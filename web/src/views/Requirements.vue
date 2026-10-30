@@ -42,7 +42,9 @@ const pending = computed(() => nodes.value.filter((n) => !n.confirmed && n.statu
 async function loadTree() {
   loading.value = true;
   try {
+    const before = nodes.value.length && nodes.value[0].spaceId === state.space;
     nodes.value = (await get<{ nodes: Node[] }>(`/api/requirements?space=${encodeURIComponent(state.space)}${showRemoved.value ? "&removed=1" : ""}`)).nodes;
+    if (!before) loadFolds();
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {
@@ -78,6 +80,77 @@ onServerEvent((e) => {
   }
 });
 const open = (id: string) => router.push(`/reqs/${id}`);
+
+// ---- folding and search -------------------------------------------------------------------------
+// Folded nodes per space, kept in this browser. A space opened for the first time shows systems and
+// modules only; the selected node's ancestors always open.
+const query = ref("");
+const showTests = ref(true);
+const folded = ref(new Set<string>());
+const foldKey = () => `omem.reqs.folded.${state.space}`;
+function loadFolds() {
+  try {
+    const saved = localStorage.getItem(foldKey());
+    if (saved) return void (folded.value = new Set(JSON.parse(saved) as string[]));
+  } catch {}
+  folded.value = new Set(nodes.value.filter((n) => n.depth >= 1 && hasKids.value.has(n.id)).map((n) => n.id));
+}
+function saveFolds() {
+  try {
+    localStorage.setItem(foldKey(), JSON.stringify([...folded.value]));
+  } catch {}
+}
+const byId = computed(() => new Map(nodes.value.map((n) => [n.id, n])));
+const hasKids = computed(() => new Set(nodes.value.filter((n) => n.parentId && (showTests.value || n.kind !== "test")).map((n) => n.parentId!)));
+const ancestors = (n: Node) => {
+  const out: string[] = [];
+  for (let p = n.parentId, i = 0; p && i < 20; p = byId.value.get(p)?.parentId ?? null, i++) out.push(p);
+  return out;
+};
+function toggle(id: string) {
+  const next = new Set(folded.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  folded.value = next;
+  saveFolds();
+}
+function foldAll(fold: boolean) {
+  folded.value = fold ? new Set([...hasKids.value].filter((id) => (byId.value.get(id)?.depth ?? 0) >= 1)) : new Set();
+  saveFolds();
+}
+// Searching: matches and the path down to them, regardless of folding.
+const terms = computed(() => query.value.trim().toLowerCase().split(/\s+/).filter(Boolean));
+const matches = computed(() => {
+  if (!terms.value.length) return null;
+  const hit = new Set(nodes.value.filter((n) => terms.value.every((t) => `${n.title}\n${n.body}\n${n.acceptance}\n${n.id}`.toLowerCase().includes(t))).map((n) => n.id));
+  return hit;
+});
+const visible = computed(() => {
+  const list = nodes.value.filter((n) => showTests.value || n.kind !== "test");
+  const m = matches.value;
+  if (m) {
+    const keep = new Set<string>();
+    for (const id of m) {
+      const n = byId.value.get(id);
+      if (!n) continue;
+      keep.add(id);
+      for (const a of ancestors(n)) keep.add(a);
+    }
+    return list.filter((n) => keep.has(n.id));
+  }
+  return list.filter((n) => !ancestors(n).some((a) => folded.value.has(a)));
+});
+// Opening a node (a link, a search hit) unfolds the way to it.
+watch([selectedId, nodes], () => {
+  const n = byId.value.get(selectedId.value);
+  if (!n) return;
+  const up = ancestors(n).filter((a) => folded.value.has(a));
+  if (!up.length) return;
+  const next = new Set(folded.value);
+  for (const a of up) next.delete(a);
+  folded.value = next;
+  saveFolds();
+});
 
 async function apply(ops: Record<string, unknown>[], done = "已保存") {
   try {
@@ -175,19 +248,34 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
         <span class="spacer" />
         <button class="btn ghost sm icon" title="新建顶层节点" aria-label="新建顶层节点" @click="router.push('/reqs'); startAdd(null)"><Icon name="plus" :size="15" /></button>
       </div>
-      <div class="filters row">
-        <UiCheckbox v-model="showRemoved" size="sm">显示删除和移除的</UiCheckbox>
-        <span v-if="pending" class="badge accent">{{ pending }} 个待确认</span>
+      <div class="filters">
+        <input v-model="query" class="input sm" type="search" placeholder="搜索标题、需求、验收或 id" aria-label="搜索需求" />
+        <div class="row wrap">
+          <UiCheckbox v-model="showTests" size="sm">测试点</UiCheckbox>
+          <UiCheckbox v-model="showRemoved" size="sm">已删除</UiCheckbox>
+          <span class="spacer" />
+          <button class="btn ghost sm" type="button" :disabled="!!matches" @click="foldAll(false)">全部展开</button>
+          <button class="btn ghost sm" type="button" :disabled="!!matches" @click="foldAll(true)">收起</button>
+        </div>
+        <div v-if="pending || matches" class="row muted small">
+          <span v-if="matches">{{ matches.size }} 个匹配</span>
+          <span v-if="pending" class="badge accent">{{ pending }} 个待确认</span>
+        </div>
       </div>
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else>
-          <button v-for="n in nodes" :key="n.id" type="button" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test' }" :style="{ paddingLeft: `${10 + n.depth * 16}px` }" @click="open(n.id)">
+          <div v-for="n in visible" :key="n.id" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test', hit: matches?.has(n.id) }" :style="{ paddingLeft: `${4 + n.depth * 16}px` }">
+            <button v-if="hasKids.has(n.id)" type="button" class="fold" :aria-expanded="!!matches || !folded.has(n.id)" :aria-label="folded.has(n.id) ? `展开 ${n.title}` : `收起 ${n.title}`" :disabled="!!matches" @click="toggle(n.id)"><Icon :name="!matches && folded.has(n.id) ? 'right' : 'down'" :size="13" /></button>
+            <span v-else class="fold-gap" />
+            <button type="button" class="pick" @click="open(n.id)">
             <span class="k" :class="`k-${n.kind}`">{{ KIND[n.kind] }}</span>
             <span class="t ellipsis" :title="n.title">{{ n.title }}</span>
             <span v-if="!n.confirmed && n.status === 'active'" class="dot" title="待本人确认" />
             <span v-if="n.state && STATE[n.state.status]" class="badge" :class="STATE[n.state.status].cls">{{ STATE[n.state.status].text }}</span>
-          </button>
+            </button>
+          </div>
+          <div v-if="matches && !matches.size" class="empty muted small">没有匹配的需求点。</div>
           <div v-if="!nodes.length" class="empty muted small">
             这个空间还没有需求树。点右上角的 + 建系统或模块，或者在事项页点“拆需求点”，让 AI 读事项的材料拆好再给你确认。
           </div>
@@ -322,8 +410,12 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
 }
 .filters {
   padding: 8px 12px;
-  gap: 8px;
+  display: grid;
+  gap: 6px;
   border-bottom: 1px solid var(--line);
+}
+.filters .row {
+  gap: 8px;
 }
 .items {
   overflow-y: auto;
@@ -336,16 +428,47 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
 .node {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   width: 100%;
+  min-width: 0;
+  padding: 0 6px 0 4px;
+  border-radius: 8px;
+}
+.node.hit .t {
+  font-weight: 600;
+}
+.fold,
+.fold-gap {
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+.fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+.fold:hover:not(:disabled) {
+  background: var(--hover);
+}
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
   min-width: 0;
   border: 0;
   background: none;
   color: var(--ink);
   font: inherit;
   text-align: left;
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 6px 4px;
   cursor: pointer;
 }
 .node:hover {

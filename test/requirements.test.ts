@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { addMaterials, materialsBrief } from "../src/items/materials.ts";
-import { findReq, recordReqStatus, reqDetail, reqTree, reqVersions, saveReqs, type ReqOp, type ReqWriter } from "../src/items/requirements.ts";
+import { findReq, ownerCorrections, recordReqStatus, reqDetail, reqTree, reqVersions, saveReqs, type ReqOp, type ReqWriter } from "../src/items/requirements.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { search } from "../src/search/search.ts";
 import { testApp } from "./helpers.ts";
@@ -108,5 +108,18 @@ describe("requirement trees", () => {
     expect(read.text).toMatch(/时间线[\s\S]*新建（req-splitter）/);
     const found = await callTool(ctx, "search", { query: "退款原因筛选", scope: "requirements" });
     expect(found.text).toContain(`需求点 ${filter.id}`);
+  });
+
+  it("shows the owner's corrections of what an Agent wrote, for the next split and the coach", () => {
+    const agent: ReqWriter = { by: "agent", label: "req-splitter", runId: "r-split" };
+    const k = save([{ op: "add", key: "p", space: "shop", kind: "page", title: "优惠券页" }, { op: "add", key: "a", parent: "$p", title: "优化领券" }, { op: "add", parent: "$p", title: "多余的点" }], agent).keys;
+    const extra = reqTree(app, "shop").find((n) => n.title === "多余的点")!;
+    save([{ op: "edit", id: k.a, change: "correct", title: "每人每天最多领 3 张" }, { op: "delete", id: extra.id, change: "correct", reason: "PRD 没有这条" }, { op: "confirm", id: k.p }]);
+    const forRun = ownerCorrections(app, { runId: "r-split" });
+    const text = forRun.lines.join("\n");
+    expect(text).toMatch(/标题「优化领券」→「每人每天最多领 3 张」/);
+    expect(text).toMatch(/删掉了「多余的点」（PRD 没有这条）/);
+    expect(forRun.confirmed).toBeGreaterThan(0);
+    expect(ownerCorrections(app, { spaceId: "shop" }).lines.length).toBeGreaterThanOrEqual(2);
   });
 });

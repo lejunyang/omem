@@ -416,3 +416,36 @@ export function reqBrief(app: App, ids: string[], opts: { since?: string } = {})
     crossLinks.length ? `### 关联的其他业务（用 req_read 看对方）\n\n${[...new Set(crossLinks)].join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
 }
+
+// ---- the owner's corrections, for the splitter to learn from --------------------------------------
+
+/**
+ * What the owner changed in nodes an Agent wrote: corrections (wording, structure, wrong nodes
+ * deleted) and how many were confirmed as written. The req-split task shows the latest ones in the
+ * space, the coach's review of req-splitter those on a run's nodes (profile-jobs.ts).
+ */
+export function ownerCorrections(app: App, opts: { runId?: string; spaceId?: string; limit?: number }) {
+  const where = opts.runId
+    ? "q.id in (select node_id from req_versions where run_id = ? and change = 'create')"
+    : "q.space_id = ? and q.created_by != '本人'";
+  const rows = all<VersionRow & { space_id: string }>(
+    app.db,
+    `select v.*, q.space_id from req_versions v join req_nodes q on q.id = v.node_id where ${where} and v.by = '本人' and v.change in ('correct','delete','confirm') order by v.at desc limit ?`,
+    opts.runId ?? opts.spaceId ?? "",
+    (opts.limit ?? 20) * 3,
+  ).map(toVersion);
+  const confirmed = rows.filter((v) => v.change === "confirm").length;
+  const lines: string[] = [];
+  for (const v of rows.filter((x) => x.change !== "confirm").slice(0, opts.limit ?? 20)) {
+    const before = one<VersionRow>(app.db, "select * from req_versions where node_id = ? and version < ? and change != 'confirm' order by version desc, at desc limit 1", v.nodeId, v.version);
+    const was = before ? toVersion(before) : null;
+    const diff: string[] = [];
+    if (was && was.title !== v.title) diff.push(`标题「${was.title}」→「${v.title}」`);
+    if (was && was.parentId !== v.parentId) diff.push(`移到「${v.parentId ? (findReq(app, v.parentId)?.title ?? v.parentId) : "最上层"}」下`);
+    if (was && was.body !== v.body) diff.push(`需求改为：${truncate(v.body.replace(/\s+/g, " "), 160)}`);
+    if (was && was.acceptance !== v.acceptance) diff.push(`验收改为：${truncate(v.acceptance.replace(/\s+/g, " "), 120)}`);
+    const what = v.change === "delete" ? `删掉了「${v.title}」` : diff.join("；") || `改了「${v.title}」`;
+    lines.push(`- ${v.at.slice(0, 10)} ${what}${v.reason ? `（${v.reason}）` : ""}`);
+  }
+  return { confirmed, lines };
+}

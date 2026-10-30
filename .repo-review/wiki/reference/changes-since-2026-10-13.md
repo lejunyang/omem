@@ -1001,3 +1001,9 @@ updated: 2026-10-30
 
 - **需求树**（新增 `src/items/requirements.ts`、`src/agents/req-split.ts`、`roles/req-splitter.md`、`web/src/views/Requirements.vue`，设计 `docs/v2/requirements.md`）：迁移加 `req_nodes`、`req_versions`、`req_links`、`req_status`、`reqs_fts` / `req_rowids`。每空间一棵树，节点 id 固定，每次修改一个版本（`correct` / `change`，业务变更必须写原因；删除分 `delete` / `remove`），跨空间关联，Agent 写的待确认。检索加 `requirement` 命中类型（`search` 的 `scope: "requirements"`），测试点不进。事项材料加 `req`；`materialsBrief` 带上需求点（`reqBrief`），续轮带交办开始后的业务变更。变更点加 `req`，`submit_change_points` 记 `req_status`。工具 `req_tree`、`req_read`、`save_requirements`、`split_requirements`（分组 items）；编码和评审角色加 `req_read`、`req_tree`。HTTP：`/api/requirements`、`/api/requirements/:id`、`POST /api/requirements`、`POST /api/items/:id/split-requirements`。导航加“需求”，事项材料加“拆需求点”。设备拉取带上四张表并重建检索。
 - **设备交办**：`run_agent` / `ask_agent` 不再在 `PEER_DENY` 里；经 `--peer` 调用时排成 `agent` 运行（`fromPeer`），立即返回运行 id，用 `read_run` 取结果。
+
+## 10-31：需求树按端分层、折叠与搜索，拆分从本人的修改里学
+
+- **拆分写法**（`roles/req-splitter.md` 重写）：系统按端（PC端、移动端…），空间即产品；公共规则单独成页面并 link，不重复；依据优先级（本人决定 > 后来的群聊口径 > PRD > 旧实现）；迁移需求必须核对并引用旧代码；acceptance 写可观察的结果；测试点一条一个场景，覆盖边界、错误提示、权限、状态和存量数据。
+- **从修改里学**：`ownerCorrections`（`src/items/requirements.ts`）取本人对 Agent 写的节点的更正、删除和确认；`req-split` 任务列出同空间最近的修改，`profile-jobs.ts` 的 req-splitter 复盘证据带上每次拆分之后本人的处理。
+- **需求页**：树可折叠（按空间存在浏览器里，首次只展开到模块）、全部展开 / 收起、隐藏测试点、按标题 / 需求 / 验收 / id 搜索（匹配项连同路径）。

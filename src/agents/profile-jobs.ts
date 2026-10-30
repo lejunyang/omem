@@ -1,3 +1,4 @@
+import { ownerCorrections } from "../items/requirements.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
@@ -81,6 +82,13 @@ function ownerAfter(app: App, r: EvidenceRun) {
   );
 }
 
+/** A split's nodes as the owner left them: what was corrected or deleted, how many confirmed as written. */
+function reqFixesText(app: App, runId: string) {
+  const f = ownerCorrections(app, { runId, limit: 12 });
+  if (!f.lines.length && !f.confirmed) return "它写的需求点本人还没有处理";
+  return `之后本人对它写的需求点：确认 ${f.confirmed} 个${f.lines.length ? `；修改或删除：\n${f.lines.join("\n")}` : "，没有修改"}`;
+}
+
 /** The task for the coach: who the profile is, what it knows, and the evidence since last time. */
 export function reviewTask(app: App, name: string, since: string) {
   const d = profileDetail(app, name);
@@ -92,6 +100,7 @@ export function reviewTask(app: App, name: string, since: string) {
       `### ${r.id}（${r.kind}/${r.status}，${r.created_at.slice(0, 16)}）${r.title}`,
       r.error ? `错误：${truncate(r.error, 300)}` : "",
       `产出：${truncate(resultOf(name, r).trim() || "（无）", 1500)}`,
+      ...(name === "req-splitter" ? [reqFixesText(app, r.id)] : []),
       said.length ? `之后本人说：\n${said.map((m) => `- msg:${m.id}（${m.created_at.slice(0, 16)}）${truncate(m.text.replace(/\s+/g, " "), 400)}`).join("\n")}` : "之后本人没有说什么",
       (() => {
         const r_ = runReactionsText(app, r.id);

@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { run } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { materialSpaces, materialsBrief } from "../items/materials.ts";
-import { reqTree } from "../items/requirements.ts";
+import { ownerCorrections, reqTree } from "../items/requirements.ts";
 import { getItem } from "../items/store.ts";
 import { runRole } from "./runner.ts";
 import { createRun, registerHandler, runUser } from "./runs.ts";
@@ -31,10 +31,13 @@ registerHandler("req-split", async (ctx) => {
   const user = runUser(ctx.app, ctx.run.id);
   const spaceId = ctx.run.spaceId!;
   const tree = reqTree(ctx.app, spaceId, { tests: false, depth: 4 });
+  // How the owner fixed earlier splits in this space: the same kind of thing should come out right now.
+  const fixes = ownerCorrections(ctx.app, { spaceId, limit: 15 });
   const task = [
     `给事项 ${itemId} 拆需求点，写进空间 ${spaceId} 的需求树。`,
     materialsBrief(ctx.app, itemId, user),
     tree.length ? `空间 ${spaceId} 现有的需求树（前四层，不含测试点；完整的用 req_tree 看）：\n${tree.map((n) => `${"  ".repeat(n.depth)}- ${n.id} ${n.title}`).join("\n")}` : `空间 ${spaceId} 还没有需求树。`,
+    fixes.lines.length ? `## 本人以前对拆分结果的修改（同样的问题这次不要再出现）\n\n${fixes.lines.join("\n")}` : "",
     note ? `## 本人的要求\n\n${note}` : "",
     "不用把需求点挂到事项上：你新建或修改的节点里最上层的那些，宿主会作为这个事项的材料（kind: req）挂上。",
   ].filter(Boolean).join("\n\n");
