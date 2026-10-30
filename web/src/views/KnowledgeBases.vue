@@ -25,7 +25,7 @@ type Kb = {
   description: string;
   spaceType: string | null;
   goneAt: string | null;
-  sample: { roots: { title: string }[]; rootCount: number; more: boolean; error?: string } | null;
+  sample: { roots: { title: string; children?: string[] }[]; rootCount: number; more: boolean; error?: string } | null;
   status: Status;
   targetSpace: string | null;
   priority: Priority;
@@ -88,8 +88,40 @@ watch(
 onMounted(load);
 onBeforeUnmount(() => timer && clearInterval(timer));
 
+// Search: every word must appear in the name, description, catalog titles, target space or the suggestion.
+const query = ref("");
+const terms = computed(() => query.value.trim().toLowerCase().split(/\s+/).filter(Boolean));
+function haystack(k: Kb) {
+  const p = k.proposal;
+  return [
+    k.name,
+    k.description,
+    ...(k.sample?.roots ?? []).flatMap((r) => [r.title, ...(r.children ?? [])]),
+    spaceName(k.targetSpace),
+    p ? `${proposalText(p)} ${p.newSpace?.name ?? ""} ${p.reason}` : "",
+  ].join("\n").toLowerCase();
+}
+const matched = computed(() => {
+  const list = data.value?.kbs ?? [];
+  if (!terms.value.length) return list;
+  return list.filter((k) => {
+    const h = haystack(k);
+    return terms.value.every((t) => h.includes(t));
+  });
+});
+// Counts follow the search, so the tabs say where the matches are.
+const counts = computed(() => {
+  if (!terms.value.length) return data.value?.counts;
+  const c: Partial<Record<Status | "gone", number>> = {};
+  for (const k of matched.value) {
+    const key = k.goneAt ? "gone" : k.status;
+    c[key] = (c[key] ?? 0) + 1;
+  }
+  return c;
+});
+
 const filterOptions = computed(() => {
-  const c = data.value?.counts;
+  const c = counts.value;
   const n = (k: Status | "gone") => (c?.[k] ? ` ${c[k]}` : "");
   return [
     { value: "proposed" as const, label: `待确认${n("proposed")}` },
@@ -102,7 +134,7 @@ const filterOptions = computed(() => {
   ];
 });
 const shown = computed(() => {
-  const list = data.value?.kbs ?? [];
+  const list = matched.value;
   if (filter.value === "all") return list.filter((k) => !k.goneAt);
   if (filter.value === "gone") return list.filter((k) => !!k.goneAt);
   return list.filter((k) => !k.goneAt && k.status === filter.value);
@@ -260,8 +292,15 @@ const lastReading = computed(() => {
         </div>
       </div>
 
-      <div class="filters">
-        <UiSegmented v-model="filter" size="sm" aria-label="按状态筛选" :options="filterOptions" />
+      <div class="toolbar row wrap">
+        <label class="search row">
+          <Icon name="search" :size="15" />
+          <input v-model="query" placeholder="搜索名称、说明、目录、空间" aria-label="搜索知识库" @keydown.esc="query = ''" />
+          <button v-if="query" type="button" class="btn ghost sm icon" aria-label="清空" @click="query = ''"><Icon name="x" :size="13" /></button>
+        </label>
+        <div class="filters">
+          <UiSegmented v-model="filter" size="sm" aria-label="按状态筛选" :options="filterOptions" />
+        </div>
       </div>
 
       <div v-if="!data.kbs.length" class="empty">
@@ -269,7 +308,13 @@ const lastReading = computed(() => {
         <h3>还没有发现过知识库</h3>
         <p>点“立即发现”列出你能看到的知识库（需要运行 omem 的电脑上 lark-cli 已登录）。</p>
       </div>
-      <div v-else-if="!shown.length" class="empty small"><p>这一类没有知识库。</p></div>
+      <div v-else-if="!shown.length" class="empty small">
+        <template v-if="terms.length">
+          <p>{{ matched.length ? "这一类里没有匹配的知识库。" : "没有匹配的知识库。" }}</p>
+          <button v-if="matched.length && filter !== 'all'" class="btn ghost sm" @click="filter = 'all'">在全部里看</button>
+        </template>
+        <p v-else>这一类没有知识库。</p>
+      </div>
       <VirtualList v-else :items="shown" :item-key="(k) => k.id" :estimate="150">
         <template #default="{ item: k }">
           <article class="card pad kb" :class="{ gone: !!k.goneAt }">
@@ -380,8 +425,38 @@ const lastReading = computed(() => {
 .share {
   width: 140px;
 }
-.filters {
+.toolbar {
+  gap: 8px 12px;
   margin-bottom: 12px;
+  align-items: center;
+}
+.search {
+  flex: 1 1 220px;
+  max-width: 340px;
+  min-width: 0;
+  gap: 6px;
+  padding: 0 6px 0 10px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+}
+.search:focus-within {
+  border-color: var(--accent);
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+.filters {
+  min-width: 0;
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
