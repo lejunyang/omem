@@ -1025,3 +1025,4 @@ updated: 2026-10-30
 - 提示超过 6000 字或只能经 cmd 调用时写进 `tmpdir()/omem-doubao/<uuid>.md` 让它先读，结束后删掉；默认命令 `doubao` 直接调用 npm 包解压的原生程序（`doubaoAppRoot()`，和包里 `runtime.cjs` 的位置一致）。
 - 检测模型（`probeDoubaoCli`，网页 Agent 页的“检测模型”也对它开放）：`--model` 给一个不存在的名字读出可用模型，再按模型试 `--effort none` / `max` 读出强度；都带 `--resume 1`，合法组合停在找会话这一步，不新建对话。
 - 它的对话存在豆包账号里，CLI 不能删除或归档。
+- `code_workspace` 写新文件时按最近的已有上级目录解析真实路径：工作区在链接后面（如 home 目录是链接）时，原来新文件会被判成“不在工作区里”。

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { git, resolveRef } from "../core/git.ts";
@@ -47,6 +47,22 @@ function peerWork(app: App, runId: string, caller: string) {
   return { root, peer, all, last: all.at(-1)!, worktrees };
 }
 
+/**
+ * A path's real location even when it does not exist yet: the nearest existing ancestor resolved
+ * through links (the workspace may sit behind one, e.g. a home directory that is a link) plus the rest.
+ */
+function realish(path: string): string {
+  let head = path;
+  const rest: string[] = [];
+  while (!existsSync(head)) {
+    const parent = dirname(head);
+    if (parent === head) return path;
+    rest.unshift(basename(head));
+    head = parent;
+  }
+  return join(realpathSync(head), ...rest);
+}
+
 /** The worktree a path is in (`space/path` when there are several) and the file's absolute path inside it. */
 function locate(work: ReturnType<typeof peerWork>, path: string) {
   const { worktrees } = work;
@@ -62,7 +78,7 @@ function locate(work: ReturnType<typeof peerWork>, path: string) {
   const dir = workDirOf(wt);
   if (isAbsolute(rel) || rel.split("/").includes("..")) throw new HttpError(400, "路径写成仓库里的相对路径");
   const abs = resolve(dir, rel || ".");
-  const inside = relative(realpathSync(dir), existsSync(abs) ? realpathSync(abs) : abs);
+  const inside = relative(realpathSync(dir), realish(abs));
   if (inside.startsWith("..") || isAbsolute(inside)) throw new HttpError(400, "路径不在工作区里");
   if (/(^|\/)\.git(\/|$)/.test(rel)) throw new HttpError(400, "不能动 .git");
   return { wt, dir, rel, abs };

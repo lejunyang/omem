@@ -61,6 +61,8 @@ describe("coding an outside Agent on another device does itself", () => {
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "write", path: ".git/config", content: "x" })).text).toMatch(/\.git/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "edit", path: "refund.ts", old: "return 0;", new: "return lines.filter((l) => !l.shipped).length;" })).text).toMatch(/已修改/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "write", path: "lines.test.ts", content: "// shipped lines\n" })).text).toMatch(/已新建/);
+    // A new file in new directories (the workspace may sit behind a link, e.g. a linked home directory).
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "write", path: "tests/ui/new-dir/deep.test.ts", content: "// nested\n" })).text).toMatch(/已新建/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "grep", pattern: "shipped" })).text).toMatch(/refund\.ts:2/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "rm", args: ["-rf"] })).text).toMatch(/只能运行本人给仓库/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "test", args: ["a;rm"] })).text).toMatch(/shell 符号/);
