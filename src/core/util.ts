@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const now = () => new Date().toISOString();
 
@@ -9,6 +9,8 @@ export function newId(prefix = ""): string {
 }
 
 export const sha256 = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
+/** Compare a presented secret with the expected one in constant time (hashed, so lengths match). */
+export const sameSecret = (given: string, expected: string) => !!expected && timingSafeEqual(createHash("sha256").update(given).digest(), createHash("sha256").update(expected).digest());
 
 export function slugify(text: string): string {
   const slug = text

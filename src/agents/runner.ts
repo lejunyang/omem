@@ -114,7 +114,7 @@ export function profileFor(app: App, role: RoleName | string): AgentProfile {
   return p;
 }
 
-function mcpBridge(): { command: string; args: string[] } {
+export function mcpBridge(): { command: string; args: string[] } {
   const ts = resolve(here, "../mcp-bridge.ts");
   const js = resolve(here, "../mcp-bridge.js");
   return { command: process.execPath, args: [existsSync(js) ? js : ts] };

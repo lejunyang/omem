@@ -35,12 +35,14 @@ import { cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEven
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { configSchema, saveConfig } from "../core/config.ts";
+import { allProfiles, configSchema, saveConfig } from "../core/config.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
+import { trustedLocal } from "./origin.ts";
+import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
 import { accessibleSpaces, canWrite, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
@@ -76,7 +78,8 @@ const q = <T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> => {
 function bearer(req: FastifyRequest) {
   const h = req.headers.authorization;
   if (h?.startsWith("Bearer ")) return h.slice(7);
-  return (req.query as { token?: string })?.token ?? "";
+  // In the query only for what the browser loads itself (images, downloads, the event stream).
+  return req.method === "GET" || req.method === "HEAD" ? ((req.query as { token?: string })?.token ?? "") : "";
 }
 
 export async function startServer(app: App, opts: { port?: number; host?: string; quiet?: boolean } = {}) {
@@ -100,13 +103,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const MEMBER_ROUTES = [/^\/api\/ask$/, /^\/api\/conversations(\/[^/?]+)?(\?.*)?$/, /^\/api\/search(\?.*)?$/, /^\/api\/items(\?.*)?$/, /^\/api\/runs\/[^/?]+(\/events)?(\?.*)?$/, /^\/api\/me$/];
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
-    if (!req.url.startsWith("/api/") || req.url.startsWith("/api/tools")) return;
+    // Tool routes check their own (per-run) token.
+    if (!req.url.startsWith("/api/") || /^\/api\/tools(\/|\?|$)/.test(req.url)) return;
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
     // returns only the snapshot that share holds.
     if (req.method === "GET" && SHARE_ROUTE.test(req.url)) return;
     const token = bearer(req);
-    // Without a token only this machine is trusted, even when listening on all interfaces.
-    const local = /^(127\.|::1$|::ffff:127\.)/.test(req.ip ?? "");
+    // Without a token only this machine is trusted, even when listening on all interfaces, and
+    // only when the request is not another site's (server/origin.ts).
+    const local = trustedLocal(req.raw, req.ip ?? "");
     const userId = token ? userForToken(app, token) : app.config.token || !local ? null : OWNER;
     if (!userId) return void reply.status(401).send({ error: "需要访问令牌" });
     (req as FastifyRequest & { userId: string }).userId = userId;
@@ -132,16 +137,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ---------------------------------------------------------------- tools/MCP
-  const toolCtx = (req: FastifyRequest) => {
+  // A run's token, or a stand-in for another device's tools (its agent runs here, core/peer-acp.ts).
+  const toolBackend = (req: FastifyRequest) => {
+    const relay = toolRelay(bearer(req));
+    if (relay) return relay;
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的工具令牌");
-    return ctx;
+    return { list: async () => mcpTools(ctx.tools), call: (name: string, args: unknown) => callTool(ctx, name, args) };
   };
-  server.get("/api/tools", async (req) => ({ tools: mcpTools(toolCtx(req).tools) }));
-  server.post("/api/tools/:name", async (req) => callTool(toolCtx(req), (req.params as { name: string }).name, req.body));
+  server.get("/api/tools", async (req) => ({ tools: await toolBackend(req).list() }));
+  server.post("/api/tools/:name", async (req) => toolBackend(req).call((req.params as { name: string }).name, req.body));
   const mcp = async (req: FastifyRequest, reply: FastifyReply) => {
-    const ctx = toolCtx(req);
-    const mcpServer = createMcpServer({ list: async () => mcpTools(ctx.tools), call: (name, args) => callTool(ctx, name, args) });
+    const mcpServer = createMcpServer(toolBackend(req));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.hijack();
     reply.raw.on("close", () => {
@@ -1005,7 +1012,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const relay = async (req: FastifyRequest, reply: FastifyReply) => {
       const { tunnelHttp } = await import("../core/peer-tunnel.ts");
       const hops = Number(req.headers["x-omem-hops"] ?? 0);
-      if (hops > 3) throw new HttpError(508, "同伴转发层数过多");
+      if (hops > 3) throw new HttpError(508, "设备转发层数过多");
       const { id } = req.params as { id: string };
       reply.hijack();
       tunnelHttp(app, id, req.url.slice(`/api/peers/${encodeURIComponent(id)}`.length), req.raw, reply.raw, hops + 1);
@@ -1018,6 +1025,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   attachPluginStreams(app, server.server);
   // Its WebSocket: upgrades skip the hooks, so the owner's token is checked here.
   server.server.on("upgrade", async (req, socket, head) => {
+    // Another device runs one of this device's agents (core/peer-acp.ts): the owner's token.
+    if (ACP_PATH.test(req.url ?? "")) {
+      const h = req.headers.authorization;
+      const owner = h?.startsWith("Bearer ") ? userForToken(app, h.slice(7)) === OWNER : !app.config.token && trustedLocal(req, req.socket.remoteAddress ?? "");
+      if (!owner) return void socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      return void serveAcp(app, req, socket, head);
+    }
     const m = /^\/api\/peers\/([^/?]+)(\/.*)$/.exec(req.url ?? "");
     if (!m) return;
     const { tunneled, tunnelUpgrade } = await import("../core/peer-tunnel.ts");
@@ -1029,6 +1043,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     tunnelUpgrade(app, decodeURIComponent(m[1]), m[2], req, socket, head, hops + 1);
   });
   server.addHook("onClose", async () => stopIdeWeb());
+  server.addHook("onClose", async () => closeAcpServing());
   // The delegations an editor opened on `folder` belongs to (the VS Code extension, docs/v2/ide.md).
   server.get("/api/code-runs/at", async (req) => {
     const { folder } = q(z.object({ folder: z.string().min(1) }), req.query);
@@ -1812,13 +1827,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     effort: z.string().max(40).optional(),
   });
   server.get("/api/peer/tools", async (req) => {
-    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能使用同伴的工具接口");
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能使用设备的工具接口");
     const o = q(peerScope.extend({ spaces: z.string().optional(), readOnly: z.string().optional() }), req.query);
     const { peerTools } = await import("../agents/peer-agent.ts");
     return { node: (await import("../core/peers.ts")).nodeId(app), tools: peerTools(app, { ...o, spaces: o.spaces?.split(",").filter(Boolean), readOnly: o.readOnly === "1" || o.readOnly === "true" }) };
   });
   server.post("/api/peer/tool", async (req) => {
-    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能使用同伴的工具接口");
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能使用设备的工具接口");
     const b = q(peerScope.extend({ session: z.string().min(1).max(80), name: z.string().max(80), args: z.unknown().optional() }), req.body);
     const { peerToolCall } = await import("../agents/peer-agent.ts");
     const { name, args, ...scope } = b;
@@ -1830,14 +1845,98 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     reply.type("application/x-tar");
     return reply.send(await snapshotStream(app));
   });
-  server.get("/api/peers", async () => {
-    const { listPeers, nodeId } = await import("../core/peers.ts");
-    return { node: nodeId(app), peers: listPeers(app).map((p) => ({ id: p.id, url: p.url, via: p.via ?? null, addedAt: p.addedAt })) };
+  // Settings → 设备: the devices this one can reach (tokens never leave), the ones holding a
+  // pairing token of this one, pairing both ways, and which of a device's agents to use here.
+  const peerView = async () => {
+    const { listPeers, localUrls, nodeId } = await import("../core/peers.ts");
+    const { pairedTokens } = await import("../core/users.ts");
+    const agents = app.config.agents.profiles.filter((p) => p.peer).map((p) => ({ id: p.id, name: p.name ?? p.id, peer: p.peer!.id, agent: p.peer!.agent }));
+    return {
+      node: nodeId(app),
+      urls: localUrls(app),
+      peers: listPeers(app).map((p) => ({ id: p.id, url: p.url, urls: p.urls ?? [p.url], via: p.via ?? null, addedAt: p.addedAt })),
+      paired: pairedTokens(app),
+      agents,
+    };
+  };
+  server.get("/api/peers", async () => peerView());
+  server.post("/api/peer/invite", async (req) => {
+    const b = q(z.object({ label: z.string().trim().regex(/^[\w.-]{1,40}$/, "名字只用字母、数字、点、短横线").default("device"), url: z.string().url().optional() }), req.body);
+    const { invite } = await import("../core/peers.ts");
+    return invite(app, b);
+  });
+  server.post("/api/peer/add", async (req) => {
+    const b = q(z.object({ code: z.string().trim().min(8), via: z.string().optional(), url: z.string().url().optional() }), req.body);
+    const { addPeer, peerJson } = await import("../core/peers.ts");
+    let p;
+    try {
+      p = await addPeer(app, b.code, { via: b.via || undefined, url: b.url });
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message);
+    }
+    const error = await peerJson<{ node: string }>(app, p.id, "/api/diag", undefined, 20_000).then(() => null, (e: Error) => e.message);
+    return { id: p.id, online: !error, error, ...(await peerView()) };
+  });
+  server.patch("/api/peers/:id", async (req) => {
+    const b = q(z.object({ url: z.string().url() }), req.body);
+    const { setPeerUrl } = await import("../core/peers.ts");
+    try {
+      setPeerUrl(app, (req.params as { id: string }).id, b.url);
+    } catch (e) {
+      throw new HttpError(404, (e as Error).message);
+    }
+    return peerView();
+  });
+  server.delete("/api/peers/:id", async (req) => {
+    const { removePeer } = await import("../core/peers.ts");
+    const r = await removePeer(app, (req.params as { id: string }).id);
+    return { ...r, ...(await peerView()) };
+  });
+  // Is it there, which version, which ACP agents it could lend (its own, installed).
+  server.get("/api/peers/:id/status", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const { peerJson } = await import("../core/peers.ts");
+    const started = Date.now();
+    try {
+      const d = await peerJson<{ node?: string; version?: string | null }>(app, id, "/api/diag", undefined, 15_000);
+      const s = await peerJson<{ agents?: { id: string; name?: string; transport: string; installed?: boolean; peer?: unknown }[] }>(app, id, "/api/settings", undefined, 15_000).catch(() => ({ agents: [] }));
+      const agents = (s.agents ?? []).filter((a) => a.transport === "acp" && a.installed && !a.peer).map((a) => ({ id: a.id, name: a.name ?? a.id }));
+      return { online: true, ms: Date.now() - started, version: d.version ?? null, agents };
+    } catch (e) {
+      return { online: false, error: (e as Error).message, agents: [] };
+    }
+  });
+  server.post("/api/peer/agents", async (req) => {
+    const b = q(z.object({ peer: z.string().min(1), agent: z.string().min(1), name: z.string().optional(), use: z.boolean() }), req.body);
+    const { dropPeerAgents, findPeer } = await import("../core/peers.ts");
+    if (!findPeer(app, b.peer)) throw new HttpError(404, `没有名为 ${b.peer} 的设备`);
+    if (!b.use) {
+      await dropPeerAgents(app, (p) => p.id === b.peer && p.agent === b.agent);
+      return peerView();
+    }
+    const id = `${b.peer}-${b.agent}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+    if (allProfiles(app.config).some((p) => p.id === id && !(p.peer?.id === b.peer && p.peer.agent === b.agent))) throw new HttpError(409, `已经有名为 ${id} 的 Agent 配置`);
+    const rest = app.config.agents.profiles.filter((p) => !(p.peer?.id === b.peer && p.peer.agent === b.agent));
+    const name = `${(b.name ?? b.agent).replace(/\s*\(ACP\)$/, "")}（${b.peer}）`;
+    app.config.agents.profiles = [...rest, { id, name, transport: "acp", command: "omem", args: [], env: {}, idleTimeoutMs: 600_000, peer: { id: b.peer, agent: b.agent } }];
+    saveConfig(app.config, app.home);
+    return peerView();
+  });
+  // A device paired with us asks to forget it: the token it holds stops working.
+  server.post("/api/peer/unpair", async (req) => {
+    const { revokeTokenValue } = await import("../core/users.ts");
+    const token = bearer(req);
+    return { revoked: !!token && /^om_/.test(token) && revokeTokenValue(app, token) };
+  });
+  server.delete("/api/peer/paired/:id", async (req) => {
+    const { revokePairedToken } = await import("../core/users.ts");
+    if (!revokePairedToken(app, (req.params as { id: string }).id)) throw new HttpError(404, "没有这个配对令牌");
+    return peerView();
   });
   server.all("/api/peers/:id/*", async (req, reply) => {
     const { peerFetch } = await import("../core/peers.ts");
     const hops = Number(req.headers["x-omem-hops"] ?? 0);
-    if (hops > 3) throw new HttpError(508, "同伴转发层数过多");
+    if (hops > 3) throw new HttpError(508, "设备转发层数过多");
     const { id } = req.params as { id: string };
     const rest = req.url.slice(`/api/peers/${encodeURIComponent(id)}`.length) || "/";
     // The web UI's own files (GET) are forwarded too, so `omem peer open` can show a peer's

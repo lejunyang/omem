@@ -108,7 +108,7 @@ function sessionRun(app: App, scope: PeerAgentScope, spaceId: string) {
     const created = createRun(app, {
       kind: "peer-agent",
       spaceId,
-      title: truncate(`同伴 ${caller} 的外部 Agent（${session}）`, 80),
+      title: truncate(`设备 ${caller} 的外部 Agent（${session}）`, 80),
       input: { caller, session, agent: scope.agent ? clean(scope.agent, 60, "") : undefined, model: scope.model ? clean(scope.model, 80, "") : undefined, effort: scope.effort ? clean(scope.effort, 40, "") : undefined, readOnly: scope.readOnly || undefined, spaces: scope.spaces },
     });
     // Claimed before the worker's next look (it runs on a microtask after this synchronous step);
@@ -140,7 +140,7 @@ const clip = (args: unknown) => {
   return s.length <= 4000 ? args : truncate(s, 4000);
 };
 
-const REFUSED = (name: string) => `工具 ${name} 不对同伴的外部 Agent 开放：它会对外发消息、交办这台机器上的 Agent 或改动这里运行的配置。需要时请本人在这台机器上（或网页上）做。`;
+const REFUSED = (name: string) => `工具 ${name} 不对设备的外部 Agent 开放：它会对外发消息、交办这台机器上的 Agent 或改动这里运行的配置。需要时请本人在这台机器上（或网页上）做。`;
 
 /**
  * One tool call of an outside Agent, as the owner, recorded in the session's run: a `tool` event

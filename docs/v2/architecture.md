@@ -7,7 +7,7 @@
 v1 在一年里接通了捕获、检索、Wiki、记忆、事项、飞书和编码交办，但效果差。根因不在某个权重或模型，而在三处设计：
 
 1. **把智能放在宿主代码里。** 一次问答要宿主先检索、拼几十条规则的长 prompt、要求模型输出固定 JSON，再由宿主二次检索。模型只能在宿主给的片段里作答，读不到全貌；规则越加越多（`acp-model.ts` 一个 prompt 就有二十多条约束），彼此冲突。
-2. **知识产物以文件为单位。** 每个源文件生成一篇“说明”，512 份 JSON 资产只有 6 份是面向读者的页面。读者想知道“一条消息进来后发生了什么”，得到的是“该文件以 0700 权限创建目录”。
+2. **知识产物以文件为单位。** 每个源文件生成一篇“说明”，512 份 JSON 资产只有 6 份是面向用户的页面。用户想知道“一条消息进来后发生了什么”，得到的是“该文件以 0700 权限创建目录”。
 3. **验证代替了效果。** 大量精力花在复核链、引用范围、快照副本、预算计时上，用户能读懂什么反而无人负责。
 
 v2 的原则：**宿主只做数据、索引、调度和权限；理解和写作交给有工具的强 Agent。** 代码量目标是 v1 的五分之一以内。
@@ -60,7 +60,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
       wiki/index.md           空间首页与目录（Agent 维护）
       wiki/**/*.md            页面，路径就是目录（a/b/c.md 是目录 a/b 里的页面 c），frontmatter 含 title/summary/kind/updated，移动过的页面还有 aliases（旧路径）
       log.md                  整理日志（追加）
-      SPACE.md                空间说明：读者、范围、写作要求（人可编辑）
+      SPACE.md                空间说明：用户、范围、写作要求（人可编辑）
     _agents/*.md              Agent 档案
     _skills/<名称>/SKILL.md    技能（内置技能从 skills/library 播种）
   files/                      上传与采集的原始文件（代码仓库只记录路径，不复制）
@@ -69,7 +69,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
   workspaces/<空间>/<n>/       omem 按需建的交办工作区，每个仓库最多 4 个（docs/v2/ide.md）
   agents/<id>/<版本>/          从 ACP 注册表下载的 Agent 程序
   （插件页面构建在包内 web/dist/plugins/<id>/，插件记录在 omem.db 的 plugin_records / plugin_blocks）
-  secrets/                    lark.json（App Secret）、peers.json（同伴地址与令牌），均 0600
+  secrets/                    lark.json（App Secret）、peers.json（设备地址与令牌），均 0600
   service/                    后台服务的 PM2 数据与日志
 ```
 
@@ -112,12 +112,12 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 ### 2. 代码仓库 Wiki
 
 聊天工具 `generate_wiki`、网页和 CLI 共用 `wiki/generate.ts` 入口。目标空间须可写，材料空间须可读，生成运行保存发起用户和只读范围；规划后每个写作子运行继承用户、材料范围和完整要求，不能扩大到新关联的空间。助手只负责发起与核验，正文由 Wiki 角色提交。当前实现以代码为准，文档补充背景和设计意图，冲突处标明过时说法。
-1. `wiki-planner`：Agent 在仓库只读副本中自由浏览（原生工具），产出目录：每页的读者问题、类型（入门/机制/操作/参考）、入口文件。目录写入 `wiki/index.md`，人可在界面里改。
+1. `wiki-planner`：Agent 在仓库只读副本中自由浏览（原生工具），产出目录：每页的用户问题、类型（入门/机制/操作/参考）、入口文件。目录写入 `wiki/index.md`，人可在界面里改。
 2. `wiki-writer`：逐页调查并写作，要求：先给一个真实例子走完整条路径，再讲概念和取舍，最后给“要改 X 去哪里”。引用落到文件行号。
 3. `wiki-linter`：原件变化后检查受影响的页面（页面引用的原件哈希与写作时不同，或原件已删除），只改受影响的部分，仍然成立的用 `confirm_page` 记一笔。
 4. `wiki-organizer`：把顶层散落的页面和直接放了 40 页以上的目录整理进目录（`move_page`，必要时给新目录写一页 `<目录>/index`）。
 
-**目录**：页面的路径就是目录，没有单独的目录表。网页的目录树由 `buildNav`（`wiki/store.ts`）从路径生成，目录名取自它自己的 `index` 页标题（点目录名打开这页），没有就用路径最后一段；空间的 `index` 是首页，不进树。`move_page`（`movePages`）移动页面或整个目录：内容和“引用的原件在写作时是什么状态”不变，旧路径写进页面的 `aliases` 并进 `page_aliases` 表（可从文件重建），其他页面里的 `[[链接]]` 和 `](wiki:…)` 改成新路径，`readPage` / `pageContext` 对旧路径也能打开，一次一个提交。重写页面（`writePage`）保留文件里已有的 `aliases`，写作者只给标题、摘要和类型时旧路径也不会丢；之前因重写丢掉的旧路径用 `restoreAliases` 从知识库的 Git 历史补回（远程 `wiki-restore-aliases`，默认只列出）。规划和写作角色按“页面按读者问题分目录、顶层只放总览入门”写 slug。
+**目录**：页面的路径就是目录，没有单独的目录表。网页的目录树由 `buildNav`（`wiki/store.ts`）从路径生成，目录名取自它自己的 `index` 页标题（点目录名打开这页），没有就用路径最后一段；空间的 `index` 是首页，不进树。`move_page`（`movePages`）移动页面或整个目录：内容和“引用的原件在写作时是什么状态”不变，旧路径写进页面的 `aliases` 并进 `page_aliases` 表（可从文件重建），其他页面里的 `[[链接]]` 和 `](wiki:…)` 改成新路径，`readPage` / `pageContext` 对旧路径也能打开，一次一个提交。重写页面（`writePage`）保留文件里已有的 `aliases`，写作者只给标题、摘要和类型时旧路径也不会丢；之前因重写丢掉的旧路径用 `restoreAliases` 从知识库的 Git 历史补回（远程 `wiki-restore-aliases`，默认只列出）。规划和写作角色按“页面按用户问题分目录、顶层只放总览入门”写 slug。
 
 **原件变化后的自动检查**（`wiki/upkeep.ts`）：宿主只决定什么时候、多少。每次有原件变化时开一个 30 分钟的防抖计时，另有启动 3 分钟后和每小时各看一次：某页引用的原件变了或被删，原件已安静 30 分钟，该页 24 小时内没被检查过，空间 3 小时内没跑过检查，就为这个空间排一个 `wiki-linter` 运行，一次最多 10 页（最久没处理的先）；聊天、会话、动态、会议这类只追加的原件变化不触发；空间设置 `autoLint: false` 关闭。顶层页面 ≥ 6 页或某目录直接页面 > 40 页时同样排 `wiki-organize`（6 小时一次，一轮没移动任何页面则一周后再看，`autoOrganize: false` 关闭）。手动检查（网页“现在检查全部”、`omem wiki lint`）不受这些限制。
 
@@ -191,11 +191,11 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 ## 多台设备
 
-现在的做法是“一台常驻，其他来看”：常驻那台负责采集和定时任务，是唯一写入方；其他机器经 HTTP 读它的状态、拉快照、让它跑检查。配对码 = 对方地址 + 为本人生成的 API 令牌，所以同伴就是“拿着本人令牌的客户端”，权限与撤销都走已有的令牌表。中间节点转发 `/api/peers/<id>/…` 时换上自己保存的令牌，并用 `x-omem-hops` 限制层数。
+现在的做法是“一台常驻，其他来看”：常驻那台负责采集和定时任务，是唯一写入方；其他机器经 HTTP 读它的状态、拉快照、让它跑检查。配对码 = 对方地址 + 为本人生成的 API 令牌，所以设备就是“拿着本人令牌的客户端”，权限与撤销都走已有的令牌表。中间节点转发 `/api/peers/<id>/…` 时换上自己保存的令牌，并用 `x-omem-hops` 限制层数。
 
 远程命令刻意做成固定清单（`peerCommands`，每条有参数校验），而不是任意 shell：要核对的多是飞书原始返回、数据库内容、日志和版本，这些都能用只读命令覆盖；会改东西的只有采集、回溯、触发定时任务、`git pull --ff-only` 和重启。
 
-**外部 Agent 用同伴的库**（`src/agents/peer-agent.ts`）：本机的 Claude Code / Codex 想用本机的模型整理常驻服务器的数据时，`omem tool --peer <id>` / `omem mcp --peer <id>` 调目标节点的 `GET /api/peer/tools` 和 `POST /api/peer/tool`（本人令牌，成员令牌 403）。客户端走和 `omem peer call` 一样的 `peerJson`，直接读本机的 peers.json，所以本机服务不必运行；经中间节点时中间节点只转发 `/api/` 请求，不用更新。目标节点上，一次调用是“本人、`actor: agent`、工具集 = 内置分组里的工具去掉角色交结果的工具、插件工具和 `PEER_DENY`”：`PEER_DENY` 是会对外发消息或动手的——飞书发送、卡片、文档写入、采集设置，`notify`，问本人和等回答，唤醒，`run_agent` / `ask_agent` / `generate_wiki` / `digest_sources` 这类会用目标机器模型的，交办编码与评审、Git 动作，改档案、技能、规则和仓库关联。读取与整理类写入（记忆、页面、原件关注度与标注、事项、记忆目录、导入网页和笔记）保留。`test/peer-tools.test.ts` 要求每个内置工具都在某个分组里，新增工具默认放行，要对外或交办的必须加进 `PEER_DENY`。每次调用都记在一条 `peer-agent` 运行里：调用方的本机名 + 会话名对应一条运行（第一次用时创建，闲置 15 分钟收尾，之后再用会重新打开；服务重启时由处理器直接结束），每次调用一条 `tool` 事件（被拒的带 `refused`），写入工具自己再记 `tool-write`，写入的记忆等带这条运行和 `peer:<调用方>` 作为来源档案、调用方告知的模型和强度；调用方给了 Agent、模型或强度（`--agent` / `--model` / `--effort`，或 `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL` / `OMEM_PEER_EFFORT`）时，这条运行的 AI 记成 `peer:<调用方>:<Agent> · 模型 · 强度`，运行页和其他运行一样显示。`omem_help` 不新建运行。`space`（默认空间，缺省 personal，不看调用方的当前目录）、`spaces`（限定可读写的空间）、`readOnly` 由调用方给，仍走 `callTool` 里的空间检查。
+**外部 Agent 用设备的库**（`src/agents/peer-agent.ts`）：本机的 Claude Code / Codex 想用本机的模型整理常驻服务器的数据时，`omem tool --peer <id>` / `omem mcp --peer <id>` 调目标节点的 `GET /api/peer/tools` 和 `POST /api/peer/tool`（本人令牌，成员令牌 403）。客户端走和 `omem peer call` 一样的 `peerJson`，直接读本机的 peers.json，所以本机服务不必运行；经中间节点时中间节点只转发 `/api/` 请求，不用更新。目标节点上，一次调用是“本人、`actor: agent`、工具集 = 内置分组里的工具去掉角色交结果的工具、插件工具和 `PEER_DENY`”：`PEER_DENY` 是会对外发消息或动手的——飞书发送、卡片、文档写入、采集设置，`notify`，问本人和等回答，唤醒，`run_agent` / `ask_agent` / `generate_wiki` / `digest_sources` 这类会用目标机器模型的，交办编码与评审、Git 动作，改档案、技能、规则和仓库关联。读取与整理类写入（记忆、页面、原件关注度与标注、事项、记忆目录、导入网页和笔记）保留。`test/peer-tools.test.ts` 要求每个内置工具都在某个分组里，新增工具默认放行，要对外或交办的必须加进 `PEER_DENY`。每次调用都记在一条 `peer-agent` 运行里：调用方的本机名 + 会话名对应一条运行（第一次用时创建，闲置 15 分钟收尾，之后再用会重新打开；服务重启时由处理器直接结束），每次调用一条 `tool` 事件（被拒的带 `refused`），写入工具自己再记 `tool-write`，写入的记忆等带这条运行和 `peer:<调用方>` 作为来源档案、调用方告知的模型和强度；调用方给了 Agent、模型或强度（`--agent` / `--model` / `--effort`，或 `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL` / `OMEM_PEER_EFFORT`）时，这条运行的 AI 记成 `peer:<调用方>:<Agent> · 模型 · 强度`，运行页和其他运行一样显示。`omem_help` 不新建运行。`space`（默认空间，缺省 personal，不看调用方的当前目录）、`spaces`（限定可读写的空间）、`readOnly` 由调用方给，仍走 `callTool` 里的空间检查。
 
 `omem peer pull` 仍是手动单向拉取。HTTP 与 SSH 共用 `pull-snapshot.ts` 的快照程序：SQLite 一致性副本、整个 `library/` 和 `files/`、运行补丁、仓库 Git bundle 与非忽略工作文件；已检出的子模块和编码 worktree 各自保存为可独立恢复的仓库，不传 `.git` 中的凭据配置与 hooks。HTTP 下载落到临时文件，不把完整快照放进内存。只允许本人下载快照。
 
@@ -205,10 +205,10 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 以后要做持续同步（两台都写）时的方向，现在不实现：
 
-- **变更日志**：记忆、事项、原件元数据各自已有 id 和时间，补一张按节点自增的变更表（节点 id + 序号 + 实体 + 操作），同伴按“我已看到对方的第几号”增量拉取，代替整库快照。
+- **变更日志**：记忆、事项、原件元数据各自已有 id 和时间，补一张按节点自增的变更表（节点 id + 序号 + 实体 + 操作），设备按“我已看到对方的第几号”增量拉取，代替整库快照。
 - **单写者的事归一台**：飞书采集、定时任务、发消息这类有外部副作用的事只在持有租约的节点上跑（租约存在常驻那台，过期可接管），避免两台同时采集或重复提醒。
 - **冲突**：记忆本来就是版本链（新的使旧的失效），并发修改同一条时两条都保留、交给做梦整理合并；事项状态按最后修改时间。
-- **按能力分派**：同伴上报自己有哪些 Agent / 工具（`diag` 里已有），跑不了的任务转给有的那台。
+- **按能力分派**：设备上报自己有哪些 Agent / 工具（`diag` 里已有），跑不了的任务转给有的那台。
 - **多用户**：配对码里的令牌目前固定是本人的；给同事的设备配对时换成他的用户令牌，同步时只带他能访问的空间。
 
 ## 实现状态（2026-10-23）
@@ -305,7 +305,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 更新：`osdk run upgrade` / `scripts/upgrade.ts`（拉代码、装依赖、构建、`npm install -g .`、可选重启）；远程 `update` 命令复用它 | 已实现 | `scripts/upgrade.ts`、`osdk.toml` |
 | 磁盘占用：设置 → 占用。`storage-scan.ts` 在子进程里用只读连接统计数据目录各顶层项；`files/` 按来源（`lark_messages.resources` 与 `lark_res:` 为聊天附件，原件 `meta.media` 为在线文档的图片和附件，`meta.original` 按 uri 分聊天附件或导入原件，其余为没有引用）和扩展名分类型；数据库用 `dbstat` 按表和索引汇总、按表名归到模块，原件按类型和来处（飞书、目录、链接）统计正文、切块和向量字节，另报空闲页。结果存 kv（`storage_report`），`GET /api/storage`、`POST /api/storage/scan`，只有本人可看 | 已实现；2026-10-30，`test/storage.test.ts`；本地开发实例看过 1440 / 375 宽度 | `src/core/storage-scan.ts`、`storage.ts`、`web/src/components/StorageUsage.vue` |
 | 附件压缩：设置 → 占用 → 压缩附件。ffmpeg 经 osdk 装（`osdk use -g conda:ffmpeg`，网页上后台安装，或 `omem setup ffmpeg`；PATH 上的 ffmpeg 要能运行才算，osdk 未选用时的失败垫片不算）；`media.ts` 按大小从大到小逐个调 ffmpeg（低优先级，同时只跑一个）：有损图片 → WebP（GIF 用 libwebp_anim）、视频 → AV1（没有 SVT-AV1 时 H.264）MP4、音频 → Opus；无损只做 PNG/BMP/TIFF/GIF → 无损 WebP、WAV/AIFF → FLAC，视频跳过。可限长边、跳过小文件、先试 N 个。ffprobe 核对时长，小 10% 以上才算压缩成功，否则记为保留，同样设置不重试。压缩件按内容哈希命名放进 `files/`，`file_variants(original → file)` 记对应关系并随 pull 同步；引用一律不改，`stored-files.ts` 在原件不在时换成压缩件（`/api/files`、飞书附件与文档图片的存在检查、Agent 读原件、`keepOriginal` 不再把原件写回）。可选压缩后立即删原件，或先保留、之后一键删除。`GET /api/media`、`POST /api/media/{ffmpeg/install,compress,stop,delete-originals}`，只有本人 | 已实现；2026-10-30，`test/media.test.ts`（含真 ffmpeg 端到端）；本地开发实例用 conda:ffmpeg 9.0.2 压过图片、视频、音频并在浏览器里按原名打开，看过 1440 / 390 宽度；常驻服务器的真实数据待跑 | `src/core/media.ts`、`stored-files.ts`、`tools.ts`、`web/src/components/MediaCompress.vue` |
-| 多台设备（同伴）：一行配对码配对（本机各网卡地址 + 本人 API 令牌，add 时挑能连上的，之后断线自动换地址）；`omem link` 给浏览器的带令牌链接；`omem peer open` 在本机转发同伴的整个网页（转发端点对 GET 也放行网页文件）；`omem user tokens|revoke`；经中间节点转发（`via`，最多 3 跳）；`/api/diag` 诊断；固定的远程命令（诊断、日志、配置、飞书只读查询、采集与回溯、记忆统计、运行记录、只读 SQL、`agents` / `search` / `prompt` / `ide` 只读查看 AI 后端、检索结果、运行说明和网页版 VS Code、`agent-upgrade` 升级已装的 ACP 适配器 npm 包、git、更新并重启；经中间节点只转发 `/api/peer/exec`，中间节点不核对命令名，新命令只需目标节点更新）；`omem tool --peer` / `omem mcp --peer` 让本机的外部 Agent 用同伴的库（去掉对外和交办类工具，调用记在目标上的 `peer-agent` 运行里）；`omem peer pull <同伴>` 经 HTTP 拉快照；默认监听所有网卡，没有配置令牌时只信任本机请求（旧配置里写出的 `127.0.0.1` 视为未设置，`localhost` 表示只给本机） | 已实现，三节点（服务器、中间、笔记本）测试覆盖，`test/peer-tools.test.ts` 覆盖外部 Agent 的工具清单、运行归属、拒绝对外工具和空间限定；真实设备待验收 | `src/core/peers.ts`、`peer-exec.ts`、`peer-inspect.ts`、`src/agents/peer-agent.ts`、`pull.ts` 的 `fetchPeer`、`omem peer` |
+| 多台设备：一行配对码配对（本机各网卡地址 + 本人 API 令牌，add 时挑能连上的，之后断线自动换地址）；`omem link` 给浏览器的带令牌链接；`omem peer open` 在本机转发设备的整个网页（转发端点对 GET 也放行网页文件）；`omem user tokens|revoke`；经中间节点转发（`via`，最多 3 跳）；`/api/diag` 诊断；固定的远程命令（诊断、日志、配置、飞书只读查询、采集与回溯、记忆统计、运行记录、只读 SQL、`agents` / `search` / `prompt` / `ide` 只读查看 AI 后端、检索结果、运行说明和网页版 VS Code、`agent-upgrade` 升级已装的 ACP 适配器 npm 包、git、更新并重启；经中间节点只转发 `/api/peer/exec`，中间节点不核对命令名，新命令只需目标节点更新）；`omem tool --peer` / `omem mcp --peer` 让本机的外部 Agent 用设备的库（去掉对外和交办类工具，调用记在目标上的 `peer-agent` 运行里）；`omem peer pull <设备>` 经 HTTP 拉快照；默认监听所有网卡，没有配置令牌时只信任本机请求（`Host` 是本机名、`Origin` 缺省或同源，挡住别的网页的跨站请求和 DNS 重绑定；旧配置里写出的 `127.0.0.1` 视为未设置，`localhost` 表示只给本机）；设置 → 设备（`/api/peers`、`/api/peer/invite|add|agents|paired`）配对、改地址、移除（`/api/peer/unpair` 请对方撤销令牌）、撤销持有本机令牌的设备；设备的 ACP Agent 当本机后端用（`peer` 配置，`omem peer acp` 桥接 `/api/peer/acp` 升级连接，MCP 服务留在本机，对方给替身令牌） | 已实现，三节点（服务器、中间、笔记本）测试覆盖，`test/peer-tools.test.ts` 覆盖外部 Agent 的工具清单、运行归属、拒绝对外工具和空间限定，`test/peer-acp.test.ts` 经中间设备用对方的 Agent、工具在本机，`test/origin.test.ts` 覆盖本机信任的检查；真实设备待验收 | `src/core/peers.ts`、`peer-acp.ts`、`src/server/origin.ts`、`web/src/components/PeerSettings.vue`、`peer-exec.ts`、`peer-inspect.ts`、`src/agents/peer-agent.ts`、`pull.ts` 的 `fetchPeer`、`omem peer` |
 | 临时白名单转发 `scripts/relay.mjs`：文件收件箱 → 经 ssh（可多跳）执行允许的命令 → 结果写回 | 已实现；用假 ssh 验证了两跳下参数原样传递 | `scripts/relay.mjs` |
 | 飞书机器人能力：回复/话题回复、表情、Markdown、图片文件、Card 2.0（按钮、下拉、输入、选人、日期、表单）、限定处理人、草稿确认、原生思考气泡及状态兜底卡片（不再显示过程）；气泡投递失败尝试撤回并单独写 `output.thinkingDelivery`，不修改任务状态，超时不冷却后续轮次，权限拒绝只冷却当前群；卡片与表情的慢请求在回答收尾时等待并清理；卡片回调回到原会话；分享的群读出群名、chat_id 和是否已采集，合并转发读出其中的消息，引用助手自己的回复时取回答原文 | 已实现；假客户端测试覆盖，真实飞书待验收 | `src/channels/lark-send.ts`、`lark-actions.ts`、`lark-progress.ts`、技能 `lark-messaging` |
 | 飞书里的引用与只读分享：发出去的消息里，属于句子的引用保留文字链到原处，句末的换成 ①② 链接，打不开的不显示；文档链原文，飞书聊天行和来自飞书的 `msg:` 链到会话里那条消息（lark-cli 的 `message_position` 存进 `lark_messages.position`，缺的发送前 `+messages-mget` 补一次，读不到只开会话）；代码、工作文件、记忆、Wiki 页面或小节、omem 内的消息在有运行时复制成只读分享（`shares` 表只存令牌的 SHA-256，按运行能读的空间复制被引部分和前后几行，表格从表头起；默认不过期，`shares.expiryDays` 可设，撤销或过期即清空副本；记录运行、群和飞书消息 id），链接 `<webUrl>/#/share/<令牌>/<序号>`；`GET /api/share/:token` 是唯一免令牌的读接口，只返回快照；设置 → 分享列出、撤销；多台设备拉取时分享留在本机 | 已实现；2026-10-30，`test/shares.test.ts`、`test/lark.test.ts`、`test/item-evidence.test.ts`；真实飞书里的显示和定位到消息待验 | `src/channels/citations.ts`、`src/core/shares.ts`、`src/server/http.ts`、`web/src/views/Share.vue`、`web/src/components/ShareSettings.vue` |

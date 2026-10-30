@@ -25,7 +25,7 @@ sequenceDiagram
   P->>Plan: submit_plan → runs.output.plan
   loop 计划里的每一页
     Plan->>W: createRun(wiki-write, parentId)
-    W->>A: 任务 = 读者问题 / 讲解路线 / 调查入口
+    W->>A: 任务 = 用户问题 / 讲解路线 / 调查入口
     A->>S: write_page
     S->>S: 写文件、indexPage、commitLibrary、appendLog
   end
@@ -35,13 +35,13 @@ sequenceDiagram
 
 **2. 宿主给规划者什么。** `wiki-plan` 处理器只拼三样东西交给 `wiki-planner`：本人的要求（没有就写“为这个空间规划完整的 Wiki”）、已有页面的 slug 和标题、`sourceMap` 生成的目录概况（[jobs.ts:158-178](../../../src/agents/jobs.ts#L158-L178)）。`sourceMap` 不读内容，只按目录统计未删除原件的文件数、行数和前 6 个文件名，最多列 120 个目录（[jobs.ts:138-156](../../../src/agents/jobs.ts#L138-L156)）。宿主不替规划者决定读什么、分几页——这符合 AGENTS.md 里“宿主只做数据、索引、调度和权限”的约定；怎么调查写在角色说明里：读 README、入口、测试，顺着一两条核心流程追代码（[wiki-planner.md:14-15](../../../roles/wiki-planner.md#L14-L15)）。
 
-**3. 计划怎么交回来。** 规划者调用 `submit_plan`，参数是页面数组：`slug`、`title`、`kind`、`question`（读者问题）、`outline`（讲解路线）、`entry_points`（调查入口）、可选的 `section`。工具处理器只做一件事：`setRunOutput(runId, { plan })`，把计划写进这条运行的 `output` 列（[tools.ts:742-766](../../../src/agents/tools.ts#L742-L766)）。处理器等 Agent 结束后再从数据库读 `runs.output` 取回 `plan`，没有就抛错“规划没有提交页面计划”（[jobs.ts:172-174](../../../src/agents/jobs.ts#L172-L174)）。所以“计划”不经过模型的文字输出，也不需要从回答里解析 JSON；结构由工具的 zod schema 保证。
+**3. 计划怎么交回来。** 规划者调用 `submit_plan`，参数是页面数组：`slug`、`title`、`kind`、`question`（用户问题）、`outline`（讲解路线）、`entry_points`（调查入口）、可选的 `section`。工具处理器只做一件事：`setRunOutput(runId, { plan })`，把计划写进这条运行的 `output` 列（[tools.ts:742-766](../../../src/agents/tools.ts#L742-L766)）。处理器等 Agent 结束后再从数据库读 `runs.output` 取回 `plan`，没有就抛错“规划没有提交页面计划”（[jobs.ts:172-174](../../../src/agents/jobs.ts#L172-L174)）。所以“计划”不经过模型的文字输出，也不需要从回答里解析 JSON；结构由工具的 zod schema 保证。
 
 规划者还要自己用 `write_page` 写 `index` 页，列出分组和页面链接（[wiki-planner.md:34-35](../../../roles/wiki-planner.md#L34-L35)）。这页后面会被 `wikiNav` 解析成侧边目录。
 
 **4. 逐页派活。** `autoWrite` 为真时，处理器给计划中的每一页 `createRun({ kind: "wiki-write", input: { brief }, parentId: 本次规划的 id })`（[jobs.ts:175-176](../../../src/agents/jobs.ts#L175-L176)）。`parentId` 让网页和 CLI 能把这些子运行挂在规划运行下面（CLI 的 `children: true` 会等它们）。子运行是否并行取决于运行队列，我没有在这条路径上核实。
 
-**5. 写作任务怎么构造。** `wiki-write` 把 `brief` 渲染成任务文本：页面 slug 与标题、类型、读者问题、讲解路线、调查入口；页面已存在时加一句“先 read_page，保留仍然正确且有用的内容”；再附上全部已有/计划中页面的链接列表，让写作者能互相链接而不重复讲（[jobs.ts:182-200](../../../src/agents/jobs.ts#L182-L200)）。你正在读的这页，收到的任务就是这样一段文字，包括“调查入口”和页面清单。写作结束后处理器检查页面文件是否存在，不存在就让运行失败（[jobs.ts:198](../../../src/agents/jobs.ts#L198)）。
+**5. 写作任务怎么构造。** `wiki-write` 把 `brief` 渲染成任务文本：页面 slug 与标题、类型、用户问题、讲解路线、调查入口；页面已存在时加一句“先 read_page，保留仍然正确且有用的内容”；再附上全部已有/计划中页面的链接列表，让写作者能互相链接而不重复讲（[jobs.ts:182-200](../../../src/agents/jobs.ts#L182-L200)）。你正在读的这页，收到的任务就是这样一段文字，包括“调查入口”和页面清单。写作结束后处理器检查页面文件是否存在，不存在就让运行失败（[jobs.ts:198](../../../src/agents/jobs.ts#L198)）。
 
 **6. `write_page` 落盘。** 写作者唯一的写入手段是 `write_page`。工具层做三件事：先 `space()` 检查空间范围；把正文开头的一级标题去掉（标题在元数据里）；然后调用 `writePage`，提交信息带上执行者、创建还是更新、原因和运行 id；最后 `appendLog` 往空间的 `log.md` 追一行（[tools.ts:523-546](../../../src/agents/tools.ts#L523-L546)）。返回给 Agent 的文字会带上“引用原件 N 个”和“这些链接目标还不存在”，让它当场发现漏链（[tools.ts:544-545](../../../src/agents/tools.ts#L544-L545)）。
 
@@ -99,14 +99,14 @@ linter 改完靠 `write_page` 重新 `indexPage`，`page_cites` 因此刷新成�
 
 ## 为什么这样设计
 
-- 计划走工具而不是文字：`submit_plan` 的 schema 要求每页必须有读者问题、讲解路线和调查入口，宿主拿到的是结构化数据，不必解析模型回答。这是从实现看到的好处，代码里没有专门的设计说明。
+- 计划走工具而不是文字：`submit_plan` 的 schema 要求每页必须有用户问题、讲解路线和调查入口，宿主拿到的是结构化数据，不必解析模型回答。这是从实现看到的好处，代码里没有专门的设计说明。
 - 引用记录 hash 而不是时间戳：只要原件内容变了就算过期，与改动大小无关；代价是行号移动、注释改动这类无关变化也会触发检查，交给 linter 判断。
 - 页面质量靠角色说明：`wiki-write` 的任务文本只有事实性的字段；写什么、怎么引用、不写什么都在 [wiki-writer.md](../../../roles/wiki-writer.md#L10-L26)。AGENTS.md 也明确要求“改写作质量优先改角色说明，其次才改代码”。
 
 ## 要改这里从哪下手
 
 - 页面写得不对、不够深：先改 `roles/wiki-writer.md`，规划粒度问题改 `roles/wiki-planner.md`；改完用真实 Agent 跑一两页验证，不要批量生成。
-- 计划字段（比如加“读者”字段）：同时改 `submit_plan` 的 schema（`src/agents/tools.ts`）、`PageBrief` 类型和 `wiki-write` 的任务文本（`src/agents/jobs.ts`），以及 `POST /api/wiki/:space/write` 与 CLI `wiki write` 里手工构造 brief 的地方（`src/server/http.ts`、`src/cli-main.ts`）。
+- 计划字段（比如加“用户”字段）：同时改 `submit_plan` 的 schema（`src/agents/tools.ts`）、`PageBrief` 类型和 `wiki-write` 的任务文本（`src/agents/jobs.ts`），以及 `POST /api/wiki/:space/write` 与 CLI `wiki write` 里手工构造 brief 的地方（`src/server/http.ts`、`src/cli-main.ts`）。
 - 引用语法或过期判定：`extractCites`、`extractLinks`、`resolveSourceRef`、`indexPage`、`listPages`、`pageContext` 在 `src/wiki/store.ts`，`stalePages` 在 `src/agents/jobs.ts`。过期的 SQL 条件在 `listPages` 和 `stalePages` 两处各写了一份，改一处要同步另一处；网页端的 Markdown 渲染也认这些语法（`web/src/lib/markdown.ts`，本页没有展开，未核实细节）。**引用语法一变，`exportWiki` 里的两条正则也要跟着改**，否则导出的链接会错。
 - 表结构：`src/core/db.ts` 里 `pages`、`page_links`、`page_cites`；改动需要考虑已有数据库的迁移。
 - 测试：`test/library.test.ts` 的 `wiki` 和 `tools` 两组覆盖索引、过期和 `write_page` 工具；改 `write_page` 的去标题、日志行为要同步这里。`exportWiki` 目前没有专门的测试，改它之前最好补一个。

@@ -18,7 +18,7 @@ const app = testApp();
 for (const id of ["project", "materials", "excluded"]) createSpace(app, { id, name: id, kind: "project" });
 relateSpaces(app, "project", "materials", { origin: "owner" });
 relateSpaces(app, "project", "excluded", { origin: "owner" });
-createUser(app, { id: "reader", name: "读者" });
+createUser(app, { id: "reader", name: "用户" });
 addMember(app, "project", "reader", "editor");
 addMember(app, "materials", "reader", "reader");
 // The caller can read excluded, but did not include it in this generation.

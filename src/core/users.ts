@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { App } from "./app.ts";
 import { all, one, run } from "./db.ts";
 import { createSpace, findSpace } from "./spaces.ts";
-import { HttpError, now, sha256, slugify } from "./util.ts";
+import { HttpError, now, sameSecret, sha256, slugify } from "./util.ts";
 
 /**
  * People. omem is used by one owner today, but every conversation, item,
@@ -133,10 +133,36 @@ export function revokeApiTokens(app: App, userId: string, label: string) {
   return n;
 }
 
+/**
+ * Devices holding a pairing token of the owner (`omem peer invite`, label `peer:<label>`). `id` is
+ * the start of the token's hash: enough to revoke one when several share a label, useless as a token.
+ */
+export function pairedTokens(app: App) {
+  return all<{ token_hash: string; label: string; created_at: string; last_used_at: string | null }>(
+    app.db,
+    "select token_hash, label, created_at, last_used_at from api_tokens where user_id = ? and label like 'peer:%' order by created_at",
+    OWNER,
+  ).map((t) => ({ id: t.token_hash.slice(0, 16), label: t.label.slice(5), createdAt: t.created_at, lastUsedAt: t.last_used_at }));
+}
+
+export function revokePairedToken(app: App, id: string) {
+  if (!/^[0-9a-f]{16}$/.test(id)) return false;
+  const r = one<{ token_hash: string }>(app.db, "select token_hash from api_tokens where user_id = ? and label like 'peer:%' and substr(token_hash, 1, 16) = ?", OWNER, id);
+  if (r) run(app.db, "delete from api_tokens where token_hash = ?", r.token_hash);
+  return !!r;
+}
+
+/** Revoke the token itself (a paired device unpairing, `/api/peer/unpair`); true when it existed. */
+export function revokeTokenValue(app: App, token: string) {
+  const n = all(app.db, "select 1 from api_tokens where token_hash = ?", sha256(token)).length;
+  run(app.db, "delete from api_tokens where token_hash = ?", sha256(token));
+  return n > 0;
+}
+
 /** The user a bearer token stands for: the configured token is the owner's. */
 export function userForToken(app: App, token: string): string | null {
   if (!token) return null;
-  if (app.config.token && token === app.config.token) return OWNER;
+  if (app.config.token && sameSecret(token, app.config.token)) return OWNER;
   const r = one<{ user_id: string }>(app.db, "select t.user_id from api_tokens t join users u on u.id = t.user_id where t.token_hash = ? and u.disabled_at is null", sha256(token));
   if (r) run(app.db, "update api_tokens set last_used_at = ? where token_hash = ?", now(), sha256(token));
   return r?.user_id ?? null;

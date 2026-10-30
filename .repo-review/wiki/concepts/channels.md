@@ -141,7 +141,7 @@ flowchart LR
 | `telegram.enabled / ownerChatId / defaultSpace`，`tokenEnv` | 同理，默认 `OMEM_TELEGRAM_TOKEN` |
 | `onebot.enabled / name / url / ownerUserId / defaultSpace / groupSpaces`，`tokenEnv` | `url` 如 `ws://127.0.0.1:3001`，`name` 用在原件标题里，`tokenEnv` 可选，作为 Bearer 头 |
 
-密钥只通过 `process.env[xxxEnv]` 读取，缺失就抛错，配置文件和仓库里不出现明文；`.env.example` 列了飞书的变量。注意一个不对称点：OneBot 的群到空间映射在配置里（`groupSpaces`），飞书的映射却读 `personal` 空间设置里的 `larkGroups`，配置 schema 中没有它（[lark-bot.ts:82](../../../src/channels/lark-bot.ts#L82)）。这符合 AGENTS.md “分类与范围用空间和持久设置表达”，但读者容易在 `lark.*` 里找不到。
+密钥只通过 `process.env[xxxEnv]` 读取，缺失就抛错，配置文件和仓库里不出现明文；`.env.example` 列了飞书的变量。注意一个不对称点：OneBot 的群到空间映射在配置里（`groupSpaces`），飞书的映射却读 `personal` 空间设置里的 `larkGroups`，配置 schema 中没有它（[lark-bot.ts:82](../../../src/channels/lark-bot.ts#L82)）。这符合 AGENTS.md “分类与范围用空间和持久设置表达”，但用户容易在 `lark.*` 里找不到。
 
 `omem setup` 的“渠道”一步（`setupChannelsSection`）会写这些配置：勾选三个渠道的 `enabled`，飞书问 `appId` 和 `ownerOpenId`，Telegram 问 `ownerChatId`，OneBot 问 `url`、`name`、`ownerUserId`；密钥只提示放进哪个环境变量，不写文件。本人标识留空就走上面的自助绑定（[setup.ts:293-322](../../../src/setup.ts#L293-L322)）。`defaultSpace`、`groupSpaces` 和飞书的 `larkGroups` 它不问。
 

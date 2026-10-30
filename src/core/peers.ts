@@ -26,15 +26,21 @@ import { createApiToken, OWNER } from "./users.ts";
  */
 export type Peer = { id: string; url: string; urls?: string[]; token: string; via?: string; addedAt: string };
 
-const file = (app: App) => join(app.home, "secrets", "peers.json");
+const fileIn = (home: string) => join(home, "secrets", "peers.json");
+const file = (app: App) => fileIn(app.home);
 
 export function nodeId(app: App) {
   return (app.config.node?.id || hostname().split(".")[0] || "omem").toLowerCase().replace(/[^a-z0-9-]+/g, "-");
 }
 
 export function listPeers(app: App): Peer[] {
+  return pairedIn(app.home);
+}
+
+/** The devices paired in a data directory (for code that has no App, like backend availability). */
+export function pairedIn(home: string): Peer[] {
   try {
-    return JSON.parse(readFileSync(file(app), "utf8")) as Peer[];
+    return JSON.parse(readFileSync(fileIn(home), "utf8")) as Peer[];
   } catch {
     return [];
   }
@@ -118,7 +124,7 @@ async function answers(url: string, token: string) {
  */
 export async function addPeer(app: App, code: string, opts: { via?: string; url?: string } = {}) {
   const v = decodeInvite(code);
-  if (opts.via && !findPeer(app, opts.via)) throw new Error(`没有名为 ${opts.via} 的同伴；先添加它`);
+  if (opts.via && !findPeer(app, opts.via)) throw new Error(`没有名为 ${opts.via} 的设备；先添加它`);
   let urls = opts.url ? [trim(opts.url)] : v.urls;
   if (!opts.via) {
     if (!urls.length) throw new Error("配对码里没有地址（对方服务只监听本机）；对方把 host 改为 0.0.0.0 后重新 invite，或这里用 --url 指定");
@@ -135,7 +141,7 @@ export async function addPeer(app: App, code: string, opts: { via?: string; url?
 export function setPeerUrl(app: App, id: string, url: string) {
   const peers = listPeers(app);
   const p = peers.find((x) => x.id === id);
-  if (!p) throw new Error(`没有名为 ${id} 的同伴`);
+  if (!p) throw new Error(`没有名为 ${id} 的设备`);
   p.url = trim(url);
   p.urls = [p.url, ...(p.urls ?? []).filter((u) => u !== p.url)];
   delete p.via;
@@ -143,10 +149,35 @@ export function setPeerUrl(app: App, id: string, url: string) {
   return p;
 }
 
-export function removePeer(app: App, id: string) {
+/**
+ * Forget a device. A direct one is first asked to revoke the token it gave us (`/api/peer/unpair`;
+ * best effort: an older or offline device keeps it until `omem user revoke` there). Profiles that
+ * used its agents go too.
+ */
+export async function removePeer(app: App, id: string) {
   const before = listPeers(app);
-  savePeers(app, before.filter((p) => p.id !== id));
-  return before.length !== listPeers(app).length;
+  const p = before.find((x) => x.id === id);
+  let revoked = false;
+  if (p && !p.via) revoked = await peerJson<{ revoked: boolean }>(app, id, "/api/peer/unpair", {}, 5000).then((r) => r.revoked, () => false);
+  savePeers(app, before.filter((x) => x.id !== id));
+  await dropPeerAgents(app, (x) => x.id === id);
+  return { removed: !!p, revoked };
+}
+
+/**
+ * Stop using some devices' agents here: their profiles go, and roles, the default and the
+ * fallback list that named them go back to choosing on their own.
+ */
+export async function dropPeerAgents(app: App, which: (peer: { id: string; agent: string }) => boolean) {
+  const a = app.config.agents;
+  const gone = new Set(a.profiles.filter((x) => x.peer && which(x.peer)).map((x) => x.id));
+  if (!gone.size) return;
+  a.profiles = a.profiles.filter((x) => !gone.has(x.id));
+  for (const [role, profile] of Object.entries(a.roles)) if (gone.has(profile)) delete a.roles[role];
+  if (a.default && gone.has(a.default)) a.default = undefined;
+  a.fallback = a.fallback.filter((x) => !gone.has(x.profile));
+  const { saveConfig } = await import("./config.ts");
+  saveConfig(app.config, app.home);
 }
 
 /**
@@ -154,9 +185,9 @@ export function removePeer(app: App, id: string) {
  * forwarding endpoint with that peer's token (any depth, at most a few hops).
  */
 export async function peerFetch(app: App, id: string, path: string, init: RequestInit & { timeoutMs?: number } = {}, hops = 0): Promise<Response> {
-  if (hops > 4) throw new Error("同伴转发层数过多");
+  if (hops > 4) throw new Error("设备转发层数过多");
   const p = findPeer(app, id);
-  if (!p) throw new Error(`没有名为 ${id} 的同伴（omem peer list 查看）`);
+  if (!p) throw new Error(`没有名为 ${id} 的设备（omem peer list 查看）`);
   if (p.via) return peerFetch(app, p.via, `/api/peers/${encodeURIComponent(p.id)}${path}`, init, hops + 1);
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${p.token}`);
@@ -177,7 +208,7 @@ export async function peerFetch(app: App, id: string, path: string, init: Reques
       }
       return go(u);
     }
-    throw new Error(`连不上同伴 ${p.id}（${p.url}）：${(e as Error).message}`);
+    throw new Error(`连不上设备 ${p.id}（${p.url}）：${(e as Error).message}`);
   }
 }
 
@@ -204,11 +235,15 @@ export function codeVersion(root: string) {
  * Web VS Code (/ide, with its WebSocket) goes through the raw tunnel instead (peer-tunnel.ts).
  */
 export async function openPeerUi(app: App, id: string, port = 0) {
-  if (!findPeer(app, id)) throw new Error(`没有名为 ${id} 的同伴（omem peer list 查看）`);
+  if (!findPeer(app, id)) throw new Error(`没有名为 ${id} 的设备（omem peer list 查看）`);
   const { createServer } = await import("node:http");
   const { Readable } = await import("node:stream");
   const { tunneled, tunnelHttp, tunnelUpgrade } = await import("./peer-tunnel.ts");
+  const { trustedLocal } = await import("../server/origin.ts");
+  // Everything here goes out with the owner's token: only this machine's browser, not another site's page.
+  const refuse = (req: import("node:http").IncomingMessage) => !trustedLocal(req, req.socket.remoteAddress ?? "");
   const server = createServer(async (req, res) => {
+    if (refuse(req)) return void res.writeHead(403, { "content-type": "text/plain; charset=utf-8" }).end("只接受本机浏览器直接打开的请求");
     if (tunneled(req.url ?? "/")) return tunnelHttp(app, id, req.url ?? "/", req, res);
     try {
       const chunks: Buffer[] = [];
@@ -237,6 +272,7 @@ export async function openPeerUi(app: App, id: string, port = 0) {
     }
   });
   server.on("upgrade", (req, socket, head) => {
+    if (refuse(req)) return void socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
     if (tunneled(req.url ?? "/")) tunnelUpgrade(app, id, req.url ?? "/", req, socket, head);
     else socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
   });

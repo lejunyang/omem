@@ -30,7 +30,7 @@ omem digest proj --mode triage --goal "…"       # 整理一大批存量材料�
 ## Wiki、记忆、事项
 
 ```bash
-omem wiki plan shop -f "读者是新加入的后端开发"   # 规划并逐页生成
+omem wiki plan shop -f "用户是新加入的后端开发"   # 规划并逐页生成
 omem wiki lint shop                              # 原件变了之后修正受影响的页面
 omem wiki export shop .repo-review/wiki          # 导出成仓库里可读的 Markdown
 omem items
@@ -58,7 +58,7 @@ omem replay [list]                              # 夜间复盘：状态和最近
 omem replay run [--run <运行id>] [--axis M1]    # 立即复盘（先给 replay-judge 选模型）
 omem mcp [--read-only] [--space <id>]           # 作为 MCP 服务给其他 Agent 用
 omem tool [工具名] [JSON | 键=值 … | -f 文件]     # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明
-omem tool --peer <同伴> [工具名] [参数…]         # 在同伴上调用（用本机的模型整理它的库），mcp 也有 --peer；--model / --effort 登记用的模型
+omem tool --peer <设备> [工具名] [参数…]         # 在设备上调用（用本机的模型整理它的库），mcp 也有 --peer；--model / --effort 登记用的模型
 omem hook claude|codex                          # 把编码 Agent 的会话记进知识库
 ```
 
@@ -82,16 +82,16 @@ omem user token wang
 omem space share project-a wang [--edit]
 omem peer invite --label laptop     # 打印配对码
 omem peer add <配对码> [--via <中间那台>]
-omem diag <同伴>
-omem peer call <同伴> update
-omem peer pull <同伴>
-omem peer pull <同伴> --dry-run
-omem peer pull <同伴> --overwrite  # 先停本机服务；旧数据留备份
-omem peer open <同伴>
+omem diag <设备>
+omem peer call <设备> update
+omem peer pull <设备>
+omem peer pull <设备> --dry-run
+omem peer pull <设备> --overwrite  # 先停本机服务；旧数据留备份
+omem peer open <设备>
 omem link
 ```
 
-`pull` 是手动单向合并：原件、记忆、事项和提醒时间、运行与评审问题、原件标注和归档、规则与学习记录都会拉取；Wiki、档案和技能随知识库合并，附件传整个文件目录。SSH 主机和已配对同伴使用相同快照。两端升级后还能传仓库的 Git 历史、分支、暂存与未暂存改动、非忽略的未跟踪文件、已检出子模块，以及编码 worktree 和补丁。
+`pull` 是手动单向合并：原件、记忆、事项和提醒时间、运行与评审问题、原件标注和归档、规则与学习记录都会拉取；Wiki、档案和技能随知识库合并，附件传整个文件目录。SSH 主机和已配对设备使用相同快照。两端升级后还能传仓库的 Git 历史、分支、暂存与未暂存改动、非忽略的未跟踪文件、已检出子模块，以及编码 worktree 和补丁。
 
 两边各自新增的记录保留；同一记录按更新时间处理。聊天追加远端缺少的行，保留本机行号并换算远端引用。知识库文件冲突留本地，远端另存 `.remote.md`；物理删除不传播。新仓库保存到数据目录并关联空间；已有仓库只在干净、同分支且可快进时更新，本机改动和分叉保留，远端分支与工作区另存。
 

@@ -179,7 +179,7 @@ describe("Git operations on applied code", { timeout: 60000 }, () => {
       expect(response.statusCode).toBe(200); expect(response.json().staged).toBe(0);
       const pushed = await server.inject({ method: "POST", url: `/api/runs/${id}/git`, payload: { space: "shop", action: "push", expected_state: response.json().state } });
       expect(pushed.statusCode).toBe(200); expect(pushed.json().pushed).toBe(true);
-      createUser(app, { id: "reader", name: "读者" }); const token = createApiToken(app, "reader");
+      createUser(app, { id: "reader", name: "用户" }); const token = createApiToken(app, "reader");
       const denied = await server.inject({ method: "GET", url: `/api/runs/${id}/git?space=shop`, headers: { authorization: `Bearer ${token}` } });
       expect(denied.statusCode).toBe(403);
       expect(getRun(app, id).output.gitOperations).toHaveLength(2);

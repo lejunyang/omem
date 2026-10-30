@@ -101,7 +101,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 
 **传输压缩**：Web 服务为支持 gzip 的客户端压缩网页静态资源和超过 1 KB 的 JSON 等文本响应；实时事件保持流式发送。
 
-**监听地址**：默认监听所有网卡（`0.0.0.0`），方便其他设备配对和打开网页；本机的请求不需要令牌，其他机器的请求必须带令牌（配对码或 `omem link` 给的）。只想本机访问，配置里写 `"host": "localhost"`。Windows 第一次启动时防火墙可能会询问是否允许 Node 访问网络。
+**监听地址**：默认监听所有网卡（`0.0.0.0`），方便其他设备配对和打开网页；本机的请求不需要令牌，其他机器的请求必须带令牌（配对码或 `omem link` 给的）。“本机”只认用 `localhost` / `127.0.0.1` 访问、且不是别的网站发来的请求（检查 `Host` 和 `Origin`），所以浏览器里打开的其他网页借不到这份信任。只想本机访问，配置里写 `"host": "localhost"`。Windows 第一次启动时防火墙可能会询问是否允许 Node 访问网络。
 
 打开网页后：
 
@@ -176,7 +176,8 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 想知道记忆、原件级别、Wiki 和模型到底帮没帮上忙 | 夜间复盘：先在 Agent 页给内置角色 replay-judge 选一个模型（最好和主助手不同家），再到设置 → Agent → 夜间复盘打开定时、设每晚几题。它挑最近被纠正、说没找到、加了表情或正常完成的问题，回到提问时重答两次，只改一处（检索、原件级别、记忆、页面或模型），盲评后把误导的记忆送回复核、给页面排检查；原件降级、导入材料这类建议在早上的事项清点卡片或 Agent 页采纳。`omem replay run --run <运行id>` 手动复盘一题，`omem replay` 看结果 |
 | 让 Agent 替我操作电脑上的程序或网页（填表、点按钮、看界面现在是什么样） | `omem setup` → 桌面与浏览器控制（或 `omem setup desktop`、设置 → Agent）经 osdk 装好 ai-auto-desktop，之后对助理说要做什么；内置技能 `desktop-control` 规定默认只看、动手前先问你、不输入密码 |
 | 开会时让机器人进会记录、有人问到我时提醒我 | 规则 → 新建 → 触发选“我加入会议时”，按标题、人数、参会人写条件，动作“拉机器人入会”勾选机器人、记录、旁听；确认方式可选始终询问、直接加入或按条件询问（如 30 人及以上先问）；保存后看“飞书权限”，缺的点链接申请。会议本身要打开“允许智能体加入” |
-| 一台机器常驻，在别的电脑上看它、拉数据和代码仓库 | 见“多台设备”：`omem peer invite` / `add` 配对，`omem peer pull` 合并原件、记忆、规则、评审记录、Wiki、档案、附件与仓库，`omem link` 在浏览器里打开 |
+| 一台机器常驻，在别的电脑上看它、拉数据和代码仓库 | 见“多台设备”：设置 → 设备（或 `omem peer invite` / `add`）配对，`omem peer pull` 合并原件、记忆、规则、评审记录、Wiki、档案、附件与仓库，`omem link` 在浏览器里打开 |
+| 本机没装 Agent 或额度用完，借另一台机器的 | 设置 → 设备，在那台设备下打开它的某个 Agent：它出现在本机的 Agent 列表里，可以分给角色和档案；Agent 在那台机器上运行（它的登录和额度），检索和写入的仍是本机的库。不适合编码交办 |
 | 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑（＋ 新建是一张完整的表单）；`/as 名称 任务` 交给它，结果发回当前会话 |
 | 查看和编辑一个技能的附属说明、清单或脚本 | Agent → 技能：展开目录、切换文件、编辑保存；新建文件可填写多层路径。支持不超过 2 MB 的 UTF-8 文本，修改保留 Git 历史 |
 | 从新上下文开始任务，或把任务放在独立飞书话题里 | `/new 任务描述` 开新会话并立即执行；在飞书群聊或机器人私聊的主界面发送 `/topic 任务描述`（群里需 @ 机器人），以本条消息开启话题并保持独立上下文；话题内拒绝此指令 |
@@ -230,7 +231,7 @@ omem space add omem --path E:\Projects\omem  # 代码仓库空间
 omem add notes.md -s personal               # 保存材料（文件/目录/网址/飞书文档，- 读标准输入）
 omem search "预算 约定"                      # 检索原件、页面、记忆
 omem ask "项目A的预算之前是多少，现在是多少？"  # 让助理调查并回答（会按需记录）
-omem wiki plan omem -f "读者是新加入的后端开发"  # 规划并逐页生成 Wiki
+omem wiki plan omem -f "用户是新加入的后端开发"  # 规划并逐页生成 Wiki
 omem wiki lint omem                         # 原件变化后修正受影响的页面（也会自动进行）
 omem wiki organize omem                     # 把顶层散落、挤在一个目录里的页面整理进目录
 omem wiki move omem cases/ kb/cases/        # 移动或改名一页 / 一个目录，旧路径的链接自动跟过去
@@ -243,8 +244,8 @@ omem digest proj --mode triage --title-contains 值班 --goal "…"     # 整理
 omem search --space shop-api --branch feature/refund "退款金额"     # 查分支上的代码
 omem mcp [--read-only] [--space <id>]       # 把个人库作为 MCP 服务给其他 Agent 用（默认空间按当前目录所在的仓库空间）
 omem tool [工具名] [JSON | 键=值 … | -f 文件]  # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明；omem 运行里的 Agent 带着本次运行的权限
-omem tool --peer <同伴> [工具名] [参数…]      # 在同伴（常驻服务器）上调用工具：用本机的模型整理它的数据，不含对外发消息、交办、唤醒；调用记在它那里的一条“同伴的外部 Agent”运行（--session 分会话，--space / --spaces / --read-only；--agent / --model / --effort 登记本机用的 Agent、模型和强度，显示在那条运行上）
-omem mcp --peer <同伴>                      # 同上，作为 stdio MCP 服务给本机的 Claude Code、Codex 用
+omem tool --peer <设备> [工具名] [参数…]      # 在设备（常驻服务器）上调用工具：用本机的模型整理它的数据，不含对外发消息、交办、唤醒；调用记在它那里的一条“设备的外部 Agent”运行（--session 分会话，--space / --spaces / --read-only；--agent / --model / --effort 登记本机用的 Agent、模型和强度，显示在那条运行上）
+omem mcp --peer <设备>                      # 同上，作为 stdio MCP 服务给本机的 Claude Code、Codex 用
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
@@ -384,38 +385,44 @@ omem peer invite --label laptop           # 打印一行配对码（omem1.…）
 omem peer add <配对码>                    # 直接能访问到
 omem peer add <配对码> --via <中间那台>     # 只能经中间那台访问（中间那台先和它配对）
 omem peer list
-omem peer name laptop                     # 改本机在同伴中的名字（默认主机名，存为配置 node.id）
-omem peer url <同伴> http://<新地址>:4317   # 对方换了地址、码里的地址都连不上时（不用重新配对）
-omem diag <同伴>                          # 版本、数量、最近失败、飞书采集状态、Agent
-omem peer commands <同伴>                 # 可远程执行的命令
-omem peer call <同伴> logs '{"stream":"out","lines":5000}'  # 气泡请求与成功记录
-omem peer call <同伴> logs '{"stream":"err","lines":5000}'  # 气泡失败与超时记录
-omem peer call <同伴> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'
-omem peer call <同伴> sql '{"query":"select count(*) from lark_messages"}'   # 只读
-omem peer call <同伴> update               # git pull --ff-only、安装依赖、构建、重启服务
-omem peer call <同伴> agents '{}'           # 只读：它上面的 AI 后端、ACP 适配器的已装版本、模型和探测结果
-omem peer call <同伴> search '{"query":"退款规则","limit":5}'   # 只读：Agent 的 search 工具同一套检索，看真实数据上的命中
-omem peer call <同伴> prompt '{"space":"personal","role":"coder","task":"…"}'   # 只读：预览一次运行收到的常驻说明（不含令牌）
-omem peer call <同伴> ide '{}'              # 只读：网页版 VS Code 的服务端版本、扩展与语言包（界面按键翻译了多少）、omem 插件、可复用的设置与扩展、语言和终端设置、日志、进程
-omem peer call <同伴> replays '{}'          # 只读：夜间复盘的状态（定时、replay-judge 的模型、上次结果或没跑的原因）和最近的结论
-omem peer call <同伴> replay-run '{"run_id":"r…","axis":"M1"}'   # 立即复盘一题（不带参数按选题规则挑）
-omem peer call <同伴> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适配器（如 codex-acp）升到 npm 最新版，返回前后版本
-omem peer call <同伴> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
-omem peer call <同伴> lark-docs-refresh '{"metadataOnly":true,"unchecked":true}'  # 只补读从没读过知识库位置的文档的目录（不重读正文），补全原件页的知识库目录树
-omem peer call <同伴> sources-merge-duplicates '{}'  # 列出同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件；'{"dryRun":false}' 合并（旧 id 保留为别名）
-omem peer call <同伴> wiki-restore-aliases '{"space":"<空间>"}'  # 列出被重写后丢了旧路径的 Wiki 页面（从知识库 Git 历史找回）；加 "dryRun":false 补回
-omem peer call <同伴> schedule-set '{"id":"dream","enabled":true}'  # 打开或关闭一个定时任务（只改开关；schedule-run 立即跑一次）
-omem peer call <同伴> lark-doc-import '{"url":"https://…/docx/…"}'  # 立即读一篇，返回素材下载情况和没处理掉的标签
-omem peer call <同伴> lark-kb-list '{"status":"proposed"}'  # 能看到的飞书知识库、建议和每晚读的进度；lark-kb-discover 立即发现，lark-kb-read 立即读一批
-omem peer call <同伴> lark-kb-map '{"kb":"<知识库 id>","action":"accept"}'  # 采纳建议；map / create / ignore / later / reset / pause / resume / update（只改 omem 自己的库）
-omem tool --peer <同伴> search query=退款     # 用本机的 Agent 整理它的库：工具在它上面执行，每次调用记成它的一条运行；见 skills/omem/SKILL.md“在另一台设备上用这个库”
-omem peer pull <同伴>                     # 经 HTTP 合并数据、附件、仓库与编码工作区（手动）
-omem peer pull <同伴> --dry-run           # 预览数据库合并，不改本机数据或仓库
-omem peer pull <同伴> --overwrite         # 停掉本机服务后替换；旧数据库、文件和仓库留备份
-omem peer open <同伴>                     # 在本机浏览器打开它的网页，经中间机器的也行，不用令牌
+omem peer name laptop                     # 改本机在设备中的名字（默认主机名，存为配置 node.id）
+omem peer url <设备> http://<新地址>:4317   # 对方换了地址、码里的地址都连不上时（不用重新配对）
+omem diag <设备>                          # 版本、数量、最近失败、飞书采集状态、Agent
+omem peer commands <设备>                 # 可远程执行的命令
+omem peer call <设备> logs '{"stream":"out","lines":5000}'  # 气泡请求与成功记录
+omem peer call <设备> logs '{"stream":"err","lines":5000}'  # 气泡失败与超时记录
+omem peer call <设备> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'
+omem peer call <设备> sql '{"query":"select count(*) from lark_messages"}'   # 只读
+omem peer call <设备> update               # git pull --ff-only、安装依赖、构建、重启服务
+omem peer call <设备> agents '{}'           # 只读：它上面的 AI 后端、ACP 适配器的已装版本、模型和探测结果
+omem peer call <设备> search '{"query":"退款规则","limit":5}'   # 只读：Agent 的 search 工具同一套检索，看真实数据上的命中
+omem peer call <设备> prompt '{"space":"personal","role":"coder","task":"…"}'   # 只读：预览一次运行收到的常驻说明（不含令牌）
+omem peer call <设备> ide '{}'              # 只读：网页版 VS Code 的服务端版本、扩展与语言包（界面按键翻译了多少）、omem 插件、可复用的设置与扩展、语言和终端设置、日志、进程
+omem peer call <设备> replays '{}'          # 只读：夜间复盘的状态（定时、replay-judge 的模型、上次结果或没跑的原因）和最近的结论
+omem peer call <设备> replay-run '{"run_id":"r…","axis":"M1"}'   # 立即复盘一题（不带参数按选题规则挑）
+omem peer call <设备> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适配器（如 codex-acp）升到 npm 最新版，返回前后版本
+omem peer call <设备> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
+omem peer call <设备> lark-docs-refresh '{"metadataOnly":true,"unchecked":true}'  # 只补读从没读过知识库位置的文档的目录（不重读正文），补全原件页的知识库目录树
+omem peer call <设备> sources-merge-duplicates '{}'  # 列出同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件；'{"dryRun":false}' 合并（旧 id 保留为别名）
+omem peer call <设备> wiki-restore-aliases '{"space":"<空间>"}'  # 列出被重写后丢了旧路径的 Wiki 页面（从知识库 Git 历史找回）；加 "dryRun":false 补回
+omem peer call <设备> schedule-set '{"id":"dream","enabled":true}'  # 打开或关闭一个定时任务（只改开关；schedule-run 立即跑一次）
+omem peer call <设备> lark-doc-import '{"url":"https://…/docx/…"}'  # 立即读一篇，返回素材下载情况和没处理掉的标签
+omem peer call <设备> lark-kb-list '{"status":"proposed"}'  # 能看到的飞书知识库、建议和每晚读的进度；lark-kb-discover 立即发现，lark-kb-read 立即读一批
+omem peer call <设备> lark-kb-map '{"kb":"<知识库 id>","action":"accept"}'  # 采纳建议；map / create / ignore / later / reset / pause / resume / update（只改 omem 自己的库）
+omem tool --peer <设备> search query=退款     # 用本机的 Agent 整理它的库：工具在它上面执行，每次调用记成它的一条运行；见 skills/omem/SKILL.md“在另一台设备上用这个库”
+omem peer pull <设备>                     # 经 HTTP 合并数据、附件、仓库与编码工作区（手动）
+omem peer pull <设备> --dry-run           # 预览数据库合并，不改本机数据或仓库
+omem peer pull <设备> --overwrite         # 停掉本机服务后替换；旧数据库、文件和仓库留备份
+omem peer open <设备>                     # 在本机浏览器打开它的网页，经中间机器的也行，不用令牌
+omem peer remove <设备>                   # 移除；先请对方撤销给本机的令牌，本机用它的 Agent 一并删除
+omem peer acp <设备> <Agent>              # 用它的 ACP Agent（stdio 上说 ACP）；一般不手动运行，由设置 → 设备里打开的 Agent 配置调用
 ```
 
-`pull` 单向拉取，不会把本机修改传回去；未配对的主机走 SSH。业务数据包括原件（含代码和工作区索引）、记忆与质量记录、事项和提醒时间、材料关联、会话、运行与事件、代码评审及问题、原件标注和归档信息、学习卡片、规则与定时任务；Wiki、Agent 档案和技能随 `library/` 合并。附件复制整个 `files/`，编码补丁随运行复制。两端都升级后才能传仓库和完整文件目录；拉旧版本的同伴时会提示，并补拉能识别的附件。
+网页的 **设置 → 设备** 做同样的事：生成配对码、粘贴配对码添加（可选经哪台转发）、检查在线和版本、改地址、移除；列出拿着本机令牌的设备（最近使用时间），可逐个撤销。
+
+**用设备的 Agent**：在设备下面打开它的某个 ACP Agent，本机多一个 Agent 配置（`agents.profiles` 里带 `peer: {id, agent}`）。运行时本机启动 `omem peer acp`，经 `/api/peer/acp`（经中间设备的也行）连到对方，对方在自己的数据目录 `peer-acp/<本机名>` 里启动那个 Agent；会话要的 MCP 服务只把名字发过去，对方给 Agent 一个只在这条连接上有效的替身，工具调用回到本机执行。所以 Agent 用的是对方的登录和额度，读写的是本机的库，但看不到本机的文件，编码交办不要选它。对方和中间设备都要更新到支持的版本。
+
+`pull` 单向拉取，不会把本机修改传回去；未配对的主机走 SSH。业务数据包括原件（含代码和工作区索引）、记忆与质量记录、事项和提醒时间、材料关联、会话、运行与事件、代码评审及问题、原件标注和归档信息、学习卡片、规则与定时任务；Wiki、Agent 档案和技能随 `library/` 合并。附件复制整个 `files/`，编码补丁随运行复制。两端都升级后才能传仓库和完整文件目录；拉旧版本的设备时会提示，并补拉能识别的附件。
 
 同一文档按更新时间取较新版本；聊天把远端缺少的消息行追加到本机，保留本机行号，并换算远端记忆、标注、聊天消息和 Wiki 的引用。记忆、事项等按记录 ID 合并，辅助表用跨设备标识区分本地自增编号。没有更新时间的已有设置优先留本机。Wiki、档案和技能走 Git 合并，冲突保留本地，远端另存 `.remote.md`（非 Markdown 文件追加 `.remote`）。合并不传播物理删除；原件墓碑和记忆撤回状态随记录更新。
 
@@ -423,9 +430,9 @@ omem peer open <同伴>                     # 在本机浏览器打开它的网�
 
 配置、密钥、API 令牌、采集游标、模型和服务日志留在本机；合并时重建检索索引，不复制另一台的向量。新拉来的任务规则、定时任务和存量整理任务先停用或暂停，排队与运行中的远端任务取消，原 Agent 进程会话不恢复，避免两台重复执行。覆盖也会停用任务规则和定时任务；本机服务启动后按需要启用。
 
-同伴的名字是对方配置里的 `node.id`（`omem peer name` 查看或设置），没配就是它的主机名；最好在配对之前起好名字，之后改名的话对方那边仍记着旧名字。配对码里是对方的所有可能地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`）；`add` 留下能连上的地址，之后正在用的地址连不上时会自动换码里的其他地址，所以断线、重启、换网后不用重新配对。`omem user revoke owner peer:<名字>` 撤销令牌即解除配对；配对信息存在 `secrets/peers.json`，令牌用 `omem user tokens` 查看。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、AI 后端 / 检索 / 说明 / 网页版 VS Code 的只读查看、git 与更新、重启），没有任意 shell。本机打开网页不需要令牌；要看已配对的同伴的网页，最省事的是 `omem peer open <同伴>`：本机起一个只给本机用的转发地址，经 `--via` 的同伴也能打开（经中间机器时上传文件不可用）。从别的机器直接打开时运行 `omem link`，它打印带新令牌的链接（每个网卡地址一个），打开一次后令牌存在那个浏览器里；也可以在页面提示时粘贴 `omem user token owner` 生成的令牌。
+设备的名字是对方配置里的 `node.id`（`omem peer name` 查看或设置），没配就是它的主机名；最好在配对之前起好名字，之后改名的话对方那边仍记着旧名字。配对码里是对方的所有可能地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`）；`add` 留下能连上的地址，之后正在用的地址连不上时会自动换码里的其他地址，所以断线、重启、换网后不用重新配对。`omem user revoke owner peer:<名字>` 撤销令牌即解除配对；配对信息存在 `secrets/peers.json`，令牌用 `omem user tokens` 查看。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、AI 后端 / 检索 / 说明 / 网页版 VS Code 的只读查看、git 与更新、重启），没有任意 shell。本机打开网页不需要令牌；要看已配对的设备的网页，最省事的是 `omem peer open <设备>`：本机起一个只给本机用的转发地址，经 `--via` 的设备也能打开（经中间机器时上传文件不可用）。从别的机器直接打开时运行 `omem link`，它打印带新令牌的链接（每个网卡地址一个），打开一次后令牌存在那个浏览器里；也可以在页面提示时粘贴 `omem user token owner` 生成的令牌。
 
-`scripts/relay.mjs` 是一个临时的白名单转发：在只能 ssh 到其他机器的那台上运行（不配置时只有本机目标 `local`，经已配对的同伴执行 `omem peer call` / `omem diag`），往 `.remote/relay/inbox/` 放请求文件，它经 ssh 执行允许的命令（omem 子命令、git/pnpm 的检查与更新、lark-cli 只读查询、本机 API 的 GET、几个系统信息命令）并把结果写到 `outbox/`。目标机器在 `.remote/relay/config.json` 里配置，详见脚本开头的说明。
+`scripts/relay.mjs` 是一个临时的白名单转发：在只能 ssh 到其他机器的那台上运行（不配置时只有本机目标 `local`，经已配对的设备执行 `omem peer call` / `omem diag`），往 `.remote/relay/inbox/` 放请求文件，它经 ssh 执行允许的命令（omem 子命令、git/pnpm 的检查与更新、lark-cli 只读查询、本机 API 的 GET、几个系统信息命令）并把结果写到 `outbox/`。目标机器在 `.remote/relay/config.json` 里配置，详见脚本开头的说明。
 
 ## 开发
 

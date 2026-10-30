@@ -9,7 +9,7 @@ updated: 2026-10-30
 
 ## 调度与 Web 服务
 
-- **拉取命令归入同伴**（10-27）：数据拉取统一用 `omem peer pull <同伴或 SSH 主机>`，保留 `--remote-home`、`--overwrite` 和 `--dry-run`；移除旧的顶层 `omem pull` 入口。`scripts/relay.mjs` 的白名单与长任务超时识别一起调整；下文历史记录里的旧命令均指这项功能。
+- **拉取命令归入设备**（10-27）：数据拉取统一用 `omem peer pull <设备或 SSH 主机>`，保留 `--remote-home`、`--overwrite` 和 `--dry-run`；移除旧的顶层 `omem pull` 入口。`scripts/relay.mjs` 的白名单与长任务超时识别一起调整；下文历史记录里的旧命令均指这项功能。
 - **完整手动拉取**（10-27）：`src/core/pull.ts` 与新增的 `pull-transfer.ts`、`pull-snapshot.ts`、`pull-data.ts`、`pull-repos.ts`。SSH / HTTP 共用快照，传整个附件目录、仓库历史与非忽略工作文件、已检出子模块和编码工作区 / 补丁；业务表补上评审、问题、标注、归档、规则、学习和质量记录等，辅助表增加跨设备标识，自增编号重分配并保持关联。聊天追加合并并换算引用和行号；已有本地仓库保留改动与分叉，远端另存副本。新导入的任务规则、定时任务停用，远端排队运行取消，本机活跃任务保留。覆盖备份数据和托管仓库，恢复失败回滚。替代下文 10-16 的辅助表不参与合并及旧 worktree 不拉取的行为。
 - **整理合并与队列隔离**（10-25）：`src/agents/jobs.ts` 将同空间、同要求的待整理材料去重合并，等待 30 秒、每批最多 40 份，同空间串行，保留聊天最早待整理行号。`src/agents/runs.ts` 先筛选有空位的任务类别，避免前 100 条后台积压挡住后续对话。空间自动整理开关不启动回溯；显式请求的历史回溯完成后，旧聊天也会作为新入库材料参与整理。
 - **gzip**（10-25）：`src/server/http.ts` 按客户端支持压缩网页静态资源和超过 1 KB 的 JSON 等文本响应，实时事件保持流式发送。
@@ -80,8 +80,8 @@ updated: 2026-10-30
 ## 运维
 
 - **`omem service`**（10-15）：自带 PM2 的后台服务（`src/core/service.ts`）。
-- **`omem pull <host>`**（10-16）：经 ssh 拉另一台机器的库，合并或覆盖（`src/core/pull.ts`）。新表 `memory_rejections`、`shadow_writes` 不参与合并。10-18 起对已配对的同伴改走 HTTP（`fetchPeer`，`/api/peer/snapshot`）。
-- **多台设备**（10-18）：`omem peer invite|add|list|call`、`omem diag`；配对码 = 地址 + 本人 API 令牌（`src/core/peers.ts`），`via` 经中间节点转发（`/api/peers/:id/*`），固定远程命令清单（`src/core/peer-exec.ts` 的 `peerCommands`，`POST /api/peer/exec`）。同时改了鉴权：没有配置令牌时只信任本机请求（以前对所有来源都当作本人）；网页支持 `?token=` 和 401 时填写令牌。临时 ssh 转发见 `scripts/relay.mjs`。配对码带本机所有网卡地址，断线后自动换地址；`omem peer name` 设本机名字（`config.node.id`），`omem link` 给浏览器带令牌的链接，`omem user tokens|revoke` 管令牌，`omem peer open` 在本机转发同伴的网页。同伴之间不自动同步，`omem pull` 手动拉。设计与以后的持续同步方向见 `docs/v2/architecture.md` 的“多台设备”。
+- **`omem pull <host>`**（10-16）：经 ssh 拉另一台机器的库，合并或覆盖（`src/core/pull.ts`）。新表 `memory_rejections`、`shadow_writes` 不参与合并。10-18 起对已配对的设备改走 HTTP（`fetchPeer`，`/api/peer/snapshot`）。
+- **多台设备**（10-18）：`omem peer invite|add|list|call`、`omem diag`；配对码 = 地址 + 本人 API 令牌（`src/core/peers.ts`），`via` 经中间节点转发（`/api/peers/:id/*`），固定远程命令清单（`src/core/peer-exec.ts` 的 `peerCommands`，`POST /api/peer/exec`）。同时改了鉴权：没有配置令牌时只信任本机请求（以前对所有来源都当作本人）；网页支持 `?token=` 和 401 时填写令牌。临时 ssh 转发见 `scripts/relay.mjs`。配对码带本机所有网卡地址，断线后自动换地址；`omem peer name` 设本机名字（`config.node.id`），`omem link` 给浏览器带令牌的链接，`omem user tokens|revoke` 管令牌，`omem peer open` 在本机转发设备的网页。设备之间不自动同步，`omem pull` 手动拉。设计与以后的持续同步方向见 `docs/v2/architecture.md` 的“多台设备”。
 - **默认监听所有网卡、开机自启、更新命令**（10-18）：`config.host` 默认 `0.0.0.0`（旧配置里的 `127.0.0.1` 视为未设置，`localhost` 只给本机）；`omem service enable|disable`（`src/core/autostart.ts`）；`osdk run upgrade` / `scripts/upgrade.ts`，远程 `update` 复用它。
 - **判官按需启动**（10-15）：`src/sources/judge.ts`。
 - **对话里建空间、关联仓库**（10-15）：`create_space`、`connect_repository`（`src/core/repositories.ts`）。
@@ -267,7 +267,7 @@ updated: 2026-10-30
 
 - 新后端 `doubao`（`src/agents/doubao.ts` + `dispatch.ts` 统一各传输入口）：豆包 Managed Agent OpenAPI（sessions / events / MessageStream），设备码 OAuth 拿用户 access_token 存 `secrets/doubao.json`（按飞书 app id 分，自动刷新、保留 refresh token），会话留在豆包，线程用 `resumeSessionId` 续聊；reasoning 进思考、artifact 附为链接；云端运行用不了 omem MCP 工具，请求带工具时会说明。
 - 权限按应用区分：`omem doubao status` 检查 omem 持有 secret 的全部应用（租户令牌读 `doubao:*` 用户权限）和 lark-cli 自己的应用；`omem doubao login [--app]` 设备码授权，也有远程命令 `doubao-status` / `doubao-login`（远程发起后在飞书确认，完成通知）。
-- 在一台同伴机器上真机验证：助理机器人应用有权限，授权后两轮对话正常且第二轮记得第一轮答案（同一 session）。
+- 在一台设备机器上真机验证：助理机器人应用有权限，授权后两轮对话正常且第二轮记得第一轮答案（同一 session）。
 
 ## 2026-10-21：新话题继续旧工作；思考气泡超长修复；后台进度不私聊
 
@@ -488,7 +488,7 @@ updated: 2026-10-30
 ## 网页缓存与预加载（10-25）
 
 - 构建产物 `assets/*`（文件名带哈希）返回 `cache-control: public, max-age=31536000, immutable`，`index.html` 和前端路由回退返回 `no-cache`；之前全部是 `max-age=0`，每次都要回源验证。
-- 经中间节点转发（`/api/peers/:id/*`）时保留对方的 `cache-control`、`etag`、`last-modified`，并转发 `if-none-match`、`if-modified-since`；之前这些都被丢掉，`omem peer open` 打开经中转的同伴时浏览器完全不缓存。
+- 经中间节点转发（`/api/peers/:id/*`）时保留对方的 `cache-control`、`etag`、`last-modified`，并转发 `if-none-match`、`if-modified-since`；之前这些都被丢掉，`omem peer open` 打开经中转的设备时浏览器完全不缓存。
 - 修正路由预加载：没写明 key 的路由（记忆、学习、Agent、规则、通知、设置）都被算成 `/` 互相覆盖，空闲预加载和悬停预加载对它们不生效；规则归档页也加入空闲预加载。
 
 ## 唤醒复查不留空气泡（10-25）
@@ -647,7 +647,7 @@ updated: 2026-10-30
 - **在 VS Code 中打开**：`code.ts` 的 `codeFolders`（工作区的真实路径，应用后为接收位置）与 `GET /api/runs/:id/folders`（带 `local`、主机名）；网页 `OpenInIde.vue` 和 `lib/ide.ts` 生成 `vscode://file/…` 或 `vscode://vscode-remote/ssh-remote+<别名>/…`，SSH 别名和编辑器（VS Code / Insiders / Cursor）存在看的人的浏览器里。
 - **VS Code 插件第一版**：新增 `vscode/`（独立 package），设计在 `docs/v2/ide.md` 第三节。宿主新增 `GET /api/code-runs/at?folder=`（`code.ts` 的 `codeRunsAt`，按文件夹找交办和各轮）。插件：`current.ts`（当前交办、路径对应）、`review.ts`（评论控制器：评审问题线程与改 / 暂不改 / 不改，选中提问走 `/api/ask` 并轮询会话写回线程，修改点，“开始修改”调 `/fix`；“修改单”视图）、`runs.ts`、`progress.ts`（`/api/runs/:id?after=` 轮询事件到输出通道和状态栏）、`delegate.ts`（任务文档 + CodeLens 调 `/api/delegate`）。`vscode/test/run.mjs` 用 `seed.mts` 起演示 omem，在真实 VS Code 里跑 `suite.cjs`。
 - **网页版 VS Code**：新增 `src/server/ide-web.ts`（按需启动官方 `code serve-web`，回环随机端口与 connection token；会话 cookie；`/ide` 的 HTTP 与 WebSocket 代理，转发时加 `vscode-tkn`、去掉 omem 自己的 cookie 与 Authorization；进程树结束与遗留进程清理；下载中的 202 换成自动刷新页）。`http.ts` 加 `GET /api/ide/open`（本人，设 cookie 后跳转）、注册 `/ide` 代理和 upgrade 处理；配置 `ide.web.enabled / command`（设置 → 外观与说明）；`/api/runs/:id/folders` 带 `web`；`OpenInIde.vue` 的编辑器多“网页版 VS Code”；Vite 代理 `/ide`（ws）。
-- **网页版 VS Code 经同伴打开**：新增 `src/core/peer-tunnel.ts`，`/ide` 和 `/api/ide/open` 原样转发（含 WebSocket 升级，不跟随跳转）：`omem peer open` 的本机服务把它们交给路上第一台直连设备；中间设备在 `/api/peers/:id/ide…`、`/api/peers/:id/api/ide/open` 上原样转给下一台，升级请求单独核对本人令牌。`ide-web.ts` 的 `ideAllowed` 也认本人令牌（转发来的请求）。
+- **网页版 VS Code 经设备打开**：新增 `src/core/peer-tunnel.ts`，`/ide` 和 `/api/ide/open` 原样转发（含 WebSocket 升级，不跟随跳转）：`omem peer open` 的本机服务把它们交给路上第一台直连设备；中间设备在 `/api/peers/:id/ide…`、`/api/peers/:id/api/ide/open` 上原样转给下一台，升级请求单独核对本人令牌。`ide-web.ts` 的 `ideAllowed` 也认本人令牌（转发来的请求）。
 - **插件的连接设置**：新增 `vscode/src/connection.ts`（`omem.connection` = `local` / `direct` / `peer`，`omem.port`、`omem.url`、`omem.peer`、`omem.sshHost`；令牌按服务地址存 SecretStorage；omem 机器上的路径与本窗口 URI 互转，Remote-SSH 窗口和 `sshHost` 都走 `vscode-remote`）和 `connect.ts`（“连接 omem…”：本机先试默认端口、粘贴 `omem link` 链接或配对码逐个地址试连、填地址和令牌、从本机 omem 的 `/api/peers` 选设备；状态栏连接状态，`omem.connected` 控制欢迎页）。修正：以前 Remote-SSH 窗口里的文件夹（`vscode-remote` 协议）被跳过，认不出交办。评审线程正文不再重复标题，已选的决定按钮隐藏。
 - **插件连配对的设备不再要本机服务**：`connection.ts` 的 `pairedPeers` 读数据目录（`omem.home` / `OMEM_HOME` / `~/.omem`）的 `secrets/peers.json`，`target()` 照 `peerFetch` 的走法算出请求地址和令牌（直连用设备地址，`via` 发到中间设备的 `/api/peers/<id>`，地址不应答时试其他地址）；没有数据目录时才经本机服务转发。连接选项改名“本机配对的设备”。
 - **网页版 VS Code 不再要开关**：去掉 `ide.web.enabled`，运行页“在 VS Code 中打开”一直有网页版；`GET /api/ide/cli` 给出要用的 VS Code 命令行，齿轮面板里显示并可就地填 `ide.web.command`；找不到命令时打开返回说明。转发给 serve-web 时带 `X-Forwarded-Host`（`peer-tunnel.ts` 第一跳加上），修正经 `peer open` 打开别的机器时 WebSocket 去连对方回环端口、1006 断开。插件：空的提问线程不再有两个删除按钮（空线程 VS Code 自带删除），标题改为“问 omem，或记为修改点”；直接连接到本机回环地址时按本机文件对应路径。
@@ -781,14 +781,14 @@ updated: 2026-10-30
 
 ## 10-30：只读远程命令 agents / search / prompt / ide
 
-在本机查常驻服务器上的行为，不用 ssh 上去：`omem peer call <同伴> <命令> '<json>'`，都只读，参数都校验，经中间节点转发时中间节点不用更新（`/api/peers/<id>/api/peer/exec` 原样转给目标，命令名只在目标上核对）。
+在本机查常驻服务器上的行为，不用 ssh 上去：`omem peer call <设备> <命令> '<json>'`，都只读，参数都校验，经中间节点转发时中间节点不用更新（`/api/peers/<id>/api/peer/exec` 原样转给目标，命令名只在目标上核对）。
 
 - **`agents`**：`peer-inspect.ts` 的 `agentsReport`。每个后端的命令、是否装好、解析到的路径、ACP 适配器 npm 包的已装版本（顺着命令的符号链接或 npm 垫片找 `node_modules` 里的 package.json，不启动 Agent；npx 档案只给包名）、配置的模型和强度、`cachedProbe`。用来确认 codex-acp 是否够新（2.5.0 起收 `systemPrompt`）。
 - **`search`**：`searchPreview`，本人身份跑和 `search` 工具同一个 `search()`，参数 `query`、`space`（缺省所有空间）、`limit`（最多 30）；返回原件 id、标题、uri、类型、空间、行号、分数、命中通道和工具会给的片段（500 字内）。
 - **`prompt`**：`promptPreview`，`role` 或 `agent`（档案名，二选一）加 `space`，可带 `task`（`runner.ts` 新导出的 `lessonsForTask` 按任务取偏好与经验，`runRole` 同用它）。返回 `parts`、`system`（最多 30000 字）、`now`；工具令牌签发后立刻撤销，结果里没有令牌和 MCP 环境。
 - **`ide`**：`ide-web.ts` 的 `ideWebReport`。VS Code 命令行、serve-web 下载的各版本服务端（版本、提交、`node-pty` 原生模块）、服务端数据 / 用户数据 / 扩展目录、已装扩展、语言包与服务端版本差几个小版本（`minorsBehindServer`，差得多时菜单会半中半英）、`argv.json` 的 `locale`、语言和终端相关设置、最近几次服务端日志（ptyhost / remoteagent 末尾，连接令牌已隐藏）、运行中的 serve-web 进程（`procs.ts` 的 `findProcesses`）。
 - 回归：`test/peer-commands.test.ts`（参数校验、各命令的返回形状、令牌不外泄）。
-- 验证：`omem peer call <同伴> agents '{}'` 看适配器版本；`search` 查一个真实问题；`prompt` 看说明里的偏好与经验；`ide` 看语言包版本和终端日志。
+- 验证：`omem peer call <设备> agents '{}'` 看适配器版本；`search` 查一个真实问题；`prompt` 看说明里的偏好与经验；`ide` 看语言包版本和终端日志。
 
 ## 10-30：飞书里的引用与只读分享链接
 
@@ -827,13 +827,13 @@ updated: 2026-10-30
 - 终端：本机直连和经 `peer open` 都能建终端、跑命令；常驻服务器上之前的会话都没有 `ptyhost.log`，终端请求从没到过服务端，当时是菜单错位找不到入口。更新后用 `ide` 的 `logs.sessions` 确认。
 - 回归：`test/ide-setup.test.ts`（按键翻译与英文兜底、选语言包与重建、改写页面、插件安装 / 刷新 / 换版本 / 无编译器、设置播种、扩展沿用）、`test/ide-web.test.ts`（经代理的页面改写与翻译脚本、插件已装、环境变量）。
 
-## 10-30：外部 Agent 用同伴的库（omem tool --peer / omem mcp --peer）
+## 10-30：外部 Agent 用设备的库（omem tool --peer / omem mcp --peer）
 
 让本机的 Claude Code 用本机的模型整理常驻服务器的数据（原件、记忆、Wiki、事项），不走服务器自己的模型。
 
 - **目标节点**：`src/agents/peer-agent.ts`；`http.ts` 新增 `GET /api/peer/tools`（`mcpTools` 同款列表，参数 `space`、`spaces`、`readOnly`）和 `POST /api/peer/tool`（`session`、`name`、`args`、`caller` 等）。鉴权同其他 `/api/`：本人令牌；成员令牌 403。名字不合法、`args` 不是对象返回 400；没有或不允许的工具返回 `isError` 的结果。
 - **工具集**：内置分组里的工具，去掉角色交结果的 `ROLE_TOOLS`、插件工具和 `PEER_DENY`（飞书发送 / 卡片 / 文档写入 / 采集设置、`notify`、`ask_owner` / `wait_answer` / `suggest_next`、唤醒、`run_agent` / `ask_agent` / `generate_wiki` / `digest_sources` / `switch_run_ai`、交办编码与评审与 Git 动作、`save_agent` / `save_skill` / `save_rule` / `connect_repository` 等）。`test/peer-tools.test.ts` 的归类用例：每个内置工具都要在某个分组里，`PEER_DENY` 里的名字都要是真工具。`READ_ONLY_TOOLS` 抽到同一文件，`omem mcp --read-only` 共用。
-- **运行归属**：调用方的本机名 + 会话名对应一条 `peer-agent` 运行（标题“同伴 <本机名> 的外部 Agent（<会话>）”，第一次调用创建、状态进行中；闲置 15 分钟变完成，再用时重新打开；服务重启后由 `jobs.ts` 里的处理器直接结束）。每次调用一条 `tool` 事件（被拒的带 `refused`），写入工具的 `tool-write`；记忆等带 `run_id`、`agent_profile = peer:<本机名>`、调用方告知的模型。`omem_help` 不新建运行。网页运行页加了“同伴的外部 Agent”类型名。
+- **运行归属**：调用方的本机名 + 会话名对应一条 `peer-agent` 运行（标题“设备 <本机名> 的外部 Agent（<会话>）”，第一次调用创建、状态进行中；闲置 15 分钟变完成，再用时重新打开；服务重启后由 `jobs.ts` 里的处理器直接结束）。每次调用一条 `tool` 事件（被拒的带 `refused`），写入工具的 `tool-write`；记忆等带 `run_id`、`agent_profile = peer:<本机名>`、调用方告知的模型。`omem_help` 不新建运行。网页运行页加了“设备的外部 Agent”类型名。
 - **客户端**：`cli-main.ts` 的 `peerToolBackend`：`omem tool --peer <id> [名] [参数]`、`omem mcp --peer <id>`（`--session`、`--space`、`--spaces`、`--read-only`；环境变量 `OMEM_PEER_SESSION` / `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL`）。走 `peerJson`，读本机 peers.json，本机服务不必运行；经中间节点只用它的 `/api/peers/<id>/…` 转发，中间节点不用更新。默认会话：`omem tool` 为“cli-本机名-日期”，`omem mcp` 每个进程一个。
 - **文档**：`skills/omem/SKILL.md` 的“在另一台设备上用这个库”、README 命令行清单、architecture“多台设备”和状态表、acceptance P4b、文档站设备页。
 
@@ -911,7 +911,7 @@ updated: 2026-10-30
 
 ## 10-31：页面写给人读（内置技能 wiki-writing）
 
-- **问题**：按批次追加写成的案例页，一个样本一节往后补，夹着阅读过程（“N 行已读、截图未展开”“本批”）、写给审稿人的否定句（“不能写成……”“不代表……”）和个人姓名，读者找不到该做什么。
+- **问题**：按批次追加写成的案例页，一个样本一节往后补，夹着阅读过程（“N 行已读、截图未展开”“本批”）、写给审稿人的否定句（“不能写成……”“不代表……”）和个人姓名，用户找不到该做什么。
 - **技能** `skills/library/wiki-writing/SKILL.md`（启动时补进技能库，本人可在网页上改）：七条要求（开头给答案、一句一事、重复结构用表格、不确定集中写一处、不写调查过程、不写给审稿人的话、人写角色或团队），案例页模板（先这样查 → 常见原因表 → 交给谁 → 历史样本表 → 还没查清），新样本加一行而不是追加一节，改写前后对照，知识页的写法和用词。
 - **角色**：`distiller`、`wiki-writer`、`wiki-linter` 挂上这个技能并可 `read_skill`；`distiller` 加“怎么写”一节，案例页改按模板、更新时整页改写；`wiki-writer` 加一句一事、表格、不写调查过程；`wiki-linter` 遇到追加式的案例页按模板整页重排；`_common.md` 的“表达”加一句一事和成稿不写过程，“工作文件与案例”改成模板和整页改写。
 
@@ -924,7 +924,7 @@ updated: 2026-10-30
 - **两臂与评判**：`runArm` 是父运行 `replay` 里就地执行的子运行 `replay-arm`（只读工具 `REPLAY_TOOLS`、影子写入、后端只读模式、临时目录、只放行 `readOnly` 的外部 MCP、“现在”写提问时间）；`checkArm` / `crossCheck` 做引用检查；`judgeOnce` 用内置角色 `roles/replay-judge.md` 两种顺序各一次（子运行 `replay-judge`），`combine` 一致才算胜负。评判的 AI 由本人在 Agent 页选，`judgeChoice` 没选时 `scheduleReplays` 不运行并记下原因（kv `replay_last`）。
 - **改动**：`applyEffects` 写 `replay_effects`：M1 胜清空 `reviewed_at` 并写 `review_note`、M1 负记 helped、W1 胜给页面排 `wiki-lint`（新输入 `recheck`）、R2 胜进 `space-candidates.ts` 的关联候选；S1 / S2 / R3 的建议由 `resolveEffect` 采纳或忽略（卡片按钮 `replay:adopt|ignore:<id>`，`lark-actions.ts`）。`jobs.ts` 的 `sendItemDigests` 给本人的清点卡片加“昨晚复盘”一节；做梦任务带 helped 和存量经验噪声，记忆复核任务带复盘备注，coach 的复盘任务带该档案的复盘结论。
 - **选型证据**：`replayModelEvidence` → `list_ai_backends` 的 `replay28d`；`runner.ts` 的任务选型说明加一句“只作参考”。
-- **入口**：定时任务 `replay`（4:30，默认关）、`omem replay [list|run]`、`GET /api/replays`、`POST /api/replays/run`、`POST /api/replay-effects/:id/:action`、同伴命令 `replays` / `replay-run`、`omem diag` 的 `replay`；设置 → Agent → 夜间复盘（`web/src/components/ReplaySettings.vue`），Agent 页首屏的复盘列表（`ReplayList.vue`）。档案 frontmatter 新增 `traits`（`research` 用于 R3），MCP 条目新增 `readOnly`。表 `replays`、`replay_effects`（迁移，随 `peer pull` 同步）。
+- **入口**：定时任务 `replay`（4:30，默认关）、`omem replay [list|run]`、`GET /api/replays`、`POST /api/replays/run`、`POST /api/replay-effects/:id/:action`、设备命令 `replays` / `replay-run`、`omem diag` 的 `replay`；设置 → Agent → 夜间复盘（`web/src/components/ReplaySettings.vue`），Agent 页首屏的复盘列表（`ReplayList.vue`）。档案 frontmatter 新增 `traits`（`research` 用于 R3），MCP 条目新增 `readOnly`。表 `replays`、`replay_effects`（迁移，随 `peer pull` 同步）。
 - **未做**：K 轴、coach 按汇总证据提 `routing.candidates`、私有回归集。
 
 ## 10-30：主动读能看到的飞书知识库
@@ -943,9 +943,9 @@ updated: 2026-10-30
 - **补回**：`restoreAliases(app, space, {dryRun})` 读知识库 `git log -p` 里该空间每个页面文件写过的 `aliases:` 条目，沿旧路径往前追，补回现在没有页面占用的；远程 `wiki-restore-aliases`（默认只列出）。`test/wiki-tree.test.ts` 覆盖重写保留和从历史补回。
 - **远程开关定时任务**：peer 命令 `schedule-set {id, enabled}` 只改已有定时任务的开关（时间和配置不变），与 `schedule-run` 配合在常驻服务器上打开做梦、夜间复盘等。
 
-## 10-31：同伴协作登记模型和强度，原件目录里看不到名字的知识库
+## 10-31：设备协作登记模型和强度，原件目录里看不到名字的知识库
 
-- **同伴的外部 Agent**：`omem tool --peer` / `omem mcp --peer` 加 `--agent`、`--model`、`--effort`（环境变量 `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL` / 新增 `OMEM_PEER_EFFORT`）；目标节点把这条 `peer-agent` 运行的 `ai` 记成 `{profile: peer:<调用方>:<Agent>, model, effort}`（运行页照常显示），工具上下文带上强度，写入的记忆记模型和强度。`test/peer-tools.test.ts` 覆盖。
+- **设备的外部 Agent**：`omem tool --peer` / `omem mcp --peer` 加 `--agent`、`--model`、`--effort`（环境变量 `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL` / 新增 `OMEM_PEER_EFFORT`）；目标节点把这条 `peer-agent` 运行的 `ai` 记成 `{profile: peer:<调用方>:<Agent>, model, effort}`（运行页照常显示），工具上下文带上强度，写入的记忆记模型和强度。`test/peer-tools.test.ts` 覆盖。
 - **不是成员的知识库**：飞书对非成员不给知识库名字和共享页面以上的目录（131006），以前目录树里只显示“知识库”“（未命名节点）”。现在用其中最上层的已知页面起名（“「X」所在的知识库”，`unnamed`），读不到标题的目录写“（无权限查看的目录）”或“（还没读到标题的目录）”；原件目录的行菜单可“命名”（`PUT /api/sources/wiki-space-name`），加入知识库后飞书给的名字会替换它。`test/source-catalog.test.ts` 覆盖。
 
 ## 10-31：规则给自己的运行指定 AI
@@ -962,3 +962,11 @@ updated: 2026-10-30
 - **压缩**（新增 `src/core/media.ts`）：候选按大小倒序；有损图片 WebP、视频 SVT-AV1（没有时 x264）、音频 Opus（没有时 AAC），可限长边；无损只做 PNG/BMP/TIFF/GIF → 无损 WebP、WAV/AIFF → FLAC。ffprobe 核对时长，省不到 10% 记为 kept。结果写 `file_variants`，作业状态在内存、结束后存 kv `media_compress_last`。
 - **对应关系**（新增 `src/core/stored-files.ts`、迁移 `file_variants`）：原件名仍是引用，`storedName` 在原件不在时返回压缩件；`sendStoredFile` 按实际文件给类型和下载名，飞书附件与文档图片的存在检查、`read_source` 给 Agent 的路径、`keepOriginal`（不把压缩过的原件写回）都走它；`storage-scan` 把压缩件归到原件的来源；`file_variants` 进 `pullTables`。
 - **网页**：`web/src/components/MediaCompress.vue`，放在占用页附件卡片下。
+
+## 10-31：设置 → 设备，用设备的 Agent，本机信任收紧
+
+- **改名**：peer 的中文统一为“设备”（原“同伴”）；Wiki 规划与写作里的“读者”改为“用户”（`docs/archive` 与写作检查技能不动）。
+- **本机信任**（新增 `src/server/origin.ts`）：没配令牌时只信任 `Host` 是本机名、`Origin` 缺省或同源的本机请求，挡住别的网页对 127.0.0.1 的跨站请求、WebSocket 和 DNS 重绑定；用在 API 钩子、网页版 VS Code（会话 cookie 也要同源）、插件流、`omem peer open` 的本机转发。`/api/tools` 免钩子改为精确匹配；查询参数里的令牌只认 GET / HEAD；`config.token` 和内部令牌用定长比较（`sameSecret`）。
+- **设置 → 设备**（`web/src/components/PeerSettings.vue`）：本机名字和地址、生成配对码、粘贴添加（直连或经某台转发）、检查在线与版本、改地址、移除；“持有本机令牌的设备”列出 `peer:*` 令牌（`pairedTokens`，id 是令牌哈希的前 16 位）并可撤销。移除时先请对方 `/api/peer/unpair` 撤销它发的令牌（尽力而为），本机用它的 Agent 配置和引用它们的角色、默认、兜底一并清掉（`dropPeerAgents`）。
+- **用设备的 Agent**（新增 `src/core/peer-acp.ts`）：Agent 配置加 `peer: {id, agent}`，`allProfiles` 把命令换成本机的 `omem peer acp <设备> <Agent>`。它对 `/api/peer/acp` 发起升级连接（`tunneled` 收进这个路径，经中间设备照常转发），按行传 `{acp}`、`{mcp}`/`{mcpReply}`、`{stderr}`、`{exit}`。对方只跑自己的 ACP 配置，在 `peer-acp/<调用方>` 目录里启动，`session/new|load|resume|fork` 的 `cwd` 换成这个目录、`mcpServers` 换成替身（支持 HTTP MCP 用 `/mcp`，否则用 stdio 桥，令牌只在这条连接上有效，`toolRelay`）；替身上的列表和调用回到本机，按会话原来的 MCP 配置执行（`@modelcontextprotocol/sdk` 客户端），本机的工具令牌不出本机。服务关闭时断开这些连接。
+- **测试**：`test/peer-acp.test.ts`（经中间设备跑假 Agent，检索和记忆落在本机；没有的 Agent 被拒）、`test/origin.test.ts`。

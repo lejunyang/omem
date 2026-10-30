@@ -101,7 +101,7 @@ flowchart LR
 
 测试里有个典型场景：`main.ts` 里 `fmt(' a ')` 经 `util/index.ts` 的 `export *` 追到 `util/format.ts#format`，`renamed()` 经 `export { other as renamed }` 追到 `other`，`new Store().save()` 里的 `Store` 经默认导入解析到类，`other/format.ts` 里同名的 `format` 不会被混淆；`node:fs` 的 `readFileSync` 保持未解析（[callgraph.test.ts:29-63](../../../test/callgraph.test.ts#L29-L63)）。
 
-解析结果有两个读者：`find_symbol` 工具把“已解析”的调用方和被调用者与“只按名字匹配”的分开列，后者标明可能是同名误报（[tools.ts:248-289](../../../src/agents/tools.ts#L248-L289)）；网页原件页右侧“结构”栏点一个符号，请求 `/api/sources/:id/relations`，由 `symbolRelations` 返回调用方和被调用者（[callgraph.ts:178-195](../../../src/sources/callgraph.ts#L178-L195)，[Sources.vue:203-213](../../../web/src/views/Sources.vue#L203-L213)）。
+解析结果有两个用户：`find_symbol` 工具把“已解析”的调用方和被调用者与“只按名字匹配”的分开列，后者标明可能是同名误报（[tools.ts:248-289](../../../src/agents/tools.ts#L248-L289)）；网页原件页右侧“结构”栏点一个符号，请求 `/api/sources/:id/relations`，由 `symbolRelations` 返回调用方和被调用者（[callgraph.ts:178-195](../../../src/sources/callgraph.ts#L178-L195)，[Sources.vue:203-213](../../../web/src/views/Sources.vue#L203-L213)）。
 
 取舍：这是靠 import 绑定的静态解析，不做类型推断，所以变量上的方法调用（`foo.bar()`，`foo` 是实例）、动态分派、包内符号都不会解析。从实现看，选择“解析不了就只留名字”而不是猜，是宁缺毋滥；`find_symbol` 因此把两类分开显示。
 

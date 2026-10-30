@@ -124,7 +124,7 @@ node scripts/eval-retrieval.ts … --vector-only | --fts-weight 0.3
 
 ## ⑨ 改 Wiki 写作质量
 
-先改 [roles/wiki-writer.md](../../../roles/wiki-writer.md#L1-L31)（和规划用的 `wiki-planner.md`），其次才改代码。原因是写作要求本来就写在角色说明里，[wiki-write 处理器](../../../src/agents/jobs.ts#L182-L200)只是把页面计划（读者问题、讲解路线、调查入口）整理成任务，没有再塞规则。具体到症状：
+先改 [roles/wiki-writer.md](../../../roles/wiki-writer.md#L1-L31)（和规划用的 `wiki-planner.md`），其次才改代码。原因是写作要求本来就写在角色说明里，[wiki-write 处理器](../../../src/agents/jobs.ts#L182-L200)只是把页面计划（用户问题、讲解路线、调查入口）整理成任务，没有再塞规则。具体到症状：
 
 - 讲得空泛、没有例子：改角色说明里“先调查、再写作”的要求。
 - 引用格式错：核对说明里的 `[文字](src:<原件id>#L起-L止)`，同时看 `write_page` 工具返回的“链接目标不存在”提示（[tools.ts:545](../../../src/agents/tools.ts#L523-L547)）。

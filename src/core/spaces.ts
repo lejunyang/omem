@@ -58,10 +58,10 @@ export function findSpace(app: App, id: string): Space | null {
 
 const SPACE_GUIDE = (name: string, kind: SpaceKind, description: string) => `# ${name}
 
-${description || "（在这里写这个空间的范围、读者和整理要求，Agent 每次工作前都会读它。）"}
+${description || "（在这里写这个空间的范围、用户和整理要求，Agent 每次工作前都会读它。）"}
 
 - 类型：${kindLabel(kind)}
-- 读者：
+- 用户：
 - 范围：
 - 写作要求：
 `;

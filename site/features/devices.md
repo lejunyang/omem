@@ -11,28 +11,34 @@ omem peer invite --label laptop       # 打印一行配对码，含本机所有�
 # 另一台
 omem peer add <配对码>                # 直接能访问到
 omem peer add <配对码> --via <中间那台> # 只能经中间那台访问
-omem diag <同伴>                      # 版本、数量、最近失败、采集状态、Agent
-omem peer commands <同伴>             # 可远程执行的命令
-omem peer call <同伴> update          # 拉代码、装依赖、构建、重启
-omem peer pull <同伴>                 # 拉一份快照合并进本机
-omem peer open <同伴>                 # 在本机浏览器打开它的网页
-omem tool --peer <同伴> search query=退款  # 用本机的 Agent 整理它的库（见下）
+omem diag <设备>                      # 版本、数量、最近失败、采集状态、Agent
+omem peer commands <设备>             # 可远程执行的命令
+omem peer call <设备> update          # 拉代码、装依赖、构建、重启
+omem peer pull <设备>                 # 拉一份快照合并进本机
+omem peer open <设备>                 # 在本机浏览器打开它的网页
+omem tool --peer <设备> search query=退款  # 用本机的 Agent 整理它的库（见下）
 ```
+
+网页里 **设置 → 设备** 能做同样的事：生成配对码、粘贴添加、检查在线、改地址、移除，并列出拿着本机令牌的设备，可以逐个撤销。设备之间是 HTTP 直连，令牌有本人的全部权限，只在自己的局域网或 VPN 里配对。
 
 远程命令是固定的一组（诊断、日志、配置、只读查询、手动采集与回溯、运行记录、只读 SQL、查看 AI 后端 / 检索 / 运行说明 / 网页版 VS Code、git 与更新、重启），没有任意 shell。配对码里的令牌可以随时撤销。
 
 ### 用本机的模型整理它的库
 
-常驻服务器上的知识库想让本机的 Claude Code、Codex 来整理（用本机的模型，而不是服务器自己的），不用登录服务器，直接把工具指到同伴上：
+常驻服务器上的知识库想让本机的 Claude Code、Codex 来整理（用本机的模型，而不是服务器自己的），不用登录服务器，直接把工具指到设备上：
 
 ```bash
-omem tool --peer <同伴>                          # 列出能用的工具
-omem tool --peer <同伴> search query=退款 space=project-a
-omem tool --peer <同伴> --session 整理项目A remember '{"kind":"fact","content":"…"}'
-omem mcp --peer <同伴>                           # 或配成 MCP 服务给 Agent 用
+omem tool --peer <设备>                          # 列出能用的工具
+omem tool --peer <设备> search query=退款 space=project-a
+omem tool --peer <设备> --session 整理项目A remember '{"kind":"fact","content":"…"}'
+omem mcp --peer <设备>                           # 或配成 MCP 服务给 Agent 用
 ```
 
-工具和 `omem mcp` 是同一套，但去掉了会对外发消息或动手的：飞书发送、通知、交办编码、让对方机器的 Agent 或模型干活、唤醒，以及改档案、技能和规则。读取、检索、记忆、Wiki 页面、原件关注度与标注、事项这些整理类的读写都可以。每次调用都记在对方的一条“同伴的外部 Agent”运行里（一个会话一条，`--session` 区分），运行页能看到做了什么，写入的记忆来源档案是 `peer:<本机名>`。本机不用开 omem 服务；经中间机器连接时，中间机器不用更新。`--space` 选默认空间，`--spaces a,b` 限定可读写的空间，`--read-only` 只读。
+工具和 `omem mcp` 是同一套，但去掉了会对外发消息或动手的：飞书发送、通知、交办编码、让对方机器的 Agent 或模型干活、唤醒，以及改档案、技能和规则。读取、检索、记忆、Wiki 页面、原件关注度与标注、事项这些整理类的读写都可以。每次调用都记在对方的一条“设备的外部 Agent”运行里（一个会话一条，`--session` 区分），运行页能看到做了什么，写入的记忆来源档案是 `peer:<本机名>`。本机不用开 omem 服务；经中间机器连接时，中间机器不用更新。`--space` 选默认空间，`--spaces a,b` 限定可读写的空间，`--read-only` 只读。
+
+### 借用设备的 Agent
+
+本机没装某个 Agent，或者额度用完了，可以用另一台设备上的：在 **设置 → 设备** 里那台设备下面打开它的 Agent，它就出现在本机的 Agent 列表里，可以分给角色、档案和规则。Agent 在那台机器上运行，用它的登录和额度；检索、记忆和页面读写的始终是本机的库，本机的工具令牌不会发过去。它看不到本机的文件，所以适合问答、调查和写作，不要用来交办编码。两台机器（以及中间转发的那台）都要更新到支持这个功能的版本。
 
 ## 多人
 

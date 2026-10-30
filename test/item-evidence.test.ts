@@ -139,7 +139,7 @@ describe("item evidence and notification scope", () => {
     const { app, refs } = fixture();
     createUser(app, { id: "wang", name: "小王" });
     addMember(app, "project-a", "wang", "reader");
-    const target = upsertItem(app, undefined, { spaceId: "project-a", userId: "wang", title: "读者事项" });
+    const target = upsertItem(app, undefined, { spaceId: "project-a", userId: "wang", title: "用户事项" });
     const secret = upsertItem(app, undefined, { userId: "wang", title: "不可访问事项" });
     for (let i = 0; i < 101; i++) upsertItem(app, undefined, { userId: "wang", title: `隐藏高优先级事项 ${i}`, priority: 1 });
     const member: ToolContext = { app, runId: null, spaceId: "personal-wang", spaces: ["personal-wang", "project-a"], tools: null, actor: "agent", userId: "wang" };

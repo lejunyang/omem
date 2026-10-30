@@ -14,7 +14,7 @@ import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { findUser, OWNER, canWrite, scopeFor } from "../core/users.ts";
-import { HttpError, newId, now, slugify, truncate } from "../core/util.ts";
+import { HttpError, newId, now, sameSecret, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
@@ -1309,7 +1309,7 @@ def({
   schema: z.object({
     page: z.string().describe("页面路径，如 overview、retrieval/how-search-works；index 是空间目录页"),
     title: z.string(),
-    summary: z.string().describe("一两句话：读者读完能得到什么"),
+    summary: z.string().describe("一两句话：用户读完能得到什么"),
     kind: z.enum(["index", "guide", "concept", "howto", "reference", "topic", "person", "project", "log", "case"]).optional().describe("case：一个解决过的问题（现象、判断、原因、解法、适用条件），放在 cases/ 下"),
     body: z.string().describe("正文 Markdown，不要再写一级标题"),
     space: z.string().optional(),
@@ -3334,7 +3334,7 @@ def({
   write: true,
   schema: z.object({
     space: z.string().optional().describe("Wiki 写入空间；不填为当前空间"),
-    focus: z.string().optional().describe("完整要求：读者、范围、资料优先级、图文要求、已有草稿和原件线索；会传给规划和每页写作"),
+    focus: z.string().optional().describe("完整要求：用户、范围、资料优先级、图文要求、已有草稿和原件线索；会传给规划和每页写作"),
     source_spaces: z.array(z.string()).optional().describe("额外只读材料空间，如前端、后端和文档空间；不填使用目标的相关空间"),
     auto_write: z.boolean().optional().describe("默认 true；本人只要目录规划时设 false"),
     execution: executionSchema.optional().describe("规划和每页写作用的 AI 的临时选择；已经在跑的 Wiki 要换 AI 用 switch_run_ai"),
@@ -3387,7 +3387,7 @@ def({
 
 def({
   name: "submit_plan",
-  description: "提交 Wiki 目录计划（只在规划任务中使用）。每页写清读者问题和调查入口，宿主随后按计划逐页安排写作。",
+  description: "提交 Wiki 目录计划（只在规划任务中使用）。每页写清用户问题和调查入口，宿主随后按计划逐页安排写作。",
   write: true,
   schema: z.object({
     pages: z
@@ -3396,7 +3396,7 @@ def({
           slug: z.string(),
           title: z.string(),
           kind: z.enum(["guide", "concept", "howto", "reference", "topic"]),
-          question: z.string().describe("这页要回答的读者问题"),
+          question: z.string().describe("这页要回答的用户问题"),
           outline: z.string().describe("计划的讲解路线：用哪个真实例子、按什么顺序讲"),
           entry_points: z.array(z.string()).describe("调查入口：文件路径、符号或文档"),
           section: z.string().optional().describe("目录中的分组名"),
@@ -3856,6 +3856,6 @@ export function revokeToolToken(token: string) {
 export function toolContextForToken(app: App, token: string): ToolContext | null {
   const ctx = tokens.get(token);
   if (ctx) return { app, ...ctx };
-  if (app.internalToken && token === app.internalToken) return { app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "user" };
+  if (app.internalToken && sameSecret(token, app.internalToken)) return { app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "user" };
   return null;
 }

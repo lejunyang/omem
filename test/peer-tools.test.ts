@@ -66,7 +66,7 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     expect(read.runId).toMatch(/^r/);
     const runs = listRuns(server, { kind: "peer-agent", includeQuiet: true });
     expect(runs).toHaveLength(1);
-    expect(runs[0]).toMatchObject({ id: read.runId, status: "running", title: expect.stringContaining("同伴 laptop 的外部 Agent") });
+    expect(runs[0]).toMatchObject({ id: read.runId, status: "running", title: expect.stringContaining("设备 laptop 的外部 Agent") });
     expect(runs[0].input).toMatchObject({ caller: "laptop", session: "s1" });
     expect(runEvents(server, read.runId!).map((e) => e.type)).toContain("tool");
 
@@ -100,9 +100,9 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     ] as const) {
       const r = await call(name, args);
       expect(r.isError, name).toBe(true);
-      expect(r.text, name).toMatch(/不对同伴的外部 Agent 开放|不可用/);
+      expect(r.text, name).toMatch(/不对设备的外部 Agent 开放|不可用/);
     }
-    expect((await call("lark_send", { text: "hi" })).text).toMatch(/不对同伴的外部 Agent 开放/);
+    expect((await call("lark_send", { text: "hi" })).text).toMatch(/不对设备的外部 Agent 开放/);
     expect(all<{ n: number }>(server.db, "select count(*) n from notifications")[0].n).toBe(before);
     expect(runEvents(server, read.runId!).some((e) => e.type === "tool" && (e.data as { refused?: boolean }).refused === true)).toBe(true);
     // a role-only tool is not available either

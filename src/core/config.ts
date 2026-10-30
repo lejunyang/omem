@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalog.ts";
 
@@ -23,6 +24,8 @@ export const agentProfileSchema = z.object({
    * one quota, so they share capacity and are never offered as two separate choices.
    */
   source: z.string().optional(),
+  /** An ACP agent of another device (core/peer-acp.ts): runs there, tools stay here. command/args are filled in. */
+  peer: z.object({ id: z.string().min(1), agent: z.string().min(1) }).optional(),
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
@@ -752,6 +755,14 @@ export function saveConfig(config: Config, home = omemHome()) {
 
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
-  for (const p of config.agents.profiles) byId.set(p.id, upgradeProfileArgs(p));
+  for (const p of config.agents.profiles) byId.set(p.id, p.peer ? peerProfile(p) : upgradeProfileArgs(p));
   return [...byId.values()];
+}
+
+/** A device's agent: this omem's own `peer acp` bridge is the command (core/peer-acp.ts). */
+function peerProfile(p: AgentProfile): AgentProfile {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const js = resolve(here, "../cli.js");
+  const cli = existsSync(js) ? js : resolve(here, "../cli.ts");
+  return { ...p, transport: "acp", command: process.execPath, args: [cli, "peer", "acp", p.peer!.id, p.peer!.agent], source: p.source ?? `peer:${p.peer!.id}:${p.peer!.agent}` };
 }

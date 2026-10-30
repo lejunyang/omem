@@ -80,7 +80,7 @@ export async function snapshotStream(app: App): Promise<Readable> {
 export async function fetchPeer(app: App, peerId: string, log: (s: string) => void = () => {}): Promise<Fetched> {
   const { peerFetch } = await import("./peers.ts");
   const dir = mkdtempSync(join(tmpdir(), "omem-pull-"));
-  log(`从同伴 ${peerId} 拉取数据、文件和仓库…`);
+  log(`从设备 ${peerId} 拉取数据、文件和仓库…`);
   try {
     const res = await peerFetch(app, peerId, "/api/peer/snapshot", { timeoutMs: 30 * 60_000 });
     if (!res.ok || !res.body) throw new Error(`拉取失败：${res.status}`);
@@ -104,7 +104,7 @@ export async function fetchPeer(app: App, peerId: string, log: (s: string) => vo
         if (existsSync(join(app.filesDir, name))) cpSync(join(app.filesDir, name), join(fetched.filesDir, name));
         else {
           const file = await peerFetch(app, peerId, `/api/files/${encodeURIComponent(name)}`);
-          if (!file.ok || !file.body) throw new Error(`旧同伴的原文件 ${name} 无法读取：${file.status}`);
+          if (!file.ok || !file.body) throw new Error(`旧设备的原文件 ${name} 无法读取：${file.status}`);
           await pipeline(Readable.fromWeb(file.body as import("node:stream/web").ReadableStream), createWriteStream(join(fetched.filesDir, name)));
         }
       }

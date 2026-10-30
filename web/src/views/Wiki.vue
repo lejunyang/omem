@@ -292,7 +292,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
       <div v-else-if="!pages.length && !page" class="empty">
         <Icon name="book" :size="36" />
         <h3>「{{ spaceName }}」还没有 Wiki</h3>
-        <p>助理会先调查这个空间的全部材料（代码仓库会读入口、流程和测试），按读者问题规划一套目录，再逐页写作并引用原文。</p>
+        <p>助理会先调查这个空间的全部材料（代码仓库会读入口、流程和测试），按用户问题规划一套目录，再逐页写作并引用原文。</p>
         <button class="btn primary" @click="planOpen = true"><Icon name="sparkles" :size="16" />规划并生成 Wiki</button>
         <div v-if="runs.length" class="muted small" style="margin-top: 12px">已有 {{ runs.length }} 个整理任务在进行中。</div>
       </div>
@@ -325,7 +325,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
 
       <article v-else-if="editing" class="article editor">
         <input v-model="draft.title" class="input title-input" />
-        <input v-model="draft.summary" class="input" placeholder="摘要：读者读完能得到什么" />
+        <input v-model="draft.summary" class="input" placeholder="摘要：用户读完能得到什么" />
         <textarea v-model="draft.body" class="textarea body-input" spellcheck="false" />
         <div class="row">
           <span class="muted small">支持 Markdown、[[页面链接]]、[说明](src:原件id#L1-L5) 引用、mermaid 图。</span>
@@ -407,13 +407,13 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
     <div v-if="newOpen" class="modal-overlay" @mousedown.self="newOpen = false">
       <div class="modal">
         <header class="row"><strong>写一页新文章</strong><span class="spacer" /><button class="btn ghost sm icon" @click="newOpen = false"><Icon name="x" /></button></header>
-        <p class="muted small">说清楚读者想弄明白什么，助理会在「{{ spaceName }}」的材料里调查后写作，并引用原文。</p>
+        <p class="muted small">说清楚用户想弄明白什么，助理会在「{{ spaceName }}」的材料里调查后写作，并引用原文。</p>
         <label class="field"><span>标题</span><input v-model="newPage.title" class="input" placeholder="例如：一条飞书消息进来之后发生了什么" /></label>
         <div class="field">
           <span>放在哪个目录</span>
           <UiSelect v-model="newPage.folder" aria-label="目录" :options="[{ value: '', label: '顶层（之后由助理归类）' }, ...folders.map((f) => ({ value: f.path, label: f.path, hint: f.count + ' 页' }))]" />
         </div>
-        <label class="field"><span>读者问题</span><textarea v-model="newPage.question" class="textarea" rows="3" placeholder="读者读完应该能回答什么、能做什么" /></label>
+        <label class="field"><span>用户问题</span><textarea v-model="newPage.question" class="textarea" rows="3" placeholder="用户读完应该能回答什么、能做什么" /></label>
         <label class="field"><span>讲解思路（可选）</span><textarea v-model="newPage.outline" class="textarea" rows="2" placeholder="例如：先用一个真实例子走完全流程，再讲设计取舍" /></label>
         <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!newPage.title.trim() || !newPage.question.trim()" @click="createPage">开始写作</button></div>
       </div>
@@ -423,7 +423,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
       <div class="modal">
         <header class="row"><strong>规划 Wiki 目录</strong><span class="spacer" /><button class="btn ghost sm icon" @click="planOpen = false"><Icon name="x" /></button></header>
         <p class="muted small">助理会调查「{{ spaceName }}」的材料，规划页面（概览、端到端流程、核心概念、修改指南等），然后逐页写作。已有页面会被考虑复用。</p>
-        <label class="field"><span>读者与重点（可选）</span><textarea v-model="planFocus" class="textarea" rows="4" placeholder="例如：读者是刚加入的后端开发，重点是消息处理流程和怎么加一个新渠道。" /></label>
+        <label class="field"><span>用户与重点（可选）</span><textarea v-model="planFocus" class="textarea" rows="4" placeholder="例如：用户是刚加入的后端开发，重点是消息处理流程和怎么加一个新渠道。" /></label>
         <div class="row"><span class="spacer" /><button class="btn primary" @click="plan"><Icon name="sparkles" :size="15" />开始</button></div>
       </div>
     </div>

@@ -9,6 +9,7 @@ import { resolveCommand } from "../agents/spawn.ts";
 import { findProcesses, freePort, killPid, reachable } from "../core/procs.ts";
 import { OWNER, userForToken } from "../core/users.ts";
 import { truncate } from "../core/util.ts";
+import { sameOrigin, trustedLocal } from "./origin.ts";
 import { NLS_ROUTE, packFor, rewriteWorkbench, translateMessages, workbenchNls } from "./ide-locale.ts";
 import { extensionDigest, findExtensionSource, installOmemExtension, listedExtensions, OMEM_EXTENSION, readJsonc, reusableExtensions, reuseExtensions, reuseSources, seedMachineSettings, typescriptTranspiler } from "./ide-setup.ts";
 
@@ -194,11 +195,12 @@ function cookies(req: IncomingMessage) {
  * or this machine when omem trusts loopback (no token configured).
  */
 export function ideAllowed(app: App, req: IncomingMessage) {
-  if (sessions.has(cookies(req)[COOKIE] ?? "")) return true;
+  // The cookie is sent along with another site's WebSocket too; its Origin gives it away.
+  if (sessions.has(cookies(req)[COOKIE] ?? "")) return sameOrigin(req);
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ")) return userForToken(app, auth.slice(7)) === OWNER;
   const ip = req.socket.remoteAddress ?? "";
-  return !app.config.token && /^(127\.|::1$|::ffff:127\.)/.test(ip) && !req.headers.authorization;
+  return !app.config.token && trustedLocal(req, ip) && !req.headers.authorization;
 }
 
 /** Headers for serve-web: its token added as the cookie it checks, omem's own cookie and auth left out. */

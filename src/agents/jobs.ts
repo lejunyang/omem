@@ -729,7 +729,7 @@ registerHandler("wiki-write", async (ctx) => {
   const pagesNow = listPages(ctx.app, spaceId);
   const task = [
     `页面：${brief.slug}「${brief.title}」（类型：${brief.kind}）`,
-    `读者问题：${brief.question}`,
+    `用户问题：${brief.question}`,
     `讲解路线：${brief.outline}`,
     `调查入口：${(brief.entry_points ?? []).join("、") || "自行调查"}`,
     exists ? "这个页面已经存在：先 read_page，保留仍然正确且有用的内容，在此基础上改进。" : "",

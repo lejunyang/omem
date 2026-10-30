@@ -27,6 +27,10 @@ program.name("omem").description("个人记忆与助理：理解材料、带依�
 program.option("--home <dir>", "数据目录（默认 ~/.omem，或环境变量 OMEM_HOME）");
 
 const home = () => (program.opts().home ? resolve(program.opts().home) : omemHome());
+// Commands this one starts (a device's agent bridge, `omem peer acp`) use the same data directory.
+program.hook("preAction", () => {
+  if (program.opts().home) process.env.OMEM_HOME = home();
+});
 const open = () => {
   const app = App.open(home());
   ensurePersonalSpace(app);
@@ -180,10 +184,10 @@ program
   });
 
 // ------------------------------------------------------------------- peers
-const peer = program.command("peer").description("同伴：其他运行 omem 的设备（配对、诊断、拉取数据、远程执行检查命令）");
+const peer = program.command("peer").description("设备：其他运行 omem 的机器（配对、诊断、拉取数据、远程执行检查命令）");
 peer
   .command("pull <host>")
-  .description("拉取另一台机器的业务数据、附件、知识库、代码仓库与编码工作区（同伴走 HTTP，其他走 SSH）；默认合并，--overwrite 替换并备份")
+  .description("拉取另一台机器的业务数据、附件、知识库、代码仓库与编码工作区（设备走 HTTP，其他走 SSH）；默认合并，--overwrite 替换并备份")
   .option("--remote-home <dir>", "远端数据目录", "~/.omem")
   .option("--overwrite", "替换本地业务数据、文件与托管仓库并备份；本机配置、密钥、令牌和采集游标保留")
   .option("--dry-run", "只统计合并结果，不写入")
@@ -233,8 +237,8 @@ peer
   });
 peer
   .command("add <code>")
-  .description("用配对码添加同伴（重复 add 同一个同伴会更新它）；--via 表示要经另一个同伴转发才能访问")
-  .option("--via <peer>", "经由哪个同伴转发")
+  .description("用配对码添加设备（重复 add 同一个设备会更新它）；--via 表示要经另一个设备转发才能访问")
+  .option("--via <peer>", "经由哪个设备转发")
   .option("--url <url>", "覆盖配对码里的地址")
   .action(async (code: string, o) => {
     const { addPeer, peerJson } = await import("./core/peers.ts");
@@ -242,14 +246,14 @@ peer
     const p = await addPeer(app, code, { via: o.via, url: o.url });
     try {
       const d = await peerJson<{ node: string; version: string | null }>(app, p.id, "/api/diag", undefined, 20_000);
-      console.log(`已添加同伴 ${p.id}${p.via ? `（经 ${p.via}）` : `（${p.url}）`}，连接正常：${d.node} · ${d.version ?? "版本未知"}`);
+      console.log(`已添加设备 ${p.id}${p.via ? `（经 ${p.via}）` : `（${p.url}）`}，连接正常：${d.node} · ${d.version ?? "版本未知"}`);
     } catch (e) {
-      console.log(`已添加同伴 ${p.id}，但现在连不上：${(e as Error).message}\n对方上线后直接用即可，不用重新配对；地址变了用 omem peer url ${p.id} <新地址>。`);
+      console.log(`已添加设备 ${p.id}，但现在连不上：${(e as Error).message}\n对方上线后直接用即可，不用重新配对；地址变了用 omem peer url ${p.id} <新地址>。`);
     }
   });
 peer
   .command("name [id]")
-  .description("查看或设置本机在同伴中的名字（默认是主机名）")
+  .description("查看或设置本机在设备中的名字（默认是主机名）")
   .action(async (id?: string) => {
     const { nodeId } = await import("./core/peers.ts");
     const { saveConfig } = await import("./core/config.ts");
@@ -264,7 +268,7 @@ peer
   });
 peer
   .command("open <id>")
-  .description("在本机打开同伴的网页（经本机转发，--via 的同伴也行；浏览器不用令牌）")
+  .description("在本机打开设备的网页（经本机转发，--via 的设备也行；浏览器不用令牌）")
   .option("-p, --port <port>", "本机端口（默认 4318 起找空闲的）", (v) => Number(v))
   .option("--no-browser", "只打印地址，不打开浏览器")
   .action(async (id: string, o) => {
@@ -283,7 +287,7 @@ peer
   });
 peer
   .command("url <id> <url>")
-  .description("同伴换了地址、原来的都连不上时，指定新地址（不用重新配对）")
+  .description("设备换了地址、原来的都连不上时，指定新地址（不用重新配对）")
   .action(async (id: string, url: string) => {
     const { setPeerUrl } = await import("./core/peers.ts");
     console.log(`已更新：${setPeerUrl(open(), id, url).url}`);
@@ -308,7 +312,7 @@ program
   });
 peer
   .command("list")
-  .description("已添加的同伴")
+  .description("已添加的设备")
   .action(async () => {
     const { listPeers, nodeId } = await import("./core/peers.ts");
     const app = open();
@@ -317,13 +321,25 @@ peer
   });
 peer
   .command("remove <id>")
+  .description("移除设备：先请对方撤销给本机的令牌（对方在线且支持时），本机用它的 Agent 的配置一并删除")
   .action(async (id: string) => {
     const { removePeer } = await import("./core/peers.ts");
-    console.log(removePeer(open(), id) ? `已移除 ${id}` : `没有 ${id}`);
+    const r = await removePeer(open(), id);
+    console.log(!r.removed ? `没有 ${id}` : r.revoked ? `已移除 ${id}，对方已撤销令牌` : `已移除 ${id}；对方没有确认撤销令牌，在那台机器上用 omem user tokens owner 查看、omem user revoke owner peer:<名字> 撤销`);
+  });
+peer
+  .command("acp <id> <agent>")
+  .description("用设备上的 ACP Agent（在 stdio 上说 ACP，供 Agent 配置的 peer 字段使用；工具留在本机）")
+  .action(async (id: string, agent: string) => {
+    const { runAcpBridge } = await import("./core/peer-acp.ts");
+    await runAcpBridge(open(), id, agent).catch((e: Error) => {
+      process.stderr.write(e.message + "\n");
+      process.exit(1);
+    });
   });
 peer
   .command("commands [id]")
-  .description("同伴（或本机）能执行的检查命令")
+  .description("设备（或本机）能执行的检查命令")
   .action(async (id?: string) => {
     if (!id) {
       const { peerCommands } = await import("./core/peer-exec.ts");
@@ -336,7 +352,7 @@ peer
   });
 peer
   .command("call <id> <command> [args]")
-  .description("在同伴上执行一条检查命令；args 是 JSON，如 '{\"lines\":100}'。id 写 local 表示本机")
+  .description("在设备上执行一条检查命令；args 是 JSON，如 '{\"lines\":100}'。id 写 local 表示本机")
   .action(async (id: string, command: string, args?: string) => {
     const parsed = args ? JSON.parse(args) : {};
     const app = open();
@@ -353,7 +369,7 @@ peer
 
 program
   .command("diag [peer]")
-  .description("健康状态：本机，或某个同伴")
+  .description("健康状态：本机，或某个设备")
   .action(async (peerId?: string) => {
     const app = open();
     if (!peerId) {
@@ -838,7 +854,7 @@ const wiki = program.command("wiki").description("Wiki：规划、写作、检�
 wiki
   .command("plan <space>")
   .description("调查空间并规划目录，随后逐页写作")
-  .option("-f, --focus <text>", "重点或读者")
+  .option("-f, --focus <text>", "重点或用户")
   .option("--no-write", "只规划不写")
   .action(async (sp, o) => {
     const r = await runJob((app) => generateWiki(app, { spaceId: sp, focus: o.focus, autoWrite: o.write }), { stream: false, children: true });
@@ -848,7 +864,7 @@ wiki
   .command("write <space> <slug>")
   .description("写/重写一页")
   .requiredOption("--title <title>")
-  .requiredOption("-q, --question <text>", "读者问题")
+  .requiredOption("-q, --question <text>", "用户问题")
   .option("--outline <text>", "讲解路线", "")
   .option("--entry <paths...>", "调查入口")
   .action(async (sp, slug, o) => {
@@ -1188,7 +1204,7 @@ type PeerToolOptions = { peer: string; space?: string; spaces?: string; readOnly
 async function peerToolBackend(o: PeerToolOptions, defaultSession: string) {
   const app = open();
   const { nodeId, peerJson, findPeer } = await import("./core/peers.ts");
-  if (!findPeer(app, o.peer)) throw new Error(`没有名为 ${o.peer} 的同伴（omem peer list 查看）`);
+  if (!findPeer(app, o.peer)) throw new Error(`没有名为 ${o.peer} 的设备（omem peer list 查看）`);
   const scope = {
     caller: nodeId(app),
     space: o.space,
@@ -1219,7 +1235,7 @@ program
   .description("以 stdio MCP 服务暴露 omem 工具（供 Claude Code、Codex 等直接使用个人库）")
   .option("--read-only", "只开放读取类工具")
   .option("--space <id>", "默认空间（不填时按当前目录找关联了它的空间，找不到用 personal）")
-  .option("--peer <id>", "使用同伴（另一台设备）上的库：工具在那台机器上执行，不含对外发消息、交办、唤醒这类的工具；每个 MCP 会话在对方记成一条运行")
+  .option("--peer <id>", "使用另一台设备上的库：工具在那台机器上执行，不含对外发消息、交办、唤醒这类的工具；每个 MCP 会话在对方记成一条运行")
   .option("--spaces <ids>", "--peer 时只开放这些空间（逗号分隔）")
   .option("--session <name>", "--peer 时的会话名（对方一个会话一条运行；默认每个 MCP 进程一个）")
   .option("--agent <name>", "--peer 时在对方运行记录里登记的 Agent 名（如 claude-code；也可用环境变量 OMEM_PEER_AGENT）")
@@ -1246,7 +1262,7 @@ program
   .option("-f, --file <path>", "从文件读 JSON 参数（- 为标准输入）")
   .option("--read-only", "没有运行令牌时只开放读取类工具")
   .option("--space <id>", "没有运行令牌时的默认空间")
-  .option("--peer <id>", "在同伴（另一台设备）上调用：那台机器上的库，不含对外发消息、交办、唤醒这类的工具；调用在对方记成一条运行（omem peer list 看同伴）")
+  .option("--peer <id>", "在另一台设备上调用：那台机器上的库，不含对外发消息、交办、唤醒这类的工具；调用在对方记成一条运行（omem peer list 看设备）")
   .option("--spaces <ids>", "--peer 时只开放这些空间（逗号分隔）")
   .option("--session <name>", "--peer 时的会话名（对方一个会话一条运行；默认本机名加当天日期，也可用环境变量 OMEM_PEER_SESSION）")
   .option("--agent <name>", "--peer 时在对方运行记录里登记的 Agent 名（如 claude-code；也可用环境变量 OMEM_PEER_AGENT）")
