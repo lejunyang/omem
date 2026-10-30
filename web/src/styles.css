@@ -170,9 +170,12 @@ kbd {
   font-weight: 500;
   transition: background 0.12s, border-color 0.12s;
 }
-/* A disabled button keeps its look on hover (no tint, no darker primary). */
+/* A disabled button keeps its look on hover (no tint, no darker primary).
+   The tint is laid over the button's own color instead of replacing it: a filled button
+   (primary, accent, danger-fill, or one a component defines) would otherwise turn into
+   white text on the page color when hovered. */
 .btn:hover:not(:disabled) {
-  background: var(--hover);
+  background-image: linear-gradient(var(--hover), var(--hover));
   text-decoration: none;
 }
 .btn:disabled {
@@ -184,14 +187,23 @@ kbd {
   border-color: var(--ink);
   color: var(--bg);
 }
-.btn.primary:hover:not(:disabled) {
-  background: var(--ink);
-  opacity: 0.88;
-}
 .btn.accent {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
+}
+/* Red filled button for destructive confirms (dialogs). */
+.btn.danger-fill {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+/* Filled buttons show hover by fading a little, keeping their color. */
+.btn.primary:hover:not(:disabled),
+.btn.accent:hover:not(:disabled),
+.btn.danger-fill:hover:not(:disabled) {
+  background-image: none;
+  opacity: 0.88;
 }
 .btn.ghost {
   border-color: transparent;

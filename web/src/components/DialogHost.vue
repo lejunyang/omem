@@ -102,11 +102,6 @@ h3 {
 .actions {
   margin-top: 4px;
 }
-.btn.danger-fill {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
-}
 @keyframes dlg-fade {
   from {
     opacity: 0;
