@@ -8,7 +8,7 @@ import type { App } from "./app.ts";
 import { all, one } from "./db.ts";
 import { codeVersion, listPeers, nodeId } from "./peers.ts";
 import { listSchedules, nextRuns, triggerSchedule } from "./scheduler.ts";
-import { roleNames } from "./config.ts";
+import { REPLAY_AXES, roleNames } from "./config.ts";
 import { desktopControl } from "./tools.ts";
 import { HttpError } from "./util.ts";
 import { memoryHistory, memoryNow } from "./memory-watch.ts";
@@ -108,6 +108,8 @@ export async function diag(app: App) {
     // Optional local tools; aad is desktop and browser control (skill desktop-control).
     tools: { aad: desktopControl.status() },
     agents: { default: app.config.agents.default ?? null, roles: app.config.agents.roles, review: app.config.memory.review, compare: app.config.memory.compare },
+    // Nightly replay (agents/replay.ts): on or off, the judge, the last night; details with `replays`.
+    replay: await import("../agents/replay.ts").then((m) => { const s = m.replayStatus(app); return { enabled: s.enabled, judge: s.judge, notice: s.notice, last: s.last, pendingEffects: s.pendingEffects }; }).catch((e) => ({ error: (e as Error).message })),
     peers: listPeers(app).map((p) => ({ id: p.id, url: p.url, via: p.via ?? null })),
   };
 }
@@ -448,6 +450,19 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "schedule-run": { description: "立即触发一个定时任务", schema: z.object({ id }), run: (app, a) => ({ ok: triggerSchedule(app, a.id) }) },
+  replays: {
+    description: "只读：夜间复盘的状态（定时是否打开、replay-judge 的模型、上次结果或没跑的原因、近 28 天胜平负和评判一致数）和最近的复盘（问题、轴、结论、检查、建议）",
+    schema: z.object({ limit: z.number().int().min(1).max(100).default(20) }),
+    run: async (app, a) => {
+      const m = await import("../agents/replay.ts");
+      return { status: m.replayStatus(app), replays: m.listReplays(app, { limit: a.limit }) };
+    },
+  },
+  "replay-run": {
+    description: "立即排一次夜间复盘：不带参数按选题规则挑 replay.max 题；run_id 复盘那一次运行（问答或档案运行），axis 指定轴（R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2）。没给 replay-judge 选模型时不运行并返回原因",
+    schema: z.object({ run_id: z.string().regex(/^r[0-9a-z]{6,40}$/).optional(), axis: z.enum(REPLAY_AXES).optional() }),
+    run: async (app, a) => (await import("../agents/replay.ts")).scheduleReplays(app, { runId: a.run_id, axis: a.axis }),
+  },
   agents: {
     description: "这台机器上的 AI 后端：命令、是否装好、ACP 适配器（npm 包）的已装版本、配置的模型和强度、缓存的探测结果（不启动 Agent）",
     schema: z.object({}),

@@ -86,6 +86,20 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     const itemId = (inter.payload as { itemId?: string }).itemId;
     const act = (typeof value === "object" && value ? (value as { action?: string }).action : "") ?? "";
     // Item digest: keep one item open, or reopen one that closed by itself. The card stays open for the rest.
+    // Nightly replay's suggestions on the same card: only the owner decides them.
+    const replay = /^replay:(adopt|ignore):([^:]+)$/.exec(act);
+    if ((inter.payload as { digest?: boolean }).digest && replay) {
+      const [, op, id] = replay;
+      if (!((inter.payload as { effectIds?: string[] }).effectIds ?? []).includes(id)) return { toast: { type: "error", content: "按钮与建议不匹配" } };
+      if (operatorUser() !== OWNER) return { toast: { type: "error", content: "只有本人可以处理复盘建议" } };
+      try {
+        const { resolveEffect } = await import("../agents/replay.ts");
+        const r = resolveEffect(app, id, op as "adopt" | "ignore");
+        return { toast: { type: r.status === "pending" ? "info" : "success", content: r.message } };
+      } catch (e) {
+        return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
+      }
+    }
     const digest = /^item:(keep|reopen):([^:]+)$/.exec(act);
     if ((inter.payload as { digest?: boolean }).digest && digest) {
       const [, op, id] = digest;

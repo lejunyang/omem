@@ -26,7 +26,7 @@ import { search, shadowedFiles, type HitType } from "../search/search.ts";
 import { branchIndexes, indexBranch, overlayRepo } from "./worktree-index.ts";
 import {
   addSourceNote, applyAttentionRulesToExisting, attentionRuleSchema, deleteAttentionRule, LEVEL_LABELS, LEVELS, listAttentionRules, NOTE_KINDS, NOTE_LABELS, notesOn, noteText,
-  removeSourceNote, saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceNotes, type Level,
+  removeSourceNote, saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceNotes, levelSql, type Level,
 } from "../sources/attention.ts";
 import { catalog, nodePath, treeChildren, type TreeFilter } from "../sources/catalog.ts";
 import { canonicalSourceId } from "../sources/duplicates.ts";
@@ -41,6 +41,8 @@ import { describeThread, findThread, listThreads, threadMessages } from "./threa
 import { setApprovalExecutor } from "./asks.ts";
 import { helpText, metaSchemas, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
+import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
+import type { SearchOptions } from "../search/search.ts";
 
 export type ToolContext = {
   app: App;
@@ -79,6 +81,8 @@ export type ToolContext = {
   shadow?: { parentRunId: string | null };
   /** The plugin whose agent is running (docs/v2/plugins.md): plugin_query / plugin_put work on its records. */
   plugin?: string;
+  /** A replay arm: what it may see as of the question's time (agents/replay-view.ts). */
+  view?: RunView;
 };
 
 /**
@@ -227,6 +231,19 @@ const sourceKinds: Record<string, HitType[]> = {
   memories: ["memory"],
 };
 
+/**
+ * Search as this run sees the library. A replay arm (ctx.view) searches wide (every level, the memory
+ * history) through the cache it shares with the other arm, then keeps what its view lets through.
+ */
+async function viewSearch(ctx: ToolContext, query: string, opts: SearchOptions) {
+  const view = ctx.view;
+  if (!view) return search(ctx.app, query, opts);
+  const limit = opts.limit ?? 20;
+  const wide: SearchOptions = { ...opts, includeIgnored: true, includeHistory: !!view.asOf || opts.includeHistory, limit: Math.min(120, limit * 3 + 10) };
+  const hits = await cached(view, ["search", query, wide, view.asOf ?? null], () => search(ctx.app, query, wide));
+  return filterHits(ctx.app, view, hits).slice(0, limit);
+}
+
 // ---------------------------------------------------------------- read tools
 
 /** Point a repository space at another checkout of the same repository (repo-relink.ts). */
@@ -369,7 +386,7 @@ def({
   handler: async (ctx, a) => {
     const onBranch = a.branch ? await branchSpaces(ctx, a.space, a.branch) : null;
     const underSpace = a.under ? space(ctx, a.space && a.space !== "*" ? a.space : undefined) : null;
-    const hits = await search(ctx.app, a.query, {
+    const hits = await viewSearch(ctx, a.query, {
       spaces: underSpace ? [underSpace] : (onBranch?.spaces ?? spacesFor(ctx, a.space)),
       types: sourceKinds[a.scope ?? "all"],
       limit: a.limit ?? 12,
@@ -390,7 +407,8 @@ def({
         const level = h.attention ? `〔${LEVEL_LABELS[h.attention as Level] ?? h.attention}〕` : "";
         const notes = h.notes?.length ? `\n   ${h.notes.join(" ")}` : "";
         const twins = h.sameAs?.length ? `\n   （另有 ${h.sameAs.length} 份相同内容：${h.sameAs.slice(0, 5).map((s) => s.sourceId).join("、")}${h.sameAs.length > 5 ? "…" : ""}）` : "";
-        return `${i + 1}. ${elsewhere}${level}${where}  [${h.via.join("+")}]${notes}${twins}\n${truncate(h.snippet, 500).replace(/^/gm, "   ")}`;
+        const later = h.later ? "（提问之后改过，只有最新版，可能泄题）" : "";
+        return `${i + 1}. ${elsewhere}${level}${where}${later}  [${h.via.join("+")}]${notes}${twins}\n${truncate(h.snippet, 500).replace(/^/gm, "   ")}`;
       })
       .join("\n\n");
   },
@@ -409,11 +427,37 @@ def({
     const id = resolveSource(ctx, a.source, a.space);
     const from = a.from ?? 1;
     const to = Math.min(a.to ?? from + 399, from + 399);
-    if (id.startsWith("__msg__:")) return renderMessageSource(ctx, id.slice(8));
-    if (id.startsWith("__mem__:")) return renderMemorySource(ctx, id.slice(8));
+    const view = ctx.view;
+    if (id.startsWith("__msg__:")) {
+      const at = one<{ created_at: string }>(ctx.app.db, "select created_at from messages where id = ?", id.slice(8))?.created_at;
+      if (view?.asOf && at && at >= view.asOf) throw new HttpError(404, `消息 ${id.slice(8)} 晚于提问时间，这次不提供`);
+      return renderMessageSource(ctx, id.slice(8));
+    }
+    if (id.startsWith("__mem__:")) {
+      if (view && !visibleMemories(ctx.app, view, [id.slice(8)]).size) throw new HttpError(404, `记忆不存在：${id.slice(8)}`);
+      return renderMemorySource(ctx, id.slice(8));
+    }
+    if (view) {
+      const row = sourceRows(ctx.app, [id]).get(id);
+      const why = row ? sourceHidden(view, row) : null;
+      if (why) throw new HttpError(404, `${why}：${id}`);
+    }
     const r = readSource(ctx.app, id, from, to);
     const s = r.source;
     if (s.deletedAt) return `原件 ${s.id}（${s.uri}）已在 ${s.deletedAt} 移除，内容不可用。`;
+    // A replay arm: chats cut to the lines before the question, later documents flagged.
+    let replayNote = "";
+    if (view?.asOf && TIME_CUT_KINDS.has(s.kind)) {
+      const vis = visibleLines(ctx.app, view, s.id, sourceText(ctx.app, s.id));
+      const lines = r.text.split("\n");
+      const kept = lines.map((l, i) => ({ l, n: r.lineStart + i })).filter((x) => vis[x.n - 1]);
+      const hidden = lines.length - kept.length;
+      if (!kept.length) return `原件 ${s.id} 第 ${r.lineStart}-${r.lineEnd} 行都晚于提问时间，这次不提供；更早的内容在前面的行。`;
+      if (hidden) {
+        const body = kept.map((x) => `${String(x.n).padStart(5)}│${x.l}`).join("\n");
+        return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind}\n这一段有 ${hidden} 行晚于提问时间，没有显示。\n引用格式：[${s.uri}:${kept[0].n}-${kept[kept.length - 1].n}](src:${s.id}#L${kept[0].n}-L${kept[kept.length - 1].n})\n\n${body}`;
+      }
+    } else if (view?.asOf && s.updatedAt > view.asOf) replayNote = `\n注意：这份原件在提问之后更新过（${s.updatedAt.slice(0, 16).replace("T", " ")}），这里只有最新版，内容可能包含提问之后的信息。`;
     const more = r.lineEnd < (s.lines ?? 0) ? `\n……还有 ${(s.lines ?? 0) - r.lineEnd} 行，继续用 from=${r.lineEnd + 1}` : "";
     const original = (s.meta as { original?: string }).original;
     const file = original ? `\n原始文件：${join(ctx.app.filesDir, original)}${s.kind === "image" ? "（图片，可用你的文件或图片工具查看）" : ""}` : "";
@@ -423,7 +467,7 @@ def({
     const level = lv.level !== "normal" ? ` · ${LEVEL_LABELS[lv.level as Level] ?? lv.level}${lv.by === "owner" ? "（本人设的）" : ""}${lv.inherited ? "（随所在目录）" : ""}` : "";
     const notes = notesOn(sourceNotes(ctx.app, s.id).filter((n) => n.status !== "rejected"), r.lineStart, r.lineEnd);
     const noteText_ = notes.length ? `\n标注（以标注为准，不要引用已过时、有误或不检索的段落作为现状）：\n${notes.map((n) => `- #${n.id} ${noteText(n)}${n.by === "owner" ? "（本人）" : n.status === "confirmed" ? "（本人确认）" : ""}`).join("\n")}` : "";
-    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${level}${file}${warn}${noteText_}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
+    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${level}${file}${warn}${replayNote}${noteText_}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
   },
 });
 
@@ -467,11 +511,12 @@ def({
       `(${terms.map(() => "instr(lower(text), ?) > 0").join(" or ")})`,
     ].join(" and ");
     const params = [...(sp ?? []), ...(a.source_kind ? [a.source_kind] : []), ...(a.since ? [a.since] : []), ...(a.until ? [a.until] : []), ...terms];
-    const rows = all<{ id: string; uri: string; title: string; text: string; date: string }>(
+    const view = ctx.view;
+    const rows = all<{ id: string; uri: string; title: string; text: string; date: string; kind: string; captured_at: string; level: string | null; updated_at: string }>(
       ctx.app.db,
-      `select id, uri, title, text, coalesce(json_extract(meta,'$.date'), captured_at) as date from sources where ${where} order by date`,
+      `select id, uri, title, text, kind, captured_at, updated_at, ${levelSql("sources")} level, coalesce(json_extract(meta,'$.date'), captured_at) as date from sources where ${where} order by date`,
       ...params,
-    );
+    ).filter((r) => !view || (!(view.asOf && r.captured_at > view.asOf) && (!view.sourceLevels || view.sourceLevels.includes((r.level ?? "normal") as Level))));
     const limit = a.limit ?? 150;
     const ctxLines = a.context ?? 0;
     const out: string[] = [];
@@ -479,24 +524,30 @@ def({
     let shown = 0;
     for (const r of rows) {
       const lines = r.text.split("\n");
-      const matched = lines.map((l, i) => (terms.some((t) => l.toLowerCase().includes(t)) ? i : -1)).filter((i) => i >= 0);
+      const vis = view?.asOf && TIME_CUT_KINDS.has(r.kind) ? visibleLines(ctx.app, view, r.id, r.text) : null;
+      const matched = lines.map((l, i) => (terms.some((t) => l.toLowerCase().includes(t)) && (!vis || vis[i]) ? i : -1)).filter((i) => i >= 0);
+      if (!matched.length) continue;
       hits += matched.length;
       if (shown >= limit) continue;
-      out.push(`\n## ${r.id} ${r.uri}（${String(r.date).slice(0, 10)}，${matched.length} 处）`);
+      const later = view?.asOf && !vis && r.updated_at > view.asOf ? "，提问之后改过、可能泄题" : "";
+      out.push(`\n## ${r.id} ${r.uri}（${String(r.date).slice(0, 10)}，${matched.length} 处${later}）`);
       for (const i of matched) {
         if (shown >= limit) break;
         const from = Math.max(0, i - ctxLines);
         const to = Math.min(lines.length - 1, i + ctxLines);
-        out.push(`L${i + 1}: ${truncate(lines.slice(from, to + 1).join(" ⏎ "), 400)}`);
+        out.push(`L${i + 1}: ${truncate(lines.slice(from, to + 1).filter((_, k) => !vis || vis[from + k]).join(" ⏎ "), 400)}`);
         shown++;
       }
     }
+    // A replay arm: memories as they stood at the question's time, minus what its variant leaves out.
+    const mw = memoryWhere(view, "m");
     const mems = all<{ id: string; kind: string; subject: string; content: string; valid_from: string | null }>(
       ctx.app.db,
-      `select id, kind, subject, content, valid_from from memories where status = 'active' ${sp ? `and space_id in (${sp.map(() => "?").join(",")})` : ""} and (${terms.map(() => "instr(lower(subject || ' ' || content), ?) > 0").join(" or ")}) limit 60`,
+      `select m.id, m.kind, m.subject, m.content, m.valid_from from memories m where ${view ? mw.sql : "m.status = 'active'"} ${sp ? `and m.space_id in (${sp.map(() => "?").join(",")})` : ""} and (${terms.map(() => "instr(lower(m.subject || ' ' || m.content), ?) > 0").join(" or ")}) limit 60`,
+      ...(view ? mw.params : []),
       ...(sp ?? []),
       ...terms,
-    );
+    ).map((m) => ({ ...m, content: asOfContent(view, m.content) }));
     const head = `${rows.length} 个原件共 ${hits} 行命中${shown < hits ? `，显示前 ${shown} 行（可缩小时间范围或关键词后再扫）` : ""}；有效记忆 ${mems.length} 条。`;
     const memText = mems.length ? `\n\n## 记忆\n${mems.map((m) => `- ${m.id} [${m.kind}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 200)}`).join("\n")}` : "";
     return head + out.join("\n") + memText;
@@ -520,6 +571,8 @@ def({
     const sp = space(ctx, a.space);
     if (a.under !== undefined || !a.query) return catalogListing(ctx, sp, a.under ?? "", a.depth ?? 1, { kind: a.kind, level: a.level, q: a.query }, a.limit ?? 200);
     const r = listSources(ctx.app, { spaceId: sp, q: a.query, kind: a.kind, level: a.level, limit: a.limit ?? 200 });
+    // A replay arm does not see what was captured after the question or levels it was told to leave out.
+    if (ctx.view) r.sources = r.sources.filter((s) => !sourceHidden(ctx.view, { captured_at: s.capturedAt, level: s.level?.level ?? null }));
     return `共 ${r.total} 个原件${r.total > r.sources.length ? `，显示前 ${r.sources.length} 个` : ""}\n` + r.sources.map((s) => `- ${s.id} ${s.uri} (${s.kind}, ${s.lines} 行${s.attention ? `，${LEVEL_LABELS[s.attention as Level]}` : ""})`).join("\n");
   },
 });
@@ -794,7 +847,8 @@ def({
     spaces: z.array(z.string()).optional(),
     cwd: z.string().optional(),
     skills: z.array(z.string()).optional(),
-    mcp: z.record(z.string(), z.any()).optional().describe('额外 MCP，如 {"github": {"command": "gh-mcp", "args": []}} 或 {"x": {"url": "https://…"}}'),
+    mcp: z.record(z.string(), z.any()).optional().describe('额外 MCP，如 {"github": {"command": "gh-mcp", "args": []}} 或 {"x": {"url": "https://…"}}；只读的服务器加 "readOnly": true（夜间复盘只放行这些）'),
+    traits: z.array(z.string()).optional().describe("档案的类型标记：research 表示研究档案（查本库之外的材料，夜间复盘的 R3 轴交给它）"),
     instructions: z.string().optional().describe("像 AGENTS.md 那样的长期约定"),
     draft: z.boolean().optional(),
   }),
@@ -821,6 +875,8 @@ def({
     const { backendLimitOf, choosableProfiles, limitOf, recentStats, usedOf } = await import("./capacity.ts");
     const choosable = new Set(choosableProfiles(ctx.app).map((p) => p.id));
     const stats = recentStats(ctx.app);
+    // Nightly replay's single-variable comparisons of the last 28 days (replay.ts), n < 3 left out.
+    const replayed = (await import("./replay.ts")).replayModelEvidence(ctx.app);
     // Load per probed model: in use / limit (0 = the owner excluded it), and the last 7 days.
     const models = (p: (typeof backends)[number]) => {
       const probe = cachedProbe(ctx.app, p.id);
@@ -828,7 +884,8 @@ def({
       return names.map((model) => {
         const q = { ...p, model };
         const st = stats.find((s) => s.profile === p.id && s.model === model);
-        return { model, used: usedOf(ctx.app, q), limit: limitOf(ctx.app, q), ...(st ? { recent7d: { done: st.done, failed: st.failed, medianMinutes: st.medianMinutes } } : {}) };
+        const rp = replayed.get(`${p.id}|${model}`);
+        return { model, used: usedOf(ctx.app, q), limit: limitOf(ctx.app, q), ...(st ? { recent7d: { done: st.done, failed: st.failed, medianMinutes: st.medianMinutes } } : {}), ...(rp?.length ? { replay28d: rp } : {}) };
       });
     };
     const tz = ctx.app.config.timezone;
@@ -836,7 +893,7 @@ def({
       // Candidates may prefer some hours (off-peak prices, provider queues): the time to compare with.
       now: `${new Intl.DateTimeFormat("zh-CN", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(new Date())}（${tz}）`,
       routing: ctx.app.config.agents.routing,
-      note: "limit 为 0 的模型本人不想自动使用，不要选。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。",
+      note: "limit 为 0 的模型本人不想自动使用，不要选。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。replay28d 是夜间复盘近 28 天的单变量对比（type 题型，vs 对照的模型，w/t/l 胜/平/负，tokens 上下文峰值之比），样本小，只作参考。",
       backends: backends.filter((p) => p.installed && choosable.has(p.id) && (!a.profile || p.id === a.profile)).map((p) => {
         const probe = cachedProbe(ctx.app, p.id);
         return { id: p.id, name: p.name, transport: p.transport, tools: p.transport !== "doubao", model: p.model, effort: p.effort, backendLimit: backendLimitOf(ctx.app, p), models: models(p), efforts: probe?.effortsByModel ?? probe?.efforts };
@@ -1069,9 +1126,11 @@ def({
     offset: z.number().int().min(0).optional(),
   }),
   handler: (ctx, a) => {
+    if (ctx.view?.noPages) return "（这次不看 Wiki 页面）";
     const pages = listPages(ctx.app, space(ctx, a.space));
     if (!pages.length) return "（这个空间还没有页面）";
-    const line = (p: (typeof pages)[number]) => `- ${p.slug}「${p.title}」${p.summary ? "：" + truncate(p.summary, 100) : ""}${p.staleSources ? `（${p.staleSources} 个引用原件已变化）` : ""}`;
+    const asOf = ctx.view?.asOf;
+    const line = (p: (typeof pages)[number]) => `- ${p.slug}「${p.title}」${p.summary ? "：" + truncate(p.summary, 100) : ""}${p.staleSources ? `（${p.staleSources} 个引用原件已变化）` : ""}${asOf && p.updatedAt > asOf ? "（提问之后改过，可能泄题）" : ""}`;
     const folder = a.folder?.replace(/^\/+|\/+$/g, "");
     const scoped = a.folder !== undefined || a.direct;
     if (!scoped && pages.length > 80) {
@@ -1096,12 +1155,15 @@ def({
     let sp = a.space;
     let slug = a.page.replace(/^wiki:/, "");
     if (!sp && slug.includes("/") && findSpace(ctx.app, slug.split("/")[0])) [sp, slug] = [slug.split("/")[0], slug.split("/").slice(1).join("/")];
+    if (ctx.view?.noPages) throw new HttpError(404, "这次不看 Wiki 页面");
     const id = space(ctx, sp);
     const p = readPage(ctx.app, id, slug);
     const c = pageContext(ctx.app, id, p.slug);
     const stale = c.sources.filter((s) => s.stale || s.deleted);
+    const asOf = ctx.view?.asOf;
     return [
       `页面 ${id}/${p.slug}${p.slug !== slug ? `（原路径 ${slug} 已移到这里）` : ""} ·${p.meta.kind ?? "page"} · 更新于 ${p.meta.updated ?? p.updatedAt.slice(0, 10)}`,
+      asOf && p.updatedAt > asOf ? "注意：这页在提问之后改过，这里只有最新版，内容可能包含提问之后的信息。" : "",
       stale.length ? `注意：${stale.length} 个引用原件在写作后已变化：${stale.map((s) => s.uri).join(", ")}` : "",
       `---\n# ${p.meta.title}\n${p.meta.summary ? "> " + p.meta.summary + "\n" : ""}\n${p.body}`,
       c.backlinks.length ? `---\n被这些页面链接：${c.backlinks.map((b) => b.slug).join(", ")}` : "",
@@ -1128,9 +1190,15 @@ def({
     const sp = spacesFor(ctx, a.space ?? "*");
     const query = a.query?.replace(/[*?%\s]+/g, " ").trim();
     const folder = a.folder === undefined ? undefined : a.folder.trim() === "未归档" ? null : normalizeFolder(a.folder) || undefined;
+    // A replay arm sees memories as they were at the question's time (replay-view.ts): no history, no later versions.
+    const view = ctx.view;
     let mems = query
-      ? (await search(ctx.app, query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
-      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, tag: a.tag, folder, agent: a.agent ?? ownProfile(ctx) ?? undefined, limit: folder !== undefined ? 200 : 50 });
+      ? (await viewSearch(ctx, query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
+      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history || view?.asOf ? "all" : "active", subject: a.subject, tag: a.tag, folder, agent: a.agent ?? ownProfile(ctx) ?? undefined, limit: folder !== undefined ? 200 : 50 });
+    if (view) {
+      const ok = visibleMemories(ctx.app, view, mems.map((m) => m.id));
+      mems = mems.filter((m) => ok.has(m.id)).map((m) => ({ ...m, status: "active" as const, content: asOfContent(view, m.content), validTo: null, supersededBy: null, supersedes: view.asOf ? null : m.supersedes }));
+    }
     if (sp && !query) mems = mems.filter((m) => sp.includes(m.spaceId));
     if (a.subject) mems = mems.filter((m) => m.subject.includes(a.subject!));
     if (a.tag) mems = mems.filter((m) => m.tags?.includes(a.tag!));
@@ -1142,10 +1210,12 @@ def({
     if (!mems.length) return "没有相关记忆。";
     // Recall accounting (best effort): which memories surfaced for this run, so their value
     // can be measured. Marking "used" happens when the run finishes (see runs worker).
-    try {
-      const { recordRecalls } = await import("../memory/recall-stats.ts");
-      recordRecalls(ctx.app, mems.map((m) => m.id), { runId: ctx.runId, profile: ctx.agentProfile, spec: ownProfile(ctx) ?? undefined });
-    } catch {}
+    // A replay arm's recalls are its own business (replay.ts reads them), not the memory's usage.
+    if (!view)
+      try {
+        const { recordRecalls } = await import("../memory/recall-stats.ts");
+        recordRecalls(ctx.app, mems.map((m) => m.id), { runId: ctx.runId, profile: ctx.agentProfile, spec: ownProfile(ctx) ?? undefined });
+      } catch {}
     return mems
       .map((m) => {
         const chain = a.include_history && (m.supersedes || m.supersededBy) ? memoryHistory(ctx.app, m.id) : [];
@@ -1169,13 +1239,15 @@ def({
   }),
   handler: (ctx, a) => {
     const discovery = scopeFor(ctx.app, ctx.userId ?? OWNER, (a.space === "*" && ctx.itemDiscoverySpaces !== undefined ? ctx.itemDiscoverySpaces : spacesFor(ctx, a.space)) ?? null);
-    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceIds: discovery ?? undefined, userId: ctx.userId ?? "owner", limit: 100 });
+    // A replay arm: items that did not exist yet are left out, and so is their later progress.
+    const asOf = ctx.view?.asOf;
+    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceIds: discovery ?? undefined, userId: ctx.userId ?? "owner", limit: 100 }).filter((i) => !asOf || i.createdAt <= asOf);
     if (!items.length) return "没有符合条件的事项。";
     return items
       .map((i) => {
         const head = `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? ` 截止 ${i.dueAt}` : ""}${i.remindAt ? ` 提醒 ${i.remindAt}` : ""}${i.waitingOn ? ` 等待 ${i.waitingOn}` : ""}（空间 ${i.spaceId}；${(!ctx.writable || ctx.writable.includes(i.spaceId)) && canWrite(ctx.app, ctx.userId ?? OWNER, i.spaceId) ? "可写" : "只读：用 propose_item_update 路由，勿挂到其他事项"}）${i.detail ? "\n  " + truncate(i.detail, 200) : ""}`;
         if (!a.with_timeline) return head;
-        return head + "\n" + itemEvents(ctx.app, i.id).slice(-6).map((e) => `    · ${e.at.slice(0, 16)} ${e.actor}: ${truncate(e.text, 160)} [事件 ${e.id}] ${e.sourceRefs.join(" ")}`).join("\n");
+        return head + "\n" + itemEvents(ctx.app, i.id).filter((e) => !asOf || e.at <= asOf).slice(-6).map((e) => `    · ${e.at.slice(0, 16)} ${e.actor}: ${truncate(e.text, 160)} [事件 ${e.id}] ${e.sourceRefs.join(" ")}`).join("\n");
       })
       .join("\n");
   },

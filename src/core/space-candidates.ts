@@ -101,6 +101,12 @@ export function relationCandidates(app: App, limit = 12): RelationCandidate[] {
     for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) add(list[i], list[j], `两边都有标签 #${t} 的记忆`);
   }
 
+  // Nightly replay (agents/replay.ts): adding the other space to a question's search answered it better.
+  for (const r of all<{ target_id: string; n: number }>(app.db, "select target_id, count(*) n from replay_effects where effect = 'relate' and target_kind = 'space' and target_id like '%|%' group by target_id")) {
+    const [a, b] = r.target_id.split("|");
+    add(a, b, `夜间复盘里 ${r.n} 次加上另一边的空间后答得更好`);
+  }
+
   return [...found]
     .map(([k, s]) => ({ a: k.split("|")[0], b: k.split("|")[1], signals: [...s] }))
     .sort((x, y) => y.signals.length - x.signals.length)

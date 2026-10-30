@@ -9,6 +9,7 @@ import { loadRole, runRole } from "./runner.ts";
 import { createRun, registerHandler, runsInLane } from "./runs.ts";
 import { listAgentSpecs, readAgentSpec } from "./specs.ts";
 import { runReactions, runReactionsText } from "../channels/lark-feedback.ts";
+import { replayCoachText } from "./replay.ts";
 
 /** Which runs show a built-in role at work (an agent spec's are its `agent` runs). */
 const ROLE_RUNS: Record<string, string[]> = {
@@ -96,10 +97,13 @@ export function reviewTask(app: App, name: string, since: string) {
       })(),
     ].filter(Boolean).join("\n");
   });
+  // Nightly replay's single-variable comparisons on its questions (agents/replay.ts): reference, small samples.
+  const replayed = replayCoachText(app, name);
   return {
     runs: runs.length,
     task: [
       `# 复盘对象\n\n${identity}`,
+      ...(replayed ? [`# 夜间复盘（近 28 天，只换了一处的重答对比；样本小，同一结论反复出现才算数）\n\n${replayed}`] : []),
       `# 挂的技能\n\n${d.skills.map((s) => `- ${s.name}：${s.description}`).join("\n") || "（没有）"}`,
       `# 专属记忆\n\n${d.memories.map((m) => `- ${m.id} [${m.kind}] ${truncate(m.content, 200)}`).join("\n") || "（没有）"}`,
       `# 待本人确认的建议\n\n${d.proposals.filter((p) => p.status === "pending").map((p) => `- ${p.id} [${p.kind}] ${p.title}`).join("\n") || "（没有）"}`,

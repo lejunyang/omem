@@ -24,6 +24,7 @@ import { expandTools } from "./tool-help.ts";
 import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
 import { embedQuery } from "../search/embeddings.ts";
+import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -119,8 +120,8 @@ function mcpBridge(): { command: string; args: string[] } {
   return { command: process.execPath, args: [existsSync(js) ? js : ts] };
 }
 
-function localTime(app: App) {
-  const now = new Date();
+function localTime(app: App, at?: string) {
+  const now = at ? new Date(at) : new Date();
   const fmt = new Intl.DateTimeFormat("zh-CN", { timeZone: app.config.timezone, dateStyle: "full", timeStyle: "short" });
   return `${fmt.format(now)}（时区 ${app.config.timezone}，ISO ${now.toISOString()}）`;
 }
@@ -131,24 +132,27 @@ function localTime(app: App) {
  */
 type Lesson = { kind: string; subject: string; content: string; agent: string | null; embedding: Uint8Array | null };
 
-function lessonRows(app: App, spaceId: string, userId: string, spec: string | null, vectors = false) {
+function lessonRows(app: App, spaceId: string, userId: string, spec: string | null, vectors = false, view?: RunView) {
   // With review on, only memories the reviewer (or the owner) accepted are handed to every run:
   // a bad lesson repeated in every prompt costs more than a missing one.
   const vetted = app.config.memory.review.enabled ? "and (created_by = 'user' or review_verdict = 'keep')" : "";
-  return all<Lesson>(
+  // A replay arm: the lessons as they stood at the question's time, minus what its variant leaves out.
+  const w = memoryWhere(view, "memories");
+  return all<Lesson & { id: string }>(
     app.db,
     // A profile's own experience goes with it whatever space it runs in (an investigator learns from
     // the on-call groups of one project space and is called from the personal space).
-    `select kind, subject, content, agent, ${vectors ? "embedding" : "null as embedding"} from memories where status = 'active' ${vetted} and (agent is null or agent = ?) and (
+    `select id, kind, subject, content, agent, ${vectors ? "embedding" : "null as embedding"} from memories where ${view ? w.sql : "status = 'active'"} ${vetted} and (agent is null or agent = ?) and (
        (kind = 'preference' and space_id in (?, ?) and coalesce(user_id, 'owner') = ?) or (kind = 'experience' and (space_id = ? or agent = ?))
      ) order by kind = 'preference' desc, agent is not null desc, updated_at desc limit 2000`,
+    ...(view ? w.params : []),
     spec ?? "",
     personalSpaceId(userId),
     spaceId,
     userId,
     spaceId,
     spec ?? "",
-  );
+  ).map((r) => ({ ...r, content: asOfContent(view, r.content) }));
 }
 
 const lessonLines = (rows: Lesson[]) => rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
@@ -166,8 +170,8 @@ const TASK_LESSONS = 8;
  * (cosine on memory vectors; the newest without vectors). A coder is not told how the owner swipes
  * back on a phone or how on-call cases were triaged.
  */
-async function taskLessons(app: App, spaceId: string, userId: string, spec: string | null, about: string) {
-  const rows = lessonRows(app, spaceId, userId, spec, true);
+async function taskLessons(app: App, spaceId: string, userId: string, spec: string | null, about: string, view?: RunView) {
+  const rows = lessonRows(app, spaceId, userId, spec, true, view);
   const own = rows.filter((r) => r.agent).slice(0, 16);
   const shared = rows.filter((r) => !r.agent);
   const q = shared.length > TASK_LESSONS ? await embedQuery(app, about, "query").catch(() => null) : null;
@@ -185,11 +189,18 @@ async function taskLessons(app: App, spaceId: string, userId: string, spec: stri
   return lessonLines([...own, ...near]);
 }
 
+/** The ids of the lessons a task run is told (a replay records what the original run had in view). */
+export async function lessonIdsForTask(app: App, input: { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string; replay?: ReplayArm }) {
+  const text = await lessonsForTask(app, input);
+  const rows = lessonRows(app, input.spec?.space && !input.spaceId ? input.spec.space : input.spaceId, input.userId ?? OWNER, input.spec?.name ?? (input.role === "assistant" ? null : input.role), false, input.replay?.view);
+  return rows.filter((r) => text.includes(r.content)).map((r) => r.id);
+}
+
 /** The lessons that bear on a task run (a conversation gets the newest instead, see prepareRun). */
-export async function lessonsForTask(app: App, input: { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string }) {
+export async function lessonsForTask(app: App, input: { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string; replay?: ReplayArm }) {
   if (input.role === "guest" && !input.spec) return "";
   return taskLessons(app, input.spec?.space && !input.spaceId ? input.spec.space : input.spaceId, input.userId ?? OWNER, input.spec?.name ?? (input.role === "assistant" ? null : input.role), `${input.spec?.description ?? loadRole(input.role, app).description}
-${input.task}`);
+${input.task}`, input.replay?.view);
 }
 
 export type RoleRunInput = {
@@ -226,7 +237,16 @@ export type RoleRunInput = {
   reviewCheck?: boolean;
   /** Running as review-lead of a delegation round: read-only tools plus rule_review. */
   reviewLead?: boolean;
+  /** A replay arm (agents/replay.ts): what it sees and the only tools it gets. */
+  replay?: ReplayArm;
 };
+
+/**
+ * A replay arm: it answers a past question as of its time (`view`), with only these read-only tools,
+ * the backend in read-only mode, only the extra MCP servers marked `readOnly`, and the clock set to
+ * the question's time.
+ */
+export type ReplayArm = { view: RunView; tools: string[] };
 
 /**
  * Urgent and members-only Feishu messages: a rule's agent when the rule allows them; the owner's own
@@ -306,7 +326,7 @@ export function recordRunAI(app: App, runId: string | null, profile: AgentProfil
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; reviewLead?: boolean; lessons?: string },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; reviewLead?: boolean; lessons?: string; replay?: ReplayArm },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -351,6 +371,8 @@ export function prepareRun(
     tools.add(input.reviewLead ? "rule_review" : "submit_review");
     if (input.reviewCheck) tools.add("submit_change_points");
   }
+  // A replay arm reads and nothing else, whatever its role or profile may do elsewhere.
+  if (input.replay) for (const t of [...tools]) if (!input.replay.tools.includes(t)) tools.delete(t);
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
   const scoped = scopeFor(app, userId, spaces)?.filter(id => !input.readScope || input.readScope.includes(id)) ?? (input.readScope ?? null);
@@ -362,7 +384,7 @@ export function prepareRun(
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
-  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, plugin: spec?.plugin, shadow: input.shadow });
+  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   const guide = spaceGuide(app, space.id).trim();
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
   const lessons = guest ? "" : input.lessons ?? learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
@@ -375,21 +397,38 @@ export function prepareRun(
   const common = commonGuide(tools);
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
+  const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
   return {
     profile,
     cwd,
     system,
-    now: `现在：${localTime(app)}`,
+    // A replay arm answers as of the question's time.
+    now: `现在：${localTime(app, input.replay?.view.asOf)}`,
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length },
     token,
-    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token), ...(guest ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
-    extraMcp: input.reviewCheck || input.reviewLead ? {} : spec?.mcp ?? {},
-    allowWrites: input.reviewCheck || input.reviewLead ? false : spec ? spec.writes : role!.writes,
-    modes: input.reviewCheck || input.reviewLead ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
+    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token), ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
+    extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor(spec?.mcp ?? {}, !!input.replay),
+    allowWrites: readOnly ? false : spec ? spec.writes : role!.writes,
+    modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,
     // Guests never see the owner's memories unasked.
     recall: guest ? null : { spaces: readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), userId },
   };
+}
+
+/**
+ * A profile's extra MCP servers as the backend gets them (without omem's own `readOnly` mark); a
+ * replay arm only gets those marked `readOnly: true` (a research profile's search, never one that writes).
+ */
+function extraMcpFor(mcp: Record<string, McpServerSpec>, onlyReadOnly: boolean): Record<string, McpServerSpec> {
+  return Object.fromEntries(
+    Object.entries(mcp)
+      .filter(([, s]) => !onlyReadOnly || s.readOnly === true)
+      .map(([name, s]) => {
+        const { readOnly: _, ...rest } = s;
+        return [name, rest as McpServerSpec];
+      }),
+  );
 }
 
 /** Tools that hand work to another run and accept an `execution` choice. */
@@ -411,6 +450,7 @@ function routingGuide(app: App, profile: AgentProfile) {
     ...(r.candidates.length ? ["本人列出的候选：", ...r.candidates.map((c) => `- ${ai(c)}：${c.when}`)] : []),
     "偏好和候选里写了时段的（峰谷价格、排队高峰、某段时间不用），按每轮消息开头的现在时间对照着选。",
     "交办前用 list_ai_backends 看各模型现在的占用（正在用/上限）和近 7 天的完成、失败：同样合适时选空闲、失败少的，满了的会排队。",
+    ...(one(app.db, "select 1 from replays where verdict in ('win','loss','tie') and axis in ('A1','A2') limit 1") ? ["其中的 replay28d 是夜间复盘的单变量对比（同一题只换模型），样本小，只作参考。"] : []),
     ...(doubao ? ["doubao（豆包 OpenAPI）在云端运行，用不了 omem 的工具：只适合纯调研、写作。交给它时先自己把要用的材料取出来，原文一次性写进任务。"] : []),
   ].join("\n");
 }
@@ -481,7 +521,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const lessons = await lessonsForTask(app, input);
-  const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
+  const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead, replay: input.replay });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
@@ -506,7 +546,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     const moved = slot.index > 0;
     i += slot.index;
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
+    const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead, replay: input.replay });
     if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
     try {
       const req = {

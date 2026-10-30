@@ -126,6 +126,9 @@ export const runKindLabel: Record<string, string> = {
   "profile-review": "复盘",
   "role-merge": "合并角色",
   "peer-agent": "同伴的外部 Agent",
+  replay: "夜间复盘",
+  "replay-arm": "复盘重答",
+  "replay-judge": "复盘评判",
 };
 export const statusLabel: Record<string, string> = {
   queued: "排队中",

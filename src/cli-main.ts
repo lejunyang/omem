@@ -998,6 +998,51 @@ roles
     console.log(`${r.conflicts} 处冲突，模型合并：${run.status}${run.error ? `（${run.error}）` : ""}`);
   });
 
+const replay = program.command("replay").description("夜间复盘：回到提问时重答过去的问题，基线和只改一处的变体对比（docs/v2/replay.md）");
+replay
+  .command("list", { isDefault: true })
+  .description("状态（定时、replay-judge 的模型、上次结果）和最近的复盘")
+  .option("--limit <n>", "最多几条", Number)
+  .action(async (o) => {
+    const m = await import("./agents/replay.ts");
+    const app = open();
+    const s = m.replayStatus(app);
+    console.log(`定时：${s.enabled ? `打开（${s.cron}）` : "关闭"} · 每晚 ${s.max} 题 · 评判：${s.judge ? [s.judge.profile, s.judge.model, s.judge.effort].filter(Boolean).join(" · ") : "未选"}${s.judge?.sameFamilyAsAssistant ? "（和主助手同一家，评判可能偏向同类回答）" : ""}`);
+    if (s.notice) console.log(s.notice);
+    if (s.last) console.log(`上次：${JSON.stringify(s.last)}`);
+    for (const r of m.listReplays(app, { limit: o.limit ?? 20 }))
+      console.log(`\n${r.at.slice(0, 16)} ${r.id} [${r.verdictLabel}] ${r.axis} ${r.axisLabel} · ${m.SIGNAL_LABEL[r.signal as keyof typeof m.SIGNAL_LABEL] ?? r.signal}${r.taskType ? ` · ${r.taskType}` : ""}\n  ${r.question}${r.reason ? `\n  ${r.reason}` : ""}${r.effects.map((e) => `\n  · ${e.status} ${e.effect} ${e.targetId ?? ""} ${e.note}`).join("")}`);
+  });
+replay
+  .command("run")
+  .description("立即复盘：不带参数按选题规则挑 replay.max 题；--run 指定一次问答或档案运行，--axis 指定轴")
+  .option("--run <id>", "要复盘的运行 id")
+  .option("--axis <axis>", "R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2")
+  .action(async (o) => {
+    const local = open();
+    const remote = await runningServer(local);
+    if (remote) {
+      const res = await fetch(`${remote}/api/replays/run`, { method: "POST", headers: { "content-type": "application/json", ...(local.config.token ? { authorization: `Bearer ${local.config.token}` } : {}) }, body: JSON.stringify({ runId: o.run, axis: o.axis }) });
+      const body = (await res.json()) as { skipped?: string | null; runs?: string[]; error?: string };
+      if (!res.ok) throw new Error(body.error ?? res.statusText);
+      console.log(body.skipped ?? (body.runs?.length ? `已排队 ${body.runs.length} 题（服务里一题一题地跑）：${body.runs.join(" ")}` : "最近没有可以复盘的问题"));
+      return;
+    }
+    const booted = await boot(home(), { port: 0, quiet: true, background: false });
+    try {
+      const m = await import("./agents/replay.ts");
+      const r = await m.scheduleReplays(booted.app, { runId: o.run, axis: o.axis });
+      if (r.skipped) return void console.log(r.skipped);
+      if (!r.runs.length) return void console.log("最近没有可以复盘的问题");
+      for (const id of r.runs) {
+        const done = await waitForRun(booted.app, id);
+        console.log(`${done.status === "done" ? "✓" : "✗"} ${done.title}${done.error ? `：${done.error}` : (done.output as { summary?: string }).summary ? `\n  ${(done.output as { summary?: string }).summary}` : ""}`);
+      }
+    } finally {
+      await booted.server.close();
+    }
+  });
+
 const agents = program.command("agents").description("Agent 后端：列出、从 ACP 注册表添加");
 agents
   .command("list", { isDefault: true })

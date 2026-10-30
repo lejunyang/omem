@@ -24,9 +24,10 @@ import { HttpError } from "../core/util.ts";
 
 const NAME = /^[a-z0-9][a-z0-9-]{0,47}$/;
 
+/** `readOnly: true`: the server only reads (a search API, docs): replay arms may use it (agents/replay.ts). */
 const mcpServerSchema = z.union([
-  z.object({ command: z.string(), args: z.array(z.string()).default([]), env: z.record(z.string(), z.string()).default({}) }),
-  z.object({ url: z.string().url(), headers: z.record(z.string(), z.string()).default({}) }),
+  z.object({ command: z.string(), args: z.array(z.string()).default([]), env: z.record(z.string(), z.string()).default({}), readOnly: z.boolean().optional() }),
+  z.object({ url: z.string().url(), headers: z.record(z.string(), z.string()).default({}), readOnly: z.boolean().optional() }),
 ]);
 export type McpServerSpec = z.infer<typeof mcpServerSchema>;
 
@@ -52,6 +53,11 @@ export const agentSpecSchema = z.object({
   instructions: z.string().optional(),
   /** Comes from this plugin (docs/v2/plugins.md); its runs read and write the plugin's records. */
   plugin: z.string().optional(),
+  /**
+   * What kind of profile it is, for the host's own uses; the host never goes by a profile's name.
+   * `research`: looks beyond this library (the web, other systems) — nightly replay's R3 axis.
+   */
+  traits: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,31}$/)).default([]),
 });
 export type AgentSpec = z.infer<typeof agentSpecSchema> & { prompt: string; updatedBy?: string };
 

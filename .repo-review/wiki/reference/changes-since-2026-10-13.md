@@ -914,3 +914,15 @@ updated: 2026-10-30
 - **问题**：按批次追加写成的案例页，一个样本一节往后补，夹着阅读过程（“N 行已读、截图未展开”“本批”）、写给审稿人的否定句（“不能写成……”“不代表……”）和个人姓名，读者找不到该做什么。
 - **技能** `skills/library/wiki-writing/SKILL.md`（启动时补进技能库，本人可在网页上改）：七条要求（开头给答案、一句一事、重复结构用表格、不确定集中写一处、不写调查过程、不写给审稿人的话、人写角色或团队），案例页模板（先这样查 → 常见原因表 → 交给谁 → 历史样本表 → 还没查清），新样本加一行而不是追加一节，改写前后对照，知识页的写法和用词。
 - **角色**：`distiller`、`wiki-writer`、`wiki-linter` 挂上这个技能并可 `read_skill`；`distiller` 加“怎么写”一节，案例页改按模板、更新时整页改写；`wiki-writer` 加一句一事、表格、不写调查过程；`wiki-linter` 遇到追加式的案例页按模板整页重排；`_common.md` 的“表达”加一句一事和成稿不写过程，“工作文件与案例”改成模板和整页改写。
+
+## 10-30：夜间复盘（换一条信息路径再答一次）
+
+设计在 `docs/v2/replay.md`。
+
+- **选题与选轴**（`src/agents/replay.ts`）：`selectQuestions` 从最近 `replay.days` 天的 ask / agent 运行里按信号（负面表情、本人纠正、没找到、超时、正面对照、慢、正常）排序，取 `replay.max` 题；`touchedBy` 从 `memory_recalls`、工具事件和回答引用解析原运行碰过的记忆、原件、页面；`precheck` 用检索看问题落在本空间、被忽略的原件、别的空间还是哪都没有；`chooseAxis` 按 `replay.plan` 取第一个适用、这题没试过的轴；`modelStep` 按 `replay.models` 阶梯或思考强度降 / 升一档。
+- **回到当时**（`src/agents/replay-view.ts`）：`RunView`（`asOf`、`sourceLevels`、`memoryFilter`、`noPages`、`cache`）经 `runRole` / `prepareRun` 的 `replay` 参数进工具令牌（`ToolContext.view`）；`search`、`scan`、`recall`、`read_source`、`list_sources`、`list_pages`、`read_page`、`list_items` 和提示里的偏好与经验按它过滤：记忆按 supersede 链、聊天和对话逐行截断（`visibleLines`）、晚收的原件不存在、改过的文档和页面标“可能泄题”。两臂共用检索缓存（`viewSearch` 按最宽条件算一次）。
+- **两臂与评判**：`runArm` 是父运行 `replay` 里就地执行的子运行 `replay-arm`（只读工具 `REPLAY_TOOLS`、影子写入、后端只读模式、临时目录、只放行 `readOnly` 的外部 MCP、“现在”写提问时间）；`checkArm` / `crossCheck` 做引用检查；`judgeOnce` 用内置角色 `roles/replay-judge.md` 两种顺序各一次（子运行 `replay-judge`），`combine` 一致才算胜负。评判的 AI 由本人在 Agent 页选，`judgeChoice` 没选时 `scheduleReplays` 不运行并记下原因（kv `replay_last`）。
+- **改动**：`applyEffects` 写 `replay_effects`：M1 胜清空 `reviewed_at` 并写 `review_note`、M1 负记 helped、W1 胜给页面排 `wiki-lint`（新输入 `recheck`）、R2 胜进 `space-candidates.ts` 的关联候选；S1 / S2 / R3 的建议由 `resolveEffect` 采纳或忽略（卡片按钮 `replay:adopt|ignore:<id>`，`lark-actions.ts`）。`jobs.ts` 的 `sendItemDigests` 给本人的清点卡片加“昨晚复盘”一节；做梦任务带 helped 和存量经验噪声，记忆复核任务带复盘备注，coach 的复盘任务带该档案的复盘结论。
+- **选型证据**：`replayModelEvidence` → `list_ai_backends` 的 `replay28d`；`runner.ts` 的任务选型说明加一句“只作参考”。
+- **入口**：定时任务 `replay`（4:30，默认关）、`omem replay [list|run]`、`GET /api/replays`、`POST /api/replays/run`、`POST /api/replay-effects/:id/:action`、同伴命令 `replays` / `replay-run`、`omem diag` 的 `replay`；设置 → Agent → 夜间复盘（`web/src/components/ReplaySettings.vue`），Agent 页首屏的复盘列表（`ReplayList.vue`）。档案 frontmatter 新增 `traits`（`research` 用于 R3），MCP 条目新增 `readOnly`。表 `replays`、`replay_effects`（迁移，随 `peer pull` 同步）。
+- **未做**：K 轴、coach 按汇总证据提 `routing.candidates`、私有回归集。

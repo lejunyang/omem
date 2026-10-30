@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import AiRouting from "../components/AiRouting.vue";
 import AiCapacity from "../components/AiCapacity.vue";
+import ReplaySettings from "../components/ReplaySettings.vue";
 import { detectProbe, probes as shared } from "../lib/probes";
 import Icon from "../components/Icon.vue";
 import CronEditor from "../components/CronEditor.vue";
@@ -17,7 +19,11 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
-const tab = ref<"spaces" | "agents" | "schedules" | "search" | "lark" | "shares" | "plugins" | "storage" | "about">("spaces");
+type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "shares" | "plugins" | "storage" | "about";
+const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "shares", "plugins", "storage", "about"];
+// Other pages link to a tab (?tab=agents from the Agent page's nightly replay).
+const asked = useRoute().query.tab;
+const tab = ref<Tab>(TABS.includes(asked as Tab) ? (asked as Tab) : "spaces");
 const config = ref<any>(null);
 const profiles = ref<Profile[]>([]);
 const home = ref("");
@@ -717,6 +723,7 @@ async function saveEdit() {
           <button class="btn sm" :disabled="!compareDraft.profile" @click="addCompare">添加</button>
         </div>
       </div>
+      <ReplaySettings v-if="config.replay" :value="config.replay" :backends="profileOptions" :model-options="modelOptionsFor" @save="(replay, note) => saveConfig({ replay }, note)" />
       <div class="card pad stack">
         <div class="section-title">添加或修改 Agent 配置</div>
         <textarea v-model="profileJson" class="textarea mono" rows="9" placeholder='{"id":"codex-sol","name":"Codex · Sol","transport":"acp","command":"codex-acp","args":[],"model":"gpt-6.1-sol","effort":"low"}' />

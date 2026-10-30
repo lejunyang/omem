@@ -925,6 +925,46 @@ const migrations: string[] = [
   create table source_aliases (alias_id text primary key, source_id text not null, reason text not null, detail text not null default '{}', created_at text not null);
   create index source_aliases_target on source_aliases(source_id);
   `,
+  // Nightly replay (src/agents/replay.ts, docs/v2/replay.md): one past question answered again as of
+  // its time, a baseline re-run against one variant that changes a single axis, deterministic checks,
+  // a blind judge in both orders; what the result changes (memory re-review, suggestions) in replay_effects.
+  `
+  create table replays (
+    id text primary key,
+    task_run_id text,                         -- the replay run (kind replay)
+    signal text not null,                     -- negative | correction | notFound | timeout | slow | normal | positive | manual
+    task_type text,
+    axis text not null,                       -- R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2
+    variant text not null default '{}',       -- what the variant arm changed
+    as_of text not null,
+    base_run_id text not null,                -- the original run
+    baseline_run_id text,                     -- the baseline re-run (kind replay-arm)
+    arm_run_id text,                          -- the variant (kind replay-arm)
+    touched text not null default '{}',       -- what the original run touched: memories, sources, pages
+    checks text not null default '{}',
+    verdict text,                             -- win | loss | tie | void | failed (from the variant's side)
+    judge text not null default '{}',
+    cost text not null default '{}',
+    status text not null default 'running',   -- running | done | failed
+    at text not null,
+    finished_at text
+  );
+  create index replays_base on replays(base_run_id, axis);
+  create index replays_at on replays(at);
+  create table replay_effects (
+    id text primary key,
+    replay_id text not null,
+    target_kind text not null,                -- memory | source | attention-rule | space | page | item | profile | routing | dream
+    target_id text,
+    effect text not null,                     -- rereview | helped | level | rule | relate | lint | import | prompt | digest-noise
+    note text not null default '',
+    status text not null default 'pending',   -- pending | adopted | ignored | applied | info
+    at text not null,
+    resolved_at text
+  );
+  create index replay_effects_replay on replay_effects(replay_id);
+  create index replay_effects_target on replay_effects(target_kind, target_id, effect);
+  `,
 ];
 
 export type Db = DatabaseSync;

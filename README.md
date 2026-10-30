@@ -170,6 +170,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 减少巡检、材料整理在后端的重复会话 | 默认按权限与角色复用后台 ACP 会话，超过 60% 上下文换新；不支持用量报告的后端保持单次任务 |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
 | 看记忆写得好不好、哪个模型写得好 | “记忆 → 质量”：按模型看写入数、被退回的原因、复核结果；`omem memories stats`。旧记忆可用 `omem memories check` 过一遍检查 |
+| 想知道记忆、原件级别、Wiki 和模型到底帮没帮上忙 | 夜间复盘：先在 Agent 页给内置角色 replay-judge 选一个模型（最好和主助手不同家），再到设置 → Agent → 夜间复盘打开定时、设每晚几题。它挑最近被纠正、说没找到、加了表情或正常完成的问题，回到提问时重答两次，只改一处（检索、原件级别、记忆、页面或模型），盲评后把误导的记忆送回复核、给页面排检查；原件降级、导入材料这类建议在早上的事项清点卡片或 Agent 页采纳。`omem replay run --run <运行id>` 手动复盘一题，`omem replay` 看结果 |
 | 让 Agent 替我操作电脑上的程序或网页（填表、点按钮、看界面现在是什么样） | `omem setup` → 桌面与浏览器控制（或 `omem setup desktop`、设置 → Agent）经 osdk 装好 ai-auto-desktop，之后对助理说要做什么；内置技能 `desktop-control` 规定默认只看、动手前先问你、不输入密码 |
 | 开会时让机器人进会记录、有人问到我时提醒我 | 规则 → 新建 → 触发选“我加入会议时”，按标题、人数、参会人写条件，动作“拉机器人入会”勾选机器人、记录、旁听；确认方式可选始终询问、直接加入或按条件询问（如 30 人及以上先问）；保存后看“飞书权限”，缺的点链接申请。会议本身要打开“允许智能体加入” |
 | 一台机器常驻，在别的电脑上看它、拉数据和代码仓库 | 见“多台设备”：`omem peer invite` / `add` 配对，`omem peer pull` 合并原件、记忆、规则、评审记录、Wiki、档案、附件与仓库，`omem link` 在浏览器里打开 |
@@ -244,6 +245,7 @@ omem mcp --peer <同伴>                      # 同上，作为 stdio MCP 服务
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
+omem replay [list] / omem replay run [--run <运行id>] [--axis M1]  # 夜间复盘：看状态和结论；立即复盘（不给 --run 时按选题规则挑 replay.max 题）
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）
 omem agents registry                        # 官方 ACP 注册表里的 Agent
 omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / uvx / 下载程序）
@@ -387,6 +389,8 @@ omem peer call <同伴> agents '{}'           # 只读：它上面的 AI 后端�
 omem peer call <同伴> search '{"query":"退款规则","limit":5}'   # 只读：Agent 的 search 工具同一套检索，看真实数据上的命中
 omem peer call <同伴> prompt '{"space":"personal","role":"coder","task":"…"}'   # 只读：预览一次运行收到的常驻说明（不含令牌）
 omem peer call <同伴> ide '{}'              # 只读：网页版 VS Code 的服务端版本、扩展与语言包（界面按键翻译了多少）、omem 插件、可复用的设置与扩展、语言和终端设置、日志、进程
+omem peer call <同伴> replays '{}'          # 只读：夜间复盘的状态（定时、replay-judge 的模型、上次结果或没跑的原因）和最近的结论
+omem peer call <同伴> replay-run '{"run_id":"r…","axis":"M1"}'   # 立即复盘一题（不带参数按选题规则挑）
 omem peer call <同伴> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适配器（如 codex-acp）升到 npm 最新版，返回前后版本
 omem peer call <同伴> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
 omem peer call <同伴> lark-docs-refresh '{"metadataOnly":true,"unchecked":true}'  # 只补读从没读过知识库位置的文档的目录（不重读正文），补全原件页的知识库目录树
@@ -439,7 +443,7 @@ src/items     事项（时间线）
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）
-src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts
+src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
