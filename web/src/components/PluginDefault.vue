@@ -57,8 +57,8 @@ async function say() {
     if (!id) {
       id = (await post<{ id: string }>(`${base}/sessions`, { title: text.slice(0, 40) })).id;
       // Events can be missed (a reconnect); while a turn is under way, look again now and then.
-  poll = setInterval(() => current.value?.busy && void refresh().catch(() => {}), 4000);
-  sessions.value = await get(`${base}/sessions`);
+      poll ??= setInterval(() => current.value?.busy && void refresh().catch(() => {}), 4000);
+      sessions.value = await get(`${base}/sessions`);
     }
     await post(`${base}/sessions/${id}/messages`, { text });
     draft.value = "";
@@ -166,6 +166,10 @@ onBeforeUnmount(() => {
 .timeline {
   display: grid;
   gap: 14px;
+}
+/* Scrolled into view at the end, an entry stops above the sticky composer instead of behind it. */
+.timeline > * {
+  scroll-margin-bottom: 96px;
 }
 .me {
   justify-self: end;
