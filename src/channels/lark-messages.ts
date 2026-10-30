@@ -3,6 +3,7 @@ import { basename, extname, join } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { json } from "../core/util.ts";
+import { hasStoredFile } from "../core/stored-files.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
 import { resourceKeys } from "./lark-resource-keys.ts";
 import { queueResourceParsing } from "./lark-resource-parse.ts";
@@ -169,7 +170,7 @@ export async function keepResources(app: App, spaceId: string, chatId: string, m
     for (const r of m.resources ?? []) {
       const optional = keys.optional.has(r.key);
       if (optional) refs[r.key] = { ...refs[r.key], type: r.type ?? "image", optional: true };
-      if (r.error && refs[r.key]?.file && existsSync(join(app.filesDir, refs[r.key].file!))) continue;
+      if (r.error && refs[r.key]?.file && hasStoredFile(app, refs[r.key].file!)) continue;
       if (optional && (r.error || !r.local_path)) continue;
       if (r.error || !r.local_path || !r.key) { if (strict) throw new Error(`附件下载未完成（${m.message_id}）`); continue; }
       const path = existsSync(r.local_path) ? r.local_path : join(cwd, r.local_path);
@@ -192,10 +193,10 @@ export async function keepResources(app: App, spaceId: string, chatId: string, m
       }
     }
     if (asSources) for (const [key, ref] of Object.entries(refs)) {
-      if (!ref.optional && !keys.optional.has(key) && ref.file && !ref.sourceId && needsDocumentConversion(ref.file) && existsSync(join(app.filesDir, ref.file)))
+      if (!ref.optional && !keys.optional.has(key) && ref.file && !ref.sourceId && needsDocumentConversion(ref.file) && hasStoredFile(app, ref.file))
         ref.parse ??= { status: "pending" };
     }
-    if (strict) for (const key of keys.required) if (!refs[key]?.file || !existsSync(join(app.filesDir, refs[key].file!)))
+    if (strict) for (const key of keys.required) if (!refs[key]?.file || !hasStoredFile(app, refs[key].file!))
       throw new Error(`附件下载未完成（${m.message_id}/${key}）`);
   }
   return byMessage;
@@ -439,9 +440,9 @@ export function messageResourceFile(app: App, messageId: string, key: string): P
 function knownResourceFile(app: App, messageId: string, key: string): string | null {
   const row = one<{ resources: string }>(app.db, "select resources from lark_messages where message_id = ?", messageId);
   const fromRow = row ? json<Record<string, ResourceRef>>(row.resources, {})[key]?.file : undefined;
-  if (fromRow && existsSync(join(app.filesDir, fromRow))) return fromRow;
+  if (fromRow && hasStoredFile(app, fromRow)) return fromRow;
   const kv = one<{ value: string }>(app.db, "select value from kv where key = ?", `lark_res:${messageId}/${key}`)?.value;
-  return kv && existsSync(join(app.filesDir, kv)) ? kv : null;
+  return kv && hasStoredFile(app, kv) ? kv : null;
 }
 
 async function downloadResource(app: App, messageId: string, key: string): Promise<string | null> {

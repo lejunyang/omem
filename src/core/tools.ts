@@ -5,7 +5,8 @@ import { commandExists } from "../agents/spawn.ts";
 
 /**
  * External programs omem calls (uv for Docling and the judge's Python side,
- * llama-server for the judge, aad for desktop and browser control). Use the one
+ * llama-server for the judge, aad for desktop and browser control, ffmpeg and
+ * ffprobe for compressing stored media). Use the one
  * on PATH when there is one; otherwise run osdk's managed copy through
  * `osdk exec`, so the user never has to put osdk shims on PATH or select a
  * version by hand.
@@ -20,6 +21,8 @@ export const OSDK_TOOLS: Record<string, string[]> = {
   uvx: ["conda:uv", "pypi:uv"],
   "llama-server": ["conda:llama.cpp"],
   aad: ["github:lejunyang/ai-auto-desktop"],
+  ffmpeg: ["conda:ffmpeg"],
+  ffprobe: ["conda:ffmpeg"],
 };
 /** The package a tool is installed from (the first candidate). */
 export const installSpec = (name: string) => OSDK_TOOLS[name]?.[0];
@@ -39,6 +42,20 @@ export function installOptions(name: string, platform: string = process.platform
   return [];
 }
 
+/**
+ * `osdk use -g` for ffmpeg: it also selects the package, so the `ffmpeg` / `ffprobe` shims on PATH
+ * work for the owner's shell too. Their PATH entry is checked by running it, as for directory tools:
+ * an unselected install leaves a shim that only says "no backend provides".
+ */
+const USE_GLOBAL = new Set(["ffmpeg", "ffprobe"]);
+/** The osdk arguments that install a tool. */
+export function installArgs(name: string): string[] {
+  const spec = installSpec(name)!;
+  return [...(USE_GLOBAL.has(name) ? ["use", "-g"] : ["install"]), spec, ...installOptions(name)];
+}
+/** ffmpeg only knows `-version` (`--version` exits with an error). */
+const versionFlag = (name: string) => (name === "ffmpeg" || name === "ffprobe" ? "-version" : "--version");
+
 let override: ((name: string) => string[] | null) | null = null;
 /** Tests: decide how a tool is invoked. */
 export function setToolResolverForTests(fn: ((name: string) => string[] | null) | null) {
@@ -48,7 +65,7 @@ export function setToolResolverForTests(fn: ((name: string) => string[] | null) 
 /** argv prefix that runs `name`, or null when neither PATH nor osdk can provide it. */
 export function toolCommand(name: string): string[] | null {
   if (override) return override(name);
-  if (DIR_TOOLS.has(name) ? pathWorks(name) : commandExists(name)) return [name];
+  if (DIR_TOOLS.has(name) || USE_GLOBAL.has(name) ? pathWorks(name) : commandExists(name)) return [name];
   if (!commandExists("osdk")) return null;
   if (DIR_TOOLS.has(name)) {
     const dir = osdkToolDir(name);
@@ -66,7 +83,7 @@ const works = new Map<string, { at: number; ok: boolean }>();
 function pathWorks(name: string) {
   const hit = works.get(name);
   if (hit && Date.now() - hit.at < DIR_TTL_MS) return hit.ok;
-  const ok = commandExists(name) && spawnSync(name, ["--version"], { windowsHide: true, timeout: 15_000, shell: process.platform === "win32", stdio: "ignore" }).status === 0;
+  const ok = commandExists(name) && spawnSync(name, [versionFlag(name)], { windowsHide: true, timeout: 15_000, shell: process.platform === "win32", stdio: "ignore" }).status === 0;
   works.set(name, { at: Date.now(), ok });
   return ok;
 }
@@ -78,7 +95,7 @@ function osdkHas(spec: string) {
     const opts = { encoding: "utf8" as const, windowsHide: true, shell: process.platform === "win32", timeout: 30_000 };
     const where = spawnSync("osdk", ["where", spec], opts);
     const bin = spec === "conda:llama.cpp" ? "llama-server" : spec.split(":")[1];
-    known.set(spec, where.status === 0 && spawnSync("osdk", ["exec", "--no-deps", "-t", spec, "--", bin, "--version"], opts).status === 0);
+    known.set(spec, where.status === 0 && spawnSync("osdk", ["exec", "--no-deps", "-t", spec, "--", bin, versionFlag(bin)], opts).status === 0);
   }
   return known.get(spec)!;
 }
@@ -120,18 +137,23 @@ function osdkToolDir(name: string): string | null {
 export function installTool(name: string, opts: { inherit?: boolean } = {}) {
   const spec = installSpec(name);
   if (!spec || !commandExists("osdk")) return !!toolCommand(name);
-  const r = spawnSync("osdk", ["install", spec, ...installOptions(name)], { stdio: opts.inherit ? "inherit" : "pipe", windowsHide: true, shell: process.platform === "win32" });
-  for (const s of OSDK_TOOLS[name]) known.delete(s);
+  const r = spawnSync("osdk", installArgs(name), { stdio: opts.inherit ? "inherit" : "pipe", windowsHide: true, shell: process.platform === "win32" });
+  forgetTool(name);
+  return r.status === 0 && !!toolCommand(name);
+}
+
+/** Drop what is cached about a tool (after installing it some other way). */
+export function forgetTool(name: string) {
+  for (const s of OSDK_TOOLS[name] ?? []) known.delete(s);
   dirs.delete(name);
   works.delete(name);
-  return r.status === 0 && !!toolCommand(name);
 }
 
 /** What `name --version` prints (the first version-looking token), or null when it cannot run. */
 export function toolVersion(name: string): string | null {
   const cmd = toolCommand(name);
   if (!cmd) return null;
-  const r = spawnSync(cmd[0], [...cmd.slice(1), "--version"], { encoding: "utf8", windowsHide: true, timeout: 15_000, shell: false });
+  const r = spawnSync(cmd[0], [...cmd.slice(1), versionFlag(name)], { encoding: "utf8", windowsHide: true, timeout: 15_000, shell: false });
   if (r.status !== 0) return null;
   return /\d+\.\d+\.\d+[\w.+-]*/.exec(`${r.stdout ?? ""}`)?.[0] ?? null;
 }

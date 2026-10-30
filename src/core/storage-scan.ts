@@ -87,6 +87,12 @@ function fileOrigins(db: DatabaseSync) {
     put(r.file, "doc-media", r.title);
   for (const r of db.prepare("select title, uri, json_extract(meta, '$.original') file from sources where json_extract(meta, '$.original') is not null").iterate() as Iterable<{ title: string; uri: string; file: string }>)
     put(r.file, r.uri.startsWith("lark:") ? "chat" : "import", r.title);
+  // A compressed copy (media.ts) belongs where its original is referenced.
+  if (hasTable(db, "file_variants"))
+    for (const r of db.prepare("select original, file from file_variants where status = 'done' and file is not null").iterate() as Iterable<{ original: string; file: string }>) {
+      const o = origins.get(r.original);
+      if (o) put(r.file, o.origin, o.label);
+    }
   return origins;
 }
 

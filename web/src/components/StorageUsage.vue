@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { authUrl, get, post } from "../api";
 import Icon from "./Icon.vue";
+import MediaCompress from "./MediaCompress.vue";
 import Skeleton from "./Skeleton.vue";
 import UiSegmented from "./UiSegmented.vue";
 import { fmtTime, toast } from "../store";
@@ -129,6 +130,7 @@ const sourceMax = computed(() => Math.max(1, ...(report.value?.db.sources ?? [])
     </div>
     <div v-if="status?.error" class="card pad small danger-text">{{ status.report || status.running ? "上次统计失败" : "读取失败" }}：{{ status.error }}</div>
     <Skeleton v-if="!status || (status.running && !report)" variant="lines" :rows="6" />
+    <MediaCompress v-if="status && !report" />
 
     <template v-if="report">
       <section class="card pad stack">
@@ -169,6 +171,8 @@ const sourceMax = computed(() => Math.max(1, ...(report.value?.db.sources ?? [])
           </div>
         </details>
       </section>
+
+      <MediaCompress />
 
       <section class="card pad stack">
         <div class="section-title">数据库 · 文件 {{ fmt(report.db.fileBytes) }}</div>

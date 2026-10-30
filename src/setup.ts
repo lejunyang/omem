@@ -9,7 +9,7 @@ import { doubaoTokenExists } from "./agents/doubao.ts";
 import type { App } from "./core/app.ts";
 import { builtinProfiles, roleNames, saveConfig, type AgentProfile, type Config } from "./core/config.ts";
 import { run } from "./core/db.ts";
-import { desktopControl, installSpec, installTool, toolCommand } from "./core/tools.ts";
+import { desktopControl, installArgs, installSpec, installTool, toolCommand, toolStatus } from "./core/tools.ts";
 import { judgeProject } from "./sources/judge.ts";
 import { ensureDefaultSchedules, listSchedules, scheduleLabels } from "./core/scheduler.ts";
 import { larkCliInteractive, larkCliText, larkCliWithInput } from "./channels/lark-cli.ts";
@@ -725,12 +725,44 @@ async function setupSchedulesSection(app: App) {
   return true;
 }
 
+// ---- media compression (ffmpeg) ---------------------------------------------
+
+/** Install ffmpeg through osdk (`osdk use -g conda:ffmpeg`, which also selects it for the shell); true when it runs afterwards. */
+export function installFfmpeg() {
+  if (!osdkAvailable()) {
+    guideOsdk();
+    out("  也可以用系统的包管理器装 ffmpeg（apt install ffmpeg、brew install ffmpeg），放进 PATH 即可。");
+    return false;
+  }
+  out(`  经 osdk 安装 ffmpeg（osdk ${installArgs("ffmpeg").join(" ")}）…`);
+  const done = installTool("ffmpeg", { inherit: true });
+  if (!done) out(`  安装失败，稍后可运行 osdk ${installArgs("ffmpeg").join(" ")} 重试。`);
+  return done;
+}
+
+export function ffmpegStateLine() {
+  const st = toolStatus("ffmpeg");
+  if (!st.installed) return "未安装";
+  return `已安装 ffmpeg ${st.version ?? "（版本未知）"}${st.via === "path" ? "（在 PATH 上）" : "（经 osdk）"}${toolCommand("ffprobe") ? "" : "；没有 ffprobe，压缩后不核对时长"}`;
+}
+
+async function setupFfmpegSection() {
+  out(`
+附件压缩（ffmpeg）：${ffmpegStateLine()}`);
+  out("把 files/ 里的图片转成 WebP、视频转成 AV1、音频转成 Opus 或 FLAC，可选无损或有损。原来的引用不变，打开时自动换成压缩后的文件。");
+  out("装好后在网页的 设置 → 占用 里选范围和方式，开始压缩。");
+  if (toolStatus("ffmpeg").installed) return false;
+  if (!(await confirm({ message: "现在安装 ffmpeg？", default: true }))) return false;
+  if (installFfmpeg()) out(`  ✓ ${ffmpegStateLine()}`);
+  return false;
+}
+
 // ---- entry ----------------------------------------------------------------
 
 export async function setupInteractive(app: App) {
   const config = app.config;
   out(`omem 设置 · 数据目录 ${app.home}`);
-  out(`本机：${ok(osdkAvailable())} osdk  ${ok(!!toolCommand("uv"))} uv  ${ok(commandExists("git"))} git  ${ok(desktopControl.status().installed)} aad  · 向量 ${config.embeddings.provider === "none" ? "未开启" : config.embeddings.model}`);
+  out(`本机：${ok(osdkAvailable())} osdk  ${ok(!!toolCommand("uv"))} uv  ${ok(commandExists("git"))} git  ${ok(desktopControl.status().installed)} aad  ${ok(!!toolCommand("ffmpeg"))} ffmpeg  · 向量 ${config.embeddings.provider === "none" ? "未开启" : config.embeddings.model}`);
   if (!osdkAvailable()) guideOsdk();
   const sections = await checkbox({
     message: "要设置哪些部分（空格选择，回车确认）",
@@ -741,6 +773,7 @@ export async function setupInteractive(app: App) {
       { value: "channels", name: "渠道：飞书 / Telegram / QQ·微信" },
       { value: "guard", name: "注入标记（本地小模型，可选）" },
       { value: "desktop", name: "桌面与浏览器控制（ai-auto-desktop，可选）" },
+      { value: "ffmpeg", name: "附件压缩（ffmpeg，可选）" },
       { value: "sessions", name: "会话与并发" },
       { value: "schedules", name: "定时任务（巡检、简报、做梦、同步…）" },
     ],
@@ -754,6 +787,7 @@ export async function setupInteractive(app: App) {
       if (s === "channels") await setupChannelsSection(app);
       if (s === "guard") await setupGuardSection(config);
       if (s === "desktop") await setupDesktopSection();
+      if (s === "ffmpeg") await setupFfmpegSection();
       if (s === "sessions") await setupSessionsSection(config);
       if (s === "schedules") await setupSchedulesSection(app);
     } catch (e) {

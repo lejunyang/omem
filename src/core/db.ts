@@ -1004,6 +1004,21 @@ const migrations: string[] = [
   create index lark_kb_reads_kb on lark_kb_reads(kb_id, at);
   create index lark_kb_reads_at on lark_kb_reads(at);
   `,
+  // Compressed stored media (core/media.ts): references keep the original name, stored-files.ts opens the variant.
+  `create table file_variants (
+    original text primary key,
+    status text not null,
+    file text,
+    mode text not null,
+    quality text not null default '',
+    codec text not null default '',
+    original_bytes integer not null,
+    bytes integer,
+    error text,
+    created_at text not null
+  );
+  create index file_variants_file on file_variants(file) where file is not null;
+  `,
 ];
 
 export type Db = DatabaseSync;

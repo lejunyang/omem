@@ -118,6 +118,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 想做的事 | 怎么做 |
 | --- | --- |
 | 数据目录越来越大，想知道占在哪 | 设置 → 占用 → 开始统计：数据目录各部分的大小；附件按类型（图片、视频、音频、文档……）和来源（群聊附件、在线文档里的图片、导入的原件、没有引用的）分开，列出最大的几十个文件；数据库按模块展开到表（行数、索引），原件按类别分正文、切块和向量，并给出删除后留下的空闲页。统计在后台进程里读一遍整个库，库大时要几分钟，结果留着下次直接看 |
+| 图片和视频把磁盘占满了 | 设置 → 占用 → 压缩附件（没有 ffmpeg 时先点“安装 ffmpeg”，或 `omem setup ffmpeg`）：选图片 / 视频 / 音频、有损或无损、质量、长边上限，可以先试 20 个。有损把图片转 WebP、视频转 AV1、音频转 Opus；无损只做内容不变的转换（PNG 等转无损 WebP，WAV 转 FLAC）。聊天和文档里原来的引用不变，打开时自动换成压缩后的文件；可以先两份都留着，确认没问题再删原件 |
 | 让同类材料自动进入项目空间 | 规则 → 归档规则，按标题、正文、网址 / 路径、中文采集渠道、知识库名称和目录路径设条件，或用原话让 AI 编写；从上到下匹配（选中规则后可上移），首条命中即停止 |
 | 整理已有材料、修正一份原件的归属 | 规则 → 归档规则 → 列表底部“整理已有材料” → 预览当前空间，核对后应用；旧飞书文档可先“更新飞书目录”，只补目录名称。未命中的可交给 AI 判断。原件详情标题下的“换空间”，可手动指定并查看历次归属 |
 | 定时做日常总结，不想误交给专用档案 | 任务规则交给“主助手”；定时规则要回复时选“发到”哪个会话或已采集的飞书群（机器人需在群中），动作也可单独指定查资料的空间；缺少投递目标的旧规则会明确报错 |
@@ -257,6 +258,7 @@ omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见�
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
 omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
 omem setup desktop                          # 安装或更新桌面与浏览器控制（ai-auto-desktop 的 aad），并做只读的环境检查
+omem setup ffmpeg                           # 经 osdk 安装 ffmpeg（osdk use -g conda:ffmpeg），用来压缩附件里的图片、视频和音频
 omem space sync omem --exclude docs/archive # 同步仓库空间并排除路径
 omem space relate shop-web shop-api -n "调用订单接口"  # 关联两个空间（--remove 取消）
 omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读的 Markdown
@@ -444,7 +446,7 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 代码结构：
 
 ```
-src/core      配置、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）
+src/core      配置、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）
 src/rules     任务规则、条件判断、执行动作与触发记录
 src/sources   归档规则与原件迁移（archive.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合

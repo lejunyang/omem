@@ -1300,7 +1300,7 @@ program
 
 program
   .command("setup [component]")
-  .description("设置向导：Agent、向量模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | documents | desktop")
+  .description("设置向导：Agent、向量模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | documents | desktop | ffmpeg")
   .option("--model <id-or-dir>", "embeddings：模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（经 osdk 下载）")
   .option("--no-osdk", "不经 osdk，直接从 Hugging Face 下载")
   .action(async (component: string | undefined, o) => {
@@ -1348,7 +1348,13 @@ program
       if (probe) console.log([`环境检查：${probe.line}`, ...probe.notes.map((n) => `  · ${n}`)].join("\n"));
       return;
     }
-    throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup documents | omem setup desktop");
+    if (component === "ffmpeg") {
+      // Non-interactive: install ffmpeg through osdk for compressing stored media (settings → 占用).
+      if (!setup.installFfmpeg()) throw new Error("没有装好 ffmpeg");
+      console.log(setup.ffmpegStateLine());
+      return;
+    }
+    throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup documents | omem setup desktop | omem setup ffmpeg");
   });
 
 program.addCommand(memoriesCommand);

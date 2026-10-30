@@ -6,6 +6,7 @@ import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { json } from "../core/util.ts";
 import { keepOriginal } from "../sources/import.ts";
+import { hasStoredFile } from "../core/stored-files.ts";
 import { sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
 import { clearWikiLocationCache } from "./lark-wiki.ts";
@@ -1076,7 +1077,7 @@ export function larkDocsStatus(app: App) {
     withoutLocalMedia: docs.filter((d) => remote.test(d.text)).length,
     neverLocalized: metas.filter((m) => !m.media).length,
     mediaFiles: media.size,
-    missingMediaFiles: [...media].filter((f) => !existsSync(join(app.filesDir, f))).length,
+    missingMediaFiles: [...media].filter((f) => !hasStoredFile(app, f)).length,
     failedMedia,
     unreadableLinks: {
       retrying: missing.filter((m) => !m.gaveUp).length,

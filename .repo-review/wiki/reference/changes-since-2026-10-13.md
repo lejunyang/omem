@@ -953,3 +953,12 @@ updated: 2026-10-30
 - **原因**：任务选型（`agents.routing`）只写进会交办的运行（`DELEGATING`：run_agent、ask_agent、delegate_code……），由助手在交办时选；规则、定时任务这类宿主自己开的运行用档案或角色的默认 AI，规则任务说明里写的模型不会生效。
 - **规则动作**（`rules/types.ts`）：`agent` 动作加 `ai: {profile, model?, effort?}`；`saveRule` 用 `validateExecution` 按后端最近的检测核对；`actions.ts` 的 `ruleAI` 把它作为运行的 `execution`（`source: user`，理由“规则「…」指定”）放进普通和静默排查两条路径开出的运行，`runRole` 照常换用。
 - **界面与草稿**：规则页“交给 Agent”加“指定 AI”（复用 `AiDefaults`，默认显示档案自己的后端）；`/api/rule-options` 带 `backends` 和各档案的默认后端；草稿生成的提示列出可用后端和检测到的模型，本人点名模型时写 `ai`、不写进 task。`test/rules.test.ts` 覆盖保存核对、运行带上和不指定时不带。
+
+## 10-30：压缩附件（ffmpeg）
+
+常驻服务器 70 GB 的数据目录里图片和视频占了 47 GB，要能把它们转成压缩率高的格式，又不能让原来的引用失效。
+
+- **ffmpeg**（`src/core/tools.ts`）：`OSDK_TOOLS` 加 `ffmpeg`、`ffprobe`（`conda:ffmpeg`），安装用 `osdk use -g`（同时选用，PATH 上的垫片对本人的 shell 也能用）；ffmpeg 只认 `-version`；PATH 上的 ffmpeg 要能跑才算（osdk 装了没选用时垫片只会报 no backend provides），否则经 `osdk exec`。`omem setup ffmpeg` 和向导里的“附件压缩”。
+- **压缩**（新增 `src/core/media.ts`）：候选按大小倒序；有损图片 WebP、视频 SVT-AV1（没有时 x264）、音频 Opus（没有时 AAC），可限长边；无损只做 PNG/BMP/TIFF/GIF → 无损 WebP、WAV/AIFF → FLAC。ffprobe 核对时长，省不到 10% 记为 kept。结果写 `file_variants`，作业状态在内存、结束后存 kv `media_compress_last`。
+- **对应关系**（新增 `src/core/stored-files.ts`、迁移 `file_variants`）：原件名仍是引用，`storedName` 在原件不在时返回压缩件；`sendStoredFile` 按实际文件给类型和下载名，飞书附件与文档图片的存在检查、`read_source` 给 Agent 的路径、`keepOriginal`（不把压缩过的原件写回）都走它；`storage-scan` 把压缩件归到原件的来源；`file_variants` 进 `pullTables`。
+- **网页**：`web/src/components/MediaCompress.vue`，放在占用页附件卡片下。

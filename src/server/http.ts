@@ -437,9 +437,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   /** A stored original (images, PDFs, videos with Range support). */
   async function sendStoredFile(req: FastifyRequest, reply: FastifyReply, name: string) {
     if (!/^[a-f0-9]{16}\.[a-z0-9]+$/.test(name)) throw new HttpError(400, "bad name");
-    const file = join(app.filesDir, name);
-    if (!existsSync(file)) throw new HttpError(404, "not found");
-    const ext = name.split(".").pop()!;
+    // A compressed copy (core/media.ts) answers for the original name; its type is the copy's.
+    const { storedName } = await import("../core/stored-files.ts");
+    const actual = storedName(app, name);
+    if (!actual) throw new HttpError(404, "not found");
+    const file = join(app.filesDir, actual);
+    const ext = actual.split(".").pop()!;
     const types: Record<string, string> = {
       png: "image/png",
       jpg: "image/jpeg",
@@ -452,7 +455,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       webm: "video/webm",
       mp3: "audio/mpeg",
       m4a: "audio/mp4",
+      avif: "image/avif",
+      ogg: "audio/ogg",
+      opus: "audio/ogg",
+      flac: "audio/flac",
     };
+    if (actual !== name) reply.header("content-disposition", `inline; filename="${name.replace(/\.[^.]+$/, "")}.${ext}"`);
     reply.type(types[ext] ?? "application/octet-stream").header("accept-ranges", "bytes").header("x-content-type-options", "nosniff");
     // Videos are seeked with Range requests.
     const size = statSync(file).size;
@@ -1735,6 +1743,53 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const m = await import("../core/storage.ts");
     void m.startStorageScan(app);
     return m.storageStatus(app);
+  });
+  // Compressing stored media with ffmpeg (settings → 占用): install and detect ffmpeg, start or stop a job.
+  const mediaState = async () => {
+    const m = await import("../core/media.ts");
+    return { ffmpeg: m.ffmpegStatus(), overview: m.mediaOverview(app), compressed: m.compressedSummary(app), job: m.mediaJobState(app) };
+  };
+  const mediaOwner = (req: FastifyRequest) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能压缩附件");
+  };
+  server.get("/api/media", async (req) => (mediaOwner(req), mediaState()));
+  server.post("/api/media/ffmpeg/install", async (req) => {
+    mediaOwner(req);
+    const { commandExists } = await import("../agents/spawn.ts");
+    if (!commandExists("osdk")) throw new HttpError(400, "这台机器没有 osdk：先装 osdk，或自己装 ffmpeg 放进 PATH");
+    void (await import("../core/media.ts")).startFfmpegInstall();
+    return mediaState();
+  });
+  server.post("/api/media/compress", async (req) => {
+    mediaOwner(req);
+    const o = q(z.object({
+      types: z.array(z.enum(["image", "video", "audio"])).min(1),
+      mode: z.enum(["lossless", "lossy"]),
+      quality: z.enum(["high", "medium", "low"]).default("medium"),
+      maxSide: z.number().int().min(0).max(16384).default(0),
+      minBytes: z.number().int().min(0).default(0),
+      deleteOriginals: z.boolean().default(true),
+      limit: z.number().int().min(0).default(0),
+    }), req.body);
+    try {
+      (await import("../core/media.ts")).startMediaJob(app, o);
+    } catch (e) {
+      throw new HttpError(409, (e as Error).message);
+    }
+    return mediaState();
+  });
+  server.post("/api/media/stop", async (req) => {
+    mediaOwner(req);
+    (await import("../core/media.ts")).stopMediaJob();
+    return mediaState();
+  });
+  server.post("/api/media/delete-originals", async (req) => {
+    mediaOwner(req);
+    try {
+      return { ...(await import("../core/media.ts")).deleteCompressedOriginals(app), ...(await mediaState()) };
+    } catch (e) {
+      throw new HttpError(409, (e as Error).message);
+    }
   });
   server.get("/api/peer/commands", async () => {
     const { peerCommands } = await import("../core/peer-exec.ts");

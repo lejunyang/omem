@@ -11,6 +11,7 @@ import { headCommit, listRepoFiles } from "../core/git.ts";
 import { getSpace, updateSpace } from "../core/spaces.ts";
 import { toolCommand } from "../core/tools.ts";
 import { HttpError, newId, sha256 } from "../core/util.ts";
+import { hasStoredFile } from "../core/stored-files.ts";
 import { classify } from "./chunk.ts";
 import { deleteSource, upsertSource, type SourceKind, type UpsertResult } from "./store.ts";
 
@@ -128,8 +129,8 @@ export function keepOriginal(app: App, path: string) {
   const buf = readFileSync(path);
   const name = `${sha256(buf).slice(0, 16)}${extname(path).toLowerCase()}`;
   mkdirSync(app.filesDir, { recursive: true });
-  const target = join(app.filesDir, name);
-  if (!existsSync(target)) copyFileSync(path, target);
+  // A compressed copy (core/media.ts) stands in for the original: do not bring the large file back.
+  if (!hasStoredFile(app, name)) copyFileSync(path, join(app.filesDir, name));
   return name;
 }
 
