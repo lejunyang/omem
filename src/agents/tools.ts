@@ -3700,10 +3700,11 @@ def({
 def({
   name: "code_workspace",
   description:
-    "设备的外部 Agent 用：在自己用 delegate_code 交办的编码里写代码。action：brief（任务、事项材料、工作分支、本人允许运行的命令、各轮状态）、list（文件）、read（path，from 起 400 行）、grep（pattern 正则，path 限定目录）、write（path + content 整个文件）、edit（path + old + new，old 要唯一，或 replace_all）、delete、run（command 写允许的命令名，args 追加参数如测试文件；最多等 wait 秒，没跑完用 output 取）、output（job）、git（git=status / diff / log / commit + message；merge + ref 把另一条分支合并进来，冲突留在文件里由你改好再 commit，merge-abort 放弃）、finish（summary：改了什么、怎么验证、还差什么；这台机器提交剩下的改动、运行检查命令，再按 review 交给评审：peer 你自己评审，here 这台机器的评审 Agent）。几个仓库时 path 写成 仓库空间id/路径。",
+    "设备的外部 Agent 用：在自己用 delegate_code 交办的编码里写代码。action：brief（任务、事项材料、工作分支、本人允许运行的命令、各轮状态）、list（文件）、read（path，from 起 400 行）、grep（pattern 正则，path 限定目录）、write（path + content 整个文件）、edit（path + old + new，old 要唯一，或 replace_all）、delete、run（command 写允许的命令名，args 追加参数如测试文件；最多等 wait 秒，没跑完用 output 取）、output（job）、git（git=status / diff / log / commit + message；merge + ref 把另一条分支合并进来，冲突留在文件里由你改好再 commit，merge-abort 放弃）、import（from_run：把另一次没应用的交办保存的改动导入工作区，先 merge 它基于的提交）、finish（summary：改了什么、怎么验证、还差什么；这台机器提交剩下的改动、运行检查命令，再按 review 交给评审：peer 你自己评审，here 这台机器的评审 Agent）。几个仓库时 path 写成 仓库空间id/路径。",
   schema: z.object({
     run_id: z.string().describe("delegate_code 返回的运行 id（之后各轮的 id 也可以）"),
-    action: z.enum(["brief", "list", "read", "grep", "write", "edit", "delete", "run", "output", "git", "finish"]),
+    action: z.enum(["brief", "list", "read", "grep", "write", "edit", "delete", "run", "output", "git", "import", "finish"]),
+    from_run: z.string().max(80).optional().describe("import：要接过来的另一次（没应用的）交办的运行 id"),
     path: z.string().max(500).optional(),
     from: z.number().int().min(0).optional().describe("read 从第几行；list / git diff 的分页位置"),
     content: z.string().optional(),

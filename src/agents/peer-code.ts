@@ -110,7 +110,8 @@ const jobText = (j: Job) => j.done
   : `命令 ${j.id}（${j.command}）还在运行（${Math.round((Date.now() - j.started) / 1000)} 秒）。稍后用 action=output、job=${j.id} 取结果。输出末尾：\n${j.output.slice(-2000) || "（暂无输出）"}`;
 
 export type WorkspaceAction = {
-  action: "brief" | "list" | "read" | "grep" | "write" | "edit" | "delete" | "run" | "output" | "git" | "finish";
+  action: "brief" | "list" | "read" | "grep" | "write" | "edit" | "delete" | "run" | "output" | "git" | "import" | "finish";
+  from_run?: string;
   path?: string;
   from?: number;
   content?: string;
@@ -273,6 +274,34 @@ ${String(work.last.input.task ?? "")}` : "";
         }
       }
       return out.join("\n\n");
+    }
+    case "import": {
+      // Another delegation's unapplied changes (its saved patch) brought into this workspace, e.g.
+      // an older run's work this one continues. Its base commit has to be here first (git=merge).
+      editable(work);
+      if (!a.from_run) throw new HttpError(400, "import 要给 from_run（要接过来的交办运行 id）");
+      const other = rootOf(app, a.from_run);
+      if (other.kind !== "code" || other.id === root.id) throw new HttpError(400, `运行 ${a.from_run} 不是另一次编码交办`);
+      if (other.output.appliedAt || other.output.discardedAt) throw new HttpError(409, `交办 ${other.id} 已经确认或丢弃`);
+      const { codePatches } = await import("./code.ts");
+      const last = rounds(app, other.id).filter((r) => r.status === "done").at(-1) ?? other;
+      const out: string[] = [];
+      for (const { space, patch } of codePatches(app, last.id)) {
+        const w = worktrees.find((x) => x.space === space);
+        if (!w) { out.push(`${space}：这次交办没有这个仓库，跳过`); continue; }
+        if (!patch.trim()) { out.push(`${space}：没有改动`); continue; }
+        const dir = workDirOf(w);
+        if (git(dir, ["status", "--porcelain"]).stdout.trim()) throw new HttpError(409, "工作区有没提交的改动，先 commit 再导入");
+        const file = resolve(dir, `.git-import-${other.id}.patch`);
+        writeFileSync(file, patch);
+        const r = git(dir, ["apply", "--3way", "--whitespace=nowarn", file]);
+        rmSync(file, { force: true });
+        const conflicts = git(dir, ["diff", "--name-only", "--diff-filter=U"]).stdout.split("\n").filter(Boolean);
+        const changed = git(dir, ["status", "--porcelain"]).stdout.split("\n").filter(Boolean).length;
+        if (!r.ok && !conflicts.length) throw new HttpError(409, `${space}：没能应用交办 ${other.id} 的改动（它基于的提交可能还没合并进来，先 git=merge 它的基线）：${truncate(r.stderr, 600)}`);
+        out.push(`${space}：已导入交办 ${other.id}（第 ${rounds(app, other.id).indexOf(last) + 1} 轮）的 ${changed} 个文件改动，未提交${conflicts.length ? `；${conflicts.length} 个文件有冲突标记：${conflicts.join("、")}` : ""}。核对后用 git=commit 提交。`);
+      }
+      return out.join("\n") || "那次交办没有保存的改动";
     }
     case "finish": {
       editable(work);

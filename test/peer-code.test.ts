@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
 import { discardCodeRun } from "../src/agents/code.ts";
-import { __testHandlers, addRunEvent, getRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
+import { __testHandlers, addRunEvent, createRun, getRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace, updateSpace } from "../src/core/spaces.ts";
@@ -78,6 +78,16 @@ describe("coding an outside Agent on another device does itself", () => {
     await callTool(ctx, "code_workspace", { run_id: runId, action: "write", path: "refund.ts", content: "export function refundAmount(lines: { shipped: boolean }[]) {\n  return lines.filter((l) => !l.shipped).length;\n}\n" });
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "commit", message: "合并 feat/other" })).text).toMatch(/已提交/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "log" })).text).toMatch(/合并 feat\/other/);
+    // An older, unapplied delegation's saved changes taken over into this workspace.
+    const old = createRun(app, { kind: "code", spaceId: "shop-api", title: "旧交办", input: { task: "旧的改动", repos: ["shop-api"] } });
+    run(app.db, "update runs set status = 'done' where id = ?", old.id);
+    setRunOutput(app, old.id, { repos: [{ space: "shop-api", diffStat: "", diffBytes: 1, check: null }] });
+    mkdirSync(join(app.runsDir, old.id, "patches"), { recursive: true });
+    writeFileSync(join(app.runsDir, old.id, "patches", "shop-api.patch"), "diff --git a/notes.md b/notes.md\nnew file mode 100644\n--- /dev/null\n+++ b/notes.md\n@@ -0,0 +1 @@\n+旧交办写的说明\n");
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "import", from_run: old.id })).text).toMatch(/已导入交办 .*1 个文件改动/);
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "read", path: "notes.md" })).text).toContain("旧交办写的说明");
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "import", from_run: old.id })).text).toMatch(/先 commit/);
+    await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "commit", message: "接手旧交办的说明" });
     // Another device, or this machine's own Agents, cannot work in it.
     expect((await callTool(peerCtx("other"), "code_workspace", { run_id: runId, action: "brief" })).text).toMatch(/不是 other/);
     expect((await callTool({ ...ctx, peer: undefined }, "code_workspace", { run_id: runId, action: "brief" })).isError).toBe(true);
