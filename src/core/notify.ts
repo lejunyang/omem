@@ -51,8 +51,8 @@ export type Notification = {
   scheduled?: boolean;
   /** Deliver into this Feishu conversation id instead of the owner's private chat (a work topic). */
   larkConversationId?: string;
-  /** The daily item digest: items that closed by themselves (can be reopened) and that close soon (can be kept). */
-  digest?: { closed: string[]; soon: string[] };
+  /** The daily item digest: items that closed by themselves (can be reopened) and that close soon (can be kept); `effects`: nightly replay suggestions to adopt or ignore. */
+  digest?: { closed: string[]; soon: string[]; effects?: string[] };
   /** This is the newer state of an earlier notification (a pending authorization now done): channels edit the card they sent for it instead of sending another. */
   replaces?: string;
   /** Set by the Feishu channel: the card it sent (or edited) for this notification, so a later one can replace it. */
@@ -70,7 +70,7 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[] }; replaces?: string },
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; effects?: string[] }; replaces?: string },
 ) {
   const userId = input.userId ?? "owner";
   const replaced = input.replaces ? one<{ id: string; user_id: string }>(app.db, "select id, user_id from notifications where id = ?", input.replaces) : undefined;

@@ -34,6 +34,8 @@ export type Hit = {
   sameAs?: { sourceId: string; uri: string; title: string; spaceId: string }[];
   /** The source's text hash (for folding identical documents; not returned). */
   hash?: string;
+  /** Replay (agents/replay-view.ts): the document or page changed after the question's time. */
+  later?: boolean;
 };
 
 export type SearchOptions = {

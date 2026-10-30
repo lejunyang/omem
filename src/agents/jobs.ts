@@ -33,6 +33,7 @@ import { digestMergeText } from "../memory/digest-merge.ts";
 import "./profile-jobs.ts";
 import "./wakes.ts";
 import "./digest.ts";
+import { helpedCounts, replayDreamText } from "./replay.ts";
 
 registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
 
@@ -482,11 +483,18 @@ registerHandler("memory-review", async (ctx) => {
   );
   if (!mems.length && !proposals.length) return { quiet: true, summary: "没有待复核的记忆" };
   // Blind and mixed: the reviewer must not know which backend/model wrote what.
+  // What nightly replay found about them (agents/replay.ts): taken away and the answer got better (sent
+  // back for review, review_note says so) or worse (helped). The reviewer sees it before retracting.
+  const helped = helpedCounts(app, mems.map((m) => m.id));
+  const replayNote = (id: string) => {
+    const note = one<{ review_note: string | null }>(app.db, "select review_note from memories where id = ?", id)?.review_note;
+    return [note?.startsWith("复盘 ") ? `夜间复盘：${note}` : "", helped.get(id) ? `夜间复盘里帮上过忙 ${helped.get(id)} 次（去掉后答得更差）` : ""].filter(Boolean).join("；");
+  };
   const entries = [
-    ...mems.map((m) => ({ id: m.id, kind: m.kind, subject: m.subject, content: m.content, refs: m.sourceRefs, replaces: m.supersedes })),
+    ...mems.map((m) => ({ id: m.id, kind: m.kind, subject: m.subject, content: m.content, refs: m.sourceRefs, replaces: m.supersedes, replay: replayNote(m.id) })),
     ...proposals.map((p) => {
       const a = json<Record<string, any>>(p.args, {});
-      return { id: p.id, kind: a.kind ?? "(更正)", subject: a.subject ?? "", content: String(a.content ?? ""), refs: (a.source_refs ?? []) as string[], replaces: a.memory_id ?? null };
+      return { id: p.id, kind: a.kind ?? "(更正)", subject: a.subject ?? "", content: String(a.content ?? ""), refs: (a.source_refs ?? []) as string[], replaces: a.memory_id ?? null, replay: "" };
     }),
   ].sort(() => Math.random() - 0.5);
   // Related spaces: the reviewer may read them and sees what they already hold on the same thing.
@@ -499,7 +507,7 @@ registerHandler("memory-review", async (ctx) => {
     `空间 ${spaceId} 里待复核的 ${entries.length} 条：`,
     ...entries.map(
       (e) =>
-        `- ${e.id} [${e.kind}]${e.subject ? ` ${e.subject}：` : " "}${e.content}\n  来源：${e.refs.join(", ") || "（无）"}${e.replaces ? `；更正自 ${e.replaces}` : ""}${e.content.length > app.config.memory.longChars ? `；${e.content.length} 字，较长：看是否是几条独立结论（split）` : ""}${alikeIn(e)}`,
+        `- ${e.id} [${e.kind}]${e.subject ? ` ${e.subject}：` : " "}${e.content}\n  来源：${e.refs.join(", ") || "（无）"}${e.replaces ? `；更正自 ${e.replaces}` : ""}${e.content.length > app.config.memory.longChars ? `；${e.content.length} 字，较长：看是否是几条独立结论（split）` : ""}${e.replay ? `\n  ${e.replay}` : ""}${alikeIn(e)}`,
     ),
     ...(related.length ? [`\n相关空间：${related.join("、")}。可以用 recall / search 查它们，但只能处理本空间的这几条。`] : []),
   ].join("\n");
@@ -630,20 +638,27 @@ registerHandler("item-settle", async (ctx) => {
 export async function sendItemDigests(app: App) {
   const { digestFor, digestBody, markDigestSent } = await import("../items/expiry.ts");
   const sent = [];
-  for (const { user_id } of all<{ user_id: string }>(app.db, "select distinct user_id from items")) {
+  // Last night's replays go to the owner's card as a section of their own (agents/replay.ts); none ran → no section.
+  const { replayDigest } = await import("./replay.ts");
+  const replaySince = one<{ value: string }>(app.db, "select value from kv where key = 'replay_digest_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
+  const replays = replayDigest(app, replaySince);
+  run(app.db, "insert into kv(key, value) values('replay_digest_at', ?) on conflict(key) do update set value = excluded.value", now());
+  const users = new Set([...all<{ user_id: string }>(app.db, "select distinct user_id from items").map((r) => r.user_id), ...(replays ? [OWNER] : [])]);
+  for (const user_id of users) {
     const d = digestFor(app, user_id);
     markDigestSent(app, user_id);
-    if (!d) continue;
-    const handled = d.closed.filter((c) => c.status !== "expired").length;
-    const expired = d.closed.length - handled;
-    const parts = [handled ? `${handled} 件看起来已办` : "", expired ? `${expired} 件已过期` : "", d.soon.length ? `${d.soon.length} 件明天过期` : ""].filter(Boolean);
+    const section = user_id === OWNER ? replays : null;
+    if (!d && !section) continue;
+    const handled = d ? d.closed.filter((c) => c.status !== "expired").length : 0;
+    const expired = d ? d.closed.length - handled : 0;
+    const parts = [handled ? `${handled} 件看起来已办` : "", expired ? `${expired} 件已过期` : "", d?.soon.length ? `${d.soon.length} 件明天过期` : "", section ? "昨晚复盘" : ""].filter(Boolean);
     sent.push(
       notify(app, {
         title: `事项清点：${parts.join("，")}`,
-        body: digestBody(app, d),
-        link: "#/items",
+        body: [d ? digestBody(app, d) : "", section?.text ?? ""].filter(Boolean).join("\n\n"),
+        link: d ? "#/items" : "#/agents",
         userId: user_id,
-        digest: { closed: d.closed.map((c) => c.id), soon: d.soon.map((s) => s.item.id) },
+        digest: { closed: d?.closed.map((c) => c.id) ?? [], soon: d?.soon.map((s) => s.item.id) ?? [], ...(section?.effects.length ? { effects: section.effects.map((e) => e.id) } : {}) },
       }),
     );
   }
@@ -742,11 +757,16 @@ registerHandler("wiki-lint", async (ctx) => {
   syncWiki(ctx.app, spaceId);
   // An automatic check names the pages it chose (a batch); a manual one looks at all of them.
   const only = (ctx.run.input as { pages?: string[] }).pages;
-  const stale = stalePages(ctx.app, spaceId).filter((s) => !only?.length || only.includes(s.page_id.slice(spaceId.length + 1)));
-  if (!stale.length) return { quiet: true, summary: "没有受影响的页面" };
-  const task = `受影响的页面与变化的原件：\n${stale.map((s) => `- ${s.page_id.split("/").slice(1).join("/")}：${s.uris}`).join("\n")}`;
+  // Pages nightly replay found misleading (agents/replay.ts): checked whether or not their originals changed.
+  const recheck = ((ctx.run.input as { recheck?: { page: string; note: string }[] }).recheck ?? []).filter((p) => pageExists(ctx.app, spaceId, p.page));
+  const stale = stalePages(ctx.app, spaceId).filter((s) => (!only?.length && !recheck.length) || only?.includes(s.page_id.slice(spaceId.length + 1)) || recheck.some((p) => p.page === s.page_id.slice(spaceId.length + 1)));
+  if (!stale.length && !recheck.length) return { quiet: true, summary: "没有受影响的页面" };
+  const task = [
+    stale.length ? `受影响的页面与变化的原件：\n${stale.map((s) => `- ${s.page_id.split("/").slice(1).join("/")}：${s.uris}`).join("\n")}` : "",
+    recheck.length ? `夜间复盘发现这些页面可能过时（不看它们时回答更好）：对照它引用的原件和最近的材料逐段核对，过时的改掉或标出：\n${recheck.map((p) => `- ${p.page}：${p.note}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
   const r = await agent(ctx, "wiki-linter", spaceId, task);
-  return { quiet: isQuiet(r.text), summary: r.text.trim(), pages: stale.length };
+  return { quiet: isQuiet(r.text), summary: r.text.trim(), pages: stale.length + recheck.length };
 });
 
 /** Pages one folder pass looks at (the rest of a crowded folder goes to the next pass). */
@@ -882,6 +902,8 @@ registerHandler("dream", async (ctx) => {
   const candidates = relationCandidates(app);
   const gaps = shortcomings(app, { since });
   const merge = digestMergeText(app);
+  // Nightly replay's evidence: memories that helped (keep them when merging), digest-written experience that misleads.
+  const replayed = replayDreamText(app, mems.map((m) => m.id));
   if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps) && !merge) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
   const relations = listSpaces(app).flatMap((s) => relatedSpaces(app, s.id).filter((r) => s.id < r.space).map((r) => `- ${s.id} ↔ ${r.space}${r.note ? `：${r.note}` : ""}`));
   const task = [
@@ -892,10 +914,13 @@ registerHandler("dream", async (ctx) => {
     runs.length ? `期间的后台运行（用于提炼经验）：\n${runs.map((r) => `- [${r.kind}/${r.status}] ${r.title}${r.error ? "：" + truncate(r.error, 120) : ""}`).join("\n")}` : "",
     relations.length ? `已关联的空间：\n${relations.join("\n")}` : "",
     merge,
+    replayed,
     (() => {
       const pairs = sameTopicPairs(app, mems.filter((m) => m.status === "active").map((m) => m.id));
+      const helped = helpedCounts(app, pairs.flatMap((p) => [p.a.id, p.b.id]));
+      const h = (id: string) => (helped.get(id) ? `（复盘里帮过 ${helped.get(id)} 次）` : "");
       return pairs.length
-        ? `可能说的是同一件事的记忆（向量相近，宿主只负责找，是否重复、冲突由你读后判断；不同的事就不动）：\n${pairs.map((p) => `- ${p.a.id}「${truncate(p.a.content, 80)}」 ↔ ${p.b.id}「${truncate(p.b.content, 80)}」`).join("\n")}`
+        ? `可能说的是同一件事的记忆（向量相近，宿主只负责找，是否重复、冲突由你读后判断；不同的事就不动；合并时保留复盘里帮过忙的那条）：\n${pairs.map((p) => `- ${p.a.id}「${truncate(p.a.content, 80)}」${h(p.a.id)} ↔ ${p.b.id}「${truncate(p.b.content, 80)}」${h(p.b.id)}`).join("\n")}`
         : "";
     })(),
     hasShortcomings(gaps)

@@ -7,11 +7,11 @@
 - 已经在这个话题里时再调用 `run_agent(own_topic=true)` 或 `continue_agent_work` 都续在同一项工作上，同一个 Agent 接着它上一轮的会话。
 - 没有专门档案的一次性任务可 `run_agent(name="assistant", …)`，继承调用者的工具、空间和发送范围，不能再交办；不用为临时换模型新建或修改档案。
 - `ask_agent(name, question)`：向另一个档案请教并同步拿到回答（被请教的不能再请教或交办）。
-- `save_agent`：建或改档案，只在本人要求时做；档案正文只写稳定的职责和原则。
+- `save_agent`：建或改档案，只在本人要求时做；档案正文只写稳定的职责和原则。档案 frontmatter 的 `traits: [research]` 表示它是研究档案（查本库之外的材料），夜间复盘的 R3 轴会交给它；`mcp` 里标 `readOnly: true` 的服务器才会在复盘时放行。
 
 ## 选 AI
 
-- `list_ai_backends()` 返回可用后端、默认模型、缓存的模型 / 强度、各模型现在的占用与上限（`limit` 为 0 是本人不想自动用的，不要选）、近 7 天的完成和失败，以及本人的任务选型偏好；同一账号的命令行后端不单独列出；传 `profile` 可检测该后端，`refresh: true` 强制刷新。准备临时换 AI 时先核对，未知选项不要猜；同样合适时选空闲的。豆包（`tools: false`）用不了 omem 工具，交给它时把材料原文写进任务。
+- `list_ai_backends()` 返回可用后端、默认模型、缓存的模型 / 强度、各模型现在的占用与上限（`limit` 为 0 是本人不想自动用的，不要选）、近 7 天的完成和失败，以及本人的任务选型偏好；同一账号的命令行后端不单独列出；传 `profile` 可检测该后端，`refresh: true` 强制刷新。模型上的 `replay28d` 是夜间复盘近 28 天的单变量对比（同一题只换模型重答后盲评）：`type` 题型、`vs` 对照的模型、`w/t/l` 胜平负（从这个模型看）、`tokens` 上下文峰值之比，少于 3 次的不列；样本小，只作参考，不要因此改档案的默认模型。准备临时换 AI 时先核对，未知选项不要猜；同样合适时选空闲的。豆包（`tools: false`）用不了 omem 工具，交给它时把材料原文写进任务。
 - `run_agent`、`continue_agent_work`、`ask_agent` 可传 `execution: {profile, model?, effort?, source: "user" | "auto", reason}`；`profile` 是后端 id，`name` / `agent` 仍是档案名。本人明确指定填 `user`，助手根据任务选择填 `auto`；关闭自主选型时后者被拒绝。普通 Agent 工作的后续轮次需继续显式传入本人的指定。选择只作用于任务并留运行记录；更换后端或模型时使用新会话并携带工作经过。
 - `switch_run_ai(run_id, execution, with_children?)`：给已经安排的运行换 AI（后端一直排队或失败、本人要求中途换模型）。排队中的直接改，进行中的停下后重新排队，失败的用新 AI 重试，默认连同子运行（如 Wiki 各页写作）；编码交办改用 `continue_code_run` 的 `execution`。
 

@@ -53,6 +53,8 @@ omem agents [--all]                 # 已识别的 Agent（--all 含未安装的
 omem agents registry                # 官方 ACP 注册表
 omem agents add gemini --via npx
 omem roles [list|customize|reset|merge] <名>   # 内置角色：自定义、恢复、合并源码更新
+omem replay [list]                              # 夜间复盘：状态和最近的结论
+omem replay run [--run <运行id>] [--axis M1]    # 立即复盘（先给 replay-judge 选模型）
 omem mcp [--read-only] [--space <id>]           # 作为 MCP 服务给其他 Agent 用
 omem tool [工具名] [JSON | 键=值 … | -f 文件]     # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明
 omem tool --peer <同伴> [工具名] [参数…]         # 在同伴上调用（用本机的模型整理它的库），mcp 也有 --peer

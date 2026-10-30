@@ -553,7 +553,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/roles/:name", async (req) => {
     const name = (req.params as { name: string }).name;
     const r = loadRole(name, app);
-    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} }, ...profileDetail(app, name) };
+    // A role a feature waits on until the owner picks its AI (replay-judge: nightly replay does not run without it).
+    const notice = name === "replay-judge" ? (await import("../agents/replay.ts")).replayStatus(app).notice : null;
+    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} }, notice, ...profileDetail(app, name) };
   });
   server.put("/api/roles/:name/defaults", async (req) => {
     const name = (req.params as { name: string }).name;
@@ -1561,6 +1563,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/feedback/stats", async (req) => {
     const days = q(z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }), req.query ?? {}).days;
     return (await import("../channels/lark-feedback.ts")).feedbackStats(app, days);
+  });
+  // Nightly replay (agents/replay.ts): status, recent replays and their verdicts, run one by hand, adopt / ignore a suggestion.
+  server.get("/api/replays", async (req) => {
+    const o = q(z.object({ limit: z.coerce.number().int().min(1).max(200).default(30) }), req.query ?? {});
+    const m = await import("../agents/replay.ts");
+    return { status: m.replayStatus(app), replays: m.listReplays(app, { limit: o.limit }) };
+  });
+  server.post("/api/replays/run", async (req) => {
+    const { REPLAY_AXES } = await import("../core/config.ts");
+    const b = q(z.object({ runId: z.string().regex(/^r[0-9a-z]{6,40}$/).optional(), axis: z.enum(REPLAY_AXES).optional() }), req.body ?? {});
+    return (await import("../agents/replay.ts")).scheduleReplays(app, b);
+  });
+  server.post("/api/replay-effects/:id/:action", async (req) => {
+    const p = q(z.object({ id: z.string().regex(/^re[0-9a-z]{6,40}$/), action: z.enum(["adopt", "ignore"]) }), req.params);
+    return (await import("../agents/replay.ts")).resolveEffect(app, p.id, p.action);
   });
   // Knowledge-base crawls (lark-wiki.ts): progress, continue, stop.
   server.get("/api/lark/wiki-crawls", async () => ({ crawls: (await import("../channels/lark-wiki.ts")).listCrawls(app) }));

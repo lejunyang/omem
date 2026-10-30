@@ -32,6 +32,8 @@ registerScheduleKind("profile-review", (app) => {
   // Proposals nobody answered for 14 days expire; a notice goes out two days before.
   void import("./agents/proposals.ts").then((m) => m.expireProposals(app)).catch((e) => console.warn(`[omem] 档案建议过期处理失败：${(e as Error).message}`));
 });
+// Nightly replay, after the profile reviews (agents/replay.ts); nothing runs until replay-judge has an AI.
+registerScheduleKind("replay", (app) => void import("./agents/replay.ts").then((m) => m.scheduleReplays(app)).catch((e) => console.warn(`[omem] 夜间复盘排队失败：${(e as Error).message}`)));
 registerScheduleKind("rule", (app, s) => void import("./rules/engine.ts").then((m) => m.fireScheduledRule(app, String((s.config as { ruleId?: string }).ruleId))));
 registerScheduleKind("learn", (app) => learningTick(app));
 registerScheduleKind("activity", (app) => {

@@ -63,8 +63,33 @@ export const roleNames = [
   "review-style",
   "review-history",
   "review-lead",
+  "replay-judge",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
+
+/**
+ * Nightly replay (src/agents/replay.ts, docs/v2/replay.md). Signals a past run shows, and the axes a
+ * variant arm may change: retrieval (R1 deep search, R2 related spaces, R3 a research profile), source
+ * levels (S1 focus+reference only, S2 ignore too), memories (M1 without the ones the run touched, M2
+ * none, M3 without digest-written experience), the Wiki (W1 no pages, W2 pages first), the model
+ * (A1 one step down, A2 one step up). `random` picks any axis that applies (a control).
+ */
+export const REPLAY_SIGNALS = ["negative", "correction", "notFound", "timeout", "slow", "normal", "positive"] as const;
+export const REPLAY_AXES = ["R1", "R2", "R3", "S1", "S2", "M1", "M2", "M3", "W1", "W2", "A1", "A2"] as const;
+export type ReplaySignal = (typeof REPLAY_SIGNALS)[number];
+export type ReplayAxis = (typeof REPLAY_AXES)[number];
+export const DEFAULT_REPLAY_TASK_TYPES = ["事实查询", "汇总计数", "代码路径", "时间线与变化", "排查", "写作"];
+export const DEFAULT_REPLAY_PLAN: Record<ReplaySignal, (ReplayAxis | "random")[]> = {
+  negative: ["M1", "S1", "W1", "A2"],
+  correction: ["M1", "S1", "W1", "A2"],
+  notFound: ["S2", "R2", "R1", "R3", "A2"],
+  timeout: ["A1"],
+  slow: ["A1", "M3"],
+  normal: ["A1"],
+  positive: ["random"],
+};
+const replayAxes = z.array(z.enum([...REPLAY_AXES, "random"])).max(12);
+const replayPlanSchema = z.object(Object.fromEntries(REPLAY_SIGNALS.map((s) => [s, replayAxes.default(DEFAULT_REPLAY_PLAN[s])])) as Record<ReplaySignal, z.ZodDefault<typeof replayAxes>>);
 
 /** Light = today's single reviewer; heavier tiers add independent checks for larger changes. */
 export function defaultReviewTiers() {
@@ -561,6 +586,25 @@ export const configSchema = z.object({
         .default(DEFAULT_FEEDBACK_EMOJI),
     })
     .default({ emoji: DEFAULT_FEEDBACK_EMOJI }),
+  /**
+   * Nightly replay (docs/v2/replay.md): the scheduled job `replay` (off by default) picks `max` past
+   * questions a night and answers each again as of its time, a baseline re-run against one variant.
+   * No token limits: the owner sets how many questions; each arm is an ordinary run with its usual
+   * time limit. The judge is the built-in role replay-judge, whose AI the owner must choose first.
+   */
+  replay: z
+    .object({
+      max: z.number().int().min(1).max(20).default(1),
+      /** Questions are picked from runs of the last this many days. */
+      days: z.number().int().min(1).max(14).default(3),
+      /** Task types the judge labels questions with (routing evidence is kept per type). */
+      taskTypes: z.array(z.string().trim().min(1).max(20)).min(1).max(20).default(DEFAULT_REPLAY_TASK_TYPES),
+      /** Signal → axes to try in order; the first that applies and was not tried on that question is used. */
+      plan: replayPlanSchema.default(DEFAULT_REPLAY_PLAN),
+      /** The A axis: models from cheaper to stronger. Without it, one effort level down / up on the same model. */
+      models: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).default([]),
+    })
+    .default({ max: 1, days: 3, taskTypes: DEFAULT_REPLAY_TASK_TYPES, plan: DEFAULT_REPLAY_PLAN, models: [] }),
   /**
    * Items close themselves: one with no new progress for `days[kind]` (counted from its
    * last activity: the owner touching it or new evidence) becomes "expired"; a reminder

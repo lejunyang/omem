@@ -25,6 +25,17 @@ export function itemDigestCard(app: App, n: Notification) {
   const reopen: CardButton[] = (n.digest?.closed ?? []).slice(0, MAX).map((id) => ({ text: `恢复 · ${title(id)}`, value: `item:reopen:${id}` }));
   const keep: CardButton[] = (n.digest?.soon ?? []).slice(0, MAX).map((id) => ({ text: `保留 · ${title(id)}`, value: `item:keep:${id}` }));
   const more = (n.digest?.closed.length ?? 0) + (n.digest?.soon.length ?? 0) - reopen.length - keep.length;
+  // Nightly replay's suggestions (agents/replay.ts): adopt or ignore each one.
+  const effect = (id: string) => {
+    const e = one<{ effect: string; target_id: string | null }>(app.db, "select effect, target_id from replay_effects where id = ?", id);
+    const what = e?.effect === "level" ? "降为仅检索" : e?.effect === "rule" ? "改回一般关注" : e?.effect === "import" ? "建事项导入" : "采纳";
+    const target = e?.target_id ? (e.target_id.length > 10 ? e.target_id.slice(0, 9) + "…" : e.target_id) : "";
+    return [
+      { text: `采纳 · ${what}${target ? ` ${target}` : ""}`, value: `replay:adopt:${id}` },
+      { text: "忽略", value: `replay:ignore:${id}` },
+    ] as CardButton[];
+  };
+  const effects = (n.digest?.effects ?? []).slice(0, 6);
   return buildCard({
     title: n.title,
     color: "grey",
@@ -33,6 +44,8 @@ export function itemDigestCard(app: App, n: Notification) {
       ...(reopen.length ? [{ buttons: reopen }] : []),
       ...(keep.length ? [{ buttons: keep }] : []),
       ...(more > 0 ? [{ note: `另有 ${more} 件，在网页“事项”里处理` }] : []),
+      ...effects.map((id) => ({ buttons: effect(id) })),
+      ...((n.digest?.effects?.length ?? 0) > effects.length ? [{ note: `另有 ${(n.digest?.effects?.length ?? 0) - effects.length} 条复盘建议，在网页“Agent”页处理` }] : []),
     ],
   });
 }

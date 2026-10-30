@@ -74,6 +74,7 @@ const OMEM = [
   ["memories", "check"],
   ["memories", "rejections"],
   ["memories", "prune"],
+  ["replay", "list"],
   ["run"],
   ["items"],
   ["search"],

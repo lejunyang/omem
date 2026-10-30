@@ -8,6 +8,7 @@ import ChipPicker from "../components/ChipPicker.vue";
 import Icon from "../components/Icon.vue";
 import ReviewSettings from "../components/ReviewSettings.vue";
 import FeedbackStats from "../components/FeedbackStats.vue";
+import ReplayList from "../components/ReplayList.vue";
 import Markdown from "../components/Markdown.vue";
 import ProfileLearning, { type ProfileDetail } from "../components/ProfileLearning.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -27,7 +28,7 @@ type RoleState = { name: string; description: string; customized: boolean; sourc
 type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
-type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; name: string; description: string; tools: string[]; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
+type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
 
 const route = useRoute();
 const router = useRouter();
@@ -166,6 +167,7 @@ async function saveRoleAi() {
     dirty.value = roleText.value !== (roleDetail.value?.role.own ?? roleDetail.value?.role.source);
     if (roleDetail.value) roleDetail.value.defaults = { agent: roleAi.value.agent, byBackend: { ...roleDetail.value.defaults.byBackend, [roleAi.value.agent || options.value.globalDefaultBackend]: { model: roleAi.value.model, effort: roleAi.value.effort } } };
     toast("默认 AI 已保存", "ok");
+    if (roleDetail.value && (roleAi.value.agent || roleAi.value.model)) roleDetail.value.notice = null;
   } catch (e) { toast((e as Error).message, "error"); }
   finally { saving.value = false; }
 }
@@ -395,6 +397,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <p v-else>可复用的做法（SKILL.md）。挂到档案上，它做对应的事之前会先读全文照做。草稿启用后才会出现在目录里。</p>
         <button class="btn" @click="go({ tab, new: '1' })"><Icon name="plus" :size="14" />{{ tab === "agents" ? "新建 Agent 档案" : "新建技能" }}</button>
         <FeedbackStats v-if="tab === 'agents'" class="feedback" />
+        <ReplayList v-if="tab === 'agents'" class="feedback" />
       </div>
       <div v-else-if="detailLoading" class="pad"><Skeleton variant="lines" :rows="14" /></div>
 
@@ -486,6 +489,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <div class="card pad role-ai">
           <div class="row wrap"><strong>默认 AI</strong><span class="spacer" /><button class="btn sm primary" :disabled="saving || !roleAiDirty" @click="saveRoleAi">保存默认 AI</button></div>
           <p class="muted small">这个角色平时用的 AI。助手为某个任务临时换用时不改这里。</p>
+          <p v-if="roleDetail.notice" class="small role-notice">{{ roleDetail.notice }}</p>
           <AiDefaults :model-value="roleAi" :backends="options.backends" :default-backend="options.globalDefaultBackend" @update:model-value="updateRoleAi" />
         </div>
         <p class="muted small meta">{{ roleDetail.description }} · 工具 {{ roleDetail.tools.length ? roleDetail.tools.join(", ") : "无" }}<span v-if="roleDetail.writes"> · 可改文件</span></p>
@@ -542,6 +546,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
 
 <style scoped>
 .role-ai { margin-bottom: 20px; }
+.role-notice { color: var(--warn); margin: 6px 0; }
 .skill-workspace { display: grid; grid-template-columns: minmax(140px, 210px) minmax(0, 1fr); gap: 16px; }
 .file-tree { max-height: 560px; overflow: auto; border-right: 1px solid var(--line); padding-right: 8px; }
 .file-row { display: flex; gap: 6px; width: 100%; text-align: left; padding: 7px 8px; border: 0; background: transparent; color: var(--ink-2); border-radius: 4px; }
