@@ -947,3 +947,9 @@ updated: 2026-10-30
 
 - **同伴的外部 Agent**：`omem tool --peer` / `omem mcp --peer` 加 `--agent`、`--model`、`--effort`（环境变量 `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL` / 新增 `OMEM_PEER_EFFORT`）；目标节点把这条 `peer-agent` 运行的 `ai` 记成 `{profile: peer:<调用方>:<Agent>, model, effort}`（运行页照常显示），工具上下文带上强度，写入的记忆记模型和强度。`test/peer-tools.test.ts` 覆盖。
 - **不是成员的知识库**：飞书对非成员不给知识库名字和共享页面以上的目录（131006），以前目录树里只显示“知识库”“（未命名节点）”。现在用其中最上层的已知页面起名（“「X」所在的知识库”，`unnamed`），读不到标题的目录写“（无权限查看的目录）”或“（还没读到标题的目录）”；原件目录的行菜单可“命名”（`PUT /api/sources/wiki-space-name`），加入知识库后飞书给的名字会替换它。`test/source-catalog.test.ts` 覆盖。
+
+## 10-31：规则给自己的运行指定 AI
+
+- **原因**：任务选型（`agents.routing`）只写进会交办的运行（`DELEGATING`：run_agent、ask_agent、delegate_code……），由助手在交办时选；规则、定时任务这类宿主自己开的运行用档案或角色的默认 AI，规则任务说明里写的模型不会生效。
+- **规则动作**（`rules/types.ts`）：`agent` 动作加 `ai: {profile, model?, effort?}`；`saveRule` 用 `validateExecution` 按后端最近的检测核对；`actions.ts` 的 `ruleAI` 把它作为运行的 `execution`（`source: user`，理由“规则「…」指定”）放进普通和静默排查两条路径开出的运行，`runRole` 照常换用。
+- **界面与草稿**：规则页“交给 Agent”加“指定 AI”（复用 `AiDefaults`，默认显示档案自己的后端）；`/api/rule-options` 带 `backends` 和各档案的默认后端；草稿生成的提示列出可用后端和检测到的模型，本人点名模型时写 `ai`、不写进 task。`test/rules.test.ts` 覆盖保存核对、运行带上和不指定时不带。

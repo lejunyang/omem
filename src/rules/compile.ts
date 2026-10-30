@@ -1,6 +1,8 @@
 import type { App } from "../core/app.ts";
 import { askModel, jsonIn } from "../agents/oneshot.ts";
 import { listAgentSpecs } from "../agents/specs.ts";
+import { cachedProbe } from "../agents/probe.ts";
+import { listAgentProfiles } from "../agents/runner.ts";
 import { one } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { describe } from "./conditions.ts";
@@ -17,7 +19,7 @@ const LANGUAGE = `条件是 JSON：叶子 {"field": 字段, "op": 运算, "value
 运算：${OPS.join(" / ")}（in 的 value 是字符串数组；is 的 value 是 true/false；gte/lte 比数字（只用于 meeting.participantCount）；matches 是正则，大小写不敏感；其余是字符串，大小写不敏感）。`;
 
 const ACTIONS = `动作（按顺序执行，至少一个）：
-- {"type":"agent","spec":"档案名","task":"交给它的任务说明（触发的消息和正在进行的讨论会自动附上）","ownTopic":是否从触发消息开话题处理,"reply":"none|draft|auto|silent","allowUrgent":false,"allowPrivate":false}：allowUrgent 允许它在群里发消息时加急指定的人，allowPrivate 允许它发只给群里某些人看的消息（reply 不是 none 时才有用）；reply 的 none 只把结论发给本人；draft 它要在群里说的话先给本人确认；auto 可以直接在这个群/话题里回复和 @ 人，过程（思考气泡）可见；silent 静默排查：群里看不到过程，它自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题
+- {"type":"agent","spec":"档案名","task":"交给它的任务说明（触发的消息和正在进行的讨论会自动附上）","ownTopic":是否从触发消息开话题处理,"reply":"none|draft|auto|silent","allowUrgent":false,"allowPrivate":false,"ai":{"profile":"后端 id","model":"模型","effort":"思考强度"}}：ai 只在本人点名用哪个后端、模型或强度时写（profile 必须是下面列出的后端 id，model、effort 不确定就省略），不写就用档案自己的设置，模型偏好不要写进 task；allowUrgent 允许它在群里发消息时加急指定的人，allowPrivate 允许它发只给群里某些人看的消息（reply 不是 none 时才有用）；reply 的 none 只把结论发给本人；draft 它要在群里说的话先给本人确认；auto 可以直接在这个群/话题里回复和 @ 人，过程（思考气泡）可见；silent 静默排查：群里看不到过程，它自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题
 - {"type":"watch","spec":"档案名","on":"all|mention|keyword","pattern":"关键词正则（keyword 时）","reply":"none|draft|auto"}：开始监听这个群，之后的消息交给它
 - {"type":"invite-bot"}：以本人身份把 omem 的机器人拉进这个群
 - {"type":"capture"}：把这个群设为与本人有关，立刻采集一次
@@ -27,6 +29,10 @@ const ACTIONS = `动作（按顺序执行，至少一个）：
 export async function draftRule(app: App, description: string, current?: Partial<RuleInput>): Promise<{ rule?: RuleInput; error?: string; summary?: string }> {
   const specs = listAgentSpecs(app).map((s) => `- ${s.name}：${s.description}`).join("\n") || "（还没有 Agent 档案）";
   const botName = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value;
+  const backends = listAgentProfiles(app).filter((p) => p.installed).map((p) => {
+    const models = cachedProbe(app, p.id)?.models ?? [];
+    return `- ${p.id}${p.model ? `（默认模型 ${p.model}）` : ""}${models.length ? `：可选模型 ${models.slice(0, 12).join("、")}` : ""}`;
+  }).join("\n") || "（没有可用的后端）";
   const prompt = [
     "把本人的一句话规则写成 omem 能执行的规则。只输出一个 JSON 对象，不要解释、不要代码块围栏。",
     "",
@@ -40,6 +46,8 @@ export async function draftRule(app: App, description: string, current?: Partial
     ACTIONS,
     "",
     `已有的 Agent 档案：\n${specs}`,
+    "",
+    `可用的 AI 后端（ai.profile 写这里的 id）：\n${backends}`,
     "",
     "要求：",
     "- 能用条件说清楚的都写成条件（群名、发送人、关键词、@ 本人、消息类型），judge 用 code；条件说不清的部分（“报警需要关注”“问题是我们负责的”）用 code+ai：条件先缩小范围，模型再确认；完全没有可写的条件才用 ai。",

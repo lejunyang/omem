@@ -72,6 +72,11 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
   }
 }
 
+/** The AI the owner picked for this rule's runs: the run's `execution`, as run_agent passes one. */
+function ruleAI(rule: Rule, a: Extract<RuleAction, { type: "agent" }>) {
+  return a.ai ? { execution: { ...a.ai, source: "user" as const, reason: `规则「${rule.name}」指定` } } : {};
+}
+
 /** Urgent and members-only messages: only when the rule allows them. */
 function powers(a: Extract<RuleAction, { type: "agent" }>) {
   return { ...(a.allowUrgent ? { urgent: true } : {}), ...(a.allowPrivate ? { private: true } : {}) };
@@ -162,6 +167,7 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
       ...(threadId && reply === "auto" ? { threadId } : {}),
       ...(replyAt && reply === "auto" ? { replyAt } : {}),
       rule: { id: rule.id, name: rule.name },
+      ...ruleAI(rule, a),
       lark,
       // Drafts posted with lark_send land in the topic of the chosen conversation.
       ...(origin && reply === "draft" ? { conversationId: origin.id } : {}),
@@ -216,6 +222,7 @@ async function silentAgent(app: App, rule: Rule, a: Extract<RuleAction, { type: 
       ...assistantScope(spec.name, space, lark),
       task,
       rule: { id: rule.id, name: rule.name },
+      ...ruleAI(rule, a),
       silent: { chatId, messageId: e.message.id, topicId: e.message.topicId ?? null },
       ...(prevSession ? { resumeSessionId: prevSession } : {}),
       lark,

@@ -5,6 +5,7 @@ import { all, one, run } from "../core/db.ts";
 import { deleteSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { readAgentSpec } from "../agents/specs.ts";
+import { validateExecution } from "../agents/execution.ts";
 import { fieldsOf } from "./conditions.ts";
 import { ruleInputSchema, type Rule, type RuleInput, type Temporary } from "./types.ts";
 
@@ -85,6 +86,8 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   for (const a of r.actions) {
     if (a.type === "agent" || a.type === "watch") {
       if (a.type === "agent" && a.space) getSpace(app, a.space);
+      // The backend must exist and offer the model and effort (checked against its last detection).
+      if (a.type === "agent" && a.ai) validateExecution(app, { ...a.ai, source: "user", reason: `规则「${r.name}」指定` });
     }
   }
   const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;

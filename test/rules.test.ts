@@ -263,3 +263,32 @@ describe("rules that read the discussion", () => {
     app.db.close();
   });
 });
+
+describe("a rule's own AI", () => {
+  it("pins backend, model and effort on the runs it starts; an unknown backend or model is refused when saving", async () => {
+    const { resolve } = await import("node:path");
+    const { saveProbe } = await import("../src/agents/probe.ts");
+    const { fireScheduledRule } = await import("../src/rules/engine.ts");
+    const app = testApp();
+    for (const id of ["first", "second"]) app.config.agents.profiles.push({ id, name: id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: {}, idleTimeoutMs: 60000, model: "m1" });
+    app.config.agents.default = "first";
+    for (const id of ["first", "second"]) saveProbe(app, id, { at: new Date().toISOString(), agent: id, models: ["m1", "m2"], efforts: ["low", "high"], effortsByModel: { m1: [], m2: ["low", "high"] } });
+    saveAgentSpec(app, { name: "patrol", description: "巡检", prompt: "巡检。", agent: "first" }, "user");
+    const base = { name: "每周巡检", description: "每周五巡检一次", enabled: true, trigger: { event: "schedule" as const, once: "event" as const, cron: "0 2 * * 5" }, judge: "code" as const, conditions: null };
+    const action = { type: "agent" as const, spec: "patrol", task: "巡检", ownTopic: false, reply: "none" as const };
+    expect(() => saveRule(app, { ...base, actions: [{ ...action, ai: { profile: "missing" } }] })).toThrow(/不可用/);
+    expect(() => saveRule(app, { ...base, actions: [{ ...action, ai: { profile: "second", model: "m9" } }] })).toThrow(/检测结果/);
+    const pinned = saveRule(app, { ...base, actions: [{ ...action, ai: { profile: "second", model: "m2", effort: "high" } }] });
+    expect(getRule(app, pinned.id).actions[0]).toMatchObject({ ai: { profile: "second", model: "m2", effort: "high" } });
+    await fireScheduledRule(app, pinned.id);
+    const runId = listFirings(app, pinned.id)[0].results[0].runId!;
+    const input = JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", runId)!.input);
+    expect(input.execution).toEqual({ profile: "second", model: "m2", effort: "high", source: "user", reason: "规则「每周巡检」指定" });
+    // Without a pick the run carries none and the profile's own AI is used.
+    const plain = saveRule(app, { ...base, name: "另一条", actions: [action] });
+    await fireScheduledRule(app, plain.id);
+    const plainRun = listFirings(app, plain.id)[0].results[0].runId!;
+    expect(JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", plainRun)!.input).execution).toBeUndefined();
+    app.db.close();
+  });
+});

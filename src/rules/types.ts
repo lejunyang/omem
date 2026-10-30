@@ -81,6 +81,11 @@ export const actionSchema = z.discriminatedUnion("type", [
     reply: agentReply.default("none"),
     allowUrgent: z.boolean().optional(),
     allowPrivate: z.boolean().optional(),
+    /** The owner's pick of AI for this rule's runs (backend id, optional model and effort); without it the profile's own. */
+    ai: z
+      .object({ profile: z.string().trim().min(1), model: z.string().trim().optional(), effort: z.string().trim().optional() })
+      .transform((v) => ({ profile: v.profile, ...(v.model ? { model: v.model } : {}), ...(v.effort ? { effort: v.effort } : {}) }))
+      .optional(),
   }),
   z.object({ type: z.literal("watch"), spec: z.string(), on: z.enum(["all", "mention", "keyword"]).default("mention"), pattern: z.string().optional(), reply: reply.default("draft") }),
   z.object({ type: z.literal("invite-bot") }),

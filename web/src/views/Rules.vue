@@ -6,6 +6,7 @@ import Icon from "../components/Icon.vue";
 import RuleTabs from "../components/RuleTabs.vue";
 import RuleConditions, { type Condition } from "../components/RuleConditions.vue";
 import Skeleton from "../components/Skeleton.vue";
+import AiDefaults from "../components/AiDefaults.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
@@ -19,7 +20,7 @@ import { fmtTime, relTime, state, toast } from "../store";
 type Reply = "none" | "draft" | "auto";
 type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; allowUrgent?: boolean; allowPrivate?: boolean }
+  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; allowUrgent?: boolean; allowPrivate?: boolean; ai?: { profile: string; model?: string; effort?: string } }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
@@ -42,7 +43,7 @@ type Rule = {
   createdBy?: string;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { fields: Record<string, string>; eventFields?: Record<"message" | "meeting", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
+type Options = { fields: Record<string, string>; eventFields?: Record<"message" | "meeting", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[]; note: string };
 
 const route = useRoute();
@@ -218,6 +219,16 @@ const larkDestination = computed(() => {
 });
 const scheduleReplyOptions = computed(() => replyOptions.filter((o) => o.value !== "draft" || larkDestination.value));
 const specOptions = computed(() => options.value.specs.map((s) => ({ value: s.name, label: s.name === "assistant" ? "主助手" : s.name, hint: s.description })));
+/** The backend a profile runs on when the rule does not pick one. */
+const specAgent = (spec: string) => options.value.specs.find((s) => s.name === spec)?.agent ?? "";
+type AgentAction = Extract<Action, { type: "agent" }>;
+function toggleAI(a: AgentAction, on: boolean) {
+  a.ai = on ? { profile: specAgent(a.spec) || options.value.backends?.find((b) => b.installed)?.id || "" } : undefined;
+  touch();
+}
+function setAI(a: AgentAction, v: { agent?: string; model?: string; effort?: string }) {
+  a.ai = { profile: v.agent || specAgent(a.spec), ...(v.model ? { model: v.model } : {}), ...(v.effort ? { effort: v.effort } : {}) };
+}
 const addPick = ref<string | null>(null);
 function addAction(type: string | null) {
   addPick.value = null;
@@ -493,6 +504,11 @@ function startFrom(text: string) {
                 <UiCheckbox :model-value="!!a.allowPrivate" size="sm" @change="(v) => ((a.allowPrivate = v), touch())">允许只给部分人看</UiCheckbox>
                 <small class="muted">什么时候用、对谁用写在要求里，没写就不用</small>
               </div>
+              <div class="row wrap">
+                <UiCheckbox :model-value="!!a.ai" size="sm" @change="(v) => toggleAI(a, v)">指定 AI</UiCheckbox>
+                <small class="muted">{{ a.ai ? "这条规则交出去的运行用下面选的后端、模型和思考强度。" : `不指定就用档案自己的设置${specAgent(a.spec) ? `（${specAgent(a.spec)}）` : ""}；模型写在要求里不会生效。` }}</small>
+              </div>
+              <AiDefaults v-if="a.ai" :model-value="{ agent: a.ai.profile, model: a.ai.model, effort: a.ai.effort }" :backends="options.backends ?? []" :default-backend="specAgent(a.spec)" @update:model-value="(v) => setAI(a, v)" @change="touch" />
               <textarea v-model="a.task" class="input" rows="2" placeholder="交给它的要求（触发的消息会自动附上），例如：分析报警，需要关注就 @ 值班人" @input="touch" />
             </template>
             <template v-else-if="a.type === 'watch'">

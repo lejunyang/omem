@@ -1456,6 +1456,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ rule: z.record(z.string(), z.unknown()), chatId: z.string().optional(), days: z.number().optional(), ai: z.boolean().optional() }), req.body);
     return (await import("../rules/engine.ts")).testRule(app, b.rule as never, { chatId: b.chatId, days: b.days, ai: b.ai });
   });
+  // A profile whose backend is gone still lists (with no default shown).
+  const defaultBackendOf = (f: () => string) => {
+    try {
+      return f();
+    } catch {
+      return "";
+    }
+  };
   server.get("/api/rule-options", async () => {
     const { FIELDS, OPS, EVENT_FIELDS } = await import("../rules/types.ts");
     const { larkBotInfo } = await import("../channels/lark-send.ts");
@@ -1469,7 +1477,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         ...(app.config.lark.appId ? [{ id: "main", name: one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value ?? larkBotInfo("main")?.name ?? "主机器人" }] : []),
         ...app.config.lark.bots.filter((b) => b.enabled).map((b) => ({ id: b.id, name: larkBotInfo(b.id)?.name ?? b.id })),
       ],
-      specs: [{ name: "assistant", description: "主助手：未指定专用档案的日常任务" }, ...listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description }))],
+      // `agent`: the backend each one runs on when a rule does not pick one (shown as the default).
+      specs: [
+        { name: "assistant", description: "主助手：未指定专用档案的日常任务", agent: defaultBackendOf(() => resolveRunProfile(app, { actor: { role: "assistant" } }).id) },
+        ...listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description, agent: defaultBackendOf(() => resolveRunProfile(app, { actor: { spec: s } }).id) })),
+      ],
+      // The AI a rule's agent action may be pinned to (AiDefaults on the rules page).
+      backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(app, p.id) })),
       chats: all<{ chat_id: string; name: string }>(app.db, "select chat_id, name from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
       conversations: all(app.db, "select id,title,channel,space_id,external_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
