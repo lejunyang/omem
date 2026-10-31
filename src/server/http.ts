@@ -1277,6 +1277,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { requestSplit } = await import("../agents/review-chain.ts");
     return requestSplit(app, id, { ...b, userId: who(req) });
   });
+  // Other unfinished delegations and branch reviews on the same branch, whose findings can be fixed together.
+  server.get("/api/runs/:id/same-branch", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    return (await import("../agents/review-fix.ts")).sameBranchWork(app, id, who(req));
+  });
   server.post("/api/runs/:id/fix", async (req) => {
     const id = (req.params as { id: string }).id;
     ownRun(req, id);
@@ -1287,12 +1293,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       review: z.object({ tier: z.string().optional(), checks: z.array(z.string()).optional(), split: z.boolean().optional(), rotate: z.boolean().optional() }).optional(),
       reviewAi: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
       applyFirst: z.boolean().optional(),
+      // Findings of other reviews of the same branch are among findingIds (review-fix.ts sameBranchWork).
+      withSameBranch: z.boolean().optional(),
     }), req.body);
     if (b.review?.tier) await tierExists(b.review.tier);
     const { validateExecution } = await import("../agents/execution.ts");
     const reviewExecution = b.reviewAi ? validateExecution(app, { ...b.reviewAi, source: "user", reason: "本人在网页上按评审修改时指定" }) : undefined;
     const { startFix } = await import("../agents/review-fix.ts");
-    return startFix(app, id, { findingIds: b.findingIds, text: b.text, review: b.review, reviewExecution, applyFirst: b.applyFirst }, who(req));
+    return startFix(app, id, { findingIds: b.findingIds, text: b.text, review: b.review, reviewExecution, applyFirst: b.applyFirst, withSameBranch: b.withSameBranch }, who(req));
   });
   // The owner's words for a delegation while it runs, and the review its rounds get from now on (code-steer.ts).
   server.post("/api/runs/:id/notes", async (req) => {

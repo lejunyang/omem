@@ -3,9 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { getRun, setRunOutput } from "../src/agents/runs.ts";
+import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
-import { setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
+import { sameBranchWork, setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -78,5 +78,27 @@ describe("coding seen from the requirement tree", () => {
 
     setFindingSuggestion(app, id, f.id, "");
     expect(roundFindings(app, id, 1)[0].owner_suggestion).toBeNull();
+  });
+
+  it("fixes findings of two reviews of the same branch in one go", async () => {
+    const review = (title: string) => {
+      const r = createRun(app, { kind: "code", spaceId: "shop", title, input: { branches: { "shop-api": { branch: "feat/refund" } }, repos: ["shop-api"] } });
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      return r;
+    };
+    const a = review("评审 A"), b = review("评审 B");
+    recordReview(app, { codeRunId: a.id, round: 1, check: "reviewer", verdict: "changes_requested", summary: "", findings: [{ severity: "minor", title: "A 说的问题", detail: "", suggestion: "", evidence: [], confidence: "high" }] });
+    recordReview(app, { codeRunId: b.id, round: 1, check: "review-style", verdict: "changes_requested", summary: "", findings: [{ severity: "nit", title: "B 说的风格问题", detail: "", suggestion: "改成查表", evidence: [], confidence: "high" }, { severity: "minor", title: "B 没选的问题", detail: "", suggestion: "", evidence: [], confidence: "high" }] });
+    expect(sameBranchWork(app, a.id, OWNER).map((w) => w.rootId)).toEqual([b.id]);
+    const [fa] = roundFindings(app, a.id, 1);
+    const [fb, fb2] = roundFindings(app, b.id, 1);
+    // Without saying so, another review's finding is not this one's.
+    await expect(startFix(app, a.id, { findingIds: [fa.id, fb.id] }, OWNER)).rejects.toThrow(/同一分支/);
+    const fix = await startFix(app, a.id, { findingIds: [fa.id, fb.id], withSameBranch: true }, OWNER);
+    const task = String((fix.input as { task: string }).task);
+    expect(task).toMatch(/A 说的问题[\s\S]*B 说的风格问题[\s\S]*改成查表/);
+    expect(task).toContain(`以及同一分支的 ${b.id}`);
+    expect(roundFindings(app, b.id, 1).map((f) => f.decision)).toEqual(["fix", "later"]);
+    expect(fb2.title).toBe("B 没选的问题");
   });
 });

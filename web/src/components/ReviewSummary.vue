@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { post, put } from "../api";
+import { get, post, put } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import Markdown from "./Markdown.vue";
 import UiSegmented from "./UiSegmented.vue";
+import UiCheckbox from "./UiCheckbox.vue";
 import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { clearFixDraft, clearQuotes, draftReview, fixDraft, quotesOf, quotesText } from "../lib/quotes";
 import NextRoundReview from "./NextRoundReview.vue";
-import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type Finding, type Reviews } from "../lib/reviews";
+import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type Finding, type Review, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “概览” for a coding delegation or branch review: the verdict and review-lead's
@@ -43,26 +44,67 @@ const lastAt = computed(() => rv.reviews.value.reduce((t, r) => (r.created_at > 
 // whatever is set to be fixed; behind “全部” only what review-lead rejected or merged and the hints
 // nobody asked to fix.
 const quiet = (f: Finding) => settled(f) || (f.severity === "nit" && decisionOf(f) !== "fix");
+
+// ---- other reviews of the same branch (another AI's review of it, an earlier delegation on it) ----
+// Their findings can be shown here and fixed in the same round (review-fix.ts sameBranchWork).
+type Source = { runId: string; title: string; label: string };
+type Row = Finding & { check: string; fromRound?: number; source?: Source };
+const others = ref<{ rootId: string; latestId: string; title: string; branchReview: boolean }[]>([]);
+const withOthers = ref(false);
+const otherFindings = ref<Row[]>([]);
+const loadingOthers = ref(false);
+watch(() => props.runId, async (id) => {
+  others.value = [];
+  withOthers.value = false;
+  otherFindings.value = [];
+  if (!props.canFix) return;
+  others.value = await get<typeof others.value>(`/api/runs/${id}/same-branch`).catch(() => []);
+}, { immediate: true });
+watch(withOthers, async (on) => {
+  if (!on || otherFindings.value.length) return;
+  loadingOthers.value = true;
+  try {
+    const lists = await Promise.all(others.value.map(async (o) => {
+      const d = await get<{ rounds: { round: number }[]; reviews: Review[]; labels: Record<string, string> }>(`/api/runs/${o.latestId}/reviews`);
+      const last = d.rounds.at(-1)?.round;
+      return d.reviews.filter((r) => r.round === last).flatMap((r) => r.findings.map((f): Row => ({ ...f, check: r.check_name, source: { runId: o.latestId, title: o.title, label: d.labels[r.check_name] ?? r.check_name } })));
+    }));
+    otherFindings.value = lists.flat();
+  } catch (e) {
+    toast((e as Error).message, "error");
+    withOthers.value = false;
+  } finally {
+    loadingOthers.value = false;
+  }
+});
+const allFindings = computed<Row[]>(() => [...rv.findings.value, ...(withOthers.value ? otherFindings.value : [])]);
+const checkLabel = (f: Row) => f.source?.label ?? rv.label(f.check);
+const runOf = (f: Row) => f.source?.runId ?? props.runId;
+/** A finding's copies here (every round's copy of an own one, or the other review's). */
+function patchFinding(f: Row, fields: Partial<Finding>) {
+  if (f.source) return void Object.assign(f, fields);
+  for (const r of rv.data.value?.reviews ?? []) for (const x of r.findings) if (x.id === f.id) Object.assign(x, fields);
+}
 const filter = ref<"open" | "all">("open");
-const openCount = computed(() => rv.findings.value.filter((f) => !quiet(f)).length);
-const quietCount = computed(() => rv.findings.value.length - openCount.value);
-const filterOptions = computed(() => [{ value: "open" as const, label: `待处理 ${openCount.value}` }, { value: "all" as const, label: `全部 ${rv.findings.value.length}` }]);
-const shown = computed(() => (filter.value === "all" ? rv.findings.value : rv.findings.value.filter((f) => !quiet(f))));
+const openCount = computed(() => allFindings.value.filter((f) => !quiet(f)).length);
+const quietCount = computed(() => allFindings.value.length - openCount.value);
+const filterOptions = computed(() => [{ value: "open" as const, label: `待处理 ${openCount.value}` }, { value: "all" as const, label: `全部 ${allFindings.value.length}` }]);
+const shown = computed(() => (filter.value === "all" ? allFindings.value : allFindings.value.filter((f) => !quiet(f))));
 const open = ref(new Set<number>());
 const toggle = (id: number) => { const n = new Set(open.value); n.has(id) ? n.delete(id) : n.add(id); open.value = n; };
 const rawOpen = ref(false);
 const reasonsOpen = ref(false);
 const changeOpen = ref(false);
 
-function askAbout(f: Finding & { check: string }) {
-  emit("ask", { quote: [`[${SEV[f.severity].text}] ${f.title}`, findingWhere(f), f.detail, suggestionOf(f) ? `建议：${suggestionOf(f)}` : ""].filter(Boolean).join("\n"), label: `${rv.label(f.check)}评审的问题` });
+function askAbout(f: Row) {
+  emit("ask", { quote: [`[${SEV[f.severity].text}] ${f.title}`, findingWhere(f), f.detail, suggestionOf(f) ? `建议：${suggestionOf(f)}` : ""].filter(Boolean).join("\n"), label: `${f.source ? "另一份评审 · " : ""}${checkLabel(f)}评审的问题` });
 }
 
 // ---- what to fix: each finding's call, then the fix with the owner's own additions ------------
 const DECISIONS = [{ value: "fix" as const, label: "改" }, { value: "later" as const, label: "暂不改" }, { value: "wontfix" as const, label: "不改" }];
 const latestRound = computed(() => rv.round.value === (rv.data.value?.rounds.at(-1)?.round ?? rv.round.value));
 const deciding = computed(() => !!props.canFix && latestRound.value);
-async function decide(f: Finding, d: Decision) {
+async function decide(f: Row, d: Decision) {
   let note = "";
   if (d === "wontfix") {
     const why = await promptDialog("为什么不改？", { message: "写业务上的决定（如“运营确认存量工具不需要重新裁剪”）。会记到事项上，之后的评审不再提这个问题。", value: f.decision_note, placeholder: "理由", okText: "不改" });
@@ -70,9 +112,9 @@ async function decide(f: Finding, d: Decision) {
     note = why.trim();
   }
   try {
-    await put(`/api/runs/${props.runId}/findings/${f.id}`, { decision: d, note });
+    await put(`/api/runs/${runOf(f)}/findings/${f.id}`, { decision: d, note });
     // Every round's copy: a carried “暂不改” lives in an earlier round's review.
-    for (const r of rv.data.value?.reviews ?? []) for (const x of r.findings) if (x.id === f.id) Object.assign(x, { decision: d, decision_note: note });
+    patchFinding(f, { decision: d, decision_note: note });
   } catch (e) {
     toast((e as Error).message, "error");
   }
@@ -85,12 +127,12 @@ function editSug(f: Finding) {
   editingSug.value = f.id;
   sugText.value = suggestionOf(f);
 }
-async function saveSug(f: Finding, text = sugText.value) {
+async function saveSug(f: Row, text = sugText.value) {
   if (savingSug.value) return;
   savingSug.value = true;
   try {
-    const r = await put<{ ownerSuggestion: string | null; decision: Decision | null }>(`/api/runs/${props.runId}/findings/${f.id}/suggestion`, { text });
-    for (const rv_ of rv.data.value?.reviews ?? []) for (const x of rv_.findings) if (x.id === f.id) Object.assign(x, { owner_suggestion: r.ownerSuggestion, decision: r.decision });
+    const r = await put<{ ownerSuggestion: string | null; decision: Decision | null }>(`/api/runs/${runOf(f)}/findings/${f.id}/suggestion`, { text });
+    patchFinding(f, { owner_suggestion: r.ownerSuggestion, decision: r.decision });
     editingSug.value = null;
   } catch (e) {
     toast((e as Error).message, "error");
@@ -100,7 +142,7 @@ async function saveSug(f: Finding, text = sugText.value) {
 }
 const tally = computed(() => {
   const t = { fix: 0, later: 0, wontfix: 0 };
-  for (const f of rv.findings.value) t[decisionOf(f)]++;
+  for (const f of allFindings.value) t[decisionOf(f)]++;
   return t;
 });
 // The text and the next rounds' review survive switching tabs (lib/quotes.ts keeps them per run).
@@ -111,13 +153,13 @@ const router = useRouter();
 const picked = computed(() => quotesOf(props.runId, "fix"));
 // `applyFirst`: what is done now goes to the target branch (uncommitted) before the next round, which goes on in the same worktree.
 async function startFix(applyFirst = false) {
-  const ids = rv.findings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id);
+  const ids = allFindings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id);
   const text = [quotesText(picked.value, "本人在页面上选中、要求修改的地方（按 [1]、[2] 编号）："), draft.value.text.trim()].filter(Boolean).join("\n\n");
   if (starting.value || (!ids.length && !text)) return;
   if (applyFirst && !(await confirmDialog("先应用到原分支，再接着改？", { message: "现在的改动先写进原目标分支（未提交，可以在运行页提交）；下一轮在同一个工作区接着改，之后再应用只带新的改动。", okText: "应用并接着改" }))) return;
   starting.value = true;
   try {
-    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined, ...draftReview(draft.value), ...(applyFirst ? { applyFirst: true } : {}) });
+    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined, ...draftReview(draft.value), ...(applyFirst ? { applyFirst: true } : {}), ...(withOthers.value ? { withSameBranch: true } : {}) });
     clearFixDraft(props.runId);
     clearQuotes(props.runId, "fix");
     toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
@@ -205,8 +247,14 @@ async function answer(choice: number | null) {
       <div v-if="rawOpen && reviewText" class="sub"><Markdown :source="reviewText" /></div>
     </div>
 
-    <div v-if="rv.findings.value.length" class="card pad findings">
-      <div class="row"><div class="section-title flat">待处理问题</div><span class="spacer" /><UiSegmented v-model="filter" size="sm" :options="filterOptions" aria-label="显示哪些问题" /></div>
+    <div v-if="allFindings.length || (deciding && others.length)" class="card pad findings">
+      <div class="row wrap"><div class="section-title flat">待处理问题</div><span class="spacer" /><UiSegmented v-model="filter" size="sm" :options="filterOptions" aria-label="显示哪些问题" /></div>
+      <div v-if="deciding && others.length" class="row wrap others small">
+        <UiCheckbox v-model="withOthers" size="sm">一起看同一分支的其他评审（{{ others.length }} 份）</UiCheckbox>
+        <span class="muted ellipsis" :title="others.map((o) => o.title).join('\n')">{{ others.map((o) => o.title).join("、") }}</span>
+        <span v-if="loadingOthers" class="muted">读取中…</span>
+        <span v-else-if="withOthers" class="muted">勾上的问题和这份评审的一起改，开一次修改</span>
+      </div>
       <p v-if="!shown.length" class="muted small">没有要处理的问题。</p>
       <p v-if="filter === 'open' && quietCount" class="muted small">另有 {{ quietCount }} 个已驳回、已合并或只是提示的，在“全部”里。</p>
       <div v-for="f in shown" :key="f.id" class="finding" :class="{ dim: quiet(f) }">
@@ -216,17 +264,18 @@ async function answer(choice: number | null) {
           <span v-if="STATE[f.state]" class="badge" :class="{ warn: f.state === 'accepted' }">{{ STATE[f.state] }}</span>
           <span v-if="f.owner_suggestion" class="badge accent" title="建议按你改写的执行">建议已改</span>
           <span class="spacer" />
-          <span class="muted small nowrap">{{ f.fromRound ? `第 ${f.fromRound} 轮 · ` : "" }}{{ rv.label(f.check) }} · #{{ f.id }}</span>
+          <span v-if="f.source" class="badge" :title="f.source.title">另一份评审</span>
+          <span class="muted small nowrap">{{ f.fromRound ? `第 ${f.fromRound} 轮 · ` : "" }}{{ checkLabel(f) }} · #{{ f.id }}</span>
           <UiSegmented v-if="deciding" :model-value="decisionOf(f)" class="decide-f" size="sm" :options="DECISIONS" :aria-label="`#${f.id} 怎么处理`" @change="(d) => decide(f, d)" />
         </div>
         <div v-if="f.decision === 'wontfix' && f.decision_note" class="small wontfix">不改：{{ f.decision_note }}</div>
         <div v-if="findingWhere(f) || f.triage_note || f.merged_into" class="line2 small">
-          <a v-if="findingWhere(f)" href="#" class="loc mono" title="打开这段代码" @click.prevent="refAction(findingWhere(f), runId)?.()">{{ findingWhere(f) }}</a>
+          <a v-if="findingWhere(f)" href="#" class="loc mono" title="打开这段代码" @click.prevent="refAction(findingWhere(f), runOf(f))?.()">{{ findingWhere(f) }}</a>
           <span v-if="f.triage_note || f.merged_into" class="muted">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : "" }}{{ f.merged_into && f.triage_note ? "；" : "" }}{{ f.triage_note }}</span>
         </div>
         <div v-if="open.has(f.id)" class="more small">
           <p v-if="f.detail">{{ f.detail }}</p>
-          <p v-if="f.evidence.length" class="muted">依据：<template v-for="(e, i) in f.evidence" :key="i"><a v-if="refAction(e, runId)" href="#" class="mono" @click.prevent="refAction(e, runId)!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < f.evidence.length - 1 ? "、" : "" }}</template></p>
+          <p v-if="f.evidence.length" class="muted">依据：<template v-for="(e, i) in f.evidence" :key="i"><a v-if="refAction(e, runOf(f))" href="#" class="mono" @click.prevent="refAction(e, runOf(f))!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < f.evidence.length - 1 ? "、" : "" }}</template></p>
           <div v-if="editingSug === f.id" class="sug-edit">
             <textarea v-model="sugText" class="textarea" rows="4" :aria-label="`改写 #${f.id} 的建议`" placeholder="写清楚要怎么改；下一轮按这段改，不再看评审的原建议" @keydown.esc.stop="editingSug = null" />
             <div class="row wrap">
@@ -304,6 +353,8 @@ async function answer(choice: number | null) {
 .more p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .more .btn { justify-self: start; }
 .sug-edit { display: grid; gap: 6px; }
+.others { gap: 8px; padding: 6px 0; }
+.others .ellipsis { min-width: 0; flex: 1 1 160px; }
 .orig summary { cursor: pointer; }
 .decide-f { flex: none; }
 .wontfix { color: var(--ink-2); background: var(--sunken); border-radius: 6px; padding: 3px 8px; justify-self: start; }

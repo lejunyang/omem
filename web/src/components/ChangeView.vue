@@ -17,13 +17,16 @@ import { POINT_STATUS, type ChangePoint, type Reviews } from "../lib/reviews";
  * 上一处 / 下一处 (or n / N). The marks next to line numbers lead back to the point. A point's
  * explanation opens in the ask drawer. Points may form a tree (pages or modules, the points under
  * them) that folds like folders; choosing a group takes in everything under it.
+ *
+ * `only`: just these points and the files they touch (the requirements page shows one requirement
+ * node's part of the change); the first one is chosen at once.
  */
 type DiffRepo = { space: string; files: { name: string; lines: string[]; add: number; rm: number }[] };
-const props = defineProps<{ rv: Reviews; runId: string; diffs: DiffRepo[] }>();
+const props = defineProps<{ rv: Reviews; runId: string; diffs: DiffRepo[]; only?: string[] | null }>();
 const emit = defineEmits<{ explain: [point: ChangePoint] }>();
 
 const COLORS = ["#3b63d1", "#7a55c9", "#12807a", "#b9730f", "#bf4369", "#4f7d2b"];
-const points = props.rv.changePoints;
+const points = computed(() => (props.only ? props.rv.changePoints.value.filter((p) => props.only!.includes(p.id)) : props.rv.changePoints.value));
 const colorOf = (id: string) => COLORS[Math.max(0, points.value.findIndex((p) => p.id === id)) % COLORS.length];
 const multi = computed(() => props.diffs.length > 1);
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
@@ -254,6 +257,13 @@ onBeforeUnmount(() => clearTimeout(splitTimer));
 // On a phone the list and the code take turns.
 const view = ref<"points" | "code">("points");
 const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: "code" as const, label: "代码" }];
+// Scoped to one requirement node: start on its (first top-level) point.
+watch(() => props.only?.join(","), async () => {
+  if (!props.only) return;
+  active.value = null;
+  const first = (kids.value.get(null) ?? [])[0];
+  if (first && props.diffs.length) await choose(first);
+}, { immediate: true });
 </script>
 
 <template>
@@ -264,7 +274,9 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
         <UiSegmented v-model="aside" size="sm" :options="asideOptions" aria-label="按变更点还是按文件看" />
         <DiffTree v-if="aside === 'files'" :files="treeFiles" :active="activeFile" :marked="pointFiles" :hot="activeFiles" :hot-color="active ? colorOf(active) : undefined" @pick="pickFile" />
         <template v-else>
-        <div v-if="points.length" class="legend muted small">
+        <p v-if="only && !points.length" class="muted small">这一轮的需求拆分里没有对应这个需求点的变更点。</p>
+        <div v-else-if="only" class="legend muted small"><span>这个需求点在这一轮的变更 · 行号旁的标记回到变更点</span></div>
+        <div v-else-if="points.length" class="legend muted small">
           <span>{{ isTree ? "点一组看它下面全部的代码" : "点一条只看它的代码" }} · 行号旁的标记回到变更点</span>
           <button v-if="!splitRun" class="lnk" title="按你的要求调整这份拆分，不重跑评审" @click="split(true)">重新整理</button>
           <span v-else>整理中…<router-link :to="`/runs/${splitRun}`">看过程</router-link></span>
@@ -318,7 +330,7 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
             <DiffFile v-if="open.has(key(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :points="pointsOf(d.space, f.name)" :active="activeIds" @point="fromMark" />
           </div>
         </template>
-        <template v-if="points.length && others.length">
+        <template v-if="!only && points.length && others.length">
           <button class="lnk others small" :aria-expanded="othersOpen" @click="othersOpen = !othersOpen">{{ othersOpen ? "收起" : "另有" }} {{ others.length }} 个文件没有对应的变更点</button>
           <template v-if="othersOpen">
             <div v-for="f in others" :key="key(f.space, f.name)" class="file" :data-key="key(f.space, f.name)" :class="{ picked: activeFile === key(f.space, f.name) }">

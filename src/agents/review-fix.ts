@@ -61,6 +61,43 @@ export function setFindingSuggestion(app: App, runId: string, findingId: number,
   return { id: findingId, ownerSuggestion: after.owner_suggestion, decision: after.decision };
 }
 
+const bareBranch = (b: string) => b.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+
+/** The branch each repository of a work is on: the reviewed branch, the one it started from, or the one it lands on. */
+function workBranches(app: App, rootId: string): Record<string, string> {
+  const input = getRun(app, rootId).input as { branches?: Record<string, { branch: string }>; fromBranches?: Record<string, string>; branchNames?: Record<string, string> };
+  if (input.branches) return Object.fromEntries(Object.entries(input.branches).map(([s, b]) => [s, bareBranch(b.branch)]));
+  const out: Record<string, string> = {};
+  for (const w of worktreesOf(app, rootId)) {
+    const b = input.fromBranches?.[w.space] ?? input.branchNames?.[w.space] ?? w.targetBranch ?? (w.commits ? w.branch : null);
+    if (b) out[w.space] = bareBranch(b);
+  }
+  for (const [s, b] of Object.entries({ ...input.branchNames, ...input.fromBranches })) out[s] ??= bareBranch(b);
+  return out;
+}
+
+/**
+ * The other unfinished delegations and branch reviews on the same branch of the same repositories
+ * (two reviews of one branch, by different AIs): their findings can be fixed in one go.
+ */
+export function sameBranchWork(app: App, runId: string, userId: string) {
+  const rootId = workRuns(app, runId)[0];
+  const mine = Object.entries(workBranches(app, rootId));
+  if (!mine.length) return [];
+  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const roots = all<{ id: string }>(app.db, "select id from runs where kind = 'code' and id != ? and json_extract(input, '$.continueFrom') is null and coalesce(user_id, ?) = ? and created_at > ? order by created_at desc limit 100", rootId, OWNER, userId, since);
+  const out: { rootId: string; latestId: string; title: string; branchReview: boolean }[] = [];
+  for (const { id } of roots) {
+    const theirs = workBranches(app, id);
+    if (!mine.some(([space, b]) => theirs[space] === b)) continue;
+    const rounds = workRuns(app, id).map((x) => getRun(app, x));
+    if (rounds.some((r) => r.output.appliedAt || r.output.discardedAt)) continue;
+    const last = rounds.at(-1)!;
+    out.push({ rootId: id, latestId: last.id, title: last.title, branchReview: isBranchReview(rounds[0]) });
+  }
+  return out;
+}
+
 /** Findings the owner chose not to change now or at all, across the given work. */
 export function ownerDecisions(app: App, runIds: string[]) {
   if (!runIds.length) return [];
@@ -105,29 +142,33 @@ export function openDelegationOn(app: App, repos: string[], branch: string | nul
   return null;
 }
 
-export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; reviewExecution?: Execution; applyFirst?: boolean }, userId: string): Promise<Run> {
+// `withSameBranch`: the owner looked at the other reviews of the same branch too (sameBranchWork); their findings may be chosen, and what is left there waits as well.
+export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; reviewExecution?: Execution; applyFirst?: boolean; withSameBranch?: boolean }, userId: string): Promise<Run> {
   const runs = workRuns(app, runId);
   const last = getRun(app, runs.at(-1)!);
   if (!req.findingIds.length && !req.text?.trim()) throw new HttpError(400, "选几个要改的问题，或者写下要改什么");
-  const chosen = req.findingIds.map((id) => findingOf(app, runs, id) ?? (() => { throw new HttpError(404, `问题 #${id} 不属于这次交办或评审`); })());
+  const others = req.withSameBranch ? sameBranchWork(app, runId, userId) : [];
+  const pool = [...runs, ...others.flatMap((o) => workRuns(app, o.rootId))];
+  const chosen = req.findingIds.map((id) => findingOf(app, pool, id) ?? (() => { throw new HttpError(404, `问题 #${id} 不属于这次交办或评审，也不属于同一分支的其他评审`); })());
   const accepted = (next: Run) => {
     // Failed requests must leave the review's actions available for retry.
     for (const id of runs) cancelHostAsks(app, id, "review-done");
     for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '' where id = ?", f.id);
     // What the owner left unpicked waits (“暂不改”) and stays in view in the rounds after this one.
-    run(app.db, `update review_findings set decision = 'later' where decision is null and severity != 'nit' and state in ('open', 'accepted') and review_id in (select id from reviews where code_run_id = ?)${chosen.length ? ` and id not in (${chosen.map(() => "?").join(",")})` : ""}`, last.id, ...chosen.map((f) => f.id));
+    for (const latest of [last.id, ...others.map((o) => o.latestId)])
+      run(app.db, `update review_findings set decision = 'later' where decision is null and severity != 'nit' and state in ('open', 'accepted') and review_id in (select id from reviews where code_run_id = ?)${chosen.length ? ` and id not in (${chosen.map(() => "?").join(",")})` : ""}`, latest, ...chosen.map((f) => f.id));
     return next;
   };
   const task = [
     `# 按评审修改：${last.title}`,
-    chosen.length ? `本人从评审（运行 ${runs[0]}）里选定要改的问题：\n\n${chosen.map((f, i) => [
+    chosen.length ? `本人从评审（运行 ${runs[0]}${others.length ? `，以及同一分支的 ${others.map((o) => o.rootId).join("、")}` : ""}）里选定要改的问题：\n\n${chosen.map((f, i) => [
       `${i + 1}. [${SEVERITY_LABEL[f.severity]}] ${f.title}${where(f) ? ` — ${where(f)}` : ""}`,
       f.detail && `   问题：${truncate(f.detail, 1500)}`,
       f.owner_suggestion?.trim() ? `   建议（本人改写，以此为准）：${truncate(f.owner_suggestion.trim(), 2000)}` : f.suggestion && `   建议：${truncate(f.suggestion, 1000)}`,
       f.triage_note && `   评审负责人：${f.triage_note}`,
     ].filter(Boolean).join("\n")).join("\n")}` : "",
     req.text?.trim() ? `## 本人补充的要求\n\n${req.text.trim()}` : "",
-    decisionsBrief(app, runs, req.findingIds).replace("## 本人已经定了的问题", "## 这次不改的问题").replace(/下面这些[^\n]*/, "下面这些本人决定这次不改，不要动它们："),
+    decisionsBrief(app, pool, req.findingIds).replace("## 本人已经定了的问题", "## 这次不改的问题").replace(/下面这些[^\n]*/, "下面这些本人决定这次不改，不要动它们："),
   ].filter(Boolean).join("\n\n");
 
   const root = getRun(app, runs[0]);

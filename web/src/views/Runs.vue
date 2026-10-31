@@ -30,7 +30,7 @@ import ContextUsage from "../components/ContextUsage.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
-import { findingWhere, pointCount, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
+import { findingWhere, parsePatches, pointCount, pointQuote, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
 
 const route = useRoute();
 const router = useRouter();
@@ -158,19 +158,7 @@ const taskOpen = ref(false);
 watch(id, () => (taskOpen.value = false));
 const finalText = computed(() => out.value.answer ?? out.value.summary ?? out.value.coderSummary ?? "");
 // One entry per repository (a delegation may change several together).
-const diffs = computed(() =>
-  (detail.value?.patches ?? []).map((p) => ({
-    space: p.space,
-    files: p.patch
-      .split(/^diff --git /m)
-      .filter(Boolean)
-      .map((chunk) => {
-        const name = /^a\/(\S+)/.exec(chunk)?.[1] ?? "?";
-        const lines = chunk.split("\n").slice(1);
-        return { name, lines, add: lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length, rm: lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length };
-      }),
-  })),
-);
+const diffs = computed(() => parsePatches(detail.value?.patches ?? []));
 const fileCount = computed(() => diffs.value.reduce((n, d) => n + d.files.length, 0));
 const lineCount = computed(() => diffs.value.flatMap((d) => d.files).reduce((n, f) => ({ add: n.add + f.add, rm: n.rm + f.rm }), { add: 0, rm: 0 }));
 
@@ -203,15 +191,7 @@ function explain(p: ChangePoint) {
   if (asking.value === "open") asking.value = "min";
   explaining.value = p;
 }
-// A group (a page or module) is explained with the points under it.
-const under = (p: ChangePoint) => {
-  const list = rv.changePoints.value.filter((x) => x.parent === p.id);
-  return list.length ? `下面的变更点：${list.map((x) => `${x.id} ${x.title}（${POINT_STATUS[x.status].text}）`).join("；")}` : "";
-};
-const explainContext = computed(() => {
-  const p = explaining.value;
-  return p ? { quote: [`${p.id} ${p.title}（${POINT_STATUS[p.status].text}）`, p.requirement && `需求：${p.requirement}`, p.implementation && `实现：${p.implementation}`, p.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end && l.end !== l.start ? `-${l.end}` : ""}` : ""}`).join("、"), under(p)].filter(Boolean).join("\n"), label: `变更点 ${p.id}` } : null;
-});
+const explainContext = computed(() => (explaining.value ? pointQuote(explaining.value, rv.changePoints.value) : null));
 // Diffs start folded (a large change would bury everything below); a file's lines render only once opened.
 const openDiffs = ref(new Set<string>());
 watch(id, () => (openDiffs.value = new Set()));

@@ -8,7 +8,8 @@ import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
-import WorkPane from "../components/WorkPane.vue";
+import WorkPane, { type ReqFocus, type WorkTab } from "../components/WorkPane.vue";
+import { POINT_STATUS, type ChangePoint } from "../lib/reviews";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { fmtTime, relTime, state, toast } from "../store";
 
@@ -48,10 +49,46 @@ const selectedId = computed(() => (route.params.id as string | undefined) || "")
 const workId = computed(() => (typeof route.query.work === "string" ? route.query.work : ""));
 const openWork = (runId: string) => router.push({ path: `/reqs/${selectedId.value}`, query: { work: runId } });
 const closeWork = () => router.push(`/reqs/${selectedId.value}`);
+// While a delegation is open the tree is its map: picking a node keeps it open and shows that node's part.
+const workTab = computed<WorkTab>({
+  get: () => (typeof route.query.tab === "string" ? (route.query.tab as WorkTab) : "overview"),
+  set: (tab) => void router.replace({ path: route.path, query: { ...route.query, tab } }),
+});
+const workPoints = ref<ChangePoint[]>([]);
+watch(workId, (id) => { if (!id) workPoints.value = []; });
+/** This round's change points by requirement node, and the worst status among a node's own points. */
+const RANK = { missing: 3, partial: 2, done: 1, extra: 0 } as const;
+const pointsByNode = computed(() => {
+  const m = new Map<string, ChangePoint["status"]>();
+  for (const p of workPoints.value) if (p.req && (!m.has(p.req) || RANK[p.status] > RANK[m.get(p.req)!])) m.set(p.req, p.status);
+  return m;
+});
+/** Nodes this round touches: those with points and every node above them. */
+const touched = computed(() => {
+  const out = new Set<string>();
+  for (const id of pointsByNode.value.keys()) {
+    const n = byId.value.get(id);
+    if (!n) continue;
+    out.add(id);
+    for (const a of ancestors(n)) out.add(a);
+  }
+  return out;
+});
+const extraPoints = computed(() => workPoints.value.filter((p) => !p.req && !p.parent));
+const lastWork = ref<{ itemTitle: string; rounds: string[] } | null>(null);
 const live = computed(() => (detail.value?.work ?? []).filter((w) => w.stage !== "applied" && w.stage !== "discarded"));
 const past = computed(() => (detail.value?.work ?? []).filter((w) => w.stage === "applied" || w.stage === "discarded"));
 const showPast = ref(false);
-const openedWork = computed(() => detail.value?.work.find((w) => w.rounds.includes(workId.value)) ?? null);
+const openedWork = computed(() => detail.value?.work.find((w) => w.rounds.includes(workId.value)) ?? (lastWork.value?.rounds.includes(workId.value) ? lastWork.value : null));
+watch(openedWork, (w) => { if (w) lastWork.value = { itemTitle: w.itemTitle, rounds: w.rounds }; });
+/** The chosen node with everything under it, for the open delegation's “需求点” tab. */
+const focus = computed<ReqFocus | null>(() => {
+  const d = detail.value;
+  if (!d) return null;
+  const ids = new Set([d.node.id]);
+  for (const n of nodes.value) if (ancestors(n).includes(d.node.id)) ids.add(n.id);
+  return { id: d.node.id, title: d.node.title, ids: [...ids], body: d.node.body, acceptance: d.node.acceptance };
+});
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 const pending = computed(() => nodes.value.filter((n) => !n.confirmed && n.status === "active").length);
 const waiting = computed(() => nodes.value.reduce((t, n) => t + (n.work?.waiting ?? 0), 0));
@@ -104,7 +141,7 @@ onServerEvent((e) => {
     if ((e as { id?: string }).id === selectedId.value) void loadDetail();
   }
 });
-const open = (id: string) => router.push(`/reqs/${id}`);
+const open = (id: string) => router.push(workId.value ? { path: `/reqs/${id}`, query: { work: workId.value, tab: "req" } } : `/reqs/${id}`);
 
 // ---- folding and search -------------------------------------------------------------------------
 // Folded nodes per space, kept in this browser. A space opened for the first time shows systems and
@@ -291,18 +328,23 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else>
-          <div v-for="n in visible" :key="n.id" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test', hit: matches?.has(n.id) }" :style="{ paddingLeft: `${4 + n.depth * 16}px` }">
+          <div v-if="workId && workPoints.length" class="work-legend muted small">这次编码的变更：标出每个需求点这一轮的状态，没涉及的变灰</div>
+          <div v-for="n in visible" :key="n.id" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test', hit: matches?.has(n.id), idle: workId && workPoints.length && !touched.has(n.id) }" :style="{ paddingLeft: `${4 + n.depth * 16}px` }">
             <button v-if="hasKids.has(n.id)" type="button" class="fold" :aria-expanded="!!matches || !folded.has(n.id)" :aria-label="folded.has(n.id) ? `展开 ${n.title}` : `收起 ${n.title}`" :disabled="!!matches" @click="toggle(n.id)"><Icon :name="!matches && folded.has(n.id) ? 'right' : 'down'" :size="13" /></button>
             <span v-else class="fold-gap" />
             <button type="button" class="pick" @click="open(n.id)">
             <span class="k" :class="`k-${n.kind}`">{{ KIND[n.kind] }}</span>
             <span class="t ellipsis" :title="n.title">{{ n.title }}</span>
             <span v-if="!n.confirmed && n.status === 'active'" class="dot" title="待本人确认" />
-            <span v-if="n.state && STATE[n.state.status]" class="badge" :class="STATE[n.state.status].cls">{{ STATE[n.state.status].text }}</span>
+            <template v-if="workId && workPoints.length">
+              <span v-if="pointsByNode.get(n.id)" class="badge" :class="POINT_STATUS[pointsByNode.get(n.id)!].cls">{{ POINT_STATUS[pointsByNode.get(n.id)!].text }}</span>
+            </template>
+            <span v-else-if="n.state && STATE[n.state.status]" class="badge" :class="STATE[n.state.status].cls">{{ STATE[n.state.status].text }}</span>
             <span v-if="n.work?.waiting" class="badge accent" :title="`${n.work.waiting} 次编码或评审等你处理`">等你 {{ n.work.waiting }}</span>
             <span v-else-if="n.work?.total" class="muted wk" :title="`${n.work.total} 次编码或评审进行中`"><Icon name="code" :size="13" /></span>
             </button>
           </div>
+          <button v-if="workId && extraPoints.length" type="button" class="node extra" @click="workTab = 'change'"><span class="fold-gap" /><span class="k">需求外</span><span class="t ellipsis">需求点以外的改动</span><span class="badge warn">{{ extraPoints.length }}</span></button>
           <div v-if="matches && !matches.size" class="empty muted small">没有匹配的需求点。</div>
           <div v-if="!nodes.length" class="empty muted small">
             这个空间还没有需求树。点右上角的 + 建系统或模块，或者在事项页点“拆需求点”，让 AI 读事项的材料拆好再给你确认。
@@ -339,11 +381,11 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
         <nav class="crumbs muted small" aria-label="路径">
           <template v-for="(p, i) in detail.path" :key="p.id">
             <span v-if="i" aria-hidden="true">/</span>
-            <a href="#" @click.prevent="p.id === detail.node.id ? closeWork() : open(p.id)">{{ p.title }}</a>
+            <a href="#" @click.prevent="open(p.id)">{{ p.title }}</a>
           </template>
           <span aria-hidden="true">/</span><span>{{ openedWork?.itemTitle ?? "编码" }}</span>
         </nav>
-        <WorkPane :run-id="workId" :rounds="openedWork?.rounds ?? [workId]" @close="closeWork" @open="openWork" />
+        <WorkPane v-model:tab="workTab" :run-id="workId" :rounds="openedWork?.rounds ?? [workId]" :focus="focus" @close="closeWork" @open="openWork" @points="(p) => (workPoints = p)" />
       </div>
 
       <div v-else-if="detail" class="page">
@@ -486,6 +528,21 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
 }
 .wk {
   display: inline-flex;
+}
+.node.idle .pick {
+  opacity: 0.45;
+}
+.node.extra {
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-height: 28px;
+}
+.work-legend {
+  padding: 2px 8px 6px;
 }
 .work-row {
   display: flex;

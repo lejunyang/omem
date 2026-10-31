@@ -11,7 +11,7 @@ export type Decision = "fix" | "later" | "wontfix";
 /** Without a call of the owner's: what review-lead accepted and the serious ones get fixed, the rest wait. */
 export const decisionOf = (f: Finding): Decision => f.decision ?? (f.state === "accepted" || (f.state === "open" && (f.severity === "blocker" || f.severity === "major")) ? "fix" : "later");
 /** `parent` nests a point under a page or module (a tree); without it the list is flat. */
-export type ChangePoint = { id: string; parent?: string; title: string; status: "done" | "partial" | "missing" | "extra"; requirement: string; implementation: string; refs: string[]; locations: { file: string; start?: number; end?: number }[] };
+export type ChangePoint = { id: string; parent?: string; req?: string; title: string; status: "done" | "partial" | "missing" | "extra"; requirement: string; implementation: string; refs: string[]; locations: { file: string; start?: number; end?: number }[] };
 export type Review = { id: string; round: number; check_name: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; profile_id: string | null; model: string | null; effort: string | null; created_at: string; findings: Finding[]; change_points: ChangePoint[] };
 export type Lead = { verdict: "approve" | "revise" | "escalate"; summary: string; changeRequest: string; rerun: string[]; by: "lead" | "host"; stop?: string; escalation?: { summary: string } };
 export type AskInfo = { id: string; status: string; question: string; options: { label: string }[]; answer: string | null; handler?: string | null };
@@ -84,3 +84,25 @@ export function useReviews(runId: Ref<string>, refreshKey: Ref<string | undefine
   return { data, round, current, reviews, label, findings, changePoints, roundOptions, verdict, load };
 }
 export type Reviews = ReturnType<typeof useReviews>;
+
+/** A run's saved patches (one per repository) split into files, for the diff views. */
+export function parsePatches(patches: { space: string; patch: string }[]) {
+  return patches.map((p) => ({
+    space: p.space,
+    files: p.patch
+      .split(/^diff --git /m)
+      .filter(Boolean)
+      .map((chunk) => {
+        const name = /^a\/(\S+)/.exec(chunk)?.[1] ?? "?";
+        const lines = chunk.split("\n").slice(1);
+        return { name, lines, add: lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length, rm: lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length };
+      }),
+  }));
+}
+
+/** A change point as a quote for the ask drawer (“讲解”), with the points under a group. */
+export function pointQuote(p: ChangePoint, all: ChangePoint[]) {
+  const list = all.filter((x) => x.parent === p.id);
+  const under = list.length ? `下面的变更点：${list.map((x) => `${x.id} ${x.title}（${POINT_STATUS[x.status].text}）`).join("；")}` : "";
+  return { quote: [`${p.id} ${p.title}（${POINT_STATUS[p.status].text}）`, p.requirement && `需求：${p.requirement}`, p.implementation && `实现：${p.implementation}`, p.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end && l.end !== l.start ? `-${l.end}` : ""}` : ""}`).join("、"), under].filter(Boolean).join("\n"), label: `变更点 ${p.id}` };
+}
