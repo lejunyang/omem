@@ -69,17 +69,35 @@ export function addCodeNote(app: App, runId: string, text: string, by: string) {
   return { runId: r.id, stage, note };
 }
 
-/** Notes for a running coder, appended to an omem tool result (steer.ts does the same for chat turns). */
+/**
+ * What the checks said about a round's tasks while its coder works on (code-overlap.ts): not fixed,
+ * to be reverted, new from a second look. In memory: it lives as long as the round codes here.
+ */
+const feedback = new Map<string, string[]>();
+export function addRoundFeedback(runId: string, line: string) {
+  feedback.set(runId, [...(feedback.get(runId) ?? []), line]);
+}
+export function takeRoundFeedback(runId: string): string | null {
+  const lines = feedback.get(runId);
+  feedback.delete(runId);
+  return lines?.length ? ["## 评审在你工作期间的反馈", "", ...lines, "", "这些项已经算在你这一轮里（要回退的除外）；结合它们继续，最后的说明里交代怎么处理的。"].join("\n") : null;
+}
+
+/** Notes for a running coder, appended to an omem tool result (steer.ts does the same for chat turns); the checks' feedback too. */
 export function takeCodeSteering(app: App, runId: string): string | null {
   const r = one<{ kind: string; status: string }>(app.db, "select kind, status from runs where id = ?", runId);
   if (r?.kind !== "code" || r.status !== "running") return null;
   const run = getRun(app, runId);
   if (roundStage(run) !== "coding") return null;
   const notes = pendingNotes(app, runId);
-  if (!notes.length) return null;
-  markNotesDelivered(app, runId, notes);
-  addRunEvent(app, runId, "status", { text: `把 ${notes.length} 条本人补充交给了编码 Agent` });
-  return `\n\n---\n${notesText(notes)}`;
+  const checks = takeRoundFeedback(runId);
+  if (!notes.length && !checks) return null;
+  if (notes.length) {
+    markNotesDelivered(app, runId, notes);
+    addRunEvent(app, runId, "status", { text: `把 ${notes.length} 条本人补充交给了编码 Agent` });
+  }
+  if (checks) addRunEvent(app, runId, "status", { text: "把评审的反馈交给了编码 Agent" });
+  return `\n\n---\n${[notes.length ? notesText(notes) : "", checks ?? ""].filter(Boolean).join("\n\n")}`;
 }
 
 /**
@@ -100,6 +118,9 @@ export function setRoundReview(app: App, runId: string, review: RoundReview) {
 export function stopCodeWork(app: App, runId: string, reason: string) {
   const r = latestRound(app, runId);
   const reviews = all<{ id: string }>(app.db, "select id from runs where kind = 'review' and status in ('queued', 'running') and json_extract(input, '$.codeRunId') = ?", r.id).map((x) => x.id);
+  // A second look at the last stage (code-overlap.ts) goes on beside the round; it stops with it.
+  const root = String(r.input.continueFrom ?? r.id);
+  reviews.push(...all<{ id: string }>(app.db, "select id from runs where kind = 'agent' and status = 'running' and json_extract(input, '$.workId') = ? and json_extract(input, '$.secondLookOf') is not null", root).map((x) => x.id));
   const live = [r.id, ...reviews].filter((id) => ["queued", "running"].includes(getRun(app, id).status));
   if (!live.length) return { runId: r.id, stopped: [] as string[] };
   setRunOutput(app, r.id, { stoppedByOwner: reason.trim() || "本人要求停下" });

@@ -12,7 +12,8 @@ import { fmtTime, toast } from "../store";
  */
 type Note = { id: string; text: string; at: string; deliveredAt?: string };
 type RoundReview = { tier?: string; checks?: string[]; split?: boolean; rotate?: boolean };
-const props = defineProps<{ runId: string; coding: boolean; notes: Note[]; review: RoundReview | undefined }>();
+/** `tasks`: a delegation driven by tasks, where another model takes a second look instead of each round switching. */
+const props = defineProps<{ runId: string; coding: boolean; notes: Note[]; review: RoundReview | undefined; tasks?: boolean }>();
 const emit = defineEmits<{ changed: [] }>();
 
 const text = ref("");
@@ -49,9 +50,11 @@ const reviewOpen = ref(false);
 const reviewSummary = computed(() => [
   tier.value ? `「${tiers.value.find((t) => t.id === tier.value)?.name ?? tier.value}」档` : "",
   split.value ? "" : "不拆需求",
-  rotate.value === "on" ? "每轮换模型" : rotate.value === "off" ? "不换模型" : "",
+  rotate.value === "on" ? (props.tasks ? "每次换模型复看" : "每轮换模型") : rotate.value === "off" ? (props.tasks ? "不复看" : "不换模型") : "",
 ].filter(Boolean).join("，") || "按改动自动选");
-const ROTATE = [{ value: "" as const, label: "模型按档位设置" }, { value: "on" as const, label: "每轮换模型" }, { value: "off" as const, label: "不换模型" }];
+const ROTATE = computed(() => props.tasks
+  ? [{ value: "" as const, label: "复看由评审负责人定" }, { value: "on" as const, label: "每次换模型复看" }, { value: "off" as const, label: "不复看" }]
+  : [{ value: "" as const, label: "模型按档位设置" }, { value: "on" as const, label: "每轮换模型" }, { value: "off" as const, label: "不换模型" }]);
 const tierOptions = computed(() => [{ value: "", label: "按改动自动选" }, ...tiers.value.map((t) => ({ value: t.id, label: `「${t.name}」档` }))]);
 async function saveReview() {
   try {
@@ -81,7 +84,7 @@ async function saveReview() {
     <button class="lnk small review-toggle" :aria-expanded="reviewOpen" @click="reviewOpen = !reviewOpen">之后的评审：{{ reviewSummary }} {{ reviewOpen ? "▴" : "▾" }}</button>
     <div v-if="reviewOpen" class="row wrap small choices">
       <UiSelect v-model="tier" :options="tierOptions" size="sm" width="170px" aria-label="之后各轮的评审档位" @change="saveReview" />
-      <UiSelect v-model="rotate" :options="ROTATE" size="sm" width="150px" aria-label="之后各轮评审换不换模型" @change="saveReview" />
+      <UiSelect v-model="rotate" :options="ROTATE" size="sm" width="170px" :aria-label="tasks ? '要不要换模型复看' : '之后各轮评审换不换模型'" @change="saveReview" />
       <UiCheckbox v-model="split" size="sm" @update:model-value="saveReview">拆需求</UiCheckbox>
     </div>
   </section>

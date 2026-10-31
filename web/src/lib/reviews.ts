@@ -16,7 +16,7 @@ export type ChangePoint = { id: string; parent?: string; req?: string; title: st
 export type Review = { id: string; round: number; check_name: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; profile_id: string | null; model: string | null; effort: string | null; created_at: string; findings: Finding[]; change_points: ChangePoint[] };
 export type Lead = { verdict: "approve" | "revise" | "escalate"; summary: string; changeRequest: string; rerun: string[]; by: "lead" | "host"; stop?: string; escalation?: { summary: string } };
 export type AskInfo = { id: string; status: string; question: string; options: { label: string }[]; answer: string | null; handler?: string | null };
-export type Round = { runId: string; round: number; status: string; plan: { tier: string; tierName: string; checks: string[]; reasons: string[]; lead?: boolean } | null; verdict: string | null; stage: string | null; lead: Lead | null; stop: string | null; ask: AskInfo | null; acceptedByOwner: boolean; changePoints: ChangePoint[] | null; reviewRuns?: { id: string; status: string; title: string }[] };
+export type Round = { runId: string; round: number; status: string; plan: { tier: string; tierName: string; checks: string[]; reasons: string[]; lead?: boolean; looks?: string[] } | null; verdict: string | null; stage: string | null; lead: Lead | null; stop: string | null; ask: AskInfo | null; acceptedByOwner: boolean; changePoints: ChangePoint[] | null; reviewRuns?: { id: string; status: string; title: string }[] };
 type Data = { estimate: { tierName: string; reason: string } | null; rounds: Round[]; reviews: Review[]; labels: Record<string, string> };
 
 export const SEV: Record<Severity, { text: string; cls: string }> = { blocker: { text: "阻断", cls: "danger" }, major: { text: "严重", cls: "danger" }, minor: { text: "一般", cls: "warn" }, nit: { text: "提示", cls: "" } };
@@ -52,7 +52,8 @@ export function useReviews(runId: Ref<string>, refreshKey: Ref<string | undefine
   const current = computed(() => data.value?.rounds.find((r) => r.round === round.value) ?? null);
   const reviews = computed(() => {
     const list = (data.value?.reviews ?? []).filter((r) => r.round === round.value);
-    const order = current.value?.plan?.checks ?? [];
+    // Second looks by another model after the checks they look again at.
+    const order = [...(current.value?.plan?.checks ?? []), ...(current.value?.plan?.looks ?? [])];
     return [...list].sort((a, b) => order.indexOf(a.check_name) - order.indexOf(b.check_name));
   });
   const label = (name: string) => data.value?.labels[name] ?? name;

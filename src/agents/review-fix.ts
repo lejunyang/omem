@@ -276,8 +276,19 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     // A task-driven delegation: the chosen findings are tasks (taken up again if they were settled),
     // the owner's words one more, and the loop goes on with a fresh budget (code-loop.ts).
     const tasks = await import("./code-tasks.ts");
+    // One started before the task loop goes on driven by tasks from the owner's next request on
+    // (agents.autoAdvance.taskLoop): what its rounds did is one checkpoint, and the first stage review
+    // after it looks at the whole change.
+    const kept = worktreesOf(app, tasks.workRootOf(app, into.id));
+    if (!tasks.isTaskWork(app, into.id) && !branchReview && app.config.agents.autoAdvance.taskLoop && kept.length && kept.every((w) => existsSync(w.path))) {
+      const rootId = tasks.workRootOf(app, into.id);
+      run(app.db, "update runs set input = json_set(input, '$.taskMode', json('true')) where id = ?", rootId);
+      if (!tasks.listCheckpoints(app, rootId).length) tasks.recordCheckpoint(app, rootId, worktreesOf(app, rootId), "host", [], "改成按修改项推进之前的各轮");
+    }
     if (tasks.isTaskWork(app, into.id)) {
       const rootId = tasks.workRootOf(app, into.id);
+      // The checks the owner picked hold for the stage reviews from here (code-loop.ts planStage).
+      if (req.review) (await import("./code-steer.ts")).setRoundReview(app, into.id, req.review);
       for (const f of chosen) {
         const t = tasks.taskForFinding(app, rootId, f, userId);
         if (["done", "wontdo", "reverted"].includes(t.state)) tasks.updateTask(app, rootId, t.seq, { state: "todo", attempts: 0 }, { by: userId, kind: "owner", text: "本人要求再改" });

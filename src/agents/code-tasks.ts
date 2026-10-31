@@ -72,7 +72,14 @@ export type WorkState = {
   reverts?: RevertOp[];
   viewed?: Record<string, number>;
   asks?: Record<string, string>;
+  /** A second look at the last stage by other models, beside the next round (code-overlap.ts); cleared when it is done. */
+  look?: LookState | null;
+  /** The model each check's second look uses in this work, chosen once so its session goes on. */
+  lookAI?: Record<string, { profile: string; model?: string; effort?: string }>;
 };
+
+/** The stage a second look reads (the reviewed round, its commits) and which checks look again. */
+export type LookState = { run: string; round: number; stage: number; since?: Record<string, string>; heads: Record<string, string>; checks: { name: string; focus: string }[] };
 
 /**
  * Something to take back before the next round codes, each as a commit of its own: a task's commits,
@@ -373,6 +380,22 @@ export function commitTask(app: App, rootId: string, seq: number, worktrees: Wor
     if (c.ok) made.push(wt.space);
   }
   return made;
+}
+
+/**
+ * The commits on the work branch since the last checkpoint that name `seq`, on the task now (the
+ * round settles the rest at its end): its check verifies it while the round goes on (code-overlap.ts).
+ */
+export function attributeCommits(app: App, rootId: string, worktrees: WorktreeRef[], seq: number) {
+  const before = listCheckpoints(app, rootId).at(-1);
+  for (const wt of worktrees) {
+    const dir = gitDirOf(app, wt);
+    if (!dir) continue;
+    const t = getTask(app, rootId, seq);
+    const list = t.commits[wt.space] ?? [];
+    const mine = commitsByTask(dir, before?.heads[wt.space] ?? wt.start ?? wt.base).filter((c) => !c.revert && c.tasks.includes(seq) && !list.includes(c.sha)).map((c) => c.sha);
+    if (mine.length) updateTask(app, rootId, seq, { commits: { ...t.commits, [wt.space]: [...list, ...mine] } });
+  }
 }
 
 // ---- diffs ----------------------------------------------------------------------------------------

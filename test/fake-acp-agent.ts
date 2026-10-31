@@ -180,13 +180,22 @@ new AgentSideConnection(
             return { stopReason: "end_turn" as const };
           }
           if (prompt.includes("# 决定这次评审看什么")) {
-            await call("plan_review", { checks: [{ name: "reviewer", focus: "退款金额的边界" }, { name: "review-business", focus: "已发货的行" }], skipped: [{ name: "review-style", reason: "没有新增文件" }], summary: "改的是退款计算，功能和业务各看一遍" });
+            const second = process.env.FAKE_OVERLAP && !prompt.includes("上次评审以后") ? { second_look: [{ name: "review-business", focus: "支付渠道" }] } : {};
+            await call("plan_review", { checks: [{ name: "reviewer", focus: "退款金额的边界" }, { name: "review-business", focus: "已发货的行" }], skipped: [{ name: "review-style", reason: "没有新增文件" }], ...second, summary: "改的是退款计算，功能和业务各看一遍" });
             await say("计划好了");
             return { stopReason: "end_turn" as const };
           }
           if (prompt.includes("你这次只做需求拆分")) {
             await call("submit_change_points", { change_points: [{ id: "C1", title: "只退未发货的行", status: "done", locations: [{ file: "refund.ts" }] }] });
             await say("拆分完成");
+            return { stopReason: "end_turn" as const };
+          }
+          // review-lead on what a second look found: everything it raised is new, accepted.
+          if (prompt.includes("# 裁决复看的问题")) {
+            const section = prompt.slice(prompt.indexOf("## 复看提的问题"));
+            const ids = [...section.slice(0, section.indexOf("## 这次交办按修改项推进")).matchAll(/^- #(\d+) \[/gm)].map((m) => Number(m[1]));
+            await call("rule_review", { rulings: ids.map((id) => ({ id, decision: "accept" })), verdict: ids.length ? "revise" : "approve", summary: "复看的问题都要改" });
+            await say("裁决完成");
             return { stopReason: "end_turn" as const };
           }
           const leadRound = /你在裁决第 (\d+) 轮/.exec(prompt)?.[1];
@@ -199,9 +208,18 @@ new AgentSideConnection(
           }
           if (prompt.includes("# 验证修改项")) {
             const tasks = [...prompt.matchAll(/^### T(\d+) (.+)$/gm)].map((m) => ({ seq: Number(m[1]), title: m[2] }));
-            const results = tasks.map((t) => t.title.includes("已发货行不能退") && !prompt.includes("改出了新问题") ? { task: `T${t.seq}`, verdict: "regressed", note: "过滤写反了，未发货的行也被去掉了" } : { task: `T${t.seq}`, verdict: "fixed" });
+            const results = tasks.map((t) => !t.title.includes("已发货行不能退") ? { task: `T${t.seq}`, verdict: "fixed" }
+              : process.env.FAKE_OVERLAP ? (prompt.includes("没改好") ? { task: `T${t.seq}`, verdict: "fixed" } : { task: `T${t.seq}`, verdict: "not_fixed", note: "部分发货的订单还没处理" })
+              : !prompt.includes("改出了新问题") ? { task: `T${t.seq}`, verdict: "regressed", note: "过滤写反了，未发货的行也被去掉了" } : { task: `T${t.seq}`, verdict: "fixed" });
             await call("verify_tasks", { results });
             await say("验证完成");
+            return { stopReason: "end_turn" as const };
+          }
+          if (prompt.includes("## 这次是复看")) {
+            if (process.env.FAKE_LOOK_DELAY) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LOOK_DELAY)));
+            const findings = prompt.includes("上次评审以后") ? [] : [{ severity: "major", file: "refund.ts", line: 1, title: "退款要按支付渠道分开算", suggestion: "按支付渠道分组后再算" }];
+            const res = await call("submit_review", { verdict: findings.length ? "changes_requested" : "approved", summary: "复看", findings });
+            await say(`结论：${findings.length ? "需要修改" : "通过"}${res.isError ? JSON.stringify(res.content) : ""}`);
             return { stopReason: "end_turn" as const };
           }
           const check = /你负责的评审项：(\S+)/.exec(prompt)?.[1];
@@ -237,6 +255,23 @@ new AgentSideConnection(
             if (seq === 2 && prompt.includes(PLAN_ASK)) appendFileSync(join(cwd, "refund.test.ts"), "// 已发货的行不退\n");
             else commit(seq, `export const t${seq} = ${Date.now() % 1000};`);
             await call("finish_task", { task: `T${seq}`, summary: `做完了 T${seq}，跑了测试` });
+          }
+          // FAKE_OVERLAP: still at work while its checks verify and a second look runs; what comes back
+          // in a tool result (not fixed, new from the second look) is done in this same turn.
+          if (process.env.FAKE_OVERLAP && seqs.length && !prompt.includes(PLAN_ASK) && !prompt.includes("## 还在你这一轮的项")) {
+            for (let i = 0; i < 150; i++) {
+              await new Promise((r) => setTimeout(r, 200));
+              const text = ((await call("search", { query: "退款" })).content as { text: string }[]).map((c) => c.text).join("\n");
+              const back = [...text.matchAll(/^- T(\d+)「[^\n]*\n\s+在这一轮接着改/gm)].map((m) => Number(m[1]));
+              const added = /复看（另一个模型）新发现：([^\n]*)，已经加给你这一轮/.exec(text);
+              const fresh = added ? [...added[1].matchAll(/T(\d+)「/g)].map((m) => Number(m[1])) : [];
+              for (const seq of [...back, ...fresh]) {
+                commit(seq, `export const t${seq}b = ${i};`);
+                await call("finish_task", { task: `T${seq}`, summary: `按反馈改了 T${seq}` });
+                seqs.push(seq);
+              }
+              if (added) break;
+            }
           }
           await say(`做完了 ${seqs.map((n) => `T${n}`).join("、")}`);
         } finally { await client.close(); }

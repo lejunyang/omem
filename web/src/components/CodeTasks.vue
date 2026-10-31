@@ -18,7 +18,9 @@ type TaskState = "todo" | "coding" | "verify" | "disputed" | "done" | "owner" | 
 type Note = { at: string; by: string; text: string; kind: string };
 type Task = { seq: number; title: string; doneWhen: string; kind: "build" | "fix" | "owner" | "redo"; origin: { findings?: number[]; note?: string; files?: string[] }; state: TaskState; question: string | null; options: string[]; answer: string | null; verifier: string | null; attempts: number; reverts: number; commits: Record<string, string[]>; checkpoint: number | null; notes: Note[] };
 type Checkpoint = { seq: number; tasks: number[]; label: string; createdAt: string };
-type Work = { budget: number; budgetBy: "owner" | "coder" | null; until: number; round: number; lastRunId: string; paused: string | null; viewed: number; status: string; verdict: string | null; stage: string | null; reverts: number[]; pending: string[]; max: number };
+type Work = { budget: number; budgetBy: "owner" | "coder" | null; until: number; round: number; lastRunId: string; paused: string | null; viewed: number; status: string; verdict: string | null; stage: string | null; reverts: number[]; pending: string[]; max: number;
+  /** Another model looking at the last stage again, beside the fixes. */
+  look: { checks: string[]; ai: Record<string, { profile: string; model?: string } | null> } | null };
 type Data = { taskMode: boolean; rootId?: string; tasks?: Task[]; checkpoints?: Checkpoint[]; work?: Work };
 
 const props = defineProps<{ runId: string }>();
@@ -42,7 +44,9 @@ const STATE: Record<TaskState, { text: string; cls: string }> = {
   owner: { text: "等你决定", cls: "warn" }, wontdo: { text: "不做", cls: "" }, reverted: { text: "已回退", cls: "danger" },
 };
 const WHO: Record<string, string> = { coder: "编码 Agent", host: "omem", owner: "你", reviewer: "功能评审", "review-business": "业务评审", "review-arch": "架构评审", "review-style": "规范评审", "review-history": "历史评审", "review-lead": "评审负责人" };
-const who = (by: string) => WHO[by] ?? (by.startsWith("u") || by === "owner" ? "你" : by);
+const LOOK = "@复看";
+const who = (by: string): string => (by.endsWith(LOOK) ? `${who(by.slice(0, -LOOK.length))}（复看）` : WHO[by] ?? (by.startsWith("u") || by === "owner" ? "你" : by));
+const lookText = computed(() => w.value?.look ? w.value.look.checks.map((c) => { const ai = w.value!.look!.ai[c]; return `${who(c)}${ai ? `（${[ai.profile, ai.model].filter(Boolean).join(" · ")}）` : ""}`; }).join("、") : "");
 const PAUSE: Record<string, string> = { budget: "暂停：自动推进的轮数用完了", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停" };
 
 const tasks = computed(() => data.value?.tasks ?? []);
@@ -57,7 +61,7 @@ const busy = computed(() => !!w.value && ["queued", "running"].includes(w.value.
 const status = computed(() => {
   const x = w.value;
   if (!x) return null;
-  if (busy.value) return { text: x.status === "queued" ? "排队中" : x.stage === "verify" ? "逐项验证中" : x.stage === "arbitrate" ? "评审负责人裁决异议中" : x.stage === "plan" ? "评审负责人在定这次评审看什么" : x.stage === "checks" || x.stage === "lead" ? "阶段评审中" : "编码中", cls: "accent" };
+  if (busy.value) return { text: x.status === "queued" ? "排队中" : x.stage === "verify" ? "逐项验证中" : x.stage === "look" ? "等复看做完" : x.stage === "arbitrate" ? "评审负责人裁决异议中" : x.stage === "plan" ? "评审负责人在定这次评审看什么" : x.stage === "checks" || x.stage === "lead" ? "阶段评审中" : "编码中", cls: "accent" };
   if (x.paused) return { text: PAUSE[x.paused] ?? "已暂停", cls: "warn" };
   const open = tasks.value.some((t) => ["todo", "coding", "verify", "disputed"].includes(t.state));
   if (owner.value.length) return { text: `等你决定 ${owner.value.length} 项${open ? "" : "，其余已做完"}`, cls: "warn" };
@@ -155,6 +159,7 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
       <button v-if="w.paused" class="btn primary sm" :disabled="working" @click="pause(false)">继续推进</button>
       <button v-else-if="busy || tasks.some((t) => ['todo', 'coding', 'verify'].includes(t.state))" class="btn ghost sm" :disabled="working" @click="pause(true)">暂停</button>
     </div>
+    <p v-if="w.look" class="muted small look">另一个模型在复看上一次评审的改动：{{ lookText }}；新发现的问题会加进修改项。</p>
 
     <div v-if="owner.length" class="ask block">
       <div class="section-title">等你决定</div>

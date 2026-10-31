@@ -160,6 +160,9 @@ type Check = { command: string; code: number; output: string; ms: number };
 type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null };
 
 /** The run's worktrees, including runs from before multi-repository delegation. */
+/** Turns a task-driven round's coder may get after its own for what its checks sent back (code-overlap.ts). */
+const FOLLOW_UPS = 2;
+
 export function worktreesOf(app: App, runId: string): WorktreeRef[] {
   const r = getRun(app, runId);
   const out = r.output as { worktrees?: WorktreeRef[]; worktree?: string; branch?: string; base?: string };
@@ -516,6 +519,9 @@ ${input.task}
         return `## 工作区\n\n${wt.space}：${dir}（独立的 worktree）${command ? `\n检查命令：${command}` : ""}`;
       },
     });
+    // …and its tasks are verified while it codes on, what is not fixed coming back to it (code-overlap.ts).
+    const overlap = taskMode ? await import("./code-overlap.ts") : null;
+    overlap?.openRound(app, run.id, { event: ctx.event, signal: ctx.signal });
     let coder: Awaited<ReturnType<typeof runCoder>>;
     let reply: string;
     try {
@@ -539,9 +545,22 @@ ${input.task}
         coder = await runCoder(notesText(notes), coder.sessionId);
         reply = `${reply}\n\n## 按本人补充继续\n\n${replyOf(coder)}`;
       }
+      // Its turn is over: the checks verify what it finished; what is not fixed (and what a second look
+      // found meanwhile) comes back for up to FOLLOW_UPS more turns in the same session.
+      for (let i = 0; overlap && !ctx.signal.aborted; i++) {
+        const more = i < FOLLOW_UPS && !!coder.sessionId;
+        const back = await overlap.settleTurn(app, run.id, more);
+        if (!more || !back || ctx.signal.aborted) break;
+        const notes = pendingNotes(app, run.id);
+        if (notes.length) markNotesDelivered(app, run.id, notes);
+        ctx.event("status", { phase: "coder", text: "把评审的反馈交给编码 Agent，在这一轮接着改" });
+        coder = await runCoder([back, notes.length ? notesText(notes) : ""].filter(Boolean).join("\n\n"), coder.sessionId);
+        reply = `${reply}\n\n## 按评审的反馈继续\n\n${replyOf(coder)}`;
+      }
     } finally {
       // The helpers finish, and what they committed is picked onto the work branch (conflicts to the coder).
       if (helpers) helperRuns = await helpers.joinHelpers(app, run.id, (wt, files, label) => resolverFor(wt)(files, label));
+      await overlap?.closeRound(app, run.id);
     }
     if (helperRuns.length) reply = `${reply}\n\n## 编码助手\n\n${helperRuns.map((id) => { const h = getRun(app, id); return `- ${h.title}：${h.status === "done" ? truncate(String(h.output.answer ?? ""), 600) : `没做完（${h.error ?? h.status}）`}`; }).join("\n")}`;
     ctx.output({ coderSummary: reply.trim(), coderAI: coder!.ai, coderAgent: coder!.profileId, coderSessionId: coder!.sessionId, coderContext: coder!.contextUsage });

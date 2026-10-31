@@ -1183,7 +1183,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const w = t.workState(app, rootId);
     return {
       taskMode: true, rootId, tasks: t.listTasks(app, rootId), checkpoints: t.listCheckpoints(app, rootId),
-      work: { budget: w.budget, budgetBy: w.budgetBy ?? null, until: w.until, round: Number(last.input.round ?? 1), lastRunId: last.id, paused: w.paused ?? null, viewed: w.viewed?.[who(req)] ?? 0, status: last.status, verdict: last.output.verdict ?? null, stage: last.output.reviewStage ?? null, reverts: (w.reverts ?? []).flatMap((r) => (r.seq !== undefined ? [r.seq] : [])), pending: (w.reverts ?? []).map(t.revertLabel), max: app.config.agents.autoAdvance.codeRoundsMax },
+      work: { budget: w.budget, budgetBy: w.budgetBy ?? null, until: w.until, round: Number(last.input.round ?? 1), lastRunId: last.id, paused: w.paused ?? null, viewed: w.viewed?.[who(req)] ?? 0, status: last.status, verdict: last.output.verdict ?? null, stage: last.output.reviewStage ?? null, reverts: (w.reverts ?? []).flatMap((r) => (r.seq !== undefined ? [r.seq] : [])), pending: (w.reverts ?? []).map(t.revertLabel), max: app.config.agents.autoAdvance.codeRoundsMax, look: w.look ? { checks: w.look.checks.map((c) => c.name), ai: Object.fromEntries(w.look.checks.map((c) => [c.name, w.lookAI?.[c.name] ?? null])) } : null },
     };
   });
   // The owner adds a task: it is coded in the next round (now, when nothing is running).
@@ -1344,10 +1344,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/runs/:id/reviews", async (req) => {
     const r = getRun(app, (req.params as { id: string }).id);
     if (r.kind !== "code") throw new HttpError(400, "只有编码交办有评审");
-    const { reviewChecks, reviewsOf } = await import("../agents/review.ts");
+    const { checkLabel, lookName, reviewChecks, reviewsOf } = await import("../agents/review.ts");
     const chain = (r.output as { codeChain?: { rounds: string[] } }).codeChain;
     const rounds = (chain?.rounds ?? [r.id]).map((id) => getRun(app, id));
-    const labels = Object.fromEntries(reviewChecks(app).map((c) => [c.name, c.label]));
+    const checks = reviewChecks(app);
+    const infos = new Map(checks.map((c) => [c.name, c]));
+    // A second look by another model is the check under its look name (code-overlap.ts).
+    const labels = Object.fromEntries(checks.flatMap((c) => [[c.name, c.label], [lookName(c.name), checkLabel(infos, lookName(c.name))]]));
     const { getAsk } = await import("../agents/asks.ts");
     // The owner's open decision on a round (plan to confirm, stopped review), answered from the run page.
     const askOf = (id: unknown) => { try { const a = typeof id === "string" ? getAsk(app, id) : null; return a ? { id: a.id, status: a.status, question: a.question, options: a.options, answer: a.answer, handler: one<{ h: string | null }>(app.db, "select json_extract(context, '$.handler') h from asks where id = ?", a.id)?.h ?? null } : null; } catch { return null; } };

@@ -85,6 +85,8 @@ describe("one delegation per branch", () => {
 describe("fixing chosen findings", () => {
   it("re-reviews only the checks that raised them, all of them every few rounds or with the owner's own words", async () => {
     const { app, code } = delegation("done");
+    // The round-based flow (a delegation turned task-driven is covered in code-loop.test.ts).
+    app.config.agents.autoAdvance.taskLoop = false;
     setRunOutput(app, code.id, { coderSessionId: "coder-1" });
     app.config.review.rereviewAllEvery = 3;
     const arch = finding(app, code.id, "major", "接口两边对不上");

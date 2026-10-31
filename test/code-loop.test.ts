@@ -362,4 +362,95 @@ describe("a delegation driven by tasks", () => {
       app.db.close();
     }
   }, 180_000);
+
+  it("verifies a round's tasks while it codes, and lets another model look at the stage again beside the fixes", async () => {
+    const app = testApp();
+    const fake = (id: string) => ({ id, name: id, transport: "acp" as const, command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "tasks", FAKE_OVERLAP: "1", FAKE_LOOK_DELAY: "2500" }, idleTimeoutMs: 60000 });
+    app.config.agents.profiles.push(fake("fake"), fake("fake2"));
+    app.config.agents.default = "fake";
+    app.config.review.rotation = [{ profile: "fake2" }];
+    const dir = mkdtempSync(join(tmpdir(), "omem-overlap-"));
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: dir, encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const t = createThread(app, { channel: "web", spaceId: "shop-api", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "shop-api", title: "交办", input: { conversationId: t.id } });
+      const r1 = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款金额", input: { task: "退款只按未发货的行计算", repos: ["shop-api"], taskMode: true }, parentId: ask.id });
+      codeChainFor(app, r1);
+
+      // Round 1: the stage review asks another model to look at the business side again.
+      const one = await work(app, r1.id);
+      expect(one.verdict).toBe("continuing");
+      expect(workState(app, r1.id).look?.checks.map((c) => c.name)).toEqual(["review-business"]);
+      expect(workState(app, r1.id).lookAI).toEqual({ "review-business": { profile: "fake2" } });
+      const fix = listTasks(app, r1.id).find((x) => x.title === "已发货行不能退")!;
+
+      // Round 2 codes the fix while the second look runs. The fix is verified as soon as it is
+      // finished, is not fixed, comes back and is fixed in the same round; what the second look adds
+      // joins this round too.
+      const two = await work(app, one.continuedRunId!);
+      const r2 = one.continuedRunId!;
+      expect(two.verdict).toBe("awaiting-owner");
+      const task = (seq: number) => listTasks(app, r1.id).find((x) => x.seq === seq)!;
+      expect(task(fix.seq)).toMatchObject({ state: "done", attempts: 1, coderRun: r2 });
+      expect(task(fix.seq).commits["shop-api"]).toHaveLength(2);
+      expect(task(fix.seq).notes.map((n) => n.text)).toEqual(expect.arrayContaining([expect.stringContaining("没改好"), "验证没过，交回这一轮接着改", "验证通过"]));
+      const added = listTasks(app, r1.id).find((x) => x.title === "退款要按支付渠道分开算")!;
+      expect(added).toMatchObject({ state: "done", verifier: "review-business@复看", coderRun: r2 });
+      expect(added.notes.map((n) => n.text)).toContain("复看新发现，交给正在编码的这一轮");
+      // Nothing else needed a round of its own: the owner's question is all that is left.
+      expect(lastRound(app, r1.id).id).toBe(r2);
+      expect(workState(app, r1.id).look).toBeNull();
+
+      // The second look is recorded apart from the first, on its own model and session.
+      const looks = app.db.prepare("select check_name, profile_id from reviews where code_run_id = ? order by created_at").all(r1.id) as { check_name: string; profile_id: string }[];
+      expect(looks.find((x) => x.check_name === "review-business")?.profile_id).toBe("fake");
+      expect(looks.find((x) => x.check_name === "review-business@复看")?.profile_id).toBe("fake2");
+      expect(Object.keys(workState(app, r1.id).sessions ?? {})).toEqual(expect.arrayContaining(["review-business", "review-business@复看"]));
+      const child = app.db.prepare("select title, status from runs where parent_id = ? and json_extract(input, '$.secondLookOf') is not null").get(r1.id) as { title: string; status: string };
+      expect(child).toMatchObject({ status: "done" });
+      expect(child.title).toContain("复看：业务（fake2）");
+      // The coder heard about both mid-turn, through its tool results.
+      const events = (app.db.prepare("select data from run_events where run_id = ? and type = 'status'").all(r2) as { data: string }[]).map((e) => JSON.parse(e.data).text as string);
+      expect(events.filter((e) => e === "把评审的反馈交给了编码 Agent").length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await server.close();
+      app.db.close();
+    }
+  }, 180_000);
+
+  it("turns a delegation started before the task loop task-driven on the owner's next request, its rounds so far one checkpoint", async () => {
+    const app = testApp();
+    const dir = mkdtempSync(join(tmpdir(), "omem-convert-"));
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: dir, encoding: "utf8" }).trim();
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    const base = git("rev-parse", "HEAD");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 1;\n");
+    git("commit", "-qam", "第 1 轮");
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    try {
+      const old = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["shop-api"] } });
+      setRunOutput(app, old.id, { worktrees: [{ space: "shop-api", path: dir, branch: "main", base, start: base, commits: true }], verdict: "changes-requested" });
+      run(app.db, "update runs set status = 'done' where id = ?", old.id);
+      const { startFix } = await import("../src/agents/review-fix.ts");
+      const next = await startFix(app, old.id, { findingIds: [], text: "看一下 SDK 不支持的字段旧数据会不会保留", review: { checks: ["review-arch"] } }, OWNER);
+      expect(getRun(app, old.id).input.taskMode).toBe(true);
+      expect(listCheckpoints(app, old.id).map((c) => [c.seq, c.by, c.heads["shop-api"]])).toEqual([[1, "host", git("rev-parse", "HEAD")]]);
+      expect(listTasks(app, old.id).map((t) => [t.kind, t.state, t.title])).toEqual([["owner", "todo", "看一下 SDK 不支持的字段旧数据会不会保留"]]);
+      expect(next).toMatchObject({ kind: "code", status: "queued" });
+      expect(next.input).toMatchObject({ continueFrom: old.id, roundReview: { checks: ["review-arch"] } });
+      // Nothing reviewed yet: the first stage review takes the whole change since the start.
+      expect(workState(app, old.id).stageAt ?? 0).toBe(0);
+    } finally {
+      app.db.close();
+    }
+  });
 });

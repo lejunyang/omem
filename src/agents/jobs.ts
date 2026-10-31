@@ -180,6 +180,8 @@ registerHandler("agent", async (ctx) => {
   if (consultOf !== undefined) throw new Error("请教在服务重启时中断，提问的一方已经结束");
   // A helper of a coding round runs inside that round (code-helpers.ts); the round starts over after a restart.
   if ((ctx.run.input as { helperOf?: string }).helperOf) throw new Error("编码助手在服务重启时中断，它的项由下一轮接着做");
+  // So does a second look at a stage of a delegation (code-overlap.ts); the delegation starts it again.
+  if ((ctx.run.input as { secondLookOf?: string }).secondLookOf) throw new Error("复看在服务重启时中断，交办会重新开始复看");
   const spec = name === "assistant" ? undefined : readAgentSpec(ctx.app, name);
   if (!spec && !assistantScope) throw new Error("临时助手任务缺少调用者权限范围");
   // A round of multi-agent work: the agent continues its own session from its last round in this

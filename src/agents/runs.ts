@@ -480,6 +480,17 @@ export function cancelRun(app: App, id: string) {
   return getRun(app, id);
 }
 
+/**
+ * Work that runs inside another run's handler but has a run of its own (a second look,
+ * code-overlap.ts): cancelling that run aborts `controller`. Returns the undo.
+ */
+export function trackAbort(id: string, controller: AbortController) {
+  controllers.set(id, controller);
+  return () => {
+    if (controllers.get(id) === controller) controllers.delete(id);
+  };
+}
+
 /** Resolve when a run reaches a terminal state (used by CLI and tests). */
 export function waitForRun(app: App, id: string): Promise<Run> {
   return new Promise((resolve) => {

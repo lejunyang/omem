@@ -11,6 +11,7 @@ import type { RoundReview } from "./code-steer.ts";
 import {
   blocksAt, checkBrief, FINDING_FORMAT, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
   SEVERITY_LABEL, STOP_LABEL, type ChangePoint, type LeadResult, type ReviewPlan, type Severity, type StopReason,
+  checkLabel, lookBase,
 } from "./review.ts";
 import { loadRole, runRole } from "./runner.ts";
 import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } from "./runs.ts";
@@ -45,7 +46,8 @@ export function codeRunOf(app: App, runId: string | null): Run | null {
   if (!runId) return null;
   const r = getRun(app, runId);
   if (r.kind === "code") return r;
-  const id = r.kind === "review" ? (r.input as { codeRunId?: string }).codeRunId : undefined;
+  // A second look at a stage works on the round whose stage it looks at (code-overlap.ts).
+  const id = r.kind === "review" ? (r.input as { codeRunId?: string }).codeRunId : r.kind === "agent" ? (r.input as { secondLookOf?: string }).secondLookOf : undefined;
   return id ? getRun(app, id) : null;
 }
 
@@ -62,7 +64,12 @@ const roundOf = (r: Run) => (r.input as { round?: number }).round ?? 1;
  * `since`: only the change after these commits (a delegation driven by tasks reviews what came
  * after its last stage review, code-loop.ts).
  */
-export async function reviewContext(app: App, codeRunId: string, note?: string, opts: { since?: Record<string, string> } = {}) {
+/**
+ * What every check of a round reads. `since`: only the change after these commits; `to`: up to these
+ * commits instead of the worktree's HEAD, read in `dirs` (a snapshot, code-overlap.ts), not the
+ * worktrees the coder is editing.
+ */
+export async function reviewContext(app: App, codeRunId: string, note?: string, opts: { since?: Record<string, string>; to?: Record<string, string>; dirs?: Record<string, string>; cwd?: string } = {}) {
   const run = getRun(app, codeRunId);
   const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string; peerReviewer?: PeerReviewer };
   const { decisionsBrief, workRuns } = await import("./review-fix.ts");
@@ -74,7 +81,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const worktrees = worktreesOf(app, root);
   const results = out.repos ?? [];
   const multi = results.length > 1;
-  const cwd = multi ? join(app.runsDir, root, "work") : worktrees[0] && workDirOf(worktrees[0]);
+  const cwd = opts.cwd ?? (multi ? join(app.runsDir, root, "work") : worktrees[0] && workDirOf(worktrees[0]));
   const { materialSpaces, materialsBrief } = await import("../items/materials.ts");
   const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
@@ -83,7 +90,8 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const ranged = since ? worktrees.map((w) => {
     const from = since[w.space];
     const dir = workDirOf(w);
-    return { space: w.space, patch: from ? git(dir, ["diff", "--no-color", from, "HEAD"]).stdout : "", stat: from ? git(dir, ["diff", "--stat", from, "HEAD"]).stdout.trim() : "" };
+    const to = opts.to?.[w.space] ?? "HEAD";
+    return { space: w.space, patch: from ? git(dir, ["diff", "--no-color", from, to]).stdout : "", stat: from ? git(dir, ["diff", "--stat", from, to]).stdout.trim() : "" };
   }).filter((p) => p.patch.trim()) : null;
   const patches = ranged ?? codePatches(app, run.id);
   const diffs = patches.map((p) => (multi ? `### ${p.space}\n\n${fence("diff", p.patch)}` : fence("diff", p.patch)));
@@ -91,7 +99,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     ? ranged.map((r) => (multi ? `[${r.space}]\n${r.stat}` : r.stat)).join("\n\n")
     : results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
-  const label = (n: string) => infos.get(n)?.label ?? n;
+  const label = (n: string) => checkLabel(infos, n);
 
   const head = (r: { space: string }) => (multi ? `### ${r.space}\n\n` : "");
   const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
@@ -100,7 +108,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     input.itemId ? materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
     decisionsBrief(app, [...workRuns(app, run.id), ...(input.fromReview ? workRuns(app, input.fromReview) : [])]),
     note ? `## 本人确认评审计划时补充\n\n${note}` : "",
-    multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
+    multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${opts.dirs?.[w.space] ?? w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
     `## 检查结果\n\n${checkText}`,
     `## ${since ? "上次评审以后的改动统计" : "改动统计"}\n\n${statText}`,
@@ -225,7 +233,9 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       ...(info.builtin ? {} : { spec: readAgentSpec(app, name) }),
       reviewCheck: true,
       // Rounds after the first may each take another model (the tier's or the owner's choice), for a different take.
-      execution: rotatedExecution(app, round, plan.checks.indexOf(name), (run.input as { roundReview?: RoundReview }).roundReview?.rotate ?? plan.rotateModels) ?? (name === "reviewer" ? input.reviewExecution : undefined),
+      // Not a task-driven delegation's: each check keeps its model and session there, and another
+      // model takes a second look under its own name instead (code-overlap.ts).
+      execution: (opts.task ? null : rotatedExecution(app, round, plan.checks.indexOf(name), (run.input as { roundReview?: RoundReview }).roundReview?.rotate ?? plan.rotateModels)) ?? (name === "reviewer" ? input.reviewExecution : undefined),
       spaceId: run.spaceId!,
       spaces,
       alsoRead: indexed,
@@ -395,7 +405,7 @@ function hostRuling(app: App, codeRunId: string, round: number, done: { name: st
 }
 
 /** What review-lead reads: this round's findings by number, earlier rulings, and the change. */
-const TASK_RULING = [
+export const TASK_RULING = [
   "## 这次交办按修改项推进",
   "不用写修改单（change_request 可以不填）：你接受的每条问题都会变成一个修改项，编码 Agent 逐项改，由提出它的评审项验证。接受时再判断这一条能不能不问本人就改：",
   "- 自动改：问题说得清（哪里、什么情况下、错在哪），有背景和原因，改法明确，改动不大、好回退。不按严重程度划线，一条“提示”只要符合这些也改；",
@@ -407,9 +417,9 @@ function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, fail
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
   const round = roundOf(run);
   const fmt = (f: ReturnType<typeof roundFindings>[number]) => {
-    const info = infos.get(f.check_name);
+    const info = infos.get(lookBase(f.check_name));
     const blocking = info && blocksAt(f.severity, info.blocks);
-    return `- #${f.id} [${info?.label ?? f.check_name} · ${SEVERITY_LABEL[f.severity]}${blocking ? " · 达到阻塞级别" : ""}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${f.detail ? `\n  ${truncate(f.detail, 600)}` : ""}${f.owner_suggestion?.trim() ? `\n  建议（本人改写）：${truncate(f.owner_suggestion.trim(), 800)}` : f.suggestion ? `\n  建议：${truncate(f.suggestion, 400)}` : ""}`;
+    return `- #${f.id} [${checkLabel(infos, f.check_name)} · ${SEVERITY_LABEL[f.severity]}${blocking ? " · 达到阻塞级别" : ""}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${f.detail ? `\n  ${truncate(f.detail, 600)}` : ""}${f.owner_suggestion?.trim() ? `\n  建议（本人改写）：${truncate(f.owner_suggestion.trim(), 800)}` : f.suggestion ? `\n  建议：${truncate(f.suggestion, 400)}` : ""}`;
   };
   const now = roundFindings(app, run.id, round);
   const chain = chainOf(app, run);

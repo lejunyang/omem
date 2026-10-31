@@ -1,5 +1,4 @@
 import type { App } from "../core/app.ts";
-import type { RoleName } from "../core/config.ts";
 import { one } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { git } from "../core/git.ts";
@@ -11,22 +10,24 @@ import {
   addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, taskForFinding,
   stranded, taskLabel, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
+import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
 import { queueStandaloneFix } from "./review-fix.ts";
-import { planReview, reviewChecks, roundFindings, type ReviewPlan } from "./review.ts";
+import { checkLabel, planReview, reviewChecks, roundFindings, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
-import { readAgentSpec } from "./specs.ts";
 import { workDirOf } from "./workspaces.ts";
 
 /**
  * What happens after a coding round of a delegation driven by tasks (docs/v2/coding-loop.md §4):
  *
  * 1. each finished task that came from a finding goes back to the check that raised it, in that
- *    check's own session, which says fixed / not fixed / broke something / withdrawn;
+ *    check's own session, which says fixed / not fixed / broke something / withdrawn — mostly while
+ *    the round still codes (code-overlap.ts); here what that did not cover;
  * 2. when nothing is left to do, review-lead decides what this stretch of the change needs reviewed
  *    (which checks, what each should look at), the checks review it, and review-lead routes each
  *    finding: a task done without the owner, a question for the owner, or rejected;
+ *    A second look by another model may follow, beside the next round (code-overlap.ts);
  * 3. then the next round takes the tasks still to do, within the budget; owner questions wait
  *    without holding the rest; with nothing left the work is done and waits for the owner's confirm.
  *
@@ -35,21 +36,16 @@ import { workDirOf } from "./workspaces.ts";
 
 const roundOf = (r: Run) => Number((r.input as { round?: number }).round ?? 1);
 
-/** A check's session for this work, unless it has grown past the resume limit. */
-function sessionOf(app: App, rootId: string, check: string) {
-  const s = workState(app, rootId).sessions?.[check];
-  if (!s) return undefined;
-  return s.used !== undefined && s.used > app.config.sessions.codeResumeMaxTokens ? undefined : s.id;
-}
-function keepSession(app: App, rootId: string, check: string, id: string | undefined, used: number | undefined) {
-  if (!id) return;
-  const w = workState(app, rootId);
-  setWorkState(app, rootId, { sessions: { ...(w.sessions ?? {}), [check]: { id, ...(used !== undefined ? { used } : {}) } } });
-}
-
 export async function taskReview(app: App, codeRunId: string, rc: RoundContext): Promise<{ verdict: string; continuedRunId?: string }> {
   const run = getRun(app, codeRunId);
   const rootId = workRootOf(app, run.id);
+  // A second look that went on beside this round finishes first: what it adds belongs to its stage.
+  const look = lookRunning(rootId);
+  if (look) {
+    setRunOutput(app, run.id, { reviewStage: "look" });
+    rc.event("status", { text: "等复看做完" });
+    await untilDone(look, rc.signal);
+  }
   // Only reverts this round: what was taken back had been reviewed; a check it breaks is a task.
   if (run.output.gitOnly) {
     const broken = ((run.output.repos ?? []) as { space: string; check: { command: string; code: number; output: string } | null }[]).filter((r) => r.check && r.check.code !== 0);
@@ -71,72 +67,34 @@ export async function taskReview(app: App, codeRunId: string, rc: RoundContext):
   const w = workState(app, rootId);
   const latest = listCheckpoints(app, rootId).at(-1)?.seq ?? 0;
   if (!open.length && !(w.reverts ?? []).length && latest > (w.stageAt ?? 0)) await stageReview(app, run, rc);
+  // A second look the stage asked for goes on beside the next round; with nothing to code it is waited for here.
+  const after = workState(app, rootId);
+  const again = after.paused ? null : startLook(app, rootId);
+  if (again && !listTasks(app, rootId).some((t) => t.state === "todo") && !(after.reverts ?? []).length) {
+    setRunOutput(app, run.id, { reviewStage: "look" });
+    await untilDone(again, rc.signal);
+  }
   return nextStep(app, getRun(app, run.id), rc);
+}
+
+/** Wait for `p`, unless the round is stopped first. */
+function untilDone(p: Promise<void>, signal: AbortSignal) {
+  return new Promise<void>((ok, fail) => {
+    if (signal.aborted) return fail(new Error("CANCELLED"));
+    signal.addEventListener("abort", () => fail(new Error("CANCELLED")), { once: true });
+    void p.then(() => ok());
+  });
 }
 
 // ---- verification -----------------------------------------------------------------------------
 
-const VERIFY_BRIEF = [
-  "# 验证修改项",
-  "下面是你之前提的问题，编码 Agent 说已经改了。逐项读这一项的改动（必要时在工作区里看完整的代码），判断问题是不是真的解决了、有没有改出新问题，然后调用一次 `verify_tasks` 给每一项一个结论：",
-  "- fixed：解决了；",
-  "- not_fixed：没解决或只解决了一部分，note 写还差什么、该怎么改（交回编码 Agent 再改）；",
-  "- regressed：这一项的改动本身带来了新问题，note 写清是什么和证据（会先回退这一项再重做）；",
-  "- withdrawn：重新看过，问题本身不成立，note 写理由。",
-  "编码 Agent 对问题有异议时，说明里会写它的理由：理由成立就 withdrawn，不成立就 not_fixed 并回应它的理由。",
-  "只看这些修改项相关的改动；整份改动之后还有阶段评审，别的问题留给那时。",
-].join("\n");
-
+/** The finished tasks this round's own verifications did not cover (a helper's, the last ones), each by the check that raised it. */
 async function verifyTasks(app: App, run: Run, tasks: CodeTask[], rc: RoundContext) {
-  const rootId = workRootOf(app, run.id);
-  const ctx = await reviewContext(app, run.id);
   const groups = new Map<string, CodeTask[]>();
   for (const t of tasks) groups.set(t.verifier!, [...(groups.get(t.verifier!) ?? []), t]);
-  rc.event("status", { text: `逐项验证：${[...groups].map(([c, l]) => `${ctx.label(c)} 验证 ${l.map((t) => taskLabel(t.seq)).join("、")}`).join("；")}` });
-  await Promise.allSettled([...groups].map(async ([check, list]) => {
-    const info = ctx.infos.get(check);
-    if (!info || info.missing) {
-      for (const t of list) updateTask(app, rootId, t.seq, { state: "done" }, { by: "host", kind: "host", text: `评审项 ${check} 已经不在了，没有逐项验证，交给阶段评审` });
-      return;
-    }
-    const parts = list.map((t) => {
-      const said = t.notes.filter((n) => n.kind === "coder").at(-1)?.text;
-      const diff = ctx.worktrees.map((wt) => {
-        const shas = t.commits[wt.space] ?? [];
-        if (!shas.length) return "";
-        const dir = workDirOf(wt);
-        const first = shas[0];
-        const body = git(dir, ["diff", "--no-color", `${first}^`, shas.at(-1)!]).stdout;
-        return body.trim() ? `${ctx.multi ? `#### ${wt.space}\n\n` : ""}\`\`\`diff\n${truncate(body, 30000)}\n\`\`\`` : "";
-      }).filter(Boolean).join("\n\n");
-      return [taskText(app, t), said ? `编码 Agent 的说明：${truncate(said, 2000)}` : "", diff ? `#### 这一项的改动\n\n${diff}` : "（这一项没有找到对应的提交，在工作区里看现在的代码）"].filter(Boolean).join("\n\n");
-    });
-    try {
-      const res = await runRole(app, {
-        role: (info.builtin ? check : "reviewer") as RoleName,
-        ...(info.builtin ? {} : { spec: readAgentSpec(app, check) }),
-        reviewCheck: true,
-        addTools: ["verify_tasks"],
-        spaceId: run.spaceId!,
-        spaces: ctx.spaces,
-        alsoRead: ctx.indexed,
-        task: `${VERIFY_BRIEF}\n\n${parts.join("\n\n")}`,
-        runId: rc.runId,
-        cwd: ctx.cwd,
-        signal: rc.signal,
-        onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check, verify: true }),
-        profileId: info.builtin ? app.config.agents.roles[check] : undefined,
-        resumeSessionId: sessionOf(app, rootId, check),
-        persistSession: true,
-      });
-      keepSession(app, rootId, check, res.sessionId, res.contextUsage?.used);
-    } catch (e) {
-      if (rc.signal.aborted) throw e;
-      rc.event("status", { text: `${ctx.label(check)}没能完成验证：${(e as Error).message}` });
-    }
-    // No verdict: the stage review covers it.
-    for (const t of list) if (getTask(app, rootId, t.seq).state === "verify") updateTask(app, rootId, t.seq, { state: "done" }, { by: "host", kind: "host", text: `${ctx.label(check)}没有给出验证结论，交给阶段评审` });
-  }));
+  const { infos } = await checkScope(app, run);
+  rc.event("status", { text: `逐项验证：${[...groups].map(([c, l]) => `${checkLabel(infos, c)} 验证 ${l.map((t) => taskLabel(t.seq)).join("、")}`).join("；")}` });
+  await Promise.allSettled([...groups].map(([check, list]) => verifyGroup(app, { run, check, tasks: list, runId: rc.runId, signal: rc.signal, event: rc.event })));
   if (rc.signal.aborted) throw new Error("CANCELLED");
 }
 
@@ -211,6 +169,7 @@ const PLAN_BRIEF = [
   "这次交办按修改项推进，现在待做的项都做完了。你来决定这一段改动要哪些评审项看、各看什么。不按改动行数套档位：看改的是什么——业务逻辑、接口、数据、样式、测试、搬动的资源各需要不同的眼光；之前看过且没再动的地方不用再看；本人在任务里说了要怎么评审的照做。",
   "调用一次 `plan_review`：`checks` 列出参加的评审项和各自的重点（具体到哪些文件、哪类问题，一两句话），`skipped` 写没选的评审项各一句理由，`summary` 一句话说明这样安排的理由。至少选一项。",
 ].join("\n");
+const SECOND_LOOK_BRIEF = "这次还可以请另一个模型复看（`second_look`）：编码 Agent 修这次评审提的问题时，另一个模型同时重新看同一段改动，找第一次没发现的问题。值得复看的是业务逻辑复杂、风险大、第一次可能看不透的部分；改动小、样式、文档、搬资源的不用。复看也花 token，拿不准就不选。";
 
 async function planStage(app: App, run: Run, rc: RoundContext, since: Record<string, string> | undefined): Promise<ReviewPlan> {
   const rootId = workRootOf(app, run.id);
@@ -221,9 +180,14 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
   const facts = worktrees.map((wt) => `${worktrees.length > 1 ? `### ${wt.space}\n\n` : ""}${changeFacts(workDirOf(wt), since?.[wt.space] ?? wt.start ?? wt.base)}`).join("\n\n");
   const tasks = listTasks(app, rootId);
   const input = root.input as { task?: string; reviewTier?: string; reviewChecks?: string[] };
-  const ownerSaid = [input.reviewTier ? `本人点名的评审档位：${input.reviewTier}` : "", input.reviewChecks?.length ? `本人要求加上的评审项：${input.reviewChecks.join("、")}（必须选上）` : ""].filter(Boolean).join("\n");
+  // Checks the owner named when delegating, or picked for the rounds since (运行页“之后的评审”).
+  const must = [...new Set([...(input.reviewChecks ?? []), ...((run.input as { roundReview?: { checks?: string[] } }).roundReview?.checks ?? [])])];
+  const ownerSaid = [input.reviewTier ? `本人点名的评审档位：${input.reviewTier}` : "", must.length ? `本人要求加上的评审项：${must.join("、")}（必须选上）` : ""].filter(Boolean).join("\n");
+  // The owner said either way (每轮换模型 / 不换模型), or there is no other model: not review-lead's call.
+  const lookable = (app.config.review.rotation ?? []).length > 0 && (run.input as { roundReview?: { rotate?: boolean } }).roundReview?.rotate === undefined;
   const task = [
     PLAN_BRIEF,
+    lookable ? SECOND_LOOK_BRIEF : "",
     `## 这一段改动（${since ? "上次评审以后" : "从开始到现在"}）\n\n${facts}`,
     `## 修改项\n\n${tasks.map((t) => `- ${taskLabel(t.seq)} [${TASK_STATE_LABEL[t.state]}] ${t.title}`).join("\n") || "（没有）"}`,
     `## 可用的评审项\n\n${checks.map((c) => { const h = history.get(c.name); return `- ${c.name}（${c.label}）：${c.about}${c.guide ? `；本人说：${c.guide}` : ""}${h ? `；这次交办里提过 ${h.raised} 条，采纳 ${h.accepted}，驳回 ${h.rejected}` : ""}`; }).join("\n")}`,
@@ -250,18 +214,19 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
     if (rc.signal.aborted) throw e;
     rc.event("status", { text: `评审负责人没有完成计划（${(e as Error).message}），按改动大小选评审项` });
   }
-  const draft = getRun(app, run.id).output.reviewPlanDraft as { checks: { name: string; focus: string }[]; skipped?: { name: string; reason: string }[]; summary: string } | null | undefined;
+  const draft = getRun(app, run.id).output.reviewPlanDraft as { checks: { name: string; focus: string }[]; skipped?: { name: string; reason: string }[]; secondLook?: { name: string; focus: string }[]; summary: string } | null | undefined;
   const metrics = reviewMetrics(worktrees, (getRun(app, run.id).output.repos ?? []) as never, String(input.task ?? ""));
   const w = workState(app, rootId);
   if (draft?.checks.length) {
-    const names = [...new Set([...draft.checks.map((c) => c.name), ...(input.reviewChecks ?? [])])].filter((n) => checks.some((c) => c.name === n));
+    const names = [...new Set([...draft.checks.map((c) => c.name), ...must])].filter((n) => checks.some((c) => c.name === n));
     return {
       tier: "ai", tierName: "按改动定", checks: names, maxRounds: w.until, metrics, lead: true,
       reasons: [draft.summary, ...(draft.skipped ?? []).map((s) => `没选 ${s.name}：${s.reason}`)],
       focus: Object.fromEntries(draft.checks.map((c) => [c.name, c.focus])),
+      ...(lookable && draft.secondLook?.length ? { second: draft.secondLook.filter((c) => names.includes(c.name)) } : {}),
     };
   }
-  const fallback = planReview(app, metrics, { tier: input.reviewTier, extraChecks: input.reviewChecks });
+  const fallback = planReview(app, metrics, { tier: input.reviewTier, extraChecks: must });
   return { ...fallback, maxRounds: w.until, lead: true, confirmPlan: false };
 }
 
@@ -299,6 +264,8 @@ async function stageReview(app: App, run: Run, rc: RoundContext) {
     addTask(app, rootId, { title: "方案上的分歧", doneWhen: lead.escalation.summary, kind: "owner", state: "owner", question: lead.escalation.summary, options: lead.escalation.options }, "review-lead");
   }
   setWorkState(app, rootId, { stageAt: latest, stages: [...(w.stages ?? []), made] });
+  const look = planLook(app, rootId, getRun(app, run.id), plan, latest, since);
+  if (look) rc.event("status", { text: `另一个模型复看 ${look.checks.map((c) => c.name).join("、")}，和下一轮的修改同时进行` });
 }
 
 // ---- what next ------------------------------------------------------------------------------------
@@ -383,7 +350,8 @@ function queueRound(app: App, rootId: string, last: Run): Run | null {
       saveCodeChain(app, ready, ready.askRunId, ...ready.rounds);
       return queueNextCodeRound(app, ready, title, { manual: !running, resumeSessionId: sessionId })?.run ?? null;
     }
-    return queueStandaloneFix(app, rootId, last.id, title, runUser(app, last.id), {}, { allowRunning: last.id });
+    // Coded and reviewed here, also after rounds an outside Agent did (a delegation turned task-driven).
+    return queueStandaloneFix(app, rootId, last.id, title, runUser(app, last.id), { peerCoder: undefined, peerReviewer: undefined }, { allowRunning: last.id });
   } catch (e) {
     if (e instanceof HttpError) return null;
     throw e;
@@ -492,36 +460,36 @@ export async function askReviewer(app: App, codeRunId: string, seq: number, ques
   const rootId = workRootOf(app, run.id);
   const t = getTask(app, rootId, seq);
   if (!t.verifier) throw new HttpError(400, `${taskLabel(seq)} 不是评审问题，没有提出它的评审项可以问；对需求有疑问用 report_task 交给本人`);
-  const ctx = await reviewContext(app, run.id);
-  const info = ctx.infos.get(t.verifier);
-  if (!info || info.missing) throw new HttpError(404, `提出 ${taskLabel(seq)} 的评审项 ${t.verifier} 已经不在了`);
-  updateTask(app, rootId, seq, {}, { by: "coder", kind: "consult", text: `问${ctx.label(t.verifier)}：${truncate(question.trim(), 1500)}` });
+  const ctx = await checkScope(app, run);
+  const verifier = t.verifier;
+  const { role, spec, ...args } = checkArgs(app, rootId, verifier, run);
+  updateTask(app, rootId, seq, {}, { by: "coder", kind: "consult", text: `问${ctx.label(verifier)}：${truncate(question.trim(), 1500)}` });
   const { consultAgent } = await import("./consult.ts");
   let answer = "";
-  const reply = await consultAgent(app, {
-    role: (info.builtin ? t.verifier : "reviewer") as RoleName,
-    ...(info.builtin ? {} : { spec: readAgentSpec(app, t.verifier) }),
-    label: `${ctx.label(t.verifier)}评审`,
+  // Its session takes one turn at a time: an answer waits for a verification it is doing.
+  const reply = await withCheck(rootId, verifier, () => consultAgent(app, {
+    role,
+    ...(spec ? { spec } : {}),
+    label: `${ctx.label(verifier)}评审`,
     question: `编码 Agent 在改 ${taskLabel(seq)}（来自你提的问题）时有疑问。回答它的问题：问题在哪、为什么、改到什么程度算解决；只回答，不提交评审结论。\n\n${taskText(app, t)}\n\n## 它的问题\n\n${question.trim()}`,
     askedBy: "编码 Agent",
     parentRunId: run.id,
     spaceId: run.spaceId!,
     userId: userId ?? runUser(app, run.id),
     extra: {
-      reviewCheck: true,
+      ...args,
+      // Fresh at the call: a verification just before may have moved the session on.
+      resumeSessionId: sessionOf(app, rootId, verifier),
       spaces: ctx.spaces,
       alsoRead: ctx.indexed,
       cwd: ctx.cwd,
-      profileId: info.builtin ? app.config.agents.roles[t.verifier] : undefined,
-      resumeSessionId: sessionOf(app, rootId, t.verifier),
-      persistSession: true,
     },
     onDone: (res) => {
-      keepSession(app, rootId, t.verifier!, res.sessionId, res.contextUsage?.used);
+      keepSession(app, rootId, verifier, res.sessionId, res.contextUsage?.used);
       answer = res.reply ?? res.text;
     },
-  });
-  if (answer.trim()) updateTask(app, rootId, seq, {}, { by: t.verifier, kind: "consult", text: `回答：${truncate(answer.trim(), 1500)}` });
+  }));
+  if (answer.trim()) updateTask(app, rootId, seq, {}, { by: verifier, kind: "consult", text: `回答：${truncate(answer.trim(), 1500)}` });
   return reply;
 }
 

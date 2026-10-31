@@ -79,6 +79,8 @@ export type ToolContext = {
   role?: string;
   /** Agent spec running, if any: its experience/preference memories are its own. */
   spec?: string;
+  /** A review check running under another name than its role or spec (a second look, `<check>@复看`). */
+  check?: string;
   /** Comparison run: writes are recorded for grading, never applied. */
   shadow?: { parentRunId: string | null };
   /** The plugin whose agent is running (docs/v2/plugins.md): plugin_query / plugin_put work on its records. */
@@ -3810,10 +3812,10 @@ def({
   handler: async (ctx, a) => {
     const chain = await import("./review-chain.ts");
     if (ctx.peer && (!a.run_id || !a.check)) throw new HttpError(400, "设备的外部 Agent 提交评审要带 run_id 和 check");
-    const check = ctx.peer ? a.check : (ctx.spec ?? ctx.role);
+    const check = ctx.peer ? a.check : (ctx.check ?? ctx.spec ?? ctx.role);
     const r = ctx.peer ? chain.acceptPeerSubmission(ctx.app, a.run_id!, ctx.peer.caller, a.check) : chain.codeRunOf(ctx.app, ctx.runId);
     const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
-    if (!r || !check || !plan?.checks.includes(check)) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
+    if (!r || !check || !(plan?.checks.includes(check) || plan?.looks?.includes(check))) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
     const { changePointSchema, findingSchema, recordReview } = await import("./review.ts");
     const findings = a.findings.map((f) => findingSchema.parse(f));
     const changePoints = (a.change_points ?? []).map((c) => changePointSchema.parse(c));
@@ -3954,7 +3956,7 @@ def({
     summary: z.string().min(1).max(4000).describe("做了什么、改了哪些文件、怎么验证的（命令和结果）"),
   }),
   handler: async (ctx, a) => {
-    const { rootId, actor, worktrees } = await taskRound(ctx, "finish_task");
+    const { rootId, actor, worktrees, helper } = await taskRound(ctx, "finish_task");
     const t = await import("./code-tasks.ts");
     const seq = t.parseTaskRef(a.task);
     const task = t.getTask(ctx.app, rootId, seq);
@@ -3963,9 +3965,13 @@ def({
     const { worktreesOf } = await import("./code.ts");
     const { identity } = await import("./code-branch.ts");
     const committed = t.commitTask(ctx.app, rootId, seq, worktrees ?? worktreesOf(ctx.app, rootId), identity);
+    // The round's own commits are on the work branch already (a helper's are picked there at the round's end).
+    if (!helper) t.attributeCommits(ctx.app, rootId, worktreesOf(ctx.app, rootId), seq);
     t.updateTask(ctx.app, rootId, seq, { state: task.verifier ? "verify" : "done" }, { by: "coder", kind: "coder", text: a.summary });
+    // The round's own tasks are verified as they are finished, while it codes on (code-overlap.ts).
+    const started = !helper && task.verifier ? (await import("./code-overlap.ts")).taskFinished(ctx.app, actor, seq) : false;
     const left = t.listTasks(ctx.app, rootId).filter((x) => x.coderRun === actor && x.state === "coding");
-    return `已记下 ${t.taskLabel(seq)}${committed.length ? "，工作区里没提交的改动已作为这一项提交" : ""}${task.verifier ? `，交给 ${task.verifier} 验证` : ""}。${left.length ? `这一轮还有：${left.map((x) => t.taskLabel(x.seq)).join("、")}` : "这一轮的项都做完了，写最后的说明。"}`;
+    return `已记下 ${t.taskLabel(seq)}${committed.length ? "，工作区里没提交的改动已作为这一项提交" : ""}${task.verifier ? `，交给 ${task.verifier} 验证${started ? "（已经开始，你接着做别的项；没改好会在这一轮告诉你）" : ""}` : ""}。${left.length ? `这一轮还有：${left.map((x) => t.taskLabel(x.seq)).join("、")}` : "这一轮的项都做完了，写最后的说明。"}`;
   },
 });
 
@@ -3980,7 +3986,7 @@ def({
     options: z.array(z.string().min(1).max(40)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
   handler: async (ctx, a) => {
-    const { rootId, actor } = await taskRound(ctx, "report_task");
+    const { run: r, rootId, actor } = await taskRound(ctx, "report_task");
     const t = await import("./code-tasks.ts");
     const seq = t.parseTaskRef(a.task);
     const task = t.getTask(ctx.app, rootId, seq);
@@ -4000,6 +4006,7 @@ def({
         return `${task.verifier} 看过你的异议后仍坚持，这一轮结束后由评审负责人裁决 ${t.taskLabel(seq)}。接着做别的项。`;
       }
       t.updateTask(ctx.app, rootId, seq, { state: "verify" }, note);
+      if (actor === r.id) (await import("./code-overlap.ts")).taskFinished(ctx.app, actor, seq);
       return `已把 ${t.taskLabel(seq)} 的异议交给 ${task.verifier}，它会撤回或回应。接着做别的项。`;
     }
     const question = a.question?.trim() || a.reason;
@@ -4075,7 +4082,7 @@ def({
   handler: async (ctx, a) => {
     const { codeRunOf } = await import("./review-chain.ts");
     const r = codeRunOf(ctx.app, ctx.runId);
-    const check = ctx.spec ?? ctx.role;
+    const check = ctx.check ?? ctx.spec ?? ctx.role;
     const { isTaskWork, parseTaskRef } = await import("./code-tasks.ts");
     if (!r || !check || !isTaskWork(ctx.app, r.id)) throw new HttpError(400, "verify_tasks 只能在按修改项推进的交办的验证里使用");
     const { recordVerification } = await import("./code-loop.ts");
@@ -4093,6 +4100,10 @@ def({
       focus: z.string().min(1).max(1500).describe("这次请它重点看什么：哪些文件、哪类问题"),
     })).min(1).max(12),
     skipped: z.array(z.object({ name: z.string(), reason: z.string().min(1).max(500) })).max(12).optional(),
+    second_look: z.array(z.object({
+      name: z.string().min(1).describe("要复看的评审项名（必须也在 checks 里）"),
+      focus: z.string().min(1).max(1500).describe("复看重点看什么：第一次可能没看透的地方"),
+    })).max(12).optional().describe("请另一个模型复看同一段改动的评审项（评审设置里配了轮换模型才有）：编码 Agent 修这次的问题时，复看同时进行。值得复看的才选"),
     summary: z.string().min(1).max(1000).describe("一句话：为什么这样安排（给本人看）"),
   }),
   handler: async (ctx, a) => {
@@ -4104,8 +4115,12 @@ def({
     const known = new Map(reviewChecks(ctx.app).filter((c) => !c.missing).map((c) => [c.name, c]));
     const unknown = a.checks.map((c) => c.name).filter((n) => !known.has(n));
     if (unknown.length) throw new HttpError(400, `没有评审项 ${unknown.join("、")}；可用的：${[...known.keys()].join("、")}`);
-    setRunOutput(ctx.app, r.id, { reviewPlanDraft: { checks: a.checks, skipped: a.skipped ?? [], summary: a.summary, at: new Date().toISOString() } });
-    return `已记下评审计划：${a.checks.map((c) => known.get(c.name)!.label).join("、")}。`;
+    const looks = a.second_look ?? [];
+    if (looks.length && !ctx.app.config.review.rotation?.length) throw new HttpError(400, "评审设置里没有轮换用的模型，不能复看；去掉 second_look");
+    const stray = looks.map((c) => c.name).filter((n) => !a.checks.some((c) => c.name === n));
+    if (stray.length) throw new HttpError(400, `复看的评审项要先在 checks 里：${stray.join("、")}`);
+    setRunOutput(ctx.app, r.id, { reviewPlanDraft: { checks: a.checks, skipped: a.skipped ?? [], secondLook: looks, summary: a.summary, at: new Date().toISOString() } });
+    return `已记下评审计划：${a.checks.map((c) => known.get(c.name)!.label).join("、")}${looks.length ? `；换模型复看：${looks.map((c) => known.get(c.name)!.label).join("、")}` : ""}。`;
   },
 });
 

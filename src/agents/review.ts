@@ -144,7 +144,27 @@ export function defaultReviewSettings() {
 // ---- planning ----------------------------------------------------------------------------------
 
 /** `focus`: what review-lead asked each check to look at this time (a delegation driven by tasks, code-loop.ts). */
-export type ReviewPlan = { tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics; lead?: boolean; confirmPlan?: boolean; rotateModels?: boolean; focus?: Record<string, string> };
+export type ReviewPlan = {
+  tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics; lead?: boolean; confirmPlan?: boolean; rotateModels?: boolean; focus?: Record<string, string>;
+  /** Checks review-lead wants another model to look at again, beside the fixes (code-overlap.ts). */
+  second?: { name: string; focus: string }[];
+  /** The second looks that ran on this stage (`<check>@复看`): they may submit a review too. */
+  looks?: string[];
+};
+
+/**
+ * A second look at a stage by another model (code-overlap.ts) is the check under this name: its
+ * reviews, findings, session and verifications stay apart from the first look's.
+ */
+export const LOOK_MARK = "@复看";
+export const lookName = (check: string) => `${check}${LOOK_MARK}`;
+export const isLook = (name: string) => name.endsWith(LOOK_MARK);
+export const lookBase = (name: string) => (isLook(name) ? name.slice(0, -LOOK_MARK.length) : name);
+/** A check's label, a second look's too (“业务（复看）”). */
+export function checkLabel(infos: Map<string, CheckInfo>, name: string) {
+  const base = infos.get(lookBase(name))?.label ?? lookBase(name);
+  return isLook(name) ? `${base}（复看）` : base;
+}
 
 /**
  * The AI a check uses in a round when its tier (or the owner, `roundReview.rotate`) rotates models:
