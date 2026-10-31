@@ -76,7 +76,7 @@ function workBranches(app: App, rootId: string): Record<string, string> {
   return out;
 }
 
-type BranchWork = { rootId: string; latestId: string; title: string; branchReview: boolean; status: string; applied: boolean; appliedAt: string | null; createdAt: string };
+type BranchWork = { rootId: string; latestId: string; title: string; rootTitle: string; branchReview: boolean; status: string; applied: boolean; appliedAt: string | null; createdAt: string };
 
 /** Every other delegation and branch review of the last 30 days on a branch of this work, newest first (discarded ones left out). */
 function branchWork(app: App, runId: string, userId: string): BranchWork[] {
@@ -92,7 +92,7 @@ function branchWork(app: App, runId: string, userId: string): BranchWork[] {
     const rounds = workRuns(app, id).map((x) => getRun(app, x));
     if (rounds.some((r) => r.output.discardedAt)) continue;
     const last = rounds.at(-1)!;
-    out.push({ rootId: id, latestId: last.id, title: last.title, branchReview: isBranchReview(rounds[0]), status: last.status, applied: rounds.some((r) => r.output.appliedAt), appliedAt: (rounds.map((r) => r.output.appliedAt as string | undefined).filter(Boolean).at(-1)) ?? null, createdAt: rounds[0].createdAt });
+    out.push({ rootId: id, latestId: last.id, title: last.title, rootTitle: rounds[0].title, branchReview: isBranchReview(rounds[0]), status: last.status, applied: rounds.some((r) => r.output.appliedAt), appliedAt: (rounds.map((r) => r.output.appliedAt as string | undefined).filter(Boolean).at(-1)) ?? null, createdAt: rounds[0].createdAt });
   }
   return out;
 }
@@ -114,7 +114,7 @@ export function newerWork(app: App, runId: string, userId: string) {
   const root = getRun(app, workRuns(app, runId)[0]);
   const review = isBranchReview(root);
   const w = branchWork(app, runId, userId).find((x) => !x.branchReview && (x.createdAt > root.createdAt || (review && !x.applied)));
-  return w ? { rootId: w.rootId, latestId: w.latestId, title: w.title, branchReview: w.branchReview, status: w.status, applied: w.applied } : null;
+  return w ? { rootId: w.rootId, latestId: w.latestId, title: w.rootTitle, branchReview: w.branchReview, status: w.status, applied: w.applied } : null;
 }
 
 /**
@@ -140,7 +140,7 @@ export function fixedByInfo(app: App, runIds: string[]) {
     if (!one(app.db, "select 1 from runs where id = ?", id)) continue;
     const rounds = workRuns(app, id).map((x) => getRun(app, x));
     const round = rounds.find((x) => x.id === id) ?? rounds.at(-1)!;
-    out[id] = { rootId: rounds[0].id, title: rounds.at(-1)!.title, status: round.status, applied: rounds.some((x) => x.output.appliedAt), discarded: rounds.some((x) => x.output.discardedAt) };
+    out[id] = { rootId: rounds[0].id, title: rounds[0].title, status: round.status, applied: rounds.some((x) => x.output.appliedAt), discarded: rounds.some((x) => x.output.discardedAt) };
   }
   return out;
 }
