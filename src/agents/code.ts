@@ -475,7 +475,7 @@ ${input.task}
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
       role: "coder",
-      ...(taskMode ? { addTools: ["plan_tasks", "finish_task", "report_task"] } : {}),
+      ...(taskMode ? { addTools: ["plan_tasks", "finish_task", "report_task", "ask_reviewer"] } : {}),
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,

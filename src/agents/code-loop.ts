@@ -412,6 +412,52 @@ export function advanceWork(app: App, rootId: string, opts: { owner?: boolean } 
   return null;
 }
 
+// ---- the coder asks the check that raised a task ------------------------------------------------------
+
+/**
+ * The coder is unsure what a finding means or how far to go: it asks the check that raised it, which
+ * answers in its own session for this work (it remembers why it raised the finding, and its later
+ * verification remembers the exchange). Both sides are noted on the task. The general `ask_agent`
+ * consultation underneath (consult.ts); only the target and the session are this work's.
+ */
+export async function askReviewer(app: App, codeRunId: string, seq: number, question: string, userId?: string): Promise<string> {
+  const run = getRun(app, codeRunId);
+  const rootId = workRootOf(app, run.id);
+  const t = getTask(app, rootId, seq);
+  if (!t.verifier) throw new HttpError(400, `${taskLabel(seq)} 不是评审问题，没有提出它的评审项可以问；对需求有疑问用 report_task 交给本人`);
+  const ctx = await reviewContext(app, run.id);
+  const info = ctx.infos.get(t.verifier);
+  if (!info || info.missing) throw new HttpError(404, `提出 ${taskLabel(seq)} 的评审项 ${t.verifier} 已经不在了`);
+  updateTask(app, rootId, seq, {}, { by: "coder", kind: "consult", text: `问${ctx.label(t.verifier)}：${truncate(question.trim(), 1500)}` });
+  const { consultAgent } = await import("./consult.ts");
+  let answer = "";
+  const reply = await consultAgent(app, {
+    role: (info.builtin ? t.verifier : "reviewer") as RoleName,
+    ...(info.builtin ? {} : { spec: readAgentSpec(app, t.verifier) }),
+    label: `${ctx.label(t.verifier)}评审`,
+    question: `编码 Agent 在改 ${taskLabel(seq)}（来自你提的问题）时有疑问。回答它的问题：问题在哪、为什么、改到什么程度算解决；只回答，不提交评审结论。\n\n${taskText(app, t)}\n\n## 它的问题\n\n${question.trim()}`,
+    askedBy: "编码 Agent",
+    parentRunId: run.id,
+    spaceId: run.spaceId!,
+    userId: userId ?? runUser(app, run.id),
+    extra: {
+      reviewCheck: true,
+      spaces: ctx.spaces,
+      alsoRead: ctx.indexed,
+      cwd: ctx.cwd,
+      profileId: info.builtin ? app.config.agents.roles[t.verifier] : undefined,
+      resumeSessionId: sessionOf(app, rootId, t.verifier),
+      persistSession: true,
+    },
+    onDone: (res) => {
+      keepSession(app, rootId, t.verifier!, res.sessionId, res.contextUsage?.used);
+      answer = res.reply ?? res.text;
+    },
+  });
+  if (answer.trim()) updateTask(app, rootId, seq, {}, { by: t.verifier, kind: "consult", text: `回答：${truncate(answer.trim(), 1500)}` });
+  return reply;
+}
+
 // ---- owner questions --------------------------------------------------------------------------------
 
 const SKIP = "不做这一项";

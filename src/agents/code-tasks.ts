@@ -22,7 +22,7 @@ import type { WorktreeRef } from "./worktree-index.ts";
 export type TaskState = "todo" | "coding" | "verify" | "done" | "owner" | "wontdo" | "reverted";
 /** build: split from the request; fix: from a review finding; owner: the owner's words; redo: again after a revert. */
 export type TaskKind = "build" | "fix" | "owner" | "redo";
-export type TaskNote = { at: string; by: string; text: string; kind: "coder" | "verify" | "owner" | "revert" | "lead" | "host" };
+export type TaskNote = { at: string; by: string; text: string; kind: "coder" | "verify" | "owner" | "revert" | "lead" | "host" | "consult" };
 export type CodeTask = {
   id: number;
   workId: string;
@@ -624,7 +624,7 @@ export function takeTasks(app: App, rootId: string, runId: string): CodeTask[] {
 /** What a task asks for, as the coder reads it: what done means, where it came from, how it went before. */
 export function taskText(app: App, t: CodeTask) {
   const findings = (t.origin.findings ?? []).map((id) => one<{ title: string; detail: string; suggestion: string; owner_suggestion: string | null; file_path: string | null; line: number | null; check_name: string }>(app.db, "select f.title, f.detail, f.suggestion, f.owner_suggestion, f.file_path, f.line, r.check_name from review_findings f join reviews r on r.id = f.review_id where f.id = ?", id)).filter(Boolean);
-  const tries = t.notes.filter((n) => ["verify", "revert", "host", "owner", "lead"].includes(n.kind)).slice(-4);
+  const tries = t.notes.filter((n) => ["verify", "revert", "host", "owner", "lead", "consult"].includes(n.kind)).slice(-6);
   return [
     `### ${taskLabel(t.seq)} ${t.title}`,
     t.doneWhen ? `完成标准：${t.doneWhen}` : "",

@@ -40,7 +40,7 @@
 
 ## 评审角色专用
 
-`submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。按修改项推进的交办里还有：编码 Agent 的 `plan_tasks`（拆分、估轮数）、`finish_task`（说明一项做完了；没提交的改动由宿主作为这一项提交）、`report_task`（交给本人 / 有异议 / 被挡住）；评审项的 `verify_tasks`（逐项验证）；评审负责人的 `plan_review`（这次评审谁看、看什么），`rule_review` 的裁决可带 `owner`（交给本人决定的问题和选项）。
+`submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。按修改项推进的交办里还有：编码 Agent 的 `plan_tasks`（拆分、估轮数）、`finish_task`（说明一项做完了；没提交的改动由宿主作为这一项提交）、`report_task`（交给本人 / 有异议 / 被挡住）、`ask_reviewer`（问提出这一项的评审项，它在自己这次交办的会话里回答）；评审项的 `verify_tasks`（逐项验证）；评审负责人的 `plan_review`（这次评审谁看、看什么），`rule_review` 的裁决可带 `owner`（交给本人决定的问题和选项）。
 
 ## 设备的外部 Agent 评审分支
 

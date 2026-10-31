@@ -3990,6 +3990,21 @@ def({
 });
 
 def({
+  name: "ask_reviewer",
+  description: "编码 Agent 对一个来自评审问题的修改项有疑问（说的是哪条路径、要改到什么程度、和需求是不是冲突）时，问提出它的评审项并等回答（同步，通常一两分钟）。它记得当初为什么提，问答也记在这一项上。对需求本身的疑问用 report_task 交给本人。",
+  schema: z.object({
+    task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
+    question: z.string().min(1).max(4000).describe("问题本身：你看到了什么、哪里不明白、你打算怎么改"),
+  }),
+  handler: async (ctx, a) => {
+    const { run: r } = await taskRound(ctx, "ask_reviewer");
+    const t = await import("./code-tasks.ts");
+    const { askReviewer } = await import("./code-loop.ts");
+    return askReviewer(ctx.app, r.id, t.parseTaskRef(a.task), a.question, ctx.userId ?? undefined);
+  },
+});
+
+def({
   name: "verify_tasks",
   description: "评审项验证自己提出的问题有没有改好（只在按修改项推进的交办的验证里可用）：每项 fixed / not_fixed / regressed / withdrawn，除了 fixed 都要写 note。",
   schema: z.object({

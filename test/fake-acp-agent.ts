@@ -155,6 +155,11 @@ new AgentSideConnection(
         };
         try {
           if (prompt.includes("只输出一个 JSON")) { await say("{}"); return { stopReason: "end_turn" as const }; }
+          // The coder asks the check that raised its task: the check answers from its own session.
+          if (prompt.includes("在工作中向你请教") && prompt.includes("## 它的问题")) {
+            await say("要去掉的是 shipped 为 true 的行，未发货的行照常退。");
+            return { stopReason: "end_turn" as const };
+          }
           if (prompt.includes("# 决定这次评审看什么")) {
             await call("plan_review", { checks: [{ name: "reviewer", focus: "退款金额的边界" }, { name: "review-business", focus: "已发货的行" }], skipped: [{ name: "review-style", reason: "没有新增文件" }], summary: "改的是退款计算，功能和业务各看一遍" });
             await say("计划好了");
@@ -200,6 +205,8 @@ new AgentSideConnection(
             seqs = [...String((made.content as { text: string }[])[0].text).matchAll(/T(\d+) /g)].map((m) => Number(m[1]));
           } else seqs = [...prompt.matchAll(/^### T(\d+) /gm)].map((m) => Number(m[1]));
           for (const seq of [...new Set(seqs)]) {
+            // Unsure about the business finding the first time: ask the check that raised it.
+            if (prompt.includes(`### T${seq} 已发货行不能退`) && !prompt.includes("问业务")) await call("ask_reviewer", { task: `T${seq}`, question: "过滤的是已发货还是未发货的行？" });
             // The test task is left uncommitted, as a sandbox that cannot write Git would: finish_task commits it.
             if (seq === 2 && prompt.includes("先用 `plan_tasks` 拆分")) appendFileSync(join(cwd, "refund.test.ts"), "// 已发货的行不退\n");
             else commit(seq, `export const t${seq} = ${Date.now() % 1000};`);

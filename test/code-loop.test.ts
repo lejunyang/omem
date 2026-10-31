@@ -80,9 +80,17 @@ describe("a delegation driven by tasks", () => {
       expect(progress).toContain("修改项**：完成 2 / 4");
       expect(progress).toContain("（等你决定）");
 
-      // Round 2: the fix of T3 is verified by the business check, which finds it broke something.
+      // Round 2: the coder asks the business check what its finding means, in that check's session;
+      // then the fix is verified by the same check, which finds it broke something.
       const two = await work(app, one.continuedRunId!);
       expect(two.verdict).toBe("continuing");
+      const asked = task(fix.seq).notes.filter((n) => n.kind === "consult");
+      expect(asked.map((n) => n.by)).toEqual(["coder", "review-business"]);
+      expect(asked[1].text).toContain("shipped 为 true 的行");
+      const consult = app.db.prepare("select title, input from runs where parent_id = ? and kind = 'agent'").get(one.continuedRunId!) as { title: string; input: string };
+      expect(consult.title).toContain("业务评审（被 编码 Agent 请教）");
+      expect(JSON.parse(consult.input)).toMatchObject({ role: "review-business", askedBy: "编码 Agent" });
+      expect(workState(app, r1.id).sessions?.["review-business"]?.id).toBeTruthy();
       expect(task(fix.seq)).toMatchObject({ state: "todo" });
       expect(workState(app, r1.id).reverts?.map((x) => x.seq)).toEqual([fix.seq]);
 
