@@ -1044,3 +1044,4 @@ updated: 2026-10-30
 - 差异的文件状态：`web/src/lib/patch.ts` 的 `splitPatch` / `diffMeta` 取代各处各写的切分（`reviews.ts` 的 `parsePatches`、`CodeGitPanel`），文件按改动后的路径命名，带状态（新增 / 删除 / 移动 / 复制）、原路径、相似度、二进制、权限和两边的 blob id；`DiffName` 显示文件头，`DiffTree` 标状态，`DiffFile` 对没有行的文件说明发生了什么、显示图片前后或给下载。新接口 `GET /api/runs/:id/blob?space=&oid=&path=` 按 blob id 读这次交办仓库里的旧版本。
 - 过期的卡片：`asks.ts` 的 `ROUND_ASKS`（评审计划、结果、停下、重试）在新的一轮排上（`queueNextCodeRound`、`queueStandaloneFix`）、应用、丢弃时对之前各轮一起作废，`startFix` 连同一起修改的同一分支其他评审；启动时 `sweepRoundAsks` 清理以前遗留的。
 - 设计稿 `docs/v2/coding-loop.md`：以修改项代替轮次推进编码与评审（逐项验证、AI 决定评审范围代替档位、不阻塞的“等你决定”、并行编码、检查点与回退），未实现。
+- 评审问题的显示：小节标题（`**触发条件**`）紧跟在列表项下面没有空行时，Markdown 把它并进上一条列表项，缩进显示；`web/src/lib/findingText.ts` 的 `findingMarkdown` 在显示前给只有加粗标签的行前后补空行（以“标签：”开头的行前面补空行），`ReviewSummary` 的正文、建议和原来的描述都经过它，`FINDING_FORMAT` 也要求小节标题前空一行。问题正文里 `src:` / `mem:` / `msg:` 引用和直接写的路径不再显示成等宽小标签，和代码引用一样是带下划线的普通链接（只限 `.fd`，回答等处不变）。

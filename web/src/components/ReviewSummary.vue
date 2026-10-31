@@ -8,6 +8,7 @@ import UiSegmented from "./UiSegmented.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
+import { findingMarkdown } from "../lib/findingText";
 import { clearFixDraft, clearQuotes, draftReview, fixDraft, quotesOf, quotesText } from "../lib/quotes";
 import NextRoundReview from "./NextRoundReview.vue";
 import { decisionOf, findingWhere, fixLabel, pointCount, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type Finding, type FixInfo, type LatestState, type Review, type Reviews } from "../lib/reviews";
@@ -334,9 +335,9 @@ async function answer(choice: number | null) {
           <span v-if="f.triage_note || f.merged_into" class="muted">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : "" }}{{ f.merged_into && f.triage_note ? "；" : "" }}{{ f.triage_note }}</span>
         </div>
         <div v-if="open.has(f.id)" class="more small">
-          <Markdown v-if="f.detail" class="fd" :source="f.detail" :run-id="runOf(f)" breaks />
+          <Markdown v-if="f.detail" class="fd" :source="findingMarkdown(f.detail)" :run-id="runOf(f)" breaks />
           <p v-if="extraEvidence(f).length" class="muted">{{ f.detail ? "其他依据" : "依据" }}：<template v-for="(e, i) in extraEvidence(f)" :key="i"><a v-if="refAction(e, runOf(f))" href="#" class="mono" @click.prevent="refAction(e, runOf(f))!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < extraEvidence(f).length - 1 ? "、" : "" }}</template></p>
-          <details v-if="originalOf(f)" class="orig"><summary class="muted">评审原来的描述</summary><p class="muted"><strong>{{ originalOf(f)!.title }}</strong></p><Markdown class="fd muted" :source="originalOf(f)!.detail" :run-id="runOf(f)" breaks /></details>
+          <details v-if="originalOf(f)" class="orig"><summary class="muted">评审原来的描述</summary><p class="muted"><strong>{{ originalOf(f)!.title }}</strong></p><Markdown class="fd muted" :source="findingMarkdown(originalOf(f)!.detail)" :run-id="runOf(f)" breaks /></details>
           <div v-if="editingSug === f.id" class="sug-edit">
             <textarea v-model="sugText" class="textarea" rows="4" :aria-label="`改写 #${f.id} 的建议`" placeholder="写清楚要怎么改；下一轮按这段改，不再看评审的原建议" @keydown.esc.stop="editingSug = null" />
             <div class="row wrap">
@@ -347,8 +348,8 @@ async function answer(choice: number | null) {
             </div>
           </div>
           <template v-else>
-            <div v-if="suggestionOf(f)" class="sug"><strong>建议{{ f.owner_suggestion ? "（你改过）" : "" }}：</strong><Markdown class="fd" :source="suggestionOf(f)" :run-id="runOf(f)" breaks /></div>
-            <details v-if="f.owner_suggestion && f.suggestion" class="orig"><summary class="muted">评审的原建议</summary><Markdown class="fd muted" :source="f.suggestion" :run-id="runOf(f)" breaks /></details>
+            <div v-if="suggestionOf(f)" class="sug"><strong>建议{{ f.owner_suggestion ? "（你改过）" : "" }}：</strong><Markdown class="fd" :source="findingMarkdown(suggestionOf(f))" :run-id="runOf(f)" breaks /></div>
+            <details v-if="f.owner_suggestion && f.suggestion" class="orig"><summary class="muted">评审的原建议</summary><Markdown class="fd muted" :source="findingMarkdown(f.suggestion)" :run-id="runOf(f)" breaks /></details>
           </template>
           <div class="row wrap">
             <button v-if="deciding && editingSug !== f.id" class="btn ghost sm" @click="editSug(f)">{{ suggestionOf(f) ? "改建议" : "写建议" }}</button>
@@ -423,6 +424,9 @@ async function answer(choice: number | null) {
 .more :deep(.fd p) { white-space: normal; margin: 4px 0; }
 .more :deep(.fd ul), .more :deep(.fd ol) { margin: 2px 0 4px; padding-left: 20px; }
 .more :deep(.fd pre) { max-width: 100%; overflow-x: auto; }
+/* Every citation in a finding (code location, original, memory, message, bare path) reads as one kind of
+   link: underlined text in the surrounding font, not the mono chips used in answers. */
+.more :deep(.fd a.cite) { display: inline; font: inherit; padding: 0; margin: 0; background: none; white-space: normal; max-width: none; vertical-align: baseline; text-decoration: underline; text-underline-offset: 2px; }
 .sug { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .more .btn { justify-self: start; }
 .sug-edit { display: grid; gap: 6px; }
