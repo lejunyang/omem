@@ -1096,6 +1096,20 @@ const migrations: string[] = [
       and space_id in (select id from spaces where root_path is not null)
       and space_id != (select i.space_id from fam join items i on i.id = fam.item where fam.id = runs.id limit 1);
    alter table review_findings add column owner_suggestion text;`,
+  // …and an item with a requirement tree is the tree's business: its work moves there (from the
+  // repository's space, or from the item's own space when that is not the tree's, e.g. personal).
+  `with recursive home(item, space) as (
+     select i.id, coalesce((select n.space_id from item_materials m join req_nodes n on n.id = m.ref where m.item_id = i.id and m.kind = 'req' and n.status = 'active' order by m.id limit 1), i.space_id) from items i
+   ), fam(id, item) as (
+     select id, json_extract(input, '$.itemId') from runs
+      where kind = 'code' and json_extract(input, '$.itemId') is not null and json_extract(input, '$.repos') is not null
+     union
+     select r.id, fam.item from runs r join fam on r.parent_id = fam.id or json_extract(r.input, '$.continueFrom') = fam.id or json_extract(r.input, '$.codeRunId') = fam.id
+   )
+   update runs set space_id = (select h.space from fam join home h on h.item = fam.item where fam.id = runs.id limit 1)
+    where id in (select fam.id from fam join home h on h.item = fam.item join items i on i.id = fam.item
+                  where runs.space_id in (select id from spaces where root_path is not null) or runs.space_id = i.space_id)
+      and space_id != (select h.space from fam join home h on h.item = fam.item where fam.id = runs.id limit 1);`,
 ];
 
 export type Db = DatabaseSync;

@@ -36,14 +36,14 @@ describe("coding seen from the requirement tree", () => {
       { op: "add", key: "amount", parent: "$page", kind: "feature", title: "退款金额只算未发货的行" },
     ], { by: "user", label: "本人" }, { canWrite: () => {}, canRead: () => {}, defaultSpace: "shop" });
     const page = tree.keys.page, amount = tree.keys.amount;
-    const item = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "退款改造", userId: OWNER }, "user");
+    const item = upsertItem(app, undefined, { spaceId: "personal", kind: "todo", title: "退款改造", userId: OWNER }, "user");
     addMaterials(app, item.id, [{ kind: "req", ref: page }], OWNER, "user");
 
     const ctx: ToolContext = { app, runId: null, spaceId: "shop", spaces: null, tools: null, actor: "agent" };
     const started = await callTool(ctx, "delegate_code", { repo_spaces: ["shop-api"], task: "退款只按未发货的行计算", item_id: item.id });
     expect(started.isError).toBeFalsy();
     const id = started.text.match(/运行 (r\w+)/)![1];
-    // The business the work is for, not the first repository.
+    // The business of the item's requirement tree: not the first repository, nor the item's own (personal) space.
     expect(getRun(app, id).spaceId).toBe("shop");
 
     // The item is about the page: the feature under it and the page itself both show the work.

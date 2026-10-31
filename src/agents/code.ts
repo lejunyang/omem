@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
+import { all, one } from "../core/db.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { cancelHostAsks, createAsk, registerAskHandler } from "./asks.ts";
@@ -161,11 +161,15 @@ export function worktreesOf(app: App, runId: string): WorktreeRef[] {
 }
 
 /**
- * Where a delegation or branch review lives: the space asked for, else its item's (the business the
- * work is for, so the runs list of that space shows it), else the first repository's.
+ * Where a delegation or branch review lives: the space asked for, else the business the work is for
+ * (the space of its item's requirement tree, else the item's own space), so that space's runs list
+ * shows it; else the first repository's.
  */
 export function homeSpace(app: App, space: string | undefined, itemId: string | undefined, repos: string[]) {
-  return space ?? (itemId ? getItem(app, itemId).spaceId : undefined) ?? repos[0];
+  if (space) return space;
+  if (!itemId) return repos[0];
+  const tree = one<{ space_id: string }>(app.db, "select n.space_id from item_materials m join req_nodes n on n.id = m.ref where m.item_id = ? and m.kind = 'req' and n.status = 'active' order by m.id limit 1", itemId);
+  return tree?.space_id ?? getItem(app, itemId).spaceId;
 }
 
 /** Repository spaces a delegation changes: each one must be a Git repository. */

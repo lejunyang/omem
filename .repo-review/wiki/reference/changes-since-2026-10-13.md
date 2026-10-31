@@ -1029,7 +1029,7 @@ updated: 2026-10-30
 
 ## 10-31：需求页里看编码；本人改写评审建议
 
-- 带事项的交办和分支评审放在事项的空间（`code.ts` 的 `homeSpace`，`delegate_code`、`review_branch`、`/api/review-branch` 都用它）：原来取第一个仓库的空间，运行记录按业务空间看不到。迁移把已有的（带 `itemId` 和 `repos` 的交办，连同各轮和评审子运行）从仓库空间挪到事项的空间。
+- 带事项的交办和分支评审放在这件事的业务空间（`code.ts` 的 `homeSpace`，`delegate_code`、`review_branch`、`/api/review-branch` 都用它）：事项挂了需求点就用需求树所在的空间，否则用事项的空间；原来取第一个仓库的空间，运行记录按业务空间看不到。两个迁移把已有的（带 `itemId` 和 `repos` 的交办，连同各轮和评审子运行）挪过去：从仓库空间，或从不是需求树空间的事项空间（如个人空间）。
 - 新增 `src/items/work.ts`：`itemWork`（事项的 `run` 材料按交办归并各轮，算阶段 coding / reviewing / peer / owner / done / applied / discarded 和最新一轮没定的问题数）、`reqWork`（事项的 `req` 材料包含这个节点或在它下面）、`reqWorkMarks`（树上的“等你 N”）。`GET /api/requirements` 的节点带 `work`，`GET /api/requirements/:id` 带 `work` 列表。
 - 需求页：详情加“编码与评审”（进行中的在前，已应用或丢弃的收起），`?work=<运行>` 时右栏换成 `components/WorkPane.vue`（评审概览、各轮切换、应用 / 丢弃、就某条提问）；树上标“等你 N”和进行中的图标，可“只看等你处理的编码”。`ReviewSummary` 加 `stay`（开始修改后发 `started`，不跳运行页）。
 - 评审问题加 `owner_suggestion`（迁移）：`PUT /api/runs/:id/findings/:fid/suggestion` 保存本人改写的建议（和原建议相同或为空就清掉；没定过的问题标成 fix）。修改任务写“建议（本人改写，以此为准）”，不再带原建议；评审负责人和无负责人时的修改单也用改写后的（`suggestionOf`）。网页问题卡片展开后顺序改为问题 → 依据 → 建议，“改建议”就地编辑，标题旁标“建议已改”。
