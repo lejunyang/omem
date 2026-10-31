@@ -6,10 +6,11 @@ import Icon from "./Icon.vue";
 import Skeleton from "./Skeleton.vue";
 import ReviewSummary from "./ReviewSummary.vue";
 import AskAboutRun from "./AskAboutRun.vue";
+import OpenInIde from "./OpenInIde.vue";
 import { confirmDialog } from "../lib/dialog";
 import { addQuote } from "../lib/quotes";
 import { useReviews } from "../lib/reviews";
-import { fmtTime, statusLabel, toast } from "../store";
+import { fmtTime, state, statusLabel, toast } from "../store";
 
 /**
  * One delegation or branch review shown inside the requirements page (views/Requirements.vue): its
@@ -19,6 +20,7 @@ import { fmtTime, statusLabel, toast } from "../store";
 const props = defineProps<{ runId: string; rounds: string[] }>();
 const emit = defineEmits<{ close: []; open: [runId: string] }>();
 const router = useRouter();
+const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 
 type Detail = { run: Run; children: { id: string }[] };
 const detail = ref<Detail | null>(null);
@@ -96,6 +98,8 @@ function ask(c: { quote: string; label: string }) {
         <span class="spacer" />
         <button v-if="canApply" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
         <button v-if="run.status === 'done' && !out.appliedAt && !out.discardedAt" class="btn sm danger" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
+        <OpenInIde :key="`${run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${run.status}`" :run-id="run.id" :space-name="spaceName" />
+        <button class="btn ghost sm" @click="asking = true"><Icon name="chat" :size="14" />提问</button>
       </div>
       <p v-if="branchWork && !out.appliedAt && !out.discardedAt && run.status === 'done'" class="muted small">这次交办直接提交在工作分支上，推送和确认在运行页做。</p>
       <ReviewSummary v-if="hasReview" :key="run.id" :rv="rv" :run-id="run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" stay @ask="ask" @go="router.push(`/runs/${run.id}`)" @started="(id) => emit('open', id)" />
