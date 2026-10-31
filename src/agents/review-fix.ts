@@ -117,6 +117,32 @@ export function newerWork(app: App, runId: string, userId: string) {
   return w ? { rootId: w.rootId, latestId: w.latestId, title: w.rootTitle, branchReview: w.branchReview, status: w.status, applied: w.applied } : null;
 }
 
+/** Whether a round has a requirement split: its own (req-split / submit_change_points) or one a check gave. */
+function hasSplit(app: App, r: Run) {
+  if (((r.output as { changePoints?: { points?: unknown[] } }).changePoints?.points ?? []).length) return true;
+  return !!one(app.db, "select 1 from reviews where code_run_id = ? and change_points is not null and change_points not in ('', '[]')", r.id);
+}
+
+/**
+ * The requirement split to show for a round that has none of its own (a fix round reviewed without
+ * one, a delegation that only changes code style): the latest earlier round of the same work with a
+ * split, else the latest round with one in other work on the branch (its branch reviews). Shown with
+ * that round's code, since the split's locations point there.
+ */
+export function inheritedSplit(app: App, runId: string, userId: string) {
+  const own = workRuns(app, runId);
+  const upTo = own.indexOf(runId);
+  const earlier = own.slice(0, upTo < 0 ? own.length : upTo).reverse();
+  const candidates = [...earlier.map((id) => ({ id, rootId: own[0] })), ...branchWork(app, runId, userId).flatMap((w) => workRuns(app, w.rootId).reverse().map((id) => ({ id, rootId: w.rootId })))];
+  for (const c of candidates) {
+    const r = getRun(app, c.id);
+    if (!hasSplit(app, r)) continue;
+    const root = getRun(app, c.rootId);
+    return { runId: r.id, rootId: root.id, title: root.title, round: (r.input as { round?: number }).round ?? 1, sameWork: c.rootId === own[0], branchReview: isBranchReview(root) };
+  }
+  return null;
+}
+
 /**
  * Findings of this review that later work on the branch took on (`by`: a round of it) — set when a
  * fix chooses them, or by the owner for work started elsewhere. `by: null` puts them back to open.

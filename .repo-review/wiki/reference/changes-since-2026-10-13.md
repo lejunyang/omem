@@ -1037,3 +1037,4 @@ updated: 2026-10-30
 - 同一分支一起改：`review-fix.ts` 的 `sameBranchWork`（同一用户 30 天内、没应用或丢弃、任一仓库的分支相同的交办和分支评审；分支取评审的分支、交办的起点或落点）、`GET /api/runs/:id/same-branch`；`startFix` 加 `withSameBranch`，问题可以来自这些评审，没选的在各自最新一轮记成暂不改，“这次不改的问题”也汇总它们。`ReviewSummary` 的“一起看同一分支的其他评审”：读它们最新一轮的问题，决定和改建议写到各自的运行上。
 - 需求页的详情靠左（不再居中留出大块空白），打开交办时最宽 1280px；评审概览和编码页的网格改成可收缩的一列，评审项的长摘要、路径不再撑出横向滚动。
 - 旧评审看最新状态：`review_findings.fixed_by` 记接手问题的那一轮（`startFix` 自动记；`PUT /api/runs/:id/findings-fixed` 由本人标或撤回），`GET /api/runs/:id/latest-state` 返回这些轮次的状态和分支上更新的编码（`review-fix.ts` 的 `newerWork`：之后开始的交办；分支评审还算没应用的交办；别的分支评审不算）。`ReviewSummary` 里交出去的问题标“修改中 / 已修改 / 已修改并应用”，不算待处理、不再发给修改、不显示改 / 暂不改 / 不改；旧评审顶部写更新的编码，展开问题可“已在新编码里改了”。`AskAboutRun` 在有更新的编码时让助手以它为准。接着改旧交办时，分支上后来有交办应用过就先 `sync.pull`。
+- 没有需求拆分的一轮沿用别处的：`review-fix.ts` 的 `inheritedSplit`（同一交办更早一轮，否则同一分支其他工作最近一轮，有 `output.changePoints` 或评审项给的变更点），`GET /api/runs/:id/inherited-split`；`WorkPane` 这时用那一轮的 `useReviews` 和补丁给树和“需求点”标签，`points` 事件带上来源，需求页图例写明沿用的哪一次。

@@ -1280,6 +1280,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { setFindingSuggestion } = await import("../agents/review-fix.ts");
     return setFindingSuggestion(app, p.id, Number(p.fid), b.text);
   });
+  // A round without a requirement split of its own borrows the latest one on its work or branch (review-fix.ts inheritedSplit).
+  server.get("/api/runs/:id/inherited-split", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    return { split: (await import("../agents/review-fix.ts")).inheritedSplit(app, id, who(req)) };
+  });
   // The owner marks findings as taken on by later work on the branch (`by`: one of its rounds), or open again (null).
   server.put("/api/runs/:id/findings-fixed", async (req) => {
     const id = (req.params as { id: string }).id;

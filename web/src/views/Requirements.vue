@@ -55,7 +55,9 @@ const workTab = computed<WorkTab>({
   set: (tab) => void router.replace({ path: route.path, query: { ...route.query, tab } }),
 });
 const workPoints = ref<ChangePoint[]>([]);
-watch(workId, (id) => { if (!id) workPoints.value = []; });
+/** Whose split the tree shows when this round has none of its own (WorkPane's inherited split). */
+const workPointsFrom = ref<string | null>(null);
+watch(workId, (id) => { if (!id) { workPoints.value = []; workPointsFrom.value = null; } });
 /** This round's change points by requirement node, and the worst status among a node's own points. */
 const RANK = { missing: 3, partial: 2, done: 1, extra: 0 } as const;
 const pointsByNode = computed(() => {
@@ -328,7 +330,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else>
-          <div v-if="workId && workPoints.length" class="work-legend muted small">这次编码的变更：标出每个需求点这一轮的状态，没涉及的变灰</div>
+          <div v-if="workId && workPoints.length" class="work-legend muted small">{{ workPointsFrom ? `这一轮没有需求拆分，沿用${workPointsFrom}的：` : "这次编码的变更：" }}标出每个需求点的状态，没涉及的变灰</div>
           <div v-for="n in visible" :key="n.id" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test', hit: matches?.has(n.id), idle: workId && workPoints.length && !touched.has(n.id) }" :style="{ paddingLeft: `${4 + n.depth * 16}px` }">
             <button v-if="hasKids.has(n.id)" type="button" class="fold" :aria-expanded="!!matches || !folded.has(n.id)" :aria-label="folded.has(n.id) ? `展开 ${n.title}` : `收起 ${n.title}`" :disabled="!!matches" @click="toggle(n.id)"><Icon :name="!matches && folded.has(n.id) ? 'right' : 'down'" :size="13" /></button>
             <span v-else class="fold-gap" />
@@ -385,7 +387,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           </template>
           <span aria-hidden="true">/</span><span>{{ openedWork?.itemTitle ?? "编码" }}</span>
         </nav>
-        <WorkPane v-model:tab="workTab" :run-id="workId" :rounds="openedWork?.rounds ?? [workId]" :focus="focus" @close="closeWork" @open="openWork" @points="(p) => (workPoints = p)" />
+        <WorkPane v-model:tab="workTab" :run-id="workId" :rounds="openedWork?.rounds ?? [workId]" :focus="focus" @close="closeWork" @open="openWork" @points="(p, from) => { workPoints = p; workPointsFrom = from; }" />
       </div>
 
       <div v-else-if="detail" class="page">

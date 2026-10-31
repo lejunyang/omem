@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
-import { fixedByInfo, markFindingsFixed, newerWork, sameBranchWork, setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
+import { fixedByInfo, inheritedSplit, markFindingsFixed, newerWork, sameBranchWork, setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -118,5 +118,16 @@ describe("coding seen from the requirement tree", () => {
     // A discarded fix no longer counts.
     setRunOutput(app, fix.id, { ...getRun(app, fix.id).output, discardedAt: new Date().toISOString() });
     expect(fixedByInfo(app, [fix.id])[fix.id].discarded).toBe(true);
+  });
+
+  it("lets a round without a requirement split borrow the latest one of the branch", () => {
+    const reviewRun = createRun(app, { kind: "code", spaceId: "shop", title: "分支评审", input: { branches: { "shop-api": { branch: "feat/split" } }, repos: ["shop-api"] } });
+    recordReview(app, { codeRunId: reviewRun.id, round: 1, check: "review-business", verdict: "approved", summary: "", findings: [], changePoints: [{ id: "C1", title: "退款金额", status: "done", requirement: "", implementation: "", refs: [], locations: [{ file: "refund.ts" }] }] });
+    const tidy = createRun(app, { kind: "code", spaceId: "shop", title: "整理代码", input: { task: "改风格", repos: ["shop-api"], fromBranches: { "shop-api": "feat/split" } } });
+    run(app.db, "update runs set created_at = ? where id = ?", new Date(Date.now() + 2000).toISOString(), tidy.id);
+    expect(inheritedSplit(app, tidy.id, OWNER)).toMatchObject({ runId: reviewRun.id, rootId: reviewRun.id, title: "分支评审", sameWork: false, branchReview: true });
+    // Another branch's split is not borrowed.
+    const other = createRun(app, { kind: "code", spaceId: "shop", title: "别的分支", input: { task: "x", repos: ["shop-api"], fromBranches: { "shop-api": "feat/none" } } });
+    expect(inheritedSplit(app, other.id, OWNER)).toBeNull();
   });
 });

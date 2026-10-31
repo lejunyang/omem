@@ -26,7 +26,7 @@ import { fmtTime, state, statusLabel, toast } from "../store";
 export type ReqFocus = { id: string; title: string; ids: string[]; body: string; acceptance: string };
 export type WorkTab = "overview" | "req" | "change" | "review" | "activity";
 const props = defineProps<{ runId: string; rounds: string[]; focus: ReqFocus | null; tab?: WorkTab }>();
-const emit = defineEmits<{ close: []; open: [runId: string]; points: [points: ChangePoint[]]; "update:tab": [tab: WorkTab] }>();
+const emit = defineEmits<{ close: []; open: [runId: string]; points: [points: ChangePoint[], from: string | null]; "update:tab": [tab: WorkTab] }>();
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 
 type Detail = { run: Run; children: { id: string }[]; patches?: { space: string; patch: string }[] };
@@ -61,7 +61,36 @@ const roundNo = computed(() => props.rounds.indexOf(props.runId) + 1 || props.ro
 const canApply = computed(() => run.value?.status === "done" && !branchReview.value && !branchWork.value && !out.value.appliedAt && !out.value.discardedAt);
 const diffs = computed(() => parsePatches(detail.value?.patches ?? []));
 const checks = computed(() => (out.value.repos ?? []).flatMap((r) => (r.check ? [{ space: r.space, check: r.check }] : [])));
-watch(() => rv.changePoints.value, (p) => emit("points", p), { immediate: true });
+
+// ---- the requirement map: this round's split, else the latest one on the work or branch ----
+// A round reviewed without a split (or a delegation that only tidies code) still shows the branch's
+// requirement → code map: the split of an earlier round or of another review of the branch, with
+// that round's code, since its locations point there (review-fix.ts inheritedSplit).
+type Inherited = { runId: string; rootId: string; title: string; round: number; sameWork: boolean; branchReview: boolean };
+const inherited = ref<Inherited | null>(null);
+let inheritedFor = "";
+watch(() => [run.value?.id, !!rv.data.value, rv.changePoints.value.length, busy.value] as const, async ([id, loaded, own, running]) => {
+  if (!id || !loaded || own || running) {
+    inheritedFor = "";
+    return void (inherited.value = null);
+  }
+  if (inheritedFor === id) return;
+  inheritedFor = id;
+  const split = (await get<{ split: Inherited | null }>(`/api/runs/${id}/inherited-split`).catch(() => null))?.split ?? null;
+  if (inheritedFor === id) inherited.value = split;
+}, { immediate: true });
+const srcRv = useReviews(computed(() => inherited.value?.runId ?? ""), computed(() => inherited.value?.runId));
+const srcPatches = ref<{ space: string; patch: string }[]>([]);
+watch(() => inherited.value?.runId, async (id) => {
+  srcPatches.value = id ? ((await get<Detail>(`/api/runs/${id}`).catch(() => null))?.patches ?? []) : [];
+});
+/** The points the tree and the “需求点” tab follow, with the review and code they belong to. */
+const mapRv = computed(() => (rv.changePoints.value.length || !inherited.value ? rv : srcRv));
+const mapRunId = computed(() => (mapRv.value === rv ? run.value?.id ?? "" : inherited.value!.runId));
+const mapDiffs = computed(() => (mapRv.value === rv ? diffs.value : parsePatches(srcPatches.value)));
+const mapPoints = computed(() => mapRv.value.changePoints.value);
+const inheritedLabel = computed(() => (inherited.value && mapRv.value === srcRv ? `${inherited.value.sameWork ? "" : `「${inherited.value.title}」`}第 ${inherited.value.round} 轮` : null));
+watch([mapPoints, inheritedLabel], ([p, from]) => emit("points", p, from), { immediate: true });
 
 // ---- tabs ----------------------------------------------------------------------------------------
 const tab = computed<WorkTab>({ get: () => props.tab ?? "overview", set: (t) => emit("update:tab", t) });
@@ -69,7 +98,7 @@ const tab = computed<WorkTab>({ get: () => props.tab ?? "overview", set: (t) => 
 const focusPoints = computed(() => {
   const f = props.focus;
   if (!f) return [];
-  const all = rv.changePoints.value;
+  const all = mapPoints.value;
   const picked = new Set(all.filter((p) => p.req && f.ids.includes(p.req)).map((p) => p.id));
   for (let grew = true; grew; ) {
     grew = false;
@@ -168,7 +197,8 @@ function explain(p: ChangePoint) {
               <Markdown v-if="focus.acceptance" class="small" :source="`**验收**\n\n${focus.acceptance}`" />
             </template>
           </section>
-          <ChangeView :rv="rv" :run-id="run.id" :diffs="diffs" :only="focusPoints.map((p) => p.id)" @explain="explain" />
+          <p v-if="inheritedLabel" class="muted small inherited">这一轮没有自己的需求拆分，这里用{{ inheritedLabel }}的拆分和那时的代码；这一轮改了什么在<a href="#" @click.prevent="tab = 'change'">“变更”</a>里，要单独拆分也在那里。</p>
+          <ChangeView :key="mapRunId" :rv="mapRv" :run-id="mapRunId" :diffs="mapDiffs" :only="focusPoints.map((p) => p.id)" @explain="explain" />
         </template>
         <ChangeView v-else-if="tab === 'change'" :rv="rv" :run-id="run.id" :diffs="diffs" @explain="explain" />
         <ReviewChecks v-else-if="tab === 'review'" :rv="rv" :run-id="run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
@@ -209,6 +239,7 @@ function explain(p: ChangePoint) {
 .meta { gap: 8px; }
 .rounds { gap: 2px; flex-wrap: wrap; }
 .rounds .on { background: var(--sunken); color: var(--ink); }
+.inherited { margin: 0; }
 .req { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
 .log { max-height: 320px; overflow: auto; background: var(--sunken); border-radius: 8px; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; margin: 0; }
