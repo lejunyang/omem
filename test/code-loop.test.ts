@@ -438,10 +438,13 @@ describe("a delegation driven by tasks", () => {
     createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
     try {
       const old = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["shop-api"] } });
-      setRunOutput(app, old.id, { worktrees: [{ space: "shop-api", path: dir, branch: "main", base, start: base, commits: true }], verdict: "changes-requested" });
+      setRunOutput(app, old.id, { worktrees: [{ space: "shop-api", path: dir, branch: "main", targetBranch: "main", base, start: base, commits: true }], verdict: "changes-requested" });
       run(app.db, "update runs set status = 'done' where id = ?", old.id);
+      // Asked from a review of the branch it works on: the fix is that delegation's, and it turns too.
+      const review = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款分支评审", input: { branches: { "shop-api": { branch: "main" } }, repos: ["shop-api"] } });
+      run(app.db, "update runs set status = 'done' where id = ?", review.id);
       const { startFix } = await import("../src/agents/review-fix.ts");
-      const next = await startFix(app, old.id, { findingIds: [], text: "看一下 SDK 不支持的字段旧数据会不会保留", review: { checks: ["review-arch"] } }, OWNER);
+      const next = await startFix(app, review.id, { findingIds: [], text: "看一下 SDK 不支持的字段旧数据会不会保留", review: { checks: ["review-arch"] } }, OWNER);
       expect(getRun(app, old.id).input.taskMode).toBe(true);
       expect(listCheckpoints(app, old.id).map((c) => [c.seq, c.by, c.heads["shop-api"]])).toEqual([[1, "host", git("rev-parse", "HEAD")]]);
       expect(listTasks(app, old.id).map((t) => [t.kind, t.state, t.title])).toEqual([["owner", "todo", "看一下 SDK 不支持的字段旧数据会不会保留"]]);

@@ -66,6 +66,8 @@ describe("steering a delegation while it runs", () => {
 describe("one delegation per branch", () => {
   it("fixing a branch review continues the open delegation on that branch; unpicked findings wait as “暂不改”", async () => {
     const { app, code } = delegation("done");
+    // The round-based flow (a delegation turned task-driven is covered in code-loop.test.ts).
+    app.config.agents.autoAdvance.taskLoop = false;
     setRunOutput(app, code.id, { coderSessionId: "coder-1" });
     const review = createRun(app, { kind: "code", spaceId: "personal", title: "评审 feature/a", input: { branches: { personal: { branch: "origin/feature/a" } }, repos: ["personal"] } });
     run(app.db, "update runs set status='done' where id=?", review.id);

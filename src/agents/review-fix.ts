@@ -280,7 +280,8 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     // (agents.autoAdvance.taskLoop): what its rounds did is one checkpoint, and the first stage review
     // after it looks at the whole change.
     const kept = worktreesOf(app, tasks.workRootOf(app, into.id));
-    if (!tasks.isTaskWork(app, into.id) && !branchReview && app.config.agents.autoAdvance.taskLoop && kept.length && kept.every((w) => existsSync(w.path))) {
+    // (`into` is that delegation also when the fix starts from a review of its branch.)
+    if (!tasks.isTaskWork(app, into.id) && !isBranchReview(into) && app.config.agents.autoAdvance.taskLoop && kept.length && kept.every((w) => existsSync(w.path))) {
       const rootId = tasks.workRootOf(app, into.id);
       run(app.db, "update runs set input = json_set(input, '$.taskMode', json('true')) where id = ?", rootId);
       if (!tasks.listCheckpoints(app, rootId).length) tasks.recordCheckpoint(app, rootId, worktreesOf(app, rootId), "host", [], "改成按修改项推进之前的各轮");
