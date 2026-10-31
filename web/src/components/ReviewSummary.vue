@@ -316,17 +316,18 @@ async function answer(choice: number | null) {
 </template>
 
 <style scoped>
-.review { display: grid; gap: 12px; }
+/* One shrinkable column: a long unbroken line (a check summary, a path) must not widen the page. */
+.review { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .flat { margin: 0; }
 .decide { border-color: var(--accent); }
 .decide .q { margin: 0; white-space: pre-wrap; }
-.summary { display: grid; gap: 10px; }
+.summary { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .head { gap: 10px; }
 .headline { font-size: 16px; }
 .lead-summary { margin: 0; line-height: 1.65; }
 .stop { margin: 0; color: var(--warn); }
 .esc { margin: 0; white-space: pre-wrap; }
-.checks { display: grid; }
+.checks { display: grid; grid-template-columns: minmax(0, 1fr); }
 .check-row { display: grid; grid-template-columns: 10px 64px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
 .sev { gap: 4px; }
 .ai { white-space: nowrap; }
@@ -339,8 +340,8 @@ async function answer(choice: number | null) {
 .sub { border-top: 1px solid var(--line); padding-top: 10px; }
 .lnk { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .lnk:hover { text-decoration: underline; }
-.findings { display: grid; gap: 0; }
-.finding { border-top: 1px solid var(--line); padding: 10px 0; display: grid; gap: 4px; }
+.findings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+.finding { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .findings > .row + .finding, .findings > .row + p + .finding { border-top-color: var(--line); }
 .line1 { gap: 8px; min-width: 0; }
 .line2 { display: flex; flex-wrap: wrap; gap: 4px 12px; }
@@ -349,7 +350,7 @@ async function answer(choice: number | null) {
 .title { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; text-align: left; min-width: 0; }
 .title:hover { color: var(--accent); }
 .loc { color: var(--accent); overflow-wrap: anywhere; }
-.more { background: var(--sunken); border-radius: 8px; padding: 8px 10px; display: grid; gap: 6px; }
+.more { background: var(--sunken); border-radius: 8px; padding: 8px 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .more p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .more .btn { justify-self: start; }
 .sug-edit { display: grid; gap: 6px; }
@@ -358,7 +359,7 @@ async function answer(choice: number | null) {
 .orig summary { cursor: pointer; }
 .decide-f { flex: none; }
 .wontfix { color: var(--ink-2); background: var(--sunken); border-radius: 6px; padding: 3px 8px; justify-self: start; }
-.fix { display: grid; gap: 8px; }
+.fix { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .fix p { margin: 0; }
 .actions { gap: 8px; align-items: flex-start; }
 @media (max-width: 760px) {

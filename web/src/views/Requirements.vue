@@ -377,7 +377,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
         </div>
       </div>
 
-      <div v-else-if="detail && workId" class="page">
+      <div v-else-if="detail && workId" class="page wide">
         <nav class="crumbs muted small" aria-label="路径">
           <template v-for="(p, i) in detail.path" :key="p.id">
             <span v-if="i" aria-hidden="true">/</span>
@@ -673,11 +673,18 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
   min-width: 0;
   overflow-y: auto;
 }
+/* Left-aligned next to the tree (the global .page centres, which leaves a wide gap on big screens). */
 .page {
   max-width: 880px;
+  margin: 0;
   padding: 16px 24px 40px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
+}
+/* An open delegation shows code: give it more room. */
+.page.wide {
+  max-width: 1280px;
 }
 .crumbs {
   display: flex;

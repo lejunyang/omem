@@ -203,15 +203,15 @@ function explain(p: ChangePoint) {
 </template>
 
 <style scoped>
-.work { display: grid; gap: 12px; min-width: 0; }
+.work { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .wh { gap: 8px; }
 .title { margin: 0; font-size: 18px; min-width: 0; }
 .meta { gap: 8px; }
 .rounds { gap: 2px; flex-wrap: wrap; }
 .rounds .on { background: var(--sunken); color: var(--ink); }
-.req { display: grid; gap: 8px; }
+.req { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
 .log { max-height: 320px; overflow: auto; background: var(--sunken); border-radius: 8px; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; margin: 0; }
-.explain { display: grid; gap: 6px; }
+.explain { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .explain p { margin: 0; }
 </style>
