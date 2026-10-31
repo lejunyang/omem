@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import Icon from "./Icon.vue";
+import { STATUS_LABEL, type FileStatus } from "../lib/patch";
 
 /**
  * The changed files of a diff as a tree: folders fold, a chain of single folders reads as one
  * (`src/agents`), each file shows its added and removed lines. Picking a file is the caller's
  * (open its diff and scroll to it).
  */
-export type TreeFile = { key: string; path: string; add: number; rm: number };
+export type TreeFile = { key: string; path: string; add: number; rm: number; status?: FileStatus };
 /** `hot`: the files of the change point being looked at, shown with its colour. */
 const props = defineProps<{ files: TreeFile[]; active?: string | null; marked?: Set<string>; hot?: Set<string>; hotColor?: string }>();
 const emit = defineEmits<{ pick: [key: string] }>();
@@ -61,7 +62,7 @@ const lines = computed(() => {
         <Icon :name="closed.has(l.dir.path) ? 'right' : 'down'" :size="12" /><Icon name="folder" :size="13" /><span class="ellipsis">{{ l.dir.name }}</span>
       </button>
       <button v-else class="row-btn file" :class="{ on: active === l.file.key, marked: marked?.has(l.file.key) }" :style="{ paddingLeft: `${24 + l.depth * 14}px` }" :title="l.file.path" @click="emit('pick', l.file.key)">
-        <span class="ellipsis mono">{{ l.name }}</span><span v-if="hot?.has(l.file.key)" class="hot" :style="{ background: hotColor }" title="当前变更点涉及" /><span class="add">+{{ l.file.add }}</span><span class="rm">-{{ l.file.rm }}</span>
+        <span class="ellipsis mono" :class="l.file.status">{{ l.name }}</span><span v-if="l.file.status && STATUS_LABEL[l.file.status]" class="st" :class="l.file.status">{{ STATUS_LABEL[l.file.status] }}</span><span v-if="hot?.has(l.file.key)" class="hot" :style="{ background: hotColor }" title="当前变更点涉及" /><span class="add">+{{ l.file.add }}</span><span class="rm">-{{ l.file.rm }}</span>
       </button>
     </template>
   </nav>
@@ -75,6 +76,11 @@ const lines = computed(() => {
 .dir { color: var(--ink); }
 .file.on { background: var(--accent-soft); color: var(--ink); }
 .file.marked .mono { font-weight: 600; }
+.deleted { text-decoration: line-through; color: var(--muted); }
+.st { flex: none; font-size: 10.5px; color: var(--muted); }
+.st.added { color: var(--ok); }
+.st.deleted { color: var(--danger); }
+.st.renamed, .st.copied { color: var(--accent); }
 .hot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--accent); }
 .add { color: var(--ok); font-size: 11px; }
 .rm { color: var(--danger); font-size: 11px; }

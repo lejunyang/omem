@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
-import { cancelHostAsks } from "./asks.ts";
+import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { isBranchReview, worktreesOf } from "./code.ts";
 import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
 import { createRun, getRun, type Run } from "./runs.ts";
@@ -239,8 +239,9 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   const pool = [...runs, ...others.flatMap((o) => workRuns(app, o.rootId))];
   const chosen = req.findingIds.map((id) => findingOf(app, pool, id) ?? (() => { throw new HttpError(404, `问题 #${id} 不属于这次交办或评审，也不属于同一分支的其他评审`); })());
   const accepted = (next: Run) => {
-    // Failed requests must leave the review's actions available for retry.
-    for (const id of runs) cancelHostAsks(app, id, "review-done");
+    // Failed requests must leave the review's actions available for retry. The other reviews of the
+    // branch taken up here are answered too: what was not picked from them waits (“暂不改”).
+    for (const id of [...runs, ...others.flatMap((o) => workRuns(app, o.rootId))]) cancelHostAsks(app, id, ROUND_ASKS);
     // Each chosen finding remembers the round that takes it on, so its review (when that is another
     // one of the branch, or an older one opened later) shows it as being fixed rather than open.
     for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '', fixed_by = ? where id = ?", next.id, f.id);
@@ -323,6 +324,24 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
 }
 
 /**
+ * Cards about rounds the work has moved past, left open by versions that only closed the result card
+ * of the review a fix started from: a later round of the same work, an apply or a discard, or findings
+ * other work on the branch took up. Run at start; returns how many were closed.
+ */
+export function sweepRoundAsks(app: App): number {
+  const open = all<{ id: string; run_id: string | null }>(app.db, `select id, run_id from asks where status = 'pending' and json_extract(context, '$.handler') in (${ROUND_ASKS.map(() => "?").join(",")})`, ...ROUND_ASKS);
+  const stale = new Set<string>();
+  for (const a of open) {
+    if (!a.run_id || !one(app.db, "select 1 from runs where id = ? and kind = 'code'", a.run_id)) continue;
+    const rounds = workRuns(app, a.run_id).map((id) => getRun(app, id));
+    const taken = one(app.db, "select 1 from review_findings f join reviews v on v.id = f.review_id where v.code_run_id = ? and f.fixed_by is not null", a.run_id);
+    if (rounds.at(-1)!.id !== a.run_id || rounds.some((r) => r.output.appliedAt || r.output.discardedAt) || taken) stale.add(a.run_id);
+  }
+  for (const id of stale) cancelHostAsks(app, id, ROUND_ASKS);
+  return stale.size;
+}
+
+/**
  * A round left waiting for an outside Agent to code (peer-code.ts) that the owner wants done here:
  * the same task as the next round, coded and reviewed by this machine's Agents. Findings handed to
  * the waiting round move to the new one.
@@ -358,6 +377,8 @@ export function queueStandaloneFix(app: App, rootId: string, expectedLastId: str
       parentId: last.parentId,
     });
     app.db.exec("COMMIT");
+    // The work moved on: what the earlier rounds asked the owner (plan, result, a stop) is answered.
+    for (const r of rounds) cancelHostAsks(app, r.id, ROUND_ASKS);
     return next;
   } catch (e) { if (app.db.isTransaction) app.db.exec("ROLLBACK"); throw e; }
 }

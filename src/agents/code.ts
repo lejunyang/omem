@@ -6,7 +6,7 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
-import { cancelHostAsks, createAsk, registerAskHandler } from "./asks.ts";
+import { cancelHostAsks, createAsk, registerAskHandler, ROUND_ASKS } from "./asks.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
@@ -914,12 +914,12 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
     setRunOutput(app, firstId, { worktrees: wts, partlyAppliedTo: appliedTo, partlyAppliedAt: appliedAt });
     // Shown on the run page like a full apply (where it landed, commit there); the work goes on.
     setRunOutput(app, runId, { appliedTo, partlyAppliedAt: appliedAt });
-    cancelHostAsks(app, runId, "review-done");
+    cancelHostAsks(app, runId, ROUND_ASKS);
     return { applied: true, spaces: applied, targets: appliedTo };
   }
   for (const id of new Set([firstId, runId])) setRunOutput(app, id, { appliedAt, appliedTo });
   removeWorktrees(app, runId, { applied: true });
-  cancelHostAsks(app, runId, "review-done");
+  for (const id of workRoundIds(app, firstId)) cancelHostAsks(app, id, ROUND_ASKS);
   return { applied: true, spaces: applied, targets: appliedTo };
 }
 
@@ -929,7 +929,12 @@ export function discardCodeRun(app: App, runId: string) {
   releaseBranchRun(app, runId, { discard: true });
   removeWorktrees(app, runId);
   setRunOutput(app, runId, { discardedAt: new Date().toISOString() });
-  cancelHostAsks(app, runId, "review-done");
+  for (const id of workRoundIds(app, String(r.input.continueFrom ?? r.id))) cancelHostAsks(app, id, [...ROUND_ASKS, "code-sync"]);
+}
+
+/** Every round of a delegation or branch review, from its first run. */
+function workRoundIds(app: App, rootId: string) {
+  return all<{ id: string }>(app.db, "select id from runs where id = ? or (kind = 'code' and json_extract(input, '$.continueFrom') = ?)", rootId, rootId).map((x) => x.id);
 }
 
 /** What the coding Agent is told when Git stops on conflicts. */

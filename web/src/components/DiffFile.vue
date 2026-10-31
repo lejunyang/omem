@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { get } from "../api";
+import { authUrl, get } from "../api";
+import { diffMeta, isImagePath, modeLabel } from "../lib/patch";
 import { toast } from "../store";
 import { diffLayout } from "../lib/diffLayout";
 
@@ -11,7 +12,8 @@ import { diffLayout } from "../lib/diffLayout";
  * Rows carry data-line so a selection can say which lines it covers. Change points (the business
  * review's mapping of the requirement to the code) mark their lines; the active one is highlighted.
  * Read in one column, or old and new side by side (lib/diffLayout), removed lines paired with the
- * lines that replaced them.
+ * lines that replaced them. A file without lines (binary, only moved, only its mode changed) says
+ * what happened instead; an image is shown before and after, other binaries offered as downloads.
  */
 export type DiffPoint = { id: string; mark: string; color: string; start: number; end: number };
 // `active` is one change point, or a group's points (a page or module and what is under it).
@@ -23,13 +25,19 @@ type Row = { kind: "add" | "del" | "ctx" | "meta"; old: number | null; new: numb
 type Hunk = { oldStart: number; newStart: number; header: string; rows: Row[]; oldEnd: number; newEnd: number };
 type Gap = { from: number; to: number | null; delta: number; head: number; tail: number };
 
-const path = computed(() => {
-  const plus = props.lines.find((l) => l.startsWith("+++ "));
-  const minus = props.lines.find((l) => l.startsWith("--- "));
-  const pick = plus && plus !== "+++ /dev/null" ? plus.slice(4) : minus?.slice(4) ?? "";
-  return pick.replace(/^[ab]\//, "");
-});
-const deleted = computed(() => props.lines.some((l) => l === "+++ /dev/null"));
+const meta = computed(() => diffMeta(props.lines));
+const path = computed(() => (meta.value.name === "?" ? "" : meta.value.name));
+const deleted = computed(() => meta.value.status === "deleted");
+const q = (p: string) => `space=${encodeURIComponent(props.space)}&path=${encodeURIComponent(p)}`;
+// Before: the blob the diff names (a deleted or changed binary); after: the file as the work has it now.
+const oldSrc = computed(() => (meta.value.status !== "added" && meta.value.oldOid ? authUrl(`/api/runs/${props.runId}/blob?${q(meta.value.oldName ?? path.value)}&oid=${meta.value.oldOid}`) : null));
+const newSrc = computed(() => (meta.value.status !== "deleted" && path.value ? authUrl(`/api/runs/${props.runId}/file/raw?${q(path.value)}`) : null));
+const image = computed(() => isImagePath(path.value));
+// An image the server cannot read (an older server without …/blob, a blob gone from the repository).
+const broken = ref(new Set<string>());
+const unreadable = (src: string) => { broken.value = new Set([...broken.value, src]); };
+const modeNote = computed(() => (meta.value.oldMode && meta.value.newMode && meta.value.oldMode !== meta.value.newMode ? `文件权限 ${modeLabel(meta.value.oldMode)}（${meta.value.oldMode}）→ ${modeLabel(meta.value.newMode)}（${meta.value.newMode}）` : ""));
+const moveNote = computed(() => (meta.value.oldName ? `${meta.value.status === "copied" ? "复制自" : "从"} ${meta.value.oldName}${meta.value.status === "copied" ? "" : " 移过来"}${meta.value.similarity !== null && meta.value.similarity < 100 ? `，相似度 ${meta.value.similarity}%` : ""}` : ""));
 
 const hunks = computed<Hunk[]>(() => {
   const out: Hunk[] = [];
@@ -157,7 +165,27 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
 
 <template>
   <div class="dfile" :class="{ split }" :data-space="space" :data-path="path">
-    <table class="dtable">
+    <p v-if="(moveNote || modeNote) && hunks.length" class="note muted small">{{ [moveNote, modeNote].filter(Boolean).join("；") }}</p>
+    <div v-if="!hunks.length" class="nohunk small">
+      <div v-if="image && (oldSrc || newSrc)" class="imgs">
+        <figure v-if="oldSrc"><figcaption class="muted">{{ newSrc ? "改动前" : "删除前" }}</figcaption><span v-if="broken.has(oldSrc)" class="muted">读不到这个版本</span><a v-else :href="oldSrc" target="_blank" rel="noopener"><img :src="oldSrc" :alt="`${path} 改动前`" loading="lazy" @error="unreadable(oldSrc)" /></a></figure>
+        <figure v-if="newSrc"><figcaption class="muted">{{ oldSrc ? "改动后" : meta.status === "added" ? "新增的图片" : "现在的样子" }}</figcaption><span v-if="broken.has(newSrc)" class="muted">读不到这个文件</span><a v-else :href="newSrc" target="_blank" rel="noopener"><img :src="newSrc" :alt="`${path} 改动后`" loading="lazy" @error="unreadable(newSrc)" /></a></figure>
+      </div>
+      <template v-if="meta.binary">
+        <p v-if="!image" class="muted">二进制文件，不显示内容。</p>
+        <p v-if="moveNote || (!image && (oldSrc || newSrc))" class="row wrap links">
+          <span v-if="moveNote" class="muted">{{ moveNote }}</span>
+          <a v-if="oldSrc && !image" class="lnk" :href="oldSrc" download>下载改动前</a>
+          <a v-if="newSrc && !image" class="lnk" :href="newSrc" download>下载{{ oldSrc ? "改动后" : "" }}</a>
+        </p>
+      </template>
+      <p v-else-if="moveNote" class="muted">内容没有变化，{{ moveNote }}。{{ modeNote }}</p>
+      <p v-else-if="modeNote" class="muted">只改了{{ modeNote }}。</p>
+      <p v-else-if="meta.status === 'added'" class="muted">新建的空文件。</p>
+      <p v-else-if="meta.status === 'deleted'" class="muted">删除了这个文件（文件是空的）。</p>
+      <p v-else class="muted">这个文件没有可以显示的行。</p>
+    </div>
+    <table v-if="hunks.length" class="dtable">
       <colgroup v-if="split"><col class="cno" /><col /><col class="cno" /><col /></colgroup>
       <tbody>
         <template v-for="(h, i) in hunks" :key="i">
@@ -203,6 +231,14 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
 
 <style scoped>
 .dfile { overflow-x: auto; }
+.note { margin: 0; padding: 4px 12px; background: var(--sunken); border-bottom: 1px solid var(--line); }
+.nohunk { padding: 10px 12px; overflow-wrap: anywhere; }
+.nohunk p { margin: 0 0 6px; }
+.nohunk p:last-child { margin-bottom: 0; }
+.imgs { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 6px; }
+.imgs figure { margin: 0; display: grid; gap: 4px; max-width: min(100%, 420px); }
+.imgs img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; border: 1px solid var(--line); border-radius: 6px; background: repeating-conic-gradient(var(--sunken) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.links { gap: 12px; }
 .dtable { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12px; line-height: 1.6; }
 .dtable td { padding: 0; vertical-align: top; }
 .no { width: 1%; min-width: 38px; padding: 0 8px !important; text-align: right; color: var(--muted); user-select: none; white-space: nowrap; }

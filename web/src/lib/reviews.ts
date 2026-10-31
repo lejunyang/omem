@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { get } from "../api";
+import { splitPatch } from "./patch";
 
 /** The reviews of a coding delegation or branch review (GET /api/runs/:id/reviews), shared by the run page's tabs. */
 export type Severity = "blocker" | "major" | "minor" | "nit";
@@ -87,17 +88,7 @@ export type Reviews = ReturnType<typeof useReviews>;
 
 /** A run's saved patches (one per repository) split into files, for the diff views. */
 export function parsePatches(patches: { space: string; patch: string }[]) {
-  return patches.map((p) => ({
-    space: p.space,
-    files: p.patch
-      .split(/^diff --git /m)
-      .filter(Boolean)
-      .map((chunk) => {
-        const name = /^a\/(\S+)/.exec(chunk)?.[1] ?? "?";
-        const lines = chunk.split("\n").slice(1);
-        return { name, lines, add: lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length, rm: lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length };
-      }),
-  }));
+  return patches.map((p) => ({ space: p.space, files: splitPatch(p.patch) }));
 }
 
 /** A change point as a quote for the ask drawer (“讲解”), with the points under a group. */

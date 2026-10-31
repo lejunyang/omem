@@ -1416,6 +1416,30 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     reply.header("content-disposition", `${type ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`);
     return reply.type(type ?? "application/octet-stream").send(f.bytes());
   });
+  // One side of a binary in a run's diff, by the blob id the diff names (a deleted image, the old
+  // version of a changed one): read from the repository the run works in, nothing else.
+  server.get("/api/runs/:id/blob", async (req, reply) => {
+    const o = q(z.object({ space: z.string().min(1), oid: z.string().regex(/^[0-9a-f]{7,64}$/), path: z.string().min(1).max(1000) }), req.query);
+    const r = getRun(app, (req.params as { id: string }).id);
+    if (r.kind !== "code") throw new HttpError(400, "只有编码交办有文件");
+    const allowed = accessibleSpaces(app, who(req));
+    if (allowed && !allowed.includes(o.space)) throw new HttpError(404, `找不到文件 ${o.path}`);
+    const { worktreesOf } = await import("../agents/code.ts");
+    const root = String(r.input.continueFrom ?? r.id);
+    const wt = worktreesOf(app, root).find((w) => w.space === o.space);
+    if (!wt && !((getRun(app, root).input as { repos?: string[] }).repos ?? []).includes(o.space)) throw new HttpError(404, `这次交办没有改 ${o.space}`);
+    const dir = wt && existsSync(wt.path) ? wt.path : findSpace(app, o.space)?.rootPath;
+    if (!dir) throw new HttpError(404, `找不到 ${o.space} 的仓库`);
+    const kind = spawnSync("git", ["cat-file", "-t", o.oid], { cwd: dir, encoding: "utf8", windowsHide: true });
+    if (kind.status !== 0 || kind.stdout.trim() !== "blob") throw new HttpError(404, `仓库里没有这个版本的 ${o.path}`);
+    const shown = spawnSync("git", ["cat-file", "blob", o.oid], { cwd: dir, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+    if (shown.status !== 0) throw new HttpError(404, `读不到这个版本的 ${o.path}`);
+    const type = imageType(o.path);
+    const name = o.path.split("/").pop()!.replace(/["\\\r\n]/g, "_");
+    reply.header("x-content-type-options", "nosniff").header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    reply.header("content-disposition", `${type ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`);
+    return reply.type(type ?? "application/octet-stream").send(shown.stdout);
+  });
 
   // ------------------------------------------------------------------ learning
   server.get("/api/cards", async (req) => {

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { get, post } from "../api";
 import DiffFile, { type DiffPoint } from "./DiffFile.vue";
+import DiffName from "./DiffName.vue";
 import DiffTree from "./DiffTree.vue";
 import Icon from "./Icon.vue";
 import UiSegmented from "./UiSegmented.vue";
@@ -9,6 +10,7 @@ import { promptDialog } from "../lib/dialog";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { state, toast } from "../store";
 import { POINT_STATUS, type ChangePoint, type Reviews } from "../lib/reviews";
+import type { DiffEntry } from "../lib/patch";
 
 /**
  * The run page's “变更” tab: the requirement's change points (from the business review) on the left,
@@ -21,7 +23,7 @@ import { POINT_STATUS, type ChangePoint, type Reviews } from "../lib/reviews";
  * `only`: just these points and the files they touch (the requirements page shows one requirement
  * node's part of the change); the first one is chosen at once.
  */
-type DiffRepo = { space: string; files: { name: string; lines: string[]; add: number; rm: number }[] };
+type DiffRepo = { space: string; files: DiffEntry[] };
 const props = defineProps<{ rv: Reviews; runId: string; diffs: DiffRepo[]; only?: string[] | null }>();
 const emit = defineEmits<{ explain: [point: ChangePoint] }>();
 
@@ -199,7 +201,7 @@ function scrollToEl(el: HTMLElement, frac: number) {
 // ---- the file tree: every changed file, opened and scrolled to on a pick -----------------------
 const aside = ref<"points" | "files">("points");
 const asideOptions = [{ value: "points" as const, label: "变更点" }, { value: "files" as const, label: "文件" }];
-const treeFiles = computed(() => props.diffs.flatMap((d) => d.files.map((f) => ({ key: key(d.space, f.name), path: multi.value ? `${spaceName(d.space)}/${f.name}` : f.name, add: f.add, rm: f.rm }))));
+const treeFiles = computed(() => props.diffs.flatMap((d) => d.files.map((f) => ({ key: key(d.space, f.name), path: multi.value ? `${spaceName(d.space)}/${f.name}` : f.name, add: f.add, rm: f.rm, status: f.status }))));
 const pointFiles = computed(() => new Set(props.diffs.flatMap((d) => d.files.filter((f) => points.value.some((p) => touches(p, d.space, f.name))).map((f) => key(d.space, f.name)))));
 const activeFile = ref<string | null>(null);
 async function pickFile(k: string) {
@@ -325,7 +327,7 @@ watch(() => props.only?.join(","), async () => {
           <div v-if="multi" class="repo">{{ spaceName(d.space) }}</div>
           <div v-for="f in d.files" :key="f.name" class="file" :data-key="key(d.space, f.name)" :class="{ hit: !!activePoint && touches(activePoint, d.space, f.name), picked: activeFile === key(d.space, f.name) }">
             <button class="fhead mono small" :aria-expanded="open.has(key(d.space, f.name))" @click="toggleFile(key(d.space, f.name))">
-              <span class="ellipsis">{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span>
+              <DiffName :file="f" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span>
             </button>
             <DiffFile v-if="open.has(key(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :points="pointsOf(d.space, f.name)" :active="activeIds" @point="fromMark" />
           </div>
@@ -335,7 +337,7 @@ watch(() => props.only?.join(","), async () => {
           <template v-if="othersOpen">
             <div v-for="f in others" :key="key(f.space, f.name)" class="file" :data-key="key(f.space, f.name)" :class="{ picked: activeFile === key(f.space, f.name) }">
               <button class="fhead mono small" :aria-expanded="open.has(key(f.space, f.name))" @click="toggleFile(key(f.space, f.name))">
-                <span class="ellipsis">{{ multi ? `${spaceName(f.space)} · ` : "" }}{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span>
+                <DiffName :file="f" :prefix="multi ? `${spaceName(f.space)} · ` : ''" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span>
               </button>
               <DiffFile v-if="open.has(key(f.space, f.name))" :run-id="runId" :space="f.space" :lines="f.lines" />
             </div>

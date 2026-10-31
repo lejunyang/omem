@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
-import { codeHere, fixedByInfo, inheritedSplit, markFindingsFixed, newerWork, reviseFinding, sameBranchWork, setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
+import { codeHere, fixedByInfo, inheritedSplit, markFindingsFixed, newerWork, reviseFinding, sameBranchWork, setFindingSuggestion, startFix, sweepRoundAsks } from "../src/agents/review-fix.ts";
+import { createAsk, getAsk } from "../src/agents/asks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -92,6 +93,9 @@ describe("coding seen from the requirement tree", () => {
     expect(sameBranchWork(app, a.id, OWNER).map((w) => w.rootId)).toEqual([b.id]);
     const [fa] = roundFindings(app, a.id, 1);
     const [fb, fb2] = roundFindings(app, b.id, 1);
+    // Both reviews wait for the owner on the home page.
+    const card = (runId: string, handler: string) => createAsk(app, { runId, conversationId: null, question: "怎么继续？", options: [{ label: "按评审修改" }], context: { handler, codeRunId: runId } });
+    const cardA = card(a.id, "review-done"), cardB = card(b.id, "review-done"), retryB = card(b.id, "review-retry");
     // Without saying so, another review's finding is not this one's.
     await expect(startFix(app, a.id, { findingIds: [fa.id, fb.id] }, OWNER)).rejects.toThrow(/同一分支/);
     const fix = await startFix(app, a.id, { findingIds: [fa.id, fb.id], withSameBranch: true }, OWNER);
@@ -100,6 +104,8 @@ describe("coding seen from the requirement tree", () => {
     expect(task).toContain(`以及同一分支的 ${b.id}`);
     expect(roundFindings(app, b.id, 1).map((f) => f.decision)).toEqual(["fix", "later"]);
     expect(fb2.title).toBe("B 没选的问题");
+    // Taken up in one fix: neither review's cards wait any longer, the other one's included.
+    expect([cardA, cardB, retryB].map((c) => getAsk(app, c.id).status)).toEqual(["cancelled", "cancelled", "cancelled"]);
 
     // B, opened later, shows the chosen finding as taken on by the fix and names the fix as the newer code.
     run(app.db, "update runs set created_at = ? where id = ?", new Date(Date.now() + 1000).toISOString(), fix.id);
@@ -118,6 +124,21 @@ describe("coding seen from the requirement tree", () => {
     // A discarded fix no longer counts.
     setRunOutput(app, fix.id, { ...getRun(app, fix.id).output, discardedAt: new Date().toISOString() });
     expect(fixedByInfo(app, [fix.id])[fix.id].discarded).toBe(true);
+  });
+
+  it("closes the cards of rounds a work has moved past, left open before", () => {
+    const first = createRun(app, { kind: "code", spaceId: "shop", title: "交办", input: { task: "x", repos: ["shop-api"] } });
+    run(app.db, "update runs set status = 'done' where id = ?", first.id);
+    const second = createRun(app, { kind: "code", spaceId: "shop", title: "交办第 2 轮", input: { task: "y", repos: ["shop-api"], continueFrom: first.id, round: 2 } });
+    const old = createAsk(app, { runId: first.id, conversationId: null, question: "停下来了", context: { handler: "review-escalation", codeRunId: first.id } });
+    const current = createAsk(app, { runId: second.id, conversationId: null, question: "评审计划", context: { handler: "review-plan", codeRunId: second.id } });
+    const agentQuestion = createAsk(app, { runId: first.id, conversationId: null, question: "要改哪个文件？" });
+    expect(sweepRoundAsks(app)).toBe(1);
+    expect([old, current, agentQuestion].map((c) => getAsk(app, c.id).status)).toEqual(["cancelled", "pending", "pending"]);
+    // Discarded: the latest round's card goes too.
+    setRunOutput(app, second.id, { discardedAt: new Date().toISOString() });
+    sweepRoundAsks(app);
+    expect(getAsk(app, current.id).status).toBe("cancelled");
   });
 
   it("lets a round without a requirement split borrow the latest one of the branch", () => {

@@ -6,7 +6,7 @@ import { fetchBranch, git, resolveRef } from "../core/git.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
-import { cancelHostAsks } from "./asks.ts";
+import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { getRun, setRunOutput } from "./runs.ts";
 import { hasSyncStash, syncInProgress } from "./code-sync.ts";
 import { dropWorktreeSpace, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
@@ -352,7 +352,7 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
     return { space: wt.space, path: checkedOutAt(root, wt.branch) ?? root, branch: wt.branch };
   });
   for (const id of new Set([first, runId])) setRunOutput(app, id, { appliedAt, appliedTo, pushed, confirmNotes: notes });
-  for (const r of rounds(app, first)) cancelHostAsks(app, r.id, "review-done");
+  for (const r of rounds(app, first)) cancelHostAsks(app, r.id, ROUND_ASKS);
   return { applied: true, spaces: wts.map((w) => w.space), targets: appliedTo, pushed, notes };
 }
 

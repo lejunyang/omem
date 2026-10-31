@@ -1041,3 +1041,6 @@ updated: 2026-10-30
 - 评审问题的写法：`review.ts` 的 `FINDING_FORMAT` 写进各评审项和外部 Agent 的评审任务（标题说清情境；正文 Markdown 分现在的实现 / 源实现 / 触发条件 / 问题，引用 `[说明](路径:起-止)` 在正文里）；`ReviewSummary` 用 Markdown 显示正文和建议（`Markdown` 的 `runId` 让代码引用打开交办的文件），“依据”只列正文没引用的。新工具 `revise_finding`（code 分组，原写法存 `review_findings.revised`），问题上的“看不懂，重新描述”带着草稿打开提问抽屉（`AskAboutRun` 的 `draft`）。
 - 代码文件的引用：`GET /api/runs/:id/file` 对图片返回 `binary: "image"`、二进制和超过 2 MB 的返回 `binary`，`GET /api/runs/:id/file/raw` 给原始字节（图片 inline，其他下载，带 sandbox CSP）；引用抽屉显示图片或下载按钮。聊天原件的引用在抽屉里用 `ChatView`（可切回原文行号）。提问抽屉默认 640 宽、可加宽，正文单列不撑宽。
 - 外部 Agent 编码过的交办：`startFix` 开的轮次清掉 `peerCoder` / `peerReviewer`，由这台机器编码和评审；等外部 Agent 编码的一轮可 `POST /api/runs/:id/code-here`（`review-fix.ts` 的 `codeHere`）改由这台机器做，交给它的问题（`fixed_by`）跟到新的一轮。
+- 差异的文件状态：`web/src/lib/patch.ts` 的 `splitPatch` / `diffMeta` 取代各处各写的切分（`reviews.ts` 的 `parsePatches`、`CodeGitPanel`），文件按改动后的路径命名，带状态（新增 / 删除 / 移动 / 复制）、原路径、相似度、二进制、权限和两边的 blob id；`DiffName` 显示文件头，`DiffTree` 标状态，`DiffFile` 对没有行的文件说明发生了什么、显示图片前后或给下载。新接口 `GET /api/runs/:id/blob?space=&oid=&path=` 按 blob id 读这次交办仓库里的旧版本。
+- 过期的卡片：`asks.ts` 的 `ROUND_ASKS`（评审计划、结果、停下、重试）在新的一轮排上（`queueNextCodeRound`、`queueStandaloneFix`）、应用、丢弃时对之前各轮一起作废，`startFix` 连同一起修改的同一分支其他评审；启动时 `sweepRoundAsks` 清理以前遗留的。
+- 设计稿 `docs/v2/coding-loop.md`：以修改项代替轮次推进编码与评审（逐项验证、AI 决定评审范围代替档位、不阻塞的“等你决定”、并行编码、检查点与回退），未实现。

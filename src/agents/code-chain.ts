@@ -7,6 +7,7 @@ import type { Run } from "./runs.ts";
 import { createRun, getRun, setRunOutput } from "./runs.ts";
 import { refreshWork, workForChild } from "./agent-work.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
+import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 
 /**
  * A delegated coding run reports back to the conversation that requested it, and keeps going
@@ -139,6 +140,8 @@ export function queueNextCodeRound(
     next.rounds.push(r.id);
     next.lastCodeRunId = r.id;
     saveCodeChain(app, next, r.id, chain.askRunId, ...chain.rounds);
+    // The work moved on: what the earlier rounds asked the owner (plan, result, a stop) is answered.
+    for (const id of chain.rounds) cancelHostAsks(app, id, ROUND_ASKS);
     return { run: r, chain: next };
   } catch (e) { app.db.exec("ROLLBACK"); throw e; } finally { if (app.db.isTransaction) app.db.exec("COMMIT"); }
 }

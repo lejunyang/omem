@@ -85,6 +85,11 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     const n = compactArchiveQueue(app);
     if (n) console.log(`[omem] 合并了排队中的归属判断，取消 ${n} 个重复或已无事可做的任务`);
   }
+  {
+    const { sweepRoundAsks } = await import("./agents/review-fix.ts");
+    const n = sweepRoundAsks(app);
+    if (n) console.log(`[omem] ${n} 个交办或评审已经有了新的一轮（或已应用、丢弃），关掉它们旧的待处理卡片`);
+  }
   startWorker(app);
   if (opts.background !== false) {
     startMemoryWatch();

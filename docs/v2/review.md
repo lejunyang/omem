@@ -1,5 +1,7 @@
 # 分档、多角度的评审方案（设计稿，未实现）
 
+> 2026-10-31：档位、计划确认和按轮续改将由 [coding-loop.md](coding-loop.md)（以修改项推进、AI 决定评审范围）取代，评审项、结构化结论和需求拆分保留。
+
 状态：2026-10-24 初稿，同日修订；第一、二阶段已实现（见 8 节和 4.4），其余仍是设计。实现前先按本文核对，有变化改本文。现有实现是交办编码链：worktree → 检查 → 单个 `reviewer` → 自动续轮（最多 3 轮），见 architecture.md 第 5 节和 `src/agents/code-chain.ts`；本文是它在中大型改动上的扩展，不替换小改动的链路。
 
 可点击原型：`docs/v2/design/review-prototype.html`（直接用 `web/src/styles.css`，和网页同一套样式；1440 / 390 截图在 `design/screens/`）。

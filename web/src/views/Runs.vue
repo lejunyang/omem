@@ -15,6 +15,7 @@ import AskAboutRun from "../components/AskAboutRun.vue";
 import FixBasket from "../components/FixBasket.vue";
 import QuoteDock from "../components/QuoteDock.vue";
 import DiffFile from "../components/DiffFile.vue";
+import DiffName from "../components/DiffName.vue";
 import DiffTree from "../components/DiffTree.vue";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import ReviewSummary from "../components/ReviewSummary.vue";
@@ -204,7 +205,7 @@ function onDiffToggle(key: string, e: Event) {
   open ? next.add(key) : next.delete(key);
   openDiffs.value = next;
 }
-const treeFiles = computed(() => diffs.value.flatMap((d) => d.files.map((f) => ({ key: `${d.space}:${f.name}`, path: diffs.value.length > 1 ? `${spaceName(d.space)}/${f.name}` : f.name, add: f.add, rm: f.rm }))));
+const treeFiles = computed(() => diffs.value.flatMap((d) => d.files.map((f) => ({ key: `${d.space}:${f.name}`, path: diffs.value.length > 1 ? `${spaceName(d.space)}/${f.name}` : f.name, add: f.add, rm: f.rm, status: f.status }))));
 const pickedDiff = ref<string | null>(null);
 async function pickDiff(key: string) {
   pickedDiff.value = key;
@@ -597,7 +598,7 @@ const kindOptions = computed(() => [
           <template v-for="d in diffs" :key="d.space">
           <div v-if="diffs.length > 1" class="repo-title">{{ spaceName(d.space) }}</div>
           <details v-for="f in d.files" :key="f.name" class="file" :class="{ picked: pickedDiff === `${d.space}:${f.name}` }" :data-key="`${d.space}:${f.name}`" :open="openDiffs.has(`${d.space}:${f.name}`)" @toggle="onDiffToggle(`${d.space}:${f.name}`, $event)">
-            <summary class="mono small"><span>{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></summary>
+            <summary class="mono small"><DiffName :file="f" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></summary>
             <DiffFile v-if="openDiffs.has(`${d.space}:${f.name}`)" :run-id="detail.run.id" :space="d.space" :lines="f.lines" />
           </details>
           </template>
@@ -955,7 +956,9 @@ const kindOptions = computed(() => [
 }
 .file summary {
   display: flex;
+  align-items: center;
   gap: 10px;
+  min-width: 0;
   padding: 7px 12px;
   background: var(--sunken);
   cursor: pointer;

@@ -6,6 +6,8 @@ import { fmtTime } from "../store";
 import Skeleton from "./Skeleton.vue";
 import VirtualList from "./VirtualList.vue";
 import DiffFile from "./DiffFile.vue";
+import DiffName from "./DiffName.vue";
+import { splitPatch } from "../lib/patch";
 import UiCheckbox from "./UiCheckbox.vue";
 
 const props = defineProps<{ runId: string; space: string }>();
@@ -27,10 +29,7 @@ const dest = ref("");
 const force = ref(false);
 const error = ref("");
 const result = ref<Operation | null>(null);
-const diffFiles = computed(() => (status.value?.stagedDiff ?? "").split(/^diff --git /m).filter(Boolean).map(chunk => {
-  const lines = chunk.split("\n").slice(1);
-  return { name: chunk.split("\n")[0], lines, text: lines.some(line => line.startsWith("@@ ")) };
-}));
+const diffFiles = computed(() => splitPatch(status.value?.stagedDiff ?? ""));
 let generation = 0;
 async function refresh() {
   const request = ++generation;
@@ -93,9 +92,8 @@ async function act(action: Action) {
         <div v-if="diffFiles.length" class="git-diff">
           <VirtualList :items="diffFiles" :item-key="item => item.name" :estimate="150">
             <template #default="{ item }">
-              <p class="git-filename">{{ item.name }}</p>
-              <DiffFile v-if="item.text" :key="`${status.state}:${item.name}`" :run-id="runId" :space="space" :lines="item.lines" :expandable="false" />
-              <p v-else class="muted">文件属性、重命名或二进制变化，请在接收目录检查。</p>
+              <p class="git-filename"><DiffName :file="item" /></p>
+              <DiffFile :key="`${status.state}:${item.name}`" :run-id="runId" :space="space" :lines="item.lines" :expandable="false" />
             </template>
           </VirtualList>
         </div>
