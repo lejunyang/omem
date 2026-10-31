@@ -10,7 +10,7 @@ import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { clearFixDraft, clearQuotes, draftReview, fixDraft, quotesOf, quotesText } from "../lib/quotes";
 import NextRoundReview from "./NextRoundReview.vue";
-import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type Finding, type Review, type Reviews } from "../lib/reviews";
+import { decisionOf, findingWhere, fixLabel, pointCount, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type Finding, type FixInfo, type LatestState, type Review, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “概览” for a coding delegation or branch review: the verdict and review-lead's
@@ -20,7 +20,7 @@ import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts
 // `branchWork`: a delegation on work branches, whose rounds are commits already (nothing to apply first).
 // `stay`: shown inside another page (the requirements page), which follows the next round itself (`started`).
 const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; branchWork?: boolean; canFix?: boolean; stay?: boolean }>();
-const emit = defineEmits<{ ask: [context: { quote: string; label: string }]; go: [tab: "review" | "change"]; started: [runId: string] }>();
+const emit = defineEmits<{ ask: [context: { quote: string; label: string }]; go: [tab: "review" | "change"]; started: [runId: string]; open: [runId: string] }>();
 
 const STATE: Record<string, string> = { accepted: "要改", rejected: "已驳回", merged: "已合并" };
 const STOP: Record<string, string> = {
@@ -43,7 +43,33 @@ const lastAt = computed(() => rv.reviews.value.reduce((t, r) => (r.created_at > 
 // “待处理”: every finding the owner still has a call on (to fix, put off, or not yet decided) and
 // whatever is set to be fixed; behind “全部” only what review-lead rejected or merged and the hints
 // nobody asked to fix.
-const quiet = (f: Finding) => settled(f) || (f.severity === "nit" && decisionOf(f) !== "fix");
+const quiet = (f: Finding) => settled(f) || !!fixOf(f) || (f.severity === "nit" && decisionOf(f) !== "fix");
+
+// ---- later work on the branch (review-fix.ts fixed_by / newerWork) ----
+// A finding handed to a later fix shows how that fix stands instead of “open”; an older review also
+// names the newest code on the branch, which questions and fixes from here use.
+const fixedBy = ref<Record<string, FixInfo>>({});
+const newer = ref<LatestState["newer"]>(null);
+async function loadLatest(ids: string[]) {
+  const states = await Promise.all(ids.map((id) => get<LatestState>(`/api/runs/${id}/latest-state`).catch(() => null)));
+  for (const s of states) if (s) fixedBy.value = { ...fixedBy.value, ...s.fixedBy };
+  return states;
+}
+watch(() => props.runId, async (id) => {
+  fixedBy.value = {};
+  newer.value = null;
+  newer.value = (await loadLatest([id]))[0]?.newer ?? null;
+}, { immediate: true });
+/** The later fix a finding was handed to, while it counts (a discarded one does not). */
+const fixOf = (f: Finding) => {
+  const i = f.fixed_by ? fixedBy.value[f.fixed_by] : undefined;
+  return i && !i.discarded ? i : null;
+};
+function openWork(id: string) {
+  if (props.stay) emit("open", id);
+  else router.push(`/runs/${id}`);
+}
+const NEWER_STATUS: Record<string, string> = { queued: "排队中", running: "进行中", done: "已完成", failed: "失败", cancelled: "已停止" };
 
 // ---- other reviews of the same branch (another AI's review of it, an earlier delegation on it) ----
 // Their findings can be shown here and fixed in the same round (review-fix.ts sameBranchWork).
@@ -70,6 +96,7 @@ watch(withOthers, async (on) => {
       return d.reviews.filter((r) => r.round === last).flatMap((r) => r.findings.map((f): Row => ({ ...f, check: r.check_name, source: { runId: o.latestId, title: o.title, label: d.labels[r.check_name] ?? r.check_name } })));
     }));
     otherFindings.value = lists.flat();
+    await loadLatest(others.value.map((o) => o.latestId));
   } catch (e) {
     toast((e as Error).message, "error");
     withOthers.value = false;
@@ -84,6 +111,20 @@ const runOf = (f: Row) => f.source?.runId ?? props.runId;
 function patchFinding(f: Row, fields: Partial<Finding>) {
   if (f.source) return void Object.assign(f, fields);
   for (const r of rv.data.value?.reviews ?? []) for (const x of r.findings) if (x.id === f.id) Object.assign(x, fields);
+}
+// The owner says a finding was already taken care of by later work on the branch (or takes that back).
+const marking = ref<number | null>(null);
+async function markFixed(f: Row, by: string | null) {
+  marking.value = f.id;
+  try {
+    await put(`/api/runs/${runOf(f)}/findings-fixed`, { ids: [f.id], by });
+    if (by && !fixedBy.value[by]) await loadLatest([runOf(f)]);
+    patchFinding(f, { fixed_by: by });
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    marking.value = null;
+  }
 }
 const filter = ref<"open" | "all">("open");
 const openCount = computed(() => allFindings.value.filter((f) => !quiet(f)).length);
@@ -142,7 +183,7 @@ async function saveSug(f: Row, text = sugText.value) {
 }
 const tally = computed(() => {
   const t = { fix: 0, later: 0, wontfix: 0 };
-  for (const f of allFindings.value) t[decisionOf(f)]++;
+  for (const f of allFindings.value) if (!fixOf(f)) t[decisionOf(f)]++;
   return t;
 });
 // The text and the next rounds' review survive switching tabs (lib/quotes.ts keeps them per run).
@@ -153,7 +194,8 @@ const router = useRouter();
 const picked = computed(() => quotesOf(props.runId, "fix"));
 // `applyFirst`: what is done now goes to the target branch (uncommitted) before the next round, which goes on in the same worktree.
 async function startFix(applyFirst = false) {
-  const ids = allFindings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id);
+  // A finding already handed to later work on the branch is not sent again.
+  const ids = allFindings.value.filter((f) => decisionOf(f) === "fix" && !fixOf(f)).map((f) => f.id);
   const text = [quotesText(picked.value, "本人在页面上选中、要求修改的地方（按 [1]、[2] 编号）："), draft.value.text.trim()].filter(Boolean).join("\n\n");
   if (starting.value || (!ids.length && !text)) return;
   if (applyFirst && !(await confirmDialog("先应用到原分支，再接着改？", { message: "现在的改动先写进原目标分支（未提交，可以在运行页提交）；下一轮在同一个工作区接着改，之后再应用只带新的改动。", okText: "应用并接着改" }))) return;
@@ -247,6 +289,12 @@ async function answer(choice: number | null) {
       <div v-if="rawOpen && reviewText" class="sub"><Markdown :source="reviewText" /></div>
     </div>
 
+    <div v-if="newer" class="row wrap newer small">
+      <span>这个分支后来有更新的编码：</span>
+      <a href="#" @click.prevent="openWork(newer.rootId)">{{ newer.title }}</a>
+      <span class="muted">（{{ newer.applied ? "已应用到分支" : NEWER_STATUS[newer.status] ?? newer.status }}）</span>
+      <span class="muted">这里提问、开始修改都按它的代码；已在那边改了的问题，展开后点“已在新编码里改了”。</span>
+    </div>
     <div v-if="allFindings.length || (deciding && others.length)" class="card pad findings">
       <div class="row wrap"><div class="section-title flat">待处理问题</div><span class="spacer" /><UiSegmented v-model="filter" size="sm" :options="filterOptions" aria-label="显示哪些问题" /></div>
       <div v-if="deciding && others.length" class="row wrap others small">
@@ -256,17 +304,18 @@ async function answer(choice: number | null) {
         <span v-else-if="withOthers" class="muted">勾上的问题和这份评审的一起改，开一次修改</span>
       </div>
       <p v-if="!shown.length" class="muted small">没有要处理的问题。</p>
-      <p v-if="filter === 'open' && quietCount" class="muted small">另有 {{ quietCount }} 个已驳回、已合并或只是提示的，在“全部”里。</p>
+      <p v-if="filter === 'open' && quietCount" class="muted small">另有 {{ quietCount }} 个已交给后来的修改、已驳回、已合并或只是提示的，在“全部”里。</p>
       <div v-for="f in shown" :key="f.id" class="finding" :class="{ dim: quiet(f) }">
         <div class="row line1">
           <span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span>
           <button class="title" :aria-expanded="open.has(f.id)" @click="toggle(f.id)">{{ f.title }}</button>
           <span v-if="STATE[f.state]" class="badge" :class="{ warn: f.state === 'accepted' }">{{ STATE[f.state] }}</span>
           <span v-if="f.owner_suggestion" class="badge accent" title="建议按你改写的执行">建议已改</span>
+          <a v-if="fixOf(f)" href="#" class="badge ok" :title="`交给了「${fixOf(f)!.title}」`" @click.prevent="openWork(fixOf(f)!.rootId)">{{ fixLabel(fixOf(f)!) }}</a>
           <span class="spacer" />
           <span v-if="f.source" class="badge" :title="f.source.title">另一份评审</span>
           <span class="muted small nowrap">{{ f.fromRound ? `第 ${f.fromRound} 轮 · ` : "" }}{{ checkLabel(f) }} · #{{ f.id }}</span>
-          <UiSegmented v-if="deciding" :model-value="decisionOf(f)" class="decide-f" size="sm" :options="DECISIONS" :aria-label="`#${f.id} 怎么处理`" @change="(d) => decide(f, d)" />
+          <UiSegmented v-if="deciding && !fixOf(f)" :model-value="decisionOf(f)" class="decide-f" size="sm" :options="DECISIONS" :aria-label="`#${f.id} 怎么处理`" @change="(d) => decide(f, d)" />
         </div>
         <div v-if="f.decision === 'wontfix' && f.decision_note" class="small wontfix">不改：{{ f.decision_note }}</div>
         <div v-if="findingWhere(f) || f.triage_note || f.merged_into" class="line2 small">
@@ -292,6 +341,8 @@ async function answer(choice: number | null) {
           <div class="row wrap">
             <button v-if="deciding && editingSug !== f.id" class="btn ghost sm" @click="editSug(f)">{{ suggestionOf(f) ? "改建议" : "写建议" }}</button>
             <button class="btn ghost sm" @click="askAbout(f)">就这条提问</button>
+            <button v-if="newer && !fixOf(f)" class="btn ghost sm" :disabled="marking === f.id" :title="`标为已在「${newer.title}」里改了`" @click="markFixed(f, newer.latestId)">已在新编码里改了</button>
+            <button v-if="f.fixed_by" class="btn ghost sm" :disabled="marking === f.id" @click="markFixed(f, null)">{{ fixOf(f) ? "不算已改" : "清除" }}</button>
           </div>
         </div>
       </div>
@@ -355,6 +406,7 @@ async function answer(choice: number | null) {
 .more .btn { justify-self: start; }
 .sug-edit { display: grid; gap: 6px; }
 .others { gap: 8px; padding: 6px 0; }
+.newer { gap: 6px; padding: 8px 12px; border-radius: 8px; background: var(--sunken); }
 .others .ellipsis { min-width: 0; flex: 1 1 160px; }
 .orig summary { cursor: pointer; }
 .decide-f { flex: none; }

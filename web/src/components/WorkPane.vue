@@ -152,7 +152,7 @@ function explain(p: ChangePoint) {
       </nav>
 
       <template v-if="hasReview">
-        <ReviewSummary v-if="tab === 'overview'" :key="run.id" :rv="rv" :run-id="run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" stay data-ask-label="评审" @ask="ask" @go="(t) => (tab = t)" @started="(id) => emit('open', id)" />
+        <ReviewSummary v-if="tab === 'overview'" :key="run.id" :rv="rv" :run-id="run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" stay data-ask-label="评审" @ask="ask" @go="(t) => (tab = t)" @started="(id) => emit('open', id)" @open="(id) => emit('open', id)" />
         <template v-else-if="tab === 'req' && focus">
           <section class="card pad req">
             <div class="row wrap">

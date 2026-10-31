@@ -1110,6 +1110,9 @@ const migrations: string[] = [
     where id in (select fam.id from fam join home h on h.item = fam.item join items i on i.id = fam.item
                   where runs.space_id in (select id from spaces where root_path is not null) or runs.space_id = i.space_id)
       and space_id != (select h.space from fam join home h on h.item = fam.item where fam.id = runs.id limit 1);`,
+  // The round of later work that took a finding on (review-fix.ts): another review of the same
+  // branch shows it as being fixed / fixed instead of still open.
+  `alter table review_findings add column fixed_by text;`,
 ];
 
 export type Db = DatabaseSync;

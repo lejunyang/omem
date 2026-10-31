@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
-import { sameBranchWork, setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
+import { fixedByInfo, markFindingsFixed, newerWork, sameBranchWork, setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -100,5 +100,23 @@ describe("coding seen from the requirement tree", () => {
     expect(task).toContain(`以及同一分支的 ${b.id}`);
     expect(roundFindings(app, b.id, 1).map((f) => f.decision)).toEqual(["fix", "later"]);
     expect(fb2.title).toBe("B 没选的问题");
+
+    // B, opened later, shows the chosen finding as taken on by the fix and names the fix as the newer code.
+    run(app.db, "update runs set created_at = ? where id = ?", new Date(Date.now() + 1000).toISOString(), fix.id);
+    expect(roundFindings(app, b.id, 1).map((f) => f.fixed_by ?? null)).toEqual([fix.id, null]);
+    expect(fixedByInfo(app, [fix.id])[fix.id]).toMatchObject({ rootId: fix.id, applied: false, discarded: false });
+    expect(newerWork(app, b.id, OWNER)?.rootId).toBe(fix.id);
+    expect(newerWork(app, fix.id, OWNER)).toBeNull();
+    // Fixed elsewhere: the owner marks the other one too, and can take it back; only code on the branch counts.
+    markFindingsFixed(app, b.id, [fb2.id], fix.id, OWNER);
+    expect(roundFindings(app, b.id, 1)[1].fixed_by).toBe(fix.id);
+    markFindingsFixed(app, b.id, [fb2.id], null, OWNER);
+    expect(roundFindings(app, b.id, 1)[1].fixed_by).toBeNull();
+    const elsewhere = createRun(app, { kind: "code", spaceId: "shop", title: "别的分支", input: { branches: { "shop-api": { branch: "feat/other" } }, repos: ["shop-api"] } });
+    expect(() => markFindingsFixed(app, b.id, [fb2.id], elsewhere.id, OWNER)).toThrow(/同一分支/);
+    expect(() => markFindingsFixed(app, b.id, [fa.id], fix.id, OWNER)).toThrow(/不属于/);
+    // A discarded fix no longer counts.
+    setRunOutput(app, fix.id, { ...getRun(app, fix.id).output, discardedAt: new Date().toISOString() });
+    expect(fixedByInfo(app, [fix.id])[fix.id].discarded).toBe(true);
   });
 });

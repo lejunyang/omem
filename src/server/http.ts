@@ -1243,6 +1243,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       labels,
     };
   });
+  // Later work on the branch a review's findings were handed to (review-fix.ts fixed_by), and the newest
+  // work on the branch after this one: an older review shows its findings' latest state and points
+  // questions and fixes at that code.
+  server.get("/api/runs/:id/latest-state", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const { fixedByInfo, newerWork, workRuns } = await import("../agents/review-fix.ts");
+    const runs = workRuns(app, id);
+    const marks = runs.map(() => "?").join(",");
+    const by = all<{ b: string }>(app.db, `select distinct f.fixed_by b from review_findings f join reviews r on r.id = f.review_id where r.code_run_id in (${marks}) and f.fixed_by is not null`, ...runs).map((x) => x.b);
+    return { fixedBy: fixedByInfo(app, by), newer: newerWork(app, id, who(req)) };
+  });
   // A file of a delegation as it is now: the worktree while it exists, else the repository (after apply).
   // The owner's call on a finding, and starting the fix (src/agents/review-fix.ts).
   const ownRun = (req: FastifyRequest, id: string) => {
@@ -1267,6 +1279,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ text: z.string().max(8000) }), req.body);
     const { setFindingSuggestion } = await import("../agents/review-fix.ts");
     return setFindingSuggestion(app, p.id, Number(p.fid), b.text);
+  });
+  // The owner marks findings as taken on by later work on the branch (`by`: one of its rounds), or open again (null).
+  server.put("/api/runs/:id/findings-fixed", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({ ids: z.array(z.number().int()).min(1).max(200), by: z.string().max(40).nullable() }), req.body);
+    const { markFindingsFixed } = await import("../agents/review-fix.ts");
+    return markFindingsFixed(app, id, b.ids, b.by, who(req));
   });
   // Split the requirement into change points for a review that has none (an earlier review), or
   // rework the split it has by the owner's note.

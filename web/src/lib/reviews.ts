@@ -3,7 +3,7 @@ import { get } from "../api";
 
 /** The reviews of a coding delegation or branch review (GET /api/runs/:id/reviews), shared by the run page's tabs. */
 export type Severity = "blocker" | "major" | "minor" | "nit";
-export type Finding = { id: number; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string; decision: Decision | null; decision_note: string; owner_suggestion?: string | null };
+export type Finding = { id: number; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string; decision: Decision | null; decision_note: string; owner_suggestion?: string | null; fixed_by?: string | null };
 /** The suggestion the next round acts on: the owner's rewrite when there is one. */
 export const suggestionOf = (f: Pick<Finding, "suggestion" | "owner_suggestion">) => f.owner_suggestion?.trim() || f.suggestion;
 /** The owner's call on a finding (src/agents/review-fix.ts). */
@@ -106,3 +106,10 @@ export function pointQuote(p: ChangePoint, all: ChangePoint[]) {
   const under = list.length ? `下面的变更点：${list.map((x) => `${x.id} ${x.title}（${POINT_STATUS[x.status].text}）`).join("；")}` : "";
   return { quote: [`${p.id} ${p.title}（${POINT_STATUS[p.status].text}）`, p.requirement && `需求：${p.requirement}`, p.implementation && `实现：${p.implementation}`, p.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end && l.end !== l.start ? `-${l.end}` : ""}` : ""}`).join("、"), under].filter(Boolean).join("\n"), label: `变更点 ${p.id}` };
 }
+
+/** Later work on the branch that findings were handed to, and the newest work after a review (GET /api/runs/:id/latest-state). */
+export type FixInfo = { rootId: string; title: string; status: string; applied: boolean; discarded: boolean };
+export type NewerWork = { rootId: string; latestId: string; title: string; branchReview: boolean; status: string; applied: boolean };
+export type LatestState = { fixedBy: Record<string, FixInfo>; newer: NewerWork | null };
+/** How a handed-over finding stands: being fixed, fixed, or fixed and applied. */
+export const fixLabel = (i: FixInfo) => (i.applied ? "已修改并应用" : ["queued", "running"].includes(i.status) ? "修改中" : i.status === "done" ? "已修改" : "修改没完成");

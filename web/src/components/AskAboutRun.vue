@@ -5,6 +5,7 @@ import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import { toast } from "../store";
 import { clearQuotes, quotesOf, quotesText, removeQuote } from "../lib/quotes";
+import type { LatestState } from "../lib/reviews";
 
 /**
  * Asking about a run without leaving it: quoted selections (diff lines, the task, a review
@@ -20,6 +21,11 @@ const props = defineProps<{ runId: string; runTitle: string; spaceId: string | n
 const emit = defineEmits<{ close: []; minimize: [] }>();
 
 const KEY = "omem.runAsk";
+// Later work on the same branch may have changed the code this run saw: the answer reads that code.
+const newer = ref<LatestState["newer"]>(null);
+watch(() => props.runId, async (id) => {
+  newer.value = (await get<LatestState>(`/api/runs/${id}/latest-state`).catch(() => null))?.newer ?? null;
+}, { immediate: true });
 const stored = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem(KEY) ?? "{}"); } catch { return {}; } };
 const conversationId = ref<string | null>(stored()[props.runId] ?? null);
 const messages = ref<Message[]>([]);
@@ -72,7 +78,7 @@ async function send() {
     // Fenced, so code keeps its lines and indentation.
     quote.value ? `${quote.value.label}：\n\n${"```"}\n${quote.value.quote.replace(/```/g, "ˋˋˋ")}\n${"```"}` : "",
     quotesText(quotes.value, "引用的内容（问题里的 [1]、[2] 指这些）："),
-    `${NOTE} ${props.runId}「${props.runTitle}」。需要时用 read_run 看这次交办的任务、改动和评审，用 read_source 或工作目录里的文件看代码；只回答，不要修改代码或续轮。）`,
+    `${NOTE} ${props.runId}「${props.runTitle}」。需要时用 read_run 看这次交办的任务、改动和评审，用 read_source 或工作目录里的文件看代码；${newer.value ? `这个分支之后又有编码「${newer.value.title}」（运行 ${newer.value.latestId}${newer.value.applied ? "，已应用到分支" : ""}），代码以它为准：用 read_run ${newer.value.latestId} 看它改了什么，读代码看它的工作区${newer.value.applied ? "或分支的最新提交" : ""}，这次评审说的问题有的可能已经在那里改了；` : ""}只回答，不要修改代码或续轮。）`,
   ].filter(Boolean).join("\n\n");
   try {
     const r = await post<{ conversationId: string }>("/api/ask", { text: body, space: props.spaceId ?? undefined, conversationId: conversationId.value ?? undefined });

@@ -352,7 +352,7 @@ export function deadRefs(app: App, refs: string[]) {
   });
 }
 export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
-export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; decision_note?: string; owner_suggestion?: string | null };
+export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null };
 /** The suggestion to act on: the owner's rewrite when there is one (review-fix.ts setFindingSuggestion). */
 export const suggestionOf = (f: Pick<FindingRow, "suggestion" | "owner_suggestion">) => f.owner_suggestion?.trim() || f.suggestion;
 

@@ -76,24 +76,71 @@ function workBranches(app: App, rootId: string): Record<string, string> {
   return out;
 }
 
-/**
- * The other unfinished delegations and branch reviews on the same branch of the same repositories
- * (two reviews of one branch, by different AIs): their findings can be fixed in one go.
- */
-export function sameBranchWork(app: App, runId: string, userId: string) {
+type BranchWork = { rootId: string; latestId: string; title: string; branchReview: boolean; status: string; applied: boolean; appliedAt: string | null; createdAt: string };
+
+/** Every other delegation and branch review of the last 30 days on a branch of this work, newest first (discarded ones left out). */
+function branchWork(app: App, runId: string, userId: string): BranchWork[] {
   const rootId = workRuns(app, runId)[0];
   const mine = Object.entries(workBranches(app, rootId));
   if (!mine.length) return [];
   const since = new Date(Date.now() - 30 * 86400_000).toISOString();
   const roots = all<{ id: string }>(app.db, "select id from runs where kind = 'code' and id != ? and json_extract(input, '$.continueFrom') is null and coalesce(user_id, ?) = ? and created_at > ? order by created_at desc limit 100", rootId, OWNER, userId, since);
-  const out: { rootId: string; latestId: string; title: string; branchReview: boolean }[] = [];
+  const out: BranchWork[] = [];
   for (const { id } of roots) {
     const theirs = workBranches(app, id);
     if (!mine.some(([space, b]) => theirs[space] === b)) continue;
     const rounds = workRuns(app, id).map((x) => getRun(app, x));
-    if (rounds.some((r) => r.output.appliedAt || r.output.discardedAt)) continue;
+    if (rounds.some((r) => r.output.discardedAt)) continue;
     const last = rounds.at(-1)!;
-    out.push({ rootId: id, latestId: last.id, title: last.title, branchReview: isBranchReview(rounds[0]) });
+    out.push({ rootId: id, latestId: last.id, title: last.title, branchReview: isBranchReview(rounds[0]), status: last.status, applied: rounds.some((r) => r.output.appliedAt), appliedAt: (rounds.map((r) => r.output.appliedAt as string | undefined).filter(Boolean).at(-1)) ?? null, createdAt: rounds[0].createdAt });
+  }
+  return out;
+}
+
+/**
+ * The other unfinished delegations and branch reviews on the same branch of the same repositories
+ * (two reviews of one branch, by different AIs): their findings can be fixed in one go.
+ */
+export function sameBranchWork(app: App, runId: string, userId: string) {
+  return branchWork(app, runId, userId).filter((w) => !w.applied).map(({ rootId, latestId, title, branchReview }) => ({ rootId, latestId, title, branchReview }));
+}
+
+/**
+ * The newest code on the branch beyond what this review saw: a delegation started after it, or (for a
+ * branch review) one still holding unapplied changes to the branch. Questions and fixes from this
+ * older review look at that code. Other branch reviews change no code and do not count.
+ */
+export function newerWork(app: App, runId: string, userId: string) {
+  const root = getRun(app, workRuns(app, runId)[0]);
+  const review = isBranchReview(root);
+  const w = branchWork(app, runId, userId).find((x) => !x.branchReview && (x.createdAt > root.createdAt || (review && !x.applied)));
+  return w ? { rootId: w.rootId, latestId: w.latestId, title: w.title, branchReview: w.branchReview, status: w.status, applied: w.applied } : null;
+}
+
+/**
+ * Findings of this review that later work on the branch took on (`by`: a round of it) — set when a
+ * fix chooses them, or by the owner for work started elsewhere. `by: null` puts them back to open.
+ */
+export function markFindingsFixed(app: App, runId: string, findingIds: number[], by: string | null, userId: string) {
+  const runs = workRuns(app, runId);
+  for (const id of findingIds) if (!findingOf(app, runs, id)) throw new HttpError(404, `问题 #${id} 不属于这次交办或评审`);
+  if (by) {
+    const target = one<{ id: string; kind: string }>(app.db, "select id, kind from runs where id = ?", by);
+    const ok = !!target && target.kind === "code" && (runs.includes(by) || branchWork(app, runId, userId).some((w) => workRuns(app, w.rootId).includes(by)));
+    if (!ok) throw new HttpError(400, `${by} 不是同一分支上的编码`);
+  }
+  for (const id of findingIds) run(app.db, "update review_findings set fixed_by = ? where id = ?", by, id);
+  return { ids: findingIds, by };
+}
+
+/** The rounds findings were handed to, as a review shows them (修改中 / 已修改 / 已应用; a discarded one no longer counts). */
+export function fixedByInfo(app: App, runIds: string[]) {
+  const out: Record<string, { rootId: string; title: string; status: string; applied: boolean; discarded: boolean }> = {};
+  for (const id of new Set(runIds)) {
+    if (!one(app.db, "select 1 from runs where id = ?", id)) continue;
+    const rounds = workRuns(app, id).map((x) => getRun(app, x));
+    const round = rounds.find((x) => x.id === id) ?? rounds.at(-1)!;
+    out[id] = { rootId: rounds[0].id, title: rounds.at(-1)!.title, status: round.status, applied: rounds.some((x) => x.output.appliedAt), discarded: rounds.some((x) => x.output.discardedAt) };
   }
   return out;
 }
@@ -153,7 +200,9 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   const accepted = (next: Run) => {
     // Failed requests must leave the review's actions available for retry.
     for (const id of runs) cancelHostAsks(app, id, "review-done");
-    for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '' where id = ?", f.id);
+    // Each chosen finding remembers the round that takes it on, so its review (when that is another
+    // one of the branch, or an older one opened later) shows it as being fixed rather than open.
+    for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '', fixed_by = ? where id = ?", next.id, f.id);
     // What the owner left unpicked waits (“暂不改”) and stays in view in the rounds after this one.
     for (const latest of [last.id, ...others.map((o) => o.latestId)])
       run(app.db, `update review_findings set decision = 'later' where decision is null and severity != 'nit' and state in ('open', 'accepted') and review_id in (select id from reviews where code_run_id = ?)${chosen.length ? ` and id not in (${chosen.map(() => "?").join(",")})` : ""}`, latest, ...chosen.map((f) => f.id));
@@ -186,7 +235,10 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     if (req.applyFirst) (await import("./code.ts")).applyCodeRun(app, into.id, { keepWorking: true });
     const { codeChainFor, queueNextCodeRound } = await import("./code-chain.ts");
     const chain = codeChainFor(app, into) ?? (into.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
-    const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}) };
+    // Work on the branch that landed after this delegation started (another delegation applied):
+    // bring it in before coding, so the fix is made on the latest code.
+    const landed = !branchReview && branchWork(app, into.id, userId).some((w) => !!w.appliedAt && w.appliedAt > root.createdAt);
+    const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}), ...(landed ? { sync: { pull: true } } : {}) };
     const intoRuns = workRuns(app, into.id);
     // Fixing chosen findings: the next round re-reviews only the checks that raised them, and every
     // check every `rereviewAllEvery` rounds (as when review-lead names them). The owner's own words,
