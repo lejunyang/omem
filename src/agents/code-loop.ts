@@ -62,7 +62,12 @@ export async function taskReview(app: App, codeRunId: string, rc: RoundContext):
     setRunOutput(app, run.id, { reviewStage: "verify" });
     await verifyTasks(app, run, toVerify, rc);
   }
-  const open = listTasks(app, rootId).filter((t) => ["todo", "coding", "verify"].includes(t.state));
+  const disputed = listTasks(app, rootId).filter((t) => t.state === "disputed");
+  if (disputed.length) {
+    setRunOutput(app, run.id, { reviewStage: "arbitrate" });
+    await arbitrate(app, run, disputed, rc);
+  }
+  const open = listTasks(app, rootId).filter((t) => ["todo", "coding", "verify", "disputed"].includes(t.state));
   const w = workState(app, rootId);
   const latest = listCheckpoints(app, rootId).at(-1)?.seq ?? 0;
   if (!open.length && !(w.reverts ?? []).length && latest > (w.stageAt ?? 0)) await stageReview(app, run, rc);
@@ -410,6 +415,68 @@ export function advanceWork(app: App, rootId: string, opts: { owner?: boolean } 
     completed(app, rootId, getRun(app, last.id));
   }
   return null;
+}
+
+// ---- review-lead rules on a dispute ----------------------------------------------------------------
+
+const ARBITRATE_BRIEF = [
+  "# 裁决异议",
+  "编码 Agent 和提出问题的评审项对下面几项有分歧：评审项看过编码 Agent 的异议后仍然坚持，编码 Agent 还是认为问题不成立。你是第三方：读双方的理由、相关代码和需求原文（拿不准就去读，不要凭印象），对每一项用 `rule_dispute` 判一次：",
+  "- coder：异议成立，这一项不做。写清依据，之后的评审不再提；",
+  "- reviewer：照评审的意见改。写清为什么，编码 Agent 照你写的改，不再争；",
+  "- owner：分歧其实来自需求或业务上没定的事，交给本人，写出问题和两三个选项。",
+  "你不改代码，也不重新评审别的地方。",
+].join("\n");
+
+/** The disputes of this round, ruled by review-lead; one it did not rule on goes to the owner. */
+async function arbitrate(app: App, run: Run, tasks: CodeTask[], rc: RoundContext) {
+  const rootId = workRootOf(app, run.id);
+  const ctx = await reviewContext(app, run.id);
+  rc.event("status", { text: `评审负责人裁决异议：${tasks.map((t) => taskLabel(t.seq)).join("、")}` });
+  const parts = tasks.map((t) => {
+    const history = t.notes.map((n) => `- ${n.by === "coder" ? "编码 Agent" : n.by}：${truncate(n.text, 1500)}`).join("\n");
+    const diff = ctx.worktrees.map((wt) => {
+      const shas = t.commits[wt.space] ?? [];
+      return shas.length ? git(workDirOf(wt), ["diff", "--no-color", `${shas[0]}^`, shas.at(-1)!]).stdout : "";
+    }).filter((d) => d.trim()).join("\n");
+    return [taskText(app, t), `#### 双方的说法（按时间）\n\n${history}`, diff ? `#### 这一项现在的改动\n\n\`\`\`diff\n${truncate(diff, 20000)}\n\`\`\`` : ""].filter(Boolean).join("\n\n");
+  });
+  try {
+    await runRole(app, {
+      role: "review-lead",
+      reviewLead: true,
+      addTools: ["rule_dispute"],
+      spaceId: run.spaceId!,
+      spaces: ctx.spaces,
+      alsoRead: ctx.indexed,
+      task: `${ARBITRATE_BRIEF}\n\n${parts.join("\n\n")}`,
+      runId: rc.runId,
+      cwd: ctx.cwd,
+      signal: rc.signal,
+      onEvent: (e) => rc.event(e.type, { ...e, phase: "lead", arbitrate: true }),
+      profileId: app.config.agents.roles["review-lead"],
+    });
+  } catch (e) {
+    if (rc.signal.aborted) throw e;
+    rc.event("status", { text: `评审负责人没能裁决：${(e as Error).message}` });
+  }
+  for (const t of tasks) {
+    if (getTask(app, rootId, t.seq).state !== "disputed") continue;
+    updateTask(app, rootId, t.seq, { state: "owner", question: `${taskLabel(t.seq)}「${t.title}」编码 Agent 和评审项有分歧，评审负责人没有给出裁决。怎么办？`, options: ["照评审的意见改", "不改"] }, { by: "host", kind: "host", text: "评审负责人没有裁决，交给本人" });
+  }
+}
+
+/** review-lead's ruling on one dispute (rule_dispute). */
+export function ruleDispute(app: App, rootId: string, seq: number, a: { decision: "coder" | "reviewer" | "owner"; note: string; question?: string; options?: string[] }) {
+  const t = getTask(app, rootId, seq);
+  if (t.state !== "disputed") throw new HttpError(400, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，没有要裁决的异议`);
+  const note = { by: "review-lead", kind: "lead" as const, text: `裁决：${{ coder: "异议成立，不做", reviewer: "照评审的意见改", owner: "交给本人" }[a.decision]}：${a.note.trim()}` };
+  if (a.decision === "coder") {
+    updateTask(app, rootId, seq, { state: "wontdo" }, note);
+    for (const id of t.origin.findings ?? []) app.db.prepare("update review_findings set state = 'rejected', triage_note = ? where id = ?").run(`评审负责人裁决异议成立：${truncate(a.note, 900)}`, id);
+  } else if (a.decision === "reviewer") updateTask(app, rootId, seq, { state: "todo" }, note);
+  else updateTask(app, rootId, seq, { state: "owner", question: a.question!.trim(), options: a.options ?? [] }, note);
+  return `已裁决 ${taskLabel(seq)}：${note.text.slice(3, 40)}。`;
 }
 
 // ---- the coder asks the check that raised a task ------------------------------------------------------

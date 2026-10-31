@@ -10,13 +10,13 @@ import type { Current } from "./current";
  * so it works when the worktree is on another machine. The owner answers, re-does, drops, reverts,
  * adds tasks, goes back to a checkpoint, pauses and goes on from here as on the run page.
  */
-export type TaskState = "todo" | "coding" | "verify" | "done" | "owner" | "wontdo" | "reverted";
+export type TaskState = "todo" | "coding" | "verify" | "disputed" | "done" | "owner" | "wontdo" | "reverted";
 export type Task = { seq: number; title: string; doneWhen: string; kind: string; origin: { findings?: number[]; note?: string }; state: TaskState; question: string | null; options: string[]; answer: string | null; verifier: string | null; attempts: number; reverts: number; commits: Record<string, string[]>; checkpoint: number | null; notes: { at: string; by: string; text: string; kind: string }[] };
 export type Checkpoint = { seq: number; tasks: number[]; by: string; label: string; createdAt: string };
 export type Work = { budget: number; budgetBy: string | null; until: number; round: number; lastRunId: string; paused: string | null; viewed: number; status: string; verdict: string | null; stage: string | null; reverts: number[]; pending: string[]; max: number };
 export type TaskData = { taskMode: boolean; rootId?: string; tasks?: Task[]; checkpoints?: Checkpoint[]; work?: Work };
 
-export const TASK_STATE: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
+export const TASK_STATE: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
 const PAUSE: Record<string, string> = { budget: "暂停：自动推进的轮数用完了", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停" };
 const SKIP = "不做这一项";
 
@@ -75,7 +75,7 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
       const w = n.data.work!;
       const owner = (n.data.tasks ?? []).filter((t) => t.state === "owner").length;
       const busy = ["queued", "running"].includes(w.status);
-      item.label = busy ? (w.stage === "verify" ? "逐项验证中" : ["plan", "checks", "lead"].includes(w.stage ?? "") ? "阶段评审中" : w.status === "queued" ? "排队中" : "编码中")
+      item.label = busy ? (w.stage === "verify" ? "逐项验证中" : w.stage === "arbitrate" ? "评审负责人裁决异议中" : ["plan", "checks", "lead"].includes(w.stage ?? "") ? "阶段评审中" : w.status === "queued" ? "排队中" : "编码中")
         : w.paused ? PAUSE[w.paused] ?? "已暂停" : owner ? `等你决定 ${owner} 项` : w.verdict === "approved" ? "完成，等你确认" : "已停下";
       item.description = `第 ${w.round} 轮 · 最多到第 ${w.until} 轮`;
       item.tooltip = `${w.pending.length ? `下一轮开始前：${w.pending.join("；")}\n` : ""}每次 ${w.budget} 轮（${w.budgetBy === "owner" ? "你给的" : "按任务估的"}），上限 ${w.max}`;
@@ -95,7 +95,7 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
       if (t.origin.findings?.length) md.appendMarkdown(`来自评审问题 ${t.origin.findings.map((f) => `#${f}`).join("、")}${t.verifier ? `，由 ${t.verifier} 验证` : ""}\n\n`);
       for (const note of t.notes.slice(-5)) md.appendMarkdown(`- ${note.text.replace(/\n/g, " ").slice(0, 300)}\n`);
       item.tooltip = md;
-      item.iconPath = new vscode.ThemeIcon({ todo: "circle-outline", coding: "sync~spin", verify: "eye", done: "pass", owner: "question", wontdo: "circle-slash", reverted: "discard" }[t.state]);
+      item.iconPath = new vscode.ThemeIcon({ todo: "circle-outline", coding: "sync~spin", verify: "eye", disputed: "law", done: "pass", owner: "question", wontdo: "circle-slash", reverted: "discard" }[t.state]);
       const commits = Object.values(t.commits).some((l) => l.length);
       item.contextValue = `task-${t.state}${commits ? "-commits" : ""}`;
       if (commits) item.command = { command: "omem.task.diff", title: "看改动", arguments: [item] };
@@ -120,7 +120,7 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
     if (!parent) {
       const groups = [
         { id: "owner", label: "等你决定", tasks: tasks.filter((t) => t.state === "owner") },
-        { id: "open", label: "进行中", tasks: tasks.filter((t) => ["coding", "verify", "todo"].includes(t.state)) },
+        { id: "open", label: "进行中", tasks: tasks.filter((t) => ["coding", "verify", "disputed", "todo"].includes(t.state)) },
         { id: "done", label: "已完成", tasks: tasks.filter((t) => t.state === "done") },
         { id: "other", label: "不做与回退", tasks: tasks.filter((t) => ["wontdo", "reverted"].includes(t.state)) },
       ].filter((g) => g.tasks.length);

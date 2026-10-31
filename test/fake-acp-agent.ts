@@ -145,6 +145,8 @@ new AgentSideConnection(
       // (the business finding is fixed without the owner, the naming nit goes to the owner); the
       // business check finds that its fix broke something the first time (so it is reverted and redone).
       if (process.env.FAKE_MODE === "tasks") {
+        // The round's task asking for a split (the coder role says something alike, so match the task's words).
+        const PLAN_ASK = "做法见角色说明里的“修改项”）。先用 `plan_tasks` 拆分";
         const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
         const client = new Client({ name: "fake-tasks", version: "1" });
         await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
@@ -155,9 +157,26 @@ new AgentSideConnection(
         };
         try {
           if (prompt.includes("只输出一个 JSON")) { await say("{}"); return { stopReason: "end_turn" as const }; }
+          // Conflicts the host hands over (a helper's commits picked onto the work branch): keep both sides.
+          if (prompt.includes("# 解决 Git 冲突")) {
+            const cwd = cwds.get(p.sessionId)!;
+            const files = [...prompt.matchAll(/^- (\S+)$/gm)].map((m) => m[1]).filter((f) => existsSync(join(cwd, f)));
+            for (const f of files) {
+              writeFileSync(join(cwd, f), readFileSync(join(cwd, f), "utf8").replace(/^(<{7}|={7}|>{7}).*\r?\n/gm, ""));
+              execFileSync("git", ["add", f], { cwd });
+            }
+            await say(`合并了两边：${files.join("、")}`);
+            return { stopReason: "end_turn" as const };
+          }
           // The coder asks the check that raised its task: the check answers from its own session.
           if (prompt.includes("在工作中向你请教") && prompt.includes("## 它的问题")) {
             await say("要去掉的是 shipped 为 true 的行，未发货的行照常退。");
+            return { stopReason: "end_turn" as const };
+          }
+          // review-lead rules on a dispute: the reviewer is right about T1, the coder about the rest.
+          if (prompt.includes("# 裁决异议")) {
+            for (const m of prompt.matchAll(/^### T(\d+) /gm)) await call("rule_dispute", { task: `T${m[1]}`, decision: m[1] === "1" ? "reviewer" : "coder", note: m[1] === "1" ? "需求第 3 条写明已发货的行不退，评审说得对" : "这条路径走不到，异议成立" });
+            await say("裁决完成");
             return { stopReason: "end_turn" as const };
           }
           if (prompt.includes("# 决定这次评审看什么")) {
@@ -200,7 +219,14 @@ new AgentSideConnection(
             execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qam", `T${seq} 的改动\n\nOmem-Task: T${seq}`], { cwd });
           };
           let seqs: number[] = [];
-          if (prompt.includes("先用 `plan_tasks` 拆分")) {
+          // FAKE_PARALLEL: three tasks, two handed to helpers, the first done here.
+          if (process.env.FAKE_PARALLEL && prompt.includes(PLAN_ASK)) {
+            const made = await call("plan_tasks", { tasks: [{ title: "退款只算未发货的行" }, { title: "运费按比例退" }, { title: "补退款说明" }], rounds: 3 });
+            const planned = [...String((made.content as { text: string }[])[0].text).matchAll(/T(\d+) /g)].map((m) => Number(m[1]));
+            const sent = await call("dispatch_tasks", { groups: [{ tasks: [`T${planned[1]}`], note: "只改运费" }, { tasks: [`T${planned[2]}`] }] });
+            if (sent.isError) await say(`分派失败 ${JSON.stringify(sent.content)}`);
+            seqs = [planned[0]];
+          } else if (prompt.includes(PLAN_ASK)) {
             const made = await call("plan_tasks", { tasks: [{ title: "退款只算未发货的行", done_when: "已发货的行不计入退款" }, { title: "补退款测试", done_when: "有覆盖已发货行的测试" }], rounds: 6 });
             seqs = [...String((made.content as { text: string }[])[0].text).matchAll(/T(\d+) /g)].map((m) => Number(m[1]));
           } else seqs = [...prompt.matchAll(/^### T(\d+) /gm)].map((m) => Number(m[1]));
@@ -208,7 +234,7 @@ new AgentSideConnection(
             // Unsure about the business finding the first time: ask the check that raised it.
             if (prompt.includes(`### T${seq} 已发货行不能退`) && !prompt.includes("问业务")) await call("ask_reviewer", { task: `T${seq}`, question: "过滤的是已发货还是未发货的行？" });
             // The test task is left uncommitted, as a sandbox that cannot write Git would: finish_task commits it.
-            if (seq === 2 && prompt.includes("先用 `plan_tasks` 拆分")) appendFileSync(join(cwd, "refund.test.ts"), "// 已发货的行不退\n");
+            if (seq === 2 && prompt.includes(PLAN_ASK)) appendFileSync(join(cwd, "refund.test.ts"), "// 已发货的行不退\n");
             else commit(seq, `export const t${seq} = ${Date.now() % 1000};`);
             await call("finish_task", { task: `T${seq}`, summary: `做完了 T${seq}，跑了测试` });
           }

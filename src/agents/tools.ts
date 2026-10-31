@@ -3908,12 +3908,18 @@ def({
 
 // --------------------------------------------- task-driven delegations (code-loop.ts)
 
-/** The coding round a coder's task tool call belongs to, refused outside a task-driven delegation. */
+/**
+ * The coding round a coder's task tool call belongs to, refused outside a task-driven delegation.
+ * A helper (code-helpers.ts) works for the round that dispatched it: `actor` is the helper's run (its
+ * tasks name it), `worktrees` its own workspaces.
+ */
 async function taskRound(ctx: ToolContext, tool: string) {
-  const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+  const me = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+  const helperOf = me?.kind === "agent" ? (me.input as { helperOf?: string }).helperOf : undefined;
+  const r = helperOf ? getRun(ctx.app, helperOf) : me;
   const { isTaskWork, workRootOf } = await import("./code-tasks.ts");
-  if (!r || r.kind !== "code" || r.status !== "running" || !isTaskWork(ctx.app, r.id)) throw new HttpError(400, `${tool} 只能在按修改项推进的交办编码里使用`);
-  return { run: r, rootId: workRootOf(ctx.app, r.id) };
+  if (!me || !r || r.kind !== "code" || r.status !== "running" || !isTaskWork(ctx.app, r.id)) throw new HttpError(400, `${tool} 只能在按修改项推进的交办编码里使用`);
+  return { run: r, rootId: workRootOf(ctx.app, r.id), actor: me.id, helper: !!helperOf, worktrees: helperOf ? (me.output.worktrees as import("./worktree-index.ts").WorktreeRef[] | undefined) : undefined };
 }
 
 def({
@@ -3928,7 +3934,8 @@ def({
     rounds: z.number().int().min(1).max(50).optional().describe("估计自动推进几轮能做完（含评审后的修改）；本人给了预算时不用填"),
   }),
   handler: async (ctx, a) => {
-    const { run: r, rootId } = await taskRound(ctx, "plan_tasks");
+    const { run: r, rootId, helper } = await taskRound(ctx, "plan_tasks");
+    if (helper) throw new HttpError(400, "编码助手只做分给它的项；要加修改项告诉编码负责人（在说明里写）");
     const t = await import("./code-tasks.ts");
     const made = a.tasks.map((x) => {
       const task = t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", state: "coding", origin: x.files?.length ? { files: x.files } : {} }, "coder");
@@ -3947,17 +3954,17 @@ def({
     summary: z.string().min(1).max(4000).describe("做了什么、改了哪些文件、怎么验证的（命令和结果）"),
   }),
   handler: async (ctx, a) => {
-    const { run: r, rootId } = await taskRound(ctx, "finish_task");
+    const { rootId, actor, worktrees } = await taskRound(ctx, "finish_task");
     const t = await import("./code-tasks.ts");
     const seq = t.parseTaskRef(a.task);
     const task = t.getTask(ctx.app, rootId, seq);
-    if (task.coderRun !== r.id || task.state !== "coding") throw new HttpError(400, `${t.taskLabel(seq)} 不是这一轮在做的项（现在：${t.TASK_STATE_LABEL[task.state]}）`);
+    if (task.coderRun !== actor || task.state !== "coding") throw new HttpError(400, `${t.taskLabel(seq)} 不是你这一轮在做的项（现在：${t.TASK_STATE_LABEL[task.state]}）`);
     // What it did not commit is this task's: one commit per task, also where the agent cannot commit.
     const { worktreesOf } = await import("./code.ts");
     const { identity } = await import("./code-branch.ts");
-    const committed = t.commitTask(ctx.app, rootId, seq, worktreesOf(ctx.app, rootId), identity);
+    const committed = t.commitTask(ctx.app, rootId, seq, worktrees ?? worktreesOf(ctx.app, rootId), identity);
     t.updateTask(ctx.app, rootId, seq, { state: task.verifier ? "verify" : "done" }, { by: "coder", kind: "coder", text: a.summary });
-    const left = t.listTasks(ctx.app, rootId).filter((x) => x.coderRun === r.id && x.state === "coding");
+    const left = t.listTasks(ctx.app, rootId).filter((x) => x.coderRun === actor && x.state === "coding");
     return `已记下 ${t.taskLabel(seq)}${committed.length ? "，工作区里没提交的改动已作为这一项提交" : ""}${task.verifier ? `，交给 ${task.verifier} 验证` : ""}。${left.length ? `这一轮还有：${left.map((x) => t.taskLabel(x.seq)).join("、")}` : "这一轮的项都做完了，写最后的说明。"}`;
   },
 });
@@ -3973,19 +3980,49 @@ def({
     options: z.array(z.string().min(1).max(40)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
   handler: async (ctx, a) => {
-    const { run: r, rootId } = await taskRound(ctx, "report_task");
+    const { rootId, actor } = await taskRound(ctx, "report_task");
     const t = await import("./code-tasks.ts");
     const seq = t.parseTaskRef(a.task);
     const task = t.getTask(ctx.app, rootId, seq);
-    if (task.coderRun !== r.id || task.state !== "coding") throw new HttpError(400, `${t.taskLabel(seq)} 不是这一轮在做的项`);
+    if (task.coderRun !== actor || task.state !== "coding") throw new HttpError(400, `${t.taskLabel(seq)} 不是你这一轮在做的项`);
     // An objection goes back to the check that raised the finding: it withdraws it or answers it.
+    // Objecting again after it insisted: review-lead rules; after a ruling, the owner decides.
     if (a.kind === "disputed" && task.verifier) {
-      t.updateTask(ctx.app, rootId, seq, { state: "verify" }, { by: "coder", kind: "coder", text: `有异议：${a.reason}` });
+      const before = task.notes.filter((n) => n.kind === "coder" && n.text.startsWith("有异议")).length;
+      const ruled = task.notes.some((n) => n.kind === "lead" && n.text.startsWith("裁决"));
+      const note = { by: "coder", kind: "coder" as const, text: `有异议：${a.reason}` };
+      if (ruled) {
+        t.updateTask(ctx.app, rootId, seq, { state: "owner", question: `${t.taskLabel(seq)}「${task.title}」评审负责人裁决后，编码 Agent 仍认为问题不成立：${truncate(a.reason, 600)}`, options: ["照评审的意见改", "不改"] }, note);
+        return `${t.taskLabel(seq)} 评审负责人已经裁决过，这次交给本人决定（这一项停着）。接着做别的项。`;
+      }
+      if (before) {
+        t.updateTask(ctx.app, rootId, seq, { state: "disputed" }, note);
+        return `${task.verifier} 看过你的异议后仍坚持，这一轮结束后由评审负责人裁决 ${t.taskLabel(seq)}。接着做别的项。`;
+      }
+      t.updateTask(ctx.app, rootId, seq, { state: "verify" }, note);
       return `已把 ${t.taskLabel(seq)} 的异议交给 ${task.verifier}，它会撤回或回应。接着做别的项。`;
     }
     const question = a.question?.trim() || a.reason;
     t.updateTask(ctx.app, rootId, seq, { state: "owner", question, options: a.kind === "owner" ? a.options ?? [] : ["已经处理好了，再试一次"] }, { by: "coder", kind: "coder", text: `${a.kind === "owner" ? "要本人决定" : a.kind === "blocked" ? "被挡住了" : "有异议"}：${a.reason}` });
     return `已把 ${t.taskLabel(seq)} 交给本人（这一项停着，本人回答后再做）。接着做别的项。`;
+  },
+});
+
+def({
+  name: "dispatch_tasks",
+  description: "编码负责人把这一轮几组互不相干的修改项分给编码助手，它们在各自的工作区里同时做（每组一个助手）。分出去后接着做自己的项；这一轮结束时宿主把它们的提交合进工作分支，有冲突会让你解决。项少、或者都改同一处时不要分。",
+  schema: z.object({
+    groups: z.array(z.object({
+      tasks: z.array(z.union([z.string(), z.number()])).min(1).max(20).describe("这一组的修改项编号，如 [\"T2\", \"T3\"]"),
+      note: z.string().max(3000).optional().describe("交代给这个助手的话：要注意什么、和别的项怎么对上"),
+    })).min(1).max(8),
+  }),
+  handler: async (ctx, a) => {
+    const { run: r, helper } = await taskRound(ctx, "dispatch_tasks");
+    if (helper) throw new HttpError(400, "编码助手不能再分给别的助手");
+    const t = await import("./code-tasks.ts");
+    const { dispatchTasks } = await import("./code-helpers.ts");
+    return dispatchTasks(ctx.app, r.id, a.groups.map((g) => ({ tasks: g.tasks.map((x) => t.parseTaskRef(x)), note: g.note })));
   },
 });
 
@@ -4001,6 +4038,27 @@ def({
     const t = await import("./code-tasks.ts");
     const { askReviewer } = await import("./code-loop.ts");
     return askReviewer(ctx.app, r.id, t.parseTaskRef(a.task), a.question, ctx.userId ?? undefined);
+  },
+});
+
+def({
+  name: "rule_dispute",
+  description: "评审负责人裁决一个有分歧的修改项（只在按修改项推进的交办里可用）：评审项看过编码 Agent 的异议后仍坚持，编码 Agent 还是认为问题不成立。coder = 异议成立，这一项不做；reviewer = 照评审的意见改；owner = 其实是需求或业务上没定的事，交给本人。",
+  schema: z.object({
+    task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
+    decision: z.enum(["coder", "reviewer", "owner"]),
+    note: z.string().min(1).max(3000).describe("理由：依据哪段需求、哪段代码；判 reviewer 时写清为什么，编码 Agent 照这个改"),
+    question: z.string().max(1000).optional().describe("owner：给本人的问题（分歧在哪、各自的影响）"),
+    options: z.array(z.string().min(1).max(40)).max(4).optional().describe("owner：两三个可选的做法"),
+  }),
+  handler: async (ctx, a) => {
+    const { codeRunOf } = await import("./review-chain.ts");
+    const r = codeRunOf(ctx.app, ctx.runId);
+    const t = await import("./code-tasks.ts");
+    if (!r || ctx.role !== "review-lead" || !t.isTaskWork(ctx.app, r.id)) throw new HttpError(400, "rule_dispute 只能在按修改项推进的交办的评审负责人运行里使用");
+    if (a.decision === "owner" && !a.question?.trim()) throw new HttpError(400, "交给本人要写 question");
+    const { ruleDispute } = await import("./code-loop.ts");
+    return ruleDispute(ctx.app, t.workRootOf(ctx.app, r.id), t.parseTaskRef(a.task), a);
   },
 });
 

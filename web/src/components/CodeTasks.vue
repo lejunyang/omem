@@ -14,7 +14,7 @@ import DiffName from "./DiffName.vue";
  * looked. The owner can add a task, pause or go on, re-do, drop or revert a task at any time, go
  * back to a checkpoint, restore a file to how it was before the change shown, or take back one hunk.
  */
-type TaskState = "todo" | "coding" | "verify" | "done" | "owner" | "wontdo" | "reverted";
+type TaskState = "todo" | "coding" | "verify" | "disputed" | "done" | "owner" | "wontdo" | "reverted";
 type Note = { at: string; by: string; text: string; kind: string };
 type Task = { seq: number; title: string; doneWhen: string; kind: "build" | "fix" | "owner" | "redo"; origin: { findings?: number[]; note?: string; files?: string[] }; state: TaskState; question: string | null; options: string[]; answer: string | null; verifier: string | null; attempts: number; reverts: number; commits: Record<string, string[]>; checkpoint: number | null; notes: Note[] };
 type Checkpoint = { seq: number; tasks: number[]; label: string; createdAt: string };
@@ -38,7 +38,7 @@ const off = onServerEvent((e) => {
 onBeforeUnmount(() => { off(); if (timer) clearTimeout(timer); });
 
 const STATE: Record<TaskState, { text: string; cls: string }> = {
-  todo: { text: "待做", cls: "" }, coding: { text: "编码中", cls: "accent" }, verify: { text: "待验证", cls: "accent" }, done: { text: "已完成", cls: "ok" },
+  todo: { text: "待做", cls: "" }, coding: { text: "编码中", cls: "accent" }, verify: { text: "待验证", cls: "accent" }, disputed: { text: "裁决中", cls: "accent" }, done: { text: "已完成", cls: "ok" },
   owner: { text: "等你决定", cls: "warn" }, wontdo: { text: "不做", cls: "" }, reverted: { text: "已回退", cls: "danger" },
 };
 const WHO: Record<string, string> = { coder: "编码 Agent", host: "omem", owner: "你", reviewer: "功能评审", "review-business": "业务评审", "review-arch": "架构评审", "review-style": "规范评审", "review-history": "历史评审", "review-lead": "评审负责人" };
@@ -49,7 +49,7 @@ const tasks = computed(() => data.value?.tasks ?? []);
 const w = computed(() => data.value?.work ?? null);
 const owner = computed(() => tasks.value.filter((t) => t.state === "owner"));
 const groups = computed(() => [
-  { id: "open", label: "进行中", list: tasks.value.filter((t) => ["coding", "verify", "todo"].includes(t.state)) },
+  { id: "open", label: "进行中", list: tasks.value.filter((t) => ["coding", "verify", "disputed", "todo"].includes(t.state)) },
   { id: "done", label: "已完成", list: tasks.value.filter((t) => t.state === "done") },
   { id: "other", label: "不做与回退", list: tasks.value.filter((t) => ["wontdo", "reverted"].includes(t.state)) },
 ].filter((g) => g.list.length));
@@ -57,9 +57,9 @@ const busy = computed(() => !!w.value && ["queued", "running"].includes(w.value.
 const status = computed(() => {
   const x = w.value;
   if (!x) return null;
-  if (busy.value) return { text: x.status === "queued" ? "排队中" : x.stage === "verify" ? "逐项验证中" : x.stage === "plan" ? "评审负责人在定这次评审看什么" : x.stage === "checks" || x.stage === "lead" ? "阶段评审中" : "编码中", cls: "accent" };
+  if (busy.value) return { text: x.status === "queued" ? "排队中" : x.stage === "verify" ? "逐项验证中" : x.stage === "arbitrate" ? "评审负责人裁决异议中" : x.stage === "plan" ? "评审负责人在定这次评审看什么" : x.stage === "checks" || x.stage === "lead" ? "阶段评审中" : "编码中", cls: "accent" };
   if (x.paused) return { text: PAUSE[x.paused] ?? "已暂停", cls: "warn" };
-  const open = tasks.value.some((t) => ["todo", "coding", "verify"].includes(t.state));
+  const open = tasks.value.some((t) => ["todo", "coding", "verify", "disputed"].includes(t.state));
   if (owner.value.length) return { text: `等你决定 ${owner.value.length} 项${open ? "" : "，其余已做完"}`, cls: "warn" };
   if (x.verdict === "approved") return { text: "完成，等你确认", cls: "ok" };
   return { text: x.status === "failed" ? "这一轮失败了" : "已停下", cls: "warn" };

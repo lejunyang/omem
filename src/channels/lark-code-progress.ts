@@ -83,7 +83,7 @@ function checkLines(app: App, repos: RepoCheck[] | undefined): string {
 }
 
 /** A delegation driven by tasks (docs/v2/coding-loop.md): how far its tasks are and what waits for the owner. */
-const TASK_MARK: Record<string, string> = { todo: "待做", coding: "编码中", verify: "待验证", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
+const TASK_MARK: Record<string, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
 const PAUSED: Record<string, string> = { budget: "暂停：自动推进的轮数用完了，说“继续”再推进", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停" };
 function taskLines(app: App, rootId: string) {
   const tasks = listTasks(app, rootId);
@@ -100,7 +100,7 @@ function taskStatus(app: App, rootId: string, latest: ReturnType<typeof getRun>)
   const w = workState(app, rootId);
   const owner = listTasks(app, rootId).filter((t) => t.state === "owner").length;
   const stage = String(latest.output.reviewStage ?? "");
-  if (["queued", "running"].includes(latest.status)) return latest.status === "queued" ? "排队中" : stage === "verify" ? "逐项验证中" : stage === "plan" ? "评审负责人在定这次评审看什么" : ["checks", "lead"].includes(stage) ? "阶段评审中" : "编码中";
+  if (["queued", "running"].includes(latest.status)) return latest.status === "queued" ? "排队中" : stage === "verify" ? "逐项验证中" : stage === "arbitrate" ? "评审负责人裁决异议中" : stage === "plan" ? "评审负责人在定这次评审看什么" : ["checks", "lead"].includes(stage) ? "阶段评审中" : "编码中";
   if (w.paused) return PAUSED[w.paused] ?? "已暂停";
   if (owner) return `等你决定 ${owner} 项（卡片在下面），其余照常推进`;
   if (latest.output.verdict === "approved") return "完成，等你确认推送";

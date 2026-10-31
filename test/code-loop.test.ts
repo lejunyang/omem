@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,9 @@ import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { worktreesOf } from "../src/agents/code.ts";
 import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, recordCheckpoint, recordOutsideChanges, scheduleWorkRevert, settleCodingRound, updateTask, workPatches, workState } from "../src/agents/code-tasks.ts";
-import { advanceWork } from "../src/agents/code-loop.ts";
+import { advanceWork, taskReview } from "../src/agents/code-loop.ts";
+import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { recordReview, roundFindings } from "../src/agents/review.ts";
 import { identity } from "../src/agents/code-branch.ts";
 import { snapshot } from "../src/channels/lark-code-progress.ts";
 import type { CodeChain } from "../src/agents/code-chain.ts";
@@ -255,4 +257,109 @@ describe("a delegation driven by tasks", () => {
     expect(git("status", "--porcelain").trim()).toBe("M refund.ts");
     app.db.close();
   });
+
+  it("hands a dispute the check still insists on to review-lead, and to the owner after a ruling", async () => {
+    const app = testApp();
+    app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "tasks" }, idleTimeoutMs: 60000 });
+    app.config.agents.default = "fake";
+    const dir = mkdtempSync(join(tmpdir(), "omem-dispute-"));
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: dir, encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    const base = git("rev-parse", "HEAD").trim();
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["shop-api"], taskMode: true }, userId: OWNER });
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      setRunOutput(app, r.id, { worktrees: [{ space: "shop-api", path: dir, branch: "main", base, start: base, commits: true }], repos: [{ space: "shop-api", diffStat: "", diffBytes: 0, check: null }] });
+      recordReview(app, { codeRunId: r.id, round: 1, check: "reviewer", verdict: "changes_requested", summary: "", findings: [
+        { severity: "major", title: "已发货的行也算进了退款", detail: "", suggestion: "过滤已发货的行", evidence: [], confidence: "high" },
+        { severity: "minor", title: "空订单会报错", detail: "", suggestion: "判空", evidence: [], confidence: "medium" },
+      ] });
+      const [f1, f2] = roundFindings(app, r.id, 1);
+      const { taskForFinding } = await import("../src/agents/code-tasks.ts");
+      const t1 = taskForFinding(app, r.id, f1, "review-lead");
+      const t2 = taskForFinding(app, r.id, f2, "review-lead");
+      const coding = (seq: number) => updateTask(app, r.id, seq, { state: "coding", coderRun: r.id });
+      const ctx: ToolContext = { app, runId: r.id, spaceId: "shop-api", spaces: null, tools: null, actor: "agent", role: "coder" } as ToolContext;
+      const dispute = (seq: number, reason: string) => callTool(ctx, "report_task", { task: `T${seq}`, kind: "disputed", reason });
+      const { recordVerification } = await import("../src/agents/code-loop.ts");
+
+      // First objection: back to the check that raised it, which insists.
+      for (const t of [t1, t2]) coding(t.seq);
+      expect((await dispute(t1.seq, "需求里已发货的行也要退")).text).toContain("交给 reviewer");
+      await dispute(t2.seq, "空订单在上游就被拦了");
+      expect(listTasks(app, r.id).map((t) => t.state)).toEqual(["verify", "verify"]);
+      recordVerification(app, r.id, "reviewer", [{ task: t1.seq, verdict: "not_fixed", note: "需求第 3 条写明已发货的行不退" }, { task: t2.seq, verdict: "not_fixed", note: "上游拦不住批量导入" }]);
+      // Objecting again after it insisted: review-lead rules, at the end of the round.
+      for (const t of [t1, t2]) coding(t.seq);
+      expect((await dispute(t1.seq, "我还是认为已发货的行要退")).text).toContain("评审负责人裁决");
+      await dispute(t2.seq, "批量导入也走同一个校验");
+      expect(listTasks(app, r.id).map((t) => t.state)).toEqual(["disputed", "disputed"]);
+      const out = await taskReview(app, r.id, { runId: r.id, signal: new AbortController().signal, event: (type, data) => addRunEvent(app, r.id, type, data) });
+      expect(out.verdict).toBe("continuing");
+      const [a, b] = listTasks(app, r.id);
+      expect(a).toMatchObject({ state: "todo" });
+      expect(a.notes.at(-1)).toMatchObject({ by: "review-lead", kind: "lead" });
+      expect(a.notes.at(-1)!.text).toContain("照评审的意见改");
+      expect(b.state).toBe("wontdo");
+      expect(roundFindings(app, r.id, 1).find((f) => f.id === f2.id)!.state).toBe("rejected");
+      // After a ruling, objecting once more goes to the owner.
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      coding(a.seq);
+      expect((await dispute(a.seq, "还是不同意")).text).toContain("交给本人");
+      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "owner", options: ["照评审的意见改", "不改"] });
+    } finally {
+      await server.close();
+      app.db.close();
+    }
+  }, 120_000);
+
+  it("lets the coder hand groups of tasks to helpers coding beside it, and merges what they commit", async () => {
+    const app = testApp();
+    app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "tasks", FAKE_PARALLEL: "1" }, idleTimeoutMs: 60000 });
+    app.config.agents.default = "fake";
+    const dir = mkdtempSync(join(tmpdir(), "omem-parallel-"));
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: dir, encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const t = createThread(app, { channel: "web", spaceId: "shop-api", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "shop-api", title: "交办", input: { conversationId: t.id } });
+      const r1 = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款", input: { task: "退款三件事", repos: ["shop-api"], taskMode: true }, parentId: ask.id });
+      codeChainFor(app, r1);
+      await work(app, r1.id);
+      // Three tasks, each done once, by the lead (T1) or a helper (T2, T3), each with its own commit on the work branch.
+      const tasks = listTasks(app, r1.id).slice(0, 3);
+      expect(tasks.map((x) => x.title)).toEqual(["退款只算未发货的行", "运费按比例退", "补退款说明"]);
+      expect(tasks.map((x) => x.state)).toEqual(["done", "done", "done"]);
+      const wt = worktreesOf(app, r1.id)[0];
+      for (const x of tasks) {
+        expect(x.commits["shop-api"]).toHaveLength(1);
+        expect(execFileSync("git", ["log", "--format=%B", "-n", "1", x.commits["shop-api"][0]], { cwd: wt.path, encoding: "utf8" })).toContain(`Omem-Task: T${x.seq}`);
+      }
+      // The helpers' runs are children of the round; their workspaces are given back.
+      const helpers = app.db.prepare("select id, status, input from runs where parent_id = ? and kind = 'agent' and json_extract(input, '$.helperOf') is not null order by created_at").all(r1.id) as { id: string; status: string; input: string }[];
+      expect(helpers.map((h) => [h.status, JSON.parse(h.input).tasks])).toEqual([["done", [2]], ["done", [3]]]);
+      expect(tasks[1].coderRun).toBe(helpers[0].id);
+      for (const h of helpers) expect(existsSync(join(app.runsDir, h.id, "work", "shop-api"))).toBe(false);
+      // All three edits of the same spot are there, the conflicts resolved by the lead.
+      const merged = readFileSync(join(wt.path, "refund.ts"), "utf8");
+      expect(merged).not.toMatch(/^[<=>]{7}/m);
+      for (const n of [1, 2, 3]) expect(merged).toContain(`export const t${n} =`);
+      const events = (app.db.prepare("select data from run_events where run_id = ? and type = 'status'").all(r1.id) as { data: string }[]).map((e) => JSON.parse(e.data).text as string);
+      expect(events.some((e) => e.startsWith("已合并编码助手 1"))).toBe(true);
+      expect(events.some((e) => e.startsWith("已合并编码助手 2"))).toBe(true);
+    } finally {
+      await server.close();
+      app.db.close();
+    }
+  }, 180_000);
 });

@@ -19,7 +19,8 @@ import type { WorktreeRef } from "./worktree-index.ts";
  * the agents (code-loop.ts runs the reviews and decides what comes next).
  */
 
-export type TaskState = "todo" | "coding" | "verify" | "done" | "owner" | "wontdo" | "reverted";
+/** disputed: the coder objects to a finding its check still insists on; review-lead rules (code-loop.ts). */
+export type TaskState = "todo" | "coding" | "verify" | "disputed" | "done" | "owner" | "wontdo" | "reverted";
 /** build: split from the request; fix: from a review finding; owner: the owner's words; redo: again after a revert. */
 export type TaskKind = "build" | "fix" | "owner" | "redo";
 export type TaskNote = { at: string; by: string; text: string; kind: "coder" | "verify" | "owner" | "revert" | "lead" | "host" | "consult" };
@@ -49,7 +50,7 @@ export type CodeTask = {
 };
 export type Checkpoint = { seq: number; heads: Record<string, string>; tasks: number[]; by: string; label: string; createdAt: string };
 
-export const TASK_STATE_LABEL: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
+export const TASK_STATE_LABEL: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
 /** After this many tries a task the coder and the reviewer cannot settle goes to the owner. */
 export const MAX_ATTEMPTS = 3;
 
@@ -320,9 +321,11 @@ export function headsAt(app: App, rootId: string, worktrees: WorktreeRef[], seq:
  * then the round's tasks settle — finished ones to verification (or done, when the next stage review
  * covers them), untouched ones back to do with one more attempt — and a checkpoint is recorded.
  */
-export function settleCodingRound(app: App, rootId: string, runId: string, worktrees: WorktreeRef[], round: number) {
+export function settleCodingRound(app: App, rootId: string, runId: string, worktrees: WorktreeRef[], round: number, helpers: string[] = []) {
   const before = listCheckpoints(app, rootId).at(-1);
-  const roundTasks = listTasks(app, rootId).filter((t) => t.coderRun === runId);
+  // The round's own tasks and its helpers' (code-helpers.ts).
+  const coders = new Set([runId, ...helpers]);
+  const roundTasks = listTasks(app, rootId).filter((t) => t.coderRun && coders.has(t.coderRun));
   const touched = new Set<number>();
   for (const wt of worktrees) {
     const dir = gitDirOf(app, wt);
@@ -348,7 +351,7 @@ export function settleCodingRound(app: App, rootId: string, runId: string, workt
       else retryTask(app, rootId, t.seq, { by: "host", kind: "host", text: `第 ${round} 轮没有这一项的提交，也没有说明` });
     }
   }
-  const finished = listTasks(app, rootId).filter((t) => t.coderRun === runId && ["verify", "done"].includes(t.state)).map((t) => t.seq);
+  const finished = listTasks(app, rootId).filter((t) => t.coderRun && coders.has(t.coderRun) && ["verify", "done"].includes(t.state)).map((t) => t.seq);
   const cp = recordCheckpoint(app, rootId, worktrees, runId, finished, `第 ${round} 轮${finished.length ? `：${finished.map(taskLabel).join("、")}` : ""}`);
   if (cp) for (const seq of finished) if (getTask(app, rootId, seq).checkpoint === null) updateTask(app, rootId, seq, { checkpoint: cp.seq });
   return { checkpoint: cp, finished };

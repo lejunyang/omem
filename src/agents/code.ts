@@ -22,7 +22,7 @@ import { OWNER } from "../core/users.ts";
 import { linkRunToItem, materialSpaces, materialsBrief } from "../items/materials.ts";
 import { getItem } from "../items/store.ts";
 
-function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000): Promise<{ code: number; output: string; ms: number }> {
+export function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000): Promise<{ code: number; output: string; ms: number }> {
   const started = Date.now();
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
@@ -321,6 +321,8 @@ ${input.task}
   const taskMode = !!getRun(app, rootRunId).input.taskMode && !input.branches && !skipCoder && !input.peerCoder;
   // A round that only takes things back (the owner reverted, nothing to code): no coding Agent.
   let gitOnly: string | null = null;
+  // Helpers the coder handed groups of tasks to (code-helpers.ts); their tasks settle with the round's.
+  let helperRuns: string[] = [];
   if (taskMode) {
     const tasks = await import("./code-tasks.ts");
     const { identity } = await import("./code-branch.ts");
@@ -475,7 +477,7 @@ ${input.task}
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
       role: "coder",
-      ...(taskMode ? { addTools: ["plan_tasks", "finish_task", "report_task", "ask_reviewer"] } : {}),
+      ...(taskMode ? { addTools: ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] } : {}),
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,
@@ -500,28 +502,49 @@ ${input.task}
       `# 之前各轮已经做的\n\n这是一个新会话。之前各轮的改动都在工作区里${commits ? `，工作分支上的提交：\n\n${fence("", commits)}` : ""}\n\n需要时用 git log / git diff 看具体改动，不要重做。${before ? `\n\n上一轮编码 Agent 的说明：\n\n${truncate(before, 4000)}` : ""}`,
       coderTask,
     ].join("\n\n") : coderTask;
+    // A task-driven round may hand groups of its tasks to helpers coding beside it (code-helpers.ts).
+    const helpers = taskMode && app.config.agents.autoAdvance.parallelCoders ? await import("./code-helpers.ts") : null;
+    helpers?.registerRound(run.id, {
+      signal: ctx.signal,
+      event: ctx.event,
+      worktrees,
+      repos,
+      execution: input.execution,
+      spaces,
+      where: (dir, wt) => {
+        const command = commandFor(repos.find((r) => r.id === wt.space)!);
+        return `## 工作区\n\n${wt.space}：${dir}（独立的 worktree）${command ? `\n检查命令：${command}` : ""}`;
+      },
+    });
     let coder: Awaited<ReturnType<typeof runCoder>>;
+    let reply: string;
     try {
-      coder = await runCoder(resumeCoder ? coderTask : freshTask, resumeCoder);
-    } catch (e) {
-      if (!resumeCoder || ctx.signal.aborted) throw e;
-      // The previous session is gone (cleaned up, or the backend cannot resume it): the worktree
-      // still has the changes, so a new session carries on from there.
-      ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
-      coder = await runCoder(freshTask);
+      try {
+        coder = await runCoder(resumeCoder ? coderTask : freshTask, resumeCoder);
+      } catch (e) {
+        if (!resumeCoder || ctx.signal.aborted) throw e;
+        // The previous session is gone (cleaned up, or the backend cannot resume it): the worktree
+        // still has the changes, so a new session carries on from there.
+        ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
+        coder = await runCoder(freshTask);
+      }
+      // What the owner added while it worked and it did not pick up at an omem tool call: one more turn
+      // in the same session, before the checks (code-steer.ts).
+      reply = replyOf(coder);
+      for (let i = 0; i < 3 && !ctx.signal.aborted && coder.sessionId; i++) {
+        const notes = pendingNotes(app, run.id);
+        if (!notes.length) break;
+        markNotesDelivered(app, run.id, notes);
+        ctx.event("status", { phase: "coder", text: `把 ${notes.length} 条本人补充交给编码 Agent，接着改` });
+        coder = await runCoder(notesText(notes), coder.sessionId);
+        reply = `${reply}\n\n## 按本人补充继续\n\n${replyOf(coder)}`;
+      }
+    } finally {
+      // The helpers finish, and what they committed is picked onto the work branch (conflicts to the coder).
+      if (helpers) helperRuns = await helpers.joinHelpers(app, run.id, (wt, files, label) => resolverFor(wt)(files, label));
     }
-    // What the owner added while it worked and it did not pick up at an omem tool call: one more turn
-    // in the same session, before the checks (code-steer.ts).
-    let reply = replyOf(coder);
-    for (let i = 0; i < 3 && !ctx.signal.aborted && coder.sessionId; i++) {
-      const notes = pendingNotes(app, run.id);
-      if (!notes.length) break;
-      markNotesDelivered(app, run.id, notes);
-      ctx.event("status", { phase: "coder", text: `把 ${notes.length} 条本人补充交给编码 Agent，接着改` });
-      coder = await runCoder(notesText(notes), coder.sessionId);
-      reply = `${reply}\n\n## 按本人补充继续\n\n${replyOf(coder)}`;
-    }
-    ctx.output({ coderSummary: reply.trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId, coderContext: coder.contextUsage });
+    if (helperRuns.length) reply = `${reply}\n\n## 编码助手\n\n${helperRuns.map((id) => { const h = getRun(app, id); return `- ${h.title}：${h.status === "done" ? truncate(String(h.output.answer ?? ""), 600) : `没做完（${h.error ?? h.status}）`}`; }).join("\n")}`;
+    ctx.output({ coderSummary: reply.trim(), coderAI: coder!.ai, coderAgent: coder!.profileId, coderSessionId: coder!.sessionId, coderContext: coder!.contextUsage });
     return reply;
   }
 
@@ -568,7 +591,7 @@ ${input.task}
       const t = tasks.addTask(app, rootRunId, { title: run.title, doneWhen: "", kind: "build", state: "coding" }, "host");
       tasks.updateTask(app, rootRunId, t.seq, { coderRun: run.id });
     }
-    const { checkpoint, finished } = tasks.settleCodingRound(app, rootRunId, run.id, worktrees, Number((input as { round?: number }).round ?? 1));
+    const { checkpoint, finished } = tasks.settleCodingRound(app, rootRunId, run.id, worktrees, Number((input as { round?: number }).round ?? 1), helperRuns);
     if (checkpoint) ctx.event("status", { text: `检查点 ${checkpoint.seq}：${finished.length ? `完成 ${finished.map(tasks.taskLabel).join("、")}` : "这一轮没有完成的修改项"}` });
   }
   // Only Git work on a work branch: its commits are on the branch already, and what came in is not this work to review.
@@ -678,7 +701,7 @@ function checkoutBranch(app: App, repo: Space, runId: string, target: { branch: 
 }
 
 /** A worktree for reviewing a branch at `path`, detached at `commit`: a lent slot (returned) or a new one. */
-function addWorktree(app: App, repo: Space, runId: string, path: string, commit: string, log: (text: string) => void): { path: string } | undefined {
+export function addWorktree(app: App, repo: Space, runId: string, path: string, commit: string, log: (text: string) => void): { path: string } | undefined {
   const slot = leaseWorkspace(app, repo, runId, path, log);
   if (slot) {
     const moved = git(slot.path, ["checkout", "-q", "--detach", commit]);
@@ -991,7 +1014,7 @@ function workRoundIds(app: App, rootId: string) {
 }
 
 /** What the coding Agent is told when Git stops on conflicts. */
-function conflictTask(wt: WorktreeRef, files: string[], label: string, task: string) {
+export function conflictTask(wt: WorktreeRef, files: string[], label: string, task: string) {
   return `# 解决 Git 冲突：${label}
 
 仓库 ${wt.space} 的工作区 ${wt.path} 里，下面这些文件有冲突：
