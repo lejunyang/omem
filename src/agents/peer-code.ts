@@ -25,6 +25,8 @@ const SAFE_ARG = /^[\w@%+=:,.\/-]+$/;
 
 type Job = { id: string; command: string; started: number; done: boolean; code: number | null; output: string; ms?: number };
 const jobs = new Map<string, Job[]>();
+// Ids keep counting after old jobs are dropped, so `output job=…` never finds a newer job under an old id.
+const jobCount = new Map<string, number>();
 
 function rootOf(app: App, runId: string) {
   const r = getRun(app, runId);
@@ -234,7 +236,9 @@ ${String(work.last.input.task ?? "")}` : "";
       const list = jobs.get(root.id) ?? [];
       if (list.some((j) => !j.done)) throw new HttpError(409, `已有命令在运行：${list.filter((j) => !j.done).map((j) => j.id).join("、")}（action=output 看）`);
       const command = [base, ...(a.args ?? [])].join(" ");
-      const job: Job = { id: `${a.command}-${list.length + 1}`, command, started: Date.now(), done: false, code: null, output: "" };
+      const n = (jobCount.get(root.id) ?? 0) + 1;
+      jobCount.set(root.id, n);
+      const job: Job = { id: `${a.command}-${n}`, command, started: Date.now(), done: false, code: null, output: "" };
       jobs.set(root.id, [...list.slice(-9), job]);
       const finished = runShell(command, workDirOf(w), job, 30 * 60_000);
       const waitMs = Math.min(100, Math.max(0, a.wait ?? 90)) * 1000;
