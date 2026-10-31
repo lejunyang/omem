@@ -273,6 +273,19 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   if (req.applyFirst && (!into || into !== last)) throw new HttpError(400, "分支评审没有可应用的改动；先应用要在交办编码上做");
   if (into) {
     if (into.output.appliedAt || into.output.discardedAt) throw new HttpError(409, "这次交办已经应用或丢弃，工作区已释放；请重新交办");
+    // A task-driven delegation: the chosen findings are tasks (taken up again if they were settled),
+    // the owner's words one more, and the loop goes on with a fresh budget (code-loop.ts).
+    const tasks = await import("./code-tasks.ts");
+    if (tasks.isTaskWork(app, into.id)) {
+      const rootId = tasks.workRootOf(app, into.id);
+      for (const f of chosen) {
+        const t = tasks.taskForFinding(app, rootId, f, userId);
+        if (["done", "wontdo", "reverted"].includes(t.state)) tasks.updateTask(app, rootId, t.seq, { state: "todo", attempts: 0 }, { by: userId, kind: "owner", text: "本人要求再改" });
+      }
+      if (req.text?.trim()) tasks.addTask(app, rootId, { title: truncate(req.text.trim().split("\n")[0], 120), doneWhen: req.text.trim(), kind: "owner", origin: { note: req.text.trim() } }, userId);
+      const next = (await import("./code-loop.ts")).advanceWork(app, rootId, { owner: true });
+      return accepted(next ?? tasks.lastRound(app, rootId));
+    }
     // “先应用到原分支，再接着改”: the owner gets what is done now; the next round goes on in the same worktree.
     if (req.applyFirst) (await import("./code.ts")).applyCodeRun(app, into.id, { keepWorking: true });
     const { codeChainFor, queueNextCodeRound } = await import("./code-chain.ts");
@@ -309,11 +322,18 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
       roundReview: req.review,
       reviewExecution: req.reviewExecution,
       fromReview: root.id,
+      ...(app.config.agents.autoAdvance.taskLoop ? { taskMode: true } : {}),
     },
     // Under the conversation that asked for the review, so progress and results go back there.
     parentId: root.parentId,
     userId,
   });
+  // Task-driven: each chosen finding is a task its check verifies, the owner's words one more.
+  if (r.input.taskMode) {
+    const tasks = await import("./code-tasks.ts");
+    for (const f of chosen) tasks.taskForFinding(app, r.id, f, userId);
+    if (req.text?.trim()) tasks.addTask(app, r.id, { title: truncate(req.text.trim().split("\n")[0], 120), doneWhen: req.text.trim(), kind: "owner", origin: { note: req.text.trim() } }, userId);
+  }
   const { codeChainFor } = await import("./code-chain.ts");
   codeChainFor(app, r);
   if (input.itemId && one(app.db, "select 1 from items where id = ?", input.itemId)) {
@@ -356,12 +376,13 @@ export function codeHere(app: App, runId: string, userId: string): Run {
 }
 
 /** Web/CLI work has no conversation to report to, but still owns reusable worktrees. `extraInput`: a round of Git work (code-sync.ts). */
-export function queueStandaloneFix(app: App, rootId: string, expectedLastId: string, task: string, userId: string, extraInput: Record<string, unknown> = {}): Run {
+// `allowRunning`: the round that queues its own successor (a task-driven delegation, code-loop.ts) is still running.
+export function queueStandaloneFix(app: App, rootId: string, expectedLastId: string, task: string, userId: string, extraInput: Record<string, unknown> = {}, opts: { allowRunning?: string } = {}): Run {
   app.db.exec("BEGIN IMMEDIATE");
   try {
     const rounds = workRuns(app, rootId).map(id => getRun(app, id));
     const last = rounds.at(-1)!;
-    if (last.id !== expectedLastId || rounds.some(r => ["queued", "running"].includes(r.status)))
+    if (last.id !== expectedLastId || rounds.some(r => r.id !== opts.allowRunning && ["queued", "running"].includes(r.status)))
       throw new HttpError(409, `已有修改轮次 ${last.id}，请等待完成后继续`);
     if (rounds.some(r => r.output.appliedAt || r.output.discardedAt))
       throw new HttpError(409, "原交办已应用或丢弃，工作区已释放，不能续轮");

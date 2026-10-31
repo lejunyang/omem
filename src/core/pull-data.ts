@@ -67,6 +67,8 @@ export const pullTables: Table[] = [
   { name: "req_versions", key: ["id"] },
   { name: "req_links", key: ["id"] },
   { name: "req_status", key: ["id"], newer: "at" },
+  // A task-driven delegation's checkpoints (agents/code-tasks.ts): numbered within the delegation, never rewritten.
+  { name: "code_checkpoints", key: ["work_id", "seq"] },
   ...[
     ["item_events", ["item_id", "at", "kind", "text"]],
     ["memory_recalls", ["memory_id", "run_id", "agent_profile", "at", "via"]],
@@ -75,6 +77,8 @@ export const pullTables: Table[] = [
     ["source_notes", ["source_id", "line_start", "line_end", "kind", "note", "created_at"]],
     ["item_materials", ["item_id", "kind", "ref"]],
     ["review_findings", ["review_id", "file_path", "line", "title"]],
+    // After review_findings: a task names its findings, a finding its task (both remapped below).
+    ["code_tasks", ["work_id", "seq"]],
   ].map(([name, natural]) => ({ name: name as string, key: ["id"], newer: "sync_updated_at", integer: true, natural: natural as string[] })),
 ];
 
@@ -188,9 +192,11 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
       }
     }
 
+    const idMaps = new Map<string, Map<number, number>>();
     for (const t of pullTables.filter((t) => t.integer)) {
       let next = Number((local.prepare(`select coalesce(max(id), 0) n from ${t.name}`).get() as { n: number }).n);
       const idMap = new Map<number, number>();
+      idMaps.set(t.name, idMap);
       for (const row of all<Row>(remote, `select * from ${t.name} order by id`)) {
         // Natural keys also recognise copies made before portable identities were introduced.
         const have = local.prepare(`select id, sync_key from ${t.name} where sync_key = ? or sync_key = (select local_key from pull_aliases where table_name = ? and remote_key = ?) or (${t.natural!.map((k) => `${k} is ?`).join(" and ")}) limit 1`).get(row.sync_key, t.name, row.sync_key, ...t.natural!.map((k) => row[k])) as { id: number; sync_key: string } | undefined;
@@ -200,6 +206,17 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
         remote.prepare(`update ${t.name} set id = ?, sync_key = ? where id = ?`).run(-Number(row.id), have?.sync_key ?? row.sync_key, row.id);
       }
       for (const [from, to] of idMap) remote.prepare(`update ${t.name} set id = ? where id = ?`).run(to, -from);
+      if (t.name === "code_tasks") {
+        // A finding's task, and a task's findings (already renumbered above), in local ids.
+        for (const row of all<Row>(remote, "select id, task_id from review_findings where task_id is not null"))
+          remote.prepare("update review_findings set task_id = ? where id = ?").run(idMap.get(Number(row.task_id)) ?? null, row.id);
+        const findings = idMaps.get("review_findings") ?? new Map<number, number>();
+        for (const row of all<Row>(remote, "select id, origin from code_tasks")) {
+          const origin = JSON.parse(String(row.origin ?? "{}")) as { findings?: number[] };
+          if (!origin.findings?.length) continue;
+          remote.prepare("update code_tasks set origin = ? where id = ?").run(JSON.stringify({ ...origin, findings: origin.findings.map((f) => findings.get(f) ?? f) }), row.id);
+        }
+      }
       if (t.name === "review_findings") {
         for (const row of all<Row>(remote, "select id, merged_into from review_findings where merged_into is not null"))
           remote.prepare("update review_findings set merged_into = ? where id = ?").run(idMap.get(Number(row.merged_into)) ?? null, row.id);

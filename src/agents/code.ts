@@ -101,6 +101,13 @@ export type CodeInput = {
    */
   peerCoder?: PeerReviewer;
   peerFinished?: boolean;
+  /**
+   * Driven by tasks instead of rounds (docs/v2/coding-loop.md, code-tasks.ts / code-loop.ts): the
+   * coder works task by task, each check verifies what it raised, review-lead picks what to review;
+   * `maxRounds` is the budget the owner gave (else the coder estimates one, under the cap).
+   */
+  taskMode?: boolean;
+  maxRounds?: number;
 };
 export type PeerReviewer = { caller: string; session: string; agent?: string; model?: string };
 
@@ -246,7 +253,7 @@ export async function runCodeTask(ctx: RunContext) {
 
   // Triage before coding: review-lead guesses the tier from the task (shown with the progress, and
   // a heavier option the post-coding triage weighs). Only when a tier has a lead to do it.
-  if (!continueFrom && !input.reviewTier && !input.peerReviewer && !input.peerCoder && app.config.review.tiers.some((t) => t.lead)) {
+  if (!continueFrom && !input.taskMode && !input.reviewTier && !input.peerReviewer && !input.peerCoder && app.config.review.tiers.some((t) => t.lead)) {
     const { estimateReview } = await import("./review.ts");
     const { askModel } = await import("./oneshot.ts");
     const estimate = await estimateReview(app, input.task, (p) => askModel(app, p, { timeoutMs: 60_000, signal: ctx.signal }));
@@ -310,6 +317,25 @@ ${input.task}
     }
   }
   const skipCoder = !!(input.syncOnly || input.moveToTarget);
+  // A task-driven delegation: what to revert first, then the tasks this round codes (code-tasks.ts).
+  const taskMode = !!getRun(app, rootRunId).input.taskMode && !input.branches && !skipCoder && !input.peerCoder;
+  if (taskMode) {
+    const tasks = await import("./code-tasks.ts");
+    const { identity } = await import("./code-branch.ts");
+    tasks.applyReverts(app, rootRunId, worktrees, (text) => ctx.event("status", { text }), identity);
+    const taken = tasks.takeTasks(app, rootRunId, run.id);
+    const w = tasks.workState(app, rootRunId);
+    const planning = !continueFrom && !tasks.listTasks(app, rootRunId).some((t) => t.coderRun !== run.id);
+    const list = taken.map((t) => tasks.taskText(app, t)).join("\n\n");
+    const head = continueFrom ? "# 这一轮要做的修改项" : `${input.task}${itemBrief}`;
+    coderTask = [
+      head,
+      continueFrom ? list : taken.length ? `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”），这些已经列好，逐项做：\n\n${list}` : `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”）。先用 \`plan_tasks\` 拆分${w.budgetBy === "owner" ? `（本人给的预算：最多自动推进 ${w.budget} 轮）` : "，并估计要几轮"}，再逐项做。`,
+      continueFrom ? "继续在原来的工作区里改，只做这些项；已完成和不做的项不要动。每项照角色说明里“修改项”的做法提交，并用 finish_task 说明。" : "",
+      where.trim(),
+    ].filter(Boolean).join("\n\n");
+    if (planning || taken.length) ctx.event("status", { text: taken.length ? `这一轮做 ${taken.map((t) => tasks.taskLabel(t.seq)).join("、")}` : "编码 Agent 先拆分修改项" });
+  }
   if (input.peerCoder && !input.peerFinished && !skipCoder) {
     // The other device's Agent codes now; the run ends so it holds no slot meanwhile.
     ctx.event("status", { text: `工作区已准备好，等设备 ${input.peerCoder.caller} 的外部 Agent 编码（code_workspace，run_id=${run.id}）` });
@@ -437,6 +463,7 @@ ${input.task}
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
       role: "coder",
+      ...(taskMode ? { addTools: ["plan_tasks", "finish_task", "report_task"] } : {}),
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,
@@ -522,13 +549,23 @@ ${input.task}
   }
   const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
   ctx.output({ repos: results, diffStat: statText, diffBytes: results.reduce((n, r) => n + r.diffBytes, 0), check: multi ? undefined : results[0].check });
+  if (taskMode) {
+    const tasks = await import("./code-tasks.ts");
+    // The coder did not split: the whole task is one.
+    if (!tasks.listTasks(app, rootRunId).length) {
+      const t = tasks.addTask(app, rootRunId, { title: run.title, doneWhen: "", kind: "build", state: "coding" }, "host");
+      tasks.updateTask(app, rootRunId, t.seq, { coderRun: run.id });
+    }
+    const { checkpoint, finished } = tasks.settleCodingRound(app, rootRunId, run.id, worktrees, Number((input as { round?: number }).round ?? 1));
+    if (checkpoint) ctx.event("status", { text: `检查点 ${checkpoint.seq}：${finished.length ? `完成 ${finished.map(tasks.taskLabel).join("、")}` : "这一轮没有完成的修改项"}` });
+  }
   // Only Git work on a work branch: its commits are on the branch already, and what came in is not this work to review.
   if (skipCoder && worktrees.some((w) => w.commits)) {
     ctx.output({ verdict: "synced" });
     notify(app, { title: `同步完成：${run.title}`, body: truncate(synced && typeof synced === "object" ? synced.summary : coderReply, 600), link: `#/runs/${run.id}` });
     return { verdict: "synced" };
   }
-  if (!diffs.length) {
+  if (!diffs.length && !taskMode) {
     // Only Git work (a merge, a pull): its commits are what gets applied, by fast-forward.
     if (worktrees.some((w) => w.syncHead)) {
       ctx.output({ verdict: "synced" });
@@ -558,6 +595,10 @@ ${input.task}
   }
   ctx.output({ indexedSpaces: indexed });
 
+  if (taskMode) {
+    const { taskReview } = await import("./code-loop.ts");
+    return taskReview(app, run.id, { runId: run.id, signal: ctx.signal, event: ctx.event });
+  }
   const { planReview, refineReviewPlan } = await import("./review.ts");
   const { askModel } = await import("./oneshot.ts");
   const previousPlan = chain?.rounds.filter((id) => id !== run.id).map((id) => getRun(app, id).output.reviewPlan as ReviewPlan | undefined).filter(Boolean).at(-1);
@@ -652,7 +693,7 @@ function changeRange(wt: WorktreeRef) {
 }
 
 /** What review tiers are chosen by: the size and place of the change, whether checks passed. */
-function reviewMetrics(worktrees: WorktreeRef[], results: RepoResult[], task: string): ReviewMetrics {
+export function reviewMetrics(worktrees: WorktreeRef[], results: RepoResult[], task: string): ReviewMetrics {
   let lines = 0;
   let codeLines = 0;
   const paths: string[] = [];

@@ -2983,7 +2983,8 @@ def({
     check_command: z.string().optional().describe("验证命令，如 npm test；对所有仓库生效，除非 check_commands 单独指定"),
     check_commands: z.record(z.string(), z.string()).optional().describe("按仓库空间 id 指定的验证命令"),
     space: z.string().optional().describe("任务所属的空间（如项目空间），默认第一个仓库"),
-    review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
+    review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选。按修改项推进的交办（默认）里它只作为本人的要求交给评审负责人参考"),
+    max_rounds: z.number().int().min(1).max(50).optional().describe("本人给的预算：最多自动推进几轮（编码一批修改项 + 验证 / 评审算一轮）。本人没说就不传，由编码 Agent 按任务大小估；都不超过设置里的上限"),
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
     from_branch: z.string().optional().describe("在已有分支上继续开发：提交接着加在这条分支上（本地没有、origin 上有的先建本地分支）；不带未提交修改"),
     branch: z.string().max(200).optional().describe("新工作分支的名字（本人指定了才传，如 feat/refund-shipped）；不传时用临时名，编码 Agent 按功能改名。本地已有同名分支就当作 from_branch"),
@@ -3017,7 +3018,7 @@ def({
       kind: "code",
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, execution, reviewExecution, ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
@@ -3026,7 +3027,8 @@ def({
     // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
     const { codeChainFor } = await import("./code-chain.ts");
     const chain = codeChainFor(ctx.app, r);
-    return `已交办，运行 ${r.id}（${ids.join("、")}），共一个会话，评审要求修改会自动续轮。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。`;
+    const tasks = !!r.input.taskMode;
+    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。`;
   },
 });
 
@@ -3136,6 +3138,12 @@ def({
     for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     // A failed round may have no session of its own: resume the latest one that has.
+    // A task-driven delegation: the new request is a task; the loop codes it with a fresh budget.
+    const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
+    if (isTaskWork(ctx.app, last.id) && !a.sync && !a.onto_latest_target && !a.apply_first) {
+      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER, { asTask: true })!;
+      return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，这一轮结束后接着做"}。`;
+    }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
     const extraInput = a.onto_latest_target ? { moveToTarget: true } : a.sync ? { sync: a.sync } : undefined;
     const roundReview = await roundReviewOf(ctx, a);
@@ -3191,6 +3199,12 @@ def({
   schema: z.object({ run_id: z.string().describe("交办的任一运行 id"), text: z.string().min(1).max(20000).describe("本人的补充，原话为主") }),
   handler: async (ctx, a) => {
     steerable(ctx, a.run_id);
+    // A task-driven delegation between rounds: the words become a task (code-loop.ts).
+    const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
+    if (isTaskWork(ctx.app, a.run_id)) {
+      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.text, ctx.userId ?? OWNER);
+      if (made) return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，下一轮做"}。`;
+    }
     const { addCodeNote } = await import("./code-steer.ts");
     const r = addCodeNote(ctx.app, a.run_id, a.text, ctx.userId ?? OWNER);
     return r.stage === "coding" ? `已交给正在编码的 ${r.runId}：它下一次调用 omem 工具时收到，最晚在这一轮检查之前。`
@@ -3861,6 +3875,7 @@ def({
       decision: z.enum(["accept", "reject", "merge"]),
       into: z.number().int().optional().describe("merge 时合并到的那条问题编号"),
       note: z.string().max(1000).optional().describe("理由；驳回必须写"),
+      owner: z.object({ question: z.string().min(1).max(1000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("只在按修改项推进的交办里用：接受的问题要本人决定时，给本人的问题和两三个选项"),
     })).max(300),
     verdict: z.enum(["approve", "revise", "escalate"]),
     summary: z.string().min(1).max(2000).describe("一两句话：这一轮的结论（给本人看，不写问题编号）"),
@@ -3876,14 +3891,148 @@ def({
     const round = (r.input as { round?: number }).round ?? 1;
     const { applyRulings, reviewChecks } = await import("./review.ts");
     for (const x of a.rulings) if (x.decision === "reject" && !x.note?.trim()) throw new HttpError(400, `驳回问题 ${x.id} 要写理由`);
-    if (a.verdict === "revise" && !a.change_request?.trim()) throw new HttpError(400, "revise 需要写修改单 change_request");
+    const { isTaskWork } = await import("./code-tasks.ts");
+    const tasks = isTaskWork(ctx.app, r.id);
+    if (a.verdict === "revise" && !tasks && !a.change_request?.trim()) throw new HttpError(400, "revise 需要写修改单 change_request");
+    for (const x of a.rulings) if (x.owner && x.decision !== "accept") throw new HttpError(400, `问题 ${x.id}：只有接受的问题才交给本人决定`);
     if (a.verdict === "escalate" && !a.escalation) throw new HttpError(400, "escalate 需要写 escalation");
     const known = new Set(reviewChecks(ctx.app).map((c) => c.name));
     const unknown = (a.rerun ?? []).filter((c) => !known.has(c));
     if (unknown.length) throw new HttpError(400, `没有评审项 ${unknown.join("、")}`);
     applyRulings(ctx.app, r.id, round, a.rulings);
-    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation } });
+    const owner = Object.fromEntries(a.rulings.filter((x) => x.owner).map((x) => [String(x.id), x.owner!]));
+    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}) } });
     return `已记录第 ${round} 轮裁决（${a.verdict}，${a.rulings.length} 条）。`;
+  },
+});
+
+// --------------------------------------------- task-driven delegations (code-loop.ts)
+
+/** The coding round a coder's task tool call belongs to, refused outside a task-driven delegation. */
+async function taskRound(ctx: ToolContext, tool: string) {
+  const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+  const { isTaskWork, workRootOf } = await import("./code-tasks.ts");
+  if (!r || r.kind !== "code" || r.status !== "running" || !isTaskWork(ctx.app, r.id)) throw new HttpError(400, `${tool} 只能在按修改项推进的交办编码里使用`);
+  return { run: r, rootId: workRootOf(ctx.app, r.id) };
+}
+
+def({
+  name: "plan_tasks",
+  description: "编码 Agent 把交办拆成修改项（T1、T2…），或在做的过程中加新的一项；拆出来的项由你这一轮做。第一次拆分时按任务大小估计要自动推进几轮（rounds）。",
+  schema: z.object({
+    tasks: z.array(z.object({
+      title: z.string().min(1).max(200).describe("一句话：这一项要做成什么"),
+      done_when: z.string().max(2000).optional().describe("完成标准：怎样算做完（可核对）"),
+      files: z.array(z.string().max(500)).max(30).optional().describe("预计改的文件"),
+    })).min(1).max(60),
+    rounds: z.number().int().min(1).max(50).optional().describe("估计自动推进几轮能做完（含评审后的修改）；本人给了预算时不用填"),
+  }),
+  handler: async (ctx, a) => {
+    const { run: r, rootId } = await taskRound(ctx, "plan_tasks");
+    const t = await import("./code-tasks.ts");
+    const made = a.tasks.map((x) => {
+      const task = t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", state: "coding", origin: x.files?.length ? { files: x.files } : {} }, "coder");
+      return t.updateTask(ctx.app, rootId, task.seq, { coderRun: r.id });
+    });
+    const w = a.rounds ? t.estimateBudget(ctx.app, rootId, a.rounds) : t.workState(ctx.app, rootId);
+    return `已建 ${made.map((x) => `${t.taskLabel(x.seq)} ${x.title}`).join("；")}。预算：最多自动推进 ${w.budget} 轮${w.budgetBy === "owner" ? "（本人给的）" : ""}。逐项做，每项提交带 Omem-Task 行，做完用 finish_task。`;
+  },
+});
+
+def({
+  name: "finish_task",
+  description: "编码 Agent 说明一个修改项做完了：做了什么、怎么验证的。先提交（提交信息末尾单独一行 Omem-Task: T<编号>），再调用它；提交不了（权限、沙箱）就直接调用，宿主把工作区里还没提交的改动作为这一项提交。",
+  schema: z.object({
+    task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
+    summary: z.string().min(1).max(4000).describe("做了什么、改了哪些文件、怎么验证的（命令和结果）"),
+  }),
+  handler: async (ctx, a) => {
+    const { run: r, rootId } = await taskRound(ctx, "finish_task");
+    const t = await import("./code-tasks.ts");
+    const seq = t.parseTaskRef(a.task);
+    const task = t.getTask(ctx.app, rootId, seq);
+    if (task.coderRun !== r.id || task.state !== "coding") throw new HttpError(400, `${t.taskLabel(seq)} 不是这一轮在做的项（现在：${t.TASK_STATE_LABEL[task.state]}）`);
+    // What it did not commit is this task's: one commit per task, also where the agent cannot commit.
+    const { worktreesOf } = await import("./code.ts");
+    const { identity } = await import("./code-branch.ts");
+    const committed = t.commitTask(ctx.app, rootId, seq, worktreesOf(ctx.app, rootId), identity);
+    t.updateTask(ctx.app, rootId, seq, { state: task.verifier ? "verify" : "done" }, { by: "coder", kind: "coder", text: a.summary });
+    const left = t.listTasks(ctx.app, rootId).filter((x) => x.coderRun === r.id && x.state === "coding");
+    return `已记下 ${t.taskLabel(seq)}${committed.length ? "，工作区里没提交的改动已作为这一项提交" : ""}${task.verifier ? `，交给 ${task.verifier} 验证` : ""}。${left.length ? `这一轮还有：${left.map((x) => t.taskLabel(x.seq)).join("、")}` : "这一轮的项都做完了，写最后的说明。"}`;
+  },
+});
+
+def({
+  name: "report_task",
+  description: "编码 Agent 把一个修改项交出去，然后接着做别的项：owner = 要本人在业务或功能上定（写问题和两三个选项）；disputed = 认为评审的问题不成立（写理由，交提出它的评审项再看）；blocked = 被权限、环境、外部依赖挡住了（写清楚是什么）。",
+  schema: z.object({
+    task: z.union([z.string(), z.number()]),
+    kind: z.enum(["owner", "disputed", "blocked"]),
+    reason: z.string().min(1).max(3000).describe("为什么：分歧点和各自的影响、不成立的理由，或挡住的是什么"),
+    question: z.string().max(1000).optional().describe("owner / blocked：给本人的问题"),
+    options: z.array(z.string().min(1).max(40)).max(4).optional().describe("owner：两三个可选的做法"),
+  }),
+  handler: async (ctx, a) => {
+    const { run: r, rootId } = await taskRound(ctx, "report_task");
+    const t = await import("./code-tasks.ts");
+    const seq = t.parseTaskRef(a.task);
+    const task = t.getTask(ctx.app, rootId, seq);
+    if (task.coderRun !== r.id || task.state !== "coding") throw new HttpError(400, `${t.taskLabel(seq)} 不是这一轮在做的项`);
+    // An objection goes back to the check that raised the finding: it withdraws it or answers it.
+    if (a.kind === "disputed" && task.verifier) {
+      t.updateTask(ctx.app, rootId, seq, { state: "verify" }, { by: "coder", kind: "coder", text: `有异议：${a.reason}` });
+      return `已把 ${t.taskLabel(seq)} 的异议交给 ${task.verifier}，它会撤回或回应。接着做别的项。`;
+    }
+    const question = a.question?.trim() || a.reason;
+    t.updateTask(ctx.app, rootId, seq, { state: "owner", question, options: a.kind === "owner" ? a.options ?? [] : ["已经处理好了，再试一次"] }, { by: "coder", kind: "coder", text: `${a.kind === "owner" ? "要本人决定" : a.kind === "blocked" ? "被挡住了" : "有异议"}：${a.reason}` });
+    return `已把 ${t.taskLabel(seq)} 交给本人（这一项停着，本人回答后再做）。接着做别的项。`;
+  },
+});
+
+def({
+  name: "verify_tasks",
+  description: "评审项验证自己提出的问题有没有改好（只在按修改项推进的交办的验证里可用）：每项 fixed / not_fixed / regressed / withdrawn，除了 fixed 都要写 note。",
+  schema: z.object({
+    results: z.array(z.object({
+      task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
+      verdict: z.enum(["fixed", "not_fixed", "regressed", "withdrawn"]),
+      note: z.string().max(3000).optional().describe("not_fixed：还差什么、怎么改；regressed：改出了什么问题、证据；withdrawn：为什么不成立"),
+    })).min(1).max(60),
+  }),
+  handler: async (ctx, a) => {
+    const { codeRunOf } = await import("./review-chain.ts");
+    const r = codeRunOf(ctx.app, ctx.runId);
+    const check = ctx.spec ?? ctx.role;
+    const { isTaskWork, parseTaskRef } = await import("./code-tasks.ts");
+    if (!r || !check || !isTaskWork(ctx.app, r.id)) throw new HttpError(400, "verify_tasks 只能在按修改项推进的交办的验证里使用");
+    const { recordVerification } = await import("./code-loop.ts");
+    const done = recordVerification(ctx.app, r.id, check, a.results.map((x) => ({ task: parseTaskRef(x.task), verdict: x.verdict, note: x.note })));
+    return `已记录：${done.join("；")}。`;
+  },
+});
+
+def({
+  name: "plan_review",
+  description: "评审负责人决定这次评审看什么（只在按修改项推进的交办里可用）：哪些评审项参加、各看什么，没选的写理由。",
+  schema: z.object({
+    checks: z.array(z.object({
+      name: z.string().min(1).describe("评审项名，照任务里“可用的评审项”抄"),
+      focus: z.string().min(1).max(1500).describe("这次请它重点看什么：哪些文件、哪类问题"),
+    })).min(1).max(12),
+    skipped: z.array(z.object({ name: z.string(), reason: z.string().min(1).max(500) })).max(12).optional(),
+    summary: z.string().min(1).max(1000).describe("一句话：为什么这样安排（给本人看）"),
+  }),
+  handler: async (ctx, a) => {
+    const { codeRunOf } = await import("./review-chain.ts");
+    const r = codeRunOf(ctx.app, ctx.runId);
+    const { isTaskWork } = await import("./code-tasks.ts");
+    if (!r || ctx.role !== "review-lead" || !isTaskWork(ctx.app, r.id)) throw new HttpError(400, "plan_review 只能在按修改项推进的交办的评审负责人运行里使用");
+    const { reviewChecks } = await import("./review.ts");
+    const known = new Map(reviewChecks(ctx.app).filter((c) => !c.missing).map((c) => [c.name, c]));
+    const unknown = a.checks.map((c) => c.name).filter((n) => !known.has(n));
+    if (unknown.length) throw new HttpError(400, `没有评审项 ${unknown.join("、")}；可用的：${[...known.keys()].join("、")}`);
+    setRunOutput(ctx.app, r.id, { reviewPlanDraft: { checks: a.checks, skipped: a.skipped ?? [], summary: a.summary, at: new Date().toISOString() } });
+    return `已记下评审计划：${a.checks.map((c) => known.get(c.name)!.label).join("、")}。`;
   },
 });
 

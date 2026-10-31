@@ -6,6 +6,8 @@ import { run } from "../src/core/db.ts";
 
 it("continues a standalone branch-review fix in the same workspace, preserving execution and rejecting duplicate clicks", async () => {
   const app = testApp();
+  // The round-based flow (task-driven delegations are covered in code-loop.test.ts).
+  app.config.agents.autoAdvance.taskLoop = false;
   try {
     const review = createRun(app, { kind: "code", spaceId: "personal", title: "项目 A 评审", input: { branches: { "project-a": { branch: "feature/a" } }, repos: ["project-a"], reviewTier: "full", readSpaces: ["personal"] } });
     run(app.db, "update runs set status='done' where id=?", review.id);

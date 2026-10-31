@@ -17,6 +17,7 @@ import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } f
 import { readAgentSpec } from "./specs.ts";
 import { replyOf } from "./types.ts";
 import { workDirOf } from "./workspaces.ts";
+import { git } from "../core/git.ts";
 
 /**
  * One review round of a coding delegation (docs/v2/review.md §4): the planned checks run in their
@@ -58,8 +59,10 @@ const roundOf = (r: Run) => (r.input as { round?: number }).round ?? 1;
 /**
  * What every reviewer of a delegation reads, and where: the task, the item's materials and the
  * owner's decisions, the checks, the diff; the spaces it may read and the working directory.
+ * `since`: only the change after these commits (a delegation driven by tasks reviews what came
+ * after its last stage review, code-loop.ts).
  */
-async function reviewContext(app: App, codeRunId: string, note?: string) {
+export async function reviewContext(app: App, codeRunId: string, note?: string, opts: { since?: Record<string, string> } = {}) {
   const run = getRun(app, codeRunId);
   const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string; peerReviewer?: PeerReviewer };
   const { decisionsBrief, workRuns } = await import("./review-fix.ts");
@@ -76,9 +79,17 @@ async function reviewContext(app: App, codeRunId: string, note?: string) {
   const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
   const indexed = out.indexedSpaces ?? [];
-  const patches = codePatches(app, run.id);
+  const since = opts.since;
+  const ranged = since ? worktrees.map((w) => {
+    const from = since[w.space];
+    const dir = workDirOf(w);
+    return { space: w.space, patch: from ? git(dir, ["diff", "--no-color", from, "HEAD"]).stdout : "", stat: from ? git(dir, ["diff", "--stat", from, "HEAD"]).stdout.trim() : "" };
+  }).filter((p) => p.patch.trim()) : null;
+  const patches = ranged ?? codePatches(app, run.id);
   const diffs = patches.map((p) => (multi ? `### ${p.space}\n\n${fence("diff", p.patch)}` : fence("diff", p.patch)));
-  const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
+  const statText = ranged
+    ? ranged.map((r) => (multi ? `[${r.space}]\n${r.stat}` : r.stat)).join("\n\n")
+    : results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
   const label = (n: string) => infos.get(n)?.label ?? n;
 
@@ -92,10 +103,10 @@ async function reviewContext(app: App, codeRunId: string, note?: string) {
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
     `## 检查结果\n\n${checkText}`,
-    `## 改动统计\n\n${statText}`,
+    `## ${since ? "上次评审以后的改动统计" : "改动统计"}\n\n${statText}`,
   ].filter(Boolean).join("\n\n");
   const diffText = diffs.join("\n\n");
-  const reviewTask = `${brief}\n\n## 完整 diff\n\n${truncate(diffText, 80000)}`;
+  const reviewTask = `${brief}\n\n## ${since ? "上次评审以后的 diff（之前的改动已经评审过，需要时在工作区里读）" : "完整 diff"}\n\n${truncate(diffText, 80000)}`;
 
   return { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask, brief, diffText };
 }
@@ -171,8 +182,20 @@ export function currentPoints(app: App, run: Run): ChangePoint[] {
   return row?.change_points ? (JSON.parse(row.change_points) as ChangePoint[]) : [];
 }
 
-export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string } = {}): Promise<{ verdict: string; continuedRunId?: string }> {
-  const { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask } = await reviewContext(app, codeRunId, opts.note);
+/**
+ * A delegation driven by tasks (code-loop.ts) reviews a stretch of the work with the checks
+ * review-lead picked; each check keeps its session across reviews and verifications; the ruling
+ * comes back instead of a next round or a card.
+ */
+export type TaskReviewOptions = {
+  since?: Record<string, string>;
+  split: boolean;
+  session(check: string): string | undefined;
+  onSession(check: string, id: string | undefined, used: number | undefined): void;
+};
+
+export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; task?: TaskReviewOptions } = {}): Promise<{ verdict: string; continuedRunId?: string; lead?: LeadResult }> {
+  const { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask } = await reviewContext(app, codeRunId, opts.note, { since: opts.task?.since });
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
   // An outside Agent on a paired device already submitted every check (and the split, if it made one).
   const peer = input.peerReviewer;
@@ -185,7 +208,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     return false;
   });
   // The owner can leave the split out (“只做最简评审”): the change points stay as the last round had them.
-  const noSplit = !!peer || (run.input as { roundReview?: RoundReview }).roundReview?.split === false;
+  const noSplit = !!peer || (run.input as { roundReview?: RoundReview }).roundReview?.split === false || (!!opts.task && !opts.task.split);
   const split = noSplit ? Promise.resolve(true) : splitOnce();
 
   // Each check is its own session with read-only tools; one failing does not stop the others.
@@ -206,13 +229,16 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       spaceId: run.spaceId!,
       spaces,
       alsoRead: indexed,
-      task: `${reviewTask}\n\n${checkBrief(info, plan)}`,
+      task: `${reviewTask}\n\n${checkBrief(info, plan)}${plan.focus?.[name] ? `\n\n## 这次请重点看\n\n${plan.focus[name]}` : ""}`,
       runId: rc.runId,
       cwd,
       signal: rc.signal,
       onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check: name }),
       profileId: info.builtin ? app.config.agents.roles[name] : undefined,
+      // A check of a task-driven delegation keeps one session: it remembers what it raised and why.
+      ...(opts.task ? { resumeSessionId: opts.task.session(name), persistSession: true } : {}),
     });
+    opts.task?.onSession(name, res.sessionId, res.contextUsage?.used);
     const text = replyOf(res).trim();
     // A check that only wrote text (an older customized prompt) still counts, by its verdict line.
     if (!reviewFor(app, run.id, round, name)) {
@@ -260,7 +286,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
         spaceId: run.spaceId!,
         spaces,
         alsoRead: indexed,
-        task: leadTask(app, run, plan, reviewTask, failed.map((f) => f.name)),
+        task: leadTask(app, run, plan, reviewTask, failed.map((f) => f.name), !!opts.task),
         runId: rc.runId,
         cwd,
         signal: rc.signal,
@@ -268,12 +294,19 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
         profileId: app.config.agents.roles["review-lead"],
       });
       const draft = (getRun(app, run.id).output as Out).reviewLeadDraft;
-      if (draft && draft.round === round) lead = { ...draft, by: "lead" };
+      if (draft && draft.round === round) lead = { ...draft, by: "lead" } as LeadResult;
       else rc.event("status", { text: "评审负责人没有提交裁决，按各评审项的结论合并" });
     } catch (e) {
       if (rc.signal.aborted) throw e;
       rc.event("status", { text: `评审负责人没有完成（${(e as Error).message}），按各评审项的结论合并` });
     }
+  }
+
+  // A task-driven delegation decides what comes next from its task list (code-loop.ts).
+  if (opts.task) {
+    lead = { ...lead, round };
+    setRunOutput(app, run.id, { reviewLead: lead, reviewStage: "done" });
+    return { verdict: lead.verdict, lead };
   }
 
   // ---- what next ---------------------------------------------------------------------------
@@ -362,7 +395,15 @@ function hostRuling(app: App, codeRunId: string, round: number, done: { name: st
 }
 
 /** What review-lead reads: this round's findings by number, earlier rulings, and the change. */
-function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, failed: string[]) {
+const TASK_RULING = [
+  "## 这次交办按修改项推进",
+  "不用写修改单（change_request 可以不填）：你接受的每条问题都会变成一个修改项，编码 Agent 逐项改，由提出它的评审项验证。接受时再判断这一条能不能不问本人就改：",
+  "- 自动改：问题说得清（哪里、什么情况下、错在哪），有背景和原因，改法明确，改动不大、好回退。不按严重程度划线，一条“提示”只要符合这些也改；",
+  "- 交给本人：需求没说清或材料互相矛盾、用户看得到的行为有几种合理做法、超出原需求、数据迁移 / 对外接口 / 性能与成本的取舍、问题成立但改动大不好回退。在这条裁决的 `owner` 里写给本人的问题（一两句话，说清分歧和影响）和两三个选项；本人回答前这一项停着，别的项照做。",
+  "说不清问题在哪、只是风格偏好且项目没有约定的，驳回。verdict：没有要改的写 approve，有要改的写 revise；只有方案本身的分歧挡住了整件事才 escalate。",
+].join("\n");
+
+function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, failed: string[], tasks = false) {
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
   const round = roundOf(run);
   const fmt = (f: ReturnType<typeof roundFindings>[number]) => {
@@ -386,7 +427,7 @@ function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, fail
     `## 各评审项的结论\n\n${reviews.join("\n")}${failed.length ? `\n\n没有完成的评审项：${failed.join("、")}（不要替它们下结论，在 summary 里说明缺了哪项）` : ""}`,
     `## 这一轮的问题\n\n${now.map(fmt).join("\n") || "（没有问题）"}`,
     earlier.length ? `## 之前的轮次\n\n${earlier.join("\n\n")}\n\n同一个问题修过还在报时，判断是没修好还是评审要求不合理；连续僵持说明该交给本人（escalate）。` : "",
-    `## 评审项（下一轮可选择只复审其中受影响的）\n\n${plan.checks.map((n) => `- ${n}（${infos.get(n)?.label ?? n}）：${SEVERITY_LABEL[infos.get(n)?.blocks ?? "major"]}及以上阻塞`).join("\n")}`,
+    tasks ? TASK_RULING : `## 评审项（下一轮可选择只复审其中受影响的）\n\n${plan.checks.map((n) => `- ${n}（${infos.get(n)?.label ?? n}）：${SEVERITY_LABEL[infos.get(n)?.blocks ?? "major"]}及以上阻塞`).join("\n")}`,
     reviewTask,
   ].filter(Boolean).join("\n\n");
 }
@@ -478,7 +519,7 @@ const CONFIRM = "确认并推送";
 const DISCARD = "丢弃改动";
 
 /** The end of a review that needs nothing more from the reviewers: what the owner can do next, as buttons. */
-function askDone(app: App, run: Run, chain: CodeChain | null, d: { title: string; digest: string; approved: boolean; branchReview: boolean }) {
+export function askDone(app: App, run: Run, chain: CodeChain | null, d: { title: string; digest: string; approved: boolean; branchReview: boolean }) {
   const toFix = fixCandidates(app, run.id, roundOf(run));
   // A passed branch review with nothing to fix leaves nothing to decide.
   const branch = ((getRun(app, String(run.input.continueFrom ?? run.id)).output.worktrees ?? []) as { commits?: boolean }[]).some((w) => w.commits);
@@ -493,6 +534,19 @@ function askDone(app: App, run: Run, chain: CodeChain | null, d: { title: string
     runId: run.id,
     ...(chain ? { conversationId: chain.conversationId } : {}),
     question: `**${d.title}**\n\n${d.digest}\n\n${hint}`,
+    options: labels.map((label) => ({ label })),
+    context: { handler: "review-done", codeRunId: run.id, labels },
+  });
+}
+
+/** The end of a task-driven delegation (code-loop.ts): confirm (push) or apply, or discard. */
+export function askConfirm(app: App, run: Run, chain: CodeChain | null, title: string, digest: string) {
+  const branch = ((getRun(app, String(run.input.continueFrom ?? run.id)).output.worktrees ?? []) as { commits?: boolean }[]).some((w) => w.commits);
+  const labels = [branch ? CONFIRM : APPLY, DISCARD];
+  return createAsk(app, {
+    runId: run.id,
+    ...(chain ? { conversationId: chain.conversationId } : {}),
+    question: `**${title}**\n\n${digest}\n\n${branch ? "改动已经按修改项提交在工作分支上；确认后推到 origin，归还工作区。还要改就直接说，或在网页上加修改项。" : "改动在独立的工作区里，应用后成为仓库里未提交的修改。"}`,
     options: labels.map((label) => ({ label })),
     context: { handler: "review-done", codeRunId: run.id, labels },
   });
@@ -669,6 +723,11 @@ registerHandler("review", async (ctx) => {
   if (splitOnly) {
     await splitChangePoints(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note, revise });
     return { changePoints: true };
+  }
+  const { isTaskWork } = await import("./code-tasks.ts");
+  if (isTaskWork(ctx.app, codeRunId)) {
+    const { taskReview } = await import("./code-loop.ts");
+    return taskReview(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event });
   }
   return reviewRound(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note });
 });

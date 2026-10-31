@@ -25,7 +25,8 @@ export type CodeChain = {
   larkKey: string | null;
   /** The one progress card message for the whole chain, updated as rounds run. */
   larkMessageId: string | null;
-  waitReason?: "auto-limit" | "review" | "no-changes" | "failed" | "plan" | "not-converging" | "stalemate" | "escalated" | "stopped";
+  /** owner / budget / paused: a task-driven delegation waits for answers, ran out of rounds, or was paused (code-loop.ts). */
+  waitReason?: "auto-limit" | "review" | "no-changes" | "failed" | "plan" | "not-converging" | "stalemate" | "escalated" | "stopped" | "owner" | "budget" | "paused";
   round: number;
   rounds: string[];
   /** The last coding run id; its Agent session is resumed on the next round. */
@@ -101,7 +102,7 @@ export function queueNextCodeRound(
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
-    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; fromReview?: string };
+    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; fromReview?: string; taskMode?: boolean };
     // What the owner added while the last round ran and nobody delivered yet goes with this round's task.
     const notes = pendingNotes(app, chain.lastCodeRunId!);
     if (notes.length) {
@@ -127,6 +128,7 @@ export function queueNextCodeRound(
         readSpaces: input.readSpaces,
         itemId: input.itemId,
         fromReview: input.fromReview,
+        ...(input.taskMode ? { taskMode: true } : {}),
         // review-lead named the checks the fixes touch; the others are not re-run this round.
         ...(opts.reviewOnly?.length ? { reviewOnly: opts.reviewOnly } : {}),
         // A round of Git work (finishing a stopped sync, moving onto the latest target) says so here.

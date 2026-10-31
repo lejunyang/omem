@@ -1066,6 +1066,8 @@ export function learningTick(app: App) {
 registerHandler("code", runCodeTask);
 // Review rounds after a confirmed plan, and the owner's answers to review asks.
 import "./review-chain.ts";
+// Owner questions of task-driven delegations are answered through cards too.
+import "./code-loop.ts";
 
 export function scheduleSpaceSync(app: App, spaceId: string) {
   const s = getSpace(app, spaceId);

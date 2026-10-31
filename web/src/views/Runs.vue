@@ -19,6 +19,7 @@ import DiffName from "../components/DiffName.vue";
 import DiffTree from "../components/DiffTree.vue";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import ReviewSummary from "../components/ReviewSummary.vue";
+import CodeTasks from "../components/CodeTasks.vue";
 import CodeSteer from "../components/CodeSteer.vue";
 import OpenInIde from "../components/OpenInIde.vue";
 import ReviewChecks from "../components/ReviewChecks.vue";
@@ -521,6 +522,8 @@ const kindOptions = computed(() => [
           </div>
         </section>
 
+        <!-- A delegation driven by tasks: its tasks, the owner's questions, budget and changes by task (docs/v2/coding-loop.md). -->
+        <CodeTasks v-if="detail.run.kind === 'code' && !branchReview" :key="`tasks:${detail.run.id}`" :run-id="detail.run.id" />
         <nav v-if="hasReview" class="tabs" role="tablist" aria-label="运行详情">
           <button v-for="t in tabs" :key="t.id" role="tab" class="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
         </nav>

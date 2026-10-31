@@ -201,9 +201,12 @@ export const configSchema = z.object({
       /**
        * How far work goes on without the owner: `turns` is how many times the main assistant may hand
        * a multi-agent work on after the owner last spoke; `codeRounds` how many rounds a coding
-       * delegation runs before the reviewer's requests wait for the owner.
+       * delegation runs before the reviewer's requests wait for the owner. A delegation driven by
+       * tasks (docs/v2/coding-loop.md) gets its own budget (given when delegating, else the coder's
+       * estimate), never more than `codeRoundsMax`, so a loop that does not converge still stops.
+       * `taskLoop: false` starts new delegations the older way (rounds, tiers, plan confirmation).
        */
-      autoAdvance: z.object({ turns: z.number().int().min(0).max(50).default(6), codeRounds: z.number().int().min(1).max(20).default(3) }).default({ turns: 6, codeRounds: 3 }),
+      autoAdvance: z.object({ turns: z.number().int().min(0).max(50).default(6), codeRounds: z.number().int().min(1).max(20).default(3), codeRoundsMax: z.number().int().min(1).max(50).default(12), taskLoop: z.boolean().default(true) }).default({ turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true }),
       /**
        * How many runs one model of one source takes at a time (`perModel`, or a `limits` entry for a
        * source / model; 0 = do not use it). A role run whose model is full takes the first free one of
@@ -220,7 +223,7 @@ export const configSchema = z.object({
       }).default(() => ({ automatic: true, guidance: "", candidates: [] })),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3 }, capacity: { perModel: 3, limits: [] }, routing: { automatic: true, guidance: "", candidates: [] }, profiles: [] })),
+    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true }, capacity: { perModel: 3, limits: [] }, routing: { automatic: true, guidance: "", candidates: [] }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

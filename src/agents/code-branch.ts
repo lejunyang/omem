@@ -21,7 +21,7 @@ import { leaseWorkspace, releaseWorkspace, workDirOf } from "./workspaces.ts";
  */
 
 const ID = ["-c", "user.name=omem", "-c", "user.email=omem@localhost"];
-const identity = (path: string) => (git(path, ["config", "user.email"]).stdout.trim() ? [] : ID);
+export const identity = (path: string) => (git(path, ["config", "user.email"]).stdout.trim() ? [] : ID);
 const head = (path: string) => git(path, ["rev-parse", "HEAD"]).stdout.trim();
 const tipOf = (root: string, branch: string) => git(root, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`]).stdout.trim() || null;
 const ancestor = (dir: string, a: string, b: string) => git(dir, ["merge-base", "--is-ancestor", a, b]).ok;

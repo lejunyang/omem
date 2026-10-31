@@ -4,13 +4,14 @@
 
 ## 交办
 
-- `delegate_code`：编码交办，评审不通过会自动续轮。可传 `execution`（编码用的 AI）和 `review_execution`（功能评审）、`title`（一句话标题，显示在运行列表和进度卡片上）、`review_tier`（本人点名的评审档位，如“完整”）和 `review_checks`（额外加的评审项档案名），不传按改动和档位设置自动选；编码自动续轮保留这次选择。
+- `delegate_code`：编码交办。新交办按修改项推进（编码 Agent 拆成修改项、逐项提交；评审问题变成修改项自动改，提出它的评审项验证；只有业务和功能上的取舍问本人）。本人给了预算（“最多推进 3 轮”）传 `max_rounds`，没说就不传，由编码 Agent 估。可传 `execution`（编码用的 AI）和 `review_execution`（功能评审）、`title`（一句话标题，显示在运行列表和进度卡片上）、`review_tier`（本人点名的评审档位，如“完整”）和 `review_checks`（额外加的评审项档案名），不传按改动和档位设置自动选；编码自动续轮保留这次选择。
 - 同一个分支上已有没应用的交办时 `delegate_code` 拒绝（本人明确要另开时传 `parallel: true`），对这个分支的评审按 `fix_review` 修改时续在那次交办上。每轮编码前宿主先拉取目标分支在 origin 上的新提交。
 - `continue_code_run`：之后的调整（本人明确继续可到第 4 轮及以后，自动上限仍为 3 轮）。
 - 飞书进度缺失时先 `read_run` 看 `codeProgress`，经明确要求后 `retry_code_progress(run_id)` 恢复同一链原卡片，不新开编码任务。
 
 ## 进行中调整
 
+- 按修改项推进的交办里，`message_code_run` 在编码进行中照旧交给编码 Agent，其他时候记成一个修改项、马上开始下一轮；`continue_code_run` 把要求记成修改项并给一份新预算。修改项、等本人决定的问题、回退在运行页处理。
 - `message_code_run(run_id, text)`：把本人的补充交给正在编码的 Agent（它下一次调用 omem 工具时收到，最晚在这一轮检查前接着同一会话交给它；这一轮已写完代码时随下一轮的任务交付）。
 - `set_code_review(run_id, review_tier?, review_checks?, split?)` 改之后的评审：档位可以比之前轻，`review_checks` 只做这些评审项，`split: false` 不再拆需求，`rotate_models` 之后每轮各评审项换用评审设置里轮换列表的下一个模型；还没开始评审的这一轮就生效，之后的轮次沿用。
 - `revise_finding(run_id, finding_id, detail, title?, suggestion?)`：本人看不懂某条评审问题时，读相关代码（迁移也读源实现）后重写它的描述：标题说清什么情况下哪里出了什么错；正文用 Markdown 分“现在的实现 / 源实现 / 触发条件 / 问题”（小节标题单独一行、前面空一行），每点后面直接带 `[说明](路径:起-止)` 或 `[说明](src:<原件id>#L起-L止)`。评审原来的写法保留，严重级别和本人的决定不变。提交评审（`submit_review`）时也按这个写法写 `detail`。
@@ -39,7 +40,7 @@
 
 ## 评审角色专用
 
-`submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。
+`submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。按修改项推进的交办里还有：编码 Agent 的 `plan_tasks`（拆分、估轮数）、`finish_task`（说明一项做完了；没提交的改动由宿主作为这一项提交）、`report_task`（交给本人 / 有异议 / 被挡住）；评审项的 `verify_tasks`（逐项验证）；评审负责人的 `plan_review`（这次评审谁看、看什么），`rule_review` 的裁决可带 `owner`（交给本人决定的问题和选项）。
 
 ## 设备的外部 Agent 评审分支
 

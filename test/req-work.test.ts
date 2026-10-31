@@ -7,6 +7,7 @@ import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
 import { codeHere, fixedByInfo, inheritedSplit, markFindingsFixed, newerWork, reviseFinding, sameBranchWork, setFindingSuggestion, startFix, sweepRoundAsks } from "../src/agents/review-fix.ts";
 import { createAsk, getAsk } from "../src/agents/asks.ts";
+import { listTasks, taskText } from "../src/agents/code-tasks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -69,9 +70,11 @@ describe("coding seen from the requirement tree", () => {
     expect(setFindingSuggestion(app, id, f.id, "按已发货金额扣掉运费").ownerSuggestion).toBeNull();
     setFindingSuggestion(app, id, f.id, "运费按未发货金额占比退，不是扣掉已发货的");
 
-    // The next round acts on the owner's version only.
+    // The next round acts on the owner's version only: the finding is a task whose text carries it.
     const next = await startFix(app, id, { findingIds: [f.id] }, OWNER);
-    const task = String((next.input as { task: string }).task);
+    const fixTask = listTasks(app, id).find((x) => x.origin.findings?.includes(f.id))!;
+    const task = taskText(app, fixTask);
+    expect(fixTask.doneWhen).toBe("运费按未发货金额占比退，不是扣掉已发货的");
     expect(task).toContain("建议（本人改写，以此为准）：运费按未发货金额占比退");
     expect(task).not.toContain("按已发货金额扣掉运费");
     expect(next.spaceId).toBe("shop");

@@ -1115,6 +1115,55 @@ const migrations: string[] = [
   `alter table review_findings add column fixed_by text;`,
   // A finding's first wording after it was re-described (review-fix.ts reviseFinding).
   `alter table review_findings add column revised text;`,
+  // A delegation driven by tasks instead of rounds (docs/v2/coding-loop.md): each task has its own
+  // commits and verification; checkpoints record the work branch after each round of coding.
+  `create table code_tasks (
+     id integer primary key autoincrement,
+     work_id text not null references runs(id) on delete cascade,
+     seq integer not null,
+     title text not null,
+     done_when text not null default '',
+     kind text not null,
+     origin text not null default '{}',
+     state text not null,
+     question text,
+     options text,
+     answer text,
+     verifier text,
+     coder_run text,
+     attempts integer not null default 0,
+     reverts integer not null default 0,
+     commits text not null default '{}',
+     checkpoint integer,
+     notes text not null default '[]',
+     created_by text not null,
+     created_at text not null,
+     updated_at text not null,
+     unique(work_id, seq)
+   );
+   create table code_checkpoints (
+     work_id text not null references runs(id) on delete cascade,
+     seq integer not null,
+     heads text not null,
+     tasks text not null default '[]',
+     by text not null,
+     label text not null default '',
+     created_at text not null,
+     primary key (work_id, seq)
+   );
+   alter table review_findings add column task_id integer;`,
+  // Tasks travel between devices like findings (core/pull-data.ts): a portable identity and revision.
+  `alter table code_tasks add column sync_key text not null default '';
+   alter table code_tasks add column sync_updated_at text not null default '';
+   update code_tasks set sync_key = lower(hex(randomblob(16))), sync_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+   create unique index code_tasks_sync on code_tasks(sync_key) where sync_key != '';
+   create trigger code_tasks_sync_insert after insert on code_tasks when new.sync_key = '' begin
+     update code_tasks set sync_key = lower(hex(randomblob(16))), sync_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where rowid = new.rowid;
+   end;
+   create trigger code_tasks_sync_update after update on code_tasks
+     when new.sync_key = old.sync_key and new.sync_updated_at = old.sync_updated_at begin
+     update code_tasks set sync_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where rowid = new.rowid;
+   end;`,
 ];
 
 export type Db = DatabaseSync;

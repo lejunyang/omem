@@ -1172,10 +1172,93 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     discardCodeRun(app, (req.params as { id: string }).id);
     return { ok: true };
   });
+  // ---- delegations driven by tasks (docs/v2/coding-loop.md; agents/code-tasks.ts, code-loop.ts)
+  server.get("/api/runs/:id/tasks", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const t = await import("../agents/code-tasks.ts");
+    if (!t.isTaskWork(app, id)) return { taskMode: false };
+    const rootId = t.workRootOf(app, id);
+    const last = t.lastRound(app, rootId);
+    const w = t.workState(app, rootId);
+    return {
+      taskMode: true, rootId, tasks: t.listTasks(app, rootId), checkpoints: t.listCheckpoints(app, rootId),
+      work: { budget: w.budget, budgetBy: w.budgetBy ?? null, until: w.until, round: Number(last.input.round ?? 1), lastRunId: last.id, paused: w.paused ?? null, viewed: w.viewed?.[who(req)] ?? 0, status: last.status, verdict: last.output.verdict ?? null, stage: last.output.reviewStage ?? null, reverts: (w.reverts ?? []).map((r) => r.seq), max: app.config.agents.autoAdvance.codeRoundsMax },
+    };
+  });
+  // The owner adds a task: it is coded in the next round (now, when nothing is running).
+  server.post("/api/runs/:id/tasks", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({ title: z.string().trim().min(1).max(200), detail: z.string().max(8000).optional() }), req.body);
+    const t = await import("../agents/code-tasks.ts");
+    if (!t.isTaskWork(app, id)) throw new HttpError(400, "这次交办不是按修改项推进的");
+    const rootId = t.workRootOf(app, id);
+    const task = t.addTask(app, rootId, { title: b.title, doneWhen: b.detail?.trim() ?? "", kind: "owner", origin: { note: b.detail?.trim() || b.title } }, who(req));
+    const next = await (await import("../agents/code-loop.ts")).advanceWork(app, rootId, { owner: true });
+    return { task, next: next?.id ?? null };
+  });
+  server.post("/api/runs/:id/tasks/:seq", async (req) => {
+    const { id, seq: raw } = req.params as { id: string; seq: string };
+    ownRun(req, id);
+    const b = q(z.object({ action: z.enum(["answer", "skip", "reopen", "wontdo", "revert"]), choice: z.string().max(200).nullable().optional(), text: z.string().max(8000).optional(), redo: z.boolean().optional() }), req.body);
+    const t = await import("../agents/code-tasks.ts");
+    const loop = await import("../agents/code-loop.ts");
+    if (!t.isTaskWork(app, id)) throw new HttpError(400, "这次交办不是按修改项推进的");
+    const rootId = t.workRootOf(app, id);
+    const seq = t.parseTaskRef(raw);
+    const task = t.getTask(app, rootId, seq);
+    const by = who(req);
+    let next: { id: string } | null = null;
+    if (b.action === "answer" || b.action === "skip") next = await loop.answerTask(app, rootId, seq, { choice: b.choice ?? null, text: b.text ?? null, skip: b.action === "skip" }, by);
+    else if (b.action === "wontdo") {
+      if (!b.text?.trim()) throw new HttpError(400, "不做要写一句理由");
+      if (["done", "wontdo", "reverted"].includes(task.state)) throw new HttpError(409, `${t.taskLabel(seq)} 已经是「${t.TASK_STATE_LABEL[task.state]}」`);
+      t.updateTask(app, rootId, seq, { state: "wontdo", answer: b.text.trim() }, { by, kind: "owner", text: `本人决定不做：${b.text.trim()}` });
+      loop.closeTaskAsk(app, rootId, seq);
+      next = await loop.advanceWork(app, rootId, { owner: true });
+    } else if (b.action === "reopen") {
+      if (!["done", "wontdo", "reverted"].includes(task.state)) throw new HttpError(409, `${t.taskLabel(seq)} 还没结束，不用重开`);
+      t.updateTask(app, rootId, seq, { state: "todo", attempts: 0 }, { by, kind: "owner", text: `本人要求重做${b.text?.trim() ? `：${b.text.trim()}` : ""}` });
+      next = await loop.advanceWork(app, rootId, { owner: true });
+    } else {
+      t.scheduleRevert(app, rootId, seq, b.text?.trim() || "本人要求回退", by, { redo: b.redo ?? false });
+      next = await loop.advanceWork(app, rootId, { owner: true });
+    }
+    return { task: t.getTask(app, rootId, seq), next: next?.id ?? null };
+  });
+  server.post("/api/runs/:id/work", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({ paused: z.boolean().optional(), viewed: z.number().int().min(0).optional() }), req.body);
+    const t = await import("../agents/code-tasks.ts");
+    if (!t.isTaskWork(app, id)) throw new HttpError(400, "这次交办不是按修改项推进的");
+    const rootId = t.workRootOf(app, id);
+    let next: { id: string } | null = null;
+    if (b.viewed !== undefined) t.setWorkState(app, rootId, { viewed: { ...(t.workState(app, rootId).viewed ?? {}), [who(req)]: b.viewed } });
+    if (b.paused === true) t.setWorkState(app, rootId, { paused: "owner" });
+    if (b.paused === false) {
+      t.setWorkState(app, rootId, { paused: null });
+      next = await (await import("../agents/code-loop.ts")).advanceWork(app, rootId, { owner: true });
+    }
+    return { work: t.workState(app, rootId), next: next?.id ?? null };
+  });
+  // One task's change, a stretch between checkpoints, or everything since the viewer last looked.
+  server.get("/api/runs/:id/task-diff", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const o = q(z.object({ tasks: z.string().regex(/^[\dTt, ]+$/).optional(), from: z.coerce.number().int().min(0).optional(), to: z.coerce.number().int().min(0).optional(), since: z.enum(["viewed"]).optional() }), req.query);
+    const t = await import("../agents/code-tasks.ts");
+    if (!t.isTaskWork(app, id)) throw new HttpError(400, "这次交办不是按修改项推进的");
+    const rootId = t.workRootOf(app, id);
+    const tasks = o.tasks ? o.tasks.split(/[,\s]+/).filter(Boolean).map((x) => t.parseTaskRef(x)) : undefined;
+    const { worktreesOf } = await import("../agents/code.ts");
+    return { patches: t.workPatches(app, rootId, worktreesOf(app, rootId), { tasks, from: o.from, to: o.to, since: o.since, userId: who(req) }) };
+  });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
     const sync = z.object({ pull: z.boolean().optional(), onto: z.string().optional(), mode: z.enum(["merge", "rebase"]).optional(), fetch: z.boolean().optional() });
-    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional(), branch: z.string().trim().max(200).optional(), itemId: z.string().optional(), sync: sync.optional(), syncOnly: z.boolean().optional(), parallel: z.boolean().optional() }), req.body);
+    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), maxRounds: z.number().int().min(1).max(50).optional(), fromBranch: z.string().optional(), branch: z.string().trim().max(200).optional(), itemId: z.string().optional(), sync: sync.optional(), syncOnly: z.boolean().optional(), parallel: z.boolean().optional() }), req.body);
     if (b.sync && !b.sync.pull && !b.sync.onto) throw new HttpError(400, "同步要选拉取或合并 / 变基到哪个分支");
     const userId = who(req);
     const s = getSpace(app, b.space);
@@ -1190,7 +1273,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办「${open.title}」（${open.id}），在它上面接着改，或者先确认 / 丢弃它`);
     }
     if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
-    const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}) }, userId });
+    const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(!b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(b.maxRounds ? { maxRounds: b.maxRounds } : {}) } : {}) }, userId });
     if (b.itemId) linkRunToItem(app, r, b.itemId, userId);
     return r;
   });
@@ -1340,6 +1423,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     ownRun(req, id);
     const b = q(z.object({ text: z.string().min(1).max(20000) }), req.body);
+    const { isTaskWork } = await import("../agents/code-tasks.ts");
+    if (isTaskWork(app, id)) {
+      const made = (await import("../agents/code-loop.ts")).ownerNote(app, id, b.text, who(req));
+      if (made) return { runId: made.next?.id ?? id, stage: "task", task: made.task };
+    }
     const { addCodeNote } = await import("../agents/code-steer.ts");
     return addCodeNote(app, id, b.text, who(req));
   });

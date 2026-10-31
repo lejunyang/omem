@@ -29,6 +29,10 @@ const STOP: Record<string, string> = {
   "not-converging": "这一轮要改的问题不比上一轮少，修改没有收敛",
   stalemate: "同一个问题连续两轮修改后仍被报出",
   escalated: "评审负责人判断是需求或方案上的分歧",
+  // A delegation driven by tasks (CodeTasks shows the details).
+  owner: "剩下的修改项等你决定，其余已做完",
+  budget: "自动推进的轮数用完了",
+  paused: "已暂停",
 };
 const rv = props.rv;
 const current = rv.current;

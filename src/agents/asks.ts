@@ -203,6 +203,14 @@ export function cancelHostAsks(app: App, runId: string, handler: string | string
   for (const a of open) closed(app, { ...a, status: "cancelled" });
 }
 
+/** One ask settled some other way (its task was decided on the web): the card stops taking answers. */
+export function cancelAsk(app: App, id: string) {
+  const r = one<Row>(app.db, "select * from asks where id = ? and status = 'pending'", id);
+  if (!r) return;
+  run(app.db, "update asks set status = 'cancelled', answered_at = ? where id = ?", now(), id);
+  closed(app, { ...toAsk(r), status: "cancelled" });
+}
+
 function cancelOpen(app: App, conversationId: string, kind: AskKind) {
   const open = all<Row>(app.db, "select * from asks where conversation_id = ? and kind = ? and status = 'pending'", conversationId, kind).map(toAsk);
   if (!open.length) return;

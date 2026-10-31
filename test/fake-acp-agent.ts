@@ -69,7 +69,7 @@ new AgentSideConnection(
     async initialize() {
       return {
         protocolVersion: 1,
-        agentCapabilities: { mcpCapabilities: { http: false }, sessionCapabilities: { ...(threadMode || echo ? { resume: {} } : {}), ...(process.env.FAKE_DELETE_LOG ? { delete: {} } : {}), ...(takesSystem ? { systemPrompt: {} } : {}) } },
+        agentCapabilities: { mcpCapabilities: { http: false }, sessionCapabilities: { ...(threadMode || echo || process.env.FAKE_MODE === "tasks" ? { resume: {} } : {}), ...(process.env.FAKE_DELETE_LOG ? { delete: {} } : {}), ...(takesSystem ? { systemPrompt: {} } : {}) } },
         agentInfo: { name: "fake-agent", version: "1" },
       } as never;
     },
@@ -92,8 +92,9 @@ new AgentSideConnection(
       if (p.configId === "model") state.model = String(p.value);
       return { configOptions: traeOptions(state.model) } as never;
     },
-    async resumeSession(p: { sessionId: string; mcpServers?: McpServer[] }) {
+    async resumeSession(p: { sessionId: string; mcpServers?: McpServer[]; cwd?: string }) {
       sessions.set(p.sessionId, p.mcpServers ?? []);
+      if (p.cwd) cwds.set(p.sessionId, p.cwd);
       resumed.add(p.sessionId);
       return { modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] }, ...(trae ? { configOptions: traeOptions(state.model) } : {}) } as never;
     },
@@ -136,6 +137,75 @@ new AgentSideConnection(
           if (planner) await call("submit_plan", { pages: [{ slug: "overview", title: "概览", kind: "guide", question: "如何开始？", outline: "以示例说明", entry_points: ["materials:README.md"] }] });
           const written = await call("write_page", { page: planner ? "index" : "overview", title: planner ? "目录" : "概览", kind: planner ? "index" : "guide", summary: "示例说明", body: planner ? "- [[overview|概览]]" : "示例正文" });
           await say(JSON.stringify({ prompt, read, blockedRead, blockedWrite, written }));
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
+      // FAKE_MODE=tasks: a delegation driven by tasks (code-loop.ts). The coder splits the work, commits
+      // each task with its Omem-Task line and says it is done; review-lead plans the review and rules
+      // (the business finding is fixed without the owner, the naming nit goes to the owner); the
+      // business check finds that its fix broke something the first time (so it is reverted and redone).
+      if (process.env.FAKE_MODE === "tasks") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-tasks", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        const call = async (name: string, args: Record<string, unknown>) => {
+          const r = await client.callTool({ name, arguments: args });
+          if (process.env.FAKE_TOOL_LOG) appendFileSync(process.env.FAKE_TOOL_LOG, JSON.stringify({ name, args, error: r.isError ? r.content : null }) + "\n");
+          return r;
+        };
+        try {
+          if (prompt.includes("只输出一个 JSON")) { await say("{}"); return { stopReason: "end_turn" as const }; }
+          if (prompt.includes("# 决定这次评审看什么")) {
+            await call("plan_review", { checks: [{ name: "reviewer", focus: "退款金额的边界" }, { name: "review-business", focus: "已发货的行" }], skipped: [{ name: "review-style", reason: "没有新增文件" }], summary: "改的是退款计算，功能和业务各看一遍" });
+            await say("计划好了");
+            return { stopReason: "end_turn" as const };
+          }
+          if (prompt.includes("你这次只做需求拆分")) {
+            await call("submit_change_points", { change_points: [{ id: "C1", title: "只退未发货的行", status: "done", locations: [{ file: "refund.ts" }] }] });
+            await say("拆分完成");
+            return { stopReason: "end_turn" as const };
+          }
+          const leadRound = /你在裁决第 (\d+) 轮/.exec(prompt)?.[1];
+          if (leadRound) {
+            const ids = [...prompt.matchAll(/- #(\d+) \[([^\]]+)\] (?:\S+ )?([^\n]+)/g)].map((m) => ({ id: Number(m[1]), tag: m[2], title: m[3] }));
+            const rulings = ids.map((x) => x.title.includes("命名") ? { id: x.id, decision: "accept", owner: { question: "退款函数要不要统一改名成 refundable？", options: ["改名", "保持现状"] } } : { id: x.id, decision: "accept" });
+            await call("rule_review", { rulings, verdict: rulings.length ? "revise" : "approve", summary: rulings.length ? "业务问题直接改，命名问本人" : "没有要改的" });
+            await say("裁决完成");
+            return { stopReason: "end_turn" as const };
+          }
+          if (prompt.includes("# 验证修改项")) {
+            const tasks = [...prompt.matchAll(/^### T(\d+) (.+)$/gm)].map((m) => ({ seq: Number(m[1]), title: m[2] }));
+            const results = tasks.map((t) => t.title.includes("已发货行不能退") && !prompt.includes("改出了新问题") ? { task: `T${t.seq}`, verdict: "regressed", note: "过滤写反了，未发货的行也被去掉了" } : { task: `T${t.seq}`, verdict: "fixed" });
+            await call("verify_tasks", { results });
+            await say("验证完成");
+            return { stopReason: "end_turn" as const };
+          }
+          const check = /你负责的评审项：(\S+)/.exec(prompt)?.[1];
+          if (check) {
+            const later = prompt.includes("上次评审以后");
+            const findings = later ? [] : check === "业务" ? [{ severity: "major", file: "refund.ts", line: 1, title: "已发货行不能退", suggestion: "过滤已发货行" }] : [{ severity: "nit", title: "命名可以更具体" }];
+            await call("submit_review", { verdict: findings.length ? "changes_requested" : "approved", summary: `${check}评审`, findings });
+            await say(`结论：${findings.length ? "需要修改" : "通过"}`);
+            return { stopReason: "end_turn" as const };
+          }
+          // The coder: split first if asked, then each task in its own commit.
+          const cwd = cwds.get(p.sessionId)!;
+          const commit = (seq: number, line: string) => {
+            appendFileSync(join(cwd, "refund.ts"), `${line}\n`);
+            execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qam", `T${seq} 的改动\n\nOmem-Task: T${seq}`], { cwd });
+          };
+          let seqs: number[] = [];
+          if (prompt.includes("先用 `plan_tasks` 拆分")) {
+            const made = await call("plan_tasks", { tasks: [{ title: "退款只算未发货的行", done_when: "已发货的行不计入退款" }, { title: "补退款测试", done_when: "有覆盖已发货行的测试" }], rounds: 6 });
+            seqs = [...String((made.content as { text: string }[])[0].text).matchAll(/T(\d+) /g)].map((m) => Number(m[1]));
+          } else seqs = [...prompt.matchAll(/^### T(\d+) /gm)].map((m) => Number(m[1]));
+          for (const seq of [...new Set(seqs)]) {
+            // The test task is left uncommitted, as a sandbox that cannot write Git would: finish_task commits it.
+            if (seq === 2 && prompt.includes("先用 `plan_tasks` 拆分")) appendFileSync(join(cwd, "refund.test.ts"), "// 已发货的行不退\n");
+            else commit(seq, `export const t${seq} = ${Date.now() % 1000};`);
+            await call("finish_task", { task: `T${seq}`, summary: `做完了 T${seq}，跑了测试` });
+          }
+          await say(`做完了 ${seqs.map((n) => `T${n}`).join("、")}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }

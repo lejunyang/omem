@@ -143,7 +143,8 @@ export function defaultReviewSettings() {
 
 // ---- planning ----------------------------------------------------------------------------------
 
-export type ReviewPlan = { tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics; lead?: boolean; confirmPlan?: boolean; rotateModels?: boolean };
+/** `focus`: what review-lead asked each check to look at this time (a delegation driven by tasks, code-loop.ts). */
+export type ReviewPlan = { tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics; lead?: boolean; confirmPlan?: boolean; rotateModels?: boolean; focus?: Record<string, string> };
 
 /**
  * The AI a check uses in a round when its tier (or the owner, `roundReview.rotate`) rotates models:
@@ -416,6 +417,8 @@ export type LeadResult = {
   changeRequest: string;
   rerun: string[];
   escalation?: { summary: string; options: string[] };
+  /** Accepted findings the owner has to decide (business or product choices), by finding id. */
+  owner?: Record<string, { question: string; options: string[] }>;
   stop?: StopReason;
   by: "lead" | "host";
 };

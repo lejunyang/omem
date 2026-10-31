@@ -5,6 +5,7 @@ import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import Skeleton from "./Skeleton.vue";
 import ReviewSummary from "./ReviewSummary.vue";
+import CodeTasks from "./CodeTasks.vue";
 import ChangeView from "./ChangeView.vue";
 import ReviewChecks from "./ReviewChecks.vue";
 import ReviewProcess from "./ReviewProcess.vue";
@@ -196,6 +197,7 @@ function explain(p: ChangePoint) {
       </nav>
 
       <template v-if="hasReview">
+        <CodeTasks v-if="tab === 'overview' && !branchReview" :key="`tasks:${run.id}`" :run-id="run.id" />
         <ReviewSummary v-if="tab === 'overview'" :key="run.id" :rv="rv" :run-id="run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" stay data-ask-label="评审" @ask="ask" @go="(t) => (tab = t)" @started="(id) => emit('open', id)" @open="(id) => emit('open', id)" />
         <template v-else-if="tab === 'req' && focus">
           <section class="card pad req">

@@ -82,8 +82,13 @@ export function loadRole(name: string, app?: App): Role {
  * about items, wake-ups or how to write memories).
  */
 export function commonGuide(tools: Set<string>) {
-  const text = readFileSync(join(rolesDir(), "_common.md"), "utf8").replace(/\r\n/g, "\n");
+  return toolSections(readFileSync(join(rolesDir(), "_common.md"), "utf8"), tools);
+}
+
+/** A guide without its sections about tools this run does not have (roles may have such sections too). */
+export function toolSections(text: string, tools: Set<string>) {
   return text
+    .replace(/\r\n/g, "\n")
     .split(/(?=^## )/m)
     .flatMap((part) => {
       const m = /^(## [^\n]*\n)<!-- tools: ([^>]*?) -->\n/.exec(part);
@@ -237,6 +242,8 @@ export type RoleRunInput = {
   lark?: LarkAccess;
   /** Running as a review check of a delegation: read-only tools plus submit_review, no writes or extra MCP. */
   reviewCheck?: boolean;
+  /** Hand-in tools this run gets on top of its role's (and after a review run is cut to read-only): a task-driven delegation's plan_tasks, verify_tasks… */
+  addTools?: string[];
   /** Running as review-lead of a delegation round: read-only tools plus rule_review. */
   reviewLead?: boolean;
   /** A replay arm (agents/replay.ts): what it sees and the only tools it gets. */
@@ -328,7 +335,7 @@ export function recordRunAI(app: App, runId: string | null, profile: AgentProfil
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; reviewLead?: boolean; lessons?: string; replay?: ReplayArm },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; replay?: ReplayArm },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -373,6 +380,7 @@ export function prepareRun(
     tools.add(input.reviewLead ? "rule_review" : "submit_review");
     if (input.reviewCheck) tools.add("submit_change_points");
   }
+  for (const t of input.addTools ?? []) tools.add(t);
   // A replay arm reads and nothing else, whatever its role or profile may do elsewhere.
   if (input.replay) for (const t of [...tools]) if (!input.replay.tools.includes(t)) tools.delete(t);
   const spaces =
@@ -395,7 +403,7 @@ export function prepareRun(
   const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
-    : `# 角色：${role!.description}\n\n${role!.body}`;
+    : `# 角色：${role!.description}\n\n${toolSections(role!.body, tools)}`;
   const common = commonGuide(tools);
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
@@ -523,7 +531,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const lessons = await lessonsForTask(app, input);
-  const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead, replay: input.replay });
+  const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
@@ -548,7 +556,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     const moved = slot.index > 0;
     i += slot.index;
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead, replay: input.replay });
+    const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay });
     if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
     try {
       const req = {
