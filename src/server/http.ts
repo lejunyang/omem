@@ -956,14 +956,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const states = reqStatuses(app, nodes.map((n) => n.id));
     const links = all<{ node: string; n: number }>(app.db, `select node, count(*) n from (select from_id node from req_links union all select to_id node from req_links) where node in (select id from req_nodes where space_id = ?) group by node`, spaceId);
     const linkCount = new Map(links.map((l) => [l.node, l.n]));
-    return { nodes: nodes.map((n) => ({ ...n, state: states.get(n.id) ?? null, links: linkCount.get(n.id) ?? 0 })) };
+    const work = (await import("../items/work.ts")).reqWorkMarks(app, spaceId, who(req));
+    return { nodes: nodes.map((n) => ({ ...n, state: states.get(n.id) ?? null, links: linkCount.get(n.id) ?? 0, work: work.get(n.id) ?? null })) };
   });
   server.get("/api/requirements/:id", async (req) => {
     const { reqDetail } = await import("../items/requirements.ts");
     const d = reqDetail(app, (req.params as { id: string }).id);
     readableSpace(req, d.node.spaceId);
     const allowed = accessibleSpaces(app, who(req));
-    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)) };
+    // The delegations and branch reviews done for the items this node belongs to (items/work.ts).
+    const work = (await import("../items/work.ts")).reqWork(app, d.node.id, who(req));
+    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)), work };
   });
   server.post("/api/requirements", async (req) => {
     const { reqOpSchema, saveReqs } = await import("../items/requirements.ts");
@@ -1256,6 +1259,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ decision: z.enum(["fix", "later", "wontfix"]).nullable(), note: z.string().max(2000).optional() }), req.body);
     const { setFindingDecision } = await import("../agents/review-fix.ts");
     return setFindingDecision(app, p.id, Number(p.fid), b.decision, b.note);
+  });
+  // The owner's rewrite of a finding's suggestion (empty: back to the reviewer's).
+  server.put("/api/runs/:id/findings/:fid/suggestion", async (req) => {
+    const p = req.params as { id: string; fid: string };
+    ownRun(req, p.id);
+    const b = q(z.object({ text: z.string().max(8000) }), req.body);
+    const { setFindingSuggestion } = await import("../agents/review-fix.ts");
+    return setFindingSuggestion(app, p.id, Number(p.fid), b.text);
   });
   // Split the requirement into change points for a review that has none (an earlier review), or
   // rework the split it has by the owner's note.

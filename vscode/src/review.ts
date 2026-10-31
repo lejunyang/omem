@@ -91,7 +91,7 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
     // The thread's title already names it (number, severity, title, decision); the comment, under
     // the check's name, is what the reviewer said about it.
     const body = new vscode.MarkdownString(
-      [f.detail, f.suggestion && `**建议**：${f.suggestion}`, f.triage_note && `**评审负责人**：${f.triage_note}`]
+      [f.detail, f.owner_suggestion ? `**建议（你改过）**：${f.owner_suggestion}` : f.suggestion && `**建议**：${f.suggestion}`, f.triage_note && `**评审负责人**：${f.triage_note}`]
         .filter(Boolean)
         .join("\n\n") || f.title,
     );
@@ -317,7 +317,7 @@ export class FindingItem extends vscode.TreeItem {
     const f = ft.finding;
     super(`#${f.id} ${f.title}`, vscode.TreeItemCollapsibleState.None);
     this.description = `${SEVERITY[f.severity]} · ${f.decision ? DECISION[f.decision] : "未定"}${f.file_path ? ` · ${f.file_path}${f.line ? `:${f.line}` : ""}` : ""}`;
-    this.tooltip = new vscode.MarkdownString([`**${f.title}**`, f.detail, f.suggestion && `建议：${f.suggestion}`, `— ${ft.check}`].filter(Boolean).join("\n\n"));
+    this.tooltip = new vscode.MarkdownString([`**${f.title}**`, f.detail, (f.owner_suggestion || f.suggestion) && `建议：${f.owner_suggestion || f.suggestion}`, `— ${ft.check}`].filter(Boolean).join("\n\n"));
     this.iconPath = new vscode.ThemeIcon(f.decision ? DECISION_ICON[f.decision] : f.severity === "blocker" || f.severity === "major" ? "warning" : "info");
     this.contextValue = f.decision ? `finding-${f.decision}` : "finding";
     if (ft.uri) this.command = { command: "omem.reveal", title: "转到代码", arguments: [ft.uri, Math.max(0, (f.line ?? 1) - 1), ft.thread] };

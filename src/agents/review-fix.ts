@@ -46,6 +46,21 @@ export function setFindingDecision(app: App, runId: string, findingId: number, d
   return { id: findingId, decision, note: decision ? note.trim() : "" };
 }
 
+/**
+ * The owner rewrites a finding's suggestion so the coder does not misread the reviewer's: the
+ * original stays, the next round gets the owner's version. An empty text goes back to the original.
+ * A finding nobody decided on yet is then one to fix.
+ */
+export function setFindingSuggestion(app: App, runId: string, findingId: number, text: string) {
+  const f = findingOf(app, workRuns(app, runId), findingId);
+  if (!f) throw new HttpError(404, `问题 #${findingId} 不属于这次交办或评审`);
+  const t = text.trim();
+  run(app.db, "update review_findings set owner_suggestion = ? where id = ?", t && t !== f.suggestion.trim() ? t : null, findingId);
+  if (t && !f.decision) run(app.db, "update review_findings set decision = 'fix', decision_note = '' where id = ?", findingId);
+  const after = one<{ owner_suggestion: string | null; decision: Decision | null }>(app.db, "select owner_suggestion, decision from review_findings where id = ?", findingId)!;
+  return { id: findingId, ownerSuggestion: after.owner_suggestion, decision: after.decision };
+}
+
 /** Findings the owner chose not to change now or at all, across the given work. */
 export function ownerDecisions(app: App, runIds: string[]) {
   if (!runIds.length) return [];
@@ -108,7 +123,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     chosen.length ? `本人从评审（运行 ${runs[0]}）里选定要改的问题：\n\n${chosen.map((f, i) => [
       `${i + 1}. [${SEVERITY_LABEL[f.severity]}] ${f.title}${where(f) ? ` — ${where(f)}` : ""}`,
       f.detail && `   问题：${truncate(f.detail, 1500)}`,
-      f.suggestion && `   建议：${truncate(f.suggestion, 1000)}`,
+      f.owner_suggestion?.trim() ? `   建议（本人改写，以此为准）：${truncate(f.owner_suggestion.trim(), 2000)}` : f.suggestion && `   建议：${truncate(f.suggestion, 1000)}`,
       f.triage_note && `   评审负责人：${f.triage_note}`,
     ].filter(Boolean).join("\n")).join("\n")}` : "",
     req.text?.trim() ? `## 本人补充的要求\n\n${req.text.trim()}` : "",

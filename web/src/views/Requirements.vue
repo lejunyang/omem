@@ -8,6 +8,7 @@ import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
+import WorkPane from "../components/WorkPane.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { fmtTime, relTime, state, toast } from "../store";
 
@@ -19,14 +20,21 @@ import { fmtTime, relTime, state, toast } from "../store";
  */
 type Kind = "system" | "module" | "page" | "feature" | "test";
 type State = { runId: string; round: number; status: string; locations: { file: string; start?: number; end?: number }[]; note: string; at: string };
-type Node = { id: string; spaceId: string; parentId: string | null; kind: Kind; title: string; body: string; acceptance: string; refs: string[]; tests: { file?: string; name?: string }[]; confirmed: boolean; status: "active" | "deleted" | "removed"; version: number; createdBy: string; updatedAt: string; depth: number; state: State | null; links: number };
+type Node = { id: string; spaceId: string; parentId: string | null; kind: Kind; title: string; body: string; acceptance: string; refs: string[]; tests: { file?: string; name?: string }[]; confirmed: boolean; status: "active" | "deleted" | "removed"; version: number; createdBy: string; updatedAt: string; depth: number; state: State | null; links: number; work: { total: number; waiting: number } | null };
 type Version = { id: string; version: number; change: string; title: string; reason: string; sourceRefs: string[]; by: string; runId: string | null; at: string };
 type Link = { id: string; direction: "in" | "out"; note: string; other: { id: string; spaceId: string; kind: Kind; title: string; status: string } | null };
-type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null };
+// A delegation or branch review done for an item this node belongs to (src/items/work.ts).
+type WorkStage = "coding" | "reviewing" | "peer" | "owner" | "done" | "applied" | "discarded";
+type Work = { itemId: string; itemTitle: string; rootId: string; latestId: string; title: string; rounds: string[]; status: string; verdict: string | null; stage: WorkStage; branchReview: boolean; branch: string | null; open: number; createdAt: string; updatedAt: string };
+type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; work: Work[] };
 
 const KIND: Record<Kind, string> = { system: "系统", module: "模块", page: "页面", feature: "功能", test: "测试点" };
 const CHANGE: Record<string, string> = { create: "新建", correct: "更正", change: "业务变更", delete: "删除（写错了）", remove: "移除（业务不要了）", confirm: "本人确认", restore: "恢复" };
 const STATE: Record<string, { text: string; cls: string }> = { done: { text: "已实现", cls: "ok" }, partial: { text: "部分实现", cls: "warn" }, missing: { text: "没实现", cls: "danger" }, extra: { text: "需求外", cls: "" } };
+const STAGE: Record<WorkStage, { text: string; cls: string }> = { coding: { text: "编码中", cls: "" }, reviewing: { text: "评审中", cls: "" }, peer: { text: "等外部 Agent", cls: "" }, owner: { text: "等你处理", cls: "accent" }, done: { text: "已评审", cls: "ok" }, applied: { text: "已应用", cls: "ok" }, discarded: { text: "已丢弃", cls: "" } };
+// What the owner is waiting on, from the latest round's verdict.
+const OWNER_WHAT: Record<string, string> = { "awaiting-plan": "确认评审计划", "changes-requested": "决定要改的问题", approved: "评审通过，可以应用", "sync-conflict": "同步有冲突", "no-changes": "没有改动" };
+const ownerWhat = (w: Work) => (w.status === "failed" ? "运行失败" : (w.verdict && OWNER_WHAT[w.verdict]) || "看结果");
 const CHILD_KINDS: Record<Kind | "root", Kind[]> = { root: ["system", "module", "page", "feature"], system: ["module", "page", "feature"], module: ["module", "page", "feature"], page: ["feature"], feature: ["feature", "test"], test: ["test"] };
 
 const route = useRoute();
@@ -36,13 +44,24 @@ const loading = ref(true);
 const showRemoved = ref(false);
 const detail = ref<Detail | null>(null);
 const selectedId = computed(() => (route.params.id as string | undefined) || "");
+// A delegation opened inside the page (`?work=<run>`): its overview replaces the node's detail.
+const workId = computed(() => (typeof route.query.work === "string" ? route.query.work : ""));
+const openWork = (runId: string) => router.push({ path: `/reqs/${selectedId.value}`, query: { work: runId } });
+const closeWork = () => router.push(`/reqs/${selectedId.value}`);
+const live = computed(() => (detail.value?.work ?? []).filter((w) => w.stage !== "applied" && w.stage !== "discarded"));
+const past = computed(() => (detail.value?.work ?? []).filter((w) => w.stage === "applied" || w.stage === "discarded"));
+const showPast = ref(false);
+const openedWork = computed(() => detail.value?.work.find((w) => w.rounds.includes(workId.value)) ?? null);
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 const pending = computed(() => nodes.value.filter((n) => !n.confirmed && n.status === "active").length);
+const waiting = computed(() => nodes.value.reduce((t, n) => t + (n.work?.waiting ?? 0), 0));
+const waitingOnly = ref(false);
 
 async function loadTree() {
-  loading.value = true;
+  const before = nodes.value.length && nodes.value[0].spaceId === state.space;
+  // A refresh of the same tree keeps it on screen.
+  if (!before) loading.value = true;
   try {
-    const before = nodes.value.length && nodes.value[0].spaceId === state.space;
     nodes.value = (await get<{ nodes: Node[] }>(`/api/requirements?space=${encodeURIComponent(state.space)}${showRemoved.value ? "&removed=1" : ""}`)).nodes;
     if (!before) loadFolds();
   } catch (e) {
@@ -73,7 +92,13 @@ watch(selectedId, () => {
   editing.value = null;
   void loadDetail();
 });
+let workTimer: ReturnType<typeof setTimeout> | undefined;
 onServerEvent((e) => {
+  // A round or review of this node's work changed (or a new round was queued): stages and marks follow.
+  if (e.type === "run" && detail.value?.work.length && (detail.value.work.some((w) => w.rounds.includes(e.runId)) || e.status === "queued" || e.status === "done")) {
+    clearTimeout(workTimer);
+    workTimer = setTimeout(() => void Promise.all([loadDetail(), loadTree()]), 800);
+  }
   if (e.type === "changed" && (e as { entity?: string }).entity === "requirement") {
     void loadTree();
     if ((e as { id?: string }).id === selectedId.value) void loadDetail();
@@ -121,8 +146,8 @@ function foldAll(fold: boolean) {
 // Searching: matches and the path down to them, regardless of folding.
 const terms = computed(() => query.value.trim().toLowerCase().split(/\s+/).filter(Boolean));
 const matches = computed(() => {
-  if (!terms.value.length) return null;
-  const hit = new Set(nodes.value.filter((n) => terms.value.every((t) => `${n.title}\n${n.body}\n${n.acceptance}\n${n.id}`.toLowerCase().includes(t))).map((n) => n.id));
+  if (!terms.value.length && !waitingOnly.value) return null;
+  const hit = new Set(nodes.value.filter((n) => (!waitingOnly.value || n.work?.waiting) && terms.value.every((t) => `${n.title}\n${n.body}\n${n.acceptance}\n${n.id}`.toLowerCase().includes(t))).map((n) => n.id));
   return hit;
 });
 const visible = computed(() => {
@@ -257,6 +282,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           <button class="btn ghost sm" type="button" :disabled="!!matches" @click="foldAll(false)">全部展开</button>
           <button class="btn ghost sm" type="button" :disabled="!!matches" @click="foldAll(true)">收起</button>
         </div>
+        <UiCheckbox v-if="waiting || waitingOnly" v-model="waitingOnly" size="sm">只看等你处理的编码（{{ waiting }}）</UiCheckbox>
         <div v-if="pending || matches" class="row muted small">
           <span v-if="matches">{{ matches.size }} 个匹配</span>
           <span v-if="pending" class="badge accent">{{ pending }} 个待确认</span>
@@ -273,6 +299,8 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
             <span class="t ellipsis" :title="n.title">{{ n.title }}</span>
             <span v-if="!n.confirmed && n.status === 'active'" class="dot" title="待本人确认" />
             <span v-if="n.state && STATE[n.state.status]" class="badge" :class="STATE[n.state.status].cls">{{ STATE[n.state.status].text }}</span>
+            <span v-if="n.work?.waiting" class="badge accent" :title="`${n.work.waiting} 次编码或评审等你处理`">等你 {{ n.work.waiting }}</span>
+            <span v-else-if="n.work?.total" class="muted wk" :title="`${n.work.total} 次编码或评审进行中`"><Icon name="code" :size="13" /></span>
             </button>
           </div>
           <div v-if="matches && !matches.size" class="empty muted small">没有匹配的需求点。</div>
@@ -305,6 +333,17 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           </template>
           <div class="row"><span class="spacer" /><button class="btn sm" @click="editing = null">取消</button><button class="btn sm primary" @click="saveForm">保存</button></div>
         </div>
+      </div>
+
+      <div v-else-if="detail && workId" class="page">
+        <nav class="crumbs muted small" aria-label="路径">
+          <template v-for="(p, i) in detail.path" :key="p.id">
+            <span v-if="i" aria-hidden="true">/</span>
+            <a href="#" @click.prevent="p.id === detail.node.id ? closeWork() : open(p.id)">{{ p.title }}</a>
+          </template>
+          <span aria-hidden="true">/</span><span>{{ openedWork?.itemTitle ?? "编码" }}</span>
+        </nav>
+        <WorkPane :run-id="workId" :rounds="openedWork?.rounds ?? [workId]" @close="closeWork" @open="openWork" />
       </div>
 
       <div v-else-if="detail" class="page">
@@ -341,6 +380,26 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           <button v-for="h in linkHits" :key="h.id" type="button" class="hit" @click="link(h.id)">
             <span class="ellipsis">{{ h.title }}</span><span class="muted small">{{ spaceName(h.spaceId) }}</span>
           </button>
+        </section>
+
+        <section v-if="detail.work.length" class="block">
+          <div class="block-head"><strong>编码与评审</strong><span class="muted small ellipsis">{{ [...new Set(detail.work.map((w) => w.itemTitle))].join("、") }}</span></div>
+          <button v-for="w in live" :key="w.rootId" type="button" class="work-row" @click="openWork(w.latestId)">
+            <span class="badge" :class="STAGE[w.stage].cls">{{ STAGE[w.stage].text }}</span>
+            <span class="grow ellipsis" :title="w.title">{{ w.title }}</span>
+            <span v-if="w.stage === 'owner'" class="small accent-ink">{{ ownerWhat(w) }}</span>
+            <span v-if="w.open" class="small muted">{{ w.open }} 个问题待定</span>
+            <span class="small muted">{{ w.branchReview ? "分支评审" : `第 ${w.rounds.length} 轮` }}{{ w.branch ? ` · ${w.branch}` : "" }} · {{ relTime(w.updatedAt) }}</span>
+          </button>
+          <p v-if="!live.length" class="muted small">没有进行中的编码。</p>
+          <button v-if="past.length" type="button" class="lnk small" :aria-expanded="showPast" @click="showPast = !showPast">{{ showPast ? "收起" : `已应用或丢弃的 ${past.length} 次` }}</button>
+          <template v-if="showPast">
+            <button v-for="w in past" :key="w.rootId" type="button" class="work-row dim" @click="openWork(w.latestId)">
+              <span class="badge" :class="STAGE[w.stage].cls">{{ STAGE[w.stage].text }}</span>
+              <span class="grow ellipsis" :title="w.title">{{ w.title }}</span>
+              <span class="small muted">{{ w.rounds.length }} 轮{{ w.branch ? ` · ${w.branch}` : "" }} · {{ relTime(w.updatedAt) }}</span>
+            </button>
+          </template>
         </section>
 
         <section v-if="detail.state" class="block">
@@ -424,6 +483,46 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
 }
 .empty {
   padding: 12px 10px;
+}
+.wk {
+  display: inline-flex;
+}
+.work-row {
+  display: flex;
+  align-items: center;
+  gap: 4px 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.work-row:hover {
+  background: var(--hover);
+}
+.work-row.dim {
+  opacity: 0.75;
+}
+.work-row .grow {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.accent-ink {
+  color: var(--accent);
+}
+.lnk {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  justify-self: start;
 }
 .node {
   display: flex;

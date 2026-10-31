@@ -9,7 +9,7 @@ import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setCh
 import { codePatches, isBranchReview, worktreesOf, type PeerReviewer } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
-  blocksAt, checkBrief, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason,
+  blocksAt, checkBrief, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
   SEVERITY_LABEL, STOP_LABEL, type ChangePoint, type LeadResult, type ReviewPlan, type Severity, type StopReason,
 } from "./review.ts";
 import { loadRole, runRole } from "./runner.ts";
@@ -348,7 +348,7 @@ function hostRuling(app: App, codeRunId: string, round: number, done: { name: st
   }).filter((v) => !v.ok);
   const changeRequest = asking.map((v) => [
     single ? "" : `### ${v.label}`,
-    v.blocking.map((f, i) => `${i + 1}. [${SEVERITY_LABEL[f.severity as Severity]}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${f.suggestion ? `：${f.suggestion}` : ""}`).join("\n"),
+    v.blocking.map((f, i) => `${i + 1}. [${SEVERITY_LABEL[f.severity as Severity]}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${suggestionOf(f) ? `：${suggestionOf(f)}` : ""}`).join("\n"),
     v.text,
   ].filter(Boolean).join("\n\n")).join("\n\n");
   return {
@@ -368,7 +368,7 @@ function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, fail
   const fmt = (f: ReturnType<typeof roundFindings>[number]) => {
     const info = infos.get(f.check_name);
     const blocking = info && blocksAt(f.severity, info.blocks);
-    return `- #${f.id} [${info?.label ?? f.check_name} · ${SEVERITY_LABEL[f.severity]}${blocking ? " · 达到阻塞级别" : ""}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${f.detail ? `\n  ${truncate(f.detail, 600)}` : ""}${f.suggestion ? `\n  建议：${truncate(f.suggestion, 400)}` : ""}`;
+    return `- #${f.id} [${info?.label ?? f.check_name} · ${SEVERITY_LABEL[f.severity]}${blocking ? " · 达到阻塞级别" : ""}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${f.detail ? `\n  ${truncate(f.detail, 600)}` : ""}${f.owner_suggestion?.trim() ? `\n  建议（本人改写）：${truncate(f.owner_suggestion.trim(), 800)}` : f.suggestion ? `\n  建议：${truncate(f.suggestion, 400)}` : ""}`;
   };
   const now = roundFindings(app, run.id, round);
   const chain = chainOf(app, run);

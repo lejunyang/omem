@@ -9,7 +9,7 @@ import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { clearFixDraft, clearQuotes, draftReview, fixDraft, quotesOf, quotesText } from "../lib/quotes";
 import NextRoundReview from "./NextRoundReview.vue";
-import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts, SEV, type Decision, type Finding, type Reviews } from "../lib/reviews";
+import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type Finding, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “概览” for a coding delegation or branch review: the verdict and review-lead's
@@ -17,8 +17,9 @@ import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts
  * waits for the owner (a plan to confirm, or a stop) the decision is answered here.
  */
 // `branchWork`: a delegation on work branches, whose rounds are commits already (nothing to apply first).
-const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; branchWork?: boolean; canFix?: boolean }>();
-const emit = defineEmits<{ ask: [context: { quote: string; label: string }]; go: [tab: "review" | "change"] }>();
+// `stay`: shown inside another page (the requirements page), which follows the next round itself (`started`).
+const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; branchWork?: boolean; canFix?: boolean; stay?: boolean }>();
+const emit = defineEmits<{ ask: [context: { quote: string; label: string }]; go: [tab: "review" | "change"]; started: [runId: string] }>();
 
 const STATE: Record<string, string> = { accepted: "要改", rejected: "已驳回", merged: "已合并" };
 const STOP: Record<string, string> = {
@@ -54,7 +55,7 @@ const reasonsOpen = ref(false);
 const changeOpen = ref(false);
 
 function askAbout(f: Finding & { check: string }) {
-  emit("ask", { quote: [`[${SEV[f.severity].text}] ${f.title}`, findingWhere(f), f.detail, f.suggestion ? `建议：${f.suggestion}` : ""].filter(Boolean).join("\n"), label: `${rv.label(f.check)}评审的问题` });
+  emit("ask", { quote: [`[${SEV[f.severity].text}] ${f.title}`, findingWhere(f), f.detail, suggestionOf(f) ? `建议：${suggestionOf(f)}` : ""].filter(Boolean).join("\n"), label: `${rv.label(f.check)}评审的问题` });
 }
 
 // ---- what to fix: each finding's call, then the fix with the owner's own additions ------------
@@ -74,6 +75,27 @@ async function decide(f: Finding, d: Decision) {
     for (const r of rv.data.value?.reviews ?? []) for (const x of r.findings) if (x.id === f.id) Object.assign(x, { decision: d, decision_note: note });
   } catch (e) {
     toast((e as Error).message, "error");
+  }
+}
+// The owner rewrites a suggestion in place, so the coder acts on that instead of the reviewer's wording.
+const editingSug = ref<number | null>(null);
+const sugText = ref("");
+const savingSug = ref(false);
+function editSug(f: Finding) {
+  editingSug.value = f.id;
+  sugText.value = suggestionOf(f);
+}
+async function saveSug(f: Finding, text = sugText.value) {
+  if (savingSug.value) return;
+  savingSug.value = true;
+  try {
+    const r = await put<{ ownerSuggestion: string | null; decision: Decision | null }>(`/api/runs/${props.runId}/findings/${f.id}/suggestion`, { text });
+    for (const rv_ of rv.data.value?.reviews ?? []) for (const x of rv_.findings) if (x.id === f.id) Object.assign(x, { owner_suggestion: r.ownerSuggestion, decision: r.decision });
+    editingSug.value = null;
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    savingSug.value = false;
   }
 }
 const tally = computed(() => {
@@ -99,7 +121,8 @@ async function startFix(applyFirst = false) {
     clearFixDraft(props.runId);
     clearQuotes(props.runId, "fix");
     toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
-    router.push(`/runs/${r.id}`);
+    if (props.stay) emit("started", r.id);
+    else router.push(`/runs/${r.id}`);
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {
@@ -191,6 +214,7 @@ async function answer(choice: number | null) {
           <span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span>
           <button class="title" :aria-expanded="open.has(f.id)" @click="toggle(f.id)">{{ f.title }}</button>
           <span v-if="STATE[f.state]" class="badge" :class="{ warn: f.state === 'accepted' }">{{ STATE[f.state] }}</span>
+          <span v-if="f.owner_suggestion" class="badge accent" title="建议按你改写的执行">建议已改</span>
           <span class="spacer" />
           <span class="muted small nowrap">{{ f.fromRound ? `第 ${f.fromRound} 轮 · ` : "" }}{{ rv.label(f.check) }} · #{{ f.id }}</span>
           <UiSegmented v-if="deciding" :model-value="decisionOf(f)" class="decide-f" size="sm" :options="DECISIONS" :aria-label="`#${f.id} 怎么处理`" @change="(d) => decide(f, d)" />
@@ -202,9 +226,24 @@ async function answer(choice: number | null) {
         </div>
         <div v-if="open.has(f.id)" class="more small">
           <p v-if="f.detail">{{ f.detail }}</p>
-          <p v-if="f.suggestion"><strong>建议：</strong>{{ f.suggestion }}</p>
           <p v-if="f.evidence.length" class="muted">依据：<template v-for="(e, i) in f.evidence" :key="i"><a v-if="refAction(e, runId)" href="#" class="mono" @click.prevent="refAction(e, runId)!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < f.evidence.length - 1 ? "、" : "" }}</template></p>
-          <button class="btn ghost sm" @click="askAbout(f)">就这条提问</button>
+          <div v-if="editingSug === f.id" class="sug-edit">
+            <textarea v-model="sugText" class="textarea" rows="4" :aria-label="`改写 #${f.id} 的建议`" placeholder="写清楚要怎么改；下一轮按这段改，不再看评审的原建议" @keydown.esc.stop="editingSug = null" />
+            <div class="row wrap">
+              <button class="btn primary sm" :disabled="savingSug || !sugText.trim()" @click="saveSug(f)">保存</button>
+              <button class="btn ghost sm" @click="editingSug = null">取消</button>
+              <button v-if="f.owner_suggestion" class="btn ghost sm" :disabled="savingSug" @click="saveSug(f, '')">恢复原建议</button>
+              <span class="muted">{{ f.decision ? "" : "保存后这条标为“改”。" }}</span>
+            </div>
+          </div>
+          <template v-else>
+            <p v-if="suggestionOf(f)"><strong>建议{{ f.owner_suggestion ? "（你改过）" : "" }}：</strong>{{ suggestionOf(f) }}</p>
+            <details v-if="f.owner_suggestion && f.suggestion" class="orig"><summary class="muted">评审的原建议</summary><p class="muted">{{ f.suggestion }}</p></details>
+          </template>
+          <div class="row wrap">
+            <button v-if="deciding && editingSug !== f.id" class="btn ghost sm" @click="editSug(f)">{{ suggestionOf(f) ? "改建议" : "写建议" }}</button>
+            <button class="btn ghost sm" @click="askAbout(f)">就这条提问</button>
+          </div>
         </div>
       </div>
     </div>
@@ -264,6 +303,8 @@ async function answer(choice: number | null) {
 .more { background: var(--sunken); border-radius: 8px; padding: 8px 10px; display: grid; gap: 6px; }
 .more p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .more .btn { justify-self: start; }
+.sug-edit { display: grid; gap: 6px; }
+.orig summary { cursor: pointer; }
 .decide-f { flex: none; }
 .wontfix { color: var(--ink-2); background: var(--sunken); border-radius: 6px; padding: 3px 8px; justify-self: start; }
 .fix { display: grid; gap: 8px; }

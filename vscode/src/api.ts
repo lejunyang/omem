@@ -56,7 +56,7 @@ export type Severity = "blocker" | "major" | "minor" | "nit";
 export type Decision = "fix" | "later" | "wontfix";
 export type Finding = {
   id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string;
-  suggestion: string; state: string; merged_into: number | null; triage_note: string; decision?: Decision | null; decision_note?: string;
+  suggestion: string; state: string; merged_into: number | null; triage_note: string; decision?: Decision | null; decision_note?: string; owner_suggestion?: string | null;
 };
 export type Review = { id: string; code_run_id: string; round: number; check_name: string; verdict: string; summary: string; findings: Finding[] };
 export type Reviews = { rounds: { runId: string; round: number; status: string; verdict: string | null }[]; reviews: Review[]; labels: Record<string, string> };

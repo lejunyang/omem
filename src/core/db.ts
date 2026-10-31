@@ -1083,6 +1083,19 @@ const migrations: string[] = [
   create virtual table reqs_fts using fts5(title, body, content='', contentless_delete=1, tokenize="unicode61 remove_diacritics 2");
   create table req_rowids (rowid integer primary key, node_id text unique not null);
   `,
+  // Delegations and branch reviews for an item live in the item's space (code.ts homeSpace); earlier
+  // ones took the first repository's. Move them, their rounds and their reviews over.
+  `with recursive fam(id, item) as (
+     select id, json_extract(input, '$.itemId') from runs
+      where kind = 'code' and json_extract(input, '$.itemId') is not null and json_extract(input, '$.repos') is not null
+     union
+     select r.id, fam.item from runs r join fam on r.parent_id = fam.id or json_extract(r.input, '$.continueFrom') = fam.id or json_extract(r.input, '$.codeRunId') = fam.id
+   )
+   update runs set space_id = (select i.space_id from fam join items i on i.id = fam.item where fam.id = runs.id limit 1)
+    where id in (select fam.id from fam join items i on i.id = fam.item)
+      and space_id in (select id from spaces where root_path is not null)
+      and space_id != (select i.space_id from fam join items i on i.id = fam.item where fam.id = runs.id limit 1);
+   alter table review_findings add column owner_suggestion text;`,
 ];
 
 export type Db = DatabaseSync;

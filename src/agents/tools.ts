@@ -3000,8 +3000,9 @@ def({
     if (a.sync_only && !a.sync) throw new HttpError(400, "sync_only 需要同时给出 sync（拉取或合并 / 变基到哪个分支）");
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => writeSpace(ctx, r)))];
-    const home = a.space ? space(ctx, a.space) : ids[0];
-    const { codeRepos } = await import("./code.ts");
+    const itemId = a.item_id ? itemFor(ctx, a.item_id) : undefined;
+    const { codeRepos, homeSpace } = await import("./code.ts");
+    const home = homeSpace(ctx.app, a.space ? space(ctx, a.space) : undefined, itemId, ids);
     const repos = codeRepos(ctx.app, home, ids);
     if (a.from_branch) for (const repo of repos) if (!resolveRef(repo.rootPath!, a.from_branch)) throw new HttpError(404, `${repo.id} 里没有分支 ${a.from_branch}；用 list_branches 查看`);
     // One delegation per branch: a second worktree on the same branch has to be merged by hand later.
@@ -3012,7 +3013,6 @@ def({
       const open = openDelegationOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER);
       if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办 ${open.id}（${open.title}，${open.status}）。新的要求续在它上面：进行中用 message_code_run 补充，结束后用 continue_code_run；本人明确要另开一次才传 parallel: true`);
     }
-    const itemId = a.item_id ? itemFor(ctx, a.item_id) : undefined;
     const r = createRun(ctx.app, {
       kind: "code",
       spaceId: home,

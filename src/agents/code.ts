@@ -20,6 +20,7 @@ import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from ".
 import { isSourceFile } from "../sources/chunk.ts";
 import { OWNER } from "../core/users.ts";
 import { linkRunToItem, materialSpaces, materialsBrief } from "../items/materials.ts";
+import { getItem } from "../items/store.ts";
 
 function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000): Promise<{ code: number; output: string; ms: number }> {
   const started = Date.now();
@@ -123,7 +124,7 @@ export type BranchReviewRequest = {
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
 export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null, userId = OWNER) {
   const ids = [...new Set(req.repos)];
-  const home = req.space ?? ids[0];
+  const home = homeSpace(app, req.space, req.itemId, ids);
   codeRepos(app, home, ids);
   const branches = Object.fromEntries(ids.map((id) => [id, { branch: req.branches?.[id] ?? req.branch, ...(req.base ? { base: req.base } : {}) }]));
   const r = createRun(app, {
@@ -157,6 +158,14 @@ export function worktreesOf(app: App, runId: string): WorktreeRef[] {
   const out = r.output as { worktrees?: WorktreeRef[]; worktree?: string; branch?: string; base?: string };
   if (out.worktrees) return out.worktrees;
   return out.worktree && r.spaceId ? [{ space: r.spaceId, path: out.worktree, branch: out.branch ?? "", base: out.base ?? "" }] : [];
+}
+
+/**
+ * Where a delegation or branch review lives: the space asked for, else its item's (the business the
+ * work is for, so the runs list of that space shows it), else the first repository's.
+ */
+export function homeSpace(app: App, space: string | undefined, itemId: string | undefined, repos: string[]) {
+  return space ?? (itemId ? getItem(app, itemId).spaceId : undefined) ?? repos[0];
 }
 
 /** Repository spaces a delegation changes: each one must be a Git repository. */
