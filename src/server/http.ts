@@ -1183,7 +1183,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const w = t.workState(app, rootId);
     return {
       taskMode: true, rootId, tasks: t.listTasks(app, rootId), checkpoints: t.listCheckpoints(app, rootId),
-      work: { budget: w.budget, budgetBy: w.budgetBy ?? null, until: w.until, round: Number(last.input.round ?? 1), lastRunId: last.id, paused: w.paused ?? null, viewed: w.viewed?.[who(req)] ?? 0, status: last.status, verdict: last.output.verdict ?? null, stage: last.output.reviewStage ?? null, reverts: (w.reverts ?? []).map((r) => r.seq), max: app.config.agents.autoAdvance.codeRoundsMax },
+      work: { budget: w.budget, budgetBy: w.budgetBy ?? null, until: w.until, round: Number(last.input.round ?? 1), lastRunId: last.id, paused: w.paused ?? null, viewed: w.viewed?.[who(req)] ?? 0, status: last.status, verdict: last.output.verdict ?? null, stage: last.output.reviewStage ?? null, reverts: (w.reverts ?? []).flatMap((r) => (r.seq !== undefined ? [r.seq] : [])), pending: (w.reverts ?? []).map(t.revertLabel), max: app.config.agents.autoAdvance.codeRoundsMax },
     };
   });
   // The owner adds a task: it is coded in the next round (now, when nothing is running).
@@ -1227,6 +1227,26 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     }
     return { task: t.getTask(app, rootId, seq), next: next?.id ?? null };
   });
+  // Take back a stretch (to a checkpoint), a file (as it was at a revision) or one hunk; the next round does it first.
+  server.post("/api/runs/:id/revert", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({
+      checkpoint: z.number().int().min(0).optional(),
+      file: z.object({ space: z.string().min(1), path: z.string().min(1).max(1000), rev: z.string().min(7).max(64) }).optional(),
+      patch: z.object({ space: z.string().min(1), text: z.string().min(1).max(200_000) }).optional(),
+      reason: z.string().max(4000).optional(),
+    }), req.body);
+    const t = await import("../agents/code-tasks.ts");
+    if (!t.isTaskWork(app, id)) throw new HttpError(400, "这次交办不是按修改项推进的");
+    const rootId = t.workRootOf(app, id);
+    const { worktreesOf } = await import("../agents/code.ts");
+    const op = b.checkpoint !== undefined ? { checkpoint: b.checkpoint } : b.file ? { file: b.file } : b.patch ? { patch: b.patch } : null;
+    if (!op) throw new HttpError(400, "要回退什么：检查点、文件或一段改动");
+    t.scheduleWorkRevert(app, rootId, worktreesOf(app, rootId), { ...op, reason: b.reason } as never, who(req));
+    const next = await (await import("../agents/code-loop.ts")).advanceWork(app, rootId, { owner: true });
+    return { reverts: (t.workState(app, rootId).reverts ?? []).map(t.revertLabel), next: next?.id ?? null };
+  });
   server.post("/api/runs/:id/work", async (req) => {
     const id = (req.params as { id: string }).id;
     ownRun(req, id);
@@ -1242,6 +1262,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       next = await (await import("../agents/code-loop.ts")).advanceWork(app, rootId, { owner: true });
     }
     return { work: t.workState(app, rootId), next: next?.id ?? null };
+  });
+  // A file at a commit of the work's repositories (VS Code's two sides of a task's change).
+  server.get("/api/runs/:id/file-at", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const o = q(z.object({ space: z.string().min(1), path: z.string().min(1).max(1000), rev: z.string().min(7).max(64) }), req.query);
+    const t = await import("../agents/code-tasks.ts");
+    const { worktreesOf } = await import("../agents/code.ts");
+    const bytes = t.fileAt(app, worktreesOf(app, t.workRootOf(app, id)), o.space, o.path, o.rev);
+    if (!bytes) return { missing: true, text: "" };
+    if (bytes.subarray(0, 8000).includes(0)) return { binary: true, text: "" };
+    return { text: bytes.toString("utf8") };
   });
   // One task's change, a stretch between checkpoints, or everything since the viewer last looked.
   server.get("/api/runs/:id/task-diff", async (req) => {

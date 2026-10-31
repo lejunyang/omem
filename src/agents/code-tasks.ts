@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -67,10 +68,21 @@ export type WorkState = {
   sessions?: Record<string, { id: string; used?: number }>;
   stageAt?: number | null;
   stages?: number[];
-  reverts?: { seq: number; reason: string; by: string }[];
+  reverts?: RevertOp[];
   viewed?: Record<string, number>;
   asks?: Record<string, string>;
 };
+
+/**
+ * Something to take back before the next round codes, each as a commit of its own: a task's commits,
+ * everything after a checkpoint, one file as it was at a revision, or one hunk of a diff.
+ */
+export type RevertOp = { reason: string; by: string } & (
+  | { seq: number; checkpoint?: undefined; file?: undefined; patch?: undefined }
+  | { checkpoint: number; seq?: undefined; file?: undefined; patch?: undefined }
+  | { file: { space: string; path: string; rev: string }; seq?: undefined; checkpoint?: undefined; patch?: undefined }
+  | { patch: { space: string; text: string }; seq?: undefined; checkpoint?: undefined; file?: undefined }
+);
 
 type Row = {
   id: number; work_id: string; seq: number; title: string; done_when: string; kind: TaskKind; origin: string; state: TaskState;
@@ -265,6 +277,36 @@ export function recordCheckpoint(app: App, rootId: string, worktrees: WorktreeRe
   return listCheckpoints(app, rootId).at(-1)!;
 }
 
+/**
+ * Before a round codes: what changed on the work branch since the last checkpoint without a round
+ * doing it — the owner's edits left in the worktree (committed as theirs, `Omem-By: owner`), commits
+ * made on the branch elsewhere, what came in from origin — becomes a checkpoint of its own. It is
+ * never counted as a task's change, and the coder is told to keep it. Uncommitted changes after a
+ * round that failed are that round's unfinished work and stay as they are.
+ */
+export function recordOutsideChanges(app: App, rootId: string, runId: string, worktrees: WorktreeRef[], identity: (dir: string) => string[], opts: { previousEnded: boolean; round: number }): { checkpoint: Checkpoint; files: string[]; owner: boolean } | null {
+  const last = listCheckpoints(app, rootId).at(-1);
+  if (!last) return null;
+  let owner = false;
+  if (opts.previousEnded) for (const wt of worktrees) {
+    if (!existsSync(wt.path) || !git(wt.path, ["status", "--porcelain"]).stdout.trim()) continue;
+    git(wt.path, ["add", "-A"]);
+    if (git(wt.path, [...identity(wt.path), "commit", "-q", "--no-verify", "-m", `本人的修改（第 ${opts.round} 轮开始前在工作区里改的）\n\nOmem-By: owner`]).ok) owner = true;
+  }
+  const files: string[] = [];
+  let moved = false;
+  for (const wt of worktrees) {
+    const at = last.heads[wt.space];
+    const now = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
+    if (!at || !now || at === now) continue;
+    moved = true;
+    for (const f of git(wt.path, ["diff", "--name-only", at, now]).stdout.split("\n").filter(Boolean)) files.push(worktrees.length > 1 ? `${wt.space}/${f}` : f);
+  }
+  if (!moved) return null;
+  const cp = recordCheckpoint(app, rootId, worktrees, owner ? "owner" : "branch", [], owner ? `本人的修改（第 ${opts.round} 轮开始前）` : `分支上的其他提交（第 ${opts.round} 轮开始前）`);
+  return cp ? { checkpoint: cp, files, owner } : null;
+}
+
 /** The heads a checkpoint number stands for: 0 is where the work started. */
 export function headsAt(app: App, rootId: string, worktrees: WorktreeRef[], seq: number | null | undefined): Record<string, string> {
   if (!seq) return startHeads(worktrees);
@@ -332,7 +374,8 @@ export function commitTask(app: App, rootId: string, seq: number, worktrees: Wor
 
 // ---- diffs ----------------------------------------------------------------------------------------
 
-export type Patch = { space: string; patch: string; label?: string };
+/** `from` / `to`: the revisions the patch goes between (“恢复成改动前” restores a file to `from`; VS Code shows both sides). */
+export type Patch = { space: string; patch: string; label?: string; from?: string; to?: string };
 
 /** One task's change: its commits (one diff when they follow each other, else one per commit). */
 function taskPatch(dir: string, shas: string[]): string {
@@ -355,8 +398,10 @@ export function workPatches(app: App, rootId: string, worktrees: WorktreeRef[], 
       const t = getTask(app, rootId, seq);
       for (const wt of worktrees) {
         const dir = gitDirOf(app, wt);
-        const patch = dir ? taskPatch(dir, t.commits[wt.space] ?? []) : "";
-        if (patch.trim()) out.push({ space: wt.space, patch, label: `${taskLabel(seq)} ${t.title}` });
+        const shas = t.commits[wt.space] ?? [];
+        const patch = dir ? taskPatch(dir, shas) : "";
+        const from = dir && shas.length ? git(dir, ["rev-parse", `${shas[0]}^`]).stdout.trim() : "";
+        if (patch.trim()) out.push({ space: wt.space, patch, label: `${taskLabel(seq)} ${t.title}`, ...(from ? { from, to: shas.at(-1)! } : {}) });
       }
     }
     return out;
@@ -370,9 +415,23 @@ export function workPatches(app: App, rootId: string, worktrees: WorktreeRef[], 
     const dir = gitDirOf(app, wt);
     if (!dir || !a[wt.space] || !b[wt.space] || a[wt.space] === b[wt.space]) continue;
     const patch = git(dir, ["diff", "--no-color", a[wt.space], b[wt.space]]).stdout;
-    if (patch.trim()) out.push({ space: wt.space, patch });
+    if (patch.trim()) out.push({ space: wt.space, patch, from: a[wt.space], to: b[wt.space] });
   }
   return out;
+}
+
+/**
+ * A file as it was at a commit of one of the work's repositories (VS Code shows both sides of a task's
+ * change from these). Missing at that commit: null.
+ */
+export function fileAt(app: App, worktrees: WorktreeRef[], space: string, path: string, rev: string): Buffer | null {
+  const wt = worktrees.find((w) => w.space === space);
+  const dir = wt && gitDirOf(app, wt);
+  if (!dir) throw new HttpError(404, `这次交办没有改 ${space}`);
+  if (!/^[0-9a-f]{7,64}$/.test(rev) || git(dir, ["cat-file", "-t", rev]).stdout.trim() !== "commit") throw new HttpError(400, `${rev} 不是这个仓库里的提交`);
+  if (path.split("/").includes("..") || path.startsWith("/")) throw new HttpError(400, "文件路径不对");
+  const shown = spawnSync("git", ["show", `${rev}:${path}`], { cwd: dir, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+  return shown.status === 0 ? shown.stdout : null;
 }
 
 // ---- reverts --------------------------------------------------------------------------------------
@@ -386,9 +445,44 @@ export function scheduleRevert(app: App, rootId: string, seq: number, reason: st
   if (!Object.values(t.commits).some((l) => l.length)) throw new HttpError(409, `${taskLabel(seq)} 还没有提交，没有可回退的`);
   const w = workState(app, rootId);
   if ((w.reverts ?? []).some((r) => r.seq === seq)) return t;
-  setWorkState(app, rootId, { reverts: [...(w.reverts ?? []), { seq, reason, by }] });
+  setWorkState(app, rootId, { reverts: [...(w.reverts ?? []), { seq, reason, by } as RevertOp] });
   const redo = opts.redo ?? true;
   return updateTask(app, rootId, seq, { state: redo ? "todo" : "reverted" }, { by, kind: "revert", text: `${redo ? "回退后重做" : "回退"}：${reason}` });
+}
+
+/**
+ * The owner takes back a stretch, a file or a hunk (the next round does it first, docs/v2/coding-loop.md §5).
+ * Checked now so a mistake is refused at once: the checkpoint exists, the revision is a commit of
+ * the repository, the patch is a Git diff of one of the work's repositories.
+ */
+export function scheduleWorkRevert(app: App, rootId: string, worktrees: WorktreeRef[], op: Omit<RevertOp, "by" | "reason"> & { reason?: string }, by: string) {
+  const reason = op.reason?.trim() || "本人要求回退";
+  let entry: RevertOp;
+  if (op.checkpoint !== undefined) {
+    if (!listCheckpoints(app, rootId).some((c) => c.seq === op.checkpoint) && op.checkpoint !== 0) throw new HttpError(404, `没有检查点 ${op.checkpoint}`);
+    entry = { checkpoint: op.checkpoint, reason, by };
+  } else if (op.file) {
+    const wt = worktrees.find((w) => w.space === op.file!.space);
+    const dir = wt && gitDirOf(app, wt);
+    if (!dir) throw new HttpError(404, `这次交办没有改 ${op.file.space}`);
+    if (!/^[0-9a-f]{7,64}$/.test(op.file.rev) || git(dir, ["cat-file", "-t", op.file.rev]).stdout.trim() !== "commit") throw new HttpError(400, `${op.file.rev} 不是这个仓库里的提交`);
+    if (op.file.path.split("/").includes("..") || op.file.path.startsWith("/")) throw new HttpError(400, "文件路径不对");
+    entry = { file: op.file, reason, by };
+  } else if (op.patch) {
+    if (!worktrees.some((w) => w.space === op.patch!.space)) throw new HttpError(404, `这次交办没有改 ${op.patch.space}`);
+    if (!/^diff --git /.test(op.patch.text) || !/^@@ /m.test(op.patch.text)) throw new HttpError(400, "要回退的不是一段 Git 改动");
+    entry = { patch: op.patch, reason, by };
+  } else throw new HttpError(400, "要回退什么：检查点、文件或一段改动");
+  const w = workState(app, rootId);
+  return setWorkState(app, rootId, { reverts: [...(w.reverts ?? []), entry] });
+}
+
+/** How a pending revert reads to people (the run page, the coder). */
+export function revertLabel(r: RevertOp) {
+  if (r.seq !== undefined) return `回退 ${taskLabel(r.seq)}`;
+  if (r.checkpoint !== undefined) return r.checkpoint ? `回到检查点 ${r.checkpoint}` : "回到开始的样子";
+  if (r.file) return `把 ${r.file.path} 恢复成 ${r.file.rev.slice(0, 8)} 时的样子`;
+  return `回退 ${/^diff --git a\/(\S+)/.exec(r.patch!.text)?.[1] ?? "一段改动"} 里的一段`;
 }
 
 /**
@@ -417,8 +511,15 @@ export function applyReverts(app: App, rootId: string, worktrees: WorktreeRef[],
   const w = workState(app, rootId);
   const pending = w.reverts ?? [];
   if (!pending.length) return [];
-  const done: number[] = [];
+  const done: string[] = [];
+  const commit = (dir: string, message: string) => git(dir, [...identity(dir), "commit", "-q", "--no-verify", "-m", message]).ok;
   for (const r of pending) {
+    if (r.seq === undefined) {
+      const ok = applyOtherRevert(app, rootId, worktrees, r, commit);
+      log(ok ? `已${revertLabel(r)}` : `没能${revertLabel(r)}，改成一个修改项交给编码 Agent`);
+      if (ok) done.push(revertLabel(r));
+      continue;
+    }
     const t = getTask(app, rootId, r.seq);
     let ok = true;
     const made: { dir: string; head: string }[] = [];
@@ -447,10 +548,58 @@ export function applyReverts(app: App, rootId: string, worktrees: WorktreeRef[],
     const kept = Object.fromEntries(Object.keys(t.commits).map((space) => [space, [] as string[]]));
     updateTask(app, rootId, r.seq, { commits: kept, reverts: t.reverts + 1 }, { by: "host", kind: "revert", text: `已回退之前的提交：${Object.values(t.commits).flat().map((s) => s.slice(0, 8)).join("、")}` });
     log(`已回退 ${taskLabel(r.seq)}「${truncate(t.title, 40)}」`);
-    done.push(r.seq);
+    done.push(revertLabel(r));
   }
   setWorkState(app, rootId, { reverts: [] });
   return done;
+}
+
+/**
+ * A checkpoint, a file or a hunk taken back, as one commit (`Omem-Revert: …`). Back to a checkpoint
+ * reverses everything after it in one go, and the tasks done after it are marked reverted; a hunk
+ * that no longer applies becomes a task for the coder, with the hunk and the reason.
+ */
+function applyOtherRevert(app: App, rootId: string, worktrees: WorktreeRef[], r: RevertOp, commit: (dir: string, message: string) => boolean): boolean {
+  const trailer = `\n\n${truncate(r.reason, 1500)}\n\nOmem-Revert: ${revertLabel(r)}`;
+  if (r.checkpoint !== undefined) {
+    const heads = headsAt(app, rootId, worktrees, r.checkpoint);
+    let changed = false;
+    for (const wt of worktrees) {
+      const from = heads[wt.space];
+      if (!from) continue;
+      const diff = git(wt.path, ["diff", "--binary", from, "HEAD"]).stdout;
+      if (!diff.trim()) continue;
+      const applied = git(wt.path, ["apply", "-R", "--index", "-"], diff);
+      if (!applied.ok || !commit(wt.path, `${revertLabel(r)}${trailer}`)) {
+        git(wt.path, ["reset", "-q", "--hard", "HEAD"]);
+        return false;
+      }
+      changed = true;
+    }
+    if (changed) for (const t of listTasks(app, rootId)) {
+      if ((t.checkpoint ?? 0) > r.checkpoint && ["done", "verify"].includes(t.state)) updateTask(app, rootId, t.seq, { state: "reverted" }, { by: r.by, kind: "revert", text: `${revertLabel(r)}：${r.reason}` });
+    }
+    return true;
+  }
+  if (r.file) {
+    const wt = worktrees.find((w) => w.space === r.file!.space);
+    if (!wt) return false;
+    const there = git(wt.path, ["cat-file", "-e", `${r.file.rev}:${r.file.path}`]).ok;
+    const restored = there ? git(wt.path, ["checkout", r.file.rev, "--", r.file.path]) : git(wt.path, ["rm", "-q", "-f", "--ignore-unmatch", "--", r.file.path]);
+    if (!restored.ok) return false;
+    if (git(wt.path, ["diff", "--cached", "--quiet"]).ok) return true;
+    if (!commit(wt.path, `${revertLabel(r)}${trailer}`)) { git(wt.path, ["reset", "-q", "--hard", "HEAD"]); return false; }
+    return true;
+  }
+  const p = r.patch!;
+  const wt = worktrees.find((w) => w.space === p.space);
+  const text = p.text.endsWith("\n") ? p.text : `${p.text}\n`;
+  const applied = wt ? git(wt.path, ["apply", "-R", "--3way", "--index", "-"], text) : null;
+  if (wt && applied?.ok && commit(wt.path, `${revertLabel(r)}${trailer}`)) return true;
+  if (wt) git(wt.path, ["reset", "-q", "--hard", "HEAD"]);
+  // It no longer applies as it is: the coder takes it back by hand.
+  addTask(app, rootId, { title: `按本人的要求回退：${revertLabel(r).replace(/^回退 /, "")}`, doneWhen: `把下面这段改动退回去（代码已经变过，按意思回退，不要整段覆盖）。原因：${r.reason}\n\n\`\`\`diff\n${truncate(text, 6000)}\n\`\`\``, kind: "owner", origin: { note: r.reason } }, r.by);
+  return false;
 }
 
 // ---- for the coder -------------------------------------------------------------------------------

@@ -17,7 +17,7 @@ exports.run = async function run() {
   const G = vscode.ConfigurationTarget.Global;
   const port = Number(new URL(process.env.OMEM_TEST_URL).port);
   const ext = vscode.extensions.getExtension("omem.omem-vscode");
-  const { api, status, current, bench, runs, delegate } = await ext.activate();
+  const { api, status, current, bench, runs, delegate, tasks } = await ext.activate();
   const step = (s) => console.log(`  · ${s}`);
 
   step("连接：这台机器上的 omem（只填端口）");
@@ -148,6 +148,30 @@ exports.run = async function run() {
   await current.advance(run);
   assert.deepEqual(current.run.rounds, [process.env.OMEM_TEST_RUN, next.id]);
   await api.post(`/api/runs/${next.id}/cancel`);
+
+  step("按修改项推进的交办：修改项视图、等你决定、看一项的改动（两边从 omem 读）、暂停和继续");
+  await current.select(process.env.OMEM_TEST_TASK_RUN);
+  const data = await tasks.load();
+  assert.equal(data.taskMode, true);
+  const top = tasks.getChildren();
+  assert.equal(tasks.getTreeItem(top[0]).label, "等你决定 1 项");
+  const groups = top.slice(1, -1).map((x) => tasks.getTreeItem(x).label);
+  assert.deepEqual(groups, ["等你决定", "已完成"]);
+  const doneItem = tasks.getChildren(top[2])[0];
+  assert.equal(tasks.getTreeItem(doneItem).contextValue, "task-done-commits");
+  assert.equal(tasks.getTreeItem(tasks.getChildren(top[1])[0]).contextValue, "task-owner");
+  const opened = await tasks.showChanges("T1 的改动", "tasks=1");
+  assert.equal(opened, 1, "多文件对比里一个文件");
+  const { patches } = await api.get(`/api/runs/${process.env.OMEM_TEST_TASK_RUN}/task-diff?tasks=1`);
+  const right = vscode.Uri.from({ scheme: "omem-rev", path: "/reason.ts", query: new URLSearchParams({ run: process.env.OMEM_TEST_TASK_RUN, space: "shop-web", rev: patches[0].to }).toString() });
+  assert.match((await vscode.workspace.openTextDocument(right)).getText(), /requireReason/);
+  const left = vscode.Uri.from({ scheme: "omem-rev", path: "/reason.ts", query: new URLSearchParams({ run: process.env.OMEM_TEST_TASK_RUN, space: "shop-web", rev: "" }).toString() });
+  assert.equal((await vscode.workspace.openTextDocument(left)).getText(), "", "新增的文件左边是空的");
+  await tasks.pause(true);
+  assert.equal(tasks.data.work.paused, "owner");
+  await tasks.pause(false);
+  assert.equal(tasks.data.work.paused, null);
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 
   step("写任务文档交办");
   const task = await vscode.workspace.openTextDocument({ language: "markdown", content: "<!-- omem 交办 · 空间 shop-web（商城前端）。 -->\n\n退款单列表加一列退款原因\n" });

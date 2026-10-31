@@ -1,6 +1,7 @@
 /**
  * An omem for the extension test: a repository space, a finished delegation whose worktree has a
- * change and whose review has findings, and the fake ACP agent (answers echo the question).
+ * change and whose review has findings, a task-driven delegation with a task done and one waiting
+ * for the owner, and the fake ACP agent (answers echo the question).
  * Prints `{ url, folder, runId }` on one line once the server listens. Run from the repository
  * root: node vscode/test/seed.mts <home>
  */
@@ -12,6 +13,7 @@ import { App } from "../../src/core/app.ts";
 import { createSpace, ensurePersonalSpace } from "../../src/core/spaces.ts";
 import { createRun, setRunOutput } from "../../src/agents/runs.ts";
 import { recordReview } from "../../src/agents/review.ts";
+import { addTask, recordCheckpoint, setWorkState, updateTask } from "../../src/agents/code-tasks.ts";
 import { run as sql } from "../../src/core/db.ts";
 import { boot } from "../../src/main.ts";
 import { addPeer } from "../../src/core/peers.ts";
@@ -54,6 +56,23 @@ recordReview(app, {
 });
 sql(app.db, "update runs set status = 'done', finished_at = ? where id = ?", new Date().toISOString(), r.id);
 
+// A task-driven delegation (docs/v2/coding-loop.md): T1 done in its own commit, T2 a question for the owner.
+const t = createRun(app, { kind: "code", spaceId: "shop-web", title: "退款原因必填", input: { task: "退款原因必填", repos: ["shop-web"], taskMode: true } });
+const taskFolder = join(app.runsDir, t.id, "work", "shop-web");
+git(repo, "worktree", "add", "-q", "-b", `omem/${t.id}`, taskFolder, base);
+writeFileSync(join(taskFolder, "reason.ts"), "export const requireReason = true;\n");
+git(taskFolder, "add", "-A");
+git(taskFolder, "commit", "-q", "-m", "退款原因必填\n\nOmem-Task: T1");
+const head = git(taskFolder, "rev-parse", "HEAD").trim();
+const taskWt = { space: "shop-web", path: taskFolder, branch: `omem/${t.id}`, base, start: base, targetBranch: "main", commits: true };
+setRunOutput(app, t.id, { worktrees: [taskWt], repos: [{ space: "shop-web", diffStat: "", diffBytes: 1, check: null }], verdict: "awaiting-owner", reviewStop: "owner", reviewStage: "done" });
+const t1 = addTask(app, t.id, { title: "退款原因必填", doneWhen: "没填原因不能提交", kind: "build", state: "done" }, "coder");
+updateTask(app, t.id, t1.seq, { commits: { "shop-web": [head] }, coderRun: t.id }, { by: "coder", kind: "coder", text: "加了必填校验" });
+addTask(app, t.id, { title: "原因选项从哪来", kind: "fix", state: "owner", question: "退款原因用固定选项还是让用户自己写？", options: ["固定选项", "自己写"] }, "review-lead");
+recordCheckpoint(app, t.id, [taskWt], t.id, [1], "第 1 轮：T1");
+setWorkState(app, t.id, { budget: 3, until: 3 });
+sql(app.db, "update runs set status = 'done', finished_at = ? where id = ?", new Date().toISOString(), t.id);
+
 // Paired with itself, for the "through this omem to a paired device" connection.
 const port = Number(process.env.OMEM_TEST_PORT ?? 4391);
 const token = createApiToken(app, OWNER, "vscode-test");
@@ -61,4 +80,4 @@ await addPeer(app, "omem1." + Buffer.from(JSON.stringify({ id: "box", urls: [`ht
 app.db.close();
 
 await boot(home, { port, quiet: true, background: false });
-console.log(JSON.stringify({ url: `http://127.0.0.1:${port}`, folder, runId: r.id, token }));
+console.log(JSON.stringify({ url: `http://127.0.0.1:${port}`, folder, runId: r.id, taskRunId: t.id, token }));

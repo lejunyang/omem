@@ -11,13 +11,14 @@ import DiffName from "./DiffName.vue";
  * A delegation driven by tasks (docs/v2/coding-loop.md): where it stands and how much budget is left,
  * the questions waiting for the owner (answering one never holds the rest), every task with where it
  * came from, how its verification went and its own change, and what changed since the owner last
- * looked. The owner can add a task, pause or go on, re-do, drop or revert a task at any time.
+ * looked. The owner can add a task, pause or go on, re-do, drop or revert a task at any time, go
+ * back to a checkpoint, restore a file to how it was before the change shown, or take back one hunk.
  */
 type TaskState = "todo" | "coding" | "verify" | "done" | "owner" | "wontdo" | "reverted";
 type Note = { at: string; by: string; text: string; kind: string };
 type Task = { seq: number; title: string; doneWhen: string; kind: "build" | "fix" | "owner" | "redo"; origin: { findings?: number[]; note?: string; files?: string[] }; state: TaskState; question: string | null; options: string[]; answer: string | null; verifier: string | null; attempts: number; reverts: number; commits: Record<string, string[]>; checkpoint: number | null; notes: Note[] };
 type Checkpoint = { seq: number; tasks: number[]; label: string; createdAt: string };
-type Work = { budget: number; budgetBy: "owner" | "coder" | null; until: number; round: number; lastRunId: string; paused: string | null; viewed: number; status: string; verdict: string | null; stage: string | null; reverts: number[]; max: number };
+type Work = { budget: number; budgetBy: "owner" | "coder" | null; until: number; round: number; lastRunId: string; paused: string | null; viewed: number; status: string; verdict: string | null; stage: string | null; reverts: number[]; pending: string[]; max: number };
 type Data = { taskMode: boolean; rootId?: string; tasks?: Task[]; checkpoints?: Checkpoint[]; work?: Work };
 
 const props = defineProps<{ runId: string }>();
@@ -109,15 +110,16 @@ async function addTask() {
 const pause = (paused: boolean) => act(`/api/runs/${props.runId}/work`, { paused }, paused ? "已暂停：手上这一项做完就停" : "继续推进");
 
 // ---- changes ------------------------------------------------------------------------------------
-type Shown = { title: string; files: ReturnType<typeof parsePatches>; loading: boolean };
+// `from`: per repository, the revision the change shown starts at (what a file is restored to).
+type Shown = { title: string; files: ReturnType<typeof parsePatches>; loading: boolean; from: Record<string, string> };
 const shown = ref<Shown | null>(null);
 const openFiles = ref(new Set<string>());
 async function showChanges(title: string, query: string, after?: () => void) {
-  shown.value = { title, files: [], loading: true };
+  shown.value = { title, files: [], loading: true, from: {} };
   openFiles.value = new Set();
   try {
-    const r = await get<{ patches: { space: string; patch: string }[] }>(`/api/runs/${props.runId}/task-diff?${query}`);
-    shown.value = { title, files: parsePatches(r.patches), loading: false };
+    const r = await get<{ patches: { space: string; patch: string; from?: string }[] }>(`/api/runs/${props.runId}/task-diff?${query}`);
+    shown.value = { title, files: parsePatches(r.patches), loading: false, from: Object.fromEntries(r.patches.filter((p) => p.from).map((p) => [p.space, p.from!])) };
     after?.();
   } catch (e) {
     shown.value = null;
@@ -131,6 +133,15 @@ const showSince = () => {
 };
 const showAll = () => showChanges("从开始到现在的全部改动", "from=0");
 const fileKey = (space: string, name: string) => `${space}:${name}`;
+
+// ---- taking back a stretch, a file or a hunk ----------------------------------------------------
+const revertWork = (body: Record<string, unknown>, done: string) => act(`/api/runs/${props.runId}/revert`, body, done);
+const revertFile = (space: string, path: string) => withReason(`把 ${path} 恢复成改动前`, "下一轮开始前恢复，作为一个回退提交。原因：", (text) => revertWork({ file: { space, path, rev: shown.value!.from[space] }, reason: text || undefined }, `${path} 会在下一轮开始前恢复`));
+const revertHunk = (space: string, patch: string) => withReason("回退这一段", "下一轮开始前回退；代码已经变过、对不上时交给编码 Agent 按意思回退。原因：", (text) => revertWork({ patch: { space, text: patch }, reason: text || undefined }, "这一段会在下一轮开始前回退"));
+const backTo = (seq: number) => withReason(seq ? `回到检查点 ${seq}` : "回到开始的样子", `把${seq ? `检查点 ${seq}` : "开始"}之后的改动全部退回（一个回退提交，之后还能再回到更晚的检查点）；之后完成的修改项记为已回退。原因：`, (text) => revertWork({ checkpoint: seq, reason: text || undefined }, seq ? `下一轮开始前回到检查点 ${seq}` : "下一轮开始前回到开始的样子"));
+const showStep = (c: Checkpoint) => showChanges(`检查点 ${c.seq}：${c.label}`, `from=${c.seq - 1}&to=${c.seq}`);
+const showSinceCp = (c: Checkpoint) => showChanges(`检查点 ${c.seq} 以后到现在`, `from=${c.seq}`);
+const cpsOpen = ref(false);
 const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k) ? n.delete(k) : n.add(k); openFiles.value = n; };
 </script>
 
@@ -159,12 +170,23 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
       </div>
     </div>
 
+    <p v-if="w.pending.length" class="muted small pending">下一轮开始前：{{ w.pending.join("；") }}</p>
+
     <div class="row wrap changes-bar small">
       <span class="muted">看改动：</span>
       <button class="lnk" @click="showSince">{{ w.viewed ? `我上次看过之后（检查点 ${w.viewed} → ${lastCp}）` : "从开始到现在" }}</button>
       <button v-if="w.viewed" class="lnk" @click="showAll">全部</button>
-      <span class="muted">· 共 {{ data.checkpoints?.length ?? 0 }} 个检查点</span>
+      <button v-if="data.checkpoints?.length" class="lnk" :aria-expanded="cpsOpen" @click="cpsOpen = !cpsOpen">{{ cpsOpen ? "收起" : "" }}检查点（{{ data.checkpoints.length }}）</button>
     </div>
+    <ol v-if="cpsOpen && data.checkpoints?.length" class="cps small" aria-label="检查点">
+      <li v-for="c in [...data.checkpoints].reverse()" :key="c.seq" class="row wrap">
+        <span class="mono muted">{{ c.seq }}</span><span class="grow">{{ c.label }}</span><span class="muted">{{ relTime(c.createdAt) }}</span>
+        <button class="lnk" @click="showStep(c)">看这一步</button>
+        <button v-if="c.seq !== lastCp" class="lnk" @click="showSinceCp(c)">和现在比</button>
+        <button v-if="c.seq !== lastCp" class="lnk danger" :disabled="working" @click="backTo(c.seq)">回到这里</button>
+      </li>
+      <li class="row wrap"><span class="mono muted">0</span><span class="grow muted">开始</span><button class="lnk danger" :disabled="working" @click="backTo(0)">回到开始的样子</button></li>
+    </ol>
 
     <div v-for="g in groups" :key="g.id" class="group">
       <div class="section-title">{{ g.label }} · {{ g.list.length }}</div>
@@ -200,8 +222,11 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
       <p v-else-if="!shown.files.some((d) => d.files.length)" class="muted small">没有改动。</p>
       <template v-for="d in shown.files" :key="d.space">
         <div v-for="f in d.files" :key="fileKey(d.space, f.name)" class="file">
-          <button class="fhead mono small" :aria-expanded="openFiles.has(fileKey(d.space, f.name))" @click="toggleFile(fileKey(d.space, f.name))"><DiffName :file="f" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></button>
-          <DiffFile v-if="openFiles.has(fileKey(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :expandable="false" />
+          <div class="fbar">
+            <button class="fhead mono small" :aria-expanded="openFiles.has(fileKey(d.space, f.name))" @click="toggleFile(fileKey(d.space, f.name))"><DiffName :file="f" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></button>
+            <button v-if="shown.from[d.space] && f.status !== 'renamed' && f.status !== 'copied'" class="lnk small restore" :disabled="working" @click="revertFile(d.space, f.name)">恢复成改动前</button>
+          </div>
+          <DiffFile v-if="openFiles.has(fileKey(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :expandable="false" revertable @revert-hunk="(p) => revertHunk(d.space, p)" />
         </div>
       </template>
     </div>
@@ -235,7 +260,12 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
 .danger { color: var(--danger); }
 .shown { display: grid; gap: 8px; min-width: 0; }
 .file { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; }
-.fhead { display: flex; gap: 10px; width: 100%; padding: 7px 12px; background: var(--sunken); border: 0; color: var(--ink); cursor: pointer; text-align: left; min-width: 0; }
+.fbar { display: flex; align-items: center; background: var(--sunken); min-width: 0; }
+.fhead { display: flex; gap: 10px; flex: 1; padding: 7px 12px; background: none; border: 0; color: var(--ink); cursor: pointer; text-align: left; min-width: 0; }
+.restore { flex: none; padding: 0 10px; }
+.pending { margin: 0; }
+.cps { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.cps li { gap: 4px 10px; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--line); }
 .add { color: var(--ok); }
 .rm { color: var(--danger); }
 @media (max-width: 760px) {

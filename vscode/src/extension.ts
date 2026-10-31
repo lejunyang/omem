@@ -7,11 +7,13 @@ import { Delegate } from "./delegate";
 import { Progress } from "./progress";
 import { RunItem, Runs } from "./runs";
 import { Workbench } from "./review";
+import { TaskItem, Tasks } from "./tasks";
 
 /**
  * omem in VS Code (docs/v2/ide.md): delegations and their progress, review findings on the code,
- * questions and fix points on a selection, starting a fix or a new delegation. Everything goes
- * through omem's HTTP API, as the web page does.
+ * questions and fix points on a selection, starting a fix or a new delegation, and a task-driven
+ * delegation's tasks and checkpoints (tasks.ts). Everything goes through omem's HTTP API, as the
+ * web page does.
  */
 export async function activate(context: vscode.ExtensionContext) {
   const api = new Api(new Connection(context.secrets));
@@ -20,10 +22,12 @@ export async function activate(context: vscode.ExtensionContext) {
   const current = new Current(api);
   const bench = new Workbench(api, current);
   const runs = new Runs(api, current);
+  const tasks = new Tasks(api, current);
   const delegate = new Delegate(api, current);
   const progress = new Progress(api, current, () => {
     runs.refresh();
     void bench.load().catch(fail);
+    void tasks.load().catch(fail);
   });
   current.onDidChange(() => void bench.load().catch(fail));
 
@@ -53,6 +57,8 @@ export async function activate(context: vscode.ExtensionContext) {
     progress,
     vscode.window.registerTreeDataProvider("omem.runs", runs),
     vscode.window.registerTreeDataProvider("omem.review", bench),
+    vscode.window.registerTreeDataProvider("omem.tasks", tasks),
+    vscode.workspace.registerTextDocumentContentProvider("omem-rev", tasks),
     vscode.languages.registerCodeLensProvider({ language: "markdown" }, delegate),
     vscode.workspace.onDidChangeWorkspaceFolders(() => void current.detect().catch(() => {})),
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -72,6 +78,7 @@ export async function activate(context: vscode.ExtensionContext) {
     runs.refresh();
     if (current.run) await current.select(current.run.id);
     else await current.detect();
+    await tasks.load();
   });
   cmd("omem.setToken", async () => {
     const token = await vscode.window.showInputBox({ title: `${api.conn.describe()} 的访问令牌`, prompt: "omem 所在机器上运行 omem user token 得到；留空则删除", password: true, ignoreFocusOut: true });
@@ -140,6 +147,35 @@ export async function activate(context: vscode.ExtensionContext) {
     await started(next, "已开始修改");
   });
 
+  // A task-driven delegation's tasks and checkpoints (docs/v2/coding-loop.md).
+  const taskOf = (arg: unknown) => (arg instanceof TaskItem && arg.node.kind === "task" ? arg.node.task : null);
+  const cpOf = (arg: unknown) => (arg instanceof TaskItem && arg.node.kind === "checkpoint" ? arg.node.cp : null);
+  cmd("omem.task.diff", async (arg) => {
+    const t = taskOf(arg);
+    if (t) await tasks.showChanges(`T${t.seq} ${t.title} 的改动`, `tasks=${t.seq}`);
+  });
+  cmd("omem.task.answer", async (arg) => { const t = taskOf(arg); if (t) await tasks.answer(t); });
+  cmd("omem.task.reopen", async (arg) => { const t = taskOf(arg); if (t) await tasks.reopen(t); });
+  cmd("omem.task.drop", async (arg) => { const t = taskOf(arg); if (t) await tasks.drop(t); });
+  cmd("omem.task.revert", async (arg) => { const t = taskOf(arg); if (t) await tasks.revert(t, false); });
+  cmd("omem.task.revertRedo", async (arg) => { const t = taskOf(arg); if (t) await tasks.revert(t, true); });
+  cmd("omem.task.add", () => tasks.add());
+  cmd("omem.work.pause", () => tasks.pause(true));
+  cmd("omem.work.resume", () => tasks.pause(false));
+  cmd("omem.work.sinceViewed", () => tasks.sinceViewed());
+  cmd("omem.checkpoint.step", async (arg) => {
+    const c = cpOf(arg);
+    if (c) await tasks.showChanges(`检查点 ${c.seq}：${c.label}`, `from=${c.seq - 1}&to=${c.seq}`);
+  });
+  cmd("omem.checkpoint.since", async (arg) => {
+    const c = cpOf(arg);
+    if (c) await tasks.showChanges(`检查点 ${c.seq} 以后到现在`, `from=${c.seq}`);
+  });
+  cmd("omem.checkpoint.back", async (arg) => {
+    const c = cpOf(arg);
+    if (c) await tasks.backTo(c);
+  });
+
   cmd("omem.delegate", () => delegate.open());
   cmd("omem.quoteToTask", () => {
     const editor = vscode.window.activeTextEditor;
@@ -155,7 +191,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   if (await status.check()) await current.detect().catch(() => current.set(null));
   else await current.set(null).catch(() => {});
-  return { api, status, current, bench, runs, delegate };
+  return { api, status, current, bench, runs, delegate, tasks };
 }
 
 export function deactivate() {}

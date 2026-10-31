@@ -17,9 +17,10 @@ import { diffLayout } from "../lib/diffLayout";
  */
 export type DiffPoint = { id: string; mark: string; color: string; start: number; end: number };
 // `active` is one change point, or a group's points (a page or module and what is under it).
-const props = withDefaults(defineProps<{ runId: string; space: string; lines: string[]; points?: DiffPoint[]; active?: string | string[] | null; expandable?: boolean }>(), { points: () => [], active: null, expandable: true });
+// `revertable`: each hunk offers “回退这一段”, handing the parent that hunk as a patch of its own (CodeTasks).
+const props = withDefaults(defineProps<{ runId: string; space: string; lines: string[]; points?: DiffPoint[]; active?: string | string[] | null; expandable?: boolean; revertable?: boolean }>(), { points: () => [], active: null, expandable: true, revertable: false });
 const isActive = (id: string) => (Array.isArray(props.active) ? props.active.includes(id) : props.active === id);
-const emit = defineEmits<{ point: [id: string] }>();
+const emit = defineEmits<{ point: [id: string]; "revert-hunk": [patch: string] }>();
 
 type Row = { kind: "add" | "del" | "ctx" | "meta"; old: number | null; new: number | null; text: string };
 type Hunk = { oldStart: number; newStart: number; header: string; rows: Row[]; oldEnd: number; newEnd: number };
@@ -33,6 +34,14 @@ const q = (p: string) => `space=${encodeURIComponent(props.space)}&path=${encode
 const oldSrc = computed(() => (meta.value.status !== "added" && meta.value.oldOid ? authUrl(`/api/runs/${props.runId}/blob?${q(meta.value.oldName ?? path.value)}&oid=${meta.value.oldOid}`) : null));
 const newSrc = computed(() => (meta.value.status !== "deleted" && path.value ? authUrl(`/api/runs/${props.runId}/file/raw?${q(path.value)}`) : null));
 const image = computed(() => isImagePath(path.value));
+/** The i-th hunk with the file's header, as `git apply` takes it. */
+function hunkPatch(i: number) {
+  const starts = props.lines.flatMap((l, k) => (l.startsWith("@@ ") ? [k] : []));
+  const head = props.lines.slice(0, starts[0] ?? props.lines.length);
+  const body = props.lines.slice(starts[i], starts[i + 1] ?? props.lines.length);
+  while (body.length && body.at(-1) === "") body.pop();
+  return [`diff --git a/${meta.value.oldName ?? path.value} b/${path.value}`, ...head, ...body, ""].join("\n");
+}
 // An image the server cannot read (an older server without …/blob, a blob gone from the repository).
 const broken = ref(new Set<string>());
 const unreadable = (src: string) => { broken.value = new Set([...broken.value, src]); };
@@ -201,7 +210,7 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
             </tr>
             <tr v-for="r in gapRows(gaps[i], 'tail')" :key="`t${i}-${r.new}`" class="ctx" :data-line="r.new"><template v-if="split"><td class="no">{{ r.old }}</td><td class="code">{{ r.text }}</td><td class="no">{{ r.new }}</td><td class="code">{{ r.text }}</td></template><template v-else><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></template></tr>
           </template>
-          <tr class="hunk"><td :colspan="cols">@@ -{{ h.oldStart }} +{{ h.newStart }} @@ {{ h.header }}</td></tr>
+          <tr class="hunk"><td :colspan="cols">@@ -{{ h.oldStart }} +{{ h.newStart }} @@ {{ h.header }}<button v-if="revertable" class="lnk hunk-revert" type="button" @click="emit('revert-hunk', hunkPatch(i))">回退这一段</button></td></tr>
           <template v-if="split">
             <tr v-for="(p, j) in pairs[i]" :key="`${i}-${j}`" :class="pairClass(p)" :data-line="p.r?.new ?? p.l?.old">
               <td class="no" :class="p.l?.kind === 'del' ? 'del' : p.l ? '' : 'none'">{{ p.l?.old ?? "" }}</td>
@@ -255,6 +264,7 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0 6px; }
 .lnk:hover { text-decoration: underline; }
 .lnk:disabled { opacity: 0.5; cursor: default; }
+.hunk-revert { float: right; font-family: var(--sans); }
 .cp > td:first-child { box-shadow: inset 3px 0 0 var(--line-strong); }
 .cp-on > td { background-image: linear-gradient(var(--accent-soft), var(--accent-soft)); }
 .cp-on > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }

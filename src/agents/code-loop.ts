@@ -50,6 +50,13 @@ function keepSession(app: App, rootId: string, check: string, id: string | undef
 export async function taskReview(app: App, codeRunId: string, rc: RoundContext): Promise<{ verdict: string; continuedRunId?: string }> {
   const run = getRun(app, codeRunId);
   const rootId = workRootOf(app, run.id);
+  // Only reverts this round: what was taken back had been reviewed; a check it breaks is a task.
+  if (run.output.gitOnly) {
+    const broken = ((run.output.repos ?? []) as { space: string; check: { command: string; code: number; output: string } | null }[]).filter((r) => r.check && r.check.code !== 0);
+    if (broken.length) addTask(app, rootId, { title: "回退之后检查没通过", doneWhen: broken.map((r) => `${r.space}：\`${r.check!.command}\` 退出码 ${r.check!.code}\n\n\`\`\`\n${truncate(r.check!.output.slice(-3000), 3000)}\n\`\`\``).join("\n\n"), kind: "fix" }, "host");
+    else setWorkState(app, rootId, { stageAt: listCheckpoints(app, rootId).at(-1)?.seq ?? 0 });
+    return nextStep(app, getRun(app, run.id), rc);
+  }
   const toVerify = listTasks(app, rootId).filter((t) => t.state === "verify" && t.verifier);
   if (toVerify.length) {
     setRunOutput(app, run.id, { reviewStage: "verify" });

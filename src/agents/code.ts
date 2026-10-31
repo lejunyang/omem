@@ -319,11 +319,21 @@ ${input.task}
   const skipCoder = !!(input.syncOnly || input.moveToTarget);
   // A task-driven delegation: what to revert first, then the tasks this round codes (code-tasks.ts).
   const taskMode = !!getRun(app, rootRunId).input.taskMode && !input.branches && !skipCoder && !input.peerCoder;
+  // A round that only takes things back (the owner reverted, nothing to code): no coding Agent.
+  let gitOnly: string | null = null;
   if (taskMode) {
     const tasks = await import("./code-tasks.ts");
     const { identity } = await import("./code-branch.ts");
-    tasks.applyReverts(app, rootRunId, worktrees, (text) => ctx.event("status", { text }), identity);
+    // What the owner (or anyone) changed on the branch since the last round: a checkpoint of its own, kept by the coder.
+    const before = one<{ status: string }>(app.db, "select status from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) and id != ? order by created_at desc limit 1", rootRunId, rootRunId, run.id);
+    const outside = continueFrom ? tasks.recordOutsideChanges(app, rootRunId, run.id, worktrees, identity, { previousEnded: before?.status === "done", round: Number((input as { round?: number }).round ?? 1) }) : null;
+    if (outside) ctx.event("status", { text: `检查点 ${outside.checkpoint.seq}：${outside.checkpoint.label}，${outside.files.length} 个文件` });
+    const reverted = tasks.applyReverts(app, rootRunId, worktrees, (text) => ctx.event("status", { text }), identity);
     const taken = tasks.takeTasks(app, rootRunId, run.id);
+    if (continueFrom && !taken.length) {
+      gitOnly = reverted.length ? `这一轮只做了回退：${reverted.join("；")}` : "这一轮没有要编码的修改项";
+      ctx.output({ gitOnly: true });
+    }
     const w = tasks.workState(app, rootRunId);
     const planning = !continueFrom && !tasks.listTasks(app, rootRunId).some((t) => t.coderRun !== run.id);
     const list = taken.map((t) => tasks.taskText(app, t)).join("\n\n");
@@ -332,6 +342,7 @@ ${input.task}
       head,
       continueFrom ? list : taken.length ? `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”），这些已经列好，逐项做：\n\n${list}` : `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”）。先用 \`plan_tasks\` 拆分${w.budgetBy === "owner" ? `（本人给的预算：最多自动推进 ${w.budget} 轮）` : "，并估计要几轮"}，再逐项做。`,
       continueFrom ? "继续在原来的工作区里改，只做这些项；已完成和不做的项不要动。每项照角色说明里“修改项”的做法提交，并用 finish_task 说明。" : "",
+      outside ? `## ${outside.owner ? "本人在这一轮之前改过代码" : "分支上有别人的新提交"}\n\n${outside.owner ? "本人" : "分支上"}改过这些文件（检查点 ${outside.checkpoint.seq}）：${outside.files.slice(0, 30).join("、")}${outside.files.length > 30 ? ` 等 ${outside.files.length} 个` : ""}。这些改动保留，不要覆盖或回退；和你要做的冲突时先用 report_task 交给本人。` : "",
       where.trim(),
     ].filter(Boolean).join("\n\n");
     if (planning || taken.length) ctx.event("status", { text: taken.length ? `这一轮做 ${taken.map((t) => tasks.taskLabel(t.seq)).join("、")}` : "编码 Agent 先拆分修改项" });
@@ -355,7 +366,8 @@ ${input.task}
     ctx.event("status", { text: `上一次尝试已经写完代码，这次从检查和评审接着做` });
   }
   if (input.peerFinished) ctx.output({ coderSummary: input.task, coderAI: { profile: `peer:${input.peerCoder?.caller ?? "?"}`, model: input.peerCoder?.model } });
-  let coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : input.peerFinished ? input.task : coded ? String(coded.coderSummary) : await code();
+  let coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : gitOnly ?? (input.peerFinished ? input.task : coded ? String(coded.coderSummary) : await code());
+  if (gitOnly) ctx.output({ coderSummary: gitOnly });
   // What Git brought in before coding goes to the reviewers too, not only the conflicts.
   if (synced?.report || (synced?.summary && !skipCoder)) coderReply = `${coderReply}\n\n## Git 同步\n\n${[synced.summary, synced.report].filter(Boolean).join("\n\n")}`.trim();
   if (input.branches || skipCoder || synced) ctx.output({ coderSummary: coderReply });

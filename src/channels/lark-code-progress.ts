@@ -5,6 +5,7 @@ import { all, one, run } from "../core/db.ts";
 import { type CodeChain, saveCodeChain, trySettleCodeChain, maxCodeRounds } from "../agents/code-chain.ts";
 import { getThread } from "../agents/threads.ts";
 import { getRun } from "../agents/runs.ts";
+import { isTaskWork, listTasks, taskLabel, workRootOf, workState } from "../agents/code-tasks.ts";
 import { findSpace } from "../core/spaces.ts";
 import { reviewChecks, reviewsOf, STOP_LABEL, SEVERITY_LABEL, type LeadResult, type ReviewPlan, type StopReason } from "../agents/review.ts";
 import { buildCard, sendLark, updateLarkCard, larkClient, type CardBlock } from "./lark-send.ts";
@@ -81,8 +82,49 @@ function checkLines(app: App, repos: RepoCheck[] | undefined): string {
   }).join("\n");
 }
 
+/** A delegation driven by tasks (docs/v2/coding-loop.md): how far its tasks are and what waits for the owner. */
+const TASK_MARK: Record<string, string> = { todo: "待做", coding: "编码中", verify: "待验证", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
+const PAUSED: Record<string, string> = { budget: "暂停：自动推进的轮数用完了，说“继续”再推进", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停" };
+function taskLines(app: App, rootId: string) {
+  const tasks = listTasks(app, rootId);
+  if (!tasks.length) return "";
+  const done = tasks.filter((t) => t.state === "done").length;
+  const open = tasks.filter((t) => !["done", "wontdo", "reverted"].includes(t.state));
+  return [
+    `**修改项**：完成 ${done} / ${tasks.length}${tasks.some((t) => t.state === "wontdo") ? `，不做 ${tasks.filter((t) => t.state === "wontdo").length}` : ""}`,
+    ...open.slice(0, 8).map((t) => `- ${taskLabel(t.seq)} ${t.title}（${TASK_MARK[t.state]}${t.attempts ? `，第 ${t.attempts + 1} 次` : ""}）`),
+    open.length > 8 ? `- ……另有 ${open.length - 8} 项` : "",
+  ].filter(Boolean).join("\n");
+}
+function taskStatus(app: App, rootId: string, latest: ReturnType<typeof getRun>) {
+  const w = workState(app, rootId);
+  const owner = listTasks(app, rootId).filter((t) => t.state === "owner").length;
+  const stage = String(latest.output.reviewStage ?? "");
+  if (["queued", "running"].includes(latest.status)) return latest.status === "queued" ? "排队中" : stage === "verify" ? "逐项验证中" : stage === "plan" ? "评审负责人在定这次评审看什么" : ["checks", "lead"].includes(stage) ? "阶段评审中" : "编码中";
+  if (w.paused) return PAUSED[w.paused] ?? "已暂停";
+  if (owner) return `等你决定 ${owner} 项（卡片在下面），其余照常推进`;
+  if (latest.output.verdict === "approved") return "完成，等你确认推送";
+  return latest.status !== "done" ? `运行${latest.status}，等本人处理` : "已停下";
+}
+
 export function snapshot(app: App, chain: CodeChain) {
   const latest = getRun(app, chain.lastCodeRunId!);
+  if (isTaskWork(app, latest.id)) {
+    const rootId = workRootOf(app, latest.id);
+    const live = ["queued", "running"].includes(latest.status);
+    const approved = latest.status === "done" && latest.output.verdict === "approved";
+    const w = workState(app, rootId);
+    const blocks: CardBlock[] = [
+      { markdown: `第 ${chain.round} 轮 · ${taskStatus(app, rootId, latest)}\n运行：${latest.id} · 最多自动推进到第 ${w.until} 轮` },
+      ...(taskLines(app, rootId) ? [{ markdown: taskLines(app, rootId) }] : []),
+      ...(reviewLines(app, latest.id) ? [{ markdown: reviewLines(app, latest.id) }] : []),
+      { note: `交办标识：${chain.askRunId}` },
+    ];
+    const repos = latest.output.repos as RepoCheck[] | undefined;
+    const checks = live ? "" : checkLines(app, repos);
+    if (checks) blocks.push({ markdown: checks });
+    return buildCard({ title: "编码交办", color: live ? "wathet" : approved ? "green" : "orange", blocks });
+  }
   const blocks: CardBlock[] = [{ note: `交办标识：${chain.askRunId}` }];
   if (chain.rounds.length > 3) blocks.push({ note: `更早 ${chain.rounds.length - 3} 轮评审保存在运行记录中。` });
   for (const id of chain.rounds.slice(-3)) {
@@ -133,7 +175,7 @@ async function resolveAnchor(app: App, chain: CodeChain): Promise<string> {
 
 /** A review after the coding run (confirmed plan) keeps the card live until it has a verdict. */
 function checkpointOf(latest: ReturnType<typeof getRun>) {
-  const reviewing = ["queued", "checks", "lead"].includes(String(latest.output.reviewStage ?? ""));
+  const reviewing = ["queued", "checks", "lead", "verify", "plan"].includes(String(latest.output.reviewStage ?? ""));
   return `${latest.id}:${["done", "failed", "cancelled"].includes(latest.status) && !reviewing ? `${latest.status}:${latest.output.verdict ?? ""}` : "active"}`;
 }
 
