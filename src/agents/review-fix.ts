@@ -61,6 +61,21 @@ export function setFindingSuggestion(app: App, runId: string, findingId: number,
   return { id: findingId, ownerSuggestion: after.owner_suggestion, decision: after.decision };
 }
 
+/**
+ * A finding re-described (the owner could not follow it): a new title, detail and, when given,
+ * suggestion, written after reading the code again. The reviewer's first wording stays in `revised`
+ * (kept from the first rewrite on), shown under the new one.
+ */
+export function reviseFinding(app: App, runId: string, findingId: number, next: { title?: string; detail: string; suggestion?: string }) {
+  const f = findingOf(app, workRuns(app, runId), findingId);
+  if (!f) throw new HttpError(404, `问题 #${findingId} 不属于这次交办或评审`);
+  const original = f.revised ?? JSON.stringify({ title: f.title, detail: f.detail, suggestion: f.suggestion, at: now() });
+  const title = next.title?.trim() || f.title;
+  const suggestion = next.suggestion?.trim() ? next.suggestion.trim() : f.suggestion;
+  run(app.db, "update review_findings set title = ?, detail = ?, suggestion = ?, revised = ? where id = ?", title, next.detail.trim(), suggestion, original, findingId);
+  return { id: findingId, title };
+}
+
 const bareBranch = (b: string) => b.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 
 /** The branch each repository of a work is on: the reviewed branch, the one it started from, or the one it lands on. */
@@ -264,7 +279,9 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     // Work on the branch that landed after this delegation started (another delegation applied):
     // bring it in before coding, so the fix is made on the latest code.
     const landed = !branchReview && branchWork(app, into.id, userId).some((w) => !!w.appliedAt && w.appliedAt > root.createdAt);
-    const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}), ...(landed ? { sync: { pull: true } } : {}) };
+    // The owner starts this round here: this machine's coding and review Agents do it, also when an
+    // outside Agent coded or reviewed the rounds before (their peerCoder / peerReviewer stay behind).
+    const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}), ...(landed ? { sync: { pull: true } } : {}), peerCoder: undefined, peerReviewer: undefined };
     const intoRuns = workRuns(app, into.id);
     // Fixing chosen findings: the next round re-reviews only the checks that raised them, and every
     // check every `rereviewAllEvery` rounds (as when review-lead names them). The owner's own words,
@@ -303,6 +320,20 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     linkRunToItem(app, r, input.itemId, userId);
   }
   return accepted(r);
+}
+
+/**
+ * A round left waiting for an outside Agent to code (peer-code.ts) that the owner wants done here:
+ * the same task as the next round, coded and reviewed by this machine's Agents. Findings handed to
+ * the waiting round move to the new one.
+ */
+export function codeHere(app: App, runId: string, userId: string): Run {
+  const r = getRun(app, runId);
+  if (r.kind !== "code" || r.output.verdict !== "awaiting-peer-code") throw new HttpError(409, "这一轮不是在等外部 Agent 编码");
+  const rootId = String(r.input.continueFrom ?? r.id);
+  const next = queueStandaloneFix(app, rootId, r.id, String(r.input.task ?? ""), userId, { reviewOnly: r.input.reviewOnly, peerCoder: undefined, peerReviewer: undefined });
+  run(app.db, "update review_findings set fixed_by = ? where fixed_by = ?", next.id, r.id);
+  return next;
 }
 
 /** Web/CLI work has no conversation to report to, but still owns reusable worktrees. `extraInput`: a round of Git work (code-sync.ts). */

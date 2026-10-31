@@ -9,7 +9,7 @@ import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setCh
 import { codePatches, isBranchReview, worktreesOf, type PeerReviewer } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
-  blocksAt, checkBrief, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
+  blocksAt, checkBrief, FINDING_FORMAT, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
   SEVERITY_LABEL, STOP_LABEL, type ChangePoint, type LeadResult, type ReviewPlan, type Severity, type StopReason,
 } from "./review.ts";
 import { loadRole, runRole } from "./runner.ts";
@@ -594,6 +594,7 @@ export async function peerReviewTask(app: App, codeRunId: string, caller: string
       worktrees.length > 1 ? `涉及 ${worktrees.length} 个仓库：文件路径写成 仓库空间id/路径。` : "",
     ].filter(Boolean).join("\n"),
     brief,
+    FINDING_FORMAT,
     `## 需求拆分（可选）\n\n${SPLIT_BRIEF.replace(/^## .*\n/, "")}`,
     ...plan!.checks.map(guide),
   ].join("\n\n");

@@ -80,7 +80,8 @@ async function ensureFile() {
   if (file.value || loading.value) return !!file.value;
   loading.value = true;
   try {
-    const r = await get<{ lines: string[] }>(`/api/runs/${props.runId}/file?space=${encodeURIComponent(props.space)}&path=${encodeURIComponent(path.value)}`);
+    const r = await get<{ lines?: string[] }>(`/api/runs/${props.runId}/file?space=${encodeURIComponent(props.space)}&path=${encodeURIComponent(path.value)}`);
+    if (!r.lines) throw new Error("不是文本文件");
     file.value = r.lines.at(-1) === "" ? r.lines.slice(0, -1) : r.lines;
     for (const g of gaps.value) if (g.to === null) g.to = file.value.length;
     return true;

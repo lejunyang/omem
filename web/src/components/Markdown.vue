@@ -4,7 +4,8 @@ import { useRouter } from "vue-router";
 import { linkifyPaths, renderMarkdown, renderMermaid } from "../lib/markdown";
 import { openCitation, state } from "../store";
 
-const props = withDefaults(defineProps<{ source: string; space?: string; linkify?: boolean; existingPages?: string[]; breaks?: boolean }>(), { linkify: true });
+/** `runId`: the text is about a coding run (a review finding); `路径:行` opens that run's file instead of an indexed original. */
+const props = withDefaults(defineProps<{ source: string; space?: string; linkify?: boolean; existingPages?: string[]; breaks?: boolean; runId?: string }>(), { linkify: true });
 const root = ref<HTMLElement>();
 const router = useRouter();
 const emit = defineEmits<{ rendered: [el: HTMLElement] }>();
@@ -39,7 +40,8 @@ function onClick(e: MouseEvent) {
     const from = a.dataset.from ? Number(a.dataset.from) : undefined;
     const to = a.dataset.to ? Number(a.dataset.to) : undefined;
     const replace = !(e.target as HTMLElement).closest(".drawer");
-    if (cite === "source") openCitation(a.dataset.uri ? { kind: "source", uri: a.dataset.uri, space: props.space ?? state.space, from, to, label: a.textContent ?? "" } : { kind: "source", id: a.dataset.ref, from, to, label: a.textContent ?? "" }, replace);
+    if (cite === "source" && a.dataset.uri && props.runId) openCitation({ kind: "file", runId: props.runId, path: a.dataset.uri, from, to }, replace);
+    else if (cite === "source") openCitation(a.dataset.uri ? { kind: "source", uri: a.dataset.uri, space: props.space ?? state.space, from, to, label: a.textContent ?? "" } : { kind: "source", id: a.dataset.ref, from, to, label: a.textContent ?? "" }, replace);
     else if (cite === "memory") openCitation({ kind: "memory", id: a.dataset.ref! }, replace);
     else if (cite === "message") openCitation({ kind: "message", id: a.dataset.ref! }, replace);
     return;

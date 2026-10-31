@@ -3,7 +3,7 @@ import { get } from "../api";
 
 /** The reviews of a coding delegation or branch review (GET /api/runs/:id/reviews), shared by the run page's tabs. */
 export type Severity = "blocker" | "major" | "minor" | "nit";
-export type Finding = { id: number; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string; decision: Decision | null; decision_note: string; owner_suggestion?: string | null; fixed_by?: string | null };
+export type Finding = { id: number; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string; decision: Decision | null; decision_note: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null };
 /** The suggestion the next round acts on: the owner's rewrite when there is one. */
 export const suggestionOf = (f: Pick<Finding, "suggestion" | "owner_suggestion">) => f.owner_suggestion?.trim() || f.suggestion;
 /** The owner's call on a finding (src/agents/review-fix.ts). */

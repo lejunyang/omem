@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
-import { fixedByInfo, inheritedSplit, markFindingsFixed, newerWork, sameBranchWork, setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
+import { codeHere, fixedByInfo, inheritedSplit, markFindingsFixed, newerWork, reviseFinding, sameBranchWork, setFindingSuggestion, startFix } from "../src/agents/review-fix.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
@@ -129,5 +129,34 @@ describe("coding seen from the requirement tree", () => {
     // Another branch's split is not borrowed.
     const other = createRun(app, { kind: "code", spaceId: "shop", title: "别的分支", input: { task: "x", repos: ["shop-api"], fromBranches: { "shop-api": "feat/none" } } });
     expect(inheritedSplit(app, other.id, OWNER)).toBeNull();
+  });
+  it("codes a fix here after an outside Agent coded the rounds before, and re-describes a finding", async () => {
+    const peerCoder = { caller: "laptop", session: "s" };
+    const root = createRun(app, { kind: "code", spaceId: "shop", title: "外部编码", input: { task: "改退款", repos: ["shop-api"], peerCoder } });
+    run(app.db, "update runs set status = 'done' where id = ?", root.id);
+    setRunOutput(app, root.id, { verdict: "changes-requested", worktrees: [{ space: "shop-api", path: dir, branch: "omem/peer", base: "main", targetBranch: "main" }] });
+    recordReview(app, { codeRunId: root.id, round: 1, check: "reviewer", verdict: "changes_requested", summary: "", findings: [{ severity: "major", file: "refund.ts", line: 1, title: "入口消失", detail: "重新审核后入口消失", suggestion: "", evidence: [], confidence: "high" }] });
+    const f = roundFindings(app, root.id, 1)[0];
+
+    // Re-described: new wording, the first one kept; again keeps the first.
+    reviseFinding(app, root.id, f.id, { title: "工具重新提交审核后，『取消挂载』按钮不再显示", detail: "**现在的实现**\n- [按钮条件](refund.ts:1)" });
+    reviseFinding(app, root.id, f.id, { detail: "**问题**\n- 按钮不显示" });
+    const revised = roundFindings(app, root.id, 1)[0];
+    expect(revised).toMatchObject({ title: "工具重新提交审核后，『取消挂载』按钮不再显示", detail: "**问题**\n- 按钮不显示" });
+    expect(JSON.parse(revised.revised!)).toMatchObject({ title: "入口消失", detail: "重新审核后入口消失" });
+
+    // The owner's fix round is coded and reviewed here, not left for the outside Agent.
+    const next = await startFix(app, root.id, { findingIds: [f.id] }, OWNER);
+    expect((next.input as { peerCoder?: unknown }).peerCoder).toBeUndefined();
+
+    // A round that did wait for it can be handed to this machine; the finding follows.
+    run(app.db, "update runs set status = 'done' where id = ?", next.id);
+    setRunOutput(app, next.id, { verdict: "awaiting-peer-code" });
+    run(app.db, "update runs set input = json_set(input, '$.peerCoder', json(?)) where id = ?", JSON.stringify(peerCoder), next.id);
+    const here = codeHere(app, next.id, OWNER);
+    expect(here.input).toMatchObject({ task: (next.input as { task: string }).task, continueFrom: root.id, round: 3 });
+    expect((here.input as { peerCoder?: unknown }).peerCoder).toBeUndefined();
+    expect(roundFindings(app, root.id, 1)[0].fixed_by).toBe(here.id);
+    expect(() => codeHere(app, root.id, OWNER)).toThrow(/不是在等/);
   });
 });

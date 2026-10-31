@@ -17,7 +17,8 @@ import type { LatestState } from "../lib/reviews";
  */
 type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string };
 export type AskContext = { quote: string; label: string };
-const props = defineProps<{ runId: string; runTitle: string; spaceId: string | null; context?: AskContext | null; heading?: string; basket?: boolean; minimized?: boolean }>();
+/** `draft`: a question to start from (“看不懂，重新描述”); the owner can edit it before sending. */
+const props = defineProps<{ runId: string; runTitle: string; spaceId: string | null; context?: AskContext | null; heading?: string; basket?: boolean; minimized?: boolean; draft?: string }>();
 const emit = defineEmits<{ close: []; minimize: [] }>();
 
 const KEY = "omem.runAsk";
@@ -40,6 +41,7 @@ const returnTo = document.activeElement as HTMLElement | null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 
 watch(() => props.context, (c) => { if (c) quote.value = c; void nextTick(() => input.value?.focus()); }, { immediate: true });
+watch(() => props.draft, (d) => { if (d) text.value = d; }, { immediate: true });
 watch(() => [quotes.value.length, props.minimized], () => { if (!props.minimized) void nextTick(() => input.value?.focus()); });
 async function load() {
   if (!conversationId.value) return;
@@ -100,6 +102,13 @@ async function send() {
 // What the owner typed is shown without the instruction line the drawer adds.
 const NOTE = "（关于交办运行";
 const shownText = (m: Message) => (m.role === "user" ? m.text.slice(0, m.text.lastIndexOf(`\n\n${NOTE}`) >= 0 ? m.text.lastIndexOf(`\n\n${NOTE}`) : undefined) : m.text);
+// Answers with code or tables read better wider; the owner's choice is remembered.
+const WIDE_KEY = "omem.runAskWide";
+const wide = ref((() => { try { return localStorage.getItem(WIDE_KEY) === "1"; } catch { return false; } })());
+function toggleWide() {
+  wide.value = !wide.value;
+  try { localStorage.setItem(WIDE_KEY, wide.value ? "1" : "0"); } catch { /* private mode */ }
+}
 /** With a basket the drawer shrinks (what was quoted stays); without, it closes. */
 function dismiss() {
   if (props.basket) emit("minimize");
@@ -113,10 +122,11 @@ function onKey(e: KeyboardEvent) {
 
 <template>
   <div v-show="!minimized" class="scrim" @click="dismiss" />
-  <aside v-show="!minimized" class="drawer" role="dialog" :aria-label="heading ?? '就这次交办提问'" tabindex="-1" @keydown="onKey">
+  <aside v-show="!minimized" class="drawer" :class="{ wide }" role="dialog" :aria-label="heading ?? '就这次交办提问'" tabindex="-1" @keydown="onKey">
     <header>
       <span class="t">{{ heading ?? "就这次交办提问" }}</span>
       <router-link v-if="conversationId" class="btn ghost sm" :to="`/ask/${conversationId}`" title="在问答里打开">在问答里打开</router-link>
+      <button class="btn ghost sm" :aria-pressed="wide" @click="toggleWide">{{ wide ? "收窄" : "加宽" }}</button>
       <button v-if="basket" class="btn ghost sm" title="缩小到图标，继续选中别处的内容加入引用（Esc）" @click="emit('minimize')">缩小</button>
       <button class="btn ghost sm icon" aria-label="关闭" @click="emit('close')"><Icon name="x" :size="16" /></button>
     </header>
@@ -145,10 +155,15 @@ function onKey(e: KeyboardEvent) {
 
 <style scoped>
 .scrim { position: fixed; inset: 0; background: rgba(10, 12, 16, 0.2); z-index: 39; }
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow-lg); z-index: 40; display: flex; flex-direction: column; outline: none; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow-lg); z-index: 40; display: flex; flex-direction: column; outline: none; }
 header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--line); min-height: 52px; }
 .t { flex: 1; font-weight: 600; }
-.body { flex: 1; padding: 16px; overflow: auto; display: grid; gap: 12px; align-content: start; }
+.drawer.wide { width: min(1040px, 100vw); }
+/* One column that never grows past the drawer: wide code and tables scroll in place, not the whole answer. */
+.body { flex: 1; padding: 16px; overflow: auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
+.msg { min-width: 0; }
+.msg :deep(pre) { max-width: 100%; overflow-x: auto; }
+.msg :deep(table) { display: block; max-width: 100%; overflow-x: auto; }
 .msg.user { background: var(--sunken); border-radius: 10px; padding: 8px 12px; }
 .compose { border-top: 1px solid var(--line); padding: 12px 16px; display: grid; gap: 8px; }
 .quote { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; padding: 4px 8px 6px 10px; }

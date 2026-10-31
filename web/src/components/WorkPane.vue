@@ -50,7 +50,7 @@ onBeforeUnmount(() => off());
 
 const run = computed(() => detail.value?.run ?? null);
 type Check = { command: string; code: number; output: string };
-type Out = { appliedAt?: string; discardedAt?: string; review?: string; coderSummary?: string; worktrees?: { commits?: boolean }[]; repos?: { space: string; check: Check | null }[] };
+type Out = { appliedAt?: string; verdict?: string; discardedAt?: string; review?: string; coderSummary?: string; worktrees?: { commits?: boolean }[]; repos?: { space: string; check: Check | null }[] };
 const out = computed(() => (run.value?.output ?? {}) as Out);
 const branchReview = computed(() => !!(run.value?.input as { branches?: unknown } | undefined)?.branches);
 const branchWork = computed(() => !branchReview.value && (out.value.worktrees ?? []).some((w) => w.commits));
@@ -117,6 +117,18 @@ const processFocus = ref<string | null>(null);
 watch(tab, (t) => { if (t !== "activity") processFocus.value = null; });
 const reqOpen = ref(false);
 
+/** A round waiting for an outside Agent to code; the owner can have this machine do it (review-fix.ts codeHere). */
+const peerWaiting = computed(() => run.value?.kind === "code" && run.value.status === "done" && out.value.verdict === "awaiting-peer-code" && !out.value.appliedAt && !out.value.discardedAt);
+async function codeHere() {
+  if (!run.value) return;
+  try {
+    const r = await post<{ id: string }>(`/api/runs/${run.value.id}/code-here`);
+    toast("已交给这台机器的编码 Agent", "ok");
+    emit("open", r.id);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 async function act(action: "apply" | "discard") {
   if (!run.value) return;
   const id = run.value.id;
@@ -135,9 +147,11 @@ async function act(action: "apply" | "discard") {
 
 // ---- asking: “就这条提问” and 提问 use the run's question basket; “讲解” explains a change point ----
 const asking = ref(false);
-function ask(c: { quote: string; label: string }) {
+const askDraft = ref("");
+function ask(c: { quote: string; label: string; text?: string }) {
   if (!run.value) return;
-  addQuote(run.value.id, "ask", c);
+  addQuote(run.value.id, "ask", { quote: c.quote, label: c.label });
+  askDraft.value = c.text ?? "";
   explaining.value = null;
   asking.value = true;
 }
@@ -164,11 +178,12 @@ function explain(p: ChangePoint) {
     <template v-else-if="run">
       <div class="row wrap muted small meta">
         <span>第 {{ roundNo }} 轮</span>
-        <span class="badge" :class="{ danger: run.status === 'failed' }">{{ statusLabel[run.status] ?? run.status }}</span>
+        <span class="badge" :class="{ danger: run.status === 'failed', accent: peerWaiting }">{{ peerWaiting ? "等外部 Agent 编码" : statusLabel[run.status] ?? run.status }}</span>
         <span>{{ fmtTime(run.createdAt) }}</span>
         <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
         <span v-if="out.discardedAt" class="badge">已丢弃</span>
         <span class="spacer" />
+        <button v-if="peerWaiting" class="btn sm" title="不等外部 Agent：这一轮的任务交给这台机器的编码 Agent，评审也在这里做" @click="codeHere"><Icon name="refresh" :size="13" />改用这台机器的 AI 编码</button>
         <button v-if="canApply" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
         <button v-if="run.status === 'done' && !out.appliedAt && !out.discardedAt" class="btn sm danger" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
         <OpenInIde :key="`${run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${run.status}`" :run-id="run.id" :space-name="spaceName" />
@@ -221,7 +236,7 @@ function explain(p: ChangePoint) {
       </template>
     </template>
     <p v-else class="muted small">打不开这次运行。</p>
-    <AskAboutRun v-if="asking && run" :key="run.id" basket :run-id="run.id" :run-title="run.title" :space-id="run.spaceId" @close="asking = false" @minimize="asking = false" />
+    <AskAboutRun v-if="asking && run" :key="run.id" basket :draft="askDraft" :run-id="run.id" :run-title="run.title" :space-id="run.spaceId" @close="asking = false" @minimize="asking = false" />
     <AskAboutRun v-if="explaining && run" :key="`${run.id}:${explaining.id}`" :run-id="run.id" :run-title="run.title" :space-id="run.spaceId" :context="explainContext" :heading="`${explaining.id} ${explaining.title}`" @close="explaining = null">
       <div class="explain small">
         <span class="badge" :class="POINT_STATUS[explaining.status].cls">{{ POINT_STATUS[explaining.status].text }}</span>

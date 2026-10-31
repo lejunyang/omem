@@ -1,5 +1,6 @@
 import { generateWiki } from "../wiki/generate.ts";
 import { presentHits } from "../search/present.ts";
+import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
 import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
@@ -1116,7 +1117,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
     return (await import("../agents/retry.ts")).retryRun(app, id);
   });
-  server.get("/api/runs/:id/apply-targets", async (req) => codeApplyTargets(app, (req.params as { id: string }).id));
+  // A round waiting for an outside Agent to code, done by this machine's Agents instead (review-fix.ts codeHere).
+  server.post("/api/runs/:id/code-here", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    return (await import("../agents/review-fix.ts")).codeHere(app, id, who(req));
+  });
+  server.get("/api/runs/:id/apply-targets",async (req) => codeApplyTargets(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/apply", async (req) => {
     const b = q(z.object({ squash: z.string().trim().max(10000).optional(), force: z.boolean().optional() }), req.body ?? {});
     return applyCodeRun(app, (req.params as { id: string }).id, { squash: b.squash || undefined, force: b.force });
@@ -1348,7 +1355,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // A file a delegation or review names (`space` optional; a path may start with the repository's
   // space id): the worktree while it exists, a reviewed branch's tip after it is gone, else the
   // repository; a path in another space the review read (a migration's source) comes from the index.
-  server.get("/api/runs/:id/file", async (req) => {
+  type RunFile = { from: "worktree" | "branch" | "repo" | "source"; space: string; path: string; bytes: () => Buffer; size: number; sourceId?: string };
+  async function runFile(req: FastifyRequest): Promise<RunFile> {
     const o = q(z.object({ space: z.string().optional(), path: z.string().min(1).max(1000) }), req.query);
     const r = getRun(app, (req.params as { id: string }).id);
     if (r.kind !== "code") throw new HttpError(400, "只有编码交办有文件");
@@ -1367,23 +1375,46 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       // A reviewed branch's tip, or a work branch between rounds (its workspace given back).
       const tip = wt?.tip ?? (wt?.commits ? `refs/heads/${wt.branch}` : undefined);
       if (wt && !existsSync(wt.path) && tip && base) {
-        const shown = git(base, ["show", `${tip}:${path}`]);
-        if (shown.ok) return { lines: shown.stdout.split(/\r?\n/), from: "branch", space, path };
+        const shown = spawnSync("git", ["show", `${tip}:${path}`], { cwd: base, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+        if (shown.status === 0) return { from: "branch", space, path, bytes: () => shown.stdout, size: shown.stdout.length };
       }
       if (!base) continue;
       const full = resolvePath(base, path);
       if (!full.startsWith(resolvePath(base) + sep) || !existsSync(full) || statSync(full).isDirectory()) continue;
-      if (statSync(full).size > 2 * 1024 * 1024) throw new HttpError(413, "文件太大");
-      return { lines: readFileSync(full, "utf8").split(/\r?\n/), from: wt && existsSync(wt.path) ? "worktree" : "repo", space, path };
+      return { from: wt && existsSync(wt.path) ? "worktree" : "repo", space, path, bytes: () => readFileSync(full), size: statSync(full).size };
     }
     const { materialSpaces } = await import("../items/materials.ts");
     const readable = [...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, who(req)) : [])].filter((s) => !allowed || allowed.includes(s));
     for (const space of readable) {
       const path = o.path.startsWith(`${space}/`) ? o.path.slice(space.length + 1) : o.path;
       const s = one<{ id: string }>(app.db, "select id from sources where space_id = ? and uri = ? and deleted_at is null", space, path);
-      if (s) return { lines: readSource(app, s.id).text.split(/\r?\n/), from: "source", space, path, sourceId: s.id };
+      if (s) {
+        const text = Buffer.from(readSource(app, s.id).text, "utf8");
+        return { from: "source", space, path, bytes: () => text, size: text.length, sourceId: s.id };
+      }
     }
     throw new HttpError(404, `找不到文件 ${o.path}`);
+  }
+  const IMAGE_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", bmp: "image/bmp", ico: "image/x-icon", svg: "image/svg+xml" };
+  const imageType = (path: string) => IMAGE_TYPES[path.split(".").pop()!.toLowerCase()];
+  server.get("/api/runs/:id/file", async (req) => {
+    const f = await runFile(req);
+    const meta = { from: f.from, space: f.space, path: f.path, size: f.size, ...(f.sourceId ? { sourceId: f.sourceId } : {}) };
+    // Images are shown, other binaries offered as a download (…/file/raw); text comes as lines.
+    if (imageType(f.path)) return { ...meta, binary: "image" };
+    if (f.size > 2 * 1024 * 1024) return { ...meta, binary: "large" };
+    const bytes = f.bytes();
+    if (bytes.subarray(0, 8000).includes(0)) return { ...meta, binary: "other" };
+    return { ...meta, lines: bytes.toString("utf8").split(/\r?\n/) };
+  });
+  server.get("/api/runs/:id/file/raw", async (req, reply) => {
+    const f = await runFile(req);
+    const type = imageType(f.path);
+    const name = f.path.split("/").pop()!.replace(/["\\r\n]/g, "_");
+    // Shown in an <img> or saved; never run as a page of this site (an SVG can carry script).
+    reply.header("x-content-type-options", "nosniff").header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    reply.header("content-disposition", `${type ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`);
+    return reply.type(type ?? "application/octet-stream").send(f.bytes());
   });
 
   // ------------------------------------------------------------------ learning

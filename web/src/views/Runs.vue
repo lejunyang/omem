@@ -180,6 +180,8 @@ watch(tab, (t) => { if (t !== "activity") processFocus.value = null; });
 const checkPassed = computed(() => (checks.value.length ? checks.value.every((c) => c.check.code === 0) : null));
 // A change point's explanation, with the problems reported on its files, in the ask drawer.
 const explaining = ref<ChangePoint | null>(null);
+/** A question the ask drawer starts from (a finding's “看不懂，重新描述”). */
+const askDraft = ref("");
 watch(id, () => (explaining.value = null));
 const pointFindings = computed(() => {
   const p = explaining.value;
@@ -280,6 +282,16 @@ const checks = computed<{ space: string; check: Check }[]>(() => {
   if (repos.length) return repos.filter((r) => r.check).map((r) => ({ space: repos.length > 1 ? r.space : "", check: r.check! }));
   return out.value.check ? [{ space: "", check: out.value.check }] : [];
 });
+async function codeHere() {
+  if (!detail.value) return;
+  try {
+    const r = await post<{ id: string }>(`/api/runs/${detail.value.run.id}/code-here`);
+    toast("已交给这台机器的编码 Agent", "ok");
+    router.push(`/runs/${r.id}`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 async function act(action: "cancel" | "retry" | "apply" | "discard") {
   if (!detail.value) return;
   const runId = detail.value.run.id;
@@ -474,6 +486,7 @@ const kindOptions = computed(() => [
           <div class="row">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
+            <button v-if="detail.run.kind === 'code' && detail.run.status === 'done' && out.verdict === 'awaiting-peer-code' && !out.appliedAt && !out.discardedAt" class="btn sm" title="不等外部 Agent：这一轮的任务交给这台机器的编码 Agent，评审也在这里做" @click="codeHere"><Icon name="refresh" :size="13" />改用这台机器的 AI 编码</button>
             <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && (detail.patches?.length || syncCommits) && !out.appliedAt && !out.discardedAt && out.verdict !== 'sync-conflict'">
               <button v-if="!branchReview && !branchWork" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
               <button v-if="!branchReview && !branchWork" class="btn sm" title="目标分支在交办后有了新提交、应用不上时：把改动移到它的最新提交上（冲突交给编码 Agent）" @click="moveToTarget">移到目标分支最新提交</button>
@@ -510,7 +523,7 @@ const kindOptions = computed(() => [
         <nav v-if="hasReview" class="tabs" role="tablist" aria-label="运行详情">
           <button v-for="t in tabs" :key="t.id" role="tab" class="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
         </nav>
-        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => quote('ask', c)" @go="(t) => (tab = t)" />
+        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => { askDraft = c.text ?? ''; quote('ask', c); }" @go="(t) => (tab = t)" />
         <ChangeView v-if="hasReview && tab === 'change'" :rv="rv" :run-id="detail.run.id" :diffs="diffs" @explain="explain" />
         <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" :run-id="detail.run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
 
@@ -606,7 +619,7 @@ const kindOptions = computed(() => [
       <button class="btn sm primary" @click="quote('ask')"><Icon name="chat" :size="13" />加入提问{{ askQuotes.length ? `（${askQuotes.length + 1}）` : "" }}</button>
       <button v-if="canFix" class="btn sm" title="作为下一轮修改的要求，攒够了一起开始修改" @click="quote('fix')"><Icon name="edit" :size="13" />加入修改点{{ fixQuotes.length ? `（${fixQuotes.length + 1}）` : "" }}</button>
     </div>
-    <AskAboutRun v-if="asking && detail" :key="detail.run.id" basket :minimized="asking === 'min'" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" @close="asking = null" @minimize="asking = 'min'" />
+    <AskAboutRun v-if="asking && detail" :key="detail.run.id" basket :draft="askDraft" :minimized="asking === 'min'" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" @close="asking = null" @minimize="asking = 'min'" />
     <FixBasket v-if="fixOpen && detail" :key="`fix:${detail.run.id}`" :run-id="detail.run.id" :rv="rv" :can-fix="canFix" :branch-review="branchReview" @close="fixOpen = false" />
     <QuoteDock v-if="detail && !explaining && !fixOpen && (asking === 'min' || (!asking && askQuotes.length) || fixQuotes.length)" :ask="askQuotes.length" :fix="fixQuotes.length" :asking="!!asking" @ask="asking = 'open'" @fix="fixOpen = true" />
     <AskAboutRun v-if="explaining && detail" :key="`${detail.run.id}:${explaining.id}`" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" :context="explainContext" :heading="`${explaining.id} ${explaining.title}`" @close="explaining = null">

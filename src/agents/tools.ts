@@ -3201,6 +3201,26 @@ def({
 });
 
 def({
+  name: "revise_finding",
+  description:
+    "重新描述编码交办或分支评审里的一条问题：本人说看不懂、描述不清时，先读相关代码（迁移的话也读源实现），再按“每条问题怎么写”重写标题和正文（现在的实现、源实现、触发条件、问题，引用写在正文里）。评审原来的写法会保留在网页上。只改描述，不改严重级别和本人的决定；结论变了（其实没问题、是别的问题）就在正文里写明。",
+  write: true,
+  schema: z.object({
+    run_id: z.string().describe("交办或分支评审的任一运行 id"),
+    finding_id: z.number().int().describe("问题编号（网页上的 #id）"),
+    title: z.string().max(200).optional().describe("新标题；不填保持原样"),
+    detail: z.string().min(1).max(6000).describe("新的正文（Markdown）"),
+    suggestion: z.string().max(4000).optional().describe("新的建议；不填保持原样"),
+  }),
+  handler: async (ctx, a) => {
+    steerable(ctx, a.run_id);
+    const { reviseFinding } = await import("./review-fix.ts");
+    const r = reviseFinding(ctx.app, a.run_id, a.finding_id, a);
+    return `已重新描述 #${r.id}「${r.title}」；原来的写法保留在网页上。`;
+  },
+});
+
+def({
   name: "set_code_review",
   description:
     "改一次编码交办之后的评审：档位（可以比之前轻）、只做哪些评审项、要不要再拆需求。本人说“后面从简 / 只做最简评审 / 别再拆需求 / 这轮只要功能评审”时用；还没开始评审的这一轮就按新的来，之后的轮次（包括自动续轮）沿用，直到再改。不启动新的一轮。",
@@ -3755,9 +3775,9 @@ def({
       file: z.string().max(500).optional().describe("仓库内路径；几个仓库时写成 仓库空间id/路径"),
       line: z.number().int().min(1).optional(),
       title: z.string().min(1).max(200),
-      detail: z.string().max(4000).optional(),
+      detail: z.string().max(4000).optional().describe("Markdown：现在的实现、源实现（迁移时）、触发条件、问题，各点后面直接带引用 [说明](路径:起-止)、[说明](src:<原件id>#L起-L止)（任务里的“每条问题怎么写”）"),
       suggestion: z.string().max(4000).optional(),
-      evidence: z.array(z.string().max(300)).max(20).optional().describe("依据：src:<原件id>#L起-L止、mem:<id>，或 文件:行"),
+      evidence: z.array(z.string().max(300)).max(20).optional().describe("正文里没引用到的补充依据：src:<原件id>#L起-L止、mem:<id>，或 文件:行"),
       confidence: z.enum(["high", "medium", "low"]).optional(),
     })).max(100),
     change_points: z.array(z.object({

@@ -20,7 +20,7 @@ import { decisionOf, findingWhere, fixLabel, pointCount, reviewAi, settled, seve
 // `branchWork`: a delegation on work branches, whose rounds are commits already (nothing to apply first).
 // `stay`: shown inside another page (the requirements page), which follows the next round itself (`started`).
 const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; branchWork?: boolean; canFix?: boolean; stay?: boolean }>();
-const emit = defineEmits<{ ask: [context: { quote: string; label: string }]; go: [tab: "review" | "change"]; started: [runId: string]; open: [runId: string] }>();
+const emit = defineEmits<{ ask: [context: { quote: string; label: string; text?: string }]; go: [tab: "review" | "change"]; started: [runId: string]; open: [runId: string] }>();
 
 const STATE: Record<string, string> = { accepted: "要改", rejected: "已驳回", merged: "已合并" };
 const STOP: Record<string, string> = {
@@ -137,8 +137,19 @@ const rawOpen = ref(false);
 const reasonsOpen = ref(false);
 const changeOpen = ref(false);
 
-function askAbout(f: Row) {
-  emit("ask", { quote: [`[${SEV[f.severity].text}] ${f.title}`, findingWhere(f), f.detail, suggestionOf(f) ? `建议：${suggestionOf(f)}` : ""].filter(Boolean).join("\n"), label: `${f.source ? "另一份评审 · " : ""}${checkLabel(f)}评审的问题` });
+function askAbout(f: Row, rewrite = false) {
+  emit("ask", {
+    quote: [`#${f.id} [${SEV[f.severity].text}] ${f.title}`, findingWhere(f), f.detail, suggestionOf(f) ? `建议：${suggestionOf(f)}` : ""].filter(Boolean).join("\n"),
+    label: `${f.source ? "另一份评审 · " : ""}${checkLabel(f)}评审的问题`,
+    ...(rewrite ? { text: `这条问题我看不懂。请读相关代码（是迁移的话也读源实现），确认问题是否成立，然后用 revise_finding（run_id ${runOf(f)}，finding_id ${f.id}）重新描述：标题说清什么情况下、哪里、出了什么错；正文分“现在的实现 / 源实现 / 触发条件 / 问题”，每点后面带代码引用。不成立就在正文里写明。` } : {}),
+  });
+}
+/** Evidence the detail does not already cite inline. */
+const extraEvidence = (f: Row) => f.evidence.filter((e) => !f.detail.includes(e.replace(/^`|`$/g, "").split("#")[0]));
+/** The reviewer's first wording of a finding someone re-described (revise_finding). */
+function originalOf(f: Row): { title: string; detail: string } | null {
+  if (!f.revised) return null;
+  try { return JSON.parse(f.revised) as { title: string; detail: string }; } catch { return null; }
 }
 
 // ---- what to fix: each finding's call, then the fix with the owner's own additions ------------
@@ -323,8 +334,9 @@ async function answer(choice: number | null) {
           <span v-if="f.triage_note || f.merged_into" class="muted">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : "" }}{{ f.merged_into && f.triage_note ? "；" : "" }}{{ f.triage_note }}</span>
         </div>
         <div v-if="open.has(f.id)" class="more small">
-          <p v-if="f.detail">{{ f.detail }}</p>
-          <p v-if="f.evidence.length" class="muted">依据：<template v-for="(e, i) in f.evidence" :key="i"><a v-if="refAction(e, runOf(f))" href="#" class="mono" @click.prevent="refAction(e, runOf(f))!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < f.evidence.length - 1 ? "、" : "" }}</template></p>
+          <Markdown v-if="f.detail" class="fd" :source="f.detail" :run-id="runOf(f)" breaks />
+          <p v-if="extraEvidence(f).length" class="muted">{{ f.detail ? "其他依据" : "依据" }}：<template v-for="(e, i) in extraEvidence(f)" :key="i"><a v-if="refAction(e, runOf(f))" href="#" class="mono" @click.prevent="refAction(e, runOf(f))!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < extraEvidence(f).length - 1 ? "、" : "" }}</template></p>
+          <details v-if="originalOf(f)" class="orig"><summary class="muted">评审原来的描述</summary><p class="muted"><strong>{{ originalOf(f)!.title }}</strong></p><Markdown class="fd muted" :source="originalOf(f)!.detail" :run-id="runOf(f)" breaks /></details>
           <div v-if="editingSug === f.id" class="sug-edit">
             <textarea v-model="sugText" class="textarea" rows="4" :aria-label="`改写 #${f.id} 的建议`" placeholder="写清楚要怎么改；下一轮按这段改，不再看评审的原建议" @keydown.esc.stop="editingSug = null" />
             <div class="row wrap">
@@ -335,12 +347,13 @@ async function answer(choice: number | null) {
             </div>
           </div>
           <template v-else>
-            <p v-if="suggestionOf(f)"><strong>建议{{ f.owner_suggestion ? "（你改过）" : "" }}：</strong>{{ suggestionOf(f) }}</p>
-            <details v-if="f.owner_suggestion && f.suggestion" class="orig"><summary class="muted">评审的原建议</summary><p class="muted">{{ f.suggestion }}</p></details>
+            <div v-if="suggestionOf(f)" class="sug"><strong>建议{{ f.owner_suggestion ? "（你改过）" : "" }}：</strong><Markdown class="fd" :source="suggestionOf(f)" :run-id="runOf(f)" breaks /></div>
+            <details v-if="f.owner_suggestion && f.suggestion" class="orig"><summary class="muted">评审的原建议</summary><Markdown class="fd muted" :source="f.suggestion" :run-id="runOf(f)" breaks /></details>
           </template>
           <div class="row wrap">
             <button v-if="deciding && editingSug !== f.id" class="btn ghost sm" @click="editSug(f)">{{ suggestionOf(f) ? "改建议" : "写建议" }}</button>
             <button class="btn ghost sm" @click="askAbout(f)">就这条提问</button>
+            <button class="btn ghost sm" title="让助手读代码（迁移的也读源实现）后重写这条：现在的实现、触发条件、问题，引用写在正文里" @click="askAbout(f, true)">看不懂，重新描述</button>
             <button v-if="newer && !fixOf(f)" class="btn ghost sm" :disabled="marking === f.id" :title="`标为已在「${newer.title}」里改了`" @click="markFixed(f, newer.latestId)">已在新编码里改了</button>
             <button v-if="f.fixed_by" class="btn ghost sm" :disabled="marking === f.id" @click="markFixed(f, null)">{{ fixOf(f) ? "不算已改" : "清除" }}</button>
           </div>
@@ -403,6 +416,14 @@ async function answer(choice: number | null) {
 .loc { color: var(--accent); overflow-wrap: anywhere; }
 .more { background: var(--sunken); border-radius: 8px; padding: 8px 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .more p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A finding's detail and suggestion are Markdown (sections, lists, inline code links); kept at the card's size. */
+.more :deep(.fd) { font-size: inherit; line-height: 1.6; overflow-wrap: anywhere; }
+.more :deep(.fd > :first-child) { margin-top: 0; }
+.more :deep(.fd > :last-child) { margin-bottom: 0; }
+.more :deep(.fd p) { white-space: normal; margin: 4px 0; }
+.more :deep(.fd ul), .more :deep(.fd ol) { margin: 2px 0 4px; padding-left: 20px; }
+.more :deep(.fd pre) { max-width: 100%; overflow-x: auto; }
+.sug { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .more .btn { justify-self: start; }
 .sug-edit { display: grid; gap: 6px; }
 .others { gap: 8px; padding: 6px 0; }

@@ -1113,6 +1113,8 @@ const migrations: string[] = [
   // The round of later work that took a finding on (review-fix.ts): another review of the same
   // branch shows it as being fixed / fixed instead of still open.
   `alter table review_findings add column fixed_by text;`,
+  // A finding's first wording after it was re-described (review-fix.ts reviseFinding).
+  `alter table review_findings add column revised text;`,
 ];
 
 export type Db = DatabaseSync;

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { get, type Memory } from "../api";
+import { authUrl, get, type Memory } from "../api";
 import { fmtTime, memoryKindLabel, openCitation, state, statusLabel, type CitationTarget } from "../store";
+import ChatView from "./ChatView.vue";
 import CodeView from "./CodeView.vue";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
@@ -17,11 +18,20 @@ const source = ref<any>(null);
 const memory = ref<{ memory: Memory; history: Memory[] } | null>(null);
 const message = ref<any>(null);
 const page = ref<any>(null);
-const file = ref<{ lines: string[]; from: string; space: string; path: string; sourceId?: string } | null>(null);
+const file = ref<{ lines?: string[]; binary?: "image" | "large" | "other"; size: number; from: string; space: string; path: string; sourceId?: string } | null>(null);
+/** The file's bytes (an image shown, other binaries downloaded). */
+const fileRaw = computed(() => {
+  const t = top.value;
+  if (t?.kind !== "file" || !file.value) return "";
+  return authUrl(`/api/runs/${t.runId}/file/raw?path=${encodeURIComponent(file.value.path)}&space=${encodeURIComponent(file.value.space)}`);
+});
+const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 const panel = ref<HTMLElement>();
 // A document (a Feishu doc, Markdown) reads laid out, the cited lines set off; code keeps line numbers.
 const raw = ref(false);
 const asDocument = computed(() => !!source.value && !raw.value && readsAsDocument(source.value.source));
+// A chat reads as a chat (senders, replies, images), as on its original's page.
+const asChat = computed(() => !!source.value && !raw.value && source.value.source.kind === "chat");
 const docParts = computed(() => {
   const s = source.value;
   const t = top.value as { from?: number; to?: number } | undefined;
@@ -36,7 +46,7 @@ const docParts = computed(() => {
 // Documents (wide tables, screenshots) get a wider drawer; the owner can switch, and it is remembered.
 const WIDE_KEY = "omem.drawerWide";
 const wideChoice = ref<boolean | null>((() => { try { const v = localStorage.getItem(WIDE_KEY); return v === null ? null : v === "1"; } catch { return null; } })());
-const wide = computed(() => wideChoice.value ?? asDocument.value);
+const wide = computed(() => wideChoice.value ?? (asDocument.value || asChat.value));
 function toggleWide() {
   wideChoice.value = !wide.value;
   try { localStorage.setItem(WIDE_KEY, wideChoice.value ? "1" : "0"); } catch { /* private mode */ }
@@ -146,12 +156,13 @@ const title = computed(() => {
             <span class="badge">{{ source.source.spaceId }}</span>
             <span class="muted small">更新于 {{ fmtTime(source.source.updatedAt) }} · 共 {{ source.source.lines }} 行</span>
             <span class="spacer" />
-            <button v-if="readsAsDocument(source.source)" class="btn ghost sm" @click="raw = !raw">{{ raw ? "排版视图" : "原文行号" }}</button>
+            <button v-if="readsAsDocument(source.source) || source.source.kind === 'chat'" class="btn ghost sm" @click="raw = !raw">{{ raw ? (source.source.kind === "chat" ? "聊天视图" : "排版视图") : "原文行号" }}</button>
           </div>
           <div v-if="source.source.deletedAt" class="err">这份原件已在 {{ fmtTime(source.source.deletedAt) }} 移除，引用的内容不再可用。</div>
           <template v-else>
             <button v-if="source.lineStart > 1" class="btn ghost sm more" @click="more('up')">向上展开</button>
-            <div v-if="asDocument && docParts" class="doc">
+            <ChatView v-if="asChat" :source-id="source.id" :text="source.text" :start="source.lineStart" :space="source.source.spaceId" :from="(top as any).from" :to="(top as any).to" />
+            <div v-else-if="asDocument && docParts" class="doc">
               <Markdown v-if="docParts.before.trim()" :source="docParts.before" :space="source.source.spaceId" />
               <div v-if="docParts.cited.trim()" ref="citedEl" class="cited-lines"><Markdown :source="docParts.cited" :space="source.source.spaceId" /></div>
               <Markdown v-if="docParts.after.trim()" :source="docParts.after" :space="source.source.spaceId" />
@@ -171,9 +182,12 @@ const title = computed(() => {
         <template v-else-if="file">
           <div class="meta row wrap">
             <span class="badge">{{ file.space }}</span>
-            <span class="muted small">{{ { worktree: "评审 / 交办的工作区", branch: "分支上的版本", repo: "仓库当前检出", source: "已索引的原件" }[file.from] ?? file.from }} · 共 {{ file.lines.length }} 行</span>
+            <span class="muted small">{{ { worktree: "评审 / 交办的工作区", branch: "分支上的版本", repo: "仓库当前检出", source: "已索引的原件" }[file.from] ?? file.from }} · {{ file.lines ? `共 ${file.lines.length} 行` : fileSize(file.size) }}</span>
+            <a v-if="file.binary" class="btn ghost sm" :href="fileRaw" :download="file.path.split('/').pop()"><Icon name="download" :size="13" />下载</a>
           </div>
-          <CodeView :text="file.lines.join('\n')" :start="1" :path="file.path" :from="(top as any).from" :to="(top as any).to ?? (top as any).from" />
+          <img v-if="file.binary === 'image'" class="file-image" :src="fileRaw" :alt="file.path" />
+          <p v-else-if="file.binary" class="muted small">{{ file.binary === "large" ? "文件超过 2 MB，不在这里显示；可以下载查看。" : "这是二进制文件，不支持预览；可以下载查看。" }}</p>
+          <CodeView v-else-if="file.lines" :text="file.lines.join('\n')" :start="1" :path="file.path" :from="(top as any).from" :to="(top as any).to ?? (top as any).from" />
         </template>
 
         <template v-else-if="memory">
@@ -268,6 +282,7 @@ header {
   gap: 12px;
   align-content: start;
 }
+.file-image { display: block; max-width: 100%; height: auto; margin: 8px 0; border: 1px solid var(--line); border-radius: 6px; background: repeating-conic-gradient(var(--sunken) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
 .meta {
   gap: 6px;
 }

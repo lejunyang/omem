@@ -279,6 +279,24 @@ export async function estimateReview(app: App, task: string, ask: (prompt: strin
   }
 }
 
+/**
+ * How a finding is written, for every check (here and an outside Agent's, review-chain.ts) and for
+ * re-describing one (revise_finding): the owner decides from this alone, without hunting through
+ * the evidence, so the claims carry their references inline.
+ */
+export const FINDING_FORMAT = `## 每条问题怎么写
+
+本人只看这一条就要能判断要不要改，不用再去“依据”里找是哪段代码。
+
+- title：一句话说清在什么情况下、哪里、出了什么错，用页面、按钮、状态这些看得见的说法，不写只有你懂的缩写。比如不写“重新审核后取消挂载入口消失”，写“工具重新提交审核后，已关联作品列表里的『取消挂载』按钮不再显示”。
+- detail：Markdown，按下面的小节写，每一点后面直接带引用：代码写 \`[说明](路径:起-止)\`（几个仓库时路径写成 仓库空间id/路径），原件写 \`[说明](src:<原件id>#L起-L止)\`，记忆写 \`mem:<id>\`。
+  - **现在的实现**：按执行顺序列出相关的实现点（哪个组件或函数、在什么条件下做什么），一点一行；
+  - **源实现**（迁移、或对照另一套实现时才写）：源仓库里对应的实现点，同样逐点带引用，写清和现在的差别；
+  - **触发条件**：什么数据、身份、操作顺序下出现，能复现就写步骤；
+  - **问题**：结果是什么、应该是什么、影响谁。
+- suggestion：具体改法，多处就分点，同样带引用。
+- evidence：只放正文里没引用到的补充依据，可以不填。`;
+
 /** Written into each check's task: how to report, what blocks. */
 export function checkBrief(check: CheckInfo, plan: ReviewPlan) {
   const others = plan.checks.filter((c) => c !== check.name);
@@ -286,7 +304,8 @@ export function checkBrief(check: CheckInfo, plan: ReviewPlan) {
     `## 你负责的评审项：${check.label}`,
     others.length ? `这次是「${plan.tierName}」档，另有 ${others.length} 个评审项各自独立评审，你只看自己负责的角度，不必重复别的角度。` : "",
     `${SEVERITY_LABEL[check.blocks]}及以上的问题会要求编码 Agent 再改一轮；低于这一级的只列出来。`,
-    "评审完先调用一次 `submit_review` 提交结论和问题清单（每条写清文件和行、问题、建议），再用文字写结论：第一行 `结论：通过` 或 `结论：需要修改`。没有问题时 findings 传空数组，并在 summary 里说明你查了什么。",
+    "评审完先调用一次 `submit_review` 提交结论和问题清单，再用文字写结论：第一行 `结论：通过` 或 `结论：需要修改`。没有问题时 findings 传空数组，并在 summary 里说明你查了什么。",
+    FINDING_FORMAT,
   ].filter(Boolean).join("\n\n");
 }
 
@@ -352,7 +371,7 @@ export function deadRefs(app: App, refs: string[]) {
   });
 }
 export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
-export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null };
+export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null };
 /** The suggestion to act on: the owner's rewrite when there is one (review-fix.ts setFindingSuggestion). */
 export const suggestionOf = (f: Pick<FindingRow, "suggestion" | "owner_suggestion">) => f.owner_suggestion?.trim() || f.suggestion;
 

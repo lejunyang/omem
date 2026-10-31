@@ -72,6 +72,8 @@ marked.use({
       if ((m = /^msg:(\S+)$/.exec(href))) return `<a class="cite mem" href="#" data-cite="message" data-ref="${escapeHtml(m[1])}"${t}>${inner || "消息"}</a>`;
       if ((m = /^wiki:(\S+)$/.exec(href))) return `<a class="wikilink" href="#" data-wiki="${escapeHtml(decodeURIComponent(m[1]))}"${t}>${inner}</a>`;
       if (href.startsWith("omem-file:")) return `<a href="${escapeHtml(authUrl(`/api/files/${encodeURIComponent(href.slice(10))}`))}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
+      // A code location, [说明](路径:起-止): opens the file (of the run when the text belongs to one, Markdown.vue).
+      if ((m = /^((?:[\w.@~-]+\/)*[\w.@~-]+\.[\w]{1,8})(?::L?(\d+)(?:[-–]L?(\d+))?)?$/.exec((() => { try { return decodeURIComponent(href); } catch { return href; } })()))) return `<a class="cite doc code" href="#" data-cite="source" data-uri="${escapeHtml(m[1])}"${m[2] ? ` data-from="${m[2]}" data-to="${m[3] ?? m[2]}"` : ""}${t || ` title="${escapeHtml(m[0])}"`}>${inner || escapeHtml(m[0])}</a>`;
       const safe = /^(https?:|mailto:|#)/i.test(href) ? href : "#";
       return `<a href="${escapeHtml(safe)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
     },
@@ -92,7 +94,7 @@ function preprocess(md: string) {
 
 export function renderMarkdown(md: string, opts: { breaks?: boolean } = {}): string {
   const html = marked.parse(preprocess(md ?? ""), { async: false, breaks: !!opts.breaks }) as string;
-  return DOMPurify.sanitize(html, { ADD_ATTR: ["data-cite", "data-ref", "data-from", "data-to", "data-wiki", "data-mermaid", "target"] });
+  return DOMPurify.sanitize(html, { ADD_ATTR: ["data-cite", "data-ref", "data-uri", "data-from", "data-to", "data-wiki", "data-mermaid", "target"] });
 }
 
 let mermaidLoader: Promise<typeof import("mermaid").default> | null = null;
