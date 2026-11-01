@@ -5,6 +5,7 @@ import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import Skeleton from "./Skeleton.vue";
 import ReviewSummary from "./ReviewSummary.vue";
+import UiSelect from "./UiSelect.vue";
 import CodeTasks from "./CodeTasks.vue";
 import ChangeView from "./ChangeView.vue";
 import ReviewChecks from "./ReviewChecks.vue";
@@ -59,6 +60,10 @@ const rv = useReviews(computed(() => run.value?.id ?? ""), computed(() => run.va
 const hasReview = computed(() => !!rv.data.value && (rv.reviews.value.length > 0 || !!rv.current.value?.plan));
 const busy = computed(() => ["queued", "running"].includes(run.value?.status ?? ""));
 const roundNo = computed(() => props.rounds.indexOf(props.runId) + 1 || props.rounds.length);
+// Many rounds: the latest few as buttons, the earlier ones in a list, so the row stays one line.
+const RECENT_ROUNDS = 3;
+const recentRounds = computed(() => (props.rounds.length > RECENT_ROUNDS + 1 ? props.rounds.slice(-RECENT_ROUNDS) : props.rounds));
+const earlierRounds = computed(() => props.rounds.slice(0, props.rounds.length - recentRounds.value.length).map((r, i) => ({ value: r, label: `第 ${i + 1} 轮` })));
 const canApply = computed(() => run.value?.status === "done" && !branchReview.value && !branchWork.value && !out.value.appliedAt && !out.value.discardedAt);
 const diffs = computed(() => parsePatches(detail.value?.patches ?? []));
 const checks = computed(() => (out.value.repos ?? []).flatMap((r) => (r.check ? [{ space: r.space, check: r.check }] : [])));
@@ -168,10 +173,10 @@ function explain(p: ChangePoint) {
   <div class="work" data-quotable>
     <div class="row wrap wh">
       <button class="btn ghost sm icon" title="回到需求点" aria-label="回到需求点" @click="emit('close')"><Icon name="left" :size="15" /></button>
-      <h2 class="title ellipsis">{{ run?.title ?? "编码" }}</h2>
-      <span class="spacer" />
+      <h2 class="title ellipsis" :title="run?.title">{{ run?.title ?? "编码" }}</h2>
       <div v-if="rounds.length > 1" class="rounds row" role="group" aria-label="各轮">
-        <button v-for="(r, i) in rounds" :key="r" class="btn ghost sm" :class="{ on: r === runId }" :aria-pressed="r === runId" @click="emit('open', r)">第 {{ i + 1 }} 轮</button>
+        <UiSelect v-if="earlierRounds.length" :model-value="earlierRounds.some((o) => o.value === runId) ? runId : null" :options="earlierRounds" size="sm" width="auto" placeholder="更早的轮" aria-label="更早的轮" @update:model-value="(r) => r && emit('open', r)" />
+        <button v-for="r in recentRounds" :key="r" class="btn ghost sm" :class="{ on: r === runId }" :aria-pressed="r === runId" @click="emit('open', r)">第 {{ rounds.indexOf(r) + 1 }} 轮</button>
       </div>
       <router-link v-if="run" :to="`/runs/${run.id}`" class="btn sm">运行页<Icon name="external" :size="13" /></router-link>
     </div>
@@ -196,8 +201,9 @@ function explain(p: ChangePoint) {
         <button v-for="t in tabs" :key="t.id" role="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
       </nav>
 
+      <!-- A task-driven round may have only verified its tasks (no review of its own): the list still shows. -->
+      <CodeTasks v-if="!branchReview && (!hasReview || tab === 'overview')" :key="`tasks:${run.id}`" :run-id="run.id" />
       <template v-if="hasReview">
-        <CodeTasks v-if="tab === 'overview' && !branchReview" :key="`tasks:${run.id}`" :run-id="run.id" />
         <ReviewSummary v-if="tab === 'overview'" :key="run.id" :rv="rv" :run-id="run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" stay data-ask-label="评审" @ask="ask" @go="(t) => (tab = t)" @started="(id) => emit('open', id)" @open="(id) => emit('open', id)" />
         <template v-else-if="tab === 'req' && focus">
           <section class="card pad req">
@@ -252,7 +258,8 @@ function explain(p: ChangePoint) {
 <style scoped>
 .work { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .wh { gap: 8px; }
-.title { margin: 0; font-size: 18px; min-width: 0; }
+/* A long title keeps the back button on its line (one line, cut short); the rounds wrap below it. */
+.title { margin: 0; font-size: 18px; min-width: 0; flex: 1 1 16em; }
 .meta { gap: 8px; }
 .rounds { gap: 2px; flex-wrap: wrap; }
 .rounds .on { background: var(--sunken); color: var(--ink); }

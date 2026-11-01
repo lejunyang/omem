@@ -49,7 +49,8 @@ const selectedId = computed(() => (route.params.id as string | undefined) || "")
 const workId = computed(() => (typeof route.query.work === "string" ? route.query.work : ""));
 const openWork = (runId: string) => router.push({ path: `/reqs/${selectedId.value}`, query: { work: runId } });
 const closeWork = () => router.push(`/reqs/${selectedId.value}`);
-// While a delegation is open the tree is its map: picking a node keeps it open and shows that node's part.
+// While a delegation is open the tree is its map: picking a node it touches keeps it open and shows that
+// node's part. The path above it leads out, to the nodes' own pages, like the back button.
 const workTab = computed<WorkTab>({
   get: () => (typeof route.query.tab === "string" ? (route.query.tab as WorkTab) : "overview"),
   set: (tab) => void router.replace({ path: route.path, query: { ...route.query, tab } }),
@@ -82,14 +83,18 @@ const live = computed(() => (detail.value?.work ?? []).filter((w) => w.stage !==
 const past = computed(() => (detail.value?.work ?? []).filter((w) => w.stage === "applied" || w.stage === "discarded"));
 const showPast = ref(false);
 const openedWork = computed(() => detail.value?.work.find((w) => w.rounds.includes(workId.value)) ?? (lastWork.value?.rounds.includes(workId.value) ? lastWork.value : null));
-watch(openedWork, (w) => { if (w) lastWork.value = { itemTitle: w.itemTitle, rounds: w.rounds }; });
-/** The chosen node with everything under it, for the open delegation's “需求点” tab. */
+// Only a work from the detail is copied: copying lastWork itself would change openedWork again, forever.
+watch(openedWork, (w) => { if (w && w !== lastWork.value) lastWork.value = { itemTitle: w.itemTitle, rounds: w.rounds }; });
+/**
+ * The chosen node with everything under it, for the open delegation's “需求点” tab: the tree's node
+ * at once, so the tab does not show the last node's part while the detail loads.
+ */
 const focus = computed<ReqFocus | null>(() => {
-  const d = detail.value;
-  if (!d) return null;
-  const ids = new Set([d.node.id]);
-  for (const n of nodes.value) if (ancestors(n).includes(d.node.id)) ids.add(n.id);
-  return { id: d.node.id, title: d.node.title, ids: [...ids], body: d.node.body, acceptance: d.node.acceptance };
+  const n = byId.value.get(selectedId.value) ?? (detail.value?.node.id === selectedId.value ? detail.value.node : null);
+  if (!n) return null;
+  const ids = new Set([n.id]);
+  for (const x of nodes.value) if (ancestors(x).includes(n.id)) ids.add(x.id);
+  return { id: n.id, title: n.title, ids: [...ids], body: n.body, acceptance: n.acceptance };
 });
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 const pending = computed(() => nodes.value.filter((n) => !n.confirmed && n.status === "active").length);
@@ -144,6 +149,8 @@ onServerEvent((e) => {
   }
 });
 const open = (id: string) => router.push(workId.value ? { path: `/reqs/${id}`, query: { work: workId.value, tab: "req" } } : `/reqs/${id}`);
+/** A node the open delegation does not touch (greyed in the tree) opens on its own, with its own work. */
+const pick = (n: Node) => (workId.value && workPoints.value.length && !touched.value.has(n.id) ? router.push(`/reqs/${n.id}`) : open(n.id));
 
 // ---- folding and search -------------------------------------------------------------------------
 // Folded nodes per space, kept in this browser. A space opened for the first time shows systems and
@@ -330,11 +337,11 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else>
-          <div v-if="workId && workPoints.length" class="work-legend muted small">{{ workPointsFrom ? `这一轮没有需求拆分，沿用${workPointsFrom}的：` : "这次编码的变更：" }}标出每个需求点的状态，没涉及的变灰</div>
+          <div v-if="workId && workPoints.length" class="work-legend muted small">{{ workPointsFrom ? `这一轮没有需求拆分，沿用${workPointsFrom}的：` : "这次编码的变更：" }}标出每个需求点的状态；没涉及的变灰，点开看它自己的需求和编码</div>
           <div v-for="n in visible" :key="n.id" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test', hit: matches?.has(n.id), idle: workId && workPoints.length && !touched.has(n.id) }" :style="{ paddingLeft: `${4 + n.depth * 16}px` }">
             <button v-if="hasKids.has(n.id)" type="button" class="fold" :aria-expanded="!!matches || !folded.has(n.id)" :aria-label="folded.has(n.id) ? `展开 ${n.title}` : `收起 ${n.title}`" :disabled="!!matches" @click="toggle(n.id)"><Icon :name="!matches && folded.has(n.id) ? 'right' : 'down'" :size="13" /></button>
             <span v-else class="fold-gap" />
-            <button type="button" class="pick" @click="open(n.id)">
+            <button type="button" class="pick" @click="pick(n)">
             <span class="k" :class="`k-${n.kind}`">{{ KIND[n.kind] }}</span>
             <span class="t ellipsis" :title="n.title">{{ n.title }}</span>
             <span v-if="!n.confirmed && n.status === 'active'" class="dot" title="待本人确认" />
@@ -383,7 +390,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
         <nav class="crumbs muted small" aria-label="路径">
           <template v-for="(p, i) in detail.path" :key="p.id">
             <span v-if="i" aria-hidden="true">/</span>
-            <a href="#" @click.prevent="open(p.id)">{{ p.title }}</a>
+            <a href="#" @click.prevent="router.push(`/reqs/${p.id}`)">{{ p.title }}</a>
           </template>
           <span aria-hidden="true">/</span><span>{{ openedWork?.itemTitle ?? "编码" }}</span>
         </nav>

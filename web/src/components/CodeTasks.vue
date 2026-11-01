@@ -239,11 +239,13 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
 </template>
 
 <style scoped>
-.tasks { display: grid; gap: 12px; min-width: 0; }
+.tasks { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .head { gap: 8px; align-items: center; }
-.ask { display: grid; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft, var(--sunken)); }
+.ask { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft, var(--sunken)); }
 .ask .section-title { margin: 0; }
-.q { display: grid; gap: 6px; }
+.q { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+/* An option can be a whole sentence: it wraps instead of running out of the card on a phone. */
+.q .btn { white-space: normal; height: auto; min-height: 28px; padding-block: 4px; text-align: left; }
 .q p { margin: 0; }
 .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .grow { flex: 1; min-width: 160px; }
