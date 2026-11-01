@@ -197,7 +197,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   if (await status.check()) await current.detect().catch(() => current.set(null));
   else await current.set(null).catch(() => {});
-  return { api, status, current, bench, runs, delegate, tasks };
+  return { api, status, current, bench, runs, delegate, tasks, changed };
 }
 
 export function deactivate() {}

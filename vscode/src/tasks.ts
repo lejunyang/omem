@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { Api } from "./api";
 import type { Current } from "./current";
-import { OPEN_ALL_UP_TO, type ChangedFile, type ChangedFiles } from "./changes";
+import { changeEntry, OPEN_ALL_UP_TO, type ChangedFile, type ChangedFiles } from "./changes";
 
 /**
  * A delegation driven by tasks (docs/v2/coding-loop.md) in the 修改项 view: where it stands and its
@@ -185,7 +185,7 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
     }
     await this.files?.set(title, files);
     if (!files.length) return void vscode.window.showInformationMessage(`${title}：没有改动`);
-    if (files.length <= OPEN_ALL_UP_TO || !this.files) await vscode.commands.executeCommand("vscode.changes", title, files.map((f) => [f.right, f.left, f.right]));
+    if (files.length <= OPEN_ALL_UP_TO || !this.files) await vscode.commands.executeCommand("vscode.changes", title, files.map(changeEntry));
     else {
       await vscode.commands.executeCommand("omem.changes.focus");
       void vscode.window.showInformationMessage(`${title}：${files.length} 个文件，在“改动的文件”里按目录点开看；要一次看全部，点那里的“全部打开”。`);

@@ -13,6 +13,8 @@ type Node = { dir: Dir } | { file: ChangedFile };
 const STATUS: Record<ChangedFile["status"], string> = { A: "新增", D: "删除", M: "修改", R: "改名" };
 /** Up to this many files the multi-file diff opens at once; beyond it the tree is the way in. */
 export const OPEN_ALL_UP_TO = 50;
+/** A file in the multi-file diff: an added one has no left side and a deleted one no right, so VS Code marks them A and D. */
+export const changeEntry = (f: ChangedFile) => [f.status === "D" ? f.left : f.right, f.status === "A" ? undefined : f.left, f.status === "D" ? undefined : f.right];
 
 export class ChangedFiles implements vscode.TreeDataProvider<Node> {
   title = "";
@@ -37,7 +39,7 @@ export class ChangedFiles implements vscode.TreeDataProvider<Node> {
   /** The whole change in VS Code's multi-file diff. */
   async openAll() {
     if (!this.files.length) return;
-    await vscode.commands.executeCommand("vscode.changes", this.title, this.files.map((f) => [f.right, f.left, f.right]));
+    await vscode.commands.executeCommand("vscode.changes", this.title, this.files.map(changeEntry));
   }
 
   getChildren(node?: Node): Node[] {

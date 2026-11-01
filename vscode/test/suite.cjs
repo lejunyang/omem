@@ -17,7 +17,7 @@ exports.run = async function run() {
   const G = vscode.ConfigurationTarget.Global;
   const port = Number(new URL(process.env.OMEM_TEST_URL).port);
   const ext = vscode.extensions.getExtension("omem.omem-vscode");
-  const { api, status, current, bench, runs, delegate, tasks } = await ext.activate();
+  const { api, status, current, bench, runs, delegate, tasks, changed } = await ext.activate();
   const step = (s) => console.log(`  · ${s}`);
 
   step("连接：这台机器上的 omem（只填端口）");
@@ -141,9 +141,11 @@ exports.run = async function run() {
   const next = await bench.startFix("顺便补一条测试");
   assert.ok(next?.id);
   const { run } = await api.get(`/api/runs/${next.id}`);
-  assert.match(String(run.input.task), /负数金额的舍入方向不对/);
-  assert.match(String(run.input.task), /refund\.ts:1：函数名改成 roundRefund/);
-  assert.match(String(run.input.task), /顺便补一条测试/);
+  // The delegation goes on by tasks from this fix on (review-fix.ts): the finding and the fix points are its tasks.
+  const madeTasks = (await api.get(`/api/runs/${next.id}/tasks`)).tasks.map((t) => `${t.title}\n${t.doneWhen}`).join("\n");
+  assert.match(madeTasks, /负数金额的舍入方向不对/);
+  assert.match(madeTasks, /refund\.ts:1：函数名改成 roundRefund/);
+  assert.match(madeTasks, /顺便补一条测试/);
   assert.equal(bench.fixPoints.length, 0);
   await current.advance(run);
   assert.deepEqual(current.run.rounds, [process.env.OMEM_TEST_RUN, next.id]);
@@ -167,6 +169,21 @@ exports.run = async function run() {
   assert.match((await vscode.workspace.openTextDocument(right)).getText(), /requireReason/);
   const left = vscode.Uri.from({ scheme: "omem-rev", path: "/reason.ts", query: new URLSearchParams({ run: process.env.OMEM_TEST_TASK_RUN, space: "shop-web", rev: "" }).toString() });
   assert.equal((await vscode.workspace.openTextDocument(left)).getText(), "", "新增的文件左边是空的");
+
+  step("和分支比较：右边是工作区里的文件，左边路径相同（不当成改名）；改动的文件按目录列出");
+  assert.equal(await tasks.showChanges("和 main 比较", "base=main", true), 1);
+  const [cmp] = changed.files;
+  assert.equal(cmp.status, "A");
+  assert.equal(cmp.right.scheme, "file", "右边是工作区里的文件，能提问、记修改点");
+  assert.equal(cmp.left.scheme, "omem-rev");
+  assert.equal(cmp.left.path, cmp.right.path, "VS Code 按两边路径判断改名");
+  assert.equal(new URLSearchParams(cmp.left.query).get("file"), "reason.ts");
+  const row = changed.getTreeItem(changed.getChildren()[0]);
+  assert.equal(row.label, "reason.ts");
+  assert.equal(row.description, "新增 +1 −0");
+  assert.equal(row.command.command, "vscode.diff");
+  await changed.clear();
+  assert.equal(changed.files.length, 0);
   await tasks.pause(true);
   assert.equal(tasks.data.work.paused, "owner");
   await tasks.pause(false);
