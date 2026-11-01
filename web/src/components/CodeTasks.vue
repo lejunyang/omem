@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, post } from "../api";
 import { promptDialog } from "../lib/dialog";
 import { parsePatches } from "../lib/reviews";
+import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { relTime, toast } from "../store";
 import DiffFile from "./DiffFile.vue";
 import DiffName from "./DiffName.vue";
+import DiffTree from "./DiffTree.vue";
+import UiSegmented from "./UiSegmented.vue";
 
 /**
  * A delegation driven by tasks (docs/v2/coding-loop.md): where it stands and how much budget is left,
@@ -124,6 +127,7 @@ async function showChanges(title: string, query: string, after?: () => void) {
   const base = query.startsWith("base=");
   shown.value = { title, files: [], loading: true, from: {}, base };
   openFiles.value = new Set();
+  picked.value = null;
   try {
     const r = await get<{ patches: { space: string; patch: string; from?: string }[] }>(`/api/runs/${props.runId}/task-diff?${query}`);
     shown.value = { title, files: parsePatches(r.patches), loading: false, from: Object.fromEntries(r.patches.filter((p) => p.from).map((p) => [p.space, p.from!])), base };
@@ -161,6 +165,19 @@ const showStep = (c: Checkpoint) => showChanges(`检查点 ${c.seq}：${c.label}
 const showSinceCp = (c: Checkpoint) => showChanges(`检查点 ${c.seq} 以后到现在`, `from=${c.seq}`);
 const cpsOpen = ref(false);
 const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k) ? n.delete(k) : n.add(k); openFiles.value = n; };
+// The files as a tree beside the list, as on the run page: picking one opens it and scrolls to it.
+const treeFiles = computed(() => {
+  const repos = shown.value?.files ?? [];
+  return repos.flatMap((d) => d.files.map((f) => ({ key: fileKey(d.space, f.name), path: repos.length > 1 ? `${d.space}/${f.name}` : f.name, add: f.add, rm: f.rm, status: f.status })));
+});
+const picked = ref<string | null>(null);
+const listEl = ref<HTMLElement | null>(null);
+async function pickFile(key: string) {
+  picked.value = key;
+  openFiles.value = new Set([...openFiles.value, key]);
+  await nextTick();
+  listEl.value?.querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+}
 </script>
 
 <template>
@@ -237,11 +254,20 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
     </div>
 
     <div v-if="shown" class="shown block">
-      <div class="row wrap"><strong class="small">{{ shown.title }}</strong><span class="spacer" /><button class="btn ghost sm" @click="shown = null">收起</button></div>
+      <div class="row wrap shown-head">
+        <strong class="small">{{ shown.title }}</strong>
+        <span v-if="treeFiles.length" class="muted small">{{ treeFiles.length }} 个文件</span>
+        <span class="spacer" />
+        <UiSegmented v-if="treeFiles.length" v-model="diffLayout" size="sm" :options="diffLayoutOptions" aria-label="差异的排列" />
+        <button class="btn ghost sm" @click="shown = null">收起</button>
+      </div>
       <p v-if="shown.loading" class="muted small">正在取改动…</p>
-      <p v-else-if="!shown.files.some((d) => d.files.length)" class="muted small">没有改动。</p>
+      <p v-else-if="!treeFiles.length" class="muted small">没有改动。</p>
+      <div v-else class="diff-cols">
+      <DiffTree v-if="treeFiles.length > 1" class="diff-tree" :files="treeFiles" :active="picked" @pick="pickFile" />
+      <div ref="listEl" class="diff-list">
       <template v-for="d in shown.files" :key="d.space">
-        <div v-for="f in d.files" :key="fileKey(d.space, f.name)" class="file">
+        <div v-for="f in d.files" :key="fileKey(d.space, f.name)" class="file" :class="{ picked: picked === fileKey(d.space, f.name) }" :data-key="fileKey(d.space, f.name)">
           <div class="fbar">
             <button class="fhead mono small" :aria-expanded="openFiles.has(fileKey(d.space, f.name))" @click="toggleFile(fileKey(d.space, f.name))"><DiffName :file="f" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></button>
             <button v-if="!shown.base && shown.from[d.space] && f.status !== 'renamed' && f.status !== 'copied'" class="lnk small restore" :disabled="working" @click="revertFile(d.space, f.name)">恢复成改动前</button>
@@ -249,6 +275,8 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
           <DiffFile v-if="openFiles.has(fileKey(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :expandable="false" revertable @revert-hunk="(p) => revertHunk(d.space, p)" />
         </div>
       </template>
+      </div>
+      </div>
     </div>
   </section>
 </template>
@@ -281,7 +309,13 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
 .notes { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
 .danger { color: var(--danger); }
 .shown { display: grid; gap: 8px; min-width: 0; }
+.shown-head { gap: 8px; align-items: center; }
+.diff-cols { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.diff-cols:not(:has(.diff-tree)) { grid-template-columns: minmax(0, 1fr); }
+.diff-tree { position: sticky; top: 0; max-height: calc(100vh - 120px); overflow: auto; }
+.diff-list { display: grid; gap: 8px; min-width: 0; }
 .file { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; }
+.file.picked { border-color: var(--accent); }
 .fbar { display: flex; align-items: center; background: var(--sunken); min-width: 0; }
 .fhead { display: flex; gap: 10px; flex: 1; padding: 7px 12px; background: none; border: 0; color: var(--ink); cursor: pointer; text-align: left; min-width: 0; }
 .restore { flex: none; padding: 0 10px; }
@@ -291,6 +325,8 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
 .add { color: var(--ok); }
 .rm { color: var(--danger); }
 @media (max-width: 760px) {
+  .diff-cols { grid-template-columns: minmax(0, 1fr); }
+  .diff-tree { position: static; max-height: 240px; }
   .meta { padding-left: 0; }
   .more { padding-left: 12px; }
 }

@@ -1057,3 +1057,4 @@ updated: 2026-10-30
 - 需求页打开一轮还在进行的交办：以前不沿用更早的需求拆分，每个需求点都显示“没有对应的变更点”，切换需求点只有面包屑变；现在进行中的一轮也沿用最近一次拆分（`WorkPane` 的 inherited split），并写明“这一轮还在进行”。
 - 网页版 VS Code 的压缩与缓存：`ide-web.ts` 把 `/ide/stable-<提交>/static/` 的文件 gzip 一次存进 `ide/gzip/<提交>/`，以后直接发、带 `immutable`；界面翻译带 ETag、可 304、要发时压缩。经 `peer open` 打开常驻服务器时 workbench.js 从约 21 MB 变成约 5 MB。
 - 和分支比较：`GET /api/runs/:id/task-diff?base=<分支>`（`code-tasks.ts` 的 `workPatches`：`origin/` 开头先 `fetchBranch`，从 `merge-base` 比到工作分支最新提交）；运行页“修改项”的“和分支比较…”，VS Code “修改项”视图的同名命令（`omem.work.compareBase`，右边用工作区里的文件，能问 omem、记修改点）。
+- 运行页“修改项”看改动的面板（某一项、检查点、我上次看过之后、和分支比较）加了左边的文件目录（`DiffTree`）和上下 / 左右切换（`lib/diffLayout`），和运行页“改动”一样。
