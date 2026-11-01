@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -128,6 +128,12 @@ describe("a delegation driven by tasks", () => {
       const whole = workPatches(app, r1.id, worktrees, { base: "release-x" });
       expect(whole[0]).toMatchObject({ from: start });
       expect(whole[0].patch).toContain("refund.ts");
+      // Where the tip is checked out (an editor's new side): the work's worktree; nowhere once it moves off.
+      const norm = (p?: string) => p && realpathSync(p).replace(/\\/g, "/").toLowerCase();
+      expect(norm(whole[0].at)).toBe(norm(worktrees[0].path));
+      execFileSync("git", ["-C", worktrees[0].path, "checkout", "-q", "--detach", "HEAD~1"]);
+      expect(workPatches(app, r1.id, worktrees, { base: "release-x" })[0].at).toBeUndefined();
+      execFileSync("git", ["-C", worktrees[0].path, "checkout", "-q", "-"]);
       expect(() => workPatches(app, r1.id, worktrees, { base: "no-such-branch" })).toThrow(/没有分支 no-such-branch/);
 
       // Back to checkpoint 1 on the owner's word: a round that only reverts — no coding Agent, no

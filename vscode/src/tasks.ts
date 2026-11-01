@@ -169,11 +169,13 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
   async showChanges(title: string, query: string, local = false) {
     const run = this.current.run;
     if (!run) return;
-    const { patches } = await this.api.get<{ patches: { space: string; patch: string; from?: string; to?: string }[] }>(`/api/runs/${run.id}/task-diff?${query}`);
+    const { patches } = await this.api.get<{ patches: { space: string; patch: string; from?: string; to?: string; at?: string }[] }>(`/api/runs/${run.id}/task-diff?${query}`);
     const files: ChangedFile[] = [];
     for (const p of patches) {
-      const folder = local ? this.current.folders.find((x) => x.space === p.space) : undefined;
-      const root = folder ? this.api.conn.uri(folder.path) : null;
+      // Only a checkout of exactly the compared tip (omem says where): another folder of the work may be
+      // on another branch by now (a confirmed work's repository back on main), its files not these.
+      const root = local && p.at ? this.api.conn.uri(p.at) : null;
+      if (root && p.at && !this.current.folders.some((x) => x.path === p.at)) this.current.folders.push({ space: p.space, path: p.at, kind: "work", branch: null });
       for (const f of patchFiles(p.patch)) {
         const path = f.newPath ?? f.oldPath!;
         // With the work folder's file on the right, the left takes the same kind of path (not a rename).

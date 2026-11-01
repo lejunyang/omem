@@ -182,6 +182,18 @@ exports.run = async function run() {
   assert.equal(row.label, "reason.ts");
   assert.equal(row.description, "新增 +1 −0");
   assert.equal(row.command.command, "vscode.diff");
+  // The tip checked out nowhere (a confirmed work's repository is back on main): both sides from omem.
+  const taskFolder = current.folders.find((f) => f.space === "shop-web").path;
+  require("node:child_process").execFileSync("git", ["-C", taskFolder, "checkout", "-q", "--detach", "HEAD~1"]);
+  try {
+    await tasks.showChanges("和 main 比较", "base=main", true);
+    const [away] = changed.files;
+    assert.equal(away.right.scheme, "omem-rev", "没有检出这个提交的目录时右边也从 omem 读");
+    assert.match((await vscode.workspace.openTextDocument(away.right)).getText(), /requireReason/, "新增的文件能打开");
+    assert.equal(away.left.path, away.right.path);
+  } finally {
+    require("node:child_process").execFileSync("git", ["-C", taskFolder, "checkout", "-q", "-"]);
+  }
   await changed.clear();
   assert.equal(changed.files.length, 0);
   await tasks.pause(true);

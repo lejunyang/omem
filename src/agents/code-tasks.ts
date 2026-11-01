@@ -422,7 +422,15 @@ export function attributeCommits(app: App, rootId: string, worktrees: WorktreeRe
 // ---- diffs ----------------------------------------------------------------------------------------
 
 /** `from` / `to`: the revisions the patch goes between (“恢复成改动前” restores a file to `from`; VS Code shows both sides). */
-export type Patch = { space: string; patch: string; label?: string; from?: string; to?: string };
+/** `at`: a checkout whose HEAD is `to` (an editor shows its files as the new side); none when the branch is not checked out. */
+export type Patch = { space: string; patch: string; label?: string; from?: string; to?: string; at?: string };
+
+/** The work's own worktree or any other of the repository where `tip` is what is checked out. */
+function checkoutAt(dir: string, wt: WorktreeRef, tip: string): string | undefined {
+  const list = git(dir, ["worktree", "list", "--porcelain"]).stdout.split(/\n\s*\n/).map((block) => ({ path: /^worktree (.+)$/m.exec(block)?.[1], head: /^HEAD ([0-9a-f]+)$/m.exec(block)?.[1] }));
+  const at = list.filter((w) => w.path && w.head === tip);
+  return (at.find((w) => w.path === wt.path) ?? at[0])?.path;
+}
 
 /** One task's change: its commits (one diff when they follow each other, else one per commit). */
 function taskPatch(dir: string, shas: string[]): string {
@@ -455,7 +463,7 @@ export function workPatches(app: App, rootId: string, worktrees: WorktreeRef[], 
       const from = tip ? git(dir, ["merge-base", base.commit, tip]).stdout.trim() : "";
       if (!from) throw new HttpError(400, `${wt.space} 的工作分支和 ${sel.base} 没有共同的提交`);
       const patch = git(dir, ["diff", "--no-color", from, tip]).stdout;
-      if (patch.trim()) out.push({ space: wt.space, patch, from, to: tip });
+      if (patch.trim()) out.push({ space: wt.space, patch, from, to: tip, at: checkoutAt(dir, wt, tip) });
     }
     return out;
   }

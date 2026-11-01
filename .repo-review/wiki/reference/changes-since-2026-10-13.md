@@ -1059,3 +1059,4 @@ updated: 2026-10-30
 - 和分支比较：`GET /api/runs/:id/task-diff?base=<分支>`（`code-tasks.ts` 的 `workPatches`：`origin/` 开头先 `fetchBranch`，从 `merge-base` 比到工作分支最新提交）；运行页“修改项”的“和分支比较…”，VS Code “修改项”视图的同名命令（`omem.work.compareBase`，右边用工作区里的文件，能问 omem、记修改点）。
 - 运行页“修改项”看改动的面板（某一项、检查点、我上次看过之后、和分支比较）加了左边的文件目录（`DiffTree`）和上下 / 左右切换（`lib/diffLayout`），和运行页“改动”一样。
 - VS Code 插件：“和分支比较”时左边的 `omem-rev:` 用和右边工作区文件相同的路径（仓库路径放查询参数 `file`），不再把每个文件标成改名；新视图“改动的文件”（`vscode/src/changes.ts`）按目录列出看过的改动，点文件单独对比，超过 50 个文件不自动打开多文件对比。
+- 和分支比较的新一侧：`task-diff?base=` 每个仓库返回 `at`（HEAD 正是工作分支最新提交的 worktree），VS Code 插件只在有 `at` 时用那里的文件，否则两边都从 omem 读。以前用交办的文件夹，确认过的交办那里是仓库主目录、已回到别的分支，新增的文件打开报“文件不存在”，修改的文件右边是别的分支的内容。
