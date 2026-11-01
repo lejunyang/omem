@@ -22,7 +22,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const current = new Current(api);
   const bench = new Workbench(api, current);
   const runs = new Runs(api, current);
-  const tasks = new Tasks(api, current);
+  const tasks = new Tasks(api, current, context.workspaceState);
   const delegate = new Delegate(api, current);
   const progress = new Progress(api, current, () => {
     runs.refresh();
@@ -163,6 +163,7 @@ export async function activate(context: vscode.ExtensionContext) {
   cmd("omem.work.pause", () => tasks.pause(true));
   cmd("omem.work.resume", () => tasks.pause(false));
   cmd("omem.work.sinceViewed", () => tasks.sinceViewed());
+  cmd("omem.work.compareBase", () => tasks.compareBase());
   cmd("omem.checkpoint.step", async (arg) => {
     const c = cpOf(arg);
     if (c) await tasks.showChanges(`检查点 ${c.seq}：${c.label}`, `from=${c.seq - 1}&to=${c.seq}`);

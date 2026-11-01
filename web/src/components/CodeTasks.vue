@@ -136,6 +136,17 @@ const showSince = () => {
   void showChanges(from ? `检查点 ${from} 以后的改动` : "从开始到现在的改动", "since=viewed", () => void post(`/api/runs/${props.runId}/work`, { viewed: lastCp.value }).then(load).catch(() => {}));
 };
 const showAll = () => showChanges("从开始到现在的全部改动", "from=0");
+// The whole branch against the one it will go into, for a review of everything it brings; the branch
+// last compared with is remembered per work in this browser.
+const baseKey = () => `omem.compareBase.${data.value?.rootId ?? props.runId}`;
+async function compareBase() {
+  let last = "";
+  try { last = localStorage.getItem(baseKey()) ?? ""; } catch {}
+  const ref = (await promptDialog("和哪个分支比较", { message: "看工作分支和它分开以后的全部改动，包括这次交办以前就在分支上的提交；origin/ 开头的先拉取最新。选中代码可以提问或要改。", value: last, placeholder: "如 origin/main", okText: "比较" }))?.trim();
+  if (!ref) return;
+  try { localStorage.setItem(baseKey(), ref); } catch {}
+  await showChanges(`和 ${ref} 比较：工作分支的全部改动`, `base=${encodeURIComponent(ref)}`);
+}
 const fileKey = (space: string, name: string) => `${space}:${name}`;
 
 // ---- taking back a stretch, a file or a hunk ----------------------------------------------------
@@ -181,6 +192,7 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
       <span class="muted">看改动：</span>
       <button class="lnk" @click="showSince">{{ w.viewed ? `我上次看过之后（检查点 ${w.viewed} → ${lastCp}）` : "从开始到现在" }}</button>
       <button v-if="w.viewed" class="lnk" @click="showAll">全部</button>
+      <button class="lnk" title="工作分支和另一个分支（如上线分支）比较，看它会带进去的全部改动" @click="compareBase">和分支比较…</button>
       <button v-if="data.checkpoints?.length" class="lnk" :aria-expanded="cpsOpen" @click="cpsOpen = !cpsOpen">{{ cpsOpen ? "收起" : "" }}检查点（{{ data.checkpoints.length }}）</button>
     </div>
     <ol v-if="cpsOpen && data.checkpoints?.length" class="cps small" aria-label="检查点">

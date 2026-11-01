@@ -56,7 +56,7 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
 
-  constructor(private readonly api: Api, private readonly current: Current) {
+  constructor(private readonly api: Api, private readonly current: Current, private readonly state?: vscode.Memento) {
     current.onDidChange(() => void this.load().catch(() => {}));
   }
 
@@ -153,8 +153,12 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
     return vscode.Uri.from({ scheme: "omem-rev", path: `/${path}`, query: new URLSearchParams({ run, space, rev: rev ?? "" }).toString() });
   }
 
-  /** Open a change in the multi-file diff: one task, a checkpoint's step, since a checkpoint, or since the owner last looked. */
-  async showChanges(title: string, query: string) {
+  /**
+   * Open a change in the multi-file diff: one task, a checkpoint's step, since a checkpoint, since the
+   * owner last looked, or the branch against another. `local`: the right side is the work folder's own
+   * file (the branch tip is what is checked out there), so questions and fix points work on it.
+   */
+  async showChanges(title: string, query: string, local = false) {
     const run = this.current.run;
     if (!run) return;
     const { patches } = await this.api.get<{ patches: { space: string; patch: string; from?: string; to?: string }[] }>(`/api/runs/${run.id}/task-diff?${query}`);
@@ -163,7 +167,9 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
       for (const f of patchFiles(p.patch)) {
         const path = f.newPath ?? f.oldPath!;
         const left = this.revUri(run.id, p.space, f.oldPath ?? path, f.oldPath ? p.from ?? null : null);
-        const right = this.revUri(run.id, p.space, path, f.newPath ? p.to ?? null : null);
+        const folder = local && f.newPath ? this.current.folders.find((x) => x.space === p.space) : undefined;
+        const root = folder ? this.api.conn.uri(folder.path) : null;
+        const right = root ? vscode.Uri.joinPath(root, path) : this.revUri(run.id, p.space, path, f.newPath ? p.to ?? null : null);
         resources.push([right, left, right]);
       }
     }
@@ -223,6 +229,17 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
   pause(paused: boolean) {
     return this.act("/work", { paused }, paused ? "已暂停：手上这一项做完就停" : "继续推进");
   }
+  /** The whole branch against the one it will go into (fetched first when it is origin's), for reviewing everything it brings. */
+  async compareBase() {
+    const run = this.current.run;
+    if (!run) return;
+    const key = `omem.compareBase.${this.data?.rootId ?? run.id}`;
+    const ref = (await vscode.window.showInputBox({ title: "和哪个分支比较", prompt: "工作分支和它分开以后的全部改动，包括这次交办以前就在分支上的提交；origin/ 开头的先拉取最新", value: this.state?.get<string>(key) ?? "", placeHolder: "如 origin/main", ignoreFocusOut: true }))?.trim();
+    if (!ref) return;
+    await this.state?.update(key, ref);
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `正在和 ${ref} 比较…` }, () => this.showChanges(`和 ${ref} 比较`, `base=${encodeURIComponent(ref)}`, true));
+  }
+
   /** Everything since the checkpoint the owner last looked at; then that is the one looked at. */
   async sinceViewed() {
     const d = this.data;

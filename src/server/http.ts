@@ -1275,17 +1275,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (bytes.subarray(0, 8000).includes(0)) return { binary: true, text: "" };
     return { text: bytes.toString("utf8") };
   });
-  // One task's change, a stretch between checkpoints, or everything since the viewer last looked.
+  // One task's change, a stretch between checkpoints, everything since the viewer last looked, or the branch against another.
   server.get("/api/runs/:id/task-diff", async (req) => {
     const id = (req.params as { id: string }).id;
     ownRun(req, id);
-    const o = q(z.object({ tasks: z.string().regex(/^[\dTt, ]+$/).optional(), from: z.coerce.number().int().min(0).optional(), to: z.coerce.number().int().min(0).optional(), since: z.enum(["viewed"]).optional() }), req.query);
+    const o = q(z.object({ tasks: z.string().regex(/^[\dTt, ]+$/).optional(), from: z.coerce.number().int().min(0).optional(), to: z.coerce.number().int().min(0).optional(), since: z.enum(["viewed"]).optional(), base: z.string().max(200).regex(/^(?!-)[\w./-]+$/, "分支名不对").optional() }), req.query);
     const t = await import("../agents/code-tasks.ts");
     if (!t.isTaskWork(app, id)) throw new HttpError(400, "这次交办不是按修改项推进的");
     const rootId = t.workRootOf(app, id);
     const tasks = o.tasks ? o.tasks.split(/[,\s]+/).filter(Boolean).map((x) => t.parseTaskRef(x)) : undefined;
     const { worktreesOf } = await import("../agents/code.ts");
-    return { patches: t.workPatches(app, rootId, worktreesOf(app, rootId), { tasks, from: o.from, to: o.to, since: o.since, userId: who(req) }) };
+    return { patches: t.workPatches(app, rootId, worktreesOf(app, rootId), { tasks, from: o.from, to: o.to, since: o.since, base: o.base, userId: who(req) }) };
   });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.

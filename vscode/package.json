@@ -110,6 +110,7 @@
       { "command": "omem.work.pause", "title": "暂停", "category": "omem", "icon": "$(debug-pause)" },
       { "command": "omem.work.resume", "title": "继续推进", "category": "omem", "icon": "$(debug-continue)" },
       { "command": "omem.work.sinceViewed", "title": "我上次看过之后的改动", "category": "omem", "icon": "$(history)" },
+      { "command": "omem.work.compareBase", "title": "和分支比较…", "category": "omem", "icon": "$(git-compare)" },
       { "command": "omem.checkpoint.step", "title": "看这一步", "category": "omem" },
       { "command": "omem.checkpoint.since", "title": "和现在比", "category": "omem", "icon": "$(compare-changes)" },
       { "command": "omem.checkpoint.back", "title": "回到这里", "category": "omem" }
@@ -142,7 +143,8 @@
         { "command": "omem.task.add", "when": "omem.taskMode" },
         { "command": "omem.work.pause", "when": "omem.taskMode" },
         { "command": "omem.work.resume", "when": "omem.taskMode" },
-        { "command": "omem.work.sinceViewed", "when": "omem.taskMode" }
+        { "command": "omem.work.sinceViewed", "when": "omem.taskMode" },
+        { "command": "omem.work.compareBase", "when": "omem.taskMode" }
       ],
       "editor/context": [
         { "command": "omem.askSelection", "when": "editorHasSelection", "group": "omem@1" },
@@ -168,6 +170,7 @@
         { "command": "omem.showProgress", "when": "view == omem.review && omem.hasRun", "group": "navigation@2" },
         { "command": "omem.task.add", "when": "view == omem.tasks", "group": "navigation@1" },
         { "command": "omem.work.sinceViewed", "when": "view == omem.tasks", "group": "navigation@2" },
+        { "command": "omem.work.compareBase", "when": "view == omem.tasks", "group": "navigation@2" },
         { "command": "omem.work.pause", "when": "view == omem.tasks && !omem.paused", "group": "navigation@3" },
         { "command": "omem.work.resume", "when": "view == omem.tasks && omem.paused", "group": "navigation@3" },
         { "command": "omem.refresh", "when": "view == omem.tasks", "group": "navigation@9" }
