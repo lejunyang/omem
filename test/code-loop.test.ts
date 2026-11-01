@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
-import { worktreesOf } from "../src/agents/code.ts";
+import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
 import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, recordCheckpoint, recordOutsideChanges, scheduleWorkRevert, settleCodingRound, updateTask, workPatches, workState } from "../src/agents/code-tasks.ts";
 import { advanceWork, taskReview } from "../src/agents/code-loop.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
@@ -269,6 +269,54 @@ describe("a delegation driven by tasks", () => {
     expect(recordOutsideChanges(app, r.id, "r3", worktrees, identity, { previousEnded: false, round: 3 })).toBeNull();
     expect(git("status", "--porcelain").trim()).toBe("M refund.ts");
     app.db.close();
+  });
+
+  it("makes force-added ignored files and a check still failing at the end tasks of the host, again only when a done one did not hold", async () => {
+    const app = testApp();
+    const dir = mkdtempSync(join(tmpdir(), "omem-host-"));
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: dir, encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, ".gitignore"), "gen/\n");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    const base = git("rev-parse", "HEAD").trim();
+    mkdirSync(join(dir, "gen"));
+    writeFileSync(join(dir, "gen", "client.ts"), "export const listRefunds = () => [];\n");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 1;\n");
+    git("add", "-f", "gen/client.ts", "refund.ts");
+    git("commit", "-q", "-m", "refund, with the generated client");
+    const wt = { space: "shop-api", path: dir, branch: "main", base, start: base, commits: true };
+    expect(ignoredAdded(wt)).toEqual([{ pattern: "gen/", files: 1, example: "gen/client.ts" }]);
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["shop-api"], taskMode: true }, userId: OWNER });
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      const repo = { space: "shop-api", diffStat: "", diffBytes: 0, check: { command: "npm test", code: 1, output: "1 failed: refund.test.ts" } };
+      setRunOutput(app, r.id, { worktrees: [wt], repos: [{ ...repo, ignored: ignoredAdded(wt) }] });
+      const review = () => taskReview(app, r.id, { runId: r.id, signal: new AbortController().signal, event: (type, data) => addRunEvent(app, r.id, type, data) });
+      const states = () => listTasks(app, r.id).map((t) => [t.title, t.state]);
+      // Nothing else to do: not approved with a red check, and the generated client goes back.
+      expect((await review()).verdict).not.toBe("approved");
+      expect(states()).toEqual([["撤回提交了的被忽略文件", "todo"], ["检查没通过", "todo"]]);
+      expect(listTasks(app, r.id)[0].doneWhen).toContain("`gen/`：1 个文件（如 `gen/client.ts`）");
+      expect(listTasks(app, r.id)[1].doneWhen).toContain("1 failed: refund.test.ts");
+      // Still open: not added twice.
+      await review();
+      expect(states()).toHaveLength(2);
+      // The coder said done but the check still fails; it hands that to the owner the next time.
+      for (const t of listTasks(app, r.id)) updateTask(app, r.id, t.seq, { state: "done" });
+      setRunOutput(app, r.id, { repos: [repo] });
+      await review();
+      expect(states()).toEqual([["撤回提交了的被忽略文件", "done"], ["检查没通过", "done"], ["检查没通过", "todo"]]);
+      updateTask(app, r.id, 3, { state: "owner", question: "测试环境连不上，先不管？" });
+      expect((await review()).verdict).toBe("awaiting-owner");
+      expect(states()).toHaveLength(3);
+    } finally {
+      // The owner's card is shown after an import or two; let it land before the database closes.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      app.db.close();
+    }
   });
 
   it("hands a dispute the check still insists on to review-lead, and to the owner after a ruling", async () => {

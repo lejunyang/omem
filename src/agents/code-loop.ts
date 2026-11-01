@@ -5,7 +5,7 @@ import { git } from "../core/git.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { codeChainFor, queueNextCodeRound, saveCodeChain, type CodeChain } from "./code-chain.ts";
-import { reviewMetrics, worktreesOf } from "./code.ts";
+import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
 import {
   addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, taskForFinding,
   stranded, taskLabel, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
@@ -36,6 +36,27 @@ import { workDirOf } from "./workspaces.ts";
 
 const roundOf = (r: Run) => Number((r.input as { round?: number }).round ?? 1);
 
+type RepoOut = { space: string; check: { command: string; code: number; output: string } | null; ignored?: IgnoredFiles[] };
+const repoResults = (run: Run) => (run.output.repos ?? []) as RepoOut[];
+const brokenChecks = (run: Run) => repoResults(run).filter((r) => r.check && r.check.code !== 0);
+const checkFailure = (broken: RepoOut[]) => broken.map((r) => `${r.space}：\`${r.check!.command}\` 退出码 ${r.check!.code}\n\n\`\`\`\n${truncate(r.check!.output.slice(-3000), 3000)}\n\`\`\``).join("\n\n");
+
+/**
+ * What the host itself finds after a round, as tasks for the coder: files the repository ignores
+ * forced into the commits, and — when nothing else is left to do — a check that fails, so the work
+ * is not approved red. Each is added once; one the coder handed to the owner or set aside stays so.
+ */
+function hostFindings(app: App, rootId: string, run: Run) {
+  const tasks = listTasks(app, rootId);
+  const open = (title: string) => tasks.some((t) => t.title === title && !["done", "reverted"].includes(t.state));
+  const ignored = ignoredText(repoResults(run));
+  if (ignored && !open(IGNORED_TASK)) addTask(app, rootId, { title: IGNORED_TASK, doneWhen: `仓库的 .gitignore 忽略这些文件，提交里却有它们（多半是 \`git add -f\`）：\n\n${ignored}\n\n用 \`git rm -r --cached <路径>\` 撤回（文件留在工作区），提交生成它们的输入（IDL、生成配置）而不是产物；确实要入库的，用 report_task 交给本人说明理由。`, kind: "fix" }, "host");
+  const broken = brokenChecks(run);
+  if (broken.length && !tasks.some((t) => t.state === "todo") && !open(CHECK_TASK)) addTask(app, rootId, { title: CHECK_TASK, doneWhen: `${checkFailure(broken)}\n\n修到检查通过；失败和这次的改动无关（环境、外部服务）或检查命令本身要改的，用 report_task 交给本人说明。`, kind: "fix" }, "host");
+}
+const IGNORED_TASK = "撤回提交了的被忽略文件";
+const CHECK_TASK = "检查没通过";
+
 export async function taskReview(app: App, codeRunId: string, rc: RoundContext): Promise<{ verdict: string; continuedRunId?: string }> {
   const run = getRun(app, codeRunId);
   const rootId = workRootOf(app, run.id);
@@ -48,8 +69,8 @@ export async function taskReview(app: App, codeRunId: string, rc: RoundContext):
   }
   // Only reverts this round: what was taken back had been reviewed; a check it breaks is a task.
   if (run.output.gitOnly) {
-    const broken = ((run.output.repos ?? []) as { space: string; check: { command: string; code: number; output: string } | null }[]).filter((r) => r.check && r.check.code !== 0);
-    if (broken.length) addTask(app, rootId, { title: "回退之后检查没通过", doneWhen: broken.map((r) => `${r.space}：\`${r.check!.command}\` 退出码 ${r.check!.code}\n\n\`\`\`\n${truncate(r.check!.output.slice(-3000), 3000)}\n\`\`\``).join("\n\n"), kind: "fix" }, "host");
+    const broken = brokenChecks(run);
+    if (broken.length) addTask(app, rootId, { title: "回退之后检查没通过", doneWhen: checkFailure(broken), kind: "fix" }, "host");
     else setWorkState(app, rootId, { stageAt: listCheckpoints(app, rootId).at(-1)?.seq ?? 0 });
     return nextStep(app, getRun(app, run.id), rc);
   }
@@ -278,6 +299,7 @@ function notConverging(stages: number[]) {
 
 async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict: string; continuedRunId?: string }> {
   const rootId = workRootOf(app, run.id);
+  hostFindings(app, rootId, run);
   const tasks = listTasks(app, rootId);
   const w = workState(app, rootId);
   const todo = tasks.filter((t) => t.state === "todo");

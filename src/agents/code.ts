@@ -157,7 +157,9 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
   return r;
 }
 type Check = { command: string; code: number; output: string; ms: number };
-type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null };
+type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null; ignored?: IgnoredFiles[] };
+/** Files of the change that .gitignore covers, by the pattern that covers them. */
+export type IgnoredFiles = { pattern: string; files: number; example: string };
 
 /** The run's worktrees, including runs from before multi-repository delegation. */
 /** Turns a task-driven round's coder may get after its own for what its checks sent back (code-overlap.ts). */
@@ -598,7 +600,8 @@ ${input.task}
     const diff = git(wt.path, ["diff", "--no-color", ...range]).stdout;
     const stat = git(wt.path, ["diff", "--stat", ...range]).stdout.trim();
     writeFileSync(patchFile(app, run.id, repo.id), diff);
-    results.push({ space: repo.id, diffStat: stat, diffBytes: diff.length, check });
+    const ignored = ignoredAdded(wt);
+    results.push({ space: repo.id, diffStat: stat, diffBytes: diff.length, check, ...(ignored.length ? { ignored } : {}) });
     if (diff.trim()) diffs.push(multi ? `### ${repo.id}\n\n${fence("diff", diff)}` : fence("diff", diff));
   }
   const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
@@ -744,6 +747,31 @@ function branchSummary(worktrees: WorktreeRef[]) {
 /** What a worktree's change is measured as: a work branch against where it starts, an older delegation's staged change against HEAD. */
 function changeRange(wt: WorktreeRef) {
   return wt.commits ? [changeBase(wt.path, wt), "HEAD"] : ["--cached", "HEAD"];
+}
+
+/**
+ * Files the change adds although the repository ignores them: generated code, dependencies or build
+ * output someone forced in with `git add -f`. A fresh checkout regenerates them, so they drift.
+ */
+export function ignoredAdded(wt: WorktreeRef): IgnoredFiles[] {
+  const added = git(wt.path, ["diff", "--name-only", "--diff-filter=A", "-z", ...changeRange(wt)]).stdout;
+  if (!added) return [];
+  // -v gives source, line, pattern and path per file; a `!` pattern is a match that keeps the file.
+  const f = git(wt.path, ["check-ignore", "-v", "--no-index", "--stdin", "-z"], added).stdout.split("\0");
+  const by = new Map<string, IgnoredFiles>();
+  for (let i = 0; i + 3 < f.length; i += 4) {
+    if (f[i + 2].startsWith("!")) continue;
+    const g = by.get(f[i + 2]) ?? { pattern: f[i + 2], files: 0, example: f[i + 3] };
+    g.files++;
+    by.set(g.pattern, g);
+  }
+  return [...by.values()];
+}
+
+/** The ignored files of each repository as a list: the pattern, how many, one of them. */
+export function ignoredText(repos: { space: string; ignored?: IgnoredFiles[] }[]) {
+  const multi = repos.length > 1;
+  return repos.flatMap((r) => (r.ignored ?? []).map((g) => `- ${multi ? `${r.space}：` : ""}\`.gitignore\` 的 \`${g.pattern}\`：${g.files} 个文件（如 \`${g.example}\`）`)).join("\n");
 }
 
 /** What review tiers are chosen by: the size and place of the change, whether checks passed. */

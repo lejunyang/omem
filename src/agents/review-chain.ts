@@ -6,7 +6,7 @@ import { one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
-import { codePatches, isBranchReview, worktreesOf, type PeerReviewer } from "./code.ts";
+import { codePatches, ignoredText, isBranchReview, worktreesOf, type IgnoredFiles, type PeerReviewer } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
   blocksAt, checkBrief, FINDING_FORMAT, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
@@ -31,7 +31,7 @@ import { git } from "../core/git.ts";
 
 type Out = {
   task?: string;
-  repos?: { space: string; diffStat: string; diffBytes: number; check: { command: string; code: number; output: string } | null }[];
+  repos?: { space: string; diffStat: string; diffBytes: number; check: { command: string; code: number; output: string } | null; ignored?: IgnoredFiles[] }[];
   coderSummary?: string;
   coderSessionId?: string;
   indexedSpaces?: string[];
@@ -103,6 +103,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
 
   const head = (r: { space: string }) => (multi ? `### ${r.space}\n\n` : "");
   const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
+  const ignored = ignoredText(results);
   const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
     input.itemId ? materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
@@ -111,6 +112,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${opts.dirs?.[w.space] ?? w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
     `## 检查结果\n\n${checkText}`,
+    ignored ? `## 提交了被忽略的文件\n\n仓库的 .gitignore 忽略这些文件（生成代码、依赖、构建产物），改动却把它们加进了提交：\n\n${ignored}\n\n重新安装或生成时它们会被覆盖；除非任务要求入库，这是要改的问题。` : "",
     `## ${since ? "上次评审以后的改动统计" : "改动统计"}\n\n${statText}`,
   ].filter(Boolean).join("\n\n");
   const diffText = diffs.join("\n\n");
