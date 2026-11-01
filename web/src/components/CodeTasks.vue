@@ -115,15 +115,18 @@ const pause = (paused: boolean) => act(`/api/runs/${props.runId}/work`, { paused
 
 // ---- changes ------------------------------------------------------------------------------------
 // `from`: per repository, the revision the change shown starts at (what a file is restored to).
-type Shown = { title: string; files: ReturnType<typeof parsePatches>; loading: boolean; from: Record<string, string> };
+// `base`: the branch against another one, where a whole file back to the parting point would also
+// drop what others did on the branch before this work: only hunks can be taken back there.
+type Shown = { title: string; files: ReturnType<typeof parsePatches>; loading: boolean; from: Record<string, string>; base?: boolean };
 const shown = ref<Shown | null>(null);
 const openFiles = ref(new Set<string>());
 async function showChanges(title: string, query: string, after?: () => void) {
-  shown.value = { title, files: [], loading: true, from: {} };
+  const base = query.startsWith("base=");
+  shown.value = { title, files: [], loading: true, from: {}, base };
   openFiles.value = new Set();
   try {
     const r = await get<{ patches: { space: string; patch: string; from?: string }[] }>(`/api/runs/${props.runId}/task-diff?${query}`);
-    shown.value = { title, files: parsePatches(r.patches), loading: false, from: Object.fromEntries(r.patches.filter((p) => p.from).map((p) => [p.space, p.from!])) };
+    shown.value = { title, files: parsePatches(r.patches), loading: false, from: Object.fromEntries(r.patches.filter((p) => p.from).map((p) => [p.space, p.from!])), base };
     after?.();
   } catch (e) {
     shown.value = null;
@@ -241,7 +244,7 @@ const toggleFile = (k: string) => { const n = new Set(openFiles.value); n.has(k)
         <div v-for="f in d.files" :key="fileKey(d.space, f.name)" class="file">
           <div class="fbar">
             <button class="fhead mono small" :aria-expanded="openFiles.has(fileKey(d.space, f.name))" @click="toggleFile(fileKey(d.space, f.name))"><DiffName :file="f" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></button>
-            <button v-if="shown.from[d.space] && f.status !== 'renamed' && f.status !== 'copied'" class="lnk small restore" :disabled="working" @click="revertFile(d.space, f.name)">恢复成改动前</button>
+            <button v-if="!shown.base && shown.from[d.space] && f.status !== 'renamed' && f.status !== 'copied'" class="lnk small restore" :disabled="working" @click="revertFile(d.space, f.name)">恢复成改动前</button>
           </div>
           <DiffFile v-if="openFiles.has(fileKey(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :expandable="false" revertable @revert-hunk="(p) => revertHunk(d.space, p)" />
         </div>
