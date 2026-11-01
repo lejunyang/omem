@@ -107,7 +107,12 @@ export function invalidateVectors() {
   vectorIndex().clear();
 }
 
-/** Embed chunks that have no vector yet. Returns how many were embedded. */
+/**
+ * Embed chunks that have no vector yet. Returns how many were embedded. Not the indexes of a
+ * delegation's or branch review's worktree (`wt-…`, worktree-index.ts): they live as long as the
+ * review and are searched by text; a few reviews of one large branch at once are tens of thousands
+ * of chunks, and embedding them took the CPU the reviewers' own tool calls needed.
+ */
 export async function embedPending(app: App, batch = 32): Promise<number> {
   const e = await getEmbedder(app);
   if (!e) return 0;
@@ -120,7 +125,7 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   }
   const rows = all<{ id: number; space_id: string; title: string; path: string; text: string }>(
     app.db,
-    "select id, space_id, title, path, text from chunks where embedding is null limit ?",
+    "select id, space_id, title, path, text from chunks where embedding is null and space_id not like 'wt-%' limit ?",
     batch,
   );
   if (!rows.length) return 0;
