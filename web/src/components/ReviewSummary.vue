@@ -39,7 +39,7 @@ const current = rv.current;
 const headline = computed(() => {
   const c = current.value;
   if (!c || !rv.verdict.value) return "";
-  if (c.verdict === "approved") return props.branchReview ? "可以合并" : "可以应用";
+  if (c.verdict === "approved") return props.branchReview ? "可以合并" : props.branchWork ? "可以确认推送" : "可以应用";
   if (c.verdict === "changes-requested") return c.stop ? "停下来等你决定" : "需要修改";
   return "";
 });

@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { json } from "../core/util.ts";
 import { worktreesOf } from "../agents/code.ts";
+import { isBranchWork } from "../agents/code-branch.ts";
 import { findReq, reqPath } from "./requirements.ts";
 
 /**
@@ -27,6 +28,8 @@ export type Work = {
   verdict: string | null;
   stage: WorkStage;
   branchReview: boolean;
+  /** Rounds commit on a work branch, confirmed by pushing it (code-branch.ts) rather than applied as a patch. */
+  branchWork: boolean;
   branch: string | null;
   /** Findings of the latest round the owner has not decided on yet (hints left out). */
   open: number;
@@ -59,14 +62,11 @@ function workOf(app: App, item: { id: string; title: string }, rounds: RunRow[])
     : verdict === "awaiting-peer" || verdict === "awaiting-peer-code" ? "peer"
     : branchReview && last.status === "done" && verdict !== "awaiting-plan" && (verdict === "approved" || !open) ? "done"
     : "owner";
-  let branch = Object.values(rootIn.branches ?? {})[0]?.branch ?? Object.values(rootIn.fromBranches ?? {})[0] ?? Object.values(rootIn.branchNames ?? {})[0] ?? null;
-  if (!branch) {
-    const w = worktreesOf(app, root.id)[0];
-    branch = w?.targetBranch ?? w?.branch ?? null;
-  }
+  const wts = worktreesOf(app, root.id);
+  const branch = Object.values(rootIn.branches ?? {})[0]?.branch ?? Object.values(rootIn.fromBranches ?? {})[0] ?? Object.values(rootIn.branchNames ?? {})[0] ?? wts[0]?.targetBranch ?? wts[0]?.branch ?? null;
   return {
     itemId: item.id, itemTitle: item.title, rootId: root.id, latestId: last.id, title: last.title, rounds: rounds.map((r) => r.id),
-    status: last.status, verdict, stage, branchReview, branch, open, createdAt: root.created_at, updatedAt: last.finished_at ?? last.created_at,
+    status: last.status, verdict, stage, branchReview, branchWork: !branchReview && isBranchWork(wts), branch, open, createdAt: root.created_at, updatedAt: last.finished_at ?? last.created_at,
   };
 }
 

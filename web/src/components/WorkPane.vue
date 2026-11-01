@@ -13,6 +13,7 @@ import ReviewProcess from "./ReviewProcess.vue";
 import RunActivity from "./RunActivity.vue";
 import AskAboutRun from "./AskAboutRun.vue";
 import OpenInIde from "./OpenInIde.vue";
+import CodeLanding, { type ApplyTarget } from "./CodeLanding.vue";
 import { confirmDialog } from "../lib/dialog";
 import { addQuote } from "../lib/quotes";
 import { parsePatches, pointCount, pointQuote, POINT_STATUS, useReviews, type ChangePoint } from "../lib/reviews";
@@ -52,7 +53,7 @@ onBeforeUnmount(() => off());
 
 const run = computed(() => detail.value?.run ?? null);
 type Check = { command: string; code: number; output: string };
-type Out = { appliedAt?: string; verdict?: string; discardedAt?: string; review?: string; coderSummary?: string; worktrees?: { commits?: boolean }[]; repos?: { space: string; check: Check | null }[] };
+type Out = { appliedAt?: string; verdict?: string; discardedAt?: string; review?: string; coderSummary?: string; worktrees?: { commits?: boolean; syncHead?: string }[]; repos?: { space: string; check: Check | null }[] };
 const out = computed(() => (run.value?.output ?? {}) as Out);
 const branchReview = computed(() => !!(run.value?.input as { branches?: unknown } | undefined)?.branches);
 const branchWork = computed(() => !branchReview.value && (out.value.worktrees ?? []).some((w) => w.commits));
@@ -64,7 +65,10 @@ const roundNo = computed(() => props.rounds.indexOf(props.runId) + 1 || props.ro
 const RECENT_ROUNDS = 3;
 const recentRounds = computed(() => (props.rounds.length > RECENT_ROUNDS + 1 ? props.rounds.slice(-RECENT_ROUNDS) : props.rounds));
 const earlierRounds = computed(() => props.rounds.slice(0, props.rounds.length - recentRounds.value.length).map((r, i) => ({ value: r, label: `第 ${i + 1} 轮` })));
-const canApply = computed(() => run.value?.status === "done" && !branchReview.value && !branchWork.value && !out.value.appliedAt && !out.value.discardedAt);
+/** Commits a sync added (a merge, a pull), applied by fast-forward even without a patch. */
+const syncCommits = computed(() => (out.value.worktrees ?? []).some((w) => w.syncHead));
+// A patch delegation is applied here as on the run page; a work branch is confirmed (pushed) in CodeLanding.
+const canApply = computed(() => run.value?.status === "done" && !branchReview.value && !branchWork.value && !!(detail.value?.patches?.length || syncCommits.value) && !out.value.appliedAt && !out.value.discardedAt && out.value.verdict !== "sync-conflict");
 const diffs = computed(() => parsePatches(detail.value?.patches ?? []));
 const checks = computed(() => (out.value.repos ?? []).flatMap((r) => (r.check ? [{ space: r.space, check: r.check }] : [])));
 
@@ -140,12 +144,23 @@ async function act(action: "apply" | "discard") {
   const id = run.value.id;
   try {
     if (action === "apply") {
-      const targets = await get<{ space: string; branch: string | null; path: string }[]>(`/api/runs/${id}/apply-targets`);
-      if (!(await confirmDialog("应用到原目标分支？", { message: `${targets.map((t) => `${t.space} · ${t.branch ?? "指定版本"}\n${t.path}`).join("\n\n")}\n\n将写入未提交的修改；之后在运行页检查并提交。`, okText: "应用" }))) return;
+      const targets = await get<ApplyTarget[]>(`/api/runs/${id}/apply-targets`);
+      if (!(await confirmDialog("应用到原目标分支？", { message: `${targets.map((t) => `${t.space} · ${t.branch ?? "指定版本"}\n${t.path}`).join("\n\n")}\n\n将写入未提交的修改；之后在下方检查并提交。`, okText: "应用" }))) return;
     } else if (!(await confirmDialog(branchReview.value ? "清理评审工作区？" : "丢弃这次交办？", { message: branchWork.value ? "归还工作区。这次交办新建的分支如果没推送、也没在别处检出，会连同上面的提交一起删掉。" : "归还工作区，改动不再保留。", okText: branchReview.value ? "清理" : "丢弃", danger: true }))) return;
     await post(`/api/runs/${id}/${action}`);
-    toast(action === "apply" ? "已应用到目标分支，在运行页检查并提交" : "已清理工作区", "ok");
+    toast(action === "apply" ? "已应用到目标分支，可在下方检查并提交" : "已清理工作区", "ok");
     void load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+async function moveToTarget() {
+  if (!run.value) return;
+  if (!(await confirmDialog("移到目标分支的最新提交？", { message: "会开新的一轮：把这次的改动（和同步的提交）变基到目标分支现在的最新提交上，冲突先交给编码 Agent，解决不了会问你。改动没变就沿用这一轮的评审。", okText: "开始" }))) return;
+  try {
+    const r = await post<{ id: string }>(`/api/runs/${run.value.id}/move-to-target`);
+    toast("已安排，完成后再应用", "ok");
+    emit("open", r.id);
   } catch (e) {
     toast((e as Error).message, "error");
   }
@@ -191,11 +206,12 @@ function explain(p: ChangePoint) {
         <span class="spacer" />
         <button v-if="peerWaiting" class="btn sm" title="不等外部 Agent：这一轮的任务交给这台机器的编码 Agent，评审也在这里做" @click="codeHere"><Icon name="refresh" :size="13" />改用这台机器的 AI 编码</button>
         <button v-if="canApply" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
+        <button v-if="canApply" class="btn sm" title="目标分支在交办后有了新提交、应用不上时：把改动移到它的最新提交上（冲突交给编码 Agent）" @click="moveToTarget">移到目标分支最新提交</button>
         <button v-if="run.status === 'done' && !out.appliedAt && !out.discardedAt" class="btn sm danger" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
         <OpenInIde :key="`${run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${run.status}`" :run-id="run.id" :space-name="spaceName" />
         <button class="btn ghost sm" @click="explaining = null; asking = true"><Icon name="chat" :size="14" />提问</button>
       </div>
-      <p v-if="branchWork && !out.appliedAt && !out.discardedAt && run.status === 'done'" class="muted small">这次交办直接提交在工作分支上，推送和确认在运行页做。</p>
+      <CodeLanding :run="run" :branch-work="branchWork" :space-name="spaceName" @changed="load" @synced="(id) => emit('open', id)" />
 
       <nav v-if="hasReview" class="tabs" role="tablist" aria-label="编码详情">
         <button v-for="t in tabs" :key="t.id" role="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>

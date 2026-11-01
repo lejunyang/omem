@@ -25,8 +25,7 @@ import OpenInIde from "../components/OpenInIde.vue";
 import ReviewChecks from "../components/ReviewChecks.vue";
 import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
-import CodeGitPanel from "../components/CodeGitPanel.vue";
-import CodeBranchPanel from "../components/CodeBranchPanel.vue";
+import CodeLanding, { type ApplyTarget } from "../components/CodeLanding.vue";
 import ReviewProcess from "../components/ReviewProcess.vue";
 import ContextUsage from "../components/ContextUsage.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
@@ -51,7 +50,6 @@ const showQuiet = ref(false);
 /** One status to show; empty: all. */
 const statusFilter = ref<"" | "queued" | "running" | "failed">("");
 const statusOptions = [{ value: "" as const, label: "全部" }, { value: "queued" as const, label: "排队中" }, { value: "running" as const, label: "进行中" }, { value: "failed" as const, label: "失败" }];
-type ApplyTarget = { space: string; path: string; branch: string | null };
 type Brief = { id: string; kind: string; title: string; status: string };
 type RunContextInfo = {
   items: { id: string; title: string; status: string }[];
@@ -332,31 +330,6 @@ async function moveToTarget() {
     toast((e as Error).message, "error");
   }
 }
-// A sync that stopped on conflicts: the same decision as the Feishu card, here.
-const syncAsk = ref<{ id: string; status: string; question: string } | null>(null);
-watch(() => [detail.value?.run.id, out.value.verdict, out.value.reviewAskId] as const, async ([, verdict, askId]) => {
-  syncAsk.value = null;
-  if (verdict !== "sync-conflict" || typeof askId !== "string") return;
-  try {
-    const a = await get<{ id: string; status: string; question: string }>(`/api/asks/${askId}`);
-    syncAsk.value = a.status === "pending" ? a : null;
-  } catch { /* gone */ }
-}, { immediate: true });
-async function answerSync(choice: number) {
-  if (!syncAsk.value) return;
-  try {
-    await post(`/api/asks/${syncAsk.value.id}/answer`, { choice });
-    toast(choice === 0 ? "已安排继续同步" : "已放弃这次同步", "ok");
-    syncAsk.value = null;
-    void loadDetail();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-async function copyApplyPath(path: string) {
-  try { await navigator.clipboard.writeText(path); toast("已复制接收目录", "ok"); }
-  catch { toast("复制失败，请选中目录文字复制", "error"); }
-}
 const delegateOpen = ref(false);
 type DelegateMode = "code" | "review";
 const mode = ref<DelegateMode>("code");
@@ -501,26 +474,8 @@ const kindOptions = computed(() => [
         </header>
         <!-- A delegation's round in progress: the owner's words for the coding Agent, and the review from now on. -->
         <CodeSteer v-if="detail.run.kind === 'code' && !branchReview && ['queued', 'running'].includes(detail.run.status)" :run-id="detail.run.id" :coding="typeof out.coderSummary !== 'string'" :notes="(out.notes ?? []) as { id: string; text: string; at: string; deliveredAt?: string }[]" :review="(detail.run.input as { roundReview?: { tier?: string; split?: boolean } }).roundReview" :tasks="!!(detail.run.input as { taskMode?: boolean }).taskMode" @changed="loadDetail" />
-        <section v-if="syncAsk" class="card pad block sync-stop" role="alert">
-          <div class="section-title">Git 同步停在冲突上</div>
-          <p class="pre small">{{ syncAsk.question }}</p>
-          <div class="row wrap"><button class="btn primary sm" @click="answerSync(0)">已解决，继续</button><button class="btn sm" @click="answerSync(1)">放弃这次同步</button></div>
-        </section>
-        <!-- A work branch: its commits, where it is checked out, and confirming (pushing) it. -->
-        <CodeBranchPanel v-if="branchWork && detail.run.kind === 'code' && !out.discardedAt" :run-id="detail.run.id" :title="detail.run.title" :busy="['queued', 'running'].includes(detail.run.status)" :confirmed-at="(out.appliedAt as string | undefined) ?? null" :space-name="spaceName" @changed="loadDetail" @synced="(id) => router.push(`/runs/${id}`)" />
-        <!-- After apply (an older delegation): where the change landed, and committing / pushing it there. -->
-        <section v-if="out.appliedTo?.length && !branchWork" class="card pad block apply-targets">
-          <div class="section-title">接收位置与提交</div>
-          <div v-for="t in (out.appliedTo as ApplyTarget[])" :key="t.space" class="target">
-            <div class="row wrap small">
-              <strong>{{ spaceName(t.space) }}</strong>
-              <span class="badge">{{ t.branch ?? "指定版本" }}</span>
-              <code class="grow">{{ t.path }}</code>
-              <button class="btn ghost sm" @click="copyApplyPath(t.path)">复制目录</button>
-            </div>
-            <CodeGitPanel :key="`${detail.run.id}:${t.space}`" :run-id="detail.run.id" :space="t.space" />
-          </div>
-        </section>
+        <!-- Where the round lands: a sync stopped on conflicts, the work branch and pushing it, or an applied patch and committing it. -->
+        <CodeLanding :run="detail.run" :branch-work="branchWork" :space-name="spaceName" @changed="loadDetail" @synced="(id) => router.push(`/runs/${id}`)" />
 
         <!-- A delegation driven by tasks: its tasks, the owner's questions, budget and changes by task (docs/v2/coding-loop.md). -->
         <CodeTasks v-if="detail.run.kind === 'code' && !branchReview" :key="`tasks:${detail.run.id}`" :run-id="detail.run.id" />
@@ -681,14 +636,7 @@ const kindOptions = computed(() => [
 </template>
 
 <style scoped>
-.apply-targets { display: grid; gap: 12px; }
-.sync-stop { border-color: var(--warn); display: grid; gap: 8px; }
-.sync-stop p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sync .row { gap: 10px; align-items: center; }
-.apply-targets .section-title { margin: 0; }
-.apply-targets .target { display: grid; gap: 10px; min-width: 0; }
-.apply-targets code { overflow-wrap: anywhere; white-space: normal; min-width: 0; }
-.apply-targets .grow { flex: 1; }
 .branch-row {
   display: flex;
   gap: 12px;

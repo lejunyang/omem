@@ -26,7 +26,7 @@ type Version = { id: string; version: number; change: string; title: string; rea
 type Link = { id: string; direction: "in" | "out"; note: string; other: { id: string; spaceId: string; kind: Kind; title: string; status: string } | null };
 // A delegation or branch review done for an item this node belongs to (src/items/work.ts).
 type WorkStage = "coding" | "reviewing" | "peer" | "owner" | "done" | "applied" | "discarded";
-type Work = { itemId: string; itemTitle: string; rootId: string; latestId: string; title: string; rounds: string[]; status: string; verdict: string | null; stage: WorkStage; branchReview: boolean; branch: string | null; open: number; createdAt: string; updatedAt: string };
+type Work = { itemId: string; itemTitle: string; rootId: string; latestId: string; title: string; rounds: string[]; status: string; verdict: string | null; stage: WorkStage; branchReview: boolean; branchWork: boolean; branch: string | null; open: number; createdAt: string; updatedAt: string };
 type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; work: Work[] };
 
 const KIND: Record<Kind, string> = { system: "系统", module: "模块", page: "页面", feature: "功能", test: "测试点" };
@@ -35,7 +35,9 @@ const STATE: Record<string, { text: string; cls: string }> = { done: { text: "�
 const STAGE: Record<WorkStage, { text: string; cls: string }> = { coding: { text: "编码中", cls: "" }, reviewing: { text: "评审中", cls: "" }, peer: { text: "等外部 Agent", cls: "" }, owner: { text: "等你处理", cls: "accent" }, done: { text: "已评审", cls: "ok" }, applied: { text: "已应用", cls: "ok" }, discarded: { text: "已丢弃", cls: "" } };
 // What the owner is waiting on, from the latest round's verdict.
 const OWNER_WHAT: Record<string, string> = { "awaiting-plan": "确认评审计划", "changes-requested": "决定要改的问题", approved: "评审通过，可以应用", "sync-conflict": "同步有冲突", "no-changes": "没有改动" };
-const ownerWhat = (w: Work) => (w.status === "failed" ? "运行失败" : (w.verdict && OWNER_WHAT[w.verdict]) || "看结果");
+const ownerWhat = (w: Work) => (w.status === "failed" ? "运行失败" : w.verdict === "approved" && w.branchWork ? "评审通过，可以确认推送" : (w.verdict && OWNER_WHAT[w.verdict]) || "看结果");
+/** A work branch is confirmed by pushing it, not applied. */
+const stageOf = (w: Work) => (w.stage === "applied" && w.branchWork ? { text: "已推送", cls: "ok" } : STAGE[w.stage]);
 const CHILD_KINDS: Record<Kind | "root", Kind[]> = { root: ["system", "module", "page", "feature"], system: ["module", "page", "feature"], module: ["module", "page", "feature"], page: ["feature"], feature: ["feature", "test"], test: ["test"] };
 
 const route = useRoute();
@@ -436,17 +438,17 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
         <section v-if="detail.work.length" class="block">
           <div class="block-head"><strong>编码与评审</strong><span class="muted small ellipsis">{{ [...new Set(detail.work.map((w) => w.itemTitle))].join("、") }}</span></div>
           <button v-for="w in live" :key="w.rootId" type="button" class="work-row" @click="openWork(w.latestId)">
-            <span class="badge" :class="STAGE[w.stage].cls">{{ STAGE[w.stage].text }}</span>
+            <span class="badge" :class="stageOf(w).cls">{{ stageOf(w).text }}</span>
             <span class="grow ellipsis" :title="w.title">{{ w.title }}</span>
             <span v-if="w.stage === 'owner'" class="small accent-ink">{{ ownerWhat(w) }}</span>
             <span v-if="w.open" class="small muted">{{ w.open }} 个问题待定</span>
             <span class="small muted">{{ w.branchReview ? "分支评审" : `第 ${w.rounds.length} 轮` }}{{ w.branch ? ` · ${w.branch}` : "" }} · {{ relTime(w.updatedAt) }}</span>
           </button>
           <p v-if="!live.length" class="muted small">没有进行中的编码。</p>
-          <button v-if="past.length" type="button" class="lnk small" :aria-expanded="showPast" @click="showPast = !showPast">{{ showPast ? "收起" : `已应用或丢弃的 ${past.length} 次` }}</button>
+          <button v-if="past.length" type="button" class="lnk small" :aria-expanded="showPast" @click="showPast = !showPast">{{ showPast ? "收起" : `已应用、推送或丢弃的 ${past.length} 次` }}</button>
           <template v-if="showPast">
             <button v-for="w in past" :key="w.rootId" type="button" class="work-row dim" @click="openWork(w.latestId)">
-              <span class="badge" :class="STAGE[w.stage].cls">{{ STAGE[w.stage].text }}</span>
+              <span class="badge" :class="stageOf(w).cls">{{ stageOf(w).text }}</span>
               <span class="grow ellipsis" :title="w.title">{{ w.title }}</span>
               <span class="small muted">{{ w.rounds.length }} 轮{{ w.branch ? ` · ${w.branch}` : "" }} · {{ relTime(w.updatedAt) }}</span>
             </button>

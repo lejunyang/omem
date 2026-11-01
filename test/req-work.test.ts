@@ -58,8 +58,13 @@ describe("coding seen from the requirement tree", () => {
     setRunOutput(app, id, { verdict: "changes-requested", worktrees: [{ space: "shop-api", path: dir, branch: "omem/refund", base: "main", targetBranch: "main" }] });
     recordReview(app, { codeRunId: id, round: 1, check: "reviewer", verdict: "changes_requested", summary: "运费没按比例", findings: [{ severity: "major", file: "refund.ts", line: 1, title: "运费没有按比例退", detail: "整单运费都退了", suggestion: "按已发货金额扣掉运费", evidence: [], confidence: "high" }] });
     const [w] = reqWork(app, amount, OWNER);
-    expect(w).toMatchObject({ stage: "owner", open: 1, branch: "main", rounds: [id] });
+    expect(w).toMatchObject({ stage: "owner", open: 1, branch: "main", rounds: [id], branchWork: false });
     expect(reqWorkMarks(app, "shop", OWNER).get(page)).toEqual({ total: 1, waiting: 1 });
+    // Rounds committed on a work branch: the list says “confirm and push”, not “apply”.
+    const patchTree = { space: "shop-api", path: dir, branch: "omem/refund", base: "main", targetBranch: "main" };
+    setRunOutput(app, id, { worktrees: [{ ...patchTree, commits: true }] });
+    expect(reqWork(app, amount, OWNER)[0].branchWork).toBe(true);
+    setRunOutput(app, id, { worktrees: [patchTree] });
 
     // The owner rewrites the suggestion: kept beside the original, the finding is now one to fix.
     const f = roundFindings(app, id, 1)[0];
