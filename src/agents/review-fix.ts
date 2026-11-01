@@ -4,6 +4,7 @@ import { all, one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { isBranchReview, worktreesOf } from "./code.ts";
+import { isBranchWork } from "./code-branch.ts";
 import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
 import { createRun, getRun, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
@@ -266,13 +267,18 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   const input = root.input as { repos?: string[]; branches?: Record<string, { branch: string }>; readSpaces?: string[]; itemId?: string; reviewTier?: string };
   const branchReview = isBranchReview(root);
   const repos = input.repos ?? worktreesOf(app, root.id).map((w) => w.space);
+  // A delegation already confirmed onto its work branch: what is asked now is new work on that branch,
+  // the next round of a delegation still open there, else a new delegation on the branch's latest.
+  const applied = !branchReview && !!(last.output.appliedAt || root.output.appliedAt) && !last.output.discardedAt && isBranchWork(worktreesOf(app, root.id));
+  const confirmedOn: Record<string, string> = applied ? Object.fromEntries(worktreesOf(app, root.id).filter((w) => w.commits && w.targetBranch).map((w) => [w.space, w.targetBranch!])) : {};
   // A reviewed branch that a delegation is already changing: the fix is that delegation's next round.
-  const into = branchReview ? openDelegationOn(app, repos, Object.values(input.branches ?? {})[0]?.branch, userId) : last;
-  if (into && branchReview && ["queued", "running"].includes(into.status))
+  const into = branchReview || applied ? openDelegationOn(app, repos, Object.values(input.branches ?? {})[0]?.branch ?? Object.values(confirmedOn)[0], userId) : last;
+  if (into && (branchReview || applied) && ["queued", "running"].includes(into.status))
     throw new HttpError(409, `交办 ${into.id}（${into.title}）正在改同一个分支，等这一轮结束再改；要马上加要求，补充给正在编码的 Agent（运行页“补充”或 message_code_run）`);
   if (req.applyFirst && (!into || into !== last)) throw new HttpError(400, "分支评审没有可应用的改动；先应用要在交办编码上做");
   if (into) {
-    if (into.output.appliedAt || into.output.discardedAt) throw new HttpError(409, "这次交办已经应用或丢弃，工作区已释放；请重新交办");
+    // Applied as a patch: the change sits in the target folder, maybe uncommitted, where a new delegation would not see it.
+    if (into.output.appliedAt || into.output.discardedAt) throw new HttpError(409, into.output.discardedAt ? "这次交办已经丢弃，改动不在了；请重新交办" : "这次交办的改动已经应用到目标目录；提交以后另开交办接着改");
     // A task-driven delegation: the chosen findings are tasks (taken up again if they were settled),
     // the owner's words one more, and the loop goes on with a fresh budget (code-loop.ts).
     const tasks = await import("./code-tasks.ts");
@@ -323,17 +329,19 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   const r = createRun(app, {
     kind: "code",
     spaceId: root.spaceId,
-    title: truncate(`按评审修改：${root.title}`, 80),
+    title: truncate(`${applied ? "接着改" : "按评审修改"}：${root.title}`, 80),
     input: {
       task,
       repos,
-      fromBranches: Object.fromEntries(Object.entries(input.branches ?? {}).map(([space, b]) => [space, b.branch])),
+      fromBranches: { ...Object.fromEntries(Object.entries(input.branches ?? {}).map(([space, b]) => [space, b.branch])), ...confirmedOn },
       readSpaces: input.readSpaces,
       itemId: input.itemId,
       reviewTier: input.reviewTier,
       roundReview: req.review,
       reviewExecution: req.reviewExecution,
       fromReview: root.id,
+      // Others may have pushed to the branch since it was confirmed: start from origin's latest.
+      ...(applied ? { sync: { pull: true } } : {}),
       ...(app.config.agents.autoAdvance.taskLoop ? { taskMode: true } : {}),
     },
     // Under the conversation that asked for the review, so progress and results go back there.

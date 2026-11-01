@@ -144,7 +144,7 @@ exports.run = async function run() {
   // The delegation goes on by tasks from this fix on (review-fix.ts): the finding and the fix points are its tasks.
   const madeTasks = (await api.get(`/api/runs/${next.id}/tasks`)).tasks.map((t) => `${t.title}\n${t.doneWhen}`).join("\n");
   assert.match(madeTasks, /负数金额的舍入方向不对/);
-  assert.match(madeTasks, /refund\.ts:1：函数名改成 roundRefund/);
+  assert.match(madeTasks, /refund\.ts:1（工作区里的文件）：函数名改成 roundRefund/);
   assert.match(madeTasks, /顺便补一条测试/);
   assert.equal(bench.fixPoints.length, 0);
   await current.advance(run);
@@ -191,6 +191,15 @@ exports.run = async function run() {
     assert.equal(away.right.scheme, "omem-rev", "没有检出这个提交的目录时右边也从 omem 读");
     assert.match((await vscode.workspace.openTextDocument(away.right)).getText(), /requireReason/, "新增的文件能打开");
     assert.equal(away.left.path, away.right.path);
+    // A fix point says which version its lines are of: the two sides' line numbers differ.
+    for (const [uri, side] of [[away.right, `改动后的版本 ${new URLSearchParams(away.right.query).get("rev").slice(0, 8)}`], [away.left, "改动前的版本"]]) {
+      const ed = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri));
+      ed.selection = new vscode.Selection(0, 0, 0, 3);
+      const t = bench.startThread(ed);
+      await bench.fixPoint({ thread: t, text: "看一下" });
+      assert.equal(bench.fixPoints.at(-1).file, `${current.folders.length > 1 ? "shop-web/" : ""}reason.ts:1（${side}）`);
+      bench.deleteThread(t);
+    }
   } finally {
     require("node:child_process").execFileSync("git", ["-C", taskFolder, "checkout", "-q", "-"]);
   }

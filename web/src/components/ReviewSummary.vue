@@ -20,7 +20,7 @@ import { decisionOf, findingWhere, fixLabel, pointCount, reviewAi, settled, seve
  */
 // `branchWork`: a delegation on work branches, whose rounds are commits already (nothing to apply first).
 // `stay`: shown inside another page (the requirements page), which follows the next round itself (`started`).
-const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; branchWork?: boolean; canFix?: boolean; stay?: boolean }>();
+const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; branchWork?: boolean; canFix?: boolean; applied?: boolean; stay?: boolean }>();
 const emit = defineEmits<{ ask: [context: { quote: string; label: string; text?: string }]; go: [tab: "review" | "change"]; started: [runId: string]; open: [runId: string] }>();
 
 const STATE: Record<string, string> = { accepted: "要改", rejected: "已驳回", merged: "已合并" };
@@ -380,8 +380,8 @@ async function answer(choice: number | null) {
       <div class="row wrap actions">
         <NextRoundReview :draft="draft" />
         <span class="spacer" />
-        <button v-if="!branchReview && !branchWork" class="btn sm" title="现在的改动先写进原分支（未提交），下一轮在同一个工作区接着改" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix(true)">先应用再接着改</button>
-        <button class="btn primary sm" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix()">开始修改{{ tally.fix || picked.length ? `（${[tally.fix ? `${tally.fix} 个问题` : "", picked.length ? `${picked.length} 处修改点` : "", draft.text.trim() ? "补充" : ""].filter(Boolean).join(" + ")}）` : "" }}</button>
+        <button v-if="!branchReview && !branchWork && !applied" class="btn sm" title="现在的改动先写进原分支（未提交），下一轮在同一个工作区接着改" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix(true)">先应用再接着改</button>
+        <button class="btn primary sm" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" :title="applied ? '这次交办已经应用：改动接着交给新的交办，确认推送过的在同一个分支上改' : ''" @click="startFix()">{{ applied ? "接着改" : "开始修改" }}{{ tally.fix || picked.length ? `（${[tally.fix ? `${tally.fix} 个问题` : "", picked.length ? `${picked.length} 处修改点` : "", draft.text.trim() ? "补充" : ""].filter(Boolean).join(" + ")}）` : "" }}</button>
       </div>
     </div>
   </section>

@@ -23,6 +23,7 @@ export const BUILTIN_CHECKS: Record<string, { label: string; about: string }> = 
   "review-arch": { label: "架构", about: "模块边界、依赖方向、抽象取舍、跨仓库接口" },
   "review-style": { label: "规范", about: "只报违反项目明确约定的地方" },
   "review-history": { label: "历史", about: "以前类似改动踩过的坑" },
+  "review-simplify": { label: "精简", about: "功能不变时能删、能合并、能内联或改用已有实现的代码" },
 };
 
 export const SEVERITIES = ["blocker", "major", "minor", "nit"] as const;

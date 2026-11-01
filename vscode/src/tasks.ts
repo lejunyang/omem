@@ -147,6 +147,7 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
    * `omem-rev:/<path>?run=…&space=…&rev=…`: a file at a commit of the work (empty when it did not exist
    * there). `file`: the path in the repository when the URI's own path is the work folder's file (as
    * Git's `git:` URIs do): VS Code calls the two sides of a diff a rename when their paths differ.
+   * `side`: before or after the change, so a fix point written on it says which version it quotes.
    */
   async provideTextDocumentContent(uri: vscode.Uri) {
     const q = new URLSearchParams(uri.query);
@@ -156,9 +157,9 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
     return r.binary ? "（二进制文件，不显示内容）" : r.text;
   }
 
-  private revUri(run: string, space: string, path: string, rev: string | null, at?: vscode.Uri) {
-    if (at) return at.with({ scheme: "omem-rev", query: new URLSearchParams({ run, space, rev: rev ?? "", file: path }).toString() });
-    return vscode.Uri.from({ scheme: "omem-rev", path: `/${path}`, query: new URLSearchParams({ run, space, rev: rev ?? "" }).toString() });
+  private revUri(run: string, space: string, path: string, rev: string | null, side: "before" | "after", at?: vscode.Uri) {
+    if (at) return at.with({ scheme: "omem-rev", query: new URLSearchParams({ run, space, rev: rev ?? "", side, file: path }).toString() });
+    return vscode.Uri.from({ scheme: "omem-rev", path: `/${path}`, query: new URLSearchParams({ run, space, rev: rev ?? "", side }).toString() });
   }
 
   /**
@@ -179,8 +180,8 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
       for (const f of patchFiles(p.patch)) {
         const path = f.newPath ?? f.oldPath!;
         // With the work folder's file on the right, the left takes the same kind of path (not a rename).
-        const left = this.revUri(run.id, p.space, f.oldPath ?? path, f.oldPath ? p.from ?? null : null, root ? vscode.Uri.joinPath(root, f.oldPath ?? path) : undefined);
-        const right = root && f.newPath ? vscode.Uri.joinPath(root, path) : this.revUri(run.id, p.space, path, f.newPath ? p.to ?? null : null, root ? vscode.Uri.joinPath(root, path) : undefined);
+        const left = this.revUri(run.id, p.space, f.oldPath ?? path, f.oldPath ? p.from ?? null : null, "before", root ? vscode.Uri.joinPath(root, f.oldPath ?? path) : undefined);
+        const right = root && f.newPath ? vscode.Uri.joinPath(root, path) : this.revUri(run.id, p.space, path, f.newPath ? p.to ?? null : null, "after", root ? vscode.Uri.joinPath(root, path) : undefined);
         const status = !f.oldPath ? "A" : !f.newPath ? "D" : f.oldPath !== f.newPath ? "R" : "M";
         files.push({ path: patches.length > 1 ? `${p.space}/${path}` : path, left, right, status, add: f.add, rm: f.rm });
       }

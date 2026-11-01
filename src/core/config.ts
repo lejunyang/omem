@@ -68,6 +68,7 @@ export const roleNames = [
   "review-arch",
   "review-style",
   "review-history",
+  "review-simplify",
   "review-lead",
   "replay-judge",
   "kb-scout",
@@ -102,7 +103,7 @@ const replayPlanSchema = z.object(Object.fromEntries(REPLAY_SIGNALS.map((s) => [
 /** Light = today's single reviewer; heavier tiers add independent checks for larger changes. */
 export function defaultReviewTiers() {
   return [
-    { id: "full", name: "完整", guide: "", checks: ["reviewer", "review-business", "review-arch", "review-history", "review-style"], maxRounds: 3, lead: true, confirmPlan: true, rotateModels: false,
+    { id: "full", name: "完整", guide: "", checks: ["reviewer", "review-business", "review-arch", "review-history", "review-style", "review-simplify"], maxRounds: 3, lead: true, confirmPlan: true, rotateModels: false,
       when: { any: [{ field: "change.repos", op: "gte", value: 2 }, { field: "change.lines", op: "gte", value: 600 }, { field: "change.paths", op: "contains", value: "migration" }] } },
     { id: "standard", name: "标准", guide: "", checks: ["reviewer", "review-business", "review-style"], maxRounds: 3, lead: true, confirmPlan: false, rotateModels: false,
       when: { any: [{ field: "change.lines", op: "gte", value: 80 }, { field: "change.files", op: "gte", value: 3 }] } },

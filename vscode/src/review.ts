@@ -136,8 +136,22 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
     const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === thread.uri.toString());
     const r = thread.range ?? new vscode.Range(0, 0, 0, 0);
     const text = doc ? doc.getText(new vscode.Range(r.start.line, 0, r.end.line, doc.lineAt(Math.min(r.end.line, doc.lineCount - 1)).text.length)) : "";
-    const file = `${this.current.run ? this.current.relative(thread.uri) : vscode.workspace.asRelativePath(thread.uri)}:${r.start.line + 1}${r.end.line > r.start.line ? `-${r.end.line + 1}` : ""}`;
-    return { file, text, range: r };
+    const lines = `${r.start.line + 1}${r.end.line > r.start.line ? `-${r.end.line + 1}` : ""}`;
+    return { file: this.where(thread.uri, lines), text, range: r };
+  }
+
+  /**
+   * Where a question or fix point is, for the Agent: the repository path and lines, and which code
+   * they are lines of — a side of a diff omem serves (omem-rev; the lines before the change are not
+   * where they are now), or the file as it is in the folder.
+   */
+  private where(uri: vscode.Uri, lines: string) {
+    if (uri.scheme !== "omem-rev") return `${this.current.run ? this.current.relative(uri) : vscode.workspace.asRelativePath(uri)}:${lines}（工作区里的文件）`;
+    const q = new URLSearchParams(uri.query);
+    const path = `${this.current.folders.length > 1 ? `${q.get("space")}/` : ""}${q.get("file") ?? uri.path.replace(/^\//, "")}`;
+    const rev = q.get("rev")?.slice(0, 8);
+    const side = q.get("side") === "before" ? "改动前的版本" : "改动后的版本";
+    return `${path}:${lines}（${side}${rev ? ` ${rev}` : ""}）`;
   }
 
   /**

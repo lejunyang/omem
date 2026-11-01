@@ -79,7 +79,7 @@ review:
 （提示词：审什么、不审什么、依据从哪找）
 ```
 
-- **内置五项**是内置角色：`reviewer`（功能）、`review-style`（规范）、`review-arch`（架构）、`review-business`（业务）、`review-history`（历史问题回扫）。它们走现有的“自定义 / 恢复源码版 / 三方合并”，默认 AI 在档案页设置。内置项的 `review` 段写在角色文件的 frontmatter 里，本人改的是自定义后的副本。
+- **内置六项**是内置角色：`reviewer`（功能）、`review-style`（规范）、`review-arch`（架构）、`review-business`（业务）、`review-history`（历史问题回扫）、`review-simplify`（精简）。它们走现有的“自定义 / 恢复源码版 / 三方合并”，默认 AI 在档案页设置。内置项的 `review` 段写在角色文件的 frontmatter 里，本人改的是自定义后的副本。
 - **专项**是普通档案勾上“用作评审项”。保存时宿主强制：`writes: false`，工具清单只能是只读工具加 `submit_review`，不能发消息、不能交办、不能写库——和内置评审项同一条边界，不因为档案是本人写的就放宽。
 - 评审项照常积累档案记忆、参加复盘（coach），“这个评审老报误报”之类的改进走档案的改进提案，不另建评审知识库。
 
@@ -92,6 +92,7 @@ review:
 | 架构（`review-arch`） | 模块边界、依赖方向、抽象取舍、和既有架构（Wiki）是否冲突、跨仓库接口是否对上 | Wiki 架构页、调用图、相关空间 |
 | 业务（`review-business`） | 业务规则和变更点是否被正确实现、有没有需求外行为、边界案例是否符合约定 | 业务简报、事项材料、diff |
 | 历史（`review-history`） | 类似改动以前踩过的坑：案例页、经验记忆、被更正的旧约定、过去的评审结论 | recall（含历史）、cases、过去 run、git 历史 |
+| 精简（`review-simplify`） | 功能不变的前提下哪些代码能删、合并、内联或改用仓库已有实现：过度封装、层层传参、重复实现、绕远路、多余的参数和开关、同类文件不在一处；迁移时顺带报搬漏和行为变化。默认在“完整”档 | diff、相邻文件、仓库里的公共实现 |
 
 ### 3.2 档位
 
@@ -105,7 +106,7 @@ review:
           { "field": "change.repos", "op": "gte", "value": 2 },
           { "field": "change.lines", "op": "gte", "value": 600 },
           { "field": "change.paths", "op": "contains", "value": "migration" } ] },
-        "checks": ["reviewer", "review-business", "review-arch", "review-history", "review-style"],
+        "checks": ["reviewer", "review-business", "review-arch", "review-history", "review-style", "review-simplify"],
         "lead": true, "maxRounds": 3, "confirmPlan": true, "brief": "wait" },
       { "id": "standard", "name": "标准", "when": { "any": [
           { "field": "change.lines", "op": "gte", "value": 80 },

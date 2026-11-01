@@ -46,7 +46,7 @@ const STATE: Record<TaskState, { text: string; cls: string }> = {
   todo: { text: "待做", cls: "" }, coding: { text: "编码中", cls: "accent" }, verify: { text: "待验证", cls: "accent" }, disputed: { text: "裁决中", cls: "accent" }, done: { text: "已完成", cls: "ok" },
   owner: { text: "等你决定", cls: "warn" }, wontdo: { text: "不做", cls: "" }, reverted: { text: "已回退", cls: "danger" },
 };
-const WHO: Record<string, string> = { coder: "编码 Agent", host: "omem", owner: "你", reviewer: "功能评审", "review-business": "业务评审", "review-arch": "架构评审", "review-style": "规范评审", "review-history": "历史评审", "review-lead": "评审负责人" };
+const WHO: Record<string, string> = { coder: "编码 Agent", host: "omem", owner: "你", reviewer: "功能评审", "review-business": "业务评审", "review-arch": "架构评审", "review-style": "规范评审", "review-history": "历史评审", "review-simplify": "精简评审", "review-lead": "评审负责人" };
 const LOOK = "@复看";
 const who = (by: string): string => (by.endsWith(LOOK) ? `${who(by.slice(0, -LOOK.length))}（复看）` : WHO[by] ?? (by.startsWith("u") || by === "owner" ? "你" : by));
 const lookText = computed(() => w.value?.look ? w.value.look.checks.map((c) => { const ai = w.value!.look!.ai[c]; return `${who(c)}${ai ? `（${[ai.profile, ai.model].filter(Boolean).join(" · ")}）` : ""}`; }).join("、") : "");

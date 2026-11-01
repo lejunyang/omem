@@ -26,7 +26,7 @@ it("continues a standalone branch-review fix in the same workspace, preserving e
     expect(workRuns(app, third.id)).toEqual([first.id, next.id, third.id]);
     run(app.db, "update runs set status='done' where id=?", third.id);
     setRunOutput(app, first.id, { appliedAt: new Date().toISOString() });
-    await expect(startFix(app, third.id, { findingIds: [], text: "不能修改已释放工作区" }, "owner")).rejects.toThrow(/已应用或丢弃/);
+    await expect(startFix(app, third.id, { findingIds: [], text: "不能修改已释放工作区" }, "owner")).rejects.toThrow(/已应用或丢弃|已经应用到目标目录/);
   } finally { app.db.close(); }
 });
 

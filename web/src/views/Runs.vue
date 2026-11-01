@@ -227,7 +227,7 @@ watch(id, () => { asking.value = null; fixOpen.value = false; selection.value = 
 const runId = computed(() => detail.value?.run.id ?? "");
 const askQuotes = computed(() => quotesOf(runId.value, "ask"));
 const fixQuotes = computed(() => quotesOf(runId.value, "fix"));
-const canFix = computed(() => !!detail.value && detail.value.run.kind === "code" && detail.value.run.status === "done" && !out.value.appliedAt && (branchReview.value || !out.value.discardedAt));
+const canFix = computed(() => !!detail.value && detail.value.run.kind === "code" && detail.value.run.status === "done" && (branchReview.value || !out.value.discardedAt));
 // The button is placed against the viewport: any scroll moves the text away from it.
 const dropSelection = () => (selection.value = null);
 onMounted(() => {
@@ -482,7 +482,7 @@ const kindOptions = computed(() => [
         <nav v-if="hasReview" class="tabs" role="tablist" aria-label="运行详情">
           <button v-for="t in tabs" :key="t.id" role="tab" class="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
         </nav>
-        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => { askDraft = c.text ?? ''; quote('ask', c); }" @go="(t) => (tab = t)" />
+        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="canFix" :applied="!!out.appliedAt" data-ask-label="评审" @ask="(c) => { askDraft = c.text ?? ''; quote('ask', c); }" @go="(t) => (tab = t)" />
         <ChangeView v-if="hasReview && tab === 'change'" :rv="rv" :run-id="detail.run.id" :diffs="diffs" @explain="explain" />
         <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" :run-id="detail.run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
 

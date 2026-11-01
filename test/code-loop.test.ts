@@ -507,4 +507,36 @@ describe("a delegation driven by tasks", () => {
       app.db.close();
     }
   });
+
+  it("starts a new delegation on the branch a confirmed one landed on, from origin's latest, when asked to change it further", async () => {
+    const app = testApp();
+    const dir = mkdtempSync(join(tmpdir(), "omem-after-confirm-"));
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: dir, encoding: "utf8" }).trim();
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    git("branch", "feature/refund");
+    const base = git("rev-parse", "HEAD");
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    try {
+      const done = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["shop-api"], fromBranches: { "shop-api": "feature/refund" }, taskMode: true } });
+      setRunOutput(app, done.id, { worktrees: [{ space: "shop-api", path: join(dir, "gone"), branch: "feature/refund", targetBranch: "feature/refund", base, start: base, commits: true }], appliedAt: new Date().toISOString() });
+      run(app.db, "update runs set status = 'done' where id = ?", done.id);
+      const { startFix } = await import("../src/agents/review-fix.ts");
+      const next = await startFix(app, done.id, { findingIds: [], text: "金额字段改成分" }, OWNER);
+      expect(next.id).not.toBe(done.id);
+      expect(next.title).toBe("接着改：退款");
+      expect(next.input).toMatchObject({ repos: ["shop-api"], fromBranches: { "shop-api": "feature/refund" }, sync: { pull: true }, fromReview: done.id, taskMode: true });
+      expect(next.input.continueFrom).toBeUndefined();
+      expect(listTasks(app, next.id).map((t) => t.title)).toEqual(["金额字段改成分"]);
+      // Asked again before the new one finishes: it goes on there, not in a third delegation.
+      setRunOutput(app, next.id, { worktrees: [{ space: "shop-api", path: dir, branch: "feature/refund", targetBranch: "feature/refund", base, start: base, commits: true }] });
+      run(app.db, "update runs set status = 'done' where id = ?", next.id);
+      const again = await startFix(app, done.id, { findingIds: [], text: "再加个注释" }, OWNER);
+      expect(again.input.continueFrom ?? again.id).toBe(next.id);
+    } finally {
+      app.db.close();
+    }
+  });
 });

@@ -65,7 +65,7 @@ async function start() {
       </div>
     </div>
     <div class="compose">
-      <p v-if="!canFix" class="muted small">这次交办已经应用、丢弃或还没完成，不能从这里续改；可以先把这些内容复制到新的交办里。</p>
+      <p v-if="!canFix" class="muted small">这次交办已经丢弃或还没完成，不能从这里续改；可以先把这些内容复制到新的交办里。</p>
       <UiCheckbox v-if="findingIds.length" v-model="withFindings" size="sm">同时改评审里定为“改”的 {{ findingIds.length }} 个问题</UiCheckbox>
       <textarea v-model="draft.text" class="textarea" rows="3" placeholder="其他要求（可选）：需求变化、实现上的约束" aria-label="其他要求" />
       <NextRoundReview :draft="draft" />
