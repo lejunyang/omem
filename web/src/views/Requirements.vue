@@ -339,7 +339,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else>
-          <div v-if="workId && workPoints.length" class="work-legend muted small">{{ workPointsFrom ? `这一轮没有需求拆分，沿用${workPointsFrom}的：` : "这次编码的变更：" }}标出每个需求点的状态；没涉及的变灰，点开看它自己的需求和编码</div>
+          <div v-if="workId && workPoints.length" class="work-legend muted small">{{ workPointsFrom ? `这一轮没有自己的需求拆分，沿用${workPointsFrom}的：` : "这次编码的变更：" }}标出每个需求点的状态；没涉及的变灰，点开看它自己的需求和编码</div>
           <div v-for="n in visible" :key="n.id" class="node" :class="{ on: n.id === selectedId, gone: n.status !== 'active', test: n.kind === 'test', hit: matches?.has(n.id), idle: workId && workPoints.length && !touched.has(n.id) }" :style="{ paddingLeft: `${4 + n.depth * 16}px` }">
             <button v-if="hasKids.has(n.id)" type="button" class="fold" :aria-expanded="!!matches || !folded.has(n.id)" :aria-label="folded.has(n.id) ? `展开 ${n.title}` : `收起 ${n.title}`" :disabled="!!matches" @click="toggle(n.id)"><Icon :name="!matches && folded.has(n.id) ? 'right' : 'down'" :size="13" /></button>
             <span v-else class="fold-gap" />

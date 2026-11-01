@@ -20,6 +20,7 @@ const a = process.argv.slice(2);
 const at = (k) => a[a.indexOf(k) + 1];
 const token = at("--connection-token");
 const ok = (req) => (req.headers.cookie ?? "").includes("vscode-tkn=" + token);
+let hits = 0;
 const s = createServer((req, res) => {
   if (!ok(req)) { res.writeHead(403); return res.end("forbidden"); }
   let body = "";
@@ -29,6 +30,12 @@ const s = createServer((req, res) => {
       res.writeHead(200, { "content-type": "text/html", "transfer-encoding": "chunked" });
       res.write('<!-- ae:' + (req.headers["accept-encoding"] ?? "none") + ' --><script type="module" src="/ide/stable-x/static/out/nls.messages.js"></script>');
       return res.end('<script type="module" src="https://www.vscode-unpkg.net/nls/' + "c".repeat(40) + '/1.144.0/zh-cn/nls.messages.js"></script>');
+    }
+    // A build's static file: counted, to see whether omem asked again.
+    if (req.url.includes("/static/out/big.js")) {
+      hits++;
+      res.writeHead(200, { "content-type": "text/javascript", "cache-control": "public, max-age=31536000" });
+      return res.end("x".repeat(100000) + " ae:" + (req.headers["accept-encoding"] ?? "none") + " hit " + hits);
     }
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ path: req.url, method: req.method, cookie: req.headers.cookie, auth: req.headers.authorization ?? null, fwd: req.headers["x-forwarded-host"] ?? null, base: at("--server-base-path"), body, omemUrl: process.env.OMEM_URL ?? null, omemToken: process.env.OMEM_TOKEN ?? null }));
@@ -121,6 +128,9 @@ describe("web VS Code under /ide", () => {
     const strings = await fetch(`${base}/ide/_omem/nls/${commit}/zh-cn.js`, { headers: { cookie } });
     expect(strings.headers.get("content-type")).toMatch(/javascript/);
     expect(await strings.text()).toContain('_VSCODE_NLS_MESSAGES=["复制","Newer"]');
+    // Asked again on each load; sent again only when the strings changed.
+    expect(strings.headers.get("etag")).toBeTruthy();
+    expect((await fetch(`${base}/ide/_omem/nls/${commit}/zh-cn.js`, { headers: { cookie, "if-none-match": strings.headers.get("etag")! } })).status).toBe(304);
     // Not without the session; not for a build or language it has nothing for.
     expect((await fetch(`${base}/ide/_omem/nls/${commit}/zh-cn.js`)).status).toBe(401);
     expect((await fetch(`${base}/ide/_omem/nls/${"d".repeat(40)}/zh-cn.js`, { headers: { cookie } })).status).toBe(404);
@@ -130,6 +140,27 @@ describe("web VS Code under /ide", () => {
     expect(seen.omemUrl).toBe(base);
     expect(seen.omemToken).toBe("owner-secret");
   }, 60000);
+
+  it("gzips a build's static files once and keeps them, for a browser that takes gzip", async () => {
+    const s = await fetch(`${base}/api/ide/open?token=owner-secret`, { redirect: "manual" });
+    const cookie = s.headers.get("set-cookie")!.split(";")[0];
+    const url = `${base}/ide/stable-${"e".repeat(40)}/static/out/big.js`;
+    const first = await fetch(url, { headers: { cookie, "accept-encoding": "gzip, deflate, br" } });
+    expect(first.headers.get("content-encoding")).toBe("gzip");
+    expect(Number(first.headers.get("content-length"))).toBeLessThan(10000);
+    expect(first.headers.get("cache-control")).toContain("immutable");
+    const body = await first.text();
+    // serve-web was asked for it uncompressed, once.
+    expect(body).toMatch(/^x{100000} ae:none hit 1$/);
+    const again = await fetch(url, { headers: { cookie, "accept-encoding": "gzip" } });
+    expect(again.headers.get("content-encoding")).toBe("gzip");
+    expect(await again.text()).toBe(body);
+    // Without gzip it comes from serve-web as it was; without the session not at all.
+    const plain = await fetch(url, { headers: { cookie, "accept-encoding": "identity" } });
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    expect(await plain.text()).toMatch(/hit 2$/);
+    expect((await fetch(url, { headers: { "accept-encoding": "gzip" } })).status).toBe(401);
+  }, 30000);
 
   it("passes WebSocket upgrades through with the same check", async () => {
     const s = await fetch(`${base}/api/ide/open?token=owner-secret`, { redirect: "manual" });

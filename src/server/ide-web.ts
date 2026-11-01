@@ -1,9 +1,11 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request, type IncomingMessage, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
 import type { App } from "../core/app.ts";
 import { resolveCommand } from "../agents/spawn.ts";
 import { findProcesses, freePort, killPid, reachable } from "../core/procs.ts";
@@ -225,7 +227,10 @@ const deny = (res: { writeHead: (s: number, h: Record<string, string>) => void; 
 export async function proxyIde(app: App, req: IncomingMessage, res: import("node:http").ServerResponse) {
   if (!ideAllowed(app, req)) return deny(res, 401, "网页版 VS Code 只对本人开放：在 omem 网页的运行页点“网页版 VS Code”打开。");
   const own = NLS_ROUTE.exec((req.url ?? "").slice(IDE_BASE.length).replace(/\?.*$/, ""));
-  if (own) return serveNls(app, own[1], own[2], res);
+  if (own) return serveNls(app, own[1], own[2], req, res);
+  const fixed = req.method === "GET" && acceptsGzip(req) ? STATIC.exec((req.url ?? "").slice(IDE_BASE.length)) : null;
+  const packed = fixed ? packedPath(app, fixed[1], req.url!) : "";
+  if (packed && servePacked(packed, res)) return;
   let p: number;
   try {
     p = await ensureIdeWeb(app);
@@ -233,9 +238,10 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
     return deny(res, 503, (e as Error).message);
   }
   const headers = upstreamHeaders(req);
-  // The workbench page gets its translated strings swapped (ide-locale.ts): asked for uncompressed.
+  // The workbench page gets its translated strings swapped (ide-locale.ts), a static file gzipped
+  // here: both asked for uncompressed.
   const page = req.method === "GET" && /text\/html/.test(String(req.headers.accept ?? ""));
-  if (page) delete headers["accept-encoding"];
+  if (page || packed) delete headers["accept-encoding"];
   const up = request({ host: "127.0.0.1", port: p, method: req.method, path: req.url, headers }, (r) => {
     // The first open downloads the matching server; serve-web answers 202 meanwhile. A page that
     // reloads itself instead of one that waits for the owner to.
@@ -250,6 +256,20 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
       r.on("end", () => {
         const body = Buffer.from(rewriteWorkbench(Buffer.concat(chunks).toString("utf8"), IDE_BASE, (commit, locale) => !!safeNls(app, commit, locale)), "utf8");
         const out: Record<string, string | string[] | undefined> = { ...r.headers, "content-length": String(body.length) };
+        delete out["transfer-encoding"];
+        res.writeHead(200, out);
+        res.end(body);
+      });
+      r.on("error", () => res.destroy());
+      return;
+    }
+    if (packed && r.statusCode === 200 && !r.headers["content-encoding"] && PACKABLE.test(String(r.headers["content-type"] ?? ""))) {
+      const chunks: Buffer[] = [];
+      r.on("data", (c: Buffer) => chunks.push(c));
+      r.on("end", async () => {
+        const body = await gzipAsync(Buffer.concat(chunks));
+        storePacked(fixed![1], packed, body, String(r.headers["content-type"]));
+        const out: Record<string, string | string[] | undefined> = { ...r.headers, "content-encoding": "gzip", "content-length": String(body.length), "cache-control": IMMUTABLE, vary: "accept-encoding" };
         delete out["transfer-encoding"];
         res.writeHead(200, out);
         res.end(body);
@@ -273,11 +293,59 @@ function safeNls(app: App, commit: string, locale: string) {
   }
 }
 
-function serveNls(app: App, commit: string, locale: string, res: import("node:http").ServerResponse) {
+async function serveNls(app: App, commit: string, locale: string, req: IncomingMessage, res: import("node:http").ServerResponse) {
   const built = safeNls(app, commit, decodeURIComponent(locale));
   if (!built) return deny(res, 404, "没有这一版的界面翻译");
-  res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" });
-  res.end(readFileSync(built.file));
+  // Rebuilt when the language pack changes: asked again each time, sent again only when it did.
+  const st = statSync(built.file);
+  const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+  const head = { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", etag, vary: "accept-encoding" };
+  if (req.headers["if-none-match"] === etag) return void res.writeHead(304, head).end();
+  const body = readFileSync(built.file);
+  if (!acceptsGzip(req)) return void res.writeHead(200, head).end(body);
+  const packed = await gzipAsync(body);
+  res.writeHead(200, { ...head, "content-encoding": "gzip", "content-length": String(packed.length) });
+  res.end(packed);
+}
+
+// ---- serve-web's static files: compressed once, kept for the build ---------------------------
+// serve-web sends them uncompressed (workbench.js alone is over 20 MB), slow through `omem peer
+// open` and a middle node. Under /ide/stable-<commit>/static/ a file never changes within a build:
+// gzipped once into <home>/ide/gzip/<commit>/ and served from there, `immutable` for the browser.
+const STATIC = /^\/stable-([0-9a-f]{40})\/static\/[^?#]+$/;
+const PACKABLE = /^(text\/|application\/(javascript|json|xml|wasm)|image\/svg)/;
+const IMMUTABLE = "public, max-age=31536000, immutable";
+const gzipAsync = promisify(gzip);
+const acceptsGzip = (req: IncomingMessage) => /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));
+const packedPath = (app: App, commit: string, url: string) => join(app.home, "ide", "gzip", commit, createHash("sha1").update(url).digest("hex"));
+let prunedFor = "";
+
+function servePacked(file: string, res: import("node:http").ServerResponse) {
+  let type: string;
+  let body: Buffer;
+  try {
+    type = (JSON.parse(readFileSync(`${file}.json`, "utf8")) as { type: string }).type;
+    body = readFileSync(`${file}.gz`);
+  } catch {
+    return false;
+  }
+  res.writeHead(200, { "content-type": type, "content-encoding": "gzip", "content-length": String(body.length), "cache-control": IMMUTABLE, vary: "accept-encoding" });
+  res.end(body);
+  return true;
+}
+
+/** The body first, its type last: a file with a type is complete. Other builds' files go. */
+function storePacked(commit: string, file: string, body: Buffer, type: string) {
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(`${file}.gz.tmp`, body);
+    renameSync(`${file}.gz.tmp`, `${file}.gz`);
+    writeFileSync(`${file}.json`, JSON.stringify({ type }));
+    if (prunedFor === commit) return;
+    prunedFor = commit;
+    const root = dirname(dirname(file));
+    for (const d of readdirSync(root)) if (d !== commit) rmSync(join(root, d), { recursive: true, force: true });
+  } catch { /* served uncached next time */ }
 }
 
 /** WebSocket upgrades under /ide go straight to serve-web, with the same check. */

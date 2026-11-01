@@ -75,12 +75,13 @@ const checks = computed(() => (out.value.repos ?? []).flatMap((r) => (r.check ? 
 // ---- the requirement map: this round's split, else the latest one on the work or branch ----
 // A round reviewed without a split (or a delegation that only tidies code) still shows the branch's
 // requirement → code map: the split of an earlier round or of another review of the branch, with
-// that round's code, since its locations point there (review-fix.ts inheritedSplit).
+// that round's code, since its locations point there (review-fix.ts inheritedSplit). A round still
+// running has no split yet either: the tree and “需求点” follow the last one until it has its own.
 type Inherited = { runId: string; rootId: string; title: string; round: number; sameWork: boolean; branchReview: boolean };
 const inherited = ref<Inherited | null>(null);
 let inheritedFor = "";
-watch(() => [run.value?.id, !!rv.data.value, rv.changePoints.value.length, busy.value] as const, async ([id, loaded, own, running]) => {
-  if (!id || !loaded || own || running) {
+watch(() => [run.value?.id, !!rv.data.value, rv.changePoints.value.length] as const, async ([id, loaded, own]) => {
+  if (!id || !loaded || own) {
     inheritedFor = "";
     return void (inherited.value = null);
   }
@@ -236,7 +237,8 @@ function explain(p: ChangePoint) {
               <Markdown v-if="focus.acceptance" class="small" :source="`**验收**\n\n${focus.acceptance}`" />
             </template>
           </section>
-          <p v-if="inheritedLabel" class="muted small inherited">这一轮没有自己的需求拆分，这里用{{ inheritedLabel }}的拆分和那时的代码；这一轮改了什么在<a href="#" @click.prevent="tab = 'change'">“变更”</a>里，要单独拆分也在那里。</p>
+          <p v-if="inheritedLabel && busy" class="muted small inherited">这一轮还在进行，先用{{ inheritedLabel }}的拆分和那时的代码；这一轮结束后按它的评审更新。</p>
+          <p v-else-if="inheritedLabel" class="muted small inherited">这一轮没有自己的需求拆分，这里用{{ inheritedLabel }}的拆分和那时的代码；这一轮改了什么在<a href="#" @click.prevent="tab = 'change'">“变更”</a>里，要单独拆分也在那里。</p>
           <ChangeView :key="mapRunId" :rv="mapRv" :run-id="mapRunId" :diffs="mapDiffs" :only="focusPoints.map((p) => p.id)" @explain="explain" />
         </template>
         <ChangeView v-else-if="tab === 'change'" :rv="rv" :run-id="run.id" :diffs="diffs" @explain="explain" />
