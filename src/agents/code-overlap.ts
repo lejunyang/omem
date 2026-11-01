@@ -8,11 +8,11 @@ import { HttpError, now, truncate } from "../core/util.ts";
 import { worktreesOf } from "./code.ts";
 import { addRoundFeedback, takeRoundFeedback, type RoundReview } from "./code-steer.ts";
 import {
-  getTask, headsAt, lastRound, listTasks, setWorkState, taskForFinding, taskLabel, taskText, updateTask, workRootOf, workState, TASK_STATE_LABEL,
+  getTask, headsAt, lastRound, listTasks, setWorkState, taskForFinding, taskLabel, taskList, taskText, updateTask, workRootOf, workState,
   type CodeTask, type LookState,
 } from "./code-tasks.ts";
 import type { Execution } from "./execution.ts";
-import { reviewContext, TASK_RULING } from "./review-chain.ts";
+import { reviewContext, taskCheckBrief, TASK_RULING } from "./review-chain.ts";
 import { checkBrief, checkLabel, isLook, lookBase, lookName, recordReview, reviewChecks, reviewFor, roundFindings, SEVERITY_LABEL, type LeadResult, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, getRun, runUser, setRunOutput, trackAbort, type Run } from "./runs.ts";
@@ -446,7 +446,7 @@ async function runLook(app: App, rootId: string, look: LookState) {
       const first = roundFindings(app, reviewed.id, round).filter((f) => f.check_name === c.name);
       const res = await runCheck(app, rootId, name, {
         run: reviewed,
-        task: [ctx.reviewTask, checkBrief(infos.get(c.name)!, plan), lookBrief(checkLabel(infos, c.name), aiText(ais[c.name]), first, c.focus)].join("\n\n"),
+        task: [ctx.reviewTask, checkBrief(infos.get(c.name)!, plan), lookBrief(checkLabel(infos, c.name), aiText(ais[c.name]), first, c.focus), taskCheckBrief(taskList(app, rootId))].join("\n\n"),
         cwd: snap!.cwd,
         spaces: ctx.spaces,
         indexed: ctx.indexed,
@@ -501,19 +501,12 @@ async function runLook(app: App, rootId: string, look: LookState) {
 
 const LOOK_RULING = [
   "# 裁决复看的问题",
-  "另一个模型复看了这一段改动，提了下面这些问题。第一次评审的问题已经是修改项（列在下面）。逐条用 `rule_review` 裁决：",
-  "- 和已有的修改项说的是同一件事：merge 到那一项背后的问题（#编号，列表里有的话），没有编号就 reject，note 写和哪一项重复；",
-  "- 其余按下面的规则判断接受、交给本人或驳回。",
+  "另一个模型复看了这一段改动，提了下面这些问题。第一次评审的问题已经是修改项（列在下面），和它们重复的按下面的规则并进去。逐条用 `rule_review` 裁决。",
 ].join("\n");
 
 /** review-lead on what a second look found, next to the tasks the work has. */
 async function lookRuling(app: App, rootId: string, reviewed: Run, round: number, fresh: ReturnType<typeof roundFindings>, reviewTask: string, runId: string, signal: AbortSignal, event: (type: string, data: unknown) => void): Promise<LeadResult> {
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
-  const here = new Set(roundFindings(app, reviewed.id, round).map((f) => f.id));
-  const tasks = listTasks(app, rootId).map((t) => {
-    const ids = (t.origin.findings ?? []).filter((id) => here.has(id));
-    return `- ${taskLabel(t.seq)} [${TASK_STATE_LABEL[t.state]}] ${t.title}${ids.length ? `（问题 ${ids.map((id) => `#${id}`).join("、")}）` : ""}`;
-  });
   const fmt = (f: (typeof fresh)[number]) => `- #${f.id} [${checkLabel(infos, f.check_name)} · ${SEVERITY_LABEL[f.severity]}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${f.detail ? `\n  ${truncate(f.detail, 600)}` : ""}${f.suggestion ? `\n  建议：${truncate(f.suggestion, 400)}` : ""}`;
   const host: LeadResult = { round, verdict: "revise", summary: "", changeRequest: "", rerun: [], by: "host" };
   setRunOutput(app, reviewed.id, { reviewLeadDraft: null });
@@ -523,7 +516,7 @@ async function lookRuling(app: App, rootId: string, reviewed: Run, round: number
       reviewLead: true,
       spaceId: reviewed.spaceId!,
       spaces: (await checkScope(app, reviewed)).spaces,
-      task: [LOOK_RULING, `## 已有的修改项\n\n${tasks.join("\n") || "（没有）"}`, `## 复看提的问题\n\n${fresh.map(fmt).join("\n")}`, TASK_RULING, reviewTask].join("\n\n"),
+      task: [LOOK_RULING, `## 已有的修改项\n\n${taskList(app, rootId) || "（没有）"}`, `## 复看提的问题\n\n${fresh.map(fmt).join("\n")}`, TASK_RULING, reviewTask].join("\n\n"),
       runId,
       signal,
       onEvent: (e) => event(e.type, { ...e, phase: "lead" }),

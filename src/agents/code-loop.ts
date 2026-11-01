@@ -8,7 +8,7 @@ import { codeChainFor, queueNextCodeRound, saveCodeChain, type CodeChain } from 
 import { reviewMetrics, worktreesOf } from "./code.ts";
 import {
   addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, taskForFinding,
-  stranded, taskLabel, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
+  stranded, taskLabel, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
@@ -178,7 +178,6 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
   const checks = reviewChecks(app).filter((c) => !c.missing);
   const history = checkHistory(app, rootId);
   const facts = worktrees.map((wt) => `${worktrees.length > 1 ? `### ${wt.space}\n\n` : ""}${changeFacts(workDirOf(wt), since?.[wt.space] ?? wt.start ?? wt.base)}`).join("\n\n");
-  const tasks = listTasks(app, rootId);
   const input = root.input as { task?: string; reviewTier?: string; reviewChecks?: string[] };
   // Checks the owner named when delegating, or picked for the rounds since (运行页“之后的评审”).
   const must = [...new Set([...(input.reviewChecks ?? []), ...((run.input as { roundReview?: { checks?: string[] } }).roundReview?.checks ?? [])])];
@@ -189,7 +188,7 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
     PLAN_BRIEF,
     lookable ? SECOND_LOOK_BRIEF : "",
     `## 这一段改动（${since ? "上次评审以后" : "从开始到现在"}）\n\n${facts}`,
-    `## 修改项\n\n${tasks.map((t) => `- ${taskLabel(t.seq)} [${TASK_STATE_LABEL[t.state]}] ${t.title}`).join("\n") || "（没有）"}`,
+    `## 修改项\n\n${taskList(app, rootId) || "（没有）"}`,
     `## 可用的评审项\n\n${checks.map((c) => { const h = history.get(c.name); return `- ${c.name}（${c.label}）：${c.about}${c.guide ? `；本人说：${c.guide}` : ""}${h ? `；这次交办里提过 ${h.raised} 条，采纳 ${h.accepted}，驳回 ${h.rejected}` : ""}`; }).join("\n")}`,
     ownerSaid,
     `## 交办任务（本人的原话）\n\n${truncate(String(input.task ?? ""), 6000)}`,
@@ -245,6 +244,7 @@ async function stageReview(app: App, run: Run, rc: RoundContext) {
     task: {
       since,
       split,
+      tasks: () => taskList(app, rootId),
       session: (check) => sessionOf(app, rootId, check),
       onSession: (check, id, used) => keepSession(app, rootId, check, id, used),
     },

@@ -232,6 +232,27 @@ export function taskForFinding(app: App, rootId: string, f: { id: number; title:
   return t;
 }
 
+/** States a later finding can still join: the task is not settled yet. */
+export const JOINABLE: TaskState[] = ["todo", "coding", "verify", "disputed", "owner"];
+
+/**
+ * A finding that restates a task the work already has (review-lead merged it there): the task
+ * gains it, no second task asks the same. A settled task does not: a problem still there after
+ * it is a new task.
+ */
+export function joinTask(app: App, rootId: string, findingId: number, seq: number): CodeTask {
+  const t = getTask(app, rootId, seq);
+  if (!JOINABLE.includes(t.state)) throw new HttpError(400, `${taskLabel(seq)} 现在是“${TASK_STATE_LABEL[t.state]}”，不能再并进去；问题还在就接受为新的一项，在 note 里写是哪一项没改好`);
+  const findings = [...new Set([...(t.origin.findings ?? []), findingId])];
+  run(app.db, "update code_tasks set origin = ?, updated_at = ? where id = ?", JSON.stringify({ ...t.origin, findings }), now(), t.id);
+  run(app.db, "update review_findings set task_id = ?, decision = coalesce(decision, 'fix') where id = ?", t.id, findingId);
+  app.emit({ type: "changed", entity: "code-task", id: rootId });
+  return getTask(app, rootId, seq);
+}
+
+/** The work's tasks as checks and review-lead read them: label, state, title. */
+export const taskList = (app: App, rootId: string) => listTasks(app, rootId).map((t) => `- ${taskLabel(t.seq)} [${TASK_STATE_LABEL[t.state]}] ${t.title}`).join("\n");
+
 // ---- commits and checkpoints ---------------------------------------------------------------------
 
 /** Where a worktree's Git commands run now: the worktree while it exists, else the repository. */

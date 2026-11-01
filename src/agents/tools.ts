@@ -3870,12 +3870,13 @@ def({
 
 def({
   name: "rule_review",
-  description: "评审负责人提交这一轮的裁决：每条问题接受 / 驳回 / 合并，结论（approve 通过 / revise 再改一轮 / escalate 交给本人），修改单和下一轮要重新评审的评审项。只在交办编码的评审负责人运行里可用。",
+  description: "评审负责人提交这一轮的裁决：每条问题接受 / 驳回 / 合并（合到这一轮的另一条，或按修改项推进时合到已有的修改项），结论（approve 通过 / revise 再改一轮 / escalate 交给本人），修改单和下一轮要重新评审的评审项。只在交办编码的评审负责人运行里可用。",
   schema: z.object({
     rulings: z.array(z.object({
       id: z.number().int().describe("问题编号（任务里列出的 #编号）"),
       decision: z.enum(["accept", "reject", "merge"]),
       into: z.number().int().optional().describe("merge 时合并到的那条问题编号"),
+      task: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，merge 到已有的修改项时填它的编号（如 T5），这时不填 into"),
       note: z.string().max(1000).optional().describe("理由；驳回必须写"),
       owner: z.object({ question: z.string().min(1).max(1000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("只在按修改项推进的交办里用：接受的问题要本人决定时，给本人的问题和两三个选项"),
     })).max(300),
@@ -3901,7 +3902,20 @@ def({
     const known = new Set(reviewChecks(ctx.app).map((c) => c.name));
     const unknown = (a.rerun ?? []).filter((c) => !known.has(c));
     if (unknown.length) throw new HttpError(400, `没有评审项 ${unknown.join("、")}`);
-    applyRulings(ctx.app, r.id, round, a.rulings);
+    // A finding that restates a task the work already has joins that task (checked before any ruling is recorded).
+    const t = await import("./code-tasks.ts");
+    const rootId = tasks ? t.workRootOf(ctx.app, r.id) : null;
+    const rulings = a.rulings.map((x) => {
+      if (x.task === undefined) return { ...x, task: undefined };
+      if (!rootId) throw new HttpError(400, `问题 ${x.id}：只有按修改项推进的交办才能合并到修改项`);
+      if (x.decision !== "merge") throw new HttpError(400, `问题 ${x.id}：填了 task 就要用 merge`);
+      const seq = t.parseTaskRef(x.task);
+      const task = t.getTask(ctx.app, rootId, seq);
+      if (!t.JOINABLE.includes(task.state)) throw new HttpError(400, `问题 ${x.id}：${t.taskLabel(seq)} 现在是“${t.TASK_STATE_LABEL[task.state]}”，不能再并进去；问题还在就 accept 为新的一项，在 note 里写是哪一项没改好`);
+      return { ...x, task: seq };
+    });
+    applyRulings(ctx.app, r.id, round, rulings);
+    for (const x of rulings) if (x.task) t.joinTask(ctx.app, rootId!, x.id, x.task);
     const owner = Object.fromEntries(a.rulings.filter((x) => x.owner).map((x) => [String(x.id), x.owner!]));
     setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}) } });
     return `已记录第 ${round} 轮裁决（${a.verdict}，${a.rulings.length} 条）。`;

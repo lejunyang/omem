@@ -48,6 +48,8 @@ const lastAt = computed(() => rv.reviews.value.reduce((t, r) => (r.created_at > 
 // “待处理”: every finding the owner still has a call on (to fix, put off, or not yet decided) and
 // whatever is set to be fixed; behind “全部” only what review-lead rejected or merged and the hints
 // nobody asked to fix.
+/** Merged into a task the work already had (review-lead's rule_review `task`), not into another finding. */
+const intoTask = (f: Finding) => f.state === "merged" && !f.merged_into && !!f.task_seq;
 const quiet = (f: Finding) => settled(f) || !!fixOf(f) || (f.severity === "nit" && decisionOf(f) !== "fix");
 
 // ---- later work on the branch (review-fix.ts fixed_by / newerWork) ----
@@ -326,6 +328,7 @@ async function answer(choice: number | null) {
           <span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span>
           <button class="title" :aria-expanded="open.has(f.id)" @click="toggle(f.id)">{{ f.title }}</button>
           <span v-if="STATE[f.state]" class="badge" :class="{ warn: f.state === 'accepted' }">{{ STATE[f.state] }}</span>
+          <span v-if="f.task_seq" class="badge mono" :title="`修改项 T${f.task_seq}，在“修改项”里处理`">T{{ f.task_seq }}</span>
           <span v-if="f.owner_suggestion" class="badge accent" title="建议按你改写的执行">建议已改</span>
           <a v-if="fixOf(f)" href="#" class="badge ok" :title="`交给了「${fixOf(f)!.title}」`" @click.prevent="openWork(fixOf(f)!.rootId)">{{ fixLabel(fixOf(f)!) }}</a>
           <span class="spacer" />
@@ -334,9 +337,9 @@ async function answer(choice: number | null) {
           <UiSegmented v-if="deciding && !fixOf(f)" :model-value="decisionOf(f)" class="decide-f" size="sm" :options="DECISIONS" :aria-label="`#${f.id} 怎么处理`" @change="(d) => decide(f, d)" />
         </div>
         <div v-if="f.decision === 'wontfix' && f.decision_note" class="small wontfix">不改：{{ f.decision_note }}</div>
-        <div v-if="findingWhere(f) || f.triage_note || f.merged_into" class="line2 small">
+        <div v-if="findingWhere(f) || f.triage_note || f.merged_into || intoTask(f)" class="line2 small">
           <a v-if="findingWhere(f)" href="#" class="loc mono" title="打开这段代码" @click.prevent="refAction(findingWhere(f), runOf(f))?.()">{{ findingWhere(f) }}</a>
-          <span v-if="f.triage_note || f.merged_into" class="muted">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : "" }}{{ f.merged_into && f.triage_note ? "；" : "" }}{{ f.triage_note }}</span>
+          <span v-if="f.triage_note || f.merged_into || intoTask(f)" class="muted">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : intoTask(f) ? `并到 T${f.task_seq}` : "" }}{{ (f.merged_into || intoTask(f)) && f.triage_note ? "；" : "" }}{{ f.triage_note }}</span>
         </div>
         <div v-if="open.has(f.id)" class="more small">
           <Markdown v-if="f.detail" class="fd" :source="findingMarkdown(f.detail)" :run-id="runOf(f)" breaks />

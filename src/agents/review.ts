@@ -423,13 +423,15 @@ export function reviewsOf(app: App, codeRunIds: string[]) {
   if (!codeRunIds.length) return [];
   const marks = codeRunIds.map(() => "?").join(",");
   const reviews = all<ReviewRow>(app.db, `select * from reviews where code_run_id in (${marks}) order by round, created_at`, ...codeRunIds);
-  const findings = reviews.length ? all<FindingRow>(app.db, `select * from review_findings where review_id in (${reviews.map(() => "?").join(",")}) order by id`, ...reviews.map((r) => r.id)) : [];
+  // task_seq: the task a finding is on (T5) in a task-driven delegation.
+  const findings = reviews.length ? all<FindingRow & { task_seq: number | null }>(app.db, `select f.*, t.seq as task_seq from review_findings f left join code_tasks t on t.id = f.task_id where f.review_id in (${reviews.map(() => "?").join(",")}) order by f.id`, ...reviews.map((r) => r.id)) : [];
   return reviews.map((r) => ({ ...r, change_points: r.change_points ? (JSON.parse(r.change_points) as ChangePoint[]) : [], findings: findings.filter((f) => f.review_id === r.id).map((f) => ({ ...f, evidence: JSON.parse(f.evidence) as string[] })) }));
 }
 
 // ---- review-lead: rulings and when to stop -------------------------------------------------------
 
-export type Ruling = { id: number; decision: "accept" | "reject" | "merge"; into?: number; note?: string };
+/** `task`: merged into a task the work already has (its seq; code-tasks.ts joinTask), not into a finding of this round. */
+export type Ruling = { id: number; decision: "accept" | "reject" | "merge"; into?: number; task?: number; note?: string };
 export type LeadResult = {
   round: number;
   verdict: "approve" | "revise" | "escalate";
@@ -460,12 +462,12 @@ export function applyRulings(app: App, codeRunId: string, round: number, rulings
   const mine = new Set(roundFindings(app, codeRunId, round).map((f) => f.id));
   for (const r of rulings) {
     if (!mine.has(r.id)) throw new HttpError(400, `问题 ${r.id} 不是这一轮的`);
-    if (r.decision === "merge" && (!r.into || !mine.has(r.into) || r.into === r.id)) throw new HttpError(400, `问题 ${r.id} 合并到的 ${r.into ?? "（空）"} 不是这一轮的另一条问题`);
+    if (r.decision === "merge" && !r.task && (!r.into || !mine.has(r.into) || r.into === r.id)) throw new HttpError(400, `问题 ${r.id} 合并到的 ${r.into ?? "（空）"} 不是这一轮的另一条问题`);
   }
   tx(app.db, () => {
     for (const r of rulings) {
       const state = r.decision === "accept" ? "accepted" : r.decision === "reject" ? "rejected" : "merged";
-      run(app.db, "update review_findings set state = ?, merged_into = ?, triage_note = ? where id = ?", state, r.decision === "merge" ? r.into! : null, (r.note ?? "").slice(0, 1000), r.id);
+      run(app.db, "update review_findings set state = ?, merged_into = ?, triage_note = ? where id = ?", state, r.decision === "merge" && !r.task ? r.into! : null, (r.note ?? "").slice(0, 1000), r.id);
     }
   });
 }

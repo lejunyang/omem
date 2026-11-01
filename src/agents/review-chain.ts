@@ -198,6 +198,8 @@ export function currentPoints(app: App, run: Run): ChangePoint[] {
 export type TaskReviewOptions = {
   since?: Record<string, string>;
   split: boolean;
+  /** The work's tasks so far (code-tasks.ts taskList): checks do not raise them again, review-lead merges into them. */
+  tasks(): string;
   session(check: string): string | undefined;
   onSession(check: string, id: string | undefined, used: number | undefined): void;
 };
@@ -239,7 +241,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       spaceId: run.spaceId!,
       spaces,
       alsoRead: indexed,
-      task: `${reviewTask}\n\n${checkBrief(info, plan)}${plan.focus?.[name] ? `\n\n## 这次请重点看\n\n${plan.focus[name]}` : ""}`,
+      task: `${reviewTask}\n\n${checkBrief(info, plan)}${plan.focus?.[name] ? `\n\n## 这次请重点看\n\n${plan.focus[name]}` : ""}${opts.task ? `\n\n${taskCheckBrief(opts.task.tasks())}` : ""}`,
       runId: rc.runId,
       cwd,
       signal: rc.signal,
@@ -296,7 +298,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
         spaceId: run.spaceId!,
         spaces,
         alsoRead: indexed,
-        task: leadTask(app, run, plan, reviewTask, failed.map((f) => f.name), !!opts.task),
+        task: leadTask(app, run, plan, reviewTask, failed.map((f) => f.name), opts.task?.tasks()),
         runId: rc.runId,
         cwd,
         signal: rc.signal,
@@ -411,9 +413,13 @@ export const TASK_RULING = [
   "- 自动改：问题说得清（哪里、什么情况下、错在哪），有背景和原因，改法明确，改动不大、好回退。不按严重程度划线，一条“提示”只要符合这些也改；",
   "- 交给本人：需求没说清或材料互相矛盾、用户看得到的行为有几种合理做法、超出原需求、数据迁移 / 对外接口 / 性能与成本的取舍、问题成立但改动大不好回退。在这条裁决的 `owner` 里写给本人的问题（一两句话，说清分歧和影响）和两三个选项；本人回答前这一项停着，别的项照做。",
   "说不清问题在哪、只是风格偏好且项目没有约定的，驳回。verdict：没有要改的写 approve，有要改的写 revise；只有方案本身的分歧挡住了整件事才 escalate。",
+  "和“已有的修改项”说的是同一件事的（等本人决定、还在改的也算），`merge` 并在 `task` 填那一项（如 T5），不要再接受成新的一项；已完成的项问题又出现了，接受为新的一项，note 写是哪一项没改好。",
 ].join("\n");
 
-function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, failed: string[], tasks = false) {
+/** What a check of a task-driven delegation reads about the tasks already there. */
+export const taskCheckBrief = (list: string) => `## 这次交办已有的修改项\n\n${list || "（没有）"}\n\n已经是修改项的问题（包括等本人决定的）不要再提。某一项改过了还有问题，或者有新的情况要补充，照常提问题，在标题里写明是哪一项（如“T3 没改好：……”），评审负责人会把它并到那一项。`;
+
+function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, failed: string[], tasks?: string) {
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
   const round = roundOf(run);
   const fmt = (f: ReturnType<typeof roundFindings>[number]) => {
@@ -437,7 +443,7 @@ function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, fail
     `## 各评审项的结论\n\n${reviews.join("\n")}${failed.length ? `\n\n没有完成的评审项：${failed.join("、")}（不要替它们下结论，在 summary 里说明缺了哪项）` : ""}`,
     `## 这一轮的问题\n\n${now.map(fmt).join("\n") || "（没有问题）"}`,
     earlier.length ? `## 之前的轮次\n\n${earlier.join("\n\n")}\n\n同一个问题修过还在报时，判断是没修好还是评审要求不合理；连续僵持说明该交给本人（escalate）。` : "",
-    tasks ? TASK_RULING : `## 评审项（下一轮可选择只复审其中受影响的）\n\n${plan.checks.map((n) => `- ${n}（${infos.get(n)?.label ?? n}）：${SEVERITY_LABEL[infos.get(n)?.blocks ?? "major"]}及以上阻塞`).join("\n")}`,
+    tasks !== undefined ? `## 已有的修改项\n\n${tasks || "（没有）"}\n\n${TASK_RULING}` : `## 评审项（下一轮可选择只复审其中受影响的）\n\n${plan.checks.map((n) => `- ${n}（${infos.get(n)?.label ?? n}）：${SEVERITY_LABEL[infos.get(n)?.blocks ?? "major"]}及以上阻塞`).join("\n")}`,
     reviewTask,
   ].filter(Boolean).join("\n\n");
 }

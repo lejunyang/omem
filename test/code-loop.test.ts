@@ -318,6 +318,44 @@ describe("a delegation driven by tasks", () => {
     }
   }, 120_000);
 
+  it("merges a finding that restates a task still open into that task, not a second one; a done task's problem back is a new task", async () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true, round: 2 }, userId: OWNER });
+      setRunOutput(app, r.id, { reviewPlan: { tier: "ai", tierName: "按改动定", checks: ["review-business"], maxRounds: 6, metrics: {}, reasons: [] } });
+      recordReview(app, { codeRunId: r.id, round: 1, check: "review-business", verdict: "approved", summary: "", findings: [
+        { severity: "minor", title: "存量订单保存时沿用旧模板", detail: "", suggestion: "请本人定口径", evidence: [], confidence: "high" },
+        { severity: "major", title: "空订单会报错", detail: "", suggestion: "判空", evidence: [], confidence: "high" },
+      ] });
+      const { taskForFinding } = await import("../src/agents/code-tasks.ts");
+      const [o1, o2] = roundFindings(app, r.id, 1);
+      const owner = taskForFinding(app, r.id, o1, "review-lead", { question: "保存时用哪个模板？", options: ["沿用旧模板", "用当前模板"] });
+      const done = updateTask(app, r.id, taskForFinding(app, r.id, o2, "review-lead").seq, { state: "done" });
+      // The next stage: the check raises the owner's question again, and the empty order once more.
+      recordReview(app, { codeRunId: r.id, round: 2, check: "review-business", verdict: "approved", summary: "", findings: [
+        { severity: "minor", title: "【待本人决定·T1】存量订单保存时沿用旧模板", detail: "", suggestion: "", evidence: [], confidence: "high" },
+        { severity: "major", title: "T2 没改好：空订单还会报错", detail: "", suggestion: "判空", evidence: [], confidence: "high" },
+      ] });
+      const [again, back] = roundFindings(app, r.id, 2);
+      const ctx = { app, runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "review-lead" } as ToolContext;
+      const rule = (rulings: unknown[]) => callTool(ctx, "rule_review", { rulings, verdict: "revise", summary: "合并重复的问题" });
+      const refused = await rule([{ id: back.id, decision: "merge", task: `T${done.seq}` }]);
+      expect(refused).toMatchObject({ isError: true });
+      expect(refused.text).toContain("已完成");
+      expect((await rule([{ id: again.id, decision: "merge", task: `T${owner.seq}` }, { id: back.id, decision: "accept", note: "T2 没改好" }])).isError).toBe(false);
+      expect(listTasks(app, r.id).find((t) => t.seq === owner.seq)!.origin.findings).toEqual([o1.id, again.id]);
+      expect(roundFindings(app, r.id, 2).find((f) => f.id === again.id)).toMatchObject({ state: "merged", merged_into: null, task_id: owner.id });
+      // The review page shows which task a finding is on.
+      const { reviewsOf } = await import("../src/agents/review.ts");
+      expect(reviewsOf(app, [r.id]).flatMap((x) => x.findings).find((f) => f.id === again.id)).toMatchObject({ task_seq: owner.seq });
+      // What checks and review-lead read lists the tasks so far.
+      const { taskList } = await import("../src/agents/code-tasks.ts");
+      expect(taskList(app, r.id)).toBe("- T1 [等你决定] 存量订单保存时沿用旧模板\n- T2 [已完成] 空订单会报错");
+    } finally {
+      app.db.close();
+    }
+  });
+
   it("lets the coder hand groups of tasks to helpers coding beside it, and merges what they commit", async () => {
     const app = testApp();
     app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "tasks", FAKE_PARALLEL: "1" }, idleTimeoutMs: 60000 });

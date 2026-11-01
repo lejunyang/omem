@@ -33,7 +33,8 @@ const saved = ref<Settings | null>(null);
 const tiers = ref<Tier[]>([]);
 const checks = ref<Check[]>([]);
 const rereviewAllEvery = ref(2);
-// The models review rounds rotate through, shared by every tier that turns rotation on.
+// The models another look takes (review.rotation): a task-driven delegation's second look, and the
+// rounds of a tier that turns rotation on. Its own page, not under a tier: second looks use it either way.
 const rotation = ref<Pick[]>([]);
 const backends = ref<Backend[]>([]);
 const options = ref<{ fields: Record<string, string>; descriptions: Record<string, string>; ops: string[] }>({ fields: {}, descriptions: {}, ops: [] });
@@ -43,6 +44,8 @@ const fieldOps = Object.fromEntries(NUMERIC.map((f) => [f, ["gte", "lte", "equal
 const tierId = computed(() => (typeof route.query.tier === "string" ? route.query.tier : null));
 const checkName = computed(() => (typeof route.query.check === "string" ? route.query.check : null));
 const adding = computed(() => route.query.add === "1");
+const rotating = computed(() => route.query.rotation === "1");
+const rotatingTiers = computed(() => tiers.value.filter((t) => t.rotateModels).map((t) => t.name));
 const tier = computed(() => tiers.value.find((t) => t.id === tierId.value) ?? null);
 const tierIndex = computed(() => tiers.value.findIndex((t) => t.id === tierId.value));
 const check = computed(() => checks.value.find((c) => c.name === checkName.value) ?? null);
@@ -189,6 +192,11 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
             </span>
           </button>
           <button class="li add" :class="{ on: adding }" @click="go({ add: '1' })"><Icon name="plus" :size="14" />加专项评审</button>
+
+          <div class="group">模型</div>
+          <button class="li" :class="{ on: rotating }" @click="go({ rotation: '1' })">
+            <span class="grow"><strong>换模型复审</strong><span class="muted small sub">{{ rotation.length ? `${rotation.length} 个模型` : "没有设置：不复看、不换模型" }}</span></span>
+          </button>
         </template>
       </div>
       <div v-if="dirty" class="savebar row">
@@ -241,15 +249,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
             <input v-model.number="rereviewAllEvery" class="input num" type="number" min="1" max="10" inputmode="numeric" aria-label="全部重审的间隔" @input="touch" /></label>
           <div class="row opt"><span class="grow">多轮时换模型复审<span class="muted small sub">第 1 轮用各评审项自己的模型；从第 2 轮起每项换用下面列表里的下一个，同一轮各项也错开，多看几种意见。交办时也可以单独开关</span></span>
             <UiCheckbox :model-value="!!tier.rotateModels" switch aria-label="多轮时换模型复审" @update:model-value="(v) => { tier!.rotateModels = !!v; touch(); }" /></div>
-          <div v-if="tier.rotateModels" class="rotation stack">
-            <span class="muted small">轮换用的模型（所有档位共用）</span>
-            <div v-for="(p, i) in rotation" :key="i" class="row wrap">
-              <AiDefaults :model-value="{ agent: p.profile, model: p.model, effort: p.effort }" :backends="backends.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => { Object.assign(p, { profile: v.agent ?? '', model: v.model || undefined, effort: v.effort || undefined }); touch(); }" />
-              <button class="btn ghost sm danger" @click="rotation.splice(i, 1); touch()">移除</button>
-            </div>
-            <div><button class="btn sm" :disabled="rotation.length >= 12" @click="rotation.push({ profile: '' }); touch()">＋ 添加模型</button></div>
-            <small v-if="!rotation.length" class="muted">列表为空时不换模型。</small>
-          </div>
+          <small v-if="tier.rotateModels" class="muted">{{ rotation.length ? `在 ${rotation.length} 个模型间轮换` : "还没有设置轮换的模型，不会换" }}，<a href="#" @click.prevent="go({ rotation: '1' })">在“换模型复审”里设置</a>（所有档位共用）。</small>
           <small class="muted">每轮 {{ tier.checks.length }} 个评审运行{{ tier.lead ? " + 1 个负责人运行" : "" }}。</small>
         </section>
       </div>
@@ -300,6 +300,32 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
         <div v-if="!check.builtin" class="row"><button class="btn ghost sm danger" @click="removeCheck">不再用作评审项</button></div>
       </div>
 
+      <div v-else-if="rotating" class="page">
+        <header class="row dh">
+          <h2>换模型复审</h2>
+          <span class="spacer" />
+          <button class="btn sm primary" :disabled="saving || !dirty" @click="save">保存</button>
+        </header>
+        <p class="muted about">评审要用另一个模型再看一遍时，从这里选模型。列表为空时不复看，也不换模型。</p>
+        <section class="block">
+          <div class="block-head"><h3>用在哪里</h3></div>
+          <ul class="uses small">
+            <li><strong>按修改项推进的交办</strong>：每次阶段评审，评审负责人可以请另一个模型复看风险大的部分，和编码同时进行；它选用列表里和第一次评审不同的模型。</li>
+            <li><strong>按轮推进的交办</strong>：档位打开“多轮时换模型复审”后，从第 2 轮起各评审项依次换用列表里的下一个。{{ rotatingTiers.length ? `打开了的档位：${rotatingTiers.join("、")}` : "现在没有档位打开" }}。</li>
+          </ul>
+        </section>
+        <section class="block">
+          <div class="block-head"><h3>模型</h3><span class="muted small">最多 12 个</span></div>
+          <div class="rotation stack">
+            <div v-for="(p, i) in rotation" :key="i" class="row wrap">
+              <AiDefaults :model-value="{ agent: p.profile, model: p.model, effort: p.effort }" :backends="backends.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => { Object.assign(p, { profile: v.agent ?? '', model: v.model || undefined, effort: v.effort || undefined }); touch(); }" />
+              <button class="btn ghost sm danger" @click="rotation.splice(i, 1); touch()">移除</button>
+            </div>
+            <div><button class="btn sm" :disabled="rotation.length >= 12" @click="rotation.push({ profile: '' }); touch()">＋ 添加模型</button></div>
+          </div>
+        </section>
+      </div>
+
       <div v-else-if="adding" class="page">
         <header class="row dh"><h2>加专项评审</h2></header>
         <p class="muted about">专项评审就是一个 Agent 档案：在档案里写清它只看什么（比如鉴权和越权、性能、数据迁移），这里把它挂成评审项，再选它用在哪些档位、什么改动时额外加上。</p>
@@ -326,6 +352,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
 
 <style scoped>
 .rotation { display: grid; gap: 8px; padding: 4px 0 10px; min-width: 0; }
+.uses { margin: 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.6; }
 .review { display: flex; height: 100%; }
 .list-col { width: 300px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 .items { overflow-y: auto; padding: 6px; flex: 1; }
