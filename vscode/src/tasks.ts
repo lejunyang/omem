@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { Api } from "./api";
 import type { Current } from "./current";
+import { OPEN_ALL_UP_TO, type ChangedFile, type ChangedFiles } from "./changes";
 
 /**
  * A delegation driven by tasks (docs/v2/coding-loop.md) in the 修改项 view: where it stands and its
@@ -33,8 +34,8 @@ export class TaskItem extends vscode.TreeItem {
   }
 }
 
-/** The rows of a `git diff`, file by file: where each file was and is, so both sides can be shown. */
-export function patchFiles(patch: string): { oldPath: string | null; newPath: string | null }[] {
+/** The rows of a `git diff`, file by file: where each file was and is, so both sides can be shown, and its added and removed lines. */
+export function patchFiles(patch: string): { oldPath: string | null; newPath: string | null; add: number; rm: number }[] {
   return patch.split(/^diff --git /m).filter(Boolean).map((chunk) => {
     const lines = chunk.split("\n");
     const pick = (re: RegExp) => lines.map((l) => re.exec(l)?.[1]).find((x) => x !== undefined);
@@ -47,7 +48,8 @@ export function patchFiles(patch: string): { oldPath: string | null; newPath: st
     const deleted = lines.some((l) => l.startsWith("deleted file mode"));
     const oldPath = added ? null : from ?? (minus && minus !== "/dev/null" ? minus : null) ?? head?.[1] ?? null;
     const newPath = deleted ? null : to ?? (plus && plus !== "/dev/null" ? plus : null) ?? head?.[2] ?? null;
-    return { oldPath, newPath };
+    const body = lines.slice(Math.max(0, lines.findIndex((l) => l.startsWith("@@"))));
+    return { oldPath, newPath, add: body.filter((l) => l.startsWith("+")).length, rm: body.filter((l) => l.startsWith("-")).length };
   });
 }
 
@@ -56,7 +58,7 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
 
-  constructor(private readonly api: Api, private readonly current: Current, private readonly state?: vscode.Memento) {
+  constructor(private readonly api: Api, private readonly current: Current, private readonly state?: vscode.Memento, private readonly files?: ChangedFiles) {
     current.onDidChange(() => void this.load().catch(() => {}));
   }
 
@@ -141,15 +143,21 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
 
   // ---- both sides of a change, read from omem ---------------------------------------------------
 
-  /** `omem-rev:/<path>?run=…&space=…&rev=…`: a file at a commit of the work (empty when it did not exist there). */
+  /**
+   * `omem-rev:/<path>?run=…&space=…&rev=…`: a file at a commit of the work (empty when it did not exist
+   * there). `file`: the path in the repository when the URI's own path is the work folder's file (as
+   * Git's `git:` URIs do): VS Code calls the two sides of a diff a rename when their paths differ.
+   */
   async provideTextDocumentContent(uri: vscode.Uri) {
     const q = new URLSearchParams(uri.query);
     if (!q.get("rev")) return "";
-    const r = await this.api.get<{ text: string; missing?: boolean; binary?: boolean }>(`/api/runs/${q.get("run")}/file-at?space=${encodeURIComponent(q.get("space")!)}&path=${encodeURIComponent(uri.path.replace(/^\//, ""))}&rev=${q.get("rev")}`);
+    const file = q.get("file") ?? uri.path.replace(/^\//, "");
+    const r = await this.api.get<{ text: string; missing?: boolean; binary?: boolean }>(`/api/runs/${q.get("run")}/file-at?space=${encodeURIComponent(q.get("space")!)}&path=${encodeURIComponent(file)}&rev=${q.get("rev")}`);
     return r.binary ? "（二进制文件，不显示内容）" : r.text;
   }
 
-  private revUri(run: string, space: string, path: string, rev: string | null) {
+  private revUri(run: string, space: string, path: string, rev: string | null, at?: vscode.Uri) {
+    if (at) return at.with({ scheme: "omem-rev", query: new URLSearchParams({ run, space, rev: rev ?? "", file: path }).toString() });
     return vscode.Uri.from({ scheme: "omem-rev", path: `/${path}`, query: new URLSearchParams({ run, space, rev: rev ?? "" }).toString() });
   }
 
@@ -162,20 +170,27 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
     const run = this.current.run;
     if (!run) return;
     const { patches } = await this.api.get<{ patches: { space: string; patch: string; from?: string; to?: string }[] }>(`/api/runs/${run.id}/task-diff?${query}`);
-    const resources: [vscode.Uri, vscode.Uri, vscode.Uri][] = [];
+    const files: ChangedFile[] = [];
     for (const p of patches) {
+      const folder = local ? this.current.folders.find((x) => x.space === p.space) : undefined;
+      const root = folder ? this.api.conn.uri(folder.path) : null;
       for (const f of patchFiles(p.patch)) {
         const path = f.newPath ?? f.oldPath!;
-        const left = this.revUri(run.id, p.space, f.oldPath ?? path, f.oldPath ? p.from ?? null : null);
-        const folder = local && f.newPath ? this.current.folders.find((x) => x.space === p.space) : undefined;
-        const root = folder ? this.api.conn.uri(folder.path) : null;
-        const right = root ? vscode.Uri.joinPath(root, path) : this.revUri(run.id, p.space, path, f.newPath ? p.to ?? null : null);
-        resources.push([right, left, right]);
+        // With the work folder's file on the right, the left takes the same kind of path (not a rename).
+        const left = this.revUri(run.id, p.space, f.oldPath ?? path, f.oldPath ? p.from ?? null : null, root ? vscode.Uri.joinPath(root, f.oldPath ?? path) : undefined);
+        const right = root && f.newPath ? vscode.Uri.joinPath(root, path) : this.revUri(run.id, p.space, path, f.newPath ? p.to ?? null : null, root ? vscode.Uri.joinPath(root, path) : undefined);
+        const status = !f.oldPath ? "A" : !f.newPath ? "D" : f.oldPath !== f.newPath ? "R" : "M";
+        files.push({ path: patches.length > 1 ? `${p.space}/${path}` : path, left, right, status, add: f.add, rm: f.rm });
       }
     }
-    if (!resources.length) return void vscode.window.showInformationMessage(`${title}：没有改动`);
-    await vscode.commands.executeCommand("vscode.changes", title, resources);
-    return resources.length;
+    await this.files?.set(title, files);
+    if (!files.length) return void vscode.window.showInformationMessage(`${title}：没有改动`);
+    if (files.length <= OPEN_ALL_UP_TO || !this.files) await vscode.commands.executeCommand("vscode.changes", title, files.map((f) => [f.right, f.left, f.right]));
+    else {
+      await vscode.commands.executeCommand("omem.changes.focus");
+      void vscode.window.showInformationMessage(`${title}：${files.length} 个文件，在“改动的文件”里按目录点开看；要一次看全部，点那里的“全部打开”。`);
+    }
+    return files.length;
   }
 
   // ---- the owner's actions -----------------------------------------------------------------------

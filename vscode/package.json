@@ -70,6 +70,7 @@
       "omem": [
         { "id": "omem.runs", "name": "交办" },
         { "id": "omem.tasks", "name": "修改项", "when": "omem.taskMode" },
+        { "id": "omem.changes", "name": "改动的文件", "when": "omem.hasChanges" },
         { "id": "omem.review", "name": "修改单" }
       ]
     },
@@ -111,6 +112,8 @@
       { "command": "omem.work.resume", "title": "继续推进", "category": "omem", "icon": "$(debug-continue)" },
       { "command": "omem.work.sinceViewed", "title": "我上次看过之后的改动", "category": "omem", "icon": "$(history)" },
       { "command": "omem.work.compareBase", "title": "和分支比较…", "category": "omem", "icon": "$(git-compare)" },
+      { "command": "omem.changes.openAll", "title": "全部打开", "category": "omem", "icon": "$(diff-multiple)" },
+      { "command": "omem.changes.clear", "title": "关掉", "category": "omem", "icon": "$(close)" },
       { "command": "omem.checkpoint.step", "title": "看这一步", "category": "omem" },
       { "command": "omem.checkpoint.since", "title": "和现在比", "category": "omem", "icon": "$(compare-changes)" },
       { "command": "omem.checkpoint.back", "title": "回到这里", "category": "omem" }
@@ -144,7 +147,9 @@
         { "command": "omem.work.pause", "when": "omem.taskMode" },
         { "command": "omem.work.resume", "when": "omem.taskMode" },
         { "command": "omem.work.sinceViewed", "when": "omem.taskMode" },
-        { "command": "omem.work.compareBase", "when": "omem.taskMode" }
+        { "command": "omem.work.compareBase", "when": "omem.taskMode" },
+        { "command": "omem.changes.openAll", "when": "omem.hasChanges" },
+        { "command": "omem.changes.clear", "when": "omem.hasChanges" }
       ],
       "editor/context": [
         { "command": "omem.askSelection", "when": "editorHasSelection", "group": "omem@1" },
@@ -171,6 +176,8 @@
         { "command": "omem.task.add", "when": "view == omem.tasks", "group": "navigation@1" },
         { "command": "omem.work.sinceViewed", "when": "view == omem.tasks", "group": "navigation@2" },
         { "command": "omem.work.compareBase", "when": "view == omem.tasks", "group": "navigation@2" },
+        { "command": "omem.changes.openAll", "when": "view == omem.changes", "group": "navigation@1" },
+        { "command": "omem.changes.clear", "when": "view == omem.changes", "group": "navigation@9" },
         { "command": "omem.work.pause", "when": "view == omem.tasks && !omem.paused", "group": "navigation@3" },
         { "command": "omem.work.resume", "when": "view == omem.tasks && omem.paused", "group": "navigation@3" },
         { "command": "omem.refresh", "when": "view == omem.tasks", "group": "navigation@9" }

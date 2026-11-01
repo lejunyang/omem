@@ -3,6 +3,7 @@ import { Api, type Folder, type Run } from "./api";
 import { askSshHost, connect, Status } from "./connect";
 import { Connection } from "./connection";
 import { Current } from "./current";
+import { ChangedFiles } from "./changes";
 import { Delegate } from "./delegate";
 import { Progress } from "./progress";
 import { RunItem, Runs } from "./runs";
@@ -22,7 +23,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const current = new Current(api);
   const bench = new Workbench(api, current);
   const runs = new Runs(api, current);
-  const tasks = new Tasks(api, current, context.workspaceState);
+  const changed = new ChangedFiles();
+  const tasks = new Tasks(api, current, context.workspaceState, changed);
   const delegate = new Delegate(api, current);
   const progress = new Progress(api, current, () => {
     runs.refresh();
@@ -58,6 +60,7 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider("omem.runs", runs),
     vscode.window.registerTreeDataProvider("omem.review", bench),
     vscode.window.registerTreeDataProvider("omem.tasks", tasks),
+    vscode.window.createTreeView("omem.changes", { treeDataProvider: changed, showCollapseAll: true }),
     vscode.workspace.registerTextDocumentContentProvider("omem-rev", tasks),
     vscode.languages.registerCodeLensProvider({ language: "markdown" }, delegate),
     vscode.workspace.onDidChangeWorkspaceFolders(() => void current.detect().catch(() => {})),
@@ -164,6 +167,8 @@ export async function activate(context: vscode.ExtensionContext) {
   cmd("omem.work.resume", () => tasks.pause(false));
   cmd("omem.work.sinceViewed", () => tasks.sinceViewed());
   cmd("omem.work.compareBase", () => tasks.compareBase());
+  cmd("omem.changes.openAll", () => changed.openAll());
+  cmd("omem.changes.clear", () => changed.clear());
   cmd("omem.checkpoint.step", async (arg) => {
     const c = cpOf(arg);
     if (c) await tasks.showChanges(`检查点 ${c.seq}：${c.label}`, `from=${c.seq - 1}&to=${c.seq}`);
