@@ -415,7 +415,9 @@ async function answer(choice: number | null) {
 .findings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
 .finding { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .findings > .row + .finding, .findings > .row + p + .finding { border-top-color: var(--line); }
-.line1 { gap: 8px; min-width: 0; }
+/* Wraps by its own width, not the window's: beside the requirement tree the pane is narrow on a wide screen too. */
+.line1 { gap: 8px; min-width: 0; flex-wrap: wrap; }
+.line1 .title { flex: 1 1 14em; }
 .line2 { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .nowrap { white-space: nowrap; }
 .finding.dim .title { color: var(--ink-2); font-weight: 450; }
@@ -449,6 +451,5 @@ async function answer(choice: number | null) {
 @media (max-width: 760px) {
   .check-row { grid-template-columns: 10px 52px minmax(0, 1fr) auto; }
   .ai { display: none; }
-  .line1 { flex-wrap: wrap; }
 }
 </style>
