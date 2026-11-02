@@ -12,6 +12,7 @@ import WorkPane, { type ReqFocus, type WorkTab } from "../components/WorkPane.vu
 import { POINT_STATUS, type ChangePoint } from "../lib/reviews";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { fmtTime, relTime, state, toast } from "../store";
+import { pageParam } from "../lib/route";
 
 /**
  * A space's requirement tree (src/items/requirements.ts, docs/v2/requirements.md): system → module →
@@ -46,7 +47,7 @@ const nodes = ref<Node[]>([]);
 const loading = ref(true);
 const showRemoved = ref(false);
 const detail = ref<Detail | null>(null);
-const selectedId = computed(() => (route.params.id as string | undefined) || "");
+const selectedId = pageParam("reqs");
 // A delegation opened inside the page (`?work=<run>`): its overview replaces the node's detail.
 const workId = computed(() => (typeof route.query.work === "string" ? route.query.work : ""));
 const openWork = (runId: string) => router.push({ path: `/reqs/${selectedId.value}`, query: { work: runId } });

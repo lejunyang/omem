@@ -6,6 +6,7 @@ import AskCard from "../components/AskCard.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { confirmDialog } from "../lib/dialog";
+import { pageParam } from "../lib/route";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
 import { currentSpace, relTime, state, toast } from "../store";
@@ -30,7 +31,7 @@ const sending = ref(false);
 const scroller = ref<HTMLElement>();
 const input = ref<HTMLTextAreaElement>();
 const showList = ref(false);
-const id = computed(() => route.params.id as string | undefined);
+const id = pageParam("ask");
 
 const listLoading = ref(true);
 const convLoading = ref(false);

@@ -11,7 +11,8 @@ import { prepareShare, type ShareRef } from "../core/shares.ts";
  *
  * - a document whose original is on the web or in Feishu → that link;
  * - a Feishu chat line or a message that came from Feishu → the chat opened at that message
- *   (lark-cli's message_position; the chat alone when the position is unknown);
+ *   (lark-cli's message_position; the chat alone when the position is unknown, unless it is the
+ *   chat the message goes to: that is where the reader already is, so a share instead);
  * - anything else (code, working files, memories, pages, messages in omem) → a read-only share
  *   link holding a copy of just the cited parts (core/shares.ts), when `webUrl` is set;
  * - nothing to link to → no reference text at all.
@@ -61,7 +62,8 @@ export function externalUrl(uri: string): string | null {
   return null;
 }
 
-type LarkTarget = { chat: string; messageId: string | null };
+/** `message`: the omem message cited (`msg:`), which keeps the Feishu position when lark_messages has no row (the bot's own chats). */
+type LarkTarget = { chat: string; messageId: string | null; message?: string };
 
 /** The Feishu message behind a reference, when there is one. */
 function larkTarget(app: App, ref: string): LarkTarget | null {
@@ -80,29 +82,35 @@ function larkTarget(app: App, ref: string): LarkTarget | null {
     if (!r || !(r.channel === "lark" || r.channel.startsWith("lark:"))) return null;
     const meta = json<{ externalId?: string; larkMessageId?: string }>(r.meta, {});
     const messageId = meta.externalId ?? meta.larkMessageId ?? null;
+    // Not sent to Feishu as such (a record, a card shown elsewhere): the chat alone would not show it.
+    if (!messageId) return null;
     const chat = (r.external_id ?? "").split("#")[0];
-    if (/^oc_/.test(chat)) return { chat, messageId };
-    if (messageId) {
-      const row = one<{ chat_id: string }>(app.db, "select chat_id from lark_messages where message_id = ?", messageId);
-      if (row) return { chat: row.chat_id, messageId };
-    }
-    return null;
+    if (/^oc_/.test(chat)) return { chat, messageId, message: m[1] };
+    const row = one<{ chat_id: string }>(app.db, "select chat_id from lark_messages where message_id = ?", messageId);
+    return row ? { chat: row.chat_id, messageId, message: m[1] } : null;
   }
   return null;
 }
 
-function larkUrl(app: App, t: LarkTarget) {
-  const pos = t.messageId ? one<{ position: number | null }>(app.db, "select position from lark_messages where message_id = ?", t.messageId)?.position : null;
-  return chatLink(t.chat, pos);
+function larkPosition(app: App, t: LarkTarget): number | null {
+  if (!t.messageId) return null;
+  const pos = one<{ position: number | null }>(app.db, "select position from lark_messages where message_id = ?", t.messageId)?.position;
+  if (pos !== null && pos !== undefined) return pos;
+  return t.message ? (one<{ p: number | null }>(app.db, "select json_extract(meta, '$.larkPosition') p from messages where id = ?", t.message)?.p ?? null) : null;
 }
 
 function sourceRow(app: App, id: string) {
   return one<{ uri: string }>(app.db, "select uri from sources where id = ? and deleted_at is null", canonicalSourceId(app, id));
 }
 
-function target(app: App, ref: string): { url: string | null; shareable: boolean } {
+function target(app: App, ref: string, chatId?: string): { url: string | null; shareable: boolean } {
   const lark = larkTarget(app, ref);
-  if (lark) return { url: larkUrl(app, lark), shareable: false };
+  if (lark) {
+    const pos = larkPosition(app, lark);
+    // The chat the answer goes to, opened at its end, is where the reader already is: a copy says more.
+    if (pos !== null || lark.chat !== chatId) return { url: chatLink(lark.chat, pos), shareable: false };
+    return { url: null, shareable: true };
+  }
   const src = /^src:([A-Za-z0-9_-]+)/.exec(ref);
   if (src) {
     const s = sourceRow(app, src[1]);
@@ -127,17 +135,19 @@ const failedAt = { at: 0 };
 export async function prefetchLarkPositions(app: App, mds: string[]) {
   if (app.config.lark.capture.mode === "off" || Date.now() - failedAt.at < 10 * 60_000) return;
   const ids = new Set<string>();
+  // Cited omem messages by their Feishu id: the bot's own chats have no lark_messages row to hold the position.
+  const messages = new Map<string, string>();
   for (const md of mds)
     for (const m of md.matchAll(CITE)) {
       const raw = m[2] ?? m[5];
       if (!raw || !/^(src|msg):/.test(raw)) continue;
       const t = larkTarget(app, normalize(raw));
-      if (t?.messageId) ids.add(t.messageId);
+      if (t?.messageId && larkPosition(app, t) === null) {
+        ids.add(t.messageId);
+        if (t.message) messages.set(t.messageId, t.message);
+      }
     }
-  if (!ids.size) return;
-  const marks = [...ids].map(() => "?").join(",");
-  const known = new Set(all<{ message_id: string }>(app.db, `select message_id from lark_messages where position is not null and message_id in (${marks})`, ...ids).map((r) => r.message_id));
-  const missing = [...ids].filter((id) => !known.has(id)).slice(0, 50);
+  const missing = [...ids].slice(0, 50);
   if (!missing.length) return;
   try {
     const { larkCli } = await import("./lark-cli.ts");
@@ -145,7 +155,10 @@ export async function prefetchLarkPositions(app: App, mds: string[]) {
     const { positionOf } = await import("./lark-messages.ts");
     for (const msg of (v?.data?.messages ?? v?.data?.items ?? []) as { message_id?: string; message_position?: string | number }[]) {
       const pos = positionOf(msg);
-      if (msg.message_id && pos !== null) run(app.db, "update lark_messages set position = ? where message_id = ?", pos, msg.message_id);
+      if (!msg.message_id || pos === null) continue;
+      run(app.db, "update lark_messages set position = ? where message_id = ?", pos, msg.message_id);
+      const own = messages.get(msg.message_id);
+      if (own) run(app.db, "update messages set meta = json_set(meta, '$.larkPosition', ?) where id = ?", pos, own);
     }
   } catch (e) {
     failedAt.at = Date.now();
@@ -204,7 +217,7 @@ export function resolveCitationsNow(app: App, mds: string[], opts: CiteOptions =
         const raw = m[2] ?? (m[3] !== undefined ? `wiki:${m[3].trim()}` : m[5]);
         const label = m[1] !== undefined ? m[1].trim() || null : m[3] !== undefined ? (m[4] ?? m[3].split(/[:/]/).pop() ?? m[3]).trim() : null;
         const ref = normalize(raw!);
-        const t = target(app, ref);
+        const t = target(app, ref, opts.chatId);
         out.push({ seg: si, start, end, ref, label, trailing: isTrailing(seg.text, start, end, label, out.at(-1) ?? null), url: t.url, shareable: t.shareable });
       }
       return out;

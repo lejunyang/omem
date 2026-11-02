@@ -168,7 +168,8 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
 
 // ---- delivering to threads -------------------------------------------------
 
-type Sender = (thread: Thread, markdown: string, meta?: Record<string, unknown>) => Promise<void>;
+/** `messageId`: the omem message being sent, for channels that note what it became on their side. */
+type Sender = (thread: Thread, markdown: string, meta: Record<string, unknown>, messageId: string) => Promise<void>;
 const senders = new Map<string, Sender>();
 
 /** Channels register how to post into one of their threads (chat, topic). */
@@ -184,11 +185,11 @@ export function registerThreadSender(channel: string, send: Sender) {
 export async function deliverToThread(app: App, threadId: string, markdown: string, meta: Record<string, unknown> = {}) {
   const t = findThread(app, threadId);
   if (!t) return false;
-  addMessage(app, t.id, "assistant", markdown, null, { ...meta, deliveredAt: now() });
+  const id = addMessage(app, t.id, "assistant", markdown, null, { ...meta, deliveredAt: now() });
   const send = senders.get(t.channel);
   if (!send) return false;
   try {
-    await send(t, markdown, meta);
+    await send(t, markdown, meta, id);
     return true;
   } catch (e) {
     console.warn(`[omem] 发送到会话 ${t.id} 失败：${(e as Error).message}`);

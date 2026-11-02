@@ -10,6 +10,7 @@ import ChipPicker from "../components/ChipPicker.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
+import { pageParam } from "../lib/route";
 import Markdown from "../components/Markdown.vue";
 import AskAboutRun from "../components/AskAboutRun.vue";
 import FixBasket from "../components/FixBasket.vue";
@@ -59,7 +60,7 @@ type RunContextInfo = {
   work: { id: string; title: string; rounds: { runId: string; agent: string; kind: string; status: string; title: string }[] } | null;
 };
 const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo } | null>(null);
-const id = computed(() => route.params.id as string | undefined);
+const id = pageParam("runs");
 
 const listLoading = ref(true);
 const detailLoading = ref(false);

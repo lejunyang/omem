@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { pageParam } from "../lib/route";
 import { del, get, post, type Source } from "../api";
 import ChatView from "../components/ChatView.vue";
 import CodeView from "../components/CodeView.vue";
@@ -80,7 +81,7 @@ const expandedOnce = ref(new Set<string>());
 const listLoading = ref(true);
 const detailLoading = ref(false);
 const space = computed(() => currentSpace());
-const id = computed(() => route.params.id as string | undefined);
+const id = pageParam("sources");
 const hl = computed(() => (route.query.from ? { from: Number(route.query.from), to: Number(route.query.to ?? route.query.from) } : null));
 
 let loadSeq = 0;

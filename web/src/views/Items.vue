@@ -12,6 +12,7 @@ import UiSelect from "../components/UiSelect.vue";
 import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import { fmtTime, itemKindLabel, openCitation, relTime, state, toast } from "../store";
 import { refAction } from "../lib/refs";
+import { pageParam } from "../lib/route";
 
 const route = useRoute();
 const router = useRouter();
@@ -48,8 +49,9 @@ watch(query, () => {
   searching.value = true;
   searchTimer = setTimeout(load, 200);
 });
+const itemId = pageParam("items");
 async function loadDetail() {
-  const id = route.params.id as string | undefined;
+  const id = itemId.value;
   detail.value = id ? await get(`/api/items/${id}`).catch(() => null) : null;
 }
 onMounted(() => {
@@ -58,7 +60,7 @@ onMounted(() => {
   void loadExpiry();
 });
 watch([showDone, scope], load);
-watch(() => route.params.id, loadDetail);
+watch(itemId, loadDetail);
 const off = onServerEvent((e) => {
   if (e.type === "changed" && e.entity === "item") {
     void load();

@@ -44,8 +44,9 @@ describe("citations in messages sent outside omem", () => {
     const lines = out.split("\n");
     expect(lines[0]).toBe(`按[退款说明](https://tenant.larkoffice.com/docx/Guide)处理。[①](https://omem.example.test/#/share/${token}/0)`);
     expect(lines[1]).toBe(`代码在这里。[②](https://omem.example.test/#/share/${token}/1) [③](https://omem.example.test/#/share/${token}/2)`);
-    // Feishu messages open in Feishu: at the message when its position is known, else the chat.
-    expect(lines[2]).toBe(`小王说的。[④](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=41) [⑤](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT})`);
+    // Feishu messages open in Feishu at the message when its position is known; without one, the chat
+    // the answer goes to is where the reader already is, so the line is copied instead.
+    expect(lines[2]).toBe(`小王说的。[④](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=41) [⑤](https://omem.example.test/#/share/${token}/3)`);
     expect(out).toContain("`[不动](src:x)`");
     expect(out).toContain("[也不动](src:y)");
     expect(out).not.toContain("(mem:");
@@ -53,7 +54,7 @@ describe("citations in messages sent outside omem", () => {
     // Only the hash is stored; the share holds copies of what was cited and nothing else.
     expect(one(app.db, "select count(*) n from shares where token_hash = ?", token)).toEqual({ n: 0 });
     const share = readShare(app, token)!;
-    expect(share.items.map((i) => [i.kind, i.label, i.mark])).toEqual([["source", "日志摘录", 1], ["source", "实现", 2], ["memory", "记录", 3]]);
+    expect(share.items.map((i) => [i.kind, i.label, i.mark])).toEqual([["source", "日志摘录", 1], ["source", "实现", 2], ["memory", "记录", 3], ["source", "回复", 5]]);
     const log = share.items[0] as Extract<typeof share.items[number], { kind: "source" }>;
     // Cited lines 3-5 of a table: starts at the table header, a few lines of context after.
     expect(log.start).toBe(1);
@@ -61,7 +62,7 @@ describe("citations in messages sent outside omem", () => {
     const impl = share.items[1] as Extract<typeof share.items[number], { kind: "source" }>;
     expect([impl.start, impl.lines.length, impl.from, impl.to, impl.format, impl.path]).toEqual([7, 9, 10, 12, "code", "src/refund.ts"]);
     expect((share.items[2] as { text: string }).text).toBe("退款失败多半是渠道超时，见 记录");
-    expect(listShares(app)[0]).toMatchObject({ runId: "r_owner", origin: "飞书 · 退款改造群", labels: ["日志摘录", "实现", "记录"], views: 1 });
+    expect(listShares(app)[0]).toMatchObject({ runId: "r_owner", origin: "飞书 · 退款改造群", labels: ["日志摘录", "实现", "记录", "回复"], views: 1 });
   });
 
   it("without a web address or a run, leaves out what it cannot link and keeps inline words", () => {
@@ -118,6 +119,33 @@ describe("citations in messages sent outside omem", () => {
     run(app.db, "insert into conversations(id, space_id, channel, title, external_id, created_at, updated_at) values('c1', 'personal', 'lark', '群', ?, 'x', 'x')", `${CHAT}#omt_1`);
     run(app.db, "insert into messages(id, conversation_id, role, text, meta, created_at) values('msg0abcdefgh', 'c1', 'user', '帮我查一下', ?, 'x')", JSON.stringify({ externalId: "om_a1" }));
     expect(resolveCitationsNow(app, ["你让我查的。msg:msg0abcdefgh"], {})[0]).toBe(`你让我查的。[①](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=41)`);
+  });
+
+  it("opens earlier messages of the owner's chat with the bot at them, or as a copy when Feishu has no place for them", async () => {
+    const { app } = fixture();
+    // The bot's private chat is not captured: no lark_messages rows, only omem's own messages.
+    const DM = "oc_botdm";
+    run(app.db, "insert into conversations(id, space_id, channel, title, external_id, created_at, updated_at) values('c2', 'personal', 'lark', '私聊', ?, 'x', 'x')", DM);
+    const add = (id: string, role: string, text: string, meta: object) => run(app.db, "insert into messages(id, conversation_id, role, text, meta, created_at) values(?, 'c2', ?, ?, ?, 'x')", id, role, text, JSON.stringify(meta));
+    add("msg0asked0001", "user", "直播卡片查不到", { externalId: "om_q1" });
+    add("msg0record001", "assistant", "编码交办第 4 轮已结束", { record: true });
+    add("msg0nopos0001", "user", "再看看", { externalId: "om_q2" });
+    const calls: string[][] = [];
+    setLarkCliForTests(async (args) => {
+      calls.push(args);
+      return { ok: true, data: { messages: [{ message_id: "om_q1", message_position: "7" }] } };
+    });
+    const md = "你问过。[原话](msg:msg0asked0001)\n结论在这。[记录](msg:msg0record001)\n后来又问。[原话](msg:msg0nopos0001)";
+    const out = (await resolveCitations(app, md, { chatId: DM, runId: "r_owner" })).split("\n");
+    expect(out[0]).toBe(`你问过。[①](https://applink.feishu.cn/client/chat/open?openChatId=${DM}&position=7)`);
+    // Never sent to Feishu as a message, or no position known: not a link to the chat the reader is in.
+    expect(out[1]).toMatch(/^结论在这。\[②\]\(https:\/\/omem\.example\.test\/#\/share\//);
+    expect(out[2]).toMatch(/^后来又问。\[③\]\(https:\/\/omem\.example\.test\/#\/share\//);
+    // The position is kept on the message: the next answer citing it reads nothing.
+    await resolveCitations(app, "你问过。[原话](msg:msg0asked0001)", { chatId: DM });
+    expect(calls).toHaveLength(1);
+    // From another chat, the bot's chat itself is still the place to look.
+    expect(resolveCitationsNow(app, ["后来又问。[原话](msg:msg0nopos0001)"], { chatId: CHAT })[0]).toBe(`后来又问。[①](https://applink.feishu.cn/client/chat/open?openChatId=${DM})`);
   });
 });
 
