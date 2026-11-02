@@ -3120,6 +3120,7 @@ def({
     review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
     run_id: z.string().describe("本次交办的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
     task: z.string().describe("这一轮要做什么：评审意见或本人的新要求，写具体"),
+    new_item: z.boolean().optional().describe("按修改项推进的交办：本人提了一件新的、能单独验证的修改时 true，记成修改项；只是让它接着推进、提醒注意什么、告诉它环境已经好了时不填，作为下一轮的交代交给编码 Agent"),
     sync: syncSchema.optional().describe("这一轮编码前先做的 Git 同步（如先合并最新的 main）；工作区里未提交的改动会先收起、同步后放回"),
     onto_latest_target: z.boolean().optional().describe("只把改动移到目标分支的最新提交上（目标分支有了新提交、应用失败时用），task 可简单写原因；冲突交给编码 Agent，解决不了会问本人"),
     apply_first: z.boolean().optional().describe("本人说“先应用到原分支再继续改”时 true：上一轮的改动先应用到目标分支，这一轮在同一个工作区接着改"),
@@ -3141,10 +3142,13 @@ def({
     for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     // A failed round may have no session of its own: resume the latest one that has.
-    // A task-driven delegation: the new request is a task; the loop codes it with a fresh budget.
+    // A task-driven delegation: a new change is a task, coded with a fresh budget; words about how to go
+    // on are the next round's instructions.
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
     if (isTaskWork(ctx.app, last.id) && !a.sync && !a.onto_latest_target && !a.apply_first) {
-      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER, { asTask: true })!;
+      const loop = await import("./code-loop.ts");
+      if (!a.new_item) return loop.workNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER);
+      const made = loop.ownerNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER, { asTask: true })!;
       return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，这一轮结束后接着做"}。`;
     }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
@@ -3199,12 +3203,16 @@ def({
   description:
     "把本人的补充要求交给正在进行的编码交办（不用等这一轮结束，也不重开一轮）：编码 Agent 在下一次调用 omem 工具时收到；没收到的在它这一轮写完、检查之前接着同一会话交给它。这一轮已经写完代码、在评审中时，补充随下一轮的任务一起交给它（评审结束后用 continue_code_run 开始下一轮）。本人在交办进行中说了新要求、纠正或补充时用，原话为主。",
   write: true,
-  schema: z.object({ run_id: z.string().describe("交办的任一运行 id"), text: z.string().min(1).max(20000).describe("本人的补充，原话为主") }),
+  schema: z.object({
+    run_id: z.string().describe("交办的任一运行 id"),
+    text: z.string().min(1).max(20000).describe("本人的补充，原话为主"),
+    new_item: z.boolean().optional().describe("按修改项推进的交办：补充的是一件新的、能单独验证的修改时 true，在两轮之间记成修改项；提醒、纠正做法、让它接着推进时不填"),
+  }),
   handler: async (ctx, a) => {
     steerable(ctx, a.run_id);
-    // A task-driven delegation between rounds: the words become a task (code-loop.ts).
+    // A task-driven delegation between rounds: a new change becomes a task (code-loop.ts); other words wait for the next round.
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
-    if (isTaskWork(ctx.app, a.run_id)) {
+    if (isTaskWork(ctx.app, a.run_id) && a.new_item) {
       const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.text, ctx.userId ?? OWNER);
       if (made) return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，下一轮做"}。`;
     }

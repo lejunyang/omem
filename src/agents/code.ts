@@ -108,6 +108,8 @@ export type CodeInput = {
    */
   taskMode?: boolean;
   maxRounds?: number;
+  /** A task-driven later round: what the owner or the assistant said for it since the last one (code-steer.ts notesText). */
+  roundNotes?: string;
 };
 export type PeerReviewer = { caller: string; session: string; agent?: string; model?: string };
 
@@ -162,8 +164,8 @@ type RepoResult = { space: string; diffStat: string; diffBytes: number; check: C
 export type IgnoredFiles = { pattern: string; files: number; example: string };
 
 /** The run's worktrees, including runs from before multi-repository delegation. */
-/** Turns a task-driven round's coder may get after its own for what its checks sent back (code-overlap.ts). */
-const FOLLOW_UPS = 2;
+/** Turns a task-driven round's coder may get after its own, for what its checks sent back and what it has not got to (code-overlap.ts). */
+const FOLLOW_UPS = 8;
 
 export function worktreesOf(app: App, runId: string): WorktreeRef[] {
   const r = getRun(app, runId);
@@ -348,7 +350,8 @@ ${input.task}
     coderTask = [
       head,
       continueFrom ? list : taken.length ? `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”），这些已经列好，逐项做：\n\n${list}` : `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”）。先用 \`plan_tasks\` 拆分${w.budgetBy === "owner" ? `（本人给的预算：最多自动推进 ${w.budget} 轮）` : "，并估计要几轮"}，再逐项做。`,
-      continueFrom ? "继续在原来的工作区里改，只做这些项；已完成和不做的项不要动。每项照角色说明里“修改项”的做法提交，并用 finish_task 说明。" : "",
+      continueFrom ? "继续在原来的工作区里改，这些项都在这一轮做完，不要做一两项就停下；已完成和不做的项不要动。每项照角色说明里“修改项”的做法提交，并用 finish_task 说明。" : "",
+      continueFrom && typeof input.roundNotes === "string" ? input.roundNotes : "",
       outside ? `## ${outside.owner ? "本人在这一轮之前改过代码" : "分支上有别人的新提交"}\n\n${outside.owner ? "本人" : "分支上"}改过这些文件（检查点 ${outside.checkpoint.seq}）：${outside.files.slice(0, 30).join("、")}${outside.files.length > 30 ? ` 等 ${outside.files.length} 个` : ""}。这些改动保留，不要覆盖或回退；和你要做的冲突时先用 report_task 交给本人。` : "",
       where.trim(),
     ].filter(Boolean).join("\n\n");
@@ -552,17 +555,27 @@ ${input.task}
         coder = await runCoder(notesText(notes), coder.sessionId);
         reply = `${reply}\n\n## 按本人补充继续\n\n${replyOf(coder)}`;
       }
-      // Its turn is over: the checks verify what it finished; what is not fixed (and what a second look
-      // found meanwhile) comes back for up to FOLLOW_UPS more turns in the same session.
-      for (let i = 0; overlap && !ctx.signal.aborted; i++) {
-        const more = i < FOLLOW_UPS && !!coder.sessionId;
+      // Its turn is over: the checks verify what it finished; what is not fixed, what a second look found
+      // meanwhile and what it has not got to come back in the same session, for up to FOLLOW_UPS more
+      // turns while each one gets something done (a task finished or reported, the code changed).
+      const { listTasks } = await import("./code-tasks.ts");
+      const progress = () => JSON.stringify([
+        overlap ? listTasks(app, rootRunId).filter((t) => t.coderRun === run.id).map((t) => [t.seq, t.state]) : [],
+        worktrees.map((wt) => `${git(workDirOf(wt), ["rev-parse", "HEAD"]).stdout}${git(workDirOf(wt), ["status", "--porcelain"]).stdout}`),
+      ]);
+      let mark = progress();
+      for (let i = 0, moved = true; overlap && !ctx.signal.aborted; i++) {
+        const more = i < FOLLOW_UPS && moved && !!coder.sessionId;
         const back = await overlap.settleTurn(app, run.id, more);
         if (!more || !back || ctx.signal.aborted) break;
         const notes = pendingNotes(app, run.id);
         if (notes.length) markNotesDelivered(app, run.id, notes);
-        ctx.event("status", { phase: "coder", text: "把评审的反馈交给编码 Agent，在这一轮接着改" });
+        ctx.event("status", { phase: "coder", text: back.includes("## 这一轮还没做的项") ? "这一轮还有项没做，让编码 Agent 在同一会话里接着做" : "把评审的反馈交给编码 Agent，在这一轮接着改" });
         coder = await runCoder([back, notes.length ? notesText(notes) : ""].filter(Boolean).join("\n\n"), coder.sessionId);
-        reply = `${reply}\n\n## 按评审的反馈继续\n\n${replyOf(coder)}`;
+        reply = `${reply}\n\n## 接着做\n\n${replyOf(coder)}`;
+        const now = progress();
+        moved = now !== mark;
+        mark = now;
       }
     } finally {
       // The helpers finish, and what they committed is picked onto the work branch (conflicts to the coder).

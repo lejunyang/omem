@@ -207,11 +207,35 @@ export function retryTask(app: App, rootId: string, seq: number, note: Omit<Task
     return updateTask(app, rootId, seq, {
       attempts,
       state: "owner",
-      question: `${taskLabel(seq)}「${t.title}」试了 ${attempts} 次还没改好（最后一次：${truncate(note.text, 300)}）。怎么办？`,
+      question: `改了 ${attempts} 次，验证还是没通过（每次的意见在下面“之前的情况”里）。要怎么改，还是不做？`,
       options: ["按评审的意见再试一次", "改成你说的做法", "不做这一项"],
     }, note);
   }
   return updateTask(app, rootId, seq, { attempts, state: "todo" }, note);
+}
+
+const NOT_REACHED = "轮编码 Agent 停下时还没做这一项";
+
+/**
+ * A round ended before its coder got to a task (no commit, no finish_task or report_task): not a try
+ * that failed, so it waits for the next round as it was. A task left alone round after round is
+ * stuck on something nobody said: it goes to whoever started the work, like one held up (blocked).
+ */
+export function notReached(app: App, rootId: string, seq: number, round: number): CodeTask {
+  const t = getTask(app, rootId, seq);
+  const note = { by: "host", kind: "host" as const, text: `第 ${round} ${NOT_REACHED}` };
+  let times = 1;
+  for (const n of [...t.notes].reverse()) {
+    if (n.kind === "host" && n.text.endsWith(NOT_REACHED)) times++;
+    else if (n.kind !== "host") break;
+  }
+  if (times < MAX_ATTEMPTS) return updateTask(app, rootId, seq, { state: "todo" }, note);
+  return updateTask(app, rootId, seq, {
+    state: "owner",
+    question: `编码 Agent 连续 ${times} 轮都没做到这一项：它在做别的项，或者每轮停下前没轮到它，也没有用 report_task 说明为什么。可能是这一项太大、说得不清楚，或者依赖别的项。`,
+    options: ["说清楚了，再做一次"],
+    origin: { ...t.origin, blocked: true, escalated: undefined },
+  }, note);
 }
 
 /** A finding taken up as a task: its check verifies it, the finding remembers the task. */
@@ -377,7 +401,7 @@ export function settleCodingRound(app: App, rootId: string, runId: string, workt
     const task = getTask(app, rootId, t.seq);
     if (task.state === "coding") {
       if (touched.has(t.seq)) updateTask(app, rootId, t.seq, { state: task.verifier ? "verify" : "done" }, { by: "host", kind: "host", text: "有这一项的提交，但编码 Agent 没有用 finish_task 说明" });
-      else retryTask(app, rootId, t.seq, { by: "host", kind: "host", text: `第 ${round} 轮没有这一项的提交，也没有说明` });
+      else notReached(app, rootId, t.seq, round);
     }
   }
   const finished = listTasks(app, rootId).filter((t) => t.coderRun && coders.has(t.coderRun) && ["verify", "done"].includes(t.state)).map((t) => t.seq);
@@ -711,6 +735,20 @@ export function taskText(app: App, t: CodeTask) {
     t.origin.note ? `本人的原话：${t.origin.note}` : "",
     t.answer ? `本人的决定：${t.answer}` : "",
     tries.length ? `之前的情况：\n${tries.map((n) => `- ${n.text}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
+}
+
+/**
+ * What the owner reads when a task waits on them, as plainly as a review finding: the question, then
+ * the task in full (what done means, the finding it came from, each try and what was said about it)
+ * and what the coder said last.
+ */
+export function ownerQuestionText(app: App, t: CodeTask) {
+  const said = t.notes.filter((n) => n.kind === "coder").at(-1);
+  return [
+    t.question ?? "",
+    taskText(app, t).split("\n").slice(1).join("\n").trim(),
+    said && !(t.question ?? "").includes(said.text) ? `编码 Agent 最后的说明：${said.text}` : "",
   ].filter(Boolean).join("\n\n");
 }
 

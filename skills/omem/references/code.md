@@ -11,7 +11,7 @@
 
 ## 进行中调整
 
-- 按修改项推进的交办里，`message_code_run` 在编码进行中照旧交给编码 Agent，其他时候记成一个修改项、马上开始下一轮；`continue_code_run` 把要求记成修改项并给一份新预算。修改项、等本人决定的问题、回退在运行页处理。
+- 按修改项推进的交办里，`message_code_run` 和 `continue_code_run` 默认把话作为交代交给编码 Agent（编码中马上收到，否则随下一轮；`continue_code_run` 有待做的项时马上开下一轮）。只有本人提了一件新的、能单独验证的修改时传 `new_item: true`，记成修改项（`continue_code_run` 另给一份新预算）。“接着推进”“环境好了”“注意某事”不要记成修改项：它没法用一次提交做完，只会一轮轮算作没改好。等本人决定的项本人说重做时，在回答本人的这一轮用 `settle_code_task` 转达。修改项、等本人决定的问题、回退在运行页处理。
 - `message_code_run(run_id, text)`：把本人的补充交给正在编码的 Agent（它下一次调用 omem 工具时收到，最晚在这一轮检查前接着同一会话交给它；这一轮已写完代码时随下一轮的任务交付）。
 - `set_code_review(run_id, review_tier?, review_checks?, split?)` 改之后的评审：档位可以比之前轻，`review_checks` 只做这些评审项，`split: false` 不再拆需求，`rotate_models` 之后每轮各评审项换用评审设置里轮换列表的下一个模型；还没开始评审的这一轮就生效，之后的轮次沿用。
 - `revise_finding(run_id, finding_id, detail, title?, suggestion?)`：本人看不懂某条评审问题时，读相关代码（迁移也读源实现）后重写它的描述：标题说清什么情况下哪里出了什么错；正文用 Markdown 分“现在的实现 / 源实现 / 触发条件 / 问题”（小节标题单独一行、前面空一行），每点后面直接带 `[说明](路径:起-止)` 或 `[说明](src:<原件id>#L起-L止)`。评审原来的写法保留，严重级别和本人的决定不变。提交评审（`submit_review`）时也按这个写法写 `detail`。

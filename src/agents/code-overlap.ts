@@ -309,7 +309,8 @@ function bringBack(app: App, runId: string, r: OpenRound, seq: number, text: str
  * The coder's turn ended. With `more` (one more turn may follow): its finished tasks not verified yet
  * are verified now and what is not fixed comes back; without: only the verifications running are
  * waited for, and what they send back waits for the next round. Returns what the next turn is told
- * when tasks came back to this round (not fixed, or new from a second look) and wait to be done.
+ * when the round still has tasks to code: ones that came back (not fixed, or new from a second look)
+ * and ones it has not got to yet (a coder often stops after one or two of them).
  */
 export async function settleTurn(app: App, runId: string, more: boolean): Promise<string | null> {
   const r = open.get(runId);
@@ -321,9 +322,15 @@ export async function settleTurn(app: App, runId: string, more: boolean): Promis
   }
   while (r.running.size) await Promise.allSettled([...r.running]);
   const said = takeRoundFeedback(runId);
-  const left = [...r.back.keys()].map((seq) => getTask(app, r.rootId, seq)).filter((t) => t.state === "coding" && t.coderRun === runId);
+  const left = listTasks(app, r.rootId).filter((t) => t.state === "coding" && t.coderRun === runId);
   if (!more || !left.length) return null;
-  return [said ?? "", `## 还在你这一轮的项\n\n逐项改、提交、finish_task；拿不准的照常 ask_reviewer 或 report_task。\n\n${left.map((t) => taskText(app, t)).join("\n\n")}`].filter(Boolean).join("\n\n");
+  const back = left.filter((t) => r.back.has(t.seq));
+  const untouched = left.filter((t) => !r.back.has(t.seq));
+  return [
+    said ?? "",
+    back.length ? `## 还在你这一轮的项\n\n逐项改、提交、finish_task；拿不准的照常 ask_reviewer 或 report_task。\n\n${back.map((t) => taskText(app, t)).join("\n\n")}` : "",
+    untouched.length ? `## 这一轮还没做的项\n\n这些也是这一轮的，你停下时还没做。接着逐项做：改、验证、提交、finish_task；做不了的用 report_task 说明原因，不要留给下一轮。\n\n${untouched.map((t) => taskText(app, t)).join("\n\n")}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 /**

@@ -248,6 +248,8 @@ new AgentSideConnection(
             const made = await call("plan_tasks", { tasks: [{ title: "退款只算未发货的行", done_when: "已发货的行不计入退款" }, { title: "补退款测试", done_when: "有覆盖已发货行的测试" }], rounds: 6 });
             seqs = [...String((made.content as { text: string }[])[0].text).matchAll(/T(\d+) /g)].map((m) => Number(m[1]));
           } else seqs = [...prompt.matchAll(/^### T(\d+) /gm)].map((m) => Number(m[1]));
+          // FAKE_ONE_PER_TURN: like a coder that does one task and ends its turn.
+          if (process.env.FAKE_ONE_PER_TURN) seqs = seqs.slice(0, 1);
           for (const seq of [...new Set(seqs)]) {
             // Unsure about the business finding the first time: ask the check that raised it.
             if (prompt.includes(`### T${seq} 已发货行不能退`) && !prompt.includes("问业务")) await call("ask_reviewer", { task: `T${seq}`, question: "过滤的是已发货还是未发货的行？" });

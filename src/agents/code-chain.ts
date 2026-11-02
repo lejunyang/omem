@@ -106,6 +106,7 @@ export function queueNextCodeRound(
     const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; fromReview?: string; taskMode?: boolean };
     // What the owner added while the last round ran and nobody delivered yet goes with this round's task.
     const notes = pendingNotes(app, chain.lastCodeRunId!);
+    const roundNotes = notes.length ? notesText(notes) : null;
     if (notes.length) {
       task = `${task}\n\n${notesText(notes)}`;
       markNotesDelivered(app, chain.lastCodeRunId!, notes);
@@ -129,7 +130,8 @@ export function queueNextCodeRound(
         readSpaces: input.readSpaces,
         itemId: input.itemId,
         fromReview: input.fromReview,
-        ...(input.taskMode ? { taskMode: true } : {}),
+        // A task-driven round's brief is its tasks, not `task`: the notes go along on their own.
+        ...(input.taskMode ? { taskMode: true, ...(roundNotes ? { roundNotes } : {}) } : {}),
         // review-lead named the checks the fixes touch; the others are not re-run this round.
         ...(opts.reviewOnly?.length ? { reviewOnly: opts.reviewOnly } : {}),
         // A round of Git work (finishing a stopped sync, moving onto the latest target) says so here.

@@ -7,7 +7,7 @@ import "../src/agents/jobs.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
-import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, recordCheckpoint, recordOutsideChanges, scheduleWorkRevert, settleCodingRound, updateTask, workPatches, workState } from "../src/agents/code-tasks.ts";
+import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQuestionText, recordCheckpoint, recordOutsideChanges, retryTask, scheduleWorkRevert, settleCodingRound, updateTask, workPatches, workState } from "../src/agents/code-tasks.ts";
 import { advanceWork, taskReview } from "../src/agents/code-loop.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
@@ -16,7 +16,7 @@ import { snapshot } from "../src/channels/lark-code-progress.ts";
 import type { CodeChain } from "../src/agents/code-chain.ts";
 import { __testHandlers, addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
-import { run } from "../src/core/db.ts";
+import { all, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { OWNER } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
@@ -358,6 +358,86 @@ describe("a delegation driven by tasks", () => {
       const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "回答", input: { conversationId: t.id, messageIds: [said] } });
       expect((await settle({ ...assistant, runId: turn.id } as ToolContext, scope.seq, "retry", "本人说：存量按新口径")).isError).toBe(false);
       expect(listTasks(app, r.id)[1]).toMatchObject({ state: "todo", answer: "本人说：存量按新口径" });
+    } finally {
+      app.db.close();
+    }
+  });
+
+  it("keeps a coder that stops after one task going in the same session until the round's tasks are done", async () => {
+    const app = testApp();
+    app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "tasks", FAKE_ONE_PER_TURN: "1" }, idleTimeoutMs: 60000 });
+    app.config.agents.default = "fake";
+    const dir = mkdtempSync(join(tmpdir(), "omem-loop-keep-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" } });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const r1 = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款金额", input: { task: "退款只按未发货的行计算", repos: ["shop-api"], taskMode: true, maxRounds: 1 }, userId: OWNER });
+      for (const title of ["退款只算未发货的行", "运费按比例退", "补退款说明"]) addTask(app, r1.id, { title, kind: "build" }, "coder");
+      await work(app, r1.id);
+      // The three the round was given (the review may add its own after).
+      expect(listTasks(app, r1.id).slice(0, 3).map((t) => [t.state, t.attempts])).toEqual([["done", 0], ["done", 0], ["done", 0]]);
+      const said = all<{ data: string }>(app.db, "select data from run_events where run_id = ? and type = 'status'", r1.id).map((e) => JSON.parse(e.data).text as string);
+      expect(said.filter((t) => t.includes("这一轮还有项没做"))).toHaveLength(2);
+    } finally {
+      await server.close();
+      app.db.close();
+    }
+  }, 120_000);
+
+  it("leaves a task a round did not get to as it was, and gives it to the assistant after three such rounds", () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款", repos: ["personal"], taskMode: true }, userId: OWNER });
+      const t = addTask(app, r.id, { title: "运费按比例退", doneWhen: "部分退款时运费按金额比例退", kind: "build" }, "coder");
+      for (const round of [1, 2, 3]) {
+        updateTask(app, r.id, t.seq, { state: "coding", coderRun: r.id });
+        settleCodingRound(app, r.id, r.id, [], round);
+        expect(listTasks(app, r.id)[0]).toMatchObject({ state: round < 3 ? "todo" : "owner", attempts: 0 });
+      }
+      const stuck = listTasks(app, r.id)[0];
+      expect(stuck.origin).toMatchObject({ blocked: true });
+      expect(stuck.question).toContain("连续 3 轮");
+      // What the owner (or the assistant) reads has the task in full, not a cut-off line.
+      const text = ownerQuestionText(app, stuck);
+      expect(text).toContain("完成标准：部分退款时运费按金额比例退");
+      expect(text).toContain("第 3 轮编码 Agent 停下时还没做这一项");
+      // A try that failed verification still counts.
+      updateTask(app, r.id, t.seq, { state: "todo", origin: {} });
+      for (let i = 0; i < 3; i++) retryTask(app, r.id, t.seq, { by: "verify", kind: "verify", text: `第 ${i + 1} 次：部分退款时运费还是全退` });
+      const failed = listTasks(app, r.id)[0];
+      expect(failed).toMatchObject({ state: "owner", attempts: 3 });
+      expect(ownerQuestionText(app, failed)).toContain("第 3 次：部分退款时运费还是全退");
+    } finally {
+      app.db.close();
+    }
+  });
+
+  it("gives the assistant's words on how to go on to the next round as instructions, and makes a task only of a new change", async () => {
+    const app = testApp();
+    try {
+      const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "交办", input: { conversationId: t.id } });
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true }, parentId: ask.id, userId: OWNER });
+      codeChainFor(app, r);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      setRunOutput(app, r.id, { coderSummary: "做完了 T1" });
+      addTask(app, r.id, { title: "运费按比例退", kind: "build" }, "coder");
+      const assistant: ToolContext = { app, runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
+      const said = await callTool(assistant, "continue_code_run", { run_id: r.id, task: "接着推进，浏览器环境已经装好了" });
+      expect(said.text).toContain("作为这一轮的交代");
+      expect(listTasks(app, r.id)).toHaveLength(1);
+      const next = lastRound(app, r.id);
+      expect(next.id).not.toBe(r.id);
+      expect(String(next.input.roundNotes)).toContain("浏览器环境已经装好了");
+      // A new change of its own is a task.
+      run(app.db, "update runs set status = 'done' where id = ?", next.id);
+      expect((await callTool(assistant, "continue_code_run", { run_id: r.id, task: "退款单要显示退款原因", new_item: true })).text).toContain("已记成修改项");
+      expect(listTasks(app, r.id).map((x) => x.title)).toContain("退款单要显示退款原因");
     } finally {
       app.db.close();
     }

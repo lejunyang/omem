@@ -5,10 +5,11 @@ import { git } from "../core/git.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { codeChainFor, queueNextCodeRound, saveCodeChain, type CodeChain } from "./code-chain.ts";
+import { addCodeNote } from "./code-steer.ts";
 import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
 import {
   addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, taskForFinding,
-  stranded, taskLabel, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
+  ownerQuestionText, stranded, taskLabel, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
@@ -537,7 +538,7 @@ function ensureOwnerAsks(app: App, rootId: string) {
       runId: last.id,
       conversationId: chain?.conversationId ?? null,
       userId: workOwner(app, rootId),
-      question: `「${truncate(getRun(app, rootId).title, 40)}」的 ${taskLabel(t.seq)}「${t.title}」需要你决定：\n${t.question ?? t.doneWhen}\n其他修改项照常推进；可以在输入框里写你的做法。`,
+      question: `「${truncate(getRun(app, rootId).title, 40)}」的 ${taskLabel(t.seq)}「${t.title}」需要你决定：\n\n${ownerQuestionText(app, t)}\n\n其他修改项照常推进；可以在输入框里写你的做法。`,
       options: [...t.options, SKIP].map((label) => ({ label })),
       allowText: true,
       context: { handler: "code-task", workId: rootId, seq: t.seq },
@@ -620,4 +621,24 @@ export function ownerNote(app: App, runId: string, text: string, by: string, opt
   const first = text.trim().split("\n")[0];
   const task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: "owner", origin: { note: text.trim() } }, by);
   return { task, next: advanceWork(app, rootId, { owner: true }) };
+}
+
+/**
+ * Words about how a task-driven delegation goes on rather than a change of their own (go on, mind
+ * this, the environment works now): they reach the coder as the round's instructions — at once while
+ * it codes, else with the next round, which starts now when there are tasks to do. Made a task, such
+ * words could never be finished by a commit and would only come back as tries that failed.
+ */
+export function workNote(app: App, runId: string, text: string, by: string): string {
+  const rootId = workRootOf(app, runId);
+  const { stage, runId: at } = addCodeNote(app, runId, text, by);
+  if (stage === "coding" || stage === "queued") return `已交给正在做的 ${at}：编码 Agent 在这一轮收到。`;
+  const next = advanceWork(app, rootId, { owner: true });
+  if (next) return `第 ${next.input.round ?? "?"} 轮 ${next.id} 开始做，这段话作为这一轮的交代交给编码 Agent。`;
+  const waiting = listTasks(app, rootId).filter((t) => t.state === "owner");
+  return [
+    "记下了，下一轮开始时交给编码 Agent。现在没有待做的修改项，所以没有开新的一轮。",
+    waiting.length ? `在等处理的：${waiting.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 40)}」${t.origin.blocked && !t.origin.escalated ? "（等你处理）" : "（等本人决定）"}`).join("、")}。本人让它们重做的，在回答本人的这一轮用 settle_code_task（action=retry）转达；等你处理的直接处理。` : "",
+    "要加一项新的修改，再调用一次并传 new_item=true。",
+  ].filter(Boolean).join("\n");
 }

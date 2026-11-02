@@ -1075,3 +1075,4 @@ updated: 2026-10-30
 - **豆包**：`deleteDoubaoSession`（`DELETE /v1/sessions/:id`，无令牌时接口回 99991661，路由存在）。`doubao` 与 `doubao-cli` 的单次运行（不续会话、不保留）结束后删掉这次建的会话，失败的也删；CLI 的对话 id 交给同一个接口（同一豆包账号），这台机器没有授权 OpenAPI 时运行里提示会话留在豆包历史里。只删 omem 从后端拿到的 id。
 - **飞书里引用和机器人的私聊**（`citations.ts`）：和机器人的私聊不进 `lark_messages`，补到的位置原来无处可存，`msg:` 引用都只打开这个私聊（读者本来就在这里）。现在位置记在 omem 消息的 `meta.larkPosition`；`deliverToThread` 送出的回复记下 `larkMessageId`；没有位置、又正是发往的会话时，引用改成只读分享；没发到飞书的消息（记录、卡片）直接分享。
 - **网页的页面参数**（`web/src/lib/route.ts` 的 `pageParam`）：需求、事项、问答、运行、原件页只认自己路径下的 id，路由已经换到别的页、旧页面还没卸载时不再拿新页的 id 去请求（运行页报“需求点不存在：<运行 id>”）。
+- **修改项推进的一轮做完再停**（`code.ts`、`code-overlap.ts` 的 `settleTurn`）：编码 Agent 做完一两项就停下时，同一会话里接着做这一轮没做的项（最多 8 次，没进展就停）。没轮到的项不再算一次尝试（`code-tasks.ts` 的 `notReached`，连续 3 轮没轮到交给助手）。助手用 `continue_code_run` / `message_code_run` 说的“接着推进”作为下一轮的交代（`workNote`、`roundNotes`），`new_item: true` 才记成修改项。问本人的卡片带完成标准、评审问题、每次的情况和编码 Agent 的说明（`ownerQuestionText`）。
