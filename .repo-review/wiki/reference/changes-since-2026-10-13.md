@@ -1024,7 +1024,7 @@ updated: 2026-10-30
 - 没有 MCP：有 omem 工具时说明末尾加 `DOUBAO_TOOL_NOTE`，让它在 shell 里用 `omem tool`（`agentToolEnv` 的令牌和 PATH 会传到它执行的命令）；额外 MCP 服务器给不了，发一条状态说明。
 - 提示超过 6000 字或只能经 cmd 调用时写进 `tmpdir()/omem-doubao/<uuid>.md` 让它先读，结束后删掉；默认命令 `doubao` 直接调用 npm 包解压的原生程序（`doubaoAppRoot()`，和包里 `runtime.cjs` 的位置一致）。
 - 检测模型（`probeDoubaoCli`，网页 Agent 页的“检测模型”也对它开放）：`--model` 给一个不存在的名字读出可用模型，再按模型试 `--effort none` / `max` 读出强度；都带 `--resume 1`，合法组合停在找会话这一步，不新建对话。
-- 它的对话存在豆包账号里，CLI 不能删除或归档。
+- 它的对话存在豆包账号里，CLI 不能删除或归档（11-03 起经 OpenAPI 删除 omem 建的，见下）。
 - `code_workspace` 写新文件时按最近的已有上级目录解析真实路径：工作区在链接后面（如 home 目录是链接）时，原来新文件会被判成“不在工作区里”。
 
 ## 10-31：需求页里看编码；本人改写评审建议
@@ -1067,3 +1067,9 @@ updated: 2026-10-30
 - 宿主发现的修改项（`code-loop.ts` 的 `hostFindings`）：交办的提交里有被 `.gitignore` 忽略的文件（`code.ts` 的 `ignoredAdded`，按 `git check-ignore -v` 的规则分组）时加“撤回提交了的被忽略文件”，评审任务里也列出；没有别的待做项、检查却没通过时加“检查没通过”，以前会带着失败的检查判为完成（一次交办里检查命令因为删掉了构建脚本一直报错，三轮都判“通过”）。`roles/coder.md` 写明不要 `git add -f` 被忽略的文件。
 - 编码 Agent 被挡住的项先交给助手（`settle_code_task`）：`report_task` 的 blocked 在交办来自对话时不给本人发卡片，一轮结束叫醒助手时列出（`code-tasks.ts` 的 `blockedText`），助手让它重做、不做或交给本人（`code-loop.ts` 的 `settleTask`）；本人在对话里回答了“等你决定”的项也由助手转达，已发的卡片关闭。编码任务写明宿主开始前的 Git 同步结果和 HEAD，`roles/coder.md` 说明拉取、推送由宿主做。`delegate_code` 在已有分支上不带事项时沿用这条分支之前交办的事项（`review-fix.ts` 的 `itemOnBranch`）。
 - 思考气泡更新超时不再立刻撤回：已经能更新的气泡遇到超时当作已送达接着更新，连续三次超时才撤回并改发“处理中”卡片（`lark-cot.ts` 的 `tolerant`）。常驻服务器上一天里 8 次撤回都是飞书 15 秒没回。
+
+## 11-03：后端会话清理补漏；豆包会话经 OpenAPI 删除
+
+- **ACP 清理补漏**（`acp.ts`）：`discard` 时原连接已断（进程退出，或后台池里闲置期间连接关闭：常驻服务器上 Codex 10-23 以来 92 次“ACP connection closed”）改用 `deleteAcpSession`：另起一个进程，`initialize` 后只调 `session/delete`。之前进程已退出时直接跳过、不提示。
+- **聊天换会话时清理旧的**（`sessions.ts` 的 `retireReplaced`，`dispatch.ts` 的 `retireSession`）：聊天会话因轮数上限、换模型或旧会话恢复不了而换成新会话时，旧会话按后端能力归档（`archiveArgs`）、`session/delete` 或豆包删除；在后台进行，失败只写服务日志。编码、交办、评审链的会话仍保留供续轮。
+- **豆包**：`deleteDoubaoSession`（`DELETE /v1/sessions/:id`，无令牌时接口回 99991661，路由存在）。`doubao` 与 `doubao-cli` 的单次运行（不续会话、不保留）结束后删掉这次建的会话，失败的也删；CLI 的对话 id 交给同一个接口（同一豆包账号），这台机器没有授权 OpenAPI 时运行里提示会话留在豆包历史里。只删 omem 从后端拿到的 id。

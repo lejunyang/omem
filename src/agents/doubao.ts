@@ -381,6 +381,17 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   return { text, reply: reply ? reply + links : undefined, stopReason: status === "cancelled" ? "cancelled" : "end_turn", sessionId, agent: "豆包" };
 }
 
+/**
+ * Delete a session omem made (`DELETE /v1/sessions/:id`), so finished one-off conversations do not
+ * pile up in the owner's Doubao history. Also takes the Doubao CLI's conversation ids: same account.
+ */
+export async function deleteDoubaoSession(home: string, app: DoubaoApp, sessionId: string) {
+  if (!/^[\w-]+$/.test(sessionId)) throw new Error("无效的豆包会话 id");
+  const token = await doubaoAccessToken(home, app);
+  if (!token) throw new Error("豆包 OpenAPI 未授权");
+  await api(token, "DELETE", `/v1/sessions/${sessionId}`);
+}
+
 /** The app whose token a doubao profile uses: `env.DOUBAO_APP_ID` on the profile, else the bot. */
 export function doubaoAppFor(home: string, profile: AgentProfile, apps: DoubaoApp[]): DoubaoApp | null {
   const wanted = profile.env?.DOUBAO_APP_ID;

@@ -29,4 +29,8 @@ if (prompt === "fail") {
   process.exit(1);
 }
 console.error(JSON.stringify({ type: "session", session_id: resume ?? "s-1" }));
+if (prompt.endsWith("fail-after-session")) {
+  console.log("Error: 任务中断");
+  process.exit(1);
+}
 console.log(`echo:${prompt} model=${model ?? ""} effort=${effort ?? ""} env=${process.env.OMEM_TOKEN ?? ""}`);

@@ -3,9 +3,9 @@ import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
-import { runBackend } from "./dispatch.ts";
+import { retireSession, runBackend } from "./dispatch.ts";
 import { fallbackProfiles, isRetryableAgentError, prepareRun, recordRunAI, type Actor } from "./runner.ts";
-import type { AgentProfile } from "../core/config.ts";
+import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
 import { chatSettings, describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
@@ -269,6 +269,14 @@ ${WAKE_NOTE}`
 
   const save = (sessionId: string | undefined, turns: number) =>
     updateThread(app, threadId, { agentProfile: sessionKey, agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns });
+  // The session this thread had is not coming back once a new one replaced it: remove it from the
+  // backend's own list (Codex, TraeX, Doubao keep every session the owner can browse).
+  const retireReplaced = (sessionId: string | undefined) => {
+    if (!t.agentSession || t.agentSession === sessionId) return;
+    const old = allProfiles(app.config).find((p) => p.id === t.agentProfile?.split("|")[0]);
+    // In the background, after the reply: a failure goes to the service log, not the finished run.
+    if (old) void retireSession(app, old, t.agentSession, t.agentCwd ?? prep.cwd, (e) => e.type === "status" && console.warn(`[omem] ${e.text}`));
+  };
 
   if (prep.profile.transport !== "acp") {
     // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
@@ -303,6 +311,7 @@ ${WAKE_NOTE}`
         mode = "fresh";
       }
       save(r.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
+      retireReplaced(r.sessionId);
       return { text: replyOf(r), agent: r.agent, profileId: prep.profile.id, mode };
     } finally {
       revokeToolToken(prep.token);
@@ -416,6 +425,7 @@ ${WAKE_NOTE}`
           r = await handle.prompt(sessionPrompt(handle, again, freshBody(), emit), emit, ctx.signal);
         }
         save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
+        retireReplaced(l.handle.sessionId);
         answer = replyOf(r);
         done = true;
         break;

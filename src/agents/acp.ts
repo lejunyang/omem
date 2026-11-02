@@ -302,11 +302,18 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         if (!resumed && !caps?.sessionCapabilities?.delete && profile.archiveArgs?.length) {
           close();
           await archiveSession(profile, sessionId, opts.cwd, opts.env);
-        } else if (!dead && caps?.sessionCapabilities?.delete && !resumed) {
+        } else if (caps?.sessionCapabilities?.delete && !resumed) {
           // A cancelled/failed prompt has already rejected `failed`; cleanup has its own budget.
-          await Promise.race([connection.deleteSession({ sessionId }), new Promise<never>((_, reject) => {
+          // The agent keeps sessions on disk, so one whose process has gone (or whose connection
+          // closed while it sat idle in the background pool) is deleted through a new connection.
+          const here = dead ? Promise.reject(new Error("ACP connection closed")) : connection.deleteSession({ sessionId });
+          await Promise.race([here, new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new Error("会话清理超时")), 5000);
-          })]);
+          })]).catch(async (e) => {
+            if (!dead && !/connection closed|EPIPE|ECONNRESET|会话清理超时/i.test((e as Error).message)) throw e;
+            close();
+            await deleteAcpSession(profile, sessionId, opts.cwd, { ...opts.mcp?.env, ...opts.env });
+          });
         } else if (!resumed && !caps?.sessionCapabilities?.delete && !opts.probe) {
           emitSetup({ type: "status", text: "该后端不支持自动清理会话，历史可能仍显示在后端列表中" });
         }
@@ -490,6 +497,43 @@ function explain(error: unknown, profile: AgentProfile) {
   const cli = profile.command === "npx" || profile.command === "uvx" ? `${profile.command} ${profile.args.filter((a) => !a.startsWith("-") || a === "-y").slice(0, 2).join(" ")}` : profile.command;
   const hint = /auth|login|log in|api.?key|credential|provider|configur/i.test(text) ? `（先在终端直接运行 ${cli} 完成登录或配置，再回来使用）` : "";
   return new Error(text + hint);
+}
+
+/** Delete a session through a connection of its own: start the agent, `session/delete`, stop it. */
+export async function deleteAcpSession(profile: AgentProfile, sessionId: string, cwd: string, env?: Record<string, string>) {
+  const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...env } });
+  child.stderr.resume();
+  const output = new WritableStream<Uint8Array>({ write: (chunk) => new Promise((resolve, reject) => child.stdin.write(chunk, (e) => (e ? reject(e) : resolve()))) });
+  const input = new ReadableStream<Uint8Array>({
+    start(controller) {
+      child.stdout.on("data", (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
+      child.stdout.once("end", () => { try { controller.close(); } catch {} });
+    },
+  });
+  const connection = new ClientSideConnection(
+    () => ({
+      requestPermission: async () => ({ outcome: { outcome: "cancelled" } }),
+      sessionUpdate: async () => {},
+    }),
+    ndJsonStream(output, input),
+  );
+  let timer: NodeJS.Timeout | undefined;
+  const exited = new Promise<never>((_, reject) => child.once("exit", (code) => reject(new Error(`Agent 进程退出（${code}）`))));
+  exited.catch(() => {});
+  try {
+    await Promise.race([
+      (async () => {
+        const init = await connection.initialize({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "omem", version: "0.2.0" } });
+        if (!(init.agentCapabilities as { sessionCapabilities?: { delete?: unknown } } | undefined)?.sessionCapabilities?.delete) throw new Error("该后端不支持删除会话");
+        await connection.deleteSession({ sessionId });
+      })(),
+      exited,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("会话清理超时")), 30_000); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    stop(child);
+  }
 }
 
 /** One prompt turn against an ACP agent (Codex/TraeX/Claude Code adapters…). */
