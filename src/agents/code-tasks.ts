@@ -23,7 +23,7 @@ import type { WorktreeRef } from "./worktree-index.ts";
 export type TaskState = "todo" | "coding" | "verify" | "disputed" | "done" | "owner" | "wontdo" | "reverted";
 /** build: split from the request; fix: from a review finding; owner: the owner's words; redo: again after a revert. */
 export type TaskKind = "build" | "fix" | "owner" | "redo";
-export type TaskNote = { at: string; by: string; text: string; kind: "coder" | "verify" | "owner" | "revert" | "lead" | "host" | "consult" };
+export type TaskNote = { at: string; by: string; text: string; kind: "coder" | "verify" | "owner" | "revert" | "lead" | "host" | "consult" | "assistant" };
 export type CodeTask = {
   id: number;
   workId: string;
@@ -31,7 +31,8 @@ export type CodeTask = {
   title: string;
   doneWhen: string;
   kind: TaskKind;
-  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[] };
+  /** blocked: the coder was held up by its environment, which the assistant that started the work sees to first; escalated: it passed it on to the owner. */
+  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[]; blocked?: boolean; escalated?: boolean };
   state: TaskState;
   question: string | null;
   options: string[];
@@ -184,13 +185,13 @@ export function addTask(app: App, rootId: string, t: NewTask, by: string): CodeT
   return getTask(app, rootId, seq);
 }
 
-export type TaskPatch = Partial<Pick<CodeTask, "title" | "doneWhen" | "state" | "question" | "options" | "answer" | "verifier" | "coderRun" | "attempts" | "reverts" | "commits" | "checkpoint">>;
+export type TaskPatch = Partial<Pick<CodeTask, "title" | "doneWhen" | "origin" | "state" | "question" | "options" | "answer" | "verifier" | "coderRun" | "attempts" | "reverts" | "commits" | "checkpoint">>;
 export function updateTask(app: App, rootId: string, seq: number, patch: TaskPatch, note?: Omit<TaskNote, "at">): CodeTask {
   const t = getTask(app, rootId, seq);
   const next = { ...t, ...patch };
   const notes = note ? [...t.notes, { at: now(), ...note }] : t.notes;
-  run(app.db, "update code_tasks set title=?, done_when=?, state=?, question=?, options=?, answer=?, verifier=?, coder_run=?, attempts=?, reverts=?, commits=?, checkpoint=?, notes=?, updated_at=? where id=?",
-    next.title, next.doneWhen, next.state, next.question, next.options.length ? JSON.stringify(next.options) : null, next.answer, next.verifier, next.coderRun, next.attempts, next.reverts, JSON.stringify(next.commits), next.checkpoint, JSON.stringify(notes), now(), t.id);
+  run(app.db, "update code_tasks set title=?, done_when=?, origin=?, state=?, question=?, options=?, answer=?, verifier=?, coder_run=?, attempts=?, reverts=?, commits=?, checkpoint=?, notes=?, updated_at=? where id=?",
+    next.title, next.doneWhen, JSON.stringify(next.origin), next.state, next.question, next.options.length ? JSON.stringify(next.options) : null, next.answer, next.verifier, next.coderRun, next.attempts, next.reverts, JSON.stringify(next.commits), next.checkpoint, JSON.stringify(notes), now(), t.id);
   app.emit({ type: "changed", entity: "code-task", id: rootId });
   return getTask(app, rootId, seq);
 }
@@ -698,7 +699,7 @@ export function takeTasks(app: App, rootId: string, runId: string): CodeTask[] {
 /** What a task asks for, as the coder reads it: what done means, where it came from, how it went before. */
 export function taskText(app: App, t: CodeTask) {
   const findings = (t.origin.findings ?? []).map((id) => one<{ title: string; detail: string; suggestion: string; owner_suggestion: string | null; file_path: string | null; line: number | null; check_name: string }>(app.db, "select f.title, f.detail, f.suggestion, f.owner_suggestion, f.file_path, f.line, r.check_name from review_findings f join reviews r on r.id = f.review_id where f.id = ?", id)).filter(Boolean);
-  const tries = t.notes.filter((n) => ["verify", "revert", "host", "owner", "lead", "consult"].includes(n.kind)).slice(-6);
+  const tries = t.notes.filter((n) => ["verify", "revert", "host", "owner", "lead", "consult", "assistant"].includes(n.kind)).slice(-6);
   return [
     `### ${taskLabel(t.seq)} ${t.title}`,
     t.doneWhen ? `完成标准：${t.doneWhen}` : "",
@@ -715,6 +716,14 @@ export function taskText(app: App, t: CodeTask) {
 
 /** Owner of the work, for asks and notifications. */
 export const workOwner = (app: App, rootId: string) => runUser(app, rootId);
+
+/** The tasks held up by the coder's environment that wait for the assistant (ensureOwnerAsks), for its turn after the round. */
+export function blockedText(app: App, rootId: string) {
+  const blocked = listTasks(app, rootId).filter((t) => t.state === "owner" && t.origin.blocked && !t.origin.escalated);
+  return blocked.length
+    ? `## 编码 Agent 被挡住、等你处理的修改项\n\n${blocked.map((t) => `- ${taskLabel(t.seq)}「${t.title}」：${truncate(t.question ?? "", 600)}`).join("\n")}\n\n这些没有问本人。你能处理的（查清楚、换个做法、宿主已经做过的）处理好后用 settle_code_task 让它重做或不做；要本人做或决定的，用 settle_code_task 的 owner 交给本人。`
+    : "";
+}
 
 export function lastRound(app: App, rootId: string): Run {
   const r = one<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at desc limit 1", rootId, rootId);

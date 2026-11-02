@@ -53,6 +53,8 @@ type State = {
   prologueSent: boolean;
   /** At least one event batch was accepted: the bubble has proven usable this turn. */
   proven: boolean;
+  /** Updates timed out in a row (tolerant). */
+  timeouts: number;
   /** Collect only; the bubble is created when the turn ends with something to show. */
   deferred: boolean;
   /** The turn ended quiet: drop what was collected and recall a bubble already sent. */
@@ -278,6 +280,21 @@ function expirePendingTools(st: State) {
   return missingTools;
 }
 
+/**
+ * Feishu sometimes answers an update after the timeout (p99 about 5 s, a few past 15 s): the batch
+ * was most likely applied, and resending would duplicate it. A bubble that already took updates
+ * goes on; only a third timeout in a row gives it up (recalled, the fallback card takes over).
+ */
+async function tolerant(st: State, request: Promise<unknown>) {
+  try {
+    await request;
+    st.timeouts = 0;
+  } catch (e) {
+    if (!st.proven || errorInfo(e).reason !== "timeout" || ++st.timeouts >= 3) throw e;
+    cotLog(st, "timeout-assumed-applied", { timeouts: st.timeouts }, true);
+  }
+}
+
 async function pump(app: App, runId: string, st: State) {
   if (st.pumping || st.disabled || st.settled) return;
   st.pumping = true;
@@ -298,7 +315,7 @@ async function pump(app: App, runId: string, st: State) {
       }
       const evs = eventsFor(st);
       if (evs.length) {
-        await append(st, evs);
+        await tolerant(st, append(st, evs));
         st.proven = true;
       }
     } while (st.dirty && st.finish && !st.discard);
@@ -307,7 +324,7 @@ async function pump(app: App, runId: string, st: State) {
       st.closing = true;
       const tail = [ev("REASONING_END", { messageId: reasoningId(st.turnId, 0) })];
       if (st.finish === "done") tail.push(ev("RUN_FINISHED", { threadId: st.turnId, runId: st.turnId, status: "done" }));
-      await append(st, tail, "finish");
+      await tolerant(st, append(st, tail, "finish"));
       st.proven = true;
       if (st.finish === "error") await api(st, "complete", "POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId!)}`, {}, { message_id: st.messageId!, reason: "error" });
       st.settled = true;
@@ -368,7 +385,7 @@ export function startCot(app: App, runId: string, at: { chatId: string; originMe
     return false;
   }
   disabledChats.delete(at.chatId);
-  const st: State = { bot, chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, deferred: !!at.defer, discard: false, waiters: [], timers: [] };
+  const st: State = { bot, chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, timeouts: 0, deferred: !!at.defer, discard: false, waiters: [], timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
   return true;

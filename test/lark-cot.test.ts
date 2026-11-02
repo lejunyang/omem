@@ -228,6 +228,35 @@ it("recalls a broken bubble without reporting task failure or cooling down the n
   real.db.close();
 });
 
+it("goes on past a slow update of a bubble that works, and gives it up after three in a row", async () => {
+  let failing = 0;
+  respond = async (r) => {
+    if (r.method === "PUT" && failing > 0) { failing--; throw Object.assign(new Error("timeout of 15000ms exceeded"), { code: "ECONNABORTED" }); }
+    return accepted(r);
+  };
+  start();
+  await vi.advanceTimersByTimeAsync(300);
+  failing = 1;
+  delta("第二段");
+  await vi.advanceTimersByTimeAsync(700);
+  delta("第三段");
+  cot.finishCot(app, "run_test", true);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+  expect(types()).toContain("RUN_FINISHED");
+  expect(logs()).toContainEqual(expect.objectContaining({ action: "timeout-assumed-applied", timeouts: 1 }));
+
+  requests = [];
+  expect(cot.startCot(app, "run_slow", { chatId: "oc_test", title: "开始" })).toBe(true);
+  await vi.advanceTimersByTimeAsync(300);
+  failing = 3;
+  for (const s of ["一", "二", "三"]) {
+    cot.cotEvent(app, "run_slow", { type: "text-delta", data: { text: s } });
+    await vi.advanceTimersByTimeAsync(700);
+  }
+  expect(requests.some((r) => r.method === "DELETE" && r.url.endsWith("/messages/om_test"))).toBe(true);
+});
+
 it("limits an authority cooldown to the affected chat", async () => {
   respond = async () => ({ code: 41050, msg: "no user authority error" });
   start();

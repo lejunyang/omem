@@ -360,8 +360,13 @@ ${input.task}
     ctx.output({ verdict: "awaiting-peer-code" });
     return { verdict: "awaiting-peer-code" };
   }
+  // The host synced before coding: the coder need not (and in its sandbox often cannot) fetch or pull.
+  if (synced && !skipCoder) {
+    const heads = worktrees.map((w) => `${multi ? `${w.space}：` : ""}现在的 HEAD ${git(w.path, ["rev-parse", "HEAD"]).stdout.trim()}`).join("\n");
+    coderTask = `${coderTask}\n\n## 宿主已做的 Git 同步\n\n${[synced.summary, heads].filter(Boolean).join("\n")}\n\n任务里要求的拉取最新代码已经做完；拉取、合并、推送都由宿主做，不要自己 fetch / pull / push。`;
+  }
   // What the owner added while this round waited in the queue.
-  const early = input.branches || skipCoder || input.peerCoder ? [] : pendingNotes(app, run.id);
+  const early =input.branches || skipCoder || input.peerCoder ? [] : pendingNotes(app, run.id);
   if (early.length) {
     coderTask = `${coderTask}\n\n${notesText(early)}`;
     markNotesDelivered(app, run.id, early);

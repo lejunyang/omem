@@ -40,7 +40,9 @@
 
 ## 评审角色专用
 
-`submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。按修改项推进的交办里还有：编码 Agent 的 `plan_tasks`（拆分、估轮数）、`finish_task`（说明一项做完了；没提交的改动由宿主作为这一项提交）、`report_task`（交给本人 / 有异议 / 被挡住）、`ask_reviewer`（问提出这一项的评审项，它在自己这次交办的会话里回答）、`dispatch_tasks`（编码负责人把几组互不相干的项分给编码助手，同时做，这一轮结束时合并）；评审项的 `verify_tasks`（逐项验证）；评审负责人的 `plan_review`（这次评审谁看、看什么，`second_look` 请另一个模型复看）、`rule_dispute`（评审项坚持、编码 Agent 仍有异议时裁决），`rule_review` 的裁决可带 `owner`（交给本人决定的问题和选项），和已有修改项重复的用 `merge` + `task`（如 T5）合到那一项。
+`submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。按修改项推进的交办里还有：编码 Agent 的 `plan_tasks`（拆分、估轮数）、`finish_task`（说明一项做完了；没提交的改动由宿主作为这一项提交）、`report_task`（交给本人 / 有异议 / 被挡住；被挡住的先交给发起交办的助手）、`ask_reviewer`（问提出这一项的评审项，它在自己这次交办的会话里回答）、`dispatch_tasks`（编码负责人把几组互不相干的项分给编码助手，同时做，这一轮结束时合并）；评审项的 `verify_tasks`（逐项验证）；评审负责人的 `plan_review`（这次评审谁看、看什么，`second_look` 请另一个模型复看）、`rule_dispute`（评审项坚持、编码 Agent 仍有异议时裁决），`rule_review` 的裁决可带 `owner`（交给本人决定的问题和选项），和已有修改项重复的用 `merge` + `task`（如 T5）合到那一项。
+
+发起交办的助手在一轮结束被叫醒时，会看到编码 Agent 被挡住的项（拉取、权限、环境）：能处理的处理好后用 `settle_code_task` 让它重做（retry）或不做（skip），处理不了的用 owner 交给本人；等本人决定的项，只在本人这一轮在对话里给了答案时用它转达。已经发给本人的卡片随之关闭，不用再让本人点。
 
 ## 设备的外部 Agent 评审分支
 

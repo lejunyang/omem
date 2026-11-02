@@ -71,7 +71,7 @@ it("falls back once if the native bubble fails after its first successful upload
   let failed = false;
   setCotSdk({ request: async (req) => {
     if (req.method === "POST") return { code: 0, data: { cot_id: "cot_late", message_id: "om_native" } };
-    if (failed && req.method === "PUT") throw new Error("timeout");
+    if (failed && req.method === "PUT") throw new Error("socket hang up");
     return { code: 0 };
   } });
   const id = task();

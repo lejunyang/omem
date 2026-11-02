@@ -319,6 +319,63 @@ describe("a delegation driven by tasks", () => {
     }
   });
 
+  it("gives what held the coder up to the assistant that started the work, which settles it or passes it on, closing the owner's card", async () => {
+    const app = testApp();
+    try {
+      const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "交办", input: { conversationId: t.id } });
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true }, parentId: ask.id, userId: OWNER });
+      codeChainFor(app, r);
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      const sync = addTask(app, r.id, { title: "同步远端最新代码", kind: "build" }, "coder");
+      const scope = addTask(app, r.id, { title: "存量订单怎么算", kind: "build", state: "owner", question: "存量订单按哪个口径？", options: ["旧口径", "新口径"] }, "coder");
+      updateTask(app, r.id, sync.seq, { state: "coding", coderRun: r.id });
+      const coder: ToolContext = { app, runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "coder" } as ToolContext;
+      expect((await callTool(coder, "report_task", { task: `T${sync.seq}`, kind: "blocked", reason: "Git 目录只读，fetch 写不了 FETCH_HEAD" })).text).toContain("发起交办的助手");
+      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "owner", origin: { blocked: true } });
+      const { blockedText } = await import("../src/agents/code-tasks.ts");
+      expect(blockedText(app, r.id)).toContain("同步远端最新代码");
+      expect(blockedText(app, r.id)).not.toContain("存量订单");
+
+      // Woken after the round (not answering the owner): it passes the blocked one on, and a card goes to the owner.
+      const handoff = createRun(app, { kind: "ask", spaceId: "personal", title: "看结果", input: { conversationId: t.id, handoff: { kind: "code", runId: r.id } } });
+      const assistant: ToolContext = { app, runId: handoff.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
+      const settle = (ctx: ToolContext, seq: number, action: string, note: string) => callTool(ctx, "settle_code_task", { run_id: r.id, task: `T${seq}`, action, note });
+      expect((await settle(assistant, scope.seq, "retry", "按新口径")).text).toContain("要本人决定");
+      expect((await settle(assistant, sync.seq, "owner", "常驻服务器上要本人登录一次")).isError).toBe(false);
+      const card = listAsks(app, { status: "pending" }).find((a) => a.question.includes("同步远端最新代码"))!;
+      expect(card.question).toContain("助手：常驻服务器上要本人登录一次");
+      expect(blockedText(app, r.id)).toBe("");
+      // The assistant saw to it after all: the task is done again and the owner's card closes.
+      expect((await settle(assistant, sync.seq, "retry", "宿主开始前已经拉过，HEAD 就是最新")).text).toContain("回到待做");
+      expect(listAsks(app, {}).find((a) => a.id === card.id)!.status).toBe("cancelled");
+      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "todo", attempts: 0 });
+      expect(listTasks(app, r.id)[0].notes.at(-1)).toMatchObject({ by: "assistant", kind: "assistant" });
+
+      // The owner's own answer in the conversation is relayed.
+      const said = "msg_owner";
+      run(app.db, "insert into messages(id, conversation_id, role, text, created_at) values(?,?,?,?,?)", said, t.id, "user", "存量按新口径", new Date().toISOString());
+      const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "回答", input: { conversationId: t.id, messageIds: [said] } });
+      expect((await settle({ ...assistant, runId: turn.id } as ToolContext, scope.seq, "retry", "本人说：存量按新口径")).isError).toBe(false);
+      expect(listTasks(app, r.id)[1]).toMatchObject({ state: "todo", answer: "本人说：存量按新口径" });
+    } finally {
+      app.db.close();
+    }
+  });
+
+  it("finds the item of earlier work on a branch for a new delegation there", async () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款", repos: ["personal"], itemId: "i_refund" }, userId: OWNER });
+      setRunOutput(app, r.id, { appliedAt: new Date().toISOString(), worktrees: [{ space: "personal", path: join(tmpdir(), "gone"), branch: "feat/refund", base: "main", targetBranch: "feat/refund", commits: true }] });
+      const { itemOnBranch } = await import("../src/agents/review-fix.ts");
+      expect(itemOnBranch(app, ["personal"], "origin/feat/refund", OWNER)).toBe("i_refund");
+      expect(itemOnBranch(app, ["personal"], "feat/other", OWNER)).toBeNull();
+    } finally {
+      app.db.close();
+    }
+  });
+
   it("hands a dispute the check still insists on to review-lead, and to the owner after a ruling", async () => {
     const app = testApp();
     app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "tasks" }, idleTimeoutMs: 60000 });

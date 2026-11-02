@@ -519,14 +519,18 @@ export async function askReviewer(app: App, codeRunId: string, seq: number, ques
 
 const SKIP = "不做这一项";
 
-/** One card per task waiting for the owner, in the conversation the work reports to (or the home page). */
+/**
+ * One card per task waiting for the owner, in the conversation the work reports to (or the home page).
+ * What held the coder up (blocked) goes first to the assistant that started the work, which is woken
+ * when the round ends: it sees to it or passes it on (settleTask); work started on the web has none.
+ */
 function ensureOwnerAsks(app: App, rootId: string) {
   const w = workState(app, rootId);
   const asks = { ...(w.asks ?? {}) };
   const last = lastRound(app, rootId);
   const chain = (last.output as { codeChain?: CodeChain }).codeChain;
   let changed = false;
-  for (const t of listTasks(app, rootId).filter((x) => x.state === "owner")) {
+  for (const t of listTasks(app, rootId).filter((x) => x.state === "owner" && !(chain && x.origin.blocked && !x.origin.escalated))) {
     const id = asks[String(t.seq)];
     if (id && one(app.db, "select 1 from asks where id = ? and status = 'pending'", id)) continue;
     const ask = createAsk(app, {
@@ -542,6 +546,27 @@ function ensureOwnerAsks(app: App, rootId: string) {
     changed = true;
   }
   if (changed) setWorkState(app, rootId, { asks });
+}
+
+/**
+ * The assistant settles a task waiting on it (blocked) or relays the owner's answer to one waiting on
+ * the owner: done again, not done, or (blocked) passed on to the owner. A card already sent closes.
+ */
+export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner"; text: string; ownerWords: boolean }, by: string) {
+  const t = getTask(app, rootId, seq);
+  if (t.state !== "owner") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等处理`);
+  if (!t.origin.blocked && !a.ownerWords) throw new HttpError(403, `${taskLabel(seq)} 是要本人决定的问题：等本人回答；本人在对话里回答了，在回答本人消息的那一轮转达`);
+  const note = { by, kind: "assistant" as const, text: `${a.action === "owner" ? "交给本人" : a.action === "skip" ? "不做" : "重做"}：${a.text}` };
+  if (a.action === "owner") {
+    if (!t.origin.blocked || t.origin.escalated) throw new HttpError(409, `${taskLabel(seq)} 已经在等本人`);
+    updateTask(app, rootId, seq, { origin: { ...t.origin, escalated: true }, question: `${t.question ?? t.doneWhen}\n\n助手：${a.text}` }, note);
+    ensureOwnerAsks(app, rootId);
+    return null;
+  }
+  if (a.action === "skip") updateTask(app, rootId, seq, { state: "wontdo", answer: a.text }, note);
+  else updateTask(app, rootId, seq, { state: "todo", answer: a.text, attempts: 0 }, note);
+  closeTaskAsk(app, rootId, seq);
+  return advanceWork(app, rootId, { owner: a.ownerWords });
 }
 
 /** The owner's answer to a task's question: done their way, or not at all. Then the work goes on. */

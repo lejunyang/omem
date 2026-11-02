@@ -231,6 +231,15 @@ export function openDelegationOn(app: App, repos: string[], branch: string | nul
   return null;
 }
 
+/** The item of the latest delegation on a branch (applied or not): new work on the branch belongs to it too. */
+export function itemOnBranch(app: App, repos: string[], branch: string | null | undefined, userId: string): string | null {
+  if (!branch) return null;
+  const want = branch.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+  const since = new Date(Date.now() - 60 * 86400_000).toISOString();
+  const roots = all<{ id: string; item: string }>(app.db, "select id, json_extract(input, '$.itemId') item from runs where kind = 'code' and json_extract(input, '$.continueFrom') is null and json_extract(input, '$.itemId') is not null and coalesce(user_id, ?) = ? and created_at > ? order by created_at desc limit 50", OWNER, userId, since);
+  return roots.find(({ id }) => worktreesOf(app, id).some((w) => repos.includes(w.space) && w.targetBranch === want))?.item ?? null;
+}
+
 // `withSameBranch`: the owner looked at the other reviews of the same branch too (sameBranchWork); their findings may be chosen, and what is left there waits as well.
 export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; reviewExecution?: Execution; applyFirst?: boolean; withSameBranch?: boolean }, userId: string): Promise<Run> {
   const runs = workRuns(app, runId);

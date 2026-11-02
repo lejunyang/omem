@@ -2990,7 +2990,7 @@ def({
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
     from_branch: z.string().optional().describe("在已有分支上继续开发：提交接着加在这条分支上（本地没有、origin 上有的先建本地分支）；不带未提交修改"),
     branch: z.string().max(200).optional().describe("新工作分支的名字（本人指定了才传，如 feat/refund-shipped）；不传时用临时名，编码 Agent 按功能改名。本地已有同名分支就当作 from_branch"),
-    item_id: z.string().optional().describe("这次交办所属的事项：编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库），交办本身也记到事项上"),
+    item_id: z.string().optional().describe("这次交办所属的事项：编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库），交办本身也记到事项上；不传而在已有分支上接着改时，沿用这条分支上之前交办的事项"),
     sync: syncSchema.optional(),
     sync_only: z.boolean().optional().describe("这次只做 Git 同步（拉取、合并、变基、解决冲突），不再编码；结果的提交在应用时快进到目标分支"),
     parallel: z.boolean().optional().describe("本人明确要求在同一个分支上另开一次交办时才传 true；默认同一分支已有没应用的交办时拒绝，应续在那次交办上"),
@@ -3003,7 +3003,8 @@ def({
     if (a.sync_only && !a.sync) throw new HttpError(400, "sync_only 需要同时给出 sync（拉取或合并 / 变基到哪个分支）");
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => writeSpace(ctx, r)))];
-    const itemId = a.item_id ? itemFor(ctx, a.item_id) : undefined;
+    // Without one, work on a branch belongs to the item its earlier delegations were done for.
+    const itemId = a.item_id ? itemFor(ctx, a.item_id) : (await import("./review-fix.ts")).itemOnBranch(ctx.app, ids, a.from_branch ?? a.branch, ctx.userId ?? OWNER) ?? undefined;
     const { codeRepos, homeSpace } = await import("./code.ts");
     const home = homeSpace(ctx.app, a.space ? space(ctx, a.space) : undefined, itemId, ids);
     const repos = codeRepos(ctx.app, home, ids);
@@ -4024,8 +4025,31 @@ def({
       return `已把 ${t.taskLabel(seq)} 的异议交给 ${task.verifier}，它会撤回或回应。接着做别的项。`;
     }
     const question = a.question?.trim() || a.reason;
-    t.updateTask(ctx.app, rootId, seq, { state: "owner", question, options: a.kind === "owner" ? a.options ?? [] : ["已经处理好了，再试一次"] }, { by: "coder", kind: "coder", text: `${a.kind === "owner" ? "要本人决定" : a.kind === "blocked" ? "被挡住了" : "有异议"}：${a.reason}` });
-    return `已把 ${t.taskLabel(seq)} 交给本人（这一项停着，本人回答后再做）。接着做别的项。`;
+    const blocked = a.kind === "blocked";
+    t.updateTask(ctx.app, rootId, seq, { state: "owner", question, options: blocked ? ["已经处理好了，再试一次"] : a.options ?? [], origin: { ...task.origin, blocked: blocked || undefined, escalated: undefined } }, { by: "coder", kind: "coder", text: `${blocked ? "被挡住了" : a.kind === "owner" ? "要本人决定" : "有异议"}：${a.reason}` });
+    const assistant = !!(t.lastRound(ctx.app, rootId).output as { codeChain?: unknown }).codeChain;
+    return `已把 ${t.taskLabel(seq)} 交给${blocked && assistant ? "发起交办的助手（这一轮结束后它来处理，处理不了再问本人）" : "本人"}，这一项先停着。接着做别的项。`;
+  },
+});
+
+def({
+  name: "settle_code_task",
+  description: "发起交办的助手处理一个停着的修改项：编码 Agent 被环境挡住（blocked）的，查清楚或处理好后让它重做（retry）、不做（skip），自己处理不了的交给本人（owner）；等本人决定的项，只在本人这一轮在对话里给了答案时转达（retry 照本人的话做，skip 不做）。已发给本人的卡片随之关闭。",
+  write: true,
+  schema: z.object({
+    run_id: z.string().describe("这次交办的任一运行 id"),
+    task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
+    action: z.enum(["retry", "skip", "owner"]),
+    note: z.string().min(1).max(3000).describe("retry：怎么处理好的、编码 Agent 这次该怎么做；skip：为什么不做；owner：要本人做或决定什么"),
+  }),
+  handler: async (ctx, a) => {
+    const t = await import("./code-tasks.ts");
+    const rootId = t.workRootOf(ctx.app, a.run_id);
+    if (t.workOwner(ctx.app, rootId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能处理本人的交办");
+    const seq = t.parseTaskRef(a.task);
+    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx) }, "assistant");
+    const label = t.taskLabel(seq);
+    return a.action === "owner" ? `已把 ${label} 交给本人。` : `${label} ${a.action === "skip" ? "不做了" : "回到待做"}${next ? `，下一轮已排上（${next.id}）` : "；交办停着时，下一轮在本人说继续或预算内推进时做"}。`;
   },
 });
 

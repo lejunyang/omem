@@ -8,6 +8,7 @@ import { createRun, getRun, setRunOutput } from "./runs.ts";
 import { refreshWork, workForChild } from "./agent-work.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
+import { blockedText, isTaskWork, workRootOf } from "./code-tasks.ts";
 
 /**
  * A delegated coding run reports back to the conversation that requested it, and keeps going
@@ -204,7 +205,8 @@ export function settleCodeChain(app: App, runId: string) {
       // Internal handoff is a conversation record backed by this run; it is not a
       // new user source and does not invoke source indexing inside this transaction.
       const branchReview = !!(r.input as { branches?: unknown }).branches;
-      const text = `${branchReview ? `分支评审 ${r.id}` : `编码交办第 ${chain.round} 轮 ${r.id}`} 已结束：${r.status}${r.output.verdict ? `（评审：${r.output.verdict}）` : ""}。${approved ? "" : branchReview ? "只有评审意见，没有改动；本人要按意见修改时用 delegate_code 传 from_branch 基于该分支交办。" : "等待本人处理；明确继续时用 continue_code_run 复用原任务。"}\n\n${String(r.output.review ?? r.output.coderSummary ?? "").slice(0, 12000)}`;
+      const blocked = isTaskWork(app, r.id) ? blockedText(app, workRootOf(app, r.id)) : "";
+      const text = `${branchReview ? `分支评审 ${r.id}` : `编码交办第 ${chain.round} 轮 ${r.id}`} 已结束：${r.status}${r.output.verdict ? `（评审：${r.output.verdict}）` : ""}。${approved ? "" : branchReview ? "只有评审意见，没有改动；本人要按意见修改时用 delegate_code 传 from_branch 基于该分支交办。" : "等待本人处理；明确继续时用 continue_code_run 复用原任务。"}\n\n${String(r.output.review ?? r.output.coderSummary ?? "").slice(0, 12000)}${blocked ? `\n\n${blocked}` : ""}`;
       run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)",
         messageId, chain.conversationId, "assistant", text, r.id, JSON.stringify({ codeResult: r.id, record: true }), now());
       run(app.db, "update conversations set updated_at=? where id=?", now(), chain.conversationId);
