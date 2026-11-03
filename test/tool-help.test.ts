@@ -41,8 +41,8 @@ describe("omem tools offered to agents", () => {
       const now = expandTools([`group:${id}`]);
       const expected = tools.filter((t) => !ROLE_TOOLS.includes(t));
       expect(now, id).toEqual(expect.arrayContaining(expected));
-      // An old name gains only a tool that moved into a group it stands for (lark_wiki_crawl → collect, notify → ask).
-      expect(now.filter((t) => !expected.includes(t)), id).toEqual(({ sources: ["lark_wiki_crawl"], owner: ["notify"] } as Record<string, string[]>)[id] ?? []);
+      // An old name gains only a tool that moved into a group it stands for (lark_wiki_crawl → collect, notify → ask) or a tool added later to a group it stands for (lark_read / lark_write).
+      expect(now.filter((t) => !expected.includes(t)), id).toEqual(({ sources: ["lark_wiki_crawl"], owner: ["notify"], lark: ["lark_read", "lark_write"] } as Record<string, string[]>)[id] ?? []);
     }
   });
 

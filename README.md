@@ -345,7 +345,7 @@ omem link                                   # 从其他设备打开网页的链�
 
 **私聊指令**（设置 → 渠道 → 私聊指令，默认关）：在你和别人的私聊里发 `/ai`（可在后面写要求，如 `/ai 帮我回他部署的问题`），omem 一分钟内读到，助理读最近的私聊把事情处理掉，以你的身份在那个私聊里回复，结尾带“（此消息由 AI 代发）”；只想给自己看的（如“/ai 总结一下”），结果发给你，不发给对方。私聊里发不了思考气泡和卡片，只发最后的结论。`/ai拉群 [群名]` 建一个你、对方和机器人的群，机器人读之前的私聊，在新群里接着处理，之后在群里 @ 它继续。这是 omem 仅有的以你身份发消息的地方，只在你亲手发指令时发生。
 
-**以你的身份写飞书文档**：你让助理把东西整理成文档时，它用 lark-cli 以你的身份新建（`lark_doc_create`）、编辑（`lark_doc_update`：先用 `lark_doc_fetch` 读出要改的那一节或那张表和 block id，再按块替换、插入、删除、调整顺序或替换一段文字，只在你要求整篇重写时覆盖；做法在内置技能 `lark-docs`）和移动（`lark_doc_move`）飞书文档，文档归你。默认放在你的个人文档库；在个人文档库或你自己的云空间文件夹、文档里直接做，放进别人也在用的知识库、别人的文件夹或文档时，先把具体位置和改动摘要发给你批准；首次列出所有待改文档，批准后这些文档的追加、局部替换和失败重试不再逐次问，换轮或换会话也沿用，并兼容此前已批准的文档。范围外的文档、整篇覆盖、移动和新建仍需批准。lark-cli 的登录缺权限时，omem 发起只要那一项的授权，把链接发到你的飞书私聊，你确认后自动完成登录；`omem lark user-permissions` 或设置 → 渠道 → 飞书文档里可以先检查一遍。外部 Agent 经 `omem mcp` 用不了这几个工具。
+**以你的身份写飞书文档**：你让助理把东西整理成文档时，它用 lark-cli 以你的身份新建（`lark_doc_create`）、编辑（`lark_doc_update`：先用 `lark_doc_fetch` 读出要改的那一节或那张表和 block id，再按块替换、插入、删除、调整顺序或替换一段文字，只在你要求整篇重写时覆盖；做法在内置技能 `lark-docs`）。表格、多维表格、幻灯片、云空间 Markdown 文件、任务和评论也能让它读和改（`lark_read` / `lark_write`：跑 lark-cli 的命令，只放行它标为只读或写入的那些，删除清空之类的高风险操作不做；你自己的文件直接改，别人的文件和任务先发给你批准，按文件复用），日历、邮件、聊天记录、妙记只读；做法在内置技能 `lark-suite`，它先读 lark-cli 自带的官方说明和移动（`lark_doc_move`）飞书文档，文档归你。默认放在你的个人文档库；在个人文档库或你自己的云空间文件夹、文档里直接做，放进别人也在用的知识库、别人的文件夹或文档时，先把具体位置和改动摘要发给你批准；首次列出所有待改文档，批准后这些文档的追加、局部替换和失败重试不再逐次问，换轮或换会话也沿用，并兼容此前已批准的文档。范围外的文档、整篇覆盖、移动和新建仍需批准。lark-cli 的登录缺权限时，omem 发起只要那一项的授权，把链接发到你的飞书私聊，你确认后自动完成登录；`omem lark user-permissions` 或设置 → 渠道 → 飞书文档里可以先检查一遍。外部 Agent 经 `omem mcp` 用不了这几个工具。
 
 **读取你自己的飞书**（lark-cli 个人登录；以你的身份发消息只限上面的私聊指令，写文档见上一段）：在 setup 的同一部分选择读取方式；lark-cli 未登录或登录过期时会直接发起扫码登录（lark-cli 还没有应用时可以用机器人应用），并可顺手开启每 10 分钟的采集。
 
@@ -480,7 +480,7 @@ roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/�
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
 plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/）
 packages/plugin-sdk   插件 SDK（omem-plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
-skills/library  内置技能（如 lark-messaging、lark-docs、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
+skills/library  内置技能（如 lark-messaging、lark-docs、lark-suite、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
 vscode/       VS Code 插件（workspace 里的包 omem-vscode；omem 的网页版 VS Code 启动前从源码编译装进去，连本机 omem 不用设置）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test

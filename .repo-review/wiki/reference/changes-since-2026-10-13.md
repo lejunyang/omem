@@ -1155,3 +1155,10 @@ updated: 2026-11-04
 - `test/tool-help.test.ts`：每组不超过 15 个工具（插件组除外）、每组都在 SKILL.md 分组表里、旧名的工具不变。
 - `DIRECT_ALL` 20 → 30：常驻服务器上 ingest（21 个工具）两周调了 750 次 `omem_help`、自定义档案（28 个）343 次、dream 6 次，都是工具数刚过线、非常用工具藏在 `omem_call` 后面造成的。`CORE_TOOLS` 加 `list_sources`、`write_file`、`list_runs`、`read_run`、`wake_later`、`cancel_wake`（主助手和档案运行里最常经 omem_call 调的几个）。
 - 按两周的调用统计精简内置角色：triager 去掉 source_outline、list_pages、recall、list_items（2810 次运行里没用过，说明里也没提）；kb-scout 去掉 search；memory-reviewer 去掉 list_items。
+
+## 11-04：以本人身份读写飞书的其他数据
+
+- 新工具 `lark_read` / `lark_write`（分组 `lark-owner`，旧名 `group:lark` 也包含）：以本人身份跑一条 lark-cli 命令，风险等级取 lark-cli 自己在 `--help` 里标的 read / write / high-risk-write（缓存）。read 在数据域里放行（不含 api、auth、config、event、apps），`skills read/list`、`schema` 也能读；write 只放行 sheets、base、slides、markdown、task 和 drive 的评论命令，本人自己的文件直接写（新建到云空间根目录也算），别人的文件和所有任务操作先审批，按文件复用（`docEditDecision` 加了 tool 参数）；命令里必须出现 target 的 token；high-risk-write、`--as`、`--yes` 拒绝；在临时目录里运行，下载的文件运行后删除。外部 Agent（`--peer`）用不了。
+- 内置技能 `lark-suite`：按业务列出要读的 lark-cli 官方说明（lark-sheets、lark-base、lark-task、lark-drive、lark-im、lark-mail、lark-meeting、lark-workflow-meeting-summary……）和这里能读 / 能写什么；官方说明不复制进仓库，运行时用 `lark_read(["skills","read",…])` 读，和装的版本一致。lark-shared 的登录、授权、高风险确认由 omem 处理，不需要。
+- AGENTS.md 的“以本人身份写飞书只有这几处”补上 `lark_doc_*` 和 `lark_write`；仍不能以本人身份发消息、邮件和日程邀请。
+- `lark-cli.ts` 加 `larkCliOutput`（`--help`、`skills read` 这类输出文本的命令）。

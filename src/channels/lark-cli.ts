@@ -36,6 +36,19 @@ export function larkCliText(args: string[]): string | null {
   return r.status === 0 ? r.stdout : null;
 }
 
+/** lark-cli's text output for commands that print Markdown or help rather than JSON (`--help`, `skills read`). */
+export async function larkCliOutput(args: string[], timeoutMs = 30_000): Promise<string> {
+  if (override) {
+    const r = await override(args);
+    return typeof r === "string" ? r : JSON.stringify(r);
+  }
+  try {
+    return (await exec(process.execPath, [larkCliScript(), ...args], { timeout: timeoutMs, maxBuffer: 20_000_000, windowsHide: true })).stdout;
+  } catch (e) {
+    throw new Error(`飞书 CLI：${String((e as { stderr?: string }).stderr || (e as Error).message).trim().slice(0, 300)}`);
+  }
+}
+
 /** Run lark-cli with a secret on stdin (never on the command line), output to the terminal. */
 export function larkCliWithInput(args: string[], stdin: string) {
   if (override) return 0;

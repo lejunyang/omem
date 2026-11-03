@@ -2877,18 +2877,24 @@ def({
  * Writes outside the owner's own place (a knowledge base others read, someone else's folder or doc)
  * wait for the owner's OK, with the place spelled out; the approved call runs again with `approved`.
  */
-async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean, docEditScope?: DocEditScope) {
-  if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有 omem 的主人能以本人身份写飞书文档");
+/** Acting as the owner on Feishu (lark-cli user identity): the owner's own runs in omem only. */
+function ownerOnly(ctx: ToolContext) {
+  if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有 omem 的主人能以本人身份用飞书");
   // Like the bot's lark_* tools: omem's own runs only (an outside agent over `omem mcp` has no Feishu scope).
-  if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份写飞书文档只在 omem 自己的运行里可用");
+  if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份用飞书只在 omem 自己的运行里可用");
+}
+
+async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean, docEditScope?: DocEditScope, scopeNote?: string) {
+  ownerOnly(ctx);
   if (personal || ctx.actor === "user" || ctx.approved) return null;
-  const decision = docEditScope ? await docEditDecision(ctx.app, ctx.userId ?? OWNER, docEditScope) : null;
+  const decision = docEditScope ? await docEditDecision(ctx.app, ctx.userId ?? OWNER, docEditScope, name) : null;
   if (decision?.status === "answered" && decision.approved) return null;
   if (decision?.status === "answered") throw new HttpError(403, `本人已拒绝这项文档编辑${decision.answer ? `：${decision.answer}` : ""}。按理由调整，不要换个方式绕过。`);
   // A concurrent call shares the card, but its own edit has not been scheduled for execution.
   if (decision) return `文档编辑正在等本人批准（${decision.id}），不要重复发审批。当前这处编辑尚未执行；用 wait_answer 等批准后再调用。`;
-  const scopeText = docEditScope ? `\n\n批准范围：以上文档的${docEditScope.commands.includes("overwrite") ? "编辑（含整篇覆盖）" : "追加和局部替换"}，包括后续对话中的编辑和失败重试；其他文档、移动或新建需另行批准。` : "";
-  const r = await held(ctx, name, args, `以你的身份${what}${scopeText}\n\n不在你的个人文档库或你自己的云空间里，确认位置和改动后批准。`, docEditScope ? { docEditScope } : undefined);
+  const scopeText = scopeNote ? `\n\n${scopeNote}` : docEditScope ? `\n\n批准范围：以上文档的${docEditScope.commands.includes("overwrite") ? "编辑（含整篇覆盖）" : "追加和局部替换"}，包括后续对话中的编辑和失败重试；其他文档、移动或新建需另行批准。` : "";
+  const why = name === "lark_write" ? "不是你自己的文件，或会通知到别人" : "不在你的个人文档库或你自己的云空间里";
+  const r = await held(ctx, name, args, `以你的身份${what}${scopeText}\n\n${why}，确认位置和改动后批准。`, docEditScope ? { docEditScope } : undefined);
   if (r.isError) throw new HttpError(403, r.text);
   return r.text;
 }
@@ -2910,6 +2916,7 @@ def({
     format: z.enum(["xml", "markdown"]).optional(),
   }),
   handler: async (ctx, a) => {
+    ownerOnly(ctx);
     const w = await import("../channels/lark-doc-write.ts");
     const r = await w.fetchForEdit(ctx.app, {
       doc: a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
@@ -3007,6 +3014,53 @@ def({
     if (wait) return wait;
     const r = await w.moveDoc(ctx.app, from, to);
     return `已把 ${from.label} 移到 ${to.label}${r ? `：${truncate(JSON.stringify(r), 300)}` : ""}`;
+  },
+});
+
+// ---- Other Feishu data as the owner (lark-cli commands, by lark-cli's own risk label) ----------
+
+const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后的参数，如 [\"sheets\", \"+cells-get\", \"--url\", \"https://…/sheets/xxx\", \"--range\", \"A1:D20\"]；不写 lark-cli 本身，不写 --as");
+
+def({
+  name: "lark_read",
+  description:
+    "以本人身份运行一条只读的 lark-cli 命令，读飞书的表格、多维表格、幻灯片、云空间文件和评论、Markdown 文件、知识库、任务、日历、邮件、聊天记录、会议与妙记、通讯录、OKR、审批等。只放行 lark-cli 自己标为 read 的命令（--help 里的 Risk）。先读官方说明：command=[\"skills\", \"read\", \"lark-sheets\"]（或 lark-base、lark-task、lark-drive……，带 references/… 读附带文件），[\"schema\", \"<服务.资源.方法>\"] 看参数，[\"<域>\", \"--help\"] 看命令列表。说明里的 `lark-cli <命令> --as user` 在这里写成 command 数组、去掉 lark-cli 和 --as。做法见技能 lark-suite。",
+  schema: z.object({ command: larkCommand }),
+  handler: async (ctx, a) => {
+    ownerOnly(ctx);
+    const c = await import("../channels/lark-cli-tools.ts");
+    return c.larkRead(ctx.app, a.command);
+  },
+});
+
+def({
+  name: "lark_write",
+  description:
+    "以本人身份运行一条写入的 lark-cli 命令：表格（sheets）、多维表格（base）、幻灯片（slides）、云空间 Markdown 文件（markdown）、任务（task），以及给文档、表格等加评论或标记解决（drive 的评论命令）。只在本人要求时用。target 填要改的那个文件的链接（命令里必须改的就是它）；新建到本人云空间根目录时可不填。本人自己的文件直接写；别人的文件和任务（会通知到负责人和关注人）先请本人批准，批准按文件复用（换轮、换会话和失败重试不再问），首次可用 approval_targets 一次列出本次要改的全部文件。高风险操作（删除、清空等）、文档正文（用 lark_doc_update）、消息、邮件和日程不能用。写前先用 lark_read 读官方说明和当前内容；写后再读一次核对。",
+  write: true,
+  schema: z.object({
+    command: larkCommand,
+    target: z.string().optional().describe("要改的文件链接（/sheets/、/base/、/slides/、/file/、/wiki/，评论时是那篇文档）；新建到某个文件夹时填文件夹链接"),
+    summary: z.string().min(1).max(500).describe("给本人看的一两句：改什么、为什么，不贴原始参数"),
+    approval_targets: z.array(z.string().min(1)).min(1).max(20).optional().describe("首次审批时列出本次要改的全部文件链接，一次批准"),
+  }),
+  handler: async (ctx, a) => {
+    ownerOnly(ctx);
+    const c = await import("../channels/lark-cli-tools.ts");
+    const path = await c.checkWrite(a.command);
+    const target = await c.writeTarget(ctx.app, a.command, a.target);
+    c.checkTouches(a.command, target);
+    const targets = [target];
+    for (const t of a.approval_targets ?? []) {
+      if (t === a.target) continue;
+      const other = await c.writeTarget(ctx.app, a.command, t);
+      if (!targets.some((x) => x.key === other.key)) targets.push(other);
+    }
+    const scope = { documents: targets.map((t) => t.key), commands: ["write"] };
+    const note = `批准范围：以上${target.key === "task" ? "飞书任务的创建、修改和指派" : "文件的写入"}，包括后续对话中的修改和失败重试；高风险操作、其他文件需另行批准。`;
+    const wait = await ownerDocGate(ctx, "lark_write", a, `修改：\n${targets.map((t) => `- ${t.label}`).join("\n")}\n\n改动摘要：${a.summary}\n首次操作：${path.join(" ")}`, targets.every((t) => t.personal), scope, note);
+    if (wait) return wait;
+    return `已执行（${path.join(" ")}，${target.label}）：\n${await c.larkWrite(ctx.app, a.command, path)}\n写后用 lark_read 读一次核对。`;
   },
 });
 

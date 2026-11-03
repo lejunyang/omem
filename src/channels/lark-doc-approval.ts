@@ -21,16 +21,19 @@ export function docPreview(value: string, max = 240) {
   return truncate(plain, max);
 }
 
-/** Reuse the owner's document permission across turns, including approvals made before scopes existed. */
-export async function docEditDecision(app: App, userId: string, scope: DocEditScope): Promise<Ask | null> {
+/**
+ * Reuse the owner's document permission across turns, including approvals made before scopes existed.
+ * `tool` is whose approvals count: lark_doc_update for docs, lark_write for sheets, Base, tasks…
+ */
+export async function docEditDecision(app: App, userId: string, scope: DocEditScope, tool = "lark_doc_update"): Promise<Ask | null> {
   const rows = all<{ id: string; context: string; status: string; doc: string | null; command: string | null }>(app.db, `select id, context, status,
     json_extract(args, '$.doc') doc, json_extract(args, '$.command') command from asks where user_id = ?
-    and kind = 'approval' and tool = 'lark_doc_update' and status != 'cancelled' order by created_at desc, rowid desc`, userId);
+    and kind = 'approval' and tool = ? and status != 'cancelled' order by created_at desc, rowid desc`, userId, tool);
   const decisions = new Map<string, Ask>();
   let pending: Ask | null = null;
   for (const row of rows) {
     let grant = (JSON.parse(row.context ?? "{}") as { docEditScope?: DocEditScope }).docEditScope;
-    if (!grant && row.doc && row.command) {
+    if (!grant && tool === "lark_doc_update" && row.doc && row.command) {
       const m = /\/(docx|docs)\/([A-Za-z0-9]+)/.exec(row.doc);
       let key = m ? `${m[1] === "docs" ? "doc" : "docx"}:${m[2]}` : null;
       if (!key) {

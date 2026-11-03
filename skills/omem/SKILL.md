@@ -79,6 +79,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `code-handin` | 编码与评审角色交结果（只给对应角色） | 同上 |
 | `lark-msg` | 飞书消息、卡片、表情、文件 | [references/lark.md](references/lark.md) |
 | `lark-docs` | 以本人身份读改、新建、移动飞书文档 | 同上 |
+| `lark-owner` | 以本人身份跑 lark-cli 命令：读表格、多维表格、任务、日历、邮件、妙记等（`lark_read`），经批准写表格、多维表格、幻灯片、Markdown 文件、任务和评论（`lark_write`） | 同上 |
 | `lark-capture` | 飞书会话列表、盯群、采集设置、历史回溯、知识库归属 | 同上 |
 | `learning` | 学习目标与卡片 | [references/learning.md](references/learning.md) |
 | `plugins` | 插件档案读写插件自己的记录；插件的内容块工具（如 `english_quiz`）按插件 id 成组 | [references/plugins.md](references/plugins.md) |
