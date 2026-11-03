@@ -12,7 +12,9 @@ import { personalLibrary, wikiNode, type WikiNode } from "./lark-wiki.ts";
  * put together becomes a doc the owner owns. Where it lands decides whether the owner confirms first:
  * the personal document library and the owner's own Drive folders and docs are the owner's own
  * place; a knowledge base others read (or anyone else's folder or doc) needs the owner's approval
- * for every create, edit, overwrite and move, with the exact place spelled out (tools.ts holds the call).
+ * with the exact place spelled out (tools.ts holds the call). Editing is approved for the listed
+ * documents in one task, including retries; create, move and whole-document overwrite keep their
+ * own approval boundaries.
  */
 
 export type Place = {

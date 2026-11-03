@@ -7,6 +7,10 @@ updated: 2026-11-03
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 飞书文档编辑审批（11-03）
+
+- `lark_doc_update` 首次用 `approval_docs` 列出本次所有待改文档、`summary` 说明整体改动；宿主核对文档实际对象后记在审批上下文，同一任务的追加、局部替换和失败重试沿用批准。审批结果唤醒的续轮可继续，夹入普通新请求则重新审批；新文档、整篇覆盖、移动和新建不借用局部编辑授权。`lark-doc-approval.ts` 管范围匹配和去标签预览，`test/lark-wiki.test.ts` 覆盖拒绝、重复待批、失败重试与续轮边界。卡片不再直接显示 XML 标签；新建文档也可传摘要。
+
 ## 需求切换性能（11-03）
 
 - `src/items/work.ts` 批量读取交办轮次和评审状态，只取列表摘要，避免逐轮解析完整补丁和检查输出。`Requirements.vue` 在普通需求切换时立即显示新标题和加载骨架；同一编码内切换需求点保留面板。`test/req-work-summary.test.ts` 覆盖大结果、查询数量、旧工作区字段和跨轮应用状态；`scripts/bench-scale.ts --requirements` 提供可复现的规模基准。

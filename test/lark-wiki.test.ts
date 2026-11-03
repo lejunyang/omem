@@ -7,7 +7,11 @@ import { importLarkDocument, startRefresh, continueRefresh } from "../src/channe
 import { rememberPerson } from "../src/channels/lark-people.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { continueCrawl, crawlLoop, getCrawl, startCrawl, wikiLocation, clearWikiLocationCache } from "../src/channels/lark-wiki.ts";
-import { all, one } from "../src/core/db.ts";
+import { all, one, run } from "../src/core/db.ts";
+import { createRun } from "../src/agents/runs.ts";
+import { createThread } from "../src/agents/threads.ts";
+import { receive } from "../src/agents/inbox.ts";
+import { askCard } from "../src/channels/lark-asks.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { matchesArchive, saveArchiveRule } from "../src/sources/archive.ts";
 import { getSource, sourceText } from "../src/sources/store.ts";
@@ -23,8 +27,9 @@ type Node = { title: string; children?: string[]; space?: string; type?: string;
  * A fake lark-cli with a knowledge base: wiki nodes by token (their children listed by node-list),
  * docs fetched by the same token, the personal library, and doc writes recorded.
  */
-function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeError?: string } = {}) {
+function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeError?: string; failUpdates?: number } = {}) {
   const calls: string[][] = [];
+  let updates = 0;
   setLarkCliForTests(async (args) => {
     calls.push(args);
     const flag = (name: string) => args[args.indexOf(name) + 1];
@@ -56,7 +61,10 @@ function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeE
     if (args[0] === "auth" && args[1] === "login") return new Promise(() => {});
     if (args[0] === "auth" && args[1] === "status") return { ok: true, identities: { user: { openId: "ou_me", userName: "本人", scope: "wiki:node:read docx:document" } } };
     if (args[0] === "docs" && args[1] === "+create") return { ok: true, data: { document: { document_id: "docx_new", url: `${ORIGIN}/docx/docx_new` } } };
-    if (args[0] === "docs" && args[1] === "+update") return { ok: true, data: { document: { revision_id: 2 } } };
+    if (args[0] === "docs" && args[1] === "+update") {
+      if (++updates <= (opts.failUpdates ?? 0)) throw new Error("模拟写入失败");
+      return { ok: true, data: { document: { revision_id: 2 } } };
+    }
     if (args[0] === "wiki" && args[1] === "+move") return { ok: true, data: { node_token: flag("--node-token") } };
     throw new Error(`unexpected ${args.join(" ")}`);
   });
@@ -204,6 +212,68 @@ describe("feishu knowledge bases", () => {
 
 describe("feishu docs written as the owner", () => {
   const agent = (app: ReturnType<typeof testApp>) => toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: null }))!;
+  function task() {
+    const app = testApp();
+    app.config.approvals.waitSeconds = 0;
+    const thread = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+    const r = createRun(app, { kind: "ask", spaceId: "personal", title: "补齐两篇文档", input: { conversationId: thread.id } });
+    return { app, thread, runId: r.id, ctx: { ...agent(app), runId: r.id } };
+  }
+
+  it("approves listed documents once, including a failed edit's retry; other docs, overwrite and move still ask", async () => {
+    const { app, ctx } = task();
+    const calls = fakeWiki(TREE, { failUpdates: 1 });
+    const edit = { doc: `${ORIGIN}/wiki/A`, command: "str_replace", pattern: "原文", content: "<table><tr><td>新内容</td></tr></table>", format: "xml", summary: "补齐两篇文档的字段对照表，保留已有说明和图片。", approval_docs: [`${ORIGIN}/wiki/A`, `${ORIGIN}/wiki/A1`] };
+    await callTool(ctx, "lark_doc_update", edit);
+    const ask = listAsks(app)[0];
+    expect(ask.question).toContain(edit.summary);
+    expect(ask.question).toContain("《上手》");
+    expect(ask.question).toContain("《环境搭建》");
+    expect(JSON.stringify(askCard(app, ask))).not.toContain("<table>");
+    expect((await answerAsk(app, ask.id, { approved: true, by: "owner" })).result).toContain("失败");
+    // A failed attempt does not spend the task's approval.
+    expect((await callTool(ctx, "lark_doc_update", { ...edit, command: "append" })).text).toContain("已编辑");
+    expect((await callTool(ctx, "lark_doc_update", { doc: `${ORIGIN}/wiki/A1`, command: "append", content: "第二篇" })).text).toContain("已编辑");
+    expect(listAsks(app)).toHaveLength(1);
+    expect(calls.filter((c) => c[1] === "+update")).toHaveLength(3);
+    expect((await callTool(ctx, "lark_doc_update", { doc: `${ORIGIN}/wiki/A2`, command: "append", content: "第三篇" })).text).toContain("需要本人批准");
+    expect((await callTool(ctx, "lark_doc_update", { doc: edit.doc, command: "overwrite", content: "重写" })).text).toContain("需要本人批准");
+    expect((await callTool(ctx, "lark_doc_move", { doc: edit.doc, target: `${ORIGIN}/wiki/A1` })).text).toContain("需要本人批准");
+    expect(calls.filter((c) => c[1] === "+update")).toHaveLength(3);
+  });
+
+  it("shares a pending task approval without scheduling extra edits, and respects refusal", async () => {
+    const { app, ctx } = task();
+    const calls = fakeWiki(TREE);
+    const edit = { doc: `${ORIGIN}/wiki/A`, command: "append", content: "<h2>字段对照</h2><p>补齐事件 &amp; 属性</p>", format: "xml" };
+    await callTool(ctx, "lark_doc_update", edit);
+    const ask = listAsks(app)[0];
+    expect(ask.question).toContain("字段对照 补齐事件 & 属性");
+    expect(ask.question).not.toMatch(/<\/?(?:h2|p)>/);
+    expect((await callTool(ctx, "lark_doc_update", edit)).text).toContain("当前这处编辑尚未执行");
+    expect(listAsks(app)).toHaveLength(1);
+    await answerAsk(app, ask.id, { approved: false, text: "保留现状", by: "owner" });
+    expect((await callTool(ctx, "lark_doc_update", edit))).toMatchObject({ isError: true, text: expect.stringContaining("保留现状") });
+    expect(calls.filter((c) => c[1] === "+update")).toHaveLength(0);
+    expect(listAsks(app)).toHaveLength(1);
+  });
+
+  it("keeps approval for the result's continuation, but not a new request in the same conversation", async () => {
+    const { app, ctx, thread, runId } = task();
+    fakeWiki(TREE);
+    const edit = { doc: `${ORIGIN}/wiki/A`, command: "append", content: "追加" };
+    await callTool(ctx, "lark_doc_update", edit);
+    const ask = listAsks(app)[0];
+    run(app.db, "update runs set status = 'done' where id = ?", runId);
+    await answerAsk(app, ask.id, { approved: true, by: "owner" });
+    const next = one<{ id: string }>(app.db, "select id from runs where status = 'queued' and json_extract(input, '$.fromAsk') = 1")!;
+    expect((await callTool({ ...ctx, runId: next.id }, "lark_doc_update", edit)).text).toContain("已编辑");
+    expect(listAsks(app)).toHaveLength(1);
+    // An ordinary request merged into that queued turn ends the inherited grant as well.
+    await receive(app, { conversationId: thread.id, userId: "owner", text: "另外，改成新的方案" });
+    expect((await callTool({ ...ctx, runId: next.id }, "lark_doc_update", edit)).text).toContain("需要本人批准");
+    expect(listAsks(app)).toHaveLength(2);
+  });
 
   it("creates in the personal library directly; a shared knowledge base waits for the owner's OK with the place spelled out", async () => {
     const app = testApp();

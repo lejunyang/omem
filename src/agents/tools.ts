@@ -43,6 +43,7 @@ import { describeThread, findThread, listThreads, threadMessages } from "./threa
 import { setApprovalExecutor } from "./asks.ts";
 import { helpText, metaSchemas, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
+import { docEditDecision, docPreview, type DocEditScope } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
 import type { SearchOptions } from "../search/search.ts";
 
@@ -2876,17 +2877,21 @@ def({
  * Writes outside the owner's own place (a knowledge base others read, someone else's folder or doc)
  * wait for the owner's OK, with the place spelled out; the approved call runs again with `approved`.
  */
-async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean) {
+async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean, docEditScope?: DocEditScope) {
   if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有 omem 的主人能以本人身份写飞书文档");
   // Like the bot's lark_* tools: omem's own runs only (an outside agent over `omem mcp` has no Feishu scope).
   if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份写飞书文档只在 omem 自己的运行里可用");
   if (personal || ctx.actor === "user" || ctx.approved) return null;
-  const r = await held(ctx, name, args, `${ctx.spec ?? ctx.role ?? "助理"} 要以你的身份${what}\n\n不在你的个人文档库或你自己的云空间里，确认位置无误再批准。`);
+  const decision = docEditScope ? docEditDecision(ctx.app, ctx.runId, ctx.userId ?? OWNER, docEditScope) : null;
+  if (decision?.status === "answered" && decision.approved) return null;
+  if (decision?.status === "answered") throw new HttpError(403, `本人已拒绝这项文档编辑${decision.answer ? `：${decision.answer}` : ""}。按理由调整，不要换个方式绕过。`);
+  // A concurrent call shares the card, but its own edit has not been scheduled for execution.
+  if (decision) return `文档编辑正在等本人批准（${decision.id}），不要重复发审批。当前这处编辑尚未执行；用 wait_answer 等批准后再调用。`;
+  const scopeText = docEditScope ? `\n\n批准范围：本次任务中以上文档的${docEditScope.commands.includes("overwrite") ? "编辑（含整篇覆盖）" : "追加和局部替换"}，包括失败后的重试；其他文档、移动或新建需另行批准。` : "";
+  const r = await held(ctx, name, args, `以你的身份${what}${scopeText}\n\n不在你的个人文档库或你自己的云空间里，确认位置和改动后批准。`, docEditScope ? { docEditScope } : undefined);
   if (r.isError) throw new HttpError(403, r.text);
   return r.text;
 }
-
-const preview = (s: string) => truncate(s.replace(/\s+/g, " ").trim(), 300);
 
 def({
   name: "lark_doc_create",
@@ -2898,11 +2903,12 @@ def({
     content: z.string().min(1),
     parent: z.string().optional().describe("放在哪里：知识库页面链接（建为它的子页面）、云空间文件夹链接；不填 = 个人文档库根目录"),
     format: z.enum(["markdown", "xml"]).optional(),
+    summary: z.string().min(1).max(500).optional().describe("给本人看的一两句改动摘要，写用途和主要内容，不贴正文或 HTML/XML"),
   }),
   handler: async (ctx, a) => {
     const w = await import("../channels/lark-doc-write.ts");
     const place = await w.placeFor(ctx.app, a.parent);
-    const wait = await ownerDocGate(ctx, "lark_doc_create", a, `在 ${place.label} 新建文档《${a.title}》。\n内容开头：${preview(a.content)}`, place.personal);
+    const wait = await ownerDocGate(ctx, "lark_doc_create", a, `在 ${place.label} 新建文档《${a.title}》。\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content)}`, place.personal);
     if (wait) return wait;
     const r = await w.createDoc(ctx.app, { title: a.title, content: a.content, format: a.format, place });
     return `已在 ${place.label} 新建《${a.title}》：${r.url || r.documentId}${r.warnings.length ? `\n飞书的提示：${truncate(JSON.stringify(r.warnings), 500)}` : ""}`;
@@ -2912,7 +2918,7 @@ def({
 def({
   name: "lark_doc_update",
   description:
-    "以本人身份编辑飞书文档：append 追加到末尾，str_replace 把 pattern（一小段原文）换成 content，overwrite 整篇覆盖（会丢掉原有的富文本，只在本人要求重写时用）。本人个人文档库或本人自己的文档直接改；知识库里别人也在用的文档、别人的文档，要本人批准。",
+    "以本人身份编辑飞书文档：append 追加到末尾，str_replace 把 pattern（一小段原文）换成 content，overwrite 整篇覆盖（会丢掉原有的富文本，只在本人要求重写时用）。本人自己的文档直接改；共享文档按本次任务审批。首次调用用 approval_docs 列出本次所有待编辑文档、summary 概括整体改动；批准后这些文档的追加、局部替换和失败重试不重复审批，整篇覆盖需单独批准。",
   write: true,
   schema: z.object({
     doc: z.string().describe("文档链接（/docx/… 或 /wiki/…）"),
@@ -2920,12 +2926,23 @@ def({
     content: z.string(),
     pattern: z.string().optional(),
     format: z.enum(["markdown", "xml"]).optional(),
+    summary: z.string().min(1).max(500).optional().describe("本次任务整体改动的一两句摘要，说明改什么、保留什么；不贴正文或 HTML/XML"),
+    approval_docs: z.array(z.string().min(1)).min(1).max(20).optional().describe("首次审批时列出本次任务所有要编辑的文档链接，一次批准这些文档的后续编辑。只列本人要求修改的文档；不填只批准当前文档"),
   }),
   handler: async (ctx, a) => {
     const w = await import("../channels/lark-doc-write.ts");
     const place = await w.docPlace(ctx.app, a.doc);
-    const verb = { append: "在末尾追加", str_replace: `把“${truncate(a.pattern ?? "", 80)}”改成`, overwrite: "整篇覆盖为" }[a.command];
-    const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑 ${place.label}：${verb}\n${preview(a.content)}`, place.personal);
+    if (a.command === "str_replace" && !a.pattern) throw new HttpError(400, "str_replace 需要 pattern（要替换的原文）");
+    const places = [place];
+    for (const doc of a.approval_docs ?? []) {
+      if (doc === a.doc) continue;
+      const other = await w.docPlace(ctx.app, doc);
+      if (!places.some((p) => p.objToken === other.objToken && p.objType === other.objType)) places.push(other);
+    }
+    const scope = { documents: places.map((p) => `${p.objType}:${p.objToken}`), commands: a.command === "overwrite" ? ["append", "str_replace", "overwrite"] : ["append", "str_replace"] };
+    const verb = { append: "追加内容", str_replace: "局部替换", overwrite: "整篇覆盖（会替换原有富文本）" }[a.command];
+    const targets = places.map((p) => `- ${p.label}`).join("\n");
+    const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑以下文档：\n${targets}\n\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content)}\n首次操作：${verb}`, places.every((p) => p.personal), scope);
     if (wait) return wait;
     await w.updateDoc(ctx.app, a);
     return `已编辑（${a.command}）：${a.doc}（${place.label}）`;
@@ -4292,7 +4309,7 @@ async function steering(ctx: ToolContext) {
  * A tool listed in `approvals.tools`: the call waits for the owner's OK. Approved, it runs with
  * the context it was made in (also after this run has ended); refused, the reason goes back.
  */
-async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string): Promise<{ text: string; isError: boolean }> {
+async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string, extraContext?: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
   const { createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
   const { app, tools: allowed, ...rest } = ctx;
   const ask = createAsk(app, {
@@ -4302,7 +4319,7 @@ async function held(ctx: ToolContext, name: string, args: Record<string, unknown
     question: question ?? `${ctx.spec ?? ctx.role ?? "助理"} 要调用 ${name}：\n${truncate(JSON.stringify(args, null, 1), 1500)}`,
     tool: name,
     args,
-    context: { ...rest, tools: allowed ? [...allowed] : null },
+    context: { ...rest, tools: allowed ? [...allowed] : null, ...extraContext },
   });
   const got = await waitForAnswer(app, ask.id, app.config.approvals.waitSeconds * 1000);
   if (got.status === "pending")
