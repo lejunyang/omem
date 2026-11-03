@@ -391,9 +391,10 @@ ${input.task}
     // Every coding round starts from the target branch's latest commits on origin, asked or not:
     // coding on an old commit leaves the work to be merged by hand later. Nothing to pull, no trace.
     const implicit = !input.sync && !input.syncResume && !input.moveToTarget && !input.syncOnly && !retryOf && !input.peerFinished && worktrees.some((w) => w.targetBranch);
-    const req: import("./code-sync.ts").SyncRequest | undefined = input.sync ?? (implicit ? { pull: true, fetch: false } : undefined);
-    if (!req && !input.syncResume && !input.moveToTarget) return null;
     const cs = await import("./code-sync.ts");
+    const unfinished = worktrees.some((w) => cs.syncInProgress(w.path));
+    const req: import("./code-sync.ts").SyncRequest | undefined = input.sync ?? (implicit ? { pull: true, fetch: false } : unfinished ? { fetch: false } : undefined);
+    if (!req && !input.syncResume && !input.moveToTarget) return null;
     type Pending = { space: string; kind: "sync" | "move"; start?: string; label: string; conflicts: string[] };
     const before = ((getRun(app, rootRunId).output.syncPending ?? []) as Pending[]);
     const pending: Pending[] = [];
@@ -407,7 +408,7 @@ ${input.task}
       const status = (text: string) => ctx.event("status", { text: `${multi ? `${wt.space}：` : ""}${text}` });
       let steps: import("./code-sync.ts").SyncStep[] = [];
       let stopped: import("./code-sync.ts").SyncState | null = null;
-      const was = before.find((p) => p.space === wt.space);
+      const was: Pending | undefined = before.find((p) => p.space === wt.space) ?? (cs.syncInProgress(wt.path) ? { space: wt.space, kind: "sync", label: `继续未完成的 ${cs.syncInProgress(wt.path)}`, conflicts: [] } : undefined);
       if (input.syncResume) {
         if (!was) continue;
         const from = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
@@ -425,7 +426,7 @@ ${input.task}
         else wt.start = m.start;
       } else if (req) {
         // Nothing new on origin: leave the worktree (and its uncommitted work) alone.
-        if (implicit && !cs.behindOrigin(root, wt)) continue;
+        if (implicit && !cs.syncInProgress(wt.path) && !cs.behindOrigin(root, wt)) continue;
         const r = await cs.syncWorktree(root, wt, req, resolver, status);
         steps = r.steps;
         if (r.stopped) { stopped = r.stopped; pending.push({ space: wt.space, kind: "sync", label: r.stopped.label, conflicts: r.stopped.conflicts }); }
@@ -1094,7 +1095,7 @@ ${truncate(task, 3000)}
 1. 读两边的改动（\`git diff\`、\`git log --merge\`、\`git show :2:<文件>\` / \`:3:<文件>\`），按两边的意图合并，不要简单地选一边丢掉另一边的功能。
 2. 业务上拿不准取舍的（两边都改了同一个规则、同一个接口）用 ask_owner 问本人，给出选项并说明各自的后果；本人没回答前不要猜。
 3. 解决后删掉所有冲突标记，对这些文件 \`git add\`；能跑检查命令就跑一下。
-4. 不要 commit，不要 \`git merge --continue\` / \`git rebase --continue\` / \`--abort\`，宿主会接着做。
+4. 不要 commit，不要继续或中止 merge / rebase / cherry-pick / revert，宿主会接着做。
 5. 结束时逐个文件说明怎么解决的；实在解决不了的，说明卡在哪里（会交给本人）。`;
 }
 

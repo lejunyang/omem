@@ -8,6 +8,7 @@ import { finishSync, moveToTarget, popWip, syncInProgress, syncWorktree, type Re
 import { __testHandlers, addRunEvent, createRun, getRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
 import type { WorktreeRef } from "../src/agents/worktree-index.ts";
 import { git } from "../src/core/git.ts";
+import { placeOnBranch } from "../src/agents/code-branch.ts";
 import { run as sql } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { startServer } from "../src/server/http.ts";
@@ -62,6 +63,54 @@ beforeEach(() => {
 afterEach(() => { app.db.close(); try { rmSync(app.home, { recursive: true, force: true }); } catch { /* still in use */ } });
 
 describe("Git sync before coding", { timeout: 60000 }, () => {
+  it("preserves an interrupted cherry-pick at round entry, resolves it before stashing and continues the sequence", async () => {
+    const picked = commit(root, "rules.txt", "refund: picked rule\n", "picked rule");
+    const next = commit(root, "followup.txt", "keep the second commit\n", "next picked commit");
+    commit(wtPath, "rules.txt", "refund: local rule\n", "local rule");
+    writeFileSync(join(wtPath, "notes.txt"), "unrelated work stays\n");
+    expect(git(wtPath, ["cherry-pick", picked, next]).ok).toBe(false);
+    expect(syncInProgress(wtPath)).toBe("cherry-pick");
+    const before = sh(wtPath, "rev-parse", "HEAD");
+    expect(placeOnBranch(root, wt)).toContain("没做完的同步");
+    expect(sh(wtPath, "rev-parse", "HEAD")).toBe(before);
+    expect(sh(wtPath, "diff", "--name-only", "--diff-filter=U")).toBe("rules.txt");
+    const r = await syncWorktree(root, wt, { fetch: false }, bothSides, noop);
+    expect(r.stopped).toBeNull();
+    expect(r.steps[0]).toMatchObject({ label: "继续未完成的 cherry-pick", conflicts: ["rules.txt"] });
+    expect(syncInProgress(wtPath)).toBeNull();
+    expect(readFileSync(join(wtPath, "rules.txt"), "utf8")).toContain("local rule");
+    expect(readFileSync(join(wtPath, "rules.txt"), "utf8")).toContain("picked rule");
+    expect(readFileSync(join(wtPath, "notes.txt"), "utf8")).toBe("unrelated work stays\n");
+    expect(readFileSync(join(wtPath, "followup.txt"), "utf8")).toBe("keep the second commit\n");
+    expect(placeOnBranch(root, wt)).toContain("你在分支");
+  });
+
+  it("keeps unresolved picks for a later round and skips a pick resolved to an empty change", async () => {
+    const picked = commit(root, "rules.txt", "refund: picked rule\n", "picked rule");
+    commit(wtPath, "rules.txt", "refund: local rule\n", "local rule");
+    expect(git(wtPath, ["cherry-pick", picked]).ok).toBe(false);
+    const r = await syncWorktree(root, wt, { fetch: false }, giveUp, noop);
+    expect(r.stopped).toMatchObject({ op: "cherry-pick", conflicts: ["rules.txt"] });
+    expect(syncInProgress(wtPath)).toBe("cherry-pick");
+    expect(await finishSync(wtPath, "继续", async () => {
+      sh(wtPath, "checkout", "--ours", "rules.txt");
+      sh(wtPath, "add", "rules.txt");
+    })).toBeNull();
+    expect(syncInProgress(wtPath)).toBeNull();
+    expect(readFileSync(join(wtPath, "rules.txt"), "utf8")).toBe("refund: local rule\n");
+  });
+
+  it("resumes a conflicted revert without switching away from its index", async () => {
+    const reverted = commit(wtPath, "rules.txt", "refund: first rule\n", "first rule");
+    commit(wtPath, "rules.txt", "refund: second rule\n", "second rule");
+    expect(git(wtPath, ["revert", "--no-edit", reverted]).ok).toBe(false);
+    expect(syncInProgress(wtPath)).toBe("revert");
+    expect(placeOnBranch(root, wt)).toContain("没做完的同步");
+    expect(await finishSync(wtPath, "继续撤销", bothSides)).toBeNull();
+    expect(syncInProgress(wtPath)).toBeNull();
+    expect(readFileSync(join(wtPath, "rules.txt"), "utf8")).toContain("second rule");
+  });
+
   it("merges another branch, sends its conflicts to the resolver and finishes the merge", async () => {
     commit(root, "rules.txt", "refund: shipped lines\n", "main changes the rule");
     commit(wtPath, "rules.txt", "refund: unshipped lines\n", "feature changes the rule");
@@ -196,6 +245,24 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
     sh(root, "checkout", "-q", "main");
     return createRun(app, { kind: "code", spaceId: "shop", title: "把 main 合并到 feature/refund", input: { task: "合并 main，解决冲突", repos: ["shop"], fromBranches: { shop: "feature/refund" }, sync: { onto: "main", fetch: false }, syncOnly: true } });
   };
+
+  it("a retry without a sync request recovers a pick before starting the normal coder", async () => {
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const failed = delegate("resolve");
+      sql(app.db, "update runs set status = 'failed' where id = ?", failed.id);
+      const picked = sh(root, "rev-parse", "main");
+      commit(wtPath, "rules.txt", "refund: local rule\n", "local rule");
+      writeFileSync(join(wtPath, "notes.txt"), "keep previous work\n");
+      expect(git(wtPath, ["cherry-pick", picked]).ok).toBe(false);
+      const r = createRun(app, { kind: "code", spaceId: "shop", title: "继续退款改动", input: { task: "继续原任务", repos: ["shop"], fromBranches: { shop: "feature/refund" }, reviewTier: "light", retryOf: failed.id } });
+      setRunOutput(app, r.id, { worktrees: [{ ...wt, commits: true }] });
+      await exec(r.id);
+      expect(syncInProgress(wtPath)).toBeNull();
+      expect(String(getRun(app, r.id).output.coderSummary)).toContain("继续未完成的 cherry-pick");
+      expect(readFileSync(join(wtPath, "notes.txt"), "utf8")).toBe("keep previous work\n");
+    } finally { await server.close(); }
+  });
 
   it("every coding round first pulls what others pushed to the target branch", async () => {
     const server = await startServer(app, { port: 0, quiet: true });

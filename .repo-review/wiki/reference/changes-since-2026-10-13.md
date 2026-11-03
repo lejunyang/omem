@@ -7,6 +7,10 @@ updated: 2026-11-03
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 中断的 Git 操作续轮（11-03）
+
+- `code-sync.ts` 在 merge / rebase 之外识别 cherry-pick / revert 及其 sequencer；`placeOnBranch` 保留现场，`syncWorktree` 先解决并继续未完成的操作再暂存与同步，`code.ts` 让失败重试和无需拉取的续轮也进入恢复。多提交序列和空提交不再卡住，冲突仍未解决时保留现场。`test/code-sync.test.ts` 覆盖工作区入口、后续提交、空提交、revert 和 ACP 端到端恢复。
+
 ## 飞书文档编辑审批（11-03）
 
 - `lark_doc_update` 首次用 `approval_docs` 列出本次所有待改文档、`summary` 说明整体改动；宿主核对文档实际对象后记在审批上下文，按本人和文档实际对象复用追加、局部替换和失败重试的批准，跨轮次、会话及旧版批准记录均兼容；最近的拒绝仍拦截；新文档、整篇覆盖、移动和新建不借用局部编辑授权。`lark-doc-approval.ts` 管范围匹配和去标签预览，`test/lark-wiki.test.ts` 覆盖拒绝、重复待批、失败重试与续轮边界。卡片不再直接显示 XML 标签；新建文档也可传摘要。

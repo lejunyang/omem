@@ -130,7 +130,7 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
  */
 export function placeOnBranch(root: string, wt: WorktreeRef): string {
   const dir = workDirOf(wt);
-  // A merge or rebase stopped on conflicts waits here for the owner: the round finishes it in place.
+  // Keep interrupted operations (including picks/reverts) in place for the conflict resolver.
   if (syncInProgress(dir) || hasSyncStash(dir)) return `工作区里有一次没做完的同步（${wt.branch}），宿主会先把它做完。`;
   let tip = tipOf(root, wt.branch);
   if (!tip) {

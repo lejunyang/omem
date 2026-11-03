@@ -15,6 +15,7 @@ import type { WorktreeRef } from "./worktree-index.ts";
  * onto the target branch's latest commit, when the branch moved and the patch no longer applies.
  */
 export type SyncMode = "merge" | "rebase";
+export type SyncOperation = SyncMode | "cherry-pick" | "revert";
 export type SyncRequest = {
   /** Bring in the target branch's commits from origin first (fast-forward when possible). */
   pull?: boolean;
@@ -25,7 +26,7 @@ export type SyncRequest = {
   fetch?: boolean;
 };
 export type SyncStep = { label: string; from: string; to: string; conflicts: string[] };
-export type SyncState = { op: "merge" | "rebase"; label: string; conflicts: string[] };
+export type SyncState = { op: SyncOperation; label: string; conflicts: string[] };
 /** Resolves the listed conflicts in the worktree (the coding Agent): leaves them resolved or not. */
 export type Resolver = (files: string[], label: string) => Promise<void>;
 
@@ -37,11 +38,22 @@ function identity(path: string) {
 const head = (path: string) => git(path, ["rev-parse", "HEAD"]).stdout.trim();
 const unmerged = (path: string) => git(path, ["diff", "--name-only", "--diff-filter=U"]).stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 
-/** A merge or rebase stopped half way in this worktree. */
-export function syncInProgress(path: string): "merge" | "rebase" | null {
-  const at = (name: string) => existsSync(resolve(path, git(path, ["rev-parse", "--git-path", name]).stdout.trim()));
+/** An unfinished Git operation belongs to this worktree, including a sequenced pick/revert. */
+export function syncInProgress(path: string): SyncOperation | null {
+  const at = (name: string) => {
+    const r = git(path, ["rev-parse", "--git-path", name]);
+    return r.ok && !!r.stdout.trim() && existsSync(resolve(path, r.stdout.trim()));
+  };
   if (at("rebase-merge") || at("rebase-apply")) return "rebase";
   if (at("MERGE_HEAD")) return "merge";
+  if (at("CHERRY_PICK_HEAD")) return "cherry-pick";
+  if (at("REVERT_HEAD")) return "revert";
+  if (at("sequencer/todo")) {
+    const file = git(path, ["rev-parse", "--git-path", "sequencer/todo"]).stdout.trim();
+    const next = readFileSync(resolve(path, file), "utf8").split("\n").find((l) => /^(pick|revert)\s/.test(l));
+    if (next?.startsWith("pick ")) return "cherry-pick";
+    if (next?.startsWith("revert ")) return "revert";
+  }
   return null;
 }
 
@@ -68,12 +80,12 @@ function freshest(root: string, name: string): { ref: string; commit: string } |
 function start(path: string, op: SyncMode, commit: string) {
   return op === "merge" ? git(path, [...identity(path), "merge", "--no-ff", "--no-edit", commit]) : git(path, [...identity(path), "rebase", "--rebase-merges", commit]);
 }
-function proceed(path: string, op: SyncMode) {
-  return op === "merge" ? git(path, [...identity(path), "commit", "--no-edit"]) : git(path, [...identity(path), "-c", "core.editor=true", "rebase", "--continue"]);
+function proceed(path: string, op: SyncOperation) {
+  return op === "merge" ? git(path, [...identity(path), "commit", "--no-edit"]) : git(path, [...identity(path), "-c", "core.editor=true", op, "--continue"]);
 }
 
 /**
- * Carry a stopped merge or rebase to its end: each round of conflicts goes to the resolver, then
+ * Carry a stopped Git operation to its end: each round of conflicts goes to the resolver, then
  * Git continues. Returns what is still unresolved (the run stops and asks the owner), or null.
  */
 export async function finishSync(path: string, label: string, resolver: Resolver, conflicts: string[] = []): Promise<SyncState | null> {
@@ -91,7 +103,10 @@ export async function finishSync(path: string, label: string, resolver: Resolver
     const r = proceed(path, op);
     // Nothing left to commit in this step (the resolution took one side entirely): skip it.
     if (!r.ok && op === "rebase" && !unmerged(path).length && /nothing to commit|empty/i.test(r.stderr + r.stdout)) git(path, ["-c", "core.editor=true", "rebase", "--skip"]);
-    else if (!r.ok && !unmerged(path).length && syncInProgress(path)) throw new HttpError(409, `${label}没能继续：${(r.stderr || r.stdout).slice(0, 600)}`);
+    else if (!r.ok && (op === "cherry-pick" || op === "revert") && !unmerged(path).length && git(path, ["diff", "--cached", "--quiet", "HEAD"]).ok) {
+      const skip = git(path, [...identity(path), "-c", "core.editor=true", op, "--skip"]);
+      if (!skip.ok && !unmerged(path).length && syncInProgress(path)) throw new HttpError(409, `${label}没能跳过空提交：${(skip.stderr || skip.stdout).slice(0, 600)}`);
+    } else if (!r.ok && !unmerged(path).length && syncInProgress(path)) throw new HttpError(409, `${label}没能继续：${(r.stderr || r.stdout).slice(0, 600)}`);
   }
   throw new HttpError(409, `${label}的冲突一直没有处理完`);
 }
@@ -114,6 +129,16 @@ async function step(path: string, op: SyncMode, target: { ref: string; commit: s
  */
 export async function syncWorktree(root: string, wt: WorktreeRef, req: SyncRequest, resolver: Resolver, status: (text: string) => void) {
   const path = wt.path;
+  const recovered: SyncStep[] = [];
+  const op = syncInProgress(path);
+  if (op) {
+    const label = `继续未完成的 ${op}`;
+    status(label);
+    const from = head(path), conflicts: string[] = [];
+    const stopped = await finishSync(path, label, resolver, conflicts);
+    recovered.push({ label, from, to: head(path), conflicts });
+    if (stopped) return { steps: recovered, stopped, stashed: hasSyncStash(path) };
+  }
   // Work already in the worktree (a later round) waits in the stash while Git merges or rebases.
   const stashed = !!git(path, ["status", "--porcelain"]).stdout.trim();
   if (stashed) {
@@ -121,6 +146,7 @@ export async function syncWorktree(root: string, wt: WorktreeRef, req: SyncReque
     if (!st.ok) throw new HttpError(409, `暂存未提交的改动失败：${st.stderr.slice(0, 600)}`);
   }
   const r = await syncSteps(root, wt, req, resolver, status);
+  r.steps.unshift(...recovered);
   if (r.stopped || !stashed) return { ...r, stashed };
   const left = await popStash(path, resolver);
   return { ...r, stopped: left, stashed: !!left };
