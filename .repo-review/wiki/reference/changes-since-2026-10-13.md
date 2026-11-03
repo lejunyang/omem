@@ -9,6 +9,8 @@ updated: 2026-11-03
 
 ## 对话投递、引用与编码接续（11-03）
 
+- `roles/_common.md` 与原件工具说明明确：工作文件、确认表内的代码锚点优先引用库内原件并核对版本、行号；不能从 Git remote、提交号或其他平台的路径规则猜造代码网页地址。
+
 - 确认卡片和建议触发的后续回答回到原渠道；卡片回答与普通消息合并时只投递一次（`agents/inbox.ts`、`jobs.ts`、`channels/common.ts`）。
 - 文档引用按完整 Markdown 块高亮，表格、列表与代码块不会从引用行被切断（`web/src/lib/cited-document.ts`、`CitationDrawer.vue`）。
 - 连续三次验证失败、裁决未交付先交给发起助手；`settle_code_task` 的 retry 可附 `existing_authorization` 说明原需求或已有授权，后台接续也能恢复，新的业务决定仍问本人。编码确认卡片先显示问题和按钮，完整技术记录默认折叠（`code-tasks.ts`、`code-loop.ts`、`tools.ts`、`channels/lark-asks.ts`）。
