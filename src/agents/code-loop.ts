@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { one } from "../core/db.ts";
+import { all, one } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { git } from "../core/git.ts";
 import { HttpError, truncate } from "../core/util.ts";
@@ -605,6 +605,28 @@ export function answerTask(app: App, rootId: string, seq: number, a: { choice?: 
   }
   closeTaskAsk(app, rootId, seq);
   return advanceWork(app, rootId, { owner: true });
+}
+
+/**
+ * At start: a card left for a task that no longer waits on the owner (it moved on, or now waits on the
+ * assistant) closes, and the assistant is woken for tasks waiting on it that no turn is taking.
+ */
+export function reconcileWaiting(app: App) {
+  let closed = 0;
+  let woken = 0;
+  for (const a of all<{ id: string; w: string; s: number }>(app.db, "select id, json_extract(context, '$.workId') w, json_extract(context, '$.seq') s from asks where status = 'pending' and json_extract(context, '$.handler') = 'code-task'")) {
+    const t = one<{ state: string }>(app.db, "select state from code_tasks where work_id = ? and seq = ?", a.w, a.s);
+    if (t?.state === "owner") continue;
+    if (t) closeTaskAsk(app, a.w, a.s);
+    cancelAsk(app, a.id);
+    closed++;
+  }
+  for (const { work_id } of all<{ work_id: string }>(app.db, "select distinct work_id from code_tasks where state = 'assistant'")) {
+    const rounds = all<{ output: string }>(app.db, "select output from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?)", work_id, work_id);
+    if (rounds.some((r) => { const o = JSON.parse(r.output ?? "{}"); return o.appliedAt || o.discardedAt; })) continue;
+    if (wakeAssistantForTasks(app, work_id)) woken++;
+  }
+  return { closed, woken };
 }
 
 export function closeTaskAsk(app: App, rootId: string, seq: number) {

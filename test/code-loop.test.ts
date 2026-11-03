@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
-import { answerAsk, listAsks } from "../src/agents/asks.ts";
+import { answerAsk, createAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
 import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQuestionText, recordCheckpoint, recordOutsideChanges, retryTask, scheduleWorkRevert, setWorkState, settleCodingRound, updateTask, waitingText, workPatches, workState } from "../src/agents/code-tasks.ts";
-import { advanceWork, settleTask, taskReview } from "../src/agents/code-loop.ts";
+import { advanceWork, reconcileWaiting, settleTask, taskReview } from "../src/agents/code-loop.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
 import { identity } from "../src/agents/code-branch.ts";
@@ -381,6 +381,28 @@ describe("a delegation driven by tasks", () => {
       expect(listTasks(app, r.id)[1].notes.at(-1)?.text).toContain("已有授权依据");
       updateTask(app, r.id, scope.seq, { state: "owner" });
       expect((await settle(assistant, scope.seq, "skip", "先不做", { existing_authorization: "本人此前让继续" })).isError).toBe(true);
+    } finally {
+      app.db.close();
+    }
+  });
+
+  it("at start closes cards of tasks no longer waiting on the owner and wakes the assistant for its own", () => {
+    const app = testApp();
+    try {
+      const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "交办", input: { conversationId: t.id } });
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款", repos: ["personal"], taskMode: true }, parentId: ask.id, userId: OWNER });
+      codeChainFor(app, r);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const x = addTask(app, r.id, { title: "补审核时间", kind: "build", state: "owner", question: "缺后端字段", options: ["等", "不做"] }, "coder");
+      const card = createAsk(app, { runId: r.id, conversationId: t.id, userId: OWNER, question: "补审核时间？", options: [{ label: "等" }], context: { handler: "code-task", workId: r.id, seq: x.seq } });
+      setWorkState(app, r.id, { asks: { [String(x.seq)]: card.id } });
+      // An upgrade moved it to the assistant (db migration).
+      run(app.db, "update code_tasks set state = 'assistant' where work_id = ? and seq = ?", r.id, x.seq);
+      expect(reconcileWaiting(app)).toEqual({ closed: 1, woken: 1 });
+      expect(listAsks(app, {}).find((a) => a.id === card.id)!.status).toBe("cancelled");
+      // Again: nothing left to close, and the turn already queued takes it.
+      expect(reconcileWaiting(app)).toEqual({ closed: 0, woken: 0 });
     } finally {
       app.db.close();
     }
