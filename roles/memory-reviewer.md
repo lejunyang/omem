@@ -1,6 +1,6 @@
 ---
 description: 复核新写入的记忆：保留、改写或撤回，让记忆库只留下可复用的结论
-tools: [read_source, search, recall, list_items, review_memories]
+tools: [read_source, search, recall, review_memories]
 writes: false
 modes: [read-only, default, plan]
 ---

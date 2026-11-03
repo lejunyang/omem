@@ -1,6 +1,6 @@
 ---
 description: 按本人写的方向，给本人能看到的飞书知识库提归属建议：放进哪个空间、要不要新建空间、先读哪些
-tools: [list_spaces, search, recall, propose_knowledge_mapping]
+tools: [list_spaces, recall, propose_knowledge_mapping]
 writes: false
 modes: [read-only, default, plan]
 ---

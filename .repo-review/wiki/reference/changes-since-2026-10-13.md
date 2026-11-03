@@ -1147,3 +1147,11 @@ updated: 2026-11-04
 - 新工具 `lark_doc_fetch`（飞书分组）：以本人身份 `docs +fetch --detail with-ids`，可按 outline / section / range / keyword 读一部分，拿 block id；只读，不存原件。外部 Agent（`--peer`）用不了。
 - `lark_doc_update` 加 `block_replace`、`block_insert_after`、`block_delete`、`block_move_after`、`block_copy_insert_after`（参数 `block_id`、`start_block_id` / `end_block_id`、`src_block_ids`、`revision_id`），`content` 在这些命令里可省略或默认 DocxXML；返回结果、新 block、飞书的提示。块操作沿用追加 / 局部替换的批准（`commands` 仍记为 append、str_replace），旧批准照样覆盖。以前只有追加、替换一段文字、整篇覆盖，改表格只能整篇覆盖。
 - 内置技能 `lark-docs`：读 → 按块改 → 重读核对的做法、表格怎么改、新建文档；`references/` 里的 DocxXML / Markdown 写法由 `scripts/sync-lark-skills.ts` 从 lark-cli 自带的说明（`lark-cli skills read lark-doc/...`）同步。主助手改文档前先读它。lark-cli 的其他技能（lark-im 等）是本人身份的命令行做法，omem 的写入走工具，不内置。
+
+## 11-04：工具按用途分组
+
+- `TOOL_GROUPS` 从 10 个按领域的大组拆成 19 个按用途的小组：`read` / `collect` / `curate`（原 sources）、`track` / `notifications`（原 items）、`delegate` / `skills`（原 agents）、`ask` / `wake`（原 owner，`notify` 移到 ask）、`coding` / `git` / `code-handin`（原 code）、`lark-msg` / `lark-docs` / `lark-capture`（原 lark，`lark_wiki_crawl` 移到 collect）；memory、wiki、learning、plugins 不变。每组带 `doc`，几组共用原来的 reference 页，`omem_help` 填分组 id 或说明页名都行。
+- 旧名经 `GROUP_ALIASES` 仍可写在 `tools:` 里，等于原来那些工具（加上移进去的 lark_wiki_crawl / notify），本人自定义过的主助手不用改。主助手的 `tools:` 改成新分组。
+- `test/tool-help.test.ts`：每组不超过 15 个工具（插件组除外）、每组都在 SKILL.md 分组表里、旧名的工具不变。
+- `DIRECT_ALL` 20 → 30：常驻服务器上 ingest（21 个工具）两周调了 750 次 `omem_help`、自定义档案（28 个）343 次、dream 6 次，都是工具数刚过线、非常用工具藏在 `omem_call` 后面造成的。`CORE_TOOLS` 加 `list_sources`、`write_file`、`list_runs`、`read_run`、`wake_later`、`cancel_wake`（主助手和档案运行里最常经 omem_call 调的几个）。
+- 按两周的调用统计精简内置角色：triager 去掉 source_outline、list_pages、recall、list_items（2810 次运行里没用过，说明里也没提）；kb-scout 去掉 search；memory-reviewer 去掉 list_items。

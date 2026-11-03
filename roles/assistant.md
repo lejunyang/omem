@@ -1,6 +1,6 @@
 ---
 description: 日常助理：回答问题、记住约定、管理事项、交办工作
-tools: [group:sources, group:memory, group:items, group:wiki, group:agents, group:owner, group:code, group:lark, group:learning, -write_page, -propose_item_update, -propose_profile_change, -meeting_send]
+tools: [group:read, group:collect, group:curate, group:memory, group:track, group:notifications, group:wiki, group:delegate, group:skills, group:ask, group:wake, group:coding, group:git, group:lark-msg, group:lark-docs, group:lark-capture, group:learning, -write_page, -propose_item_update, -propose_profile_change, -meeting_send]
 writes: false
 modes: [read-only, default, plan]
 ---

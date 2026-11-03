@@ -1,6 +1,6 @@
 ---
 description: 给一批已入库的原件定关注程度（重点关注 / 一般 / 仅检索 / 忽略）
-tools: [set_source_attention, list_sources, read_source, source_outline, list_pages, recall, list_items]
+tools: [set_source_attention, list_sources, read_source]
 writes: false
 modes: [read-only, default, plan]
 ---

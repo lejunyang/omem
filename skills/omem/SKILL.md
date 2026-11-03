@@ -59,18 +59,31 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 
 ## 分组
 
-| 分组 | 内容 | 说明 |
+按用途分组，一个档案只拿它要做的那几类（比如只读的角色拿 `read`，不拿 `curate`）。几个分组共用一页说明；`omem_help` 填分组 id 或说明页名（`sources`、`lark`…）都行。
+
+| 分组 | 用途 | 说明 |
 | --- | --- | --- |
-| `sources` | 空间、检索、读原件、代码符号、聊天会话、关注程度与标注、导入材料、工作文件、原件归档 | [references/sources.md](references/sources.md) |
+| `read` | 查找与阅读原件：空间列表、检索、读原件和目录、代码符号、聊天会话 | [references/sources.md](references/sources.md) |
+| `collect` | 收进材料：导入网址和飞书文档、笔记、工作文件、整理一批原件、按目录读知识库 | 同上 |
+| `curate` | 空间与原件治理：建空间、接仓库、空间关联、关注程度与标注、原件归档 | 同上 |
 | `memory` | 查、写、更正、撤回记忆，记忆目录 | [references/memory.md](references/memory.md) |
-| `items` | 待办、提醒、等待回复，跨空间进展提案，通知与修复 | [references/items.md](references/items.md) |
+| `track` | 事项与需求：待办、提醒、等待回复，需求树，跨空间进展提案 | [references/items.md](references/items.md) |
+| `notifications` | 事项通知排查：关联修复、通知检查与重发、忽略规则 | 同上 |
 | `wiki` | 读写 Wiki 页面、生成 Wiki | [references/wiki.md](references/wiki.md) |
-| `agents` | Agent 档案、交办与请教、选 AI、技能、运行记录 | [references/agents.md](references/agents.md) |
-| `owner` | 问本人、下一步按钮、定时或按消息唤醒、规则 | [references/owner.md](references/owner.md) |
-| `code` | 编码交办、评审、应用改动、Git 同步与提交 | [references/code.md](references/code.md) |
-| `lark` | 飞书消息与卡片、飞书文档、采集设置与历史回溯 | [references/lark.md](references/lark.md) |
+| `delegate` | 交给别的 Agent、请教、选 AI、看运行记录 | [references/agents.md](references/agents.md) |
+| `skills` | 技能与 Agent 档案 | 同上 |
+| `ask` | 问本人、等回答、下一步按钮、通知本人 | [references/owner.md](references/owner.md) |
+| `wake` | 定时或按消息唤醒、规则 | 同上 |
+| `coding` | 编码交办、评审、修改项、应用改动 | [references/code.md](references/code.md) |
+| `git` | 分支、工作区、Git 同步与提交 | 同上 |
+| `code-handin` | 编码与评审角色交结果（只给对应角色） | 同上 |
+| `lark-msg` | 飞书消息、卡片、表情、文件 | [references/lark.md](references/lark.md) |
+| `lark-docs` | 以本人身份读改、新建、移动飞书文档 | 同上 |
+| `lark-capture` | 飞书会话列表、盯群、采集设置、历史回溯、知识库归属 | 同上 |
 | `learning` | 学习目标与卡片 | [references/learning.md](references/learning.md) |
 | `plugins` | 插件档案读写插件自己的记录；插件的内容块工具（如 `english_quiz`）按插件 id 成组 | [references/plugins.md](references/plugins.md) |
+
+以前的分组名（`sources`、`items`、`agents`、`owner`、`code`、`lark`）仍可写在档案的 `tools:` 里，等于它们拆成的那几组。
 
 ## 通用要求
 

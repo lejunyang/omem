@@ -14,26 +14,67 @@ export const CORE_TOOLS = new Set([
   "recall", "remember", "supersede", "list_items", "read_item", "upsert_item", "notify",
   "list_conversations", "read_conversation", "list_skills", "read_skill",
   "ask_owner", "wait_answer", "suggest_next", "lark_send",
+  "list_sources", "write_file", "list_runs", "read_run", "wake_later", "cancel_wake",
 ]);
 /** What a background role exists to hand in: always its own tool, and only for that role. */
 export const ROLE_TOOLS = ["describe_source", "classify_source", "propose_archive_rule", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
-/** A run allowed this few tools gets every one of them directly. */
-export const DIRECT_ALL = 20;
+/**
+ * A run allowed this few tools gets every one of them directly: a background role or profile
+ * with an exact list just over the line otherwise spends a turn on omem_help for each tool it
+ * reaches through omem_call, which costs more than the schemas would.
+ */
+export const DIRECT_ALL = 30;
 
-/** Areas of the tool set; each has a reference page at skills/omem/references/<id>.md. */
-export const TOOL_GROUPS: { id: string; label: string; tools: string[] }[] = [
-  { id: "sources", label: "原件、检索与材料", tools: ["list_spaces", "create_space", "connect_repository", "relate_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "describe_source", "set_source_attention", "annotate_source", "attention_rules", "digest_sources", "import_url", "save_note", "write_file", "list_conversations", "read_conversation", "classify_source", "propose_archive_rule"] },
-  { id: "memory", label: "记忆", tools: ["recall", "remember", "supersede", "forget", "review_memories", "list_memory_folders", "organize_memories"] },
-  { id: "items", label: "事项、需求与通知", tools: ["req_tree", "req_read", "save_requirements", "split_requirements", "list_items", "read_item", "upsert_item", "settle_items", "propose_item_update", "list_item_proposals", "resolve_item_proposal", "repair_item_association", "inspect_item_notification", "read_item_repair", "refresh_item_notification", "notify", "ignore_notification_rule"] },
-  { id: "wiki", label: "Wiki", tools: ["list_pages", "read_page", "write_page", "move_page", "confirm_page", "generate_wiki", "submit_plan"] },
-  { id: "agents", label: "Agent、技能与运行", tools: ["list_agents", "save_agent", "run_agent", "continue_agent_work", "ask_agent", "list_ai_backends", "switch_run_ai", "list_skills", "read_skill", "save_skill", "propose_profile_change", "list_runs", "read_run"] },
-  { id: "owner", label: "问本人、唤醒与规则", tools: ["ask_owner", "wait_answer", "suggest_next", "wake_later", "wake_on_message", "cancel_wake", "list_rules", "save_rule"] },
-  { id: "code", label: "编码交办、评审与 Git", tools: ["delegate_code", "review_branch", "list_branches", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "settle_code_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute"] },
-  { id: "lark", label: "飞书", tools: ["lark_send", "lark_react", "meeting_send", "lark_card", "lark_update_card", "lark_send_file", "set_chat_watch", "lark_wiki_crawl", "propose_knowledge_mapping", "lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "list_lark_chats", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription"] },
-  { id: "learning", label: "学习", tools: ["create_card", "set_learning_goal", "learning_progress"] },
-  { id: "plugins", label: "插件", tools: ["plugin_query", "plugin_put"] },
+/**
+ * The tool set by what a run uses it for, small enough that a profile takes only the purposes it
+ * needs (`group:read` without `group:curate`). Every tool is in exactly one group
+ * (test/tool-help.test.ts); a new tool goes into the group of its purpose, or a new group when none
+ * fits, never a catch-all. `doc` is the reference page at skills/omem/references/<doc>.md (several
+ * groups share one; plugin groups have none), what omem_help(<group>) returns.
+ */
+export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: string[] }[] = [
+  { id: "read", label: "查找与阅读原件", doc: "sources", tools: ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_conversations", "read_conversation"] },
+  { id: "collect", label: "收进材料", doc: "sources", tools: ["import_url", "save_note", "write_file", "digest_sources", "lark_wiki_crawl"] },
+  { id: "curate", label: "空间与原件治理", doc: "sources", tools: ["create_space", "connect_repository", "relate_spaces", "set_source_attention", "annotate_source", "attention_rules", "describe_source", "classify_source", "propose_archive_rule"] },
+  { id: "memory", label: "记忆", doc: "memory", tools: ["recall", "remember", "supersede", "forget", "review_memories", "list_memory_folders", "organize_memories"] },
+  { id: "track", label: "事项与需求", doc: "items", tools: ["req_tree", "req_read", "save_requirements", "split_requirements", "list_items", "read_item", "upsert_item", "settle_items", "propose_item_update", "list_item_proposals", "resolve_item_proposal"] },
+  { id: "notifications", label: "事项通知排查", doc: "items", tools: ["repair_item_association", "inspect_item_notification", "read_item_repair", "refresh_item_notification", "ignore_notification_rule"] },
+  { id: "wiki", label: "Wiki", doc: "wiki", tools: ["list_pages", "read_page", "write_page", "move_page", "confirm_page", "generate_wiki", "submit_plan"] },
+  { id: "delegate", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", "continue_agent_work", "ask_agent", "list_ai_backends", "switch_run_ai", "list_runs", "read_run"] },
+  { id: "skills", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "save_agent", "propose_profile_change"] },
+  { id: "ask", label: "问本人与通知", doc: "owner", tools: ["ask_owner", "wait_answer", "suggest_next", "notify"] },
+  { id: "wake", label: "唤醒与规则", doc: "owner", tools: ["wake_later", "wake_on_message", "cancel_wake", "list_rules", "save_rule"] },
+  { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["delegate_code", "review_branch", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
+  { id: "git", label: "代码仓库与 Git", doc: "code", tools: ["list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action"] },
+  { id: "code-handin", label: "编码与评审角色交结果", doc: "code", tools: ["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute"] },
+  { id: "lark-msg", label: "飞书消息与卡片", doc: "lark", tools: ["lark_send", "lark_react", "meeting_send", "lark_card", "lark_update_card", "lark_send_file"] },
+  { id: "lark-docs", label: "以本人身份写飞书文档", doc: "lark", tools: ["lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move"] },
+  { id: "lark-capture", label: "飞书采集设置", doc: "lark", tools: ["list_lark_chats", "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "propose_knowledge_mapping"] },
+  { id: "learning", label: "学习", doc: "learning", tools: ["create_card", "set_learning_goal", "learning_progress"] },
+  { id: "plugins", label: "插件", doc: "plugins", tools: ["plugin_query", "plugin_put"] },
 ];
+
+/**
+ * The earlier, broader groups. Roles the owner customized (library/_roles) and saved profiles
+ * still say `group:sources` etc.; they keep meaning the same tools, and what is added to the
+ * groups they stand for reaches them too. An entry that is not a group id is a single tool.
+ */
+export const GROUP_ALIASES: Record<string, string[]> = {
+  sources: ["read", "collect", "curate"],
+  items: ["track", "notifications", "notify"],
+  agents: ["delegate", "skills"],
+  owner: ["ask", "wake"],
+  code: ["coding", "git", "code-handin"],
+  lark: ["lark-msg", "lark-docs", "lark-capture", "lark_wiki_crawl"],
+};
+
+/** A group id or an alias as the groups it stands for, plus the single tools an alias adds. */
+export function groupsFor(id: string) {
+  const parts = GROUP_ALIASES[id] ?? [id];
+  const groups = parts.map((g) => TOOL_GROUPS.find((x) => x.id === g)).filter((g): g is (typeof TOOL_GROUPS)[number] => !!g);
+  return { groups, tools: [...groups.flatMap((g) => g.tools), ...(GROUP_ALIASES[id] ? parts.filter((t) => !groups.some((g) => g.id === t)) : [])] };
+}
 
 /**
  * A role's or profile's `tools` as tool names: `group:<id>` stands for every tool of that group
@@ -45,7 +86,7 @@ export function expandTools(list: string[]): string[] {
   for (const t of list) {
     const g = /^group:(.+)$/.exec(t);
     if (g) {
-      for (const name of TOOL_GROUPS.find((x) => x.id === g[1])?.tools ?? []) if (!ROLE_TOOLS.includes(name)) out.add(name);
+      for (const name of groupsFor(g[1]).tools) if (!ROLE_TOOLS.includes(name)) out.add(name);
     } else if (!t.startsWith("-")) out.add(t);
   }
   for (const t of list) if (t.startsWith("-")) out.delete(t.slice(1));
@@ -53,7 +94,7 @@ export function expandTools(list: string[]): string[] {
 }
 
 /** `group:<id>` entries that name no group. */
-export const unknownGroups = (list: string[]) => list.filter((t) => /^group:/.test(t) && !TOOL_GROUPS.some((g) => `group:${g.id}` === t));
+export const unknownGroups = (list: string[]) => list.filter((t) => /^group:/.test(t) && !groupsFor(t.slice(6)).groups.length);
 
 type ToolInfo = { name: string; description: string; inputSchema: Record<string, unknown> };
 
@@ -95,7 +136,7 @@ export function metaSchemas(rest: ToolInfo[]): ToolInfo[] {
   return [
     {
       name: "omem_help",
-      description: "查看 omem 工具的用法：topic 填工具名（可用逗号分隔多个）看完整说明和参数；填分组 id（sources、memory、items、wiki、agents、owner、code、lark、learning、plugins，或插件 id）看这一类的做法和要点；不填列出本次能用的全部工具。",
+      description: `查看 omem 工具的用法：topic 填工具名（可用逗号分隔多个）看完整说明和参数；填分组 id（${TOOL_GROUPS.map((g) => g.id).join("、")}，或插件 id）看这一类的做法和要点；不填列出本次能用的全部工具。`,
       inputSchema: { type: "object", properties: { topic: { type: "string", description: "工具名、分组 id，或不填" } } },
     },
     {
@@ -148,13 +189,20 @@ export function helpText(allowed: ToolInfo[], topic?: string | null): string {
   const t = topic?.trim();
   if (!t)
     return `本次能用的 omem 工具（omem_help(topic=工具名) 看参数，omem_help(topic=分组) 看这类的做法）：\n\n${grouped(allowed)}\n\n${SHELL_NOTE}`;
-  const group = TOOL_GROUPS.find((g) => g.id === t);
-  if (group) {
+  // A group id, an earlier group name, or a reference page several groups share.
+  const named = groupsFor(t).groups;
+  const groups = named.length ? named : TOOL_GROUPS.filter((g) => g.doc === t);
+  if (groups.length) {
     const dir = omemSkillDir();
-    const file = dir && join(dir, "references", `${group.id}.md`);
-    const doc = file && existsSync(file) ? readFileSync(file, "utf8").replace(/\r\n/g, "\n").trim() : "";
-    const mine = allowed.filter((x) => group.tools.includes(x.name));
-    return `${doc}\n\n本次能用的${group.label}工具：\n${mine.length ? mine.map((x) => `- ${x.name}：${summary(x.description)}`).join("\n") : "（无）"}`.trim();
+    const docs = [...new Set(groups.map((g) => g.doc ?? g.id))].map((d) => {
+      const file = dir && join(dir, "references", `${d}.md`);
+      return file && existsSync(file) ? readFileSync(file, "utf8").replace(/\r\n/g, "\n").trim() : "";
+    });
+    const lists = groups.map((g) => {
+      const mine = allowed.filter((x) => g.tools.includes(x.name));
+      return `本次能用的${g.label}工具（${g.id}）：\n${mine.length ? mine.map((x) => `- ${x.name}：${summary(x.description)}`).join("\n") : "（无）"}`;
+    });
+    return `${docs.filter(Boolean).join("\n\n")}\n\n${lists.join("\n\n")}`.trim();
   }
   const names = t.split(/[,，\s]+/).filter(Boolean);
   return names
