@@ -6,7 +6,8 @@
  *   osdk run upgrade [--restart] …
  *
  * 1. git pull --ff-only          (skipped with --no-pull, or when this is not a git checkout)
- * 2. pnpm install --frozen-lockfile --filter omem-assistant   (only the app, not the docs site or VS Code extension)
+ * 2. pnpm install --frozen-lockfile --filter omem-assistant   (only the app, not the docs site or VS Code extension;
+ *    confirmModulesPurge=false so it does not stop to ask without a TTY)
  * 3. pnpm run build
  * 4. npm install -g .            (links the global `omem` to this checkout; --no-global skips;
  *                                 a failure here, e.g. no permission, is reported and skipped)
@@ -42,7 +43,8 @@ function step(title: string, cmd: string, args: string[], opts: { optional?: boo
 }
 
 if (!has("--no-pull") && existsSync(join(root, ".git"))) step("拉取最新代码", "git", ["pull", "--ff-only"]);
-step("安装依赖", "pnpm", ["install", "--frozen-lockfile", "--filter", "omem-assistant"]);
+// Run without a TTY (peer update, services), pnpm aborts instead of asking when it must rebuild node_modules.
+step("安装依赖", "pnpm", ["install", "--frozen-lockfile", "--filter", "omem-assistant", "--config.confirmModulesPurge=false"]);
 step("构建", "pnpm", ["run", "build"]);
 if (!has("--no-global")) {
   // The package was called "omem" before it became omem-assistant: a global link under the old name
