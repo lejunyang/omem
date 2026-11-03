@@ -32,7 +32,7 @@ import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePage
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
-import { cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEvents } from "../agents/runs.ts";
+import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEvents } from "../agents/runs.ts";
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -143,8 +143,33 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const relay = toolRelay(bearer(req));
     if (relay) return relay;
     const ctx = toolContextForToken(app, bearer(req));
-    if (!ctx) throw new HttpError(401, "无效的工具令牌");
-    return { list: async () => mcpTools(ctx.tools), call: (name: string, args: unknown) => callTool(ctx, name, args) };
+    if (!ctx) {
+      // Tokens live in memory: an agent session kept across a restart still holds the old one.
+      console.warn(`[omem] 工具调用被拒：令牌无效（${req.method} ${req.url}；常见于服务重启前开的 Agent 会话）`);
+      throw new HttpError(401, "无效的工具令牌");
+    }
+    return { list: async () => mcpTools(ctx.tools), call: (name: string, args: unknown) => tracedCall(ctx, name, args) };
+  };
+  /**
+   * Each call an agent makes from outside the process is recorded on its run when it arrives and
+   * when it returns (`tool-call`), so a call the agent shows as hanging can be told apart: never
+   * reached omem (no start), stuck in omem (start, no end), or slow to get back (both, short).
+   */
+  const tracedCall = async (ctx: NonNullable<ReturnType<typeof toolContextForToken>>, name: string, args: unknown) => {
+    const label = name === "omem_call" ? `omem_call → ${String((args as { tool?: unknown } | null)?.tool ?? "")}` : name;
+    const runId = ctx.runId && one(app.db, "select 1 from runs where id = ?", ctx.runId) ? ctx.runId : null;
+    const started = Date.now();
+    if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "start" });
+    let ok = false;
+    try {
+      const r = await callTool(ctx, name, args);
+      ok = !r.isError;
+      return r;
+    } finally {
+      const ms = Date.now() - started;
+      if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "end", ms, ok });
+      if (ms > 60_000) console.warn(`[omem] 工具 ${label} 用了 ${Math.round(ms / 1000)} 秒${runId ? `（运行 ${runId}）` : ""}`);
+    }
   };
   server.get("/api/tools", async (req) => ({ tools: await toolBackend(req).list() }));
   server.post("/api/tools/:name", async (req) => toolBackend(req).call((req.params as { name: string }).name, req.body));

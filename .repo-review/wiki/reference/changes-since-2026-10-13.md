@@ -1116,3 +1116,9 @@ updated: 2026-11-03
 - 宿主限制助手（`code-loop.ts` 的 `settleTask`）：同一项最多 retry 2 次；不能替本人决定；retry 只在自动推进的轮数内开下一轮（`advanceWork`）。
 - 运行页轮次多时，较早的轮收进“更早的轮”下拉（`web/src/views/Runs.vue`，和 WorkPane 一样）。
 - 角色、工具、唤醒和全部限制的表：docs/v2/coding-loop.md 3.1。
+
+## 11-04：外部 Agent 的工具调用留痕
+
+- 经 `/mcp`、`/api/tools` 进来的每次工具调用，到达和返回时在它的运行上各记一条 `tool-call`（工具名，`omem_call` 写成 `omem_call → 实际工具`；返回时带耗时和是否成功）；超过 60 秒的在服务日志里另记一行。Agent 显示某个调用一直没回时，看有没有“到达”就能分清：没到 omem、卡在 omem 里，还是回去的路上慢（`src/server/http.ts`）。
+- 令牌无效的调用在服务日志里记一行：令牌只在内存里，服务重启前开的 Agent 会话还拿着旧令牌。
+- 启动时整理修改项：已经不等本人的项关掉旧卡片；等助手处理的项叫醒发起交办的助手，没有助手的交办交给本人（`code-loop.ts` 的 `reconcileWaiting`）。
