@@ -11,6 +11,7 @@ import { testRule } from "../src/rules/engine.ts";
 import { meetingConfirmation } from "../src/rules/meeting.ts";
 import type { Condition, RuleEvent } from "../src/rules/types.ts";
 import { testApp } from "./helpers.ts";
+import { createThread } from "../src/agents/threads.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
 afterEach(() => {
@@ -177,6 +178,12 @@ describe("meetings the owner joins", () => {
     expect(window).toHaveLength(1);
     expect(JSON.parse(window[0].input)).toMatchObject({ spec: "assistant", meeting: { id: "m1" }, rule: { id: rule.id } });
     expect(JSON.parse(window[0].input).task).toContain("我们下周上");
+    // Nothing reaches the owner during the meeting: no notify; what concerns them is the window's answer.
+    expect(JSON.parse(window[0].input)).toMatchObject({ denyTools: ["notify"], meetingWindow: true });
+    run(app.db, "update runs set status = 'done', output = json_set(coalesce(output, '{}'), '$.answer', ?) where lane = 'meeting:m1'", "小李说接口文档晚点发，本人等着联调：建议会后催一下小李。\n\nQUIET");
+    // The owner's private chat with the bot: the summary goes there, with buttons for next steps.
+    run(app.db, "insert into kv(key, value) values('lark_owner_chat', 'oc_dm') on conflict(key) do update set value = excluded.value");
+    const dm = createThread(app, { channel: "lark", spaceId: "personal", userId: "owner", key: "oc_dm" });
 
     // The sentence is revised as it is recognised: the latest text replaces it, in place.
     resetMeetingsForTests();
@@ -194,6 +201,10 @@ describe("meetings the owner joins", () => {
     const last = JSON.parse(all<{ input: string }>(app.db, "select input from runs where lane = 'meeting:m1' order by rowid").at(-1)!.input);
     expect(last.meeting).toBeUndefined();
     expect(last.task).toContain("会后纪要");
+    expect(last.task).toContain("小李说接口文档晚点发");
+    expect(last.task).not.toContain("QUIET");
+    expect(last.task).toContain("suggest_next");
+    expect(last.threadId).toBe(dm.id);
   });
 
   it("counts who the calendar event invited (groups by members, no rooms or declines) and leaves bots out of who is there", async () => {

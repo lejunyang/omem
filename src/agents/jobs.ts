@@ -218,7 +218,8 @@ registerHandler("agent", async (ctx) => {
       spec,
       execution,
       spaces: assistantScope?.spaces,
-      denyTools: assistantScope?.denyTools,
+      // A run may also be denied tools of its own (a meeting's windows: nothing reaches the owner until it ends).
+      denyTools: [...(assistantScope?.denyTools ?? []), ...(((ctx.run.input as { denyTools?: string[] }).denyTools) ?? [])],
       userId: assistantScope?.userId ?? one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? undefined,
       spaceId: ctx.run.spaceId ?? spec?.space ?? "personal",
       task: fullTask,
