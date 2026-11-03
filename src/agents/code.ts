@@ -290,6 +290,8 @@ export async function runCodeTask(ctx: RunContext) {
   // Retried after a failure: the worktree keeps what the failed attempt changed.
   const retryOf = (input as { retryOf?: string }).retryOf;
   const retried = retryOf ? getRun(app, retryOf) : null;
+  // Started again after a restart, its coder having finished before it (the summary and the AI are kept).
+  const ranBefore = !retried && typeof run.output.coderSummary === "string" && !!run.output.coderAI && !run.output.gitOnly;
   let coderTask = retried
     ? `${(await import("./retry.ts")).attemptNote(app, retried.id)}\n\n工作区里保留了它已经做的改动（git status / git diff 查看）。\n\n# 任务\n\n${input.task}${itemBrief}${where}`
     : continueFrom
@@ -339,9 +341,12 @@ ${input.task}
     if (outside) ctx.event("status", { text: `检查点 ${outside.checkpoint.seq}：${outside.checkpoint.label}，${outside.files.length} 个文件` });
     const reverted = tasks.applyReverts(app, rootRunId, worktrees, (text) => ctx.event("status", { text }), identity);
     const taken = tasks.takeTasks(app, rootRunId, run.id);
-    if (continueFrom && !taken.length) {
+    // This run coded before a restart stopped it (its tasks are done or being verified): it goes on
+    // to verification and review with what it wrote, not as a round with nothing to code.
+    if (continueFrom && !taken.length && !ranBefore) {
       gitOnly = reverted.length ? `这一轮只做了回退：${reverted.join("；")}` : "这一轮没有要编码的修改项";
-      ctx.output({ gitOnly: true });
+      // Only a round that reverted skips the stage review (what it took back had been reviewed).
+      ctx.output({ gitOnly: reverted.length > 0 });
     }
     const w = tasks.workState(app, rootRunId);
     const planning = !continueFrom && !tasks.listTasks(app, rootRunId).some((t) => t.coderRun !== run.id);
@@ -375,7 +380,8 @@ ${input.task}
     markNotesDelivered(app, run.id, early);
   }
   // The failed attempt finished coding and stopped later (checks, review): only those are redone.
-  const coded = retried && typeof retried.output.coderSummary === "string" && retried.output.coderAI ? retried.output : null;
+  // A failed run retried, or this run started again after a restart once its coder had finished.
+  const coded = retried && typeof retried.output.coderSummary === "string" && retried.output.coderAI ? retried.output : ranBefore ? run.output : null;
   if (coded) {
     ctx.output({ coderSummary: coded.coderSummary, coderAI: coded.coderAI, coderAgent: coded.coderAgent, coderSessionId: coded.coderSessionId });
     ctx.event("status", { text: `上一次尝试已经写完代码，这次从检查和评审接着做` });

@@ -300,6 +300,16 @@ export function registerHandler(kind: RunKind, handler: Handler) {
   handlers.set(kind, handler);
 }
 
+/**
+ * The service is stopping (a restart, an upgrade): runs that fail from now on failed because their
+ * agent sessions are being closed, not on their own. They stay running, and the next start puts them
+ * back in the queue like any run a restart cut off; nothing new starts meanwhile.
+ */
+let stopping = false;
+export function stopWorker() {
+  stopping = true;
+}
+
 export function startWorker(app: App) {
   if (started) return;
   started = true;
@@ -384,7 +394,7 @@ function watchStalls(app: App) {
 }
 
 function kick(app: App) {
-  if (!started) return;
+  if (!started || stopping) return;
   for (;;) {
     const next = nextRunnable(app);
     if (!next) return;
@@ -437,6 +447,7 @@ function kick(app: App) {
       })
       .catch((error: Error) => {
         flushText(app, r.id);
+        if (stopping && !controller.signal.aborted) return;
         const cancelled = controller.signal.aborted || error.message === "CANCELLED";
         run(app.db, "update runs set status=?, error=?, finished_at=? where id=?", cancelled ? "cancelled" : "failed", cancelled ? null : error.message, now(), r.id);
         if (r.kind === "code") trySettleCodeChain(app, r.id);

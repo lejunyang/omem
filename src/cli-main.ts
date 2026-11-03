@@ -138,6 +138,7 @@ program
     const shutdown = async () => {
       if (stopping) return;
       stopping = true;
+      (await import("./agents/runs.ts")).stopWorker();
       const { releaseBackgroundSessions } = await import("./agents/background-sessions.ts");
       await releaseBackgroundSessions();
       process.exit(0);

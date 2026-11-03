@@ -187,6 +187,48 @@ describe("a delegation driven by tasks", () => {
     }
   }, 120_000);
 
+  it("goes on to the stage review when a round its coder finished starts again after a restart, instead of approving it unreviewed", async () => {
+    const app = testApp();
+    app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "tasks" }, idleTimeoutMs: 60000 });
+    app.config.agents.default = "fake";
+    const dir = mkdtempSync(join(tmpdir(), "omem-loop-restart-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" } });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const r1 = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款金额", input: { task: "退款只按未发货的行计算", repos: ["shop-api"], taskMode: true, maxRounds: 4 }, userId: OWNER });
+      addTask(app, r1.id, { title: "退款只算未发货的行", kind: "build" }, "coder");
+      const drive = async (id: string) => {
+        for (let out = await work(app, id); out.continuedRunId; out = await work(app, out.continuedRunId)) id = out.continuedRunId;
+        return id;
+      };
+      await drive(r1.id);
+      // A later round, coded; the restart came during its stage review (nothing recorded for it yet).
+      addTask(app, r1.id, { title: "补退款说明", kind: "build" }, "coder");
+      setWorkState(app, r1.id, { paused: null });
+      const next = advanceWork(app, r1.id, { owner: true })!;
+      const r2 = { id: next.id };
+      await work(app, r2.id);
+      const round = Number(getRun(app, r2.id).input.round);
+      const reviewed = () => all<{ n: number }>(app.db, "select count(*) n from reviews where code_run_id = ? and round = ?", r2.id, round)[0].n;
+      expect(listTasks(app, r1.id).find((t) => t.title === "补退款说明")!.state).toBe("done");
+      run(app.db, "delete from review_findings where review_id in (select id from reviews where code_run_id = ?)", r2.id);
+      run(app.db, "delete from reviews where code_run_id = ?", r2.id);
+      setWorkState(app, r1.id, { stageAt: workState(app, r1.id).stages?.length ? 1 : 0 });
+      run(app.db, "update runs set status = 'queued', output = json_remove(output, '$.verdict', '$.reviewStage', '$.codeChain') where id = ?", r2.id);
+      await work(app, r2.id);
+      expect(getRun(app, r2.id).output.gitOnly).toBeFalsy();
+      expect(reviewed()).toBeGreaterThan(0);
+    } finally {
+      await server.close();
+      app.db.close();
+    }
+  }, 120_000);
+
   it("takes back a file or a hunk as a commit of its own, and hands a hunk that no longer applies to the coder", () => {
     const app = testApp();
     const dir = mkdtempSync(join(tmpdir(), "omem-revert-"));
