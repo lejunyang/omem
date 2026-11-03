@@ -2894,6 +2894,34 @@ async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string,
 }
 
 def({
+  name: "lark_doc_fetch",
+  description:
+    "以本人身份读飞书文档的当前内容，带 block id，供 lark_doc_update 的 block_* 局部编辑定位用（只读，不存为原件；要收进知识库用 import_url）。大文档先 scope=outline 看目录，再 scope=section + 标题的 start_block_id 读那一节；只有关键词时 scope=keyword；整张表格用 scope=range，start_block_id 和 end_block_id 都给表格的 id（默认只返回表头和命中的行）。看到 <excerpt> 表示只拿到容器或表格的一部分。默认 DocxXML。",
+  schema: z.object({
+    doc: z.string().describe("文档链接（/docx/… 或 /wiki/…，可带 #share 选区）"),
+    scope: z.enum(["outline", "section", "range", "keyword"]).optional().describe("不填 = 整篇"),
+    keyword: z.string().optional().describe("scope=keyword 的关键词，多个用 | 分隔"),
+    start_block_id: z.string().optional(),
+    end_block_id: z.string().optional().describe("-1 表示到文末"),
+    max_depth: z.number().int().optional().describe("outline：标题层级上限；其他：子树深度（0 只要块本身）"),
+    context_before: z.number().int().min(0).max(20).optional(),
+    context_after: z.number().int().min(0).max(20).optional(),
+    detail: z.enum(["simple", "with-ids", "full"]).optional().describe("默认 with-ids；full 另带样式和引用元数据"),
+    format: z.enum(["xml", "markdown"]).optional(),
+  }),
+  handler: async (ctx, a) => {
+    const w = await import("../channels/lark-doc-write.ts");
+    const r = await w.fetchForEdit(ctx.app, {
+      doc: a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
+      contextBefore: a.context_before, contextAfter: a.context_after, detail: a.detail, format: a.format,
+    });
+    const max = 60_000;
+    const body = r.content.length > max ? `${r.content.slice(0, max)}\n…（已截断，共 ${r.content.length} 字；用 scope=outline / section / range 缩小范围）` : r.content;
+    return `版本 ${r.revision ?? "未知"}${r.tips ? `\n飞书的提示：${truncate(r.tips, 300)}` : ""}\n\n${body || "（没有内容）"}`;
+  },
+});
+
+def({
   name: "lark_doc_create",
   description:
     "以本人身份新建飞书文档（lark-cli，文档归本人所有），用于本人让你整理成文档的内容。默认放在本人的个人文档库根目录；parent 可给个人文档库里的页面、知识库页面或云空间文件夹的链接。放在个人文档库或本人自己的文件夹里直接建；放进别人也在用的知识库或别人的文件夹，要本人批准（会把具体位置给本人确认）。content 默认按 Markdown。缺权限时会把授权链接发给本人。",
@@ -2918,34 +2946,50 @@ def({
 def({
   name: "lark_doc_update",
   description:
-    "以本人身份编辑飞书文档：append 追加到末尾，str_replace 把 pattern（一小段原文）换成 content，overwrite 整篇覆盖（会丢掉原有的富文本，只在本人要求重写时用）。本人自己的文档直接改；共享文档的批准按文档复用，不因换轮或换会话失效。首次调用用 approval_docs 列出本次所有待编辑文档、summary 概括整体改动；批准后这些文档后续的追加、局部替换和失败重试不重复审批，整篇覆盖需单独批准。",
+    "以本人身份编辑飞书文档。先用 lark_doc_fetch 读要改的那部分拿到 block id，再按最小范围改：str_replace 把 pattern（一小段行内原文）换成 content（空 content 即删除）；block_replace 换掉一个 block（block_id）或同一父节点下连续的几个（start_block_id + end_block_id），整段、列表、整张表格用它（只改表格里几格的文字用 str_replace）；block_insert_after 在 block_id 后插入；block_delete 删除；block_move_after / block_copy_insert_after 把 src_block_ids 移到 / 复制到 block_id 后；append 追加到末尾；overwrite 整篇覆盖（会丢掉图片、评论和暂不支持的内容，只在本人要求整篇重写时用）。block_* 的 content 默认是 DocxXML（和 lark_doc_fetch 读到的一样，写法见技能 lark-docs），其余默认 Markdown。每次写入后旧 block id 可能失效，再改前重新读。本人自己的文档直接改；共享文档的批准按文档复用，不因换轮或换会话失效。首次调用用 approval_docs 列出本次所有待编辑文档、summary 概括整体改动；批准后这些文档后续的局部编辑和失败重试不重复审批，整篇覆盖需单独批准。",
   write: true,
   schema: z.object({
     doc: z.string().describe("文档链接（/docx/… 或 /wiki/…）"),
-    command: z.enum(["append", "str_replace", "overwrite"]),
-    content: z.string(),
+    command: z.enum(["append", "str_replace", "block_replace", "block_insert_after", "block_delete", "block_move_after", "block_copy_insert_after", "overwrite"]),
+    content: z.string().optional().describe("写入的内容；block_delete / block_move_after / block_copy_insert_after 不用"),
     pattern: z.string().optional(),
+    block_id: z.string().optional().describe("目标或锚点 block id（来自 lark_doc_fetch）；-1 表示文末，0 表示文首"),
+    start_block_id: z.string().optional().describe("block_replace / block_delete 的连续范围起点（同一父节点，含），和 end_block_id 成对"),
+    end_block_id: z.string().optional().describe("连续范围终点（含）；-1 表示到文末"),
+    src_block_ids: z.string().optional().describe("block_move_after / block_copy_insert_after 的源 block id，逗号分隔"),
+    revision_id: z.number().int().optional().describe("基于哪个版本改（lark_doc_fetch 返回的 revision）；不填 = 最新"),
     format: z.enum(["markdown", "xml"]).optional(),
     summary: z.string().min(1).max(500).optional().describe("本次任务整体改动的一两句摘要，说明改什么、保留什么；不贴正文或 HTML/XML"),
     approval_docs: z.array(z.string().min(1)).min(1).max(20).optional().describe("首次审批时列出本次任务所有要编辑的文档链接，一次批准这些文档的后续编辑。只列本人要求修改的文档；不填只批准当前文档"),
   }),
   handler: async (ctx, a) => {
     const w = await import("../channels/lark-doc-write.ts");
+    const edit = { doc: a.doc, command: a.command, content: a.content, pattern: a.pattern, format: a.format, blockId: a.block_id, startBlockId: a.start_block_id, endBlockId: a.end_block_id, srcBlockIds: a.src_block_ids, revisionId: a.revision_id };
+    w.checkUpdate(edit);
     const place = await w.docPlace(ctx.app, a.doc);
-    if (a.command === "str_replace" && !a.pattern) throw new HttpError(400, "str_replace 需要 pattern（要替换的原文）");
     const places = [place];
     for (const doc of a.approval_docs ?? []) {
       if (doc === a.doc) continue;
       const other = await w.docPlace(ctx.app, doc);
       if (!places.some((p) => p.objToken === other.objToken && p.objType === other.objType)) places.push(other);
     }
+    // Block edits are partial edits: the same approval class as append / str_replace (older grants keep covering them).
     const scope = { documents: places.map((p) => `${p.objType}:${p.objToken}`), commands: a.command === "overwrite" ? ["append", "str_replace", "overwrite"] : ["append", "str_replace"] };
-    const verb = { append: "追加内容", str_replace: "局部替换", overwrite: "整篇覆盖（会替换原有富文本）" }[a.command];
+    const verb = {
+      append: "追加内容", str_replace: "局部替换", block_replace: "替换段落或表格", block_insert_after: "插入内容", block_delete: "删除段落",
+      block_move_after: "调整段落顺序", block_copy_insert_after: "复制段落", overwrite: "整篇覆盖（会替换原有富文本）",
+    }[a.command];
     const targets = places.map((p) => `- ${p.label}`).join("\n");
-    const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑以下文档：\n${targets}\n\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content)}\n首次操作：${verb}`, places.every((p) => p.personal), scope);
+    const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑以下文档：\n${targets}\n\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content ?? verb)}\n首次操作：${verb}`, places.every((p) => p.personal), scope);
     if (wait) return wait;
-    await w.updateDoc(ctx.app, a);
-    return `已编辑（${a.command}）：${a.doc}（${place.label}）`;
+    const r = await w.updateDoc(ctx.app, edit);
+    const extra = [
+      r.result && r.result !== "success" ? `结果：${r.result}` : "",
+      r.newBlocks.length ? `新 block：${r.newBlocks.map((b) => `${b.block_id}${b.block_type ? `（${b.block_type}）` : ""}`).join("、")}` : "",
+      r.warnings.length ? `飞书的提示：${truncate(JSON.stringify(r.warnings), 500)}` : "",
+      r.tips ? `建议：${truncate(r.tips, 300)}` : "",
+    ].filter(Boolean);
+    return `已编辑（${a.command}）：${a.doc}（${place.label}）${r.revision != null ? `，版本 ${r.revision}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\n之前读到的 block id 可能已失效，再改前重新 lark_doc_fetch。`;
   },
 });
 

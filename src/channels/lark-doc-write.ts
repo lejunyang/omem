@@ -113,16 +113,93 @@ export async function createDoc(app: App, input: { title: string; content: strin
   return { url: String(d.url ?? ""), documentId: String(d.document_id ?? ""), warnings: (v?.data?.warnings ?? []) as unknown[] };
 }
 
-export type UpdateCommand = "append" | "overwrite" | "str_replace";
+export const UPDATE_COMMANDS = ["append", "str_replace", "block_replace", "block_insert_after", "block_delete", "block_move_after", "block_copy_insert_after", "overwrite"] as const;
+export type UpdateCommand = (typeof UPDATE_COMMANDS)[number];
+export type UpdateInput = {
+  doc: string;
+  command: UpdateCommand;
+  content?: string;
+  pattern?: string;
+  format?: "markdown" | "xml";
+  blockId?: string;
+  startBlockId?: string;
+  endBlockId?: string;
+  srcBlockIds?: string;
+  revisionId?: number;
+};
 
-export async function updateDoc(app: App, input: { doc: string; command: UpdateCommand; content: string; pattern?: string; format?: "markdown" | "xml" }) {
-  if (input.command === "str_replace" && !input.pattern) throw new HttpError(400, "str_replace 需要 pattern（要替换的原文）");
-  const v = await withContent(input.content, (ref, cwd) =>
+/** What each command needs (lark-cli checks the same; failing here keeps the error readable). */
+export function checkUpdate(input: UpdateInput) {
+  const c = input.command;
+  const range = !!(input.startBlockId || input.endBlockId);
+  if (range && !(input.startBlockId && input.endBlockId)) throw new HttpError(400, "start_block_id 和 end_block_id 要成对给");
+  if (range && input.blockId) throw new HttpError(400, "block_id 和 start_block_id/end_block_id 只能给一种");
+  if (range && c !== "block_replace" && c !== "block_delete") throw new HttpError(400, "start_block_id/end_block_id 只用于 block_replace 和 block_delete");
+  if (c === "str_replace" && !input.pattern) throw new HttpError(400, "str_replace 需要 pattern（要替换的原文）");
+  if ((c === "block_replace" || c === "block_delete") && !input.blockId && !range) throw new HttpError(400, `${c} 需要 block_id，或 start_block_id + end_block_id`);
+  if ((c === "block_insert_after" || c === "block_move_after" || c === "block_copy_insert_after") && !input.blockId) throw new HttpError(400, `${c} 需要 block_id（锚点）`);
+  if ((c === "block_move_after" || c === "block_copy_insert_after") && !input.srcBlockIds) throw new HttpError(400, `${c} 需要 src_block_ids`);
+  if ((c === "append" || c === "overwrite" || c === "block_replace" || c === "block_insert_after") && !input.content) throw new HttpError(400, `${c} 需要 content`);
+}
+
+/** Block commands carry DocxXML by default (what lark_doc_fetch shows); text commands Markdown, as before. */
+export function updateFormat(input: Pick<UpdateInput, "command" | "format">) {
+  return input.format ?? (input.command.startsWith("block_") ? "xml" : "markdown");
+}
+
+export async function updateDoc(app: App, input: UpdateInput) {
+  checkUpdate(input);
+  const flags = [
+    ...(input.pattern !== undefined ? ["--pattern", input.pattern] : []),
+    ...(input.blockId ? ["--block-id", input.blockId] : []),
+    ...(input.startBlockId ? ["--start-block-id", input.startBlockId, "--end-block-id", input.endBlockId!] : []),
+    ...(input.srcBlockIds ? ["--src-block-ids", input.srcBlockIds] : []),
+    ...(input.revisionId !== undefined ? ["--revision-id", String(input.revisionId)] : []),
+  ];
+  const run = (content: string[], cwd?: string) =>
     asOwner(app, "以本人身份编辑飞书文档", () =>
-      larkCli(["docs", "+update", "--as", "user", "--doc", input.doc, "--command", input.command, "--doc-format", input.format ?? "markdown", "--content", ref, ...(input.pattern ? ["--pattern", input.pattern] : [])], 120_000, cwd),
-    ),
-  );
-  return { revision: v?.data?.document?.revision_id ?? v?.data?.revision_id ?? null };
+      larkCli(["docs", "+update", "--as", "user", "--doc", input.doc, "--command", input.command, "--doc-format", updateFormat(input), ...content, ...flags], 120_000, cwd),
+    );
+  const v = input.content !== undefined ? await withContent(input.content, (ref, cwd) => run(["--content", ref], cwd)) : await run([]);
+  const d = v?.data ?? {};
+  return {
+    revision: d.document?.revision_id ?? d.revision_id ?? null,
+    result: typeof d.result === "string" ? d.result : null,
+    newBlocks: (Array.isArray(d.document?.new_blocks) ? d.document.new_blocks : []) as { block_id?: string; block_type?: string; block_token?: string }[],
+    warnings: (Array.isArray(d.warnings) ? d.warnings : []) as unknown[],
+    tips: typeof d.tips === "string" ? d.tips : "",
+  };
+}
+
+export type FetchInput = {
+  doc: string;
+  scope?: "outline" | "section" | "range" | "keyword";
+  keyword?: string;
+  startBlockId?: string;
+  endBlockId?: string;
+  maxDepth?: number;
+  contextBefore?: number;
+  contextAfter?: number;
+  detail?: "simple" | "with-ids" | "full";
+  format?: "xml" | "markdown";
+};
+
+/** Read a doc, or the part about to change, as the owner: the block ids block_* edits target. */
+export async function fetchForEdit(app: App, input: FetchInput) {
+  if (input.scope === "section" && !input.startBlockId) throw new HttpError(400, "scope=section 需要 start_block_id（标题的 block id，先用 scope=outline 找）");
+  if (input.scope === "keyword" && !input.keyword) throw new HttpError(400, "scope=keyword 需要 keyword");
+  if (input.scope === "range" && !input.startBlockId && !input.endBlockId) throw new HttpError(400, "scope=range 需要 start_block_id 或 end_block_id");
+  const args = ["docs", "+fetch", "--as", "user", "--doc", input.doc, "--doc-format", input.format ?? "xml", "--detail", input.detail ?? "with-ids"];
+  if (input.scope) args.push("--scope", input.scope);
+  if (input.keyword) args.push("--keyword", input.keyword);
+  if (input.startBlockId) args.push("--start-block-id", input.startBlockId);
+  if (input.endBlockId) args.push("--end-block-id", input.endBlockId);
+  if (input.maxDepth !== undefined) args.push("--max-depth", String(input.maxDepth));
+  if (input.contextBefore) args.push("--context-before", String(input.contextBefore));
+  if (input.contextAfter) args.push("--context-after", String(input.contextAfter));
+  const v = await asOwner(app, "读取飞书文档", () => larkCli(args, 60_000));
+  const d = v?.data?.document ?? {};
+  return { content: String(d.content ?? ""), revision: d.revision_id ?? null, tips: typeof d.tips === "string" ? d.tips : "" };
 }
 
 /** Move a doc into a knowledge-base place (`wiki +move`; a Drive doc moves into the knowledge base) or out to a Drive folder. */

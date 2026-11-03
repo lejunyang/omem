@@ -242,6 +242,34 @@ describe("feishu docs written as the owner", () => {
     expect(calls.filter((c) => c[1] === "+update")).toHaveLength(3);
   });
 
+  it("reads a part of a doc with block ids and edits single blocks under the same partial-edit approval", async () => {
+    const { app, ctx } = task();
+    const calls = fakeWiki(TREE);
+    const read = await callTool(ctx, "lark_doc_fetch", { doc: `${ORIGIN}/wiki/A`, scope: "range", start_block_id: "tbl1", end_block_id: "tbl1" });
+    expect(read.text).toContain("版本 1");
+    const fetch = calls.find((c) => c[1] === "+fetch")!;
+    expect(fetch).toEqual(expect.arrayContaining(["--detail", "with-ids", "--doc-format", "xml", "--scope", "range", "--start-block-id", "tbl1", "--end-block-id", "tbl1"]));
+    expect((await callTool(ctx, "lark_doc_update", { doc: `${ORIGIN}/wiki/A`, command: "block_replace" })).text).toContain("需要 block_id");
+    expect((await callTool(ctx, "lark_doc_update", { doc: `${ORIGIN}/wiki/A`, command: "block_insert_after", block_id: "h2" })).text).toContain("需要 content");
+    const table = { doc: `${ORIGIN}/wiki/A`, command: "block_replace", block_id: "tbl1", content: "<table><tbody><tr><td><p>42</p></td></tr></tbody></table>", summary: "更新字段对照表里的数字。" };
+    await callTool(ctx, "lark_doc_update", table);
+    const ask = listAsks(app)[0];
+    expect(ask.question).toContain("替换段落或表格");
+    await answerAsk(app, ask.id, { approved: true, by: "owner" });
+    const update = calls.filter((c) => c[1] === "+update")[0];
+    expect(update).toEqual(expect.arrayContaining(["--command", "block_replace", "--block-id", "tbl1", "--doc-format", "xml"]));
+    // An approval for partial edits also covers other block commands and text edits, but not overwrite.
+    const del = await callTool(ctx, "lark_doc_update", { doc: `${ORIGIN}/wiki/A`, command: "block_delete", start_block_id: "p3", end_block_id: "p5" });
+    expect(del.text).toContain("已编辑（block_delete）");
+    const delArgs = calls.filter((c) => c[1] === "+update")[1];
+    expect(delArgs).toEqual(expect.arrayContaining(["--start-block-id", "p3", "--end-block-id", "p5"]));
+    expect(delArgs).not.toContain("--content");
+    expect((await callTool(ctx, "lark_doc_update", { doc: `${ORIGIN}/wiki/A`, command: "str_replace", pattern: "旧", content: "新" })).text).toContain("已编辑");
+    expect(calls.filter((c) => c[1] === "+update").at(-1)).toEqual(expect.arrayContaining(["--doc-format", "markdown"]));
+    expect((await callTool(ctx, "lark_doc_update", { doc: `${ORIGIN}/wiki/A`, command: "overwrite", content: "重写" })).text).toContain("需要本人批准");
+    expect(listAsks(app)).toHaveLength(2);
+  });
+
   it("shares a pending task approval without scheduling extra edits, and respects refusal", async () => {
     const { app, ctx } = task();
     const calls = fakeWiki(TREE);

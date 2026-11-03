@@ -1140,3 +1140,10 @@ updated: 2026-11-04
 - 机器人入会因会议没开 AI 纪要失败（飞书 10022）时，通知说清楚要主持人打开 AI 纪要；之后半小时内每分钟自动再拉一次，入会后再通知一次（`lark-meetings.ts`）。飞书给 omem 的会议信息里没有“是否开了 AI 纪要”，只能靠入会结果判断。
 - 豆包会话清理每次都写一行状态：删了哪个会话、经哪个应用，或者为什么没删；豆包 CLI 的说明里加上“这一轮自己做完，不开子 Agent，原件先 search 再按需读”（CLI 没有关子 Agent 的参数）。
 - 会议旁听不再在会上打扰本人：会中各段的运行没有 notify，和本人有关的事写在它的回答里；会后的纪要收齐这些（`heldNotes`），先列和本人有关的、再写结论与待办、最后是处理建议。纪要发到本人和主机器人的私聊（当前的会话），最值得做的 1–3 条用 suggest_next 做成按钮，点了或直接回复就由助手接着处理；找不到私聊时照旧作为通知。智能体运行的输入可以带 `denyTools`（`jobs.ts`）。
+
+## 11-04：飞书文档按块编辑、lark-cli 1.0.98
+
+- `@larksuite/cli` 1.0.97 → 1.0.98、`@larksuiteoapi/node-sdk` 1.74.0 → 1.76.0。
+- 新工具 `lark_doc_fetch`（飞书分组）：以本人身份 `docs +fetch --detail with-ids`，可按 outline / section / range / keyword 读一部分，拿 block id；只读，不存原件。外部 Agent（`--peer`）用不了。
+- `lark_doc_update` 加 `block_replace`、`block_insert_after`、`block_delete`、`block_move_after`、`block_copy_insert_after`（参数 `block_id`、`start_block_id` / `end_block_id`、`src_block_ids`、`revision_id`），`content` 在这些命令里可省略或默认 DocxXML；返回结果、新 block、飞书的提示。块操作沿用追加 / 局部替换的批准（`commands` 仍记为 append、str_replace），旧批准照样覆盖。以前只有追加、替换一段文字、整篇覆盖，改表格只能整篇覆盖。
+- 内置技能 `lark-docs`：读 → 按块改 → 重读核对的做法、表格怎么改、新建文档；`references/` 里的 DocxXML / Markdown 写法由 `scripts/sync-lark-skills.ts` 从 lark-cli 自带的说明（`lark-cli skills read lark-doc/...`）同步。主助手改文档前先读它。lark-cli 的其他技能（lark-im 等）是本人身份的命令行做法，omem 的写入走工具，不内置。
