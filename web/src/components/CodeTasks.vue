@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, post } from "../api";
-import { promptDialog } from "../lib/dialog";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 import { parsePatches } from "../lib/reviews";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { relTime, toast } from "../store";
@@ -119,6 +119,12 @@ async function addTask() {
   await act(`/api/runs/${props.runId}/tasks`, { title: title.slice(0, 200), detail: rest.join("\n").trim() || undefined }, "加上了");
 }
 const pause = (paused: boolean) => act(`/api/runs/${props.runId}/work`, { paused }, paused ? "已暂停：手上这一项做完就停" : "继续推进");
+// Another stage review of what changed since the checkpoint before the latest (one cut off, or a second look).
+async function reviewAgain() {
+  const latest = lastCp.value;
+  if (!(await confirmDialog("重新评审？", { message: `开一轮只做评审：评审负责人决定看什么，评审项看检查点 ${Math.max(0, latest - 1)} 之后的改动，提出的问题照常变成修改项。已经发出的“确认并推送”卡片会失效。`, okText: "开始评审" }))) return;
+  await act(`/api/runs/${props.runId}/review-again`, {}, "评审排上了");
+}
 
 // ---- changes ------------------------------------------------------------------------------------
 // `from`: per repository, the revision the change shown starts at (what a file is restored to).
@@ -191,6 +197,7 @@ async function pickFile(key: string) {
       <span class="muted small">第 {{ w.round }} 轮 · 最多自动推进到第 {{ w.until }} 轮（每次 {{ w.budget }} 轮，{{ w.budgetBy === "owner" ? "你给的" : "按任务估的" }}，上限 {{ w.max }}）</span>
       <span class="spacer" />
       <button class="btn sm" :disabled="working" @click="addTask">加修改项</button>
+      <button v-if="!busy && lastCp" class="btn ghost sm" :disabled="working" title="评审被打断了，或者想再看一遍：开一轮只做评审" @click="reviewAgain">重新评审</button>
       <button v-if="w.paused" class="btn primary sm" :disabled="working" @click="pause(false)">继续推进</button>
       <button v-else-if="busy || tasks.some((t) => ['todo', 'coding', 'verify'].includes(t.state))" class="btn ghost sm" :disabled="working" @click="pause(true)">暂停</button>
     </div>

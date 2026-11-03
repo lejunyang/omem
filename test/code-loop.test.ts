@@ -8,7 +8,7 @@ import { answerAsk, createAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
 import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQuestionText, recordCheckpoint, recordOutsideChanges, retryTask, scheduleWorkRevert, setWorkState, settleCodingRound, updateTask, waitingText, workPatches, workState } from "../src/agents/code-tasks.ts";
-import { advanceWork, reconcileWaiting, settleTask, taskReview } from "../src/agents/code-loop.ts";
+import { advanceWork, reconcileWaiting, reviewAgain, settleTask, taskReview } from "../src/agents/code-loop.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
 import { identity } from "../src/agents/code-branch.ts";
@@ -223,6 +223,16 @@ describe("a delegation driven by tasks", () => {
       await work(app, r2.id);
       expect(getRun(app, r2.id).output.gitOnly).toBeFalsy();
       expect(reviewed()).toBeGreaterThan(0);
+
+      // The owner asks for another review: a round with nothing to code reviews the last checkpoint's change.
+      const end = await drive(lastRound(app, r1.id).status === "queued" ? lastRound(app, r1.id).id : r2.id).catch(() => r2.id);
+      const latest = listCheckpoints(app, r1.id).at(-1)!.seq;
+      const again = reviewAgain(app, r1.id);
+      expect(again.id).not.toBe(end);
+      expect(workState(app, r1.id).stageAt).toBe(latest - 1);
+      await work(app, again.id);
+      expect(getRun(app, again.id).output.gitOnly).toBeFalsy();
+      expect(all<{ n: number }>(app.db, "select count(*) n from reviews where code_run_id = ?", again.id)[0].n).toBeGreaterThan(0);
     } finally {
       await server.close();
       app.db.close();
@@ -428,7 +438,7 @@ describe("a delegation driven by tasks", () => {
     }
   });
 
-  it("at start closes cards of tasks no longer waiting on the owner and wakes the assistant for its own", () => {
+  it("at start closes cards of tasks no longer waiting on the owner and wakes the assistant for its own", async () => {
     const app = testApp();
     try {
       const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
@@ -453,7 +463,14 @@ describe("a delegation driven by tasks", () => {
       expect(listTasks(app, web.id)[0]).toMatchObject({ seq: y.seq, state: "owner", options: ["按原来的要求再做一次"] });
       expect(listAsks(app, { status: "pending" }).some((a) => a.question.includes("运费按比例退"))).toBe(true);
       expect(lastRound(app, web.id).output.verdict).toBe("awaiting-owner");
+      // Pushed since: the card closes and the task no longer waits on anyone.
+      setRunOutput(app, web.id, { appliedAt: new Date().toISOString() });
+      expect(reconcileWaiting(app).closed).toBe(1);
+      expect(listTasks(app, web.id)[0].state).toBe("wontdo");
+      expect(listAsks(app, { status: "pending" }).some((a) => a.question.includes("运费按比例退"))).toBe(false);
     } finally {
+      // The owner's card is shown after an import or two; let it land before the database closes.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       app.db.close();
     }
   });

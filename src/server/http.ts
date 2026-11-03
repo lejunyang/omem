@@ -1224,6 +1224,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { task, next: next?.id ?? null };
   });
   server.post("/api/runs/:id/tasks/:seq", async (req) => {
+  // Another stage review of a task-driven delegation, from a checkpoint (code-loop.ts reviewAgain).
+  server.post("/api/runs/:id/review-again", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({ from: z.number().int().min(0).optional() }), req.body ?? {});
+    const t = await import("../agents/code-tasks.ts");
+    if (!t.isTaskWork(app, id)) throw new HttpError(400, "这次交办不是按修改项推进的");
+    const next = (await import("../agents/code-loop.ts")).reviewAgain(app, t.workRootOf(app, id), { from: b.from });
+    return { next: next.id };
+  });
     const { id, seq: raw } = req.params as { id: string; seq: string };
     ownRun(req, id);
     const b = q(z.object({ action: z.enum(["answer", "skip", "reopen", "wontdo", "revert"]), choice: z.string().max(200).nullable().optional(), text: z.string().max(8000).optional(), redo: z.boolean().optional() }), req.body);

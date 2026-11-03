@@ -364,9 +364,9 @@ function notifyOwner(app: App, rootId: string, run: Run, title: string, body: st
  * progress card) or, for work started on the web, after the last round. The budget was checked by
  * the caller; null when the work cannot go on (applied, discarded, its workspace gone).
  */
-function queueRound(app: App, rootId: string, last: Run): Run | null {
+function queueRound(app: App, rootId: string, last: Run, label?: string): Run | null {
   const todo = listTasks(app, rootId).filter((t) => t.state === "todo" || stranded(app, t));
-  const title = `修改项 ${todo.map((t) => taskLabel(t.seq)).join("、") || "回退与重做"}`;
+  const title = `修改项 ${todo.map((t) => taskLabel(t.seq)).join("、") || label || "回退与重做"}`;
   const w = workState(app, rootId);
   const running = ["queued", "running"].includes(last.status);
   const sessionId = last.output.coderSessionId as string | undefined;
@@ -615,9 +615,14 @@ export function reconcileWaiting(app: App) {
   let closed = 0;
   let woken = 0;
   let moved = 0;
+  const ended = (rootId: string) => all<{ output: string }>(app.db, "select output from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?)", rootId, rootId)
+    .some((r) => { const o = JSON.parse(r.output ?? "{}"); return o.appliedAt || o.discardedAt; });
   for (const a of all<{ id: string; w: string; s: number }>(app.db, "select id, json_extract(context, '$.workId') w, json_extract(context, '$.seq') s from asks where status = 'pending' and json_extract(context, '$.handler') = 'code-task'")) {
     const t = one<{ state: string }>(app.db, "select state from code_tasks where work_id = ? and seq = ?", a.w, a.s);
-    if (t?.state === "owner") continue;
+    // Confirmed (pushed) or discarded since: nothing of it waits on anyone any more.
+    const over = !!t && ended(a.w);
+    if (over) updateTask(app, a.w, a.s, { state: "wontdo" }, { by: "host", kind: "host", text: "交办已经确认或丢弃，这一项不再等处理" });
+    if (t?.state === "owner" && !over) continue;
     if (t) closeTaskAsk(app, a.w, a.s);
     cancelAsk(app, a.id);
     closed++;
@@ -637,6 +642,26 @@ export function reconcileWaiting(app: App) {
     moved++;
   }
   return { closed, woken, moved };
+}
+
+/**
+ * The owner asks for another stage review (one was cut off, or they want a second look): the review
+ * marker goes back to checkpoint `from` (default: the one before the latest) and a round with nothing
+ * to code runs it on what changed since. Its findings become tasks as usual.
+ */
+export function reviewAgain(app: App, rootId: string, opts: { from?: number } = {}): Run {
+  const latest = listCheckpoints(app, rootId).at(-1)?.seq ?? 0;
+  if (!latest) throw new HttpError(409, "还没有可以评审的改动");
+  const last = lastRound(app, rootId);
+  if (["queued", "running"].includes(last.status)) throw new HttpError(409, `第 ${roundOf(last)} 轮还在进行，结束后会照常评审`);
+  const from = Math.max(0, Math.min(opts.from ?? latest - 1, latest - 1));
+  setWorkState(app, rootId, { stageAt: from, paused: null });
+  renewBudget(app, rootId, roundOf(last));
+  // A round that only asks for review: no task to code, no revert, so it is not a revert-only round.
+  const next = advanceWork(app, rootId, { owner: true }) ?? queueRound(app, rootId, last, `重新评审（检查点 ${from} → ${latest}）`);
+  if (!next) throw new HttpError(409, "这次交办现在不能再开一轮（已确认、丢弃，或工作区已经不在）");
+  setRunOutput(app, last.id, { verdict: "continuing", reviewStop: null });
+  return next;
 }
 
 export function closeTaskAsk(app: App, rootId: string, seq: number) {
