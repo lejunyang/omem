@@ -93,7 +93,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   {
     const { reconcileWaiting } = await import("./agents/code-loop.ts");
     const r = reconcileWaiting(app);
-    if (r.closed || r.woken) console.log(`[omem] 修改项：关掉 ${r.closed} 张已经不等本人的卡片，为 ${r.woken} 个交办叫醒发起的助手`);
+    if (r.closed || r.woken || r.moved) console.log(`[omem] 修改项：关掉 ${r.closed} 张已经不等本人的卡片，为 ${r.woken} 个交办叫醒发起的助手，${r.moved} 个没有助手的交办交给本人`);
   }
   startWorker(app);
   if (opts.background !== false) {

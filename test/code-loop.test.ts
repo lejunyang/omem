@@ -399,10 +399,18 @@ describe("a delegation driven by tasks", () => {
       setWorkState(app, r.id, { asks: { [String(x.seq)]: card.id } });
       // An upgrade moved it to the assistant (db migration).
       run(app.db, "update code_tasks set state = 'assistant' where work_id = ? and seq = ?", r.id, x.seq);
-      expect(reconcileWaiting(app)).toEqual({ closed: 1, woken: 1 });
+      expect(reconcileWaiting(app)).toEqual({ closed: 1, woken: 1, moved: 0 });
       expect(listAsks(app, {}).find((a) => a.id === card.id)!.status).toBe("cancelled");
       // Again: nothing left to close, and the turn already queued takes it.
-      expect(reconcileWaiting(app)).toEqual({ closed: 0, woken: 0 });
+      expect(reconcileWaiting(app)).toEqual({ closed: 0, woken: 0, moved: 0 });
+      // Started on the web, no assistant: the owner gets it, with a card.
+      const web = createRun(app, { kind: "code", spaceId: "personal", title: "网页交办", input: { task: "退款", repos: ["personal"], taskMode: true }, userId: OWNER });
+      run(app.db, "update runs set status = 'done', output = json_set(coalesce(output, '{}'), '$.verdict', 'awaiting-assistant') where id = ?", web.id);
+      const y = addTask(app, web.id, { title: "运费按比例退", kind: "build", state: "assistant", question: "改了 3 次没过" }, "coder");
+      expect(reconcileWaiting(app)).toEqual({ closed: 0, woken: 0, moved: 1 });
+      expect(listTasks(app, web.id)[0]).toMatchObject({ seq: y.seq, state: "owner", options: ["按原来的要求再做一次"] });
+      expect(listAsks(app, { status: "pending" }).some((a) => a.question.includes("运费按比例退"))).toBe(true);
+      expect(lastRound(app, web.id).output.verdict).toBe("awaiting-owner");
     } finally {
       app.db.close();
     }

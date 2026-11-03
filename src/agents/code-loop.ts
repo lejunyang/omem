@@ -9,7 +9,7 @@ import { addCodeNote } from "./code-steer.ts";
 import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
 import {
   addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, taskForFinding,
-  ownerQuestionText, stranded, taskLabel, toAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
+  ownerQuestionText, stranded, taskLabel, toAssistant, hasAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
@@ -614,6 +614,7 @@ export function answerTask(app: App, rootId: string, seq: number, a: { choice?: 
 export function reconcileWaiting(app: App) {
   let closed = 0;
   let woken = 0;
+  let moved = 0;
   for (const a of all<{ id: string; w: string; s: number }>(app.db, "select id, json_extract(context, '$.workId') w, json_extract(context, '$.seq') s from asks where status = 'pending' and json_extract(context, '$.handler') = 'code-task'")) {
     const t = one<{ state: string }>(app.db, "select state from code_tasks where work_id = ? and seq = ?", a.w, a.s);
     if (t?.state === "owner") continue;
@@ -624,9 +625,18 @@ export function reconcileWaiting(app: App) {
   for (const { work_id } of all<{ work_id: string }>(app.db, "select distinct work_id from code_tasks where state = 'assistant'")) {
     const rounds = all<{ output: string }>(app.db, "select output from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?)", work_id, work_id);
     if (rounds.some((r) => { const o = JSON.parse(r.output ?? "{}"); return o.appliedAt || o.discardedAt; })) continue;
-    if (wakeAssistantForTasks(app, work_id)) woken++;
+    if (hasAssistant(app, work_id)) {
+      if (wakeAssistantForTasks(app, work_id)) woken++;
+      continue;
+    }
+    // Started without a conversation (the web, another device): nobody but the owner settles them.
+    for (const t of listTasks(app, work_id).filter((x) => x.state === "assistant")) toAssistant(app, work_id, t.seq, t.question ?? "");
+    ensureOwnerAsks(app, work_id);
+    const last = lastRound(app, work_id);
+    if (last.output.verdict === "awaiting-assistant") setRunOutput(app, last.id, { verdict: "awaiting-owner", reviewStop: "owner" });
+    moved++;
   }
-  return { closed, woken };
+  return { closed, woken, moved };
 }
 
 export function closeTaskAsk(app: App, rootId: string, seq: number) {
