@@ -89,6 +89,7 @@ export async function searchPreview(app: App, a: { query: string; space?: string
     path: h.path,
     lines: h.lineStart ? [h.lineStart, h.lineEnd] : null,
     score: Number(h.score.toFixed(4)),
+    rerank: h.rerank ?? null,
     via: h.via,
     attention: h.attention ?? null,
     snippet: truncate(h.snippet, 500),

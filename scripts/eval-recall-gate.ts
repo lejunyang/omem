@@ -1,7 +1,7 @@
 /**
  * Calibrate the passive-recall gate (src/memory/passive.ts).
  *
- *   node scripts/eval-recall-gate.ts <corpus.jsonl> <queries.jsonl> <neg_queries.jsonl> [--chars N] [--home DIR] [--limit 5]
+ *   node scripts/eval-recall-gate.ts <corpus.jsonl> <queries.jsonl> <neg_queries.jsonl> [--chars N] [--home DIR] [--limit 5] [--rerank [MODEL]]
  *
  * Each corpus document becomes one memory (cut to --chars, default whole text). queries.jsonl
  * have relevant documents in the corpus ({"id","text","rels"}); neg_queries.jsonl have none
@@ -9,6 +9,9 @@
  * For each threshold it reports, on positive queries, how often something is added and how
  * often that includes a relevant memory, the precision of what is added, and on negative
  * queries how often anything is added at all (all of it noise).
+ *
+ * --rerank: the gate is the reranker's relevance instead (candidates: cosine ≥ RERANK_PREFILTER,
+ * as passiveRecall does); MODEL is a model id or directory (default rerank.model).
  */
 process.removeAllListeners("warning");
 const { existsSync, readFileSync } = await import("node:fs");
@@ -16,7 +19,7 @@ const { join } = await import("node:path");
 const { App } = await import("../src/core/app.ts");
 const { ensurePersonalSpace } = await import("../src/core/spaces.ts");
 const { remember } = await import("../src/memory/store.ts");
-const { passiveRecall } = await import("../src/memory/passive.ts");
+const { passiveRecall, RERANK_PREFILTER } = await import("../src/memory/passive.ts");
 const { embedPending, embedPendingMemories } = await import("../src/search/embeddings.ts");
 
 const args = process.argv.slice(2);
@@ -28,12 +31,17 @@ const [corpusPath, posPath, negPath] = args.filter((a, i) => !a.startsWith("--")
 const chars = Number(opt("--chars", "0"));
 const home = opt("--home", join(process.cwd(), ".scratch", `eval-gate${chars ? "-" + chars : ""}`));
 const limit = Number(opt("--limit", "5"));
+const rerank = args.includes("--rerank");
 
 const read = (p: string) => readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const fresh = !existsSync(join(home, "omem.db"));
 const app = App.open(home);
 ensurePersonalSpace(app);
 app.config.embeddings.provider = "local";
+if (rerank) {
+  const m = opt("--rerank", "");
+  app.config.rerank = { ...app.config.rerank, enabled: true, passiveThreshold: 0, timeoutMs: 120_000, ...(m && !m.startsWith("--") ? { model: m } : {}) };
+}
 if (fresh) {
   for (const d of read(corpusPath) as { id: string; text: string }[]) {
     const text = d.text.replace(/<br>|<img>/g, " ").replace(/\s+/g, " ").trim();
@@ -52,7 +60,7 @@ if (n) console.error(`memory vectors ready (+${n}) in ${((Date.now() - t0) / 100
 type Q = { id: string; text: string; rels: Record<string, number> };
 const docOf = (tags: string[] | undefined) => tags?.find((t) => t.startsWith("doc-"))?.slice(4) ?? "";
 async function top(q: Q) {
-  const hits = await passiveRecall(app, { text: q.text, spaces: ["personal"], userId: "owner", threshold: 0, limit: 10 });
+  const hits = await passiveRecall(app, { text: q.text, spaces: ["personal"], userId: "owner", threshold: rerank ? RERANK_PREFILTER : 0, limit: 10 });
   return hits.map((h) => ({ doc: docOf(h.memory.tags), score: h.score }));
 }
 const pos: { q: Q; hits: Awaited<ReturnType<typeof top>> }[] = [];
@@ -67,11 +75,11 @@ for (const { q, hits } of pos) {
   const ideal = Object.values(q.rels).sort((a, b) => b - a).slice(0, 10);
   ndcg += dcg(hits.map((h) => q.rels[h.doc] ?? 0)) / (dcg(ideal) || 1);
 }
-console.log(JSON.stringify({ memories: chars ? `first ${chars} chars` : "whole document", pos: pos.length, neg: neg.length, "nDCG@10": ((100 * ndcg) / pos.length).toFixed(2) }));
+console.log(JSON.stringify({ memories: chars ? `first ${chars} chars` : "whole document", gate: rerank ? `rerank ${app.config.rerank.model}` : "cosine", pos: pos.length, neg: neg.length, "nDCG@10": ((100 * ndcg) / pos.length).toFixed(2) }));
 
 const pct = (x: number, d: number) => (d ? ((100 * x) / d).toFixed(1) : "-");
 console.log("threshold | pos: any added | pos: relevant added | precision of added | avg added | neg: any added | neg avg added");
-for (let t = 0.4; t <= 0.801; t += 0.025) {
+for (let t = rerank ? 0.05 : 0.4; t <= (rerank ? 0.951 : 0.801); t += rerank ? 0.05 : 0.025) {
   let pAny = 0, pRel = 0, added = 0, addedRel = 0, nAny = 0, nAdded = 0;
   for (const { q, hits } of pos) {
     const kept = hits.filter((h) => h.score >= t).slice(0, limit);

@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { embedQuery } from "../search/embeddings.ts";
+import { rerankScores } from "../search/rerank.ts";
 import { similarity } from "./quality.ts";
 import { getMemory, type Memory } from "./store.ts";
 
@@ -52,10 +53,17 @@ export async function nearMemories(app: App, input: NearInput): Promise<PassiveH
   return scored.slice(0, input.limit).map((h) => ({ memory: getMemory(app, h.id), score: h.score }));
 }
 
+/** With reranking, the cosine only gathers candidates; the reranker's score decides (docs/v2/evaluation.md). */
+export const RERANK_PREFILTER = 0.4;
+/** The turn waits for this, so the reranker gets less time than a search (then the cosine gate applies). */
+const RERANK_WAIT_MS = 3000;
+
 /**
  * Passive recall: before a chat turn, memories close enough to the new message are put in front
- * of the agent so it does not have to think of calling `recall` first. Only a gate on the cosine
- * score decides — below the threshold nothing is added, so an unrelated message costs no tokens.
+ * of the agent so it does not have to think of calling `recall` first. Only a gate decides —
+ * below it nothing is added, so an unrelated message costs no tokens. The gate is the cosine, or
+ * with reranking on, the reranker's relevance of the closest candidates (`score` is then that
+ * relevance); when the reranker gives no answer in time, the cosine gate applies.
  * Preferences and experience are left out: every run already gets them (runner.learnedContext).
  */
 export async function passiveRecall(
@@ -64,7 +72,23 @@ export async function passiveRecall(
 ): Promise<PassiveHit[]> {
   const cfg = app.config.memory.passive;
   if (!cfg.enabled) return [];
-  return nearMemories(app, { ...input, spec: input.spec ?? null, factsOnly: true, threshold: input.threshold ?? cfg.threshold, limit: input.limit ?? cfg.limit });
+  const near = { ...input, spec: input.spec ?? null, factsOnly: true };
+  const threshold = input.threshold ?? cfg.threshold;
+  const limit = input.limit ?? cfg.limit;
+  const rr = app.config.rerank;
+  if (rr.enabled) {
+    const pool = await nearMemories(app, { ...near, threshold: Math.min(RERANK_PREFILTER, threshold), limit: Math.max(limit, rr.top) });
+    if (!pool.length) return [];
+    const scores = await rerankScores(app, input.text, pool.map(({ memory: m }) => (m.subject ? `${m.subject}：${m.content}` : m.content)), RERANK_WAIT_MS);
+    if (scores)
+      return pool
+        .map((h, i) => ({ ...h, score: scores[i] }))
+        .filter((h) => h.score >= rr.passiveThreshold)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit);
+    return pool.filter((h) => h.score >= threshold).slice(0, limit);
+  }
+  return nearMemories(app, { ...near, threshold, limit });
 }
 
 /** The block a chat turn carries; empty when nothing passed the gate. */

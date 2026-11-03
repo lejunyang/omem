@@ -338,6 +338,26 @@ export const configSchema = z.object({
       memArena: z.boolean().optional(),
     })
     .default({ provider: "none", model: "Xenova/bge-small-zh-v1.5", apiKeyEnv: "OPENAI_API_KEY" }),
+  /**
+   * Reranking (search/rerank.ts): a cross-encoder reads the question with each of the first `top`
+   * fused hits and reorders them; passive recall keeps only memories it scores at least
+   * `passiveThreshold`. Local only (transformers.js, ONNX). Calibrated in docs/v2/evaluation.md.
+   */
+  rerank: z
+    .object({
+      enabled: z.boolean().default(false),
+      /** Model id or local directory (osdk `rerank-m3`). */
+      model: z.string().default("onnx-community/bge-reranker-v2-m3-ONNX"),
+      top: z.number().int().min(5).max(100).default(20),
+      /** Tokens of question + passage the model reads; longer passages are cut. */
+      maxTokens: z.number().int().min(128).max(1024).default(512),
+      /** onnxruntime threads; 0 = its default (all cores). */
+      threads: z.number().int().min(0).max(256).default(0),
+      /** Past this the hits keep the fused order (the work stops at the next batch). */
+      timeoutMs: z.number().int().min(500).max(120_000).default(10_000),
+      passiveThreshold: z.number().min(0).max(1).default(0.5),
+    })
+    .default({ enabled: false, model: "onnx-community/bge-reranker-v2-m3-ONNX", top: 20, maxTokens: 512, threads: 0, timeoutMs: 10_000, passiveThreshold: 0.5 }),
   documents: z
     .object({
       /** Command that prints Markdown for PDF/DOCX on stdout. {file} is replaced. */

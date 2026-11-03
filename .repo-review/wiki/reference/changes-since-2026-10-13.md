@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -1126,3 +1126,10 @@ updated: 2026-11-03
 - 编码写完后被重启打断的一轮，重新开始时沿用写好的代码，接着验证和阶段评审；以前它被当成“没有要编码的项”的一轮跳过阶段评审，直接判为完成（`code.ts` 的 `ranBefore`）。只有真的做了回退的一轮才不再做阶段评审。
 - 运行页修改项面板加“重新评审”（`POST /api/runs/:id/review-again`，`code-loop.ts` 的 `reviewAgain`）：评审被打断、或想再看一遍时，开一轮只做评审，看最后一个检查点之前到现在的改动；发出的“确认并推送”卡片失效。
 - 启动时整理修改项也处理已经确认（推送）或丢弃的交办：还挂着的卡片关掉，项记成不做。
+
+## 11-04：检索重排
+
+- `src/search/rerank.ts`：可选的本地重排（默认关），bge-reranker-v2-m3 的 q8 ONNX 经 transformers.js 运行，osdk 别名 `rerank-m3`（`osdk.toml` 锁定版本）。`search()` 融合后把前 `rerank.top` 条（默认 20，读整块片段）重新排序，命中带 `rerank` 分数；调用排队，超过 `timeoutMs` 保持融合顺序；`search(..., { rerank: false })` 跳过。`embeddings.ts` 的 `loadLocalModel` 让本地目录的模型逐个加载（transformers.js 的本地路径是全局设置）。
+- 对话前带上记忆（`memory/passive.ts`）：开着重排时余弦 ≥ 0.4 的最近 20 条交给重排，过 `rerank.passiveThreshold`（0.5）才带上，`score` 是重排分数；最多等 3 秒，重排没给结果时退回余弦门槛。
+- 设置：`omem setup rerank [--model] [--threads] [--off]`、setup 向导的“重排模型”；网页 设置 → 检索 的“重排”卡片（`GET /api/settings` 多了 `rerank` 状态：加载情况、调用次数、超时次数、上一次耗时），改动不用重启。
+- 评测：`eval-retrieval.ts --rerank [模型] --rerank-top --rerank-tokens --model`，`eval-recall-gate.ts --rerank`；T2 子集 nDCG@10 86.61 → 91.58（docs/v2/evaluation.md）。`test/rerank.test.ts`。

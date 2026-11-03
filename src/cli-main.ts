@@ -1318,9 +1318,11 @@ program
 
 program
   .command("setup [component]")
-  .description("设置向导：Agent、向量模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | documents | desktop | ffmpeg")
-  .option("--model <id-or-dir>", "embeddings：模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（经 osdk 下载）")
+  .description("设置向导：Agent、向量模型、重排模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | rerank | documents | desktop | ffmpeg")
+  .option("--model <id-or-dir>", "embeddings：模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（经 osdk 下载）；rerank：模型 id 或本地目录（默认经 osdk 下载 bge-reranker-v2-m3）")
   .option("--no-osdk", "不经 osdk，直接从 Hugging Face 下载")
+  .option("--threads <n>", "rerank：onnxruntime 线程数，0 = 全部核")
+  .option("--off", "rerank：关闭重排")
   .option("--concurrency <n>", "ffmpeg：同时压缩几个文件")
   .option("--auto <mode>", "ffmpeg：新下载的附件自动压缩，lossy | lossless | off")
   .action(async (component: string | undefined, o) => {
@@ -1350,6 +1352,24 @@ program
       while (await embedPendingMemories(app, 64)) {}
       saveConfig(app.config, app.home);
       console.log(`\n向量检索已开启（${model}）。之后新增的材料由服务在后台补齐向量。`);
+      return;
+    }
+    if (component === "rerank") {
+      // Non-interactive: --off turns it off; otherwise the model comes from osdk (or --model / the hub) and reranking is on.
+      if (o.off) {
+        app.config.rerank.enabled = false;
+        saveConfig(app.config, app.home);
+        return console.log("重排已关闭。");
+      }
+      const model = o.model ?? (o.osdk !== false && setup.osdkAvailable() ? setup.osdkReranker() : setup.RERANKER.repo);
+      if (o.threads !== undefined) {
+        const n = Number(o.threads);
+        if (!Number.isInteger(n) || n < 0 || n > 256) throw new Error("--threads 要是 0 到 256 的整数（0 = 全部核）");
+        app.config.rerank.threads = n;
+      }
+      app.config.rerank = { ...app.config.rerank, enabled: true, model };
+      saveConfig(app.config, app.home);
+      console.log(`重排已开启（${model}${app.config.rerank.threads ? `，${app.config.rerank.threads} 线程` : ""}）。下一次检索生效，不用重启服务。`);
       return;
     }
     if (component === "documents" || component === "document-models") {
@@ -1387,7 +1407,7 @@ program
       console.log(`同时压缩 ${media.concurrency} 个；新下载的附件${media.auto.enabled ? `自动${media.auto.mode === "lossy" ? "有损" : "无损"}压缩（${media.auto.deleteOriginals ? "删除" : "保留"}原文件）` : "不自动压缩"}`);
       return;
     }
-    throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup documents | omem setup desktop | omem setup ffmpeg");
+    throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup rerank [--model …] [--threads n] [--off] | omem setup documents | omem setup desktop | omem setup ffmpeg");
   });
 
 program.addCommand(memoriesCommand);

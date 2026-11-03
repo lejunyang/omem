@@ -37,17 +37,9 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
     return embedder;
   }
   try {
-    const mod = (await import("@huggingface/transformers")) as any;
-    // A local directory (e.g. an osdk-managed model view) loads offline.
-    let modelId = cfg.model;
-    if (existsSync(cfg.model)) {
-      mod.env.localModelPath = dirname(resolve(cfg.model)) + "/";
-      mod.env.allowRemoteModels = false;
-      modelId = basename(resolve(cfg.model));
-    }
     // onnxruntime keeps its CPU arena at the largest batch it has seen; turning it off gives memory
     // back after each batch at some speed cost (embeddings.memArena).
-    const extractor = await mod.pipeline("feature-extraction", modelId, { dtype: "q8", ...(cfg.memArena === false ? { session_options: { enableCpuMemArena: false } } : {}) });
+    const extractor = await loadLocalModel<any>(cfg.model, (mod, id) => mod.pipeline("feature-extraction", id, { dtype: "q8", ...(cfg.memArena === false ? { session_options: { enableCpuMemArena: false } } : {}) }));
     // osdk paths do not name the model, so setup records its family.
     const family = cfg.family ?? (/bge-m3/i.test(cfg.model) ? "bge-m3" : /bge.*zh/i.test(cfg.model) ? "bge-zh" : /bge/i.test(cfg.model) ? "bge" : "other");
     const isBge = family.startsWith("bge");
@@ -70,6 +62,24 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
     embedder = null;
   }
   return embedder;
+}
+
+let loading: Promise<unknown> = Promise.resolve();
+
+/**
+ * Load a transformers.js model by hub id or from a local directory (an osdk-managed model loads
+ * offline). The local path is a library-wide setting, so loads run one at a time.
+ */
+export function loadLocalModel<T>(model: string, load: (mod: any, id: string) => Promise<T>): Promise<T> {
+  const next = loading.then(async () => {
+    const mod = (await import("@huggingface/transformers")) as any;
+    const local = existsSync(model);
+    mod.env.localModelPath = local ? dirname(resolve(model)) + "/" : "/models/";
+    mod.env.allowRemoteModels = !local;
+    return load(mod, local ? basename(resolve(model)) : model);
+  });
+  loading = next.catch(() => {});
+  return next;
 }
 
 /**

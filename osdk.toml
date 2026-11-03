@@ -4,6 +4,8 @@
 node = "24.18.1"
 pnpm = "11"
 
+[models.rerank-m3.views]
+
 [models.decision-2b.views]
 
 [models.memory-m3.views]
@@ -35,6 +37,14 @@ run = "node scripts/eval-retrieval.ts"
 [models.docling-layout.views]
 
 [models.memory-zh.views]
+
+[models.rerank-m3]
+source = "hf:onnx-community/bge-reranker-v2-m3-ONNX@6f5ff65298512715a1e669753bc754d2bc8f367b"
+include = ["config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "onnx/model_quantized.onnx"]
+exclude = []
+kind = "other"
+family = "bge-reranker"
+derived_from = "BAAI/bge-reranker-v2-m3"
 
 [models.decision-2b]
 source = "hf:startlux-models/StartLux-Decision-2B-Q8_0-GGUF@main"

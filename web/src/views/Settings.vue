@@ -26,6 +26,8 @@ const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "peers",
 const asked = useRoute().query.tab;
 const tab = ref<Tab>(TABS.includes(asked as Tab) ? (asked as Tab) : "spaces");
 const config = ref<any>(null);
+type RerankStatus = { enabled: boolean; model: string; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number };
+const rerank = ref<RerankStatus | null>(null);
 const profiles = ref<Profile[]>([]);
 const home = ref("");
 const schedules = ref<Schedule[]>([]);
@@ -194,8 +196,9 @@ async function grantPerms() {
 }
 
 async function load() {
-  const s = await get<{ config: any; agents: Profile[]; home: string }>("/api/settings");
+  const s = await get<{ config: any; agents: Profile[]; home: string; rerank: RerankStatus }>("/api/settings");
   config.value = s.config;
+  rerank.value = s.rerank;
   profiles.value = s.agents;
   home.value = s.home;
   const sc = await get<{ schedules: Schedule[]; next: Record<string, string | null>; labels: Record<string, string> }>("/api/schedules");
@@ -465,6 +468,23 @@ function saveReview(patch: Record<string, unknown>) {
 function savePassive(patch: Record<string, unknown>) {
   const memory = config.value.memory;
   void saveConfig({ memory: { ...memory, passive: { ...memory.passive, ...patch } } }, "已保存相关记忆设置");
+}
+async function saveRerank(patch: Record<string, unknown>) {
+  await saveConfig({ rerank: { ...config.value.rerank, ...patch } }, "已保存重排设置");
+  rerank.value = (await get<{ rerank: RerankStatus }>("/api/settings")).rerank;
+}
+const rerankLine = computed(() => {
+  const r = rerank.value;
+  if (!r?.enabled) return "";
+  const tail = r.timeouts ? `，${r.timeouts} 次超时没用上` : "";
+  if (r.state === "ready") return `已加载 · 用过 ${r.calls} 次${r.lastMs ? `，上一次 ${(r.lastMs / 1000).toFixed(1)} 秒` : ""}${tail}`;
+  if (r.state === "loading") return "正在加载模型";
+  if (r.state === "failed") return `加载失败：${r.error}`;
+  return "还没用过（第一次检索时加载）";
+});
+function numberIn(e: Event, min: number, max: number, fallback: number) {
+  const n = Number((e.target as HTMLInputElement).value);
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
 }
 const compareDraft = ref({ profile: "", model: "", effort: "" });
 function addCompare() {
@@ -766,12 +786,33 @@ async function saveEdit() {
       </div>
       <label class="field"><span>模型</span><input class="input mono" :value="config.embeddings.model" @change="saveConfig({ embeddings: { ...config.embeddings, model: ($event.target as HTMLInputElement).value } })" /><span class="hint">本地默认 Xenova/bge-small-zh-v1.5（首次使用会下载约 100MB，也可以填本地目录）。</span></label>
       <label v-if="config.embeddings.provider === 'openai'" class="field"><span>接口地址</span><input class="input mono" :value="config.embeddings.url ?? ''" placeholder="https://api.openai.com/v1" @change="saveConfig({ embeddings: { ...config.embeddings, url: ($event.target as HTMLInputElement).value } })" /></label>
+      <div v-if="config.rerank" class="card pad stack">
+        <div class="section-title">重排</div>
+        <p class="muted small">检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。模型在终端用 <span class="mono">omem setup rerank</span> 经 osdk 下载并锁定版本；改这里的设置不用重启服务。</p>
+        <UiCheckbox :model-value="config.rerank.enabled" switch @change="(v) => saveRerank({ enabled: v })">开启</UiCheckbox>
+        <p v-if="rerankLine" class="small" :class="rerank?.state === 'failed' ? 'warn-text' : 'muted'">{{ rerankLine }}</p>
+        <template v-if="config.rerank.enabled">
+          <label class="field"><span>模型</span><input class="input mono" :value="config.rerank.model" @change="saveRerank({ model: ($event.target as HTMLInputElement).value.trim() || config.rerank.model })" /><span class="hint">osdk 下载的本地目录，或 Hugging Face 上的 ONNX 模型 id（首次使用时下载，不锁定版本）。</span></label>
+          <div class="row wrap days">
+            <label class="field"><span>重排条数</span><input class="input" type="number" inputmode="numeric" min="5" max="100" :value="config.rerank.top" @change="saveRerank({ top: numberIn($event, 5, 100, config.rerank.top) })" /></label>
+            <label class="field"><span>每条 token</span><input class="input" type="number" inputmode="numeric" min="128" max="1024" step="64" :value="config.rerank.maxTokens" @change="saveRerank({ maxTokens: numberIn($event, 128, 1024, config.rerank.maxTokens) })" /></label>
+            <label class="field"><span>线程数</span><input class="input" type="number" inputmode="numeric" min="0" max="256" :value="config.rerank.threads" @change="saveRerank({ threads: numberIn($event, 0, 256, config.rerank.threads) })" /></label>
+            <label class="field"><span>超时（秒）</span><input class="input" type="number" inputmode="numeric" min="1" max="120" :value="config.rerank.timeoutMs / 1000" @change="saveRerank({ timeoutMs: numberIn($event, 1, 120, config.rerank.timeoutMs / 1000) * 1000 })" /></label>
+          </div>
+          <p class="muted small">重排前 20 条、每条 512 token 时效果和前 50 条差不多；条数或 token 减半大约快一倍，排序略差。线程数 0 表示用全部核，和别的任务抢 CPU 时调小。</p>
+        </template>
+      </div>
       <div v-if="config.memory?.passive" class="card pad stack">
         <div class="section-title">对话前带上相关记忆</div>
         <p class="muted small">你发消息时，先按这条消息找相似的记忆（事实、约定、人物、决定），相似度过了门槛的最多 {{ config.memory.passive.limit }} 条附在消息后面，助理不用先想起来去查。没过门槛就什么都不加。需要开启向量检索。门槛越高带得越少、越准：0.6 时，有相关记忆的问题约八成能带上，带上的约 96% 相关；无关的问题约一成会带上一两条（bge-small-zh，见 docs/v2/evaluation.md）。</p>
         <UiCheckbox :model-value="config.memory.passive.enabled" switch @change="(v) => savePassive({ enabled: v })">开启</UiCheckbox>
         <label class="field"><span>相似度门槛（0.4–0.9）</span>
           <input class="input" style="width: 120px" type="number" inputmode="decimal" min="0.4" max="0.9" step="0.025" :value="config.memory.passive.threshold" @change="savePassive({ threshold: Math.max(0.4, Math.min(0.9, Number(($event.target as HTMLInputElement).value) || 0.6)) })" />
+          <span v-if="config.rerank?.enabled" class="hint">开着重排时只在重排超时的时候用。</span>
+        </label>
+        <label v-if="config.rerank?.enabled" class="field"><span>重排门槛（0–1）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="decimal" min="0.05" max="0.95" step="0.05" :value="config.rerank.passiveThreshold" @change="saveRerank({ passiveThreshold: Math.max(0.05, Math.min(0.95, Number(($event.target as HTMLInputElement).value) || 0.5)) })" />
+          <span class="hint">开着重排时，先按相似度 0.4 以上取候选，再只带重排打分过这个门槛的。</span>
         </label>
       </div>
     </section>

@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { matchQuery, terms } from "./tokenize.ts";
 import { vectorSearch } from "./embeddings.ts";
+import { rerankScores } from "./rerank.ts";
 import { countNoteHits, LEVEL_WEIGHT, levelSql, noteFactor, notesOf, notesOn, noteText, type Level, type SourceNote } from "../sources/attention.ts";
 import { citeBoost, citeCounts } from "../sources/cites.ts";
 import { catalog, sourcesUnder } from "../sources/catalog.ts";
@@ -36,6 +37,8 @@ export type Hit = {
   hash?: string;
   /** Replay (agents/replay-view.ts): the document or page changed after the question's time. */
   later?: boolean;
+  /** The reranker's relevance (0–1) when it reordered this hit (search/rerank.ts). */
+  rerank?: number;
 };
 
 export type SearchOptions = {
@@ -54,6 +57,8 @@ export type SearchOptions = {
   ftsWeight?: number;
   /** Only sources below this catalog node of a space (sources/catalog.ts); pages and memories are left out. */
   under?: { space: string; node: string };
+  /** false: keep the fused order even when reranking is on (settings → 检索). */
+  rerank?: boolean;
 };
 
 const RRF_K = 60;
@@ -367,6 +372,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   const out: Hit[] = [];
   const perSource = new Map<string, number>();
   const cap = opts.perSource ?? 3;
+  const reranking = app.config.rerank.enabled && opts.rerank !== false;
+  const want = reranking ? Math.max(limit, app.config.rerank.top) : limit;
   // Different documents with identical text (copies, templates filled the same way): one is shown, the others are named on it.
   const same = new Map<string, Hit>();
   for (const h of hits) {
@@ -392,8 +399,10 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     }
     out.push(h);
     if (twin) same.set(twin, h);
-    if (out.length >= limit) break;
+    if (out.length >= want) break;
   }
+  if (reranking) await rerankHits(app, query, out);
+  out.splice(limit);
   // Which notes shaped what was returned (the review list is ordered by this).
   countNoteHits(app, out.flatMap((h) => h.noteIds ?? []));
   for (const h of out) {
@@ -401,4 +410,26 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     delete h.hash;
   }
   return out;
+}
+
+/**
+ * Reorder the first `rerank.top` hits by the reranker's relevance (in place). A chunk is read
+ * whole, as the agent would read it; other hits by title and snippet. Without scores (off,
+ * timed out, failed) the fused order stays.
+ */
+async function rerankHits(app: App, query: string, hits: Hit[]) {
+  const head = hits.slice(0, app.config.rerank.top);
+  if (head.length < 2) return;
+  const chunkIds = head.filter((h) => h.type === "chunk").map((h) => Number(h.id));
+  const chunks = new Map(
+    chunkIds.length
+      ? all<{ id: number; text: string }>(app.db, `select id, text from chunks where id in (${chunkIds.map(() => "?").join(",")})`, ...chunkIds).map((r) => [String(r.id), r.text])
+      : [],
+  );
+  const passages = head.map((h) => `${h.path || h.title}\n${(h.type === "chunk" && chunks.get(h.id)) || h.snippet}`.slice(0, 4000));
+  const scores = await rerankScores(app, query, passages);
+  if (!scores) return;
+  head.forEach((h, i) => (h.rerank = Math.round(scores[i] * 1000) / 1000));
+  head.sort((a, b) => b.rerank! - a.rerank!);
+  hits.splice(0, head.length, ...head);
 }

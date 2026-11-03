@@ -55,6 +55,42 @@ node scripts/eval-retrieval.ts … --vector-only | --fts-weight 0.3
 转换（`scripts/bench/cmteb_to_jsonl.py`，原来的 `prep-t2.py` 并进了这里）：读 `C-MTEB/T2Retrieval` 的 corpus/queries parquet 和 `C-MTEB/T2Retrieval-qrels` 的 dev，`random.seed(7)` 抽 400 个有正例的问题，加 15,000 篇随机干扰文档，写成 JSONL（`{"id","text"}` 与 `{"id","text","rels":{docId:grade}}`）。步骤和种子没变，抽出来的子集和上表一致。
 2026-10-30，原件治理第一期（目录档继承、标注按比例和复核状态生效、被引用加分、相同内容折叠）前后，同一份 17,086 篇语料和 400 个问题：全文 nDCG@10 69.01 → 69.01（Recall@10 67.47、Recall@50 78.17、MRR@10 79.78 不变），全文 + 向量（权重 0.5）86.61 → 86.61（Recall@10 85.55、Recall@50 95.60、MRR@10 93.67 不变）。公开集没有关注程度、标注和引用，这组数字说明新规则在没有这些信号时不改变排序；它们对真实材料的效果要在常驻服务器上看复核和命中。耗时这次在高负载的机器上测，前后不可比（同一代码两次 FTS 平均 51 ms 和 72 ms），单独测新增的引用和标注查询每次约 0.15 ms。
 
+### 重排（2026-11-04）
+
+同一份 17,086 篇语料和 400 个问题。先由现有检索（全文 + 向量，全文权重 0.5，每份原件取一个片段）取前 50 篇，再用交叉编码器给“问题 + 片段”打分，只重排前 K 篇。先在 GPU（RTX 4080 Laptop，PyTorch FP16）上比较模型，片段截到 512 token：
+
+| 第一阶段 | 重排 | nDCG@10 | Recall@10 | MRR@10 | 每问（GPU） |
+| --- | --- | --- | --- | --- | --- |
+| bge-small-zh 融合 | 不重排 | 86.61 | 85.55 | 93.67 | — |
+| bge-small-zh 融合 | bge-reranker-v2-m3，前 20 | 91.65 | 89.40 | 97.02 | — |
+| bge-small-zh 融合 | bge-reranker-v2-m3，前 50 | 92.08 | 90.09 | 96.79 | 0.37 s |
+| bge-small-zh 融合 | Qwen3-Reranker-0.6B，前 50 | 91.44 | 89.93 | 96.65 | 1.47 s |
+| bge-small-zh 融合 | Qwen3-Reranker-4B，前 30 | 92.16 | 90.26 | 96.64 | 约 3.6 s |
+| bge-m3 融合 | 不重排 | 89.21 | 88.14 | 95.17 | — |
+| bge-m3 融合 | bge-reranker-v2-m3，前 20 | 92.16 | 90.69 | 96.77 | — |
+| bge-m3 融合 | Qwen3-Reranker-0.6B，前 50 | 91.96 | 90.66 | 96.96 | 1.29 s |
+
+（bge-m3 那几行的文档向量在 GPU 上用 FP16 算，问题向量用 omem 的 q8，和常驻服务器两边都是 q8 略有不同。）
+
+结论：重排前 20 篇就够（20 / 30 / 50 相差不到 0.5），加了重排后第一阶段用哪个向量模型差得不多。Qwen3 的两个重排模型不比 bge-reranker-v2-m3 好，0.6B 慢 4 倍，4B 慢 10 倍。所以内置 bge-reranker-v2-m3（`onnx-community/bge-reranker-v2-m3-ONNX` 的 q8 ONNX，osdk 别名 `rerank-m3`）。
+
+omem 自己的实现（`src/search/rerank.ts`，transformers.js q8，CPU：i9-13900HX，onnxruntime 默认线程），bge-small-zh 融合后重排前 20 篇：
+
+| 片段长度 | nDCG@10 | Recall@10 | Recall@50 | MRR@10 | 每问平均 |
+| --- | --- | --- | --- | --- | --- |
+| 不重排 | 86.61 | 85.55 | 95.60 | 93.67 | 约 0.1 s |
+| 512 token（默认） | 91.58 | 89.29 | 95.60 | 97.05 | 4.7 s |
+| 256 token | 90.59 | 88.84 | 95.60 | 96.17 | 2.4 s |
+
+q8 和 GPU 上 FP16 的结果一致（91.58 对 91.65）。耗时基本和条数 × token 数成正比；和别的任务抢 CPU 时用 `rerank.threads` 限制线程数。
+
+复现：
+
+```bash
+osdk model sync rerank-m3
+node scripts/eval-retrieval.ts .scratch/bench/t2retrieval/corpus.jsonl .scratch/bench/t2retrieval/queries.jsonl --home .scratch/eval-t2 --vector --rerank "$(osdk model path rerank-m3 --stable)" [--rerank-top 20] [--rerank-tokens 512]
+```
+
 `prep_t2.py`：用 huggingface_hub 下载 `C-MTEB/T2Retrieval` 的 corpus/queries parquet 和 `C-MTEB/T2Retrieval-qrels` 的 dev，`random.seed(7)` 抽 400 个有正例的问题，加 15,000 篇随机干扰文档，写成 JSONL（`{"id","text"}` 与 `{"id","text","rels":{docId:grade}}`）。
 
 ## 长期记忆问答：LongMemEval_s（cleaned）小样本
@@ -110,6 +146,27 @@ node scripts/eval-retrieval.ts … --vector-only | --fts-weight 0.3
 
 ```bash
 node scripts/eval-recall-gate.ts corpus.jsonl queries.jsonl neg_queries.jsonl --chars 120
+```
+
+#### 开着重排时的门槛（2026-11-04）
+
+开着重排时，被动召回先按余弦 ≥ 0.4（`RERANK_PREFILTER`）取最接近的 20 条，再按 bge-reranker-v2-m3 的打分（0–1）过门槛 `rerank.passiveThreshold`；重排超时或出错时退回余弦门槛。数据按上面的做法从 T2 子集的 400 个问题重新抽：`random.seed(7)` 打乱后前 200 个作正例、后 200 个作反例（它们的相关文档都不放进语料），正例的全部相关文档加 4,000 篇随机干扰，共 5,064 篇，每篇取前 120 字当一条记忆；向量 bge-small-zh-v1.5 q8。两种门槛用同一份数据：
+
+| 门槛 | 正例：带上了相关记忆 | 带上的记忆中相关的比例 | 正例平均带几条 | 反例：带上了任何记忆 | 反例平均带几条 |
+| --- | --- | --- | --- | --- | --- |
+| 余弦 0.55 | 91.5% | 90.3% | 3.46 | 39.0% | 1.07 |
+| **余弦 0.60（不开重排的默认）** | **80.5%** | **96.0%** | 2.73 | **11.0%** | 0.20 |
+| 余弦 0.65 | 66.0% | 99.2% | 1.99 | 2.0% | 0.02 |
+| 重排 0.30 | 89.0% | 96.4% | 3.06 | 17.0% | 0.27 |
+| 重排 0.35 | 87.0% | 97.0% | 2.98 | 11.5% | 0.17 |
+| **重排 0.50（默认）** | **85.0%** | **98.2%** | 2.75 | **7.0%** | 0.07 |
+| 重排 0.70 | 79.5% | 98.8% | 2.42 | 3.5% | 0.04 |
+| 重排 0.90 | 67.0% | 99.2% | 1.86 | 1.0% | 0.01 |
+
+结论：重排 0.5 在三项上都好于余弦 0.6（多带上 4.5 个点的相关记忆，带错的更少，反例误带从 11% 降到 7%）；要和余弦 0.6 一样的误带率，重排门槛可以放到 0.35，正例多带上 6.5 个点。重排分数不随向量模型变；余弦预筛 0.4 是按 bge-small-zh 定的（正例里 97.5% 的相关记忆在它之上），换向量模型后要看预筛是否还留得住候选。
+
+```bash
+node scripts/eval-recall-gate.ts corpus.jsonl pos.jsonl neg.jsonl --chars 120 --rerank "$(osdk model path rerank-m3 --stable)"
 ```
 
 ### 写记忆前的近邻门槛（2026-10-22）

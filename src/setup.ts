@@ -150,6 +150,69 @@ async function setupEmbeddingsSection(config: Config) {
   return true;
 }
 
+// ---- rerank ---------------------------------------------------------------
+
+export const RERANKER = {
+  alias: "rerank-m3",
+  repo: "onnx-community/bge-reranker-v2-m3-ONNX",
+  revision: "6f5ff65298512715a1e669753bc754d2bc8f367b",
+  size: "约 570MB",
+  files: ["config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "onnx/model_quantized.onnx"],
+};
+
+/** Prepare the reranker through osdk (declared in osdk.toml; declared here when omem runs from the npm package); returns its directory. */
+export function osdkReranker() {
+  try {
+    osdk(["model", "show", RERANKER.alias, "--json", "--offline"]);
+  } catch {
+    osdk(["model", "use", RERANKER.alias, `hf:${RERANKER.repo}@${RERANKER.revision}`, ...RERANKER.files.flatMap((f) => ["--include", f]), "--kind", "other", "--family", "bge-reranker", "--derived-from", "BAAI/bge-reranker-v2-m3", "-y"], { inherit: true });
+  }
+  osdk(["model", "sync", RERANKER.alias], { inherit: true });
+  const path = osdkModelPath(RERANKER.alias);
+  if (!path) throw new Error(`osdk 没有给出 ${RERANKER.alias} 的本地路径`);
+  return path;
+}
+
+async function setupRerankSection(config: Config) {
+  const cur = config.rerank;
+  out(`\n当前：${cur.enabled ? `开启 · ${cur.model} · 前 ${cur.top} 条 · ${cur.threads || "全部"}线程` : "未开启"}`);
+  out("重排：检索先按全文和向量取候选，再用 bge-reranker-v2-m3 把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。");
+  out("T2Retrieval 上 nDCG@10 提高 3～5 点（docs/v2/evaluation.md）；代价是每次检索多花 CPU：前 20 条、每条 512 token 在 24 核笔记本上约 5 秒（截到 256 token 约 2.4 秒）。用在记忆上要先开启向量检索。");
+  const choice = await select({
+    message: "重排",
+    choices: [
+      { value: "on", name: `开启（bge-reranker-v2-m3 · ${RERANKER.size}）`, description: "本地运行，材料不出本机" },
+      { value: "off", name: "关闭", description: "保持全文 + 向量融合的顺序" },
+      { value: "keep", name: "保持不变" },
+    ],
+    default: "keep",
+  });
+  if (choice === "keep") return false;
+  if (choice === "off") {
+    config.rerank = { ...cur, enabled: false };
+    return true;
+  }
+  let model = RERANKER.repo;
+  if (osdkAvailable()) {
+    const how = await select({
+      message: "模型从哪里来",
+      choices: [
+        { value: "osdk", name: "osdk 下载并锁定（推荐）", description: "按固定版本校验，之后离线加载" },
+        { value: "hub", name: "首次使用时从 Hugging Face 下载", description: "存在 transformers.js 缓存里，不锁定版本" },
+      ],
+    });
+    if (how === "osdk") model = osdkReranker();
+  } else {
+    guideOsdk();
+    if (!(await confirm({ message: `先不用 osdk，首次使用时直接从 Hugging Face 下载 ${RERANKER.repo}（${RERANKER.size}）？`, default: true }))) return false;
+  }
+  const cores = cpus().length;
+  const threads = await number({ message: `重排用几个线程（本机 ${cores} 核；0 = 全部。和别的任务抢 CPU 时调小）`, default: cur.threads, min: 0, max: 256 });
+  config.rerank = { ...cur, enabled: true, model, threads: threads ?? cur.threads };
+  out(`  已开启：${model}。改动在下一次检索时生效，不用重启服务；其余参数在网页 设置 → 检索。`);
+  return true;
+}
+
 // ---- documents ------------------------------------------------------------
 
 const DOCLING_MODELS: [alias: string, folder: string][] = [
@@ -774,13 +837,14 @@ async function setupFfmpegSection(config: Config) {
 export async function setupInteractive(app: App) {
   const config = app.config;
   out(`omem 设置 · 数据目录 ${app.home}`);
-  out(`本机：${ok(osdkAvailable())} osdk  ${ok(!!toolCommand("uv"))} uv  ${ok(commandExists("git"))} git  ${ok(desktopControl.status().installed)} aad  ${ok(!!toolCommand("ffmpeg"))} ffmpeg  · 向量 ${config.embeddings.provider === "none" ? "未开启" : config.embeddings.model}`);
+  out(`本机：${ok(osdkAvailable())} osdk  ${ok(!!toolCommand("uv"))} uv  ${ok(commandExists("git"))} git  ${ok(desktopControl.status().installed)} aad  ${ok(!!toolCommand("ffmpeg"))} ffmpeg  · 向量 ${config.embeddings.provider === "none" ? "未开启" : config.embeddings.model} · 重排 ${config.rerank.enabled ? "开启" : "未开启"}`);
   if (!osdkAvailable()) guideOsdk();
   const sections = await checkbox({
     message: "要设置哪些部分（空格选择，回车确认）",
     choices: [
       { value: "agents", name: "Agent 后端与模型", checked: !config.agents.default },
       { value: "embeddings", name: "向量检索模型", checked: config.embeddings.provider === "none" },
+      { value: "rerank", name: "重排模型（可选）" },
       { value: "documents", name: "PDF / DOCX 解析（Docling 等）" },
       { value: "channels", name: "渠道：飞书 / Telegram / QQ·微信" },
       { value: "guard", name: "注入标记（本地小模型，可选）" },
@@ -795,6 +859,7 @@ export async function setupInteractive(app: App) {
     try {
       if (s === "agents") await setupAgentsSection(config, app.home);
       if (s === "embeddings") await setupEmbeddingsSection(config);
+      if (s === "rerank") await setupRerankSection(config);
       if (s === "documents") await setupDocumentsSection(config, app.home);
       if (s === "channels") await setupChannelsSection(app);
       if (s === "guard") await setupGuardSection(config);

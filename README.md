@@ -59,6 +59,7 @@ flowchart LR
 - **记忆按目录分层**：每条记忆在空间里有一个目录（如 `工作/项目A/发布`，最多三层），记忆页左侧是目录树。助理写记忆时按目录说明选目录，没有合适的才新建并写一句说明；拿不准的先放“未归档”，每两小时由整理目录的运行归档，每周再看一遍结构（拆太满的、并太小的、补说明）。标签只用来串起跨目录的东西（同一个人、同一个季度）。
 - **记忆质量不靠人工逐条看**：写入前有规则检查（免责式、超长、转述原件、事件复述、无来源、重复的会被退回并告诉模型怎么改），之后每小时由复核模型盲评保留、改写或撤回；可以再挂几个模型做对比运行，在“记忆 → 质量”里按模型比较。
 - **相关记忆自动带上**：开了向量检索后，你每发一条消息，和它足够相近的记忆（事实、约定、人物、决定，最多 5 条）会附在这一轮里，助理不用先想起来去查；不够相近就什么都不加（门槛在设置 → 检索，校准数据见 docs/v2/evaluation.md）。
+- **重排（可选）**：检索先按全文和向量取候选，再由本地的 bge-reranker-v2-m3 把问题和前 20 条逐条对读、重新排序；开着时对话前带上的记忆也由它判断相关不相关。公开中文检索集上排序指标 nDCG@10 从 86.6 提到 91.6，代价是每次检索多几秒 CPU，超时就保持原来的顺序。`omem setup rerank` 经 osdk 下载模型，设置 → 检索 里开关和调参数。
 - **问你和给你选项**：Agent 遇到非你决定不可的事用卡片问你，你答完它在同一轮继续；原来那轮已结束也会接着回答并发回原会话。编码的技术返工先交给助手调查，已有授权能在后台接着执行，完整技术记录在卡片里默认折叠；回答以建议结尾时附上下一步按钮。列在 `approvals.tools` 里的工具调用要你批准才执行，拒绝时写的理由会回给 Agent。
 
 ## 快速开始
@@ -99,7 +100,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 npm install -g omem-assistant
 ```
 
-第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、桌面与浏览器控制（可选）、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
+第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型与重排模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、桌面与浏览器控制（可选）、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
 
 **后台服务**：`omem service start | stop | restart | status | logs`。用 omem 自带的 PM2 常驻运行（PM2 数据放在 `~/.omem/service/pm2`，不碰你自己的 PM2），崩溃自动重启，日志在 `~/.omem/service/logs` 按天和大小轮换。`omem service enable` 设置开机自启（macOS 用 LaunchAgent，Linux 用 systemd 用户服务并开启 linger、没有 systemd 时用 crontab `@reboot`，Windows 在“启动”文件夹放一个隐藏窗口的启动脚本，都不需要管理员权限），`omem service disable` 取消；`omem setup` 结束时也会问。自启用的是设置时终端里的 PATH，之后装了新 Agent 或换了 Node 版本再 `enable` 一次。前台调试用 `omem serve`。
 
@@ -266,6 +267,7 @@ omem doubao login [--app <appId>]            # 设备码授权豆包（在飞书
 omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见“多人使用”
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
 omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
+omem setup rerank [--threads 16]            # 开启重排（经 osdk 下载 bge-reranker-v2-m3，约 570MB）；--off 关闭
 omem setup desktop                          # 安装或更新桌面与浏览器控制（ai-auto-desktop 的 aad），并做只读的环境检查
 omem setup ffmpeg                           # 经 osdk 安装 ffmpeg（osdk use -g conda:ffmpeg），用来压缩附件里的图片、视频和音频
 omem setup ffmpeg --concurrency 4 --auto lossy  # 同时压 4 个；新下载的附件自动有损压缩（off 关掉）
@@ -465,7 +467,7 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 src/core      配置、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）
 src/rules     任务规则、条件判断、执行动作与触发记录
 src/sources   归档规则与原件迁移（archive.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
-src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合
+src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合、重排（rerank.ts）
 src/memory    记忆（目录、有效期、版本链、写入检查与复核统计、对话前带上相关记忆、日常不足信号）
 src/items     事项（时间线）、需求树（requirements.ts）、需求点下的编码（work.ts）
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测

@@ -56,6 +56,7 @@ import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, 
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
 import { search } from "../search/search.ts";
+import { rerankStatus } from "../search/rerank.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
 import { deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
@@ -2271,7 +2272,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return reply.send(res.body ? (await import("node:stream")).Readable.fromWeb(res.body as never) : "");
   });
 
-  server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home }));
+  server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app) }));
   server.put("/api/settings", async (req) => {
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });
     // Everything else is read on use; these are only read when the service starts.

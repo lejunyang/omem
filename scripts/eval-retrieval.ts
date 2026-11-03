@@ -2,11 +2,14 @@
  * BEIR-style retrieval evaluation of omem's search layer.
  *
  *   node scripts/eval-retrieval.ts <corpus.jsonl> <queries.jsonl> [--vector] [--limit N] [--home DIR]
+ *     [--model ID|DIR] [--rerank [ID|DIR]] [--rerank-top N] [--rerank-tokens N]
  *
  * corpus.jsonl: {"id","text","title"?}   queries.jsonl: {"id","text","rels":{docId: grade}}
  * Reports nDCG@10, Recall@10/@50 and MRR@10 at document level (chunks are
  * folded into their source). The same library is reused across runs when
- * --home points at an existing directory.
+ * --home points at an existing directory (its vectors belong to one embedding model:
+ * another --model re-embeds it). --rerank reorders the first --rerank-top fused hits
+ * (search/rerank.ts).
  */
 process.removeAllListeners("warning");
 const { existsSync, readFileSync } = await import("node:fs");
@@ -29,12 +32,23 @@ const home = opt("--home", join(process.cwd(), ".scratch", "eval-home"));
 const limitQ = Number(opt("--limit", "100000"));
 const vectorOnly = flag("--vector-only");
 const vector = flag("--vector") || vectorOnly;
+const rerank = flag("--rerank");
 
 const read = (p: string) => readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const fresh = !existsSync(join(home, "omem.db"));
 const app = App.open(home);
 ensurePersonalSpace(app);
 app.config.embeddings.provider = vector ? "local" : "none";
+if (opt("--model", "")) app.config.embeddings = { ...app.config.embeddings, model: opt("--model", ""), family: undefined };
+const rerankModel = opt("--rerank", "");
+app.config.rerank = {
+  ...app.config.rerank,
+  enabled: rerank,
+  timeoutMs: 120_000,
+  top: Number(opt("--rerank-top", String(app.config.rerank.top))),
+  maxTokens: Number(opt("--rerank-tokens", String(app.config.rerank.maxTokens))),
+  ...(rerankModel && !rerankModel.startsWith("--") ? { model: rerankModel } : {}),
+};
 
 if (fresh) {
   const t = Date.now();
@@ -74,4 +88,5 @@ for (const q of queries) {
 }
 const n = queries.length;
 const pct = (x: number) => ((100 * x) / n).toFixed(2);
-console.log(JSON.stringify({ mode: vectorOnly ? "vector" : vector ? "fts+vector (RRF)" : "fts", queries: n, "nDCG@10": pct(ndcg), "Recall@10": pct(r10), "Recall@50": pct(r50), "MRR@10": pct(mrr), avgMs: (ms / n).toFixed(1) }));
+const mode = (vectorOnly ? "vector" : vector ? "fts+vector (RRF)" : "fts") + (rerank ? ` + rerank top ${app.config.rerank.top}` : "");
+console.log(JSON.stringify({ mode, queries: n, "nDCG@10": pct(ndcg), "Recall@10": pct(r10), "Recall@50": pct(r50), "MRR@10": pct(mrr), avgMs: (ms / n).toFixed(1) }));
