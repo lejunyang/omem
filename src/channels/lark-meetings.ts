@@ -455,7 +455,7 @@ export async function decideMeetingJoin(app: App, payload: CardPayload, approve:
 }
 
 /** Bring the bots in and start listening, as the plan says. Returns what happened. */
-async function startPlan(app: App, id: string, plan: MeetingPlan): Promise<string> {
+async function startPlan(app: App, id: string, plan: MeetingPlan, opts: { retry?: number } = {}): Promise<string> {
   const row = getRow(app, id)!;
   const joined: Joined[] = [];
   for (const ref of plan.bots) {
@@ -477,8 +477,29 @@ async function startPlan(app: App, id: string, plan: MeetingPlan): Promise<strin
     failed.length ? `${failed.map((j) => `${j.name} 没能入会：${j.error}`).join("；")}` : "",
     listen ? (plan.record ? "开始记录会议" : "开始旁听") : "",
   ].filter(Boolean);
-  if (failed.length) notify(app, { title: `会议「${row.topic || "无标题"}」：机器人没能入会`, body: `${failed.map((j) => `- ${j.name}：${j.error}`).join("\n")}\n\n${plan.ruleId === INVITED ? plan.ruleName : `规则「${plan.ruleName}」`}。`, link: plan.ruleId === INVITED ? "#/rules" : `#/rules?id=${plan.ruleId}` });
+  // AI Summary off is often only so far: the owner may turn it on once in. Try again quietly for a while.
+  const waiting = !anyIn && failed.length > 0 && failed.every((j) => SUMMARY_OFF.test(j.error ?? ""));
+  if (waiting && (opts.retry ?? 0) < SUMMARY_RETRIES) {
+    const t = setTimeout(() => void retryJoin(app, id, plan, (opts.retry ?? 0) + 1), SUMMARY_RETRY_MS);
+    t.unref?.();
+  }
+  if (failed.length && !opts.retry) notify(app, { title: `会议「${row.topic || "无标题"}」：机器人没能入会`, body: `${failed.map((j) => `- ${j.name}：${j.error}`).join("\n")}\n\n${waiting ? `打开 AI 纪要后，${Math.round((SUMMARY_RETRIES * SUMMARY_RETRY_MS) / 60_000)} 分钟内 omem 会自动再拉一次，不用再操作。` : ""}${plan.ruleId === INVITED ? plan.ruleName : `规则「${plan.ruleName}」`}。`, link: plan.ruleId === INVITED ? "#/rules" : `#/rules?id=${plan.ruleId}` });
+  if (opts.retry && anyIn) notify(app, { title: `会议「${row.topic || "无标题"}」：机器人已入会`, body: `打开 AI 纪要后已经把 ${joined.filter((j) => j.ok).map((j) => j.name).join("、")} 拉进会议。`, link: "#/rules" });
   return parts.join("；") || "没有要做的";
+}
+
+/** Join failures that only mean the meeting has AI Summary (AI 纪要) off: Feishu code 10022. */
+const SUMMARY_OFF = /（10022）|\b10022\b/;
+/** While the owner may still turn AI Summary on: every minute, for half an hour. */
+const SUMMARY_RETRY_MS = 60_000;
+const SUMMARY_RETRIES = 30;
+
+/** Again after AI Summary was off, while the meeting goes on and nobody settled it another way. */
+async function retryJoin(app: App, id: string, plan: MeetingPlan, retry: number) {
+  const row = getRow(app, id);
+  if (!row || !["listening", "joined"].includes(row.status)) return;
+  if (json<Joined[]>(row.bots, []).some((b) => b.ok)) return;
+  await startPlan(app, id, plan, { retry }).catch((e) => log(`会议「${row.topic}」（${id}）：再拉机器人失败：${(e as Error).message}`));
 }
 
 
@@ -542,6 +563,8 @@ export class MeetingEnded extends Error {}
 
 function explainVc(code: number | undefined, msg: string) {
   const text = `${code ?? ""} ${msg}`.trim();
+  if (code === 10022 || /AI Summary.*(off|disabled)/i.test(msg))
+    return "这场会议没有打开 AI 纪要，机器人进不来（10022）：请主持人在会议里打开「AI 纪要」；也可以打开后在会议里直接邀请机器人";
   if (code === 20001 || /meeting.*(end|over|finish)|会议已结束/i.test(msg)) return `会议已结束（${text}）`;
   if (code === 121003 || /no permission|agent.*disabled|allow.*agent/i.test(msg))
     return `会议不让机器人进（${text}）：检查会议是否打开“允许智能体加入”和 AI 纪要、会议号、密码、等候室或入会审批、是否限制了入会身份`;

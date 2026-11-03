@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { answerAsk, createAsk, getAsk, listAsks, settleAsks, showSuggestions } from "../src/agents/asks.ts";
+import { answerAsk, createAsk, getAsk, listAsks, registerAskHandler, settleAsks, showSuggestions } from "../src/agents/asks.ts";
 import { receive } from "../src/agents/inbox.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { handleAskAction, askCard } from "../src/channels/lark-asks.ts";
+import { ANSWER_WAIT_MS, handleAskAction, askCard } from "../src/channels/lark-asks.ts";
 import { testApp } from "./helpers.ts";
 import { addTask, ownerQuestionText } from "../src/agents/code-tasks.ts";
 
@@ -140,5 +140,23 @@ describe("asking the owner", () => {
     await handleAskAction(app, "ci", a.id, { name: "reject", formValue: { text: "这条还有用" } }, "owner");
     expect(getAsk(app, a.id)).toMatchObject({ approved: false, answer: "这条还有用" });
     expect(JSON.stringify(askCard(app, getAsk(app, a.id)))).toContain("已拒绝");
+  });
+
+  it("acknowledges a card click within Feishu's limit when acting on the answer takes longer, and finishes it after", async () => {
+    const { app, runId } = working();
+    let finished = false;
+    registerAskHandler("slow-test", async () => {
+      await new Promise((ok) => setTimeout(ok, ANSWER_WAIT_MS + 800));
+      finished = true;
+    });
+    const q = createAsk(app, { runId, question: "确认并推送？", options: [{ label: "确认并推送" }], context: { handler: "slow-test" } });
+    const started = Date.now();
+    const r = await handleAskAction(app, "ci", q.id, { name: "opt_0" }, "owner");
+    expect(Date.now() - started).toBeLessThan(ANSWER_WAIT_MS + 500);
+    expect(r.toast).toContain("正在处理");
+    expect(finished).toBe(false);
+    await new Promise((ok) => setTimeout(ok, 1200));
+    expect(finished).toBe(true);
+    expect(getAsk(app, q.id).status).toBe("answered");
   });
 });

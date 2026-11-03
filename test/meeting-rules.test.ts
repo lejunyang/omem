@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { botInvitedToMeeting, ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
@@ -273,6 +273,38 @@ describe("meetings the owner joins", () => {
     const n = listNotifications(app)[0];
     expect(n?.title).toContain("没能入会");
     expect(n?.body).toContain("允许智能体加入");
+  });
+
+  it("says plainly when AI Summary is off, and brings the bot in once the owner turns it on", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      const { app } = setup();
+      let summaryOn = false;
+      const joins: unknown[] = [];
+      setLarkClient({ request: async (r: { url: string }) => {
+        if (!r.url.endsWith("/bots/join")) return { code: 0, data: {} };
+        joins.push(r);
+        return summaryOn ? { code: 0, data: {} } : { code: 10022, msg: 'This agent cannot join because "AI Summary" is turned off. Ask the meeting host to turn it on and try again.' };
+      } }, "ou_bot", "小助理");
+      saveRule(app, { name: "直接拉", description: "直接拉", enabled: true, trigger: { event: "meeting" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: true }] });
+      await ownerJoinedMeeting(app, { id: "m9", no: "999000111", topic: "评审" });
+      const first = listNotifications(app)[0];
+      expect(first?.body).toContain("没有打开 AI 纪要");
+      expect(first?.body).toContain("自动再拉一次");
+      // Still off a minute later: tried again, nothing new said.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(joins).toHaveLength(2);
+      expect(listNotifications(app)).toHaveLength(1);
+      summaryOn = true;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(joins).toHaveLength(3);
+      expect(listNotifications(app)[0]?.title).toContain("已入会");
+      // In now: no more tries.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(joins).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

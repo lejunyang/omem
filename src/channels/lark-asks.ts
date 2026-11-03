@@ -14,6 +14,8 @@ import { getTask } from "../agents/code-tasks.ts";
  * answer or a refusal's reason. Answered anywhere, the card turns into a record of the answer.
  */
 const TITLE: Record<Ask["kind"], string> = { question: "需要你回答", approval: "需要你批准", suggestion: "" };
+/** How long a card click waits for its answer before Feishu is told it is being handled (its limit is about 3 s). */
+export const ANSWER_WAIT_MS = 2000;
 
 function button(text: string, name: string, kind: "primary" | "danger" | "default", inForm: boolean, value: string) {
   return {
@@ -129,6 +131,14 @@ export async function handleAskAction(app: App, interactionId: string, askId: st
   else if (text) input = { text, by };
   else return { toast: "请选一个选项或写下回答" };
   run(app.db, "update card_interactions set handled_at = datetime('now'), handled_by = ? where id = ?", by, interactionId);
-  const done = await answerAsk(app, askId, input);
+  // Feishu waits about 3 s for this answer, and some answers take longer (confirming a delegation
+  // pushes its branches): past ANSWER_WAIT_MS the click is acknowledged and the work goes on; the card
+  // is updated again when the ask closes.
+  const answering = answerAsk(app, askId, input);
+  const done = await Promise.race([answering, new Promise<null>((ok) => setTimeout(() => ok(null), ANSWER_WAIT_MS))]);
+  if (!done) {
+    answering.catch((e) => console.warn(`[omem] 卡片回答 ${askId} 处理失败：${(e as Error).message}`));
+    return { toast: "收到，正在处理，完成后卡片会更新", card: askCard(app, getAsk(app, askId)) };
+  }
   return { toast: ask.kind === "approval" ? (input.approved ? "已批准" : "已拒绝") : ask.kind === "suggestion" ? "收到，接着做" : "已回答", card: askCard(app, done) };
 }

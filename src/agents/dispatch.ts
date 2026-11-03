@@ -66,8 +66,13 @@ export async function retireSession(app: App, profile: AgentProfile, sessionId: 
       return;
     }
     const da = doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config));
-    if (!da) return;
+    if (!da) {
+      emit({ type: "status", text: "豆包会话没有删除：找不到授权过的豆包应用（omem doubao login），会话留在豆包历史里" });
+      return;
+    }
     await deleteDoubaoSession(app.home, da, sessionId);
+    // Said every time: the CLI may be logged in to another account than the app deleting it.
+    emit({ type: "status", text: `已经通过应用 ${da.appId} 删除豆包会话 ${sessionId}${profile.transport === "doubao-cli" ? "（豆包 CLI 登录的若是别的账号，它的历史里仍会留着）" : ""}` });
   } catch (e) {
     emit({ type: "status", text: `${profile.transport.startsWith("doubao") ? "豆包" : "后端"}会话清理失败：${(e as Error).message.slice(0, 160)}` });
   }

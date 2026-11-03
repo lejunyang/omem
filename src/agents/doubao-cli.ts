@@ -41,7 +41,7 @@ export const DOUBAO_CLI_INSTALL = "npm i -g @bytedance/doubao-cli，再 doubao l
 
 /** What the agent is told when omem's tools come through its shell. */
 export const DOUBAO_TOOL_NOTE =
-  "【omem 工具】这次运行没有 MCP 工具。说明里提到的 omem 工具（omem_help、omem_call 和各个工具名）都在终端里调用：`omem tool <工具名> 键=值 …`，参数复杂时写进 JSON 文件再 `omem tool <工具名> -f 参数.json`，`omem tool help [分组]` 看说明。权限与这次运行相同。";
+  "【omem 工具】这次运行没有 MCP 工具。说明里提到的 omem 工具（omem_help、omem_call 和各个工具名）都在终端里调用：`omem tool <工具名> 键=值 …`，参数复杂时写进 JSON 文件再 `omem tool <工具名> -f 参数.json`，`omem tool help [分组]` 看说明。权限与这次运行相同。\n\n【子任务】这一轮自己做完，不要另开子 Agent 或并行子任务：它们的过程 omem 看不到，读到的也不会交回这一轮。要别的 Agent 帮忙用 omem 的 run_agent / ask_agent；原件按需读，先 search 找到要看的，不要逐份通读。";
 
 /** Longest prompt passed as an argument; longer ones go through a file. */
 const INLINE_MAX = 6000;

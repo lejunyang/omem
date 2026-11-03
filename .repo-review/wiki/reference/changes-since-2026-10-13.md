@@ -1133,3 +1133,9 @@ updated: 2026-11-04
 - 对话前带上记忆（`memory/passive.ts`）：开着重排时余弦 ≥ 0.4 的最近 20 条交给重排，过 `rerank.passiveThreshold`（0.5）才带上，`score` 是重排分数；最多等 3 秒，重排没给结果时退回余弦门槛。
 - 设置：`omem setup rerank [--model] [--threads] [--off]`、setup 向导的“重排模型”；网页 设置 → 检索 的“重排”卡片（`GET /api/settings` 多了 `rerank` 状态：加载情况、调用次数、超时次数、上一次耗时），改动不用重启。
 - 评测：`eval-retrieval.ts --rerank [模型] --rerank-top --rerank-tokens --model`，`eval-recall-gate.ts --rerank`；T2 子集 nDCG@10 86.61 → 91.58（docs/v2/evaluation.md）。`test/rerank.test.ts`。
+
+## 11-04：卡片点击先回应、会议没开 AI 纪要、豆包
+
+- 飞书卡片的按钮要在约 3 秒内回应：回答要做的事超过 2 秒（确认交办会推送分支），先回“收到，正在处理”，做完卡片再更新（`lark-asks.ts` 的 `ANSWER_WAIT_MS`）。以前推送慢时飞书显示“服务未响应”，其实推送照常完成。
+- 机器人入会因会议没开 AI 纪要失败（飞书 10022）时，通知说清楚要主持人打开 AI 纪要；之后半小时内每分钟自动再拉一次，入会后再通知一次（`lark-meetings.ts`）。飞书给 omem 的会议信息里没有“是否开了 AI 纪要”，只能靠入会结果判断。
+- 豆包会话清理每次都写一行状态：删了哪个会话、经哪个应用，或者为什么没删；豆包 CLI 的说明里加上“这一轮自己做完，不开子 Agent，原件先 search 再按需读”（CLI 没有关子 Agent 的参数）。
