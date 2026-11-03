@@ -14,6 +14,13 @@ import { preloadRoute } from "./preload";
 
 const route = useRoute();
 const router = useRouter();
+async function selectSpace(space: string) {
+  if (space === state.space) return;
+  // Leave the old requirement (and its open work) before the space key remounts the page.
+  // A requirement link can still set state.space itself to open its own business tree.
+  if (route.path.split("/")[1] === "reqs") await router.replace("/reqs");
+  state.space = space;
+}
 watch(() => state.space, () => {
   const section = route.path.split("/")[1];
   // The knowledge-base list is not per space: it stays.
@@ -94,7 +101,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
 
       <div class="space-pick">
         <span class="small muted">空间</span>
-        <UiSelect v-model="state.space" aria-label="当前空间" :placeholder="state.spaces.length ? '请选择' : '加载中…'" :options="state.spaces.map((s) => ({ value: s.id, label: s.name, hint: kindLabel[s.kind] ?? s.kind }))" />
+        <UiSelect :model-value="state.space" @update:model-value="selectSpace" aria-label="当前空间" :placeholder="state.spaces.length ? '请选择' : '加载中…'" :options="state.spaces.map((s) => ({ value: s.id, label: s.name, hint: kindLabel[s.kind] ?? s.kind }))" />
       </div>
 
       <button class="search-btn" @click="state.palette = true"><Icon name="search" :size="16" /><span>搜索或提问</span><kbd>Ctrl K</kbd></button>

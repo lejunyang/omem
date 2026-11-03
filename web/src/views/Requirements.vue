@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, post } from "../api";
 import Icon from "../components/Icon.vue";
@@ -104,30 +104,44 @@ const pending = computed(() => nodes.value.filter((n) => !n.confirmed && n.statu
 const waiting = computed(() => nodes.value.reduce((t, n) => t + (n.work?.waiting ?? 0), 0));
 const waitingOnly = ref(false);
 
+let disposed = false;
+let treeRequest = 0;
+let detailRequest = 0;
 async function loadTree() {
+  const request = ++treeRequest;
+  const space = state.space;
+  const current = () => !disposed && request === treeRequest && space === state.space;
   const before = nodes.value.length && nodes.value[0].spaceId === state.space;
   // A refresh of the same tree keeps it on screen.
   if (!before) loading.value = true;
   try {
-    nodes.value = (await get<{ nodes: Node[] }>(`/api/requirements?space=${encodeURIComponent(state.space)}${showRemoved.value ? "&removed=1" : ""}`)).nodes;
+    const tree = await get<{ nodes: Node[] }>(`/api/requirements?space=${encodeURIComponent(space)}${showRemoved.value ? "&removed=1" : ""}`);
+    if (!current()) return;
+    nodes.value = tree.nodes;
     if (!before) loadFolds();
   } catch (e) {
-    toast((e as Error).message, "error");
+    if (current()) toast((e as Error).message, "error");
   } finally {
-    loading.value = false;
+    if (current()) loading.value = false;
   }
 }
 async function loadDetail() {
-  if (!selectedId.value) {
+  const request = ++detailRequest;
+  const id = selectedId.value;
+  const space = state.space;
+  const current = () => !disposed && request === detailRequest && id === selectedId.value && space === state.space && route.path.split("/")[1] === "reqs";
+  if (!id) {
     detail.value = null;
     return;
   }
   try {
-    const d = await get<Detail>(`/api/requirements/${selectedId.value}`);
+    const d = await get<Detail>(`/api/requirements/${id}`);
+    if (!current()) return;
     detail.value = d;
     // A link to another business opens its tree.
     if (d.node.spaceId !== state.space) state.space = d.node.spaceId;
   } catch (e) {
+    if (!current()) return;
     detail.value = null;
     toast((e as Error).message, "error");
   }
@@ -140,7 +154,7 @@ watch(selectedId, () => {
   void loadDetail();
 });
 let workTimer: ReturnType<typeof setTimeout> | undefined;
-onServerEvent((e) => {
+const unsubscribe = onServerEvent((e) => {
   // A round or review of this node's work changed (or a new round was queued): stages and marks follow.
   if (e.type === "run" && detail.value?.work.length && (detail.value.work.some((w) => w.rounds.includes(e.runId)) || e.status === "queued" || e.status === "done")) {
     clearTimeout(workTimer);
@@ -150,6 +164,12 @@ onServerEvent((e) => {
     void loadTree();
     if ((e as { id?: string }).id === selectedId.value) void loadDetail();
   }
+});
+onBeforeUnmount(() => {
+  disposed = true;
+  clearTimeout(workTimer);
+  clearTimeout(linkTimer);
+  unsubscribe();
 });
 const open = (id: string) => router.push(workId.value ? { path: `/reqs/${id}`, query: { work: workId.value, tab: "req" } } : `/reqs/${id}`);
 /** A node the open delegation does not touch (greyed in the tree) opens on its own, with its own work. */
