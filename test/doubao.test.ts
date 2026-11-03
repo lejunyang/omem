@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { checkDoubaoApp, doubaoAccessToken, readDoubaoTokens, runDoubao, saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
+import { runBackend } from "../src/agents/dispatch.ts";
+import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 import { testApp } from "./helpers.ts";
 
 const profile = agentProfileSchema.parse({ id: "doubao", transport: "doubao", command: "doubao-openapi", idleTimeoutMs: 5000 });
@@ -39,6 +41,7 @@ describe("doubao backend", () => {
     const events: AgentEvent[] = [];
     const r = await runDoubao(profile, { cwd: app.home, prompt: "查天气" }, (e) => events.push(e), { home: app.home, app: botApp });
     expect(r.sessionId).toBe("S1");
+    expect(events).toContainEqual({ type: "session", sessionId: "S1", resumed: false });
     expect(r.text).toBe("北京明天多云。\n\n[天气](https://tenant.larkoffice.com/docx/abc)");
     // The streamed text and the completed item's remainder, never twice.
     expect(events.filter((e) => e.type === "text").map((e) => (e as { text: string }).text).join("")).toBe("北京明天多云。");
@@ -51,6 +54,34 @@ describe("doubao backend", () => {
     const r2 = await runDoubao(profile, { cwd: app.home, prompt: "那后天呢", resumeSessionId: "S1" }, () => {}, { home: app.home, app: botApp });
     expect(r2.sessionId).toBe("S1");
     expect(calls.some((c) => c.url.endsWith("/v1/sessions/S1/events") && c.body.events[0].contents[0].text === "那后天呢")).toBe(true);
+  });
+
+  it.each(["stream-unavailable", "reply-failed"])("deletes a new OpenAPI session when %s, while keeping resumed sessions", async (failure) => {
+    const app = testApp();
+    saveLarkSecret(app.home, { appId: botApp.appId, appSecret: botApp.secret });
+    app.config.lark.appId = botApp.appId;
+    saveDoubaoToken(app.home, { appId: botApp.appId, accessToken: "u-1", expiresAt: future(), savedAt: "" });
+    const deleted: string[] = [];
+    setDoubaoFetchForTests(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "DELETE") {
+        deleted.push(url.split("/v1/sessions/")[1]);
+        return ok({});
+      }
+      if (init?.method === "POST" && url.endsWith("/v1/sessions")) return ok({ id: "S1", messages: [{ id: "Q1" }] });
+      if (init?.method === "POST" && url.endsWith("/events")) return ok({ messages: [{ id: "Q1" }] });
+      if (url.endsWith("/events/Q1")) {
+        if (failure === "stream-unavailable") return new Response("unavailable", { status: 503 });
+        return stream([["message.failed", { message: { id: "A1", status: "failed" } }]]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const error = failure === "stream-unavailable" ? /HTTP 503/ : /failed/;
+    await expect(runBackend(app, profile, { cwd: app.home, prompt: "临时任务" }, () => {})).rejects.toThrow(error);
+    expect(deleted).toEqual(["S1"]);
+    await expect(runBackend(app, profile, { cwd: app.home, prompt: "继续", resumeSessionId: "S2" }, () => {})).rejects.toThrow(error);
+    await expect(runBackend(app, profile, { cwd: app.home, prompt: "聊天", persistSession: true }, () => {})).rejects.toThrow(error);
+    expect(deleted).toEqual(["S1"]);
   });
 
   it("refreshes an expiring token and keeps the old refresh token when none comes back", async () => {

@@ -264,6 +264,7 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
     try {
       const d = await api<{ messages: Message[] }>(token, "POST", `/v1/sessions/${sessionId}/events`, { uuid: randomUUID(), events: [userMessage(true)] });
       queryId = d.messages[0].id;
+      emit({ type: "session", sessionId, resumed: true });
       sessionPrompt({ resumed: true }, req, req.prompt, emit);
     } catch (e) {
       if ((e as Error).message === "CANCELLED") throw e;
@@ -274,6 +275,8 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   if (!sessionId) {
     const d = await api<{ id: string; messages: Message[] }>(token, "POST", "/v1/sessions", { uuid: randomUUID(), initial_events: [userMessage(false)] });
     sessionId = d.id;
+    // 读取回复前交出 ID，单次运行失败后也能清理会话。
+    emit({ type: "session", sessionId, resumed: false });
     queryId = d.messages[0].id;
     sessionPrompt({ resumed: false }, req, req.prompt, emit);
   }

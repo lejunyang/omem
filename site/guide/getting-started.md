@@ -17,7 +17,7 @@
 | Claude / Codex 命令行（没有 ACP 时的后备） | `claude` 或 `codex` 在 PATH 中 | `claude-cli` / `codex-cli` |
 | 豆包 CLI | `npm i -g @bytedance/doubao-cli`，再 `doubao login` | `doubao-cli` |
 
-每个 Agent 第一次用之前，在终端里直接运行一次完成登录。
+每个 Agent 第一次用之前，在终端里直接运行一次完成登录。豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。
 
 ## 安装
 

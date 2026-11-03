@@ -81,6 +81,8 @@ flowchart LR
 | 豆包 CLI（本机运行，omem 工具经 `omem tool`） | `npm i -g @bytedance/doubao-cli`，再 `doubao login` | `doubao-cli` |
 | 豆包 OpenAPI（云端 Managed Agent，无需本地程序） | 飞书应用开了豆包用户权限并授权：`omem doubao status` / `omem doubao login` | `doubao` |
 
+豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。
+
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → Agent → ACP 注册表”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。
 
 ```bash
@@ -198,7 +200,7 @@ npm install -g omem-assistant
 
 角色说明（共同约定、角色、环境、偏好与经验、技能目录）每个 Agent 会话只发一次：后端在 ACP 里声明支持系统提示（codex-acp 2.5、claude-agent-acp 0.99 以上）时作为系统提示，否则放在新会话的第一条消息；接上的会话（编码续轮、多 Agent 话题续轮、对话）只发这一轮的内容，当前时间写在每轮开头。编码交办的下一轮默认接着上一轮的编码会话，但上一轮结束时会话已超过 `sessions.codeResumeMaxTokens`（默认 100000）token 上下文时换新会话：任务里带上原始任务、工作分支上已有的提交和上一轮的说明，改动从分支读，不再每次调用都带着前几轮的全部历史。
 
-一次性 Codex CLI / TraeX CLI 任务使用 `--ephemeral`，Claude CLI 使用 `--no-session-persistence`。TraeX 的该参数适用于 `exec`，不适用于 `acp serve`；选 `traex-cli` 使用原生临时模式。ACP 没有通用的不落盘开关：后端声明支持 `session/delete` 时，omem 在临时会话释放时请求移出后端列表；当前 Codex ACP 实际执行归档，磁盘上仍可能保留历史。TraeX ACP 未声明 `session/delete`，释放时改用目录中声明的 `traex archive <会话 ID>`。其他后端可在后端配置中声明 `archiveArgs`，通过同一个可执行程序归档；既无协议清理也无归档命令时，会在运行中提示历史可能仍保留，不能保证所有 ACP 都能归档。会话闲置、超过占用阈值、取消或正常停服时都清理，原来的 Agent 进程已经退出或连接已断时另起一个进程清理；omem 自身被强杀或清理失败时仍可能留下记录。普通聊天和需要续轮的编码/交办会话保留恢复能力；聊天换成新的 Agent 会话时清理旧的。既有历史不批量处理。豆包 CLI 的对话在这台机器授权了豆包 OpenAPI（`omem doubao login`）时由 omem 删除自己建的那些。每次任务在 omem 内仍有独立运行记录和工具调用归属。
+一次性 Codex CLI / TraeX CLI 任务使用 `--ephemeral`，Claude CLI 使用 `--no-session-persistence`。TraeX 的该参数适用于 `exec`，不适用于 `acp serve`；选 `traex-cli` 使用原生临时模式。ACP 没有通用的不落盘开关：后端声明支持 `session/delete` 时，omem 在临时会话释放时请求移出后端列表；当前 Codex ACP 实际执行归档，磁盘上仍可能保留历史。TraeX ACP 未声明 `session/delete`，释放时改用目录中声明的 `traex archive <会话 ID>`。其他后端可在后端配置中声明 `archiveArgs`，通过同一个可执行程序归档；既无协议清理也无归档命令时，会在运行中提示历史可能仍保留，不能保证所有 ACP 都能归档。会话闲置、超过占用阈值、取消或正常停服时都清理，原来的 Agent 进程已经退出或连接已断时另起一个进程清理；omem 自身被强杀或清理失败时仍可能留下记录。普通聊天和需要续轮的编码/交办会话保留恢复能力；聊天换成新的 Agent 会话时清理旧的。既有历史不批量处理。豆包 CLI 和 OpenAPI 的单次运行结束或失败后，会通过这台机器上的 OpenAPI 授权（`omem doubao login`）删除这次建的会话；授权过期且无法刷新时需要重新登录。每次任务在 omem 内仍有独立运行记录和工具调用归属。
 
 每个网页对话、飞书私聊、群、群里的话题（Telegram 论坛话题同理）各是一个会话，接着上下文继续聊：
 

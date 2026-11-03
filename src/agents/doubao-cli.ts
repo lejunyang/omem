@@ -18,8 +18,8 @@ import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
  * - The prompt: there is no stdin; a long one goes into a file it is told to read.
  * - The npm `doubao` is a node wrapper that may stop to ask about an update, and on Windows a .cmd
  *   that cmd.exe re-parses; the native binary it starts is called directly when it is there.
- * - Conversations are kept in the Doubao account (`doubao --list`); the CLI cannot delete or
- *   archive them, so each new omem session adds one to the owner's history.
+ * - Conversations are kept in the Doubao account (`doubao --list`); dispatch.ts deletes finished
+ *   one-off sessions through the OpenAPI when it is authorized on this machine.
  */
 
 /** Where the npm package unpacks the native CLI (its scripts/runtime.cjs). */
@@ -70,8 +70,8 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
     writeFileSync(file, req.prompt);
     prompt = `先完整读取文件 ${file}（UTF-8），那是这一轮的完整内容，按它执行并回答；回答里不要提这个文件。`;
   }
-  const child = launch(exe, doubaoArgs(profile, req, prompt), { cwd: req.cwd, env: { ...profile.env, ...req.mcp?.env, ...req.env } });
-  child.stdin.end();
+  // -p 从参数读提示；新版 CLI 无法把 Node 子进程默认的 socket 接为 stdin。
+  const child = launch(exe, doubaoArgs(profile, req, prompt), { cwd: req.cwd, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore" });
   emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复" });
   let stdout = "";
   let stderr = "";

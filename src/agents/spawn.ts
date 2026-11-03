@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
@@ -48,7 +48,10 @@ export function commandExists(command: string) {
   return resolveCommand(command) !== null;
 }
 
-export function launch(command: string, args: string[], opts: { cwd: string; env?: NodeJS.ProcessEnv }): ChildProcessWithoutNullStreams {
+type LaunchOptions = { cwd: string; env?: NodeJS.ProcessEnv };
+export function launch(command: string, args: string[], opts: LaunchOptions & { stdin: "ignore" }): Omit<ChildProcessWithoutNullStreams, "stdin"> & { stdin: null };
+export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" }): ChildProcessWithoutNullStreams;
+export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" | "ignore" }) {
   // Agents get tools osdk installed (desktop control) on PATH without the owner putting osdk shims there.
   const env = withAgentPath({ ...process.env, ...opts.env });
   const resolved = resolveCommand(command, env);
@@ -56,16 +59,16 @@ export function launch(command: string, args: string[], opts: { cwd: string; env
   const child = spawn(resolved.file, [...resolved.prefix, ...args], {
     cwd: opts.cwd,
     env,
-    stdio: "pipe",
+    stdio: [opts.stdin ?? "pipe", "pipe", "pipe"],
     shell: false,
     windowsHide: true,
     detached: process.platform !== "win32",
   });
-  child.stdin.on("error", () => {});
+  child.stdin?.on("error", () => {});
   return child;
 }
 
-export function stop(child: ChildProcessWithoutNullStreams) {
+export function stop(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const kill = (signal: NodeJS.Signals) => {
     try {

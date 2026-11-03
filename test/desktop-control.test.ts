@@ -85,7 +85,7 @@ else if (args[0] === "install") {
     writeFileSync(join(bin, "osdk.mjs"), script);
     if (win) writeFileSync(join(bin, "osdk.cmd"), `@node "%~dp0osdk.mjs" %*\r\n`);
     else {
-      writeFileSync(join(bin, "osdk"), `#!/bin/sh\nexec node "$(dirname "$0")/osdk.mjs" "$@"\n`);
+      writeFileSync(join(bin, "osdk"), '#!/bin/sh\nexec node "${0%/*}/osdk.mjs" "$@"\n');
       chmodSync(join(bin, "osdk"), 0o755);
     }
     if (win) writeFileSync(join(shims, "aad.cmd"), "@echo osdk-shim: no backend provides aad 1>&2\r\n@exit /b 1\r\n");

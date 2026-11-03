@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { fstatSync, readFileSync } from "node:fs";
 
 // Behaves like `doubao` in the ways omem relies on: argument errors for the probe, the reply on
 // stdout, the session on stderr. Replies "echo:<prompt>" (the file's content when told to read one).
@@ -19,6 +19,11 @@ if (effort && model && !models[model].includes(effort)) {
 const resume = opt("--resume");
 if (resume === "1") {
   console.log("Error: IM request failed: 712017001");
+  process.exit(1);
+}
+// 新版 CLI 的非交互任务拒绝 Node 子进程默认的 socket stdin。
+if (fstatSync(0).isSocket()) {
+  console.error("internal_error: 无法连接标准输入，任务未启动。请重试");
   process.exit(1);
 }
 let prompt = opt("-p") ?? "";
