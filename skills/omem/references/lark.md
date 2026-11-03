@@ -13,7 +13,7 @@
 ## 飞书文档
 
 - `lark_doc_create` / `lark_doc_update` / `lark_doc_move`：以本人身份写飞书文档，只在本人要求时用。
-- 共享文档的编辑按任务审批：首次 `lark_doc_update` 用 `approval_docs` 列出本次全部待编辑文档，`summary` 写一两句整体改动（不贴正文或 HTML/XML）。一次批准后，本次任务对这些文档的追加、局部替换和失败重试不重复问；单篇可不填 `approval_docs`。换文档、整篇覆盖、移动和新建要重新批准；普通新请求不继承上次批准。卡片列出文档和摘要，旧调用没有摘要时使用去标签的正文预览；`lark_doc_create` 也支持 `summary`。等审批时用 `wait_answer`，同一待批范围不会再发卡片；提示“当前这处编辑尚未执行”时，批准后再调用那处编辑。
+- 共享文档的编辑按文档复用批准：首次 `lark_doc_update` 用 `approval_docs` 列出本次全部待编辑文档，`summary` 写一两句整体改动（不贴正文或 HTML/XML）。一次批准后，这些文档在后续任务和对话中的追加、局部替换和失败重试不重复问，兼容旧版已批准的编辑记录；单篇可不填 `approval_docs`。换文档、整篇覆盖、移动和新建要重新批准；实际写入仍须本人发起；最近的拒绝会阻止沿用旧批准。卡片列出文档和摘要，旧调用没有摘要时使用去标签的正文预览；`lark_doc_create` 也支持 `summary`。等审批时用 `wait_answer`，同一待批范围不会再发卡片；提示“当前这处编辑尚未执行”时，批准后再调用那处编辑。
 - 读文档用 `import_url`（可给 `depth`）；整个知识库用 `lark_wiki_crawl`（start / continue / stop / status，可分批）。
 
 ## 能看到的知识库（kb-scout）

@@ -350,7 +350,7 @@ async function deliverAnswer(app: App, ask: Ask) {
     return;
   }
   const { receive } = await import("./inbox.ts");
-  await receive(app, { conversationId: ask.conversationId, text: `[回答] ${describeAnswer(ask)}`, userId: ask.userId, fromAsk: true, meta: { askId: ask.id } });
+  await receive(app, { conversationId: ask.conversationId, text: `[回答] ${describeAnswer(ask)}`, userId: ask.userId, fromAsk: true });
 }
 
 /**

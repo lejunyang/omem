@@ -258,7 +258,7 @@ describe("feishu docs written as the owner", () => {
     expect(listAsks(app)).toHaveLength(1);
   });
 
-  it("keeps approval for the result's continuation, but not a new request in the same conversation", async () => {
+  it("keeps a document's approval across turns and conversations, including legacy approvals", async () => {
     const { app, ctx, thread, runId } = task();
     fakeWiki(TREE);
     const edit = { doc: `${ORIGIN}/wiki/A`, command: "append", content: "追加" };
@@ -269,10 +269,17 @@ describe("feishu docs written as the owner", () => {
     const next = one<{ id: string }>(app.db, "select id from runs where status = 'queued' and json_extract(input, '$.fromAsk') = 1")!;
     expect((await callTool({ ...ctx, runId: next.id }, "lark_doc_update", edit)).text).toContain("已编辑");
     expect(listAsks(app)).toHaveLength(1);
-    // An ordinary request merged into that queued turn ends the inherited grant as well.
+    // An ordinary request and another conversation may edit the same approved document.
     await receive(app, { conversationId: thread.id, userId: "owner", text: "另外，改成新的方案" });
-    expect((await callTool({ ...ctx, runId: next.id }, "lark_doc_update", edit)).text).toContain("需要本人批准");
-    expect(listAsks(app)).toHaveLength(2);
+    expect((await callTool({ ...ctx, runId: next.id }, "lark_doc_update", edit)).text).toContain("已编辑");
+    const other = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+    const otherRun = createRun(app, { kind: "ask", spaceId: "personal", title: "接着编辑", input: { conversationId: other.id } });
+    expect((await callTool({ ...ctx, runId: otherRun.id }, "lark_doc_update", edit)).text).toContain("已编辑");
+    // Old records did not carry a host-resolved docEditScope. Resolve their wiki alias on read.
+    run(app.db, "update asks set context = json_remove(context, '$.docEditScope') where id = ?", ask.id);
+    expect((await callTool({ ...ctx, runId: otherRun.id }, "lark_doc_update", edit)).text).toContain("已编辑");
+    expect(listAsks(app)).toHaveLength(1);
+    expect((await callTool({ ...ctx, userId: "other-user" }, "lark_doc_update", edit)).isError).toBe(true);
   });
 
   it("creates in the personal library directly; a shared knowledge base waits for the owner's OK with the place spelled out", async () => {

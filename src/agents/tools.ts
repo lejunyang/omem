@@ -2882,12 +2882,12 @@ async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string,
   // Like the bot's lark_* tools: omem's own runs only (an outside agent over `omem mcp` has no Feishu scope).
   if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份写飞书文档只在 omem 自己的运行里可用");
   if (personal || ctx.actor === "user" || ctx.approved) return null;
-  const decision = docEditScope ? docEditDecision(ctx.app, ctx.runId, ctx.userId ?? OWNER, docEditScope) : null;
+  const decision = docEditScope ? await docEditDecision(ctx.app, ctx.userId ?? OWNER, docEditScope) : null;
   if (decision?.status === "answered" && decision.approved) return null;
   if (decision?.status === "answered") throw new HttpError(403, `本人已拒绝这项文档编辑${decision.answer ? `：${decision.answer}` : ""}。按理由调整，不要换个方式绕过。`);
   // A concurrent call shares the card, but its own edit has not been scheduled for execution.
   if (decision) return `文档编辑正在等本人批准（${decision.id}），不要重复发审批。当前这处编辑尚未执行；用 wait_answer 等批准后再调用。`;
-  const scopeText = docEditScope ? `\n\n批准范围：本次任务中以上文档的${docEditScope.commands.includes("overwrite") ? "编辑（含整篇覆盖）" : "追加和局部替换"}，包括失败后的重试；其他文档、移动或新建需另行批准。` : "";
+  const scopeText = docEditScope ? `\n\n批准范围：以上文档的${docEditScope.commands.includes("overwrite") ? "编辑（含整篇覆盖）" : "追加和局部替换"}，包括后续对话中的编辑和失败重试；其他文档、移动或新建需另行批准。` : "";
   const r = await held(ctx, name, args, `以你的身份${what}${scopeText}\n\n不在你的个人文档库或你自己的云空间里，确认位置和改动后批准。`, docEditScope ? { docEditScope } : undefined);
   if (r.isError) throw new HttpError(403, r.text);
   return r.text;
@@ -2918,7 +2918,7 @@ def({
 def({
   name: "lark_doc_update",
   description:
-    "以本人身份编辑飞书文档：append 追加到末尾，str_replace 把 pattern（一小段原文）换成 content，overwrite 整篇覆盖（会丢掉原有的富文本，只在本人要求重写时用）。本人自己的文档直接改；共享文档按本次任务审批。首次调用用 approval_docs 列出本次所有待编辑文档、summary 概括整体改动；批准后这些文档的追加、局部替换和失败重试不重复审批，整篇覆盖需单独批准。",
+    "以本人身份编辑飞书文档：append 追加到末尾，str_replace 把 pattern（一小段原文）换成 content，overwrite 整篇覆盖（会丢掉原有的富文本，只在本人要求重写时用）。本人自己的文档直接改；共享文档的批准按文档复用，不因换轮或换会话失效。首次调用用 approval_docs 列出本次所有待编辑文档、summary 概括整体改动；批准后这些文档后续的追加、局部替换和失败重试不重复审批，整篇覆盖需单独批准。",
   write: true,
   schema: z.object({
     doc: z.string().describe("文档链接（/docx/… 或 /wiki/…）"),

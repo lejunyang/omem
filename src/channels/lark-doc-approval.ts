@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { all, one } from "../core/db.ts";
+import { all } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { getAsk, type Ask } from "../agents/asks.ts";
 
@@ -21,36 +21,39 @@ export function docPreview(value: string, max = 240) {
   return truncate(plain, max);
 }
 
-/** An approval result may wake a new turn; an ordinary new request never inherits its grants. */
-function taskRuns(app: App, runId: string, userId: string): string[] {
-  const seen = new Set<string>();
-  while (!seen.has(runId)) {
-    seen.add(runId);
-    const r = one<{ input: string }>(app.db, "select input from runs where id = ?", runId);
-    const input = JSON.parse(r?.input ?? "{}") as { fromAsk?: boolean; messageIds?: string[]; conversationId?: string };
-    if (!input.fromAsk || !input.messageIds?.length) break;
-    const origins = input.messageIds.map((id) => {
-      const m = one<{ meta: string }>(app.db, "select meta from messages where id = ? and conversation_id = ?", id, input.conversationId ?? "");
-      const meta = JSON.parse(m?.meta ?? "{}");
-      if (!meta.fromAsk || typeof meta.askId !== "string") return null;
-      return one<{ run_id: string }>(app.db, `select run_id from asks where id = ? and user_id = ? and conversation_id = ?
-        and kind = 'approval' and tool = 'lark_doc_update' and status = 'answered' and approved = 1`, meta.askId, userId, input.conversationId ?? "")?.run_id ?? null;
-    });
-    if (!origins[0] || origins.some((id) => id !== origins[0])) break;
-    runId = origins[0];
-  }
-  return [...seen];
-}
-
-/** Scope is resolved by the host before the card is shown, never inferred from model prose. */
-export function docEditDecision(app: App, runId: string | null, userId: string, scope: DocEditScope): Ask | null {
-  if (!runId) return null;
-  const ids = taskRuns(app, runId, userId);
-  const rows = all<{ id: string; context: string }>(app.db, `select id, context from asks where run_id in (${ids.map(() => "?").join(",")}) and user_id = ?
-    and kind = 'approval' and tool = 'lark_doc_update' and status != 'cancelled' order by created_at desc, rowid desc`, ...ids, userId);
+/** Reuse the owner's document permission across turns, including approvals made before scopes existed. */
+export async function docEditDecision(app: App, userId: string, scope: DocEditScope): Promise<Ask | null> {
+  const rows = all<{ id: string; context: string; status: string; doc: string | null; command: string | null }>(app.db, `select id, context, status,
+    json_extract(args, '$.doc') doc, json_extract(args, '$.command') command from asks where user_id = ?
+    and kind = 'approval' and tool = 'lark_doc_update' and status != 'cancelled' order by created_at desc, rowid desc`, userId);
+  const decisions = new Map<string, Ask>();
+  let pending: Ask | null = null;
   for (const row of rows) {
-    const grant = (JSON.parse(row.context ?? "{}") as { docEditScope?: DocEditScope }).docEditScope;
-    if (grant && scope.documents.every((d) => grant.documents.includes(d)) && scope.commands.every((c) => grant.commands.includes(c))) return getAsk(app, row.id);
+    let grant = (JSON.parse(row.context ?? "{}") as { docEditScope?: DocEditScope }).docEditScope;
+    if (!grant && row.doc && row.command) {
+      const m = /\/(docx|docs)\/([A-Za-z0-9]+)/.exec(row.doc);
+      let key = m ? `${m[1] === "docs" ? "doc" : "docx"}:${m[2]}` : null;
+      if (!key) {
+        try {
+          const { docPlace } = await import("./lark-doc-write.ts");
+          const place = await docPlace(app, row.doc);
+          key = `${place.objType}:${place.objToken}`;
+        } catch { continue; }
+      }
+      grant = { documents: [key], commands: row.command === "overwrite" ? ["append", "str_replace", "overwrite"] : ["append", "str_replace"] };
+    }
+    if (!grant || !scope.commands.every((c) => grant.commands.includes(c))) continue;
+    const matches = scope.documents.filter((d) => grant.documents.includes(d));
+    if (!matches.length) continue;
+    if (row.status === "pending") {
+      if (!pending && matches.length === scope.documents.length) pending = getAsk(app, row.id);
+      continue;
+    }
+    const ask = getAsk(app, row.id);
+    for (const doc of matches) if (!decisions.has(doc)) decisions.set(doc, ask);
+    const refused = [...decisions.values()].find((a) => !a.approved);
+    if (refused) return refused;
+    if (decisions.size === scope.documents.length) return ask;
   }
-  return null;
+  return pending;
 }
