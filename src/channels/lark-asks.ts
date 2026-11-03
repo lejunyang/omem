@@ -6,6 +6,7 @@ import { identitiesOf, OWNER } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
 import { buildCard, closeInteraction, getInteraction, larkOwnerOpenId, recordInteraction, sendLark, updateLarkCard, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
+import { getTask } from "../agents/code-tasks.ts";
 
 /**
  * Asks in Feishu: a card in the conversation's chat or topic (or the person's private chat with
@@ -26,12 +27,26 @@ function button(text: string, name: string, kind: "primary" | "danger" | "defaul
   };
 }
 
+/** A decision needs its question up front; the investigation stays in the run and a closed fold. */
+function questionBlocks(app: App, ask: Ask) {
+  const row = one<{ context: string | null }>(app.db, "select context from asks where id = ?", ask.id);
+  const ctx = JSON.parse(row?.context ?? "{}") as { handler?: string; workId?: string; seq?: number };
+  if (ctx.handler !== "code-task" || !ctx.workId || !ctx.seq) return ask.question ? [{ markdown: resolveCitationsSync(app, ask.question) }] : [];
+  const task = getTask(app, ctx.workId, ctx.seq);
+  const base = (app.config.webUrl || app.baseUrl).replace(/\/$/, "");
+  return [
+    { markdown: resolveCitationsSync(app, `**T${task.seq} · ${task.title}**\n\n${truncate(task.question ?? "", 1200)}`) },
+    ...(base ? [{ markdown: `[查看修改项、评审和修复记录](${base}/#/runs/${encodeURIComponent(ctx.workId)})` }] : [{ note: `完整记录：运行 ${ctx.workId} · T${task.seq}` }]),
+    { fold: { title: "完成标准与处理记录", markdown: resolveCitationsSync(app, ask.question) } },
+  ];
+}
+
 export function askCard(app: App, ask: Ask): Record<string, unknown> {
   if (ask.status !== "pending") {
     const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
     return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }] });
   }
-  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: ask.question ? [{ markdown: resolveCitationsSync(app, ask.question) }] : [] });
+  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: questionBlocks(app, ask) });
   const elements = (card.body as { elements: unknown[] }).elements;
   const buttons =
     ask.kind === "approval"

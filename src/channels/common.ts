@@ -26,6 +26,8 @@ export async function answerFromChannel(
   }
   await hooks.onStart?.(r.runId);
   const done = await waitForRun(app, r.runId);
+  // Card answers may merge into this turn. That background turn posts through the thread sender.
+  if (getRun(app, r.runId).output.channelDelivered) return null;
   // The turn that was running when it came took the message (steer.ts) and answers it.
   if (done.status === "cancelled" && getRun(app, r.runId).output.steeredInto) {
     await hooks.onMerged?.();

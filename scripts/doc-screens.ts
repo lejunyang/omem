@@ -136,6 +136,12 @@ const chat = upsertSource(app, { spaceId: "shop", kind: "chat", uri: "lark:oc_de
   "[10-22 10:30] 小李：上次满减分摊出过负数，这次加个测试",
 ].join("\n") }).id;
 const code = upsertSource(app, { spaceId: "shop", kind: "code", uri: "refund.js", title: "refund.js", text: REFUND_AFTER }).id;
+const confirmationTable = upsertSource(app, { spaceId: "shop", kind: "work", uri: "work/refund-confirmation", title: "退款改造确认表", text: [
+  "# 退款改造确认表", "", "| 编号 | 验收项 | 建议 |", "| --- | --- | --- |",
+  ...Array.from({ length: 29 }, (_, i) => `| ${i + 1} | ${["部分发货退款", "运费分摊", "优惠尾差", "退款失败重试"][i % 4]} · 场景 ${i + 1} | 按方案验证 |`),
+  "", "逐项确认后再进入验收。",
+].join("\n") }).id;
+writePage(app, "shop", "refund/confirmation", { meta: { title: "退款验收确认", kind: "reference" }, body: `剩余场景见[第 7—29 项确认表](src:${confirmationTable}#L11-L33)。\n` }, { actor: "wiki-writer" });
 upsertSource(app, { spaceId: "personal", kind: "note", uri: "note:weekly", title: "本周计划", text: "- 周四前上线退款改造\n- 周五和小王对一下发货状态的接口\n" });
 upsertSource(app, { spaceId: "shop", kind: "doc", uri: "docs/优惠券规则.md", title: "优惠券规则", text: "# 优惠券规则\n\n满减券按订单实付金额计算门槛。\n" });
 
@@ -459,6 +465,13 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "wiki-tree-mobile", path: "/wiki/shop/refund/cases/partial-shipment-over-refund", width: 390, prepare: async (p) => { await p.getByRole("button", { name: "目录" }).click(); await p.waitForTimeout(400); } },
   { name: "search-hits", path: "/", prepare: async (p) => { await p.keyboard.press("Control+k"); await p.getByPlaceholder(/搜索原件/).fill("尾差 分摊"); await p.waitForTimeout(1500); } },
   { name: "wiki-citations", path: "/wiki/shop/refund/amount", prepare: async (p) => { await p.getByText("refund.js 第 10–21 行").first().click(); await p.waitForTimeout(1000); } },
+  { name: "citations-table", path: "/wiki/shop/refund/confirmation", prepare: async (p) => {
+    await p.getByText("第 7—29 项确认表").click();
+    await p.locator(".drawer .cited-lines table").waitFor();
+    if (await p.locator(".drawer table tbody tr").count() !== 29) throw new Error("确认表没有完整渲染");
+    await p.locator(".drawer table").evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await p.waitForTimeout(400);
+  } },
   { name: "sources", path: `/sources/${prd}` },
   { name: "sources-catalog", path: `/sources/${kbPrd}`, space: "refund", init: { "omem.sourceTree.refund": JSON.stringify(["wiki:kb_demo", "wn:wn_root", "wn:wn_refund", "chat:group", "chat:oc_demo_team", "lark-drive"]) } },
   { name: "sources-review", path: `/sources/${kbOld}`, space: "refund", prepare: async (p) => { await p.getByRole("button", { name: /待复核/ }).click(); await p.waitForTimeout(600); } },

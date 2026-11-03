@@ -6,6 +6,7 @@ import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { handleAskAction, askCard } from "../src/channels/lark-asks.ts";
 import { testApp } from "./helpers.ts";
+import { addTask, ownerQuestionText } from "../src/agents/code-tasks.ts";
 
 /** A conversation with an agent run working in it (no real agent: the row is enough for asks). */
 function working(status = "running") {
@@ -19,6 +20,24 @@ function working(status = "running") {
 const turns = (app: ReturnType<typeof testApp>, conv: string) => all<{ input: string }>(app.db, "select input from runs where kind = 'ask'").filter((r) => JSON.parse(r.input).conversationId === conv);
 
 describe("asking the owner", () => {
+  it("shows the coding decision and buttons before folded technical history in Feishu", () => {
+    const { app, thread, runId } = working("done");
+    try {
+      const task = addTask(app, runId, { title: "旧订单的退款口径", kind: "fix", state: "owner", question: "旧订单沿用旧口径，还是也按新口径？", doneWhen: "按选择覆盖旧订单。" }, "review-lead");
+      const history = "具体技术调查与多次修复记录。".repeat(900);
+      const ask = createAsk(app, { runId, conversationId: thread.id, userId: "owner", question: ownerQuestionText(app, task) + "\n" + history, options: [{ label: "旧口径" }, { label: "新口径" }], context: { handler: "code-task", workId: runId, seq: task.seq } });
+      const card = askCard(app, ask);
+      const elements = (card.body as { elements: any[] }).elements;
+      const visible = elements.filter((e) => e.tag === "markdown").map((e) => e.content).join("\n");
+      expect(visible).toContain(task.question);
+      expect(visible.length).toBeLessThan(1600);
+      expect(visible).not.toContain(history);
+      const fold = elements.find((e) => e.tag === "collapsible_panel");
+      expect(fold.expanded).toBe(false);
+      expect(fold.elements[0].content).toContain(history);
+      expect(JSON.stringify(elements.find((e) => e.tag === "form"))).toContain("opt_1");
+    } finally { app.db.close(); }
+  });
   it("an agent waiting gets a plain reply in the chat as the answer, and that reply starts no turn", async () => {
     const { app, thread, ctx } = working();
     const call = callTool(ctx, "ask_owner", { question: "发布改到周四还是周五？", options: ["周四", "周五"], wait_seconds: 5 });

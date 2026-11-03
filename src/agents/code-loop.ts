@@ -453,7 +453,7 @@ async function arbitrate(app: App, run: Run, tasks: CodeTask[], rc: RoundContext
   }
   for (const t of tasks) {
     if (getTask(app, rootId, t.seq).state !== "disputed") continue;
-    updateTask(app, rootId, t.seq, { state: "owner", question: `${taskLabel(t.seq)}「${t.title}」编码 Agent 和评审项有分歧，评审负责人没有给出裁决。怎么办？`, options: ["照评审的意见改", "不改"] }, { by: "host", kind: "host", text: "评审负责人没有裁决，交给本人" });
+    updateTask(app, rootId, t.seq, { state: "owner", origin: { ...t.origin, blocked: true, escalated: undefined }, question: `${taskLabel(t.seq)}「${t.title}」编码 Agent 和评审项有分歧，评审负责人没有给出裁决。请发起交办的助手查清楚后继续处理。`, options: [] }, { by: "host", kind: "host", text: "评审负责人没有裁决，交给发起交办的助手" });
   }
 }
 
@@ -553,11 +553,12 @@ function ensureOwnerAsks(app: App, rootId: string) {
  * The assistant settles a task waiting on it (blocked) or relays the owner's answer to one waiting on
  * the owner: done again, not done, or (blocked) passed on to the owner. A card already sent closes.
  */
-export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner"; text: string; ownerWords: boolean }, by: string) {
+export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner"; text: string; ownerWords: boolean; authorization?: string }, by: string) {
   const t = getTask(app, rootId, seq);
   if (t.state !== "owner") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等处理`);
-  if (!t.origin.blocked && !a.ownerWords) throw new HttpError(403, `${taskLabel(seq)} 是要本人决定的问题：等本人回答；本人在对话里回答了，在回答本人消息的那一轮转达`);
-  const note = { by, kind: "assistant" as const, text: `${a.action === "owner" ? "交给本人" : a.action === "skip" ? "不做" : "重做"}：${a.text}` };
+  const authorizedRetry = a.action === "retry" && !!a.authorization?.trim();
+  if (!t.origin.blocked && !a.ownerWords && !authorizedRetry) throw new HttpError(403, `${taskLabel(seq)} 是要本人决定的问题：等本人回答；已有需求或授权已确定做法的，可附 existing_authorization 恢复原任务，不得替本人作新的业务决定`);
+  const note = { by, kind: "assistant" as const, text: `${a.action === "owner" ? "交给本人" : a.action === "skip" ? "不做" : "重做"}：${a.text}${authorizedRetry ? `\n已有授权依据：${a.authorization!.trim()}` : ""}` };
   if (a.action === "owner") {
     if (!t.origin.blocked || t.origin.escalated) throw new HttpError(409, `${taskLabel(seq)} 已经在等本人`);
     updateTask(app, rootId, seq, { origin: { ...t.origin, escalated: true }, question: `${t.question ?? t.doneWhen}\n\n助手：${a.text}` }, note);
@@ -565,7 +566,7 @@ export function settleTask(app: App, rootId: string, seq: number, a: { action: "
     return null;
   }
   if (a.action === "skip") updateTask(app, rootId, seq, { state: "wontdo", answer: a.text }, note);
-  else updateTask(app, rootId, seq, { state: "todo", answer: a.text, attempts: 0 }, note);
+  else updateTask(app, rootId, seq, { state: "todo", answer: a.text, attempts: 0, origin: { ...t.origin, blocked: undefined, escalated: undefined } }, note);
   closeTaskAsk(app, rootId, seq);
   return advanceWork(app, rootId, { owner: a.ownerWords });
 }

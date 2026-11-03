@@ -4042,20 +4042,21 @@ def({
 
 def({
   name: "settle_code_task",
-  description: "发起交办的助手处理一个停着的修改项：编码 Agent 被环境挡住（blocked）的，查清楚或处理好后让它重做（retry）、不做（skip），自己处理不了的交给本人（owner）；等本人决定的项，只在本人这一轮在对话里给了答案时转达（retry 照本人的话做，skip 不做）。已发给本人的卡片随之关闭。",
+  description: "发起交办的助手处理停着的修改项：环境阻塞或多次修复失败先由你调查、调整后 retry；自己处理不了且确需本人操作或新业务决定的才 owner。待本人项若原需求或已有授权已确定做法，retry 并在 existing_authorization 写出依据，不要求本人在当前轮重复授权；新的业务取舍仍等本人回答。skip 不得绕过本人的决定。已发卡片随之关闭。",
   write: true,
   schema: z.object({
     run_id: z.string().describe("这次交办的任一运行 id"),
     task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
     action: z.enum(["retry", "skip", "owner"]),
     note: z.string().min(1).max(3000).describe("retry：怎么处理好的、编码 Agent 这次该怎么做；skip：为什么不做；owner：要本人做或决定什么"),
+    existing_authorization: z.string().min(1).max(2000).optional().describe("仅 retry：原需求或本人此前已给的授权，写出原话或消息引用及其如何确定本项做法；不用于替本人作新的业务决定"),
   }),
   handler: async (ctx, a) => {
     const t = await import("./code-tasks.ts");
     const rootId = t.workRootOf(ctx.app, a.run_id);
     if (t.workOwner(ctx.app, rootId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能处理本人的交办");
     const seq = t.parseTaskRef(a.task);
-    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx) }, "assistant");
+    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), authorization: a.existing_authorization }, "assistant");
     const label = t.taskLabel(seq);
     return a.action === "owner" ? `已把 ${label} 交给本人。` : `${label} ${a.action === "skip" ? "不做了" : "回到待做"}${next ? `，下一轮已排上（${next.id}）` : "；交办停着时，下一轮在本人说继续或预算内推进时做"}。`;
   },

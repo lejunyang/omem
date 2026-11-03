@@ -119,10 +119,10 @@ registerHandler("ask", async (ctx) => {
     return { answer, messageId: id, quiet: true, session: r.mode };
   }
   // Woken by a result (a coding delegation ended): nobody waits on this turn, so it is posted.
-  if ((ctx.run.input as { handoff?: unknown }).handoff) {
+  if ((ctx.run.input as { handoff?: unknown }).handoff || ctx.run.input.fromAsk) {
     await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });
     maybeSummarize(ctx.app, input.conversationId);
-    return { answer, session: r.mode };
+    return { answer, session: r.mode, channelDelivered: true };
   }
   const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
   maybeSummarize(ctx.app, input.conversationId);

@@ -2,10 +2,16 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-10-30
+updated: 2026-11-03
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
+
+## 对话投递、引用与编码接续（11-03）
+
+- 确认卡片和建议触发的后续回答回到原渠道；卡片回答与普通消息合并时只投递一次（`agents/inbox.ts`、`jobs.ts`、`channels/common.ts`）。
+- 文档引用按完整 Markdown 块高亮，表格、列表与代码块不会从引用行被切断（`web/src/lib/cited-document.ts`、`CitationDrawer.vue`）。
+- 连续三次验证失败、裁决未交付先交给发起助手；`settle_code_task` 的 retry 可附 `existing_authorization` 说明原需求或已有授权，后台接续也能恢复，新的业务决定仍问本人。编码确认卡片先显示问题和按钮，完整技术记录默认折叠（`code-tasks.ts`、`code-loop.ts`、`tools.ts`、`channels/lark-asks.ts`）。
 
 ## 调度与 Web 服务
 

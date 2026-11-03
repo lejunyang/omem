@@ -350,6 +350,7 @@ describe("a delegation driven by tasks", () => {
       expect((await settle(assistant, sync.seq, "retry", "宿主开始前已经拉过，HEAD 就是最新")).text).toContain("回到待做");
       expect(listAsks(app, {}).find((a) => a.id === card.id)!.status).toBe("cancelled");
       expect(listTasks(app, r.id)[0]).toMatchObject({ state: "todo", attempts: 0 });
+      expect(listTasks(app, r.id)[0].origin.blocked).toBeUndefined();
       expect(listTasks(app, r.id)[0].notes.at(-1)).toMatchObject({ by: "assistant", kind: "assistant" });
 
       // The owner's own answer in the conversation is relayed.
@@ -358,6 +359,14 @@ describe("a delegation driven by tasks", () => {
       const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "回答", input: { conversationId: t.id, messageIds: [said] } });
       expect((await settle({ ...assistant, runId: turn.id } as ToolContext, scope.seq, "retry", "本人说：存量按新口径")).isError).toBe(false);
       expect(listTasks(app, r.id)[1]).toMatchObject({ state: "todo", answer: "本人说：存量按新口径" });
+
+      updateTask(app, r.id, scope.seq, { state: "owner" });
+      const oldAuthorization = await callTool(assistant, "settle_code_task", { run_id: r.id, task: `T${scope.seq}`, action: "retry", note: "恢复既定口径，继续修复", existing_authorization: "此前本人已明确：存量按新口径（msg_owner），本项没有新的取舍" });
+      expect(oldAuthorization.isError).toBe(false);
+      expect(listTasks(app, r.id)[1].notes.at(-1)?.text).toContain("已有授权依据");
+      updateTask(app, r.id, scope.seq, { state: "owner" });
+      const noSkip = await callTool(assistant, "settle_code_task", { run_id: r.id, task: `T${scope.seq}`, action: "skip", note: "先不做", existing_authorization: "本人此前让继续" });
+      expect(noSkip.isError).toBe(true);
     } finally {
       app.db.close();
     }
@@ -411,6 +420,7 @@ describe("a delegation driven by tasks", () => {
       for (let i = 0; i < 3; i++) retryTask(app, r.id, t.seq, { by: "verify", kind: "verify", text: `第 ${i + 1} 次：部分退款时运费还是全退` });
       const failed = listTasks(app, r.id)[0];
       expect(failed).toMatchObject({ state: "owner", attempts: 3 });
+      expect(failed.origin).toMatchObject({ blocked: true });
       expect(ownerQuestionText(app, failed)).toContain("第 3 次：部分退款时运费还是全退");
     } finally {
       app.db.close();

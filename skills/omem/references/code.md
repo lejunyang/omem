@@ -11,7 +11,7 @@
 
 ## 进行中调整
 
-- 按修改项推进的交办里，`message_code_run` 和 `continue_code_run` 默认把话作为交代交给编码 Agent（编码中马上收到，否则随下一轮；`continue_code_run` 有待做的项时马上开下一轮）。只有本人提了一件新的、能单独验证的修改时传 `new_item: true`，记成修改项（`continue_code_run` 另给一份新预算）。“接着推进”“环境好了”“注意某事”不要记成修改项：它没法用一次提交做完，只会一轮轮算作没改好。等本人决定的项本人说重做时，在回答本人的这一轮用 `settle_code_task` 转达。修改项、等本人决定的问题、回退在运行页处理。
+- 按修改项推进的交办里，`message_code_run` 和 `continue_code_run` 默认把话作为交代交给编码 Agent（编码中马上收到，否则随下一轮；`continue_code_run` 有待做的项时马上开下一轮）。只有本人提了一件新的、能单独验证的修改时传 `new_item: true`，记成修改项（`continue_code_run` 另给一份新预算）。“接着推进”“环境好了”“注意某事”不要记成修改项：它没法用一次提交做完，只会一轮轮算作没改好。等本人决定的项用 `settle_code_task` 转达；原需求或此前授权已确定做法的，retry 时附 `existing_authorization` 写明原话或引用及适用依据，后台接续时也能恢复。修改项、等本人决定的问题、回退在运行页处理。
 - `message_code_run(run_id, text)`：把本人的补充交给正在编码的 Agent（它下一次调用 omem 工具时收到，最晚在这一轮检查前接着同一会话交给它；这一轮已写完代码时随下一轮的任务交付）。
 - `set_code_review(run_id, review_tier?, review_checks?, split?)` 改之后的评审：档位可以比之前轻，`review_checks` 只做这些评审项，`split: false` 不再拆需求，`rotate_models` 之后每轮各评审项换用评审设置里轮换列表的下一个模型；还没开始评审的这一轮就生效，之后的轮次沿用。
 - `revise_finding(run_id, finding_id, detail, title?, suggestion?)`：本人看不懂某条评审问题时，读相关代码（迁移也读源实现）后重写它的描述：标题说清什么情况下哪里出了什么错；正文用 Markdown 分“现在的实现 / 源实现 / 触发条件 / 问题”（小节标题单独一行、前面空一行），每点后面直接带 `[说明](路径:起-止)` 或 `[说明](src:<原件id>#L起-L止)`。评审原来的写法保留，严重级别和本人的决定不变。提交评审（`submit_review`）时也按这个写法写 `detail`。
@@ -42,7 +42,7 @@
 
 `submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。按修改项推进的交办里还有：编码 Agent 的 `plan_tasks`（拆分、估轮数）、`finish_task`（说明一项做完了；没提交的改动由宿主作为这一项提交）、`report_task`（交给本人 / 有异议 / 被挡住；被挡住的先交给发起交办的助手）、`ask_reviewer`（问提出这一项的评审项，它在自己这次交办的会话里回答）、`dispatch_tasks`（编码负责人把几组互不相干的项分给编码助手，同时做，这一轮结束时合并）；评审项的 `verify_tasks`（逐项验证）；评审负责人的 `plan_review`（这次评审谁看、看什么，`second_look` 请另一个模型复看）、`rule_dispute`（评审项坚持、编码 Agent 仍有异议时裁决），`rule_review` 的裁决可带 `owner`（交给本人决定的问题和选项），和已有修改项重复的用 `merge` + `task`（如 T5）合到那一项。
 
-发起交办的助手在一轮结束被叫醒时，会看到编码 Agent 被挡住的项（拉取、权限、环境）：能处理的处理好后用 `settle_code_task` 让它重做（retry）或不做（skip），处理不了的用 owner 交给本人；等本人决定的项，只在本人这一轮在对话里给了答案时用它转达。已经发给本人的卡片随之关闭，不用再让本人点。
+发起交办的助手在一轮结束被叫醒时，会看到编码 Agent 被挡住的项（拉取、权限、环境、连续修复失败、裁决未交付）：能处理的处理好后用 `settle_code_task` 让它重做（retry）或不做（skip），处理不了的用 owner 交给本人；等本人决定的项，当前轮转达本人的答案，或在 retry 时附 `existing_authorization` 写明原需求或已有授权及其适用依据（不能作新的业务决定，不能用它 skip）。已经发给本人的卡片随之关闭，不用再让本人点。
 
 ## 设备的外部 Agent 评审分支
 

@@ -9,6 +9,7 @@ import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import MemoryText from "./MemoryText.vue";
 import { readsAsDocument } from "../lib/sources";
+import { citedDocumentParts } from "../lib/cited-document";
 
 const router = useRouter();
 const top = computed<CitationTarget | undefined>(() => state.trail[state.trail.length - 1]);
@@ -36,12 +37,7 @@ const docParts = computed(() => {
   const s = source.value;
   const t = top.value as { from?: number; to?: number } | undefined;
   if (!s) return null;
-  const lines = String(s.text).split("\n");
-  const at = (n: number) => Math.min(lines.length, Math.max(0, n - s.lineStart));
-  if (!t?.from) return { before: s.text as string, cited: "", after: "" };
-  const a = at(t.from);
-  const b = at((t.to ?? t.from) + 1);
-  return { before: lines.slice(0, a).join("\n"), cited: lines.slice(a, b).join("\n"), after: lines.slice(b).join("\n") };
+  return citedDocumentParts(String(s.text), s.lineStart, t?.from, t?.to);
 });
 // Documents (wide tables, screenshots) get a wider drawer; the owner can switch, and it is remembered.
 const WIDE_KEY = "omem.drawerWide";

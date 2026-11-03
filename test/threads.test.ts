@@ -10,6 +10,8 @@ import { getThread, resolveThread, setChatSettings, threadMessages, updateThread
 import { createUser } from "../src/core/users.ts";
 import { openLarkTopic, setLarkClient } from "../src/channels/lark-send.ts";
 import { one, run } from "../src/core/db.ts";
+import { answerAsk, createAsk } from "../src/agents/asks.ts";
+import { answerFromChannel } from "../src/channels/common.ts";
 import { remember } from "../src/memory/store.ts";
 import { embedPending, embedPendingMemories, setEmbedderForTests } from "../src/search/embeddings.ts";
 import { boot } from "../src/main.ts";
@@ -36,6 +38,30 @@ describe("threads: continuity, merging, lanes, commands", async () => {
     expect(r.error).toBeNull();
     return JSON.parse(String((getRun(app, runId!).output as { answer: string }).answer)) as Echo;
   };
+
+  it("posts a card answer's next turn back to its channel, including suggestions and merged chat messages", async () => {
+    const sent: string[] = [];
+    registerThreadSender("card-test", async (_t, text, meta) => { if (!meta.ask) sent.push(text); });
+    const original = await receive(app, { channel: "card-test", chatId: "room", text: "给我一个确认项", mergeMs: 0 });
+    await answer(original.runId);
+    expect(sent).toEqual([]); // The ordinary channel adapter owns the initial reply.
+    const card = createAsk(app, { runId: original.runId!, conversationId: original.thread.id, userId: "owner", question: "批量列出？", options: [{ label: "是" }] });
+    await answerAsk(app, card.id, { choice: 0, text: "用表格一起列出", by: "owner" });
+    const pending = app.db.prepare("select id from runs where kind='ask' and status in ('queued','running') and lane=? order by created_at desc limit 1").get(original.thread.id) as { id: string };
+    await answer(pending.id);
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]).msgs[0]).toContain("用表格一起列出");
+    expect(threadMessages(app, original.thread.id).filter((m) => m.role === "assistant" && !m.meta.ask)).toHaveLength(2);
+
+    // A card callback joins a queued chat turn: the adapter must not send its answer a second time.
+    const chatReply = answerFromChannel(app, { channel: "card-test", chatId: "room", text: "另外补充说明", mergeMs: 1000 });
+    await new Promise((r) => setTimeout(r, 100));
+    const suggestion = createAsk(app, { runId: original.runId!, conversationId: original.thread.id, userId: "owner", kind: "suggestion", question: "", options: [{ label: "继续", message: "按原要求继续" }] });
+    await answerAsk(app, suggestion.id, { choice: 0, by: "owner" });
+    expect(await chatReply).toBeNull();
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(sent[1]).msgs).toEqual(["另外补充说明", "按原要求继续"]);
+  }, 60000);
 
   it("keeps the agent session across turns, resumes it after release, cold-starts with the summary", async () => {
     const a = await receive(app, { channel: "lark", chatId: "oc_dm", text: "第一句" });

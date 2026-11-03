@@ -148,7 +148,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     // A fixed window (a watched chat's batch) is never pushed back, only brought forward.
     const due = inb.fixedWindow ? app.db.prepare("select not_before from runs where id = ?").get(waiting.id) as { not_before: string | null } | undefined : undefined;
     const later = !!due?.not_before && due.not_before <= notBefore;
-    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids }, notBefore: mergeMs && !later ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, 80) })) {
+    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids, ...(inb.fromAsk ? { fromAsk: true } : {}) }, notBefore: mergeMs && !later ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, 80) })) {
       app.db.prepare("update messages set run_id = ? where id = ?").run(waiting.id, messageId);
       return { thread, messageId, runId: waiting.id, merged: true, reply: null, started };
     }
@@ -157,7 +157,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     kind: "ask",
     spaceId: thread.spaceId,
     title: truncate(text.replace(/\s+/g, " "), 60),
-    input: { conversationId: thread.id, messageIds: [messageId], ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
+    input: { conversationId: thread.id, messageIds: [messageId], ...(inb.fromAsk ? { fromAsk: true } : {}), ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
     lane: thread.id,
     userId,
     notBefore: mergeMs ? notBefore : null,

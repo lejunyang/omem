@@ -52,7 +52,7 @@ export type CodeTask = {
 export type Checkpoint = { seq: number; heads: Record<string, string>; tasks: number[]; by: string; label: string; createdAt: string };
 
 export const TASK_STATE_LABEL: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
-/** After this many tries a task the coder and the reviewer cannot settle goes to the owner. */
+/** After this many failed tries, the initiating assistant takes over the technical blockage. */
 export const MAX_ATTEMPTS = 3;
 
 /**
@@ -198,7 +198,7 @@ export function updateTask(app: App, rootId: string, seq: number, patch: TaskPat
 
 /**
  * A task that did not come out right goes back to be done again; after MAX_ATTEMPTS it goes to the
- * owner (the coder and the reviewer cannot settle it), the rest of the work goes on.
+ * initiating assistant to investigate; the rest of the work goes on.
  */
 export function retryTask(app: App, rootId: string, seq: number, note: Omit<TaskNote, "at">): CodeTask {
   const t = getTask(app, rootId, seq);
@@ -207,8 +207,9 @@ export function retryTask(app: App, rootId: string, seq: number, note: Omit<Task
     return updateTask(app, rootId, seq, {
       attempts,
       state: "owner",
-      question: `改了 ${attempts} 次，验证还是没通过（每次的意见在下面“之前的情况”里）。要怎么改，还是不做？`,
-      options: ["按评审的意见再试一次", "改成你说的做法", "不做这一项"],
+      question: `改了 ${attempts} 次，验证还是没通过。请发起交办的助手核对历次意见、调整执行安排，再按原需求修复；只有需要新的业务决定或本人操作时才交给本人。`,
+      options: [],
+      origin: { ...t.origin, blocked: true, escalated: undefined },
     }, note);
   }
   return updateTask(app, rootId, seq, { attempts, state: "todo" }, note);

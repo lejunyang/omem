@@ -8,6 +8,7 @@ description: 修改 omem v2 的 Vue 网页（web/）时使用：阅读优先的�
 1. 页面在 `web/src/views`，公共组件在 `web/src/components`，样式 token 在 `web/src/styles.css`。新增颜色先加 token（同时给深色值），不要在组件里写死色值。
 2. 用 `<script setup lang="ts">`，数据走 `web/src/api.ts`，全局状态在 `web/src/store.ts`。实时更新订阅 `onServerEvent`。
 3. 正文用 `Markdown.vue` 渲染（marked + DOMPurify + highlight.js + 懒加载 mermaid）。`src:` / `mem:` / `msg:` 链接和 `path:行号` 会变成引用，点击后由 `CitationDrawer` 逐层展示；`[[slug]]` 是 Wiki 链接。
+   文档引用高亮按完整 Markdown 块切分（`lib/cited-document.ts`），不能直接从引用行切开表格、列表、引用块或代码围栏；引用位于块内时高亮整个块，原文行号模式仍定位精确行。
 4. 阅读区限宽（正文约 760px），标题用衬线体，元信息小号灰色；按钮组用 gap。空状态说明现状并给一个能执行的动作。
 5. 表单控件用 `components/UiSelect`（下拉）、`UiCheckbox`（勾选 / switch）、`UiSegmented`（少量互斥选项）、`UiDateTime`（日期时间），确认和输入用 `lib/dialog` 的 `confirmDialog` / `promptDialog`；不用原生 select、checkbox、datetime-local、confirm、prompt。弹层用 Teleport 到 body，自带键盘操作和 Esc。
 6. 大列表和长文本（原件列表、长原件、聊天、运行、记忆）用 `components/VirtualList`（动态行高，跟随最近的滚动容器，`scrollToIndex` 定位）；加载中用 `components/Skeleton`，和“没有数据”的空状态分开。聊天类原件用 `components/ChatView`（解析见 `lib/chat.ts`）。
