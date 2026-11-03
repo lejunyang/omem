@@ -67,3 +67,11 @@ Agent 写的节点（拆需求、助手按本人的话改）标为“待本人�
 - 工具（分组 `items`）：`req_tree`、`req_read`、`save_requirements`（一批操作，原子执行；`add` 可用 `key` 起名，后面用 `$key` 引用）、`split_requirements`。编码和评审角色有 `req_tree`、`req_read`。
 - HTTP：`GET /api/requirements?space=`、`GET /api/requirements/:id`、`POST /api/requirements`（`{space, ops}`，本人写入）、`POST /api/items/:id/split-requirements`。
 - 设备之间拉取（`omem peer pull`）带上四张表，拉过来的节点重建检索。
+
+## 读取与切换性能
+
+编码列表一次取齐事项关联的交办轮次、问题数和评审状态，只投影状态、分支、工作区及应用记录；不把补丁、检查日志或编码长说明读进 JavaScript，也不逐次读取每轮的完整运行。旧轮次的应用/丢弃标记、旧版单工作区字段仍参与状态计算。
+
+切换普通需求点时，右侧先显示新标题和骨架屏；请求结束再展示详情，迟到响应不能覆盖新的选择。在同一个已打开的编码里切换需求点时，保留编码面板和已加载的差异。
+
+规模基准：`node scripts/bench-scale.ts --requirements --works 20 --rounds 5 --payload-kb 128`（临时虚构数据，20 次读取，100 轮、约 13.1 MB 补丁）。同机旧实现查询 103 次、p50 53.70 ms / p90 62.72 ms；批量摘要查询 6 次、p50 11.90 ms / p90 14.99 ms。该数字是服务端编码列表读取，不包含网络和浏览器渲染。

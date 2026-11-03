@@ -29,6 +29,7 @@ import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
+import { saveReqs } from "../src/items/requirements.ts";
 import { remember } from "../src/memory/store.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { resolveCitationsNow } from "../src/channels/citations.ts";
@@ -224,6 +225,11 @@ const mem = [
 ] as const;
 for (const m of mem) remember(app, { spaceId: m.kind === "preference" ? "personal" : "shop", kind: m.kind as never, subject: m.subject, content: m.content, sourceRefs: [...m.sourceRefs], folder: m.folder, createdBy: "agent" });
 const item = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "退款改造周四上线", detail: "部分发货只退已发货行，优惠按比例分摊；上线前回放上月数据", priority: 1, sourceRefs: [`src:${prd}#L1-L14`] }, "agent");
+const requirementPages = saveReqs(app, [
+  { op: "add", key: "root", kind: "system", title: "示例商城" },
+  { op: "add", key: "apply", parent: "$root", kind: "page", title: "退款申请页", body: "选择订单明细，按已发货行计算可退款金额。" },
+  { op: "add", key: "records", parent: "$root", kind: "page", title: "退款记录页", body: "按申请时间查看退款进度与处理结果。" },
+], { by: "user", label: "本人" }, { defaultSpace: "shop", canWrite: () => {}, canRead: () => {} }).keys;
 addItemEvent(app, item.id, "note", "技术方案定稿：金额换算成分计算，尾差归最后一行", "agent", [`src:${tech}#L3-L4`]);
 addItemEvent(app, item.id, "note", "交办编码完成第 1 轮，评审要求修改尾差和负数分摊", "agent");
 upsertItem(app, undefined, { spaceId: "shop", kind: "waiting", title: "等小李确认满减券的分摊口径", waitingOn: "小李", priority: 2, sourceRefs: [`src:${chat}#L2-L2`] }, "agent");
@@ -477,6 +483,14 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "sources-review", path: `/sources/${kbOld}`, space: "refund", prepare: async (p) => { await p.getByRole("button", { name: /待复核/ }).click(); await p.waitForTimeout(600); } },
   { name: "memory", path: "/memory" },
   { name: "items", path: `/items/${item.id}` },
+  { name: "requirements-loading", path: `/reqs/${requirementPages.apply}`, prepare: async (p) => {
+    await p.route(`**/api/requirements/${requirementPages.records}`, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await route.continue().catch(() => {});
+    });
+    await p.locator(".list-col .pick").filter({ hasText: "退款记录页" }).click();
+    await p.locator("main.detail [aria-busy='true']").waitFor();
+  } },
   { name: "review-overview", path: `/runs/${r.id}` },
   { name: "review-checks", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "评审" }).click(); await p.locator(".check-head").nth(1).click(); await p.waitForTimeout(300); } },
   { name: "review-change", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick", { hasText: "补测试与说明" }).click(); await p.waitForTimeout(900); await p.getByRole("button", { name: "下一处" }).click(); await p.waitForTimeout(1200); } },

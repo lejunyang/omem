@@ -7,6 +7,10 @@ updated: 2026-11-03
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 需求切换性能（11-03）
+
+- `src/items/work.ts` 批量读取交办轮次和评审状态，只取列表摘要，避免逐轮解析完整补丁和检查输出。`Requirements.vue` 在普通需求切换时立即显示新标题和加载骨架；同一编码内切换需求点保留面板。`test/req-work-summary.test.ts` 覆盖大结果、查询数量、旧工作区字段和跨轮应用状态；`scripts/bench-scale.ts --requirements` 提供可复现的规模基准。
+
 ## 对话投递、引用与编码接续（11-03）
 
 - `roles/_common.md` 与原件工具说明明确：工作文件、确认表内的代码锚点优先引用库内原件并核对版本、行号；不能从 Git remote、提交号或其他平台的路径规则猜造代码网页地址。

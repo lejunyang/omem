@@ -47,6 +47,7 @@ const nodes = ref<Node[]>([]);
 const loading = ref(true);
 const showRemoved = ref(false);
 const detail = ref<Detail | null>(null);
+const detailLoading = ref(false);
 const selectedId = pageParam("reqs");
 // A delegation opened inside the page (`?work=<run>`): its overview replaces the node's detail.
 const workId = computed(() => (typeof route.query.work === "string" ? route.query.work : ""));
@@ -132,8 +133,13 @@ async function loadDetail() {
   const current = () => !disposed && request === detailRequest && id === selectedId.value && space === state.space && route.path.split("/")[1] === "reqs";
   if (!id) {
     detail.value = null;
+    detailLoading.value = false;
     return;
   }
+  // A slow response must not leave the previous requirement under the newly selected tree row.
+  // Picking another point of the same open coding work keeps WorkPane and its loaded diff alive.
+  if (!workId.value && detail.value?.node.id !== id) detail.value = null;
+  detailLoading.value = true;
   try {
     const d = await get<Detail>(`/api/requirements/${id}`);
     if (!current()) return;
@@ -144,6 +150,8 @@ async function loadDetail() {
     if (!current()) return;
     detail.value = null;
     toast((e as Error).message, "error");
+  } finally {
+    if (current()) detailLoading.value = false;
   }
 }
 onMounted(() => void Promise.all([loadTree(), loadDetail()]));
@@ -407,6 +415,11 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           </template>
           <div class="row"><span class="spacer" /><button class="btn sm" @click="editing = null">取消</button><button class="btn sm primary" @click="saveForm">保存</button></div>
         </div>
+      </div>
+
+      <div v-else-if="detailLoading && !detail" class="page" aria-busy="true">
+        <h2 v-if="byId.get(selectedId)" class="title">{{ byId.get(selectedId)!.title }}</h2>
+        <Skeleton variant="text" :rows="8" />
       </div>
 
       <div v-else-if="detail && workId" class="page wide">

@@ -1,8 +1,8 @@
 import type { App } from "../core/app.ts";
-import { all, one } from "../core/db.ts";
+import { all } from "../core/db.ts";
 import { json } from "../core/util.ts";
-import { worktreesOf } from "../agents/code.ts";
 import { isBranchWork } from "../agents/code-branch.ts";
+import type { WorktreeRef } from "../agents/worktree-index.ts";
 import { findReq, reqPath } from "./requirements.ts";
 
 /**
@@ -37,7 +37,8 @@ export type Work = {
   updatedAt: string;
 };
 
-type RunRow = { id: string; status: string; title: string; input: string; output: string; created_at: string; finished_at: string | null };
+type RunRow = { id: string; root_id: string; space_id: string; status: string; title: string; input: string; output: string; created_at: string; finished_at: string | null };
+type WorkOutput = { verdict?: string | null; appliedAt?: string; discardedAt?: string; worktrees?: WorktreeRef[]; worktree?: string; branch?: string; base?: string };
 type ReqMaterial = { item_id: string; ref: string; title: string };
 
 function reqMaterials(app: App, userId: string) {
@@ -45,15 +46,13 @@ function reqMaterials(app: App, userId: string) {
 }
 
 /** One work's state from its rounds (oldest first). */
-function workOf(app: App, item: { id: string; title: string }, rounds: RunRow[]): Work {
+function workOf(item: { id: string; title: string }, rounds: RunRow[], open: number, reviewing: boolean): Work {
   const root = rounds[0];
   const last = rounds.at(-1)!;
   const rootIn = json<{ branches?: Record<string, { branch: string }>; fromBranches?: Record<string, string>; branchNames?: Record<string, string> }>(root.input, {});
-  const outs = rounds.map((r) => json<{ verdict?: string | null; appliedAt?: string; discardedAt?: string }>(r.output, {}));
+  const outs = rounds.map((r) => json<WorkOutput>(r.output, {}));
   const out = outs.at(-1)!;
   const branchReview = !!rootIn.branches;
-  const open = one<{ n: number }>(app.db, "select count(*) n from review_findings f join reviews r on r.id = f.review_id where r.code_run_id = ? and f.state in ('open', 'accepted') and f.severity != 'nit' and f.decision is null", last.id)!.n;
-  const reviewing = !!one(app.db, "select 1 from runs where kind = 'review' and parent_id = ? and status in ('queued', 'running')", last.id);
   const verdict = out.verdict ?? null;
   const stage: WorkStage = outs.some((o) => o.appliedAt) ? "applied"
     : outs.some((o) => o.discardedAt) ? "discarded"
@@ -62,7 +61,8 @@ function workOf(app: App, item: { id: string; title: string }, rounds: RunRow[])
     : verdict === "awaiting-peer" || verdict === "awaiting-peer-code" ? "peer"
     : branchReview && last.status === "done" && verdict !== "awaiting-plan" && (verdict === "approved" || !open) ? "done"
     : "owner";
-  const wts = worktreesOf(app, root.id);
+  const first = outs[0];
+  const wts = first.worktrees ?? (first.worktree && root.space_id ? [{ space: root.space_id, path: first.worktree, branch: first.branch ?? "", base: first.base ?? "" }] : []);
   const branch = Object.values(rootIn.branches ?? {})[0]?.branch ?? Object.values(rootIn.fromBranches ?? {})[0] ?? Object.values(rootIn.branchNames ?? {})[0] ?? wts[0]?.targetBranch ?? wts[0]?.branch ?? null;
   return {
     itemId: item.id, itemTitle: item.title, rootId: root.id, latestId: last.id, title: last.title, rounds: rounds.map((r) => r.id),
@@ -72,17 +72,33 @@ function workOf(app: App, item: { id: string; title: string }, rounds: RunRow[])
 
 /** Every work done for the item, newest first. */
 export function itemWork(app: App, item: { id: string; title: string }): Work[] {
-  const runs = all<{ ref: string }>(app.db, "select ref from item_materials where item_id = ? and kind = 'run'", item.id).map((r) => r.ref);
-  const roots = new Set<string>();
-  for (const id of runs) {
-    const r = one<{ kind: string; input: string }>(app.db, "select kind, input from runs where id = ?", id);
-    if (r?.kind !== "code") continue;
-    roots.add(json<{ continueFrom?: string }>(r.input, {}).continueFrom ?? id);
+  const roots = all<{ id: string }>(app.db, `select distinct coalesce(json_extract(r.input, '$.continueFrom'), r.id) id
+    from item_materials m join runs r on r.id = m.ref where m.item_id = ? and m.kind = 'run' and r.kind = 'code'`, item.id).map((r) => r.id);
+  if (!roots.length) return [];
+  const marks = roots.map(() => "?").join(",");
+  // Lists need status, branch and application metadata, never patches, check output or the run log.
+  // Project in SQLite and batch the rounds: one query per work otherwise repeatedly scans runs and
+  // decodes multi-megabyte outputs just to paint the requirement's coding list.
+  const rows = all<RunRow>(app.db, `select id, coalesce(json_extract(input, '$.continueFrom'), id) root_id,
+    space_id, status, title, created_at, finished_at,
+    json_object('branches', json_extract(input, '$.branches'), 'fromBranches', json_extract(input, '$.fromBranches'), 'branchNames', json_extract(input, '$.branchNames')) input,
+    json_object('verdict', json_extract(output, '$.verdict'), 'appliedAt', json_extract(output, '$.appliedAt'), 'discardedAt', json_extract(output, '$.discardedAt'),
+      'worktrees', json_extract(output, '$.worktrees'), 'worktree', json_extract(output, '$.worktree'), 'branch', json_extract(output, '$.branch'), 'base', json_extract(output, '$.base')) output
+    from runs where id in (${marks}) or (kind = 'code' and json_extract(input, '$.continueFrom') in (${marks})) order by created_at`, ...roots, ...roots);
+  const grouped = new Map(roots.map((id) => [id, [] as RunRow[]]));
+  for (const row of rows) {
+    grouped.get(row.id)?.push(row);
+    if (row.root_id !== row.id) grouped.get(row.root_id)?.push(row);
   }
-  return [...roots]
-    .map((root) => all<RunRow>(app.db, "select id, status, title, input, output, created_at, finished_at from runs where id = ? or (kind = 'code' and json_extract(input, '$.continueFrom') = ?) order by created_at", root, root))
-    .filter((rounds) => rounds.length)
-    .map((rounds) => workOf(app, item, rounds))
+  const groups = [...grouped.values()].filter((rounds) => rounds.length);
+  if (!groups.length) return [];
+  const latest = groups.map((rounds) => rounds.at(-1)!.id);
+  const lastMarks = latest.map(() => "?").join(",");
+  const findings = new Map(all<{ id: string; n: number }>(app.db, `select r.code_run_id id, count(*) n from review_findings f join reviews r on r.id = f.review_id
+    where r.code_run_id in (${lastMarks}) and f.state in ('open', 'accepted') and f.severity != 'nit' and f.decision is null group by r.code_run_id`, ...latest).map((r) => [r.id, r.n]));
+  const reviewing = new Set(all<{ parent_id: string }>(app.db, `select distinct parent_id from runs where kind = 'review' and status in ('queued', 'running') and parent_id in (${lastMarks})`, ...latest).map((r) => r.parent_id));
+  return groups
+    .map((rounds) => workOf(item, rounds, findings.get(rounds.at(-1)!.id) ?? 0, reviewing.has(rounds.at(-1)!.id)))
     .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }
 

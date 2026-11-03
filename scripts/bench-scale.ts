@@ -4,11 +4,63 @@
  * vector search over random vectors, and memory use.
  *
  *   node scripts/bench-scale.ts <corpus.jsonl> [--copies 10] [--home DIR] [--queries queries.jsonl] [--dims 512]
+ *   node scripts/bench-scale.ts --requirements [--works 20] [--rounds 5] [--payload-kb 128]
  *
  * Vectors are random (embedding a large corpus on CPU takes hours); they only
  * measure the cost of the vector search itself, not its quality.
  */
 process.removeAllListeners("warning");
+if (process.argv.includes("--requirements")) {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { App } = await import("../src/core/app.ts");
+  const { ensurePersonalSpace } = await import("../src/core/spaces.ts");
+  const { createRun, setRunOutput } = await import("../src/agents/runs.ts");
+  const { saveReqs } = await import("../src/items/requirements.ts");
+  const { addMaterials } = await import("../src/items/materials.ts");
+  const { upsertItem } = await import("../src/items/store.ts");
+  const { reqWork } = await import("../src/items/work.ts");
+  const option = (key: string, fallback: number) => {
+    const at = process.argv.indexOf(key);
+    const value = at < 0 ? fallback : Number(process.argv[at + 1]);
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${key} 要是正整数`);
+    return value;
+  };
+  const works = option("--works", 20), rounds = option("--rounds", 5), bytes = option("--payload-kb", 128) * 1024;
+  const home = mkdtempSync(join(tmpdir(), "omem-bench-requirements-"));
+  const app = App.open(home);
+  try {
+    ensurePersonalSpace(app);
+    const { keys } = saveReqs(app, [{ op: "add", key: "page", kind: "page", title: "退款验收" }], { by: "user", label: "本人" }, { defaultSpace: "personal", canWrite: () => {}, canRead: () => {} });
+    const item = upsertItem(app, undefined, { spaceId: "personal", title: "退款改造", kind: "todo", userId: "owner" }, "user");
+    addMaterials(app, item.id, [{ kind: "req", ref: keys.page }], "owner", "user");
+    const payload = "+code\n".repeat(Math.ceil(bytes / 6)).slice(0, bytes);
+    for (let w = 0; w < works; w++) {
+      let root = "";
+      for (let round = 0; round < rounds; round++) {
+        const r = createRun(app, { kind: "code", spaceId: "personal", title: `退款 ${w} · 第 ${round + 1} 轮`, input: root ? { continueFrom: root } : {} });
+        root ||= r.id;
+        setRunOutput(app, r.id, { verdict: "approved", patches: [{ patch: payload }] });
+        app.db.prepare("update runs set status = 'done' where id = ?").run(r.id);
+      }
+      addMaterials(app, item.id, [{ kind: "run", ref: root }], "owner", "user");
+    }
+    const prepare = app.db.prepare.bind(app.db);
+    let queries = 0;
+    app.db.prepare = (sql) => { queries++; return prepare(sql); };
+    const ms: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      queries = 0;
+      const start = performance.now();
+      if (reqWork(app, keys.page, "owner").length !== works) throw new Error("编码列表不完整");
+      ms.push(performance.now() - start);
+    }
+    ms.sort((a, b) => a - b);
+    console.log(JSON.stringify({ works, rounds: works * rounds, payloadMb: works * rounds * bytes / 1e6, queries, p50Ms: +ms[10].toFixed(2), p90Ms: +ms[18].toFixed(2) }));
+  } finally { app.db.close(); rmSync(home, { recursive: true, force: true }); }
+  process.exit(0);
+}
 const { existsSync, readFileSync, statSync } = await import("node:fs");
 const { join } = await import("node:path");
 const { App } = await import("../src/core/app.ts");
