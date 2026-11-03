@@ -7,8 +7,8 @@ import "../src/agents/jobs.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
-import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQuestionText, recordCheckpoint, recordOutsideChanges, retryTask, scheduleWorkRevert, settleCodingRound, updateTask, workPatches, workState } from "../src/agents/code-tasks.ts";
-import { advanceWork, taskReview } from "../src/agents/code-loop.ts";
+import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQuestionText, recordCheckpoint, recordOutsideChanges, retryTask, scheduleWorkRevert, setWorkState, settleCodingRound, updateTask, waitingText, workPatches, workState } from "../src/agents/code-tasks.ts";
+import { advanceWork, settleTask, taskReview } from "../src/agents/code-loop.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
 import { identity } from "../src/agents/code-branch.ts";
@@ -319,7 +319,7 @@ describe("a delegation driven by tasks", () => {
     }
   });
 
-  it("gives what held the coder up to the assistant that started the work, which settles it or passes it on, closing the owner's card", async () => {
+  it("gives what held the coder up to the assistant that started the work at once, never as the owner's question, and holds it to what it may decide", async () => {
     const app = testApp();
     try {
       const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
@@ -329,29 +329,44 @@ describe("a delegation driven by tasks", () => {
       run(app.db, "update runs set status = 'running' where id = ?", r.id);
       const sync = addTask(app, r.id, { title: "同步远端最新代码", kind: "build" }, "coder");
       const scope = addTask(app, r.id, { title: "存量订单怎么算", kind: "build", state: "owner", question: "存量订单按哪个口径？", options: ["旧口径", "新口径"] }, "coder");
-      updateTask(app, r.id, sync.seq, { state: "coding", coderRun: r.id });
       const coder: ToolContext = { app, runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "coder" } as ToolContext;
-      expect((await callTool(coder, "report_task", { task: `T${sync.seq}`, kind: "blocked", reason: "Git 目录只读，fetch 写不了 FETCH_HEAD" })).text).toContain("发起交办的助手");
-      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "owner", origin: { blocked: true } });
-      const { blockedText } = await import("../src/agents/code-tasks.ts");
-      expect(blockedText(app, r.id)).toContain("同步远端最新代码");
-      expect(blockedText(app, r.id)).not.toContain("存量订单");
+      const block = async () => {
+        updateTask(app, r.id, sync.seq, { state: "coding", coderRun: r.id });
+        return callTool(coder, "report_task", { task: `T${sync.seq}`, kind: "blocked", reason: "Git 目录只读，fetch 写不了 FETCH_HEAD" });
+      };
+      expect((await block()).text).toContain("发起交办的助手");
+      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "assistant", options: [] });
+      // Woken now, while the round goes on; a second report does not queue a second turn.
+      const wakes = () => all<{ input: string }>(app.db, "select input from runs where kind = 'ask' and json_extract(input, '$.handoff.kind') = 'code-tasks'").map((x) => JSON.parse(x.input));
+      expect(wakes()).toHaveLength(1);
+      expect(wakes()[0]).toMatchObject({ conversationId: t.id, handoff: { workId: r.id }, denyTools: expect.arrayContaining(["continue_code_run"]) });
+      const waiting = waitingText(app, r.id);
+      expect(waiting.split("## 在等本人决定")[0]).toContain("同步远端最新代码");
+      expect(waiting.split("## 在等本人决定")[1]).toContain("存量订单");
+      expect(listAsks(app, { status: "pending" }).some((a) => a.question.includes("同步远端最新代码"))).toBe(false);
+      // An owner question without options is not one: the coder is told to use blocked.
+      updateTask(app, r.id, scope.seq, { state: "coding", coderRun: r.id });
+      expect((await callTool(coder, "report_task", { task: `T${scope.seq}`, kind: "owner", reason: "缺后端字段", question: "请后端补审核时间" })).isError).toBe(true);
+      updateTask(app, r.id, scope.seq, { state: "owner" });
 
-      // Woken after the round (not answering the owner): it passes the blocked one on, and a card goes to the owner.
-      const handoff = createRun(app, { kind: "ask", spaceId: "personal", title: "看结果", input: { conversationId: t.id, handoff: { kind: "code", runId: r.id } } });
+      const handoff = createRun(app, { kind: "ask", spaceId: "personal", title: "看结果", input: { conversationId: t.id, handoff: { kind: "code-tasks", runId: r.id, workId: r.id } } });
       const assistant: ToolContext = { app, runId: handoff.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
-      const settle = (ctx: ToolContext, seq: number, action: string, note: string) => callTool(ctx, "settle_code_task", { run_id: r.id, task: `T${seq}`, action, note });
-      expect((await settle(assistant, scope.seq, "retry", "按新口径")).text).toContain("要本人决定");
-      expect((await settle(assistant, sync.seq, "owner", "常驻服务器上要本人登录一次")).isError).toBe(false);
-      const card = listAsks(app, { status: "pending" }).find((a) => a.question.includes("同步远端最新代码"))!;
-      expect(card.question).toContain("助手：常驻服务器上要本人登录一次");
-      expect(blockedText(app, r.id)).toBe("");
-      // The assistant saw to it after all: the task is done again and the owner's card closes.
-      expect((await settle(assistant, sync.seq, "retry", "宿主开始前已经拉过，HEAD 就是最新")).text).toContain("回到待做");
-      expect(listAsks(app, {}).find((a) => a.id === card.id)!.status).toBe("cancelled");
-      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "todo", attempts: 0 });
-      expect(listTasks(app, r.id)[0].origin.blocked).toBeUndefined();
-      expect(listTasks(app, r.id)[0].notes.at(-1)).toMatchObject({ by: "assistant", kind: "assistant" });
+      const settle = (ctx: ToolContext, seq: number, action: string, note: string, extra: Record<string, unknown> = {}) => callTool(ctx, "settle_code_task", { run_id: r.id, task: `T${seq}`, action, note, ...extra });
+      // Not its decision to make.
+      expect((await settle(assistant, scope.seq, "retry", "按新口径")).text).toContain("在等本人决定");
+      // Its own: done again twice at most, then only the owner (with options) or not at all.
+      for (const n of [1, 2]) {
+        const done = await settle(assistant, sync.seq, "retry", `第 ${n} 次：宿主开始前已经拉过，HEAD 就是最新`);
+        expect(done.text).toContain("回到待做");
+        expect(listTasks(app, r.id)[0]).toMatchObject({ state: "todo", attempts: 0, answer: null });
+        expect(listTasks(app, r.id)[0].notes.at(-1)).toMatchObject({ by: "assistant", kind: "assistant" });
+        await block();
+      }
+      expect((await settle(assistant, sync.seq, "retry", "再试一次")).text).toContain("重做过 2 次");
+      expect((await settle(assistant, sync.seq, "owner", "常驻服务器上要本人登录一次")).isError).toBe(true);
+      expect((await settle(assistant, sync.seq, "owner", "查过：只读的是常驻服务器的 Git 目录", { question: "要不要在常驻服务器上放开工作区的 Git 目录写权限？", options: ["放开", "保持只读，由宿主提交"] })).isError).toBe(false);
+      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "owner", options: ["放开", "保持只读，由宿主提交"] });
+      expect(listAsks(app, { status: "pending" }).find((a) => a.question.includes("同步远端最新代码"))!.question).toContain("放开工作区的 Git 目录写权限");
 
       // The owner's own answer in the conversation is relayed.
       const said = "msg_owner";
@@ -361,12 +376,32 @@ describe("a delegation driven by tasks", () => {
       expect(listTasks(app, r.id)[1]).toMatchObject({ state: "todo", answer: "本人说：存量按新口径" });
 
       updateTask(app, r.id, scope.seq, { state: "owner" });
-      const oldAuthorization = await callTool(assistant, "settle_code_task", { run_id: r.id, task: `T${scope.seq}`, action: "retry", note: "恢复既定口径，继续修复", existing_authorization: "此前本人已明确：存量按新口径（msg_owner），本项没有新的取舍" });
+      const oldAuthorization = await settle(assistant, scope.seq, "retry", "恢复既定口径，继续修复", { existing_authorization: "此前本人已明确：存量按新口径（msg_owner），本项没有新的取舍" });
       expect(oldAuthorization.isError).toBe(false);
       expect(listTasks(app, r.id)[1].notes.at(-1)?.text).toContain("已有授权依据");
       updateTask(app, r.id, scope.seq, { state: "owner" });
-      const noSkip = await callTool(assistant, "settle_code_task", { run_id: r.id, task: `T${scope.seq}`, action: "skip", note: "先不做", existing_authorization: "本人此前让继续" });
-      expect(noSkip.isError).toBe(true);
+      expect((await settle(assistant, scope.seq, "skip", "先不做", { existing_authorization: "本人此前让继续" })).isError).toBe(true);
+    } finally {
+      app.db.close();
+    }
+  });
+
+  it("lets the assistant start rounds for what it settles only within the budget", () => {
+    const app = testApp();
+    try {
+      const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "交办", input: { conversationId: t.id } });
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款", repos: ["personal"], taskMode: true, round: 1 }, parentId: ask.id, userId: OWNER });
+      codeChainFor(app, r);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const x = addTask(app, r.id, { title: "运费按比例退", kind: "build" }, "coder");
+      for (let i = 0; i < 3; i++) retryTask(app, r.id, x.seq, { by: "verify", kind: "verify", text: `第 ${i + 1} 次没过` });
+      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "assistant", attempts: 3 });
+      // Budget used up (one round): the retry waits for the owner to say go on.
+      setWorkState(app, r.id, { budget: 1, until: 1 });
+      expect(settleTask(app, r.id, x.seq, { action: "retry", text: "先只改运费的计算", ownerWords: false }, "assistant")).toBeNull();
+      expect(listTasks(app, r.id)[0].state).toBe("todo");
+      expect(lastRound(app, r.id).id).toBe(r.id);
     } finally {
       app.db.close();
     }
@@ -408,8 +443,9 @@ describe("a delegation driven by tasks", () => {
         settleCodingRound(app, r.id, r.id, [], round);
         expect(listTasks(app, r.id)[0]).toMatchObject({ state: round < 3 ? "todo" : "owner", attempts: 0 });
       }
+      // Started on the web: no assistant, so the owner gets it, with something to answer.
       const stuck = listTasks(app, r.id)[0];
-      expect(stuck.origin).toMatchObject({ blocked: true });
+      expect(stuck.options).toEqual(["按原来的要求再做一次"]);
       expect(stuck.question).toContain("连续 3 轮");
       // What the owner (or the assistant) reads has the task in full, not a cut-off line.
       const text = ownerQuestionText(app, stuck);
@@ -420,7 +456,6 @@ describe("a delegation driven by tasks", () => {
       for (let i = 0; i < 3; i++) retryTask(app, r.id, t.seq, { by: "verify", kind: "verify", text: `第 ${i + 1} 次：部分退款时运费还是全退` });
       const failed = listTasks(app, r.id)[0];
       expect(failed).toMatchObject({ state: "owner", attempts: 3 });
-      expect(failed.origin).toMatchObject({ blocked: true });
       expect(ownerQuestionText(app, failed)).toContain("第 3 次：部分退款时运费还是全退");
     } finally {
       app.db.close();

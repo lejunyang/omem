@@ -15,7 +15,7 @@ import { findReq, reqPath } from "./requirements.ts";
  * device is coding or reviewing), owner (waiting for the owner: a plan to confirm, findings to decide,
  * a result to apply, a failure), done (a branch review with nothing left to decide), applied, discarded.
  */
-export type WorkStage = "coding" | "reviewing" | "peer" | "owner" | "done" | "applied" | "discarded";
+export type WorkStage = "coding" | "reviewing" | "peer" | "assistant" | "owner" | "done" | "applied" | "discarded";
 export type Work = {
   itemId: string;
   itemTitle: string;
@@ -60,6 +60,8 @@ function workOf(item: { id: string; title: string }, rounds: RunRow[], open: num
     : reviewing ? "reviewing"
     : verdict === "awaiting-peer" || verdict === "awaiting-peer-code" ? "peer"
     : branchReview && last.status === "done" && verdict !== "awaiting-plan" && (verdict === "approved" || !open) ? "done"
+    // Waiting on the assistant that started it, not on the owner.
+    : verdict === "awaiting-assistant" ? "assistant"
     : "owner";
   const first = outs[0];
   const wts = first.worktrees ?? (first.worktree && root.space_id ? [{ space: root.space_id, path: first.worktree, branch: first.branch ?? "", base: first.base ?? "" }] : []);

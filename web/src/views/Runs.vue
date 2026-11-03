@@ -165,6 +165,10 @@ const lineCount = computed(() => diffs.value.flatMap((d) => d.files).reduce((n, 
 
 // ---- a coding run with reviews: 概览 / 变更 / 评审 / 活动 ------------------------------------
 const rv = useReviews(computed(() => (detail.value?.run.kind === "code" ? detail.value.run.id : "")), computed(() => detail.value?.run.status));
+// Many rounds: the latest few stay buttons, the earlier ones go in a list (as in WorkPane), so the row stays one line.
+const RECENT_ROUNDS = 3;
+const recentRounds = computed(() => (rv.roundOptions.value.length > RECENT_ROUNDS + 1 ? rv.roundOptions.value.slice(-RECENT_ROUNDS) : rv.roundOptions.value));
+const earlierRounds = computed(() => rv.roundOptions.value.slice(0, rv.roundOptions.value.length - recentRounds.value.length));
 const hasReview = computed(() => !!rv.data.value && (rv.reviews.value.length > 0 || !!rv.current.value?.plan));
 type Tab = "overview" | "change" | "review" | "activity";
 const tab = ref<Tab>("overview");
@@ -456,7 +460,10 @@ const kindOptions = computed(() => [
           <div v-if="detail.run.kind === 'code' && fileCount" class="row wrap small muted sub">
             <span>{{ diffs.length > 1 ? `${diffs.length} 个仓库 · ` : "" }}{{ fileCount }} 个文件 · <span class="add">+{{ lineCount.add }}</span> <span class="rm">−{{ lineCount.rm }}</span><template v-if="checkPassed !== null"> · 检查{{ checkPassed ? "通过" : "没通过" }}</template></span>
             <span class="spacer" />
-            <UiSegmented v-if="rv.roundOptions.value.length > 1" v-model="rv.round.value" size="sm" :options="rv.roundOptions.value" aria-label="轮次" />
+            <template v-if="rv.roundOptions.value.length > 1">
+              <UiSelect v-if="earlierRounds.length" :model-value="earlierRounds.some((o) => o.value === rv.round.value) ? rv.round.value : null" :options="earlierRounds" size="sm" width="auto" placeholder="更早的轮" aria-label="更早的轮" @update:model-value="(r) => r && (rv.round.value = r)" />
+              <UiSegmented v-model="rv.round.value" size="sm" :options="recentRounds" aria-label="轮次" />
+            </template>
           </div>
           <p v-if="detail.run.waiting" class="muted small waiting" title="omem 自己的排队：开始运行时才选定后端和模型">排队中：{{ detail.run.waiting }}。开始运行时才选定后端和模型；后端自己的排队会在开始后的过程里显示。</p>
           <div class="row">

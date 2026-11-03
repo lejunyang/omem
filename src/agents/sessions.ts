@@ -248,12 +248,22 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const recalled = await passiveForTurn(app, ctx.run.id, threadId, prep, said, canResume || live.has(threadId));
   const newPart = coordinate
     ? coordinationNote(app, coordinate.workId, messages)
-    : handoff
-      ? `# 编码交办结束
+    : handoff?.kind === "code-tasks"
+      ? `# 交办里有修改项等你处理
 
 ${renderMessages(messages, app)}
 
-你之前交办的编码任务停下来了（上面是它的结果和独立评审）。写一条给本人的回复：结果是什么、评审还要求什么、接下来怎么办（应用改动、再改一轮、或放弃），需要本人决定的列出选项和你的建议。这一轮你不能再交办或续轮编码（自动轮数已用完或在等本人），本人明确要继续时用 continue_code_run。`
+交办还在推进，别的项照常在做。上面“等你处理”的项是编码 Agent 和评审处理不了、交给你的（没有问本人）。逐项用 settle_code_task 处理：
+- retry：你查清楚了原因或换了做法，note 写清编码 Agent 这次具体怎么做（太大的写明先做哪一部分，依赖别的项的写明顺序）；
+- skip：不该做或做不了（等别的团队、缺外部字段），note 写在等什么；
+- owner：只有业务或功能上要本人取舍时，写 question 和两三个 options。
+本人不需要知道这些处理：都处理完、没有要本人决定的，只回答 QUIET。`
+      : handoff
+      ? `# 编码交办停下了
+
+${renderMessages(messages, app)}
+
+上面是宿主写的结果：停下的原因、现在等谁。先用 settle_code_task 处理“等你处理”的项（retry 写清这次怎么做，skip 写理由，owner 只在要本人取舍时写 question 和 options）；你 retry 的项在自动推进的轮数之内会接着开下一轮。然后给本人写一条汇报：做成了什么、还剩什么、停在哪。只有“在等本人决定”的项，以及轮数用完、本人暂停、运行失败时，才需要本人回复；这些情况写清本人要说什么（比如“继续”）。其余不要让本人确认或回复。这一轮不能交办或续轮（continue_code_run 不可用）。`
       : woken
       ? `# 唤醒
 

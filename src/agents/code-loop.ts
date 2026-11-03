@@ -4,12 +4,12 @@ import { notify } from "../core/notify.ts";
 import { git } from "../core/git.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler, type Ask } from "./asks.ts";
-import { codeChainFor, queueNextCodeRound, saveCodeChain, type CodeChain } from "./code-chain.ts";
+import { codeChainFor, queueNextCodeRound, saveCodeChain, wakeAssistantForTasks, type CodeChain } from "./code-chain.ts";
 import { addCodeNote } from "./code-steer.ts";
 import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
 import {
   addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, taskForFinding,
-  ownerQuestionText, stranded, taskLabel, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
+  ownerQuestionText, stranded, taskLabel, toAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
@@ -305,6 +305,7 @@ async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict
   const w = workState(app, rootId);
   const todo = tasks.filter((t) => t.state === "todo");
   const owner = tasks.filter((t) => t.state === "owner");
+  const mine = tasks.filter((t) => t.state === "assistant");
   ensureOwnerAsks(app, rootId);
   const finish = (verdict: string, extra: Record<string, unknown> = {}) => {
     setRunOutput(app, run.id, { verdict, reviewStage: "done", ...extra });
@@ -325,10 +326,14 @@ async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict
     const next = queueRound(app, rootId, run);
     if (next) {
       rc.event("status", { text: `排上第 ${roundOf(next)} 轮：${todo.map((t) => taskLabel(t.seq)).join("、")}` });
+      // What the next round cannot move goes to the assistant now, not when the work stops.
+      if (mine.length) wakeAssistantForTasks(app, rootId);
       return { ...finish("continuing"), continuedRunId: next.id };
     }
     return finish("paused", { reviewStop: "paused" });
   }
+  // The assistant is woken for its tasks when this round's run ends (code-chain.ts): the work waits on it, not on the owner.
+  if (mine.length) return finish("awaiting-assistant", { reviewStop: "assistant" });
   if (owner.length) return finish("awaiting-owner", { reviewStop: "owner" });
   const result = finish("approved", { reviewStop: null });
   completed(app, rootId, getRun(app, run.id));
@@ -394,14 +399,16 @@ export function advanceWork(app: App, rootId: string, opts: { owner?: boolean } 
   if (busy) return null;
   const w = workState(app, rootId);
   if (w.paused) return null;
+  // Only the owner gives more rounds: what the assistant settles waits once the budget is used up.
+  if (!opts.owner && roundOf(last) >= w.until) return null;
   const tasks = listTasks(app, rootId);
   if (tasks.some((t) => t.state === "todo" || stranded(app, t)) || (w.reverts ?? []).length) {
     const next = queueRound(app, rootId, last);
     if (next) setRunOutput(app, last.id, { verdict: "continuing", reviewStop: null });
     return next;
   }
-  // Nothing to code: what was left were questions the owner has now settled.
-  if (!tasks.some((t) => ["owner", "verify", "coding"].includes(t.state)) && last.output.verdict === "awaiting-owner") {
+  // Nothing to code: what was left were questions now settled.
+  if (!tasks.some((t) => ["assistant", "owner", "verify", "coding"].includes(t.state)) && ["awaiting-owner", "awaiting-assistant"].includes(String(last.output.verdict))) {
     setRunOutput(app, last.id, { verdict: "approved", reviewStop: null });
     completed(app, rootId, getRun(app, last.id));
   }
@@ -453,7 +460,7 @@ async function arbitrate(app: App, run: Run, tasks: CodeTask[], rc: RoundContext
   }
   for (const t of tasks) {
     if (getTask(app, rootId, t.seq).state !== "disputed") continue;
-    updateTask(app, rootId, t.seq, { state: "owner", origin: { ...t.origin, blocked: true, escalated: undefined }, question: `${taskLabel(t.seq)}「${t.title}」编码 Agent 和评审项有分歧，评审负责人没有给出裁决。请发起交办的助手查清楚后继续处理。`, options: [] }, { by: "host", kind: "host", text: "评审负责人没有裁决，交给发起交办的助手" });
+    toAssistant(app, rootId, t.seq, "编码 Agent 和评审项有分歧，评审负责人没有给出裁决（双方的说法在“之前的情况”里）。", { by: "host", kind: "host", text: "评审负责人没有裁决" });
   }
 }
 
@@ -522,8 +529,8 @@ const SKIP = "不做这一项";
 
 /**
  * One card per task waiting for the owner, in the conversation the work reports to (or the home page).
- * What held the coder up (blocked) goes first to the assistant that started the work, which is woken
- * when the round ends: it sees to it or passes it on (settleTask); work started on the web has none.
+ * Tasks waiting on the assistant never get one: it is woken for them (wakeAssistantForTasks) and
+ * passes on to the owner only what it cannot settle, as a question with options (settleTask).
  */
 function ensureOwnerAsks(app: App, rootId: string) {
   const w = workState(app, rootId);
@@ -531,7 +538,7 @@ function ensureOwnerAsks(app: App, rootId: string) {
   const last = lastRound(app, rootId);
   const chain = (last.output as { codeChain?: CodeChain }).codeChain;
   let changed = false;
-  for (const t of listTasks(app, rootId).filter((x) => x.state === "owner" && !(chain && x.origin.blocked && !x.origin.escalated))) {
+  for (const t of listTasks(app, rootId).filter((x) => x.state === "owner")) {
     const id = asks[String(t.seq)];
     if (id && one(app.db, "select 1 from asks where id = ? and status = 'pending'", id)) continue;
     const ask = createAsk(app, {
@@ -550,23 +557,37 @@ function ensureOwnerAsks(app: App, rootId: string) {
 }
 
 /**
- * The assistant settles a task waiting on it (blocked) or relays the owner's answer to one waiting on
- * the owner: done again, not done, or (blocked) passed on to the owner. A card already sent closes.
+ * The assistant settles a task waiting on it — done again (with what to do differently), not done,
+ * or passed on to the owner as a question with options — or relays the owner's answer to one waiting
+ * on the owner. What it may do is decided here, not by its instructions:
+ * - a task waiting on the owner moves only on the owner's words this turn, or an earlier requirement
+ *   or permission the assistant quotes (`authorization`), and only to be done again;
+ * - one task goes back to be done at most ASSISTANT_RETRIES times by the assistant alone;
+ * - a retry starts the next round only within the budget (advanceWork).
+ * A card already sent closes.
  */
-export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner"; text: string; ownerWords: boolean; authorization?: string }, by: string) {
+export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner"; text: string; ownerWords: boolean; authorization?: string; question?: string; options?: string[] }, by: string) {
   const t = getTask(app, rootId, seq);
-  if (t.state !== "owner") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等处理`);
+  if (t.state !== "assistant" && t.state !== "owner") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等处理`);
   const authorizedRetry = a.action === "retry" && !!a.authorization?.trim();
-  if (!t.origin.blocked && !a.ownerWords && !authorizedRetry) throw new HttpError(403, `${taskLabel(seq)} 是要本人决定的问题：等本人回答；已有需求或授权已确定做法的，可附 existing_authorization 恢复原任务，不得替本人作新的业务决定`);
-  const note = { by, kind: "assistant" as const, text: `${a.action === "owner" ? "交给本人" : a.action === "skip" ? "不做" : "重做"}：${a.text}${authorizedRetry ? `\n已有授权依据：${a.authorization!.trim()}` : ""}` };
+  if (t.state === "owner") {
+    if (a.action === "owner") throw new HttpError(409, `${taskLabel(seq)} 已经在等本人`);
+    if (!a.ownerWords && !authorizedRetry) throw new HttpError(403, `${taskLabel(seq)} 在等本人决定：本人在这一轮回答了才转达；原需求或本人之前的话已经定了做法的，retry 并在 existing_authorization 写出原话或引用。不能替本人作新的决定，也不能替本人说不做`);
+  }
+  if (a.action === "retry" && t.state === "assistant" && !a.ownerWords && retriesBy(t) >= ASSISTANT_RETRIES)
+    throw new HttpError(409, `${taskLabel(seq)} 你已经让它重做过 ${retriesBy(t)} 次还没好：换一种做法要本人定，用 owner 写清问题和两三个选项；做不了的用 skip 写理由`);
   if (a.action === "owner") {
-    if (!t.origin.blocked || t.origin.escalated) throw new HttpError(409, `${taskLabel(seq)} 已经在等本人`);
-    updateTask(app, rootId, seq, { origin: { ...t.origin, escalated: true }, question: `${t.question ?? t.doneWhen}\n\n助手：${a.text}` }, note);
+    const options = (a.options ?? []).map((o) => o.trim()).filter(Boolean);
+    if (!a.question?.trim() || options.length < 2) throw new HttpError(400, "交给本人要写 question（本人要定什么、为什么只有本人能定）和两三个 options（各自的做法）；没有可选的做法、只是要人去做事的（补字段、等别的团队），用 skip 写明在等什么");
+    updateTask(app, rootId, seq, { state: "owner", question: a.question.trim(), options }, { by, kind: "assistant", text: `交给本人：${a.text}` });
     ensureOwnerAsks(app, rootId);
     return null;
   }
-  if (a.action === "skip") updateTask(app, rootId, seq, { state: "wontdo", answer: a.text }, note);
-  else updateTask(app, rootId, seq, { state: "todo", answer: a.text, attempts: 0, origin: { ...t.origin, blocked: undefined, escalated: undefined } }, note);
+  const note = { by, kind: "assistant" as const, text: `${a.action === "skip" ? "不做" : "重做"}：${a.text}${authorizedRetry ? `\n已有授权依据：${a.authorization!.trim()}` : ""}` };
+  // The owner's words are their decision (taskText shows it); the assistant's stay a note on the task.
+  const answer = a.ownerWords ? { answer: a.text } : {};
+  if (a.action === "skip") updateTask(app, rootId, seq, { state: "wontdo", ...answer }, note);
+  else updateTask(app, rootId, seq, { state: "todo", attempts: 0, ...answer }, note);
   closeTaskAsk(app, rootId, seq);
   return advanceWork(app, rootId, { owner: a.ownerWords });
 }
@@ -574,7 +595,8 @@ export function settleTask(app: App, rootId: string, seq: number, a: { action: "
 /** The owner's answer to a task's question: done their way, or not at all. Then the work goes on. */
 export function answerTask(app: App, rootId: string, seq: number, a: { choice?: string | null; text?: string | null; skip?: boolean }, by: string) {
   const t = getTask(app, rootId, seq);
-  if (t.state !== "owner") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等你决定`);
+  // The owner may also settle a task the assistant holds: their word comes first.
+  if (t.state !== "owner" && t.state !== "assistant") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等你决定`);
   const text = [a.choice && a.choice !== SKIP ? a.choice : "", a.text?.trim() ?? ""].filter(Boolean).join("：");
   if (a.skip || a.choice === SKIP) updateTask(app, rootId, seq, { state: "wontdo", answer: text || "不做" }, { by, kind: "owner", text: `本人决定不做${a.text?.trim() ? `：${a.text.trim()}` : ""}` });
   else {
@@ -598,7 +620,7 @@ export function closeTaskAsk(app: App, rootId: string, seq: number) {
 registerAskHandler("code-task", async (app: App, ask: Ask, ctx) => {
   const { workId, seq } = ctx as { workId: string; seq: number };
   const t = getTask(app, workId, seq);
-  if (t.state !== "owner") return;
+  if (t.state !== "owner" && t.state !== "assistant") return;
   const choice = ask.choice !== null ? ask.options[ask.choice]?.label ?? null : null;
   const text = choice && ask.answer?.startsWith(choice) ? ask.answer.slice(choice.length).replace(/^[：:]\s*/, "") : ask.choice === null ? ask.answer : "";
   const w = workState(app, workId);
@@ -636,10 +658,11 @@ export function workNote(app: App, runId: string, text: string, by: string): str
   if (stage === "coding" || stage === "queued") return `已交给正在做的 ${at}：编码 Agent 在这一轮收到。`;
   const next = advanceWork(app, rootId, { owner: true });
   if (next) return `第 ${next.input.round ?? "?"} 轮 ${next.id} 开始做，这段话作为这一轮的交代交给编码 Agent。`;
-  const waiting = listTasks(app, rootId).filter((t) => t.state === "owner");
+  const waiting = listTasks(app, rootId).filter((t) => t.state === "owner" || t.state === "assistant");
+  const w = workState(app, rootId);
   return [
-    "记下了，下一轮开始时交给编码 Agent。现在没有待做的修改项，所以没有开新的一轮。",
-    waiting.length ? `在等处理的：${waiting.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 40)}」${t.origin.blocked && !t.origin.escalated ? "（等你处理）" : "（等本人决定）"}`).join("、")}。本人让它们重做的，在回答本人的这一轮用 settle_code_task（action=retry）转达；等你处理的直接处理。` : "",
+    `记下了，下一轮开始时交给编码 Agent。${w.paused ? `交办暂停着（${w.paused}），` : roundOf(lastRound(app, rootId)) >= w.until ? `自动推进的 ${w.until} 轮用完了，` : "现在没有待做的修改项，"}所以没有开新的一轮。`,
+    waiting.length ? `在等处理的：${waiting.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 40)}」${t.state === "assistant" ? "（等你处理）" : "（等本人决定）"}`).join("、")}。等你处理的用 settle_code_task 处理；等本人决定的，本人在这一轮回答了才用 settle_code_task（action=retry）转达。` : "",
     "要加一项新的修改，再调用一次并传 new_item=true。",
   ].filter(Boolean).join("\n");
 }

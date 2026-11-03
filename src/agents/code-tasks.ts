@@ -19,8 +19,13 @@ import type { WorktreeRef } from "./worktree-index.ts";
  * the agents (code-loop.ts runs the reviews and decides what comes next).
  */
 
-/** disputed: the coder objects to a finding its check still insists on; review-lead rules (code-loop.ts). */
-export type TaskState = "todo" | "coding" | "verify" | "disputed" | "done" | "owner" | "wontdo" | "reverted";
+/**
+ * disputed: the coder objects to a finding its check still insists on; review-lead rules (code-loop.ts).
+ * Two states wait on someone, each on one party only: assistant — the assistant that started the work
+ * (held up, failed too often, never reached, no ruling), which settles it or passes it on; owner — a
+ * decision only the owner makes, always with options. Work started on the web has no assistant.
+ */
+export type TaskState = "todo" | "coding" | "verify" | "disputed" | "done" | "assistant" | "owner" | "wontdo" | "reverted";
 /** build: split from the request; fix: from a review finding; owner: the owner's words; redo: again after a revert. */
 export type TaskKind = "build" | "fix" | "owner" | "redo";
 export type TaskNote = { at: string; by: string; text: string; kind: "coder" | "verify" | "owner" | "revert" | "lead" | "host" | "consult" | "assistant" };
@@ -31,8 +36,7 @@ export type CodeTask = {
   title: string;
   doneWhen: string;
   kind: TaskKind;
-  /** blocked: the coder was held up by its environment, which the assistant that started the work sees to first; escalated: it passed it on to the owner. */
-  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[]; blocked?: boolean; escalated?: boolean };
+  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[] };
   state: TaskState;
   question: string | null;
   options: string[];
@@ -51,9 +55,11 @@ export type CodeTask = {
 };
 export type Checkpoint = { seq: number; heads: Record<string, string>; tasks: number[]; by: string; label: string; createdAt: string };
 
-export const TASK_STATE_LABEL: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
-/** After this many failed tries, the initiating assistant takes over the technical blockage. */
+export const TASK_STATE_LABEL: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", assistant: "等助手处理", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
+/** After this many failed tries (or rounds that never got to it) a task goes to the assistant that started the work. */
 export const MAX_ATTEMPTS = 3;
+/** How many times the assistant may send one task back to be done again before only the owner can. */
+export const ASSISTANT_RETRIES = 2;
 
 /**
  * What the loop keeps on the delegation's first run (`output.work`): the round it may go up to
@@ -203,16 +209,22 @@ export function updateTask(app: App, rootId: string, seq: number, patch: TaskPat
 export function retryTask(app: App, rootId: string, seq: number, note: Omit<TaskNote, "at">): CodeTask {
   const t = getTask(app, rootId, seq);
   const attempts = t.attempts + 1;
-  if (attempts >= MAX_ATTEMPTS) {
-    return updateTask(app, rootId, seq, {
-      attempts,
-      state: "owner",
-      question: `改了 ${attempts} 次，验证还是没通过。请发起交办的助手核对历次意见、调整执行安排，再按原需求修复；只有需要新的业务决定或本人操作时才交给本人。`,
-      options: [],
-      origin: { ...t.origin, blocked: true, escalated: undefined },
-    }, note);
-  }
+  if (attempts >= MAX_ATTEMPTS) return toAssistant(app, rootId, seq, `改了 ${attempts} 次，验证还是没通过（每次的意见在“之前的情况”里）。`, note, { attempts });
   return updateTask(app, rootId, seq, { attempts, state: "todo" }, note);
+}
+
+/** The work reports to an assistant (it was delegated from a conversation), which settles what holds a task up. */
+export function hasAssistant(app: App, rootId: string) {
+  return !!(lastRound(app, rootId).output as { codeChain?: unknown }).codeChain;
+}
+
+/**
+ * A task the coder and the checks cannot move on goes to the assistant that started the work, with
+ * what happened (`why`, facts only); with no assistant (started on the web), to the owner.
+ */
+export function toAssistant(app: App, rootId: string, seq: number, why: string, note?: Omit<TaskNote, "at">, patch: TaskPatch = {}): CodeTask {
+  if (hasAssistant(app, rootId)) return updateTask(app, rootId, seq, { ...patch, state: "assistant", question: why, options: [] }, note);
+  return updateTask(app, rootId, seq, { ...patch, state: "owner", question: why, options: ["按原来的要求再做一次"] }, note);
 }
 
 const NOT_REACHED = "轮编码 Agent 停下时还没做这一项";
@@ -231,12 +243,7 @@ export function notReached(app: App, rootId: string, seq: number, round: number)
     else if (n.kind !== "host") break;
   }
   if (times < MAX_ATTEMPTS) return updateTask(app, rootId, seq, { state: "todo" }, note);
-  return updateTask(app, rootId, seq, {
-    state: "owner",
-    question: `编码 Agent 连续 ${times} 轮都没做到这一项：它在做别的项，或者每轮停下前没轮到它，也没有用 report_task 说明为什么。可能是这一项太大、说得不清楚，或者依赖别的项。`,
-    options: ["说清楚了，再做一次"],
-    origin: { ...t.origin, blocked: true, escalated: undefined },
-  }, note);
+  return toAssistant(app, rootId, seq, `编码 Agent 连续 ${times} 轮都没做到这一项，也没有用 report_task 说明为什么：可能太大（该拆开）、说得不清楚，或者依赖别的项。`, note);
 }
 
 /** A finding taken up as a task: its check verifies it, the finding remembers the task. */
@@ -259,7 +266,7 @@ export function taskForFinding(app: App, rootId: string, f: { id: number; title:
 }
 
 /** States a later finding can still join: the task is not settled yet. */
-export const JOINABLE: TaskState[] = ["todo", "coding", "verify", "disputed", "owner"];
+export const JOINABLE: TaskState[] = ["todo", "coding", "verify", "disputed", "assistant", "owner"];
 
 /**
  * A finding that restates a task the work already has (review-lead merged it there): the task
@@ -756,13 +763,22 @@ export function ownerQuestionText(app: App, t: CodeTask) {
 /** Owner of the work, for asks and notifications. */
 export const workOwner = (app: App, rootId: string) => runUser(app, rootId);
 
-/** The tasks held up by the coder's environment that wait for the assistant (ensureOwnerAsks), for its turn after the round. */
-export function blockedText(app: App, rootId: string) {
-  const blocked = listTasks(app, rootId).filter((t) => t.state === "owner" && t.origin.blocked && !t.origin.escalated);
-  return blocked.length
-    ? `## 编码 Agent 被挡住、等你处理的修改项\n\n${blocked.map((t) => `- ${taskLabel(t.seq)}「${t.title}」：${truncate(t.question ?? "", 600)}`).join("\n")}\n\n这些没有问本人。你能处理的（查清楚、换个做法、宿主已经做过的）处理好后用 settle_code_task 让它重做或不做；要本人做或决定的，用 settle_code_task 的 owner 交给本人。`
-    : "";
+/**
+ * Who the work waits on now, for the assistant's turn: the tasks it settles itself (each in full) and
+ * the questions already with the owner (cards sent, not to be asked again).
+ */
+export function waitingText(app: App, rootId: string) {
+  const tasks = listTasks(app, rootId);
+  const mine = tasks.filter((t) => t.state === "assistant");
+  const owner = tasks.filter((t) => t.state === "owner");
+  return [
+    mine.length ? `## 等你处理的修改项（${mine.length} 项，没有问本人）\n\n${mine.map((t) => `${truncate(taskText(app, t), 4000)}\n\n停下的原因：${t.question ?? ""}${retriesBy(t) ? `\n你已经让它重做过 ${retriesBy(t)} 次（最多 ${ASSISTANT_RETRIES} 次）。` : ""}`).join("\n\n")}` : "",
+    owner.length ? `## 在等本人决定的修改项（${owner.length} 项，卡片已经发给本人，不要再问）\n\n${owner.map((t) => `- ${taskLabel(t.seq)}「${t.title}」：${truncate(t.question ?? "", 300)}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
 }
+
+/** Times the assistant sent the task back to be done again (settle_code_task retry). */
+export const retriesBy = (t: CodeTask) => t.notes.filter((n) => n.kind === "assistant" && n.text.startsWith("重做")).length;
 
 export function lastRound(app: App, rootId: string): Run {
   const r = one<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at desc limit 1", rootId, rootId);

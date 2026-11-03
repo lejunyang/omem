@@ -1164,6 +1164,10 @@ const migrations: string[] = [
      when new.sync_key = old.sync_key and new.sync_updated_at = old.sync_updated_at begin
      update code_tasks set sync_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where rowid = new.rowid;
    end;`,
+  // A task waiting on the assistant that started the work has its own state; "owner" is only the owner's (code-loop.ts).
+  `update code_tasks set state = 'assistant', origin = json_remove(origin, '$.blocked', '$.escalated')
+     where state = 'owner' and json_extract(origin, '$.blocked') = 1 and json_extract(origin, '$.escalated') is null;
+   update code_tasks set origin = json_remove(origin, '$.blocked', '$.escalated') where json_extract(origin, '$.blocked') is not null;`,
 ];
 
 export type Db = DatabaseSync;

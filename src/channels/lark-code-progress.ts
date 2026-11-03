@@ -5,7 +5,7 @@ import { all, one, run } from "../core/db.ts";
 import { type CodeChain, saveCodeChain, trySettleCodeChain, maxCodeRounds } from "../agents/code-chain.ts";
 import { getThread } from "../agents/threads.ts";
 import { getRun } from "../agents/runs.ts";
-import { isTaskWork, listTasks, taskLabel, workRootOf, workState } from "../agents/code-tasks.ts";
+import { isTaskWork, listTasks, taskLabel, TASK_STATE_LABEL, workRootOf, workState } from "../agents/code-tasks.ts";
 import { findSpace } from "../core/spaces.ts";
 import { reviewChecks, reviewsOf, STOP_LABEL, SEVERITY_LABEL, type LeadResult, type ReviewPlan, type StopReason } from "../agents/review.ts";
 import { buildCard, sendLark, updateLarkCard, larkClient, type CardBlock } from "./lark-send.ts";
@@ -83,7 +83,7 @@ function checkLines(app: App, repos: RepoCheck[] | undefined): string {
 }
 
 /** A delegation driven by tasks (docs/v2/coding-loop.md): how far its tasks are and what waits for the owner. */
-const TASK_MARK: Record<string, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
+const TASK_MARK: Record<string, string> = TASK_STATE_LABEL;
 const PAUSED: Record<string, string> = { budget: "暂停：自动推进的轮数用完了，说“继续”再推进", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停" };
 function taskLines(app: App, rootId: string) {
   const tasks = listTasks(app, rootId);
@@ -99,10 +99,12 @@ function taskLines(app: App, rootId: string) {
 function taskStatus(app: App, rootId: string, latest: ReturnType<typeof getRun>) {
   const w = workState(app, rootId);
   const owner = listTasks(app, rootId).filter((t) => t.state === "owner").length;
+  const mine = listTasks(app, rootId).filter((t) => t.state === "assistant").length;
   const stage = String(latest.output.reviewStage ?? "");
   if (["queued", "running"].includes(latest.status)) return latest.status === "queued" ? "排队中" : stage === "verify" ? "逐项验证中" : stage === "arbitrate" ? "评审负责人裁决异议中" : stage === "plan" ? "评审负责人在定这次评审看什么" : ["checks", "lead"].includes(stage) ? "阶段评审中" : "编码中";
   if (w.paused) return PAUSED[w.paused] ?? "已暂停";
-  if (owner) return `等你决定 ${owner} 项（卡片在下面），其余照常推进`;
+  if (owner) return `等你决定 ${owner} 项（卡片在下面）${mine ? `，${mine} 项助手在处理` : ""}，其余照常推进`;
+  if (mine) return `${mine} 项助手在处理（没有要你决定的）`;
   if (latest.output.verdict === "approved") return "完成，等你确认推送";
   return latest.status !== "done" ? `运行${latest.status}，等本人处理` : "已停下";
 }

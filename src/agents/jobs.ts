@@ -100,7 +100,7 @@ registerHandler("ask", async (ctx) => {
     throw e;
   }
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
-  const answer = r.text.trim() || "（Agent 没有给出文字回答）";
+  let answer = r.text.trim() || "（Agent 没有给出文字回答）";
   if (coordinate) {
     const id = await deliverCoordination(ctx, coordinate, answer, { agent: r.agent, session: r.mode, replyTo: ids });
     maybeSummarize(ctx.app, input.conversationId);
@@ -118,8 +118,15 @@ registerHandler("ask", async (ctx) => {
     const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
     return { answer, messageId: id, quiet: true, session: r.mode };
   }
-  // Woken by a result (a coding delegation ended): nobody waits on this turn, so it is posted.
-  if ((ctx.run.input as { handoff?: unknown }).handoff || ctx.run.input.fromAsk) {
+  // Woken by a result (a coding delegation ended) or by tasks waiting on it: nobody waits on this turn, so it is posted.
+  const handoff = (ctx.run.input as { handoff?: { kind: string; workId?: string } }).handoff;
+  if (handoff || ctx.run.input.fromAsk) {
+    // What the turn left unsettled is said where the owner reads it, not left as a silent wait.
+    const { listTasks, taskLabel } = await import("./code-tasks.ts");
+    const left = handoff?.workId ? listTasks(ctx.app, handoff.workId).filter((t) => t.state === "assistant") : [];
+    if (handoff?.kind === "code-tasks" && isQuiet(answer) && !left.length) return { answer, quiet: true, session: r.mode };
+    const note = left.length ? `\n\n（${left.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 40)}」`).join("、")} 交给了助手，这一轮还没处理，交办在这几项上停着。）` : "";
+    answer = `${isQuiet(answer) ? "" : answer}${note}`.trim() || answer;
     await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode, channelDelivered: true };

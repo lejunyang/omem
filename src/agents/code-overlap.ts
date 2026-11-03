@@ -296,7 +296,7 @@ function afterVerify(app: App, runId: string, r: OpenRound, tasks: CodeTask[]) {
     else if (t.state === "todo" && r.accepting) {
       bringBack(app, runId, r, t.seq, "验证没过，交回这一轮接着改");
       addRoundFeedback(runId, `- ${head}\n  在这一轮接着改，改完照常提交、finish_task。`);
-    } else if (t.state === "owner") addRoundFeedback(runId, `- ${head}\n  试了几次还没改好，已经交给本人决定，这一轮跳过它。`);
+    } else if (t.state === "assistant" || t.state === "owner") addRoundFeedback(runId, `- ${head}\n  试了几次还没改好，交给了${t.state === "assistant" ? "发起交办的助手" : "本人"}，这一轮跳过它。`);
   }
 }
 

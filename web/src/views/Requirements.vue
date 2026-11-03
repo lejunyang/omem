@@ -26,14 +26,14 @@ type Node = { id: string; spaceId: string; parentId: string | null; kind: Kind; 
 type Version = { id: string; version: number; change: string; title: string; reason: string; sourceRefs: string[]; by: string; runId: string | null; at: string };
 type Link = { id: string; direction: "in" | "out"; note: string; other: { id: string; spaceId: string; kind: Kind; title: string; status: string } | null };
 // A delegation or branch review done for an item this node belongs to (src/items/work.ts).
-type WorkStage = "coding" | "reviewing" | "peer" | "owner" | "done" | "applied" | "discarded";
+type WorkStage = "coding" | "reviewing" | "peer" | "assistant" | "owner" | "done" | "applied" | "discarded";
 type Work = { itemId: string; itemTitle: string; rootId: string; latestId: string; title: string; rounds: string[]; status: string; verdict: string | null; stage: WorkStage; branchReview: boolean; branchWork: boolean; branch: string | null; open: number; createdAt: string; updatedAt: string };
 type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; work: Work[] };
 
 const KIND: Record<Kind, string> = { system: "系统", module: "模块", page: "页面", feature: "功能", test: "测试点" };
 const CHANGE: Record<string, string> = { create: "新建", correct: "更正", change: "业务变更", delete: "删除（写错了）", remove: "移除（业务不要了）", confirm: "本人确认", restore: "恢复" };
 const STATE: Record<string, { text: string; cls: string }> = { done: { text: "已实现", cls: "ok" }, partial: { text: "部分实现", cls: "warn" }, missing: { text: "没实现", cls: "danger" }, extra: { text: "需求外", cls: "" } };
-const STAGE: Record<WorkStage, { text: string; cls: string }> = { coding: { text: "编码中", cls: "" }, reviewing: { text: "评审中", cls: "" }, peer: { text: "等外部 Agent", cls: "" }, owner: { text: "等你处理", cls: "accent" }, done: { text: "已评审", cls: "ok" }, applied: { text: "已应用", cls: "ok" }, discarded: { text: "已丢弃", cls: "" } };
+const STAGE: Record<WorkStage, { text: string; cls: string }> = { coding: { text: "编码中", cls: "" }, reviewing: { text: "评审中", cls: "" }, peer: { text: "等外部 Agent", cls: "" }, assistant: { text: "助手在处理", cls: "" }, owner: { text: "等你处理", cls: "accent" }, done: { text: "已评审", cls: "ok" }, applied: { text: "已应用", cls: "ok" }, discarded: { text: "已丢弃", cls: "" } };
 // What the owner is waiting on, from the latest round's verdict.
 const OWNER_WHAT: Record<string, string> = { "awaiting-plan": "确认评审计划", "changes-requested": "决定要改的问题", approved: "评审通过，可以应用", "sync-conflict": "同步有冲突", "no-changes": "没有改动" };
 const ownerWhat = (w: Work) => (w.status === "failed" ? "运行失败" : w.verdict === "approved" && w.branchWork ? "评审通过，可以确认推送" : (w.verdict && OWNER_WHAT[w.verdict]) || "看结果");

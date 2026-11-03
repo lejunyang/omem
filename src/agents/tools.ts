@@ -4017,12 +4017,12 @@ def({
 
 def({
   name: "report_task",
-  description: "编码 Agent 把一个修改项交出去，然后接着做别的项：owner = 要本人在业务或功能上定（写问题和两三个选项）；disputed = 认为评审的问题不成立（写理由，交提出它的评审项再看）；blocked = 被权限、环境、外部依赖挡住了（写清楚是什么）。",
+  description: "编码 Agent 把一个修改项交出去，然后接着做别的项：owner = 要本人在业务或功能上取舍（写 question 和两三个 options，缺了会被拒绝）；disputed = 认为评审的问题不成立（写理由，交提出它的评审项再看）；blocked = 被权限、环境、外部依赖挡住了，或缺别的团队给的字段、接口（写清楚是什么），交给发起交办的助手处理。",
   schema: z.object({
     task: z.union([z.string(), z.number()]),
     kind: z.enum(["owner", "disputed", "blocked"]),
     reason: z.string().min(1).max(3000).describe("为什么：分歧点和各自的影响、不成立的理由，或挡住的是什么"),
-    question: z.string().max(1000).optional().describe("owner / blocked：给本人的问题"),
+    question: z.string().max(1000).optional().describe("owner：给本人的问题，写要定什么和影响"),
     options: z.array(z.string().min(1).max(40)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
   handler: async (ctx, a) => {
@@ -4049,33 +4049,47 @@ def({
       if (actor === r.id) (await import("./code-overlap.ts")).taskFinished(ctx.app, actor, seq);
       return `已把 ${t.taskLabel(seq)} 的异议交给 ${task.verifier}，它会撤回或回应。接着做别的项。`;
     }
-    const question = a.question?.trim() || a.reason;
-    const blocked = a.kind === "blocked";
-    t.updateTask(ctx.app, rootId, seq, { state: "owner", question, options: blocked ? ["已经处理好了，再试一次"] : a.options ?? [], origin: { ...task.origin, blocked: blocked || undefined, escalated: undefined } }, { by: "coder", kind: "coder", text: `${blocked ? "被挡住了" : a.kind === "owner" ? "要本人决定" : "有异议"}：${a.reason}` });
-    const assistant = !!(t.lastRound(ctx.app, rootId).output as { codeChain?: unknown }).codeChain;
-    return `已把 ${t.taskLabel(seq)} 交给${blocked && assistant ? "发起交办的助手（这一轮结束后它来处理，处理不了再问本人）" : "本人"}，这一项先停着。接着做别的项。`;
+    // Held up, or objecting to a task no check raised (the assistant or the owner wrote it): the assistant looks first.
+    if (a.kind === "blocked" || a.kind === "disputed") {
+      const said = a.kind === "blocked" ? "被挡住了" : "认为这一项不该做";
+      const after = t.toAssistant(ctx.app, rootId, seq, `编码 Agent ${said}：${a.reason}`, { by: "coder", kind: "coder", text: `${said}：${a.reason}` });
+      // Woken now, not when the work stops: it may settle this while the round goes on.
+      if (after.state === "assistant") (await import("./code-chain.ts")).wakeAssistantForTasks(ctx.app, rootId);
+      return `已把 ${t.taskLabel(seq)} 交给${after.state === "assistant" ? "发起交办的助手（它现在就来处理，处理不了才问本人）" : "本人"}，这一项先停着。接着做别的项。`;
+    }
+    const options = (a.options ?? []).map((o) => o.trim()).filter(Boolean);
+    if (a.kind === "owner" && (!a.question?.trim() || options.length < 2))
+      throw new HttpError(400, "要本人决定的写 question（要定什么、各自的影响）和两三个 options（可选的做法）。没有可选的做法、只是要别人做事（补字段、给接口、改环境）的，用 blocked");
+    t.updateTask(ctx.app, rootId, seq, { state: "owner", question: a.question!.trim(), options }, { by: "coder", kind: "coder", text: `要本人决定：${a.reason}` });
+    return `已把 ${t.taskLabel(seq)} 交给本人，这一项先停着。接着做别的项。`;
   },
 });
 
 def({
   name: "settle_code_task",
-  description: "发起交办的助手处理停着的修改项：环境阻塞或多次修复失败先由你调查、调整后 retry；自己处理不了且确需本人操作或新业务决定的才 owner。待本人项若原需求或已有授权已确定做法，retry 并在 existing_authorization 写出依据，不要求本人在当前轮重复授权；新的业务取舍仍等本人回答。skip 不得绕过本人的决定。已发卡片随之关闭。",
+  description: "发起交办的助手处理停着的修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（等别的团队、缺外部字段也是 skip）、owner 只在要本人在业务或功能上取舍时，写 question 和两三个 options。「等你决定」的项只在本人这一轮回答了才转达（retry / skip）；原需求或本人之前的话已经定了做法的，retry 并在 existing_authorization 写出原话或引用。retry 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
   write: true,
   schema: z.object({
     run_id: z.string().describe("这次交办的任一运行 id"),
     task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
     action: z.enum(["retry", "skip", "owner"]),
-    note: z.string().min(1).max(3000).describe("retry：怎么处理好的、编码 Agent 这次该怎么做；skip：为什么不做；owner：要本人做或决定什么"),
-    existing_authorization: z.string().min(1).max(2000).optional().describe("仅 retry：原需求或本人此前已给的授权，写出原话或消息引用及其如何确定本项做法；不用于替本人作新的业务决定"),
+    note: z.string().min(1).max(3000).describe("retry：查到的原因、编码 Agent 这次具体怎么做；skip：为什么不做、在等什么；owner：你查过什么、为什么只有本人能定"),
+    question: z.string().max(1000).optional().describe("owner：给本人的问题，写要定什么和影响，不写调查过程"),
+    options: z.array(z.string().min(1).max(60)).max(4).optional().describe("owner：两三个可选的做法"),
+    existing_authorization: z.string().min(1).max(2000).optional().describe("仅 retry「等你决定」的项：原需求或本人此前的原话或消息引用，及它怎么定了这一项的做法；不用于替本人作新的业务决定"),
   }),
   handler: async (ctx, a) => {
     const t = await import("./code-tasks.ts");
     const rootId = t.workRootOf(ctx.app, a.run_id);
     if (t.workOwner(ctx.app, rootId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能处理本人的交办");
     const seq = t.parseTaskRef(a.task);
-    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), authorization: a.existing_authorization }, "assistant");
+    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), authorization: a.existing_authorization, question: a.question, options: a.options }, "assistant");
     const label = t.taskLabel(seq);
-    return a.action === "owner" ? `已把 ${label} 交给本人。` : `${label} ${a.action === "skip" ? "不做了" : "回到待做"}${next ? `，下一轮已排上（${next.id}）` : "；交办停着时，下一轮在本人说继续或预算内推进时做"}。`;
+    if (a.action === "owner") return `已把 ${label} 交给本人（发了卡片）。`;
+    if (a.action === "skip" || next) return `${label} ${a.action === "skip" ? "不做了" : "回到待做"}${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;
+    const w = t.workState(ctx.app, rootId);
+    const busy = ["queued", "running"].includes(t.lastRound(ctx.app, rootId).status);
+    return `${label} 回到待做；${busy ? "正在进行的这一轮结束后接着做" : w.paused ? `交办暂停着（${w.paused}），本人说继续才推进` : `自动推进的 ${w.until} 轮用完了，本人说继续才推进`}。`;
   },
 });
 

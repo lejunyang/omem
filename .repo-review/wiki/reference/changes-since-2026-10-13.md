@@ -1108,3 +1108,11 @@ updated: 2026-11-03
 
 - 空间选择先退出旧需求和编码详情，再切换空间，避免页面重建后加载旧需求，把空间切回去；直接打开跨空间需求链接仍切到需求所属空间（`web/src/App.vue`）。
 - 需求树和详情忽略过期请求的结果及错误；页面卸载时移除事件订阅并清理定时刷新，旧页面不再改动当前空间（`web/src/views/Requirements.vue`）。
+
+## 11-03：编码交办“等谁”分开，助手马上被叫醒
+
+- 修改项新状态“等助手处理”（`assistant`）：被挡住、缺外部字段、验证 3 次没过、连续 3 轮没轮到、评审负责人没裁决都进这里，不再显示成“等你决定”、不发卡片；“等你决定”只留给带选项的业务取舍（`report_task(owner)`、`settle_code_task(owner)` 没选项会被拒绝）。旧数据的 `owner + blocked` 迁移成新状态（`src/core/db.ts`）。
+- 一项变成“等助手处理”时宿主马上叫醒发起交办的助手（`code-chain.ts` 的 `wakeAssistantForTasks`，同一交办同时一轮，可回答 QUIET），不等交办停下；交办停下时叫醒它的消息由宿主写明停下的原因和现在等谁（`stopText`）。
+- 宿主限制助手（`code-loop.ts` 的 `settleTask`）：同一项最多 retry 2 次；不能替本人决定；retry 只在自动推进的轮数内开下一轮（`advanceWork`）。
+- 运行页轮次多时，较早的轮收进“更早的轮”下拉（`web/src/views/Runs.vue`，和 WorkPane 一样）。
+- 角色、工具、唤醒和全部限制的表：docs/v2/coding-loop.md 3.1。
