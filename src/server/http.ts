@@ -1223,7 +1223,6 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const next = await (await import("../agents/code-loop.ts")).advanceWork(app, rootId, { owner: true });
     return { task, next: next?.id ?? null };
   });
-  server.post("/api/runs/:id/tasks/:seq", async (req) => {
   // Another stage review of a task-driven delegation, from a checkpoint (code-loop.ts reviewAgain).
   server.post("/api/runs/:id/review-again", async (req) => {
     const id = (req.params as { id: string }).id;
@@ -1234,6 +1233,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const next = (await import("../agents/code-loop.ts")).reviewAgain(app, t.workRootOf(app, id), { from: b.from });
     return { next: next.id };
   });
+  server.post("/api/runs/:id/tasks/:seq", async (req) => {
     const { id, seq: raw } = req.params as { id: string; seq: string };
     ownRun(req, id);
     const b = q(z.object({ action: z.enum(["answer", "skip", "reopen", "wontdo", "revert"]), choice: z.string().max(200).nullable().optional(), text: z.string().max(8000).optional(), redo: z.boolean().optional() }), req.body);
