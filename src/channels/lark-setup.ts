@@ -243,12 +243,14 @@ export const LARK_BOT_CALLBACKS = [{ name: "card.action.trigger", label: "卡片
  * `scopesUnknown`: the app's granted permissions could not be read, so `missingScopes` may be incomplete.
  * `events` / `callbacks`: what the application info says the app subscribes to (null: not readable);
  * `publishedEvents`: the events of the version online, when that version could be read.
+ * `grantedScopes`: every scope the app has (tenant and user identity), when they could be read.
  */
 export type LarkCheck = {
   botName?: string;
   botOpenId?: string;
   missingScopes: string[];
   scopesUnknown?: boolean;
+  grantedScopes?: string[];
   error?: string;
   events?: string[] | null;
   publishedEvents?: string[] | null;
@@ -311,6 +313,7 @@ export async function checkLarkApp(appId: string, appSecret: string, request: ty
     if (bot.code !== 0) return { missingScopes: [], error: `应用没有开启机器人能力（${bot.code}：${bot.msg ?? ""}）` };
     let missing: string[] = [];
     let unknown = true;
+    let granted: string[] | undefined;
     const subs: Pick<LarkCheck, "events" | "publishedEvents" | "eventMode" | "callbacks" | "callbackMode"> = { events: null, publishedEvents: null, eventMode: null, callbacks: null, callbackMode: null };
     try {
       // Application info (application v6, the app reading itself): granted scopes, and the event and
@@ -321,6 +324,7 @@ export async function checkLarkApp(appId: string, appSecret: string, request: ty
       if (have.size) {
         missing = LARK_BOT_ADDONS.scopes.tenant.filter((s) => !have.has(s));
         unknown = false;
+        granted = [...have];
       }
       if (Array.isArray(info?.event?.subscribed_events)) subs.events = info.event.subscribed_events;
       subs.eventMode = info?.event?.subscription_type ?? null;
@@ -336,7 +340,7 @@ export async function checkLarkApp(appId: string, appSecret: string, request: ty
         } catch {}
       }
     } catch {}
-    return { botName: bot.bot?.app_name, botOpenId: bot.bot?.open_id, missingScopes: missing, ...(unknown ? { scopesUnknown: true } : {}), ...subs };
+    return { botName: bot.bot?.app_name, botOpenId: bot.bot?.open_id, missingScopes: missing, ...(unknown ? { scopesUnknown: true } : {}), ...(granted ? { grantedScopes: granted } : {}), ...subs };
   } catch (e) {
     return { missingScopes: [], error: `连不上飞书开放平台：${(e as Error).message}` };
   }

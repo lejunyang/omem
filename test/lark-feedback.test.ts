@@ -171,9 +171,16 @@ describe("reaction feedback", () => {
     expect(s.events.unpublished).toEqual(["im.message.reaction.created_v1"]);
     expect(s.events.link).toBe("https://open.feishu.cn/app/cli_main/event");
     expect(s.callbacks.missing.map((c) => c.name)).toEqual(["card.action.trigger"]);
+    // What people connecting their own Feishu would need: every feature lacks something here.
+    expect(s.members!.features).toContain("日程");
+    expect(s.members!.missing).toEqual(expect.arrayContaining(["offline_access", "calendar:calendar:read"]));
+    expect(s.members!.link).toMatch(/\/app\/cli_main\/auth\?q=.*calendar:calendar:read.*token_type=user/);
+    // Another bot is not what people connect through.
+    expect(summarizeCheck(app, "helper", "cli_helper", check).members).toBeUndefined();
 
     // Feishu does not list subscriptions: unknown, and the heuristic says whether events ever came.
     const unknown = summarizeCheck(app, "main", "cli_main", { missingScopes: [], events: null });
+    expect(unknown.members).toBeUndefined();
     expect(unknown.events.subscribed).toBeNull();
     expect(unknown.events.missing).toEqual([]);
     for (let i = 0; i < 25; i++) recordLarkSent(app, { messageId: `om_${i}`, purpose: "answer", bot: "main" });

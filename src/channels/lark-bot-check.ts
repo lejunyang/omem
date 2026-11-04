@@ -1,3 +1,4 @@
+import { featuresOf } from "../auth/features.ts";
 import type { App } from "../core/app.ts";
 import { reactionEventsQuiet } from "./lark-feedback.ts";
 import { checkLarkApp, larkAppSecret, larkEventLink, larkScopeLink, LARK_BOT_ADDONS, LARK_BOT_CALLBACKS, LARK_BOT_EVENTS, registerLarkBot, saveLarkSecret, type LarkCheck } from "./lark-setup.ts";
@@ -19,6 +20,12 @@ export type BotCheck = {
   name?: string;
   error?: string;
   scopes: { missing: string[]; unknown: boolean; link: string | null };
+  /**
+   * The main app only (people connect their Feishu through it, docs/v2/multi-user.md): user-identity
+   * scopes of the connection features the app does not have yet, which a person turning that feature
+   * on would meet as error 20027. Absent when the app's scopes could not be read.
+   */
+  members?: { missing: string[]; features: string[]; link: string | null };
   events: {
     /** null: the app info did not list them. */
     subscribed: string[] | null;
@@ -66,7 +73,14 @@ export function summarizeCheck(app: App, ref: string, appId: string, check: Lark
     },
     callbacks: { subscribed: check.callbacks ?? null, missing: check.callbacks ? LARK_BOT_CALLBACKS.filter((c) => !cbHave.has(norm(c.name))) : [], mode: check.callbackMode ?? null },
     reactionsQuiet: reactionEventsQuiet(app),
+    ...(ref === "main" && check.grantedScopes ? { members: memberScopes(appId, new Set(check.grantedScopes)) } : {}),
   };
+}
+
+function memberScopes(appId: string, have: Set<string>) {
+  const lacking = featuresOf("lark").filter((f) => f.scopes.some((s) => !have.has(s)));
+  const missing = [...new Set(lacking.flatMap((f) => f.scopes.filter((s) => !have.has(s))))];
+  return { missing, features: lacking.map((f) => f.label), link: missing.length ? larkScopeLink(appId, missing, undefined, "user") : null };
 }
 
 export async function checkLarkBots(app: App, request?: typeof fetch): Promise<BotCheck[]> {

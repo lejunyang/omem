@@ -156,6 +156,7 @@ type BotCheck = {
   name?: string;
   error?: string;
   scopes: { missing: string[]; unknown: boolean; link: string | null };
+  members?: { missing: string[]; features: string[]; link: string | null };
   events: { subscribed: string[] | null; missing: BotEvent[]; unpublished: string[]; mode: string | null; link: string };
   callbacks: { subscribed: string[] | null; missing: { name: string; label: string }[] };
   reactionsQuiet: { days: number; botMessages: number; reactions: number; everReceived: boolean; quiet: boolean };
@@ -849,6 +850,11 @@ async function saveEdit() {
             权限：
             <template v-if="b.scopes.unknown">读不到已开通的权限，<a v-if="b.scopes.link" :href="b.scopes.link" target="_blank" rel="noopener">在开发者后台核对并申请</a></template>
             <template v-else-if="b.scopes.missing.length">缺 {{ b.scopes.missing.length }} 项，<a :href="b.scopes.link!" target="_blank" rel="noopener">一键申请</a><div class="muted mono break">{{ b.scopes.missing.join("、") }}</div></template>
+            <span v-else class="badge accent">齐全</span>
+          </div>
+          <div v-if="b.members" class="small">
+            成员连接飞书：
+            <template v-if="b.members.missing.length">{{ b.members.features.join("、") }}还缺 {{ b.members.missing.length }} 项用户身份的权限，<a :href="b.members.link!" target="_blank" rel="noopener">一键申请</a><div class="muted mono break">{{ b.members.missing.join("、") }}</div></template>
             <span v-else class="badge accent">齐全</span>
           </div>
           <div class="small">
