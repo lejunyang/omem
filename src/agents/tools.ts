@@ -18,6 +18,7 @@ import { findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts"
 import { toolAllowed } from "../auth/tools.ts";
 import { can, requirePerm } from "../auth/permissions.ts";
 import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
+import { isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
@@ -255,11 +256,12 @@ const sourceKinds: Record<string, HitType[]> = {
  */
 async function viewSearch(ctx: ToolContext, query: string, opts: SearchOptions) {
   const view = ctx.view;
-  if (!view) return search(ctx.app, query, opts);
+  // Sources the person this run works for may not see (restricted, Feishu access) are left out (src/auth/visibility.ts).
+  if (!view) return visibleHits(ctx.app, ctx.userId ?? OWNER, await search(ctx.app, query, opts));
   const limit = opts.limit ?? 20;
   const wide: SearchOptions = { ...opts, includeIgnored: true, includeHistory: !!view.asOf || opts.includeHistory, limit: Math.min(120, limit * 3 + 10) };
   const hits = await cached(view, ["search", query, wide, view.asOf ?? null], () => search(ctx.app, query, wide));
-  return filterHits(ctx.app, view, hits).slice(0, limit);
+  return visibleHits(ctx.app, ctx.userId ?? OWNER, filterHits(ctx.app, view, hits)).slice(0, limit);
 }
 
 // ---------------------------------------------------------------- read tools
@@ -443,8 +445,9 @@ def({
     to: z.number().int().min(1).optional(),
     space: z.string().optional(),
   }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const id = resolveSource(ctx, a.source, a.space);
+    if (!id.startsWith("__")) await requireReadable(ctx.app, ctx.userId ?? OWNER, id);
     const from = a.from ?? 1;
     const to = Math.min(a.to ?? from + 399, from + 399);
     const view = ctx.view;
@@ -1383,6 +1386,12 @@ def({
   }),
   handler: (ctx, a) => {
     const id = wikiSpace(ctx, a.space);
+    // A page in a shared space is read by everyone there: it may not quote what only some of them may see.
+    if (findSpace(ctx.app, id)?.kind !== "personal") {
+      const cited = [...new Set([...a.body.matchAll(/src:([A-Za-z0-9_-]{6,})/g)].map((m) => canonicalSourceId(ctx.app, m[1])))];
+      const kept = cited.filter((c) => isRestricted(ctx.app, c));
+      if (kept.length) throw new HttpError(400, `共享空间的页面不能引用只对部分人开放的原件：${kept.join("、")}。换成可以公开给空间成员的依据，或写进个人空间。`);
+    }
     const existed = pageExists(ctx.app, id, a.page);
     const body = a.body.replace(/^#\s+.+\n+/, "");
     const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });

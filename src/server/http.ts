@@ -45,6 +45,7 @@ import { HttpError } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { checkRoute } from "../auth/routes.ts";
+import { setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
 import { can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
@@ -128,7 +129,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.addHook("preHandler", async (req) => {
     const r = req as FastifyRequest & { auth?: RequestAuth; userId: string };
     if (!r.auth || !req.url.startsWith("/api/")) return;
-    checkRoute(app, req, r.userId);
+    await checkRoute(app, req, r.userId);
   });
   const who = (req: FastifyRequest) => (req as FastifyRequest & { userId?: string }).userId ?? OWNER;
   const authOf = (req: FastifyRequest) => (req as FastifyRequest & { auth?: RequestAuth }).auth ?? null;
@@ -286,6 +287,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.patch("/api/spaces/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const b = q(z.object({ name: z.string().optional(), description: z.string().optional(), settings: z.record(z.string(), z.unknown()).optional(), guide: z.string().optional() }), req.body);
+    // A mirror is set up by subscribing (core/federation.ts); a space's manager who is not the owner
+    // changes only who may read its Feishu documents (src/auth/visibility.ts).
+    if (b.settings && "mirror" in b.settings) throw new HttpError(400, "镜像空间由关注其他服务的空间时设置");
+    const extra = Object.keys(b.settings ?? {}).filter((k) => k !== "larkAccess");
+    if (who(req) !== OWNER && extra.length) throw new HttpError(403, `只有 omem 的主人能改这些设置：${extra.join("、")}`);
     if (b.guide !== undefined) writeSpaceGuide(app, id, b.guide);
     return updateSpace(app, id, { name: b.name, description: b.description, settings: b.settings ? { ...getSpace(app, id).settings, ...b.settings } : undefined });
   });
@@ -307,7 +313,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // ------------------------------------------------------------------ sources
   server.get("/api/sources", async (req) => {
     const o = q(z.object({ space: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional(), level: z.enum(LEVELS).optional() }), req.query);
-    return listSources(app, { spaceId: o.space, kind: o.kind, q: o.q, limit: o.limit, offset: o.offset, level: o.level });
+    const rows = listSources(app, { spaceId: o.space, kind: o.kind, q: o.q, limit: o.limit, offset: o.offset, level: o.level });
+    // Restricted ones only for those who may see them (src/auth/visibility.ts); Feishu-checked ones stay listed by title.
+    if (who(req) === OWNER) return rows;
+    const shown = rows.sources.filter((r) => sourceVisible(app, who(req), r.id) !== false);
+    return { ...rows, sources: shown, total: rows.total - (rows.sources.length - shown.length) };
+  });
+  // A source seen by fewer people than its space: only its viewers and the space's managers.
+  server.put("/api/sources/:id/visibility", async (req) => {
+    const b = q(z.object({ visibility: z.enum(["space", "restricted"]), viewers: z.array(z.string()).max(100).optional() }), req.body);
+    const id = (req.params as { id: string }).id;
+    setVisibility(app, id, b.visibility, b.visibility === "restricted" ? [who(req), ...(b.viewers ?? [])] : []);
+    return { visibility: b.visibility, viewers: viewersOf(app, id) };
   });
 
   // ------------------------------------------------- how much a source matters (sources/attention.ts)
@@ -582,7 +599,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       branch = await indexBranch(app, spaces[0], o.branch);
       spaces = [spaces[0], branch.space];
     }
-    const found = await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2 });
+    const found = visibleHits(app, who(req), await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2 }));
     return { hits: presentHits(app, found, o.q), branch };
   });
 

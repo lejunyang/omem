@@ -8,6 +8,7 @@ import { search } from "../search/search.ts";
 import { deleteSource, sourceText, upsertSource } from "../sources/store.ts";
 import { deletePage, readPage, writePage } from "../wiki/store.ts";
 import { getMemory, remember, retract, type MemoryKind } from "../memory/store.ts";
+import { keptHere } from "../auth/visibility.ts";
 
 /**
  * Sharing between omem servers (docs/v2/multi-user.md, “多服务连接”).
@@ -110,7 +111,7 @@ export async function fedSearch(app: App, userId: string, input: { query: string
     if (!g) continue;
     if (h.type === "page" && g.kinds.includes("wiki")) out.push({ type: "page", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
     else if (h.type === "memory" && g.kinds.includes("memory")) out.push({ type: "memory", id: h.id, space: h.spaceId, title: h.title, snippet: h.snippet });
-    else if (h.type === "chunk" && h.sourceKind && allowsSource(g.kinds, h.sourceKind)) {
+    else if (h.type === "chunk" && h.sourceKind && allowsSource(g.kinds, h.sourceKind) && !(h.sourceId && keptHere(app, h.sourceId))) {
       const origin = h.sourceId ? one<{ origin_key: string | null }>(app.db, "select origin_key from sources where id = ?", h.sourceId)?.origin_key : null;
       out.push({ type: "source", id: h.sourceId!, space: h.spaceId, title: h.title, snippet: h.snippet, sourceId: h.sourceId, lineStart: h.lineStart, lineEnd: h.lineEnd, originKey: origin, kind: h.sourceKind });
     }
@@ -123,7 +124,7 @@ export function fedSource(app: App, userId: string, id: string) {
   const s = one<{ id: string; space_id: string; kind: string; uri: string; title: string; origin_key: string | null; updated_at: string; deleted_at: string | null }>(app.db, "select id, space_id, kind, uri, title, origin_key, updated_at, deleted_at from sources where id = ?", id);
   if (!s || s.deleted_at) throw new HttpError(404, "原件不存在");
   const g = grant(app, userId, s.space_id);
-  if (!allowsSource(g.kinds, s.kind)) throw new HttpError(403, "这类原件没有共享");
+  if (!allowsSource(g.kinds, s.kind) || keptHere(app, s.id)) throw new HttpError(403, "这类原件没有共享");
   const text = sourceText(app, s.id);
   return { id: s.id, space: s.space_id, kind: s.kind, uri: s.uri, title: s.title, originKey: s.origin_key, updatedAt: s.updated_at, text: text.slice(0, MAX_TEXT), truncated: text.length > MAX_TEXT };
 }
@@ -146,7 +147,7 @@ export function fedChanges(app: App, userId: string, space: string, since: numbe
       if (r.entity === "source") {
         const s = one<{ kind: string; uri: string; title: string; origin_key: string | null; space_id: string; deleted_at: string | null }>(app.db, "select kind, uri, title, origin_key, space_id, deleted_at from sources where id = ?", r.entity_id);
         if (!s || s.deleted_at || s.space_id !== space) c.op = "delete";
-        else if (!allowsSource(g.kinds, s.kind)) continue;
+        else if (!allowsSource(g.kinds, s.kind) || keptHere(app, r.entity_id)) continue;
         else c.data = { kind: s.kind, uri: s.uri, title: s.title, originKey: s.origin_key, text: sourceText(app, r.entity_id).slice(0, MAX_TEXT) };
       } else if (r.entity === "page") {
         if (!g.kinds.includes("wiki")) continue;

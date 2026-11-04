@@ -1342,6 +1342,17 @@ const migrations: string[] = [
      local_id text not null,
      primary key (peer, entity, remote_id)
    );`,
+  // Who may see a source beyond its space (src/auth/visibility.ts): restricted ones only their
+  // viewers and the space's managers; under a space's Feishu access check, what Feishu said each
+  // person may view, kept a day.
+  `alter table sources add column visibility text not null default 'space';   -- space | restricted
+   create table source_access (
+     source_id text not null references sources(id) on delete cascade,
+     user_id text not null,
+     allowed integer not null,
+     checked_at text not null,
+     primary key (source_id, user_id)
+   );`,
 ];
 
 export type Db = DatabaseSync;

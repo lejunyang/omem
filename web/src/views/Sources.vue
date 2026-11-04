@@ -2,7 +2,8 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { pageParam } from "../lib/route";
-import { del, get, post, type Source } from "../api";
+import { del, get, post, put, type Source } from "../api";
+import UiSegmented from "../components/UiSegmented.vue";
 import ChatView from "../components/ChatView.vue";
 import CodeView from "../components/CodeView.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -199,6 +200,19 @@ onMounted(() => {
 watch(kind, load);
 watch(level, load);
 /** After a level or a note changed: the detail, the counts and the list's badges. */
+// Who may see a source beyond its space (src/auth/visibility.ts): the owner and the space's managers decide.
+const managesSpace = (space: string) => !state.me || state.me.role === "owner" || !!state.me.manages?.includes(space);
+async function setVisibility(v: string) {
+  const s = detail.value?.source;
+  if (!s) return;
+  try {
+    const r = await put<{ visibility: "space" | "restricted" }>(`/api/sources/${s.id}/visibility`, { visibility: v });
+    (s as Source & { visibility?: string }).visibility = r.visibility;
+    toast(r.visibility === "restricted" ? "已设为受限：只有你和这个空间的管理者能看" : "空间成员都能看", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 async function attentionChanged() {
   await Promise.all([loadDetail(), loadLevels(), treeRef.value?.reload(), reviewing.value ? reviewRef.value?.load() : loadReviewCount()]);
   const s = detail.value?.source;
@@ -406,6 +420,11 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
             <button class="btn ghost sm icon danger" title="移除" @click="remove"><Icon name="trash" :size="14" /></button>
           </div>
           <SourceAttention v-if="!detail.source.deletedAt && !['code','conversation','activity','work'].includes(detail.source.kind)" :source="detail.source" :notes="detail.notes ?? []" @changed="attentionChanged" @go-line="(a, b) => goLine(a, b)" />
+          <div v-if="!detail.source.deletedAt && managesSpace(detail.source.spaceId) && detail.source.spaceId.split('-')[0] !== 'personal'" class="row wrap small visibility">
+            <span class="muted">谁能看</span>
+            <UiSegmented :model-value="(detail.source as Source & { visibility?: string }).visibility ?? 'space'" size="sm" aria-label="谁能看" :options="[{ value: 'space', label: '空间成员' }, { value: 'restricted', label: '受限' }]" @change="setVisibility" />
+            <span class="muted">受限的原件只有记下的人和空间管理者能看，不会分享出去，共享空间的页面也不能引用它。</span>
+          </div>
           <div v-if="detail.citedBy.length" class="cited small">
             被引用：<router-link v-for="p in detail.citedBy" :key="p.page_id" :to="`/wiki/${p.page_id.split('/')[0]}/${p.page_id.split('/').slice(1).join('/')}`" class="badge accent">{{ p.title }}</router-link>
           </div>

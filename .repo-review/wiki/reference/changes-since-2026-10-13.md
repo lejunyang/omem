@@ -1284,3 +1284,9 @@ updated: 2026-11-04
 - `permissions.ts`：镜像空间里谁都没有 `source.write` / `memory.write` / `wiki.write` / `capture.route`（本人也没有）。
 - 接口：`/api/fed/*`（服务账号，按授权）、`/api/peer/shares`、`/api/peer/subscriptions`、`/api/peer/offers/:peer`（`peers.manage`）。`addPeer` 探测地址改用 `/api/me`（服务账号读不了诊断）。定时任务 `peer-sync`（第一次关注同步空间时建，每半小时）。
 - 工具：`peer_search`、`peer_read`（分组 read，说明在 `skills/omem/references/sources.md`）。命令：`omem peer share/subscribe/subscriptions/sync`。网页：设置 → 设备 → 和别人的 omem 共享。
+
+## 只对部分人开放的原件（2026-11-05）
+
+- 迁移：`sources.visibility`（space / restricted）、`source_access`（每人对每篇飞书文档的阅读权限，记一天）。
+- `src/auth/visibility.ts`：`setVisibility`、`sourceVisible`（同步判断，飞书文档未知时为 check）、`sourceReadable`（用读者的连接调云文档的权限判断接口）、`requireReadable`、`visibleHits`、`keptHere`、`isRestricted`。
+- 接入：`checkRoute` 改为异步，`src:` 定位的路由再查一次能否读；`/api/search`、原件列表、工具的 `search`（`viewSearch`）和 `read_source` 过滤；`shares.ts` 不复制、`federation.ts` 不检索不发送不同步这两类；`write_page` 在非个人空间拒绝引用受限原件。新接口 `PUT /api/sources/:id/visibility`（`space.manage`）。`PATCH /api/spaces/:id`：非本人只能改 `larkAccess`，带 `mirror` 一律拒绝（设置页保存时去掉它）。

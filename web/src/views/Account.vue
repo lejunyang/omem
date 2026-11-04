@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { del, get, logout, put } from "../api";
+import { del, get, logout, patch, put } from "../api";
 import UiSelect from "../components/UiSelect.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -41,6 +41,17 @@ async function loadManaged() {
   for (const s of managed.value) {
     members.value[s.id] = await get<Member[]>(`/api/spaces/${s.id}/members`);
     addForm.value[s.id] ??= { user: "", role: "reader" };
+  }
+}
+/** A space's Feishu documents shown in full only to those Feishu lets read them (src/auth/visibility.ts). */
+async function setLarkAccess(space: string, on: boolean) {
+  try {
+    await patch(`/api/spaces/${space}`, { settings: { larkAccess: on } });
+    const s = state.spaces.find((x) => x.id === space);
+    if (s) s.settings = { ...s.settings, larkAccess: on };
+    toast(on ? "已打开：飞书文档要各人在飞书里有权限才能看全文" : "已关闭：空间成员都能看", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
   }
 }
 // Who I am arrives with the frame (App.vue): load once it is known.
@@ -216,7 +227,11 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
       <template v-if="managed.length">
         <h2 class="section-title">我管理的空间</h2>
         <div v-for="sp in managed" :key="sp.id" class="card pad stack">
-          <strong>{{ sp.name }}</strong>
+          <div class="row wrap">
+            <strong>{{ sp.name }}</strong>
+            <span class="spacer" />
+            <UiCheckbox :model-value="!!sp.settings?.larkAccess" size="sm" @change="(v) => setLarkAccess(sp.id, v)">飞书文档按各人的飞书权限显示</UiCheckbox>
+          </div>
           <div v-for="m in members[sp.id] ?? []" :key="m.id" class="row wrap member">
             <span>{{ m.name }} <span class="muted small mono">{{ m.id }}</span></span>
             <span class="spacer" />

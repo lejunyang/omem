@@ -30,8 +30,11 @@ export type Source = {
   nodeLevel?: string | null;
   nodeLevelBy?: string | null;
   level?: { level: string; by: string | null; inherited: boolean };
+  /** restricted: only its viewers and the space's managers (src/auth/visibility.ts). */
+  visibility?: "space" | "restricted";
 };
 type Row = {
+  visibility?: string | null;
   attention?: string | null;
   attention_by?: string | null;
   node_level?: string | null;
@@ -67,8 +70,9 @@ const toSource = (r: Row): Source => ({
   nodeLevel: r.node_level ?? null,
   nodeLevelBy: r.node_level_by ?? null,
   level: effectiveLevel(r),
+  visibility: r.visibility === "restricted" ? "restricted" : "space",
 });
-const COLS = "id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at,attention,attention_by,node_level,node_level_by";
+const COLS = "id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at,attention,attention_by,node_level,node_level_by,visibility";
 
 export type UpsertInput = {
   /** Automatic collection; explicit imports leave this unset. */

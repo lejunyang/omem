@@ -4,6 +4,7 @@ import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { aliasTarget } from "../sources/duplicates.ts";
 import { can, canReadRun, isOwner, requirePerm, type GlobalPerm, type SpacePerm } from "./permissions.ts";
+import { requireReadable } from "./visibility.ts";
 
 /**
  * What each API route needs (docs/v2/multi-user.md, “在哪里检查”), checked in one place after the
@@ -76,6 +77,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/sources/:id/relations": s("space.read", "src:p.id"),
   "GET /api/sources/:id/archive": s("space.read", "src:p.id"),
   "DELETE /api/sources/:id": s("source.write", "src:p.id"),
+  "PUT /api/sources/:id/visibility": s("space.manage", "src:p.id"),
   "POST /api/sources/:id/move": AGENTS,
   "POST /api/sources/text": s("source.write", "b.space"),
   "POST /api/sources/url": s("source.write", "b.space"),
@@ -292,8 +294,11 @@ function locate(app: App, req: FastifyRequest, at: string): string | null {
 
 export const routeKey = (req: FastifyRequest) => `${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`;
 
-/** Throws when this user may not use this route. The owner may use every one. */
-export function checkRoute(app: App, req: FastifyRequest, userId: string) {
+/**
+ * Throws when this user may not use this route. The owner may use every one. A source a route names
+ * must also be one this person may read (restricted ones, Feishu access: src/auth/visibility.ts).
+ */
+export async function checkRoute(app: App, req: FastifyRequest, userId: string) {
   if (isOwner(app, userId)) return;
   const rule = ROUTE_RULES[routeKey(req)] ?? ROUTE_RULES[`* ${req.routeOptions.url}`];
   if (!rule) throw new HttpError(403, "这个接口只对 omem 的主人开放");
@@ -307,4 +312,8 @@ export function checkRoute(app: App, req: FastifyRequest, userId: string) {
   const space = locate(app, req, rule.at);
   if (!space) throw new HttpError(rule.at.includes(":") ? 404 : 400, rule.at.includes(":") ? "要找的内容不存在" : "要指定空间");
   if (!can(app, userId, rule.s, space)) requirePerm(app, userId, rule.s, space);
+  if (rule.at.startsWith("src:")) {
+    const id = String((req.params as { id?: string }).id ?? "");
+    await requireReadable(app, userId, aliasTarget(app, id) ?? id);
+  }
 }
