@@ -1255,3 +1255,10 @@ updated: 2026-11-04
 - `src/auth/tools.ts`：编码、Git、采集设置、规则、档案和技能保存等工具要对应的全局权限；`runner.ts` 建工具清单时去掉，`callTool` 再查一次。`write_page` / `move_page` / `confirm_page` / `generate_wiki` 和 Wiki 规划运行要 `wiki.write`。
 - 新接口：`/api/access/roles`（列出、建、改、删）、`/api/access/audit`、`/api/spaces/:id/members`（空间管理者）、`PATCH /api/users/:id` 的 `role`；邀请可以带全局角色和任意空间角色。成员建空间时成为管理者；关联本机目录要 `code.delegate`。`/api/me` 带 `perms`、`writes`、`wiki`、`manages`。
 - 网页：导航按权限显示；设置 → 成员 加全局角色、空间角色、角色编辑和改动记录；账号页“我管理的空间”。
+
+## 评审问题正文里的原件引用也要存在（2026-11-05）
+
+- 现象：一条评审问题正文里的 PRD 链接点开报“原件不存在”。评审项抄原件 id 时中间漏了三个字符；`submit_review` 只核对 `evidence` 和变更点的 `refs`，正文里的链接没有核对。
+- `review.ts` 的 `inlineRefs` 取出 Markdown 里的 `src:` / `mem:` 引用；`submit_review`（问题的标题、正文、建议，变更点的需求和实现）、`submit_change_points`、`revise_finding` 都用 `deadRefs` 核对，找不到就拒绝并让它用 `read_source` 核对后重交。
+- 另有一种：引用了交办工作区里建了索引的文件，工作区归还后这些原件随之删除，链接也会失效；还没处理。
+

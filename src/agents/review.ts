@@ -392,6 +392,11 @@ export function deadRefs(app: App, refs: string[]) {
       : !one(app.db, "select 1 from memories where id = ?", m[2]);
   });
 }
+
+/** The `src:` and `mem:` references written inside Markdown (`[说明](src:<id>#L1-L2)`, a bare `mem:<id>`). */
+export const inlineRefs = (...texts: (string | null | undefined)[]) =>
+  texts.flatMap((t) => [...(t ?? "").matchAll(/(?<![\w/])(src|mem):([A-Za-z0-9_-]+)/g)].map((m) => `${m[1]}:${m[2]}`));
+
 export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
 export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null };
 /** The suggestion to act on: the owner's rewrite when there is one (review-fix.ts setFindingSuggestion). */

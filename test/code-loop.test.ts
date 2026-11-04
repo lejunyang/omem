@@ -734,6 +734,26 @@ describe("a delegation driven by tasks", () => {
     }
   });
 
+  it("refuses a finding or change point whose text cites a source that does not exist", async () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "主页模板", input: { task: "切换模板", repos: ["personal"], taskMode: true, round: 1 }, userId: OWNER });
+      setRunOutput(app, r.id, { reviewPlan: { tier: "ai", tierName: "按改动定", checks: ["review-business"], maxRounds: 6, metrics: {}, reasons: [] } });
+      run(app.db, "insert into sources(id, space_id, kind, uri, title, text, hash, captured_at, updated_at) values('s0prdaaaabbbbccccdddd', 'personal', 'doc', 'prd', '应用模版 PRD', '', 'h', '2026-11-05', '2026-11-05')");
+      const ctx = { app, runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "review-business" } as ToolContext;
+      const finding = (detail: string) => ({ severity: "major", title: "往返切换后未提交内容被带回", detail, suggestion: "切换时丢弃草稿" });
+      // Three characters dropped from the middle of the id, as a model did.
+      const bad = await callTool(ctx, "submit_review", { verdict: "changes_requested", summary: "有问题", findings: [finding("PRD 要求未提交内容不保留 [PRD](src:s0prdaaaacccdddd#L156-L156)")] });
+      expect(bad).toMatchObject({ isError: true });
+      expect(bad.text).toContain("src:s0prdaaaacccdddd");
+      expect((await callTool(ctx, "submit_review", { verdict: "changes_requested", summary: "有问题", findings: [finding("PRD 要求未提交内容不保留 [PRD](src:s0prdaaaabbbbccccdddd#L156-L156)")] })).isError).toBe(false);
+      const point = await callTool(ctx, "submit_change_points", { change_points: [{ id: "C1", title: "切换模板", status: "partial", requirement: "见 [PRD](src:s0prdaaaacccdddd#L1)" }] });
+      expect(point.text).toContain("src:s0prdaaaacccdddd");
+    } finally {
+      app.db.close();
+    }
+  });
+
   it("stops for the assistant when reviews only polish after the requirement is done, and lets the owner set the rest aside", async () => {
     const app = testApp();
     try {

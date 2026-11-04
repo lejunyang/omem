@@ -3153,14 +3153,6 @@ def({
       userId: ctx.userId ?? OWNER,
     });
     if (itemId) (await import("../items/materials.ts")).linkRunToItem(ctx.app, r, itemId, ctx.userId ?? OWNER);
-    if (ctx.peer) return `已开始准备，运行 ${r.id}：这台机器建工作分支和工作区、装依赖，代码由你来写。用 code_workspace（run_id=${r.id}，action=brief）看任务、工作区和能运行的命令；准备好之前 brief 会说明。`;
-    // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
-    const { codeChainFor } = await import("./code-chain.ts");
-    const chain = codeChainFor(ctx.app, r);
-    const tasks = !!r.input.taskMode;
-    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。${carried}`;
-  },
-});
     // Pushed and confirmed before, more to do now: what the earlier delegations there left carries on.
     let carried = "";
     if (r.input.taskMode && onBranch) {
@@ -3169,6 +3161,14 @@ def({
       const c = carryTasks(ctx.app, r.id, confirmedWorkOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER, r.id));
       if (c.todo.length || c.later.length) carried = `\n接上了这条分支上之前交办留下的：${c.todo.length ? `没做完的 ${c.todo.length} 项（${c.todo.map((t) => taskLabel(t.seq)).join("、")}，这一轮一起做）` : ""}${c.todo.length && c.later.length ? "；" : ""}${c.later.length ? `记成以后再做的 ${c.later.length} 项（${c.later.map((t) => `${taskLabel(t.seq)} ${truncate(t.title, 40)}`).join("、")}，不做，本人要做哪项再说）` : ""}。`;
     }
+    if (ctx.peer) return `已开始准备，运行 ${r.id}：这台机器建工作分支和工作区、装依赖，代码由你来写。用 code_workspace（run_id=${r.id}，action=brief）看任务、工作区和能运行的命令；准备好之前 brief 会说明。`;
+    // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
+    const { codeChainFor } = await import("./code-chain.ts");
+    const chain = codeChainFor(ctx.app, r);
+    const tasks = !!r.input.taskMode;
+    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。${carried}`;
+  },
+});
 
 /** An item the caller owns and may see, for linking a delegation or review to it. */
 function itemFor(ctx: ToolContext, id: string) {
@@ -3374,6 +3374,9 @@ def({
   }),
   handler: async (ctx, a) => {
     steerable(ctx, a.run_id);
+    const { deadRefs, inlineRefs } = await import("./review.ts");
+    const dead = deadRefs(ctx.app, inlineRefs(a.title, a.detail, a.suggestion));
+    if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交。`);
     const { reviseFinding } = await import("./review-fix.ts");
     const r = reviseFinding(ctx.app, a.run_id, a.finding_id, a);
     return `已重新描述 #${r.id}「${r.title}」；原来的写法保留在网页上。`;
@@ -3633,21 +3636,13 @@ def({
     run_id: z.string(),
     squash_message: z.string().max(10000).optional().describe("本人要求压缩成一个提交时传：压缩后的提交信息"),
     force: z.boolean().optional().describe("本人同意覆盖远端分支时才传（按上次拉取的远端状态带 lease）"),
+    keep_going: z.boolean().optional().describe("只推送、不结束交办：本人要先验证推上去的版本，之后还要改"),
   }),
   handler: async (ctx, a) => {
     if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "确认交办只对本人开放");
     const r = getRun(ctx.app, a.run_id);
     const repos = (r.input as { repos?: string[] }).repos ?? (r.spaceId ? [r.spaceId] : []);
     for (const id of repos) inScope(ctx, id, "代码");
-    const { applyCodeRun } = await import("./code.ts");
-    const res = applyCodeRun(ctx.app, a.run_id, { squash: a.squash_message?.trim() || undefined, force: a.force }) as ReturnType<typeof applyCodeRun> & { pushed?: { space: string; branch: string; forced?: boolean }[]; notes?: string[] };
-    keep_going: z.boolean().optional().describe("只推送、不结束交办：本人要先验证推上去的版本，之后还要改"),
-    if (res.pushed) return `已确认运行 ${a.run_id}：\n${[...res.pushed.map((p) => `- ${p.space}：推送 ${p.branch} 到 origin${p.forced ? "（覆盖了远端）" : ""}`), ...(res.notes ?? []).map((n) => `- ${n}`)].join("\n")}\n工作区已归还，分支保留。`;
-    return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n可在网页填写提交信息，或在本人要求后先 code_git_status 再 code_git_action 提交或推送。编码用的 worktree 已删除，接收工作区保留。`;
-  },
-});
-
-def({
     if (a.keep_going) {
       if (a.squash_message) throw new HttpError(400, "接着改的交办不能压缩：压缩会改写之后还要接着提交的分支");
       const t = await import("./code-tasks.ts");
@@ -3657,6 +3652,14 @@ def({
       const paused = t.workState(ctx.app, t.workRootOf(ctx.app, a.run_id)).paused;
       return `已推送，交办没有结束：\n${lines.join("\n") || "- 没有要推送的分支"}\n之后的修改提交在同一分支上，要再推送就再调用一次；全部改完后照常确认。${paused ? "\n交办现在暂停着：本人验证后要接着改（或给了新的问题），用 continue_code_run。" : ""}`;
     }
+    const { applyCodeRun } = await import("./code.ts");
+    const res = applyCodeRun(ctx.app, a.run_id, { squash: a.squash_message?.trim() || undefined, force: a.force }) as ReturnType<typeof applyCodeRun> & { pushed?: { space: string; branch: string; forced?: boolean }[]; notes?: string[] };
+    if (res.pushed) return `已确认运行 ${a.run_id}：\n${[...res.pushed.map((p) => `- ${p.space}：推送 ${p.branch} 到 origin${p.forced ? "（覆盖了远端）" : ""}`), ...(res.notes ?? []).map((n) => `- ${n}`)].join("\n")}\n工作区已归还，分支保留。`;
+    return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n可在网页填写提交信息，或在本人要求后先 code_git_status 再 code_git_action 提交或推送。编码用的 worktree 已删除，接收工作区保留。`;
+  },
+});
+
+def({
   name: "code_branch",
   description:
     "交办工作分支上的操作（只对本人，本人要求时用；进行中的交办先等这一轮结束）：status 列出每个仓库的工作分支、切出点、提交、推送状态和检出位置；rename 改分支名；checkout_main 把仓库目录切到这条分支（目录要干净），之后每轮的提交会快进到那里，本人可以在仓库目录直接运行验证；squash 把分支压缩成一个提交；sync 排一轮把另一个分支合并（或变基）进来，冲突交给编码 Agent。确认推送用 apply_code_run。",
@@ -3973,10 +3976,14 @@ def({
     const { changePointSchema, findingSchema, recordReview } = await import("./review.ts");
     const findings = a.findings.map((f) => findingSchema.parse(f));
     const changePoints = (a.change_points ?? []).map((c) => changePointSchema.parse(c));
-    const { deadRefs, pointTreeProblem } = await import("./review.ts");
+    const { deadRefs, inlineRefs, pointTreeProblem } = await import("./review.ts");
     const badTree = pointTreeProblem(changePoints);
     if (badTree) throw new HttpError(400, `变更点的层级不对：${badTree}。改正后再提交。`);
-    const dead = deadRefs(ctx.app, [...findings.flatMap((f) => f.evidence), ...changePoints.flatMap((c) => c.refs)]);
+    // Links written in the text count too: a PRD cited in a finding's body is what the owner clicks.
+    const dead = deadRefs(ctx.app, [
+      ...findings.flatMap((f) => [...f.evidence, ...inlineRefs(f.title, f.detail, f.suggestion)]),
+      ...changePoints.flatMap((c) => [...c.refs, ...inlineRefs(c.requirement, c.implementation)]),
+    ]);
     if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交（找不到就去掉这条依据）。`);
     recordReview(ctx.app, { codeRunId: r.id, round: (r.input as { round?: number }).round ?? 1, check, tier: plan.tier, verdict: a.verdict, summary: a.summary, findings, changePoints, ai: { profile: ctx.agentProfile, model: ctx.model ?? undefined, effort: ctx.effort ?? undefined } });
     const what = `已记录${ctx.peer ? `「${check}」的` : ""}评审结论（${a.verdict === "approved" ? "通过" : "需要修改"}，${findings.length} 条问题${changePoints.length ? `，${changePoints.length} 个变更点` : ""}）。`;
@@ -4010,7 +4017,8 @@ def({
     const points = a.change_points.map((c) => changePointSchema.parse(c));
     const bad = pointTreeProblem(points);
     if (bad) throw new HttpError(400, `变更点的层级不对：${bad}。改正后再提交。`);
-    const dead = deadRefs(ctx.app, points.flatMap((c) => c.refs));
+    const { inlineRefs } = await import("./review.ts");
+    const dead = deadRefs(ctx.app, points.flatMap((c) => [...c.refs, ...inlineRefs(c.requirement, c.implementation)]));
     if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交（找不到就去掉）。`);
     const unknown = points.filter((p) => p.req && !findReq(ctx.app, p.req)).map((p) => p.req);
     if (unknown.length) throw new HttpError(400, `这些需求点 id 不存在：${unknown.join("、")}；照任务里“需求点”一节的 id 抄`);
@@ -4033,6 +4041,7 @@ def({
       task: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，merge 到已有的修改项时填它的编号（如 T5），这时不填 into"),
       note: z.string().max(1000).optional().describe("理由；驳回必须写"),
       owner: z.object({ question: z.string().min(1).max(1000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("只在按修改项推进的交办里用：接受的问题要本人决定时，给本人的问题和两三个选项"),
+      follows: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，accept / defer 的问题是某个已完成修改项没改好或改出来的新问题时，填那一项（如 T5）"),
     })).max(300),
     verdict: z.enum(["approve", "revise", "escalate"]),
     summary: z.string().min(1).max(2000).describe("一两句话：这一轮的结论（给本人看，不写问题编号）"),
@@ -4041,7 +4050,6 @@ def({
     escalation: z.object({ summary: z.string().min(1).max(4000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("escalate 时：分歧点、各方依据、建议，以及给本人选的做法"),
   }),
   handler: async (ctx, a) => {
-      follows: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，accept / defer 的问题是某个已完成修改项没改好或改出来的新问题时，填那一项（如 T5）"),
     const { codeRunOf } = await import("./review-chain.ts");
     const r = codeRunOf(ctx.app, ctx.runId);
     const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
@@ -4053,6 +4061,8 @@ def({
     const tasks = isTaskWork(ctx.app, r.id);
     if (a.verdict === "revise" && !tasks && !a.change_request?.trim()) throw new HttpError(400, "revise 需要写修改单 change_request");
     for (const x of a.rulings) if (x.owner && x.decision !== "accept") throw new HttpError(400, `问题 ${x.id}：只有接受的问题才交给本人决定`);
+    for (const x of a.rulings) if (x.decision === "defer" && !x.note?.trim()) throw new HttpError(400, `问题 ${x.id}：以后再做要写为什么现在不做`);
+    if (!tasks && a.rulings.some((x) => x.decision === "defer" || x.follows !== undefined)) throw new HttpError(400, "defer 和 follows 只在按修改项推进的交办里用");
     if (a.verdict === "escalate" && !a.escalation) throw new HttpError(400, "escalate 需要写 escalation");
     const known = new Set(reviewChecks(ctx.app).map((c) => c.name));
     const unknown = (a.rerun ?? []).filter((c) => !known.has(c));
@@ -4069,8 +4079,6 @@ def({
       follows[String(x.id)] = seq;
     }
     const rulings = a.rulings.map(({ follows: _, ...x }) => {
-    for (const x of a.rulings) if (x.decision === "defer" && !x.note?.trim()) throw new HttpError(400, `问题 ${x.id}：以后再做要写为什么现在不做`);
-    if (!tasks && a.rulings.some((x) => x.decision === "defer" || x.follows !== undefined)) throw new HttpError(400, "defer 和 follows 只在按修改项推进的交办里用");
       if (x.task === undefined) return { ...x, task: undefined };
       if (!rootId) throw new HttpError(400, `问题 ${x.id}：只有按修改项推进的交办才能合并到修改项`);
       if (x.decision !== "merge") throw new HttpError(400, `问题 ${x.id}：填了 task 就要用 merge`);
@@ -4225,6 +4233,7 @@ def({
     const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), authorization: a.existing_authorization, question: a.question, options: a.options }, "assistant");
     const label = t.taskLabel(seq);
     if (a.action === "owner") return `已把 ${label} 交给本人（发了卡片）。`;
+    if (a.action === "later") return `${label} 记成以后再做${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;
     if (a.action === "skip" || next) return `${label} ${a.action === "skip" ? "不做了" : "回到待做"}${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;
     const w = t.workState(ctx.app, rootId);
     const busy = ["queued", "running"].includes(t.lastRound(ctx.app, rootId).status);
@@ -4233,7 +4242,6 @@ def({
 });
 
 def({
-    if (a.action === "later") return `${label} 记成以后再做${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;
   name: "dispatch_tasks",
   description: "编码负责人把这一轮几组互不相干的修改项分给编码助手，它们在各自的工作区里同时做（每组一个助手）。分出去后接着做自己的项；这一轮结束时宿主把它们的提交合进工作分支，有冲突会让你解决。项少、或者都改同一处时不要分。",
   schema: z.object({
@@ -4438,17 +4446,6 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   return runTool(ctx, tool, name, parsed.data);
 }
 
-async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown): Promise<{ text: string; isError: boolean }> {
-  const parsed = { data };
-  try {
-    // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
-    const text = await withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data));
-    if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
-    const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : "";
-    return { text: text + moved + (await steering(ctx)), isError: false };
-  } catch (error) {
-    return { text: (error as Error).message + (await steering(ctx)), isError: true };
-  }
 /** Tools the owner steers a delegation with: when used from another conversation of theirs, its reports follow there. */
 const STEERS_CODE = new Set(["message_code_run", "continue_code_run", "fix_review", "settle_code_task", "apply_code_run"]);
 
@@ -4465,6 +4462,17 @@ async function followFrom(ctx: ToolContext, runId: string | undefined): Promise<
   }
 }
 
+async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown): Promise<{ text: string; isError: boolean }> {
+  const parsed = { data };
+  try {
+    // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
+    const text = await withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data));
+    if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
+    const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : "";
+    return { text: text + moved + (await steering(ctx)), isError: false };
+  } catch (error) {
+    return { text: (error as Error).message + (await steering(ctx)), isError: true };
+  }
 }
 
 /** Messages that arrived for this turn's conversation while it runs (steer.ts). */
