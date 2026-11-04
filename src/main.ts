@@ -48,6 +48,11 @@ registerScheduleKind("lark-poll", (app) => {
   import("./auth/connections.ts").then((m) => m.renewConnections(app)).catch((e) => console.warn("[omem] 续期飞书连接失败：", e.message));
 });
 
+// Other servers' spaces this one mirrors (core/federation.ts).
+registerScheduleKind("peer-sync", (app) => {
+  import("./core/federation.ts").then((m) => m.syncAll(app)).catch((e) => console.warn("[omem] 同步其他服务的空间失败：", e.message));
+});
+
 registerScheduleKind("lark-docs-watch", (app) => {
   import("./channels/lark-docs.ts")
     .then((m) => m.checkInBackground(app))

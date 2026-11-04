@@ -237,8 +237,16 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "PATCH /api/peers/:id", "DELETE /api/peers/:id", "GET /api/peers/:id/status", "POST /api/peer/agents", "POST /api/peer/unpair", "DELETE /api/peer/paired/:id", "GET /api/peers/:id/api/ide/open",
       // Forwarded to a device as they are, any method.
       "* /api/peers/:id/*", "* /api/peers/:id/ide", "* /api/peers/:id/ide/*",
+      // Sharing with other servers (src/core/federation.ts): what this one shares, what it follows.
+      "GET /api/peer/shares", "POST /api/peer/shares", "PUT /api/peer/shares/:user", "DELETE /api/peer/shares/:user",
+      "GET /api/peer/subscriptions", "GET /api/peer/offers/:peer", "POST /api/peer/subscriptions", "DELETE /api/peer/subscriptions/:id", "POST /api/peer/subscriptions/:id/sync",
     ].map((r) => [r, PEERS]),
   ),
+  // Another server reading what is shared with it: the handlers keep to the caller's grants.
+  "GET /api/fed/info": "self",
+  "POST /api/fed/search": "self",
+  "GET /api/fed/source/:id": "self",
+  "GET /api/fed/changes": "self",
 
   // logging in, one's account, and managing people
   "GET /api/auth/session": "public",

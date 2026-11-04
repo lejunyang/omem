@@ -116,9 +116,14 @@ const othersPersonal = (app: App, spaceId: string, userId: string) => {
 export const isOwner = (app: App, userId: string) => who(app, userId)?.role === "owner";
 
 /** Whether the user may do this; space permissions need the space. */
+/** Space permissions that change its content: none in another server's mirror (src/core/federation.ts), whoever asks. */
+const WRITES = new Set<Perm>(["source.write", "memory.write", "wiki.write", "capture.route"]);
+const mirrored = (app: App, spaceId: string) => !!one<{ m: string | null }>(app.db, "select json_extract(settings, '$.mirror') m from spaces where id = ?", spaceId)?.m;
+
 export function can(app: App, userId: string, perm: Perm, spaceId?: string | null): boolean {
   const u = who(app, userId);
   if (!u?.active) return false;
+  if (spaceId && WRITES.has(perm) && mirrored(app, spaceId)) return false;
   if (u.role === "owner") return true;
   const g = grants(app, u.role);
   if (perm in GLOBAL_PERMS) return g.has(perm);

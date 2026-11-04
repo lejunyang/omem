@@ -1279,6 +1279,69 @@ const migrations: string[] = [
    create index lark_message_lines_message on lark_message_lines(message_id);
    insert or ignore into lark_message_lines(source_id, message_id, line)
      select source_id, message_id, line from lark_messages where source_id is not null and line is not null and source_id in (select id from sources);`,
+  // Sharing with other omem servers (src/core/federation.ts, docs/v2/multi-user.md “多服务连接”): what
+  // each server's service account may see (peer_shares), what changed per space for those who sync
+  // (change_log, kept by triggers), and here the other servers' spaces subscribed to, with the ids
+  // their sources, pages and memories have in this server's mirror spaces (peer_aliases).
+  `create table peer_shares (
+     user_id text not null,
+     space_id text not null,
+     mode text not null default 'query',        -- query | sync
+     kinds text not null default '["wiki","memory","doc"]',
+     created_at text not null,
+     primary key (user_id, space_id)
+   );
+   create table change_log (
+     seq integer primary key autoincrement,
+     entity text not null,                      -- source | page | memory
+     entity_id text not null,
+     space_id text not null,
+     op text not null,                          -- upsert | delete
+     at text not null
+   );
+   create index change_log_space on change_log(space_id, seq);
+   create trigger change_source_insert after insert on sources begin
+     insert into change_log(entity, entity_id, space_id, op, at) values ('source', new.id, new.space_id, case when new.deleted_at is null then 'upsert' else 'delete' end, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+   end;
+   create trigger change_source_update after update of hash, title, deleted_at, space_id on sources begin
+     insert into change_log(entity, entity_id, space_id, op, at) values ('source', new.id, new.space_id, case when new.deleted_at is null then 'upsert' else 'delete' end, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+     insert into change_log(entity, entity_id, space_id, op, at) select 'source', old.id, old.space_id, 'delete', strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where old.space_id != new.space_id;
+   end;
+   create trigger change_page_insert after insert on pages begin
+     insert into change_log(entity, entity_id, space_id, op, at) values ('page', new.id, new.space_id, 'upsert', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+   end;
+   create trigger change_page_update after update of hash, title on pages begin
+     insert into change_log(entity, entity_id, space_id, op, at) values ('page', new.id, new.space_id, 'upsert', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+   end;
+   create trigger change_page_delete after delete on pages begin
+     insert into change_log(entity, entity_id, space_id, op, at) values ('page', old.id, old.space_id, 'delete', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+   end;
+   create trigger change_memory_insert after insert on memories begin
+     insert into change_log(entity, entity_id, space_id, op, at) values ('memory', new.id, new.space_id, 'upsert', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+   end;
+   create trigger change_memory_update after update of content, status on memories begin
+     insert into change_log(entity, entity_id, space_id, op, at) values ('memory', new.id, new.space_id, 'upsert', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+   end;
+   create table peer_subscriptions (
+     id text primary key,
+     peer text not null,
+     remote_space text not null,
+     remote_name text not null default '',
+     local_space text not null,
+     mode text not null default 'query',        -- query | sync
+     last_seq integer not null default 0,
+     created_at text not null,
+     synced_at text,
+     error text,
+     unique (peer, remote_space)
+   );
+   create table peer_aliases (
+     peer text not null,
+     entity text not null,
+     remote_id text not null,
+     local_id text not null,
+     primary key (peer, entity, remote_id)
+   );`,
 ];
 
 export type Db = DatabaseSync;

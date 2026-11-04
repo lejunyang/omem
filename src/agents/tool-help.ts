@@ -34,7 +34,7 @@ export const DIRECT_ALL = 30;
  * groups share one; plugin groups have none), what omem_help(<group>) returns.
  */
 export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: string[] }[] = [
-  { id: "read", label: "查找与阅读原件", doc: "sources", tools: ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_conversations", "read_conversation"] },
+  { id: "read", label: "查找与阅读原件", doc: "sources", tools: ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_conversations", "read_conversation", "peer_search", "peer_read"] },
   { id: "collect", label: "收进材料", doc: "sources", tools: ["import_url", "save_note", "write_file", "digest_sources", "lark_wiki_crawl"] },
   { id: "curate", label: "空间与原件治理", doc: "sources", tools: ["create_space", "connect_repository", "relate_spaces", "set_source_attention", "annotate_source", "attention_rules", "describe_source", "classify_source", "propose_archive_rule"] },
   { id: "memory", label: "记忆", doc: "memory", tools: ["recall", "remember", "supersede", "forget", "review_memories", "list_memory_folders", "organize_memories"] },

@@ -15,6 +15,7 @@ import PluginsSettings from "../components/PluginsSettings.vue";
 import StorageUsage from "../components/StorageUsage.vue";
 import ShareSettings from "../components/ShareSettings.vue";
 import MembersSettings from "../components/MembersSettings.vue";
+import FederationSettings from "../components/FederationSettings.vue";
 import PeerSettings from "../components/PeerSettings.vue";
 import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
@@ -1058,6 +1059,7 @@ async function saveEdit() {
     </section>
     <section v-else-if="tab === 'peers'" class="stack">
       <PeerSettings />
+      <FederationSettings />
     </section>
     <section v-else-if="tab === 'shares'" class="stack">
       <ShareSettings />

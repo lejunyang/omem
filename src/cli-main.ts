@@ -237,6 +237,49 @@ peer
     console.log(`撤销：omem user revoke owner peer:${o.label}`);
   });
 peer
+  .command("share <label>")
+  .description("给另一台 omem 服务（别人的）一个配对码：只能检索或同步这里指定的空间，用它自己的服务账号")
+  .requiredOption("--space <specs...>", "空间:模式[:内容]，如 project-a:query  handbook:sync:wiki,memory,doc（模式 query 或 sync；内容 wiki、memory、doc、chat、web、note、code、source）")
+  .option("--url <url>", "对方访问本机 omem 的地址")
+  .action(async (label: string, o) => {
+    const { shareInvite } = await import("./core/federation.ts");
+    const shares = (o.space as string[]).map((spec) => {
+      const [space, mode = "query", kinds] = spec.split(":");
+      if (mode !== "query" && mode !== "sync") throw new Error(`模式只能是 query 或 sync：${spec}`);
+      return { space, mode: mode as "query" | "sync", kinds: kinds ? kinds.split(",") : undefined };
+    });
+    const r = shareInvite(open(), { label, shares, url: o.url });
+    console.log(`服务账号：${r.userId}\n在对方的 omem 上运行：\n\n  omem peer add ${r.code}\n  omem peer subscribe <本机名> <空间> [--sync]\n\n撤销：设置 → 设备 → 对外共享`);
+  });
+peer
+  .command("subscribe <peer> <space>")
+  .description("关注另一台 omem 服务共享过来的空间：检索时能查到它；--sync 把它定时同步到本机的只读镜像空间")
+  .option("--sync", "同步到本机（对方要允许同步）")
+  .option("--local <space>", "本机镜像空间的 id（默认 <设备>-<空间>）")
+  .action(async (peerId: string, space: string, o) => {
+    const { subscribe } = await import("./core/federation.ts");
+    const { ensureSyncSchedule } = await import("./core/federation-http.ts");
+    const app = open();
+    const s = await subscribe(app, { peer: peerId, remoteSpace: space, localSpace: o.local, mode: o.sync ? "sync" : "query" });
+    if (s.mode === "sync") ensureSyncSchedule(app);
+    console.log(`已关注 ${peerId} 的 ${s.remoteName}（${s.mode === "sync" ? "同步" : "只检索"}），本机空间 ${s.localSpace}${s.mode === "sync" ? "；omem peer sync 立即同步一次" : ""}`);
+  });
+peer
+  .command("subscriptions")
+  .description("列出关注的其他服务的空间")
+  .action(async () => {
+    const { listSubscriptions } = await import("./core/federation.ts");
+    for (const s of listSubscriptions(open())) console.log(`${s.id}  ${s.peer}:${s.remoteSpace} → ${s.localSpace}  ${s.mode}  ${s.syncedAt ? `同步于 ${s.syncedAt.slice(0, 16)}` : ""}${s.error ? `  出错：${s.error}` : ""}`);
+  });
+peer
+  .command("sync [id]")
+  .description("立即同步关注的空间（不给 id 就全部同步）")
+  .action(async (id?: string) => {
+    const { syncAll, syncSubscription } = await import("./core/federation.ts");
+    const app = open();
+    console.log(JSON.stringify(id ? await syncSubscription(app, id) : await syncAll(app), null, 2));
+  });
+peer
   .command("add <code>")
   .description("用配对码添加设备（重复 add 同一个设备会更新它）；--via 表示要经另一个设备转发才能访问")
   .option("--via <peer>", "经由哪个设备转发")

@@ -90,11 +90,15 @@ export async function serviceRunning(app: App) {
   }
 }
 
-/** A pairing code for another machine: this node's id, its addresses and a new owner token. */
-export function invite(app: App, opts: { url?: string; label?: string } = {}) {
+/**
+ * A pairing code for another machine: this node's id, its addresses and a new token — the owner's (one
+ * of the owner's own devices), or a service account's (another server this one shares with, federation.ts).
+ */
+export function invite(app: App, opts: { url?: string; label?: string; userId?: string } = {}) {
   const id = nodeId(app);
   const urls = opts.url ? [trim(opts.url)] : localUrls(app);
-  const token = createApiToken(app, OWNER, `peer:${opts.label ?? "device"}`);
+  const owner = !opts.userId || opts.userId === OWNER;
+  const token = createApiToken(app, opts.userId ?? OWNER, `${owner ? "peer" : "fed"}:${opts.label ?? "device"}`);
   const code = "omem1." + Buffer.from(JSON.stringify({ id, urls, token })).toString("base64url");
   return { id, urls, code };
 }
@@ -110,7 +114,8 @@ export function decodeInvite(code: string): { id: string; urls: string[]; token:
 
 async function answers(url: string, token: string) {
   try {
-    const r = await fetch(url + "/api/diag", { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3000) });
+    // /api/me answers any token (a service account's too, which may not read the diagnosis).
+    const r = await fetch(url + "/api/me", { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3000) });
     return r.ok;
   } catch {
     return false;

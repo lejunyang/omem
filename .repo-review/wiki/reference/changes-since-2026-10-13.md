@@ -1276,3 +1276,11 @@ updated: 2026-11-04
 - `src/plugins/types.ts`：`PluginApi.connector(def)`（`LoginProvider` 加 `features`）、`PluginContext.connection(provider)` 返回 `{ account, scopes, fetch }`。清单加 `connectors: [{ provider, features }]`，`describePlugin` 带出来。
 - `registry.ts`：`api.connector` 检查 id 前缀、注册 `registerLoginProvider` 和 `registerFeatures`，`unloadCode` 时撤销。`LoginProvider.apiBase`；`connections.ts` 的 `pluginConnection` 只往 `apiBase` 下发请求（不跟随重定向）。
 - 账号页列出所有有功能的提供方（不只是登录方）；插件页在清单要的连接缺失时显示提示条。
+
+## 多服务连接（2026-11-05）
+
+- `src/core/federation.ts`：服务账号（`serviceAccount`，`users.kind = service`，角色 viewer，没有个人空间）、`peer_shares`、`shareInvite`（`peers.ts` 的 `invite` 可以给服务账号发令牌，标签 `fed:<名字>`）、`sharesFor`（本人的设备看到全部）、`fedSearch` / `fedSource` / `fedChanges`；订阅方 `subscribe`（建或认领只读镜像空间，`settings.mirror`）、`peerSearch`、`peerRead`、`syncSubscription` / `syncAll`、`peer_aliases` 换引用。镜像原件 URI 为 `peer:<设备>:<对方 id>`，带 origin_key。
+- 迁移：`peer_shares`、`change_log`（原件、页面、记忆的触发器）、`peer_subscriptions`、`peer_aliases`（都是本机的，不参与拉取）。
+- `permissions.ts`：镜像空间里谁都没有 `source.write` / `memory.write` / `wiki.write` / `capture.route`（本人也没有）。
+- 接口：`/api/fed/*`（服务账号，按授权）、`/api/peer/shares`、`/api/peer/subscriptions`、`/api/peer/offers/:peer`（`peers.manage`）。`addPeer` 探测地址改用 `/api/me`（服务账号读不了诊断）。定时任务 `peer-sync`（第一次关注同步空间时建，每半小时）。
+- 工具：`peer_search`、`peer_read`（分组 read，说明在 `skills/omem/references/sources.md`）。命令：`omem peer share/subscribe/subscriptions/sync`。网页：设置 → 设备 → 和别人的 omem 共享。

@@ -278,6 +278,8 @@ omem space relate shop-web shop-api -n "调用订单接口"  # 关联两个空�
 omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读的 Markdown
 omem hook claude|codex                      # 记录编码 Agent 会话（配在钩子里）
 omem peer invite|add|list|call / omem diag   # 多台设备：配对、诊断、远程检查，见“多台设备”
+omem peer share <名字> --space 空间:query|sync[:内容]   # 给别人的 omem 服务开放几个空间（它用自己的服务账号）
+omem peer subscribe <设备> <空间> [--sync] / omem peer subscriptions / omem peer sync   # 关注别的服务共享过来的空间：检索得到，--sync 定时同步到本机只读空间
 omem lark docs-refresh [--space <id>]        # 重新读已保存的飞书文档（补下载图片、画板，导入链接的文档）
 omem lark docs-dedupe [--space <id>] [--apply]  # 合并同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件，默认只列出
 omem lark docs-missing [--retry|--ignore all] # 链接里读不到的飞书文档（多半没权限）：立即重试或不再重试
@@ -398,6 +400,8 @@ omem space share project-a wang [--edit]           # 再开放一个空间
 
 ## 多台设备
 
+**和别人的 omem 共享**：设置 → 设备 → 和别人的 omem 共享，选几个空间、每个空间“只检索”或“可同步”、开放哪些内容（Wiki、记忆、文档、聊天……），生成配对码给对方。对方的服务用它自己的服务账号连进来，只能看到这些；你随时可以停止。对方在“关注别人共享的空间”里选你的空间：检索和助手就能查到（助手要引用时先把原件取到它那边一个只读空间，引用按它本机的 id），选“同步”的每半小时把原件、页面和记忆同步过去，引用自动换成它本机的副本；同步过去的内容不会被再整理一遍。令牌只在各自那台，传过去的只有内容。
+
 常见用法是一台机器常驻运行（采集、定时任务），其他机器拉它的数据、看它的状态、让它执行检查。机器之间不必能直接访问：可以经中间那台转发。
 
 ```bash
@@ -509,7 +513,7 @@ web/          Vue 3 网页
 
 ## 当前限制
 
-- 多人：能登录、批准、邀请，按角色和空间角色管权限，成员能连接自己的飞书；成员的后台采集只有聊天，多台服务之间共享还在做（docs/v2/multi-user.md 的分期），不做多租户隔离。
+- 多人：能登录、批准、邀请，按角色和空间角色管权限，成员能连接自己的飞书，能和别人的 omem 服务共享空间；成员的后台采集只有聊天，检索结果还不按同一个平台对象合并显示（docs/v2/multi-user.md 的分期），不做多租户隔离。
 - 默认监听所有网卡，其他机器必须带令牌（配对或 `omem link`）或登录；在同一台机器上用反向代理对外暴露时，打开多人登录后带 `X-Forwarded-For` 的请求不算本机（代理要传这个头或 `Host`），没打开时经代理来的请求看起来来自本机，要配置 `token`。多台设备是“一台常驻写入、其他来看”，还没有双向持续同步。
 - 除 Claude Code、OpenCode 外，其他 ACP Agent 只验证过连接握手；各家登录和模型名以实际“检测模型”结果为准。
 - 代码解析：TS/JS/JSX/TSX/Vue 用 TypeScript AST；Python 用导入与缩进分析；Go、Rust、Java、Kotlin、Swift、C、C++、Objective-C、C#、PHP、Ruby、Scala、Dart、Lua、Zig、Elixir、OCaml、ReScript、Solidity、Bash、Emacs Lisp 用 tree-sitter（WebAssembly，无需编译，按需加载语法）；其他语言（Haskell、Erlang、Clojure、Elm…）只做通用声明识别。

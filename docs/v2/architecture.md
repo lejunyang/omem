@@ -211,7 +211,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 - **单写者的事归一台**：飞书采集、定时任务、发消息这类有外部副作用的事只在持有租约的节点上跑（租约存在常驻那台，过期可接管），避免两台同时采集或重复提醒。
 - **冲突**：记忆本来就是版本链（新的使旧的失效），并发修改同一条时两条都保留、交给做梦整理合并；事项状态按最后修改时间。
 - **按能力分派**：设备上报自己有哪些 Agent / 工具（`diag` 里已有），跑不了的任务转给有的那台。
-- **多用户**：配对码里的令牌目前固定是本人的；给同事的设备配对时换成他的用户令牌，同步时只带他能访问的空间。
+- **多用户**：本人的设备拿本人令牌；别人的服务用服务账号和按空间的共享授权，检索、引用时落地、按变更日志单向同步已经实现（`src/core/federation.ts`，见 multi-user.md）。
 
 ## 实现状态（2026-10-23）
 
@@ -357,6 +357,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 角色与权限（multi-user.md 第 2 期）：全局角色（owner / admin / member / viewer，可自定义）与空间角色（reader / contributor / editor / manager，可自定义），`P@*` 给所有空间但不含别人的个人空间；每个 `/api` 路由在 `src/auth/routes.ts` 声明要什么，`preHandler` 统一检查，没登记的只给本人（测试要求全部登记、没有多余条目）；运行按 `runs.scope` 判断谁能看（要在它能读的每个空间都有 `runs.read`）；事件流按人过滤；通知按人；Agent 工具按全局权限裁剪并在调用时再查（`src/auth/tools.ts`）；写 Wiki 要 `wiki.write`；自己建的空间自己管理；改动记录 `audit_events` | 已实现，`test/permissions.test.ts` | `src/auth/permissions.ts`、`routes.ts`、`tools.ts`，设置 → 成员，账号页“我管理的空间” |
 | 连接器与飞书多用户（multi-user.md 第 3 期）：连接与令牌在 `secrets/vault.db`（AES-256-GCM，`secrets/vault.key`，不进快照与拉取）；飞书功能开关按功能要 scope（增量授权），登录时带 scope 的令牌也会存下来续用；到期前刷新、同一连接串行、刷新令牌用一次即换，失败标为需要重新授权并通知一次，定时续期；`asLarkUser` 异步上下文让 lark-cli 用这个人的令牌（每次工具调用都包着），本人仍用 lark-cli 登录，没连接的成员被拒；缺 scope 时成员收到账号页授权链接；`captureSpace` 按采集者；聊天按空间存各自的副本（`lark_message_lines`），`origin_key` 标出同一个平台对象；成员的“我的消息”采集最近活跃的聊天，已在可读共享空间里的群和文档只记 `source_viewers` | 已实现，`test/connections.test.ts`（假飞书与假 lark-cli）；未连真实飞书验证 | `src/auth/vault.ts`、`connections.ts`、`features.ts`、`lark-user.ts`，`src/channels/lark-member-capture.ts`，账号页“已连接的应用” |
 | 插件连接器（multi-user.md 第 4 期）：`api.connector` 注册提供方和功能（id 以插件 id 开头，代码卸载时注销）；清单 `connectors` 声明要用的平台，插件页在没连接或缺功能时提示；工具里 `ctx.connection(provider)` 是这次用的人的连接，`fetch` 只发往提供方的 `apiBase`、宿主加令牌；只能连接的提供方也出现在账号页 | 已实现，`test/plugin-connectors.test.ts` | `src/plugins/registry.ts`、`types.ts`，`src/auth/connections.ts` 的 `pluginConnection` |
+| 多服务连接（multi-user.md 第 5 期）：别人的服务用服务账号（`users.kind = service`）和 `peer_shares`（空间、query / sync、内容类型）；`/api/fed/info|search|source/:id|changes` 只给授权内的内容；`change_log` 由触发器记原件、页面、记忆的变化；订阅方 `peer_subscriptions` 与只读镜像空间（`settings.mirror`，任何人都不能写，只有同步写），`peer_search` / `peer_read` 工具现场检索和引用时落地，`peer-sync` 定时任务同步，引用按 `peer_aliases` 换成本机副本，同步来的记忆标为已复核、不再交给 ingest | 已实现，`test/federation.test.ts`（两台服务）；检索结果按 origin_key 合并显示没做 | `src/core/federation.ts`、`federation-http.ts`，设置 → 设备 → 和别人的 omem 共享，`omem peer share/subscribe/sync` |
 | ID 优先搜索：全局搜索与运行页识别裸 id，先返回按主键查询的命中，保留加载状态，再追加其他搜索结果；切换查询立即使旧请求失效，运行页去重并独立记录文本分页偏移，精确查询沿用列表筛选 | 已实现；`test/id-search.test.ts`、`scripts/check-id-search.ts`（1440/390、延迟、过期响应、分页）；`scripts/bench-scale.ts --runs` | `src/core/id-query.ts`、`agents/runs.ts`、`server/http.ts`、`CommandPalette.vue`、`Runs.vue` |
 | 飞书回答尾注：显示 `id r… · codex · gpt-6.1-sol · low`（后端、模型、思考强度），完成后读取运行记录，跟随兜底后端；普通回答、进度卡片、访客和后续投递共用。模型或强度未指定时标“默认模型”或“默认强度”，无 AI 记录时只显示 id；整行可粘贴到快捷搜索打开运行 | 已实现；假 ACP + 飞书客户端及 ID 检索回归覆盖 | `src/channels/lark-bot.ts`、`lark-progress.ts`、`src/core/lookup.ts` |
 | 飞书通知外链：普通通知与事项卡片保留 HTTP(S) 链接按钮；站内路由、无效地址和其他协议不变成按钮，事项已有同一外链时去重 | 已实现，假客户端回归覆盖 | `src/channels/item-notification.ts`、`lark-bot.ts`、`test/notification-card.test.ts` |

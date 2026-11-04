@@ -491,6 +491,32 @@ def({
   },
 });
 
+// Other omem servers this one follows (core/federation.ts): searched live; a result to cite is brought here first.
+def({
+  name: "peer_search",
+  description: "检索其他 omem 服务向这台共享的空间（设置 → 设备里订阅的）。返回对方的原件、页面、记忆片段；要引用某个原件，先用 peer_read 把它取到本机，再引用本机的 src:<id>。对方不在线时会说明。",
+  schema: z.object({ query: z.string().min(1), peer: z.string().optional().describe("只查这一台"), limit: z.number().int().min(1).max(20).optional() }),
+  handler: async (ctx, a) => {
+    const { peerSearch } = await import("../core/federation.ts");
+    const r = await peerSearch(ctx.app, a.query, { peer: a.peer, limit: a.limit });
+    const lines = r.hits.map((h) => `- [${h.peer}] ${h.type === "source" ? `原件 ${h.id}（${h.kind}）${h.lineStart ? ` 第 ${h.lineStart}-${h.lineEnd} 行` : ""}` : h.type === "page" ? `页面 ${h.id}` : `记忆 ${h.id}`} · ${h.title}\n  ${h.snippet.replace(/\s+/g, " ").slice(0, 200)}`);
+    const missed = r.missed.length ? `\n没有回应：${r.missed.join("、")}` : "";
+    return (lines.length ? `${lines.join("\n")}\n要引用原件：peer_read(peer, source)` : "其他服务里没有命中。") + missed;
+  },
+});
+def({
+  name: "peer_read",
+  description: "把另一台 omem 服务共享的一个原件取到本机（放进它订阅对应的只读镜像空间），返回本机的原件 id，之后用 read_source 读、按本机 id 引用。",
+  schema: z.object({ peer: z.string(), source: z.string().describe("对方的原件 id（peer_search 结果里的）") }),
+  write: true,
+  handler: async (ctx, a) => {
+    const { peerRead } = await import("../core/federation.ts");
+    const r = await peerRead(ctx.app, a.peer, a.source);
+    if (ctx.spaces && !ctx.spaces.includes(r.space)) return `已取到本机原件 ${r.id}（空间 ${r.space}），但这次任务不能读那个空间。`;
+    return `${r.existed ? "已更新" : "已取到"}本机原件 ${r.id}（${r.title}，${r.lines} 行，空间 ${r.space}）${r.truncated ? "，原件太长只取了前一部分" : ""}。用 read_source("${r.id}") 读，引用写 src:${r.id}。`;
+  },
+});
+
 def({
   name: "source_outline",
   description: "查看原件结构：Markdown 章节或代码符号（函数/类/类型）及其行号，用来决定读哪一段。",

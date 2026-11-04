@@ -45,6 +45,7 @@ import { HttpError } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { checkRoute } from "../auth/routes.ts";
+import { registerFederationRoutes } from "../core/federation-http.ts";
 import { can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
@@ -132,6 +133,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const who = (req: FastifyRequest) => (req as FastifyRequest & { userId?: string }).userId ?? OWNER;
   const authOf = (req: FastifyRequest) => (req as FastifyRequest & { auth?: RequestAuth }).auth ?? null;
   registerAuthRoutes(server, app, who, authOf);
+  registerFederationRoutes(server, app, who);
 
   // ------------------------------------------------------------------- shares
   server.get("/api/share/:token", async (req, reply) => {
