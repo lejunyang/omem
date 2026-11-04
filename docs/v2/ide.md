@@ -73,7 +73,7 @@
 
 用官方的 `code serve-web`，鉴权全由 omem 做（`src/server/ide-web.ts`）。编码运行的“在 VS Code 中打开”里一直有“网页版 VS Code”这一项（只对本人，不另设开关）。选它时齿轮面板里显示 omem 那台机器上要用的 VS Code 命令行（`GET /api/ide/cli`：配置的 `ide.web.command`，或自动找到的路径），可以就地填路径（存进配置）；找不到时面板里提示，打开时返回一句说明。
 
-- **启动**：第一次用到时启动 `serve-web --host 127.0.0.1 --port <随机空闲端口> --connection-token <随机> --server-base-path /ide`，数据放在数据目录的 `ide/`。CLI 依次找 `ide.web.command`、`code-tunnel`（桌面版 `code` 旁边的那个 CLI 本体；Windows 上的 `code.cmd` 会启动桌面程序）、`code`（服务器上的独立 CLI）。第一次打开页面时 serve-web 从微软下载对应版本的服务端，这段时间 omem 返回一个会自动刷新的等待页。
+- **启动**：第一次用到时启动 `serve-web --host 127.0.0.1 --port <随机空闲端口> --connection-token <随机> --server-base-path /ide`，数据放在数据目录的 `ide/`，所有项目共用。CLI 依次找 `ide.web.command`、`code-tunnel`（桌面版 `code` 旁边的那个 CLI 本体；Windows 上的 `code.cmd` 会启动桌面程序）、`code`（服务器上的独立 CLI）。已有完整缓存时带 `--commit-id` 复用最近下载好的版本，不因打开项目或重启而追最新版本；缺少 Node、入口或启动脚本的目录和 `.staging` 不算完整版本。没有完整缓存才从微软下载，等待页在后台检查、显示已等待秒数，准备好后进入；连接失败、服务端报错或等待超过 10 分钟时停止检查，显示原因和“重新检查”按钮，不整页循环刷新。
 - **入口**：页面上是一个普通链接 `/api/ide/open?folder=<路径>`（不在本机时带令牌查询参数，和下载链接一样），新标签页打开。它只对本人开放：启动 serve-web，给浏览器一个 `Path=/ide`、HttpOnly 的会话 cookie，再跳到 `/ide/?folder=…`（Windows 路径换成 `/e:/…`）。
 - **代理**：`/ide` 下的 HTTP（不解析请求体）和 WebSocket 升级都原样转给 serve-web。放行条件：会话 cookie 有效，或请求来自本机回环、没带令牌且 omem 没配令牌（和 API 的本机信任一致）。转发时去掉 omem 的 cookie 和 Authorization，加上 serve-web 认的 `vscode-tkn` cookie，所以 connection token 不出 omem。会话在内存里，omem 重启后从网页重新点一次。
 - **进程**：WebSocket 任一端断开就关掉两端；停服时连同 serve-web 启动的服务端整棵进程树一起结束；pid 记在 `ide/serve-web.pid`，被强杀或被 watch 重启的 omem 下次启动前先结束遗留的那个（核对命令行确实是带 connection token 的 serve-web 才动）。

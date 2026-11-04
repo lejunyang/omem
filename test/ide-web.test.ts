@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,10 @@ const ok = (req) => (req.headers.cookie ?? "").includes("vscode-tkn=" + token);
 let hits = 0;
 const s = createServer((req, res) => {
   if (!ok(req)) { res.writeHead(403); return res.end("forbidden"); }
+  if (req.url.includes("waiting=1")) {
+    res.writeHead(202, { "content-type": "text/html", "set-cookie": "vscode-test=kept; Path=/" });
+    return res.end("downloading");
+  }
   let body = "";
   req.on("data", (d) => (body += d)).on("end", () => {
     // The workbench page, as serve-web writes it for a Chinese browser.
@@ -38,7 +42,7 @@ const s = createServer((req, res) => {
       return res.end("x".repeat(100000) + " ae:" + (req.headers["accept-encoding"] ?? "none") + " hit " + hits);
     }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ path: req.url, method: req.method, cookie: req.headers.cookie, auth: req.headers.authorization ?? null, fwd: req.headers["x-forwarded-host"] ?? null, base: at("--server-base-path"), body, omemUrl: process.env.OMEM_URL ?? null, omemToken: process.env.OMEM_TOKEN ?? null }));
+    res.end(JSON.stringify({ path: req.url, method: req.method, cookie: req.headers.cookie, auth: req.headers.authorization ?? null, fwd: req.headers["x-forwarded-host"] ?? null, base: at("--server-base-path"), commit: a.includes("--commit-id") ? at("--commit-id") : null, body, omemUrl: process.env.OMEM_URL ?? null, omemToken: process.env.OMEM_TOKEN ?? null }));
   });
 });
 s.on("upgrade", (req, socket) => {
@@ -178,6 +182,45 @@ describe("web VS Code under /ide", () => {
       });
     expect(await upgrade({ cookie })).toEqual({ status: 101, echo: "echo:ping" });
     expect((await upgrade({})).status).toBe(401);
+  }, 30000);
+
+  it("reuses a complete cached build across folders and restarts, skipping incomplete downloads", async () => {
+    stopIdeWeb();
+    const root = join(app.home, "ide", "cli", "serve-web");
+    const commit = "a".repeat(40);
+    const good = join(root, commit);
+    for (const file of [process.platform === "win32" ? "node.exe" : "node", "out/server-main.js", process.platform === "win32" ? "bin/code-server.cmd" : "bin/code-server", "product.json"]) {
+      const path = join(good, file);
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, file === "product.json" ? JSON.stringify({ version: "1.144.0" }) : "fake");
+    }
+    // Newer-looking directories left by interrupted downloads are not complete builds.
+    for (const name of ["b".repeat(40), "d".repeat(40) + ".staging"]) {
+      mkdirSync(join(root, name), { recursive: true });
+      utimesSync(join(root, name), new Date(), new Date(Date.now() + 60000));
+    }
+    for (const folder of ["/srv/work/shop", "/srv/work/docs"]) {
+      const s = await fetch(`${base}/api/ide/open?folder=${encodeURIComponent(folder)}&token=owner-secret`, { redirect: "manual" });
+      expect(s.status).toBe(302);
+      const cookie = s.headers.get("set-cookie")!.split(";")[0];
+      const seen = await (await fetch(`${base}${s.headers.get("location")}`, { headers: { cookie } })).json();
+      expect(seen.commit).toBe(commit);
+      expect(seen.path).toContain(encodeURIComponent(folder));
+      stopIdeWeb();
+    }
+  }, 30000);
+
+  it("keeps download waits in one page and preserves serve-web's cookies", async () => {
+    const s = await fetch(`${base}/api/ide/open?token=owner-secret`, { redirect: "manual" });
+    const cookie = s.headers.get("set-cookie")!.split(";")[0];
+    const waiting = await fetch(`${base}/ide/?waiting=1`, { headers: { cookie, accept: "text/html" } });
+    expect(waiting.status).toBe(202);
+    expect(waiting.headers.get("cache-control")).toBe("no-store");
+    expect(waiting.headers.get("set-cookie")).toContain("vscode-test=kept");
+    const page = await waiting.text();
+    expect(page).toContain("所有项目共用");
+    expect(page).not.toContain('http-equiv="refresh"');
+    expect(page).not.toContain("第一次打开，正在下载这一版");
   }, 30000);
 
   it("says which CLI it would run, and why it cannot when the configured one is not there", async () => {

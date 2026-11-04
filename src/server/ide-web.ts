@@ -59,6 +59,10 @@ export function ensureIdeWeb(app: App): Promise<number> {
     const dir = join(app.home, "ide");
     mkdirSync(dir, { recursive: true });
     const args = ["serve-web", "--host", "127.0.0.1", "--port", String(port), "--connection-token", token, "--accept-server-license-terms", "--server-base-path", IDE_BASE, "--server-data-dir", join(dir, "server"), "--cli-data-dir", join(dir, "cli"), "--disable-telemetry"];
+    // Without a commit serve-web tracks the latest release, even with a working server cached.
+    // Keep opening workspaces offline instead of blocking them on an unrelated update download.
+    const cached = newestServer(dir);
+    if (cached) args.push("--commit-id", cached.commit);
     reapOrphan(join(dir, "serve-web.pid"));
     reapServers(join(dir, "server"));
     prepared = await prepareIde(app).catch((e: Error) => ({ error: e.message }));
@@ -114,12 +118,14 @@ function ideEnv(app: App): NodeJS.ProcessEnv {
   return env;
 }
 
-/** The newest server serve-web downloaded (the one it runs unless a newer one comes out). */
+/** The newest complete cached server; interrupted downloads must not pin an unusable build. */
 function newestServer(root: string) {
   const base = join(root, "cli", "serve-web");
+  const files = ["product.json", process.platform === "win32" ? "node.exe" : "node", "out/server-main.js", process.platform === "win32" ? "bin/code-server.cmd" : "bin/code-server"];
   return (
     subdirs(base)
       .filter((c) => /^[0-9a-f]{40}$/.test(c))
+      .filter((c) => files.every((file) => existsSync(join(base, c, file))))
       .map((commit) => ({ commit, dir: join(base, commit), version: (readObject(join(base, commit, "product.json"))?.version as string | undefined) ?? null, at: statSync(join(base, commit)).mtimeMs }))
       .sort((a, b) => b.at - a.at)[0] ?? null
   );
@@ -243,12 +249,11 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
   const page = req.method === "GET" && /text\/html/.test(String(req.headers.accept ?? ""));
   if (page || packed) delete headers["accept-encoding"];
   const up = request({ host: "127.0.0.1", port: p, method: req.method, path: req.url, headers }, (r) => {
-    // The first open downloads the matching server; serve-web answers 202 meanwhile. A page that
-    // reloads itself instead of one that waits for the owner to.
+    // Poll in the background: a slow first download must not keep reloading the whole page.
     if (r.statusCode === 202 && req.method === "GET" && /text\/html/.test(String(r.headers["content-type"]))) {
       r.resume();
-      res.writeHead(202, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      return res.end(`<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="3"><title>VS Code</title><p style="font:14px system-ui;margin:24px">第一次打开，正在下载这一版的 VS Code 服务端，好了会自动进入……</p>`);
+      res.writeHead(202, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...(r.headers["set-cookie"] ? { "set-cookie": r.headers["set-cookie"] } : {}) });
+      return res.end(ideWaitingPage());
     }
     if (page && r.statusCode === 200 && /text\/html/.test(String(r.headers["content-type"])) && !r.headers["content-encoding"]) {
       const chunks: Buffer[] = [];
@@ -282,6 +287,42 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
   });
   up.on("error", (e) => (res.headersSent ? res.destroy() : deny(res, 502, `网页版 VS Code 没有响应：${e.message}`)));
   req.pipe(up);
+}
+
+function ideWaitingPage() {
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>准备 VS Code</title>
+<style>body{font:15px/1.7 system-ui;margin:24px;max-width:680px;overflow-wrap:anywhere;color-scheme:light dark}button{font:inherit;padding:6px 16px;cursor:pointer}pre{white-space:pre-wrap}</style>
+<h1 style="font-size:22px">正在准备网页版 VS Code</h1>
+<p>首次使用需要下载服务端；所有项目共用，已有完整版本会直接复用。准备好了会自动进入。</p>
+<p id="status" role="status">正在检查……</p><pre id="error" hidden></pre><button id="retry" hidden>重新检查</button>
+<script>
+const status = document.getElementById('status');
+const error = document.getElementById('error');
+const retry = document.getElementById('retry');
+let started = Date.now();
+let timer;
+function stop(message, detail = '') {
+  clearTimeout(timer);
+  status.textContent = message;
+  error.textContent = detail;
+  error.hidden = !detail;
+  retry.hidden = false;
+}
+async function check() {
+  const seconds = Math.floor((Date.now() - started) / 1000);
+  status.textContent = '已等待 ' + seconds + ' 秒，正在检查……';
+  if (seconds >= 600) return stop('准备超过 10 分钟。下载可能较慢或已中断，可稍后重新检查。');
+  try {
+    const response = await fetch(location.href, {cache: 'no-store', headers: {accept: 'text/html'}, signal: AbortSignal.timeout(30000)});
+    if (response.status === 200) { location.reload(); return; }
+    if (response.status !== 202) return stop('准备失败（HTTP ' + response.status + '）', await response.text());
+    status.textContent = '已等待 ' + Math.floor((Date.now() - started) / 1000) + ' 秒，服务端仍在准备中……';
+    timer = setTimeout(check, 3000);
+  } catch (e) { stop('检查连接失败，请重新检查。', e.message); }
+}
+retry.onclick = () => { started = Date.now(); retry.hidden = true; error.hidden = true; check(); };
+timer = setTimeout(check, 1000);
+</script></html>`;
 }
 
 /** The interface strings omem built for a server build and language; null (English) when it cannot. */
