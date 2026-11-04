@@ -57,27 +57,6 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
 ];
 
 /**
- * The earlier, broader groups. Roles the owner customized (library/_roles) and saved profiles
- * still say `group:sources` etc.; they keep meaning the same tools, and what is added to the
- * groups they stand for reaches them too. An entry that is not a group id is a single tool.
- */
-export const GROUP_ALIASES: Record<string, string[]> = {
-  sources: ["read", "collect", "curate"],
-  items: ["track", "notifications", "notify"],
-  agents: ["delegate", "skills"],
-  owner: ["ask", "wake"],
-  code: ["coding", "git", "code-handin"],
-  lark: ["lark-msg", "lark-docs", "lark-owner", "lark-capture", "lark_wiki_crawl"],
-};
-
-/** A group id or an alias as the groups it stands for, plus the single tools an alias adds. */
-export function groupsFor(id: string) {
-  const parts = GROUP_ALIASES[id] ?? [id];
-  const groups = parts.map((g) => TOOL_GROUPS.find((x) => x.id === g)).filter((g): g is (typeof TOOL_GROUPS)[number] => !!g);
-  return { groups, tools: [...groups.flatMap((g) => g.tools), ...(GROUP_ALIASES[id] ? parts.filter((t) => !groups.some((g) => g.id === t)) : [])] };
-}
-
-/**
  * A role's or profile's `tools` as tool names: `group:<id>` stands for every tool of that group
  * (so a tool added to the group needs no edit of the roles, nor of the owner's customized copies),
  * `-<name>` takes one back out. A role's own hand-in tools (ROLE_TOOLS) never come with a group.
@@ -87,7 +66,7 @@ export function expandTools(list: string[]): string[] {
   for (const t of list) {
     const g = /^group:(.+)$/.exec(t);
     if (g) {
-      for (const name of groupsFor(g[1]).tools) if (!ROLE_TOOLS.includes(name)) out.add(name);
+      for (const name of TOOL_GROUPS.find((x) => x.id === g[1])?.tools ?? []) if (!ROLE_TOOLS.includes(name)) out.add(name);
     } else if (!t.startsWith("-")) out.add(t);
   }
   for (const t of list) if (t.startsWith("-")) out.delete(t.slice(1));
@@ -95,7 +74,7 @@ export function expandTools(list: string[]): string[] {
 }
 
 /** `group:<id>` entries that name no group. */
-export const unknownGroups = (list: string[]) => list.filter((t) => /^group:/.test(t) && !groupsFor(t.slice(6)).groups.length);
+export const unknownGroups = (list: string[]) => list.filter((t) => /^group:/.test(t) && !TOOL_GROUPS.some((g) => g.id === t.slice(6)));
 
 type ToolInfo = { name: string; description: string; inputSchema: Record<string, unknown> };
 
@@ -190,9 +169,8 @@ export function helpText(allowed: ToolInfo[], topic?: string | null): string {
   const t = topic?.trim();
   if (!t)
     return `本次能用的 omem 工具（omem_help(topic=工具名) 看参数，omem_help(topic=分组) 看这类的做法）：\n\n${grouped(allowed)}\n\n${SHELL_NOTE}`;
-  // A group id, an earlier group name, or a reference page several groups share.
-  const named = groupsFor(t).groups;
-  const groups = named.length ? named : TOOL_GROUPS.filter((g) => g.doc === t);
+  // A group id, or a reference page several groups share.
+  const groups = TOOL_GROUPS.filter((g) => g.id === t || g.doc === t);
   if (groups.length) {
     const dir = omemSkillDir();
     const docs = [...new Set(groups.map((g) => g.doc ?? g.id))].map((d) => {

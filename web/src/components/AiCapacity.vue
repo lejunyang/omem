@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import { get } from "../api";
+import { del, get } from "../api";
 import Icon from "./Icon.vue";
 import UiSelect from "./UiSelect.vue";
 import { toast } from "../store";
@@ -12,7 +12,7 @@ import { toast } from "../store";
  */
 type Limit = { profile: string; model?: string; max: number };
 type Value = { concurrency: number; interactiveConcurrency: number; perModel: number; limits: Limit[] };
-type Load = { now: { source: string; model: string; used: number; waiting: number }[]; recent: { profile: string; model: string; done: number; failed: number; medianMinutes: number | null }[] };
+type Load = { now: { source: string; model: string; used: number; waiting: number }[]; recent: { profile: string; model: string; done: number; failed: number; medianMinutes: number | null }[]; outOfQuota?: { source: string; until: string; message: string }[] };
 const props = defineProps<{ value: Value; backends: { id: string; name?: string }[]; models: Record<string, string[]> }>();
 const emit = defineEmits<{ save: [value: Value] }>();
 const draft = ref<Value>({ concurrency: 2, interactiveConcurrency: 4, perModel: 3, limits: [] });
@@ -48,6 +48,11 @@ function save() {
     limits: d.limits.map((l) => ({ profile: l.profile, ...(l.model ? { model: l.model } : {}), max: clamp(l.max, 0, 32) })),
   });
 }
+async function useAgain(source: string) {
+  await del(`/api/agents/quota/${encodeURIComponent(source)}`);
+  await refresh();
+}
+const when = (iso: string) => new Date(iso).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 const rec = (source: string, model: string) => load.value?.recent.find((r) => r.profile === source && r.model === model);
 </script>
 
@@ -77,6 +82,14 @@ const rec = (source: string, model: string) => load.value?.recent.find((r) => r.
       </li>
     </ul>
     <p v-else class="muted small">现在没有在用的模型。</p>
+    <template v-if="load?.outOfQuota?.length">
+      <div class="section-title">额度用完</div>
+      <p class="muted small">这些账号的额度用完了，到恢复时间前不会被自动选用，任务改用兜底和其他配置过的后端。已经充值或换了套餐可以提前恢复。</p>
+      <div v-for="q in load.outOfQuota" :key="q.source" class="row wrap small">
+        <span class="mono">{{ q.source }}</span><span class="muted">{{ when(q.until) }} 恢复</span><span class="spacer" />
+        <button class="btn ghost sm" @click="useAgain(q.source)">现在恢复使用</button>
+      </div>
+    </template>
   </div>
 </template>
 

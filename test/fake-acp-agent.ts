@@ -8,7 +8,7 @@ import { PassThrough, Readable, Writable } from "node:stream";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AgentSideConnection, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
+import { AgentSideConnection, ndJsonStream, RequestError, type McpServer } from "@agentclientprotocol/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -117,6 +117,12 @@ new AgentSideConnection(
     async prompt(p) {
       const prompt = p.prompt.map((b) => (b.type === "text" ? b.text : "")).join("");
       const say = (text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      // FAKE_QUOTA=1: Codex with the plan's quota spent (the message as text, then "Internal error" with codexErrorInfo).
+      if (process.env.FAKE_QUOTA === "1") {
+        const message = "You've hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again in 2 hours.";
+        await say(`${message}\n\n`);
+        throw RequestError.internalError({ message, codexErrorInfo: "usageLimitExceeded" });
+      }
       if (process.env.FAKE_USAGE) {
         const values = process.env.FAKE_USAGE.split(",").map(Number);
         const used = values[Math.min(turns.get(p.sessionId) ?? 0, values.length - 1)];

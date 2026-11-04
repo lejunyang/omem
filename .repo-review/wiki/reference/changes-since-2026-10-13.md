@@ -1151,14 +1151,24 @@ updated: 2026-11-04
 ## 11-04：工具按用途分组
 
 - `TOOL_GROUPS` 从 10 个按领域的大组拆成 19 个按用途的小组：`read` / `collect` / `curate`（原 sources）、`track` / `notifications`（原 items）、`delegate` / `skills`（原 agents）、`ask` / `wake`（原 owner，`notify` 移到 ask）、`coding` / `git` / `code-handin`（原 code）、`lark-msg` / `lark-docs` / `lark-capture`（原 lark，`lark_wiki_crawl` 移到 collect）；memory、wiki、learning、plugins 不变。每组带 `doc`，几组共用原来的 reference 页，`omem_help` 填分组 id 或说明页名都行。
-- 旧名经 `GROUP_ALIASES` 仍可写在 `tools:` 里，等于原来那些工具（加上移进去的 lark_wiki_crawl / notify），本人自定义过的主助手不用改。主助手的 `tools:` 改成新分组。
-- `test/tool-help.test.ts`：每组不超过 15 个工具（插件组除外）、每组都在 SKILL.md 分组表里、旧名的工具不变。
+- 旧分组名不再兼容（11-04 去掉 `GROUP_ALIASES`：常驻服务器上自定义过的主助手已是新分组名，档案都没用分组）。主助手的 `tools:` 改成新分组。
+- `test/tool-help.test.ts`：每组不超过 15 个工具（插件组除外）、每组都在 SKILL.md 分组表里。
 - `DIRECT_ALL` 20 → 30：常驻服务器上 ingest（21 个工具）两周调了 750 次 `omem_help`、自定义档案（28 个）343 次、dream 6 次，都是工具数刚过线、非常用工具藏在 `omem_call` 后面造成的。`CORE_TOOLS` 加 `list_sources`、`write_file`、`list_runs`、`read_run`、`wake_later`、`cancel_wake`（主助手和档案运行里最常经 omem_call 调的几个）。
 - 按两周的调用统计精简内置角色：triager 去掉 source_outline、list_pages、recall、list_items（2810 次运行里没用过，说明里也没提）；kb-scout 去掉 search；memory-reviewer 去掉 list_items。
 
 ## 11-04：以本人身份读写飞书的其他数据
 
-- 新工具 `lark_read` / `lark_write`（分组 `lark-owner`，旧名 `group:lark` 也包含）：以本人身份跑一条 lark-cli 命令，风险等级取 lark-cli 自己在 `--help` 里标的 read / write / high-risk-write（缓存）。read 在数据域里放行（不含 api、auth、config、event、apps），`skills read/list`、`schema` 也能读；write 只放行 sheets、base、slides、markdown、task 和 drive 的评论命令，本人自己的文件直接写（新建到云空间根目录也算），别人的文件和所有任务操作先审批，按文件复用（`docEditDecision` 加了 tool 参数）；命令里必须出现 target 的 token；high-risk-write、`--as`、`--yes` 拒绝；在临时目录里运行，下载的文件运行后删除。外部 Agent（`--peer`）用不了。
+- 新工具 `lark_read` / `lark_write`（分组 `lark-owner`）：以本人身份跑一条 lark-cli 命令，风险等级取 lark-cli 自己在 `--help` 里标的 read / write / high-risk-write（缓存）。read 在数据域里放行（不含 api、auth、config、event、apps），`skills read/list`、`schema` 也能读；write 只放行 sheets、base、slides、markdown、task 和 drive 的评论命令，本人自己的文件直接写（新建到云空间根目录也算），别人的文件和所有任务操作先审批，按文件复用（`docEditDecision` 加了 tool 参数）；命令里必须出现 target 的 token；high-risk-write、`--as`、`--yes` 拒绝；在临时目录里运行，下载的文件运行后删除。外部 Agent（`--peer`）用不了。
 - 内置技能 `lark-suite`：按业务列出要读的 lark-cli 官方说明（lark-sheets、lark-base、lark-task、lark-drive、lark-im、lark-mail、lark-meeting、lark-workflow-meeting-summary……）和这里能读 / 能写什么；官方说明不复制进仓库，运行时用 `lark_read(["skills","read",…])` 读，和装的版本一致。lark-shared 的登录、授权、高风险确认由 omem 处理，不需要。
 - AGENTS.md 的“以本人身份写飞书只有这几处”补上 `lark_doc_*` 和 `lark_write`；仍不能以本人身份发消息、邮件和日程邀请。
 - `lark-cli.ts` 加 `larkCliOutput`（`--help`、`skills read` 这类输出文本的命令）。
+
+## 11-04：额度用完自动换后端
+
+- 问题：常驻服务器上 Codex 额度用完，每个运行都先试 Codex 再失败（“Internal error”），没有换到配好的兜底。codex-acp 2.5.0 把“You've hit your usage limit … try again at 2:36 PM.”作为回答文字发出，再以 JSON-RPC internal error 结束这一轮，`data` 里是 `codexErrorInfo: "usageLimitExceeded"`；原来的重试判断只认限流、排队。
+- `acp.ts` 的 `promptError`：把 JSON-RPC 的 `data` 拼进错误信息，额度用完的标成 `quota`（`AgentFailureKind` 新增）；`isRetryableAgentError` 认 `quota` 和 `isQuotaMessage`（usage limit、insufficient_quota、out of credits……）。
+- `capacity.ts`：`markOutOfQuota` 按来源记到 kv `agent_quota_exhausted`，恢复时间由 `quotaResetAt` 从消息读（本机时间的“at 2:36 PM”取下一次、带日期的、“in 2 hours”，没有就一小时）；`excluded` 在恢复前为真，所以 `acquire`、`fallbackProfiles` 和对话的兜底链都跳过它；`clearOutOfQuota`、`outOfQuotaList`。
+- `runner.ts` 的 `noteQuota`：运行和对话轮次遇到额度用完时记下并发状态“… 的额度用完了，<时间> 前自动改用其他后端”；`sessions.ts` 的对话兜底链跳过额度用完的账号（都不可用时仍试第一个）。
+- 网页：设置 → Agent → 并行 显示“额度用完”的账号和恢复时间，`DELETE /api/agents/quota/:source` 提前恢复。
+- 剩余额度：codex-acp 只在 `/status` 命令的文字里给出各窗口的剩余百分比，不经 ACP 推送，这里不读它。
+- 测试：`test/quota.test.ts`，假 ACP 加 `FAKE_QUOTA=1`。

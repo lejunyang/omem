@@ -3,6 +3,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
+import { isQuotaMessage } from "./capacity.ts";
 import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
 
 // Provider queue text shown as a normal message by some CLIs (traex included).
@@ -467,7 +468,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         };
         signal?.addEventListener("abort", onAbort, { once: true });
         try {
-          const result = await Promise.race([connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] }), failed]);
+          const result = await Promise.race([connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] }), failed]).catch((e) => { throw promptError(e); });
           if (signal?.aborted) throw new Error("CANCELLED");
           return { text, reply: replyFromSegments(segments), stopReason: result.stopReason, sessionId, agent: agentName, contextUsage };
         } finally {
@@ -486,6 +487,18 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     close();
     throw explain(error, profile);
   }
+}
+
+/**
+ * A failed turn: JSON-RPC errors say why in `data` (Codex answers "Internal error" with
+ * codexErrorInfo "usageLimitExceeded" and "try again at …" when the plan's quota is spent).
+ */
+function promptError(error: unknown) {
+  if (!(error instanceof Error) || !("code" in error)) return error;
+  const data = (error as Error & { data?: unknown }).data;
+  const detail = data === undefined || data === null ? "" : typeof data === "string" ? data : JSON.stringify(data).slice(0, 600);
+  const text = detail ? `${error.message}：${detail}` : error.message;
+  return isQuotaMessage(text) ? agentRunError(text, "quota") : detail ? new Error(text) : error;
 }
 
 /** JSON-RPC errors carry the useful part ("GOOSE_PROVIDER not set", "please log in") in `data`. */

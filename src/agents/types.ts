@@ -63,7 +63,7 @@ export type AgentProbe = {
   effortsByModel?: Record<string, string[]>;
 };
 /** Why a run failed; used to decide whether a fallback backend/model is worth trying. */
-export type AgentFailureKind = "queue" | "idle" | "rate-limit" | "other";
+export type AgentFailureKind = "queue" | "idle" | "rate-limit" | "quota" | "other";
 export type AgentResult = {
   /** Latest measured context occupancy, not cumulative billed tokens. */
   contextUsage?: { used: number; size: number };

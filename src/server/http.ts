@@ -352,7 +352,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Models in use now against their limits, and how each did in the last 7 days.
   server.get("/api/agents/load", async () => {
     const c = await import("../agents/capacity.ts");
-    return { now: c.loadReport(app), recent: c.recentStats(app) };
+    return { now: c.loadReport(app), recent: c.recentStats(app), outOfQuota: c.outOfQuotaList(app) };
+  });
+  // The owner says an account has quota again (bought credits): use it before the reset time.
+  server.delete("/api/agents/quota/:source", async (req) => {
+    (await import("../agents/capacity.ts")).clearOutOfQuota(app, (req.params as { source: string }).source);
+    return { ok: true };
   });
   // The catalog of a space, one level at a time (sources/catalog.ts): counts and levels follow the filters.
   server.get("/api/sources/tree", async (req) => {

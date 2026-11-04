@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { allProfiles, builtinProfiles, type AgentProfile } from "../core/config.ts";
 import { backendAvailable } from "./availability.ts";
 
@@ -73,8 +73,71 @@ export function releaseRun(runId: string) {
   runHolds.delete(runId);
 }
 
-/** A limit of 0: the owner does not want this model (or backend) used automatically. */
-export const excluded = (app: App, p: AgentProfile) => limitOf(app, p) <= 0;
+/**
+ * A limit of 0 (the owner does not want this model or backend used automatically), or an account
+ * whose usage quota ran out and has not reset yet.
+ */
+export const excluded = (app: App, p: AgentProfile) => limitOf(app, p) <= 0 || outOfQuotaUntil(app, p) !== null;
+
+/**
+ * Usage quota per account (source): Codex says "You've hit your usage limit … try again at 2:36 PM"
+ * when the plan's quota is spent, and every model of the account fails until then. The account is
+ * left out of automatic choices until that time (an hour when the message gives none), so runs go to
+ * the fallbacks right away instead of failing one by one. Kept in kv: a restart does not forget it.
+ */
+const QUOTA_KEY = "agent_quota_exhausted";
+function quotaState(app: App): Record<string, { until: string; message: string }> {
+  try { return JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", QUOTA_KEY)?.value ?? "{}"); } catch { return {}; }
+}
+export function outOfQuotaUntil(app: App, p: AgentProfile): string | null {
+  const e = quotaState(app)[sourceOf(p)];
+  return e && Date.parse(e.until) > Date.now() ? e.until : null;
+}
+export function markOutOfQuota(app: App, p: AgentProfile, message: string, at = new Date()) {
+  const st = Object.fromEntries(Object.entries(quotaState(app)).filter(([, e]) => Date.parse(e.until) > at.getTime()));
+  const until = quotaResetAt(message, at);
+  st[sourceOf(p)] = { until: until.toISOString(), message: message.slice(0, 300) };
+  run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", QUOTA_KEY, JSON.stringify(st));
+  return until;
+}
+/** Owner's "it has more credits now": use the account again. */
+export function clearOutOfQuota(app: App, source: string) {
+  const st = quotaState(app);
+  delete st[source];
+  run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", QUOTA_KEY, JSON.stringify(st));
+}
+export function outOfQuotaList(app: App) {
+  return Object.entries(quotaState(app)).filter(([, e]) => Date.parse(e.until) > Date.now()).map(([source, e]) => ({ source, ...e }));
+}
+
+/** Whether an error says the account's usage quota is spent (not a short rate limit). */
+export const isQuotaMessage = (text: string) => /usage limit|usageLimitExceeded|quota_exhausted|insufficient_quota|exceeded your current quota|out of credits|额度(已)?用(完|尽)/i.test(text);
+
+/**
+ * When the quota resets, from the provider's message: "try again at 2:36 PM" (the machine's local
+ * time, the next such time), "at Nov 6th, 2026 2:36 PM", or "in 3 hours 5 minutes". An hour when none.
+ */
+export function quotaResetAt(message: string, at = new Date()): Date {
+  const ok = (d: Date) => d.getTime() > at.getTime() && d.getTime() - at.getTime() < 8 * 86_400_000;
+  const tail = /try again (at|in) ([^.\n]+)/i.exec(message);
+  let d: Date | null = null;
+  if (tail?.[1].toLowerCase() === "in") {
+    const unit: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000 };
+    let ms = 0;
+    for (const m of tail[2].matchAll(/(\d+)\s*(day|hour|hr|minute|min)/gi)) ms += Number(m[1]) * unit[m[2][0].toLowerCase()];
+    if (ms) d = new Date(at.getTime() + ms);
+  } else if (tail) {
+    const text = tail[2].replace(/(\d)(st|nd|rd|th)\b/g, "$1").trim();
+    const time = /^(\d{1,2}):(\d{2})\s*([AP]M)?$/i.exec(text);
+    if (time) {
+      d = new Date(at);
+      const h = Number(time[1]);
+      d.setHours(time[3] ? (h % 12) + (time[3].toUpperCase() === "PM" ? 12 : 0) : h, Number(time[2]), 0, 0);
+      if (d.getTime() <= at.getTime()) d.setDate(d.getDate() + 1);
+    } else d = new Date(Date.parse(text));
+  }
+  return d && ok(d) ? d : new Date(at.getTime() + 3_600_000);
+}
 
 /**
  * Take a slot on the first option with room (options in order of preference: the run's own choice

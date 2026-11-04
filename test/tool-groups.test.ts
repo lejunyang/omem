@@ -4,7 +4,7 @@ import { loadRole } from "../src/agents/runner.ts";
 import { expandTools, ROLE_TOOLS, TOOL_GROUPS } from "../src/agents/tool-help.ts";
 
 it("expands tool groups, never with a role's own hand-in tools, and takes out what is excluded", () => {
-  const tools = expandTools(["group:code", "-apply_code_run", "search"]);
+  const tools = expandTools(["group:coding", "group:git", "-apply_code_run", "search"]);
   expect(tools).toEqual(expect.arrayContaining(["delegate_code", "clean_code_runs", "set_code_workspaces", "search"]));
   expect(tools).not.toContain("apply_code_run");
   expect(tools).not.toContain("submit_review");
@@ -22,5 +22,5 @@ it("gives the assistant every tool of its groups, so a new tool in a group needs
 
 it("rejects a group that does not exist when a role is saved", () => {
   expect(() => parseRoleText("---\ndescription: x\ntools: [group:nope]\n---\nbody\n")).toThrow(/group:nope/);
-  expect(parseRoleText("---\ndescription: x\ntools: [group:code, -apply_code_run]\n---\nbody\n").meta.tools).toEqual(["group:code", "-apply_code_run"]);
+  expect(parseRoleText("---\ndescription: x\ntools: [group:coding, -apply_code_run]\n---\nbody\n").meta.tools).toEqual(["group:coding", "-apply_code_run"]);
 });

@@ -1,10 +1,10 @@
-import { holdForRun } from "./capacity.ts";
+import { excluded, holdForRun } from "./capacity.ts";
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
-import { fallbackProfiles, isRetryableAgentError, prepareRun, recordRunAI, type Actor } from "./runner.ts";
+import { fallbackProfiles, isRetryableAgentError, noteQuota, prepareRun, recordRunAI, type Actor } from "./runner.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
@@ -335,14 +335,17 @@ ${WAKE_NOTE}`
   let used: AgentProfile = prep.profile;
   let curPrep = prep;
   let answer: string | null = null;
+  // An account out of quota is skipped while another backend can take the turn.
+  const usable = (i: number) => !excluded(app, chain[i]) || !chain.slice(i + 1).some((p) => !excluded(app, p));
   for (let step = 0; step < chain.length; step++) {
+    if (!usable(step)) continue;
     if (step > 0) {
       used = chain[step];
       release(threadId);
       revokeToolToken(curPrep.token);
       curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined });
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
-      emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
+      emit({ type: "status", text: `默认后端不可用（排队、限流或额度用完），改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
     }
     try {
       if (used.transport !== "acp") {
@@ -451,7 +454,8 @@ ${WAKE_NOTE}`
         }
       }
     } catch (e) {
-      if ((e as Error).message === "CANCELLED" || ctx.signal?.aborted || !isRetryableAgentError(e) || step === chain.length - 1) throw e;
+      noteQuota(app, used, e, emit);
+      if ((e as Error).message === "CANCELLED" || ctx.signal?.aborted || !isRetryableAgentError(e) || !chain.slice(step + 1).some((_, k) => usable(step + 1 + k))) throw e;
       emit({ type: "status", text: (e as Error).message.slice(0, 120) });
     }
   }

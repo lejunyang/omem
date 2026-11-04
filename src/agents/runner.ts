@@ -14,7 +14,7 @@ import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
-import { acquire, choosableProfiles, excluded } from "./capacity.ts";
+import { acquire, choosableProfiles, excluded, isQuotaMessage, markOutOfQuota } from "./capacity.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { DOUBAO_CLI_INSTALL } from "./doubao-cli.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
@@ -482,8 +482,18 @@ function distinctProfiles(list: AgentProfile[]) {
 /** Whether a failure is worth retrying on a fallback backend/model. */
 export function isRetryableAgentError(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
-  if (isAgentRunError(e)) return e.kind === "queue" || e.kind === "rate-limit" || e.queued === true;
-  return /rate.?limit|too many requests|429|capacity|overloaded|busy|try again later|resource.*(exhaust|unavailable)|排队/i.test(e.message);
+  if (isAgentRunError(e)) return e.kind === "queue" || e.kind === "rate-limit" || e.kind === "quota" || e.queued === true;
+  return isQuotaMessage(e.message) || /rate.?limit|too many requests|429|capacity|overloaded|busy|try again later|resource.*(exhaust|unavailable)|排队/i.test(e.message);
+}
+
+/**
+ * The account's usage quota is spent: leave its backends out until the reset time the provider
+ * gave, so this run's fallback and later runs skip it instead of failing one by one.
+ */
+export function noteQuota(app: App, profile: AgentProfile, e: unknown, emit: (e: AgentEvent) => void) {
+  if (!(e instanceof Error) || !(isAgentRunError(e) ? e.kind === "quota" : isQuotaMessage(e.message))) return;
+  const until = markOutOfQuota(app, profile, e.message);
+  emit({ type: "status", text: `${profile.name ?? profile.id} 的额度用完了，${until.toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 前自动改用其他后端` });
 }
 
 /** Build the ordered profile list for one role run: primary then configured fallbacks. */
@@ -577,7 +587,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         persistSession: input.persistSession ?? !!input.resumeSessionId,
         queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
       };
-      if (i > 0) emit({ type: "status", text: `${failed && !moved ? "默认后端不可用（排队/限流）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
+      if (i > 0) emit({ type: "status", text: `${failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
       emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
       const result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
         ? await backgroundTurn(app, prep, req, input.task, input.runId, emit)
@@ -586,6 +596,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       return { ...result, profileId: prep.profile.id, ai: { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort } };
     } catch (e) {
       revokeToolToken(prep.token);
+      noteQuota(app, prep.profile, e, emit);
       if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !isRetryableAgentError(e) || i === chain.length - 1) throw e;
       lastError = e;
       failed = true;
