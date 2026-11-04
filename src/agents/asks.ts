@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 
@@ -153,7 +153,7 @@ export function createAsk(
   const ask = getAsk(app, id);
   app.emit({ type: "ask", id, status: "pending", conversationId: ask.conversationId });
   // Suggestions belong under the reply: shown once the run has delivered it (settleAsks / showSuggestions).
-  if (kind !== "suggestion") void show(app, ask);
+  if (kind !== "suggestion" && !input.context?.afterReply) void show(app, ask);
   return ask;
 }
 
@@ -188,7 +188,7 @@ export function askText(ask: Ask) {
 
 /** Show a finished run's suggestions now (a channel that has just posted the reply calls this). */
 export async function showSuggestions(app: App, runId: string) {
-  for (const r of all<Row>(app.db, "select * from asks where run_id = ? and kind = 'suggestion' and status = 'pending' and shown_at is null order by created_at", runId)) await show(app, toAsk(r));
+  for (const r of all<Row>(app.db, "select * from asks where run_id = ? and (kind = 'suggestion' or json_extract(context, '$.afterReply') = 1) and status = 'pending' and shown_at is null order by created_at", runId)) await show(app, toAsk(r));
 }
 
 /** The host's cards about one round of a coding delegation or branch review (review-chain.ts): a newer round, an apply or a discard answers them all. */
@@ -262,6 +262,12 @@ let executor: Executor | null = null;
  */
 type AskHandler = (app: App, ask: Ask, context: Record<string, unknown>) => Promise<void>;
 const askHandlers = new Map<string, AskHandler>();
+/** Small deterministic actions commit with the answer, before acknowledging the click. */
+const askActions = new Map<string, (app: App, ask: Ask, context: Record<string, unknown>) => string>();
+export function registerAskAction(name: string, action: (app: App, ask: Ask, context: Record<string, unknown>) => string) {
+  askActions.set(name, action);
+}
+export const isImmediateAsk = (ask: Ask) => !!ask.handler && askActions.has(ask.handler);
 export function registerAskHandler(name: string, h: AskHandler) {
   askHandlers.set(name, h);
 }
@@ -285,17 +291,24 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
   if (before.kind === "question" && !option && !text) throw new HttpError(400, "回答不能为空");
   const approved = before.kind === "approval" ? !!input.approved : null;
   const answer = [option?.label, text].filter(Boolean).join("：") || null;
-  const changed = run(
-    app.db,
-    "update asks set status = 'answered', answer = ?, choice = ?, approved = ?, answered_at = ?, answered_by = ?, consumed = ? where id = ? and status = 'pending'",
-    answer,
-    option ? input.choice! : null,
-    approved === null ? null : approved ? 1 : 0,
-    now(),
-    input.by,
-    input.viaMessage || before.kind === "suggestion" ? 1 : 0,
-    id,
-  ).changes;
+  const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
+  const action = before.handler ? askActions.get(before.handler) : undefined;
+  const changed = tx(app.db, () => {
+    if (getAsk(app, id).status !== "pending") throw new HttpError(409, "这个提问已经处理过了");
+    const result = action?.(app, { ...before, status: "answered", answer, choice: option ? input.choice! : null, approved, answeredBy: input.by }, context);
+    return run(
+      app.db,
+      "update asks set status = 'answered', answer = ?, choice = ?, approved = ?, answered_at = ?, answered_by = ?, consumed = ?, result = coalesce(?, result) where id = ? and status = 'pending'",
+      answer,
+      option ? input.choice! : null,
+      approved === null ? null : approved ? 1 : 0,
+      now(),
+      input.by,
+      action || input.viaMessage || before.kind === "suggestion" ? 1 : 0,
+      result ?? null,
+      id,
+    ).changes;
+  });
   if (!changed) throw new HttpError(409, "这个提问已经回答过了");
   // Persist and acknowledge a channel click before running effects that may block on Git.
   const finish = async (): Promise<Ask> => {
@@ -306,6 +319,7 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
     }
     const ask = getAsk(app, id);
     closed(app, ask);
+    if (action) return ask;
     const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
     const handler = typeof context.handler === "string" ? askHandlers.get(context.handler) : undefined;
     if (handler) {
@@ -325,7 +339,7 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
     else if (!ask.consumed && !runActive(app, ask.runId)) await deliverAnswer(app, ask);
     return getAsk(app, id);
   };
-  if (input.deferEffects) {
+  if (input.deferEffects && !action) {
     setTimeout(() => void finish().catch((e) => {
       console.warn(`[omem] 卡片回答 ${id} 后续处理失败`, e);
       run(app.db, "update asks set result = ? where id = ?", `失败：${truncate(String(e instanceof Error ? e.message : e), 4000)}`, id);
@@ -371,6 +385,9 @@ async function deliverAnswer(app: App, ask: Ask) {
  */
 export async function settleAsks(app: App, runId: string) {
   for (const r of all<Row>(app.db, "select * from asks where run_id = ? and kind != 'suggestion' and status = 'answered' and consumed = 0", runId)) await deliverAnswer(app, toAsk(r));
+  const channel = one<{ channel: string }>(app.db, "select c.channel from conversations c join runs r on c.id = json_extract(r.input, '$.conversationId') where r.id = ?", runId)?.channel;
+  // Feishu confirms delivery explicitly; a timer can overtake a slow answer request.
+  if (channel === "lark" || channel?.startsWith("lark:")) return;
   const t = setTimeout(() => void showSuggestions(app, runId).catch(() => {}), 4000);
   t.unref();
 }

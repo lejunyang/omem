@@ -127,14 +127,16 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   // A schedule rule runs from the scheduler like the built-in tasks (schedule id rule:<id>).
   if (r.trigger.event === "schedule") upsertSchedule(app, { id: `rule:${id}`, kind: "rule", cron: r.trigger.cron!, config: { ruleId: id }, enabled: r.enabled });
   else if (prev && JSON.parse(prev.trigger).event === "schedule") deleteSchedule(app, `rule:${id}`);
+  queueMicrotask(() => app.emit({ type: "changed", entity: "rule", id, spaceId: r.spaceId }));
   return getRule(app, id);
 }
 
 export function deleteRule(app: App, id: string) {
-  getRule(app, id);
+  const rule = getRule(app, id);
   run(app.db, "delete from rules where id = ?", id);
   if (one(app.db, "select 1 from schedules where id = ?", `rule:${id}`)) deleteSchedule(app, `rule:${id}`);
   run(app.db, "delete from rule_handled where rule_id = ?", id);
+  queueMicrotask(() => app.emit({ type: "changed", entity: "rule", id, spaceId: rule.spaceId }));
 }
 
 /** Claim an event for a rule; false when it was handled before (by the other source, say). */

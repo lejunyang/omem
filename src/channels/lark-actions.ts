@@ -3,8 +3,9 @@ import { addMessage, findThread } from "../agents/threads.ts";
 import type { App } from "../core/app.ts";
 import { one, run, tx } from "../core/db.ts";
 import { OWNER, canWrite } from "../core/users.ts";
+import { currentBot } from "../core/bot-context.ts";
 import { larkUser } from "./lark-bots.ts";
-import { buildCard, closeInteraction, deliverLark, describeAction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, closeInteraction, deliverLark, describeAction, getInteraction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
 
 /**
  * A button press, select or form submit on one of the bot's cards
@@ -42,22 +43,34 @@ async function actOnCard(app: App, data: any): Promise<CardActionResult> {
   const operatorUser = () => larkUser(app, { open_id: operator, user_id: data.operator?.user_id });
   const messageId: string = data.context?.open_message_id ?? data.open_message_id ?? "";
   const action = data.action ?? {};
-  const inter = messageId ? interactionForMessage(app, messageId) : null;
+  const value = typeof action.value === "string" ? safeJson(action.value) : action.value;
+  const named = /^(opt_\d+|answer|approve|reject)__(ci[a-z0-9]+)$/.exec(action.name ?? "");
+  const earlyId = named?.[2] ?? (typeof value?.interactionId === "string" ? value.interactionId : null);
+  let inter = messageId ? interactionForMessage(app, messageId) : null;
+  if (!inter && messageId && earlyId) {
+    const pending = getInteraction(app, earlyId);
+    const chatId = data.context?.open_chat_id;
+    if (pending?.purpose === "ask" && pending.status === "open" && !pending.messageId && pending.bot === currentBot() && (!pending.chatId || chatId === pending.chatId) &&
+      pending.allowed.length && (pending.allowed.includes(operator) || (data.operator?.user_id && pending.allowed.includes(data.operator.user_id)))) {
+      bindInteraction(app, pending.id, messageId);
+      inter = getInteraction(app, pending.id);
+    }
+  }
   if (!inter) return { toast: { type: "warning", content: "这张卡片已经失效" } };
+  if (earlyId && earlyId !== inter.id) return { toast: { type: "warning", content: "卡片与交互记录不匹配" } };
   if (inter.allowed.length && !inter.allowed.includes(operator) && !(data.operator?.user_id && inter.allowed.includes(data.operator.user_id))) {
     const who = inter.allowed.slice(0, 3).join("、");
     return { toast: { type: "error", content: `只有 ${who} 可以处理` } };
   }
   if (inter.status !== "open") return { toast: { type: "info", content: "已经处理过了" } };
   const opName = operatorUser() === OWNER ? "本人" : operator;
-  const value = typeof action.value === "string" ? safeJson(action.value) : action.value;
   if (inter.purpose === "ask") {
     // A question, suggested step or approval (agents/asks.ts): answered here, no agent turn of its own.
     const { handleAskAction } = await import("./lark-asks.ts");
     const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;
     const by = operatorUser() ?? operator;
     try {
-      const r = await handleAskAction(app, inter.id, String((inter.payload as { askId?: string }).askId ?? ""), { name: action.name, value, formValue }, by);
+      const r = await handleAskAction(app, inter.id, String((inter.payload as { askId?: string }).askId ?? ""), { name: named?.[1] ?? action.name, value, formValue }, by);
       return { toast: { type: "success", content: r.toast }, ...(r.card ? { card: rawCard(r.card) } : {}) };
     } catch (e) {
       return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
-import { del, get, post, put } from "../api";
+import { del, get, onServerEvent, post, put } from "../api";
 import Icon from "../components/Icon.vue";
 import RuleTabs from "../components/RuleTabs.vue";
 import RuleConditions, { type Condition } from "../components/RuleConditions.vue";
@@ -61,11 +61,14 @@ const drafting = ref(false);
 
 const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", actions: [{ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" }] });
 
+let listSeq = 0;
 async function loadList() {
+  const seq = ++listSeq, space = state.space;
   try {
-    [rules.value, wakes.value, watches.value] = await Promise.all([get<Rule[]>(`/api/rules?space=${encodeURIComponent(state.space)}`), get<Wake[]>("/api/wakes").catch(() => []), get<Watch[]>("/api/watches").catch(() => [])]);
+    const result = await Promise.all([get<Rule[]>(`/api/rules?space=${encodeURIComponent(space)}`), get<Wake[]>("/api/wakes").catch(() => []), get<Watch[]>("/api/watches").catch(() => [])]);
+    if (seq === listSeq && space === state.space) [rules.value, wakes.value, watches.value] = result;
   } finally {
-    loading.value = false;
+    if (seq === listSeq) loading.value = false;
   }
 }
 // Wake-ups agents set for their own follow-up work: after a while, or on a message in a chat.
@@ -93,7 +96,8 @@ async function cancelWake(w: Wake) {
   if (route.query.wake === w.id) void router.replace({ query: {} });
 }
 let detailSeq = 0;
-async function loadCurrent() {
+async function loadCurrent(protectEdits = false) {
+  if (protectEdits && dirty.value) return;
   const seq = ++detailSeq, selected = selectedId.value;
   const current = () => seq === detailSeq && selected === selectedId.value;
   test.value = null;
@@ -106,7 +110,7 @@ async function loadCurrent() {
   if (!selectedId.value) return void (form.value = null);
   try {
     const r = await get<Rule & { firings: Firing[] }>(`/api/rules/${selectedId.value}`);
-    if (!current()) return;
+    if (!current() || (protectEdits && dirty.value)) return;
     firings.value = r.firings;
     form.value = { ...r };
     dirty.value = false;
@@ -121,6 +125,12 @@ onMounted(async () => {
   await loadCurrent();
 });
 watch(() => [route.query.id, route.query.new], () => void loadCurrent());
+const off = onServerEvent((e) => {
+  if (e.type !== "changed" || e.entity !== "rule") return;
+  void loadList().catch(() => {});
+  if (e.id === selectedId.value && !saving.value && !drafting.value) void loadCurrent(true);
+});
+onBeforeUnmount(() => { off(); ++listSeq; ++detailSeq; });
 onBeforeRouteLeave(async () => !dirty.value || (await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true })));
 async function go(query: Record<string, string>) {
   if (dirty.value && !(await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true }))) return;

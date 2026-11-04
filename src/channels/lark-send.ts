@@ -404,6 +404,11 @@ export function getInteraction(app: App, id: string): Interaction | null {
   const r = one<IRow>(app.db, "select * from card_interactions where id = ?", id);
   return r ? toI(r) : null;
 }
+/** A pre-registered card may be bound by its first click before the send API returns. */
+export function bindInteraction(app: App, id: string, messageId: string) {
+  if (!messageId || !run(app.db, "update card_interactions set message_id = ? where id = ? and (message_id is null or message_id = ?)", messageId, id, messageId).changes)
+    throw new HttpError(409, "卡片与交互记录不匹配");
+}
 export function closeInteraction(app: App, id: string, by: string) {
   run(app.db, "update card_interactions set status = 'done', handled_at = ?, handled_by = ? where id = ?", now(), by, id);
 }

@@ -1,10 +1,10 @@
-import { addAskSink, answerAsk, getAsk, type Ask } from "../agents/asks.ts";
+import { addAskSink, answerAsk, getAsk, isImmediateAsk, type Ask } from "../agents/asks.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { identitiesOf, OWNER } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
-import { buildCard, closeInteraction, getInteraction, larkOwnerOpenId, recordInteraction, sendLark, updateLarkCard, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, closeInteraction, getInteraction, larkOwnerOpenId, recordInteraction, sendLark, updateLarkCard, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
 import { getTask } from "../agents/code-tasks.ts";
 
@@ -79,8 +79,9 @@ function questionBlocks(app: App, ask: Ask) {
 
 export function askCard(app: App, ask: Ask): Record<string, unknown> {
   if (ask.status !== "pending") {
-    const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
-    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.result ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
+    const immediate = isImmediateAsk(ask) && ask.status === "answered";
+    const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : immediate ? ask.result ?? "已处理" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
+    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: immediate ? "已处理" : TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.result && !immediate ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
   }
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: questionBlocks(app, ask) });
   const elements = (card.body as { elements: unknown[] }).elements;
@@ -136,10 +137,35 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
     async show(app, ask) {
       const to = targetFor(app, ask, ownerOpenId());
       if (!to) return false;
-      const sent = await sendLark(to.target, { card: askCard(app, ask) });
       // Who may answer, in the posting bot's ids (the owner's open_id there; others by their main-bot id or user_id).
       const who = ask.userId === OWNER ? larkOwnerOpenId(app, to.bot) : to.bot === "main" ? identitiesOf(app, ask.userId).find((i) => i.channel === "lark")?.external_id : larkUserIdOf(app, ask.userId);
-      recordInteraction(app, { messageId: sent.messageId, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
+      const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
+      const card = askCard(app, ask);
+      const bind = (value: unknown): void => {
+        if (!value || typeof value !== "object") return;
+        const node = value as Record<string, unknown>;
+        if (node.tag === "button") {
+          node.name = `${node.name}__${id}`;
+          for (const behavior of (node.behaviors ?? []) as { type: string; value?: Record<string, unknown> }[]) {
+            if (behavior.type === "callback") behavior.value = { ...behavior.value, interactionId: id };
+          }
+        }
+        for (const child of Object.values(node)) if (child && typeof child === "object") {
+          if (Array.isArray(child)) child.forEach(bind);
+          else bind(child);
+        }
+      };
+      bind(card);
+      try {
+        const sent = await sendLark(to.target, { card });
+        bindInteraction(app, id, sent.messageId);
+        // A click may have completed while the send request was still returning.
+        const current = getAsk(app, ask.id);
+        if (current.status !== "pending") await updateLarkCard(sent.messageId, askCard(app, current), to.bot).catch(() => {});
+      } catch (error) {
+        if (!getInteraction(app, id)?.messageId) run(app.db, "update card_interactions set status = 'expired' where id = ?", id);
+        throw error;
+      }
       return true;
     },
     async closed(app, ask) {
@@ -175,6 +201,7 @@ export async function handleAskAction(app: App, interactionId: string, askId: st
     answering.catch((e) => console.warn(`[omem] 卡片回答 ${askId} 处理失败：${(e as Error).message}`));
     return { toast: "收到，正在处理，完成后卡片会更新", card: askCard(app, getAsk(app, askId)) };
   }
+  if (isImmediateAsk(done)) return { toast: done.result ?? "已处理", card: askCard(app, done) };
   if (ask.handler || ask.kind === "approval") return { toast: "收到，正在处理，完成后卡片会更新", card: askCard(app, done) };
   return { toast: ask.kind === "suggestion" ? "收到，接着做" : "已回答", card: askCard(app, done) };
 }

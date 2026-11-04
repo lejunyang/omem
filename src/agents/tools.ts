@@ -41,6 +41,7 @@ import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, readAgentSpec
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { setApprovalExecutor } from "./asks.ts";
+import { confirmRule } from "../rules/confirmation.ts";
 import { helpText, metaSchemas, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, type DocEditScope } from "../channels/lark-doc-approval.ts";
@@ -2449,7 +2450,7 @@ def({
 def({
   name: "save_rule",
   description:
-    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、拉机器人入会并旁听、优先采集、通知本人）。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用，回复里请本人到规则页（#/rules）核对后启用；本人明确说现在就启用时 enabled=true。",
+    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、拉机器人入会并旁听、优先采集、通知本人）。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：会话中自动准备启用确认卡片，回复送达后展示，点击由宿主直接启用；不要用 ask_owner 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
   write: true,
   schema: z.object({
     id: z.string().optional().describe("修改已有规则时填（list_rules）"),
@@ -2478,7 +2479,8 @@ def({
     input.conversationId = current?.conversationId ?? origin;
     for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space);
     const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent");
-    const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人到规则页核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
+    const confirmation = ctx.runId && origin ? confirmRule(ctx.app, saved, ctx.runId, origin) : null;
+    const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}${confirmation ? "\n已准备启用确认卡片，回复送达后自动展示；本人点击后由宿主直接启用，无需 AI 续轮。不要再用 ask_owner 或 suggest_next 重复询问启用。" : ""}`;
     // Rules that need Feishu permissions (meetings): what is missing, with the links to apply, for the owner.
     const { rulePermissions, permissionText } = await import("../rules/permissions.ts");
     const p = await rulePermissions(ctx.app, saved);
@@ -2556,6 +2558,8 @@ def({
     if (ctx.shadow) return "（对比运行）不附建议按钮。";
     const { createAsk, conversationOfRun } = await import("./asks.ts");
     if (!conversationOfRun(ctx.app, ctx.runId)) return "这次运行不在对话里，没有地方放按钮；把建议写在回答里即可。";
+    if (one(ctx.app.db, "select 1 from asks where run_id = ? and status = 'pending' and json_extract(context, '$.handler') = 'rule-enable'", ctx.runId))
+      return "本轮规则已有宿主的启用确认卡片，不再附建议按钮。其他后续建议写在回答正文里即可。";
     const ask = createAsk(ctx.app, { runId: ctx.runId, userId: ctx.userId ?? OWNER, kind: "suggestion", question: a.question ?? "", options: toOptions(a.options) });
     return `已附上 ${ask.options.length} 个下一步按钮，会显示在你这次回答下面。回答正文里不必再列这些选项。`;
   },

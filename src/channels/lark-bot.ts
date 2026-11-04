@@ -269,7 +269,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const [chatId, keyTopic] = (thread.key ?? "").split("#");
     const topic = thread.settings.lastTopicId ?? keyTopic;
     // What it became in Feishu: a later citation of it (`msg:`) opens the chat at it.
-    const sent = (id: string | undefined) => id && run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where id = ?", id, omemId);
+    const sent = async (id: string | undefined) => {
+      if (!id) return;
+      run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where id = ?", id, omemId);
+      if (typeof meta.runId === "string") await showSuggestions(app, meta.runId).catch((e) => console.warn("[omem] 回答后的确认卡片发送失败：", (e as Error).message));
+    };
     if (!chatId) return;
     // Internal citations and paths on this machine mean nothing in Feishu.
     const cite = { runId: typeof meta.runId === "string" ? meta.runId : null, chatId };
@@ -278,7 +282,6 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     // First message of a multi-agent work topic: open the topic from the request message.
     if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
       const opened = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true, runId: cite.runId, conversationId: thread.id }, { markdown, note });
-      sent(opened.messageId);
       // Keep Feishu's thread id as is (omt_…): replies inside the topic arrive with the same id,
       // so they resolve to this work conversation instead of starting a second one.
       if (opened.threadId) {
@@ -291,6 +294,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
           thread.id,
         );
       }
+      await sent(opened.messageId);
       return;
     }
     // A digest carries the agent's full report: one message, the answer on top and the record folded below.
@@ -299,10 +303,10 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       const { buildCard } = await import("./lark-send.ts");
       const card = buildCard({ wide: true, blocks: [{ markdown }, { fold: { title: String(meta.detailsTitle ?? "完整记录"), markdown: await resolveCitations(app, details, cite) } }, ...(note ? [{ note }] : [])] });
       const to = thread.settings.lastMessageId ? { replyTo: thread.settings.lastMessageId, inThread: !!topic } : { chatId };
-      sent((await sendLark({ ...to, purpose: "answer", runId: cite.runId, conversationId: thread.id }, { card })).messageId);
+      await sent((await sendLark({ ...to, purpose: "answer", runId: cite.runId, conversationId: thread.id }, { card })).messageId);
       return;
     }
-    sent((await reply(chatId, markdown, thread.settings.lastMessageId, !!topic, note, { runId: cite.runId, conversationId: thread.id })).messageId);
+    await sent((await reply(chatId, markdown, thread.settings.lastMessageId, !!topic, note, { runId: cite.runId, conversationId: thread.id })).messageId);
   }));
 
   // Background work tied to a conversation goes there (its Feishu topic, through its bot), never as
