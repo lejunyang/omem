@@ -354,7 +354,7 @@ ${input.task}
     const head = continueFrom ? "# 这一轮要做的修改项" : `${input.task}${itemBrief}`;
     coderTask = [
       head,
-      continueFrom ? list : taken.length ? `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”），这些已经列好，逐项做：\n\n${list}` : `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”）。先用 \`plan_tasks\` 拆分${w.budgetBy === "owner" ? `（本人给的预算：最多自动推进 ${w.budget} 轮）` : "，并估计要几轮"}，再逐项做。`,
+      continueFrom ? list : taken.length && taken.every((t) => t.origin.carried) ? `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”）。先用 \`plan_tasks\` 拆分上面的任务${w.budgetBy === "owner" ? `（本人给的预算：最多自动推进 ${w.budget} 轮）` : "，并估计要几轮"}，再逐项做；同一分支上之前的交办留下的这几项也在这一轮做（任务里已经要求的不要再拆一遍）：\n\n${list}` : taken.length ? `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”），这些已经列好，逐项做：\n\n${list}` : `## 修改项\n\n这次交办按修改项推进（做法见角色说明里的“修改项”）。先用 \`plan_tasks\` 拆分${w.budgetBy === "owner" ? `（本人给的预算：最多自动推进 ${w.budget} 轮）` : "，并估计要几轮"}，再逐项做。`,
       continueFrom ? "继续在原来的工作区里改，这些项都在这一轮做完，不要做一两项就停下；已完成和不做的项不要动。每项照角色说明里“修改项”的做法提交，并用 finish_task 说明。" : "",
       continueFrom && typeof input.roundNotes === "string" ? input.roundNotes : "",
       outside ? `## ${outside.owner ? "本人在这一轮之前改过代码" : "分支上有别人的新提交"}\n\n${outside.owner ? "本人" : "分支上"}改过这些文件（检查点 ${outside.checkpoint.seq}）：${outside.files.slice(0, 30).join("、")}${outside.files.length > 30 ? ` 等 ${outside.files.length} 个` : ""}。这些改动保留，不要覆盖或回退；和你要做的冲突时先用 report_task 交给本人。` : "",
@@ -456,7 +456,7 @@ ${input.task}
     setRunOutput(app, rootRunId, { syncPending: pending.length ? pending : null });
     for (const l of lines) ctx.event("status", { text: l });
     if (pending.length) {
-      const ask = askSyncConflict(app, getRun(app, run.id), chain?.conversationId ?? null, pending.map((p) => ({ ...p, path: worktrees.find((w) => w.space === p.space)!.path })));
+      const ask = askSyncConflict(app, getRun(app, run.id), chain ? (await import("./code-chain.ts")).reportConversation(app, chain) : null, pending.map((p) => ({ ...p, path: worktrees.find((w) => w.space === p.space)!.path })));
       ctx.output({ verdict: "sync-conflict", reviewAskId: ask.id, coderSummary: lines.join("\n") });
       return "stopped";
     }

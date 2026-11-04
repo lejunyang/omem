@@ -19,7 +19,7 @@ import UiSegmented from "./UiSegmented.vue";
  */
 type TaskState = "todo" | "coding" | "verify" | "disputed" | "done" | "assistant" | "owner" | "wontdo" | "reverted";
 type Note = { at: string; by: string; text: string; kind: string };
-type Task = { seq: number; title: string; doneWhen: string; kind: "build" | "fix" | "owner" | "redo"; origin: { findings?: number[]; note?: string; files?: string[] }; state: TaskState; question: string | null; options: string[]; answer: string | null; verifier: string | null; attempts: number; reverts: number; commits: Record<string, string[]>; checkpoint: number | null; notes: Note[] };
+type Task = { seq: number; title: string; doneWhen: string; kind: "build" | "fix" | "owner" | "redo"; origin: { findings?: number[]; note?: string; files?: string[]; later?: boolean; follows?: number; carried?: { work: string; seq: number } }; state: TaskState; question: string | null; options: string[]; answer: string | null; verifier: string | null; attempts: number; reverts: number; commits: Record<string, string[]>; checkpoint: number | null; notes: Note[] };
 type Checkpoint = { seq: number; tasks: number[]; label: string; createdAt: string };
 type Work = { budget: number; budgetBy: "owner" | "coder" | null; until: number; round: number; lastRunId: string; paused: string | null; viewed: number; status: string; verdict: string | null; stage: string | null; reverts: number[]; pending: string[]; max: number;
   /** Another model looking at the last stage again, beside the fixes. */
@@ -50,7 +50,9 @@ const WHO: Record<string, string> = { coder: "编码 Agent", host: "omem", owner
 const LOOK = "@复看";
 const who = (by: string): string => (by.endsWith(LOOK) ? `${who(by.slice(0, -LOOK.length))}（复看）` : WHO[by] ?? (by.startsWith("u") || by === "owner" ? "你" : by));
 const lookText = computed(() => w.value?.look ? w.value.look.checks.map((c) => { const ai = w.value!.look!.ai[c]; return `${who(c)}${ai ? `（${[ai.profile, ai.model].filter(Boolean).join(" · ")}）` : ""}`; }).join("、") : "");
-const PAUSE: Record<string, string> = { budget: "暂停：自动推进的轮数用完了", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停" };
+const PAUSE: Record<string, string> = { budget: "暂停：自动推进的轮数用完了", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停", polishing: "暂停：需求早已做完，评审还在一轮轮提问题" };
+const LATER = { text: "以后再做", cls: "" };
+const stateOf = (t: Task) => (t.state === "wontdo" && t.origin.later ? LATER : STATE[t.state]);
 
 const tasks = computed(() => data.value?.tasks ?? []);
 const w = computed(() => data.value?.work ?? null);
@@ -61,7 +63,8 @@ const groups = computed(() => [
   // Held up tasks the assistant that started the work settles; not the owner's to answer, though they may.
   { id: "assistant", label: "助手在处理", list: mine.value },
   { id: "done", label: "已完成", list: tasks.value.filter((t) => t.state === "done") },
-  { id: "other", label: "不做与回退", list: tasks.value.filter((t) => ["wontdo", "reverted"].includes(t.state)) },
+  { id: "later", label: "以后再做", list: tasks.value.filter((t) => t.state === "wontdo" && t.origin.later) },
+  { id: "other", label: "不做与回退", list: tasks.value.filter((t) => (t.state === "wontdo" && !t.origin.later) || t.state === "reverted") },
 ].filter((g) => g.list.length));
 const busy = computed(() => !!w.value && ["queued", "running"].includes(w.value.status));
 const status = computed(() => {
@@ -242,7 +245,7 @@ async function pickFile(key: string) {
         <button class="trow" :aria-expanded="open.has(t.seq)" @click="toggle(t.seq)">
           <span class="seq mono">T{{ t.seq }}</span>
           <span class="title">{{ t.title }}</span>
-          <span class="badge" :class="STATE[t.state].cls">{{ STATE[t.state].text }}</span>
+          <span class="badge" :class="stateOf(t).cls">{{ stateOf(t).text }}</span>
           <span class="muted small meta">{{ source(t) }}{{ t.attempts ? ` · 第 ${t.attempts + 1} 次` : "" }}{{ t.reverts ? ` · 回退过 ${t.reverts} 次` : "" }}{{ data.work?.reverts.includes(t.seq) ? " · 下一轮先回退" : "" }}</span>
         </button>
         <div v-if="open.has(t.seq)" class="more small">

@@ -8,7 +8,7 @@ import { HttpError, now, truncate } from "../core/util.ts";
 import { worktreesOf } from "./code.ts";
 import { addRoundFeedback, takeRoundFeedback, type RoundReview } from "./code-steer.ts";
 import {
-  getTask, headsAt, lastRound, listTasks, setWorkState, taskForFinding, taskLabel, taskList, taskText, updateTask, workRootOf, workState,
+  getTask, headsAt, lastRound, listTasks, setWorkState, tasksFromRuling, isLater, taskLabel, taskList, taskText, updateTask, workRootOf, workState,
   type CodeTask, type LookState,
 } from "./code-tasks.ts";
 import type { Execution } from "./execution.ts";
@@ -474,12 +474,9 @@ async function runLook(app: App, rootId: string, look: LookState) {
     if (fresh.length && !controller.signal.aborted) {
       const lead = await lookRuling(app, rootId, reviewed, round, fresh, ctx.reviewTask, child.id, controller.signal, event);
       const ids = new Set(fresh.map((f) => f.id));
-      for (const f of roundFindings(app, reviewed.id, round).filter((x) => ids.has(x.id))) {
-        const take = lead.by === "lead" ? f.state === "accepted" : f.state === "open";
-        if (!take) continue;
-        const owner = lead.owner?.[String(f.id)];
-        made.push(taskForFinding(app, rootId, f, "review-lead", owner ? { question: owner.question, options: owner.options } : undefined));
-      }
+      // Without a ruling only what is still open (never ruled on) becomes a task.
+      const ruled = roundFindings(app, reviewed.id, round).filter((x) => ids.has(x.id) && (lead.by === "lead" || x.state === "open"));
+      made.push(...tasksFromRuling(app, rootId, ruled, lead).filter((t) => !isLater(t)));
     }
     const joined = joinRound(app, rootId, made.filter((t) => getTask(app, rootId, t.seq).state === "todo"));
     const w = workState(app, rootId);

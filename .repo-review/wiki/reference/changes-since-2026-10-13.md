@@ -1228,3 +1228,21 @@ updated: 2026-11-04
 - 配置 `auth`：`enabled`、`providers`、`primary`、`signup`（按登录方：approve / closed / open）、`sessionDays`。打开后 `trustedLocal(..., { refuseProxied })` 把带 `X-Forwarded-For` / `Forwarded` / `X-Real-IP` 的请求排除在本机信任之外（插件流、网页版 VS Code、`omem peer open` 同样）。
 - HTTP：`/api/auth/session`、`/api/auth/:provider/start|callback`、`/api/auth/link/:code`、`/api/auth/logout` 不经统一鉴权；`/api/auth/account`、会话和身份的删除给每个人；`/api/users`、`/api/invites`、`/api/auth/providers` 只给本人。待批准和受限会话只能访问 `/api/me` 和 `/api/auth/*`（403 带 `code: pending|restricted`）。成员可以 GET `/api/spaces`（只列能读的）。
 - 网页：`/login`（不带外壳）、`/account`、设置 → 成员；401 带 `login: true` 时跳登录页而不是要令牌。命令：`/login`；`omem user approve`、`omem user invite`。
+
+## 交办不在细枝末节里打转（2026-11-05）
+
+- 起因：常驻服务器上一次桌面工具的交办，需求的 6 项第一晚做完，之后两天 43 轮、49 个评审修改项几乎都在磨 MCP stdio 层的请求 ID 复用、取消竞态和输出背压，同一处连着修了十层，源码安装和二维码登录实测一直没做。
+- 评审负责人（`TASK_RULING`、`roles/review-lead.md`）先问问题和需求、和代码实际用法的关系；碰不到的 `rule_review` 用 `defer` 记成以后再做（finding `decision = later`，修改项 `wontdo` + `origin.later`）。没改好 / 改出新问题的带 `follows`，`followDepth` 超过 `MAX_FOLLOW_DEPTH`（2）的新项交给助手。评审项的说明也要求先找影响验收和实际用法的问题。
+- 可交付点（`WorkState.deliverableAt`）：需求本身的项都完成、检查通过的那次阶段评审；之后的阶段评审还有评审项待做时发一次 `work-deliver` 卡片（先推送验证 / 剩下的以后再做），不暂停。之后 `POLISH_STAGES`（3）次阶段评审仍有新问题就暂停 `polishing`，助手接手。
+- 推送不结束交办：`deliverBranchWork` 推工作分支（一轮在编码时推最近一次阶段评审的检查点），`apply_code_run` 的 `keep_going`，记在 `WorkState.delivered`。确认时还在等本人的项记成以后再做。
+- 接续：`delegate_code` 在已有分支上、`startFix` 的“接着改”新交办时，`carryTasks` 把之前确认过的交办没做完的项接成待做、以后再做的照样列着，旧项记“接到交办 X 的 Tn”。第一轮全是接续项时编码 Agent 仍先 `plan_tasks` 拆这次的任务。
+- 助手：停下的消息带 `goalText`（原任务、需求项与评审项进展、轮数、推送）；两种交给助手的说明改成“你是发起人不是转发人”，按原需求判断、用本人的话、不写 T 编号；`settle_code_task` 加 `later`（评审提的待做项可以直接放下，需求本身的项要本人原话）。
+- 运行页和飞书进度卡片显示“以后再做”和新的暂停原因。
+
+## 交办的汇报跟着本人换会话（2026-11-05）
+
+- 现象：话题群里在第一条话题交办，本人之后在第三条话题里接着说（助手 `message_code_run`），每轮结果、“有修改项等你处理”、助手的接手汇报和卡片仍发回第一条话题。原因是这些都用 `chain.conversationId`（发起时的会话），只有交办整体移到工作话题时才换。
+- `code-chain.ts` 的 `reportConversation` 导出，顺序是本人最近调整交办的会话（ask 运行的 `output.codeReportTo`）→ 工作话题 → 发起的会话；`followOwner` 在 `message_code_run`、`continue_code_run`、`fix_review`、`settle_code_task`、`apply_code_run` 成功后由 `runTool` 调用（`STEERS_CODE`），从调用它的 ask 运行取会话，只认本人自己的会话；换过去时工具返回里提醒助手说一声进度卡片在原话题。
+- 结果记录直接写到汇报会话（`settleCodeChain`），交给助手时按消息实际所在的会话判断要不要搬；卡片（`askDeliver`、`ensureOwnerAsks`、`askPlan`、`askRetry`、`askConfirm`、`escalate`、同步冲突）都改用它。
+- 验收 R27k；测试 `test/code-loop.test.ts`“reports to the conversation the owner last steered…”。
+

@@ -231,6 +231,15 @@ export function openDelegationOn(app: App, repos: string[], branch: string | nul
   return null;
 }
 
+/** Task-driven delegations on a branch that were confirmed (pushed), newest first: a new one on it carries on what they left. */
+export function confirmedWorkOn(app: App, repos: string[], branch: string | null | undefined, userId: string, except: string): string[] {
+  if (!branch) return [];
+  const want = branch.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+  const since = new Date(Date.now() - 60 * 86400_000).toISOString();
+  const roots = all<{ id: string }>(app.db, "select id from runs where kind = 'code' and id != ? and json_extract(input, '$.continueFrom') is null and json_extract(input, '$.taskMode') = 1 and json_extract(output, '$.appliedAt') is not null and json_extract(output, '$.discardedAt') is null and coalesce(user_id, ?) = ? and created_at > ? order by created_at desc limit 20", except, OWNER, userId, since);
+  return roots.filter(({ id }) => worktreesOf(app, id).some((w) => repos.includes(w.space) && w.targetBranch === want)).map((r) => r.id);
+}
+
 /** The item of the latest delegation on a branch (applied or not): new work on the branch belongs to it too. */
 export function itemOnBranch(app: App, repos: string[], branch: string | null | undefined, userId: string): string | null {
   if (!branch) return null;
@@ -362,6 +371,8 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     const tasks = await import("./code-tasks.ts");
     for (const f of chosen) tasks.taskForFinding(app, r.id, f, userId);
     if (req.text?.trim()) tasks.addTask(app, r.id, { title: truncate(req.text.trim().split("\n")[0], 120), doneWhen: req.text.trim(), kind: "owner", origin: { note: req.text.trim() } }, userId);
+    // What the confirmed delegation left (unfinished, set aside) carries on here.
+    if (applied) tasks.carryTasks(app, r.id, [root.id]);
   }
   const { codeChainFor } = await import("./code-chain.ts");
   codeChainFor(app, r);

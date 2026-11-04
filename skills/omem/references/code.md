@@ -23,7 +23,7 @@
 
 - 交办每个仓库一条工作分支：`delegate_code` 不传分支时从仓库目录当前的提交切出临时分支，编码 Agent 按功能改名；`from_branch` 接着已有分支提交；`branch` 指定新分支名（本人说了才传）。编码 Agent 按功能提交，一轮剩下没提交的由宿主提交；不要让它 push。同一个分支一次只有一个没确认的交办，新交办默认各开一条分支，可以并行。
 - `code_branch(run_id, action, …)`：本人要求时用，进行中的交办等这一轮结束。`status` 看每个仓库的分支、切出点、提交、推送状态和检出位置；`rename(name)` 改名；`checkout_main` 把仓库目录切到这条分支（目录要干净），之后每轮的提交自动快进到那里，本人可以直接在仓库目录运行验证；`squash(message)` 压缩成一个提交；`sync(onto, mode)` 排一轮把另一个分支合并（或变基）进来，冲突交给编码 Agent。
-- `apply_code_run(run_id, squash_message?, force?)`：本人明确说确认 / 推送 / 合入时用。工作分支上的交办：可先压缩，推到 origin 的同名分支并设为上游，归还工作区，分支保留；远端有本地没有的提交时报错，本人同意覆盖才传 `force`（带 lease）。没有 origin 时只在本地确认。返回推送了哪些分支，失败就照实说。
+- `apply_code_run(run_id, squash_message?, force?, keep_going?)`：本人明确说确认 / 推送 / 合入时用。本人要先推上去验证、之后还要接着改时传 `keep_going`：只把工作分支推到 origin（有一轮在编码时推最近一次阶段评审看过的检查点），交办和工作区留着，之后的提交接着在同一分支，试过以后的问题用 `continue_code_run`；不能和 `squash_message` 一起用。交办已经确认、又要接着改时，`delegate_code` 传同一条 `from_branch`：之前交办没做完的项接成待做，记成以后再做的照样列着（返回里会说接上了哪些），任务里只写这次要做的。工作分支上的交办：可先压缩，推到 origin 的同名分支并设为上游，归还工作区，分支保留；远端有本地没有的提交时报错，本人同意覆盖才传 `force`（带 lease）。没有 origin 时只在本地确认。返回推送了哪些分支，失败就照实说。
 - 以前的交办（工作区里是未提交的改动）：`apply_code_run` 把改动应用到目标分支的工作区（未提交），之后 `code_git_status(run_id, space)` 看接收工作区的状态和暂存 diff，`code_git_action(run_id, space, action, expected_state, …)` 提交或推送（`expected_state` 传刚读到的 `state`；只提交暂存区；`force` 只在本人同意时用）。
 - `clean_code_runs`：本人要清理交办留下的东西时用。先不带 `confirm` 列出清单：没确认的交办（丢弃后工作区归还，这次新建、没推送、没在别处检出的分支一起删）、`receivers: true` 时以前交办的接收工作区、没有对应交办的遗留工作区，每项写着改了几个文件。本人同意后带 `confirm: true` 和 `run_ids` 再调，只处理这些。进行中的交办不在清单里。
 
@@ -40,9 +40,9 @@
 
 ## 评审角色专用
 
-`submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。按修改项推进的交办里还有：编码 Agent 的 `plan_tasks`（拆分、估轮数）、`finish_task`（说明一项做完了；没提交的改动由宿主作为这一项提交）、`report_task`（owner 交给本人，必须带 question 和两三个 options；disputed 有异议；blocked 被挡住或缺外部字段，交给发起交办的助手）、`ask_reviewer`（问提出这一项的评审项，它在自己这次交办的会话里回答）、`dispatch_tasks`（编码负责人把几组互不相干的项分给编码助手，同时做，这一轮结束时合并）；评审项的 `verify_tasks`（逐项验证）；评审负责人的 `plan_review`（这次评审谁看、看什么，`second_look` 请另一个模型复看）、`rule_dispute`（评审项坚持、编码 Agent 仍有异议时裁决），`rule_review` 的裁决可带 `owner`（交给本人决定的问题和选项），和已有修改项重复的用 `merge` + `task`（如 T5）合到那一项。
+`submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。按修改项推进的交办里还有：编码 Agent 的 `plan_tasks`（拆分、估轮数）、`finish_task`（说明一项做完了；没提交的改动由宿主作为这一项提交）、`report_task`（owner 交给本人，必须带 question 和两三个 options；disputed 有异议；blocked 被挡住或缺外部字段，交给发起交办的助手）、`ask_reviewer`（问提出这一项的评审项，它在自己这次交办的会话里回答）、`dispatch_tasks`（编码负责人把几组互不相干的项分给编码助手，同时做，这一轮结束时合并）；评审项的 `verify_tasks`（逐项验证）；评审负责人的 `plan_review`（这次评审谁看、看什么，`second_look` 请另一个模型复看）、`rule_dispute`（评审项坚持、编码 Agent 仍有异议时裁决），`rule_review` 的裁决可带 `owner`（交给本人决定的问题和选项），和已有修改项重复的用 `merge` + `task`（如 T5）合到那一项；问题成立但现在的用法碰不到（假想的并发、协议被乱用、极少见的时序、需求没要求的加固）用 `defer` 记成以后再做（要写 note），不挡交付；已完成的项没改好或改出新问题时 accept / defer 带 `follows`（如 T5），同一处修到第三层以后宿主交给助手判断。
 
-修改项停下时只等一方：「等助手处理」（编码被挡住、缺外部字段、验证 3 次没过、连续 3 轮没轮到、评审负责人没裁决）不发卡片，宿主马上在交办汇报的会话里叫醒发起交办的助手，别的项照常推进；「等你决定」才发卡片给本人。助手用 `settle_code_task` 处理：retry 写清这次怎么做（同一项最多 2 次，在自动推进的轮数内才开下一轮），skip 写在等什么，owner 必须带 `question` 和两三个 `options`；没什么要告诉本人的回答 QUIET。等本人决定的项，当前轮转达本人的答案，或在 retry 时附 `existing_authorization` 写明原需求或已有授权及其适用依据（不能作新的业务决定，不能用它 skip）。已经发给本人的卡片随之关闭，不用再让本人点。
+修改项停下时只等一方：「等助手处理」（编码被挡住、缺外部字段、验证 3 次没过、连续 3 轮没轮到、评审负责人没裁决）不发卡片，宿主马上在交办汇报的会话里叫醒发起交办的助手，别的项照常推进；「等你决定」才发卡片给本人。助手用 `settle_code_task` 处理：retry 写清这次怎么做（同一项最多 2 次，在自动推进的轮数内才开下一轮），skip 写在等什么，later 记成以后再做（问题成立但和这次要的关系不大；评审提的待做项也可以直接 later，需求本身的项只有本人能放下），owner 必须带 `question` 和两三个 `options`；没什么要告诉本人的回答 QUIET。等本人决定的项，当前轮转达本人的答案，或在 retry 时附 `existing_authorization` 写明原需求或已有授权及其适用依据（不能作新的业务决定，不能用它 skip）。已经发给本人的卡片随之关闭，不用再让本人点。
 
 ## 设备的外部 Agent 评审分支
 

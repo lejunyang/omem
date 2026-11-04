@@ -432,7 +432,7 @@ export function reviewsOf(app: App, codeRunIds: string[]) {
 // ---- review-lead: rulings and when to stop -------------------------------------------------------
 
 /** `task`: merged into a task the work already has (its seq; code-tasks.ts joinTask), not into a finding of this round. */
-export type Ruling = { id: number; decision: "accept" | "reject" | "merge"; into?: number; task?: number; note?: string };
+export type Ruling = { id: number; decision: "accept" | "reject" | "merge" | "defer"; into?: number; task?: number; note?: string };
 export type LeadResult = {
   round: number;
   verdict: "approve" | "revise" | "escalate";
@@ -442,6 +442,8 @@ export type LeadResult = {
   escalation?: { summary: string; options: string[] };
   /** Accepted findings the owner has to decide (business or product choices), by finding id. */
   owner?: Record<string, { question: string; options: string[] }>;
+  /** Accepted findings that are follow-up fixes of a task (it did not come out right, or broke something), by finding id: the task's number. */
+  follows?: Record<string, number>;
   stop?: StopReason;
   by: "lead" | "host";
 };
@@ -467,8 +469,9 @@ export function applyRulings(app: App, codeRunId: string, round: number, rulings
   }
   tx(app.db, () => {
     for (const r of rulings) {
-      const state = r.decision === "accept" ? "accepted" : r.decision === "reject" ? "rejected" : "merged";
-      run(app.db, "update review_findings set state = ?, merged_into = ?, triage_note = ? where id = ?", state, r.decision === "merge" && !r.task ? r.into! : null, (r.note ?? "").slice(0, 1000), r.id);
+      // Deferred: the problem stands, but is not worth doing in this change (a task set aside for later).
+      const state = r.decision === "accept" || r.decision === "defer" ? "accepted" : r.decision === "reject" ? "rejected" : "merged";
+      run(app.db, "update review_findings set state = ?, merged_into = ?, triage_note = ?, decision = case when ? then 'later' else decision end where id = ?", state, r.decision === "merge" && !r.task ? r.into! : null, (r.note ?? "").slice(0, 1000), r.decision === "defer" ? 1 : 0, r.id);
     }
   });
 }

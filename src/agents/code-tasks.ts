@@ -5,6 +5,7 @@ import { all, one, run } from "../core/db.ts";
 import { fetchBranch, git, resolveRef } from "../core/git.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
+import type { FindingRow, LeadResult } from "./review.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 
@@ -36,7 +37,12 @@ export type CodeTask = {
   title: string;
   doneWhen: string;
   kind: TaskKind;
-  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[] };
+  /**
+   * later: set aside (state wontdo) — not done, not holding the work up, taken up again by the next
+   * delegation on the branch; follows: the task this one is a follow-up fix of (it did not come out
+   * right or broke something); carried: the task of an earlier delegation it continues.
+   */
+  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[]; later?: boolean; follows?: number; carried?: { work: string; seq: number } };
   state: TaskState;
   question: string | null;
   options: string[];
@@ -56,6 +62,16 @@ export type CodeTask = {
 export type Checkpoint = { seq: number; heads: Record<string, string>; tasks: number[]; by: string; label: string; createdAt: string };
 
 export const TASK_STATE_LABEL: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", assistant: "等助手处理", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
+/** How a task's state reads: one set aside for later is not the same as one dropped. */
+export const stateLabel = (t: Pick<CodeTask, "state" | "origin">) => (isLater(t) ? "以后再做" : TASK_STATE_LABEL[t.state]);
+export const isLater = (t: Pick<CodeTask, "state" | "origin">) => t.state === "wontdo" && !!t.origin.later;
+/**
+ * How deep a chain of follow-up fixes may go on its own: a fix of a fix (depth 2) is still made; a
+ * finding on that goes to the assistant, which decides whether the part is worth more rounds.
+ */
+export const MAX_FOLLOW_DEPTH = 2;
+/** Stage reviews that may go on finding only review fixes after the requirement was done, before the loop stops for the assistant. */
+export const POLISH_STAGES = 3;
 /** After this many failed tries (or rounds that never got to it) a task goes to the assistant that started the work. */
 export const MAX_ATTEMPTS = 3;
 /** How many times the assistant may send one task back to be done again before only the owner can. */
@@ -83,6 +99,17 @@ export type WorkState = {
   look?: LookState | null;
   /** The model each check's second look uses in this work, chosen once so its session goes on. */
   lookAI?: Record<string, { profile: string; model?: string; effort?: string }>;
+  /**
+   * The requirement's own tasks were all done at this stage review (index into `stages`): from here
+   * on what is left are review fixes, and the work can be delivered (pushed, tried) before they are.
+   */
+  deliverableAt?: number | null;
+  /** The card that asked the owner, at that point, whether to push before the rest is done. */
+  deliverAsk?: string | null;
+  /** The stage review the loop last paused at because only review fixes went on (POLISH_STAGES). */
+  polishAt?: number | null;
+  /** Pushes while the work went on (deliverWork): what went out, to be tried before the work ends. */
+  delivered?: { at: string; branches: { space: string; branch: string; head: string }[] }[];
 };
 
 /** The stage a second look reads (the reviewed round, its commits) and which checks look again. */
@@ -284,7 +311,53 @@ export function joinTask(app: App, rootId: string, findingId: number, seq: numbe
 }
 
 /** The work's tasks as checks and review-lead read them: label, state, title. */
-export const taskList = (app: App, rootId: string) => listTasks(app, rootId).map((t) => `- ${taskLabel(t.seq)} [${TASK_STATE_LABEL[t.state]}] ${t.title}`).join("\n");
+export const taskList = (app: App, rootId: string) => listTasks(app, rootId).map((t) => `- ${taskLabel(t.seq)} [${stateLabel(t)}]${t.origin.follows ? `（接着 ${taskLabel(t.origin.follows)}）` : ""} ${t.title}`).join("\n");
+
+/** How many follow-up fixes deep a task is: 0 for one of its own, 1 for a fix of it, 2 for a fix of that… */
+export function followDepth(app: App, rootId: string, seq: number): number {
+  let depth = 0;
+  const seen = new Set<number>();
+  for (let t = getTask(app, rootId, seq); t.origin.follows && !seen.has(t.seq); depth++) {
+    seen.add(t.seq);
+    const next = one<Row>(app.db, "select * from code_tasks where work_id = ? and seq = ?", rootId, t.origin.follows);
+    if (!next) return depth + 1;
+    t = toTask(next);
+  }
+  return depth;
+}
+
+/** Set a task aside: it does not hold the work up, and the next delegation on the branch takes it up again. */
+export function deferTask(app: App, rootId: string, seq: number, why: string, note: Omit<TaskNote, "at">): CodeTask {
+  const t = getTask(app, rootId, seq);
+  return updateTask(app, rootId, seq, { state: "wontdo", answer: why, origin: { ...t.origin, later: true } }, note);
+}
+
+/**
+ * The tasks review-lead's ruling makes of a stage's findings (accepted ones; every open one when it
+ * gave none): each a task its check verifies; set aside when the lead deferred it; a follow-up of the
+ * task it names, and past MAX_FOLLOW_DEPTH handed to the assistant instead of coded again.
+ */
+export function tasksFromRuling(app: App, rootId: string, findings: (FindingRow & { check_name: string })[], lead: Pick<LeadResult, "by" | "owner" | "follows">): CodeTask[] {
+  const made: CodeTask[] = [];
+  for (const f of findings) {
+    const take = lead.by === "lead" ? f.state === "accepted" : f.state === "open" || f.state === "accepted";
+    if (!take) continue;
+    const owner = f.decision === "later" ? undefined : lead.owner?.[String(f.id)];
+    const follows = lead.follows?.[String(f.id)];
+    let t = taskForFinding(app, rootId, f, "review-lead", owner ? { question: owner.question, options: owner.options } : undefined);
+    if (follows && follows !== t.seq && !t.origin.follows && one(app.db, "select 1 from code_tasks where work_id = ? and seq = ?", rootId, follows)) t = updateTask(app, rootId, t.seq, { origin: { ...t.origin, follows } });
+    if (f.decision === "later") {
+      const why = f.triage_note.trim() || "和这次的需求关系不大";
+      t = deferTask(app, rootId, t.seq, why, { by: "review-lead", kind: "lead", text: `以后再做：${why}` });
+    } else if (t.state === "todo" && followDepth(app, rootId, t.seq) > MAX_FOLLOW_DEPTH) {
+      const chain: number[] = [];
+      for (let x = t; x.origin.follows && !chain.includes(x.origin.follows); x = getTask(app, rootId, x.origin.follows)) chain.unshift(x.origin.follows);
+      t = toAssistant(app, rootId, t.seq, `这一处已经连着修了 ${chain.length} 层（${[...chain, t.seq].map(taskLabel).join(" → ")}），每次修完，评审又在新改的代码里找出问题。先判断它对这次的需求还重要吗：重要就想清楚换什么做法再 retry；只是现在的用法碰不到的边界情况，就 later 记成以后再做。`);
+    }
+    made.push(t);
+  }
+  return made;
+}
 
 // ---- commits and checkpoints ---------------------------------------------------------------------
 
@@ -770,11 +843,61 @@ export const workOwner = (app: App, rootId: string) => runUser(app, rootId);
 export function waitingText(app: App, rootId: string) {
   const tasks = listTasks(app, rootId);
   const mine = tasks.filter((t) => t.state === "assistant");
+  const later = tasks.filter(isLater);
   const owner = tasks.filter((t) => t.state === "owner");
   return [
     mine.length ? `## 等你处理的修改项（${mine.length} 项，没有问本人）\n\n${mine.map((t) => `${truncate(taskText(app, t), 4000)}\n\n停下的原因：${t.question ?? ""}${retriesBy(t) ? `\n你已经让它重做过 ${retriesBy(t)} 次（最多 ${ASSISTANT_RETRIES} 次）。` : ""}`).join("\n\n")}` : "",
     owner.length ? `## 在等本人决定的修改项（${owner.length} 项，卡片已经发给本人，不要再问）\n\n${owner.map((t) => `- ${taskLabel(t.seq)}「${t.title}」：${truncate(t.question ?? "", 300)}`).join("\n")}` : "",
+    later.length ? `## 记成以后再做的（${later.length} 项，不挡这次交付，同一分支的下一次交办会接上）\n\n${later.map((t) => `- ${taskLabel(t.seq)}「${t.title}」`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
+}
+
+const UNFINISHED: TaskState[] = ["todo", "coding", "verify", "disputed", "assistant", "owner"];
+
+/**
+ * A new delegation on a branch carries on what earlier confirmed ones there left: their unfinished
+ * tasks to do again, those set aside staying set aside (in view, so reviews do not raise them anew,
+ * and the owner can take one up). Each old task notes where it went and is carried once.
+ */
+export function carryTasks(app: App, rootId: string, from: string[]): { todo: CodeTask[]; later: CodeTask[] } {
+  const out = { todo: [] as CodeTask[], later: [] as CodeTask[] };
+  for (const old of [...from].reverse()) {
+    for (const t of listTasks(app, old)) {
+      if (t.notes.some((n) => n.kind === "host" && n.text.startsWith("接到交办")) || !(UNFINISHED.includes(t.state) || isLater(t))) continue;
+      const later = isLater(t);
+      const n = addTask(app, rootId, {
+        title: t.title,
+        doneWhen: truncate(taskText(app, t).split("\n").slice(1).join("\n").trim(), 4000),
+        kind: t.kind,
+        origin: { carried: { work: old, seq: t.seq }, ...(t.origin.files ? { files: t.origin.files } : {}), ...(t.origin.note ? { note: t.origin.note } : {}) },
+        ...(t.state === "owner" && !later ? { state: "owner" as const, question: t.question ?? undefined, options: t.options } : {}),
+      }, "host");
+      if (later) out.later.push(deferTask(app, rootId, n.seq, t.answer ?? "上一次交办记成以后再做", { by: "host", kind: "host", text: `上一次交办（${old} 的 ${taskLabel(t.seq)}）记成以后再做的` }));
+      else out.todo.push(n);
+      updateTask(app, old, t.seq, later ? {} : { state: "wontdo" }, { by: "host", kind: "host", text: `接到交办 ${rootId} 的 ${taskLabel(n.seq)}` });
+    }
+  }
+  return out;
+}
+
+/**
+ * What the delegation was for and how far it got, for the assistant's turn when the work stops: the
+ * request as given, the requirement's own tasks against the review fixes, and how many rounds it took.
+ */
+export function goalText(app: App, rootId: string) {
+  const root = getRun(app, rootId);
+  const tasks = listTasks(app, rootId);
+  const own = tasks.filter((t) => t.kind !== "fix");
+  const fixes = tasks.filter((t) => t.kind === "fix");
+  const count = (l: CodeTask[], f: (t: CodeTask) => boolean) => l.filter(f).length;
+  const w = workState(app, rootId);
+  const unfinished = own.filter((t) => !["done", "wontdo", "reverted"].includes(t.state));
+  const progress = [
+    `- 需求拆出的修改项：完成 ${count(own, (t) => t.state === "done")} / ${own.length}${unfinished.length ? `（没完成：${unfinished.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 60)}」`).join("、")}）` : ""}`,
+    `- 评审提的修改项：${fixes.length} 项，完成 ${count(fixes, (t) => t.state === "done")}，以后再做 ${count(fixes, isLater)}，待做 ${count(fixes, (t) => t.state === "todo")}；其中修了又修的 ${count(fixes, (t) => !!t.origin.follows)} 项`,
+    `- 第 ${lastRound(app, rootId).input.round ?? 1} 轮，阶段评审 ${(w.stages ?? []).length} 次${w.deliverableAt != null ? `（第 ${w.deliverableAt + 1} 次时需求就做完了）` : ""}${w.delivered?.length ? `；推送过 ${w.delivered.length} 次，最近 ${w.delivered.at(-1)!.at.slice(0, 16)}` : ""}`,
+  ];
+  return `## 这次交办原来要的\n\n${truncate(String(root.input.task ?? root.title), 3000)}\n\n## 进展\n\n${progress.join("\n")}`;
 }
 
 /** Times the assistant sent the task back to be done again (settle_code_task retry). */

@@ -308,6 +308,46 @@ function releaseWorktree(root: string, first: string, wt: WorktreeRef) {
   git(root, ["worktree", "prune"]);
 }
 
+/** Push one work branch to origin as its upstream; a remote that moved on is refused unless `force` (with a lease). */
+function pushWorkBranch(root: string, wt: WorktreeRef, force: boolean, before: { branch: string }[], rev?: string) {
+  fetchBranch(root, wt.branch);
+  const tip = rev ?? tipOf(root, wt.branch)!;
+  const known = git(root, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${wt.branch}`]).stdout.trim();
+  if (known && !ancestor(root, known, tip) && !force)
+    throw new HttpError(409, `origin/${wt.branch} 有本地没有的提交：先在分支面板“合并到”origin/${wt.branch}，或者确认要覆盖时选“强制推送”`);
+  const lease = known && !ancestor(root, known, tip) ? [`--force-with-lease=refs/heads/${wt.branch}:${known}`] : [];
+  const r = git(root, ["-c", "remote.origin.mirror=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", ...lease, "origin", `${rev ?? `refs/heads/${wt.branch}`}:refs/heads/${wt.branch}`]);
+  if (!r.ok) throw new HttpError(409, `${before.length ? `${before.map((p) => p.branch).join("、")} 已推送；` : ""}推送 ${wt.space} 的 ${wt.branch} 失败：${(r.stderr || r.stdout).trim().slice(0, 800)}`);
+  git(root, ["branch", `--set-upstream-to=origin/${wt.branch}`, wt.branch]);
+  return { space: wt.space, branch: wt.branch, at: new Date().toISOString(), head: tip, ...(lease.length ? { forced: true } : {}) };
+}
+
+/**
+ * Push the work branches and keep going (“先推上去验证，再接着改”): the workspaces and the work stay,
+ * later rounds add to the same branches, and the owner confirms at the end as usual. What goes out is
+ * `heads` (a checkpoint the loop reached, so a round coding now does not push half a task), else the
+ * branch tips when no round is coding.
+ */
+export function deliverBranchWork(app: App, runId: string, opts: { force?: boolean; heads?: Record<string, string> } = {}) {
+  const first = String(getRun(app, runId).input.continueFrom ?? runId);
+  const firstRun = getRun(app, first);
+  if (firstRun.output.appliedAt || firstRun.output.discardedAt) throw new HttpError(409, "这次交办已经确认或丢弃了");
+  const coding = rounds(app, first).some((r) => ["queued", "running"].includes(r.status));
+  if (coding && !opts.heads) throw new HttpError(409, "这一轮还在编码，结束后再推送");
+  const wts = ((firstRun.output.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits);
+  if (!wts.length) throw new HttpError(400, "还没有提交，没有可推送的");
+  const pushed: ReturnType<typeof pushWorkBranch>[] = [];
+  const notes: string[] = [];
+  for (const wt of wts) {
+    const rev = opts.heads?.[wt.space];
+    if (wt.pending && !rev) throw new HttpError(409, `${wt.space} 有一轮的提交没能放回分支 ${wt.branch}（${wt.pending.slice(0, 8)}，在工作区里）：等下一轮合并进来再推送`);
+    const t = targetOf(app, runId, wt.space);
+    if (!git(t.root, ["remote", "get-url", "origin"]).ok) { notes.push(`${wt.space}：没有 origin，只在本地`); continue; }
+    pushed.push(pushWorkBranch(t.root, wt, !!opts.force, pushed, rev));
+  }
+  return { pushed, notes };
+}
+
 /**
  * The owner's confirmation: optionally squash, push each work branch to origin (set as upstream;
  * with a lease when it was squashed or `force`), then give the workspaces back. Branches stay.
@@ -336,16 +376,7 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
       notes.push(`${wt.space}：${opts.push === false ? "没有推送" : "没有 origin，只在本地"}`);
       continue;
     }
-    fetchBranch(t.root, wt.branch);
-    const tip = tipOf(t.root, wt.branch)!;
-    const known = git(t.root, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${wt.branch}`]).stdout.trim();
-    if (known && !ancestor(t.root, known, tip) && !force)
-      throw new HttpError(409, `origin/${wt.branch} 有本地没有的提交：先在分支面板“合并到”origin/${wt.branch}，或者确认要覆盖时选“强制推送”`);
-    const lease = known && !ancestor(t.root, known, tip) ? [`--force-with-lease=refs/heads/${wt.branch}:${known}`] : [];
-    const r = git(t.root, ["-c", "remote.origin.mirror=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", ...lease, "origin", `refs/heads/${wt.branch}:refs/heads/${wt.branch}`]);
-    if (!r.ok) throw new HttpError(409, `${pushed.length ? `${pushed.map((p) => p.branch).join("、")} 已推送；` : ""}推送 ${wt.space} 的 ${wt.branch} 失败：${(r.stderr || r.stdout).trim().slice(0, 800)}`);
-    git(t.root, ["branch", `--set-upstream-to=origin/${wt.branch}`, wt.branch]);
-    pushed.push({ space: wt.space, branch: wt.branch, at: new Date().toISOString(), ...(lease.length ? { forced: true } : {}) });
+    pushed.push(pushWorkBranch(t.root, wt, force, pushed));
   }
   for (const wt of wts) {
     const root = getSpace(app, wt.space).rootPath!;

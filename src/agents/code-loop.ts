@@ -4,11 +4,11 @@ import { notify } from "../core/notify.ts";
 import { git } from "../core/git.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler, type Ask } from "./asks.ts";
-import { codeChainFor, queueNextCodeRound, saveCodeChain, wakeAssistantForTasks, type CodeChain } from "./code-chain.ts";
+import { codeChainFor, queueNextCodeRound, reportConversation, saveCodeChain, wakeAssistantForTasks, type CodeChain } from "./code-chain.ts";
 import { addCodeNote } from "./code-steer.ts";
 import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
 import {
-  addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, taskForFinding,
+  addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, tasksFromRuling, isLater, deferTask, POLISH_STAGES,
   ownerQuestionText, stranded, taskLabel, toAssistant, hasAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
@@ -273,19 +273,20 @@ async function stageReview(app: App, run: Run, rc: RoundContext) {
   });
   const lead = res.lead!;
   const round = roundOf(run);
-  let made = 0;
-  for (const f of roundFindings(app, run.id, round)) {
-    // A lead's ruling decides; without one (it failed), every finding is worth a task.
-    const take = lead.by === "lead" ? f.state === "accepted" : f.state === "open" || f.state === "accepted";
-    if (!take) continue;
-    const owner = lead.owner?.[String(f.id)];
-    taskForFinding(app, rootId, f, "review-lead", owner ? { question: owner.question, options: owner.options } : undefined);
-    made++;
-  }
+  // A lead's ruling decides; without one (it failed), every finding is worth a task. Set aside ones do not count as left to do.
+  const made = tasksFromRuling(app, rootId, roundFindings(app, run.id, round), lead).filter((t) => !isLater(t)).length;
   if (lead.verdict === "escalate" && lead.escalation) {
     addTask(app, rootId, { title: "方案上的分歧", doneWhen: lead.escalation.summary, kind: "owner", state: "owner", question: lead.escalation.summary, options: lead.escalation.options }, "review-lead");
   }
-  setWorkState(app, rootId, { stageAt: latest, stages: [...(w.stages ?? []), made] });
+  const stages = [...(w.stages ?? []), made];
+  // The requirement's own tasks are all done: what is left are review fixes, and the work can go out first.
+  const own = listTasks(app, rootId).filter((t) => t.kind !== "fix");
+  const deliverable = w.deliverableAt ?? (own.length && own.every((t) => ["done", "wontdo", "reverted"].includes(t.state)) && !brokenChecks(run).length ? stages.length - 1 : null);
+  setWorkState(app, rootId, { stageAt: latest, stages, deliverableAt: deliverable });
+  // Once: the fixes the first review after the requirement asked for are in, and reviews still find
+  // more — offer the owner to push what was reviewed and try it while they go on.
+  const fixes = listTasks(app, rootId).filter((t) => t.kind === "fix" && t.state === "todo");
+  if (deliverable != null && stages.length - 1 > deliverable && !w.deliverAsk && fixes.length) setWorkState(app, rootId, { deliverAsk: askDeliver(app, rootId, run, fixes).id });
   const look = planLook(app, rootId, getRun(app, run.id), plan, latest, since);
   if (look) rc.event("status", { text: `另一个模型复看 ${look.checks.map((c) => c.name).join("、")}，和下一轮的修改同时进行` });
 }
@@ -313,6 +314,15 @@ async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict
   };
   if (todo.length || (w.reverts ?? []).length) {
     if (w.paused) return finish("paused", { reviewStop: "paused" });
+    // Only review fixes left, POLISH_STAGES stage reviews after the requirement was done (and as many
+    // after each such stop): stop, and let the assistant judge what is still worth doing.
+    const stage = (w.stages ?? []).length - 1;
+    const polished = w.deliverableAt != null ? stage - (w.polishAt ?? w.deliverableAt) : 0;
+    if (polished >= POLISH_STAGES && todo.every((t) => t.kind === "fix") && !(w.reverts ?? []).length) {
+      setWorkState(app, rootId, { paused: "polishing", polishAt: stage });
+      notifyOwner(app, rootId, run, "交办暂停：需求已做完，评审还在一轮轮提问题", `需求的修改项早已完成，之后 ${polished} 次阶段评审一直在提新问题（还有 ${todo.length} 项）。助手会看哪些值得改。`);
+      return finish("paused", { reviewStop: "polishing" });
+    }
     if (notConverging(w.stages ?? [])) {
       setWorkState(app, rootId, { paused: "not-converging" });
       notifyOwner(app, rootId, run, "交办暂停：修改没有收敛", `最近三次阶段评审要改的问题没有减少（${(w.stages ?? []).slice(-3).join(" → ")}）。看一下修改项，决定继续、调整方案还是先停下。`);
@@ -354,6 +364,66 @@ function completed(app: App, rootId: string, run: Run) {
   const ask = askConfirm(app, run, chain, `交办完成：${getRun(app, rootId).title}`, digest);
   setRunOutput(app, run.id, { reviewAskId: ask.id });
 }
+
+const DELIVER = ["先推送验证", "剩下的以后再做"] as const;
+
+/**
+ * The requirement is done and only review fixes are left: the owner may push what was reviewed and
+ * try it while the fixes go on, or set the rest aside for a later delegation on the branch, instead of
+ * waiting for reviews to run dry. It does not hold the work up; unanswered, the fixes go on.
+ */
+function askDeliver(app: App, rootId: string, run: Run, todo: CodeTask[]) {
+  const tasks = listTasks(app, rootId);
+  const own = tasks.filter((t) => t.kind !== "fix" && t.state === "done");
+  const chain = (run.output as { codeChain?: CodeChain }).codeChain ?? null;
+  const branch = worktreesOf(app, rootId).some((w) => w.commits);
+  return createAsk(app, {
+    runId: run.id,
+    ...(chain ? { conversationId: reportConversation(app, chain) } : {}),
+    question: [
+      `**需求做完了：${getRun(app, rootId).title}**`,
+      `需求拆出的 ${own.length} 项都已完成并通过检查：\n${own.slice(0, 8).map((t) => `- ${t.title}`).join("\n")}`,
+      `评审还提了 ${todo.length} 个问题待改：\n${todo.slice(0, 5).map((t) => `- ${t.title}`).join("\n")}${todo.length > 5 ? `\n- ……共 ${todo.length} 个` : ""}`,
+      `这些问题照常在改，不用回复。${branch ? "想先实际试一下，可以把评审过的版本推上去（之后的修改接着提交在同一分支）；" : ""}觉得剩下的不值得这次改，可以记成以后再做，同一分支下次交办会接上。`,
+    ].join("\n\n"),
+    options: (branch ? DELIVER : DELIVER.slice(1)).map((label) => ({ label })),
+    context: { handler: "work-deliver", rootId },
+  });
+}
+
+/**
+ * Push the work branches and keep the work open (deliverBranchWork), noted on the work. While a round
+ * codes, what goes out is the checkpoint the last stage review saw, not the round's half-done commits.
+ */
+export async function deliverWork(app: App, rootId: string, opts: { force?: boolean } = {}) {
+  const { deliverBranchWork } = await import("./code-branch.ts");
+  const w = workState(app, rootId);
+  const last = lastRound(app, rootId);
+  const checkpoints = listCheckpoints(app, rootId);
+  const reviewed = checkpoints.find((c) => c.seq === w.stageAt) ?? checkpoints.at(-1);
+  const coding = ["queued", "running"].includes(last.status);
+  const res = deliverBranchWork(app, last.id, { force: opts.force, ...(coding && reviewed ? { heads: reviewed.heads } : {}) });
+  if (res.pushed.length) setWorkState(app, rootId, { delivered: [...(w.delivered ?? []), { at: new Date().toISOString(), branches: res.pushed.map((p) => ({ space: p.space, branch: p.branch, head: p.head })) }] });
+  return res;
+}
+
+registerAskHandler("work-deliver", async (app: App, ask: Ask, ctx) => {
+  const { rootId } = ctx as { rootId: string };
+  const picked = ask.choice !== null ? ask.options[ask.choice]?.label : DELIVER.find((l) => (ask.answer ?? "").trim().startsWith(l));
+  const run = lastRound(app, rootId);
+  try {
+    if (picked === DELIVER[0]) {
+      const res = await deliverWork(app, rootId);
+      notify(app, { userId: ask.userId, title: `已推送：${getRun(app, rootId).title}`, body: [res.pushed.map((p) => `${p.branch}（${p.head.slice(0, 8)}）`).join("、"), ...res.notes].filter(Boolean).join("\n") || "没有要推送的分支", link: `#/runs/${run.id}` });
+    } else if (picked === DELIVER[1]) {
+      for (const t of listTasks(app, rootId).filter((x) => x.kind === "fix" && x.state === "todo")) deferTask(app, rootId, t.seq, "本人：先交付，以后再改", { by: ask.userId, kind: "owner", text: "本人选了先交付，这一项以后再做" });
+      // Nothing left to code once the round in progress ends: the work comes to its usual confirm.
+      advanceWork(app, rootId, { owner: true });
+    }
+  } catch (e) {
+    notify(app, { userId: ask.userId, title: `没能${picked ?? "处理"}：${getRun(app, rootId).title}`, body: (e as Error).message, link: `#/runs/${run.id}` });
+  }
+});
 
 function notifyOwner(app: App, rootId: string, run: Run, title: string, body: string) {
   notify(app, { userId: workOwner(app, rootId), title, body, link: `#/runs/${run.id}` });
@@ -407,8 +477,8 @@ export function advanceWork(app: App, rootId: string, opts: { owner?: boolean } 
     if (next) setRunOutput(app, last.id, { verdict: "continuing", reviewStop: null });
     return next;
   }
-  // Nothing to code: what was left were questions now settled.
-  if (!tasks.some((t) => ["assistant", "owner", "verify", "coding"].includes(t.state)) && ["awaiting-owner", "awaiting-assistant"].includes(String(last.output.verdict))) {
+  // Nothing to code: what was left were questions now settled, or set aside while it was paused.
+  if (!tasks.some((t) => ["assistant", "owner", "verify", "coding"].includes(t.state)) && ["awaiting-owner", "awaiting-assistant", "paused"].includes(String(last.output.verdict))) {
     setRunOutput(app, last.id, { verdict: "approved", reviewStop: null });
     completed(app, rootId, getRun(app, last.id));
   }
@@ -543,7 +613,7 @@ function ensureOwnerAsks(app: App, rootId: string) {
     if (id && one(app.db, "select 1 from asks where id = ? and status = 'pending'", id)) continue;
     const ask = createAsk(app, {
       runId: last.id,
-      conversationId: chain?.conversationId ?? null,
+      conversationId: chain ? reportConversation(app, chain) : null,
       userId: workOwner(app, rootId),
       question: `「${truncate(getRun(app, rootId).title, 40)}」的 ${taskLabel(t.seq)}「${t.title}」需要你决定：\n\n${ownerQuestionText(app, t)}\n\n其他修改项照常推进；可以在输入框里写你的做法。`,
       options: [...t.options, SKIP].map((label) => ({ label })),
@@ -566,8 +636,14 @@ function ensureOwnerAsks(app: App, rootId: string) {
  * - a retry starts the next round only within the budget (advanceWork).
  * A card already sent closes.
  */
-export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner"; text: string; ownerWords: boolean; authorization?: string; question?: string; options?: string[] }, by: string) {
+export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner" | "later"; text: string; ownerWords: boolean; authorization?: string; question?: string; options?: string[] }, by: string) {
   const t = getTask(app, rootId, seq);
+  // A review fix still to do may be set aside too: the assistant judges it against what the work is for.
+  if (a.action === "later" && t.state === "todo") {
+    if (t.kind !== "fix" && !a.ownerWords) throw new HttpError(409, `${taskLabel(seq)} 是需求本身的一项，只有本人能说以后再做`);
+    deferTask(app, rootId, seq, a.text, { by, kind: "assistant", text: `以后再做：${a.text}` });
+    return advanceWork(app, rootId, { owner: a.ownerWords });
+  }
   if (t.state !== "assistant" && t.state !== "owner") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等处理`);
   const authorizedRetry = a.action === "retry" && !!a.authorization?.trim();
   if (t.state === "owner") {
@@ -583,10 +659,11 @@ export function settleTask(app: App, rootId: string, seq: number, a: { action: "
     ensureOwnerAsks(app, rootId);
     return null;
   }
-  const note = { by, kind: "assistant" as const, text: `${a.action === "skip" ? "不做" : "重做"}：${a.text}${authorizedRetry ? `\n已有授权依据：${a.authorization!.trim()}` : ""}` };
+  const note = { by, kind: "assistant" as const, text: `${{ skip: "不做", later: "以后再做", retry: "重做" }[a.action]}：${a.text}${authorizedRetry ? `\n已有授权依据：${a.authorization!.trim()}` : ""}` };
   // The owner's words are their decision (taskText shows it); the assistant's stay a note on the task.
   const answer = a.ownerWords ? { answer: a.text } : {};
-  if (a.action === "skip") updateTask(app, rootId, seq, { state: "wontdo", ...answer }, note);
+  if (a.action === "later") deferTask(app, rootId, seq, a.text, note);
+  else if (a.action === "skip") updateTask(app, rootId, seq, { state: "wontdo", ...answer }, note);
   else updateTask(app, rootId, seq, { state: "todo", attempts: 0, ...answer }, note);
   closeTaskAsk(app, rootId, seq);
   return advanceWork(app, rootId, { owner: a.ownerWords });
@@ -621,7 +698,8 @@ export function reconcileWaiting(app: App) {
     const t = one<{ state: string }>(app.db, "select state from code_tasks where work_id = ? and seq = ?", a.w, a.s);
     // Confirmed (pushed) or discarded since: nothing of it waits on anyone any more.
     const over = !!t && ended(a.w);
-    if (over) updateTask(app, a.w, a.s, { state: "wontdo" }, { by: "host", kind: "host", text: "交办已经确认或丢弃，这一项不再等处理" });
+    // Never decided: set aside, so the next delegation on the branch asks again.
+    if (over) deferTask(app, a.w, a.s, "交办确认时还没定", { by: "host", kind: "host", text: "交办已经确认或丢弃，这一项不再等处理，记成以后再做" });
     if (t?.state === "owner" && !over) continue;
     if (t) closeTaskAsk(app, a.w, a.s);
     cancelAsk(app, a.id);

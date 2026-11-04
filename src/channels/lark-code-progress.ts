@@ -5,7 +5,7 @@ import { all, one, run } from "../core/db.ts";
 import { type CodeChain, saveCodeChain, trySettleCodeChain, maxCodeRounds } from "../agents/code-chain.ts";
 import { getThread } from "../agents/threads.ts";
 import { getRun } from "../agents/runs.ts";
-import { isTaskWork, listTasks, taskLabel, TASK_STATE_LABEL, workRootOf, workState } from "../agents/code-tasks.ts";
+import { isLater, isTaskWork, listTasks, taskLabel, TASK_STATE_LABEL, workRootOf, workState } from "../agents/code-tasks.ts";
 import { findSpace } from "../core/spaces.ts";
 import { reviewChecks, reviewsOf, STOP_LABEL, SEVERITY_LABEL, type LeadResult, type ReviewPlan, type StopReason } from "../agents/review.ts";
 import { buildCard, sendLark, updateLarkCard, larkClient, type CardBlock } from "./lark-send.ts";
@@ -84,14 +84,14 @@ function checkLines(app: App, repos: RepoCheck[] | undefined): string {
 
 /** A delegation driven by tasks (docs/v2/coding-loop.md): how far its tasks are and what waits for the owner. */
 const TASK_MARK: Record<string, string> = TASK_STATE_LABEL;
-const PAUSED: Record<string, string> = { budget: "暂停：自动推进的轮数用完了，说“继续”再推进", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停" };
+const PAUSED: Record<string, string> = { budget: "暂停：自动推进的轮数用完了，说“继续”再推进", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停", polishing: "暂停：需求早已做完，评审还在一轮轮提问题" };
 function taskLines(app: App, rootId: string) {
   const tasks = listTasks(app, rootId);
   if (!tasks.length) return "";
   const done = tasks.filter((t) => t.state === "done").length;
   const open = tasks.filter((t) => !["done", "wontdo", "reverted"].includes(t.state));
   return [
-    `**修改项**：完成 ${done} / ${tasks.length}${tasks.some((t) => t.state === "wontdo") ? `，不做 ${tasks.filter((t) => t.state === "wontdo").length}` : ""}`,
+    `**修改项**：完成 ${done} / ${tasks.length}${tasks.some((t) => t.state === "wontdo" && !isLater(t)) ? `，不做 ${tasks.filter((t) => t.state === "wontdo" && !isLater(t)).length}` : ""}${tasks.some(isLater) ? `，以后再做 ${tasks.filter(isLater).length}` : ""}`,
     ...open.slice(0, 8).map((t) => `- ${taskLabel(t.seq)} ${t.title}（${TASK_MARK[t.state]}${t.attempts ? `，第 ${t.attempts + 1} 次` : ""}）`),
     open.length > 8 ? `- ……另有 ${open.length - 8} 项` : "",
   ].filter(Boolean).join("\n");

@@ -466,7 +466,8 @@ describe("a delegation driven by tasks", () => {
       // Pushed since: the card closes and the task no longer waits on anyone.
       setRunOutput(app, web.id, { appliedAt: new Date().toISOString() });
       expect(reconcileWaiting(app).closed).toBe(1);
-      expect(listTasks(app, web.id)[0].state).toBe("wontdo");
+      // Never decided: set aside for the next delegation on the branch, not dropped.
+      expect(listTasks(app, web.id)[0]).toMatchObject({ state: "wontdo", origin: { later: true } });
       expect(listAsks(app, { status: "pending" }).some((a) => a.question.includes("运费按比例退"))).toBe(false);
     } finally {
       // The owner's card is shown after an import or two; let it land before the database closes.
@@ -683,6 +684,135 @@ describe("a delegation driven by tasks", () => {
       // What checks and review-lead read lists the tasks so far.
       const { taskList } = await import("../src/agents/code-tasks.ts");
       expect(taskList(app, r.id)).toBe("- T1 [等你决定] 存量订单保存时沿用旧模板\n- T2 [已完成] 空订单会报错");
+    } finally {
+      app.db.close();
+    }
+  });
+
+  it("sets aside what the current use never meets, and hands a part fixed over and over to the assistant", async () => {
+    const app = testApp();
+    try {
+      const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "交办", input: { conversationId: t.id } });
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true, round: 2 }, parentId: ask.id, userId: OWNER });
+      codeChainFor(app, r);
+      setRunOutput(app, r.id, { reviewPlan: { tier: "ai", tierName: "按改动定", checks: ["reviewer"], maxRounds: 6, metrics: {}, reasons: [] } });
+      const t1 = addTask(app, r.id, { title: "退款按行计算", kind: "build", state: "done" }, "coder");
+      const t2 = addTask(app, r.id, { title: "T1 没改好：空订单", kind: "fix", state: "done", origin: { follows: t1.seq } }, "review-lead");
+      const t3 = addTask(app, r.id, { title: "T2 改出新问题：空行", kind: "fix", state: "done", origin: { follows: t2.seq } }, "review-lead");
+      recordReview(app, { codeRunId: r.id, round: 2, check: "reviewer", verdict: "changes_requested", summary: "", findings: [
+        { severity: "blocker", title: "两个客户端同时复用请求 ID 时会重复执行", detail: "", suggestion: "加在途表", evidence: [], confidence: "high" },
+        { severity: "major", title: "T3 没改好：空行时金额为负", detail: "", suggestion: "判空", evidence: [], confidence: "high" },
+        { severity: "minor", title: "金额舍入错了一分", detail: "", suggestion: "四舍五入到分", evidence: [], confidence: "high" },
+      ] });
+      const [race, again, cent] = roundFindings(app, r.id, 2);
+      const ctx = { app, runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "review-lead" } as ToolContext;
+      const rule = (rulings: unknown[]) => callTool(ctx, "rule_review", { rulings, verdict: "revise", summary: "只改需求要的" });
+      expect((await rule([{ id: race.id, decision: "defer" }])).text).toContain("以后再做要写");
+      expect((await rule([{ id: race.id, decision: "defer", note: "只有一个调用方，碰不到" }, { id: again.id, decision: "accept", follows: `T${t3.seq}` }, { id: cent.id, decision: "accept" }])).isError).toBe(false);
+      const { tasksFromRuling, followDepth, isLater, taskList } = await import("../src/agents/code-tasks.ts");
+      const made = tasksFromRuling(app, r.id, roundFindings(app, r.id, 2), { ...(getRun(app, r.id).output.reviewLeadDraft as object), by: "lead" } as never);
+      const by = (f: { id: number }) => made.find((t) => t.origin.findings?.includes(f.id))!;
+      // Real but out of today's use: set aside, in view, not to do.
+      expect(isLater(by(race))).toBe(true);
+      expect(by(race).answer).toBe("只有一个调用方，碰不到");
+      // A fourth layer on the same spot: the assistant decides whether it is worth more rounds.
+      expect(followDepth(app, r.id, by(again).seq)).toBe(3);
+      expect(by(again)).toMatchObject({ state: "assistant", origin: { follows: t3.seq } });
+      expect(by(again).question).toContain(`T${t1.seq} → T${t2.seq} → T${t3.seq} → T${by(again).seq}`);
+      // What the use does meet is fixed, whatever its severity.
+      expect(by(cent).state).toBe("todo");
+      expect(taskList(app, r.id)).toContain(`[以后再做] 两个客户端同时复用请求 ID 时会重复执行`);
+      expect(waitingText(app, r.id)).toContain("记成以后再做的（1 项");
+      // The assistant may set a review fix aside too, never the requirement's own task on its own.
+      expect(settleTask(app, r.id, by(cent).seq, { action: "later", text: "和需求无关", ownerWords: false }, "assistant")).toBeNull();
+      expect(isLater(listTasks(app, r.id).find((t) => t.seq === by(cent).seq)!)).toBe(true);
+      const own = addTask(app, r.id, { title: "退款单号", kind: "build" }, "coder");
+      expect(() => settleTask(app, r.id, own.seq, { action: "later", text: "先不做", ownerWords: false }, "assistant")).toThrow("只有本人");
+    } finally {
+      app.db.close();
+    }
+  });
+
+  it("stops for the assistant when reviews only polish after the requirement is done, and lets the owner set the rest aside", async () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true, round: 3 }, userId: OWNER });
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      addTask(app, r.id, { title: "退款按行计算", kind: "build", state: "done" }, "coder");
+      addTask(app, r.id, { title: "并发复用请求 ID", kind: "fix" }, "review-lead");
+      // Done at the second stage review; three more that each found something: it stops.
+      setWorkState(app, r.id, { budget: 12, until: 12, stages: [0, 1, 2, 1, 3], deliverableAt: 1, stageAt: 0 });
+      const rc = { runId: r.id, signal: new AbortController().signal, event: () => {} } as never;
+      expect((await taskReview(app, r.id, rc)).verdict).toBe("paused");
+      expect(workState(app, r.id)).toMatchObject({ paused: "polishing", polishAt: 4 });
+      // The owner sets the rest aside (the card offered at the deliverable point): it comes to its usual confirm.
+      const card = createAsk(app, { runId: r.id, userId: OWNER, question: "需求做完了", options: [{ label: "先推送验证" }, { label: "剩下的以后再做" }], context: { handler: "work-deliver", rootId: r.id } });
+      await answerAsk(app, card.id, { choice: 1, by: OWNER });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const { isLater } = await import("../src/agents/code-tasks.ts");
+      expect(listTasks(app, r.id).filter(isLater).map((x) => x.title)).toEqual(["并发复用请求 ID"]);
+      expect(workState(app, r.id).paused).toBeNull();
+      expect(lastRound(app, r.id).output.verdict).toBe("approved");
+      expect(listAsks(app, { status: "pending" }).some((a) => a.handler === "review-done")).toBe(true);
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      app.db.close();
+    }
+  });
+
+  it("reports to the conversation the owner last steered the delegation from, not the one it was asked in", async () => {
+    const app = testApp();
+    try {
+      const first = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const later = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "交办", input: { conversationId: first.id } });
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款", repos: ["personal"], taskMode: true, round: 1 }, parentId: ask.id, userId: OWNER });
+      codeChainFor(app, r);
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      // The owner, in a later topic, adds to the delegation.
+      const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "补充", input: { conversationId: later.id }, userId: OWNER });
+      const ctx = { app, runId: turn.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
+      const res = await callTool(ctx, "message_code_run", { run_id: r.id, text: "金额字段改成分" });
+      expect(res.text).toContain("之后这次交办的结果");
+      // Said again from there: no second note.
+      expect((await callTool(ctx, "message_code_run", { run_id: r.id, text: "再补一句" })).text).not.toContain("之后这次交办的结果");
+      // A question for the owner, the round's result and the assistant's turn all go to the later topic.
+      const q = addTask(app, r.id, { title: "保存时用哪个模板", kind: "fix", state: "assistant", question: "评审负责人没有裁决" }, "review-lead");
+      settleTask(app, r.id, q.seq, { action: "owner", text: "是业务口径", ownerWords: false, question: "用哪个模板？", options: ["旧模板", "新模板"] }, "assistant");
+      setRunOutput(app, r.id, { verdict: "awaiting-owner", reviewStop: "owner" });
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      trySettleCodeChain(app, r.id);
+      const card = listAsks(app, { status: "pending" }).find((a) => a.handler === "code-task")!;
+      expect(card.conversationId).toBe(later.id);
+      const result = all<{ conversation_id: string }>(app.db, "select conversation_id from messages where run_id = ? and json_extract(meta, '$.codeResult') is not null", r.id);
+      expect(result.map((m) => m.conversation_id)).toEqual([later.id]);
+      const handoff = all<{ input: string }>(app.db, "select input from runs where kind = 'ask' and json_extract(input, '$.handoff.workId') = ?", r.id).map((x) => JSON.parse(x.input).conversationId);
+      expect(handoff).toEqual([later.id]);
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      app.db.close();
+    }
+  });
+
+  it("carries what a confirmed delegation left into the next one on its branch, once", async () => {
+    const app = testApp();
+    try {
+      const old = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款", repos: ["personal"], taskMode: true }, userId: OWNER });
+      addTask(app, old.id, { title: "退款按行计算", kind: "build", state: "done" }, "coder");
+      const open = addTask(app, old.id, { title: "金额舍入错了一分", kind: "fix", doneWhen: "四舍五入到分" }, "review-lead");
+      const { carryTasks, deferTask, isLater } = await import("../src/agents/code-tasks.ts");
+      deferTask(app, old.id, addTask(app, old.id, { title: "并发复用请求 ID", kind: "fix" }, "review-lead").seq, "只有一个调用方", { by: "review-lead", kind: "lead", text: "以后再做" });
+      const next = createRun(app, { kind: "code", spaceId: "personal", title: "接着改", input: { task: "加退款单号", repos: ["personal"], taskMode: true }, userId: OWNER });
+      const c = carryTasks(app, next.id, [old.id]);
+      expect(c.todo.map((x) => [x.title, x.state])).toEqual([["金额舍入错了一分", "todo"]]);
+      expect(c.todo[0].doneWhen).toContain("四舍五入到分");
+      expect(c.todo[0].origin.carried).toEqual({ work: old.id, seq: open.seq });
+      expect(c.later.map((x) => [x.title, isLater(x), x.answer])).toEqual([["并发复用请求 ID", true, "只有一个调用方"]]);
+      expect(listTasks(app, old.id).find((x) => x.seq === open.seq)!.notes.at(-1)!.text).toBe(`接到交办 ${next.id} 的 T${c.todo[0].seq}`);
+      // A third delegation does not take them again.
+      const third = createRun(app, { kind: "code", spaceId: "personal", title: "再改", input: { task: "x", repos: ["personal"], taskMode: true }, userId: OWNER });
+      expect(carryTasks(app, third.id, [old.id])).toEqual({ todo: [], later: [] });
     } finally {
       app.db.close();
     }

@@ -3150,9 +3150,17 @@ def({
     const { codeChainFor } = await import("./code-chain.ts");
     const chain = codeChainFor(ctx.app, r);
     const tasks = !!r.input.taskMode;
-    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。`;
+    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。${carried}`;
   },
 });
+    // Pushed and confirmed before, more to do now: what the earlier delegations there left carries on.
+    let carried = "";
+    if (r.input.taskMode && onBranch) {
+      const { confirmedWorkOn } = await import("./review-fix.ts");
+      const { carryTasks, taskLabel } = await import("./code-tasks.ts");
+      const c = carryTasks(ctx.app, r.id, confirmedWorkOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER, r.id));
+      if (c.todo.length || c.later.length) carried = `\n接上了这条分支上之前交办留下的：${c.todo.length ? `没做完的 ${c.todo.length} 项（${c.todo.map((t) => taskLabel(t.seq)).join("、")}，这一轮一起做）` : ""}${c.todo.length && c.later.length ? "；" : ""}${c.later.length ? `记成以后再做的 ${c.later.length} 项（${c.later.map((t) => `${taskLabel(t.seq)} ${truncate(t.title, 40)}`).join("、")}，不做，本人要做哪项再说）` : ""}。`;
+    }
 
 /** An item the caller owns and may see, for linking a delegation or review to it. */
 function itemFor(ctx: ToolContext, id: string) {
@@ -3611,7 +3619,7 @@ def({
 
 def({
   name: "apply_code_run",
-  description: "本人明确要求确认 / 推送 / 合入时用。工作分支上的交办：可先压缩成一个提交（squash_message），把每个仓库的工作分支推到 origin 的同名分支并设为上游，然后归还工作区，分支保留；远端有本地没有的提交时拒绝，本人同意覆盖才传 force。这次改动之前开始的旧交办：把改动应用到原目标分支的工作区（未提交的修改），之后可用 code_git_action 提交。",
+  description: "本人明确要求确认 / 推送 / 合入时用。本人要先推上去验证、之后还要接着改时传 keep_going：只把工作分支推到 origin，交办和工作区留着，之后的修改接着提交在同一分支。工作分支上的交办：可先压缩成一个提交（squash_message），把每个仓库的工作分支推到 origin 的同名分支并设为上游，然后归还工作区，分支保留；远端有本地没有的提交时拒绝，本人同意覆盖才传 force。这次改动之前开始的旧交办：把改动应用到原目标分支的工作区（未提交的修改），之后可用 code_git_action 提交。",
   write: true,
   schema: z.object({
     run_id: z.string(),
@@ -3625,12 +3633,22 @@ def({
     for (const id of repos) inScope(ctx, id, "代码");
     const { applyCodeRun } = await import("./code.ts");
     const res = applyCodeRun(ctx.app, a.run_id, { squash: a.squash_message?.trim() || undefined, force: a.force }) as ReturnType<typeof applyCodeRun> & { pushed?: { space: string; branch: string; forced?: boolean }[]; notes?: string[] };
+    keep_going: z.boolean().optional().describe("只推送、不结束交办：本人要先验证推上去的版本，之后还要改"),
     if (res.pushed) return `已确认运行 ${a.run_id}：\n${[...res.pushed.map((p) => `- ${p.space}：推送 ${p.branch} 到 origin${p.forced ? "（覆盖了远端）" : ""}`), ...(res.notes ?? []).map((n) => `- ${n}`)].join("\n")}\n工作区已归还，分支保留。`;
     return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n可在网页填写提交信息，或在本人要求后先 code_git_status 再 code_git_action 提交或推送。编码用的 worktree 已删除，接收工作区保留。`;
   },
 });
 
 def({
+    if (a.keep_going) {
+      if (a.squash_message) throw new HttpError(400, "接着改的交办不能压缩：压缩会改写之后还要接着提交的分支");
+      const t = await import("./code-tasks.ts");
+      const { deliverWork } = await import("./code-loop.ts");
+      const res = await deliverWork(ctx.app, t.workRootOf(ctx.app, a.run_id), { force: a.force });
+      const lines = [...res.pushed.map((p) => `- ${p.space}：${p.branch} 推到 origin（${p.head.slice(0, 8)}）${p.forced ? "，覆盖了远端" : ""}`), ...res.notes.map((n) => `- ${n}`)];
+      const paused = t.workState(ctx.app, t.workRootOf(ctx.app, a.run_id)).paused;
+      return `已推送，交办没有结束：\n${lines.join("\n") || "- 没有要推送的分支"}\n之后的修改提交在同一分支上，要再推送就再调用一次；全部改完后照常确认。${paused ? "\n交办现在暂停着：本人验证后要接着改（或给了新的问题），用 continue_code_run。" : ""}`;
+    }
   name: "code_branch",
   description:
     "交办工作分支上的操作（只对本人，本人要求时用；进行中的交办先等这一轮结束）：status 列出每个仓库的工作分支、切出点、提交、推送状态和检出位置；rename 改分支名；checkout_main 把仓库目录切到这条分支（目录要干净），之后每轮的提交会快进到那里，本人可以在仓库目录直接运行验证；squash 把分支压缩成一个提交；sync 排一轮把另一个分支合并（或变基）进来，冲突交给编码 Agent。确认推送用 apply_code_run。",
@@ -3998,11 +4016,11 @@ def({
 
 def({
   name: "rule_review",
-  description: "评审负责人提交这一轮的裁决：每条问题接受 / 驳回 / 合并（合到这一轮的另一条，或按修改项推进时合到已有的修改项），结论（approve 通过 / revise 再改一轮 / escalate 交给本人），修改单和下一轮要重新评审的评审项。只在交办编码的评审负责人运行里可用。",
+  description: "评审负责人提交这一轮的裁决：每条问题接受 / 驳回 / 合并（合到这一轮的另一条，或按修改项推进时合到已有的修改项）/ 以后再做（按修改项推进时：问题成立，但和这次的需求与实际用法关系不大），结论（approve 通过 / revise 再改一轮 / escalate 交给本人），修改单和下一轮要重新评审的评审项。只在交办编码的评审负责人运行里可用。",
   schema: z.object({
     rulings: z.array(z.object({
       id: z.number().int().describe("问题编号（任务里列出的 #编号）"),
-      decision: z.enum(["accept", "reject", "merge"]),
+      decision: z.enum(["accept", "reject", "merge", "defer"]).describe("defer：只在按修改项推进的交办里用，记成“以后再做”，不挡这次交付，同一分支下一次交办会接上；note 写为什么现在不做"),
       into: z.number().int().optional().describe("merge 时合并到的那条问题编号"),
       task: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，merge 到已有的修改项时填它的编号（如 T5），这时不填 into"),
       note: z.string().max(1000).optional().describe("理由；驳回必须写"),
@@ -4015,6 +4033,7 @@ def({
     escalation: z.object({ summary: z.string().min(1).max(4000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("escalate 时：分歧点、各方依据、建议，以及给本人选的做法"),
   }),
   handler: async (ctx, a) => {
+      follows: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，accept / defer 的问题是某个已完成修改项没改好或改出来的新问题时，填那一项（如 T5）"),
     const { codeRunOf } = await import("./review-chain.ts");
     const r = codeRunOf(ctx.app, ctx.runId);
     const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
@@ -4033,7 +4052,17 @@ def({
     // A finding that restates a task the work already has joins that task (checked before any ruling is recorded).
     const t = await import("./code-tasks.ts");
     const rootId = tasks ? t.workRootOf(ctx.app, r.id) : null;
-    const rulings = a.rulings.map((x) => {
+    const follows: Record<string, number> = {};
+    for (const x of a.rulings) {
+      if (x.follows === undefined) continue;
+      if (x.decision !== "accept" && x.decision !== "defer") throw new HttpError(400, `问题 ${x.id}：follows 只用于 accept 或 defer`);
+      const seq = t.parseTaskRef(x.follows);
+      t.getTask(ctx.app, rootId!, seq);
+      follows[String(x.id)] = seq;
+    }
+    const rulings = a.rulings.map(({ follows: _, ...x }) => {
+    for (const x of a.rulings) if (x.decision === "defer" && !x.note?.trim()) throw new HttpError(400, `问题 ${x.id}：以后再做要写为什么现在不做`);
+    if (!tasks && a.rulings.some((x) => x.decision === "defer" || x.follows !== undefined)) throw new HttpError(400, "defer 和 follows 只在按修改项推进的交办里用");
       if (x.task === undefined) return { ...x, task: undefined };
       if (!rootId) throw new HttpError(400, `问题 ${x.id}：只有按修改项推进的交办才能合并到修改项`);
       if (x.decision !== "merge") throw new HttpError(400, `问题 ${x.id}：填了 task 就要用 merge`);
@@ -4045,7 +4074,7 @@ def({
     applyRulings(ctx.app, r.id, round, rulings);
     for (const x of rulings) if (x.task) t.joinTask(ctx.app, rootId!, x.id, x.task);
     const owner = Object.fromEntries(a.rulings.filter((x) => x.owner).map((x) => [String(x.id), x.owner!]));
-    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}) } });
+    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}), ...(Object.keys(follows).length ? { follows } : {}) } });
     return `已记录第 ${round} 轮裁决（${a.verdict}，${a.rulings.length} 条）。`;
   },
 });
@@ -4169,13 +4198,13 @@ def({
 
 def({
   name: "settle_code_task",
-  description: "发起交办的助手处理停着的修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（等别的团队、缺外部字段也是 skip）、owner 只在要本人在业务或功能上取舍时，写 question 和两三个 options。「等你决定」的项只在本人这一轮回答了才转达（retry / skip）；原需求或本人之前的话已经定了做法的，retry 并在 existing_authorization 写出原话或引用。retry 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
+  description: "发起交办的助手处理停着的修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决、同一处修了几层）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（等别的团队、缺外部字段也是 skip）、later 记成以后再做（问题成立但和这次要的关系不大：不挡交付，同一分支下一次交办会接上；评审提的待做项也可以这样放下）、owner 只在要本人在业务或功能上取舍时，写 question 和两三个 options。「等你决定」的项只在本人这一轮回答了才转达（retry / skip）；原需求或本人之前的话已经定了做法的，retry 并在 existing_authorization 写出原话或引用。retry 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
   write: true,
   schema: z.object({
     run_id: z.string().describe("这次交办的任一运行 id"),
     task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
-    action: z.enum(["retry", "skip", "owner"]),
-    note: z.string().min(1).max(3000).describe("retry：查到的原因、编码 Agent 这次具体怎么做；skip：为什么不做、在等什么；owner：你查过什么、为什么只有本人能定"),
+    action: z.enum(["retry", "skip", "owner", "later"]),
+    note: z.string().min(1).max(3000).describe("retry：查到的原因、编码 Agent 这次具体怎么做；skip：为什么不做、在等什么；later：为什么现在不值得改、什么情况下才会碰到；owner：你查过什么、为什么只有本人能定"),
     question: z.string().max(1000).optional().describe("owner：给本人的问题，写要定什么和影响，不写调查过程"),
     options: z.array(z.string().min(1).max(60)).max(4).optional().describe("owner：两三个可选的做法"),
     existing_authorization: z.string().min(1).max(2000).optional().describe("仅 retry「等你决定」的项：原需求或本人此前的原话或消息引用，及它怎么定了这一项的做法；不用于替本人作新的业务决定"),
@@ -4196,6 +4225,7 @@ def({
 });
 
 def({
+    if (a.action === "later") return `${label} 记成以后再做${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;
   name: "dispatch_tasks",
   description: "编码负责人把这一轮几组互不相干的修改项分给编码助手，它们在各自的工作区里同时做（每组一个助手）。分出去后接着做自己的项；这一轮结束时宿主把它们的提交合进工作分支，有冲突会让你解决。项少、或者都改同一处时不要分。",
   schema: z.object({
@@ -4404,10 +4434,27 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
     // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
     const text = await withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data));
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
-    return { text: text + (await steering(ctx)), isError: false };
+    const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : "";
+    return { text: text + moved + (await steering(ctx)), isError: false };
   } catch (error) {
     return { text: (error as Error).message + (await steering(ctx)), isError: true };
   }
+/** Tools the owner steers a delegation with: when used from another conversation of theirs, its reports follow there. */
+const STEERS_CODE = new Set(["message_code_run", "continue_code_run", "fix_review", "settle_code_task", "apply_code_run"]);
+
+/** The conversation this call's run answers in becomes where the delegation reports (followOwner); a note for the reply when it moved. */
+async function followFrom(ctx: ToolContext, runId: string | undefined): Promise<string> {
+  if (!runId || !ctx.runId) return "";
+  const me = one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId);
+  const conversationId = me ? (JSON.parse(me.input) as { conversationId?: string }).conversationId : undefined;
+  try {
+    const { followOwner } = await import("./code-chain.ts");
+    return followOwner(ctx.app, runId, conversationId, ctx.userId ?? OWNER) ? "\n之后这次交办的结果、汇报和要本人决定的卡片都发在这个会话；飞书进度卡片还在原来的话题里，告诉本人一声。" : "";
+  } catch {
+    return "";
+  }
+}
+
 }
 
 /** Messages that arrived for this turn's conversation while it runs (steer.ts). */

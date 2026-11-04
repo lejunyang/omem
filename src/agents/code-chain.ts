@@ -8,7 +8,7 @@ import { createRun, getRun, setRunOutput, updateQueuedRun } from "./runs.ts";
 import { refreshWork, workForChild } from "./agent-work.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
-import { isTaskWork, listTasks, waitingText, workRootOf, workState } from "./code-tasks.ts";
+import { goalText, isTaskWork, listTasks, POLISH_STAGES, waitingText, workRootOf, workState } from "./code-tasks.ts";
 
 /**
  * A delegated coding run reports back to the conversation that requested it, and keeps going
@@ -27,7 +27,7 @@ export type CodeChain = {
   /** The one progress card message for the whole chain, updated as rounds run. */
   larkMessageId: string | null;
   /** owner / budget / paused: a task-driven delegation waits for answers, ran out of rounds, or was paused (code-loop.ts). */
-  waitReason?: "auto-limit" | "review" | "no-changes" | "failed" | "plan" | "not-converging" | "stalemate" | "escalated" | "stopped" | "owner" | "assistant" | "budget" | "paused";
+  waitReason?: "auto-limit" | "review" | "no-changes" | "failed" | "plan" | "not-converging" | "stalemate" | "escalated" | "stopped" | "owner" | "assistant" | "budget" | "paused" | "polishing";
   round: number;
   rounds: string[];
   /** The last coding run id; its Agent session is resumed on the next round. */
@@ -209,11 +209,12 @@ export function settleCodeChain(app: App, runId: string) {
       const branchReview = !!(r.input as { branches?: unknown }).branches;
       const taskWork = isTaskWork(app, r.id);
       const next = approved ? "" : branchReview ? "只有评审意见，没有改动；本人要按意见修改时用 delegate_code 传 from_branch 基于该分支交办。" : taskWork ? stopText(app, workRootOf(app, r.id), r) : "等待本人处理；明确继续时用 continue_code_run 复用原任务。";
-      const waiting = taskWork ? waitingText(app, workRootOf(app, r.id)) : "";
+      const waiting = taskWork ? [goalText(app, workRootOf(app, r.id)), waitingText(app, workRootOf(app, r.id))].filter(Boolean).join("\n\n") : "";
       const text = `${branchReview ? `分支评审 ${r.id}` : `编码交办第 ${chain.round} 轮 ${r.id}`} 已结束：${r.status}${r.output.verdict ? `（${r.output.verdict}）` : ""}。${next}\n\n${String(r.output.review ?? r.output.coderSummary ?? "").slice(0, 12000)}${waiting ? `\n\n${waiting}` : ""}`;
+      const to = reportConversation(app, chain, r);
       run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)",
-        messageId, chain.conversationId, "assistant", text, r.id, JSON.stringify({ codeResult: r.id, record: true }), now());
-      run(app.db, "update conversations set updated_at=? where id=?", now(), chain.conversationId);
+        messageId, to, "assistant", text, r.id, JSON.stringify({ codeResult: r.id, record: true }), now());
+      run(app.db, "update conversations set updated_at=? where id=?", now(), to);
       setRunOutput(app, r.id, { codeResultMessageId: messageId });
     }
   } catch (e) { app.db.exec("ROLLBACK"); throw e; } finally { if (app.db.isTransaction) app.db.exec("COMMIT"); }
@@ -252,6 +253,7 @@ function stopText(app: App, rootId: string, r: Run): string {
   const why = r.status !== "done" ? `这一轮${r.status === "failed" ? `失败了（${String(r.error ?? "").slice(0, 300)}）` : "被停下了"}，宿主不会自己重开。`
     : stop === "budget" ? `自动推进的 ${w.until} 轮用完了（还有 ${left} 项待做；预算是交办时的 max_rounds、或编码 Agent 拆分时的估计，上限是设置 → Agent → 自动推进的“编码最多轮数”）。只有本人说继续才再推进一份（${w.budget} 轮）。`
     : stop === "not-converging" ? "最近三次阶段评审要改的问题没有减少，宿主暂停了交办：要本人看一下方案。"
+    : stop === "polishing" ? `需求早就做完了，之后 ${POLISH_STAGES} 次阶段评审每次都在提新问题（还剩 ${left} 项），宿主暂停了交办。逐项看剩下的：和原来要的无关、只在现在的用法碰不到的情况下出现的，用 settle_code_task 的 later 记成以后再做；真影响需求的留着。然后告诉本人现在能用什么、你建议先交付还是再改几项。`
     : stop === "paused" || w.paused === "owner" ? "本人暂停了交办。"
     : stop === "assistant" ? "能做的修改项都做完了，剩下的等你处理（下面列着），没有要本人决定的。"
     : stop === "owner" ? "能做的修改项都做完了，剩下的在等本人决定（卡片已经发给本人）。"
@@ -265,10 +267,32 @@ function assistantTurnFor(app: App, rootId: string) {
   return one<{ id: string; status: string }>(app.db, "select id, status from runs where kind = 'ask' and status in ('queued', 'running') and json_extract(input, '$.handoff.workId') = ? order by created_at desc limit 1", rootId);
 }
 
-/** Where the work reports: the conversation it was asked from, or the topic the owner moved it to. */
-function reportConversation(app: App, chain: CodeChain, r: Run) {
-  const work = workForChild(app, r) ?? (chain.askRunId ? refreshWork(app, chain.askRunId) : null);
+/**
+ * Where the work reports to the owner now: the conversation they last steered it from (followOwner),
+ * else the topic it was moved to, else the one it was asked from. Results, handoffs to the assistant
+ * and cards all go there; the Feishu progress card stays where it was posted.
+ */
+export function reportConversation(app: App, chain: CodeChain, r?: Run) {
+  const steered = chain.askRunId ? (getRun(app, chain.askRunId).output as { codeReportTo?: string }).codeReportTo : undefined;
+  if (steered) return steered;
+  const work = (r ? workForChild(app, r) : null) ?? (chain.askRunId ? refreshWork(app, chain.askRunId) : null);
   return work?.workConversationId ?? chain.conversationId;
+}
+
+/**
+ * The owner steered the work from another conversation of theirs (a later topic of the group, a
+ * private chat): from now on it reports there. Kept on the ask run that started it, apart from the
+ * chain, so a round saving an older copy of the chain does not undo it. True when it moved.
+ */
+export function followOwner(app: App, runId: string, conversationId: string | undefined, userId: string): boolean {
+  if (!conversationId) return false;
+  const chain = codeChainFor(app, getRun(app, runId));
+  if (!chain?.askRunId) return false;
+  const owner = (id: string) => one<{ user_id: string | null }>(app.db, "select user_id from conversations where id = ?", id)?.user_id ?? null;
+  if (owner(conversationId) !== userId || owner(chain.conversationId) !== userId) return false;
+  if (reportConversation(app, chain) === conversationId) return false;
+  setRunOutput(app, chain.askRunId, { codeReportTo: conversationId });
+  return true;
 }
 
 /**
@@ -317,12 +341,13 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   // The owner moved this work to another conversation (new Feishu topic): the handoff goes there.
   const conversationId = reportConversation(app, chain, r);
   let movedMessageId = messageId;
-  if (conversationId !== chain.conversationId) {
-    const handoffText = one<{ text?: string }>(app.db, "select text from messages where id = ?", messageId)?.text;
+  const written = one<{ text: string; conversation_id: string }>(app.db, "select text, conversation_id from messages where id = ?", messageId);
+  if (written && written.conversation_id !== conversationId) {
+    const handoffText = written.text;
     if (handoffText) {
       movedMessageId = newId();
       run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)",
-        movedMessageId, conversationId, "assistant", handoffText, r.id, JSON.stringify({ codeResult: r.id, record: true, movedFrom: chain.conversationId }), now());
+        movedMessageId, conversationId, "assistant", handoffText, r.id, JSON.stringify({ codeResult: r.id, record: true, movedFrom: written.conversation_id }), now());
     }
   }
   const rootId = isTaskWork(app, r.id) ? workRootOf(app, r.id) : chain.rounds[0];

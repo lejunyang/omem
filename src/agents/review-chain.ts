@@ -5,7 +5,7 @@ import { notify } from "../core/notify.ts";
 import { one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
-import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
+import { type CodeChain, queueNextCodeRound, maxCodeRounds, reportConversation, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
 import { codePatches, ignoredText, isBranchReview, worktreesOf, type IgnoredFiles, type PeerReviewer } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
@@ -411,15 +411,17 @@ function hostRuling(app: App, codeRunId: string, round: number, done: { name: st
 /** What review-lead reads: this round's findings by number, earlier rulings, and the change. */
 export const TASK_RULING = [
   "## 这次交办按修改项推进",
-  "不用写修改单（change_request 可以不填）：你接受的每条问题都会变成一个修改项，编码 Agent 逐项改，由提出它的评审项验证。接受时再判断这一条能不能不问本人就改：",
-  "- 自动改：问题说得清（哪里、什么情况下、错在哪），有背景和原因，改法明确，改动不大、好回退。不按严重程度划线，一条“提示”只要符合这些也改；",
-  "- 交给本人：需求没说清或材料互相矛盾、用户看得到的行为有几种合理做法、超出原需求、数据迁移 / 对外接口 / 性能与成本的取舍、问题成立但改动大不好回退。在这条裁决的 `owner` 里写给本人的问题（一两句话，说清分歧和影响）和两三个选项；本人回答前这一项停着，别的项照做。",
-  "说不清问题在哪、只是风格偏好且项目没有约定的，驳回。verdict：没有要改的写 approve，有要改的写 revise；只有方案本身的分歧挡住了整件事才 escalate。",
-  "和“已有的修改项”说的是同一件事的（等本人决定、还在改的也算），`merge` 并在 `task` 填那一项（如 T5），不要再接受成新的一项；已完成的项问题又出现了，接受为新的一项，note 写是哪一项没改好。",
+  "不用写修改单（change_request 可以不填）：你接受的每条问题都会变成一个修改项，编码 Agent 逐项改，由提出它的评审项验证。",
+  "每条先问它和这次交办的关系：照需求和代码现在实际被调用的方式（谁调、怎么调、同时几个调用方、输入从哪来），它会不会让验收标准做不到、让用户或调用方拿到错的结果、丢数据或留下安全问题？",
+  "- 会：接受，再判断能不能不问本人就改。说得清（哪里、什么情况下、错在哪）、改法明确、改动不大好回退的直接改，不按严重程度划线，一条“提示”符合也改。需求没说清或材料矛盾、用户看得到的行为有几种合理做法、超出原需求、数据迁移 / 对外接口 / 性能与成本的取舍、改动大不好回退的，在 `owner` 里写给本人的问题（一两句话，说清分歧和影响）和两三个选项；本人回答前这一项停着，别的项照做；",
+  "- 问题成立，但只在现在的用法碰不到的情况下出现（假想的并发客户端、协议被故意乱用、极少见的时序、需求没要求的加固）：`defer` 记成以后再做，note 写要什么条件才会碰到。它不挡这次交付，同一分支的下一次交办会接上。评审项标的严重程度不改变这个判断；",
+  "- 说不清问题在哪、只是风格偏好且项目没有约定的：驳回。",
+  "和“已有的修改项”说的是同一件事的（等本人决定、还在改的也算），`merge` 并在 `task` 填那一项（如 T5），不要再接受成新的一项。已完成的项没改好或改出了新问题，accept / defer 为新的一项，`follows` 填那一项。同一处连着修了几层还在出问题，多半是做法不对或在磨用不到的边界：越往后越要严格地问它是不是需求真要的，宿主也会把超过两层的交给助手判断。",
+  "verdict：没有要改的写 approve（只有 defer 的也是），有要改的写 revise；只有方案本身的分歧挡住了整件事才 escalate。",
 ].join("\n");
 
 /** What a check of a task-driven delegation reads about the tasks already there. */
-export const taskCheckBrief = (list: string) => `## 这次交办已有的修改项\n\n${list || "（没有）"}\n\n已经是修改项的问题（包括等本人决定的）不要再提。某一项改过了还有问题，或者有新的情况要补充，照常提问题，在标题里写明是哪一项（如“T3 没改好：……”），评审负责人会把它并到那一项。`;
+export const taskCheckBrief = (list: string) => `## 这次交办已有的修改项\n\n${list || "（没有）"}\n\n已经是修改项的问题（包括等本人决定、以后再做的）不要再提。某一项改过了还有问题，或者有新的情况要补充，照常提问题，在标题里写明是哪一项（如“T3 没改好：……”），评审负责人会把它并到那一项。\n\n先找会让需求的验收标准做不到、或在现在的实际用法下出错的问题。只在假想的用法下出现的（多个客户端并发、协议被故意乱用、极少见的时序），严重程度如实标，并在问题里写清要什么条件才会碰到；不要为了找出问题往越来越深的边界里挖。`;
 
 function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, failed: string[], tasks?: string) {
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
@@ -464,7 +466,7 @@ export function askPlan(app: App, run: Run, chain: CodeChain | null, plan: Revie
   const coded = isBranchReview(run) ? "" : [change && `**改动**：${change}${(out.repos ?? []).some((r) => r.check) ? `，检查${failedCheck ? "没通过" : "通过"}` : ""}`, out.coderSummary && `**编码 Agent 的说明**：${truncate(out.coderSummary.trim(), 600)}`].filter(Boolean).join("\n");
   return createAsk(app, {
     runId: run.id,
-    conversationId: chain?.conversationId ?? null,
+    conversationId: chain ? reportConversation(app, chain) : null,
     question: `「${truncate(run.title, 40)}」${isBranchReview(run) ? "分支已检出" : "第 1 轮编码完成"}。${coded ? `\n${coded}\n` : ""}评审计划：「${plan.tierName}」档，${plan.checks.map((c) => labels.get(c) ?? c).join("、")}，最多 ${plan.maxRounds} 轮。\n理由：${plan.reasons.join("；")}\n开始评审吗？也可以直接回一句补充要求。`,
     options,
     context: { handler: "review-plan", codeRunId: run.id, tiers: [plan.tier, ...tiers.slice(0, 4).map((t) => t.id)] },
@@ -481,7 +483,7 @@ export function setReviewRetryDelayForTests(ms: number) {
 function askRetry(app: App, run: Run, chain: CodeChain | null, failed: { check: string; error: string }[], all: boolean) {
   return createAsk(app, {
     runId: run.id,
-    conversationId: chain?.conversationId ?? null,
+    conversationId: chain ? reportConversation(app, chain) : null,
     question: [
       `「${truncate(run.title, 40)}」的评审${all ? "没有完成" : `有 ${failed.length} 项没有完成，其余已出结论`}，自动重试一次后仍然失败：`,
       failed.map((f) => `- ${f.check}：${truncate(f.error, 160)}`).join("\n"),
@@ -550,7 +552,7 @@ export function askDone(app: App, run: Run, chain: CodeChain | null, d: { title:
     : "改动在独立的工作区里，应用后成为仓库里未提交的修改。";
   return createAsk(app, {
     runId: run.id,
-    ...(chain ? { conversationId: chain.conversationId } : {}),
+    ...(chain ? { conversationId: reportConversation(app, chain) } : {}),
     question: `**${d.title}**\n\n${d.digest}\n\n${hint}`,
     options: labels.map((label) => ({ label })),
     context: { handler: "review-done", codeRunId: run.id, labels },
@@ -563,7 +565,7 @@ export function askConfirm(app: App, run: Run, chain: CodeChain | null, title: s
   const labels = [branch ? CONFIRM : APPLY, DISCARD];
   return createAsk(app, {
     runId: run.id,
-    ...(chain ? { conversationId: chain.conversationId } : {}),
+    ...(chain ? { conversationId: reportConversation(app, chain) } : {}),
     question: `**${title}**\n\n${digest}\n\n${branch ? "改动已经按修改项提交在工作分支上；确认后推到 origin，归还工作区。还要改就直接说，或在网页上加修改项。" : "改动在独立的工作区里，应用后成为仓库里未提交的修改。"}`,
     options: labels.map((label) => ({ label })),
     context: { handler: "review-done", codeRunId: run.id, labels },
@@ -602,7 +604,7 @@ function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult, digest
   ];
   return createAsk(app, {
     runId: run.id,
-    conversationId: chain.conversationId,
+    conversationId: reportConversation(app, chain),
     question: [
       `「${truncate(run.title, 40)}」第 ${lead.round} 轮评审后停了下来：${STOP_LABEL[lead.stop!]}。`,
       lead.escalation?.summary ?? lead.summary,
