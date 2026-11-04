@@ -1,6 +1,7 @@
 import type { App } from "./app.ts";
 import { one } from "./db.ts";
 import { accessibleSpaces, OWNER } from "./users.ts";
+import { normalizeLookupId } from "./id-query.ts";
 
 /** What an id names, with enough to show it and open it (the web app picks the view by `type`). */
 export type IdHit = {
@@ -26,7 +27,7 @@ const clip = (s: string | null | undefined, n = 160) => {
  * tables by prefix and time, so at most a few rows answer; the caller's spaces limit what is shown.
  */
 export function lookupId(app: App, raw: string, userId = OWNER): IdHit[] {
-  const id = raw.trim().replace(/^(运行|run)\s*/i, "").replace(/^#?\/?(runs|items|ask)\//, "").replace(/^(src|mem|msg):/, "").replace(/#L\d+(-L?\d+)?$/, "");
+  const id = normalizeLookupId(raw);
   if (!id || /\s/.test(id) || id.length > 200) return [];
   const spaces = accessibleSpaces(app, userId);
   const may = (space: string | null) => spaces === null || (!!space && spaces.includes(space));

@@ -30,7 +30,7 @@ export async function startProgress(_app: App, at: { messageId: string; inThread
       // Very long answers do not fit one card: the card keeps the start, the rest follows as messages.
       const head = answer.length > 18000 ? answer.slice(0, 18000) : answer;
       await updateLarkCard(sent.messageId, buildCard({ blocks: [{ markdown: head || "（没有回答）" }, { note }] })).catch(async () => {
-        await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId }, { markdown: head });
+        await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId }, { markdown: head, note });
       });
       if (answer.length > 18000) await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId }, { markdown: answer.slice(18000) });
       await reactLark(at.messageId, "DONE").catch(() => {});

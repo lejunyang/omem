@@ -5,11 +5,44 @@
  *
  *   node scripts/bench-scale.ts <corpus.jsonl> [--copies 10] [--home DIR] [--queries queries.jsonl] [--dims 512]
  *   node scripts/bench-scale.ts --requirements [--works 20] [--rounds 5] [--payload-kb 128]
+ *   node scripts/bench-scale.ts --runs [--count 20000]
  *
  * Vectors are random (embedding a large corpus on CPU takes hours); they only
  * measure the cost of the vector search itself, not its quality.
  */
 process.removeAllListeners("warning");
+if (process.argv.includes("--runs")) {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { App } = await import("../src/core/app.ts");
+  const { ensurePersonalSpace } = await import("../src/core/spaces.ts");
+  const { listRuns, countRuns } = await import("../src/agents/runs.ts");
+  const { lookupId } = await import("../src/core/lookup.ts");
+  const at = process.argv.indexOf("--count");
+  const count = at < 0 ? 20000 : Number(process.argv[at + 1]);
+  if (!Number.isSafeInteger(count) || count < 1) throw new Error("--count 要是正整数");
+  const home = mkdtempSync(join(tmpdir(), "omem-bench-runs-"));
+  const app = App.open(home);
+  try {
+    ensurePersonalSpace(app);
+    const id = (i: number) => `r${i.toString(36).padStart(19, "0")}`;
+    const target = id(Math.floor(count / 2));
+    const insert = app.db.prepare("insert into runs(id,kind,space_id,status,title,input,created_at) values(?,'ask','personal','done',?,?,'2026-01-01')");
+    app.db.exec("begin");
+    for (let i = 0; i < count; i++) insert.run(id(i), `示例问答 ${i}`, JSON.stringify({ task: `${"示例任务正文。".repeat(150)}${i % 1000 === 0 ? target : ""}` }));
+    app.db.exec("commit");
+    const measure = (fn: () => unknown) => {
+      fn();
+      const times = Array.from({ length: 20 }, () => { const start = performance.now(); fn(); return performance.now() - start; }).sort((a, b) => a - b);
+      return { p50Ms: +times[10].toFixed(3), p90Ms: +times[18].toFixed(3) };
+    };
+    const text = { q: target, spaceId: "personal", brief: true, limit: 40 };
+    const exact = { id: target, spaceId: "personal", brief: true, limit: 40 };
+    console.log(JSON.stringify({ count, textSearch: measure(() => [listRuns(app, text), countRuns(app, text)]), exactRun: measure(() => [listRuns(app, exact), countRuns(app, exact)]), globalId: measure(() => lookupId(app, target)) }));
+  } finally { app.db.close(); rmSync(home, { recursive: true, force: true }); }
+  process.exit(0);
+}
 if (process.argv.includes("--requirements")) {
   const { mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

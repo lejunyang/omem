@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import UiCheckbox from "./UiCheckbox.vue";
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { idQuery } from "../../../src/core/id-query";
 import { useRouter } from "vue-router";
 import { get, post, type Hit, type IdHit } from "../api";
 import { openCitation, sourceKindLabel, state } from "../store";
@@ -24,34 +25,43 @@ watch(
     if (open) {
       q.value = "";
       hits.value = [];
+      idHits.value = [];
       active.value = 0;
       await nextTick();
       input.value?.focus();
+    } else {
+      ++seq;
+      clearTimeout(timer);
+      searching.value = false;
     }
   },
 );
-watch([q, scopeAll], () => {
+watch([q, scopeAll, () => state.space], () => {
   clearTimeout(timer);
   const my = ++seq;
-  if (!q.value.trim()) return void ((hits.value = []), (idHits.value = []), (searching.value = false));
+  const query = q.value.trim();
+  hits.value = [];
+  idHits.value = [];
+  active.value = 0;
+  if (!query) return void (searching.value = false);
+  const id = idQuery(query);
+  const space = scopeAll.value ? "" : `&space=${encodeURIComponent(state.space)}`;
   searching.value = true;
   timer = setTimeout(async () => {
-    // Something that looks like an id (one word with letters and digits) is also looked up as one.
-    // "运行 r…" is how the id reads under a Feishu answer.
-    const t = q.value.trim().replace(/^(运行|run)\s+/i, "");
-    const asId = /^\S{6,}$/.test(t) && /\d/.test(t) && /[a-z]/i.test(t);
-    const [r, ids] = await Promise.all([
-      get<{ hits: Hit[] }>(`/api/search?q=${encodeURIComponent(q.value)}&limit=14${scopeAll.value ? "" : `&space=${state.space}`}`).catch(() => ({ hits: [] })),
-      asId ? get<{ hits: IdHit[] }>(`/api/lookup?id=${encodeURIComponent(t)}`).catch(() => ({ hits: [] })) : { hits: [] as IdHit[] },
-    ]);
-    if (my === seq) {
+    // Publish the indexed result before starting the more expensive text/vector search.
+    if (id) {
+      const ids = await get<{ hits: IdHit[] }>(`/api/lookup?id=${encodeURIComponent(id)}`).catch(() => ({ hits: [] }));
+      if (my !== seq) return;
       idHits.value = ids.hits;
+    }
+    const r = await get<{ hits: Hit[] }>(`/api/search?q=${encodeURIComponent(id ?? query)}&limit=14${space}`).catch(() => ({ hits: [] }));
+    if (my === seq) {
       hits.value = r.hits;
-      active.value = 0;
       searching.value = false;
     }
-  }, 180);
+  }, id ? 0 : 180);
 });
+onBeforeUnmount(() => { ++seq; clearTimeout(timer); });
 
 const navs = [
   { label: "首页", to: "/", icon: "home" },

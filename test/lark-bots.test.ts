@@ -52,7 +52,7 @@ describe("several Feishu bots, the same abilities, each its own profile", async 
     join(home, "config.json"),
     JSON.stringify({
       lark: { ownerOpenId: "ou_owner", appId: "cli_main", bots: [{ id: "reviewer-bot", appId: "cli_rev", agent: "code-checker", ownerOpenId: "ou_owner_in_rev" }], botRelay: 1 },
-      agents: { default: "fake", profiles: [fake("fake", { FAKE_MODE: "thread" })] },
+      agents: { default: "fake", profiles: [{ ...fake("fake", { FAKE_MODE: "thread" }), model: "m2", effort: "low" }] },
       sessions: { mergeMs: 0 },
     }),
   );
@@ -93,6 +93,8 @@ describe("several Feishu bots, the same abilities, each its own profile", async 
     expect(conv).toMatchObject({ spec: "code-checker" });
     const answer = botSent.find((s) => s.to === "om_1" && s.content.includes("代码检查员"));
     expect(answer).toBeTruthy();
+    const r = one<{ id: string }>(app.db, "select run_id id from lark_sent where message_id = ?", answer!.id)!;
+    expect(answer!.content).toContain(`id ${r.id} · fake · m2 · low`);
     // It learned the main bot's id in its own app and @-ed it for real.
     expect(answer!.content).toContain("<at id=ou_main_in_rev></at>");
     expect(postedByOmem(answer!.id)).toBe(true);

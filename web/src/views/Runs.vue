@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { idQuery } from "../../../src/core/id-query";
 import { useRoute, useRouter } from "vue-router";
 import { aiLabel, get, onServerEvent, post, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
@@ -66,37 +67,64 @@ const listLoading = ref(true);
 const detailLoading = ref(false);
 let listSeq = 0;
 let detailSeq = 0;
+let loadedCount = 0;
 async function load() {
+  clearTimeout(keywordTimer);
   const seq = ++listSeq;
   loadingMore.value = false;
   listLoading.value = true;
+  runs.value = [];
+  total.value = 0;
+  loadedCount = 0;
+  const query = pageQuery();
+  const exactId = idQuery(keyword.value);
   try {
-    const page = await loadPage(0);
+    if (exactId) {
+      const exact = new URLSearchParams(query);
+      exact.delete("q");
+      exact.set("id", exactId);
+      const found = await get<{ runs: Run[]; total: number }>(`/api/runs?${exact}`).catch(() => ({ runs: [], total: 0 }));
+      if (seq !== listSeq) return;
+      runs.value = found.runs;
+      total.value = found.total;
+    }
+    const page = await loadPage(0, query);
     if (seq !== listSeq) return;
-    runs.value = page.runs;
+    appendRuns(page.runs);
+    loadedCount = page.runs.length;
     total.value = page.total;
   } finally {
     if (seq === listSeq) listLoading.value = false;
   }
 }
-async function loadPage(offset: number) {
-  const q = new URLSearchParams({ limit: String(PAGE), offset: String(offset), brief: "1" });
+function pageQuery() {
+  const q = new URLSearchParams({ limit: String(PAGE), brief: "1" });
   // A guest's question runs in the group's space, a rule in the chat's: "所有空间" finds them from anywhere.
   if (scope.value === "space") q.set("space", state.space);
-  if (keyword.value.trim()) q.set("q", keyword.value.trim());
+  if (keyword.value.trim()) q.set("q", idQuery(keyword.value) ?? keyword.value.trim());
   if (kindFilter.value.length) q.set("kind", kindFilter.value.join(","));
   if (showQuiet.value) q.set("all", "true");
   if (statusFilter.value) q.set("status", statusFilter.value);
-  return get<{ runs: Run[]; total: number }>(`/api/runs?${q.toString()}`);
+  return q;
+}
+function loadPage(offset: number, query = pageQuery()) {
+  const q = new URLSearchParams(query);
+  q.set("offset", String(offset));
+  return get<{ runs: Run[]; total: number }>(`/api/runs?${q}`);
+}
+function appendRuns(page: Run[]) {
+  const known = new Set(runs.value.map((r) => r.id));
+  runs.value.push(...page.filter((r) => !known.has(r.id)));
 }
 async function loadMore() {
-  if (listLoading.value || loadingMore.value || runs.value.length >= total.value) return;
+  if (listLoading.value || loadingMore.value || loadedCount >= total.value) return;
   const seq = listSeq;
   loadingMore.value = true;
   try {
-    const page = await loadPage(runs.value.length);
+    const page = await loadPage(loadedCount);
     if (seq !== listSeq) return;
-    runs.value.push(...page.runs);
+    appendRuns(page.runs);
+    loadedCount += page.runs.length;
     total.value = page.total;
   } finally {
     if (seq === listSeq) loadingMore.value = false;
@@ -124,10 +152,17 @@ watch(scope, load);
 watch(kindFilter, load);
 watch(showQuiet, load);
 watch(statusFilter, load);
+watch(() => state.space, load);
 let keywordTimer: ReturnType<typeof setTimeout> | undefined;
 watch(keyword, () => {
   clearTimeout(keywordTimer);
-  keywordTimer = setTimeout(() => void load(), 250);
+  // Invalidate both stages immediately, including during the text-search debounce.
+  ++listSeq;
+  runs.value = [];
+  total.value = 0;
+  listLoading.value = true;
+  loadingMore.value = false;
+  keywordTimer = setTimeout(() => void load(), idQuery(keyword.value) ? 0 : 250);
 });
 watch(id, loadDetail);
 const off = onServerEvent((e) => {
@@ -444,7 +479,7 @@ const kindOptions = computed(() => [
           </template>
         </VirtualList>
         <div v-if="!runs.length && !listLoading" class="muted small pad">{{ keyword.trim() || kindFilter.length ? "没有符合条件的运行。" : statusFilter ? `没有${statusOptions.find((o) => o.value === statusFilter)?.label}的运行。` : "还没有运行记录。" }}</div>
-        <div v-else-if="loadingMore" class="list-foot">加载中…</div>
+        <div v-else-if="listLoading || loadingMore" class="list-foot"><span class="spinner" />搜索中…</div>
         <div v-else-if="runs.length >= total" class="list-foot">共 {{ total }} 条</div>
       </div>
     </aside>

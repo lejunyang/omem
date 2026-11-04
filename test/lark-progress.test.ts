@@ -41,7 +41,8 @@ it("waits for a late fallback card and reaction before settling the answer", asy
   reaction = async () => { await new Promise<void>((resolve) => { releaseReaction = resolve; }); return { code: 0, data: { reaction_id: "reaction" } }; };
   const p = startReplyProgress(app, at, task());
   let settled = false;
-  const closing = p.close().then(async (card) => { settled = true; await card!.finish("最终答案"); });
+  const note = "id r_test · codex · gpt-x · low";
+  const closing = p.close().then(async (card) => { settled = true; await card!.finish("最终答案", note); });
   await vi.advanceTimersByTimeAsync(0);
   expect(settled).toBe(false);
   reaction = async () => ({ code: 0, data: { reaction_id: "done" } });
@@ -49,6 +50,7 @@ it("waits for a late fallback card and reaction before settling the answer", asy
   await closing;
   expect(replies).toHaveLength(1);
   expect(patches[0].data.content).toContain("最终答案");
+  expect(patches[0].data.content).toContain(note);
   expect(removed).toBe(1);
   expect(app.events.listenerCount("event")).toBe(0);
 });

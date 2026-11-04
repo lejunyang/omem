@@ -7,6 +7,14 @@ updated: 2026-11-04
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## ID 优先搜索（11-04）
+
+- 全局搜索和运行页直接识别裸 id，先按索引查精确命中并显示，加载状态持续到其余文本或向量搜索结束；运行页沿用筛选，追加时去重，分页偏移按文本结果计算。新查询立即使旧响应失效。入口：`src/core/id-query.ts`、`src/agents/runs.ts`、`src/server/http.ts`、`CommandPalette.vue`、`Runs.vue`；浏览器回归：`scripts/check-id-search.ts`，规模对比：`scripts/bench-scale.ts --runs`。
+
+## 飞书回答尾注（11-04）
+
+- 回答底部的“运行”改成 `id`，后面直接列出本次运行记录中的后端、模型、思考强度（如 `id r… · codex · gpt-6.1-sol · low`）；兜底后读取更新的 AI，未指定模型或强度标“默认模型”或“默认强度”，无 AI 记录只显示 id。普通回答、进度卡片、访客和后续投递共用，整行粘到 `Ctrl K` 仍能打开运行。入口：`src/channels/lark-bot.ts`、`lark-progress.ts`、`src/core/lookup.ts`。
+
 ## 网页组合输入保护（11-04）
 
 - `web/src/lib/composition.ts` 统一隔离输入法组合期间的键盘事件，并取消确认回车引起的隐式表单提交；主站和英语插件的 Vue 入口共用。原生 input / textarea、父级键盘处理、Teleport 弹窗与下拉筛选、全局快捷键都受保护，保留输入法选词的默认行为。`scripts/check-composition.ts` 用真实 Vue 控件和浏览器回归，操作系统输入法另需手动验收。

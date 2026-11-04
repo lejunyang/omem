@@ -52,6 +52,8 @@ it("finds what an id names, within the spaces the caller may read", async () => 
   const r = createRun(app, { kind: "ask", spaceId: "personal", title: "查一下经营信息" });
   const m = remember(app, { spaceId: "personal", kind: "fact", content: "示例商城的退款走异步回调" });
   expect(lookupId(app, `运行 ${r.id}`)).toMatchObject([{ type: "run", id: r.id, title: "查一下经营信息" }]);
+  expect(lookupId(app, `id ${r.id}`)).toMatchObject([{ type: "run", id: r.id }]);
+  expect(lookupId(app, `id ${r.id} · codex · gpt-x · low · 12 秒`)).toMatchObject([{ type: "run", id: r.id }]);
   expect(lookupId(app, `mem:${m.id}`)).toMatchObject([{ type: "memory", id: m.id }]);
   expect(lookupId(app, "no-such-id-123")).toEqual([]);
   expect(lookupId(app, "两个 词")).toEqual([]);

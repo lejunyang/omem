@@ -1043,8 +1043,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // --------------------------------------------------------------------- runs
   server.get("/api/runs", async (req) => {
-    const o = q(z.object({ kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
-    const opts = { kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q };
+    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
+    const opts = { id: o.id, kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
   });

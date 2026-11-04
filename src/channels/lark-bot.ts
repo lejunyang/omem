@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scheduleIngest } from "../agents/jobs.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
+import { getRun } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink, deferNotification, notificationCardOf, setNotificationCard, takeDeferred } from "../core/notify.ts";
@@ -31,6 +32,15 @@ import { askAsGuest, guestApprovalCard, guestsAllowed, onGuestApproved, ownerInC
 import { claimedByRule, markAddressed } from "../rules/store.ts";
 import { larkSenderNames } from "./lark-sender.ts";
 import { markLarkSent, onLarkReaction, recordLarkSent } from "./lark-feedback.ts";
+
+function answerNote(app: App, runId: string | null) {
+  if (!runId) return undefined;
+  const r = getRun(app, runId);
+  const provider = r.ai?.profile ?? r.profileId;
+  return [`id ${r.id}`, ...(provider ? [
+    provider, r.ai?.model || "默认模型", r.ai?.effort || "默认强度",
+  ] : [])].join(" · ");
+}
 
 /**
  * Feishu/Lark bot channel.
@@ -264,9 +274,10 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     // Internal citations and paths on this machine mean nothing in Feishu.
     const cite = { runId: typeof meta.runId === "string" ? meta.runId : null, chatId };
     const markdown = await resolveCitations(app, raw, cite);
+    const note = answerNote(app, cite.runId);
     // First message of a multi-agent work topic: open the topic from the request message.
     if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
-      const opened = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true, runId: cite.runId, conversationId: thread.id }, { markdown });
+      const opened = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true, runId: cite.runId, conversationId: thread.id }, { markdown, note });
       sent(opened.messageId);
       // Keep Feishu's thread id as is (omt_…): replies inside the topic arrive with the same id,
       // so they resolve to this work conversation instead of starting a second one.
@@ -286,12 +297,12 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const details = typeof meta.details === "string" && meta.details.trim() ? String(meta.details) : "";
     if (details) {
       const { buildCard } = await import("./lark-send.ts");
-      const card = buildCard({ wide: true, blocks: [{ markdown }, { fold: { title: String(meta.detailsTitle ?? "完整记录"), markdown: await resolveCitations(app, details, cite) } }] });
+      const card = buildCard({ wide: true, blocks: [{ markdown }, { fold: { title: String(meta.detailsTitle ?? "完整记录"), markdown: await resolveCitations(app, details, cite) } }, ...(note ? [{ note }] : [])] });
       const to = thread.settings.lastMessageId ? { replyTo: thread.settings.lastMessageId, inThread: !!topic } : { chatId };
       sent((await sendLark({ ...to, purpose: "answer", runId: cite.runId, conversationId: thread.id }, { card })).messageId);
       return;
     }
-    sent((await reply(chatId, markdown, thread.settings.lastMessageId, !!topic, undefined, { runId: cite.runId, conversationId: thread.id })).messageId);
+    sent((await reply(chatId, markdown, thread.settings.lastMessageId, !!topic, note, { runId: cite.runId, conversationId: thread.id })).messageId);
   }));
 
   // Background work tied to a conversation goes there (its Feishu topic, through its bot), never as
@@ -512,7 +523,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (working) await unreactLark(m.messageId, working);
     if (withOwner && v?.verdict === "answer") return true;
     const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
-    if (say) await reply(m.chatId, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId }), m.messageId, !!m.topicId, `运行 ${r.id}`, { runId: r.id }).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+    if (say) await reply(m.chatId, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId }), m.messageId, !!m.topicId, answerNote(app, r.id), { runId: r.id }).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
     // A person (not a bot) refused in a group: ask the owner whether to let this one through.
     if (v?.verdict === "refuse" && !m.fromApp && m.chatType === "group") await askOwnerAboutGuest(m, r.id, v.reason).catch((e) => console.warn("[omem] 访客确认卡片发送失败", e));
     return false;
@@ -642,8 +653,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       if (runId) finishCot(app, runId, true);
       const p = await presentation?.close();
       const shown = renderBotMentions(app, ref, answer);
-      // The run id in small print: the owner can search it in omem to see what the run did and wrote.
-      const note = runId ? `运行 ${runId}` : undefined;
+      // Read the recorded AI after completion so fallbacks show the backend that answered.
+      const note = answerNote(app, runId);
       const sentId = p ? (await p.finish(shown, note), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread, note, { runId })).messageId;
       // The progress card became the answer: reactions on it are about this run.
       if (sentId) markLarkSent(app, sentId, { purpose: "answer", runId, chatId: m.chatId, bot: ref });

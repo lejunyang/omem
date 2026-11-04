@@ -351,6 +351,8 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 学习卡片（FSRS）、学习目标与主动提醒、聊天里复习 | 已实现，测试覆盖 | `src/learn` |
 | 相关空间：`space_relations` 表（本人或 Agent 添加、本人移除后不再自动加回）；限定在一个空间的运行对相关空间只读（令牌分 `spaces` 与 `writable`）；运行环境列出相关空间与关系说明；`search`/`scan`/`find_symbol` 默认带上相关空间并标出命中所在空间；`remember` 返回相关空间里的相近记忆，记忆复核任务列出它们；定期整理从互相引用原件、页面互链、依赖清单（package.json、go.mod、pyproject、Cargo、pom）和共用标签找候选，交给 dreamer 用 `relate_spaces` 判断；`omem mcp` 按工作目录选默认空间；设置页和 `omem space relate` 管理 | 已实现，测试覆盖；真实 Agent 下的效果见验收 R1–R5 | `src/core/spaces.ts`、`src/core/space-candidates.ts`、`src/agents/runner.ts`、`tools.ts` 的 `relate_spaces`、`roles/dreamer.md` |
 | 多用户口子：用户、渠道身份、空间成员、API 令牌；工具与接口按用户限定空间 | 已实现，测试覆盖；不做多租户隔离 | `src/core/users.ts`、`omem user` |
+| ID 优先搜索：全局搜索与运行页识别裸 id，先返回按主键查询的命中，保留加载状态，再追加其他搜索结果；切换查询立即使旧请求失效，运行页去重并独立记录文本分页偏移，精确查询沿用列表筛选 | 已实现；`test/id-search.test.ts`、`scripts/check-id-search.ts`（1440/390、延迟、过期响应、分页）；`scripts/bench-scale.ts --runs` | `src/core/id-query.ts`、`agents/runs.ts`、`server/http.ts`、`CommandPalette.vue`、`Runs.vue` |
+| 飞书回答尾注：显示 `id r… · codex · gpt-6.1-sol · low`（后端、模型、思考强度），完成后读取运行记录，跟随兜底后端；普通回答、进度卡片、访客和后续投递共用。模型或强度未指定时标“默认模型”或“默认强度”，无 AI 记录时只显示 id；整行可粘贴到快捷搜索打开运行 | 已实现；假 ACP + 飞书客户端及 ID 检索回归覆盖 | `src/channels/lark-bot.ts`、`lark-progress.ts`、`src/core/lookup.ts` |
 | 飞书通知外链：普通通知与事项卡片保留 HTTP(S) 链接按钮；站内路由、无效地址和其他协议不变成按钮，事项已有同一外链时去重 | 已实现，假客户端回归覆盖 | `src/channels/item-notification.ts`、`lark-bot.ts`、`test/notification-card.test.ts` |
 | 飞书引用：规则首次开话题回复、主动发消息/卡片、草稿与卡片更新统一转换原件引用；有外部地址则链接原文，内部引用退成文字，卡片回调数据保持原样 | 已实现，假客户端及真实 Agent 验证 | `src/channels/common.ts`、`src/agents/jobs.ts`、`src/agents/tools.ts` |
 | 普通群内提及：完整成员列表无同名成员时跳过该对象，继续发送其余提及与正文；不回退全局同名记录或邮箱。群内重名、分页和权限错误仍保留；加急与限定收件人不静默降级，已知机器人身份继续按原方式使用 | 已实现，假客户端与真实只读成员核验 | `src/channels/lark-people.ts`、`src/agents/tools.ts` |

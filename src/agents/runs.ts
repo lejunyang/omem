@@ -137,7 +137,7 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; q?: string };
+type RunFilter = { id?: string; kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; q?: string };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
@@ -147,6 +147,7 @@ type RunFilter = { kind?: string; spaceId?: string; status?: string; parentId?: 
 function runWhere(opts: RunFilter) {
   const where: string[] = [];
   const params: (string | number)[] = [];
+  if (opts.id) where.push("id = ?"), params.push(opts.id);
   const kinds = (opts.kind ?? "").split(",").map((k) => k.trim()).filter(Boolean);
   if (kinds.length) {
     const any: string[] = [];
