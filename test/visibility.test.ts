@@ -23,7 +23,8 @@ describe("who may see a source", async () => {
   setAuthFetchForTests((async (url: string | URL | Request, init?: RequestInit) => {
     const auth = new Headers(init?.headers).get("authorization") ?? "";
     asked.push(`${String(url)} ${auth}`);
-    // Feishu: ann may read doc_ok, nobody may read doc_no.
+    // Feishu: ann may read doc_ok, nobody may read doc_no; asking about doc_flaky fails (a scope is missing).
+    if (String(url).includes("/doc_flaky/")) return new Response(JSON.stringify({ code: 99991679, msg: "Unauthorized. You do not have permission to perform the requested operation on the resource." }), { status: 400 });
     const allowed = String(url).includes("/doc_ok/") && auth === "Bearer at_ann";
     return new Response(JSON.stringify({ code: 0, data: { auth_result: allowed } }));
   }) as typeof fetch);
@@ -97,6 +98,16 @@ describe("who may see a source", async () => {
     // Never leaves this server either; the owner is not checked.
     expect(keptHere(app, ok.id)).toBe(true);
     expect(await sourceReadable(app, "owner", no.id)).toBe(true);
+  });
+
+  it("does not keep a failed Feishu call as a no", async () => {
+    const doc = upsertSource(app, { spaceId: "proj", kind: "doc", uri: "https://tenant.larkoffice.com/docx/doc_flaky", title: "周报", text: "飞书文档 周报", meta: { documentId: "doc_flaky" } });
+    expect(await sourceReadable(app, "ann", doc.id)).toBe(false);
+    expect(one(app.db, "select 1 from source_access where source_id = ?", doc.id)).toBeFalsy();
+    // Not asked again right away: in ten minutes it is.
+    const n = asked.length;
+    expect(await sourceReadable(app, "ann", doc.id)).toBe(false);
+    expect(asked.length).toBe(n);
   });
 
   it("only the owner sets other space settings; nobody sets a mirror by hand", async () => {

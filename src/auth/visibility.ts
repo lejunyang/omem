@@ -53,20 +53,34 @@ export function sourceVisible(app: App, userId: string, sourceId: string): boole
   return true;
 }
 
-/** Ask Feishu, as the person, whether they may view the document (and keep the answer a day). */
+/** When asking Feishu failed (not an answer: expired connection, missing scope, network), per person and source. */
+const failedAt = new Map<string, number>();
+const RETRY_MS = 10 * 60_000;
+
+/**
+ * Ask Feishu, as the person, whether they may view the document. Its answer is kept a day; a failed
+ * call is not an answer: they are kept out for now and Feishu is asked again after a while.
+ */
 async function askFeishu(app: App, userId: string, r: Row) {
-  let allowed = false;
+  const key = `${userId}:${r.id}`;
+  if (Date.now() - (failedAt.get(key) ?? 0) < RETRY_MS) return false;
+  let allowed: boolean | null = null;
   try {
     const token = await accessToken(app, userId, "lark");
     if (token) {
       const brand = readLarkSecrets(app.home)[app.config.lark.appId ?? ""]?.brand === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
       const res = await authFetch(`${brand}/open-apis/drive/v1/permissions/${encodeURIComponent(docToken(r)!)}/members/auth?type=docx&action=view`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
       const v = (await res.json()) as { code?: number; data?: { auth_result?: boolean } };
-      allowed = v.code === 0 && !!v.data?.auth_result;
+      if (v.code === 0) allowed = !!v.data?.auth_result;
     }
   } catch {
-    allowed = false;
+    allowed = null;
   }
+  if (allowed === null) {
+    failedAt.set(key, Date.now());
+    return false;
+  }
+  failedAt.delete(key);
   run(app.db, "insert into source_access(source_id,user_id,allowed,checked_at) values(?,?,?,?) on conflict(source_id,user_id) do update set allowed = excluded.allowed, checked_at = excluded.checked_at", r.id, userId, allowed ? 1 : 0, now());
   return allowed;
 }

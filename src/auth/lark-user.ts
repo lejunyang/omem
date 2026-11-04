@@ -3,7 +3,7 @@ import { readLarkSecrets } from "../channels/lark-setup.ts";
 import { larkActor, larkCli, setLarkCredentials } from "../channels/lark-cli.ts";
 import { HttpError } from "../core/util.ts";
 import { OWNER, userName } from "../core/users.ts";
-import { accessToken } from "./connections.ts";
+import { accessToken, staleToken } from "./connections.ts";
 import { findConnection } from "./vault.ts";
 
 /**
@@ -19,7 +19,7 @@ setLarkCredentials(async ({ app, userId }) => {
   if (!token) throw new HttpError(403, `${userName(a, userId)}还没有连接飞书：在 omem 的账号页连接飞书后再试`);
   const appId = a.config.lark.appId;
   if (!appId) throw new HttpError(400, "还没有飞书机器人应用");
-  return { appId, token, brand: readLarkSecrets(a.home)[appId]?.brand === "lark" ? "lark" : "feishu" };
+  return { appId, token, brand: readLarkSecrets(a.home)[appId]?.brand === "lark" ? "lark" : "feishu", rejected: () => staleToken(a, userId, "lark") };
 });
 
 /** Run `fn` as this person on Feishu. */

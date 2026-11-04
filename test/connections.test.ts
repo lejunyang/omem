@@ -23,7 +23,9 @@ setAuthFetchForTests((async (url: string | URL | Request, init?: RequestInit) =>
     const b = JSON.parse(String(init?.body));
     if (b.grant_type === "refresh_token") {
       refreshCalls++;
-      if (b.refresh_token === "rt_dead") return new Response(JSON.stringify({ code: 20064, error_description: "refresh token revoked" }), { status: 400 });
+      // As Feishu answers (checked with a made-up token): OAuth's invalid_grant with its own code.
+      if (b.refresh_token === "rt_dead") return new Response(JSON.stringify({ error: "invalid_grant", error_description: "The refresh token provided is invalid.", code: 20026 }), { status: 400 });
+      if (b.refresh_token === "rt_flaky") return new Response("<html>502 Bad Gateway</html>", { status: 502 });
       await new Promise((r) => setTimeout(r, 30));
       return new Response(JSON.stringify({ code: 0, access_token: `at_new${refreshCalls}`, refresh_token: `rt_new${refreshCalls}`, expires_in: 7200, refresh_token_expires_in: 604800, scope: "offline_access" }));
     }
@@ -101,6 +103,16 @@ describe("connections", async () => {
     expect(findConnection(app, "ann", "lark")!.status).toBe("expired");
     expect(one<{ n: number }>(app.db, "select count(*) n from notifications where user_id = 'ann' and title like '%重新授权%'")!.n).toBe(1);
     expect((await renewConnections(app)).lost).toBe(0); // expired ones are not retried
+  });
+
+  it("keeps the connection when refreshing fails for another reason, and tries again later", async () => {
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: [], accessToken: "at_old", refreshToken: "rt_flaky", expiresIn: 60, refreshExpiresIn: 3600 });
+    const before = one<{ n: number }>(app.db, "select count(*) n from notifications where user_id = 'ann'")!.n;
+    await expect(accessToken(app, "ann", "lark")).rejects.toThrow(/稍后再试/);
+    expect(findConnection(app, "ann", "lark")!.status).toBe("active");
+    expect((await renewConnections(app)).lost).toBe(0);
+    expect(findConnection(app, "ann", "lark")!.status).toBe("active");
+    expect(one<{ n: number }>(app.db, "select count(*) n from notifications where user_id = 'ann'")!.n).toBe(before);
   });
 
   it("runs lark-cli with the person's own token, never the owner's login in their place", async () => {

@@ -7,6 +7,15 @@ import type { App } from "../core/app.ts";
  * (`lark.ts`); others are registered the same way (later by plugins). Identities live in
  * `identities` under the provider's `channel`.
  */
+/**
+ * The provider refused a code or refresh token (revoked, expired, already used): only authorizing again
+ * helps. Any other failure (network, the provider's own trouble) leaves the connection to retry later.
+ */
+export class GrantRejected extends Error {
+  readonly grantRejected = true;
+}
+export const grantRejected = (e: unknown) => !!(e as { grantRejected?: boolean } | null)?.grantRejected;
+
 export type ProviderTokens = { accessToken: string; refreshToken?: string | null; expiresIn?: number; refreshExpiresIn?: number; scope?: string };
 export type ProviderIdentity = {
   /** The id the provider logs people in by (Feishu: union_id). */
@@ -28,7 +37,11 @@ export type LoginProvider = {
   authorizeUrl(app: App, p: { state: string; challenge: string; redirectUri: string; scopes: string[] }): string;
   exchange(app: App, p: { code: string; verifier: string; redirectUri: string }): Promise<ProviderTokens>;
   whoami(app: App, tokens: ProviderTokens): Promise<ProviderIdentity>;
-  /** New tokens for a refresh token (src/auth/connections.ts); providers without it cannot keep a connection alive. */
+  /**
+   * New tokens for a refresh token (src/auth/connections.ts); providers without it cannot keep a connection
+   * alive. When the provider refuses the refresh token itself, throw an error with `grantRejected: true`
+   * (`GrantRejected`): only then does the person have to authorize again.
+   */
   refresh?(app: App, refreshToken: string): Promise<ProviderTokens>;
   /** Where a connection's API calls may go (a plugin's ctx.connection().fetch): the token is never sent anywhere else. */
   apiBase?: string;

@@ -2,8 +2,8 @@ import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError } from "../core/util.ts";
 import { featuresOf, grantedFeatures } from "./features.ts";
-import { authFetch, loginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
-import { connectionSecrets, deleteConnection, findConnection, listConnections, markConnection, replaceTokens, storeConnection, type Connection } from "./vault.ts";
+import { authFetch, grantRejected, loginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
+import { connectionSecrets, deleteConnection, expireAccessToken, findConnection, listConnections, markConnection, replaceTokens, storeConnection, type Connection } from "./vault.ts";
 
 /**
  * Using a person's connection (docs/v2/multi-user.md, “连接器”): a current access token, refreshed
@@ -51,7 +51,9 @@ async function refresh(app: App, c: Connection): Promise<string> {
     replaceTokens(app, c.id, t);
     return t.accessToken;
   } catch (e) {
-    throw expired(app, c, (e as Error).message);
+    // Only a refused refresh token needs the person; a network or provider failure is tried again on the next use.
+    if (grantRejected(e)) throw expired(app, c, (e as Error).message);
+    throw new HttpError(503, `${loginProvider(c.provider)?.label ?? c.provider}授权暂时刷新不了，稍后再试：${(e as Error).message}`);
   }
 }
 
@@ -81,6 +83,12 @@ export async function accessToken(app: App, userId: string, provider: string): P
   return p;
 }
 
+/** The provider turned this person's access token down before its time (revoked, signed out elsewhere): the next use refreshes it. */
+export function staleToken(app: App, userId: string, provider: string) {
+  const c = findConnection(app, userId, provider);
+  if (c?.status === "active") expireAccessToken(app, c.id);
+}
+
 /**
  * The scheduler's pass: refresh tokens whose refresh token runs out within two days, so a connection
  * nobody used for a while stays alive. Returns how many were renewed and how many need the person.
@@ -95,7 +103,7 @@ export async function renewConnections(app: App) {
       await (refreshing.get(c.id) ?? refresh(app, c));
       renewed++;
     } catch {
-      lost++;
+      if (findConnection(app, c.userId, c.provider)?.status === "expired") lost++;
     }
   }
   return { renewed, lost };

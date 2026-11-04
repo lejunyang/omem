@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { larkAppSecret, readLarkSecrets } from "../channels/lark-setup.ts";
-import { authFetch, registerLoginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
+import { authFetch, GrantRejected, registerLoginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
 
 /**
  * Logging in with Feishu through the main bot's app (`lark.appId`): the authorization page, the v2
@@ -26,7 +26,12 @@ async function call<T>(res: Response, what: string): Promise<T> {
   } catch {
     throw new Error(`飞书${what}返回的不是 JSON（HTTP ${res.status}）`);
   }
-  if (!res.ok || (v.code !== undefined && v.code !== 0)) throw new Error(`飞书${what}失败：${v.error_description ?? v.msg ?? v.error ?? `HTTP ${res.status}`}${v.code ? `（${v.code}）` : ""}`);
+  if (!res.ok || (v.code !== undefined && v.code !== 0)) {
+    const why = `飞书${what}失败：${v.error_description ?? v.msg ?? v.error ?? `HTTP ${res.status}`}${v.code ? `（${v.code}）` : ""}`;
+    // A refused code or refresh token comes back as OAuth's invalid_grant (20003 code not found, 20026
+    // refresh token invalid, …); a bad access token is HTTP 200 with its own code (user_info: 20005).
+    throw v.error === "invalid_grant" ? new GrantRejected(why) : new Error(why);
+  }
   return v as T;
 }
 

@@ -22,7 +22,8 @@ export function setLarkCliForTests(fn: Override | null) {
  */
 export type LarkActor = { app: { home: string }; userId: string };
 export const larkActor = new AsyncLocalStorage<LarkActor>();
-type Credentials = { appId: string; token: string; brand?: string };
+/** `rejected`: Feishu turned the token down (lark-cli's `authentication` errors), so it is refreshed before the next call. */
+type Credentials = { appId: string; token: string; brand?: string; rejected?: () => void };
 let credentials: ((actor: LarkActor) => Promise<Credentials>) | null = null;
 /** src/auth/lark-user.ts hands in how to get a person's token (kept out of here: no import cycle). */
 export function setLarkCredentials(fn: typeof credentials) {
@@ -98,6 +99,7 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
     // A failing command still prints its JSON error ({ ok: false, error: { type, message, hint } }); keep what it says.
     let detail = "";
     let hint = "";
+    let type = "";
     let missing: string[] = [];
     for (const output of [(e as { stderr?: string }).stderr, (e as { stdout?: string }).stdout]) {
       try {
@@ -107,12 +109,19 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
         const v = value.error ?? value;
         detail = [v.type, v.subtype, v.code ?? value.code, v.message ?? v.msg ?? value.msg, v.log_id ?? value.log_id].filter(Boolean).join(" ");
         hint = v.hint ? String(v.hint) : "";
+        type = typeof v.type === "string" ? v.type : "";
         if (Array.isArray(v.missing_scopes)) missing = v.missing_scopes.filter((x: unknown): x is string => typeof x === "string");
         if (detail) break;
       } catch {}
     }
     // The user token lacks a scope: callers can ask the owner to grant it (lark-auth.ts).
     if (missing.length) throw new LarkScopeError(missing, `飞书 CLI：缺少权限 ${missing.join(" 或 ")}`);
+    // A person's own token turned down (lark-cli 1.0.98: exit 3, `authentication` token_invalid 99991668 and the
+    // like): theirs to fix in omem, not lark-cli's login; refreshed before the next call.
+    if (user && (type === "authentication" || /token_(invalid|expired)/.test(detail))) {
+      user.rejected?.();
+      throw new Error(`飞书不接受你的授权（${redactLarkError(detail).slice(0, 200)}）：下次调用会先刷新；还不行就在 omem 的账号页重新连接飞书`);
+    }
     // A missing permission (scope) is not a missing login, even though both say "unauthorized".
     if (!/scope|permission/i.test(detail) && /keychain|unauthori[sz]ed|not.*logged|auth.*login|token.*expired|credential/i.test(detail || raw))
       throw new Error("飞书登录不可用：请在运行 omem 的电脑上执行 lark-cli auth login 后重试");

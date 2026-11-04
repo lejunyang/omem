@@ -90,6 +90,7 @@ api.tool({ name: "notes_recent", description, schema, handler: async (ctx) => {
 
 - 连接器 id 要以 `<插件 id>-` 开头；插件的代码卸载（撤销信任）时一起注销。
 - 账号页“已连接的应用”列出它，按功能一项项授权；令牌由宿主保管（`secrets/vault.db`），快过期时刷新。
+- `refresh` 在平台拒绝刷新令牌（吊销、过期、用过）时抛一个带 `grantRejected: true` 的错误，宿主才把连接标为“需要重新授权”并通知那个人；别的失败（网络、平台出错）当作暂时的，下次用到时再刷新。
 - `ctx.connection(provider).fetch` 只能请求 `apiBase` 下的地址，宿主带上令牌，插件拿不到令牌本身。
 - 清单里写 `connectors: [{ provider: notes-api, features: [read] }]`，没连接或缺功能时插件页顶上提示去账号页连接。
 - 想让人用它登录，把它的 id 加进 `auth.providers`（设置 → 成员）。

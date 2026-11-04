@@ -1271,6 +1271,7 @@ updated: 2026-11-04
 - `src/channels/lark-member-capture.ts`：开了“我的消息”的成员，每次 lark-poll 后以他的身份读最近活跃的 30 个会话（游标在 kv `lark_member_cursor:<用户>:<会话>`），已有可读共享副本的只记 `source_viewers`。开了日程、妙记、文档的，接着跑 `lark-personal.ts` 的 `captureCalendar` / `captureMinutes` / `captureRecentDocs`（带 `who`：写进他的个人空间，kv 状态键加 `:<用户>`，不占本人的每小时检查）；`capture-space.ts` 的 `sharedCopyFor` 找他能读的共享副本并记下（聊天也改用它）。
 - 按读者分开：`lark-docs.ts` 数正文里嵌进来的表格和同步块，有的话 meta 记 `perReader` 和 `capturedBy`，`originKeyOf` 给 `lark:doc:<id>#<用户>`，不会被当作共享副本给别人用。多维表格只存链接，没有要分开的。
 - 检索：`search.ts` 按 origin_key（去掉 `#` 以后）合并，留排名最高的一份，`Hit.elsewhere` 列出其余；`SearchOptions.visible`（`visibility.ts` 的 `hitFilter`）让读者看不到的副本在合并前去掉。`search` 工具输出“同一个聊天或文档另有 N 处”，命令面板显示其余几处的空间名。
+- 对着真实飞书接口用假令牌核对过返回（2026-11-05）：令牌接口失败是 `{ error: "invalid_grant", error_description, code }`（授权码 20003、刷新令牌 20026），`user_info` 的坏令牌是 HTTP 200 加 `code: 20005`，文档权限接口路径存在（坏令牌 99991668）。据此改了两处：刷新只在 `invalid_grant`（`providers.ts` 的 `GrantRejected` / `grantRejected`，插件的 `refresh` 也这样表示）时标为需要重新授权，网络或飞书出错返回 503、连接不动，下次再刷；文档阅读权限只记飞书真正给出的答案，调用失败（连接过期、缺权限、网络）不记成“不能看”，十分钟内不重复问。lark-cli 1.0.98 以成员身份调用（`LARKSUITE_CLI_USER_ACCESS_TOKEN`）时确实把这个令牌发给飞书、不用本机登录，`auth` 命令在这种方式下不可用；令牌被拒时退出码 3、stderr 里是 `authentication` / `token_invalid`（99991668）。以前这类错误可能被说成“请执行 lark-cli auth login”；现在在成员的调用里改说他的授权不被接受，并把令牌标为过期（`staleToken`），下一次先刷新。用假凭据从 `asLarkUser` 一路走到真实飞书核对过：被拒 → 标为过期 → 刷新被拒（20026）→ 连接变成需要重新授权。
 - 向量：`embedPending` 先找正文和标题都相同、已有向量的切块，复制过来；同一批里相同的输入只算一次。迁移加部分索引 `chunks_text_head`（长度 + 开头 80 字，只含有向量的切块）。
 - 网页：账号页“已连接的应用”（按功能打开、重新授权、断开、缺权限的授权提示）；本人那里只说明用 lark-cli 登录。
 

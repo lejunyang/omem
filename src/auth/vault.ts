@@ -160,6 +160,11 @@ export function replaceTokens(app: App, id: string, t: { accessToken: string; re
     .run(seal(app, { accessToken: t.accessToken, refreshToken: refresh }), at(t.expiresIn), t.refreshToken ? at(t.refreshExpiresIn) : null, t.scope ? JSON.stringify([...new Set([...(c?.scopes ?? []), ...t.scope.split(/\s+/).filter(Boolean)])].sort()) : null, now(), id);
 }
 
+/** The access token was turned down before its time: the next use refreshes it (connections.ts). */
+export function expireAccessToken(app: App, id: string) {
+  db(app).prepare("update connections set expires_at = ?, updated_at = ? where id = ?").run(now(), now(), id);
+}
+
 export function markConnection(app: App, id: string, status: ConnectionStatus, error: string | null) {
   db(app).prepare("update connections set status = ?, last_error = ?, updated_at = ? where id = ?").run(status, error?.slice(0, 500) ?? null, now(), id);
 }
