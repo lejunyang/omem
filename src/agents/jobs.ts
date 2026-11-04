@@ -1,4 +1,5 @@
 import { canWrite, OWNER, scopeFor } from "../core/users.ts";
+import { can } from "../auth/permissions.ts";
 import { sourceRoute, moveSource, prepareArchive } from "../sources/archive.ts";
 import { executionArgs, type Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
@@ -706,7 +707,7 @@ registerHandler("wiki-plan", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
   const { focus, autoWrite = true, readSpaces } = ctx.run.input as { focus?: string; autoWrite?: boolean; readSpaces?: string[] };
   const userId = one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? OWNER;
-  if (!canWrite(ctx.app, userId, spaceId)) throw new Error("无权写入目标空间的 Wiki");
+  if (!can(ctx.app, userId, "wiki.write", spaceId)) throw new Error("无权写入目标空间的 Wiki");
   const allowed = scopeFor(ctx.app, userId, null);
   const sources = (readSpaces ?? [spaceId]).filter(id => !allowed || allowed.includes(id));
   const existing = listPages(ctx.app, spaceId);

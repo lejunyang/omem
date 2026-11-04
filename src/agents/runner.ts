@@ -20,6 +20,7 @@ import { DOUBAO_CLI_INSTALL } from "./doubao-cli.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
+import { trimTools } from "../auth/tools.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools } from "./tool-help.ts";
 import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
@@ -385,6 +386,8 @@ export function prepareRun(
   for (const t of input.addTools ?? []) tools.add(t);
   // A replay arm reads and nothing else, whatever its role or profile may do elsewhere.
   if (input.replay) for (const t of [...tools]) if (!input.replay.tools.includes(t)) tools.delete(t);
+  // Not what the person it works for may not do (src/auth/tools.ts).
+  trimTools(app, userId, tools);
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
   const scoped = scopeFor(app, userId, spaces)?.filter(id => !input.readScope || input.readScope.includes(id)) ?? (input.readScope ?? null);

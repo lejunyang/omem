@@ -113,7 +113,7 @@ describe("logging in", async () => {
     expect((await remote("/api/conversations", { cookie: `omem_sid=${cookie}` })).status).toBe(200);
     expect(resolveIdentity(app, "lark", "ou_wang")).toBe(wang.id);
     // Still a member: owner routes stay closed.
-    expect((await remote("/api/runs", { cookie: `omem_sid=${cookie}` })).status).toBe(403);
+    expect((await remote("/api/settings", { cookie: `omem_sid=${cookie}` })).status).toBe(403);
   });
 
   it("recognises someone already registered by their open_id", async () => {

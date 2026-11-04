@@ -4,7 +4,8 @@ import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError, json, newId, now, sha256 } from "../core/util.ts";
-import { addMember, createUser, getUser, identitiesOf, identityOwner, linkIdentity, OWNER, updateUser, type User } from "../core/users.ts";
+import { addMember, createUser, getUser, identitiesOf, identityOwner, linkIdentity, OWNER, setUserRole, updateUser, type User } from "../core/users.ts";
+import { findRole } from "./permissions.ts";
 import { enabledProviders, loginProvider, type LoginProvider, type ProviderIdentity } from "./providers.ts";
 import "./lark.ts";
 
@@ -147,21 +148,28 @@ export function approveUser(app: App, id: string) {
 
 // ---- invites -----------------------------------------------------------------
 
-export type InviteSpace = { space: string; role: "reader" | "editor" };
+/** A space and the space role the invited person gets in it (reader, contributor, editor, manager or a custom one). */
+export type InviteSpace = { space: string; role: string };
 export type Invite = { id: string; role: string; spaces: InviteSpace[]; allowAny: boolean; note: string; createdBy: string; createdAt: string; expiresAt: string; usedBy: string | null; usedAt: string | null; revokedAt: string | null };
 type InviteRow = { id: string; token_hash: string; role: string; spaces: string; allow_any: number; note: string; created_by: string; created_at: string; expires_at: string; used_by: string | null; used_at: string | null; revoked_at: string | null };
 const toInvite = (r: InviteRow): Invite => ({ id: r.id, role: r.role, spaces: json<InviteSpace[]>(r.spaces, []), allowAny: !!r.allow_any, note: r.note, createdBy: r.created_by, createdAt: r.created_at, expiresAt: r.expires_at, usedBy: r.used_by, usedAt: r.used_at, revokedAt: r.revoked_at });
 
-/** An invite link: whoever logs in with it gets an account at once (no approval), with these spaces. */
-export function createInvite(app: App, by: string, input: { spaces?: InviteSpace[]; allowAny?: boolean; note?: string; days?: number }) {
-  for (const s of input.spaces ?? []) if (!findSpace(app, s.space)) throw new HttpError(404, `空间不存在：${s.space}`);
+/** An invite link: whoever logs in with it gets an account at once (no approval), with this global role and these spaces. */
+export function createInvite(app: App, by: string, input: { role?: string; spaces?: InviteSpace[]; allowAny?: boolean; note?: string; days?: number }) {
+  for (const s of input.spaces ?? []) {
+    if (!findSpace(app, s.space)) throw new HttpError(404, `空间不存在：${s.space}`);
+    if (findRole(app, s.role)?.scope !== "space") throw new HttpError(400, `不是空间角色：${s.role}`);
+  }
+  const role = input.role ?? "member";
+  const r = findRole(app, role);
+  if (!r || r.scope !== "global" || r.id === "owner") throw new HttpError(400, `不是可以分配的全局角色：${role}`);
   const token = b64(24);
   const id = newId("inv");
   const days = Math.min(Math.max(input.days ?? 7, 1), 90);
   run(
     app.db,
     "insert into invites(id,token_hash,role,spaces,allow_any,note,created_by,created_at,expires_at) values(?,?,?,?,?,?,?,?,?)",
-    id, sha256(token), "member", JSON.stringify(input.spaces ?? []), input.allowAny ? 1 : 0, (input.note ?? "").slice(0, 200), by, now(), new Date(Date.now() + days * 86400_000).toISOString(),
+    id, sha256(token), role, JSON.stringify(input.spaces ?? []), input.allowAny ? 1 : 0, (input.note ?? "").slice(0, 200), by, now(), new Date(Date.now() + days * 86400_000).toISOString(),
   );
   return { id, token };
 }
@@ -176,7 +184,8 @@ export function validInvite(app: App, token: string): Invite | null {
 }
 function useInvite(app: App, invite: Invite, user: User) {
   run(app.db, "update invites set used_by = ?, used_at = ? where id = ? and used_at is null", user.id, now(), invite.id);
-  for (const s of invite.spaces) if (findSpace(app, s.space)) addMember(app, s.space, user.id, s.role);
+  if (invite.role !== "member" && findRole(app, invite.role)) setUserRole(app, user.id, invite.role);
+  for (const s of invite.spaces) if (findSpace(app, s.space) && findRole(app, s.role)) addMember(app, s.space, user.id, s.role);
   if (invite.allowAny) updateUser(app, user.id, { settings: { loginAny: true } });
 }
 

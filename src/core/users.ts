@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { App } from "./app.ts";
 import { all, one, run } from "./db.ts";
 import { createSpace, findSpace } from "./spaces.ts";
+import { can, findRole, spacesWith } from "../auth/permissions.ts";
 import { HttpError, json, now, sameSecret, sha256, slugify } from "./util.ts";
 
 /**
@@ -22,7 +23,8 @@ export type UserSettings = { loginAny?: boolean };
 export type User = {
   id: string;
   name: string;
-  role: "owner" | "member";
+  /** Global role id (src/auth/permissions.ts): owner, admin, member, viewer or a custom role. */
+  role: string;
   kind: "person" | "service";
   status: UserStatus;
   email: string | null;
@@ -35,7 +37,7 @@ type Row = { id: string; name: string; role: string; kind: string; status: strin
 const toUser = (r: Row): User => ({
   id: r.id,
   name: r.name,
-  role: r.role === "owner" ? "owner" : "member",
+  role: r.role,
   kind: r.kind === "service" ? "service" : "person",
   status: r.status === "pending" ? "pending" : "active",
   email: r.email,
@@ -65,7 +67,7 @@ export function personalSpaceId(userId: string) {
   return userId === OWNER ? "personal" : `personal-${userId}`;
 }
 
-export function createUser(app: App, input: { name: string; id?: string; role?: "member" | "owner"; status?: UserStatus; email?: string | null; avatar?: string | null }) {
+export function createUser(app: App, input: { name: string; id?: string; role?: string; status?: UserStatus; email?: string | null; avatar?: string | null }) {
   let id = slugify(input.id ?? input.name).replace(/[^a-z0-9-]/g, "") || `u${Date.now().toString(36)}`;
   if (findUser(app, id)) {
     // Someone logging in for the first time has no say in the id: take the next free one.
@@ -78,32 +80,37 @@ export function createUser(app: App, input: { name: string; id?: string; role?: 
   const sp = personalSpaceId(id);
   if (!findSpace(app, sp)) createSpace(app, { id: sp, name: `${input.name} 的个人空间`, kind: "personal" });
   run(app.db, "update spaces set owner_id = ? where id = ?", id, sp);
-  addMember(app, sp, id, "owner");
+  addMember(app, sp, id, "manager");
   return getUser(app, id);
 }
 
-export function addMember(app: App, spaceId: string, userId: string, role: "reader" | "editor" | "owner" = "reader") {
+/** A space role (src/auth/permissions.ts): reader | contributor | editor | manager, or a custom one. */
+export function addMember(app: App, spaceId: string, userId: string, role = "reader") {
   getUser(app, userId);
   if (!findSpace(app, spaceId)) throw new HttpError(404, `空间不存在：${spaceId}`);
-  run(app.db, "insert into space_members(space_id,user_id,role) values(?,?,?) on conflict(space_id,user_id) do update set role = excluded.role", spaceId, userId, role);
+  const r = findRole(app, role === "owner" ? "manager" : role);
+  if (!r || r.scope !== "space") throw new HttpError(400, `不是空间角色：${role}`);
+  run(app.db, "insert into space_members(space_id,user_id,role) values(?,?,?) on conflict(space_id,user_id) do update set role = excluded.role", spaceId, userId, r.id);
 }
 export function removeMember(app: App, spaceId: string, userId: string) {
   run(app.db, "delete from space_members where space_id = ? and user_id = ?", spaceId, userId);
 }
+/** A user's global role (admin, member, viewer or a custom one); the owner's stays. */
+export function setUserRole(app: App, userId: string, role: string) {
+  if (userId === OWNER) throw new HttpError(400, "本人的角色不能改");
+  const r = findRole(app, role);
+  if (!r || r.scope !== "global" || r.id === "owner") throw new HttpError(400, `不是可以分配的全局角色：${role}`);
+  getUser(app, userId);
+  run(app.db, "update users set role = ? where id = ?", r.id, userId);
+}
 
 /** Spaces a user may read; null means all (the owner). */
 export function accessibleSpaces(app: App, userId: string = OWNER): string[] | null {
-  const u = findUser(app, userId);
-  if (!activeUser(u)) return [];
-  if (u.role === "owner") return null;
-  return all<{ space_id: string }>(app.db, "select space_id from space_members where user_id = ?", userId).map((r) => r.space_id);
+  return spacesWith(app, userId, "space.read");
 }
+/** May write memories, items and originals in the space (Wiki pages need `wiki.write`). */
 export function canWrite(app: App, userId: string, spaceId: string) {
-  const u = findUser(app, userId);
-  if (!activeUser(u)) return false;
-  if (u.role === "owner") return true;
-  const m = one<{ role: string }>(app.db, "select role from space_members where space_id = ? and user_id = ?", spaceId, userId);
-  return m?.role === "editor" || m?.role === "owner";
+  return can(app, userId, "memory.write", spaceId);
 }
 
 /** Combine a run's own scope with what its user may see. */

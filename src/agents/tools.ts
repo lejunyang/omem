@@ -14,7 +14,9 @@ import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
-import { findUser, OWNER, canWrite, scopeFor } from "../core/users.ts";
+import { findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
+import { toolAllowed } from "../auth/tools.ts";
+import { can } from "../auth/permissions.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
@@ -162,6 +164,12 @@ function writeSpace(ctx: ToolContext, requested?: string | null) {
   const id = space(ctx, requested);
   if (findSpace(ctx.app, id)!.kind === "worktree") throw new HttpError(403, `空间 ${id} 是交办工作区的临时索引，只能读；写进对应的仓库或项目空间`);
   inScope(ctx, id, "内容");
+  return id;
+}
+/** A space to write Wiki pages in: writable, and its person may write the Wiki there (src/auth/permissions.ts wiki.write). */
+function wikiSpace(ctx: ToolContext, requested?: string | null) {
+  const id = writeSpace(ctx, requested);
+  if (!can(ctx.app, ctx.userId ?? OWNER, "wiki.write", id)) throw new HttpError(403, `在空间 ${id} 不能写 Wiki`);
   return id;
 }
 /** The current space and the related ones this caller may read. */
@@ -1347,7 +1355,7 @@ def({
     reason: z.string().optional().describe("这次修改的原因，写入版本历史"),
   }),
   handler: (ctx, a) => {
-    const id = writeSpace(ctx, a.space);
+    const id = wikiSpace(ctx, a.space);
     const existed = pageExists(ctx.app, id, a.page);
     const body = a.body.replace(/^#\s+.+\n+/, "");
     const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
@@ -1375,7 +1383,7 @@ def({
     reason: z.string().optional().describe("为什么这样整理，写入版本历史和整理日志"),
   }),
   handler: (ctx, a) => {
-    const id = writeSpace(ctx, a.space);
+    const id = wikiSpace(ctx, a.space);
     const r = movePages(ctx.app, id, a.moves, { actor: ctx.actor, message: `${ctx.actor}: move ${a.moves.length} entries in ${id}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
     appendLog(ctx.app, id, `移动 ${r.moved.length} 页（${r.moved[0].from} → ${r.moved[0].to}${r.moved.length > 1 ? " 等" : ""}）${a.reason ? "：" + a.reason : ""}`);
     return `已移动 ${r.moved.length} 页，改了 ${r.linksFixed} 个页面里的链接。${r.moved.slice(0, 12).map((m) => `\n- ${m.from} → ${m.to}`).join("")}${r.moved.length > 12 ? `\n…另有 ${r.moved.length - 12} 页` : ""}`;
@@ -1389,7 +1397,7 @@ def({
   write: true,
   schema: z.object({ page: z.string().describe("页面路径"), space: z.string().optional(), note: z.string().optional().describe("核对了什么，为什么仍然成立") }),
   handler: (ctx, a) => {
-    const id = writeSpace(ctx, a.space);
+    const id = wikiSpace(ctx, a.space);
     const r = confirmPage(ctx.app, id, a.page);
     appendLog(ctx.app, id, `核对 [[${r.id.slice(id.length + 1)}]] 仍然成立${a.note ? "：" + a.note : ""}`);
     return `已记录：页面 ${r.id} 核对过，引用的原件按现在的版本算。${r.deleted.length ? `\n这些引用的原件已被删除，提示还在，需要改写引用：${r.deleted.join("、")}` : ""}`;
@@ -3547,7 +3555,7 @@ def({
   }),
   handler: (ctx, a) => {
     const r = generateWiki(ctx.app, {
-      spaceId: writeSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution),
+      spaceId: wikiSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution),
       userId: ctx.userId, parentId: ctx.runId, readable: ctx.spaces, writable: ctx.writable ?? ctx.spaces,
     });
     return `已安排 Wiki ${a.auto_write === false ? "目录规划" : "规划与逐页写作"}，运行 ${r.id}，状态 ${r.status}，写入空间 ${r.spaceId}。用 read_run 查看计划和写作子运行；目前尚未生成完成。`;
@@ -4421,6 +4429,8 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const tool = tools.find((t) => t.name === name);
   if (!tool || (ctx.tools && !ctx.tools.has(name))) return { text: `工具 ${name} 不可用`, isError: true };
+  // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
+  if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };

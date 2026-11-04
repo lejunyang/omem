@@ -12,6 +12,7 @@ export const pullTables: Table[] = [
   { name: "users", key: ["id"] },
   { name: "identities", key: ["channel", "external_id"] },
   { name: "space_members", key: ["space_id", "user_id"] },
+  { name: "roles", key: ["id"], newer: "updated_at" },
   { name: "space_relations", key: ["space_a", "space_b"], newer: "updated_at" },
   { name: "memory_folders", key: ["space_id", "path"], newer: "updated_at" },
   { name: "memories", key: ["id"], newer: "updated_at", local: ["embedding"] },

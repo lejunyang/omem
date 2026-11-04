@@ -30,7 +30,7 @@ export const state = reactive({
   capture: false,
   theme: stored("omem-theme", "auto"),
   /** Who is using the page (src/auth): the owner, or a member with a smaller set of pages. */
-  me: null as null | { id: string; name: string; role: "owner" | "member"; status: string; avatar: string | null; via: string },
+  me: null as null | { id: string; name: string; role: string; status: string; avatar: string | null; via: string; perms: string[]; spaces: string[] | null; writes: string[] | null; wiki: string[] | null; manages: string[] | null },
 });
 
 watch(

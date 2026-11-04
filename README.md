@@ -391,7 +391,7 @@ omem user token wang                                # 给他发一个 API 令牌
 omem space share project-a wang [--edit]           # 再开放一个空间
 ```
 
-成员私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。成员在网页上目前只有问答、事项和账号页；角色和更细的权限见 [docs/v2/multi-user.md](docs/v2/multi-user.md)。同一台机器、同一个数据目录，不做多租户隔离。
+成员私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。每个人有一个全局角色（管理员、成员、访客，或你建的角色），在加入的每个空间里有一个空间角色（只读、贡献者、编辑、管理，或自定义的）：能不能写记忆、写 Wiki、看别人的运行、管空间成员都按角色来；管理员能改 Agent 和规则，系统设置、设备、交办编码只给你。自己建的空间自己管理，在账号页加人。成员的 Agent 运行只拿到他能用的工具。设计与分期见 [docs/v2/multi-user.md](docs/v2/multi-user.md)。同一台机器、同一个数据目录，不做多租户隔离。
 
 ## 多台设备
 
@@ -506,7 +506,7 @@ web/          Vue 3 网页
 
 ## 当前限制
 
-- 多人：能登录、批准、邀请，成员在网页上只有问答、事项和账号页；角色与权限、成员各自连接飞书还在做（docs/v2/multi-user.md 的分期），不做多租户隔离。
+- 多人：能登录、批准、邀请，按角色和空间角色管权限；成员各自连接飞书、多台服务之间共享还在做（docs/v2/multi-user.md 的分期），不做多租户隔离。
 - 默认监听所有网卡，其他机器必须带令牌（配对或 `omem link`）或登录；在同一台机器上用反向代理对外暴露时，打开多人登录后带 `X-Forwarded-For` 的请求不算本机（代理要传这个头或 `Host`），没打开时经代理来的请求看起来来自本机，要配置 `token`。多台设备是“一台常驻写入、其他来看”，还没有双向持续同步。
 - 除 Claude Code、OpenCode 外，其他 ACP Agent 只验证过连接握手；各家登录和模型名以实际“检测模型”结果为准。
 - 代码解析：TS/JS/JSX/TSX/Vue 用 TypeScript AST；Python 用导入与缩进分析；Go、Rust、Java、Kotlin、Swift、C、C++、Objective-C、C#、PHP、Ruby、Scala、Dart、Lua、Zig、Elixir、OCaml、ReScript、Solidity、Bash、Emacs Lisp 用 tree-sitter（WebAssembly，无需编译，按需加载语法）；其他语言（Haskell、Erlang、Clojure、Elm…）只做通用声明识别。

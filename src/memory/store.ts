@@ -229,7 +229,7 @@ export function updateMemoryText(app: App, id: string, patch: { content?: string
   return getMemory(app, id);
 }
 
-export function listMemories(app: App, opts: { spaceId?: string; status?: string; kind?: string; subject?: string; tag?: string; /** that folder and everything under it; null = not filed */ folder?: string | null; agent?: string | null; /** "visible" (default): shared + that spec; "own": that spec only */ agentScope?: "own" | "visible"; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number }) {
+export function listMemories(app: App, opts: { spaceId?: string; /** only these spaces (what someone other than the owner can read) */ spaceIds?: string[]; status?: string; kind?: string; subject?: string; tag?: string; /** that folder and everything under it; null = not filed */ folder?: string | null; agent?: string | null; /** "visible" (default): shared + that spec; "own": that spec only */ agentScope?: "own" | "visible"; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number }) {
   const where: string[] = [];
   const params: string[] = [];
   if (opts.folder === null) where.push("folder = ''");
@@ -245,6 +245,7 @@ export function listMemories(app: App, opts: { spaceId?: string; status?: string
   if (opts.review === "pending") where.push("reviewed_at is null and created_by = 'agent'");
   else if (opts.review) where.push("review_verdict = ?"), params.push(opts.review);
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
+  if (opts.spaceIds) where.push(opts.spaceIds.length ? `space_id in (${opts.spaceIds.map(() => "?").join(",")})` : "0"), params.push(...opts.spaceIds);
   if (opts.status && opts.status !== "all") where.push("status = ?"), params.push(opts.status);
   if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
   if (opts.subject) where.push("subject like ?"), params.push(`%${opts.subject}%`);
@@ -264,11 +265,13 @@ export function memoryHistory(app: App, id: string): Memory[] {
   return chain;
 }
 
-export function memoryTags(app: App, spaceId?: string) {
+/** Tags of active memories in one space, in these spaces, or everywhere. */
+export function memoryTags(app: App, spaceId?: string, spaceIds?: string[]) {
+  const spaces = spaceId ? [spaceId] : spaceIds;
   return all<{ tag: string; n: number }>(
     app.db,
-    `select j.value tag, count(*) n from memories, json_each(memories.tags) j where status = 'active' ${spaceId ? "and space_id = ?" : ""} group by j.value order by n desc limit 100`,
-    ...(spaceId ? [spaceId] : []),
+    `select j.value tag, count(*) n from memories, json_each(memories.tags) j where status = 'active' ${spaces ? `and space_id in (${spaces.map(() => "?").join(",") || "null"})` : ""} group by j.value order by n desc limit 100`,
+    ...(spaces ?? []),
   );
 }
 

@@ -5,7 +5,8 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
-import { addMember, findUser, getUser, identitiesOf, listUsers, OWNER, removeMember, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
+import { addMember, findUser, getUser, identitiesOf, listUsers, OWNER, removeMember, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
+import { audit, auditLog, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { approveUser, beginLogin, completeLogin, consumeLoginLink, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, validInvite } from "./login.ts";
 import { enabledProviders, loginProvider, loginProviders } from "./providers.ts";
@@ -203,12 +204,18 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     return { ok: true };
   });
 
-  // ------------------------------------------------------- the owner manages
-  const owner = (req: FastifyRequest) => {
-    if (who(req) !== OWNER) throw new HttpError(403, "只有 omem 的主人能管理成员");
+  // --------------------------------------------- managing people and roles
+  // `users.manage` (the owner, or a custom role); roles themselves and who has which global role are
+  // the owner's alone, so nobody can hand themselves more than they have.
+  const manager = (req: FastifyRequest) => requirePerm(app, who(req), "users.manage");
+  const ownerOnly = (req: FastifyRequest, what: string) => {
+    if (who(req) !== OWNER) throw new HttpError(403, `只有 omem 的主人能${what}`);
+  };
+  const notOwner = (id: string) => {
+    if (id === OWNER) throw new HttpError(400, "本人的账号不用这样设置");
   };
   server.get("/api/users", async (req) => {
-    owner(req);
+    manager(req);
     const members = all<{ space_id: string; user_id: string; role: string }>(app.db, "select space_id, user_id, role from space_members");
     return listUsers(app)
       .filter((u) => u.kind === "person")
@@ -224,55 +231,128 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       .sort((a, b) => Number(b.status === "pending") - Number(a.status === "pending"));
   });
   server.patch("/api/users/:id", async (req) => {
-    owner(req);
+    manager(req);
     const { id } = req.params as { id: string };
-    const b = parse(z.object({ approve: z.boolean().optional(), disabled: z.boolean().optional(), loginAny: z.boolean().optional(), name: z.string().min(1).max(60).optional() }), req.body);
-    if (id === OWNER && (b.disabled || b.loginAny !== undefined)) throw new HttpError(400, "本人的账号不用这样设置");
-    if (b.approve) approveUser(app, id);
+    const b = parse(z.object({ approve: z.boolean().optional(), role: z.string().optional(), disabled: z.boolean().optional(), loginAny: z.boolean().optional(), name: z.string().min(1).max(60).optional() }), req.body);
+    if (b.disabled !== undefined || b.loginAny !== undefined || b.role) notOwner(id);
+    if (b.role) {
+      ownerOnly(req, "分配全局角色");
+      setUserRole(app, id, b.role);
+      audit(app, who(req), "user.role", id, { role: b.role });
+    }
+    if (b.approve) {
+      approveUser(app, id);
+      audit(app, who(req), "user.approve", id);
+    }
     const u = updateUser(app, id, { name: b.name, disabled: b.disabled, settings: b.loginAny === undefined ? undefined : { loginAny: b.loginAny } });
+    if (b.disabled !== undefined) audit(app, who(req), b.disabled ? "user.disable" : "user.enable", id);
+    if (b.loginAny !== undefined) audit(app, who(req), "user.login-any", id, { on: b.loginAny });
     if (b.disabled) revokeUserSessions(app, id);
     return userView(app, u.id);
   });
   server.delete("/api/users/:id/sessions", async (req) => {
-    owner(req);
-    return { revoked: revokeUserSessions(app, (req.params as { id: string }).id) };
+    manager(req);
+    const { id } = req.params as { id: string };
+    audit(app, who(req), "user.sign-out", id);
+    return { revoked: revokeUserSessions(app, id) };
   });
   server.delete("/api/users/:id/identities", async (req) => {
-    owner(req);
+    manager(req);
     const { id } = req.params as { id: string };
     const b = parse(z.object({ channel: z.string(), externalId: z.string() }), req.body);
     if (!identitiesOf(app, id).some((i) => i.channel === b.channel && i.external_id === b.externalId)) throw new HttpError(404, "没有这个绑定");
     unlinkIdentity(app, b.channel, b.externalId);
+    audit(app, who(req), "identity.unlink", id, b);
     return { ok: true };
   });
+  /** Add, change or remove someone in a space; a personal space stays its owner's alone. */
+  const setMembership = (req: FastifyRequest, space: string, userId: string, role: string | null) => {
+    const s = findSpace(app, space);
+    if (!s) throw new HttpError(404, `空间不存在：${space}`);
+    if (s.kind === "personal") throw new HttpError(400, "个人空间不能加人或移出");
+    const u = getUser(app, userId);
+    if (u.kind !== "person" && role) throw new HttpError(400, "设备的账号在“设备与共享”里设置");
+    if (role) addMember(app, space, userId, role);
+    else removeMember(app, space, userId);
+    audit(app, who(req), role ? "space.member" : "space.remove", space, { user: userId, role });
+  };
   server.put("/api/users/:id/spaces", async (req) => {
-    owner(req);
+    manager(req);
     const { id } = req.params as { id: string };
-    const b = parse(z.object({ space: z.string(), role: z.enum(["reader", "editor"]).nullable() }), req.body);
-    if (!findSpace(app, b.space)) throw new HttpError(404, `空间不存在：${b.space}`);
-    if (b.role) addMember(app, b.space, id, b.role);
-    else removeMember(app, b.space, id);
+    const b = parse(z.object({ space: z.string(), role: z.string().nullable() }), req.body);
+    setMembership(req, b.space, id, b.role);
     return { ok: true };
   });
 
+  // A space's own manager (space.manage, checked by the route) looks after its members.
+  server.get("/api/spaces/:id/members", async (req) => {
+    const { id } = req.params as { id: string };
+    const rows = all<{ user_id: string; role: string }>(app.db, "select user_id, role from space_members where space_id = ?", id);
+    return rows.map((r) => ({ ...userView(app, r.user_id), spaceRole: r.role === "owner" ? "manager" : r.role }));
+  });
+  server.put("/api/spaces/:id/members/:user", async (req) => {
+    const { id, user } = req.params as { id: string; user: string };
+    const b = parse(z.object({ role: z.string().nullable() }), req.body);
+    if (user === who(req) && who(req) !== OWNER) throw new HttpError(400, "不能改自己在这个空间的角色");
+    setMembership(req, id, user, b.role);
+    return { ok: true };
+  });
+
+  server.get("/api/access/roles", async () => ({ roles: listRoles(app), global: GLOBAL_PERMS, space: SPACE_PERMS }));
+  server.post("/api/access/roles", async (req) => {
+    ownerOnly(req, "建角色");
+    const b = parse(z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,31}$/).optional(), name: z.string().min(1).max(40), scope: z.enum(["global", "space"]), description: z.string().max(200).optional(), permissions: z.array(z.string()).max(60) }), req.body);
+    const r = saveRole(app, b);
+    audit(app, who(req), "role.save", r.id, { permissions: r.permissions });
+    return r;
+  });
+  server.put("/api/access/roles/:id", async (req) => {
+    ownerOnly(req, "改角色");
+    const { id } = req.params as { id: string };
+    const old = findRole(app, id);
+    if (!old) throw new HttpError(404, "没有这个角色");
+    const b = parse(z.object({ name: z.string().min(1).max(40).optional(), description: z.string().max(200).optional(), permissions: z.array(z.string()).max(60).optional() }), req.body);
+    const r = saveRole(app, { id, name: b.name ?? old.name, scope: old.scope, description: b.description ?? old.description, permissions: b.permissions ?? old.permissions });
+    audit(app, who(req), "role.save", id, { permissions: r.permissions });
+    return r;
+  });
+  server.delete("/api/access/roles/:id", async (req) => {
+    ownerOnly(req, "删角色");
+    const { id } = req.params as { id: string };
+    deleteRole(app, id);
+    audit(app, who(req), "role.delete", id);
+    return { ok: true };
+  });
+  server.get("/api/access/audit", async (req) => {
+    manager(req);
+    return auditLog(app);
+  });
+
   server.get("/api/invites", async (req) => {
-    owner(req);
+    manager(req);
     return listInvites(app);
   });
   server.post("/api/invites", async (req) => {
-    owner(req);
-    const b = parse(z.object({ spaces: z.array(z.object({ space: z.string(), role: z.enum(["reader", "editor"]) })).max(50).default([]), allowAny: z.boolean().default(false), note: z.string().max(200).default(""), days: z.number().int().min(1).max(90).default(7) }), req.body);
-    const r = createInvite(app, OWNER, b);
+    manager(req);
+    const b = parse(
+      z.object({ role: z.string().default("member"), spaces: z.array(z.object({ space: z.string(), role: z.string() })).max(50).default([]), allowAny: z.boolean().default(false), note: z.string().max(200).default(""), days: z.number().int().min(1).max(90).default(7) }),
+      req.body,
+    );
+    if (b.role !== "member") ownerOnly(req, "邀请成员以外的角色");
+    const r = createInvite(app, who(req), b);
+    audit(app, who(req), "invite.create", r.id, { role: b.role, spaces: b.spaces });
     return { id: r.id, url: `${baseUrl(app, req)}/#/login?invite=${r.token}` };
   });
   server.delete("/api/invites/:id", async (req) => {
-    owner(req);
-    revokeInvite(app, (req.params as { id: string }).id);
+    manager(req);
+    const { id } = req.params as { id: string };
+    revokeInvite(app, id);
+    audit(app, who(req), "invite.revoke", id);
     return { ok: true };
   });
   // What to register in the provider's console (the redirect URL) and whether it can be used now.
   server.get("/api/auth/providers", async (req) => {
-    owner(req);
+    manager(req);
     const base = baseUrl(app, req);
     return loginProviders().map((p) => ({ id: p.id, label: p.label, unavailable: p.unavailable(app), callback: callbackUrl(base, p.id) }));
   });

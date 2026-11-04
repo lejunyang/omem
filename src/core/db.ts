@@ -1229,6 +1229,28 @@ const migrations: string[] = [
      expires_at text not null,
      used_at text
    );`,
+  // Roles and permissions (src/auth/permissions.ts): custom roles beside the built-in ones (owner,
+  // admin, member, viewer; reader, contributor, editor, manager), who changed what, and the spaces a
+  // run could read (who else may read the run). A space's former `owner` membership is its manager.
+  `create table roles (
+     id text primary key,
+     name text not null,
+     scope text not null,                     -- global | space
+     description text not null default '',
+     permissions text not null default '[]',
+     created_at text not null,
+     updated_at text not null
+   );
+   create table audit_events (
+     id integer primary key autoincrement,
+     at text not null,
+     actor text not null,
+     action text not null,
+     target text not null,
+     detail text not null default '{}'
+   );
+   alter table runs add column scope text;   -- JSON array of space ids, null: everything (the owner's)
+   update space_members set role = 'manager' where role = 'owner';`,
 ];
 
 export type Db = DatabaseSync;

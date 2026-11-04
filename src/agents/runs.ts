@@ -4,6 +4,7 @@ import { trySettleCodeChain } from "./code-chain.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
+import { scopeFor } from "../core/users.ts";
 
 export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -82,9 +83,12 @@ export function createRun(
   },
 ) {
   const id = newId("r");
+  // The spaces it can read at most (src/auth/permissions.ts canReadRun: who else may read the run). Null: everything, the owner's.
+  const asked = Array.isArray(input.input?.spaces) ? (input.input!.spaces as string[]) : null;
+  const scope = scopeFor(app, input.userId ?? "owner", asked);
   run(
     app.db,
-    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before,user_id) values(?,?,?,?,?,?,?,?,?,?,?)",
+    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before,user_id,scope) values(?,?,?,?,?,?,?,?,?,?,?,?)",
     id,
     input.kind,
     input.spaceId ?? null,
@@ -96,6 +100,7 @@ export function createRun(
     input.lane ?? null,
     input.notBefore ?? null,
     input.userId ?? null,
+    scope === null ? null : JSON.stringify(scope),
   );
   app.emit({ type: "run", runId: id, status: "queued" });
   queueMicrotask(() => kick(app));
@@ -137,16 +142,24 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { id?: string; kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; q?: string };
+type RunFilter = { id?: string; kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; visibleTo?: { userId: string; spaces: string[] } };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
  * the runs a built-in role took part in. Any of them matches. `q` matches the title, the id or the
- * task.
+ * task. `visibleTo`: someone other than the owner sees their own runs, and those whose every
+ * readable space is in `spaces` (src/auth/permissions.ts canReadRun).
  */
 function runWhere(opts: RunFilter) {
   const where: string[] = [];
   const params: (string | number)[] = [];
+  if (opts.visibleTo) {
+    const v = opts.visibleTo;
+    const others = v.spaces.length
+      ? ` or (scope is not null and json_array_length(scope) > 0 and not exists (select 1 from json_each(runs.scope) j where j.value not in (${v.spaces.map(() => "?").join(",")})))`
+      : "";
+    where.push(`(coalesce(user_id, 'owner') = ?${others})`), params.push(v.userId, ...v.spaces);
+  }
   if (opts.id) where.push("id = ?"), params.push(opts.id);
   const kinds = (opts.kind ?? "").split(",").map((k) => k.trim()).filter(Boolean);
   if (kinds.length) {

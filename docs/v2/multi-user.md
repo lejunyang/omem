@@ -1,6 +1,6 @@
 # 多用户、权限与连接器
 
-> 状态：第 1 期（登录与会话）已实现（2026-11-05），其余在做。按文末“分期”一段一段做，每段过 `pnpm run check` 后提交，并同步 README、architecture.md 的实现状态表和 acceptance.md。
+> 状态：第 1 期（登录与会话）、第 2 期（角色与权限）已实现（2026-11-05），其余在做。按文末“分期”一段一段做，每段过 `pnpm run check` 后提交，并同步 README、architecture.md 的实现状态表和 acceptance.md。
 
 要做四件事：
 

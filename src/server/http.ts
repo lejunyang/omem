@@ -44,9 +44,11 @@ import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpac
 import { HttpError } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
+import { checkRoute } from "../auth/routes.ts";
+import { can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
-import { accessibleSpaces, canWrite, findUser, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
+import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
@@ -79,9 +81,15 @@ const q = <T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> => {
 };
 
 const bearer = bearerToken;
+/** `METHOD /path` of every /api route registered so far. */
+export const registeredRoutes = new Set<string>();
 
 export async function startServer(app: App, opts: { port?: number; host?: string; quiet?: boolean } = {}) {
   const server = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
+  // Every API route, for test/route-perms.test.ts: each must say what it needs (src/auth/routes.ts).
+  server.addHook("onRoute", (r) => {
+    if (r.url.startsWith("/api/")) for (const m of [r.method].flat()) registeredRoutes.add(`${m} ${r.url}`);
+  });
   await server.register(fastifyCompress, { encodings: ["gzip"], threshold: 1024, globalDecompression: false });
   server.addHook("onClose", async () => {
     const { releaseBackgroundSessions } = await import("../agents/background-sessions.ts");
@@ -96,11 +104,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // API auth (src/auth/http.ts): a token, a login session, or this machine (the owner, unless a
-  // token is configured). Members get a small API: asking, their own conversations and items,
-  // search within their spaces, the spaces they can read, their account.
-  const MEMBER_ROUTES = [/^\/api\/ask$/, /^\/api\/conversations(\/[^/?]+)?(\?.*)?$/, /^\/api\/search(\?.*)?$/, /^\/api\/items(\?.*)?$/, /^\/api\/runs\/[^/?]+(\/events)?(\?.*)?$/, /^\/api\/me$/, AUTH_LIMITED];
-  // Reads only: the spaces a member can see (the route filters them).
-  const MEMBER_READS = [/^\/api\/spaces(\?.*)?$/];
+  // token is configured). What each route needs is in src/auth/routes.ts, checked once the body is
+  // parsed (some rules find the space in it).
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
     // Tool routes check their own (per-run) token.
@@ -118,7 +123,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const u = findUser(app, auth.userId);
     if ((u?.status === "pending" || auth.restricted) && !AUTH_LIMITED.test(req.url))
       return void reply.status(403).send({ error: u?.status === "pending" ? "账号还在等 omem 的主人批准" : "请先绑定主要登录方", code: u?.status === "pending" ? "pending" : "restricted" });
-    if (auth.userId !== OWNER && !MEMBER_ROUTES.some((re) => re.test(req.url)) && !(req.method === "GET" && MEMBER_READS.some((re) => re.test(req.url)))) reply.status(403).send({ error: "这个接口只对 omem 的主人开放" });
+  });
+  server.addHook("preHandler", async (req) => {
+    const r = req as FastifyRequest & { auth?: RequestAuth; userId: string };
+    if (!r.auth || !req.url.startsWith("/api/")) return;
+    checkRoute(app, req, r.userId);
   });
   const who = (req: FastifyRequest) => (req as FastifyRequest & { userId?: string }).userId ?? OWNER;
   const authOf = (req: FastifyRequest) => (req as FastifyRequest & { auth?: RequestAuth }).auth ?? null;
@@ -138,7 +147,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/me", async (req) => {
     const u = getUser(app, who(req));
-    return { ...u, spaces: accessibleSpaces(app, u.id), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted };
+    // What the page may offer: global permissions, and the spaces this person writes or manages.
+    return { ...u, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted };
   });
 
   // ---------------------------------------------------------------- tools/MCP
@@ -192,14 +202,39 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/mcp", async (_req, reply) => reply.status(405).send({ error: "use POST" }));
 
   // ------------------------------------------------------------------- events
+  /**
+   * What someone other than the owner hears of the live events: runs they may read, their own
+   * notifications, asks and plugin sessions, changes in spaces they can read.
+   */
+  const eventFilter = (userId: string) => {
+    if (userId === OWNER) return () => true;
+    const runs = new Map<string, boolean>();
+    const readable = (runId: string) => {
+      if (!runs.has(runId)) runs.set(runId, canReadRun(app, userId, runId));
+      return runs.get(runId)!;
+    };
+    return (e: AppEvent) => {
+      if (e.type === "run" || e.type === "run-event") return readable(e.runId);
+      if (e.type === "notification") return one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
+      if (e.type === "ask") return one<{ user_id: string }>(app.db, "select user_id from asks where id = ?", e.id)?.user_id === userId;
+      if (e.type === "plugin") return one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", e.conversationId)?.user_id === userId;
+      if (e.type === "changed") {
+        const space = e.spaceId ?? (e.entity === "space" ? e.id : null);
+        return !space || (accessibleSpaces(app, userId) ?? []).includes(space);
+      }
+      return false;
+    };
+  };
   server.get("/api/events", async (req, reply) => {
     reply.hijack();
     const res = reply.raw;
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no" });
     res.write(": connected\n\n");
     const runFilter = (req.query as { run?: string }).run;
+    const shown = eventFilter(who(req));
     const listener = (e: AppEvent) => {
       if (runFilter && !("runId" in e && e.runId === runFilter)) return;
+      if (!shown(e)) return;
       res.write(`data: ${JSON.stringify(e)}\n\n`);
     };
     app.events.on("event", listener);
@@ -233,7 +268,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/spaces", async (req) => {
     const b = q(z.object({ id: z.string().optional(), name: z.string().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional(), rootPath: z.string().optional() }), req.body);
+    // A linked directory is a path on this machine: only for those who may run things on it.
+    if (b.rootPath && !can(app, who(req), "code.delegate")) throw new HttpError(403, "关联本机目录要有交办编码的权限");
+    if (b.kind === "personal" && who(req) !== OWNER) throw new HttpError(403, "个人空间由 omem 建");
     const s = createSpace(app, b);
+    // Whoever made it (other than the owner) manages it.
+    if (who(req) !== OWNER) addMember(app, s.id, who(req), "manager");
     if (s.rootPath) scheduleSpaceSync(app, s.id);
     return s;
   });
@@ -403,7 +443,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/messages/:id", async (req) => {
     const m = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(app.db, "select * from messages where id = ?", (req.params as { id: string }).id.replace(/^msg:/, ""));
-    if (!m) throw new HttpError(404, "消息不存在");
+    // A message of someone else's conversation is as missing as one that never was.
+    if (!m || (who(req) !== OWNER && one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", m.conversation_id)?.user_id !== who(req))) throw new HttpError(404, "消息不存在");
     return { id: m.id, conversationId: m.conversation_id, role: m.role, text: m.text, createdAt: m.created_at };
   });
   server.get("/api/sources/:id", async (req) => {
@@ -698,6 +739,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.delete("/api/conversations/:id", async (req) => {
     const id = (req.params as { id: string }).id;
+    const c = one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", id);
+    if (!c || (who(req) !== OWNER && c.user_id !== who(req))) throw new HttpError(404, "对话不存在");
     const src = one<{ id: string }>(app.db, "select id from sources where uri = ? and deleted_at is null", `conversation:${id}`);
     if (src) deleteSource(app, src.id);
     app.db.prepare("delete from conversations where id = ?").run(id);
@@ -787,16 +830,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     );
     const folder = o.unfiled ? null : normalizeFolder(o.folder) || undefined;
     const inFolder = (m: { folder: string }) => (folder === undefined ? true : folder === null ? !m.folder : m.folder === folder || m.folder.startsWith(folder + "/"));
+    // No space named: everything this person can read (all of it for the owner).
+    if (o.space) readableSpace(req, o.space);
+    const readable = o.space ? undefined : (accessibleSpaces(app, who(req)) ?? undefined);
     if (o.q) {
-      const hits = await search(app, o.q, { spaces: o.space ? [o.space] : undefined, types: ["memory"], limit: 100, includeHistory: o.status === "all" });
+      const hits = await search(app, o.q, { spaces: o.space ? [o.space] : readable, types: ["memory"], limit: 100, includeHistory: o.status === "all" });
       return hits.map((h) => getMemory(app, h.id)).filter((m) => (!o.tag || m.tags?.includes(o.tag)) && (!o.kind || m.kind === o.kind) && inFolder(m));
     }
-    return listMemories(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, tag: o.tag, folder, review: o.review, limit: 5000 });
+    return listMemories(app, { spaceId: o.space, spaceIds: readable, status: o.status ?? "active", kind: o.kind, tag: o.tag, folder, review: o.review, limit: 5000 });
   });
   // Folders: the tree on the memory page, its upkeep by hand, and an on-demand organizing pass.
   server.get("/api/memory-folders", async (req) => {
     const space = (req.query as { space?: string }).space;
-    const spaces = space ? [space] : listSpaces(app).map((s) => s.id);
+    if (space) readableSpace(req, space);
+    const readable = accessibleSpaces(app, who(req));
+    const spaces = space ? [space] : listSpaces(app).map((s) => s.id).filter((s) => readable === null || readable.includes(s));
     return { folders: listFolders(app, spaces), unfiled: Object.fromEntries(spaces.map((s) => [s, unfiledCount(app, s)]).filter(([, n]) => n)) };
   });
   const folderBody = z.object({ space: z.string(), path: z.string().min(1), description: z.string().optional() });
@@ -830,7 +878,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (listRuns(app, { kind: "memory-organize", status: "queued" }).length || listRuns(app, { kind: "memory-organize", status: "running" }).length) throw new HttpError(409, "已有整理目录的运行在进行");
     return createRun(app, { kind: "memory-organize", spaceId: b.space, title: "整理记忆目录" });
   });
-  server.get("/api/memory-tags", async (req) => memoryTags(app, (req.query as { space?: string }).space));
+  server.get("/api/memory-tags", async (req) => {
+    const space = (req.query as { space?: string }).space;
+    if (space) readableSpace(req, space);
+    return memoryTags(app, space, accessibleSpaces(app, who(req)) ?? undefined);
+  });
   // Recall/effectiveness accounting for memory governance.
   server.get("/api/memory-recall-stats", async (req) => {
     const o = q(z.object({ space: z.string().optional(), includeInactive: z.coerce.boolean().optional(), sort: z.enum(["recalls", "never", "unused", "recent"]).optional() }), req.query);
@@ -1050,17 +1102,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // --------------------------------------------------------------------- runs
   server.get("/api/runs", async (req) => {
     const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
-    const opts = { id: o.id, kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q };
+    // Someone other than the owner: their own runs and the ones they may read (src/auth/permissions.ts).
+    const spaces = runReadableSpaces(app, who(req));
+    const visibleTo = spaces === null ? undefined : { userId: who(req), spaces };
+    const opts = { id: o.id, kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, visibleTo };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
   });
+  // Who may read it is checked by the route (src/auth/routes.ts); its sub-runs only as far as they are readable too.
   server.get("/api/runs/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const o = q(z.object({ after: z.coerce.number().optional() }), req.query);
     const r = getRun(app, id);
-    const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
-    if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
-    return { run: { ...r, waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r), writes: runWrites(app, r) };
+    const children = listRuns(app, { parentId: id }).filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
+    return { run: { ...r, waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r), writes: runWrites(app, r) };
   });
   // Folders to open in an editor; `local`: the page is on this machine (loopback, no token), so a
   // local link works; otherwise the viewer reaches them over SSH (`host` keys their alias for it).
@@ -1138,8 +1193,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { folder } = q(z.object({ folder: z.string().min(1) }), req.query);
     return { runs: codeRunsAt(app, folder, who(req) === OWNER ? null : who(req)) };
   });
+  // Reading a run is not running it: stopping or retrying is for its user, the owner, or whoever may read all runs.
+  const mayControlRun = (req: FastifyRequest, id: string) => {
+    const user = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id ?? OWNER;
+    if (who(req) !== OWNER && user !== who(req) && !can(app, who(req), "runs.read.all")) throw new HttpError(403, "只能停下或重试自己的运行");
+  };
   server.post("/api/runs/:id/cancel", async (req) => {
     const id = (req.params as { id: string }).id;
+    mayControlRun(req, id);
     // Stopping a coding round from the page is the owner's stop: no automatic round after it.
     const r = getRun(app, id);
     if (r.kind === "code" && ["queued", "running"].includes(r.status)) {
@@ -1151,8 +1212,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/runs/:id/retry", async (req) => {
     const id = (req.params as { id: string }).id;
-    const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
-    if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
+    mayControlRun(req, id);
     return (await import("../agents/retry.ts")).retryRun(app, id);
   });
   // A round waiting for an outside Agent to code, done by this machine's Agents instead (review-fix.ts codeHere).
@@ -1682,12 +1742,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ----------------------------------------------------- notifications/status
-  server.get("/api/notifications", async () => {
-    const list = listNotifications(app, 50);
+  server.get("/api/notifications", async (req) => {
+    const list = listNotifications(app, 50, who(req));
     return { notifications: list, unread: list.filter((n) => !n.readAt).length };
   });
   server.post("/api/notifications/read", async (req) => {
-    markRead(app, (req.body as { id?: string } | null)?.id);
+    markRead(app, (req.body as { id?: string } | null)?.id, who(req));
     return { ok: true };
   });
   // Archive settings are owner-only, like task rules; members cannot reach these routes.

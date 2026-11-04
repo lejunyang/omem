@@ -28,26 +28,27 @@ watch(() => state.space, () => {
 });
 const menu = ref(false);
 const loadError = ref("");
-// `member`: pages a member (not the owner) can use; the rest of the API is the owner's.
-const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; member?: boolean }[]>([
+// `member`: pages anyone else can use too (within the spaces they can read); `perm`: a global permission
+// that opens the page (src/auth/permissions.ts). The rest is the owner's.
+const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; member?: boolean; perm?: string }[]>([
   { to: "/", label: "今日", icon: "home", exact: true },
   { to: "/ask", label: "问答", icon: "chat", member: true },
-  { to: "/wiki", label: "Wiki", icon: "book" },
+  { to: "/wiki", label: "Wiki", icon: "book", member: true },
   { to: "/items", label: "事项", icon: "checkbox", member: true },
-  { to: "/reqs", label: "需求", icon: "target" },
-  { to: "/memory", label: "记忆", icon: "brain" },
-  { to: "/sources", label: "原件", icon: "file" },
+  { to: "/reqs", label: "需求", icon: "target", member: true },
+  { to: "/memory", label: "记忆", icon: "brain", member: true },
+  { to: "/sources", label: "原件", icon: "file", member: true },
   { to: "/learn", label: "学习", icon: "cap" },
-  { to: "/agents", label: "Agent", icon: "layers" },
-  { to: "/rules", label: "规则", icon: "zap" },
-  { to: "/runs", label: "运行", icon: "activity" },
+  { to: "/agents", label: "Agent", icon: "layers", perm: "agents.manage" },
+  { to: "/rules", label: "规则", icon: "zap", perm: "agents.manage" },
+  { to: "/runs", label: "运行", icon: "activity", member: true },
 ]);
 // Plugins with a page (docs/v2/plugins.md) go right after 学习.
 async function addPluginPages() {
   const plugins = await get<{ id: string; icon: string; page: { title: string } | null }[]>("/api/plugins").catch(() => []);
   const rest = nav.value.filter((n) => !n.to.startsWith("/plugin/"));
   const at = rest.findIndex((n) => n.to === "/learn") + 1;
-  rest.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon })));
+  rest.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon, member: true })));
   nav.value = rest;
 }
 // Settings → 插件 changed an icon.
@@ -66,11 +67,13 @@ function onKey(e: KeyboardEvent) {
   }
 }
 const owner = computed(() => !state.me || state.me.role === "owner");
-const shownNav = computed(() => (owner.value ? nav.value : nav.value.filter((n) => n.member)));
-const MEMBER_PAGES = ["/ask", "/items", "/account"];
-// A member landing on an owner's page (the start page, an old link) goes to 问答.
+const allowed = (n: { member?: boolean; perm?: string }) => owner.value || n.member || (!!n.perm && !!state.me?.perms.includes(n.perm));
+const shownNav = computed(() => nav.value.filter(allowed));
+// Pages someone other than the owner may open: the nav they see, the graph (Wiki), their account.
+const open = computed(() => [...shownNav.value.map((n) => n.to), "/graph", "/account"]);
+// Landing on a page they cannot use (the start page, an old link) goes to 问答.
 watch([() => route.path, owner], ([path]) => {
-  if (!owner.value && !bare.value && !MEMBER_PAGES.some((p) => path === p || path.startsWith(p + "/"))) void router.replace("/ask");
+  if (!owner.value && state.me && !bare.value && !open.value.some((p) => path === p || path.startsWith(p + "/"))) void router.replace("/ask");
 });
 // A share link is opened by people without a token, the login page before logging in: no frame, nothing else loaded.
 const BARE = ["#/share/", "#/login"];

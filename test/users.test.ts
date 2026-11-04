@@ -71,8 +71,12 @@ describe("users: identities, spaces, per-user turns and API", async () => {
     expect((await fetch(`${base}/api/me`, { headers: h }).then((r) => r.json())).id).toBe("wang");
     // Spaces: only the ones they can read, and only to read.
     expect(((await fetch(`${base}/api/spaces`, { headers: h }).then((r) => r.json())) as { id: string }[]).map((s) => s.id).sort()).toEqual(["personal-wang", "team"]);
-    expect((await fetch(`${base}/api/spaces`, { method: "POST", headers: h, body: JSON.stringify({ name: "x" }) })).status).toBe(403);
-    expect((await fetch(`${base}/api/runs`, { headers: h })).status).toBe(403);
+    // Members may make spaces of their own (src/auth/permissions.ts), and manage them.
+    expect((await fetch(`${base}/api/spaces`, { method: "POST", headers: h, body: JSON.stringify({ id: "wang-notes", name: "x" }) })).status).toBe(200);
+    expect(accessibleSpaces(app, "wang")).toContain("wang-notes");
+    // Runs: only their own (and those they may read).
+    expect(((await fetch(`${base}/api/runs`, { headers: h }).then((r) => r.json())) as { runs: { userId?: string }[] }).runs.every((r) => !r.userId || r.userId === "wang")).toBe(true);
+    expect((await fetch(`${base}/api/settings`, { headers: h })).status).toBe(403);
     const asked = await fetch(`${base}/api/ask`, { method: "POST", headers: h, body: JSON.stringify({ text: "/whoami" }) }).then((r) => r.json());
     expect(asked.reply).toMatch(/小王/);
     expect((await fetch(`${base}/api/ask`, { method: "POST", headers: h, body: JSON.stringify({ text: "hi", space: "secret" }) })).status).toBe(403);

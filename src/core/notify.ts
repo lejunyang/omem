@@ -131,10 +131,12 @@ export function notify(
   return n;
 }
 
-export function listNotifications(app: App, limit = 50) {
+/** One person's notifications, newest first (the owner's by default). */
+export function listNotifications(app: App, limit = 50, userId = "owner") {
   return all<{ id: string; at: string; title: string; body: string; link: string | null; read_at: string | null; context: string }>(
     app.db,
-    "select * from notifications order by at desc limit ?",
+    "select * from notifications where user_id = ? order by at desc limit ?",
+    userId,
     limit,
   ).map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: r.read_at }));
 }
@@ -164,7 +166,7 @@ export function notificationCardOf(app: App, id: string) {
   return r?.m ? { messageId: r.m, bot: r.b } : null;
 }
 
-export function markRead(app: App, id?: string) {
-  if (id) run(app.db, "update notifications set read_at = ? where id = ?", now(), id);
-  else run(app.db, "update notifications set read_at = ? where read_at is null", now());
+export function markRead(app: App, id?: string, userId = "owner") {
+  if (id) run(app.db, "update notifications set read_at = ? where id = ? and user_id = ?", now(), id, userId);
+  else run(app.db, "update notifications set read_at = ? where read_at is null and user_id = ?", now(), userId);
 }

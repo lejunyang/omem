@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { del, get, logout } from "../api";
+import { del, get, logout, put } from "../api";
+import UiSelect from "../components/UiSelect.vue";
 import Skeleton from "../components/Skeleton.vue";
-import { fmtTime, toast } from "../store";
+import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
 
 /**
@@ -26,6 +27,32 @@ type Account = {
 
 const route = useRoute();
 const acc = ref<Account | null>(null);
+// Spaces this person manages (space.manage): their members, by user id. The owner does this in 设置 → 成员.
+type Member = { id: string; name: string; spaceRole: string };
+const managed = computed(() => (state.me && state.me.role !== "owner" ? state.spaces.filter((s) => s.kind !== "personal" && (state.me!.manages ?? []).includes(s.id)) : []));
+const members = ref<Record<string, Member[]>>({});
+const spaceRoles = ref<{ id: string; name: string }[]>([]);
+const addForm = ref<Record<string, { user: string; role: string }>>({});
+async function loadManaged() {
+  if (!managed.value.length) return;
+  const r = await get<{ roles: { id: string; name: string; scope: string }[] }>("/api/access/roles");
+  spaceRoles.value = r.roles.filter((x) => x.scope === "space");
+  for (const s of managed.value) {
+    members.value[s.id] = await get<Member[]>(`/api/spaces/${s.id}/members`);
+    addForm.value[s.id] ??= { user: "", role: "reader" };
+  }
+}
+// Who I am arrives with the frame (App.vue): load once it is known.
+watch(() => managed.value.map((s) => s.id).join(), () => void loadManaged().catch((e) => toast((e as Error).message, "error")));
+async function setMember(space: string, user: string, role: string | null) {
+  try {
+    await put(`/api/spaces/${space}/members/${encodeURIComponent(user)}`, { role });
+    members.value[space] = await get<Member[]>(`/api/spaces/${space}/members`);
+    if (addForm.value[space]) addForm.value[space].user = "";
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 const notice = computed(() => (typeof route.query.error === "string" ? { kind: "err", text: route.query.error } : typeof route.query.bound === "string" ? { kind: "ok", text: "已绑定" } : null));
 const VIA: Record<string, string> = { lark: "飞书", link: "机器人登录链接", invite: "邀请", local: "本机", token: "令牌" };
 const viaLabel = (v: string) => VIA[v] ?? acc.value?.providers.find((p) => p.id === v)?.label ?? v;
@@ -63,7 +90,7 @@ async function signOut(s: Session) {
     toast((e as Error).message, "error");
   }
 }
-onMounted(() => load().catch((e) => toast((e as Error).message, "error")));
+onMounted(() => Promise.all([load(), loadManaged()]).catch((e) => toast((e as Error).message, "error")));
 </script>
 
 <template>
@@ -114,6 +141,26 @@ onMounted(() => load().catch((e) => toast((e as Error).message, "error")));
           <button class="btn ghost sm" @click="signOut(s)">{{ s.current ? "退出登录" : "让它退出" }}</button>
         </div>
       </div>
+      <template v-if="managed.length">
+        <h2 class="section-title">我管理的空间</h2>
+        <div v-for="sp in managed" :key="sp.id" class="card pad stack">
+          <strong>{{ sp.name }}</strong>
+          <div v-for="m in members[sp.id] ?? []" :key="m.id" class="row wrap member">
+            <span>{{ m.name }} <span class="muted small mono">{{ m.id }}</span></span>
+            <span class="spacer" />
+            <span v-if="m.id === acc.user.id" class="badge">{{ spaceRoles.find((r) => r.id === m.spaceRole)?.name ?? m.spaceRole }}（你）</span>
+            <template v-else>
+              <UiSelect :model-value="m.spaceRole" size="sm" width="110px" :aria-label="`${m.name}的角色`" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setMember(sp.id, m.id, v)" />
+              <button class="btn ghost sm danger" @click="setMember(sp.id, m.id, null)">移出</button>
+            </template>
+          </div>
+          <div v-if="addForm[sp.id]" class="row wrap">
+            <input v-model="addForm[sp.id].user" class="input" placeholder="对方的用户 id（他的账号页能看到）" />
+            <UiSelect v-model="addForm[sp.id].role" size="sm" width="110px" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" />
+            <button class="btn sm" :disabled="!addForm[sp.id].user.trim()" @click="setMember(sp.id, addForm[sp.id].user.trim(), addForm[sp.id].role)">加入</button>
+          </div>
+        </div>
+      </template>
       <p v-if="acc.user.role === 'owner'" class="muted small">管理其他人：<router-link to="/settings?tab=members">设置 → 成员</router-link></p>
     </template>
   </div>
@@ -157,5 +204,15 @@ onMounted(() => load().catch((e) => toast((e as Error).message, "error")));
 }
 .badge {
   margin-left: 6px;
+}
+.member {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  gap: 8px;
+  min-width: 0;
+}
+.input {
+  flex: 1;
+  min-width: 180px;
 }
 </style>

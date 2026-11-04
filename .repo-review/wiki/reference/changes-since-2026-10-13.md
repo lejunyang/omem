@@ -1246,3 +1246,12 @@ updated: 2026-11-04
 - 结果记录直接写到汇报会话（`settleCodeChain`），交给助手时按消息实际所在的会话判断要不要搬；卡片（`askDeliver`、`ensureOwnerAsks`、`askPlan`、`askRetry`、`askConfirm`、`escalate`、同步冲突）都改用它。
 - 验收 R27k；测试 `test/code-loop.test.ts`“reports to the conversation the owner last steered…”。
 
+## 角色与权限（2026-11-05）
+
+- `src/auth/permissions.ts`：全局权限与空间权限清单、内置角色（`BUILTIN_ROLES`）、自定义角色（新表 `roles`，随拉取同步）、`can` / `spacesWith` / `requirePerm` / `canReadRun` / `runReadableSpaces` / `globalPerms`、改动记录（新表 `audit_events`，本机的）。`accessibleSpaces` = `spacesWith(space.read)`，`canWrite` = `can(memory.write)`；旧的空间 owner 成员迁成 manager。
+- `src/auth/routes.ts`：每个 `/api` 路由要什么（public / self / owner / 全局权限 / 某空间的权限 / 能读这条运行），`server/http.ts` 的 `preHandler` 统一检查；`MEMBER_ROUTES` 删掉。`test/permissions.test.ts` 用 `registeredRoutes` 检查全部登记。
+- `runs.scope`：`createRun` 记下这条运行最多能读的空间；`listRuns` 的 `visibleTo`。事件流按人过滤（运行、通知、提问、插件会话、空间变化）。`listNotifications` / `markRead` 按人。
+- 删除别人的对话、读别人对话里的消息现在返回 404（以前成员能删任何对话）。成员 GET `/api/memories`、`/api/memory-folders`、`/api/memory-tags` 不带空间时只含能读的空间。
+- `src/auth/tools.ts`：编码、Git、采集设置、规则、档案和技能保存等工具要对应的全局权限；`runner.ts` 建工具清单时去掉，`callTool` 再查一次。`write_page` / `move_page` / `confirm_page` / `generate_wiki` 和 Wiki 规划运行要 `wiki.write`。
+- 新接口：`/api/access/roles`（列出、建、改、删）、`/api/access/audit`、`/api/spaces/:id/members`（空间管理者）、`PATCH /api/users/:id` 的 `role`；邀请可以带全局角色和任意空间角色。成员建空间时成为管理者；关联本机目录要 `code.delegate`。`/api/me` 带 `perms`、`writes`、`wiki`、`manages`。
+- 网页：导航按权限显示；设置 → 成员 加全局角色、空间角色、角色编辑和改动记录；账号页“我管理的空间”。
