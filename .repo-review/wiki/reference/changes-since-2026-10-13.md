@@ -7,6 +7,10 @@ updated: 2026-11-04
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 飞书选项卡片布局（11-04）
+
+- `src/channels/lark-asks.ts` 按选项文字长度排版：两个短选项保持并排，更多短选项每行最多两个，长选项独立成行，用可换行的文字展示完整内容，旁边保留简短的“选择”（下一步建议为“继续”）按钮。“用文字回答”放在输入框后，不挤入选项行。选项编号、表单附言和回调动作保持对应；`test/asks.test.ts` 覆盖长短混排、六个长选项、文字回答和批准/拒绝。
+
 ## ID 优先搜索（11-04）
 
 - 全局搜索和运行页直接识别裸 id，先按索引查精确命中并显示，加载状态持续到其余文本或向量搜索结束；运行页沿用筛选，追加时去重，分页偏移按文本结果计算。新查询立即使旧响应失效。入口：`src/core/id-query.ts`、`src/agents/runs.ts`、`src/server/http.ts`、`CommandPalette.vue`、`Runs.vue`；浏览器回归：`scripts/check-id-search.ts`，规模对比：`scripts/bench-scale.ts --runs`。

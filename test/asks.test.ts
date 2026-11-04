@@ -142,6 +142,59 @@ describe("asking the owner", () => {
     expect(JSON.stringify(askCard(app, getAsk(app, a.id)))).toContain("已拒绝");
   });
 
+  it("gives every long option its own wrapping row and keeps text submission after the input", async () => {
+    const { app, runId } = working();
+    const options = Array.from({ length: 6 }, (_, i) => ({ label: `方案${i + 1}：先核对旧订单退款口径，再分批处理历史数据并补充验收记录` }));
+    try {
+      for (const allowText of [true, false]) {
+        const ask = createAsk(app, { runId, question: "这次按哪个方案处理？", options, allowText });
+        const elements = (askCard(app, ask).body as { elements: any[] }).elements;
+        const body = allowText ? elements.find((e) => e.tag === "form").elements : elements;
+        const rows = body.filter((e: any) => e.tag === "column_set" && e.columns[0].width === "weighted");
+        expect(rows).toHaveLength(6);
+        rows.forEach((row: any, i: number) => {
+          expect(row.columns).toHaveLength(2);
+          expect(row.columns[0].elements[0]).toEqual({ tag: "markdown", content: `${i + 1}. ${options[i].label}` });
+          expect(row.columns[1].elements[0]).toMatchObject({ name: `opt_${i}`, text: { content: "选择" } });
+        });
+        if (allowText) {
+          expect(body[6]).toMatchObject({ tag: "input", name: "text" });
+          expect(body[7].columns).toHaveLength(1);
+          expect(body[7].columns[0].elements[0]).toMatchObject({ name: "answer", text: { content: "用文字回答" }, form_action_type: "submit" });
+        }
+        const action = allowText ? { name: "opt_5", formValue: { text: "先试一小批" } } : { value: { action: "ask:5" } };
+        await handleAskAction(app, "ci", ask.id, action, "owner");
+        expect(getAsk(app, ask.id)).toMatchObject({ choice: 5, answer: options[5].label + (allowText ? "：先试一小批" : "") });
+      }
+      const typed = createAsk(app, { runId, question: "还有其他方案吗？" });
+      const form = (askCard(app, typed).body as { elements: any[] }).elements.find((e) => e.tag === "form");
+      expect(form.elements[0]).toMatchObject({ tag: "input" });
+      expect(form.elements[1].columns[0].elements[0]).toMatchObject({ name: "answer", text: { content: "回答" } });
+      await handleAskAction(app, "ci", typed.id, { name: "answer", formValue: { text: "先做只读核对" } }, "owner");
+      expect(getAsk(app, typed.id).answer).toBe("先做只读核对");
+    } finally { app.db.close(); }
+  });
+
+  it("keeps two short options together and packs larger or mixed lists without changing their order", () => {
+    const { app, runId } = working();
+    const layout = (labels: string[]) => {
+      const ask = createAsk(app, { runId, question: "选哪个？", options: labels.map((label) => ({ label })) });
+      return (askCard(app, ask).body as { elements: any[] }).elements.find((e) => e.tag === "form").elements.filter((e: any) => e.tag === "column_set" && !e.columns.some((c: any) => c.elements[0].name === "answer"));
+    };
+    try {
+      expect(layout(["周四", "周五"]).map((r: any) => r.columns.map((c: any) => c.elements[0].text.content))).toEqual([["周四", "周五"]]);
+      const many = layout(["方案一", "方案二", "方案三", "方案四", "方案五"]);
+      expect(many.map((r: any) => r.columns.length)).toEqual([2, 2, 1]);
+      const mixed = layout(["先不改", "先核对旧订单的退款口径，再分批处理历史数据", "下周再看", "现在处理"]);
+      expect(mixed.map((r: any) => r.columns.at(-1).elements[0].name)).toEqual(["opt_0", "opt_1", "opt_3"]);
+      expect(mixed[1].columns[0].elements[0].content).toContain("先核对旧订单的退款口径，再分批处理历史数据");
+      const escaped = layout(["保留 <at id=all> 和 [原样] & 内容"])[0].columns[0].elements[0].content;
+      expect(escaped).toContain("&lt;at id=all\\>");
+      expect(escaped).toContain("\\[原样\\]");
+      expect(escaped).toContain("&amp;");
+    } finally { app.db.close(); }
+  });
+
   it("acknowledges before a synchronous host action starts", async () => {
     const { app, runId } = working();
     let started = false;

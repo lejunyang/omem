@@ -29,6 +29,40 @@ function button(text: string, name: string, kind: "primary" | "danger" | "defaul
   };
 }
 
+/** Keep the full option readable even when the client truncates button text. */
+function optionRow(label: string, i: number, inForm: boolean, suggestion: boolean) {
+  const text = label.replace(/&/g, "&amp;").replace(/([\\`*_{}\[\]()#+.!|>~-])/g, "\\$1").replace(/</g, "&lt;");
+  return {
+    tag: "column_set",
+    flex_mode: "none",
+    columns: [
+      { tag: "column", width: "weighted", weight: 1, elements: [{ tag: "markdown", content: `${i + 1}. ${text}` }] },
+      button(suggestion ? "继续" : "选择", `opt_${i}`, i === 0 ? "primary" : "default", inForm, `ask:${i}`),
+    ],
+  };
+}
+
+function optionRows(ask: Ask) {
+  const rows: Record<string, unknown>[] = [];
+  const short: ReturnType<typeof button>[] = [];
+  const flush = () => {
+    if (short.length) rows.push({ tag: "column_set", flex_mode: "flow", columns: short.splice(0) });
+  };
+  ask.options.forEach((o, i) => {
+    // Reserve room for two buttons on a phone; CJK and other wide characters take two units.
+    const width = Array.from(o.label).reduce((n, c) => n + (c.codePointAt(0)! > 0xff ? 2 : 1), 0);
+    if (width <= 12 && !/[\r\n]/.test(o.label)) {
+      short.push(button(o.label, `opt_${i}`, i === 0 ? "primary" : "default", ask.allowText, `ask:${i}`));
+      if (short.length === 2) flush();
+    } else {
+      flush();
+      rows.push(optionRow(o.label, i, ask.allowText, ask.kind === "suggestion"));
+    }
+  });
+  flush();
+  return rows;
+}
+
 /** A decision needs its question up front; the investigation stays in the run and a closed fold. */
 function questionBlocks(app: App, ask: Ask) {
   const row = one<{ context: string | null }>(app.db, "select context from asks where id = ?", ask.id);
@@ -50,22 +84,23 @@ export function askCard(app: App, ask: Ask): Record<string, unknown> {
   }
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: questionBlocks(app, ask) });
   const elements = (card.body as { elements: unknown[] }).elements;
-  const buttons =
+  const choices =
     ask.kind === "approval"
-      ? [button("批准", "approve", "primary", true, ""), button("拒绝", "reject", "danger", true, "")]
-      : ask.options.map((o, i) => button(o.label, `opt_${i}`, i === 0 ? "primary" : "default", ask.allowText, `ask:${i}`));
+      ? [{ tag: "column_set", flex_mode: "flow", columns: [button("批准", "approve", "primary", ask.allowText, "approve"), button("拒绝", "reject", "danger", ask.allowText, "reject")] }]
+      : optionRows(ask);
   if (ask.allowText) {
-    if (ask.kind === "question" && !ask.options.length) buttons.push(button("回答", "answer", "primary", true, ""));
-    else if (ask.kind === "question") buttons.push(button("用文字回答", "answer", "default", true, ""));
     elements.push({
       tag: "form",
       name: "ask",
       elements: [
+        ...(ask.kind === "approval" ? [] : choices),
         { tag: "input", name: "text", placeholder: { tag: "plain_text", content: ask.kind === "approval" ? "理由或附言（可不填）" : ask.options.length ? "也可以写别的回答" : "你的回答" } },
-        { tag: "column_set", flex_mode: "flow", columns: buttons },
+        ...(ask.kind === "approval" ? choices : ask.kind === "question" ? [{
+          tag: "column_set", flex_mode: "flow", columns: [button(ask.options.length ? "用文字回答" : "回答", "answer", ask.options.length ? "default" : "primary", true, "")],
+        }] : []),
       ],
     });
-  } else elements.push({ tag: "column_set", flex_mode: "flow", columns: buttons });
+  } else elements.push(...choices);
   return card;
 }
 
