@@ -67,6 +67,33 @@ export default function register(api: PluginApi) {
 - `api.service(name).ensure()`：启动（如果没在运行）清单里声明的服务，返回 `{ url, token }`；请求带 `authorization: Bearer <token>`。
 - 内置插件的 `server.ts` 随 `tsc` 编译到 `dist/plugins/<id>/server.js`，类型只从 `src/plugins/types.ts` 引入。
 
+### 连接器：以用的人的身份调一个平台
+
+插件可以带一个让人连接的平台（docs/v2/multi-user.md 的“插件扩展”）。公司内部系统的连接器只能这样放在数据目录的插件里，不进仓库。
+
+```ts
+api.connector({
+  id: "notes-api", label: "笔记平台", channel: "notes", apiBase: "https://api.notes.example/v1",
+  unavailable: (app) => null,                       // 不能用时返回原因（没配应用、缺密钥）
+  authorizeUrl: (app, { state, challenge, redirectUri, scopes }) => "https://…/authorize?…",
+  exchange: async (app, { code, verifier, redirectUri }) => ({ accessToken, refreshToken, expiresIn, scope }),
+  whoami: async (app, tokens) => ({ externalId, name }), // 服务端拿令牌查，不信浏览器
+  refresh: async (app, refreshToken) => ({ accessToken, refreshToken, expiresIn }),
+  features: [{ id: "read", label: "读笔记", description: "读你的笔记", scopes: ["notes.read"] }],
+});
+api.tool({ name: "notes_recent", description, schema, handler: async (ctx) => {
+  const c = await ctx.connection("notes-api");     // 这次用的人自己的连接；没连接时是 null
+  if (!c) return "请先在 omem 的账号页连接笔记平台";
+  return await (await c.fetch("/notes?limit=10")).text();
+} });
+```
+
+- 连接器 id 要以 `<插件 id>-` 开头；插件的代码卸载（撤销信任）时一起注销。
+- 账号页“已连接的应用”列出它，按功能一项项授权；令牌由宿主保管（`secrets/vault.db`），快过期时刷新。
+- `ctx.connection(provider).fetch` 只能请求 `apiBase` 下的地址，宿主带上令牌，插件拿不到令牌本身。
+- 清单里写 `connectors: [{ provider: notes-api, features: [read] }]`，没连接或缺功能时插件页顶上提示去账号页连接。
+- 想让人用它登录，把它的 id 加进 `auth.providers`（设置 → 成员）。
+
 ## 服务与流
 
 清单声明插件的常驻进程和它对页面开放的 WebSocket：

@@ -26,6 +26,14 @@ export const FEATURES: Record<string, Feature[]> = {
 
 export const featuresOf = (provider: string) => FEATURES[provider] ?? [];
 
+/** A plugin's provider brings its own features (src/plugins/registry.ts api.connector); gone with the plugin. */
+export function registerFeatures(provider: string, list: Feature[]) {
+  FEATURES[provider] = list;
+  return () => {
+    if (FEATURES[provider] === list) delete FEATURES[provider];
+  };
+}
+
 /** The scopes to ask for to turn on these features (background access comes along with any of them). */
 export function scopesFor(provider: string, ids: string[]) {
   const list = featuresOf(provider);

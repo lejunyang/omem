@@ -197,7 +197,8 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   // Connected platforms (src/auth/connections.ts): what is on, whether it works in the background; disconnecting.
   server.get("/api/auth/connections", async (req) => ({
     connections: connectionsOf(app, who(req)),
-    available: enabledProviders(app).filter((id) => featuresOf(id).length).map((id) => ({ ...providerView(app, id)!, features: featuresOf(id).map((f) => ({ id: f.id, label: f.label, description: f.description })) })),
+    // Every provider with something to turn on, logging in with it or not (a plugin's may be for connecting only).
+    available: [...new Set([...enabledProviders(app), ...loginProviders().map((p) => p.id)])].filter((id) => featuresOf(id).length).map((id) => ({ ...providerView(app, id)!, features: featuresOf(id).map((f) => ({ id: f.id, label: f.label, description: f.description })) })),
     may: can(app, who(req), "connector.use"),
   }));
   server.delete("/api/auth/connections/:provider", async (req) => {

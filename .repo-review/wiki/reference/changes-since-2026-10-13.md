@@ -1270,3 +1270,9 @@ updated: 2026-11-04
 - 去重：迁移给 `sources` 加 `origin_key`（`upsertSource` 用 `originKeyOf` 填，旧数据按 URI 和 `documentId` 回填）、新表 `source_viewers`、`lark_message_lines`（按原件记消息的行，从 `lark_messages.source_id/line` 回填；拉取不带，回落到旧列）。`persistChatMessages` 加 `userId`：本人照旧写进聊天已有的副本，别人只写自己空间里的副本。`captureSpace(app, chatId, userId)`：绑定和已有副本只在采集者有 `capture.route` 的空间才用，否则进他的个人空间。成员导入一篇已在他能读的共享空间里的飞书文档时只记 `source_viewers`。
 - `src/channels/lark-member-capture.ts`：开了“我的消息”的成员，每次 lark-poll 后以他的身份读最近活跃的 30 个会话（游标在 kv `lark_member_cursor:<用户>:<会话>`），已有可读共享副本的只记 `source_viewers`。
 - 网页：账号页“已连接的应用”（按功能打开、重新授权、断开、缺权限的授权提示）；本人那里只说明用 lark-cli 登录。
+
+## 插件连接器（2026-11-05）
+
+- `src/plugins/types.ts`：`PluginApi.connector(def)`（`LoginProvider` 加 `features`）、`PluginContext.connection(provider)` 返回 `{ account, scopes, fetch }`。清单加 `connectors: [{ provider, features }]`，`describePlugin` 带出来。
+- `registry.ts`：`api.connector` 检查 id 前缀、注册 `registerLoginProvider` 和 `registerFeatures`，`unloadCode` 时撤销。`LoginProvider.apiBase`；`connections.ts` 的 `pluginConnection` 只往 `apiBase` 下发请求（不跟随重定向）。
+- 账号页列出所有有功能的提供方（不只是登录方）；插件页在清单要的连接缺失时显示提示条。

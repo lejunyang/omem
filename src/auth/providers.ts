@@ -30,6 +30,8 @@ export type LoginProvider = {
   whoami(app: App, tokens: ProviderTokens): Promise<ProviderIdentity>;
   /** New tokens for a refresh token (src/auth/connections.ts); providers without it cannot keep a connection alive. */
   refresh?(app: App, refreshToken: string): Promise<ProviderTokens>;
+  /** Where a connection's API calls may go (a plugin's ctx.connection().fetch): the token is never sent anywhere else. */
+  apiBase?: string;
   /** The owner, known from configuration before any login (Feishu: lark.ownerOpenId among the aliases). */
   isOwner?(app: App, identity: ProviderIdentity): boolean;
 };

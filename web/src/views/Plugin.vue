@@ -13,7 +13,7 @@ import { state } from "../store";
  * the theme, the route's query and this plugin's server events are passed in, and the page can
  * open the settings dialog. A plugin without a page of its own gets the default page.
  */
-type PluginInfo = { id: string; name: string; description: string; agents: { name: string; description: string }[]; page: { title: string; own: boolean; built: boolean } | null; settings: boolean };
+type PluginInfo = { id: string; name: string; description: string; agents: { name: string; description: string }[]; page: { title: string; own: boolean; built: boolean } | null; settings: boolean; connectors?: { provider: string; features: string[] }[] };
 
 const route = useRoute();
 const router = useRouter();
@@ -22,6 +22,20 @@ const info = ref<PluginInfo | null>(null);
 const error = ref("");
 const frame = ref<HTMLIFrameElement | null>(null);
 const settingsOpen = ref(false);
+// Platforms its tools act on as you (manifest `connectors`) that you have not connected, or not with every feature it needs.
+const missing = ref<{ provider: string; label: string }[]>([]);
+async function checkConnectors() {
+  const wanted = info.value?.connectors ?? [];
+  if (!wanted.length) return;
+  const r = await get<{ connections: { provider: string; status: string; features: { id: string; on: boolean }[] }[]; available: { id: string; label: string }[] }>("/api/auth/connections").catch(() => null);
+  if (!r) return;
+  missing.value = wanted
+    .filter((w) => {
+      const c = r.connections.find((x) => x.provider === w.provider);
+      return !c || c.status !== "active" || w.features.some((f) => !c.features.find((x) => x.id === f)?.on);
+    })
+    .map((w) => ({ provider: w.provider, label: r.available.find((a) => a.id === w.provider)?.label ?? w.provider }));
+}
 
 const TOKENS = ["--bg", "--panel", "--sunken", "--hover", "--line", "--line-strong", "--ink", "--ink-2", "--muted", "--accent", "--accent-ink", "--accent-soft", "--ok", "--ok-soft", "--warn", "--warn-soft", "--danger", "--danger-soft", "--mark", "--shadow", "--shadow-lg", "--radius", "--radius-sm", "--sans", "--serif", "--mono"];
 function theme() {
@@ -90,6 +104,7 @@ onMounted(async () => {
   });
   try {
     info.value = await get<PluginInfo>(`/api/plugins/${id}`);
+    void checkConnectors();
   } catch (e) {
     error.value = (e as Error).message;
   }
@@ -106,6 +121,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="plugin-host">
+    <div v-if="info && missing.length" class="connect-bar small">
+      {{ info.name }}要以你的身份用 {{ missing.map((m) => m.label).join("、") }}，还没有连接或缺少权限。
+      <router-link to="/account">去账号页连接</router-link>
+    </div>
     <div v-if="error" class="page"><div class="card pad err">{{ error }}</div></div>
     <div v-else-if="!info" class="page"><Skeleton variant="text" :rows="6" /></div>
     <div v-else-if="!info.page" class="page"><div class="card pad">插件 {{ info.name }} 没有页面。</div></div>
@@ -136,6 +155,13 @@ onBeforeUnmount(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+.connect-bar {
+  padding: 8px 16px;
+  background: var(--warn-soft);
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
 }
 iframe {
   flex: 1;

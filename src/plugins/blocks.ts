@@ -108,6 +108,7 @@ export function pluginContext(app: App, env: PluginEnv, c: { userId: string; spa
       app.emit({ type: "plugin", plugin: env.id, conversationId: r.conversation_id, blockId: id });
     },
     present: (kind, data, conversationId) => presentBlock(app, env, { kind, data, conversationId, runId: c.runId, userId: c.userId }).id,
+    connection: async (provider) => (await import("../auth/connections.ts")).pluginConnection(app, c.userId, provider),
   };
 }
 

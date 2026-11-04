@@ -1,4 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { loginProvider, registerLoginProvider } from "../auth/providers.ts";
+import { registerFeatures } from "../auth/features.ts";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import YAML from "yaml";
@@ -47,6 +49,8 @@ export const manifestSchema = z.object({
   services: z.array(serviceSchema).default([]),
   /** WebSockets to a service that the plugin's page may open (through the shell, as the owner). */
   streams: z.array(streamSchema).default([]),
+  /** Platforms its tools act on as the person using them (docs/v2/multi-user.md, “插件扩展”): the page says when one is not connected. */
+  connectors: z.array(z.object({ provider: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/), features: z.array(z.string()).default([]) })).default([]),
 });
 export type PluginManifest = z.infer<typeof manifestSchema>;
 
@@ -64,6 +68,8 @@ export type LoadedPlugin = {
   /** Tools the plugin registered; `page` ones its page may call. */
   tools: { name: string; page: boolean }[];
   blocks: Map<string, PluginBlock>;
+  /** Undo what api.connector registered (providers and their features). */
+  connectors: (() => void)[];
   env: PluginEnv;
 };
 
@@ -129,6 +135,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     specs: [],
     tools: own,
     blocks,
+    connectors: [],
     env: {
       id: manifest.id,
       title: manifest.page?.title ?? manifest.name,
@@ -167,6 +174,13 @@ async function loadCode(app: App, p: LoadedPlugin) {
       CORE_TOOLS.add(name);
       p.blocks.set(b.kind, b);
       p.tools.push({ name, page: false });
+    },
+    connector(def) {
+      if (!def.id.startsWith(`${manifest.id}-`)) throw new Error(`插件 ${manifest.id} 的连接器 id 要以 ${manifest.id}- 开头：${def.id}`);
+      if (loginProvider(def.id)) throw new Error(`已经有连接器 ${def.id}`);
+      const { features, ...provider } = def;
+      p.connectors.push(registerLoginProvider(provider));
+      if (features?.length) p.connectors.push(registerFeatures(def.id, features));
     },
     service(name: string) {
       const spec = manifest.services.find((s) => s.name === name);
@@ -214,6 +228,7 @@ export function untrustPlugin(app: App, id: string) {
 function unloadCode(p: LoadedPlugin) {
   unregisterTools(p.tools.map((t) => t.name));
   p.tools.splice(0);
+  for (const undo of p.connectors.splice(0)) undo();
   p.blocks.clear();
   stopPluginServices(p.manifest.id);
   const group = TOOL_GROUPS.findIndex((g) => g.id === p.manifest.id);
@@ -374,5 +389,6 @@ export function describePlugin(p: LoadedPlugin) {
     tools: p.tools.map((t) => t.name),
     services: p.manifest.services.map((s) => ({ name: s.name, description: s.description, command: [s.command, ...s.args].join(" ") })),
     streams: p.manifest.streams.map((s) => ({ name: s.name, description: s.description, service: s.service })),
+    connectors: p.manifest.connectors,
   };
 }

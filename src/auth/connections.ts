@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError } from "../core/util.ts";
 import { featuresOf, grantedFeatures } from "./features.ts";
-import { loginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
+import { authFetch, loginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
 import { connectionSecrets, deleteConnection, findConnection, listConnections, markConnection, replaceTokens, storeConnection, type Connection } from "./vault.ts";
 
 /**
@@ -105,4 +105,27 @@ export function disconnect(app: App, userId: string, provider: string) {
   const c = findConnection(app, userId, provider);
   if (!c) throw new HttpError(404, "没有这个连接");
   deleteConnection(app, c.id);
+}
+
+/**
+ * A plugin's view of this person's connection (src/plugins/types.ts PluginContext.connection): calls go
+ * to the provider's `apiBase` only, with a current token added; the token itself never leaves here.
+ */
+export function pluginConnection(app: App, userId: string, provider: string) {
+  const c = findConnection(app, userId, provider);
+  if (!c || c.status !== "active") return null;
+  const base = loginProvider(provider)?.apiBase?.replace(/\/+$/, "");
+  return {
+    account: c.accountName || c.accountId,
+    scopes: c.scopes,
+    async fetch(path: string, init: RequestInit = {}) {
+      if (!base) throw new HttpError(400, `${provider} 没有声明 apiBase，不能代发请求`);
+      const url = /^https?:\/\//.test(path) ? path : `${base}/${path.replace(/^\/+/, "")}`;
+      if (url !== base && !url.startsWith(`${base}/`) && !url.startsWith(`${base}?`)) throw new HttpError(400, `只能请求 ${base} 下的地址`);
+      const token = await accessToken(app, userId, provider);
+      const headers = new Headers(init.headers);
+      headers.set("authorization", `Bearer ${token}`);
+      return authFetch(url, { ...init, headers, redirect: "manual" });
+    },
+  };
 }

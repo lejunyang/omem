@@ -34,6 +34,19 @@ export type PluginContext = {
   setBlockResult(id: string, result: unknown): void;
   /** Put a block in one of this user's sessions of this plugin without an agent turn (drawn from a question bank, say). */
   present(kind: string, data: unknown, conversationId: string): string;
+  /**
+   * This user's connection to a platform (docs/v2/multi-user.md, “插件扩展”), or null when they have not
+   * connected it. `fetch` goes to the provider's `apiBase` only, with their token; the plugin never sees it.
+   */
+  connection(provider: string): Promise<PluginConnection | null>;
+};
+
+export type PluginConnection = { account: string; scopes: string[]; fetch(path: string, init?: RequestInit): Promise<Response> };
+
+/** A platform people connect (logging in with it, or only binding): see src/auth/providers.ts LoginProvider. */
+export type PluginConnector = import("../auth/providers.ts").LoginProvider & {
+  /** What a person can turn on, each with the scopes it asks for (src/auth/features.ts). */
+  features?: import("../auth/features.ts").Feature[];
 };
 
 export type PluginTool<S extends z.ZodObject = z.ZodObject> = {
@@ -80,6 +93,8 @@ export type PluginApi = {
   block<S extends z.ZodObject>(block: PluginBlock<S>): void;
   /** One of the services the manifest declares: started on first use, its address and the token it expects. */
   service(name: string): { ensure(): Promise<{ url: string; token: string }> };
+  /** A platform people can connect; its id must start with `<plugin id>-`. Gone when the plugin's code is unloaded. */
+  connector(def: PluginConnector): void;
 };
 
 export type PluginRegister = (api: PluginApi) => void | Promise<void>;
