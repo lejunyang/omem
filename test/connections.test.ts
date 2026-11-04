@@ -172,6 +172,36 @@ describe("connections", async () => {
     expect(one<{ origin_key: string }>(app.db, "select origin_key from sources where id = ?", annCopy.id)!.origin_key).toBe("lark:chat:oc_dm");
   });
 
+  it("reads someone's calendar and minutes into their space, not what a shared space they read holds", async () => {
+    const { captureForMember } = await import("../src/channels/lark-member-capture.ts");
+    createSpace(app, { id: "weekly", name: "周会" });
+    addMember(app, "weekly", "ann", "reader");
+    const at = new Date().toISOString();
+    // The owner's capture already put this meeting's minutes in a space ann reads.
+    app.db.prepare("insert into sources(id,space_id,kind,uri,title,hash,text,captured_at,updated_at,origin_key) values('s_min','weekly','meeting','lark:minutes:obc_weekly','妙记：周会','h','',?,?,'lark:minutes:obc_weekly')").run(at, at);
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["messages", "calendar", "minutes"]), accessToken: "at_ann4", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    const calls: { args: string[]; as?: string }[] = [];
+    setLarkCliForTests(async (args, _cwd, as) => {
+      calls.push({ args, as });
+      if (args.includes("+chat-list")) return { ok: true, data: { chats: [] } };
+      if (args.includes("+agenda")) return { ok: true, data: { events: [{ event_id: "evt_a", summary: "和小王一对一", start_time: { date_time: at }, end_time: { date_time: at } }] } };
+      if (args.includes("+search")) return { ok: true, data: { items: [{ minute_token: "obc_weekly", title: "周会" }, { minute_token: "obc_talk", title: "用户访谈" }] } };
+      if (args.includes("+detail")) return { ok: true, data: { minutes: [{ title: "用户访谈", artifacts: { summary: "谈了退款流程" } }] } };
+      return { ok: true, data: {} };
+    });
+    await captureForMember(app, "ann");
+    expect(calls.every((c) => c.as === "ann")).toBe(true);
+    expect(one(app.db, "select 1 from sources where uri = 'lark:calendar:evt_a' and space_id = 'personal-ann'")).toBeTruthy();
+    expect(one<{ text: string }>(app.db, "select text from sources where uri = 'lark:minutes:obc_talk' and space_id = 'personal-ann'")!.text).toContain("谈了退款流程");
+    // The weekly minutes: not read again, ann recorded as seeing the shared copy.
+    expect(calls.filter((c) => c.args.includes("+detail")).map((c) => c.args[c.args.indexOf("--minute-tokens") + 1])).toEqual(["obc_talk"]);
+    expect(one(app.db, "select 1 from source_viewers where source_id = 's_min' and user_id = 'ann'")).toBeTruthy();
+    // Their own state: the owner's hourly checks are not used up.
+    expect(one(app.db, "select 1 from kv where key = 'lark_calendar_at:ann'")).toBeTruthy();
+    expect(one(app.db, "select 1 from kv where key = 'lark_calendar_at'")).toBeFalsy();
+    expect(one(app.db, "select 1 from kv where key = 'lark_minutes_seen'")).toBeFalsy();
+  });
+
   it("captures someone's chat into a space they may capture into, else their own", () => {
     createSpace(app, { id: "proj", name: "项目" });
     // The owner captured this private chat first, into the owner's personal space.

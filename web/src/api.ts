@@ -184,7 +184,7 @@ export type SpaceRelation = { space: string; name: string; kind: string; note: s
 export type Space = { id: string; name: string; kind: string; description: string; rootPath: string | null; settings: Record<string, any>; sources?: number; pages?: number; related?: SpaceRelation[] };
 /** How a hit is shown (src/search/present.ts): clean text around the match and the matched ranges. */
 export type HitDisplay = { title: string; titleMarks: [number, number][]; text: string; marks: [number, number][]; place: string; link: string };
-export type Hit = { type: "chunk" | "page" | "memory" | "symbol"; id: string; spaceId: string; title: string; path: string; sourceId?: string; uri?: string; sourceKind?: string; lineStart?: number; lineEnd?: number; snippet: string; score: number; via: string[]; status?: string; notes?: string[]; display?: HitDisplay; sameAs?: { sourceId: string; uri: string; title: string; spaceId: string }[] };
+export type Hit = { type: "chunk" | "page" | "memory" | "symbol"; id: string; spaceId: string; title: string; path: string; sourceId?: string; uri?: string; sourceKind?: string; lineStart?: number; lineEnd?: number; snippet: string; score: number; via: string[]; status?: string; notes?: string[]; display?: HitDisplay; sameAs?: { sourceId: string; uri: string; title: string; spaceId: string }[]; elsewhere?: { sourceId: string; title: string; spaceId: string }[] };
 /** What an id names (`GET /api/lookup`). */
 export type IdHit = { type: "run" | "memory" | "source" | "item" | "message" | "conversation" | "rule" | "page" | "notification"; id: string; title: string; snippet: string; spaceId: string | null; slug?: string; conversationId?: string; at?: string };
 export type Memory = {

@@ -1,5 +1,5 @@
 import type { App } from "./app.ts";
-import { all, one } from "./db.ts";
+import { all, one, run } from "./db.ts";
 import { OWNER, personalSpaceId } from "./users.ts";
 import { can } from "../auth/permissions.ts";
 import { findSpace } from "./spaces.ts";
@@ -32,4 +32,18 @@ export function captureSpace(app: App, chatId?: string, userId: string = OWNER):
   if (userId !== OWNER) return personalSpaceId(userId);
   const def = app.config.lark.capture.space;
   return findSpace(app, def) ? def : "personal";
+}
+
+/**
+ * Someone other than the owner capturing a thing (by origin_key) that already has a copy in a shared
+ * space they read: it is not stored again for them; they are recorded as able to see it
+ * (source_viewers, docs/v2/multi-user.md “采集前先查”). Returns that copy, or null.
+ */
+export function sharedCopyFor(app: App, userId: string, originKey: string, evidence: string) {
+  if (userId === OWNER) return null;
+  const readable = new Set(all<{ id: string }>(app.db, "select id from spaces").map((s) => s.id).filter((s) => can(app, userId, "space.read", s)));
+  const copy = all<{ id: string; space_id: string }>(app.db, "select id, space_id from sources where origin_key = ? and deleted_at is null", originKey).find((c) => readable.has(c.space_id) && !c.space_id.startsWith("personal"));
+  if (!copy) return null;
+  run(app.db, "insert into source_viewers(source_id,user_id,evidence,at) values(?,?,?,?) on conflict(source_id,user_id) do update set at = excluded.at", copy.id, userId, evidence, new Date().toISOString());
+  return copy;
 }

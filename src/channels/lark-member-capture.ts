@@ -1,15 +1,15 @@
 import { scheduleIngest } from "../agents/jobs.ts";
 import { grantedFeatures } from "../auth/features.ts";
 import { asLarkUser } from "../auth/lark-user.ts";
-import { accessibleSpaces, larkOpenIdOf, userName } from "../core/users.ts";
-import { listConnections } from "../auth/vault.ts";
+import { larkOpenIdOf, personalSpaceId, userName } from "../core/users.ts";
+import { findConnection, listConnections } from "../auth/vault.ts";
 import type { App } from "../core/app.ts";
-import { captureSpace } from "../core/capture-space.ts";
-import { all, one, run } from "../core/db.ts";
-import { json, now } from "../core/util.ts";
+import { captureSpace, sharedCopyFor } from "../core/capture-space.ts";
+import { one, run } from "../core/db.ts";
+import { json } from "../core/util.ts";
 import { larkCli } from "./lark-cli.ts";
 import { persistChatMessages, timeMs, type LarkMessage } from "./lark-messages.ts";
-import { fetchMessages } from "./lark-personal.ts";
+import { captureCalendar, captureMinutes, captureRecentDocs, fetchMessages } from "./lark-personal.ts";
 
 /**
  * Capture for the people who connected Feishu with “我的消息” (docs/v2/multi-user.md, “多用户采集与
@@ -34,13 +34,6 @@ function saveCursor(app: App, userId: string, chatId: string, messages: LarkMess
 }
 const newer = (messages: LarkMessage[], c: Cursor | null) => (c ? messages.filter((m) => timeMs(m.create_time) > c.lastTime || (timeMs(m.create_time) === c.lastTime && !c.lastIds.includes(m.message_id))) : messages);
 
-/** A copy of this chat in a space the person reads: reading it again would only duplicate it. */
-function readableCopy(app: App, userId: string, chatId: string) {
-  const readable = accessibleSpaces(app, userId) ?? [];
-  const copies = all<{ id: string; space_id: string }>(app.db, "select id, space_id from sources where origin_key = ? and deleted_at is null", `lark:chat:${chatId}`);
-  return copies.find((c) => readable.includes(c.space_id) && !c.space_id.startsWith("personal")) ?? null;
-}
-
 /** One person's pass; returns how many messages were kept. */
 export async function captureForMember(app: App, userId: string) {
   return asLarkUser(app, userId, async () => {
@@ -52,11 +45,8 @@ export async function captureForMember(app: App, userId: string) {
     let kept = 0;
     for (const chat of chats) {
       try {
-        const copy = readableCopy(app, userId, chat.chat_id);
-        if (copy) {
-          run(app.db, "insert into source_viewers(source_id,user_id,evidence,at) values(?,?,?,?) on conflict(source_id,user_id) do update set at = excluded.at", copy.id, userId, "member-capture", now());
-          continue;
-        }
+        // A copy in a shared space they read: reading it again would only duplicate it.
+        if (sharedCopyFor(app, userId, `lark:chat:${chat.chat_id}`, "member-capture")) continue;
         const prev = cursor(app, userId, chat.chat_id);
         const fresh = newer(await fetchMessages(["+chat-messages-list", "--chat-id", chat.chat_id, "--order", "asc"], prev?.lastTime ?? endMs - LOOKBACK_MS, endMs, { pages: 5 }), prev);
         if (fresh.length) {
@@ -70,7 +60,13 @@ export async function captureForMember(app: App, userId: string) {
         console.warn(`[omem] 读取 ${userName(app, userId)} 的飞书会话失败 ${chat.name ?? chat.chat_id}：${(e as Error).message}`);
       }
     }
-    for (const [spaceId, ids] of touched) scheduleIngest(app, spaceId, [...ids], `${userName(app, userId)}的飞书新消息`);
+    // Their calendar, minutes and the documents they opened lately, as for the owner, into their space.
+    const who = { userId, spaceId: personalSpaceId(userId) };
+    const features = grantedFeatures("lark", findConnection(app, userId, "lark")?.scopes ?? []);
+    if (features.includes("calendar")) await captureCalendar(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 的飞书日程读取失败：${(e as Error).message}`));
+    if (features.includes("minutes")) await captureMinutes(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 的妙记读取失败：${(e as Error).message}`));
+    if (features.includes("docs") && app.config.lark.capture.recentDocs) await captureRecentDocs(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 最近打开的飞书文档读取失败：${(e as Error).message}`));
+    for (const [spaceId, ids] of touched) scheduleIngest(app, spaceId, [...ids], `${userName(app, userId)}的飞书新消息、日程或妙记`);
     return kept;
   });
 }

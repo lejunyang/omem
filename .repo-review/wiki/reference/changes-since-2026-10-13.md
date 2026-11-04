@@ -1268,7 +1268,10 @@ updated: 2026-11-04
 - 登录流程加 `purpose=connect`（要 `connector.use`；`features` 或 `scopes` 决定要哪些 scope）；登录或绑定时令牌带 scope、带刷新令牌或已经有连接，就存下来。接口：`GET /api/auth/connections`、`DELETE /api/auth/connections/:provider`。
 - `lark-cli.ts`：`larkActor`（AsyncLocalStorage）与 `setLarkCredentials`；在某人的上下文里 `larkCli` 用 `LARKSUITE_CLI_APP_ID` / `LARKSUITE_CLI_USER_ACCESS_TOKEN` / `LARKSUITE_CLI_BRAND` 跑。`lark-user.ts` 的 `asLarkUser`；`tools.ts` 的 `runTool` 把每次工具调用包进去，`ownerOnly` 改为“本人，或有 `connector.use` 且连接可用的人”。`asOwner` 在成员上下文里给成员发账号页授权链接；`personalLibrary` 按人缓存；`lark_write` 判断“是不是自己的文件”用这个人在机器人应用里的 open_id。
 - 去重：迁移给 `sources` 加 `origin_key`（`upsertSource` 用 `originKeyOf` 填，旧数据按 URI 和 `documentId` 回填）、新表 `source_viewers`、`lark_message_lines`（按原件记消息的行，从 `lark_messages.source_id/line` 回填；拉取不带，回落到旧列）。`persistChatMessages` 加 `userId`：本人照旧写进聊天已有的副本，别人只写自己空间里的副本。`captureSpace(app, chatId, userId)`：绑定和已有副本只在采集者有 `capture.route` 的空间才用，否则进他的个人空间。成员导入一篇已在他能读的共享空间里的飞书文档时只记 `source_viewers`。
-- `src/channels/lark-member-capture.ts`：开了“我的消息”的成员，每次 lark-poll 后以他的身份读最近活跃的 30 个会话（游标在 kv `lark_member_cursor:<用户>:<会话>`），已有可读共享副本的只记 `source_viewers`。
+- `src/channels/lark-member-capture.ts`：开了“我的消息”的成员，每次 lark-poll 后以他的身份读最近活跃的 30 个会话（游标在 kv `lark_member_cursor:<用户>:<会话>`），已有可读共享副本的只记 `source_viewers`。开了日程、妙记、文档的，接着跑 `lark-personal.ts` 的 `captureCalendar` / `captureMinutes` / `captureRecentDocs`（带 `who`：写进他的个人空间，kv 状态键加 `:<用户>`，不占本人的每小时检查）；`capture-space.ts` 的 `sharedCopyFor` 找他能读的共享副本并记下（聊天也改用它）。
+- 按读者分开：`lark-docs.ts` 数正文里嵌进来的表格和同步块，有的话 meta 记 `perReader` 和 `capturedBy`，`originKeyOf` 给 `lark:doc:<id>#<用户>`，不会被当作共享副本给别人用。多维表格只存链接，没有要分开的。
+- 检索：`search.ts` 按 origin_key（去掉 `#` 以后）合并，留排名最高的一份，`Hit.elsewhere` 列出其余；`SearchOptions.visible`（`visibility.ts` 的 `hitFilter`）让读者看不到的副本在合并前去掉。`search` 工具输出“同一个聊天或文档另有 N 处”，命令面板显示其余几处的空间名。
+- 向量：`embedPending` 先找正文和标题都相同、已有向量的切块，复制过来；同一批里相同的输入只算一次。迁移加部分索引 `chunks_text_head`（长度 + 开头 80 字，只含有向量的切块）。
 - 网页：账号页“已连接的应用”（按功能打开、重新授权、断开、缺权限的授权提示）；本人那里只说明用 lark-cli 登录。
 
 ## 插件连接器（2026-11-05）

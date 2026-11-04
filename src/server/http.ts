@@ -45,7 +45,7 @@ import { HttpError } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { checkRoute } from "../auth/routes.ts";
-import { setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
+import { hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
 import { can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
@@ -599,7 +599,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       branch = await indexBranch(app, spaces[0], o.branch);
       spaces = [spaces[0], branch.space];
     }
-    const found = visibleHits(app, who(req), await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2 }));
+    const found = visibleHits(app, who(req), await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2, visible: hitFilter(app, who(req)) }));
     return { hits: presentHits(app, found, o.q), branch };
   });
 

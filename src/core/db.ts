@@ -1353,6 +1353,9 @@ const migrations: string[] = [
      checked_at text not null,
      primary key (source_id, user_id)
    );`,
+  // The same text embedded once (search/embeddings.ts): copies of one chat or document in several
+  // spaces find the vector already made by its length and start, then compare the whole text.
+  `create index chunks_text_head on chunks(length(text), substr(text, 1, 80)) where embedding is not null;`,
 ];
 
 export type Db = DatabaseSync;

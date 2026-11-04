@@ -33,6 +33,8 @@ export type Hit = {
   noteIds?: number[];
   /** Other sources with exactly the same text, folded into this hit (“另有 N 份相同内容”). */
   sameAs?: { sourceId: string; uri: string; title: string; spaceId: string }[];
+  /** Other copies of the same thing on its platform (origin_key: someone else's copy of a chat, a document in another space), not shown separately. */
+  elsewhere?: { sourceId: string; title: string; spaceId: string }[];
   /** The source's text hash (for folding identical documents; not returned). */
   hash?: string;
   /** Replay (agents/replay-view.ts): the document or page changed after the question's time. */
@@ -59,6 +61,11 @@ export type SearchOptions = {
   under?: { space: string; node: string };
   /** false: keep the fused order even when reranking is on (settings → 检索). */
   rerank?: boolean;
+  /**
+   * Sources the reader may see (auth/visibility.ts `hitFilter`): the others are left out before copies
+   * of one chat or document are merged, so the copy they can read is the one shown.
+   */
+  visible?: (sourceId: string) => boolean;
 };
 
 const RRF_K = 60;
@@ -376,7 +383,22 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   const want = reranking ? Math.max(limit, app.config.rerank.top) : limit;
   // Different documents with identical text (copies, templates filled the same way): one is shown, the others are named on it.
   const same = new Map<string, Hit>();
+  // The same chat or document captured into several spaces (each person's copy, per-reader ones too):
+  // shown once, the others named on it.
+  const origins = new Map<string, string | null>();
+  const originOf = (id: string) => {
+    if (!origins.has(id)) origins.set(id, one<{ origin_key: string | null }>(app.db, "select origin_key from sources where id = ?", id)?.origin_key?.replace(/#.*$/, "") ?? null);
+    return origins.get(id)!;
+  };
+  const sameThing = new Map<string, Hit>();
   for (const h of hits) {
+    if (opts.visible && h.sourceId && !opts.visible(h.sourceId)) continue;
+    const origin = h.type === "chunk" && h.sourceId ? originOf(h.sourceId) : null;
+    const shown = origin ? sameThing.get(origin) : undefined;
+    if (shown && shown.sourceId !== h.sourceId) {
+      if (!shown.elsewhere?.some((s) => s.sourceId === h.sourceId)) (shown.elsewhere ??= []).push({ sourceId: h.sourceId!, title: h.title, spaceId: h.spaceId });
+      continue;
+    }
     const twin = h.type === "chunk" && h.hash && h.sourceKind !== "code" ? `${h.hash}#${h.lineStart}` : null;
     const first = twin ? same.get(twin) : undefined;
     if (first && first.sourceId !== h.sourceId) {
@@ -399,6 +421,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     }
     out.push(h);
     if (twin) same.set(twin, h);
+    if (origin && !sameThing.has(origin)) sameThing.set(origin, h);
     if (out.length >= want) break;
   }
   if (reranking) await rerankHits(app, query, out);

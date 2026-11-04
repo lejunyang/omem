@@ -139,13 +139,28 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
     batch,
   );
   if (!rows.length) return 0;
-  const vecs = await e.embed(
-    rows.map((r) => `${r.path || r.title}\n${r.text}`.slice(0, 2000)),
-    "passage",
+  // Text already embedded elsewhere (another copy of the same chat or document, docs/v2/multi-user.md):
+  // its vector is copied instead of asking the model again.
+  const twin = app.db.prepare(
+    "select embedding from chunks where length(text) = ? and substr(text, 1, 80) = ? and embedding is not null and text = ? and (case when path != '' then path else title end) = ? and id != ? limit 1",
   );
+  const known = new Map<number, Float32Array>();
+  for (const r of rows) {
+    const t = twin.get(r.text.length, r.text.slice(0, 80), r.text, r.path || r.title, r.id) as { embedding: Uint8Array } | undefined;
+    if (t?.embedding) known.set(r.id, new Float32Array(t.embedding.buffer.slice(t.embedding.byteOffset, t.embedding.byteOffset + t.embedding.byteLength)));
+  }
+  // Within the batch too: identical inputs are embedded once.
+  const input = (r: (typeof rows)[number]) => `${r.path || r.title}\n${r.text}`.slice(0, 2000);
+  const fresh = [...new Set(rows.filter((r) => !known.has(r.id)).map(input))];
+  const made = fresh.length ? await e.embed(fresh, "passage") : [];
+  const byInput = new Map(fresh.map((t, i) => [t, made[i]]));
+  for (const r of rows) if (!known.has(r.id)) known.set(r.id, byInput.get(input(r))!);
   const upd = app.db.prepare("update chunks set embedding = ? where id = ?");
-  rows.forEach((r, i) => upd.run(new Uint8Array(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength), r.id));
-  vectorIndex().add(app, rows.map((r, i) => ({ id: r.id, spaceId: r.space_id, vec: vecs[i] })));
+  for (const r of rows) {
+    const v = known.get(r.id)!;
+    upd.run(new Uint8Array(v.buffer, v.byteOffset, v.byteLength), r.id);
+  }
+  vectorIndex().add(app, rows.map((r) => ({ id: r.id, spaceId: r.space_id, vec: known.get(r.id)! })));
   return rows.length;
 }
 

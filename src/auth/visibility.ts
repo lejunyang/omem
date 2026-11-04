@@ -104,5 +104,11 @@ export function visibleHits<H extends { sourceId?: string; snippet: string }>(ap
   return out;
 }
 
+/** For search (SearchOptions.visible): whether a source may be shown at all; one to check is shown by title. None for the owner. */
+export function hitFilter(app: App, userId: string) {
+  if (isOwner(app, userId)) return undefined;
+  return (sourceId: string) => sourceVisible(app, userId, sourceId) !== false;
+}
+
 /** Restricted by hand (not the Feishu access check, which only decides who reads the text). */
 export const isRestricted = (app: App, sourceId: string) => rowOf(app, sourceId)?.visibility === "restricted";

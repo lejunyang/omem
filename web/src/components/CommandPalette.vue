@@ -168,6 +168,7 @@ const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ??
               <span class="ttl"><HitText :text="row.hit.display?.title ?? row.hit.title" :marks="row.hit.display?.titleMarks" /><span v-if="row.hit.lineStart" class="muted">:{{ row.hit.lineStart }}</span></span>
               <span v-if="row.hit.display?.place || row.hit.display?.link" class="where muted small ellipsis">{{ [row.hit.display.place, row.hit.display.link].filter(Boolean).join(" · ") }}</span>
               <span class="snip muted"><HitText :text="row.hit.display?.text ?? row.hit.snippet.replace(/\s+/g, ' ')" :marks="row.hit.display?.marks" /></span>
+              <span v-if="row.hit.elsewhere?.length" class="where muted small ellipsis">同一份另有 {{ row.hit.elsewhere.length }} 处：{{ row.hit.elsewhere.map((e) => spaceName(e.spaceId)).join("、") }}</span>
             </span>
             <span class="muted small space">{{ spaceName(row.hit.spaceId) }}</span>
           </button>

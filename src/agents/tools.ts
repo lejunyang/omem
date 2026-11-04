@@ -18,7 +18,7 @@ import { findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts"
 import { toolAllowed } from "../auth/tools.ts";
 import { can, requirePerm } from "../auth/permissions.ts";
 import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
-import { isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
+import { hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
@@ -257,9 +257,10 @@ const sourceKinds: Record<string, HitType[]> = {
 async function viewSearch(ctx: ToolContext, query: string, opts: SearchOptions) {
   const view = ctx.view;
   // Sources the person this run works for may not see (restricted, Feishu access) are left out (src/auth/visibility.ts).
-  if (!view) return visibleHits(ctx.app, ctx.userId ?? OWNER, await search(ctx.app, query, opts));
+  const visible = hitFilter(ctx.app, ctx.userId ?? OWNER);
+  if (!view) return visibleHits(ctx.app, ctx.userId ?? OWNER, await search(ctx.app, query, { ...opts, visible }));
   const limit = opts.limit ?? 20;
-  const wide: SearchOptions = { ...opts, includeIgnored: true, includeHistory: !!view.asOf || opts.includeHistory, limit: Math.min(120, limit * 3 + 10) };
+  const wide: SearchOptions = { ...opts, visible, includeIgnored: true, includeHistory: !!view.asOf || opts.includeHistory, limit: Math.min(120, limit * 3 + 10) };
   const hits = await cached(view, ["search", query, wide, view.asOf ?? null], () => search(ctx.app, query, wide));
   return visibleHits(ctx.app, ctx.userId ?? OWNER, filterHits(ctx.app, view, hits)).slice(0, limit);
 }
@@ -429,8 +430,9 @@ def({
         const level = h.attention ? `〔${LEVEL_LABELS[h.attention as Level] ?? h.attention}〕` : "";
         const notes = h.notes?.length ? `\n   ${h.notes.join(" ")}` : "";
         const twins = h.sameAs?.length ? `\n   （另有 ${h.sameAs.length} 份相同内容：${h.sameAs.slice(0, 5).map((s) => s.sourceId).join("、")}${h.sameAs.length > 5 ? "…" : ""}）` : "";
+        const copies = h.elsewhere?.length ? `\n   （同一个聊天或文档另有 ${h.elsewhere.length} 处：${h.elsewhere.slice(0, 5).map((s) => `${s.sourceId}〔${s.spaceId}〕`).join("、")}）` : "";
         const later = h.later ? "（提问之后改过，只有最新版，可能泄题）" : "";
-        return `${i + 1}. ${elsewhere}${level}${where}${later}  [${h.via.join("+")}]${notes}${twins}\n${truncate(h.snippet, 500).replace(/^/gm, "   ")}`;
+        return `${i + 1}. ${elsewhere}${level}${where}${later}  [${h.via.join("+")}]${notes}${twins}${copies}\n${truncate(h.snippet, 500).replace(/^/gm, "   ")}`;
       })
       .join("\n\n");
   },

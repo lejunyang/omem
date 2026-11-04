@@ -97,8 +97,11 @@ export function originKeyOf(input: { kind: string; uri: string; meta?: Record<st
   if (chat) return `lark:chat:${chat[1]}`;
   if (/^lark:(meeting|minutes):/.test(input.uri)) return input.uri;
   if (input.uri.startsWith("lark:calendar:")) return `lark:event:${input.uri.slice(14)}`;
+  // A document carrying other files' content (sheet tables, synced blocks) as its reader saw them:
+  // that reader's copy, never handed to someone else as theirs. (Bitables stay links, lark-docs.ts.)
+  const reader = input.meta?.perReader ? `#${String(input.meta?.capturedBy ?? "owner")}` : "";
   const doc = input.meta?.documentId;
-  if (input.kind === "doc" && typeof doc === "string" && doc) return `lark:doc:${doc}`;
+  if (input.kind === "doc" && typeof doc === "string" && doc) return `lark:doc:${doc}${reader}`;
   if (input.kind === "web" && /^https?:\/\//.test(input.uri)) return `url:${input.uri.replace(/#.*$/, "").replace(/\/+$/, "")}`;
   return null;
 }

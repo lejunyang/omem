@@ -1,4 +1,4 @@
-import { captureSpace as chatSpace } from "../core/capture-space.ts";
+import { captureSpace as chatSpace, sharedCopyFor } from "../core/capture-space.ts";
 import { historyDue, historyScan, resetHistoryScan, historyPage, RATE_LIMITED, retryHistoryNow } from "./lark-history.ts";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -627,13 +627,21 @@ async function captureMentions(app: App, endMs: number, touched: Map<string, Set
 const RECENT_DOCS_PER_POLL = 10;
 
 /**
+ * `who`: someone else's capture (lark-member-capture.ts, run inside their Feishu context): into their
+ * space, with their own state keys; what a shared space they read already holds is not stored again.
+ */
+export type CaptureFor = { userId: string; spaceId: string };
+const forKey = (key: string, who?: CaptureFor) => (who ? `${key}:${who.userId}` : key);
+const ownerSpace = (app: App) => (findSpace(app, app.config.lark.capture.space) ? app.config.lark.capture.space : "personal");
+
+/**
  * Docs the owner opened in the last `recentDocsDays` (lark-cli `drive +search --opened-since`,
  * newest first): each one not saved yet is read into the capture space. Once saved, the daily
  * docs check keeps it current; opening it again does not read it again.
  */
-export async function captureRecentDocs(app: App, touched: Map<string, Set<string>>) {
+export async function captureRecentDocs(app: App, touched: Map<string, Set<string>>, who?: CaptureFor) {
   const cfg = app.config.lark.capture;
-  const spaceId = findSpace(app, cfg.space) ? cfg.space : "personal";
+  const spaceId = who?.spaceId ?? ownerSpace(app);
   let token: string | undefined;
   let read = 0;
   for (let page = 0; page < 3 && read < RECENT_DOCS_PER_POLL; page++) {
@@ -643,8 +651,8 @@ export async function captureRecentDocs(app: App, touched: Map<string, Set<strin
       if (read >= RECENT_DOCS_PER_POLL) break;
       const url = String(r.result_meta?.url ?? r.url ?? "");
       if (!/^https?:\/\//.test(url)) continue;
-      const seenKey = `lark_recent_doc:${url}`;
-      if (one(app.db, "select 1 from kv where key = ?", seenKey) || one(app.db, "select 1 from sources where uri = ?", url)) continue;
+      const seenKey = forKey(`lark_recent_doc:${url}`, who);
+      if (one(app.db, "select 1 from kv where key = ?", seenKey) || one(app.db, "select 1 from sources where uri = ? and space_id = ?", url, spaceId) || (!who && one(app.db, "select 1 from sources where uri = ?", url))) continue;
       try {
         const s = await importUrl(app, spaceId, url, { archive: true });
         touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), s.id, ...(s.related ?? [])]));
@@ -669,18 +677,19 @@ function hourlyDue(app: App, key: string, minutes = 60) {
 }
 
 /** Calendar events from yesterday to a week ahead: one event source each, updated when the event changes. */
-export async function captureCalendar(app: App, touched: Map<string, Set<string>>) {
-  if (!hourlyDue(app, "lark_calendar_at")) return 0;
+export async function captureCalendar(app: App, touched: Map<string, Set<string>>, who?: CaptureFor) {
+  if (!hourlyDue(app, forKey("lark_calendar_at", who))) return 0;
   const start = new Date(Date.now() - 86400_000).toISOString();
   const end = new Date(Date.now() + 7 * 86400_000).toISOString();
   const v = await larkCli(["calendar", "+agenda", "--start", start, "--end", end, "--as", "user", "--format", "json"]);
   const events = (v.data?.events ?? v.data?.items ?? v.data ?? []) as Record<string, any>[];
   if (!Array.isArray(events)) return 0;
-  const spaceId = findSpace(app, app.config.lark.capture.space) ? app.config.lark.capture.space : "personal";
+  const spaceId = who?.spaceId ?? ownerSpace(app);
   let n = 0;
   for (const e of events) {
     const id = e.event_id ?? e.id;
     if (!id) continue;
+    if (who && sharedCopyFor(app, who.userId, `lark:event:${id}`, "member-capture")) continue;
     const when = (t: any) => (t?.date_time ?? t?.datetime ?? (t?.timestamp ? new Date(Number(t.timestamp) * 1000).toISOString() : t?.date) ?? (typeof t === "string" ? t : "")) as string;
     const attendees = (e.attendees ?? []).map((a: any) => a.display_name ?? a.name ?? a.user_id ?? "").filter(Boolean);
     const text = [
@@ -707,10 +716,12 @@ export async function captureCalendar(app: App, touched: Map<string, Set<string>
 }
 
 /** Minutes the owner owns or joined since the last check: summary, todos and transcript. */
-export async function captureMinutes(app: App, touched: Map<string, Set<string>>) {
-  if (!hourlyDue(app, "lark_minutes_at")) return 0;
-  const since = one<{ value: string }>(app.db, "select value from kv where key = 'lark_minutes_since'")?.value ?? new Date(Date.now() - 7 * 86400_000).toISOString();
-  const seen = new Set<string>(json(one<{ value: string }>(app.db, "select value from kv where key = 'lark_minutes_seen'")?.value, []));
+export async function captureMinutes(app: App, touched: Map<string, Set<string>>, who?: CaptureFor) {
+  if (!hourlyDue(app, forKey("lark_minutes_at", who))) return 0;
+  const sinceKey = forKey("lark_minutes_since", who);
+  const seenKey = forKey("lark_minutes_seen", who);
+  const since = one<{ value: string }>(app.db, "select value from kv where key = ?", sinceKey)?.value ?? new Date(Date.now() - 7 * 86400_000).toISOString();
+  const seen = new Set<string>(json(one<{ value: string }>(app.db, "select value from kv where key = ?", seenKey)?.value, []));
   const tokens = new Map<string, string>();
   for (const flag of ["--owner-ids", "--participant-ids"]) {
     const v = await larkCli(["minutes", "+search", flag, "me", "--start", since, "--page-size", "30", "--as", "user", "--format", "json"]);
@@ -719,9 +730,13 @@ export async function captureMinutes(app: App, touched: Map<string, Set<string>>
       if (t && !seen.has(t)) tokens.set(t, it.title ?? t);
     }
   }
-  const spaceId = findSpace(app, app.config.lark.capture.space) ? app.config.lark.capture.space : "personal";
+  const spaceId = who?.spaceId ?? ownerSpace(app);
   let n = 0;
   for (const [token, title] of tokens) {
+    if (who && sharedCopyFor(app, who.userId, `lark:minutes:${token}`, "member-capture")) {
+      seen.add(token);
+      continue;
+    }
     try {
       const m = await minutesText(token, title);
       const r = upsertSource(app, { archive: true, spaceId, kind: "meeting", uri: `lark:minutes:${token}`, title: `妙记：${m.title}`, text: m.text, meta: { via: "lark-cli", minuteToken: token } });
@@ -733,9 +748,9 @@ export async function captureMinutes(app: App, touched: Map<string, Set<string>>
     }
   }
   // A meeting's record may have taken some minutes meanwhile (minutesSeen): keep those too.
-  for (const t of json<string[]>(one<{ value: string }>(app.db, "select value from kv where key = 'lark_minutes_seen'")?.value, [])) seen.add(t);
-  run(app.db, "insert into kv(key,value) values('lark_minutes_seen', ?) on conflict(key) do update set value = excluded.value", JSON.stringify([...seen].slice(-500)));
-  run(app.db, "insert into kv(key,value) values('lark_minutes_since', ?) on conflict(key) do update set value = excluded.value", new Date(Date.now() - 86400_000).toISOString());
+  for (const t of json<string[]>(one<{ value: string }>(app.db, "select value from kv where key = ?", seenKey)?.value, [])) seen.add(t);
+  run(app.db, "insert into kv(key,value) values(?, ?) on conflict(key) do update set value = excluded.value", seenKey, JSON.stringify([...seen].slice(-500)));
+  run(app.db, "insert into kv(key,value) values(?, ?) on conflict(key) do update set value = excluded.value", sinceKey, new Date(Date.now() - 86400_000).toISOString());
   return n;
 }
 

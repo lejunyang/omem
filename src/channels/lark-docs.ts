@@ -63,6 +63,9 @@ export type LarkDocMeta = {
    * check) follows only this many, so links of links do not start a new two levels each time.
    */
   depth?: number;
+  /** Whose Feishu it was read with; `perReader`: it carries other files' content as that person saw it. */
+  capturedBy?: string;
+  perReader?: boolean;
   /** When omem last read it, when its content last changed here, Feishu's last edit, the last update check. */
   fetchedAt?: string;
   changedAt?: string;
@@ -169,6 +172,8 @@ type Ctx = {
   maxBytes: number;
   /** Tokens already attempted in this read (a failure is not retried within it). */
   tried: Set<string>;
+  /** Content of other files written into this one (sheet tables, synced blocks): what the reader could see of them. */
+  embeds: number;
 };
 
 const PARALLEL_DOWNLOADS = 4;
@@ -322,7 +327,10 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
     const link = `${ctx.origin}/sheets/${a.token}${a["sheet-id"] ? `?sheet=${a["sheet-id"]}` : ""}`;
     try {
       const table = a["sheet-id"] ? await sheetTable(a.token, a["sheet-id"]) : "";
-      if (table) return `\n\n${table}\n\n${anchor(link, "在飞书中打开表格")}\n\n`;
+      if (table) {
+        ctx.embeds++;
+        return `\n\n${table}\n\n${anchor(link, "在飞书中打开表格")}\n\n`;
+      }
     } catch (e) {
       console.warn(`[omem] 读取飞书文档内嵌表格失败 ${a.token}：${(e as Error).message}`);
     }
@@ -340,6 +348,7 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
       if (!token || !block) return "";
       try {
         const d = await fetchDoc(token, ["--scope", "range", "--start-block-id", block, "--end-block-id", block]);
+        ctx.embeds++;
         return await localize(ctx, d.content.replace(/<\/?fragment[^>]*>/g, ""), false);
       } catch (e) {
         console.warn(`[omem] 读取飞书同步块失败 ${token}#${block}：${(e as Error).message}`);
@@ -583,7 +592,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     return { id: existing.id, status: "unchanged", related: [], missing: [] };
   }
 
-  const ctx: Ctx = { app, origin, docUrl: url, media: { ...(prev.media ?? {}) }, used: new Set(), maxBytes: cfg.docMediaMaxMB * 1024 * 1024, tried: new Set() };
+  const ctx: Ctx = { app, origin, docUrl: url, media: { ...(prev.media ?? {}) }, used: new Set(), maxBytes: cfg.docMediaMaxMB * 1024 * 1024, tried: new Set(), embeds: 0 };
   let text = await localize(ctx, doc.content);
 
   const related: string[] = [];
@@ -639,6 +648,10 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     documentId: doc.documentId || undefined,
     token,
     media: keptMedia,
+    // Who read it, and whether parts of other files are in it as that person saw them: then it is that
+    // person's copy (sources/store.ts originKeyOf), never handed to someone else as theirs.
+    capturedBy: larkActing()?.userId ?? "owner",
+    ...(ctx.embeds ? { perReader: true } : {}),
     ...(missing.length ? { missing: Object.fromEntries(missing.map((m) => [m.url, { title: m.title, error: m.error }])) } : {}),
   };
   // Someone else's capture of a document already kept in a shared space they read: one copy, and a note
@@ -646,6 +659,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const acting = larkActing();
   if (acting && doc.documentId && !one(app.db, "select 1 from sources where space_id = ? and uri = ?", spaceId, uri)) {
     const readable = accessibleSpaces(app, acting.userId) ?? [];
+    // A copy carrying other files as its reader saw them (perReader) has its own key: not reused here.
     const copy = all<{ id: string; space_id: string }>(app.db, "select id, space_id from sources where origin_key = ? and deleted_at is null", `lark:doc:${doc.documentId}`).find((c) => c.space_id !== spaceId && readable.includes(c.space_id) && !c.space_id.startsWith("personal"));
     if (copy) {
       run(app.db, "insert into source_viewers(source_id,user_id,evidence,at) values(?,?,?,?) on conflict(source_id,user_id) do update set at = excluded.at", copy.id, acting.userId, "doc-import", now());
