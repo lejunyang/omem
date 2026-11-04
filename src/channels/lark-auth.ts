@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError } from "../core/util.ts";
-import { larkCli, LarkScopeError } from "./lark-cli.ts";
+import { larkActing, larkCli, LarkScopeError } from "./lark-cli.ts";
 
 /**
  * The owner's lark-cli login (user identity) and what it may do. lark-cli has its own app and
@@ -107,6 +107,13 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>)
     if (!(e instanceof LarkScopeError)) throw e;
     // Any one of the listed scopes is enough: ask for the first (the narrowest lark-cli names).
     const scope = e.scopes[0];
+    // Someone else's connection (src/auth/lark-user.ts): they authorize the scope on their own connection, from the account page.
+    const actor = larkActing();
+    if (actor) {
+      const { userName } = await import("../core/users.ts");
+      notify(app, { userId: actor.userId, title: "飞书授权：需要补一项权限", body: `${reason}需要你给 omem 授权：${scope}。在账号页点“授权”，在飞书里确认后再试。`, link: `#/account?connect=lark&scopes=${encodeURIComponent(scope)}`, urgency: "normal" });
+      throw new HttpError(403, `缺少飞书权限 ${e.scopes.join(" 或 ")}。已把授权链接发给 ${userName(app, actor.userId)}；对方授权后再试，不要换别的方式绕过。`);
+    }
     let link = "";
     try {
       link = (await requestUserScopes(app, [scope], reason)).url;

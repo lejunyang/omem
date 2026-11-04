@@ -28,6 +28,8 @@ export type LoginProvider = {
   authorizeUrl(app: App, p: { state: string; challenge: string; redirectUri: string; scopes: string[] }): string;
   exchange(app: App, p: { code: string; verifier: string; redirectUri: string }): Promise<ProviderTokens>;
   whoami(app: App, tokens: ProviderTokens): Promise<ProviderIdentity>;
+  /** New tokens for a refresh token (src/auth/connections.ts); providers without it cannot keep a connection alive. */
+  refresh?(app: App, refreshToken: string): Promise<ProviderTokens>;
   /** The owner, known from configuration before any login (Feishu: lark.ownerOpenId among the aliases). */
   isOwner?(app: App, identity: ProviderIdentity): boolean;
 };

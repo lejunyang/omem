@@ -3,7 +3,7 @@ import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError, json, newId } from "../core/util.ts";
 import { asOwner } from "./lark-auth.ts";
-import { larkCli } from "./lark-cli.ts";
+import { larkActing, larkCli } from "./lark-cli.ts";
 import { catalogChanged } from "../sources/catalog.ts";
 
 /**
@@ -157,15 +157,18 @@ export function nodeUrl(origin: string, n: WikiNode) {
 /** Only docs are read; sheets, bases, mind notes and files in a knowledge base stay links. */
 export const isReadableNode = (n: WikiNode) => n.objType === "docx" || n.objType === "doc";
 
-let personalSpace: string | null = null;
-/** Space id of the owner's personal document library (`my_library`). */
+/** Per person: whose Feishu the call is for (lark-cli.ts larkActing), the owner when nobody else. */
+const personalSpaces = new Map<string, string>();
+/** Space id of the personal document library (`my_library`) of the owner, or of the person this call is for. */
 export async function personalLibrary(app: App): Promise<string> {
-  if (personalSpace) return personalSpace;
+  const who = larkActing()?.userId ?? "owner";
+  const known = personalSpaces.get(who);
+  if (known) return known;
   const v = await asOwner(app, "查找个人文档库", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: "my_library" }), "--as", "user", "--format", "json"], 60_000));
   const d = v?.data ?? v;
   const id = String(d?.space?.space_id ?? d?.space_id ?? "");
   if (!id) throw new Error("读不到个人文档库的空间 id");
-  personalSpace = id;
+  personalSpaces.set(who, id);
   return id;
 }
 

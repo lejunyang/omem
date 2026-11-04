@@ -16,7 +16,8 @@ import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpace
 import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { toolAllowed } from "../auth/tools.ts";
-import { can } from "../auth/permissions.ts";
+import { can, requirePerm } from "../auth/permissions.ts";
+import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
@@ -2889,9 +2890,16 @@ def({
  * Writes outside the owner's own place (a knowledge base others read, someone else's folder or doc)
  * wait for the owner's OK, with the place spelled out; the approved call runs again with `approved`.
  */
-/** Acting as the owner on Feishu (lark-cli user identity): the owner's own runs in omem only. */
+/**
+ * Acting as a person on Feishu (lark-cli user identity): the owner with lark-cli's login, anyone else
+ * with their own connection (src/auth/lark-user.ts) — the call runs as whoever the run works for.
+ */
 function ownerOnly(ctx: ToolContext) {
-  if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有 omem 的主人能以本人身份用飞书");
+  const user = ctx.userId ?? OWNER;
+  if (user !== OWNER) {
+    requirePerm(ctx.app, user, "connector.use");
+    if (!canActOnLark(ctx.app, user)) throw new HttpError(403, `${userName(ctx.app, user)}还没有连接飞书（或连接需要重新授权）：请对方在 omem 的账号页连接飞书`);
+  }
   // Like the bot's lark_* tools: omem's own runs only (an outside agent over `omem mcp` has no Feishu scope).
   if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份用飞书只在 omem 自己的运行里可用");
 }
@@ -4466,7 +4474,8 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
   const parsed = { data };
   try {
     // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
-    const text = await withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data));
+    // ... and Feishu as the person this run works for (their own connection; src/auth/lark-user.ts).
+    const text = await asLarkUser(ctx.app, ctx.userId ?? OWNER, () => withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data)));
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
     const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : "";
     return { text: text + moved + (await steering(ctx)), isError: false };

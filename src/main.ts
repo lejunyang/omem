@@ -43,6 +43,9 @@ registerScheduleKind("brief", (app) => createRun(app, { kind: "brief", spaceId: 
 registerScheduleKind("lark-curate", (app, s) => createRun(app, { kind: "curate", spaceId: "personal", title: "筛选值得关注的飞书群", input: { direction: (s.config as { direction?: string }).direction } }));
 registerScheduleKind("lark-poll", (app) => {
   import("./channels/lark-personal.ts").then((m) => m.pollLark(app)).catch((e) => console.warn("[omem] 飞书消息采集失败：", e.message));
+  // Then the people who connected their own Feishu (src/auth/connections.ts), and connections nobody used lately kept alive.
+  import("./channels/lark-member-capture.ts").then((m) => m.pollMembers(app)).catch((e) => console.warn("[omem] 成员的飞书采集失败：", e.message));
+  import("./auth/connections.ts").then((m) => m.renewConnections(app)).catch((e) => console.warn("[omem] 续期飞书连接失败：", e.message));
 });
 
 registerScheduleKind("lark-docs-watch", (app) => {

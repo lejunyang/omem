@@ -4,11 +4,12 @@ import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { json } from "../core/util.ts";
+import { json, now } from "../core/util.ts";
+import { accessibleSpaces } from "../core/users.ts";
 import { keepOriginal } from "../sources/import.ts";
 import { hasStoredFile } from "../core/stored-files.ts";
 import { sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
-import { larkCli } from "./lark-cli.ts";
+import { larkActing, larkCli } from "./lark-cli.ts";
 import { clearWikiLocationCache } from "./lark-wiki.ts";
 import { withExtension } from "./lark-messages.ts";
 
@@ -640,6 +641,17 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     media: keptMedia,
     ...(missing.length ? { missing: Object.fromEntries(missing.map((m) => [m.url, { title: m.title, error: m.error }])) } : {}),
   };
+  // Someone else's capture of a document already kept in a shared space they read: one copy, and a note
+  // that they can see it (docs/v2/multi-user.md, “采集前先查”). The same revision reads the same for everyone.
+  const acting = larkActing();
+  if (acting && doc.documentId && !one(app.db, "select 1 from sources where space_id = ? and uri = ?", spaceId, uri)) {
+    const readable = accessibleSpaces(app, acting.userId) ?? [];
+    const copy = all<{ id: string; space_id: string }>(app.db, "select id, space_id from sources where origin_key = ? and deleted_at is null", `lark:doc:${doc.documentId}`).find((c) => c.space_id !== spaceId && readable.includes(c.space_id) && !c.space_id.startsWith("personal"));
+    if (copy) {
+      run(app.db, "insert into source_viewers(source_id,user_id,evidence,at) values(?,?,?,?) on conflict(source_id,user_id) do update set at = excluded.at", copy.id, acting.userId, "doc-import", now());
+      return { id: copy.id, status: "unchanged" as const, related: [...new Set(related)], missing: [] };
+    }
+  }
   const r = upsertSource(app, { archive: opts.archive, spaceId, kind: "doc", uri, title: doc.title, text, meta });
   if (r.status === "unchanged") run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), r.id);
   if (wiki) linkWikiSource(app, wiki.nodeToken, r.id);

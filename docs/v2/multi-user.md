@@ -1,6 +1,6 @@
 # 多用户、权限与连接器
 
-> 状态：第 1 期（登录与会话）、第 2 期（角色与权限）已实现（2026-11-05），其余在做。按文末“分期”一段一段做，每段过 `pnpm run check` 后提交，并同步 README、architecture.md 的实现状态表和 acceptance.md。
+> 状态：第 1 期（登录与会话）、第 2 期（角色与权限）、第 3 期（连接器与飞书多用户）已实现（2026-11-05），其余在做。第 3 期与下文不同的地方：连接的元数据也在 `secrets/vault.db`（主库没有 `connections` 表）；本人仍用 lark-cli 自己的登录；成员的后台采集先只做聊天（日程、妙记、最近打开的文档以后再加）。按文末“分期”一段一段做，每段过 `pnpm run check` 后提交，并同步 README、architecture.md 的实现状态表和 acceptance.md。
 
 要做四件事：
 
@@ -228,7 +228,7 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 
 ### 令牌保管
 
-- 令牌不进主数据库，放在 `secrets/vault.db`（单独的 SQLite，权限 0600），按连接 id 存 AES-256-GCM 密文，密钥在 `secrets/vault.key`。主库的 `connections` 表只存元数据：提供方、账号、scope、状态、到期时间、最近一次错误。
+- 令牌不进主数据库，放在 `secrets/vault.db`（单独的 SQLite，权限 0600），按连接 id 存 AES-256-GCM 密文，密钥在 `secrets/vault.key`。连接的元数据（提供方、账号、scope、状态、到期时间、最近一次错误）也放在这里：连接本来就只属于这台机器（`src/auth/vault.ts`）。
 - `secrets/` 本来就不进快照，也不随拉取同步，所以连接只存在于建立它的那台服务上。别的服务要用这个人的平台能力，只能请这台服务代办（见“多服务连接”）。
 - 刷新：调度器里一个任务，访问令牌到期前 10 分钟刷新；刷新令牌离过期不到 2 天时也主动刷新一次来续期。同一个连接的刷新串行执行（进程内锁），新令牌先写进 vault 再使用。飞书的刷新令牌只能用一次，刷新之后没存住就只能让用户重新授权。
 - 刷新失败（被撤销、已过期）：连接标为“需要重新授权”，通知这个用户（机器人私聊卡片，附重新授权链接），相关采集暂停，不反复重试。
@@ -255,7 +255,7 @@ AI 后端和额度暂时不限制，成员的运行用本人配置的后端和�
 | 妙记与会议 | 妙记、入会事件 | `minutes:minutes:readonly` `minutes:minutes.artifacts:read` `vc:meeting.meetingevent:read` |
 | 让助手写文档 | `lark_doc_*`、`lark_write` | `docx:document` `wiki:node:create` 等 |
 
-- **继续用 lark-cli。** lark-cli 可以从环境变量取应用和用户令牌（`LARKSUITE_CLI_APP_ID`、`LARKSUITE_CLI_USER_ACCESS_TOKEN`，1.0.98 里有），所以现有的采集、`lark_read`、`lark_write` 不用重写：`larkCli(args, { as: userId })` 在子进程的环境里注入这个用户的令牌。本人没有建立连接时，照旧用 lark-cli 自己的登录，兼容现状；本人建立了连接以后也走注入，lark-cli 的设备码登录只留作后备。`lark-auth.ts` 的 scope 缓存和待完成的授权改成按用户分开。缺 scope（`LarkScopeError`）时给这个用户发增量授权链接，不再给本人发设备码。
+- **继续用 lark-cli。** lark-cli 可以从环境变量取应用和用户令牌（`LARKSUITE_CLI_APP_ID`、`LARKSUITE_CLI_USER_ACCESS_TOKEN`，1.0.98 里有；这时它的 `auth` 命令不能用），所以现有的采集、`lark_read`、`lark_write`、文档读写不用重写。做法是一个异步上下文：为某人做的事放在 `asLarkUser(app, 用户, …)` 里（`src/auth/lark-user.ts`；每次工具调用都这样包着），里面的 `larkCli` 就注入这个人的令牌（`lark-cli.ts` 的 `larkActor`）。本人照旧用 lark-cli 自己的登录。缺 scope（`LarkScopeError`）时：本人照旧收到设备码链接，别人收到“到账号页授权这一项”的通知（`asOwner` 里按上下文分开）。个人文档库这类缓存按人分开。
 - 本人的 lark-cli 现在可能指向另一个应用，open_id 和机器人应用不同。迁移时提示本人把 lark-cli 也换到机器人应用（`lark-setup.ts` 已经支持），或者直接用飞书登录 + 连接代替 lark-cli 登录。
 
 ### 授权代理：飞书内置，长尾平台可选 Nango

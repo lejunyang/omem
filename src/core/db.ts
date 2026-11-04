@@ -1251,6 +1251,34 @@ const migrations: string[] = [
    );
    alter table runs add column scope text;   -- JSON array of space ids, null: everything (the owner's)
    update space_members set role = 'manager' where role = 'owner';`,
+  // Several people capturing the same things (docs/v2/multi-user.md, “多用户采集与去重”): a source's
+  // platform identity (origin_key: lark:chat:<chat_id>, lark:doc:<document id>, …) so copies in different
+  // spaces are known to be one thing; who else could see a source (source_viewers) when a capture found
+  // it already in a space they read; and a message's line in each chat source it is part of — the same
+  // private chat captured by both people in it, each into their own space. lark_messages.source_id /
+  // line stay as the first copy (and what pulls carry).
+  `alter table sources add column origin_key text;
+   create index sources_origin on sources(origin_key) where origin_key is not null;
+   update sources set origin_key = 'lark:chat:' || substr(uri, 6) where kind = 'chat' and uri like 'lark:oc\\_%' escape '\\' and instr(uri, '/') = 0;
+   update sources set origin_key = uri where uri like 'lark:meeting:%' or uri like 'lark:minutes:%';
+   update sources set origin_key = 'lark:event:' || substr(uri, 15) where uri like 'lark:calendar:%';
+   update sources set origin_key = 'lark:doc:' || json_extract(meta, '$.documentId') where kind = 'doc' and coalesce(json_extract(meta, '$.documentId'), '') != '';
+   create table source_viewers (
+     source_id text not null references sources(id) on delete cascade,
+     user_id text not null,
+     evidence text not null default '',
+     at text not null,
+     primary key (source_id, user_id)
+   );
+   create table lark_message_lines (
+     source_id text not null references sources(id) on delete cascade,
+     message_id text not null,
+     line integer not null,
+     primary key (source_id, message_id)
+   );
+   create index lark_message_lines_message on lark_message_lines(message_id);
+   insert or ignore into lark_message_lines(source_id, message_id, line)
+     select source_id, message_id, line from lark_messages where source_id is not null and line is not null and source_id in (select id from sources);`,
 ];
 
 export type Db = DatabaseSync;

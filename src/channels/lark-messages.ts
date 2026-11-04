@@ -281,6 +281,12 @@ export function storeMessages(
         positionOf(m),
       ),
     );
+    // Its line in this chat source; the same message can be a line of several (each person's copy of a shared chat).
+    if (opts.sourceId)
+      messages.forEach((m, i) => {
+        const line = opts.lines?.get(m.message_id) ?? (opts.firstLine !== undefined ? opts.firstLine + i : null);
+        if (line !== null) run(app.db, "insert into lark_message_lines(source_id,message_id,line) values(?,?,?) on conflict(source_id,message_id) do update set line = excluded.line", opts.sourceId!, m.message_id, line);
+      });
   });
 }
 
@@ -386,7 +392,13 @@ const toView = (r: Row): ChatMessageView => ({
 /** Structured messages of a chat source (empty for sources captured before rows were kept) and the messages they quote. */
 /** The messages kept for a chat source; `from` / `to` limit them to the lines on screen. */
 export function sourceMessages(app: App, sourceId: string, from = 1, to = Number.MAX_SAFE_INTEGER) {
-  const rows = all<Row>(app.db, "select * from lark_messages where source_id = ? and (line is null or line between ? and ?) order by create_ms, line", sourceId, from, to);
+  const rows = all<Row>(
+    app.db,
+    `select m.*, coalesce(l.line, case when m.source_id = ? then m.line end) line from lark_messages m left join lark_message_lines l on l.message_id = m.message_id and l.source_id = ?
+     where (l.source_id is not null or m.source_id = ?) and (coalesce(l.line, case when m.source_id = ? then m.line end) is null or coalesce(l.line, case when m.source_id = ? then m.line end) between ? and ?)
+     order by m.create_ms, line`,
+    sourceId, sourceId, sourceId, sourceId, sourceId, from, to,
+  );
   const parents = new Set(rows.map((r) => r.parent_id).filter((p): p is string => !!p));
   const have = new Set(rows.map((r) => r.message_id));
   const quoted: Record<string, ChatMessageView & { sourceId: string | null }> = {};
@@ -563,9 +575,15 @@ export function fillResourcesStatus() {
 }
 
 /** Both identities use the same chat/message location. Replayed messages update that line. */
-export function persistChatMessages(app: App, input: { chatId: string; spaceId: string; name: string; messages: LarkMessage[]; owner?: string; resources?: Map<string, Record<string, ResourceRef>>; archive?: string }) {
+/** `userId`: whose capture it is (the owner's by default). */
+export function persistChatMessages(app: App, input: { chatId: string; spaceId: string; name: string; messages: LarkMessage[]; owner?: string; resources?: Map<string, Record<string, ResourceRef>>; archive?: string; userId?: string }) {
   type SourceRow = { id: string; space_id: string; uri: string; title: string; text: string; meta: string };
-  const existing = one<SourceRow>(app.db, "select * from sources where uri=? and deleted_at is null order by captured_at limit 1", `lark:${input.chatId}`);
+  // The owner's capture goes on in the chat's existing copy wherever it is; someone else's only in its own
+  // space (docs/v2/multi-user.md): another space may hold another person's copy, neither read nor written here.
+  const mine = !input.userId || input.userId === "owner";
+  const existing =
+    one<SourceRow>(app.db, "select * from sources where uri=? and space_id=? and deleted_at is null order by captured_at limit 1", `lark:${input.chatId}`, input.spaceId) ??
+    (mine ? one<SourceRow>(app.db, "select * from sources where uri=? and deleted_at is null order by captured_at limit 1", `lark:${input.chatId}`) : undefined);
   const spaceId = existing?.space_id ?? input.spaceId;
   const targets = new Map<string, { source?: SourceRow; lines: string[]; positions: Map<string, number>; writes: { message: LarkMessage; line: number; resources: Record<string, ResourceRef> }[] }>();
   const validSources = new Map<string, SourceRow | undefined>();
@@ -573,11 +591,15 @@ export function persistChatMessages(app: App, input: { chatId: string; spaceId: 
   let status: UpsertResult["status"] = "unchanged";
   const inBatch = new Map(input.messages.map(m => [m.message_id, m]));
   for (const m of input.messages) {
-    const row = one<{ source_id: string | null; line: number | null; resources: string }>(app.db, "select source_id,line,resources from lark_messages where chat_id=? and message_id=?", input.chatId, m.message_id);
+    const row0 = one<{ source_id: string | null; line: number | null; resources: string }>(app.db, "select source_id,line,resources from lark_messages where chat_id=? and message_id=?", input.chatId, m.message_id);
+    // Its line in a copy in this space, if any (the row's own columns may be another space's copy).
+    const here = row0 ? one<{ source_id: string; line: number }>(app.db, "select l.source_id, l.line from lark_message_lines l join sources s on s.id = l.source_id where l.message_id = ? and s.space_id = ? and s.deleted_at is null order by s.captured_at limit 1", m.message_id, spaceId) : undefined;
+    const sameSpace = (id: string | null) => !!id && one<{ space_id: string }>(app.db, "select space_id from sources where id = ?", id)?.space_id === spaceId;
+    const row = row0 && { ...row0, source_id: here?.source_id ?? (sameSpace(row0.source_id) ? row0.source_id : null), line: here?.line ?? (sameSpace(row0.source_id) ? row0.line : null) };
     const resources = { ...json<Record<string, ResourceRef>>(row?.resources, {}), ...input.resources?.get(m.message_id) };
     if (row?.source_id && !validSources.has(row.source_id)) validSources.set(row.source_id, one<SourceRow>(app.db, "select * from sources where id=? and deleted_at is null", row.source_id));
-    const legacy = !row?.source_id ? one<SourceRow>(app.db, "select * from sources where deleted_at is null and (uri=? or uri glob ?) and instr(text,?)>0 limit 1", `lark:${input.chatId}`, `lark:${input.chatId}@*`, `(${m.message_id})`) : undefined;
-    const archive = input.archive ? one<SourceRow>(app.db, "select * from sources where deleted_at is null and uri=? limit 1", `lark:${input.chatId}@${input.archive}`) : undefined;
+    const legacy = !row?.source_id ? one<SourceRow>(app.db, "select * from sources where deleted_at is null and space_id=? and (uri=? or uri glob ?) and instr(text,?)>0 limit 1", spaceId, `lark:${input.chatId}`, `lark:${input.chatId}@*`, `(${m.message_id})`) : undefined;
+    const archive = input.archive ? one<SourceRow>(app.db, "select * from sources where deleted_at is null and space_id=? and uri=? limit 1", spaceId, `lark:${input.chatId}@${input.archive}`) : undefined;
     const source = (row?.source_id ? validSources.get(row.source_id) : undefined) ?? legacy ?? (input.archive ? archive : existing);
     const targetKey = source?.id ?? `new:${input.archive ?? "live"}`;
     let target = targets.get(targetKey);

@@ -6,7 +6,9 @@ import { all } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { addMember, findUser, getUser, identitiesOf, listUsers, OWNER, removeMember, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
-import { audit, auditLog, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
+import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
+import { connectionsOf, disconnect } from "./connections.ts";
+import { featuresOf, scopesFor } from "./features.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { approveUser, beginLogin, completeLogin, consumeLoginLink, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, validInvite } from "./login.ts";
 import { enabledProviders, loginProvider, loginProviders } from "./providers.ts";
@@ -116,15 +118,19 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
 
   server.get("/api/auth/:provider/start", async (req, reply) => {
     const { provider } = req.params as { provider: string };
-    const o = parse(z.object({ purpose: z.enum(["login", "bind"]).default("login"), invite: z.string().max(80).optional(), return: z.string().max(300).optional() }), req.query);
+    const o = parse(z.object({ purpose: z.enum(["login", "bind", "connect"]).default("login"), features: z.string().max(300).optional(), scopes: z.string().regex(/^[\w:., -]*$/).max(1000).optional(), invite: z.string().max(80).optional(), return: z.string().max(300).optional() }), req.query);
     const base = baseUrl(app, req);
     try {
       const a = resolveAuth(app, req);
-      if (o.purpose === "bind" && !a) throw new HttpError(401, "先登录再绑定");
-      const url = beginLogin(app, { provider, purpose: o.purpose, redirectUri: callbackUrl(base, provider), userId: a?.userId, sessionHash: a?.sessionHash, invite: o.invite, returnTo: o.return });
+      if (o.purpose !== "login" && !a) throw new HttpError(401, "先登录再绑定");
+      // Connecting asks for just the scopes of the features being turned on (incremental authorization).
+      // A missing scope a call ran into (lark-user.ts larkAs) is asked for by name, with background access.
+      const named = (o.scopes ?? "").split(/[\s,]+/).filter(Boolean).slice(0, 30);
+      const scopes = o.purpose === "connect" ? [...new Set([...scopesFor(provider, (o.features ?? "").split(",").filter(Boolean)), ...named, ...(named.length ? scopesFor(provider, ["offline"]) : [])])] : [];
+      const url = beginLogin(app, { provider, purpose: o.purpose, redirectUri: callbackUrl(base, provider), userId: a?.userId, sessionHash: a?.sessionHash, invite: o.invite, returnTo: o.return, scopes });
       return reply.header("cache-control", "no-store").redirect(url);
     } catch (e) {
-      return back(reply, base, `${o.purpose === "bind" ? "/account" : "/login"}?error=${encodeURIComponent((e as Error).message)}`);
+      return back(reply, base, `${o.purpose === "login" ? "/login" : "/account"}?error=${encodeURIComponent((e as Error).message)}`);
     }
   });
 
@@ -136,7 +142,7 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       const r = await completeLogin(app, { provider, state: o.state, code: o.code, error: o.error });
       if (r.kind === "bound") {
         if (r.lifted) liftRestriction(app, r.lifted);
-        return back(reply, base, r.returnTo || `/account?bound=${encodeURIComponent(provider)}`);
+        return back(reply, base, r.returnTo || `/account?${r.connected ? "connected" : "bound"}=${encodeURIComponent(provider)}`);
       }
       startSession(req, reply, base, r.userId, r.via, r.restricted);
       return back(reply, base, r.returnTo || "/");
@@ -187,6 +193,18 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       providers: enabledProviders(app).map((p) => ({ ...providerView(app, p)!, primary: p === primary })),
       ownerSeesPersonal: id !== OWNER,
     };
+  });
+  // Connected platforms (src/auth/connections.ts): what is on, whether it works in the background; disconnecting.
+  server.get("/api/auth/connections", async (req) => ({
+    connections: connectionsOf(app, who(req)),
+    available: enabledProviders(app).filter((id) => featuresOf(id).length).map((id) => ({ ...providerView(app, id)!, features: featuresOf(id).map((f) => ({ id: f.id, label: f.label, description: f.description })) })),
+    may: can(app, who(req), "connector.use"),
+  }));
+  server.delete("/api/auth/connections/:provider", async (req) => {
+    const { provider } = req.params as { provider: string };
+    disconnect(app, who(req), provider);
+    audit(app, who(req), "connection.remove", who(req), { provider });
+    return { ok: true };
   });
   server.delete("/api/auth/sessions/:id", async (req) => {
     revokeSession(app, who(req), (req.params as { id: string }).id);

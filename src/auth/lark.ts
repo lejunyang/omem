@@ -55,6 +55,18 @@ export const larkProvider = {
     if (!v.access_token) throw new Error("飞书没有返回 access_token");
     return { accessToken: v.access_token, refreshToken: v.refresh_token ?? null, expiresIn: v.expires_in, refreshExpiresIn: v.refresh_token_expires_in, scope: v.scope };
   },
+  /** A refresh token works once: the new one comes back with the new access token. */
+  async refresh(app: App, refreshToken: string): Promise<ProviderTokens> {
+    const res = await authFetch(`${hosts(app).open}/open-apis/authen/v2/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ grant_type: "refresh_token", client_id: app.config.lark.appId, client_secret: secret(app), refresh_token: refreshToken }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const v = await call<{ access_token?: string; refresh_token?: string; expires_in?: number; refresh_token_expires_in?: number; scope?: string }>(res, "刷新令牌");
+    if (!v.access_token) throw new Error("飞书没有返回 access_token");
+    return { accessToken: v.access_token, refreshToken: v.refresh_token ?? null, expiresIn: v.expires_in, refreshExpiresIn: v.refresh_token_expires_in, scope: v.scope };
+  },
   async whoami(app: App, tokens: ProviderTokens): Promise<ProviderIdentity> {
     const res = await authFetch(`${hosts(app).open}/open-apis/authen/v1/user_info`, { headers: { authorization: `Bearer ${tokens.accessToken}` }, signal: AbortSignal.timeout(15_000) });
     const v = await call<{ data?: { name?: string; en_name?: string; avatar_url?: string; open_id?: string; union_id?: string; email?: string; enterprise_email?: string; tenant_key?: string } }>(res, "读取用户信息");

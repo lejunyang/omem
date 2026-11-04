@@ -248,6 +248,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/auth/link/:code": "public",
   "POST /api/auth/logout": "public",
   "GET /api/auth/account": "self",
+  "GET /api/auth/connections": "self",
+  "DELETE /api/auth/connections/:provider": "self",
   "DELETE /api/auth/sessions/:id": "self",
   "DELETE /api/auth/identities": "self",
   "GET /api/auth/providers": USERS,

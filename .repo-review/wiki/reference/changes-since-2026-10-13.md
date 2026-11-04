@@ -1262,3 +1262,11 @@ updated: 2026-11-04
 - `review.ts` 的 `inlineRefs` 取出 Markdown 里的 `src:` / `mem:` 引用；`submit_review`（问题的标题、正文、建议，变更点的需求和实现）、`submit_change_points`、`revise_finding` 都用 `deadRefs` 核对，找不到就拒绝并让它用 `read_source` 核对后重交。
 - 另有一种：引用了交办工作区里建了索引的文件，工作区归还后这些原件随之删除，链接也会失效；还没处理。
 
+## 连接器与飞书多用户（2026-11-05）
+
+- `src/auth/vault.ts`：连接（每人每个提供方一条）与令牌，存 `secrets/vault.db`，令牌 AES-256-GCM（`secrets/vault.key`）。`connections.ts`：`saveConnection`、`accessToken`（到期前 10 分钟刷新，同一连接串行）、`renewConnections`（刷新令牌两天内到期的续一次，接在 lark-poll 定时任务后面）、刷新失败标 `expired` 并通知一次。`features.ts`：飞书功能与 scope。`LoginProvider.refresh`（飞书 `authen/v2/oauth/token` 的 refresh_token）。
+- 登录流程加 `purpose=connect`（要 `connector.use`；`features` 或 `scopes` 决定要哪些 scope）；登录或绑定时令牌带 scope、带刷新令牌或已经有连接，就存下来。接口：`GET /api/auth/connections`、`DELETE /api/auth/connections/:provider`。
+- `lark-cli.ts`：`larkActor`（AsyncLocalStorage）与 `setLarkCredentials`；在某人的上下文里 `larkCli` 用 `LARKSUITE_CLI_APP_ID` / `LARKSUITE_CLI_USER_ACCESS_TOKEN` / `LARKSUITE_CLI_BRAND` 跑。`lark-user.ts` 的 `asLarkUser`；`tools.ts` 的 `runTool` 把每次工具调用包进去，`ownerOnly` 改为“本人，或有 `connector.use` 且连接可用的人”。`asOwner` 在成员上下文里给成员发账号页授权链接；`personalLibrary` 按人缓存；`lark_write` 判断“是不是自己的文件”用这个人在机器人应用里的 open_id。
+- 去重：迁移给 `sources` 加 `origin_key`（`upsertSource` 用 `originKeyOf` 填，旧数据按 URI 和 `documentId` 回填）、新表 `source_viewers`、`lark_message_lines`（按原件记消息的行，从 `lark_messages.source_id/line` 回填；拉取不带，回落到旧列）。`persistChatMessages` 加 `userId`：本人照旧写进聊天已有的副本，别人只写自己空间里的副本。`captureSpace(app, chatId, userId)`：绑定和已有副本只在采集者有 `capture.route` 的空间才用，否则进他的个人空间。成员导入一篇已在他能读的共享空间里的飞书文档时只记 `source_viewers`。
+- `src/channels/lark-member-capture.ts`：开了“我的消息”的成员，每次 lark-poll 后以他的身份读最近活跃的 30 个会话（游标在 kv `lark_member_cursor:<用户>:<会话>`），已有可读共享副本的只记 `source_viewers`。
+- 网页：账号页“已连接的应用”（按功能打开、重新授权、断开、缺权限的授权提示）；本人那里只说明用 lark-cli 登录。

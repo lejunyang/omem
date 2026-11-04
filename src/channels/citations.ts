@@ -73,7 +73,10 @@ function larkTarget(app: App, ref: string): LarkTarget | null {
     const chat = s ? /^lark:(oc_[A-Za-z0-9]+)/.exec(s.uri)?.[1] : null;
     if (!chat) return null;
     if (!m[2]) return { chat, messageId: null };
-    const row = one<{ message_id: string }>(app.db, "select message_id from lark_messages where source_id = ? and line between ? and ? order by line limit 1", m[1], Number(m[2]), Number(m[3] ?? m[2]));
+    // Lines of this copy of the chat (each person may have their own), else the first copy kept on the row.
+    const row =
+      one<{ message_id: string }>(app.db, "select message_id from lark_message_lines where source_id = ? and line between ? and ? order by line limit 1", m[1], Number(m[2]), Number(m[3] ?? m[2])) ??
+      one<{ message_id: string }>(app.db, "select message_id from lark_messages where source_id = ? and line between ? and ? order by line limit 1", m[1], Number(m[2]), Number(m[3] ?? m[2]));
     return { chat, messageId: row?.message_id ?? null };
   }
   m = /^msg:([A-Za-z0-9_-]+)$/.exec(ref);

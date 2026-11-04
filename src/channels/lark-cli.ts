@@ -1,13 +1,37 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
-let override: ((args: string[], cwd?: string) => Promise<any>) | null = null;
+/** `as`: whose token a call ran with (someone's connection); absent: lark-cli's own login, the owner's. */
+type Override = (args: string[], cwd?: string, as?: string) => Promise<any>;
+let override: Override | null = null;
 /** Tests: answer lark-cli calls without the CLI. */
-export function setLarkCliForTests(fn: ((args: string[], cwd?: string) => Promise<any>) | null) {
+export function setLarkCliForTests(fn: Override | null) {
   override = fn;
+}
+
+/**
+ * Whose Feishu a lark-cli call is (docs/v2/multi-user.md, “继续用 lark-cli”). Everything done for one
+ * person runs inside `larkActor.run({ app, userId }, …)` (src/auth/lark-user.ts asLarkUser — every tool
+ * call does): lark-cli then runs with that person's own token (LARKSUITE_CLI_USER_ACCESS_TOKEN), so code
+ * written against lark-cli works for anyone who connected Feishu and never falls back to the owner's
+ * login. The owner, and anything outside such a context, use lark-cli's own login as before.
+ */
+export type LarkActor = { app: { home: string }; userId: string };
+export const larkActor = new AsyncLocalStorage<LarkActor>();
+type Credentials = { appId: string; token: string; brand?: string };
+let credentials: ((actor: LarkActor) => Promise<Credentials>) | null = null;
+/** src/auth/lark-user.ts hands in how to get a person's token (kept out of here: no import cycle). */
+export function setLarkCredentials(fn: typeof credentials) {
+  credentials = fn;
+}
+/** The person this call is for, when it is not the owner. */
+export function larkActing(): LarkActor | null {
+  const a = larkActor.getStore();
+  return a && a.userId !== "owner" ? a : null;
 }
 
 function larkCliScript() {
@@ -57,10 +81,14 @@ export function larkCliWithInput(args: string[], stdin: string) {
 
 /** Run the official lark-cli (bundled npm dependency) and parse its JSON output. */
 export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
-  if (override) { const result = await override(args, cwd); assertLarkResult(result); return result; }
+  const actor = larkActing();
+  if (actor && !credentials) throw new Error("飞书：还不能以这个用户的身份调用（没有接上连接器）");
+  const user = actor ? await credentials!(actor) : null;
+  if (override) { const result = await override(args, cwd, actor?.userId); assertLarkResult(result); return result; }
   const script = larkCliScript();
+  const env = user ? { ...process.env, LARKSUITE_CLI_APP_ID: user.appId, LARKSUITE_CLI_USER_ACCESS_TOKEN: user.token, LARKSUITE_CLI_BRAND: user.brand ?? "feishu" } : undefined;
   try {
-    const { stdout } = await exec(process.execPath, [script, ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd });
+    const { stdout } = await exec(process.execPath, [script, ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd, env });
     const value = JSON.parse(stdout);
     assertLarkResult(value);
     return value;

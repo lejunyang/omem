@@ -84,6 +84,22 @@ export type UpsertInput = {
 export type UpsertResult = { id: string; status: "created" | "updated" | "unchanged" };
 
 /**
+ * What a source is on its platform, whoever captured it into whichever space (docs/v2/multi-user.md,
+ * “多用户采集与去重”): a Feishu chat, document, meeting, minutes or event by its own id, a web page by
+ * its address. Null for what has no such identity (notes, uploads, code).
+ */
+export function originKeyOf(input: { kind: string; uri: string; meta?: Record<string, unknown> }): string | null {
+  const chat = /^lark:(oc_[\w-]+(?:@\d{4}-\d{2})?)$/.exec(input.uri);
+  if (chat) return `lark:chat:${chat[1]}`;
+  if (/^lark:(meeting|minutes):/.test(input.uri)) return input.uri;
+  if (input.uri.startsWith("lark:calendar:")) return `lark:event:${input.uri.slice(14)}`;
+  const doc = input.meta?.documentId;
+  if (input.kind === "doc" && typeof doc === "string" && doc) return `lark:doc:${doc}`;
+  if (input.kind === "web" && /^https?:\/\//.test(input.uri)) return `url:${input.uri.replace(/#.*$/, "").replace(/\/+$/, "")}`;
+  return null;
+}
+
+/**
  * Store the latest version of a source and rebuild its chunks/index. Code and
  * documents keep only the newest original; conversation sources append.
  */
@@ -118,7 +134,7 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
       clearIndex(app, id);
       run(
         app.db,
-        "update sources set kind=?, title=?, mime=?, hash=?, text=?, meta=?, updated_at=?, deleted_at=null where id=?",
+        "update sources set kind=?, title=?, mime=?, hash=?, text=?, meta=?, updated_at=?, deleted_at=null, origin_key=coalesce(?, origin_key) where id=?",
         input.kind,
         input.title,
         input.mime ?? null,
@@ -126,12 +142,13 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
         text,
         JSON.stringify(input.meta ?? {}),
         at,
+        originKeyOf(input),
         id,
       );
     } else {
       run(
         app.db,
-        "insert into sources(id,space_id,kind,uri,title,mime,hash,text,meta,captured_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+        "insert into sources(id,space_id,kind,uri,title,mime,hash,text,meta,captured_at,updated_at,origin_key) values(?,?,?,?,?,?,?,?,?,?,?,?)",
         id,
         input.spaceId,
         input.kind,
@@ -143,6 +160,7 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
         JSON.stringify(input.meta ?? {}),
         at,
         at,
+        originKeyOf(input),
       );
     }
     writeIndex(app, id, input.spaceId, input.kind, input.uri, input.title, text);

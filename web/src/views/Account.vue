@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { del, get, logout, put } from "../api";
 import UiSelect from "../components/UiSelect.vue";
+import UiCheckbox from "../components/UiCheckbox.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { fmtTime, state, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
@@ -53,7 +54,39 @@ async function setMember(space: string, user: string, role: string | null) {
     toast((e as Error).message, "error");
   }
 }
-const notice = computed(() => (typeof route.query.error === "string" ? { kind: "err", text: route.query.error } : typeof route.query.bound === "string" ? { kind: "ok", text: "已绑定" } : null));
+const notice = computed(() =>
+  typeof route.query.error === "string" ? { kind: "err", text: route.query.error } : typeof route.query.connected === "string" ? { kind: "ok", text: "已连接，新授权的权限已生效" } : typeof route.query.bound === "string" ? { kind: "ok", text: "已绑定" } : null,
+);
+// Connected platforms (src/auth/connections.ts): features turned on one at a time (an incremental authorization each).
+type Feature = { id: string; label: string; description: string; on?: boolean };
+type Conn = { id: string; provider: string; label: string; accountName: string; status: "active" | "expired" | "error"; scopes: string[]; features: Feature[]; background: boolean; lastError: string | null; updatedAt: string };
+type Connections = { connections: Conn[]; available: { id: string; label: string; unavailable: string | null; features: Feature[] }[]; may: boolean };
+const conns = ref<Connections | null>(null);
+const picked = ref<Record<string, string[]>>({});
+// A call ran into a missing scope (a link from a notification): ask for just that one.
+const askScopes = computed(() => (route.query.connect === "lark" && typeof route.query.scopes === "string" ? route.query.scopes : ""));
+// The owner reads and writes Feishu through lark-cli's own login (设置 → 渠道), not a connection here.
+const shownProviders = computed(() => (conns.value?.available ?? []).filter((p) => !(state.me?.role === "owner" && p.id === "lark")));
+const connOf = (provider: string) => conns.value?.connections.find((c) => c.provider === provider) ?? null;
+async function loadConnections() {
+  conns.value = await get<Connections>("/api/auth/connections");
+  for (const a of conns.value.available) picked.value[a.id] ??= [];
+}
+function connect(provider: string, features: string[], scopes = "") {
+  const q = new URLSearchParams({ purpose: "connect" });
+  if (features.length) q.set("features", features.join(","));
+  if (scopes) q.set("scopes", scopes);
+  location.href = `/api/auth/${provider}/start?${q}`;
+}
+async function disconnectProvider(c: Conn) {
+  if (!(await confirmDialog(`断开${c.label}连接？`, { message: "omem 不再以你的身份读写，已经保存的内容保留。之后要用再连接。", okText: "断开", danger: true }))) return;
+  try {
+    await del(`/api/auth/connections/${c.provider}`);
+    await loadConnections();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 const VIA: Record<string, string> = { lark: "飞书", link: "机器人登录链接", invite: "邀请", local: "本机", token: "令牌" };
 const viaLabel = (v: string) => VIA[v] ?? acc.value?.providers.find((p) => p.id === v)?.label ?? v;
 const logins = computed(() => (acc.value?.identities ?? []).filter((i) => i.kind === "login"));
@@ -90,7 +123,7 @@ async function signOut(s: Session) {
     toast((e as Error).message, "error");
   }
 }
-onMounted(() => Promise.all([load(), loadManaged()]).catch((e) => toast((e as Error).message, "error")));
+onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e) => toast((e as Error).message, "error")));
 </script>
 
 <template>
@@ -128,6 +161,45 @@ onMounted(() => Promise.all([load(), loadManaged()]).catch((e) => toast((e as Er
         <p v-if="!acc.providers.length" class="muted small">还没有打开任何登录方式。</p>
       </div>
       <p v-if="aliases.length" class="muted small">渠道里的身份（机器人靠它认出你）：{{ aliases.map((a) => `${a.provider} ${a.externalId}`).join("、") }}</p>
+
+      <h2 class="section-title">已连接的应用</h2>
+      <div v-if="askScopes" class="card pad stack warn-box">
+        <strong>需要补一项飞书权限</strong>
+        <p class="small">助手刚才以你的身份用飞书时缺少权限：<span class="mono">{{ askScopes }}</span>。授权后再让助手试一次。</p>
+        <div class="row"><button class="btn sm primary" @click="connect('lark', [], askScopes)">去飞书授权</button></div>
+      </div>
+      <p class="muted small">连接后，助手和后台采集以你的身份读你在这个平台上能看到的内容；写入（文档、表格）不在你自己的文件里时先问你。令牌只存在运行 omem 的这台机器上。</p>
+      <div v-if="conns && !conns.may" class="card pad muted small">你的角色不能连接第三方平台，需要的话请 omem 的主人调整。</div>
+      <p v-if="state.me?.role === 'owner'" class="muted small">你本人用 lark-cli 的登录读写飞书（设置 → 渠道），不用在这里连接。</p>
+      <div v-for="p in shownProviders" :key="p.id" class="card pad stack">
+        <div class="row wrap">
+          <strong>{{ p.label }}</strong>
+          <template v-if="connOf(p.id)">
+            <span class="muted small">{{ connOf(p.id)!.accountName }}</span>
+            <span v-if="connOf(p.id)!.status !== 'active'" class="badge danger">需要重新授权</span>
+            <span v-else-if="!connOf(p.id)!.background" class="badge warn">只在你在线时可用</span>
+          </template>
+          <span class="spacer" />
+          <button v-if="connOf(p.id) && connOf(p.id)!.status !== 'active'" class="btn sm primary" @click="connect(p.id, connOf(p.id)!.features.filter((f) => f.on).map((f) => f.id))">重新授权</button>
+          <button v-if="connOf(p.id)" class="btn ghost sm danger" @click="disconnectProvider(connOf(p.id)!)">断开</button>
+        </div>
+        <p v-if="p.unavailable" class="small warn-text">暂时不能用：{{ p.unavailable }}</p>
+        <div class="features">
+          <div v-for="f in connOf(p.id)?.features ?? p.features" :key="f.id" class="row wrap feature">
+            <div class="stack tight">
+              <span>{{ f.label }}</span>
+              <span class="muted small">{{ f.description }}</span>
+            </div>
+            <span class="spacer" />
+            <span v-if="f.on" class="badge accent">已打开</span>
+            <button v-else-if="connOf(p.id)" class="btn sm" :disabled="!conns?.may || !!p.unavailable" @click="connect(p.id, [f.id])">打开</button>
+            <UiCheckbox v-else v-model="picked[p.id]" :value="f.id" size="sm" :aria-label="f.label" />
+          </div>
+        </div>
+        <div v-if="!connOf(p.id)" class="row"><button class="btn sm primary" :disabled="!conns?.may || !!p.unavailable || !(picked[p.id] ?? []).length" @click="connect(p.id, picked[p.id] ?? [])">连接{{ p.label }}</button></div>
+        <p v-if="connOf(p.id)?.lastError" class="small warn-text">{{ connOf(p.id)!.lastError }}</p>
+      </div>
+      <p v-if="conns && !shownProviders.length && state.me?.role !== 'owner'" class="muted small">omem 还没有可以连接的平台。</p>
 
       <h2 class="section-title">登录的设备</h2>
       <div v-if="!acc.sessions.length" class="card pad muted small">{{ acc.via === "local" ? "你在运行 omem 的这台机器上，不用登录。" : "没有登录的设备。" }}</div>
@@ -204,6 +276,16 @@ onMounted(() => Promise.all([load(), loadManaged()]).catch((e) => toast((e as Er
 }
 .badge {
   margin-left: 6px;
+}
+.features {
+  display: grid;
+  gap: 6px;
+}
+.feature {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  gap: 8px;
+  min-width: 0;
 }
 .member {
   border-top: 1px solid var(--line);
