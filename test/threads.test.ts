@@ -209,6 +209,19 @@ describe("threads: continuity, merging, lanes, commands", async () => {
     expect((await answer(follow.runId)).turn).toBe(2);
   }, 60000);
 
+  it("keeps the last delivery topic even when the group shares one conversation", async () => {
+    const address = { channel: "lark", chatId: "oc_shared", isGroup: true };
+    setChatSettings(app, "lark", address.chatId, { mode: "chat" });
+    const outside = await receive(app, { ...address, externalMessageId: "om_out", text: "/status" });
+    const inside = await receive(app, { ...address, topicId: "omt_follow", externalMessageId: "om_in", text: "/status" });
+    expect(inside.thread.id).toBe(outside.thread.id);
+    expect(getThread(app, inside.thread.id).settings).toMatchObject({ lastMessageId: "om_in", lastTopicId: "omt_follow" });
+    await receive(app, { conversationId: inside.thread.id, externalMessageId: "om_card", text: "/status" });
+    expect(getThread(app, inside.thread.id).settings.lastTopicId).toBe("omt_follow");
+    await receive(app, { ...address, externalMessageId: "om_back", text: "/status" });
+    expect(getThread(app, inside.thread.id).settings.lastTopicId).toBeNull();
+  });
+
   it.each([true, false])("opens /topic through the bot (isGroup=%s), isolates follow-ups, and rejects nested topics", async (isGroup) => {
     const chatId = isGroup ? "oc_topic_command" : "oc_private_topic_command";
     const old = await receive(app, { channel: "lark", chatId, isGroup, text: "原来的任务" });

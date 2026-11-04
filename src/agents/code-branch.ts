@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
-import { fetchBranch, git, resolveRef } from "../core/git.ts";
+import { refreshDefaultBaseRef, fetchBranch, git, resolveRef } from "../core/git.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
@@ -47,7 +47,8 @@ export function checkedOutAt(root: string, branch: string, except?: string): str
 /** The commit the branch's changes are measured from: where it left the branch it was cut from, else where the work began. */
 export function changeBase(dir: string, wt: WorktreeRef, at = "HEAD") {
   if (wt.cutFrom) {
-    const mb = git(dir, ["merge-base", at, `refs/heads/${wt.cutFrom}`]);
+    const baseRef = resolveRef(dir, `refs/remotes/origin/${wt.cutFrom}`) ? `refs/remotes/origin/${wt.cutFrom}` : `refs/heads/${wt.cutFrom}`;
+    const mb = git(dir, ["merge-base", at, baseRef]);
     if (mb.ok && ancestor(dir, wt.base, mb.stdout.trim())) return mb.stdout.trim();
   }
   return wt.start ?? wt.base;
@@ -58,7 +59,7 @@ export type BranchPlan = { branch: string; base: string; newBranch: boolean; cut
 /**
  * The work branch of a new delegation in `repo`: an existing branch (`from`, made local when only
  * origin has it), a new one named `name` (an existing local one is used as it is), or a temporary
- * `omem/<run>` the coding Agent renames. New branches start at the repository's local HEAD.
+ * `omem/<run>` the coding Agent renames. New branches start at the refreshed default branch (local HEAD only without a default).
  */
 export function planBranch(repo: Space, runId: string, opts: { from?: string; name?: string }): BranchPlan {
   const root = repo.rootPath!;
@@ -76,11 +77,16 @@ export function planBranch(repo: Space, runId: string, opts: { from?: string; na
   }
   const name = (opts.name ?? `omem/${runId}`).replace(/^refs\/heads\//, "");
   if (!git(root, ["check-ref-format", `refs/heads/${name}`]).ok) throw new HttpError(400, `分支名不合法：${name}`);
-  const base = head(root);
+  const baseRef = refreshDefaultBaseRef(root);
+  if (baseRef && git(root, ["remote", "get-url", "origin"]).ok) {
+    const fetched = fetchBranch(root, baseRef);
+    if (!fetched.ok) throw new HttpError(409, `更新默认分支失败：${fetched.stderr.trim().slice(0, 300)}`);
+  }
+  const base = (baseRef ? resolveRef(root, baseRef.startsWith("origin/") ? baseRef : `origin/${baseRef}`)?.commit ?? resolveRef(root, baseRef)?.commit : null) ?? head(root);
   if (!base) throw new HttpError(400, `${repo.id} 还没有提交`);
   const made = git(root, ["branch", name, base]);
   if (!made.ok) throw new HttpError(409, `没能建分支 ${name}：${made.stderr.trim().slice(0, 300)}`);
-  const cutFrom = git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || undefined;
+  const cutFrom = baseRef?.replace(/^origin\//, "") ?? (git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || undefined);
   return { branch: name, base, newBranch: true, ...(cutFrom ? { cutFrom } : {}) };
 }
 

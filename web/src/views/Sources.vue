@@ -166,7 +166,9 @@ function onListScroll(ev: Event) {
 }
 /** The owner asked for the whole text of this source. */
 const wantAll = ref(false);
+let detailSeq = 0;
 async function loadDetail(full = wantAll.value) {
+  const seq = ++detailSeq;
   if (!id.value) return void (detail.value = null);
   detailLoading.value = true;
   try {
@@ -174,15 +176,17 @@ async function loadDetail(full = wantAll.value) {
     const h = hl.value;
     const range = full ? "from=1&to=100000000" : h ? `from=${Math.max(1, h.from - WINDOW / 2)}&to=${h.to + WINDOW / 2}` : `window=${WINDOW}`;
     const d = await get<Detail>(`/api/sources/${id.value}?${range}`);
-    if (d.source.id !== id.value) return;
+    if (seq !== detailSeq || d.source.id !== id.value) return;
     detail.value = d;
     moveTarget.value = d.source.spaceId;
-    archive.value = await get(`/api/sources/${d.source.id}/archive`);
+    const history = await get<typeof archive.value>(`/api/sources/${d.source.id}/archive`);
+    if (seq !== detailSeq || d.source.id !== id.value) return;
+    archive.value = history;
     moveReason.value = "";
     // Chats open as a chat even from a citation; the highlighted message is scrolled to.
     raw.value = d.source.kind === "code" || (!!hl.value && d.source.kind !== "chat");
   } finally {
-    detailLoading.value = false;
+    if (seq === detailSeq) detailLoading.value = false;
   }
 }
 let qTimer: ReturnType<typeof setTimeout> | undefined;

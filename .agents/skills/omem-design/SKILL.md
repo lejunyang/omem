@@ -31,3 +31,5 @@ Agent 档案和任务选型的后端、模型、强度使用 `AiDefaults`：可�
 保存设置后的提示只说实际发生的事：`PUT /api/settings` 返回的 `restart` 不为空才提示重启，并写出是哪几项。新增只在启动时读取的设置要加进 `src/server/http.ts` 的 `atStartup` 清单。选中文字的颜色在 `styles.css` 的 `::selection` 统一设定（浅底深字），不要在组件里另设。
 
 插件页面（`plugins/<id>/web`，沙箱 iframe）不另做一套样式：引入 `web/src/styles.css` 和 `web/src/components` 里不依赖主站状态的组件（`UiSegmented`、`UiCheckbox`、`UiSelect`、`Skeleton`、`Icon`），主按钮用 `.btn.primary`（深色），输入用 `.input` / `.textarea`；普通 HTML 页面引入 `/plugins/_sdk/omem.css`。只补主站没有的类。
+
+异步详情、列表和二次请求（评审、归档记录等）要按请求序号和当前选择核对后再写状态；错误提示、加载状态和轮询计时器也要核对。切换时立即清掉上一项详情，避免把旧内容挂在新标题下。

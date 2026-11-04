@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { one, run, tx } from "../core/db.ts";
 import { OWNER, canWrite } from "../core/users.ts";
 import { larkUser } from "./lark-bots.ts";
-import { buildCard, closeInteraction, deliverLark, describeAction, interactionForMessage, sendLark, type Content, type Delivery, type Target } from "./lark-send.ts";
+import { buildCard, closeInteraction, deliverLark, describeAction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
 
 /**
  * A button press, select or form submit on one of the bot's cards
@@ -17,7 +17,26 @@ import { buildCard, closeInteraction, deliverLark, describeAction, interactionFo
  */
 type CardActionResult = { toast: { type: string; content: string }; card?: unknown };
 
-export async function handleCardAction(app: App, data: any, nameOf: (openId: string) => Promise<string> = async (id) => id): Promise<CardActionResult> {
+export async function handleCardAction(app: App, data: any, _nameOf: (openId: string) => Promise<string> = async (id) => id): Promise<CardActionResult> {
+  const work = actOnCard(app, data);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([work, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 1000); })]);
+    if (result) return result;
+    // Slow remote actions continue once; the completed card is patched after the callback closes.
+    void work.then(async (late) => {
+      const messageId = data.context?.open_message_id ?? data.open_message_id;
+      const card = late.card as { type?: string; data?: Record<string, unknown> } | undefined;
+      if (messageId && card?.type === "raw" && card.data) await updateLarkCard(messageId, card.data, interactionForMessage(app, messageId)?.bot);
+      else if (late.toast.type === "error") console.warn("[omem] 卡片操作失败", late.toast.content);
+    }).catch((e) => console.warn("[omem] 卡片操作后续处理失败", e));
+    return { toast: { type: "info", content: "已收到，正在处理" } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function actOnCard(app: App, data: any): Promise<CardActionResult> {
   const operator: string = data.operator?.open_id ?? data.open_id ?? "";
   // Who clicked, as this bot sees them (open_ids are per app; the other bots also know user_id).
   const operatorUser = () => larkUser(app, { open_id: operator, user_id: data.operator?.user_id });
@@ -26,11 +45,11 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
   const inter = messageId ? interactionForMessage(app, messageId) : null;
   if (!inter) return { toast: { type: "warning", content: "这张卡片已经失效" } };
   if (inter.allowed.length && !inter.allowed.includes(operator) && !(data.operator?.user_id && inter.allowed.includes(data.operator.user_id))) {
-    const who = (await Promise.all(inter.allowed.slice(0, 3).map(nameOf))).join("、");
+    const who = inter.allowed.slice(0, 3).join("、");
     return { toast: { type: "error", content: `只有 ${who} 可以处理` } };
   }
   if (inter.status !== "open") return { toast: { type: "info", content: "已经处理过了" } };
-  const opName = await nameOf(operator);
+  const opName = operatorUser() === OWNER ? "本人" : operator;
   const value = typeof action.value === "string" ? safeJson(action.value) : action.value;
   if (inter.purpose === "ask") {
     // A question, suggested step or approval (agents/asks.ts): answered here, no agent turn of its own.
@@ -189,13 +208,13 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
   const desc = describeAction({ tag: action.tag, name: action.name, value, formValue, option: action.option, options: action.options, input: action.input_value, checked: action.checked });
   const userId = operatorUser();
   run(app.db, "update card_interactions set handled_at = datetime('now'), handled_by = ? where id = ?", operator, inter.id);
-  await receive(app, {
+  void receive(app, {
     conversationId: inter.conversationId,
     text: `[卡片操作] ${opName}（${operator}）在卡片 ${messageId} 上${desc}`,
     speaker: userId === OWNER ? undefined : opName,
     userId: OWNER,
     externalMessageId: messageId,
-  });
+  }).catch((e) => console.warn("[omem] 卡片操作续聊失败", e));
   return { toast: { type: "info", content: "已收到，处理中" } };
 }
 

@@ -27,6 +27,8 @@ export type ThreadSettings = {
   links?: string[];
   /** Last channel message id seen in this thread (replies go under it, e.g. inside a topic). */
   lastMessageId?: string;
+  /** Delivery location is independent of whether topics share a conversation. */
+  lastTopicId?: string | null;
   /** /topic explicitly keeps this topic independent, even when the chat uses mode=chat. */
   isolatedTopic?: boolean;
   /** An in-chat review session (/review): the card being asked and whether its answer was shown. */

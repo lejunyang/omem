@@ -20,8 +20,11 @@ const conversations = ref<Conversation[]>([]);
 const messages = ref<Message[]>([]);
 const conversationSpace = ref<string | null>(null);
 const asks = ref<AskItem[]>([]);
+let asksSeq = 0, listSeq = 0, convSeq = 0;
 async function loadAsks() {
-  asks.value = id.value ? await get<AskItem[]>(`/api/asks?conversation=${encodeURIComponent(id.value)}&status=pending`).catch(() => []) : [];
+  const seq = ++asksSeq, target = id.value;
+  const result = target ? await get<AskItem[]>(`/api/asks?conversation=${encodeURIComponent(target)}&status=pending`).catch(() => []) : [];
+  if (seq === asksSeq && target === id.value) asks.value = result;
 }
 /** Questions and approvals wait above the composer; suggested next steps sit under their reply. */
 const waiting = computed(() => asks.value.filter((a) => a.kind !== "suggestion"));
@@ -36,24 +39,27 @@ const id = pageParam("ask");
 const listLoading = ref(true);
 const convLoading = ref(false);
 async function loadList() {
+  const seq = ++listSeq, space = state.space;
   try {
-    conversations.value = await get<Conversation[]>(`/api/conversations?space=${encodeURIComponent(state.space)}`);
+    const result = await get<Conversation[]>(`/api/conversations?space=${encodeURIComponent(space)}`);
+    if (seq === listSeq && space === state.space) conversations.value = result;
   } finally {
-    listLoading.value = false;
+    if (seq === listSeq) listLoading.value = false;
   }
 }
 async function loadConversation() {
+  const seq = ++convSeq;
   if (!id.value) { conversationSpace.value = null; messages.value = []; return; }
   const want = id.value;
   // Only the first load of a conversation shows a placeholder; refreshes keep what is on screen.
   if (!messages.value.length) convLoading.value = true;
   try {
     const r = await get<{ messages: Message[]; conversation?: Conversation }>(`/api/conversations/${want}`).catch(() => ({ messages: [] }));
-    if (want !== id.value) return;
+    if (seq !== convSeq || want !== id.value) return;
     messages.value = r.messages;
     conversationSpace.value = "conversation" in r ? r.conversation?.space_id ?? null : null;
   } finally {
-    convLoading.value = false;
+    if (seq === convSeq) convLoading.value = false;
   }
   await scrollDown();
 }

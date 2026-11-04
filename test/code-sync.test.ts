@@ -7,8 +7,8 @@ import { applyCodeRun, worktreesOf } from "../src/agents/code.ts";
 import { finishSync, moveToTarget, popWip, syncInProgress, syncWorktree, type Resolver } from "../src/agents/code-sync.ts";
 import { __testHandlers, addRunEvent, createRun, getRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
 import type { WorktreeRef } from "../src/agents/worktree-index.ts";
-import { git } from "../src/core/git.ts";
-import { placeOnBranch } from "../src/agents/code-branch.ts";
+import { git, refreshDefaultBaseRef } from "../src/core/git.ts";
+import { placeOnBranch, planBranch, changeBase } from "../src/agents/code-branch.ts";
 import { run as sql } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { startServer } from "../src/server/http.ts";
@@ -63,6 +63,25 @@ beforeEach(() => {
 afterEach(() => { app.db.close(); try { rmSync(app.home, { recursive: true, force: true }); } catch { /* still in use */ } });
 
 describe("Git sync before coding", { timeout: 60000 }, () => {
+  it.each(["main", "master", "preonline"])("starts from origin's updated default %s without changing the owner's checkout", async (branch) => {
+    if (branch !== "main") sh(root, "branch", "-m", "main", branch);
+    sh(remote, "symbolic-ref", "HEAD", `refs/heads/${branch}`);
+    const old = sh(root, "rev-parse", "HEAD");
+    commit(root, "upstream.txt", "new upstream code\n", "upstream update");
+    const latest = sh(root, "rev-parse", "HEAD");
+    sh(root, "push", "origin", branch);
+    sh(root, "reset", "--hard", old);
+    const repo = createSpace(app, { id: "shop", name: "示例商城", kind: "repo", rootPath: root });
+    const plan = planBranch(repo, "r_new", { name: "feature/new" });
+    expect(plan.base).toBe(latest);
+    expect(plan.cutFrom).toBe(branch);
+    expect(sh(root, "rev-parse", "HEAD")).toBe(old);
+    const result = await syncWorktree(root, wt, { pull: true, onto: refreshDefaultBaseRef(root)! }, giveUp, noop);
+    expect(result.stopped).toBeNull();
+    expect(sh(wtPath, "show", "HEAD:upstream.txt")).toBe("new upstream code");
+    expect(changeBase(wtPath, { ...wt, cutFrom: branch })).toBe(latest);
+  });
+
   it("preserves an interrupted cherry-pick at round entry, resolves it before stashing and continues the sequence", async () => {
     const picked = commit(root, "rules.txt", "refund: picked rule\n", "picked rule");
     const next = commit(root, "followup.txt", "keep the second commit\n", "next picked commit");

@@ -31,11 +31,11 @@ const message = (text: string, sender: RuleEvent["sender"] = { name: "小王", k
 const inputOf = (app: ReturnType<typeof testApp>, id: string) => JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", id)!.input);
 
 describe("wake-ups", () => {
-  it("keeps a profile's own follow-up in its original space and authorized topic", async () => {
+  it.each(["alert-checker", "assistant"])("keeps %s own follow-up in its original space and authorized topic", async (spec) => {
     const { app, ctx, runId } = working();
     createSpace(app, { id: "project-a", name: "项目 A" });
     saveAgentSpec(app, { name: "alert-checker", description: "复查", prompt: "复查指标" }, "user");
-    const origin = { spec: "alert-checker", replyAt: { chatId: "oc_alert", messageId: "om_alert" }, rule: { id: "rule_alert", name: "报警" }, lark: { chats: ["oc_alert"], draft: true, urgent: false } };
+    const origin = { spec, assistantScope: { spaces: ["project-a"], userId: "owner", denyTools: ["save_rule"], lark: { chats: ["oc_alert"], draft: true } }, denyTools: ["meeting_send"], replyAt: { chatId: "oc_alert", messageId: "om_alert" }, rule: { id: "rule_alert", name: "报警" }, lark: { chats: ["oc_alert"], draft: true, urgent: false } };
     run(app.db, "update runs set input=?,output=?,user_id=?,space_id=? where id=?", JSON.stringify(origin), JSON.stringify({ sessionId: "session_alert" }), "owner", "project-a", runId);
     const r = await callTool(ctx, "wake_later", { after: "5m", note: "按原规则过滤条件复查" });
     const id = /已设唤醒 (\S+)：/.exec(r.text)![1];
@@ -45,7 +45,7 @@ describe("wake-ups", () => {
     // A different profile cannot borrow a resume id to acquire the sender's permissions/session.
     const other = fireWake(app, { ...inputOf(app, id), target: { spec: "other-checker", resumeRunId: runId } });
     const otherInput = inputOf(app, other.runId!);
-    for (const key of ["lark", "replyAt", "rule", "resumeSessionId"]) expect(otherInput[key]).toBeUndefined();
+    for (const key of ["lark", "replyAt", "rule", "resumeSessionId", "assistantScope", "denyTools"]) expect(otherInput[key]).toBeUndefined();
   });
 
   it("wakes the conversation's agent later with its note, at most five pending, cancellable", async () => {

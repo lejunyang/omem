@@ -64,14 +64,19 @@ const id = pageParam("runs");
 
 const listLoading = ref(true);
 const detailLoading = ref(false);
+let listSeq = 0;
+let detailSeq = 0;
 async function load() {
+  const seq = ++listSeq;
+  loadingMore.value = false;
   listLoading.value = true;
   try {
     const page = await loadPage(0);
+    if (seq !== listSeq) return;
     runs.value = page.runs;
     total.value = page.total;
   } finally {
-    listLoading.value = false;
+    if (seq === listSeq) listLoading.value = false;
   }
 }
 async function loadPage(offset: number) {
@@ -85,22 +90,27 @@ async function loadPage(offset: number) {
   return get<{ runs: Run[]; total: number }>(`/api/runs?${q.toString()}`);
 }
 async function loadMore() {
-  if (loadingMore.value || runs.value.length >= total.value) return;
+  if (listLoading.value || loadingMore.value || runs.value.length >= total.value) return;
+  const seq = listSeq;
   loadingMore.value = true;
   try {
     const page = await loadPage(runs.value.length);
+    if (seq !== listSeq) return;
     runs.value.push(...page.runs);
     total.value = page.total;
   } finally {
-    loadingMore.value = false;
+    if (seq === listSeq) loadingMore.value = false;
   }
 }
 async function loadDetail() {
-  if (id.value && detail.value?.run.id !== id.value) detailLoading.value = true;
+  const seq = ++detailSeq, target = id.value;
+  if (detail.value?.run.id !== target) detail.value = null;
+  detailLoading.value = !!target && !detail.value;
   try {
-    detail.value = id.value ? await get(`/api/runs/${id.value}`).catch(() => null) : null;
+    const result = target ? await get<NonNullable<typeof detail.value>>(`/api/runs/${target}`).catch(() => null) : null;
+    if (seq === detailSeq && target === id.value) detail.value = result;
   } finally {
-    detailLoading.value = false;
+    if (seq === detailSeq && target === id.value) detailLoading.value = false;
   }
 }
 onMounted(() => {
@@ -138,7 +148,7 @@ function onListScroll(ev: Event) {
   const el = ev.target as HTMLElement;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) void loadMore();
 }
-onBeforeUnmount(() => { off(); clearTimeout(reloadTimer); clearTimeout(keywordTimer); });
+onBeforeUnmount(() => { ++listSeq; ++detailSeq; off(); clearTimeout(reloadTimer); clearTimeout(keywordTimer); });
 
 const out = computed(() => detail.value?.run.output ?? {});
 // A review of an existing branch: no coding round, nothing to apply.

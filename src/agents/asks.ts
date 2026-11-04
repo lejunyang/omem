@@ -276,7 +276,7 @@ export function setApprovalExecutor(e: Executor) {
  * to the conversation as a message once the asking run has ended (`viaMessage`: the owner's own
  * chat message already carried it).
  */
-export async function answerAsk(app: App, id: string, input: { choice?: number | null; text?: string; approved?: boolean; by: string; viaMessage?: boolean }): Promise<Ask> {
+export async function answerAsk(app: App, id: string, input: { choice?: number | null; text?: string; approved?: boolean; by: string; viaMessage?: boolean; deferEffects?: boolean }): Promise<Ask> {
   const before = getAsk(app, id);
   if (before.status !== "pending") throw new HttpError(409, before.status === "cancelled" ? "这个提问已经失效了" : "这个提问已经回答过了");
   const option = input.choice !== undefined && input.choice !== null ? before.options[input.choice] : undefined;
@@ -297,31 +297,43 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
     id,
   ).changes;
   if (!changed) throw new HttpError(409, "这个提问已经回答过了");
-  if (before.kind === "approval" && approved && executor) {
-    const ctx = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}");
-    const r = await executor(app, getAsk(app, id), ctx).catch((e: Error) => ({ text: e.message, isError: true }));
-    run(app.db, "update asks set result = ? where id = ?", `${r.isError ? "失败：" : ""}${truncate(r.text, 4000)}`, id);
-  }
-  const ask = getAsk(app, id);
-  closed(app, ask);
-  const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
-  const handler = typeof context.handler === "string" ? askHandlers.get(context.handler) : undefined;
-  if (handler) {
-    run(app.db, "update asks set consumed = 1 where id = ?", id);
-    await handler(app, ask, context);
+  // Persist and acknowledge a channel click before running effects that may block on Git.
+  const finish = async (): Promise<Ask> => {
+    if (before.kind === "approval" && approved && executor) {
+      const ctx = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}");
+      const r = await executor(app, getAsk(app, id), ctx).catch((e: Error) => ({ text: e.message, isError: true }));
+      run(app.db, "update asks set result = ? where id = ?", `${r.isError ? "失败：" : ""}${truncate(r.text, 4000)}`, id);
+    }
+    const ask = getAsk(app, id);
+    closed(app, ask);
+    const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
+    const handler = typeof context.handler === "string" ? askHandlers.get(context.handler) : undefined;
+    if (handler) {
+      run(app.db, "update asks set consumed = 1 where id = ?", id);
+      await handler(app, ask, context);
+      return getAsk(app, id);
+    }
+    if (ask.kind === "suggestion") {
+      if (ask.conversationId && !input.viaMessage) {
+        const { receive } = await import("./inbox.ts");
+        await receive(app, { conversationId: ask.conversationId, text: option?.message ?? answer ?? "", userId: ask.userId, fromAsk: true });
+      }
+      return ask;
+    }
+    const set = waiters.get(id);
+    if (set?.size) for (const w of [...set]) w(ask);
+    else if (!ask.consumed && !runActive(app, ask.runId)) await deliverAnswer(app, ask);
+    return getAsk(app, id);
+  };
+  if (input.deferEffects) {
+    setTimeout(() => void finish().catch((e) => {
+      console.warn(`[omem] 卡片回答 ${id} 后续处理失败`, e);
+      run(app.db, "update asks set result = ? where id = ?", `失败：${truncate(String(e instanceof Error ? e.message : e), 4000)}`, id);
+      closed(app, getAsk(app, id));
+    }), 50);
     return getAsk(app, id);
   }
-  if (ask.kind === "suggestion") {
-    if (ask.conversationId && !input.viaMessage) {
-      const { receive } = await import("./inbox.ts");
-      await receive(app, { conversationId: ask.conversationId, text: option?.message ?? answer ?? "", userId: ask.userId, fromAsk: true });
-    }
-    return ask;
-  }
-  const set = waiters.get(id);
-  if (set?.size) for (const w of [...set]) w(ask);
-  else if (!ask.consumed && !runActive(app, ask.runId)) await deliverAnswer(app, ask);
-  return getAsk(app, id);
+  return finish();
 }
 
 function runActive(app: App, runId: string | null) {

@@ -46,7 +46,7 @@ function questionBlocks(app: App, ask: Ask) {
 export function askCard(app: App, ask: Ask): Record<string, unknown> {
   if (ask.status !== "pending") {
     const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
-    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }] });
+    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.result ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
   }
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: questionBlocks(app, ask) });
   const elements = (card.body as { elements: unknown[] }).elements;
@@ -72,7 +72,7 @@ export function askCard(app: App, ask: Ask): Record<string, unknown> {
 /** Where an ask goes in Feishu, or null when this channel is not the one to show it. */
 function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { target: Target; chatId: string | null; bot: string } | null {
   if (ask.conversationId) {
-    const t = one<{ channel: string; external_id: string | null; last: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastMessageId') last from conversations where id = ?", ask.conversationId);
+    const t = one<{ channel: string; external_id: string | null; last: string | null; topic: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastTopicId') topic, json_extract(settings, '$.lastMessageId') last from conversations where id = ?", ask.conversationId);
     // The host's own decisions about background work (a review plan, a finished review) reach the
     // person in Feishu even when the work was asked for elsewhere; an agent's question stays in its chat.
     const hostAsk = !!one(app.db, "select 1 from asks where id = ? and json_extract(context, '$.handler') is not null", ask.id);
@@ -81,7 +81,7 @@ function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { targe
       // The card goes through the bot of the conversation (lark.bots), whose ids it then uses.
       const bot = botOfChannel(t.channel);
       const [chatId, topic] = t.external_id.split("#");
-      return { target: topic && t.last ? { replyTo: t.last, inThread: true, bot } : { chatId, bot }, chatId, bot };
+      return { target: (t.topic ?? topic) && t.last ? { replyTo: t.last, inThread: true, bot } : { chatId, bot }, chatId, bot };
     }
   }
   // No Feishu conversation: the person's private chat with the bot (suggestions only live under a reply).
@@ -108,7 +108,7 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       return true;
     },
     async closed(app, ask) {
-      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and json_extract(payload, '$.askId') = ? and status = 'open'", ask.id);
+      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and json_extract(payload, '$.askId') = ?", ask.id);
       if (!row?.message_id) return;
       closeInteraction(app, row.id, ask.answeredBy ?? "");
       await updateLarkCard(row.message_id, askCard(app, ask), getInteraction(app, row.id)?.bot).catch(() => {});
@@ -134,11 +134,12 @@ export async function handleAskAction(app: App, interactionId: string, askId: st
   // Feishu waits about 3 s for this answer, and some answers take longer (confirming a delegation
   // pushes its branches): past ANSWER_WAIT_MS the click is acknowledged and the work goes on; the card
   // is updated again when the ask closes.
-  const answering = answerAsk(app, askId, input);
+  const answering = answerAsk(app, askId, { ...input, deferEffects: !!ask.handler || ask.kind === "approval" });
   const done = await Promise.race([answering, new Promise<null>((ok) => setTimeout(() => ok(null), ANSWER_WAIT_MS))]);
   if (!done) {
     answering.catch((e) => console.warn(`[omem] 卡片回答 ${askId} 处理失败：${(e as Error).message}`));
     return { toast: "收到，正在处理，完成后卡片会更新", card: askCard(app, getAsk(app, askId)) };
   }
-  return { toast: ask.kind === "approval" ? (input.approved ? "已批准" : "已拒绝") : ask.kind === "suggestion" ? "收到，接着做" : "已回答", card: askCard(app, done) };
+  if (ask.handler || ask.kind === "approval") return { toast: "收到，正在处理，完成后卡片会更新", card: askCard(app, done) };
+  return { toast: ask.kind === "suggestion" ? "收到，接着做" : "已回答", card: askCard(app, done) };
 }

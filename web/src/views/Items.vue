@@ -50,9 +50,13 @@ watch(query, () => {
   searchTimer = setTimeout(load, 200);
 });
 const itemId = pageParam("items");
+let detailSeq = 0;
 async function loadDetail() {
+  const seq = ++detailSeq;
   const id = itemId.value;
-  detail.value = id ? await get(`/api/items/${id}`).catch(() => null) : null;
+  if (detail.value?.item.id !== id) detail.value = null;
+  const result = id ? await get<NonNullable<typeof detail.value>>(`/api/items/${id}`).catch(() => null) : null;
+  if (seq === detailSeq && id === itemId.value) detail.value = result;
 }
 onMounted(() => {
   void load();

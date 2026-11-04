@@ -92,7 +92,10 @@ async function cancelWake(w: Wake) {
   wakes.value = wakes.value.filter((x) => x.id !== w.id);
   if (route.query.wake === w.id) void router.replace({ query: {} });
 }
+let detailSeq = 0;
 async function loadCurrent() {
+  const seq = ++detailSeq, selected = selectedId.value;
+  const current = () => seq === detailSeq && selected === selectedId.value;
   test.value = null;
   firings.value = [];
   if (creating.value) {
@@ -103,13 +106,14 @@ async function loadCurrent() {
   if (!selectedId.value) return void (form.value = null);
   try {
     const r = await get<Rule & { firings: Firing[] }>(`/api/rules/${selectedId.value}`);
+    if (!current()) return;
     firings.value = r.firings;
     form.value = { ...r };
     dirty.value = false;
     perms.value = null;
     if (r.trigger.event === "meeting") void checkPermissions(r.id!);
   } catch (e) {
-    toast((e as Error).message, "error");
+    if (current()) toast((e as Error).message, "error");
   }
 }
 onMounted(async () => {
@@ -297,7 +301,8 @@ const checking = ref(false);
 async function checkPermissions(id: string) {
   checking.value = true;
   try {
-    perms.value = await get<Perms>(`/api/rules/${id}/permissions`);
+    const result = await get<Perms>(`/api/rules/${id}/permissions`);
+    if (id === selectedId.value) perms.value = result;
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {

@@ -67,43 +67,55 @@ watch(
 
 const spaceLoading = ref(true);
 const pageLoading = ref(false);
+let spaceSeq = 0, pageSeq = 0, spaceWatchSeq = 0;
 async function loadSpace() {
+  const seq = ++spaceSeq, selected = space.value;
   const r = await get<{ nav: NavNode[]; pages: PageSummary[]; aliases: string[]; stalePages: StalePage[]; upkeep: Upkeep }>(`/api/wiki/${space.value}`);
+  if (seq !== spaceSeq || selected !== space.value) return;
   nav.value = r.nav;
   pages.value = r.pages;
   aliases.value = r.aliases;
   stalePageList.value = r.stalePages;
   upkeep.value = r.upkeep;
-  runs.value = (await get<{ runs: Run[] }>(`/api/runs?space=${space.value}&limit=30`)).runs.filter((x) => x.kind.startsWith("wiki-") && ["queued", "running"].includes(x.status));
+  const active = (await get<{ runs: Run[] }>(`/api/runs?space=${selected}&limit=30`)).runs.filter((x) => x.kind.startsWith("wiki-") && ["queued", "running"].includes(x.status));
+  if (seq === spaceSeq && selected === space.value) runs.value = active;
 }
 async function loadPage() {
+  const seq = ++pageSeq, selected = space.value;
+  const current = () => seq === pageSeq && selected === space.value;
   editing.value = false;
   version.value = null;
   notFound.value = false;
   const target = slug.value || (pages.value.some((p) => p.slug === "index") ? "index" : "");
-  if (!target) return void (page.value = null);
+  if (!target) { page.value = null; pageLoading.value = false; return; }
   if (!page.value || page.value.slug !== target) pageLoading.value = true;
   try {
-    page.value = await get<PageData>(`/api/wiki/${space.value}/page/${target}`);
+    const result = await get<PageData>(`/api/wiki/${selected}/page/${target}`);
+    if (!current()) return;
+    page.value = result;
     // A page that moved opens at its new path.
     if (slug.value && page.value.slug !== slug.value) void router.replace(`/wiki/${space.value}/${page.value.slug}`);
   } catch {
+    if (!current()) return;
     page.value = null;
     notFound.value = true;
   } finally {
-    pageLoading.value = false;
+    if (current()) pageLoading.value = false;
   }
 }
 watch(
   space,
   async () => {
+    const selected = space.value, seq = ++spaceWatchSeq;
+    ++pageSeq;
+    page.value = null;
     spaceLoading.value = true;
     try {
       await loadSpace();
     } finally {
-      spaceLoading.value = false;
+      if (seq === spaceWatchSeq && selected === space.value) spaceLoading.value = false;
     }
-    await loadPage();
+    if (seq === spaceWatchSeq && selected === space.value) await loadPage();
   },
   { immediate: true },
 );

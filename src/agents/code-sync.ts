@@ -71,6 +71,7 @@ function withMarkers(path: string, files: string[]) {
 /** The newest of a branch's local and origin copies: the remote one when the local is behind it. */
 function freshest(root: string, name: string): { ref: string; commit: string } | null {
   const short = name.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+  if (name.startsWith("origin/") || name.startsWith("refs/remotes/")) return resolveRef(root, name);
   const local = resolveRef(root, `refs/heads/${short}`);
   const remote = resolveRef(root, `refs/remotes/origin/${short}`);
   if (local && remote && local.commit !== remote.commit && git(root, ["merge-base", "--is-ancestor", local.commit, remote.commit]).ok) return remote;
@@ -185,6 +186,7 @@ async function syncSteps(root: string, wt: WorktreeRef, req: SyncRequest, resolv
   if (req.fetch !== false) {
     for (const name of new Set([req.pull ? wt.targetBranch : null, req.onto].filter((x): x is string => !!x))) {
       const f = fetchBranch(root, name);
+      if (!f.ok && name === req.onto && git(root, ["remote", "get-url", "origin"]).ok) throw new HttpError(409, `更新基准分支 ${name} 失败：${f.stderr.trim().slice(0, 300)}`);
       if (!f.ok) status(`没能从 origin 拉取 ${name}：${f.stderr.trim().slice(0, 200)}（按本地已有的版本继续）`);
     }
   }

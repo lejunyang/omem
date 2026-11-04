@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
-import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
+import { refreshDefaultBaseRef, defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { cancelHostAsks, createAsk, registerAskHandler, ROUND_ASKS } from "./asks.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
@@ -399,7 +399,7 @@ ${input.task}
     const implicit = !input.sync && !input.syncResume && !input.moveToTarget && !input.syncOnly && !retryOf && !input.peerFinished && worktrees.some((w) => w.targetBranch);
     const cs = await import("./code-sync.ts");
     const unfinished = worktrees.some((w) => cs.syncInProgress(w.path));
-    const req: import("./code-sync.ts").SyncRequest | undefined = input.sync ?? (implicit ? { pull: true, fetch: false } : unfinished ? { fetch: false } : undefined);
+    const req: import("./code-sync.ts").SyncRequest | undefined = input.sync ?? (implicit ? { pull: true } : unfinished ? { fetch: false } : undefined);
     if (!req && !input.syncResume && !input.moveToTarget) return null;
     type Pending = { space: string; kind: "sync" | "move"; start?: string; label: string; conflicts: string[] };
     const before = ((getRun(app, rootRunId).output.syncPending ?? []) as Pending[]);
@@ -431,9 +431,9 @@ ${input.task}
         if (m.stopped) { stopped = m.stopped; pending.push({ space: wt.space, kind: "move", start: m.start, label: m.stopped.label, conflicts: m.stopped.conflicts }); }
         else wt.start = m.start;
       } else if (req) {
-        // Nothing new on origin: leave the worktree (and its uncommitted work) alone.
-        if (implicit && !cs.syncInProgress(wt.path) && !cs.behindOrigin(root, wt)) continue;
-        const r = await cs.syncWorktree(root, wt, req, resolver, status);
+        // Refresh the default branch as well: the work branch remote may not have moved.
+        const autoBase = implicit ? refreshDefaultBaseRef(root) : null;
+        const r = await cs.syncWorktree(root, wt, { ...req, ...(autoBase ? { onto: autoBase } : {}) }, resolver, status);
         steps = r.steps;
         if (r.stopped) { stopped = r.stopped; pending.push({ space: wt.space, kind: "sync", label: r.stopped.label, conflicts: r.stopped.conflicts }); }
       }

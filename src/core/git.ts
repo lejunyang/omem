@@ -139,11 +139,26 @@ export function fetchBranch(dir: string, name: string, timeoutMs = 120_000): Git
   return { ok: r.status === 0, stdout: r.stdout ?? "", stderr: r.stderr || (r.error ? String(r.error) : "") };
 }
 
+/** Read origin's advertised default branch; supports arbitrary branch names. */
+export function refreshDefaultBaseRef(dir: string): string | null {
+  if (!git(dir, ["remote", "get-url", "origin"]).ok) return defaultBaseRef(dir);
+  const result = spawnSync("git", ["ls-remote", "--symref", "origin", "HEAD"], {
+    cwd: dir, encoding: "utf8", timeout: 30_000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" }, windowsHide: true,
+  });
+  if (result.status !== 0) throw new Error(`读取远端默认分支失败：${(result.stderr || String(result.error ?? "")).trim().slice(0, 300)}`);
+  const branch = /^ref: refs\/heads\/(.+)\s+HEAD$/m.exec(result.stdout)?.[1];
+  if (!branch) return defaultBaseRef(dir);
+  const ref = `refs/remotes/origin/${branch}`;
+  git(dir, ["symbolic-ref", "refs/remotes/origin/HEAD", ref]);
+  return `origin/${branch}`;
+}
+
 /** What a branch is usually compared with: origin's default branch, else main / master. */
 export function defaultBaseRef(dir: string): string | null {
   const head = git(dir, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
   if (head.ok && head.stdout.trim()) return head.stdout.trim();
-  for (const name of ["main", "master", "origin/main", "origin/master"]) if (resolveRef(dir, name)) return name;
+  for (const name of ["origin/main", "origin/master", "main", "master"]) if (resolveRef(dir, name)) return name;
   return null;
 }
 

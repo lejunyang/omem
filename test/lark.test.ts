@@ -15,7 +15,7 @@ import { backfillTick, capturedChats, pollLark, requestBackfill, setCapturePolic
 import { fillResources, missingResources, sourceMessages, storeMessages } from "../src/channels/lark-messages.ts";
 import { mkdirSync as mkdirS, writeFileSync as writeF } from "node:fs";
 import { run as runSql } from "../src/core/db.ts";
-import { buildCard, setLarkClient } from "../src/channels/lark-send.ts";
+import { buildCard, recordInteraction, setLarkClient } from "../src/channels/lark-send.ts";
 import { expireWatches, listWatches, routeWatchedMessages, setWatchRule } from "../src/channels/lark-watch.ts";
 import { recordCodeActivity } from "../src/sources/activity.ts";
 import { appendToSource, upsertSource } from "../src/sources/store.ts";
@@ -46,6 +46,24 @@ afterEach(() => {
 });
 
 describe("feishu bot messaging", () => {
+  it("acknowledges slow draft delivery once and patches the completed card afterwards", async () => {
+    const app = testApp();
+    const client = fakeClient();
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const create = client.im.message.create;
+    client.im.message.create = async (args: any) => { await wait; return create(args); };
+    setLarkClient(client);
+    recordInteraction(app, { messageId: "om_slow_card", chatId: "oc_g", conversationId: null, runId: null, purpose: "draft", allowed: [], payload: { target: { chatId: "oc_g" }, content: { text: "确认发送" } } });
+    const action = { operator: { open_id: "ou_owner" }, context: { open_message_id: "om_slow_card" }, action: { value: { action: "send" } } };
+    const result = await handleCardAction(app, action, () => new Promise(() => {}));
+    expect(result.toast.content).toContain("正在处理");
+    expect((await handleCardAction(app, action)).toast.content).toBe("已经处理过了");
+    release();
+    await expect.poll(() => client.calls.some(c => c.op === "patch")).toBe(true);
+    expect(client.calls.filter(c => c.op === "create")).toHaveLength(1);
+  });
+
   it("converts citations in sends, nested cards, updates and drafts while preserving callback data", async () => {
     const app = testApp();
     const client = fakeClient();
@@ -138,7 +156,7 @@ describe("feishu bot messaging", () => {
     expect(client.calls.find((c) => c.op === "reply")!.args.data.reply_in_thread).toBe(true);
 
     expect(await handleCardAction(app, { operator: { open_id: "ou_b" }, context: { open_message_id: cardId }, action: { tag: "button", value: { action: "claim" } } })).toMatchObject({ toast: { type: "error" } });
-    const ok = await handleCardAction(app, { operator: { open_id: "ou_a" }, context: { open_message_id: cardId }, action: { tag: "button", value: { action: "claim" } } });
+    const ok = await handleCardAction(app, { operator: { open_id: "ou_a" }, context: { open_message_id: cardId }, action: { tag: "button", value: { action: "claim" } } }, () => new Promise(() => {}));
     expect(ok).toMatchObject({ toast: { content: "已收到，处理中" } });
     const last = threadMessages(app, t.id).pop()!;
     expect(last.text).toMatch(/\[卡片操作\] ou_a（ou_a）在卡片 om_\d+ 上点击按钮「claim」/);

@@ -64,7 +64,8 @@ function start(app: App, r: Run) {
   if (!place) return false;
   const t = findThread(app, place.conversationId);
   if (!t || !(t.channel === "lark" || t.channel.startsWith("lark:")) || !t.key) return false;
-  const [chatId, topic] = t.key.split("#");
+  const [chatId, keyTopic] = t.key.split("#");
+  const topic = t.settings.lastTopicId ?? keyTopic;
   const anchor = t.settings.lastMessageId;
   if (!chatId || !anchor) return false;
   // A work conversation shows its process in its own topic; before the topic exists, nowhere

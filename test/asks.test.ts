@@ -142,6 +142,20 @@ describe("asking the owner", () => {
     expect(JSON.stringify(askCard(app, getAsk(app, a.id)))).toContain("已拒绝");
   });
 
+  it("acknowledges before a synchronous host action starts", async () => {
+    const { app, runId } = working();
+    let started = false;
+    registerAskHandler("blocking-test", async () => {
+      started = true;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    });
+    const q = createAsk(app, { runId, question: "执行？", options: [{ label: "执行" }], context: { handler: "blocking-test" } });
+    await handleAskAction(app, "ci", q.id, { name: "opt_0" }, "owner");
+    expect(started).toBe(false);
+    expect(getAsk(app, q.id).status).toBe("answered");
+    await expect.poll(() => started).toBe(true);
+  });
+
   it("acknowledges a card click within Feishu's limit when acting on the answer takes longer, and finishes it after", async () => {
     const { app, runId } = working();
     let finished = false;
@@ -155,8 +169,7 @@ describe("asking the owner", () => {
     expect(Date.now() - started).toBeLessThan(ANSWER_WAIT_MS + 500);
     expect(r.toast).toContain("正在处理");
     expect(finished).toBe(false);
-    await new Promise((ok) => setTimeout(ok, 1200));
-    expect(finished).toBe(true);
+    await expect.poll(() => finished, { timeout: 5000 }).toBe(true);
     expect(getAsk(app, q.id).status).toBe("answered");
   });
 });

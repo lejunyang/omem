@@ -62,20 +62,26 @@ const detailLoading = ref(false);
 const saving = ref(false);
 
 /** `quiet`: refresh in place (after a change on the page), keeping the scroll position. */
+let specSeq = 0, roleSeq = 0, skillSeq = 0;
 async function loadSpec(quiet = false) {
+  const seq = ++specSeq, name = specName.value;
+  const current = () => seq === specSeq && name === specName.value && !creating.value;
   if (!quiet) specDetail.value = null;
   if (!specName.value) return;
   detailLoading.value = !quiet;
   try {
     const d = await get<SpecDetail>(`/api/agents/${encodeURIComponent(specName.value)}`);
+    if (!current()) return;
     specDetail.value = d;
     form.value = { ...blank(), ...d, tools: [...d.tools], spaces: [...(d.spaces ?? [])], skills: d.skills.map((s) => s.name) } as Spec;
-    raw.value = (await get<{ raw: string }>(`/api/library-files/agent/${encodeURIComponent(specName.value)}`)).raw;
+    const file = await get<{ raw: string }>(`/api/library-files/agent/${encodeURIComponent(name!)}`);
+    if (!current()) return;
+    raw.value = file.raw;
     dirty.value = false;
   } catch (e) {
-    toast((e as Error).message, "error");
+    if (current()) toast((e as Error).message, "error");
   } finally {
-    detailLoading.value = false;
+    if (current()) detailLoading.value = false;
   }
 }
 function startNew() {
@@ -173,11 +179,15 @@ async function saveRoleAi() {
 }
 const showSource = ref(false);
 async function loadRole(quiet = false) {
+  const seq = ++roleSeq, name = roleName.value;
+  const current = () => seq === roleSeq && name === roleName.value && !creating.value;
   if (!quiet) roleDetail.value = null;
   if (!roleName.value) return;
   detailLoading.value = !quiet;
   try {
-    roleDetail.value = await get<RoleDetail>(`/api/roles/${encodeURIComponent(roleName.value)}`);
+    const result = await get<RoleDetail>(`/api/roles/${encodeURIComponent(roleName.value)}`);
+    if (!current()) return;
+    roleDetail.value = result;
     const ai = roleDetail.value.defaults;
     const saved = ai.byBackend[ai.agent || options.value.globalDefaultBackend];
     roleAi.value = { agent: ai.agent, model: saved?.model ?? "", effort: saved?.effort ?? "" };
@@ -186,9 +196,9 @@ async function loadRole(quiet = false) {
     dirty.value = false;
     showSource.value = false;
   } catch (e) {
-    toast((e as Error).message, "error");
+    if (current()) toast((e as Error).message, "error");
   } finally {
-    detailLoading.value = false;
+    if (current()) detailLoading.value = false;
   }
 }
 async function roleAction(action: "customize" | "reset" | "merge") {
@@ -261,16 +271,21 @@ async function removeSkillFile() {
 }
 const newSkill = ref({ name: "", description: "", body: "## 什么时候用\n\n……\n\n## 步骤\n\n1. ……\n\n## 检查\n\n- ……" });
 async function loadSkill() {
+  const seq = ++skillSeq, name = skillName.value;
+  ++fileRequest;
+  const current = () => seq === skillSeq && name === skillName.value && !creating.value;
   skillRaw.value = "";
   if (!skillName.value) return;
   detailLoading.value = true;
   try {
-    skillFiles.value = await get(`/api/skills/${encodeURIComponent(skillName.value)}/files`);
+    const result = await get<typeof skillFiles.value>(`/api/skills/${encodeURIComponent(skillName.value)}/files`);
+    if (!current()) return;
+    skillFiles.value = result;
     dirty.value = false; collapsed.value.clear();
     await openSkillFile("SKILL.md");
-    dirty.value = false;
+    if (current()) dirty.value = false;
   } finally {
-    detailLoading.value = false;
+    if (current()) detailLoading.value = false;
   }
 }
 async function saveSkill() {
@@ -319,6 +334,7 @@ async function go(query: Record<string, string>) {
 }
 onBeforeRouteLeave(async () => !dirty.value || (await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true })));
 async function loadCurrent() {
+  ++specSeq; ++roleSeq; ++skillSeq; ++fileRequest;
   rawMode.value = false;
   if (creating.value) {
     if (tab.value === "agents") startNew();

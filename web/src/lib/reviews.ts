@@ -34,20 +34,25 @@ export function useReviews(runId: Ref<string>, refreshKey: Ref<string | undefine
   const data = ref<Data | null>(null);
   const round = ref(1);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let seq = 0;
   async function load(keepRound = false) {
+    const request = ++seq, target = runId.value;
     clearTimeout(timer);
     if (!runId.value) return void (data.value = null);
     try {
-      data.value = await get<Data>(`/api/runs/${runId.value}/reviews`);
+      const result = await get<Data>(`/api/runs/${target}/reviews`);
+      if (request !== seq || target !== runId.value) return;
+      data.value = result;
       if (!keepRound) round.value = data.value.rounds.find((r) => r.runId === runId.value)?.round ?? data.value.rounds.at(-1)?.round ?? 1;
       // A review running after the coding run ended (confirmed plan) has no run of this page to follow.
       if (["queued", "checks", "lead"].includes(current.value?.stage ?? "")) timer = setTimeout(() => void load(true), 3000);
     } catch {
-      data.value = null;
+      if (request === seq && target === runId.value) data.value = null;
     }
   }
   watch([runId, refreshKey], () => void load(), { immediate: true });
-  onBeforeUnmount(() => clearTimeout(timer));
+  watch(runId, () => { data.value = null; }, { flush: "sync" });
+  onBeforeUnmount(() => { ++seq; clearTimeout(timer); });
 
   const current = computed(() => data.value?.rounds.find((r) => r.round === round.value) ?? null);
   const reviews = computed(() => {

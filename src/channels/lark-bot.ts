@@ -256,7 +256,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
 
   // Later results for a thread (delegated agents…) go back to the same chat, inside the topic when there is one.
   registerThreadSender(channel, (thread, raw, meta, omemId) => withBot(ref, async () => {
-    const [chatId, topic] = (thread.key ?? "").split("#");
+    const [chatId, keyTopic] = (thread.key ?? "").split("#");
+    const topic = thread.settings.lastTopicId ?? keyTopic;
     // What it became in Feishu: a later citation of it (`msg:`) opens the chat at it.
     const sent = (id: string | undefined) => id && run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where id = ?", id, omemId);
     if (!chatId) return;
@@ -298,10 +299,10 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   const notifyConversation = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0]) => {
     const cid = (n as { larkConversationId?: string }).larkConversationId;
     if (!cid) return null;
-    const t = one<{ channel: string; external_id: string | null; last: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastMessageId') last from conversations where id = ? and (channel = 'lark' or channel like 'lark:%')", cid);
+    const t = one<{ channel: string; external_id: string | null; last: string | null; topic: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastTopicId') topic, json_extract(settings, '$.lastMessageId') last from conversations where id = ? and (channel = 'lark' or channel like 'lark:%')", cid);
     if (!t?.external_id) return null;
     const [chatId, topic] = t.external_id.split("#");
-    return { chatId, inThread: !!topic, replyTo: t.last ?? undefined, bot: botOfChannel(t.channel) };
+    return { chatId, inThread: !!(t.topic ?? topic), replyTo: t.last ?? undefined, bot: botOfChannel(t.channel) };
   };
   const targetOf = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0]) => {
     const inThread = notifyConversation(n);

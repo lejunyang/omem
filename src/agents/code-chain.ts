@@ -50,7 +50,7 @@ export function codeChainFor(app: App, run: Run): CodeChain | null {
   if (!conversationId && !prev) return null;
   const larkKey = prev?.larkKey ?? (() => {
     const t = getThread(app, conversationId ?? "");
-    return t?.channel === "lark" || t?.channel.startsWith("lark:") ? (t.key ?? null) : null;
+    return t?.channel === "lark" || t?.channel.startsWith("lark:") ? (t.settings.lastTopicId && t.key ? `${t.key.split("#")[0]}#${t.settings.lastTopicId}` : t.key ?? null) : null;
   })();
   const chain: CodeChain = {
     askRunId: run.parentId,

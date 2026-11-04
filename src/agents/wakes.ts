@@ -104,13 +104,13 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
     return { runId: r.id };
   }
   const origin = target.resumeRunId ? getRun(app, target.resumeRunId) : null;
-  const originInput = (origin?.input ?? {}) as { spec?: string; lark?: unknown; replyAt?: unknown; silent?: unknown; rule?: unknown };
+  const originInput = (origin?.input ?? {}) as { spec?: string; lark?: unknown; replyAt?: unknown; silent?: unknown; rule?: unknown; assistantScope?: unknown; denyTools?: unknown; execution?: unknown };
   // Only a profile continuing its own run inherits that run's delivery scope.
   // Delegating a wake to another profile does not grant it the caller's channel permissions.
   const ownRun = originInput.spec === target.spec;
   const userId = ownRun && origin ? one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", origin.id)?.user_id : null;
   const prev = ownRun ? (origin?.output as { sessionId?: string } | undefined)?.sessionId : undefined;
-  const delivery = ownRun ? Object.fromEntries(["lark", "replyAt", "silent", "rule"].filter(k => k in originInput).map(k => [k, originInput[k as keyof typeof originInput]])) : {};
+  const delivery = ownRun ? Object.fromEntries(["lark", "replyAt", "silent", "rule", "assistantScope", "denyTools", "execution"].filter(k => k in originInput).map(k => [k, originInput[k as keyof typeof originInput]])) : {};
   const r = createRun(app, {
     kind: "agent",
     spaceId: ownRun ? origin?.spaceId ?? "personal" : "personal",
