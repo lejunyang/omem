@@ -67,6 +67,7 @@ describe("connections", async () => {
 
     const connect = await remote("/api/auth/lark/start?purpose=connect&features=messages", { cookie: `omem_sid=${cookie}` });
     const to = new URL(connect.headers.get("location")!);
+    expect(to.search).not.toContain("+");
     const asked = to.searchParams.get("scope")!.split(" ");
     expect(asked).toEqual(expect.arrayContaining([...scopesFor("lark", ["messages"])]));
     expect(asked).toContain("offline_access");

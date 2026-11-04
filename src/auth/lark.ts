@@ -47,7 +47,8 @@ export const larkProvider = {
   authorizeUrl(app: App, p: { state: string; challenge: string; redirectUri: string; scopes: string[] }) {
     const q = new URLSearchParams({ client_id: app.config.lark.appId ?? "", response_type: "code", redirect_uri: p.redirectUri, state: p.state, code_challenge: p.challenge, code_challenge_method: "S256" });
     if (p.scopes.length) q.set("scope", p.scopes.join(" "));
-    return `${hosts(app).accounts}/open-apis/authen/v1/authorize?${q}`;
+    // Scopes separated by %20 as Feishu documents it (URLSearchParams writes a space as +).
+    return `${hosts(app).accounts}/open-apis/authen/v1/authorize?${q.toString().replace(/\+/g, "%20")}`;
   },
   async exchange(app: App, p: { code: string; verifier: string; redirectUri: string }): Promise<ProviderTokens> {
     const res = await authFetch(`${hosts(app).open}/open-apis/authen/v2/oauth/token`, {
