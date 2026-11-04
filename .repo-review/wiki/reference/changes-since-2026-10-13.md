@@ -7,6 +7,10 @@ updated: 2026-11-04
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 网页组合输入保护（11-04）
+
+- `web/src/lib/composition.ts` 统一隔离输入法组合期间的键盘事件，并取消确认回车引起的隐式表单提交；主站和英语插件的 Vue 入口共用。原生 input / textarea、父级键盘处理、Teleport 弹窗与下拉筛选、全局快捷键都受保护，保留输入法选词的默认行为。`scripts/check-composition.ts` 用真实 Vue 控件和浏览器回归，操作系统输入法另需手动验收。
+
 ## 中断的 Git 操作续轮（11-03）
 
 - `code-sync.ts` 在 merge / rebase 之外识别 cherry-pick / revert 及其 sequencer；`placeOnBranch` 保留现场，`syncWorktree` 先解决并继续未完成的操作再暂存与同步，`code.ts` 让失败重试和无需拉取的续轮也进入恢复。多提交序列和空提交不再卡住，冲突仍未解决时保留现场。`test/code-sync.test.ts` 覆盖工作区入口、后续提交、空提交、revert 和 ACP 端到端恢复。

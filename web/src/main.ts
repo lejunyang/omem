@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-router";
 import App from "./App.vue";
 import { preloadWhenIdle, preloadable } from "./preload";
+import { compositionGuard } from "./lib/composition";
 import "./styles.css";
 
 // `pattern` is the router pattern; `key` is the nav base used for hover/idle preloading.
@@ -40,4 +41,4 @@ const router = createRouter({
 // After the first view has settled, pull every other chunk at idle.
 router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/agents", "/rules", "/rules/archive", "/notifications", "/settings"]));
 
-createApp(App).use(router).mount("#app");
+createApp(App).use(compositionGuard).use(router).mount("#app");
