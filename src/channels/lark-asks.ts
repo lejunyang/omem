@@ -14,8 +14,12 @@ import { getTask } from "../agents/code-tasks.ts";
  * answer or a refusal's reason. Answered anywhere, the card turns into a record of the answer.
  */
 const TITLE: Record<Ask["kind"], string> = { question: "需要你回答", approval: "需要你批准", suggestion: "" };
-/** How long a card click waits for its answer before Feishu is told it is being handled (its limit is about 3 s). */
-export const ANSWER_WAIT_MS = 2000;
+/**
+ * How long a card click waits for its answer before Feishu is told it is being handled (its limit is
+ * about 3 s). Shorter than the whole callback's CALLBACK_WAIT_MS (lark-actions.ts), so a slow answer still
+ * comes back with the updated card instead of a bare toast.
+ */
+export const ANSWER_WAIT_MS = 800;
 
 function button(text: string, name: string, kind: "primary" | "danger" | "default", inForm: boolean, value: string) {
   return {
@@ -169,7 +173,8 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       return true;
     },
     async closed(app, ask) {
-      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and json_extract(payload, '$.askId') = ?", ask.id);
+      // The card that reached Feishu: a send that failed leaves an expired row without a message.
+      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and json_extract(payload, '$.askId') = ? and message_id is not null order by status = 'open' desc, created_at desc limit 1", ask.id);
       if (!row?.message_id) return;
       closeInteraction(app, row.id, ask.answeredBy ?? "");
       await updateLarkCard(row.message_id, askCard(app, ask), getInteraction(app, row.id)?.bot).catch(() => {});

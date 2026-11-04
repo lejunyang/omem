@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { answerAsk, createAsk, getAsk, listAsks, settleAsks, showSuggestions } from "../src/agents/asks.ts";
+import { answerAsk, createAsk, getAsk, listAsks, settleAsks, showSuggestions, LARK_SUGGESTION_FALLBACK_MS } from "../src/agents/asks.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool } from "../src/agents/tools.ts";
@@ -95,6 +95,22 @@ it("does not show Feishu confirmations on a timer while the answer has not been 
   await vi.advanceTimersByTimeAsync(8000);
   expect(posts).toBe(0);
   await showSuggestions(app, task.id);
+  expect(posts).toBe(1);
+  // Shown once: the late fallback finds nothing left to show.
+  await vi.advanceTimersByTimeAsync(LARK_SUGGESTION_FALLBACK_MS);
+  expect(posts).toBe(1);
+});
+
+it("still shows a Feishu confirmation when the reply itself never went out", async () => {
+  vi.useFakeTimers();
+  const { app, ctx, task } = fixture();
+  let posts = 0;
+  client(async () => { posts++; return { code: 0, data: { message_id: "om_late" } }; });
+  await callTool(ctx, "save_rule", { description: ruleInput.description, rule: ruleInput });
+  await settleAsks(app, task.id);
+  await vi.advanceTimersByTimeAsync(LARK_SUGGESTION_FALLBACK_MS - 1000);
+  expect(posts).toBe(0);
+  await vi.advanceTimersByTimeAsync(2000);
   expect(posts).toBe(1);
 });
 

@@ -155,12 +155,16 @@ describe("feishu bot messaging", () => {
     const cardId = /已发送 (om_\d+)/.exec(sent.text)![1];
     expect(client.calls.find((c) => c.op === "reply")!.args.data.reply_in_thread).toBe(true);
 
-    expect(await handleCardAction(app, { operator: { open_id: "ou_b" }, context: { open_message_id: cardId }, action: { tag: "button", value: { action: "claim" } } })).toMatchObject({ toast: { type: "error" } });
-    const ok = await handleCardAction(app, { operator: { open_id: "ou_a" }, context: { open_message_id: cardId }, action: { tag: "button", value: { action: "claim" } } }, () => new Promise(() => {}));
+    const names: Record<string, string> = { ou_a: "小王", ou_b: "小李" };
+    expect(await handleCardAction(app, { operator: { open_id: "ou_b" }, context: { open_message_id: cardId }, action: { tag: "button", value: { action: "claim" } } }, async (id) => names[id] ?? id)).toMatchObject({ toast: { type: "error", content: "只有 小王 可以处理" } });
+    // The contacts API is slow: the click is answered within Feishu's limit, the name follows into the conversation.
+    const slowName = (id: string) => new Promise<string>((ok) => setTimeout(() => ok(names[id] ?? id), 600));
+    const started = Date.now();
+    const ok = await handleCardAction(app, { operator: { open_id: "ou_a" }, context: { open_message_id: cardId }, action: { tag: "button", value: { action: "claim" } } }, slowName);
+    expect(Date.now() - started).toBeLessThan(1000);
     expect(ok).toMatchObject({ toast: { content: "已收到，处理中" } });
-    const last = threadMessages(app, t.id).pop()!;
-    expect(last.text).toMatch(/\[卡片操作\] ou_a（ou_a）在卡片 om_\d+ 上点击按钮「claim」/);
-    expect(last.meta.speaker).toBe("ou_a");
+    await expect.poll(() => threadMessages(app, t.id).pop()!.text).toMatch(/\[卡片操作\] 小王（ou_a）在卡片 om_\d+ 上点击按钮「claim」/);
+    expect(threadMessages(app, t.id).pop()!.meta.speaker).toBe("小王");
   });
 
   it("without a target, posts into the Feishu conversation the run is answering", async () => {

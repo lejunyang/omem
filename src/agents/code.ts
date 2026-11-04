@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
-import { refreshDefaultBaseRef, defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
+import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { cancelHostAsks, createAsk, registerAskHandler, ROUND_ASKS } from "./asks.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
@@ -431,8 +431,9 @@ ${input.task}
         if (m.stopped) { stopped = m.stopped; pending.push({ space: wt.space, kind: "move", start: m.start, label: m.stopped.label, conflicts: m.stopped.conflicts }); }
         else wt.start = m.start;
       } else if (req) {
-        // Refresh the default branch as well: the work branch remote may not have moved.
-        const autoBase = implicit ? refreshDefaultBaseRef(root) : null;
+        // A branch omem cut also takes in what landed on the branch it was cut from; a branch the
+        // person picked (a release branch, say) only follows its own remote.
+        const autoBase = implicit ? wt.cutFrom ?? null : null;
         const r = await cs.syncWorktree(root, wt, { ...req, ...(autoBase ? { onto: autoBase } : {}) }, resolver, status);
         steps = r.steps;
         if (r.stopped) { stopped = r.stopped; pending.push({ space: wt.space, kind: "sync", label: r.stopped.label, conflicts: r.stopped.conflicts }); }

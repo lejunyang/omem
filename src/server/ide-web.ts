@@ -13,6 +13,7 @@ import { OWNER, userForToken } from "../core/users.ts";
 import { truncate } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "./origin.ts";
 import { NLS_ROUTE, packFor, rewriteWorkbench, translateMessages, workbenchNls } from "./ide-locale.ts";
+import { completeServer, DEFAULT_UPDATE_URL, downloadServer, latestServer, pruneServers, type ServerDownload } from "./ide-download.ts";
 import { extensionDigest, findExtensionSource, installOmemExtension, listedExtensions, OMEM_EXTENSION, readJsonc, reusableExtensions, reuseExtensions, reuseSources, seedMachineSettings, typescriptTranspiler } from "./ide-setup.ts";
 
 /**
@@ -36,6 +37,25 @@ const sessions = new Set<string>();
 let ownServer: Server | null = null;
 /** What the last start put in (the omem extension, seeded settings, reused extensions), for the report. */
 let prepared: Record<string, unknown> | null = null;
+/** The server build serve-web runs, and omem's download of one (ide-download.ts), for the page and the report. */
+let running: string | null = null;
+let download: ServerDownload | null = null;
+let downloading: Promise<void> | null = null;
+let updateTimer: ReturnType<typeof setTimeout> | null = null;
+/** Between two checks for a newer server build; a check happens a while after serve-web starts. */
+const UPDATE_EVERY_MS = 24 * 3600_000;
+const UPDATE_DELAY_MS = 60_000;
+/** The waiting page's own route under /ide: the download's progress (GET), a retry (POST). */
+const DOWNLOAD_ROUTE = "/__omem/server-download";
+
+/** No server build yet: omem is downloading one and the page shows how far it is. */
+export class IdeNotReady extends Error {}
+
+/** Where omem looks for server builds; null when the owner turned it off (serve-web downloads then). */
+function updateUrl(app: App) {
+  const set = app.config.ide.web.updateUrl?.trim();
+  return set === "off" ? null : set || DEFAULT_UPDATE_URL;
+}
 
 /**
  * The VS Code CLI to run: the configured command, else `code-tunnel` (the CLI itself, shipped beside
@@ -58,18 +78,25 @@ export function ensureIdeWeb(app: App): Promise<number> {
     token = randomBytes(24).toString("hex");
     const dir = join(app.home, "ide");
     mkdirSync(dir, { recursive: true });
-    const args = ["serve-web", "--host", "127.0.0.1", "--port", String(port), "--connection-token", token, "--accept-server-license-terms", "--server-base-path", IDE_BASE, "--server-data-dir", join(dir, "server"), "--cli-data-dir", join(dir, "cli"), "--disable-telemetry"];
-    // Without a commit serve-web tracks the latest release, even with a working server cached.
-    // Keep opening workspaces offline instead of blocking them on an unrelated update download.
-    const cached = newestServer(dir);
-    if (cached) args.push("--commit-id", cached.commit);
-    reapOrphan(join(dir, "serve-web.pid"));
-    reapServers(join(dir, "server"));
-    prepared = await prepareIde(app).catch((e: Error) => ({ error: e.message }));
     const command = ideCli(app);
     const set = app.config.ide.web.command?.trim();
     if (!command)
       throw new Error(set ? `找不到 ${set}：在运行页“在 VS Code 中打开”旁的齿轮里改成 VS Code 命令行的完整路径` : "这台机器上找不到 VS Code 的命令行（code-tunnel、code）：装上 VS Code 或它的独立命令行，或在运行页“在 VS Code 中打开”旁的齿轮里填它的路径");
+    // Run a build already here, even when a newer one is out: a newer one is fetched in the
+    // background and used the next time serve-web starts. Without one omem downloads it first, so
+    // the page can show the progress (serve-web's own download shows nothing for minutes).
+    const cached = newestServer(dir);
+    if (!cached && updateUrl(app)) {
+      void fetchServer(app, "first");
+      throw new IdeNotReady(download?.state === "error" ? `下载 VS Code 服务端失败：${download.error}` : "正在下载 VS Code 服务端，好了再打开");
+    }
+    const args = ["serve-web", "--host", "127.0.0.1", "--port", String(port), "--connection-token", token, "--accept-server-license-terms", "--server-base-path", IDE_BASE, "--server-data-dir", join(dir, "server"), "--cli-data-dir", join(dir, "cli"), "--disable-telemetry"];
+    // Without a commit serve-web tracks the latest release, even with a working server cached.
+    if (cached) args.push("--commit-id", cached.commit);
+    running = cached?.commit ?? null;
+    reapOrphan(join(dir, "serve-web.pid"));
+    reapServers(join(dir, "server"));
+    prepared = await prepareIde(app).catch((e: Error) => ({ error: e.message }));
     // resolveCommand runs a .cmd through cmd.exe itself; the arguments are ours (paths, a hex token).
     const child = spawn(command.file, [...command.prefix, ...args], { windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: ideEnv(app) });
     let log = "";
@@ -94,7 +121,10 @@ export function ensureIdeWeb(app: App): Promise<number> {
     }
     for (let i = 0; i < 150; i++) {
       if (failed || child.exitCode !== null || child.signalCode) break;
-      if (await reachable(port)) return port;
+      if (await reachable(port)) {
+        scheduleUpdate(app);
+        return port;
+      }
       await new Promise((r) => setTimeout(r, 200));
     }
     killTree(child);
@@ -121,14 +151,70 @@ function ideEnv(app: App): NodeJS.ProcessEnv {
 /** The newest complete cached server; interrupted downloads must not pin an unusable build. */
 function newestServer(root: string) {
   const base = join(root, "cli", "serve-web");
-  const files = ["product.json", process.platform === "win32" ? "node.exe" : "node", "out/server-main.js", process.platform === "win32" ? "bin/code-server.cmd" : "bin/code-server"];
   return (
     subdirs(base)
       .filter((c) => /^[0-9a-f]{40}$/.test(c))
-      .filter((c) => files.every((file) => existsSync(join(base, c, file))))
+      .filter((c) => completeServer(join(base, c)))
       .map((commit) => ({ commit, dir: join(base, commit), version: (readObject(join(base, commit, "product.json"))?.version as string | undefined) ?? null, at: statSync(join(base, commit)).mtimeMs }))
       .sort((a, b) => b.at - a.at)[0] ?? null
   );
+}
+
+/**
+ * Download the newest server build, one download at a time: `first` while the page waits for it,
+ * `update` beside the build that runs (kept; older ones go; the new one runs from the next start).
+ */
+function fetchServer(app: App, purpose: ServerDownload["purpose"]) {
+  const url = updateUrl(app);
+  if (!url) return Promise.resolve();
+  downloading ??= (async () => {
+    const root = join(app.home, "ide", "cli", "serve-web");
+    const state: ServerDownload = { purpose, state: "checking", received: 0, total: null, startedAt: new Date().toISOString() };
+    download = state;
+    try {
+      const build = await latestServer(url);
+      Object.assign(state, { commit: build.commit, version: build.version });
+      writeUpdateCheck(app, build.commit);
+      if (!completeServer(join(root, build.commit))) {
+        await downloadServer(root, build, (received, total, step) => Object.assign(state, { received, total, state: step }));
+        pruneServers(root, [build.commit, ...(running ? [running] : [])]);
+      }
+      Object.assign(state, { state: "ready", finishedAt: new Date().toISOString() });
+    } catch (e) {
+      Object.assign(state, { state: "error", error: (e as Error).message, finishedAt: new Date().toISOString() });
+      console.warn(`[omem] 网页版 VS Code：${purpose === "first" ? "下载" : "更新"}服务端失败：${(e as Error).message}`);
+    }
+  })().finally(() => (downloading = null));
+  return downloading;
+}
+
+/** Check for a newer server build now instead of on the daily timer (tests, a diagnosis). */
+export const updateIdeServer = (app: App) => fetchServer(app, "update");
+
+const updateCheckFile = (app: App) => join(app.home, "ide", "update-check.json");
+function writeUpdateCheck(app: App, latest: string) {
+  try {
+    writeFileSync(updateCheckFile(app), JSON.stringify({ checkedAt: new Date().toISOString(), latest }));
+  } catch { /* checked again next start */ }
+}
+
+/** A while after serve-web is up, at most once a day: fetch a newer build for the next start. */
+function scheduleUpdate(app: App) {
+  if (updateTimer || !updateUrl(app)) return;
+  const last = Date.parse(String(readObject(updateCheckFile(app))?.checkedAt ?? ""));
+  const wait = Number.isNaN(last) ? UPDATE_DELAY_MS : Math.max(UPDATE_DELAY_MS, last + UPDATE_EVERY_MS - Date.now());
+  updateTimer = setTimeout(() => {
+    updateTimer = null;
+    void fetchServer(app, "update").then(() => {
+      if (proc) scheduleUpdate(app);
+    });
+  }, wait);
+  updateTimer.unref?.();
+}
+
+/** What the waiting page shows: omem's download, and whether a build is there to run. */
+export function ideDownloadState(app: App) {
+  return { download, ready: !!newestServer(join(app.home, "ide")), running };
 }
 
 /** Before serve-web starts: omem's extension, settings and (when asked) extensions from this machine. */
@@ -175,6 +261,9 @@ function reapOrphan(file: string) {
 
 export function stopIdeWeb() {
   if (proc) killTree(proc);
+  if (updateTimer) clearTimeout(updateTimer);
+  updateTimer = null;
+  running = null;
   prepared = null;
   if (pidFile) rmSync(pidFile, { force: true });
   proc = null;
@@ -232,7 +321,14 @@ const deny = (res: { writeHead: (s: number, h: Record<string, string>) => void; 
 /** An HTTP request under /ide (the raw request; its body not read yet). */
 export async function proxyIde(app: App, req: IncomingMessage, res: import("node:http").ServerResponse) {
   if (!ideAllowed(app, req)) return deny(res, 401, "网页版 VS Code 只对本人开放：在 omem 网页的运行页点“网页版 VS Code”打开。");
-  const own = NLS_ROUTE.exec((req.url ?? "").slice(IDE_BASE.length).replace(/\?.*$/, ""));
+  const sub = (req.url ?? "").slice(IDE_BASE.length).replace(/\?.*$/, "");
+  // The waiting page asks how the download goes, and starts it again after a failure.
+  if (sub === DOWNLOAD_ROUTE) {
+    if (req.method === "POST" && download?.state === "error") void fetchServer(app, download.purpose);
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    return void res.end(JSON.stringify(ideDownloadState(app)));
+  }
+  const own = NLS_ROUTE.exec(sub);
   if (own) return serveNls(app, own[1], own[2], req, res);
   const fixed = req.method === "GET" && acceptsGzip(req) ? STATIC.exec((req.url ?? "").slice(IDE_BASE.length)) : null;
   const packed = fixed ? packedPath(app, fixed[1], req.url!) : "";
@@ -241,6 +337,10 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
   try {
     p = await ensureIdeWeb(app);
   } catch (e) {
+    if (e instanceof IdeNotReady && req.method === "GET" && /text\/html/.test(String(req.headers.accept ?? ""))) {
+      res.writeHead(202, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      return res.end(ideWaitingPage());
+    }
     return deny(res, 503, (e as Error).message);
   }
   const headers = upstreamHeaders(req);
@@ -289,39 +389,77 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
   req.pipe(up);
 }
 
+/**
+ * Shown while there is no server build to run: omem's download with its progress (or, with omem's
+ * download turned off, serve-web's own, which shows none), entered by itself once ready.
+ */
 function ideWaitingPage() {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>准备 VS Code</title>
-<style>body{font:15px/1.7 system-ui;margin:24px;max-width:680px;overflow-wrap:anywhere;color-scheme:light dark}button{font:inherit;padding:6px 16px;cursor:pointer}pre{white-space:pre-wrap}</style>
+<style>body{font:15px/1.7 system-ui;margin:24px;max-width:680px;overflow-wrap:anywhere;color-scheme:light dark}button{font:inherit;padding:6px 16px;cursor:pointer}pre{white-space:pre-wrap}progress{width:100%;height:10px}</style>
 <h1 style="font-size:22px">正在准备网页版 VS Code</h1>
-<p>首次使用需要下载服务端；所有项目共用，已有完整版本会直接复用。准备好了会自动进入。</p>
-<p id="status" role="status">正在检查……</p><pre id="error" hidden></pre><button id="retry" hidden>重新检查</button>
+<p>首次使用需要下载服务端；所有项目共用，已有完整版本会直接复用，新版本以后在后台下载。准备好了会自动进入。</p>
+<progress id="bar" hidden></progress>
+<p id="status" role="status">正在检查……</p><pre id="error" hidden></pre><button id="retry" hidden>重新下载</button>
 <script>
+const route = '${IDE_BASE}${DOWNLOAD_ROUTE}';
 const status = document.getElementById('status');
 const error = document.getElementById('error');
 const retry = document.getElementById('retry');
+const bar = document.getElementById('bar');
 let started = Date.now();
 let timer;
+let last = null;
+const mb = (n) => (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB';
+const waited = () => Math.floor((Date.now() - started) / 1000);
 function stop(message, detail = '') {
   clearTimeout(timer);
+  bar.hidden = true;
   status.textContent = message;
   error.textContent = detail;
   error.hidden = !detail;
   retry.hidden = false;
 }
+function show(d) {
+  const version = d.version ? ' ' + d.version : '';
+  if (d.state === 'checking') { bar.hidden = false; bar.removeAttribute('value'); return '正在查询最新的服务端版本……'; }
+  if (d.state === 'extracting') { bar.hidden = false; bar.removeAttribute('value'); return '已下载' + version + '（' + mb(d.received) + '），正在解压……'; }
+  bar.hidden = false;
+  const now = Date.now();
+  const speed = last && now > last.at ? (d.received - last.received) / ((now - last.at) / 1000) : 0;
+  last = { at: now, received: d.received };
+  const rate = speed > 0 ? '，' + mb(speed) + '/s' : '';
+  if (!d.total) { bar.removeAttribute('value'); return '正在下载服务端' + version + '：已下载 ' + mb(d.received) + rate; }
+  bar.max = d.total; bar.value = d.received;
+  const left = speed > 0 ? '，约 ' + Math.max(1, Math.round((d.total - d.received) / speed)) + ' 秒' : '';
+  return '正在下载服务端' + version + '：' + mb(d.received) + ' / ' + mb(d.total) + '（' + Math.floor(d.received * 100 / d.total) + '%' + rate + left + '）';
+}
 async function check() {
-  const seconds = Math.floor((Date.now() - started) / 1000);
-  status.textContent = '已等待 ' + seconds + ' 秒，正在检查……';
-  if (seconds >= 600) return stop('准备超过 10 分钟。下载可能较慢或已中断，可稍后重新检查。');
+  if (waited() >= 1800) return stop('准备超过 30 分钟。下载可能较慢或已中断，可稍后重新检查。');
   try {
+    const state = await (await fetch(route, {cache: 'no-store', signal: AbortSignal.timeout(15000)})).json();
+    const d = state.download;
+    if (!state.ready && d && d.purpose === 'first' && d.state === 'error') return stop('下载 VS Code 服务端失败。', d.error || '');
+    if (!state.ready && d && d.purpose === 'first' && d.state !== 'ready') {
+      status.textContent = show(d);
+      timer = setTimeout(check, 1000);
+      return;
+    }
+    // A build is here, or serve-web downloads one itself (no progress to show then).
     const response = await fetch(location.href, {cache: 'no-store', headers: {accept: 'text/html'}, signal: AbortSignal.timeout(30000)});
     if (response.status === 200) { location.reload(); return; }
     if (response.status !== 202) return stop('准备失败（HTTP ' + response.status + '）', await response.text());
-    status.textContent = '已等待 ' + Math.floor((Date.now() - started) / 1000) + ' 秒，服务端仍在准备中……';
+    bar.hidden = false; bar.removeAttribute('value');
+    status.textContent = '已等待 ' + waited() + ' 秒，服务端仍在准备中……';
     timer = setTimeout(check, 3000);
   } catch (e) { stop('检查连接失败，请重新检查。', e.message); }
 }
-retry.onclick = () => { started = Date.now(); retry.hidden = true; error.hidden = true; check(); };
-timer = setTimeout(check, 1000);
+retry.onclick = async () => {
+  started = Date.now(); last = null; retry.hidden = true; error.hidden = true;
+  status.textContent = '正在重新下载……';
+  await fetch(route, {method: 'POST', cache: 'no-store'}).catch(() => {});
+  check();
+};
+timer = setTimeout(check, 300);
 </script></html>`;
 }
 
@@ -555,6 +693,7 @@ export function ideWebReport(app: App) {
       sources: reuse,
     },
     lastStart: prepared,
+    serverDownload: { ...ideDownloadState(app), lastCheck: readObject(join(root, "update-check.json")) },
     locale: { argv, settings, env: Object.fromEntries(["LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"].map((k) => [k, process.env[k] ?? null])) },
     terminal: { shell: process.env.SHELL ?? process.env.ComSpec ?? null, nodePty: servers[0]?.nodePty ?? null },
     logs: { sessions, ...logs },

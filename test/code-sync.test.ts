@@ -283,10 +283,13 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
     } finally { await server.close(); }
   });
 
-  it("every coding round first pulls what others pushed to the target branch", async () => {
+  it("every coding round first pulls what others pushed to the target branch, and leaves main out of a branch the person picked", async () => {
     const server = await startServer(app, { port: 0, quiet: true });
     try {
       delegate("resolve");
+      // main moved on origin too: a branch the person picked (a release branch, say) does not take it in.
+      sh(root, "push", "-q", "origin", "main");
+      const mainTip = sh(root, "rev-parse", "main");
       const other = join(app.home, "other");
       sh(app.home, "clone", "-q", "-b", "feature/refund", remote, other);
       sh(other, "config", "core.autocrlf", "false"); sh(other, "config", "user.name", "Other"); sh(other, "config", "user.email", "other@example.com");
@@ -298,6 +301,7 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
       expect(sh(w.path, "merge-base", "--is-ancestor", pushed, "HEAD")).toBe("");
       expect(readFileSync(join(w.path, "notes.txt"), "utf8")).toBe("from a colleague\n");
       expect(String(getRun(app, r.id).output.coderSummary)).toMatch(/## Git 同步\n\n(拉取|合并) origin\/feature\/refund/);
+      expect(git(w.path, ["merge-base", "--is-ancestor", mainTip, "HEAD"]).ok).toBe(false);
     } finally {
       await server.close();
     }

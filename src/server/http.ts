@@ -20,7 +20,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
 import { attachPluginStreams, registerPluginRoutes } from "../plugins/http.ts";
-import { IDE_BASE, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
+import { IDE_BASE, IdeNotReady, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -1075,7 +1075,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (who(req) !== OWNER) throw new HttpError(403, "网页版 VS Code 只对本人开放");
     const { folder } = q(z.object({ folder: z.string().optional(), token: z.string().optional() }), req.query);
     // Opened in a new tab: a readable sentence, not JSON.
-    const failed = await ensureIdeWeb(app).then(() => null, (e: Error) => e.message);
+    // Still downloading a server build: the page under /ide shows how far it is.
+    const failed = await ensureIdeWeb(app).then(() => null, (e: Error) => (e instanceof IdeNotReady ? null : e.message));
     if (failed) return reply.code(503).type("text/plain; charset=utf-8").send(failed);
     reply.header("set-cookie", newIdeSession()).header("cache-control", "no-store");
     return reply.redirect(`${IDE_BASE}/${folder ? `?folder=${encodeURIComponent(ideFolder(folder))}` : ""}`);

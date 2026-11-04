@@ -1,11 +1,14 @@
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createServer, type Server as HttpServer } from "node:http";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { startServer } from "../src/server/http.ts";
-import { ideFolder, stopIdeWeb } from "../src/server/ide-web.ts";
+import { ideFolder, stopIdeWeb, updateIdeServer } from "../src/server/ide-web.ts";
+import { serverFiles, serverPlatform } from "../src/server/ide-download.ts";
 import { addPeer, openPeerUi } from "../src/core/peers.ts";
 import { testApp } from "./helpers.ts";
 
@@ -58,7 +61,8 @@ if (process.platform !== "win32") chmodSync(fake, 0o755);
 
 const app = testApp();
 // Settings and extensions from this machine's real VS Code stay out of tests.
-app.config.ide = { web: { command: fake, reuseSettings: false } };
+// Server builds: serve-web's own download (the fake has none) unless a test sets the update service.
+app.config.ide = { web: { command: fake, reuseSettings: false, updateUrl: "off" } };
 app.config.token = "owner-secret";
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const base = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
@@ -222,6 +226,86 @@ describe("web VS Code under /ide", () => {
     expect(page).not.toContain('http-equiv="refresh"');
     expect(page).not.toContain("第一次打开，正在下载这一版");
   }, 30000);
+
+  it("downloads the first server build itself, showing its progress, and fetches newer ones in the background", async () => {
+    stopIdeWeb();
+    const root = join(app.home, "ide", "cli", "serve-web");
+    rmSync(root, { recursive: true, force: true });
+    // A stand-in for the update service: announces a build and serves it as an archive, slowly.
+    const builds: Record<string, Buffer> = {};
+    const build = (commit: string, version: string) => {
+      const work = mkdtempSync(join(tmpdir(), "omem-build-"));
+      for (const file of serverFiles()) {
+        const path = join(work, "vscode-server-web", file);
+        mkdirSync(join(path, ".."), { recursive: true });
+        writeFileSync(path, file === "product.json" ? JSON.stringify({ version, commit }) : "fake");
+      }
+      expect(spawnSync("tar", ["-czf", "build.tar.gz", "vscode-server-web"], { cwd: work }).status).toBe(0);
+      builds[commit] = readFileSync(join(work, "build.tar.gz"));
+      rmSync(work, { recursive: true, force: true });
+    };
+    let latest = { commit: "e".repeat(40), version: "1.150.0" };
+    build(latest.commit, latest.version);
+    let release!: () => void;
+    let gate = new Promise<void>((ok) => (release = ok));
+    const updates: HttpServer = createServer(async (req, res) => {
+      if (req.url === `/api/update/${serverPlatform()}/stable/latest`) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ version: latest.commit, productVersion: latest.version, url: `http://127.0.0.1:${(updates.address() as { port: number }).port}/dl/${latest.commit}.tar.gz`, sha256hash: createHash("sha256").update(builds[latest.commit]).digest("hex") }));
+      }
+      const body = builds[/\/dl\/([0-9a-f]{40})/.exec(req.url ?? "")?.[1] ?? ""];
+      if (!body) return void res.writeHead(404).end();
+      res.writeHead(200, { "content-length": String(body.length) });
+      res.write(body.subarray(0, 10));
+      await gate;
+      res.end(body.subarray(10));
+    });
+    await new Promise<void>((ok) => updates.listen(0, "127.0.0.1", ok));
+    app.config.ide.web.updateUrl = `http://127.0.0.1:${(updates.address() as { port: number }).port}`;
+    try {
+      // The link still opens the page; the page shows the download while it goes.
+      const s = await fetch(`${base}/api/ide/open?token=owner-secret`, { redirect: "manual" });
+      expect(s.status).toBe(302);
+      const cookie = s.headers.get("set-cookie")!.split(";")[0];
+      const page = await fetch(`${base}/ide/`, { headers: { cookie, accept: "text/html" } });
+      expect(page.status).toBe(202);
+      expect(await page.text()).toContain("/ide/__omem/server-download");
+      const progress = async () => (await fetch(`${base}/ide/__omem/server-download`, { headers: { cookie } })).json();
+      await expect.poll(async () => (await progress()).download?.received).toBe(10);
+      const during = await progress();
+      expect(during).toMatchObject({ ready: false, download: { purpose: "first", state: "downloading", commit: latest.commit, version: "1.150.0", total: builds[latest.commit].length } });
+      // Without a build nothing else opens yet.
+      expect((await fetch(`${base}/ide/static/x.js`, { headers: { cookie } })).status).toBe(503);
+      release();
+      await expect.poll(async () => (await progress()).ready).toBe(true);
+      expect((await progress()).download.state).toBe("ready");
+      const seen = await (await fetch(`${base}/ide/x`, { headers: { cookie } })).json();
+      expect(seen.commit).toBe(latest.commit);
+
+      // A newer build comes out: the running one stays until the next start, then the new one runs.
+      const old = latest.commit;
+      latest = { commit: "f".repeat(40), version: "1.151.0" };
+      build(latest.commit, latest.version);
+      gate = Promise.resolve();
+      await updateIdeServer(app);
+      expect((await (await fetch(`${base}/ide/x`, { headers: { cookie } })).json()).commit).toBe(old);
+      expect(readdirSync(root).filter((d) => !d.startsWith(".")).sort()).toEqual([old, latest.commit].sort());
+      stopIdeWeb();
+      const again = await fetch(`${base}/api/ide/open?token=owner-secret`, { redirect: "manual" });
+      const cookie2 = again.headers.get("set-cookie")!.split(";")[0];
+      expect((await (await fetch(`${base}/ide/x`, { headers: { cookie: cookie2 } })).json()).commit).toBe(latest.commit);
+      // Older builds go once a newer one is there and the old one no longer runs.
+      latest = { commit: "9".repeat(40), version: "1.152.0" };
+      build(latest.commit, latest.version);
+      await updateIdeServer(app);
+      expect(readdirSync(root).filter((d) => !d.startsWith(".")).sort()).toEqual(["f".repeat(40), latest.commit].sort());
+    } finally {
+      release();
+      app.config.ide.web.updateUrl = "off";
+      stopIdeWeb();
+      await new Promise((ok) => updates.close(ok));
+    }
+  }, 60000);
 
   it("says which CLI it would run, and why it cannot when the configured one is not there", async () => {
     const owner = { headers: { authorization: "Bearer owner-secret" } };

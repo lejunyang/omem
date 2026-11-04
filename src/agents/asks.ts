@@ -383,12 +383,14 @@ async function deliverAnswer(app: App, ask: Ask) {
  * A run ended: answers that came in while it was working go to its conversation, and its
  * suggestions are shown — after a moment, so a channel posting the reply itself goes first.
  */
+export const LARK_SUGGESTION_FALLBACK_MS = 60_000;
 export async function settleAsks(app: App, runId: string) {
   for (const r of all<Row>(app.db, "select * from asks where run_id = ? and kind != 'suggestion' and status = 'answered' and consumed = 0", runId)) await deliverAnswer(app, toAsk(r));
   const channel = one<{ channel: string }>(app.db, "select c.channel from conversations c join runs r on c.id = json_extract(r.input, '$.conversationId') where r.id = ?", runId)?.channel;
-  // Feishu confirms delivery explicitly; a timer can overtake a slow answer request.
-  if (channel === "lark" || channel?.startsWith("lark:")) return;
-  const t = setTimeout(() => void showSuggestions(app, runId).catch(() => {}), 4000);
+  // Feishu shows them once the reply is posted (a short timer could overtake a slow send); the long
+  // one only catches a reply that never went out, so its buttons and confirmations are not lost.
+  const lark = channel === "lark" || !!channel?.startsWith("lark:");
+  const t = setTimeout(() => void showSuggestions(app, runId).catch(() => {}), lark ? LARK_SUGGESTION_FALLBACK_MS : 4000);
   t.unref();
 }
 

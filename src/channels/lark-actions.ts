@@ -17,12 +17,14 @@ import { bindInteraction, buildCard, closeInteraction, deliverLark, describeActi
  *   posted the card, so the agent that asked continues.
  */
 type CardActionResult = { toast: { type: string; content: string }; card?: unknown };
+/** Feishu waits about 3 s for the callback; past this the click is acknowledged and the card patched later. */
+export const CALLBACK_WAIT_MS = 1000;
 
-export async function handleCardAction(app: App, data: any, _nameOf: (openId: string) => Promise<string> = async (id) => id): Promise<CardActionResult> {
-  const work = actOnCard(app, data);
+export async function handleCardAction(app: App, data: any, nameOf: (openId: string) => Promise<string> = async (id) => id): Promise<CardActionResult> {
+  const work = actOnCard(app, data, nameOf);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const result = await Promise.race([work, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 1000); })]);
+    const result = await Promise.race([work, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), CALLBACK_WAIT_MS); })]);
     if (result) return result;
     // Slow remote actions continue once; the completed card is patched after the callback closes.
     void work.then(async (late) => {
@@ -37,7 +39,14 @@ export async function handleCardAction(app: App, data: any, _nameOf: (openId: st
   }
 }
 
-async function actOnCard(app: App, data: any): Promise<CardActionResult> {
+/** A name lookup may call the contacts API: inside the callback it gets a short budget, then the id stands in. */
+const NAME_WAIT_MS = 300;
+function quickName(nameOf: (openId: string) => Promise<string>, openId: string, waitMs = NAME_WAIT_MS) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([nameOf(openId).catch(() => openId), new Promise<string>((ok) => { timer = setTimeout(() => ok(openId), waitMs); })]).finally(() => clearTimeout(timer));
+}
+
+async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promise<string>): Promise<CardActionResult> {
   const operator: string = data.operator?.open_id ?? data.open_id ?? "";
   // Who clicked, as this bot sees them (open_ids are per app; the other bots also know user_id).
   const operatorUser = () => larkUser(app, { open_id: operator, user_id: data.operator?.user_id });
@@ -59,11 +68,11 @@ async function actOnCard(app: App, data: any): Promise<CardActionResult> {
   if (!inter) return { toast: { type: "warning", content: "这张卡片已经失效" } };
   if (earlyId && earlyId !== inter.id) return { toast: { type: "warning", content: "卡片与交互记录不匹配" } };
   if (inter.allowed.length && !inter.allowed.includes(operator) && !(data.operator?.user_id && inter.allowed.includes(data.operator.user_id))) {
-    const who = inter.allowed.slice(0, 3).join("、");
+    const who = (await Promise.all(inter.allowed.slice(0, 3).map((id) => quickName(nameOf, id)))).join("、");
     return { toast: { type: "error", content: `只有 ${who} 可以处理` } };
   }
   if (inter.status !== "open") return { toast: { type: "info", content: "已经处理过了" } };
-  const opName = operatorUser() === OWNER ? "本人" : operator;
+  const opName = operatorUser() === OWNER ? "本人" : await quickName(nameOf, operator);
   if (inter.purpose === "ask") {
     // A question, suggested step or approval (agents/asks.ts): answered here, no agent turn of its own.
     const { handleAskAction } = await import("./lark-asks.ts");
@@ -221,13 +230,18 @@ async function actOnCard(app: App, data: any): Promise<CardActionResult> {
   const desc = describeAction({ tag: action.tag, name: action.name, value, formValue, option: action.option, options: action.options, input: action.input_value, checked: action.checked });
   const userId = operatorUser();
   run(app.db, "update card_interactions set handled_at = datetime('now'), handled_by = ? where id = ?", operator, inter.id);
-  void receive(app, {
-    conversationId: inter.conversationId,
-    text: `[卡片操作] ${opName}（${operator}）在卡片 ${messageId} 上${desc}`,
-    speaker: userId === OWNER ? undefined : opName,
-    userId: OWNER,
-    externalMessageId: messageId,
-  }).catch((e) => console.warn("[omem] 卡片操作续聊失败", e));
+  // After the callback has answered there is time for the full lookup: the Agent should know who clicked.
+  const conversationId = inter.conversationId;
+  void (async () => {
+    const name = userId === OWNER || opName !== operator ? opName : await quickName(nameOf, operator, 5000);
+    await receive(app, {
+      conversationId,
+      text: `[卡片操作] ${name}（${operator}）在卡片 ${messageId} 上${desc}`,
+      speaker: userId === OWNER ? undefined : name,
+      userId: OWNER,
+      externalMessageId: messageId,
+    });
+  })().catch((e) => console.warn("[omem] 卡片操作续聊失败", e));
   return { toast: { type: "info", content: "已收到，处理中" } };
 }
 
