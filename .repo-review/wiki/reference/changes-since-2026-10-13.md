@@ -1218,3 +1218,13 @@ updated: 2026-11-04
 - 飞书会话的下一步按钮和规则确认卡片在回复送达后展示，另有 60 秒兜底（`LARK_SUGGESTION_FALLBACK_MS`）：回复没发出去时按钮不丢，已展示的不重复（`test/rule-confirmation.test.ts`）。
 - 网页版 VS Code：服务端由 omem 自己下载（`src/server/ide-download.ts`）：查更新服务的最新版本，流式下载并显示进度（已下载 / 总大小、速度、剩余时间），按公布的 SHA-256 校验，解压后放进 serve-web 的缓存目录，用 `--commit-id` 运行。已有完整版本时直接进入，serve-web 启动一分钟后（之后每天最多一次）在后台下载新版本，下次启动 serve-web 时使用，旧版本在不再运行后删掉。`ide.web.updateUrl: "off"` 时交回 serve-web 自己下载。Windows 上用系统的 bsdtar 解压 zip（Git 自带的 GNU tar 读不了 zip，也会把 `C:` 当成远程主机）。
 - 验证：`test/ide-web.test.ts` 用假更新服务覆盖首次下载的进度、下载中其他请求 503、完成后进入、后台更新不影响正在运行的版本、下次启动换新版本、清理旧版本；本机用官方 1.145.0 Windows 包（211 MB，SHA-256 与公布值一致）经 omem 下载解压后，真实 `code-tunnel serve-web --commit-id` 直接返回工作台，没有再次下载。
+
+## 多人登录（2026-11-05）
+
+- 设计与分期：`docs/v2/multi-user.md`。这是第 1 期：登录与会话。
+- `src/auth/`：`providers.ts` 登录方注册表（授权地址、换令牌、`whoami`，身份由服务端拿令牌查，不信浏览器）；`lark.ts` 用机器人应用做飞书 OAuth（`authen/v1/authorize` + PKCE、`authen/v2/oauth/token`、`authen/v1/user_info`），身份是 union_id，本应用的 open_id 记成别名；`login.ts` 登录 / 绑定 / 待批准 / 邀请 / 机器人一次性链接；`sessions.ts` 会话 cookie（`omem_sid`，只存哈希）；`http.ts` 的 `resolveAuth`（令牌 → 会话 → 本机）和相关接口。
+- 迁移：`users` 加 `kind`、`status`（pending）、`email`、`avatar`；`identities` 加 `kind`（login / alias）、`tenant`、`app_id`、`display`、`verified_at`，已有的飞书 `ou_` 身份改成 alias；新表 `auth_sessions`、`auth_states`、`invites`、`login_links`（本机的，不参与拉取）。
+- `resolveIdentity`、`userForToken`、`accessibleSpaces`、`canWrite` 不认待批准的用户。机器人给用户发私聊改用 `larkOpenIdOf`（只取机器人应用里的 open_id 别名）。
+- 配置 `auth`：`enabled`、`providers`、`primary`、`signup`（按登录方：approve / closed / open）、`sessionDays`。打开后 `trustedLocal(..., { refuseProxied })` 把带 `X-Forwarded-For` / `Forwarded` / `X-Real-IP` 的请求排除在本机信任之外（插件流、网页版 VS Code、`omem peer open` 同样）。
+- HTTP：`/api/auth/session`、`/api/auth/:provider/start|callback`、`/api/auth/link/:code`、`/api/auth/logout` 不经统一鉴权；`/api/auth/account`、会话和身份的删除给每个人；`/api/users`、`/api/invites`、`/api/auth/providers` 只给本人。待批准和受限会话只能访问 `/api/me` 和 `/api/auth/*`（403 带 `code: pending|restricted`）。成员可以 GET `/api/spaces`（只列能读的）。
+- 网页：`/login`（不带外壳）、`/account`、设置 → 成员；401 带 `login: true` 时跳登录页而不是要令牌。命令：`/login`；`omem user approve`、`omem user invite`。

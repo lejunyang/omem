@@ -28,6 +28,9 @@ const routes: RouteRecordRaw[] = [
   view("/rules", () => import("./views/Rules.vue")),
   view("/notifications", () => import("./views/Notifications.vue")),
   view("/settings", () => import("./views/Settings.vue")),
+  view("/account", () => import("./views/Account.vue")),
+  // Logging in (src/auth): like a share link, shown without the app frame.
+  view("/login", () => import("./views/Login.vue")),
   // A read-only share link (no token, no app frame): App.vue renders it alone.
   view("/share/:token/:item?", () => import("./views/Share.vue"), "/share"),
 ];
@@ -39,6 +42,6 @@ const router = createRouter({
 });
 
 // After the first view has settled, pull every other chunk at idle.
-router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/agents", "/rules", "/rules/archive", "/notifications", "/settings"]));
+router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/agents", "/rules", "/rules/archive", "/notifications", "/settings", "/account"]));
 
 createApp(App).use(compositionGuard).use(router).mount("#app");

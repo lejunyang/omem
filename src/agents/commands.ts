@@ -53,7 +53,7 @@ const commands: Record<string, Command> = {
         ...["space", "agent", "model", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
         "",
         "**快捷**",
-        ...["remember", "todo", "search", "review", "runs", "whoami"].map(line),
+        ...["remember", "todo", "search", "review", "runs", "whoami", "login"].map(line),
         "",
         "其他文字照常交给助理。",
       ].join("\n"),
@@ -413,6 +413,18 @@ const commands: Record<string, Command> = {
       const id = inb.userId ?? OWNER;
       const spaces = accessibleSpaces(app, id);
       return `${userName(app, id)}（${id}）· 可访问空间：${spaces ? spaces.join(", ") || "无" : "全部"}`;
+    },
+  },
+  login: {
+    usage: "/login",
+    help: "在私聊里取一个网页登录链接（5 分钟内有效，只能用一次）",
+    run: async ({ app, inb, thread }) => {
+      if (inb.isGroup || !/^(lark|telegram|onebot)(:|$)/.test(thread.channel)) return "登录链接只在和机器人的私聊里发。";
+      const base = app.config.webUrl?.trim().replace(/\/+$/, "");
+      if (!app.config.auth.enabled || !base) return "omem 还没有打开多人登录，或没有填网页地址（设置 → 成员 / 渠道）。";
+      const { createLoginLink } = await import("../auth/login.ts");
+      const code = createLoginLink(app, inb.userId ?? OWNER, thread.channel);
+      return `在浏览器里打开，点“登录”：${base}/api/auth/link/${code}\n\n5 分钟内有效，只能用一次，不要转发给别人。`;
     },
   },
   runs: {

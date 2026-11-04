@@ -1168,6 +1168,67 @@ const migrations: string[] = [
   `update code_tasks set state = 'assistant', origin = json_remove(origin, '$.blocked', '$.escalated')
      where state = 'owner' and json_extract(origin, '$.blocked') = 1 and json_extract(origin, '$.escalated') is null;
    update code_tasks set origin = json_remove(origin, '$.blocked', '$.escalated') where json_extract(origin, '$.blocked') is not null;`,
+  // Logging in (src/auth, docs/v2/multi-user.md): a person signs in with a provider (Feishu first) and
+  // gets a session cookie. users: pending until the owner approves; identities: the login id (Feishu
+  // union_id) and per-app aliases (open_ids, which differ per app). Sessions, OAuth states, invites and
+  // one-time login links are this device's own.
+  `alter table users add column kind text not null default 'person';      -- person | service
+   alter table users add column status text not null default 'active';   -- active | pending
+   alter table users add column email text;
+   alter table users add column avatar text;
+   alter table identities add column tenant text not null default '';
+   alter table identities add column kind text not null default 'login';  -- login | alias
+   alter table identities add column app_id text;
+   alter table identities add column display text not null default '';
+   alter table identities add column verified_at text;
+   update identities set kind = 'alias' where channel like 'lark%' and external_id like 'ou\\_%' escape '\\';
+   create index identities_user on identities(user_id);
+   create table auth_sessions (
+     id_hash text primary key,
+     user_id text not null,
+     via text not null,                       -- provider id, link, invite
+     restricted integer not null default 0,   -- 1: may only bind the primary login provider
+     created_at text not null,
+     last_seen_at text not null,
+     expires_at text not null,
+     ip text not null default '',
+     user_agent text not null default ''
+   );
+   create index auth_sessions_user on auth_sessions(user_id);
+   create table auth_states (
+     state text primary key,
+     provider text not null,
+     verifier text not null,
+     purpose text not null,                   -- login | bind
+     user_id text,                            -- bind: who is binding
+     session_hash text,                       -- bind: the session to lift out of restricted mode
+     invite text,
+     redirect_uri text not null,
+     return_to text not null default '',
+     created_at text not null
+   );
+   create table invites (
+     id text primary key,
+     token_hash text unique not null,
+     role text not null default 'member',
+     spaces text not null default '[]',       -- [{ space, role }]
+     allow_any integer not null default 0,    -- may log in with providers other than the primary one
+     note text not null default '',
+     created_by text not null,
+     created_at text not null,
+     expires_at text not null,
+     used_by text,
+     used_at text,
+     revoked_at text
+   );
+   create table login_links (
+     code_hash text primary key,
+     user_id text not null,
+     channel text not null,
+     created_at text not null,
+     expires_at text not null,
+     used_at text
+   );`,
 ];
 
 export type Db = DatabaseSync;

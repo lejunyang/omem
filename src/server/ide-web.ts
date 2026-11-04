@@ -297,7 +297,7 @@ export function ideAllowed(app: App, req: IncomingMessage) {
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ")) return userForToken(app, auth.slice(7)) === OWNER;
   const ip = req.socket.remoteAddress ?? "";
-  return !app.config.token && trustedLocal(req, ip) && !req.headers.authorization;
+  return !app.config.token && trustedLocal(req, ip, { refuseProxied: app.config.auth.enabled }) && !req.headers.authorization;
 }
 
 /** Headers for serve-web: its token added as the cookie it checks, omem's own cookie and auth left out. */

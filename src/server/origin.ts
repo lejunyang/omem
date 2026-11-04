@@ -31,7 +31,17 @@ export function sameOrigin(req: Pick<IncomingMessage, "headers">) {
   }
 }
 
-/** Loopback trust: from this machine, addressed by a loopback name, not sent by another site. */
-export function trustedLocal(req: Pick<IncomingMessage, "headers">, ip: string) {
+/**
+ * Came through a reverse proxy on this machine: the proxy connects from loopback for whoever is outside.
+ * `omem peer open` and the dev server only add X-Forwarded-Host, so they are not counted.
+ */
+export const viaProxy = (req: Pick<IncomingMessage, "headers">) => !!(header(req, "x-forwarded-for") || header(req, "forwarded") || header(req, "x-real-ip"));
+
+/**
+ * Loopback trust: from this machine, addressed by a loopback name, not sent by another site. With
+ * logging in on (`auth.enabled`, `refuseProxied`), a request a reverse proxy forwarded is not this machine.
+ */
+export function trustedLocal(req: Pick<IncomingMessage, "headers">, ip: string, opts: { refuseProxied?: boolean } = {}) {
+  if (opts.refuseProxied && viaProxy(req)) return false;
   return loopbackIp(ip) && LOOPBACK_HOST.test(header(req, "host") ?? "") && sameOrigin(req);
 }

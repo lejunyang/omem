@@ -241,7 +241,7 @@ export async function openPeerUi(app: App, id: string, port = 0) {
   const { tunneled, tunnelHttp, tunnelUpgrade } = await import("./peer-tunnel.ts");
   const { trustedLocal } = await import("../server/origin.ts");
   // Everything here goes out with the owner's token: only this machine's browser, not another site's page.
-  const refuse = (req: import("node:http").IncomingMessage) => !trustedLocal(req, req.socket.remoteAddress ?? "");
+  const refuse = (req: import("node:http").IncomingMessage) => !trustedLocal(req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
   const server = createServer(async (req, res) => {
     if (refuse(req)) return void res.writeHead(403, { "content-type": "text/plain; charset=utf-8" }).end("只接受本机浏览器直接打开的请求");
     if (tunneled(req.url ?? "/")) return tunnelHttp(app, id, req.url ?? "/", req, res);

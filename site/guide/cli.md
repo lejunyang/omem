@@ -81,6 +81,8 @@ omem lark user-permissions [--grant] | bot-permissions [--scan]
 ```bash
 omem user add 小王 --id wang --lark ou_xxx --space team
 omem user token wang
+omem user approve <id>              # 批准用登录建好的账号
+omem user invite --space team       # 邀请链接：用它登录的人直接建好账号
 omem space share project-a wang [--edit]
 omem peer invite --label laptop     # 打印配对码
 omem peer add <配对码> [--via <中间那台>]

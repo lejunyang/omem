@@ -29,6 +29,8 @@ export const state = reactive({
   palette: false,
   capture: false,
   theme: stored("omem-theme", "auto"),
+  /** Who is using the page (src/auth): the owner, or a member with a smaller set of pages. */
+  me: null as null | { id: string; name: string; role: "owner" | "member"; status: string; avatar: string | null; via: string },
 });
 
 watch(

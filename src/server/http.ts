@@ -43,9 +43,10 @@ import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedul
 import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
+import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
-import { accessibleSpaces, canWrite, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
+import { accessibleSpaces, canWrite, findUser, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
@@ -77,12 +78,7 @@ const q = <T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> => {
   return r.data;
 };
 
-function bearer(req: FastifyRequest) {
-  const h = req.headers.authorization;
-  if (h?.startsWith("Bearer ")) return h.slice(7);
-  // In the query only for what the browser loads itself (images, downloads, the event stream).
-  return req.method === "GET" || req.method === "HEAD" ? ((req.query as { token?: string })?.token ?? "") : "";
-}
+const bearer = bearerToken;
 
 export async function startServer(app: App, opts: { port?: number; host?: string; quiet?: boolean } = {}) {
   const server = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
@@ -99,10 +95,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     reply.status(status).send({ error: error.message });
   });
 
-  // API auth: loopback is trusted as the owner unless a token is configured; per-user
-  // API tokens (omem user token) identify other people. Members get a small API:
-  // asking, their own conversations and items, search within their spaces.
-  const MEMBER_ROUTES = [/^\/api\/ask$/, /^\/api\/conversations(\/[^/?]+)?(\?.*)?$/, /^\/api\/search(\?.*)?$/, /^\/api\/items(\?.*)?$/, /^\/api\/runs\/[^/?]+(\/events)?(\?.*)?$/, /^\/api\/me$/];
+  // API auth (src/auth/http.ts): a token, a login session, or this machine (the owner, unless a
+  // token is configured). Members get a small API: asking, their own conversations and items,
+  // search within their spaces, the spaces they can read, their account.
+  const MEMBER_ROUTES = [/^\/api\/ask$/, /^\/api\/conversations(\/[^/?]+)?(\?.*)?$/, /^\/api\/search(\?.*)?$/, /^\/api\/items(\?.*)?$/, /^\/api\/runs\/[^/?]+(\/events)?(\?.*)?$/, /^\/api\/me$/, AUTH_LIMITED];
+  // Reads only: the spaces a member can see (the route filters them).
+  const MEMBER_READS = [/^\/api\/spaces(\?.*)?$/];
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
     // Tool routes check their own (per-run) token.
@@ -110,16 +108,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
     // returns only the snapshot that share holds.
     if (req.method === "GET" && SHARE_ROUTE.test(req.url)) return;
-    const token = bearer(req);
-    // Without a token only this machine is trusted, even when listening on all interfaces, and
-    // only when the request is not another site's (server/origin.ts).
-    const local = trustedLocal(req.raw, req.ip ?? "");
-    const userId = token ? userForToken(app, token) : app.config.token || !local ? null : OWNER;
-    if (!userId) return void reply.status(401).send({ error: "需要访问令牌" });
-    (req as FastifyRequest & { userId: string }).userId = userId;
-    if (userId !== OWNER && !MEMBER_ROUTES.some((re) => re.test(req.url))) reply.status(403).send({ error: "这个接口只对 omem 的主人开放" });
+    // Logging in has to work before there is anyone; those routes look themselves.
+    if (AUTH_PUBLIC.test(req.url)) return;
+    const auth = resolveAuth(app, req);
+    if (!auth) return void reply.status(401).send({ error: app.config.auth.enabled ? "请先登录" : "需要访问令牌", login: app.config.auth.enabled });
+    const r = req as FastifyRequest & { userId: string; auth: RequestAuth };
+    r.userId = auth.userId;
+    r.auth = auth;
+    const u = findUser(app, auth.userId);
+    if ((u?.status === "pending" || auth.restricted) && !AUTH_LIMITED.test(req.url))
+      return void reply.status(403).send({ error: u?.status === "pending" ? "账号还在等 omem 的主人批准" : "请先绑定主要登录方", code: u?.status === "pending" ? "pending" : "restricted" });
+    if (auth.userId !== OWNER && !MEMBER_ROUTES.some((re) => re.test(req.url)) && !(req.method === "GET" && MEMBER_READS.some((re) => re.test(req.url)))) reply.status(403).send({ error: "这个接口只对 omem 的主人开放" });
   });
   const who = (req: FastifyRequest) => (req as FastifyRequest & { userId?: string }).userId ?? OWNER;
+  const authOf = (req: FastifyRequest) => (req as FastifyRequest & { auth?: RequestAuth }).auth ?? null;
+  registerAuthRoutes(server, app, who, authOf);
 
   // ------------------------------------------------------------------- shares
   server.get("/api/share/:token", async (req, reply) => {
@@ -135,7 +138,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/me", async (req) => {
     const u = getUser(app, who(req));
-    return { ...u, spaces: accessibleSpaces(app, u.id) };
+    return { ...u, spaces: accessibleSpaces(app, u.id), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted };
   });
 
   // ---------------------------------------------------------------- tools/MCP
@@ -208,10 +211,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ------------------------------------------------------------------- spaces
-  server.get("/api/spaces", async () => {
+  server.get("/api/spaces", async (req) => {
     const counts = new Map(all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from sources where deleted_at is null group by space_id").map((r) => [r.space_id, r.n]));
     const pages = new Map(all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from pages group by space_id").map((r) => [r.space_id, r.n]));
-    return listSpaces(app).map((s) => ({ ...s, sources: counts.get(s.id) ?? 0, pages: pages.get(s.id) ?? 0, related: relatedSpaces(app, s.id) }));
+    const allowed = accessibleSpaces(app, who(req));
+    return listSpaces(app)
+      .filter((s) => allowed === null || allowed.includes(s.id))
+      .map((s) => ({ ...s, sources: counts.get(s.id) ?? 0, pages: pages.get(s.id) ?? 0, related: relatedSpaces(app, s.id).filter((r) => allowed === null || allowed.includes(r.space)) }));
   });
   // Related spaces: the owner adds or removes; removing one an agent added keeps it from coming back.
   server.post("/api/spaces/:id/related", async (req) => {
@@ -1111,7 +1117,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Another device runs one of this device's agents (core/peer-acp.ts): the owner's token.
     if (ACP_PATH.test(req.url ?? "")) {
       const h = req.headers.authorization;
-      const owner = h?.startsWith("Bearer ") ? userForToken(app, h.slice(7)) === OWNER : !app.config.token && trustedLocal(req, req.socket.remoteAddress ?? "");
+      const owner = h?.startsWith("Bearer ") ? userForToken(app, h.slice(7)) === OWNER : !app.config.token && trustedLocal(req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
       if (!owner) return void socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n");
       return void serveAcp(app, req, socket, head);
     }

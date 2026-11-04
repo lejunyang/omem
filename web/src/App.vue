@@ -28,11 +28,12 @@ watch(() => state.space, () => {
 });
 const menu = ref(false);
 const loadError = ref("");
-const nav = ref<{ to: string; label: string; icon: string; exact?: boolean }[]>([
+// `member`: pages a member (not the owner) can use; the rest of the API is the owner's.
+const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; member?: boolean }[]>([
   { to: "/", label: "今日", icon: "home", exact: true },
-  { to: "/ask", label: "问答", icon: "chat" },
+  { to: "/ask", label: "问答", icon: "chat", member: true },
   { to: "/wiki", label: "Wiki", icon: "book" },
-  { to: "/items", label: "事项", icon: "checkbox" },
+  { to: "/items", label: "事项", icon: "checkbox", member: true },
   { to: "/reqs", label: "需求", icon: "target" },
   { to: "/memory", label: "记忆", icon: "brain" },
   { to: "/sources", label: "原件", icon: "file" },
@@ -64,12 +65,21 @@ function onKey(e: KeyboardEvent) {
     state.capture = true;
   }
 }
-// A share link is opened by people without a token: no frame, nothing else loaded.
-const bare = computed(() => route.path.startsWith("/share/") || (!route.matched.length && location.hash.startsWith("#/share/")));
+const owner = computed(() => !state.me || state.me.role === "owner");
+const shownNav = computed(() => (owner.value ? nav.value : nav.value.filter((n) => n.member)));
+const MEMBER_PAGES = ["/ask", "/items", "/account"];
+// A member landing on an owner's page (the start page, an old link) goes to 问答.
+watch([() => route.path, owner], ([path]) => {
+  if (!owner.value && !bare.value && !MEMBER_PAGES.some((p) => path === p || path.startsWith(p + "/"))) void router.replace("/ask");
+});
+// A share link is opened by people without a token, the login page before logging in: no frame, nothing else loaded.
+const BARE = ["#/share/", "#/login"];
+const bare = computed(() => route.path.startsWith("/share/") || route.path === "/login" || (!route.matched.length && BARE.some((b) => location.hash.startsWith(b))));
 onMounted(async () => {
-  if (location.hash.startsWith("#/share/")) return;
+  if (BARE.some((b) => location.hash.startsWith(b))) return;
   window.addEventListener("keydown", onKey);
   try {
+    state.me = await get("/api/me");
     await loadSpaces();
     await refreshUnread();
     await addPluginPages();
@@ -107,14 +117,15 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
       <button class="search-btn" @click="state.palette = true"><Icon name="search" :size="16" /><span>搜索或提问</span><kbd>Ctrl K</kbd></button>
 
       <nav>
-        <router-link v-for="n in nav" :key="n.to" :to="n.to" class="nav" :class="{ on: isActive(n.to, n.exact) }" @mouseenter="preloadRoute(n.to)" @focus="preloadRoute(n.to)"><Icon :name="n.icon" :size="17" />{{ n.label }}</router-link>
+        <router-link v-for="n in shownNav" :key="n.to" :to="n.to" class="nav" :class="{ on: isActive(n.to, n.exact) }" @mouseenter="preloadRoute(n.to)" @focus="preloadRoute(n.to)"><Icon :name="n.icon" :size="17" />{{ n.label }}</router-link>
       </nav>
 
       <div class="spacer" />
       <button class="btn capture" @click="state.capture = true"><Icon name="plus" :size="16" />保存材料<kbd>Ctrl J</kbd></button>
       <div class="foot row">
-        <router-link to="/notifications" class="btn ghost sm icon bell" title="通知" @mouseenter="preloadRoute('/notifications')"><Icon name="bell" :size="17" /><span v-if="state.unread" class="dot">{{ state.unread > 9 ? "9+" : state.unread }}</span></router-link>
-        <router-link to="/settings" class="btn ghost sm icon" title="设置" @mouseenter="preloadRoute('/settings')"><Icon name="settings" :size="17" /></router-link>
+        <router-link v-if="owner" to="/notifications" class="btn ghost sm icon bell" title="通知" @mouseenter="preloadRoute('/notifications')"><Icon name="bell" :size="17" /><span v-if="state.unread" class="dot">{{ state.unread > 9 ? "9+" : state.unread }}</span></router-link>
+        <router-link to="/account" class="btn ghost sm icon" :title="state.me ? `账号：${state.me.name}` : '账号'" @mouseenter="preloadRoute('/account')"><Icon name="user" :size="17" /></router-link>
+        <router-link v-if="owner" to="/settings" class="btn ghost sm icon" title="设置" @mouseenter="preloadRoute('/settings')"><Icon name="settings" :size="17" /></router-link>
         <button class="btn ghost sm icon" :title="`主题：${state.theme}`" @click="cycleTheme"><Icon :name="state.theme === 'dark' ? 'moon' : 'sun'" :size="17" /></button>
       </div>
     </aside>

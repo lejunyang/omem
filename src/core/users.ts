@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { App } from "./app.ts";
 import { all, one, run } from "./db.ts";
 import { createSpace, findSpace } from "./spaces.ts";
-import { HttpError, now, sameSecret, sha256, slugify } from "./util.ts";
+import { HttpError, json, now, sameSecret, sha256, slugify } from "./util.ts";
 
 /**
  * People. omem is used by one owner today, but every conversation, item,
@@ -15,9 +15,37 @@ import { HttpError, now, sameSecret, sha256, slugify } from "./util.ts";
  * turns and API tokens all go through `accessibleSpaces`.
  */
 export const OWNER = "owner";
-export type User = { id: string; name: string; role: "owner" | "member"; createdAt: string; disabledAt: string | null };
-type Row = { id: string; name: string; role: string; created_at: string; disabled_at: string | null };
-const toUser = (r: Row): User => ({ id: r.id, name: r.name, role: r.role === "owner" ? "owner" : "member", createdAt: r.created_at, disabledAt: r.disabled_at });
+/** `pending`: signed up by logging in, waiting for the owner (src/auth); cannot use anything yet. */
+export type UserStatus = "active" | "pending";
+/** Per-user switches the owner sets. loginAny: may log in with providers other than auth.primary. */
+export type UserSettings = { loginAny?: boolean };
+export type User = {
+  id: string;
+  name: string;
+  role: "owner" | "member";
+  kind: "person" | "service";
+  status: UserStatus;
+  email: string | null;
+  avatar: string | null;
+  settings: UserSettings;
+  createdAt: string;
+  disabledAt: string | null;
+};
+type Row = { id: string; name: string; role: string; kind: string; status: string; email: string | null; avatar: string | null; settings: string; created_at: string; disabled_at: string | null };
+const toUser = (r: Row): User => ({
+  id: r.id,
+  name: r.name,
+  role: r.role === "owner" ? "owner" : "member",
+  kind: r.kind === "service" ? "service" : "person",
+  status: r.status === "pending" ? "pending" : "active",
+  email: r.email,
+  avatar: r.avatar,
+  settings: json<UserSettings>(r.settings, {}),
+  createdAt: r.created_at,
+  disabledAt: r.disabled_at,
+});
+/** Can act: not disabled, not waiting for approval. */
+export const activeUser = (u: User | null | undefined): u is User => !!u && !u.disabledAt && u.status === "active";
 
 export function getUser(app: App, id: string): User {
   const r = one<Row>(app.db, "select * from users where id = ?", id);
@@ -37,10 +65,16 @@ export function personalSpaceId(userId: string) {
   return userId === OWNER ? "personal" : `personal-${userId}`;
 }
 
-export function createUser(app: App, input: { name: string; id?: string; role?: "member" | "owner" }) {
-  const id = slugify(input.id ?? input.name).replace(/[^a-z0-9-]/g, "") || `u${Date.now().toString(36)}`;
-  if (findUser(app, id)) throw new HttpError(409, `用户已存在：${id}`);
-  run(app.db, "insert into users(id,name,role,created_at) values(?,?,?,?)", id, input.name, input.role ?? "member", now());
+export function createUser(app: App, input: { name: string; id?: string; role?: "member" | "owner"; status?: UserStatus; email?: string | null; avatar?: string | null }) {
+  let id = slugify(input.id ?? input.name).replace(/[^a-z0-9-]/g, "") || `u${Date.now().toString(36)}`;
+  if (findUser(app, id)) {
+    // Someone logging in for the first time has no say in the id: take the next free one.
+    if (input.id) throw new HttpError(409, `用户已存在：${id}`);
+    let n = 2;
+    while (findUser(app, `${id}-${n}`)) n++;
+    id = `${id}-${n}`;
+  }
+  run(app.db, "insert into users(id,name,role,status,email,avatar,created_at) values(?,?,?,?,?,?,?)", id, input.name, input.role ?? "member", input.status ?? "active", input.email ?? null, input.avatar ?? null, now());
   const sp = personalSpaceId(id);
   if (!findSpace(app, sp)) createSpace(app, { id: sp, name: `${input.name} 的个人空间`, kind: "personal" });
   run(app.db, "update spaces set owner_id = ? where id = ?", id, sp);
@@ -60,13 +94,13 @@ export function removeMember(app: App, spaceId: string, userId: string) {
 /** Spaces a user may read; null means all (the owner). */
 export function accessibleSpaces(app: App, userId: string = OWNER): string[] | null {
   const u = findUser(app, userId);
-  if (!u || u.disabledAt) return [];
+  if (!activeUser(u)) return [];
   if (u.role === "owner") return null;
   return all<{ space_id: string }>(app.db, "select space_id from space_members where user_id = ?", userId).map((r) => r.space_id);
 }
 export function canWrite(app: App, userId: string, spaceId: string) {
   const u = findUser(app, userId);
-  if (!u || u.disabledAt) return false;
+  if (!activeUser(u)) return false;
   if (u.role === "owner") return true;
   const m = one<{ role: string }>(app.db, "select role from space_members where space_id = ? and user_id = ?", spaceId, userId);
   return m?.role === "editor" || m?.role === "owner";
@@ -97,16 +131,65 @@ export function resolveIdentity(app: App, channel: string, externalId: string | 
   if (externalId === undefined || externalId === null || externalId === "") return null;
   const id = String(externalId);
   if (configuredOwner(app, channel, id)) return OWNER;
-  const r = one<{ user_id: string }>(app.db, "select i.user_id from identities i join users u on u.id = i.user_id where i.channel = ? and i.external_id = ? and u.disabled_at is null", channel, id);
+  const r = one<{ user_id: string }>(app.db, "select i.user_id from identities i join users u on u.id = i.user_id where i.channel = ? and i.external_id = ? and u.disabled_at is null and u.status = 'active'", channel, id);
   return r?.user_id ?? null;
 }
 
-export function linkIdentity(app: App, userId: string, channel: string, externalId: string) {
+/**
+ * `login`: what a provider logs someone in by (Feishu union_id); `alias`: the same person in one app's
+ * id space (a Feishu open_id differs per app), so channel messages still resolve to them.
+ */
+export type IdentityKind = "login" | "alias";
+export type Identity = { channel: string; external_id: string; user_id: string; kind: IdentityKind; tenant: string; app_id: string | null; display: string; created_at: string; verified_at: string | null };
+
+export function linkIdentity(app: App, userId: string, channel: string, externalId: string, opts: { kind?: IdentityKind; tenant?: string; appId?: string | null; display?: string; verified?: boolean } = {}) {
   getUser(app, userId);
-  run(app.db, "insert into identities(channel,external_id,user_id,created_at) values(?,?,?,?) on conflict(channel,external_id) do update set user_id = excluded.user_id", channel, externalId, userId, now());
+  const kind = opts.kind ?? (channel.startsWith("lark") && externalId.startsWith("ou_") ? "alias" : "login");
+  run(
+    app.db,
+    `insert into identities(channel,external_id,user_id,created_at,kind,tenant,app_id,display,verified_at) values(?,?,?,?,?,?,?,?,?)
+     on conflict(channel,external_id) do update set user_id = excluded.user_id, kind = excluded.kind,
+       tenant = case when excluded.tenant != '' then excluded.tenant else identities.tenant end,
+       app_id = coalesce(excluded.app_id, identities.app_id),
+       display = case when excluded.display != '' then excluded.display else identities.display end,
+       verified_at = coalesce(excluded.verified_at, identities.verified_at)`,
+    channel, externalId, userId, now(), kind, opts.tenant ?? "", opts.appId ?? null, opts.display ?? "", opts.verified ? now() : null,
+  );
 }
 export function identitiesOf(app: App, userId: string) {
-  return all<{ channel: string; external_id: string }>(app.db, "select channel, external_id from identities where user_id = ?", userId);
+  return all<Identity>(app.db, "select * from identities where user_id = ? order by kind, created_at", userId);
+}
+/**
+ * A user's open_id in the main bot's app (what the bot sends to). Aliases recorded without an app are
+ * the bot's: `omem user add --lark` and the bot's own events. Other apps' open_ids do not work there.
+ */
+export function larkOpenIdOf(app: App, userId: string): string | undefined {
+  const appId = app.config.lark.appId ?? null;
+  return identitiesOf(app, userId).find((i) => i.channel === "lark" && i.kind === "alias" && (!i.app_id || i.app_id === appId))?.external_id;
+}
+/** Who an identity belongs to (whatever their status), or null. */
+export function identityOwner(app: App, channel: string, externalId: string): string | null {
+  return one<{ user_id: string }>(app.db, "select user_id from identities where channel = ? and external_id = ?", channel, externalId)?.user_id ?? null;
+}
+export function unlinkIdentity(app: App, channel: string, externalId: string) {
+  return run(app.db, "delete from identities where channel = ? and external_id = ?", channel, externalId).changes > 0;
+}
+
+export function updateUser(app: App, id: string, patch: { name?: string; status?: UserStatus; email?: string | null; avatar?: string | null; settings?: UserSettings; disabled?: boolean }) {
+  const u = getUser(app, id);
+  if (id === OWNER && (patch.disabled || patch.status === "pending")) throw new HttpError(400, "不能停用本人");
+  run(
+    app.db,
+    "update users set name = ?, status = ?, email = ?, avatar = ?, settings = ?, disabled_at = ? where id = ?",
+    patch.name ?? u.name,
+    patch.status ?? u.status,
+    patch.email === undefined ? u.email : patch.email,
+    patch.avatar === undefined ? u.avatar : patch.avatar,
+    JSON.stringify(patch.settings ? { ...u.settings, ...patch.settings } : u.settings),
+    patch.disabled === undefined ? u.disabledAt : patch.disabled ? (u.disabledAt ?? now()) : null,
+    id,
+  );
+  return getUser(app, id);
 }
 
 // ---- API tokens --------------------------------------------------------------
@@ -163,7 +246,7 @@ export function revokeTokenValue(app: App, token: string) {
 export function userForToken(app: App, token: string): string | null {
   if (!token) return null;
   if (app.config.token && sameSecret(token, app.config.token)) return OWNER;
-  const r = one<{ user_id: string }>(app.db, "select t.user_id from api_tokens t join users u on u.id = t.user_id where t.token_hash = ? and u.disabled_at is null", sha256(token));
+  const r = one<{ user_id: string }>(app.db, "select t.user_id from api_tokens t join users u on u.id = t.user_id where t.token_hash = ? and u.disabled_at is null and u.status = 'active'", sha256(token));
   if (r) run(app.db, "update api_tokens set last_used_at = ? where token_hash = ?", now(), sha256(token));
   return r?.user_id ?? null;
 }

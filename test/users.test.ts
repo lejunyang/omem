@@ -69,7 +69,10 @@ describe("users: identities, spaces, per-user turns and API", async () => {
     const token = createApiToken(app, "wang", "test");
     const h = { authorization: `Bearer ${token}`, "content-type": "application/json" };
     expect((await fetch(`${base}/api/me`, { headers: h }).then((r) => r.json())).id).toBe("wang");
-    expect((await fetch(`${base}/api/spaces`, { headers: h })).status).toBe(403);
+    // Spaces: only the ones they can read, and only to read.
+    expect(((await fetch(`${base}/api/spaces`, { headers: h }).then((r) => r.json())) as { id: string }[]).map((s) => s.id).sort()).toEqual(["personal-wang", "team"]);
+    expect((await fetch(`${base}/api/spaces`, { method: "POST", headers: h, body: JSON.stringify({ name: "x" }) })).status).toBe(403);
+    expect((await fetch(`${base}/api/runs`, { headers: h })).status).toBe(403);
     const asked = await fetch(`${base}/api/ask`, { method: "POST", headers: h, body: JSON.stringify({ text: "/whoami" }) }).then((r) => r.json());
     expect(asked.reply).toMatch(/小王/);
     expect((await fetch(`${base}/api/ask`, { method: "POST", headers: h, body: JSON.stringify({ text: "hi", space: "secret" }) })).status).toBe(403);

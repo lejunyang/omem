@@ -2,7 +2,7 @@ import { addAskSink, answerAsk, getAsk, isImmediateAsk, type Ask } from "../agen
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
-import { identitiesOf, OWNER } from "../core/users.ts";
+import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
 import { bindInteraction, buildCard, closeInteraction, getInteraction, larkOwnerOpenId, recordInteraction, sendLark, updateLarkCard, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
@@ -126,13 +126,13 @@ function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { targe
   }
   // No Feishu conversation: the person's private chat with the bot (suggestions only live under a reply).
   if (ask.kind === "suggestion") return null;
-  const openId = ask.userId === OWNER ? ownerOpenId : identitiesOf(app, ask.userId).find((i) => i.channel === "lark")?.external_id;
+  const openId = ask.userId === OWNER ? ownerOpenId : larkOpenIdOf(app, ask.userId);
   return openId ? { target: { userId: openId, bot: "main" }, chatId: null, bot: "main" } : null;
 }
 
 /** A user's tenant-wide user_id (known from the main bot's id for them), for cards of the other bots. */
 function larkUserIdOf(app: App, userId: string) {
-  const openId = identitiesOf(app, userId).find((i) => i.channel === "lark")?.external_id;
+  const openId = larkOpenIdOf(app, userId);
   return openId ? one<{ user_id: string | null }>(app.db, "select user_id from lark_people where bot_open_id = ?", openId)?.user_id ?? undefined : undefined;
 }
 
@@ -142,7 +142,7 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       const to = targetFor(app, ask, ownerOpenId());
       if (!to) return false;
       // Who may answer, in the posting bot's ids (the owner's open_id there; others by their main-bot id or user_id).
-      const who = ask.userId === OWNER ? larkOwnerOpenId(app, to.bot) : to.bot === "main" ? identitiesOf(app, ask.userId).find((i) => i.channel === "lark")?.external_id : larkUserIdOf(app, ask.userId);
+      const who = ask.userId === OWNER ? larkOwnerOpenId(app, to.bot) : to.bot === "main" ? larkOpenIdOf(app, ask.userId) : larkUserIdOf(app, ask.userId);
       const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
       const card = askCard(app, ask);
       const bind = (value: unknown): void => {

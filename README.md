@@ -265,6 +265,7 @@ omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / 
 omem doubao status                           # 哪个飞书应用有豆包权限、本机是否已授权
 omem doubao login [--app <appId>]            # 设备码授权豆包（在飞书里打开链接确认）
 omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见“多人使用”
+omem user approve <id> / omem user invite [--space …] [--edit …] [--any]  # 批准登录建好的账号；生成邀请链接（只能用一次）
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
 omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
 omem setup rerank [--threads 16]            # 开启重排（经 osdk 下载 bge-reranker-v2-m3，约 570MB）；--off 关闭
@@ -374,7 +375,15 @@ omem link                                   # 从其他设备打开网页的链�
 
 ## 多人使用
 
-omem 默认只服务你自己。要给同事用：
+omem 默认只服务你自己。要给同事用，在设置 → 成员里打开“多人登录”：
+
+- 从别的机器打开网页会看到登录页，用飞书登录（用的是 omem 自己的机器人应用，先在飞书开发者后台的“重定向 URL”里加上设置页给出的回调地址）。运行 omem 的这台机器、你配对过的设备仍然算作你本人，不用登录。
+- 第一次登录的人先进“等待批准”，你在成员页批准，或 `omem user approve <id>`。用邀请链接（成员页生成，或 `omem user invite --space team`）登录的人直接建好账号并加入选的空间。
+- 可以设一个主要登录方（比如飞书）：之后只能用它登录，其他方式只在账号页绑定；以前用别的方式建的账号，下次登录要先绑定它。企业外的人用不了飞书登录，可以在他的账号上允许其他登录方式，或者给他令牌。
+- 私聊机器人发 `/login`，会收到一个 5 分钟内有效、只能用一次的网页登录链接。
+- 每个人在“账号”页看自己的登录方式和登录过的设备，可以让某台设备退出；你在成员页能停用账号、让他所有设备退出、调整他能读写的空间。
+
+也可以在命令行登记：
 
 ```bash
 omem user add 小王 --id wang --lark ou_xxx --space team   # 建用户、绑定飞书身份、可读 team 空间（--edit 可写）
@@ -382,7 +391,7 @@ omem user token wang                                # 给他发一个 API 令牌
 omem space share project-a wang [--edit]           # 再开放一个空间
 ```
 
-他私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。这是“留口子”级别的支持：同一台机器、同一个数据目录，不做多租户隔离。
+成员私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。成员在网页上目前只有问答、事项和账号页；角色和更细的权限见 [docs/v2/multi-user.md](docs/v2/multi-user.md)。同一台机器、同一个数据目录，不做多租户隔离。
 
 ## 多台设备
 
@@ -464,6 +473,7 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 代码结构：
 
 ```
+src/auth      登录：登录方（providers.ts，飞书在 lark.ts）、登录与绑定、邀请、机器人登录链接（login.ts）、会话 cookie（sessions.ts）、谁在请求与相关接口（http.ts）
 src/core      配置、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）
 src/rules     任务规则、条件判断、执行动作与触发记录
 src/sources   归档规则与原件迁移（archive.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
@@ -496,8 +506,8 @@ web/          Vue 3 网页
 
 ## 当前限制
 
-- 多人只到“留口子”：用户、身份、空间成员和令牌，不做多租户隔离。
-- 默认监听所有网卡，其他机器必须带令牌（配对或 `omem link`）；在同一台机器上用反向代理对外暴露时，经代理来的请求看起来来自本机，这种情况要配置 `token`。多台设备是“一台常驻写入、其他来看”，还没有双向持续同步。
+- 多人：能登录、批准、邀请，成员在网页上只有问答、事项和账号页；角色与权限、成员各自连接飞书还在做（docs/v2/multi-user.md 的分期），不做多租户隔离。
+- 默认监听所有网卡，其他机器必须带令牌（配对或 `omem link`）或登录；在同一台机器上用反向代理对外暴露时，打开多人登录后带 `X-Forwarded-For` 的请求不算本机（代理要传这个头或 `Host`），没打开时经代理来的请求看起来来自本机，要配置 `token`。多台设备是“一台常驻写入、其他来看”，还没有双向持续同步。
 - 除 Claude Code、OpenCode 外，其他 ACP Agent 只验证过连接握手；各家登录和模型名以实际“检测模型”结果为准。
 - 代码解析：TS/JS/JSX/TSX/Vue 用 TypeScript AST；Python 用导入与缩进分析；Go、Rust、Java、Kotlin、Swift、C、C++、Objective-C、C#、PHP、Ruby、Scala、Dart、Lua、Zig、Elixir、OCaml、ReScript、Solidity、Bash、Emacs Lisp 用 tree-sitter（WebAssembly，无需编译，按需加载语法）；其他语言（Haskell、Erlang、Clojure、Elm…）只做通用声明识别。
 - 跨文件调用解析到具体定义：TS/JS/Python 按导入；Go 按包（同目录与导入路径）；Rust 按 `use` 路径、`mod` 和工作区 crate；Java/Kotlin 按包、导入和静态导入（两者互通）；Swift 按整个模块；其余 tree-sitter 语言先看本类型、本文件和导入的文件（`#include`、`require`、`import … as`、`open`），再在同一语言里找唯一的同名定义，有多个同名就不连。对变量调用方法（`db.open()`）需要类型推断，和动态派发、第三方包一样只有名称级候选。

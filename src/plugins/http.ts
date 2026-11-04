@@ -8,7 +8,8 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
-import { trustedLocal } from "../server/origin.ts";
+import { sameOrigin, trustedLocal } from "../server/origin.ts";
+import { cookies, SESSION_COOKIE, sessionFor } from "../auth/sessions.ts";
 import { callTool } from "../agents/tools.ts";
 import { createSession, listSessions, sendMessage, sessionView, submitBlock } from "./blocks.ts";
 import { codeRuns, describePlugin, findPlugin, getPlugin, listPlugins, pluginWebDir, setPluginIcon, trustPlugin, untrustPlugin } from "./registry.ts";
@@ -161,8 +162,11 @@ function streamAllowed(app: App, req: IncomingMessage) {
   const auth = req.headers.authorization;
   const token = auth?.startsWith("Bearer ") ? auth.slice(7) : url.searchParams.get("token");
   if (token) return userForToken(app, token) === OWNER;
+  // The owner logged in from another machine (src/auth); another site's WebSocket gives itself away by its Origin.
+  const session = sessionFor(app, cookies(req)[SESSION_COOKIE]);
+  if (session) return session.userId === OWNER && !session.restricted && sameOrigin(req);
   const ip = req.socket.remoteAddress ?? "";
-  return !app.config.token && trustedLocal(req, ip);
+  return !app.config.token && trustedLocal(req, ip, { refuseProxied: app.config.auth.enabled });
 }
 
 const STREAM = /^\/api\/plugins\/([a-z][a-z0-9]{1,23})\/streams\/([a-z][a-z0-9-]{0,23})(\?.*)?$/;

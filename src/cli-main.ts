@@ -789,7 +789,32 @@ user
     const { listUsers, identitiesOf, accessibleSpaces } = await import("./core/users.ts");
     const app = open();
     for (const u of listUsers(app))
-      console.log(`${u.id.padEnd(14)} ${u.role.padEnd(7)} ${u.name}${u.disabledAt ? "（已停用）" : ""}\n  身份：${identitiesOf(app, u.id).map((i) => `${i.channel}:${i.external_id}`).join(", ") || "（配置中的主人身份）"}\n  空间：${accessibleSpaces(app, u.id)?.join(", ") ?? "全部"}`);
+      console.log(`${u.id.padEnd(14)} ${u.role.padEnd(7)} ${u.name}${u.disabledAt ? "（已停用）" : u.status === "pending" ? "（等待批准）" : ""}\n  身份：${identitiesOf(app, u.id).map((i) => `${i.channel}:${i.external_id}${i.kind === "alias" ? "（渠道）" : ""}`).join(", ") || "（配置中的主人身份）"}\n  空间：${accessibleSpaces(app, u.id)?.join(", ") ?? "全部"}`);
+  });
+user
+  .command("approve <userId>")
+  .description("批准用登录建好、正在等待的账号")
+  .action(async (userId: string) => {
+    const { approveUser } = await import("./auth/login.ts");
+    const u = approveUser(open(), userId);
+    console.log(`已批准 ${u.id}（${u.name}）`);
+  });
+user
+  .command("invite")
+  .description("生成邀请链接：用它登录的人直接建好账号（不用批准），只能用一次")
+  .option("--space <ids...>", "加入并可读的空间")
+  .option("--edit <ids...>", "加入并可写的空间")
+  .option("--any", "允许用主要登录方以外的方式登录（企业外的人）")
+  .option("--note <text>", "备注，对方登录时能看到")
+  .option("--days <n>", "有效天数", "7")
+  .action(async (o) => {
+    const { createInvite } = await import("./auth/login.ts");
+    const app = open();
+    const base = app.config.webUrl?.trim().replace(/\/+$/, "");
+    if (!base) throw new Error("先填网页地址：omem setup 或 设置 → 渠道 → 网页地址");
+    const spaces = [...(o.space ?? []).map((space: string) => ({ space, role: "reader" as const })), ...(o.edit ?? []).map((space: string) => ({ space, role: "editor" as const }))];
+    const r = createInvite(app, "owner", { spaces, allowAny: !!o.any, note: o.note, days: Number(o.days) });
+    console.log(`${base}/#/login?invite=${r.token}\n（只显示这一次；设置 → 成员 里可以撤销）`);
   });
 user
   .command("add <name>")

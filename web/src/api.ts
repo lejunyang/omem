@@ -34,6 +34,22 @@ export function authUrl(path: string) {
   return t ? `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(t)}` : path;
 }
 
+/** To the login page (src/auth), coming back here afterwards. */
+export function toLogin() {
+  if (location.hash.startsWith("#/login")) return;
+  const back = location.hash.slice(1) || "/";
+  location.hash = `#/login${back !== "/" ? `?return=${encodeURIComponent(back)}` : ""}`;
+}
+/** Forget a pasted token too: signing out means this browser is nobody until it logs in again. */
+export async function logout() {
+  try {
+    localStorage.removeItem("omem-token");
+  } catch {}
+  await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+  location.hash = "#/login";
+  location.reload();
+}
+
 let asking: Promise<string | null> | null = null;
 async function askToken() {
   asking ??= promptDialog("需要访问令牌", { message: "从其他设备打开 omem 需要令牌：在运行 omem 的机器上执行 omem user token owner。", placeholder: "令牌", okText: "保存" }).finally(() => (asking = null));
@@ -94,9 +110,21 @@ async function request<T>(path: string, init: RequestInit & { json?: unknown }):
     body = JSON.stringify(init.json);
   }
   const res = await fetch(path, { ...init, headers, body });
-  if (res.status === 401 && !(init as { retried?: boolean }).retried && (await askToken())) return api<T>(path, { ...init, retried: true } as typeof init);
   const text = await res.text();
   const data = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
+  // Logging in is on (another machine's browser): the login page instead of asking for a token.
+  // Waiting for approval, or only allowed to bind the primary provider: the login page says so.
+  const said = (data ?? {}) as { login?: boolean; code?: string };
+  if ((res.status === 401 && said.login) || (res.status === 403 && (said.code === "pending" || said.code === "restricted"))) {
+    // A pasted token that no longer works is dropped, or it would hide the session cookie.
+    if (res.status === 401 && t)
+      try {
+        localStorage.removeItem("omem-token");
+      } catch {}
+    toLogin();
+    throw new ApiError(res.status, (data as { error?: string })?.error ?? "请先登录");
+  }
+  if (res.status === 401 && !(init as { retried?: boolean }).retried && (await askToken())) return api<T>(path, { ...init, retried: true } as typeof init);
   if (!res.ok) throw new ApiError(res.status, (data && (data as { error?: string }).error) || res.statusText);
   return data as T;
 }
@@ -105,7 +133,7 @@ export const get = <T = any>(path: string) => api<T>(path);
 export const post = <T = any>(path: string, json?: unknown) => api<T>(path, { method: "POST", json: json ?? {} });
 export const put = <T = any>(path: string, json?: unknown) => api<T>(path, { method: "PUT", json });
 export const patch = <T = any>(path: string, json?: unknown) => api<T>(path, { method: "PATCH", json });
-export const del = <T = any>(path: string) => api<T>(path, { method: "DELETE" });
+export const del = <T = any>(path: string, json?: unknown) => api<T>(path, { method: "DELETE", ...(json === undefined ? {} : { json }) });
 
 export type ServerEvent =
   | { type: "run"; runId: string; status: string }

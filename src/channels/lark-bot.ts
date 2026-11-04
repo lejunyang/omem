@@ -11,7 +11,7 @@ import { getRun } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink, deferNotification, notificationCardOf, setNotificationCard, takeDeferred } from "../core/notify.ts";
-import { identitiesOf, OWNER } from "../core/users.ts";
+import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
 import { inQuietHours } from "../core/notify.ts";
@@ -325,7 +325,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       ? (inThread.replyTo ? { replyTo: inThread.replyTo, inThread: inThread.inThread } : { chatId: inThread.chatId })
       : n.userId === OWNER
         ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
-        : { userId: identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id ?? "" };
+        : { userId: larkOpenIdOf(app, n.userId) ?? "" };
     if (!target || (!("userId" in target) && !("chatId" in target) && !("replyTo" in target)) || ("userId" in target && !target.userId)) return null;
     return target;
   };

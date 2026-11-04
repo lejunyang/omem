@@ -136,6 +136,22 @@ export const configSchema = z.object({
   /** Per-plugin choices of the owner that are not the plugin's own settings: the nav icon. */
   plugins: z.object({ icons: z.record(z.string(), z.string()).default({}) }).default({ icons: {} }),
   shares: z.object({ expiryDays: z.number().int().min(0).max(3650).default(0) }).default({ expiryDays: 0 }),
+  /**
+   * Other people logging in (src/auth, docs/v2/multi-user.md). Off: the page asks for a token as
+   * before. On: a browser on another machine gets the login page; this machine and paired devices
+   * stay the owner without logging in, but a request that came through a reverse proxy is not this
+   * machine. Every provider in `providers` can log in and create accounts (pending until approved,
+   * per `signup`); once `primary` is set only it logs in, the others are for binding.
+   */
+  auth: z
+    .object({
+      enabled: z.boolean().default(false),
+      providers: z.array(z.string()).default(["lark"]),
+      primary: z.string().nullable().default(null),
+      signup: z.record(z.string(), z.enum(["approve", "closed", "open"])).default({}),
+      sessionDays: z.number().int().min(1).max(365).default(30),
+    })
+    .default({ enabled: false, providers: ["lark"], primary: null, signup: {}, sessionDays: 30 }),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),
   /** Background runs (ingest, wiki, dream…) at the same time; each model's own limit is agents.capacity. */
