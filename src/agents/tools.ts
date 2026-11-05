@@ -2921,6 +2921,20 @@ def({
   },
 });
 
+// ---- Rule execution ------------------------------------------------------------------
+
+def({
+  name: "report_rule_failure",
+  description: "规则任务执行失败或无法完成时报告给宿主。summary 用一两句说明失败原因和已完成的部分；宿主按本人设置发到本人私聊或规则指定群聊，避免最终回答重复发送。仅本次规则运行可用，不能自行指定收件人。",
+  write: true,
+  schema: z.object({ summary: z.string().min(1).max(3000) }),
+  handler: async (ctx, a) => {
+    if (!ctx.runId || ctx.actor !== "agent") throw new HttpError(403, "只在 omem 的规则运行里报告失败");
+    if (runUser(ctx.app, ctx.runId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能报告本人的规则运行");
+    return (await import("../rules/failure.ts")).reportRuleFailure(ctx.app, ctx.runId, a.summary);
+  },
+});
+
 // ---- Feishu docs written as the owner -------------------------------------------------
 
 /**

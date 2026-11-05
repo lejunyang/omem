@@ -79,6 +79,8 @@ export const actionSchema = z.discriminatedUnion("type", [
     task: z.string().default(""),
     ownTopic: z.boolean().default(false),
     reply: agentReply.default("none"),
+    hideThinking: z.boolean().optional(),
+    failureTo: z.enum(["owner", "chat"]).optional(),
     allowUrgent: z.boolean().optional(),
     allowPrivate: z.boolean().optional(),
     /** The owner's pick of AI for this rule's runs (backend id, optional model and effort); without it the profile's own. */

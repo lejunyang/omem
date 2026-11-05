@@ -117,8 +117,7 @@ export async function createDoc(app: App, input: { title: string; content: strin
 export async function copyDoc(app: App, source: WikiNode, target: NonNullable<Place["wiki"]>, title?: string) {
   const v = await asOwner(app, "以本人身份复制飞书文档", () => larkCli([
     "wiki", "+node-copy", "--space-id", source.spaceId, "--node-token", source.nodeToken,
-    "--target-space-id", target.spaceId,
-    ...(target.nodeToken ? ["--target-parent-node-token", target.nodeToken] : []),
+    ...(target.nodeToken ? ["--target-parent-node-token", target.nodeToken] : ["--target-space-id", target.spaceId]),
     ...(title ? ["--title", title] : []), "--as", "user", "--yes", "--format", "json",
   ], 180_000));
   return v?.data ?? v;

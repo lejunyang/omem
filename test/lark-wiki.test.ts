@@ -231,9 +231,13 @@ describe("feishu docs written as the owner", () => {
     expect(ask.question).toContain(input.summary);
     expect((await answerAsk(app, ask.id, { approved: true, by: "owner" })).result).toContain("NewCopy");
     expect(calls.filter(c => c[1] === "+node-copy")).toEqual([[
-      "wiki", "+node-copy", "--space-id", TEAM, "--node-token", "A", "--target-space-id", TEAM,
+      "wiki", "+node-copy", "--space-id", TEAM, "--node-token", "A",
       "--target-parent-node-token", "Root", "--title", input.title, "--as", "user", "--yes", "--format", "json",
     ]]);
+    expect((await callTool(ctx, "lark_doc_copy", { ...input, target: "my_library" })).text).toContain("已完整复制");
+    const toRoot = calls.filter(c => c[1] === "+node-copy").at(-1)!;
+    expect(toRoot).toEqual(expect.arrayContaining(["--target-space-id", PERSONAL]));
+    expect(toRoot).not.toContain("--target-parent-node-token");
     const outside = { ...ctx, larkChats: undefined };
     expect((await callTool(outside, "lark_doc_copy", input)).isError).toBe(true);
     expect((await callTool(outside, "lark_doc_authorize", { under: input.target, operations: ["copy"], summary: "申请目录授权" })).isError).toBe(true);
