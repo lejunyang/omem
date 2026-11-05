@@ -113,6 +113,17 @@ export async function createDoc(app: App, input: { title: string; content: strin
   return { url: String(d.url ?? ""), documentId: String(d.document_id ?? ""), warnings: (v?.data?.warnings ?? []) as unknown[] };
 }
 
+/** The fixed node-copy command is the only high-risk-labelled CLI operation exposed here. */
+export async function copyDoc(app: App, source: WikiNode, target: NonNullable<Place["wiki"]>, title?: string) {
+  const v = await asOwner(app, "以本人身份复制飞书文档", () => larkCli([
+    "wiki", "+node-copy", "--space-id", source.spaceId, "--node-token", source.nodeToken,
+    "--target-space-id", target.spaceId,
+    ...(target.nodeToken ? ["--target-parent-node-token", target.nodeToken] : []),
+    ...(title ? ["--title", title] : []), "--as", "user", "--yes", "--format", "json",
+  ], 180_000));
+  return v?.data ?? v;
+}
+
 export const UPDATE_COMMANDS = ["append", "str_replace", "block_replace", "block_insert_after", "block_delete", "block_move_after", "block_copy_insert_after", "overwrite"] as const;
 export type UpdateCommand = (typeof UPDATE_COMMANDS)[number];
 export type UpdateInput = {

@@ -48,7 +48,7 @@ import { setApprovalExecutor } from "./asks.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { helpText, metaSchemas, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
-import { docEditDecision, docPreview, type DocEditScope } from "../channels/lark-doc-approval.ts";
+import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
 import type { SearchOptions } from "../search/search.ts";
 
@@ -2941,10 +2941,12 @@ function ownerOnly(ctx: ToolContext) {
   if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份用飞书只在 omem 自己的运行里可用");
 }
 
-async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean, docEditScope?: DocEditScope, scopeNote?: string) {
+async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean, docEditScope?: DocEditScope, scopeNote?: string, wikiWrite?: { operation: WikiWriteOperation; targets: WikiWriteTarget[] }) {
   ownerOnly(ctx);
   if (personal || ctx.actor === "user" || ctx.approved) return null;
-  const decision = docEditScope ? await docEditDecision(ctx.app, ctx.userId ?? OWNER, docEditScope, name) : null;
+  const docDecision = docEditScope ? await docEditDecision(ctx.app, ctx.userId ?? OWNER, docEditScope, name) : null;
+  const treeDecision = wikiWrite ? await wikiWriteDecision(ctx.app, ctx.userId ?? OWNER, wikiWrite.operation, wikiWrite.targets) : null;
+  const decision = [docDecision, treeDecision].filter(d => d !== null).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (decision?.status === "answered" && decision.approved) return null;
   if (decision?.status === "answered") throw new HttpError(403, `本人已拒绝这项文档编辑${decision.answer ? `：${decision.answer}` : ""}。按理由调整，不要换个方式绕过。`);
   // A concurrent call shares the card, but its own edit has not been scheduled for execution.
@@ -2955,6 +2957,31 @@ async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string,
   if (r.isError) throw new HttpError(403, r.text);
   return r.text;
 }
+
+def({
+  name: "lark_doc_authorize",
+  description: "本人希望按目录一次批准时使用：给某个飞书知识库节点（含自身及所有层级子页面、以后新建的子页面）申请可跨运行复用的写入批准。under 填本人指定的节点链接；operations 明确列出新建 create、复制到范围内 copy、局部编辑 edit、范围内移动 move。卡片发到本人的机器人私聊，批准后定时规则也能沿用。这里只申请授权，不写文档；范围外、整篇覆盖仍另行批准。",
+  write: true,
+  schema: z.object({
+    under: z.string().min(1).describe("本人指定的知识库节点链接（/wiki/…），不能用整个知识库或猜测的节点"),
+    operations: z.array(z.enum(WIKI_WRITE_OPERATIONS)).min(1).max(4),
+    summary: z.string().min(1).max(500).describe("用途及要批准的改动，例如定时复制周报并在目录内整理"),
+  }),
+  handler: async (ctx, a) => {
+    ownerOnly(ctx);
+    const w = await import("../channels/lark-doc-write.ts");
+    const place = await w.docPlace(ctx.app, a.under);
+    if (!place.node || place.node.nodeType !== "origin") throw new HttpError(400, "under 必须是实际的知识库节点，不能是云空间文档或快捷方式");
+    if (ctx.approved) return `已批准 ${place.label} 及所有子页面的指定操作；后续在范围内的写入可复用。`;
+    const scope: WikiWriteScope = { root: { spaceId: place.node.spaceId, nodeToken: place.node.nodeToken }, operations: [...new Set(a.operations)].sort() };
+    const pending = one<{ id: string }>(ctx.app.db, "select id from asks where user_id = ? and tool = 'lark_doc_authorize' and status = 'pending' and json_extract(context, '$.wikiWriteScope') = ? order by created_at desc limit 1", ctx.userId ?? OWNER, JSON.stringify(scope));
+    if (pending) return `节点授权正在等本人批准（${pending.id}），用 wait_answer 等结果，不要重复申请。`;
+    const labels = { create: "新建子页面", copy: "完整复制文档到范围内", edit: "追加和局部编辑", move: "范围内移动（来源和目标都在此节点下）" };
+    const r = await held(ctx, "lark_doc_authorize", a, `批准 ${place.label} 及所有子页面的写入？\n节点：${a.under}\n\n用途：${docPreview(a.summary)}\n操作：${scope.operations.map(op => labels[op]).join("、")}\n\n包括以后新增的子页面，跨会话和定时规则持续有效。整篇覆盖、范围外写入需另行批准；实际操作仍按你的要求执行。`, { wikiWriteScope: scope });
+    if (r.isError) throw new HttpError(403, r.text);
+    return r.text;
+  },
+});
 
 def({
   name: "lark_doc_fetch",
@@ -3000,7 +3027,7 @@ def({
   handler: async (ctx, a) => {
     const w = await import("../channels/lark-doc-write.ts");
     const place = await w.placeFor(ctx.app, a.parent);
-    const wait = await ownerDocGate(ctx, "lark_doc_create", a, `在 ${place.label} 新建文档《${a.title}》。\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content)}`, place.personal);
+    const wait = await ownerDocGate(ctx, "lark_doc_create", a, `在 ${place.label} 新建文档《${a.title}》。\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content)}`, place.personal, undefined, undefined, { operation: "create", targets: place.wiki ? [place.wiki] : [] });
     if (wait) return wait;
     const r = await w.createDoc(ctx.app, { title: a.title, content: a.content, format: a.format, place });
     return `已在 ${place.label} 新建《${a.title}》：${r.url || r.documentId}${r.warnings.length ? `\n飞书的提示：${truncate(JSON.stringify(r.warnings), 500)}` : ""}`;
@@ -3044,7 +3071,8 @@ def({
       block_move_after: "调整段落顺序", block_copy_insert_after: "复制段落", overwrite: "整篇覆盖（会替换原有富文本）",
     }[a.command];
     const targets = places.map((p) => `- ${p.label}`).join("\n");
-    const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑以下文档：\n${targets}\n\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content ?? verb)}\n首次操作：${verb}`, places.every((p) => p.personal), scope);
+    const wikiWrite = a.command !== "overwrite" && places.every(p => p.wiki) ? { operation: "edit" as const, targets: places.map(p => p.wiki!) } : undefined;
+    const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑以下文档：\n${targets}\n\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content ?? verb)}\n首次操作：${verb}`, places.every((p) => p.personal), scope, undefined, wikiWrite);
     if (wait) return wait;
     const r = await w.updateDoc(ctx.app, edit);
     const extra = [
@@ -3058,6 +3086,26 @@ def({
 });
 
 def({
+  name: "lark_doc_copy",
+  description: "以本人身份用飞书官方 wiki +node-copy 完整复制知识库文档，保留表格、图片和排版，原文档不变；只复制当前文档，不递归复制子页面。doc 给来源文档或知识库链接；target 给目标父节点链接或 my_library；title 可改新副本标题。共享目标先发批准卡，已有 lark_doc_authorize 的 copy 范围则复用。成功后读返回的新节点核对标题、正文和位置；状态不明先查远端，不能盲目重试。",
+  write: true,
+  schema: z.object({
+    doc: z.string().min(1), target: z.string().min(1), title: z.string().min(1).max(200).optional(),
+    summary: z.string().min(1).max(500).describe("复制用途，给本人批准时看"),
+  }),
+  handler: async (ctx, a) => {
+    ownerOnly(ctx);
+    const w = await import("../channels/lark-doc-write.ts");
+    const from = await w.docPlace(ctx.app, a.doc);
+    const to = await w.placeFor(ctx.app, a.target);
+    if (!from.node || !to.wiki) throw new HttpError(400, "完整复制目前需要知识库里的来源文档，目标需为知识库节点或 my_library");
+    const wait = await ownerDocGate(ctx, "lark_doc_copy", a, `把 ${from.label} 完整复制到 ${to.label}${a.title ? `，新标题《${a.title}》` : ""}。\n改动摘要：${docPreview(a.summary)}`, to.personal, undefined, undefined, { operation: "copy", targets: [to.wiki] });
+    if (wait) return wait;
+    return `已完整复制到 ${to.label}：\n${JSON.stringify(await w.copyDoc(ctx.app, from.node, to.wiki, a.title))}\n请回读新节点核对标题、正文和位置。`;
+  },
+});
+
+def({
   name: "lark_doc_move",
   description:
     "以本人身份移动飞书文档：移到知识库页面下（target 给页面链接）、知识库根目录（target=my_library 表示个人文档库根目录），或把知识库页面移到云空间文件夹（target 给文件夹链接）。来源和目标都在本人自己的地方时直接移；涉及别人也在用的知识库或别人的文件夹，要本人批准。",
@@ -3067,7 +3115,8 @@ def({
     const w = await import("../channels/lark-doc-write.ts");
     const from = await w.docPlace(ctx.app, a.doc);
     const to = await w.placeFor(ctx.app, a.target);
-    const wait = await ownerDocGate(ctx, "lark_doc_move", a, `把 ${from.label} 移到 ${to.label}`, from.personal && to.personal);
+    const wikiWrite = from.wiki && to.wiki ? { operation: "move" as const, targets: [from.wiki, to.wiki] } : undefined;
+    const wait = await ownerDocGate(ctx, "lark_doc_move", a, `把 ${from.label} 移到 ${to.label}`, from.personal && to.personal, undefined, undefined, wikiWrite);
     if (wait) return wait;
     const r = await w.moveDoc(ctx.app, from, to);
     return `已把 ${from.label} 移到 ${to.label}${r ? `：${truncate(JSON.stringify(r), 300)}` : ""}`;

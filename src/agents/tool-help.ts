@@ -49,7 +49,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "git", label: "代码仓库与 Git", doc: "code", tools: ["list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action"] },
   { id: "code-handin", label: "编码与评审角色交结果", doc: "code", tools: ["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute"] },
   { id: "lark-msg", label: "飞书消息与卡片", doc: "lark", tools: ["lark_send", "lark_react", "meeting_send", "lark_card", "lark_update_card", "lark_send_file"] },
-  { id: "lark-docs", label: "以本人身份写飞书文档", doc: "lark", tools: ["lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move"] },
+  { id: "lark-docs", label: "以本人身份写飞书文档", doc: "lark", tools: ["lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"] },
   { id: "lark-owner", label: "以本人身份读写飞书的表格、多维表格、任务等", doc: "lark", tools: ["lark_read", "lark_write"] },
   { id: "lark-capture", label: "飞书采集设置", doc: "lark", tools: ["list_lark_chats", "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "propose_knowledge_mapping"] },
   { id: "learning", label: "学习", doc: "learning", tools: ["create_card", "set_learning_goal", "learning_progress"] },

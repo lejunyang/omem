@@ -111,6 +111,10 @@ export function askCard(app: App, ask: Ask): Record<string, unknown> {
 
 /** Where an ask goes in Feishu, or null when this channel is not the one to show it. */
 function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { target: Target; chatId: string | null; bot: string } | null {
+  if (ask.kind === "approval" && (ask.tool?.startsWith("lark_doc_") || ask.tool === "lark_write")) {
+    const openId = ask.userId === OWNER ? ownerOpenId : larkOpenIdOf(app, ask.userId);
+    return openId ? { target: { userId: openId, bot: "main" }, chatId: null, bot: "main" } : null;
+  }
   if (ask.conversationId) {
     const t = one<{ channel: string; external_id: string | null; last: string | null; topic: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastTopicId') topic, json_extract(settings, '$.lastMessageId') last from conversations where id = ?", ask.conversationId);
     // The host's own decisions about background work (a review plan, a finished review) reach the

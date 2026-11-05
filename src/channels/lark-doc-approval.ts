@@ -2,8 +2,45 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { getAsk, type Ask } from "../agents/asks.ts";
+import { wikiNode } from "./lark-wiki.ts";
 
 export type DocEditScope = { documents: string[]; commands: string[] };
+export const WIKI_WRITE_OPERATIONS = ["create", "copy", "edit", "move"] as const;
+export type WikiWriteOperation = typeof WIKI_WRITE_OPERATIONS[number];
+export type WikiWriteTarget = { spaceId: string; nodeToken?: string };
+export type WikiWriteScope = { root: { spaceId: string; nodeToken: string }; operations: WikiWriteOperation[] };
+
+/** Check live ancestry: a cached catalogue must not authorize a document moved out of the tree. */
+async function withinWiki(app: App, target: WikiWriteTarget, root: WikiWriteScope["root"]) {
+  if (target.spaceId !== root.spaceId || !target.nodeToken) return false;
+  let token: string | undefined = target.nodeToken;
+  const seen = new Set<string>();
+  while (token && seen.size < 64 && !seen.has(token)) {
+    seen.add(token);
+    const node = await wikiNode(app, token);
+    // Shortcuts can point at documents outside the approved tree.
+    if (!node || node.spaceId !== root.spaceId || node.nodeType !== "origin") return false;
+    if (node.nodeToken === root.nodeToken) return true;
+    token = node.parentNodeToken;
+  }
+  return false;
+}
+
+/** Only explicit subtree approvals count; copying checks the destination, moving checks both ends. */
+export async function wikiWriteDecision(app: App, userId: string, operation: WikiWriteOperation, targets: WikiWriteTarget[]): Promise<Ask | null> {
+  if (!targets.length) return null;
+  const rows = all<{ id: string; context: string }>(app.db, `select id, context from asks where user_id = ?
+    and kind = 'approval' and tool = 'lark_doc_authorize' and status = 'answered'
+    order by created_at desc, rowid desc`, userId);
+  for (const row of rows) {
+    const scope = (JSON.parse(row.context ?? "{}") as { wikiWriteScope?: WikiWriteScope }).wikiWriteScope;
+    if (!scope?.operations.includes(operation)) continue;
+    const matches = await Promise.all(targets.map(t => withinWiki(app, t, scope.root)));
+    const ask = getAsk(app, row.id);
+    if (ask.approved ? matches.every(Boolean) : matches.some(Boolean)) return ask;
+  }
+  return null;
+}
 
 /** Human-readable previews, including old callers that supply DocxXML without a summary. */
 export function docPreview(value: string, max = 240) {
