@@ -142,11 +142,12 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { id?: string; kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; visibleTo?: { userId: string; spaces: string[] } };
+type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; visibleTo?: { userId: string; spaces: string[] } };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
- * the runs a built-in role took part in. Any of them matches. `q` matches the title, the id or the
+ * the runs a built-in role took part in. Any of them matches; `exclude` lists kinds left out (the run
+ * page lists coding work on its own). `q` matches the title, the id or the
  * task. `visibleTo`: someone other than the owner sees their own runs, and those whose every
  * readable space is in `spaces` (src/auth/permissions.ts canReadRun).
  */
@@ -171,6 +172,8 @@ function runWhere(opts: RunFilter) {
     }
     where.push(`(${any.join(" or ")})`);
   }
+  const exclude = (opts.exclude ?? "").split(",").map((k) => k.trim()).filter(Boolean);
+  if (exclude.length) where.push(`kind not in (${exclude.map(() => "?").join(",")})`), params.push(...exclude);
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.status) where.push("status = ?"), params.push(opts.status);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);

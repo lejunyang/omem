@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { idQuery } from "../../../src/core/id-query";
 import { useRoute, useRouter } from "vue-router";
 import { aiLabel, get, onServerEvent, post, type Run, type RunEvent } from "../api";
@@ -10,33 +10,21 @@ import UiCheckbox from "../components/UiCheckbox.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
-import { confirmDialog } from "../lib/dialog";
 import { pageParam } from "../lib/route";
 import Markdown from "../components/Markdown.vue";
-import AskAboutRun from "../components/AskAboutRun.vue";
-import FixBasket from "../components/FixBasket.vue";
-import QuoteDock from "../components/QuoteDock.vue";
-import DiffFile from "../components/DiffFile.vue";
-import DiffName from "../components/DiffName.vue";
-import DiffTree from "../components/DiffTree.vue";
-import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
-import ReviewSummary from "../components/ReviewSummary.vue";
-import CodeTasks from "../components/CodeTasks.vue";
-import CodeSteer from "../components/CodeSteer.vue";
-import OpenInIde from "../components/OpenInIde.vue";
-import ReviewChecks from "../components/ReviewChecks.vue";
-import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
-import CodeLanding, { type ApplyTarget } from "../components/CodeLanding.vue";
-import ReviewProcess from "../components/ReviewProcess.vue";
 import ContextUsage from "../components/ContextUsage.vue";
-import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
-import { refAction } from "../lib/refs";
-import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
-import { findingWhere, parsePatches, pointCount, pointQuote, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
+import CodeWork from "../components/CodeWork.vue";
+import CodeWorkList from "../components/CodeWorkList.vue";
+import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
 const route = useRoute();
 const router = useRouter();
+/** 编码: one row per delegation or branch review (CodeWorkList); 全部运行: every other run, newest first. Kept in this browser. */
+const view = ref<"code" | "all">((() => { try { return localStorage.getItem("omem.runs.view") === "code" ? "code" : "all"; } catch { return "all"; } })());
+watch(view, (v) => { try { localStorage.setItem("omem.runs.view", v); } catch { /* private window */ } });
+/** Coding and review runs are listed as their work under 编码, not one row per round here. */
+const CODE_KINDS = "code,review";
 const runs = ref<Run[]>([]);
 const total = ref(0);
 // About two screens of rows; scrolling loads more.
@@ -80,8 +68,10 @@ async function load() {
   const exactId = idQuery(keyword.value);
   try {
     if (exactId) {
+      // An exact id finds any run, a coding round too (it opens as its work).
       const exact = new URLSearchParams(query);
       exact.delete("q");
+      exact.delete("exclude");
       exact.set("id", exactId);
       const found = await get<{ runs: Run[]; total: number }>(`/api/runs?${exact}`).catch(() => ({ runs: [], total: 0 }));
       if (seq !== listSeq) return;
@@ -98,7 +88,7 @@ async function load() {
   }
 }
 function pageQuery() {
-  const q = new URLSearchParams({ limit: String(PAGE), brief: "1" });
+  const q = new URLSearchParams({ limit: String(PAGE), brief: "1", exclude: CODE_KINDS });
   // A guest's question runs in the group's space, a rule in the chat's: "所有空间" finds them from anywhere.
   if (scope.value === "space") q.set("space", state.space);
   if (keyword.value.trim()) q.set("q", idQuery(keyword.value) ?? keyword.value.trim());
@@ -165,6 +155,7 @@ watch(keyword, () => {
   keywordTimer = setTimeout(() => void load(), idQuery(keyword.value) ? 0 : 250);
 });
 watch(id, loadDetail);
+watch(() => detail.value?.run.kind, (k) => { if (k === "code" && view.value !== "code" && !keyword.value.trim()) view.value = "code"; });
 const off = onServerEvent((e) => {
   if (e.type === "run") {
     // Keep the list itself stable: only refresh when a new top-level run might appear
@@ -186,10 +177,8 @@ function onListScroll(ev: Event) {
 onBeforeUnmount(() => { ++listSeq; ++detailSeq; off(); clearTimeout(reloadTimer); clearTimeout(keywordTimer); });
 
 const out = computed(() => detail.value?.run.output ?? {});
-// A review of an existing branch: no coding round, nothing to apply.
-const branchReview = computed(() => !!(detail.value?.run.input as { branches?: unknown } | undefined)?.branches);
 const ctxInfo = computed(() => detail.value?.context ?? null);
-// The full task as given to the agent (delegations, agent rounds, digests); ask turns carry their messages.
+// The full task as given to the agent (agent rounds, digests); ask turns carry their messages.
 const taskText = computed(() => {
   const i = (detail.value?.run.input ?? {}) as { task?: string; text?: string };
   return String(i.task ?? i.text ?? "");
@@ -202,182 +191,22 @@ function hintOf(r: { title: string; input?: Record<string, unknown> }) {
 const taskLong = computed(() => taskText.value.split("\n").length > 14 || taskText.value.length > 1200);
 const taskOpen = ref(false);
 watch(id, () => (taskOpen.value = false));
-const finalText = computed(() => out.value.answer ?? out.value.summary ?? out.value.coderSummary ?? "");
-// One entry per repository (a delegation may change several together).
-const diffs = computed(() => parsePatches(detail.value?.patches ?? []));
-const fileCount = computed(() => diffs.value.reduce((n, d) => n + d.files.length, 0));
-const lineCount = computed(() => diffs.value.flatMap((d) => d.files).reduce((n, f) => ({ add: n.add + f.add, rm: n.rm + f.rm }), { add: 0, rm: 0 }));
-
-// ---- a coding run with reviews: 概览 / 变更 / 评审 / 活动 ------------------------------------
-const rv = useReviews(computed(() => (detail.value?.run.kind === "code" ? detail.value.run.id : "")), computed(() => detail.value?.run.status));
-// Many rounds: the latest few stay buttons, the earlier ones go in a list (as in WorkPane), so the row stays one line.
-const RECENT_ROUNDS = 3;
-const recentRounds = computed(() => (rv.roundOptions.value.length > RECENT_ROUNDS + 1 ? rv.roundOptions.value.slice(-RECENT_ROUNDS) : rv.roundOptions.value));
-const earlierRounds = computed(() => rv.roundOptions.value.slice(0, rv.roundOptions.value.length - recentRounds.value.length));
-const hasReview = computed(() => !!rv.data.value && (rv.reviews.value.length > 0 || !!rv.current.value?.plan));
-type Tab = "overview" | "change" | "review" | "activity";
-const tab = ref<Tab>("overview");
-const tabs = computed(() => [
-  { id: "overview" as const, label: "概览" },
-  { id: "change" as const, label: rv.changePoints.value.length ? `变更 ${pointCount(rv.changePoints.value)}` : "变更" },
-  { id: "review" as const, label: "评审" },
-  { id: "activity" as const, label: "活动" },
-]);
-watch(id, () => (tab.value = "overview"));
-// The check whose process “看过程” asked for; leaving the tab forgets it.
-const processFocus = ref<string | null>(null);
-watch(tab, (t) => { if (t !== "activity") processFocus.value = null; });
-const checkPassed = computed(() => (checks.value.length ? checks.value.every((c) => c.check.code === 0) : null));
-// A change point's explanation, with the problems reported on its files, in the ask drawer.
-const explaining = ref<ChangePoint | null>(null);
-/** A question the ask drawer starts from (a finding's “看不懂，重新描述”). */
-const askDraft = ref("");
-watch(id, () => (explaining.value = null));
-const pointFindings = computed(() => {
-  const p = explaining.value;
-  if (!p) return [];
-  const files = p.locations.map((l) => l.file);
-  return rv.findings.value.filter((f) => f.file_path && files.some((x) => x === f.file_path || x.endsWith(`/${f.file_path}`) || f.file_path!.endsWith(`/${x}`)));
-});
-function explain(p: ChangePoint) {
-  if (asking.value === "open") asking.value = "min";
-  explaining.value = p;
-}
-const explainContext = computed(() => (explaining.value ? pointQuote(explaining.value, rv.changePoints.value) : null));
-// Diffs start folded (a large change would bury everything below); a file's lines render only once opened.
-const openDiffs = ref(new Set<string>());
-watch(id, () => (openDiffs.value = new Set()));
-function onDiffToggle(key: string, e: Event) {
-  const open = (e.target as HTMLDetailsElement).open;
-  if (open === openDiffs.value.has(key)) return;
-  const next = new Set(openDiffs.value);
-  open ? next.add(key) : next.delete(key);
-  openDiffs.value = next;
-}
-const treeFiles = computed(() => diffs.value.flatMap((d) => d.files.map((f) => ({ key: `${d.space}:${f.name}`, path: diffs.value.length > 1 ? `${spaceName(d.space)}/${f.name}` : f.name, add: f.add, rm: f.rm, status: f.status }))));
-const pickedDiff = ref<string | null>(null);
-async function pickDiff(key: string) {
-  pickedDiff.value = key;
-  openDiffs.value = new Set([...openDiffs.value, key]);
-  await nextTick();
-  document.querySelector(`.diff-list [data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
-}
-function toggleAllDiffs() {
-  openDiffs.value = openDiffs.value.size ? new Set() : new Set(diffs.value.flatMap((d) => d.files.map((f) => `${d.space}:${f.name}`)));
-}
+const finalText = computed(() => out.value.answer ?? out.value.summary ?? "");
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
-
-// ---- quoting a selection (diff lines, the task, a review, an open citation) -------------------
-// Into a question (the ask drawer, which can shrink to the dock while more is quoted) or into the
-// next round of changes (the fix basket). Both keep numbered quotes per run (lib/quotes).
-const asking = ref<"open" | "min" | null>(null);
-const fixOpen = ref(false);
-const selection = ref<{ top: number; left: number; quote: string; label: string } | null>(null);
-watch(id, () => { asking.value = null; fixOpen.value = false; selection.value = null; });
-const runId = computed(() => detail.value?.run.id ?? "");
-const askQuotes = computed(() => quotesOf(runId.value, "ask"));
-const fixQuotes = computed(() => quotesOf(runId.value, "fix"));
-const canFix = computed(() => !!detail.value && detail.value.run.kind === "code" && detail.value.run.status === "done" && (branchReview.value || !out.value.discardedAt));
-// The button is placed against the viewport: any scroll moves the text away from it.
-const dropSelection = () => (selection.value = null);
-onMounted(() => {
-  window.addEventListener("scroll", dropSelection, { capture: true, passive: true });
-  document.addEventListener("mouseup", onSelect);
-  document.addEventListener("keyup", onSelectKey);
-});
-onBeforeUnmount(() => {
-  window.removeEventListener("scroll", dropSelection, { capture: true });
-  document.removeEventListener("mouseup", onSelect);
-  document.removeEventListener("keyup", onSelectKey);
-});
-function lineOf(node: Node | null) {
-  const el = node instanceof Element ? node : node?.parentElement;
-  return Number(el?.closest("[data-line]")?.getAttribute("data-line")) || null;
-}
-const onSelectKey = (e: KeyboardEvent) => { if (e.shiftKey) onSelect(); };
-/** What can be quoted: the run page, and the citation drawer opened from it (both carry data-quotable). */
-function onSelect() {
-  // Wait for the browser to settle the selection after the click.
-  setTimeout(() => {
-    const sel = window.getSelection();
-    const text = sel?.toString().trim() ?? "";
-    if (!sel || !text || sel.rangeCount === 0 || detail.value?.run.kind !== "code") return void (selection.value = null);
-    const range = sel.getRangeAt(0);
-    const host = (range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement)!;
-    if (!host.closest("[data-quotable]") || host.closest("input, textarea")) return void (selection.value = null);
-    const file = host.closest<HTMLElement>(".dfile");
-    let label = host.closest<HTMLElement>("[data-ask-label]")?.dataset.askLabel ?? "运行详情里的一段";
-    const lines = [lineOf(range.startContainer), lineOf(range.endContainer)].filter((n): n is number => !!n);
-    const at = lines.length ? `:${Math.min(...lines)}${Math.max(...lines) !== Math.min(...lines) ? `-${Math.max(...lines)}` : ""}` : "";
-    if (file) label = `${spaceName(file.dataset.space ?? "")} · ${file.dataset.path}${at}`;
-    else if (host.closest("[data-lines]")) label += at;
-    const rect = range.getBoundingClientRect();
-    selection.value = { top: Math.max(8, rect.top - 40), left: Math.min(window.innerWidth - 260, Math.max(8, rect.left)), quote: text.slice(0, 4000), label };
-  }, 0);
-}
-function quote(kind: QuoteKind, q?: { quote: string; label: string }) {
-  const from = q ?? selection.value;
-  if (!from || !runId.value) return;
-  const n = addQuote(runId.value, kind, { quote: from.quote, label: from.label });
-  selection.value = null;
-  window.getSelection()?.removeAllRanges();
-  if (kind === "fix") return toast(`已加入修改点 [${n}]，在右下角的图标里查看和开始修改`, "ok");
-  explaining.value = null;
-  if (asking.value === "min") toast(`已加入提问 [${n}]`, "ok");
-  else asking.value = "open";
-}
-type Check = { command: string; code: number; output: string };
-const checks = computed<{ space: string; check: Check }[]>(() => {
-  const repos = (out.value.repos ?? []) as { space: string; check: Check | null }[];
-  if (repos.length) return repos.filter((r) => r.check).map((r) => ({ space: repos.length > 1 ? r.space : "", check: r.check! }));
-  return out.value.check ? [{ space: "", check: out.value.check }] : [];
-});
-async function codeHere() {
+/** A coding run (a delegation's round or a branch review) opens as its whole work (CodeWork). */
+const codeRoot = computed(() => (detail.value?.run.kind === "code" ? String((detail.value.run.input as { continueFrom?: string }).continueFrom ?? detail.value.run.id) : null));
+async function act(action: "cancel" | "retry") {
   if (!detail.value) return;
   try {
-    const r = await post<{ id: string }>(`/api/runs/${detail.value.run.id}/code-here`);
-    toast("已交给这台机器的编码 Agent", "ok");
-    router.push(`/runs/${r.id}`);
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-async function act(action: "cancel" | "retry" | "apply" | "discard") {
-  if (!detail.value) return;
-  const runId = detail.value.run.id;
-  try {
-    if (action === "apply") {
-      const targets = await get<ApplyTarget[]>(`/api/runs/${runId}/apply-targets`);
-      const message = targets.map(t => `${t.space} · ${t.branch ?? "指定版本"}\n${t.path}`).join("\n\n");
-      if (!(await confirmDialog("应用到原目标分支？", { message: `${message}\n\n将写入未提交的修改；需要时自动建立目标分支工作区，仓库主目录保持原分支。`, okText: "应用" }))) return;
-    }
-    if (action === "discard" && branchWork.value && !(await confirmDialog("丢弃这次交办？", { message: "归还工作区。这次交办新建的分支如果没推送、也没在别处检出，会连同上面的提交一起删掉。", okText: "丢弃", danger: true }))) return;
-    const r = await post<{ id?: string; continued?: boolean }>(`/api/runs/${runId}/${action}`);
+    const r = await post<{ id?: string; continued?: boolean }>(`/api/runs/${detail.value.run.id}/${action}`);
     if (action === "retry" && r?.id) {
-      // A coding run continues in its worktree; an agent run is told what the failed attempt did.
+      // An agent run is told what the failed attempt did.
       toast(r.continued ? "已接着上次的进度重新开始" : "已重新排队", "ok");
       router.push(`/runs/${r.id}`);
       return;
     }
-    toast({ cancel: "已停止", retry: "已重新排队", apply: "已应用到目标分支，可在下方检查并提交", discard: "已清理工作区" }[action], "ok");
+    toast(action === "cancel" ? "已停止" : "已重新排队", "ok");
     void loadDetail();
-  } catch (e) {
-    toast((e as Error).message, "error");
-  }
-}
-/** A delegation on work branches: commits per round, confirmed by pushing (no apply, no commit step). */
-const branchWork = computed(() => !branchReview.value && ((out.value.worktrees ?? []) as { commits?: boolean }[]).some((w) => w.commits));
-/** Commits a sync added (a merge, a pull), applied by fast-forward even without a patch. */
-const syncCommits = computed(() => ((out.value.worktrees ?? []) as { syncHead?: string }[]).some((w) => w.syncHead));
-const moveMode = ref<"merge" | "rebase">("merge");
-const targetSyncModes = [{ value: "merge" as const, label: "合并（merge）" }, { value: "rebase" as const, label: "变基（rebase）" }];
-async function moveToTarget() {
-  if (!detail.value) return;
-  if (!(await confirmDialog("移到目标分支的最新提交？", { message: `${moveMode.value === "merge" ? "将目标分支最新提交合并到工作区，集中处理合并冲突，保留合并提交。" : "逐个重放提交到目标最新版本，历史较长时可能反复处理冲突。"}目标已被工作区包含时直接跳过。冲突先交给编码 Agent，解决不了会问你；改动没变就沿用评审。`, okText: "开始" }))) return;
-  try {
-    const r = await post<{ id: string }>(`/api/runs/${detail.value.run.id}/move-to-target`, { mode: moveMode.value });
-    toast("已安排，完成后再应用", "ok");
-    router.push(`/runs/${r.id}`);
   } catch (e) {
     toast((e as Error).message, "error");
   }
@@ -447,7 +276,7 @@ async function delegate() {
 }
 // The hint carries the other language, so the filter box finds a kind or role by either name.
 const kindOptions = computed(() => [
-  ...Object.entries(runKindLabel).map(([k, label]) => ({ value: k, label, hint: k })),
+  ...Object.entries(runKindLabel).filter(([k]) => !CODE_KINDS.split(",").includes(k)).map(([k, label]) => ({ value: k, label, hint: k })),
   ...roles.value.map((r) => ({ value: `role:${r.name}`, label: `内置 · ${r.name}`, hint: r.description ?? "" })),
   ...specs.value.map((s) => ({ value: `agent:${s.name}`, label: `Agent · ${s.name}`, hint: s.description ?? "这个 Agent 档案的运行" })),
 ]);
@@ -456,17 +285,21 @@ const kindOptions = computed(() => [
 <template>
   <div class="runs">
     <aside class="list-col">
-      <div class="head row">
-        <strong>运行记录</strong>
-        <label class="search"><Icon name="search" :size="14" /><input v-model="keyword" placeholder="标题、id 或任务里的字" aria-label="搜索运行记录" /></label>
-        <span class="spacer" />
-        <button class="btn sm" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
-        <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
-        <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
+      <div class="head" :class="{ code: view === 'code' }">
+        <UiSegmented v-model="view" class="view-pick" size="sm" aria-label="运行页视图" :options="[{ value: 'code', label: '编码' }, { value: 'all', label: '全部运行' }]" />
+        <label class="search"><Icon name="search" :size="14" /><input v-model="keyword" :placeholder="view === 'code' ? '标题、分支、任务里的字或 id' : '标题、id 或任务里的字'" :aria-label="view === 'code' ? '搜索交办' : '搜索运行记录'" /></label>
+        <button class="btn sm delegate" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
+        <template v-if="view === 'all'">
+          <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
+          <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
+          <UiCheckbox v-model="showQuiet" size="sm" class="small muted quiet" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
+        </template>
         <UiSegmented v-model="scope" class="scope-filter" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
-        <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
       </div>
-      <div class="items" @scroll.passive="onListScroll">
+      <div v-if="view === 'code'" class="items">
+        <CodeWorkList :space="scope === 'space' ? state.space : null" :q="keyword" :active="codeRoot" @pick="(w) => router.push(`/runs/${w.latestId}`)" />
+      </div>
+      <div v-else class="items" @scroll.passive="onListScroll">
         <Skeleton v-if="listLoading && !runs.length" :rows="8" />
         <VirtualList v-else :items="runs" :item-key="(r) => r.id" :estimate="54">
           <template #default="{ item: r }">
@@ -485,13 +318,16 @@ const kindOptions = computed(() => [
         <div v-else-if="runs.length >= total" class="list-foot">共 {{ total }} 条</div>
       </div>
     </aside>
-    <main class="detail" data-quotable>
+    <main class="detail">
       <div v-if="detailLoading" class="pad-loading"><Skeleton variant="text" :rows="8" /></div>
       <div v-else-if="!detail" class="empty">
-        <Icon name="activity" :size="34" />
-        <h3>后台运行</h3>
-        <p>问答、整理、Wiki 写作、交办编码和巡检都会在这里留下记录：Agent 做了哪些调查、改了什么、结果如何。</p>
+        <Icon :name="view === 'code' ? 'code' : 'activity'" :size="34" />
+        <h3>{{ view === "code" ? "编码" : "后台运行" }}</h3>
+        <p v-if="view === 'code'">每次交办编码和分支评审是一行，按等谁分组，等你决定或确认的在最上面。点开看它现在在做什么、下一步、分支推到哪，以及修改项、评审和每一轮的过程。</p>
+        <p v-else>问答、整理、Wiki 写作和巡检都会在这里留下记录：Agent 做了哪些调查、结果如何。交办编码和评审在“编码”里。</p>
       </div>
+      <!-- A delegation's round or a branch review: the whole work, the same view as on the requirements page. -->
+      <CodeWork v-else-if="codeRoot" :key="codeRoot" :run-id="detail.run.id" from="runs" @open="(r) => router.push(`/runs/${r}`)" />
       <template v-else>
         <header class="dh">
           <div class="row wrap small">
@@ -499,50 +335,17 @@ const kindOptions = computed(() => [
             <span class="badge" :class="{ ok: detail.run.status === 'done', danger: detail.run.status === 'failed', warn: detail.run.status === 'running' }">{{ statusLabel[detail.run.status] }}</span>
             <span class="muted">{{ fmtTime(detail.run.createdAt) }}<template v-if="detail.run.finishedAt"> → {{ fmtTime(detail.run.finishedAt) }}</template></span>
             <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· <span class="mono">{{ aiLabel(detail.run) }}</span></span>
-            <span v-if="detail.run.spaceId" class="muted">· {{ detail.run.spaceId }}</span>
-            <span v-if="rv.current.value?.plan" class="badge">「{{ rv.current.value.plan.tierName }}」档</span>
+            <span v-if="detail.run.spaceId" class="muted">· {{ spaceName(detail.run.spaceId) }}</span>
             <router-link v-for="it in ctxInfo?.items ?? []" :key="it.id" :to="`/items/${it.id}`" class="item-link" :title="it.title">事项：{{ it.title }}</router-link>
           </div>
           <h1 :title="hintOf(detail.run)">{{ detail.run.title }}</h1>
-          <div v-if="detail.run.kind === 'code' && fileCount" class="row wrap small muted sub">
-            <span>{{ diffs.length > 1 ? `${diffs.length} 个仓库 · ` : "" }}{{ fileCount }} 个文件 · <span class="add">+{{ lineCount.add }}</span> <span class="rm">−{{ lineCount.rm }}</span><template v-if="checkPassed !== null"> · 检查{{ checkPassed ? "通过" : "没通过" }}</template></span>
-            <span class="spacer" />
-            <template v-if="rv.roundOptions.value.length > 1">
-              <UiSelect v-if="earlierRounds.length" :model-value="earlierRounds.some((o) => o.value === rv.round.value) ? rv.round.value : null" :options="earlierRounds" size="sm" width="auto" placeholder="更早的轮" aria-label="更早的轮" @update:model-value="(r) => r && (rv.round.value = r)" />
-              <UiSegmented v-model="rv.round.value" size="sm" :options="recentRounds" aria-label="轮次" />
-            </template>
-          </div>
           <p v-if="detail.run.waiting" class="muted small waiting" title="omem 自己的排队：开始运行时才选定后端和模型">排队中：{{ detail.run.waiting }}。开始运行时才选定后端和模型；后端自己的排队会在开始后的过程里显示。</p>
           <div class="row wrap">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
-            <button v-if="detail.run.kind === 'code' && detail.run.status === 'done' && out.verdict === 'awaiting-peer-code' && !out.appliedAt && !out.discardedAt" class="btn sm" title="不等外部 Agent：这一轮的任务交给这台机器的编码 Agent，评审也在这里做" @click="codeHere"><Icon name="refresh" :size="13" />改用这台机器的 AI 编码</button>
-            <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && (detail.patches?.length || syncCommits) && !out.appliedAt && !out.discardedAt && out.verdict !== 'sync-conflict'">
-              <button v-if="!branchReview && !branchWork" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
-              <UiSelect v-if="!branchReview && !branchWork" v-model="moveMode" :options="targetSyncModes" size="sm" width="auto" aria-label="同步目标分支的方式" />
-              <button v-if="!branchReview && !branchWork" class="btn sm" title="目标分支在交办后有了新提交、应用不上时：把改动移到它的最新提交上（冲突交给编码 Agent）" @click="moveToTarget">移到目标分支最新提交</button>
-              <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : branchWork ? '归还工作区；这次交办新建、没推送的分支一起删掉' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
-            </template>
-            <span v-if="out.appliedAt && !branchWork" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
-            <OpenInIde v-if="detail.run.kind === 'code'" :key="`${detail.run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${detail.run.status}`" :run-id="detail.run.id" :space-name="spaceName" />
-            <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = 'open'"><Icon name="chat" :size="14" />提问</button>
           </div>
         </header>
-        <!-- A delegation's round in progress: the owner's words for the coding Agent, and the review from now on. -->
-        <CodeSteer v-if="detail.run.kind === 'code' && !branchReview && ['queued', 'running'].includes(detail.run.status)" :run-id="detail.run.id" :coding="typeof out.coderSummary !== 'string'" :notes="(out.notes ?? []) as { id: string; text: string; at: string; deliveredAt?: string }[]" :review="(detail.run.input as { roundReview?: { tier?: string; split?: boolean } }).roundReview" :tasks="!!(detail.run.input as { taskMode?: boolean }).taskMode" @changed="loadDetail" />
-        <!-- Where the round lands: a sync stopped on conflicts, the work branch and pushing it, or an applied patch and committing it. -->
-        <CodeLanding :run="detail.run" :branch-work="branchWork" :space-name="spaceName" @changed="loadDetail" @synced="(id) => router.push(`/runs/${id}`)" />
 
-        <!-- A delegation driven by tasks: its tasks, the owner's questions, budget and changes by task (docs/v2/coding-loop.md). -->
-        <CodeTasks v-if="detail.run.kind === 'code' && !branchReview" :key="`tasks:${detail.run.id}`" :run-id="detail.run.id" />
-        <nav v-if="hasReview" class="tabs" role="tablist" aria-label="运行详情">
-          <button v-for="t in tabs" :key="t.id" role="tab" class="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
-        </nav>
-        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="canFix" :applied="!!out.appliedAt" data-ask-label="评审" @ask="(c) => { askDraft = c.text ?? ''; quote('ask', c); }" @go="(t) => (tab = t)" />
-        <ChangeView v-if="hasReview && tab === 'change'" :rv="rv" :run-id="detail.run.id" :diffs="diffs" @explain="explain" />
-        <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" :run-id="detail.run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
-
-        <template v-if="!hasReview || tab === 'activity'">
         <section v-if="ctxInfo && (ctxInfo.conversation || ctxInfo.parent || ctxInfo.work)" class="card pad block ctx">
           <div class="section-title">所在会话与关联</div>
           <div v-if="ctxInfo.conversation" class="ctx-row">
@@ -584,8 +387,7 @@ const kindOptions = computed(() => [
 
         <ContextUsage :events="detail.events" />
 
-        <ReviewProcess v-if="hasReview" :rv="rv" :focus="processFocus" />
-        <section v-else class="block">
+        <section class="block">
           <RunActivity :run-id="detail.run.id" :link="false" :open="['queued', 'running'].includes(detail.run.status)">
             <template #default="{ text, running }">
               <Markdown v-if="running && text" :source="text" />
@@ -594,30 +396,8 @@ const kindOptions = computed(() => [
         </section>
 
         <section v-if="finalText" class="block">
-          <div class="section-title">{{ detail.run.kind === "code" ? (branchReview ? "要评审的分支" : "编码 Agent 的说明") : "结果" }}</div>
+          <div class="section-title">结果</div>
           <div class="card pad"><Markdown :source="String(finalText)" :space="detail.run.spaceId ?? undefined" /></div>
-        </section>
-
-        <section v-for="c in checks" :key="c.space" class="block">
-          <div class="section-title">检查<template v-if="c.space"> · {{ spaceName(c.space) }}</template>：<span class="mono">{{ c.check.command }}</span> <span class="badge" :class="c.check.code === 0 ? 'ok' : 'danger'">退出码 {{ c.check.code }}</span></div>
-          <pre class="log">{{ c.check.output }}</pre>
-        </section>
-
-        <section v-if="fileCount" class="block">
-          <div class="section-title row">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件<span class="spacer" /><span class="muted small hint-sel">选中代码可以加入提问或修改点</span><UiSegmented v-model="diffLayout" size="sm" :options="diffLayoutOptions" aria-label="差异的排列" /><button class="btn ghost sm" @click="toggleAllDiffs">{{ openDiffs.size ? "全部收起" : "全部展开" }}</button></div>
-          <p v-if="out.indexedSpaces?.length && !out.appliedAt && !out.discardedAt" class="muted small">{{ branchReview ? "清理工作区之前" : "应用或丢弃之前" }}，改过的文件可以检索（空间 {{ out.indexedSpaces.join("、") }}）；之后连同 worktree 一起删除。</p>
-          <div class="diff-cols">
-          <DiffTree v-if="fileCount > 1" class="diff-tree" :files="treeFiles" :active="pickedDiff" @pick="pickDiff" />
-          <div class="diff-list">
-          <template v-for="d in diffs" :key="d.space">
-          <div v-if="diffs.length > 1" class="repo-title">{{ spaceName(d.space) }}</div>
-          <details v-for="f in d.files" :key="f.name" class="file" :class="{ picked: pickedDiff === `${d.space}:${f.name}` }" :data-key="`${d.space}:${f.name}`" :open="openDiffs.has(`${d.space}:${f.name}`)" @toggle="onDiffToggle(`${d.space}:${f.name}`, $event)">
-            <summary class="mono small"><DiffName :file="f" /><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></summary>
-            <DiffFile v-if="openDiffs.has(`${d.space}:${f.name}`)" :run-id="detail.run.id" :space="d.space" :lines="f.lines" />
-          </details>
-          </template>
-          </div>
-          </div>
         </section>
 
         <section v-if="detail.children.length" class="block">
@@ -626,27 +406,8 @@ const kindOptions = computed(() => [
             <router-link v-for="c in detail.children" :key="c.id" :to="`/runs/${c.id}`" class="li"><span class="st" :class="c.status" /><span class="grow ellipsis">{{ c.title }}</span><span class="muted small">{{ statusLabel[c.status] }}</span></router-link>
           </div>
         </section>
-        </template>
       </template>
     </main>
-
-    <div v-if="selection" class="sel-ask" :style="{ top: `${selection.top}px`, left: `${selection.left}px` }" @mousedown.prevent>
-      <button class="btn sm primary" @click="quote('ask')"><Icon name="chat" :size="13" />加入提问{{ askQuotes.length ? `（${askQuotes.length + 1}）` : "" }}</button>
-      <button v-if="canFix" class="btn sm" title="作为下一轮修改的要求，攒够了一起开始修改" @click="quote('fix')"><Icon name="edit" :size="13" />加入修改点{{ fixQuotes.length ? `（${fixQuotes.length + 1}）` : "" }}</button>
-    </div>
-    <AskAboutRun v-if="asking && detail" :key="detail.run.id" basket :draft="askDraft" :minimized="asking === 'min'" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" @close="asking = null" @minimize="asking = 'min'" />
-    <FixBasket v-if="fixOpen && detail" :key="`fix:${detail.run.id}`" :run-id="detail.run.id" :rv="rv" :can-fix="canFix" :branch-review="branchReview" @close="fixOpen = false" />
-    <QuoteDock v-if="detail && !explaining && !fixOpen && (asking === 'min' || (!asking && askQuotes.length) || fixQuotes.length)" :ask="askQuotes.length" :fix="fixQuotes.length" :asking="!!asking" @ask="asking = 'open'" @fix="fixOpen = true" />
-    <AskAboutRun v-if="explaining && detail" :key="`${detail.run.id}:${explaining.id}`" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" :context="explainContext" :heading="`${explaining.id} ${explaining.title}`" @close="explaining = null">
-      <div class="explain">
-        <div class="row"><span class="badge" :class="POINT_STATUS[explaining.status].cls">{{ POINT_STATUS[explaining.status].text }}</span></div>
-        <template v-if="explaining.requirement"><div class="ex-h">需求怎么说</div><Markdown :source="explaining.requirement" :space="detail.run.spaceId ?? undefined" /></template>
-        <template v-if="explaining.implementation"><div class="ex-h">代码怎么做</div><Markdown :source="explaining.implementation" :space="detail.run.spaceId ?? undefined" /></template>
-        <template v-if="explaining.locations.length"><div class="ex-h">位置</div><div class="mono small locs"><a v-for="(l, i) in explaining.locations" :key="i" href="#" @click.prevent="openCitation({ kind: 'file', runId: detail.run.id, path: l.file, from: l.start, to: l.end ?? l.start }, true)">{{ l.file }}{{ l.start ? `:${l.start}${l.end && l.end !== l.start ? `-${l.end}` : ""}` : "" }}</a></div></template>
-        <template v-if="explaining.refs.length"><div class="ex-h">依据</div><div class="small"><template v-for="(r, i) in explaining.refs" :key="i"><a v-if="refAction(r, detail.run.id)" href="#" class="mono" @click.prevent="refAction(r, detail.run.id)!()">{{ r }}</a><span v-else class="mono">{{ r }}</span>{{ i < explaining.refs.length - 1 ? "、" : "" }}</template></div></template>
-        <template v-if="pointFindings.length"><div class="ex-h">这些文件上的问题</div><div v-for="f in pointFindings" :key="f.id" class="small ex-f"><span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span> {{ f.title }} <span class="mono muted">{{ findingWhere(f) }}</span></div></template>
-      </div>
-    </AskAboutRun>
 
     <div v-if="delegateOpen" class="modal-overlay" @mousedown.self="delegateOpen = false">
       <div class="modal stack">
@@ -730,12 +491,12 @@ const kindOptions = computed(() => [
   flex-direction: column;
 }
 .head {
-  padding: 14px 12px 10px;
+  padding: 12px 12px 10px;
   border-bottom: 1px solid var(--line);
   display: grid;
   grid-template-columns: auto 1fr auto;
   grid-template-areas:
-    "title . delegate"
+    "view . delegate"
     "search search search"
     "status status status"
     "scope scope quiet"
@@ -743,26 +504,21 @@ const kindOptions = computed(() => [
   row-gap: 8px;
   align-items: center;
 }
-.head > strong { grid-area: title; }
+.head.code {
+  grid-template-areas:
+    "view . delegate"
+    "search search search"
+    "scope scope scope";
+}
+.head .view-pick { grid-area: view; justify-self: start; }
 .head .search { grid-area: search; display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); }
 .head .search:focus-within { border-color: var(--accent); }
 .head .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13px; color: var(--ink); }
-.head .btn[title="交办编码任务"] { grid-area: delegate; }
+.head .delegate { grid-area: delegate; }
 .head .kind-filter { grid-area: kind; justify-self: start; }
 .head .status-filter { grid-area: status; justify-self: start; }
 .head .scope-filter { grid-area: scope; justify-self: start; }
-.head .small.muted { grid-area: quiet; justify-self: end; white-space: nowrap; }
-@media (max-width: 480px) {
-  .head {
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      "title delegate"
-      "search search"
-      "status status"
-      "scope quiet"
-      "kind kind";
-  }
-}
+.head .quiet { grid-area: quiet; justify-self: end; white-space: nowrap; }
 .sm-select {
   width: auto;
   height: 28px;

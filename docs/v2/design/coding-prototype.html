@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>编码页与空间原型</title>
+<!-- 直接用网页的样式 token 和公共类；下面只补 App.vue、Runs.vue、Requirements.vue、Settings.vue 和 Ui* 组件里的 scoped 样式。数据都是虚构的。 -->
+<link rel="stylesheet" href="../../../web/src/styles.css" />
+<style>
+  /* ---- 外壳（App.vue） ---- */
+  .shell { display: flex; height: 100%; }
+  .side { width: var(--sidebar); flex: none; border-right: 1px solid var(--line); background: var(--sunken); display: flex; flex-direction: column; gap: 12px; padding: 14px 12px; overflow-y: auto; }
+  .brand { padding: 2px 6px; font-size: 16px; gap: 10px; }
+  .space-pick { display: grid; gap: 4px; padding: 0 4px; position: relative; }
+  .search-btn { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line-strong); background: var(--panel); border-radius: 8px; padding: 7px 10px; color: var(--muted); }
+  .search-btn span { flex: 1; }
+  nav.main-nav { display: grid; gap: 1px; }
+  .nav { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: var(--ink-2); font-weight: 500; }
+  .nav:hover { background: var(--hover); text-decoration: none; }
+  .nav.on { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .nav .new { margin-left: auto; font-size: 10.5px; color: var(--accent); }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .topbar { display: none; }
+  .proto-note { font-size: 11.5px; color: var(--muted); padding: 0 6px; margin: 0; }
+
+  /* ---- 原型切换条（不是界面的一部分） ---- */
+  .proto-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 16px; background: var(--warn-soft); border-bottom: 1px dashed var(--line-strong); font-size: 12.5px; }
+  .proto-bar .lbl { color: var(--warn); font-weight: 600; }
+  .proto-why { flex-basis: 100%; margin: 0; color: var(--ink-2); line-height: 1.6; }
+
+  /* ---- Ui 组件的静态外观 ---- */
+  .ui-select { display: inline-flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 36px; padding: 0 10px 0 11px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
+  .ui-select.sm { height: 30px; font-size: 13px; padding: 0 8px 0 9px; width: auto; }
+  .ui-select .value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ui-select .sub { color: var(--muted); font-size: 12px; font-weight: 400; }
+  .ui-select svg { color: var(--muted); }
+  .ui-seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 9px; background: var(--sunken); border: 1px solid var(--line); max-width: 100%; overflow-x: auto; }
+  .ui-seg button { border: 0; background: none; color: var(--ink-2); height: 28px; padding: 0 11px; border-radius: 7px; cursor: pointer; white-space: nowrap; font: inherit; font-size: 13px; }
+  .ui-seg.sm button { height: 24px; padding: 0 9px; font-size: 12.5px; }
+  .ui-seg button.on { background: var(--panel); color: var(--ink); font-weight: 550; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .ui-check { display: inline-flex; align-items: center; gap: 8px; user-select: none; min-width: 0; }
+  .ui-check .box { flex: none; width: 17px; height: 17px; border-radius: 5px; border: 1.5px solid var(--line-strong); background: var(--panel); display: inline-flex; align-items: center; justify-content: center; color: var(--accent-ink); }
+  .ui-check.on .box { background: var(--accent); border-color: var(--accent); }
+
+  /* 空间选择的下拉（UiSelect 的弹层） */
+  .menu { position: absolute; left: 4px; right: 4px; top: 62px; z-index: 20; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 6px; display: none; }
+  .menu.open { display: grid; gap: 1px; }
+  .opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; min-width: 0; }
+  .opt:hover { background: var(--hover); }
+  .opt.on { background: var(--accent-soft); }
+  .opt .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opt .k { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .opt.child { padding-left: 26px; }
+  .opt.child .grow { color: var(--ink-2); }
+  .menu-sep { font-size: 11px; color: var(--muted); padding: 8px 8px 2px; letter-spacing: .04em; }
+
+  /* ---- 左列表 + 右详情（Runs.vue / Requirements.vue） ---- */
+  .screen { display: none; flex: 1; min-height: 0; }
+  .screen.on { display: flex; }
+  .split { display: flex; flex: 1; min-width: 0; min-height: 0; }
+  .list-col { width: 340px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+  .head .row strong { font-size: 14px; }
+  .items { overflow-y: auto; padding: 6px; flex: 1; }
+  .group { font-size: 11.5px; color: var(--muted); padding: 10px 10px 4px; display: flex; align-items: center; gap: 6px; }
+  .group b { color: var(--ink-2); font-weight: 600; }
+  .wk { display: grid; gap: 2px; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--ink); min-width: 0; font: inherit; }
+  .wk:hover { background: var(--hover); }
+  .wk.on { background: var(--accent-soft); }
+  .wk-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .wk-top strong { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wk-meta { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .wk.done { opacity: .7; }
+  .run-li { display: grid; gap: 1px; padding: 8px 10px; border-radius: 8px; }
+  .run-li:hover { background: var(--hover); }
+  .run-li .t { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-li .m { font-size: 12px; color: var(--muted); }
+  .detail { flex: 1; min-width: 0; overflow-y: auto; }
+
+  /* ---- 一次交办（三处同一个组件） ---- */
+  .work { max-width: 1040px; padding: 16px 24px 48px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .crumbs { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12.5px; color: var(--muted); }
+  .wh { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .wh h2 { margin: 0; font-size: 18px; flex: 1 1 16em; min-width: 0; }
+  .sub-line { font-size: 13px; color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .facts { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px 12px; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  .facts dt { color: var(--muted); font-size: 12.5px; padding-top: 2px; }
+  .facts dd { margin: 0; min-width: 0; display: grid; gap: 4px; }
+  .facts .line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+  .br { display: grid; gap: 2px; min-width: 0; }
+  .br + .br { padding-top: 6px; border-top: 1px dashed var(--line); }
+  .br .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 13px; }
+  .br .flow code { font-family: var(--mono); font-size: 12.5px; background: var(--sunken); padding: 0 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .br .note { font-size: 12px; color: var(--muted); }
+  .arrow { color: var(--muted); }
+  .work .tabs { margin-bottom: 0; }
+  .block { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; min-width: 0; background: var(--panel); }
+  .block-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .block-head strong { font-size: 14px; }
+  .task { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
+  .task:first-of-type { border-top: 0; }
+  .task .no { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .task .src { font-size: 12px; color: var(--muted); }
+  .task .r { display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+  .ask-box { border: 1px solid var(--warn); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; background: var(--panel); }
+  .ask-box p { margin: 0; }
+  .assist { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 12px; border-radius: 6px; font-size: 13px; display: grid; gap: 4px; }
+  .assist p { margin: 0; }
+  .tl { display: grid; gap: 0; }
+  .tl .ev { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .tl .ev:first-child { border-top: 0; }
+  .tl .when { color: var(--muted); font-size: 12px; }
+  .commit { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 8px; font-size: 12.5px; padding: 4px 0; }
+  .commit code { font-family: var(--mono); color: var(--muted); }
+  .files { display: grid; gap: 2px; font-family: var(--mono); font-size: 12.5px; }
+  .files .add { color: var(--ok); } .files .del { color: var(--danger); }
+  .req-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .req-row:first-of-type { border-top: 0; }
+  .req-row .s { font-size: 12.5px; color: var(--muted); grid-column: 1 / -1; }
+  .tp { font-size: 12.5px; color: var(--ink-2); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; grid-column: 1 / -1; }
+  .tp code { font-family: var(--mono); font-size: 12px; }
+  .empty-tab { color: var(--muted); font-size: 13px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: 10px; }
+
+  /* ---- 需求页（Requirements.vue） ---- */
+  .node { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 8px; cursor: pointer; min-width: 0; }
+  .node:hover { background: var(--hover); }
+  .node.on { background: var(--accent-soft); }
+  .node .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node.idle { opacity: .45; }
+  .kd { flex: none; font-size: 11px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--line-strong); color: var(--muted); }
+  .kd.f { color: var(--accent); border-color: var(--accent); }
+  .page-r { max-width: 880px; padding: 16px 24px 48px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .page-r h2 { margin: 0; font-size: 18px; }
+
+  /* ---- 原件树（Sources.vue / SourceTree.vue） ---- */
+  .tree { padding: 6px; display: grid; gap: 1px; }
+  .tn { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; font-size: 13.5px; min-width: 0; }
+  .tn:hover { background: var(--hover); }
+  .tn .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tn .m { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .tn.repo { font-weight: 600; }
+  .tn.on { background: var(--accent-soft); }
+
+  /* ---- 设置（Settings.vue） ---- */
+  .settings { max-width: 860px; padding: 16px 24px 48px; display: grid; gap: 14px; width: 100%; align-content: start; }
+  .menu.static { position: static; display: grid; gap: 1px; box-shadow: var(--shadow); max-width: 320px; }
+  .sp-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); min-width: 0; }
+  .sp-card .grow { flex: 1; min-width: 0; }
+  .sp-card .sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sp-card.child { margin-left: 24px; }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.22); z-index: 40; display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--panel); border-radius: 12px; box-shadow: var(--shadow-lg); width: min(720px, 100%); padding: 18px 20px; display: grid; gap: 14px; }
+  .repo-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--line); align-items: center; }
+  .repo-row:first-of-type { border-top: 0; }
+  .repo-row .p { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .repo-row .acts { display: flex; gap: 4px; }
+  .suggest { background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow-lg); z-index: 50; display: none; flex-direction: column; }
+  .drawer.open { display: flex; }
+  .drawer header { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .drawer .body { padding: 14px 16px; overflow-y: auto; flex: 1; display: grid; gap: 14px; align-content: start; }
+  .slot { display: flex; gap: 8px; align-items: center; font-size: 12.5px; min-width: 0; }
+  .slot .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .removed { text-decoration: line-through; color: var(--muted); }
+
+  .only-narrow { display: none !important; }
+  @media (max-width: 860px) {
+    .side { display: none; }
+    .topbar { display: flex; align-items: center; gap: 10px; background: var(--bg); border-bottom: 1px solid var(--line); padding: 8px 12px; flex: none; }
+    .topbar .ui-select { width: auto; max-width: 60vw; }
+  }
+  @media (max-width: 760px) {
+    .main { overflow-y: auto; display: block; }
+    .screen.on { display: block; }
+    .split { flex-direction: column; }
+    .list-col { width: 100%; max-height: 42vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    .work, .page-r, .settings { padding: 12px 16px 32px; }
+    .facts { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+    .facts dt { padding-top: 6px; }
+    .task { grid-template-columns: 30px minmax(0, 1fr); }
+    .task .r { grid-column: 2; justify-content: flex-start; }
+    .tl .ev { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .commit { grid-template-columns: 56px minmax(0, 1fr); }
+    .commit .when { display: none; }
+    .proto-bar { padding: 8px 12px; }
+    .sp-card.child { margin-left: 12px; }
+    .only-narrow { display: inline-flex !important; }
+    .hide-narrow { display: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand row"><svg viewBox="0 0 32 32" width="22" height="22"><rect width="32" height="32" rx="8" fill="currentColor" /><circle cx="16" cy="16" r="7" fill="none" stroke="var(--bg)" stroke-width="3" /></svg><strong>omem</strong></div>
+    <div class="space-pick">
+      <span class="small muted">空间</span>
+      <button class="ui-select" id="space-btn" style="font-weight:550" aria-haspopup="listbox"><span class="value" id="space-label">示例商城 <span class="sub">· 含 2 个仓库</span></span><i data-i="down"></i></button>
+      <div class="menu" id="space-menu" role="listbox" aria-label="空间">
+        <div class="opt" data-sp="个人"><i data-i="home" data-s="15"></i><span class="grow">个人</span></div>
+        <div class="opt on" data-sp="示例商城"><i data-i="layers" data-s="15"></i><span class="grow">示例商城</span><span class="k">2 个仓库</span></div>
+        <div class="opt child" data-sp="示例商城 / 商城前端"><i data-i="code" data-s="14"></i><span class="grow">商城前端</span><span class="k">仓库</span></div>
+        <div class="opt child" data-sp="示例商城 / 商城后端"><i data-i="code" data-s="14"></i><span class="grow">商城后端</span><span class="k">仓库</span></div>
+        <div class="opt" data-sp="售后知识库"><i data-i="layers" data-s="15"></i><span class="grow">售后知识库</span></div>
+        <div class="opt" data-sp="英语学习"><i data-i="cap" data-s="15"></i><span class="grow">英语学习</span></div>
+        <div class="menu-sep">独立仓库</div>
+        <div class="opt" data-sp="omem"><i data-i="code" data-s="15"></i><span class="grow">omem</span></div>
+      </div>
+    </div>
+    <div class="search-btn"><i data-i="search" data-s="16"></i><span>搜索或提问</span><kbd>Ctrl K</kbd></div>
+    <nav class="main-nav">
+      <a class="nav" href="#"><i data-i="home"></i>今日</a>
+      <a class="nav" href="#"><i data-i="chat"></i>问答</a>
+      <a class="nav" href="#"><i data-i="book"></i>Wiki</a>
+      <a class="nav" href="#"><i data-i="checkbox"></i>事项</a>
+      <a class="nav" href="#reqs" data-nav="reqs"><i data-i="target"></i>需求</a>
+      <a class="nav" href="#page" data-nav="page" id="nav-code"><i data-i="code"></i>编码<span class="new">新</span></a>
+      <a class="nav" href="#"><i data-i="brain"></i>记忆</a>
+      <a class="nav" href="#sources" data-nav="sources"><i data-i="file"></i>原件</a>
+      <a class="nav" href="#"><i data-i="cap"></i>学习</a>
+      <a class="nav" href="#"><i data-i="layers"></i>Agent</a>
+      <a class="nav" href="#"><i data-i="zap"></i>规则</a>
+      <a class="nav" href="#runs" data-nav="runs"><i data-i="activity"></i>运行</a>
+      <a class="nav" href="#settings" data-nav="settings"><i data-i="gear"></i>设置</a>
+    </nav>
+    <div class="spacer"></div>
+    <p class="proto-note">原型：数据是虚构的；只有黄色条里列的几处能点。</p>
+  </aside>
+
+  <main class="main">
+    <div class="topbar"><svg viewBox="0 0 32 32" width="20" height="20"><rect width="32" height="32" rx="8" fill="currentColor" /><circle cx="16" cy="16" r="7" fill="none" stroke="var(--bg)" stroke-width="3" /></svg><span class="ui-select sm"><span class="value">示例商城 <span class="sub">· 2 个仓库</span></span><i data-i="down" data-s="14"></i></span><span class="spacer"></span><i data-i="menu"></i></div>
+
+    <div class="proto-bar">
+      <span class="lbl">原型</span>
+      <span class="row wrap" style="gap:6px"><span class="muted">编码记录放哪：</span><span class="ui-seg sm" role="group" aria-label="编码放哪"><button data-go="runs">运行页里</button><button data-go="page">单独的编码页</button><button data-go="reqs">需求页里</button></span></span>
+      <span class="row wrap" style="gap:6px"><span class="muted">仓库挂在业务空间下：</span><span class="ui-seg sm" role="group" aria-label="空间"><button data-go="pick">空间选择</button><button data-go="settings">空间设置</button><button data-go="sources">原件</button></span></span>
+      <p class="proto-why" id="why"></p>
+    </div>
+
+    <!-- 方案一：运行页顶部切到“编码” -->
+    <section class="screen" data-screen="runs">
+      <div class="split">
+        <aside class="list-col">
+          <div class="head">
+            <div class="row"><strong>运行</strong><span class="spacer"></span><span class="ui-seg sm" role="tablist" aria-label="运行页视图"><button class="on" data-runs-view="code">编码</button><button data-runs-view="all">全部运行</button></span></div>
+            <div class="row"><input class="input" style="height:30px;font-size:13px" placeholder="标题、分支、事项" aria-label="筛选编码" /><span class="ui-select sm" style="flex:none"><span class="value">全部仓库</span><i data-i="down" data-s="14"></i></span></div>
+          </div>
+          <div class="items" data-list="runs"></div>
+          <div class="items" data-all-runs hidden>
+            <div class="group"><b>今天</b></div>
+            <div class="run-li"><span class="t">交办第 3 轮：修改项 T4、T6</span><span class="m">编码 · 进行中 · 「退款只按已发货的行计算」</span></div>
+            <div class="run-li"><span class="t">逐项验证：功能评审</span><span class="m">评审 · 完成 · 「退款只按已发货的行计算」</span></div>
+            <div class="run-li"><span class="t">退款为什么会重复到账？</span><span class="m">问答 · 完成</span></div>
+            <div class="run-li"><span class="t">整理：售后群 11-06</span><span class="m">整理 · 完成</span></div>
+            <div class="run-li"><span class="t">交办第 4 轮：修改项 T7</span><span class="m">编码 · 完成 · 「退款单取消后恢复重新申请入口」</span></div>
+            <p class="small muted" style="padding:8px 10px;margin:0">“全部运行”就是现在的运行列表，每一轮一行。点编码的一轮，打开的也是右边这个交办视图，停在那一轮的活动上。</p>
+          </div>
+        </aside>
+        <div class="detail" data-detail="runs"></div>
+      </div>
+    </section>
+
+    <!-- 方案二：单独的“编码”页 -->
+    <section class="screen" data-screen="page">
+      <div class="split">
+        <aside class="list-col">
+          <div class="head">
+            <div class="row"><strong>编码</strong><span class="spacer"></span><button class="btn sm"><i data-i="plus" data-s="14"></i>交办</button></div>
+            <div class="row"><input class="input" style="height:30px;font-size:13px" placeholder="标题、分支、事项" aria-label="筛选编码" /><span class="ui-select sm" style="flex:none"><span class="value">全部仓库</span><i data-i="down" data-s="14"></i></span></div>
+          </div>
+          <div class="items" data-list="page"></div>
+        </aside>
+        <div class="detail" data-detail="page"></div>
+      </div>
+    </section>
+
+    <!-- 方案三：需求页左边切到“编码” -->
+    <section class="screen" data-screen="reqs">
+      <div class="split">
+        <aside class="list-col">
+          <div class="head">
+            <div class="row"><strong>示例商城 · 需求</strong><span class="spacer"></span><span class="ui-seg sm" role="tablist" aria-label="需求页视图"><button class="on" data-reqs-view="tree">需求树</button><button data-reqs-view="code">编码</button></span></div>
+          </div>
+          <div class="items" data-reqs-tree>
+            <div class="node"><i data-i="down" data-s="13"></i><span class="kd">系统</span><span class="t">PC 端</span></div>
+            <div class="node" style="padding-left:24px"><i data-i="down" data-s="13"></i><span class="kd">模块</span><span class="t">售后</span><span class="badge accent">编码中 1</span></div>
+            <div class="node" style="padding-left:40px"><i data-i="down" data-s="13"></i><span class="kd">页面</span><span class="t">退款申请</span></div>
+            <div class="node on" style="padding-left:56px" data-node="n1"><span style="width:13px"></span><span class="kd f">功能</span><span class="t">可退金额只算未发货的行</span><span class="badge ok">已实现</span></div>
+            <div class="node" style="padding-left:56px" data-node="n2"><span style="width:13px"></span><span class="kd f">功能</span><span class="t">部分发货时优惠券按行均摊</span><span class="badge warn">部分实现</span></div>
+            <div class="node" style="padding-left:56px" data-node="n3"><span style="width:13px"></span><span class="kd f">功能</span><span class="t">重复提交只退一次</span><span class="badge danger">没实现</span></div>
+            <div class="node" style="padding-left:56px" data-node="n4"><span style="width:13px"></span><span class="kd f">功能</span><span class="t">取消后可以重新申请</span><span class="badge ok">已实现</span><span class="badge accent">等你 1</span></div>
+            <div class="node" style="padding-left:40px"><i data-i="right" data-s="13"></i><span class="kd">页面</span><span class="t">售后单列表</span></div>
+            <div class="node" style="padding-left:24px"><i data-i="right" data-s="13"></i><span class="kd">模块</span><span class="t">订单</span></div>
+          </div>
+          <div class="items" data-list="reqs" hidden></div>
+        </aside>
+        <div class="detail" data-detail="reqs"></div>
+      </div>
+    </section>
+
+    <!-- 空间：选择器展开 -->
+    <section class="screen" data-screen="pick">
+      <div class="settings">
+        <div class="block">
+          <div class="block-head"><strong>左上角的空间选择</strong><span class="small muted">宽屏在侧栏（已展开），手机在顶部；下面是同一个下拉</span></div>
+          <div class="menu static" aria-hidden="true">
+            <div class="opt"><i data-i="home" data-s="15"></i><span class="grow">个人</span></div>
+            <div class="opt on"><i data-i="layers" data-s="15"></i><span class="grow">示例商城</span><span class="k">2 个仓库</span></div>
+            <div class="opt child"><i data-i="code" data-s="14"></i><span class="grow">商城前端</span><span class="k">仓库</span></div>
+            <div class="opt child"><i data-i="code" data-s="14"></i><span class="grow">商城后端</span><span class="k">仓库</span></div>
+            <div class="opt"><i data-i="layers" data-s="15"></i><span class="grow">售后知识库</span></div>
+            <div class="opt"><i data-i="cap" data-s="15"></i><span class="grow">英语学习</span></div>
+            <div class="menu-sep">独立仓库</div>
+            <div class="opt"><i data-i="code" data-s="15"></i><span class="grow">omem</span></div>
+          </div>
+          <p class="small" style="margin:0">业务空间下面缩进列出它的仓库。选“示例商城”就是整个业务，问答、检索、原件、需求、编码都包括两个仓库；选“商城前端”只看这一个仓库（交办、检索都限在它）。不属于任何业务的仓库放在最后的“独立仓库”。选中业务空间时，按钮上写“示例商城 · 含 2 个仓库”。</p>
+        </div>
+        <div class="block">
+          <div class="block-head"><strong>另一种：选择器只列业务空间</strong><span class="badge">没采用</span></div>
+          <p class="small" style="margin:0">仓库完全不进选择器，只在各页里当筛选（编码列表的“全部仓库”、原件树里的仓库文件夹）。更干净，但想“只在前端仓库里问问题”时要每页单独选。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 空间：设置 -->
+    <section class="screen" data-screen="settings">
+      <div class="settings">
+        <div class="row"><h2 style="margin:0;font-size:18px">设置</h2></div>
+        <nav class="tabs" style="margin-bottom:0"><button>Agent</button><button class="on">空间</button><button>渠道</button><button>检索</button><button>关于</button></nav>
+        <div class="row"><span class="section-title" style="margin:0">空间</span><span class="spacer"></span><button class="btn sm"><i data-i="plus" data-s="14"></i>新建空间</button></div>
+        <div class="sp-card"><i data-i="home"></i><div class="grow"><strong>个人</strong><div class="sub">个人笔记、约定、聊天与日常事项</div></div><button class="btn sm ghost">设置</button></div>
+        <div class="sp-card"><i data-i="layers"></i><div class="grow"><strong>示例商城</strong><div class="sub">项目 · 3,571 个原件 · 2 个仓库</div></div><button class="btn sm" data-open-modal>设置</button></div>
+        <div class="sp-card child"><i data-i="code" data-s="15"></i><div class="grow"><strong>商城前端</strong><div class="sub">示例商城的仓库 · ~/code/mall-web · main</div></div></div>
+        <div class="sp-card child"><i data-i="code" data-s="15"></i><div class="grow"><strong>商城后端</strong><div class="sub">示例商城的仓库 · ~/code/mall-server · main</div></div></div>
+        <div class="sp-card"><i data-i="layers"></i><div class="grow"><strong>售后知识库</strong><div class="sub">通用 · 1,204 个原件</div></div><button class="btn sm ghost">设置</button></div>
+        <div class="sp-card"><i data-i="code"></i><div class="grow"><strong>omem</strong><div class="sub">独立仓库 · ~/code/omem · main</div></div><button class="btn sm ghost">设置</button></div>
+        <p class="small muted" style="margin:0">仓库的行没有自己的“设置”按钮：在所属业务空间的设置里管理。独立仓库照旧有。</p>
+      </div>
+      <div class="overlay" id="modal">
+        <div class="modal">
+          <div class="row"><strong>空间设置：示例商城</strong><span class="spacer"></span><button class="btn ghost sm icon" data-close-modal aria-label="关闭"><i data-i="x"></i></button></div>
+          <label class="field"><span>名称</span><input class="input" value="示例商城" /></label>
+          <label class="field"><span>说明</span><input class="input" value="商城的退款、订单、售后；前端和后端两个仓库" /></label>
+          <div class="field">
+            <span>仓库</span>
+            <div class="suggest"><span>这个仓库可能也属于这里：<strong>商城管理后台</strong>（它的 3 次交办都记在示例商城）</span><span class="spacer"></span><button class="btn sm">归到这里</button><button class="btn sm ghost">不是</button></div>
+            <div class="card" style="padding:4px 12px">
+              <div class="repo-row"><div style="min-width:0"><strong>商城前端</strong> <span class="small muted">main · 10 分钟前同步</span><div class="p" title="~/code/mall-web">~/code/mall-web</div></div><div class="acts"><button class="btn sm ghost">同步</button><button class="btn sm" data-open-drawer>设置</button><button class="btn sm ghost danger">移出</button></div></div>
+              <div class="repo-row"><div style="min-width:0"><strong>商城后端</strong> <span class="small muted">main · 1 小时前同步</span><div class="p" title="~/code/mall-server">~/code/mall-server</div></div><div class="acts"><button class="btn sm ghost">同步</button><button class="btn sm" data-open-drawer>设置</button><button class="btn sm ghost danger">移出</button></div></div>
+            </div>
+            <div class="row"><input class="input mono" placeholder="添加仓库：本地路径或 Git 链接" style="font-size:13px" /><button class="btn sm" style="flex:none">添加</button></div>
+            <span class="hint">添加后导入代码（遵守 .gitignore）；检索、交办、评审和编码记录都算在示例商城。</span>
+          </div>
+          <div class="field">
+            <span>相关空间（别的业务：互相调用、共用约定）</span>
+            <div class="row"><strong>售后知识库</strong><span class="muted small grow">退款规则的口径以它为准</span><button class="btn ghost sm icon" aria-label="移除"><i data-i="x" data-s="14"></i></button></div>
+            <span class="hint">以前“项目 ↔ 它的仓库”的关联不再需要，归属以后自动去掉。</span>
+          </div>
+          <label class="field"><span>空间指南（SPACE.md，Agent 每次工作前都会读）</span><textarea class="textarea mono" rows="4"># 示例商城&#10;&#10;- 范围：退款、订单、售后</textarea></label>
+          <span class="ui-check on"><span class="box"><i data-i="check" data-s="12"></i></span>新材料保存后让助理整理（更新记忆、事项、相关页面）</span>
+          <div class="field"><span class="removed">检查命令 · 仓库目录 · 准备命令 · 外部 Agent 可以运行的命令 · 交办工作区</span><span class="hint">这几项从业务空间的设置里挪走了，放在每个仓库的“设置”里。</span></div>
+          <div class="row"><span class="spacer"></span><button class="btn sm" data-close-modal>取消</button><button class="btn sm primary" data-close-modal>保存</button></div>
+        </div>
+      </div>
+      <div class="drawer" id="drawer" role="dialog" aria-label="仓库设置">
+        <header class="row"><strong>商城前端 · 仓库设置</strong><span class="spacer"></span><button class="btn ghost sm icon" data-close-drawer aria-label="关闭"><i data-i="x"></i></button></header>
+        <div class="body">
+          <div class="field"><span>目录</span><div class="row"><span class="mono small grow" style="min-width:0;overflow:hidden;text-overflow:ellipsis">~/code/mall-web</span><button class="btn sm">换目录</button></div><span class="hint">同一个仓库在别处的克隆（remote 相同）可以换过来。</span></div>
+          <label class="field"><span>检查命令（交办编码后运行）</span><input class="input mono" value="pnpm test" /></label>
+          <label class="field"><span>准备命令</span><input class="input mono" placeholder="不填按锁文件自动选" /></label>
+          <label class="field"><span>设备的外部 Agent 可以运行的命令</span><textarea class="textarea mono" rows="3">lint: pnpm lint</textarea></label>
+          <label class="field"><span>不导入的路径</span><input class="input mono" placeholder="mock/**, vendor/" /></label>
+          <div class="field"><span>交办工作区</span>
+            <div class="slot"><span class="mono">~/.omem/workspaces/mall-web/1</span><span class="mono small">feat/refund-reapply</span><span class="badge">借出</span></div>
+            <div class="slot"><span class="mono">~/.omem/workspaces/mall-web/2</span><span class="badge">空闲</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 空间：原件树 -->
+    <section class="screen" data-screen="sources">
+      <div class="split">
+        <aside class="list-col">
+          <div class="head"><div class="row"><strong>示例商城 · 原件</strong></div><input class="input" style="height:30px;font-size:13px" placeholder="筛选" aria-label="筛选原件" /></div>
+          <div class="tree">
+            <div class="tn"><i data-i="right" data-s="13"></i><i data-i="folder" data-s="15"></i><span class="grow">群聊</span><span class="m">38</span></div>
+            <div class="tn"><i data-i="right" data-s="13"></i><i data-i="folder" data-s="15"></i><span class="grow">飞书文档</span><span class="m">412</span></div>
+            <div class="tn"><i data-i="down" data-s="13"></i><i data-i="folder" data-s="15"></i><span class="grow">仓库</span><span class="m">2</span></div>
+            <div class="tn repo" style="padding-left:28px"><i data-i="down" data-s="13"></i><i data-i="code" data-s="15"></i><span class="grow">商城前端</span><span class="m">main · 1,509</span></div>
+            <div class="tn" style="padding-left:48px"><i data-i="right" data-s="13"></i><i data-i="folder" data-s="15"></i><span class="grow">src</span></div>
+            <div class="tn on" style="padding-left:48px"><span style="width:13px"></span><i data-i="file" data-s="15"></i><span class="grow">package.json</span></div>
+            <div class="tn repo" style="padding-left:28px"><i data-i="down" data-s="13"></i><i data-i="code" data-s="15"></i><span class="grow">商城后端</span><span class="m">main · 496</span></div>
+            <div class="tn" style="padding-left:48px"><i data-i="right" data-s="13"></i><i data-i="folder" data-s="15"></i><span class="grow">src</span></div>
+            <div class="tn" style="padding-left:48px"><span style="width:13px"></span><i data-i="file" data-s="15"></i><span class="grow">package.json</span></div>
+          </div>
+        </aside>
+        <div class="detail">
+          <div class="page-r">
+            <div class="crumbs"><span>示例商城</span><span>/</span><span>仓库</span><span>/</span><span>商城前端</span><span>/</span><span>package.json</span></div>
+            <h2>package.json</h2>
+            <div class="block">
+              <p class="small" style="margin:0">两个仓库都有 <code>package.json</code>：在树上是两个文件夹下的两个文件，路径分别是 <code>商城前端/package.json</code> 和 <code>商城后端/package.json</code>，不会混。</p>
+              <p class="small muted" style="margin:0">内部每个仓库仍是一个下级空间，文件路径相对各自的仓库根目录记录；业务空间的原件树把它的仓库放在“仓库”文件夹下一起显示。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  const paths = {
+    home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z",
+    chat: "M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z",
+    book: "M4 19.5V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zm0 0A2 2 0 0 0 6 22h13M8 7h7M8 11h5",
+    file: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zM14 3v5h5M9 13h6M9 17h6",
+    folder: "M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",
+    brain: "M9 4a3 3 0 0 0-3 3v.2A3 3 0 0 0 4 10a3 3 0 0 0 1 2.2A3 3 0 0 0 6 17a3 3 0 0 0 3 3 3 3 0 0 0 3-3V7a3 3 0 0 0-3-3zm6 0a3 3 0 0 1 3 3v.2a3 3 0 0 1 2 2.8 3 3 0 0 1-1 2.2 3 3 0 0 1-1 4.8 3 3 0 0 1-3 3 3 3 0 0 1-3-3",
+    check: "M4 12.5 9 17.5 20 6.5",
+    checkbox: "M9 11l3 3 8-8M20 12v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h11",
+    activity: "M3 12h4l3-8 4 16 3-8h4",
+    cap: "M2 9l10-5 10 5-10 5zM6 11v5c3 2.5 9 2.5 12 0v-5M22 9v6",
+    search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4",
+    plus: "M12 5v14M5 12h14",
+    x: "M6 6l12 12M18 6 6 18",
+    right: "M9 18l6-6-6-6",
+    left: "M15 18l-6-6 6-6",
+    down: "M6 9l6 6 6-6",
+    code: "M8 8l-5 4 5 4M16 8l5 4-5 4M14 4l-4 16",
+    menu: "M4 6h16M4 12h16M4 18h16",
+    zap: "M13 3 4 14h7l-1 7 9-11h-7z",
+    layers: "M12 2 2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+    target: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
+    branch: "M6 3v12M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9",
+    gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
+    external: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
+    pause: "M8 5v14M16 5v14",
+  };
+  const icon = (name, s = 17) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="${paths[name]}"/></svg>`;
+  const drawIcons = (root = document) => { for (const el of root.querySelectorAll("i[data-i]")) el.outerHTML = icon(el.dataset.i, el.dataset.s || 17); };
+
+  // ---- 虚构的交办 ----------------------------------------------------------------------------
+  const W = {
+    w1: {
+      group: "进行中", title: "退款只按已发货的行计算", badge: ["编码中", "accent"], item: "退款改造", reqs: "售后 / 退款申请（3 个功能）", time: "2 分钟前",
+      meta: "需求 2/3 · 评审修改 3/5 · 第 3 轮", repos: "商城后端、商城前端 · feat/refund-shipped",
+      state: "编码中：编码 Agent 在做 T4「部分发货时优惠券按行均摊」 · 第 3 轮 / 预算 8 轮",
+      next: "T4、T6 做完后做第一次阶段评审。现在不用你做什么。", acts: [["暂停", ""], ["提问", "ghost"]],
+      branches: [
+        { repo: "商城后端", cut: "main@3f2a91c", at: "11-04", br: "feat/refund-shipped", n: 9, origin: "还没推送", where: "在交办工作区里（编码中）", extra: "" },
+        { repo: "商城前端", cut: "main@81c0d2e", at: "11-04", br: "feat/refund-shipped", n: 2, origin: "还没推送", where: "在交办工作区里（编码中）", extra: "" },
+      ],
+      tasks: [
+        ["进行中", [["T4", "部分发货时优惠券按行均摊", "需求 · 部分发货时优惠券按行均摊", ["编码中", "accent"]], ["T6", "重复提交时只生成一笔退款", "评审问题 #12 · 功能评审验证", ["待做", ""]]]],
+        ["已完成", [["T1", "可退金额只算未发货的行", "需求 · 可退金额只算未发货的行", ["已完成", "ok"]], ["T2", "退款金额页显示每行的可退金额", "需求 · 可退金额只算未发货的行", ["已完成", "ok"]], ["T3", "金额为 0 的行不出现在申请里", "评审问题 #9 · 功能评审验证通过", ["已完成", "ok"]], ["T5", "接口返回字段名与前端对齐", "评审问题 #10 · 架构评审验证通过", ["已完成", "ok"]]]],
+      ],
+      reqRows: [
+        ["可退金额只算未发货的行", ["已实现", "ok"], "T1、T2 完成 · 检查点 2", [["部分发货：2 行退 1 行", "mall-server/src/refund.test.ts › 只退未发货的行", "待你确认"]]],
+        ["部分发货时优惠券按行均摊", ["部分实现", "warn"], "T4 编码中", []],
+        ["重复提交只退一次", ["没实现", "danger"], "T6 待做（来自评审问题 #12）", []],
+      ],
+      review: null,
+      activity: [["14:02", "第 3 轮开始：T4、T6（编码 Agent 续用同一个会话）"], ["13:58", "功能评审在自己的会话里验证 T3：通过"], ["13:40", "宿主记检查点 2（T1、T2、T3、T5）"], ["11:20", "第 2 轮：T3、T5"], ["10:05", "第 1 轮：编码 Agent 拆成 T1、T2、T4，估 8 轮"], ["10:03", "助手交办（从「退款改造」话题）"]],
+    },
+    w2: {
+      group: "等你", title: "退款单取消后恢复重新申请入口", badge: ["完成，等你确认", "ok"], item: "退款改造", reqs: "售后 / 退款申请 › 取消后可以重新申请", time: "1 小时前",
+      meta: "需求 1/1 · 评审修改 4/4 · 第 4 轮", repos: "商城前端 · feat/refund-reapply",
+      state: "完成：最近一次阶段评审没有新的要改的问题，pnpm test 通过",
+      next: "确认后推送 feat/refund-reapply 到 origin，归还工作区。合进 main 在代码平台上发合并请求。", acts: [["确认并推送", "primary"], ["丢弃", "danger"]],
+      branches: [{ repo: "商城前端", cut: "main@81c0d2e", at: "11-03", br: "feat/refund-reapply", n: 6, origin: "origin 上有，本地领先 3", where: "在仓库目录 ~/code/mall-web 检出", extra: "main 之后多了 12 个提交" }],
+      tasks: [["已完成", [["T1", "取消后恢复“重新申请”入口", "需求 · 取消后可以重新申请", ["已完成", "ok"]], ["T2", "重新申请时带上上次填的原因", "评审问题 #3 · 业务评审验证通过", ["已完成", "ok"]]]], ["以后再做", [["T5", "并发取消和重新申请的竞态", "评审问题 #7 · 现在的用法碰不到", ["以后再做", ""]]]]],
+      reqRows: [["取消后可以重新申请", ["已实现", "ok"], "T1 完成 · 已推送到 origin/feat/refund-reapply", [["取消后列表里出现“重新申请”", "mall-web/src/refund/List.test.tsx › 取消后可重新申请", "待你确认"]]]],
+      review: "第 2 次阶段评审（11-06 09:12）：评审负责人派了功能、业务评审；没有新问题。",
+      activity: [["09:12", "第 2 次阶段评审：通过"], ["09:01", "第 4 轮：T7"], ["11-05", "先推送验证：推到 origin/feat/refund-reapply（a91c3e2）"]],
+    },
+    w3: {
+      group: "等你", title: "订单导出加上售后状态", badge: ["等你决定 1 项", "warn"], item: "订单导出", reqs: "订单 / 导出", time: "20 分钟前",
+      meta: "需求 2/3 · 评审修改 1/2 · 第 2 轮", repos: "商城后端 · feat/export-aftersale",
+      state: "其他项照常推进；T3 等你决定",
+      next: "回答 T3（下面），回答后马上排下一轮。", acts: [["提问", "ghost"]],
+      ask: { q: "部分退款的订单，导出时售后状态写什么？", opts: ["写“部分退款”", "按最后一笔退款的状态", "拆成每行一条"] },
+      branches: [{ repo: "商城后端", cut: "main@3f2a91c", at: "11-06", br: "feat/export-aftersale", n: 4, origin: "还没推送", where: "没有检出", extra: "" }],
+      tasks: [["等你决定", [["T3", "部分退款订单的导出状态", "需求 · 导出包含售后状态", ["等你决定", "warn"]]]], ["已完成", [["T1", "导出加“售后状态”列", "需求 · 导出包含售后状态", ["已完成", "ok"]]]]],
+      reqRows: [], review: null, activity: [["13:30", "T3 交给你决定（编码 Agent：需求没说部分退款怎么算）"]],
+    },
+    w4: {
+      group: "搁着", title: "清理旧的退款接口", badge: ["你停下的 · 2 天没动", ""], item: "退款改造", reqs: "没挂需求点", time: "2 天前",
+      meta: "需求 1/2 · 第 1 轮停下", repos: "商城后端 · chore/drop-old-refund-api",
+      state: "你在网页上停下了第 1 轮；留下 T2 编码中、T3 等你决定",
+      next: "助手的建议见下面。丢弃会归还工作区，这条分支没推送过，会一起删掉。", acts: [["接着做", ""], ["丢弃", "danger"]],
+      assist: "助手（11-07 早上巡检）：旧接口在后端已经没有调用方，T1 做完了；T2、T3 是停下时挂着的。建议把 T1 留下推送、T2/T3 记成以后再做，或者整个丢弃——你选一个我来处理。",
+      branches: [{ repo: "商城后端", cut: "main@3f2a91c", at: "11-05", br: "chore/drop-old-refund-api", n: 1, origin: "还没推送", where: "没有检出", extra: "" }],
+      tasks: [["停下时挂着", [["T2", "删掉旧接口的路由和文档", "需求", ["编码中（已停）", ""]], ["T3", "旧接口的调用统计要不要保留", "编码 Agent 交给你", ["等你决定", "warn"]]]], ["已完成", [["T1", "确认旧接口没有调用方", "需求", ["已完成", "ok"]]]]],
+      reqRows: [], review: null, activity: [["11-07", "巡检：叫醒助手（停下 1 天没动）"], ["11-05", "你在网页上停下第 1 轮"]],
+    },
+    w5: {
+      group: "已结束", title: "售后单列表加筛选", badge: ["已推送", "ok"], item: "售后列表", reqs: "售后 / 售后单列表", time: "11-02",
+      meta: "需求 2/2 · 评审修改 3/3 · 5 轮", repos: "商城前端 · feat/aftersale-filter",
+      state: "11-02 确认：推送到 origin/feat/aftersale-filter，工作区已归还", next: "已结束。要接着改就在同一分支上新交办（自动接上这条分支）。", acts: [["接着改", ""]],
+      branches: [{ repo: "商城前端", cut: "main@6d01f9a", at: "10-31", br: "feat/aftersale-filter", n: 7, origin: "已推送（和本地一致）", where: "没有检出", extra: "" }],
+      tasks: [["已完成", [["T1", "按状态筛选", "需求", ["已完成", "ok"]], ["T2", "按申请时间筛选", "需求", ["已完成", "ok"]]]]], reqRows: [], review: "3 次阶段评审，最后一次通过。", activity: [["11-02", "确认并推送"]],
+    },
+  };
+  const ORDER = ["等你", "进行中", "助手在处理", "搁着", "已结束"];
+
+  function listHtml(where, current) {
+    let out = "";
+    for (const g of ORDER) {
+      const ws = Object.entries(W).filter(([, w]) => w.group === g);
+      if (!ws.length) continue;
+      out += `<div class="group"><b>${g}</b><span>${ws.length}</span></div>`;
+      for (const [id, w] of ws) out += `<button class="wk${id === current ? " on" : ""}${g === "已结束" ? " done" : ""}" data-w="${id}" data-where="${where}">
+        <span class="wk-top"><strong>${w.title}</strong><span class="badge ${w.badge[1]}">${w.badge[0]}</span></span>
+        <span class="wk-meta">${w.meta}</span>
+        <span class="wk-meta">${icon("branch", 13)}${w.repos}</span>
+        <span class="wk-meta">${icon("target", 13)}${w.item} · ${w.time}</span>
+      </button>`;
+    }
+    return out;
+  }
+
+  const TABS = [["overview", "概览"], ["req", "需求点"], ["change", "变更"], ["review", "评审"], ["activity", "活动"], ["branch", "分支"]];
+  function workHtml(id, tab, where) {
+    const w = W[id];
+    const branches = w.branches.map((b) => `<div class="br">
+        <div class="flow"><strong>${b.repo}</strong><code>${b.cut}</code><span class="muted small">${b.at} 切出</span><span class="arrow">→</span><code>${b.br}</code><span class="small">${b.n} 个提交</span><span class="arrow">·</span><span class="small">${b.origin}</span></div>
+        <div class="note">${b.where}${b.extra ? ` · ${b.extra}` : ""} · 确认后推送到 <code style="font-size:11.5px">origin/${b.br}</code></div>
+      </div>`).join("");
+    const back = where === "reqs" ? `<button class="btn ghost sm icon" data-back aria-label="回到需求点">${icon("left", 15)}</button>` : "";
+    const crumbs = where === "reqs" ? `<div class="crumbs"><span>PC 端</span><span>/</span><span>售后</span><span>/</span><span>退款申请</span><span>/</span><span>${w.title}</span></div>` : "";
+    const facts = `<dl class="facts">
+        <dt>状态</dt><dd><div class="line"><span class="badge ${w.badge[1]}">${w.badge[0]}</span><span class="small">${w.state}</span></div></dd>
+        <dt>下一步</dt><dd><div class="line"><span class="small">${w.next}</span></div><div class="line">${w.acts.map(([t, c]) => `<button class="btn sm ${c}">${t}</button>`).join("")}</div></dd>
+        <dt>分支</dt><dd>${branches}</dd>
+      </dl>`;
+    let body = "";
+    if (tab === "overview") {
+      if (w.assist) body += `<div class="assist"><p>${w.assist}</p></div>`;
+      if (w.ask) body += `<div class="ask-box"><div class="row"><span class="badge warn">等你决定</span><strong>T3</strong></div><p>${w.ask.q}</p><div class="row wrap">${w.ask.opts.map((o, i) => `<button class="btn sm${i ? "" : " primary"}">${o}</button>`).join("")}</div><input class="input" placeholder="或者写你的做法" style="font-size:13px" /></div>`;
+      for (const [g, list] of w.tasks) body += `<div class="block"><div class="block-head"><strong>${g}</strong><span class="small muted">${list.length} 项</span></div>${list.map(([no, t, src, st]) => `<div class="task"><span class="no">${no}</span><div style="min-width:0"><div>${t}</div><div class="src">${src}</div></div><div class="r"><span class="badge ${st[1]}">${st[0]}</span></div></div>`).join("")}</div>`;
+      body += `<div class="block"><div class="block-head"><strong>交办时的任务</strong><button class="lnk small">展开全文</button></div><p class="small" style="margin:0;color:var(--ink-2)">退款金额只按还没发货的行计算；优惠券按行均摊……（助手交办时写的原文）</p></div>`;
+    } else if (tab === "req") {
+      body = w.reqRows.length ? `<div class="block"><div class="block-head"><strong>这次交办挂的需求点</strong><span class="small muted">状态跟着修改项走；测试点由编码 Agent 报，等你确认</span></div>${w.reqRows.map(([t, st, s, tps]) => `<div class="req-row"><strong>${t}</strong><span class="badge ${st[1]}">${st[0]}</span><span class="s">${s}</span>${tps.map(([tp, test, c]) => `<div class="tp"><span class="kd">测试点</span>${tp}<span class="arrow">→</span><code>${test}</code><span class="badge accent">${c}</span></div>`).join("")}</div>`).join("")}</div>` : `<div class="empty-tab">这次交办没有挂需求点。</div>`;
+    } else if (tab === "change") {
+      body = `<div class="row wrap"><span class="ui-seg sm"><button class="on">全部</button><button>我上次看过之后</button><button>某几项</button><button>两个检查点之间</button><button>和分支比较…</button></span></div>
+        <div class="block"><div class="block-head"><strong>商城后端</strong><span class="small muted">从切出点到最新提交 · 编码中也能看已经提交的</span></div><div class="files"><span><span class="add">M</span> src/refund/amount.ts <span class="muted">+42 −8</span></span><span><span class="add">A</span> src/refund/amount.test.ts <span class="muted">+88</span></span><span><span class="add">M</span> src/refund/coupon.ts <span class="muted">+15 −3</span></span></div></div>`;
+    } else if (tab === "review") {
+      body = w.review ? `<div class="block"><p class="small" style="margin:0">${w.review}</p></div>` : `<div class="empty-tab">还没有阶段评审：待做的项做完后，评审负责人决定这次看什么。逐项验证的结论在“概览”的修改项上。</div>`;
+    } else if (tab === "activity") {
+      body = `<div class="block"><div class="tl">${w.activity.map(([t, x]) => `<div class="ev"><span class="when">${t}</span><span>${x}</span></div>`).join("")}</div></div>`;
+    } else {
+      body = w.branches.map((b) => `<div class="block"><div class="block-head"><strong>${b.repo} · ${b.br}</strong><span class="small muted">${b.origin}</span></div>
+        <div class="commit"><code>a91c3e2</code><span>fix(refund): 优惠券按行均摊 (T4)</span><span class="muted when">14:20</span></div>
+        <div class="commit"><code>7b2d018</code><span>feat(refund): 可退金额只算未发货的行 (T1)</span><span class="muted when">10:41</span></div>
+        <div class="row wrap"><button class="btn sm">在仓库目录检出</button><button class="btn sm">改名</button><button class="btn sm">先推送验证</button><button class="btn sm ghost">合并 / 变基到…</button></div></div>`).join("");
+    }
+    return `<div class="work">${crumbs}
+      <div class="wh">${back}<h2>${w.title}</h2><button class="btn sm ghost">${icon("chat", 14)}提问</button><button class="btn sm ghost">在 VS Code 打开</button>${where !== "runs" ? `<a class="btn sm" href="#runs/${id}">运行页${icon("external", 13)}</a>` : ""}</div>
+      <div class="sub-line"><span>${icon("target", 13)} 事项：${w.item}</span><span>需求：${w.reqs}</span></div>
+      ${facts}
+      <nav class="tabs" role="tablist" aria-label="交办详情">${TABS.map(([t, l]) => `<button role="tab" class="${t === tab ? "on" : ""}" data-tab="${t}" data-w="${id}" data-where="${where}">${l}${t === "req" && w.reqRows.length ? ` ${w.reqRows.length}` : ""}</button>`).join("")}</nav>
+      ${body}
+    </div>`;
+  }
+
+  function reqNodeHtml() {
+    return `<div class="page-r">
+      <div class="crumbs"><span>PC 端</span><span>/</span><span>售后</span><span>/</span><span>退款申请</span></div>
+      <div class="row wrap"><span class="kd f">功能</span><h2 style="flex:1">可退金额只算未发货的行</h2><span class="badge ok">已实现</span></div>
+      <div class="small muted">状态来自编码：「退款只按已发货的行计算」检查点 2（T1、T2 完成）· 11-06</div>
+      <div class="block"><div class="block-head"><strong>编码</strong><span class="small muted">挂了这个需求点的交办</span></div>
+        ${["w1", "w2"].map((id) => { const w = W[id]; return `<button class="wk" data-w="${id}" data-where="reqs"><span class="wk-top"><strong>${w.title}</strong><span class="badge ${w.badge[1]}">${w.badge[0]}</span></span><span class="wk-meta">${w.meta}</span><span class="wk-meta">${icon("branch", 13)}${w.repos}</span></button>`; }).join("")}
+      </div>
+      <div class="block"><div class="block-head"><strong>需求</strong></div><p class="small" style="margin:0">可退金额 = 未发货行的实付分摊；已发货的行走退货流程。</p></div>
+      <div class="block"><div class="block-head"><strong>测试点</strong></div><div class="tp"><span class="kd">测试点</span>部分发货：2 行退 1 行<span class="arrow">→</span><code>mall-server/src/refund.test.ts › 只退未发货的行</code><span class="badge accent">待你确认</span></div></div>
+    </div>`;
+  }
+
+  // ---- 路由 --------------------------------------------------------------------------------------
+  const WHY = {
+    runs: "编码记录本来就在运行页：顶部切到“编码”，一次交办一行（不再一轮一行），按“等谁”分组；点开就是右边的交办视图。需求页里点一个需求点的编码，打开的也是这个视图（切到“需求页里”看）。导航不加东西，运行页现在那套编码详情换成这个。",
+    page: "单独的“编码”页：导航多一项，入口最显眼。列表和右边的交办视图与“运行页里”完全一样；运行页仍然一轮一行列着所有运行，需求页里也能打开交办——同一个视图有三个入口。",
+    reqs: "放进需求页：左边切到“编码”看全部交办，或在需求树上点需求点看它的编码（右边是需求点页面，里面的“编码”一块）。按需求找编码最方便；修 bug、没挂需求的交办在这里找不太自然。",
+    pick: "左上角选“示例商城”就包括它的两个仓库；也能只选其中一个仓库。设置里的空间列表把仓库缩进列在业务空间下面。",
+    settings: "仓库在业务空间的设置里管：一个“仓库”列表加一个“添加仓库”输入框。仓库自己的检查命令、准备命令等挪到每个仓库的“设置”抽屉里，业务空间的设置页反而少了这几项。点“示例商城”的“设置”，再点仓库的“设置”。",
+    sources: "原件树：业务空间下多一个“仓库”文件夹，每个仓库是一个子文件夹。两个仓库都有 package.json，在树上是两条不同的路径。",
+  };
+  const state = { runs: "w1", page: "w1", reqs: null, tab: "overview" };
+  function render(screen, a) {
+    for (const s of document.querySelectorAll(".screen")) s.classList.toggle("on", s.dataset.screen === screen);
+    for (const b of document.querySelectorAll("[data-go]")) b.classList.toggle("on", b.dataset.go === screen);
+    for (const n of document.querySelectorAll("[data-nav]")) n.classList.toggle("on", n.dataset.nav === (screen === "pick" ? "runs" : screen));
+    document.getElementById("nav-code").style.display = screen === "page" ? "" : "none";
+    document.getElementById("why").textContent = WHY[screen] ?? "";
+    document.getElementById("space-menu").classList.toggle("open", screen === "pick");
+    document.getElementById("modal").classList.toggle("open", screen === "settings" && (a === "modal" || a === "repo"));
+    document.getElementById("drawer").classList.toggle("open", screen === "settings" && a === "repo");
+    if (screen === "runs" || screen === "page") {
+      if (a && W[a]) state[screen] = a;
+      document.querySelector(`[data-list="${screen}"]`).innerHTML = listHtml(screen, state[screen]);
+      document.querySelector(`[data-detail="${screen}"]`).innerHTML = workHtml(state[screen], state.tab, screen);
+    }
+    if (screen === "reqs") {
+      if (a && W[a]) state.reqs = a;
+      else if (a === "node") state.reqs = null;
+      const listMode = !document.querySelector("[data-list=reqs]").hidden;
+      document.querySelector("[data-list=reqs]").innerHTML = listHtml("reqs", state.reqs);
+      document.querySelector("[data-detail=reqs]").innerHTML = state.reqs ? workHtml(state.reqs, state.tab, "reqs") : reqNodeHtml();
+      for (const n of document.querySelectorAll("[data-node]")) n.classList.toggle("idle", !!state.reqs && !listMode && !["n1", "n2", "n3"].includes(n.dataset.node));
+    }
+    drawIcons();
+  }
+  function route() {
+    const [screen = "runs", a] = location.hash.slice(1).split("/").filter(Boolean);
+    render(screen, a);
+  }
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("button, [data-sp], [data-node]");
+    if (!t) return;
+    if (t.dataset.go) location.hash = t.dataset.go;
+    else if (t.dataset.tab) { state.tab = t.dataset.tab; render(t.dataset.where, t.dataset.w); }
+    else if (t.dataset.w) { state.tab = "overview"; location.hash = `${t.dataset.where}/${t.dataset.w}`; }
+    else if (t.hasAttribute("data-back")) location.hash = "reqs/node";
+    else if (t.dataset.runsView) {
+      for (const b of document.querySelectorAll("[data-runs-view]")) b.classList.toggle("on", b === t);
+      document.querySelector("[data-list=runs]").hidden = t.dataset.runsView !== "code";
+      document.querySelector("[data-all-runs]").hidden = t.dataset.runsView === "code";
+    } else if (t.dataset.reqsView) {
+      for (const b of document.querySelectorAll("[data-reqs-view]")) b.classList.toggle("on", b === t);
+      document.querySelector("[data-reqs-tree]").hidden = t.dataset.reqsView !== "tree";
+      document.querySelector("[data-list=reqs]").hidden = t.dataset.reqsView === "tree";
+      route();
+    } else if (t.dataset.node) location.hash = "reqs/node";
+    else if (t.id === "space-btn" || t.id === "open-menu") document.getElementById("space-menu").classList.toggle("open");
+    else if (t.dataset.sp) { document.getElementById("space-label").innerHTML = t.dataset.sp; document.getElementById("space-menu").classList.remove("open"); }
+    else if (t.hasAttribute("data-open-modal")) location.hash = "settings/modal";
+    else if (t.hasAttribute("data-close-modal")) location.hash = "settings";
+    else if (t.hasAttribute("data-open-drawer")) location.hash = "settings/repo";
+    else if (t.hasAttribute("data-close-drawer")) location.hash = "settings/modal";
+  });
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && location.hash.startsWith("#settings/")) location.hash = location.hash === "#settings/repo" ? "settings/modal" : "settings"; });
+  addEventListener("hashchange", route);
+  drawIcons();
+  route();
+</script>
+</body>
+</html>

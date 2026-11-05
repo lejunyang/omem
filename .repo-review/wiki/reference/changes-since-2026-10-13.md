@@ -1395,3 +1395,10 @@ updated: 2026-11-05
 - 授予：`threadTurn` 的三处 `prepareRun` 都 `addTools: ["stay_quiet"]`（一个 Agent 会话服务各种轮次）；`runAgentTask` 在 rule / silent / meeting / wake 时加；十个后台角色的 `tools:` 写上它。规则运行静默且这次没有 `lark_sent` 记录时返回 `quiet: true`（气泡撤回）。
 - 测试替身：`test/fake-acp-agent.ts` 的 `FAKE_QUIET` 让固定回答前先调 `stay_quiet`（直接或经 `omem_call`），被拒时把拒绝说出来。
 - 验收见 acceptance.md 同名一节。
+
+## 运行页“编码”与统一的交办视图（2026-11-06）
+
+- 起因：编码记录要去运行列表里一轮一轮翻；需求页和运行页的编码详情是两套，编码中看不到概览这些标签；看不出分支从哪切出、确认后推到哪（方案 docs/v2/coding-work.md，本人选定放在运行页、仓库做成业务空间的下级空间）。
+- `src/agents/code-works.ts`：一次交办或分支评审一项，按投影列算阶段、等谁（owner / active / assistant / idle / ended，两天没动算 idle）、现在、下一步和可做的动作、修改项进度、事项与需求、各仓库分支；`GET /api/code-works`、`GET /api/code-works/:id`；需求详情接口多返回 `works`，需求树的“等你 N”按同一套算。
+- 网页：运行页顶部“编码 / 全部运行”；`CodeWork.vue` 取代运行页里的编码详情和 `WorkPane.vue`（提问、修改点、讲解一起搬过来），需求页用同一个组件；`CodeWorkRow.vue` 两处共用。“全部运行”带 `exclude=code,review`，类型筛选去掉这两项；按 id 精确搜仍能找到。
+- 测试：`test/code-works.test.ts`。

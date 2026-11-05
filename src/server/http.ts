@@ -1089,7 +1089,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const allowed = accessibleSpaces(app, who(req));
     // The delegations and branch reviews done for the items this node belongs to (items/work.ts).
     const work = (await import("../items/work.ts")).reqWork(app, d.node.id, who(req));
-    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)), work };
+    // The same entries as the run page's “编码” view (src/agents/code-works.ts), with the item each was done for.
+    const works = (await import("../agents/code-works.ts")).listCodeWorks(app, { roots: work.map((w) => w.rootId), ended: true });
+    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)), work, works };
   });
   server.post("/api/requirements", async (req) => {
     const { reqOpSchema, saveReqs } = await import("../items/requirements.ts");
@@ -1134,13 +1136,26 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // --------------------------------------------------------------------- runs
   server.get("/api/runs", async (req) => {
-    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
+    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     // Someone other than the owner: their own runs and the ones they may read (src/auth/permissions.ts).
     const spaces = runReadableSpaces(app, who(req));
     const visibleTo = spaces === null ? undefined : { userId: who(req), spaces };
-    const opts = { id: o.id, kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, visibleTo };
+    const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, visibleTo };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
+  });
+  // Coding work, one entry per delegation or branch review (src/agents/code-works.ts): the run page's “编码” view.
+  server.get("/api/code-works", async (req) => {
+    const o = q(z.object({ space: z.string().optional(), q: z.string().optional(), ended: z.coerce.boolean().optional(), limit: z.coerce.number().optional() }), req.query);
+    const spaces = runReadableSpaces(app, who(req));
+    const { listCodeWorks } = await import("../agents/code-works.ts");
+    return listCodeWorks(app, { spaces: o.space ? [o.space] : undefined, q: o.q, ended: o.ended, limit: o.limit, visibleTo: spaces === null ? undefined : { userId: who(req), spaces } });
+  });
+  server.get("/api/code-works/:id", async (req) => {
+    const spaces = runReadableSpaces(app, who(req));
+    const work = (await import("../agents/code-works.ts")).codeWork(app, (req.params as { id: string }).id, spaces === null ? undefined : { userId: who(req), spaces });
+    if (!work) throw new HttpError(404, "没有这次交办");
+    return work;
   });
   // Who may read it is checked by the route (src/auth/routes.ts); its sub-runs only as far as they are readable too.
   server.get("/api/runs/:id", async (req) => {

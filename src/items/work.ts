@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { json } from "../core/util.ts";
 import { isBranchWork } from "../agents/code-branch.ts";
+import { listCodeWorks } from "../agents/code-works.ts";
 import type { WorktreeRef } from "../agents/worktree-index.ts";
 import { findReq, reqPath } from "./requirements.ts";
 
@@ -127,15 +128,19 @@ export function reqWork(app: App, nodeId: string, userId: string): Work[] {
 export function reqWorkMarks(app: App, spaceId: string, userId: string): Map<string, { total: number; waiting: number }> {
   const marks = new Map<string, { total: number; waiting: number }>();
   const cache = new Map<string, Work[]>();
+  const groups = new Map<string, string>();
   for (const m of reqMaterials(app, userId)) {
     if (findReq(app, m.ref)?.spaceId !== spaceId) continue;
     const works = cache.get(m.item_id) ?? itemWork(app, { id: m.item_id, title: m.title });
     cache.set(m.item_id, works);
-    const live = works.filter((w) => w.stage !== "applied" && w.stage !== "discarded");
+    // Who each waits on, as the run page's “编码” says it (a work left for days is not counted as waiting).
+    const unknown = works.map((w) => w.rootId).filter((id) => !groups.has(id));
+    for (const w of unknown.length ? listCodeWorks(app, { roots: unknown, ended: true }) : []) groups.set(w.rootId, w.stage.group);
+    const live = works.filter((w) => (groups.get(w.rootId) ?? "ended") !== "ended");
     if (!live.length) continue;
     const mark = marks.get(m.ref) ?? { total: 0, waiting: 0 };
     mark.total += live.length;
-    mark.waiting += live.filter((w) => w.stage === "owner").length;
+    mark.waiting += live.filter((w) => groups.get(w.rootId) === "owner").length;
     marks.set(m.ref, mark);
   }
   return marks;

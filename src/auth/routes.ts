@@ -155,6 +155,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/runs/:id/retry": RUN,
   "GET /api/runs/:id/folders": CODE,
   "GET /api/code-runs/at": CODE,
+  "GET /api/code-works": CODE,
+  "GET /api/code-works/:id": CODE,
   "POST /api/delegate": CODE,
   "POST /api/review-branch": CODE,
   "GET /api/review-settings": CODE,

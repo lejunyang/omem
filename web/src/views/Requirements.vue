@@ -8,7 +8,9 @@ import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
-import WorkPane, { type ReqFocus, type WorkTab } from "../components/WorkPane.vue";
+import CodeWork, { type ReqFocus, type WorkTab } from "../components/CodeWork.vue";
+import CodeWorkRow from "../components/CodeWorkRow.vue";
+import type { CodeWork as Work } from "../lib/works";
 import { POINT_STATUS, type ChangePoint } from "../lib/reviews";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { fmtTime, relTime, state, toast } from "../store";
@@ -25,20 +27,12 @@ type State = { runId: string; round: number; status: string; locations: { file: 
 type Node = { id: string; spaceId: string; parentId: string | null; kind: Kind; title: string; body: string; acceptance: string; refs: string[]; tests: { file?: string; name?: string }[]; confirmed: boolean; status: "active" | "deleted" | "removed"; version: number; createdBy: string; updatedAt: string; depth: number; state: State | null; links: number; work: { total: number; waiting: number } | null };
 type Version = { id: string; version: number; change: string; title: string; reason: string; sourceRefs: string[]; by: string; runId: string | null; at: string };
 type Link = { id: string; direction: "in" | "out"; note: string; other: { id: string; spaceId: string; kind: Kind; title: string; status: string } | null };
-// A delegation or branch review done for an item this node belongs to (src/items/work.ts).
-type WorkStage = "coding" | "reviewing" | "peer" | "assistant" | "owner" | "done" | "applied" | "discarded";
-type Work = { itemId: string; itemTitle: string; rootId: string; latestId: string; title: string; rounds: string[]; status: string; verdict: string | null; stage: WorkStage; branchReview: boolean; branchWork: boolean; branch: string | null; open: number; createdAt: string; updatedAt: string };
-type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; work: Work[] };
+// The delegations and branch reviews done for the items this node belongs to, as the run page's “编码” lists them (src/agents/code-works.ts).
+type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; works: Work[] };
 
 const KIND: Record<Kind, string> = { system: "系统", module: "模块", page: "页面", feature: "功能", test: "测试点" };
 const CHANGE: Record<string, string> = { create: "新建", correct: "更正", change: "业务变更", delete: "删除（写错了）", remove: "移除（业务不要了）", confirm: "本人确认", restore: "恢复" };
 const STATE: Record<string, { text: string; cls: string }> = { done: { text: "已实现", cls: "ok" }, partial: { text: "部分实现", cls: "warn" }, missing: { text: "没实现", cls: "danger" }, extra: { text: "需求外", cls: "" } };
-const STAGE: Record<WorkStage, { text: string; cls: string }> = { coding: { text: "编码中", cls: "" }, reviewing: { text: "评审中", cls: "" }, peer: { text: "等外部 Agent", cls: "" }, assistant: { text: "助手在处理", cls: "" }, owner: { text: "等你处理", cls: "accent" }, done: { text: "已评审", cls: "ok" }, applied: { text: "已应用", cls: "ok" }, discarded: { text: "已丢弃", cls: "" } };
-// What the owner is waiting on, from the latest round's verdict.
-const OWNER_WHAT: Record<string, string> = { "awaiting-plan": "确认评审计划", "changes-requested": "决定要改的问题", approved: "评审通过，可以应用", "sync-conflict": "同步有冲突", "no-changes": "没有改动" };
-const ownerWhat = (w: Work) => (w.status === "failed" ? "运行失败" : w.verdict === "approved" && w.branchWork ? "评审通过，可以确认推送" : (w.verdict && OWNER_WHAT[w.verdict]) || "看结果");
-/** A work branch is confirmed by pushing it, not applied. */
-const stageOf = (w: Work) => (w.stage === "applied" && w.branchWork ? { text: "已推送", cls: "ok" } : STAGE[w.stage]);
 const CHILD_KINDS: Record<Kind | "root", Kind[]> = { root: ["system", "module", "page", "feature"], system: ["module", "page", "feature"], module: ["module", "page", "feature"], page: ["feature"], feature: ["feature", "test"], test: ["test"] };
 
 const route = useRoute();
@@ -82,13 +76,16 @@ const touched = computed(() => {
   return out;
 });
 const extraPoints = computed(() => workPoints.value.filter((p) => !p.req && !p.parent));
-const lastWork = ref<{ itemTitle: string; rounds: string[] } | null>(null);
-const live = computed(() => (detail.value?.work ?? []).filter((w) => w.stage !== "applied" && w.stage !== "discarded"));
-const past = computed(() => (detail.value?.work ?? []).filter((w) => w.stage === "applied" || w.stage === "discarded"));
+const live = computed(() => (detail.value?.works ?? []).filter((w) => w.stage.group !== "ended"));
+const past = computed(() => (detail.value?.works ?? []).filter((w) => w.stage.group === "ended"));
 const showPast = ref(false);
-const openedWork = computed(() => detail.value?.work.find((w) => w.rounds.includes(workId.value)) ?? (lastWork.value?.rounds.includes(workId.value) ? lastWork.value : null));
-// Only a work from the detail is copied: copying lastWork itself would change openedWork again, forever.
-watch(openedWork, (w) => { if (w && w !== lastWork.value) lastWork.value = { itemTitle: w.itemTitle, rounds: w.rounds }; });
+/** The item of the open delegation, for the path above it; kept while another of its rounds opens. */
+const openedItem = ref<string | null>(null);
+watch([workId, () => detail.value?.works], () => {
+  const w = detail.value?.works.find((x) => x.rootId === workId.value || x.latestId === workId.value);
+  if (w) openedItem.value = w.item?.title ?? null;
+  else if (!workId.value) openedItem.value = null;
+}, { immediate: true });
 /**
  * The chosen node with everything under it, for the open delegation's “需求点” tab: the tree's node
  * at once, so the tab does not show the last node's part while the detail loads.
@@ -164,7 +161,7 @@ watch(selectedId, () => {
 let workTimer: ReturnType<typeof setTimeout> | undefined;
 const unsubscribe = onServerEvent((e) => {
   // A round or review of this node's work changed (or a new round was queued): stages and marks follow.
-  if (e.type === "run" && detail.value?.work.length && (detail.value.work.some((w) => w.rounds.includes(e.runId)) || e.status === "queued" || e.status === "done")) {
+  if (e.type === "run" && detail.value?.works.length && (detail.value.works.some((w) => w.latestId === e.runId || w.rootId === e.runId) || e.status === "queued" || e.status === "done")) {
     clearTimeout(workTimer);
     workTimer = setTimeout(() => void Promise.all([loadDetail(), loadTree()]), 800);
   }
@@ -428,9 +425,9 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
             <span v-if="i" aria-hidden="true">/</span>
             <a href="#" @click.prevent="router.push(`/reqs/${p.id}`)">{{ p.title }}</a>
           </template>
-          <span aria-hidden="true">/</span><span>{{ openedWork?.itemTitle ?? "编码" }}</span>
+          <span aria-hidden="true">/</span><span>{{ openedItem ?? "编码" }}</span>
         </nav>
-        <WorkPane v-model:tab="workTab" :run-id="workId" :rounds="openedWork?.rounds ?? [workId]" :focus="focus" @close="closeWork" @open="openWork" @points="(p, from) => { workPoints = p; workPointsFrom = from; }" />
+        <CodeWork v-model:tab="workTab" :run-id="workId" :focus="focus" from="reqs" @close="closeWork" @open="openWork" @points="(p, from) => { workPoints = p; workPointsFrom = from; }" />
       </div>
 
       <div v-else-if="detail" class="page">
@@ -469,23 +466,13 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           </button>
         </section>
 
-        <section v-if="detail.work.length" class="block">
-          <div class="block-head"><strong>编码与评审</strong><span class="muted small ellipsis">{{ [...new Set(detail.work.map((w) => w.itemTitle))].join("、") }}</span></div>
-          <button v-for="w in live" :key="w.rootId" type="button" class="work-row" @click="openWork(w.latestId)">
-            <span class="badge" :class="stageOf(w).cls">{{ stageOf(w).text }}</span>
-            <span class="grow ellipsis" :title="w.title">{{ w.title }}</span>
-            <span v-if="w.stage === 'owner'" class="small accent-ink">{{ ownerWhat(w) }}</span>
-            <span v-if="w.open" class="small muted">{{ w.open }} 个问题待定</span>
-            <span class="small muted">{{ w.branchReview ? "分支评审" : `第 ${w.rounds.length} 轮` }}{{ w.branch ? ` · ${w.branch}` : "" }} · {{ relTime(w.updatedAt) }}</span>
-          </button>
+        <section v-if="detail.works.length" class="block">
+          <div class="block-head"><strong>编码</strong><span class="muted small">挂了这个需求点（或它的上级）的事项做过的交办和分支评审；运行页的“编码”里也能找到</span></div>
+          <CodeWorkRow v-for="w in live" :key="w.rootId" :work="w" @pick="openWork(w.latestId)" />
           <p v-if="!live.length" class="muted small">没有进行中的编码。</p>
-          <button v-if="past.length" type="button" class="lnk small" :aria-expanded="showPast" @click="showPast = !showPast">{{ showPast ? "收起" : `已应用、推送或丢弃的 ${past.length} 次` }}</button>
+          <button v-if="past.length" type="button" class="lnk small" :aria-expanded="showPast" @click="showPast = !showPast">{{ showPast ? "收起" : `已推送、应用或丢弃的 ${past.length} 次` }}</button>
           <template v-if="showPast">
-            <button v-for="w in past" :key="w.rootId" type="button" class="work-row dim" @click="openWork(w.latestId)">
-              <span class="badge" :class="stageOf(w).cls">{{ stageOf(w).text }}</span>
-              <span class="grow ellipsis" :title="w.title">{{ w.title }}</span>
-              <span class="small muted">{{ w.rounds.length }} 轮{{ w.branch ? ` · ${w.branch}` : "" }} · {{ relTime(w.updatedAt) }}</span>
-            </button>
+            <CodeWorkRow v-for="w in past" :key="w.rootId" :work="w" @pick="openWork(w.latestId)" />
           </template>
         </section>
 
@@ -588,35 +575,6 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
 }
 .work-legend {
   padding: 2px 8px 6px;
-}
-.work-row {
-  display: flex;
-  align-items: center;
-  gap: 4px 8px;
-  width: 100%;
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  flex-wrap: wrap;
-}
-.work-row:hover {
-  background: var(--hover);
-}
-.work-row.dim {
-  opacity: 0.75;
-}
-.work-row .grow {
-  flex: 1 1 160px;
-  min-width: 0;
-}
-.accent-ink {
-  color: var(--accent);
 }
 .lnk {
   border: 0;
