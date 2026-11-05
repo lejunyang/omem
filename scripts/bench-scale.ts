@@ -6,11 +6,45 @@
  *   node scripts/bench-scale.ts <corpus.jsonl> [--copies 10] [--home DIR] [--queries queries.jsonl] [--dims 512]
  *   node scripts/bench-scale.ts --requirements [--works 20] [--rounds 5] [--payload-kb 128]
  *   node scripts/bench-scale.ts --runs [--count 20000]
+ *   node scripts/bench-scale.ts --source-purge
  *
  * Vectors are random (embedding a large corpus on CPU takes hours); they only
  * measure the cost of the vector search itself, not its quality.
  */
 process.removeAllListeners("warning");
+if (process.argv.includes("--source-purge")) {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { App } = await import("../src/core/app.ts");
+  const { ensurePersonalSpace } = await import("../src/core/spaces.ts");
+  const { purgeSource } = await import("../src/sources/store.ts");
+  const results = [];
+  for (const indexed of [false, true]) {
+    const home = mkdtempSync(join(tmpdir(), "omem-bench-purge-"));
+    const app = App.open(home);
+    try {
+      ensurePersonalSpace(app);
+      if (!indexed) app.db.exec("drop index symbols_source; drop index source_locations_source;");
+      const source = app.db.prepare("insert into sources(id,space_id,kind,uri,title,hash,text,captured_at,updated_at) values(?,'personal','code',?,'示例文件','hash','','2026-01-01','2026-01-01')");
+      const symbol = app.db.prepare("insert into symbols(source_id,space_id,name,qname,kind,line_start,line_end) values(?,'personal',?,?,'function',1,2)");
+      const location = app.db.prepare("insert into source_locations(origin_space,uri,source_id) values('personal',?,?)");
+      app.db.exec("begin");
+      for (let i = 0; i < 20_000; i++) {
+        const id = `source-${i}`;
+        source.run(id, `${id}.ts`);
+        location.run(`${id}.ts`, id);
+        for (let j = 0; j < 5; j++) symbol.run(id, `example${j}`, `${id}.example${j}`);
+      }
+      app.db.exec("commit");
+      const start = performance.now();
+      for (let i = 0; i < 300; i++) purgeSource(app, `source-${i}`);
+      results.push({ indexed, sources: 20_000, symbols: 100_000, purged: 300, ms: +(performance.now() - start).toFixed(1) });
+    } finally { app.db.close(); rmSync(home, { recursive: true, force: true }); }
+  }
+  console.log(JSON.stringify(results));
+  process.exit(0);
+}
 if (process.argv.includes("--vector-loading")) {
   const { DatabaseSync } = await import("node:sqlite");
   const { mkdtempSync, rmSync } = await import("node:fs");

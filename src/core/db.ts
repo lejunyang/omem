@@ -1385,6 +1385,10 @@ export const migrations: readonly string[] = [
    drop table doubao_session_cleanup;`,
   // Vector counts and keyset pages must stay within one space, including spaces with no vectors.
   `create index chunks_vector_space on chunks(space_id, id) where embedding is not null;`,
+  // Temporary workspaces purge originals one at a time during startup. Both the explicit
+  // symbol deletion and the source_locations foreign-key cascade must find only that source.
+  `create index symbols_source on symbols(source_id);
+   create index source_locations_source on source_locations(source_id);`,
 ];
 
 export type Db = DatabaseSync;

@@ -7,6 +7,10 @@ updated: 2026-11-05
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 启动清理临时索引（11-05）
+
+- 失效工作区逐份清理临时原件时，符号删除和采集位置的级联删除缺索引，积压较多时启动迟迟不能监听。数据库迁移补齐 `symbols(source_id)` 与 `source_locations(source_id)`；旧库迁移、查询计划和其他原件保留有回归。合成库 2 万原件、10 万符号清理 300 份：9044.1 → 372.9 ms。入口：`src/core/db.ts`；验证：`test/source-purge-index.test.ts`、`scripts/bench-scale.ts --source-purge`。
+
 ## 网页接入 Git 仓库（11-05）
 
 - 设置 → 空间新建“代码仓库”时，同一输入框自动识别本地目录与 HTTP(S)/SSH Git 地址。`POST /api/spaces` 复用 `cloneRepository`，成功后建空间并排同步；权限检查在联网前执行，非法协议与含凭据链接拒绝，克隆失败不创建空间。网页等待期间防止重复提交，失败保留表单。入口：`src/server/http.ts`、`web/src/views/Settings.vue`；回归：`test/http-space-repository.test.ts`。
