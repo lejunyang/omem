@@ -7,10 +7,12 @@ import { describe as describeCond, evaluate, eventReader } from "../src/rules/co
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { followedTopic, setDiscussionForTests, type Said } from "../src/rules/context.ts";
-import { dispatchRuleEvent, fireAfterWait, testRule } from "../src/rules/engine.ts";
+import { dispatchRuleEvent, fireAfterWait, fireScheduledRule, testRule } from "../src/rules/engine.ts";
+import { createThread } from "../src/agents/threads.ts";
 import { deleteRule, getRule, listFirings, saveRule } from "../src/rules/store.ts";
 import type { Condition, RuleEvent } from "../src/rules/types.ts";
 import { testApp } from "./helpers.ts";
+import { getRun } from "../src/agents/runs.ts";
 
 const msg = (over: Partial<RuleEvent["message"]> = {}, chat = { id: "oc_alerts", name: "项目 A 报警群", kind: "group" as const }, sender: RuleEvent["sender"] = { name: "小王", email: "wang@example.com", kind: "bot" }): RuleEvent => ({
   key: `lark:${over.id ?? "om_1"}`,
@@ -20,6 +22,31 @@ const msg = (over: Partial<RuleEvent["message"]> = {}, chat = { id: "oc_alerts",
   sender,
   message: { id: "om_1", text: "CPU 使用率超过 90%", type: "interactive", mentionsOwner: false, mentionsBot: false, topicId: null, cardTitle: "P1 报警", ...over },
   via: "test",
+});
+
+it.each(["owner", "chat"] as const)("keeps hidden thinking independent from success delivery and reports failures to %s once", async failureTo => {
+  const app = testApp();
+  const sent: string[] = [];
+  setLarkClient({ im: { message: { create: async ({ data }: any) => { sent.push(data.receive_id); return { code: 0, data: { message_id: "om_failure" } }; } } } });
+  try {
+    const thread = createThread(app, { channel: "lark", key: "oc_reports", spaceId: "personal", userId: "owner" });
+    const rule = saveRule(app, { name: "每周提醒", description: "成功发群提醒，失败按所选位置报告", enabled: true,
+      trigger: { event: "schedule", cron: "0 15 * * 4" }, judge: "code", conversationId: thread.id,
+      actions: [{ type: "agent", spec: "assistant", reply: "auto", hideThinking: true, failureTo, task: "复制后发提醒" }],
+    });
+    await fireScheduledRule(app, rule.id);
+    const runId = listFirings(app, rule.id)[0].results[0].runId!;
+    const input = getRun(app, runId).input;
+    expect(input).toMatchObject({ threadId: thread.id, hideThinking: true, rule: { failureTo, failureChatId: "oc_reports" }, lark: { chats: ["oc_reports"] } });
+    expect(input.task).toContain("report_rule_failure");
+    const ctx = { app, runId, spaceId: "personal", spaces: null, tools: null, actor: "agent" as const, userId: "owner", larkChats: ["oc_reports"] };
+    const results = await Promise.all([callTool(ctx, "report_rule_failure", { summary: "复制失败，尚未发提醒" }), callTool(ctx, "report_rule_failure", { summary: "复制失败" })]);
+    expect(results.every(r => !r.isError)).toBe(true);
+    expect(getRun(app, runId).output.ruleFailure).toMatchObject({ to: failureTo });
+    expect(sent).toEqual(failureTo === "chat" ? ["oc_reports"] : []);
+    expect(listNotifications(app).filter(n => n.title.includes("每周提醒"))).toHaveLength(failureTo === "owner" ? 1 : 0);
+    expect((await callTool({ ...ctx, runId: null }, "report_rule_failure", { summary: "不属于运行" })).isError).toBe(true);
+  } finally { setLarkClient(null); app.db.close(); }
 });
 
 describe("rule conditions", () => {

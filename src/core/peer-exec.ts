@@ -13,6 +13,8 @@ import { desktopControl } from "./tools.ts";
 import { HttpError } from "./util.ts";
 import { memoryHistory, memoryNow } from "./memory-watch.ts";
 import { vectorIndex } from "../search/vectors.ts";
+import { searchLatency } from "../search/trace.ts";
+import { readProcessStats } from "../search/read-process.ts";
 
 /**
  * What another device may ask this instance to do (`POST /api/peer/exec`, owner only):
@@ -33,17 +35,20 @@ export const SLOW_TOOL_MS = 30_000;
  */
 export function toolLatency(app: App, hours = 24) {
   const since = new Date(Date.now() - hours * 3600_000).toISOString();
-  const rows = all<{ title: string | null; ms: number }>(
+  const name = (t: string | null) => (t ?? "?").replace(/^omem_call\s*→\s*/, "").replace(/^omem\s*·\s*/, "").replace(/^Tool:\s*omem\//, "").replace(/^mcp[._]omem[._]/, "").replace(/^mcp__\w+__/, "").split(/[\s(:：]/)[0].slice(0, 60) || "?";
+  const events = all<{ run_id: string; type: string; title: string | null; ms: number }>(
     app.db,
-    `select json_extract(e.data, '$.title') title, json_extract(e.data, '$.ms') ms from run_events e
-      where e.run_id in (select id from runs where created_at > ?) and e.type = 'tool' and instr(e.data, '"ms":') > 0`,
+    `select e.run_id, e.type, coalesce(json_extract(e.data, '$.name'), json_extract(e.data, '$.title')) title, json_extract(e.data, '$.ms') ms from run_events e
+      where e.run_id in (select id from runs where created_at > ?) and e.type in ('tool', 'tool-call') and instr(e.data, '"ms":') > 0`,
     since,
   ).filter((r) => typeof r.ms === "number");
+  // The host's completed call is authoritative; keep native file/shell tools from the same run.
+  const host = new Set(events.filter((r) => r.type === "tool-call").map((r) => `${r.run_id}:${name(r.title)}`));
+  const rows = events.filter((r) => r.type === "tool-call" || !host.has(`${r.run_id}:${name(r.title)}`));
   const pct = (xs: number[], p: number) => (xs.length ? xs[Math.min(xs.length - 1, Math.floor(p * xs.length))] : 0);
   const all_ = rows.map((r) => r.ms).sort((a, b) => a - b);
   const byTool = new Map<string, number[]>();
   // omem tools show as "omem · <name>" or "mcp__omem__<name>"; others by their title's first words.
-  const name = (t: string | null) => (t ?? "?").replace(/^mcp__\w+__/, "").split(/[\s(:：]/)[0].slice(0, 60) || "?";
   for (const r of rows) byTool.set(name(r.title), [...(byTool.get(name(r.title)) ?? []), r.ms]);
   const slowest = [...byTool]
     .filter(([, xs]) => xs.length >= 5)
@@ -76,7 +81,8 @@ export async function diag(app: App) {
     version: codeVersion(root),
     runtime: { node: process.version, platform: `${process.platform}-${process.arch}`, pid: process.pid, uptimeSec: Math.round(process.uptime()), rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024) },
     // RSS minus V8 heap and buffers is native memory (the local embedding model's arena, SQLite).
-    memory: { now: memoryNow(), vectorIndex: vectorIndex().stats(), history: memoryHistory() },
+    memory: { now: memoryNow(), vectorIndex: vectorIndex().stats(), searchProcess: readProcessStats(app), history: memoryHistory() },
+    searchLatency: searchLatency(app),
     now: new Date().toISOString(),
     home: app.home,
     baseUrl: app.baseUrl,

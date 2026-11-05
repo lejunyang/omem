@@ -21,7 +21,7 @@ export const FILL_WIKI_NODES = `
     from sources where kind = 'doc' and deleted_at is null and coalesce(json_extract(meta, '$.wikiParentNodeToken'), '') != '';
 `;
 
-const migrations: string[] = [
+export const migrations: readonly string[] = [
   `
   create table spaces (
     id text primary key,
@@ -1356,6 +1356,39 @@ const migrations: string[] = [
   // The same text embedded once (search/embeddings.ts): copies of one chat or document in several
   // spaces find the vector already made by its length and start, then compare the whole text.
   `create index chunks_text_head on chunks(length(text), substr(text, 1, 80)) where embedding is not null;`,
+  // Only sessions explicitly retired or created for a one-off turn; never infer this from history.
+  `create table doubao_session_cleanup (
+     session_id text primary key,
+     transport text not null,
+     app_id text,
+     run_id text,
+     owner_pid integer not null,
+     ready integer not null default 0,
+     retry_at text not null
+   );`,
+  `create table session_cleanup (
+     backend_key text not null,
+     session_id text not null,
+     transport text not null,
+     profile_id text,
+     fingerprint text,
+     app_id text,
+     cwd text not null default '',
+     run_id text,
+     owner_pid integer not null,
+     ready integer not null default 0,
+     retry_at text not null,
+     primary key (backend_key, session_id)
+   );
+   insert into session_cleanup(backend_key,session_id,transport,app_id,run_id,owner_pid,ready,retry_at)
+     select 'doubao:' || coalesce(app_id,''),session_id,transport,app_id,run_id,owner_pid,ready,retry_at from doubao_session_cleanup;
+   drop table doubao_session_cleanup;`,
+  // Vector counts and keyset pages must stay within one space, including spaces with no vectors.
+  `create index chunks_vector_space on chunks(space_id, id) where embedding is not null;`,
+  // Temporary workspaces purge originals one at a time during startup. Both the explicit
+  // symbol deletion and the source_locations foreign-key cascade must find only that source.
+  `create index symbols_source on symbols(source_id);
+   create index source_locations_source on source_locations(source_id);`,
 ];
 
 export type Db = DatabaseSync;

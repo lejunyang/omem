@@ -240,6 +240,9 @@ describe("web VS Code under /ide", () => {
         mkdirSync(join(path, ".."), { recursive: true });
         writeFileSync(path, file === "product.json" ? JSON.stringify({ version, commit }) : "fake");
       }
+      // tar preserves directory times at second precision; distinct builds must have distinct ages.
+      const builtAt = new Date(1_700_000_000_000 + Object.keys(builds).length * 1000);
+      utimesSync(join(work, "vscode-server-web"), builtAt, builtAt);
       expect(spawnSync("tar", ["-czf", "build.tar.gz", "vscode-server-web"], { cwd: work }).status).toBe(0);
       builds[commit] = readFileSync(join(work, "build.tar.gz"));
       rmSync(work, { recursive: true, force: true });

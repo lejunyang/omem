@@ -1,0 +1,134 @@
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import type { App } from "../core/app.ts";
+import { allProfiles, type AgentProfile } from "../core/config.ts";
+import { all, one, run } from "../core/db.ts";
+import { now } from "../core/util.ts";
+import { cleanupAcpSession } from "./acp.ts";
+import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoSessionStatus, doubaoTokenExists } from "./doubao.ts";
+import type { AgentEvent, AgentRequest, SessionCleanup } from "./types.ts";
+
+type Pending = {
+  backend_key: string; session_id: string; transport: string; profile_id: string | null;
+  fingerprint: string | null; app_id: string | null; cwd: string; run_id: string | null;
+  owner_pid: number; ready: number; retry_at: string;
+};
+type Key = Pick<Pending, "backend_key" | "session_id">;
+type Emit = (e: AgentEvent) => void;
+const busy = new Set<string>();
+
+// Resolve credentials from current configuration; never copy environment values into the ledger.
+function fingerprint(p: AgentProfile) {
+  return createHash("sha256").update(JSON.stringify([p.transport, p.command, p.args, p.archiveArgs ?? [], Object.entries(p.env).sort(([a], [b]) => a.localeCompare(b))])).digest("hex");
+}
+
+/** One lifecycle for temporary turns, pooled ACP sessions and explicitly replaced sessions. */
+export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<AgentRequest, "cwd" | "runId" | "persistSession" | "resumeSessionId">, emit: Emit): Promise<SessionCleanup> {
+  const acp = profile.transport === "acp";
+  const appId = acp ? null : (profile.env.DOUBAO_APP_ID ?? doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config))?.appId ?? null);
+  const hash = acp ? fingerprint(profile) : null;
+  const backend = acp ? `acp:${hash}` : `doubao:${appId ?? ""}`;
+  const retained = !!req.persistSession || !!req.resumeSessionId;
+  return {
+    created(id) {
+      run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,?,?)
+        on conflict(backend_key,session_id) do update set run_id = coalesce(excluded.run_id, session_cleanup.run_id), owner_pid = excluded.owner_pid, ready = excluded.ready`, backend, id, profile.transport, profile.id, hash, appId, req.cwd, req.runId ?? null, process.pid, retained ? -1 : 0, now());
+    },
+    async discard(id, operation) {
+      run(app.db, "update session_cleanup set ready = 1 where backend_key = ? and session_id = ?", backend, id);
+      const p = one<Pending>(app.db, "select * from session_cleanup where backend_key = ? and session_id = ?", backend, id);
+      if (p) await clean(app, p, emit, false, operation ?? (acp ? () => cleanupAcpSession(profile, id, req.cwd) : undefined));
+    },
+  };
+}
+
+/** An explicitly replaced retained session: its original backend is recorded even if routing changed. */
+export async function retireRecordedSession(app: App, sessionId: string, emit: Emit) {
+  const records = all<Pending>(app.db, "select * from session_cleanup where session_id = ?", sessionId);
+  // Older runs have no recorded backend; ambiguous ids cannot safely choose one.
+  if (!records.length) return false;
+  if (records.length !== 1) {
+    emit({ type: "status", text: "后端会话清理未执行：这个会话 ID 对应多个后端，无法唯一识别" });
+    return true;
+  }
+  const p = records[0];
+  update(app, p, "ready = 1");
+  await clean(app, p, emit, false);
+  return true;
+}
+
+function alive(pid: number) {
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return (e as NodeJS.ErrnoException).code !== "ESRCH"; }
+}
+function update(app: App, p: Key, sql: string, ...args: (string | number)[]) {
+  run(app.db, `update session_cleanup set ${sql} where backend_key = ? and session_id = ?`, ...args, p.backend_key, p.session_id);
+}
+
+async function perform(app: App, p: Pending, recovering: boolean): Promise<boolean> {
+  if (p.transport === "acp") {
+    const profile = allProfiles(app.config).find(a => a.id === p.profile_id && fingerprint(a) === p.fingerprint);
+    if (!profile) throw new Error("创建时使用的后端配置已变更或移除，等待原配置恢复后重试");
+    await cleanupAcpSession(profile, p.session_id, existsSync(p.cwd) ? p.cwd : app.home);
+    return true;
+  }
+  if (!doubaoTokenExists(app.home)) throw new Error("豆包 OpenAPI 没有在这台机器上授权，会话留在豆包历史里（omem doubao login 后重试）");
+  const apps = await doubaoApps(app.home, app.config);
+  const da = p.app_id ? apps.find(a => a.appId === p.app_id) : doubaoAppFor(app.home, { env: {} }, apps);
+  if (!da) throw new Error("找不到创建时选用的豆包应用，等待应用恢复后重试");
+  if (!p.app_id) update(app, p, "app_id = ?", da.appId);
+  if (recovering) {
+    const status = await doubaoSessionStatus(app.home, da, p.session_id);
+    if (status !== null && status !== "idle") return false;
+    if (status === null) return true;
+  }
+  await deleteDoubaoSession(app.home, da, p.session_id);
+  return true;
+}
+
+async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, operation?: () => Promise<void>) {
+  const key = `${app.home}:${p.backend_key}:${p.session_id}`;
+  if (busy.has(key)) return;
+  busy.add(key);
+  try {
+    // Delay both failures and still-running cloud tasks; the next sweep tries again.
+    update(app, p, "retry_at = ?", new Date(Date.now() + 60_000).toISOString());
+    if (operation) await operation();
+    else if (!await perform(app, p, recovering)) return;
+    run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);
+    emit({ type: "status", text: `已清理后端会话 ${p.session_id}（${p.profile_id ?? p.transport}${p.app_id ? `，应用 ${p.app_id}` : ""}${recovering ? "，恢复待清理会话" : ""}）` });
+  } catch (e) {
+    emit({ type: "status", text: `后端会话清理失败，稍后重试：${(e as Error).message.slice(0, 160)}` });
+  } finally { busy.delete(key); }
+}
+
+/** Recorded disposable sessions only; a live omem process retains ownership, including pool idle time. */
+export async function recoverSessionCleanup(app: App, emit: (runId: string | null, e: AgentEvent) => void) {
+  const pending = all<Pending>(app.db, "select * from session_cleanup where ready >= 0 and retry_at <= ? order by retry_at", now());
+  let attempts = 0;
+  for (const p of pending) {
+    if (!p.ready && alive(p.owner_pid)) continue;
+    if (attempts++ >= 20) break;
+    // A local cleanup record may outlive its run after a library is overwritten from another device.
+    const runId = p.run_id && one(app.db, "select id from runs where id = ?", p.run_id) ? p.run_id : null;
+    await clean(app, p, e => emit(runId, e), true);
+  }
+}
+
+const workers = new WeakMap<App, { timer: NodeJS.Timeout; pending?: Promise<void> }>();
+export function startSessionCleanup(app: App, emit: (runId: string | null, e: AgentEvent) => void) {
+  if (workers.has(app)) return;
+  const tick = () => {
+    if (worker.pending) return;
+    worker.pending = recoverSessionCleanup(app, emit)
+      .catch(e => console.warn("[omem] 恢复后端会话清理失败：", (e as Error).message))
+      .finally(() => { worker.pending = undefined; });
+  };
+  const worker = { timer: setInterval(tick, 60_000).unref(), pending: undefined as Promise<void> | undefined };
+  workers.set(app, worker); tick();
+}
+export async function stopSessionCleanup(app: App) {
+  const worker = workers.get(app);
+  if (!worker) return;
+  clearInterval(worker.timer); workers.delete(app); await worker.pending;
+}

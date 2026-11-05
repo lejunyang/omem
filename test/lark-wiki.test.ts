@@ -21,7 +21,7 @@ const ORIGIN = "https://tenant.larkoffice.com";
 const PERSONAL = "7000000000000000001";
 const TEAM = "7000000000000000002";
 
-type Node = { title: string; children?: string[]; space?: string; type?: string; parent?: string };
+type Node = { title: string; children?: string[]; space?: string; type?: string; parent?: string; nodeType?: string };
 
 /**
  * A fake lark-cli with a knowledge base: wiki nodes by token (their children listed by node-list),
@@ -35,7 +35,7 @@ function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeE
     const flag = (name: string) => args[args.indexOf(name) + 1];
     const node = (token: string) => {
       const n = nodes[token];
-      return { space_id: n.space ?? TEAM, node_token: token, parent_node_token: n.parent, obj_token: `obj_${token}`, obj_type: n.type ?? "docx", node_type: "origin", title: n.title, has_child: !!n.children?.length };
+      return { space_id: n.space ?? TEAM, node_token: token, parent_node_token: n.parent, obj_token: `obj_${token}`, obj_type: n.type ?? "docx", node_type: n.nodeType ?? "origin", title: n.title, has_child: !!n.children?.length };
     };
     if (args[0] === "docs" && args[1] === "+fetch") {
       const token = flag("--doc").split("/").pop()!;
@@ -66,6 +66,7 @@ function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeE
       return { ok: true, data: { document: { revision_id: 2 } } };
     }
     if (args[0] === "wiki" && args[1] === "+move") return { ok: true, data: { node_token: flag("--node-token") } };
+    if (args[0] === "wiki" && args[1] === "+node-copy") return { ok: true, data: { node: { node_token: "NewCopy", url: `${ORIGIN}/wiki/NewCopy` } } };
     throw new Error(`unexpected ${args.join(" ")}`);
   });
   return calls;
@@ -219,6 +220,85 @@ describe("feishu docs written as the owner", () => {
     const r = createRun(app, { kind: "ask", spaceId: "personal", title: "补齐两篇文档", input: { conversationId: thread.id } });
     return { app, thread, runId: r.id, ctx: { ...agent(app), runId: r.id } };
   }
+
+  it("holds a complete copy for approval, then uses only the fixed official copy command", async () => {
+    const { app, ctx } = task();
+    const calls = fakeWiki(TREE);
+    const input = { doc: `${ORIGIN}/wiki/A`, target: `${ORIGIN}/wiki/Root`, title: "本周周报", summary: "完整保留上一期的表格和图片" };
+    expect((await callTool(ctx, "lark_doc_copy", input)).text).toContain("需要本人批准");
+    expect(calls.some(c => c[1] === "+node-copy")).toBe(false);
+    const ask = listAsks(app)[0];
+    expect(ask.question).toContain(input.summary);
+    expect((await answerAsk(app, ask.id, { approved: true, by: "owner" })).result).toContain("NewCopy");
+    expect(calls.filter(c => c[1] === "+node-copy")).toEqual([[
+      "wiki", "+node-copy", "--space-id", TEAM, "--node-token", "A",
+      "--target-parent-node-token", "Root", "--title", input.title, "--as", "user", "--yes", "--format", "json",
+    ]]);
+    expect((await callTool(ctx, "lark_doc_copy", { ...input, target: "my_library" })).text).toContain("已完整复制");
+    const toRoot = calls.filter(c => c[1] === "+node-copy").at(-1)!;
+    expect(toRoot).toEqual(expect.arrayContaining(["--target-space-id", PERSONAL]));
+    expect(toRoot).not.toContain("--target-parent-node-token");
+    const outside = { ...ctx, larkChats: undefined };
+    expect((await callTool(outside, "lark_doc_copy", input)).isError).toBe(true);
+    expect((await callTool(outside, "lark_doc_authorize", { under: input.target, operations: ["copy"], summary: "申请目录授权" })).isError).toBe(true);
+  });
+
+  it("reuses an explicit subtree grant across runs for current and future pages, with scoped operations", async () => {
+    const { app, ctx } = task();
+    const nodes = { Root: { title: "周会" }, Quarter: { title: "本季度", parent: "Root" }, Report: { title: "周报", parent: "Quarter" } };
+    const calls = fakeWiki(nodes);
+    const request = { under: `${ORIGIN}/wiki/Root`, operations: ["create", "copy", "edit", "move"], summary: "定时复制周报，并在周会目录内整理" };
+    await callTool(ctx, "lark_doc_authorize", request);
+    const ask = listAsks(app)[0];
+    expect(ask.question).toContain("包括以后新增的子页面");
+    expect((await callTool(ctx, "lark_doc_authorize", request)).text).toContain(ask.id);
+    expect(listAsks(app)).toHaveLength(1);
+    expect(calls.some(c => ["+create", "+update", "+node-copy", "+move"].includes(c[1]))).toBe(false);
+    await answerAsk(app, ask.id, { approved: true, by: "owner" });
+    const next = createRun(app, { kind: "agent", spaceId: "personal", title: "下一次定时任务", input: {} });
+    const later = { ...ctx, runId: next.id };
+    expect((await callTool(later, "lark_doc_copy", { doc: `${ORIGIN}/wiki/Report`, target: `${ORIGIN}/wiki/Quarter`, summary: "复制本周周报" })).text).toContain("已完整复制");
+    expect((await callTool(later, "lark_doc_create", { title: "新季度", content: "目录", parent: request.under })).text).toContain("已在");
+    expect((await callTool(later, "lark_doc_update", { doc: `${ORIGIN}/wiki/Report`, command: "append", content: "新内容" })).text).toContain("已编辑");
+    expect((await callTool(later, "lark_doc_move", { doc: `${ORIGIN}/wiki/Report`, target: request.under })).text).toContain("已把");
+    fakeWiki({ ...nodes, Future: { title: "下季度周报", parent: "Root" } });
+    expect((await callTool(later, "lark_doc_update", { doc: `${ORIGIN}/wiki/Future`, command: "append", content: "新内容" })).text).toContain("已编辑");
+    expect(listAsks(app)).toHaveLength(1);
+    expect((await callTool(later, "lark_doc_update", { doc: `${ORIGIN}/wiki/Report`, command: "overwrite", content: "重写" })).text).toContain("需要本人批准");
+  });
+
+  it("checks live ancestry and both ends of a move; same-name, cross-space and shortcut pages do not inherit grants", async () => {
+    const { app, ctx } = task();
+    const nodes: Record<string, Node> = { Root: { title: "周会" }, Outside: { title: "周会" }, Report: { title: "周报", parent: "Root" }, Other: { title: "另一份", parent: "Outside" } };
+    fakeWiki(nodes);
+    await callTool(ctx, "lark_doc_authorize", { under: `${ORIGIN}/wiki/Root`, operations: ["edit", "move", "copy"], summary: "整理周会" });
+    await answerAsk(app, listAsks(app)[0].id, { approved: true, by: "owner" });
+    expect((await callTool(ctx, "lark_doc_move", { doc: `${ORIGIN}/wiki/Report`, target: `${ORIGIN}/wiki/Outside` })).text).toContain("需要本人批准");
+    expect((await callTool(ctx, "lark_doc_move", { doc: `${ORIGIN}/wiki/Other`, target: `${ORIGIN}/wiki/Root` })).text).toContain("需要本人批准");
+    expect((await callTool(ctx, "lark_doc_copy", { doc: `${ORIGIN}/wiki/Report`, target: `${ORIGIN}/wiki/Outside`, summary: "复制" })).text).toContain("需要本人批准");
+    const edit = { doc: `${ORIGIN}/wiki/Report`, command: "append", content: "新内容" };
+    expect((await callTool(ctx, "lark_doc_update", edit)).text).toContain("已编辑");
+    fakeWiki({ ...nodes, Report: { ...nodes.Report, parent: "Outside" } });
+    expect((await callTool(ctx, "lark_doc_update", edit)).text).toContain("需要本人批准");
+    fakeWiki({ ...nodes, Cross: { title: "周报", space: "another-space", parent: "Root" }, Loop: { title: "环", parent: "Loop" }, Shortcut: { title: "快捷方式", parent: "Root", nodeType: "shortcut" } });
+    for (const token of ["Cross", "Loop", "Shortcut"]) expect((await callTool(ctx, "lark_doc_update", { ...edit, doc: `${ORIGIN}/wiki/${token}` })).text).toContain("需要本人批准");
+  });
+
+  it("keeps subtree permissions per operation and user, and a later refusal overrides an older grant", async () => {
+    const { app, ctx } = task();
+    const calls = fakeWiki({ Root: { title: "周会" }, Report: { title: "周报", parent: "Root" } });
+    const request = { under: `${ORIGIN}/wiki/Root`, operations: ["copy"], summary: "每周复制到周会目录" };
+    await callTool(ctx, "lark_doc_authorize", request);
+    await answerAsk(app, listAsks(app)[0].id, { approved: true, by: "owner" });
+    const copy = { doc: `${ORIGIN}/wiki/Report`, target: request.under, summary: "复制" };
+    expect((await callTool(ctx, "lark_doc_copy", copy)).text).toContain("已完整复制");
+    expect((await callTool(ctx, "lark_doc_create", { title: "新页", content: "内容", parent: request.under })).text).toContain("需要本人批准");
+    expect((await callTool({ ...ctx, userId: "someone-else" }, "lark_doc_copy", copy)).isError).toBe(true);
+    await callTool(ctx, "lark_doc_authorize", request);
+    await answerAsk(app, listAsks(app)[0].id, { approved: false, text: "暂时停用", by: "owner" });
+    expect((await callTool(ctx, "lark_doc_copy", copy))).toMatchObject({ isError: true, text: expect.stringContaining("暂时停用") });
+    expect(calls.filter(c => c[1] === "+node-copy")).toHaveLength(1);
+  });
 
   it("approves listed documents once, including a failed edit's retry; other docs, overwrite and move still ask", async () => {
     const { app, ctx } = task();

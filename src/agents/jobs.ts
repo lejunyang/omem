@@ -163,6 +163,15 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
 registerHandler("agent", async (ctx) => {
+  try { return await runAgentTask(ctx); }
+  catch (e) {
+    if (ctx.run.input.rule && !ctx.signal.aborted && (e as Error).message !== "CANCELLED")
+      await (await import("../rules/failure.ts")).reportRuleFailure(ctx.app, ctx.run.id, (e as Error).message);
+    throw e;
+  }
+});
+
+async function runAgentTask(ctx: RunContext) {
   const { spec: name, task, threadId, agentWorkId, consultOf, rule, lark, silent, meeting, replyAt, resumeSessionId: resumeRule, execution, assistantScope } = ctx.run.input as {
     execution?: Execution;
     assistantScope?: import("./agent-work.ts").AssistantScope;
@@ -217,6 +226,7 @@ registerHandler("agent", async (ctx) => {
     runRole(ctx.app, {
       role: "assistant",
       spec,
+      addTools: rule ? ["report_rule_failure"] : undefined,
       execution,
       spaces: assistantScope?.spaces,
       // A run may also be denied tools of its own (a meeting's windows: nothing reaches the owner until it ends).
@@ -232,9 +242,8 @@ registerHandler("agent", async (ctx) => {
       lark: assistantScope?.lark ?? lark,
     });
   let r;
-  try {
-    r = await go(resumeSessionId);
-  } catch (e) {
+  try { r = await go(resumeSessionId); }
+  catch (e) {
     if (!resumeSessionId || ctx.signal.aborted || (e as Error).message === "CANCELLED") throw e;
     ctx.event("status", { text: "无法接上上一轮的 Agent 会话，改用新会话（带这项工作的经过）" });
     r = await go(undefined);
@@ -250,7 +259,7 @@ registerHandler("agent", async (ctx) => {
     await (await import("../channels/lark-cot.ts")).endCot(ctx.app, ctx.run.id, { ok: true, quiet });
     if (quiet) return { answer, quiet: true, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
   }
-  if (silent || meeting) {
+  if (silent || meeting || getRun(ctx.app, ctx.run.id).output.ruleFailure) {
     // Whatever it had to say it already posted (or told the owner); the text stays in the run.
   } else if (rule && isQuiet(answer)) {
     // It already posted (lark_send, to @ someone) and ends QUIET so the answer is not sent twice.
@@ -266,7 +275,7 @@ registerHandler("agent", async (ctx) => {
     else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
   } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name });
   return { answer, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
-});
+}
 
 registerHandler("thread-summary", async (ctx) => {
   const { threadId } = ctx.run.input as { threadId: string };

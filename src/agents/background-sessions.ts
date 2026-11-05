@@ -4,6 +4,7 @@ import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import type { PreparedRun } from "./runner.ts";
 import { issueToolToken, retargetToolToken, revokeToolToken, toolContextForToken } from "./tools.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { sessionCleanup } from "./session-cleanup.ts";
 
 type Live = { key: string; handle: AcpHandle; token: string; busy: boolean; usedAt: number; usage?: AgentResult["contextUsage"]; timer?: NodeJS.Timeout; releasing?: Promise<void> };
 const pools = new Map<App, Set<Live>>();
@@ -41,6 +42,7 @@ export function tooFull(usage: { used: number; size: number }, config: { maxCont
 
 /** Only recurring jobs opt in. Conversations, coding chains and blind comparisons stay independent. */
 export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequest, task: string, runId: string | null, emit: (e: AgentEvent) => void): Promise<AgentResult> {
+  req = { ...req, cleanup: await sessionCleanup(app, prep.profile, req, emit) };
   const config = app.config.sessions.background;
   if (!config.enabled || config.maxLive === 0 || config.liveMinutes === 0) return runAcp(prep.profile, req, emit);
   const ctx = toolContextForToken(app, prep.token);

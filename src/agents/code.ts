@@ -19,6 +19,7 @@ import { replyOf } from "./types.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
 import { OWNER } from "../core/users.ts";
+import { retireRecordedSession } from "./session-cleanup.ts";
 import { linkRunToItem, materialSpaces, materialsBrief } from "../items/materials.ts";
 import { getItem } from "../items/store.ts";
 
@@ -88,6 +89,7 @@ export type CodeInput = {
   syncResume?: boolean;
   /** A later round: move the unapplied work onto the target branch's latest commit. */
   moveToTarget?: boolean;
+  moveToTargetMode?: "merge" | "rebase";
   /**
    * A branch review an outside Agent on a paired device does itself (peer-agent.ts, review_branch
    * over `--peer`): this machine prepares the worktrees, index and plan, then waits for that Agent's
@@ -425,7 +427,7 @@ ${input.task}
         steps = [{ label: `${was.label}（本人处理后继续）`, from, to: git(wt.path, ["rev-parse", "HEAD"]).stdout.trim(), conflicts: [...new Set([...was.conflicts, ...found])] }];
         if (stopped) pending.push({ ...was, label: stopped.label, conflicts: stopped.conflicts });
       } else if (input.moveToTarget) {
-        const m = await cs.moveToTarget(root, wt, resolver);
+        const m = await cs.moveToTarget(root, wt, resolver, input.moveToTargetMode ?? "merge");
         if (!m.moved) { lines.push(`${wt.space}：已经在 ${wt.targetBranch} 的最新提交上`); continue; }
         steps = [{ label: `移到 ${wt.targetBranch} 的最新提交 ${m.start!.slice(0, 8)}`, from: m.start!, to: git(wt.path, ["rev-parse", "HEAD"]).stdout.trim(), conflicts: m.conflicts ?? [] }];
         if (m.stopped) { stopped = m.stopped; pending.push({ space: wt.space, kind: "move", start: m.start, label: m.stopped.label, conflicts: m.stopped.conflicts }); }
@@ -480,6 +482,7 @@ ${input.task}
   }
   async function code() {
     let resumeCoder = (input as { resumeSessionId?: string }).resumeSessionId;
+    const previousSession = resumeCoder;
     const previousId = chain?.rounds.filter((id) => id !== run.id).at(-1);
     if (resumeCoder && previousId) {
       const previous = getRun(app, previousId);
@@ -552,6 +555,8 @@ ${input.task}
         ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
         coder = await runCoder(freshTask);
       }
+      if (previousSession && coder.sessionId && previousSession !== coder.sessionId)
+        await retireRecordedSession(app, previousSession, e => ctx.event(e.type, { ...e, phase: "coder" }));
       // What the owner added while it worked and it did not pick up at an omem tool call: one more turn
       // in the same session, before the checks (code-steer.ts).
       reply = replyOf(coder);
@@ -1001,7 +1006,7 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
   const targets = applyTargets(app, runId);
   if (!targets.length) throw new HttpError(404, "没有可应用的改动");
   const created: (ApplyTarget & { createdHead: string })[] = [];
-  const forwarded: ApplyTarget[] = [];
+  const forwarded: { target: ApplyTarget; before: string }[] = [];
   const applied: string[] = [];
   let applying = false;
   try {
@@ -1014,15 +1019,17 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
     for (const t of targets) {
       if (t.branch && git(t.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() !== t.branch)
         throw new HttpError(409, `接收目录 ${t.path} 的分支已变化，请重新应用`);
-      // Sync commits go on by fast-forward: only while the target is still where the work began.
-      if (t.syncHead && git(t.path, ["rev-parse", "HEAD"]).stdout.trim() !== t.startCommit)
+      // The target may have advanced within the synced history, or already contain it.
+      const at = git(t.path, ["rev-parse", "HEAD"]).stdout.trim();
+      if (t.syncHead && !git(t.path, ["merge-base", "--is-ancestor", at, t.syncHead]).ok && !git(t.path, ["merge-base", "--is-ancestor", t.syncHead, at]).ok)
         throw new HttpError(409, `${t.branch ?? t.space} 在交办之后有了新提交，同步的结果不能直接快进；点“移到目标分支最新提交”重做一次再应用`);
     }
     // Fast-forward first (the patch is relative to the synced commits), undone if a patch then fails.
     for (const t of targets.filter(t => t.syncHead)) {
+      const before = git(t.path, ["rev-parse", "HEAD"]).stdout.trim();
       const ff = git(t.path, ["merge", "--ff-only", t.syncHead!]);
       if (!ff.ok) throw new HttpError(409, `快进 ${t.branch ?? t.space} 失败（接收目录里的修改和同步的提交冲突？）：${ff.stderr.slice(0, 800)}`);
-      forwarded.push(t);
+      if (git(t.path, ["rev-parse", "HEAD"]).stdout.trim() !== before) forwarded.push({ target: t, before });
     }
     for (const t of targets.filter(t => t.file)) {
       const check = git(t.path, ["apply", "--check", "--3way", t.file]);
@@ -1037,7 +1044,7 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
   } catch (error) {
     // Preflight failed: remove only the clean worktrees/branches this attempt created.
     // After application starts, retain every destination for recovery, even on failure.
-    if (!applying) for (const t of forwarded.reverse()) git(t.path, ["reset", "-q", "--keep", t.startCommit!]);
+    if (!applying) for (const { target, before } of forwarded.reverse()) git(target.path, ["reset", "-q", "--keep", before]);
     if (!applying) for (const t of created.reverse()) {
       const removed = git(t.root, ["worktree", "remove", t.path]);
       if (removed.ok && t.newBranch && git(t.root, ["rev-parse", `refs/heads/${t.branch}`]).stdout.trim() === t.createdHead)
@@ -1145,10 +1152,10 @@ registerAskHandler("code-sync", async (app, ask, ctx) => {
 });
 
 /** Queue a round that moves the unapplied work onto the target branch's latest commit. */
-export async function queueMoveToTarget(app: App, runId: string, userId = OWNER) {
+export async function queueMoveToTarget(app: App, runId: string, userId = OWNER, mode: "merge" | "rebase" = "merge") {
   const run = getRun(app, runId);
   if (isBranchReview(run)) throw new HttpError(400, "分支评审没有要移动的改动");
-  return queueGitRound(app, run, "把这次交办的改动移到目标分支的最新提交上（冲突交给编码 Agent，解决不了找本人）", { moveToTarget: true }, userId);
+  return queueGitRound(app, run, `${mode === "merge" ? "合并目标分支的最新提交，集中处理冲突" : "将改动变基到目标分支的最新提交"}（冲突交给编码 Agent，解决不了找本人）`, { moveToTarget: true, moveToTargetMode: mode }, userId);
 }
 
 /** Queue a round that merges or rebases the work branch onto another branch (conflicts to the coding Agent). */

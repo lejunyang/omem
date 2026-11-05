@@ -34,6 +34,25 @@ function client(create: (card: any) => Promise<any>) {
   setLarkClient({ im: { message: { create: async (args: any) => create(JSON.parse(args.data.content)), patch: async () => ({ code: 0 }) } } });
 }
 
+it("sends document approvals from a group or scheduled task privately to the owner", async () => {
+  const { app, task } = fixture();
+  const recipients: string[] = [];
+  setLarkClient({ im: { message: {
+    create: async ({ data }: any) => { recipients.push(data.receive_id); return { code: 0, data: { message_id: `om_private_${recipients.length}` } }; },
+    patch: async () => ({ code: 0 }),
+    reply: async () => { throw new Error("审批不应回复到群里"); },
+  } } });
+  for (const runId of [task.id, null]) {
+    const ask = createAsk(app, { runId, kind: "approval", tool: "lark_doc_authorize", question: "批准周会节点下的复制？" });
+    await expect.poll(() => recipients.length).toBe(runId ? 1 : 2);
+    expect(recipients.at(-1)).toBe("ou_owner");
+    const interaction = one<{ chat_id: string | null; allowed: string }>(app.db, "select chat_id, allowed from card_interactions where json_extract(payload, '$.askId') = ?", ask.id)!;
+    expect(interaction.chat_id).toBeNull();
+    expect(JSON.parse(interaction.allowed)).toEqual(["ou_owner"]);
+    await answerAsk(app, ask.id, { approved: false, by: "owner" });
+  }
+});
+
 it("saves a disabled rule, then commits its enable button before acknowledging without starting AI", async () => {
   const { app, ctx, task } = fixture();
   const saved = await callTool(ctx, "save_rule", { description: ruleInput.description, rule: ruleInput });

@@ -13,9 +13,10 @@
 
 ## 飞书文档
 
-- `lark_doc_create` / `lark_doc_update` / `lark_doc_move`：以本人身份写飞书文档，只在本人要求时用。做法和 DocxXML / Markdown 写法在内置技能 `lark-docs`。
+- `lark_doc_create` / `lark_doc_update` / `lark_doc_move` / `lark_doc_copy`：以本人身份写飞书文档，只在本人要求时用。完整复制知识库文档用 `lark_doc_copy(doc, target, summary, title?)`，调用官方节点复制，保留表格、图片和排版，不把正文重建成新文档，也不递归复制子页面；成功后回读返回的新节点核对，状态不明先查远端。做法和 DocxXML / Markdown 写法在内置技能 `lark-docs`。
+- 本人希望某个目录一次审批时，`lark_doc_authorize(under, operations, summary)`：`under` 填本人指定的知识库节点链接，`operations` 从 `create`（新建）、`copy`（复制到范围内）、`edit`（局部编辑）、`move`（范围内移动）中选。卡片说明节点、操作和用途，发到本人机器人私聊；批准后包含节点自身、全部后代和以后新建的子页面，跨会话、定时规则和失败重试复用。执行时按飞书当前层级核对，不按标题或本地旧目录推断；移动须来源和目标都在范围内。整篇覆盖、范围外写入另行批准；最近的拒绝阻止沿用旧授权。申请不执行文档写入，批准后照常调用具体工具。
 - 改已有文档：先 `lark_doc_fetch` 读要改的部分（`scope=outline` 看目录、`section` 读一节、`keyword` 按关键词、`range` 读整张表），拿到 block id；再用 `lark_doc_update` 的 `str_replace`（行内文字）、`block_replace`（一块或同层连续几块，含整张表格）、`block_insert_after`、`block_delete`、`block_move_after`、`block_copy_insert_after` 局部改。`block_*` 的内容默认 DocxXML，其余默认 Markdown；每次写入后旧 block id 可能失效，再改前重读。`overwrite` 会丢掉图片、评论等，只在本人要整篇重写时用。块操作和追加、局部替换同属“局部编辑”，沿用同一份批准。
-- 共享文档的编辑按文档复用批准：首次 `lark_doc_update` 用 `approval_docs` 列出本次全部待编辑文档，`summary` 写一两句整体改动（不贴正文或 HTML/XML）。一次批准后，这些文档在后续任务和对话中的追加、局部替换和失败重试不重复问，兼容旧版已批准的编辑记录；单篇可不填 `approval_docs`。换文档、整篇覆盖、移动和新建要重新批准；实际写入仍须本人发起；最近的拒绝会阻止沿用旧批准。卡片列出文档和摘要，旧调用没有摘要时使用去标签的正文预览；`lark_doc_create` 也支持 `summary`。等审批时用 `wait_answer`，同一待批范围不会再发卡片；提示“当前这处编辑尚未执行”时，批准后再调用那处编辑。
+- 共享文档的编辑也可按文档复用批准：首次 `lark_doc_update` 用 `approval_docs` 列出本次全部待编辑文档，`summary` 写一两句整体改动（不贴正文或 HTML/XML）。一次批准后，这些文档在后续任务和对话中的追加、局部替换和失败重试不重复问，兼容旧版已批准的编辑记录；单篇可不填 `approval_docs`。不在节点授权内的其他文档、新建、复制和移动，以及整篇覆盖要重新批准；实际写入仍须本人发起。文档写入的批准卡统一发到本人机器人私聊，回答和执行结果仍回到原任务。卡片列出文档和摘要，旧调用没有摘要时使用去标签的正文预览；`lark_doc_create` 也支持 `summary`。等审批时用 `wait_answer`，同一待批范围不会再发卡片；提示“当前这处编辑尚未执行”时，批准后再调用那处编辑。
 - 其他飞书数据：`lark_read(command)` 以本人身份跑 lark-cli 标为 read 的命令（表格、多维表格、幻灯片、云空间和评论、Markdown 文件、知识库、任务、日历、邮件、聊天记录、会议与妙记、通讯录、OKR、审批），`["skills","read","lark-sheets"]`、`["schema", …]`、`["<域>","--help"]` 读官方说明。`lark_write(command, target, summary)` 只放行 sheets、base、slides、markdown、task 的 write 命令和 drive 的评论命令：本人自己的文件直接写，别人的文件和任务先请本人批准（按文件复用，首次可用 `approval_targets` 列全），命令里改的必须是 `target`；high-risk-write、`--as`、`--yes`、`api` 都不放行。做法在内置技能 `lark-suite`。
 - 读文档用 `import_url`（可给 `depth`）；整个知识库用 `lark_wiki_crawl`（start / continue / stop / status，可分批）。
 

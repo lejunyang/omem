@@ -1,5 +1,15 @@
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
+import { EventEmitter } from "node:events";
+
+/** Read-only search processes follow the same invalidations as the in-process index. */
+export const vectorChanges = new EventEmitter();
+vectorChanges.setMaxListeners(0);
+export type VectorChange =
+  | { op: "clear" }
+  | { op: "forget"; ids: number[] }
+  | { op: "evict"; spaces: string[] }
+  | { op: "add"; home: string; rows: { id: number; spaceId: string; vec: Float32Array }[] };
 
 /**
  * Where chunk vectors are searched. The default keeps one int8-quantized
@@ -47,14 +57,18 @@ function quantize(v: Float32Array, codes: Int8Array, offset: number) {
 }
 
 class MemoryIndex implements VectorIndex {
-  private spaces = new Map<string, SpaceMatrix>();
+  private spaces = new Map<string, SpaceMatrix | null>();
   private removed = new Set<number>();
 
   private loading = new Map<string, { done: Promise<void>; cursor: number; added: { id: number; vec: Float32Array }[]; stale: boolean }>();
 
   async prepare(app: App, spaces?: string[]) {
     const ids = spaces ?? all<{ id: string }>(app.db, "select id from spaces").map((r) => r.id);
-    for (const sp of ids) await this.load(app, sp);
+    for (const sp of ids) {
+      await this.load(app, sp);
+      // Empty and already-cached spaces still give HTTP and cancellation a turn.
+      await new Promise((ok) => setImmediate(ok));
+    }
   }
 
   private load(app: App, spaceId: string): Promise<void> {
@@ -63,9 +77,13 @@ class MemoryIndex implements VectorIndex {
     if (running) return running.done;
     const state = { cursor: 0, added: [] as { id: number; vec: Float32Array }[], done: Promise.resolve(), stale: false };
     state.done = (async () => {
+      // Register loading before any query; search() itself must never synchronously scan a space.
+      await new Promise((ok) => setImmediate(ok));
+      if (state.stale) return;
       const total = all<{ n: number }>(app.db, "select count(*) n from chunks where space_id = ? and embedding is not null", spaceId)[0]?.n ?? 0;
       let m: SpaceMatrix | null = null;
       for (;;) {
+        if (state.stale) return;
         const rows = all<{ id: number; embedding: Uint8Array }>(app.db, "select id, embedding from chunks where space_id = ? and embedding is not null and id > ? order by id limit ?", spaceId, state.cursor, PAGE);
         if (!rows.length) break;
         m ??= this.alloc(rows[0].embedding.byteLength / 4, Math.max(total, rows.length));
@@ -77,9 +95,13 @@ class MemoryIndex implements VectorIndex {
         await new Promise((ok) => setImmediate(ok));
       }
       // Vectors embedded while loading below the cursor were not in any page.
-      if (m) for (const a of state.added) if (a.id <= state.cursor) this.push(m, a.id, a.vec);
+      const empty = !m;
+      for (const a of state.added) if (empty || a.id <= state.cursor) {
+        m ??= this.alloc(a.vec.length, state.added.length);
+        this.push(m, a.id, a.vec);
+      }
       // Cleared or evicted meanwhile (model change, chunks moved): the next search loads it afresh.
-      if (m && !state.stale) this.spaces.set(spaceId, m);
+      if (!state.stale) this.spaces.set(spaceId, m);
     })().finally(() => { if (this.loading.get(spaceId) === state) this.loading.delete(spaceId); });
     this.loading.set(spaceId, state);
     return state.done;
@@ -107,22 +129,32 @@ class MemoryIndex implements VectorIndex {
   }
 
   add(_app: App, rows: { id: number; spaceId: string; vec: Float32Array }[]) {
+    if (rows.length) vectorChanges.emit("change", { op: "add", home: _app.home, rows });
     for (const r of rows) {
       // A reused row id: the old vector may still sit in a matrix — reload only the spaces holding it.
       if (this.removed.has(r.id)) {
-        for (const [sp, m] of this.spaces) if (m.ids.subarray(0, m.n).includes(r.id)) this.spaces.delete(sp);
+        for (const [sp, m] of this.spaces) if (m?.ids.subarray(0, m.n).includes(r.id)) this.spaces.delete(sp);
         this.removed.delete(r.id);
       }
-      const m = this.spaces.get(r.spaceId);
+      let m = this.spaces.get(r.spaceId);
+      if (m === null) {
+        m = this.alloc(r.vec.length, rows.length);
+        this.spaces.set(r.spaceId, m);
+      }
       if (m) this.push(m, r.id, r.vec);
-      else this.loading.get(r.spaceId)?.added.push({ id: r.id, vec: r.vec });
+      else {
+        const loading = this.loading.get(r.spaceId);
+        // A later page will read ids ahead of the cursor; only retain updates to pages already read.
+        if (loading && r.id <= loading.cursor) loading.added.push({ id: r.id, vec: r.vec });
+      }
     }
   }
 
   forget(ids: number[]) {
+    vectorChanges.emit("change", { op: "forget", ids });
     for (const id of ids) this.removed.add(id);
     // Rebuild lazily when too much of the cache is dead.
-    const total = [...this.spaces.values()].reduce((a, m) => a + m.n, 0);
+    const total = [...this.spaces.values()].reduce((a, m) => a + (m?.n ?? 0), 0);
     if (total && this.removed.size > total * 0.2) {
       this.spaces.clear();
       this.removed.clear();
@@ -159,6 +191,7 @@ class MemoryIndex implements VectorIndex {
   }
 
   clear() {
+    vectorChanges.emit("change", { op: "clear" });
     this.spaces.clear();
     this.removed.clear();
     for (const l of this.loading.values()) l.stale = true;
@@ -166,6 +199,7 @@ class MemoryIndex implements VectorIndex {
   }
 
   evict(spaceIds: string[]) {
+    vectorChanges.emit("change", { op: "evict", spaces: spaceIds });
     for (const id of spaceIds) {
       this.spaces.delete(id);
       const l = this.loading.get(id);
@@ -178,6 +212,7 @@ class MemoryIndex implements VectorIndex {
     let vectors = 0;
     let bytes = 0;
     for (const m of this.spaces.values()) {
+      if (!m) continue;
       vectors += m.n;
       bytes += m.codes.byteLength + m.ids.byteLength + m.scales.byteLength;
     }

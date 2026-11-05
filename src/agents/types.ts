@@ -24,8 +24,17 @@ export type McpAccess = {
   env?: Record<string, string>;
 };
 
+/** Internal host callbacks: the backend reports ownership before exposing a new session. */
+export type SessionCleanup = {
+  created(sessionId: string): void;
+  discard(sessionId: string, operation?: () => Promise<void>): Promise<void>;
+};
+
 export type AgentRequest = {
   cwd: string;
+  /** Run owning this turn, for cleanup that may outlive the process. */
+  runId?: string | null;
+  cleanup?: SessionCleanup;
   /** This turn's text. */
   prompt: string;
   /**

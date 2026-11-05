@@ -222,7 +222,7 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       const t = findThread(app, inter.conversationId)!;
       const id = t.settings.profile ?? app.config.agents.default ?? allProfiles(app.config)[0]?.id;
       const p = allProfiles(app.config).find((x) => x.id === id);
-      if (p) void probeProfile(p).then((probe) => { if (!probe.error) saveProbe(app, id, probe); });
+      if (p) void probeProfile(p, app).then((probe) => { if (!probe.error) saveProbe(app, id, probe); });
     }
     run(app.db, "update card_interactions set status = 'done', handled_at = datetime('now'), handled_by = ? where id = ?", operator, inter.id);
     return { card: rawCard(r.card), toast: { type: "success", content: r.toast } };

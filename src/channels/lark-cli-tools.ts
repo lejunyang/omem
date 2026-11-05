@@ -87,7 +87,7 @@ export async function larkRead(app: App, args: string[]) {
   const path = commandPath(args);
   const risk = await riskOf(path);
   if (risk === null) throw new HttpError(400, `lark-cli 没有命令 ${path.join(" ")}（或它没有标风险）；用 ["${args[0]}", "--help"] 看可用命令`);
-  if (risk !== "read") throw new HttpError(400, `${path.join(" ")} 是${risk === "write" ? "写操作" : "高风险写操作"}，lark_read 只做读；${args[0] === "docs" ? "改文档用 lark_doc_update" : WRITE_DOMAINS.has(args[0]) ? "写入用 lark_write" : "这一类不能以本人身份写"}`);
+  if (risk !== "read") throw new HttpError(400, `${path.join(" ")} 是${risk === "write" ? "写操作" : "高风险写操作"}，lark_read 只做读；${path.join(" ") === "wiki +node-copy" ? "完整复制用 lark_doc_copy，可请本人批准" : args[0] === "docs" ? "改文档用 lark_doc_update" : WRITE_DOMAINS.has(args[0]) ? "写入用 lark_write" : "这一类不能以本人身份写"}`);
   const r = await run(app, args, `读取飞书（${path.join(" ")}）`);
   return `${show(r.value)}${r.files.length ? `\n\n下载的文件只在这次调用里，已删除：${r.files.join("、")}` : ""}`;
 }
@@ -137,7 +137,7 @@ export async function checkWrite(args: string[]) {
   checkArgs(args);
   const path = commandPath(args);
   if (!WRITE_DOMAINS.has(args[0])) {
-    const where = args[0] === "docs" || args[0] === "wiki" ? "改文档用 lark_doc_update，移动用 lark_doc_move" : args[0] === "im" || args[0] === "mail" ? "消息和邮件不能以本人身份发；机器人发消息用 lark_send" : "这一类不能以本人身份写";
+    const where = args[0] === "docs" || args[0] === "wiki" ? "改文档用 lark_doc_update，移动用 lark_doc_move，完整复制用 lark_doc_copy" : args[0] === "im" || args[0] === "mail" ? "消息和邮件不能以本人身份发；机器人发消息用 lark_send" : "这一类不能以本人身份写";
     throw new HttpError(400, `lark_write 不能用 ${args[0]}：${where}`);
   }
   if (args[0] === "drive" && !path.some((p) => /comment/.test(p))) throw new HttpError(400, "云空间只能写评论（drive +add-comment、+resolve-comment 等）；上传、移动、权限不在这里做");

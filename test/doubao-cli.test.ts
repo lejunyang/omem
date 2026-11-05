@@ -1,7 +1,7 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { doubaoArgs, probeDoubaoCli, runDoubaoCli } from "../src/agents/doubao-cli.ts";
 import type { AgentProfile } from "../src/core/config.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
@@ -9,6 +9,7 @@ import { runBackend } from "../src/agents/dispatch.ts";
 import { saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
 import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 import { testApp } from "./helpers.ts";
+import { all } from "../src/core/db.ts";
 
 const fake: AgentProfile = { id: "doubao-cli", transport: "doubao-cli", command: process.execPath, args: [resolve("test/fake-doubao-cli.ts")], env: {}, idleTimeoutMs: 60_000 };
 
@@ -21,16 +22,24 @@ describe("doubao cli", () => {
   });
 
   it("runs a turn: the prompt reaches it, the session comes from stderr, the run's env reaches it", async () => {
-    const events: AgentEvent[] = [];
-    const prompt = "多行\n提示 \"带引号\" %PATH% " + "长".repeat(7000);
-    const r = await runDoubaoCli({ ...fake, model: "Auto" }, { cwd: process.cwd(), prompt, mcp: { url: "", baseUrl: "", token: "", stdio: { command: "", args: [] }, env: { OMEM_TOKEN: "tok" } } }, (e) => events.push(e));
-    expect(r.text.startsWith(`echo:${prompt} model=Auto`)).toBe(true);
-    expect(r.text.endsWith("env=tok")).toBe(true);
-    expect(r.sessionId).toBe("s-1");
-    expect(events.some((e) => e.type === "session" && e.sessionId === "s-1" && !e.resumed)).toBe(true);
-    // The prompt file is gone after the turn.
-    const dir = join(tmpdir(), "omem-doubao");
-    if (existsSync(dir)) expect(readdirSync(dir)).toEqual([]);
+    // A live service may also have prompt files in the system temp directory.
+    const temp = mkdtempSync(join(tmpdir(), "omem-doubao-test-"));
+    for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, temp);
+    try {
+      const events: AgentEvent[] = [];
+      const prompt = "多行\n提示 \"带引号\" %PATH% " + "长".repeat(7000);
+      const r = await runDoubaoCli({ ...fake, model: "Auto" }, { cwd: process.cwd(), prompt, mcp: { url: "", baseUrl: "", token: "", stdio: { command: "", args: [] }, env: { OMEM_TOKEN: "tok" } } }, (e) => events.push(e));
+      expect(r.text.startsWith(`echo:${prompt} model=Auto`)).toBe(true);
+      expect(r.text.endsWith("env=tok")).toBe(true);
+      expect(r.sessionId).toBe("s-1");
+      expect(events.some((e) => e.type === "session" && e.sessionId === "s-1" && !e.resumed)).toBe(true);
+      // The prompt file is gone after the turn.
+      const dir = join(tmpdir(), "omem-doubao");
+      if (existsSync(dir)) expect(readdirSync(dir)).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   it("continues a session and reports a failed turn with the CLI's message", async () => {
@@ -55,6 +64,7 @@ describe("doubao cli", () => {
       await runBackend(app, fake, { cwd: process.cwd(), prompt: "thread", persistSession: true }, () => {});
       await runBackend(app, fake, { cwd: process.cwd(), prompt: "again", resumeSessionId: "s-7" }, () => {});
       expect(deleted).toEqual(["s-1"]);
+      expect(all(app.db, "select * from session_cleanup where ready >= 0")).toEqual([]);
       // A failed turn's conversation goes too.
       await expect(runBackend(app, fake, { cwd: process.cwd(), prompt: "fail-after-session" }, () => {})).rejects.toThrow();
       expect(deleted).toEqual(["s-1", "s-1"]);

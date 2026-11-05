@@ -99,7 +99,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     throw new HttpError(400, "定时规则没有具体的群或消息：只能交给 Agent（不开话题）或通知本人");
   if (r.trigger.event === "schedule" && (r.trigger.waitMinutes || r.trigger.unless.length || r.actions.some((a) => a.type === "agent" && a.reply === "silent")))
     throw new HttpError(400, "定时规则没有具体的讨论：不能等待回应、不能按“本人已在处理/已有人回复”跳过，也不能静默排查");
-  if (r.trigger.event === "schedule" && !r.conversationId && r.actions.some(a => a.type === "agent" && ["auto", "draft"].includes(a.reply))) throw new HttpError(400, "定时规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
+  if (r.trigger.event === "schedule" && !r.conversationId && r.actions.some(a => a.type === "agent" && (["auto", "draft"].includes(a.reply) || a.failureTo === "chat"))) throw new HttpError(400, "定时规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
   checkMeetingRule(app, r);
   const at = now();
   const id = input.id ?? newId("rule");

@@ -20,7 +20,7 @@ import { fmtTime, relTime, state, toast } from "../store";
 type Reply = "none" | "draft" | "auto";
 type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; allowUrgent?: boolean; allowPrivate?: boolean; ai?: { profile: string; model?: string; effort?: string } }
+  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; ai?: { profile: string; model?: string; effort?: string } }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
@@ -508,11 +508,16 @@ function startFrom(text: string) {
                 <UiSegmented v-model="a.reply" size="sm" :options="scheduleOnly ? scheduleReplyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
                 <UiCheckbox v-if="!scheduleOnly && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
               </div>
-              <div v-if="scheduleOnly && a.reply !== 'none'" class="row wrap">
+              <div class="row wrap">
+                <UiCheckbox :model-value="!!a.hideThinking" size="sm" @change="v => { a.hideThinking = v; touch(); }">隐藏思考气泡</UiCheckbox>
+                <span class="small">失败时</span>
+                <UiSelect :model-value="a.failureTo ?? 'owner'" :options="[{ value: 'owner', label: '通知本人' }, { value: 'chat', label: '发到群聊' }]" size="sm" width="150px" aria-label="失败时通知谁" @update:model-value="v => { a.failureTo = v; touch(); }" />
+              </div>
+              <div v-if="scheduleOnly && (a.reply !== 'none' || a.failureTo === 'chat')" class="row wrap">
                 <span class="small">发到</span>
                 <UiSelect :model-value="destinationValue" size="sm" width="260px" :search-at="8" :options="conversationOptions" aria-label="结果发到哪个会话" @update:model-value="(v) => ((form!.conversationId = String(v || '')), touch())" />
               </div>
-              <small v-if="scheduleOnly && a.reply !== 'none' && !form.conversationId" class="muted">尚未指定投递目标。请选择会话或已采集的群聊；向群里发送需要机器人已在群中。</small>
+              <small v-if="scheduleOnly && (a.reply !== 'none' || a.failureTo === 'chat') && !form.conversationId" class="muted">尚未指定投递目标。请选择会话或已采集的群聊；向群里发送需要机器人已在群中。</small>
               <small class="muted">{{ scheduleOnly && a.reply !== 'none' ? (a.reply === 'auto' ? "结论直接发到选定的会话。" : "它要在群里说的话先变成给你确认的草稿，你点发送才发到这个群（话题）；结论另外发给你。") : REPLY_HINT[a.reply] }}</small>
               <div v-if="!scheduleOnly && a.reply !== 'none'" class="row wrap">
                 <UiCheckbox :model-value="!!a.allowUrgent" size="sm" @change="(v) => ((a.allowUrgent = v), touch())">允许加急</UiCheckbox>

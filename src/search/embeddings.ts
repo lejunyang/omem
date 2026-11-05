@@ -3,6 +3,8 @@ import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { vectorIndex } from "./vectors.ts";
 import { all, one, run } from "../core/db.ts";
+import { readProcess } from "./read-process.ts";
+import { searchStage } from "./trace.ts";
 
 /**
  * Optional dense retrieval. Vectors live next to chunks as Float32 BLOBs and are
@@ -13,8 +15,14 @@ import { all, one, run } from "../core/db.ts";
 type Embedder = { id: string; embed(texts: string[], kind: "query" | "passage"): Promise<Float32Array[]> };
 
 let embedder: Embedder | null | undefined;
+let testEmbedder = false;
 
-async function getEmbedder(app: App): Promise<Embedder | null> {
+export function resetEmbedder() {
+  embedder = undefined;
+  vectorIndex().clear();
+}
+
+async function getEmbedder(app: App, inProcess = false): Promise<Embedder | null> {
   if (embedder !== undefined) return embedder;
   const cfg = app.config.embeddings;
   if (cfg.provider === "none") return (embedder = null);
@@ -35,6 +43,19 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
       },
     };
     return embedder;
+  }
+  if (!inProcess && !testEmbedder) {
+    try {
+      // Validate in the child before embedPending is allowed to replace an old model's vectors.
+      await readProcess(app, "embedding").request({ op: "embed", texts: [], kind: "passage", config: { embeddings: cfg } }, 120_000);
+      return (embedder = {
+        id: `local:${cfg.model}`,
+        embed: (texts, kind) => readProcess(app, kind === "query" ? "vector" : "embedding").request<Float32Array[]>({ op: "embed", texts, kind, config: { embeddings: cfg } }, kind === "query" ? 30_000 : 120_000),
+      });
+    } catch (error) {
+      console.warn("[omem] 向量模型不可用，退回纯全文检索：", (error as Error).message);
+      return (embedder = null);
+    }
   }
   try {
     // onnxruntime keeps its CPU arena at the largest batch it has seen; turning it off gives memory
@@ -109,6 +130,7 @@ function normalize(v: Float32Array) {
 
 /** Benchmarks and tests: use a stand-in embedder. */
 export function setEmbedderForTests(e: Embedder | null) {
+  testEmbedder = true;
   embedder = e;
   vectorIndex().clear();
 }
@@ -186,8 +208,16 @@ export async function embedQuery(app: App, text: string, kind: "query" | "passag
   return q;
 }
 
+/** Only the isolated process loads the local runtime. The parent keeps batching and writes. */
+export async function embedLocally(app: App, texts: string[], kind: "query" | "passage") {
+  const e = await getEmbedder(app, true);
+  if (!e) throw new Error("向量模型不可用");
+  return e.embed(texts, kind);
+}
+
 export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {
   if (app.config.embeddings.provider === "none") return [];
+  if (!testEmbedder) return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, config: { embeddings: app.config.embeddings } }, 30_000));
   const e = await getEmbedder(app);
   if (!e) return [];
   const [q] = await e.embed([query], "query");

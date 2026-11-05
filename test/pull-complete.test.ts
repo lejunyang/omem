@@ -43,7 +43,7 @@ describe("complete portable pulls", () => {
     const app = testApp();
     // lark_message_lines: a pulled chat keeps its first copy in lark_messages.source_id / line; source_viewers is what this device saw.
     const derived = new Set(["chunks", "symbols", "code_refs", "pages", "page_rowids", "page_links", "page_cites", "page_aliases", "memory_rowids", "req_rowids", "lark_message_lines", "source_viewers", "source_access"]);
-    const device = new Set(["kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "auth_states", "invites", "login_links", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases"]);
+    const device = new Set(["kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "auth_states", "invites", "login_links", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup"]);
     const covered = new Set(["spaces", "sources", "lark_people", ...pullTables.map((t) => t.name)]);
     const tables = all<{ name: string }>(app.db, "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name not like '%_fts%' and name not like 'memory_fts%'");
     expect(tables.map((t) => t.name).filter((n) => !derived.has(n) && !device.has(n) && !covered.has(n))).toEqual([]);
@@ -287,6 +287,8 @@ describe("complete portable pulls", () => {
     run(remote.db, "insert into api_tokens(token_hash,user_id,label,created_at) values('remote_hash','owner','remote','2026-01-01')");
     run(local.db, "insert or replace into kv(key,value) values('capture_demo','local cursor')");
     run(remote.db, "insert or replace into kv(key,value) values('capture_demo','remote cursor')");
+    for (const [app, id] of [[local, "local-session"], [remote, "remote-session"]] as const)
+      run(app.db, "insert into session_cleanup(backend_key,session_id,transport,owner_pid,retry_at) values('doubao:app',?,'doubao-cli',1,'')", id);
     const bin = mkdtempSync(join(tmpdir(), "omem-ssh-test-"));
     writeFileSync(join(bin, "ssh"), '#!/bin/sh\nexec /bin/sh -c "$4"\n');
     chmodSync(join(bin, "ssh"), 0o755);
@@ -299,6 +301,9 @@ describe("complete portable pulls", () => {
     const home = local.home;
     local.db.close();
     try {
+      const copied = App.open(f.dbDir);
+      try { expect(all(copied.db, "select * from session_cleanup")).toEqual([]); }
+      finally { copied.db.close(); }
       const backup = overwriteLocal(home, f);
       expect(readFileSync(join(home, "files/report.pdf"), "utf8")).toBe("document");
       expect(readFileSync(join(home, "files/abcdef0123456789.png"), "utf8")).toBe("image");
@@ -307,6 +312,7 @@ describe("complete portable pulls", () => {
       try {
         expect(all(after.db, "select token_hash from api_tokens")).toEqual([{ token_hash: "local_hash" }]);
         expect(one(after.db, "select value from kv where key='capture_demo'")).toMatchObject({ value: "local cursor" });
+        expect(all(after.db, "select session_id from session_cleanup")).toEqual([{ session_id: "local-session" }]);
       } finally { after.db.close(); }
     } finally { cleanupFetched(f); }
   });

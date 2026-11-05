@@ -63,6 +63,42 @@ beforeEach(() => {
 afterEach(() => { app.db.close(); try { rmSync(app.home, { recursive: true, force: true }); } catch { /* still in use */ } });
 
 describe("Git sync before coding", { timeout: 60000 }, () => {
+  it.each(["merge", "rebase"] as const)("skips %s when the target is already included despite a stale start", async mode => {
+    const target = commit(root, "shared.txt", "shared\n", "target advances");
+    sh(root, "branch", "-f", "feature/refund", target); sh(wtPath, "merge", "--ff-only", target);
+    const accepted = commit(wtPath, "accepted.txt", "accepted\n", "accepted work");
+    writeFileSync(join(wtPath, "rules.txt"), "staged\n"); sh(wtPath, "add", "rules.txt");
+    writeFileSync(join(wtPath, "rules.txt"), "unstaged too\n"); writeFileSync(join(wtPath, "notes.txt"), "untracked work\n");
+    const before = [sh(wtPath, "status", "--porcelain"), sh(wtPath, "diff", "--cached"), sh(wtPath, "diff")];
+    expect(await moveToTarget(root, wt, async () => { throw new Error("unexpected conflicts"); }, mode)).toMatchObject({ moved: false, stopped: null });
+    expect(sh(wtPath, "rev-parse", "HEAD")).toBe(accepted);
+    expect([sh(wtPath, "status", "--porcelain"), sh(wtPath, "diff", "--cached"), sh(wtPath, "diff")]).toEqual(before);
+    expect(syncInProgress(wtPath)).toBeNull();
+  });
+
+  it("merges a diverged target by default, resolving the combined conflicts once", async () => {
+    const first = commit(wtPath, "rules.txt", "feature one\n", "feature one");
+    const last = commit(wtPath, "rules.txt", "feature two\n", "feature two");
+    sh(root, "checkout", "-q", "feature/refund");
+    const target = commit(root, "rules.txt", "target version\n", "target update");
+    const seen: string[][] = [];
+    expect(await moveToTarget(root, wt, async (files, label) => { seen.push(files); await bothSides(files, label); })).toMatchObject({ moved: true, stopped: null, start: target });
+    expect(seen).toEqual([["rules.txt"]]);
+    expect(sh(wtPath, "log", "-1", "--format=%P").split(" ")).toEqual([last, target]);
+    expect(git(wtPath, ["merge-base", "--is-ancestor", first, "HEAD"]).ok).toBe(true);
+  });
+
+  it("rebases only after the actual shared ancestor when rebase is explicitly requested", async () => {
+    const shared = commit(root, "rules.txt", "shared\n", "shared history");
+    sh(root, "branch", "-f", "feature/refund", shared); sh(wtPath, "merge", "--ff-only", shared);
+    commit(wtPath, "feature.txt", "feature\n", "feature change");
+    sh(root, "checkout", "-q", "feature/refund");
+    const target = commit(root, "rules.txt", "updated target\n", "target changes shared text");
+    writeFileSync(join(wtPath, "draft.txt"), "pending draft\n");
+    expect(await moveToTarget(root, wt, async () => { throw new Error("shared history replayed"); }, "rebase")).toMatchObject({ stopped: null, start: target, wip: true });
+    expect(sh(wtPath, "log", "--format=%s", `${target}..HEAD`)).toBe("feature change");
+    expect(sh(wtPath, "diff", "--cached", "--name-only")).toBe("draft.txt");
+  });
   it.each(["main", "master", "preonline"])("starts from origin's updated default %s without changing the owner's checkout", async (branch) => {
     if (branch !== "main") sh(root, "branch", "-m", "main", branch);
     sh(remote, "symbolic-ref", "HEAD", `refs/heads/${branch}`);
@@ -182,7 +218,7 @@ describe("Git sync before coding", { timeout: 60000 }, () => {
     const newer = commit(root.replace(/repo$/, "repo"), "other.txt", "x\n", "target moves");
     // root is on main; move the target branch itself forward.
     sh(root, "branch", "-f", "feature/refund", newer);
-    const m = await moveToTarget(root, wt, giveUp);
+    const m = await moveToTarget(root, wt, giveUp, "rebase");
     expect(m).toMatchObject({ moved: true, stopped: null, start: newer, wip: true });
     expect(sh(wtPath, "rev-parse", "HEAD")).toBe(newer);
     expect(sh(wtPath, "diff", "--cached", "--name-only")).toBe("rules.txt");
@@ -193,7 +229,7 @@ describe("Git sync before coding", { timeout: 60000 }, () => {
     sh(root, "checkout", "-q", "feature/refund");
     const newer = commit(root, "rules.txt", "refund: shipped lines\n", "target changes the rule too");
     sh(root, "checkout", "-q", "main");
-    const m = await moveToTarget(root, wt, giveUp);
+    const m = await moveToTarget(root, wt, giveUp, "rebase");
     expect(m.stopped?.conflicts).toEqual(["rules.txt"]);
     writeFileSync(join(wtPath, "rules.txt"), "refund: shipped and unshipped lines\n");
     sh(wtPath, "add", "rules.txt");
@@ -205,6 +241,43 @@ describe("Git sync before coding", { timeout: 60000 }, () => {
 });
 
 describe("applying synced work", { timeout: 60000 }, () => {
+  function finished(syncHead: string, patch: string) {
+    createSpace(app, { id: "shop", name: "项目 A", kind: "repo", rootPath: root });
+    const r = createRun(app, { kind: "code", spaceId: "shop", title: "应用同步结果", input: { task: "应用", repos: ["shop"], fromBranches: { shop: "feature/refund" } } });
+    sql(app.db, "update runs set status='done' where id=?", r.id);
+    mkdirSync(join(app.runsDir, r.id, "patches"), { recursive: true });
+    writeFileSync(join(app.runsDir, r.id, "patches", "shop.patch"), patch);
+    setRunOutput(app, r.id, { worktrees: [{ ...wt, syncHead }], repos: [{ space: "shop", diffBytes: patch.length }] });
+    return r.id;
+  }
+
+  it.each(["within", "ahead"])("applies when the target advanced %s the synced history", relation => {
+    const shared = commit(root, "shared.txt", "shared\n", "shared update");
+    sh(root, "branch", "-f", "feature/refund", shared); sh(root, "checkout", "-q", "feature/refund");
+    sh(wtPath, "merge", "--ff-only", shared);
+    const synced = commit(wtPath, "synced.txt", "synced\n", "sync result");
+    let expected = synced;
+    if (relation === "ahead") { sh(root, "merge", "--ff-only", synced); expected = commit(root, "later.txt", "later\n", "later target update"); }
+    writeFileSync(join(wtPath, "rules.txt"), "new rule\n");
+    const id = finished(synced, git(wtPath, ["diff", "--binary", "HEAD"]).stdout);
+    expect(applyCodeRun(app, id).applied).toBe(true);
+    expect(sh(root, "rev-parse", "HEAD")).toBe(expected);
+    expect(readFileSync(join(root, "rules.txt"), "utf8")).toBe("new rule\n");
+  });
+
+  it("restores the actual receiving head on preflight failure and preserves pending changes", () => {
+    const shared = commit(root, "shared.txt", "shared\n", "shared update");
+    sh(root, "branch", "-f", "feature/refund", shared); sh(root, "checkout", "-q", "feature/refund"); sh(wtPath, "merge", "--ff-only", shared);
+    const synced = commit(wtPath, "synced.txt", "synced\n", "sync result");
+    writeFileSync(join(wtPath, "rules.txt"), "new rule\n");
+    const id = finished(synced, git(wtPath, ["diff", "--binary", "HEAD"]).stdout);
+    writeFileSync(join(root, "rules.txt"), "user pending change\n");
+    expect(() => applyCodeRun(app, id)).toThrow(/无法干净应用/);
+    expect(sh(root, "rev-parse", "HEAD")).toBe(shared);
+    expect(readFileSync(join(root, "rules.txt"), "utf8")).toBe("user pending change\n");
+    expect(existsSync(join(root, "synced.txt"))).toBe(false);
+    expect(existsSync(join(root, "shared.txt"))).toBe(true);
+  });
   it("fast-forwards the target branch to the sync commits, then applies the patch; refuses when the target moved", async () => {
     createSpace(app, { id: "shop", name: "项目 A", kind: "repo", rootPath: root });
     commit(root, "main.txt", "main\n", "main moves");

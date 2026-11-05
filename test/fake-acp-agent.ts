@@ -110,6 +110,8 @@ new AgentSideConnection(
       return {};
     },
     async deleteSession(p: { sessionId: string }) {
+      if (process.env.FAKE_DELETE_FAIL_FILE && existsSync(process.env.FAKE_DELETE_FAIL_FILE))
+        throw new RequestError(-32603, "Internal error", { details: "session still active" });
       if (process.env.FAKE_DELETE_LOG) appendFileSync(process.env.FAKE_DELETE_LOG, p.sessionId + "\n");
       return {};
     },

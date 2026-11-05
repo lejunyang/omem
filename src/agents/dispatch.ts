@@ -1,30 +1,35 @@
 import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
-import { deleteAcpSession, runAcp } from "./acp.ts";
+import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
-import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoTokenExists, runDoubao } from "./doubao.ts";
+import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
+import { retireRecordedSession, sessionCleanup } from "./session-cleanup.ts";
 import { DOUBAO_TOOL_NOTE, runDoubaoCli } from "./doubao-cli.ts";
-import { archiveSession } from "./session-archive.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 /** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
-  if (profile.transport === "acp") return runAcp(profile, req, emit);
+  const disposable = !req.persistSession && !req.resumeSessionId;
+  if (profile.transport === "acp") return runAcp(profile, { ...req, cleanup: await sessionCleanup(app, profile, req, emit) }, emit);
   if (profile.transport === "doubao" || profile.transport === "doubao-cli") {
     // Doubao keeps every conversation in the owner's account: a one-off turn's session is deleted
     // once the turn is over, failed or not (ACP agents do the same with session/delete).
-    let made: string | undefined;
+    const cleanup = await sessionCleanup(app, profile, req, emit);
+    const made = new Set<string>();
+    const remember = (id: string) => {
+      made.add(id);
+      cleanup.created(id);
+    };
     const track = (e: AgentEvent) => {
-      if (e.type === "session" && !e.resumed) made = e.sessionId;
+      if (e.type === "session" && !e.resumed) remember(e.sessionId);
       emit(e);
     };
     try {
       const r = await runDoubaoTurn(app, profile, req, track);
-      if (!r.sessionId || r.sessionId === req.resumeSessionId) made = undefined;
-      else made = r.sessionId;
+      if (r.sessionId && r.sessionId !== req.resumeSessionId) remember(r.sessionId);
       return r;
     } finally {
-      if (made && !req.persistSession && !req.resumeSessionId) await retireSession(app, profile, made, req.cwd, emit);
+      if (disposable) for (const id of made) await cleanup.discard(id);
     }
   }
   // The CLIs take no system prompt here: the instructions open a new session, a resumed one has them
@@ -53,26 +58,11 @@ async function runDoubaoTurn(app: App, profile: AgentProfile, req: AgentRequest,
  */
 export async function retireSession(app: App, profile: AgentProfile, sessionId: string, cwd: string, emit: (e: AgentEvent) => void = () => {}) {
   try {
-    if (profile.transport === "acp") {
-      if (profile.archiveArgs?.length) await archiveSession(profile, sessionId, cwd);
-      else await deleteAcpSession(profile, sessionId, cwd).catch((e) => {
-        if (!/不支持删除会话/.test((e as Error).message)) throw e;
-      });
-      return;
-    }
-    if (profile.transport !== "doubao" && profile.transport !== "doubao-cli") return;
-    if (!doubaoTokenExists(app.home)) {
-      emit({ type: "status", text: "豆包 OpenAPI 没有在这台机器上授权，豆包 CLI 的会话留在豆包历史里（omem doubao login 后会自动删除 omem 建的会话）" });
-      return;
-    }
-    const da = doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config));
-    if (!da) {
-      emit({ type: "status", text: "豆包会话没有删除：找不到授权过的豆包应用（omem doubao login），会话留在豆包历史里" });
-      return;
-    }
-    await deleteDoubaoSession(app.home, da, sessionId);
-    // Said every time: the CLI may be logged in to another account than the app deleting it.
-    emit({ type: "status", text: `已经通过应用 ${da.appId} 删除豆包会话 ${sessionId}${profile.transport === "doubao-cli" ? "（豆包 CLI 登录的若是别的账号，它的历史里仍会留着）" : ""}` });
+    if (!["acp", "doubao", "doubao-cli"].includes(profile.transport)) return;
+    if (await retireRecordedSession(app, sessionId, emit)) return;
+    const cleanup = await sessionCleanup(app, profile, { cwd }, emit);
+    cleanup.created(sessionId);
+    await cleanup.discard(sessionId);
   } catch (e) {
     emit({ type: "status", text: `${profile.transport.startsWith("doubao") ? "豆包" : "后端"}会话清理失败：${(e as Error).message.slice(0, 160)}` });
   }
