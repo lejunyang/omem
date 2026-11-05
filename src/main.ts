@@ -1,6 +1,7 @@
 import "./agents/jobs.ts";
 import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, scheduleSpaceSync, sendItemDigests, sweepItems } from "./agents/jobs.ts";
-import { createRun, listRuns, startWorker } from "./agents/runs.ts";
+import { addRunEvent, createRun, listRuns, startWorker } from "./agents/runs.ts";
+import { startDoubaoCleanup } from "./agents/doubao-cleanup.ts";
 import { refreshBranchIndexes, sweepWorktreeSpaces } from "./agents/worktree-index.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
@@ -104,6 +105,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     if (r.closed || r.woken || r.moved) console.log(`[omem] 修改项：关掉 ${r.closed} 张已经不等本人的卡片，为 ${r.woken} 个交办叫醒发起的助手，${r.moved} 个没有助手的交办交给本人`);
   }
   startWorker(app);
+  startDoubaoCleanup(app, (runId, e) => {
+    if (runId) addRunEvent(app, runId, e.type, e);
+    else if (e.type === "status") console.log(`[omem] ${e.text}`);
+  });
   if (opts.background !== false) {
     startMemoryWatch();
     restartScheduler(app);

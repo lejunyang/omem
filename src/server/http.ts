@@ -96,6 +96,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.addHook("onClose", async () => {
     const { releaseBackgroundSessions } = await import("../agents/background-sessions.ts");
     await releaseBackgroundSessions(app);
+    const { stopDoubaoCleanup } = await import("../agents/doubao-cleanup.ts");
+    await stopDoubaoCleanup(app);
   });
   await server.register(fastifyMultipart, { limits: { fileSize: 200 * 1024 * 1024 } });
 

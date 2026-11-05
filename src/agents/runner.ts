@@ -575,6 +575,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
     try {
       const req = {
+        runId: input.runId,
         strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,
         cwd: prep.cwd,
         // The instructions go once per session (see withInstructions); a resumed session gets the task alone.

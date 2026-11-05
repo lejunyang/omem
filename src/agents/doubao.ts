@@ -204,7 +204,7 @@ async function api<T>(token: string, method: string, path: string, body?: unknow
     const msg = `豆包接口 ${method} ${path.replace(/\/\d{6,}/g, "/…")}：${code} ${v?.msg ?? r.statusText}`;
     if (code === 429001 || r.status === 429) throw agentRunError(msg, "rate-limit");
     if (code === 401001 || r.status === 401 || code === 99991663 || code === 99991668) throw new Error(`${msg}（授权失效，运行 omem doubao login 重新授权）`);
-    throw new Error(msg);
+    throw Object.assign(new Error(msg), { code });
   }
   return v.data;
 }
@@ -392,11 +392,30 @@ export async function deleteDoubaoSession(home: string, app: DoubaoApp, sessionI
   if (!/^[\w-]+$/.test(sessionId)) throw new Error("无效的豆包会话 id");
   const token = await doubaoAccessToken(home, app);
   if (!token) throw new Error("豆包 OpenAPI 未授权");
-  await api(token, "DELETE", `/v1/sessions/${sessionId}`);
+  try {
+    await api(token, "DELETE", `/v1/sessions/${sessionId}`);
+  } catch (e) {
+    if ((e as { code?: number }).code !== 3440008) throw e;
+  }
+}
+
+/** Recovery must wait for a detached CLI task to finish before removing its session. */
+export async function doubaoSessionStatus(home: string, app: DoubaoApp, sessionId: string): Promise<string | null> {
+  if (!/^[\w-]+$/.test(sessionId)) throw new Error("无效的豆包会话 id");
+  const token = await doubaoAccessToken(home, app);
+  if (!token) throw new Error("豆包 OpenAPI 未授权");
+  try {
+    const data = await api<{ session: { status: string } }>(token, "GET", `/v1/sessions/${sessionId}`);
+    if (!data?.session?.status) throw new Error("豆包接口没有返回会话状态");
+    return data.session.status;
+  } catch (e) {
+    if ((e as { code?: number }).code === 3440008) return null;
+    throw e;
+  }
 }
 
 /** The app whose token a doubao profile uses: `env.DOUBAO_APP_ID` on the profile, else the bot. */
-export function doubaoAppFor(home: string, profile: AgentProfile, apps: DoubaoApp[]): DoubaoApp | null {
+export function doubaoAppFor(home: string, profile: Pick<AgentProfile, "env">, apps: DoubaoApp[]): DoubaoApp | null {
   const wanted = profile.env?.DOUBAO_APP_ID;
   if (wanted) return apps.find((a) => a.appId === wanted) ?? null;
   const tokens = readDoubaoTokens(home);

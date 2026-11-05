@@ -1296,3 +1296,12 @@ updated: 2026-11-04
 - 迁移：`sources.visibility`（space / restricted）、`source_access`（每人对每篇飞书文档的阅读权限，记一天）。
 - `src/auth/visibility.ts`：`setVisibility`、`sourceVisible`（同步判断，飞书文档未知时为 check）、`sourceReadable`（用读者的连接调云文档的权限判断接口）、`requireReadable`、`visibleHits`、`keptHere`、`isRestricted`。
 - 接入：`checkRoute` 改为异步，`src:` 定位的路由再查一次能否读；`/api/search`、原件列表、工具的 `search`（`viewSearch`）和 `read_source` 过滤；`shares.ts` 不复制、`federation.ts` 不检索不发送不同步这两类；`write_page` 在非个人空间拒绝引用受限原件。新接口 `PUT /api/sources/:id/visibility`（`space.manage`）。`PATCH /api/spaces/:id`：非本人只能改 `larkAccess`，带 `mirror` 一律拒绝（设置页保存时去掉它）。
+
+
+## 豆包临时会话在重启后继续清理（2026-11-05）
+
+- 修复运行中重启造成的遗漏：旧豆包 CLI 任务仍在云端执行，但 omem 的 `finally` 已丢失；重跑只删除新会话，旧会话留在历史里。
+- `dispatch.ts` 拿到临时会话 ID 时即登记 `doubao_session_cleanup`，保存创建时选用的应用、所属运行和 omem 进程 ID；正常清理成功后撤掉记录。聊天、明确保留和续轮不登记，显式退役的旧聊天会话也经同一清理路径处理。
+- `doubao-cleanup.ts` 启动时及每分钟恢复：原进程仍活着的临时运行让开，原进程已退出时先查云端状态，等到 idle 再删。删除失败保留记录重试，应用变更后仍用原应用；接口返回资源不存在视为完成。不扫描或批量处理既有账号历史。
+- 回归用单独的 Node 子进程拿到 ID 后立即退出，确认清理登记先于退出落盘，再用新的 App 恢复；覆盖云端仍在执行、正常完成、接口失败重试、应用变更、404 和权限查询失败。既有 CLI 临时文件测试改用独立临时目录，避免与常驻服务正在使用的文件冲突。
+- 真机：CLI 已创建会话、OpenAPI 返回 in_progress 时退出所属 omem 测试进程，用隔离数据库中的清理记录恢复，等待空闲后删除；最终 OpenAPI 返回 HTTP 404 / code 3440008，CLI 列表不再包含这次会话。该清理表是设备本地的进程状态，快照不携带，覆盖拉取保留本机的记录。

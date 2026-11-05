@@ -1356,6 +1356,16 @@ const migrations: string[] = [
   // The same text embedded once (search/embeddings.ts): copies of one chat or document in several
   // spaces find the vector already made by its length and start, then compare the whole text.
   `create index chunks_text_head on chunks(length(text), substr(text, 1, 80)) where embedding is not null;`,
+  // Only sessions explicitly retired or created for a one-off turn; never infer this from history.
+  `create table doubao_session_cleanup (
+     session_id text primary key,
+     transport text not null,
+     app_id text,
+     run_id text,
+     owner_pid integer not null,
+     ready integer not null default 0,
+     retry_at text not null
+   );`,
 ];
 
 export type Db = DatabaseSync;

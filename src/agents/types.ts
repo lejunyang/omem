@@ -26,6 +26,8 @@ export type McpAccess = {
 
 export type AgentRequest = {
   cwd: string;
+  /** Run owning this turn, for cleanup that may outlive the process. */
+  runId?: string | null;
   /** This turn's text. */
   prompt: string;
   /**
