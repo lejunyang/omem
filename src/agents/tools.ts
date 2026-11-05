@@ -921,7 +921,7 @@ def({
     if (a.profile) {
       const p = backends.find((p) => p.id === a.profile);
       if (!p?.installed) throw new HttpError(400, "后端不可用");
-      if (a.refresh || !cachedProbe(ctx.app, p.id)) { const probe = await probeProfile(p); if (!probe.error) saveProbe(ctx.app, p.id, probe); else return JSON.stringify({ profile: p.id, error: probe.error, routing: ctx.app.config.agents.routing }); }
+      if (a.refresh || !cachedProbe(ctx.app, p.id)) { const probe = await probeProfile(p, ctx.app); if (!probe.error) saveProbe(ctx.app, p.id, probe); else return JSON.stringify({ profile: p.id, error: probe.error, routing: ctx.app.config.agents.routing }); }
     }
     const { backendLimitOf, choosableProfiles, limitOf, recentStats, usedOf } = await import("./capacity.ts");
     const choosable = new Set(choosableProfiles(ctx.app).map((p) => p.id));

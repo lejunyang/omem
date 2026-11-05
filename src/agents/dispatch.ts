@@ -1,25 +1,24 @@
 import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
-import { deleteAcpSession, runAcp } from "./acp.ts";
+import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
-import { finishDoubaoCleanup, queueDoubaoCleanup } from "./doubao-cleanup.ts";
+import { retireRecordedSession, sessionCleanup } from "./session-cleanup.ts";
 import { DOUBAO_TOOL_NOTE, runDoubaoCli } from "./doubao-cli.ts";
-import { archiveSession } from "./session-archive.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 /** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
-  if (profile.transport === "acp") return runAcp(profile, req, emit);
+  const disposable = !req.persistSession && !req.resumeSessionId;
+  if (profile.transport === "acp") return runAcp(profile, { ...req, cleanup: await sessionCleanup(app, profile, req, emit) }, emit);
   if (profile.transport === "doubao" || profile.transport === "doubao-cli") {
     // Doubao keeps every conversation in the owner's account: a one-off turn's session is deleted
     // once the turn is over, failed or not (ACP agents do the same with session/delete).
-    const disposable = !req.persistSession && !req.resumeSessionId;
-    const da = disposable ? doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config)) : null;
+    const cleanup = await sessionCleanup(app, profile, req, emit);
     const made = new Set<string>();
     const remember = (id: string) => {
       made.add(id);
-      if (disposable) queueDoubaoCleanup(app, id, profile.transport, profile.env?.DOUBAO_APP_ID ?? da?.appId, req.runId);
+      cleanup.created(id);
     };
     const track = (e: AgentEvent) => {
       if (e.type === "session" && !e.resumed) remember(e.sessionId);
@@ -30,7 +29,7 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
       if (r.sessionId && r.sessionId !== req.resumeSessionId) remember(r.sessionId);
       return r;
     } finally {
-      if (disposable) for (const id of made) await retireSession(app, profile, id, req.cwd, emit);
+      if (disposable) for (const id of made) await cleanup.discard(id);
     }
   }
   // The CLIs take no system prompt here: the instructions open a new session, a resumed one has them
@@ -59,17 +58,11 @@ async function runDoubaoTurn(app: App, profile: AgentProfile, req: AgentRequest,
  */
 export async function retireSession(app: App, profile: AgentProfile, sessionId: string, cwd: string, emit: (e: AgentEvent) => void = () => {}) {
   try {
-    if (profile.transport === "acp") {
-      if (profile.archiveArgs?.length) await archiveSession(profile, sessionId, cwd);
-      else await deleteAcpSession(profile, sessionId, cwd).catch((e) => {
-        if (!/不支持删除会话/.test((e as Error).message)) throw e;
-      });
-      return;
-    }
-    if (profile.transport !== "doubao" && profile.transport !== "doubao-cli") return;
-    const da = doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config));
-    queueDoubaoCleanup(app, sessionId, profile.transport, profile.env?.DOUBAO_APP_ID ?? da?.appId);
-    await finishDoubaoCleanup(app, sessionId, emit);
+    if (!["acp", "doubao", "doubao-cli"].includes(profile.transport)) return;
+    if (await retireRecordedSession(app, sessionId, emit)) return;
+    const cleanup = await sessionCleanup(app, profile, { cwd }, emit);
+    cleanup.created(sessionId);
+    await cleanup.discard(sessionId);
   } catch (e) {
     emit({ type: "status", text: `${profile.transport.startsWith("doubao") ? "豆包" : "后端"}会话清理失败：${(e as Error).message.slice(0, 160)}` });
   }

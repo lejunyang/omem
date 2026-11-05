@@ -1,0 +1,197 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { App } from "../src/core/app.ts";
+import { all, run } from "../src/core/db.ts";
+import { sessionCleanup, recoverSessionCleanup } from "../src/agents/session-cleanup.ts";
+import { saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
+import { saveLarkSecret } from "../src/channels/lark-setup.ts";
+import { testApp } from "./helpers.ts";
+import { agentProfileSchema, saveConfig } from "../src/core/config.ts";
+import { keepSession } from "../src/agents/code-overlap.ts";
+import { createRun } from "../src/agents/runs.ts";
+
+const opened: App[] = [];
+const ok = (data: unknown) => new Response(JSON.stringify({ code: 0, data }));
+const pending = (app: App) => all<{ session_id: string; ready: number; app_id: string }>(app.db, "select * from session_cleanup");
+const due = (app: App) => run(app.db, "update session_cleanup set retry_at = ''");
+function authorized() {
+  const app = testApp(); opened.push(app);
+  app.config.lark.appId = "cli_bot";
+  // The subprocess loads its own config, which must select the same application.
+  saveLarkSecret(app.home, { appId: "cli_bot", appSecret: "s" });
+  saveDoubaoToken(app.home, { appId: "cli_bot", accessToken: "user-token", expiresAt: new Date(Date.now() + 3600_000).toISOString(), savedAt: "" });
+  return app;
+}
+afterEach(() => { setDoubaoFetchForTests(null); for (const app of opened.splice(0)) app.db.close(); });
+
+describe("durable Doubao cleanup", () => {
+  it("migrates an existing Doubao cleanup record into the shared ledger without losing ownership", async () => {
+    const old = authorized();
+    const version = (old.db.prepare("pragma user_version").get() as { user_version: number }).user_version;
+    old.db.exec(`drop table session_cleanup;
+      create table doubao_session_cleanup(session_id text primary key, transport text, app_id text, run_id text, owner_pid integer, ready integer, retry_at text);
+      insert into doubao_session_cleanup values('legacy','doubao-cli','cli_bot',null,1,1,'');
+      pragma user_version = ${version - 1};`);
+    old.db.close(); opened.splice(opened.indexOf(old), 1);
+    const app = App.open(old.home); opened.push(app);
+    expect(pending(app)).toMatchObject([{ session_id: "legacy", app_id: "cli_bot", ready: 1 }]);
+    let deleted = false;
+    setDoubaoFetchForTests(async (_input, init) => {
+      if (init?.method === "DELETE") { deleted = true; return ok({}); }
+      return ok({ session: { status: "idle" } });
+    });
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted).toBe(true);
+    expect(pending(app)).toEqual([]);
+  });
+  it("recovers a session after the owning process exits, waits until idle, then deletes once", async () => {
+    const original = authorized();
+    execFileSync(process.execPath, [resolve("test/session-cleanup-child.ts"), original.home], { timeout: 10000, stdio: "pipe" });
+    expect(pending(original)).toMatchObject([{ session_id: "s-1", ready: 0, app_id: "cli_bot" }]);
+    // A fresh App reads only the persisted state; no live turn or in-memory id survives.
+    const app = App.open(original.home); opened.push(app);
+    let status = "in_progress";
+    const deleted: string[] = [];
+    setDoubaoFetchForTests(async (input, init) => {
+      if (init?.method === "DELETE") { deleted.push(String(input)); return ok({}); }
+      return ok({ session: { status } });
+    });
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted).toEqual([]);
+    expect(pending(app)).toHaveLength(1);
+    status = "idle"; due(app);
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted).toHaveLength(1);
+    expect(pending(app)).toEqual([]);
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted).toHaveLength(1);
+  });
+
+  it("leaves sessions owned by a live turn alone", async () => {
+    const app = authorized();
+    const cleanup = await sessionCleanup(app, { id: "doubao-cli", transport: "doubao-cli", command: "doubao", args: [], env: {}, idleTimeoutMs: 5000 }, { cwd: app.home }, () => {});
+    cleanup.created("live");
+    let calls = 0;
+    setDoubaoFetchForTests(async () => { calls++; return ok({}); });
+    await recoverSessionCleanup(app, () => {});
+    expect(calls).toBe(0);
+    expect(pending(app)).toHaveLength(1);
+  });
+
+  it("retries a failed deletion with the original application after the configured bot changes", async () => {
+    const app = authorized();
+    const cleanup = await sessionCleanup(app, { id: "doubao-cli", transport: "doubao-cli", command: "doubao", args: [], env: {}, idleTimeoutMs: 5000 }, { cwd: app.home }, e => { if (e.type === "status") messages.push(e.text); });
+    cleanup.created("retry");
+    setDoubaoFetchForTests(async () => new Response(JSON.stringify({ code: 500, msg: "unavailable" }), { status: 503 }));
+    const messages: string[] = [];
+    await cleanup.discard("retry");
+    expect(messages.some(m => m.includes("稍后重试"))).toBe(true);
+    expect(pending(app)).toMatchObject([{ session_id: "retry", ready: 1 }]);
+    saveLarkSecret(app.home, { appId: "cli_other", appSecret: "other" });
+    app.config.lark.appId = "cli_other";
+    saveDoubaoToken(app.home, { appId: "cli_other", accessToken: "other-token", expiresAt: new Date(Date.now() + 3600_000).toISOString(), savedAt: "" });
+    const auth: string[] = [];
+    setDoubaoFetchForTests(async (_input, init) => {
+      auth.push((init?.headers as Record<string, string>).authorization);
+      return init?.method === "DELETE" ? ok({}) : ok({ session: { status: "idle" } });
+    });
+    due(app); await recoverSessionCleanup(app, () => {});
+    expect(auth).toEqual(["Bearer user-token", "Bearer user-token"]);
+    expect(pending(app)).toEqual([]);
+  });
+
+  it("forgets an already deleted session, while retaining denied or malformed queries", async () => {
+    const app = authorized();
+    const cleanup = await sessionCleanup(app, { id: "doubao-cli", transport: "doubao-cli", command: "doubao", args: [], env: {}, idleTimeoutMs: 5000 }, { cwd: app.home }, () => {});
+    cleanup.created("gone");
+    run(app.db, "update session_cleanup set ready = 1");
+    for (const response of [() => new Response(JSON.stringify({ code: 403, msg: "denied" }), { status: 403 }), () => ok({})]) {
+      setDoubaoFetchForTests(async () => response());
+      due(app); await recoverSessionCleanup(app, () => {});
+      expect(pending(app)).toHaveLength(1);
+    }
+    setDoubaoFetchForTests(async (_input, init) => {
+      expect(init?.method).toBe("GET");
+      return new Response(JSON.stringify({ code: 3440008, msg: "not found" }), { status: 404 });
+    });
+    due(app); await recoverSessionCleanup(app, () => {});
+    expect(pending(app)).toEqual([]);
+  });
+});
+
+function acpApp(protocol: boolean) {
+  const app = testApp(); opened.push(app);
+  const log = join(app.home, "deleted.txt");
+  const profile = agentProfileSchema.parse({ id: "fake-acp", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], archiveArgs: [resolve("test/fake-session-archive.ts"), protocol ? join(app.home, "fallback.txt") : log], env: { FAKE_MODE: "background", ...(protocol ? { FAKE_DELETE_LOG: log } : {}) } });
+  app.config.agents.profiles = [profile]; saveConfig(app.config, app.home);
+  return { app, profile, deleted: () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [] };
+}
+
+describe("unified ACP cleanup", () => {
+  it("keeps the actual protocol error and retries, without switching to an archive command", async () => {
+    const { app, profile, deleted } = acpApp(true);
+    const failFile = join(app.home, "protocol-busy");
+    profile.env.FAKE_DELETE_FAIL_FILE = failFile;
+    writeFileSync(failFile, "busy");
+    const messages: string[] = [];
+    const cleanup = await sessionCleanup(app, profile, { cwd: app.home }, e => { if (e.type === "status") messages.push(e.text); });
+    cleanup.created("protocol-retry");
+    await cleanup.discard("protocol-retry");
+    expect(messages.some(m => m.includes("session still active"))).toBe(true);
+    expect(existsSync(join(app.home, "fallback.txt"))).toBe(false);
+    expect(pending(app)).toMatchObject([{ ready: 1 }]);
+    rmSync(failFile); due(app);
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual(["protocol-retry"]);
+    expect(pending(app)).toEqual([]);
+  });
+  it.each([true, false])("recovers a crashed host using advertised deletion or configured archive (protocol=%s)", async protocol => {
+    const { app, deleted } = acpApp(protocol);
+    execFileSync(process.execPath, [resolve("test/session-cleanup-child.ts"), app.home, "fake-acp"], { timeout: 10000, stdio: "pipe" });
+    const records = pending(app);
+    expect(records).toHaveLength(1);
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual([records[0].session_id]);
+    expect(existsSync(join(app.home, "fallback.txt"))).toBe(false);
+    expect(pending(app)).toEqual([]);
+  });
+
+  it("keeps retained sessions across process exit, but retires a review session when replaced", async () => {
+    const { app, deleted, profile } = acpApp(true);
+    execFileSync(process.execPath, [resolve("test/session-cleanup-child.ts"), app.home, "fake-acp", "keep"], { timeout: 10000, stdio: "pipe" });
+    const old = pending(app)[0].session_id;
+    expect(pending(app)[0].ready).toBe(-1);
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual([]);
+    const root = createRun(app, { kind: "code", spaceId: "personal", title: "测试评审会话轮换" });
+    keepSession(app, root.id, "reviewer", old, 130000);
+    const next = await sessionCleanup(app, profile, { cwd: app.home, persistSession: true }, () => {});
+    next.created("next-review");
+    keepSession(app, root.id, "reviewer", "next-review", 1000);
+    await vi.waitFor(() => expect(deleted()).toEqual([old]));
+    expect(pending(app)).toMatchObject([{ session_id: "next-review", ready: -1 }]);
+  });
+
+  it("retries archive failures, and refuses a changed executable or account configuration", async () => {
+    const { app, profile, deleted } = acpApp(false);
+    const failFile = join(app.home, "fail-archive");
+    profile.env.FAKE_ARCHIVE_FAIL_FILE = failFile;
+    writeFileSync(failFile, "fail");
+    const cleanup = await sessionCleanup(app, profile, { cwd: app.home }, () => {});
+    cleanup.created("failed");
+    await cleanup.discard("failed");
+    expect(pending(app)).toMatchObject([{ ready: 1 }]);
+    profile.command = "a-different-agent";
+    due(app); await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual([]); // Credentials/config changed; do not act under the new identity.
+    expect(pending(app)).toHaveLength(1);
+    profile.command = process.execPath;
+    rmSync(failFile);
+    // The same operation can succeed later without changing its credentials or executable.
+    due(app); await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual(["failed"]);
+    expect(pending(app)).toEqual([]);
+  });
+});

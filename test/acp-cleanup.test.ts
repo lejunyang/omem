@@ -6,6 +6,7 @@ import { openAcp } from "../src/agents/acp.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { retireSession } from "../src/agents/dispatch.ts";
 import { testApp } from "./helpers.ts";
+import { all } from "../src/core/db.ts";
 
 it("deletes a session whose agent process is gone through a new connection", async () => {
   const log = join(mkdtempSync(join(tmpdir(), "omem-acp-")), "deleted.txt");
@@ -28,7 +29,9 @@ it("retires a thread's replaced ACP session through a connection of its own", as
   const events: string[] = [];
   await retireSession(app, profile, "old-session", process.cwd(), (e) => e.type === "status" && events.push(e.text));
   expect(readFileSync(log, "utf8").trim()).toBe("old-session");
-  // An agent without session/delete: nothing to do, nothing said.
+  expect(events.some(t => t.includes("已清理后端会话"))).toBe(true);
+  // Unsupported cleanup stays recorded and reports why; it must not look successful.
   await retireSession(app, { ...profile, env: { FAKE_MODE: "thread" } }, "other", process.cwd(), (e) => e.type === "status" && events.push(e.text));
-  expect(events).toEqual([]);
+  expect(events.some(t => t.includes("不支持自动清理"))).toBe(true);
+  expect(all(app.db, "select session_id,ready from session_cleanup")).toEqual([{ session_id: "other", ready: 1 }]);
 });

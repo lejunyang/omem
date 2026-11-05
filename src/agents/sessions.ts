@@ -15,6 +15,7 @@ import { autoTurnsSinceOwner, maxAutoTurns, refreshWork } from "./agent-work.ts"
 import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
 import { WAKE_NOTE } from "./wakes.ts";
+import { sessionCleanup } from "./session-cleanup.ts";
 
 /**
  * Agent sessions behind threads. Three levels of continuity, cheapest first:
@@ -304,6 +305,7 @@ ${WAKE_NOTE}`
           prep.profile,
           {
             cwd: prep.cwd,
+            runId: ctx.run.id,
             system: prep.system,
             parts: prep.parts,
             prompt: resume ? `（${stamp(new Date().toISOString())}）\n\n${newPart}` : freshBody(),
@@ -361,6 +363,7 @@ ${WAKE_NOTE}`
           used,
           {
             cwd: curPrep.cwd,
+            runId: ctx.run.id,
             system: curPrep.system,
             parts: curPrep.parts,
             prompt: `（${curPrep.now}）\n\n${newPart}`,
@@ -395,6 +398,7 @@ ${WAKE_NOTE}`
             used,
             {
               cwd: curPrep.cwd,
+              cleanup: await sessionCleanup(app, used, { cwd: curPrep.cwd, runId: ctx.run.id, persistSession: true }, emit),
               mcp: curPrep.mcp,
               extraMcp: curPrep.extraMcp,
               allowWrites: curPrep.allowWrites,
@@ -435,7 +439,7 @@ ${WAKE_NOTE}`
           const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined });
           const handle = await openAcp(
             again.profile,
-            { cwd: again.cwd, mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
+            { cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
             emit,
           );
           l = { threadId, key: stepKey, handle, token: again.token, lastUsed: Date.now(), busy: true };

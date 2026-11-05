@@ -37,6 +37,7 @@ describe("background sessions", () => {
   it("reuses instructions and MCP scope, attributes tools to each run, rotates above 60%", async () => {
     const { app, invoke, deleted } = await setup();
     const first = await invoke();
+    expect(all(app.db, "select session_id,ready from session_cleanup")).toEqual([{ session_id: first.session, ready: 0 }]);
     const second = await invoke({ task: "第二份材料" });
     const third = await invoke();
     const fourth = await invoke();

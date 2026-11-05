@@ -64,7 +64,7 @@ describe("doubao cli", () => {
       await runBackend(app, fake, { cwd: process.cwd(), prompt: "thread", persistSession: true }, () => {});
       await runBackend(app, fake, { cwd: process.cwd(), prompt: "again", resumeSessionId: "s-7" }, () => {});
       expect(deleted).toEqual(["s-1"]);
-      expect(all(app.db, "select * from doubao_session_cleanup")).toEqual([]);
+      expect(all(app.db, "select * from session_cleanup where ready >= 0")).toEqual([]);
       // A failed turn's conversation goes too.
       await expect(runBackend(app, fake, { cwd: process.cwd(), prompt: "fail-after-session" }, () => {})).rejects.toThrow();
       expect(deleted).toEqual(["s-1", "s-1"]);

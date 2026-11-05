@@ -4,7 +4,7 @@ import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
 import { isQuotaMessage } from "./capacity.ts";
-import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
+import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult, type SessionCleanup } from "./types.ts";
 
 // Provider queue text shown as a normal message by some CLIs (traex included).
 const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
@@ -24,6 +24,7 @@ function optionValues(option: SessionConfigOption): string[] {  if (option.type 
 
 export type AcpOpenOptions = {
   cwd: string;
+  cleanup?: SessionCleanup;
   mcp?: AgentRequest["mcp"];
   extraMcp?: AgentRequest["extraMcp"];
   allowWrites?: boolean;
@@ -85,6 +86,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   let text = "";
   let contextUsage: AgentResult["contextUsage"];
   let sessionId = "";
+  let discard: (() => Promise<void>) | undefined;
   // Text between tool calls; the last segment is the reply proper (see replyFromSegments).
   let segments: string[] = [""];
   // Whether the model produced anything real (text, thought, tool call) in the current turn.
@@ -292,32 +294,34 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       session = (await Promise.race([connection.newSession({ cwd: opts.cwd, mcpServers, ...system }), failed])) as SessionInfo;
       sessionId = session.sessionId!;
     }
-    // Recorded with the run, so a run that fails halfway can still be continued (retry).
-    if (!opts.probe) emitSetup({ type: "session", sessionId, resumed });
-    touch();
-    // Permission mode: prefer the role's choice when the agent offers it.
+    opts.cleanup?.created(sessionId);
     let disposal: Promise<void> | undefined;
-    const discard = () => disposal ??= (async () => {
+    discard = () => disposal ??= (async () => {
       let timer: NodeJS.Timeout | undefined;
       try {
-        if (!resumed && !caps?.sessionCapabilities?.delete && profile.archiveArgs?.length) {
-          close();
-          await archiveSession(profile, sessionId, opts.cwd, opts.env);
-        } else if (caps?.sessionCapabilities?.delete && !resumed) {
-          // A cancelled/failed prompt has already rejected `failed`; cleanup has its own budget.
-          // The agent keeps sessions on disk, so one whose process has gone (or whose connection
-          // closed while it sat idle in the background pool) is deleted through a new connection.
-          const here = dead ? Promise.reject(new Error("ACP connection closed")) : connection.deleteSession({ sessionId });
-          await Promise.race([here, new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error("会话清理超时")), 5000);
-          })]).catch(async (e) => {
-            if (!dead && !/connection closed|EPIPE|ECONNRESET|会话清理超时/i.test((e as Error).message)) throw e;
+        const operation = async () => {
+          if (resumed) return;
+          if (!caps?.sessionCapabilities?.delete && profile.archiveArgs?.length) {
             close();
-            await deleteAcpSession(profile, sessionId, opts.cwd, { ...opts.mcp?.env, ...opts.env });
-          });
-        } else if (!resumed && !caps?.sessionCapabilities?.delete && !opts.probe) {
-          emitSetup({ type: "status", text: "该后端不支持自动清理会话，历史可能仍显示在后端列表中" });
-        }
+            await archiveSession(profile, sessionId, opts.cwd, opts.env);
+          } else if (caps?.sessionCapabilities?.delete) {
+            // A cancelled/failed prompt has already rejected `failed`; cleanup has its own budget.
+            // The agent keeps sessions on disk, so one whose process has gone (or whose connection
+            // closed while it sat idle in the background pool) is deleted through a new connection.
+            const here = dead ? Promise.reject(new Error("ACP connection closed")) : connection.deleteSession({ sessionId }).catch(e => { throw promptError(e); });
+            await Promise.race([here, new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("会话清理超时")), 5000);
+            })]).catch(async (e) => {
+              if (!dead && !/connection closed|EPIPE|ECONNRESET|会话清理超时/i.test((e as Error).message)) throw e;
+              close();
+              await deleteAcpSession(profile, sessionId, opts.cwd, { ...opts.mcp?.env, ...opts.env });
+            });
+          } else {
+            throw new Error("该后端不支持自动清理会话，历史可能仍显示在后端列表中");
+          }
+        };
+        if (opts.cleanup && !resumed) await opts.cleanup.discard(sessionId, operation);
+        else await operation();
       } catch (e) {
         emitSetup({ type: "status", text: `后端会话清理失败：${(e as Error).message.slice(0, 120)}` });
       } finally {
@@ -325,6 +329,10 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         close();
       }
     })();
+    // Persist ownership before events or setup choices can fail or the host can exit.
+    if (!opts.probe) emitSetup({ type: "session", sessionId, resumed });
+    touch();
+    // Permission mode: prefer the role's choice when the agent offers it.
     const modes = session.modes?.availableModes ?? [];
     const wanted = pickMode(opts.modes ?? [], modes.map((m) => m.id));
     if (wanted && session.modes?.currentModeId !== wanted) await Promise.race([connection.setSessionMode({ sessionId, modeId: wanted }), failed]);
@@ -391,7 +399,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       system: "systemPrompt" in system,
       alive: () => !dead,
       close,
-      discard,
+      discard: discard!,
       async prompt(promptText, turnEmit, signal) {
         if (dead) throw new Error("Agent 进程已结束");
         if (busy) throw new Error("这个 Agent 会话正在处理上一条消息");
@@ -484,6 +492,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     };
   } catch (error) {
     setupWatch.close();
+    await discard?.();
     close();
     throw explain(error, profile);
   }
@@ -537,8 +546,8 @@ export async function deleteAcpSession(profile: AgentProfile, sessionId: string,
     await Promise.race([
       (async () => {
         const init = await connection.initialize({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "omem", version: "0.2.0" } });
-        if (!(init.agentCapabilities as { sessionCapabilities?: { delete?: unknown } } | undefined)?.sessionCapabilities?.delete) throw new Error("该后端不支持删除会话");
-        await connection.deleteSession({ sessionId });
+        if (!(init.agentCapabilities as { sessionCapabilities?: { delete?: unknown } } | undefined)?.sessionCapabilities?.delete) throw Object.assign(new Error("该后端不支持自动清理会话：未声明 session/delete"), { unsupportedCleanup: true });
+        await connection.deleteSession({ sessionId }).catch(e => { throw promptError(e); });
       })(),
       exited,
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("会话清理超时")), 30_000); }),
@@ -549,11 +558,20 @@ export async function deleteAcpSession(profile: AgentProfile, sessionId: string,
   }
 }
 
+/** Negotiate protocol deletion first; an archive command is only a fallback for unsupported agents. */
+export async function cleanupAcpSession(profile: AgentProfile, sessionId: string, cwd: string) {
+  try { await deleteAcpSession(profile, sessionId, cwd); }
+  catch (e) {
+    if (!(e as { unsupportedCleanup?: boolean }).unsupportedCleanup || !profile.archiveArgs?.length) throw e;
+    await archiveSession(profile, sessionId, cwd);
+  }
+}
+
 /** One prompt turn against an ACP agent (Codex/TraeX/Claude Code adapters…). */
 export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const onAbort = () => {};
   req.signal?.addEventListener("abort", onAbort, { once: true });
-  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const handle = await openAcp(profile, { cwd: req.cwd, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");

@@ -19,6 +19,7 @@ import { replyOf } from "./types.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
 import { OWNER } from "../core/users.ts";
+import { retireRecordedSession } from "./session-cleanup.ts";
 import { linkRunToItem, materialSpaces, materialsBrief } from "../items/materials.ts";
 import { getItem } from "../items/store.ts";
 
@@ -480,6 +481,7 @@ ${input.task}
   }
   async function code() {
     let resumeCoder = (input as { resumeSessionId?: string }).resumeSessionId;
+    const previousSession = resumeCoder;
     const previousId = chain?.rounds.filter((id) => id !== run.id).at(-1);
     if (resumeCoder && previousId) {
       const previous = getRun(app, previousId);
@@ -552,6 +554,8 @@ ${input.task}
         ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
         coder = await runCoder(freshTask);
       }
+      if (previousSession && coder.sessionId && previousSession !== coder.sessionId)
+        await retireRecordedSession(app, previousSession, e => ctx.event(e.type, { ...e, phase: "coder" }));
       // What the owner added while it worked and it did not pick up at an omem tool call: one more turn
       // in the same session, before the checks (code-steer.ts).
       reply = replyOf(coder);

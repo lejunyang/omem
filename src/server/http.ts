@@ -96,8 +96,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.addHook("onClose", async () => {
     const { releaseBackgroundSessions } = await import("../agents/background-sessions.ts");
     await releaseBackgroundSessions(app);
-    const { stopDoubaoCleanup } = await import("../agents/doubao-cleanup.ts");
-    await stopDoubaoCleanup(app);
+    const { stopSessionCleanup } = await import("../agents/session-cleanup.ts");
+    await stopSessionCleanup(app);
   });
   await server.register(fastifyMultipart, { limits: { fileSize: 200 * 1024 * 1024 } });
 
@@ -2075,7 +2075,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const body = req.body as { refresh?: boolean } | undefined;
     const cached = cachedProbe(app, id);
     if (cached && !body?.refresh) return { ...cached, cached: true };
-    const probe = await probeProfile(p);
+    const probe = await probeProfile(p, app);
     if (!probe.error) saveProbe(app, id, probe);
     return probe;
   });

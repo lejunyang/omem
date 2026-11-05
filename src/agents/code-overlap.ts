@@ -18,6 +18,7 @@ import { runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, getRun, runUser, setRunOutput, trackAbort, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
 import { replyOf, type AgentEvent } from "./types.ts";
+import { retireRecordedSession } from "./session-cleanup.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 import { workDirOf } from "./workspaces.ts";
 
@@ -62,6 +63,9 @@ export function keepSession(app: App, rootId: string, check: string, id: string 
   if (!id) return;
   const w = workState(app, rootId);
   setWorkState(app, rootId, { sessions: { ...(w.sessions ?? {}), [check]: { id, ...(used !== undefined ? { used } : {}) } } });
+  const old = w.sessions?.[check];
+  if (old && old.id !== id) void retireRecordedSession(app, old.id, e => addRunEvent(app, rootId, e.type, e))
+    .catch(e => console.warn("[omem] 登记旧评审会话清理失败：", (e as Error).message));
 }
 
 const aiText = (ai?: { profile: string; model?: string }) => (ai ? [ai.profile, ai.model].filter(Boolean).join(" · ") : "");

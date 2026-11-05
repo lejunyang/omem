@@ -1366,6 +1366,23 @@ const migrations: string[] = [
      ready integer not null default 0,
      retry_at text not null
    );`,
+  `create table session_cleanup (
+     backend_key text not null,
+     session_id text not null,
+     transport text not null,
+     profile_id text,
+     fingerprint text,
+     app_id text,
+     cwd text not null default '',
+     run_id text,
+     owner_pid integer not null,
+     ready integer not null default 0,
+     retry_at text not null,
+     primary key (backend_key, session_id)
+   );
+   insert into session_cleanup(backend_key,session_id,transport,app_id,run_id,owner_pid,ready,retry_at)
+     select 'doubao:' || coalesce(app_id,''),session_id,transport,app_id,run_id,owner_pid,ready,retry_at from doubao_session_cleanup;
+   drop table doubao_session_cleanup;`,
 ];
 
 export type Db = DatabaseSync;
