@@ -155,11 +155,13 @@ async function act(action: "apply" | "discard") {
     toast((e as Error).message, "error");
   }
 }
+const moveMode = ref<"merge" | "rebase">("merge");
+const targetSyncModes = [{ value: "merge" as const, label: "合并（merge）" }, { value: "rebase" as const, label: "变基（rebase）" }];
 async function moveToTarget() {
   if (!run.value) return;
-  if (!(await confirmDialog("移到目标分支的最新提交？", { message: "会开新的一轮：把这次的改动（和同步的提交）变基到目标分支现在的最新提交上，冲突先交给编码 Agent，解决不了会问你。改动没变就沿用这一轮的评审。", okText: "开始" }))) return;
+  if (!(await confirmDialog("移到目标分支的最新提交？", { message: `${moveMode.value === "merge" ? "将目标分支最新提交合并到工作区，集中处理合并冲突，保留合并提交。" : "逐个重放提交到目标最新版本，历史较长时可能反复处理冲突。"}目标已被工作区包含时直接跳过。冲突先交给编码 Agent，解决不了会问你；改动没变就沿用评审。`, okText: "开始" }))) return;
   try {
-    const r = await post<{ id: string }>(`/api/runs/${run.value.id}/move-to-target`);
+    const r = await post<{ id: string }>(`/api/runs/${run.value.id}/move-to-target`, { mode: moveMode.value });
     toast("已安排，完成后再应用", "ok");
     emit("open", r.id);
   } catch (e) {
@@ -207,6 +209,7 @@ function explain(p: ChangePoint) {
         <span class="spacer" />
         <button v-if="peerWaiting" class="btn sm" title="不等外部 Agent：这一轮的任务交给这台机器的编码 Agent，评审也在这里做" @click="codeHere"><Icon name="refresh" :size="13" />改用这台机器的 AI 编码</button>
         <button v-if="canApply" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
+        <UiSelect v-if="canApply" v-model="moveMode" :options="targetSyncModes" size="sm" width="auto" aria-label="同步目标分支的方式" />
         <button v-if="canApply" class="btn sm" title="目标分支在交办后有了新提交、应用不上时：把改动移到它的最新提交上（冲突交给编码 Agent）" @click="moveToTarget">移到目标分支最新提交</button>
         <button v-if="run.status === 'done' && !out.appliedAt && !out.discardedAt" class="btn sm danger" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
         <OpenInIde :key="`${run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${run.status}`" :run-id="run.id" :space-name="spaceName" />

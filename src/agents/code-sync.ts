@@ -220,17 +220,23 @@ async function syncSteps(root: string, wt: WorktreeRef, req: SyncRequest, resolv
 export const hasSyncStash = (path: string) => git(path, ["stash", "list", "--format=%s"]).stdout.includes(STASH);
 
 /**
- * Move the run's work onto the target branch's latest commit: the uncommitted change is committed
- * for the move, everything since the old start is rebased, and the change is put back as staged
- * (the patch to apply). Sync commits, if any, stay commits above the new start.
+ * Merge the latest target into the run by default, preserving uncommitted work. Explicit rebase
+ * replays from the actual shared ancestor and puts the temporary WIP commit back as staged changes.
  */
-export async function moveToTarget(root: string, wt: WorktreeRef, resolver: Resolver) {
+export async function moveToTarget(root: string, wt: WorktreeRef, resolver: Resolver, mode: SyncMode = "merge") {
   if (!wt.targetBranch) throw new HttpError(400, `${wt.space} 没有目标分支，不能移到最新提交上`);
   const tip = resolveRef(root, `refs/heads/${wt.targetBranch}`);
   if (!tip) throw new HttpError(404, `找不到目标分支 ${wt.targetBranch}`);
   const path = wt.path;
-  const oldStart = wt.start ?? wt.base;
-  if (tip.commit === oldStart) return { moved: false as const, stopped: null };
+  const at = head(path);
+  // A stale recorded start must not replay history already included in the work branch.
+  if (git(path, ["merge-base", "--is-ancestor", tip.commit, at]).ok) return { moved: false as const, stopped: null };
+  if (mode === "merge") {
+    const r = await syncWorktree(root, wt, { onto: tip.commit, mode, fetch: false }, resolver, () => {});
+    return { moved: true as const, stopped: r.stopped, start: tip.commit, conflicts: [...new Set(r.steps.flatMap(s => s.conflicts))] };
+  }
+  const shared = git(path, ["merge-base", at, tip.commit]);
+  if (!shared.ok || !shared.stdout.trim()) throw new HttpError(409, `${wt.targetBranch} 与工作分支没有可确认的共同祖先，不能自动迁移`);
   git(path, ["add", "-A"]);
   const wip = !!git(path, ["diff", "--cached", "--name-only", "HEAD"]).stdout.trim();
   if (wip) {
@@ -238,7 +244,7 @@ export async function moveToTarget(root: string, wt: WorktreeRef, resolver: Reso
     if (!c.ok) throw new HttpError(409, `暂存改动失败：${c.stderr.slice(0, 600)}`);
   }
   const conflicts: string[] = [];
-  const r = git(path, [...identity(path), "rebase", "--rebase-merges", "--onto", tip.commit, oldStart]);
+  const r = git(path, [...identity(path), "rebase", "--rebase-merges", "--onto", tip.commit, shared.stdout.trim()]);
   if (!r.ok && !syncInProgress(path)) throw new HttpError(409, `移到 ${wt.targetBranch} 最新提交失败：${(r.stderr || r.stdout).slice(0, 600)}`);
   const left = await finishSync(path, `移到 ${wt.targetBranch} 最新提交`, resolver, conflicts);
   if (left) return { moved: true as const, stopped: left, wip, start: tip.commit, conflicts };

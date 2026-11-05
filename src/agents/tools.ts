@@ -3366,6 +3366,7 @@ def({
     new_item: z.boolean().optional().describe("按修改项推进的交办：本人提了一件新的、能单独验证的修改时 true，记成修改项；只是让它接着推进、提醒注意什么、告诉它环境已经好了时不填，作为下一轮的交代交给编码 Agent"),
     sync: syncSchema.optional().describe("这一轮编码前先做的 Git 同步（如先合并最新的 main）；工作区里未提交的改动会先收起、同步后放回"),
     onto_latest_target: z.boolean().optional().describe("只把改动移到目标分支的最新提交上（目标分支有了新提交、应用失败时用），task 可简单写原因；冲突交给编码 Agent，解决不了会问本人"),
+    onto_latest_target_mode: z.enum(["merge", "rebase"]).optional().describe("配合 onto_latest_target：默认 merge，集中处理合并冲突；本人要求逐提交重放时才选 rebase"),
     apply_first: z.boolean().optional().describe("本人说“先应用到原分支再继续改”时 true：上一轮的改动先应用到目标分支，这一轮在同一个工作区接着改"),
     ...roundReviewSchema,
   }),
@@ -3395,7 +3396,7 @@ def({
       return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，这一轮结束后接着做"}。`;
     }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
-    const extraInput = a.onto_latest_target ? { moveToTarget: true } : a.sync ? { sync: a.sync } : undefined;
+    const extraInput = a.onto_latest_target ? { moveToTarget: true, moveToTargetMode: a.onto_latest_target_mode ?? "merge" } : a.sync ? { sync: a.sync } : undefined;
     const roundReview = await roundReviewOf(ctx, a);
     if (a.apply_first) (await import("./code.ts")).applyCodeRun(ctx.app, last.id, { keepWorking: true });
     const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution, roundReview, extraInput });

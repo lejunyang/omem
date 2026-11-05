@@ -369,11 +369,13 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
 const branchWork = computed(() => !branchReview.value && ((out.value.worktrees ?? []) as { commits?: boolean }[]).some((w) => w.commits));
 /** Commits a sync added (a merge, a pull), applied by fast-forward even without a patch. */
 const syncCommits = computed(() => ((out.value.worktrees ?? []) as { syncHead?: string }[]).some((w) => w.syncHead));
+const moveMode = ref<"merge" | "rebase">("merge");
+const targetSyncModes = [{ value: "merge" as const, label: "合并（merge）" }, { value: "rebase" as const, label: "变基（rebase）" }];
 async function moveToTarget() {
   if (!detail.value) return;
-  if (!(await confirmDialog("移到目标分支的最新提交？", { message: "会开新的一轮：把这次的改动（和同步的提交）变基到目标分支现在的最新提交上，冲突先交给编码 Agent，解决不了会问你。改动没变就沿用这一轮的评审。", okText: "开始" }))) return;
+  if (!(await confirmDialog("移到目标分支的最新提交？", { message: `${moveMode.value === "merge" ? "将目标分支最新提交合并到工作区，集中处理合并冲突，保留合并提交。" : "逐个重放提交到目标最新版本，历史较长时可能反复处理冲突。"}目标已被工作区包含时直接跳过。冲突先交给编码 Agent，解决不了会问你；改动没变就沿用评审。`, okText: "开始" }))) return;
   try {
-    const r = await post<{ id: string }>(`/api/runs/${detail.value.run.id}/move-to-target`);
+    const r = await post<{ id: string }>(`/api/runs/${detail.value.run.id}/move-to-target`, { mode: moveMode.value });
     toast("已安排，完成后再应用", "ok");
     router.push(`/runs/${r.id}`);
   } catch (e) {
@@ -511,12 +513,13 @@ const kindOptions = computed(() => [
             </template>
           </div>
           <p v-if="detail.run.waiting" class="muted small waiting" title="omem 自己的排队：开始运行时才选定后端和模型">排队中：{{ detail.run.waiting }}。开始运行时才选定后端和模型；后端自己的排队会在开始后的过程里显示。</p>
-          <div class="row">
+          <div class="row wrap">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
             <button v-if="detail.run.kind === 'code' && detail.run.status === 'done' && out.verdict === 'awaiting-peer-code' && !out.appliedAt && !out.discardedAt" class="btn sm" title="不等外部 Agent：这一轮的任务交给这台机器的编码 Agent，评审也在这里做" @click="codeHere"><Icon name="refresh" :size="13" />改用这台机器的 AI 编码</button>
             <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && (detail.patches?.length || syncCommits) && !out.appliedAt && !out.discardedAt && out.verdict !== 'sync-conflict'">
               <button v-if="!branchReview && !branchWork" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
+              <UiSelect v-if="!branchReview && !branchWork" v-model="moveMode" :options="targetSyncModes" size="sm" width="auto" aria-label="同步目标分支的方式" />
               <button v-if="!branchReview && !branchWork" class="btn sm" title="目标分支在交办后有了新提交、应用不上时：把改动移到它的最新提交上（冲突交给编码 Agent）" @click="moveToTarget">移到目标分支最新提交</button>
               <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : branchWork ? '归还工作区；这次交办新建、没推送的分支一起删掉' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
             </template>

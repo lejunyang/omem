@@ -1285,10 +1285,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   // The target branch moved since the work began: redo the work on its latest commit (code-sync.ts).
   server.post("/api/runs/:id/move-to-target", async (req) => {
+    const body = q(z.object({ mode: z.enum(["merge", "rebase"]).default("merge") }), req.body ?? {});
     const id = (req.params as { id: string }).id;
     const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
-    return (await import("../agents/code.ts")).queueMoveToTarget(app, id, who(req));
+    return (await import("../agents/code.ts")).queueMoveToTarget(app, id, who(req), body.mode);
   });
   server.post("/api/runs/:id/discard", async (req) => {
     discardCodeRun(app, (req.params as { id: string }).id);
