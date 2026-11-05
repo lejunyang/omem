@@ -269,6 +269,11 @@ function autosize(e: Event) {
   font-size: 28px;
   margin-bottom: 10px;
 }
+/* Grid items keep their content width unless told otherwise: a long path or a wide code block would push past the column. */
+.thread > *,
+.msg.bot > * {
+  min-width: 0;
+}
 .msg.user {
   display: flex;
   justify-content: flex-end;
@@ -280,6 +285,7 @@ function autosize(e: Event) {
   padding: 9px 14px;
   max-width: 85%;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-size: 15px;
 }
 .msg.bot {

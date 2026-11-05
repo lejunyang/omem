@@ -52,7 +52,7 @@ export async function logout() {
 
 let asking: Promise<string | null> | null = null;
 async function askToken() {
-  asking ??= promptDialog("需要访问令牌", { message: "从其他设备打开 omem 需要令牌：在运行 omem 的机器上执行 omem user token owner。", placeholder: "令牌", okText: "保存" }).finally(() => (asking = null));
+  asking ??= promptDialog("需要访问令牌", { message: "这台 omem 没有打开多人登录，从其他设备打开要令牌：在运行 omem 的机器上执行 omem user token owner。想用飞书登录，先在这台机器或配对过的设备（omem peer open）上打开 设置 → 成员 → 打开多人登录。", placeholder: "令牌", okText: "保存" }).finally(() => (asking = null));
   const t = (await asking)?.trim();
   if (!t) return false;
   try {

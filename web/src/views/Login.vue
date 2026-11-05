@@ -94,7 +94,7 @@ onMounted(async () => {
 
       <template v-else-if="!s.login.enabled">
         <h2>需要访问令牌</h2>
-        <p class="muted">这台 omem 没有打开多人登录。从其他设备打开需要令牌：在运行 omem 的机器上执行 <span class="mono">omem user token owner</span>。</p>
+        <p class="muted">这台 omem 没有打开多人登录。从其他设备打开需要令牌：在运行 omem 的机器上执行 <span class="mono">omem user token owner</span>。想用飞书登录，先在这台机器或配对过的设备（<span class="mono">omem peer open</span>）上打开 设置 → 成员 → 打开多人登录。</p>
         <div class="row"><button class="btn primary" @click="useToken">输入令牌</button></div>
       </template>
 
