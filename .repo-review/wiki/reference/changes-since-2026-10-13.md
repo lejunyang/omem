@@ -1410,3 +1410,9 @@ updated: 2026-11-05
 - 用到的地方：`permissions.ts`（成员跟着业务空间）、`code.ts`（`homeSpace`、`codeRepos` 用业务空间代替唯一的仓库）、`tools.ts`（`search` 写业务空间时带上仓库、`connect_repository` 的 `parent`、`list_spaces` 缩进）、`http.ts`（建空间带 `parent`、`/parent`、`/repo-suggestions`、网页交办记账、检索 / 运行 / 编码列表按业务空间）、CLI `omem space parent`、`--parent`。
 - 网页：`lib/spaces.ts`（排序与选择器选项，`UiSelect` 加 `indent`）、设置页的“仓库”一栏和“所属业务空间”、原件页的仓库入口。
 - 测试：`test/space-repos.test.ts`。
+
+## 2026-11-06：助手读消息附件
+
+- 起因：别的机器人在群里发了 CSV，助手用 `lark_read` 跑 `im +messages-resources-download`，lark-cli 把它标为写操作（它写本地文件），被拒；其实采集时已经把这个 CSV 存成了原件，只是助手用原始的 `lark_read` 读话题，看不到原件链接。
+- 新文件 `src/channels/lark-message-files.ts`：`messageFile` 按 `lark_messages.resources` 找已有原件；没有就用 `messageResourceFile`（本人 lark-cli 的 `+messages-mget --download-resources`，退回机器人）下载，按真名导入群所在的空间（uri `lark:<群>/<消息>/<key>/<名字>`），记回 `sourceId` 和 `parse.status = done`；没采集过的消息先用 `+messages-mget` 读出所在的群。范围：群所在的空间在运行的读取范围里，或群是这次运行自己的群。视频和音频只给文件；解析不了的格式给文件路径和原因。`resourceDownload` 认 `lark_read` 的下载命令。
+- 工具 `lark_message_file`（分组 lark-msg，说明在 `skills/omem/references/lark.md` 的“附件”）；`lark_read` 遇到下载命令改走它。

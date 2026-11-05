@@ -44,6 +44,8 @@ omem 每周列出本人能看到的全部飞书知识库，交给 kb-scout 角�
 
 ## 附件
 
+- 消息里的附件（别人发来的 CSV、表格、图片）用 `lark_message_file(message_id, file_key?)`：采集时已经存成原件的直接给原件 id，没下载过的先下载并存进这个群的空间，再用 `read_source` 读。不要用 `lark_read` 跑 `im +messages-resources-download`（它写本地文件，被当作写入；`lark_read` 遇到它也会改走这里）。视频和音频只保存文件，omem 不转写、不抽帧，读不到内容。
+
 - 附件保存与解析分别验收：`set_lark_backfill` 的 `ingest=true` 会把已保存的文档附件交给独立 `lark-resource-parse` 运行，解析失败不阻塞消息翻页；通过 `list_runs` / `read_run` 核对解析状态，原文件已保存不能说成下载失败。重试解析使用原文件，不重置消息回溯。
 - 视频本体是必需资源，封面可选；正文中的外链图片副本不计入原群附件缺失。
 - 消息覆盖、原文件保存、解析和知识整理分别报告；已经提交的批次由后台继续，不为等待分页反复交办。

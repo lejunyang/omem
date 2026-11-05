@@ -3172,6 +3172,29 @@ def({
 
 const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后的参数，如 [\"sheets\", \"+cells-get\", \"--url\", \"https://…/sheets/xxx\", \"--range\", \"A1:D20\"]；不写 lark-cli 本身，不写 --as");
 
+/** A message's attachment as omem keeps it (channels/lark-message-files.ts), in words the agent acts on. */
+async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
+  const { messageFile } = await import("../channels/lark-message-files.ts");
+  const f = await messageFile(ctx.app, messageId, key, { space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id) });
+  if (f.sourceId) {
+    await requireReadable(ctx.app, ctx.userId ?? OWNER, f.sourceId);
+    const s = getSource(ctx.app, f.sourceId);
+    return s.kind === "image"
+      ? `「${f.name}」是图片，已保存为原件 src:${f.sourceId}。read_source 给出原始文件的路径，用你的图片工具看。`
+      : `「${f.name}」已保存为原件 src:${f.sourceId}，用 read_source(source="${f.sourceId}") 读正文；引用时写 src:${f.sourceId}。`;
+  }
+  if (f.media) return `「${f.name}」是视频或音频：omem 只保存了文件（${f.path}），不转写、不抽帧，读不到里面说了什么或画面内容；需要的话请发的人给文字说明。`;
+  return `「${f.name}」已下载到 ${f.path}，omem 读不了它的正文${f.unreadable ? `（${f.unreadable}）` : ""}；可以用你自己的工具打开这个文件。`;
+}
+
+def({
+  name: "lark_message_file",
+  description:
+    "读飞书消息里的附件（文件、图片、视频、音频）：给出 omem 保存的那一份。采集时已经存成原件的直接给原件 id；还没下载过的先下载，存进这个群所在的空间再给。message_id 填 om_ 开头的消息 id；一条消息有几个附件时用 file_key（file_ 或 img_ 开头）指定。拿到原件 id 后用 read_source 读正文；视频和音频只保存文件，读不到内容。lark-cli 的 im +messages-resources-download 会写本地文件，lark_read 里也会改走这里。",
+  schema: z.object({ message_id: z.string().regex(/^om_[\w-]+$/, "message_id 是 om_ 开头的飞书消息 id"), file_key: z.string().regex(/^(file|img)_[\w-]+$/).optional() }),
+  handler: (ctx, a) => messageFileText(ctx, a.message_id, a.file_key),
+});
+
 def({
   name: "lark_read",
   description:
@@ -3179,6 +3202,9 @@ def({
   schema: z.object({ command: larkCommand }),
   handler: async (ctx, a) => {
     ownerOnly(ctx);
+    // Saving a message's attachment is a write to lark-cli (it writes a file): omem's own copy instead.
+    const download = (await import("../channels/lark-message-files.ts")).resourceDownload(a.command);
+    if (download) return messageFileText(ctx, download.messageId, download.key);
     const c = await import("../channels/lark-cli-tools.ts");
     return c.larkRead(ctx.app, a.command);
   },
