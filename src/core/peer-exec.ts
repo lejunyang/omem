@@ -318,6 +318,8 @@ export const peerCommands: Record<string, Command> = {
         events: main.events,
         callbacks: main.callbacks,
         reactionsQuiet: main.reactionsQuiet,
+        // What people connecting their own Feishu need and the app lacks (main app only).
+        ...(main.members ? { members: main.members } : {}),
         others: bots.filter((b) => b.ref !== a.bot).map((b) => ({ ref: b.ref, name: b.name, error: b.error, missing: b.scopes.missing, eventsMissing: b.events.missing.map((e) => e.name) })),
       };
       if (a.scan) out.scan = await updateLarkBotByScan(app, a.bot);
