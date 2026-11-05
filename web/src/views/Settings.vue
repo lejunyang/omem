@@ -36,6 +36,7 @@ const schedules = ref<Schedule[]>([]);
 const next = ref<Record<string, string | null>>({});
 const labels = ref<Record<string, string>>({});
 const newSpace = ref({ name: "", kind: "project", rootPath: "", description: "" });
+const creatingSpace = ref(false);
 const editing = ref<Space | null>(null);
 const guide = ref("");
 const profileJson = ref("");
@@ -234,13 +235,18 @@ async function saveConfig(partial: Record<string, unknown>, note = "已保存") 
   }
 }
 async function createSpace() {
+  if (creatingSpace.value) return;
+  creatingSpace.value = true;
+  const input = { ...newSpace.value, rootPath: newSpace.value.rootPath.trim() };
   try {
-    await post("/api/spaces", { name: newSpace.value.name, kind: newSpace.value.kind, rootPath: newSpace.value.rootPath || undefined, description: newSpace.value.description });
-    toast(newSpace.value.rootPath ? "已创建，正在导入目录" : "已创建空间", "ok");
+    await post("/api/spaces", { ...input, rootPath: input.rootPath || undefined });
+    toast(input.rootPath ? "已创建，正在导入目录" : "已创建空间", "ok");
     newSpace.value = { name: "", kind: "project", rootPath: "", description: "" };
     await loadSpaces();
   } catch (e) {
     toast((e as Error).message, "error");
+  } finally {
+    creatingSpace.value = false;
   }
 }
 async function openSpace(s: Space) {
@@ -598,15 +604,20 @@ async function saveEdit() {
           </div>
         </div>
       </div>
-      <form class="card pad stack" @submit.prevent="createSpace">
+      <form class="card pad stack" :aria-busy="creatingSpace" @submit.prevent="createSpace">
         <strong>新建空间</strong>
         <div class="grid2">
-          <label class="field"><span>名称</span><input v-model="newSpace.name" class="input" required placeholder="例如：项目A、英语学习、omem 仓库" /></label>
-          <div class="field"><span>类型</span><UiSelect v-model="newSpace.kind" aria-label="空间类型" :options="[{ value: 'project', label: '项目' }, { value: 'repo', label: '代码仓库' }, { value: 'learning', label: '学习' }, { value: 'topic', label: '通用' }]" /></div>
+          <label class="field"><span>名称</span><input v-model="newSpace.name" class="input" required :disabled="creatingSpace" placeholder="例如：项目A、英语学习、omem 仓库" /></label>
+          <div class="field"><span>类型</span><UiSelect v-model="newSpace.kind" aria-label="空间类型" :disabled="creatingSpace" :options="[{ value: 'project', label: '项目' }, { value: 'repo', label: '代码仓库' }, { value: 'learning', label: '学习' }, { value: 'topic', label: '通用' }]" /></div>
         </div>
-        <label class="field"><span>关联目录（代码仓库或文档目录，可选）</span><input v-model="newSpace.rootPath" class="input mono" placeholder="E:\Projects\omem 或 /home/me/code/app" /><span class="hint">填写后会导入目录下的文本文件（遵守 .gitignore），之后可同步更新。</span></label>
-        <label class="field"><span>说明</span><input v-model="newSpace.description" class="input" placeholder="这个空间收什么、给谁读" /></label>
-        <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!newSpace.name">创建</button></div>
+        <label class="field">
+          <span>{{ newSpace.kind === 'repo' ? '仓库目录或 Git 地址（可选）' : '关联目录（代码仓库或文档目录，可选）' }}</span>
+          <input v-model="newSpace.rootPath" class="input mono" :disabled="creatingSpace" :placeholder="newSpace.kind === 'repo' ? 'https://example.com/team/app.git 或 /home/me/code/app' : 'E:\\Projects\\app 或 /home/me/code/app'" />
+          <span v-if="newSpace.kind === 'repo'" class="hint">自动识别本地目录和 HTTP(S) / SSH Git 地址。Git 地址会克隆到 omem 数据目录的 repos/；私有仓库使用服务器已有的 Git/SSH 凭据，链接里不要填密码或令牌。</span>
+          <span class="hint">本地目录填运行 omem 的机器上已有的绝对路径。创建后导入文本文件（遵守 .gitignore），之后可同步更新。</span>
+        </label>
+        <label class="field"><span>说明</span><input v-model="newSpace.description" class="input" :disabled="creatingSpace" placeholder="这个空间收什么、给谁读" /></label>
+        <div class="row"><span v-if="creatingSpace" class="small muted" role="status">正在创建空间，Git 仓库克隆可能需要几分钟…</span><span class="spacer" /><button class="btn primary" :disabled="creatingSpace || !newSpace.name.trim()">{{ creatingSpace ? '正在创建…' : '创建' }}</button></div>
       </form>
     </section>
 

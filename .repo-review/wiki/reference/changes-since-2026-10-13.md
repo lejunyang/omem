@@ -7,6 +7,10 @@ updated: 2026-11-05
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 网页接入 Git 仓库（11-05）
+
+- 设置 → 空间新建“代码仓库”时，同一输入框自动识别本地目录与 HTTP(S)/SSH Git 地址。`POST /api/spaces` 复用 `cloneRepository`，成功后建空间并排同步；权限检查在联网前执行，非法协议与含凭据链接拒绝，克隆失败不创建空间。网页等待期间防止重复提交，失败保留表单。入口：`src/server/http.ts`、`web/src/views/Settings.vue`；回归：`test/http-space-repository.test.ts`。
+
 ## 规则启用确认与飞书回调登记（11-04）
 
 - `save_rule` 为会话中的停用规则准备宿主确认卡片，回答送达后再展示；点击先校验规则快照、本人身份和空间，再在事务中启用规则并保存回答，不排 AI 续轮。修改后旧卡片失效，不另生成普通的建议按钮。`confirmation.ts`、`agents/asks.ts`。

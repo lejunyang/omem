@@ -28,6 +28,7 @@ import {
   saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes, reviewQueue, reviewSourceNote, reviewNodeLevel,
 } from "../sources/attention.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, listBranches } from "../core/git.ts";
+import { cloneRepository } from "../core/repositories.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
@@ -41,7 +42,7 @@ import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
-import { HttpError } from "../core/util.ts";
+import { HttpError, slugify } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { checkRoute } from "../auth/routes.ts";
@@ -275,10 +276,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return relatedSpaces(app, id);
   });
   server.post("/api/spaces", async (req) => {
-    const b = q(z.object({ id: z.string().optional(), name: z.string().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional(), rootPath: z.string().optional() }), req.body);
-    // A linked directory is a path on this machine: only for those who may run things on it.
-    if (b.rootPath && !can(app, who(req), "code.delegate")) throw new HttpError(403, "关联本机目录要有交办编码的权限");
+    const b = q(z.object({ id: z.string().optional(), name: z.string().trim().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional(), rootPath: z.string().trim().optional() }), req.body);
+    // Both local directories and remote clones grant filesystem access on this machine.
+    if (b.rootPath && !can(app, who(req), "code.delegate")) throw new HttpError(403, "关联仓库或本机目录要有交办编码的权限");
     if (b.kind === "personal" && who(req) !== OWNER) throw new HttpError(403, "个人空间由 omem 建");
+    if (b.kind === "repo" && b.rootPath && /^(?:[a-z][a-z\d+.-]*:\/\/|[^/\\\s]+@[^/\\\s]+:|ext::)/i.test(b.rootPath)) {
+      // Validate the space before doing network work; cloneRepository validates the transport.
+      const id = slugify(b.id || b.name);
+      if (id.startsWith("_")) throw new HttpError(400, "空间 id 不能以下划线开头（知识库保留给 Agent 档案和技能）");
+      if (findSpace(app, id)) throw new HttpError(409, `空间已存在：${id}`);
+      b.rootPath = await cloneRepository(app, b.rootPath);
+      if (listSpaces(app).some((s) => s.rootPath === b.rootPath)) throw new HttpError(409, "这个仓库目录已关联空间，请使用已有空间");
+    }
     const s = createSpace(app, b);
     // Whoever made it (other than the owner) manages it.
     if (who(req) !== OWNER) addMember(app, s.id, who(req), "manager");
