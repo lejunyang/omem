@@ -65,6 +65,8 @@ describe("working files", () => {
     // The agent writes without naming the rule: the run it is in ties the file to it.
     const r = await callTool(agentCtx(app, runId), "write_file", { path: "weekly/2026-W43", content: "周一：上线了 A", expires: "30d" });
     expect(r.text).toContain(`挂在规则 ${rule.id}`);
+    // That firing's run is over by the next one (a firing while it waits would join it, rule-merge.test.ts).
+    run(app.db, "update runs set status = 'done' where id = ?", runId);
     run(app.db, "delete from rule_handled");
     await new Promise((res) => setTimeout(res, 5));
     await fireScheduledRule(app, rule.id);
