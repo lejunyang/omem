@@ -1,5 +1,7 @@
 export class ApiError extends Error {
   status: number;
+  /** The browser is on its way to the login page (not a failure to show). */
+  login = false;
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
@@ -34,11 +36,20 @@ export function authUrl(path: string) {
   return t ? `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(t)}` : path;
 }
 
+/** How main.ts goes to a page once the router is up; before that, the address itself. */
+let navigate: ((to: string) => void) | null = null;
+export function setNavigation(fn: (to: string) => void) {
+  navigate = fn;
+}
 /** To the login page (src/auth), coming back here afterwards. */
 export function toLogin() {
   if (location.hash.startsWith("#/login")) return;
   const back = location.hash.slice(1) || "/";
-  location.hash = `#/login${back !== "/" ? `?return=${encodeURIComponent(back)}` : ""}`;
+  const to = `/login${back !== "/" ? `?return=${encodeURIComponent(back)}` : ""}`;
+  // Through the router: an address set while its first navigation is still settling is written back
+  // by it, and the start page stayed with “请先登录” instead.
+  if (navigate) navigate(to);
+  else location.hash = `#${to}`;
 }
 /** Forget a pasted token too: signing out means this browser is nobody until it logs in again. */
 export async function logout() {
@@ -122,7 +133,9 @@ async function request<T>(path: string, init: RequestInit & { json?: unknown }):
         localStorage.removeItem("omem-token");
       } catch {}
     toLogin();
-    throw new ApiError(res.status, (data as { error?: string })?.error ?? "请先登录");
+    const err = new ApiError(res.status, (data as { error?: string })?.error ?? "请先登录");
+    err.login = true;
+    throw err;
   }
   if (res.status === 401 && !(init as { retried?: boolean }).retried && (await askToken())) return api<T>(path, { ...init, retried: true } as typeof init);
   if (!res.ok) throw new ApiError(res.status, (data && (data as { error?: string }).error) || res.statusText);

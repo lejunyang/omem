@@ -88,7 +88,8 @@ onMounted(async () => {
     await refreshUnread();
     await addPluginPages();
   } catch (e) {
-    loadError.value = (e as Error).message;
+    // Going to the login page: nothing failed.
+    if (!(e as { login?: boolean }).login) loadError.value = (e as Error).message;
   }
 });
 onBeforeUnmount(() => window.removeEventListener("keydown", onKey));

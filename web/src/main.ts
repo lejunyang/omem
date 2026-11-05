@@ -1,6 +1,7 @@
 import { createApp } from "vue";
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-router";
 import App from "./App.vue";
+import { setNavigation } from "./api";
 import { preloadWhenIdle, preloadable } from "./preload";
 import { compositionGuard } from "./lib/composition";
 import "./styles.css";
@@ -40,6 +41,8 @@ const router = createRouter({
   routes,
   scrollBehavior: () => ({ top: 0 }),
 });
+
+setNavigation((to) => void router.isReady().then(() => router.replace(to)));
 
 // After the first view has settled, pull every other chunk at idle.
 router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/agents", "/rules", "/rules/archive", "/notifications", "/settings", "/account"]));

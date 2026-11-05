@@ -1416,3 +1416,8 @@ updated: 2026-11-05
 - 起因：别的机器人在群里发了 CSV，助手用 `lark_read` 跑 `im +messages-resources-download`，lark-cli 把它标为写操作（它写本地文件），被拒；其实采集时已经把这个 CSV 存成了原件，只是助手用原始的 `lark_read` 读话题，看不到原件链接。
 - 新文件 `src/channels/lark-message-files.ts`：`messageFile` 按 `lark_messages.resources` 找已有原件；没有就用 `messageResourceFile`（本人 lark-cli 的 `+messages-mget --download-resources`，退回机器人）下载，按真名导入群所在的空间（uri `lark:<群>/<消息>/<key>/<名字>`），记回 `sourceId` 和 `parse.status = done`；没采集过的消息先用 `+messages-mget` 读出所在的群。范围：群所在的空间在运行的读取范围里，或群是这次运行自己的群。视频和音频只给文件；解析不了的格式给文件路径和原因。`resourceDownload` 认 `lark_read` 的下载命令。
 - 工具 `lark_message_file`（分组 lark-msg，说明在 `skills/omem/references/lark.md` 的“附件”）；`lark_read` 遇到下载命令改走它。
+
+## 2026-11-06：没登录时首页不进登录页
+
+- 现象：常驻服务器打开多人登录后，没登录直接打开 `#/` 停在“无法连接 omem 服务：请先登录”。原因：页面的第一个请求（`/api/me`）返回 401 时 `toLogin` 改了地址，但路由的第一次导航还没完成，完成时把地址写回 `#/`。
+- `web/src/api.ts`：`toLogin` 经路由跳转（`setNavigation`，`main.ts` 在 `router.isReady()` 之后 `router.replace`），路由起来之前仍改地址；去登录页抛出的错误带 `login`，`App.vue` 不把它当成加载失败。
