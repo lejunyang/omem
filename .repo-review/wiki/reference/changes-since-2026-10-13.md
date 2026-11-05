@@ -1305,3 +1305,13 @@ updated: 2026-11-04
 - 迁移：`sources.visibility`（space / restricted）、`source_access`（每人对每篇飞书文档的阅读权限，记一天）。
 - `src/auth/visibility.ts`：`setVisibility`、`sourceVisible`（同步判断，飞书文档未知时为 check）、`sourceReadable`（用读者的连接调云文档的权限判断接口）、`requireReadable`、`visibleHits`、`keptHere`、`isRestricted`。
 - 接入：`checkRoute` 改为异步，`src:` 定位的路由再查一次能否读；`/api/search`、原件列表、工具的 `search`（`viewSearch`）和 `read_source` 过滤；`shares.ts` 不复制、`federation.ts` 不检索不发送不同步这两类；`write_page` 在非个人空间拒绝引用受限原件。新接口 `PUT /api/sources/:id/visibility`（`space.manage`）。`PATCH /api/spaces/:id`：非本人只能改 `larkAccess`，带 `mirror` 一律拒绝（设置页保存时去掉它）。
+
+## 飞书卡片排版、@ 处理人与气泡跟随话题（2026-11-06）
+
+- `lark-send.ts`：`cardText`（卡片 Markdown 的原样文字按 HTML 实体转义，取代反斜杠）、`textWidth`、`buttonRows`（按手机宽度 40 单位分行、各行个数尽量平均，太宽的按钮独占一行 `width: fill`）、`cardMentions` / `mentionInCard`、`larkPrivateChat`（`lark_owner_chat*` 或会话 `settings.group = false`）。`buildCard` 的按钮块走 `buttonRows`；表单由 `formFields` 生成：每个字段上方一行粗体 Markdown 问题（多题自动编号、必填红星），字段 `width: fill`，不再用 input 自带的 label。
+- `lark-asks.ts`：选项要么全是按钮（`buttonRows`），要么全是编号行（文字 + “选择”，`vertical_align: center`），不再长短混排；问题有两条以上编号要点时输入框为 `multiline_text`；`askCard(app, ask, { mention })` 在群里开头 @ 回答人（`show` 用已算好的处理人 id，私聊不传）。
+- `ThreadSettings.group`：`receive` 在渠道给了 `isGroup` 时记下。
+- `tools.ts` 的 `larkPost`：交互卡片带 `allowed`、没给 `mentions`、发往群时 @ 其中本人和 `lark_people` 认识的 id。
+- `lark-bot.ts`：`toAsker` 给群里的回答（助理回答、访客回答和拒绝）开头加 `<at id=提问人>`，私聊和机器人发来的不加。
+- `lark-cot.ts`：`startCot` 的 `locate`；建气泡前 `GET /im/v1/messages/:id` 看锚点有没有 `thread_id`，有就 `reply_in_thread = true`（普通回复会被飞书放进话题，气泡接口不会）。`lark-agent-cot.ts` 在会话没有话题时传 `locate`。`rules/actions.ts` 记 `lastMessageId` 时一起记 `lastTopicId`。
+- 验收见 acceptance.md 同名一节；测试 `test/lark-cards.test.ts`、`test/lark-answers.test.ts`，`test/asks.test.ts` 的排版用例改写。

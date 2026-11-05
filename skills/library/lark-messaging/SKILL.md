@@ -62,7 +62,8 @@ description: 用飞书机器人发消息和交互：回复/开话题、表情回
   ], "submit": "提交" } }
 ```
 
-- `allowed`：只有这些人能点按钮或提交（open_id；"owner" 表示本人）。其他人点了会看到“只有 xx 可以处理”。不填则群里任何人都可以。
+- 表单字段的 `label` 写成问题本身，显示在字段上方；几个问题时自动编号（label 里已经写了编号就不再加）。
+- `allowed`：只有这些人能点按钮或提交（open_id；"owner" 表示本人）。其他人点了会看到“只有 xx 可以处理”。不填则群里任何人都可以。发在群里时卡片开头会 @ 这些人；要 @ 别的人用 `mentions`。
 - 复杂排版（多列、图表、折叠面板）用 `raw_card` 传 Card 2.0 JSON。先读 `lark-cli skills read lark-im/references/card/lark-im-card-create.md` 和其中引用的组件文档；`"schema": "2.0"` 必须有。
 
 ## 收到卡片操作之后

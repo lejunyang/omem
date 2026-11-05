@@ -43,6 +43,8 @@ type State = {
   queued: boolean;
   /** The bot whose app posts this bubble. */
   bot: string;
+  /** The anchor came from the conversation's record, not the message just received: check its topic first. */
+  locate: boolean;
   dirty: boolean;
   /** No more input is accepted once the terminal request starts. */
   closing: boolean;
@@ -182,9 +184,27 @@ async function api(st: State, phase: "create" | "append" | "finish" | "complete"
   }
 }
 
+/**
+ * Whether the anchor sits in a topic (or has become one's root): Feishu puts an ordinary reply to such a
+ * message inside the topic even without reply_in_thread, the bubble only with it. A failed lookup
+ * leaves the bubble where it was going.
+ */
+async function anchorInTopic(st: State) {
+  try {
+    const r = await sdkFor(st.bot)?.request({ method: "GET", url: `/open-apis/im/v1/messages/${encodeURIComponent(st.originMessageId!)}`, params: { user_id_type: "open_id" }, timeout: 5_000 });
+    return !!(r?.data?.items?.[0] as { thread_id?: string } | undefined)?.thread_id;
+  } catch {
+    return false;
+  }
+}
+
 async function createBubble(st: State) {
   const data: Record<string, unknown> = { receive_id: st.chatId };
   if (st.originMessageId) data.origin_message_id = st.originMessageId;
+  if (st.locate && !st.inThread && st.originMessageId && (await anchorInTopic(st))) {
+    st.inThread = true;
+    cotLog(st, "follow-topic");
+  }
   data.reply_in_thread = st.inThread;
   await api(st, "create", "POST", "/open-apis/im/v1/message_cot", data, { receive_id_type: "chat_id" });
 }
@@ -375,7 +395,8 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
 /** `title`: a first line saying whose process this is (an agent's round in a work topic). */
 /** `defer`: nobody waits on this turn; show its process only if it ends with something to say. */
-export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string; defer?: boolean; bot?: string }) {
+/** `locate`: the anchor may since sit in a topic (a progress card opened one under it): follow it there. */
+export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string; defer?: boolean; bot?: string; locate?: boolean }) {
   // The bubble belongs to the bot of the conversation it shows (lark.bots), the current one by default.
   const bot = at.bot ?? currentBot();
   if (!sdkFor(bot) || states.has(runId)) return false;
@@ -385,7 +406,7 @@ export function startCot(app: App, runId: string, at: { chatId: string; originMe
     return false;
   }
   disabledChats.delete(at.chatId);
-  const st: State = { bot, chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, timeouts: 0, deferred: !!at.defer, discard: false, waiters: [], timers: [] };
+  const st: State = { bot, locate: !!at.locate, chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, timeouts: 0, deferred: !!at.defer, discard: false, waiters: [], timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
   return true;

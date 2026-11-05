@@ -29,6 +29,8 @@ export type ThreadSettings = {
   lastMessageId?: string;
   /** Delivery location is independent of whether topics share a conversation. */
   lastTopicId?: string | null;
+  /** Whether the chat is a group (false: a private chat with the bot), as its channel last said. */
+  group?: boolean;
   /** /topic explicitly keeps this topic independent, even when the chat uses mode=chat. */
   isolatedTopic?: boolean;
   /** An in-chat review session (/review): the card being asked and whether its answer was shown. */

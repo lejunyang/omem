@@ -491,6 +491,13 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       .catch(() => {});
   };
 
+  /**
+   * An answer in a group @s whoever asked (they see it among everything else); a private chat needs no
+   * @, and another bot is never @-ed back (that would hand the turn back and forth).
+   */
+  const toAsker = (m: Inbound, text: string) =>
+    m.chatType === "group" && !m.fromApp && m.senderId && !text.includes(`<at id=${m.senderId}>`) ? `<at id=${m.senderId}></at> ${text}` : text;
+
   /** The bot's own @ goes away; other people keep their name (「结合 @小李 在文档里…」 means something). */
   const spoken = (m: Inbound) =>
     m.text.replace(/@_user_\d+/g, (key) => {
@@ -527,7 +534,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (working) await unreactLark(m.messageId, working);
     if (withOwner && v?.verdict === "answer") return true;
     const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
-    if (say) await reply(m.chatId, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId }), m.messageId, !!m.topicId, answerNote(app, r.id), { runId: r.id }).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+    if (say) await reply(m.chatId, toAsker(m, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId })), m.messageId, !!m.topicId, answerNote(app, r.id), { runId: r.id }).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
     // A person (not a bot) refused in a group: ask the owner whether to let this one through.
     if (v?.verdict === "refuse" && !m.fromApp && m.chatType === "group") await askOwnerAboutGuest(m, r.id, v.reason).catch((e) => console.warn("[omem] 访客确认卡片发送失败", e));
     return false;
@@ -656,7 +663,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       answered = true;
       if (runId) finishCot(app, runId, true);
       const p = await presentation?.close();
-      const shown = renderBotMentions(app, ref, answer);
+      const shown = toAsker(m, renderBotMentions(app, ref, answer));
       // Read the recorded AI after completion so fallbacks show the backend that answered.
       const note = answerNote(app, runId);
       const sentId = p ? (await p.finish(shown, note), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread, note, { runId })).messageId;

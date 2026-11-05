@@ -128,7 +128,7 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
     if (a.ownTopic && reply !== "none" && e.message && !topicId) replyAt = { chatId, messageId: e.message.id };
     else if (reply !== "none") {
       const t = resolveThread(app, { channel: e.bot && e.bot !== "main" ? `lark:${e.bot}` : "lark", chatId, topicId, isGroup: e.chat?.kind === "group", title: e.chat?.name, spaceId: rule.spaceId ?? chatSpace(app, chatId), userId: OWNER }).thread;
-      if (e.message) updateThread(app, t.id, { settings: { ...t.settings, lastMessageId: e.message.id } });
+      if (e.message) updateThread(app, t.id, { settings: { ...t.settings, lastMessageId: e.message.id, lastTopicId: topicId } });
       threadId = t.id;
     }
   }

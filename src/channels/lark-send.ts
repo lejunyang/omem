@@ -101,13 +101,81 @@ export type CardSpec = {
 
 const plain = (content: string) => ({ tag: "plain_text", content });
 
+/** Text shown as is in card Markdown: its special characters only stay literal as HTML entities (a backslash would show). */
+export function cardText(s: string) {
+  return s.replace(/[&<>*_~`#:[\]()|]/g, (c) => `&#${c.codePointAt(0)};`);
+}
+
+/** Display width for laying out buttons: CJK and other wide characters take two units. */
+export function textWidth(s: string) {
+  return Array.from(s).reduce((n, c) => n + (c.codePointAt(0)! > 0xff ? 2 : 1), 0);
+}
+
+/** What one row of buttons can take on a phone, in `textWidth` units; a button's own padding counts as 6. */
+const ROW_WIDTH = 40;
+
+/**
+ * Buttons in rows that fit a phone, in their order, the rows as even as the count allows (3 + 3 rather
+ * than 4 + 2); each row still wraps by itself (`flow`) on a narrower screen. A button too wide for a
+ * row has one of its own and fills it.
+ */
+export function buttonRows(buttons: { text: string; button: Record<string, unknown> }[]): Record<string, unknown>[] {
+  const cost = (b: { text: string }) => textWidth(b.text) + 6;
+  const pack = (cap: number) => {
+    const rows: (typeof buttons)[] = [];
+    let used = 0;
+    for (const b of buttons) {
+      const row = rows.at(-1);
+      if (row && row.length < cap && used + cost(b) <= ROW_WIDTH) {
+        row.push(b);
+        used += cost(b);
+      } else {
+        rows.push([b]);
+        used = cost(b);
+      }
+    }
+    return rows;
+  };
+  const fewest = pack(Infinity);
+  const even = pack(Math.ceil(buttons.length / Math.max(1, fewest.length)));
+  return (even.length === fewest.length ? even : fewest).map((row) => ({
+    tag: "column_set",
+    flex_mode: "flow",
+    columns: row.map((b) => ({ tag: "column", width: "auto", elements: [row.length === 1 && cost(b) > ROW_WIDTH ? { ...b.button, width: "fill" } : b.button] })),
+  }));
+}
+
+/** `<at>` tags for people a card is for (bot-side open_id or user_id of the app that posts it). */
+export function cardMentions(ids: (string | null | undefined)[]) {
+  return [...new Set(ids.filter((id): id is string => !!id))].map((id) => `<at id=${id}></at>`).join(" ");
+}
+
+/**
+ * A Feishu chat where the bot talks with one person only (no one else to point a card at): the owner's
+ * private chat with a bot, or a chat its conversation was told is not a group (ThreadSettings.group).
+ */
+export function larkPrivateChat(app: App, chatId: string) {
+  return !!one(app.db, "select 1 from kv where key like 'lark_owner_chat%' and value = ?", chatId) ||
+    !!one(app.db, "select 1 from conversations where (channel = 'lark' or channel like 'lark:%') and (external_id = ? or instr(external_id, ?) = 1) and json_extract(settings, '$.group') = 0 limit 1", chatId, `${chatId}#`);
+}
+
+/** The same card with its people @-ed at the top, unless the card already @s them. */
+export function mentionInCard(card: Record<string, unknown>, ids: (string | null | undefined)[]): Record<string, unknown> {
+  const json = JSON.stringify(card);
+  const line = cardMentions(ids.filter((id) => id && !json.includes(`<at id=${id}>`)));
+  if (!line) return card;
+  const body = (card.body ?? {}) as { elements?: unknown[] };
+  return { ...card, body: { ...body, elements: [{ tag: "markdown", content: line }, ...(body.elements ?? [])] } };
+}
+
 function field(f: CardField): Record<string, unknown> {
-  const label = "label" in f && f.label ? { label: plain(f.label), label_position: "top" } : {};
   const ph = "placeholder" in f && f.placeholder ? { placeholder: plain(f.placeholder) } : {};
   const req = "required" in f && f.required ? { required: true } : {};
+  // The question is a line of its own above every kind of field (formFields), so they line up alike.
+  const fill = { width: "fill" };
   switch (f.type) {
     case "input":
-      return { tag: "input", name: f.name, ...label, ...ph, ...req, ...(f.multiline ? { input_type: "multiline_text", rows: 3 } : {}), ...(f.default ? { default_value: f.default } : {}) };
+      return { tag: "input", name: f.name, ...ph, ...req, ...fill, ...(f.multiline ? { input_type: "multiline_text", rows: 3 } : {}), ...(f.default ? { default_value: f.default } : {}) };
     case "select":
     case "multi_select":
       return {
@@ -115,19 +183,40 @@ function field(f: CardField): Record<string, unknown> {
         name: f.name,
         ...ph,
         ...req,
+        ...fill,
         options: f.options.map((o) => ({ text: plain(o.text), value: o.value })),
         ...(f.default ? { initial_option: f.default } : {}),
       };
     case "person":
     case "multi_person":
-      return { tag: f.type === "person" ? "select_person" : "multi_select_person", name: f.name, ...ph, ...req };
+      return { tag: f.type === "person" ? "select_person" : "multi_select_person", name: f.name, ...ph, ...req, ...fill };
     case "date":
-      return { tag: "date_picker", name: f.name, ...ph, ...req };
+      return { tag: "date_picker", name: f.name, ...ph, ...req, ...fill };
     case "datetime":
-      return { tag: "picker_datetime", name: f.name, ...ph, ...req };
+      return { tag: "picker_datetime", name: f.name, ...ph, ...req, ...fill };
     case "checkbox":
       return { tag: "checker", name: f.name, text: { tag: "plain_text", content: f.label }, checked: !!f.checked };
   }
+}
+
+/**
+ * A form's questions one under another: each label in bold right above its field, a gap before the
+ * next question, numbered when there are several (unless the labels carry numbers already).
+ */
+function formFields(fields: CardField[]): Record<string, unknown>[] {
+  const asked = fields.filter((f) => f.type !== "checkbox" && f.label);
+  const number = asked.length > 1 && !asked.some((f) => /^\s*(\d+|[一二三四五六七八九十]+)\s*[.、．)）]/.test(f.label!));
+  const out: Record<string, unknown>[] = [];
+  let n = 0;
+  for (const f of fields) {
+    const label = f.type !== "checkbox" && f.label ? f.label : null;
+    if (label) {
+      const required = "required" in f && f.required ? " <font color='red'>*</font>" : "";
+      out.push({ tag: "markdown", content: `**${number ? `${++n}. ` : ""}${cardText(label)}**${required}`, ...(out.length ? { margin: "12px 0px 0px 0px" } : {}) });
+    }
+    out.push(field(f));
+  }
+  return out;
 }
 
 function button(b: CardButton, i: number, inForm = false): Record<string, unknown> {
@@ -161,22 +250,20 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
         flex_mode: "bisect",
         columns: b.fields.map((f) => ({ tag: "column", width: "weighted", weight: 1, elements: [{ tag: "markdown", content: `<font color='grey'>${f.label}</font>\n**${f.value}**` }] })),
       });
-    else if ("buttons" in b)
-      elements.push({
-        tag: "column_set",
-        flex_mode: "flow",
-        columns: b.buttons.map((btn) => ({ tag: "column", width: "auto", elements: [button(btn, n++)] })),
-      });
+    else if ("buttons" in b) elements.push(...buttonRows(b.buttons.map((btn) => ({ text: btn.text, button: button(btn, n++) }))));
     else if ("form" in b) {
       const f = b.form;
       elements.push({
         tag: "form",
         name: f.name ?? "form",
+        // A question sits close to its field (questions are kept apart by their own margin).
+        vertical_spacing: f.fields.some((x) => x.type !== "checkbox" && x.label) ? "4px" : "8px",
         elements: [
-          ...f.fields.map(field),
+          ...formFields(f.fields),
           {
             tag: "column_set",
             flex_mode: "flow",
+            margin: "12px 0px 0px 0px",
             columns: [
               { tag: "column", width: "auto", elements: [{ ...button({ text: f.submit ?? "提交", style: "primary" }, n++, true), name: "submit" }] },
               ...(f.cancel ? [{ tag: "column", width: "auto", elements: [{ ...button({ text: f.cancel }, n++, true), form_action_type: "reset", name: "reset" }] }] : []),

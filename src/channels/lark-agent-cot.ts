@@ -71,5 +71,7 @@ function start(app: App, r: Run) {
   // A work conversation shows its process in its own topic; before the topic exists, nowhere
   // (not in the group the work was started from).
   if (!topic && workInConversation(app, t.id)) return false;
-  return startCot(app, r.id, { chatId, originMessageId: anchor, inThread: !!topic, title: place.title, defer, bot: botOfChannel(t.channel) });
+  // The conversation's last message may have become a topic's root since (a coding progress card opens
+  // one under the request): the answer replying to it lands in that topic, and so must the bubble.
+  return startCot(app, r.id, { chatId, originMessageId: anchor, inThread: !!topic, locate: !topic, title: place.title, defer, bot: botOfChannel(t.channel) });
 }

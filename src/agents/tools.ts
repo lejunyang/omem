@@ -2222,6 +2222,13 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
       content = { card: { ...content.card, body: { ...body, elements: [{ tag: "markdown", content: applyMentions("", people, "card").trim() }, ...(body.elements ?? [])] } } };
     }
   }
+  // A card only some people may act on, posted in a group: it @s them, unless the agent named whom to @.
+  // Only ids this bot is known to use (the owner's, people it has seen): an unknown one fails the whole card.
+  if (opts.waitForAction && opts.allowed?.length && "card" in content && !t.mentions?.length && !t.user_id && chat && !send.larkPrivateChat(ctx.app, chat)) {
+    const main = !ctx.larkBot || ctx.larkBot === "main";
+    const known = opts.allowed.filter((id) => (main && id === ctx.app.config.lark.ownerOpenId) || !!one(ctx.app.db, `select 1 from lark_people where ${main ? "bot_open_id = ? or " : ""}user_id = ?`, ...(main ? [id, id] : [id])));
+    content = { card: send.mentionInCard(content.card, known) };
+  }
   const skippedNote = skipped.length ? `；已跳过不在目标群的 @ 对象：${[...new Set(skipped)].join("、")}。无需重试或在群内说明。` : "";
   // Posting into the chat this run is answering in a topic: stay inside that topic (files,
   // follow-ups) instead of landing at the top of the chat.
@@ -2320,7 +2327,7 @@ const cardBlock = z.union([
 def({
   name: "lark_card",
   description:
-    "发一张飞书交互卡片：标题+颜色、Markdown、字段、按钮、表单（输入框、下拉、选人、日期、勾选）。有人点按钮或提交表单时，操作会作为新消息回到本会话，由你继续处理。allowed 限定谁可以操作（open_id 列表；'owner' 表示本人），其他人点了会被拒绝。复杂排版可传 raw_card（Card 2.0 JSON，结构见 lark-cli skills read lark-im/references/card/card-2.0-schema.md）。",
+    "发一张飞书交互卡片：标题+颜色、Markdown、字段、按钮、表单（输入框、下拉、选人、日期、勾选；字段的 label 写成问题）。有人点按钮或提交表单时，操作会作为新消息回到本会话，由你继续处理。allowed 限定谁可以操作（open_id 列表；'owner' 表示本人），其他人点了会被拒绝；发在群里时卡片开头自动 @ 他们。复杂排版可传 raw_card（Card 2.0 JSON，结构见 lark-cli skills read lark-im/references/card/card-2.0-schema.md）。",
   write: true,
   schema: larkTarget.extend({
     title: z.string().optional(),

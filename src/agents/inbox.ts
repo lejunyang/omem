@@ -61,7 +61,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     thread = createThread(app, { spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
     started = "new";
   }
-  if (inb.externalMessageId) thread = updateThread(app, thread.id, { settings: { ...thread.settings, lastMessageId: inb.externalMessageId, ...(inb.chatId ? { lastTopicId: inb.topicId ?? null } : {}) } });
+  if (inb.externalMessageId) thread = updateThread(app, thread.id, { settings: { ...thread.settings, lastMessageId: inb.externalMessageId, ...(inb.chatId ? { lastTopicId: inb.topicId ?? null } : {}), ...(inb.chatId && inb.isGroup !== undefined ? { group: inb.isGroup } : {}) } });
 
   let text = inb.text.trim();
   let freshTask = false;

@@ -154,7 +154,7 @@ describe("asking the owner", () => {
         expect(rows).toHaveLength(6);
         rows.forEach((row: any, i: number) => {
           expect(row.columns).toHaveLength(2);
-          expect(row.columns[0].elements[0]).toEqual({ tag: "markdown", content: `${i + 1}. ${options[i].label}` });
+          expect(row.columns[0].elements[0]).toEqual({ tag: "markdown", content: `**${i + 1}.** ${options[i].label}` });
           expect(row.columns[1].elements[0]).toMatchObject({ name: `opt_${i}`, text: { content: "选择" } });
         });
         if (allowText) {
@@ -175,23 +175,52 @@ describe("asking the owner", () => {
     } finally { app.db.close(); }
   });
 
-  it("keeps two short options together and packs larger or mixed lists without changing their order", () => {
+  it("lays a card's options out one way: short ones as even rows of buttons, all numbered lines once one is long", () => {
     const { app, runId } = working();
     const layout = (labels: string[]) => {
       const ask = createAsk(app, { runId, question: "选哪个？", options: labels.map((label) => ({ label })) });
       return (askCard(app, ask).body as { elements: any[] }).elements.find((e) => e.tag === "form").elements.filter((e: any) => e.tag === "column_set" && !e.columns.some((c: any) => c.elements[0].name === "answer"));
     };
+    const labels = (rows: any[]) => rows.map((r: any) => r.columns.map((c: any) => c.elements[0].text.content));
     try {
-      expect(layout(["周四", "周五"]).map((r: any) => r.columns.map((c: any) => c.elements[0].text.content))).toEqual([["周四", "周五"]]);
-      const many = layout(["方案一", "方案二", "方案三", "方案四", "方案五"]);
-      expect(many.map((r: any) => r.columns.length)).toEqual([2, 2, 1]);
+      expect(labels(layout(["周四", "周五"]))).toEqual([["周四", "周五"]]);
+      // Rows fit a phone and come out even: 3 + 2, 2 + 2 rather than 3 + 1.
+      expect(labels(layout(["方案一", "方案二", "方案三", "方案四", "方案五"]))).toEqual([["方案一", "方案二", "方案三"], ["方案四", "方案五"]]);
+      expect(layout(["先核对口径", "分批处理", "下周再看", "现在处理"]).map((r: any) => r.columns.length)).toEqual([2, 2]);
+      expect(layout(["周四", "周五"])[0]).toMatchObject({ flex_mode: "flow" });
+      // One option too long for a button: every option is a numbered line with its own button, in order.
       const mixed = layout(["先不改", "先核对旧订单的退款口径，再分批处理历史数据", "下周再看", "现在处理"]);
-      expect(mixed.map((r: any) => r.columns.at(-1).elements[0].name)).toEqual(["opt_0", "opt_1", "opt_3"]);
-      expect(mixed[1].columns[0].elements[0].content).toContain("先核对旧订单的退款口径，再分批处理历史数据");
-      const escaped = layout(["保留 <at id=all> 和 [原样] & 内容"])[0].columns[0].elements[0].content;
-      expect(escaped).toContain("&lt;at id=all\\>");
-      expect(escaped).toContain("\\[原样\\]");
-      expect(escaped).toContain("&amp;");
+      expect(mixed).toHaveLength(4);
+      expect(mixed.map((r: any) => r.columns[1].elements[0].name)).toEqual(["opt_0", "opt_1", "opt_2", "opt_3"]);
+      expect(mixed.map((r: any) => r.columns[1].elements[0].text.content)).toEqual(["选择", "选择", "选择", "选择"]);
+      expect(mixed.map((r: any) => r.columns[0].elements[0].content)).toEqual(["**1.** 先不改", "**2.** 先核对旧订单的退款口径，再分批处理历史数据", "**3.** 下周再看", "**4.** 现在处理"]);
+      expect(mixed[0]).toMatchObject({ flex_mode: "none", columns: [{ width: "weighted", vertical_align: "center" }, { width: "auto", vertical_align: "center" }] });
+      // Card Markdown keeps special characters literal only as entities; a backslash would show.
+      const escaped = layout(["保留 <at id=all> 和 [原样] & ppe_tool 内容"])[0].columns[0].elements[0].content;
+      expect(escaped).toBe("**1.** 保留 &#60;at id=all&#62; 和 &#91;原样&#93; &#38; ppe&#95;tool 内容");
+      expect(escaped).not.toContain("\\");
+    } finally { app.db.close(); }
+  });
+
+  it("gives a question listing several points a box for several lines, and @s whoever has to answer", () => {
+    const { app, runId } = working();
+    try {
+      const many = createAsk(app, { runId, question: "缺口是否按建议处理？\n\n1. 补提交成功的模式字段\n2. 补挂载成功的来源字段\n3. 补五处曝光\n\n可以整体确认，也可以按编号指出不同意见。", options: [{ label: "按建议补齐" }, { label: "先保留缺口" }] });
+      const card = askCard(app, many, { mention: "ou_owner" });
+      const elements = (card.body as { elements: any[] }).elements;
+      expect(elements[0].content.startsWith("<at id=ou_owner></at> 缺口是否按建议处理？")).toBe(true);
+      const input = elements.find((e) => e.tag === "form").elements.find((e: any) => e.tag === "input");
+      expect(input).toMatchObject({ name: "text", input_type: "multiline_text", rows: 3, width: "fill", placeholder: { content: "可以整体回答，也可以按编号逐条写" } });
+      // One question: one line, and no @ unless asked (a private chat, or a suggestion).
+      const one = createAsk(app, { runId, question: "哪天发布？", options: [{ label: "周四" }] });
+      const plain = (askCard(app, one).body as { elements: any[] }).elements;
+      expect(plain.find((e) => e.tag === "form").elements.find((e: any) => e.tag === "input").input_type).toBeUndefined();
+      expect(JSON.stringify(plain)).not.toContain("<at");
+      const next = createAsk(app, { runId, kind: "suggestion", question: "", options: [{ label: "继续" }] });
+      expect(JSON.stringify(askCard(app, next, { mention: "ou_owner" }))).not.toContain("<at");
+      // A card with no question text still names its person.
+      const bare = createAsk(app, { runId, kind: "approval", question: "", tool: "forget", args: {} });
+      expect((askCard(app, bare, { mention: "ou_owner" }).body as { elements: any[] }).elements[0]).toEqual({ tag: "markdown", content: "<at id=ou_owner></at>" });
     } finally { app.db.close(); }
   });
 

@@ -4,7 +4,7 @@ import { one, run } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
-import { bindInteraction, buildCard, closeInteraction, getInteraction, larkOwnerOpenId, recordInteraction, sendLark, updateLarkCard, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, sendLark, textWidth, updateLarkCard, type CardBlock, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
 import { getTask } from "../agents/code-tasks.ts";
 
@@ -21,54 +21,44 @@ const TITLE: Record<Ask["kind"], string> = { question: "需要你回答", approv
  */
 export const ANSWER_WAIT_MS = 800;
 
-function button(text: string, name: string, kind: "primary" | "danger" | "default", inForm: boolean, value: string) {
-  return {
-    tag: "column",
-    width: "auto",
-    elements: [
-      inForm
-        ? { tag: "button", name, text: { tag: "plain_text", content: text }, type: kind, form_action_type: "submit" }
-        : { tag: "button", name, text: { tag: "plain_text", content: text }, type: kind, behaviors: [{ type: "callback", value: { action: value } }] },
-    ],
-  };
+function button(text: string, name: string, kind: "primary" | "danger" | "default", inForm: boolean, value: string): Record<string, unknown> {
+  return inForm
+    ? { tag: "button", name, text: { tag: "plain_text", content: text }, type: kind, form_action_type: "submit" }
+    : { tag: "button", name, text: { tag: "plain_text", content: text }, type: kind, behaviors: [{ type: "callback", value: { action: value } }] };
 }
+const row = (buttons: Record<string, unknown>[]) => ({ tag: "column_set", flex_mode: "flow", columns: buttons.map((b) => ({ tag: "column", width: "auto", elements: [b] })) });
 
-/** Keep the full option readable even when the client truncates button text. */
+/** An option label that fits on its button on a phone (eight CJK characters). */
+const SHORT = 16;
+
+/** A long option: its full text, numbered, wrapping beside the button that picks it. */
 function optionRow(label: string, i: number, inForm: boolean, suggestion: boolean) {
-  const text = label.replace(/&/g, "&amp;").replace(/([\\`*_{}\[\]()#+.!|>~-])/g, "\\$1").replace(/</g, "&lt;");
   return {
     tag: "column_set",
     flex_mode: "none",
+    horizontal_spacing: "8px",
     columns: [
-      { tag: "column", width: "weighted", weight: 1, elements: [{ tag: "markdown", content: `${i + 1}. ${text}` }] },
-      button(suggestion ? "继续" : "选择", `opt_${i}`, i === 0 ? "primary" : "default", inForm, `ask:${i}`),
+      { tag: "column", width: "weighted", weight: 1, vertical_align: "center", elements: [{ tag: "markdown", content: `**${i + 1}.** ${cardText(label)}` }] },
+      { tag: "column", width: "auto", vertical_align: "center", elements: [button(suggestion ? "继续" : "选择", `opt_${i}`, i === 0 ? "primary" : "default", inForm, `ask:${i}`)] },
     ],
   };
 }
 
+/**
+ * One layout for all of a card's options: short ones are buttons in rows that fit a phone; when any
+ * is too long for a button, every option is a numbered line with its own button, in order.
+ */
 function optionRows(ask: Ask) {
-  const rows: Record<string, unknown>[] = [];
-  const short: ReturnType<typeof button>[] = [];
-  const flush = () => {
-    if (short.length) rows.push({ tag: "column_set", flex_mode: "flow", columns: short.splice(0) });
-  };
-  ask.options.forEach((o, i) => {
-    // Reserve room for two buttons on a phone; CJK and other wide characters take two units.
-    const width = Array.from(o.label).reduce((n, c) => n + (c.codePointAt(0)! > 0xff ? 2 : 1), 0);
-    if (width <= 12 && !/[\r\n]/.test(o.label)) {
-      short.push(button(o.label, `opt_${i}`, i === 0 ? "primary" : "default", ask.allowText, `ask:${i}`));
-      if (short.length === 2) flush();
-    } else {
-      flush();
-      rows.push(optionRow(o.label, i, ask.allowText, ask.kind === "suggestion"));
-    }
-  });
-  flush();
-  return rows;
+  const short = ask.options.every((o) => textWidth(o.label) <= SHORT && !/[\r\n]/.test(o.label));
+  if (!short) return ask.options.map((o, i) => optionRow(o.label, i, ask.allowText, ask.kind === "suggestion"));
+  return buttonRows(ask.options.map((o, i) => ({ text: o.label, button: button(o.label, `opt_${i}`, i === 0 ? "primary" : "default", ask.allowText, `ask:${i}`) })));
 }
 
+/** A question that lists several points to answer (1. … 2. …, ①②) gets a box for several lines. */
+const manyPoints = (question: string) => (question.match(/^\s*(?:\d+\s*[.、．)）]|[①-⑩])/gm) ?? []).length >= 2;
+
 /** A decision needs its question up front; the investigation stays in the run and a closed fold. */
-function questionBlocks(app: App, ask: Ask) {
+function questionBlocks(app: App, ask: Ask): CardBlock[] {
   const row = one<{ context: string | null }>(app.db, "select context from asks where id = ?", ask.id);
   const ctx = JSON.parse(row?.context ?? "{}") as { handler?: string; workId?: string; seq?: number };
   if (ctx.handler !== "code-task" || !ctx.workId || !ctx.seq) return ask.question ? [{ markdown: resolveCitationsSync(app, ask.question) }] : [];
@@ -81,28 +71,37 @@ function questionBlocks(app: App, ask: Ask) {
   ];
 }
 
-export function askCard(app: App, ask: Ask): Record<string, unknown> {
+/**
+ * `mention`: the person who has to answer, in the posting bot's ids; @-ed at the top of a card posted
+ * in a group (only while it waits for them).
+ */
+export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = {}): Record<string, unknown> {
   if (ask.status !== "pending") {
     const immediate = isImmediateAsk(ask) && ask.status === "answered";
     const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : immediate ? ask.result ?? "已处理" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
     return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: immediate ? "已处理" : TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.result && !immediate ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
   }
-  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: questionBlocks(app, ask) });
+  const blocks = questionBlocks(app, ask);
+  const at = ask.kind === "suggestion" ? "" : cardMentions([opts.mention]);
+  if (at) {
+    const first = blocks[0];
+    if (first && "markdown" in first) blocks[0] = { markdown: `${at} ${first.markdown}` };
+    else blocks.unshift({ markdown: at });
+  }
+  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
   const elements = (card.body as { elements: unknown[] }).elements;
-  const choices =
-    ask.kind === "approval"
-      ? [{ tag: "column_set", flex_mode: "flow", columns: [button("批准", "approve", "primary", ask.allowText, "approve"), button("拒绝", "reject", "danger", ask.allowText, "reject")] }]
-      : optionRows(ask);
+  const choices = ask.kind === "approval" ? [row([button("批准", "approve", "primary", ask.allowText, "approve"), button("拒绝", "reject", "danger", ask.allowText, "reject")])] : optionRows(ask);
   if (ask.allowText) {
+    const lines = ask.kind === "question" && manyPoints(ask.question);
+    const placeholder = ask.kind === "approval" ? "理由或附言（可不填）" : lines ? "可以整体回答，也可以按编号逐条写" : ask.options.length ? "也可以写别的回答" : "你的回答";
     elements.push({
       tag: "form",
       name: "ask",
+      vertical_spacing: "8px",
       elements: [
         ...(ask.kind === "approval" ? [] : choices),
-        { tag: "input", name: "text", placeholder: { tag: "plain_text", content: ask.kind === "approval" ? "理由或附言（可不填）" : ask.options.length ? "也可以写别的回答" : "你的回答" } },
-        ...(ask.kind === "approval" ? choices : ask.kind === "question" ? [{
-          tag: "column_set", flex_mode: "flow", columns: [button(ask.options.length ? "用文字回答" : "回答", "answer", ask.options.length ? "default" : "primary", true, "")],
-        }] : []),
+        { tag: "input", name: "text", width: "fill", placeholder: { tag: "plain_text", content: placeholder }, ...(lines ? { input_type: "multiline_text", rows: 3, auto_resize: true, max_rows: 8 } : {}) },
+        ...(ask.kind === "approval" ? choices : ask.kind === "question" ? [row([button(ask.options.length ? "用文字回答" : "回答", "answer", ask.options.length ? "default" : "primary", true, "")])] : []),
       ],
     });
   } else elements.push(...choices);
@@ -144,7 +143,8 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       // Who may answer, in the posting bot's ids (the owner's open_id there; others by their main-bot id or user_id).
       const who = ask.userId === OWNER ? larkOwnerOpenId(app, to.bot) : to.bot === "main" ? larkOpenIdOf(app, ask.userId) : larkUserIdOf(app, ask.userId);
       const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
-      const card = askCard(app, ask);
+      // In a group the card says whose turn it is; a private chat needs no @.
+      const card = askCard(app, ask, { mention: to.chatId && !larkPrivateChat(app, to.chatId) ? who : null });
       const bind = (value: unknown): void => {
         if (!value || typeof value !== "object") return;
         const node = value as Record<string, unknown>;
