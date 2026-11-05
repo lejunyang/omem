@@ -781,6 +781,82 @@ describe("a delegation driven by tasks", () => {
     }
   });
 
+  it("counts reviews that only polish from when the requirement, as the owner left it, was done", async () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true, round: 6 }, userId: OWNER });
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      addTask(app, r.id, { title: "退款按行计算", kind: "build", state: "done" }, "coder");
+      addTask(app, r.id, { title: "并发复用请求 ID", kind: "fix" }, "review-lead");
+      const { deliverableStage } = await import("../src/agents/code-tasks.ts");
+      expect(deliverableStage(app, r.id, 1, false)).toBeNull();
+      expect(deliverableStage(app, r.id, 1, true)).toBe(1);
+      setWorkState(app, r.id, { deliverableAt: 1 });
+      expect(deliverableStage(app, r.id, 4, false)).toBe(1);
+      // The owner adds to the requirement: not deliverable again until that is done too.
+      const more = addTask(app, r.id, { title: "退款单号", kind: "owner" }, OWNER);
+      expect(deliverableStage(app, r.id, 5, true)).toBeNull();
+      updateTask(app, r.id, more.seq, { state: "done" });
+      setWorkState(app, r.id, { deliverableAt: null });
+      expect(deliverableStage(app, r.id, 6, true)).toBe(6);
+      // A polishing stop at stage 4, the requirement grown and done at 6: one review since, not four.
+      setWorkState(app, r.id, { budget: 12, until: 12, stages: [0, 1, 2, 1, 3, 2, 1, 1], deliverableAt: 6, polishAt: 4, stageAt: 0 });
+      const rc = { runId: r.id, signal: new AbortController().signal, event: () => {} } as never;
+      await taskReview(app, r.id, rc);
+      expect(workState(app, r.id).paused).not.toBe("polishing");
+      expect(getRun(app, r.id).output.reviewStop).not.toBe("polishing");
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      app.db.close();
+    }
+  });
+
+  it("comes to its confirm when the assistant sets aside the last fixes of a paused delegation, and closes the push-first card", async () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true, round: 3 }, userId: OWNER });
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      addTask(app, r.id, { title: "退款按行计算", kind: "build", state: "done" }, "coder");
+      const fix = addTask(app, r.id, { title: "并发复用请求 ID", kind: "fix" }, "review-lead");
+      const offered = createAsk(app, { runId: r.id, userId: OWNER, question: "需求做完了", options: [{ label: "剩下的以后再做" }], context: { handler: "work-deliver", rootId: r.id } });
+      setWorkState(app, r.id, { budget: 12, until: 12, stages: [0, 1, 2, 1, 3], deliverableAt: 1, stageAt: 0, deliverAsk: offered.id });
+      const rc = { runId: r.id, signal: new AbortController().signal, event: () => {} } as never;
+      expect((await taskReview(app, r.id, rc)).verdict).toBe("paused");
+      // The assistant judges the rest not worth this change: nothing is left to code, the pause does not hold the confirm back.
+      expect(settleTask(app, r.id, fix.seq, { action: "later", text: "只有一个调用方，碰不到", ownerWords: false }, "assistant")).toBeNull();
+      expect(workState(app, r.id).paused).toBeNull();
+      expect(lastRound(app, r.id).output.verdict).toBe("approved");
+      const asks = listAsks(app, {});
+      expect(asks.find((a) => a.id === offered.id)?.status).toBe("cancelled");
+      expect(asks.some((a) => a.handler === "review-done" && a.status === "pending")).toBe(true);
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      app.db.close();
+    }
+  });
+
+  it("takes back a deferral when review-lead rules the finding again", async () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款", repos: ["personal"], taskMode: true, round: 2 }, userId: OWNER });
+      setRunOutput(app, r.id, { reviewPlan: { tier: "ai", tierName: "按改动定", checks: ["reviewer"], maxRounds: 6, metrics: {}, reasons: [] } });
+      recordReview(app, { codeRunId: r.id, round: 2, check: "reviewer", verdict: "changes_requested", summary: "", findings: [
+        { severity: "major", title: "空订单退款为负", detail: "", suggestion: "判空", evidence: [], confidence: "high" },
+      ] });
+      const [f] = roundFindings(app, r.id, 2);
+      const ctx = { app, runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "review-lead" } as ToolContext;
+      const rule = (decision: string, note: string) => callTool(ctx, "rule_review", { rulings: [{ id: f.id, decision, note }], verdict: "revise", summary: "改" });
+      expect((await rule("defer", "以为碰不到")).isError).toBe(false);
+      expect((await rule("accept", "订单列表里就有空订单")).isError).toBe(false);
+      const { tasksFromRuling, isLater } = await import("../src/agents/code-tasks.ts");
+      const [t] = tasksFromRuling(app, r.id, roundFindings(app, r.id, 2), { ...(getRun(app, r.id).output.reviewLeadDraft as object), by: "lead" } as never);
+      expect(isLater(t)).toBe(false);
+      expect(t.state).toBe("todo");
+    } finally {
+      app.db.close();
+    }
+  });
+
   it("reports to the conversation the owner last steered the delegation from, not the one it was asked in", async () => {
     const app = testApp();
     try {
@@ -790,13 +866,21 @@ describe("a delegation driven by tasks", () => {
       const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款", repos: ["personal"], taskMode: true, round: 1 }, parentId: ask.id, userId: OWNER });
       codeChainFor(app, r);
       run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      // A turn the owner did not speak in (a handoff queued in the first topic) moves nothing.
+      const handoff0 = createRun(app, { kind: "ask", spaceId: "personal", title: "交给助手", input: { conversationId: later.id, handoff: { kind: "code", runId: r.id } }, userId: OWNER });
+      const quiet = { app, runId: handoff0.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
+      expect((await callTool(quiet, "message_code_run", { run_id: r.id, text: "提醒一下" })).text).not.toContain("之后这次交办的结果");
       // The owner, in a later topic, adds to the delegation.
-      const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "补充", input: { conversationId: later.id }, userId: OWNER });
+      run(app.db, "insert into messages(id,conversation_id,role,text,meta,created_at) values('m_owner_later', ?, 'user', '金额字段改成分', '{}', ?)", later.id, new Date().toISOString());
+      const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "补充", input: { conversationId: later.id, messageIds: ["m_owner_later"] }, userId: OWNER });
       const ctx = { app, runId: turn.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
       const res = await callTool(ctx, "message_code_run", { run_id: r.id, text: "金额字段改成分" });
       expect(res.text).toContain("之后这次交办的结果");
       // Said again from there: no second note.
       expect((await callTool(ctx, "message_code_run", { run_id: r.id, text: "再补一句" })).text).not.toContain("之后这次交办的结果");
+      // A handoff run still queued in the first topic does not take the reports back there.
+      const stale = createRun(app, { kind: "ask", spaceId: "personal", title: "交给助手", input: { conversationId: first.id, handoff: { kind: "code", runId: r.id } }, userId: OWNER });
+      await callTool({ ...ctx, runId: stale.id } as ToolContext, "message_code_run", { run_id: r.id, text: "按原需求" });
       // A question for the owner, the round's result and the assistant's turn all go to the later topic.
       const q = addTask(app, r.id, { title: "保存时用哪个模板", kind: "fix", state: "assistant", question: "评审负责人没有裁决" }, "review-lead");
       settleTask(app, r.id, q.seq, { action: "owner", text: "是业务口径", ownerWords: false, question: "用哪个模板？", options: ["旧模板", "新模板"] }, "assistant");

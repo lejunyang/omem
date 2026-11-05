@@ -4494,9 +4494,13 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
 /** Tools the owner steers a delegation with: when used from another conversation of theirs, its reports follow there. */
 const STEERS_CODE = new Set(["message_code_run", "continue_code_run", "fix_review", "settle_code_task", "apply_code_run"]);
 
-/** The conversation this call's run answers in becomes where the delegation reports (followOwner); a note for the reply when it moved. */
+/**
+ * The conversation this call's run answers in becomes where the delegation reports (followOwner); a note
+ * for the reply when it moved. Only a turn the owner spoke in: a handoff queued in the old topic, a wake
+ * or a rule's run steering the work leaves its reports where the owner last took them.
+ */
 async function followFrom(ctx: ToolContext, runId: string | undefined): Promise<string> {
-  if (!runId || !ctx.runId) return "";
+  if (!runId || !ctx.runId || !ownerAskedThisTurn(ctx)) return "";
   const me = one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId);
   const conversationId = me ? (JSON.parse(me.input) as { conversationId?: string }).conversationId : undefined;
   try {

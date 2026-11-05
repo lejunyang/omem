@@ -389,7 +389,7 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
     return { space: wt.space, path: checkedOutAt(root, wt.branch) ?? root, branch: wt.branch };
   });
   for (const id of new Set([first, runId])) setRunOutput(app, id, { appliedAt, appliedTo, pushed, confirmNotes: notes });
-  for (const r of rounds(app, first)) cancelHostAsks(app, r.id, ROUND_ASKS);
+  for (const r of rounds(app, first)) cancelHostAsks(app, r.id, [...ROUND_ASKS, "work-deliver"]);
   return { applied: true, spaces: wts.map((w) => w.space), targets: appliedTo, pushed, notes };
 }
 

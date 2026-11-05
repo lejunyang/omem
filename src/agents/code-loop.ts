@@ -8,7 +8,7 @@ import { codeChainFor, queueNextCodeRound, reportConversation, saveCodeChain, wa
 import { addCodeNote } from "./code-steer.ts";
 import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
 import {
-  addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, tasksFromRuling, isLater, deferTask, POLISH_STAGES,
+  addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, tasksFromRuling, isLater, deferTask, deliverableStage, POLISH_STAGES,
   ownerQuestionText, stranded, taskLabel, toAssistant, hasAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
@@ -280,8 +280,7 @@ async function stageReview(app: App, run: Run, rc: RoundContext) {
   }
   const stages = [...(w.stages ?? []), made];
   // The requirement's own tasks are all done: what is left are review fixes, and the work can go out first.
-  const own = listTasks(app, rootId).filter((t) => t.kind !== "fix");
-  const deliverable = w.deliverableAt ?? (own.length && own.every((t) => ["done", "wontdo", "reverted"].includes(t.state)) && !brokenChecks(run).length ? stages.length - 1 : null);
+  const deliverable = deliverableStage(app, rootId, stages.length - 1, !brokenChecks(run).length);
   setWorkState(app, rootId, { stageAt: latest, stages, deliverableAt: deliverable });
   // Once: the fixes the first review after the requirement asked for are in, and reviews still find
   // more — offer the owner to push what was reviewed and try it while they go on.
@@ -317,7 +316,8 @@ async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict
     // Only review fixes left, POLISH_STAGES stage reviews after the requirement was done (and as many
     // after each such stop): stop, and let the assistant judge what is still worth doing.
     const stage = (w.stages ?? []).length - 1;
-    const polished = w.deliverableAt != null ? stage - (w.polishAt ?? w.deliverableAt) : 0;
+    // From the later of the last such stop and when the requirement, as it stands, was done.
+    const polished = w.deliverableAt != null ? stage - Math.max(w.deliverableAt, w.polishAt ?? -1) : 0;
     if (polished >= POLISH_STAGES && todo.every((t) => t.kind === "fix") && !(w.reverts ?? []).length) {
       setWorkState(app, rootId, { paused: "polishing", polishAt: stage });
       notifyOwner(app, rootId, run, "交办暂停：需求已做完，评审还在一轮轮提问题", `需求的修改项早已完成，之后 ${polished} 次阶段评审一直在提新问题（还有 ${todo.length} 项）。助手会看哪些值得改。`);
@@ -360,6 +360,9 @@ function completed(app: App, rootId: string, run: Run) {
     tasks.filter((t) => t.state === "done").slice(0, 8).map((t) => `- ${taskLabel(t.seq)} ${t.title}`).join("\n"),
   ].filter(Boolean).join("\n");
   const chain = (run.output as { codeChain?: CodeChain }).codeChain ?? null;
+  // The confirm card pushes too: the earlier “先推送验证 / 以后再做” card has nothing left to offer.
+  const offered = workState(app, rootId).deliverAsk;
+  if (offered) cancelAsk(app, offered);
   // Named after the delegation, not its last round (“交办第 4 轮：修改项 T2”).
   const ask = askConfirm(app, run, chain, `交办完成：${getRun(app, rootId).title}`, digest);
   setRunOutput(app, run.id, { reviewAskId: ask.id });
@@ -468,17 +471,19 @@ export function advanceWork(app: App, rootId: string, opts: { owner?: boolean } 
   const busy = ["queued", "running"].includes(last.status) || !!one(app.db, "select 1 from runs where kind = 'review' and status in ('queued', 'running') and json_extract(input, '$.codeRunId') = ?", last.id);
   if (busy) return null;
   const w = workState(app, rootId);
-  if (w.paused) return null;
-  // Only the owner gives more rounds: what the assistant settles waits once the budget is used up.
-  if (!opts.owner && roundOf(last) >= w.until) return null;
   const tasks = listTasks(app, rootId);
   if (tasks.some((t) => t.state === "todo" || stranded(app, t)) || (w.reverts ?? []).length) {
+    if (w.paused) return null;
+    // Only the owner gives more rounds: what the assistant settles waits once the budget is used up.
+    if (!opts.owner && roundOf(last) >= w.until) return null;
     const next = queueRound(app, rootId, last);
     if (next) setRunOutput(app, last.id, { verdict: "continuing", reviewStop: null });
     return next;
   }
-  // Nothing to code: what was left were questions now settled, or set aside while it was paused.
+  // Nothing to code: what was left were questions now settled, or set aside while it was paused (by
+  // the assistant too: a pause holds back rounds, not the confirm of work with nothing left to do).
   if (!tasks.some((t) => ["assistant", "owner", "verify", "coding"].includes(t.state)) && ["awaiting-owner", "awaiting-assistant", "paused"].includes(String(last.output.verdict))) {
+    if (w.paused) setWorkState(app, rootId, { paused: null });
     setRunOutput(app, last.id, { verdict: "approved", reviewStop: null });
     completed(app, rootId, getRun(app, last.id));
   }

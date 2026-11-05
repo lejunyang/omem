@@ -881,6 +881,17 @@ export function carryTasks(app: App, rootId: string, from: string[]): { todo: Co
 }
 
 /**
+ * The stage review the requirement's own tasks were last all done at (WorkState.deliverableAt), given
+ * this one is `stage`: kept while they stay done, none while one is open again (the owner added to the
+ * requirement), so reviews that only polish are counted from when it was done as it stands.
+ */
+export function deliverableStage(app: App, rootId: string, stage: number, checksPass: boolean): number | null {
+  const own = listTasks(app, rootId).filter((t) => t.kind !== "fix");
+  if (!own.length || !own.every((t) => ["done", "wontdo", "reverted"].includes(t.state))) return null;
+  return workState(app, rootId).deliverableAt ?? (checksPass ? stage : null);
+}
+
+/**
  * What the delegation was for and how far it got, for the assistant's turn when the work stops: the
  * request as given, the requirement's own tasks against the review fixes, and how many rounds it took.
  */

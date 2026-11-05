@@ -475,8 +475,9 @@ export function applyRulings(app: App, codeRunId: string, round: number, rulings
   tx(app.db, () => {
     for (const r of rulings) {
       // Deferred: the problem stands, but is not worth doing in this change (a task set aside for later).
+      // The lead may rule again in the same turn: a deferral it takes back does not stay.
       const state = r.decision === "accept" || r.decision === "defer" ? "accepted" : r.decision === "reject" ? "rejected" : "merged";
-      run(app.db, "update review_findings set state = ?, merged_into = ?, triage_note = ?, decision = case when ? then 'later' else decision end where id = ?", state, r.decision === "merge" && !r.task ? r.into! : null, (r.note ?? "").slice(0, 1000), r.decision === "defer" ? 1 : 0, r.id);
+      run(app.db, "update review_findings set state = ?, merged_into = ?, triage_note = ?, decision = case when ? then 'later' when decision = 'later' then null else decision end where id = ?", state, r.decision === "merge" && !r.task ? r.into! : null, (r.note ?? "").slice(0, 1000), r.decision === "defer" ? 1 : 0, r.id);
     }
   });
 }

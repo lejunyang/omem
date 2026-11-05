@@ -1078,7 +1078,7 @@ export function discardCodeRun(app: App, runId: string) {
   releaseBranchRun(app, runId, { discard: true });
   removeWorktrees(app, runId);
   setRunOutput(app, runId, { discardedAt: new Date().toISOString() });
-  for (const id of workRoundIds(app, String(r.input.continueFrom ?? r.id))) cancelHostAsks(app, id, [...ROUND_ASKS, "code-sync"]);
+  for (const id of workRoundIds(app, String(r.input.continueFrom ?? r.id))) cancelHostAsks(app, id, [...ROUND_ASKS, "code-sync", "work-deliver"]);
 }
 
 /** Every round of a delegation or branch review, from its first run. */

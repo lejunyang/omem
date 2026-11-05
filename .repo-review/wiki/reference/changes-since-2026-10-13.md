@@ -1262,6 +1262,15 @@ updated: 2026-11-04
 - `review.ts` 的 `inlineRefs` 取出 Markdown 里的 `src:` / `mem:` 引用；`submit_review`（问题的标题、正文、建议，变更点的需求和实现）、`submit_change_points`、`revise_finding` 都用 `deadRefs` 核对，找不到就拒绝并让它用 `read_source` 核对后重交。
 - 另有一种：引用了交办工作区里建了索引的文件，工作区归还后这些原件随之删除，链接也会失效；还没处理。
 
+## 审查修正：交办暂停后的收尾、裁决改口、汇报会话（2026-11-05）
+
+- 暂停后没有可做的：`advanceWork` 原来先看 `paused` 和轮数，助手把“只剩打磨”或轮数用完时剩下的评审项都 `later` 后交办一直停着，不出确认卡片（只有本人的操作会经 `renewBudget` 清掉暂停）。现在只在还有可做的项时才被暂停和轮数挡住；没有可做、也没有等谁的项时清掉暂停，照常 `completed`。
+- `work-deliver` 卡片（需求做完了）在 `completed`、`confirmBranchRun`、`discardCodeRun` 时关掉，不再一直挂着、点了报错。
+- 可交付点：`deliverableStage`（`code-tasks.ts`）在需求本身的项又有没做完的（本人加了一项）时作废，做完再重新记；打磨的次数从可交付点和上次打磨暂停里较晚的那个数起。原来可交付点只记一次，本人加的需求一做完，第一次阶段评审就会因打磨暂停。
+- `applyRulings`：评审负责人在同一轮里对同一条问题先 `defer` 再改成别的裁决，`decision = later` 不再留着（原来会让接受的问题变成以后再做，连带丢掉给本人的问题）。
+- `followFrom`：只有本人在这一轮说了话（`ownerAskedThisTurn`）才改汇报的会话。原来交给助手的一轮、唤醒、规则触发的运行调用 `settle_code_task` 等也会改，还排在第一条话题里的交接会把汇报拉回去。
+- 验收 R27l；测试 `test/code-loop.test.ts` 新增四个用例，“reports to the conversation…”补了交接一轮的情况。
+
 ## 连接器与飞书多用户（2026-11-05）
 
 - `src/auth/vault.ts`：连接（每人每个提供方一条）与令牌，存 `secrets/vault.db`，令牌 AES-256-GCM（`secrets/vault.key`）。`connections.ts`：`saveConnection`、`accessToken`（到期前 10 分钟刷新，同一连接串行）、`renewConnections`（刷新令牌两天内到期的续一次，接在 lark-poll 定时任务后面）、刷新失败标 `expired` 并通知一次。`features.ts`：飞书功能与 scope。`LoginProvider.refresh`（飞书 `authen/v2/oauth/token` 的 refresh_token）。
