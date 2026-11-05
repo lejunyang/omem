@@ -51,4 +51,8 @@ it("reports tool-call p90 with a warning above 30 seconds", () => {
   expect(t.p90Ms).toBe(45_000);
   expect(t.warning).toMatch(/p90 是 45 秒/);
   expect(t.slowest[0]).toMatchObject({ tool: "search", n: 10, p90Ms: 45_000 });
+  for (let i = 0; i < 10; i++) addRunEvent(app, r.id, "tool-call", { name: "search", phase: "end", ms: i < 8 ? 1000 : 46_000, ok: true });
+  const traced = toolLatency(app);
+  expect(traced).toMatchObject({ n: 15, maxMs: 46_000 });
+  expect(traced.slowest[0]).toMatchObject({ tool: "search", n: 10 });
 });

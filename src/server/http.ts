@@ -62,6 +62,8 @@ import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
 import { search } from "../search/search.ts";
 import { rerankStatus } from "../search/rerank.ts";
+import { searchRun } from "../search/trace.ts";
+import { closeReadProcess } from "../search/read-process.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
 import { deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
@@ -94,6 +96,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   await server.register(fastifyCompress, { encodings: ["gzip"], threshold: 1024, globalDecompression: false });
   server.addHook("onClose", async () => {
+    closeReadProcess(app);
     const { releaseBackgroundSessions } = await import("../agents/background-sessions.ts");
     await releaseBackgroundSessions(app);
     const { stopSessionCleanup } = await import("../agents/session-cleanup.ts");
@@ -181,7 +184,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "start" });
     let ok = false;
     try {
-      const r = await callTool(ctx, name, args);
+      const r = await searchRun.run(runId ?? "", () => callTool(ctx, name, args));
       ok = !r.isError;
       return r;
     } finally {

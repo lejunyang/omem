@@ -3,6 +3,8 @@ import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { vectorIndex } from "./vectors.ts";
 import { all, one, run } from "../core/db.ts";
+import { readProcess } from "./read-process.ts";
+import { searchStage } from "./trace.ts";
 
 /**
  * Optional dense retrieval. Vectors live next to chunks as Float32 BLOBs and are
@@ -13,6 +15,12 @@ import { all, one, run } from "../core/db.ts";
 type Embedder = { id: string; embed(texts: string[], kind: "query" | "passage"): Promise<Float32Array[]> };
 
 let embedder: Embedder | null | undefined;
+let testEmbedder = false;
+
+export function resetEmbedder() {
+  embedder = undefined;
+  vectorIndex().clear();
+}
 
 async function getEmbedder(app: App): Promise<Embedder | null> {
   if (embedder !== undefined) return embedder;
@@ -109,6 +117,7 @@ function normalize(v: Float32Array) {
 
 /** Benchmarks and tests: use a stand-in embedder. */
 export function setEmbedderForTests(e: Embedder | null) {
+  testEmbedder = true;
   embedder = e;
   vectorIndex().clear();
 }
@@ -188,6 +197,7 @@ export async function embedQuery(app: App, text: string, kind: "query" | "passag
 
 export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {
   if (app.config.embeddings.provider === "none") return [];
+  if (!testEmbedder) return searchStage("vector", () => readProcess(app, "vector").request<{ chunkId: number; score: number }[]>({ op: "vector", query, spaces, limit, config: { embeddings: app.config.embeddings } }, 30_000));
   const e = await getEmbedder(app);
   if (!e) return [];
   const [q] = await e.embed([query], "query");

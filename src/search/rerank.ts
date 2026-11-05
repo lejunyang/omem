@@ -1,5 +1,7 @@
 import type { App } from "../core/app.ts";
 import { loadLocalModel } from "./embeddings.ts";
+import { readProcess } from "./read-process.ts";
+import { searchStage } from "./trace.ts";
 
 /**
  * Optional reranking: a cross-encoder (bge-reranker-v2-m3 by default, ONNX q8 through
@@ -71,6 +73,27 @@ async function getScorer(app: App): Promise<Scorer | null> {
  * of time. `timeoutMs` shortens `rerank.timeoutMs` for callers that hold up a reply.
  */
 export async function rerankScores(app: App, query: string, passages: string[], timeoutMs?: number): Promise<number[] | null> {
+  if (!app.config.rerank.enabled || !passages.length || !query.trim()) return null;
+  if (testScorer) return rerankLocally(app, query, passages, timeoutMs);
+  const budget = Math.min(app.config.rerank.timeoutMs, timeoutMs ?? Infinity);
+  stats.calls++;
+  stats.state = "loading";
+  const start = performance.now();
+  try {
+    const scores = await searchStage("rerank", () => readProcess(app, "rerank").request<number[] | null>({ op: "rerank", query, passages, config: { rerank: app.config.rerank }, timeoutMs: budget }, budget));
+    stats.state = scores ? "ready" : "idle";
+    stats.lastMs = Math.round(performance.now() - start);
+    if (scores) stats.error = "";
+    return scores;
+  } catch (e) {
+    if ((e as Error).name === "SearchTimeout") stats.timeouts++;
+    stats.state = "failed";
+    stats.error = (e as Error).message;
+    return null;
+  }
+}
+
+export async function rerankLocally(app: App, query: string, passages: string[], timeoutMs?: number): Promise<number[] | null> {
   const cfg = app.config.rerank;
   if (!cfg.enabled || !passages.length || !query.trim()) return null;
   const started = Date.now();

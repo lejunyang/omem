@@ -6,6 +6,8 @@ import { rerankScores } from "./rerank.ts";
 import { countNoteHits, LEVEL_WEIGHT, levelSql, noteFactor, notesOf, notesOn, noteText, type Level, type SourceNote } from "../sources/attention.ts";
 import { citeBoost, citeCounts } from "../sources/cites.ts";
 import { catalog, sourcesUnder } from "../sources/catalog.ts";
+import { searchRows } from "./read-process.ts";
+import { traceSearch } from "./trace.ts";
 
 export type HitType = "chunk" | "page" | "memory" | "symbol" | "requirement";
 export type Hit = {
@@ -166,6 +168,10 @@ function correction(app: App, n: SourceNote, spaces?: string[]) {
 type Ranked = { key: string; hit: Omit<Hit, "score" | "via">; rank: number; via: string; weight?: number };
 
 export async function search(app: App, query: string, opts: SearchOptions = {}): Promise<Hit[]> {
+  return traceSearch(app, query, opts.spaces, () => searchInner(app, query, opts));
+}
+
+async function searchInner(app: App, query: string, opts: SearchOptions): Promise<Hit[]> {
   const limit = opts.limit ?? 20;
   const pool = Math.max(60, limit * 4);
   const types = new Set(opts.types ?? ["chunk", "page", "memory", "symbol", "requirement"]);
@@ -182,8 +188,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   if (match && types.has("chunk") && route.fts) {
     const sf = spaceFilter("c.space_id", opts.spaces);
     const kinds = opts.sourceKinds?.length ? ` and s.kind in (${opts.sourceKinds.map(() => "?").join(",")})` : "";
-    const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null; hash: string }>(
-      app.db,
+    const rows = await searchRows<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null; hash: string }>(
+      app, "fts",
       `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, ${levelSql()} attention, s.hash
        from chunks_fts f join chunks c on c.id = f.rowid join sources s on s.id = c.source_id
        where chunks_fts match ? ${sf.sql} ${kinds}${underSql} and s.deleted_at is null ${opts.includeIgnored ? "" : `and coalesce(${levelSql()}, '') != 'ignore'`}
@@ -222,8 +228,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     const idents = [...new Set(query.match(/[A-Za-z_$][\w$]{2,}/g) ?? [])];
     if (idents.length) {
       const sf = spaceFilter("y.space_id", opts.spaces);
-      const rows = all<{ source_id: string; space_id: string; name: string; qname: string; kind: string; line_start: number; line_end: number; signature: string; uri: string }>(
-        app.db,
+      const rows = await searchRows<{ source_id: string; space_id: string; name: string; qname: string; kind: string; line_start: number; line_end: number; signature: string; uri: string }>(
+        app, "symbol",
         `select y.source_id, y.space_id, y.name, y.qname, y.kind, y.line_start, y.line_end, y.signature, s.uri
          from symbols y join sources s on s.id = y.source_id
          where lower(y.name) in (${idents.map(() => "?").join(",")}) ${sf.sql}${underIds ? " and y.source_id in (select value from json_each(?))" : ""} and s.deleted_at is null
@@ -257,8 +263,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
 
   if (match && types.has("page")) {
     const sf = spaceFilter("p.space_id", opts.spaces);
-    const rows = all<{ id: string; space_id: string; slug: string; title: string; summary: string; body: string }>(
-      app.db,
+    const rows = await searchRows<{ id: string; space_id: string; slug: string; title: string; summary: string; body: string }>(
+      app, "pages",
       `select p.id, p.space_id, p.slug, p.title, p.summary, p.body from pages_fts f join page_rowids r on r.rowid = f.rowid join pages p on p.id = r.page_id
        where pages_fts match ? ${sf.sql} order by bm25(pages_fts, 4.0, 1.0) limit ?`,
       match,
@@ -278,8 +284,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   // Requirement points (items/requirements.ts): the title is the path in the tree; test points are not indexed.
   if (match && types.has("requirement")) {
     const sf = spaceFilter("q.space_id", opts.spaces);
-    const rows = all<{ id: string; space_id: string; kind: string; title: string; body: string; acceptance: string }>(
-      app.db,
+    const rows = await searchRows<{ id: string; space_id: string; kind: string; title: string; body: string; acceptance: string }>(
+      app, "requirements",
       `select q.id, q.space_id, q.kind, q.title, q.body, q.acceptance from reqs_fts f join req_rowids r on r.rowid = f.rowid join req_nodes q on q.id = r.node_id
        where reqs_fts match ? and q.status = 'active' ${sf.sql} order by bm25(reqs_fts, 3.0, 1.0) limit ?`,
       match,
@@ -299,8 +305,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   if (match && types.has("memory")) {
     const sf = spaceFilter("m.space_id", opts.spaces);
     const status = opts.includeHistory ? "" : " and m.status = 'active'";
-    const rows = all<{ id: string; space_id: string; kind: string; subject: string; content: string; status: string }>(
-      app.db,
+    const rows = await searchRows<{ id: string; space_id: string; kind: string; subject: string; content: string; status: string }>(
+      app, "memories",
       `select m.id, m.space_id, m.kind, m.subject, m.content, m.status from memories_fts f join memory_rowids r on r.rowid = f.rowid join memories m on m.id = r.memory_id
        where memories_fts match ? ${sf.sql} ${status} order by bm25(memories_fts, 2.0, 1.0) limit ?`,
       match,
@@ -321,8 +327,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     const vec = await vectorSearch(app, query, opts.spaces, underIds ? pool * 5 : pool).catch(() => []);
     if (vec.length) {
       const ids = vec.map((v) => v.chunkId);
-      const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; stitle: string; line_start: number; line_end: number; text: string; deleted_at: string | null; attention: string | null; hash: string }>(
-        app.db,
+      const rows = await searchRows<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; stitle: string; line_start: number; line_end: number; text: string; deleted_at: string | null; attention: string | null; hash: string }>(
+        app, "vector.hydrate",
         `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.deleted_at, ${levelSql()} attention, s.hash
          from chunks c join sources s on s.id = c.source_id where c.id in (${ids.map(() => "?").join(",")})`,
         ...ids,

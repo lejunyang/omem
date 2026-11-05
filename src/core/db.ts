@@ -21,7 +21,7 @@ export const FILL_WIKI_NODES = `
     from sources where kind = 'doc' and deleted_at is null and coalesce(json_extract(meta, '$.wikiParentNodeToken'), '') != '';
 `;
 
-const migrations: string[] = [
+export const migrations: readonly string[] = [
   `
   create table spaces (
     id text primary key,
@@ -1383,6 +1383,8 @@ const migrations: string[] = [
    insert into session_cleanup(backend_key,session_id,transport,app_id,run_id,owner_pid,ready,retry_at)
      select 'doubao:' || coalesce(app_id,''),session_id,transport,app_id,run_id,owner_pid,ready,retry_at from doubao_session_cleanup;
    drop table doubao_session_cleanup;`,
+  // Vector counts and keyset pages must stay within one space, including spaces with no vectors.
+  `create index chunks_vector_space on chunks(space_id, id) where embedding is not null;`,
 ];
 
 export type Db = DatabaseSync;

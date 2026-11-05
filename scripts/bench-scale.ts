@@ -11,6 +11,51 @@
  * measure the cost of the vector search itself, not its quality.
  */
 process.removeAllListeners("warning");
+if (process.argv.includes("--vector-loading")) {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join, resolve } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const number = (key: string, fallback: number) => {
+    const at = process.argv.indexOf(key), n = at < 0 ? fallback : Number(process.argv[at + 1]);
+    if (!Number.isSafeInteger(n) || n < 1) throw new Error(`${key} 要是正整数`);
+    return n;
+  };
+  const n = number("--chunks", 650_000), dims = number("--dims", 64);
+  const count = number("--spaces", 130), filled = Math.min(count, number("--filled", 57));
+  const engineAt = process.argv.indexOf("--engine");
+  const { vectorIndex } = engineAt < 0 ? await import("../src/search/vectors.ts") : await import(pathToFileURL(resolve(process.argv[engineAt + 1])).href);
+  const home = mkdtempSync(join(tmpdir(), "omem-bench-vectors-"));
+  const db = new DatabaseSync(join(home, "omem.db"));
+  try {
+    db.exec("create table spaces(id text primary key); create table chunks(id integer primary key,space_id text,text text,embedding blob); create index chunks_text_head on chunks(length(text),substr(text,1,80)) where embedding is not null;");
+    const space = db.prepare("insert into spaces values(?)");
+    for (let i = 0; i < count; i++) space.run(`space-${i}`);
+    const ins = db.prepare("insert into chunks values(?,?,?,?)"), v = new Float32Array(dims);
+    v[0] = 1;
+    db.exec("begin");
+    for (let i = 0; i < n; i++) ins.run(i + 1, `space-${i % filled}`, `示例切片 ${i}`, new Uint8Array(v.buffer));
+    db.exec("commit");
+    if (!process.argv.includes("--without-space-index")) db.exec("create index chunks_vector_space on chunks(space_id,id) where embedding is not null");
+    const idx = vectorIndex();
+    idx.clear();
+    const app = { db } as import("../src/core/app.ts").App;
+    const passes = [];
+    for (let pass = 0; pass < 2; pass++) {
+      let last = performance.now(), maxLagMs = 0, ticks = 0;
+      const timer = setInterval(() => { const now = performance.now(); maxLagMs = Math.max(maxLagMs, now - last); last = now; ticks++; }, 5);
+      const start = performance.now();
+      await idx.prepare(app);
+      const ms = performance.now() - start;
+      await new Promise((ok) => setTimeout(ok, 10));
+      clearInterval(timer);
+      passes.push({ pass: pass + 1, ms: +ms.toFixed(1), maxLagMs: +maxLagMs.toFixed(1), ticks });
+    }
+    console.log(JSON.stringify({ chunks: n, dims, spaces: count, filled, passes, cache: idx.stats() }));
+  } finally { db.close(); rmSync(home, { recursive: true, force: true }); }
+  process.exit(0);
+}
 if (process.argv.includes("--runs")) {
   const { mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

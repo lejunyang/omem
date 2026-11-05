@@ -32,6 +32,8 @@ export class App {
     this.home = resolve(home);
     this.config = config;
     this.db = db;
+    const close = db.close.bind(db);
+    db.close = () => { close(); this.events.emit("close"); };
     this.events.setMaxListeners(100);
     this.libraryDir = join(this.home, "library");
     this.filesDir = join(this.home, "files");

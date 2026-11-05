@@ -3,7 +3,8 @@ import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/core/app.ts";
-import { all, run } from "../src/core/db.ts";
+import { all, migrations, run } from "../src/core/db.ts";
+import { DatabaseSync } from "node:sqlite";
 import { sessionCleanup, recoverSessionCleanup } from "../src/agents/session-cleanup.ts";
 import { saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
 import { saveLarkSecret } from "../src/channels/lark-setup.ts";
@@ -29,12 +30,15 @@ afterEach(() => { setDoubaoFetchForTests(null); for (const app of opened.splice(
 describe("durable Doubao cleanup", () => {
   it("migrates an existing Doubao cleanup record into the shared ledger without losing ownership", async () => {
     const old = authorized();
-    const version = (old.db.prepare("pragma user_version").get() as { user_version: number }).user_version;
-    old.db.exec(`drop table session_cleanup;
-      create table doubao_session_cleanup(session_id text primary key, transport text, app_id text, run_id text, owner_pid integer, ready integer, retry_at text);
-      insert into doubao_session_cleanup values('legacy','doubao-cli','cli_bot',null,1,1,'');
-      pragma user_version = ${version - 1};`);
     old.db.close(); opened.splice(opened.indexOf(old), 1);
+    rmSync(join(old.home, "omem.db"));
+    const legacy = new DatabaseSync(join(old.home, "omem.db"));
+    // Recreate the actual predecessor, even after unrelated migrations have been appended.
+    const version = migrations.findIndex((sql) => sql.includes("create table session_cleanup"));
+    expect(version).toBeGreaterThan(0);
+    for (const sql of migrations.slice(0, version)) legacy.exec(sql);
+    legacy.exec(`insert into doubao_session_cleanup values('legacy','doubao-cli','cli_bot',null,1,1,''); pragma user_version = ${version};`);
+    legacy.close();
     const app = App.open(old.home); opened.push(app);
     expect(pending(app)).toMatchObject([{ session_id: "legacy", app_id: "cli_bot", ready: 1 }]);
     let deleted = false;
