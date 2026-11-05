@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { commandExists } from "../agents/spawn.ts";
 
 /**
@@ -62,9 +62,14 @@ export function setToolResolverForTests(fn: ((name: string) => string[] | null) 
   override = fn;
 }
 
+/** A program named for one tool in the environment (`OMEM_TOOL_AAD=…/aad`), as when developing it. */
+const pinned = (name: string) => process.env[`OMEM_TOOL_${name.toUpperCase().replace(/\W/g, "_")}`] || null;
+
 /** argv prefix that runs `name`, or null when neither PATH nor osdk can provide it. */
 export function toolCommand(name: string): string[] | null {
   if (override) return override(name);
+  const own = pinned(name);
+  if (own) return [own];
   if (DIR_TOOLS.has(name) || USE_GLOBAL.has(name) ? pathWorks(name) : commandExists(name)) return [name];
   if (!commandExists("osdk")) return null;
   if (DIR_TOOLS.has(name)) {
@@ -179,6 +184,11 @@ export function agentPathDirs(): string[] {
   if (override) return [];
   const out: string[] = [];
   for (const name of DIR_TOOLS) {
+    const own = pinned(name);
+    if (own) {
+      out.push(dirname(own));
+      continue;
+    }
     if (pathWorks(name) || !commandExists("osdk")) continue;
     const dir = osdkToolDir(name);
     if (dir) out.push(dir);

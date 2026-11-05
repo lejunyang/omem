@@ -1441,3 +1441,12 @@ updated: 2026-11-05
 - 起因：常驻服务器上本人的飞书连接只给登录和成员功能用，本人自己读飞书仍走 lark-cli 的登录，所以没有什么会去刷新它的令牌；刷新令牌快过期（两天内）才由后台续期。要在真实租户上看一次刷新，得有个地方取令牌。
 - `src/core/peer-exec.ts` 的 `connections`：不带参数时列出每个连接（用户、账号名、状态、权限数、授到的 / 关掉的 / 能用的功能、有没有刷新令牌、到期时间、最近的错误），不带令牌。`check: <用户 id>` 时按成员用到时一样取令牌（`accessToken`，快到期就刷新），再用平台的 `whoami` 确认令牌属于这个账号，返回刷新前后的到期时间。
 - 测试：`test/connections.test.ts`（列表里没有令牌；快到期时刷新一次、确认是同一个账号；再查不刷新；没有连接的用户和不合法的 id 被拒）。
+
+## 2026-11-06：远程操作与录制技能
+
+- 起因：本人想在网页上远程打开 omem 那台机器的浏览器或桌面、用键鼠操作，并把做一遍的过程录下来，和助手对话整理成技能；看、操作、录制、回放都交给 ai-auto-desktop（aad），缺的能力在 aad 那边补（ai-auto-desktop#12：查看页按自己的地址连 WebSocket、`aad record --until-stdin-closes`、录制和查找共用命名规则、`aad browser-record steps` 转成可回放步骤、iframe 与页面同前缀时选地址一致的、`run_workflow` 正确报告控制步骤）。
+- `src/remote/`：`aad.ts`（一次性命令、长驻进程、`aad mcp` 的 JSON-RPC 客户端）、`sessions.ts`（浏览器会话用 `browser_open` 起无窗口浏览器再接 `aad assist --browser-port`，桌面会话 `aad assist --desktop`；地址栏、录制、回放；30 分钟没人看结束）、`recordings.ts`（表 `remote_recordings`、摘要、`read_recording` 的四部分、技能附带的文件；启动时把还在录的标成中断）、`http.ts`（`/api/remote/*`，`/remote/<会话>/` 的 HTTP 与 WebSocket 转发，查看用的会话 cookie 加 Origin 检查）。
+- 网页：`views/Remote.vue`（导航“远程”只在装了 aad 时加上，`desktop.control`）、`components/RemoteChat.vue`（页面旁的对话，和问答同一条线程）；Vite 开发代理加 `/remote`。
+- Agent：工具分组 `remote`（`list_recordings`、`read_recording`），主助手 `group:remote`；`save_skill` 加 `from_recording`；内置技能 `skill-from-recording`；说明页 `skills/omem/references/remote.md`。
+- 其他：`/remote` 进 `peer-tunnel` 的 `tunneled`、中间设备转发 `/api/peers/:id/remote/*`；`OMEM_TOOL_<名>` 指定某个工具的程序（`core/tools.ts`，也放进 Agent 的 PATH）。
+- 测试：`test/remote.test.ts` + `test/fake-aad.ts`；本机真实 aad 与 Codex 跑通一次浏览器录制 → 技能 → 回放（acceptance 有记录）。

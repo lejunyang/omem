@@ -71,4 +71,4 @@ aad capture <页面id> --role img --name "登录二维码" --out qr.png   # 元�
 
 ## 重复的活
 
-同一件事要做很多次，可以录一次：`aad record <id> --seconds 20 --save <名字>`（本人操作，密码不落盘），之后 `aad workflows` 看有哪些、`aad run <文件> --permission desktop.input --permission desktop.observe` 回放。回放会真的操作电脑，同样先问本人。含 `script` 步骤的描述文件默认不会执行，不要加 `--allow-scripts`。
+同一件事要做很多次，可以录一次：`aad record <id> --seconds 20 --save <名字>`（本人操作，密码不落盘），之后 `aad workflows` 看有哪些、`aad run <文件> --permission desktop.input --permission desktop.observe` 回放。回放会真的操作电脑，同样先问本人。含 `script` 步骤的描述文件默认不会执行，不要加 `--allow-scripts`。本人在网页“远程”里录的操作整理成技能后，技能目录的 `recording/workflow.yaml` 就是这样的工作流：浏览器的要先打开技能写的起始网址，再 `aad run` 它。

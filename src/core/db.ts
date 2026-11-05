@@ -1398,6 +1398,24 @@ export const migrations: readonly string[] = [
   // and reviewed as part of it. It stays a space of its own underneath (files, symbols, worktrees).
   `alter table spaces add column parent_id text references spaces(id);
    create index spaces_parent on spaces(parent_id) where parent_id is not null;`,
+  // What someone did in a remote browser page or window (docs/v2/remote.md): the files stay in `dir`,
+  // the steps that replay it among them; an agent turns one into a skill.
+  `create table remote_recordings (
+     id text primary key,
+     kind text not null,
+     goal text not null default '',
+     target text not null default '',
+     status text not null,
+     dir text not null,
+     summary text not null default '{}',
+     replay text,
+     conversation_id text,
+     skill text,
+     user_id text not null default 'owner',
+     created_at text not null,
+     finished_at text
+   );
+   create index remote_recordings_user on remote_recordings(user_id, created_at);`,
 ];
 
 export type Db = DatabaseSync;

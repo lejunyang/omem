@@ -21,6 +21,7 @@ import { z } from "zod";
 import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
 import { attachPluginStreams, registerPluginRoutes } from "../plugins/http.ts";
 import { IDE_BASE, IdeNotReady, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
+import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remote/http.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -1222,9 +1223,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     };
     ide.all("/api/peers/:id/ide", relay);
     ide.all("/api/peers/:id/ide/*", relay);
+    ide.all("/api/peers/:id/remote/*", relay);
     ide.get("/api/peers/:id/api/ide/open", relay);
   });
   attachIdeUpgrade(app, server.server);
+  // Remote operation (docs/v2/remote.md): a browser page or the desktop of this machine through aad.
+  await registerRemoteRoutes(server, app, who);
+  attachRemoteUpgrade(app, server.server);
+  server.addHook("onClose", async () => closeRemote(app));
   attachPluginStreams(app, server.server);
   // Its WebSocket: upgrades skip the hooks, so the owner's token is checked here.
   server.server.on("upgrade", async (req, socket, head) => {

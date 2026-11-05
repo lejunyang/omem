@@ -223,6 +223,19 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   ),
   "GET /api/desktop": g("desktop.control"),
   "POST /api/desktop/install": g("desktop.control"),
+  // remote operation (docs/v2/remote.md): each person's own sessions and recordings
+  "GET /api/remote": g("desktop.control"),
+  "GET /api/remote/screens": g("desktop.control"),
+  "POST /api/remote/sessions": g("desktop.control"),
+  "POST /api/remote/sessions/:id/view": g("desktop.control"),
+  "POST /api/remote/sessions/:id/navigate": g("desktop.control"),
+  "DELETE /api/remote/sessions/:id": g("desktop.control"),
+  "POST /api/remote/sessions/:id/recording": g("desktop.control"),
+  "DELETE /api/remote/sessions/:id/recording": g("desktop.control"),
+  "GET /api/remote/recordings": g("desktop.control"),
+  "GET /api/remote/recordings/:id": g("desktop.control"),
+  "POST /api/remote/recordings/:id/organize": g("desktop.control"),
+  "POST /api/remote/recordings/:id/replay": g("desktop.control"),
 
   // plugins: each person's own sessions and records
   "GET /api/plugins": "self",
@@ -242,7 +255,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "GET /api/peer/commands", "POST /api/peer/exec", "GET /api/peer/tools", "POST /api/peer/tool", "GET /api/peer/snapshot", "GET /api/peers", "POST /api/peer/invite", "POST /api/peer/add",
       "PATCH /api/peers/:id", "DELETE /api/peers/:id", "GET /api/peers/:id/status", "POST /api/peer/agents", "POST /api/peer/unpair", "DELETE /api/peer/paired/:id", "GET /api/peers/:id/api/ide/open",
       // Forwarded to a device as they are, any method.
-      "* /api/peers/:id/*", "* /api/peers/:id/ide", "* /api/peers/:id/ide/*",
+      "* /api/peers/:id/*", "* /api/peers/:id/ide", "* /api/peers/:id/ide/*", "* /api/peers/:id/remote/*",
       // Sharing with other servers (src/core/federation.ts): what this one shares, what it follows.
       "GET /api/peer/shares", "POST /api/peer/shares", "PUT /api/peer/shares/:user", "DELETE /api/peer/shares/:user",
       "GET /api/peer/subscriptions", "GET /api/peer/offers/:peer", "POST /api/peer/subscriptions", "DELETE /api/peer/subscriptions/:id", "POST /api/peer/subscriptions/:id/sync",

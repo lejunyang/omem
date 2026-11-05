@@ -733,7 +733,7 @@ async function saveEdit() {
           <span v-else class="badge">未安装</span>
         </div>
         <p class="muted small">
-          ai-auto-desktop（<span class="mono">aad</span>）让带命令行的 Agent 看和操作本机的桌面程序与浏览器：先读出界面结构，再对读到的元素动手。用法在内置技能 <span class="mono">desktop-control</span>：默认只看，动手前先问你，不输入密码。
+          ai-auto-desktop（<span class="mono">aad</span>）让带命令行的 Agent 看和操作本机的桌面程序与浏览器：先读出界面结构，再对读到的元素动手。用法在内置技能 <span class="mono">desktop-control</span>：默认只看，动手前先问你，不输入密码。装好后导航里会出现“远程”：在网页上操作这台机器的浏览器页面或桌面，并把做一遍的过程录成技能。
           <template v-if="desktop.installed && desktop.via === 'osdk'">在 osdk 安装目录里，omem 启动 Agent 时会把它加进 PATH。</template>
         </p>
         <div class="row">

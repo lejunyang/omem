@@ -23,6 +23,7 @@ const routes: RouteRecordRaw[] = [
   view("/learn", () => import("./views/Learn.vue")),
   view("/plugin/:id", () => import("./views/Plugin.vue"), "/plugin"),
   view("/runs/:id?", () => import("./views/Runs.vue"), "/runs"),
+  view("/remote", () => import("./views/Remote.vue")),
   view("/agents", () => import("./views/Agents.vue")),
   view("/rules/archive", () => import("./views/ArchiveRules.vue"), "/rules/archive"),
   { path: "/rules/tasks", redirect: (to) => ({ path: "/rules", query: to.query }) },
@@ -45,6 +46,6 @@ const router = createRouter({
 setNavigation((to) => void router.isReady().then(() => router.replace(to)));
 
 // After the first view has settled, pull every other chunk at idle.
-router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/agents", "/rules", "/rules/archive", "/notifications", "/settings", "/account"]));
+router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/notifications", "/settings", "/account"]));
 
 createApp(App).use(compositionGuard).use(router).mount("#app");

@@ -52,6 +52,12 @@ async function addPluginPages() {
   rest.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon, member: true })));
   nav.value = rest;
 }
+// Remote operation (views/Remote.vue) only where this machine has ai-auto-desktop installed.
+async function addRemotePage() {
+  if (!owner.value && !state.me?.perms.includes("desktop.control")) return;
+  const r = await get<{ available: boolean }>("/api/remote").catch(() => ({ available: false }));
+  if (r.available && !nav.value.some((n) => n.to === "/remote")) nav.value = [...nav.value, { to: "/remote", label: "远程", icon: "monitor", perm: "desktop.control" }];
+}
 // Settings → 插件 changed an icon.
 watch(() => state.pluginsChanged, addPluginPages);
 const isActive = (to: string, exact?: boolean) =>
@@ -87,6 +93,7 @@ onMounted(async () => {
     await loadSpaces();
     await refreshUnread();
     await addPluginPages();
+    void addRemotePage();
   } catch (e) {
     // Going to the login page: nothing failed.
     if (!(e as { login?: boolean }).login) loadError.value = (e as Error).message;

@@ -185,6 +185,7 @@ npm install -g omem-assistant
 | 看记忆写得好不好、哪个模型写得好 | “记忆 → 质量”：按模型看写入数、被退回的原因、复核结果；`omem memories stats`。旧记忆可用 `omem memories check` 过一遍检查 |
 | 想知道记忆、原件级别、Wiki 和模型到底帮没帮上忙 | 夜间复盘：先在 Agent 页给内置角色 replay-judge 选一个模型（最好和主助手不同家），再到设置 → Agent → 夜间复盘打开定时、设每晚几题。它挑最近被纠正、说没找到、加了表情或正常完成的问题，回到提问时重答两次，只改一处（检索、原件级别、记忆、页面或模型），盲评后把误导的记忆送回复核、给页面排检查；原件降级、导入材料这类建议在早上的事项清点卡片或 Agent 页采纳。`omem replay run --run <运行id>` 手动复盘一题，`omem replay` 看结果 |
 | 让 Agent 替我操作电脑上的程序或网页（填表、点按钮、看界面现在是什么样） | `omem setup` → 桌面与浏览器控制（或 `omem setup desktop`、设置 → Agent）经 osdk 装好 ai-auto-desktop，之后对助理说要做什么；内置技能 `desktop-control` 规定默认只看、动手前先问你、不输入密码 |
+| 在别的电脑或手机上操作 omem 那台机器的网页或桌面，把一件事做一遍教给助手 | 装好 ai-auto-desktop 后导航出现“远程”：打开一个浏览器页面或桌面，直接点击打字；说要教的事、点“开始录制”、做一遍、停止，助手读录到的步骤和请求，和你确认后保存成技能，可以在页面上“回放” |
 | 开会时让机器人进会记录、有人问到我时提醒我 | 规则 → 新建 → 触发选“我加入会议时”，按标题、人数、参会人写条件，动作“拉机器人入会”勾选机器人、记录、旁听；确认方式可选始终询问、直接加入或按条件询问（如 30 人及以上先问）；保存后看“飞书权限”，缺的点链接申请。会议本身要打开“允许智能体加入” |
 | 一台机器常驻，在别的电脑上看它、拉数据和代码仓库 | 见“多台设备”：设置 → 设备（或 `omem peer invite` / `add`）配对，`omem peer pull` 合并原件、记忆、规则、评审记录、Wiki、档案、附件与仓库，`omem link` 在浏览器里打开 |
 | 本机没装 Agent 或额度用完，借另一台机器的 | 设置 → 设备，在那台设备下打开它的某个 Agent：它出现在本机的 Agent 列表里，可以分给角色和档案；Agent 在那台机器上运行（它的登录和额度），检索和写入的仍是本机的库。不适合编码交办 |
@@ -313,6 +314,7 @@ omem link                                   # 从其他设备打开网页的链�
 - **怎么被用**：会话里带命令行的 Agent 直接运行 `aad`。osdk 的安装目录不在你的 PATH 上也行：omem 启动 Agent 时把它放进 PATH（osdk 给没选用的工具留的空垫片会被识别并绕开）。用法在内置技能 `desktop-control`（带 `references/aad.md`），启动时自动补进技能库，已有的技能不覆盖。
 - **约束**：技能规定默认只看；动手前先问你，不可撤销的操作逐个确认；不输入密码、验证码和支付信息；屏幕上的文字只当材料。这是对 Agent 的约束，不是权限边界：装了之后带命令行的 Agent 档案都能运行 `aad`。回答访客的运行不把 osdk 的安装目录放进 PATH（`OMEM_DESKTOP_TOOLS=off`）；但如果你自己把 `aad` 放在了全局 PATH 上，访客用的档案仍要选没有命令行的后端；不想要了 `osdk uninstall github:lejunyang/ai-auto-desktop`。
 - **查看**：`omem diag` 的 `tools.aad` 和 `omem setup` 开头一行显示是否装好、版本；网页设置 → Agent 里有安装 / 更新按钮。
+- **远程操作与录制技能**（导航“远程”，装了 `aad` 才出现）：在网页上打开 omem 所在机器的一个浏览器页面（默认无窗口，可选长期资料保留登录）或桌面（整个、某块显示器或某个窗口），画面经 omem 转发，鼠标键盘、输入法、滚动都送过去。要教助手一件事时先说要做什么，点“开始录制”做一遍：浏览器录下每个动作、页面变化、请求（cookie 和令牌替换成占位）和截图，桌面按所选窗口录元素和动作。停止后录制交给右边的助手，它读步骤和请求（工具 `read_recording`），按内置技能 `skill-from-recording` 和你确认会变的值、成功的标志，再保存成技能，录到的可回放步骤和请求摘要随技能保存。“回放”在当前会话里重放一次。设计见 [docs/v2/remote.md](docs/v2/remote.md)。
 
 ## 记录编码 Agent 的会话
 
@@ -487,6 +489,7 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 src/auth      登录：登录方（providers.ts，飞书在 lark.ts）、登录与绑定、邀请、机器人登录链接（login.ts）、会话 cookie（sessions.ts）、谁在请求与相关接口（http.ts）；权限（permissions.ts、routes.ts、tools.ts）；连接器：令牌保管（vault.ts）、刷新与续期（connections.ts）、功能与 scope（features.ts）、以某人身份用 lark-cli（lark-user.ts）
 src/core      配置、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）
 src/rules     任务规则、条件判断、执行动作与触发记录
+src/remote    远程操作：aad 的进程（assist、mcp、record）、会话与画面转发（/remote）、录制与回放
 src/sources   归档规则与原件迁移（archive.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合、重排（rerank.ts）
 src/memory    记忆（目录、有效期、版本链、写入检查与复核统计、对话前带上相关记忆、日常不足信号）

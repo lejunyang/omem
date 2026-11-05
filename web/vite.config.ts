@@ -12,7 +12,7 @@ export default defineConfig({
     port: Number(process.env.OMEM_WEB_PORT ?? 5173),
     // Built-in plugin pages are served from source (pluginPagesDev); the rest of /plugins goes to the API.
     fs: { allow: [repoRoot] },
-    proxy: { "/api": { target: api, changeOrigin: false, ws: true }, "/mcp": api, "/ide": { target: api, ws: true }, "/plugins": api },
+    proxy: { "/api": { target: api, changeOrigin: false, ws: true }, "/mcp": api, "/ide": { target: api, ws: true }, "/remote": { target: api, ws: true }, "/plugins": api },
   },
   build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 1500 },
 });

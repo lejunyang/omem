@@ -8,10 +8,11 @@ import { findPeer } from "./peers.ts";
  * Raw forwarding to a peer, for what `peerFetch` cannot carry: web VS Code under /ide (WebSocket
  * upgrades, binary bodies, redirects with cookies). The request goes byte for byte to the first
  * direct peer on the way, its path wrapped in `/api/peers/<id>` for each middle node, which
- * forwards it the same way (http.ts). Only the paths in `tunneled` go this way; `/api/peer/acp` is a
+ * forwards it the same way (http.ts). Only the paths in `tunneled` go this way (and /remote, a
+ * remote session's viewer and its WebSocket); `/api/peer/acp` is a
  * device's agent used from here (peer-acp.ts).
  */
-export const tunneled = (path: string) => /^\/ide(\/|\?|$)/.test(path) || /^\/api\/ide\/open(\?|$)/.test(path) || /^\/api\/peer\/acp(\?|$)/.test(path);
+export const tunneled = (path: string) => /^\/ide(\/|\?|$)/.test(path) || /^\/remote\//.test(path) || /^\/api\/ide\/open(\?|$)/.test(path) || /^\/api\/peer\/acp(\?|$)/.test(path);
 
 export function peerRoute(app: App, id: string, path: string, hops: number): { url: string; token: string; path: string; hops: number } {
   if (hops > 4) throw new Error("设备转发层数过多");

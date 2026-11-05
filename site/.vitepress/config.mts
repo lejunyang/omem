@@ -67,6 +67,7 @@ export default defineConfig({
           { text: "Agent 与技能", link: "/features/agents" },
           { text: "多 Agent 协作与会话", link: "/features/collaboration" },
           { text: "规则", link: "/features/rules" },
+          { text: "远程操作与录制技能", link: "/features/remote" },
         ],
       },
       {
