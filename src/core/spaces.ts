@@ -19,18 +19,21 @@ export type Space = {
   kind: SpaceKind;
   description: string;
   rootPath: string | null;
+  /** The business space a repository belongs to (searched, delegated and reviewed as part of it); null for the others. */
+  parentId: string | null;
   settings: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 };
 
-type Row = { id: string; name: string; kind: string; description: string; root_path: string | null; settings: string; created_at: string; updated_at: string };
+type Row = { id: string; name: string; kind: string; description: string; root_path: string | null; parent_id: string | null; settings: string; created_at: string; updated_at: string };
 const toSpace = (r: Row): Space => ({
   id: r.id,
   name: r.name,
   kind: r.kind as SpaceKind,
   description: r.description,
   rootPath: r.root_path,
+  parentId: r.parent_id ?? null,
   settings: json(r.settings, {}),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -68,7 +71,7 @@ ${description || "（在这里写这个空间的范围、用户和整理要求�
 
 export function createSpace(
   app: App,
-  input: { id?: string; name: string; kind?: SpaceKind; description?: string; rootPath?: string | null },
+  input: { id?: string; name: string; kind?: SpaceKind; description?: string; rootPath?: string | null; parentId?: string | null },
 ): Space {
   const id = slugify(input.id || input.name);
   if (id.startsWith("_")) throw new HttpError(400, "空间 id 不能以下划线开头（知识库保留给 Agent 档案和技能）");
@@ -94,6 +97,7 @@ export function createSpace(
   if (!existsSync(join(dir, "SPACE.md"))) writeFileSync(join(dir, "SPACE.md"), SPACE_GUIDE(input.name, kind, input.description ?? ""));
   commitLibrary(app.libraryDir, `space: create ${id}`);
   app.emit({ type: "changed", entity: "space", id });
+  if (input.parentId) return setSpaceParent(app, id, input.parentId);
   return getSpace(app, id);
 }
 
@@ -136,18 +140,65 @@ export function ensurePersonalSpace(app: App) {
 
 // ---- relations between spaces --------------------------------------------------
 
-export type SpaceRelation = { space: string; name: string; kind: SpaceKind; note: string; origin: "owner" | "agent"; status: "active" | "rejected"; evidence: string; updatedAt: string };
+/** `via`: not a relation of its own but the repository's business space (`parent`) or one of its repositories (`child`). */
+export type SpaceRelation = { space: string; name: string; kind: SpaceKind; note: string; origin: "owner" | "agent"; status: "active" | "rejected"; evidence: string; updatedAt: string; via?: "parent" | "child" };
 type RelRow = { space_a: string; space_b: string; note: string; origin: string; status: string; evidence: string; updated_at: string };
 const pair = (a: string, b: string) => (a < b ? [a, b] : [b, a]);
 
-/** The spaces related to one space (relations have no direction). Rejected ones only on request. */
+/**
+ * The spaces related to one space (relations have no direction). Rejected ones only on request. A
+ * repository's business space and a business space's repositories come first: everything that reads
+ * related spaces (a run's reach, the default search, the space guide) treats them as related.
+ */
 export function relatedSpaces(app: App, id: string, opts: { includeRejected?: boolean } = {}): SpaceRelation[] {
+  const self = findSpace(app, id);
+  const family: SpaceRelation[] = [];
+  const parent = self?.parentId ? findSpace(app, self.parentId) : null;
+  if (parent) family.push({ space: parent.id, name: parent.name, kind: parent.kind, note: "它所属的业务空间", origin: "owner", status: "active", evidence: "", updatedAt: self!.updatedAt, via: "parent" });
+  for (const c of childSpaces(app, id)) family.push({ space: c.id, name: c.name, kind: c.kind, note: "它的代码仓库", origin: "owner", status: "active", evidence: "", updatedAt: c.updatedAt, via: "child" });
   const rows = all<RelRow>(app.db, `select * from space_relations where (space_a = ? or space_b = ?) ${opts.includeRejected ? "" : "and status = 'active'"} order by updated_at desc`, id, id);
-  return rows.flatMap((r) => {
+  return [...family, ...rows.flatMap((r) => {
     const other = findSpace(app, r.space_a === id ? r.space_b : r.space_a);
-    if (!other) return [];
+    if (!other || family.some((f) => f.space === other.id)) return [];
     return [{ space: other.id, name: other.name, kind: other.kind, note: r.note, origin: r.origin as SpaceRelation["origin"], status: r.status as SpaceRelation["status"], evidence: r.evidence, updatedAt: r.updated_at }];
-  });
+  })];
+}
+
+// ---- repositories under a business space ---------------------------------------
+
+/** The repositories that belong to a business space. */
+export function childSpaces(app: App, id: string): Space[] {
+  return all<Row>(app.db, "select * from spaces where parent_id = ? order by name", id).map(toSpace);
+}
+
+/** A space with its repositories: what “this business” covers when searching, listing work or granting access. */
+export function spaceFamily(app: App, id: string): string[] {
+  return [id, ...all<{ id: string }>(app.db, "select id from spaces where parent_id = ? order by name", id).map((r) => r.id)];
+}
+
+/** Where a space's work is filed: a repository's business space, else the space itself. */
+export const businessOf = (app: App, id: string) => findSpace(app, id)?.parentId ?? id;
+
+/**
+ * Put a repository under a business space (`parent`), or take it out (null). Only a space with a
+ * repository directory goes under one, never under another repository; the relation the two had is
+ * dropped, the parent stands in for it.
+ */
+export function setSpaceParent(app: App, id: string, parent: string | null) {
+  const s = getSpace(app, id);
+  if (parent) {
+    const p = getSpace(app, parent);
+    if (!s.rootPath || s.kind !== "repo") throw new HttpError(400, `${s.name} 不是代码仓库，不能挂到业务空间下`);
+    if (p.id === s.id) throw new HttpError(400, "不能挂到自己下面");
+    if (p.kind === "repo" || p.kind === "worktree" || p.parentId) throw new HttpError(400, `${p.name} 不是业务空间，仓库只能挂到业务空间下`);
+    const [x, y] = pair(s.id, p.id);
+    run(app.db, "delete from space_relations where space_a = ? and space_b = ?", x, y);
+  }
+  run(app.db, "update spaces set parent_id = ?, updated_at = ? where id = ?", parent, now(), id);
+  app.emit({ type: "changed", entity: "space", id });
+  if (parent) app.emit({ type: "changed", entity: "space", id: parent });
+  if (s.parentId && s.parentId !== parent) app.emit({ type: "changed", entity: "space", id: s.parentId });
+  return getSpace(app, id);
 }
 
 export const relatedIds = (app: App, id: string) => relatedSpaces(app, id).map((r) => r.space);

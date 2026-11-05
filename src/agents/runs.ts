@@ -142,7 +142,7 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; visibleTo?: { userId: string; spaces: string[] } };
+type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; visibleTo?: { userId: string; spaces: string[] } };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
@@ -175,6 +175,7 @@ function runWhere(opts: RunFilter) {
   const exclude = (opts.exclude ?? "").split(",").map((k) => k.trim()).filter(Boolean);
   if (exclude.length) where.push(`kind not in (${exclude.map(() => "?").join(",")})`), params.push(...exclude);
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
+  if (opts.spaceIds?.length) where.push(`space_id in (${opts.spaceIds.map(() => "?").join(",")})`), params.push(...opts.spaceIds);
   if (opts.status) where.push("status = ?"), params.push(opts.status);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
   if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");

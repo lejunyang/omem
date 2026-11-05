@@ -7,7 +7,7 @@ import { all, one } from "../core/db.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { cancelHostAsks, createAsk, registerAskHandler, ROUND_ASKS } from "./asks.ts";
-import { findSpace, getSpace, type Space } from "../core/spaces.ts";
+import { businessOf, childSpaces, findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
@@ -179,11 +179,11 @@ export function worktreesOf(app: App, runId: string): WorktreeRef[] {
 /**
  * Where a delegation or branch review lives: the space asked for, else the business the work is for
  * (the space of its item's requirement tree, else the item's own space), so that space's runs list
- * shows it; else the first repository's.
+ * shows it; else the first repository's. A repository under a business space files its work there.
  */
 export function homeSpace(app: App, space: string | undefined, itemId: string | undefined, repos: string[]) {
-  if (space) return space;
-  if (!itemId) return repos[0];
+  if (space) return businessOf(app, space);
+  if (!itemId) return businessOf(app, repos[0]);
   const tree = one<{ space_id: string }>(app.db, "select n.space_id from item_materials m join req_nodes n on n.id = m.ref where m.item_id = ? and m.kind = 'req' and n.status = 'active' order by m.id limit 1", itemId);
   return tree?.space_id ?? getItem(app, itemId).spaceId;
 }
@@ -192,7 +192,13 @@ export function homeSpace(app: App, space: string | undefined, itemId: string | 
 export function codeRepos(app: App, spaceId: string, repos?: string[]): Space[] {
   const ids = [...new Set(repos?.length ? repos : [spaceId])];
   return ids.map((id) => {
-    const s = getSpace(app, id);
+    let s = getSpace(app, id);
+    // A business space names its repository when it has just one; with several, which one has to be said.
+    if (!s.rootPath) {
+      const kids = childSpaces(app, s.id);
+      if (kids.length === 1) s = kids[0];
+      else if (kids.length) throw new HttpError(400, `空间 ${id} 下有 ${kids.length} 个仓库（${kids.map((k) => `${k.id}：${k.name}`).join("、")}），说明要改哪个`);
+    }
     if (!s.rootPath || !isGitRepo(s.rootPath)) throw new HttpError(400, `空间 ${id} 没有关联 Git 仓库，不能交办编码`);
     return s;
   });

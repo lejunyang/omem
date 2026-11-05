@@ -13,7 +13,7 @@ import { ROLE_TOOLS } from "./agents/tool-help.ts";
 import { READ_ONLY_TOOLS } from "./agents/peer-agent.ts";
 import { App, type AppEvent } from "./core/app.ts";
 import { configPath, omemHome } from "./core/config.ts";
-import { createSpace, ensurePersonalSpace, getSpace, kindLabel, listSpaces, relatedIds, relateSpaces, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
+import { createSpace, ensurePersonalSpace, getSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
 import { listItems, upsertItem } from "./items/store.ts";
 import { listMemories } from "./memory/store.ts";
 import { memoriesCommand } from "./cli-memories.ts";
@@ -706,8 +706,8 @@ space
   .action(() => {
     const app = open();
     for (const s of listSpaces(app)) {
-      const rel = relatedIds(app, s.id);
-      console.log(`${s.id.padEnd(20)} ${kindLabel(s.kind).padEnd(6)} ${s.name}${s.rootPath ? `  ${s.rootPath}` : ""}${rel.length ? `  相关：${rel.join(", ")}` : ""}`);
+      const rel = relatedSpaces(app, s.id).filter((r) => !r.via).map((r) => r.space);
+      console.log(`${s.id.padEnd(20)} ${kindLabel(s.kind).padEnd(6)} ${s.name}${s.parentId ? `  属于 ${s.parentId}` : ""}${s.rootPath ? `  ${s.rootPath}` : ""}${rel.length ? `  相关：${rel.join(", ")}` : ""}`);
     }
   });
 space
@@ -722,16 +722,25 @@ space
     console.log(o.remove ? `已取消 ${a} 与 ${b} 的关联` : `已关联 ${a} 与 ${b}`);
   });
 space
+  .command("parent <repo> [business]")
+  .description("把代码仓库挂到业务空间下（不给业务空间就是移出）：在业务空间里检索、交办、评审都包括它")
+  .action((repo, business) => {
+    const app = open();
+    const s = setSpaceParent(app, repo, business ?? null);
+    console.log(s.parentId ? `${repo} 已归到 ${s.parentId} 下` : `${repo} 已移出，现在是独立仓库`);
+  });
+space
   .command("add <name>")
-  .description("新建空间；--path 关联代码仓库或目录")
+  .description("新建空间；--path 关联代码仓库或目录，--parent 挂到业务空间下")
   .option("--id <id>", "空间 id（默认由名称生成）")
   .option("--path <dir>", "关联目录（代码仓库）")
   .option("--kind <kind>", "personal | project | repo | learning | topic（通用）")
   .option("-d, --description <text>", "说明")
   .option("--exclude <patterns...>", "不导入的路径（前缀或 glob，如 docs/archive '**/*.lock'）")
+  .option("--parent <space>", "代码仓库所属的业务空间")
   .action(async (name, o) => {
     const app = open();
-    const s = createSpace(app, { id: o.id, name, kind: o.kind, rootPath: o.path, description: o.description });
+    const s = createSpace(app, { id: o.id, name, kind: o.kind, rootPath: o.path, description: o.description, parentId: o.parent });
     if (o.exclude?.length) updateSpace(app, s.id, { settings: { ...s.settings, exclude: o.exclude } });
     console.log(`已创建空间 ${s.id}`);
     if (s.rootPath) {

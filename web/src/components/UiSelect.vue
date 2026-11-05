@@ -6,7 +6,8 @@ import Icon from "./Icon.vue";
  * Select without the native control: a button that opens a listbox.
  * Keyboard: ↑/↓ (opens), Home/End, Enter/Space to choose, Esc to close, typing jumps to a label.
  */
-export type SelectOption<T> = { value: T; label: string; hint?: string; disabled?: boolean; group?: string };
+/** `indent`: an option under the one before it (a repository under its business space), indented in the list only. */
+export type SelectOption<T> = { value: T; label: string; hint?: string; disabled?: boolean; group?: string; indent?: boolean };
 
 const props = withDefaults(
   defineProps<{
@@ -183,7 +184,7 @@ onBeforeUnmount(() => {
             :aria-selected="o.value === modelValue"
             :aria-disabled="o.disabled || undefined"
             class="opt"
-            :class="{ active: i === active, selected: o.value === modelValue, disabled: o.disabled }"
+            :class="{ active: i === active, selected: o.value === modelValue, disabled: o.disabled, indent: o.indent }"
             @mousemove="active = i"
             @mousedown.prevent
             @click="choose(o)"
@@ -324,6 +325,9 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+.ui-select-pop .opt.indent {
+  padding-left: 26px;
 }
 .ui-select-pop .hint {
   font-size: 12px;

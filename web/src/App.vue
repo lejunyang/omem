@@ -9,7 +9,8 @@ import Skeleton from "./components/Skeleton.vue";
 import UiSelect from "./components/UiSelect.vue";
 import Icon from "./components/Icon.vue";
 import { get } from "./api";
-import { kindLabel, loadSpaces, refreshUnread, state } from "./store";
+import { loadSpaces, refreshUnread, state } from "./store";
+import { spaceOptions } from "./lib/spaces";
 import { preloadRoute } from "./preload";
 
 const route = useRoute();
@@ -114,7 +115,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
 
       <div class="space-pick">
         <span class="small muted">空间</span>
-        <UiSelect :model-value="state.space" @update:model-value="selectSpace" aria-label="当前空间" :placeholder="state.spaces.length ? '请选择' : '加载中…'" :options="state.spaces.map((s) => ({ value: s.id, label: s.name, hint: kindLabel[s.kind] ?? s.kind }))" />
+        <UiSelect :model-value="state.space" @update:model-value="selectSpace" aria-label="当前空间" :placeholder="state.spaces.length ? '请选择' : '加载中…'" :options="spaceOptions(state.spaces)" />
       </div>
 
       <button class="search-btn" @click="state.palette = true"><Icon name="search" :size="16" /><span>搜索或提问</span><kbd>Ctrl K</kbd></button>

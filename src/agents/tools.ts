@@ -12,7 +12,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
-import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
+import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { toolAllowed } from "../auth/tools.ts";
@@ -178,11 +178,12 @@ function wikiSpace(ctx: ToolContext, requested?: string | null) {
 function homeSpaces(ctx: ToolContext) {
   return [ctx.spaceId, ...relatedIds(ctx.app, ctx.spaceId).filter((id) => !ctx.spaces || ctx.spaces.includes(id))];
 }
-/** Spaces to read: '*' = all readable, a space id = that one, nothing = current + related. */
+/** Spaces to read: '*' = all readable, a space id = that one (a business space with its repositories), nothing = current + related. */
 function spacesFor(ctx: ToolContext, requested?: string | null, all = false) {
   if (requested === "*" || all) return ctx.spaces ?? undefined;
   if (!requested && findSpace(ctx.app, ctx.spaceId)) return homeSpaces(ctx);
-  return [space(ctx, requested)];
+  const one = space(ctx, requested);
+  return spaceFamily(ctx.app, one).filter((id) => id === one || !ctx.spaces || ctx.spaces.includes(id));
 }
 
 function renderMessageSource(ctx: ToolContext, id: string): string {
@@ -303,8 +304,8 @@ def({
 
 def({
   name: "connect_repository",
-  description: "本人要求接入仓库时使用：本地绝对路径关联 Git 根目录；HTTP(S)/SSH Git 链接尝试 clone 到 omem 数据目录 repos/ 后关联。可指定已有空间；否则按仓库路径复用或创建 repo 空间。自动导入代码。不会覆盖已有的不同仓库。\n同一个仓库（git remote 相同）已经有空间、只是关联的是别处的目录时，不新建空间，返回那个空间：交办直接用它。本人要让那个空间改用这个目录（比如这里装好了依赖、平时在这里开发）时，带 space 和 relink: true 再调；那个空间还有没应用的交办时不能改。",
-  schema: z.object({ repository: z.string().trim().min(1), space: z.string().optional(), id: z.string().optional(), name: z.string().trim().min(1).optional(), description: z.string().optional(), relink: z.boolean().optional().describe("本人同意后，让同一仓库（remote 相同）的已有空间改为关联这个目录") }),
+  description: "本人要求接入仓库时使用：本地绝对路径关联 Git 根目录；HTTP(S)/SSH Git 链接尝试 clone 到 omem 数据目录 repos/ 后关联。可指定已有空间；否则按仓库路径复用或创建 repo 空间。自动导入代码。不会覆盖已有的不同仓库。仓库属于某个业务（项目）时传 parent：它挂到那个业务空间下，检索、交办、评审和编码记录都算在业务空间里；已接入的仓库再调一次带 parent 就是归过去（parent 传空字符串是移出）。\n同一个仓库（git remote 相同）已经有空间、只是关联的是别处的目录时，不新建空间，返回那个空间：交办直接用它。本人要让那个空间改用这个目录（比如这里装好了依赖、平时在这里开发）时，带 space 和 relink: true 再调；那个空间还有没应用的交办时不能改。",
+  schema: z.object({ repository: z.string().trim().min(1), space: z.string().optional(), id: z.string().optional(), name: z.string().trim().min(1).optional(), description: z.string().optional(), relink: z.boolean().optional().describe("本人同意后，让同一仓库（remote 相同）的已有空间改为关联这个目录"), parent: z.string().optional().describe("这个仓库所属的业务空间 id；空字符串表示移出，不属于任何业务") }),
   write: true,
   handler: async (ctx, a) => {
     manageSpaces(ctx);
@@ -327,11 +328,17 @@ def({
       return relinkSpace(ctx, twin.id, root);
     }
     let s = target ?? same;
+    const under = a.parent === undefined ? undefined : a.parent ? space(ctx, a.parent) : null;
+    // Already connected: only where it belongs changes.
+    if (s?.rootPath && under !== undefined && rootOf(s.rootPath) === root) {
+      const moved = setSpaceParent(ctx.app, s.id, under);
+      return moved.parentId ? `仓库 ${s.id}（${s.name}）已归到业务空间 ${moved.parentId} 下：检索、交办、评审和编码记录都算在那里。` : `仓库 ${s.id}（${s.name}）已移出业务空间，现在是独立仓库。`;
+    }
     if (!s) {
       const name = a.name ?? root.split(/[\\/]/).pop()!;
       const id = slugify(a.id || name);
       if (findSpace(ctx.app, id)) throw new HttpError(409, `空间 ${id} 已存在；指定 space 关联或用不同 id 新建`);
-      s = createSpace(ctx.app, { id, name, kind: "repo", description: a.description, rootPath: root });
+      s = createSpace(ctx.app, { id, name, kind: "repo", description: a.description, rootPath: root, parentId: under ?? null });
     } else if (!s.rootPath) {
       const files = new Set(repoFiles(root));
       const collision = all<{ uri: string }>(ctx.app.db, "select uri from sources where space_id=? and deleted_at is null", s.id).find((source) => files.has(source.uri));
@@ -345,7 +352,8 @@ def({
       const subText = !sub
         ? ""
         : `\n子模块：共 ${sub.total} 个，已检出并索引 ${sub.ready} 个${sub.failed.length ? `；拉取失败 ${sub.failed.length} 个（${sub.failed.map((f) => `${f.path}：${f.error}`).join("；").slice(0, 600)}）` : ""}${!sub.managed && sub.ready < sub.total ? "；本地仓库由本人管理，未检出的子模块需要本人在仓库里 git submodule update --init --recursive 后再同步" : ""}`;
-      return `已关联仓库到空间 ${s.id}（${s.name}）。\n目录：${root}\n导入：新增 ${report.created}，更新 ${report.updated}，跳过 ${report.skipped.length}。${subText}\n交办编码请在 repo_spaces 里写 "${s.id}"。`;
+      const home = findSpace(ctx.app, s.id)?.parentId;
+      return `已关联仓库到空间 ${s.id}（${s.name}）${home ? `，在业务空间 ${home} 下` : ""}。\n目录：${root}\n导入：新增 ${report.created}，更新 ${report.updated}，跳过 ${report.skipped.length}。${subText}\n交办编码请在 repo_spaces 里写 "${s.id}"。`;
     } catch {
       return `空间 ${s.id} 已关联仓库 ${root}，但索引同步失败；关联已保留，重试 connect_repository 可重新同步。`;
     }
@@ -354,16 +362,17 @@ def({
 
 def({
   name: "list_spaces",
-  description: "列出可访问的知识空间（领域隔离：个人、项目、代码仓库、学习、通用），以及空间之间的关联。交办工作区是进行中的交办改过的文件（临时，只读），工作区删除后消失。",
+  description: "列出可访问的知识空间（领域隔离：个人、项目、代码仓库、学习、通用），以及空间之间的关联。业务空间下的代码仓库缩进列在它下面：限定在业务空间时也包括这些仓库。交办工作区是进行中的交办改过的文件（临时，只读），工作区删除后消失。",
   schema: z.object({}),
-  handler: (ctx) =>
-    listSpaces(ctx.app, { worktrees: true })
-      .filter((s) => !ctx.spaces || ctx.spaces.includes(s.id))
-      .map((s) => {
-        const rel = relatedSpaces(ctx.app, s.id).filter((r) => !ctx.spaces || ctx.spaces.includes(r.space));
-        return `- ${s.id}（${s.name}，${kindLabel(s.kind)}）${s.description ? "：" + s.description : ""}${s.rootPath ? `\n  目录：${s.rootPath}` : ""}${rel.length ? `\n  相关：${rel.map((r) => `${r.space}${r.note ? `（${r.note}）` : ""}`).join("；")}` : ""}`;
-      })
-      .join("\n") || "（无）",
+  handler: (ctx) => {
+    const shown = listSpaces(ctx.app, { worktrees: true }).filter((s) => !ctx.spaces || ctx.spaces.includes(s.id));
+    const line = (s: (typeof shown)[number], indent: string) => {
+      const rel = relatedSpaces(ctx.app, s.id).filter((r) => !r.via && (!ctx.spaces || ctx.spaces.includes(r.space)));
+      return `${indent}- ${s.id}（${s.name}，${kindLabel(s.kind)}）${s.description ? "：" + s.description : ""}${s.rootPath ? `\n${indent}  目录：${s.rootPath}` : ""}${rel.length ? `\n${indent}  相关：${rel.map((r) => `${r.space}${r.note ? `（${r.note}）` : ""}`).join("；")}` : ""}`;
+    };
+    const top = shown.filter((s) => !s.parentId || !shown.some((p) => p.id === s.parentId));
+    return top.map((s) => [line(s, ""), ...shown.filter((c) => c.parentId === s.id).map((c) => line(c, "  "))].join("\n")).join("\n") || "（无）";
+  },
 });
 
 def({
@@ -3236,7 +3245,7 @@ def({
   schema: z.object({
     execution: executionSchema.optional().describe("编码 AI 的临时选择"),
     review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
-    repo_spaces: z.array(z.string()).min(1).describe("要改的代码仓库空间 id；一个需求要同时改几个仓库（如前端和接口）就都写上"),
+    repo_spaces: z.array(z.string()).min(1).describe("要改的代码仓库空间 id；一个需求要同时改几个仓库（如前端和接口）就都写上。业务空间下只有一个仓库时可以写业务空间"),
     title: z.string().max(80).optional().describe("一句话说清要改什么（如“退款只按已发货行计算”），显示在运行列表和进度卡片上；不传取任务第一行"),
     task: z.string().describe("完整的任务描述：目标、背景、验收标准、相关讨论；多个仓库时写清各自要改什么、接口怎么对上"),
     check_command: z.string().optional().describe("验证命令，如 npm test；对所有仓库生效，除非 check_commands 单独指定"),
@@ -3259,7 +3268,8 @@ def({
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
     if (a.sync_only && !a.sync) throw new HttpError(400, "sync_only 需要同时给出 sync（拉取或合并 / 变基到哪个分支）");
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
-    const ids = [...new Set(a.repo_spaces.map((r) => writeSpace(ctx, r)))];
+    // A business space stands for its repository when it has just one (codeRepos).
+    const ids = [...new Set((await import("./code.ts")).codeRepos(ctx.app, "", a.repo_spaces.map((r) => writeSpace(ctx, r))).map((r) => r.id))];
     // Without one, work on a branch belongs to the item its earlier delegations were done for.
     const itemId = a.item_id ? itemFor(ctx, a.item_id) : (await import("./review-fix.ts")).itemOnBranch(ctx.app, ids, a.from_branch ?? a.branch, ctx.userId ?? OWNER) ?? undefined;
     const { codeRepos, homeSpace } = await import("./code.ts");

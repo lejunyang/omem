@@ -1402,3 +1402,11 @@ updated: 2026-11-05
 - `src/agents/code-works.ts`：一次交办或分支评审一项，按投影列算阶段、等谁（owner / active / assistant / idle / ended，两天没动算 idle）、现在、下一步和可做的动作、修改项进度、事项与需求、各仓库分支；`GET /api/code-works`、`GET /api/code-works/:id`；需求详情接口多返回 `works`，需求树的“等你 N”按同一套算。
 - 网页：运行页顶部“编码 / 全部运行”；`CodeWork.vue` 取代运行页里的编码详情和 `WorkPane.vue`（提问、修改点、讲解一起搬过来），需求页用同一个组件；`CodeWorkRow.vue` 两处共用。“全部运行”带 `exclude=code,review`，类型筛选去掉这两项；按 id 精确搜仍能找到。
 - 测试：`test/code-works.test.ts`。
+
+## 仓库挂在业务空间下（2026-11-06）
+
+- 起因：每个代码仓库都要单独建空间、再和业务空间关联，空间越来越多；同一个需求的交办有的记在业务空间、有的记在仓库空间（方案 docs/v2/coding-work.md 第 4 节，本人选定“下级空间”）。
+- `spaces.parent_id`（迁移）；`src/core/spaces.ts`：`childSpaces`、`spaceFamily`、`businessOf`、`setSpaceParent`，`relatedSpaces` 把上下级排在前面（`via: parent | child`）；`src/core/space-repos.ts` 的 `repoSuggestions`。
+- 用到的地方：`permissions.ts`（成员跟着业务空间）、`code.ts`（`homeSpace`、`codeRepos` 用业务空间代替唯一的仓库）、`tools.ts`（`search` 写业务空间时带上仓库、`connect_repository` 的 `parent`、`list_spaces` 缩进）、`http.ts`（建空间带 `parent`、`/parent`、`/repo-suggestions`、网页交办记账、检索 / 运行 / 编码列表按业务空间）、CLI `omem space parent`、`--parent`。
+- 网页：`lib/spaces.ts`（排序与选择器选项，`UiSelect` 加 `indent`）、设置页的“仓库”一栏和“所属业务空间”、原件页的仓库入口。
+- 测试：`test/space-repos.test.ts`。

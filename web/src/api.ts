@@ -180,8 +180,9 @@ export function onServerEvent(fn: Listener) {
 }
 
 // ---- shared types (mirrors server) ----
-export type SpaceRelation = { space: string; name: string; kind: string; note: string; origin: "owner" | "agent"; evidence: string; updatedAt: string };
-export type Space = { id: string; name: string; kind: string; description: string; rootPath: string | null; settings: Record<string, any>; sources?: number; pages?: number; related?: SpaceRelation[] };
+/** `via`: the repository's business space (`parent`) or one of its repositories (`child`), not a relation of its own. */
+export type SpaceRelation = { space: string; name: string; kind: string; note: string; origin: "owner" | "agent"; evidence: string; updatedAt: string; via?: "parent" | "child" };
+export type Space = { id: string; name: string; kind: string; description: string; rootPath: string | null; parentId?: string | null; settings: Record<string, any>; sources?: number; pages?: number; related?: SpaceRelation[] };
 /** How a hit is shown (src/search/present.ts): clean text around the match and the matched ranges. */
 export type HitDisplay = { title: string; titleMarks: [number, number][]; text: string; marks: [number, number][]; place: string; link: string };
 export type Hit = { type: "chunk" | "page" | "memory" | "symbol"; id: string; spaceId: string; title: string; path: string; sourceId?: string; uri?: string; sourceKind?: string; lineStart?: number; lineEnd?: number; snippet: string; score: number; via: string[]; status?: string; notes?: string[]; display?: HitDisplay; sameAs?: { sourceId: string; uri: string; title: string; spaceId: string }[]; elsewhere?: { sourceId: string; title: string; spaceId: string }[] };

@@ -41,7 +41,7 @@ import { allProfiles, configSchema, saveConfig } from "../core/config.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
-import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
+import { businessOf, createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError, slugify } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
@@ -276,7 +276,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return relatedSpaces(app, id);
   });
   server.post("/api/spaces", async (req) => {
-    const b = q(z.object({ id: z.string().optional(), name: z.string().trim().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional(), rootPath: z.string().trim().optional() }), req.body);
+    const b = q(z.object({ id: z.string().optional(), name: z.string().trim().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional(), rootPath: z.string().trim().optional(), parent: z.string().optional() }), req.body);
+    // A repository added under a business space (its settings' 添加仓库): managing that space is what it takes.
+    if (b.parent && !can(app, who(req), "space.manage", b.parent)) throw new HttpError(403, `不能管理空间 ${b.parent}`);
     // Both local directories and remote clones grant filesystem access on this machine.
     if (b.rootPath && !can(app, who(req), "code.delegate")) throw new HttpError(403, "关联仓库或本机目录要有交办编码的权限");
     if (b.kind === "personal" && who(req) !== OWNER) throw new HttpError(403, "个人空间由 omem 建");
@@ -288,12 +290,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       b.rootPath = await cloneRepository(app, b.rootPath);
       if (listSpaces(app).some((s) => s.rootPath === b.rootPath)) throw new HttpError(409, "这个仓库目录已关联空间，请使用已有空间");
     }
-    const s = createSpace(app, b);
+    const s = createSpace(app, { ...b, parentId: b.parent || null });
     // Whoever made it (other than the owner) manages it.
     if (who(req) !== OWNER) addMember(app, s.id, who(req), "manager");
     if (s.rootPath) scheduleSpaceSync(app, s.id);
     return s;
   });
+  // A repository under a business space, or taken out of one (docs/v2/coding-work.md 第 4 节).
+  server.post("/api/spaces/:id/parent", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const b = q(z.object({ parent: z.string().nullable() }), req.body);
+    if (b.parent && !can(app, who(req), "space.manage", b.parent)) throw new HttpError(403, `不能管理空间 ${b.parent}`);
+    return setSpaceParent(app, id, b.parent || null);
+  });
+  server.get("/api/spaces/:id/repo-suggestions", async (req) => (await import("../core/space-repos.ts")).repoSuggestions(app, (req.params as { id: string }).id));
   server.get("/api/spaces/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     return { ...getSpace(app, id), guide: spaceGuide(app, id) };
@@ -604,7 +614,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/search", async (req) => {
     const o = q(z.object({ q: z.string().min(1), space: z.string().optional(), types: z.string().optional(), limit: z.coerce.number().optional(), branch: z.string().optional() }), req.query);
-    const requested = o.space && o.space !== "*" ? o.space.split(",") : null;
+    // A business space covers its repositories, unless a branch of one repository is asked for.
+    const requested = o.space && o.space !== "*" ? (o.branch ? o.space.split(",") : [...new Set(o.space.split(",").flatMap((id) => spaceFamily(app, id)))]) : null;
     let spaces = scopeFor(app, who(req), requested) ?? undefined;
     // A repository space on one branch: its index of the branch stands in for the files it changed.
     let branch: Awaited<ReturnType<typeof indexBranch>> | undefined;
@@ -1140,7 +1151,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Someone other than the owner: their own runs and the ones they may read (src/auth/permissions.ts).
     const spaces = runReadableSpaces(app, who(req));
     const visibleTo = spaces === null ? undefined : { userId: who(req), spaces };
-    const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, visibleTo };
+    const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, visibleTo };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
   });
@@ -1149,7 +1160,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ space: z.string().optional(), q: z.string().optional(), ended: z.coerce.boolean().optional(), limit: z.coerce.number().optional() }), req.query);
     const spaces = runReadableSpaces(app, who(req));
     const { listCodeWorks } = await import("../agents/code-works.ts");
-    return listCodeWorks(app, { spaces: o.space ? [o.space] : undefined, q: o.q, ended: o.ended, limit: o.limit, visibleTo: spaces === null ? undefined : { userId: who(req), spaces } });
+    return listCodeWorks(app, { spaces: o.space ? spaceFamily(app, o.space) : undefined, q: o.q, ended: o.ended, limit: o.limit, visibleTo: spaces === null ? undefined : { userId: who(req), spaces } });
   });
   server.get("/api/code-works/:id", async (req) => {
     const spaces = runReadableSpaces(app, who(req));
@@ -1462,7 +1473,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办「${open.title}」（${open.id}），在它上面接着改，或者先确认 / 丢弃它`);
     }
     if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
-    const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(!b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(b.maxRounds ? { maxRounds: b.maxRounds } : {}) } : {}) }, userId });
+    const r = createRun(app, { kind: "code", spaceId: businessOf(app, s.id), title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(!b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(b.maxRounds ? { maxRounds: b.maxRounds } : {}) } : {}) }, userId });
     if (b.itemId) linkRunToItem(app, r, b.itemId, userId);
     return r;
   });

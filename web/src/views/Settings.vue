@@ -17,7 +17,8 @@ import ShareSettings from "../components/ShareSettings.vue";
 import MembersSettings from "../components/MembersSettings.vue";
 import FederationSettings from "../components/FederationSettings.vue";
 import PeerSettings from "../components/PeerSettings.vue";
-import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
+import { fmtTime, kindLabel, loadSpaces, relTime, state, toast } from "../store";
+import { nestedSpaces } from "../lib/spaces";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
@@ -249,9 +250,57 @@ async function createSpace() {
     creatingSpace.value = false;
   }
 }
+// ---- repositories under a business space (docs/v2/coding-work.md 第 4 节) ----
+/** The cards: business spaces (each listing its repositories) and repositories that belong to no business. */
+const spaceCards = computed(() => nestedSpaces(state.spaces).filter((x) => !x.child).map((x) => x.space));
+const reposOf = (id: string) => state.spaces.filter((c) => c.parentId === id);
+const isRepo = (s: Space) => s.kind === "repo" && !!s.rootPath;
+type RepoSuggestion = { space: string; name: string; reasons: string[] };
+const suggestions = ref<RepoSuggestion[]>([]);
+const newRepo = ref("");
+const addingRepo = ref(false);
+async function loadSuggestions(id: string) {
+  suggestions.value = await get<RepoSuggestion[]>(`/api/spaces/${id}/repo-suggestions`).catch(() => []);
+}
+async function moveRepo(repo: string, parent: string | null) {
+  try {
+    await post(`/api/spaces/${repo}/parent`, { parent });
+    toast(parent ? `已归到 ${state.spaces.find((s) => s.id === parent)?.name ?? parent} 下` : "已移出，现在是独立仓库", "ok");
+    await loadSpaces();
+    if (editing.value && !isRepo(editing.value)) await loadSuggestions(editing.value.id);
+    if (editing.value?.id === repo) editing.value.parentId = parent;
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+async function addRepo() {
+  const at = newRepo.value.trim();
+  if (!editing.value || !at || addingRepo.value) return;
+  addingRepo.value = true;
+  try {
+    // The name comes from the directory or the link; it can be renamed in the repository's settings.
+    const name = (at.replace(/[\\/]+$/, "").replace(/\.git$/, "").split(/[\\/:]/).pop() || at).trim();
+    await post("/api/spaces", { name, kind: "repo", rootPath: at, parent: editing.value.id });
+    toast(`已添加 ${name}，正在导入代码`, "ok");
+    newRepo.value = "";
+    await loadSpaces();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    addingRepo.value = false;
+  }
+}
+const syncRepo = async (id: string) => {
+  try { await post(`/api/spaces/${id}/sync`); toast("已开始同步", "ok"); } catch (e) { toast((e as Error).message, "error"); }
+};
+/** Business spaces a repository can go under. */
+const parentOptions = computed(() => [{ value: "", label: "不属于任何业务（独立仓库）" }, ...state.spaces.filter((s) => s.kind !== "repo" && !s.parentId && s.kind !== "worktree").map((s) => ({ value: s.id, label: s.name }))]);
 async function openSpace(s: Space) {
   editing.value = { ...s, settings: { ...s.settings } };
-  related.value = s.related ?? [];
+  related.value = (s.related ?? []).filter((r) => !r.via);
+  suggestions.value = [];
+  newRepo.value = "";
+  if (!isRepo(s)) void loadSuggestions(s.id);
   newRelated.value = { space: "", note: "" };
   slots.value = [];
   guide.value = (await get<{ guide: string }>(`/api/spaces/${s.id}`)).guide;
@@ -272,11 +321,11 @@ function submoduleTip(s: { settings?: Record<string, any> }) {
   if (!sm.managed && sm.ready < sm.total) return "其余子模块需要在仓库里运行 git submodule update --init --recursive";
   return "子模块都已检出并索引";
 }
-const relatable = computed(() => state.spaces.filter((s) => editing.value && s.id !== editing.value.id && !related.value.some((r) => r.space === s.id)).map((s) => ({ value: s.id, label: s.name })));
+const relatable = computed(() => state.spaces.filter((s) => editing.value && s.id !== editing.value.id && s.parentId !== editing.value.id && s.id !== editing.value.parentId && !related.value.some((r) => r.space === s.id)).map((s) => ({ value: s.id, label: s.name })));
 async function addRelated() {
   if (!editing.value || !newRelated.value.space) return;
   try {
-    related.value = await post<SpaceRelation[]>(`/api/spaces/${editing.value.id}/related`, newRelated.value);
+    related.value = (await post<SpaceRelation[]>(`/api/spaces/${editing.value.id}/related`, newRelated.value)).filter((r) => !r.via);
     newRelated.value = { space: "", note: "" };
     await loadSpaces();
   } catch (e) {
@@ -285,7 +334,7 @@ async function addRelated() {
 }
 async function removeRelated(r: SpaceRelation) {
   if (!editing.value) return;
-  related.value = await del<SpaceRelation[]>(`/api/spaces/${editing.value.id}/related/${encodeURIComponent(r.space)}`);
+  related.value = (await del<SpaceRelation[]>(`/api/spaces/${editing.value.id}/related/${encodeURIComponent(r.space)}`)).filter((x) => !x.via);
   await loadSpaces();
 }
 async function saveSpace() {
@@ -587,9 +636,9 @@ async function saveEdit() {
     </div>
 
     <section v-if="tab === 'spaces'" class="stack">
-      <p class="muted">空间把不同领域的知识分开：每个空间有自己的原件、Wiki、记忆和事项。助理默认在当前空间和它的相关空间里调查，需要时才查所有空间；整理、复核这类只管一个空间的任务也能读相关空间，但只写自己的。代码仓库空间关联一个本地目录，可定期同步。</p>
+      <p class="muted">空间把不同领域的知识分开：每个空间有自己的原件、Wiki、记忆和事项。助理默认在当前空间和它的相关空间里调查，需要时才查所有空间；整理、复核这类只管一个空间的任务也能读相关空间，但只写自己的。代码仓库挂在它所属的业务空间下（业务空间的设置里“添加仓库”），检索、交办、评审和编码记录都算在业务空间里；不属于任何业务的仓库单独列出。</p>
       <div class="spaces">
-        <div v-for="s in state.spaces" :key="s.id" class="card pad sp">
+        <div v-for="s in spaceCards" :key="s.id" class="card pad sp">
           <div class="row sp-head">
             <strong class="ellipsis" :title="s.name">{{ s.name }}</strong><span class="badge">{{ kindLabel[s.kind] ?? s.kind }}</span>
             <span class="spacer" />
@@ -597,7 +646,12 @@ async function saveEdit() {
           </div>
           <p class="sp-desc small" :class="{ muted: !s.description }" :title="s.description">{{ s.description || "没有说明" }}</p>
           <div v-if="s.rootPath" class="sp-line small muted" :title="s.rootPath"><Icon name="folder" :size="13" /><span class="mono ellipsis">{{ dirName(s.rootPath) }}</span></div>
-          <div v-if="s.related?.length" class="sp-line small muted" :title="s.related.map((r) => r.name).join('、')"><Icon name="link" :size="13" /><span class="ellipsis">{{ s.related.map((r) => r.name).join("、") }}</span></div>
+          <div v-if="s.related?.some((r) => !r.via)" class="sp-line small muted" :title="s.related.filter((r) => !r.via).map((r) => r.name).join('、')"><Icon name="link" :size="13" /><span class="ellipsis">{{ s.related.filter((r) => !r.via).map((r) => r.name).join("、") }}</span></div>
+          <div v-for="c in reposOf(s.id)" :key="c.id" class="sp-repo small">
+            <Icon name="code" :size="13" /><span class="ellipsis" :title="c.rootPath ?? ''">{{ c.name }}<span class="muted mono"> · {{ dirName(c.rootPath ?? "") }}</span></span>
+            <span class="spacer" />
+            <button class="btn ghost sm icon" :aria-label="`设置 ${c.name}`" title="仓库设置" @click="openSpace(c)"><Icon name="settings" :size="14" /></button>
+          </div>
           <div class="sp-meta small muted">
             <span>{{ s.sources ?? 0 }} 份原件</span><span>{{ s.pages ?? 0 }} 个页面</span>
             <span v-if="s.settings?.submodules" :class="{ warn: s.settings.submodules.failed?.length }" :title="submoduleTip(s)">子模块 {{ s.settings.submodules.ready }}/{{ s.settings.submodules.total }}<template v-if="s.settings.submodules.failed?.length"> · {{ s.settings.submodules.failed.length }} 个失败</template></span>
@@ -1102,8 +1156,32 @@ async function saveEdit() {
         <div class="row"><strong>空间设置：{{ editing.id }}</strong><span class="spacer" /><button class="btn ghost sm icon" @click="editing = null"><Icon name="x" /></button></div>
         <label class="field"><span>名称</span><input v-model="editing.name" class="input" /></label>
         <label class="field"><span>说明</span><input v-model="editing.description" class="input" /></label>
+        <div v-if="isRepo(editing)" class="field">
+          <span>所属业务空间</span>
+          <UiSelect :model-value="editing.parentId ?? ''" :options="parentOptions" aria-label="所属业务空间" @update:model-value="(v) => moveRepo(editing!.id, v || null)" />
+          <span class="hint">挂到业务空间下后，在业务空间里检索、交办、评审都包括这个仓库，交办记在业务空间。</span>
+        </div>
+        <div v-else class="field">
+          <span>仓库</span>
+          <div v-for="r in suggestions" :key="r.space" class="row wrap suggest small">
+            <span class="grow">可能也属于这里：<strong>{{ r.name }}</strong>（{{ r.reasons.join("；") }}）</span>
+            <button class="btn sm" @click="moveRepo(r.space, editing!.id)">归到这里</button>
+            <button class="btn ghost sm" @click="suggestions = suggestions.filter((x) => x.space !== r.space)">不是</button>
+          </div>
+          <div v-for="c in reposOf(editing.id)" :key="c.id" class="row repo-row">
+            <div class="grow fit"><strong>{{ c.name }}</strong> <span class="muted small">{{ c.settings?.lastSync ? `${relTime(String(c.settings.lastSync))}同步` : "还没同步" }}</span><div class="mono small muted slot-path" :title="c.rootPath ?? ''">{{ c.rootPath }}</div></div>
+            <button class="btn ghost sm" @click="syncRepo(c.id)">同步</button>
+            <button class="btn sm" @click="openSpace(c)">设置</button>
+            <button class="btn ghost sm danger" @click="moveRepo(c.id, null)">移出</button>
+          </div>
+          <div class="row">
+            <input v-model="newRepo" class="input mono grow" placeholder="添加仓库：本地路径或 Git 链接" aria-label="添加仓库" :disabled="addingRepo" @keydown.enter.prevent="addRepo" />
+            <button class="btn sm" :disabled="!newRepo.trim() || addingRepo" @click="addRepo">添加</button>
+          </div>
+          <span class="hint">添加后导入代码（遵守 .gitignore）；在这个空间里检索、交办、评审都包括它，编码记录记在这里。仓库自己的检查命令、目录等在它的“设置”里。</span>
+        </div>
         <div class="field">
-          <span>相关空间（互相调用、共用约定或属于同一项目；在其中一个工作时会一起查另一个）</span>
+          <span>相关空间（别的业务：互相调用、共用约定；在其中一个工作时会一起查另一个）</span>
           <div v-for="r in related" :key="r.space" class="row rel">
             <strong>{{ r.name }}</strong><span v-if="r.origin === 'agent'" class="badge" :title="r.evidence || undefined">Agent 发现</span>
             <span class="muted small grow">{{ r.note || "（没有说明）" }}</span>
@@ -1241,6 +1319,32 @@ async function saveEdit() {
 }
 .sp-line svg {
   flex: none;
+}
+.sp-repo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 2px;
+}
+.sp-repo svg {
+  flex: none;
+  color: var(--muted);
+}
+.sp-repo .btn {
+  margin: -4px -6px -4px 0;
+}
+.suggest {
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+  gap: 6px 10px;
+}
+.repo-row {
+  gap: 6px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  min-width: 0;
 }
 .grid2 {
   display: grid;

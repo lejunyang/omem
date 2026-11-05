@@ -129,8 +129,9 @@ export function can(app: App, userId: string, perm: Perm, spaceId?: string | nul
   if (perm in GLOBAL_PERMS) return g.has(perm);
   if (!spaceId) return false;
   if (g.has(`${perm}@*`) && !othersPersonal(app, spaceId, userId)) return true;
-  const m = one<{ role: string }>(app.db, "select role from space_members where space_id = ? and user_id = ?", spaceId, userId);
-  return !!m && grants(app, spaceRole(m.role)).has(perm);
+  // A repository under a business space also goes by the business space's members.
+  const parent = one<{ parent_id: string | null }>(app.db, "select parent_id from spaces where id = ?", spaceId)?.parent_id ?? spaceId;
+  return all<{ role: string }>(app.db, "select role from space_members where space_id in (?, ?) and user_id = ?", spaceId, parent, userId).some((m) => grants(app, spaceRole(m.role)).has(perm));
 }
 /** Old memberships said `owner` for the space's manager. */
 const spaceRole = (role: string) => (role === "owner" ? "manager" : role);
@@ -144,6 +145,8 @@ export function spacesWith(app: App, userId: string, perm: SpacePerm): string[] 
   if (grants(app, u.role).has(`${perm}@*`))
     for (const s of all<{ id: string; kind: string; owner_id: string }>(app.db, "select id, kind, owner_id from spaces")) if (s.kind !== "personal" || s.owner_id === userId) out.add(s.id);
   for (const m of all<{ space_id: string; role: string }>(app.db, "select space_id, role from space_members where user_id = ?", userId)) if (grants(app, spaceRole(m.role)).has(perm)) out.add(m.space_id);
+  // A business space's repositories go with it: they are not granted on their own.
+  for (const c of all<{ id: string; parent_id: string }>(app.db, "select id, parent_id from spaces where parent_id is not null")) if (out.has(c.parent_id)) out.add(c.id);
   return [...out];
 }
 

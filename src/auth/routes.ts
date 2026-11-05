@@ -45,6 +45,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/spaces": g("spaces.create"),
   "GET /api/spaces/:id": s("space.read", "p.id"),
   "PATCH /api/spaces/:id": s("space.manage", "p.id"),
+  "POST /api/spaces/:id/parent": s("space.manage", "p.id"),
+  "GET /api/spaces/:id/repo-suggestions": s("space.manage", "p.id"),
   "POST /api/spaces/:id/related": s("space.manage", "p.id"),
   "DELETE /api/spaces/:id/related/:other": s("space.manage", "p.id"),
   "GET /api/spaces/:id/members": s("space.manage", "p.id"),

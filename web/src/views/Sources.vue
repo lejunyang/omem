@@ -87,6 +87,9 @@ const hl = computed(() => (route.query.from ? { from: Number(route.query.from), 
 
 let loadSeq = 0;
 const itemsEl = ref<HTMLElement | null>(null);
+/** A business space's repositories (each its own space underneath), and a repository's business space. */
+const repos = computed(() => state.spaces.filter((s) => s.parentId === state.space));
+const parentSpace = computed(() => state.spaces.find((s) => s.id === space.value?.parentId) ?? null);
 /** Spaces other than repositories are browsed as the catalog tree (SourceTree loads it lazily). */
 const catalogView = computed(() => !!space.value && space.value.kind !== "repo");
 const qApplied = ref("");
@@ -360,6 +363,11 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <button class="btn ghost sm icon" title="保存材料" @click="state.capture = true"><Icon name="plus" :size="15" /></button>
         </div>
         <input v-model="q" class="input" placeholder="按标题或路径筛选" />
+        <!-- A business space's repositories, and the way back from one (docs/v2/coding-work.md 第 4 节). -->
+        <div v-if="repos.length || parentSpace" class="repos row wrap small">
+          <template v-if="repos.length"><span class="muted">仓库</span><button v-for="r in repos" :key="r.id" type="button" class="kind" :title="r.rootPath ?? ''" @click="state.space = r.id"><Icon name="code" :size="12" />{{ r.name }}</button></template>
+          <template v-else-if="parentSpace"><span class="muted">属于</span><button type="button" class="kind" @click="state.space = parentSpace.id"><Icon name="left" :size="12" />{{ parentSpace.name }}</button></template>
+        </div>
         <div v-if="space?.kind !== 'repo'" class="kinds row wrap" role="group" aria-label="关注程度">
           <button v-for="o in levelOptions" :key="o.value" class="kind" :class="{ on: !reviewing && level === o.value }" :aria-pressed="!reviewing && level === o.value" @click="level = o.value; reviewing = false">{{ o.label }}</button>
           <button class="kind review" :class="{ on: reviewing }" :aria-pressed="reviewing" title="Agent 写的标注和目录定级，按影响排序，确认或否定" @click="reviewing = !reviewing">待复核{{ reviewCount ? ` ${reviewCount}` : "" }}</button>
@@ -539,6 +547,14 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
   border-bottom: 1px solid var(--line);
 }
 .kinds {
+  gap: 4px;
+}
+.repos {
+  gap: 4px 6px;
+}
+.repos .kind {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
 }
 .kind {

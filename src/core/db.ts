@@ -1394,6 +1394,10 @@ export const migrations: readonly string[] = [
   // all runs and parsed each one's input. Queries must keep the expression exactly as written here.
   `create index runs_continue_from on runs(json_extract(input, '$.continueFrom'));
    create index runs_parent on runs(parent_id);`,
+  // A repository can belong to a business space (docs/v2/coding-work.md 第 4 节): searched, delegated
+  // and reviewed as part of it. It stays a space of its own underneath (files, symbols, worktrees).
+  `alter table spaces add column parent_id text references spaces(id);
+   create index spaces_parent on spaces(parent_id) where parent_id is not null;`,
 ];
 
 export type Db = DatabaseSync;
