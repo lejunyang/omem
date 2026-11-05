@@ -6,6 +6,7 @@ import { now, truncate } from "../core/util.ts";
 import { isBuiltinRole, listRoleStates, mergeRole, resolveRoleMerge, roleOverrideText, roleSourceText } from "./builtin-roles.ts";
 import { askModel } from "./oneshot.ts";
 import { profileDetail } from "./profiles.ts";
+import { quietReason } from "./quiet.ts";
 import { loadRole, runRole } from "./runner.ts";
 import { createRun, registerHandler, runsInLane } from "./runs.ts";
 import { listAgentSpecs, readAgentSpec } from "./specs.ts";
@@ -133,10 +134,11 @@ registerHandler("profile-review", async (ctx) => {
   const before = one<{ n: number }>(ctx.app.db, "select count(*) n from profile_proposals where target = ? and status = 'pending'", target)!.n;
   const r = await runRole(ctx.app, { role: "coach", spaceId: ctx.run.spaceId ?? "personal", task, runId: ctx.run.id, signal: ctx.signal, onEvent: (e) => ctx.event(e.type, e) });
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
-  const summary = r.text.trim();
+  const reason = quietReason(ctx.app, ctx.run.id);
+  const summary = r.text.trim() || reason || "";
   const after = one<{ n: number }>(ctx.app.db, "select count(*) n from profile_proposals where target = ? and status = 'pending'", target)!.n;
   if (after > before) notify(ctx.app, { title: `${target} 有 ${after - before} 条改进建议待确认`, body: truncate(summary, 600), link: `#/agents?tab=agents&name=${target}` });
-  return { quiet: /^\s*QUIET\s*$/i.test(summary), summary };
+  return { quiet: !!reason, summary };
 });
 
 /** Queue a review of one profile (the page's button, or the nightly pass). */

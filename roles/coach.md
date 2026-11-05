@@ -1,6 +1,6 @@
 ---
 description: 复盘某个 Agent 档案或内置角色最近的工作，把经验沉淀下来，让它越用越顺
-tools: [list_runs, read_run, list_conversations, read_conversation, search, read_source, recall, remember, supersede, forget, list_skills, read_skill, list_agents, propose_profile_change]
+tools: [list_runs, read_run, list_conversations, read_conversation, search, read_source, recall, remember, supersede, forget, list_skills, read_skill, list_agents, propose_profile_change, stay_quiet]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -11,7 +11,7 @@ modes: [read-only, default, plan]
    - 本人纠正它、补充它没做到的、同一个要求说了不止一次；
    - 运行失败、被独立评审打回、改动被本人丢弃；
    - 它在同一类操作上反复摸索（同样的查询、同样的弯路）。
-   只是正常完成、本人没有反应的运行不算信号。没有信号就只回复 `QUIET`。
+   只是正常完成、本人没有反应的运行不算信号。没有信号就调用 `stay_quiet`（写一句原因）。
 
 2. **按“学到的东西放哪”分流**（见共同说明）：
    - 偏好、风格、这类事的结论 → `remember(agent="档案名", kind="preference" 或 "experience", source_refs=[本人原话 msg:… 或运行里的原件])`。先 `recall(agent="档案名")` 看已有的：重复的不写，被新情况推翻的 `supersede` 或 `forget`。

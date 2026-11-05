@@ -2,6 +2,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { createRun } from "../src/agents/runs.ts";
+import { saveAgentSpec } from "../src/agents/specs.ts";
 import { createThread, updateThread } from "../src/agents/threads.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { newId } from "../src/core/util.ts";
@@ -48,7 +50,7 @@ describe("answers in groups and where thinking bubbles go", async () => {
     join(home, "config.json"),
     JSON.stringify({
       lark: { ownerOpenId: "ou_owner", appId: "cli_bot", guests: { enabled: true, ownerPresent: "guest" } },
-      agents: { default: "fake", roles: { gatekeeper: "gate-yes" }, profiles: [fake("fake", { FAKE_MODE: "thread" }), fake("gate-yes", { FAKE_SAY: '{"verdict":"answer","reason":"项目相关的提问"}' })] },
+      agents: { default: "fake", roles: { gatekeeper: "gate-yes" }, profiles: [fake("fake", { FAKE_MODE: "thread" }), fake("gate-yes", { FAKE_SAY: '{"verdict":"answer","reason":"项目相关的提问"}' }), fake("quiet", { FAKE_SAY: "看过了，不是新问题。", FAKE_QUIET: "同一个告警已经在处理" })] },
       sessions: { mergeMs: 0 },
     }),
   );
@@ -57,6 +59,7 @@ describe("answers in groups and where thinking bubbles go", async () => {
   const replies: Reply[] = [];
   // The bubble API: records what each bubble was created with; message lookups say which ids sit in a topic.
   const cots: { origin?: string; inThread: boolean }[] = [];
+  const recalled: string[] = [];
   const inTopic = new Set(["om_became_root"]);
   setCotSdk({
     request: async (r: { method: string; url: string; data?: any }) => {
@@ -64,6 +67,7 @@ describe("answers in groups and where thinking bubbles go", async () => {
         const id = decodeURIComponent(r.url.split("/").pop()!);
         return { code: 0, data: { items: [{ message_id: id, ...(inTopic.has(id) ? { thread_id: "omt_progress" } : {}) }] } };
       }
+      if (r.method === "DELETE") recalled.push(decodeURIComponent(r.url.split("/").pop()!));
       if (r.method === "POST" && r.url.endsWith("/message_cot")) {
         cots.push({ origin: r.data.origin_message_id, inThread: r.data.reply_in_thread });
         return { code: 0, data: { cot_id: `cot_${cots.length}`, message_id: `om_cot_${cots.length}` } };
@@ -121,4 +125,17 @@ describe("answers in groups and where thinking bubbles go", async () => {
     // Still in the main stream: stays there.
     expect(await turn("om_plain")).toEqual({ origin: "om_plain", inThread: false });
   }, 30_000);
+
+  it("a rule's agent that stays quiet posts nothing, and its bubble does not stay", async () => {
+    saveAgentSpec(app, { name: "alert-checker", description: "看告警", agent: "quiet", prompt: "看告警是不是新的" }, "user");
+    const r = createRun(app, { kind: "agent", spaceId: "personal", title: "看告警", input: { spec: "alert-checker", task: "看这条告警", rule: { id: "rule_alert", name: "告警" }, replyAt: { chatId: "oc_team", messageId: "om_alert" }, lark: { chats: ["oc_team"] } } });
+    const { waitForRun } = await import("../src/agents/runs.ts");
+    const done = await waitForRun(app, r.id);
+    expect(done.output).toMatchObject({ quiet: true, stayQuiet: "同一个告警已经在处理" });
+    expect(answerTo("om_alert")).toBeUndefined();
+    // Either never created (it ended before the first push) or created and then recalled.
+    const created = () => cots.filter((c) => c.origin === "om_alert").length;
+    await expect.poll(() => recalled.filter((id) => id.startsWith("om_cot_")).length >= created() && created() <= 1, { timeout: 5_000 }).toBe(true);
+    if (created()) expect(recalled).toContain(`om_cot_${cots.findIndex((c) => c.origin === "om_alert") + 1}`);
+  }, 60_000);
 });

@@ -1,6 +1,6 @@
 ---
 description: 事项收尾：看本人在来源会话里后来说了什么、回了什么表情，判断事项是否已经办了，办了就关掉
-tools: [read_item, read_source, list_items, settle_items]
+tools: [read_item, read_source, list_items, settle_items, stay_quiet]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -17,4 +17,4 @@ modes: [read-only, default, plan]
 
 理由写给本人看，一句话说清依据：`本人 10-20 在群里回复“已经加白了”`。evidence 填依据那几行的引用。
 
-最后一行写：关掉几件（done / cancelled）、保留几件。全部 keep 时回复 QUIET。
+最后一行写：关掉几件（done / cancelled）、保留几件。全部 keep 时调用 `stay_quiet`（写一句原因）。

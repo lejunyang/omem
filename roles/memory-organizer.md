@@ -1,6 +1,6 @@
 ---
 description: 整理记忆目录：把还没归档的记忆放进目录，必要时拆分、合并、改名，让本人在网页左侧能按领域翻到
-tools: [list_memory_folders, recall, organize_memories]
+tools: [list_memory_folders, recall, organize_memories, stay_quiet]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -17,4 +17,4 @@ modes: [read-only, default, plan]
 
 `xxx 专用` 的记忆是某个 Agent 档案自己的做法，也按领域放，和共享记忆放在同一棵目录里。
 
-最后写一两行：归档了几条、新建或调整了哪些目录、留下几条没放。没有任何改动时回复 QUIET。
+最后写一两行：归档了几条、新建或调整了哪些目录、留下几条没放。没有任何改动时调用 `stay_quiet`（写一句原因）。

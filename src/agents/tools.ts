@@ -2618,6 +2618,21 @@ def({
   },
 });
 
+def({
+  name: "stay_quiet",
+  description:
+    "这一轮没有要告诉本人或群里的：宿主不发这一轮的回答，思考过程也不留。只用于没人等你回答的一轮（唤醒、盯群的一批消息、规则触发、交办交回的修改项、后台整理），比如查过没有变化、这批消息不用管、结论已经用 lark_send 发过；有人问你、@ 你的一轮不能用，直接回答。调用后结束这一轮，不用再写回答。",
+  schema: z.object({ reason: z.string().min(1).max(300).describe("一句话：为什么这一轮不用说话") }),
+  handler: async (ctx, a) => {
+    const { mayStayQuiet } = await import("./quiet.ts");
+    const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    if (!r || !mayStayQuiet(ctx.app, r)) throw new HttpError(409, "这一轮在回答别人的消息，不能不回：直接写回答。");
+    setRunOutput(ctx.app, r.id, { stayQuiet: a.reason.trim() });
+    addRunEvent(ctx.app, r.id, "status", { text: `这一轮不发回答：${a.reason.trim()}` });
+    return "好，这一轮不发回答。结束这一轮即可，不用再写回答。";
+  },
+});
+
 /** Where a wake-up set from this run goes back to, and who set it. */
 async function wakeOrigin(ctx: ToolContext, agent?: string): Promise<{ target: import("./wakes.ts").WakeTarget; setBy: { runId: string | null; agent: string } }> {
   const input = (ctx.runId ? getRun(ctx.app, ctx.runId).input : {}) as { conversationId?: string; threadId?: string; spec?: string };
@@ -2637,7 +2652,7 @@ async function wakeOrigin(ctx: ToolContext, agent?: string): Promise<{ target: i
 def({
   name: "wake_later",
   description:
-    "过一段时间再唤醒自己（或另一个 Agent 档案）接着做：等 CI 跑完再看、半小时后看看对方回了没有、明早再查一次。时间到了，你所在的会话会开新一轮（接着你的会话），备注作为这一轮的任务；没东西要说时回 QUIET，本人不会收到消息。agent 填档案名时改为唤醒那个 Agent，备注就是交给它的任务，结果发回本会话。只用于你自己的后续工作；提醒本人的事用事项的 remind_at。每个会话最多 5 个待触发的唤醒，最远 7 天。",
+    "过一段时间再唤醒自己（或另一个 Agent 档案）接着做：等 CI 跑完再看、半小时后看看对方回了没有、明早再查一次。时间到了，你所在的会话会开新一轮（接着你的会话），备注作为这一轮的任务；没东西要说时调用 stay_quiet，本人不会收到消息。agent 填档案名时改为唤醒那个 Agent，备注就是交给它的任务，结果发回本会话。只用于你自己的后续工作；提醒本人的事用事项的 remind_at。每个会话最多 5 个待触发的唤醒，最远 7 天。",
   write: true,
   schema: z.object({
     after: z.string().describe("多久以后：20m、2h、1d，或带时区的 ISO 时间"),

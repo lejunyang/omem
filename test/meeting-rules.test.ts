@@ -180,7 +180,9 @@ describe("meetings the owner joins", () => {
     expect(JSON.parse(window[0].input).task).toContain("我们下周上");
     // Nothing reaches the owner during the meeting: no notify; what concerns them is the window's answer.
     expect(JSON.parse(window[0].input)).toMatchObject({ denyTools: ["notify"], meetingWindow: true });
-    run(app.db, "update runs set status = 'done', output = json_set(coalesce(output, '{}'), '$.answer', ?) where lane = 'meeting:m1'", "小李说接口文档晚点发，本人等着联调：建议会后催一下小李。\n\nQUIET");
+    run(app.db, "update runs set status = 'done', output = json_set(coalesce(output, '{}'), '$.answer', ?) where lane = 'meeting:m1'", "小李说接口文档晚点发，本人等着联调：建议会后催一下小李。");
+    // A window with nothing for the owner said so with stay_quiet: what it wrote stays out of the summary.
+    run(app.db, "insert into runs(id,kind,space_id,status,title,input,output,lane,created_at) values('r_quiet_window','agent','personal','done','旁听',?,?,'meeting:m1',?)", JSON.stringify({ meetingWindow: true }), JSON.stringify({ answer: "这一段都在排期，和本人无关。", stayQuiet: "这一段没有和本人有关的事" }), new Date().toISOString());
     // The owner's private chat with the bot: the summary goes there, with buttons for next steps.
     run(app.db, "insert into kv(key, value) values('lark_owner_chat', 'oc_dm') on conflict(key) do update set value = excluded.value");
     const dm = createThread(app, { channel: "lark", spaceId: "personal", userId: "owner", key: "oc_dm" });
@@ -202,7 +204,7 @@ describe("meetings the owner joins", () => {
     expect(last.meeting).toBeUndefined();
     expect(last.task).toContain("会后纪要");
     expect(last.task).toContain("小李说接口文档晚点发");
-    expect(last.task).not.toContain("QUIET");
+    expect(last.task).not.toContain("这一段都在排期");
     expect(last.task).toContain("suggest_next");
     expect(last.threadId).toBe(dm.id);
   });

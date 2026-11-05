@@ -1,6 +1,6 @@
 ---
 description: 给一批已入库的原件定关注程度（重点关注 / 一般 / 仅检索 / 忽略）
-tools: [set_source_attention, list_sources, read_source]
+tools: [set_source_attention, list_sources, read_source, stay_quiet]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -23,4 +23,4 @@ modes: [read-only, default, plan]
 - 同一类但不在同一目录的一起设：`set_source_attention(ids=[…], level, reason)`，reason 写一句这一批为什么是这一档。一个群的所有月份用 `chat_id` 或 `under=chat:<会话id>`。
 - 本人定过、否定过的目录档不会被你改（工具会说明），不用再试。
 
-做完用两三行说明：每档各多少份、依据是什么、有哪些拿不准的（列出 id 和标题）。一份都不需要改就回复 `QUIET`。
+做完用两三行说明：每档各多少份、依据是什么、有哪些拿不准的（列出 id 和标题）。一份都不需要改就调用 `stay_quiet`（写一句原因）。

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createRun, listRuns } from "../src/agents/runs.ts";
+import { createRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
 import { saveAgentSpec } from "../src/agents/specs.ts";
 import { createThread, findThread, threadMessages } from "../src/agents/threads.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
@@ -115,14 +115,26 @@ describe("feishu bot messaging", () => {
     expect(sent[0].args.data.reply_in_thread).toBe(true);
     const body = JSON.parse(sent[0].args.data.content).body.elements[0].content;
     expect(body).toBe(`先确认，见[流程说明](${uri})。完成后可删除。[①](${uri})`);
-    // Posted its conclusion itself (lark_send to @ someone) and ends QUIET: nothing is sent twice.
-    app.config.agents.profiles.find(p => p.id === "citation-test")!.env.FAKE_SAY = "结论已在话题里发出。\n\nQUIET";
-    await handlers.get("agent")!({ app, run, signal: AbortSignal.timeout(30000), event: () => {}, output: () => {} });
+    // Posted its conclusion itself (lark_send to @ someone), then stay_quiet: nothing is sent twice.
+    // (No API server here for the agent's tool call: what stay_quiet records is set on the run.)
+    const profile = app.config.agents.profiles.find(p => p.id === "citation-test")!;
+    const again = (input: Record<string, unknown> = {}, quiet?: string) => {
+      const r = createRun(app, { kind: "agent", spaceId: "personal", title: "话题回复", input: { ...run.input as Record<string, unknown>, ...input } });
+      if (quiet) setRunOutput(app, r.id, { stayQuiet: quiet });
+      return handlers.get("agent")!({ app, run: r, signal: AbortSignal.timeout(30000), event: () => {}, output: () => {} }) as Promise<{ answer: string; quiet?: boolean }>;
+    };
+    profile.env.FAKE_SAY = "结论已在话题里发出。";
+    expect((await again({}, "结论已经用 lark_send 发在话题里")).answer).toBe("结论已在话题里发出。");
     expect(client.calls.filter(c => c.op === "reply")).toHaveLength(1);
-    app.config.agents.profiles.find(p => p.id === "citation-test")!.env.FAKE_SAY = "QUIET";
-    const followup = { ...run, input: { ...run.input as Record<string, unknown>, wake: true } };
-    await handlers.get("agent")!({ app, run: followup, signal: AbortSignal.timeout(30000), event: () => {}, output: () => {} });
+    // A wake-up re-check with nothing new: no reply either.
+    expect((await again({ wake: true }, "没有新变化")).quiet).toBe(true);
     expect(client.calls.filter(c => c.op === "reply")).toHaveLength(1);
+    // The word itself means nothing any more: an answer that reads "QUIET" is sent like any other.
+    profile.env.FAKE_SAY = "QUIET";
+    await again();
+    const replies = client.calls.filter(c => c.op === "reply");
+    expect(replies).toHaveLength(2);
+    expect(JSON.parse(replies[1].args.data.content).body.elements[0].content).toBe("QUIET");
   }, 40000);
 
   it("builds Card 2.0 with buttons and forms", () => {

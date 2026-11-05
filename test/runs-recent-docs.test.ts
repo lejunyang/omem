@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { isQuiet } from "../src/agents/jobs.ts";
 import { countRuns, createRun, listRuns } from "../src/agents/runs.ts";
 import { all, run } from "../src/core/db.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
@@ -24,13 +23,6 @@ describe("run list filters", () => {
     app.db.close();
   });
 
-  it("a background run that says a sentence before QUIET is quiet too", () => {
-    expect(isQuiet("QUIET")).toBe(true);
-    expect(isQuiet("看了 3 个事项，都没有新变化。QUIET")).toBe(true);
-    expect(isQuiet("没有需要通知的。\n\n**QUIET**")).toBe(true);
-    expect(isQuiet("发了一条通知：周报今天截止")).toBe(false);
-    expect(isQuiet("QUIETLY")).toBe(false);
-  });
 });
 
 describe("docs the owner opened lately", () => {

@@ -1387,3 +1387,11 @@ updated: 2026-11-05
 - `src/agents/jobs.ts`：等着的运行自己开始时把 `triggers` 里第一条以后的列进任务，按 `resumeFromRun` 续上前一个运行的会话（同档案、同 AI、同范围、前一个已完成）；规则队列里的运行保留会话（`persistSession`）。
 - 规则页 Agent 动作加“处理中再次触发时并入同一会话”（默认勾上）；`compile.ts` 的草稿说明加 `merge`。
 - 测试：`test/rule-merge.test.ts`（并入等着的运行、换群另开、正在跑的一轮拿走触发、之后再触发另排；结束后等着的运行续上会话且任务里有全部触发，用假 ACP Agent；关掉合并时各自并行）。
+
+## 静默改成工具 stay_quiet（2026-11-06）
+
+- 新工具 `stay_quiet(reason)`（`tools.ts`，分组 ask；不在 CORE_TOOLS，多数会话经 `omem_call` 调）：记到运行输出 `stayQuiet`，并加一条状态事件。`src/agents/quiet.ts`：`mayStayQuiet(app, run)` 决定这一轮能不能用（工具里检查），`quietReason(app, runId)` 给宿主读。
+- 去掉 `jobs.ts` 的 `isQuiet` 和 digest.ts、profile-jobs.ts、lark-meetings.ts（`heldNotes` 改为排除 `stayQuiet` 的窗口）里按文字认 QUIET 的地方；后台角色用 `quietOf(ctx, text)`。
+- 授予：`threadTurn` 的三处 `prepareRun` 都 `addTools: ["stay_quiet"]`（一个 Agent 会话服务各种轮次）；`runAgentTask` 在 rule / silent / meeting / wake 时加；十个后台角色的 `tools:` 写上它。规则运行静默且这次没有 `lark_sent` 记录时返回 `quiet: true`（气泡撤回）。
+- 测试替身：`test/fake-acp-agent.ts` 的 `FAKE_QUIET` 让固定回答前先调 `stay_quiet`（直接或经 `omem_call`），被拒时把拒绝说出来。
+- 验收见 acceptance.md 同名一节。

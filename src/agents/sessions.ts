@@ -187,7 +187,7 @@ function watchedNote(app: App, t: Thread, messages: ThreadMessage[]) {
     `- 回复：${reply}。本人需要知道或决定的用 notify，不在群里 @ 本人。`,
     "- 某个话题独立又要深入处理（一次排查、一个需求），可以 run_agent(own_topic=true) 交给合适的 Agent 在它的话题里做，你这里继续看全群。",
     `- 节奏：现在每 ${w.batchMinutes ?? 0} 分钟看一批（@本人或机器人的 30 秒内）。讨论正热、要及时跟进就用 set_chat_watch 调小 batch_minutes，平静了再调大；目的达到了用 remove 结束。`,
-    "- 这一批没有要做的，只回 QUIET。",
+    "- 这一批没有要做的：调用 stay_quiet（写一句原因）结束这一轮。",
   ].join("\n");
 }
 
@@ -232,7 +232,10 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const { actor, label } = actorFor(app, t);
   const lark = larkScope(t, userId);
   const denyTools = (ctx.run.input as { denyTools?: string[] }).denyTools;
-  const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined, denyTools });
+  // One agent session serves every kind of turn, so it always has stay_quiet; the tool refuses a turn
+  // that answers someone (quiet.ts), and only the turns allowed to stay quiet mention it.
+  const addTools = ["stay_quiet"];
+  const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined, denyTools, addTools });
   const emit = (e: AgentEvent) => ctx.event(e.type, e);
   // A reply never waits for a model slot, but it counts against the model's load (released with the run).
   holdForRun(app, prep.profile, ctx.run.id);
@@ -259,7 +262,7 @@ ${renderMessages(messages, app)}
 - later：问题成立，但只在现在的用法碰不到的情况下出现、或者是需求没要求的加固（同一处修了几层还在报的多半是这种），记成以后再做，note 写为什么；
 - skip：不该做或做不了（等别的团队、缺外部字段），note 写在等什么；
 - owner：只有业务或功能上要本人取舍时，写 question 和两三个 options。
-本人不需要知道这些处理：都处理完、没有要本人决定的，只回答 QUIET。`
+本人不需要知道这些处理：都处理完、没有要本人决定的，调用 stay_quiet 结束这一轮。`
       : handoff
       ? `# 编码交办停下了
 
@@ -352,7 +355,7 @@ ${WAKE_NOTE}`
       used = chain[step];
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined });
+      curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools });
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
       emit({ type: "status", text: `默认后端不可用（排队、限流或额度用完），改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
     }
@@ -436,7 +439,7 @@ ${WAKE_NOTE}`
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined });
+          const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools });
           const handle = await openAcp(
             again.profile,
             { cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },

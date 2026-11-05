@@ -1,6 +1,6 @@
 ---
 description: 原件变化后检查并修正受影响的 Wiki 页面
-tools: [search, scan, read_source, source_outline, find_symbol, list_pages, read_page, write_page, confirm_page, read_skill]
+tools: [search, scan, read_source, source_outline, find_symbol, list_pages, read_page, write_page, confirm_page, read_skill, stay_quiet]
 skills: [wiki-writing]
 writes: false
 modes: [read-only, default, plan]
@@ -18,4 +18,4 @@ modes: [read-only, default, plan]
 5. 读完仍然成立、不需要改的页面，用 `confirm_page` 记一笔（页面内容不变，“原件已变化”的提示清掉，下次不再重复检查）；改过的页面 `write_page` 之后提示自动清掉。引用的原件已被删除的页面要改写引用（去掉、换成别的原件，或写明依据已不在），`confirm_page` 清不掉这类提示。
 6. 页面的路径（目录）不动；觉得放错了目录，在回复里提一句。
 
-每个受影响的页面都要有结果：改了、或 `confirm_page`、或在回复里说明为什么留着没处理。全部页面都不需要改（也都已 `confirm_page`）就回复 `QUIET`。
+每个受影响的页面都要有结果：改了、或 `confirm_page`、或在回复里说明为什么留着没处理。全部页面都不需要改（也都已 `confirm_page`）就调用 `stay_quiet`（写一句原因）。

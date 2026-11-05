@@ -119,7 +119,7 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
       spec: target.spec,
       wake: true,
       ...delivery,
-      task: `# 唤醒\n\n${body}\n\n${ownRun ? "这是你自己之前设的，接着当时的工作做。" : `这是 ${w.setBy.agent} 交给你的。`}没有需要告诉本人的就只回 QUIET。`,
+      task: `# 唤醒\n\n${body}\n\n${ownRun ? "这是你自己之前设的，接着当时的工作做。" : `这是 ${w.setBy.agent} 交给你的。`}没有需要告诉本人的就调用 stay_quiet 结束这一轮。`,
       ...(target.conversationId ? { threadId: target.conversationId } : {}),
       ...(prev ? { resumeSessionId: prev } : {}),
     },
@@ -138,7 +138,7 @@ registerHandler("wake", async (ctx) => {
 
 /** The turn's framing when a conversation's agent is woken (sessions.ts). */
 export const WAKE_NOTE =
-  "这是你（或别的 Agent）之前设的唤醒，不是本人发的消息。按备注接着做：查看进展、继续未完成的步骤。有需要本人知道或决定的再写给本人；没有新东西要说就只回 QUIET，本人不会收到任何消息。";
+  "这是你（或别的 Agent）之前设的唤醒，不是本人发的消息。按备注接着做：查看进展、继续未完成的步骤。有需要本人知道或决定的再写给本人；没有新东西要说就调用 stay_quiet（写一句原因）结束这一轮，本人不会收到任何消息。";
 
 /** Temporary rules past their time (heartbeat). */
 export async function expireTemporaryRules(app: App, at = now()) {

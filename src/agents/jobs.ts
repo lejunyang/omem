@@ -17,6 +17,7 @@ import { runCodeTask } from "./code.ts";
 import { deliverToThread, receive } from "./inbox.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import { replyOf } from "./types.ts";
+import { quietReason } from "./quiet.ts";
 import { maybeSummarize, threadTurn } from "./sessions.ts";
 import { readAgentSpec } from "./specs.ts";
 import { describeFlags, guardSource } from "../sources/guard.ts";
@@ -42,10 +43,14 @@ import { helpedCounts, replayDreamText } from "./replay.ts";
 registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
 
 /**
- * A background role with nothing to report ends with QUIET: alone, on a line of its own, or after
- * a sentence ("没有新的变化。QUIET"). Such runs stay out of the run list.
+ * A run with nothing to report says so with stay_quiet (quiet.ts), not in its text: such runs stay
+ * out of the run list, and what they wrote is kept in the run, not delivered. `summary` is what it
+ * wrote, else the reason it gave.
  */
-export const isQuiet = (text: string) => /(^|\n)\s*[*`_]*QUIET[*`_]*\s*[。.!！]?\s*(\n|$)/i.test(text) || /\bQUIET[*`_。.!！\s]*$/i.test(text.trim());
+function quietOf(ctx: RunContext, text: string) {
+  const reason = quietReason(ctx.app, ctx.run.id);
+  return { quiet: !!reason, summary: text.trim() || reason || "" };
+}
 
 async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: string, spaces?: string[] | null, readSpaces?: string[]) {
   const r = await runRole(ctx.app, {
@@ -107,15 +112,17 @@ registerHandler("ask", async (ctx) => {
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, messageId: id, session: r.mode };
   }
-  // Woken by a wake-up it set: nobody waits on it either; nothing to say (QUIET) posts nothing.
+  // It said it has nothing to say (stay_quiet, only where nobody waits on the turn): nothing is posted.
+  const quiet = quietReason(ctx.app, ctx.run.id);
+  // Woken by a wake-up it set: nobody waits on it either.
   if ((ctx.run.input as { wake?: unknown }).wake && msgs.every((m) => !!m.meta.wake)) {
-    if (isQuiet(answer)) return { answer, quiet: true, session: r.mode };
+    if (quiet) return { answer, quiet: true, session: r.mode };
     await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode };
   }
   // A watched group's batch with nothing to do: kept in the conversation, out of the run list.
-  if (msgs.every((m) => typeof m.meta.speaker === "string") && isQuiet(answer)) {
+  if (msgs.every((m) => typeof m.meta.speaker === "string") && quiet) {
     const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
     return { answer, messageId: id, quiet: true, session: r.mode };
   }
@@ -125,9 +132,9 @@ registerHandler("ask", async (ctx) => {
     // What the turn left unsettled is said where the owner reads it, not left as a silent wait.
     const { listTasks, taskLabel } = await import("./code-tasks.ts");
     const left = handoff?.workId ? listTasks(ctx.app, handoff.workId).filter((t) => t.state === "assistant") : [];
-    if (handoff?.kind === "code-tasks" && isQuiet(answer) && !left.length) return { answer, quiet: true, session: r.mode };
+    if (handoff?.kind === "code-tasks" && quiet && !left.length) return { answer, quiet: true, session: r.mode };
     const note = left.length ? `\n\n（${left.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 40)}」`).join("、")} 交给了助手，这一轮还没处理，交办在这几项上停着。）` : "";
-    answer = `${isQuiet(answer) ? "" : answer}${note}`.trim() || answer;
+    answer = `${quiet ? "" : answer}${note}`.trim() || answer;
     await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode, channelDelivered: true };
@@ -238,7 +245,8 @@ async function runAgentTask(ctx: RunContext) {
     runRole(ctx.app, {
       role: "assistant",
       spec,
-      addTools: rule ? ["report_rule_failure"] : undefined,
+      // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
+      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : [])],
       execution,
       spaces: assistantScope?.spaces,
       // A run may also be denied tools of its own (a meeting's windows: nothing reaches the owner until it ends).
@@ -268,15 +276,16 @@ async function runAgentTask(ctx: RunContext) {
   if ((ctx.run.input as { wake?: boolean }).wake) {
     // A wake-up's process bubble is held until now: drop it when there is nothing to say, else
     // show it before the reply below.
-    const quiet = isQuiet(answer);
+    const quiet = !!quietReason(ctx.app, ctx.run.id);
     await (await import("../channels/lark-cot.ts")).endCot(ctx.app, ctx.run.id, { ok: true, quiet });
     if (quiet) return { answer, quiet: true, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
   }
   if (silent || meeting || getRun(ctx.app, ctx.run.id).output.ruleFailure) {
     // Whatever it had to say it already posted (or told the owner); the text stays in the run.
-  } else if (rule && isQuiet(answer)) {
-    // It already posted (lark_send, to @ someone) and ends QUIET so the answer is not sent twice.
-    // The run stays listed and its bubble stays: it did work.
+  } else if (rule && quietReason(ctx.app, ctx.run.id)) {
+    // Nothing more to say. When it already posted (lark_send, to @ someone) its bubble stays: it did
+    // work; with nothing posted the bubble goes too.
+    if (!one(ctx.app.db, "select 1 from lark_sent where run_id = ? limit 1", ctx.run.id)) return { answer, quiet: true, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
   } else if (rule) {
     // A rule's agent answers in the chat only when the rule says so; otherwise the owner gets it.
     if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: name, rule: rule.id });
@@ -444,7 +453,7 @@ registerHandler("ingest", async (ctx) => {
       parentId: ctx.run.id,
     });
   const r = await agent(ctx, "ingest", ctx.run.spaceId!, task);
-  return { quiet: isQuiet(r.text), summary: r.text.trim() };
+  return quietOf(ctx, r.text);
 });
 
 /**
@@ -631,7 +640,7 @@ registerHandler("memory-organize", async (ctx) => {
   const more = unfiled.length === ORGANIZE_BATCH && (input.round ?? 1) < 20;
   if (more) createRun(app, { kind: "memory-organize", spaceId, title: "整理记忆目录（续）", input: { after: unfiled[unfiled.length - 1].created_at, round: (input.round ?? 1) + 1 } });
   const left = unfiled.filter((m) => one(app.db, "select 1 from memories where id = ? and folder = ''", m.id)).length;
-  return { quiet: isQuiet(r.text), filed: unfiled.length - left, left, summary: r.text.trim() };
+  return { ...quietOf(ctx, r.text), filed: unfiled.length - left, left };
 });
 
 // --------------------------------------------------------------- item upkeep
@@ -669,7 +678,8 @@ registerHandler("item-settle", async (ctx) => {
     } catch {}
   }
   const closed = checks.filter((c) => one(ctx.app.db, "select 1 from items where id = ? and status in ('done','cancelled')", c.id)).length;
-  return { quiet: isQuiet(r.text) || !closed, closed, checked: checks.length, summary: r.text.trim() };
+  const q = quietOf(ctx, r.text);
+  return { ...q, quiet: q.quiet || !closed, closed, checked: checks.length };
 });
 
 /** Daily: what closed by itself and what closes tomorrow, one card per person with keep/reopen buttons. */
@@ -804,7 +814,7 @@ registerHandler("wiki-lint", async (ctx) => {
     recheck.length ? `夜间复盘发现这些页面可能过时（不看它们时回答更好）：对照它引用的原件和最近的材料逐段核对，过时的改掉或标出：\n${recheck.map((p) => `- ${p.page}：${p.note}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
   const r = await agent(ctx, "wiki-linter", spaceId, task);
-  return { quiet: isQuiet(r.text), summary: r.text.trim(), pages: stale.length + recheck.length };
+  return { ...quietOf(ctx, r.text), pages: stale.length + recheck.length };
 });
 
 /** Pages one folder pass looks at (the rest of a crowded folder goes to the next pass). */
@@ -842,7 +852,8 @@ registerHandler("wiki-organize", async (ctx) => {
   const round = input.round ?? 1;
   if (moved > 0 && (again.loose.length || again.crowded.length) && round < ORGANIZE_ROUNDS)
     createRun(ctx.app, { kind: "wiki-organize", spaceId, title: "整理 Wiki 目录（续）", input: { round: round + 1, auto: (ctx.run.input as { auto?: boolean }).auto }, parentId: ctx.run.parentId ?? undefined });
-  return { quiet: moved === 0 && isQuiet(r.text), moved, loose: again.loose.length, crowded: again.crowded.length, summary: r.text.trim() };
+  const q = quietOf(ctx, r.text);
+  return { ...q, quiet: moved === 0 && q.quiet, moved, loose: again.loose.length, crowded: again.crowded.length };
 });
 
 // --------------------------------------------------------------------- sync
@@ -895,7 +906,7 @@ registerHandler("heartbeat", async (ctx) => {
   );
   const watching = listItems(app, { status: "active" }).filter((i) => i.kind === "watch" || i.kind === "waiting");
   run(app.db, "insert into kv(key,value) values('heartbeat_at', ?) on conflict(key) do update set value = excluded.value", started);
-  if (!fresh.length || !watching.length) return { quiet: true, reminders: due.length, summary: due.length ? `发送了 ${due.length} 条提醒` : "QUIET" };
+  if (!fresh.length || !watching.length) return { quiet: true, reminders: due.length, summary: due.length ? `发送了 ${due.length} 条提醒` : "没有新动静" };
   const sent = all<{ at: string; title: string }>(app.db, "select at, title from notifications where at > ? order by at", last);
   const task = [
     sent.length ? `上次巡检以来已经发给本人的通知（不要重复这些内容）：\n${sent.map((n) => `- ${n.at.slice(0, 16)} ${n.title}`).join("\n")}` : "",
@@ -905,7 +916,7 @@ registerHandler("heartbeat", async (ctx) => {
     .filter(Boolean)
     .join("\n\n");
   const r = await agent(ctx, "heartbeat", "personal", task, null);
-  return { quiet: isQuiet(r.text), reminders: due.length, summary: r.text.trim() };
+  return { ...quietOf(ctx, r.text), reminders: due.length };
 });
 
 // -------------------------------------------------------------------- dream
@@ -1027,7 +1038,7 @@ registerHandler("curate", async (ctx) => {
     `还没订阅的群（最近三天的消息预览）：\n${chats.map((c) => `### ${c.name}（${c.chatId}）\n${c.preview.map((p) => `- ${p}`).join("\n") || "（最近没有消息）"}`).join("\n\n")}`,
   ].join("\n\n");
   const r = await agent(ctx, "curator", ctx.run.spaceId ?? "personal", task, null);
-  return { quiet: isQuiet(r.text), summary: r.text.trim() };
+  return quietOf(ctx, r.text);
 });
 
 // -------------------------------------------------------------------- tutor

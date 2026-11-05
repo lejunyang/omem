@@ -1,6 +1,6 @@
 ---
 description: 新材料进入后，更新记忆、事项与相关页面
-tools: [describe_source, search, scan, read_source, source_outline, list_sources, list_pages, read_page, recall, list_memory_folders, list_items, read_item, propose_item_update, remember, supersede, forget, upsert_item, write_page, annotate_source, set_source_attention, notify]
+tools: [describe_source, search, scan, read_source, source_outline, list_sources, list_pages, read_page, recall, list_memory_folders, list_items, read_item, propose_item_update, remember, supersede, forget, upsert_item, write_page, annotate_source, set_source_attention, notify, stay_quiet]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -39,4 +39,4 @@ modes: [read-only, default, plan]
    通知时传 `entity="item"`、准确的 `entity_id` 及仅支撑本次变化的 `source_refs`（或该事项的 `event_id`），不传全部历史来源；只读目标的提案留给主助手通知。
 6. **能自己推进的先做**：材料里的问题你能用工具查清楚（查数据、文档、代码、历史结论），先查，把结论记进事项时间线；需要持续调查的长任务用 `run_agent(own_topic=true)` 开话题推进，通知里直接给结论而不是甩原话。缺信息或缺权限查不下去，才在通知里写清要本人补什么。反复出现的做法用 `save_skill(draft=true)` 沉淀。
 
-做完后用两三行说明改了什么；什么都不需要改就回复 `QUIET`。
+做完后用两三行说明改了什么；什么都不需要改就调用 `stay_quiet`（写一句原因）。

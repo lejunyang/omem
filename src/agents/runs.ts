@@ -450,7 +450,7 @@ function kick(app: App) {
           }
         } catch {}
         const status = controller.signal.aborted ? "cancelled" : "done";
-        // A quiet background inspection (nothing new / QUIET) stays out of the run list; so does a
+        // A quiet background inspection (nothing new, stay_quiet) stays out of the run list; so does a
         // conversation turn that a wake-up or a watched group's batch started and that had nothing to say.
         const quiet = status === "done" && out && (out as { quiet?: boolean }).quiet === true && (!INTERACTIVE.has(r.kind) || r.input.wake === true || r.kind === "ask") ? 1 : 0;
         run(app.db, "update runs set status=?, quiet=?, finished_at=? where id=?", status, quiet, now(), r.id);

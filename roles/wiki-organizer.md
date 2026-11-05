@@ -1,6 +1,6 @@
 ---
 description: 把 Wiki 页面整理进合适的目录：顶层散落的页面、挤在一个目录里的页面
-tools: [list_pages, read_page, move_page, write_page]
+tools: [list_pages, read_page, move_page, write_page, stay_quiet]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -19,4 +19,4 @@ Wiki 的页面按路径分目录：`flows/ingest` 是目录 `flows` 里的页面
 4. 新建的目录可以写一页 `<目录>/index`（`write_page`，kind=index，标题是目录给用户看的名字，摘要一句话说这里放什么，正文一两句话，不要列页面清单——目录树会自己列）。已有 index 的目录不要重写。
 5. 拿不准归哪的页面留着，下一轮再看；不要为了清零而乱放。
 
-一轮处理不完（任务里写了上限）就做完这一批：宿主会在还有剩余时接着安排下一轮。最后用两三句话说明建了哪些目录、移了多少页、哪些留着没动。没有需要调整的就回复 `QUIET`。
+一轮处理不完（任务里写了上限）就做完这一批：宿主会在还有剩余时接着安排下一轮。最后用两三句话说明建了哪些目录、移了多少页、哪些留着没动。没有需要调整的就调用 `stay_quiet`（写一句原因）。

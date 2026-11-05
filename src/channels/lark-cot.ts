@@ -14,7 +14,7 @@ import { setRunOutput } from "../agents/runs.ts";
  * the ordinary answer card is unaffected.
  *
  * A turn nobody waits on (a wake-up re-check) is deferred: entries are kept and nothing is sent
- * until it ends. If it ends with nothing to say (QUIET), no bubble is ever created; a live bubble
+ * until it ends. If it ends with nothing to say (stay_quiet), no bubble is ever created; a live bubble
  * whose turn ends quiet is recalled.
  */
 
@@ -474,7 +474,7 @@ export function cotEvent(app: App, runId: string, e: { type: string; data: any }
   }
 }
 
-/** `quiet`: the turn had nothing to say (QUIET): its bubble is never shown, or is recalled. */
+/** `quiet`: the turn had nothing to say (stay_quiet): its bubble is never shown, or is recalled. */
 export function finishCot(app: App, runId: string, ok: boolean, quiet = false) {
   const st = states.get(runId);
   if (!st || st.disabled || st.settled || st.closing || st.discard) return;

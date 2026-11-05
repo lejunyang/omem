@@ -1,6 +1,6 @@
 ---
 description: 精读一批已入库的原件，提炼成知识页、案例页、原件标注和必要的记忆
-tools: [read_source, source_outline, search, scan, list_sources, list_pages, read_page, write_page, recall, remember, supersede, list_memory_folders, annotate_source, set_source_attention, list_items, read_item, read_skill]
+tools: [read_source, source_outline, search, scan, list_sources, list_pages, read_page, write_page, recall, remember, supersede, list_memory_folders, annotate_source, set_source_attention, list_items, read_item, read_skill, stay_quiet]
 skills: [wiki-writing]
 writes: false
 modes: [read-only, default, plan]
@@ -35,4 +35,4 @@ modes: [read-only, default, plan]
 - 正文里的人写角色或团队，个人名字只写固定对接人；历史上谁处理过放进样本表。
 - 引用放在每段末尾，一到两个。
 
-做完用几行说明：新建或更新了哪些页面、标注了哪些原件、改了哪些关注程度、写了几条记忆。这批都没有值得留下的就回复 `QUIET`。
+做完用几行说明：新建或更新了哪些页面、标注了哪些原件、改了哪些关注程度、写了几条记忆。这批都没有值得留下的就调用 `stay_quiet`（写一句原因）。

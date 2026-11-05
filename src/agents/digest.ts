@@ -7,6 +7,7 @@ import { HttpError, json, newId, now, truncate } from "../core/util.ts";
 import { effectiveLevel, filterSql, LEVEL_LABELS, levelSql, sourceFilter, sourceNotes, noteText, type SourceFilter } from "../sources/attention.ts";
 import { catalog, nodePath, sourcesUnder } from "../sources/catalog.ts";
 import { executionSchema, type Execution } from "./execution.ts";
+import { quietReason } from "./quiet.ts";
 import { runRole } from "./runner.ts";
 import { createRun, getRun, registerHandler } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
@@ -284,7 +285,8 @@ async function runBatch(ctx: Parameters<Parameters<typeof registerHandler>[1]>[0
     });
     run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
     ok = true;
-    return { summary: r.text.trim(), quiet: /^\s*QUIET\s*$/i.test(r.text) };
+    const reason = quietReason(ctx.app, ctx.run.id);
+    return { summary: r.text.trim() || reason || "", quiet: !!reason };
   } finally {
     const at = now();
     if (ok) {

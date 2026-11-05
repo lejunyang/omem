@@ -56,7 +56,7 @@ function start(app: App, r: Run) {
   if (r.input.hideThinking) return false;
   // A rule's agent answering under the triggering message: its bubble opens the topic there.
   const input = r.input as { replyAt?: { chatId: string; messageId: string }; spec?: string; wake?: boolean; lark?: { bot?: string } };
-  // A wake-up re-check: nobody waits on it, and most end with nothing new (QUIET). Its process is
+  // A wake-up re-check: nobody waits on it, and most end with nothing new (stay_quiet). Its process is
   // shown only when it has something to say.
   const defer = !!input.wake;
   const at = input.replyAt;
