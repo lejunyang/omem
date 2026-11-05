@@ -4,12 +4,13 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { mayStayQuiet } from "../src/agents/quiet.ts";
 import { loadRole } from "../src/agents/runner.ts";
-import { createRun, getRun, waitForRun } from "../src/agents/runs.ts";
+import { createRun, getRun, waitForRun, type Run } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { addMessage, createThread, threadMessages, updateThread } from "../src/agents/threads.ts";
 import { expandTools } from "../src/agents/tool-help.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
-import { one } from "../src/core/db.ts";
+import { one, run } from "../src/core/db.ts";
+import { newId } from "../src/core/util.ts";
 import { boot } from "../src/main.ts";
 import { testApp } from "./helpers.ts";
 
@@ -19,11 +20,18 @@ describe("which runs may end saying nothing", () => {
   const app = testApp();
   afterAll(() => app.db.close());
   const t = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+  // Rows only: createRun would hand them to the run worker the booted app below has started, and
+  // they would still be running against this database when it closes.
+  const held = (kind: string, input: Record<string, unknown> = {}) => {
+    const id = newId("r");
+    run(app.db, "insert into runs(id,kind,space_id,status,title,input,created_at) values(?,?,?,?,?,?,?)", id, kind, "personal", "done", kind, JSON.stringify(input), new Date().toISOString());
+    return getRun(app, id);
+  };
   const turn = (messages: { role: "user" | "assistant"; meta?: Record<string, unknown> }[], input: Record<string, unknown> = {}) => {
     const ids = messages.map((m) => addMessage(app, t.id, m.role, "消息", null, m.meta ?? {}));
-    return createRun(app, { kind: "ask", spaceId: "personal", title: "一轮", input: { conversationId: t.id, messageIds: ids, ...input } });
+    return held("ask", { conversationId: t.id, messageIds: ids, ...input });
   };
-  const may = (r: ReturnType<typeof createRun>) => mayStayQuiet(app, r);
+  const may = (r: Run) => mayStayQuiet(app, r);
 
   it("only runs nobody waits on", () => {
     // Someone's message to it: an answer is owed.
@@ -36,12 +44,12 @@ describe("which runs may end saying nothing", () => {
     expect(may(turn([{ role: "user", meta: { speaker: "小王" } }, { role: "user", meta: { speaker: "小李" } }]))).toBe(true);
     expect(may(turn([{ role: "assistant", meta: { codeTasks: "r_x" } }], { handoff: { kind: "code-tasks" } }))).toBe(true);
     // Agent runs: a rule's, a wake-up's, a silent check, a meeting; not a delegated round someone waits for.
-    const agent = (input: Record<string, unknown>) => createRun(app, { kind: "agent", spaceId: "personal", title: "a", input: { spec: "assistant", task: "t", ...input } });
+    const agent = (input: Record<string, unknown>) => held("agent", { spec: "assistant", task: "t", ...input });
     for (const input of [{ rule: { id: "x", name: "x" } }, { wake: true }, { silent: { chatId: "oc_g" } }, { meeting: { id: "m1" } }]) expect(may(agent(input))).toBe(true);
     expect(may(agent({ threadId: t.id }))).toBe(false);
     // Background roles yes; a guest's question no.
-    expect(may(createRun(app, { kind: "heartbeat", title: "巡检" }))).toBe(true);
-    expect(may(createRun(app, { kind: "guest", title: "访客" }))).toBe(false);
+    expect(may(held("heartbeat"))).toBe(true);
+    expect(may(held("guest"))).toBe(false);
   });
 
   it("the tool refuses a turn answering someone and records the reason where it may", async () => {
@@ -51,7 +59,7 @@ describe("which runs may end saying nothing", () => {
     expect(refused.isError).toBe(true);
     expect(refused.text).toContain("不能不回");
     expect(getRun(app, answering.id).output.stayQuiet).toBeUndefined();
-    const check = createRun(app, { kind: "heartbeat", title: "巡检" });
+    const check = held("heartbeat");
     expect((await callTool(ctxFor(check.id), "stay_quiet", { reason: "事项都没有新变化" })).isError).toBeFalsy();
     expect(getRun(app, check.id).output.stayQuiet).toBe("事项都没有新变化");
   });
