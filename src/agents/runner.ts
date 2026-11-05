@@ -559,6 +559,11 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const emit = input.onEvent ?? (() => {});
   let lastError: unknown;
   let failed = false;
+  /** Why the previous backend was left: busy (queue, rate limit, quota) or it failed before doing anything. */
+  let leftBecause: { busy: boolean; why: string } | null = null;
+  let acted = false;
+  let writesBefore = 0;
+  const writes = () => (input.runId ? one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", input.runId)!.n : 0);
   for (let i = 0; i < chain.length; i++) {
     let slot;
     try {
@@ -591,17 +596,30 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         persistSession: input.persistSession ?? !!input.resumeSessionId,
         queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
       };
-      if (i > 0) emit({ type: "status", text: `${failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
+      if (i > 0)
+        emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
       emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+      // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
+      acted = false;
+      writesBefore = writes();
+      const watch = (e: AgentEvent) => {
+        if (e.type === "tool") acted = true;
+        emit(e);
+      };
       const result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
-        ? await backgroundTurn(app, prep, req, input.task, input.runId, emit)
-        : await runBackend(app, prep.profile, req, emit);
+        ? await backgroundTurn(app, prep, req, input.task, input.runId, watch)
+        : await runBackend(app, prep.profile, req, watch);
       revokeToolToken(prep.token);
       return { ...result, profileId: prep.profile.id, ai: { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort } };
     } catch (e) {
       revokeToolToken(prep.token);
       noteQuota(app, prep.profile, e, emit);
-      if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !isRetryableAgentError(e) || i === chain.length - 1) throw e;
+      // A backend that failed before doing anything (it could not start, prepare its environment, log
+      // in) is left for the next one too: nothing was done, so nothing is done twice.
+      const busy = isRetryableAgentError(e);
+      const untouched = !acted && writes() === writesBefore;
+      if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !(busy || untouched) || i === chain.length - 1) throw e;
+      leftBecause = { busy, why: (e as Error).message.slice(0, 120) };
       lastError = e;
       failed = true;
     } finally {

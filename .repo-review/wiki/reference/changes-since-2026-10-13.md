@@ -1429,3 +1429,9 @@ updated: 2026-11-05
 - 关掉的功能：`UserSettings.featuresOff`（按提供方）；`connections.ts` 的 `featuresOff` / `usableFeatures` / `setFeatureOff`，`PUT /api/auth/connections/:provider/features/:feature`（本人自己，不能关后台访问）。连接视图每项带 `paused`。
 - 用到的地方：`lark-member-capture.ts` 只采集可用的功能（聊天、日程、妙记、最近文档各自判断；以前只有“我的消息”打开时才会采日程等），等批准的账号不采集；`tools.ts` 的 `ownerOnly(ctx, feature)` 和 `featureGate`：文档读取对应“文档与知识库”，写文档、复制、授权对应“让助手写文档”，`lark_read` / `lark_write` 按命令的域（im、docs/wiki/drive、sheets/base、calendar、minutes/vc），`lark_message_file` 对应“我的消息”。本人不受影响。
 - 测试：`test/connections.test.ts`（登录页勾的功能才要 scope；关掉后不采集、工具拒绝，再打开恢复；等批准的账号不采集；后台访问不能关）。
+
+## 2026-11-06：后端没开始工作就失败时也换后端
+
+- 起因：常驻服务器夜里的巡检在豆包 CLI 上连续失败（“Local execution environment preparation failed: ENVIRONMENT_ERROR”，几秒内退出），配了 codex、traex 作后备却没有换：以前只有排队、限流、额度、容量这类错误才换。
+- `runner.ts` 的 `runRole`：每次尝试记下有没有工具调用（后端自己的 `tool` 事件）和宿主记下的写入（`tool-write`）；都没有就算没开始工作，任何错误都换到链上的下一个后端，状态写“上一个后端没有开始工作就失败了（原因）”。已经开始工作的、取消的、点名了档案或指定了 AI 的运行照旧不换。
+- 测试：`test/backend-fallback.test.ts`（第一个后端启动就退出，改用后备；没有后备时报错）。
