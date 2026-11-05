@@ -32,19 +32,23 @@ process.on("message", (message: { id: number; job: ReadJob; op?: string; change?
     try {
       let result: unknown;
       if (job.op === "sql") result = await measure(`${job.stage ?? "read"}.sql`, async () => db.prepare(job.sql).all(...job.params));
+      else if (job.op === "prepare") result = await measure("vector.load", () => vectorIndex().prepare({ db } as App, job.spaces));
       else if (job.op === "rerank") {
         const { rerankLocally } = await import("./rerank.ts");
         result = await measure("rerank.score", () => rerankLocally({ db, config: job.config } as App, job.query, job.passages, job.timeoutMs));
       } else {
         const mod = await import("./embeddings.ts");
         const key = JSON.stringify(job.config.embeddings);
-        if (modelKey !== key) { mod.resetEmbedder(); modelKey = key; }
+        if (modelKey !== key) { if (modelKey) mod.resetEmbedder(); modelKey = key; }
         const app = { db, config: job.config } as App;
-        const q = job.vector ?? await measure("vector.embed", () => mod.embedQuery(app, job.query));
-        if (!q) result = [];
+        if (job.op === "embed") result = await measure("embedding", () => mod.embedLocally(app, job.texts, job.kind));
         else {
-          await measure("vector.load", () => vectorIndex().prepare(app, job.spaces));
-          result = await measure("vector.scan", async () => vectorIndex().search(app, q, job.spaces, job.limit));
+          const q = job.vector ?? (await measure("vector.embed", () => mod.embedLocally(app, [job.query], "query")))[0];
+          if (!q) result = [];
+          else {
+            await measure("vector.load", () => vectorIndex().prepare(app, job.spaces));
+            result = await measure("vector.scan", async () => vectorIndex().search(app, q, job.spaces, job.limit));
+          }
         }
       }
       process.send?.({ id, result, phases, stats: vectorIndex().stats() });

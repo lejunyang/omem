@@ -91,4 +91,22 @@ describe("vector index loading", () => {
     expect(idx.stats().spaces).toBe(before - 1);
     app.db.close();
   });
+
+  it("does not append vectors twice when they arrive on either side of a loading cursor", async () => {
+    const app = testApp();
+    const idx = vectorIndex();
+    idx.clear();
+    try {
+      fill(app, "personal", 9500);
+      const rows = app.db.prepare("select id from chunks order by id").all() as { id: number }[];
+      const ids = [rows[1].id, rows.at(-1)!.id];
+      for (const id of ids) app.db.prepare("update chunks set embedding=null where id=?").run(id);
+      const loading = idx.prepare(app, ["personal"]);
+      await new Promise((ok) => setImmediate(ok));
+      for (const id of ids) app.db.prepare("update chunks set embedding=? where id=?").run(new Uint8Array(vec(3).buffer), id);
+      idx.add(app, ids.map((id) => ({ id, spaceId: "personal", vec: vec(3) })));
+      await loading;
+      expect(idx.stats().vectors).toBe(9500);
+    } finally { idx.clear(); app.db.close(); }
+  });
 });

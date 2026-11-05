@@ -7,6 +7,7 @@ import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
 import { ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
 import { embedPending, embedPendingMemories } from "./search/embeddings.ts";
+import { readProcess } from "./search/read-process.ts";
 import { startMemoryWatch } from "./core/memory-watch.ts";
 import { startServer } from "./server/http.ts";
 import { syncWiki } from "./wiki/store.ts";
@@ -75,7 +76,6 @@ registerScheduleKind("lark-kb-read", (app) => {
 export type BootOptions = { port?: number; host?: string; quiet?: boolean; background?: boolean };
 
 /** Open the library, start the API, the run worker and (optionally) background schedules. */
-const require_vectors = await import("./search/vectors.ts");
 
 export async function boot(home?: string, opts: BootOptions = {}) {
   const app = App.open(home);
@@ -161,7 +161,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       setTimeout(loop, 3000).unref();
       // Load the vector matrices before the first question needs them.
       setTimeout(() => {
-        require_vectors.vectorIndex().prepare(app).catch(() => {});
+        readProcess(app, "vector").request({ op: "prepare" }, 30_000).catch(() => {});
       }, 1000).unref();
     }
     if (app.config.telegram.enabled) {

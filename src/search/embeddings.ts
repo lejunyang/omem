@@ -22,7 +22,7 @@ export function resetEmbedder() {
   vectorIndex().clear();
 }
 
-async function getEmbedder(app: App): Promise<Embedder | null> {
+async function getEmbedder(app: App, inProcess = false): Promise<Embedder | null> {
   if (embedder !== undefined) return embedder;
   const cfg = app.config.embeddings;
   if (cfg.provider === "none") return (embedder = null);
@@ -43,6 +43,19 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
       },
     };
     return embedder;
+  }
+  if (!inProcess && !testEmbedder) {
+    try {
+      // Validate in the child before embedPending is allowed to replace an old model's vectors.
+      await readProcess(app, "embedding").request({ op: "embed", texts: [], kind: "passage", config: { embeddings: cfg } }, 120_000);
+      return (embedder = {
+        id: `local:${cfg.model}`,
+        embed: (texts, kind) => readProcess(app, kind === "query" ? "vector" : "embedding").request<Float32Array[]>({ op: "embed", texts, kind, config: { embeddings: cfg } }, kind === "query" ? 30_000 : 120_000),
+      });
+    } catch (error) {
+      console.warn("[omem] 向量模型不可用，退回纯全文检索：", (error as Error).message);
+      return (embedder = null);
+    }
   }
   try {
     // onnxruntime keeps its CPU arena at the largest batch it has seen; turning it off gives memory
@@ -193,6 +206,13 @@ export async function embedQuery(app: App, text: string, kind: "query" | "passag
   if (!e) return null;
   const [q] = await e.embed([text.slice(0, 2000)], kind);
   return q;
+}
+
+/** Only the isolated process loads the local runtime. The parent keeps batching and writes. */
+export async function embedLocally(app: App, texts: string[], kind: "query" | "passage") {
+  const e = await getEmbedder(app, true);
+  if (!e) throw new Error("向量模型不可用");
+  return e.embed(texts, kind);
 }
 
 export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {

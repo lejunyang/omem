@@ -1032,3 +1032,5 @@ TraeX 与其他 ACP 的清理补验：
 - 运行的 `search` 事件记录最多 160 字查询摘要、哈希、空间数、各阶段耗时和是否有通道未完成；服务日志和 `diag.searchLatency` 只含哈希与耗时。`diag.toolLatency` 计入只有 `tool-call` 的运行，同一工具不因同时有 Agent 展示事件而重复计数，原生读文件工具仍计入。
 - 回归：`test/vectors.test.ts`、`test/search-process.test.ts`、`test/run-bulk-slot.test.ts`；升级兼容回归按真实前置版本建立旧库，不假定目标迁移永远是最后一项。
 - 规模：`node scripts/bench-scale.ts --vector-loading`，默认 65 万切片、64 维、130 个空间，57 个有向量；输出冷 / 热加载时间、事件循环最长延迟和缓存规模。`--engine <旧版 vectors.ts> --without-space-index` 在独立临时库运行旧版对照。公开集质量与测量结果见 evaluation.md。
+
+- 本地向量编码也必须离开网页主进程：后台批量编码与检索分开排队，问题编码走交互通道；加载新模型失败时不清空旧模型的向量。加载期间在游标前后新增向量，最终缓存条数与数据库一致，不重复追加即将被分页读到的向量。

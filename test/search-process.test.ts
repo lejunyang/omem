@@ -8,6 +8,7 @@ import { createRun } from "../src/agents/runs.ts";
 import { search } from "../src/search/search.ts";
 import { searchLatency, searchRun } from "../src/search/trace.ts";
 import { startServer } from "../src/server/http.ts";
+import { embedPending, embedQuery, resetEmbedder } from "../src/search/embeddings.ts";
 
 it("kills a synchronous read on its deadline, keeps HTTP responsive, and restarts read-only", async () => {
   const app = testApp();
@@ -37,6 +38,8 @@ it("keeps the worker's vector cache in step with additions, deletion and empty s
   const q = new Float32Array([1, 0]);
   const job = { op: "vector" as const, query: "示例编号", spaces: ["personal"], limit: 5, config: { embeddings: app.config.embeddings }, vector: q };
   try {
+    await reader.request({ op: "prepare", spaces: ["personal"] });
+    expect(reader.stats.spaces).toBe(1);
     expect(await reader.request(job)).toEqual([]);
     const src = upsertSource(app, { spaceId: "personal", kind: "note", uri: "sample", title: "示例", text: "示例材料" });
     const row = app.db.prepare("select id from chunks where source_id=?").get(src.id) as { id: number };
@@ -74,4 +77,24 @@ it("keeps full-text hits when the independent vector channel times out", async (
     expect(hits.map((h) => h.sourceId)).toContain(src.id);
     expect(searchLatency(app).at(-1)).toMatchObject({ partial: true, stages: { vector: { status: "timeout" }, fts: { status: "ok" } } });
   } finally { timeout.mockRestore(); closeReadProcess(app); app.db.close(); }
+});
+
+it("encodes local inputs outside the host, and preserves old vectors when loading fails", async () => {
+  const app = testApp();
+  app.config.embeddings.provider = "local";
+  resetEmbedder();
+  const rpc = vi.spyOn(readProcess(app, "embedding"), "request").mockResolvedValueOnce([]);
+  const query = vi.spyOn(readProcess(app, "vector"), "request").mockResolvedValueOnce([new Float32Array([1, 0])]);
+  try {
+    expect(await embedQuery(app, "示例问题")).toEqual(new Float32Array([1, 0]));
+    expect(rpc.mock.calls.map(([job]) => job.op === "embed" ? job.texts : null)).toEqual([[]]);
+    expect(query.mock.calls.map(([job]) => job.op === "embed" ? job.texts : null)).toEqual([["示例问题"]]);
+    const src = upsertSource(app, { spaceId: "personal", kind: "note", uri: "sample", title: "示例", text: "示例材料" });
+    app.db.prepare("update chunks set embedding=? where source_id=?").run(new Uint8Array(new Float32Array([1, 0]).buffer), src.id);
+    app.db.prepare("insert into kv(key,value) values('embedding_model','old-model')").run();
+    resetEmbedder(); rpc.mockRejectedValue(new SearchTimeout());
+    expect(await embedPending(app)).toBe(0);
+    expect(app.db.prepare("select value from kv where key='embedding_model'").get()).toMatchObject({ value: "old-model" });
+    expect(app.db.prepare("select length(embedding) n from chunks where source_id=?").get(src.id)).toMatchObject({ n: 8 });
+  } finally { rpc.mockRestore(); query.mockRestore(); resetEmbedder(); closeReadProcess(app); app.db.close(); }
 });

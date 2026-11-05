@@ -9,7 +9,9 @@ import { searchPhases, searchStage } from "./trace.ts";
 
 export type ReadJob =
   | { op: "sql"; sql: string; params: SQLInputValue[]; stage?: string }
+  | { op: "prepare"; spaces?: string[] }
   | { op: "vector"; query: string; spaces?: string[]; limit: number; config: Pick<Config, "embeddings">; vector?: Float32Array }
+  | { op: "embed"; texts: string[]; kind: "query" | "passage"; config: Pick<Config, "embeddings"> }
   | { op: "rerank"; query: string; passages: string[]; config: Pick<Config, "rerank">; timeoutMs: number };
 type Reply = { id: number; result?: unknown; error?: string; phases?: Parameters<typeof searchPhases>[0]; stats?: { spaces: number; vectors: number; bytes: number } };
 export class SearchTimeout extends Error {
@@ -105,7 +107,7 @@ export class ReadProcess {
   }
 }
 
-type Lane = "sql" | "vector" | "rerank";
+type Lane = "sql" | "vector" | "rerank" | "embedding";
 const readers = new WeakMap<App, Map<Lane, ReadProcess>>();
 export function readProcess(app: App, lane: Lane = "sql") {
   let lanes = readers.get(app);

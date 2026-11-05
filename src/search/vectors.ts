@@ -142,7 +142,11 @@ class MemoryIndex implements VectorIndex {
         this.spaces.set(r.spaceId, m);
       }
       if (m) this.push(m, r.id, r.vec);
-      else this.loading.get(r.spaceId)?.added.push({ id: r.id, vec: r.vec });
+      else {
+        const loading = this.loading.get(r.spaceId);
+        // A later page will read ids ahead of the cursor; only retain updates to pages already read.
+        if (loading && r.id <= loading.cursor) loading.added.push({ id: r.id, vec: r.vec });
+      }
     }
   }
 
