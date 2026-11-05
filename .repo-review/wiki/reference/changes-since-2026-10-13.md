@@ -1374,3 +1374,12 @@ updated: 2026-11-05
 - 旧交办“移到目标分支最新提交”默认 merge，网页和工具支持显式 rebase；目标已包含时直接跳过，保留工作区全部改动。显式 rebase 使用实际共同祖先，避免从过时切出点重放已有历史。入口：code-sync.ts、code.ts、server/http.ts、tools.ts、Runs.vue、WorkPane.vue。
 - 应用时按祖先关系接受已同步历史中的目标位置及后续提交，继续检查补丁；多仓库预检失败回滚到接收区实际原 HEAD。真实 Git 回归覆盖默认合并、变基边界、无操作和未提交改动保留。
 - 全量检查通过（872 项测试）；1440 / 390 浏览器验证独立规则设置及同步方式切换，无横向溢出，使用虚构数据重新生成全部文档截图。
+
+## 2026-11-06：规则处理中再次触发并入同一会话
+
+- 起因：报警群短时间大量报警，每条触发一个 Agent 运行，耗资源、排查不及时，结论彼此孤立。
+- `src/rules/actions.ts`：Agent 动作（含静默排查的首次触发）的运行放进 `lane = rule:<规则>:<群>`；`joinLane` 发现这条队列里有等着的同规则运行就把触发并进它的 `input.triggers`（最多 60 条，其余记 `moreTriggers`），只有正在跑的就新建一个排在后面、带 `resumeFromRun` 的运行。`merge: false`（规则页取消勾选）时不进队列，和以前一样各自并行。静默排查的话题跟进仍用原来的话题队列。
+- `src/agents/steer.ts`：`takeSteering` 对规则队列里正在跑的 agent 运行，在它下一次调用工具后拿走等着的运行的触发（取消那个运行，记 `steeredInto`、`joinedTriggers`），用 `triggerNote` 列出摘要和消息 id、说明怎么一起下结论或分别回复。
+- `src/agents/jobs.ts`：等着的运行自己开始时把 `triggers` 里第一条以后的列进任务，按 `resumeFromRun` 续上前一个运行的会话（同档案、同 AI、同范围、前一个已完成）；规则队列里的运行保留会话（`persistSession`）。
+- 规则页 Agent 动作加“处理中再次触发时并入同一会话”（默认勾上）；`compile.ts` 的草稿说明加 `merge`。
+- 测试：`test/rule-merge.test.ts`（并入等着的运行、换群另开、正在跑的一轮拿走触发、之后再触发另排；结束后等着的运行续上会话且任务里有全部触发，用假 ACP Agent；关掉合并时各自并行）。

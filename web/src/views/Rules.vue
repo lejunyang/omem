@@ -20,7 +20,7 @@ import { fmtTime, relTime, state, toast } from "../store";
 type Reply = "none" | "draft" | "auto";
 type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; ai?: { profile: string; model?: string; effort?: string } }
+  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; ai?: { profile: string; model?: string; effort?: string } }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
@@ -510,6 +510,7 @@ function startFrom(text: string) {
               </div>
               <div class="row wrap">
                 <UiCheckbox :model-value="!!a.hideThinking" size="sm" @change="v => { a.hideThinking = v; touch(); }">隐藏思考气泡</UiCheckbox>
+                <UiCheckbox :model-value="a.merge !== false" size="sm" title="同一个群里，这条规则的处理还没结束时再次触发，交给正在处理的那一轮，不另开一轮" @change="v => { a.merge = v ? undefined : false; touch(); }">处理中再次触发时并入同一会话</UiCheckbox>
                 <span class="small">失败时</span>
                 <UiSelect :model-value="a.failureTo ?? 'owner'" :options="[{ value: 'owner', label: '通知本人' }, { value: 'chat', label: '发到群聊' }]" size="sm" width="150px" aria-label="失败时通知谁" @update:model-value="v => { a.failureTo = v; touch(); }" />
               </div>

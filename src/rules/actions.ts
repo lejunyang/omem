@@ -3,7 +3,7 @@ import { notify } from "../core/notify.ts";
 import { captureSpace as chatSpace } from "../core/capture-space.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError, truncate } from "../core/util.ts";
-import { createRun, getRun } from "../agents/runs.ts";
+import { createRun, getRun, runsInLane, updateQueuedRun } from "../agents/runs.ts";
 import { readAgentSpec } from "../agents/specs.ts";
 import { getThread, resolveThread, updateThread } from "../agents/threads.ts";
 import { listWorkFiles, workFileLines } from "../sources/work.ts";
@@ -12,6 +12,41 @@ import type { Followed } from "./context.ts";
 import type { Rule, RuleAction, RuleEvent } from "./types.ts";
 
 export type ActionResult = { action: string; ok: boolean; detail: string; runId?: string };
+
+type AgentAction = Extract<RuleAction, { type: "agent" }>;
+
+/**
+ * A rule's runs for one chat share a lane: one at a time, in order. A trigger while one of them is in
+ * progress joins it (`merge`, on unless the rule says false): it waits in the lane's next run, the
+ * running one takes it at its next tool call (agents/steer.ts), and what is left runs after it in the
+ * same agent session (agents/jobs.ts). So a burst of alerts is one investigation, not one per alert.
+ */
+export const ruleLane = (ruleId: string, chatId?: string | null) => `rule:${ruleId}:${chatId ?? "-"}`;
+/** One trigger a run handles: the first is its own task, the rest joined while it was in progress. */
+export type RuleTrigger = { messageId: string | null; topicId: string | null; at: string; summary: string };
+const MAX_TRIGGERS = 60;
+const triggerOf = (e: RuleEvent): RuleTrigger => ({ messageId: e.message?.id ?? null, topicId: e.message?.topicId ?? null, at: new Date().toISOString(), summary: truncate(eventSummary(e), 600) });
+
+/**
+ * Where this trigger goes: into the lane's waiting run (joined), or a new run in the lane — after the
+ * running one (`resumeFromRun`) or at once.
+ */
+function joinLane(app: App, rule: Rule, a: AgentAction, e: RuleEvent, lane: string): { joined: ActionResult } | { lane?: string; triggers: RuleTrigger[]; resumeFromRun?: string } {
+  const trigger = triggerOf(e);
+  // Each trigger on its own, as before: no lane, so they also run side by side.
+  if (a.merge === false) return { triggers: [trigger] };
+  const own = runsInLane(app, lane).filter((r) => r.kind === "agent" && (r.input.rule as { id?: string } | undefined)?.id === rule.id);
+  const waiting = own.find((r) => r.status === "queued");
+  if (waiting) {
+    const triggers = [...((waiting.input.triggers as RuleTrigger[] | undefined) ?? []), trigger];
+    const kept = triggers.slice(0, MAX_TRIGGERS);
+    const more = ((waiting.input.moreTriggers as number | undefined) ?? 0) + triggers.length - kept.length;
+    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, triggers: kept, ...(more ? { moreTriggers: more } : {}) } }))
+      return { joined: { action: "agent", ok: true, detail: `并入正在进行的处理（这一批 ${kept.length + more} 条）`, runId: waiting.id } };
+  }
+  const running = own.find((r) => r.status === "running");
+  return { lane, triggers: [trigger], ...(running ? { resumeFromRun: running.id } : {}) };
+}
 
 /** Run a fired rule's actions in order; one failing does not stop the next. */
 export async function runActions(app: App, rule: Rule, e: RuleEvent, reason: string, extra: { discussion?: string } = {}): Promise<ActionResult[]> {
@@ -107,9 +142,11 @@ export function assistantScope(spec: string, space: string, lark: { chats: strin
  * answer) or the chat itself is where it may answer when the rule allows; otherwise its conclusion goes to the owner.
  * It can post only into this chat, as drafts unless the rule says auto.
  */
-async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: "agent" }>, e: RuleEvent, reason: string): Promise<ActionResult> {
+async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, reason: string): Promise<ActionResult> {
   const spec = a.spec === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(app, a.spec);
   if (spec.status !== "active") throw new HttpError(400, `档案 ${a.spec} 是草稿`);
+  const slot = joinLane(app, rule, a, e, ruleLane(rule.id, e.chat?.id));
+  if ("joined" in slot) return slot.joined;
   const origin = e.kind === "schedule" && rule.conversationId ? getThread(app, rule.conversationId) : undefined;
   if (e.kind === "schedule" && a.reply !== "none" && !origin) throw new HttpError(400, "定时规则缺少投递会话，请在规则的“发到”中选择目标后保存；本次未执行");
   if (origin && origin.userId !== OWNER) throw new HttpError(403, "只能投递到本人的会话");
@@ -173,7 +210,10 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
       lark,
       // Drafts posted with lark_send land in the topic of the chosen conversation.
       ...(origin && reply === "draft" ? { conversationId: origin.id } : {}),
+      triggers: slot.triggers,
+      ...(slot.resumeFromRun ? { resumeFromRun: slot.resumeFromRun } : {}),
     },
+    lane: slot.lane ?? null,
     userId: OWNER,
   });
   return { action: "agent", ok: true, detail: `交给 ${spec.name}${replyAt && reply === "auto" ? "，在消息的话题里处理" : ""}`, runId: r.id };
@@ -186,11 +226,14 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
  * missing — inside the topic of the triggering message. A topic it posts in is followed (context.ts).
  * Its final text stays in the run; it tells the owner with notify only when the owner must act.
  */
-async function silentAgent(app: App, rule: Rule, a: Extract<RuleAction, { type: "agent" }>, e: RuleEvent, reason: string, talk: string, follow?: { lane: string; resumeRunId: string; notBefore: string }): Promise<ActionResult> {
+async function silentAgent(app: App, rule: Rule, a: AgentAction, e: RuleEvent, reason: string, talk: string, follow?: { lane: string; resumeRunId: string; notBefore: string }): Promise<ActionResult> {
   const spec = a.spec === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(app, a.spec);
   if (spec.status !== "active") throw new HttpError(400, `档案 ${a.spec} 是草稿`);
   const chatId = e.chat?.id;
   if (!chatId || !e.message) throw new HttpError(400, "静默排查需要具体的群消息");
+  // A followed topic keeps its own lane (context.ts); a new trigger joins the rule's run in this chat.
+  const slot = follow ? null : joinLane(app, rule, a, e, ruleLane(rule.id, chatId));
+  if (slot && "joined" in slot) return slot.joined;
   const task = [
     follow ? `# 你跟进的话题有新消息（规则「${rule.name}」）` : `# 规则「${rule.name}」触发：静默排查`,
     "",
@@ -230,8 +273,9 @@ async function silentAgent(app: App, rule: Rule, a: Extract<RuleAction, { type: 
       silent: { chatId, messageId: e.message.id, topicId: e.message.topicId ?? null },
       ...(prevSession ? { resumeSessionId: prevSession } : {}),
       lark,
+      ...(slot ? { triggers: slot.triggers, ...(slot.resumeFromRun ? { resumeFromRun: slot.resumeFromRun } : {}) } : {}),
     },
-    lane: follow?.lane ?? null,
+    lane: follow?.lane ?? slot?.lane ?? null,
     notBefore: follow?.notBefore ?? null,
     userId: OWNER,
   });
@@ -240,7 +284,7 @@ async function silentAgent(app: App, rule: Rule, a: Extract<RuleAction, { type: 
 
 /** A followed topic has news: the same agent picks it up a minute later, continuing its session. */
 export async function followUp(app: App, rule: Rule, f: Followed, e: RuleEvent, talk: string, lane: string): Promise<ActionResult> {
-  const a = rule.actions.find((x): x is Extract<RuleAction, { type: "agent" }> => x.type === "agent" && x.spec === f.spec && x.reply === "silent");
+  const a = rule.actions.find((x): x is AgentAction => x.type === "agent" && x.spec === f.spec && x.reply === "silent");
   if (!a) return { action: "agent", ok: false, detail: "规则里已经没有这个静默排查的 Agent" };
   try {
     return await silentAgent(app, rule, a, e, "", talk, { lane, resumeRunId: f.runId, notBefore: new Date(Date.now() + 60_000).toISOString() });

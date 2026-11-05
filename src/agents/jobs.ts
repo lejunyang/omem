@@ -192,6 +192,9 @@ async function runAgentTask(ctx: RunContext) {
     /** A silent agent picking up a topic it follows continues its earlier session. */
     resumeSessionId?: string;
   };
+  // Started while the rule's run for this chat was in progress (rules/actions.ts joinLane): the
+  // triggers that joined since come with the task, and it continues that run's session.
+  const { triggers, moreTriggers, resumeFromRun } = ctx.run.input as { triggers?: { messageId: string | null; topicId: string | null; at: string; summary: string }[]; moreTriggers?: number; resumeFromRun?: string };
   // A consultation runs inside the asking tool call (consult.ts); one picked up here was cut off by a
   // restart, and the asker is gone.
   if (consultOf !== undefined) throw new Error("请教在服务重启时中断，提问的一方已经结束");
@@ -205,6 +208,15 @@ async function runAgentTask(ctx: RunContext) {
   // work, and is told what happened in the work since (the owner's words, other agents' reports).
   let resumeSessionId: string | undefined = resumeRule;
   let fullTask = task;
+  if (triggers && triggers.length + (moreTriggers ?? 0) > 1) {
+    const { triggerNote } = await import("./steer.ts");
+    fullTask = `${fullTask}\n\n---\n\n${triggerNote(triggers.slice(1), moreTriggers ?? 0, !!lark?.chats?.length, "上一轮处理期间")}`;
+  }
+  if (resumeFromRun && !resumeSessionId) {
+    const previous = getRun(ctx.app, resumeFromRun);
+    const same = previous.input.spec === name && JSON.stringify(previous.input.execution) === JSON.stringify(execution) && JSON.stringify(previous.input.assistantScope) === JSON.stringify(assistantScope);
+    if (same && previous.status === "done") resumeSessionId = previous.output.sessionId as string | undefined;
+  }
   if (agentWorkId) {
     const { refreshWork, workContext } = await import("./agent-work.ts");
     const work = refreshWork(ctx.app, agentWorkId);
@@ -238,7 +250,8 @@ async function runAgentTask(ctx: RunContext) {
       signal: ctx.signal,
       onEvent: (e) => ctx.event(e.type, e),
       resumeSessionId: resume,
-      persistSession: !!agentWorkId || !!silent || !!meeting,
+      // A rule's run keeps its session for a trigger that joins after it ends (rules/actions.ts).
+      persistSession: !!agentWorkId || !!silent || !!meeting || (!!triggers && !!ctx.run.lane),
       lark: assistantScope?.lark ?? lark,
     });
   let r;

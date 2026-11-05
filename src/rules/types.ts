@@ -83,6 +83,11 @@ export const actionSchema = z.discriminatedUnion("type", [
     failureTo: z.enum(["owner", "chat"]).optional(),
     allowUrgent: z.boolean().optional(),
     allowPrivate: z.boolean().optional(),
+    /**
+     * A trigger while this rule's run for the same chat is in progress joins that run instead of
+     * starting another (an alert storm is one investigation): on unless false (rules/actions.ts).
+     */
+    merge: z.boolean().optional(),
     /** The owner's pick of AI for this rule's runs (backend id, optional model and effort); without it the profile's own. */
     ai: z
       .object({ profile: z.string().trim().min(1), model: z.string().trim().optional(), effort: z.string().trim().optional() })
