@@ -339,6 +339,13 @@ pnpm run dev                # 打开 http://localhost:5173
 - 同名空间在克隆前报冲突；同一克隆目录已关联空间时不另建。项目空间目录、代码仓库本地目录及留空创建照常可用。
 - 验证通过：`test/http-space-repository.test.ts` 使用临时 Git HTTP 服务，不连接外部账号；浏览器检查 1440 / 390 宽度，等待时禁止重复提交、失败保留输入及重试成功，无横向溢出。`LANGUAGE=C pnpm run check` 通过（147 个文件、875 项测试）；本机默认中文 Git 输出会使既有 `code-git` 的英文错误匹配用例失败。
 
+## 交办轮次查询走索引（2026-11-05）
+
+- 从已有数据库升级：`runs` 加表达式索引 `runs_continue_from`（`json_extract(input, '$.continueFrom')`）和 `runs_parent`（`parent_id`）。编码循环找一次交办的各轮（`id = ? or json_extract(input, '$.continueFrom') = ?`，约 26 处）、找一条链下的运行，都按索引查，不再全表扫描并逐行解析 `input`。
+- `test/runs-index.test.ts` 从上一版数据库迁移，检查编码循环几种查询的查询计划（带 `kind = 'code'`、不带、带表别名、按 `parent_id`），并核对 `lastRound`、`codeChainRounds` 的结果不变。
+- `node scripts/bench-scale.ts --code-rounds`：两组相同的合成库（1.1 万条运行，输入 1–2 KB，50 次交办各 4 轮），分别不带 / 带这两个索引；`lastRound` p50 34.5 → 0.048 ms，`codeChainRounds` p50 165.7 → 0.187 ms。常驻服务器上（10,845 条运行）只读放大测量，同类查询每次 6–14 ms。
+- 以后新写的查询要用一模一样的表达式 `json_extract(input, '$.continueFrom')`（可以带表别名），否则用不上索引。
+
 ## 启动清理临时索引（2026-11-05）
 
 - 从已有数据库升级：为 `symbols.source_id` 和 `source_locations.source_id` 补索引；按原件删除及级联删除走索引查找，不再逐份扫描整表。

@@ -7,6 +7,10 @@ updated: 2026-11-05
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 交办轮次查询走索引（11-05）
+
+- 编码循环找交办各轮的查询（`id = ? or json_extract(input, '$.continueFrom') = ?`，`lastRound`、`advanceWork`、`rounds`、`workRoundIds`、`reconcileWaiting` 等约 26 处）和按 `parent_id` 找链下运行原来都是全表扫描，常驻服务器上每次 6–14 ms，一步要查十几次。迁移加 `runs_continue_from`（表达式索引）和 `runs_parent`，查询写法不用改。合成库 1.1 万条运行：`lastRound` 34.5 → 0.048 ms，`codeChainRounds` 165.7 → 0.187 ms。入口：`src/core/db.ts`；验证：`test/runs-index.test.ts`、`scripts/bench-scale.ts --code-rounds`。
+
 ## 启动清理临时索引（11-05）
 
 - 失效工作区逐份清理临时原件时，符号删除和采集位置的级联删除缺索引，积压较多时启动迟迟不能监听。数据库迁移补齐 `symbols(source_id)` 与 `source_locations(source_id)`；旧库迁移、查询计划和其他原件保留有回归。合成库 2 万原件、10 万符号清理 300 份：9044.1 → 372.9 ms。入口：`src/core/db.ts`；验证：`test/source-purge-index.test.ts`、`scripts/bench-scale.ts --source-purge`。

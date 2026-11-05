@@ -1389,6 +1389,11 @@ export const migrations: readonly string[] = [
   // symbol deletion and the source_locations foreign-key cascade must find only that source.
   `create index symbols_source on symbols(source_id);
    create index source_locations_source on source_locations(source_id);`,
+  // A delegation's rounds are found by `id = ? or json_extract(input, '$.continueFrom') = ?` (about 26
+  // places in the coding loop) and a chain's children by parent_id: without these every lookup scanned
+  // all runs and parsed each one's input. Queries must keep the expression exactly as written here.
+  `create index runs_continue_from on runs(json_extract(input, '$.continueFrom'));
+   create index runs_parent on runs(parent_id);`,
 ];
 
 export type Db = DatabaseSync;

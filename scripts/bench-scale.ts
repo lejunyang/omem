@@ -7,11 +7,45 @@
  *   node scripts/bench-scale.ts --requirements [--works 20] [--rounds 5] [--payload-kb 128]
  *   node scripts/bench-scale.ts --runs [--count 20000]
  *   node scripts/bench-scale.ts --source-purge
+ *   node scripts/bench-scale.ts --code-rounds
  *
  * Vectors are random (embedding a large corpus on CPU takes hours); they only
  * measure the cost of the vector search itself, not its quality.
  */
 process.removeAllListeners("warning");
+if (process.argv.includes("--code-rounds")) {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { App } = await import("../src/core/app.ts");
+  const { ensurePersonalSpace } = await import("../src/core/spaces.ts");
+  const { lastRound } = await import("../src/agents/code-tasks.ts");
+  const { codeChainRounds } = await import("../src/agents/code-chain.ts");
+  const results = [];
+  for (const indexed of [false, true]) {
+    const home = mkdtempSync(join(tmpdir(), "omem-bench-rounds-"));
+    const app = App.open(home);
+    try {
+      ensurePersonalSpace(app);
+      if (!indexed) app.db.exec("drop index runs_continue_from; drop index runs_parent;");
+      // Shaped like the resident server: about 11k runs, inputs of 1–2 KB, 50 delegations of 4 rounds.
+      const insert = app.db.prepare("insert into runs(id,kind,space_id,status,title,input,output,parent_id,created_at) values(?,?,'personal','done','示例',?,'{}',?,?)");
+      const at = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString();
+      app.db.exec("begin");
+      for (let i = 0; i < 10_800; i++) insert.run(`r${i}`, "ask", JSON.stringify({ task: "示例任务正文。".repeat(100) }), i ? `r${i - 1}` : null, at(i));
+      for (let d = 0; d < 50; d++) for (let k = 0; k < 4; k++) insert.run(`c${d}-${k}`, "code", JSON.stringify({ task: "示例任务正文。".repeat(100), round: k + 1, ...(k ? { continueFrom: `c${d}-0` } : {}) }), `a${d}`, at(20_000 + d * 10 + k));
+      app.db.exec("commit");
+      const measure = (fn: () => unknown) => {
+        fn();
+        const times = Array.from({ length: 50 }, () => { const start = performance.now(); fn(); return performance.now() - start; }).sort((a, b) => a - b);
+        return { p50Ms: +times[25].toFixed(3), p90Ms: +times[45].toFixed(3) };
+      };
+      results.push({ indexed, runs: 11_000, lastRound: measure(() => lastRound(app, "c25-0")), chainRounds: measure(() => codeChainRounds(app, "a25")) });
+    } finally { app.db.close(); rmSync(home, { recursive: true, force: true }); }
+  }
+  console.log(JSON.stringify(results));
+  process.exit(0);
+}
 if (process.argv.includes("--source-purge")) {
   const { mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
