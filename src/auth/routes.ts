@@ -264,6 +264,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/auth/account": "self",
   "GET /api/auth/connections": "self",
   "DELETE /api/auth/connections/:provider": "self",
+  "PUT /api/auth/connections/:provider/features/:feature": "self",
   "DELETE /api/auth/sessions/:id": "self",
   "DELETE /api/auth/identities": "self",
   "GET /api/auth/providers": USERS,

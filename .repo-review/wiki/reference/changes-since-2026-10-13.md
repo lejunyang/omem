@@ -1421,3 +1421,11 @@ updated: 2026-11-05
 
 - 现象：常驻服务器打开多人登录后，没登录直接打开 `#/` 停在“无法连接 omem 服务：请先登录”。原因：页面的第一个请求（`/api/me`）返回 401 时 `toLogin` 改了地址，但路由的第一次导航还没完成，完成时把地址写回 `#/`。
 - `web/src/api.ts`：`toLogin` 经路由跳转（`setNavigation`，`main.ts` 在 `router.isReady()` 之后 `router.replace`），路由起来之前仍改地址；去登录页抛出的错误带 `login`，`App.vue` 不把它当成加载失败。
+
+## 2026-11-06：登录时选功能，账号页关掉功能
+
+- 起因：本人在真实租户上登录时，飞书授权页列出了以前给这个应用授过的全部权限（只要身份的登录，令牌里也带着 183 项）；新用户想在登录前就选好给什么。
+- 登录页：`/api/auth/session` 的登录方式带上可勾的功能（不含后台访问）；勾了的作为 `features` 传给 `/api/auth/:provider/start`，`purpose=login` 时按 `scopesFor` 要这些 scope（自动加 `offline_access`）。不勾就和以前一样只要身份。
+- 关掉的功能：`UserSettings.featuresOff`（按提供方）；`connections.ts` 的 `featuresOff` / `usableFeatures` / `setFeatureOff`，`PUT /api/auth/connections/:provider/features/:feature`（本人自己，不能关后台访问）。连接视图每项带 `paused`。
+- 用到的地方：`lark-member-capture.ts` 只采集可用的功能（聊天、日程、妙记、最近文档各自判断；以前只有“我的消息”打开时才会采日程等），等批准的账号不采集；`tools.ts` 的 `ownerOnly(ctx, feature)` 和 `featureGate`：文档读取对应“文档与知识库”，写文档、复制、授权对应“让助手写文档”，`lark_read` / `lark_write` 按命令的域（im、docs/wiki/drive、sheets/base、calendar、minutes/vc），`lark_message_file` 对应“我的消息”。本人不受影响。
+- 测试：`test/connections.test.ts`（登录页勾的功能才要 scope；关掉后不采集、工具拒绝，再打开恢复；等批准的账号不采集；后台访问不能关）。

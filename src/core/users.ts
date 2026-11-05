@@ -19,7 +19,8 @@ export const OWNER = "owner";
 /** `pending`: signed up by logging in, waiting for the owner (src/auth); cannot use anything yet. */
 export type UserStatus = "active" | "pending";
 /** Per-user switches the owner sets. loginAny: may log in with providers other than auth.primary. */
-export type UserSettings = { loginAny?: boolean };
+/** `featuresOff`: connection features the person turned off in omem, by provider (auth/connections.ts). */
+export type UserSettings = { loginAny?: boolean; featuresOff?: Record<string, string[]> };
 export type User = {
   id: string;
   name: string;

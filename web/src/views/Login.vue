@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get, logout } from "../api";
 import Skeleton from "../components/Skeleton.vue";
+import UiCheckbox from "../components/UiCheckbox.vue";
 import { promptDialog } from "../lib/dialog";
 
 /**
@@ -10,7 +11,7 @@ import { promptDialog } from "../lib/dialog";
  * and the two states between logging in and using omem — waiting for approval, and an account that
  * has to bind the primary provider first. Shown without the app frame.
  */
-type Provider = { id: string; label: string; unavailable: string | null };
+type Provider = { id: string; label: string; unavailable: string | null; features?: { id: string; label: string; description: string }[] };
 type Session = {
   user: { id: string; name: string; status: "active" | "pending"; avatar: string | null } | null;
   via: string | null;
@@ -32,9 +33,15 @@ const shown = computed(() => {
   return l.primary && !l.invite?.allowAny ? [l.primary] : l.providers;
 });
 
+/**
+ * Features to turn on in the same authorization as logging in (none by default: logging in asks only
+ * who you are). A new account still waits for approval before omem uses any of them.
+ */
+const picked = ref<Record<string, string[]>>({});
 function start(p: Provider, purpose: "login" | "bind" = "login") {
   const q = new URLSearchParams({ purpose });
   if (invite.value && purpose === "login") q.set("invite", invite.value);
+  if (purpose === "login" && picked.value[p.id]?.length) q.set("features", picked.value[p.id].join(","));
   if (back.value !== "/") q.set("return", back.value);
   location.href = `/api/auth/${p.id}/start?${q}`;
 }
@@ -50,6 +57,7 @@ async function useToken() {
 onMounted(async () => {
   try {
     s.value = await get<Session>(`/api/auth/session${invite.value ? `?invite=${encodeURIComponent(invite.value)}` : ""}`);
+    for (const p of [...s.value.login.providers, ...(s.value.login.primary ? [s.value.login.primary] : [])]) picked.value[p.id] ??= [];
     // Already in (and allowed): nothing to do here.
     if (s.value.user?.status === "active" && !s.value.restricted && !error.value) await router.replace(back.value);
   } catch (e) {
@@ -107,6 +115,15 @@ onMounted(async () => {
           <button v-for="p in shown" :key="p.id" class="btn primary" :disabled="!!p.unavailable" :title="p.unavailable ?? ''" @click="start(p)">用{{ p.label }}登录</button>
         </div>
         <p v-for="p in shown.filter((x) => x.unavailable)" :key="p.id" class="small warn-text">{{ p.label }}：{{ p.unavailable }}</p>
+        <details v-for="p in shown.filter((x) => x.features?.length && !x.unavailable)" :key="`f-${p.id}`" class="pick">
+          <summary class="small">登录时一并授权{{ p.label }}的功能（可选）</summary>
+          <p class="muted small">不勾就只让 omem 知道你是谁。勾上的在飞书授权页一起确认；之后也能在账号页打开或关掉。</p>
+          <div class="stack tight">
+            <UiCheckbox v-for="f in p.features" :key="f.id" v-model="picked[p.id]" :value="f.id" size="sm">
+              {{ f.label }}<span class="muted small"> · {{ f.description }}</span>
+            </UiCheckbox>
+          </div>
+        </details>
         <p v-if="!shown.length" class="muted small">还没有可用的登录方式。</p>
         <button class="btn ghost sm token" @click="useToken">使用访问令牌</button>
       </template>
@@ -138,6 +155,16 @@ h2 {
   margin: 0;
   font-family: var(--serif);
   font-weight: 600;
+}
+.pick {
+  text-align: left;
+}
+.pick summary {
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.pick > p {
+  margin: 6px 0 8px;
 }
 .providers {
   display: grid;

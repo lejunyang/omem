@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
+import { findUser, updateUser } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { featuresOf, grantedFeatures } from "./features.ts";
 import { authFetch, grantRejected, loginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
@@ -30,13 +31,39 @@ export function saveConnection(app: App, userId: string, provider: string, who: 
   });
 }
 
-export type ConnectionView = Connection & { label: string; features: { id: string; label: string; description: string; on: boolean }[]; background: boolean };
+/**
+ * Features a person turned off in omem (the account page): the platform still grants them — a Feishu
+ * authorization is never taken back by asking for less — but omem does not use them: no capture, and
+ * the tools that would refuse (agents/tools.ts). Turned on again, they work at once.
+ */
+export function featuresOff(app: App, userId: string, provider: string): string[] {
+  return findUser(app, userId)?.settings.featuresOff?.[provider] ?? [];
+}
+/** What omem may use of a connection: granted on the platform and not turned off here. */
+export function usableFeatures(app: App, c: Pick<Connection, "userId" | "provider" | "scopes">) {
+  const off = new Set(featuresOff(app, c.userId, c.provider));
+  return grantedFeatures(c.provider, c.scopes).filter((f) => !off.has(f));
+}
+export function setFeatureOff(app: App, userId: string, provider: string, feature: string, off: boolean) {
+  if (!featuresOf(provider).some((f) => f.id === feature) || feature === "offline") throw new HttpError(400, `没有这个功能：${feature}`);
+  const u = findUser(app, userId);
+  if (!u) throw new HttpError(404, "没有这个用户");
+  const all = { ...(u.settings.featuresOff ?? {}) };
+  const now = new Set(all[provider] ?? []);
+  if (off) now.add(feature);
+  else now.delete(feature);
+  all[provider] = [...now];
+  updateUser(app, userId, { settings: { featuresOff: all } });
+}
+
+export type ConnectionView = Connection & { label: string; features: { id: string; label: string; description: string; on: boolean; paused: boolean }[]; background: boolean };
 export function connectionView(app: App, c: Connection): ConnectionView {
   const on = new Set(grantedFeatures(c.provider, c.scopes));
+  const off = new Set(featuresOff(app, c.userId, c.provider));
   return {
     ...c,
     label: loginProvider(c.provider)?.label ?? c.provider,
-    features: featuresOf(c.provider).map((f) => ({ id: f.id, label: f.label, description: f.description, on: on.has(f.id) })),
+    features: featuresOf(c.provider).map((f) => ({ id: f.id, label: f.label, description: f.description, on: on.has(f.id), paused: on.has(f.id) && off.has(f.id) })),
     background: !!connectionSecrets(app, c.id)?.refreshToken,
   };
 }

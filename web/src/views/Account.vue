@@ -69,7 +69,7 @@ const notice = computed(() =>
   typeof route.query.error === "string" ? { kind: "err", text: route.query.error } : typeof route.query.connected === "string" ? { kind: "ok", text: "已连接，新授权的权限已生效" } : typeof route.query.bound === "string" ? { kind: "ok", text: "已绑定" } : null,
 );
 // Connected platforms (src/auth/connections.ts): features turned on one at a time (an incremental authorization each).
-type Feature = { id: string; label: string; description: string; on?: boolean };
+type Feature = { id: string; label: string; description: string; on?: boolean; paused?: boolean };
 type Conn = { id: string; provider: string; label: string; accountName: string; status: "active" | "expired" | "error"; scopes: string[]; features: Feature[]; background: boolean; lastError: string | null; updatedAt: string };
 type Connections = { connections: Conn[]; available: { id: string; label: string; unavailable: string | null; features: Feature[] }[]; may: boolean };
 const conns = ref<Connections | null>(null);
@@ -82,6 +82,15 @@ const connOf = (provider: string) => conns.value?.connections.find((c) => c.prov
 async function loadConnections() {
   conns.value = await get<Connections>("/api/auth/connections");
   for (const a of conns.value.available) picked.value[a.id] ??= [];
+}
+/** Turn a granted feature off in omem or back on; Feishu keeps the grant either way. */
+async function useFeature(provider: string, f: Feature, on: boolean) {
+  try {
+    conns.value = { ...conns.value!, ...(await put<{ connections: Conn[] }>(`/api/auth/connections/${provider}/features/${f.id}`, { on })) };
+    toast(on ? `omem 会用「${f.label}」` : `omem 不再用「${f.label}」；飞书那边的授权还在`, "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
 }
 function connect(provider: string, features: string[], scopes = "") {
   const q = new URLSearchParams({ purpose: "connect" });
@@ -202,11 +211,16 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
               <span class="muted small">{{ f.description }}</span>
             </div>
             <span class="spacer" />
-            <span v-if="f.on" class="badge accent">已打开</span>
+            <template v-if="f.on && f.id !== 'offline'">
+              <span v-if="f.paused" class="badge">已在 omem 里关掉</span>
+              <UiCheckbox :model-value="!f.paused" switch size="sm" :aria-label="`omem 使用${f.label}`" @change="(v) => useFeature(p.id, f, v)" />
+            </template>
+            <span v-else-if="f.on" class="badge accent">已打开</span>
             <button v-else-if="connOf(p.id)" class="btn sm" :disabled="!conns?.may || !!p.unavailable" @click="connect(p.id, [f.id])">打开</button>
             <UiCheckbox v-else v-model="picked[p.id]" :value="f.id" size="sm" :aria-label="f.label" />
           </div>
         </div>
+        <p v-if="connOf(p.id)" class="muted small">关掉的功能 omem 不再使用，飞书那边的授权还在；要连授权一起撤销，在飞书里取消对这个应用的授权。</p>
         <div v-if="!connOf(p.id)" class="row"><button class="btn sm primary" :disabled="!conns?.may || !!p.unavailable || !(picked[p.id] ?? []).length" @click="connect(p.id, picked[p.id] ?? [])">连接{{ p.label }}</button></div>
         <p v-if="connOf(p.id)?.lastError" class="small warn-text">{{ connOf(p.id)!.lastError }}</p>
       </div>

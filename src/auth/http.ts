@@ -7,7 +7,7 @@ import { findSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { addMember, findUser, getUser, identitiesOf, listUsers, OWNER, removeMember, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
 import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
-import { connectionsOf, disconnect } from "./connections.ts";
+import { connectionsOf, disconnect, setFeatureOff } from "./connections.ts";
 import { featuresOf, scopesFor } from "./features.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { approveUser, beginLogin, completeLogin, consumeLoginLink, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, validInvite } from "./login.ts";
@@ -67,6 +67,11 @@ const providerView = (app: App, id: string) => {
   const p = loginProvider(id);
   return p ? { id: p.id, label: p.label, unavailable: p.unavailable(app) } : null;
 };
+/** A provider on the login page, with what can be turned on in the same authorization (background access comes with any). */
+const loginView = (app: App, id: string) => {
+  const p = providerView(app, id);
+  return p ? { ...p, features: featuresOf(id).filter((f) => f.id !== "offline").map((f) => ({ id: f.id, label: f.label, description: f.description })) } : null;
+};
 const identityView = (i: ReturnType<typeof identitiesOf>[number]) => ({
   channel: i.channel,
   externalId: i.external_id,
@@ -109,8 +114,8 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       restricted: !!a?.restricted,
       login: {
         enabled: app.config.auth.enabled,
-        primary: app.config.auth.primary ? providerView(app, app.config.auth.primary) : null,
-        providers: enabledProviders(app).map((id) => providerView(app, id)!).filter(Boolean),
+        primary: app.config.auth.primary ? loginView(app, app.config.auth.primary) : null,
+        providers: enabledProviders(app).map((id) => loginView(app, id)).filter((p) => !!p),
         invite: invite ? (inv ? { note: inv.note, allowAny: inv.allowAny } : { invalid: true }) : null,
       },
     };
@@ -126,7 +131,9 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       // Connecting asks for just the scopes of the features being turned on (incremental authorization).
       // A missing scope a call ran into (lark-user.ts larkAs) is asked for by name, with background access.
       const named = (o.scopes ?? "").split(/[\s,]+/).filter(Boolean).slice(0, 30);
-      const scopes = o.purpose === "connect" ? [...new Set([...scopesFor(provider, (o.features ?? "").split(",").filter(Boolean)), ...named, ...(named.length ? scopesFor(provider, ["offline"]) : [])])] : [];
+      // Logging in asks for nothing beyond who the person is, unless they ticked features on the login page.
+      const features = (o.features ?? "").split(",").filter(Boolean);
+      const scopes = o.purpose === "connect" ? [...new Set([...scopesFor(provider, features), ...named, ...(named.length ? scopesFor(provider, ["offline"]) : [])])] : o.purpose === "login" ? scopesFor(provider, features) : [];
       const url = beginLogin(app, { provider, purpose: o.purpose, redirectUri: callbackUrl(base, provider), userId: a?.userId, sessionHash: a?.sessionHash, invite: o.invite, returnTo: o.return, scopes });
       return reply.header("cache-control", "no-store").redirect(url);
     } catch (e) {
@@ -201,6 +208,14 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     available: [...new Set([...enabledProviders(app), ...loginProviders().map((p) => p.id)])].filter((id) => featuresOf(id).length).map((id) => ({ ...providerView(app, id)!, features: featuresOf(id).map((f) => ({ id: f.id, label: f.label, description: f.description })) })),
     may: can(app, who(req), "connector.use"),
   }));
+  // Turn a feature off in omem or back on (the platform's grant stays).
+  server.put("/api/auth/connections/:provider/features/:feature", async (req) => {
+    const { provider, feature } = req.params as { provider: string; feature: string };
+    const { on } = parse(z.object({ on: z.boolean() }), req.body);
+    setFeatureOff(app, who(req), provider, feature, !on);
+    audit(app, who(req), on ? "connection.feature.on" : "connection.feature.off", who(req), { provider, feature });
+    return { connections: connectionsOf(app, who(req)) };
+  });
   server.delete("/api/auth/connections/:provider", async (req) => {
     const { provider } = req.params as { provider: string };
     disconnect(app, who(req), provider);

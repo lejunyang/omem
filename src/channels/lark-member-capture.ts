@@ -1,7 +1,7 @@
 import { scheduleIngest } from "../agents/jobs.ts";
-import { grantedFeatures } from "../auth/features.ts";
+import { usableFeatures } from "../auth/connections.ts";
 import { asLarkUser } from "../auth/lark-user.ts";
-import { larkOpenIdOf, personalSpaceId, userName } from "../core/users.ts";
+import { findUser, larkOpenIdOf, personalSpaceId, userName } from "../core/users.ts";
 import { findConnection, listConnections } from "../auth/vault.ts";
 import type { App } from "../core/app.ts";
 import { captureSpace, sharedCopyFor } from "../core/capture-space.ts";
@@ -36,33 +36,13 @@ const newer = (messages: LarkMessage[], c: Cursor | null) => (c ? messages.filte
 
 /** One person's pass; returns how many messages were kept. */
 export async function captureForMember(app: App, userId: string) {
+  const c = findConnection(app, userId, "lark");
+  const features = c ? usableFeatures(app, c) : [];
   return asLarkUser(app, userId, async () => {
-    const v = await larkCli(["im", "+chat-list", "--as", "user", "--types", "p2p,group", "--sort", "active_time", "--page-size", String(CHATS), "--format", "json"]);
-    const chats = ((v.data?.chats ?? []) as { chat_id: string; name?: string; chat_mode?: string }[]).slice(0, CHATS);
-    const me = larkOpenIdOf(app, userId);
-    const endMs = Date.now();
     const touched = new Map<string, Set<string>>();
-    let kept = 0;
-    for (const chat of chats) {
-      try {
-        // A copy in a shared space they read: reading it again would only duplicate it.
-        if (sharedCopyFor(app, userId, `lark:chat:${chat.chat_id}`, "member-capture")) continue;
-        const prev = cursor(app, userId, chat.chat_id);
-        const fresh = newer(await fetchMessages(["+chat-messages-list", "--chat-id", chat.chat_id, "--order", "asc"], prev?.lastTime ?? endMs - LOOKBACK_MS, endMs, { pages: 5 }), prev);
-        if (fresh.length) {
-          const spaceId = captureSpace(app, chat.chat_id, userId);
-          const r = persistChatMessages(app, { chatId: chat.chat_id, spaceId, name: chat.name || chat.chat_id, messages: fresh, owner: me, userId });
-          if (r.id && r.status !== "unchanged") touched.set(spaceId, (touched.get(spaceId) ?? new Set()).add(r.id));
-          kept += fresh.length;
-        }
-        saveCursor(app, userId, chat.chat_id, fresh, prev);
-      } catch (e) {
-        console.warn(`[omem] 读取 ${userName(app, userId)} 的飞书会话失败 ${chat.name ?? chat.chat_id}：${(e as Error).message}`);
-      }
-    }
+    const kept = features.includes("messages") ? await captureChats(app, userId, touched) : 0;
     // Their calendar, minutes and the documents they opened lately, as for the owner, into their space.
     const who = { userId, spaceId: personalSpaceId(userId) };
-    const features = grantedFeatures("lark", findConnection(app, userId, "lark")?.scopes ?? []);
     if (features.includes("calendar")) await captureCalendar(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 的飞书日程读取失败：${(e as Error).message}`));
     if (features.includes("minutes")) await captureMinutes(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 的妙记读取失败：${(e as Error).message}`));
     if (features.includes("docs") && app.config.lark.capture.recentDocs) await captureRecentDocs(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 最近打开的飞书文档读取失败：${(e as Error).message}`));
@@ -71,11 +51,45 @@ export async function captureForMember(app: App, userId: string) {
   });
 }
 
-/** Everyone (but the owner, whose capture is lark-personal.ts) with a working connection that has “我的消息”. */
+/** Their recently active chats; returns how many messages were kept. */
+async function captureChats(app: App, userId: string, touched: Map<string, Set<string>>) {
+  const v = await larkCli(["im", "+chat-list", "--as", "user", "--types", "p2p,group", "--sort", "active_time", "--page-size", String(CHATS), "--format", "json"]);
+  const chats = ((v.data?.chats ?? []) as { chat_id: string; name?: string; chat_mode?: string }[]).slice(0, CHATS);
+  const me = larkOpenIdOf(app, userId);
+  const endMs = Date.now();
+  let kept = 0;
+  for (const chat of chats) {
+    try {
+      // A copy in a shared space they read: reading it again would only duplicate it.
+      if (sharedCopyFor(app, userId, `lark:chat:${chat.chat_id}`, "member-capture")) continue;
+      const prev = cursor(app, userId, chat.chat_id);
+      const fresh = newer(await fetchMessages(["+chat-messages-list", "--chat-id", chat.chat_id, "--order", "asc"], prev?.lastTime ?? endMs - LOOKBACK_MS, endMs, { pages: 5 }), prev);
+      if (fresh.length) {
+        const spaceId = captureSpace(app, chat.chat_id, userId);
+        const r = persistChatMessages(app, { chatId: chat.chat_id, spaceId, name: chat.name || chat.chat_id, messages: fresh, owner: me, userId });
+        if (r.id && r.status !== "unchanged") touched.set(spaceId, (touched.get(spaceId) ?? new Set()).add(r.id));
+        kept += fresh.length;
+      }
+      saveCursor(app, userId, chat.chat_id, fresh, prev);
+    } catch (e) {
+      console.warn(`[omem] 读取 ${userName(app, userId)} 的飞书会话失败 ${chat.name ?? chat.chat_id}：${(e as Error).message}`);
+    }
+  }
+  return kept;
+}
+
+/** What a member capture reads, when granted and not turned off in omem. */
+const CAPTURED = ["messages", "calendar", "minutes", "docs"];
+
+/**
+ * Everyone (but the owner, whose capture is lark-personal.ts) with a working connection that has
+ * something to capture; not an account still waiting for approval, though its login brought a token.
+ */
 export async function pollMembers(app: App) {
   let people = 0;
   for (const c of listConnections(app)) {
-    if (c.provider !== "lark" || c.userId === "owner" || c.status !== "active" || !grantedFeatures("lark", c.scopes).includes("messages")) continue;
+    if (c.provider !== "lark" || c.userId === "owner" || c.status !== "active" || findUser(app, c.userId)?.status !== "active") continue;
+    if (!usableFeatures(app, c).some((f) => CAPTURED.includes(f))) continue;
     try {
       await captureForMember(app, c.userId);
       people++;

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { accessToken, renewConnections } from "../src/auth/connections.ts";
+import { accessToken, disconnect, renewConnections } from "../src/auth/connections.ts";
 import { scopesFor } from "../src/auth/features.ts";
 import { asLarkUser, larkCliAs } from "../src/auth/lark-user.ts";
 import { asOwner } from "../src/channels/lark-auth.ts";
@@ -11,7 +11,7 @@ import { setAuthFetchForTests } from "../src/auth/providers.ts";
 import { findConnection, storeConnection } from "../src/auth/vault.ts";
 import { larkCli, LarkScopeError, setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { captureSpace } from "../src/core/capture-space.ts";
-import { one } from "../src/core/db.ts";
+import { one, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { addMember, createUser, linkIdentity } from "../src/core/users.ts";
 import { boot } from "../src/main.ts";
@@ -97,6 +97,55 @@ describe("connections", async () => {
     expect(await accessToken(app, "ann", "lark")).toBe("at_new1");
   });
 
+  it("asks for the features ticked on the login page, and for nothing else without them", async () => {
+    const plain = new URL((await remote("/api/auth/lark/start")).headers.get("location")!);
+    expect(plain.searchParams.get("scope")).toBeNull();
+    const ticked = new URL((await remote("/api/auth/lark/start?features=calendar")).headers.get("location")!);
+    const asked = ticked.searchParams.get("scope")!.split(" ");
+    expect(asked).toEqual(expect.arrayContaining([...scopesFor("lark", ["calendar"])]));
+    expect(asked).toContain("offline_access");
+    expect(asked).not.toContain("im:message:readonly");
+    // The login page lists what can be ticked (background access comes along, not listed).
+    const session = await (await remote("/api/auth/session")).json();
+    expect(session.login.providers[0].features.map((f: { id: string }) => f.id)).toEqual(expect.arrayContaining(["messages", "calendar"]));
+    expect(session.login.providers[0].features.map((f: { id: string }) => f.id)).not.toContain("offline");
+  });
+
+  it("does not use a feature turned off in omem, though Feishu still grants it; nor an account waiting for approval", async () => {
+    const { pollMembers } = await import("../src/channels/lark-member-capture.ts");
+    const { callTool } = await import("../src/agents/tools.ts");
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["messages", "calendar"]), accessToken: "at_ann5", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    createUser(app, { name: "小波", id: "bob", status: "pending" });
+    storeConnection(app, { userId: "bob", provider: "lark", accountId: "on_bob", accountName: "小波", scopes: scopesFor("lark", ["messages"]), accessToken: "at_bob", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    const calls: { args: string[]; as?: string }[] = [];
+    setLarkCliForTests(async (args, _cwd, as) => (calls.push({ args, as }), { ok: true, data: { chats: [], events: [] } }));
+    // Turned off through the account page's switch.
+    const login = await remote("/api/auth/lark/start");
+    const state = new URL(login.headers.get("location")!).searchParams.get("state")!;
+    const cookie = `omem_sid=${/omem_sid=([^;]+)/.exec((await remote(`/api/auth/lark/callback?code=c&state=${state}`)).headers.get("set-cookie") ?? "")![1]}`;
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["messages", "calendar"]), accessToken: "at_ann5", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    const off = await remote("/api/auth/connections/lark/features/messages", { method: "PUT", cookie, headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ on: false }) });
+    expect(off.status).toBe(200);
+    const messages = (await off.json()).connections[0].features.find((f: { id: string }) => f.id === "messages");
+    expect(messages).toMatchObject({ on: true, paused: true });
+    await pollMembers(app);
+    expect(calls.some((c) => c.as === "ann" && c.args.includes("+chat-list"))).toBe(false);
+    expect(calls.some((c) => c.as === "ann" && c.args.includes("+agenda"))).toBe(true); // calendar is still on
+    expect(calls.some((c) => c.as === "bob")).toBe(false); // waiting for approval: nothing read as them
+    const ctx = { app, runId: null, spaceId: "personal-ann", spaces: null, tools: null, actor: "agent" as const, userId: "ann", larkChats: [] };
+    const refused = await callTool(ctx, "lark_read", { command: ["im", "+chat-list"] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("关掉了「我的消息」");
+    expect((await callTool(ctx, "lark_read", { command: ["calendar", "+agenda"] })).text).not.toContain("关掉了");
+    // Back on: used again at once.
+    await remote("/api/auth/connections/lark/features/messages", { method: "PUT", cookie, headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ on: true }) });
+    expect((await callTool(ctx, "lark_read", { command: ["im", "+chat-list"] })).text).not.toContain("关掉了");
+    expect((await remote("/api/auth/connections/lark/features/offline", { method: "PUT", cookie, headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ on: false }) })).status).toBe(400);
+    // The tests after this one start from ann's own connection and fresh hourly checks.
+    disconnect(app, "ann", "lark");
+    run(app.db, "delete from kv where key in ('lark_calendar_at:ann', 'lark_minutes_at:ann')");
+  });
+
   it("asks the person to authorize again when refreshing fails, and tells them once", async () => {
     storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: [], accessToken: "at_old", refreshToken: "rt_dead", expiresIn: 60, refreshExpiresIn: 3600 });
     await expect(accessToken(app, "ann", "lark")).rejects.toThrow(/重新授权/);
@@ -164,7 +213,7 @@ describe("connections", async () => {
     persistChatMessages(app, { chatId: "oc_team", spaceId: "team-chat", name: "团队", messages: [msg("om_t1", "oc_team", "周会改到周三", 0)] });
     const ownerCopy = persistChatMessages(app, { chatId: "oc_dm", spaceId: "personal", name: "和小安", messages: [msg("om_d1", "oc_dm", "你好", 0)] });
     const ownerText = one<{ text: string }>(app.db, "select text from sources where id = ?", ownerCopy.id!)!.text;
-    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: ["offline_access", "im:chat:read", "im:message:readonly"], accessToken: "at_ann3", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["messages"]), accessToken: "at_ann3", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
     const calls: { args: string[]; as?: string }[] = [];
     setLarkCliForTests(async (args, _cwd, as) => {
       calls.push({ args, as });

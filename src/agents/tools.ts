@@ -16,6 +16,8 @@ import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpace
 import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { toolAllowed } from "../auth/tools.ts";
+import { featuresOff } from "../auth/connections.ts";
+import { featuresOf } from "../auth/features.ts";
 import { can, requirePerm } from "../auth/permissions.ts";
 import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
 import { hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
@@ -2976,18 +2978,32 @@ def({
  * Acting as a person on Feishu (lark-cli user identity): the owner with lark-cli's login, anyone else
  * with their own connection (src/auth/lark-user.ts) — the call runs as whoever the run works for.
  */
-function ownerOnly(ctx: ToolContext) {
+/** Which connection feature a lark-cli command uses (one the account page can turn off), or null. */
+const DOMAIN_FEATURES: Record<string, string> = { im: "messages", contact: "messages", docs: "docs", docx: "docs", wiki: "docs", drive: "docs", markdown: "docs", sheets: "sheets", base: "sheets", calendar: "calendar", minutes: "minutes", vc: "minutes" };
+function commandFeature(command: string[], write = false) {
+  const f = DOMAIN_FEATURES[command[0] ?? ""] ?? null;
+  return write && f === "docs" ? "doc-write" : f;
+}
+/** A member who turned this feature off in omem (auth/connections.ts featuresOff): not used, though Feishu still grants it. */
+function featureGate(ctx: ToolContext, feature: string | null | undefined) {
+  const user = ctx.userId ?? OWNER;
+  if (!feature || user === OWNER || !featuresOff(ctx.app, user, "lark").includes(feature)) return;
+  const label = featuresOf("lark").find((f) => f.id === feature)?.label ?? feature;
+  throw new HttpError(403, `${userName(ctx.app, user)}在 omem 的账号页关掉了「${label}」：要用就在账号页重新打开（飞书那边的授权还在）`);
+}
+function ownerOnly(ctx: ToolContext, feature?: string | null) {
   const user = ctx.userId ?? OWNER;
   if (user !== OWNER) {
     requirePerm(ctx.app, user, "connector.use");
     if (!canActOnLark(ctx.app, user)) throw new HttpError(403, `${userName(ctx.app, user)}还没有连接飞书（或连接需要重新授权）：请对方在 omem 的账号页连接飞书`);
+    featureGate(ctx, feature);
   }
   // Like the bot's lark_* tools: omem's own runs only (an outside agent over `omem mcp` has no Feishu scope).
   if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份用飞书只在 omem 自己的运行里可用");
 }
 
 async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean, docEditScope?: DocEditScope, scopeNote?: string, wikiWrite?: { operation: WikiWriteOperation; targets: WikiWriteTarget[] }) {
-  ownerOnly(ctx);
+  ownerOnly(ctx, "doc-write");
   if (personal || ctx.actor === "user" || ctx.approved) return null;
   const docDecision = docEditScope ? await docEditDecision(ctx.app, ctx.userId ?? OWNER, docEditScope, name) : null;
   const treeDecision = wikiWrite ? await wikiWriteDecision(ctx.app, ctx.userId ?? OWNER, wikiWrite.operation, wikiWrite.targets) : null;
@@ -3013,7 +3029,7 @@ def({
     summary: z.string().min(1).max(500).describe("用途及要批准的改动，例如定时复制周报并在目录内整理"),
   }),
   handler: async (ctx, a) => {
-    ownerOnly(ctx);
+    ownerOnly(ctx, "doc-write");
     const w = await import("../channels/lark-doc-write.ts");
     const place = await w.docPlace(ctx.app, a.under);
     if (!place.node || place.node.nodeType !== "origin") throw new HttpError(400, "under 必须是实际的知识库节点，不能是云空间文档或快捷方式");
@@ -3045,7 +3061,7 @@ def({
     format: z.enum(["xml", "markdown"]).optional(),
   }),
   handler: async (ctx, a) => {
-    ownerOnly(ctx);
+    ownerOnly(ctx, "docs");
     const w = await import("../channels/lark-doc-write.ts");
     const r = await w.fetchForEdit(ctx.app, {
       doc: a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
@@ -3139,7 +3155,7 @@ def({
     summary: z.string().min(1).max(500).describe("复制用途，给本人批准时看"),
   }),
   handler: async (ctx, a) => {
-    ownerOnly(ctx);
+    ownerOnly(ctx, "doc-write");
     const w = await import("../channels/lark-doc-write.ts");
     const from = await w.docPlace(ctx.app, a.doc);
     const to = await w.placeFor(ctx.app, a.target);
@@ -3174,6 +3190,7 @@ const larkCommand = z.array(z.string()).min(1).max(60).describe("lark-cli 之后
 
 /** A message's attachment as omem keeps it (channels/lark-message-files.ts), in words the agent acts on. */
 async function messageFileText(ctx: ToolContext, messageId: string, key?: string) {
+  featureGate(ctx, "messages");
   const { messageFile } = await import("../channels/lark-message-files.ts");
   const f = await messageFile(ctx.app, messageId, key, { space: (id) => canRead(ctx, id), chat: (id) => !!ctx.larkChats?.includes(id) });
   if (f.sourceId) {
@@ -3201,7 +3218,7 @@ def({
     "以本人身份运行一条只读的 lark-cli 命令，读飞书的表格、多维表格、幻灯片、云空间文件和评论、Markdown 文件、知识库、任务、日历、邮件、聊天记录、会议与妙记、通讯录、OKR、审批等。只放行 lark-cli 自己标为 read 的命令（--help 里的 Risk）。先读官方说明：command=[\"skills\", \"read\", \"lark-sheets\"]（或 lark-base、lark-task、lark-drive……，带 references/… 读附带文件），[\"schema\", \"<服务.资源.方法>\"] 看参数，[\"<域>\", \"--help\"] 看命令列表。说明里的 `lark-cli <命令> --as user` 在这里写成 command 数组、去掉 lark-cli 和 --as。做法见技能 lark-suite。",
   schema: z.object({ command: larkCommand }),
   handler: async (ctx, a) => {
-    ownerOnly(ctx);
+    ownerOnly(ctx, commandFeature(a.command));
     // Saving a message's attachment is a write to lark-cli (it writes a file): omem's own copy instead.
     const download = (await import("../channels/lark-message-files.ts")).resourceDownload(a.command);
     if (download) return messageFileText(ctx, download.messageId, download.key);
@@ -3222,7 +3239,7 @@ def({
     approval_targets: z.array(z.string().min(1)).min(1).max(20).optional().describe("首次审批时列出本次要改的全部文件链接，一次批准"),
   }),
   handler: async (ctx, a) => {
-    ownerOnly(ctx);
+    ownerOnly(ctx, commandFeature(a.command, true));
     const c = await import("../channels/lark-cli-tools.ts");
     const path = await c.checkWrite(a.command);
     const target = await c.writeTarget(ctx.app, a.command, a.target);
