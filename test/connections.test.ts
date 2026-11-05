@@ -97,6 +97,25 @@ describe("connections", async () => {
     expect(await accessToken(app, "ann", "lark")).toBe("at_new1");
   });
 
+  it("the peer command `connections` lists without tokens and checks a refresh against Feishu", async () => {
+    const { runPeerCommand } = await import("../src/core/peer-exec.ts");
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["calendar"]), accessToken: "at_old", refreshToken: "rt_ok", expiresIn: 60, refreshExpiresIn: 604800 });
+    const list = (await runPeerCommand(app, "connections", {})) as any;
+    const ann = list.connections.find((c: { user: string }) => c.user === "ann");
+    expect(ann).toMatchObject({ provider: "lark", status: "active", background: true });
+    expect(ann.usable).toContain("calendar");
+    expect(JSON.stringify(list)).not.toMatch(/at_old|rt_ok/);
+    const checked = (await runPeerCommand(app, "connections", { check: "ann" })) as any;
+    expect(checked.refreshed).toBe(true);
+    expect(checked.whoami).toEqual({ name: "小安", sameAccount: true });
+    expect(Date.parse(checked.after.expiresAt)).toBeGreaterThan(Date.parse(checked.before.expiresAt));
+    expect(JSON.stringify(checked)).not.toMatch(/at_new|rt_new/);
+    // Still fresh: no second refresh.
+    expect(((await runPeerCommand(app, "connections", { check: "ann" })) as any).refreshed).toBe(false);
+    await expect(runPeerCommand(app, "connections", { check: "nobody" })).rejects.toThrow(/没有连接/);
+    await expect(runPeerCommand(app, "connections", { check: "../x" })).rejects.toThrow();
+  });
+
   it("asks for the features ticked on the login page, and for nothing else without them", async () => {
     const plain = new URL((await remote("/api/auth/lark/start")).headers.get("location")!);
     expect(plain.searchParams.get("scope")).toBeNull();

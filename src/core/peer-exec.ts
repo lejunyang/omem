@@ -326,6 +326,46 @@ export const peerCommands: Record<string, Command> = {
       return out;
     },
   },
+  connections: {
+    description: "每个人连接的应用（飞书等）：状态、授到的功能和在 omem 里关掉的、令牌和刷新令牌何时到期、最近的错误（不含令牌）；check 给一个用户 id 时取一次能用的令牌（快到期就刷新，和成员用到时一样）并向平台确认它是谁，返回刷新前后的到期时间",
+    schema: z.object({ check: z.string().regex(/^[\w-]{1,64}$/).optional(), provider: z.string().regex(/^[a-z][\w-]{0,31}$/).default("lark") }),
+    run: async (app, a) => {
+      const { findConnection, listConnections, connectionSecrets } = await import("../auth/vault.ts");
+      const { accessToken, featuresOff, usableFeatures } = await import("../auth/connections.ts");
+      const { grantedFeatures } = await import("../auth/features.ts");
+      const { loginProvider } = await import("../auth/providers.ts");
+      const view = (c: NonNullable<ReturnType<typeof findConnection>>) => ({
+        user: c.userId,
+        provider: c.provider,
+        account: c.accountName,
+        status: c.status,
+        scopes: c.scopes.length,
+        features: grantedFeatures(c.provider, c.scopes),
+        off: featuresOff(app, c.userId, c.provider),
+        usable: usableFeatures(app, c),
+        background: !!connectionSecrets(app, c.id)?.refreshToken,
+        expiresAt: c.expiresAt,
+        refreshExpiresAt: c.refreshExpiresAt,
+        lastError: c.lastError,
+        updatedAt: c.updatedAt,
+      });
+      if (!a.check) return { connections: listConnections(app).map(view) };
+      const before = findConnection(app, a.check, a.provider);
+      if (!before) throw new HttpError(404, `${a.check} 没有连接 ${a.provider}`);
+      const p = loginProvider(a.provider);
+      let whoami: unknown = null;
+      let error: string | null = null;
+      try {
+        const token = await accessToken(app, a.check, a.provider);
+        const id = token && p ? await p.whoami(app, { accessToken: token }) : null;
+        whoami = id && { name: id.name, sameAccount: id.externalId === before.accountId || !!id.aliases?.some((x) => x.externalId === before.accountId) };
+      } catch (e) {
+        error = (e as Error).message;
+      }
+      const after = findConnection(app, a.check, a.provider)!;
+      return { refreshed: after.expiresAt !== before.expiresAt, whoami, error, before: { expiresAt: before.expiresAt, refreshExpiresAt: before.refreshExpiresAt }, after: view(after) };
+    },
+  },
   "doubao-status": {
     description: "豆包 OpenAPI：各飞书应用的豆包权限与本机授权状态",
     schema: z.object({}),
