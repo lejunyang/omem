@@ -84,7 +84,8 @@ it("refuses a chat outside the run's spaces; a file it cannot parse or a video c
     const out = await callTool(ctx(["personal"]), "lark_message_file", { message_id: "om_txt" });
     expect(out.isError).toBe(true);
     expect(out.text).toContain("不在本次任务");
-    // No document converter on this machine for a CSV: the downloaded file, and why.
+    // Exercise the fallback regardless of which converters are installed on this machine.
+    app.config.documents.engines = [];
     const csv = await callTool(ctx(["proj"]), "lark_message_file", { message_id: "om_csv" });
     expect(csv.isError).toBe(false);
     expect(csv.text).toContain("已下载到");

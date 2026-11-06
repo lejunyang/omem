@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { expect, it } from "vitest";
-import { __testHandlers, addRunEvent, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { __testHandlers, addRunEvent, flushRunText, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { startServer } from "../src/server/http.ts";
 import { saveAgentSpec } from "../src/agents/specs.ts";
@@ -22,7 +22,7 @@ const alert = (id: string, text: string, chat = "oc_alerts"): RuleEvent => ({
   via: "test",
 });
 
-function setup(merge?: boolean) {
+function setup(merge?: boolean, mergeReply?: "combined" | "separate") {
   const app = testApp();
   saveAgentSpec(app, { name: "alert-analyst", description: "分析报警", prompt: "分析报警。" }, "user");
   setLarkClient({ im: { message: { reply: async () => ({ code: 0, data: { message_id: "om_r" } }) } } });
@@ -32,7 +32,7 @@ function setup(merge?: boolean) {
     enabled: true,
     conditions: { field: "message.type", op: "equals", value: "interactive" },
     judge: "code",
-    actions: [{ type: "agent", spec: "alert-analyst", task: "", ownTopic: true, reply: "auto", ...(merge === undefined ? {} : { merge }) }],
+    actions: [{ type: "agent", spec: "alert-analyst", task: "核对本条来源的接手状态", ownTopic: true, reply: "auto", ...(merge === undefined ? {} : { merge }), ...(mergeReply ? { mergeReply } : {}) }],
   });
   const agentRuns = () => all<{ id: string; status: string; lane: string | null; input: string }>(app.db, "select id, status, lane, input from runs where kind = 'agent' order by created_at, rowid");
   return { app, rule, agentRuns };
@@ -85,6 +85,7 @@ it("runs what joined after the run ended in that run's agent session, with every
   const exec = async (id: string) => {
     const out = (await __testHandlers.get("agent")!({ app, run: getRun(app, id), signal: new AbortController().signal, event: (type, data) => addRunEvent(app, id, type, data), output: (data) => setRunOutput(app, id, data) })) as Record<string, unknown>;
     setRunOutput(app, id, out);
+    flushRunText(app, id);
     run(app.db, "update runs set status = 'done' where id = ?", id);
     return JSON.parse(String(out.answer)) as { session: string; resumed: boolean; prompt: string };
   };
@@ -121,6 +122,74 @@ it("starts every trigger on its own when the rule does not merge", async () => {
     // No lane: they also run side by side, as before.
     expect(runs.map((r) => r.lane)).toEqual([null, null]);
     expect(takeSteering(app, runs[0].id)).toBeNull();
+  } finally {
+    setLarkClient(null);
+    app.db.close();
+  }
+});
+
+it("queues separate replies in one agent session, preserving every trigger's task and reply target", async () => {
+  const { app, rule, agentRuns } = setup(true, "separate");
+  app.config.agents.default = "fake";
+  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "echo" } })];
+  const replies: { messageId: string; inThread: boolean }[] = [];
+  setLarkClient({ im: { message: { reply: async (p: { path: { message_id: string }; data: { reply_in_thread?: boolean } }) => {
+    replies.push({ messageId: p.path.message_id, inThread: !!p.data.reply_in_thread });
+    return { code: 0, data: { message_id: `om_reply_${replies.length}` } };
+  } } } });
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    await dispatchRuleEvent(app, alert("om_1", "CPU 使用率超过 90%"));
+    const first = agentRuns()[0];
+    run(app.db, "update runs set status = 'running' where id = ?", first.id);
+    // Include a source longer than combined-mode summaries and a trigger in an existing topic.
+    const second = alert("om_2", `${"详细材料".repeat(200)}独立核对标记`);
+    second.message!.topicId = "omt_second";
+    await dispatchRuleEvent(app, second);
+    saveRule(app, { ...rule, temporary: rule.temporary ?? undefined, actions: rule.actions.map((a) => a.type === "agent" ? { ...a, ownTopic: false } : a) });
+    await dispatchRuleEvent(app, alert("om_3", "接口超时率 12%"));
+    const runs = agentRuns();
+    expect(runs).toHaveLength(3);
+    expect(new Set(runs.map((r) => r.lane)).size).toBe(1);
+    expect(getRun(app, runs[1].id).input.resumeFromRun).toBe(first.id);
+    expect(getRun(app, runs[2].id).input.resumeFromRun).toBe(runs[1].id);
+    expect(takeSteering(app, first.id)).toBeNull();
+    expect(runs.slice(1).every((r) => getRun(app, r.id).status === "queued")).toBe(true);
+    let session: string | undefined;
+    for (const [i, r] of runs.entries()) {
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      expect(takeSteering(app, r.id)).toBeNull();
+      const out = await __testHandlers.get("agent")!({ app, run: getRun(app, r.id), signal: new AbortController().signal, event: (type, data) => addRunEvent(app, r.id, type, data), output: (data) => setRunOutput(app, r.id, data) }) as Record<string, unknown>;
+      setRunOutput(app, r.id, out);
+      flushRunText(app, r.id);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const result = JSON.parse(String(out.answer)) as { session: string; resumed: boolean; prompt: string };
+      if (session) expect(result.session).toBe(session);
+      session = result.session;
+      expect(result.resumed).toBe(i > 0);
+      expect(result.prompt).toContain("核对本条来源的接手状态");
+      expect(result.prompt).toContain("每次触发分别处理");
+      expect(result.prompt).not.toContain("上一轮处理期间同一条规则又触发");
+      if (i === 1) expect(result.prompt).toContain("独立核对标记");
+    }
+    expect(replies).toEqual([{ messageId: "om_1", inThread: true }, { messageId: "om_2", inThread: true }, { messageId: "om_3", inThread: false }]);
+  } finally {
+    await server.close();
+    setLarkClient(null);
+    app.db.close();
+  }
+}, 60000);
+
+it("does not take a separately queued trigger into an older combined turn", async () => {
+  const { app, rule, agentRuns } = setup();
+  try {
+    await dispatchRuleEvent(app, alert("om_1", "CPU 使用率超过 90%"));
+    const first = agentRuns()[0];
+    run(app.db, "update runs set status = 'running' where id = ?", first.id);
+    saveRule(app, { ...rule, temporary: rule.temporary ?? undefined, actions: rule.actions.map((a) => a.type === "agent" ? { ...a, mergeReply: "separate" } : a) });
+    await dispatchRuleEvent(app, alert("om_2", "接口超时率 12%"));
+    expect(takeSteering(app, first.id)).toBeNull();
+    expect(getRun(app, agentRuns()[1].id).status).toBe("queued");
   } finally {
     setLarkClient(null);
     app.db.close();

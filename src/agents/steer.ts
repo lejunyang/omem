@@ -55,9 +55,11 @@ type Trigger = { messageId: string | null; topicId: string | null; at: string; s
  * The same rule fired again in this chat while this run works on it (rules/actions.ts joinLane): the
  * triggers waiting in the lane's next run come to this one, which drops that run.
  */
-function takeTriggers(app: App, runId: string, lane: string, input: { rule?: { id?: string }; lark?: { chats?: string[] | null } }): string | null {
+function takeTriggers(app: App, runId: string, lane: string, input: { rule?: { id?: string; mergeReply?: string }; lark?: { chats?: string[] | null } }): string | null {
+  if (input.rule?.mergeReply === "separate") return null;
   const next = queuedInLane(app, lane, "agent");
   if (!next || (next.input.rule as { id?: string } | undefined)?.id !== input.rule?.id) return null;
+  if ((next.input.rule as { mergeReply?: string }).mergeReply === "separate") return null;
   const triggers = (next.input.triggers as Trigger[] | undefined) ?? [];
   if (!triggers.length) return null;
   setRunOutput(app, next.id, { steeredInto: runId });

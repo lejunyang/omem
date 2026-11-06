@@ -98,10 +98,11 @@ export const actionSchema = z.discriminatedUnion("type", [
     allowUrgent: z.boolean().optional(),
     allowPrivate: z.boolean().optional(),
     /**
-     * A trigger while this rule's run for the same chat is in progress joins that run instead of
-     * starting another (an alert storm is one investigation): on unless false (rules/actions.ts).
+     * Triggers in the same chat share a serial lane and agent session, unless false.
      */
     merge: z.boolean().optional(),
+    /** Combined replies may steer into the current turn; separate replies keep one turn per trigger. */
+    mergeReply: z.enum(["combined", "separate"]).optional(),
     /** The owner's pick of AI for this rule's runs (backend id, optional model and effort); without it the profile's own. */
     ai: z
       .object({ profile: z.string().trim().min(1), model: z.string().trim().optional(), effort: z.string().trim().optional() })

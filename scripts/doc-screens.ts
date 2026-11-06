@@ -337,7 +337,7 @@ const rule = saveRule(app, {
   trigger: { event: "message", once: "event", waitMinutes: 5, unless: ["owner-engaged", "answered"] },
   conditions: { all: [{ field: "chat.name", op: "contains", value: "值班" }, { field: "message.mentionsOwner", op: "is", value: true }] },
   judge: "code",
-  actions: [{ type: "agent", spec: "assistant", task: "整理问题和下一步", reply: "draft", ownTopic: true }],
+  actions: [{ type: "agent", spec: "assistant", task: "整理问题和下一步", reply: "draft", ownTopic: true, mergeReply: "separate" }],
 } as never);
 
 // A meeting rule with conditional confirmation; all bot and meeting data here is fictional.

@@ -55,12 +55,12 @@ function placeOf(app: App, r: Run): { conversationId: string; title: string } | 
 function start(app: App, r: Run) {
   if (r.input.hideThinking) return false;
   // A rule's agent answering under the triggering message: its bubble opens the topic there.
-  const input = r.input as { replyAt?: { chatId: string; messageId: string }; spec?: string; wake?: boolean; lark?: { bot?: string } };
+  const input = r.input as { replyAt?: { chatId: string; messageId: string; inThread?: boolean }; spec?: string; wake?: boolean; lark?: { bot?: string } };
   // A wake-up re-check: nobody waits on it, and most end with nothing new (stay_quiet). Its process is
   // shown only when it has something to say.
   const defer = !!input.wake;
   const at = input.replyAt;
-  if (r.kind === "agent" && at) return startCot(app, r.id, { chatId: at.chatId, originMessageId: at.messageId, inThread: true, title: `**${input.spec}** ${defer ? "复查" : "处理这条消息"}`, defer, bot: input.lark?.bot ?? "main" });
+  if (r.kind === "agent" && at) return startCot(app, r.id, { chatId: at.chatId, originMessageId: at.messageId, inThread: at.inThread !== false, title: `**${input.spec}** ${defer ? "复查" : "处理这条消息"}`, defer, bot: input.lark?.bot ?? "main" });
   const place = placeOf(app, r);
   if (!place) return false;
   const t = findThread(app, place.conversationId);

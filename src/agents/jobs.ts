@@ -195,7 +195,7 @@ async function runAgentTask(ctx: RunContext) {
     /** Listening to a meeting for a rule (lark-meetings.ts): like silent, it speaks only through notify / meeting_send. */
     meeting?: { id: string; bot: string | null; answer: boolean };
     /** A rule's agent answering in a topic under this message (its bubble or answer opens the topic). */
-    replyAt?: { chatId: string; messageId: string };
+    replyAt?: { chatId: string; messageId: string; inThread?: boolean };
     /** A silent agent picking up a topic it follows continues its earlier session. */
     resumeSessionId?: string;
   };
@@ -292,7 +292,7 @@ async function runAgentTask(ctx: RunContext) {
     else if (replyAt) {
       const { sendLark } = await import("../channels/lark-send.ts");
       const { resolveCitations } = await import("../channels/common.ts");
-      await sendLark({ replyTo: replyAt.messageId, inThread: true, bot: lark?.bot, runId: ctx.run.id }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
+      await sendLark({ replyTo: replyAt.messageId, inThread: replyAt.inThread !== false, bot: lark?.bot, runId: ctx.run.id }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
     }
     else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
   } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name });

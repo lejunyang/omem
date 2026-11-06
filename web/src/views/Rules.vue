@@ -20,7 +20,7 @@ import { fmtTime, relTime, state, toast } from "../store";
 type Reply = "none" | "draft" | "auto";
 type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; ai?: { profile: string; model?: string; effort?: string } }
+  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string } }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
@@ -546,9 +546,13 @@ function startFrom(text: string) {
               </div>
               <div class="row wrap">
                 <UiCheckbox :model-value="!!a.hideThinking" size="sm" @change="v => { a.hideThinking = v; touch(); }">隐藏思考气泡</UiCheckbox>
-                <UiCheckbox :model-value="a.merge !== false" size="sm" title="同一个群里，这条规则的处理还没结束时再次触发，交给正在处理的那一轮，不另开一轮" @change="v => { a.merge = v ? undefined : false; touch(); }">处理中再次触发时并入同一会话</UiCheckbox>
+                <UiCheckbox :model-value="a.merge !== false" size="sm" title="同一个群里，这条规则还在处理时再次触发，复用同一 Agent 会话；回复方式在下方选择" @change="v => { a.merge = v ? undefined : false; touch(); }">处理中再次触发时并入同一会话</UiCheckbox>
                 <span class="small">失败时</span>
                 <UiSelect :model-value="a.failureTo ?? 'owner'" :options="[{ value: 'owner', label: '通知本人' }, { value: 'chat', label: '发到群聊' }]" size="sm" width="150px" aria-label="失败时通知谁" @update:model-value="v => { a.failureTo = v; touch(); }" />
+              </div>
+              <div v-if="a.merge !== false" class="stack">
+                <UiSegmented :model-value="a.mergeReply ?? 'combined'" :options="[{ value: 'combined', label: '合并回复' }, { value: 'separate', label: '每次触发分别回复' }]" size="sm" aria-label="连续触发的回复方式" @update:model-value="v => { a.mergeReply = v; touch(); }" />
+                <small class="muted">{{ a.mergeReply === 'separate' ? '每次触发依次处理，复用前面的调查，各自完成任务并按上面的回复方式答复。' : '后续触发交给正在处理的一轮，可以一起给出结论。' }}</small>
               </div>
               <div v-if="scheduleOnly && (a.reply !== 'none' || a.failureTo === 'chat')" class="row wrap">
                 <span class="small">发到</span>
