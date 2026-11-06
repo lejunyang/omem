@@ -88,7 +88,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === props.space)?
   <div class="modal-overlay" @mousedown.self="emit('close')">
     <div class="modal stack digest">
       <div class="row"><strong>整理存量材料 · {{ spaceName }}</strong><span class="spacer" /><button class="btn ghost sm icon" aria-label="关闭" @click="emit('close')"><Icon name="x" /></button></div>
-      <p class="muted small">已经入库、还没人整理过的材料（回溯的群、整批导入的知识库）在后台一批一批地处理。先“分级”过一遍，再对重点和一般的“精读整理”。同时跑的几批会分到角色配置过的不同模型上，各模型的并行上限在设置 → Agent。</p>
+      <p class="muted small">已经入库、还没人整理过的材料（回溯的群、整批导入的知识库）在后台一批一批地处理。先“分级”过一遍，再对重点和一般的“精读整理”。同时跑的几批会分到角色配置过的不同模型上，各模型的并行上限在设置 → AI。</p>
 
       <div v-if="loading" class="muted small">读取中…</div>
       <ul v-else-if="jobs.length" class="jobs">

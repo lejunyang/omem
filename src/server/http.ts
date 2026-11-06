@@ -70,6 +70,7 @@ import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
 import { deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
+import { CATEGORY_KINDS, categoryStatus, defaultModel, inheritedKeyVars, keyHint, keyOf, readKeys, setKey, testProvider } from "../core/ai-keys.ts";
 
 /** GET /api/share/<token>: exactly this, no query, no other path under it. */
 const SHARE_ROUTE = /^\/api\/share\/[A-Za-z0-9_-]{43}$/;
@@ -2442,8 +2443,35 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ];
     const restart = atStartup.filter(([, pick]) => JSON.stringify(pick(app.config)) !== JSON.stringify(pick(next))).map(([label]) => label);
     saveConfig(next, app.home);
+    // A provider taken out takes its key with it.
+    for (const id of Object.keys(readKeys(app.home))) if (!next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
     Object.assign(app.config, next);
     return { config: app.config, restart };
+  });
+
+  // ----------------------------------------------- AI providers and model categories (core/ai-keys.ts)
+  const aiView = () => {
+    const keys = readKeys(app.home);
+    return {
+      providers: app.config.ai.providers.map((p) => ({ ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id] })),
+      status: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, categoryStatus(app.config, c, app.home)])),
+      defaults: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, Object.fromEntries(["openai", "typesafe", "openrouter", "openai-compatible", "realtime"].map((k) => [k, k === "realtime" ? defaultModel(c, "openai", "realtime") : defaultModel(c, k)]))])),
+      kinds: CATEGORY_KINDS,
+      inherited: inheritedKeyVars(),
+    };
+  };
+  server.get("/api/ai", async () => aiView());
+  server.put("/api/ai/keys/:id", async (req) => {
+    const id = (req.params as { id: string }).id;
+    if (!app.config.ai.providers.some((p) => p.id === id)) throw new HttpError(404, "没有这个提供方");
+    const b = q(z.object({ key: z.string().trim().max(500).nullable() }), req.body);
+    setKey(app.home, id, b.key || null);
+    return aiView();
+  });
+  server.post("/api/ai/providers/:id/test", async (req) => {
+    const p = app.config.ai.providers.find((x) => x.id === (req.params as { id: string }).id);
+    if (!p) throw new HttpError(404, "没有这个提供方");
+    return testProvider(p, keyOf(p.id, app.home));
   });
 
   // ---------------------------------------------------------------- plugins

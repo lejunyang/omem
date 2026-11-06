@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { loadConfig, omemHome, type Config } from "./config.ts";
 import { openDb, type Db } from "./db.ts";
 import { disableGitFsmonitor, ensureLibraryRepo } from "./git.ts";
+import { useKeyHome } from "./ai-keys.ts";
 
 export type AppEvent =
   | { type: "run"; runId: string; status: string }
@@ -30,6 +31,7 @@ export class App {
   constructor(home: string, config: Config, db: Db) {
     // Absolute: paths under it are handed to processes (git) that run in other directories.
     this.home = resolve(home);
+    useKeyHome(this.home);
     this.config = config;
     this.db = db;
     const close = db.close.bind(db);

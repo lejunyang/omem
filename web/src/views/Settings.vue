@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import AiRouting from "../components/AiRouting.vue";
 import AiCapacity from "../components/AiCapacity.vue";
+import AiModels from "../components/AiModels.vue";
 import ReplaySettings from "../components/ReplaySettings.vue";
 import { detectProbe, probes as shared } from "../lib/probes";
 import Icon from "../components/Icon.vue";
@@ -28,6 +29,24 @@ const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "members
 // Other pages link to a tab (?tab=agents from the Agent page's nightly replay).
 const asked = useRoute().query.tab;
 const tab = ref<Tab>(TABS.includes(asked as Tab) ? (asked as Tab) : "spaces");
+// Settings → AI is split by category: the agents (general), the models omem calls itself, and the API keys.
+type AiSection = "general" | "voice" | "decision" | "image" | "keys";
+const AI_SECTIONS: { value: AiSection; label: string }[] = [
+  { value: "general", label: "通用" },
+  { value: "voice", label: "语音" },
+  { value: "decision", label: "决策" },
+  { value: "image", label: "图片生成" },
+  { value: "keys", label: "API key" },
+];
+const route = useRoute();
+const sectionOf = (v: unknown): AiSection => (AI_SECTIONS.some((s) => s.value === v) ? (v as AiSection) : "general");
+const aiSection = ref<AiSection>(sectionOf(route.query.section));
+// A link to another section while the page is open (the same route, so no remount).
+watch(() => route.query.section, (v) => {
+  if (v === undefined) return;
+  aiSection.value = sectionOf(v);
+  tab.value = "agents";
+});
 const config = ref<any>(null);
 type RerankStatus = { enabled: boolean; model: string; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number };
 const rerank = ref<RerankStatus | null>(null);
@@ -650,7 +669,7 @@ async function saveEdit() {
   <div class="page">
     <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small">数据目录：{{ home }}</p></div></div>
     <div class="tabs">
-      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'Agent'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['members', '成员'], ['peers', '设备'], ['shares', '分享'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
+      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'AI'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['members', '成员'], ['peers', '设备'], ['shares', '分享'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
     </div>
 
     <section v-if="tab === 'spaces'" class="stack">
@@ -694,7 +713,10 @@ async function saveEdit() {
     </section>
 
     <section v-else-if="tab === 'agents' && config" class="stack">
-      <p class="muted">omem 不内置模型：理解、写作和编码交给你已安装并登录的 Agent（通过 ACP 或命令行）。不同角色可以用不同 Agent，例如问答用快的模型，Wiki 和评审用强的模型。</p>
+      <UiSegmented v-model="aiSection" size="sm" aria-label="AI 分类" :options="AI_SECTIONS" />
+      <AiModels v-if="aiSection !== 'general'" :section="aiSection" :config="config" @save="(ai, note) => saveConfig({ ai }, note)" @changed="load" />
+      <template v-else>
+      <p class="muted">理解、写作和编码交给 Agent：你已安装并登录的，或用 API key 生成的（在“API key”里添加）。不同角色可以用不同 Agent，例如问答用快的模型，Wiki 和评审用强的模型。</p>
       <div class="card">
         <template v-for="p in installedProfiles" :key="p.id">
           <div class="prow">
@@ -840,6 +862,7 @@ async function saveEdit() {
         <textarea v-model="profileJson" class="textarea mono" rows="9" placeholder='{"id":"codex-sol","name":"Codex · Sol","transport":"acp","command":"codex-acp","args":[],"model":"gpt-6.1-sol","effort":"low"}' />
         <div class="row"><span class="muted small">transport：acp / claude-cli / codex-cli / doubao-cli。model、effort 必须是该 Agent 支持的值。</span><span class="spacer" /><button class="btn primary sm" :disabled="!profileJson.trim()" @click="addProfile">保存</button></div>
       </div>
+      </template>
     </section>
 
     <section v-else-if="tab === 'schedules'" class="stack">

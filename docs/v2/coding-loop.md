@@ -126,7 +126,7 @@ stateDiagram-v2
 
 | 限制 | 默认 | 在哪改 | 到了以后 |
 | --- | --- | --- | --- |
-| 自动推进的轮数（预算） | 交办时的 `max_rounds`；没给时编码 Agent 拆分时估；都没有用 `agents.autoAdvance.codeRounds`（3） | 设置 → Agent → 自动推进；上限 `codeRoundsMax`（12） | 暂停，本人说继续再给一份。助手 retry 的项在预算内才开下一轮，用完了等本人 |
+| 自动推进的轮数（预算） | 交办时的 `max_rounds`；没给时编码 Agent 拆分时估；都没有用 `agents.autoAdvance.codeRounds`（3） | 设置 → AI → 自动推进；上限 `codeRoundsMax`（12） | 暂停，本人说继续再给一份。助手 retry 的项在预算内才开下一轮，用完了等本人 |
 | 一项的尝试次数 | 3（`MAX_ATTEMPTS`） | 代码常量 | 交给助手 |
 | 一项连续没轮到 | 3 轮 | 代码常量 | 交给助手 |
 | 助手对同一项 retry | 2 次（`ASSISTANT_RETRIES`） | 代码常量 | 只能 owner（带选项）或 skip |
@@ -134,7 +134,7 @@ stateDiagram-v2
 | 不收敛 | 连续三次阶段评审要改的问题没减少 | — | 暂停，问本人 |
 | 只剩打磨 | 需求做完后 3 次阶段评审仍有新问题（`POLISH_STAGES`） | 代码常量 | 暂停，叫醒助手 |
 | 同一处修了又修 | 超过 2 层（`MAX_FOLLOW_DEPTH`） | 代码常量 | 新的一项交给助手 |
-| 多 Agent 话题自动协调 | 6 轮（`agents.autoAdvance.turns`） | 设置 → Agent → 自动推进 | 主助手停下汇报 |
+| 多 Agent 话题自动协调 | 6 轮（`agents.autoAdvance.turns`） | 设置 → AI → 自动推进 | 主助手停下汇报 |
 
 **汇报发到哪个会话**（2026-11-05）：交办的结果记录、交给助手的那一轮（`handoff`）和要本人回答的卡片（等你决定、计划确认、同步冲突、完成确认、需求做完了）都发到 `reportConversation`：本人最近一次在哪个会话里调整这次交办（`message_code_run`、`continue_code_run`、`fix_review`、`settle_code_task`、`apply_code_run`，从那一轮问答的会话取，必须是本人自己的会话，而且那一轮是本人说了话的：交给助手的一轮、唤醒、规则触发的运行用这些工具不改汇报的会话，免得还排在旧话题里的交接把汇报拉回去），就发到那里（记在发起交办的那条 ask 运行的 `output.codeReportTo`，不放在 chain 里，免得某一轮存旧 chain 时冲掉）；没有时是交办移到的工作话题，再没有才是发起交办的会话。飞书进度卡片还在原来的话题，第一次换过去时工具返回提醒助手告诉本人一声。起因：话题群里在第一条话题交办，之后本人在第三条话题里接着说，结果、修改项和助手的汇报却一直发回第一条话题。
 

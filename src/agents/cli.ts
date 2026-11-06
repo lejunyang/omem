@@ -1,6 +1,7 @@
 import type { AgentProfile } from "../core/config.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
 import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { keyEnv } from "../core/ai-keys.ts";
 
 const READ_TOOLS = ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "mcp__omem"];
 
@@ -52,7 +53,7 @@ export function codexArgs(profile: AgentProfile, req: AgentRequest) {
 export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const isClaude = profile.transport === "claude-cli";
   const args = isClaude ? claudeArgs(profile, req) : codexArgs(profile, req);
-  const child = launch(profile.command, args, { cwd: req.cwd, env: { ...profile.env, ...req.mcp?.env, ...req.env } });
+  const child = launch(profile.command, args, { cwd: req.cwd, env: { ...profile.env, ...keyEnv(profile), ...req.mcp?.env, ...req.env } });
   child.stdin.end(req.prompt);
   let text = "";
   // Text between tool calls; the last segment is the reply proper (see replyFromSegments).

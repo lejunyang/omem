@@ -562,7 +562,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
           <span class="badge" :class="quality.review.enabled ? 'ok' : 'warn'">{{ quality.review.enabled ? "复核已开启" : "复核未开启" }}</span>
           <span class="muted small">
             复核模型：{{ quality.review.profile ?? "按角色 memory-reviewer 的配置" }}{{ quality.review.model ? ` · ${quality.review.model}` : "" }}；待复核 {{ quality.pending }} 条；
-            对比运行：{{ quality.compare.length ? quality.compare.map((c) => [c.profile, c.model].filter(Boolean).join(" · ")).join("、") : "未配置（设置 → Agent → 记忆质量）" }}
+            对比运行：{{ quality.compare.length ? quality.compare.map((c) => [c.profile, c.model].filter(Boolean).join(" · ")).join("、") : "未配置（设置 → AI → 记忆质量）" }}
           </span>
           <span class="spacer" />
           <UiSegmented v-model="days" size="sm" aria-label="统计范围" :options="[{ value: 7, label: '7 天' }, { value: 30, label: '30 天' }, { value: 90, label: '90 天' }]" />

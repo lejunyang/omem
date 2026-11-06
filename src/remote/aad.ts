@@ -10,7 +10,7 @@ import { HttpError } from "../core/util.ts";
 
 export function aadCommand(): string[] {
   const cmd = toolCommand("aad");
-  if (!cmd) throw new HttpError(409, "这台机器没有装 ai-auto-desktop（设置 → Agent 里安装，或 omem setup desktop）");
+  if (!cmd) throw new HttpError(409, "这台机器没有装 ai-auto-desktop（设置 → AI 里安装，或 omem setup desktop）");
   return cmd;
 }
 

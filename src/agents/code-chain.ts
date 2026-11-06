@@ -251,7 +251,7 @@ function stopText(app: App, rootId: string, r: Run): string {
   const left = tasks.filter((t) => t.state === "todo").length;
   const stop = String(r.output.reviewStop ?? w.paused ?? "");
   const why = r.status !== "done" ? `这一轮${r.status === "failed" ? `失败了（${String(r.error ?? "").slice(0, 300)}）` : "被停下了"}，宿主不会自己重开。`
-    : stop === "budget" ? `自动推进的 ${w.until} 轮用完了（还有 ${left} 项待做；预算是交办时的 max_rounds、或编码 Agent 拆分时的估计，上限是设置 → Agent → 自动推进的“编码最多轮数”）。只有本人说继续才再推进一份（${w.budget} 轮）。`
+    : stop === "budget" ? `自动推进的 ${w.until} 轮用完了（还有 ${left} 项待做；预算是交办时的 max_rounds、或编码 Agent 拆分时的估计，上限是设置 → AI → 自动推进的“编码最多轮数”）。只有本人说继续才再推进一份（${w.budget} 轮）。`
     : stop === "not-converging" ? "最近三次阶段评审要改的问题没有减少，宿主暂停了交办：要本人看一下方案。"
     : stop === "polishing" ? `需求早就做完了，之后 ${POLISH_STAGES} 次阶段评审每次都在提新问题（还剩 ${left} 项），宿主暂停了交办。逐项看剩下的：和原来要的无关、只在现在的用法碰不到的情况下出现的，用 settle_code_task 的 later 记成以后再做；真影响需求的留着。然后告诉本人现在能用什么、你建议先交付还是再改几项。`
     : stop === "paused" || w.paused === "owner" ? "本人暂停了交办。"

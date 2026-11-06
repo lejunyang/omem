@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalog.ts";
 
+/** Agents that can run with an API key of their vendor instead of the login on this machine. */
+export const AI_KEY_BACKENDS = ["claude", "claude-cli", "codex", "codex-cli"] as const;
+/** Which provider kind can drive which of them. */
+export const KEY_BACKENDS_OF: Record<string, readonly (typeof AI_KEY_BACKENDS)[number][]> = { anthropic: ["claude", "claude-cli"], openai: ["codex", "codex-cli"] };
+
 export const agentProfileSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
@@ -29,6 +34,8 @@ export const agentProfileSchema = z.object({
   source: z.string().optional(),
   /** An ACP agent of another device (core/peer-acp.ts): runs there, tools stay here. command/args are filled in. */
   peer: z.object({ id: z.string().min(1), agent: z.string().min(1) }).optional(),
+  /** Runs with the API key of this AI provider (`ai.providers`, key in secrets/ai-keys.json; core/ai-keys.ts). */
+  keyRef: z.string().optional(),
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
@@ -386,6 +393,46 @@ export const configSchema = z.object({
       doclingArtifacts: z.string().optional(),
     })
     .default({ engines: ["docling", "pdftotext", "pandoc"] }),
+  /**
+   * Models omem calls itself over HTTP, besides the agents (docs/v2/ai-models.md): API-key providers
+   * (keys in secrets/ai-keys.json, never here) and what each category uses. A provider of kind openai
+   * or anthropic can also run Codex / Claude Code with its key as separate backends (`backends`).
+   */
+  ai: z
+    .object({
+      providers: z.array(z.object({
+        id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
+        name: z.string().trim().max(40).default(""),
+        /** typesafe: Jev (TypeSafe's own API); openrouter: OpenRouter (Jev and others); openai-compatible: any OpenAI-shaped API. */
+        kind: z.enum(["openai", "anthropic", "typesafe", "openrouter", "openai-compatible"]),
+        baseUrl: z.string().url().optional(),
+        backends: z.array(z.enum(AI_KEY_BACKENDS)).default([]),
+      })).max(20).default([]),
+      /** Voice: question-page voice input, live conversation, speaking practice. live = GPT-Live, realtime = Realtime API. */
+      voice: z.object({
+        provider: z.string().default(""),
+        api: z.enum(["live", "realtime"]).default("live"),
+        model: z.string().default(""),
+        voice: z.string().default(""),
+      }).default(() => ({ provider: "", api: "live" as const, model: "", voice: "" })),
+      /**
+       * Decision model: bounded judgments (one of a few options, yes/no, a score) with probabilities.
+       * provider "startlux" is the local judge (`guard`). Where a decision is wanted and this is not
+       * configured or fails, `fallback` "general" asks a general model (the role's agent) instead.
+       */
+      decision: z.object({
+        provider: z.string().default(""),
+        model: z.string().default(""),
+        fallback: z.enum(["general", "none"]).default("general"),
+      }).default(() => ({ provider: "", model: "", fallback: "general" as const })),
+      image: z.object({
+        provider: z.string().default(""),
+        model: z.string().default(""),
+        size: z.string().default(""),
+        quality: z.string().default(""),
+      }).default(() => ({ provider: "", model: "", size: "", quality: "" })),
+    })
+    .default(() => ({ providers: [], voice: { provider: "", api: "live" as const, model: "", voice: "" }, decision: { provider: "", model: "", fallback: "general" as const }, image: { provider: "", model: "", size: "", quality: "" } })),
   /** Optional prompt-injection flagging with a local judge (StartLux-Decision). Flags only, never blocks. */
   guard: z
     .object({
@@ -826,8 +873,29 @@ export function saveConfig(config: Config, home = omemHome()) {
 
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
+  for (const p of keyedProfiles(config)) byId.set(p.id, p);
   for (const p of config.agents.profiles) byId.set(p.id, p.peer ? peerProfile(p) : upgradeProfileArgs(p));
   return [...byId.values()];
+}
+
+/**
+ * Codex / Claude Code with an API key: one backend per chosen agent of each provider, named
+ * `<agent>@<provider>`. Its own source, so its quota and capacity are apart from the logged-in one.
+ * The key is added to the environment at launch (core/ai-keys.ts), never stored in the profile.
+ */
+export function keyedProfiles(config: Config): AgentProfile[] {
+  const out: AgentProfile[] = [];
+  for (const pr of config.ai?.providers ?? []) {
+    for (const b of pr.backends) {
+      if (!KEY_BACKENDS_OF[pr.kind]?.includes(b)) continue;
+      const base = builtinProfiles.find((p) => p.id === b);
+      if (!base) continue;
+      const label = (base.name ?? base.id).replace(/\)$/, ` · ${pr.name || pr.id})`);
+      const env = pr.baseUrl ? { [pr.kind === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL"]: pr.baseUrl } : {};
+      out.push({ ...base, id: `${b}@${pr.id}`, name: label, env: { ...base.env, ...env }, keyRef: pr.id, source: `key:${pr.id}` });
+    }
+  }
+  return out;
 }
 
 /** A device's agent: this omem's own `peer acp` bridge is the command (core/peer-acp.ts). */

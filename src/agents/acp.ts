@@ -5,6 +5,7 @@ import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
 import { isQuotaMessage } from "./capacity.ts";
 import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult, type SessionCleanup } from "./types.ts";
+import { keyEnv } from "../core/ai-keys.ts";
 
 // Provider queue text shown as a normal message by some CLIs (traex included).
 const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
@@ -61,7 +62,7 @@ export type AcpHandle = {
 };
 
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
-  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...opts.mcp?.env, ...opts.env } });
+  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env } });
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => {
     stderr = (stderr + d.toString()).slice(-4000);
@@ -523,7 +524,7 @@ function explain(error: unknown, profile: AgentProfile) {
 
 /** Delete a session through a connection of its own: start the agent, `session/delete`, stop it. */
 export async function deleteAcpSession(profile: AgentProfile, sessionId: string, cwd: string, env?: Record<string, string>) {
-  const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...env } });
+  const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...keyEnv(profile), ...env } });
   child.stderr.resume();
   const output = new WritableStream<Uint8Array>({ write: (chunk) => new Promise((resolve, reject) => child.stdin.write(chunk, (e) => (e ? reject(e) : resolve()))) });
   const input = new ReadableStream<Uint8Array>({

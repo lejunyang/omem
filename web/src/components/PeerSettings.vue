@@ -94,7 +94,7 @@ async function remove(p: Peer) {
 async function toggleAgent(peer: string, agent: { id: string; name: string }, use: boolean) {
   try {
     view.value = await post<View>("/api/peer/agents", { peer, agent: agent.id, name: agent.name, use });
-    toast(use ? `已加入 Agent 列表：设置 → Agent 和 Agent 页可以选它` : "已从 Agent 列表移除", "ok");
+    toast(use ? `已加入 Agent 列表：设置 → AI 和 Agent 页可以选它` : "已从 Agent 列表移除", "ok");
   } catch (e) {
     fail(e);
   }

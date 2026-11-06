@@ -50,7 +50,7 @@ const badge = (v: string | null) => (v === "win" ? "accent" : v === "void" || v 
     <p v-else-if="failed" class="muted small">{{ failed }}</p>
     <template v-else-if="list">
       <p v-if="status?.notice" class="warn small">{{ status.notice }} <RouterLink :to="{ path: '/agents', query: { tab: 'agents', role: 'replay-judge' } }">打开 replay-judge</RouterLink></p>
-      <p v-if="!list.length" class="muted small">还没有复盘。打开设置 → Agent → 夜间复盘的定时，或点“立即运行”。</p>
+      <p v-if="!list.length" class="muted small">还没有复盘。打开设置 → AI → 夜间复盘的定时，或点“立即运行”。</p>
       <div v-for="r in list" :key="r.id" class="rp-row">
         <div class="rp-line">
           <span class="badge" :class="badge(r.verdict)">{{ r.verdictLabel }}</span>

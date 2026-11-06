@@ -12,7 +12,7 @@ aad --version
 aad probe --compact
 ```
 
-- 找不到 `aad`：没装。告诉本人运行 `omem setup desktop`（或设置 → Agent → 桌面与浏览器控制），不要自己去下载程序。omem 启动的 Agent 会自动把 osdk 安装目录加进 PATH；在别处用时可能要写完整路径。
+- 找不到 `aad`：没装。告诉本人运行 `omem setup desktop`（或设置 → AI → 桌面与浏览器控制），不要自己去下载程序。omem 启动的 Agent 会自动把 osdk 安装目录加进 PATH；在别处用时可能要写完整路径。
 - `aad probe` 只读，不发输入，报告本机有哪些前置条件（有没有桌面会话、辅助功能权限、DPI 等）。有 `unavailable` 就先把原因告诉本人，不要硬试。
 - 本机没有图形会话（比如常驻服务器、SSH 登录）时桌面操作不可用；浏览器可以用无界面的 Chrome。
 

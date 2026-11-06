@@ -92,7 +92,7 @@ M1 的“碰过”：原运行 `memory_recalls` 里的记忆（`recall` 和被�
 
 - 运行类型：`replay`（每题一个，父运行，同一 lane 一题一题跑）、`replay-arm`（两臂）、`replay-judge`（评判，两种顺序各一个）。
 - 表：`replays(id, task_run_id, signal, task_type, axis, variant, as_of, base_run_id, baseline_run_id, arm_run_id, touched, checks, verdict, judge, cost, status, at, finished_at)`；`replay_effects(id, replay_id, target_kind, target_id, effect, note, status, at, resolved_at)`。两张表随 `omem peer pull` 同步。
-- 配置 `replay`：`max`（每晚题数）、`days`（选题范围）、`taskTypes`、`plan`（信号到轴）、`models`（A 轴阶梯）。设置 → Agent → 夜间复盘。
+- 配置 `replay`：`max`（每晚题数）、`days`（选题范围）、`taskTypes`、`plan`（信号到轴）、`models`（A 轴阶梯）。设置 → AI → 夜间复盘。
 - 定时任务 `replay` 4:30（在 profile-review 4:10 之后），默认关；开关就是设置页那个开关。
 - 手动：`omem replay run [--run <运行id>] [--axis <轴>]`、`omem replay list`、`POST /api/replays/run`、`GET /api/replays`、设备命令 `replay-run`、`replays`（只读），`omem diag` 带复盘状态。
 - runRole 新参数 `replay: { view, tools }`，`view` 含 `asOf`、`sourceLevels`、`memoryFilter`、`noPages`、`cache`。档案 frontmatter 加 `traits`；MCP 条目加 `readOnly`。

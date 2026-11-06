@@ -330,7 +330,7 @@ const counts = (r: Recording) => {
     <Skeleton v-if="loading" :rows="6" />
     <div v-else-if="!available" class="empty">
       <h1>远程操作</h1>
-      <p class="muted">这台机器还没有装 ai-auto-desktop（aad）。到 设置 → Agent 里安装后，这里可以打开本机的浏览器页面或桌面，远程操作并录制成技能。</p>
+      <p class="muted">这台机器还没有装 ai-auto-desktop（aad）。到 设置 → AI 里安装后，这里可以打开本机的浏览器页面或桌面，远程操作并录制成技能。</p>
       <router-link to="/settings" class="btn">去设置</router-link>
     </div>
     <template v-else>
