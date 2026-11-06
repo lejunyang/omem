@@ -51,7 +51,7 @@ const toRule = (r: Row): Rule => ({
 /** A document change has no chat or message: its fields, and actions that need no chat. */
 function checkDocRule(r: ReturnType<typeof ruleInputSchema.parse>) {
   const doc = r.trigger.event === "doc";
-  if (!doc && r.trigger.docs?.length) throw new HttpError(400, "只有“文档变化”规则能列出要盯的文档");
+  if (!doc && (r.trigger.docs?.length || r.trigger.pollMinutes)) throw new HttpError(400, "只有“文档变化”规则能列出要盯的文档");
   const fields = r.conditions ? fieldsOf(r.conditions) : [];
   if (!doc) {
     const docFields = fields.filter((f) => /^(doc|change)\./.test(f));

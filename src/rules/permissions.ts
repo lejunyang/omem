@@ -128,9 +128,9 @@ async function docPermissions(app: App, rule: Pick<Rule, "trigger"> & { spaceId?
   const { subscribeRuleDocs } = await import("../channels/lark-doc-events.ts");
   for (const d of await subscribeRuleDocs(app, rule.trigger.docs, rule.spaceId)) {
     if (d.ok) out.ok.push(`已订阅「${d.title || d.link}」的变化`);
-    else out.issues.push({ who: d.title ? `文档「${d.title}」` : d.link, problem: d.error ?? "订阅失败" });
+    else out.issues.push({ who: d.title ? `文档「${d.title}」` : d.link, problem: `订阅不了，先每 ${rule.trigger.pollMinutes ?? 30} 分钟用你的登录查一次更新（不是即时的）：${d.error ?? "订阅失败"}` });
   }
-  out.notes.push("飞书只把编辑和多维表格的变化发给文档的管理者：机器人订阅不了的，在文档右上角「…」→「添加文档应用」把 omem 的机器人加进来并给可管理权限，再检查一次。");
+  out.notes.push("飞书只把编辑和多维表格的变化发给文档的管理者：机器人订阅不了的，规则按“订阅不了时每隔多久查一次”用你的登录定时查更新；要即时，在文档右上角「…」→「添加文档应用」把 omem 的机器人加进来并给可管理权限，再检查一次。");
   return out;
 }
 

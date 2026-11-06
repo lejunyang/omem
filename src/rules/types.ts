@@ -171,6 +171,8 @@ export const ruleInputSchema = z.object({
     event: z.enum(["message", "chat-new", "schedule", "meeting", "doc"]).default("message"),
     /** Documents a `doc` rule watches (links): omem subscribes to their changes as the bot. */
     docs: z.array(z.string().trim().min(1).max(500)).max(200).optional(),
+    /** For those of `docs` the bot cannot subscribe to: how often to check them instead (lark-doc-events.ts pollRuleDocs). */
+    pollMinutes: z.number().int().min(5).max(1440).optional(),
     once: z.enum(["event", "chat"]).default("event"),
     cron: z.string().optional(),
     /** Wait this long after a match before acting (no one responded in time → act). */

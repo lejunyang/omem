@@ -28,7 +28,7 @@ const SNAPSHOT_MAX = 400_000;
 const TEXT_MAX = 4000;
 
 export type DocRef = { token: string; type: string; url: string; nodeToken?: string; title?: string };
-type Sub = { file_token: string; file_type: string; link: string; node_token: string | null; title: string; source_id: string | null; space_id: string | null; bot: string; status: "ok" | "failed"; error: string | null; snapshot: string | null; attempted_at: string; subscribed_at: string | null; last_event_at: string | null };
+type Sub = { file_token: string; file_type: string; link: string; node_token: string | null; title: string; source_id: string | null; space_id: string | null; bot: string; status: "ok" | "failed"; error: string | null; snapshot: string | null; attempted_at: string; subscribed_at: string | null; last_event_at: string | null; polled_at: string | null; modified_ms: number | null };
 
 const PATH = /^\/(docx|docs|doc|sheets|base|wiki|file|slides)\/([A-Za-z0-9]+)/;
 const TYPE_OF: Record<string, string> = { docx: "docx", docs: "doc", doc: "doc", sheets: "sheet", base: "bitable", file: "file", slides: "slides" };
@@ -135,8 +135,9 @@ export async function subscribeRuleDocs(app: App, links: string[], spaceId?: str
     try {
       const ref = await docRef(app, link);
       const r = await subscribeDoc(app, ref, { link: ref.url, spaceId: spaceId ?? null });
-      // A document no source keeps: its text now, so the first edit can already say what changed.
-      if (r.status === "ok" && ["docx", "doc"].includes(ref.type) && !sourceFor(app, ref.token) && !one(app.db, "select 1 from lark_doc_subscriptions where file_token = ? and snapshot is not null", ref.token)) {
+      // A document no source keeps: its text now, so the first edit (by event or by the scheduled check)
+      // can already say what changed.
+      if (["docx", "doc"].includes(ref.type) && !sourceFor(app, ref.token) && !one(app.db, "select 1 from lark_doc_subscriptions where file_token = ? and snapshot is not null", ref.token)) {
         const { readLarkDocument } = await import("./lark-docs.ts");
         const d = await readLarkDocument(ref.url).catch(() => null);
         if (d) run(app.db, "update lark_doc_subscriptions set snapshot = ?, title = case when ? != '' then ? else title end where file_token = ?", d.markdown.slice(0, SNAPSHOT_MAX), d.title, d.title, ref.token);
@@ -200,6 +201,63 @@ export async function retryFailedSubscriptions(app: App, limit = 100) {
   return { tried: rows.length, subscribed: ok };
 }
 
+const subOfLink = (app: App, link: string) => {
+  let p: ReturnType<typeof parseLink>;
+  try {
+    p = parseLink(link);
+  } catch {
+    return undefined;
+  }
+  return one<Sub>(app.db, "select * from lark_doc_subscriptions where link = ? or node_token = ? or file_token = ? limit 1", p.url, p.token, p.token);
+};
+
+let polling = false;
+/**
+ * The documents enabled rules list that the bot cannot hear about by event (not their manager, or no
+ * document event has arrived at all): every `pollMinutes` (default 30) the owner's read-only login asks
+ * Feishu for their last edit time, and an edit since the last look is read and handed to the rules like
+ * an event. The first look only notes the time. Called every minute (main.ts); returns how many changed.
+ */
+export async function pollRuleDocs(app: App) {
+  if (polling) return 0;
+  polling = true;
+  try {
+    const { listRules } = await import("../rules/store.ts");
+    const rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === "doc" && r.trigger.docs?.length);
+    if (!rules.length) return 0;
+    const byEvent = docEventsArrive(app);
+    const due = new Map<string, Sub>();
+    for (const r of rules) {
+      for (const link of r.trigger.docs!) {
+        // A rule saved without its permission check (by the assistant, say) is subscribed here first.
+        if (!subOfLink(app, link)) await subscribeRuleDocs(app, [link], r.spaceId);
+        const sub = subOfLink(app, link);
+        if (!sub || (sub.status === "ok" && byEvent)) continue;
+        if (sub.polled_at && Date.now() - Date.parse(sub.polled_at) < (r.trigger.pollMinutes ?? 30) * 60_000) continue;
+        due.set(sub.file_token, sub);
+      }
+    }
+    if (!due.size) return 0;
+    const { docMetas } = await import("./lark-docs.ts");
+    const metas = await docMetas([...due.values()].map((s) => ({ token: s.file_token, type: s.file_type })));
+    let changed = 0;
+    for (const s of due.values()) {
+      const m = metas.get(s.file_token);
+      run(app.db, "update lark_doc_subscriptions set polled_at = ?, modified_ms = coalesce(?, modified_ms) where file_token = ?", now(), m?.modifiedMs ?? null, s.file_token);
+      if (!m || s.modified_ms === null || m.modifiedMs <= s.modified_ms) continue;
+      changed++;
+      // The editor is an open_id of the owner's lark-cli app: a name only when capture has seen them.
+      const name = m.modifier ? one<{ name: string }>(app.db, "select name from lark_people where cli_open_id = ? and name != ''", m.modifier)?.name : undefined;
+      await flush(app, s.file_token, { type: s.file_type, bot: s.bot, editors: new Set(), names: name ? [name] : [], records: [], fields: [], first: Date.now(), polled: true }).catch((e) =>
+        console.warn(`[omem] 处理定时检查到的文档改动失败 ${s.title || s.file_token}：${(e as Error).message}`),
+      );
+    }
+    return changed;
+  } finally {
+    polling = false;
+  }
+}
+
 /** Whether document events reach omem at all: one arrived in the last month (the app subscribes to them). */
 export function docEventsArrive(app: App) {
   return !!one(app.db, "select 1 from lark_doc_subscriptions where last_event_at > ?", new Date(Date.now() - 30 * 86400_000).toISOString());
@@ -215,7 +273,8 @@ export function subscribedSourceIds(app: App) {
 type EventId = string | { open_id?: string; union_id?: string; user_id?: string };
 const openIdOf = (id: EventId | undefined) => (typeof id === "string" ? id : id?.open_id) || "";
 
-type Pending = { type: string; bot: string; editors: Set<string>; records: string[]; fields: string[]; first: number; timer?: ReturnType<typeof setTimeout> };
+/** `names`: editors already known by name (a scheduled check); `polled`: found by that check, not an event. */
+type Pending = { type: string; bot: string; editors: Set<string>; names?: string[]; records: string[]; fields: string[]; first: number; polled?: boolean; timer?: ReturnType<typeof setTimeout> };
 const pending = new Map<string, Pending>();
 
 /** One event from the bot's connection (lark-bot.ts). */
@@ -381,7 +440,7 @@ async function flush(app: App, token: string, p: Pending) {
       run(app.db, "update lark_doc_subscriptions set snapshot = ?, title = ? where file_token = ?", d.markdown.slice(0, SNAPSHOT_MAX), title, token);
     }
   }
-  const editors = await Promise.all([...p.editors].map((id) => personOf(app, p.bot, id)));
+  const editors = [...(await Promise.all([...p.editors].map((id) => personOf(app, p.bot, id)))), ...(p.names ?? []).map((name) => ({ name, email: null }))];
   const owner = await whoIsOwner(app);
   const bots = botNames(app);
   const tags = mentionsIn(added.join("\n"));
@@ -398,7 +457,7 @@ async function flush(app: App, token: string, p: Pending) {
     doc: { token, type: p.type, title, url, ...(source ? { location: locationOf(source.meta), space: source.space_id, sourceId: source.id } : sub?.space_id ? { space: sub.space_id } : {}) },
     change: {
       kind,
-      text: truncate(text, TEXT_MAX),
+      text: truncate(p.polled ? `${text}\n（定时检查发现的改动：机器人订阅不了这篇）` : text, TEXT_MAX),
       ...(added.length ? { added: truncate(added.join("\n"), TEXT_MAX) } : {}),
       ...(editors[0] ? { editor: editors.map((x) => x.name).join("、"), editorEmail: editors[0].email } : {}),
       mentions: [...new Set(mentionNames.filter(Boolean))],

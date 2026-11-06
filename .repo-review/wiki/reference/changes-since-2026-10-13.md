@@ -1501,3 +1501,7 @@ updated: 2026-11-06
 - 真实应用的线上版本里 `events` 是显示名（“文件编辑”“接收消息”），事件键在 `event_infos`：`eventKeys` 从里面取出 `xx.yy_v1` 形式的键当作已订阅的事件；`raw` 也带上 `event_infos`。
 - `lark-bot.ts` 给 SDK 的客户端一个只写一行的 logger：失败的接口调用不再把整个请求和响应打进服务日志（订阅被拒的那批每篇几十行），只留方法、路径、状态和飞书的错误码。
 - 成员连接飞书的“表格与多维表格”“让助手写文档”改用飞书现在的细分权限（`sheets:spreadsheet:read`、`base:*:read`、`docx:document:write_only`），旧的 `sheets:spreadsheet:readonly`、`bitable:app:readonly`、`docx:document` 新应用申请不到，机器人检查一直显示缺这三项、扫码也补不上。
+
+## 2026-11-07：文档变化规则订阅不了时定时查
+
+- `lark-doc-events.ts` 的 `pollRuleDocs`（main.ts 每分钟调一次）：启用的文档变化规则列出的文档里，订阅被拒的（或一个月里没收到过文档事件时的全部）按 `trigger.pollMinutes`（默认 30）用本人 lark-cli 只读查最后修改时间（`lark-docs.ts` 的 `docMetas`，原来的 `lastEdits` 改由它实现，带修改人），第一次只记下；改过就走和事件一样的 `flush`（重新读、逐行比较、交给规则），变化内容注明定时检查发现。`lark_doc_subscriptions` 加 `polled_at`、`modified_ms`。规则保存后的检查不管订阅成没成都给只被规则盯着的文档存 `snapshot`。规则页加“机器人订阅不了的，每 N 分钟用我的登录查一次更新”。

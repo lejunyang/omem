@@ -984,19 +984,25 @@ export function resumeRefresh(app: App) {
 
 const DAY = 86400_000;
 
-/** Feishu's own last-edit time for docs, 200 at a time (`drive metas batch_query`). Keyed by token. */
-async function lastEdits(tokens: { token: string; type: string }[]) {
-  const out = new Map<string, number>();
+/**
+ * Feishu's own last-edit time (and who made it, an open_id of the owner's lark-cli app) for docs,
+ * 200 at a time (`drive metas batch_query`, read-only as the owner). Keyed by token.
+ */
+export async function docMetas(tokens: { token: string; type: string }[]) {
+  const out = new Map<string, { modifiedMs: number; modifier?: string }>();
   for (let i = 0; i < tokens.length; i += 200) {
     const batch = tokens.slice(i, i + 200);
     const v = await larkCli(["drive", "metas", "batch_query", "--data", JSON.stringify({ request_docs: batch.map((t) => ({ doc_token: t.token, doc_type: t.type === "docs" ? "doc" : t.type })) }), "--as", "user"], 60_000);
-    for (const m of (v.data?.metas ?? []) as { doc_token?: string; latest_modify_time?: string; request_doc_info?: { doc_token?: string } }[]) {
+    for (const m of (v.data?.metas ?? []) as { doc_token?: string; latest_modify_time?: string; latest_modify_user?: string; request_doc_info?: { doc_token?: string } }[]) {
       const t = Number(m.latest_modify_time) * 1000;
       if (!t) continue;
-      for (const k of [m.doc_token, m.request_doc_info?.doc_token]) if (k) out.set(k, t);
+      for (const k of [m.doc_token, m.request_doc_info?.doc_token]) if (k) out.set(k, { modifiedMs: t, ...(m.latest_modify_user ? { modifier: m.latest_modify_user } : {}) });
     }
   }
   return out;
+}
+async function lastEdits(tokens: { token: string; type: string }[]) {
+  return new Map([...(await docMetas(tokens))].map(([k, v]) => [k, v.modifiedMs]));
 }
 
 /**

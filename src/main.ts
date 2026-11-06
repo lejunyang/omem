@@ -122,6 +122,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       if (app.config.lark.commands.enabled)
         import("./channels/lark-commands.ts").then((m) => m.pollOwnerCommands(app)).catch((e) => console.warn("[omem] 读取私聊指令失败：", e.message));
     }, 60_000).unref();
+    // Documents rules watch that the bot cannot subscribe to: checked on the rule's schedule instead.
+    setInterval(() => {
+      import("./channels/lark-doc-events.ts").then((m) => m.pollRuleDocs(app)).catch((e) => console.warn("[omem] 定时检查规则盯的文档失败：", e.message));
+    }, 60_000).unref();
     // The owner's meetings, for meeting rules (nothing runs while there are none).
     setInterval(() => {
       import("./channels/lark-meetings.ts").then((m) => m.tickMeetings(app)).catch((e) => console.warn("[omem] 跟进会议失败：", e.message));

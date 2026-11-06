@@ -3,9 +3,9 @@ import { askModel } from "../src/agents/oneshot.ts";
 import { getRun, listRuns } from "../src/agents/runs.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { flushDocEventsForTests, lineDiff, mentionsIn, onDocEvent, subscribedSourceIds, docEventsArrive } from "../src/channels/lark-doc-events.ts";
+import { flushDocEventsForTests, lineDiff, mentionsIn, onDocEvent, pollRuleDocs, subscribedSourceIds, docEventsArrive } from "../src/channels/lark-doc-events.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
-import { all, one } from "../src/core/db.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { listNotifications } from "../src/core/notify.ts";
 import { createUser } from "../src/core/users.ts";
 import { fireAfterWait } from "../src/rules/engine.ts";
@@ -199,5 +199,47 @@ describe("delay, check and script actions", () => {
     const waiting = listRuns(app, { kind: "rule-script" }).find((x) => x.status === "queued")!;
     await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: `om_card${cards.length}` }, action: { tag: "button", value: { action: "decline" } } });
     expect(getRun(app, waiting.id).status).toBe("cancelled");
+  });
+});
+
+describe("documents the bot cannot subscribe to", () => {
+  it("are checked on the rule's schedule with the owner's login, and an edit since fires the rule", async () => {
+    const { app } = setup(["x"]);
+    // Not a manager of the document: Feishu refuses the subscription.
+    setLarkClient({ request: async () => { throw Object.assign(new Error("forbidden"), { response: { data: { code: 1069603, msg: "forbidden" } } }); }, im: { message: { create: async () => ({ code: 0, data: {} }) } } }, "ou_bot", "小助理");
+    let modified = 1_000;
+    let body = "第一节\n第二节";
+    const metaCalls: string[] = [];
+    setLarkCliForTests(async (args) => {
+      if (args[0] === "docs" && args[1] === "+fetch") return { ok: true, data: { document: { content: `<title>差旅报销制度</title>\n${body}`, revision_id: "1", document_id: "DocToken123" } } };
+      if (args[0] === "drive" && args[1] === "metas") {
+        metaCalls.push(args[4]);
+        return { ok: true, data: { metas: [{ doc_token: "DocToken123", latest_modify_time: String(modified), latest_modify_user: "ou_cli_wang" }] } };
+      }
+      if (args[0] === "auth") return { ok: true, data: { identities: { user: { openId: "ou_owner_cli" } } } };
+      return { ok: true, data: {} };
+    });
+    run(app.db, "insert into lark_people(email, name, cli_open_id, updated_at) values(?,?,?,?)", "wang@example.com", "小王", "ou_cli_wang", new Date().toISOString());
+    const rule = saveRule(app, docRule({ trigger: { event: "doc", docs: [LINK], pollMinutes: 10, once: "event", waitMinutes: 0, unless: [] } }), "user", "owner");
+    const report = await rulePermissions(app, rule);
+    expect(report.issues.some((i) => /每 10 分钟用你的登录查一次/.test(i.problem))).toBe(true);
+    // The first look only notes the time.
+    expect(await pollRuleDocs(app)).toBe(0);
+    expect(one<{ modified_ms: number }>(app.db, "select modified_ms from lark_doc_subscriptions where file_token = 'DocToken123'")!.modified_ms).toBe(1_000_000);
+    // Not due again before the rule's interval.
+    modified = 2_000;
+    body = "第一节\n第二节\n第三节：住宿标准";
+    expect(await pollRuleDocs(app)).toBe(0);
+    expect(metaCalls).toHaveLength(1);
+    run(app.db, "update lark_doc_subscriptions set polled_at = ? where file_token = 'DocToken123'", new Date(Date.now() - 11 * 60_000).toISOString());
+    expect(await pollRuleDocs(app)).toBe(1);
+    const [fired] = listFirings(app, rule.id);
+    expect(fired.summary).toContain("第三节：住宿标准");
+    expect(fired.summary).toContain("小王");
+    expect(fired.summary).toContain("定时检查发现");
+    // Once the bot is subscribed and events arrive, the schedule leaves the document alone.
+    run(app.db, "update lark_doc_subscriptions set status = 'ok', last_event_at = ?, polled_at = ? where file_token = 'DocToken123'", new Date().toISOString(), new Date(0).toISOString());
+    expect(await pollRuleDocs(app)).toBe(0);
+    expect(metaCalls).toHaveLength(2);
   });
 });

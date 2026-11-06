@@ -1437,6 +1437,10 @@ export const migrations: readonly string[] = [
    );
    create index lark_doc_subscriptions_source on lark_doc_subscriptions(source_id) where source_id is not null;
    create index lark_doc_subscriptions_link on lark_doc_subscriptions(link);`,
+  // A rule's document the bot cannot subscribe to is checked on a schedule instead (lark-doc-events.ts
+  // pollRuleDocs): when it was last looked at, and Feishu's last edit time then.
+  `alter table lark_doc_subscriptions add column polled_at text;
+   alter table lark_doc_subscriptions add column modified_ms integer;`,
 ];
 
 export type Db = DatabaseSync;

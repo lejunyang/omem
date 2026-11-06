@@ -36,7 +36,7 @@ type Rule = {
   name: string;
   description: string;
   enabled: boolean;
-  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc"; docs?: string[]; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
+  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc"; docs?: string[]; pollMinutes?: number; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
   actions: Action[];
@@ -328,7 +328,10 @@ function onTrigger() {
     f.trigger.waitMinutes = 0;
     f.trigger.unless = [];
     f.trigger.docs ??= [];
-  } else delete f.trigger.docs;
+  } else {
+    delete f.trigger.docs;
+    delete f.trigger.pollMinutes;
+  }
   if (!f.actions.length) f.actions.push({ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" });
   touch();
 }
@@ -515,7 +518,10 @@ function startFrom(text: string) {
           <small v-else-if="meetingRule" class="muted">你加入一场飞书视频会议时判断（用你的 lark-cli 登录接收入会事件）。每场会议对这条规则只触发一次；入会后十分钟内参会人变了会再判断一次。不写条件就是每场会议。</small>
           <template v-if="docRule">
             <textarea :value="(form.trigger.docs ?? []).join('\n')" class="input mono small" rows="3" placeholder="要盯的飞书文档、电子表格、多维表格或知识库页面的链接，一行一个；不填就看机器人订阅了的所有文档" aria-label="要盯的文档" @input="(e) => ((form!.trigger.docs = docLinks((e.target as HTMLTextAreaElement).value)), touch())" />
-            <small class="muted">机器人订阅文档后，有人编辑、改多维表格记录或字段、在评论里 @ 机器人时触发；连续的编辑合成一次（停下一分半钟后）。飞书只把编辑和表格变化发给文档的管理者：保存后下面会检查，订阅不了的要把 omem 的机器人加为文档应用。</small>
+            <label class="row inline small">机器人订阅不了的，每
+              <input :value="form.trigger.pollMinutes ?? 30" class="input sm num" type="number" inputmode="numeric" min="5" max="1440" aria-label="订阅不了时每隔多少分钟查一次" @input="(e) => ((form!.trigger.pollMinutes = Math.min(1440, Math.max(5, Number((e.target as HTMLInputElement).value) || 30))), touch())" />
+              分钟用我的登录查一次更新</label>
+            <small class="muted">机器人订阅文档后，有人编辑、改多维表格记录或字段、在评论里 @ 机器人时立即触发；连续的编辑合成一次（停下一分半钟后）。飞书只把编辑和表格变化发给文档的管理者：机器人不是管理者的，按上面的间隔用你的登录查最后修改时间，改过就读出改了什么再触发（不是即时的）。保存后下面会检查每篇是订阅上了还是定时查。</small>
           </template>
         </section>
 
