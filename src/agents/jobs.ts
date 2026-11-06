@@ -1136,6 +1136,9 @@ registerHandler("rule-script", async (ctx) => (await import("../rules/script.ts"
 // left over from a restart is requeued by the worker and simply ends here.
 registerHandler("peer-agent", async () => ({ ended: "服务重启，会话结束；同一会话再次调用会重新打开这条运行" }));
 
+// An English speaking practice that ended (core/voice.ts): the speaking-coach role assesses it.
+registerHandler("speaking-review", async (ctx) => (await import("../core/voice.ts")).speakingReview(ctx));
+
 registerHandler("guest", async (ctx) => (await import("../channels/lark-guest.ts")).guestRun(ctx));
 
 registerHandler("lark-command", async (ctx) => (await import("../channels/lark-commands.ts")).commandRun(ctx));

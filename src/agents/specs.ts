@@ -6,6 +6,7 @@ import type { App } from "../core/app.ts";
 import { commitLibrary, fileHistory } from "../core/git.ts";
 import { roleNames } from "../core/config.ts";
 import { HttpError } from "../core/util.ts";
+import { categoryStatus } from "../core/ai-keys.ts";
 
 /**
  * What the assistant learns to delegate to, kept as files in the library
@@ -168,7 +169,16 @@ export function agentSpecHistory(app: App, name: string) {
 
 // ---- skills ---------------------------------------------------------------
 
-export type Skill = { name: string; description: string; status: "active" | "draft"; body: string; dir: string; files: string[] };
+/** `requires`: models the skill needs (`ai:image`, `ai:voice`, `ai:decision`); agents are told about it only once they are configured. */
+export type Skill = { name: string; description: string; status: "active" | "draft"; body: string; dir: string; files: string[]; requires: string[] };
+
+/** Whether what a skill needs is there (settings → AI). */
+export function skillUsable(app: App, s: Pick<Skill, "requires">) {
+  return s.requires.every((r) => {
+    const m = /^ai:(image|voice|decision)$/.exec(r);
+    return !m || categoryStatus(app.config, m[1] as "image" | "voice" | "decision", app.home).ready;
+  });
+}
 
 export function listSkills(app: App, opts: { includeDrafts?: boolean } = {}): Skill[] {
   const dir = skillsDir(app);
@@ -197,6 +207,7 @@ export function readSkill(app: App, name: string): Skill {
     name,
     description: String(meta.description ?? ""),
     status: meta.status === "draft" ? "draft" : "active",
+    requires: Array.isArray(meta.requires) ? meta.requires.map(String) : typeof meta.requires === "string" ? [meta.requires] : [],
     body,
     dir,
     files: listSkillFiles(app, name).filter((f) => f.type === "file" && f.path !== "SKILL.md").map((f) => f.path),
@@ -311,7 +322,7 @@ export function deleteSkill(app: App, name: string, actor: "user" | "agent" = "u
  * Without `names` (the main assistant, which hands work out) every skill is described.
  */
 export function skillIndex(app: App, names?: string[]) {
-  const all = listSkills(app);
+  const all = listSkills(app).filter((s) => skillUsable(app, s));
   const line = (s: (typeof all)[number]) => `- ${s.name}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`;
   if (!names) return all.map(line).join("\n");
   const own = all.filter((s) => names.includes(s.name));

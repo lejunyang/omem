@@ -43,7 +43,7 @@ import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSo
 import { confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOutput } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
-import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
+import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { setApprovalExecutor } from "./asks.ts";
@@ -1120,7 +1120,7 @@ def({
   description: "列出技能（可复用的做法：步骤、格式、检查清单）。",
   schema: z.object({ include_drafts: z.boolean().optional() }),
   handler: (ctx, a) => {
-    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts });
+    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts }).filter((s) => skillUsable(ctx.app, s));
     return list.length ? list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}`).join("\n") : "还没有技能。";
   },
 });
@@ -2129,6 +2129,31 @@ def({
       userId: a.id ? undefined : (ctx.userId ?? "owner"),
     });
     return `学习目标 ${g.id}「${g.title}」：空间 ${g.spaceId}，每天 ${g.dailyNew} 张新卡，${g.remindAt} 提醒（${g.status}）。`;
+  },
+});
+
+def({
+  name: "generate_image",
+  description:
+    "用图片生成模型画一张图（设置 → AI → 图片生成配好后才有这个工具）。prompt 写清画面内容、风格、要出现的文字；示意图和流程图写明各部分和关系。" +
+    "返回图片的本机路径和网页地址：在飞书里发用 lark_send_file(path)，写进 Wiki 页面用 Markdown 图片 ![说明](地址)。每张都要花钱，先想清楚再画，一次一张。",
+  write: true,
+  schema: z.object({
+    prompt: z.string().trim().min(1).max(8000).describe("画什么：内容、风格、构图、要出现的文字"),
+    size: z.string().regex(/^(auto|\d{3,4}x\d{3,4})$/).optional().describe("auto、1024x1024、1536x1024（横）、1024x1536（竖）；不写用设置里的"),
+    quality: z.enum(["auto", "low", "medium", "high"]).optional(),
+    background: z.enum(["auto", "transparent", "opaque"]).optional().describe("transparent 透明背景（图标、贴图）"),
+  }),
+  handler: async (ctx, a) => {
+    const { generateImage } = await import("../core/images.ts");
+    const img = await generateImage(ctx.app, { prompt: a.prompt, size: a.size, quality: a.quality, background: a.background });
+    if (ctx.runId) addRunEvent(ctx.app, ctx.runId, "image", { name: img.name, url: img.url, model: img.model, prompt: a.prompt.slice(0, 400) });
+    return [
+      `已生成（${img.model}，${Math.round(img.bytes / 1024)} KB）。`,
+      `本机路径：${img.path}`,
+      `网页地址：${img.url}（Markdown：![](${img.url})）`,
+      img.revisedPrompt ? `模型实际使用的描述：${img.revisedPrompt}` : "",
+    ].filter(Boolean).join("\n");
   },
 });
 

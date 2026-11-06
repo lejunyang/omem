@@ -116,7 +116,7 @@ export const CATEGORY_KINDS: Record<Category, string[]> = {
 /** Model a category uses when none is set, by provider kind (as of 2026-11). */
 export function defaultModel(cat: Category, kind: string, api?: string) {
   if (cat === "voice") return api === "realtime" ? "gpt-realtime-2.1" : "gpt-live-1";
-  if (cat === "image") return "gpt-image-2";
+  if (cat === "image") return "gpt-image-2.5-flare";
   if (kind === "openai") return "gpt-6-luna";
   if (kind === "typesafe") return "jev-latest";
   if (kind === "openrouter") return "jev-latest";

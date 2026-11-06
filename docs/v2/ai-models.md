@@ -37,11 +37,28 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 ### 语音
 
-用途：问答页语音输入、和助理实时语音对话、英语口语训练（按选的场景对话，结束后评价真实水平；中途可以用中文问不会的说法）。
+三个用处：
 
-- **GPT-Live**（默认，`gpt-live-1`）：全双工，边听边说，可以打断；服务端 WebSocket `wss://api.openai.com/v1/live/sessions`，浏览器用 WebRTC。2026-09-10 进 API。
-- **Realtime API**（`gpt-realtime-2.1`）：较早的语音接口。
-- 浏览器直连 OpenAI，服务器只发一次性的临时凭证，key 不进浏览器。实时对话里要查资料时，模型调用的 omem 工具经服务器执行，空间照常按用户限定。
+- **问答页语音输入**：输入框旁的麦克风，录下来交给 `/v1/audio/transcriptions`（默认 `gpt-transcribe`，`ai.voice.transcribeModel`），文字填进输入框，你再改再发。和选哪种实时接口无关。
+- **语音对话**：问答页的波形按钮，和助理实时说话。它能用 omem 的只读工具（`list_spaces`、`search`、`read_source`、`recall`、`list_items`、`read_page`），在你能读的空间里查，说出依据的文档名。结束后对话记录存进 `voice_sessions`。
+- **口语练习**（导航“口语”，语音可用后才出现）：选一个场景（或自己写），语音模型扮演场景里的另一个人，用英语对话；卡住时直接用中文问“这个怎么说”，它用中文答一句再回到场景。中途不逐句纠错，结束后由 `speaking-coach` 角色读对话记录，按内置技能 `speaking-assessment` 写评价（CEFR 估计、四个维度的分、挑真说过的句子给出改法、这次学到的说法、下次练什么）。
+
+#### GPT-Live 和 Realtime 的差别，以及 omem 怎么接
+
+| | GPT-Live（`gpt-live-1`） | Realtime（`gpt-realtime-2.1`） |
+| --- | --- | --- |
+| 对话方式 | 全双工：边听边说，模型自己决定何时开口，插话它会停下 | 轮流：听到停顿（`semantic_vad`）后回答，说话时可以打断 |
+| 推理和工具 | 语音层只管说话；查资料、调工具交给委托的 Responses 模型（`delegation: {type: "responses"}`，默认 `gpt-6-luna`，`ai.voice.delegateModel`），等结果时它会先应一声 | 同一个模型自己调用函数工具（`session.tools`） |
+| 浏览器怎么连 | 没有临时凭证：浏览器把 SDP offer 发给 omem（`POST /api/voice/live/sdp`），omem 用 key 调 `POST /v1/live/sessions`（`transport: webrtc`），把 SDP answer 交回 | omem 用 key 调 `POST /v1/realtime/client_secrets`（整套会话配置放在这里，10 分钟有效），浏览器拿临时凭证把 SDP 发到 `/v1/realtime/calls` |
+| 转写事件 | 双方都是流式：`session.input_transcript.delta` / `session.output_transcript.delta`，没有“结束”事件，对方开口就算换人 | 你的话整句到：`conversation.item.input_audio_transcription.completed`；它的话是 `response.output_audio_transcript.delta` / `.done` |
+| 工具调用 | 包在 `response.event` 里的 `response.output_item.done`（`item.type = function_call`）；回 `response.item.create`（`function_call_output`）再 `response.create` | `response.function_call_arguments.done`；回 `conversation.item.create`（`function_call_output`）再 `response.create` |
+| 计费 | 按会话分钟（另加委托模型的 token） | 按音频 token |
+
+两种接口在网页里共用一套（`web/src/lib/voice.ts`）：麦克风是 WebRTC 音轨，事件走 `oai-events` 数据通道；差别只在怎么拿到 SDP answer 和读哪些事件，读出来统一成“你 / 它的一段话”和“要调用的工具”。工具由浏览器转给 omem（`POST /api/voice/tool`），按这个用户能读的空间执行，只放行上面那几个只读工具。key 始终不进浏览器。
+
+口语练习不给工具；场景写进语音模型的说明（`voiceInstructions`）。练习结束保存时如果学习者说过话，就排一条 `speaking-review` 运行。
+
+GPT-Live 的“client 委托”（`delegation.type = "client"`，由应用自己处理请求、用 `session.commentary.append` 让它说结果）可以把整个 omem 主助手接进来，但主助手一次要几十秒，现在不用；以后要在语音里交办事情时再考虑。
 
 ### 决策
 
@@ -72,19 +89,26 @@ omem 统一成“材料 + 问题 + 选项 → 选中的一项和每项概率”�
 
 ### 图片生成
 
-OpenAI Images API（`gpt-image-2`，生成与编辑），可设尺寸和质量。可用后 Agent 才拿到画图工具：给 Wiki 页配示意图、在飞书回复里发图、在问答里直接画。
+OpenAI Images API（`POST /v1/images/generations`，返回 `data[0].b64_json`）。默认 `gpt-image-2.5-flare`（快），要精细用 `gpt-image-2.5-sunburst`；可设默认尺寸和质量。
+
+可用后才有工具 `generate_image`（分组 `media`，主助手的 `tools` 里有 `group:media`；Agent 档案要用就加这个分组），以及内置技能 `image-generation`（`requires: [ai:image]`）：没配好时运行里没有这个工具（`runner.ts`），技能也不列给 Agent（`skillUsable`）。图片按内容哈希存进 `files/`，和其他附件一样由 `/api/files/<名字>.png` 提供；工具返回本机路径（给 `lark_send_file`）和网页地址（写进 Wiki 或回答的 Markdown）。每次生成记一条运行事件 `image`。
+
+### 技能的 `requires`
+
+技能的 frontmatter 可以写 `requires: [ai:image]`（或 `ai:voice`、`ai:decision`）：对应的模型没配好时，这个技能不出现在给 Agent 的技能列表和 `list_skills` 里。内置的 `image-generation`、`speaking-assessment` 都这样标。
 
 ## 实现顺序
 
 1. 设置页分类、API key 与提供方、用 key 生成后端、三类模型的设置和可用状态（已完成）。
-2. 图片：画图工具（新分组）和配套技能，只在图片模型可用时给出。
+2. 图片：画图工具（新分组）和配套技能，只在图片模型可用时给出（已完成）。
 3. 决策：统一的判断接口（几家 API + StartLux + 通用模型兜底），接入 `gatekeeper` 和规则判断（已完成）。
-4. 语音：问答页语音输入 → 实时对话 → 口语训练。
+4. 语音：问答页语音输入、实时对话、口语练习（已完成）。
 
 ## 资料（2026-11-07 查）
 
 - GPT-Live：[OpenAI 公告](https://openai.com/index/introducing-gpt-live-1-in-the-api/)、[语音 WebSocket 指南](https://developers.openai.com/api/docs/guides/voice-websockets?api=live)
 - Decisions API：[官方指南](https://developers.openai.com/api/docs/guides/decisions)（请求与返回格式以它为准，每次最多 400 个问题，打分 2–10 档）
 - Jev：[OpenRouter 的 Jev 文档](https://openrouter.ai/docs/guides/community/jev)、[TypeSafe SDK 经 OpenRouter](https://openrouter.ai/docs/guides/community/typesafe-sdk.md)、[MixRoute 的 Jev 接口](https://mixroute.ai/docs/api-reference/endpoint/jev)（选择最多 255 项）
-- 图片：`gpt-image-2`（2026-04 发布）
+- GPT-Live 与 Realtime：[语音 WebRTC 指南](https://developers.openai.com/api/docs/guides/voice-webrtc?api=live)、[GPT-Live 委托](https://developers.openai.com/api/docs/guides/live-delegation)、[Realtime 服务端事件](https://developers.openai.com/api/reference/resources/realtime/server-events)、[语音转文字](https://developers.openai.com/api/docs/guides/speech-to-text)
+- 图片：[图片生成指南](https://developers.openai.com/api/docs/guides/image-generation)、[模型列表](https://developers.openai.com/api/docs/models)
 - Codex 的 key 变量：[codex-acp](https://github.com/zed-industries/codex-acp)、[Codex 认证](https://developers.openai.com/codex/auth)

@@ -27,6 +27,7 @@ import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
+import { categoryStatus } from "../core/ai-keys.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -377,6 +378,8 @@ export function prepareRun(
   // A thread that may post into specific Feishu chats (watched groups) gets the bot's voice and notify.
   if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "notify"]) tools.add(t);
   for (const t of input.denyTools ?? []) tools.delete(t);
+  // Tools that need a model configured in settings → AI exist only once it is (generate_image).
+  if (tools.has("generate_image") && !categoryStatus(app.config, "image", app.home).ready) tools.delete("generate_image");
   // A review check only reads and reports, whatever its profile may do elsewhere.
   if (input.reviewCheck || input.reviewLead) {
     for (const t of [...tools]) if (!REVIEW_TOOLS.includes(t) && t !== "wait_answer") tools.delete(t);

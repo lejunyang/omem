@@ -1443,6 +1443,20 @@ export const migrations: readonly string[] = [
    alter table lark_doc_subscriptions add column modified_ms integer;`,
   // Which model answers a rule's AI checks (docs/v2/ai-models.md): the decision model first, or the general one.
   `alter table rules add column judge_with text not null default 'decision';`,
+  // Voice conversations kept after the call (core/voice.ts); a practice links its review run.
+  `create table voice_sessions (
+    id text primary key,
+    user_id text not null,
+    purpose text not null,
+    scenario text not null default '',
+    api text not null,
+    model text not null,
+    transcript text not null,
+    started_at text not null,
+    ended_at text not null,
+    review_run_id text
+  );
+  create index voice_sessions_user on voice_sessions(user_id, purpose, started_at);`,
 ];
 
 export type Db = DatabaseSync;

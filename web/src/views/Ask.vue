@@ -9,6 +9,8 @@ import { confirmDialog } from "../lib/dialog";
 import { pageParam } from "../lib/route";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
+import VoiceChat from "../components/VoiceChat.vue";
+import { recordSpeech, voiceStatus } from "../lib/voice";
 import { currentSpace, relTime, state, toast } from "../store";
 
 type Conversation = { id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
@@ -67,7 +69,43 @@ async function scrollDown() {
   await nextTick();
   scroller.value?.scrollTo({ top: scroller.value.scrollHeight });
 }
+// Voice (settings → AI → 语音): speak into the box, or talk with the assistant live.
+const voiceReady = ref(false);
+const recording = ref<null | { stop(): Promise<string>; cancel(): void }>(null);
+const transcribing = ref(false);
+const talking = ref(false);
+async function toggleRecord() {
+  if (recording.value) {
+    const r = recording.value;
+    recording.value = null;
+    transcribing.value = true;
+    try {
+      const said = await r.stop();
+      if (said) text.value = text.value ? `${text.value} ${said}` : said;
+      else toast("没有听清，再说一次", "info");
+      await nextTick();
+      input.value?.focus();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      transcribing.value = false;
+    }
+    return;
+  }
+  try {
+    recording.value = await recordSpeech();
+  } catch (e) {
+    toast(`打不开麦克风：${(e as Error).message}`, "error");
+  }
+}
+function voiceEnded(saved: { id: string } | null) {
+  talking.value = false;
+  if (saved) toast("语音对话已保存", "ok");
+}
+onBeforeUnmount(() => recording.value?.cancel());
+
 onMounted(() => {
+  void voiceStatus().then((s) => (voiceReady.value = s.ready)).catch(() => {});
   void loadList();
   void loadConversation();
   void loadAsks();
@@ -191,8 +229,13 @@ function autosize(e: Event) {
       <div v-if="waiting.length" class="asks">
         <AskCard v-for="a in waiting" :key="a.id" :ask="a" @answered="loadAsks" />
       </div>
+      <VoiceChat v-if="talking" class="voice-panel" purpose="chat" :space="state.space" @ended="voiceEnded" />
       <form class="composer" @submit.prevent="send">
-        <textarea ref="input" v-model="text" rows="1" placeholder="提问或交代事情；/help 查看命令（Shift+Enter 换行）" @input="autosize" @keydown.enter.exact.prevent="send" />
+        <textarea ref="input" v-model="text" rows="1" :placeholder="recording ? '正在听，说完再点一下麦克风…' : transcribing ? '正在转成文字…' : '提问或交代事情；/help 查看命令（Shift+Enter 换行）'" @input="autosize" @keydown.enter.exact.prevent="send" />
+        <template v-if="voiceReady">
+          <button type="button" class="btn ghost icon" :class="{ rec: recording }" :disabled="transcribing || talking" :aria-pressed="!!recording" :aria-label="recording ? '停止并转成文字' : '语音输入'" :title="recording ? '停止并转成文字' : '语音输入'" @click="toggleRecord"><Icon name="mic" :size="16" /></button>
+          <button type="button" class="btn ghost icon" :disabled="talking || !!recording" aria-label="语音对话" title="和助理实时语音对话" @click="talking = true"><Icon name="waves" :size="16" /></button>
+        </template>
         <button class="btn primary icon" :disabled="sending || !text.trim()" aria-label="发送"><Icon name="send" :size="16" /></button>
       </form>
     </section>
@@ -305,6 +348,15 @@ function autosize(e: Event) {
   padding: 8px 8px 8px 14px;
   box-shadow: var(--shadow);
 }
+.voice-panel {
+  max-width: 780px;
+  width: calc(100% - 48px);
+  margin: 0 auto 10px;
+}
+.composer .rec {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
 .composer textarea {
   flex: 1;
   border: 0;
@@ -336,7 +388,8 @@ function autosize(e: Event) {
   .thread {
     padding: 16px;
   }
-  .composer {
+  .composer,
+  .voice-panel {
     width: calc(100% - 24px);
     margin-bottom: 10px;
   }

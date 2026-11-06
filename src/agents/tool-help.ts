@@ -54,6 +54,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "lark-owner", label: "以本人身份读写飞书的表格、多维表格、任务等", doc: "lark", tools: ["lark_read", "lark_write"] },
   { id: "lark-capture", label: "飞书采集设置", doc: "lark", tools: ["list_lark_chats", "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "propose_knowledge_mapping"] },
   { id: "learning", label: "学习", doc: "learning", tools: ["create_card", "set_learning_goal", "learning_progress"] },
+  { id: "media", label: "图片生成", doc: "media", tools: ["generate_image"] },
   { id: "plugins", label: "插件", doc: "plugins", tools: ["plugin_query", "plugin_put"] },
 ];
 

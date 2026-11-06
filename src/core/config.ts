@@ -80,6 +80,7 @@ export const roleNames = [
   "replay-judge",
   "kb-scout",
   "req-splitter",
+  "speaking-coach",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -414,7 +415,11 @@ export const configSchema = z.object({
         api: z.enum(["live", "realtime"]).default("live"),
         model: z.string().default(""),
         voice: z.string().default(""),
-      }).default(() => ({ provider: "", api: "live" as const, model: "", voice: "" })),
+        /** Speech to text for the voice input box (`/audio/transcriptions`). */
+        transcribeModel: z.string().default(""),
+        /** GPT-Live hands reasoning and tools to this Responses model (its `delegation`); Realtime calls tools itself. */
+        delegateModel: z.string().default(""),
+      }).default(() => ({ provider: "", api: "live" as const, model: "", voice: "", transcribeModel: "", delegateModel: "" })),
       /**
        * Decision model: bounded judgments (one of a few options, yes/no, a score) with probabilities.
        * provider "startlux" is the local judge (`guard`). Where a decision is wanted and this is not
@@ -434,7 +439,7 @@ export const configSchema = z.object({
         quality: z.string().default(""),
       }).default(() => ({ provider: "", model: "", size: "", quality: "" })),
     })
-    .default(() => ({ providers: [], voice: { provider: "", api: "live" as const, model: "", voice: "" }, decision: { provider: "", model: "", fallback: "general" as const, gatekeeper: true }, image: { provider: "", model: "", size: "", quality: "" } })),
+    .default(() => ({ providers: [], voice: { provider: "", api: "live" as const, model: "", voice: "", transcribeModel: "", delegateModel: "" }, decision: { provider: "", model: "", fallback: "general" as const, gatekeeper: true }, image: { provider: "", model: "", size: "", quality: "" } })),
   /** Optional prompt-injection flagging with a local judge (StartLux-Decision). Flags only, never blocks. */
   guard: z
     .object({

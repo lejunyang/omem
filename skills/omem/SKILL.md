@@ -83,6 +83,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `lark-owner` | 以本人身份跑 lark-cli 命令：读表格、多维表格、任务、日历、邮件、妙记等（`lark_read`），经批准写表格、多维表格、幻灯片、Markdown 文件、任务和评论（`lark_write`） | 同上 |
 | `lark-capture` | 飞书会话列表、盯群、采集设置、历史回溯、知识库归属 | 同上 |
 | `learning` | 学习目标与卡片 | [references/learning.md](references/learning.md) |
+| `media` | 图片生成（配好图片模型后才有） | [references/media.md](references/media.md) |
 | `plugins` | 插件档案读写插件自己的记录；插件的内容块工具（如 `english_quiz`）按插件 id 成组 | [references/plugins.md](references/plugins.md) |
 
 以前的分组名（`sources`、`items`、`agents`、`owner`、`code`、`lark`）仍可写在档案的 `tools:` 里，等于它们拆成的那几组。

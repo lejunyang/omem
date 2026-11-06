@@ -220,16 +220,20 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       <span class="small muted">{{ status?.detail }}</span>
     </div>
     <template v-if="cat === 'voice'">
-      <p class="muted">用于问答页的语音输入、和助理实时语音对话，以及英语口语训练（按你选的场景对话，结束后给出真实水平的评价，中途可以用中文问不会的说法）。这几项功能会在语音模型可用后逐步开放。</p>
-      <p class="muted small">接口：<strong>GPT-Live</strong>（<span class="mono">gpt-live-1</span>，全双工，边听边说，可以随时打断）或 <strong>Realtime API</strong>（<span class="mono">gpt-realtime-*</span>）。浏览器经 WebRTC 直连 OpenAI，服务器只发一次性的临时凭证，API key 不会进浏览器。</p>
+      <p class="muted">可用后：问答页输入框旁出现麦克风（说完转成文字）和语音对话按钮（和助理实时说话，它能查你的原件、记忆和事项）；导航里出现“口语”（英语口语练习：按场景对话，卡住时用中文问，结束后给出真实水平的评价）。</p>
+      <div class="cmp small">
+        <div><strong>GPT-Live</strong>（<span class="mono">gpt-live-1</span>）：全双工，边听边说，你随时插话它会停下；它自己只管说话，查资料和工具交给下面的“委托模型”（Responses 模型）去做，它在等的时候会先应一声。浏览器把连接请求交给 omem，由 omem 用 key 开会话。按分钟计费。</div>
+        <div><strong>Realtime</strong>（<span class="mono">gpt-realtime-2.1</span>）：一问一答，听到你停顿后回答；同一个模型自己调用工具。omem 发一次性的临时凭证，浏览器直接连 OpenAI。按音频 token 计费。</div>
+        <div class="muted">两种都经 WebRTC 传声音，API key 不进浏览器；工具都在 omem 上执行，只能读你能读的空间。</div>
+      </div>
     </template>
     <template v-else-if="cat === 'decision'">
       <p class="muted">决策模型只做有边界的判断：从几个选项里选一个、是或否、按几档打分，并给出每个选项的概率，比通用模型快很多也便宜很多。会用在访客提问的把关（回答 / 拒绝 / 不理）和规则的 AI 判断（规则上可选决策模型或通用模型，默认先用决策模型）。</p>
       <p class="muted small">接口：<strong>OpenAI Decisions API</strong>（<span class="mono">POST /v1/decisions</span>，<span class="mono">gpt-6-luna</span>）、<strong>Jev</strong>（TypeSafe <span class="mono">/v1/systemone</span>，或经 OpenRouter）、本机的 <strong>StartLux-Decision</strong>（和注入标记共用）。三家的请求格式不同，omem 统一成“材料 + 问题 + 选项 → 每个选项的概率”。</p>
     </template>
     <template v-else>
-      <p class="muted">图片生成模型可用后，Agent 才会拿到画图工具：给 Wiki 页配示意图，在飞书回复里发图，或者你在问答里直接让它画。</p>
-      <p class="muted small">接口：OpenAI Images API（<span class="mono">gpt-image-2</span>，生成与编辑）。</p>
+      <p class="muted">可用后，主助手和挂了 <span class="mono">group:media</span> 的 Agent 档案才拿到画图工具 <span class="mono">generate_image</span>，内置技能 <span class="mono">image-generation</span> 也才出现：给 Wiki 页配示意图，在飞书回复里发图，或者你在问答里直接让它画。图片存在数据目录，和其他附件一样。</p>
+      <p class="muted small">接口：OpenAI Images API（<span class="mono">/v1/images/generations</span>）。默认 <span class="mono">gpt-image-2.5-flare</span>（快），要更精细用 <span class="mono">gpt-image-2.5-sunburst</span>。</p>
     </template>
 
     <div v-if="noProviders" class="card pad small">还没有能提供{{ CAT_LABEL[cat] }}的 API key：先到“API key”里添加 OpenAI 的 key。</div>
@@ -243,7 +247,11 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       </div>
       <template v-if="cat === 'voice'">
         <div class="field"><span>接口</span><UiSegmented :model-value="catValue.api" aria-label="语音接口" :options="[{ value: 'live', label: 'GPT-Live' }, { value: 'realtime', label: 'Realtime' }]" @change="(v: string) => setCat({ api: v })" /></div>
-        <label class="field"><span>声音（可选）</span><input :value="catValue.voice" class="input mono" style="max-width: 240px" placeholder="默认" @change="setCat({ voice: ($event.target as HTMLInputElement).value.trim() })" /></label>
+        <div class="grid2">
+          <label class="field"><span>声音（可选）</span><input :value="catValue.voice" class="input mono" placeholder="marin" @change="setCat({ voice: ($event.target as HTMLInputElement).value.trim() })" /></label>
+          <label class="field"><span>语音输入的转写模型</span><input :value="catValue.transcribeModel" class="input mono" placeholder="gpt-transcribe" @change="setCat({ transcribeModel: ($event.target as HTMLInputElement).value.trim() })" /></label>
+          <label v-if="catValue.api === 'live'" class="field"><span>委托模型（GPT-Live 查资料、调工具用）</span><input :value="catValue.delegateModel" class="input mono" placeholder="gpt-6-luna" @change="setCat({ delegateModel: ($event.target as HTMLInputElement).value.trim() })" /></label>
+        </div>
       </template>
       <template v-else-if="cat === 'decision'">
         <div class="field">
@@ -298,6 +306,14 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
 }
 .ok-text {
   color: var(--ok);
+}
+.cmp {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
 }
 .prob-row {
   display: grid;

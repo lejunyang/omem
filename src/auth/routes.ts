@@ -94,6 +94,14 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
 
   // asking and conversations (one's own)
   "POST /api/ask": "self",
+  // voice (core/voice.ts): one's own conversations; tools run in the spaces the user can read
+  "GET /api/voice": "self",
+  "POST /api/voice/realtime/secret": "self",
+  "POST /api/voice/live/sdp": "self",
+  "POST /api/voice/transcribe": "self",
+  "POST /api/voice/tool": "self",
+  "GET /api/voice/sessions": "self",
+  "POST /api/voice/sessions": "self",
   "GET /api/conversations": "self",
   "GET /api/conversations/:id": "self",
   "DELETE /api/conversations/:id": "self",
