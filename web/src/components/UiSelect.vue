@@ -1,17 +1,21 @@
-<script setup lang="ts" generic="V extends string | number | null">
+<script setup lang="ts" generic="V extends string | number | null, M extends boolean = false">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import Icon from "./Icon.vue";
 
 /**
  * Select without the native control: a button that opens a listbox.
  * Keyboard: ↑/↓ (opens), Home/End, Enter/Space to choose, Esc to close, typing jumps to a label.
+ * Multiple selection keeps the list open; choosing a selected option removes it.
  */
 /** `indent`: an option under the one before it (a repository under its business space), indented in the list only. */
 export type SelectOption<T> = { value: T; label: string; hint?: string; disabled?: boolean; group?: string; indent?: boolean };
+type Selection = M extends true ? V[] : V;
 
 const props = withDefaults(
   defineProps<{
-    modelValue: V;
+    modelValue: V | V[];
+    /** Keep Boolean casting for a bare `multiple` attribute while inferring the emitted value. */
+    multiple?: M & boolean;
     options: SelectOption<V>[];
     placeholder?: string;
     size?: "sm" | "md";
@@ -26,7 +30,7 @@ const props = withDefaults(
   }>(),
   { size: "md", variant: "box", placeholder: "请选择", searchAt: 12 },
 );
-const emit = defineEmits<{ "update:modelValue": [value: V]; change: [value: V] }>();
+const emit = defineEmits<{ "update:modelValue": [value: Selection]; change: [value: Selection] }>();
 
 const open = ref(false);
 const active = ref(-1);
@@ -36,7 +40,10 @@ const list = ref<HTMLElement | null>(null);
 const pos = ref({ top: 0, left: 0, width: 0, up: false, maxHeight: 280 });
 const uid = `sel-${Math.random().toString(36).slice(2, 9)}`;
 
-const current = computed(() => props.options.find((o) => o.value === props.modelValue));
+const selectedValues = computed<V[]>(() => props.multiple ? props.modelValue as V[] : [props.modelValue as V]);
+const isSelected = (value: V) => selectedValues.value.includes(value);
+const currentLabel = computed(() => selectedValues.value.map((value) => props.options.find((o) => o.value === value)?.label ?? String(value)).join("、"));
+const hasSelection = computed(() => props.multiple ? selectedValues.value.length > 0 : props.options.some((o) => isSelected(o.value)));
 const shown = computed(() => {
   const f = filter.value.trim().toLowerCase();
   return f ? props.options.filter((o) => o.label.toLowerCase().includes(f) || (o.hint ?? "").toLowerCase().includes(f)) : props.options;
@@ -60,7 +67,7 @@ async function show() {
   filter.value = "";
   place();
   open.value = true;
-  active.value = Math.max(0, shown.value.findIndex((o) => o.value === props.modelValue));
+  active.value = Math.max(0, shown.value.findIndex((o) => isSelected(o.value)));
   await nextTick();
   (list.value?.querySelector("input") as HTMLInputElement | null)?.focus();
   scrollActive();
@@ -71,12 +78,13 @@ function hide(refocus = true) {
   if (refocus) trigger.value?.focus();
 }
 function choose(o: SelectOption<V> | undefined) {
-  if (!o || o.disabled) return;
-  if (o.value !== props.modelValue) {
-    emit("update:modelValue", o.value);
-    emit("change", o.value);
+  if (!o || o.disabled || props.disabled) return;
+  if (props.multiple || o.value !== props.modelValue) {
+    const value = (props.multiple ? isSelected(o.value) ? selectedValues.value.filter((v) => v !== o.value) : [...selectedValues.value, o.value] : o.value) as Selection;
+    emit("update:modelValue", value);
+    emit("change", value);
   }
-  hide();
+  if (!props.multiple) hide();
 }
 function move(d: number) {
   const n = shown.value.length;
@@ -151,7 +159,7 @@ onBeforeUnmount(() => {
     ref="trigger"
     type="button"
     class="ui-select"
-    :class="[size, variant, { open, empty: !current, disabled }]"
+    :class="[size, variant, { open, empty: !hasSelection, disabled }]"
     :style="width ? { width } : undefined"
     role="combobox"
     aria-haspopup="listbox"
@@ -163,7 +171,7 @@ onBeforeUnmount(() => {
     @click="open ? hide() : show()"
     @keydown="onKey"
   >
-    <span class="value ellipsis">{{ current?.label ?? placeholder }}</span>
+    <span class="value ellipsis" :title="currentLabel || undefined">{{ hasSelection ? currentLabel : placeholder }}</span>
     <Icon name="down" :size="variant === 'inline' ? 12 : 14" class="chev" />
   </button>
   <Teleport to="body">
@@ -176,22 +184,22 @@ onBeforeUnmount(() => {
       @keydown="onKey"
     >
       <div v-if="searchable" class="filter"><Icon name="search" :size="14" /><input v-model="filter" placeholder="筛选" :aria-label="`筛选${ariaLabel ?? ''}`" /></div>
-      <ul :id="uid" role="listbox" :aria-label="ariaLabel">
+      <ul :id="uid" role="listbox" :aria-label="ariaLabel" :aria-multiselectable="multiple || undefined">
         <template v-for="(o, i) in shown" :key="String(o.value)">
           <li v-if="o.group && o.group !== shown[i - 1]?.group" class="group" role="presentation">{{ o.group }}</li>
           <li
             :id="`${uid}-${i}`"
             :data-i="i"
             role="option"
-            :aria-selected="o.value === modelValue"
+            :aria-selected="isSelected(o.value)"
             :aria-disabled="o.disabled || undefined"
             class="opt"
-            :class="{ active: i === active, selected: o.value === modelValue, disabled: o.disabled, indent: o.indent }"
+            :class="{ active: i === active, selected: isSelected(o.value), disabled: o.disabled, indent: o.indent }"
             @mousemove="active = i"
             @mousedown.prevent
             @click="choose(o)"
           >
-            <span class="check"><Icon v-if="o.value === modelValue" name="check" :size="14" /></span>
+            <span class="check"><Icon v-if="isSelected(o.value)" name="check" :size="14" /></span>
             <span class="label">{{ o.label }}<span v-if="o.hint" class="hint">{{ o.hint }}</span></span>
           </li>
         </template>

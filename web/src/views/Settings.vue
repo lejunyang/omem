@@ -109,10 +109,23 @@ async function pollNow() {
   }
 }
 
-const guestSpacesText = computed(() => (config.value?.lark.guests?.spaces ?? []).join(", "));
+const savingGuestSpaces = ref(false);
+const guestSpaceOptions = computed(() => [
+  ...state.spaces.map((s) => ({ value: s.id, label: s.name, hint: s.id })),
+  ...(config.value?.lark.guests?.spaces ?? []).filter((id: string) => !state.spaces.some((s) => s.id === id)).map((id: string) => ({ value: id, label: `空间不存在：${id}`, hint: "取消选择可移除" })),
+].map((o) => ({ ...o, disabled: savingGuestSpaces.value })));
+async function saveGuestSpaces(spaces: string[]) {
+  if (savingGuestSpaces.value) return;
+  savingGuestSpaces.value = true;
+  try {
+    await saveGuests({ spaces });
+  } finally {
+    savingGuestSpaces.value = false;
+  }
+}
 function saveGuests(patch: Record<string, unknown>, note = "已保存访客设置") {
   const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" };
-  void saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
+  return saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
 }
 function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
   const cur = config.value.lark.commands ?? { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 };
@@ -966,7 +979,7 @@ async function saveEdit() {
         <strong>访客提问</strong>
         <p class="muted small">没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的后端和模型在“Agent”页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</p>
         <UiCheckbox :model-value="!!config.lark.guests?.enabled" switch @change="(v) => saveGuests({ enabled: v }, v ? '已开启访客提问' : '已关闭访客提问')">回答未登记的人和别的机器人</UiCheckbox>
-        <UiCheckbox :model-value="!!config.lark.guests?.p2p" :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ p2p: v })">也回答他们和机器人的私聊（只读下面列出的空间）</UiCheckbox>
+        <UiCheckbox :model-value="!!config.lark.guests?.p2p" :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ p2p: v })">也回答未登记的人与机器人的私聊（只读下方“开放给访客的空间”）</UiCheckbox>
         <div class="field"><span>你也在群里时</span>
           <UiSelect
             :model-value="config.lark.guests?.ownerPresent ?? 'guest'"
@@ -981,9 +994,18 @@ async function saveEdit() {
             @change="(v) => saveGuests({ ownerPresent: v })"
           />
         </div>
-        <label class="field"><span>另外开放给访客的空间 id（逗号分隔，可留空）</span>
-          <input class="input mono" :value="guestSpacesText" placeholder="例如 project-a, handbook" @change="saveGuests({ spaces: ($event.target as HTMLInputElement).value.split(/[,，\s]+/).filter(Boolean) })" />
-        </label>
+        <div class="field"><span>开放给访客的空间（可多选）</span>
+          <UiSelect
+            :model-value="(config.lark.guests?.spaces ?? []) as string[]"
+            multiple
+            :options="guestSpaceOptions"
+            :disabled="!config.lark.guests?.enabled"
+            aria-label="开放给访客的空间"
+            placeholder="未选择空间"
+            @change="saveGuestSpaces"
+          />
+          <span class="muted small">私聊只读这里选中的空间；未选择时没有知识库资料可查。群聊还可读群所属的非个人空间。此设置对所有访客生效。</span>
+        </div>
         <label class="field"><span>每人每小时最多提问（1–200）</span>
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="200" :value="config.lark.guests?.perHour ?? 20" @change="saveGuests({ perHour: Math.max(1, Math.min(200, Math.round(Number(($event.target as HTMLInputElement).value) || 20))) })" />
         </label>

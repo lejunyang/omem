@@ -11,6 +11,7 @@ description: 修改 omem v2 的 Vue 网页（web/）时使用：阅读优先的�
    文档引用高亮按完整 Markdown 块切分（`lib/cited-document.ts`），不能直接从引用行切开表格、列表、引用块或代码围栏；引用位于块内时高亮整个块，原文行号模式仍定位精确行。
 4. 阅读区限宽（正文约 760px），标题用衬线体，元信息小号灰色；按钮组用 gap。空状态说明现状并给一个能执行的动作。
 5. 表单控件用 `components/UiSelect`（下拉）、`UiCheckbox`（勾选 / switch）、`UiSegmented`（少量互斥选项）、`UiDateTime`（日期时间），确认和输入用 `lib/dialog` 的 `confirmDialog` / `promptDialog`；不用原生 select、checkbox、datetime-local、confirm、prompt。弹层用 Teleport 到 body，自带键盘操作和 Esc。放在标签、胶囊或一句话里的选择（成员的空间角色）用 `UiSelect` 的 `variant="inline"`：没有边框，只有文字和小箭头，和胶囊同高；不要把带边框的下拉塞进 20px 高的 `.badge`。
+   空间等可多选的范围也用 `UiSelect`，传 `multiple` 与数组；选项显示名称，ID 放 hint，保存仍用 ID。选中后保持展开，再点取消，Esc 关闭；说明清空后的范围，不让人手写逗号分隔的 ID。
    文本输入继续使用原生 input / textarea 和 Vue v-model；入口统一 `.use(compositionGuard)`（`lib/composition.ts`），插件 iframe 的独立 Vue 入口也要接入。组合输入期间的键盘事件在捕获阶段隔离，不触发回车发送、弹窗确认、选项导航或全局快捷键；只取消同次确认回车引起的表单提交，不取消输入法按键的默认行为。用 `node scripts/check-composition.ts` 回归。
 6. 大列表和长文本（原件列表、长原件、聊天、运行、记忆）用 `components/VirtualList`（动态行高，跟随最近的滚动容器，`scrollToIndex` 定位）；加载中用 `components/Skeleton`，和“没有数据”的空状态分开。聊天类原件用 `components/ChatView`（解析见 `lib/chat.ts`）。
 7. 浏览器直接加载的 `/api/...` 地址（`<img>`、下载链接）要经 `api.ts` 的 `authUrl` 带上令牌，否则从其他设备打开时加载不出来；普通请求走 `get` / `post`，401 时会提示填写令牌。

@@ -2,10 +2,14 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-05
+updated: 2026-11-06
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
+
+## 访客开放空间按名称多选（11-06）
+
+- 设置 → 渠道 → 访客提问的空间 ID 输入框改成 `UiSelect` 多选，显示空间名称和 ID，保存仍用 `lark.guests.spaces`。旧的失效 ID 保留为可取消的选项，不因修改范围丢失；私聊说明直接指向“开放给访客的空间”，明确未选择时没有知识库资料可查。保存期间选项暂停操作，防止连续请求丢失选择。入口：`web/src/views/Settings.vue`、`web/src/components/UiSelect.vue`；验证：`pnpm run check`（英文 Git、屏蔽本机可选文档解析器，915 项测试）、1440 / 390 浏览器交互与输入法回归。
 
 ## 交办轮次查询走索引（11-05）
 
