@@ -94,6 +94,20 @@ describe("pulling a library from another machine", () => {
     cleanupFetched(againDir);
   });
 
+  it("merges only the chosen parts when the other side sent everything (an older device)", () => {
+    const local = testApp();
+    const remote = testApp();
+    remember(remote, { spaceId: "personal", kind: "fact", content: "差旅住宿按城市分档" });
+    writePage(remote, "personal", "travel", { meta: { title: "差旅" }, body: "远端写的页面" });
+    writeFileSync(join(remote.filesDir, "0123456789abcdef.pdf"), "pdf");
+    const snapDir = snapshot(remote);
+    mergeLibrary(local, { dbDir: snapDir, libraryDir: join(snapDir, "library"), filesDir: join(snapDir, "files"), fetchedFiles: ["0123456789abcdef.pdf"], parts: ["repos"] });
+    expect(all<{ content: string }>(local.db, "select content from memories").map((m) => m.content)).toContain("差旅住宿按城市分档");
+    expect(all(remote.db, "select slug from pages where slug = 'travel'")).toHaveLength(1);
+    expect(all(local.db, "select slug from pages where slug = 'travel'")).toHaveLength(0);
+    expect(existsSync(join(local.filesDir, "0123456789abcdef.pdf"))).toBe(false);
+  });
+
   it("keeps the local page on a wiki conflict and saves the remote one beside it", () => {
     const local = testApp();
     const remote = testApp();

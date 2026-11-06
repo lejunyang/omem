@@ -5,14 +5,25 @@ const fs = process.getBuiltinModule('node:fs');
 const path = process.getBuiltinModule('node:path');
 const { spawnSync } = process.getBuiltinModule('node:child_process');
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
-const [home, dest] = process.argv.slice(1);
+const [home, dest, optJson] = process.argv.slice(1);
+// What the puller asked for (pull-transfer.ts PullSelection); an older puller passes nothing: everything.
+const opt = optJson ? JSON.parse(optJson) : {};
+const parts = Array.isArray(opt.parts) ? opt.parts : ['library', 'files', 'repos', 'runs'];
 const db = new DatabaseSync(path.join(home, 'omem.db'), { readOnly: true });
 db.prepare('vacuum into ?').run(path.join(dest, 'omem.db'));
 db.close();
 const snap = new DatabaseSync(path.join(dest, 'omem.db'));
+const has = (table) => !!snap.prepare("select 1 from sqlite_master where name=?").get(table);
 for (const table of ['api_tokens', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines', 'shares', 'session_cleanup', 'remote_recordings', 'lark_doc_subscriptions'])
-  if (snap.prepare("select 1 from sqlite_master where type='table' and name=?").get(table)) snap.exec('delete from ' + table);
-const manifest = { version: 1, home, repositories: [] };
+  if (has(table)) snap.exec('delete from ' + table);
+// A merge rebuilds the search index and code outline from the sources it takes (reindexSource):
+// leave them out, they are most of the database.
+if (opt.strip) {
+  for (const table of ['chunks', 'symbols', 'code_refs']) if (has(table)) snap.exec('delete from ' + table);
+  if (has('chunks_fts')) snap.exec("insert into chunks_fts(chunks_fts) values('delete-all')");
+  snap.exec('vacuum');
+}
+const manifest = { version: 1, home, parts, repositories: [] };
 const seen = new Map();
 function git(root, args, binary = false) {
   const r = spawnSync('git', ['--literal-pathspecs', '-C', root, ...args], {
@@ -75,10 +86,10 @@ function save(root, target, space, parent = null, subpath = null) {
     }
   }
 }
-for (const s of snap.prepare("select id, root_path from spaces where kind = 'repo' and root_path is not null").all()) save(s.root_path, null, s.id);
+if (parts.includes('repos')) for (const s of snap.prepare("select id, root_path from spaces where kind = 'repo' and root_path is not null").all()) save(s.root_path, null, s.id);
 // Delegation worktrees must be portable repos, not .git files pointing at the other host.
 const runs = path.join(home, 'runs');
-if (fs.existsSync(runs)) for (const run of fs.readdirSync(runs)) {
+if (parts.includes('runs') && fs.existsSync(runs)) for (const run of fs.readdirSync(runs)) {
   const runDir = path.join(runs, run);
   if (!fs.statSync(runDir).isDirectory()) continue;
   const work = path.join(runDir, 'work');

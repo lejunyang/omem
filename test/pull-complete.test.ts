@@ -276,7 +276,7 @@ describe("complete portable pulls", () => {
   });
 
   // The fake ssh is a shell script on PATH, which Windows cannot run as "ssh".
-  it.skipIf(process.platform === "win32")("SSH fetch includes a remote-only original and embedded media, and overwrite keeps every fetched file", () => {
+  it.skipIf(process.platform === "win32")("SSH fetch includes a remote-only original and embedded media, and overwrite keeps every fetched file", async () => {
     const local = testApp();
     const remote = testApp();
     upsertSource(remote, { spaceId: "personal", kind: "doc", uri: "report", title: "报告", text: "![图](/api/files/abcdef0123456789.png)", meta: { original: "report.pdf" } });
@@ -296,7 +296,7 @@ describe("complete portable pulls", () => {
     let f: Fetched;
     try {
       process.env.PATH = `${bin}:${savedPath}`;
-      f = fetchRemote(local, "fixture", remote.home);
+      f = await fetchRemote(local, "fixture", remote.home);
     } finally { process.env.PATH = savedPath; }
     const home = local.home;
     local.db.close();

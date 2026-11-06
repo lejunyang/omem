@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -6,6 +6,8 @@ import { boot } from "../src/main.ts";
 import { addPeer, decodeInvite, findPeer, invite, localUrls, openPeerUi, peerJson, setPeerUrl } from "../src/core/peers.ts";
 import { cleanupFetched, fetchPeer, mergeLibrary } from "../src/core/pull.ts";
 import { remember, listMemories } from "../src/memory/store.ts";
+import { upsertSource } from "../src/sources/store.ts";
+import { all, openDb } from "../src/core/db.ts";
 import { createApiToken, createUser } from "../src/core/users.ts";
 
 const servers: { close(): Promise<unknown> }[] = [];
@@ -78,6 +80,30 @@ describe("peers", () => {
     expect(listMemories(laptop, { status: "active" }).map((m) => m.content)).toContain("服务器上的一条记忆。");
     expect(readFileSync(join(laptop.filesDir, "fedcba9876543210.pdf"), "utf8")).toBe("remote original");
     expect(readFileSync(join(laptop.filesDir, "abcdef0123456789.png"), "utf8")).toBe("embedded media");
+
+    // A chosen part only, through the middle node: no library, no search index, and only the
+    // attachments this machine lacks.
+    upsertSource(server, { spaceId: "personal", kind: "doc", uri: "差旅.md", title: "《差旅报销制度》", text: "出差住宿按城市分档报销。" });
+    writeFileSync(join(server.filesDir, "0123456789abcdef.jpg"), "new photo");
+    const logs: string[] = [];
+    const some = await fetchPeer(laptop, "server", { selection: { parts: ["files"], strip: true }, haveFile: (n) => existsSync(join(laptop.filesDir, n)), log: (s) => logs.push(s) });
+    try {
+      expect(some.fetchedFiles).toEqual(["0123456789abcdef.jpg"]);
+      expect(some.reused?.sort()).toEqual(["abcdef0123456789.png", "fedcba9876543210.pdf"]);
+      expect(existsSync(some.libraryDir)).toBe(false);
+      const snap = openDb(join(some.dbDir, "omem.db"));
+      try {
+        expect(all(snap, "select count(*) n from chunks")).toEqual([{ n: 0 }]);
+        expect(all(snap, "select count(*) n from sources where title = '《差旅报销制度》'")).toEqual([{ n: 1 }]);
+      } finally { snap.close(); }
+      mergeLibrary(laptop, some);
+    } finally {
+      cleanupFetched(some);
+    }
+    expect(logs.join(" ")).toMatch(/本机缺 1 个/);
+    expect(readFileSync(join(laptop.filesDir, "0123456789abcdef.jpg"), "utf8")).toBe("new photo");
+    // The merge rebuilt the index from the source.
+    expect(all<{ n: number }>(laptop.db, "select count(*) n from chunks c join sources s on s.id = c.source_id where s.title = '《差旅报销制度》'")[0].n).toBeGreaterThan(0);
   }, 60000);
 });
 

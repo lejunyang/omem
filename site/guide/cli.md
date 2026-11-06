@@ -90,7 +90,8 @@ omem peer invite --label laptop     # 打印配对码
 omem peer add <配对码> [--via <中间那台>]
 omem diag <设备>
 omem peer call <设备> update
-omem peer pull <设备>
+omem peer pull <设备>              # 在终端里选拉哪些、拉进哪个数据目录
+omem peer pull <设备> --only library,files --to ~/omem-copy -y
 omem peer pull <设备> --dry-run
 omem peer pull <设备> --overwrite  # 先停本机服务；旧数据留备份
 omem peer open <设备>

@@ -1,7 +1,7 @@
 import { generateWiki } from "../wiki/generate.ts";
 import { presentHits } from "../search/present.ts";
 import { spawnSync } from "node:child_process";
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
 import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
 import { customizeRole, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride } from "../agents/builtin-roles.ts";
@@ -2290,10 +2290,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { node: (await import("../core/peers.ts")).nodeId(app), ...(await peerToolCall(app, scope, name, args)) };
   });
   server.get("/api/peer/snapshot", async (req, reply) => {
+  // `omem peer pull` (core/pull-transfer.ts): the snapshot with the parts asked for; a newer puller
+  // fetches attachments separately (files=separate), only the ones it lacks.
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
-    const { snapshotStream } = await import("../core/pull.ts");
+    const { snapshotStream, parseParts } = await import("../core/pull.ts");
+    const q = req.query as { parts?: string; strip?: string; files?: string };
+    let parts;
+    try { parts = parseParts(q.parts); } catch (e) { throw new HttpError(400, (e as Error).message); }
     reply.type("application/x-tar");
-    return reply.send(await snapshotStream(app));
+    return reply.send(await snapshotStream(app, q.parts === undefined && q.strip === undefined && q.files === undefined ? undefined : { parts, strip: q.strip === "1", separateFiles: q.files === "separate" }));
+  });
+  server.get("/api/peer/files", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
+    const { FILE_NAME } = await import("../core/pull-transfer.ts");
+    return { names: existsSync(app.filesDir) ? readdirSync(app.filesDir).filter((n) => FILE_NAME.test(n)) : [] };
+  });
+  server.post("/api/peer/files", async (req, reply) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
+    const names = (req.body as { names?: unknown })?.names;
+    if (!Array.isArray(names) || names.length > 1000 || names.some((n) => typeof n !== "string")) throw new HttpError(400, "names 是最多 1000 个文件名");
+    const { filesStream } = await import("../core/pull-transfer.ts");
+    reply.type("application/x-tar");
+    return reply.send(filesStream(app, names as string[]));
   });
   // Settings → 设备: the devices this one can reach (tokens never leave), the ones holding a
   // pairing token of this one, pairing both ways, and which of a device's agents to use here.

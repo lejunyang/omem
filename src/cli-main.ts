@@ -1,6 +1,6 @@
 import { generateWiki } from "./wiki/generate.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { Command } from "commander";
 import "./agents/jobs.ts";
 import { ask, scheduleIngest, scheduleSpaceSync, type PageBrief } from "./agents/jobs.ts";
@@ -188,35 +188,70 @@ program
 const peer = program.command("peer").description("设备：其他运行 omem 的机器（配对、诊断、拉取数据、远程执行检查命令）");
 peer
   .command("pull <host>")
-  .description("拉取另一台机器的业务数据、附件、知识库、代码仓库与编码工作区（设备走 HTTP，其他走 SSH）；默认合并，--overwrite 替换并备份")
-  .option("--remote-home <dir>", "远端数据目录", "~/.omem")
-  .option("--overwrite", "替换本地业务数据、文件与托管仓库并备份；本机配置、密钥、令牌和采集游标保留")
-  .option("--dry-run", "只统计合并结果，不写入")
+  .description("拉取另一台机器的数据（设备走 HTTP，其他走 SSH）：数据库总会拉，知识库、附件、代码仓库、编码工作区可选；在终端里运行时逐项询问。默认合并，--overwrite 替换并备份")
+  .option("--remote-home <dir>", "远端数据目录（SSH）", "~/.omem")
+  .option("--only <parts>", "除数据库外拉哪些，逗号分隔：library（知识库）、files（附件，只拉缺的）、repos（代码仓库）、runs（编码工作区与运行产物）；给空字符串只拉数据库")
+  .option("--to <dir>", "拉进哪个数据目录（默认当前数据目录；不存在会新建）")
+  .option("-y, --yes", "不询问：没给 --only 时拉全部")
+  .option("--overwrite", "替换本地业务数据、文件与托管仓库并备份（总是完整拉取）；本机配置、密钥、令牌和采集游标保留")
+  .option("--dry-run", "只统计合并结果，不写入（附件只数缺多少）")
   .action(async (host: string, o) => {
     if (o.overwrite && o.dryRun) throw new Error("--overwrite 不能与 --dry-run 同时使用；预览合并时只加 --dry-run。");
-    const { fetchRemote, mergeLibrary, overwriteLocal, cleanupFetched } = await import("./core/pull.ts");
+    if (o.overwrite && o.only !== undefined) throw new Error("--overwrite 总是完整拉取，不能和 --only 一起用。");
+    const { fetchPeer, fetchRemote, mergeLibrary, overwriteLocal, cleanupFetched, parseParts, PULL_PARTS, PULL_PART_LABELS } = await import("./core/pull.ts");
     const log = (s: string) => console.error(s);
     const local = open();
-    if (await runningServer(local)) {
-      if (o.overwrite) throw new Error("本地服务正在运行；先 omem service stop（或停掉 omem serve）再覆盖。");
-      log("本地服务正在运行：合并照常进行，完成后建议 omem service restart。");
+    const { findPeer, peerJson } = await import("./core/peers.ts");
+    const isPeer = !!findPeer(local, host);
+    let parts = parseParts(o.only);
+    let to = o.to ? resolve(o.to) : local.home;
+    if (process.stdin.isTTY && o.only === undefined && !o.yes && !o.overwrite) {
+      const { checkbox, confirm, input } = await import("@inquirer/prompts");
+      // The other side's last storage scan, when it has one: roughly how big each part is.
+      const sizes: Record<string, number> = {};
+      if (isPeer) {
+        try {
+          const st = await peerJson<{ report?: { dirs: { name: string; bytes: number }[] } }>(local, host, "/api/storage", undefined, 10_000);
+          for (const d of st.report?.dirs ?? []) sizes[d.name] = d.bytes;
+        } catch { /* an older device, or no scan yet */ }
+      }
+      const size = (n?: number) => (n ? `，对方约 ${n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`}` : "");
+      console.error(`数据库（原件、记忆、事项、会话、运行记录…）总会拉取并合并${size(sizes["omem.db"])}；其中的搜索索引和代码大纲不传，在本机重建。`);
+      parts = await checkbox({
+        message: "另外拉哪些？",
+        choices: PULL_PARTS.map((p) => ({ value: p, name: PULL_PART_LABELS[p] + size(sizes[p]), checked: p !== "runs" })),
+      });
+      to = resolve(await input({ message: "拉进哪个数据目录", default: local.home }));
+      const what = ["数据库", ...parts.map((p) => PULL_PART_LABELS[p].replace(/（.*/, ""))].join("、");
+      if (!(await confirm({ message: `从 ${host} 拉取 ${what} 到 ${to}${o.dryRun ? "（预览）" : ""}？`, default: true }))) return;
     }
-    const { findPeer } = await import("./core/peers.ts");
+    const target = resolve(to) === resolve(local.home) ? local : App.open(to);
+    if (target !== local) ensurePersonalSpace(target);
+    if (await runningServer(target)) {
+      if (o.overwrite) throw new Error(`${target.home} 的服务正在运行；先 omem service stop（或停掉 omem serve）再覆盖。`);
+      log("这个数据目录的服务正在运行：合并照常进行，完成后建议 omem service restart。");
+    }
+    const fetchOpts = {
+      selection: { parts: o.overwrite ? [...PULL_PARTS] : parts, strip: !o.overwrite },
+      log,
+      dryRun: o.dryRun,
+      haveFile: (n: string) => existsSync(join(target.filesDir, n)),
+    };
     // A paired peer is fetched over HTTP (also through another peer); anything else is an ssh host.
-    const fetched = findPeer(local, host) ? await (await import("./core/pull.ts")).fetchPeer(local, host, log) : fetchRemote(local, host, o.remoteHome, log);
+    const fetched = isPeer ? await fetchPeer(local, host, fetchOpts) : await fetchRemote(local, host, o.remoteHome, fetchOpts);
     try {
       if (o.overwrite) {
-        local.db.close();
-        const backup = overwriteLocal(home(), fetched);
-        console.log(`已用 ${host} 的数据替换本地。原数据在 ${backup}；配置、密钥、令牌和采集游标保留。任务规则和定时任务已停用，请按需启用。`);
+        target.db.close();
+        const backup = overwriteLocal(target.home, fetched);
+        console.log(`已用 ${host} 的数据替换 ${target.home}。原数据在 ${backup}；配置、密钥、令牌和采集游标保留。任务规则和定时任务已停用，请按需启用。`);
         return;
       }
-      const r = mergeLibrary(local, fetched, { dryRun: o.dryRun, log });
+      const r = mergeLibrary(target, fetched, { dryRun: o.dryRun, log });
       const names: Record<string, string> = { spaces: "空间", sources: "原件", memories: "记忆", memory_folders: "记忆目录", items: "事项", item_events: "事项时间线", conversations: "会话", messages: "消息", runs: "运行", run_events: "运行事件", cards: "卡片", card_reviews: "复习记录", notifications: "通知", files: "原件文件" };
       for (const [k, v] of Object.entries(r))
         if (k !== "wiki" && "added" in v && (v.added || v.updated)) console.log(`${(names[k] ?? k).padEnd(8)} 新增 ${v.added}${v.updated ? `，更新 ${v.updated}` : ""}${v.kept ? `，保留本地 ${v.kept}` : ""}`);
       if (r.wiki?.conflicts.length) console.log(`知识库冲突 ${r.wiki.conflicts.length} 处：保留本地版本，远端版本存为同名 .remote.md：\n  ${r.wiki.conflicts.join("\n  ")}`);
-      console.log(o.dryRun ? "（预览，未写入）" : "合并完成。新原件的向量会由服务在后台补齐。");
+      console.log(o.dryRun ? "（预览，未写入）" : `合并完成（${target.home}）。新原件的向量会由服务在后台补齐。`);
     } finally {
       cleanupFetched(fetched);
     }

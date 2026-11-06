@@ -1505,3 +1505,10 @@ updated: 2026-11-06
 ## 2026-11-07：文档变化规则订阅不了时定时查
 
 - `lark-doc-events.ts` 的 `pollRuleDocs`（main.ts 每分钟调一次）：启用的文档变化规则列出的文档里，订阅被拒的（或一个月里没收到过文档事件时的全部）按 `trigger.pollMinutes`（默认 30）用本人 lark-cli 只读查最后修改时间（`lark-docs.ts` 的 `docMetas`，原来的 `lastEdits` 改由它实现，带修改人），第一次只记下；改过就走和事件一样的 `flush`（重新读、逐行比较、交给规则），变化内容注明定时检查发现。`lark_doc_subscriptions` 加 `polled_at`、`modified_ms`。规则保存后的检查不管订阅成没成都给只被规则盯着的文档存 `snapshot`。规则页加“机器人订阅不了的，每 N 分钟用我的登录查一次更新”。
+
+## 2026-11-07：设备拉取可选内容和目标目录，附件只传缺的
+
+- `omem peer pull`：数据库总会拉；知识库、附件、代码仓库、编码工作区可选（`--only`，在终端里用勾选列表逐项问，列出对方存储页扫到的大致大小）；`--to <目录>` 合并进另一个数据目录（不存在就新建，设备配对仍读当前目录）；`-y` 不询问。`--overwrite` 总是完整拉取，不能和 `--only` 一起用。
+- 传输：`GET /api/peer/snapshot` 认 `parts`、`strip`、`files=separate`；SSH 快照程序收同样的选择作第三个参数。没选的仓库和工作区不打包；合并时不传 `chunks`、`chunks_fts`、`symbols`、`code_refs`（合并会重建；常驻服务器 8.7 GB 的库里约 6.7 GB 是这些）。附件先列名字（`GET /api/peer/files`），只请求本机没有的，每批 500 个（`POST /api/peer/files`）；覆盖时跳过的附件从备份复制回来。
+- 兼容：旧设备忽略参数、发来全部内容，`mergeLibrary` 先删掉没选的部分再合并。快照里既没有知识库也没有附件时 tar 不再因为结尾的空 `-C` 失败。
+- 回归：`test/peers.test.ts`（经中间节点只拉附件：只传缺的一个、快照无索引、合并后重建）、`test/pull.test.ts`（旧设备全量快照按选择合并）；本机起一台临时 omem 用 CLI `--only files --to <新目录> -y` 实测。

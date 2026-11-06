@@ -257,7 +257,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // devices
   ...Object.fromEntries(
     [
-      "GET /api/peer/commands", "POST /api/peer/exec", "GET /api/peer/tools", "POST /api/peer/tool", "GET /api/peer/snapshot", "GET /api/peers", "POST /api/peer/invite", "POST /api/peer/add",
+      "GET /api/peer/commands", "POST /api/peer/exec", "GET /api/peer/tools", "POST /api/peer/tool", "GET /api/peer/snapshot", "GET /api/peer/files", "POST /api/peer/files", "GET /api/peers", "POST /api/peer/invite", "POST /api/peer/add",
       "PATCH /api/peers/:id", "DELETE /api/peers/:id", "GET /api/peers/:id/status", "POST /api/peer/agents", "POST /api/peer/unpair", "DELETE /api/peer/paired/:id", "GET /api/peers/:id/api/ide/open",
       // Forwarded to a device as they are, any method.
       "* /api/peers/:id/*", "* /api/peers/:id/ide", "* /api/peers/:id/ide/*", "* /api/peers/:id/remote/*",

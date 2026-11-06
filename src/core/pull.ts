@@ -14,8 +14,8 @@ import { listSpaces } from "./spaces.ts";
 import { columns, prepareData, pullTables, rewriteLibrary, type Row } from "./pull-data.ts";
 import { installRepositories, readManifest, relocate } from "./pull-repos.ts";
 import { sha256 } from "./util.ts";
-import type { Fetched } from "./pull-transfer.ts";
-export { fetchRemote, fetchPeer, snapshotStream, type Fetched } from "./pull-transfer.ts";
+import { PULL_PARTS, type Fetched, type PullPart } from "./pull-transfer.ts";
+export { fetchRemote, fetchPeer, snapshotStream, filesStream, parseParts, PULL_PARTS, PULL_PART_LABELS, type Fetched, type PullPart, type PullSelection } from "./pull-transfer.ts";
 
 /** Pull is a one-way merge of business data, library files, originals, repositories and run artifacts.
  * Device credentials, capture cursors, process sessions and search projections remain local.
@@ -109,6 +109,8 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
     sanitizeLibrary(join(home, "library"));
     mkdirSync(join(home, "files"), { recursive: true });
     if (existsSync(files)) copyDirContents(files, join(home, "files"));
+    // Attachments not transferred because this machine had them: from the backup.
+    if (typeof fetched !== "string") for (const name of fetched.reused ?? []) if (existsSync(join(backup, "files", name)) && !existsSync(join(home, "files", name))) cpSync(join(backup, "files", name), join(home, "files", name));
     if (existsSync(join(dir, "runs"))) cpSync(join(dir, "runs"), join(home, "runs"), { recursive: true });
     const db = openDb(join(home, "omem.db"));
     try {
@@ -147,8 +149,34 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
   return backup;
 }
 
+/**
+ * Drop what the pull did not ask for from an unpacked snapshot (an older device sends everything):
+ * the library, attachments, run artifacts, and the repositories in the manifest that are not wanted.
+ */
+function narrow(fetched: Fetched) {
+  const want = new Set<PullPart>(fetched.parts ?? PULL_PARTS);
+  if (PULL_PARTS.every((p) => want.has(p))) return;
+  if (!want.has("library")) rmSync(fetched.libraryDir, { recursive: true, force: true });
+  if (!want.has("files")) {
+    rmSync(fetched.filesDir, { recursive: true, force: true });
+    mkdirSync(fetched.filesDir, { recursive: true });
+    fetched.fetchedFiles = [];
+  }
+  if (!want.has("runs")) rmSync(join(fetched.dbDir, "runs"), { recursive: true, force: true });
+  const manifest = readManifest(fetched.dbDir);
+  if (!manifest) return;
+  const kept = new Set<string>();
+  manifest.repositories = manifest.repositories.filter((r) => {
+    const ok = r.parent ? kept.has(r.parent) : r.target ? want.has("runs") : want.has("repos");
+    if (ok) kept.add(r.key);
+    return ok;
+  });
+  writeFileSync(join(fetched.dbDir, "pull-manifest.json"), JSON.stringify(manifest));
+}
+
 export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun?: boolean; log?: (s: string) => void } = {}): MergeReport {
   const log = opts.log ?? (() => {});
+  if (typeof fetched !== "string") narrow(fetched);
   const dir = typeof fetched === "string" ? fetched : fetched.dbDir;
   const files = typeof fetched === "string" ? join(dir, "files") : fetched.filesDir;
   const lib = typeof fetched === "string" ? join(dir, "library") : fetched.libraryDir;
