@@ -133,7 +133,7 @@ export async function browserProfiles() {
     }
     return found;
   } finally {
-    mcp.close();
+    await mcp.close();
   }
 }
 
@@ -184,7 +184,7 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
     mcp.proc.on("exit", () => void closeSession(app, s.id));
     return s;
   } catch (e) {
-    mcp.close();
+    await mcp.close();
     throw e;
   }
 }
@@ -221,8 +221,8 @@ export async function closeSession(app: App, id: string) {
   live.delete(id);
   if (s.recording) await stopRecording(app, s, { quiet: true }).catch(() => {});
   s.assist.proc.kill();
-  // Closing the MCP connection closes the browser it opened (a temporary profile is deleted).
-  s.mcp?.close();
+  // Wait for browser_close: only then is its persistent profile available to the next session.
+  await s.mcp?.close();
 }
 
 export async function closeAll(app: App) {

@@ -403,7 +403,10 @@ const counts = (r: Recording) => {
               <span v-else-if="!profile" class="hint">什么都没登录，关掉就清空。要保留登录，新建一份长期资料，或复制这台机器上浏览器的登录。</span>
             </div>
             <UiCheckbox v-if="copying" v-model="closeRunning">如果这台机器上的 {{ BROWSER_NAMES[copying.browser] }} 正开着，先关掉它（会关掉它的所有窗口）</UiCheckbox>
-            <UiCheckbox v-model="visible">在这台机器上也显示浏览器窗口（默认只在这里看）</UiCheckbox>
+            <div class="field">
+              <UiCheckbox v-model="visible">在运行 omem 的电脑桌面上也显示浏览器窗口</UiCheckbox>
+              <span class="hint">默认只在当前远程画面里看和操作。勾选后，那台电脑前的人也能直接看和操作这个窗口。</span>
+            </div>
           </template>
           <div v-else class="field">
             <span>共享哪部分</span>

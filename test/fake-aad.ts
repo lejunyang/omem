@@ -1,7 +1,7 @@
 // A stand-in for ai-auto-desktop's `aad` in remote operation tests (src/remote): the commands omem
 // runs, answering the way the real ones do. Each call is appended to FAKE_AAD_LOG as a JSON line.
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,12 +46,26 @@ function assist() {
 /** `aad mcp`: JSON-RPC lines in, tool results out. */
 function mcp() {
   let recording = "";
+  let profileLock: string | null = null;
   const tools: Record<string, (a: any) => unknown> = {
     browser_profiles: (a) => (a.browser === "edge" ? { browser: "edge", profiles: [{ id: "Default", name: "工作", path: "x" }] } : (() => { throw new Error(`no ${a.browser} user data`); })()),
     browser_open: (a) => {
       if (a.browser === "chrome" && process.env.FAKE_AAD_NO_CHROME) throw new Error("chrome is not installed");
       if (a.copy_profile && !a.close_running) throw new Error("the profile is in use by a running browser");
+      if (a.profile_dir) {
+        const lock = join(a.profile_dir, ".aad-recording.lock");
+        writeFileSync(lock, "", { flag: "wx" });
+        profileLock = lock;
+      }
       return { browser: a.browser, port: 9333, page_id: "PAGE1", profile_dir: a.profile_dir ?? scratch(), temporary_profile: !a.profile_dir };
+    },
+    browser_close: async () => {
+      if (profileLock) {
+        await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_AAD_CLOSE_MS ?? 0)));
+        unlinkSync(profileLock);
+        profileLock = null;
+      }
+      return { closed: true };
     },
     browser_record_start: () => ((recording = scratch()), { recording: true, out: recording }),
     browser_record_stop: () => {
@@ -69,7 +83,7 @@ function mcp() {
     control_act: () => ({ applied: true }),
     run_workflow: (a) => ({ status: "succeeded", name: a.name }),
   };
-  createInterface({ input: process.stdin }).on("line", (line) => {
+  createInterface({ input: process.stdin }).on("line", async (line) => {
     const msg = JSON.parse(line);
     if (msg.id === undefined) return;
     if (process.env.FAKE_AAD_LOG) appendFileSync(process.env.FAKE_AAD_LOG, JSON.stringify(["mcp", msg.method, msg.params?.name ?? null, msg.params?.arguments ?? null]) + "\n");
@@ -77,7 +91,7 @@ function mcp() {
     let payload: unknown;
     let isError = false;
     try {
-      payload = tools[msg.params.name](msg.params.arguments ?? {});
+      payload = await tools[msg.params.name](msg.params.arguments ?? {});
     } catch (e) {
       payload = { code: "BROWSER.START_FAILED", message: (e as Error).message };
       isError = true;

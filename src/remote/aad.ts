@@ -91,6 +91,7 @@ export class AadMcp {
   private next = 1;
   private waiting = new Map<number, { ok: (v: any) => void; fail: (e: Error) => void }>();
   private err = "";
+  private closing?: Promise<void>;
 
   constructor(args: string[]) {
     this.proc = spawnAad(["mcp", ...args]);
@@ -146,8 +147,24 @@ export class AadMcp {
     return value?.data ?? value;
   }
 
-  close() {
-    this.proc.stdin?.end();
-    setTimeout(() => this.proc.kill(), 3_000).unref();
+  /** Let aad close its browser and release the profile before ending the transport. */
+  close(): Promise<void> {
+    return this.closing ??= this.finish();
+  }
+
+  private async finish() {
+    if (this.proc.exitCode !== null || this.proc.signalCode !== null) return;
+    await this.call("browser_close", {}, 15_000).catch(() => {});
+    if (this.proc.exitCode !== null || this.proc.signalCode !== null) return;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.proc.off("exit", done);
+        resolve();
+      };
+      const timer = setTimeout(() => this.proc.kill(), 10_000);
+      this.proc.once("exit", done);
+      this.proc.stdin?.end();
+    });
   }
 }

@@ -35,6 +35,7 @@ describe("remote operation", () => {
     setToolResolverForTests(null);
     delete process.env.FAKE_AAD_LOG;
     delete process.env.FAKE_AAD_NO_CHROME;
+    delete process.env.FAKE_AAD_CLOSE_MS;
   });
   const api = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const r = await fetch(app.baseUrl + path, { method, headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual" });
@@ -202,6 +203,21 @@ describe("remote operation", () => {
     expect(calls()).toContainEqual(["mcp", "--allow-input", "--allow-profile-copy"]);
     expect((await api("DELETE", `/api/remote/sessions/${s.id}`)).status).toBe(200);
   });
+
+  it("waits for aad to release a persistent profile before closing, so it can be reopened", async () => {
+    process.env.FAKE_AAD_CLOSE_MS = "3200";
+    const opened = await api("POST", "/api/remote/sessions", { kind: "browser", profile: "reusable", visible: true });
+    delete process.env.FAKE_AAD_CLOSE_MS;
+    expect(opened.status).toBe(200);
+    const lock = join(app.home, "remote", "profiles", "reusable", ".aad-recording.lock");
+    expect(existsSync(lock)).toBe(true);
+    expect(calls().filter((c) => c[2] === "browser_open").at(-1)![3]).toMatchObject({ headless: false });
+    expect((await api("DELETE", `/api/remote/sessions/${opened.body.id}`)).status).toBe(200);
+    expect(existsSync(lock)).toBe(false);
+    const reopened = await api("POST", "/api/remote/sessions", { kind: "browser", profile: "reusable" });
+    expect(reopened.status).toBe(200);
+    expect((await api("DELETE", `/api/remote/sessions/${reopened.body.id}`)).status).toBe(200);
+  }, 10_000);
 
   it("sends the picture as each user set it, and gives an open session a viewer with new settings", async () => {
     expect((await api("GET", "/api/remote/settings")).body).toMatchObject({ settings: { format: "auto", quality: 70, fps: 0, maxWidth: 1600, cursor: true, clipboard: true, browser: "" }, video: null });
