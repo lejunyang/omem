@@ -44,6 +44,27 @@ const QUIET_EVENTS = [
   "im.chat.member.bot.deleted_v1",
 ];
 
+/**
+ * The SDK logs a failed API call as the whole HTTP request and response (dozens of lines each); the
+ * callers already say what went wrong. One line per call: method, path, status and Feishu's code.
+ */
+function brief(x: unknown): unknown {
+  const e = x as { config?: { method?: string; url?: string }; response?: { status?: number; data?: { code?: number; msg?: string } }; message?: string } | null;
+  if (e && typeof e === "object" && (e.config || e.response)) {
+    const path = (e.config?.url ?? "").replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+    return `${(e.config?.method ?? "").toUpperCase()} ${path} → ${e.response?.status ?? "?"} ${e.response?.data?.code ?? ""} ${e.response?.data?.msg ?? e.message ?? ""}`.trim();
+  }
+  if (Array.isArray(x)) return x.map(brief);
+  return x;
+}
+const sdkLogger = {
+  error: (...m: unknown[]) => console.warn("[lark]", ...m.map(brief)),
+  warn: (...m: unknown[]) => console.warn("[lark]", ...m.map(brief)),
+  info: () => {},
+  debug: () => {},
+  trace: () => {},
+};
+
 function answerNote(app: App, runId: string | null) {
   if (!runId) return undefined;
   const r = getRun(app, runId);
@@ -190,7 +211,7 @@ export async function startLarkBot(app: App, ref: BotRef = "main") {
   const appSecret = larkAppSecret(app.home, appId, extra ? `OMEM_LARK_APP_SECRET_${ref.toUpperCase().replace(/-/g, "_")}` : cfg.appSecretEnv);
   if (!appId || !appSecret)
     throw new Error(extra ? `没有 ${appId} 的 App Secret：运行 omem setup → 渠道 → 飞书 → 添加机器人` : "还没有绑定飞书机器人：运行 omem setup → 渠道 → 飞书机器人（扫码创建或授权已有应用）");
-  const client = new lark.Client({ appId, appSecret, domain: lark.Domain.Feishu });
+  const client = new lark.Client({ appId, appSecret, domain: lark.Domain.Feishu, logger: sdkLogger });
   const handlers = await setupLarkBot(app, ref, client);
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
     "im.message.receive_v1": handlers.message,
