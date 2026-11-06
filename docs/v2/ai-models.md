@@ -49,14 +49,26 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 | 接口 | 地址 | 默认模型 |
 | --- | --- | --- |
-| OpenAI Decisions API | `POST /v1/decisions` | `gpt-6-luna` |
-| Jev（TypeSafe） | `POST /v1/systemone` | `jev-latest` |
-| Jev（OpenRouter） | `POST /api/alpha/decisions` | `typesafe/jev-1.14` |
+| OpenAI Decisions API | `POST https://api.openai.com/v1/decisions` | `gpt-6-luna` |
+| Jev（TypeSafe） | `POST https://api.typesafe.ai/v1/systemone` | `jev-latest` |
+| Jev（OpenRouter） | `POST https://openrouter.ai/api/v1/systemone`（接受 `jev-latest` 这样的短名） | `jev-latest` |
 | StartLux-Decision（本机） | 本地服务的 `/v1/systemone` | 和注入标记共用（`guard`） |
 
-三家的请求和返回格式不同，阈值也不能互相照搬。omem 会统一成“材料 + 问题 + 选项 → 每个选项的概率”。
+两种格式（`src/core/decision.ts`）：
 
-计划用在访客提问的把关（回答 / 拒绝 / 不理）和规则的 AI 判断：规则上可以选决策模型或通用模型，默认先用决策模型。`fallback` 设成 `general` 时，决策模型不可用或出错就改用通用模型（角色的 Agent）判断；设成 `none` 时按“否”处理。需要读很多原件、调用工具才能判断的事，不交给决策模型。
+- **OpenAI**：`{model, input, questions: [{type, name, instructions, choices: [{value, description}]}]}`，`input` 是文字或 `input_json`；是 / 否用 `predicate`，回 `probability`；选择回 `choice`、`probabilities: [{value, probability}]`、`confidence`。答案是数组，按 `name` 对上。
+- **System One**（Jev、StartLux）：`{model, state, questions: {<编号>: {type, instructions, criteria: {选项: 说明}}}}`；是 / 否用 `noul`（`criteria: {true, false}`），回 `noul`；选择回 `choice`、`probabilities: {选项: 概率}`。StartLux 的是 / 否改问成两个选项的 `choice`，评测里这样更准（judge-models.md），它的 `state` 要是对象。
+- 拒绝回答（`type: "refusal"`）、HTTP 出错、返回的不是 JSON，都算出错。
+
+omem 统一成“材料 + 问题 + 选项 → 选中的一项和每项概率”（`decide`），是 / 否另有 `judgeYesNo`：规则要求用决策模型且配好了就用它，没配好就用通用模型；出错时 `fallback` 是 `general` 就改用通用模型（理由前写明“决策模型出错，改用通用模型”），是 `none` 就按“否”处理。决策模型不写理由，记录里写成“决策模型（提供方 · 模型）：是 0.91”。三家的概率口径不同，阈值不能照搬，现在一律取概率最高的一项。
+
+用在哪里：
+
+- **规则**：`judge` 为 `ai` / `code+ai` 的判断和“模型判断”这一步（`check` 动作），按规则的 `judgeWith`：`decision`（默认，决策模型优先）或 `general`（通用模型读完规则和讨论再判断，会写理由）。材料是规则原话、已满足的条件、事件和所在的讨论。规则页“用哪个模型判断”可选，并显示现在有没有可用的决策模型。
+- **访客提问的把关**（`ai.decision.gatekeeper`，默认开）：三个选项回答 / 拒绝 / 不理，说明取自 `gatekeeper` 角色。拒绝时回固定的一句（群里“这个需要机器人的主人同意，已经去问了。”，私聊或机器人“这个我不能帮忙。”）。出错时按 `fallback` 交给 `gatekeeper` 角色，或者不理。
+- 设置 → AI → 决策 有“试一下”：填材料、问题和选项（不填就是是 / 否），看选中的一项、每项概率、用时。
+
+需要读很多原件、调用工具才能判断的事，不交给决策模型。
 
 ### 图片生成
 
@@ -66,12 +78,13 @@ OpenAI Images API（`gpt-image-2`，生成与编辑），可设尺寸和质量�
 
 1. 设置页分类、API key 与提供方、用 key 生成后端、三类模型的设置和可用状态（已完成）。
 2. 图片：画图工具（新分组）和配套技能，只在图片模型可用时给出。
-3. 决策：统一的判断接口（几家 API + StartLux + 通用模型兜底），接入 `gatekeeper` 和规则判断。
+3. 决策：统一的判断接口（几家 API + StartLux + 通用模型兜底），接入 `gatekeeper` 和规则判断（已完成）。
 4. 语音：问答页语音输入 → 实时对话 → 口语训练。
 
 ## 资料（2026-11-07 查）
 
 - GPT-Live：[OpenAI 公告](https://openai.com/index/introducing-gpt-live-1-in-the-api/)、[语音 WebSocket 指南](https://developers.openai.com/api/docs/guides/voice-websockets?api=live)
-- Decisions API 与 Jev：[TechCrunch](https://techcrunch.com/2026/09/30/openais-jev-clone-could-help-the-frontier-lab-stop-its-swarming-agents/)、[OpenRouter 的 Jev 文档](https://openrouter.ai/docs/guides/community/jev)；Decisions API 的请求格式还没有核对官方文档，接入时再确认
+- Decisions API：[官方指南](https://developers.openai.com/api/docs/guides/decisions)（请求与返回格式以它为准，每次最多 400 个问题，打分 2–10 档）
+- Jev：[OpenRouter 的 Jev 文档](https://openrouter.ai/docs/guides/community/jev)、[TypeSafe SDK 经 OpenRouter](https://openrouter.ai/docs/guides/community/typesafe-sdk.md)、[MixRoute 的 Jev 接口](https://mixroute.ai/docs/api-reference/endpoint/jev)（选择最多 255 项）
 - 图片：`gpt-image-2`（2026-04 发布）
 - Codex 的 key 变量：[codex-acp](https://github.com/zed-industries/codex-acp)、[Codex 认证](https://developers.openai.com/codex/auth)

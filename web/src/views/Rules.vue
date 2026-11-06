@@ -39,6 +39,7 @@ type Rule = {
   trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc"; docs?: string[]; pollMinutes?: number; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
+  judgeWith?: "decision" | "general";
   actions: Action[];
   hits?: number;
   lastFiredAt?: string | null;
@@ -46,7 +47,7 @@ type Rule = {
   createdBy?: string;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
+type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[]; note: string };
 
 const route = useRoute();
@@ -62,7 +63,7 @@ const dirty = ref(false);
 const saving = ref(false);
 const drafting = ref(false);
 
-const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", actions: [{ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" }] });
+const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", judgeWith: "decision", actions: [{ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" }] });
 
 let listSeq = 0;
 async function loadList() {
@@ -169,7 +170,7 @@ async function save() {
       f.conversationId = t.id;
       options.value = await get<Options>("/api/rule-options");
     }
-    const body = { spaceId: f.spaceId, conversationId: f.conversationId, name: f.name, description: f.description, enabled: f.enabled, trigger: f.trigger, conditions: f.conditions, judge: f.judge, actions: f.actions };
+    const body = { spaceId: f.spaceId, conversationId: f.conversationId, name: f.name, description: f.description, enabled: f.enabled, trigger: f.trigger, conditions: f.conditions, judge: f.judge, judgeWith: f.judgeWith, actions: f.actions };
     const saved = f.id ? await put<Rule>(`/api/rules/${f.id}`, body) : await post<Rule>("/api/rules", body);
     dirty.value = false;
     toast("已保存", "ok");
@@ -185,7 +186,7 @@ async function save() {
 }
 async function toggle(r: Rule) {
   try {
-    await put(`/api/rules/${r.id}`, { spaceId: r.spaceId, conversationId: r.conversationId, name: r.name, description: r.description, enabled: !r.enabled, trigger: r.trigger, conditions: r.conditions, judge: r.judge, actions: r.actions });
+    await put(`/api/rules/${r.id}`, { spaceId: r.spaceId, conversationId: r.conversationId, name: r.name, description: r.description, enabled: !r.enabled, trigger: r.trigger, conditions: r.conditions, judge: r.judge, judgeWith: r.judgeWith, actions: r.actions });
     await loadList();
     if (form.value?.id === r.id && !dirty.value) await loadCurrent();
   } catch (e) {
@@ -366,13 +367,21 @@ async function runTest() {
   testing.value = true;
   try {
     const f = form.value;
-    test.value = await post<TestResult>("/api/rules/test", { rule: { name: f.name || "试运行", description: f.description || "试运行", trigger: f.trigger, conditions: f.conditions, judge: f.judge, actions: f.actions }, chatId: testChat.value ?? undefined, ai: testAi.value });
+    test.value = await post<TestResult>("/api/rules/test", { rule: { name: f.name || "试运行", description: f.description || "试运行", trigger: f.trigger, conditions: f.conditions, judge: f.judge, judgeWith: f.judgeWith, actions: f.actions }, chatId: testChat.value ?? undefined, ai: testAi.value });
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {
     testing.value = false;
   }
 }
+// The model checks (AI judging, or a "check" action) can go to the decision model.
+const usesModel = computed(() => !!form.value && (form.value.judge !== "code" || form.value.actions.some((a) => a.type === "check")));
+const judgeWithHint = computed(() => {
+  if (!form.value) return "";
+  if ((form.value.judgeWith ?? "decision") === "general") return "通用模型读完规则和讨论再判断，会写理由；慢一些、贵一些。";
+  const d = options.value.decision;
+  return d?.ready ? `用 ${d.detail}：只给出是 / 否和概率，快、便宜；出错时按 设置 → AI → 决策 的设置处理。` : "还没有可用的决策模型（设置 → AI → 决策），现在用通用模型判断。";
+});
 const judgeHint = computed(() =>
   !form.value ? "" : form.value.judge === "code" ? "只看条件：便宜、可预期。" : form.value.judge === "code+ai" ? "条件先缩小范围，命中的再请模型按原话确认。" : "每条事件都请模型按原话判断（每小时最多 60 次）。建议至少加一个群名之类的条件，改成“条件 + AI”。",
 );
@@ -530,6 +539,11 @@ function startFrom(text: string) {
           <div class="row wrap">
             <UiSegmented v-model="form.judge" size="sm" :options="[{ value: 'code', label: '按条件' }, { value: 'code+ai', label: '条件 + AI 确认' }, { value: 'ai', label: '交给 AI 判断' }]" aria-label="判断方式" @change="touch" />
             <small class="muted">{{ judgeHint }}</small>
+          </div>
+          <div v-if="usesModel" class="row wrap">
+            <span class="small muted">用哪个模型判断</span>
+            <UiSegmented :model-value="form.judgeWith ?? 'decision'" size="sm" :options="[{ value: 'decision', label: '决策模型优先' }, { value: 'general', label: '通用模型' }]" aria-label="用哪个模型判断" @change="(v: any) => { form!.judgeWith = v; touch(); }" />
+            <small class="muted">{{ judgeWithHint }}</small>
           </div>
           <RuleConditions v-model="form.conditions" :fields="condFields" :ops="options.ops" :field-ops="fieldOps" @update:model-value="touch" />
         </section>

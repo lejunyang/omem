@@ -185,6 +185,12 @@ export const ruleInputSchema = z.object({
   }).default({ event: "message", once: "event", waitMinutes: 0, unless: [] }),
   conditions: conditionSchema.nullable().default(null),
   judge: z.enum(["code", "ai", "code+ai"]).default("code"),
+  /**
+   * What answers the model checks (`judge` ai / code+ai, and `check` actions): decision — the decision
+   * model when one is configured (settings → AI → 决策), else the general model; general — always the
+   * general model (it reads the rule and discussion in full and gives a reason).
+   */
+  judgeWith: z.enum(["decision", "general"]).default("decision"),
   actions: z.array(actionSchema).min(1).max(8),
 });
 export type RuleInput = z.input<typeof ruleInputSchema>;

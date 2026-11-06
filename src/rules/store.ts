@@ -20,6 +20,7 @@ type Row = {
   trigger: string;
   conditions: string | null;
   judge: string;
+  judge_with: string | null;
   actions: string;
   created_by: string;
   created_at: string;
@@ -39,6 +40,7 @@ const toRule = (r: Row): Rule => ({
   trigger: { waitMinutes: 0, unless: [], ...json(r.trigger, { event: "message" as const, once: "event" as const }) },
   conditions: r.conditions ? json(r.conditions, null) : null,
   judge: r.judge as Rule["judge"],
+  judgeWith: r.judge_with === "general" ? "general" : "decision",
   actions: json(r.actions, []),
   createdBy: r.created_by,
   createdAt: r.created_at,
@@ -134,9 +136,9 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
   run(
     app.db,
-    `insert into rules(id, name, description, enabled, trigger, conditions, judge, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `insert into rules(id, name, description, enabled, trigger, conditions, judge, judge_with, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      on conflict(id) do update set name = excluded.name, description = excluded.description, enabled = excluded.enabled, trigger = excluded.trigger,
-       conditions = excluded.conditions, judge = excluded.judge, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary), space_id = excluded.space_id, conversation_id = excluded.conversation_id`,
+       conditions = excluded.conditions, judge = excluded.judge, judge_with = excluded.judge_with, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary), space_id = excluded.space_id, conversation_id = excluded.conversation_id`,
     id,
     r.name,
     r.description,
@@ -144,6 +146,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     JSON.stringify(r.trigger),
     r.conditions ? JSON.stringify(r.conditions) : null,
     r.judge,
+    r.judgeWith,
     JSON.stringify(r.actions),
     prev?.created_by ?? by,
     prev?.created_at ?? at,

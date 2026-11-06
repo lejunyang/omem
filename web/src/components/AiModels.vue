@@ -138,6 +138,23 @@ function setCat(patch: Record<string, unknown>, note = `已保存${cat.value ? C
   emit("save", { ...props.config.ai, [cat.value]: { ...props.config.ai[cat.value], ...patch } }, note);
 }
 const status = computed(() => (cat.value && view.value ? view.value.status[cat.value] : null));
+// Try the decision model on a question (yes/no, or a choice with 2+ options, one per line).
+const trial = ref({ material: "", question: "", options: "", busy: false, result: null as null | { choice: string; probabilities: Record<string, number>; by: string; ms: number }, error: "" });
+async function tryDecision() {
+  const t = trial.value;
+  t.busy = true;
+  t.error = "";
+  t.result = null;
+  try {
+    const options = t.options.split("\n").map((s) => s.trim()).filter(Boolean);
+    t.result = await post("/api/ai/decision/test", { material: t.material, question: t.question, options });
+  } catch (e) {
+    t.error = (e as Error).message;
+  } finally {
+    t.busy = false;
+  }
+}
+const sortedProbs = computed(() => Object.entries(trial.value.result?.probabilities ?? {}).sort((a, b) => b[1] - a[1]));
 const noProviders = computed(() => cat.value && cat.value !== "decision" && providerOptions.value.length <= 1);
 </script>
 
@@ -230,9 +247,11 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       </template>
       <template v-else-if="cat === 'decision'">
         <div class="field">
-          <span>决策模型不可用或出错时</span>
-          <UiSegmented :model-value="catValue.fallback" aria-label="决策模型不可用时" :options="[{ value: 'general', label: '改用通用模型判断' }, { value: 'none', label: '不判断（按否处理）' }]" @change="(v: string) => setCat({ fallback: v })" />
+          <span>决策模型出错时（没有配置时总是用通用模型）</span>
+          <UiSegmented :model-value="catValue.fallback" aria-label="决策模型出错时" :options="[{ value: 'general', label: '改用通用模型判断' }, { value: 'none', label: '不判断（按否处理）' }]" @change="(v: string) => setCat({ fallback: v })" />
         </div>
+        <UiCheckbox :model-value="catValue.gatekeeper !== false" switch @change="(v) => setCat({ gatekeeper: v })">访客提问的把关先用决策模型（拒绝时回固定的一句话；关掉则由“访客提问把关”角色判断）</UiCheckbox>
+        <p class="muted small">规则的 AI 判断在每条规则里选“决策模型优先”或“通用模型”，默认决策模型优先。</p>
       </template>
       <template v-else>
         <div class="grid2">
@@ -241,6 +260,21 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
         </div>
       </template>
     </div>
+    <form v-if="cat === 'decision'" class="card pad stack" @submit.prevent="tryDecision">
+      <div class="section-title">试一下</div>
+      <label class="field"><span>材料</span><textarea v-model="trial.material" class="textarea" rows="4" required placeholder="例如一条群消息：线上下单页白屏了，用户点支付没反应，两个浏览器都试过" /></label>
+      <label class="field"><span>问题</span><input v-model="trial.question" class="input" required placeholder="例如：这是不是需要马上处理的线上故障？" /></label>
+      <label class="field"><span>选项（一行一个；不填就是 是 / 否）</span><textarea v-model="trial.options" class="textarea" rows="3" placeholder="回答&#10;拒绝&#10;不理" /></label>
+      <div class="row"><span v-if="trial.error" class="small err-text">{{ trial.error }}</span><span class="spacer" /><button class="btn primary sm" :disabled="trial.busy || !status?.ready">{{ trial.busy ? "判断中…" : "判断" }}</button></div>
+      <div v-if="trial.result" class="stack small">
+        <div><strong>{{ trial.result.choice === "yes" ? "是" : trial.result.choice === "no" ? "否" : trial.result.choice }}</strong> <span class="muted">· {{ trial.result.by }} · {{ trial.result.ms }} ms</span></div>
+        <div v-for="[k, p] in sortedProbs" :key="k" class="prob-row">
+          <span class="prob-label">{{ k === "yes" ? "是" : k === "no" ? "否" : k }}</span>
+          <span class="prob-bar"><span :style="{ width: `${Math.round(p * 100)}%` }" /></span>
+          <span class="mono">{{ p.toFixed(2) }}</span>
+        </div>
+      </div>
+    </form>
   </div>
 </template>
 
@@ -264,6 +298,28 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
 }
 .ok-text {
   color: var(--ok);
+}
+.prob-row {
+  display: grid;
+  grid-template-columns: minmax(48px, 120px) 1fr 40px;
+  gap: 8px;
+  align-items: center;
+}
+.prob-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prob-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--sunken);
+  overflow: hidden;
+}
+.prob-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
 }
 .err-text {
   color: var(--danger);

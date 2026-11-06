@@ -424,7 +424,9 @@ export const configSchema = z.object({
         provider: z.string().default(""),
         model: z.string().default(""),
         fallback: z.enum(["general", "none"]).default("general"),
-      }).default(() => ({ provider: "", model: "", fallback: "general" as const })),
+        /** The guest gatekeeper (lark-guest.ts) asks the decision model first. */
+        gatekeeper: z.boolean().default(true),
+      }).default(() => ({ provider: "", model: "", fallback: "general" as const, gatekeeper: true })),
       image: z.object({
         provider: z.string().default(""),
         model: z.string().default(""),
@@ -432,7 +434,7 @@ export const configSchema = z.object({
         quality: z.string().default(""),
       }).default(() => ({ provider: "", model: "", size: "", quality: "" })),
     })
-    .default(() => ({ providers: [], voice: { provider: "", api: "live" as const, model: "", voice: "" }, decision: { provider: "", model: "", fallback: "general" as const }, image: { provider: "", model: "", size: "", quality: "" } })),
+    .default(() => ({ providers: [], voice: { provider: "", api: "live" as const, model: "", voice: "" }, decision: { provider: "", model: "", fallback: "general" as const, gatekeeper: true }, image: { provider: "", model: "", size: "", quality: "" } })),
   /** Optional prompt-injection flagging with a local judge (StartLux-Decision). Flags only, never blocks. */
   guard: z
     .object({

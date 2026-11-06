@@ -1441,6 +1441,8 @@ export const migrations: readonly string[] = [
   // pollRuleDocs): when it was last looked at, and Feishu's last edit time then.
   `alter table lark_doc_subscriptions add column polled_at text;
    alter table lark_doc_subscriptions add column modified_ms integer;`,
+  // Which model answers a rule's AI checks (docs/v2/ai-models.md): the decision model first, or the general one.
+  `alter table rules add column judge_with text not null default 'decision';`,
 ];
 
 export type Db = DatabaseSync;

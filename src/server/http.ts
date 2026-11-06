@@ -1956,6 +1956,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       conversations: all(app.db, "select id,title,channel,space_id,external_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
       groups: ruleGroups(app),
+      // Whether a rule's “决策模型” choice has one to use (settings → AI → 决策).
+      decision: (({ ready, detail }) => ({ ready, detail }))(categoryStatus(app.config, "decision", app.home)),
     };
   });
   server.post("/api/rule-conversations", async (req) => {
@@ -2467,6 +2469,23 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ key: z.string().trim().max(500).nullable() }), req.body);
     setKey(app.home, id, b.key || null);
     return aiView();
+  });
+  // Settings → AI → 决策: try a question on the configured decision model.
+  server.post("/api/ai/decision/test", async (req) => {
+    const b = q(z.object({ material: z.string().trim().min(1).max(20_000), question: z.string().trim().min(1).max(2000), options: z.array(z.string().trim().min(1).max(200)).max(20).default([]) }), req.body);
+    const { decide } = await import("../core/decision.ts");
+    const started = Date.now();
+    const question = b.options.length >= 2
+      ? { type: "choice" as const, instructions: b.question, options: Object.fromEntries(b.options.map((o) => [o, o])) }
+      : { type: "yesno" as const, instructions: b.question };
+    try {
+      const r = await decide(app, b.material, question);
+      if (!r) throw new HttpError(400, categoryStatus(app.config, "decision", app.home).detail);
+      return { ...r, ms: Date.now() - started };
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw new HttpError(502, (e as Error).message);
+    }
   });
   server.post("/api/ai/providers/:id/test", async (req) => {
     const p = app.config.ai.providers.find((x) => x.id === (req.params as { id: string }).id);

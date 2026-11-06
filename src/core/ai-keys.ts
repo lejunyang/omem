@@ -119,7 +119,7 @@ export function defaultModel(cat: Category, kind: string, api?: string) {
   if (cat === "image") return "gpt-image-2";
   if (kind === "openai") return "gpt-6-luna";
   if (kind === "typesafe") return "jev-latest";
-  if (kind === "openrouter") return "typesafe/jev-1.14";
+  if (kind === "openrouter") return "jev-latest";
   return "";
 }
 

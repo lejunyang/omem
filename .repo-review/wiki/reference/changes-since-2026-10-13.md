@@ -12,6 +12,7 @@ updated: 2026-11-07
 - 设置页的“Agent”改名“AI”，分通用 / 语音 / 决策 / 图片生成 / API key 五个子页（`?tab=agents&section=keys` 可直达）。通用就是原来的内容。
 - `config.ai.providers` 登记 API key 的提供方（openai、anthropic、typesafe、openrouter、openai-compatible），key 在 `secrets/ai-keys.json`（`src/core/ai-keys.ts`）。OpenAI / Anthropic 的提供方可生成 `codex@<编号>` 等后端（`config.ts` 的 `keyedProfiles`），启动时由 `keyEnv` 注入 key，额度单独计。
 - 语音、决策、图片三类模型的设置与可用状态（`categoryStatus`），功能本身分阶段做，设计在 docs/v2/ai-models.md。
+- 决策模型接入（`src/core/decision.ts`）：OpenAI Decisions 与 System One（Jev、本机 StartLux）两种格式；规则加 `judgeWith`（迁移加 `rules.judge_with`），模型判断和 `check` 动作默认决策模型优先；访客把关先问决策模型（`lark-guest.ts` 的 `decisionGate`）；设置页“试一下”（`POST /api/ai/decision/test`）。
 
 ## 访客开放空间按名称多选（11-06）
 
