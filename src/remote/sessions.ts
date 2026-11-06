@@ -3,6 +3,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from "node
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { HttpError, newId, now } from "../core/util.ts";
+import { OWNER } from "../core/users.ts";
 import { AadMcp, aadJson, finalJson, firstJsonLine, spawnAad } from "./aad.ts";
 import { createRecording, getRecording, recordingDir, recordingSummary, updateRecording, type Recording } from "./recordings.ts";
 
@@ -109,10 +110,13 @@ function add(app: App, s: Omit<Live, "viewers" | "idleSince" | "createdAt" | "id
   return session;
 }
 
-/** Long-lived browser profiles under the data directory: a login made once stays. */
-export function profileDir(app: App, name: string) {
+/**
+ * Long-lived browser profiles under the data directory: a login made once stays. Each person has their
+ * own (the owner's at the top, as before; anyone else's under `@<user>`), so no one opens another's logins.
+ */
+export function profileDir(app: App, name: string, userId: string = OWNER) {
   if (!/^[\p{L}\p{N}_-]{1,40}$/u.test(name)) throw new HttpError(400, "资料名只能用文字、数字、下划线和连字符（不超过 40 个字）");
-  return join(app.home, "remote", "profiles", name);
+  return userId === OWNER ? join(app.home, "remote", "profiles", name) : join(app.home, "remote", "profiles", `@${userId}`, name);
 }
 
 const BROWSERS = ["chrome", "edge", "brave"] as const;
@@ -144,7 +148,7 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
   try {
     const args: Record<string, unknown> = { headless: !opts.visible, ...(opts.url ? { url: opts.url } : {}) };
     if (opts.profile) {
-      const dir = profileDir(app, opts.profile);
+      const dir = profileDir(app, opts.profile, opts.userId);
       mkdirSync(dir, { recursive: true });
       args.profile_dir = dir;
     }

@@ -9,6 +9,7 @@ import type { App } from "../src/core/app.ts";
 import { setToolResolverForTests } from "../src/core/tools.ts";
 import { organizeText } from "../src/remote/http.ts";
 import { getRecording, readRecording } from "../src/remote/recordings.ts";
+import { profileDir } from "../src/remote/sessions.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -88,6 +89,12 @@ describe("remote operation", () => {
     delete process.env.FAKE_AAD_NO_CHROME;
     expect(edge.body.browser.name).toBe("edge");
     expect((await api("DELETE", `/api/remote/sessions/${edge.body.id}`)).status).toBe(200);
+  });
+
+  it("keeps each person's long-lived browser profiles apart", () => {
+    expect(profileDir(app, "工作")).toBe(join(app.home, "remote", "profiles", "工作"));
+    expect(profileDir(app, "工作", "wang")).toBe(join(app.home, "remote", "profiles", "@wang", "工作"));
+    expect(() => profileDir(app, "../x", "wang")).toThrow();
   });
 
   it("lets only whoever opened the session see it", async () => {

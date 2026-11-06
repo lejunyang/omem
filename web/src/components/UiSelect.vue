@@ -15,6 +15,8 @@ const props = withDefaults(
     options: SelectOption<V>[];
     placeholder?: string;
     size?: "sm" | "md";
+    /** `inline`: no box, the text and a caret, for a choice inside a chip or a sentence. */
+    variant?: "box" | "inline";
     disabled?: boolean;
     ariaLabel?: string;
     /** CSS width of the trigger; the list is at least as wide. */
@@ -22,7 +24,7 @@ const props = withDefaults(
     /** Show a filter box once there are this many options. */
     searchAt?: number;
   }>(),
-  { size: "md", placeholder: "请选择", searchAt: 12 },
+  { size: "md", variant: "box", placeholder: "请选择", searchAt: 12 },
 );
 const emit = defineEmits<{ "update:modelValue": [value: V]; change: [value: V] }>();
 
@@ -149,7 +151,7 @@ onBeforeUnmount(() => {
     ref="trigger"
     type="button"
     class="ui-select"
-    :class="[size, { open, empty: !current, disabled }]"
+    :class="[size, variant, { open, empty: !current, disabled }]"
     :style="width ? { width } : undefined"
     role="combobox"
     aria-haspopup="listbox"
@@ -162,7 +164,7 @@ onBeforeUnmount(() => {
     @keydown="onKey"
   >
     <span class="value ellipsis">{{ current?.label ?? placeholder }}</span>
-    <Icon name="down" :size="14" class="chev" />
+    <Icon name="down" :size="variant === 'inline' ? 12 : 14" class="chev" />
   </button>
   <Teleport to="body">
     <div
@@ -229,6 +231,27 @@ onBeforeUnmount(() => {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ui-select.inline {
+  width: auto;
+  height: auto;
+  gap: 2px;
+  padding: 1px 3px 1px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font: inherit;
+  color: var(--accent);
+}
+.ui-select.inline:hover {
+  background: var(--hover);
+}
+.ui-select.inline.open,
+.ui-select.inline:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.ui-select.inline .chev {
+  color: inherit;
 }
 .ui-select.empty .value {
   color: var(--muted);

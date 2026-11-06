@@ -246,7 +246,7 @@ describe("meetings the owner joins", () => {
 
   it("joins when the owner invites a bot from the meeting, and asks when someone else does", async () => {
     const { app, calls, cards } = setup();
-    expect(await botInvitedToMeeting(app, "main", { meeting: { id: "m9", meeting_no: "999999999", topic: "临时讨论" }, inviter: { id: "ou_owner", user_name: "我" } })).toContain("已把 小助理 拉进会议");
+    expect(await botInvitedToMeeting(app, "main", { meeting: { id: "m9", meeting_no: "999999999", topic: "临时讨论" }, inviter: { id: { open_id: "ou_owner", union_id: "on_owner", user_id: "u1" }, user_name: "我" } })).toContain("已把 小助理 拉进会议");
     expect(calls[0]).toMatchObject({ url: "/open-apis/vc/v1/bots/join", data: { join_identify: { meeting_no: "999999999" } } });
     const row = one<{ status: string; plan: string }>(app.db, "select status, plan from lark_meetings where meeting_id = 'm9'")!;
     expect(row.status).toBe("listening");

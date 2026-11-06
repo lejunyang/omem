@@ -349,6 +349,10 @@ input[type="number"].input::-webkit-outer-spin-button {
 }
 /* Status line under a scrolling list (loading more, total). */
 .list-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   padding: 10px 8px;
   text-align: center;
   color: var(--muted);

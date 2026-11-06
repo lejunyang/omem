@@ -44,7 +44,7 @@ export const ICONS: Record<string, string> = {
   graph: "M5 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM19 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM8 22a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM6.5 5l11 2.5M5.5 6l2 12M17.5 9 9.5 18.5",
   quote: "M7 7h4v4c0 3-2 5-4 6M15 7h4v4c0 3-2 5-4 6",
   play: "M7 4l13 8-13 8z",
-  user: "M20 21a8 8 0 0 0-16 0M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
+  user: "M20 21.5V20a5 5 0 0 0-5-5H9a5 5 0 0 0-5 5v1.5M12 11.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9z",
   zap: "M13 3 4 14h7l-1 7 9-11h-7z",
   layers: "M12 2 2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
   // Also offered to plugins (their nav icon, settings → 插件).

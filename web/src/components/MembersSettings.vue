@@ -111,10 +111,27 @@ async function signOutAll(u: User) {
     fail(e);
   }
 }
-async function unbind(u: User, i: Identity) {
-  if (!(await confirmDialog(`解绑 ${u.name} 的${i.provider}身份？`, { message: i.kind === "alias" ? "这是渠道里的身份：解绑后机器人不再认得这个人。" : "之后不能再用它登录这个账号。", okText: "解绑", danger: true }))) return;
+/**
+ * One account on a platform, as one chip: the id it logs in with and the ids the bots know it by
+ * (Feishu gives each app its own open_id). Unbinding one alone changes nothing: the next login links it again.
+ */
+type Account = { key: string; provider: string; display: string; ids: Identity[] };
+function accounts(u: User): Account[] {
+  const out = new Map<string, Account>();
+  for (const i of u.identities) {
+    const key = `${i.channel}:${i.display || i.externalId}`;
+    const a = out.get(key) ?? { key, provider: i.provider, display: i.display || i.externalId, ids: [] };
+    a.ids.push(i);
+    out.set(key, a);
+  }
+  return [...out.values()];
+}
+const idsHint = (a: Account) => a.ids.map((i) => `${i.kind === "alias" ? "机器人里认人用" : "登录用"}：${i.externalId}`).join("\n");
+async function unbind(u: User, a: Account) {
+  const message = `他不能再用这个${a.provider}账号登录这个 omem 账号，机器人也不再认得他。之后他再用${a.provider}登录会被当成新来的人，要你重新批准。`;
+  if (!(await confirmDialog(`解绑 ${u.name} 的${a.provider}账号？`, { message, okText: "解绑", danger: true }))) return;
   try {
-    await del(`/api/users/${u.id}/identities`, { channel: i.channel, externalId: i.externalId });
+    for (const i of a.ids) await del(`/api/users/${u.id}/identities`, { channel: i.channel, externalId: i.externalId });
     await load();
   } catch (e) {
     fail(e);
@@ -255,23 +272,25 @@ onMounted(() => load().catch(fail));
             </template>
           </div>
           <div class="small chips">
-            <span v-for="i in u.identities" :key="i.channel + i.externalId" class="badge" :title="i.externalId">
-              {{ i.provider }}{{ i.kind === "alias" ? "（渠道）" : "" }} {{ i.display || i.externalId }}
-              <button class="x" :aria-label="`解绑 ${i.provider}`" @click="unbind(u, i)">×</button>
+            <span v-for="a in accounts(u)" :key="a.key" class="badge" :title="idsHint(a)">
+              {{ a.provider }} · {{ a.display }}
+              <button v-if="u.role !== 'owner'" class="x" :aria-label="`解绑 ${a.provider}账号`" title="解绑这个账号" @click="unbind(u, a)">×</button>
             </span>
             <span v-if="!u.identities.length" class="muted">没有绑定任何身份</span>
           </div>
           <template v-if="u.role !== 'owner'">
             <div class="small chips">
               <span class="muted">空间：</span>
-              <span v-for="s in u.spaces" :key="s.space" class="badge">
-                {{ s.name }} ·
-                <template v-if="s.space.startsWith('personal')">{{ roleName(s.role) }}</template>
-                <UiSelect v-else :model-value="s.role === 'owner' ? 'manager' : s.role" size="sm" width="96px" :aria-label="`${s.name}里的角色`" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, s.space, v)" />
-                <button v-if="!s.space.startsWith('personal')" class="x" :aria-label="`移出 ${s.name}`" @click="setSpace(u, s.space, null)">×</button>
+              <span v-for="s in u.spaces" :key="s.space" class="space-chip">
+                <span class="ellipsis">{{ s.name }}</span>
+                <span v-if="s.space.startsWith('personal')" class="muted">{{ roleName(s.role) }}</span>
+                <UiSelect v-else variant="inline" :model-value="s.role === 'owner' ? 'manager' : s.role" :aria-label="`${s.name}里的角色`" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, s.space, v)" />
+                <button v-if="!s.space.startsWith('personal')" class="x" :aria-label="`移出 ${s.name}`" title="移出这个空间" @click="setSpace(u, s.space, null)">×</button>
               </span>
-              <UiSelect :model-value="adding[u.id] ?? ''" size="sm" width="150px" placeholder="加入空间…" aria-label="加入空间" :options="spaceOptions.filter((o) => !u.spaces.some((s) => s.space === o.value))" @change="(v) => (adding[u.id] = v)" />
-              <UiSelect v-if="adding[u.id]" :model-value="''" size="sm" width="110px" placeholder="选角色" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, adding[u.id], v)" />
+              <span class="space-chip add">
+                <UiSelect variant="inline" :model-value="adding[u.id] ?? ''" placeholder="＋ 加入空间" aria-label="加入空间" :options="spaceOptions.filter((o) => !u.spaces.some((s) => s.space === o.value))" @change="(v) => (adding[u.id] = v)" />
+                <UiSelect v-if="adding[u.id]" variant="inline" :model-value="''" placeholder="选角色" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" @change="(v) => setSpace(u, adding[u.id], v)" />
+              </span>
             </div>
             <UiCheckbox v-if="auth.primary" :model-value="u.loginAny" size="sm" @change="(v) => act(u, { loginAny: v }, '已保存')">允许用{{ label(auth.primary) }}以外的方式登录（企业外的人）</UiCheckbox>
           </template>
@@ -287,10 +306,10 @@ onMounted(() => load().catch(fail));
           <UiSelect :model-value="''" size="sm" width="160px" placeholder="加入空间…" aria-label="邀请加入的空间" :options="spaceOptions.filter((o) => !form.spaces.some((s) => s.space === o.value))" @change="(v) => form.spaces.push({ space: v, role: 'reader' })" />
         </div>
         <div v-if="form.spaces.length" class="small chips">
-          <span v-for="s in form.spaces" :key="s.space" class="badge">
-            {{ spaceOptions.find((o) => o.value === s.space)?.label ?? s.space }} ·
-            <UiSelect v-model="s.role" size="sm" width="96px" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" />
-            <button class="x" aria-label="去掉" @click="form.spaces = form.spaces.filter((x) => x.space !== s.space)">×</button>
+          <span v-for="s in form.spaces" :key="s.space" class="space-chip">
+            <span class="ellipsis">{{ spaceOptions.find((o) => o.value === s.space)?.label ?? s.space }}</span>
+            <UiSelect v-model="s.role" variant="inline" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" />
+            <button class="x" aria-label="去掉" title="去掉这个空间" @click="form.spaces = form.spaces.filter((x) => x.space !== s.space)">×</button>
           </span>
         </div>
         <div class="row wrap">
@@ -397,6 +416,26 @@ onMounted(() => load().catch(fail));
   gap: 4px;
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+.space-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  max-width: 100%;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.space-chip.add {
+  border-style: dashed;
+  padding: 0 6px;
+}
+.space-chip.add :deep(.ui-select.empty .value) {
+  color: var(--muted);
 }
 .x {
   border: 0;

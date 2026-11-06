@@ -314,7 +314,7 @@ const kindOptions = computed(() => [
           </template>
         </VirtualList>
         <div v-if="!runs.length && !listLoading" class="muted small pad">{{ keyword.trim() || kindFilter.length ? "没有符合条件的运行。" : statusFilter ? `没有${statusOptions.find((o) => o.value === statusFilter)?.label}的运行。` : "还没有运行记录。" }}</div>
-        <div v-else-if="listLoading || loadingMore" class="list-foot"><span class="spinner" />搜索中…</div>
+        <div v-else-if="runs.length && (listLoading || loadingMore)" class="list-foot"><span class="spinner" />{{ loadingMore ? "加载中…" : "搜索中…" }}</div>
         <div v-else-if="runs.length >= total" class="list-foot">共 {{ total }} 条</div>
       </div>
     </aside>

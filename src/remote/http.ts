@@ -30,6 +30,11 @@ const viewers = new Map<string, string>();
 function cookieFor(userId: string) {
   const id = randomBytes(24).toString("hex");
   viewers.set(id, userId);
+  // Every view hands out one: the oldest go once there are many (a page opened again gets a new one).
+  for (const old of viewers.keys()) {
+    if (viewers.size <= 1000) break;
+    viewers.delete(old);
+  }
   return `${COOKIE}=${id}; Path=${REMOTE_BASE}; HttpOnly; SameSite=Lax`;
 }
 
@@ -108,9 +113,14 @@ export function attachRemoteUpgrade(app: App, server: Server) {
   });
 }
 
-const profiles = (app: App) => {
-  const dir = join(app.home, "remote", "profiles");
-  return existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [];
+/** One person's long-lived profiles (sessions.ts profileDir): the owner's, or those under `@<user>`. */
+const profiles = (app: App, userId: string) => {
+  const dir = userId === OWNER ? join(app.home, "remote", "profiles") : join(app.home, "remote", "profiles", `@${userId}`);
+  return existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith("@")).map((d) => d.name) : [];
+};
+/** This machine's own browsers carry the owner's logins: only the owner starts from a copy of them. */
+const ownerOnly = (userId: string) => {
+  if (userId !== OWNER) throw new HttpError(403, "只有本人能用这台机器上浏览器的登录");
 };
 
 /** The message that hands a finished recording to the assistant in the page's conversation. */
@@ -146,11 +156,11 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
   // Whether the page is offered at all: aad installed on this machine.
   server.get("/api/remote", async (req) => {
     const status = desktopControl.status();
-    return { available: status.installed, version: status.version, sessions: status.installed ? listSessions(who(req)) : [], profiles: profiles(app) };
+    return { available: status.installed, version: status.version, sessions: status.installed ? listSessions(who(req)) : [], profiles: profiles(app, who(req)) };
   });
   server.get("/api/remote/screens", async () => screens());
   // This machine's own browser profiles, whose logins a session can start from a copy of.
-  server.get("/api/remote/browser-profiles", async () => browserProfiles());
+  server.get("/api/remote/browser-profiles", async (req) => (ownerOnly(who(req)), browserProfiles()));
   // How sessions are shown: each user's picture settings, and which video codecs work here.
   server.get("/api/remote/settings", async (req) => ({ settings: readSettings(app, who(req)), video: cachedProbe(app), probing: probeRunning() }));
   server.put("/api/remote/settings", async (req) => saveSettings(app, who(req), q(remoteSettingsSchema.partial(), req.body)));
@@ -169,6 +179,7 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
       title: z.string().max(200).optional(),
     }), req.body);
     const userId = who(req);
+    if (b.copyFrom) ownerOnly(userId);
     const settings = readSettings(app, userId);
     const viewer = viewerArgs(settings, b.kind, cachedProbe(app));
     const s = b.kind === "browser"

@@ -64,9 +64,11 @@ export function useReviews(runId: Ref<string>, refreshKey: Ref<string | undefine
   const label = (name: string) => data.value?.labels[name] ?? name;
   const findings = computed(() => {
     const own: (Finding & { check: string; fromRound?: number })[] = reviews.value.flatMap((r) => r.findings.map((f) => ({ ...f, check: r.check_name })));
-    // In the latest round, what the owner put off (“暂不改”) in earlier rounds stays in view to take up again.
+    // In the latest round, what the owner put off (“暂不改”) in earlier rounds stays in view to take up
+    // again, and so does one taken up (“改”) that no fix has picked yet (a fix sets fixed_by).
     const latest = round.value === (data.value?.rounds.at(-1)?.round ?? round.value);
-    const carried = latest ? (data.value?.reviews ?? []).filter((r) => r.round < round.value).flatMap((r) => r.findings.filter((f) => f.decision === "later").map((f) => ({ ...f, check: r.check_name, fromRound: r.round }))) : [];
+    const pending = (f: Finding) => f.decision === "later" || (f.decision === "fix" && !f.fixed_by);
+    const carried = latest ? (data.value?.reviews ?? []).filter((r) => r.round < round.value).flatMap((r) => r.findings.filter(pending).map((f) => ({ ...f, check: r.check_name, fromRound: r.round }))) : [];
     return [...own, ...carried].sort((a, b) => Number(settled(a)) - Number(settled(b)) || RANK[a.severity] - RANK[b.severity]);
   });
   /** The change points of this round: the requirement split of its own if one ran, else the business check's. */

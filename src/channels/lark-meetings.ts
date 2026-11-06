@@ -95,6 +95,7 @@ type Consumer = { proc: ChildProcess; ready: boolean; readyAt?: number; stderr: 
 const SETTLED_MS = 45_000;
 const consumers = new Map<string, Consumer>();
 const retryAt = new Map<string, { at: number; tries: number }>();
+const exitSaid = new Map<string, string>();
 let consumerError: string | null = null;
 let consumerOverride: ((key: string, onLine: (line: string) => void) => { stop: () => void } | null) | null = null;
 
@@ -157,7 +158,10 @@ function startConsumer(app: App, key: string) {
       consumerError = consumeError(c.stderr) ?? consumerError ?? "lark-cli 的事件监听退出了";
       // Feishu refused it (no subscription, no permission) right after “ready”: not listening after all.
       if (c.ready && Date.now() - (c.readyAt ?? 0) <= SETTLED_MS) c.ready = false;
-      log(`${key} 的监听退出：${consumerError}`);
+      // The same refusal every half hour (an event the app has not subscribed to) is said once.
+      if (c.ready && Date.now() - c.startedAt > 5 * 60_000) exitSaid.delete(key);
+      if (exitSaid.get(key) !== consumerError) log(`${key} 的监听退出：${consumerError}`);
+      exitSaid.set(key, consumerError);
       const prev = retryAt.get(key)?.tries ?? 0;
       // A consumer that ran a while died of something passing; one that never came up waits longer each time.
       const tries = c.ready && Date.now() - c.startedAt > 5 * 60_000 ? 0 : prev + 1;
@@ -506,7 +510,10 @@ async function retryJoin(app: App, id: string, plan: MeetingPlan, retry: number)
 // ---- a bot invited from the meeting itself ----------------------------------------------------------
 
 const INVITED = "invited";
-type Invite = { meeting?: { id?: string; topic?: string; meeting_no?: string; start_time?: string }; inviter?: { id?: string; user_name?: string }; bot?: { id?: string } };
+/** Feishu sends ids as `{ open_id, union_id, user_id }` (checked on a real invitation); a bare string is taken as an open_id. */
+type EventId = string | { open_id?: string; union_id?: string; user_id?: string };
+type Invite = { meeting?: { id?: string; topic?: string; meeting_no?: string; start_time?: string }; inviter?: { id?: EventId; user_name?: string }; bot?: { id?: EventId } };
+const openIdOf = (id: EventId | undefined) => (typeof id === "string" ? id : id?.open_id) || undefined;
 
 /**
  * Someone put bot `ref` into a meeting from the meeting (`vc.bot.meeting_invited_v1`). It joins and
@@ -520,7 +527,8 @@ export async function botInvitedToMeeting(app: App, ref: string, data: Invite): 
   const no = str(data.meeting?.meeting_no);
   if (!id || !no) return "邀请里没有会议号";
   const { larkOwnerOpenId } = await import("./lark-send.ts");
-  const byOwner = !!data.inviter?.id && data.inviter.id === larkOwnerOpenId(app, ref);
+  const inviterId = openIdOf(data.inviter?.id);
+  const byOwner = !!inviterId && inviterId === larkOwnerOpenId(app, ref);
   const inviter = byOwner ? "你" : (data.inviter?.user_name ?? "别人");
   let row = getRow(app, id);
   if (row && json<Joined[]>(row.bots, []).some((b) => b.bot === ref && b.ok && !b.left) && ["listening", "joined"].includes(row.status)) return "机器人已经在会里";

@@ -58,7 +58,9 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
       const live = (f: Finding) => f.merged_into === null && !["rejected", "merged"].includes(f.state);
       for (const rv of data?.reviews ?? []) {
         for (const f of rv.findings) {
-          if (!live(f) || (rv.round !== latest && f.decision !== "later")) continue;
+          // Earlier rounds: what was put off, and what was taken up again that no fix has picked yet.
+          const pending = f.decision === "later" || (f.decision === "fix" && !f.fixed_by);
+          if (!live(f) || (rv.round !== latest && !pending)) continue;
           found.push({ finding: f, check: data!.labels[rv.check_name] ?? rv.check_name, thread: null, uri: f.file_path ? await this.current.resolve(f.file_path) : null });
         }
       }

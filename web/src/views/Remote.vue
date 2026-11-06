@@ -360,8 +360,10 @@ const counts = (r: Recording) => {
             </button>
           </div>
           <span v-else class="spacer" />
-          <span class="muted small nowrap">aad {{ version }}</span>
-          <button class="btn sm" :class="showSettings ? 'primary' : 'ghost'" :aria-expanded="showSettings" @click="toggleSettings"><Icon name="settings" :size="14" />画面设置</button>
+          <div class="tools">
+            <span class="muted small nowrap">aad {{ version }}</span>
+            <button class="btn sm" :class="showSettings ? 'primary' : 'ghost'" :aria-expanded="showSettings" @click="toggleSettings"><Icon name="settings" :size="14" />画面设置</button>
+          </div>
         </div>
 
         <div v-if="showSettings" class="settings card pad">
@@ -502,9 +504,13 @@ const counts = (r: Recording) => {
   gap: 10px;
   min-width: 0;
 }
-.bar > .muted,
-.bar > .btn {
-  margin-bottom: 6px;
+/* Centred on the tabs' height, whether or not there are tabs. */
+.bar > .tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 35px;
+  flex: none;
 }
 /* Sessions as tabs, joined to the frame below like a browser's. */
 .stabs {
@@ -572,10 +578,11 @@ const counts = (r: Recording) => {
   width: 7px;
   height: 7px;
 }
+/* In the middle of what is left below the bar. */
 .opener {
   max-width: 600px;
   width: 100%;
-  margin: 4vh auto 0;
+  margin: auto;
   box-sizing: border-box;
 }
 .opener h2 {
