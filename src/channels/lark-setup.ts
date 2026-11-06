@@ -319,6 +319,13 @@ export async function larkAppScopes(appId: string, appSecret: string, request: t
 }
 
 /** Get a tenant token and read the bot's info and granted scopes. Does not send anything. */
+/** Event keys (im.message.receive_v1) in a version's event_infos, whatever the field holding them is called. */
+export function eventKeys(infos: unknown): string[] {
+  if (!Array.isArray(infos)) return [];
+  const key = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+_v\d+$/;
+  return [...new Set(infos.flatMap((i) => (typeof i === "string" ? [i] : i && typeof i === "object" ? Object.values(i as Record<string, unknown>) : []).filter((v): v is string => typeof v === "string" && key.test(v))))];
+}
+
 export async function checkLarkApp(appId: string, appSecret: string, request: typeof fetch = fetch): Promise<LarkCheck> {
   const base = "https://open.feishu.cn/open-apis";
   try {
@@ -352,9 +359,14 @@ export async function checkLarkApp(appId: string, appSecret: string, request: ty
       // The version online is what Feishu delivers; a subscription added since needs a new version.
       if (info?.online_version_id) {
         try {
-          const v = (await (await request(`${base}/application/v6/applications/${appId}/app_versions/${info.online_version_id}?lang=zh_cn`, { headers, signal: AbortSignal.timeout(15_000) })).json()) as { code?: number; data?: { app_version?: { events?: string[] } } };
+          const v = (await (await request(`${base}/application/v6/applications/${appId}/app_versions/${info.online_version_id}?lang=zh_cn`, { headers, signal: AbortSignal.timeout(15_000) })).json()) as { code?: number; data?: { app_version?: { events?: string[]; event_infos?: unknown[] } } };
           const ev = v.code === 0 ? v.data?.app_version?.events : undefined;
           if (Array.isArray(ev) && ev.every((e) => typeof e === "string" && e.includes("."))) subs.publishedEvents = ev;
+          // A real app's `events` are display names (“文件编辑”); the keys are in `event_infos`.
+          else if (v.code === 0) {
+            const keys = eventKeys(v.data?.app_version?.event_infos);
+            if (keys.length) subs.publishedEvents = keys;
+          }
         } catch {}
       }
     } catch {}

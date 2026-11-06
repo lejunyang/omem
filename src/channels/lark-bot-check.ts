@@ -115,6 +115,7 @@ export async function rawAppInfo(app: App, ref: string, request: typeof fetch = 
     versionKeys: Object.keys(v),
     versionScopes: v.scopes ?? null,
     versionEvents: v.events ?? null,
+    versionEventInfos: v.event_infos ?? null,
     versionStatus: v.status ?? null,
   };
 }

@@ -6,7 +6,7 @@ import { setupLarkBot } from "../src/channels/lark-bot.ts";
 import { summarizeCheck } from "../src/channels/lark-bot-check.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { feedbackStats, markLarkSent, onLarkReaction, polarityOf, reactionEventsQuiet, recordLarkSent } from "../src/channels/lark-feedback.ts";
-import { checkLarkApp, LARK_BOT_ADDONS } from "../src/channels/lark-setup.ts";
+import { checkLarkApp, eventKeys, LARK_BOT_ADDONS } from "../src/channels/lark-setup.ts";
 import { FEATURES } from "../src/auth/features.ts";
 import { onLarkSent, sendLark, setLarkBotClient } from "../src/channels/lark-send.ts";
 import { ownerReactions, reactionsBy } from "../src/channels/notify-gate.ts";
@@ -195,6 +195,8 @@ describe("reaction feedback", () => {
     expect(s.events.subscribed).toEqual(["im.message.receive_v1", "im.message.reaction.created_v1"]);
     expect(s.events.missing.map((e) => e.name)).toContain("im.message.reaction.deleted_v1");
     expect(s.events.unpublished).toEqual([]);
+    // The version's event_infos: display names next to the keys.
+    expect(eventKeys([{ event_name: "文件编辑", event_type: "drive.file.edit_v1" }, { name: "接收消息", key: "im.message.receive_v1" }, "drive.notice.comment_add_v1", { name: "x.y" }])).toEqual(["drive.file.edit_v1", "im.message.receive_v1", "drive.notice.comment_add_v1"]);
     for (const scope of FEATURES.lark.flatMap((f) => f.scopes)) expect(LARK_BOT_ADDONS.scopes.user).toContain(scope);
     expect(new Set(LARK_BOT_ADDONS.scopes.user).size).toBe(LARK_BOT_ADDONS.scopes.user.length);
   });

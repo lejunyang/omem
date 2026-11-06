@@ -1498,3 +1498,4 @@ updated: 2026-11-06
 - `lark-setup.ts` 的 `LARK_BOT_ADDONS.scopes.user` 加上 `FEATURES.lark` 里各功能的权限（去重），扫码更新一并申请成员连接飞书要的用户身份权限；以前只有个人采集那一套，扫完成员那一行还缺三项。
 - `summarizeCheck`：应用信息没给事件订阅时用线上版本的事件；“未发布”只在两边都有时比较。设置页去掉权限的“一键申请”（多项逗号分隔在飞书权限页搜不出来）和“去事件订阅页面”，说明改成扫码更新后发布新版本；扫码链接只在浏览器拦下新页面时显示。
 - 远程命令 `lark-bot-permissions` 加 `raw`（`rawAppInfo`：应用信息和线上版本的权限、事件原样）；新的 `lark-doc-subscribe`（`link` 订阅一篇，`retryFailed` 重试被拒的，`retryFailedSubscriptions`）。每天的批量订阅里没试过的优先，被拒的三天后再试（以前一周）。
+- 真实应用的线上版本里 `events` 是显示名（“文件编辑”“接收消息”），事件键在 `event_infos`：`eventKeys` 从里面取出 `xx.yy_v1` 形式的键当作已订阅的事件；`raw` 也带上 `event_infos`。
