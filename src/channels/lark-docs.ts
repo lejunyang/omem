@@ -1021,9 +1021,13 @@ export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s:
     app.db,
     "select id, space_id, uri, meta, updated_at from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'",
   );
+  // Documents whose changes arrive as events (lark-doc-events.ts) are read when they change, once
+  // events have been seen to arrive at all (the app may not subscribe to them yet).
+  const { subscribedSourceIds, docEventsArrive } = await import("./lark-doc-events.ts");
+  const byEvent = docEventsArrive(app) ? subscribedSourceIds(app) : new Set<string>();
   const due = rows
     .map((r) => ({ ...r, m: json<Partial<LarkDocMeta>>(r.meta, {}) }))
-    .filter((r) => opts.force || docDue(r.m, now, steps))
+    .filter((r) => opts.force || (!byEvent.has(r.id) && docDue(r.m, now, steps)))
     .map((r) => ({ ...r, ...normalizeDocUrl(r.m.url ?? r.uri) }));
   if (!due.length) return { checked: 0, edited: 0, changed: [] as { spaceId: string; ids: string[] }[] };
   const edits = await lastEdits(due.map((d) => ({ token: d.token, type: d.type })));

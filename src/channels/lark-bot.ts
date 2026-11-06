@@ -32,6 +32,17 @@ import { askAsGuest, guestApprovalCard, guestsAllowed, onGuestApproved, ownerInC
 import { claimedByRule, markAddressed } from "../rules/store.ts";
 import { larkSenderNames } from "./lark-sender.ts";
 import { markLarkSent, onLarkReaction, recordLarkSent } from "./lark-feedback.ts";
+import { DOC_EVENTS, onDocEvent } from "./lark-doc-events.ts";
+
+/** Events apps often subscribe to that omem reads another way; seen on a real bot during meetings and group changes. */
+const QUIET_EVENTS = [
+  "vc.bot.meeting_activity_v1",
+  "vc.bot.meeting_ended_v1",
+  "im.chat.member.user.added_v1",
+  "im.chat.member.user.deleted_v1",
+  "im.chat.member.bot.added_v1",
+  "im.chat.member.bot.deleted_v1",
+];
 
 function answerNote(app: App, runId: string | null) {
   if (!runId) return undefined;
@@ -190,6 +201,11 @@ export async function startLarkBot(app: App, ref: BotRef = "main") {
     // Put into a meeting from the meeting itself (lark-meetings.ts); the app must subscribe to it.
     "vc.bot.meeting_invited_v1": (d: Record<string, unknown>) =>
       void import("./lark-meetings.ts").then((m) => m.botInvitedToMeeting(app, ref, d)).catch((e) => console.warn(`[omem] 处理会议邀请失败：${(e as Error).message}`)),
+    // Document changes and comments to the bot (lark-doc-events.ts): rule events, and captured documents kept current.
+    ...Object.fromEntries(DOC_EVENTS.map((e) => [e, (d: unknown) => onDocEvent(app, ref, e, d)])),
+    // Subscribed in many apps but read another way (the bot's meeting events by polling, members by
+    // capture): taken quietly, or the SDK warns for each one (hundreds per meeting).
+    ...Object.fromEntries(QUIET_EVENTS.map((e) => [e, () => {}])),
   } as never);
   const ws = new lark.WSClient({ appId, appSecret, domain: lark.Domain.Feishu, loggerLevel: lark.LoggerLevel.warn });
   await ws.start({ eventDispatcher: dispatcher });

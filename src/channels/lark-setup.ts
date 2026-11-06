@@ -70,6 +70,11 @@ export const LARK_BOT_ADDONS = {
       // Rules that bring the bot into the owner's meetings (lark-meetings.ts).
       "vc:meeting.bot.join:write",
       "vc:meeting.message:write",
+      // Rules on document changes (lark-doc-events.ts): subscribing to a document, its edits, comments, table records and fields.
+      "docs:event:subscribe",
+      "docs:event.document_edited:read",
+      "base:record:read",
+      "base:field:read",
     ],
     // User identity: what personal capture through lark-cli reads (only if lark-cli is pointed at this same app).
     user: [
@@ -93,6 +98,8 @@ export const LARK_BOT_ADDONS = {
       "vc:note:read",
       // Knowing when the owner joins a meeting, and reading what is said there (lark-meetings.ts).
       "vc:meeting.meetingevent:read",
+      // Feishu wants a document subscription granted to the app's user identity as well.
+      "docs:event:subscribe",
     ],
   },
   events: {
@@ -103,6 +110,10 @@ export const LARK_BOT_ADDONS = {
         "im.chat.member.bot.deleted_v1",
         "im.message.reaction.created_v1",
         "im.message.reaction.deleted_v1",
+        "drive.file.edit_v1",
+        "drive.file.bitable_record_changed_v1",
+        "drive.file.bitable_field_changed_v1",
+        "drive.notice.comment_add_v1",
       ],
     },
   },
@@ -236,6 +247,10 @@ export const LARK_BOT_EVENTS: { name: string; label: string; optional?: boolean 
   { name: "im.message.reaction.created_v1", label: "有人加表情（回答的反馈）" },
   { name: "im.message.reaction.deleted_v1", label: "有人取消表情" },
   { name: "vc.bot.meeting_invited_v1", label: "机器人被邀请入会（会议规则）", optional: true },
+  { name: "drive.file.edit_v1", label: "订阅的文档有编辑（文档变化规则）", optional: true },
+  { name: "drive.file.bitable_record_changed_v1", label: "订阅的多维表格记录变化（文档变化规则）", optional: true },
+  { name: "drive.file.bitable_field_changed_v1", label: "订阅的多维表格字段变化（文档变化规则）", optional: true },
+  { name: "drive.notice.comment_add_v1", label: "文档评论里 @ 了机器人（文档变化规则）", optional: true },
 ];
 export const LARK_BOT_CALLBACKS = [{ name: "card.action.trigger", label: "卡片按钮和表单" }];
 

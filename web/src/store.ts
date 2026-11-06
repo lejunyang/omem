@@ -127,6 +127,7 @@ export const runKindLabel: Record<string, string> = {
   "lark-command": "私聊指令",
   "lark-resource-parse": "解析附件",
   "rule-fire": "规则（等待后）",
+  "rule-script": "规则脚本",
   "profile-review": "复盘",
   "role-merge": "合并角色",
   "peer-agent": "设备的外部 Agent",

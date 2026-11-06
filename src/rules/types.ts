@@ -29,12 +29,26 @@ export const FIELDS = {
   "meeting.participantCount": "在会人数（入会时和之后十分钟内，不算机器人）",
   "meeting.invitedCount": "会邀人数（日程邀请的人，群按成员算，不算会议室和拒绝的）",
   "meeting.host": "主持人",
+  "doc.title": "文档标题",
+  "doc.type": "文档类型（docx 文档 / sheet 电子表格 / bitable 多维表格）",
+  "doc.url": "文档链接",
+  "doc.location": "文档所在（知识库和目录，或云空间文件夹）",
+  "doc.space": "文档存在 omem 的哪个空间（空间 id）",
+  "change.kind": "变化类型（edit 内容编辑 / comment 评论 / record 多维表格记录 / field 多维表格字段）",
+  "change.text": "变化的内容（新增和删掉的文字、评论、记录的前后值）",
+  "change.added": "新增的文字（编辑时）",
+  "change.editor": "修改人 / 评论人（名字）",
+  "change.editorEmail": "修改人 / 评论人邮箱",
+  "change.mentions": "这次变化里被 @ 的人（名字）",
+  "change.mentionsOwner": "这次变化 @ 了本人",
+  "change.mentionsBot": "这次变化 @ 了 omem 机器人",
 } as const;
 export type Field = keyof typeof FIELDS;
-/** Which fields each trigger has: a meeting has no chat or message, a message no meeting. */
-export const EVENT_FIELDS: Record<"message" | "meeting", Field[]> = {
-  message: (Object.keys(FIELDS) as Field[]).filter((f) => !f.startsWith("meeting.")),
+/** Which fields each trigger has: a meeting has no chat or message, a message no meeting, a document change neither. */
+export const EVENT_FIELDS: Record<"message" | "meeting" | "doc", Field[]> = {
+  message: (Object.keys(FIELDS) as Field[]).filter((f) => !/^(meeting|doc|change)\./.test(f)),
   meeting: (Object.keys(FIELDS) as Field[]).filter((f) => f.startsWith("meeting.")),
+  doc: (Object.keys(FIELDS) as Field[]).filter((f) => /^(doc|change)\./.test(f)),
 };
 export const OPS = ["equals", "contains", "startsWith", "endsWith", "matches", "in", "is", "gte", "lte"] as const;
 export type Op = (typeof OPS)[number];
@@ -121,6 +135,28 @@ export const actionSchema = z.discriminatedUnion("type", [
   }),
   /** Only in temporary rules an agent sets (agents/wakes.ts): wake a conversation's agent or a profile. */
   z.object({ type: z.literal("wake"), note: z.string(), target: z.object({ conversationId: z.string().optional(), spec: z.string().optional(), resumeRunId: z.string().optional() }) }),
+  /** The actions after this one run this many minutes later (rules/actions.ts continueActions). */
+  z.object({ type: z.literal("delay"), minutes: z.number().int().min(1).max(7 * 1440) }),
+  /**
+   * The model looks at the event (and what the earlier actions did) and answers `question` yes or no;
+   * on no, the actions after it do not run. A gate in the middle of a rule, where conditions cannot say it.
+   */
+  z.object({ type: z.literal("check"), question: z.string().trim().min(1).max(2000) }),
+  /**
+   * A script the owner wrote, run on this machine (rules/script.ts) with the event as JSON (stdin and
+   * OMEM_EVENT), never pasted into the code. `approval` asks someone on a card first: the owner, a
+   * named person (name, email or user id), or one the model picks from the event by `hint`
+   * (“文档的所有者”). Only the owner can save a rule with a script.
+   */
+  z.object({
+    type: z.literal("script"),
+    runtime: z.enum(["node", "python", "bash"]),
+    code: z.string().min(1).max(100_000),
+    timeoutSec: z.number().int().min(1).max(3600).default(60),
+    approval: z
+      .object({ by: z.enum(["none", "owner", "person", "ai"]).default("owner"), person: z.string().trim().max(200).optional(), hint: z.string().trim().max(1000).optional() })
+      .default({ by: "owner" }),
+  }),
 ]);
 export type RuleAction = z.infer<typeof actionSchema>;
 
@@ -131,7 +167,9 @@ export const ruleInputSchema = z.object({
   description: z.string().trim().min(1).max(2000),
   enabled: z.boolean().default(false),
   trigger: z.object({
-    event: z.enum(["message", "chat-new", "schedule", "meeting"]).default("message"),
+    event: z.enum(["message", "chat-new", "schedule", "meeting", "doc"]).default("message"),
+    /** Documents a `doc` rule watches (links): omem subscribes to their changes as the bot. */
+    docs: z.array(z.string().trim().min(1).max(500)).max(200).optional(),
     once: z.enum(["event", "chat"]).default("event"),
     cron: z.string().optional(),
     /** Wait this long after a match before acting (no one responded in time → act). */
@@ -155,15 +193,18 @@ export type Rule = z.infer<typeof ruleInputSchema> & { id: string; createdAt: st
 export type RuleEvent = {
   /** Dedupe key: one message (or chat, or schedule tick) is handled once per rule. */
   key: string;
-  kind: "message" | "chat-new" | "schedule" | "meeting";
+  kind: "message" | "chat-new" | "schedule" | "meeting" | "doc";
   at: string;
   chat?: { id: string; name: string; kind: "group" | "p2p" };
   sender?: { id?: string; name: string; email?: string | null; kind: "owner" | "user" | "bot" };
   message?: { id: string; text: string; type: string; mentionsOwner: boolean; mentionsBot: boolean; topicId?: string | null; cardTitle?: string | null };
   /** The meeting the owner joined. participantCount: null = unknown; omitted = count participants. invitedCount: null or omitted = unknown. */
   meeting?: { id: string; no?: string; title: string; participants: string[]; participantCount?: number | null; invitedCount?: number | null; host?: string; calendarEventId?: string };
+  /** A document that changed (lark-doc-events.ts): what changed, who changed it, who it @-mentions. */
+  doc?: { token: string; type: string; title: string; url: string; location?: string; space?: string; sourceId?: string };
+  change?: { kind: "edit" | "comment" | "record" | "field"; text: string; added?: string; editor?: string; editorEmail?: string | null; mentions: string[]; mentionsOwner: boolean; mentionsBot: boolean; commentId?: string };
   /** Where it came from: the bot sees groups it is in in real time; the owner's capture sees every chat. */
-  via: "bot" | "capture" | "schedule" | "test" | "meeting";
+  via: "bot" | "capture" | "schedule" | "test" | "meeting" | "doc";
   /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */
   bot?: string;
 };

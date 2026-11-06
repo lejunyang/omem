@@ -6,6 +6,7 @@ import { runActions } from "./actions.ts";
 import { aiJudge, eventSummary } from "./compile.ts";
 import { describe, evaluate, eventReader, type ChatBot } from "./conditions.ts";
 import { meetingConfirmation } from "./meeting.ts";
+import { linkIsDoc } from "../channels/lark-doc-events.ts";
 import { createRun } from "../agents/runs.ts";
 import { discussion, discussionText, engagement, followedTopic, unfollowTopic, type Followed } from "./context.ts";
 import { addressed, claimEvent, deleteRule, listRules, recordFiring } from "./store.ts";
@@ -18,7 +19,7 @@ import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./ty
 export async function dispatchRuleEvent(app: App, e: RuleEvent) {
   let rules: Rule[];
   try {
-    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind && (!r.spaceId || !e.chat || r.spaceId === captureSpace(app, e.chat.id)));
+    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind && inScope(app, r, e));
   } catch {
     return;
   }
@@ -29,6 +30,14 @@ export async function dispatchRuleEvent(app: App, e: RuleEvent) {
       console.warn(`[omem] 规则「${rule.name}」处理失败：${(err as Error).message}`);
     }
   }
+}
+
+/** A rule set to one space sees that space's chats and documents; a document rule with links, only those documents. */
+function inScope(app: App, r: Rule, e: RuleEvent) {
+  if (r.spaceId && e.chat && r.spaceId !== captureSpace(app, e.chat.id)) return false;
+  if (r.spaceId && e.doc && e.doc.space && r.spaceId !== e.doc.space) return false;
+  if (e.doc && r.trigger.docs?.length) return r.trigger.docs.some((link) => linkIsDoc(app, link, e.doc!.token));
+  return true;
 }
 
 /** Several events (a capture batch) in order. */
@@ -85,11 +94,17 @@ async function consider(app: App, rule: Rule, e: RuleEvent) {
   if (rule.temporary?.once) deleteRule(app, rule.id);
 }
 
-/** A waiting rule's time is up (run kind rule-fire). */
-export async function fireAfterWait(app: App, ruleId: string, key: string, e: RuleEvent) {
+/**
+ * A waiting rule's time is up (run kind rule-fire). With `later`, a delay in the rule's actions passed:
+ * the actions after it run now, as they were when it fired.
+ */
+export async function fireAfterWait(app: App, ruleId: string, key: string, e: RuleEvent, later?: { actions: Rule["actions"]; reason?: string; discussion?: string }) {
   const rule = listRules(app, { enabledOnly: true }).find((r) => r.id === ruleId);
   if (!rule) return { summary: "规则已停用或删除，没有执行" };
-  return { summary: await act(app, rule, e, key) };
+  if (!later) return { summary: await act(app, rule, e, key) };
+  const results = await runActions(app, rule, e, later.reason ?? "", { discussion: later.discussion }, later.actions);
+  recordFiring(app, { ruleId: rule.id, eventKey: `${key}#later`, summary: eventSummary(e), judgedBy: "code", reason: "延时到了，接着做后面的动作", results }, { skipped: true });
+  return { summary: results.map((r) => `${r.action}：${r.detail}`).join("；") };
 }
 
 /**
@@ -164,9 +179,10 @@ export async function judge(app: App, rule: Pick<Rule, "id" | "description" | "c
   if (e.kind === "schedule") return { match: true, by: "code", reason: "定时" };
   const read = eventReader(e, { chatBots: (id) => chatBots(app, id), ownAppId: app.config.lark.appId || undefined });
   if (rule.judge !== "ai") {
-    // A meeting rule without conditions is about every meeting the owner joins.
-    if (!rule.conditions && e.kind === "meeting") {
-      if (rule.judge === "code") return { match: true, by: "code", reason: "每场会议" };
+    // A meeting rule without conditions is about every meeting the owner joins; a document rule without
+    // them, about every change of the documents it lists (inScope checked those).
+    if (!rule.conditions && (e.kind === "meeting" || e.kind === "doc")) {
+      if (rule.judge === "code") return { match: true, by: "code", reason: e.kind === "meeting" ? "每场会议" : "盯着的文档有变化" };
     } else {
       if (!rule.conditions || !(await evaluate(rule.conditions, read))) return { match: false, by: "code", reason: "" };
       if (rule.judge === "code") return { match: true, by: "code", reason: describe(rule.conditions) };

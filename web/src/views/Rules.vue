@@ -25,7 +25,10 @@ type Action =
   | { type: "invite-bot" }
   | { type: "capture" }
   | { type: "notify"; urgent: boolean }
-  | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; importShared: boolean; leaveWithOwner: boolean };
+  | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; importShared: boolean; leaveWithOwner: boolean }
+  | { type: "delay"; minutes: number }
+  | { type: "check"; question: string }
+  | { type: "script"; runtime: "node" | "python" | "bash"; code: string; timeoutSec: number; approval: { by: "none" | "owner" | "person" | "ai"; person?: string; hint?: string } };
 type Rule = {
   id?: string;
   spaceId?: string;
@@ -33,7 +36,7 @@ type Rule = {
   name: string;
   description: string;
   enabled: boolean;
-  trigger: { event: "message" | "chat-new" | "schedule" | "meeting"; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
+  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc"; docs?: string[]; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
   actions: Action[];
@@ -43,7 +46,7 @@ type Rule = {
   createdBy?: string;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { fields: Record<string, string>; eventFields?: Record<"message" | "meeting", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
+type Options = { fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[]; note: string };
 
 const route = useRoute();
@@ -115,7 +118,7 @@ async function loadCurrent(protectEdits = false) {
     form.value = { ...r };
     dirty.value = false;
     perms.value = null;
-    if (r.trigger.event === "meeting") void checkPermissions(r.id!);
+    if (r.trigger.event === "meeting" || r.trigger.event === "doc") void checkPermissions(r.id!);
   } catch (e) {
     if (current()) toast((e as Error).message, "error");
   }
@@ -173,7 +176,7 @@ async function save() {
     await loadList();
     if (!f.id) await router.replace({ query: { id: saved.id! } });
     else await loadCurrent();
-    if (f.trigger.event === "meeting") void checkPermissions(saved.id!);
+    if (f.trigger.event === "meeting" || f.trigger.event === "doc") void checkPermissions(saved.id!);
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {
@@ -198,7 +201,7 @@ async function remove() {
 }
 
 // ---- actions ------------------------------------------------------------------------
-const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会" };
+const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会", delay: "延时", check: "模型判断", script: "执行脚本" };
 const replyOptions = [
   { value: "none", label: "只告诉我" },
   { value: "draft", label: "先给我看" },
@@ -253,6 +256,9 @@ function addAction(type: string | null) {
     : type === "watch" ? { type, spec, on: "mention", reply: "draft" }
     : type === "notify" ? { type, urgent: false }
     : type === "meeting-bot" ? meetingAction()
+    : type === "delay" ? { type, minutes: 30 }
+    : type === "check" ? { type, question: "" }
+    : type === "script" ? { type, runtime: "node", code: SCRIPT_SAMPLE, timeoutSec: 60, approval: { by: "owner" } }
     : ({ type } as Action);
   form.value.actions.push(a);
   touch();
@@ -266,6 +272,23 @@ function moveAction(i: number, d: number) {
 }
 const scheduleOnly = computed(() => form.value?.trigger.event === "schedule");
 const meetingRule = computed(() => form.value?.trigger.event === "meeting");
+const docRule = computed(() => form.value?.trigger.event === "doc");
+const isOwner = computed(() => state.me?.role === "owner");
+/** What a new script starts as: reading the event it gets. */
+const SCRIPT_SAMPLE = [
+  "// 触发这条规则的事件在 process.env.OMEM_EVENT（JSON），也从标准输入传进来。",
+  "const event = JSON.parse(process.env.OMEM_EVENT);",
+  "console.log(event.doc?.title ?? event.chat?.name, event.change?.text ?? event.message?.text);",
+].join("\n");
+const SCRIPT_HINT: Record<string, string> = { node: "Node（用 omem 自己的 Node 运行）", python: "Python 3", bash: "Bash" };
+const approvalOptions = [{ value: "owner", label: "我批准" }, { value: "person", label: "指定的人批准" }, { value: "ai", label: "AI 判断谁批准" }, { value: "none", label: "不用批准" }];
+/** Minutes shown in the largest whole unit: 90 → 90 分钟, 120 → 2 小时, 1440 → 1 天. */
+const delayUnit = (m: number) => (m % 1440 === 0 ? 1440 : m % 60 === 0 ? 60 : 1);
+function setDelay(a: Extract<Action, { type: "delay" }>, n: number, unit: number) {
+  a.minutes = Math.max(1, Math.round((Number.isFinite(n) ? n : 1) * unit));
+  touch();
+}
+const docLinks = (v: string) => v.split("\n").map((x) => x.trim()).filter(Boolean);
 const meetingAction = (): Action => ({ type: "meeting-bot", bots: options.value.bots?.length ? [options.value.bots[0].id] : [], confirm: true, record: true, spec: "", task: "", answer: false, importShared: true, leaveWithOwner: true });
 const confirmOptions = [{ value: "always", label: "始终询问" }, { value: "never", label: "直接加入" }, { value: "condition", label: "满足条件时询问" }];
 function setConfirmation(a: Extract<Action, { type: "meeting-bot" }>, mode: string) {
@@ -275,14 +298,15 @@ function setConfirmation(a: Extract<Action, { type: "meeting-bot" }>, mode: stri
 const addOptions = computed(() =>
   (Object.keys(ACTION_LABEL) as Action["type"][])
     .filter((t) => (meetingRule.value ? ["meeting-bot", "notify"].includes(t) : t !== "meeting-bot"))
-    .filter((t) => !scheduleOnly.value || t === "agent" || t === "notify")
-    .map((t) => ({ value: t as string | null, label: ACTION_LABEL[t], hint: t === "invite-bot" && !options.value.botReady ? "需要先配置飞书机器人" : "" })),
+    // Without a chat (a schedule, a document change) only what needs none.
+    .filter((t) => !(scheduleOnly.value || docRule.value) || ["agent", "notify", "delay", "check", "script"].includes(t))
+    .map((t) => ({ value: t as string | null, label: ACTION_LABEL[t], hint: t === "invite-bot" && !options.value.botReady ? "需要先配置飞书机器人" : t === "script" && !isOwner.value ? "只有本人能保存带脚本的规则" : "" })),
 );
 
 // ---- meetings ---------------------------------------------------------------------------
 /** The condition fields that make sense for this trigger: a meeting has no chat or message. */
 const condFields = computed(() => {
-  const keys = options.value.eventFields?.[meetingRule.value ? "meeting" : "message"];
+  const keys = options.value.eventFields?.[meetingRule.value ? "meeting" : docRule.value ? "doc" : "message"];
   return keys ? Object.fromEntries(keys.map((k) => [k, options.value.fields[k]])) : options.value.fields;
 });
 const fieldOps = { "meeting.participantCount": ["gte", "lte", "equals"] };
@@ -297,6 +321,14 @@ function onTrigger() {
     f.trigger.waitMinutes = 0;
     f.trigger.unless = [];
   } else f.actions = f.actions.filter((a) => a.type !== "meeting-bot");
+  if (f.trigger.event === "doc") {
+    // A document change has no chat: the agent only reports to the owner, and nothing waits on a discussion.
+    f.actions = f.actions.filter((a) => ["agent", "notify", "delay", "check", "script"].includes(a.type));
+    for (const a of f.actions) if (a.type === "agent") Object.assign(a, { reply: "none", ownTopic: false });
+    f.trigger.waitMinutes = 0;
+    f.trigger.unless = [];
+    f.trigger.docs ??= [];
+  } else delete f.trigger.docs;
   if (!f.actions.length) f.actions.push({ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" });
   touch();
 }
@@ -465,10 +497,10 @@ function startFrom(text: string) {
         <section class="block">
           <div class="block-head"><h3>什么时候看</h3></div>
           <div class="row wrap">
-            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '我加入会议时' }]" aria-label="触发" @change="onTrigger" />
+            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '我加入会议时' }, { value: 'doc', label: '文档变化' }]" aria-label="触发" @change="onTrigger" />
             <UiSegmented v-if="form.trigger.event === 'message'" v-model="form.trigger.once" size="sm" :options="[{ value: 'event', label: '每条消息' }, { value: 'chat', label: '每个群只一次' }]" aria-label="触发次数" @change="touch" />
             <input v-if="form.trigger.event === 'schedule'" v-model="form.trigger.cron" class="input sm mono cron" placeholder="0 9 * * 1-5" aria-label="cron" @input="touch" />
-            <UiSelect v-if="form.trigger.event !== 'schedule' && !meetingRule" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions('所有空间的群')" aria-label="只看哪个空间的群" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
+            <UiSelect v-if="form.trigger.event !== 'schedule' && !meetingRule" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions(docRule ? '所有空间的文档' : '所有空间的群')" :aria-label="docRule ? '只看哪个空间的文档' : '只看哪个空间的群'" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
             <UiSelect v-if="meetingRule" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions('会议记录放默认空间')" aria-label="会议记录放哪个空间" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
           </div>
           <div v-if="form.trigger.event === 'message'" class="row wrap">
@@ -481,6 +513,10 @@ function startFrom(text: string) {
           <small v-if="form.trigger.event === 'message'" class="muted">“每个群只一次”适合拉机器人、开始监听这类一次就够的事。等待和跳过在动手前看一眼这段讨论：你在话题里或半小时内在群里说过话，算“已在讨论里”。</small>
           <small v-else-if="form.trigger.event === 'schedule'" class="muted">cron 写法：分 时 日 月 周，例如 0 9 * * 1-5 是工作日早上 9 点。</small>
           <small v-else-if="meetingRule" class="muted">你加入一场飞书视频会议时判断（用你的 lark-cli 登录接收入会事件）。每场会议对这条规则只触发一次；入会后十分钟内参会人变了会再判断一次。不写条件就是每场会议。</small>
+          <template v-if="docRule">
+            <textarea :value="(form.trigger.docs ?? []).join('\n')" class="input mono small" rows="3" placeholder="要盯的飞书文档、电子表格、多维表格或知识库页面的链接，一行一个；不填就看机器人订阅了的所有文档" aria-label="要盯的文档" @input="(e) => ((form!.trigger.docs = docLinks((e.target as HTMLTextAreaElement).value)), touch())" />
+            <small class="muted">机器人订阅文档后，有人编辑、改多维表格记录或字段、在评论里 @ 机器人时触发；连续的编辑合成一次（停下一分半钟后）。飞书只把编辑和表格变化发给文档的管理者：保存后下面会检查，订阅不了的要把 omem 的机器人加为文档应用。</small>
+          </template>
         </section>
 
         <section v-if="form.trigger.event !== 'schedule'" class="block">
@@ -505,8 +541,8 @@ function startFrom(text: string) {
               <div class="row wrap">
                 <UiSelect v-model="a.spec" size="sm" width="180px" :options="specOptions" placeholder="交给谁" aria-label="Agent" @change="touch" />
                 <UiSelect :model-value="a.space ?? ''" size="sm" width="170px" :options="spaceOptions('默认空间')" aria-label="在哪个空间里查资料" title="Agent 在哪个空间里查资料。默认：档案固定的空间，其次是上面选的空间，再次是消息所在群的空间" @update:model-value="(v) => ((a.space = String(v || '')), touch())" />
-                <UiSegmented v-model="a.reply" size="sm" :options="scheduleOnly ? scheduleReplyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
-                <UiCheckbox v-if="!scheduleOnly && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
+                <UiSegmented v-if="!docRule" v-model="a.reply" size="sm" :options="scheduleOnly ? scheduleReplyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
+                <UiCheckbox v-if="!scheduleOnly && !docRule && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
               </div>
               <div class="row wrap">
                 <UiCheckbox :model-value="!!a.hideThinking" size="sm" @change="v => { a.hideThinking = v; touch(); }">隐藏思考气泡</UiCheckbox>
@@ -572,16 +608,46 @@ function startFrom(text: string) {
             <template v-else-if="a.type === 'notify'">
               <UiCheckbox v-model="a.urgent" size="sm" @change="touch">紧急（夜间也推送）</UiCheckbox>
             </template>
+            <template v-else-if="a.type === 'delay'">
+              <div class="row wrap">
+                <span class="small">等</span>
+                <input :value="a.minutes / delayUnit(a.minutes)" class="input sm num" type="number" inputmode="numeric" min="1" aria-label="等多久" @input="(e) => setDelay(a, Number((e.target as HTMLInputElement).value), delayUnit(a.minutes))" />
+                <UiSelect :model-value="delayUnit(a.minutes)" size="sm" width="96px" :options="[{ value: 1, label: '分钟' }, { value: 60, label: '小时' }, { value: 1440, label: '天' }]" aria-label="单位" @update:model-value="(u) => setDelay(a, a.minutes / delayUnit(a.minutes), Number(u))" />
+                <span class="small">再做后面的动作</span>
+              </div>
+              <small class="muted">后面的动作按触发时的规则和事件做；规则停用或删除就不做了。</small>
+            </template>
+            <template v-else-if="a.type === 'check'">
+              <textarea v-model="a.question" class="input" rows="2" placeholder="要模型判断的问题，例如：这次改动是否涉及上线时间或负责人？" @input="touch" />
+              <small class="muted">模型看事件、讨论和前面动作的结果回答“是”或“否”；“否”就不做后面的动作，判断写进触发记录。</small>
+            </template>
+            <template v-else-if="a.type === 'script'">
+              <div class="row wrap">
+                <UiSegmented v-model="a.runtime" size="sm" :options="[{ value: 'node', label: 'Node' }, { value: 'python', label: 'Python' }, { value: 'bash', label: 'Bash' }]" aria-label="脚本语言" @change="touch" />
+                <label class="row inline small">最长
+                  <input v-model.number="a.timeoutSec" class="input sm num" type="number" inputmode="numeric" min="1" max="3600" aria-label="最长运行秒数" @input="touch" />
+                  秒</label>
+              </div>
+              <textarea v-model="a.code" class="input mono small code" rows="8" spellcheck="false" :aria-label="SCRIPT_HINT[a.runtime] + ' 脚本'" @input="touch" />
+              <small class="muted">在运行 omem 的这台机器上用 {{ SCRIPT_HINT[a.runtime] }} 执行。事件是 JSON：在环境变量 OMEM_EVENT 里，也从标准输入传进来，不会拼进代码。脚本拿不到 omem 的密钥和令牌，输出记在运行里，失败会通知你。{{ isOwner ? "" : "只有本人能保存带脚本的规则。" }}</small>
+              <div class="row wrap">
+                <span class="small">执行前</span>
+                <UiSelect :model-value="a.approval.by" size="sm" width="160px" :options="approvalOptions" aria-label="谁批准" @update:model-value="(v) => ((a.approval = { ...a.approval, by: v as typeof a.approval.by }), touch())" />
+                <input v-if="a.approval.by === 'person'" v-model="a.approval.person" class="input sm" placeholder="审批人的邮箱或飞书名字" aria-label="审批人" @input="touch" />
+              </div>
+              <textarea v-if="a.approval.by === 'ai'" v-model="a.approval.hint" class="input" rows="2" placeholder="怎么找审批人，例如：改这篇文档的人的直属负责人；找不到就我批准" @input="touch" />
+              <small class="muted">{{ a.approval.by === "none" ? "不批准就直接执行：只在你确定脚本对任何触发都安全时这样选。" : a.approval.by === "ai" ? "模型从这次的事件里找出审批人，找不到时由你批准。" : "机器人私聊审批人一张卡片，列出规则、触发的事件和脚本，点“执行”才执行；3 天内没人处理就作废。" }}</small>
+            </template>
             <p v-else-if="a.type === 'invite-bot'" class="muted small">以你的身份把 omem 的机器人加进这个群（只加机器人，不发消息）。{{ options.botReady ? "" : "还没配置飞书机器人。" }}</p>
             <p v-else class="muted small">把这个群设为与你有关：立刻采集一次，之后每次都读并交给整理（免打扰的群也读）。</p>
           </div>
           <UiSelect v-model="addPick" size="sm" width="160px" placeholder="＋ 添加动作" :options="addOptions" aria-label="添加动作" @change="addAction" />
         </section>
 
-        <section v-if="meetingRule && form.id" class="block">
+        <section v-if="(meetingRule || docRule) && form.id" class="block">
           <div class="block-head">
             <h3>飞书权限</h3>
-            <span class="muted small">入会事件用你的 lark-cli 登录，入会和读会议用机器人自己的应用</span>
+            <span class="muted small">{{ docRule ? "订阅文档变化用机器人自己的应用" : "入会事件用你的 lark-cli 登录，入会和读会议用机器人自己的应用" }}</span>
             <span class="spacer" />
             <button class="btn ghost sm" :disabled="checking" @click="checkPermissions(form.id!)">{{ checking ? "检查中…" : "重新检查" }}</button>
           </div>
@@ -709,6 +775,7 @@ function startFrom(text: string) {
   max-width: 880px;
   padding: 16px 24px 40px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 .dh {
@@ -726,6 +793,8 @@ function startFrom(text: string) {
   border-radius: 10px;
   padding: 12px 14px;
   display: grid;
+  /* One column no wider than the block: a long row (the five triggers) scrolls inside it on a phone. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
 }
@@ -763,6 +832,12 @@ function startFrom(text: string) {
   display: grid;
   gap: 6px;
   background: var(--panel, var(--bg));
+}
+.action .code {
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre;
+  overflow-x: auto;
 }
 .hit,
 .firing {

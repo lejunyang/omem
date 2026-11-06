@@ -1123,10 +1123,14 @@ export function scheduleSpaceSync(app: App, spaceId: string) {
 
 // A rule that waits to see whether anyone responds: its time is up (rules/engine.ts).
 registerHandler("rule-fire", async (ctx) => {
-  const { ruleId, key, event } = ctx.run.input as { ruleId: string; key: string; event: import("../rules/types.ts").RuleEvent };
+  const { ruleId, key, event, actions, reason, discussion } = ctx.run.input as { ruleId: string; key: string; event: import("../rules/types.ts").RuleEvent; actions?: import("../rules/types.ts").RuleAction[]; reason?: string; discussion?: string };
   const { fireAfterWait } = await import("../rules/engine.ts");
-  return fireAfterWait(ctx.app, ruleId, key, event);
+  // `actions`: what followed a delay in the rule (rules/actions.ts); otherwise a wait for a response.
+  return fireAfterWait(ctx.app, ruleId, key, event, actions ? { actions, reason, discussion } : undefined);
 });
+
+// A rule's script (rules/script.ts): approved on its card, or not needing approval.
+registerHandler("rule-script", async (ctx) => (await import("../rules/script.ts")).runScript(ctx.app, ctx.run, ctx.signal));
 
 // An outside Agent's session run (peer-agent.ts) is open while it is used and closed by a timer; one
 // left over from a restart is requeued by the worker and simply ends here.

@@ -286,6 +286,8 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
 export type Target = {
   chatId?: string;
   userId?: string;
+  /** What userId is: the open_id in this bot app (default), or the tenant-wide user_id. */
+  userIdType?: "open_id" | "user_id";
   replyTo?: string;
   inThread?: boolean;
   uuid?: string;
@@ -344,7 +346,7 @@ export async function sendLark(to: Target, content: Content): Promise<{ messageI
   let r;
   if (to.replyTo) r = await c.im.message.reply({ path: { message_id: to.replyTo }, data: { ...p, reply_in_thread: !!to.inThread, ...(to.uuid ? { uuid: to.uuid } : {}) } });
   else if (to.chatId) r = await c.im.message.create({ params: { receive_id_type: "chat_id" }, data: { receive_id: to.chatId, ...p, ...(to.uuid ? { uuid: to.uuid } : {}) } });
-  else if (to.userId) r = await c.im.message.create({ params: { receive_id_type: "open_id" }, data: { receive_id: to.userId, ...p } });
+  else if (to.userId) r = await c.im.message.create({ params: { receive_id_type: to.userIdType ?? "open_id" }, data: { receive_id: to.userId, ...p } });
   else throw new HttpError(400, "需要 chatId、userId 或 replyTo");
   const d = check(r, "发送飞书消息");
   remember(d?.message_id);
@@ -444,7 +446,7 @@ export type Interaction = {
   chatId: string | null;
   conversationId: string | null;
   runId: string | null;
-  purpose: "agent" | "draft" | "model" | "ask" | "guest-approval" | "meeting-join";
+  purpose: "agent" | "draft" | "model" | "ask" | "guest-approval" | "meeting-join" | "rule-script";
   allowed: string[];
   payload: Record<string, unknown>;
   status: "open" | "done" | "expired";

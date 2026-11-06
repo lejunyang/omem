@@ -62,6 +62,32 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
         return e.meeting?.invitedCount ?? undefined;
       case "meeting.host":
         return e.meeting?.host;
+      case "doc.title":
+        return e.doc?.title;
+      case "doc.type":
+        return e.doc?.type;
+      case "doc.url":
+        return e.doc?.url;
+      case "doc.location":
+        return e.doc?.location;
+      case "doc.space":
+        return e.doc?.space;
+      case "change.kind":
+        return e.change?.kind;
+      case "change.text":
+        return e.change?.text;
+      case "change.added":
+        return e.change?.added;
+      case "change.editor":
+        return e.change?.editor;
+      case "change.editorEmail":
+        return e.change?.editorEmail ?? undefined;
+      case "change.mentions":
+        return e.change?.mentions;
+      case "change.mentionsOwner":
+        return e.change?.mentionsOwner;
+      case "change.mentionsBot":
+        return e.change?.mentionsBot;
     }
   };
 }

@@ -24,6 +24,8 @@ const ACTIONS = `动作（按顺序执行，至少一个）：
 - {"type":"invite-bot"}：以本人身份把 omem 的机器人拉进这个群
 - {"type":"capture"}：把这个群设为与本人有关，立刻采集一次
 - {"type":"notify","urgent":false}：通知本人
+- {"type":"delay","minutes":分钟数}：后面的动作过这么久再做（“半小时后再提醒”“第二天早上再处理”）
+- {"type":"check","question":"要模型判断的问题"}：模型看事件和前面动作的结果回答是或否，否就不做后面的动作（规则中途要人判断、条件写不清时用）
 - {"type":"meeting-bot","bots":["main"],"confirm":true,"record":true,"spec":"旁听的档案名（不旁听写空字符串）","task":"旁听时要它特别留意的","answer":false,"importShared":true,"leaveWithOwner":true}：只用于 meeting 触发。bots 是要拉进会议的 omem 机器人（main 是主机器人，其余写 lark.bots 的 id；空数组表示不拉机器人、只以本人身份记录）；confirm=true 始终先问，false 直接拉，也可写会议条件（沿用上面的条件结构）：满足时先发卡片问本人，不满足直接拉；record 把会议的转写、会中聊天、进出记录存成会议原件；spec 旁听并在需要本人时提醒；answer 允许在会中聊天里回答点名机器人的问题；importShared 导入会上共享的文档；leaveWithOwner 本人离会时机器人一起离开`;
 
 export async function draftRule(app: App, description: string, current?: Partial<RuleInput>): Promise<{ rule?: RuleInput; error?: string; summary?: string }> {
@@ -39,7 +41,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     `本人的规则：${description}`,
     current ? `\n当前版本（在它的基础上改，本人没提到的部分保持不变）：${JSON.stringify(current)}` : "",
     "",
-    "JSON 结构：{\"name\": \"十个字以内的名字\", \"trigger\": {\"event\": \"message|chat-new|schedule|meeting\", \"once\": \"event|chat\", \"cron\": \"定时规则的 cron\", \"waitMinutes\": 等几分钟再处理（默认 0）, \"unless\": [\"owner-engaged\", \"answered\"] 中要跳过的情况}, \"conditions\": 条件或 null, \"judge\": \"code|ai|code+ai\", \"actions\": [...]}",
+    "JSON 结构：{\"name\": \"十个字以内的名字\", \"trigger\": {\"event\": \"message|chat-new|schedule|meeting|doc\", \"docs\": [\"doc 规则要盯的文档链接（本人给了链接才写）\"], \"once\": \"event|chat\", \"cron\": \"定时规则的 cron\", \"waitMinutes\": 等几分钟再处理（默认 0）, \"unless\": [\"owner-engaged\", \"answered\"] 中要跳过的情况}, \"conditions\": 条件或 null, \"judge\": \"code|ai|code+ai\", \"actions\": [...]}",
     "",
     LANGUAGE,
     "",
@@ -60,6 +62,8 @@ export async function draftRule(app: App, description: string, current?: Partial
     `- 本人说的“助理机器人”“omem 机器人”“我的机器人”指 omem 自己的飞书机器人${botName ? `（名字是「${botName}」）` : ""}：判断它在不在群里用 chat.hasOwnBot（is true / false），不要用 chat.bots 去猜它的名字。`,
     "- 本人说“我入会/开会时”“会议里”：trigger.event 用 meeting（本人加入一场视频会议时触发，每场会议对每条规则只触发一次），条件只能用 meeting.* 字段（标题用 meeting.title contains，在会人数用 meeting.participantCount gte/lte（入会那一刻在会里的人，早进会时还少），日程邀请了多少人用 meeting.invitedCount（群按成员算；说“大会、人多的会”一般指会邀人数），某人在会上用 meeting.participants contains 名字），动作用 meeting-bot；没说拉哪个机器人就是 [\"main\"]，没说“直接拉、不用问我”就 confirm=true；说“帮我听着/有人问我时提醒我”就 spec 写 assistant 或点名的档案。",
     "- 会议里“某条件下先问，否则直接拉”写在同一个 meeting-bot 动作的 confirm 条件里，不放进整条规则的 conditions，也不拆成多条规则。例如“30 人及以上先问，否则直接拉”：conditions=null，confirm={\"field\":\"meeting.participantCount\",\"op\":\"gte\",\"value\":\"30\"}；如果还限定会议标题，标题条件才放 conditions。",
+    "- 本人说某篇文档、表格、多维表格“有改动/有人评论/有人在里面 @ 我或机器人”时：trigger.event 用 doc，给了链接就写进 trigger.docs；条件只能用 doc.* 和 change.* 字段（谁改的 change.editor，改了什么 change.text / change.added，@ 了谁 change.mentions / change.mentionsOwner / change.mentionsBot，评论 change.kind equals comment，标题 doc.title，所在知识库或目录 doc.location）。动作可以交给 Agent（只告诉我）、通知本人、延时、模型判断。",
+    "- 不要生成 script 动作：脚本由本人在规则页自己写。",
     "- 未指定专用档案的任务交给 assistant（主助手），不选择第一个或最接近的档案。本人点名的档案不存在时不要替换，改用 notify 提示缺档案。定时任务允许 reply=auto 发回创建时的会话。",
   ].join("\n");
   const out = await askModel(app, prompt, { timeoutMs: 120_000 });
@@ -75,6 +79,9 @@ export async function draftRule(app: App, description: string, current?: Partial
   return { rule, summary: `条件：${describe(rule.conditions)}；判断：${rule.judge}；动作：${rule.actions.map((a) => a.type).join("、")}` };
 }
 
+const DOC_TYPE: Record<string, string> = { docx: "文档", doc: "文档", sheet: "电子表格", bitable: "多维表格", slides: "幻灯片", file: "文件" };
+const CHANGE_KIND: Record<string, string> = { edit: "内容有改动", comment: "有新评论", record: "多维表格记录有变化", field: "多维表格字段有变化" };
+
 /** Describe an event for the model and the firing log. */
 export function eventSummary(e: RuleEvent) {
   const parts = [
@@ -82,6 +89,8 @@ export function eventSummary(e: RuleEvent) {
     e.sender ? `发送人 ${e.sender.name}${e.sender.email ? `（${e.sender.email}）` : ""}${e.sender.kind === "bot" ? "（机器人）" : e.sender.kind === "owner" ? "（本人）" : ""}` : "",
     e.message ? `${e.message.type === "interactive" ? "卡片" : "消息"}${e.message.cardTitle ? `「${e.message.cardTitle}」` : ""}${e.message.mentionsOwner ? "，@ 了本人" : ""}${e.message.topicId ? "，在话题里" : ""}：${truncate(e.message.text.replace(/\s+/g, " "), 1000)}` : "",
     e.meeting ? `本人加入会议「${e.meeting.title || "（无标题）"}」${e.meeting.no ? `（会议号 ${e.meeting.no}）` : ""}，${e.meeting.participantCount === null ? "在会人数未知" : `在会 ${e.meeting.participantCount ?? e.meeting.participants.length} 人`}${typeof e.meeting.invitedCount === "number" ? `、会邀 ${e.meeting.invitedCount} 人` : "、会邀人数未知"}${e.meeting.participants.length ? `：${truncate(e.meeting.participants.join("、"), 300)}` : ""}${e.meeting.host ? `；主持人 ${e.meeting.host}` : ""}` : "",
+    e.doc ? `${DOC_TYPE[e.doc.type] ?? "文档"}「${e.doc.title || e.doc.token}」${e.doc.location ? `（${e.doc.location}）` : ""} ${e.doc.url}` : "",
+    e.change ? `${CHANGE_KIND[e.change.kind]}${e.change.editor ? `，${e.change.editor}${e.change.editorEmail ? `（${e.change.editorEmail}）` : ""}` : ""}${e.change.mentions.length ? `，@ 了 ${e.change.mentions.join("、")}` : ""}${e.change.mentionsOwner ? "（含本人）" : ""}${e.change.mentionsBot ? "（含 omem 机器人）" : ""}：${truncate(e.change.text, 1500)}` : "",
     e.kind === "chat-new" ? "第一次看到这个群" : e.kind === "schedule" ? `定时触发（${e.at}）` : "",
   ];
   return parts.filter(Boolean).join("；");

@@ -11,13 +11,15 @@
 | 值班群里我被 @，立刻把机器人拉进群，并优先采集 | 新消息（每个群只触发一次） | 群名包含“值班” 且 @ 了本人 | 拉机器人进群；优先采集这个群 |
 | 有人在任何群里提到“合同到期” | 新消息 | 消息包含“合同到期” | 通知本人 |
 | 每天早上看一眼发布群，有没有失败的发布 | 定时（cron） | （无，交给模型） | 交给 release-checker，结论通知本人 |
+| 《差旅报销制度》有人改了标准、在里面 @ 我，半小时后提醒我看看 | 文档变化（列出这篇的链接） | @ 了本人 | 延时 30 分钟；通知本人 |
+| 需求排期表里有人把状态改成“已上线”，跑一下发布检查脚本，执行前让改的人的负责人批准 | 文档变化（多维表格） | 变化类型是 record 且 变化内容包含“已上线” | 执行脚本（审批人由 AI 按说明找） |
 
 ## 模型
 
 一条规则（表 `rules`）：
 
 - `description`：本人的原话，规则的依据。条件和动作都可以重新从它生成。
-- `trigger`：`message`（新消息，含卡片）、`chat-new`（第一次看到的群）、`schedule`（cron）、`meeting`（本人加入飞书视频会议，见下文“会议规则”）。`once: "event" | "chat"`：每条消息都可能触发，或每个群只触发一次（拉机器人、开始监听这类）。
+- `trigger`：`message`（新消息，含卡片）、`chat-new`（第一次看到的群）、`schedule`（cron）、`meeting`（本人加入飞书视频会议，见下文“会议规则”）、`doc`（飞书文档、电子表格、多维表格有变化，见下文“文档变化规则”；`trigger.docs` 列出要盯的文档链接）。`once: "event" | "chat"`：每条消息都可能触发，或每个群只触发一次（拉机器人、开始监听这类）。
 - `conditions`：确定的条件（JSON，见下），可以为空。
 - `judge`：`code`（只看条件）、`ai`（只交给模型）、`code+ai`（条件先筛，命中的再请模型确认）。条件为空时只能是 `ai`。
 - `actions`：按顺序执行。
@@ -33,7 +35,7 @@
 ] }
 ```
 
-字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于在会人数和会邀人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。
+字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于在会人数和会邀人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。文档变化规则只用文档和变化的字段：`doc.title`、`doc.type`（docx / sheet / bitable）、`doc.url`、`doc.location`（知识库和目录）、`doc.space`、`change.kind`（edit / comment / record / field）、`change.text`、`change.added`、`change.editor`、`change.editorEmail`、`change.mentions`、`change.mentionsOwner`、`change.mentionsBot`。
 
 “固化成代码”就是这份 JSON：宿主直接求值，不执行模型写的程序。模型从规则原话生成条件，本人在页面上看到的是一句句“群名包含 报警”，可以直接改；生成后先在最近的消息上试一遍，看命中了哪些。
 
@@ -47,6 +49,31 @@
 ### 动作
 
 - `agent`：交给某个 Agent 档案。`ownTopic` 在触发消息下处理（机器人要在群里）：不再先发一张“规则触发、交给某某”的卡片，Agent 的思考气泡或回答以话题回复的方式发在那条消息下，话题由它开出。`reply`：`none`（只把结论发给本人）、`draft`（它要在群里说的话先变成给本人的确认卡片）、`auto`（可以直接在这个群 / 话题里回复和 @ 人，思考气泡可见）、`silent`（静默排查，见下）。它只能往这个群发，不能发到别处。`allowUrgent` / `allowPrivate`（默认关，规则页“允许加急”“允许只给部分人看”）：它在群里发的消息可以对指定的人加急、可以只给群里某几个人看；什么情况用、对谁用写在规则说明或任务里，任务末尾会提醒它只在写到的情况用。本人说“某种情况加急某人”“只发给某人看”时，草稿生成会勾上对应的项。`ai`（规则页“指定 AI”）：这条规则交出去的运行用哪个后端、模型和思考强度，保存时按后端最近一次检测核对；不写就用档案自己的设置。规则和定时任务这类宿主自己开的运行不经过任务选型（只有会交办的运行看得到本人的选型偏好），所以要给某条规则定模型就写在这里，写在任务说明里不会生效；草稿生成在本人点名模型时填它。
+
+### 延时、模型判断、执行脚本
+
+动作按顺序执行，这三种决定后面的动作怎么做：
+
+- `delay`（`minutes`，1 分钟到 7 天）：后面的动作过这么久再做。宿主开一个带 `not_before` 的 `rule-fire` 运行，带上触发的事件和**当时**后面的动作，到时按它们执行（规则停用或删除就不做），触发记录里另记一条“延时到了”。延时不能是最后一个动作。和触发上的“命中后等几分钟”不同：那个是等讨论有没有人回应，这个只是推迟。
+- `check`（`question`）：模型看事件、讨论和前面动作的结果，回答这个问题“是”或“否”（一次无工具的调用，不确定按否）；否就不做后面的动作，判断写进触发记录。条件写不清的中途判断用它，比如“这次改动是否涉及上线时间”。不能是最后一个动作。
+- `script`（`runtime`: node / python / bash，`code`，`timeoutSec` 默认 60，`approval`）：在运行 omem 的机器上执行本人写的脚本，是一个 `rule-script` 运行（运行页能看到输出）。
+  - 事件以 JSON 交给脚本：环境变量 `OMEM_EVENT` 和标准输入，不拼进代码。脚本在数据目录 `rules/scripts/<运行>` 里执行，跑完删掉；环境只带 PATH、HOME、语言、临时目录这些，拿不到 omem 的密钥和令牌。输出（各留最后两万字）和退出码记在运行里；失败或超时通知本人。
+  - `approval.by`：`owner`（默认，本人批准）、`person`（`person` 写邮箱、飞书名字或 user_id）、`ai`（模型按 `hint` 从这次的事件里找审批人，比如“改这篇文档的人”；找不到由本人批准）、`none`（不批准直接执行）。要批准时，主机器人私聊审批人一张卡片（规则、触发的事件、脚本的前 30 行），运行排着但不开始；点“执行”才开始，点“不执行”取消。只有审批人能点；三天内没人处理就作废。运行开始前再核对一次是否批准，所以重启或卡片过期都不会让它没批准就执行。
+  - 只有本人能保存带脚本的规则（网页或接口，`saveRule` 的 `actor` 是本人）：脚本在这台机器上执行。助理的 `save_rule`、管理员和 Agent 设的临时规则都不能写脚本，模型从原话生成规则时也不生成脚本。
+  - 这条和“宿主不执行模型写的程序”不冲突：条件仍是宿主求值的 JSON，脚本是本人自己写、自己保存的。
+
+### 文档变化规则
+
+“《差旅报销制度》有人改了、在里面 @ 我时提醒我”：触发 `doc`，`trigger.docs` 写这篇的链接，条件 `change.mentionsOwner is true`，动作通知本人。实现在 `src/channels/lark-doc-events.ts`。
+
+- **订阅**：机器人用自己的应用身份订阅一篇文档（`POST /open-apis/drive/v1/files/:token/subscribe?file_type=…`），知识库页面先换成它下面的文档（`wiki_nodes` 或读一次节点）。订阅结果存在 `lark_doc_subscriptions`。规则保存后的权限检查会订阅列出的文档，同时为 omem 没采集过的文档存一份当前的文字（`snapshot`），第一次改动就能说出改了什么。
+- **事件**：`drive.file.edit_v1`（编辑，只说谁改了）、`drive.file.bitable_record_changed_v1`（多维表格记录，带前后值）、`drive.file.bitable_field_changed_v1`（字段）、`drive.notice.comment_add_v1`（评论或回复，机器人被 @ 或被回复时收到，不用订阅）。机器人的应用要在“事件与回调”里订阅这几个，长连接接收。
+- **一次改动**：连续编辑合成一次，停下一分半钟（最多十分钟）后处理。采集过的文档按平常的导入重新读一遍并交给整理，和读之前的文字逐行比较；只有规则盯着的文档用 `snapshot` 比较。变化内容写“新增 / 删掉”的行，修改人按机器人看到的 open_id 认（omem 用户、见过的人，或通讯录）。新增的行里的 @（lark-cli 写成 `<mention-user …>`）算 `change.mentions`，是本人或机器人时 `mentionsOwner` / `mentionsBot` 为真。电子表格的编辑只知道有人改了。
+- **只发给管理者**：飞书只把编辑和多维表格的变化发给文档的管理者。机器人不是管理者时订阅被拒（1069603），权限检查列出“在文档右上角「…」→「添加文档应用」把机器人加进来并给可管理权限”。
+- **代替定时检查**：每天检查飞书文档更新前，机器人先为一批（50 篇）已采集的文档订阅，失败的一周后再试。订阅成功、且最近一个月收到过文档事件（说明应用确实订阅了这些事件）的文档，定时检查不再看它，改动时由事件触发重新读。
+- **动作**：没有群，只能交给 Agent（只告诉我）、通知本人、延时、模型判断、执行脚本；不能等待回应或按讨论跳过。不列文档时规则看机器人订阅了的所有文档（每天订阅的一批和其他规则列出的）。
+- **权限**：应用身份 `docs:event:subscribe`、`docs:event.document_edited:read`、`docs:document.comment:read`、`base:record:read`、`base:field:read`、`drive:drive.metadata:readonly`（订阅接口还要求用户身份也开通 `docs:event:subscribe`）。设置 → 渠道 → 机器人权限与事件检查里有一行“文档变化规则”，扫码更新应用时一并申请。
+- **还没有的**：别人在评论里只 @ 本人（没有 @ 机器人）时，事件发给本人的身份而不是机器人，omem 现在收不到；要收得以本人身份订阅用户云文档事件，不在本期。
 
 ### 处理中再次触发：并入同一会话
 

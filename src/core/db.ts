@@ -1416,6 +1416,27 @@ export const migrations: readonly string[] = [
      finished_at text
    );
    create index remote_recordings_user on remote_recordings(user_id, created_at);`,
+  // Feishu documents omem's bot subscribed to (channels/lark-doc-events.ts): edits, comments and
+  // multidimensional-table records arrive as events instead of being polled. `snapshot`: the text last
+  // seen of a document no source keeps, to tell what an edit changed.
+  `create table lark_doc_subscriptions (
+     file_token text primary key,
+     file_type text not null,
+     link text not null default '',
+     node_token text,
+     title text not null default '',
+     source_id text,
+     space_id text,
+     bot text not null default 'main',
+     status text not null,
+     error text,
+     snapshot text,
+     attempted_at text not null,
+     subscribed_at text,
+     last_event_at text
+   );
+   create index lark_doc_subscriptions_source on lark_doc_subscriptions(source_id) where source_id is not null;
+   create index lark_doc_subscriptions_link on lark_doc_subscriptions(link);`,
 ];
 
 export type Db = DatabaseSync;

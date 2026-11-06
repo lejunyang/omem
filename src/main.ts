@@ -56,9 +56,12 @@ registerScheduleKind("peer-sync", (app) => {
 });
 
 registerScheduleKind("lark-docs-watch", (app) => {
-  import("./channels/lark-docs.ts")
-    .then((m) => m.checkInBackground(app))
-    .catch((e) => console.warn("[omem] 检查飞书文档更新失败：", e.message));
+  // The bot subscribes to a batch of captured documents first: those get their changes by event.
+  void (async () => {
+    const { larkBotInfo } = await import("./channels/lark-send.ts");
+    if (larkBotInfo("main")) await (await import("./channels/lark-doc-events.ts")).subscribeCapturedDocs(app).catch((e) => console.warn("[omem] 订阅飞书文档变化失败：", e.message));
+    (await import("./channels/lark-docs.ts")).checkInBackground(app);
+  })().catch((e) => console.warn("[omem] 检查飞书文档更新失败：", e.message));
 });
 
 // Feishu knowledge bases (channels/lark-knowledge.ts): weekly discovery, nightly reading.

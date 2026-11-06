@@ -8,6 +8,7 @@ import { readAgentSpec } from "../agents/specs.ts";
 import { validateExecution } from "../agents/execution.ts";
 import { fieldsOf } from "./conditions.ts";
 import { ruleInputSchema, type Rule, type RuleInput, type Temporary } from "./types.ts";
+import { OWNER } from "../core/users.ts";
 
 type Row = {
   space_id: string | null;
@@ -47,6 +48,24 @@ const toRule = (r: Row): Rule => ({
   temporary: r.temporary ? json(r.temporary, null) : null,
 });
 
+/** A document change has no chat or message: its fields, and actions that need no chat. */
+function checkDocRule(r: ReturnType<typeof ruleInputSchema.parse>) {
+  const doc = r.trigger.event === "doc";
+  if (!doc && r.trigger.docs?.length) throw new HttpError(400, "只有“文档变化”规则能列出要盯的文档");
+  const fields = r.conditions ? fieldsOf(r.conditions) : [];
+  if (!doc) {
+    const docFields = fields.filter((f) => /^(doc|change)\./.test(f));
+    if (docFields.length) throw new HttpError(400, `${[...new Set(docFields)].join("、")} 只用于“文档变化”规则`);
+    return;
+  }
+  const bad = fields.filter((f) => !/^(doc|change)\./.test(f));
+  if (bad.length) throw new HttpError(400, `文档变化规则只能用文档和变化的字段，不能用 ${[...new Set(bad)].join("、")}`);
+  if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "文档变化规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
+  const allowed = new Set(["notify", "delay", "check", "script"]);
+  if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply === "none")))
+    throw new HttpError(400, "文档变化规则没有群：只能交给 Agent（只告诉我）、通知本人、延时、模型判断或执行脚本");
+}
+
 /** A meeting has no chat or message; the meeting action needs a meeting. */
 function checkMeetingRule(app: App, r: ReturnType<typeof ruleInputSchema.parse>) {
   const meeting = r.trigger.event === "meeting";
@@ -79,8 +98,13 @@ export function getRule(app: App, id: string): Rule {
 }
 
 /** Create or replace a rule; checks it can work (conditions for code judging, a cron for schedules). */
-export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user"): Rule {
+/** `actor`: who saves it through the web or API; a script runs on this machine, so only the owner may write one. */
+export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user", actor?: string): Rule {
   const r = ruleInputSchema.parse(input);
+  if (r.actions.some((a) => a.type === "script") && (by !== "user" || actor !== OWNER || input.temporary))
+    throw new HttpError(403, "带脚本的规则只能由本人在规则页保存：脚本在这台机器上执行");
+  if (r.actions.at(-1)?.type === "delay") throw new HttpError(400, "延时后面要有动作");
+  if (r.actions.at(-1)?.type === "check") throw new HttpError(400, "模型判断后面要有动作：它决定后面的动作做不做");
   if (r.spaceId) getSpace(app, r.spaceId);
   if (r.conversationId && getThread(app, r.conversationId).userId !== "owner") throw new HttpError(403, "只能投递到本人的会话");
   for (const a of r.actions) {
@@ -92,8 +116,11 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   }
   const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;
   if (r.actions.some((a) => a.type === "wake") && !input.temporary && !prevTemp) throw new HttpError(400, "“唤醒”只用于 Agent 设的临时规则（wake_on_message）");
-  // Every meeting the owner joins is a reasonable rule (the card asks first); every message is not.
-  if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule" && r.trigger.event !== "meeting") throw new HttpError(400, "按条件判断需要条件；没有条件就选“交给 AI 判断”，或先从规则原话生成条件");
+  // Every meeting the owner joins is a reasonable rule (the card asks first), so is every change of the
+  // documents a rule lists; every message is not.
+  const everyListedDoc = r.trigger.event === "doc" && !!r.trigger.docs?.length;
+  if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule" && r.trigger.event !== "meeting" && !everyListedDoc)
+    throw new HttpError(400, r.trigger.event === "doc" ? "文档变化规则要么列出盯哪些文档，要么写条件（或交给 AI 判断）" : "按条件判断需要条件；没有条件就选“交给 AI 判断”，或先从规则原话生成条件");
   if (r.trigger.event === "schedule" && !r.trigger.cron) throw new HttpError(400, "定时规则需要 cron，例如 0 9 * * 1-5");
   if (r.trigger.event === "schedule" && r.actions.some((a) => a.type === "invite-bot" || a.type === "capture" || a.type === "watch" || (a.type === "agent" && a.ownTopic)))
     throw new HttpError(400, "定时规则没有具体的群或消息：只能交给 Agent（不开话题）或通知本人");
@@ -101,6 +128,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     throw new HttpError(400, "定时规则没有具体的讨论：不能等待回应、不能按“本人已在处理/已有人回复”跳过，也不能静默排查");
   if (r.trigger.event === "schedule" && !r.conversationId && r.actions.some(a => a.type === "agent" && (["auto", "draft"].includes(a.reply) || a.failureTo === "chat"))) throw new HttpError(400, "定时规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
   checkMeetingRule(app, r);
+  checkDocRule(r);
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;

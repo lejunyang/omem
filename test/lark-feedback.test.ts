@@ -166,7 +166,7 @@ describe("reaction feedback", () => {
     const s = summarizeCheck(app, "main", "cli_main", check);
     expect(s.scopes.missing).toContain("im:message.reactions:read");
     expect(s.scopes.link).toMatch(/open\.feishu\.cn\/app\/cli_main\/auth\?q=.*im:message\.reactions:read/);
-    expect(s.events.missing.map((e) => e.name)).toEqual(["im.message.reaction.deleted_v1", "vc.bot.meeting_invited_v1"]);
+    expect(s.events.missing.map((e) => e.name)).toEqual(["im.message.reaction.deleted_v1", "vc.bot.meeting_invited_v1", "drive.file.edit_v1", "drive.file.bitable_record_changed_v1", "drive.file.bitable_field_changed_v1", "drive.notice.comment_add_v1"]);
     expect(s.events.missing.find((e) => e.name === "vc.bot.meeting_invited_v1")!.optional).toBe(true);
     expect(s.events.unpublished).toEqual(["im.message.reaction.created_v1"]);
     expect(s.events.link).toBe("https://open.feishu.cn/app/cli_main/event");

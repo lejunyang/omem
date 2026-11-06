@@ -15,8 +15,9 @@ export type PermissionReport = { issues: PermissionIssue[]; notes: string[]; ok:
 const CLI_USER_SCOPES = ["vc:meeting.meetingevent:read"];
 const CLI_EVENTS = ["vc.meeting.participant_meeting_joined_v1", "vc.meeting.participant_meeting_ended_v1"];
 
-export async function rulePermissions(app: App, rule: Pick<Rule, "trigger" | "actions" | "enabled">): Promise<PermissionReport> {
+export async function rulePermissions(app: App, rule: Pick<Rule, "trigger" | "actions" | "enabled"> & { spaceId?: string }): Promise<PermissionReport> {
   const out: PermissionReport = { issues: [], notes: [], ok: [] };
+  if (rule.trigger.event === "doc") return docPermissions(app, rule, out);
   if (rule.trigger.event !== "meeting") return out;
   await checkCli(app, out);
   const bots = new Map<string, { answer: boolean }>();
@@ -97,6 +98,40 @@ async function checkBot(app: App, ref: string, answer: boolean, out: PermissionR
   const missing = need.filter((s) => !have.has(s));
   if (missing.length) out.issues.push({ who: `${who}（${appId}）`, problem: "应用缺少会议权限（应用身份）", scopes: missing, link: larkScopeLink(appId, missing), linkText: "去开发者后台申请" });
   else out.ok.push(`${who}：会议权限已开通`);
+}
+
+/**
+ * A document rule: the main bot's scopes and events for document changes, and each listed document
+ * subscribed now (a refusal says what to do: Feishu sends edits only to the document's managers).
+ */
+async function docPermissions(app: App, rule: Pick<Rule, "trigger"> & { spaceId?: string }, out: PermissionReport) {
+  const { checkLarkBots } = await import("../channels/lark-bot-check.ts");
+  const { larkBotInfo } = await import("../channels/lark-send.ts");
+  const main = (await checkLarkBots(app).catch(() => [])).find((b) => b.ref === "main");
+  if (!main) {
+    out.issues.push({ who: "主机器人", problem: "还没有绑定飞书机器人：omem setup → 渠道 → 飞书机器人" });
+    return out;
+  }
+  if (main.docs?.missing.length) out.issues.push({ who: `主机器人（${main.appId}）`, problem: "应用缺少订阅文档变化的权限（应用身份；订阅接口还要求用户身份也开通 docs:event:subscribe）", scopes: main.docs.missing, link: main.docs.link ?? undefined, linkText: "去开发者后台申请" });
+  else if (main.docs) out.ok.push("主机器人：文档变化的权限已开通");
+  const events = main.events.missing.filter((e) => e.name.startsWith("drive."));
+  if (events.length) out.issues.push({ who: `主机器人（${main.appId}）`, problem: `应用还没订阅这些事件（事件与回调，长连接）：${events.map((e) => e.label).join("、")}；订阅后发布新版本`, scopes: events.map((e) => e.name), link: main.events.link, linkText: "去订阅事件" });
+  else if (main.events.subscribed) out.ok.push("主机器人：文档事件已订阅");
+  if (!rule.trigger.docs?.length) {
+    out.notes.push("没有列出文档时，规则看的是机器人订阅了的所有文档：omem 每天替已采集的飞书文档订阅一批（机器人要是文档的管理者）；评论里 @ 机器人的不用订阅。");
+    return out;
+  }
+  if (!larkBotInfo("main")) {
+    out.notes.push("机器人还没连上，规则启用、服务连上机器人后再检查一次，就会订阅列出的文档。");
+    return out;
+  }
+  const { subscribeRuleDocs } = await import("../channels/lark-doc-events.ts");
+  for (const d of await subscribeRuleDocs(app, rule.trigger.docs, rule.spaceId)) {
+    if (d.ok) out.ok.push(`已订阅「${d.title || d.link}」的变化`);
+    else out.issues.push({ who: d.title ? `文档「${d.title}」` : d.link, problem: d.error ?? "订阅失败" });
+  }
+  out.notes.push("飞书只把编辑和多维表格的变化发给文档的管理者：机器人订阅不了的，在文档右上角「…」→「添加文档应用」把 omem 的机器人加进来并给可管理权限，再检查一次。");
+  return out;
 }
 
 /** The report as text for the assistant to pass on. */

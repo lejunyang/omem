@@ -1907,8 +1907,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getRule } = await import("../rules/store.ts");
     return (await import("../rules/permissions.ts")).rulePermissions(app, getRule(app, (req.params as { id: string }).id));
   });
-  server.post("/api/rules", async (req) => (await import("../rules/store.ts")).saveRule(app, req.body as never, "user"));
-  server.put("/api/rules/:id", async (req) => (await import("../rules/store.ts")).saveRule(app, { ...(req.body as object), id: (req.params as { id: string }).id } as never, "user"));
+  server.post("/api/rules", async (req) => (await import("../rules/store.ts")).saveRule(app, req.body as never, "user", who(req)));
+  server.put("/api/rules/:id", async (req) => (await import("../rules/store.ts")).saveRule(app, { ...(req.body as object), id: (req.params as { id: string }).id } as never, "user", who(req)));
   server.delete("/api/rules/:id", async (req) => {
     (await import("../rules/store.ts")).deleteRule(app, (req.params as { id: string }).id);
     return { ok: true };
