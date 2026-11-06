@@ -57,9 +57,10 @@ const norm = (s: string) => s.trim().toLowerCase();
 /** One app's check result into what the settings page shows. Pure (tests feed it a fake check). */
 export function summarizeCheck(app: App, ref: string, appId: string, check: LarkCheck): BotCheck {
   const scopesMissing = check.scopesUnknown ? [] : check.missingScopes;
-  const subscribed = check.events ?? null;
+  // The app info does not always list its events; the version online does (what Feishu delivers anyway).
+  const subscribed = check.events ?? check.publishedEvents ?? null;
   const have = new Set((subscribed ?? []).map(norm));
-  const published = check.publishedEvents ? new Set(check.publishedEvents.map(norm)) : null;
+  const published = check.events && check.publishedEvents ? new Set(check.publishedEvents.map(norm)) : null;
   const cbHave = new Set((check.callbacks ?? []).map(norm));
   return {
     ref,
@@ -89,6 +90,33 @@ function memberScopes(appId: string, have: Set<string>) {
 function docScopes(appId: string, have: Set<string>) {
   const missing = DOC_SCOPES.filter((s) => !have.has(s));
   return { missing, link: missing.length ? larkScopeLink(appId, missing) : null };
+}
+
+/** The application info and the online version as Feishu returns them (scopes and events only, no secrets). */
+export async function rawAppInfo(app: App, ref: string, request: typeof fetch = fetch) {
+  const b = botApps(app).find((x) => x.ref === ref);
+  if (!b?.secret) return { error: `没有启用的飞书机器人 ${ref} 或它的 App Secret` };
+  const base = "https://open.feishu.cn/open-apis";
+  const t = (await (await request(`${base}/auth/v3/tenant_access_token/internal`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app_id: b.appId, app_secret: b.secret }) })).json()) as { tenant_access_token?: string; code?: number; msg?: string };
+  if (!t.tenant_access_token) return { error: `${t.code} ${t.msg}` };
+  const headers = { authorization: `Bearer ${t.tenant_access_token}` };
+  const info = (await (await request(`${base}/application/v6/applications/${b.appId}?lang=zh_cn`, { headers })).json()) as { code?: number; msg?: string; data?: { app?: Record<string, any> } };
+  const a = info.data?.app ?? {};
+  const version = a.online_version_id ? ((await (await request(`${base}/application/v6/applications/${b.appId}/app_versions/${a.online_version_id}?lang=zh_cn`, { headers })).json()) as { code?: number; msg?: string; data?: { app_version?: Record<string, any> } }) : null;
+  const v = version?.data?.app_version ?? {};
+  return {
+    code: info.code,
+    msg: info.msg,
+    appKeys: Object.keys(a),
+    scopes: a.scopes ?? null,
+    event: a.event ?? null,
+    onlineVersion: a.online_version_id ?? null,
+    versionCode: version?.code ?? null,
+    versionKeys: Object.keys(v),
+    versionScopes: v.scopes ?? null,
+    versionEvents: v.events ?? null,
+    versionStatus: v.status ?? null,
+  };
 }
 
 export async function checkLarkBots(app: App, request?: typeof fetch): Promise<BotCheck[]> {

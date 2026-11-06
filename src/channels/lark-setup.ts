@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import * as lark from "@larksuiteoapi/node-sdk";
 import { larkCli } from "./lark-cli.ts";
+import { FEATURES } from "../auth/features.ts";
 
 /**
  * Connecting the Feishu bot. The bot is a self-built app with bot capability,
@@ -76,8 +77,10 @@ export const LARK_BOT_ADDONS = {
       "base:record:read",
       "base:field:read",
     ],
-    // User identity: what personal capture through lark-cli reads (only if lark-cli is pointed at this same app).
-    user: [
+    // User identity: what personal capture through lark-cli reads (only if lark-cli is pointed at this same app),
+    // and what people connecting their own Feishu turn on (auth/features.ts), so a scan update covers them too.
+    user: [...new Set([
+      ...FEATURES.lark.flatMap((f) => f.scopes),
       "offline_access",
       "im:chat:read",
       "im:message:readonly",
@@ -100,7 +103,7 @@ export const LARK_BOT_ADDONS = {
       "vc:meeting.meetingevent:read",
       // Feishu wants a document subscription granted to the app's user identity as well.
       "docs:event:subscribe",
-    ],
+    ])],
   },
   events: {
     items: {

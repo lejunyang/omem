@@ -6,7 +6,8 @@ import { setupLarkBot } from "../src/channels/lark-bot.ts";
 import { summarizeCheck } from "../src/channels/lark-bot-check.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { feedbackStats, markLarkSent, onLarkReaction, polarityOf, reactionEventsQuiet, recordLarkSent } from "../src/channels/lark-feedback.ts";
-import { checkLarkApp } from "../src/channels/lark-setup.ts";
+import { checkLarkApp, LARK_BOT_ADDONS } from "../src/channels/lark-setup.ts";
+import { FEATURES } from "../src/auth/features.ts";
 import { onLarkSent, sendLark, setLarkBotClient } from "../src/channels/lark-send.ts";
 import { ownerReactions, reactionsBy } from "../src/channels/notify-gate.ts";
 import { shortcomings, shortcomingsText } from "../src/memory/gaps.ts";
@@ -185,5 +186,16 @@ describe("reaction feedback", () => {
     expect(unknown.events.missing).toEqual([]);
     for (let i = 0; i < 25; i++) recordLarkSent(app, { messageId: `om_${i}`, purpose: "answer", bot: "main" });
     expect(reactionEventsQuiet(app)).toMatchObject({ quiet: true, botMessages: 25, reactions: 0 });
+  });
+
+  it("reads the events of the version online when the app info does not list them; a scan update covers what members turn on", () => {
+    const app = testApp();
+    // As Feishu answers for a real app: no event list in the app info, the events in the online version.
+    const s = summarizeCheck(app, "main", "cli_main", { missingScopes: [], events: null, publishedEvents: ["im.message.receive_v1", "im.message.reaction.created_v1"] });
+    expect(s.events.subscribed).toEqual(["im.message.receive_v1", "im.message.reaction.created_v1"]);
+    expect(s.events.missing.map((e) => e.name)).toContain("im.message.reaction.deleted_v1");
+    expect(s.events.unpublished).toEqual([]);
+    for (const scope of FEATURES.lark.flatMap((f) => f.scopes)) expect(LARK_BOT_ADDONS.scopes.user).toContain(scope);
+    expect(new Set(LARK_BOT_ADDONS.scopes.user).size).toBe(LARK_BOT_ADDONS.scopes.user.length);
   });
 });

@@ -194,8 +194,12 @@ async function scanBot(ref_: string) {
   try {
     const r = await post<{ url?: string; error?: string }>(`/api/lark/bot-check/${ref_}/scan`, {});
     if (r.url) {
-      scanLinks.value = { ...scanLinks.value, [ref_]: r.url };
-      window.open(r.url, "_blank", "noopener");
+      // The link is shown only when the browser blocked the new tab.
+      const opened = window.open(r.url, "_blank");
+      if (opened) {
+        opened.opener = null;
+        toast("在打开的页面里用飞书扫码确认，确认后会收到通知", "ok");
+      } else scanLinks.value = { ...scanLinks.value, [ref_]: r.url };
     } else toast(r.error ?? "没有拿到扫码链接", "error");
   } catch (e) {
     toast((e as Error).message, "error");
@@ -918,7 +922,7 @@ async function saveEdit() {
           <strong>机器人权限与事件</strong><span class="spacer" />
           <button class="btn sm" :disabled="botChecking" @click="checkBots">{{ botChecking ? "检查中…" : "检查" }}</button>
         </div>
-        <p class="muted small">omem 用到的应用权限、事件订阅（收消息、表情反馈、会议邀请）和卡片回调。缺的权限可以直接去开发者后台申请；“扫码更新”在飞书里确认后一次补齐权限、事件和回调。事件订阅改了以后，要在开发者后台发布新版本才生效。</p>
+        <p class="muted small">omem 用到的应用权限（机器人的、成员连接飞书的）、事件订阅和卡片回调。缺什么都点“扫码更新”，在飞书里确认后一次补齐；之后在开发者后台发布新版本才生效，再点“检查”看结果。在后台手动加的权限同样要发布新版本才算开通。</p>
         <div v-for="b in botCheck ?? []" :key="b.ref" class="bot-row stack">
           <div class="row wrap">
             <strong>{{ b.name ?? b.ref }}</strong><span class="muted small mono">{{ b.appId }}</span><span class="spacer" />
@@ -927,33 +931,32 @@ async function saveEdit() {
           <p v-if="b.error" class="small warn-text">{{ b.error }}</p>
           <div class="small">
             权限：
-            <template v-if="b.scopes.unknown">读不到已开通的权限，<a v-if="b.scopes.link" :href="b.scopes.link" target="_blank" rel="noopener">在开发者后台核对并申请</a></template>
-            <template v-else-if="b.scopes.missing.length">缺 {{ b.scopes.missing.length }} 项，<a :href="b.scopes.link!" target="_blank" rel="noopener">一键申请</a><div class="muted mono break">{{ b.scopes.missing.join("、") }}</div></template>
+            <template v-if="b.scopes.unknown">读不到已开通的权限</template>
+            <template v-else-if="b.scopes.missing.length">缺 {{ b.scopes.missing.length }} 项<div class="muted mono break">{{ b.scopes.missing.join("、") }}</div></template>
             <span v-else class="badge accent">齐全</span>
           </div>
           <div v-if="b.members" class="small">
             成员连接飞书：
-            <template v-if="b.members.missing.length">{{ b.members.features.join("、") }}还缺 {{ b.members.missing.length }} 项用户身份的权限，<a :href="b.members.link!" target="_blank" rel="noopener">一键申请</a><div class="muted mono break">{{ b.members.missing.join("、") }}</div></template>
+            <template v-if="b.members.missing.length">{{ b.members.features.join("、") }}还缺 {{ b.members.missing.length }} 项用户身份的权限<div class="muted mono break">{{ b.members.missing.join("、") }}</div></template>
             <span v-else class="badge accent">齐全</span>
           </div>
           <div v-if="b.docs" class="small">
             文档变化规则：
-            <template v-if="b.docs.missing.length">订阅文档、表格的变化还缺 {{ b.docs.missing.length }} 项权限，<a :href="b.docs.link!" target="_blank" rel="noopener">一键申请</a><div class="muted mono break">{{ b.docs.missing.join("、") }}</div></template>
+            <template v-if="b.docs.missing.length">订阅文档、表格的变化还缺 {{ b.docs.missing.length }} 项权限<div class="muted mono break">{{ b.docs.missing.join("、") }}</div></template>
             <span v-else class="badge accent">齐全</span>
           </div>
           <div class="small">
             事件：
             <template v-if="b.events.subscribed === null">
-              读不到订阅列表<template v-if="b.reactionsQuiet.quiet">；最近 {{ b.reactionsQuiet.days }} 天机器人发了 {{ b.reactionsQuiet.botMessages }} 条消息，一个表情事件都没收到，多半没订阅表情事件</template><template v-else-if="!b.reactionsQuiet.everReceived">；还没收到过表情事件</template>。
+              飞书没有告诉 omem 订阅了哪些（应用信息和线上版本里都没有）；扫码更新会一并订阅 omem 用到的事件<template v-if="b.reactionsQuiet.quiet">；最近 {{ b.reactionsQuiet.days }} 天机器人发了 {{ b.reactionsQuiet.botMessages }} 条消息，一个表情事件都没收到，多半没订阅表情事件</template><template v-else-if="!b.reactionsQuiet.everReceived">；还没收到过表情事件</template>。
             </template>
             <template v-else-if="required(b).length">缺 {{ required(b).map((e) => e.label).join("、") }}<div class="muted mono break">{{ required(b).map((e) => e.name).join("、") }}</div></template>
             <span v-else class="badge accent">已订阅</span>
             <span v-if="b.events.subscribed !== null && optional(b).length" class="muted">（可选，未订阅：{{ optional(b).map((e) => e.label).join("、") }}）</span>
             <div v-if="b.events.unpublished.length" class="warn-text">已订阅但线上版本还没有：{{ b.events.unpublished.join("、") }}，发布新版本后生效</div>
-            <a :href="b.events.link" target="_blank" rel="noopener">去事件订阅页面</a>
           </div>
           <div v-if="b.callbacks.missing.length" class="small warn-text">卡片回调未订阅：{{ b.callbacks.missing.map((c) => `${c.label}（${c.name}）`).join("、") }}</div>
-          <a v-if="scanLinks[b.ref]" class="small" :href="scanLinks[b.ref]" target="_blank" rel="noopener">在飞书里打开扫码链接确认（确认后会收到通知）</a>
+          <a v-if="scanLinks[b.ref]" class="small" :href="scanLinks[b.ref]" target="_blank" rel="noopener">浏览器拦下了扫码页面，点这里打开（确认后会收到通知）</a>
         </div>
       </div>
       <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>

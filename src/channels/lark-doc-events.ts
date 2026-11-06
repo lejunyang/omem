@@ -160,17 +160,18 @@ export function docSubscriptions(app: App, links?: string[]) {
 /**
  * Captured Feishu documents the bot has not tried yet, a batch at a time (the daily document check):
  * the ones it may subscribe to get their changes by event, and the periodic check leaves them.
- * A failed one is tried again after a week (the owner may have added the bot to it since).
+ * A failed one is tried again after three days (the owner may have added the bot to it since), after
+ * the ones never tried.
  */
 export async function subscribeCapturedDocs(app: App, limit = 50) {
-  const week = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const retryAfter = new Date(Date.now() - 3 * 86400_000).toISOString();
   const rows = all<{ id: string; space_id: string; uri: string; meta: string }>(
     app.db,
     `select s.id, s.space_id, s.uri, s.meta from sources s
      where s.kind = 'doc' and s.deleted_at is null and json_extract(s.meta, '$.via') = 'lark-cli'
        and not exists (select 1 from lark_doc_subscriptions d where d.source_id = s.id and (d.status = 'ok' or d.attempted_at > ?))
-     order by s.updated_at desc limit ?`,
-    week,
+     order by exists (select 1 from lark_doc_subscriptions d where d.source_id = s.id), s.updated_at desc limit ?`,
+    retryAfter,
     limit,
   );
   let ok = 0;
@@ -184,6 +185,17 @@ export async function subscribeCapturedDocs(app: App, limit = 50) {
     } catch {
       /* Not a link the bot can subscribe to: left for the periodic check. */
     }
+  }
+  return { tried: rows.length, subscribed: ok };
+}
+
+/** Subscribe again to what was refused (the bot may have been made a manager since); the newest first. */
+export async function retryFailedSubscriptions(app: App, limit = 100) {
+  const rows = all<Sub>(app.db, "select * from lark_doc_subscriptions where status = 'failed' order by attempted_at desc limit ?", limit);
+  let ok = 0;
+  for (const r of rows) {
+    const res = await subscribeDoc(app, { token: r.file_token, type: r.file_type, url: r.link, ...(r.node_token ? { nodeToken: r.node_token } : {}), title: r.title }, { sourceId: r.source_id, spaceId: r.space_id, bot: r.bot });
+    if (res.status === "ok") ok++;
   }
   return { tried: rows.length, subscribed: ok };
 }

@@ -303,9 +303,11 @@ export const peerCommands: Record<string, Command> = {
   },
   "lark-bot-permissions": {
     description: "飞书机器人缺哪些权限（含 @ 人要用的 user_id、邮箱）和事件订阅（收消息、表情反馈、会议邀请、卡片回调），返回一键申请的链接；scan: true 时在后台发起扫码补齐，返回二维码链接（在飞书里打开确认）",
-    schema: z.object({ scan: z.boolean().default(false), bot: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).default("main") }),
+    schema: z.object({ scan: z.boolean().default(false), raw: z.boolean().default(false), bot: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).default("main") }),
     run: async (app, a) => {
-      const { checkLarkBots, updateLarkBotByScan } = await import("../channels/lark-bot-check.ts");
+      const { checkLarkBots, updateLarkBotByScan, rawAppInfo } = await import("../channels/lark-bot-check.ts");
+      // What Feishu itself says about the app's scopes and events, to check what the summary reads.
+      if (a.raw) return rawAppInfo(app, a.bot);
       const bots = await checkLarkBots(app);
       const main = bots.find((b) => b.ref === a.bot);
       if (!main) throw new Error("还没有绑定飞书机器人");
@@ -365,6 +367,20 @@ export const peerCommands: Record<string, Command> = {
       }
       const after = findConnection(app, a.check, a.provider)!;
       return { refreshed: after.expiresAt !== before.expiresAt, whoami, error, before: { expiresAt: before.expiresAt, refreshExpiresAt: before.refreshExpiresAt }, after: view(after) };
+    },
+  },
+  "lark-doc-subscribe": {
+    description: "让机器人订阅飞书文档的变化（文档变化规则用；返回订阅成功与否和原因）：link 订阅这一篇（文档、表格、多维表格或知识库页面）；retryFailed 立即重试之前被拒的（最多 100 篇）；都不给时列出订阅情况",
+    schema: z.object({ link: z.string().url().max(500).optional(), retryFailed: z.boolean().default(false) }),
+    run: async (app, a) => {
+      const { docRef, docSubscriptions, retryFailedSubscriptions, subscribeDoc } = await import("../channels/lark-doc-events.ts");
+      if (a.link) {
+        const ref = await docRef(app, a.link);
+        return { title: ref.title ?? "", token: ref.token, type: ref.type, ...(await subscribeDoc(app, ref, { link: ref.url })) };
+      }
+      if (a.retryFailed) return retryFailedSubscriptions(app);
+      const list = docSubscriptions(app);
+      return { ok: list.filter((s) => s.status === "ok"), failed: list.filter((s) => s.status === "failed").length, errors: [...new Set(list.map((s) => s.error).filter(Boolean))] };
     },
   },
   "doubao-status": {
