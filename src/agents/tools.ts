@@ -4633,6 +4633,19 @@ def({
   },
 });
 
+/**
+ * A plugin tool keeps something as a source (src/plugins/types.ts PluginContext.saveSource): into a
+ * space this call may write, the same uri updating it. The uri is the thing's address on its platform,
+ * so it is also the origin key that tells copies captured by different people apart from new things.
+ */
+export function saveSourceFor(ctx: ToolContext, input: { space?: string; kind?: "doc" | "chat" | "web" | "note"; uri: string; title: string; text: string; meta?: Record<string, unknown> }) {
+  if (!/^[a-z][\w.-]*:\S+$/.test(input.uri) || input.uri.length > 500) throw new HttpError(400, "uri 要写成 平台:对象 的形式（例如 notion:page/abc），不超过 500 个字符");
+  if (!input.text.trim()) throw new HttpError(400, `${input.title || input.uri} 没有正文`);
+  const spaceId = writeSpace(ctx, input.space);
+  const r = upsertSource(ctx.app, { spaceId, kind: input.kind ?? "doc", uri: input.uri, title: input.title.trim().slice(0, 300) || input.uri, text: input.text, meta: { ...(input.meta ?? {}), originKey: input.uri, capturedBy: ctx.userId ?? OWNER } });
+  return { id: r.id, created: r.status === "created", changed: r.status !== "unchanged", space: spaceId };
+}
+
 export type HostTool = Tool;
 /** Tools a plugin brings (src/plugins/registry.ts); names carry the plugin id as prefix. */
 export function registerTool(t: HostTool, opts: { approval?: boolean } = {}) {

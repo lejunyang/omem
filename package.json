@@ -32,6 +32,7 @@
     "@larksuite/cli": "1.0.98",
     "@larksuiteoapi/node-sdk": "1.76.0",
     "@modelcontextprotocol/sdk": "1.31.0",
+    "@nangohq/providers": "0.72.2",
     "commander": "15.0.0",
     "croner": "10.0.0",
     "fastify": "5.12.5",

@@ -39,14 +39,23 @@ export type PluginContext = {
    * connected it. `fetch` goes to the provider's `apiBase` only, with their token; the plugin never sees it.
    */
   connection(provider: string): Promise<PluginConnection | null>;
+  /**
+   * Keep something as a source (a page, a message thread, a ticket from a connected platform), in a
+   * space this call may write (the run's own by default). Tool calls only; the same uri updates it.
+   */
+  saveSource?(input: PluginSourceInput): { id: string; created: boolean; changed: boolean; space: string };
 };
 
-export type PluginConnection = { account: string; scopes: string[]; fetch(path: string, init?: RequestInit): Promise<Response> };
+/** `uri`: the platform's own stable address of the thing (`notion:page/<id>`), so a later capture updates it instead of adding another. */
+export type PluginSourceInput = { space?: string; kind?: "doc" | "chat" | "web" | "note"; uri: string; title: string; text: string; meta?: Record<string, unknown> };
+
+/** `base`: where its calls go (the provider's apiBase), null when the owner has not set it up. */
+export type PluginConnection = { account: string; scopes: string[]; base: string | null; fetch(path: string, init?: RequestInit): Promise<Response> };
 
 /** A platform people connect (logging in with it, or only binding): see src/auth/providers.ts LoginProvider. */
 export type PluginConnector = import("../auth/providers.ts").LoginProvider & {
-  /** What a person can turn on, each with the scopes it asks for (src/auth/features.ts). */
-  features?: import("../auth/features.ts").Feature[];
+  /** What a person can turn on, each with the scopes it asks for (src/auth/features.ts); a function when they follow the owner's settings. */
+  features?: import("../auth/features.ts").Feature[] | (() => import("../auth/features.ts").Feature[]);
 };
 
 export type PluginTool<S extends z.ZodObject = z.ZodObject> = {
@@ -95,6 +104,10 @@ export type PluginApi = {
   service(name: string): { ensure(): Promise<{ url: string; token: string }> };
   /** A platform people can connect; its id must start with `<plugin id>-`. Gone when the plugin's code is unloaded. */
   connector(def: PluginConnector): void;
+  /** What the owner filled in for one of this plugin's connectors (its `appFields`: client id and secret…), read each time. */
+  appConfig(provider: string): Record<string, string>;
+  /** The host's fetch for a connector's own calls (exchanging codes, whoami): tests answer it without the network. */
+  fetch: typeof fetch;
 };
 
 export type PluginRegister = (api: PluginApi) => void | Promise<void>;

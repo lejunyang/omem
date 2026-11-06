@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import { del, get, patch, post, put } from "../api";
+import ProviderApps, { type Provider } from "./ProviderApps.vue";
 import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
@@ -13,8 +14,7 @@ import { confirmDialog } from "../lib/dialog";
  * who is waiting for approval, everyone's role, logins and spaces, invite links, roles and what
  * changed. This machine and the owner's paired devices never need to log in.
  */
-type Auth = { enabled: boolean; providers: string[]; primary: string | null; signup: Record<string, "approve" | "closed" | "open">; sessionDays: number };
-type Provider = { id: string; label: string; unavailable: string | null; callback: string };
+type Auth = { enabled: boolean; providers: string[]; primary: string | null; signup: Record<string, "approve" | "closed" | "open">; sessionDays: number; connectors: string[] };
 type Identity = { channel: string; externalId: string; kind: "login" | "alias"; display: string; provider: string };
 type User = { id: string; name: string; role: string; status: "active" | "pending"; email: string | null; avatar: string | null; loginAny: boolean; disabledAt: string | null; createdAt: string; lastSeenAt: string | null; identities: Identity[]; spaces: { space: string; name: string; role: string }[] };
 type Invite = { id: string; role: string; spaces: { space: string; role: string }[]; allowAny: boolean; note: string; createdAt: string; expiresAt: string; usedBy: string | null; usedAt: string | null; revokedAt: string | null };
@@ -38,6 +38,8 @@ const draft = ref<{ id?: string; name: string; scope: "global" | "space"; descri
 const pending = computed(() => (users.value ?? []).filter((u) => u.status === "pending" && !u.disabledAt));
 const others = computed(() => (users.value ?? []).filter((u) => u.status !== "pending" || u.disabledAt));
 const label = (id: string) => providers.value.find((p) => p.id === id)?.label ?? id;
+// Login choices: platforms that say who someone is, once set up (or already chosen); the rest are under 平台应用.
+const logins = computed(() => providers.value.filter((p) => p.identity && (p.id === "lark" || !p.unavailable || auth.value?.providers.includes(p.id) || auth.value?.primary === p.id)));
 const spaceOptions = computed(() => state.spaces.filter((s) => s.kind !== "personal").map((s) => ({ value: s.id, label: s.name })));
 const globalRoles = computed(() => (roles.value?.roles ?? []).filter((r) => r.scope === "global" && r.id !== "owner"));
 const spaceRoles = computed(() => (roles.value?.roles ?? []).filter((r) => r.scope === "space"));
@@ -217,7 +219,7 @@ onMounted(() => load().catch(fail));
         <UiCheckbox :model-value="auth.enabled" switch @change="(v) => saveAuth({ enabled: v })">打开多人登录</UiCheckbox>
         <p class="muted small">打开后，从别的机器打开网页会看到登录页；经同一台机器上的反向代理（带 X-Forwarded-For）进来的请求也要登录。</p>
         <p v-if="!webUrl" class="small warn-text">还没有填“网页地址”（设置 → 渠道）：登录回调、邀请链接和机器人发的登录链接都要用它。</p>
-        <div v-for="p in providers" :key="p.id" class="provider stack">
+        <div v-for="p in logins" :key="p.id" class="provider stack">
           <div class="row wrap">
             <UiCheckbox :model-value="auth.providers.includes(p.id) || auth.primary === p.id" :disabled="auth.primary === p.id" @change="(v) => toggleProvider(p.id, v)">{{ p.label }}</UiCheckbox>
             <span v-if="auth.primary === p.id" class="badge accent">主要登录方</span>
@@ -226,14 +228,18 @@ onMounted(() => load().catch(fail));
             <UiSegmented :model-value="auth.signup[p.id] ?? 'approve'" size="sm" :aria-label="`${p.label}新账号`" :options="SIGNUP" @change="(v) => saveAuth({ signup: { ...auth!.signup, [p.id]: v as 'approve' } })" />
           </div>
           <p v-if="p.unavailable" class="small warn-text">暂时不能用：{{ p.unavailable }}</p>
-          <p class="small muted">开发者后台的重定向 URL 要加上：<span class="mono break">{{ p.callback }}</span><button class="btn ghost sm" @click="copy(p.callback)">复制</button></p>
+          <p v-if="p.callback" class="small muted">开发者后台的重定向 URL 要加上：<span class="mono break">{{ p.callback }}</span><button class="btn ghost sm" @click="copy(p.callback)">复制</button></p>
         </div>
+        <p class="muted small">GitHub、Google、钉钉、微信等能确认身份的平台，在下面“平台应用”里填好应用信息后出现在这里。</p>
         <div class="field">
           <span>主要登录方</span>
-          <UiSelect :model-value="auth.primary ?? ''" width="220px" aria-label="主要登录方" :options="[{ value: '', label: '不设（打开的都能登录）' }, ...providers.map((p) => ({ value: p.id, label: p.label }))]" @change="setPrimary" />
+          <UiSelect :model-value="auth.primary ?? ''" width="220px" aria-label="主要登录方" :options="[{ value: '', label: '不设（打开的都能登录）' }, ...logins.map((p) => ({ value: p.id, label: p.label }))]" @change="setPrimary" />
           <span class="hint">设了以后只能用它登录，其他方式只能在账号页绑定。</span>
         </div>
       </div>
+
+      <h2 class="section-title">平台应用</h2>
+      <ProviderApps :providers="providers" :offered="auth.connectors" @offer="(list) => saveAuth({ connectors: list })" @saved="load" />
 
       <template v-if="pending.length">
         <h2 class="section-title">等待批准</h2>

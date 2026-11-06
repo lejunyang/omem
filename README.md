@@ -406,6 +406,8 @@ omem space share project-a wang [--edit]           # 再开放一个空间
 
 成员私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。每个人有一个全局角色（管理员、成员、访客，或你建的角色），在加入的每个空间里有一个空间角色（只读、贡献者、编辑、管理，或自定义的）：能不能写记忆、写 Wiki、看别人的运行、管空间成员都按角色来；管理员能改 Agent 和规则，系统设置、设备、交办编码只给你。自己建的空间自己管理，在账号页加人。成员的 Agent 运行只拿到他能用的工具。
 
+除了飞书，内置的“连接平台”插件还能接 Notion、GitHub、Google、Slack、Jira、钉钉、微信等约 500 个平台：你在设置 → 成员 → 平台应用里搜到平台，按提示在平台开发者后台建应用、填回 Client ID 和 Secret（用 key 连接的平台不用这步），再开放给成员；能确认身份的平台（GitHub、Google、钉钉、微信……）还能用来登录和绑定账号，其余只用来读取。成员连接后，侧栏“平台采集”的 Agent 以他的身份读这些平台，把需要的内容存成原件（只读，不会改平台上的东西）。说明见 [docs/v2/connectors.md](docs/v2/connectors.md)。
+
 成员可以在账号页“已连接的应用”里连接自己的飞书，按功能一项项授权（我的消息、文档与知识库、表格、日程、妙记、让助手写文档；每打开一项跳一次飞书授权页，只要那一项的权限），也可以在登录页先勾好，登录时一起授权。飞书的授权只增不减，账号页每项功能有“omem 是否使用”的开关：关掉的不采集、对应的工具不用，飞书那边的授权要在飞书里撤销。连接以后，他的 Agent 运行以他自己的身份读写飞书（`lark_read`、`lark_write`、文档工具），没连接就用不了，不会借用你的登录；打开“我的消息”后，后台采集他最近活跃的聊天，存进他的个人空间；打开了日程、妙记、文档的，他的日程、妙记和最近打开的文档也一样。已经在他能读的共享空间里的群、文档、妙记和日程不会再存一份，只记下他也能看到；正文里嵌着表格的文档按各人看到的分开存。同一个聊天或文档在几个空间各有一份时，检索只显示一条，注明另有几处；内容相同的切块只算一次向量。用到的权限要先在机器人应用的开发者后台开通：设置 → 渠道 的机器人检查会列出成员连接还缺哪些用户身份的权限，“扫码更新”一并申请。令牌加密存在本机 `secrets/vault.db`，不随快照和多台设备同步。空间管理者可以把某份原件设为“受限”（只有记下的人和管理者能看，比如放进项目空间的一段单聊），也可以让空间里的飞书文档按各人的飞书权限显示（成员连接飞书后，飞书说他能看的才显示全文）；这两类原件都不会分享出去，也不会发给别的服务。设计与分期见 [docs/v2/multi-user.md](docs/v2/multi-user.md)。同一台机器、同一个数据目录，不做多租户隔离。
 
 ## 多台设备
@@ -491,7 +493,7 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 代码结构：
 
 ```
-src/auth      登录：登录方（providers.ts，飞书在 lark.ts）、登录与绑定、邀请、机器人登录链接（login.ts）、会话 cookie（sessions.ts）、谁在请求与相关接口（http.ts）；权限（permissions.ts、routes.ts、tools.ts）；连接器：令牌保管（vault.ts）、刷新与续期（connections.ts）、功能与 scope（features.ts）、以某人身份用 lark-cli（lark-user.ts）
+src/auth      登录：登录方（providers.ts，飞书在 lark.ts）、登录与绑定、邀请、机器人登录链接（login.ts）、会话 cookie（sessions.ts）、谁在请求与相关接口（http.ts）；权限（permissions.ts、routes.ts、tools.ts）；连接器：令牌保管（vault.ts）、刷新与续期（connections.ts）、功能与 scope（features.ts）、主人填的平台应用配置（apps.ts）、以某人身份用 lark-cli（lark-user.ts）
 src/core      配置、AI 提供方与 API key（ai-keys.ts）、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）
 src/rules     任务规则、条件判断、执行动作与触发记录
 src/remote    远程操作：aad 的进程（assist、mcp、record）、会话与画面转发（/remote）、录制与回放
@@ -507,7 +509,7 @@ src/channels  发出去的消息里的引用（citations.ts）、飞书机器人
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
-plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/）
+plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/；connect：Nango 目录与国内平台的连接器、只读请求与存原件的工具、采集档案）
 packages/plugin-sdk   插件 SDK（omem-plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
 skills/library  内置技能（如 lark-messaging、lark-docs、lark-suite、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）

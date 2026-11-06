@@ -24,10 +24,19 @@ export const FEATURES: Record<string, Feature[]> = {
   ],
 };
 
-export const featuresOf = (provider: string) => FEATURES[provider] ?? [];
+/** Plugin providers whose features follow the owner's settings (the scopes they filled in): read each time. */
+const dynamic = new Map<string, () => Feature[]>();
+
+export const featuresOf = (provider: string) => dynamic.get(provider)?.() ?? FEATURES[provider] ?? [];
 
 /** A plugin's provider brings its own features (src/plugins/registry.ts api.connector); gone with the plugin. */
-export function registerFeatures(provider: string, list: Feature[]) {
+export function registerFeatures(provider: string, list: Feature[] | (() => Feature[])) {
+  if (typeof list === "function") {
+    dynamic.set(provider, list);
+    return () => {
+      if (dynamic.get(provider) === list) dynamic.delete(provider);
+    };
+  }
   FEATURES[provider] = list;
   return () => {
     if (FEATURES[provider] === list) delete FEATURES[provider];

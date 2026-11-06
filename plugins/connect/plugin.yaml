@@ -1,0 +1,9 @@
+id: connect
+name: 连接平台
+description: 连接 Notion、GitHub、Google、Slack、钉钉等平台：能确认身份的可用来登录和绑定，其余只用来读取和采集成原件
+icon: link
+agents: [collector]
+skills: [platform-capture]
+tools: [list_spaces, list_sources, search, read_source]
+page:
+  title: 平台采集

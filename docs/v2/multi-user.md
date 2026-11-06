@@ -271,6 +271,8 @@ Nango 的情况（2026-11 查证）：
 
 omem 需要的正好是 Auth + Proxy，同步、调度、索引本来就由宿主自己做，所以 Nango 免费版适合给长尾平台保管令牌。飞书是核心，要和 lark-cli 注入、增量 scope、机器人身份绑在一起，放进 Nango 反而多绕一层。
 
+> 2026-11-07：长尾平台已经由内置插件 `plugins/connect` 接入，用的是 Nango 目录的数据（npm 包 `@nangohq/providers`），没有部署 Nango 服务，见 docs/v2/connectors.md。下面是当时的考虑。
+
 **现在不部署 Nango**（本人已定）：它要 Docker 和一整套服务，比 omem 本身还重。先只做内置 broker，接口留好；以后接 GitHub、Google 这类平台时，单个平台的 OAuth 用内置 broker 写一个提供方定义就够，平台多到值得时再考虑 Nango。接口设计成：
 
 ```ts

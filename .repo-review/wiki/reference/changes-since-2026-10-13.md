@@ -1521,3 +1521,13 @@ updated: 2026-11-07
 - 传输：`GET /api/peer/snapshot` 认 `parts`、`strip`、`files=separate`；SSH 快照程序收同样的选择作第三个参数。没选的仓库和工作区不打包；合并时不传 `chunks`、`chunks_fts`、`symbols`、`code_refs`（合并会重建；常驻服务器 8.7 GB 的库里约 6.7 GB 是这些）。附件先列名字（`GET /api/peer/files`），只请求本机没有的，每批 500 个（`POST /api/peer/files`）；覆盖时跳过的附件从备份复制回来。
 - 兼容：旧设备忽略参数、发来全部内容，`mergeLibrary` 先删掉没选的部分再合并。快照里既没有知识库也没有附件时 tar 不再因为结尾的空 `-C` 失败。
 - 回归：`test/peers.test.ts`（经中间节点只拉附件：只传缺的一个、快照无索引、合并后重建）、`test/pull.test.ts`（旧设备全量快照按选择合并）；本机起一台临时 omem 用 CLI `--only files --to <新目录> -y` 实测。
+
+## 2026-11-07：连接其他平台（身份与能力两类连接器）
+
+- 内置插件 `plugins/connect`：运行时读 npm 包 `@nangohq/providers`（Nango 的平台目录，ELv2，不复制进仓库），把全部 OAuth 2 平台和可采集分组（文档、聊天、邮件日程、会议、代码、工单）里用 API Key / 账号密码连接的平台注册成连接器；`china.ts` 补微信扫码登录、QQ 互联、微博、钉钉、抖音、Gitee、百度网盘、阿里云盘、语雀。通用引擎 `engine.ts` 处理授权参数、Basic / JSON / GET 换令牌、参数改名、响应路径、令牌放请求头或 query。
+- 两类：`identities.ts` / `china.ts` 里有“我是谁”的是身份（可登录、绑定，按平台永久 id 记 identities），其余 `identity: false` 是能力：登录流程只接受 connect，回调只存令牌。
+- 宿主：`LoginProvider` 加 `identity`、`credentials`、`appFields`、`sign`、`group`、`docs`，`apiBase` 可以是函数，授权三函数可选；`src/auth/apps.ts` 存主人填的应用配置（`secrets/connector-apps.json`）；`auth.connectors` 是开放给成员的平台；`POST /api/auth/connections/:provider/credentials`、`PUT /api/auth/providers/:id/app`；插件 `api.appConfig`、`api.fetch`、功能可为函数、`ctx.saveSource`（`saveSourceFor`，按调用者可写的空间，uri 作 origin_key）。
+- 工具 `connect_list`、`connect_request`（只读：GET；POST 只放行搜索、查询、GraphQL query 和少数已知只读接口）、`connect_save`；档案 `connect-collector`、技能 `platform-capture`。
+- 网页：设置 → 成员 → 平台应用（`ProviderApps.vue`：搜索、用途与范围筛选、填配置、复制回调、开放）；登录方式只列能登录且已设置的；账号页可搜索、用 key 连接。
+- `test/connect-plugin.test.ts`；没有用真实平台应用走过授权。
+

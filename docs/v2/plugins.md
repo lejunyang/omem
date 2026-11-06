@@ -94,6 +94,10 @@ api.tool({ name: "notes_recent", description, schema, handler: async (ctx) => {
 - `ctx.connection(provider).fetch` 只能请求 `apiBase` 下的地址，宿主带上令牌，插件拿不到令牌本身。
 - 清单里写 `connectors: [{ provider: notes-api, features: [read] }]`，没连接或缺功能时插件页顶上提示去账号页连接。
 - 想让人用它登录，把它的 id 加进 `auth.providers`（设置 → 成员）。
+- 只用来读的平台写 `identity: false`：只存令牌，不登录、不绑定、不记身份。用 key 或账号密码连接的写 `credentials: { fields, verify }`，不用授权流程的三个函数。
+- 主人要填的应用配置写 `appFields`（client id、secret、站点），在设置 → 成员 → 平台应用里填，存在 `secrets/connector-apps.json`，插件用 `api.appConfig(id)` 读；接口地址依赖它时 `apiBase` 写成函数。令牌不是 Bearer 时用 `sign(app, { url, headers }, secret)` 放进请求头或 query。插件自己发的请求（换令牌、查账号）用 `api.fetch`。
+- 工具里 `ctx.saveSource({ uri, title, text, space? })` 存原件：`uri` 写 `平台:编号`，同一个 uri 再存是更新，也作 origin_key。
+- 内置的 `connect` 插件就是这样接入几百个平台的，见 docs/v2/connectors.md。
 
 ## 服务与流
 

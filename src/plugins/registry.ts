@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { loginProvider, registerLoginProvider } from "../auth/providers.ts";
+import { authFetch, loginProvider, registerLoginProvider } from "../auth/providers.ts";
 import { registerFeatures } from "../auth/features.ts";
+import { appConfig } from "../auth/apps.ts";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import YAML from "yaml";
@@ -13,13 +14,13 @@ import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
 import { CORE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
-import { registerTool, toolList, unregisterTools, type ToolContext } from "../agents/tools.ts";
+import { registerTool, saveSourceFor, toolList, unregisterTools, type ToolContext } from "../agents/tools.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { GENERIC_BLOCKS, genericToolName } from "./generic.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
 import { setTrust, trustState } from "./trust.ts";
-import type { PluginApi, PluginBlock, PluginRegister, PluginTool } from "./types.ts";
+import type { PluginApi, PluginBlock, PluginRegister, PluginSourceInput, PluginTool } from "./types.ts";
 
 /**
  * Plugins (docs/v2/plugins.md): a directory with plugin.yaml, agent specs, skills, an optional
@@ -98,7 +99,7 @@ export function getPlugin(id: string) {
 
 /** The ToolContext of a plugin tool's call, narrowed to what server.ts may see. */
 function asPlugin(env: PluginEnv, ctx: ToolContext) {
-  return pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor });
+  return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input) };
 }
 
 // The host's blocks (form, chart) are handed in for whichever plugin the run belongs to.
@@ -180,7 +181,12 @@ async function loadCode(app: App, p: LoadedPlugin) {
       if (loginProvider(def.id)) throw new Error(`已经有连接器 ${def.id}`);
       const { features, ...provider } = def;
       p.connectors.push(registerLoginProvider(provider));
-      if (features?.length) p.connectors.push(registerFeatures(def.id, features));
+      if (typeof features === "function" || features?.length) p.connectors.push(registerFeatures(def.id, features));
+    },
+    fetch: authFetch,
+    appConfig(provider) {
+      if (!provider.startsWith(`${manifest.id}-`)) throw new Error(`插件 ${manifest.id} 只能读自己连接器的配置：${provider}`);
+      return appConfig(app, provider);
     },
     service(name: string) {
       const spec = manifest.services.find((s) => s.name === name);

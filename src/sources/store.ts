@@ -103,6 +103,8 @@ export function originKeyOf(input: { kind: string; uri: string; meta?: Record<st
   const doc = input.meta?.documentId;
   if (input.kind === "doc" && typeof doc === "string" && doc) return `lark:doc:${doc}${reader}`;
   if (input.kind === "web" && /^https?:\/\//.test(input.uri)) return `url:${input.uri.replace(/#.*$/, "").replace(/\/+$/, "")}`;
+  // Captured from a connected platform by a plugin (agents/tools.ts saveSourceFor): its address there.
+  if (typeof input.meta?.originKey === "string" && input.meta.originKey) return input.meta.originKey;
   return null;
 }
 

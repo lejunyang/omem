@@ -1036,6 +1036,17 @@ TraeX 与其他 ACP 的清理补验：
 - 撤销插件信任后，这个平台从账号页消失，它的工具不再可用。
 - 验证记录：`test/plugin-connectors.test.ts`（信任后才注册、按用的人取连接、只发往 apiBase、撤销信任后注销）。
 
+## 连接其他平台（2026-11-07，docs/v2/connectors.md）
+
+- 启动日志有“连接平台：N 个平台可连接”（N 约 500）。设置 → 成员 → 平台应用：搜 notion、github、钉钉能找到，各自标着用途；GitHub、Google、钉钉、微信标“能登录”，Jira、Notion 以外的大多数不标。
+- 主人在 GitHub 的开发者后台建 OAuth App，把“设置”里给的重定向 URL 填进去，Client ID 和 Secret 填回来保存：提示“已保存”，GitHub 自动“开放”，并出现在上面的登录方式里；刷新后 Secret 一栏只显示“已填 …后四位”。
+- 成员在账号页“已连接的应用”连接 GitHub：跳到 GitHub 授权页，回来显示账号名；成员页他的身份多了 GitHub。打开多人登录并勾选 GitHub 后，别的机器上能用 GitHub 登录进同一个账号。
+- 主人开放 Jira（填好应用）：成员连接后账号页显示站点，成员页他的身份里没有 Jira；用 Jira 登录被拒（“只用来连接”）。
+- 主人开放一个用 key 连接的平台（如 Fireflies、语雀）：成员在账号页填 key，填错时提示平台没有接受；填对后显示已连接。
+- 和 `connect-collector` 对话（侧栏“平台采集”）：“把 Notion 里《差旅报销制度》存进来”——它先 `connect_list`，再用 `connect_request` 搜到页面、读子块，`connect_save` 存成原件；原件页能看到这份文档，uri 是 `notion:page/…`；让它再采一次，原件显示没有变化。让它“删掉这个 issue”时它说只能读。
+- 微信、QQ 要在有备案域名的那台机器上验：扫码或授权后回到账号页，成员页身份里有 wechat / qq（unionid）。
+- 验证记录：`test/connect-plugin.test.ts`（假平台）；没有用真实平台应用走过授权。
+
 ## 和别人的 omem 共享（2026-11-05，docs/v2/multi-user.md 第 5 期）
 
 - A 服务：设置 → 设备 → 和别人的 omem 共享，选一个空间“可同步”，内容勾 Wiki、记忆、文档，生成配对码。

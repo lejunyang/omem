@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { del, get, logout, patch, put } from "../api";
+import { del, get, logout, patch, post, put } from "../api";
 import UiSelect from "../components/UiSelect.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -71,17 +71,41 @@ const notice = computed(() =>
 // Connected platforms (src/auth/connections.ts): features turned on one at a time (an incremental authorization each).
 type Feature = { id: string; label: string; description: string; on?: boolean; paused?: boolean };
 type Conn = { id: string; provider: string; label: string; accountName: string; status: "active" | "expired" | "error"; scopes: string[]; features: Feature[]; background: boolean; lastError: string | null; updatedAt: string };
-type Connections = { connections: Conn[]; available: { id: string; label: string; unavailable: string | null; features: Feature[] }[]; may: boolean };
+type KeyField = { key: string; label: string; secret: boolean; optional: boolean; hint: string };
+type Available = { id: string; label: string; unavailable: string | null; group: string; docs: string; identity: boolean; credentials: KeyField[] | null; features: Feature[] };
+type Connections = { connections: Conn[]; available: Available[]; may: boolean };
 const conns = ref<Connections | null>(null);
 const picked = ref<Record<string, string[]>>({});
 // A call ran into a missing scope (a link from a notification): ask for just that one.
 const askScopes = computed(() => (route.query.connect === "lark" && typeof route.query.scopes === "string" ? route.query.scopes : ""));
 // The owner reads and writes Feishu through lark-cli's own login (设置 → 渠道), not a connection here.
-const shownProviders = computed(() => (conns.value?.available ?? []).filter((p) => !(state.me?.role === "owner" && p.id === "lark")));
+const connQuery = ref("");
+const offeredProviders = computed(() => (conns.value?.available ?? []).filter((p) => !(state.me?.role === "owner" && p.id === "lark")));
+// Connected ones first; a search box once there are more than a few.
+const shownProviders = computed(() => {
+  const q = connQuery.value.trim().toLowerCase();
+  return offeredProviders.value
+    .filter((p) => !q || p.label.toLowerCase().includes(q) || p.id.includes(q) || p.group.includes(q))
+    .sort((a, b) => Number(!!connOf(b.id)) - Number(!!connOf(a.id)));
+});
+const keyDraft = ref<Record<string, Record<string, string>>>({});
+async function connectKey(p: Available) {
+  try {
+    conns.value = { ...conns.value!, ...(await post<{ connections: Conn[] }>(`/api/auth/connections/${p.id}/credentials`, { values: keyDraft.value[p.id] ?? {} })) };
+    keyDraft.value[p.id] = {};
+    toast(`已连接${p.label}`, "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 const connOf = (provider: string) => conns.value?.connections.find((c) => c.provider === provider) ?? null;
 async function loadConnections() {
   conns.value = await get<Connections>("/api/auth/connections");
-  for (const a of conns.value.available) picked.value[a.id] ??= [];
+  // A platform with one thing to turn on has it chosen already.
+  for (const a of conns.value.available) {
+    picked.value[a.id] ??= a.features.length === 1 ? [a.features[0].id] : [];
+    keyDraft.value[a.id] ??= {};
+  }
 }
 /** Turn a granted feature off in omem or back on; Feishu keeps the grant either way. */
 async function useFeature(provider: string, f: Feature, on: boolean) {
@@ -190,7 +214,8 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
       </div>
       <p class="muted small">连接后，助手和后台采集以你的身份读你在这个平台上能看到的内容；写入（文档、表格）不在你自己的文件里时先问你。令牌只存在运行 omem 的这台机器上。</p>
       <div v-if="conns && !conns.may" class="card pad muted small">你的角色不能连接第三方平台，需要的话请 omem 的主人调整。</div>
-      <p v-if="state.me?.role === 'owner'" class="muted small">你本人用 lark-cli 的登录读写飞书（设置 → 渠道），不用在这里连接。</p>
+      <p v-if="state.me?.role === 'owner'" class="muted small">你本人用 lark-cli 的登录读写飞书（设置 → 渠道），不用在这里连接。可以连接的其他平台在 设置 → 成员 → 平台应用 里开放。</p>
+      <input v-if="offeredProviders.length > 6" v-model="connQuery" class="input" type="search" placeholder="搜平台" aria-label="搜可以连接的平台" />
       <div v-for="p in shownProviders" :key="p.id" class="card pad stack">
         <div class="row wrap">
           <strong>{{ p.label }}</strong>
@@ -200,11 +225,22 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
             <span v-else-if="!connOf(p.id)!.background" class="badge warn">只在你在线时可用</span>
           </template>
           <span class="spacer" />
-          <button v-if="connOf(p.id) && connOf(p.id)!.status !== 'active'" class="btn sm primary" @click="connect(p.id, connOf(p.id)!.features.filter((f) => f.on).map((f) => f.id))">重新授权</button>
+          <button v-if="connOf(p.id) && connOf(p.id)!.status !== 'active' && !p.credentials" class="btn sm primary" @click="connect(p.id, connOf(p.id)!.features.filter((f) => f.on).map((f) => f.id))">重新授权</button>
           <button v-if="connOf(p.id)" class="btn ghost sm danger" @click="disconnectProvider(connOf(p.id)!)">断开</button>
         </div>
         <p v-if="p.unavailable" class="small warn-text">暂时不能用：{{ p.unavailable }}</p>
-        <div class="features">
+        <template v-if="p.credentials">
+          <p v-if="!connOf(p.id)" class="muted small">在{{ p.label }}里生成一个 key 填在这里，omem 先用它试一次再保存。<a v-if="p.docs" :href="p.docs" target="_blank" rel="noopener noreferrer">怎么生成</a></p>
+          <template v-if="!connOf(p.id) || connOf(p.id)!.status !== 'active'">
+            <label v-for="f in p.credentials" :key="f.key" class="field">
+              <span>{{ f.label }}<span v-if="f.optional" class="muted">（可不填）</span></span>
+              <input v-model="keyDraft[p.id][f.key]" class="input" :type="f.secret ? 'password' : 'text'" autocomplete="off" />
+              <span v-if="f.hint" class="hint">{{ f.hint }}</span>
+            </label>
+            <div class="row"><button class="btn sm primary" :disabled="!conns?.may || !!p.unavailable" @click="connectKey(p)">连接{{ p.label }}</button></div>
+          </template>
+        </template>
+        <div v-else class="features">
           <div v-for="f in connOf(p.id)?.features ?? p.features" :key="f.id" class="row wrap feature">
             <div class="stack tight">
               <span>{{ f.label }}</span>
@@ -220,8 +256,8 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
             <UiCheckbox v-else v-model="picked[p.id]" :value="f.id" size="sm" :aria-label="f.label" />
           </div>
         </div>
-        <p v-if="connOf(p.id)" class="muted small">关掉的功能 omem 不再使用，飞书那边的授权还在；要连授权一起撤销，在飞书里取消对这个应用的授权。</p>
-        <div v-if="!connOf(p.id)" class="row"><button class="btn sm primary" :disabled="!conns?.may || !!p.unavailable || !(picked[p.id] ?? []).length" @click="connect(p.id, picked[p.id] ?? [])">连接{{ p.label }}</button></div>
+        <p v-if="connOf(p.id) && !p.credentials" class="muted small">关掉的功能 omem 不再使用，{{ p.label }}那边的授权还在；要连授权一起撤销，在{{ p.label }}里取消对这个应用的授权。</p>
+        <div v-if="!connOf(p.id) && !p.credentials" class="row"><button class="btn sm primary" :disabled="!conns?.may || !!p.unavailable || !(picked[p.id] ?? []).length" @click="connect(p.id, picked[p.id] ?? [])">连接{{ p.label }}</button></div>
         <p v-if="connOf(p.id)?.lastError" class="small warn-text">{{ connOf(p.id)!.lastError }}</p>
       </div>
       <p v-if="conns && !shownProviders.length && state.me?.role !== 'owner'" class="muted small">omem 还没有可以连接的平台。</p>

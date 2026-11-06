@@ -129,7 +129,7 @@ describe("plugins", () => {
     const app = await englishApp();
     const server = await startServer(app, { port: 0, quiet: true });
     try {
-      expect((await server.inject({ url: "/api/plugins" })).json()).toMatchObject([{ id: "english", agents: [{ name: "english-tutor" }], page: { title: "英语练习" } }]);
+      expect((await server.inject({ url: "/api/plugins" })).json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "english", agents: [expect.objectContaining({ name: "english-tutor" })], page: expect.objectContaining({ title: "英语练习" }) })]));
       const s = (await server.inject({ method: "POST", url: "/api/plugins/english/sessions", payload: {} })).json() as { id: string };
       expect((await server.inject({ url: `/api/plugins/english/sessions/${s.id}` })).json()).toMatchObject({ agent: "english-tutor", spaceId: "english", blocks: [], busy: null });
       expect((await server.inject({ url: "/api/plugins/english/sessions/c_nope" })).statusCode).toBe(404);

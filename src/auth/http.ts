@@ -7,11 +7,12 @@ import { findSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { addMember, findUser, getUser, identitiesOf, listUsers, OWNER, removeMember, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
 import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
-import { connectionsOf, disconnect, setFeatureOff } from "./connections.ts";
+import { connectionsOf, connectWithCredentials, disconnect, setFeatureOff } from "./connections.ts";
+import { appView, setAppConfig } from "./apps.ts";
 import { featuresOf, scopesFor } from "./features.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { approveUser, beginLogin, completeLogin, consumeLoginLink, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, validInvite } from "./login.ts";
-import { enabledProviders, loginProvider, loginProviders } from "./providers.ts";
+import { canLogIn, enabledProviders, loginProvider, loginProviders, offeredConnectors } from "./providers.ts";
 import { clearSessionCookie, cookies, createSession, lastSeen, liftRestriction, listSessions, revokeSession, revokeSessionHash, revokeUserSessions, SESSION_COOKIE, sessionCookie, sessionFor } from "./sessions.ts";
 
 /**
@@ -128,6 +129,7 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     try {
       const a = resolveAuth(app, req);
       if (o.purpose !== "login" && !a) throw new HttpError(401, "先登录再绑定");
+      if (o.purpose === "connect" && !offeredConnectors(app).includes(provider)) throw new HttpError(403, "omem 的主人没有打开这个平台的连接");
       // Connecting asks for just the scopes of the features being turned on (incremental authorization).
       // A missing scope a call ran into (lark-user.ts larkAs) is asked for by name, with background access.
       const named = (o.scopes ?? "").split(/[\s,]+/).filter(Boolean).slice(0, 30);
@@ -205,9 +207,24 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   server.get("/api/auth/connections", async (req) => ({
     connections: connectionsOf(app, who(req)),
     // Every provider with something to turn on, logging in with it or not (a plugin's may be for connecting only).
-    available: [...new Set([...enabledProviders(app), ...loginProviders().map((p) => p.id)])].filter((id) => featuresOf(id).length).map((id) => ({ ...providerView(app, id)!, features: featuresOf(id).map((f) => ({ id: f.id, label: f.label, description: f.description })) })),
+    // The platforms offered here (Feishu, the login ones, those the owner turned on): each with what can be
+    // turned on, or for a key connection the fields to fill in.
+    available: offeredConnectors(app)
+      .map((id) => loginProvider(id)!)
+      .filter((p) => p.credentials || featuresOf(p.id).length)
+      .map((p) => ({ ...providerView(app, p.id)!, group: p.group ?? "", docs: p.docs ?? "", identity: canLogIn(p), credentials: p.credentials?.fields.map((f) => ({ key: f.key, label: f.label, secret: !!f.secret, optional: !!f.optional, hint: f.hint ?? "" })) ?? null, features: featuresOf(p.id).map((f) => ({ id: f.id, label: f.label, description: f.description })) })),
     may: can(app, who(req), "connector.use"),
   }));
+  // Connect a platform by filling in a key (an API key, a user name and password).
+  server.post("/api/auth/connections/:provider/credentials", async (req) => {
+    const { provider } = req.params as { provider: string };
+    requirePerm(app, who(req), "connector.use");
+    if (!offeredConnectors(app).includes(provider)) throw new HttpError(403, "omem 的主人没有打开这个平台的连接");
+    const { values } = parse(z.object({ values: z.record(z.string(), z.string().max(4000)) }), req.body);
+    await connectWithCredentials(app, who(req), provider, values);
+    audit(app, who(req), "connection.add", who(req), { provider });
+    return { connections: connectionsOf(app, who(req)) };
+  });
   // Turn a feature off in omem or back on (the platform's grant stays).
   server.put("/api/auth/connections/:provider/features/:feature", async (req) => {
     const { provider, feature } = req.params as { provider: string; feature: string };
@@ -388,6 +405,28 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   server.get("/api/auth/providers", async (req) => {
     manager(req);
     const base = baseUrl(app, req);
-    return loginProviders().map((p) => ({ id: p.id, label: p.label, unavailable: p.unavailable(app), callback: callbackUrl(base, p.id) }));
+    const offered = new Set(app.config.auth.connectors);
+    return loginProviders().map((p) => ({
+      id: p.id,
+      label: p.label,
+      unavailable: p.unavailable(app),
+      callback: p.authorizeUrl ? callbackUrl(base, p.id) : null,
+      identity: canLogIn(p),
+      group: p.group ?? "",
+      docs: p.docs ?? "",
+      credentials: !!p.credentials,
+      offered: p.id === "lark" || offered.has(p.id),
+      app: appView(app, p),
+    }));
+  });
+  // What the owner fills in for a platform's app (client id and secret…): kept in secrets/, never sent back whole.
+  server.put("/api/auth/providers/:id/app", async (req) => {
+    manager(req);
+    const { id } = req.params as { id: string };
+    const { values } = parse(z.object({ values: z.record(z.string(), z.string().max(4000).nullable()) }), req.body);
+    const fields = setAppConfig(app, id, values);
+    audit(app, who(req), "connector.app", id, { fields: Object.keys(values) });
+    const p = loginProvider(id)!;
+    return { unavailable: p.unavailable(app), app: fields };
   });
 }

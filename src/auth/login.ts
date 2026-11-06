@@ -8,7 +8,7 @@ import { addMember, createUser, getUser, identitiesOf, identityOwner, linkIdenti
 import { findRole, requirePerm } from "./permissions.ts";
 import { saveConnection } from "./connections.ts";
 import { findConnection } from "./vault.ts";
-import { enabledProviders, loginProvider, type LoginProvider, type ProviderIdentity } from "./providers.ts";
+import { canLogIn, enabledProviders, loginProvider, type LoginProvider, type ProviderIdentity } from "./providers.ts";
 import "./lark.ts";
 
 /**
@@ -38,6 +38,8 @@ function requireProvider(app: App, id: string): LoginProvider {
 /** Start a login or a bind: where the browser goes next. */
 export function beginLogin(app: App, input: { provider: string; purpose: Purpose; redirectUri: string; userId?: string; sessionHash?: string | null; invite?: string | null; returnTo?: string; scopes?: string[] }) {
   const p = requireProvider(app, input.provider);
+  if (!p.authorizeUrl) throw new HttpError(400, `${p.label}用填写的密钥连接，不经过授权页`);
+  if (input.purpose !== "connect" && !canLogIn(p)) throw new HttpError(400, `${p.label}只用来连接，不能登录或绑定`);
   if (input.purpose === "login" && !app.config.auth.enabled) throw new HttpError(403, "omem 没有打开多人登录");
   if (input.purpose === "login" && !enabledProviders(app).includes(p.id)) throw new HttpError(403, `没有打开${p.label}登录`);
   if (input.purpose !== "login" && !input.userId) throw new HttpError(401, "先登录再绑定");
@@ -73,8 +75,15 @@ export async function completeLogin(app: App, input: { provider: string; state: 
   if (input.error) throw new HttpError(400, input.error === "access_denied" ? "你取消了授权" : `授权没有完成：${input.error}`);
   if (!input.code) throw new HttpError(400, "授权没有返回 code");
   const p = requireProvider(app, st.provider);
+  if (!p.exchange || !p.whoami) throw new HttpError(400, `${p.label}不经过授权页连接`);
   const tokens = await p.exchange(app, { code: input.code, verifier: st.verifier, redirectUri: st.redirect_uri });
   const who = await p.whoami(app, tokens);
+  // A capability connector keeps the tokens of whoever started it; it never logs in or records an identity.
+  if (!canLogIn(p)) {
+    if (st.purpose !== "connect" || !st.user_id) throw new HttpError(400, `${p.label}只用来连接，不能登录或绑定`);
+    saveConnection(app, st.user_id, p.id, who, tokens);
+    return { kind: "bound", userId: st.user_id, via: p.id, returnTo: st.return_to, lifted: null, connected: true };
+  }
   const r = st.purpose === "login" ? login(app, p, who, st.invite, st.return_to) : bind(app, p, who, st.user_id!, st.session_hash, st.return_to);
   // The tokens are kept for a connect, and whenever they bring scopes or there is a connection already:
   // a Feishu token carries every scope granted before, so a later login renews the connection.

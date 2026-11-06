@@ -360,7 +360,7 @@ export const peerCommands: Record<string, Command> = {
       let error: string | null = null;
       try {
         const token = await accessToken(app, a.check, a.provider);
-        const id = token && p ? await p.whoami(app, { accessToken: token }) : null;
+        const id = token && p?.whoami ? await p.whoami(app, { accessToken: token }) : null;
         whoami = id && { name: id.name, sameAccount: id.externalId === before.accountId || !!id.aliases?.some((x) => x.externalId === before.accountId) };
       } catch (e) {
         error = (e as Error).message;

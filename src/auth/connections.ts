@@ -3,7 +3,7 @@ import { notify } from "../core/notify.ts";
 import { findUser, updateUser } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { featuresOf, grantedFeatures } from "./features.ts";
-import { authFetch, grantRejected, loginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
+import { apiBaseOf, authFetch, grantRejected, loginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
 import { connectionSecrets, deleteConnection, expireAccessToken, findConnection, listConnections, markConnection, replaceTokens, storeConnection, type Connection } from "./vault.ts";
 
 /**
@@ -32,6 +32,25 @@ export function saveConnection(app: App, userId: string, provider: string, who: 
 }
 
 /**
+ * Connect by filling in what the provider asks for (an API key, a user name and password): checked
+ * with the provider's own call when it has one, then kept in the vault as the connection's secret.
+ */
+export async function connectWithCredentials(app: App, userId: string, provider: string, values: Record<string, unknown>) {
+  const p = loginProvider(provider);
+  if (!p?.credentials) throw new HttpError(404, `${provider} 不用填写密钥连接`);
+  const why = p.unavailable(app);
+  if (why) throw new HttpError(400, `${p.label}暂时不能连接：${why}`);
+  const clean: Record<string, string> = {};
+  for (const f of p.credentials.fields) {
+    const v = typeof values[f.key] === "string" ? (values[f.key] as string).trim() : "";
+    if (!v && !f.optional) throw new HttpError(400, `请填写${f.label}`);
+    if (v) clean[f.key] = v.slice(0, 4000);
+  }
+  const who = p.credentials.verify ? await p.credentials.verify(app, clean) : { accountId: "default", accountName: "" };
+  return storeConnection(app, { userId, provider, accountId: who.accountId, accountName: who.accountName, scopes: [], accessToken: JSON.stringify(clean) });
+}
+
+/**
  * Features a person turned off in omem (the account page): the platform still grants them — a Feishu
  * authorization is never taken back by asking for less — but omem does not use them: no capture, and
  * the tools that would refuse (agents/tools.ts). Turned on again, they work at once.
@@ -56,7 +75,7 @@ export function setFeatureOff(app: App, userId: string, provider: string, featur
   updateUser(app, userId, { settings: { featuresOff: all } });
 }
 
-export type ConnectionView = Connection & { label: string; features: { id: string; label: string; description: string; on: boolean; paused: boolean }[]; background: boolean };
+export type ConnectionView = Connection & { label: string; features: { id: string; label: string; description: string; on: boolean; paused: boolean }[]; background: boolean; credentials: boolean };
 export function connectionView(app: App, c: Connection): ConnectionView {
   const on = new Set(grantedFeatures(c.provider, c.scopes));
   const off = new Set(featuresOff(app, c.userId, c.provider));
@@ -64,7 +83,9 @@ export function connectionView(app: App, c: Connection): ConnectionView {
     ...c,
     label: loginProvider(c.provider)?.label ?? c.provider,
     features: featuresOf(c.provider).map((f) => ({ id: f.id, label: f.label, description: f.description, on: on.has(f.id), paused: on.has(f.id) && off.has(f.id) })),
-    background: !!connectionSecrets(app, c.id)?.refreshToken,
+    // A key does not run out: it works in the background as long as it is valid.
+    background: !!loginProvider(c.provider)?.credentials || !!connectionSecrets(app, c.id)?.refreshToken,
+    credentials: !!loginProvider(c.provider)?.credentials,
   };
 }
 export const connectionsOf = (app: App, userId: string) => listConnections(app, userId).map((c) => connectionView(app, c));
@@ -149,18 +170,24 @@ export function disconnect(app: App, userId: string, provider: string) {
 export function pluginConnection(app: App, userId: string, provider: string) {
   const c = findConnection(app, userId, provider);
   if (!c || c.status !== "active") return null;
-  const base = loginProvider(provider)?.apiBase?.replace(/\/+$/, "");
+  const p = loginProvider(provider);
+  const base = p ? apiBaseOf(app, p)?.replace(/\/+$/, "") : null;
   return {
     account: c.accountName || c.accountId,
     scopes: c.scopes,
+    base: base ?? null,
     async fetch(path: string, init: RequestInit = {}) {
       if (!base) throw new HttpError(400, `${provider} 没有声明 apiBase，不能代发请求`);
       const url = /^https?:\/\//.test(path) ? path : `${base}/${path.replace(/^\/+/, "")}`;
       if (url !== base && !url.startsWith(`${base}/`) && !url.startsWith(`${base}?`)) throw new HttpError(400, `只能请求 ${base} 下的地址`);
-      const token = await accessToken(app, userId, provider);
+      const token = (await accessToken(app, userId, provider))!;
       const headers = new Headers(init.headers);
-      headers.set("authorization", `Bearer ${token}`);
-      return authFetch(url, { ...init, headers, redirect: "manual" });
+      const target = new URL(url);
+      if (p?.sign) p.sign(app, { url: target, headers }, token);
+      else headers.set("authorization", `Bearer ${token}`);
+      // sign may add query parameters (a key in the query), never another host.
+      if (target.origin !== new URL(base).origin) throw new HttpError(400, `只能请求 ${base} 下的地址`);
+      return authFetch(target, { ...init, headers, redirect: "manual" });
     },
   };
 }

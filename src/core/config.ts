@@ -158,8 +158,10 @@ export const configSchema = z.object({
       primary: z.string().nullable().default(null),
       signup: z.record(z.string(), z.enum(["approve", "closed", "open"])).default({}),
       sessionDays: z.number().int().min(1).max(365).default(30),
+      /** Platforms offered on the account page for connecting (plugin connectors); Feishu and the login providers always are. */
+      connectors: z.array(z.string()).default([]),
     })
-    .default({ enabled: false, providers: ["lark"], primary: null, signup: {}, sessionDays: 30 }),
+    .default({ enabled: false, providers: ["lark"], primary: null, signup: {}, sessionDays: 30, connectors: [] }),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),
   /** Background runs (ingest, wiki, dream…) at the same time; each model's own limit is agents.capacity. */
