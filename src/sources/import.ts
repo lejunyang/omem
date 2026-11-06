@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolveCodeRefs } from "./callgraph.ts";
+import { directoryImport } from "./import-process.ts";
 import { ensureGrammars } from "./treesitter.ts";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -176,6 +177,12 @@ function globToRegex(pattern: string) {
  * files are re-chunked; files that disappeared become tombstones.
  */
 export async function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done: number, total: number) => void): Promise<ImportReport> {
+  getSpace(app, spaceId);
+  return directoryImport(app, { kind: "sync", spaceId }, onProgress);
+}
+
+/** Runs only in the import process: parsing, indexing and reference resolution may be expensive. */
+export async function syncDirectoryLocally(app: App, spaceId: string, onProgress?: (done: number, total: number) => Promise<void>): Promise<ImportReport> {
   const space = getSpace(app, spaceId);
   if (!space.rootPath) throw new HttpError(400, "这个空间没有关联目录");
   const report = emptyReport();
@@ -184,13 +191,13 @@ export async function syncDirectorySpace(app: App, spaceId: string, onProgress?:
   const files = repoFiles(space.rootPath).filter((f) => !exclude.some((re) => re.test(f)));
   await ensureGrammars(files);
   const seen = new Set<string>();
-  files.forEach((rel, i) => {
+  for (const [i, rel] of files.entries()) {
     const full = join(space.rootPath!, rel);
     try {
       const st = statSync(full);
-      if (st.size > MAX_TEXT_BYTES) return void report.skipped.push(rel);
+      if (st.size > MAX_TEXT_BYTES) { report.skipped.push(rel); continue; }
       const buf = readFileSync(full);
-      if (looksBinary(buf)) return void report.skipped.push(rel);
+      if (looksBinary(buf)) { report.skipped.push(rel); continue; }
       seen.add(rel);
       const kind: SourceKind = /\.(md|markdown|mdx|txt|rst|adoc)$/i.test(rel) ? "doc" : "code";
       const result = upsertSource(app, { spaceId, kind, uri: rel, title: rel, text: buf.toString("utf8"), meta: { directoryRoot: space.rootPath } });
@@ -201,8 +208,8 @@ export async function syncDirectorySpace(app: App, spaceId: string, onProgress?:
     } catch {
       report.skipped.push(rel);
     }
-    if (onProgress && i % 50 === 0) onProgress(i, files.length);
-  });
+    if (onProgress && i % 50 === 0) await onProgress(i, files.length);
+  }
   for (const row of all<{ id: string; uri: string; kind: string; meta: string }>(app.db, "select id, uri, kind, meta from sources where space_id = ? and deleted_at is null and kind in ('code','doc')", spaceId)) {
     // Only prune files that came from the directory; other project materials belong to the same space.
     // Code files from before ownership was recorded carry no directoryRoot: in a repo space a relative
@@ -222,11 +229,16 @@ export async function syncDirectorySpace(app: App, spaceId: string, onProgress?:
 
 /** Import an arbitrary directory into a non-repo space (uri = path relative to that directory). */
 export async function importDirectory(app: App, spaceId: string, dir: string): Promise<ImportReport> {
+  getSpace(app, spaceId);
+  return directoryImport(app, { kind: "directory", spaceId, dir: resolve(dir) });
+}
+
+export async function importDirectoryLocally(app: App, spaceId: string, dir: string, onProgress?: (done: number, total: number) => Promise<void>): Promise<ImportReport> {
   const root = resolve(dir);
   const report = emptyReport();
   const files = repoFiles(root);
   await ensureGrammars(files);
-  for (const rel of files) {
+  for (const [i, rel] of files.entries()) {
     try {
       const r = await importFile(app, spaceId, join(root, rel), `${basename(root)}/${rel}`);
       if (r) tally(report, r);
@@ -234,6 +246,7 @@ export async function importDirectory(app: App, spaceId: string, dir: string): P
     } catch {
       report.skipped.push(rel);
     }
+    if (onProgress && i % 50 === 0) await onProgress(i, files.length);
   }
   resolveCodeRefs(app, spaceId);
   return report;

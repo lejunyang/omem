@@ -8,11 +8,46 @@
  *   node scripts/bench-scale.ts --runs [--count 20000]
  *   node scripts/bench-scale.ts --source-purge
  *   node scripts/bench-scale.ts --code-rounds
+ *   node scripts/bench-scale.ts --directory-import [--files 1200]
  *
  * Vectors are random (embedding a large corpus on CPU takes hours); they only
  * measure the cost of the vector search itself, not its quality.
  */
 process.removeAllListeners("warning");
+if (process.argv.includes("--directory-import")) {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { setTimeout: sleep } = await import("node:timers/promises");
+  const { App } = await import("../src/core/app.ts");
+  const { createSpace, ensurePersonalSpace } = await import("../src/core/spaces.ts");
+  const { syncDirectorySpace, syncDirectoryLocally } = await import("../src/sources/import.ts");
+  const at = process.argv.indexOf("--files");
+  const count = at >= 0 ? Number(process.argv[at + 1]) : 1200;
+  if (!Number.isSafeInteger(count) || count < 1) throw new Error("--files 要是正整数");
+  const results = [];
+  for (const isolated of [false, true]) {
+    const home = mkdtempSync(join(tmpdir(), "omem-bench-import-"));
+    const app = App.open(home);
+    ensurePersonalSpace(app);
+    const root = join(home, "repo");
+    mkdirSync(root);
+    createSpace(app, { id: "example", name: "示例仓库", kind: "repo", rootPath: root });
+    for (let i = 0; i < count; i++) writeFileSync(join(root, `sample${i}.ts`), Array.from({ length: 50 }, (_, n) => `export function example${n}(value: number) { return value + ${i}; }`).join("\n"));
+    let last = performance.now(), maxGap = 0, ticks = 0;
+    const timer = setInterval(() => { const now = performance.now(); maxGap = Math.max(maxGap, now - last); last = now; ticks++; }, 5);
+    try {
+      await sleep(10);
+      const start = performance.now();
+      const report = await (isolated ? syncDirectorySpace(app, "example") : syncDirectoryLocally(app, "example"));
+      const ms = performance.now() - start;
+      await sleep(10);
+      results.push({ isolated, files: count, imported: report.created, ms: +ms.toFixed(1), maxEventLoopGapMs: +maxGap.toFixed(1), ticks });
+    } finally { clearInterval(timer); app.db.close(); rmSync(home, { recursive: true, force: true }); }
+  }
+  console.log(JSON.stringify(results));
+  process.exit(0);
+}
 if (process.argv.includes("--code-rounds")) {
   const { mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
