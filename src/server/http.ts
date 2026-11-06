@@ -2290,9 +2290,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { name, args, ...scope } = b;
     return { node: (await import("../core/peers.ts")).nodeId(app), ...(await peerToolCall(app, scope, name, args)) };
   });
-  server.get("/api/peer/snapshot", async (req, reply) => {
   // `omem peer pull` (core/pull-transfer.ts): the snapshot with the parts asked for; a newer puller
   // fetches attachments separately (files=separate), only the ones it lacks.
+  server.get("/api/peer/snapshot", async (req, reply) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
     const { snapshotStream, parseParts } = await import("../core/pull.ts");
     const q = req.query as { parts?: string; strip?: string; files?: string };
