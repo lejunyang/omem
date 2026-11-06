@@ -71,7 +71,7 @@ describe("connections", async () => {
     const asked = to.searchParams.get("scope")!.split(" ");
     expect(asked).toEqual(expect.arrayContaining([...scopesFor("lark", ["messages"])]));
     expect(asked).toContain("offline_access");
-    expect(asked).not.toContain("docx:document");
+    expect(asked).not.toContain("docx:document:write_only");
     const back = await remote(`/api/auth/lark/callback?code=c2&state=${to.searchParams.get("state")}`, { cookie: `omem_sid=${cookie}` });
     expect(decodeURIComponent(new URL(back.headers.get("location")!).hash)).toBe("#/account?connected=lark");
     const list = await (await remote("/api/auth/connections", { cookie: `omem_sid=${cookie}` })).json();

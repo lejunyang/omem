@@ -1500,3 +1500,4 @@ updated: 2026-11-06
 - 远程命令 `lark-bot-permissions` 加 `raw`（`rawAppInfo`：应用信息和线上版本的权限、事件原样）；新的 `lark-doc-subscribe`（`link` 订阅一篇，`retryFailed` 重试被拒的，`retryFailedSubscriptions`）。每天的批量订阅里没试过的优先，被拒的三天后再试（以前一周）。
 - 真实应用的线上版本里 `events` 是显示名（“文件编辑”“接收消息”），事件键在 `event_infos`：`eventKeys` 从里面取出 `xx.yy_v1` 形式的键当作已订阅的事件；`raw` 也带上 `event_infos`。
 - `lark-bot.ts` 给 SDK 的客户端一个只写一行的 logger：失败的接口调用不再把整个请求和响应打进服务日志（订阅被拒的那批每篇几十行），只留方法、路径、状态和飞书的错误码。
+- 成员连接飞书的“表格与多维表格”“让助手写文档”改用飞书现在的细分权限（`sheets:spreadsheet:read`、`base:*:read`、`docx:document:write_only`），旧的 `sheets:spreadsheet:readonly`、`bitable:app:readonly`、`docx:document` 新应用申请不到，机器人检查一直显示缺这三项、扫码也补不上。

@@ -17,10 +17,10 @@ export const FEATURES: Record<string, Feature[]> = {
       scopes: ["im:chat:read", "im:message:readonly", "im:message.group_msg:get_as_user", "im:message.p2p_msg:get_as_user", "im:resource", "contact:user.base:readonly"],
     },
     { id: "docs", label: "文档与知识库", description: "读你能看到的文档和知识库目录", scopes: ["docx:document:readonly", "docs:document.content:read", "wiki:node:read", "wiki:wiki:readonly", "drive:file:download"] },
-    { id: "sheets", label: "表格与多维表格", description: "读你能看到的电子表格和多维表格", scopes: ["sheets:spreadsheet:readonly", "bitable:app:readonly"] },
+    { id: "sheets", label: "表格与多维表格", description: "读你能看到的电子表格和多维表格", scopes: ["sheets:spreadsheet:read", "sheets:spreadsheet.meta:read", "base:app:read", "base:table:read", "base:field:read", "base:record:read", "base:view:read"] },
     { id: "calendar", label: "日程", description: "读你的日程", scopes: ["calendar:calendar:read", "calendar:calendar.event:read"] },
     { id: "minutes", label: "妙记与会议", description: "读你的妙记，知道你加入了哪个会议", scopes: ["minutes:minutes:readonly", "minutes:minutes.artifacts:read", "vc:meeting.meetingevent:read"] },
-    { id: "doc-write", label: "让助手写文档", description: "助手以你的身份新建、编辑文档（别人的文件先经你批准）", scopes: ["docx:document", "docx:document:create", "wiki:node:create", "wiki:node:move"] },
+    { id: "doc-write", label: "让助手写文档", description: "助手以你的身份新建、编辑文档（别人的文件先经你批准）", scopes: ["docx:document:write_only", "docx:document:create", "wiki:node:create", "wiki:node:move"] },
   ],
 };
 
