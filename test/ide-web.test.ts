@@ -360,6 +360,9 @@ describe("web VS Code under /ide", () => {
         expect(seen.fwd).toBe(new URL(ui.url).host);
         const posted = await fetch(`${ui.url}/ide/api/x`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: "raw-bytes" });
         expect((await posted.json()).body).toBe("raw-bytes");
+        // Plugin pages load their modules in CORS mode from a sandboxed frame: the middle node keeps the header.
+        const sdk = await fetch(`${ui.url}/plugins/_sdk/omem.js`);
+        if (sdk.status === 200) expect(sdk.headers.get("access-control-allow-origin")).toBe("*");
         const echo = await new Promise<string>((ok, fail) => {
           const req = request(`${ui.url}/ide/remote`, { headers: { connection: "Upgrade", upgrade: "websocket" } });
           req.on("upgrade", (_res, socket) => {

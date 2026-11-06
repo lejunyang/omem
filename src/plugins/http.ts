@@ -140,7 +140,7 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
     const file = join(dir, rel);
     if (rel.startsWith("..") || !file.startsWith(dir + sep) || !existsSync(file) || !statSync(file).isFile()) return reply.status(404).send("not found");
     reply.header("access-control-allow-origin", "*");
-    reply.header("cache-control", /[\\/]assets[\\/]/.test(rel) ? "public, max-age=31536000, immutable" : "no-cache");
+    reply.header("cache-control", /(^|[\\/])assets[\\/]/.test(rel) ? "public, max-age=31536000, immutable" : "no-cache");
     reply.type(TYPES[extname(file).toLowerCase()] ?? "application/octet-stream");
     return reply.send(createReadStream(file));
   });

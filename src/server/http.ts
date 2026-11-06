@@ -2402,8 +2402,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     reply.status(res.status);
     const type = res.headers.get("content-type");
     if (type) reply.type(type);
-    // Keep the peer's caching headers so the browser behind `omem peer open` can cache its UI.
-    for (const h of ["cache-control", "etag", "last-modified"]) {
+    // Keep the peer's caching headers so the browser behind `omem peer open` can cache its UI,
+    // and its CORS header: plugin pages run in a sandboxed iframe and load their modules in CORS mode.
+    for (const h of ["cache-control", "etag", "last-modified", "access-control-allow-origin"]) {
       const v = res.headers.get(h);
       if (v) reply.header(h, v);
     }
