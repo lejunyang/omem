@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { run as sql } from "../src/core/db.ts";
@@ -33,6 +33,21 @@ describe("storage", () => {
     expect(r.files.total).toEqual({ bytes: 5650, files: 5 });
     expect(r.files.largest[0]).toMatchObject({ name: "aaaaaaaaaaaaaaa1.mp4", label: "演示.mp4" });
     expect(r.dirs.find((d) => d.name === "files")).toMatchObject({ bytes: 5650, files: 5 });
+  });
+
+  it("counts a hard-linked file once (pnpm links node_modules to its store) and reports it as shared", () => {
+    const a = join(app.home, "workspaces", "repo", "1");
+    const b = join(app.home, "runs", "r1", "work");
+    mkdirSync(a, { recursive: true });
+    mkdirSync(b, { recursive: true });
+    writeFileSync(join(a, "dep.js"), Buffer.alloc(4000));
+    linkSync(join(a, "dep.js"), join(b, "dep.js"));
+    writeFileSync(join(b, "own.txt"), Buffer.alloc(10));
+    const r = scanStorage(app.home);
+    const dir = (n: string) => r.dirs.find((d) => d.name === n)!;
+    expect(dir("workspaces").bytes + dir("runs").bytes).toBe(4010);
+    expect(dir("workspaces").shared! + dir("runs").shared!).toBe(4000);
+    expect(dir("workspaces").files + dir("runs").files).toBe(2);
   });
 
   it("splits the database by table and source category", () => {

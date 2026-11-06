@@ -12,7 +12,8 @@ export type StorageReport = {
   home: string;
   scannedAt: string;
   ms: number;
-  dirs: { name: string; bytes: number; files: number }[];
+  /** Hard-linked files count once in the whole scan; `shared` is the hard-linked part (see walk). */
+  dirs: { name: string; bytes: number; files: number; shared?: number }[];
   files: {
     total: { bytes: number; files: number };
     /** origin × media type. */
@@ -56,19 +57,35 @@ export function dbModule(table: string): DbModule {
   return "other";
 }
 
-function walk(path: string): { bytes: number; files: number } {
-  const st = lstatSync(path, { throwIfNoEntry: false });
-  if (!st) return { bytes: 0, files: 0 };
-  if (!st.isDirectory()) return { bytes: st.isSymbolicLink() ? 0 : st.size, files: st.isSymbolicLink() ? 0 : 1 };
-  let bytes = 0, files = 0;
+/**
+ * Bytes and files under `path`. A file with more than one hard link (pnpm's node_modules link every
+ * file to its store, so each workspace looks like a full copy) counts once in the whole scan: `seen`
+ * holds the ones counted. `shared` is the part of `bytes` that is hard-linked, i.e. also reachable
+ * elsewhere (often outside the data directory) and not freed by deleting only this directory.
+ */
+function walk(path: string, seen: Set<string>): { bytes: number; files: number; shared: number } {
+  const st = lstatSync(path, { throwIfNoEntry: false, bigint: false });
+  if (!st) return { bytes: 0, files: 0, shared: 0 };
+  if (!st.isDirectory()) {
+    if (st.isSymbolicLink()) return { bytes: 0, files: 0, shared: 0 };
+    if (st.nlink > 1) {
+      const key = `${st.dev}:${st.ino}`;
+      if (seen.has(key)) return { bytes: 0, files: 0, shared: 0 };
+      seen.add(key);
+      return { bytes: st.size, files: 1, shared: st.size };
+    }
+    return { bytes: st.size, files: 1, shared: 0 };
+  }
+  let bytes = 0, files = 0, shared = 0;
   let entries: string[] = [];
-  try { entries = readdirSync(path); } catch { return { bytes, files }; }
+  try { entries = readdirSync(path); } catch { return { bytes, files, shared }; }
   for (const e of entries) {
-    const r = walk(join(path, e));
+    const r = walk(join(path, e), seen);
     bytes += r.bytes;
     files += r.files;
+    shared += r.shared;
   }
-  return { bytes, files };
+  return { bytes, files, shared };
 }
 
 const hasTable = (db: DatabaseSync, name: string) => !!db.prepare("select 1 from sqlite_master where type = 'table' and name = ?").get(name);
@@ -168,7 +185,8 @@ export function scanStorage(home: string): StorageReport {
   try {
     let names: string[] = [];
     try { names = readdirSync(home); } catch { /* empty home */ }
-    const dirs = names.map((name) => ({ name, ...walk(join(home, name)) })).sort((a, b) => b.bytes - a.bytes);
+    const seen = new Set<string>();
+    const dirs = names.map((name) => ({ name, ...walk(join(home, name), seen) })).sort((a, b) => b.bytes - a.bytes);
     const files = scanFiles(join(home, "files"), db);
     const report = scanDb(dbPath, db);
     return { home, scannedAt: new Date().toISOString(), ms: Date.now() - started, dirs, files, db: report };

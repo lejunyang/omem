@@ -17,7 +17,7 @@ type Report = {
   home: string;
   scannedAt: string;
   ms: number;
-  dirs: { name: string; bytes: number; files: number }[];
+  dirs: { name: string; bytes: number; files: number; shared?: number }[];
   files: { total: { bytes: number; files: number }; groups: FileGroup[]; largest: { name: string; bytes: number; origin: string; type: string; label?: string }[] };
   db: {
     fileBytes: number;
@@ -140,6 +140,7 @@ const sourceMax = computed(() => Math.max(1, ...(report.value?.db.sources ?? [])
           <span class="bar"><i :style="{ width: pct(d.bytes, total) }" /></span>
           <span class="num">{{ fmt(d.bytes) }}</span>
           <span class="num muted small">{{ d.files.toLocaleString() }} 个文件</span>
+          <span v-if="d.shared && d.shared >= d.bytes / 10" class="muted small hint" :title="'硬链接的文件（如 pnpm 从它的仓库链接到 node_modules）只算一次；删掉这个目录不会释放这部分，除非别处的链接也删了'">其中 {{ fmt(d.shared) }} 与别处共用（硬链接）</span>
         </div>
       </section>
 
@@ -226,6 +227,7 @@ const sourceMax = computed(() => Math.max(1, ...(report.value?.db.sources ?? [])
 }
 .bar-row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
 .bar-row .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar-row > .hint { grid-column: 1 / -1; margin-top: -8px; }
 .as-button { background: none; border: 0; padding: 4px 0; font: inherit; color: inherit; text-align: left; cursor: pointer; border-radius: var(--radius-sm); }
 .as-button:hover { background: var(--hover); }
 .bar { height: 8px; background: var(--sunken); border-radius: 4px; overflow: hidden; display: flex; }
