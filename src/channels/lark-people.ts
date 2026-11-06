@@ -133,6 +133,12 @@ export async function resolveMention(app: App, who: string, chatId?: string | nu
   if (chatId && !w.includes("@") && !knownId && !openIdOnly) {
     const member = await mentionInChat(app, chatId, w);
     if (member) return member;
+    // The member API excludes bots. Check mentions using THIS bot's identity,
+    // rather than reusing an open_id read by the personal capture app.
+    if (!list.some((r) => r.user_id || r.email)) {
+      const mentioned = await mentionInHistory(app, chatId, w);
+      if (mentioned) return mentioned;
+    }
     if (w.startsWith("ou_")) throw new HttpError(400, "无法在目标群核实这个 open_id；不能用采集应用的 open_id 代替机器人应用的身份。");
     throw new ChatMemberAbsentError(w);
   }
@@ -160,6 +166,46 @@ export async function resolveMention(app: App, who: string, chatId?: string | nu
     );
   rememberPerson(app, { email, userId, name: r?.name ?? "" });
   return { name: r?.name || email.split("@")[0], userId, email };
+}
+
+/** Recent explicit mentions in the target chat, read by the sending bot's app. */
+async function mentionInHistory(app: App, chatId: string, who: string) {
+  const { larkClient } = await import("./lark-send.ts");
+  const client = larkClient();
+  if (!client.im?.message?.list) return null;
+  const key = `lark_chat_mention:${currentBot()}:${chatId}:${who}`;
+  const cached = one<{ value: string }>(app.db, "select value from kv where key = ?", key);
+  if (cached) {
+    const known = JSON.parse(cached.value) as { name: string; userId: string; at: number };
+    if (Date.now() - known.at < 10 * 60_000) return { name: known.name, userId: known.userId, email: null };
+  }
+  const matches = new Map<string, string>();
+  const seen = new Set<string>();
+  let token: string | undefined;
+  // Bound the lookup to 200 recent messages; do not scan years of chat history to send an @.
+  for (let page = 0; page < 4; page++) {
+    const r = await client.im.message.list({ params: { container_id_type: "chat", container_id: chatId, sort_type: "ByCreateTimeDesc", page_size: 50, ...(token ? { page_token: token } : {}) } });
+    if (r.code || !r.data) throw new HttpError(400, `读取目标群的历史提及失败（${r.code ?? "无数据"}）：需要发送机器人的群消息读取权限，不能改用个人采集应用的 open_id。`);
+    for (const m of r.data.items ?? []) {
+      if (m.chat_id && m.chat_id !== chatId) continue;
+      for (const mention of m.mentions ?? []) {
+        const id = mention.id;
+        if (typeof id !== "string" || !id.startsWith("ou_") || (mention.id_type && mention.id_type !== "open_id")) continue;
+        if (id === who || mention.name === who) matches.set(id, mention.name || who);
+      }
+    }
+    if (r.data.has_more === false) break;
+    if (!r.data.has_more || !r.data.page_token || seen.has(r.data.page_token)) throw new HttpError(400, "目标群的历史提及分页不完整，无法核实 @ 对象。");
+    const next: string = r.data.page_token;
+    token = next;
+    seen.add(next);
+  }
+  if (matches.size > 1) throw new HttpError(400, `目标群的近期消息里有 ${matches.size} 个不同身份叫“${who}”，不能按名字猜 @ 对象。`);
+  const match = [...matches][0];
+  if (!match) return null;
+  const [userId, name] = match;
+  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", key, JSON.stringify({ userId, name, at: Date.now() }));
+  return { name, userId, email: null };
 }
 
 async function mentionInChat(app: App, chatId: string, who: string) {

@@ -6,6 +6,8 @@ import { cleanUpLarkIds, formatLine, learnPeople, sourceMessages, storeMessages 
 import { applyMentions, learnCliPeople, peopleByCliIds, rememberPerson, resolveMention } from "../src/channels/lark-people.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { one } from "../src/core/db.ts";
+import { withBot } from "../src/core/bot-context.ts";
+import { setLarkBotClient } from "../src/channels/lark-send.ts";
 import { search } from "../src/search/search.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
@@ -125,6 +127,54 @@ describe("people across Feishu apps", () => {
     expect(pages).toHaveLength(2);
     expect(pages[1]).toMatchObject({ path: { chat_id: "oc_g" }, params: { member_id_type: "open_id", page_token: "next" } });
     expect(peopleByCliIds(app, [A]).get(A)?.botOpenId).toBeNull();
+  });
+
+  it("finds a bot in historical mentions without requiring another simultaneous @", async () => {
+    const app = testApp();
+    rememberPerson(app, { cliOpenId: A, name: "协作机器人" });
+    const reads: any[] = [];
+    const client = (id: string) => ({ im: {
+      chatMembers: { get: async () => ({ code: 0, data: { items: [], has_more: false } }) },
+      message: { list: async (args: any) => {
+        reads.push(args);
+        return { code: 0, data: args.params.page_token
+          ? { items: [{ chat_id: "oc_g", mentions: [{ id, id_type: "open_id", name: "协作机器人" }] }], has_more: false }
+          : { items: [], has_more: true, page_token: "next" } };
+      } },
+    } });
+    setLarkClient(client(B));
+    expect(await resolveMention(app, "协作机器人", "oc_g")).toEqual({ name: "协作机器人", userId: B, email: null });
+    expect(reads).toHaveLength(2);
+    expect(reads[0].params).toMatchObject({ container_id: "oc_g", container_id_type: "chat" });
+    expect(await resolveMention(app, "协作机器人", "oc_g")).toMatchObject({ userId: B });
+    expect(reads).toHaveLength(2);
+    expect(peopleByCliIds(app, [A]).get(A)?.botOpenId).toBeNull();
+    setLarkBotClient("second", client(C));
+    try {
+      expect(await withBot("second", () => resolveMention(app, "协作机器人", "oc_g"))).toMatchObject({ userId: C });
+    } finally {
+      setLarkBotClient("second", null);
+    }
+  });
+
+  it("rejects ambiguous or incomplete historical mentions, and never trusts capture ids", async () => {
+    const app = testApp();
+    let mode = "duplicate";
+    setLarkClient({ im: {
+      chatMembers: { get: async () => ({ code: 0, data: { items: [], has_more: false } }) },
+      message: { list: async () => ({ code: mode === "permission" ? 99991672 : 0, data: {
+        items: [B, ...(mode === "duplicate" ? [C] : [])].map(id => ({ mentions: [{ id, id_type: "open_id", name: "协作机器人" }] })),
+        has_more: mode === "incomplete", page_token: mode === "incomplete" ? "repeat" : undefined,
+      } }) },
+    } });
+    await expect(resolveMention(app, "协作机器人", "oc_g")).rejects.toThrow(/不同身份/);
+    mode = "incomplete";
+    await expect(resolveMention(app, "协作机器人", "oc_g")).rejects.toThrow(/分页不完整/);
+    mode = "permission";
+    await expect(resolveMention(app, "协作机器人", "oc_g")).rejects.toThrow(/发送机器人的群消息读取权限/);
+    mode = "single";
+    await expect(resolveMention(app, A, "oc_g")).rejects.toThrow(/不能用采集应用/);
+    expect(await resolveMention(app, B, "oc_g")).toMatchObject({ userId: B });
   });
 
   it("rejects namesakes on a later page and incomplete member lists", async () => {
