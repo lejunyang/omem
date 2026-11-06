@@ -15,6 +15,7 @@ import { testApp } from "./helpers.ts";
 // Remote operation (docs/v2/remote.md) against a fake aad (test/fake-aad.ts): the page's API, the
 // forwarded viewer and its WebSocket, recordings, the tools that read them, and replay.
 const fake = join(import.meta.dirname, "fake-aad.ts");
+const DEFAULT_VIEWER = ["--codecs", "auto", "--quality", "70", "--max-width", "1600"];
 
 describe("remote operation", () => {
   let app: App;
@@ -65,7 +66,8 @@ describe("remote operation", () => {
     expect(opened.headers.get("set-cookie")).toMatch(/^omem_remote=\w+; Path=\/remote; HttpOnly/);
     const open = calls().find((c) => c[0] === "mcp" && c[2] === "browser_open")!;
     expect(open[3]).toMatchObject({ browser: "chrome", headless: true, url: "https://example.test/admin", profile_dir: join(app.home, "remote", "profiles", "后台") });
-    expect(calls()).toContainEqual(["assist", "--browser-port", "9333", "--page", "PAGE1"]);
+    // The picture as the default settings have it (no video check made yet: aad picks).
+    expect(calls()).toContainEqual(["assist", "--browser-port", "9333", "--page", "PAGE1", ...DEFAULT_VIEWER]);
 
     // The viewer page and its socket, through /remote/<id>/.
     const page = await api("GET", browser.src);
@@ -76,7 +78,7 @@ describe("remote operation", () => {
     expect(bare.status).toBe(302);
     expect(bare.headers.get("location")).toBe(`/remote/${browser.id}/?token=${token}`);
     const said = socket(`/remote/${browser.id}/ws?token=${token}`);
-    expect(await said).toBe("ready assist --browser-port 9333 --page PAGE1");
+    expect(await said).toBe(`ready assist --browser-port 9333 --page PAGE1 ${DEFAULT_VIEWER.join(" ")}`);
     expect((await api("GET", "/api/remote")).body.sessions[0].viewers).toBe(1);
     expect((await api("GET", `/remote/${browser.id}/?token=wrong`)).status).toBe(403);
 
@@ -156,7 +158,7 @@ describe("remote operation", () => {
     expect(screens.body.recordable).toEqual([{ resourceId: "desktop.fake:notepad", name: "记事本", process: "notepad.exe" }]);
     const desk = (await api("POST", "/api/remote/sessions", { kind: "desktop", monitor: 0 })).body;
     expect(desk.title).toBe("显示器 1");
-    expect(calls()).toContainEqual(["assist", "--desktop", "--monitor", "0"]);
+    expect(calls()).toContainEqual(["assist", "--desktop", "--monitor", "0", ...DEFAULT_VIEWER]);
 
     expect((await api("POST", `/api/remote/sessions/${desk.id}/recording`, { goal: "保存笔记" })).status).toBe(400);
     const started = (await api("POST", `/api/remote/sessions/${desk.id}/recording`, { goal: "保存笔记", window: "desktop.fake:notepad" })).body;
@@ -169,6 +171,33 @@ describe("remote operation", () => {
     expect(replayed.body.replay.ok).toBe(true);
     expect(calls()).toContainEqual(["run", join(r.dir, "workflow.yaml"), "--permission", "desktop.input", "--permission", "desktop.observe"]);
 
+    expect((await api("DELETE", `/api/remote/sessions/${desk.id}`)).status).toBe(200);
+  });
+
+  it("sends the picture as each user set it, and gives an open session a viewer with new settings", async () => {
+    expect((await api("GET", "/api/remote/settings")).body).toMatchObject({ settings: { format: "auto", quality: 70, fps: 0, maxWidth: 1600, cursor: true, clipboard: true, browser: "" }, video: null });
+    // Which video codecs work here: checked once, kept until aad changes.
+    expect((await api("POST", "/api/remote/settings/probe")).body).toMatchObject({ aad: "0.0.5", encoders: { h264: "libx264" } });
+    expect((await api("GET", "/api/remote/settings")).body.video.encoders).toEqual({ h264: "libx264" });
+    expect((await api("PUT", "/api/remote/settings", { quality: 101 })).status).toBe(400);
+    expect((await api("PUT", "/api/remote/settings", { format: "h264", quality: 85, fps: 15, maxWidth: 0, clipboard: false, cursor: false })).body).toMatchObject({ format: "h264", quality: 85, browser: "" });
+
+    // The open browser session gets a new viewer; the session (and its page) carry on.
+    const old = browser;
+    const restarted = (await api("POST", `/api/remote/sessions/${browser.id}/viewer`)).body;
+    expect(restarted.id).toBe(old.id);
+    expect(restarted.src).not.toBe(old.src);
+    browser = restarted;
+    const args = ["--browser-port", "9333", "--page", "PAGE1", "--codecs", "h264,webp,jpeg", "--quality", "85", "--max-width", "0", "--encoder", "libx264", "--fps", "15", "--no-clipboard"];
+    expect(calls()).toContainEqual(["assist", ...args]);
+    expect(await socket(`/remote/${browser.id}/ws?${browser.src.split("?")[1]}`)).toBe(`ready assist ${args.join(" ")}`);
+    expect((await api("GET", old.src)).status).toBe(403);
+    expect((await api("GET", "/api/remote")).body.sessions.map((s: { id: string }) => s.id)).toEqual([browser.id]);
+
+    // A desktop gets the pointer setting too; a video codec this machine cannot encode falls back to auto.
+    await api("PUT", "/api/remote/settings", { format: "av1" });
+    const desk = (await api("POST", "/api/remote/sessions", { kind: "desktop" })).body;
+    expect(calls()).toContainEqual(["assist", "--desktop", "--codecs", "webp,jpeg,tiles,h264", "--quality", "85", "--max-width", "0", "--encoder", "libx264", "--fps", "15", "--no-clipboard", "--hide-cursor"]);
     expect((await api("DELETE", `/api/remote/sessions/${desk.id}`)).status).toBe(200);
   });
 

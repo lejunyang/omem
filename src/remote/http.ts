@@ -12,7 +12,8 @@ import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
-import { assistOf, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, replayRecording, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
+import { assistOf, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, replayRecording, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
+import { cachedProbe, probeRunning, probeVideo, readSettings, remoteSettingsSchema, saveSettings, viewerArgs } from "./settings.ts";
 
 /**
  * Remote operation over HTTP (docs/v2/remote.md): /api/remote for the page, and /remote/<session>/
@@ -148,13 +149,27 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
     return { available: status.installed, version: status.version, sessions: status.installed ? listSessions(who(req)) : [], profiles: profiles(app) };
   });
   server.get("/api/remote/screens", async () => screens());
+  // How sessions are shown: each user's picture settings, and which video codecs work here.
+  server.get("/api/remote/settings", async (req) => ({ settings: readSettings(app, who(req)), video: cachedProbe(app), probing: probeRunning() }));
+  server.put("/api/remote/settings", async (req) => saveSettings(app, who(req), q(remoteSettingsSchema.partial(), req.body)));
+  server.post("/api/remote/settings/probe", async () => probeVideo(app));
   server.post("/api/remote/sessions", async (req, reply) => {
     const b = q(z.object({ kind: z.enum(["browser", "desktop"]), url: z.string().max(2048).optional(), browser: z.enum(["chrome", "edge", "brave"]).optional(), profile: z.string().max(40).optional(), visible: z.boolean().optional(), monitor: z.number().int().min(0).optional(), window: z.string().max(200).optional() }), req.body);
     const userId = who(req);
-    const s = b.kind === "browser" ? await openBrowser(app, { url: b.url || undefined, browser: b.browser, profile: b.profile || undefined, visible: b.visible, userId }) : await openDesktop(app, { monitor: b.monitor, window: b.window, userId });
+    const settings = readSettings(app, userId);
+    const viewer = viewerArgs(settings, b.kind, cachedProbe(app));
+    const s = b.kind === "browser"
+      ? await openBrowser(app, { url: b.url || undefined, browser: b.browser ?? (settings.browser || undefined), profile: b.profile || undefined, visible: b.visible, viewer, userId })
+      : await openDesktop(app, { monitor: b.monitor, window: b.window, viewer, userId });
     return view(s, reply, userId);
   });
   server.post("/api/remote/sessions/:id/view", async (req, reply) => view(getSession((req.params as { id: string }).id, who(req)), reply, who(req)));
+  // The session's viewer again, with the settings as they are now.
+  server.post("/api/remote/sessions/:id/viewer", async (req, reply) => {
+    const userId = who(req);
+    const s = getSession((req.params as { id: string }).id, userId);
+    return view(await restartViewer(app, s.id, userId, viewerArgs(readSettings(app, userId), s.kind, cachedProbe(app))), reply, userId);
+  });
   server.post("/api/remote/sessions/:id/navigate", async (req) => navigate((req.params as { id: string }).id, q(z.object({ url: z.string().min(1).max(2048) }), req.body).url, who(req)));
   server.delete("/api/remote/sessions/:id", async (req) => {
     const id = (req.params as { id: string }).id;

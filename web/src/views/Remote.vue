@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { del, get, post } from "../api";
+import { del, get, post, put } from "../api";
 import Icon from "../components/Icon.vue";
 import RemoteChat from "../components/RemoteChat.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -16,6 +16,8 @@ import { relTime, toast } from "../store";
  */
 type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; recording: string | null; viewers: number; src?: string };
 type Recording = { id: string; kind: "browser" | "desktop"; goal: string; target: string; status: "recording" | "done" | "failed"; summary: Record<string, any>; replay: { at: string; ok: boolean; error?: string; result?: any } | null; conversationId: string | null; skill: string | null; createdAt: string };
+type Settings = { format: string; quality: number; fps: number; maxWidth: number; cursor: boolean; clipboard: boolean; browser: "" | "chrome" | "edge" | "brave" };
+type VideoProbe = { at: string; ffmpeg: string | null; encoders: Record<string, string> };
 type Screens = { monitors: { monitor: number; name: string; primary?: boolean; width: number; height: number }[]; windows: { window: string; title: string }[]; recordable: { resourceId: string; name: string; process: string | null }[] };
 
 const loading = ref(true);
@@ -34,6 +36,13 @@ const profile = ref("");
 const visible = ref(false);
 const area = ref("all");
 const screens = ref<Screens | null>(null);
+
+// How the picture is sent (aad assist's options), each user's own.
+const showSettings = ref(false);
+const settings = ref<Settings | null>(null);
+const saved = ref("");
+const video = ref<VideoProbe | null>(null);
+const probing = ref(false);
 
 // The address bar a browser session's viewer does not have.
 const address = ref("");
@@ -106,6 +115,78 @@ const areaOptions = computed<SelectOption<string>[]>(() => [
   ...(screens.value?.monitors ?? []).map((m) => ({ value: `m:${m.monitor}`, label: `显示器 ${m.monitor + 1}${m.primary ? "（主）" : ""}`, hint: `${m.width}×${m.height}`, group: "显示器" })),
   ...(screens.value?.windows ?? []).map((w) => ({ value: `w:${w.window}`, label: w.title || w.window, group: "窗口" })),
 ]);
+async function toggleSettings() {
+  showSettings.value = !showSettings.value;
+  if (!showSettings.value || settings.value) return;
+  try {
+    const r = await get<{ settings: Settings; video: VideoProbe | null; probing: boolean }>("/api/remote/settings");
+    settings.value = r.settings;
+    saved.value = JSON.stringify(r.settings);
+    video.value = r.video;
+    // Which video codecs work here decides what the format list offers: check once.
+    if (!r.video) void probe();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+async function probe() {
+  probing.value = true;
+  try {
+    video.value = await post<VideoProbe>("/api/remote/settings/probe");
+  } catch (e) {
+    toast(`没能检测视频编码：${(e as Error).message}`, "error");
+  } finally {
+    probing.value = false;
+  }
+}
+const VIDEO_NAMES: Record<string, string> = { h264: "H.264", vp9: "VP9", av1: "AV1" };
+const formatOptions = computed<SelectOption<string>[]>(() => [
+  { value: "auto", label: "自动（推荐）", hint: video.value && Object.keys(video.value.encoders).length ? "只传变化的部分，大片变化时换成视频" : "只传变化的部分" },
+  { value: "tiles", label: "只传变化的部分", hint: "清晰，不用视频" },
+  ...Object.entries(VIDEO_NAMES).map(([value, name]) => {
+    const encoder = video.value?.encoders[value];
+    return { value, label: `视频 ${name}`, hint: encoder ?? (probing.value ? "检测中…" : video.value ? "这台机器不能用" : "未检测"), disabled: !encoder, group: "视频（流畅，画面会糊一点）" };
+  }),
+  { value: "webp", label: "整张图片 WebP", hint: "每次发整个画面", group: "整张图片" },
+  { value: "jpeg", label: "整张图片 JPEG", hint: "编码最快，画面稍糊", group: "整张图片" },
+]);
+const videoNote = computed(() => {
+  const found = Object.entries(video.value?.encoders ?? {});
+  return {
+    text: found.length ? found.map(([c]) => VIDEO_NAMES[c]).join("、") : video.value?.ffmpeg ? "没有" : "没有（没装 ffmpeg，只用图片）",
+    title: found.map(([c, e]) => `${VIDEO_NAMES[c]}：${e}`).join("\n"),
+  };
+});
+const qualityOptions = [
+  { value: 40, label: "省流量" },
+  { value: 70, label: "标准" },
+  { value: 85, label: "清晰" },
+  { value: 100, label: "无损", title: "只传变化的部分时无损；视频和整张图片按最高质量" },
+];
+const fpsOptions: SelectOption<number>[] = [{ value: 0, label: "自动", hint: "整张图片 5、其余 30" }, ...[10, 15, 30, 60].map((n) => ({ value: n, label: `每秒 ${n} 帧` }))];
+const widthOptions: SelectOption<number>[] = [1280, 1600, 1920, 2560].map((n) => ({ value: n, label: `${n} 像素`, hint: n === 1600 ? "默认" : undefined })).concat([{ value: 0, label: "不缩小", hint: undefined }]);
+const browserOptions: SelectOption<string>[] = [{ value: "", label: "自动", hint: "按 Chrome、Edge、Brave 找第一个" }, { value: "chrome", label: "Chrome" }, { value: "edge", label: "Edge" }, { value: "brave", label: "Brave" }];
+const settingsChanged = computed(() => !!settings.value && JSON.stringify(settings.value) !== saved.value);
+async function saveSettings() {
+  if (!settings.value) return;
+  busy.value = "settings";
+  try {
+    settings.value = await put<Settings>("/api/remote/settings", settings.value);
+    saved.value = JSON.stringify(settings.value);
+    const s = active.value;
+    if (s) {
+      // The open session gets a new viewer with these settings; the page and a recording carry on.
+      const next = await post<Session>(`/api/remote/sessions/${s.id}/viewer`);
+      active.value = { ...s, ...next };
+      toast("已保存，当前画面换成了新设置", "ok");
+    } else toast("已保存，之后打开的画面按这个来", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    busy.value = "";
+  }
+}
+
 const recordOptions = computed<SelectOption<string>[]>(() => (screens.value?.recordable ?? []).map((r) => ({ value: r.resourceId, label: r.name, hint: r.process ?? undefined })));
 
 async function open() {
@@ -239,10 +320,36 @@ const counts = (r: Recording) => {
             <button v-for="s in sessions" :key="s.id" class="btn sm" :class="{ primary: active?.id === s.id }" @click="show(s)">
               <Icon :name="s.kind === 'browser' ? 'globe' : 'monitor'" :size="14" />{{ s.title }}
             </button>
-            <button class="btn ghost sm" :class="{ primary: !active }" @click="active = null"><Icon name="plus" :size="14" />新会话</button>
+            <button class="btn sm" :class="active ? 'ghost' : 'primary'" @click="active = null"><Icon name="plus" :size="14" />新会话</button>
           </div>
           <span class="spacer" />
           <span class="muted small">aad {{ version }}</span>
+          <button class="btn sm" :class="showSettings ? 'primary' : 'ghost'" :aria-expanded="showSettings" @click="toggleSettings"><Icon name="settings" :size="14" />画面设置</button>
+        </div>
+
+        <div v-if="showSettings" class="settings card">
+          <Skeleton v-if="!settings" :rows="3" />
+          <template v-else>
+            <div class="grid">
+              <label class="field">格式<UiSelect v-model="settings.format" :options="formatOptions" aria-label="画面格式" /></label>
+              <div class="field">画质<UiSegmented v-model="settings.quality" :options="qualityOptions" size="sm" aria-label="画质" /></div>
+              <label class="field">最高帧率<UiSelect v-model="settings.fps" :options="fpsOptions" aria-label="最高帧率" /></label>
+              <label class="field">最大宽度<UiSelect v-model="settings.maxWidth" :options="widthOptions" aria-label="最大宽度" /></label>
+              <label class="field">新开浏览器用<UiSelect v-model="settings.browser" :options="browserOptions" aria-label="浏览器" /></label>
+            </div>
+            <div class="checks">
+              <UiCheckbox v-model="settings.cursor" size="sm">桌面画面上显示远程的鼠标指针</UiCheckbox>
+              <UiCheckbox v-model="settings.clipboard" size="sm">在画面里复制的文字带回这边的剪贴板</UiCheckbox>
+            </div>
+            <div class="row foot">
+              <span class="muted small grow">
+                <template v-if="probing">正在检测这台机器能用的视频编码（可能要半分钟）…</template>
+                <template v-else-if="video"><span :title="videoNote.title">能用的视频编码：{{ videoNote.text }}</span> · <a href="#" class="nowrap" @click.prevent="probe">重新检测</a></template>
+              </span>
+              <button class="btn ghost sm" @click="showSettings = false">收起</button>
+              <button class="btn primary sm" :disabled="!settingsChanged || busy === 'settings'" @click="saveSettings">{{ busy === "settings" ? "正在应用…" : active ? "保存并应用到当前画面" : "保存" }}</button>
+            </div>
+          </template>
         </div>
 
         <div v-if="!active" class="opener card stack">
@@ -345,6 +452,31 @@ const counts = (r: Recording) => {
 .opener h2 {
   font-family: var(--serif);
   font-size: 22px;
+}
+.settings {
+  display: grid;
+  gap: 12px;
+}
+.settings .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px 14px;
+}
+.settings .checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+.settings .foot {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* On a narrow screen the note takes its own line above the buttons. */
+.settings .foot > .grow {
+  flex: 1 1 240px;
+}
+.nowrap {
+  white-space: nowrap;
 }
 .address {
   gap: 8px;

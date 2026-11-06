@@ -1450,3 +1450,4 @@ updated: 2026-11-05
 - Agent：工具分组 `remote`（`list_recordings`、`read_recording`），主助手 `group:remote`；`save_skill` 加 `from_recording`；内置技能 `skill-from-recording`；说明页 `skills/omem/references/remote.md`。
 - 其他：`/remote` 进 `peer-tunnel` 的 `tunneled`、中间设备转发 `/api/peers/:id/remote/*`；`OMEM_TOOL_<名>` 指定某个工具的程序（`core/tools.ts`，也放进 Agent 的 PATH）。
 - 测试：`test/remote.test.ts` + `test/fake-aad.ts`；本机真实 aad 与 Codex 跑通一次浏览器录制 → 技能 → 回放（acceptance 有记录）。
+- 画面设置（同日）：`src/remote/settings.ts`，每人一份存 kv `remote_settings:<用户>`，换成 `aad assist` 的格式、画质、帧率、最大宽度、鼠标指针、剪贴板参数，新开浏览器用哪个；`aad assist --probe-video` 的结果存 kv `remote_video_probe`（按 aad 版本），开会话时带 `--encoder`，`--codecs auto` 不再每次启动都把所有编码器试一遍；`POST /api/remote/sessions/:id/viewer` 给开着的会话换查看进程（会话、浏览器、录制不动，旧进程退出不结束会话）。网页“画面设置”面板；“新会话”标签在没有打开的会话时是 ghost + primary，文字和背景同色看不见，改成二选一。

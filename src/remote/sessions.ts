@@ -22,6 +22,8 @@ type Live = {
   createdAt: string;
   /** `aad assist`: where it listens on loopback, and the token every request to it carries. */
   assist: { proc: ChildProcess; port: number; token: string };
+  /** What assist shows (its arguments without the picture settings), to start it again with others. */
+  source: string[];
   /** Browser sessions: the `aad mcp` that opened the browser, and records and replays on it. */
   mcp?: AadMcp;
   browser?: { name: string; port: number; pageId: string; url: string | null; profile: string | null };
@@ -85,11 +87,18 @@ async function startAssist(args: string[]) {
   return { proc, port, token: String(announced.token) };
 }
 
+/** The screen going away (the browser closed, the desktop locked) ends the session; a replaced viewer does not. */
+function watchAssist(app: App, s: Live) {
+  const proc = s.assist.proc;
+  proc.on("exit", () => {
+    if (s.assist.proc === proc) void closeSession(app, s.id);
+  });
+}
+
 function add(app: App, s: Omit<Live, "viewers" | "idleSince" | "createdAt" | "id">) {
   const session: Live = { ...s, id: newId("rs"), createdAt: now(), viewers: 0, idleSince: Date.now() };
   live.set(session.id, session);
-  // The screen going away (the browser closed, the desktop locked) ends the session.
-  session.assist.proc.on("exit", () => void closeSession(app, session.id));
+  watchAssist(app, session);
   sweeper ??= setInterval(() => {
     for (const x of live.values()) if (!x.viewers && Date.now() - x.idleSince > IDLE_MS) void closeSession(app, x.id);
   }, 60_000);
@@ -104,7 +113,7 @@ export function profileDir(app: App, name: string) {
 }
 
 /** A browser for remote use, without a window on this machine unless asked: it is seen through the viewer. */
-export async function openBrowser(app: App, opts: { url?: string; browser?: string; profile?: string; visible?: boolean; userId: string }) {
+export async function openBrowser(app: App, opts: { url?: string; browser?: string; profile?: string; visible?: boolean; viewer?: string[]; userId: string }) {
   if (opts.url && !/^https?:\/\//.test(opts.url)) throw new HttpError(400, "网址要以 http:// 或 https:// 开头");
   const mcp = await new AadMcp(["--allow-input"]).start();
   try {
@@ -126,12 +135,14 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
       }
     }
     if (!opened) throw failure ?? new HttpError(502, "没能打开浏览器");
-    const assist = await startAssist(["--browser-port", String(opened.port), "--page", String(opened.page_id)]);
+    const source = ["--browser-port", String(opened.port), "--page", String(opened.page_id)];
+    const assist = await startAssist([...source, ...(opts.viewer ?? [])]);
     const s = add(app, {
       kind: "browser",
       title: opts.url ? new URL(opts.url).host : "浏览器",
       userId: opts.userId,
       assist,
+      source,
       mcp,
       browser: { name: opened.browser, port: Number(opened.port), pageId: String(opened.page_id), url: opts.url ?? null, profile: opts.profile ?? null },
     });
@@ -143,10 +154,30 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
   }
 }
 
-export async function openDesktop(app: App, opts: { monitor?: number; window?: string; userId: string }) {
-  const args = ["--desktop", ...(opts.monitor !== undefined ? ["--monitor", String(opts.monitor)] : []), ...(opts.window ? ["--window", opts.window] : [])];
-  const assist = await startAssist(args);
-  return add(app, { kind: "desktop", title: opts.window ? "窗口" : opts.monitor !== undefined ? `显示器 ${opts.monitor + 1}` : "桌面", userId: opts.userId, assist });
+export async function openDesktop(app: App, opts: { monitor?: number; window?: string; viewer?: string[]; userId: string }) {
+  const source = ["--desktop", ...(opts.monitor !== undefined ? ["--monitor", String(opts.monitor)] : []), ...(opts.window ? ["--window", opts.window] : [])];
+  const assist = await startAssist([...source, ...(opts.viewer ?? [])]);
+  return add(app, { kind: "desktop", title: opts.window ? "窗口" : opts.monitor !== undefined ? `显示器 ${opts.monitor + 1}` : "桌面", userId: opts.userId, assist, source });
+}
+
+/**
+ * Show a session with other picture settings: a new `aad assist` on the same browser page or screen,
+ * then the old one stops. The browser, a recording in progress and the session itself carry on; the
+ * page loads the new viewer address.
+ */
+export async function restartViewer(app: App, id: string, userId: string, viewer: string[]) {
+  const s = getSession(id, userId);
+  const next = await startAssist([...s.source, ...viewer]);
+  if (live.get(id) !== s) {
+    // The session ended while the new viewer started.
+    next.proc.kill();
+    throw new HttpError(404, "远程会话已经结束");
+  }
+  const old = s.assist.proc;
+  s.assist = next;
+  watchAssist(app, s);
+  old.kill();
+  return s;
 }
 
 export async function closeSession(app: App, id: string) {

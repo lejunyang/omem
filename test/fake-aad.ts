@@ -34,7 +34,8 @@ function assist() {
     const accept = createHash("sha1").update(`${req.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
     const text = Buffer.from(`ready ${args.join(" ")}`);
-    socket.write(Buffer.concat([Buffer.from([0x81, text.length]), text]));
+    const head = text.length < 126 ? [0x81, text.length] : [0x81, 126, text.length >> 8, text.length & 0xff];
+    socket.write(Buffer.concat([Buffer.from(head), text]));
   });
   server.listen(0, "127.0.0.1", () => {
     const port = (server.address() as { port: number }).port;
@@ -91,7 +92,8 @@ switch (args[0]) {
     out({ status: "ok", data: { resources: [{ resource_id: "desktop.fake:notepad", provider: "desktop.fake", name: "记事本", metadata: { process_name: "notepad.exe" } }] } });
     break;
   case "assist":
-    if (args.includes("--list-screens")) out({ monitors: [{ monitor: 0, name: "D1", primary: true, width: 800, height: 600 }], windows: [{ window: "0x1", title: "记事本", minimized: false }, { window: "0x2", title: "隐藏", minimized: true }] });
+    if (args.includes("--probe-video")) out({ ffmpeg: { path: "ffmpeg", version: "7.1" }, encoders: { h264: "libx264" }, tried: [{ encoder: "libx264", hardware: false, ok: true, ms: 80 }] });
+    else if (args.includes("--list-screens")) out({ monitors: [{ monitor: 0, name: "D1", primary: true, width: 800, height: 600 }], windows: [{ window: "0x1", title: "记事本", minimized: false }, { window: "0x2", title: "隐藏", minimized: true }] });
     else assist();
     break;
   case "mcp":

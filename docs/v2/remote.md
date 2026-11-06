@@ -9,12 +9,30 @@
 3. 录制技能：在对话里说要教什么（“在后台给某个商户开通退款权限”），点“开始录制”。桌面录制要选一个窗口（录制按窗口记元素，不按坐标）。做完点“停止”。
 4. 停止后页面把这次录制交给助手：录制编号、做了几步、记下多少请求。助手用 `read_recording` 看步骤、截图和关键请求，在对话里说它理解的流程和要本人确认的地方（哪些值每次不同、成功的标志是什么），本人回答后它用 `save_skill`（`from_recording`）保存技能，录到的可回放步骤和请求摘要随技能保存。
 5. “回放”：在当前远程会话上重放一次录制（或技能附带的步骤），画面里能看到它在做什么，结果显示在录制卡片上。
+6. “画面设置”（右上角）：格式、画质、帧率、最大宽度、远程鼠标指针、剪贴板、新开浏览器用哪个。保存后之后打开的画面按这个来；有打开的会话时“保存并应用到当前画面”换一个查看页，页面和进行中的录制不受影响。
+
+## 画面设置
+
+每个人一份，存在这台机器的 kv（`remote_settings:<用户>`，不随 `omem pull` 走）。接口 `GET/PUT /api/remote/settings`，打开会话时换成 `aad assist` 的参数：
+
+| 设置 | 选项 | `aad assist` |
+| --- | --- | --- |
+| 格式 | 自动（默认）/ 只传变化的部分 / 视频 H.264、VP9、AV1 / 整张图片 WebP、JPEG | 自动：图片和 tiles 加上能用的视频编码（查看页先选 tiles，大片变化时换视频）；只传变化：`--codecs tiles,webp,jpeg`；视频：`--codecs <编码>,webp,jpeg`；整张图片：`--codecs webp` / `jpeg` |
+| 画质 | 省流量 40 / 标准 70（默认）/ 清晰 85 / 无损 100 | `--quality`（tiles 在 100 时无损；视频不设码率时换算成恒定量化） |
+| 最高帧率 | 自动（整张图片 5、其余 30）/ 10 / 15 / 30 / 60 | `--fps` |
+| 最大宽度 | 1280 / 1600（默认）/ 1920 / 2560 / 不缩小 | `--max-width`（0 不缩小） |
+| 远程鼠标指针 | 默认显示（只对桌面） | 不显示时 `--hide-cursor` |
+| 剪贴板 | 默认把画面里复制的文字带回 | 关掉时 `--no-clipboard` |
+| 新开浏览器用 | 自动（Chrome、Edge、Brave 里第一个有的）/ 指定一个 | `browser_open` 的 `browser` |
+
+- 哪些视频编码能用：第一次打开设置时跑一次 `aad assist --probe-video`（每个编码器试编几帧；这台 Windows 上一个硬件编码器卡住，约 20 秒），结果存在 kv `remote_video_probe`，aad 版本变了才重测，设置里可以“重新检测”。有结果后格式列表只让选能用的视频编码，打开会话时给每个编码带上 `--encoder <检测到的编码器>`：`--codecs auto` 每次启动都会把所有编码器再试一遍（这台机器上每次多十几秒），指定编码器后只试那一个。保存的视频编码在这台机器上不能用时按“自动”开。
+- `POST /api/remote/sessions/:id/viewer`：用现在的设置给会话另起一个 `aad assist`（同一个浏览器页面或同一块屏幕），起来后关掉旧的，返回新的查看地址；旧进程退出不结束会话（只有当前的查看进程退出才算画面没了）。浏览器、`aad mcp` 和进行中的录制都不动。
 
 ## 进程与转发
 
 | 会话 | 进程 | 说明 |
 | --- | --- | --- |
-| 浏览器 | `aad mcp --allow-input`（每个会话一个，stdio JSON-RPC）+ `aad assist --browser-port <port> --page <id>` | `browser_open` 起浏览器（临时资料，或数据目录 `remote/profiles/<名>`），返回调试端口和页面；`assist` 用同一个端口出画面、收键鼠。录制用同一个 MCP 进程的 `browser_record_start/stop`。 |
+| 浏览器 | `aad mcp --allow-input`（每个会话一个，stdio JSON-RPC）+ `aad assist --browser-port <port> --page <id>`（再加画面设置的参数，下同） | `browser_open` 起浏览器（临时资料，或数据目录 `remote/profiles/<名>`），返回调试端口和页面；`assist` 用同一个端口出画面、收键鼠。录制用同一个 MCP 进程的 `browser_record_start/stop`。 |
 | 桌面 | `aad assist --desktop [--monitor N \| --window W]` | 录制时另起 `aad record <窗口> --until-stdin-closes`，停止时关它的标准输入。 |
 
 - `assist` 只监听本机回环地址，带一次性 token。omem 在 `/remote/<会话>/` 下转发它的查看页（HTTP）和 `/remote/<会话>/ws`（WebSocket）。查看页按自己的地址连 WebSocket（ai-auto-desktop#12 之后的版本），经 https 和路径前缀都能用。开发时 Vite 也代理 `/remote`。
