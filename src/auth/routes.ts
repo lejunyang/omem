@@ -226,6 +226,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // remote operation (docs/v2/remote.md): each person's own sessions and recordings
   "GET /api/remote": g("desktop.control"),
   "GET /api/remote/screens": g("desktop.control"),
+  "GET /api/remote/browser-profiles": g("desktop.control"),
   "POST /api/remote/sessions": g("desktop.control"),
   "POST /api/remote/sessions/:id/view": g("desktop.control"),
   "POST /api/remote/sessions/:id/viewer": g("desktop.control"),

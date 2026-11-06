@@ -47,8 +47,10 @@ function assist() {
 function mcp() {
   let recording = "";
   const tools: Record<string, (a: any) => unknown> = {
+    browser_profiles: (a) => (a.browser === "edge" ? { browser: "edge", profiles: [{ id: "Default", name: "工作", path: "x" }] } : (() => { throw new Error(`no ${a.browser} user data`); })()),
     browser_open: (a) => {
       if (a.browser === "chrome" && process.env.FAKE_AAD_NO_CHROME) throw new Error("chrome is not installed");
+      if (a.copy_profile && !a.close_running) throw new Error("the profile is in use by a running browser");
       return { browser: a.browser, port: 9333, page_id: "PAGE1", profile_dir: a.profile_dir ?? scratch(), temporary_profile: !a.profile_dir };
     },
     browser_record_start: () => ((recording = scratch()), { recording: true, out: recording }),
@@ -89,11 +91,12 @@ switch (args[0]) {
     console.log("aad 0.0.5");
     break;
   case "apps":
-    out({ status: "ok", data: { resources: [{ resource_id: "desktop.fake:notepad", provider: "desktop.fake", name: "记事本", metadata: { process_name: "notepad.exe" } }] } });
+    // As `aad apps` prints it: the windows the accessibility tree lists, under `apps`.
+    out({ count: 1, apps: [{ resource_id: "desktop.fake:notepad", provider: "desktop.fake", name: "记事本", metadata: { process_name: "notepad.exe", process_id: 7, window_id: "hwnd:1", title: "记事本" } }] });
     break;
   case "assist":
     if (args.includes("--probe-video")) out({ ffmpeg: { path: "ffmpeg", version: "7.1" }, encoders: { h264: "libx264" }, tried: [{ encoder: "libx264", hardware: false, ok: true, ms: 80 }] });
-    else if (args.includes("--list-screens")) out({ monitors: [{ monitor: 0, name: "D1", primary: true, width: 800, height: 600 }], windows: [{ window: "0x1", title: "记事本", minimized: false }, { window: "0x2", title: "隐藏", minimized: true }] });
+    else if (args.includes("--list-screens")) out({ monitors: [{ monitor: 0, name: "D1", primary: true, width: 800, height: 600 }], windows: [{ window: "0x1", title: "记事本", process_id: 7, minimized: false }, { window: "0x2", title: "隐藏", minimized: true }] });
     else assist();
     break;
   case "mcp":

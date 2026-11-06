@@ -14,7 +14,8 @@ import { relTime, toast } from "../store";
  * Remote operation (docs/v2/remote.md): a browser page or the desktop of the machine omem runs on,
  * shown through aad's viewer, with a recording that the assistant beside it turns into a skill.
  */
-type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; recording: string | null; viewers: number; src?: string };
+type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; window: string | null; recording: string | null; viewers: number; src?: string };
+type BrowserProfile = { browser: "chrome" | "edge" | "brave"; id: string; name: string };
 type Recording = { id: string; kind: "browser" | "desktop"; goal: string; target: string; status: "recording" | "done" | "failed"; summary: Record<string, any>; replay: { at: string; ok: boolean; error?: string; result?: any } | null; conversationId: string | null; skill: string | null; createdAt: string };
 type Settings = { format: string; quality: number; fps: number; maxWidth: number; cursor: boolean; clipboard: boolean; browser: "" | "chrome" | "edge" | "brave" };
 type VideoProbe = { at: string; ffmpeg: string | null; encoders: Record<string, string> };
@@ -33,6 +34,8 @@ const busy = ref("");
 const kind = ref<"browser" | "desktop">("browser");
 const url = ref("");
 const profile = ref("");
+const browserProfiles = ref<BrowserProfile[] | null>(null);
+const closeRunning = ref(false);
 const visible = ref(false);
 const area = ref("all");
 const screens = ref<Screens | null>(null);
@@ -82,13 +85,19 @@ async function load() {
     loading.value = false;
   }
 }
-async function loadScreens() {
-  if (screens.value) return;
-  screens.value = await get<Screens>("/api/remote/screens").catch((e) => (toast((e as Error).message, "error"), null));
+async function loadScreens(again = false) {
+  if (screens.value && !again) return;
+  const next = await get<Screens>("/api/remote/screens").catch((e) => (toast((e as Error).message, "error"), null));
+  if (next) screens.value = next;
+}
+async function loadBrowserProfiles() {
+  if (browserProfiles.value) return;
+  browserProfiles.value = await get<BrowserProfile[]>("/api/remote/browser-profiles").catch(() => []);
 }
 onMounted(() => {
   void load();
   timer = setInterval(() => (tick.value = Date.now()), 1000);
+  void loadBrowserProfiles();
 });
 onBeforeUnmount(() => timer && clearInterval(timer));
 
@@ -96,15 +105,23 @@ async function show(s: Session) {
   active.value = { ...s, ...(await post<Session>(`/api/remote/sessions/${s.id}/view`)) };
   address.value = s.browser?.url ?? "";
   if (s.recording) startedAt.value = startedAt.value || Date.now();
-  if (s.kind === "desktop") void loadScreens();
+  if (s.kind === "desktop") void loadScreens(true);
 }
 
+const BROWSER_NAMES: Record<string, string> = { chrome: "Chrome", edge: "Edge", brave: "Brave" };
 const profileOptions = computed<SelectOption<string>[]>(() => [
-  { value: "", label: "临时资料（关掉就清空）" },
-  ...profiles.value.map((p) => ({ value: p, label: p, hint: "保留登录" })),
-  { value: "__new", label: "新建长期资料…" },
+  { value: "", label: "临时资料", hint: "关掉就清空" },
+  ...profiles.value.map((p) => ({ value: p, label: p, hint: "保留登录", group: "omem 的长期资料" })),
+  { value: "__new", label: "新建长期资料…", group: "omem 的长期资料" },
+  ...(browserProfiles.value ?? []).map((p) => ({ value: `copy:${p.browser}:${p.id}`, label: p.name, hint: `${BROWSER_NAMES[p.browser]} · ${p.id}`, group: "复制这台机器上浏览器的登录" })),
 ]);
+// A profile of this machine's own browser, copied: its logins come along.
+const copying = computed(() => {
+  const m = /^copy:(chrome|edge|brave):(.+)$/.exec(profile.value);
+  return m ? { browser: m[1] as BrowserProfile["browser"], id: m[2] } : null;
+});
 async function pickProfile(v: string) {
+  closeRunning.value = false;
   if (v !== "__new") return void (profile.value = v);
   const name = await promptDialog("新建浏览器资料", { message: "登录过的网站会留在这份资料里，下次选它不用再登录。", placeholder: "例如 后台" });
   profile.value = name?.trim() ?? "";
@@ -188,18 +205,21 @@ async function saveSettings() {
 }
 
 const recordOptions = computed<SelectOption<string>[]>(() => (screens.value?.recordable ?? []).map((r) => ({ value: r.resourceId, label: r.name, hint: r.process ?? undefined })));
+// Sharing a whole screen, a recording needs the program to watch; sharing one window, it watches that.
+const pickProgram = computed(() => active.value?.kind === "desktop" && !active.value.window);
 
 async function open() {
   busy.value = "open";
   try {
+    const shared = area.value.startsWith("w:") ? screens.value?.windows.find((w) => w.window === area.value.slice(2)) : undefined;
     const body = kind.value === "browser"
-      ? { kind: "browser", url: url.value.trim() || undefined, profile: profile.value || undefined, visible: visible.value }
-      : { kind: "desktop", ...(area.value.startsWith("m:") ? { monitor: Number(area.value.slice(2)) } : area.value.startsWith("w:") ? { window: area.value.slice(2) } : {}) };
+      ? { kind: "browser", url: url.value.trim() || undefined, ...(copying.value ? { copyFrom: copying.value, closeRunning: closeRunning.value } : { profile: profile.value || undefined }), visible: visible.value }
+      : { kind: "desktop", ...(area.value.startsWith("m:") ? { monitor: Number(area.value.slice(2)) } : shared ? { window: shared.window, title: shared.title } : {}) };
     const s = await post<Session>("/api/remote/sessions", body);
     sessions.value = [...sessions.value, s];
     active.value = s;
     address.value = s.browser?.url ?? "";
-    if (s.kind === "desktop") void loadScreens();
+    if (s.kind === "desktop") void loadScreens(true);
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {
@@ -237,10 +257,10 @@ async function loadRecordings() {
 async function startRecording() {
   const s = active.value;
   if (!s) return;
-  if (s.kind === "desktop" && !recordWindow.value) return void toast("先选要录的窗口：录制按窗口记下点了哪个元素", "error");
+  if (pickProgram.value && !recordWindow.value) return void toast("先选录哪个程序：录制一次看一个程序，记下在它里面点了什么", "error");
   busy.value = "record";
   try {
-    const r = await post<Recording>(`/api/remote/sessions/${s.id}/recording`, { goal: goal.value.trim(), window: s.kind === "desktop" ? recordWindow.value : undefined, conversationId: conversationId.value ?? undefined });
+    const r = await post<Recording>(`/api/remote/sessions/${s.id}/recording`, { goal: goal.value.trim(), window: pickProgram.value ? recordWindow.value : undefined, conversationId: conversationId.value ?? undefined });
     s.recording = r.id;
     startedAt.value = Date.now();
     recordings.value = [r, ...recordings.value];
@@ -315,27 +335,44 @@ const counts = (r: Recording) => {
     </div>
     <template v-else>
       <section class="stage">
-        <div class="bar row">
-          <div v-if="sessions.length" class="tabs row">
-            <button v-for="s in sessions" :key="s.id" class="btn sm" :class="{ primary: active?.id === s.id }" @click="show(s)">
-              <Icon :name="s.kind === 'browser' ? 'globe' : 'monitor'" :size="14" />{{ s.title }}
+        <div class="bar">
+          <div v-if="sessions.length" class="stabs" role="tablist" aria-label="远程会话">
+            <div
+              v-for="s in sessions"
+              :key="s.id"
+              class="stab"
+              :class="{ on: active?.id === s.id }"
+              role="tab"
+              tabindex="0"
+              :aria-selected="active?.id === s.id"
+              :title="s.browser?.url || s.title"
+              @click="show(s)"
+              @keydown.enter.self="show(s)"
+              @auxclick.middle="close(s)"
+            >
+              <Icon :name="s.kind === 'browser' ? 'globe' : 'monitor'" :size="14" />
+              <span class="ellipsis">{{ s.title }}</span>
+              <span v-if="s.recording" class="dot" title="录制中" />
+              <button class="x" :aria-label="`关闭 ${s.title}`" title="关闭会话" @click.stop="close(s)"><Icon name="x" :size="13" /></button>
+            </div>
+            <button class="stab add" :class="{ on: !active }" role="tab" :aria-selected="!active" title="打开新的远程画面" @click="active = null">
+              <Icon name="plus" :size="14" /><span v-if="!sessions.length || !active">新会话</span>
             </button>
-            <button class="btn sm" :class="active ? 'ghost' : 'primary'" @click="active = null"><Icon name="plus" :size="14" />新会话</button>
           </div>
-          <span class="spacer" />
-          <span class="muted small">aad {{ version }}</span>
+          <span v-else class="spacer" />
+          <span class="muted small nowrap">aad {{ version }}</span>
           <button class="btn sm" :class="showSettings ? 'primary' : 'ghost'" :aria-expanded="showSettings" @click="toggleSettings"><Icon name="settings" :size="14" />画面设置</button>
         </div>
 
-        <div v-if="showSettings" class="settings card">
+        <div v-if="showSettings" class="settings card pad">
           <Skeleton v-if="!settings" :rows="3" />
           <template v-else>
             <div class="grid">
-              <label class="field">格式<UiSelect v-model="settings.format" :options="formatOptions" aria-label="画面格式" /></label>
-              <div class="field">画质<UiSegmented v-model="settings.quality" :options="qualityOptions" size="sm" aria-label="画质" /></div>
-              <label class="field">最高帧率<UiSelect v-model="settings.fps" :options="fpsOptions" aria-label="最高帧率" /></label>
-              <label class="field">最大宽度<UiSelect v-model="settings.maxWidth" :options="widthOptions" aria-label="最大宽度" /></label>
-              <label class="field">新开浏览器用<UiSelect v-model="settings.browser" :options="browserOptions" aria-label="浏览器" /></label>
+              <label class="field"><span>格式</span><UiSelect v-model="settings.format" :options="formatOptions" aria-label="画面格式" /></label>
+              <div class="field"><span>画质</span><UiSegmented v-model="settings.quality" :options="qualityOptions" size="sm" aria-label="画质" /></div>
+              <label class="field"><span>最高帧率</span><UiSelect v-model="settings.fps" :options="fpsOptions" aria-label="最高帧率" /></label>
+              <label class="field"><span>最大宽度</span><UiSelect v-model="settings.maxWidth" :options="widthOptions" aria-label="最大宽度" /></label>
+              <label class="field"><span>新开浏览器用</span><UiSelect v-model="settings.browser" :options="browserOptions" aria-label="浏览器" /></label>
             </div>
             <div class="checks">
               <UiCheckbox v-model="settings.cursor" size="sm">桌面画面上显示远程的鼠标指针</UiCheckbox>
@@ -352,20 +389,30 @@ const counts = (r: Recording) => {
           </template>
         </div>
 
-        <div v-if="!active" class="opener card stack">
+        <div v-if="!active" class="opener card pad stack">
           <h2>打开远程画面</h2>
-          <UiSegmented v-model="kind" :options="[{ value: 'browser', label: '浏览器' }, { value: 'desktop', label: '桌面' }]" aria-label="打开什么" @change="kind === 'desktop' && loadScreens()" />
+          <UiSegmented v-model="kind" :options="[{ value: 'browser', label: '浏览器' }, { value: 'desktop', label: '桌面' }]" aria-label="打开什么" @change="kind === 'desktop' && loadScreens(true)" />
           <template v-if="kind === 'browser'">
-            <label class="field">网址<input v-model="url" class="input" placeholder="https://…（可以先空着，打开后再在页面里输入）" @keydown.enter.prevent="open" /></label>
-            <label class="field">浏览器资料<UiSelect :model-value="profile" :options="profileOptions" aria-label="浏览器资料" @update:model-value="pickProfile" /></label>
+            <label class="field"><span>网址</span><input v-model="url" class="input" placeholder="https://…（可以先空着，打开后再在上面输入）" @keydown.enter.prevent="open" /></label>
+            <div class="field">
+              <span>浏览器资料</span>
+              <UiSelect :model-value="profile" :options="profileOptions" aria-label="浏览器资料" :search-at="10" @update:model-value="pickProfile" />
+              <span v-if="copying" class="hint">把这份资料的登录复制到一份临时资料里打开，你平时用的资料不会被改动，关掉会话就删掉。个别网站的登录可能带不过来。</span>
+              <span v-else-if="!profile" class="hint">什么都没登录，关掉就清空。要保留登录，新建一份长期资料，或复制这台机器上浏览器的登录。</span>
+            </div>
+            <UiCheckbox v-if="copying" v-model="closeRunning">如果这台机器上的 {{ BROWSER_NAMES[copying.browser] }} 正开着，先关掉它（会关掉它的所有窗口）</UiCheckbox>
             <UiCheckbox v-model="visible">在这台机器上也显示浏览器窗口（默认只在这里看）</UiCheckbox>
           </template>
-          <label v-else class="field">分享哪部分<UiSelect v-model="area" :options="areaOptions" aria-label="分享哪部分" :search-at="8" /></label>
+          <div v-else class="field">
+            <span>共享哪部分</span>
+            <UiSelect v-model="area" :options="areaOptions" aria-label="共享哪部分" :search-at="8" />
+            <span class="hint">共享一个窗口时，录制就录这个窗口里的操作；共享整个屏幕时，开始录制前再选录哪个程序。</span>
+          </div>
           <div class="row"><button class="btn primary" :disabled="busy === 'open'" @click="open"><Icon name="play" :size="15" />{{ busy === "open" ? "正在打开…" : "打开" }}</button></div>
-          <p class="muted small">画面在这台机器（omem 所在的电脑）上，你的鼠标键盘会转发过去。浏览器用单独的资料，不碰你平时的浏览器；30 分钟没人看会自动关闭。</p>
+          <p class="muted small">画面在这台机器（omem 所在的电脑）上，你的鼠标键盘会转发过去。30 分钟没人看会自动关闭。</p>
         </div>
 
-        <template v-else>
+        <div v-else class="frame">
           <form v-if="active.kind === 'browser'" class="address row" @submit.prevent="go">
             <Icon name="globe" :size="15" />
             <input v-model="address" class="input grow" placeholder="输入网址，回车前往" aria-label="网址" />
@@ -376,8 +423,18 @@ const counts = (r: Recording) => {
           </div>
           <div class="controls row">
             <template v-if="!active.recording">
-              <input v-model="goal" class="input grow" placeholder="这次要教的事（一句话；也可以先在右边和助手说）" />
-              <UiSelect v-if="active.kind === 'desktop'" v-model="recordWindow" :options="recordOptions" placeholder="录哪个窗口" aria-label="录哪个窗口" width="220px" :search-at="8" />
+              <input v-model="goal" class="input grow" placeholder="这次要教的事（一句话；也可以先在右边和助手说）" aria-label="这次要教的事" />
+              <UiSelect
+                v-if="pickProgram"
+                v-model="recordWindow"
+                :options="recordOptions"
+                placeholder="录哪个程序"
+                aria-label="录哪个程序"
+                width="240px"
+                :search-at="8"
+                title="录制一次看一个程序，记下在它里面点了哪个元素"
+              />
+              <button v-if="pickProgram" class="btn ghost sm icon" aria-label="刷新程序列表" title="刚打开的程序不在列表里时刷新" @click="loadScreens(true)"><Icon name="refresh" :size="14" /></button>
               <button class="btn accent" :disabled="busy === 'record'" @click="startRecording"><Icon name="camera" :size="15" />开始录制</button>
             </template>
             <template v-else>
@@ -385,9 +442,8 @@ const counts = (r: Recording) => {
               <span class="muted small grow">在画面里把要教的事做一遍，做完点停止。</span>
               <button class="btn danger-fill" :disabled="busy === 'stop'" @click="stopRecording"><Icon name="stop" :size="15" />{{ busy === "stop" ? "正在整理…" : "停止" }}</button>
             </template>
-            <button class="btn ghost sm" @click="close(active)"><Icon name="x" :size="14" />关闭会话</button>
           </div>
-        </template>
+        </div>
       </section>
 
       <aside class="side">
@@ -440,14 +496,87 @@ const counts = (r: Recording) => {
   flex-direction: column;
   gap: 10px;
 }
-.tabs {
-  flex-wrap: wrap;
+.bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+.bar > .muted,
+.bar > .btn {
+  margin-bottom: 6px;
+}
+/* Sessions as tabs, joined to the frame below like a browser's. */
+.stabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.stab {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  height: 34px;
+  max-width: 220px;
+  min-width: 0;
+  padding: 0 6px 0 12px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  flex: none;
+}
+.stab:hover:not(.on) {
+  background: var(--hover);
+  color: var(--ink);
+}
+.stab.on {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+  font-weight: 550;
+  position: relative;
+  /* Covers the frame's top border under the tab. */
+  margin-bottom: -1px;
+  height: 35px;
+}
+.stab.add {
+  padding: 0 12px;
+}
+.stab .x {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.55;
+  flex: none;
+}
+.stab .x:hover {
+  background: var(--hover);
+  opacity: 1;
+}
+.stab .dot {
+  width: 7px;
+  height: 7px;
 }
 .opener {
-  max-width: 560px;
+  max-width: 600px;
   width: 100%;
-  margin: 6vh auto 0;
+  margin: 4vh auto 0;
+  box-sizing: border-box;
 }
 .opener h2 {
   font-family: var(--serif);
@@ -478,16 +607,26 @@ const counts = (r: Recording) => {
 .nowrap {
   white-space: nowrap;
 }
+/* The open session: address bar, picture and recording controls in one box under its tab. */
+.frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0 var(--radius) var(--radius) var(--radius);
+  overflow: hidden;
+}
 .address {
   gap: 8px;
+  padding: 8px 10px;
   color: var(--muted);
+  border-bottom: 1px solid var(--line);
 }
 .viewer {
   flex: 1;
   min-height: 320px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
   background: var(--sunken);
 }
 .viewer iframe {
@@ -499,6 +638,8 @@ const counts = (r: Recording) => {
 .controls {
   gap: 8px;
   flex-wrap: wrap;
+  padding: 10px;
+  border-top: 1px solid var(--line);
 }
 .grow {
   flex: 1;

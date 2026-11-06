@@ -61,7 +61,7 @@ describe("remote operation", () => {
     const opened = await api("POST", "/api/remote/sessions", { kind: "browser", url: "https://example.test/admin", profile: "后台" });
     expect(opened.status).toBe(200);
     browser = opened.body;
-    expect(browser.src).toMatch(/^\/remote\/rs\w+\/\?token=\w+$/);
+    expect(browser.src).toMatch(/^\/remote\/rs\w+\/\?token=\w+&lang=zh$/);
     expect(opened.body.browser).toMatchObject({ name: "chrome", url: "https://example.test/admin", profile: "后台" });
     expect(opened.headers.get("set-cookie")).toMatch(/^omem_remote=\w+; Path=\/remote; HttpOnly/);
     const open = calls().find((c) => c[0] === "mcp" && c[2] === "browser_open")!;
@@ -73,7 +73,7 @@ describe("remote operation", () => {
     const page = await api("GET", browser.src);
     expect(page.status).toBe(200);
     expect(page.body).toContain("path=/");
-    const token = browser.src.split("token=")[1];
+    const token = browser.src.split("token=")[1].split("&")[0];
     const bare = await api("GET", `/remote/${browser.id}?token=${token}`);
     expect(bare.status).toBe(302);
     expect(bare.headers.get("location")).toBe(`/remote/${browser.id}/?token=${token}`);
@@ -172,6 +172,28 @@ describe("remote operation", () => {
     expect(calls()).toContainEqual(["run", join(r.dir, "workflow.yaml"), "--permission", "desktop.input", "--permission", "desktop.observe"]);
 
     expect((await api("DELETE", `/api/remote/sessions/${desk.id}`)).status).toBe(200);
+
+    // Sharing one window, a recording watches that window without being told.
+    const one = (await api("POST", "/api/remote/sessions", { kind: "desktop", window: "0x1", title: "记事本" })).body;
+    expect(one).toMatchObject({ title: "记事本", window: "0x1" });
+    const watched = (await api("POST", `/api/remote/sessions/${one.id}/recording`, { goal: "保存笔记" })).body;
+    expect(calls()).toContainEqual(["record", "desktop.fake:notepad", "--until-stdin-closes", "--save", `omem-${watched.id}`, "--overwrite"]);
+    expect((await api("DELETE", `/api/remote/sessions/${one.id}`)).status).toBe(200);
+  });
+
+  it("starts a browser from a copy of one of this machine's browser profiles", async () => {
+    expect((await api("GET", "/api/remote/browser-profiles")).body).toEqual([{ browser: "edge", id: "Default", name: "工作" }]);
+    // The browser using it is open: said so, and nothing is closed unasked.
+    const refused = await api("POST", "/api/remote/sessions", { kind: "browser", copyFrom: { browser: "edge", id: "Default" } });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/Edge 正开着这份资料/);
+    const s = (await api("POST", "/api/remote/sessions", { kind: "browser", copyFrom: { browser: "edge", id: "Default" }, closeRunning: true })).body;
+    expect(s.browser).toMatchObject({ name: "edge", profile: "Edge · Default" });
+    const open = calls().filter((c) => c[2] === "browser_open").at(-1)!;
+    expect(open[3]).toMatchObject({ browser: "edge", copy_profile: "Default", close_running: true });
+    expect(open[3]).not.toHaveProperty("profile_dir");
+    expect(calls()).toContainEqual(["mcp", "--allow-input", "--allow-profile-copy"]);
+    expect((await api("DELETE", `/api/remote/sessions/${s.id}`)).status).toBe(200);
   });
 
   it("sends the picture as each user set it, and gives an open session a viewer with new settings", async () => {
@@ -205,6 +227,6 @@ describe("remote operation", () => {
     expect((await api("DELETE", `/api/remote/sessions/${browser.id}`)).status).toBe(200);
     expect((await api("GET", browser.src)).status).toBe(404);
     expect((await api("GET", "/api/remote")).body.sessions).toEqual([]);
-    expect((await api("GET", "/api/remote/recordings")).body).toHaveLength(2);
+    expect((await api("GET", "/api/remote/recordings")).body).toHaveLength(3);
   });
 });

@@ -27,6 +27,8 @@ type Live = {
   /** Browser sessions: the `aad mcp` that opened the browser, and records and replays on it. */
   mcp?: AadMcp;
   browser?: { name: string; port: number; pageId: string; url: string | null; profile: string | null };
+  /** Desktop sessions: the one window shared, when not the whole screen; a recording watches it. */
+  window?: string;
   recording?: { id: string; done?: Promise<any>; proc?: ChildProcess };
   viewers: number;
   idleSince: number;
@@ -42,6 +44,7 @@ export const sessionView = (s: Live) => ({
   title: s.title,
   createdAt: s.createdAt,
   browser: s.browser ? { name: s.browser.name, url: s.browser.url, profile: s.browser.profile } : null,
+  window: s.window ?? null,
   recording: s.recording?.id ?? null,
   viewers: s.viewers,
 });
@@ -71,7 +74,7 @@ export function viewing(id: string, delta: number) {
 }
 
 /** The address the page should load: the viewer with its token. */
-export const viewerPath = (s: Live) => `/remote/${s.id}/?token=${s.assist.token}`;
+export const viewerPath = (s: Live) => `/remote/${s.id}/?token=${s.assist.token}&lang=zh`;
 
 async function startAssist(args: string[]) {
   const proc = spawnAad(["assist", ...args]);
@@ -112,10 +115,32 @@ export function profileDir(app: App, name: string) {
   return join(app.home, "remote", "profiles", name);
 }
 
-/** A browser for remote use, without a window on this machine unless asked: it is seen through the viewer. */
-export async function openBrowser(app: App, opts: { url?: string; browser?: string; profile?: string; visible?: boolean; viewer?: string[]; userId: string }) {
+const BROWSERS = ["chrome", "edge", "brave"] as const;
+const BROWSER_NAMES: Record<string, string> = { chrome: "Chrome", edge: "Edge", brave: "Brave" };
+
+/** The profiles of the browsers installed here (their own user data), whose logins a session can start from. */
+export async function browserProfiles() {
+  const mcp = await new AadMcp([]).start();
+  try {
+    const found: { browser: string; id: string; name: string }[] = [];
+    for (const browser of BROWSERS) {
+      const r = await mcp.call("browser_profiles", { browser }, 15_000).catch(() => null);
+      for (const p of r?.profiles ?? []) found.push({ browser, id: String(p.id), name: String(p.name ?? p.id) });
+    }
+    return found;
+  } finally {
+    mcp.close();
+  }
+}
+
+/**
+ * A browser for remote use, without a window on this machine unless asked: it is seen through the viewer.
+ * `copyFrom` starts it from a copy of one of this machine's own browser profiles, so its logins come along;
+ * the browser using that profile must be closed first (`closeRunning` closes it).
+ */
+export async function openBrowser(app: App, opts: { url?: string; browser?: string; profile?: string; copyFrom?: { browser: string; id: string }; closeRunning?: boolean; visible?: boolean; viewer?: string[]; userId: string }) {
   if (opts.url && !/^https?:\/\//.test(opts.url)) throw new HttpError(400, "网址要以 http:// 或 https:// 开头");
-  const mcp = await new AadMcp(["--allow-input"]).start();
+  const mcp = await new AadMcp(["--allow-input", ...(opts.copyFrom ? ["--allow-profile-copy"] : [])]).start();
   try {
     const args: Record<string, unknown> = { headless: !opts.visible, ...(opts.url ? { url: opts.url } : {}) };
     if (opts.profile) {
@@ -123,10 +148,14 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
       mkdirSync(dir, { recursive: true });
       args.profile_dir = dir;
     }
-    // The browser asked for, else the first one this machine has.
+    if (opts.copyFrom) {
+      args.copy_profile = opts.copyFrom.id;
+      if (opts.closeRunning) args.close_running = true;
+    }
+    // The browser asked for (the copied profile's), else the first one this machine has.
     let opened: any = null;
     let failure: Error | null = null;
-    for (const browser of opts.browser ? [opts.browser] : ["chrome", "edge", "brave"]) {
+    for (const browser of opts.copyFrom ? [opts.copyFrom.browser] : opts.browser ? [opts.browser] : BROWSERS) {
       try {
         opened = { browser, ...(await mcp.call("browser_open", { ...args, browser }, 90_000)) };
         break;
@@ -134,6 +163,8 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
         failure = e as Error;
       }
     }
+    if (!opened && opts.copyFrom && !opts.closeRunning && /in use|running|lock/i.test(failure?.message ?? ""))
+      throw new HttpError(409, `${BROWSER_NAMES[opts.copyFrom.browser]} 正开着这份资料，复制不了登录。关掉它再试，或勾选“先关掉本机正在运行的 ${BROWSER_NAMES[opts.copyFrom.browser]}”。`);
     if (!opened) throw failure ?? new HttpError(502, "没能打开浏览器");
     const source = ["--browser-port", String(opened.port), "--page", String(opened.page_id)];
     const assist = await startAssist([...source, ...(opts.viewer ?? [])]);
@@ -144,7 +175,7 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
       assist,
       source,
       mcp,
-      browser: { name: opened.browser, port: Number(opened.port), pageId: String(opened.page_id), url: opts.url ?? null, profile: opts.profile ?? null },
+      browser: { name: opened.browser, port: Number(opened.port), pageId: String(opened.page_id), url: opts.url ?? null, profile: opts.profile ?? (opts.copyFrom ? `${BROWSER_NAMES[opts.copyFrom.browser]} · ${opts.copyFrom.id}` : null) },
     });
     mcp.proc.on("exit", () => void closeSession(app, s.id));
     return s;
@@ -154,10 +185,10 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
   }
 }
 
-export async function openDesktop(app: App, opts: { monitor?: number; window?: string; viewer?: string[]; userId: string }) {
+export async function openDesktop(app: App, opts: { monitor?: number; window?: string; title?: string; viewer?: string[]; userId: string }) {
   const source = ["--desktop", ...(opts.monitor !== undefined ? ["--monitor", String(opts.monitor)] : []), ...(opts.window ? ["--window", opts.window] : [])];
   const assist = await startAssist([...source, ...(opts.viewer ?? [])]);
-  return add(app, { kind: "desktop", title: opts.window ? "窗口" : opts.monitor !== undefined ? `显示器 ${opts.monitor + 1}` : "桌面", userId: opts.userId, assist, source });
+  return add(app, { kind: "desktop", title: opts.title || (opts.window ? "窗口" : opts.monitor !== undefined ? `显示器 ${opts.monitor + 1}` : "桌面"), userId: opts.userId, assist, source, window: opts.window });
 }
 
 /**
@@ -196,16 +227,37 @@ export async function closeAll(app: App) {
   sweeper = null;
 }
 
+type Recordable = { resourceId: string; name: string; process: string | null; windowId: string | null; pid: number | null; title: string | null };
+
+/** What `aad record` can watch: windows and applications the accessibility tree lists. */
+function recordable(): Recordable[] {
+  const apps = aadJson(["apps"]);
+  const resources: any[] = apps?.apps ?? apps?.resources ?? [];
+  return resources
+    .filter((r) => String(r.provider).startsWith("desktop."))
+    .map((r) => ({ resourceId: r.resource_id, name: r.name, process: r.metadata?.process_name ?? null, windowId: r.metadata?.window_id ?? null, pid: r.metadata?.process_id ?? null, title: r.metadata?.title ?? null }));
+}
+
+/** A number in a window id, whichever way it is written (`0x1b064e`, `hwnd:1769038`, `12345`). */
+const windowNumber = (id: string) => {
+  const m = /0x[0-9a-f]+|\d+/i.exec(id);
+  return m ? Number(m[0]) : NaN;
+};
+
+/** The recordable window that is the shared window `assist --list-screens` named. */
+function recordableFor(window: { window: string; title?: string; process_id?: number }, all: Recordable[]) {
+  const n = windowNumber(window.window);
+  return all.find((r) => r.windowId && windowNumber(r.windowId) === n) ?? all.find((r) => r.pid === window.process_id && r.title === window.title) ?? null;
+}
+
 /** Displays and windows the desktop can be shared by, and windows a recording can watch. */
 export function screens() {
   const listed = aadJson(["assist", "--list-screens"]);
-  const apps = aadJson(["apps"]);
-  const resources: any[] = apps?.resources ?? [];
+  const all = recordable();
   return {
     monitors: listed.monitors ?? [],
     windows: (listed.windows ?? []).filter((w: { minimized?: boolean }) => !w.minimized),
-    // What `aad record` can watch: windows and applications the accessibility tree lists.
-    recordable: resources.filter((r) => String(r.provider).startsWith("desktop.")).map((r) => ({ resourceId: r.resource_id, name: r.name, process: r.metadata?.process_name ?? null })),
+    recordable: all.map(({ resourceId, name, process }) => ({ resourceId, name, process })),
   };
 }
 
@@ -226,13 +278,20 @@ export async function startRecording(app: App, sessionId: string, opts: { goal: 
     target = s.browser!.url ?? "";
     s.recording = { id };
   } else {
-    if (!opts.window) throw new HttpError(400, "录桌面要选一个窗口：录制按窗口记下点了哪个元素");
-    const proc = spawnAad(["record", opts.window, "--until-stdin-closes", "--save", workflowName(id), "--overwrite"]);
+    // Sharing one window, the recording watches that window; sharing a whole screen, the program chosen.
+    let window = opts.window;
+    if (!window && s.window) {
+      const shared = (aadJson(["assist", "--list-screens"]).windows ?? []).find((w: any) => w.window === s.window);
+      window = (shared && recordableFor(shared, recordable())?.resourceId) || undefined;
+      if (!window) throw new HttpError(400, "共享的窗口已经关了，或者录制看不到它");
+    }
+    if (!window) throw new HttpError(400, "共享整个屏幕时要选录哪个程序：录制按程序窗口记下点了哪个元素");
+    const proc = spawnAad(["record", window, "--until-stdin-closes", "--save", workflowName(id), "--overwrite"]);
     const done = finalJson(proc, 3_700_000);
     // A recording that cannot start (the window closed) says so at once.
     const early = await Promise.race([done.then((v) => ({ v }), (e: Error) => ({ e })), new Promise<null>((r) => setTimeout(() => r(null), 1_500))]);
     if (early && "e" in early) throw early.e;
-    target = opts.window;
+    target = window;
     s.recording = { id, proc, done };
   }
   return createRecording(app, { id, kind: s.kind, goal: opts.goal, target, dir, conversationId: opts.conversationId ?? null, userId: opts.userId });

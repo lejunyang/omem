@@ -12,7 +12,7 @@ import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
-import { assistOf, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, replayRecording, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
+import { assistOf, browserProfiles, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, replayRecording, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
 import { cachedProbe, probeRunning, probeVideo, readSettings, remoteSettingsSchema, saveSettings, viewerArgs } from "./settings.ts";
 
 /**
@@ -149,18 +149,31 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
     return { available: status.installed, version: status.version, sessions: status.installed ? listSessions(who(req)) : [], profiles: profiles(app) };
   });
   server.get("/api/remote/screens", async () => screens());
+  // This machine's own browser profiles, whose logins a session can start from a copy of.
+  server.get("/api/remote/browser-profiles", async () => browserProfiles());
   // How sessions are shown: each user's picture settings, and which video codecs work here.
   server.get("/api/remote/settings", async (req) => ({ settings: readSettings(app, who(req)), video: cachedProbe(app), probing: probeRunning() }));
   server.put("/api/remote/settings", async (req) => saveSettings(app, who(req), q(remoteSettingsSchema.partial(), req.body)));
   server.post("/api/remote/settings/probe", async () => probeVideo(app));
   server.post("/api/remote/sessions", async (req, reply) => {
-    const b = q(z.object({ kind: z.enum(["browser", "desktop"]), url: z.string().max(2048).optional(), browser: z.enum(["chrome", "edge", "brave"]).optional(), profile: z.string().max(40).optional(), visible: z.boolean().optional(), monitor: z.number().int().min(0).optional(), window: z.string().max(200).optional() }), req.body);
+    const b = q(z.object({
+      kind: z.enum(["browser", "desktop"]),
+      url: z.string().max(2048).optional(),
+      browser: z.enum(["chrome", "edge", "brave"]).optional(),
+      profile: z.string().max(40).optional(),
+      copyFrom: z.object({ browser: z.enum(["chrome", "edge", "brave"]), id: z.string().min(1).max(100) }).optional(),
+      closeRunning: z.boolean().optional(),
+      visible: z.boolean().optional(),
+      monitor: z.number().int().min(0).optional(),
+      window: z.string().max(200).optional(),
+      title: z.string().max(200).optional(),
+    }), req.body);
     const userId = who(req);
     const settings = readSettings(app, userId);
     const viewer = viewerArgs(settings, b.kind, cachedProbe(app));
     const s = b.kind === "browser"
-      ? await openBrowser(app, { url: b.url || undefined, browser: b.browser ?? (settings.browser || undefined), profile: b.profile || undefined, visible: b.visible, viewer, userId })
-      : await openDesktop(app, { monitor: b.monitor, window: b.window, viewer, userId });
+      ? await openBrowser(app, { url: b.url || undefined, browser: b.browser ?? (settings.browser || undefined), profile: b.profile || undefined, copyFrom: b.copyFrom, closeRunning: b.closeRunning, visible: b.visible, viewer, userId })
+      : await openDesktop(app, { monitor: b.monitor, window: b.window, title: b.title?.slice(0, 60), viewer, userId });
     return view(s, reply, userId);
   });
   server.post("/api/remote/sessions/:id/view", async (req, reply) => view(getSession((req.params as { id: string }).id, who(req)), reply, who(req)));
