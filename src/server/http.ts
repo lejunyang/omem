@@ -23,6 +23,7 @@ import { attachPluginStreams, registerPluginRoutes } from "../plugins/http.ts";
 import { IDE_BASE, IdeNotReady, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remote/http.ts";
 import { attachPreviewUpgrade, registerPreviewRoutes } from "./preview-http.ts";
+import { registerArtifactRoutes } from "./artifact-http.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -124,6 +125,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
     // returns only the snapshot that share holds.
     if (req.method === "GET" && SHARE_ROUTE.test(req.url)) return;
+    // A run artifact's file: its URL carries its key (a report page's own files come without a cookie).
+    if ((req.method === "GET" || req.method === "HEAD") && /^\/api\/artifacts\/[a-z0-9]+\.[\w-]+\//.test(req.url)) return;
     // Logging in has to work before there is anyone; those routes look themselves.
     if (AUTH_PUBLIC.test(req.url)) return;
     const auth = resolveAuth(app, req);
@@ -1236,6 +1239,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Previews of a delegation's workspace (docs/v2/preview.md): routes and the port tunnel.
   registerPreviewRoutes(server, app, who);
   attachPreviewUpgrade(app, server.server);
+  registerArtifactRoutes(server, app, who);
   attachPluginStreams(app, server.server);
   // Its WebSocket: upgrades skip the hooks, so the owner's token is checked here.
   server.server.on("upgrade", async (req, socket, head) => {
@@ -1353,7 +1357,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const last = t.lastRound(app, rootId);
     const w = t.workState(app, rootId);
     return {
-      taskMode: true, rootId, tasks: t.listTasks(app, rootId), checkpoints: t.listCheckpoints(app, rootId),
+      taskMode: true, rootId, tasks: t.listTasks(app, rootId), checkpoints: t.listCheckpoints(app, rootId), artifacts: (await import("../agents/artifacts.ts")).artifactCounts(app, rootId),
       work: { budget: w.budget, budgetBy: w.budgetBy ?? null, until: w.until, round: Number(last.input.round ?? 1), lastRunId: last.id, paused: w.paused ?? null, viewed: w.viewed?.[who(req)] ?? 0, status: last.status, verdict: last.output.verdict ?? null, stage: last.output.reviewStage ?? null, reverts: (w.reverts ?? []).flatMap((r) => (r.seq !== undefined ? [r.seq] : [])), pending: (w.reverts ?? []).map(t.revertLabel), max: app.config.agents.autoAdvance.codeRoundsMax, look: w.look ? { checks: w.look.checks.map((c) => c.name), ai: Object.fromEntries(w.look.checks.map((c) => [c.name, w.lookAI?.[c.name] ?? null])) } : null },
     };
   });
@@ -2421,7 +2425,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!rest.startsWith("/api/") && req.method !== "GET" && req.method !== "HEAD") throw new HttpError(400, "只能转发 /api/ 下的请求和网页文件");
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
     const headers: Record<string, string> = body ? { "content-type": "application/json" } : {};
-    for (const h of ["accept", "if-none-match", "if-modified-since"]) {
+    for (const h of ["accept", "if-none-match", "if-modified-since", "range"]) {
       const v = req.headers[h];
       if (typeof v === "string") headers[h] = v;
     }
@@ -2431,7 +2435,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (type) reply.type(type);
     // Keep the peer's caching headers so the browser behind `omem peer open` can cache its UI,
     // and its CORS header: plugin pages run in a sandboxed iframe and load their modules in CORS mode.
-    for (const h of ["cache-control", "etag", "last-modified", "access-control-allow-origin"]) {
+    // Files (stored originals, run artifacts): seeking a video, and a page's sandbox, which must not be lost on the way.
+    for (const h of ["cache-control", "etag", "last-modified", "access-control-allow-origin", "content-range", "accept-ranges", "content-disposition", "content-security-policy", "x-content-type-options", "referrer-policy"]) {
       const v = res.headers.get(h);
       if (v) reply.header(h, v);
     }

@@ -24,9 +24,12 @@ type Checkpoint = { seq: number; tasks: number[]; label: string; createdAt: stri
 type Work = { budget: number; budgetBy: "owner" | "coder" | null; until: number; round: number; lastRunId: string; paused: string | null; viewed: number; status: string; verdict: string | null; stage: string | null; reverts: number[]; pending: string[]; max: number;
   /** Another model looking at the last stage again, beside the fixes. */
   look: { checks: string[]; ai: Record<string, { profile: string; model?: string } | null> } | null };
-type Data = { taskMode: boolean; rootId?: string; tasks?: Task[]; checkpoints?: Checkpoint[]; work?: Work };
+type Data = { taskMode: boolean; rootId?: string; tasks?: Task[]; checkpoints?: Checkpoint[]; work?: Work; artifacts?: Record<string, number> };
 
 const props = defineProps<{ runId: string }>();
+/** Open the screenshots, recordings and reports of one task (the work's “产物” tab). */
+const emit = defineEmits<{ artifacts: [seq: number] }>();
+const shots = (t: Task) => data.value?.artifacts?.[t.seq] ?? 0;
 const data = ref<Data | null>(null);
 async function load() {
   data.value = await get<Data>(`/api/runs/${props.runId}/tasks`).catch(() => null);
@@ -46,7 +49,7 @@ const STATE: Record<TaskState, { text: string; cls: string }> = {
   todo: { text: "待做", cls: "" }, coding: { text: "编码中", cls: "accent" }, verify: { text: "待验证", cls: "accent" }, disputed: { text: "裁决中", cls: "accent" }, done: { text: "已完成", cls: "ok" },
   assistant: { text: "等助手处理", cls: "accent" }, owner: { text: "等你决定", cls: "warn" }, wontdo: { text: "不做", cls: "" }, reverted: { text: "已回退", cls: "danger" },
 };
-const WHO: Record<string, string> = { coder: "编码 Agent", host: "omem", owner: "你", reviewer: "功能评审", "review-business": "业务评审", "review-arch": "架构评审", "review-style": "规范评审", "review-history": "历史评审", "review-simplify": "精简评审", "review-lead": "评审负责人", assistant: "助手" };
+const WHO: Record<string, string> = { coder: "编码 Agent", host: "omem", owner: "你", reviewer: "功能评审", "review-business": "业务评审", "review-arch": "架构评审", "review-style": "规范评审", "review-history": "历史评审", "review-simplify": "精简评审", "review-lead": "评审负责人", "business-analyst": "编码前检查", assistant: "助手" };
 const LOOK = "@复看";
 const who = (by: string): string => (by.endsWith(LOOK) ? `${who(by.slice(0, -LOOK.length))}（复看）` : WHO[by] ?? (by.startsWith("u") || by === "owner" ? "你" : by));
 const lookText = computed(() => w.value?.look ? w.value.look.checks.map((c) => { const ai = w.value!.look!.ai[c]; return `${who(c)}${ai ? `（${[ai.profile, ai.model].filter(Boolean).join(" · ")}）` : ""}`; }).join("、") : "");
@@ -246,7 +249,7 @@ async function pickFile(key: string) {
           <span class="seq mono">T{{ t.seq }}</span>
           <span class="title">{{ t.title }}</span>
           <span class="badge" :class="stateOf(t).cls">{{ stateOf(t).text }}</span>
-          <span class="muted small meta">{{ source(t) }}{{ t.attempts ? ` · 第 ${t.attempts + 1} 次` : "" }}{{ t.reverts ? ` · 回退过 ${t.reverts} 次` : "" }}{{ data.work?.reverts.includes(t.seq) ? " · 下一轮先回退" : "" }}</span>
+          <span class="muted small meta">{{ source(t) }}{{ t.attempts ? ` · 第 ${t.attempts + 1} 次` : "" }}{{ t.reverts ? ` · 回退过 ${t.reverts} 次` : "" }}{{ data.work?.reverts.includes(t.seq) ? " · 下一轮先回退" : "" }}{{ shots(t) ? ` · 产物 ${shots(t)}` : "" }}</span>
         </button>
         <div v-if="open.has(t.seq)" class="more small">
           <p v-if="t.doneWhen"><span class="muted">完成标准：</span>{{ t.doneWhen }}</p>
@@ -257,6 +260,7 @@ async function pickFile(key: string) {
           </ol>
           <div class="row wrap">
             <button v-if="fixCount(t)" class="btn ghost sm" @click="showTask(t)">看改动（{{ fixCount(t) }} 个提交）</button>
+            <button v-if="shots(t)" class="btn ghost sm" @click="emit('artifacts', t.seq)">看截图和报告（{{ shots(t) }}）</button>
             <button v-if="['done', 'wontdo', 'reverted'].includes(t.state)" class="btn ghost sm" :disabled="working" @click="reopen(t)">重做</button>
             <button v-if="['todo', 'assistant', 'owner'].includes(t.state)" class="btn ghost sm" :disabled="working" @click="drop(t)">不做了</button>
             <template v-if="fixCount(t) && ['done', 'verify'].includes(t.state) && !data.work?.reverts.includes(t.seq)">

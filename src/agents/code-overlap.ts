@@ -180,7 +180,7 @@ function drop(from: string, path: string, tries = 0) {
 
 export const VERIFY_BRIEF = [
   "# 验证修改项",
-  "下面是你之前提的问题，编码 Agent 说已经改了。逐项读这一项的改动（必要时在工作区里看完整的代码），判断问题是不是真的解决了、有没有改出新问题，然后调用一次 `verify_tasks` 给每一项一个结论：",
+  "下面是你之前提的问题，编码 Agent 说已经改了。逐项读这一项的改动（必要时在工作区里看完整的代码；交了截图或报告的，需要时打开文件看），判断问题是不是真的解决了、有没有改出新问题，然后调用一次 `verify_tasks` 给每一项一个结论：",
   "- fixed：解决了；",
   "- not_fixed：没解决或只解决了一部分，note 写还差什么、该怎么改（交回编码 Agent 再改）；",
   "- regressed：这一项的改动本身带来了新问题，note 写清是什么和证据（会先回退这一项再重做）；",
@@ -222,15 +222,19 @@ export async function verifyGroup(app: App, o: { run: Run; check: string; tasks:
     for (const t of o.tasks) updateTask(app, rootId, t.seq, { state: "done" }, { by: "host", kind: "host", text: `评审项 ${o.check} 已经不在了，没有逐项验证，交给阶段评审` });
     return;
   }
+  // What the coder handed in for each task (screenshots, reports): the files, for a check that reads images.
+  const art = await import("./artifacts.ts");
+  const shots = (await art.listArtifacts(app, rootId)).filter((a) => a.task !== null);
   const parts = o.tasks.map((t) => {
     const said = t.notes.filter((n) => n.kind === "coder").at(-1)?.text;
+    const mine = shots.filter((a) => a.task === t.seq);
     const diff = scope.worktrees.map((wt) => {
       const shas = t.commits[wt.space] ?? [];
       if (!shas.length) return "";
       const body = git(workDirOf(wt), ["diff", "--no-color", `${shas[0]}^`, shas.at(-1)!]).stdout;
       return body.trim() ? `${scope.multi ? `#### ${wt.space}\n\n` : ""}\`\`\`diff\n${truncate(body, 30000)}\n\`\`\`` : "";
     }).filter(Boolean).join("\n\n");
-    return [taskText(app, t), said ? `编码 Agent 的说明：${truncate(said, 2000)}` : "", diff ? `#### 这一项的改动\n\n${diff}` : "（这一项没有找到对应的提交，在工作区里看现在的代码）"].filter(Boolean).join("\n\n");
+    return [taskText(app, t), said ? `编码 Agent 的说明：${truncate(said, 2000)}` : "", mine.length ? `#### 这一项交的截图和报告\n\n${art.artifactsText(app, mine, { max: 12 })}` : "", diff ? `#### 这一项的改动\n\n${diff}` : "（这一项没有找到对应的提交，在工作区里看现在的代码）"].filter(Boolean).join("\n\n");
   });
   try {
     await runCheck(app, rootId, o.check, {
@@ -241,7 +245,7 @@ export async function verifyGroup(app: App, o: { run: Run; check: string; tasks:
       indexed: scope.indexed,
       runId: o.runId,
       signal: o.signal,
-      addTools: ["verify_tasks"],
+      addTools: ["verify_tasks", "attach_artifact"],
       onEvent: (e) => o.event(e.type, { ...e, phase: "reviewer", check: o.check, verify: true }),
     });
   } catch (e) {

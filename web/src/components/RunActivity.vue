@@ -102,7 +102,7 @@ defineExpose({ text });
       <li v-for="(s, i) in steps" :key="i" :class="s.status">
         <span class="dot" />
         <span class="ellipsis">{{ prettyTool(s.title) }}</span>
-        <span v-if="s.phase" class="badge">{{ s.phase === "reviewer" ? "评审" : "编码" }}</span>
+        <span v-if="s.phase" class="badge">{{ s.phase === "reviewer" ? "评审" : s.phase === "pre-check" ? "编码前检查" : "编码" }}</span>
       </li>
     </ol>
     <div v-if="expanded && statusLines.length" class="status muted small">

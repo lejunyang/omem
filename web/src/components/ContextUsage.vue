@@ -12,7 +12,7 @@ const props = defineProps<{ events: RunEvent[] }>();
 type Parts = { common: number; role: number; environment: number; lessons: number; lessonCount: number; skills: number };
 type Row = { key: string; turns: number; via: string[]; instructions: number; parts?: Parts; message: number; calls: number; start: number; peak: number; total: number; size: number };
 
-const LABEL: Record<string, string> = { coder: "编码", lead: "评审负责人", reviewer: "独立评审", "review-business": "业务评审", "review-arch": "架构评审", "review-history": "历史评审", "review-simplify": "精简评审", "review-style": "规范评审", split: "需求拆分", agent: "Agent" };
+const LABEL: Record<string, string> = { coder: "编码", lead: "评审负责人", reviewer: "独立评审", "review-business": "业务评审", "review-arch": "架构评审", "review-history": "历史评审", "review-simplify": "精简评审", "review-style": "规范评审", split: "需求拆分", "business-analyst": "编码前检查", agent: "Agent" };
 const VIA: Record<string, string> = { system: "作为系统提示", message: "放在第一条消息", resumed: "接上会话，没再发", none: "没有说明" };
 
 const rows = computed(() => {

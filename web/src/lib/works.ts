@@ -27,7 +27,16 @@ export type CodeWork = {
   updatedAt: string;
 };
 export type WorkRound = { id: string; round: number; status: string; title: string; verdict: string | null; createdAt: string; finishedAt: string | null };
-export type CodeWorkDetail = CodeWork & { task: string; roundList: WorkRound[]; points: { id: string; title: string; status: string | null; at: string | null }[] };
+/** The check before coding (src/agents/pre-check.ts). */
+export type PreCheck = {
+  summary: string; at: string; by: { profile: string; model?: string } | null;
+  areas?: { files: string[]; note: string }[];
+  impacts?: { text: string; where?: string[]; reqs?: string[]; refs?: string[] }[];
+  history?: { text: string; where?: string[]; refs: string[] }[];
+  regressions?: { text: string; how?: string; reqs?: string[]; auto: boolean }[];
+  questions?: string[];
+};
+export type CodeWorkDetail = CodeWork & { task: string; roundList: WorkRound[]; points: { id: string; title: string; status: string | null; at: string | null }[]; artifacts?: number; preCheck?: PreCheck | null };
 
 export const GROUPS: { id: WorkGroup; label: string }[] = [
   { id: "owner", label: "等你" },

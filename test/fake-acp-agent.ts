@@ -6,7 +6,7 @@
  */
 import { PassThrough, Readable, Writable } from "node:stream";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentSideConnection, ndJsonStream, RequestError, type McpServer } from "@agentclientprotocol/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -118,7 +118,9 @@ new AgentSideConnection(
     async cancel() {},
     async prompt(p) {
       const prompt = p.prompt.map((b) => (b.type === "text" ? b.text : "")).join("");
-      const say = (text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      // FAKE_PROMPT_LOG=file: each turn's prompt, one JSON string a line (what the host sent).
+      if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, JSON.stringify(prompt) + "\n");
+      const say =(text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
       // FAKE_QUOTA=1: Codex with the plan's quota spent (the message as text, then "Internal error" with codexErrorInfo).
       if (process.env.FAKE_QUOTA === "1") {
         const message = "You've hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again in 2 hours.";
@@ -165,6 +167,19 @@ new AgentSideConnection(
         };
         try {
           if (prompt.includes("只输出一个 JSON")) { await say("{}"); return { stopReason: "end_turn" as const }; }
+          // The check before coding (business-analyst): the history of the file, then the brief.
+          if (prompt.includes("# 编码前检查")) {
+            const history = await call("code_history", { space: "shop-api", paths: ["refund.ts"] });
+            const said = ((history.content as { text: string }[])[0]?.text ?? "").includes("最近的提交") ? "提交记录里只有初始化" : "没有记录";
+            await call("submit_brief", {
+              summary: `改退款计算会影响退款单列表和对账（${said}）`,
+              impacts: [{ text: "对账脚本按退款金额汇总，金额口径变了要一起改", where: ["refund.ts"] }],
+              history: [{ text: "以前把未发货的行也算进了退款", refs: ["run:r-old"] }],
+              regressions: [{ text: "退款金额的单元测试", how: "node --test refund.test.ts", auto: true }, { text: "退款单列表展示的金额", how: "打开退款单列表看金额", auto: false }],
+            });
+            await say("查完了");
+            return { stopReason: "end_turn" as const };
+          }
           // Conflicts the host hands over (a helper's commits picked onto the work branch): keep both sides.
           if (prompt.includes("# 解决 Git 冲突")) {
             const cwd = cwds.get(p.sessionId)!;
@@ -264,6 +279,15 @@ new AgentSideConnection(
             // The test task is left uncommitted, as a sandbox that cannot write Git would: finish_task commits it.
             if (seq === 2 && prompt.includes(PLAN_ASK)) appendFileSync(join(cwd, "refund.test.ts"), "// 已发货的行不退\n");
             else commit(seq, `export const t${seq} = ${Date.now() % 1000};`);
+            if (process.env.FAKE_SHOTS && process.env.OMEM_ARTIFACTS && prompt.includes(PLAN_ASK)) {
+              mkdirSync(join(process.env.OMEM_ARTIFACTS, "改后"), { recursive: true });
+              writeFileSync(join(process.env.OMEM_ARTIFACTS, "改后", `T${seq}-退款单.png`), Buffer.from("89504e470d0a1a0a", "hex"));
+              // …and one for the other task, under its own folder, before it gets to it.
+              if (seq === seqs[0] && seqs[1]) {
+                mkdirSync(join(process.env.OMEM_ARTIFACTS, `T${seqs[1]}`), { recursive: true });
+                writeFileSync(join(process.env.OMEM_ARTIFACTS, `T${seqs[1]}`, "测试报告.txt"), "2 passed");
+              }
+            }
             await call("finish_task", { task: `T${seq}`, summary: `做完了 T${seq}，跑了测试` });
           }
           // FAKE_OVERLAP: still at work while its checks verify and a second look runs; what comes back

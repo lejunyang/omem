@@ -14,7 +14,7 @@ import { findAgentSpec } from "./specs.ts";
  */
 
 /** What a check may use, whatever its profile allows elsewhere: reading, plus submit_review. */
-export const REVIEW_TOOLS = ["list_spaces", "search", "req_read", "req_tree", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "read_item", "list_conversations", "read_conversation", "list_skills", "read_skill"];
+export const REVIEW_TOOLS = ["list_spaces", "search", "req_read", "req_tree", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "read_item", "list_conversations", "read_conversation", "list_skills", "read_skill", "code_history"];
 
 /** Built-in checks: label and one line on what each looks at. */
 export const BUILTIN_CHECKS: Record<string, { label: string; about: string }> = {

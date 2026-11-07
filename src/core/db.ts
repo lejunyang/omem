@@ -1474,6 +1474,28 @@ export const migrations: readonly string[] = [
     unique (user_id, provider, kind, target)
   );
   alter table auth_states add column scopes text not null default '';`,
+  // Run artifacts (src/agents/artifacts.ts): screenshots, recordings, reports a run hands in; the
+  // files are under <home>/artifacts/<id>/, served by the key (a report's own files load by relative URL).
+  `create table run_artifacts (
+    id text primary key,
+    key text not null,
+    run_id text not null,
+    work_id text,
+    space_id text,
+    task integer,
+    req text,
+    name text not null,
+    caption text not null default '',
+    kind text not null,
+    mime text not null default '',
+    size integer not null default 0,
+    entry text not null,
+    source text not null,
+    created_by text not null default '',
+    created_at text not null
+  );
+  create index run_artifacts_work on run_artifacts(work_id, created_at);
+  create index run_artifacts_run on run_artifacts(run_id);`,
 ];
 
 export type Db = DatabaseSync;

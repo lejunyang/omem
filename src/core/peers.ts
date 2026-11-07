@@ -246,7 +246,9 @@ export async function openPeerUi(app: App, id: string, port = 0) {
   const { tunneled, tunnelHttp, tunnelUpgrade } = await import("./peer-tunnel.ts");
   const { trustedLocal } = await import("../server/origin.ts");
   // Everything here goes out with the owner's token: only this machine's browser, not another site's page.
-  const refuse = (req: import("node:http").IncomingMessage) => !trustedLocal(req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
+  // A run artifact's file is fetched by a sandboxed report page (Origin: null); its key is the capability.
+  const artifact = (req: import("node:http").IncomingMessage) => (req.method === "GET" || req.method === "HEAD") && /^\/api\/artifacts\//.test(req.url ?? "") && req.headers.origin === "null";
+  const refuse = (req: import("node:http").IncomingMessage) => !trustedLocal(artifact(req) ? { headers: { ...req.headers, origin: undefined } } : req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
   // Previews of the peer's workspaces on the same port numbers here (docs/v2/preview.md).
   const { PreviewForwards } = await import("./preview-forward.ts");
   const forwards = new PreviewForwards(app, id);

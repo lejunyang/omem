@@ -4,6 +4,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
+import { briefSchema } from "./pre-check.ts";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -3364,6 +3365,7 @@ def({
     item_id: z.string().optional().describe("这次交办所属的事项：编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库），交办本身也记到事项上；不传而在已有分支上接着改时，沿用这条分支上之前交办的事项"),
     sync: syncSchema.optional(),
     sync_only: z.boolean().optional().describe("这次只做 Git 同步（拉取、合并、变基、解决冲突），不再编码；结果的提交在应用时快进到目标分支"),
+    pre_check: z.boolean().optional().describe("编码前检查（默认做：查改动会碰到什么、以前出过的问题、要回归的）。改文案、样式这类一眼看得清影响的小改动填 false"),
     parallel: z.boolean().optional().describe("本人明确要求在同一个分支上另开一次交办时才传 true；默认同一分支已有没应用的交办时拒绝，应续在那次交办上"),
   }),
   handler: async (ctx, a) => {
@@ -3393,7 +3395,7 @@ def({
       kind: "code",
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, execution, reviewExecution, ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
@@ -3487,6 +3489,21 @@ def({
       ...list.map((b) => `- ${b.name}  ${b.commit.slice(0, 8)}  ${b.at.slice(0, 10)}  ${truncate(b.subject, 80)}`),
       indexed.length ? `\n已建索引的分支：\n${indexed.map((s) => `- ${s.settings.branch}（空间 ${s.id}，${String(s.settings.commit ?? "").slice(0, 8)}，相对 ${s.settings.baseRef}）`).join("\n")}` : "",
     ].filter(Boolean).join("\n") || "（没有分支）";
+  },
+});
+
+def({
+  name: "code_history",
+  description: "查代码仓库里一些文件的历史：它们实现的需求点、改过它们的交办、在它们上面提过的评审问题、最近的提交。改之前看这里以前出过什么问题，评审时看这次有没有重犯。一次最多 20 个文件；业务空间下有几个仓库时路径写 仓库id/路径。",
+  schema: z.object({
+    space: z.string().describe("代码仓库空间，或挂着仓库的业务空间"),
+    paths: z.array(z.string().min(1).max(500)).min(1).max(20).describe("仓库里的相对路径"),
+    limit: z.number().int().min(1).max(20).optional().describe("每类最多列几条，默认 6"),
+  }),
+  handler: async (ctx, a) => {
+    const id = space(ctx, a.space);
+    const { codeHistory } = await import("./code-history.ts");
+    return codeHistory(ctx.app, { space: id, paths: a.paths, spaces: ctx.spaces, limit: a.limit });
   },
 });
 
@@ -4139,10 +4156,11 @@ def({
 def({
   name: "code_workspace",
   description:
-    "设备的外部 Agent 用：在自己用 delegate_code 交办的编码里写代码。action：brief（任务、事项材料、工作分支、本人允许运行的命令、各轮状态）、list（文件）、read（path，from 起 400 行）、grep（pattern 正则，path 限定目录）、write（path + content 整个文件）、edit（path + old + new，old 要唯一，或 replace_all）、delete、run（command 写允许的命令名，args 追加参数如测试文件；最多等 wait 秒，没跑完用 output 取）、output（job）、git（git=status / diff / log / commit + message；merge + ref 把另一条分支合并进来，冲突留在文件里由你改好再 commit，merge-abort 放弃）、import（from_run：把另一次没应用的交办保存的改动导入工作区，先 merge 它基于的提交）、finish（summary：改了什么、怎么验证、还差什么；这台机器提交剩下的改动、运行检查命令，再按 review 交给评审：peer 你自己评审，here 这台机器的评审 Agent）。几个仓库时 path 写成 仓库空间id/路径。",
+    "设备的外部 Agent 用：在自己用 delegate_code 交办的编码里写代码。action：brief（任务、事项材料、工作分支、本人允许运行的命令、各轮状态）、list（文件）、read（path，from 起 400 行）、grep（pattern 正则，path 限定目录）、write（path + content 整个文件）、edit（path + old + new，old 要唯一，或 replace_all）、delete、run（command 写允许的命令名，args 追加参数如测试文件；最多等 wait 秒，没跑完用 output 取）、output（job）、git（git=status / diff / log / commit + message；merge + ref 把另一条分支合并进来，冲突留在文件里由你改好再 commit，merge-abort 放弃）、import（from_run：把另一次没应用的交办保存的改动导入工作区，先 merge 它基于的提交）、finish（summary：改了什么、怎么验证、还差什么；这台机器提交剩下的改动、运行检查命令，再按 review 交给评审：peer 你自己评审，here 这台机器的评审 Agent）、attach（path + caption：把工作区里的截图、录屏、报告目录交给这次交办，本人在页面上看；run 的命令写到 $OMEM_ARTIFACTS 的文件也会自动收下）。几个仓库时 path 写成 仓库空间id/路径。",
   schema: z.object({
     run_id: z.string().describe("delegate_code 返回的运行 id（之后各轮的 id 也可以）"),
-    action: z.enum(["brief", "list", "read", "grep", "write", "edit", "delete", "run", "output", "git", "import", "finish"]),
+    action: z.enum(["brief", "list", "read", "grep", "write", "edit", "delete", "run", "output", "git", "import", "finish", "attach"]),
+    caption: z.string().max(500).optional().describe("attach：一句话说明这份截图、录屏或报告"),
     from_run: z.string().max(80).optional().describe("import：要接过来的另一次（没应用的）交办的运行 id"),
     path: z.string().max(500).optional(),
     from: z.number().int().min(0).optional().describe("read 从第几行；list / git diff 的分页位置"),
@@ -4400,11 +4418,69 @@ def({
     const committed = t.commitTask(ctx.app, rootId, seq, worktrees ?? worktreesOf(ctx.app, rootId), identity);
     // The round's own commits are on the work branch already (a helper's are picked there at the round's end).
     if (!helper) t.attributeCommits(ctx.app, rootId, worktreesOf(ctx.app, rootId), seq);
+    // Screenshots and reports it left in OMEM_ARTIFACTS while doing it are this task's.
+    const art = await import("./artifacts.ts");
+    const taken = await art.collectInbox(ctx.app, actor, { task: seq, source: "agent", by: "coder", keep: true });
     t.updateTask(ctx.app, rootId, seq, { state: task.verifier ? "verify" : "done" }, { by: "coder", kind: "coder", text: a.summary });
     // The round's own tasks are verified as they are finished, while it codes on (code-overlap.ts).
     const started = !helper && task.verifier ? (await import("./code-overlap.ts")).taskFinished(ctx.app, actor, seq) : false;
     const left = t.listTasks(ctx.app, rootId).filter((x) => x.coderRun === actor && x.state === "coding");
-    return `已记下 ${t.taskLabel(seq)}${committed.length ? "，工作区里没提交的改动已作为这一项提交" : ""}${task.verifier ? `，交给 ${task.verifier} 验证${started ? "（已经开始，你接着做别的项；没改好会在这一轮告诉你）" : ""}` : ""}。${left.length ? `这一轮还有：${left.map((x) => t.taskLabel(x.seq)).join("、")}` : "这一轮的项都做完了，写最后的说明。"}`;
+    return `已记下 ${t.taskLabel(seq)}${committed.length ? "，工作区里没提交的改动已作为这一项提交" : ""}${taken.made.length || taken.skipped.length ? `；${art.takenText(taken)}` : ""}${task.verifier ? `，交给 ${task.verifier} 验证${started ? "（已经开始，你接着做别的项；没改好会在这一轮告诉你）" : ""}` : ""}。${left.length ? `这一轮还有：${left.map((x) => t.taskLabel(x.seq)).join("、")}` : "这一轮的项都做完了，写最后的说明。"}`;
+  },
+});
+
+/**
+ * Where a run may hand in artifacts from: its delegation's workspaces (a helper: its own) and its
+ * own artifacts folder. Outside a delegation only the folder.
+ */
+async function artifactRoots(ctx: ToolContext): Promise<string[]> {
+  const art = await import("./artifacts.ts");
+  const runId = ctx.runId!;
+  const roots = [art.artifactInbox(ctx.app, runId)];
+  const me = getRun(ctx.app, runId);
+  const own = me.kind === "agent" ? (me.output.worktrees as import("./worktree-index.ts").WorktreeRef[] | undefined) : undefined;
+  const workId = await art.workOf(ctx.app, runId);
+  if (!workId && !own) return roots;
+  const { worktreesOf } = await import("./code.ts");
+  const { workDirOf } = await import("./workspaces.ts");
+  const wts = own ?? worktreesOf(ctx.app, workId!);
+  return [...roots, ...(workId ? [join(ctx.app.runsDir, workId, "work")] : []), ...wts.map((w) => workDirOf(w))];
+}
+
+def({
+  name: "attach_artifact",
+  description:
+    "把截图、录屏、测试报告、日志交给这次运行：本人在交办页面上按修改项看，评审和逐项验证也拿得到。path 写工作区里的文件或目录（带 index.html 的目录作为一份报告，其他目录逐个文件收；几个仓库时带上仓库目录名），或 $OMEM_ARTIFACTS 下的文件。也可以不调用它，直接把文件放进 $OMEM_ARTIFACTS（放在 T<编号>/ 子目录里就归到那一项），宿主在 finish_task 和这一轮结束时收走。",
+  schema: z.object({
+    path: z.string().min(1).max(1000),
+    caption: z.string().max(500).optional().describe("一句话说明：哪个页面、什么状态、改前还是改后、说明了什么"),
+    task: z.union([z.string(), z.number()]).optional().describe("对应的修改项，如 T3"),
+    req: z.string().max(80).optional().describe("对应的需求点或测试点 id（req_read 里的 id）"),
+    name: z.string().max(200).optional().describe("显示的名字，默认用文件名"),
+  }),
+  handler: async (ctx, a) => {
+    if (!ctx.runId) throw new HttpError(400, "attach_artifact 只能在运行里用");
+    const art = await import("./artifacts.ts");
+    const { parseTaskRef } = await import("./code-tasks.ts");
+    const task = a.task === undefined ? null : parseTaskRef(a.task);
+    if (a.req && !one(ctx.app.db, "select 1 from req_nodes where id = ?", a.req)) throw new HttpError(400, `没有需求点 ${a.req}（用 req_read / req_tree 看 id）`);
+    const r = await art.attachPath(ctx.app, ctx.runId, a.path, await artifactRoots(ctx), { caption: a.caption, task, req: a.req ?? null, name: a.name, source: "agent", by: ctx.role ?? ctx.spec ?? "agent" });
+    if (!r.made.length) throw new HttpError(400, r.skipped.length ? `没收下：${r.skipped.join("；")}` : `${a.path} 里没有可收的文件`);
+    return art.takenText(r);
+  },
+});
+
+def({
+  name: "submit_brief",
+  description: "编码前检查交结果：这次改动会碰到什么（要顾及的现有功能、调用方、接口）、这里以前出过什么问题（带依据）、改完要回归什么（有自动化测试的写命令，没有的写人工步骤）、还没查清的。只调用一次；再调用会整份替换。",
+  schema: briefSchema,
+  handler: async (ctx, a) => {
+    const me = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    if (!me || me.kind !== "code" || me.status !== "running") throw new HttpError(400, "submit_brief 只在交办开始编码前的检查里用");
+    const { workRootOf } = await import("./code-tasks.ts");
+    const pc = await import("./pre-check.ts");
+    pc.savePreCheck(ctx.app, workRootOf(ctx.app, me.id), a);
+    return `已记下：${pc.preCheckLine(a)}。编码 Agent 拆修改项时会拿到它。`;
   },
 });
 

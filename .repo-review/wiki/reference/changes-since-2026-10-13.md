@@ -1585,3 +1585,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `test/preview.test.ts`：经一个不认识预览的中间设备打开预览端口；按真实报错格式测提示。
 - 预览命令不再继承 omem 后台服务的 `NODE_ENV=production`（`previewEnv`）：常驻服务器上 `rsbuild dev` 因此按生产模式构建，页面引用 `//undefined/undefined/static/js/…`，白屏。端口刚开时 `/` 可能还是 404，启动后 3 分钟内判定为“不是网页”的端口会再探测。
 - 修复：经设备隧道转发的连接，一端结束时会立刻销毁另一端，慢链路上排队待写的数据被丢掉。常驻服务器上主应用的代理（`Connection: close`）转来的子应用脚本因此被截断（`ERR_INCOMPLETE_CHUNKED_ENCODING`，curl 报 “transfer closed with outstanding read data remaining”），Garfish 加载子应用失败。三段转发（本机、中间设备、目标设备）改用 `splice`：结束时先写完再关，出错才同时断开。
+
+## 2026-11-07：运行产物；编码前检查
+
+- 运行产物（`src/agents/artifacts.ts`、表 `run_artifacts`）：编码 Agent、编码助手、宿主的检查命令、外部 Agent 的 `code_workspace` 命令带 `OMEM_ARTIFACTS`，宿主在 `finish_task`、一轮结束、命令跑完时收走，`T<编号>/` 归到那一项；`attach_artifact` 和 `code_workspace` 的 `attach` 按路径交；文件按路径里的密钥给出（`/api/artifacts/<id>.<key>/…`，`src/server/artifact-http.ts`），网页和报告带 CSP sandbox；中间设备转发时带上 Range 和这些响应头；交办视图“产物”标签（`RunArtifacts.vue`）和修改项上的数量；评审材料和逐项验证列出文件路径。设计在 docs/v2/artifacts.md。
+- 编码前检查（`src/agents/pre-check.ts`、`roles/business-analyst.md`）：新交办第一轮编码前查影响面、以前的问题、回归清单，`submit_brief` 交结果，编码 Agent 的任务和阶段评审的材料里多一节；`code_history`（`src/agents/code-history.ts`）按文件列需求点、交办、评审问题和提交，历史评审也用；`agents.autoAdvance.preCheck`、`delegate_code` 的 `pre_check`；“概览”里的卡片（`PreCheckCard.vue`）。设计在 docs/v2/pre-check.md，review.md 5.2 的业务简报以它落地。
+- `test/artifacts.test.ts`；测试里默认关掉编码前检查（`test/helpers.ts`），这个文件里打开。

@@ -252,6 +252,11 @@ export type RoleRunInput = {
   reviewLead?: boolean;
   /** A replay arm (agents/replay.ts): what it sees and the only tools it gets. */
   replay?: ReplayArm;
+  /**
+   * Hands in artifacts (agents/artifacts.ts): the agent's commands get OMEM_ARTIFACTS, a folder
+   * whose contents become the run's artifacts when its turn ends (or a task is finished).
+   */
+  artifacts?: boolean;
 };
 
 /**
@@ -567,67 +572,77 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let acted = false;
   let writesBefore = 0;
   const writes = () => (input.runId ? one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", input.runId)!.n : 0);
-  for (let i = 0; i < chain.length; i++) {
-    let slot;
-    try {
-      slot = await acquire(app, chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
-    } catch (e) {
-      if (i === 0) revokeToolToken(base.token);
-      throw e;
+  const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
+  const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : null;
+  try {
+    for (let i = 0; i < chain.length; i++) {
+      let slot;
+      try {
+        slot = await acquire(app, chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
+      } catch (e) {
+        if (i === 0) revokeToolToken(base.token);
+        throw e;
+      }
+      if (i === 0 && slot.index > 0) revokeToolToken(base.token);
+      const moved = slot.index > 0;
+      i += slot.index;
+      const profile = chain[i];
+      const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay });
+      if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
+      try {
+        const req = {
+          runId: input.runId,
+          strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,
+          cwd: prep.cwd,
+          // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
+          system: prep.system,
+          parts: prep.parts,
+          prompt: `（${prep.now}）\n\n# 任务\n\n${input.task}`,
+          allowWrites: prep.allowWrites,
+          modes: prep.modes,
+          signal: input.signal,
+          mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
+          extraMcp: prep.extraMcp,
+          resumeSessionId: i === 0 ? input.resumeSessionId : undefined,
+          persistSession: input.persistSession ?? !!input.resumeSessionId,
+          queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
+        };
+        if (i > 0)
+          emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
+        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
+        acted = false;
+        writesBefore = writes();
+        const watch = (e: AgentEvent) => {
+          if (e.type === "tool") acted = true;
+          emit(e);
+        };
+        const result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
+          ? await backgroundTurn(app, prep, req, input.task, input.runId, watch)
+          : await runBackend(app, prep.profile, req, watch);
+        revokeToolToken(prep.token);
+        return { ...result, profileId: prep.profile.id, ai: { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort } };
+      } catch (e) {
+        revokeToolToken(prep.token);
+        noteQuota(app, prep.profile, e, emit);
+        // A backend that failed before doing anything (it could not start, prepare its environment, log
+        // in) is left for the next one too: nothing was done, so nothing is done twice.
+        const busy = isRetryableAgentError(e);
+        const untouched = !acted && writes() === writesBefore;
+        if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !(busy || untouched) || i === chain.length - 1) throw e;
+        leftBecause = { busy, why: (e as Error).message.slice(0, 120) };
+        lastError = e;
+        failed = true;
+      } finally {
+        slot.release();
+      }
     }
-    if (i === 0 && slot.index > 0) revokeToolToken(base.token);
-    const moved = slot.index > 0;
-    i += slot.index;
-    const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay });
-    if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
-    try {
-      const req = {
-        runId: input.runId,
-        strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,
-        cwd: prep.cwd,
-        // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
-        system: prep.system,
-        parts: prep.parts,
-        prompt: `（${prep.now}）\n\n# 任务\n\n${input.task}`,
-        allowWrites: prep.allowWrites,
-        modes: prep.modes,
-        signal: input.signal,
-        mcp: prep.mcp,
-        extraMcp: prep.extraMcp,
-        resumeSessionId: i === 0 ? input.resumeSessionId : undefined,
-        persistSession: input.persistSession ?? !!input.resumeSessionId,
-        queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
-      };
-      if (i > 0)
-        emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
-      emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
-      // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
-      acted = false;
-      writesBefore = writes();
-      const watch = (e: AgentEvent) => {
-        if (e.type === "tool") acted = true;
-        emit(e);
-      };
-      const result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
-        ? await backgroundTurn(app, prep, req, input.task, input.runId, watch)
-        : await runBackend(app, prep.profile, req, watch);
-      revokeToolToken(prep.token);
-      return { ...result, profileId: prep.profile.id, ai: { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort } };
-    } catch (e) {
-      revokeToolToken(prep.token);
-      noteQuota(app, prep.profile, e, emit);
-      // A backend that failed before doing anything (it could not start, prepare its environment, log
-      // in) is left for the next one too: nothing was done, so nothing is done twice.
-      const busy = isRetryableAgentError(e);
-      const untouched = !acted && writes() === writesBefore;
-      if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !(busy || untouched) || i === chain.length - 1) throw e;
-      leftBecause = { busy, why: (e as Error).message.slice(0, 120) };
-      lastError = e;
-      failed = true;
-    } finally {
-      slot.release();
+    throw lastError ?? new Error("没有可用的 Agent");
+  } finally {
+    // What the agent left in its artifacts folder (finish_task took what belongs to a task).
+    if (inbox && input.runId) {
+      const taken = await collectInbox(app, input.runId, { source: "agent", by: input.spec?.name ?? input.checkName ?? input.role }).catch((e: Error) => ({ made: [], skipped: [e.message] }));
+      if (taken.made.length || taken.skipped.length) emit({ type: "status", text: takenText(taken) });
     }
   }
-  throw lastError ?? new Error("没有可用的 Agent");
 }

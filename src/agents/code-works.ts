@@ -1,3 +1,4 @@
+import { preCheckOf, type PreCheck } from "./pre-check.ts";
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { json } from "../core/util.ts";
@@ -49,6 +50,10 @@ export type CodeWorkDetail = CodeWork & {
   roundList: WorkRound[];
   /** Feature points under the item's requirements, with their latest state (from a review split, later from tasks). */
   points: { id: string; title: string; status: string | null; at: string | null }[];
+  /** Screenshots, recordings, reports handed in (agents/artifacts.ts). */
+  artifacts: number;
+  /** The check before coding (agents/pre-check.ts). */
+  preCheck: PreCheck | null;
 };
 
 /** A work not touched for this long is shown as left aside (“搁着”), whoever it waits on. */
@@ -120,7 +125,8 @@ export function codeWork(app: App, runId: string, visibleTo?: WorkFilter["visibl
   if (visibleTo && (root.user_id ?? "owner") !== visibleTo.userId && !visibleTo.spaces.includes(root.space_id ?? "")) return null;
   const [work] = buildWorks(app, [root]);
   const roundList = roundsOf(app, [root.id]).map((x, i) => ({ id: x.id, round: x.round ?? i + 1, status: x.status, title: x.title, verdict: x.verdict, createdAt: x.created_at, finishedAt: x.finished_at }));
-  return { ...work, task: root.task ?? "", roundList, points: featurePoints(app, work.reqs.map((n) => n.id)) };
+  const artifacts = all<{ n: number }>(app.db, "select count(*) n from run_artifacts where work_id = ?", root.id)[0]?.n ?? 0;
+  return { ...work, task: root.task ?? "", roundList, points: featurePoints(app, work.reqs.map((n) => n.id)), artifacts, preCheck: preCheckOf(app, root.id) };
 }
 
 function roundsOf(app: App, roots: string[]): RoundRow[] {

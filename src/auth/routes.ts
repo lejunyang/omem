@@ -176,6 +176,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/ide/open": CODE,
   // Previews of a delegation's workspace (docs/v2/preview.md): the owner's commands and servers.
   "GET /api/runs/:id/previews": "owner",
+  "GET /api/runs/:id/artifacts": RUN,
+  "DELETE /api/runs/:id/artifacts/:artifact": RUN,
+  // The key in the path is the capability (agents/artifacts.ts): a report's own files load without a cookie.
+  "GET /api/artifacts/:token/*": "public",
   "GET /api/previews": "owner",
   "POST /api/previews": "owner",
   "GET /api/previews/:id": "owner",

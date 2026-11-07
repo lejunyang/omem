@@ -10,6 +10,8 @@ export function testApp() {
   ensurePersonalSpace(app);
   // Tests exercise notify/items directly, not the ingest first-nudge grace window.
   app.config.notify.firstNudgeDelayMinutes = 0;
+  // Delegations in tests start coding at once; test/pre-check.test.ts turns the check before coding on.
+  app.config.agents.autoAdvance.preCheck = false;
   return app;
 }
 

@@ -22,7 +22,7 @@ writeFileSync(join(dir, "refund.ts"), "export function refundAmount() {\n  retur
 git("add", "-A");
 git("commit", "-q", "-m", "init");
 createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
-updateSpace(app, "shop-api", { settings: { setupCommand: "none", checkCommand: "node -e \"process.exit(0)\"", peerCommands: "test: node -e \"console.log('tests ran')\"" } });
+updateSpace(app, "shop-api", { settings: { setupCommand: "none", checkCommand: "node -e \"process.exit(0)\"", peerCommands: "test: node -e \"console.log('tests ran')\"\nshot: node -e \"require('fs').writeFileSync(require('path').join(process.env.OMEM_ARTIFACTS, 'shot.txt'), 'list')\"" } });
 
 /** Run one queued round of the delegation as the job runner would. */
 async function runRound(id: string) {
@@ -68,6 +68,12 @@ describe("coding an outside Agent on another device does itself", () => {
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "test", args: ["a;rm"] })).text).toMatch(/shell 符号/);
     const ran = (await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "test", args: ["lines.test.ts"] })).text;
     expect(ran).toMatch(/退出码 0[\s\S]*tests ran/);
+    // What a command writes to OMEM_ARTIFACTS, and a file of the workspace handed in, become the work's artifacts.
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "shot" })).text).toMatch(/收下 1 个产物：shot\.txt/);
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "attach", path: "lines.test.ts", caption: "新加的测试" })).text).toMatch(/收下 1 个产物：lines\.test\.ts/);
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "attach", path: "../outside.ts" })).text).toMatch(/找不到/);
+    const { listArtifacts } = await import("../src/agents/artifacts.ts");
+    expect((await listArtifacts(app, runId)).map((a) => [a.name, a.source, a.caption])).toEqual([["shot.txt", "command", "命令 node -e \"require('fs').writeFileSync(require('path').join(process.env.OMEM_ARTIFACTS, 'shot.txt'), 'list')\""], ["lines.test.ts", "agent", "新加的测试"]]);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "commit", message: "只退未发货的行" })).text).toMatch(/已提交/);
     // Another branch merged in: the conflict stays in the file, the Agent fixes it and commits.
     git("checkout", "-q", "-b", "feat/other", "main");

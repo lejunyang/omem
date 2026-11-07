@@ -392,6 +392,15 @@ ${input.task}
     ].filter(Boolean).join("\n\n");
     if (planning || taken.length) ctx.event("status", { text: taken.length ? `这一轮做 ${taken.map((t) => tasks.taskLabel(t.seq)).join("、")}` : "编码 Agent 先拆分修改项" });
   }
+  // The check before coding (pre-check.ts): once, before a new delegation's first round codes; a
+  // retry of that round keeps the brief it had.
+  const pc = await import("./pre-check.ts");
+  let pre = pc.preCheckOf(app, rootRunId) ?? (retried ? pc.preCheckOf(app, retried.id) : null);
+  if (pre && retried && !continueFrom) setRunOutput(app, rootRunId, { preCheck: pre });
+  if (!pre && !continueFrom && !retried && !ranBefore && !skipCoder && !gitOnly && !input.peerCoder && !input.branches && !input.syncResume && pc.wantsPreCheck(app, run)) {
+    pre = await pc.runPreCheck(app, { run, task: `${input.task}${itemBrief}`, spaces, cwd, repos: repos.map((r, i) => ({ id: r.id, name: r.name, dir: workDirOf(worktrees[i]) })), signal: ctx.signal, event: ctx.event });
+  }
+  if (pre && !continueFrom) coderTask = `${coderTask}\n\n${pc.preCheckText(pre, "coder")}`;
   if (input.peerCoder && !input.peerFinished && !skipCoder) {
     // The other device's Agent codes now; the run ends so it holds no slot meanwhile.
     ctx.event("status", { text: `工作区已准备好，等设备 ${input.peerCoder.caller} 的外部 Agent 编码（code_workspace，run_id=${run.id}）` });
@@ -529,7 +538,7 @@ ${input.task}
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
       role: "coder",
-      ...(taskMode ? { addTools: ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] } : {}),
+      addTools: [...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact"],
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,
@@ -539,6 +548,7 @@ ${input.task}
       signal: ctx.signal,
       resumeSessionId,
       persistSession: true,
+      artifacts: true,
       onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
     });
     // A new session on a later round has not seen the original task: give it along with this round's.
@@ -549,8 +559,10 @@ ${input.task}
       const log = git(workDirOf(wt), ["log", "--oneline", "-30", `${wt.start ?? wt.base}..HEAD`]);
       return log.ok && log.stdout.trim() ? `${multi ? `${wt.space}：\n` : ""}${log.stdout.trim()}` : "";
     }).filter(Boolean).join("\n\n");
+    // …and the check before coding, which came with the first round's task.
+    const checked = (await import("./pre-check.ts")).preCheckOf(app, rootRunId);
     const freshTask = first ? [
-      `# 原始任务\n\n${first}`,
+      `# 原始任务\n\n${first}${checked ? `\n\n${(await import("./pre-check.ts")).preCheckText(checked, "coder")}` : ""}`,
       `# 之前各轮已经做的\n\n这是一个新会话。之前各轮的改动都在工作区里${commits ? `，工作分支上的提交：\n\n${fence("", commits)}` : ""}\n\n需要时用 git log / git diff 看具体改动，不要重做。${before ? `\n\n上一轮编码 Agent 的说明：\n\n${truncate(before, 4000)}` : ""}`,
       coderTask,
     ].join("\n\n") : coderTask;
@@ -638,8 +650,12 @@ ${input.task}
       ctx.event("status", { text: `运行检查${multi ? `（${repo.id}）` : ""}：${command}` });
       // Where the change starts, for a command that checks only what it touches (`git diff --name-only $OMEM_BASE`).
       const base = wt.commits ? changeBase(wt.path, wt) : git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
-      const r = await shell(command, workDirOf(wt), ctx.signal, undefined, base ? { OMEM_BASE: base } : {});
+      // Screenshots and reports the check writes to OMEM_ARTIFACTS become the round's artifacts.
+      const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
+      const r = await shell(command, workDirOf(wt), ctx.signal, undefined, { ...(base ? { OMEM_BASE: base } : {}), OMEM_ARTIFACTS: artifactInbox(app, run.id) });
       check = { command, ...r, output: r.output.slice(-8000), ...(base ? { base } : {}), at: new Date().toISOString() };
+      const taken = await collectInbox(app, run.id, { source: "check", by: "host", caption: `检查${multi ? `（${repo.id}）` : ""}：${command}` });
+      if (taken.made.length || taken.skipped.length) ctx.event("status", { text: takenText(taken) });
     }
     if (wt.commits) {
       // Whatever is left uncommitted becomes this round's last commit; then it goes onto the branch.

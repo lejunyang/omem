@@ -20,6 +20,8 @@ import ReviewChecks from "./ReviewChecks.vue";
 import ReviewProcess from "./ReviewProcess.vue";
 import ReviewSummary from "./ReviewSummary.vue";
 import RunActivity from "./RunActivity.vue";
+import RunArtifacts from "./RunArtifacts.vue";
+import PreCheckCard from "./PreCheckCard.vue";
 import { confirmDialog } from "../lib/dialog";
 import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
 import { refAction } from "../lib/refs";
@@ -37,7 +39,7 @@ import { fmtTime, openCitation, relTime, state, statusLabel, toast } from "../st
  * (`points`) so the tree can mark each node with this round's status.
  */
 export type ReqFocus = { id: string; title: string; ids: string[]; body: string; acceptance: string };
-export type WorkTab = "overview" | "req" | "change" | "review" | "activity" | "branch";
+export type WorkTab = "overview" | "req" | "change" | "review" | "artifacts" | "activity" | "branch";
 const props = defineProps<{ runId: string; focus?: ReqFocus | null; tab?: WorkTab; from?: "runs" | "reqs" }>();
 const emit = defineEmits<{ close: []; open: [runId: string]; points: [points: ChangePoint[], from: string | null]; "update:tab": [tab: WorkTab] }>();
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
@@ -215,6 +217,17 @@ const reqOpen = ref(false);
 const POINT_STATE: Record<string, { text: string; cls: string }> = { done: { text: "已实现", cls: "ok" }, partial: { text: "部分实现", cls: "warn" }, missing: { text: "没实现", cls: "danger" } };
 
 // ---- tabs (always there, also while coding) -----------------------------------------------------
+/** Screenshots, recordings, reports: the work's count, kept current by the gallery once it is open. */
+const shotCount = ref<number | null>(null);
+const artifactCount = computed(() => shotCount.value ?? work.value?.artifacts ?? 0);
+const artifactTask = ref<number | null>(null);
+watch(() => props.runId, () => { shotCount.value = null; artifactTask.value = null; });
+const openArtifacts = (seq: number | null) => {
+  // The count the page loaded with may be older than the task's artifacts: keep the tab there.
+  if (!artifactCount.value) shotCount.value = 1;
+  artifactTask.value = seq;
+  tab.value = "artifacts";
+};
 const localTab = ref<WorkTab>("overview");
 const tab = computed<WorkTab>({ get: () => props.tab ?? localTab.value, set: (t) => { localTab.value = t; emit("update:tab", t); } });
 const tabs = computed(() => [
@@ -222,6 +235,7 @@ const tabs = computed(() => [
   ...(props.focus || work.value?.points.length ? [{ id: "req" as const, label: props.focus ? `需求点 ${focusPoints.value.length ? pointCount(focusPoints.value) : 0}` : `需求点 ${work.value!.points.length}` }] : []),
   { id: "change" as const, label: rv.changePoints.value.length ? `变更 ${pointCount(rv.changePoints.value)}` : "变更" },
   { id: "review" as const, label: "评审" },
+  ...(artifactCount.value ? [{ id: "artifacts" as const, label: `产物 ${artifactCount.value}` }] : []),
   { id: "activity" as const, label: `活动 ${work.value?.rounds ?? ""}`.trim() },
   ...(branchReview.value ? [] : [{ id: "branch" as const, label: "分支" }]),
 ]);
@@ -366,7 +380,8 @@ const ctx = computed(() => detail.value?.context ?? null);
 
       <template v-if="tab === 'overview'">
         <!-- Task-driven: its tasks, the owner's questions, the budget and the changes by task. -->
-        <CodeTasks v-if="!branchReview" :key="`tasks:${run.id}`" :run-id="run.id" />
+        <CodeTasks v-if="!branchReview" :key="`tasks:${run.id}`" :run-id="run.id" @artifacts="openArtifacts" />
+        <PreCheckCard v-if="work.preCheck" :key="`pre:${work.rootId}`" :check="work.preCheck" :space="run.spaceId ?? undefined" data-ask-label="编码前的检查" />
         <ReviewSummary v-if="hasReview" :key="run.id" :rv="rv" :run-id="run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="canFix" :applied="!!out.appliedAt" stay data-ask-label="评审" @ask="(c) => { askDraft = c.text ?? ''; quote('ask', c); }" @go="(t) => (tab = t)" @started="(id) => emit('open', id)" @open="(id) => emit('open', id)" />
         <section v-else-if="!work.taskMode && out.coderSummary" class="block">
           <div class="section-title">{{ branchReview ? "要评审的分支" : "编码 Agent 的说明" }}</div>
@@ -418,6 +433,10 @@ const ctx = computed(() => detail.value?.context ?? null);
       <template v-else-if="tab === 'review'">
         <ReviewChecks v-if="hasReview" :rv="rv" :run-id="run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
         <p v-else class="empty-tab">{{ work.taskMode ? "还没有阶段评审：待做的项做完后，评审负责人决定这次看什么。逐项验证的结论在“概览”的修改项上。" : busy ? "编码结束后开始评审。" : "这一轮没有评审。" }}</p>
+      </template>
+
+      <template v-else-if="tab === 'artifacts'">
+        <RunArtifacts :run-id="run.id" :task="artifactTask" @count="(n) => (shotCount = n)" @task="(s) => (artifactTask = s)" />
       </template>
 
       <template v-else-if="tab === 'activity'">

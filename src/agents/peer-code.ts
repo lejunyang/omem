@@ -23,7 +23,7 @@ const MAX_WRITE = 1_000_000;
 /** Arguments appended to an allowed command: no shell syntax, so `sh -c` only sees words. */
 const SAFE_ARG = /^[\w@%+=:,.\/-]+$/;
 
-type Job = { id: string; command: string; started: number; done: boolean; code: number | null; output: string; ms?: number };
+type Job = { id: string; command: string; started: number; done: boolean; code: number | null; output: string; ms?: number; artifacts?: string };
 const jobs = new Map<string, Job[]>();
 // Ids keep counting after old jobs are dropped, so `output job=…` never finds a newer job under an old id.
 const jobCount = new Map<string, number>();
@@ -105,9 +105,9 @@ export function peerCommands(app: App, spaceId: string): Record<string, string> 
   return out;
 }
 
-function runShell(command: string, cwd: string, job: Job, timeoutMs: number) {
+function runShell(command: string, cwd: string, job: Job, timeoutMs: number, env: Record<string, string> = {}) {
   const isWin = process.platform === "win32";
-  const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], { cwd, windowsHide: true, windowsVerbatimArguments: isWin, env: { ...process.env, CI: "1" } });
+  const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], { cwd, windowsHide: true, windowsVerbatimArguments: isWin, env: { ...process.env, CI: "1", ...env } });
   const add = (d: Buffer) => { job.output = (job.output + d.toString()).slice(-30000); };
   child.stdout.on("data", add);
   child.stderr.on("data", add);
@@ -124,11 +124,12 @@ function runShell(command: string, cwd: string, job: Job, timeoutMs: number) {
 }
 
 const jobText = (j: Job) => j.done
-  ? `命令 ${j.id}（${j.command}）结束，退出码 ${j.code}，用时 ${Math.round((j.ms ?? 0) / 1000)} 秒。输出末尾：\n${j.output.slice(-6000) || "（无输出）"}`
+  ? `命令 ${j.id}（${j.command}）结束，退出码 ${j.code}，用时 ${Math.round((j.ms ?? 0) / 1000)} 秒。${j.artifacts ? `${j.artifacts}。` : ""}输出末尾：\n${j.output.slice(-6000) || "（无输出）"}`
   : `命令 ${j.id}（${j.command}）还在运行（${Math.round((Date.now() - j.started) / 1000)} 秒）。稍后用 action=output、job=${j.id} 取结果。输出末尾：\n${j.output.slice(-2000) || "（暂无输出）"}`;
 
 export type WorkspaceAction = {
-  action: "brief" | "list" | "read" | "grep" | "write" | "edit" | "delete" | "run" | "output" | "git" | "import" | "finish";
+  action: "brief" | "list" | "read" | "grep" | "write" | "edit" | "delete" | "run" | "output" | "git" | "import" | "finish" | "attach";
+  caption?: string;
   from_run?: string;
   path?: string;
   from?: number;
@@ -240,10 +241,25 @@ ${String(work.last.input.task ?? "")}` : "";
       jobCount.set(root.id, n);
       const job: Job = { id: `${a.command}-${n}`, command, started: Date.now(), done: false, code: null, output: "" };
       jobs.set(root.id, [...list.slice(-9), job]);
-      const finished = runShell(command, workDirOf(w), job, 30 * 60_000);
+      // Screenshots and reports the command writes to OMEM_ARTIFACTS become the round's artifacts.
+      const art = await import("./artifacts.ts");
+      const round = work.last.id;
+      const finished = runShell(command, workDirOf(w), job, 30 * 60_000, { OMEM_ARTIFACTS: art.artifactInbox(app, round) }).then(async () => {
+        const taken = await art.collectInbox(app, round, { source: "command", by: `peer:${caller}`, caption: `命令 ${command}` }).catch((e: Error) => ({ made: [], skipped: [e.message] }));
+        job.artifacts = art.takenText(taken);
+      });
       const waitMs = Math.min(100, Math.max(0, a.wait ?? 90)) * 1000;
       await Promise.race([finished, new Promise((r) => setTimeout(r, waitMs))]);
       return jobText(job);
+    }
+    case "attach": {
+      if (!a.path) throw new HttpError(400, "attach 要给 path（工作区里的文件或报告目录）");
+      const art = await import("./artifacts.ts");
+      const round = work.last.id;
+      const roots = [art.artifactInbox(app, round), ...(multi ? [join(app.runsDir, root.id, "work")] : []), ...worktrees.map((w) => workDirOf(w))];
+      const r = await art.attachPath(app, round, a.path, roots, { caption: a.caption, source: "agent", by: `peer:${caller}` });
+      if (!r.made.length) throw new HttpError(400, r.skipped.length ? `没收下：${r.skipped.join("；")}` : `${a.path} 里没有可收的文件`);
+      return art.takenText(r);
     }
     case "output": {
       const list = jobs.get(root.id) ?? [];

@@ -501,6 +501,11 @@ async function saveAutoAdvance(key: "turns" | "codeRounds", raw: string) {
   await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, [key]: v } } }, key === "turns" ? `多 Agent 自动推进最多 ${v} 次` : `编码交办自动推进到第 ${v} 轮`);
   void load();
 }
+async function savePreCheck(v: boolean) {
+  const cur = config.value.agents.autoAdvance ?? { turns: 6, codeRounds: 3 };
+  await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, preCheck: v } } }, v ? "新交办开始编码前先做检查" : "新交办直接开始编码");
+  void load();
+}
 async function addProfile() {
   try {
     const p = JSON.parse(profileJson.value);
@@ -840,6 +845,7 @@ async function saveEdit() {
         <label class="field"><span>编码交办：评审要求修改时自动改到第几轮（1–20）</span>
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="20" :value="config.agents.autoAdvance?.codeRounds ?? 3" @change="saveAutoAdvance('codeRounds', ($event.target as HTMLInputElement).value)" />
         </label>
+        <UiCheckbox :model-value="config.agents.autoAdvance?.preCheck !== false" switch @change="savePreCheck">编码前检查：新交办开始编码前，先查改动会碰到什么、这里以前出过什么问题、改完要回归什么（角色“编码前检查”，在 Agent 页选模型）</UiCheckbox>
       </div>
       <div v-if="config.memory" class="card pad stack">
         <div class="section-title">记忆质量</div>

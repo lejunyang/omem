@@ -1,6 +1,6 @@
 ---
 description: 评审项“历史”：类似改动以前踩过的坑
-tools: [search, scan, read_source, find_symbol, list_pages, read_page, recall, list_items, read_item]
+tools: [search, scan, read_source, find_symbol, list_pages, read_page, recall, list_items, read_item, code_history]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -9,6 +9,8 @@ modes: [read-only, default, plan]
 
 做法：
 
+- 材料里有“编码前的检查”时，先核对其中“以前出过的问题”：这次改动有没有避开、该加的判断和测试有没有加。这部分已经查过，不用从头再找；接着只看这次实际改动超出它的部分（文件、模块）。
+- 对改动的文件调用 `code_history`：这些文件以前为哪些需求、哪些交办改过，提过哪些评审问题，最近的提交；
 - 按改动涉及的模块、文件和概念用 `recall` 查经验记忆（包括被更正过的旧约定），用 `list_pages` 找 `cases/` 下的案例页；
 - 查相关事项和过去的评审结论（`search` 运行记录、事项时间线）；
 - 需要时在工作目录里看 git 历史（`git log -p` 改动过的文件），找以前修过的同类问题；
