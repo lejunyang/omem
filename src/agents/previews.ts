@@ -204,6 +204,18 @@ export function startPreview(app: App, b: { run: string; space: string; name?: s
 
 const live = (p: Preview) => p.status === "preparing" || p.status === "starting" || p.status === "running";
 
+/**
+ * The environment a preview's commands run in: omem's own, minus NODE_ENV. The background service
+ * runs omem with NODE_ENV=production (core/service.ts), and a dev server that inherits it builds
+ * for production (hashed bundles, CDN asset hosts) instead of serving the workspace. A command that
+ * wants a NODE_ENV sets it itself.
+ */
+export function previewEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, BROWSER: "none", OMEM_PREVIEW: "1" };
+  delete env.NODE_ENV;
+  return env;
+}
+
 /** Run one command of the preview in its folder (its own process group), output into its log. */
 function launch(app: App, p: Preview, command: string, exited: (code: number | null) => void) {
   const isWin = process.platform === "win32";
@@ -217,7 +229,7 @@ function launch(app: App, p: Preview, command: string, exited: (code: number | n
       windowsHide: true,
       windowsVerbatimArguments: isWin,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, BROWSER: "none", OMEM_PREVIEW: "1" },
+      env: previewEnv(),
     });
   } catch (e) {
     p.log = `${p.log}${(e as Error).message}\n`.slice(-LOG_MAX);
@@ -267,7 +279,8 @@ async function scan(app: App, p: Preview) {
     p.ports = s.listening.map((l) => ({ port: l.port, hosts: l.hosts, page: before.get(l.port)?.page ?? null, connections: s.connections.get(l.port) ?? 0 }));
     if (p.ports.length) p.everPorts = true;
     if (p.ports.length && p.status === "starting") Object.assign(p, { status: "running", idleSince: Date.now() });
-    for (const x of p.ports) if (x.page === null) x.page = await isPage(x.hosts[0], x.port);
+    // A dev server can listen before its first build is done and answer 404 meanwhile: ask again for a while.
+    for (const x of p.ports) if (x.page === null || (x.page === false && Date.now() - p.commandAt < 180_000)) x.page = await isPage(x.hosts[0], x.port);
     const now = Date.now();
     if (p.status === "starting") {
       if (now - p.commandAt > STARTUP_MS) end(app, p, "stopped", `${STARTUP_MS / 60_000} 分钟还没有监听任何端口，停掉了`);

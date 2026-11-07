@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { killPid } from "../src/core/procs.ts";
 import { createRun, setRunOutput } from "../src/agents/runs.ts";
-import { previewCommands, previewHint } from "../src/agents/previews.ts";
+import { previewCommands, previewEnv, previewHint } from "../src/agents/previews.ts";
 import { descendants, parseLsof, parseNetstat, parseProcNetTcp, scanPorts } from "../src/core/listening.ts";
 import { addPeer, openPeerUi } from "../src/core/peers.ts";
 import { tunnelConnect } from "../src/core/peer-tunnel.ts";
@@ -84,6 +84,12 @@ describe("preview parsing", () => {
     } finally {
       kills.mockRestore();
     }
+  });
+
+  it("runs dev servers without the service's NODE_ENV=production", () => {
+    const env = previewEnv({ PATH: "/usr/bin", NODE_ENV: "production", HOME: "/home/demo" });
+    expect(env.NODE_ENV).toBeUndefined();
+    expect(env).toMatchObject({ PATH: "/usr/bin", HOME: "/home/demo", BROWSER: "none", OMEM_PREVIEW: "1" });
   });
 
   it("says what a file-watch limit crash means", () => {

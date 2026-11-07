@@ -1583,3 +1583,4 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 经 `--via` 中转时，中间设备以前只转发 `tunneled` 列出的升级路径，预览的隧道（`/api/previews/:id/tcp`）在旧版中间设备上被回 404。现在中间设备对本人令牌的升级请求不看路径原样转发，由最后那台设备鉴权和判断路径（`src/server/http.ts`）；以后加新的隧道，中间设备不用跟着更新。
 - 预览输出里出现 `EMFILE … watch`（inotify 实例数）或 `ENOSPC`（监听数）时，`previewHint` 给出原因，交办视图的预览面板显示在状态下面。常驻服务器上主应用崩过一次就是这个：同一用户 128 个 inotify 实例被别的程序占满，两个开发服务器各只占 1 个。
 - `test/preview.test.ts`：经一个不认识预览的中间设备打开预览端口；按真实报错格式测提示。
+- 预览命令不再继承 omem 后台服务的 `NODE_ENV=production`（`previewEnv`）：常驻服务器上 `rsbuild dev` 因此按生产模式构建，页面引用 `//undefined/undefined/static/js/…`，白屏。端口刚开时 `/` 可能还是 404，启动后 3 分钟内判定为“不是网页”的端口会再探测。
