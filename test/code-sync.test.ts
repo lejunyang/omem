@@ -158,6 +158,28 @@ describe("Git sync before coding", { timeout: 60000 }, () => {
     expect(hasSyncStash(other)).toBe(true);
   });
 
+  it("keeps this run's commits not yet put back on the branch; a freshly leased workspace starts from the tip", () => {
+    // A peer Agent committed on the detached HEAD while the branch is checked out where the owner runs it.
+    const tip = sh(wtPath, "rev-parse", "HEAD");
+    sh(wtPath, "checkout", "-q", "--detach");
+    const applied = join(app.home, "applied");
+    sh(root, "worktree", "add", "-q", applied, "omem/r1");
+    const work = commit(wtPath, "rules.txt", "refund: peer rule\n", "peer commit");
+    expect(placeOnBranch(root, wt)).toContain("还没放回分支");
+    expect(sh(wtPath, "rev-parse", "HEAD")).toBe(work);
+    expect(sh(root, "rev-parse", "omem/r1")).toBe(tip);
+    // The same state in a workspace just leased (another run's leftovers): back to the tip.
+    expect(placeOnBranch(root, wt, { fresh: true })).toContain("游离 HEAD");
+    expect(sh(wtPath, "rev-parse", "HEAD")).toBe(tip);
+
+    // Branch checked out nowhere else: it is fast-forwarded to the commits and checked out.
+    sh(wtPath, "checkout", "-q", "--detach", work);
+    sh(root, "worktree", "remove", "--force", applied);
+    expect(placeOnBranch(root, wt)).toContain("已快进");
+    expect(sh(wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("omem/r1");
+    expect(sh(root, "rev-parse", "omem/r1")).toBe(work);
+  });
+
   it("keeps unresolved picks for a later round and skips a pick resolved to an empty change", async () => {
     const picked = commit(root, "rules.txt", "refund: picked rule\n", "picked rule");
     commit(wtPath, "rules.txt", "refund: local rule\n", "local rule");

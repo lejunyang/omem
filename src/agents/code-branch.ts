@@ -115,7 +115,8 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
   const ref: WorktreeRef = "space" in wt
     ? { ...wt }
     : { space: repo.id, path, branch: wt.branch, base: wt.base, start: wt.base, targetBranch: wt.branch, commits: true, ...(wt.newBranch ? { newBranch: true } : {}), ...(wt.cutFrom ? { cutFrom: wt.cutFrom } : {}) };
-  if (!existsSync(ref.path)) {
+  const fresh = !existsSync(ref.path);
+  if (fresh) {
     delete ref.slot;
     const slot = leaseWorkspace(app, repo, runId, path, log, { idle: idle(app) });
     if (slot) ref.slot = slot.path;
@@ -125,7 +126,7 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
       if (!made.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${made.stderr}`);
     }
   }
-  return { wt: ref, note: placeOnBranch(root, ref) };
+  return { wt: ref, note: placeOnBranch(root, ref, { fresh }) };
 }
 
 /**
@@ -134,7 +135,7 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
  * previous round could not put back on the branch stay where they are. Returns what the coding
  * Agent should know about it.
  */
-export function placeOnBranch(root: string, wt: WorktreeRef): string {
+export function placeOnBranch(root: string, wt: WorktreeRef, opts: { fresh?: boolean } = {}): string {
   const dir = workDirOf(wt);
   // Keep interrupted operations (including picks/reverts) in place for the conflict resolver.
   if (syncInProgress(dir) || hasSyncStash(dir)) return `工作区里有一次没做完的同步（${wt.branch}），宿主会先把它做完。`;
@@ -150,6 +151,20 @@ export function placeOnBranch(root: string, wt: WorktreeRef): string {
     return `工作区里有上一轮没能放回分支 ${wt.branch} 的提交，你在游离 HEAD 上接着做。${ancestor(dir, tip, at) ? "" : `分支 ${wt.branch} 之后又有了新提交（本人在别处提交的）：先 \`git merge ${wt.branch}\` 并解决冲突。`}`;
   }
   const elsewhere = checkedOutAt(root, wt.branch, dir);
+  // This run's own workspace already has commits on top of the branch that a round has not put
+  // back yet (a peer Agent commits during its round; the host settles them only at the end of the
+  // round its `finish` queues). Moving to the tip would leave them behind, so build on them; the
+  // end of this round puts them on the branch. A workspace just leased may hold another run's
+  // leftovers, so it always starts from the tip.
+  if (!opts.fresh && at !== tip && ancestor(dir, tip, at)) {
+    if (elsewhere) {
+      git(dir, ["checkout", "-q", "--detach", at]);
+      return `工作区里有还没放回分支 ${wt.branch} 的提交（${at.slice(0, 8)}），在它们上面接着做；分支 ${wt.branch} 正在 ${elsewhere} 检出，这一轮结束后宿主把提交快进到那里。不要切换分支，也不要改分支名。`;
+    }
+    const forward = git(dir, ["checkout", "-q", "-B", wt.branch, at]);
+    if (!forward.ok) throw new Error(`没能把分支 ${wt.branch} 快进到工作区的提交：${forward.stderr.trim().slice(0, 300)}`);
+    return `你在分支 ${wt.branch} 上（已快进到工作区里还没放回分支的提交 ${at.slice(0, 8)}）。`;
+  }
   const moved = elsewhere ? git(dir, ["checkout", "-q", "--detach", tip]) : git(dir, ["checkout", "-q", wt.branch]);
   if (!moved.ok) throw new Error(`没能把工作区切到分支 ${wt.branch}：${moved.stderr.trim().slice(0, 300)}`);
   return elsewhere
