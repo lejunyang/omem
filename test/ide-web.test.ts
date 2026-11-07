@@ -247,7 +247,11 @@ describe("web VS Code under /ide", () => {
       builds[commit] = readFileSync(join(work, "build.tar.gz"));
       rmSync(work, { recursive: true, force: true });
     };
-    let latest = { commit: "e".repeat(40), version: "1.150.0" };
+    // Commit ids that look like real ones. On Windows, Defender can hold up starting tar for one or
+    // two seconds when its arguments carry a run of one character (`.omem-eeee….tar.gz`), longer
+    // than the waits below.
+    const commitOf = (version: string) => createHash("sha1").update(version).digest("hex");
+    let latest = { commit: commitOf("1.150.0"), version: "1.150.0" };
     build(latest.commit, latest.version);
     let release!: () => void;
     let gate = new Promise<void>((ok) => (release = ok));
@@ -287,7 +291,7 @@ describe("web VS Code under /ide", () => {
 
       // A newer build comes out: the running one stays until the next start, then the new one runs.
       const old = latest.commit;
-      latest = { commit: "f".repeat(40), version: "1.151.0" };
+      latest = { commit: commitOf("1.151.0"), version: "1.151.0" };
       build(latest.commit, latest.version);
       gate = Promise.resolve();
       await updateIdeServer(app);
@@ -298,10 +302,10 @@ describe("web VS Code under /ide", () => {
       const cookie2 = again.headers.get("set-cookie")!.split(";")[0];
       expect((await (await fetch(`${base}/ide/x`, { headers: { cookie: cookie2 } })).json()).commit).toBe(latest.commit);
       // Older builds go once a newer one is there and the old one no longer runs.
-      latest = { commit: "9".repeat(40), version: "1.152.0" };
+      latest = { commit: commitOf("1.152.0"), version: "1.152.0" };
       build(latest.commit, latest.version);
       await updateIdeServer(app);
-      expect(readdirSync(root).filter((d) => !d.startsWith(".")).sort()).toEqual(["f".repeat(40), latest.commit].sort());
+      expect(readdirSync(root).filter((d) => !d.startsWith(".")).sort()).toEqual([commitOf("1.151.0"), latest.commit].sort());
     } finally {
       release();
       app.config.ide.web.updateUrl = "off";
