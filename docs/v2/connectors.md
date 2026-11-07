@@ -9,7 +9,7 @@ omem 自己内置飞书。其他平台（Notion、GitHub、Google、Slack、Jira
 
 ## 平台从哪里来
 
-- **Nango 的目录**：运行时读 npm 包 `@nangohq/providers`（Elastic License 2.0，作为依赖安装，没有复制进仓库），由 `plugins/connect/nango.ts` 转换。收录全部 OAuth 2 平台，以及用 API Key 或账号密码连接、内容能变成原件的平台（文档与知识库、聊天、邮件与日程、会议与转写、代码、项目与工单）。
+- **Nango 的目录**：运行时读 npm 包 `@nangohq/providers`（Elastic License 2.0，作为可选依赖安装，没有复制进仓库；npm 源里没有这个包时安装照常完成，只是没有 Nango 目录里的平台），由 `plugins/connect/nango.ts` 转换。收录全部 OAuth 2 平台，以及用 API Key 或账号密码连接、内容能变成原件的平台（文档与知识库、聊天、邮件与日程、会议与转写、代码、项目与工单）。
 - **国内平台**：Nango 没有，写在 `plugins/connect/china.ts`，有微信扫码登录、QQ 互联、微博、钉钉、抖音、Gitee、百度网盘、阿里云盘、语雀。这些是按各平台公开文档写的，没有用真实应用验证过。
 - **不收的**：OAuth 1、客户端凭据（应用身份）、两步换令牌、签名请求（支付宝、腾讯会议、AWS）、Nango 的 MCP 服务器，以及模板里用到占位符以外写法的平台。启动日志会打出能连接的数量，和因写法不支持而跳过的数量。
 

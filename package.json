@@ -32,7 +32,6 @@
     "@larksuite/cli": "1.0.98",
     "@larksuiteoapi/node-sdk": "1.76.0",
     "@modelcontextprotocol/sdk": "1.31.0",
-    "@nangohq/providers": "0.72.2",
     "commander": "15.0.0",
     "croner": "10.0.0",
     "fastify": "5.12.5",
@@ -46,7 +45,8 @@
     "zod": "4.1.12"
   },
   "optionalDependencies": {
-    "@huggingface/transformers": "3.8.1"
+    "@huggingface/transformers": "3.8.1",
+    "@nangohq/providers": "0.72.2"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

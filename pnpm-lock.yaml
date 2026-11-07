@@ -32,9 +32,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.31.0
         version: 1.31.0(supports-color@7.2.0)(zod@4.1.12)
-      '@nangohq/providers':
-        specifier: 0.72.2
-        version: 0.72.2
       commander:
         specifier: 15.0.0
         version: 15.0.0
@@ -115,6 +112,9 @@ importers:
       '@huggingface/transformers':
         specifier: 3.8.1
         version: 3.8.1
+      '@nangohq/providers':
+        specifier: 0.72.2
+        version: 0.72.2
 
   packages/plugin-sdk:
     devDependencies:
@@ -5065,6 +5065,7 @@ snapshots:
   '@nangohq/providers@0.72.2':
     dependencies:
       js-yaml: 4.3.2
+    optional: true
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
