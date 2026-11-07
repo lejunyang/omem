@@ -61,7 +61,7 @@
 ## 运行与依赖
 
 - Node 22.18+ 直接运行 TypeScript（类型擦除），import 写 `.ts` 后缀，只用可擦除语法（不用参数属性、enum、namespace）。构建由 tsc 改写后缀到 dist/。
-- 仓库是 pnpm workspace（根是应用，另有 `packages/plugin-sdk`、`vscode`、`site`），一份 `pnpm-lock.yaml`；服务器上只装应用（`pnpm install --filter omem-assistant`，写在 `osdk.toml` 的 `[deps.pnpm]`）。`scripts/upgrade.ts` 有 osdk 时用 `osdk trust` + `osdk install` 装工具和依赖、`osdk run build` 构建，npm 包一律从 `osdk.toml` 的 `[registries.npm]` 指定的公开源装（`[settings.precedence] npm = "osdk"`，不受各台机器 `.npmrc` 的影响），之后还原本机改写的 `osdk.lock`；没有 osdk 时退回直接用 pnpm。插件 SDK 在 `packages/plugin-sdk`（`omem-plugin-sdk`），不在 `plugins/` 里。
+- 仓库是 pnpm workspace（根是应用，另有 `packages/plugin-sdk`、`vscode`、`site`），一份 `pnpm-lock.yaml`；服务器上只装应用（`pnpm install --filter omem-assistant`，写在 `osdk.toml` 的 `[deps.pnpm]`）。`scripts/upgrade.ts` 有 osdk 时用 `osdk trust`、`osdk install --no-deps`（工具，失败只提示）、`osdk deps`（依赖）、`osdk run build`（构建），npm 包一律从 `osdk.toml` 的 `[registries.npm]` 指定的公开源装（`[settings.precedence] npm = "osdk"`，不受各台机器 `.npmrc` 的影响），之后还原本机改写的 `osdk.lock`；没有 osdk 时退回直接用 pnpm。插件 SDK 在 `packages/plugin-sdk`（`omem-plugin-sdk`），不在 `plugins/` 里。
 - osdk 管理工具链、依赖和可选模型（`osdk run dev/check`）；不强制本地大模型。向量模型可选，换模型会清空旧向量。交互式配置统一放在 `omem setup`（src/setup.ts）。
 - 个人配置、数据库、原件、密钥、模型权重、下载的 Agent 程序不进 Git。
 - 多台设备（`src/core/peers.ts`、`peer-exec.ts`）：远程命令只加进 `peerCommands` 的固定清单并带参数校验，不提供任意 shell；飞书相关的远程命令同样只读。没有配置令牌时 API 只信任本机来源的请求。`scripts/relay.mjs` 的白名单同理，只放检查与更新类命令。

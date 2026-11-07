@@ -6,9 +6,9 @@
  *   osdk run upgrade [--restart] …
  *
  * 1. git pull --ff-only          (skipped with --no-pull, or when this is not a git checkout)
- * 2. osdk install                (the toolchain from osdk.toml, then [deps.pnpm]: only the app, from the
- *                                 registry osdk.toml names); without osdk, pnpm install --frozen-lockfile
- *                                 --filter omem-assistant with the machine's own registry
+ * 2. osdk install --no-deps, osdk deps   (the toolchain from osdk.toml, then [deps.pnpm]: only the app,
+ *                                 from the registry osdk.toml names); without osdk, pnpm install
+ *                                 --frozen-lockfile --filter omem-assistant with the machine's own registry
  * 3. osdk run build (pnpm run build without osdk)
  * 4. npm install -g .            (links the global `omem` to this checkout; --no-global skips;
  *                                 a failure here, e.g. no permission, is reported and skipped)
@@ -65,7 +65,11 @@ if (spawnSync("osdk", ["--version"], { cwd: root, stdio: "ignore", shell: win })
   step("信任 osdk.toml（osdk trust）", "osdk", ["--yes", "trust", join(root, "osdk.toml")]);
   // Which registry pnpm will use and why (read-only): the first thing to look at when installing fails.
   step("依赖源（osdk registry test pnpm）", "osdk", ["registry", "test", "pnpm"], { optional: true });
-  step("安装工具与依赖（osdk install）", "osdk", ["--yes", "install"]);
+  // The toolchain, then the dependencies on their own: `osdk install` also rebuilds shims, and a machine
+  // where two tools provide one command (a global `omem` linked into both node's and npm's prefix) fails
+  // there after the dependencies are already in; that is the machine's to sort out, not a failed update.
+  step("安装工具（osdk install --no-deps）", "osdk", ["--yes", "install", "--no-deps"], { optional: true });
+  step("安装依赖（osdk deps）", "osdk", ["--yes", "deps"]);
   step("构建（osdk run build）", "osdk", ["--yes", "run", "build"]);
 } else {
   // Without osdk: pnpm directly, with the machine's own registry. Without a TTY (peer update,
