@@ -86,7 +86,7 @@ export function stopLeftovers(app: App) {
   for (const l of left) {
     if ([...previews.values()].some((p) => p.pid === l.pid)) continue;
     // Only if the pid still runs that command: it may have been reused by something else.
-    if (l.pid > 0 && commandLine(l.pid).includes(l.command.slice(0, 60))) killPid(l.pid);
+    if (l.pid > 1 && commandLine(l.pid).includes(l.command.slice(0, 60))) killPid(l.pid);
   }
   remember(app);
 }
@@ -123,8 +123,8 @@ export function getPreview(id: string, logChars = 8000): PreviewView {
 function end(app: App, p: Preview, status: PreviewStatus, reason: string | null, code: number | null = null) {
   if (p.status === "exited" || p.status === "stopped") return;
   Object.assign(p, { status, reason, exitCode: code, endedAt: new Date().toISOString(), ports: [] });
-  // The group: what the command started in the background goes too (`a & b`).
-  killPid(p.pid);
+  // The group: what the command started in the background goes too (`a & b`). Never an unknown pid (killPid refuses it too).
+  if (p.pid > 1) killPid(p.pid);
   children.delete(p.id);
   remember(app);
   // Ended ones stay listed a while, so the page can say why; then they go.
@@ -193,16 +193,24 @@ const live = (p: Preview) => p.status === "preparing" || p.status === "starting"
 /** Run one command of the preview in its folder (its own process group), output into its log. */
 function launch(app: App, p: Preview, command: string, exited: (code: number | null) => void) {
   const isWin = process.platform === "win32";
-  const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], {
-    cwd: p.folder,
-    detached: !isWin,
-    windowsHide: true,
-    windowsVerbatimArguments: isWin,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, BROWSER: "none", OMEM_PREVIEW: "1" },
-  });
-  Object.assign(p, { pid: child.pid ?? -1, current: command });
   p.log = `${p.log}$ ${command}\n`.slice(-LOG_MAX);
+  let child: ChildProcess;
+  try {
+    // Rejected before any process exists (a NUL in the command, a bad folder): the preview just ends.
+    child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], {
+      cwd: p.folder,
+      detached: !isWin,
+      windowsHide: true,
+      windowsVerbatimArguments: isWin,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, BROWSER: "none", OMEM_PREVIEW: "1" },
+    });
+  } catch (e) {
+    p.log = `${p.log}${(e as Error).message}\n`.slice(-LOG_MAX);
+    Object.assign(p, { pid: -1, current: command });
+    return end(app, p, "exited", "命令没能运行（看输出）", -1);
+  }
+  Object.assign(p, { pid: child.pid ?? -1, current: command });
   children.set(p.id, child);
   const add = (d: Buffer) => {
     p.log = (p.log + stripAnsi(d.toString())).slice(-LOG_MAX);
@@ -236,6 +244,7 @@ function isPage(host: string, port: number) {
 const idleMs = (app: App) => (app.config.preview?.idleMinutes ?? 30) * 60_000;
 
 async function scan(app: App, p: Preview) {
+  if (p.pid <= 1) return;
   p.scanning = true;
   try {
     const s = await scanPorts(p.pid);

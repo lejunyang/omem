@@ -28,8 +28,13 @@ export function commandLine(pid: number) {
   return (r.stdout ?? "").trim();
 }
 
-/** Stop a process and what it started (Windows: the whole tree; elsewhere: its process group, else itself). */
+/**
+ * Stop a process and what it started (Windows: the whole tree; elsewhere: its process group, else itself).
+ * Only a real child's pid: `kill(-1)` signals every process of this user and `kill(-pid)` of 0 or 1
+ * this process's own group or init, so anything not above 1 (an unknown pid) is refused.
+ */
 export function killPid(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return;
   if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
   else {
     try {

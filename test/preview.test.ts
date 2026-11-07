@@ -4,7 +4,8 @@ import { connect, createServer } from "node:net";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { killPid } from "../src/core/procs.ts";
 import { createRun, setRunOutput } from "../src/agents/runs.ts";
 import { previewCommands } from "../src/agents/previews.ts";
 import { descendants, parseLsof, parseNetstat, parseProcNetTcp, scanPorts } from "../src/core/listening.ts";
@@ -73,6 +74,16 @@ describe("preview parsing", () => {
       { host: "127.0.0.1", port: 61000, listening: false, pid: 777 },
     ]);
     expect([...descendants(1, [[1, 0], [2, 1], [3, 2], [4, 9], [5, 3]])].sort()).toEqual([1, 2, 3, 5]);
+  });
+
+  it("never signals an unknown pid: -1 is every process of this user, 0 and 1 this group and init", () => {
+    const kills = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      for (const pid of [-1, 0, 1, process.pid, Number.NaN]) killPid(pid);
+      expect(kills).not.toHaveBeenCalled();
+    } finally {
+      kills.mockRestore();
+    }
   });
 
   it("reads preview commands: named lines, or one unnamed command", () => {
@@ -194,10 +205,20 @@ describe("preview of a delegation's workspace", () => {
       s.once("error", () => ok(true));
     }), 15_000);
 
+    // A command that cannot even be spawned (a NUL in it) ends the preview at once, with no process to
+    // stop; starting another afterwards never signals an unknown pid (kill(-1) would hit every process).
+    const kills = vi.spyOn(process, "kill");
+    updateSpace(box, repo.id, { settings: { previewCommands: `商城: "${process.execPath}" launch.mjs\n坏: echo a\u0000b`, setupCommand: `"${process.execPath}" -e "require('fs').writeFileSync('setup.txt','ok')"` } });
+    const bad = await api<{ id: string; status: string; reason: string; log: string }>("/api/previews", { method: "POST", body: JSON.stringify({ run: r.id, space: repo.id, name: "坏" }) });
+    expect(bad).toMatchObject({ status: "exited", reason: "命令没能运行（看输出）" });
+    expect(bad.log).toMatch(/null bytes/);
+
     // The workspace goes away (applied elsewhere, reclaimed): the preview stops by itself.
     // Prepared once: the next preview starts right away.
-    const again = await api<{ id: string; status: string }>("/api/previews", { method: "POST", body: JSON.stringify({ run: r.id, space: repo.id }) });
+    const again = await api<{ id: string; status: string }>("/api/previews", { method: "POST", body: JSON.stringify({ run: r.id, space: repo.id, name: "商城" }) });
     expect(again.status).toBe("starting");
+    expect(kills.mock.calls.filter(([pid]) => Number(pid) <= 1 && Number(pid) >= -1)).toEqual([]);
+    kills.mockRestore();
     await until(async () => ((await api<{ status: string }>(`/api/previews/${again.id}`)).status === "running" ? true : null));
     setRunOutput(box, r.id, { appliedTo: [] });
     const gone = await until(async () => {
