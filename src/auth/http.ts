@@ -12,7 +12,7 @@ import { appView, setAppConfig } from "./apps.ts";
 import { listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { featuresOf, scopesFor } from "./features.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
-import { approveUser, beginLogin, completeLogin, consumeLoginLink, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, validInvite } from "./login.ts";
+import { approveUser, beginLogin, completeLogin, consumeLoginLink, larkAppLogin, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, validInvite } from "./login.ts";
 import { canLogIn, enabledProviders, loginProvider, loginProviders, offeredConnectors } from "./providers.ts";
 import { clearSessionCookie, cookies, createSession, lastSeen, liftRestriction, listSessions, revokeSession, revokeSessionHash, revokeUserSessions, SESSION_COOKIE, sessionCookie, sessionFor } from "./sessions.ts";
 
@@ -47,7 +47,7 @@ export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
 }
 
 /** Routes that find out who is asking themselves (logging in has to work before there is anyone). */
-export const AUTH_PUBLIC = /^\/api\/auth\/(session|logout|[a-z][a-z0-9-]*\/(start|callback)|link\/[A-Za-z0-9_-]{20,64})(\?.*)?$/;
+export const AUTH_PUBLIC = /^\/api\/auth\/(session|logout|lark\/app|[a-z][a-z0-9-]*\/(start|callback)|link\/[A-Za-z0-9_-]{20,64})(\?.*)?$/;
 /** What a pending user or a restricted session may still reach: who am I, my account, binding, signing out. */
 export const AUTH_LIMITED = /^\/api\/(me|auth\/[^?]*)(\?.*)?$/;
 
@@ -114,6 +114,8 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       user: u && !u.disabledAt ? userView(app, u.id) : null,
       via: u ? a!.via : null,
       restricted: !!a?.restricted,
+      // The Feishu web app (/lark/) asks Feishu for a sign-in code with this app id.
+      larkApp: app.config.lark.webApp && app.config.lark.appId ? app.config.lark.appId : null,
       login: {
         enabled: app.config.auth.enabled,
         primary: app.config.auth.primary ? loginView(app, app.config.auth.primary) : null,
@@ -161,6 +163,16 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       if (!(e instanceof HttpError)) console.warn(`[omem] 登录失败（${provider}）：${msg}`);
       return back(reply, base, `/login?error=${encodeURIComponent(msg)}`);
     }
+  });
+
+  // The Feishu web app (`/lark/`): a code from tt.requestAccess signs this browser in, without a login page.
+  server.post("/api/auth/lark/app", async (req, reply) => {
+    const { code } = parse(z.object({ code: z.string().min(1).max(512) }), req.body);
+    const base = baseUrl(app, req);
+    const r = await larkAppLogin(app, code);
+    if (r.kind === "session") startSession(req, reply, base, r.userId, r.via, r.restricted);
+    reply.header("cache-control", "no-store");
+    return { ok: true, userId: r.userId, restricted: r.kind === "session" ? r.restricted : false };
   });
 
   // A one-time link from the bot (`/login` in a private chat): opening it shows a button, pressing it signs in.

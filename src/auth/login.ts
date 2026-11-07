@@ -94,6 +94,27 @@ export async function completeLogin(app: App, input: { provider: string; state: 
   return r.kind === "bound" ? { ...r, connected: keep } : r;
 }
 
+/**
+ * Signing in from the Feishu web app (`/lark/`): the page got a one-time code from `tt.requestAccess`
+ * inside Feishu, with no authorization page in between. The same identities as a Feishu login; with
+ * multi-user login off, only the owner.
+ */
+export async function larkAppLogin(app: App, code: string): Promise<LoginResult> {
+  const p = requireProvider(app, "lark");
+  if (!app.config.lark.webApp) throw new HttpError(403, "没有打开飞书网页应用（设置 → 渠道）");
+  if (!p.exchange || !p.whoami) throw new HttpError(400, "飞书登录不可用");
+  const tokens = await p.exchange(app, { code, verifier: "", redirectUri: "" });
+  const who = await p.whoami(app, tokens);
+  if (!app.config.auth.enabled) {
+    if (!p.isOwner?.(app, who)) throw new HttpError(403, "omem 没有打开多人登录，只有它的主人能在飞书里打开");
+    return { kind: "session", userId: OWNER, restricted: false, via: "lark-app", returnTo: "", created: false };
+  }
+  const r = login(app, p, who, null, "");
+  if (r.kind !== "session") throw new HttpError(400, "登录没有完成");
+  if (tokens.refreshToken || findConnection(app, r.userId, p.id)) saveConnection(app, r.userId, p.id, who, tokens);
+  return r;
+}
+
 /** The account has the primary login provider bound (always true while none is set). */
 export const hasPrimary = (app: App, userId: string) => {
   const primary = app.config.auth.primary ? loginProvider(app.config.auth.primary) : null;

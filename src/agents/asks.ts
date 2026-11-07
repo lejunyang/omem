@@ -192,9 +192,21 @@ async function show(app: App, ask: Ask) {
   }
 }
 
-/** Where a person opens one question or view on the web (absolute when the web address is set). */
+/**
+ * Where a person opens one question or view on the web (absolute when the web address is set). With
+ * the Feishu web app on (`lark.webApp`), an AppLink that opens `/lark/` in Feishu's sidebar, signed in.
+ */
 export function uiLink(app: App, id: string) {
-  return webLink(app, `#/ui/${encodeURIComponent(id)}`);
+  const link = webLink(app, `#/ui/${encodeURIComponent(id)}`);
+  return /^https?:/.test(link) ? larkAppLink(app, `/lark/#/ui/${encodeURIComponent(id)}`) ?? link : link;
+}
+
+/** An AppLink to a page of the `/lark/` entry, or null when the web app is not set up. */
+export function larkAppLink(app: App, path: string) {
+  const base = app.config.webUrl?.trim().replace(/\/+$/, "");
+  const appId = app.config.lark.appId;
+  if (!app.config.lark.webApp || !appId || !base) return null;
+  return `https://applink.feishu.cn/client/web_app/open?appId=${encodeURIComponent(appId)}&mode=sidebar&lk_target_url=${encodeURIComponent(`${base}${path}`)}`;
 }
 
 /** An ask as plain text, for chats without buttons; `app` adds the link to its form. */

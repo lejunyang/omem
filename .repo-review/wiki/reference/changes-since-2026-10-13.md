@@ -1616,3 +1616,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `src/agents/ui-pages.ts`：`savePage` / `getPage`（表 `ui_pages`，每版一行，同步表），`pageDocument` 在页面最前面放 `<meta>` 安全策略（`PAGE_CSP`：`default-src 'none'`，只许内联脚本样式和 data: 图）、基础样式和桥（`window.omem`：`submit`、`draft`、`onInit`、`onTheme`、`open`，高度自动上报）。`asks` 加 `draft` 列，`saveDraft` / `draftOf`。
 - 工具 `ui_page`（`ask` 分组，`coder` 也有）：`html` 或工作区里的 `.html` 文件（同 `attach_artifact` 的目录范围），`page_id` 出新版。`page` 组件放进 `show` / `ask_user` 的 `view`（宿主补标题；和 `fields` 不能同在一个提问）；`answerAsk` 收页面交回的值（最多 20000 字符）。接口 `GET /api/ui/pages/:id?version=`、`POST /api/asks/:id/draft`。
 - 网页 `UiPage.vue`：`srcdoc` + `sandbox="allow-scripts"`，只认这个 iframe 发来的消息，发主题 token（浅色深色切换时更新）、存草稿、提交回答、只放行 `#/` 链接，全屏和版本切换；问答页里带交互页的提问跟在回复下面。飞书卡片里是一行说明加“打开交互页”。
+- 外部 Agent 编码（`code_workspace`）在游离 HEAD 上的提交要等它 `finish` 排的那一轮结束才放回分支；以前那一轮开头的 `placeOnBranch` 把工作区切回分支最新提交（分支在别处检出时），提交就留在了外面，检查和评审跑的是没有改动的代码。现在本次交办自己的工作区里在分支之上还没放回的提交会保留（分支没在别处检出时直接快进分支），刚借来的工作区仍从分支最新提交开始（`src/agents/code-branch.ts`，`test/code-sync.test.ts`）。
+
+## 2026-11-08：界面块第四阶段（飞书网页应用入口）
+
+- `web/lark/index.html` + `web/src/lark/`（`main.ts`、`LarkApp.vue`、`LarkHome.vue`）：Vite 第二个入口（`web/vite.config.ts` 的 `rollupOptions.input`），只有它加载飞书 JSSDK；登录：`tt.requestAccess`（103 退回 `requestAuthCode`）→ `POST /api/auth/lark/app`（`AUTH_PUBLIC` 放行）→ `login.ts` 的 `larkAppLogin`（`lark.ts` 的 `exchange` 在没有 `redirectUri` / `verifier` 时不带这两个参数）；不在飞书里跳回主站。
+- 配置 `lark.webApp`，`/api/auth/session` 返回 `larkApp`；`asks.ts` 的 `larkAppLink`，`uiLink` 在打开后给 `applink.feishu.cn/client/web_app/open?…&mode=sidebar&lk_target_url=…`。设置 → 渠道的开关写明开发者后台要填的主页和可信域名。测试 `test/lark-webapp.test.ts`。

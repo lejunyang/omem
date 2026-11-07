@@ -48,6 +48,14 @@ watch(() => route.query.section, (v) => {
   tab.value = "agents";
 });
 const config = ref<any>(null);
+/** The host Feishu has to trust for the web app (H5 可信域名). */
+const webHost = computed(() => {
+  try {
+    return new URL(config.value?.webUrl ?? "").host;
+  } catch {
+    return "";
+  }
+});
 type RerankStatus = { enabled: boolean; model: string; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number };
 const rerank = ref<RerankStatus | null>(null);
 const profiles = ref<Profile[]>([]);
@@ -1000,6 +1008,11 @@ async function saveEdit() {
       </div>
       <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>
       <label class="field"><span>网页地址（从飞书或其他设备打开 omem 页面用）</span><input class="input mono" :value="config.webUrl ?? ''" placeholder="如 http://192.0.2.10:4317，或反向代理的地址" @change="saveConfig({ webUrl: ($event.target as HTMLInputElement).value.trim() }, '已保存网页地址')" /><span class="muted small">填了以后，通知卡片里的“打开链接”和插件页的链接（如英语练习）在飞书里能直接打开，回答里引用的代码、工作文件、记忆和 Wiki 变成只读分享链接（设置 → 分享）；从其他设备打开还需要令牌（<span class="mono">omem link</span>）。</span></label>
+      <div class="field">
+        <UiCheckbox :model-value="!!config.lark.webApp" switch :disabled="!config.webUrl || !config.lark.appId" @change="(v) => saveConfig({ lark: { ...config.lark, webApp: v } }, v ? '已打开飞书网页应用' : '已关闭飞书网页应用')">飞书网页应用：表单和交互页在飞书侧边栏里打开，不用再登录</UiCheckbox>
+        <span v-if="!config.webUrl || !config.lark.appId" class="muted small">先填上面的网页地址{{ config.lark.appId ? "" : "并接入飞书机器人" }}。</span>
+        <span v-else class="muted small">打开前在飞书开发者后台给主机器人的应用（{{ config.lark.appId }}）：添加“网页应用”能力，桌面端和移动端主页都填 <span class="mono">{{ config.webUrl.replace(/\/+$/, "") }}/lark/</span>；安全设置的 H5 可信域名加上 <span class="mono">{{ webHost }}</span>；然后发布版本。手机和电脑都要能访问这个地址。打开后卡片上的“打开填写”“打开交互页”会在飞书侧边栏里打开。</span>
+      </div>
 
       <div class="card pad stack">
         <strong>其他机器人</strong>

@@ -234,6 +234,8 @@ Agent 现在只能用文字和人沟通。少数地方有按钮（`ask_owner` �
 
    2026-11-08 已做（`src/agents/ui-pages.ts`、`web/src/components/UiPage.vue`）：`ui_page(title, html | path, page_id?)` 存进 `ui_pages`（每版一行，随设备同步），`page` 组件放进 `show` 或 `ask_user` 的 `view`。和 2.2 节不同的地方：页面只能是单个文件，不经运行产物的密钥路径，而是网页取到文档后放进 `srcdoc` 的 iframe（只有 `sandbox="allow-scripts"`），宿主在文档最前面放 `<meta>` 的安全策略（`default-src 'none'`，脚本和样式只能内联，图片字体只能 data:，`connect-src 'none'`）、基础样式和桥。这样页面连 omem 自己也连不上，经设备转发、飞书里打开都不用另配；代价是不能引用别的文件，UI 套件里的库也就没做（第 11 节第 2 项）。主题：网页把当前的 token 值发给页面，切换浅色深色时实时更新。提交：页面所在的提问没有 `fields` 时，`omem.submit` 的值存成 `asks.value`（最多 20000 字符），说明文字作为回答；草稿存 `asks.draft`。编码 Agent（`coder`）也有 `ui_page`，可以把工作区里的原型交成页面放进提问。飞书卡片里交互页是一行说明和“打开交互页”链接。本地开发实例里看过：页面在问答页的提问里显示、能全屏、切版本，开关能点，深色主题实时生效，页面里的 `fetch` 被拦，`omem.submit` 的选择回到会话。
 4. **飞书网页应用**：`/lark/` 入口、免登、AppLink 打开侧边栏，设置里的检查。
+
+   2026-11-08 已做：`web/lark/index.html`（Vite 的第二个入口，唯一加载飞书 JSSDK 1.5.48 的页面）和 `web/src/lark/`：先 `GET /api/auth/session`，没登录时在飞书里 `h5sdk.ready` 后 `tt.requestAccess({ appID, scopeList: [] })`（客户端太旧报 103 时退回 `tt.requestAuthCode`），把 code 交给 `POST /api/auth/lark/app`；服务端用 v2 token 接口换令牌（不带 `redirect_uri` 和 PKCE），按飞书登录同样的身份规则发会话；没开多人登录时只认 `ownerOpenId`。不在飞书里（UA 不含 Lark/Feishu）就跳到主站同一个地址，走普通登录。路由只有 `#/ui/<id>`，复用主站的 `UiItem.vue`。配置 `lark.webApp`（设置 → 渠道，网页地址下面的开关，写明开发者后台要填的主页 `<webUrl>/lark/` 和 H5 可信域名）；打开后 `uiLink` 给 AppLink：`https://applink.feishu.cn/client/web_app/open?appId=…&mode=sidebar&lk_target_url=<编码后的 /lark/#/ui/<id>>`（参数按飞书文档“打开网页应用”核对过：`mode=sidebar` 在侧边栏打开，`lk_target_url` 需要飞书 5.12 以上）。没在飞书真机上验过：`requestAccess` 的 code 不带 `redirect_uri` 换令牌（文档没写明），会话 cookie 在飞书 webview 里能否保持，内网 http 地址能否作为主页和可信域名。
 5. **补充**：`rank`、可编辑的表格、问别的用户（`to`）、给卡片用的页面截图（需要本机有浏览器）。
 
 每个阶段按约定同步 README、architecture 状态表、acceptance、`.repo-review/wiki/reference/changes-since-2026-10-13.md`、`skills/omem/references/`；界面约定变了改 `.agents/skills/omem-design`。
@@ -259,5 +261,5 @@ Agent 现在只能用文字和人沟通。少数地方有按钮（`ask_owner` �
 3. 多字段提问是扩展 `ask_user`，还是另起一个工具。建议扩展，只保留一个入口。
 4. 问别的用户（`to`）放在哪个阶段，权限除了空间读权限还要不要再收紧。
 5. 网页应用用主机器人应用，还是单独建一个应用。建议用主应用，身份映射是现成的。
-6. 内网 http 地址能不能作为网页应用的主页（真机验证）。
+6. 内网 http 地址能不能作为网页应用的主页（真机验证）。另外第 4 阶段里 `requestAccess` 的 code 不带 `redirect_uri` 换令牌、飞书 webview 里的会话 cookie，都要真机确认。
 7. 给卡片用的页面截图依赖本机有浏览器（aad 或 Playwright），没有时只给链接。

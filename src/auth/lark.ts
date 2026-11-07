@@ -54,7 +54,8 @@ export const larkProvider = {
     const res = await authFetch(`${hosts(app).open}/open-apis/authen/v2/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ grant_type: "authorization_code", client_id: app.config.lark.appId, client_secret: secret(app), code: p.code, redirect_uri: p.redirectUri, code_verifier: p.verifier }),
+      // A code from the web app's requestAccess (no authorization page) comes without redirect_uri and PKCE.
+      body: JSON.stringify({ grant_type: "authorization_code", client_id: app.config.lark.appId, client_secret: secret(app), code: p.code, ...(p.redirectUri ? { redirect_uri: p.redirectUri } : {}), ...(p.verifier ? { code_verifier: p.verifier } : {}) }),
       signal: AbortSignal.timeout(15_000),
     });
     const v = await call<{ access_token?: string; refresh_token?: string; expires_in?: number; refresh_token_expires_in?: number; scope?: string }>(res, "换取令牌");

@@ -303,6 +303,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/auth/:provider/callback": "public",
   "GET /api/auth/link/:code": "public",
   "POST /api/auth/link/:code": "public",
+  "POST /api/auth/lark/app": "public",
   "POST /api/auth/logout": "public",
   "GET /api/auth/account": "self",
   "GET /api/auth/connections": "self",

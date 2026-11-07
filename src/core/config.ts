@@ -471,6 +471,12 @@ export const configSchema = z.object({
       enabled: z.boolean().default(false),
       appId: z.string().optional(),
       appSecretEnv: z.string().default("OMEM_LARK_APP_SECRET"),
+      /**
+       * The main bot's app has the web app ability (网页应用) with `<webUrl>/lark/` as its home page:
+       * links to forms and pages in Feishu then open in its sidebar, signed in without a login page
+       * (docs/v2/interactive-ui.md, “飞书网页应用入口”).
+       */
+      webApp: z.boolean().default(false),
       /** open_id of the owner; only the owner may command the bot. */
       ownerOpenId: z.string().optional(),
       defaultSpace: z.string().default("personal"),
@@ -648,6 +654,7 @@ export const configSchema = z.object({
     .default({
       enabled: false,
       appSecretEnv: "OMEM_LARK_APP_SECRET",
+      webApp: false,
       defaultSpace: "personal",
       bots: [],
       botRelay: 4,

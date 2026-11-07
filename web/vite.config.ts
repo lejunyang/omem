@@ -14,5 +14,11 @@ export default defineConfig({
     fs: { allow: [repoRoot] },
     proxy: { "/api": { target: api, changeOrigin: false, ws: true }, "/mcp": api, "/ide": { target: api, ws: true }, "/remote": { target: api, ws: true }, "/plugins": api },
   },
-  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 1500 },
+  // Two pages: the site, and the Feishu web app entry (/lark/), the only one that loads Feishu's JSSDK.
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: { input: { main: fileURLToPath(new URL("index.html", import.meta.url)), lark: fileURLToPath(new URL("lark/index.html", import.meta.url)) } },
+  },
 });
