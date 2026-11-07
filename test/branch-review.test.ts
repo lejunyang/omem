@@ -266,7 +266,11 @@ describe("reviewing an existing branch", () => {
       expect(card.options.map((o) => o.label)).toEqual(["按评审修改", "先不改"]);
       expect(card.question).toMatch(/分支评审要求修改/);
       expect(card.question).toMatch(/\*\*问题\*\*：严重 1 · 一般 1 · 提示 1，默认要改 1 个/);
-      expect(card.question).toContain("refund.ts");
+      // The problems to fix are a table under the question, not a list in it.
+      const fixes = card.ui!.view!.find((c) => c.type === "table") as { title?: string; rows: unknown[][] };
+      expect(fixes.title).toBe("默认要改的问题");
+      expect(String(fixes.rows[0][3])).toContain("refund.ts");
+      expect(card.question).not.toMatch(/^1\. \[/m);
       // A button with a note: the serious finding and the note become the fix, on the branch.
       await answerAsk(app, card.id, { choice: 0, text: "顺便把退款原因写进日志", by: "owner" });
       const fixRun = listRuns(app, { kind: "code" }).find((x) => (x.input as { fromReview?: string }).fromReview === r.id)!;

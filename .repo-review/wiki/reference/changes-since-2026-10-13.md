@@ -1628,3 +1628,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `ui-blocks.ts`：字段 `rank`、`table`（`normalizeAnswers`、摘要、文字版）；`lark-asks.ts` 的 `cardFields` 遇到它们返回 null（退回网页）。网页 `UiFields.vue` 用上移 / 下移和带 `UiSelect` 的表格；SDK 渲染器同样支持。
 - `ask_user` 的 `to`（`tools.ts`）：本人自己会话里 `kind = ask` 的一轮、对方能读空间才行；提问 `context` 记 `askedBy` / `toName`（`Ask` 上的同名字段），`asks.ts` 的 `show` 只通知对方和发对方的飞书私聊（`lark-asks.ts` 的 `targetFor`），`describeAnswer` 用对方的名字，`deliverAnswer` 以提问人的身份回到原会话；`/api/asks` 和 `/api/ui/:id` 带 `askedByName`，`AskCard` 显示是谁的助手在问。
 - `lark-ui.ts` 的 `preparePageShots`：有 Playwright 时发卡片前给交互页截图并上传，`kv` 的 `ui_page_shot:<页>:<版>:<机器人>` 记图片 key，`viewCardBlocks` 放截图。测试 `test/ui-ask-others.test.ts`。
+
+## 2026-11-08：评审卡片改用组件块
+
+- `review-chain.ts`：`askPlan` 的 `ui.view` 是指标（评审档、最多轮数、评审项数）+ 表格（评审项、阻塞级别）+ 编码说明和理由；`askDone` 的“默认要改的问题”是表格（最多 50 行），正文去掉编号列表。处理逻辑（`review-plan` / `review-done`）不变。

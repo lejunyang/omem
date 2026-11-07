@@ -1,3 +1,4 @@
+import { viewText } from "../src/agents/ui-blocks.ts";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,7 +79,9 @@ describe("review-lead", () => {
       // Round 1 codes, plans the review and waits for the owner.
       expect((await work(app, r1.id)).verdict).toBe("awaiting-plan");
       const planAsk = getAsk(app, String(getRun(app, r1.id).output.reviewAskId));
-      expect(planAsk.question).toContain("「标准」档");
+      // The plan is a table and metrics under the question (component blocks); text channels read it as text.
+      expect(viewText(planAsk.ui!.view!)).toContain("评审档：标准");
+      expect(planAsk.ui!.view!.find((c) => c.type === "table")).toMatchObject({ title: "评审计划", columns: ["评审项", "多严重算阻塞"] });
       expect((getRun(app, ask.id).output.codeChain as CodeChain)).toMatchObject({ awaitingUser: true, waitReason: "plan" });
       expect(getRun(app, r1.id).output.codeResultMessageId).toBeUndefined();
       expect(JSON.stringify(snapshot(app, getRun(app, ask.id).output.codeChain as CodeChain))).toContain("评审计划等你确认");

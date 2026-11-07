@@ -226,7 +226,9 @@ Agent 现在只能用文字和人沟通。少数地方有按钮（`ask_owner` �
 
 1. **组件块和提问**：`ask_owner` 改名为 `ask_user`，多字段提问，结构化回答，`show` 展示组件块。网页问答、编码交办视图和插件页用同一个渲染器。`plugin_form` / `plugin_chart` 去掉。宿主的评审计划和待修改问题改用组件块。
 
-   2026-11-08 已做：`src/agents/ui-blocks.ts`（第 2.1 节除 `diff`、`artifact`、`page`、`person`、`space`、`source`、`rank`、`steps` 以外的组件）、`ask_user` 的 `fields` / `view` / `submit_label`、`asks.value`、`show` 与 `ui_views`、`#/ui/<id>` 页面、飞书卡片的字段说明和链接、插件会话的 `ask` / `view` 块、删掉 `plugin_form` / `plugin_chart`。和设计不同的地方：展示组件只有一个渲染器（`packages/plugin-sdk/blocks.ts`），表单在 omem 网页上用 omem 自己的控件画（`web/src/components/UiFields.vue`，不用原生日期控件），插件页用 SDK 里的简单控件；带表单的提问在问答页跟在提出它的那条回复下面，不放在输入框上方。没做：宿主的评审计划、待修改问题改用组件块（编码交办视图里编码 Agent 的提问照常是 `AskCard`，已能带表单）。
+   2026-11-08 已做：`src/agents/ui-blocks.ts`（第 2.1 节除 `diff`、`artifact`、`page`、`person`、`space`、`source`、`rank`、`steps` 以外的组件）、`ask_user` 的 `fields` / `view` / `submit_label`、`asks.value`、`show` 与 `ui_views`、`#/ui/<id>` 页面、飞书卡片的字段说明和链接、插件会话的 `ask` / `view` 块、删掉 `plugin_form` / `plugin_chart`。和设计不同的地方：展示组件只有一个渲染器（`packages/plugin-sdk/blocks.ts`），表单在 omem 网页上用 omem 自己的控件画（`web/src/components/UiFields.vue`，不用原生日期控件），插件页用 SDK 里的简单控件；带表单的提问在问答页跟在提出它的那条回复下面，不放在输入框上方。宿主的评审计划、待修改问题后来也改用了组件块（见下）。编码交办视图里编码 Agent 的提问照常是 `AskCard`，能带表单和交互页。
+
+   2026-11-08 补做（`src/agents/review-chain.ts`）：评审计划确认（`askPlan`）的问题只留一句，评审档、轮数、评审项数是指标，评审项和各自的阻塞级别是表格，编码说明和理由是 Markdown；评审结束要你决定的卡片（`askDone`）把“默认要改的问题”从正文里前 5 条的编号列表改成全部问题的表格（级别、问题、位置，最多 50 行）。按钮和处理逻辑不变。修改项提问（`code-task`）没改：它在飞书里本来就有专门的排版，产物组件也还没做。
 2. **飞书卡片**：能映射的组件直接画，不能映射的给网页链接。
 
    2026-11-08 已做（`src/channels/lark-asks.ts` 的 `cardFields` / `valueFromCard`，`src/channels/lark-ui.ts`）：带表单的提问在卡片的 `form` 里直接填，字段映射见 5.1 的表（`pick` 是下拉，方案的要点写在表单上方；`checklist` 每条一个下拉和一个备注框，超过 12 条退回网页；`show_if` 的字段在卡片里都显示，标明“X 是 Y 时填”，不标必填，宿主按条件丢掉不适用的）；提交先由宿主检查，错了弹出原因、卡片不关；卡片超过约 24 KB 退回字段说明加网页链接。日期选择器回来的是“2026-11-15 +0800”，日期时间是“2026-11-15 14:00 +0800”（按飞书文档），宿主转成 `2026-11-15` 和带时区的时间。展示组件里的表格和图表用卡片自己的 `table`、`chart`（VChart）元素，每种最多 5 个，其余写成文字；`show` 交出的内容在飞书里是回复之后的一张卡片，发失败时改发文字。没在真机上看过。

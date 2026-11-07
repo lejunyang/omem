@@ -1,3 +1,4 @@
+import type { ViewComponent } from "./ui-blocks.ts";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import type { RoleName } from "../core/config.ts";
@@ -502,12 +503,21 @@ export function askPlan(app: App, run: Run, chain: CodeChain | null, plan: Revie
   const change = (out.repos ?? []).map((r) => r.diffStat.split("\n").pop()?.trim()).filter(Boolean).join("；");
   const failedCheck = (out.repos ?? []).some((r) => r.check && r.check.code !== 0);
   const coded = isBranchReview(run) ? "" : [change && `**改动**：${change}${(out.repos ?? []).some((r) => r.check) ? `，检查${failedCheck ? "没通过" : "通过"}` : ""}`, out.coderSummary && `**编码 Agent 的说明**：${truncate(out.coderSummary.trim(), 600)}`].filter(Boolean).join("\n");
+  // The plan as component blocks (docs/v2/interactive-ui.md): a table on the web and in the Feishu card, text elsewhere.
+  const blocks = new Map(reviewChecks(app).map((c) => [c.name, c.blocks]));
+  const view: ViewComponent[] = [
+    ...(coded ? [{ type: "markdown" as const, text: coded }] : []),
+    { type: "metric", items: [{ label: "评审档", value: plan.tierName }, { label: "最多轮数", value: plan.maxRounds }, { label: "评审项", value: plan.checks.length }] },
+    { type: "table", title: "评审计划", columns: ["评审项", "多严重算阻塞"], rows: plan.checks.map((c) => [labels.get(c) ?? c, `${SEVERITY_LABEL[(blocks.get(c) ?? "major") as Severity]}及以上`]) },
+    ...(plan.reasons.length ? [{ type: "markdown" as const, text: `**理由**：${plan.reasons.join("；")}` }] : []),
+  ];
   return createAsk(app, {
     runId: run.id,
     conversationId: chain ? reportConversation(app, chain) : null,
-    question: `「${truncate(run.title, 40)}」${isBranchReview(run) ? "分支已检出" : "第 1 轮编码完成"}。${coded ? `\n${coded}\n` : ""}评审计划：「${plan.tierName}」档，${plan.checks.map((c) => labels.get(c) ?? c).join("、")}，最多 ${plan.maxRounds} 轮。\n理由：${plan.reasons.join("；")}\n开始评审吗？也可以直接回一句补充要求。`,
+    question: `「${truncate(run.title, 40)}」${isBranchReview(run) ? "分支已检出" : "第 1 轮编码完成"}，按下面的计划评审。开始评审吗？也可以直接回一句补充要求。`,
     options,
     context: { handler: "review-plan", codeRunId: run.id, tiers: [plan.tier, ...tiers.slice(0, 4).map((t) => t.id)] },
+    ui: { view },
   });
 }
 
@@ -605,12 +615,19 @@ export function askDone(app: App, run: Run, chain: CodeChain | null, d: { title:
     : branch
     ? "改动已经按提交在工作分支上；确认后推到 origin，归还工作区。要压缩提交、改分支名或先在仓库目录检出验证，在网页的运行页操作。"
     : "改动在独立的工作区里，应用后成为仓库里未提交的修改。";
+  // The problems to fix as a table (all of them, not the first five of the digest's list).
+  const where = (f: { file_path: string | null; line: number | null }) => (f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""}` : "");
+  const view: ViewComponent[] | null = toFix.length
+    ? [{ type: "table", title: labels[0] === FIX ? "默认要改的问题" : "要改的问题", columns: ["#", "级别", "问题", "位置"], rows: toFix.slice(0, 50).map((f, i) => [i + 1, SEVERITY_LABEL[f.severity as Severity], f.title, where(f)]), ...(toFix.length > 50 ? { note: `另有 ${toFix.length - 50} 个，在网页上看` } : {}) }]
+    : null;
+  const digest = view ? d.digest.split("\n").filter((l) => !/^\d+\. \[/.test(l) && !l.startsWith("……另有")).join("\n") : d.digest;
   return createAsk(app, {
     runId: run.id,
     ...(chain ? { conversationId: reportConversation(app, chain) } : {}),
-    question: `**${d.title}**\n\n${d.digest}\n\n${hint}`,
+    question: `**${d.title}**\n\n${digest}\n\n${hint}`,
     options: labels.map((label) => ({ label })),
     context: { handler: "review-done", codeRunId: run.id, labels },
+    ...(view ? { ui: { view } } : {}),
   });
 }
 
