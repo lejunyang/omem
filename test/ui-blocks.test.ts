@@ -4,7 +4,7 @@ import { normalizeAnswers, viewText, type UiField } from "../src/agents/ui-block
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { run } from "../src/core/db.ts";
-import { askCard } from "../src/channels/lark-asks.ts";
+import { askCard, handleAskAction, viewCard } from "../src/channels/lark-asks.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
@@ -87,16 +87,36 @@ describe("component blocks", () => {
     expect(getAsk(app, ask.id)).toMatchObject({ status: "answered", answer: "先别上线，下周再说", value: null });
   });
 
-  it("a Feishu card for a form lists what to fill in and links to its page", async () => {
+  it("a Feishu card holds the form when it fits: fields map to card inputs, a submit is checked and answers", async () => {
     const { app, thread, ctx } = working("lark");
     app.config.webUrl = "https://omem.example.test/";
     await callTool(ctx, "ask_user", { question: "怎么上线？", fields: plan, view: [{ type: "metric", items: [{ label: "待退款", value: 12, unit: " 单" }] }], wait_seconds: 0 });
     const ask = listAsks(app, { conversationId: thread.id })[0];
     const card = JSON.stringify(askCard(app, ask));
     expect(card).toContain("待退款：12 单");
+    expect(card).toContain('"tag":"form"');
+    for (const tag of ["select_static", "date_picker", "checker"]) expect(card).toContain(`"tag":"${tag}"`);
+    expect(card).toContain('"name":"c_rules__r2"');
+    expect(card).toContain("哪天开始（选哪个方案是 a 时填）");
+    expect(card).toContain(`https://omem.example.test/#/ui/${ask.id}`);
+    // A mistake keeps the card open with the reason; a good submit answers with the values.
+    expect(await handleAskAction(app, "ci_none", ask.id, { name: "submit", formValue: { f_plan: "a", c_rules__r1: "通过" } }, "owner")).toEqual({ toast: "还没填：哪天开始、逐条确认退款规则" });
+    expect(getAsk(app, ask.id).status).toBe("pending");
+    const r = await handleAskAction(app, "ci_none", ask.id, { name: "submit", formValue: { f_plan: "a", f_when: "2026-12-01 +0800", f_notify: true, c_rules__r1: "通过", c_rules__r2: "不通过", n_rules__r2: "运费不退", text: "周一灰度" } }, "owner");
+    expect(r.toast).toBe("已回答");
+    expect(getAsk(app, ask.id)).toMatchObject({ status: "answered", value: { plan: "a", when: "2026-12-01", notify: true, rules: { r1: { choice: "通过" }, r2: { choice: "不通过", note: "运费不退" } } } });
+  });
+
+  it("a form too big for a card lists what to fill in and links to its page", async () => {
+    const { app, thread, ctx } = working("lark");
+    app.config.webUrl = "https://omem.example.test/";
+    const items = Array.from({ length: 20 }, (_, i) => ({ id: `r${i}`, title: `规则 ${i}` }));
+    await callTool(ctx, "ask_user", { question: "逐条确认", fields: [{ id: "rules", label: "逐条确认退款规则", type: "checklist", required: true, items }], wait_seconds: 0 });
+    const ask = listAsks(app, { conversationId: thread.id })[0];
+    const card = JSON.stringify(askCard(app, ask));
+    expect(card).not.toContain('"tag":"form"');
     expect(card).toContain("逐条确认退款规则（必填）");
     expect(card).toContain(`https://omem.example.test/#/ui/${ask.id}`);
-    expect(card).not.toContain('"tag":"form"');
   });
 
   it("show puts components under the reply: the web lists them, Feishu gets text and a link once the reply is out", async () => {
@@ -123,6 +143,27 @@ describe("component blocks", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].text).toContain("| B | 高\\|中 |");
     expect(sent[0].text).toMatch(/\[在网页上查看\]\(https:\/\/omem\.example\.test\/#\/ui\/uv/);
+  });
+
+  it("a Feishu card draws tables and charts with its own elements", () => {
+    const app = testApp();
+    app.config.webUrl = "https://omem.example.test";
+    const card = viewCard(app, { id: "uv1", title: "退款", components: [
+      { type: "table", title: "两种方式", columns: ["方式", "影响订单"], rows: [["灰度", 48], ["一次上线", "482"]] },
+      { type: "chart", title: "每天", kind: "bar", labels: ["周一", "周二"], series: [{ name: "上周", values: [3, 4] }, { name: "本周", values: [5, 6] }] },
+      { type: "chart", title: "原因", kind: "pie", labels: ["质量", "其他"], series: [{ name: "单", values: [7, 3] }] },
+      { type: "metric", items: [{ label: "退款单", value: 482 }] },
+    ] });
+    const els = (card.body as { elements: Record<string, any>[] }).elements;
+    const tableEl = els.find((e) => e.tag === "table")!;
+    expect(tableEl.columns).toEqual([{ name: "c0", display_name: "方式", data_type: "text" }, { name: "c1", display_name: "影响订单", data_type: "number", horizontal_align: "right" }]);
+    expect(tableEl.rows).toEqual([{ c0: "灰度", c1: 48 }, { c0: "一次上线", c1: 482 }]);
+    const [bar, pie] = els.filter((e) => e.tag === "chart");
+    expect(bar.chart_spec).toMatchObject({ type: "bar", xField: ["x", "s"], yField: "v", seriesField: "s" });
+    expect(bar.chart_spec.data.values).toContainEqual({ x: "周二", s: "本周", v: 6 });
+    expect(pie.chart_spec).toMatchObject({ type: "pie", valueField: "value", categoryField: "type", data: { values: [{ type: "质量", value: 7 }, { type: "其他", value: 3 }] } });
+    expect(JSON.stringify(els)).toContain("退款单：482");
+    expect(JSON.stringify(els)).toContain("https://omem.example.test/#/ui/uv1");
   });
 
   it("views read as text where they cannot be drawn", () => {

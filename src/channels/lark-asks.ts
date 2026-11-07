@@ -1,11 +1,12 @@
-import { addAskSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
-import { fieldsText, viewText } from "../agents/ui-blocks.ts";
+import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
+import { viewCardBlocks, viewTarget } from "./lark-ui.ts";
+import { fieldsText, normalizeAnswers, type UiField } from "../agents/ui-blocks.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
-import { truncate } from "../core/util.ts";
+import { HttpError, truncate } from "../core/util.ts";
 import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
-import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, sendLark, textWidth, updateLarkCard, type CardBlock, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
 import { getTask } from "../agents/code-tasks.ts";
 
@@ -84,7 +85,7 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
   }
   const blocks = questionBlocks(app, ask);
   // What the agent showed with the question comes first, as text (docs/v2/interactive-ui.md).
-  if (ask.ui?.view?.length) blocks.push({ markdown: resolveCitationsSync(app, truncate(viewText(ask.ui.view), 3000)) });
+  if (ask.ui?.view?.length) blocks.push(...viewCardBlocks(app, ask.ui.view));
   const at = ask.kind === "suggestion" ? "" : cardMentions([opts.mention]);
   if (at) {
     const first = blocks[0];
@@ -94,10 +95,23 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
   // A form is filled in on the web page of the question; a reply in the chat still answers it.
   if (ask.ui?.fields?.length) {
     const link = uiLink(app, ask.id);
-    blocks.push({ markdown: `要填的：
-${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` });
-    if (/^https?:/.test(link)) blocks.push({ buttons: [{ text: "打开填写", url: link, style: "primary" }] });
-    blocks.push({ note: /^https?:/.test(link) ? "也可以直接回复文字。" : "在 omem 网页上填写，或直接回复文字（设置 → 渠道 填网页地址后这里会有链接）。" });
+    const web = /^https?:/.test(link);
+    // Fields a card can hold are filled in right here; the rest is filled in on the web page.
+    const fields = cardFields(ask.ui.fields);
+    const base = blocks.length;
+    if (fields) {
+      const picks = ask.ui.fields.filter((f): f is Extract<UiField, { type: "pick" }> => f.type === "pick");
+      for (const p of picks) blocks.push({ markdown: `**${cardText(p.label)}**\n${cardText(truncate(fieldsText([p]).split("\n").slice(1).join("\n"), 2000))}` });
+      if (ask.allowText) fields.push({ type: "input", name: "text", label: "补充说明（可不填）", multiline: true });
+      blocks.push({ form: { name: "ask", fields, submit: ask.ui.submitLabel || "提交" } });
+      if (web) blocks.push({ buttons: [{ text: "在网页上填写", url: link }] });
+      const card = buildCard({ title: TITLE.question, color: "blue", blocks });
+      if (JSON.stringify(card).length <= CARD_FORM_MAX) return card;
+      blocks.length = base;
+    }
+    blocks.push({ markdown: `要填的：\n${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` });
+    if (web) blocks.push({ buttons: [{ text: "打开填写", url: link, style: "primary" }] });
+    blocks.push({ note: web ? "也可以直接回复文字。" : "在 omem 网页上填写，或直接回复文字（设置 → 渠道 填网页地址后这里会有链接）。" });
     return buildCard({ title: TITLE.question, color: "blue", blocks });
   }
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
@@ -151,7 +165,19 @@ function larkUserIdOf(app: App, userId: string) {
   return openId ? one<{ user_id: string | null }>(app.db, "select user_id from lark_people where bot_open_id = ?", openId)?.user_id ?? undefined : undefined;
 }
 
+/** A view shown under a reply (`show`), as a card of its own after the reply. */
+export function viewCard(app: App, view: { id: string; title: string; components: Parameters<typeof viewCardBlocks>[1] }) {
+  const link = uiLink(app, view.id);
+  return buildCard({ ...(view.title ? { title: view.title } : {}), color: "grey", blocks: [...viewCardBlocks(app, view.components), ...(/^https?:/.test(link) ? [{ buttons: [{ text: "在网页上查看", url: link }] }] : [])] });
+}
+
 export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined) {
+  addViewSink(async (app, view) => {
+    const to = viewTarget(app, view.conversationId);
+    if (!to) return false;
+    await sendLark(to, { card: viewCard(app, view) });
+    return true;
+  });
   addAskSink({
     async show(app, ask) {
       const to = targetFor(app, ask, ownerOpenId());
@@ -198,6 +224,102 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
   });
 }
 
+/** A card form much bigger than this goes to the web page instead (Feishu caps a card at about 30 KB). */
+const CARD_FORM_MAX = 24_000;
+/** A checklist this long is easier on the web page. */
+const CARD_CHECKLIST_MAX = 12;
+
+/**
+ * A question's fields as card form fields (docs/v2/interactive-ui.md, “卡片里直接画”), or null when
+ * they do not fit a card. A card cannot hide a field by another's answer: a conditional field says
+ * when it applies, is never marked required there, and the host drops it when it does not apply.
+ */
+export function cardFields(fields: UiField[]): CardField[] | null {
+  const out: CardField[] = [];
+  const labelOf = (id: string) => fields.find((f) => f.id === id)?.label ?? id;
+  for (const f of fields) {
+    const when = f.show_if ? `（${labelOf(f.show_if.field)}${f.show_if.in ? `选了 ${f.show_if.in.join(" / ")}` : f.show_if.equals !== undefined ? `是 ${f.show_if.equals === true ? "是" : f.show_if.equals === false ? "否" : f.show_if.equals}` : "填了"} 时填）` : "";
+    const label = `${f.label}${when}${f.help ? `\n${f.help}` : ""}`;
+    const required = f.required && !f.show_if;
+    const name = `f_${f.id}`;
+    switch (f.type) {
+      case "text":
+      case "textarea":
+        out.push({ type: "input", name, label, required, multiline: f.type === "textarea", ...(f.placeholder ? { placeholder: f.placeholder } : {}), ...(f.default ? { default: f.default } : {}) });
+        break;
+      case "number":
+        out.push({ type: "input", name, label, required, placeholder: `数字${f.min !== undefined || f.max !== undefined ? `（${f.min ?? ""}–${f.max ?? ""}）` : ""}`, ...(f.default !== undefined ? { default: String(f.default) } : {}) });
+        break;
+      case "choice":
+      case "multi":
+        out.push({ type: f.type === "choice" ? "select" : "multi_select", name, label, required, options: f.options.map((o) => ({ text: o, value: o })), ...(f.type === "choice" && f.default ? { default: f.default } : {}) });
+        break;
+      case "scale":
+        out.push({ type: "select", name, label, required, options: ["1", "2", "3", "4", "5"].map((o) => ({ text: o, value: o })) });
+        break;
+      case "date":
+      case "datetime":
+        out.push({ type: f.type, name, label, required });
+        break;
+      case "toggle":
+        out.push({ type: "checkbox", name, label, checked: !!f.default });
+        break;
+      case "pick":
+        out.push({ type: "select", name, label, required, options: f.items.map((i) => ({ text: i.title, value: i.id })) });
+        break;
+      case "checklist":
+        if (f.items.length > CARD_CHECKLIST_MAX) return null;
+        f.items.forEach((it, i) => {
+          out.push({ type: "select", name: `c_${f.id}__${it.id}`, label: `${i === 0 ? `${label}\n` : ""}${it.title}`, required, options: f.choices.map((c) => ({ text: c, value: c })) });
+          if (f.note) out.push({ type: "input", name: `n_${f.id}__${it.id}`, placeholder: "备注（可不填）" });
+        });
+        break;
+    }
+  }
+  return out.length <= 40 ? out : null;
+}
+
+/** Feishu's date pickers answer “2026-11-15 +0800” and “2026-11-15 14:00 +0800”. */
+function cardTime(v: unknown, withTime: boolean) {
+  const m = typeof v === "string" ? /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?(?:\s*([+-]\d{2}):?(\d{2}))?/.exec(v.trim()) : null;
+  if (!m) return v;
+  if (!withTime) return m[1];
+  return `${m[1]}T${m[2] ?? "00:00"}:00${m[3] ? `${m[3]}:${m[4]}` : ""}`;
+}
+
+/** What a card form sent, as the values a question's fields take. */
+export function valueFromCard(fields: UiField[], form: Record<string, unknown>) {
+  const value: Record<string, unknown> = {};
+  for (const f of fields) {
+    const v = form[`f_${f.id}`];
+    switch (f.type) {
+      case "checklist": {
+        const map: Record<string, { choice: string; note?: string }> = {};
+        for (const it of f.items) {
+          const choice = form[`c_${f.id}__${it.id}`];
+          const note = form[`n_${f.id}__${it.id}`];
+          if (typeof choice === "string" && choice) map[it.id] = { choice, ...(typeof note === "string" && note.trim() ? { note } : {}) };
+        }
+        if (Object.keys(map).length) value[f.id] = map;
+        break;
+      }
+      case "toggle":
+        if (v !== undefined) value[f.id] = v === true || v === "true";
+        break;
+      case "scale":
+        if (v !== undefined && v !== "") value[f.id] = Number(v);
+        break;
+      case "date":
+      case "datetime":
+        if (v) value[f.id] = cardTime(v, f.type === "datetime");
+        break;
+      default:
+        if (v !== undefined && v !== null && v !== "") value[f.id] = v;
+    }
+  }
+  return value;
+}
+
 /** A click or form submit on an ask card (lark-actions routes purpose "ask" here). */
 export async function handleAskAction(app: App, interactionId: string, askId: string, action: { name?: string; value?: unknown; formValue?: unknown }, by: string) {
   const ask = getAsk(app, askId);
@@ -206,7 +328,17 @@ export async function handleAskAction(app: App, interactionId: string, askId: st
   const fromValue = typeof action.value === "object" && action.value ? String((action.value as { action?: unknown }).action ?? "") : "";
   const opt = /^opt_(\d+)$/.exec(action.name ?? "")?.[1] ?? /^ask:(\d+)$/.exec(fromValue)?.[1];
   let input: Parameters<typeof answerAsk>[2];
-  if (ask.kind === "approval") {
+  const form = typeof action.formValue === "object" && action.formValue ? (action.formValue as Record<string, unknown>) : null;
+  if (ask.ui?.fields?.length && form && Object.keys(form).some((k) => /^[fcn]_/.test(k))) {
+    // A form filled in on the card: checked here first, so a mistake keeps the card open with the reason.
+    const value = valueFromCard(ask.ui.fields, form);
+    try {
+      normalizeAnswers(ask.ui.fields, value);
+    } catch (e) {
+      return { toast: e instanceof HttpError ? e.message : "填写有误" };
+    }
+    input = { value, text, by };
+  } else if (ask.kind === "approval") {
     if (action.name !== "approve" && action.name !== "reject") return { toast: "请点批准或拒绝" };
     input = { approved: action.name === "approve", text, by };
   } else if (opt !== undefined) input = { choice: Number(opt), text, by };

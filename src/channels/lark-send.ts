@@ -89,7 +89,9 @@ export type CardBlock =
   | { note: string }
   | { hr: true }
   /** Folded section (collapsible panel), closed by default: long detail under a short answer. */
-  | { fold: { title: string; markdown: string; open?: boolean } };
+  | { fold: { title: string; markdown: string; open?: boolean } }
+  /** A card element the host built itself (a table or chart, src/channels/lark-ui.ts); never model output as is. */
+  | { element: Record<string, unknown> };
 export type CardSpec = {
   title?: string;
   subtitle?: string;
@@ -244,6 +246,7 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
         elements: [{ tag: "markdown", content: b.fold.markdown.slice(0, 20000) }],
       });
     else if ("image" in b) elements.push({ tag: "img", img_key: b.image, alt: plain(b.alt ?? "") });
+    else if ("element" in b) elements.push(b.element);
     else if ("fields" in b)
       elements.push({
         tag: "column_set",

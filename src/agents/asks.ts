@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, newId, now, truncate, webLink } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
-import { fieldsText, normalizeAnswers, summarizeAnswers, viewText, type AskUi } from "./ui-blocks.ts";
+import { fieldsText, normalizeAnswers, summarizeAnswers, viewText, type AskUi, type ViewComponent } from "./ui-blocks.ts";
 
 /**
  * Choices put in front of the owner while agents work, answered with one click (Feishu card, web)
@@ -220,12 +220,27 @@ export async function showSuggestions(app: App, runId: string) {
  * Views a run showed (`show`): the web and plugin pages draw them under the reply; other channels
  * get them as text with a link to the drawn one, once the reply has gone out.
  */
+/** Channels that draw a view themselves (the Feishu bot posts a card); text otherwise. */
+export type ShownView = { id: string; conversationId: string; title: string; components: ViewComponent[] };
+type ViewSink = (app: App, view: ShownView) => Promise<boolean>;
+const viewSinks: ViewSink[] = [];
+export function addViewSink(s: ViewSink) {
+  viewSinks.push(s);
+}
+
 async function deliverViews(app: App, runId: string) {
   const views = all<{ id: string; conversation_id: string | null; title: string; components: string }>(app.db, "select id, conversation_id, title, components from ui_views where run_id = ? and delivered_at is null order by created_at", runId);
   for (const v of views) {
     if (!run(app.db, "update ui_views set delivered_at = ? where id = ? and delivered_at is null", now(), v.id).changes) continue;
     const channel = v.conversation_id ? one<{ channel: string }>(app.db, "select channel from conversations where id = ?", v.conversation_id)?.channel : null;
     if (!channel || channel === "web" || channel === "cli" || channel.startsWith("plugin:")) continue;
+    const shown: ShownView = { id: v.id, conversationId: v.conversation_id!, title: v.title, components: JSON.parse(v.components) };
+    let drawn = false;
+    for (const s of viewSinks) {
+      drawn = await s(app, shown).catch((e: Error) => (console.warn(`[omem] 展示块 ${v.id} 发卡片失败，改发文字：${e.message}`), false));
+      if (drawn) break;
+    }
+    if (drawn) continue;
     const { deliverToThread } = await import("./inbox.ts");
     const text = `${v.title ? `**${v.title}**\n\n` : ""}${viewText(JSON.parse(v.components))}\n\n[在网页上查看](${uiLink(app, v.id)})`;
     await deliverToThread(app, v.conversation_id!, text, { view: v.id }).catch((e: Error) => console.warn(`[omem] 展示块 ${v.id} 发送失败：${e.message}`));

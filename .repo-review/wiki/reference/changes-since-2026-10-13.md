@@ -1605,3 +1605,8 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 网页：`UiView.vue`（SDK 渲染器 + Markdown 组件）、`UiFields.vue`（omem 控件的表单）、`AskCard` 带表单、问答页的表单跟在回复下面、`views/UiItem.vue`（`#/ui/:id`）。
 - 角色：`_common.md`“问本人、给本人选项”讲什么时候用表单、`pick`、`checklist` 和 `show`；`coder.md`、英语陪练改用新工具。`skills/omem/references/owner.md` 同步。
 - 同一次运行里再交一张表单（重答的一轮、改过的表单）会取消还没填的旧表单，避免会话里挂两张。真实 Agent（codex-cli）试过：团建这类要问好几项的问题，一张表问完（日期 `date`、人数和预算 `number`、方案 `pick` 带要点和代价），提交后下一轮照着值排了日程和预算。
+
+## 2026-11-08：界面块第二阶段（飞书卡片里直接填表、卡片里的表格和图表）
+
+- `lark-asks.ts`：`cardFields` 把提问的字段映射成卡片表单（输入、下拉、多选下拉、日期、日期时间、勾选；`pick` 下拉，`checklist` 每条下拉加备注框，超过 12 条或卡片超过约 24 KB 退回网页链接），`valueFromCard` 把表单值转回字段值（日期 “2026-11-15 +0800” → `2026-11-15`），`handleAskAction` 先用 `normalizeAnswers` 检查，错了只弹提示。
+- `lark-ui.ts`：`viewCardBlocks` 把表格、图表画成卡片的 `table`、`chart`（VChart）元素，其余转文字；`viewTarget` 找会话所在的群或话题。`asks.ts` 加 `addViewSink`，飞书注册后 `show` 的内容在回复后发成一张卡片（`viewCard`），失败退回文字。`lark-send.ts` 的 `CardBlock` 加 `element`（宿主自己拼的元素）。
