@@ -44,7 +44,46 @@ export type PluginContext = {
    * space this call may write (the run's own by default). Tool calls only; the same uri updates it.
    */
   saveSource?(input: PluginSourceInput): { id: string; created: boolean; changed: boolean; space: string };
+  /** This person's watches: things on a connected platform kept in sync as sources (src/plugins/platforms.ts). Tool calls only. */
+  watches?: {
+    add(input: { provider: string; kind: string; target: string; title?: string; space?: string }): PlatformWatch;
+    remove(id: string): boolean;
+    list(provider?: string): PlatformWatch[];
+  };
 };
+
+/** What a reader makes of one thing on a platform: its text as a source. */
+/** `id`: the thing's own id when it was asked for by a link or another form, so a source is kept once. */
+export type PlatformDoc = { title: string; text: string; url?: string; updatedAt?: string; kind?: "doc" | "chat"; id?: string };
+/**
+ * One kind of thing on a platform (a Figma file, a Notion page, a GitHub repository's issues). `read`
+ * turns one into a source; a container has `changes`: what in it changed since `cursor` (oldest
+ * first, as things `read` by their own kind, each with the cursor just past it when it has one), and the
+ * cursor to continue from next time.
+ */
+export type PlatformReader = {
+  kind: string;
+  label: string;
+  /** What the id is and where to find it, for the agent and the person. */
+  id: string;
+  read?(c: PluginConnection, id: string): Promise<PlatformDoc | null>;
+  changes?(c: PluginConnection, id: string, cursor: string | null): Promise<{ items: { kind: string; id: string; cursor?: string }[]; cursor: string | null }>;
+};
+/**
+ * A platform pack (docs/v2/connectors.md): what a connected platform can do beyond its authorization.
+ * `provider` is the connector it builds on (`connect-figma`); `features` replace the connector's, each
+ * asking for its own scopes; readers turn the platform's things into sources and keep watches in sync.
+ */
+export type PluginPlatform = {
+  provider: string;
+  features?: import("../auth/features.ts").Feature[];
+  readers: PlatformReader[];
+  /** How often a watch is brought up to date (minutes, default 60). */
+  syncMinutes?: number;
+  /** A few lines for the agent: how to find ids, what each reader gives. */
+  guide?: string;
+};
+export type PlatformWatch = { id: string; provider: string; kind: string; target: string; title: string; spaceId: string; lastRunAt: string | null; lastError: string | null };
 
 /** `uri`: the platform's own stable address of the thing (`notion:page/<id>`), so a later capture updates it instead of adding another. */
 export type PluginSourceInput = { space?: string; kind?: "doc" | "chat" | "web" | "note"; uri: string; title: string; text: string; meta?: Record<string, unknown> };
@@ -108,6 +147,12 @@ export type PluginApi = {
   appConfig(provider: string): Record<string, string>;
   /** The host's fetch for a connector's own calls (exchanging codes, whoami): tests answer it without the network. */
   fetch: typeof fetch;
+  /** A platform pack: features and readers for a connector (any plugin's). Gone when the plugin's code is unloaded. */
+  platform(def: PluginPlatform): void;
+  /** The platform packs registered now, any plugin's. */
+  platforms(): PluginPlatform[];
+  /** Text helpers: HTML (a page, a mail) as Markdown. */
+  text: { html(html: string): string };
 };
 
 export type PluginRegister = (api: PluginApi) => void | Promise<void>;

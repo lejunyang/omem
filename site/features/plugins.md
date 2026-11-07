@@ -89,3 +89,5 @@ settings:
 
 侧栏的“平台采集”是这个插件的 Agent：告诉它要哪个平台的哪些内容，它以你的身份读，再存成原件，之后可以检索、引用，也可以整理进 Wiki。它只能读，不会改动平台上的内容；同一项内容再采一次是更新，不会重复。
 
+Figma、Notion、GitHub、Google 云盘 / Gmail / 日历、Slack、Jira、Confluence、Linear 各有一个平台包，读出来的是整理好的正文：Figma 文件按页面和画框列出文字和评论，Notion 页面保留标题、列表和表格，Slack 一天的消息带着线程。让它“盯着”某个 Figma 项目、GitHub 仓库或 Slack 频道，之后的改动会定时同步成原件，账号页能看到同步情况，随时停掉。
+

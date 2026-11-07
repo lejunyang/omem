@@ -1048,6 +1048,14 @@ TraeX 与其他 ACP 的清理补验：
 - 微信、QQ 要在有备案域名的那台机器上验：扫码或授权后回到账号页，成员页身份里有 wechat / qq（unionid）。
 - 验证记录：`test/connect-plugin.test.ts`（假平台）；没有用真实平台应用走过授权。
 
+## 平台包（2026-11-07，docs/v2/connectors.md）
+
+- 账号页连接 Figma 时列出三项：读设计稿、读评论、读项目和团队的文件列表；只勾第一项时，Figma 授权页只列这几项权限。
+- “平台采集”里贴一个 Figma 文件链接，说“读一下”：它用 `connect_read`，回复里有页面、画框和画框里的文字、评论；说“存下来”后原件页有 `figma:file/<key>`，同一个链接再存显示没有变化。
+- 说“盯着 GitHub 的 acme/app，有更新就收进来”：它用 `connect_watch`；账号页 GitHub 下面出现这一项，几秒后显示“上次 …”，原件页有最近 30 天更新过的 issue。在 GitHub 上新加一条评论后点“立即同步”，那个 issue 的原件更新，其他 issue 没有重读。
+- Notion 页面（含嵌套列表、表格、子页面）、Slack 频道某天（含线程）、Jira issue、Confluence 页面、Linear issue、Google 文档 / Gmail 会话 / 日程各读一次，看正文的格式。
+- 盯着的对象没有权限、或连接过期：账号页那一项显示错误，其他盯着的照常同步。
+
 ## 和别人的 omem 共享（2026-11-05，docs/v2/multi-user.md 第 5 期）
 
 - A 服务：设置 → 设备 → 和别人的 omem 共享，选一个空间“可同步”，内容勾 Wiki、记忆、文档，生成配对码。

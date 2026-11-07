@@ -99,8 +99,25 @@ async function connectKey(p: Available) {
   }
 }
 const connOf = (provider: string) => conns.value?.connections.find((c) => c.provider === provider) ?? null;
+// Things kept in sync from connected platforms (src/plugins/platforms.ts): set up by asking an agent, listed and removed here.
+type Watch = { id: string; provider: string; kind: string; target: string; title: string; spaceId: string; lastRunAt: string | null; lastError: string | null };
+const watches = ref<Watch[]>([]);
+const watchesOf = (provider: string) => watches.value.filter((w) => w.provider === provider);
+async function syncWatch(w: Watch) {
+  try {
+    watches.value = (await post<{ watches: Watch[] }>(`/api/auth/watches/${w.id}/sync`)).watches;
+    toast("已同步", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+async function dropWatch(w: Watch) {
+  if (!(await confirmDialog(`不再同步“${w.title || w.target}”？`, { message: "已经存下的原件保留。", okText: "不再同步" }))) return;
+  watches.value = (await del<{ watches: Watch[] }>(`/api/auth/watches/${w.id}`)).watches;
+}
 async function loadConnections() {
   conns.value = await get<Connections>("/api/auth/connections");
+  watches.value = (await get<{ watches: Watch[] }>("/api/auth/watches").catch(() => ({ watches: [] }))).watches;
   // A platform with one thing to turn on has it chosen already.
   for (const a of conns.value.available) {
     picked.value[a.id] ??= a.features.length === 1 ? [a.features[0].id] : [];
@@ -259,6 +276,19 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
         <p v-if="connOf(p.id) && !p.credentials" class="muted small">关掉的功能 omem 不再使用，{{ p.label }}那边的授权还在；要连授权一起撤销，在{{ p.label }}里取消对这个应用的授权。</p>
         <div v-if="!connOf(p.id) && !p.credentials" class="row"><button class="btn sm primary" :disabled="!conns?.may || !!p.unavailable || !(picked[p.id] ?? []).length" @click="connect(p.id, picked[p.id] ?? [])">连接{{ p.label }}</button></div>
         <p v-if="connOf(p.id)?.lastError" class="small warn-text">{{ connOf(p.id)!.lastError }}</p>
+        <div v-if="watchesOf(p.id).length" class="stack tight">
+          <span class="small muted">定时同步（在“平台采集”里让助手盯着某个文件、页面或仓库）：</span>
+          <div v-for="w in watchesOf(p.id)" :key="w.id" class="row wrap feature">
+            <div class="stack tight">
+              <span>{{ w.title || w.target }}</span>
+              <span class="muted small">{{ w.kind }} {{ w.target }} → 空间 {{ w.spaceId }} · {{ w.lastRunAt ? `上次 ${fmtTime(w.lastRunAt)}` : "还没同步" }}</span>
+              <span v-if="w.lastError" class="small warn-text">{{ w.lastError }}</span>
+            </div>
+            <span class="spacer" />
+            <button class="btn ghost sm" @click="syncWatch(w)">立即同步</button>
+            <button class="btn ghost sm danger" @click="dropWatch(w)">不再同步</button>
+          </div>
+        </div>
       </div>
       <p v-if="conns && !shownProviders.length && state.me?.role !== 'owner'" class="muted small">omem 还没有可以连接的平台。</p>
 

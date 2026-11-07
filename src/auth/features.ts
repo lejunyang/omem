@@ -27,7 +27,17 @@ export const FEATURES: Record<string, Feature[]> = {
 /** Plugin providers whose features follow the owner's settings (the scopes they filled in): read each time. */
 const dynamic = new Map<string, () => Feature[]>();
 
-export const featuresOf = (provider: string) => dynamic.get(provider)?.() ?? FEATURES[provider] ?? [];
+/** A platform pack's own features replace what its catalog entry offers (src/plugins/platforms.ts). */
+const packs = new Map<string, Feature[]>();
+
+export const featuresOf = (provider: string) => packs.get(provider) ?? dynamic.get(provider)?.() ?? FEATURES[provider] ?? [];
+
+export function overrideFeatures(provider: string, list: Feature[]) {
+  packs.set(provider, list);
+  return () => {
+    if (packs.get(provider) === list) packs.delete(provider);
+  };
+}
 
 /** A plugin's provider brings its own features (src/plugins/registry.ts api.connector); gone with the plugin. */
 export function registerFeatures(provider: string, list: Feature[] | (() => Feature[])) {

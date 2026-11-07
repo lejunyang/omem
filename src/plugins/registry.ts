@@ -14,7 +14,9 @@ import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
 import { CORE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
-import { registerTool, saveSourceFor, toolList, unregisterTools, type ToolContext } from "../agents/tools.ts";
+import { registerTool, saveSourceFor, toolList, unregisterTools, watchesFor, type ToolContext } from "../agents/tools.ts";
+import { platformList, registerPlatform } from "./platforms.ts";
+import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { GENERIC_BLOCKS, genericToolName } from "./generic.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
@@ -99,7 +101,7 @@ export function getPlugin(id: string) {
 
 /** The ToolContext of a plugin tool's call, narrowed to what server.ts may see. */
 function asPlugin(env: PluginEnv, ctx: ToolContext) {
-  return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input) };
+  return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input), watches: watchesFor(ctx) };
 }
 
 // The host's blocks (form, chart) are handed in for whichever plugin the run belongs to.
@@ -184,6 +186,11 @@ async function loadCode(app: App, p: LoadedPlugin) {
       if (typeof features === "function" || features?.length) p.connectors.push(registerFeatures(def.id, features));
     },
     fetch: authFetch,
+    platform(def) {
+      p.connectors.push(registerPlatform(manifest.id, def));
+    },
+    platforms: () => platformList(),
+    text: { html: htmlToMarkdown },
     appConfig(provider) {
       if (!provider.startsWith(`${manifest.id}-`)) throw new Error(`插件 ${manifest.id} 只能读自己连接器的配置：${provider}`);
       return appConfig(app, provider);

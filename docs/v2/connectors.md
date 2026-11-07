@@ -41,9 +41,40 @@ omem 自己内置飞书。其他平台（Notion、GitHub、Google、Slack、Jira
 - `connect_request`：以本人的身份读接口。宿主带上令牌，只能发往这个平台的接口地址。GET 随便用；POST 只放行搜索、查询（最后一段路径含 search、query）、GraphQL query（不能是 mutation），以及少数已知只读的接口（Notion 的 search 和数据库查询，Dropbox 的列目录）。二进制内容不读，返回大小和类型。
 - `connect_save`：存成原件，`uri` 是 `<平台>:<平台上的编号>`，同一个编号再存就是更新。原件的 `origin_key` 也取这个值，不同成员采到同一个平台对象时能认出来。空间按调用者能写的范围检查（`saveSourceFor`）。
 
-采集由 Agent 决定读哪些、怎么翻页、怎么拼正文，宿主不为每个平台写同步代码。要定时采集，就在定时任务或规则里把任务交给 `connect-collector`。
+没有平台包的平台，由 Agent 决定读哪些、怎么翻页、怎么拼正文。
+
+## 平台包
+
+结构复杂、又值得采集的平台，各有一个平台包（内置插件 `plugins/<平台>`）。平台包不管授权，授权仍用目录里的定义；它补三样东西：
+
+- **功能**：每项对应要申请的 scope，替换目录里那一项笼统的“读取”。成员在账号页可以逐项打开。例如 Figma 拆成读设计稿、读评论、读项目和团队的文件列表。
+- **读取器**：把平台上的一种东西读成 Markdown 原件。例如 Figma 文件读成“页面 → 画框”的大纲，带上画框里的文字和组件，评论挂在对应画框下。
+- **增量**：容器类读取器（项目、仓库、频道、数据库）有 `changes`，列出某个位置之后改过的东西，并给出下一次的位置。
+
+| 平台包 | 能读 | 能盯着（定时同步） |
+|---|---|---|
+| figma | 设计文件（页面、画框文字、组件、评论） | 项目、团队里改过的文件 |
+| notion | 页面（块转 Markdown，含嵌套列表、表格、子页面链接） | 数据库、授权的全部页面 |
+| github | issue 或 PR 和讨论、仓库里的文件 | 仓库里更新过的 issue 和 PR |
+| google | 云盘文档（文档转 Markdown、表格转 CSV、幻灯片转文本）、Gmail 会话、日历日程 | 文件夹（三层以内）、Gmail 搜索条件、日历 |
+| slack | 频道一天的消息（线程挂在原消息下，人名替换好） | 频道里有新消息的日子 |
+| atlassian | Jira issue 和评论（ADF 转 Markdown）、Confluence 页面和评论 | JQL 搜索、Confluence 空间 |
+| linear | issue 和评论 | 团队里更新过的 issue |
+
+工具：
+
+- `connect_read`：用读取器读一项，可以同时存成原件。
+- `connect_watch`：盯着一项或一个范围。
+
+盯着的记录在 `platform_watches` 表里：谁、哪个读取器、哪个对象、存进哪个空间、读到哪里。定时任务 `platform-sync`（每 20 分钟）按各平台包的间隔，用盯的人自己的连接把改过的读成原件，只写他能写的空间。一轮最多读 50 项，剩下的从最后一项的位置接着读；读失败时位置不前进，下次重试。成员在账号页看到自己盯着的内容，可以“立即同步”或“不再同步”。
+
+原件的 uri 是 `<平台>:<类型>/<id>`，例如 `figma:file/K1`、`github:issue/acme/app#7`。它同时作为 origin_key，所以同一项不论被谁、用哪种方式采到，都认得出是同一个东西。
+
+插件写平台包用 `api.platform({ provider, features, readers, syncMinutes, guide })`，见 docs/v2/plugins.md。
 
 ## 宿主为此加的
+
+- 平台包：`src/plugins/platforms.ts`（注册表、盯着、同步），`api.platform` / `api.platforms` / `api.text.html`，`ctx.watches`；功能可以被平台包覆盖（`overrideFeatures`）。平台没返回授了哪些 scope 时，按申请的记（`auth_states.scopes`）。
 
 - `LoginProvider`（`src/auth/providers.ts`）新增这些字段：
   - `identity: false`：能力连接器。

@@ -1457,6 +1457,23 @@ export const migrations: readonly string[] = [
     review_run_id text
   );
   create index voice_sessions_user on voice_sessions(user_id, purpose, started_at);`,
+  // Platforms someone asked to keep in sync (src/plugins/platforms.ts): a reader of a platform pack, the
+  // thing on the platform, the space its sources go to, and the reader's own position (what changed since).
+  `create table platform_watches (
+    id text primary key,
+    user_id text not null,
+    provider text not null,
+    kind text not null,
+    target text not null,
+    title text not null default '',
+    space_id text not null,
+    cursor text,
+    last_run_at text,
+    last_error text,
+    created_at text not null,
+    unique (user_id, provider, kind, target)
+  );
+  alter table auth_states add column scopes text not null default '';`,
 ];
 
 export type Db = DatabaseSync;

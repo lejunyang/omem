@@ -1,0 +1,4 @@
+id: atlassian
+name: Atlassian 平台包
+description: 把 Jira 的 issue 和 Confluence 的页面读成原件，盯着的定时同步改动（先在账号页连接 Jira 或 Confluence）
+icon: link

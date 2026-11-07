@@ -50,8 +50,8 @@ export function beginLogin(app: App, input: { provider: string; purpose: Purpose
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   run(
     app.db,
-    "insert into auth_states(state,provider,verifier,purpose,user_id,session_hash,invite,redirect_uri,return_to,created_at) values(?,?,?,?,?,?,?,?,?,?)",
-    state, p.id, verifier, input.purpose, input.userId ?? null, input.sessionHash ?? null, input.invite ?? null, input.redirectUri, safeReturn(input.returnTo), now(),
+    "insert into auth_states(state,provider,verifier,purpose,user_id,session_hash,invite,redirect_uri,return_to,created_at,scopes) values(?,?,?,?,?,?,?,?,?,?,?)",
+    state, p.id, verifier, input.purpose, input.userId ?? null, input.sessionHash ?? null, input.invite ?? null, input.redirectUri, safeReturn(input.returnTo), now(), (input.scopes ?? []).join(" "),
   );
   return p.authorizeUrl(app, { state, challenge, redirectUri: input.redirectUri, scopes: input.scopes ?? [] });
 }
@@ -65,7 +65,7 @@ export type LoginResult =
 
 /** The provider sent the browser back: check the state, ask the provider who this is, find or create the user. */
 export async function completeLogin(app: App, input: { provider: string; state: string; code?: string; error?: string }): Promise<LoginResult> {
-  const st = one<{ state: string; provider: string; verifier: string; purpose: Purpose; user_id: string | null; session_hash: string | null; invite: string | null; redirect_uri: string; return_to: string; created_at: string }>(
+  const st = one<{ state: string; provider: string; verifier: string; purpose: Purpose; user_id: string | null; session_hash: string | null; invite: string | null; redirect_uri: string; return_to: string; created_at: string; scopes: string }>(
     app.db,
     "select * from auth_states where state = ?",
     input.state ?? "",
@@ -77,6 +77,8 @@ export async function completeLogin(app: App, input: { provider: string; state: 
   const p = requireProvider(app, st.provider);
   if (!p.exchange || !p.whoami) throw new HttpError(400, `${p.label}不经过授权页连接`);
   const tokens = await p.exchange(app, { code: input.code, verifier: st.verifier, redirectUri: st.redirect_uri });
+  // Platforms that do not say what they granted granted what was asked for (or refused the whole authorization).
+  if (!tokens.scope?.trim() && st.scopes) tokens.scope = st.scopes;
   const who = await p.whoami(app, tokens);
   // A capability connector keeps the tokens of whoever started it; it never logs in or records an identity.
   if (!canLogIn(p)) {

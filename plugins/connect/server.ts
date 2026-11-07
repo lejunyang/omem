@@ -37,7 +37,6 @@ const READ_SCOPES: Record<string, string[]> = {
   "google-calendar": ["https://www.googleapis.com/auth/calendar.readonly"],
   gitlab: ["read_api"],
   jira: ["read:jira-work", "read:jira-user", "offline_access"],
-  confluence: ["read:confluence-content.all", "read:confluence-space.summary", "search:confluence", "offline_access"],
   linear: ["read"],
   dropbox: ["account_info.read", "files.metadata.read", "files.content.read"],
   slack: ["channels:read", "channels:history", "groups:read", "groups:history", "im:history", "mpim:history", "users:read"],
@@ -66,6 +65,7 @@ export default function register(api: PluginApi) {
     if (!d) throw new Error(`没有平台 ${name}：用 connect_list 看已经连接的平台`);
     return d;
   };
+  const packOf = (d: Def) => api.platforms().find((p) => p.provider === `${api.id}-${d.id}`) ?? null;
   const connected = async (ctx: PluginContext, d: Def) => {
     const c = await ctx.connection(`${api.id}-${d.id}`);
     if (!c) throw new Error(`本人还没有连接${d.label}：请本人在 omem 的账号页“已连接的应用”里连接（主人要先在 设置 → 成员 → 平台应用 打开它）`);
@@ -82,7 +82,14 @@ export default function register(api: PluginApi) {
       for (const d of defs.values()) {
         if (q && !d.id.includes(q) && !d.label.toLowerCase().includes(q) && !d.group.includes(q)) continue;
         const c = await ctx.connection(`${api.id}-${d.id}`);
-        if (c) lines.push(`- ${d.id}（${d.label}，${d.group}）账号 ${c.account || "—"}；接口 ${c.base ?? "未设置"}${d.docs ? `；文档 ${d.docs}` : ""}`);
+        if (!c) continue;
+        lines.push(`- ${d.id}（${d.label}，${d.group}）账号 ${c.account || "—"}；接口 ${c.base ?? "未设置"}${d.docs ? `；文档 ${d.docs}` : ""}`);
+        const pack = packOf(d);
+        if (pack) {
+          lines.push(`  能直接读（connect_read / connect_watch）：${pack.readers.map((r) => `${r.kind}（${r.label}；id：${r.id}${r.changes ? "；可盯着同步" : ""}）`).join("；")}`);
+          if (pack.guide) lines.push(`  ${pack.guide.replace(/\n/g, "\n  ")}`);
+        }
+        for (const w of ctx.watches?.list(`${api.id}-${d.id}`) ?? []) lines.push(`  正在盯着 ${w.id}：${w.kind} ${w.target}${w.title ? `（${w.title}）` : ""} → 空间 ${w.spaceId}；上次 ${w.lastRunAt ?? "还没同步"}${w.lastError ? `，出错：${w.lastError}` : ""}`);
       }
       return lines.length ? lines.join("\n") : `本人还没有连接${q ? `和“${a.query}”有关的` : "任何"}平台。连接在 omem 的账号页“已连接的应用”里做。`;
     },
@@ -126,6 +133,63 @@ export default function register(api: PluginApi) {
       }
       const cut = text.length > a.max_chars;
       return `${meta}\n\n${cut ? text.slice(0, a.max_chars) : text}${cut ? `\n\n（已截断：共 ${text.length} 字符，只返回前 ${a.max_chars}；缩小范围或翻页）` : ""}`;
+    },
+  });
+
+  api.tool({
+    name: "connect_read",
+    description:
+      "用平台包读一项内容（Figma 文件、Notion 页面、GitHub issue、Slack 一天的频道消息……），平台包已经把它整理成 Markdown；save 为 true 时同时存成原件。哪些平台、哪些类型能读看 connect_list。没有平台包的平台用 connect_request。",
+    schema: z.object({
+      provider: z.string().describe("平台 id，如 figma、notion"),
+      kind: z.string().describe("内容类型，如 file、page、issue（connect_list 里列出）"),
+      id: z.string().min(1).max(500).describe("这项内容的 id，写法见 connect_list"),
+      save: z.boolean().default(false).describe("同时存成原件（同一项再存是更新）"),
+      space: z.string().optional().describe("存进哪个空间，默认当前空间"),
+      max_chars: z.number().int().min(500).max(60000).default(20000),
+    }),
+    write: true,
+    handler: async (ctx, a) => {
+      const d = platform(a.provider);
+      const pack = packOf(d);
+      const reader = pack?.readers.find((r) => r.kind === a.kind);
+      if (!reader?.read) throw new Error(pack ? `${d.label}能读的类型：${pack.readers.filter((r) => r.read).map((r) => r.kind).join("、")}` : `${d.label}没有平台包：用 connect_request 读接口`);
+      const c = await connected(ctx, d);
+      const doc = await reader.read(c, a.id.trim());
+      if (!doc) return `没有读到 ${a.kind} ${a.id}`;
+      let saved = "";
+      if (a.save) {
+        if (!ctx.saveSource) throw new Error("这里不能保存原件");
+        const r = ctx.saveSource({ space: a.space, kind: doc.kind ?? "doc", uri: `${d.id}:${a.kind}/${doc.id ?? a.id.trim()}`, title: doc.title, text: doc.text, meta: { provider: d.id, url: doc.url, platformUpdatedAt: doc.updatedAt } });
+        saved = `（${r.created ? "已新建" : r.changed ? "已更新" : "没有变化"}原件 ${r.id}，空间 ${r.space}）`;
+      }
+      const cut = doc.text.length > a.max_chars;
+      const head = [`# ${doc.title}`, doc.url, doc.updatedAt && `最后修改 ${doc.updatedAt}`, saved].filter(Boolean).join("\n");
+      return `${head}\n\n${cut ? `${doc.text.slice(0, a.max_chars)}\n\n（已截断：共 ${doc.text.length} 字符）` : doc.text}`;
+    },
+  });
+
+  api.tool({
+    name: "connect_watch",
+    description:
+      "盯着平台上的一项内容或一个范围（Figma 项目、Notion 数据库、GitHub 仓库的 issue、Slack 频道……）：之后定时把改过的读成原件，存进指定空间，以本人的连接读。马上会先同步一次。能盯的类型看 connect_list 里标“可盯着同步”的，单项内容也能盯（改了就重读）。remove 给盯着的 id 时取消。",
+    schema: z.object({
+      provider: z.string().optional(),
+      kind: z.string().optional(),
+      target: z.string().max(500).optional().describe("要盯的东西的 id"),
+      title: z.string().max(200).optional().describe("给本人看的名字，如“设计系统项目”"),
+      space: z.string().optional().describe("存进哪个空间，默认当前空间"),
+      remove: z.string().optional().describe("取消这个盯着（connect_list 里的 pw… id）"),
+    }),
+    write: true,
+    handler: async (ctx, a) => {
+      if (!ctx.watches) throw new Error("这里不能设置盯着");
+      if (a.remove) return ctx.watches.remove(a.remove) ? `已取消 ${a.remove}` : `没有 ${a.remove}`;
+      if (!a.provider || !a.kind || !a.target) throw new Error("要给 provider、kind 和 target");
+      const d = platform(a.provider);
+      await connected(ctx, d);
+      const w = ctx.watches.add({ provider: `${api.id}-${d.id}`, kind: a.kind, target: a.target, title: a.title, space: a.space });
+      return `已盯着 ${d.label} 的 ${w.kind} ${w.target}（${w.id}），存进空间 ${w.spaceId}；正在后台做第一次同步，之后定时更新。用 connect_list 看同步情况。`;
     },
   });
 

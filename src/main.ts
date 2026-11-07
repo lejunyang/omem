@@ -70,6 +70,7 @@ registerScheduleKind("lark-kb-discover", (app) => {
     .then((m) => m.discoverKnowledgeBases(app, { scheduled: true }))
     .catch((e) => console.warn("[omem] 发现飞书知识库失败：", e.message));
 });
+registerScheduleKind("platform-sync", (app) => void import("./plugins/platforms.ts").then((m) => m.syncWatches(app)).catch((e) => console.warn(`[omem] 平台同步失败：${(e as Error).message}`)));
 registerScheduleKind("lark-kb-read", (app) => {
   import("./channels/lark-knowledge.ts")
     .then((m) => m.readKnowledgeDaily(app, { scheduled: true }))

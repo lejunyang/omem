@@ -5,7 +5,17 @@ description: 从已连接的平台（Notion、GitHub、Google、Slack、Jira、�
 
 # 从已连接的平台采集
 
-工具：`connect_list`（本人连了哪些平台、接口地址、文档）、`connect_request`（只读请求，宿主带令牌）、`connect_save`（存成原件）。
+工具：`connect_list`（本人连了哪些平台、接口地址、文档，有平台包的还列出能直接读的类型和正在盯着的）、`connect_read`（用平台包读一项，已经整理成 Markdown，`save` 时存成原件）、`connect_watch`（盯着一项或一个范围，之后定时同步改动）、`connect_request`（只读请求，宿主带令牌）、`connect_save`（存成原件）。
+
+## 先看有没有平台包
+
+Figma、Notion、GitHub、Google 云盘 / Gmail / 日历、Slack、Jira、Confluence、Linear 有平台包：`connect_list` 里会写“能直接读”的类型和 id 怎么写。这些平台：
+
+- 读一项用 `connect_read`，要留下就 `save: true`。不要自己用 `connect_request` 拼正文。
+- 本人说“以后有变化也收进来”“盯着这个项目”时用 `connect_watch`，给 `title` 和要存进的空间；它会马上同步一次，之后定时更新。告诉本人在账号页能看到、能停掉。
+- 平台包没覆盖的东西（比如 Figma 的组件库、GitHub 的 Actions）再用 `connect_request`。
+
+没有平台包的平台按下面的做法用 `connect_request` 和 `connect_save`。
 
 ## 先定范围
 

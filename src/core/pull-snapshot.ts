@@ -14,7 +14,7 @@ db.prepare('vacuum into ?').run(path.join(dest, 'omem.db'));
 db.close();
 const snap = new DatabaseSync(path.join(dest, 'omem.db'));
 const has = (table) => !!snap.prepare("select 1 from sqlite_master where name=?").get(table);
-for (const table of ['api_tokens', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines', 'shares', 'session_cleanup', 'remote_recordings', 'lark_doc_subscriptions'])
+for (const table of ['api_tokens', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines', 'shares', 'session_cleanup', 'remote_recordings', 'lark_doc_subscriptions', 'platform_watches'])
   if (has(table)) snap.exec('delete from ' + table);
 // A merge rebuilds the search index and code outline from the sources it takes (reindexSource):
 // leave them out, they are most of the database.

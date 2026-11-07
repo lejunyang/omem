@@ -1,0 +1,4 @@
+id: github
+name: GitHub 平台包
+description: 把 GitHub 的 issue、PR 和文件读成原件，盯着的定时同步改动（先在账号页连接 GitHub）
+icon: link

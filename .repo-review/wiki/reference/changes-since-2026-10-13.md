@@ -1532,6 +1532,13 @@ updated: 2026-11-07
 - 网页：设置 → 成员 → 平台应用（`ProviderApps.vue`：搜索、用途与范围筛选、填配置、复制回调、开放）；登录方式只列能登录且已设置的；账号页可搜索、用 key 连接。
 - `test/connect-plugin.test.ts`；没有用真实平台应用走过授权。
 
+## 2026-11-07：平台包（读取器与定时同步）
+
+- `src/plugins/platforms.ts`：`api.platform` 注册平台包：功能（替换连接器原来的，`overrideFeatures`）、读取器（`read` 读一项成 Markdown，`changes` 列出容器里某位置之后改过的）、同步间隔。`platform_watches` 存盯着的内容；定时任务 `platform-sync`（每 20 分钟）按盯的人的连接同步，只写能写的空间，一轮 50 项，失败时位置不前进。原件 uri `<平台>:<类型>/<id>` 兼作 origin_key。
+- 内置平台包：figma、notion、github、google（云盘、Gmail、日历）、slack、atlassian（Jira、Confluence）、linear。`src/sources/html.ts` 的 HTML 转 Markdown 经 `api.text.html` 给插件用。
+- 连接插件加 `connect_read`、`connect_watch`，`connect_list` 列出能读的类型和盯着的内容；账号页列出盯着的内容（立即同步、不再同步）。登录流程记下申请的 scope，平台没回报时按申请的记。
+- `test/platform-packs.test.ts`。
+
 ## 2026-11-07：网页版 VS Code 打开交办工作区不再问信任
 
 VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作区就要再点一次信任。`proxyIde` 在返回工作台页面时，若 `folder` 是编码交办自己的目录（`codeRunsAt`），把页面配置的 `enableWorkspaceTrust` 改成 `false`（`trustWorkbench`）；其他文件夹不变。配置 `ide.web.trustCodeFolders`（默认开）。实现：`src/server/ide-web.ts`；回归：`test/ide-setup.test.ts`；本地开发实例用真实 serve-web 对照过（交办工作区无受限模式，无关目录有）。

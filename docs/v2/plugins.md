@@ -99,6 +99,26 @@ api.tool({ name: "notes_recent", description, schema, handler: async (ctx) => {
 - 工具里 `ctx.saveSource({ uri, title, text, space? })` 存原件：`uri` 写 `平台:编号`，同一个 uri 再存是更新，也作 origin_key。
 - 内置的 `connect` 插件就是这样接入几百个平台的，见 docs/v2/connectors.md。
 
+### 平台包：给已连接的平台加读取能力
+
+```ts
+api.platform({
+  provider: "connect-figma",                     // 在哪个连接器上（目录里的或别的插件的）
+  features: [{ id: "design", label: "读设计稿", description, scopes: ["file_content:read"] }],
+  syncMinutes: 120,
+  guide: "file 的 id 是文件链接里 /design/ 后面那段",
+  readers: [
+    { kind: "file", label: "设计文件", id: "文件 key", read: async (c, id) => ({ id, title, text, url, updatedAt }) },
+    { kind: "project", label: "项目", id: "项目 id", changes: async (c, id, cursor) => ({ items: [{ kind: "file", id, cursor }], cursor }) },
+  ],
+});
+```
+
+- `features` 替换连接器原来的功能，各自申请自己的 scope。
+- `read` 把一项读成 Markdown。`changes` 列出容器里 `cursor` 之后改过的东西，按时间从旧到新，每项最好带上自己的位置。`c` 是这次用的人的连接（`ctx.connection` 的同一个对象）。
+- 用户通过 `connect_read`、`connect_watch` 使用这些读取器，宿主负责定时同步和写原件（docs/v2/connectors.md）。
+- `api.text.html(html)` 把 HTML 转成 Markdown。
+
 ## 服务与流
 
 清单声明插件的常驻进程和它对页面开放的 WebSocket：

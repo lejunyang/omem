@@ -40,6 +40,7 @@ import { catalog, nodePath, treeChildren, type TreeFilter } from "../sources/cat
 import { canonicalSourceId } from "../sources/duplicates.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
+import { addWatch, listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOutput } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
@@ -4644,6 +4645,23 @@ export function saveSourceFor(ctx: ToolContext, input: { space?: string; kind?: 
   const spaceId = writeSpace(ctx, input.space);
   const r = upsertSource(ctx.app, { spaceId, kind: input.kind ?? "doc", uri: input.uri, title: input.title.trim().slice(0, 300) || input.uri, text: input.text, meta: { ...(input.meta ?? {}), originKey: input.uri, capturedBy: ctx.userId ?? OWNER } });
   return { id: r.id, created: r.status === "created", changed: r.status !== "unchanged", space: spaceId };
+}
+
+/**
+ * A plugin tool's view of this person's watches (src/plugins/platforms.ts): added into a space this
+ * call may write, and read once right away in the background.
+ */
+export function watchesFor(ctx: ToolContext) {
+  const userId = ctx.userId ?? OWNER;
+  return {
+    add: (input: { provider: string; kind: string; target: string; title?: string; space?: string }) => {
+      const w = addWatch(ctx.app, userId, { ...input, spaceId: writeSpace(ctx, input.space) });
+      void syncWatches(ctx.app, { id: w.id }).catch((e) => console.warn(`[omem] 平台同步失败（${w.provider} ${w.kind}）：${(e as Error).message}`));
+      return w;
+    },
+    remove: (id: string) => removeWatch(ctx.app, userId, id),
+    list: (provider?: string) => listWatches(ctx.app, userId, provider),
+  };
 }
 
 export type HostTool = Tool;

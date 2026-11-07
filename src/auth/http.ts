@@ -9,6 +9,7 @@ import { addMember, findUser, getUser, identitiesOf, listUsers, OWNER, removeMem
 import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
 import { connectionsOf, connectWithCredentials, disconnect, setFeatureOff } from "./connections.ts";
 import { appView, setAppConfig } from "./apps.ts";
+import { listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { featuresOf, scopesFor } from "./features.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { approveUser, beginLogin, completeLogin, consumeLoginLink, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, validInvite } from "./login.ts";
@@ -224,6 +225,18 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     await connectWithCredentials(app, who(req), provider, values);
     audit(app, who(req), "connection.add", who(req), { provider });
     return { connections: connectionsOf(app, who(req)) };
+  });
+  // What this person keeps in sync from connected platforms (src/plugins/platforms.ts); set up by asking an agent.
+  server.get("/api/auth/watches", async (req) => ({ watches: listWatches(app, who(req)) }));
+  server.delete("/api/auth/watches/:id", async (req) => {
+    if (!removeWatch(app, who(req), (req.params as { id: string }).id)) throw new HttpError(404, "没有这项");
+    return { watches: listWatches(app, who(req)) };
+  });
+  server.post("/api/auth/watches/:id/sync", async (req) => {
+    const id = (req.params as { id: string }).id;
+    if (!listWatches(app, who(req)).some((w) => w.id === id)) throw new HttpError(404, "没有这项");
+    const report = await syncWatches(app, { id });
+    return { report, watches: listWatches(app, who(req)) };
   });
   // Turn a feature off in omem or back on (the platform's grant stays).
   server.put("/api/auth/connections/:provider/features/:feature", async (req) => {
