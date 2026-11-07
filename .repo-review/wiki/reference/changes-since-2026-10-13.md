@@ -1591,3 +1591,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 运行产物（`src/agents/artifacts.ts`、表 `run_artifacts`）：编码 Agent、编码助手、宿主的检查命令、外部 Agent 的 `code_workspace` 命令带 `OMEM_ARTIFACTS`，宿主在 `finish_task`、一轮结束、命令跑完时收走，`T<编号>/` 归到那一项；`attach_artifact` 和 `code_workspace` 的 `attach` 按路径交；文件按路径里的密钥给出（`/api/artifacts/<id>.<key>/…`，`src/server/artifact-http.ts`），网页和报告带 CSP sandbox；中间设备转发时带上 Range 和这些响应头；交办视图“产物”标签（`RunArtifacts.vue`）和修改项上的数量；评审材料和逐项验证列出文件路径。设计在 docs/v2/artifacts.md。
 - 编码前检查（`src/agents/pre-check.ts`、`roles/business-analyst.md`）：新交办第一轮编码前查影响面、以前的问题、回归清单，`submit_brief` 交结果，编码 Agent 的任务和阶段评审的材料里多一节；`code_history`（`src/agents/code-history.ts`）按文件列需求点、交办、评审问题和提交，历史评审也用；`agents.autoAdvance.preCheck`、`delegate_code` 的 `pre_check`；“概览”里的卡片（`PreCheckCard.vue`）。设计在 docs/v2/pre-check.md，review.md 5.2 的业务简报以它落地。
 - `test/artifacts.test.ts`；测试里默认关掉编码前检查（`test/helpers.ts`），这个文件里打开。
+
+## 2026-11-08：同步暂存只认本工作区的
+
+- Git 的 stash 是整个仓库共用的：以前任何一个工作区留下“同步前未提交的改动”，别的工作区都被当成同步没做完，新交办就不把复用的工作区切到分支最新提交，接着把远端合进上次留下的旧提交。现在 `src/agents/code-sync.ts` 暂存时把这条 stash 的提交记在本工作区自己的 Git 目录（`git rev-parse --git-path omem-sync-stash`），`hasSyncStash`、放回、放弃同步都只认这一条。`test/code-sync.test.ts` 加了两个工作区的用例。

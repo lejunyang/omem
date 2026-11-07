@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fetchBranch, git, resolveRef } from "../core/git.ts";
 import { HttpError } from "../core/util.ts";
@@ -142,10 +142,7 @@ export async function syncWorktree(root: string, wt: WorktreeRef, req: SyncReque
   }
   // Work already in the worktree (a later round) waits in the stash while Git merges or rebases.
   const stashed = !!git(path, ["status", "--porcelain"]).stdout.trim();
-  if (stashed) {
-    const st = git(path, [...identity(path), "stash", "push", "-q", "--include-untracked", "-m", STASH]);
-    if (!st.ok) throw new HttpError(409, `暂存未提交的改动失败：${st.stderr.slice(0, 600)}`);
-  }
+  if (stashed) pushSyncStash(path);
   const r = await syncSteps(root, wt, req, resolver, status);
   r.steps.unshift(...recovered);
   if (r.stopped || !stashed) return { ...r, stashed };
@@ -154,11 +151,37 @@ export async function syncWorktree(root: string, wt: WorktreeRef, req: SyncReque
 }
 
 const STASH = "omem: 同步前未提交的改动";
+
+/**
+ * The stash is shared by every worktree of a repository, so which entry is this worktree's is kept
+ * in the worktree's own Git directory (`--git-path` of a name Git does not share). Without it, one
+ * worktree's left-over stash made every other worktree look mid-sync (a new delegation then skipped
+ * moving its workspace onto the branch and merged origin into whatever commit the slot was left on),
+ * and finishing a sync could apply another worktree's work.
+ */
+const stashMark = (path: string) => resolve(path, git(path, ["rev-parse", "--git-path", "omem-sync-stash"]).stdout.trim());
+
+/** Set aside the worktree's uncommitted work for a sync, remembering which stash entry it is. */
+export function pushSyncStash(path: string) {
+  const st = git(path, [...identity(path), "stash", "push", "-q", "--include-untracked", "-m", STASH]);
+  if (!st.ok) throw new HttpError(409, `暂存未提交的改动失败：${st.stderr.slice(0, 600)}`);
+  writeFileSync(stashMark(path), git(path, ["rev-parse", "stash@{0}"]).stdout.trim());
+}
+
+/** This worktree's sync stash (`stash@{n}`), if it is still there. */
+function ownStash(path: string): string | null {
+  const mark = stashMark(path);
+  if (!existsSync(mark)) return null;
+  const sha = readFileSync(mark, "utf8").trim();
+  const line = git(path, ["stash", "list", "--format=%gd %H"]).stdout.split("\n").find((l) => l.endsWith(` ${sha}`));
+  if (!line) rmSync(mark, { force: true });
+  return line ? line.split(" ")[0]! : null;
+}
+
 /** Put the stashed work back on top of the synced code; its conflicts go to the resolver. */
 export async function popStash(path: string, resolver: Resolver): Promise<SyncState | null> {
-  const list = git(path, ["stash", "list", "--format=%gd %s"]).stdout.split("\n").find((l) => l.includes(STASH));
-  if (!list) return null;
-  const ref = list.split(" ")[0];
+  const ref = ownStash(path);
+  if (!ref) return null;
   const again = git(path, ["stash", "apply", ref]);
   if (!again.ok) {
     const files = unmerged(path);
@@ -169,6 +192,7 @@ export async function popStash(path: string, resolver: Resolver): Promise<SyncSt
     git(path, ["add", "-A"]);
   }
   git(path, ["stash", "drop", "-q", ref]);
+  rmSync(stashMark(path), { force: true });
   return null;
 }
 
@@ -217,7 +241,7 @@ async function syncSteps(root: string, wt: WorktreeRef, req: SyncRequest, resolv
 }
 
 /** Whether the stash still holds the work a stopped sync set aside. */
-export const hasSyncStash = (path: string) => git(path, ["stash", "list", "--format=%s"]).stdout.includes(STASH);
+export const hasSyncStash = (path: string) => ownStash(path) !== null;
 
 /**
  * Merge the latest target into the run by default, preserving uncommitted work. Explicit rebase
@@ -263,8 +287,9 @@ export function abortSync(path: string) {
   if (op) git(path, [op, "--abort"]);
   popWip(path);
   // Back where it started, the set-aside work goes back as it was.
-  const ref = git(path, ["stash", "list", "--format=%gd %s"]).stdout.split("\n").find((l) => l.includes(STASH))?.split(" ")[0];
+  const ref = ownStash(path);
   if (ref) git(path, ["stash", "pop", "-q", ref]);
+  rmSync(stashMark(path), { force: true });
 }
 
 /** For the reviewers and the owner: how each conflicted file ended up, against the branch merged in. */

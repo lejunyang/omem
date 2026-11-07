@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { applyCodeRun, worktreesOf } from "../src/agents/code.ts";
-import { finishSync, moveToTarget, popWip, syncInProgress, syncWorktree, type Resolver } from "../src/agents/code-sync.ts";
+import { finishSync, hasSyncStash, moveToTarget, popWip, pushSyncStash, syncInProgress, syncWorktree, type Resolver } from "../src/agents/code-sync.ts";
 import { __testHandlers, addRunEvent, createRun, getRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
 import type { WorktreeRef } from "../src/agents/worktree-index.ts";
 import { git, refreshDefaultBaseRef } from "../src/core/git.ts";
@@ -138,6 +138,24 @@ describe("Git sync before coding", { timeout: 60000 }, () => {
     expect(readFileSync(join(wtPath, "notes.txt"), "utf8")).toBe("unrelated work stays\n");
     expect(readFileSync(join(wtPath, "followup.txt"), "utf8")).toBe("keep the second commit\n");
     expect(placeOnBranch(root, wt)).toContain("你在分支");
+  });
+
+  it("another worktree's sync stash does not keep this one off the branch tip", () => {
+    // A pooled slot left on an old commit; another worktree of the same repository stopped mid-sync.
+    const old = sh(wtPath, "rev-parse", "HEAD");
+    const other = join(app.home, "other");
+    sh(root, "worktree", "add", "-q", "--detach", other, old);
+    writeFileSync(join(other, "draft.txt"), "someone else's work\n");
+    pushSyncStash(other);
+    expect(hasSyncStash(other)).toBe(true);
+    expect(hasSyncStash(wtPath)).toBe(false);
+    const tip = commit(root, "rules.txt", "refund: newer rule\n", "newer rule on main");
+    sh(wtPath, "checkout", "-q", "--detach", old);
+    sh(root, "branch", "-f", "omem/r1", tip);
+    expect(placeOnBranch(root, wt)).toContain("你在分支");
+    expect(sh(wtPath, "rev-parse", "HEAD")).toBe(tip);
+    expect(existsSync(join(wtPath, "draft.txt"))).toBe(false);
+    expect(hasSyncStash(other)).toBe(true);
   });
 
   it("keeps unresolved picks for a later round and skips a pick resolved to an empty change", async () => {
