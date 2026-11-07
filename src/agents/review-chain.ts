@@ -6,7 +6,7 @@ import { one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, reportConversation, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
-import { codePatches, ignoredText, isBranchReview, worktreesOf, type IgnoredFiles, type PeerReviewer } from "./code.ts";
+import { codePatches, ignoredText, isBranchReview, worktreesOf, type Check, type IgnoredFiles, type PeerReviewer } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
   blocksAt, checkBrief, FINDING_FORMAT, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
@@ -31,7 +31,7 @@ import { git } from "../core/git.ts";
 
 type Out = {
   task?: string;
-  repos?: { space: string; diffStat: string; diffBytes: number; check: { command: string; code: number; output: string } | null; ignored?: IgnoredFiles[] }[];
+  repos?: { space: string; diffStat: string; diffBytes: number; check: Check | null; ignored?: IgnoredFiles[] }[];
   coderSummary?: string;
   coderSessionId?: string;
   indexedSpaces?: string[];
@@ -102,7 +102,22 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const label = (n: string) => checkLabel(infos, n);
 
   const head = (r: { space: string }) => (multi ? `### ${r.space}\n\n` : "");
-  const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
+  const checkText = results.map((r) => {
+    const wt = worktrees.find((w) => w.space === r.space);
+    const where = wt ? `编码工作区（依赖和构建产物在这里）：${workDirOf(wt)}` : "";
+    const c = r.check;
+    if (!c) return `${head(r)}仓库没有设检查命令：宿主没有替这次改动跑检查，编码 Agent 说明里写的验证没有经过复核。${where ? `\n${where}` : ""}`;
+    const seen = opts.to?.[r.space] ?? (wt ? git(workDirOf(wt), ["rev-parse", "HEAD"]).stdout.trim() : "");
+    const commit = !c.commit ? "" : !seen || seen === c.commit ? `跑在提交 ${c.commit.slice(0, 8)}，就是这次看的代码` : `跑在提交 ${c.commit.slice(0, 8)}；这次看的是 ${seen.slice(0, 8)}，两者之间的改动没有经过检查`;
+    return [
+      `${head(r)}命令：${c.command}`,
+      `退出码：${c.code}${c.ms ? `，用时 ${Math.round(c.ms / 1000)} 秒` : ""}`,
+      commit,
+      c.base ? `改动从 ${c.base.slice(0, 8)} 起（命令里的 OMEM_BASE）` : "",
+      where,
+      `输出末尾：\n\n${fence("", c.output.slice(-6000))}`,
+    ].filter(Boolean).join("\n");
+  }).join("\n\n");
   const ignored = ignoredText(results);
   const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,

@@ -84,7 +84,7 @@ const off = onServerEvent((e) => {
 onBeforeUnmount(() => { ++seq; off(); clearTimeout(timer); });
 
 const run = computed(() => detail.value?.run ?? null);
-type Check = { command: string; code: number; output: string };
+type Check = { command: string; code: number; output: string; ms?: number; commit?: string };
 type Out = { appliedAt?: string; verdict?: string; discardedAt?: string; review?: string; coderSummary?: string; notes?: { id: string; text: string; at: string; deliveredAt?: string }[]; indexedSpaces?: string[]; repos?: { space: string; check: Check | null }[]; check?: Check };
 const out = computed(() => (run.value?.output ?? {}) as Out);
 const branchReview = computed(() => !!work.value?.branchReview);
@@ -99,6 +99,8 @@ const checks = computed(() => {
   if (out.value.repos?.length) return out.value.repos.flatMap((r) => (r.check ? [{ space: out.value.repos!.length > 1 ? r.space : "", check: r.check }] : []));
   return out.value.check ? [{ space: "", check: out.value.check }] : [];
 });
+// Repositories this round has no check for: the reviewers only have the coder's word on its tests.
+const unchecked = computed(() => (out.value.repos ?? []).filter((r) => !r.check).map((r) => r.space));
 const canFix = computed(() => run.value?.status === "done" && (branchReview.value || !out.value.discardedAt));
 
 // ---- the branch lines at the top ----------------------------------------------------------------
@@ -438,9 +440,10 @@ const ctx = computed(() => detail.value?.context ?? null);
           <div class="card pad"><Markdown :source="out.coderSummary" :space="run.spaceId ?? undefined" /></div>
         </section>
         <section v-for="c in checks" :key="c.space" class="block">
-          <div class="section-title">检查<template v-if="c.space"> · {{ spaceName(c.space) }}</template>：<span class="mono">{{ c.check.command }}</span> <span class="badge" :class="c.check.code === 0 ? 'ok' : 'danger'">退出码 {{ c.check.code }}</span></div>
+          <div class="section-title">检查<template v-if="c.space"> · {{ spaceName(c.space) }}</template>：<span class="mono">{{ c.check.command }}</span> <span class="badge" :class="c.check.code === 0 ? 'ok' : 'danger'">退出码 {{ c.check.code }}</span> <span v-if="c.check.commit || c.check.ms" class="muted small"><template v-if="c.check.commit">提交 <span class="mono">{{ c.check.commit.slice(0, 8) }}</span></template><template v-if="c.check.commit && c.check.ms"> · </template><template v-if="c.check.ms">{{ Math.round(c.check.ms / 1000) }} 秒</template></span></div>
           <pre class="log">{{ c.check.output }}</pre>
         </section>
+        <p v-if="unchecked.length && !branchReview" class="muted small block">{{ unchecked.map(spaceName).join("、") }} 没有设检查命令：评审只能看编码 Agent 自己写的验证。在 设置 → 空间 里给仓库设检查命令后，宿主每轮都会跑并交给评审。</p>
         <section v-if="detail!.children.filter((c) => c.kind !== 'code').length" class="block">
           <div class="section-title">这一轮里的其他运行</div>
           <router-link v-for="c in detail!.children.filter((c) => c.kind !== 'code')" :key="c.id" :to="`/runs/${c.id}`" class="round"><span class="st" :class="c.status" /><span class="grow ellipsis">{{ c.title }}</span><span class="muted small">{{ statusLabel[c.status] }}</span></router-link>

@@ -23,12 +23,12 @@ import { retireRecordedSession } from "./session-cleanup.ts";
 import { linkRunToItem, materialSpaces, materialsBrief } from "../items/materials.ts";
 import { getItem } from "../items/store.ts";
 
-export function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000): Promise<{ code: number; output: string; ms: number }> {
+export function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000, env: Record<string, string> = {}): Promise<{ code: number; output: string; ms: number }> {
   const started = Date.now();
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
     // Verbatim on Windows, as Node's own `shell: true`: quotes inside the command reach cmd unescaped.
-    const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], { cwd, windowsHide: true, windowsVerbatimArguments: isWin, env: { ...process.env, CI: "1" } });
+    const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], { cwd, windowsHide: true, windowsVerbatimArguments: isWin, env: { ...process.env, CI: "1", ...env } });
     let output = "";
     const add = (d: Buffer) => {
       output = (output + d.toString()).slice(-20000);
@@ -160,7 +160,29 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
   if (req.itemId) linkRunToItem(app, r, req.itemId, userId);
   return r;
 }
-type Check = { command: string; code: number; output: string; ms: number };
+/**
+ * The project's checks, run by the host in the worktree after a coding round: the evidence the
+ * reviewers judge instead of running the suite again. `commit`: what they ran on (the round's last
+ * commit; absent for a delegation that does not commit). `base`: where the change starts (OMEM_BASE).
+ */
+export type Check = { command: string; code: number; output: string; ms: number; commit?: string; base?: string; at?: string };
+
+/** The check command a round of a delegation runs in a repository: named for it, for all, or the repository's own. */
+export function checkCommandOf(app: App, run: Run, space: string): string | undefined {
+  const input = run.input as { checks?: Record<string, string>; checkCommand?: string };
+  return input.checks?.[space] ?? input.checkCommand ?? ((findSpace(app, space)?.settings.checkCommand as string | undefined) || undefined);
+}
+
+/** The host's last check of a repository in a delegation (any round), newest first. */
+export function latestCheck(app: App, rootId: string, space: string): Check | null {
+  const rows = all<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at desc limit 30", rootId, rootId);
+  for (const { id } of rows) {
+    const out = getRun(app, id).output as { repos?: { space: string; check: Check | null }[] };
+    const c = out.repos?.find((r) => r.space === space)?.check;
+    if (c) return c;
+  }
+  return null;
+}
 type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null; ignored?: IgnoredFiles[] };
 /** Files of the change that .gitignore covers, by the pattern that covers them. */
 export type IgnoredFiles = { pattern: string; files: number; example: string };
@@ -614,9 +636,10 @@ ${input.task}
     let check: Check | null = null;
     if (command) {
       ctx.event("status", { text: `运行检查${multi ? `（${repo.id}）` : ""}：${command}` });
-      const r = await shell(command, workDirOf(wt), ctx.signal);
-      check = { command, ...r, output: r.output.slice(-8000) };
-      ctx.event("check", { ...check, space: repo.id });
+      // Where the change starts, for a command that checks only what it touches (`git diff --name-only $OMEM_BASE`).
+      const base = wt.commits ? changeBase(wt.path, wt) : git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
+      const r = await shell(command, workDirOf(wt), ctx.signal, undefined, base ? { OMEM_BASE: base } : {});
+      check = { command, ...r, output: r.output.slice(-8000), ...(base ? { base } : {}), at: new Date().toISOString() };
     }
     if (wt.commits) {
       // Whatever is left uncommitted becomes this round's last commit; then it goes onto the branch.
@@ -632,7 +655,10 @@ ${input.task}
       }
       ctx.output({ worktrees });
       if (rootRunId !== run.id) setRunOutput(app, rootRunId, { worktrees });
+      // The check ran on the tree this commit holds (what was left uncommitted is in it now).
+      if (check) check.commit = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim() || undefined;
     } else git(wt.path, ["add", "-A"]);
+    if (check) ctx.event("check", { ...check, space: repo.id });
     const range = changeRange(wt);
     const diff = git(wt.path, ["diff", "--no-color", ...range]).stdout;
     const stat = git(wt.path, ["diff", "--stat", ...range]).stdout.trim();

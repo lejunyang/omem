@@ -1555,3 +1555,10 @@ updated: 2026-11-07
 ## 2026-11-07：网页版 VS Code 打开交办工作区不再问信任
 
 VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作区就要再点一次信任。`proxyIde` 在返回工作台页面时，若 `folder` 是编码交办自己的目录（`codeRunsAt`），把页面配置的 `enableWorkspaceTrust` 改成 `false`（`trustWorkbench`）；其他文件夹不变。配置 `ide.web.trustCodeFolders`（默认开）。实现：`src/server/ide-web.ts`；回归：`test/ide-setup.test.ts`；本地开发实例用真实 serve-web 对照过（交办工作区无受限模式，无关目录有）。
+
+## 2026-11-07：检查结果交给评审，评审不再重跑测试
+
+- 宿主的检查记下跑在哪个提交、改动起点和用时，命令带 `OMEM_BASE`（`src/agents/code.ts`）；评审材料的“检查结果”写明这些和编码工作区位置，没设检查命令时写明没有复核（`review-chain.ts`）；逐项验证也带“检查结果”（`code-overlap.ts` 的 `verifyChecks`）。
+- `roles/_common.md` 新增“评审时的测试和检查结果”（只给评审）：核对结果是否完整有效，不重跑整套测试，只为具体问题跑最小范围；`roles/coder.md` 要求写原样的验证命令和结果。
+- 运行页检查一节显示提交和用时，没设检查命令时提示；设置 → 空间 的检查命令说明 `OMEM_BASE`。
+- `test/code-checks.test.ts`；设计在 docs/v2/review.md §4.5。

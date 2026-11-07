@@ -5,7 +5,7 @@ import type { RoleName } from "../core/config.ts";
 import { run as sql } from "../core/db.ts";
 import { git } from "../core/git.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
-import { worktreesOf } from "./code.ts";
+import { checkCommandOf, latestCheck, worktreesOf } from "./code.ts";
 import { addRoundFeedback, takeRoundFeedback, type RoundReview } from "./code-steer.ts";
 import {
   getTask, headsAt, lastRound, listTasks, setWorkState, tasksFromRuling, isLater, taskLabel, taskList, taskText, updateTask, workRootOf, workState,
@@ -190,6 +190,29 @@ export const VERIFY_BRIEF = [
 ].join("\n");
 const SNAPSHOT_NOTE = "工作区是这些提交的快照（只读）；编码 Agent 同时在别处接着改别的项，你看到的是提交了的代码。";
 
+/**
+ * What a verification knows about the project's checks for its tasks: the host's last check when it
+ * ran on their commits, else that none has yet (the round's own runs when its coding ends, and the
+ * stage review reads it). What the coder said it ran is in its notes on each task.
+ */
+export function verifyChecks(app: App, rootId: string, run: Run, worktrees: WorktreeRef[], tasks: CodeTask[]): string {
+  const multi = worktrees.length > 1;
+  const lines = worktrees.flatMap((wt) => {
+    const shas = tasks.flatMap((t) => t.commits[wt.space]?.slice(-1) ?? []);
+    if (multi && !shas.length) return [];
+    const head = multi ? `### ${wt.space}\n\n` : "";
+    const dir = workDirOf(wt);
+    const where = `编码工作区（依赖和构建产物在这里）：${dir}`;
+    const command = checkCommandOf(app, run, wt.space);
+    if (!command) return [`${head}仓库没有设检查命令：只有编码 Agent 在说明里写的验证，宿主没有复核。\n${where}`];
+    const last = latestCheck(app, rootId, wt.space);
+    const covers = !!last?.commit && shas.length > 0 && shas.every((s) => git(dir, ["merge-base", "--is-ancestor", s, last.commit!]).ok);
+    if (!covers) return [`${head}这些项提交以后宿主还没跑过检查命令（${command}）：这一轮编码结束时会在编码工作区跑，阶段评审核对它的结果。\n${where}`];
+    return [`${head}宿主的检查（${command}）跑在提交 ${last!.commit!.slice(0, 8)}，包含这些项的提交：退出码 ${last!.code}\n${where}\n\n\`\`\`\n${last!.output.slice(-3000)}\n\`\`\``];
+  });
+  return `## 检查结果\n\n${lines.join("\n\n") || "（没有对应的提交）"}`;
+}
+
 /** A check verifies its tasks (verify_tasks); one it gives no verdict on is left to the stage review. */
 export async function verifyGroup(app: App, o: { run: Run; check: string; tasks: CodeTask[]; runId: string; signal: AbortSignal; event: (type: string, data: unknown) => void; cwd?: string; snapshot?: boolean }) {
   const scope = await checkScope(app, o.run);
@@ -212,7 +235,7 @@ export async function verifyGroup(app: App, o: { run: Run; check: string; tasks:
   try {
     await runCheck(app, rootId, o.check, {
       run: o.run,
-      task: `${VERIFY_BRIEF}${o.snapshot ? `\n${SNAPSHOT_NOTE}` : ""}\n\n${parts.join("\n\n")}`,
+      task: `${VERIFY_BRIEF}${o.snapshot ? `\n${SNAPSHOT_NOTE}` : ""}\n\n${parts.join("\n\n")}\n\n${verifyChecks(app, rootId, o.run, scope.worktrees, o.tasks)}`,
       cwd: o.cwd ?? scope.cwd,
       spaces: scope.spaces,
       indexed: scope.indexed,

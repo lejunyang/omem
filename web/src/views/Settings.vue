@@ -1250,7 +1250,7 @@ async function saveEdit() {
         </div>
         <label class="field"><span>空间指南（SPACE.md，Agent 每次工作前都会读）</span><textarea v-model="guide" class="textarea mono" rows="10" /></label>
         <UiCheckbox :model-value="editing.settings.autoIngest !== false && (editing.kind !== 'repo' || editing.settings.autoIngest === true)" @change="(v) => (editing!.settings.autoIngest = v)">新材料保存后让助理整理（更新记忆、事项、相关页面）</UiCheckbox>
-        <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /></label>
+        <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /><span class="hint">每轮编码结束后宿主在工作区运行，结果交给评审，评审不再自己跑测试。命令里可以用环境变量 OMEM_BASE（这次改动的起点提交），如用 <code>git diff --name-only $OMEM_BASE</code> 只测改到的部分。</span></label>
         <template v-if="editing.rootPath">
           <div v-if="editing.kind === 'repo'" class="field fit">
             <span>仓库目录（交办从这里当前的提交切出工作分支）</span>
