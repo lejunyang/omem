@@ -130,6 +130,8 @@ type Tool = {
   name: string;
   description: string;
   schema: z.ZodObject;
+  /** The arguments as JSON Schema, when the tool checks them elsewhere (an isolated plugin's process). */
+  jsonSchema?: Record<string, unknown>;
   write?: boolean;
   handler: (ctx: ToolContext, args: any) => Promise<string> | string;
 };
@@ -4689,7 +4691,7 @@ export function toolList(filter?: Set<string> | null) {
 }
 
 export function toolSchemas(filter?: Set<string> | null) {
-  return toolList(filter).map((t) => ({ name: t.name, description: t.description, inputSchema: z.toJSONSchema(t.schema) as Record<string, unknown> }));
+  return toolList(filter).map((t) => ({ name: t.name, description: t.description, inputSchema: t.jsonSchema ?? (z.toJSONSchema(t.schema) as Record<string, unknown>) }));
 }
 
 /** What an MCP client lists: the run's core tools, plus omem_help / omem_call for the rest (tool-help.ts). */

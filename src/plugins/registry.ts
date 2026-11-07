@@ -21,7 +21,8 @@ import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { GENERIC_BLOCKS, genericToolName } from "./generic.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
-import { setTrust, trustState } from "./trust.ts";
+import { setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
+import { startSandbox } from "./sandbox.ts";
 import { installInfo } from "./install.ts";
 import type { PluginApi, PluginBlock, PluginRegister, PluginSourceInput, PluginTool } from "./types.ts";
 
@@ -181,6 +182,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
 async function loadCode(app: App, p: LoadedPlugin) {
   const { manifest } = p;
   const prefix = `${manifest.id}_`;
+  if (p.source === "data" && trustMode(app, manifest.id) === "isolated") return loadIsolated(app, p);
   const api: PluginApi = {
     id: manifest.id,
     z,
@@ -239,15 +241,50 @@ async function loadCode(app: App, p: LoadedPlugin) {
   else if (p.tools.length) TOOL_GROUPS.push({ id: manifest.id, label: manifest.name, tools: p.tools.map((t) => t.name) });
 }
 
+/**
+ * A data plugin's code in its own process (sandbox.ts): its tools and platform readers register as
+ * stand-ins. It cannot add content blocks or connectors (they need code inside omem); its declared
+ * permissions are checked the same way.
+ */
+async function loadIsolated(app: App, p: LoadedPlugin) {
+  const { manifest } = p;
+  const server = SERVER_FILES.map((f) => join(p.dir, f)).find((f) => existsSync(f));
+  if (!server) return;
+  const sb = await startSandbox(app, { id: manifest.id, dir: p.dir, server, services: manifest.services }, {
+    prefix: `${manifest.id}_`,
+    packageRoot: packageRoot(),
+    settings: (userId) => pluginSettings(app, manifest.id, manifest.settings, userId),
+    services: (name) => manifest.services.find((s) => s.name === name),
+  });
+  p.connectors.push(() => sb.stop());
+  for (const t of sb.tools) p.tools.push({ name: t.name, page: t.page, write: t.write, approval: t.approval });
+  p.platforms.push(...sb.platforms);
+  const extra = [...sb.tools.filter((t) => t.write && !manifest.permissions.write).map((t) => `会写入的工具 ${t.name}（permissions.write）`), ...sb.platforms.filter((x) => !manifest.permissions.platforms.includes(x)).map((x) => `平台包 ${x}（permissions.platforms）`)];
+  if (extra.length) {
+    unloadCode(p);
+    throw new Error(`插件 ${manifest.id} 做了清单没有声明的事：${extra.join("、")}`);
+  }
+  if (p.tools.length) TOOL_GROUPS.push({ id: manifest.id, label: manifest.name, tools: p.tools.map((t) => t.name) });
+}
+
 /** The owner confirms a data plugin's code (as it is now): it runs from here on, no restart. */
-export async function trustPlugin(app: App, id: string) {
+export async function trustPlugin(app: App, id: string, mode: RunMode = "isolated") {
   const p = getPlugin(id);
   if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
-  setTrust(app, id, p.dir);
-  if (p.trust !== "trusted") {
+  const before = trustMode(app, id);
+  setTrust(app, id, p.dir, mode);
+  if (p.trust !== "trusted" || before !== mode) {
     unloadCode(p);
     p.trust = "trusted";
-    if (p.enabled) await loadCode(app, p);
+    try {
+      if (p.enabled) await loadCode(app, p);
+    } catch (e) {
+      // Code that does not load (or does more than it declares) is not trusted after all.
+      unloadCode(p);
+      setTrust(app, id, null);
+      p.trust = "required";
+      throw e;
+    }
     p.specs = readSpecs(p);
   }
   return describePlugin(p);
@@ -463,6 +500,7 @@ export function describePlugin(p: LoadedPlugin) {
     // own: the plugin's page in a sandboxed frame (built or not yet); otherwise the shell's default page.
     page: p.enabled && p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) || devPages(p) } : null,
     enabled: p.enabled,
+    runMode: p.source === "data" && p.trust !== "none" ? (host ? trustMode(host, p.manifest.id) : "isolated") : null,
     version: installInfo(p.dir)?.version || p.manifest.version || null,
     installed: installInfo(p.dir),
     settings: p.manifest.settings.length > 0,

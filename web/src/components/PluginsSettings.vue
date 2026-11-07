@@ -29,6 +29,7 @@ type Plugin = {
   services: { name: string; description: string; command: string }[];
   streams: { name: string; service: string }[];
   enabled: boolean;
+  runMode: "isolated" | "inprocess" | null;
   version: string | null;
   installed: { source: string; version: string; installedAt: string } | null;
   permissions: { tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; uses: string[]; services: string[]; space: string | null };
@@ -113,15 +114,24 @@ async function load() {
   for (const p of plugins.value) if (p.services.length) services.value[p.id] = await get<Service[]>(`/api/plugins/${p.id}/services`);
 }
 
-async function trust(p: Plugin) {
+/**
+ * isolated: its own process that can read only its directory (no secrets, no programs), asking omem for
+ * everything else; inprocess: inside omem with omem's rights, needed for content blocks and new connectors.
+ */
+async function trust(p: Plugin, mode: "isolated" | "inprocess" = "isolated") {
   const what = [...permissionLines(p), p.installed ? `来源：${p.installed.source}` : "", `目录：${p.dir}`].filter(Boolean).join("\n");
+  const how =
+    mode === "isolated"
+      ? "它的代码在单独的进程里运行：只能读它自己的目录、写它自己的数据目录，读不到 omem 的密钥和你的其他文件，也不能启动别的程序；读平台、存原件都经过 omem，按调用它的人的权限。"
+      : "它的代码在 omem 的进程里运行，能读写你能读写的所有文件、用 omem 的全部权限。只对你自己写的或逐行看过的插件这样做；内容块和新的连接器只能这样运行。";
   const ok = await confirmDialog(`信任插件“${p.name}”？`, {
-    message: `它的代码（server 文件、服务）会以你的身份在这台机器上运行，能读写你能读写的文件。只信任你自己写的或看过代码的插件。代码以后有改动，要在这里重新确认。\n\n${what}`,
-    okText: "信任并运行",
+    message: `${how}代码以后有改动，要在这里重新确认。\n\n${what}`,
+    okText: mode === "isolated" ? "隔离运行" : "在 omem 里运行",
+    danger: mode === "inprocess",
   });
   if (!ok) return;
   try {
-    await post(`/api/plugins/${p.id}/trust`);
+    await post(`/api/plugins/${p.id}/trust`, { mode });
     toast(`已信任 ${p.name}`, "ok");
     await load();
   } catch (e) {
@@ -185,10 +195,12 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
         </button>
         <strong>{{ p.name }}</strong><span class="muted small mono">{{ p.id }}</span>
         <span class="badge" :class="{ warn: p.trust === 'required' || p.trust === 'changed', ok: p.trust === 'trusted' }">{{ TRUST[p.trust] }}</span>
-        <span class="muted small">{{ sourceLabel(p) }}{{ p.version ? ` · ${p.version}` : "" }}</span>
+        <span v-if="p.source !== 'builtin' || p.version" class="muted small">{{ p.source === "builtin" ? "" : sourceLabel(p) }}{{ p.version ? `${p.source === "builtin" ? "" : " · "}${p.version}` : "" }}</span>
         <span class="spacer" />
         <UiCheckbox :model-value="p.enabled" switch size="sm" :aria-label="`启用${p.name}`" @change="(v) => setEnabled(p, v)">启用</UiCheckbox>
+        <span v-if="p.trust === 'trusted' && p.runMode" class="badge" :class="{ warn: p.runMode === 'inprocess' }">{{ p.runMode === "isolated" ? "隔离运行" : "在 omem 里运行" }}</span>
         <button v-if="p.trust === 'required' || p.trust === 'changed'" class="btn sm primary" @click="trust(p)">信任并运行</button>
+        <button v-if="p.trust === 'required' || p.trust === 'changed' || (p.trust === 'trusted' && p.runMode === 'isolated')" class="btn ghost sm" @click="trust(p, 'inprocess')">在 omem 里运行…</button>
         <button v-if="p.trust === 'trusted'" class="btn ghost sm danger" @click="untrust(p)">撤销信任</button>
         <button v-if="p.installed" class="btn ghost sm" :disabled="busy" @click="update(p)">更新</button>
         <button v-if="p.installed" class="btn ghost sm danger" @click="remove(p)">删除</button>

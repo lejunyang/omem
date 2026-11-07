@@ -28,6 +28,18 @@ plugins/<id>/
 
 数据目录里的代码用 `api.z`（宿主的 zod），服务用 `OMEM_SERVICE_SDK` 指向的帮助模块。装进来的插件可以带自己的依赖（安装时装进它目录的 `node_modules`），本人手放的插件不能 `import` 宿主没有的包。
 
+### 隔离运行
+
+信任时选运行方式，默认**隔离运行**（`src/plugins/sandbox.ts`、`sandbox-runner.ts`）：
+
+- **进程与权限**：插件代码在单独的 Node 进程里运行，启用 Node 的权限模型。它只能读自己的目录和 omem 的包、读写 `<数据目录>/plugin-data/<id>/`，读不到 `secrets/`、配置、数据库和本人的其他文件，也不能启动子进程。网络不受限制，进程的环境变量里也没有 omem 的令牌和密钥。
+- **工具与平台包**：它的工具和平台包的读取器在 omem 里注册成代理，调用时转给它的进程。参数由插件自己的 zod 定义检查，宿主列工具时用它给出的 JSON Schema。
+- **宿主代办的事**：要读平台（`ctx.connection(...).fetch`）、读写插件记录（`ctx.store`）、存原件（`ctx.saveSource`）、设盯着（`ctx.watches`）、启动服务时，进程向 omem 发请求。omem 按**正在进行的那次调用**的人和空间回答，不认插件自己报的身份。令牌由 omem 加在请求上，插件拿不到。
+- **写法要求**：`ctx.store`、`ctx.saveSource`、`ctx.watches` 在隔离运行时返回 Promise，所以要写 `await`；写了 `await` 在 omem 进程里运行时也照样能用。
+- **不能做的**：内容块（`api.block`）、新的连接器（`api.connector`、`api.appConfig`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
+
+**在 omem 里运行**：代码以 omem 的全部权限运行，只适合你自己写的或逐行看过的插件。运行方式记在 `secrets/plugin-trust.json` 的 `mode` 里；以前信任过的插件按原来的方式在 omem 里运行。代码注册了清单没声明的东西，或者没能启动，信任会被撤回。
+
 ### 启用与停用
 
 设置 → 插件里每个插件都有“启用”开关（内置的也有），配置记在 `plugins.disabled`。停用后它的代码不加载，工具、内容块、连接器、平台包都注销，档案、页面和侧栏入口也不出现；再启用马上加载，不用重启。命令行 `omem plugin enable|disable <id>` 改的是配置，运行中的 omem 要重启才生效。

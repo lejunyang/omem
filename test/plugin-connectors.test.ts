@@ -48,7 +48,7 @@ describe("plugin connectors", async () => {
 
   it("registers its provider and features only once its code is trusted", async () => {
     expect(loginProvider("demo-api")).toBeNull();
-    await trustPlugin(app, "demo");
+    await trustPlugin(app, "demo", "inprocess");
     expect(loginProvider("demo-api")?.label).toBe("示例平台");
     expect(featuresOf("demo-api").map((f) => f.id)).toEqual(["read"]);
     expect(describePlugin(getPlugin("demo")).connectors).toEqual([{ provider: "demo-api", features: ["read"] }]);

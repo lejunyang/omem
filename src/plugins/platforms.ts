@@ -89,17 +89,18 @@ export const removeWatch = (app: App, userId: string, id: string) => run(app.db,
 
 /** At most this many things read for one watch in one pass; the rest next time (the cursor waits). */
 const PER_PASS = 50;
-let syncing: Promise<unknown> | null = null;
+type SyncReport = { watches: number; saved: number; failed: number };
+let syncing: Promise<SyncReport> | null = null;
 
 /**
  * Bring watches up to date: each one due (its pack's interval since the last run), or the one asked for.
  * A container reads what changed since its cursor; the cursor moves only past what was kept, so a
  * failure is retried next time. One pass at a time.
  */
-export function syncWatches(app: App, opts: { id?: string; force?: boolean } = {}) {
+export function syncWatches(app: App, opts: { id?: string; force?: boolean } = {}): Promise<SyncReport> {
   if (syncing && !opts.id) return syncing;
   const p = (async () => {
-    const report = { watches: 0, saved: 0, failed: 0 };
+    const report: SyncReport = { watches: 0, saved: 0, failed: 0 };
     for (const r of all<Row>(app.db, "select * from platform_watches where (? is null or id = ?) order by last_run_at is not null, last_run_at", opts.id ?? null, opts.id ?? null)) {
       const pack = packs.get(r.provider);
       if (!pack) continue;

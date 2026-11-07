@@ -1546,6 +1546,12 @@ updated: 2026-11-07
 - 清单 `permissions`（`write`、`connectors`、`platforms`）：数据目录插件的代码注册超出声明的会被拒；`describePlugin` 带 `permissions`（信任前取声明，运行后取实际），设置页和信任确认里列出。
 - `test/plugin-install.test.ts`。
 
+## 2026-11-07：插件隔离运行
+
+- `src/plugins/sandbox.ts` / `sandbox-runner.ts`：数据目录插件信任时默认隔离运行。fork 一个带 `--permission` 的 Node 进程（读插件目录和 omem 包，写 `plugin-data/<id>`，不能起子进程），环境变量不带 omem 的；工具（宿主用插件给的 JSON Schema 列出，`Tool.jsonSchema`）和平台包读取器注册为代理。进程的请求（fetch 经连接、`store`、`saveSource`、`watches`、`service.ensure`）按正在进行的调用的 ToolContext 回答，令牌不出 omem。内容块、新连接器要选在 omem 里运行。
+- `trust.ts` 记 `mode`（isolated / inprocess；以前的记录算 inprocess），`POST /api/plugins/:id/trust` 带 `mode`；加载失败或超出声明时撤回信任。设置页显示运行方式，“在 omem 里运行…”单独确认。
+- `test/plugin-sandbox.test.ts`。
+
 ## 2026-11-07：网页版 VS Code 打开交办工作区不再问信任
 
 VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作区就要再点一次信任。`proxyIde` 在返回工作台页面时，若 `folder` 是编码交办自己的目录（`codeRunsAt`），把页面配置的 `enableWorkspaceTrust` 改成 `false`（`trustWorkbench`）；其他文件夹不变。配置 `ide.web.trustCodeFolders`（默认开）。实现：`src/server/ide-web.ts`；回归：`test/ide-setup.test.ts`；本地开发实例用真实 serve-web 对照过（交办工作区无受限模式，无关目录有）。

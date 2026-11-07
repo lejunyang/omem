@@ -41,7 +41,9 @@ export function codeHash(dir: string) {
   return h.digest("hex");
 }
 
-type Record = { hash: string; at: string };
+/** isolated: its code runs in its own process with Node's permission model (sandbox.ts); inprocess: inside omem, with omem's rights. */
+export type RunMode = "isolated" | "inprocess";
+type Record = { hash: string; at: string; mode?: RunMode };
 const file = (app: App) => join(app.home, "secrets", "plugin-trust.json");
 
 function read(app: App): { [id: string]: Record } {
@@ -66,9 +68,15 @@ export function trustState(app: App, id: string, dir: string): "trusted" | "chan
   return r.hash === codeHash(dir) ? "trusted" : "changed";
 }
 
-export function setTrust(app: App, id: string, dir: string | null) {
+/** How the owner chose to run it; plugins trusted before there was a choice ran inside omem. */
+export const trustMode = (app: App, id: string): RunMode => {
+  const r = read(app)[id];
+  return r ? (r.mode ?? "inprocess") : "isolated";
+};
+
+export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated") {
   const all = read(app);
-  if (dir) all[id] = { hash: codeHash(dir), at: now() };
+  if (dir) all[id] = { hash: codeHash(dir), at: now(), mode };
   else delete all[id];
   write(app, all);
 }
