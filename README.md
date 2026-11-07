@@ -23,6 +23,7 @@
 - **选中就能引用**：在差异、评审或打开的原件里选中几段，编号后一起提问，或攒成下一轮的修改点；提问抽屉可以缩小成可拖动的图标。
 - **Git 同步交给它**：交办时先拉取、合并或变基，冲突先交给编码 Agent，拿不准的问你；中断的合并、变基、拣选提交或撤销在原现场继续，完成后再同步和编码；应用时快进到目标分支，推送到你选的分支。
 - **不用每次重装依赖**：仓库可以把几个装好依赖的工作区借给交办轮流用，准备命令只在锁文件变了时才跑。
+- **在自己电脑上看交办的页面**：交办视图点“预览”，omem 在那次交办的工作区里起服务，认出它开的端口，按同样的端口号转到你的电脑上；主子应用、写死 localhost 端口的项目也不用另配。
 - **记忆有版本，事项会收尾**：约定被纠正时旧版本保留并指向新版本；事项有时间线和期限，没进展自己过期，有新消息再打开。
 - **插件做强交互的事**：一个插件打包 Agent 档案、技能、工具、数据和独立页面。内置的“英语练习”按场景出一组题（中英互选、填空、听写、翻译），一次提交，宿主判客观题、陪练评翻译并点评；陪练在后台补题库，“下一组”按你的水平和薄弱点当场挑出来。自己的插件放数据目录，只写清单和档案就能用表单、图表和默认页面；带代码和常驻服务的（比如实时看机器状态）要你在设置 → 插件里确认后才运行，页面能经 omem 和服务保持 WebSocket 连接。
 - **飞书里用**：机器人回答带进度卡片和思考过程，规则一句话写成“遇到什么就做什么”，提问和评审结果都是带按钮的卡片。
@@ -158,6 +159,7 @@ npm install -g omem-assistant
 | 在自己的另一份仓库上交办 | 把本地路径给助手：同一个仓库（git remote 相同）已经有空间时不会再建一个，助手告诉你用哪个空间；要让那个空间改用这份目录（比如这里装好了依赖），说一声它会改关联（那个空间还有没应用的交办时要先清理） |
 | 在 VS Code 里处理评审 | 装 `vscode/` 里的插件（`pnpm run package` 打出 .vsix）：打开交办的工作区后，评审问题挂在代码行上，线程标题点“改 / 暂不改 / 不改”；选中代码 `Ctrl+Alt+A` 提问或记修改点；侧栏“修改单”点“开始修改”续一轮；侧栏“交办”的 ＋ 写任务文档交办；状态栏看轮次和过程。经 Remote-SSH 打开时插件直接连那台机器上的 omem |
 | 不装 VS Code 也在浏览器里看交办的代码 | 运行页“在 VS Code 中打开”旁的齿轮里选“网页版 VS Code”（同一处能看用的是哪个 VS Code 命令行，找不到时填路径）：新标签页里就是这台机器上交办的工作区。用的是官方 `code serve-web`（机器上要有 VS Code 或它的命令行），所有项目共用服务端，已有完整缓存就直接进入（新版本在后台下载，下次启动时换上），首次下载时显示下载进度，准备好自动进入；omem 代理并鉴权，只对你开放；经 `omem peer open` 看常驻服务器时也能用。浏览器是中文时界面用已装语言包按键翻译（语言包比服务端旧，没翻到的显示英文，不会错位）；omem 自己的插件已经装好并连上这台 omem；交办的工作区直接按已信任打开，不用每次点信任（`ide.web.trustCodeFolders`）；网页版还没有自己的设置时，拿这台机器上 Remote-SSH（或桌面 VS Code）的设置做初始值（`ide.web.reuseSettings`），`ide.web.reuseExtensions: true` 时再把那边装的、适合这台机器和这一版的扩展各复制一份 |
+| 看交办改出来的页面效果 | 在设置 → 空间 → 编辑仓库里填“预览命令”（一行一个 `名字: 命令`，比如 `主站: pnpm --dir apps/main dev & pnpm --dir apps/sub dev & wait`，端口不用填）。交办视图点“预览”选一条启动：omem 在这次交办的工作区里运行它，显示输出，认出它和它启动的进程在监听的端口；点 `localhost:<端口>` 打开。网页和 omem 在同一台机器时端口直接能开；在别的电脑上用 `omem peer open <设备>` 打开 omem，它会在你电脑上按同样的端口号监听并转过去（HTTP 和热更新的 WebSocket 都行），所以把 localhost 端口写死在开发配置里的多应用项目也能用。同一仓库同时只开一个，端口上 30 分钟没有连接就停（`preview.idleMinutes`），交办的工作区收回、应用或丢弃后也停；只对你开放 |
 | 用 VS Code 看交办的代码 | 运行页点“在 VS Code 中打开”：本机直接打开工作区，从别的电脑看时第一次填一下那台机器的 SSH 主机名，之后经 Remote-SSH 打开；改动在源代码管理面板里。齿轮里可换 Insiders 或 Cursor |
 | 大型需求：文档、群聊、代码分支、要对照的源仓库归到一处 | 说“建一个『退款改造』事项，把这些文档、群和分支挂上去”，或在事项详情的“材料”区添加；之后说“评审这个事项的分支”，评审者会读这些材料，评审结果、分支和结论都挂回事项，从事项点进运行页 |
 | 告诉 omem 哪些材料重要、哪些过时或没用 | 原件页目录树上给整个知识库、目录或群选档（以后进来的也按这一档），或给单份选“重点关注 / 一般 / 仅检索 / 忽略”，过时或关键的段落加标注（写清以哪份为准）；或在问答里说“这个知识库都是历史资料”“oncall 群的要重点看”，助手会定级、加标注或存成规则。重点的排在检索前面，仅检索的排后面，忽略的不再出现；过时段落命中时带着标注和更正原文。Agent 写的标注先按一半强度生效，原件页“待复核”按影响面列出 Agent 的标注和目录定级，一键确认或否定：确认“有误”或标成“不检索”的段落不再被检索到 |
@@ -455,7 +457,7 @@ omem peer pull <设备>                     # 经 HTTP 合并：数据库总会�
 omem peer pull <设备> --only library,files --to ~/omem-copy -y  # 不询问：只拉这几项，合并进另一个数据目录
 omem peer pull <设备> --dry-run           # 预览数据库合并，不改本机数据或仓库
 omem peer pull <设备> --overwrite         # 停掉本机服务后替换；旧数据库、文件和仓库留备份
-omem peer open <设备>                     # 在本机浏览器打开它的网页，经中间机器的也行，不用令牌
+omem peer open <设备>                     # 在本机浏览器打开它的网页，经中间机器的也行，不用令牌；交办的预览按原端口号转到本机
 omem peer remove <设备>                   # 移除；先请对方撤销给本机的令牌，本机用它的 Agent 一并删除
 omem peer acp <设备> <Agent>              # 用它的 ACP Agent（stdio 上说 ACP）；一般不手动运行，由设置 → 设备里打开的 Agent 配置调用
 ```
@@ -496,7 +498,7 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 
 ```
 src/auth      登录：登录方（providers.ts，飞书在 lark.ts）、登录与绑定、邀请、机器人登录链接（login.ts）、会话 cookie（sessions.ts）、谁在请求与相关接口（http.ts）；权限（permissions.ts、routes.ts、tools.ts）；连接器：令牌保管（vault.ts）、刷新与续期（connections.ts）、功能与 scope（features.ts）、主人填的平台应用配置（apps.ts）、以某人身份用 lark-cli（lark-user.ts）
-src/core      配置、AI 提供方与 API key（ai-keys.ts）、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）
+src/core      配置、AI 提供方与 API key（ai-keys.ts）、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）、进程监听的端口（listening.ts）与预览的本机转发（preview-forward.ts）
 src/rules     任务规则、条件判断、执行动作与触发记录
 src/remote    远程操作：aad 的进程（assist、mcp、record）、会话与画面转发（/remote）、录制与回放
 src/sources   归档规则与原件迁移（archive.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
@@ -506,7 +508,7 @@ src/items     事项（时间线）、需求树（requirements.ts）、需求点
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）
-src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）
+src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md

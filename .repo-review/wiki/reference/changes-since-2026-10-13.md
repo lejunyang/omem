@@ -1562,3 +1562,10 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `roles/_common.md` 新增“评审时的测试和检查结果”（只给评审）：核对结果是否完整有效，不重跑整套测试，只为具体问题跑最小范围；`roles/coder.md` 要求写原样的验证命令和结果。
 - 运行页检查一节显示提交和用时，没设检查命令时提示；设置 → 空间 的检查命令说明 `OMEM_BASE`。
 - `test/code-checks.test.ts`；设计在 docs/v2/review.md §4.5。
+
+## 2026-11-07：交办工作区的预览
+
+- 仓库空间设置加“预览命令”（`previewCommands`，一行一个“名字: 命令”）。交办视图“预览”（`web/src/components/WorkPreview.vue`）在这次交办的工作区里运行它，列出它和子进程监听的端口；`src/agents/previews.ts` 管起停、同一仓库一个、没有连接超过 `preview.idleMinutes` 分钟或工作区收回时停、重启后停掉遗留进程；`src/core/listening.ts` 查进程树监听的端口与连接数（Linux `/proc`、macOS `lsof`、Windows `netstat`）。
+- 按原端口号看：`omem peer open` 的本机进程处理 `/api/local/forwards`，在同样的端口号上监听，每个连接经 `tunnelConnect`（`Upgrade: omem-tcp`，`/api/previews/:id/tcp`，加进 `tunneled`）原样接到那台机器的端口，所以把 localhost 端口写死在开发配置里的多应用项目不用另配；接口与隧道在 `src/server/preview-http.ts`，只对本人。
+- 设置页 `?tab=spaces&space=<id>` 直接打开那个空间的设置。
+- `test/preview.test.ts`；设计在 docs/v2/preview.md。

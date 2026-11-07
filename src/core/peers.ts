@@ -247,8 +247,31 @@ export async function openPeerUi(app: App, id: string, port = 0) {
   const { trustedLocal } = await import("../server/origin.ts");
   // Everything here goes out with the owner's token: only this machine's browser, not another site's page.
   const refuse = (req: import("node:http").IncomingMessage) => !trustedLocal(req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
+  // Previews of the peer's workspaces on the same port numbers here (docs/v2/preview.md).
+  const { PreviewForwards } = await import("./preview-forward.ts");
+  const forwards = new PreviewForwards(app, id);
+  const local = async (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
+    const send = (status: number, body: unknown) => void res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
+    const path = (req.url ?? "").split("?")[0];
+    if (req.method === "GET" && path === "/api/local/forwards") return send(200, { forwarder: true, peer: id, forwards: forwards.list() });
+    if (req.method === "POST" && path === "/api/local/forwards") {
+      let b: { preview?: unknown; ports?: unknown } = {};
+      try {
+        const chunks: Buffer[] = [];
+        for await (const c of req) chunks.push(c as Buffer);
+        b = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+      } catch {}
+      const ports = Array.isArray(b.ports) ? b.ports.map(Number).filter((p) => Number.isInteger(p) && p > 0 && p < 65536) : [];
+      if (typeof b.preview !== "string" || !/^[\w-]+$/.test(b.preview)) return send(400, { error: "preview 不对" });
+      return send(200, await forwards.open(b.preview, ports));
+    }
+    const m = /^\/api\/local\/forwards\/([\w-]+)$/.exec(path);
+    if (req.method === "DELETE" && m) return send(200, { closed: forwards.close(m[1]) });
+    send(404, { error: "没有这个本机接口" });
+  };
   const server = createServer(async (req, res) => {
     if (refuse(req)) return void res.writeHead(403, { "content-type": "text/plain; charset=utf-8" }).end("只接受本机浏览器直接打开的请求");
+    if (/^\/api\/local\/forwards(\/|\?|$)/.test(req.url ?? "")) return local(req, res);
     if (tunneled(req.url ?? "/")) return tunnelHttp(app, id, req.url ?? "/", req, res);
     try {
       const chunks: Buffer[] = [];
@@ -283,5 +306,5 @@ export async function openPeerUi(app: App, id: string, port = 0) {
   });
   await new Promise<void>((ok, fail) => server.once("error", fail).listen(port, "127.0.0.1", () => ok()));
   const addr = server.address() as { port: number };
-  return { url: `http://127.0.0.1:${addr.port}`, close: () => new Promise((r) => server.close(r)) };
+  return { url: `http://127.0.0.1:${addr.port}`, forwards, close: () => new Promise((r) => (forwards.closeAll(), server.close(r))) };
 }

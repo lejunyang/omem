@@ -312,6 +312,8 @@ export const configSchema = z.object({
         .default({}),
     })
     .default({ web: {} }),
+  /** Previews of a delegation's workspace (docs/v2/preview.md): stopped after this long with no connection. */
+  preview: z.object({ idleMinutes: z.number().int().min(1).max(24 * 60).default(30) }).default({ idleMinutes: 30 }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
   node: z.object({ id: z.string().optional() }).default({}),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */

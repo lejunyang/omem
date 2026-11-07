@@ -14,6 +14,7 @@ import CodeTasks from "./CodeTasks.vue";
 import ContextUsage from "./ContextUsage.vue";
 import FixBasket from "./FixBasket.vue";
 import OpenInIde from "./OpenInIde.vue";
+import WorkPreview from "./WorkPreview.vue";
 import QuoteDock from "./QuoteDock.vue";
 import ReviewChecks from "./ReviewChecks.vue";
 import ReviewProcess from "./ReviewProcess.vue";
@@ -308,6 +309,7 @@ const ctx = computed(() => detail.value?.context ?? null);
         <h2 class="title" :title="work.title">{{ work.title }}</h2>
         <button class="btn ghost sm" @click="explaining = null; asking = 'open'"><Icon name="chat" :size="14" />提问</button>
         <OpenInIde :key="`${run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${run.status}`" :run-id="run.id" :space-name="spaceName" />
+        <WorkPreview v-if="!work.branchReview" :key="`pv:${run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}`" :run-id="run.id" />
         <router-link v-if="from === 'reqs'" :to="`/runs/${work.latestId}`" class="btn sm">运行页<Icon name="external" :size="13" /></router-link>
       </div>
       <div class="row wrap about small">

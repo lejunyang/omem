@@ -174,6 +174,14 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/review-options": CODE,
   "GET /api/ide/cli": CODE,
   "GET /api/ide/open": CODE,
+  // Previews of a delegation's workspace (docs/v2/preview.md): the owner's commands and servers.
+  "GET /api/runs/:id/previews": "owner",
+  "GET /api/previews": "owner",
+  "POST /api/previews": "owner",
+  "GET /api/previews/:id": "owner",
+  "DELETE /api/previews/:id": "owner",
+  // Nothing to forward here: `omem peer open` answers this path itself on the owner's machine.
+  "GET /api/local/forwards": "self",
   ...Object.fromEntries(
     [
       "POST code-here", "GET apply-targets", "POST apply", "GET branch", "POST branch", "POST sync", "GET git", "POST git", "POST move-to-target", "POST discard",

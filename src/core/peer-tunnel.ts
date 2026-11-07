@@ -12,7 +12,10 @@ import { findPeer } from "./peers.ts";
  * remote session's viewer and its WebSocket); `/api/peer/acp` is a
  * device's agent used from here (peer-acp.ts).
  */
-export const tunneled = (path: string) => /^\/ide(\/|\?|$)/.test(path) || /^\/remote\//.test(path) || /^\/api\/ide\/open(\?|$)/.test(path) || /^\/api\/peer\/acp(\?|$)/.test(path);
+export const tunneled = (path: string) => /^\/ide(\/|\?|$)/.test(path) || /^\/remote\//.test(path) || /^\/api\/ide\/open(\?|$)/.test(path) || /^\/api\/peer\/acp(\?|$)/.test(path) || PREVIEW_TCP.test(path);
+
+/** A preview's port as a raw byte stream (docs/v2/preview.md): `/api/previews/<id>/tcp?port=<n>`. */
+export const PREVIEW_TCP = /^\/api\/previews\/[^/?]+\/tcp(\?|$)/;
 
 export function peerRoute(app: App, id: string, path: string, hops: number): { url: string; token: string; path: string; hops: number } {
   if (hops > 4) throw new Error("设备转发层数过多");
@@ -22,7 +25,7 @@ export function peerRoute(app: App, id: string, path: string, hops: number): { u
   return { url: p.url, token: p.token, path, hops };
 }
 
-function upstream(app: App, id: string, req: IncomingMessage, path: string, hops: number) {
+function upstream(app: App, id: string, req: Pick<IncomingMessage, "headers" | "method">, path: string, hops: number) {
   const r = peerRoute(app, id, path, hops);
   const target = new URL(r.path, r.url);
   const headers: Record<string, string | string[]> = {};
@@ -32,6 +35,32 @@ function upstream(app: App, id: string, req: IncomingMessage, path: string, hops
   // Kept from the first hop: web VS Code addresses its WebSocket to the host the browser used.
   if (!headers["x-forwarded-host"] && req.headers.host) headers["x-forwarded-host"] = req.headers.host;
   return (target.protocol === "https:" ? httpsRequest : httpRequest)(target, { method: req.method, headers, agent: false });
+}
+
+/**
+ * A raw byte stream to `path` on peer `id` (an upgrade to `omem-tcp`, through middle nodes like
+ * any tunneled upgrade): what the local end of a preview forward pipes a browser connection into.
+ * Rejects with the status when the far end refuses (404: the preview or the port is gone).
+ */
+export function tunnelConnect(app: App, id: string, path: string): Promise<Duplex> {
+  return new Promise((ok, fail) => {
+    let up;
+    try {
+      up = upstream(app, id, { method: "GET", headers: { connection: "Upgrade", upgrade: "omem-tcp" } }, path, 0);
+    } catch (e) {
+      return fail(e);
+    }
+    up.on("upgrade", (_r, sock, head) => {
+      if (head.length) sock.unshift(head);
+      ok(sock);
+    });
+    up.on("response", (r) => {
+      r.resume();
+      fail(Object.assign(new Error(`对方回 ${r.statusCode}`), { status: r.statusCode }));
+    });
+    up.on("error", fail);
+    up.end();
+  });
 }
 
 const fail = (res: ServerResponse, e: Error) => {

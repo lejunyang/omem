@@ -253,6 +253,16 @@ onMounted(() => {
   void loadLark();
   void loadCaptured();
   void loadCrawls();
+  // `?space=<id>` (from a page that needs one of its settings, e.g. a preview command): open it.
+  const want = route.query.space;
+  if (typeof want === "string" && tab.value === "spaces") {
+    const s = state.spaces.find((x) => x.id === want);
+    if (s) void openSpace(s);
+    else void loadSpaces().then(() => {
+      const t = state.spaces.find((x) => x.id === want);
+      if (t) void openSpace(t);
+    });
+  }
 });
 // Opening the Agent tab fills role dropdowns from cached probes (probing once when there is none).
 watch(
@@ -1267,6 +1277,11 @@ async function saveEdit() {
           <label v-if="editing.kind === 'repo'" class="field">
             <span>设备的外部 Agent 可以运行的命令（它经 --peer 交办编码时；一行一个“名字: 命令”，检查和准备命令自动包含）</span>
             <textarea v-model="editing.settings.peerCommands" class="textarea mono" rows="3" placeholder="test: npx vitest run&#10;lint: npx eslint" />
+          </label>
+          <label v-if="editing.kind === 'repo'" class="field">
+            <span>预览命令（在交办的工作区里起服务，从你的电脑打开看效果；一行一个“名字: 命令”，只有一条可以不写名字）</span>
+            <textarea v-model="editing.settings.previewCommands" class="textarea mono" rows="3" placeholder="主站: pnpm --dir apps/main dev & pnpm --dir apps/sub dev & wait&#10;H5: pnpm --dir wap/h5 dev" />
+            <span class="hint">端口不用填：omem 认出命令开的端口，按同样的端口号转到你电脑上（经 omem peer open 打开 omem 时），写死 localhost 端口的项目也能用。同一仓库同时只开一个，没人看 30 分钟后停掉。</span>
           </label>
           <div v-if="editing.kind === 'repo'" class="field fit">
             <span>交办工作区</span>

@@ -1,0 +1,258 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { request } from "node:http";
+import { resolve } from "node:path";
+import type { App } from "../core/app.ts";
+import { one, run } from "../core/db.ts";
+import { scanPorts } from "../core/listening.ts";
+import { commandLine, killPid } from "../core/procs.ts";
+import { findSpace } from "../core/spaces.ts";
+import { HttpError } from "../core/util.ts";
+import { codeFolders } from "./code.ts";
+import { getRun } from "./runs.ts";
+
+/**
+ * Previews of a coding delegation's workspace (docs/v2/preview.md): the repository's preview
+ * command runs in the workspace, omem finds the ports it and its children listen on, and the
+ * owner's browser reaches them on the same port numbers (here, or forwarded by `omem peer open`).
+ * One preview per repository at a time; it stops when nobody looks for a while, when the
+ * workspace goes away, or when omem stops.
+ */
+
+export type PreviewCommand = { name: string; command: string };
+export type PreviewPort = { port: number; hosts: string[]; page: boolean | null; connections: number };
+export type PreviewStatus = "starting" | "running" | "exited" | "stopped";
+export type PreviewView = {
+  id: string;
+  run: string;
+  space: string;
+  folder: string;
+  branch: string | null;
+  name: string;
+  command: string;
+  status: PreviewStatus;
+  ports: PreviewPort[];
+  startedAt: string;
+  endedAt: string | null;
+  exitCode: number | null;
+  reason: string | null;
+  log: string;
+};
+
+type Preview = Omit<PreviewView, "log"> & { pid: number; log: string; idleSince: number; lastScan: number; scanning: boolean };
+
+const LOG_MAX = 60_000;
+/** A big monorepo's dev servers can take minutes to come up; past this with no port, something is wrong. */
+const STARTUP_MS = 15 * 60_000;
+const KEY = "previews";
+const previews = new Map<string, Preview>();
+const children = new Map<string, ChildProcess>();
+let timer: NodeJS.Timeout | null = null;
+
+/** The name before the first colon is a name only if it does not look like part of a command. */
+export function previewCommands(settings: Record<string, unknown>): PreviewCommand[] {
+  const out: PreviewCommand[] = [];
+  for (const raw of String(settings.previewCommands ?? "").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = /^([^:：=/$'"`\s][^:：=/$'"`]*?)\s*[:：]\s*(\S.*)$/.exec(line);
+    if (m) out.push({ name: m[1].trim(), command: m[2].trim() });
+    else out.push({ name: out.length ? `命令 ${out.length + 1}` : "预览", command: line });
+  }
+  return out;
+}
+
+const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+
+function view(p: Preview, logChars = 8000): PreviewView {
+  const { pid: _pid, idleSince: _i, lastScan: _l, scanning: _s, log, ...rest } = p;
+  return { ...rest, ports: p.ports.map((x) => ({ ...x })), log: log.slice(-logChars) };
+}
+
+function remember(app: App) {
+  const live = [...previews.values()].filter((p) => p.status === "starting" || p.status === "running").map((p) => ({ id: p.id, pid: p.pid, command: p.command, folder: p.folder }));
+  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", KEY, JSON.stringify(live));
+}
+
+/** Preview processes a previous omem left running (it stopped without stopping them). */
+export function stopLeftovers(app: App) {
+  const raw = one<{ value: string }>(app.db, "select value from kv where key = ?", KEY)?.value;
+  let left: { pid: number; command: string }[] = [];
+  try {
+    left = JSON.parse(raw ?? "[]");
+  } catch {}
+  for (const l of left) {
+    if ([...previews.values()].some((p) => p.pid === l.pid)) continue;
+    // Only if the pid still runs that command: it may have been reused by something else.
+    if (l.pid > 0 && commandLine(l.pid).includes(l.command.slice(0, 60))) killPid(l.pid);
+  }
+  remember(app);
+}
+
+/** The root delegation of a coding run (where its workspaces are recorded). */
+const rootOf = (app: App, runId: string) => {
+  const r = getRun(app, runId);
+  if (r.kind !== "code") throw new HttpError(400, "只有交办编码的运行能预览");
+  return String(r.input.continueFrom ?? r.id);
+};
+
+const norm = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+
+/** What a delegation can preview: each repository's folder and its preview commands. */
+export function previewTargets(app: App, runId: string) {
+  const root = rootOf(app, runId);
+  return codeFolders(app, root).map((f) => {
+    const space = findSpace(app, f.space);
+    return { space: f.space, spaceName: space?.name ?? f.space, folder: f.path, kind: f.kind, branch: f.branch, commands: space ? previewCommands(space.settings) : [] };
+  });
+}
+
+export function listPreviews(app: App, runId?: string): PreviewView[] {
+  const root = runId ? rootOf(app, runId) : null;
+  return [...previews.values()].filter((p) => !root || p.run === root).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).map((p) => view(p, root ? 4000 : 0));
+}
+
+export function getPreview(id: string, logChars = 8000): PreviewView {
+  const p = previews.get(id);
+  if (!p) throw new HttpError(404, "没有这个预览（可能已经停了，或 omem 重启过）");
+  return view(p, logChars);
+}
+
+function end(app: App, p: Preview, status: PreviewStatus, reason: string | null, code: number | null = null) {
+  if (p.status === "exited" || p.status === "stopped") return;
+  Object.assign(p, { status, reason, exitCode: code, endedAt: new Date().toISOString(), ports: [] });
+  // The group: what the command started in the background goes too (`a & b`).
+  killPid(p.pid);
+  children.delete(p.id);
+  remember(app);
+  // Ended ones stay listed a while, so the page can say why; then they go.
+  setTimeout(() => {
+    if (previews.get(p.id) === p) previews.delete(p.id);
+  }, 10 * 60_000).unref();
+}
+
+export function stopPreview(app: App, id: string, reason = "你停掉了"): PreviewView {
+  const p = previews.get(id);
+  if (!p) throw new HttpError(404, "没有这个预览");
+  end(app, p, "stopped", reason);
+  return view(p);
+}
+
+export function stopAllPreviews(app: App) {
+  for (const p of previews.values()) end(app, p, "stopped", "omem 停止了");
+  if (timer) clearInterval(timer);
+  timer = null;
+}
+
+export function startPreview(app: App, b: { run: string; space: string; name?: string }): PreviewView {
+  const root = rootOf(app, b.run);
+  const target = previewTargets(app, root).find((t) => t.space === b.space);
+  if (!target) throw new HttpError(409, "这次交办在这个仓库没有工作区（可能已经收回、应用或丢弃）");
+  if (!target.commands.length) throw new HttpError(400, `${target.spaceName} 还没设预览命令：在空间设置里填“预览命令”`);
+  const cmd = b.name ? target.commands.find((c) => c.name === b.name) : target.commands[0];
+  if (!cmd) throw new HttpError(404, `没有名为 ${b.name} 的预览命令`);
+  // The project's ports are fixed: one preview per repository.
+  for (const p of previews.values()) if (p.space === b.space && (p.status === "starting" || p.status === "running")) end(app, p, "stopped", "同一个仓库开了另一个预览");
+  const isWin = process.platform === "win32";
+  const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${cmd.command}"`] : ["-c", cmd.command], {
+    cwd: target.folder,
+    detached: !isWin,
+    windowsHide: true,
+    windowsVerbatimArguments: isWin,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, BROWSER: "none", OMEM_PREVIEW: "1" },
+  });
+  const id = `pv${randomBytes(6).toString("hex")}`;
+  const now = Date.now();
+  const p: Preview = {
+    id, run: root, space: b.space, folder: target.folder, branch: target.branch, name: cmd.name, command: cmd.command,
+    status: "starting", ports: [], startedAt: new Date(now).toISOString(), endedAt: null, exitCode: null, reason: null,
+    pid: child.pid ?? -1, log: `$ ${cmd.command}\n`, idleSince: now, lastScan: 0, scanning: false,
+  };
+  previews.set(id, p);
+  children.set(id, child);
+  const add = (d: Buffer) => {
+    p.log = (p.log + stripAnsi(d.toString())).slice(-LOG_MAX);
+  };
+  child.stdout?.on("data", add);
+  child.stderr?.on("data", add);
+  child.on("error", (e) => {
+    add(Buffer.from(`\n${e.message}\n`));
+    end(app, p, "exited", "命令没能运行", -1);
+  });
+  child.on("exit", (code) => end(app, p, "exited", code === 0 ? "命令结束了" : `命令退出（${code ?? "被终止"}）`, code));
+  remember(app);
+  if (!timer) timer = setInterval(() => void tick(app), 2000).unref();
+  return view(p);
+}
+
+/** Whether `/` on the port answers with a web page (checked once per port). */
+function isPage(host: string, port: number) {
+  return new Promise<boolean>((ok) => {
+    const req = request({ host, port, path: "/", method: "GET", headers: { accept: "text/html", host: `localhost:${port}` }, timeout: 5000 }, (res) => {
+      ok(/text\/html/.test(String(res.headers["content-type"] ?? "")) || (res.statusCode ?? 0) >= 300 && (res.statusCode ?? 0) < 400);
+      res.destroy();
+    });
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => ok(false));
+    req.end();
+  });
+}
+
+const idleMs = (app: App) => (app.config.preview?.idleMinutes ?? 30) * 60_000;
+
+async function scan(app: App, p: Preview) {
+  p.scanning = true;
+  try {
+    const s = await scanPorts(p.pid);
+    if (p.status !== "starting" && p.status !== "running") return;
+    const before = new Map(p.ports.map((x) => [x.port, x]));
+    p.ports = s.listening.map((l) => ({ port: l.port, hosts: l.hosts, page: before.get(l.port)?.page ?? null, connections: s.connections.get(l.port) ?? 0 }));
+    if (p.ports.length && p.status === "starting") Object.assign(p, { status: "running", idleSince: Date.now() });
+    for (const x of p.ports) if (x.page === null) x.page = await isPage(x.hosts[0], x.port);
+    const now = Date.now();
+    if (p.status === "starting") {
+      if (now - Date.parse(p.startedAt) > STARTUP_MS) end(app, p, "stopped", `${STARTUP_MS / 60_000} 分钟还没有监听任何端口，停掉了`);
+    } else if (p.ports.some((x) => x.connections > 0)) p.idleSince = now;
+    else if (now - p.idleSince > idleMs(app)) end(app, p, "stopped", `${Math.round(idleMs(app) / 60_000)} 分钟没人看，停掉了`);
+  } catch (e) {
+    p.log = (p.log + `\n[omem] 查端口失败：${(e as Error).message}\n`).slice(-LOG_MAX);
+  } finally {
+    p.lastScan = Date.now();
+    p.scanning = false;
+  }
+}
+
+async function tick(app: App) {
+  const live = [...previews.values()].filter((p) => p.status === "starting" || p.status === "running");
+  if (!live.length && timer) {
+    clearInterval(timer);
+    timer = null;
+    return;
+  }
+  for (const p of live) {
+    // The workspace went back to the pool, or the change was applied or dropped.
+    let here = true;
+    try {
+      here = codeFolders(app, p.run).some((f) => norm(f.path) === norm(p.folder));
+    } catch {
+      here = false;
+    }
+    if (!here) {
+      end(app, p, "stopped", "交办的工作区已经收回");
+      continue;
+    }
+    // Every 2 s while it comes up, then every 15 s.
+    const every = p.status === "starting" || !p.ports.length ? 2000 : 15_000;
+    if (!p.scanning && Date.now() - p.lastScan >= every) void scan(app, p);
+  }
+}
+
+/** A forwarded connection to one of the preview's own ports, or null when it is not one. */
+export function previewDial(id: string, port: number): { hosts: string[]; opened: () => void } | null {
+  const p = previews.get(id);
+  if (!p || (p.status !== "running" && p.status !== "starting")) return null;
+  const x = p.ports.find((q) => q.port === port);
+  if (!x) return null;
+  return { hosts: x.hosts, opened: () => (p.idleSince = Date.now()) };
+}

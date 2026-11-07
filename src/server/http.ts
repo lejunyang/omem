@@ -22,6 +22,7 @@ import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, c
 import { attachPluginStreams, registerPluginRoutes } from "../plugins/http.ts";
 import { IDE_BASE, IdeNotReady, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remote/http.ts";
+import { attachPreviewUpgrade, registerPreviewRoutes } from "./preview-http.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -1232,6 +1233,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   await registerRemoteRoutes(server, app, who);
   attachRemoteUpgrade(app, server.server);
   server.addHook("onClose", async () => closeRemote(app));
+  // Previews of a delegation's workspace (docs/v2/preview.md): routes and the port tunnel.
+  registerPreviewRoutes(server, app, who);
+  attachPreviewUpgrade(app, server.server);
   attachPluginStreams(app, server.server);
   // Its WebSocket: upgrades skip the hooks, so the owner's token is checked here.
   server.server.on("upgrade", async (req, socket, head) => {
