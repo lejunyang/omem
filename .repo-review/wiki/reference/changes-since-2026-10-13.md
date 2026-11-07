@@ -1577,3 +1577,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 常驻服务器的 `.npmrc` 指向公司镜像，镜像里没有 `@nangohq/providers@0.72.2`，pnpm 11 的发布时间检查（minimumReleaseAge）因此拒绝安装，远程更新停在“安装依赖”。
 - `osdk.toml`：`[settings.precedence] npm = "osdk"` 和 `[registries.npm] default`（公开源）；osdk 给 pnpm 注入 `npm_config_registry` / `pnpm_config_registry`，覆盖 `.npmrc` 和 `pnpm-workspace.yaml` 的源，scope 和认证仍按原生配置。osdk 对写了自定义 `run` 的依赖不选源（`deps_cmd.rs` 只在 `run` 为空时注入），所以 `[deps.pnpm]` 另用 `env` 带上同样的两个变量，指向同一个源。`[deps.pnpm]` 的命令加 `--config.confirmModulesPurge=false`（没有终端时 pnpm 不会停下来问）。
 - `scripts/upgrade.ts`：有 osdk 时 `osdk trust osdk.toml` → `osdk install --no-deps`（工具；常驻服务器上全局 `omem` 同时挂在 node 和 npm 的前缀里，osdk 生成 shim 时报冲突，所以只提示不中断）→ `osdk deps` → `osdk run build`，之后还原本机改写的 `osdk.lock`（部署用的检出保持干净，下次 `git pull --ff-only` 不被挡）；没有 osdk 时照旧直接用 pnpm。
+
+## 2026-11-07：中间设备转发任何升级请求；预览说明文件监听上限
+
+- 经 `--via` 中转时，中间设备以前只转发 `tunneled` 列出的升级路径，预览的隧道（`/api/previews/:id/tcp`）在旧版中间设备上被回 404。现在中间设备对本人令牌的升级请求不看路径原样转发，由最后那台设备鉴权和判断路径（`src/server/http.ts`）；以后加新的隧道，中间设备不用跟着更新。
+- 预览输出里出现 `EMFILE … watch`（inotify 实例数）或 `ENOSPC`（监听数）时，`previewHint` 给出原因，交办视图的预览面板显示在状态下面。常驻服务器上主应用崩过一次就是这个：同一用户 128 个 inotify 实例被别的程序占满，两个开发服务器各只占 1 个。
+- `test/preview.test.ts`：经一个不认识预览的中间设备打开预览端口；按真实报错格式测提示。

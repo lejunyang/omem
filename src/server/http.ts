@@ -1248,8 +1248,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     }
     const m = /^\/api\/peers\/([^/?]+)(\/.*)$/.exec(req.url ?? "");
     if (!m) return;
-    const { tunneled, tunnelUpgrade } = await import("../core/peer-tunnel.ts");
-    if (!tunneled(m[2])) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
+    // A middle node passes on any upgrade of its owner, whatever the path: the device at the end
+    // checks the token and the path itself, so a new tunnel there (a preview's port, …) needs no
+    // newer omem on the nodes in between.
+    const { tunnelUpgrade } = await import("../core/peer-tunnel.ts");
     const h = req.headers.authorization;
     const hops = Number(req.headers["x-omem-hops"] ?? 0);
     if (!h?.startsWith("Bearer ") || userForToken(app, h.slice(7)) !== OWNER) return void socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n");

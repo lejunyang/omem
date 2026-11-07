@@ -37,11 +37,25 @@ export type PreviewView = {
   endedAt: string | null;
   exitCode: number | null;
   reason: string | null;
+  /** What a known failure in the output means for this machine (file-watch limits), or null. */
+  hint: string | null;
   log: string;
 };
 
 /** `current`: what runs now (the setup command, then the preview command); `commandAt`: when the preview command started. */
-type Preview = Omit<PreviewView, "log"> & { pid: number; current: string; log: string; idleSince: number; commandAt: number; everPorts: boolean; lastScan: number; scanning: boolean };
+type Preview = Omit<PreviewView, "log" | "hint"> & { pid: number; current: string; log: string; idleSince: number; commandAt: number; everPorts: boolean; lastScan: number; scanning: boolean };
+
+/**
+ * Dev servers watch files; on Linux each user has a fixed number of inotify instances and watches,
+ * shared with everything else they run. A crash for that reads like the project's own error.
+ */
+export function previewHint(log: string): string | null {
+  if (/\bEMFILE\b[^\n]*\b(watch|inotify)|\b(watch|inotify)[^\n]*\bEMFILE\b|syscall: 'watch',\s*code: 'EMFILE'|code: 'EMFILE',[^}]*syscall: 'watch'/.test(log))
+    return "监听文件变化的名额用完了（EMFILE）：这台机器上同一用户的 inotify 实例数有上限（Linux 的 fs.inotify.max_user_instances，常见默认 128），被正在运行的其他程序占满时开发服务器就会崩。关掉一些程序后重试，或请管理员调大这个值；也可以让开发服务器改用轮询监听。";
+  if (/\bENOSPC\b[^\n]*\bwatch|System limit for number of file watchers reached/.test(log))
+    return "监听的文件数到了上限（ENOSPC）：Linux 的 fs.inotify.max_user_watches 不够，请管理员调大；也可以让开发服务器少监听一些目录或改用轮询。";
+  return null;
+}
 
 const LOG_MAX = 60_000;
 /** A big monorepo's dev servers can take minutes to come up; past this with no port, something is wrong. */
@@ -68,7 +82,7 @@ const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").rep
 
 function view(p: Preview, logChars = 8000): PreviewView {
   const { pid: _pid, current: _c, idleSince: _i, commandAt: _a, everPorts: _e, lastScan: _l, scanning: _s, log, ...rest } = p;
-  return { ...rest, ports: p.ports.map((x) => ({ ...x })), log: log.slice(-logChars) };
+  return { ...rest, ports: p.ports.map((x) => ({ ...x })), hint: previewHint(log), log: log.slice(-logChars) };
 }
 
 function remember(app: App) {

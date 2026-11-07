@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { killPid } from "../src/core/procs.ts";
 import { createRun, setRunOutput } from "../src/agents/runs.ts";
-import { previewCommands } from "../src/agents/previews.ts";
+import { previewCommands, previewHint } from "../src/agents/previews.ts";
 import { descendants, parseLsof, parseNetstat, parseProcNetTcp, scanPorts } from "../src/core/listening.ts";
 import { addPeer, openPeerUi } from "../src/core/peers.ts";
 import { tunnelConnect } from "../src/core/peer-tunnel.ts";
@@ -84,6 +84,23 @@ describe("preview parsing", () => {
     } finally {
       kills.mockRestore();
     }
+  });
+
+  it("says what a file-watch limit crash means", () => {
+    // As rsbuild printed it when the user's inotify instances ran out.
+    const emfile = [
+      "Emitted 'error' event on FSWatcher instance at:",
+      "    at FSWatcher._handleError (/srv/work/shop/node_modules/chokidar/index.js:1599:16)",
+      "  errno: -24,",
+      "  syscall: 'watch',",
+      "  code: 'EMFILE',",
+      "  path: '/srv/work/shop/apps/main/rsbuild.config.ts',",
+    ].join("\n");
+    expect(previewHint(emfile)).toMatch(/max_user_instances/);
+    expect(previewHint("Error: EMFILE: too many open files, watch '/srv/work/shop/src'")).toMatch(/max_user_instances/);
+    expect(previewHint("Error: ENOSPC: System limit for number of file watchers reached, watch '/srv/work'")).toMatch(/max_user_watches/);
+    expect(previewHint("Error: EMFILE: too many open files, open '/srv/work/a.json'")).toBeNull();
+    expect(previewHint("ready   built in 5.97 s")).toBeNull();
   });
 
   it("reads preview commands: named lines, or one unnamed command", () => {
@@ -220,6 +237,24 @@ describe("preview of a delegation's workspace", () => {
     expect(kills.mock.calls.filter(([pid]) => Number(pid) <= 1 && Number(pid) >= -1)).toEqual([]);
     kills.mockRestore();
     await until(async () => ((await api<{ status: string }>(`/api/previews/${again.id}`)).status === "running" ? true : null));
+    // Through a middle node that knows nothing of previews: it passes its owner's upgrades on as they are.
+    const middle = testApp();
+    middle.config.token = "middle-secret";
+    const mid = await startServer(middle, { port: 0, host: "127.0.0.1", quiet: true });
+    closers.push(() => mid.close());
+    const midUrl = `http://127.0.0.1:${(mid.server.address() as { port: number }).port}`;
+    const code = (id: string, url: string, token: string) => "omem1." + Buffer.from(JSON.stringify({ id, urls: [url], token })).toString("base64url");
+    await addPeer(middle, code("box", base, "owner-secret"));
+    const far = testApp();
+    await addPeer(far, code("mid", midUrl, "middle-secret"));
+    await addPeer(far, code("box", "", "owner-secret"), { via: "mid" });
+    const via = await tunnelConnect(far, "box", `/api/previews/${again.id}/tcp?port=${port}`);
+    via.write(`GET /via-middle HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: close\r\n\r\n`);
+    const answer = await new Promise<string>((ok) => {
+      let got = "";
+      via.on("data", (d) => (got += d)).on("close", () => ok(got));
+    });
+    expect(answer).toContain(`page localhost:${port} /via-middle`);
     setRunOutput(box, r.id, { appliedTo: [] });
     const gone = await until(async () => {
       const p = await api<{ status: string; reason: string }>(`/api/previews/${again.id}`);

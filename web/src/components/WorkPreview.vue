@@ -14,7 +14,7 @@ const props = defineProps<{ runId: string }>();
 type Command = { name: string; command: string };
 type Target = { space: string; spaceName: string; folder: string; kind: "work" | "applied"; branch: string | null; commands: Command[] };
 type Port = { port: number; hosts: string[]; page: boolean | null; connections: number };
-type Preview = { id: string; space: string; name: string; command: string; status: "preparing" | "starting" | "running" | "exited" | "stopped"; ports: Port[]; startedAt: string; endedAt: string | null; reason: string | null; log: string };
+type Preview = { id: string; space: string; name: string; command: string; status: "preparing" | "starting" | "running" | "exited" | "stopped"; ports: Port[]; startedAt: string; endedAt: string | null; reason: string | null; hint: string | null; log: string };
 type Data = { local: boolean; targets: Target[]; previews: Preview[] };
 type ForwardPort = { port: number; ok: boolean; error: string | null };
 type Forwards = { forwarder: boolean; peer?: string; forwards?: { preview: string; ports: ForwardPort[] }[] };
@@ -155,6 +155,7 @@ onBeforeUnmount(() => (open.value = false));
               <span class="muted small grow">{{ live(p) ? `${relTime(p.startedAt)}开始` : p.reason ?? "" }}</span>
               <button v-if="live(p)" class="btn ghost sm" :disabled="busy === p.id" @click="stop(p)"><Icon name="stop" :size="13" />停止</button>
             </div>
+            <p v-if="p.hint" class="warn small">{{ p.hint }}</p>
             <ul v-if="live(p) && p.ports.length" class="ports">
               <li v-for="x in p.ports" :key="x.port" class="row">
                 <a v-if="reachable(p, x.port)" class="mono" :href="`http://localhost:${x.port}/`" target="_blank" rel="noopener">localhost:{{ x.port }}<Icon name="external" :size="12" /></a>
