@@ -26,7 +26,48 @@ plugins/<id>/
 
 确认的是代码此刻的样子：清单加上插件目录里除 `web/`、`agents/`、`skills/`、`node_modules/` 以外的所有文件的哈希（超过 50 MB 的文件按大小和修改时间算），存在本机的 `secrets/plugin-trust.json`（不随多设备同步，每台机器各自确认）。代码改过，状态变成“代码改过，需要重新确认”，重启后不再加载。撤销信任时它的工具马上注销、服务停止。
 
-数据目录里的代码不能 `import` 包：`api.z` 是宿主的 zod，服务用 `OMEM_SERVICE_SDK` 指向的帮助模块。
+数据目录里的代码用 `api.z`（宿主的 zod），服务用 `OMEM_SERVICE_SDK` 指向的帮助模块。装进来的插件可以带自己的依赖（安装时装进它目录的 `node_modules`），本人手放的插件不能 `import` 宿主没有的包。
+
+### 启用与停用
+
+设置 → 插件里每个插件都有“启用”开关（内置的也有），配置记在 `plugins.disabled`。停用后它的代码不加载，工具、内容块、连接器、平台包都注销，档案、页面和侧栏入口也不出现；再启用马上加载，不用重启。命令行 `omem plugin enable|disable <id>` 改的是配置，运行中的 omem 要重启才生效。
+
+### 第三方插件
+
+**来源**：
+
+- npm 包：`npm:包名@版本`，或直接写包名。npm 包有版本号和完整性校验，也能带依赖，是推荐的发布方式。
+- GitHub：`github:owner/repo#tag`，也可以写提交 hash。必须指定 tag 或提交，因为分支会在信任之后改变。
+
+在设置 → 插件 → 安装插件里填写，或者用命令行 `omem plugin install <来源>`。安装器（`src/plugins/install.ts`）的做法：
+
+1. 下载并解包，npm 包用 `npm pack`，GitHub 来源从 codeload 下载 tar.gz。
+2. 检查包里的 `plugin.yaml`。
+3. 拒绝和内置插件重名的 id；数据目录里有同名的、你自己放的插件时，也拒绝，不覆盖。
+4. 有依赖、但包里没带 `node_modules` 时，执行 `npm install --omit=dev --ignore-scripts`。
+5. 放进 `<数据目录>/plugins/<id>/`，来源和版本记在 `.omem-install.json`。
+
+**安全**：整个安装过程不运行包里的任何脚本。装好后，带代码的插件和手放的一样，要本人确认信任才运行。
+
+**更新和删除**：“更新”对 npm 来源取最新版本；GitHub 来源要填新的 tag。代码变了就要重新信任。“删除”只删安装器放进来的目录，插件存下的原件、记忆和插件记录都保留。
+
+**对第三方插件的要求**：
+
+- 包根目录有 `plugin.yaml`，`id` 不和内置插件重名。版本取 `package.json` 的 `version`，没有就取清单的 `version`。
+- 带代码的发布编译好的 JS（`server.js` / `server.mjs`），类型只从 `omem-plugin-sdk` 引入，不 import omem 的源码。
+- 在清单的 `permissions` 里声明代码会做的事，信任之前设置页只能显示这些：
+  - `write: true`：有会写入的工具；
+  - `connectors: [...]`：注册的连接器 id；
+  - `platforms: [...]`：平台包挂在哪些连接器上。
+
+  这些声明对数据目录里的插件是强制的：代码注册了没声明的东西，加载时报错，不运行。
+
+```yaml
+id: notes
+name: 笔记平台
+version: 1.0.0
+permissions: { write: true, connectors: [notes-api], platforms: [notes-api] }
+```
 
 ## 清单
 

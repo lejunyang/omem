@@ -142,7 +142,8 @@ export const configSchema = z.object({
    * (core/shares.ts); they need `webUrl`. expiryDays 0: links do not expire (revoke them in settings).
    */
   /** Per-plugin choices of the owner that are not the plugin's own settings: the nav icon. */
-  plugins: z.object({ icons: z.record(z.string(), z.string()).default({}) }).default({ icons: {} }),
+  /** Plugins: the nav icon the owner chose, and the ones turned off (their code does not load). */
+  plugins: z.object({ icons: z.record(z.string(), z.string()).default({}), disabled: z.array(z.string()).default([]) }).default({ icons: {}, disabled: [] }),
   shares: z.object({ expiryDays: z.number().int().min(0).max(3650).default(0) }).default({ expiryDays: 0 }),
   /**
    * Other people logging in (src/auth, docs/v2/multi-user.md). Off: the page asks for a token as

@@ -2,14 +2,16 @@
 import { onMounted, ref } from "vue";
 import { del, get, post, put } from "../api";
 import { PLUGIN_ICONS } from "../lib/icons";
-import { confirmDialog } from "../lib/dialog";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 import { state, toast } from "../store";
 import Icon from "./Icon.vue";
 import Skeleton from "./Skeleton.vue";
+import UiCheckbox from "./UiCheckbox.vue";
 
 /**
- * Settings → 插件 (docs/v2/plugins.md): what each plugin brings, trusting the code of plugins in the
- * data directory (and withdrawing it), and their services: running or not, start, stop, recent output.
+ * Settings → 插件 (docs/v2/plugins.md): installing someone else's plugin (an npm package or a GitHub tag),
+ * turning plugins on and off, what each may do, trusting the code of plugins in the data directory (and
+ * withdrawing it), updating or removing installed ones, and their services: running or not, recent output.
  */
 type Service = { name: string; description: string; command: string; running: boolean; startedAt: string | null; streams: number; log: string[] };
 type Plugin = {
@@ -26,12 +28,83 @@ type Plugin = {
   page: { title: string } | null;
   services: { name: string; description: string; command: string }[];
   streams: { name: string; service: string }[];
+  enabled: boolean;
+  version: string | null;
+  installed: { source: string; version: string; installedAt: string } | null;
+  permissions: { tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; uses: string[]; services: string[]; space: string | null };
 };
 
 const plugins = ref<Plugin[] | null>(null);
 const services = ref<Record<string, Service[]>>({});
 const openLog = ref<string | null>(null);
 const picking = ref<string | null>(null);
+const source = ref("");
+const busy = ref(false);
+
+/** What a plugin may do, in a few lines (shown on its card and before trusting it). */
+function permissionLines(p: Plugin) {
+  const m = p.permissions;
+  const writes = m.tools.filter((t) => t.write).map((t) => t.name);
+  return [
+    m.tools.length ? `自己的工具 ${m.tools.length} 个${writes.length ? `，其中会写入的：${writes.join("、")}` : "，都只读"}${m.tools.some((t) => t.approval) ? "；有的每次要你批准" : ""}` : m.writes ? "声明了会写入的工具（代码还没运行，看不到具体是哪些）" : "",
+    m.hostTools.length ? `它的 Agent 还能用：${m.hostTools.join("、")}` : "",
+    m.providers.length ? `带来可连接的平台：${m.providers.length > 6 ? `${m.providers.length} 个` : m.providers.join("、")}` : "",
+    m.platforms.length ? `给这些平台加读取和同步：${m.platforms.map((x) => x.replace(/^connect-/, "")).join("、")}` : "",
+    m.uses.length ? `以你的身份调用：${m.uses.join("、")}` : "",
+    m.services.length ? `在这台机器上运行：${m.services.join("；")}` : "",
+    m.space ? `用自己的空间 ${m.space}` : "",
+  ].filter(Boolean);
+}
+const sourceLabel = (p: Plugin) => (p.source === "builtin" ? "内置" : p.installed ? p.installed.source : "数据目录里的");
+
+async function install() {
+  if (!source.value.trim()) return;
+  busy.value = true;
+  try {
+    const r = await post<{ id: string; version: string; replaced: boolean }>("/api/plugins/install", { source: source.value.trim() });
+    toast(`已${r.replaced ? "更新" : "安装"} ${r.id}${r.version ? ` ${r.version}` : ""}；带代码的看过权限后点“信任并运行”`, "ok");
+    source.value = "";
+    await load();
+    state.pluginsChanged++;
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    busy.value = false;
+  }
+}
+async function update(p: Plugin) {
+  const isGit = p.installed?.source.startsWith("github:");
+  const next = isGit ? await promptDialog(`更新 ${p.name}`, { message: "GitHub 来源要写新的 tag 或提交，例如 github:owner/repo#v1.2.0", value: p.installed!.source, okText: "更新" }) : "";
+  if (isGit && !next) return;
+  busy.value = true;
+  try {
+    const r = await post<{ version: string }>(`/api/plugins/${p.id}/update`, { source: next || undefined });
+    toast(`已更新到 ${r.version || "最新"}；代码变了，要重新信任`, "ok");
+    await load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    busy.value = false;
+  }
+}
+async function remove(p: Plugin) {
+  if (!(await confirmDialog(`删除插件“${p.name}”？`, { message: "它的目录会删掉，工具、档案和页面马上消失；它存下的原件、记忆和插件记录保留。", okText: "删除", danger: true }))) return;
+  try {
+    await del(`/api/plugins/${p.id}`);
+    await load();
+    state.pluginsChanged++;
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+async function setEnabled(p: Plugin, on: boolean) {
+  try {
+    Object.assign(p, await put<Plugin>(`/api/plugins/${p.id}/enabled`, { on }));
+    state.pluginsChanged++;
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 
 const TRUST: Record<Plugin["trust"], string> = { builtin: "内置", none: "只有声明，不含代码", trusted: "已信任", required: "带代码，未信任", changed: "代码改过，需要重新确认" };
 
@@ -41,7 +114,7 @@ async function load() {
 }
 
 async function trust(p: Plugin) {
-  const what = [p.services.length ? `服务：${p.services.map((s) => s.command).join("；")}` : "", `目录：${p.dir}`].filter(Boolean).join("\n");
+  const what = [...permissionLines(p), p.installed ? `来源：${p.installed.source}` : "", `目录：${p.dir}`].filter(Boolean).join("\n");
   const ok = await confirmDialog(`信任插件“${p.name}”？`, {
     message: `它的代码（server 文件、服务）会以你的身份在这台机器上运行，能读写你能读写的文件。只信任你自己写的或看过代码的插件。代码以后有改动，要在这里重新确认。\n\n${what}`,
     okText: "信任并运行",
@@ -87,7 +160,15 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
 
 <template>
   <div class="stack">
-    <p class="muted">插件带来自己的 Agent 档案、技能、工具和页面。内置插件随 omem 更新；放在数据目录 <span class="mono">plugins/</span> 里的是你自己的，带代码的要你确认后才运行。写法见 docs/v2/plugins.md。</p>
+    <p class="muted">插件带来自己的 Agent 档案、技能、工具和页面。内置插件随 omem 更新；放在数据目录 <span class="mono">plugins/</span> 里的是你自己的；装进来的和你自己的，带代码的都要你看过权限、确认后才运行。写法见 docs/v2/plugins.md。</p>
+    <div class="card pad stack">
+      <strong>安装插件</strong>
+      <div class="row wrap">
+        <input v-model="source" class="input grow" placeholder="npm:omem-plugin-示例@1.0.0 或 github:owner/repo#v1.0.0" aria-label="插件来源" @keydown.enter="install" />
+        <button class="btn sm primary" :disabled="busy || !source.trim()" @click="install">{{ busy ? "安装中…" : "安装" }}</button>
+      </div>
+      <p class="muted small">不运行包里的安装脚本；GitHub 来源要写 tag 或提交，分支会在信任之后变。</p>
+    </div>
     <Skeleton v-if="!plugins" variant="text" :rows="4" />
     <p v-else-if="!plugins.length" class="muted">还没有插件。</p>
     <div v-for="p in plugins ?? []" :key="p.id" class="card pad stack">
@@ -104,9 +185,13 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
         </button>
         <strong>{{ p.name }}</strong><span class="muted small mono">{{ p.id }}</span>
         <span class="badge" :class="{ warn: p.trust === 'required' || p.trust === 'changed', ok: p.trust === 'trusted' }">{{ TRUST[p.trust] }}</span>
+        <span class="muted small">{{ sourceLabel(p) }}{{ p.version ? ` · ${p.version}` : "" }}</span>
         <span class="spacer" />
+        <UiCheckbox :model-value="p.enabled" switch size="sm" :aria-label="`启用${p.name}`" @change="(v) => setEnabled(p, v)">启用</UiCheckbox>
         <button v-if="p.trust === 'required' || p.trust === 'changed'" class="btn sm primary" @click="trust(p)">信任并运行</button>
         <button v-if="p.trust === 'trusted'" class="btn ghost sm danger" @click="untrust(p)">撤销信任</button>
+        <button v-if="p.installed" class="btn ghost sm" :disabled="busy" @click="update(p)">更新</button>
+        <button v-if="p.installed" class="btn ghost sm danger" @click="remove(p)">删除</button>
       </div>
       <div v-if="picking === p.id" class="icons stack">
         <div class="grid" role="radiogroup" :aria-label="`${p.page?.title} 的菜单图标`">
@@ -129,6 +214,9 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
       </div>
       <p v-if="p.description" class="muted small">{{ p.description }}</p>
       <p v-if="p.dir" class="muted small mono path">{{ p.dir }}</p>
+      <ul v-if="permissionLines(p).length" class="small perms">
+        <li v-for="l in permissionLines(p)" :key="l">{{ l }}</li>
+      </ul>
       <div class="small facts">
         <span v-if="p.page">页面：{{ p.page.title }}</span>
         <span v-if="p.agents.length">档案：<span class="mono">{{ p.agents.map((a) => a.name).join("、") }}</span></span>
@@ -160,6 +248,16 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
   color: var(--ink-2);
 }
 .path {
+  overflow-wrap: anywhere;
+}
+.grow {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.perms {
+  margin: 0;
+  padding-left: 1.2em;
+  color: var(--ink-2);
   overflow-wrap: anywhere;
 }
 .service {

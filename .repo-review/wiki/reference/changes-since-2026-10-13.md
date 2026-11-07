@@ -1539,6 +1539,13 @@ updated: 2026-11-07
 - 连接插件加 `connect_read`、`connect_watch`，`connect_list` 列出能读的类型和盯着的内容；账号页列出盯着的内容（立即同步、不再同步）。登录流程记下申请的 scope，平台没回报时按申请的记。
 - `test/platform-packs.test.ts`。
 
+## 2026-11-07：插件启用开关、第三方插件安装、权限声明
+
+- `plugins.disabled`：停用的插件不加载代码、档案、页面和侧栏入口；设置页切换立即生效（`setPluginEnabled`），`omem plugin enable|disable` 改配置、重启生效。
+- `src/plugins/install.ts`：`npm:包@版本` 或 `github:owner/repo#tag`（必须 tag 或提交）装进数据目录，不跑安装脚本、依赖 `--ignore-scripts`，来源记在 `.omem-install.json`；拒绝和内置或本人手放的插件重名。接口 `POST /api/plugins/install`、`/:id/update`、`DELETE /api/plugins/:id`、`PUT /:id/enabled`；命令 `omem plugin list|install|remove|enable|disable`。
+- 清单 `permissions`（`write`、`connectors`、`platforms`）：数据目录插件的代码注册超出声明的会被拒；`describePlugin` 带 `permissions`（信任前取声明，运行后取实际），设置页和信任确认里列出。
+- `test/plugin-install.test.ts`。
+
 ## 2026-11-07：网页版 VS Code 打开交办工作区不再问信任
 
 VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作区就要再点一次信任。`proxyIde` 在返回工作台页面时，若 `folder` 是编码交办自己的目录（`codeRunsAt`），把页面配置的 `enableWorkspaceTrust` 改成 `false`（`trustWorkbench`）；其他文件夹不变。配置 `ide.web.trustCodeFolders`（默认开）。实现：`src/server/ide-web.ts`；回归：`test/ide-setup.test.ts`；本地开发实例用真实 serve-web 对照过（交办工作区无受限模式，无关目录有）。

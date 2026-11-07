@@ -868,6 +868,51 @@ program
     await runJob((app) => ask(app, { text: question.join(" "), spaceId: o.space, conversationId: o.conversation, channel: "cli" }));
   });
 
+const plugin = program.command("plugin").description("插件：列出、安装（npm 包或 GitHub tag）、更新、删除、启用和停用（docs/v2/plugins.md）");
+plugin
+  .command("list")
+  .description("列出插件：来源、版本、是否启用、代码是否已信任")
+  .action(async () => {
+    const { loadPlugins, describePlugin } = await import("./plugins/registry.ts");
+    for (const p of (await loadPlugins(open())).map(describePlugin))
+      console.log(`${p.id.padEnd(14)} ${p.enabled ? "启用" : "停用"}  ${p.source === "builtin" ? "内置" : p.installed ? p.installed.source : "本地"}${p.version ? ` ${p.version}` : ""}  ${p.trust}
+  ${p.name}：${p.description}`);
+  });
+plugin
+  .command("install <source>")
+  .description("安装插件：npm:包名[@版本] 或 github:owner/repo#tag；不运行安装脚本，带代码的要在设置 → 插件里信任后才运行")
+  .action(async (source: string) => {
+    const { installPlugin } = await import("./plugins/install.ts");
+    const r = await installPlugin(open(), source);
+    console.log(`已${r.replaced ? "更新" : "安装"} ${r.id}${r.version ? ` ${r.version}` : ""} → ${r.dir}
+运行中的 omem 要重启才看得到；带代码的插件在 设置 → 插件 里看过权限、信任后才运行。`);
+  });
+plugin
+  .command("remove <id>")
+  .description("删除装进来的插件（自己放进数据目录的不删）")
+  .action(async (id: string) => {
+    const { removeInstalled } = await import("./plugins/install.ts");
+    const { setTrust } = await import("./plugins/trust.ts");
+    const app = open();
+    removeInstalled(app, id);
+    setTrust(app, id, null);
+    console.log(`已删除 ${id}；运行中的 omem 重启后不再加载它`);
+  });
+for (const [name, on] of [["enable", true], ["disable", false]] as const)
+  plugin
+    .command(`${name} <id>`)
+    .description(on ? "启用插件" : "停用插件：代码不加载，档案、页面和侧栏入口都不出现")
+    .action(async (id: string) => {
+      const { saveConfig } = await import("./core/config.ts");
+      const app = open();
+      const disabled = new Set(app.config.plugins.disabled);
+      if (on) disabled.delete(id);
+      else disabled.add(id);
+      app.config.plugins = { ...app.config.plugins, disabled: [...disabled] };
+      saveConfig(app.config, app.home);
+      console.log(`已${on ? "启用" : "停用"} ${id}；运行中的 omem 重启后生效（设置 → 插件 里切换不用重启）`);
+    });
+
 const user = program.command("user").description("用户与身份（omem 默认只有主人；给同事开放时在这里登记）");
 user
   .command("list")

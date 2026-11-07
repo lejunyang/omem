@@ -22,6 +22,7 @@ import { GENERIC_BLOCKS, genericToolName } from "./generic.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
 import { setTrust, trustState } from "./trust.ts";
+import { installInfo } from "./install.ts";
 import type { PluginApi, PluginBlock, PluginRegister, PluginSourceInput, PluginTool } from "./types.ts";
 
 /**
@@ -39,6 +40,8 @@ export const manifestSchema = z.object({
   id: z.string().regex(ID, "插件 id 只能用小写字母和数字，字母开头，2–24 个字符"),
   name: z.string().min(1),
   description: z.string().default(""),
+  /** Shown in settings → 插件; an installed package's own version wins (install.ts). */
+  version: z.string().optional(),
   /** The nav icon: a name from web/src/lib/icons.ts, or an .svg in the page's directory (web/, or web/public/ for a built page). */
   icon: z.string().regex(/^([a-z][a-z0-9-]*|[\w./-]+\.svg)$/, "图标写图标名，或页面目录里的 .svg 文件").default("box"),
   space: z.object({ id: z.string(), name: z.string(), kind: z.enum(["learning", "topic", "project"]).default("topic"), description: z.string().default("") }).optional(),
@@ -54,6 +57,14 @@ export const manifestSchema = z.object({
   streams: z.array(streamSchema).default([]),
   /** Platforms its tools act on as the person using them (docs/v2/multi-user.md, “插件扩展”): the page says when one is not connected. */
   connectors: z.array(z.object({ provider: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/), features: z.array(z.string()).default([]) })).default([]),
+  /**
+   * What its code will do, shown before the owner trusts it (docs/v2/plugins.md, “第三方插件”): tools that
+   * write, connectors and platform packs it registers. Enforced for plugins in the data directory: code that
+   * registers more than declared is refused.
+   */
+  permissions: z
+    .object({ write: z.boolean().default(false), connectors: z.array(z.string()).default([]), platforms: z.array(z.string()).default([]) })
+    .default({ write: false, connectors: [], platforms: [] }),
 });
 export type PluginManifest = z.infer<typeof manifestSchema>;
 
@@ -67,9 +78,14 @@ export type LoadedPlugin = {
    * plugin with code the owner has not confirmed (yet, or since it changed), required / changed.
    */
   trust: "builtin" | "none" | "trusted" | "required" | "changed";
+  /** The owner turned it off (config plugins.disabled): no code, agents, page or nav entry. */
+  enabled: boolean;
   specs: AgentSpec[];
   /** Tools the plugin registered; `page` ones its page may call. */
-  tools: { name: string; page: boolean }[];
+  tools: { name: string; page: boolean; write: boolean; approval: boolean }[];
+  /** Connectors and platform packs its code registered, for the permissions it shows. */
+  providers: string[];
+  platforms: string[];
   blocks: Map<string, PluginBlock>;
   /** Undo what api.connector registered (providers and their features). */
   connectors: (() => void)[];
@@ -135,8 +151,11 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     dir,
     source,
     trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir) : "none",
+    enabled: !app.config.plugins.disabled.includes(manifest.id),
     specs: [],
     tools: own,
+    providers: [],
+    platforms: [],
     blocks,
     connectors: [],
     env: {
@@ -150,7 +169,9 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
       },
     },
   };
-  if (p.trust === "builtin" || p.trust === "trusted") await loadCode(app, p);
+  if (!p.enabled) {
+    // Turned off: nothing of it runs or shows.
+  } else if (p.trust === "builtin" || p.trust === "trusted") await loadCode(app, p);
   else if (p.trust !== "none") console.warn(`[omem] 插件 ${manifest.id} 带代码，${p.trust === "changed" ? "代码在信任之后改过" : "还没有被信任"}：在设置 → 插件里确认后才会运行；档案、技能和页面照常可用`);
   p.specs = readSpecs(p);
   return p;
@@ -165,8 +186,9 @@ async function loadCode(app: App, p: LoadedPlugin) {
     z,
     tool(t: PluginTool<any>) {
       if (!t.name.startsWith(prefix)) throw new Error(`插件 ${manifest.id} 的工具名要以 ${prefix} 开头：${t.name}`);
+      if (p.source === "data" && t.write && !manifest.permissions.write) throw new Error(`插件 ${manifest.id} 的工具 ${t.name} 会写入，但清单没有声明 permissions.write`);
       registerTool({ name: t.name, description: t.description, schema: t.schema, write: t.write, handler: (ctx, args) => t.handler(asPlugin(p.env, ctx), args) }, { approval: t.approval });
-      p.tools.push({ name: t.name, page: !!t.page });
+      p.tools.push({ name: t.name, page: !!t.page, write: !!t.write, approval: !!t.approval });
     },
     block(b: PluginBlock<any>) {
       if (!/^[a-z][a-z0-9_]{0,23}$/.test(b.kind)) throw new Error(`内容块类型不合法：${b.kind}`);
@@ -176,18 +198,22 @@ async function loadCode(app: App, p: LoadedPlugin) {
       // Handing in a block is what the plugin's agent is there for: offered directly, like a role's submit tool.
       CORE_TOOLS.add(name);
       p.blocks.set(b.kind, b);
-      p.tools.push({ name, page: false });
+      p.tools.push({ name, page: false, write: true, approval: false });
     },
     connector(def) {
       if (!def.id.startsWith(`${manifest.id}-`)) throw new Error(`插件 ${manifest.id} 的连接器 id 要以 ${manifest.id}- 开头：${def.id}`);
       if (loginProvider(def.id)) throw new Error(`已经有连接器 ${def.id}`);
+      if (p.source === "data" && !manifest.permissions.connectors.includes(def.id)) throw new Error(`插件 ${manifest.id} 注册的连接器 ${def.id} 没有在 permissions.connectors 里声明`);
       const { features, ...provider } = def;
       p.connectors.push(registerLoginProvider(provider));
+      p.providers.push(def.id);
       if (typeof features === "function" || features?.length) p.connectors.push(registerFeatures(def.id, features));
     },
     fetch: authFetch,
     platform(def) {
+      if (p.source === "data" && !manifest.permissions.platforms.includes(def.provider)) throw new Error(`插件 ${manifest.id} 的平台包 ${def.provider} 没有在 permissions.platforms 里声明`);
       p.connectors.push(registerPlatform(manifest.id, def));
+      p.platforms.push(def.provider);
     },
     platforms: () => platformList(),
     text: { html: htmlToMarkdown },
@@ -221,7 +247,7 @@ export async function trustPlugin(app: App, id: string) {
   if (p.trust !== "trusted") {
     unloadCode(p);
     p.trust = "trusted";
-    await loadCode(app, p);
+    if (p.enabled) await loadCode(app, p);
     p.specs = readSpecs(p);
   }
   return describePlugin(p);
@@ -242,6 +268,8 @@ function unloadCode(p: LoadedPlugin) {
   unregisterTools(p.tools.map((t) => t.name));
   p.tools.splice(0);
   for (const undo of p.connectors.splice(0)) undo();
+  p.providers.splice(0);
+  p.platforms.splice(0);
   p.blocks.clear();
   stopPluginServices(p.manifest.id);
   const group = TOOL_GROUPS.findIndex((g) => g.id === p.manifest.id);
@@ -249,10 +277,48 @@ function unloadCode(p: LoadedPlugin) {
 }
 
 /** Its services and streams are usable only when its code may run. */
-export const codeRuns = (p: LoadedPlugin) => p.trust === "builtin" || p.trust === "trusted";
+export const codeRuns = (p: LoadedPlugin) => p.enabled && (p.trust === "builtin" || p.trust === "trusted");
+
+/** Turn a plugin on or off (config plugins.disabled): its code loads or unloads at once, no restart. */
+export async function setPluginEnabled(app: App, id: string, on: boolean) {
+  const p = getPlugin(id);
+  const disabled = new Set(app.config.plugins.disabled);
+  if (on) disabled.delete(id);
+  else disabled.add(id);
+  app.config.plugins = { ...app.config.plugins, disabled: [...disabled] };
+  saveConfig(app.config, app.home);
+  if (p.enabled !== on) {
+    unloadCode(p);
+    p.enabled = on;
+    if (on && (p.trust === "builtin" || p.trust === "trusted")) await loadCode(app, p);
+    p.specs = readSpecs(p);
+    if (on) {
+      ensureSpace(app, p.manifest);
+      seedSkills(app, p);
+    }
+  }
+  return describePlugin(p);
+}
+
+/** A plugin just installed or updated in the data directory (install.ts): (re)read it; its code waits for trust. */
+export async function reloadPlugin(app: App, id: string) {
+  forgetPlugin(id);
+  await loadPlugins(app, [{ dir: dataPluginsDir(app), source: "data" }]);
+  return describePlugin(getPlugin(id));
+}
+
+/** Drop a plugin from this process (before its directory is removed). */
+export function forgetPlugin(id: string) {
+  const p = plugins.get(id);
+  if (!p) return;
+  if (p.source === "builtin") throw new HttpError(400, `插件 ${id} 是内置的`);
+  unloadCode(p);
+  plugins.delete(id);
+}
 
 function readSpecs(p: LoadedPlugin): AgentSpec[] {
   const { manifest } = p;
+  if (!p.enabled) return [];
   const allowed = new Set([...manifest.tools, ...p.tools.map((t) => t.name), ...PLUGIN_TOOLS]);
   const known = new Set(toolList().map((t) => t.name));
   for (const t of allowed) if (!known.has(t)) console.warn(`[omem] 插件 ${manifest.id} 声明了不存在的工具 ${t}`);
@@ -395,7 +461,10 @@ export function describePlugin(p: LoadedPlugin) {
     space: p.manifest.space?.id ?? null,
     agents: p.specs.map((s) => ({ name: s.name, description: s.description })),
     // own: the plugin's page in a sandboxed frame (built or not yet); otherwise the shell's default page.
-    page: p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) || devPages(p) } : null,
+    page: p.enabled && p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) || devPages(p) } : null,
+    enabled: p.enabled,
+    version: installInfo(p.dir)?.version || p.manifest.version || null,
+    installed: installInfo(p.dir),
     settings: p.manifest.settings.length > 0,
     trust: p.trust,
     dir: p.source === "data" ? p.dir : null,
@@ -403,5 +472,17 @@ export function describePlugin(p: LoadedPlugin) {
     services: p.manifest.services.map((s) => ({ name: s.name, description: s.description, command: [s.command, ...s.args].join(" ") })),
     streams: p.manifest.streams.map((s) => ({ name: s.name, description: s.description, service: s.service })),
     connectors: p.manifest.connectors,
+    // What it may do, for the owner deciding to trust or keep it.
+    // Before its code runs, what the manifest declares.
+    permissions: {
+      tools: p.tools.filter((t) => !t.name.startsWith("plugin_")).map((t) => ({ name: t.name, write: t.write, approval: t.approval })),
+      writes: p.tools.some((t) => t.write) || (!codeRuns(p) && p.manifest.permissions.write),
+      hostTools: p.manifest.tools,
+      providers: codeRuns(p) ? p.providers : p.manifest.permissions.connectors,
+      platforms: codeRuns(p) ? p.platforms : p.manifest.permissions.platforms,
+      uses: p.manifest.connectors.map((c) => c.provider),
+      services: p.manifest.services.map((s) => [s.command, ...s.args].join(" ")),
+      space: p.manifest.space?.id ?? null,
+    },
   };
 }

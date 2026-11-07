@@ -174,6 +174,7 @@ npm install -g omem-assistant
 | 让同事也能问机器人项目的事 | 设置 → 渠道 开启访客提问，在“开放给访客的空间”按名称多选；群聊还可读群所属的非个人空间，私聊需另外开启且只读选中的空间，未选择时没有资料可查 |
 | 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 渠道 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
 | 成组练英语，按水平和薄弱点出题 | 左侧“英语练习”：选场景和侧重点开始，做完一组一起提交；选择、填空、听写当场判分，翻译由陪练评分点评。“下一组”从陪练补好的题库里按你的情况马上挑（设置里可改成每组由陪练现出），题库里没这个场景的题时由陪练出。右侧是各项水平、今天的目标、近 14 天练习量和薄弱点；“设置”里改每组题数、朗读口音和语速。陪练是 Agent 页里的 `english-tutor`，可以改说明、挂技能 |
+| 装别人写的插件 | 设置 → 插件 → 安装插件，填 `npm:包名@版本` 或 `github:owner/repo#tag`（或 `omem plugin install …`）；看过它声明的权限后点“信任并运行”。不想用的插件（内置的也可以）在同一页关掉，不用重启 |
 | 做一个自己的小插件（复盘、问卷、打卡） | 在数据目录建 `plugins/<id>/plugin.yaml`、`agents/<名>.md`（可带 `skills/`、`settings`），重启后侧栏出现它的页面：和它的 Agent 对话，Agent 能发表单让你填、画图给你看。不加载数据目录里的代码。格式见 [docs/v2/plugins.md](docs/v2/plugins.md) |
 | 插件要一个常驻进程（采集、看屏幕、连设备），页面实时显示 | 清单里写 `services` 和 `streams`，服务用 `packages/plugin-sdk/service.mjs`，页面 `omem.stream(名)`；数据目录插件带代码时在设置 → 插件里点“信任并运行”，代码改了要重新确认；服务的状态和输出也在那里看。点击、输入这类工具标 `approval: true`，每次等你批准 |
 | 插件要以用的人的身份调另一个平台（笔记、工单……） | 插件代码里 `api.connector` 注册这个平台（授权地址、换令牌、我是谁、功能和权限），工具里用 `ctx.connection(平台)` 调它；每个人在账号页“已连接的应用”连接自己的账号，令牌由 omem 保管、只发往插件声明的接口地址。公司内部系统的连接器放数据目录的插件里。格式见 [docs/v2/plugins.md](docs/v2/plugins.md) |
@@ -271,6 +272,7 @@ omem agents registry                        # 官方 ACP 注册表里的 Agent
 omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / uvx / 下载程序）
 omem doubao status                           # 哪个飞书应用有豆包权限、本机是否已授权
 omem doubao login [--app <appId>]            # 设备码授权豆包（在飞书里打开链接确认）
+omem plugin list|install|remove|enable|disable   # 插件：列出、装 npm 包或 GitHub tag、删除、启用和停用
 omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见“多人使用”
 omem user approve <id> / omem user invite [--space …] [--edit …] [--any]  # 批准登录建好的账号；生成邀请链接（只能用一次）
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）

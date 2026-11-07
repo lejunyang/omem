@@ -17,7 +17,7 @@ describe("plugin connectors", async () => {
   const app = testApp();
   const dir = join(app.home, "plugins", "demo");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "plugin.yaml"), ["id: demo", "name: 示例", "connectors:", "  - { provider: demo-api, features: [read] }"].join("\n"));
+  writeFileSync(join(dir, "plugin.yaml"), ["id: demo", "name: 示例", "connectors:", "  - { provider: demo-api, features: [read] }", "permissions: { connectors: [demo-api] }"].join("\n"));
   writeFileSync(
     join(dir, "server.mjs"),
     `export default function register(api) {

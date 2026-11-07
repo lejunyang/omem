@@ -12,7 +12,9 @@ import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { cookies, SESSION_COOKIE, sessionFor } from "../auth/sessions.ts";
 import { callTool } from "../agents/tools.ts";
 import { createSession, listSessions, sendMessage, sessionView, submitBlock } from "./blocks.ts";
-import { codeRuns, describePlugin, findPlugin, getPlugin, listPlugins, pluginWebDir, setPluginIcon, trustPlugin, untrustPlugin } from "./registry.ts";
+import { codeRuns, describePlugin, findPlugin, forgetPlugin, getPlugin, listPlugins, pluginWebDir, reloadPlugin, setPluginEnabled, setPluginIcon, trustPlugin, untrustPlugin } from "./registry.ts";
+import { installInfo, installPlugin, removeInstalled } from "./install.ts";
+import { setTrust } from "./trust.ts";
 import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
 import { savePluginSettings } from "./settings.ts";
 import { pluginStore } from "./store.ts";
@@ -95,6 +97,31 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   // Trust: a data-directory plugin's code runs only after the owner confirms it (trust.ts).
   server.put("/api/plugins/:id/icon", async (req) => setPluginIcon(app, plugin(req).manifest.id, String((req.body as { icon?: unknown })?.icon ?? "")));
   server.post("/api/plugins/:id/trust", async (req) => trustPlugin(app, plugin(req).manifest.id));
+  // Turned off: its code unloads, its agents, page and nav entry go away; on again loads it.
+  server.put("/api/plugins/:id/enabled", async (req) => setPluginEnabled(app, plugin(req).manifest.id, !!(req.body as { on?: unknown })?.on));
+  // Someone else's plugin (install.ts): an npm package or a GitHub tag; its code waits for trust.
+  server.post("/api/plugins/install", async (req) => {
+    const source = String((req.body as { source?: unknown })?.source ?? "");
+    const r = await installPlugin(app, source);
+    return { ...r, plugin: await reloadPlugin(app, r.id) };
+  });
+  server.post("/api/plugins/:id/update", async (req) => {
+    const p = plugin(req);
+    const info = installInfo(p.dir);
+    if (!info) throw new HttpError(400, `插件 ${p.manifest.id} 不是装进来的，没有来源可以更新`);
+    // Same source without a version: the newest npm release; a GitHub source needs the new tag.
+    const given = String((req.body as { source?: unknown })?.source ?? "").trim();
+    const source = given || (info.source.startsWith("npm:") ? info.source.replace(/^(npm:(?:@[^/]+\/)?[^@]+)@.*$/, "$1") : info.source);
+    const r = await installPlugin(app, source);
+    return { ...r, plugin: await reloadPlugin(app, r.id) };
+  });
+  server.delete("/api/plugins/:id", async (req) => {
+    const id = plugin(req).manifest.id;
+    forgetPlugin(id);
+    removeInstalled(app, id);
+    setTrust(app, id, null);
+    return { ok: true };
+  });
   server.delete("/api/plugins/:id/trust", async (req) => untrustPlugin(app, plugin(req).manifest.id));
 
   // Services: the page (or the settings) may start and stop the plugin's own ones.
