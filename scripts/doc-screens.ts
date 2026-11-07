@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { chromium, type Page } from "playwright";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import { createAsk } from "../src/agents/asks.ts";
+import { savePage } from "../src/agents/ui-pages.ts";
 import { findAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createSession, pluginContext } from "../src/plugins/blocks.ts";
@@ -456,6 +457,44 @@ await callTool(journal.ctx, "ask_user", { question: "今天", wait_seconds: 0, f
 await callTool(journal.ctx, "show", { components: [{ type: "chart", title: "这周每天的专注时长", unit: "小时", kind: "bar", labels: ["周一", "周二", "周三", "周四", "周五"], series: [{ name: "计划", values: [5, 5, 4, 5, 4] }, { name: "实际", values: [3.5, 4.5, 2, 4, 3] }] }] });
 journal.done();
 
+// A question with a form and a view under the reply that asked it (docs/v2/interactive-ui.md).
+const rollout = createThread(app, { channel: "web", spaceId: "shop", title: "退款改造怎么上线", userId: "owner" });
+addMessage(app, rollout.id, "user", "退款改造下周上线，比较一下两种上线方式，方案和规则让我一次定完。");
+addMessage(app, rollout.id, "assistant", "按过去两周的退款数据比了一下，灰度影响的订单少得多。方式和三条退款规则请在下面一次定完。", "r_rollout_demo");
+run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,components,created_at) values(?,?,?,?,?,?,?)", "uv_rollout_demo", "r_rollout_demo", rollout.id, "owner", "过去两周的退款", JSON.stringify([
+  { type: "metric", items: [{ label: "退款单", value: 482, change: "比上两周 +12%" }, { label: "部分退款", value: 97, change: "占 20%" }, { label: "人工介入", value: 31, unit: " 单" }] },
+  { type: "chart", title: "每天的退款单", kind: "line", labels: ["周一", "周二", "周三", "周四", "周五", "周六", "周日"], series: [{ name: "上周", values: [30, 34, 29, 41, 38, 22, 19] }, { name: "本周", values: [36, 40, 33, 45, 44, 25, 21] }] },
+  { type: "table", title: "两种方式", columns: ["方式", "影响订单", "回滚用时（分钟）", "要客服配合"], rows: [["灰度 10%", 48, 5, "否"], ["一次上线", 482, 30, "是"]] },
+]), new Date().toISOString());
+createAsk(app, {
+  runId: "r_rollout_demo", conversationId: rollout.id, kind: "question", question: "上线方式和退款规则请确认一下：",
+  ui: { fields: [
+    { id: "plan", label: "选哪种上线方式", type: "pick", required: true, items: [{ id: "gray", title: "先灰度 10%", summary: "按用户尾号放量，观察两天再全量", pros: ["出问题只影响少量订单", "回滚 5 分钟"], cons: ["全量要晚两天"] }, { id: "all", title: "一次上线", summary: "周一早上全量切换", pros: ["一次到位"], cons: ["回滚要 30 分钟", "要客服提前准备话术"] }] },
+    { id: "start", label: "哪天开始", type: "date", required: true },
+    { id: "rules", label: "逐条确认退款规则", type: "checklist", required: true, choices: ["通过", "不通过"], note: true, items: [{ id: "r1", title: "部分发货：只退已发货行的实付" }, { id: "r2", title: "优惠券按各行实付比例分摊，尾差放最后一行" }] },
+  ] },
+});
+
+// An interactive page the agent wrote, inside a question.
+const proto = createThread(app, { channel: "web", spaceId: "shop", title: "退款进度页怎么改", userId: "owner" });
+addMessage(app, proto.id, "user", "退款进度页想改一下，给两个方案让我试。");
+addMessage(app, proto.id, "assistant", "做了两个可以点的版本，切一下状态就能看到差别，试完在页面里选一个。", "r_proto_demo");
+const page = savePage(app, { title: "退款进度的两种展示", runId: "r_proto_demo", conversationId: proto.id, userId: "owner", html: `<style>
+.wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.opt{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--panel)}
+h3{margin:0 0 6px;font:600 15px/1.4 var(--serif)} p{color:var(--muted);margin:0 0 10px}
+.steps{display:flex;gap:6px;margin:8px 0}.step{flex:1;height:6px;border-radius:3px;background:var(--line)}.step.on{background:var(--accent)}
+.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}.row b{font-weight:600}
+.tl{margin:0;padding-left:16px}.tl li{margin:4px 0}.tl li.on{color:var(--ink)}.tl li{color:var(--muted)}
+</style>
+<div class="wrap">
+ <div class="opt"><h3>方案 A：进度条</h3><p>一眼看到走到哪一步</p><div class="steps"><span class="step on"></span><span class="step on"></span><span class="step"></span><span class="step"></span></div>
+  <div class="row"><span>退款金额</span><b>¥128.50</b></div><div class="row"><span>预计到账</span><b>1–3 个工作日</b></div><p></p><button>选 A</button></div>
+ <div class="opt"><h3>方案 B：时间线</h3><p>每一步的时间都列出来</p><ol class="tl"><li class="on">11-08 10:02 申请退款</li><li class="on">11-08 10:15 商家同意</li><li>原路退回中</li><li>到账</li></ol><button>选 B</button></div>
+</div>
+<p style="margin-top:10px">状态：<button>申请中</button> <button class="primary">已同意</button> <button>已到账</button></p>` });
+createAsk(app, { runId: "r_proto_demo", conversationId: proto.id, kind: "question", question: "试一下两个版本，选一个：", ui: { view: [{ type: "page", id: page.id, title: "退款进度的两种展示" }] } });
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -524,6 +563,9 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "meeting-rule-confirmation", path: `/rules?id=${meetingRule.id}`, prepare: async (p) => { await p.getByText("入会确认", { exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "agents", path: "/agents" },
   { name: "ask-question", path: `/ask/${decide.id}` },
+  { name: "ask-form", path: `/ask/${rollout.id}`, prepare: async (p) => { await p.waitForTimeout(800); await p.getByText("先灰度 10%").click(); await p.getByText("逐条确认退款规则").scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
+  { name: "ask-view", path: `/ask/${rollout.id}`, prepare: async (p) => { await p.waitForTimeout(800); await p.locator(".ui-view").first().scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
+  { name: "ask-page", path: `/ask/${proto.id}`, prepare: async (p) => { await p.waitForTimeout(1500); await p.locator(".ui-page").scrollIntoViewIfNeeded(); await p.waitForTimeout(500); } },
   { name: "plugin-english", path: `/plugin/english?session=${tutor.conversationId}`, prepare: async (p) => { await p.waitForTimeout(1500); } },
   { name: "plugin-default", path: `/plugin/journal?session=${journal.conversationId}`, space: "personal", prepare: async (p) => { await p.waitForTimeout(1500); } },
   { name: "share-link", path: `/share/${shareToken}` },
