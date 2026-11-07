@@ -1825,6 +1825,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       id: v.id, runId: v.run_id, title: v.title, components: JSON.parse(v.components), createdAt: v.created_at,
     }));
   });
+  // An interactive page (`ui_page`): the document a sandboxed frame shows, with the host's policy and bridge.
+  server.get("/api/ui/pages/:id", async (req) => {
+    const { getPage, pageDocument } = await import("../agents/ui-pages.ts");
+    const version = Number((req.query as { version?: string }).version) || undefined;
+    const p = getPage(app, (req.params as { id: string }).id, who(req), version);
+    return { id: p.id, version: p.version, versions: p.versions, title: p.title, createdAt: p.createdAt, document: pageDocument(p.html) };
+  });
+  server.post("/api/asks/:id/draft", async (req) => {
+    const { saveDraft } = await import("../agents/asks.ts");
+    saveDraft(app, (req.params as { id: string }).id, who(req), (req.body as { draft?: unknown } | null)?.draft);
+    return { ok: true };
+  });
   // One question or view on its own page (`#/ui/<id>`): what a Feishu card or a text chat links to.
   server.get("/api/ui/:id", async (req) => {
     const id = (req.params as { id: string }).id;
@@ -1833,10 +1845,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (v.user_id !== who(req)) throw new HttpError(404, "没有这个内容");
       return { type: "view", view: { id: v.id, runId: v.run_id, conversationId: v.conversation_id, title: v.title, components: JSON.parse(v.components), createdAt: v.created_at } };
     }
-    const { getAsk } = await import("../agents/asks.ts");
+    const { getAsk, draftOf } = await import("../agents/asks.ts");
     const a = getAsk(app, id);
     if (a.userId !== who(req)) throw new HttpError(404, "没有这个内容");
-    return { type: "ask", ask: a };
+    return { type: "ask", ask: { ...a, draft: draftOf(app, id) } };
   });
 
   // ----------------------------------------------------- notifications/status

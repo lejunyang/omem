@@ -354,11 +354,18 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
   const text = input.text?.trim() || null;
   // A form's answers are checked here, whichever client sent them; a text reply still answers it.
   const fields = before.ui?.fields;
-  if (input.value && !fields?.length) throw new HttpError(400, "这个提问没有要填的字段");
-  const value = input.value && fields ? normalizeAnswers(fields, input.value) : null;
+  // A question shown with an interactive page takes what the page hands in (omem.submit), as it is.
+  const pageAsk = !fields?.length && !!before.ui?.view?.some((c) => c.type === "page");
+  if (input.value && !fields?.length && !pageAsk) throw new HttpError(400, "这个提问没有要填的字段");
+  if (input.value && pageAsk && JSON.stringify(input.value).length > 20_000) throw new HttpError(400, "交回的值太大（最多 20000 字符）");
+  const value = input.value && fields ? normalizeAnswers(fields, input.value) : input.value && pageAsk ? input.value : null;
   if (before.kind === "question" && !option && !text && !value) throw new HttpError(400, "回答不能为空");
   const approved = before.kind === "approval" ? !!input.approved : null;
-  const answer = value && fields ? [summarizeAnswers(fields, value), text ? `补充：${text}` : ""].filter(Boolean).join("\n") : [option?.label, text].filter(Boolean).join("：") || null;
+  const answer = value && fields
+    ? [summarizeAnswers(fields, value as Parameters<typeof summarizeAnswers>[1]), text ? `补充：${text}` : ""].filter(Boolean).join("\n")
+    : value
+      ? text ?? truncate(JSON.stringify(value), 2000)
+      : [option?.label, text].filter(Boolean).join("：") || null;
   const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
   const action = before.handler ? askActions.get(before.handler) : undefined;
   const changed = tx(app.db, () => {
@@ -425,6 +432,21 @@ function runActive(app: App, runId: string | null) {
   return s === "running" || s === "queued";
 }
 
+/** What a person has put into a question without sending it yet (an interactive page's draft). */
+export function saveDraft(app: App, id: string, userId: string, draft: unknown) {
+  const ask = getAsk(app, id);
+  if (ask.userId !== userId) throw new HttpError(404, "没有这个提问");
+  if (ask.status !== "pending") throw new HttpError(409, "这个提问已经处理过了");
+  const json = JSON.stringify(draft ?? null);
+  if (json.length > 20_000) throw new HttpError(400, "草稿太大（最多 20000 字符）");
+  run(app.db, "update asks set draft = ? where id = ?", json, id);
+}
+
+export function draftOf(app: App, id: string) {
+  const r = one<{ draft: string | null }>(app.db, "select draft from asks where id = ?", id);
+  return r?.draft ? JSON.parse(r.draft) : null;
+}
+
 /** How an answer reads for the agent. */
 export function describeAnswer(a: Ask): string {
   if (a.status === "pending") return `本人还没回答（${a.id}）。`;
@@ -433,7 +455,7 @@ export function describeAnswer(a: Ask): string {
     return a.approved
       ? `本人批准了 ${a.tool}${a.answer ? `（附言：${a.answer}）` : ""}。执行结果：${a.result ?? "（无）"}`
       : `本人拒绝了 ${a.tool}${a.answer ? `，理由：${a.answer}` : "（没有说理由）"}。按理由调整做法，不要换个方式绕过。`;
-  if (a.value) return `本人填好了「${truncate(a.question, 80)}」：\n${a.answer ?? ""}\n结构化的值：${truncate(JSON.stringify(a.value), 4000)}`;
+  if (a.value) return `本人${a.ui?.fields?.length ? "填好了" : "在交互页里选好了"}「${truncate(a.question, 80)}」：\n${a.answer ?? ""}\n结构化的值：${truncate(JSON.stringify(a.value), 4000)}`;
   return `本人回答了「${truncate(a.question, 80)}」：${a.answer ?? "（空）"}`;
 }
 

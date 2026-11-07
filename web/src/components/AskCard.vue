@@ -44,7 +44,7 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
   <div class="ask" :class="[ask.kind, { compact }]" role="group" :aria-label="title || '下一步'">
     <div v-if="title" class="ask-title small">{{ title }}</div>
     <Markdown v-if="ask.question" class="ask-q" :source="ask.question" />
-    <UiView v-if="ask.ui?.view?.length" class="ask-view" :components="ask.ui.view" />
+    <UiView v-if="ask.ui?.view?.length" class="ask-view" :components="ask.ui.view" :ask-id="ask.id" :can-submit="!fields.length && ask.status === 'pending'" :draft="(ask as { draft?: unknown }).draft" @answered="emit('answered', ask)" />
     <form v-if="fields.length" class="ask-form" @submit.prevent="answer({ value: { ...values } })">
       <UiFields :fields="fields" :values="values" :id-prefix="`ask-${ask.id}`" />
       <textarea v-if="ask.allowText" v-model="text" class="textarea" rows="2" placeholder="补充说明（可不填）" aria-label="补充说明" />

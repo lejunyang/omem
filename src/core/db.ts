@@ -1512,6 +1512,20 @@ export const migrations: readonly string[] = [
   );
   create index ui_views_conversation on ui_views(conversation_id, created_at);
   create index ui_views_run on ui_views(run_id);`,
+  // Interactive pages (src/agents/ui-pages.ts), one row per version; a question's unsent draft.
+  `alter table asks add column draft text;
+  create table ui_pages (
+    id text not null,
+    version integer not null,
+    run_id text,
+    conversation_id text,
+    user_id text not null default 'owner',
+    title text not null default '',
+    html text not null,
+    created_at text not null,
+    primary key (id, version)
+  );
+  create index ui_pages_conversation on ui_pages(conversation_id);`,
 ];
 
 export type Db = DatabaseSync;

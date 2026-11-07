@@ -24,7 +24,9 @@ export type ViewComponent =
   | { type: "chart"; title: string; kind: "bar" | "line" | "pie"; labels: string[]; series: { name: string; values: number[] }[]; unit?: string; note?: string }
   | { type: "metric"; items: { label: string; value: string | number; unit?: string; change?: string }[] }
   | { type: "compare"; title?: string; items: Card[] }
-  | { type: "timeline"; items: { time: string; title: string; text?: string }[] };
+  | { type: "timeline"; items: { time: string; title: string; text?: string }[] }
+  /** An interactive page (`ui_page`): drawn by omem's own pages only; elsewhere a line that says where to open it. */
+  | { type: "page"; id: string; version?: number; height?: number; title?: string };
 type ShowIf = { field: string; equals?: string | number | boolean; in?: string[] };
 export type UiField = { id: string; label: string; help?: string; required?: boolean; show_if?: ShowIf } & (
   | { type: "text" | "textarea"; placeholder?: string; default?: string }
@@ -176,6 +178,8 @@ function component(doc: Document, c: ViewComponent, opts: RenderOptions, owner: 
       return h(doc, "div", { class: "ob-metrics" }, ...c.items.map((m) => h(doc, "div", { class: "ob-metric" }, h(doc, "span", { class: "ob-muted" }, m.label), h(doc, "b", {}, `${m.value}${m.unit ?? ""}`), m.change ? h(doc, "span", { class: "ob-muted" }, m.change) : null)));
     case "compare":
       return h(doc, "div", { class: "ob-field" }, c.title ? h(doc, "span", { class: "ob-label" }, c.title) : null, h(doc, "div", { class: "ob-cards" }, ...c.items.map((i) => cardBody(doc, h(doc, "div", { class: "ob-pcard" }), i))));
+    case "page":
+      return h(doc, "p", { class: "ob-muted" }, `交互页“${c.title || c.id}”：在 omem 的问答页里打开`);
     case "timeline":
       return h(doc, "ol", { class: "ob-timeline" }, ...c.items.map((i) => h(doc, "li", {}, h(doc, "time", {}, i.time), h(doc, "div", {}, h(doc, "div", { class: "ob-label" }, i.title), i.text ? h(doc, "p", { class: "ob-muted ob-text" }, i.text) : null))));
   }

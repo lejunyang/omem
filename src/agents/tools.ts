@@ -6,6 +6,8 @@ import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIE
 import { executionSchema, validateExecution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
 import { checkFields, checkView, fieldsSchema, viewSchema } from "./ui-blocks.ts";
+/** Kept in step with ui-pages.ts PAGE_MAX (imported lazily there). */
+const PAGE_MAX_CHARS = 300_000;
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -2660,7 +2662,11 @@ def({
     if (ctx.shadow) return "（对比运行）不向本人提问，按你认为最合理的选择继续。";
     if (a.fields?.length && a.options?.length) throw new HttpError(400, "有 fields 时不给 options：选项写成一个 choice 字段");
     if (a.fields) checkFields(a.fields);
-    if (a.view) checkView(a.view);
+    if (a.view) {
+      checkView(a.view);
+      await fillPages(ctx, a.view);
+      if (a.fields?.length && a.view.some((c) => c.type === "page")) throw new HttpError(400, "交互页和 fields 不能放在同一个提问里：要么让页面用 omem.submit 交回选择，要么用表单");
+    }
     const { cancelAsk, createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
     // A form asked again in the same run (a retried turn, a corrected form) replaces the one not yet filled in.
     if (a.fields?.length && ctx.runId) for (const old of all<{ id: string }>(ctx.app.db, "select id from asks where run_id = ? and status = 'pending' and kind = 'question' and json_extract(ui, '$.fields') is not null", ctx.runId)) cancelAsk(ctx.app, old.id);
@@ -2713,6 +2719,7 @@ def({
   handler: async (ctx, a) => {
     if (ctx.shadow) return "（对比运行）不展示。";
     checkView(a.components);
+    await fillPages(ctx, a.components);
     const { conversationOfRun, nudgePlugin } = await import("./asks.ts");
     const conversationId = conversationOfRun(ctx.app, ctx.runId);
     if (!conversationId) return "这次运行不在对话里，没有地方展示；把内容写在回答里即可。";
@@ -2721,6 +2728,45 @@ def({
     ctx.app.emit({ type: "ui", id, conversationId });
     nudgePlugin(ctx.app, conversationId);
     return `已放在这一轮回答的下面（${id}）。回答里不要再把内容写一遍。`;
+  },
+});
+
+/** Pages a view points to must be this person's; their titles ride along for text and cards. */
+async function fillPages(ctx: ToolContext, view: import("./ui-blocks.ts").ViewComponent[]) {
+  const { getPage } = await import("./ui-pages.ts");
+  for (const c of view) if (c.type === "page") c.title = getPage(ctx.app, c.id, ctx.userId ?? OWNER, c.version).title;
+}
+
+def({
+  name: "ui_page",
+  description:
+    "写一个交互页（单个 HTML 文件）：可以点的界面原型、几种交互方式的对比、参数可调的小计算或模拟、定制的可视化。宿主在沙箱里显示它：不能联网（脚本、样式、图片都要写在文件里，图片用 data:），读不到 omem 的数据，也调不了接口；页面的颜色用 CSS 变量 --bg --panel --ink --ink-2 --muted --line --accent，跟着本人的浅色 / 深色主题。页面里可用 window.omem：omem.submit(value, summary) 把本人的选择交回（只在这个页面放进 ask_user 的 view 时有效，返回 Promise），omem.draft(value) 存草稿，omem.onInit(fn) 拿到草稿和能否提交，omem.onTheme(fn)。要在 390 像素宽也能用。写好后不会自动显示：用 show 或 ask_user 的 view 放 {type:\"page\", id}。改页面时带上 page_id，会存成新的一版。表格、图表、方案对比这类用组件块就够的，不要做页面。",
+  write: true,
+  schema: z.object({
+    title: z.string().min(1).max(80),
+    html: z.string().max(PAGE_MAX_CHARS).optional().describe("整个页面的 HTML（含内联的 <style>、<script>）"),
+    path: z.string().min(1).max(1000).optional().describe("或者：工作区里的一个 .html 文件（编码交办的工作区或 $OMEM_ARTIFACTS 下）"),
+    page_id: z.string().max(40).optional().describe("改已有的页面时给出，存成新的一版"),
+  }),
+  handler: async (ctx, a) => {
+    if (ctx.shadow) return "（对比运行）不写页面。";
+    if (!!a.html === !!a.path) throw new HttpError(400, "html 和 path 给一个");
+    let html = a.html ?? "";
+    if (a.path) {
+      if (!ctx.runId) throw new HttpError(400, "path 只在运行里可用");
+      const { realpathSync, statSync } = await import("node:fs");
+      const { resolve: resolvePath, sep } = await import("node:path");
+      const real = (p: string) => { try { return realpathSync(p); } catch { return null; } };
+      const roots = (await artifactRoots(ctx)).map(real).filter((r): r is string => !!r);
+      const found = (isAbsolute(a.path) ? [a.path] : roots.map((r) => resolvePath(r, a.path!))).map(real).find((p): p is string => !!p && roots.some((r) => p.startsWith(r + sep)));
+      if (!found || !/\.html?$/i.test(found) || !statSync(found).isFile()) throw new HttpError(400, `找不到 ${a.path}：写工作区里的一个 .html 文件（相对路径），或 $OMEM_ARTIFACTS 下的文件`);
+      if (statSync(found).size > PAGE_MAX_CHARS * 3) throw new HttpError(400, "文件太大");
+      html = readFileSync(found, "utf8");
+    }
+    const { conversationOfRun } = await import("./asks.ts");
+    const { savePage } = await import("./ui-pages.ts");
+    const saved = savePage(ctx.app, { pageId: a.page_id, title: a.title, html, runId: ctx.runId, conversationId: conversationOfRun(ctx.app, ctx.runId), userId: ctx.userId ?? OWNER });
+    return `已存交互页 ${saved.id}（第 ${saved.version} 版）。用 show({components:[{type:"page", id:"${saved.id}"}]}) 给本人看，或放进 ask_user 的 view 让本人在页面里选（页面里调用 omem.submit）。页面在沙箱里，不能联网。`;
   },
 });
 

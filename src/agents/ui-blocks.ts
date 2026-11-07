@@ -46,7 +46,15 @@ const card = z.object({
 const compare = z.object({ type: z.literal("compare"), title: z.string().max(120).optional(), items: z.array(card).min(2).max(6) });
 const timeline = z.object({ type: z.literal("timeline"), items: z.array(z.object({ time: text(40), title: text(120), text: z.string().max(1000).optional() })).min(1).max(50) });
 
-export const viewComponent = z.discriminatedUnion("type", [markdown, heading, table, chart, metric, compare, timeline]);
+const page = z.object({
+  type: z.literal("page"),
+  id: z.string().min(1).max(40).describe("ui_page 返回的 page_id"),
+  version: z.number().int().min(1).optional().describe("固定显示某一版（默认最新）"),
+  height: z.number().int().min(120).max(1200).optional().describe("页面里的初始高度（像素），之后按内容自动调整"),
+  title: z.string().max(80).optional().describe("（宿主填）"),
+});
+
+export const viewComponent = z.discriminatedUnion("type", [markdown, heading, table, chart, metric, compare, timeline, page]);
 export type ViewComponent = z.infer<typeof viewComponent>;
 export const viewSchema = z.array(viewComponent).min(1).max(40);
 
@@ -258,6 +266,9 @@ export function viewText(view: ViewComponent[]): string {
         break;
       case "timeline":
         out.push(c.items.map((i) => `- ${i.time} ${i.title}${i.text ? `：${i.text}` : ""}`).join("\n"));
+        break;
+      case "page":
+        out.push(`交互页“${c.title || c.id}”：在网页上打开才能操作`);
         break;
     }
   }

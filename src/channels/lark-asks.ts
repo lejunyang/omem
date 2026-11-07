@@ -85,7 +85,12 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
   }
   const blocks = questionBlocks(app, ask);
   // What the agent showed with the question comes first, as text (docs/v2/interactive-ui.md).
-  if (ask.ui?.view?.length) blocks.push(...viewCardBlocks(app, ask.ui.view));
+  if (ask.ui?.view?.length) {
+    blocks.push(...viewCardBlocks(app, ask.ui.view));
+    // An interactive page is used on the web: the card links to the question's page.
+    const link = uiLink(app, ask.id);
+    if (ask.status === "pending" && ask.ui.view.some((c) => c.type === "page") && /^https?:/.test(link)) blocks.push({ buttons: [{ text: "打开交互页", url: link, style: "primary" }] });
+  }
   const at = ask.kind === "suggestion" ? "" : cardMentions([opts.mention]);
   if (at) {
     const first = blocks[0];

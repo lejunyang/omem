@@ -31,7 +31,7 @@ async function loadAsks() {
 }
 /** Questions and approvals wait above the composer; suggested next steps sit under their reply. */
 // A question with a form sits under the reply that asked it, where there is room for it.
-const inThread = (a: AskItem) => !!a.ui?.fields?.length && !!a.runId && messages.value.some((m) => m.runId === a.runId);
+const inThread = (a: AskItem) => !!(a.ui?.fields?.length || a.ui?.view?.some((c) => c.type === "page")) && !!a.runId && messages.value.some((m) => m.runId === a.runId);
 const waiting = computed(() => asks.value.filter((a) => a.kind !== "suggestion" && !inThread(a)));
 const formsFor = (runId: string | null) => (runId ? asks.value.filter((a) => a.kind === "question" && a.runId === runId && inThread(a)) : []);
 const suggestionsFor = (runId: string | null) => (runId ? asks.value.filter((a) => a.kind === "suggestion" && a.runId === runId) : []);

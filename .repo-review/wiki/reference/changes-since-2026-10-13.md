@@ -1610,3 +1610,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - `lark-asks.ts`：`cardFields` 把提问的字段映射成卡片表单（输入、下拉、多选下拉、日期、日期时间、勾选；`pick` 下拉，`checklist` 每条下拉加备注框，超过 12 条或卡片超过约 24 KB 退回网页链接），`valueFromCard` 把表单值转回字段值（日期 “2026-11-15 +0800” → `2026-11-15`），`handleAskAction` 先用 `normalizeAnswers` 检查，错了只弹提示。
 - `lark-ui.ts`：`viewCardBlocks` 把表格、图表画成卡片的 `table`、`chart`（VChart）元素，其余转文字；`viewTarget` 找会话所在的群或话题。`asks.ts` 加 `addViewSink`，飞书注册后 `show` 的内容在回复后发成一张卡片（`viewCard`），失败退回文字。`lark-send.ts` 的 `CardBlock` 加 `element`（宿主自己拼的元素）。
+
+## 2026-11-08：界面块第三阶段（交互页）
+
+- `src/agents/ui-pages.ts`：`savePage` / `getPage`（表 `ui_pages`，每版一行，同步表），`pageDocument` 在页面最前面放 `<meta>` 安全策略（`PAGE_CSP`：`default-src 'none'`，只许内联脚本样式和 data: 图）、基础样式和桥（`window.omem`：`submit`、`draft`、`onInit`、`onTheme`、`open`，高度自动上报）。`asks` 加 `draft` 列，`saveDraft` / `draftOf`。
+- 工具 `ui_page`（`ask` 分组，`coder` 也有）：`html` 或工作区里的 `.html` 文件（同 `attach_artifact` 的目录范围），`page_id` 出新版。`page` 组件放进 `show` / `ask_user` 的 `view`（宿主补标题；和 `fields` 不能同在一个提问）；`answerAsk` 收页面交回的值（最多 20000 字符）。接口 `GET /api/ui/pages/:id?version=`、`POST /api/asks/:id/draft`。
+- 网页 `UiPage.vue`：`srcdoc` + `sandbox="allow-scripts"`，只认这个 iframe 发来的消息，发主题 token（浅色深色切换时更新）、存草稿、提交回答、只放行 `#/` 链接，全屏和版本切换；问答页里带交互页的提问跟在回复下面。飞书卡片里是一行说明加“打开交互页”。
