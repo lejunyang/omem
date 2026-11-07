@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { getPreview, listPreviews, previewDial, previewTargets, startPreview, stopAllPreviews, stopLeftovers, stopPreview } from "../agents/previews.ts";
 import type { App } from "../core/app.ts";
-import { PREVIEW_TCP } from "../core/peer-tunnel.ts";
+import { PREVIEW_TCP, splice } from "../core/peer-tunnel.ts";
 import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { bearerToken } from "../auth/http.ts";
@@ -79,10 +79,8 @@ export function attachPreviewUpgrade(app: App, server: Server) {
         socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: omem-tcp\r\n\r\n");
         if (head.length) up.write(head);
         dial.opened();
-        up.pipe(socket);
-        socket.pipe(up);
-        const close = () => (up.destroy(), socket.destroy());
-        for (const s of [up, socket]) s.on("error", close).on("close", close).on("end", close);
+        // A dev server that closes after a response (`Connection: close`) must not cut it short.
+        splice(up, socket);
       });
       // Bound to one family only (a dev server on "localhost" may listen on ::1 alone): try the next.
       up.once("error", () => (i + 1 < dial.hosts.length ? attempt(i + 1) : socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n")));

@@ -86,6 +86,35 @@ export function tunnelHttp(app: App, id: string, path: string, req: IncomingMess
   req.pipe(up);
 }
 
+/**
+ * Join two byte streams both ways. One side ending (a server that closes after its response, a
+ * browser that is done) ends the other only after it has written everything it already got: over a
+ * slow link that can be megabytes, and destroying it right away cut responses short. An error, or
+ * one side gone for good, closes both; a side whose writes are all out is let go.
+ */
+export function splice(a: Duplex, b: Duplex) {
+  a.pipe(b);
+  b.pipe(a);
+  let over = false;
+  const kill = () => {
+    if (over) return;
+    over = true;
+    a.destroy();
+    b.destroy();
+  };
+  for (const [x, y] of [[a, b], [b, a]] as const) {
+    x.on("error", kill);
+    x.on("close", () => {
+      if (y.destroyed) return;
+      // x is gone: y gets no more to write; once what it has is flushed, it goes too.
+      const done = () => y.destroy();
+      if (y.writableFinished) return done();
+      y.once("finish", done);
+      y.end();
+    });
+  }
+}
+
 /** A WebSocket upgrade to `path` on peer `id`: the handshake answer and then the frames both ways. */
 export function tunnelUpgrade(app: App, id: string, path: string, req: IncomingMessage, socket: Duplex, head: Buffer, hops = 0) {
   let up;
@@ -103,11 +132,7 @@ export function tunnelUpgrade(app: App, id: string, path: string, req: IncomingM
     socket.write(head1(r));
     if (peerHead.length) socket.write(peerHead);
     if (head.length) peer.write(head);
-    peer.pipe(socket);
-    socket.pipe(peer);
-    // Either side gone ends both (see attachIdeUpgrade).
-    const close = () => (peer.destroy(), socket.destroy());
-    for (const s of [peer, socket]) s.on("error", close).on("close", close).on("end", close);
+    splice(peer, socket);
   });
   // Refused (401, 503 …): the answer as it is, then the connection closed.
   up.on("response", (r) => {

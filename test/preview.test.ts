@@ -10,7 +10,8 @@ import { createRun, setRunOutput } from "../src/agents/runs.ts";
 import { previewCommands, previewEnv, previewHint } from "../src/agents/previews.ts";
 import { descendants, parseLsof, parseNetstat, parseProcNetTcp, scanPorts } from "../src/core/listening.ts";
 import { addPeer, openPeerUi } from "../src/core/peers.ts";
-import { tunnelConnect } from "../src/core/peer-tunnel.ts";
+import { splice, tunnelConnect } from "../src/core/peer-tunnel.ts";
+import { Duplex } from "node:stream";
 import { createSpace, updateSpace } from "../src/core/spaces.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
@@ -86,6 +87,34 @@ describe("preview parsing", () => {
     }
   });
 
+  it("joins streams so that what one side sent before closing still reaches the other", async () => {
+    // A dev server that closes right after its response, and a link slower than it: the bytes queued
+    // for the slow side when the server's side ends and closes must still be written, not dropped.
+    const got: Buffer[] = [];
+    // Like a socket: a write is delivered once it completes, and destroying cancels the one in flight.
+    const slow = new Duplex({
+      read() {},
+      highWaterMark: 1024,
+      write(chunk, _enc, cb) {
+        setTimeout(() => (slow.destroyed ? cb(new Error("cancelled")) : (got.push(chunk), cb())), 2);
+      },
+    });
+    const server = new Duplex({ read() {}, write(_chunk, _enc, cb) { cb(); } });
+    splice(server, slow);
+    for (let i = 0; i < 200; i++) server.push(Buffer.alloc(1024, i % 256));
+    server.push(null);
+    server.once("end", () => server.destroy());
+    await new Promise((ok) => slow.once("close", ok));
+    expect(Buffer.concat(got).length).toBe(200 * 1024);
+    // An error on either side closes both at once.
+    const a = new Duplex({ read() {}, write(_c, _e, cb) { cb(); } });
+    const b = new Duplex({ read() {}, write(_c, _e, cb) { cb(); } });
+    splice(a, b);
+    a.destroy(new Error("reset"));
+    await new Promise((ok) => b.once("close", ok));
+    expect(b.destroyed).toBe(true);
+  });
+
   it("runs dev servers without the service's NODE_ENV=production", () => {
     const env = previewEnv({ PATH: "/usr/bin", NODE_ENV: "production", HOME: "/home/demo" });
     expect(env.NODE_ENV).toBeUndefined();
@@ -151,7 +180,13 @@ describe("preview of a delegation's workspace", () => {
     const work = mkdtempSync(join(tmpdir(), "omem-preview-"));
     writeFileSync(join(work, "server.mjs"), `
       import { createServer } from "node:http";
-      const s = createServer((req, res) => { res.writeHead(200, { "content-type": "text/html" }); res.end("page " + req.headers.host + " " + req.url); });
+      const big = Buffer.alloc(8 * 1024 * 1024, "x");
+      const s = createServer((req, res) => {
+        // A dev bundle: megabytes, with a length or chunked, and the server closing right after (Connection: close).
+        if (req.url === "/big") return void (res.writeHead(200, { "content-type": "text/javascript", "content-length": big.length, connection: "close" }), res.end(big));
+        if (req.url === "/big-chunked") { res.writeHead(200, { "content-type": "text/javascript", connection: "close" }); for (let i = 0; i < 8; i++) res.write(big.subarray(0, 1024 * 1024)); return void res.end(); }
+        res.writeHead(200, { "content-type": "text/html" }); res.end("page " + req.headers.host + " " + req.url);
+      });
       s.on("upgrade", (req, socket) => { socket.write("HTTP/1.1 101 Switching Protocols\\r\\nConnection: Upgrade\\r\\nUpgrade: echo\\r\\n\\r\\n"); socket.on("data", (d) => socket.write("echo:" + d)); });
       s.listen(${port}, "::1", () => console.log("dev server ready"));
     `);
@@ -215,6 +250,8 @@ describe("preview of a delegation's workspace", () => {
       req.end();
     });
     expect(echo).toBe("echo:ping");
+    // Large responses arrive whole (the server ends right after writing; nothing buffered may be dropped).
+    for (const path of ["/big", "/big-chunked"]) expect((await (await fetch(`http://127.0.0.1:${port}${path}`)).arrayBuffer()).byteLength).toBe(8 * 1024 * 1024);
 
     // Stopped over there: the next connection here finds it gone and the forward closes.
     await api(`/api/previews/${started.id}`, { method: "DELETE" });

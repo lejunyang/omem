@@ -1584,3 +1584,4 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 预览输出里出现 `EMFILE … watch`（inotify 实例数）或 `ENOSPC`（监听数）时，`previewHint` 给出原因，交办视图的预览面板显示在状态下面。常驻服务器上主应用崩过一次就是这个：同一用户 128 个 inotify 实例被别的程序占满，两个开发服务器各只占 1 个。
 - `test/preview.test.ts`：经一个不认识预览的中间设备打开预览端口；按真实报错格式测提示。
 - 预览命令不再继承 omem 后台服务的 `NODE_ENV=production`（`previewEnv`）：常驻服务器上 `rsbuild dev` 因此按生产模式构建，页面引用 `//undefined/undefined/static/js/…`，白屏。端口刚开时 `/` 可能还是 404，启动后 3 分钟内判定为“不是网页”的端口会再探测。
+- 修复：经设备隧道转发的连接，一端结束时会立刻销毁另一端，慢链路上排队待写的数据被丢掉。常驻服务器上主应用的代理（`Connection: close`）转来的子应用脚本因此被截断（`ERR_INCOMPLETE_CHUNKED_ENCODING`，curl 报 “transfer closed with outstanding read data remaining”），Garfish 加载子应用失败。三段转发（本机、中间设备、目标设备）改用 `splice`：结束时先写完再关，出错才同时断开。

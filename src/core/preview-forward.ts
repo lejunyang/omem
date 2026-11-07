@@ -1,6 +1,6 @@
 import { createServer, type Server, type Socket } from "node:net";
 import type { App } from "./app.ts";
-import { tunnelConnect } from "./peer-tunnel.ts";
+import { splice, tunnelConnect } from "./peer-tunnel.ts";
 
 /**
  * The local end of a preview (docs/v2/preview.md), run by `omem peer open <id>`: for each of the
@@ -85,11 +85,8 @@ export class PreviewForwards {
     sock.on("error", () => {});
     tunnelConnect(this.app, this.peer, `/api/previews/${encodeURIComponent(preview)}/tcp?port=${port}`).then(
       (up) => {
-        up.pipe(sock);
-        sock.pipe(up);
+        splice(up, sock);
         sock.resume();
-        const close = () => (up.destroy(), sock.destroy());
-        for (const s of [up, sock]) s.on("error", close).on("close", close).on("end", close);
       },
       (e: Error & { status?: number }) => {
         sock.destroy();
