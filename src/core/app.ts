@@ -12,6 +12,7 @@ export type AppEvent =
   | { type: "notification"; id: string; title: string; body: string; link?: string | null }
   | { type: "changed"; entity: "source" | "page" | "memory" | "item" | "card" | "space" | "requirement" | "code-task" | "rule"; id: string; spaceId?: string }
   | { type: "ask"; id: string; status: string; conversationId: string | null }
+  | { type: "ui"; id: string; conversationId: string }
   | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean };
 
 /** Shared process context. Services take it instead of importing globals. */

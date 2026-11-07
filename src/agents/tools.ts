@@ -5,6 +5,7 @@ import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
+import { checkFields, checkView, fieldsSchema, viewSchema } from "./ui-blocks.ts";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -2577,7 +2578,7 @@ def({
 def({
   name: "save_rule",
   description:
-    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、拉机器人入会并旁听、优先采集、通知本人）。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：会话中自动准备启用确认卡片，回复送达后展示，点击由宿主直接启用；不要用 ask_owner 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
+    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、拉机器人入会并旁听、优先采集、通知本人）。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：会话中自动准备启用确认卡片，回复送达后展示，点击由宿主直接启用；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
   write: true,
   schema: z.object({
     id: z.string().optional().describe("修改已有规则时填（list_rules）"),
@@ -2607,7 +2608,7 @@ def({
     for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space);
     const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent");
     const confirmation = ctx.runId && origin ? confirmRule(ctx.app, saved, ctx.runId, origin) : null;
-    const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}${confirmation ? "\n已准备启用确认卡片，回复送达后自动展示；本人点击后由宿主直接启用，无需 AI 续轮。不要再用 ask_owner 或 suggest_next 重复询问启用。" : ""}`;
+    const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}${confirmation ? "\n已准备启用确认卡片，回复送达后自动展示；本人点击后由宿主直接启用，无需 AI 续轮。不要再用 ask_user 或 suggest_next 重复询问启用。" : ""}`;
     // Rules that need Feishu permissions (meetings): what is missing, with the links to apply, for the owner.
     const { rulePermissions, permissionText } = await import("../rules/permissions.ts");
     const p = await rulePermissions(ctx.app, saved);
@@ -2643,19 +2644,28 @@ const toOptions = (list: z.infer<typeof askOption>[] | undefined) => (list ?? []
 const ASK_WAIT_MAX = 50;
 
 def({
-  name: "ask_owner",
+  name: "ask_user",
   description:
-    "问本人一个问题：缺了它就没法往下做、你自己查不到、也不该替本人决定的事（选哪个方案、给不给权限、某个事实只有本人知道）。本人在飞书卡片、网页上点选项或直接在对话里回复都算回答。会先等 wait_seconds 秒；没等到就返回提问 id，可以先做不依赖答案的部分，再用 wait_answer 接着等（每次最多 50 秒，可以多次）；结束这一轮也没关系，回答会作为新消息回到这个会话。能自己查实或按常理决定的不要问；一次只问一件事，给出选项时把你推荐的放第一个。",
+    "问本人（这次运行服务的人）一个问题：缺了它就没法往下做、你自己查不到、也不该替本人决定的事（选哪个方案、给不给权限、某个事实只有本人知道）。本人在飞书卡片、网页上点选项、填表或直接在对话里回复都算回答。要问的不止一件事时用 fields 做成一张表一次问完（文字、多行、数字、单选、多选、1–5 打分、日期、日期时间、开关、从几个方案卡片里选一个 pick、逐条处理的 checklist；可标必填，show_if 按别的字段决定显示）；view 放答题时要看的内容（表格、图表、指标、方案对比、时间线、Markdown）。有 fields 时不给 options。会先等 wait_seconds 秒；没等到就返回提问 id，可以先做不依赖答案的部分，再用 wait_answer 接着等（每次最多 50 秒，可以多次）；结束这一轮也没关系，回答会作为新消息回到这个会话。能自己查实或按常理决定的不要问；只有一件事时一句话问清，给出选项时把你推荐的放第一个。",
   schema: z.object({
-    question: z.string().describe("问题本身，带上本人做决定需要的背景（一两句）"),
-    options: z.array(askOption).max(6).optional().describe("可选的回答（按钮），推荐的放第一个"),
-    allow_text: z.boolean().optional().describe("是否允许本人另写回答（默认允许）"),
-    wait_seconds: z.number().int().min(0).max(ASK_WAIT_MAX).optional().describe(`先等多久（默认 40，最多 ${ASK_WAIT_MAX}）`),
+    question: z.string().describe("问题本身，带上本人做决定需要的背景（一两句）；有 fields 时是这张表的标题和说明"),
+    options: z.array(askOption).max(6).optional().describe("可选的回答（按钮），推荐的放第一个；有 fields 时不用"),
+    allow_text: z.boolean().optional().describe("是否允许本人另写回答（默认允许；有 fields 时是表单下面的补充说明）"),
+    fields: fieldsSchema.optional().describe("要本人填的字段，一次问完几件事；只有一件事时不用"),
+    view: viewSchema.optional().describe("答题时要看的内容，放在问题和字段之间；数据要来自工具查到的记录"),
+    submit_label: z.string().max(20).optional().describe("提交按钮上的字（有 fields 时，默认“提交”）"),
+    wait_seconds: z.number().int().min(0).max(ASK_WAIT_MAX).optional().describe(`先等多久（默认 40，最多 ${ASK_WAIT_MAX}；表单填得慢，可以给 0 直接结束这一轮）`),
   }),
   handler: async (ctx, a) => {
     if (ctx.shadow) return "（对比运行）不向本人提问，按你认为最合理的选择继续。";
-    const { createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
-    const ask = createAsk(ctx.app, { runId: ctx.runId, userId: ctx.userId ?? OWNER, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true });
+    if (a.fields?.length && a.options?.length) throw new HttpError(400, "有 fields 时不给 options：选项写成一个 choice 字段");
+    if (a.fields) checkFields(a.fields);
+    if (a.view) checkView(a.view);
+    const { cancelAsk, createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
+    // A form asked again in the same run (a retried turn, a corrected form) replaces the one not yet filled in.
+    if (a.fields?.length && ctx.runId) for (const old of all<{ id: string }>(ctx.app.db, "select id from asks where run_id = ? and status = 'pending' and kind = 'question' and json_extract(ui, '$.fields') is not null", ctx.runId)) cancelAsk(ctx.app, old.id);
+    const ui = a.fields || a.view ? { ...(a.fields ? { fields: a.fields } : {}), ...(a.view ? { view: a.view } : {}), ...(a.submit_label ? { submitLabel: a.submit_label } : {}) } : null;
+    const ask = createAsk(ctx.app, { runId: ctx.runId, userId: ctx.userId ?? OWNER, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true, ui });
     const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 40) * 1000);
     return got.status === "pending"
       ? `已问本人（${ask.id}），还没回答。可以先做不依赖答案的部分，再 wait_answer(ask_id="${ask.id}") 接着等；这一轮结束时还没答，回答会作为新消息回到这个会话。`
@@ -2665,7 +2675,7 @@ def({
 
 def({
   name: "wait_answer",
-  description: `接着等本人对 ask_owner 提问（或待批准操作）的回答，每次最多 ${ASK_WAIT_MAX} 秒，没等到可以再调用。`,
+  description: `接着等本人对 ask_user 提问（或待批准操作）的回答，每次最多 ${ASK_WAIT_MAX} 秒，没等到可以再调用。`,
   schema: z.object({ ask_id: z.string(), wait_seconds: z.number().int().min(1).max(ASK_WAIT_MAX).optional() }),
   handler: async (ctx, a) => {
     const { getAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
@@ -2689,6 +2699,28 @@ def({
       return "本轮规则已有宿主的启用确认卡片，不再附建议按钮。其他后续建议写在回答正文里即可。";
     const ask = createAsk(ctx.app, { runId: ctx.runId, userId: ctx.userId ?? OWNER, kind: "suggestion", question: a.question ?? "", options: toOptions(a.options) });
     return `已附上 ${ask.options.length} 个下一步按钮，会显示在你这次回答下面。回答正文里不必再列这些选项。`;
+  },
+});
+
+def({
+  name: "show",
+  description:
+    "把组件块放在这一轮回答的下面给本人看（只展示，不用回答）：表格（可排序）、柱状 / 折线 / 饼图、指标、方案对比、时间线、Markdown。数据、对比、进度用文字说不清时用；数据要来自工具查到的记录，不要估计。网页和插件页里直接画出来，飞书等渠道收到文字版和网页链接。交出后回答正文里不要再把内容写一遍，一两句说明看什么即可。要本人选择或填写时用 ask_user 的 fields / view。",
+  schema: z.object({
+    title: z.string().max(80).optional().describe("这组内容的标题"),
+    components: viewSchema.describe("要展示的组件，按顺序"),
+  }),
+  handler: async (ctx, a) => {
+    if (ctx.shadow) return "（对比运行）不展示。";
+    checkView(a.components);
+    const { conversationOfRun, nudgePlugin } = await import("./asks.ts");
+    const conversationId = conversationOfRun(ctx.app, ctx.runId);
+    if (!conversationId) return "这次运行不在对话里，没有地方展示；把内容写在回答里即可。";
+    const id = newId("uv");
+    run(ctx.app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,components,created_at) values(?,?,?,?,?,?,?)", id, ctx.runId, conversationId, ctx.userId ?? OWNER, a.title ?? "", JSON.stringify(a.components), now());
+    ctx.app.emit({ type: "ui", id, conversationId });
+    nudgePlugin(ctx.app, conversationId);
+    return `已放在这一轮回答的下面（${id}）。回答里不要再把内容写一遍。`;
   },
 });
 

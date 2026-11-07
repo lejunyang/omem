@@ -31,7 +31,7 @@ export const PEER_DENY = new Set([
   "report_rule_failure",
   "lark_send", "lark_react", "meeting_send", "lark_card", "lark_update_card", "lark_send_file", "lark_message_file", "lark_read", "lark_write", "lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize", "lark_wiki_crawl",
   "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "refresh_item_notification", "notify",
-  "ask_owner", "wait_answer", "suggest_next", "wake_later", "wake_on_message", "cancel_wake",
+  "ask_user", "wait_answer", "suggest_next", "wake_later", "wake_on_message", "cancel_wake",
   "continue_agent_work", "switch_run_ai", "generate_wiki", "digest_sources",
   "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress",
   "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action",

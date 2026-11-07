@@ -1814,8 +1814,29 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { answerAsk, getAsk } = await import("../agents/asks.ts");
     const id = (req.params as { id: string }).id;
     if (getAsk(app, id).userId !== who(req)) throw new HttpError(404, "没有这个提问");
-    const b = q(z.object({ choice: z.number().int().min(0).nullable().optional(), text: z.string().optional(), approved: z.boolean().optional() }), req.body);
+    const b = q(z.object({ choice: z.number().int().min(0).nullable().optional(), text: z.string().optional(), value: z.record(z.string(), z.unknown()).optional(), approved: z.boolean().optional() }), req.body);
     return answerAsk(app, id, { ...b, by: who(req) });
+  });
+  // Views an agent showed under its replies (`show`, docs/v2/interactive-ui.md).
+  server.get("/api/ui/views", async (req) => {
+    const conversation = (req.query as { conversation?: string }).conversation;
+    if (!conversation) throw new HttpError(400, "要给出 conversation");
+    return all<{ id: string; run_id: string | null; title: string; components: string; created_at: string }>(app.db, "select id, run_id, title, components, created_at from ui_views where conversation_id = ? and user_id = ? order by created_at", conversation, who(req)).map((v) => ({
+      id: v.id, runId: v.run_id, title: v.title, components: JSON.parse(v.components), createdAt: v.created_at,
+    }));
+  });
+  // One question or view on its own page (`#/ui/<id>`): what a Feishu card or a text chat links to.
+  server.get("/api/ui/:id", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const v = one<{ id: string; run_id: string | null; conversation_id: string | null; user_id: string; title: string; components: string; created_at: string }>(app.db, "select * from ui_views where id = ?", id);
+    if (v) {
+      if (v.user_id !== who(req)) throw new HttpError(404, "没有这个内容");
+      return { type: "view", view: { id: v.id, runId: v.run_id, conversationId: v.conversation_id, title: v.title, components: JSON.parse(v.components), createdAt: v.created_at } };
+    }
+    const { getAsk } = await import("../agents/asks.ts");
+    const a = getAsk(app, id);
+    if (a.userId !== who(req)) throw new HttpError(404, "没有这个内容");
+    return { type: "ask", ask: a };
   });
 
   // ----------------------------------------------------- notifications/status

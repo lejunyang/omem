@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { del, get, onServerEvent, post, type Ask as AskItem } from "../api";
+import { del, get, onServerEvent, post, type Ask as AskItem, type UiViewItem } from "../api";
 import AskCard from "../components/AskCard.vue";
+import UiView from "../components/UiView.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { confirmDialog } from "../lib/dialog";
@@ -29,8 +30,20 @@ async function loadAsks() {
   if (seq === asksSeq && target === id.value) asks.value = result;
 }
 /** Questions and approvals wait above the composer; suggested next steps sit under their reply. */
-const waiting = computed(() => asks.value.filter((a) => a.kind !== "suggestion"));
+// A question with a form sits under the reply that asked it, where there is room for it.
+const inThread = (a: AskItem) => !!a.ui?.fields?.length && !!a.runId && messages.value.some((m) => m.runId === a.runId);
+const waiting = computed(() => asks.value.filter((a) => a.kind !== "suggestion" && !inThread(a)));
+const formsFor = (runId: string | null) => (runId ? asks.value.filter((a) => a.kind === "question" && a.runId === runId && inThread(a)) : []);
 const suggestionsFor = (runId: string | null) => (runId ? asks.value.filter((a) => a.kind === "suggestion" && a.runId === runId) : []);
+/** Tables and charts the agent showed (`show`) sit under the reply of the turn that made them. */
+const views = ref<UiViewItem[]>([]);
+let viewsSeq = 0;
+async function loadViews() {
+  const seq = ++viewsSeq, target = id.value;
+  const result = target ? await get<UiViewItem[]>(`/api/ui/views?conversation=${encodeURIComponent(target)}`).catch(() => []) : [];
+  if (seq === viewsSeq && target === id.value) views.value = result;
+}
+const viewsFor = (runId: string | null) => (runId ? views.value.filter((v) => v.runId === runId) : []);
 const text = ref("");
 const sending = ref(false);
 const scroller = ref<HTMLElement>();
@@ -109,17 +122,21 @@ onMounted(() => {
   void loadList();
   void loadConversation();
   void loadAsks();
+  void loadViews();
   input.value?.focus();
 });
 watch(id, () => {
   conversationSpace.value = null;
   messages.value = [];
+  views.value = [];
   void loadConversation();
   void loadAsks();
+  void loadViews();
   showList.value = false;
 });
 const off = onServerEvent((e) => {
   if (e.type === "ask" && e.conversationId === id.value) void loadAsks();
+  if (e.type === "ui" && e.conversationId === id.value) void loadViews();
   if (e.type === "run" && (e.status === "done" || e.status === "failed") && messages.value.some((m) => m.runId === e.runId)) {
     void loadConversation();
     void loadAsks();
@@ -213,6 +230,8 @@ function autosize(e: Event) {
             <div v-else class="msg bot">
               <RunActivity v-if="m.runId" :run-id="m.runId" :show-text="false" />
               <Markdown :source="m.text" />
+              <UiView v-for="v in viewsFor(m.runId)" :key="v.id" :components="v.components" :title="v.title" :space="conversationSpace ?? undefined" />
+              <AskCard v-for="a in formsFor(m.runId)" :key="a.id" :ask="a" @answered="loadAsks" />
               <AskCard v-for="a in suggestionsFor(m.runId)" :key="a.id" :ask="a" compact @answered="loadAsks" />
             </div>
           </template>
@@ -220,6 +239,7 @@ function autosize(e: Event) {
             <RunActivity :run-id="r" open @text="scrollDown">
               <template #default="{ text: live, running }">
                 <Markdown v-if="live" :source="live" />
+                <UiView v-for="v in viewsFor(r)" :key="v.id" :components="v.components" :title="v.title" />
                 <div v-if="running" class="row"><button class="btn ghost sm" @click="cancel(r)"><Icon name="stop" :size="13" />停止</button></div>
               </template>
             </RunActivity>

@@ -34,6 +34,7 @@ export const pullTables: Table[] = [
   { name: "item_repairs", key: ["id"] },
   { name: "item_update_proposals", key: ["id"], newer: "sync_updated_at" },
   { name: "asks", key: ["id"], newer: "sync_updated_at" },
+  { name: "ui_views", key: ["id"], local: ["delivered_at"] },
   { name: "rules", key: ["id"], newer: "updated_at", local: ["enabled"] },
   { name: "archive_rules", key: ["id"], newer: "sync_updated_at" },
   { name: "attention_rules", key: ["id"], newer: "sync_updated_at" },

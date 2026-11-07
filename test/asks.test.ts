@@ -40,7 +40,7 @@ describe("asking the owner", () => {
   });
   it("an agent waiting gets a plain reply in the chat as the answer, and that reply starts no turn", async () => {
     const { app, thread, ctx } = working();
-    const call = callTool(ctx, "ask_owner", { question: "发布改到周四还是周五？", options: ["周四", "周五"], wait_seconds: 5 });
+    const call = callTool(ctx, "ask_user", { question: "发布改到周四还是周五？", options: ["周四", "周五"], wait_seconds: 5 });
     await new Promise((r) => setTimeout(r, 100));
     const ask = listAsks(app, { conversationId: thread.id })[0];
     expect(ask).toMatchObject({ kind: "question", status: "pending", options: [{ label: "周四" }, { label: "周五" }] });
@@ -54,7 +54,7 @@ describe("asking the owner", () => {
 
   it("a number picks an option; an answer nobody waited for arrives as a message once the run has ended", async () => {
     const { app, thread, ctx, runId } = working();
-    const first = await callTool(ctx, "ask_owner", { question: "选哪个方案？", options: ["A", "B"], wait_seconds: 0 });
+    const first = await callTool(ctx, "ask_user", { question: "选哪个方案？", options: ["A", "B"], wait_seconds: 0 });
     expect(first.text).toMatch(/wait_answer/);
     const ask = listAsks(app, { conversationId: thread.id })[0];
     // While the run still works, the answer waits for it (wait_answer would get it).

@@ -13,8 +13,8 @@ const live = omem.stream("live");         // a WebSocket to the plugin's service
 ```
 
 - `omem-plugin-sdk`: `connect()` → `get` / `post` (only `/api/plugins/<this plugin>/…`), `on`,
-  `navigate`, `openSettings`, `stream`, and `renderBlock` for omem's forms and charts.
-- `omem-plugin-sdk/blocks`: `renderBlock` alone, without a framework.
+  `navigate`, `openSettings`, `stream`, and `renderBlock` / `renderView` for the agent's questions (forms) and views (tables, charts, comparisons) in a session.
+- `omem-plugin-sdk/blocks`: `renderBlock` and `renderView` alone, without a framework.
 - `omem-plugin-sdk/service`: for a plugin's service (Node): `serve({ http, socket })` on
   `127.0.0.1:OMEM_SERVICE_PORT`, refusing requests without omem's token.
 

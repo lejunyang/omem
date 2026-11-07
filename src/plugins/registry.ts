@@ -18,7 +18,6 @@ import { registerTool, saveSourceFor, toolList, unregisterTools, watchesFor, typ
 import { platformList, registerPlatform } from "./platforms.ts";
 import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
-import { GENERIC_BLOCKS, genericToolName } from "./generic.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
 import { setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
@@ -48,7 +47,7 @@ export const manifestSchema = z.object({
   space: z.object({ id: z.string(), name: z.string(), kind: z.enum(["learning", "topic", "project"]).default("topic"), description: z.string().default("") }).optional(),
   agents: z.array(z.string().regex(SPEC)).default([]),
   skills: z.array(z.string()).default([]),
-  /** Host tools the plugin's agents may use, besides its own and the plugin tools (plugin_query, plugin_form…). */
+  /** Host tools the plugin's agents may use, besides its own and the plugin tools (plugin_query, ask_user, show…). */
   tools: z.array(z.string()).default([]),
   page: z.object({ title: z.string() }).optional(),
   settings: z.array(settingFieldSchema).default([]),
@@ -93,8 +92,8 @@ export type LoadedPlugin = {
   env: PluginEnv;
 };
 
-/** Every plugin's agents may use these, whatever the manifest lists. */
-export const PLUGIN_TOOLS = ["plugin_query", "plugin_put", ...[...GENERIC_BLOCKS.keys()].map(genericToolName)];
+/** Every plugin's agents may use these, whatever the manifest lists (questions and views show on the plugin's page). */
+export const PLUGIN_TOOLS = ["plugin_query", "plugin_put", "ask_user", "wait_answer", "show"];
 
 const plugins = new Map<string, LoadedPlugin>();
 
@@ -120,14 +119,6 @@ export function getPlugin(id: string) {
 function asPlugin(env: PluginEnv, ctx: ToolContext) {
   return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input), watches: watchesFor(ctx) };
 }
-
-// The host's blocks (form, chart) are handed in for whichever plugin the run belongs to.
-for (const def of GENERIC_BLOCKS.values()) {
-  const name = genericToolName(def.kind);
-  registerTool(blockTool(name, def, (ctx) => (ctx.plugin ? plugins.get(ctx.plugin)?.env ?? null : null)));
-  CORE_TOOLS.add(name);
-}
-TOOL_GROUPS.find((g) => g.id === "plugins")?.tools.push(...[...GENERIC_BLOCKS.keys()].map(genericToolName));
 
 async function importServer(dir: string, id: string, source: LoadedPlugin["source"]): Promise<PluginRegister | null> {
   const file = source === "builtin" ? (built ? join(packageRoot(), "dist", "plugins", id, "server.js") : join(dir, "server.ts")) : SERVER_FILES.map((f) => join(dir, f)).find((f) => existsSync(f));
@@ -162,7 +153,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     env: {
       id: manifest.id,
       title: manifest.page?.title ?? manifest.name,
-      def: (kind) => blocks.get(kind) ?? GENERIC_BLOCKS.get(kind),
+      def: (kind) => blocks.get(kind),
       settings: (app, userId) => pluginSettings(app, manifest.id, manifest.settings, userId),
       sessionFor: (spec) => {
         const s = p.specs.find((x) => x.name === spec) ?? p.specs[0];

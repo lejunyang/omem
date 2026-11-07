@@ -9,6 +9,8 @@ export class ApiError extends Error {
 }
 
 import { promptDialog } from "./lib/dialog";
+import type { UiField, ViewComponent } from "omem-plugin-sdk/blocks";
+export type { UiField, ViewComponent };
 
 // Opening the page from another machine needs an API token (`omem user token owner`
 // or a pairing token): `http://host:4317/?token=…` saves it, or the page asks on 401.
@@ -154,6 +156,7 @@ export type ServerEvent =
   | { type: "notification"; id: string; title: string; body: string; link?: string | null }
   | { type: "changed"; entity: string; id: string; spaceId?: string }
   | { type: "ask"; id: string; status: string; conversationId: string | null }
+  | { type: "ui"; id: string; conversationId: string }
   | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean };
 
 /** A question, suggested next steps or an approval from an agent (server: agents/asks.ts). */
@@ -172,7 +175,13 @@ export type Ask = {
   result: string | null;
   shownAt: string | null;
   createdAt: string;
+  /** A form and what to look at (docs/v2/interactive-ui.md). */
+  ui?: { fields?: UiField[]; view?: ViewComponent[]; submitLabel?: string } | null;
+  value?: Record<string, unknown> | null;
 };
+
+/** What an agent showed under a reply (`show`). */
+export type UiViewItem = { id: string; runId: string | null; conversationId?: string | null; title: string; components: ViewComponent[]; createdAt: string };
 
 type Listener = (e: ServerEvent) => void;
 const listeners = new Set<Listener>();

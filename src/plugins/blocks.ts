@@ -18,7 +18,7 @@ type Row = { id: string; plugin: string; kind: string; conversation_id: string; 
 /** What the host knows about one plugin that block handling needs (src/plugins/registry.ts). */
 export type PluginEnv = {
   id: string;
-  /** The plugin's own block of this kind, else the host's (form, chart). */
+  /** The plugin's own block of this kind. */
   def(kind: string): PluginBlock | undefined;
   settings(app: App, userId: string): PluginSettings;
   /** Where a block handed in outside a plugin session goes: a new session with this agent. */
@@ -180,8 +180,35 @@ export function sessionView(app: App, env: PluginEnv, conversationId: string, us
     const data = s.status === "open" && d?.publicView ? d.publicView(s.data) : s.data;
     return { id: s.id, kind: s.kind, status: s.status, data, answers: s.answers, result: s.result, runId: r.run_id, createdAt: s.createdAt };
   });
+  // The agent's questions (ask_user) and views (show) in this session are drawn as blocks too
+  // (docs/v2/interactive-ui.md): kind "ask" and "view", rendered by packages/plugin-sdk/blocks.ts.
+  const asks = all<{ id: string; run_id: string | null; question: string; options: string; allow_text: number; ui: string | null; status: string; answer: string | null; value: string | null; created_at: string }>(
+    app.db,
+    "select id, run_id, question, options, allow_text, ui, status, answer, value, created_at from asks where conversation_id = ? and kind = 'question' order by created_at",
+    conversationId,
+  ).map((a) => ({
+    id: a.id,
+    kind: "ask",
+    status: a.status === "pending" ? ("open" as const) : ("submitted" as const),
+    data: { question: a.question, options: json(a.options, []), allowText: !!a.allow_text, ...json<Record<string, unknown>>(a.ui ?? "{}", {}) },
+    answers: a.value ? json(a.value, {}) : null,
+    result: a.status === "pending" ? null : { answer: a.answer, cancelled: a.status === "cancelled" },
+    runId: a.run_id,
+    createdAt: a.created_at,
+  }));
+  const views = all<{ id: string; run_id: string | null; title: string; components: string; created_at: string }>(app.db, "select id, run_id, title, components, created_at from ui_views where conversation_id = ? order by created_at", conversationId).map((v) => ({
+    id: v.id,
+    kind: "view",
+    status: "shown" as const,
+    data: { title: v.title, components: json(v.components, []) },
+    answers: null,
+    result: null,
+    runId: v.run_id,
+    createdAt: v.created_at,
+  }));
+  const all_ = [...blocks, ...asks, ...views].sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
   const busy = one<{ status: string }>(app.db, "select status from runs where lane = ? and status in ('queued', 'running') order by created_at desc limit 1", conversationId);
-  return { id: t.id, title: t.title, agent: json<{ spec?: string }>(t.settings, {}).spec ?? null, spaceId: t.space_id, messages, blocks, busy: busy?.status ?? null };
+  return { id: t.id, title: t.title, agent: json<{ spec?: string }>(t.settings, {}).spec ?? null, spaceId: t.space_id, messages, blocks: all_, busy: busy?.status ?? null };
 }
 
 export async function sendMessage(app: App, input: { plugin: string; conversationId: string; userId: string; text: string; meta?: Record<string, unknown> }) {
@@ -193,6 +220,16 @@ export async function sendMessage(app: App, input: { plugin: string; conversatio
 
 /** The owner hands a block in: grade, keep the answers and result, and tell the agent. */
 export async function submitBlock(app: App, env: PluginEnv, input: { blockId: string; userId: string; answers: Record<string, unknown> }) {
+  // A question of this session (ask_user): `answers` is { value?, text?, choice? }, answered like anywhere else.
+  const ask = one<{ conversation_id: string | null; user_id: string }>(app.db, "select conversation_id, user_id from asks where id = ?", input.blockId);
+  if (ask) {
+    if (!ask.conversation_id || ask.user_id !== input.userId) throw new HttpError(404, `没有内容块 ${input.blockId}`);
+    sessionThread(app, env.id, ask.conversation_id, input.userId);
+    const { answerAsk } = await import("../agents/asks.ts");
+    const a = input.answers as { value?: Record<string, unknown>; text?: string; choice?: number };
+    const done = await answerAsk(app, input.blockId, { value: a.value, text: typeof a.text === "string" ? a.text : undefined, choice: typeof a.choice === "number" ? a.choice : undefined, by: input.userId });
+    return { result: { answer: done.answer }, runId: null };
+  }
   // Claim the block first, so a double click cannot grade it twice.
   const claimed = run(app.db, "update plugin_blocks set status = 'submitted', answers = ?, submitted_at = ?, updated_at = ? where id = ? and plugin = ? and user_id = ? and status = 'open'", JSON.stringify(input.answers), now(), now(), input.blockId, env.id, input.userId);
   const row = one<Row>(app.db, "select * from plugin_blocks where id = ? and plugin = ? and user_id = ?", input.blockId, env.id, input.userId);

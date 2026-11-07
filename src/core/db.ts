@@ -1496,6 +1496,22 @@ export const migrations: readonly string[] = [
   );
   create index run_artifacts_work on run_artifacts(work_id, created_at);
   create index run_artifacts_run on run_artifacts(run_id);`,
+  // Component blocks (docs/v2/interactive-ui.md): a question's form and what to look at (asks.ui),
+  // the checked answers (asks.value); views an agent shows under its reply (ui_views).
+  `alter table asks add column ui text;
+  alter table asks add column value text;
+  create table ui_views (
+    id text primary key,
+    run_id text,
+    conversation_id text,
+    user_id text not null default 'owner',
+    title text not null default '',
+    components text not null,
+    delivered_at text,
+    created_at text not null
+  );
+  create index ui_views_conversation on ui_views(conversation_id, created_at);
+  create index ui_views_run on ui_views(run_id);`,
 ];
 
 export type Db = DatabaseSync;

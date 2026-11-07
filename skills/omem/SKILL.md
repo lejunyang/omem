@@ -73,7 +73,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `delegate` | 交给别的 Agent、请教、选 AI、看运行记录 | [references/agents.md](references/agents.md) |
 | `skills` | 技能与 Agent 档案 | 同上 |
 | `remote` | 远程操作的录制：列出、读步骤和请求，整理成技能（配合 `save_skill` 的 `from_recording`） | [references/remote.md](references/remote.md) |
-| `ask` | 问本人、等回答、下一步按钮、通知本人 | [references/owner.md](references/owner.md) |
+| `ask` | 问本人（可带表单）、等回答、下一步按钮、在回答下展示表格和图表、通知本人 | [references/owner.md](references/owner.md) |
 | `wake` | 定时或按消息唤醒、规则 | 同上 |
 | `coding` | 编码交办、评审、修改项、应用改动 | [references/code.md](references/code.md) |
 | `git` | 分支、工作区、Git 同步与提交 | 同上 |

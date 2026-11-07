@@ -374,7 +374,7 @@ export function prepareRun(
   if (spec || roleName === "assistant") { tools.add("ask_agent"); tools.add("list_ai_backends"); }
   // …and the owner: a question, or next steps as buttons under the reply. Waiting is for anyone
   // whose tool call is held for approval.
-  if (spec || roleName === "assistant") for (const t of ["ask_owner", "suggest_next"]) tools.add(t);
+  if (spec || roleName === "assistant") for (const t of ["ask_user", "suggest_next"]) tools.add(t);
   // Working files: where a long task keeps its current results and a scheduled rule its report.
   if (spec || roleName === "assistant") tools.add("write_file");
   // Wake-ups for its own follow-up work (after a while, or on a message in a chat).

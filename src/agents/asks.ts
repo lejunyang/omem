@@ -1,19 +1,23 @@
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
-import { HttpError, newId, now, truncate } from "../core/util.ts";
+import { HttpError, newId, now, truncate, webLink } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
+import { fieldsText, normalizeAnswers, summarizeAnswers, viewText, type AskUi } from "./ui-blocks.ts";
 
 /**
  * Choices put in front of the owner while agents work, answered with one click (Feishu card, web)
  * or a reply in the same chat (a number picks an option):
  *
- * - question: an agent needs to know something to go on (`ask_owner`). It can wait for the answer
+ * - question: an agent needs to know something to go on (`ask_user`). It can wait for the answer
  *   inside its turn (`wait_answer`, a short wait per call so no client times out); an answer nobody
  *   waited for reaches the conversation as a message once the asking run has ended.
  * - suggestion: next steps offered with a reply (`suggest_next`). Clicking one says its message in
  *   the conversation for the owner, so the work moves on without retyping it.
  * - approval: a tool call held for the owner's OK (`approvals.tools`, empty by default). Approved
  *   calls run with the context they were made in; a refusal's reason goes back to the agent.
+ *
+ * A question may carry component blocks (`ui`, src/agents/ui-blocks.ts): fields that make it a form,
+ * whose checked answers are kept as `value`, and display components to look at while answering.
  */
 export type AskKind = "question" | "suggestion" | "approval";
 export type AskOption = { label: string; message?: string };
@@ -43,6 +47,10 @@ export type Ask = {
   answeredBy: string | null;
   /** The host acts on the answer (review and coding decisions); free text in the chat does not answer it. */
   handler: string | null;
+  /** A form and what to look at (docs/v2/interactive-ui.md). */
+  ui: AskUi | null;
+  /** The form's checked answers. */
+  value: Record<string, unknown> | null;
 };
 
 type Row = {
@@ -67,6 +75,8 @@ type Row = {
   created_at: string;
   answered_at: string | null;
   answered_by: string | null;
+  ui: string | null;
+  value: string | null;
 };
 
 const toAsk = (r: Row): Ask => ({
@@ -91,6 +101,8 @@ const toAsk = (r: Row): Ask => ({
   answeredAt: r.answered_at,
   answeredBy: r.answered_by,
   handler: ((JSON.parse(r.context ?? "{}") as { handler?: unknown }).handler as string | undefined) ?? null,
+  ui: r.ui ? (JSON.parse(r.ui) as AskUi) : null,
+  value: r.value ? (JSON.parse(r.value) as Record<string, unknown>) : null,
 });
 
 export function getAsk(app: App, id: string): Ask {
@@ -126,7 +138,7 @@ export function conversationOfRun(app: App, runId: string | null): string | null
 
 export function createAsk(
   app: App,
-  input: { runId: string | null; conversationId?: string | null; userId?: string; kind?: AskKind; question: string; options?: AskOption[]; allowText?: boolean; tool?: string; args?: Record<string, unknown>; context?: Record<string, unknown> },
+  input: { runId: string | null; conversationId?: string | null; userId?: string; kind?: AskKind; question: string; options?: AskOption[]; allowText?: boolean; tool?: string; args?: Record<string, unknown>; context?: Record<string, unknown>; ui?: AskUi | null },
 ): Ask {
   const id = newId("ask");
   const kind = input.kind ?? "question";
@@ -136,7 +148,7 @@ export function createAsk(
   if (kind === "suggestion" && conversationId) cancelOpen(app, conversationId, "suggestion");
   run(
     app.db,
-    "insert into asks(id,run_id,conversation_id,user_id,kind,question,options,allow_text,tool,args,context,status,consumed,created_at) values(?,?,?,?,?,?,?,?,?,?,?,'pending',0,?)",
+    "insert into asks(id,run_id,conversation_id,user_id,kind,question,options,allow_text,tool,args,context,ui,status,consumed,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,'pending',0,?)",
     id,
     input.runId,
     conversationId,
@@ -148,10 +160,12 @@ export function createAsk(
     input.tool ?? null,
     input.args ? JSON.stringify(input.args) : null,
     input.context ? JSON.stringify(input.context) : null,
+    input.ui && (input.ui.fields?.length || input.ui.view?.length) ? JSON.stringify(input.ui) : null,
     now(),
   );
   const ask = getAsk(app, id);
   app.emit({ type: "ask", id, status: "pending", conversationId: ask.conversationId });
+  nudgePlugin(app, ask.conversationId);
   // Suggestions belong under the reply: shown once the run has delivered it (settleAsks / showSuggestions).
   if (kind !== "suggestion" && !input.context?.afterReply) void show(app, ask);
   return ask;
@@ -169,26 +183,53 @@ async function show(app: App, ask: Ask) {
   // No card for it: the web shows asks itself; text chats get a numbered list (a number picks);
   // an ask with no conversation is a notification pointing to the web.
   const channel = ask.conversationId ? one<{ channel: string }>(app.db, "select channel from conversations where id = ?", ask.conversationId)?.channel : null;
-  if (channel && channel !== "web" && channel !== "cli") {
+  if (channel && channel !== "web" && channel !== "cli" && !channel.startsWith("plugin:")) {
     const { deliverToThread } = await import("./inbox.ts");
-    await deliverToThread(app, ask.conversationId!, askText(ask), { ask: ask.id });
+    await deliverToThread(app, ask.conversationId!, askText(ask, app), { ask: ask.id });
   } else if (!ask.conversationId && ask.kind !== "suggestion") {
     const { notify } = await import("../core/notify.ts");
-    notify(app, { userId: ask.userId, title: ask.kind === "approval" ? "有操作等你批准" : "有问题等你回答", body: askText(ask), link: "#/" });
+    notify(app, { userId: ask.userId, title: ask.kind === "approval" ? "有操作等你批准" : "有问题等你回答", body: askText(ask), link: ask.ui ? `#/ui/${ask.id}` : "#/" });
   }
 }
 
-/** An ask as plain text, for chats without buttons. */
-export function askText(ask: Ask) {
+/** Where a person opens one question or view on the web (absolute when the web address is set). */
+export function uiLink(app: App, id: string) {
+  return webLink(app, `#/ui/${encodeURIComponent(id)}`);
+}
+
+/** An ask as plain text, for chats without buttons; `app` adds the link to its form. */
+export function askText(ask: Ask, app?: App) {
+  if (ask.ui?.fields?.length) {
+    const view = ask.ui.view?.length ? `\n${viewText(ask.ui.view)}\n` : "";
+    return `需要你回答：${ask.question}${view}\n要填的：\n${fieldsText(ask.ui.fields)}\n${app ? `在网页上填写：${uiLink(app, ask.id)}\n` : ""}也可以直接回复文字。`.trim();
+  }
   const opts = ask.kind === "approval" ? ["批准", "拒绝"] : ask.options.map((o) => o.label);
   const head = ask.kind === "approval" ? "需要你批准：" : ask.kind === "question" ? "需要你回答：" : ask.question ? "" : "下一步可以：";
   const how = ask.kind === "approval" ? "回复“批准”或“拒绝 + 理由”。" : opts.length ? `回复编号选择${ask.handler ? (ask.allowText ? "，要补充就以选项开头接着写（如“" + opts[0] + "，另外……”）" : "") : ask.allowText ? "，或直接写你的回答" : ""}。` : "直接回复即可。";
-  return `${head}${ask.question}\n${ask.kind === "approval" ? "" : opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}\n${how}`.replace(/\n{2,}/g, "\n").trim();
+  const view = ask.ui?.view?.length ? `\n${viewText(ask.ui.view)}\n` : "";
+  return `${head}${ask.question}${view}\n${ask.kind === "approval" ? "" : opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}\n${how}`.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Show a finished run's suggestions now (a channel that has just posted the reply calls this). */
 export async function showSuggestions(app: App, runId: string) {
+  await deliverViews(app, runId);
   for (const r of all<Row>(app.db, "select * from asks where run_id = ? and (kind = 'suggestion' or json_extract(context, '$.afterReply') = 1) and status = 'pending' and shown_at is null order by created_at", runId)) await show(app, toAsk(r));
+}
+
+/**
+ * Views a run showed (`show`): the web and plugin pages draw them under the reply; other channels
+ * get them as text with a link to the drawn one, once the reply has gone out.
+ */
+async function deliverViews(app: App, runId: string) {
+  const views = all<{ id: string; conversation_id: string | null; title: string; components: string }>(app.db, "select id, conversation_id, title, components from ui_views where run_id = ? and delivered_at is null order by created_at", runId);
+  for (const v of views) {
+    if (!run(app.db, "update ui_views set delivered_at = ? where id = ? and delivered_at is null", now(), v.id).changes) continue;
+    const channel = v.conversation_id ? one<{ channel: string }>(app.db, "select channel from conversations where id = ?", v.conversation_id)?.channel : null;
+    if (!channel || channel === "web" || channel === "cli" || channel.startsWith("plugin:")) continue;
+    const { deliverToThread } = await import("./inbox.ts");
+    const text = `${v.title ? `**${v.title}**\n\n` : ""}${viewText(JSON.parse(v.components))}\n\n[在网页上查看](${uiLink(app, v.id)})`;
+    await deliverToThread(app, v.conversation_id!, text, { view: v.id }).catch((e: Error) => console.warn(`[omem] 展示块 ${v.id} 发送失败：${e.message}`));
+  }
 }
 
 /** The host's cards about one round of a coding delegation or branch review (review-chain.ts): a newer round, an apply or a discard answers them all. */
@@ -218,8 +259,16 @@ function cancelOpen(app: App, conversationId: string, kind: AskKind) {
   for (const a of open) closed(app, { ...a, status: "cancelled" });
 }
 
+/** A plugin's page listens to its own events only: tell it a question or view in its session changed. */
+export function nudgePlugin(app: App, conversationId: string | null) {
+  if (!conversationId) return;
+  const channel = one<{ channel: string }>(app.db, "select channel from conversations where id = ?", conversationId)?.channel;
+  if (channel?.startsWith("plugin:")) app.emit({ type: "plugin", plugin: channel.slice("plugin:".length), conversationId });
+}
+
 function closed(app: App, ask: Ask) {
   app.emit({ type: "ask", id: ask.id, status: ask.status, conversationId: ask.conversationId });
+  nudgePlugin(app, ask.conversationId);
   for (const s of sinks) s.closed?.(app, ask).catch(() => {});
 }
 
@@ -282,15 +331,19 @@ export function setApprovalExecutor(e: Executor) {
  * to the conversation as a message once the asking run has ended (`viaMessage`: the owner's own
  * chat message already carried it).
  */
-export async function answerAsk(app: App, id: string, input: { choice?: number | null; text?: string; approved?: boolean; by: string; viaMessage?: boolean; deferEffects?: boolean }): Promise<Ask> {
+export async function answerAsk(app: App, id: string, input: { choice?: number | null; text?: string; value?: Record<string, unknown>; approved?: boolean; by: string; viaMessage?: boolean; deferEffects?: boolean }): Promise<Ask> {
   const before = getAsk(app, id);
   if (before.status !== "pending") throw new HttpError(409, before.status === "cancelled" ? "这个提问已经失效了" : "这个提问已经回答过了");
   const option = input.choice !== undefined && input.choice !== null ? before.options[input.choice] : undefined;
   if (input.choice !== undefined && input.choice !== null && !option) throw new HttpError(400, "没有这个选项");
   const text = input.text?.trim() || null;
-  if (before.kind === "question" && !option && !text) throw new HttpError(400, "回答不能为空");
+  // A form's answers are checked here, whichever client sent them; a text reply still answers it.
+  const fields = before.ui?.fields;
+  if (input.value && !fields?.length) throw new HttpError(400, "这个提问没有要填的字段");
+  const value = input.value && fields ? normalizeAnswers(fields, input.value) : null;
+  if (before.kind === "question" && !option && !text && !value) throw new HttpError(400, "回答不能为空");
   const approved = before.kind === "approval" ? !!input.approved : null;
-  const answer = [option?.label, text].filter(Boolean).join("：") || null;
+  const answer = value && fields ? [summarizeAnswers(fields, value), text ? `补充：${text}` : ""].filter(Boolean).join("\n") : [option?.label, text].filter(Boolean).join("：") || null;
   const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
   const action = before.handler ? askActions.get(before.handler) : undefined;
   const changed = tx(app.db, () => {
@@ -298,8 +351,9 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
     const result = action?.(app, { ...before, status: "answered", answer, choice: option ? input.choice! : null, approved, answeredBy: input.by }, context);
     return run(
       app.db,
-      "update asks set status = 'answered', answer = ?, choice = ?, approved = ?, answered_at = ?, answered_by = ?, consumed = ?, result = coalesce(?, result) where id = ? and status = 'pending'",
+      "update asks set status = 'answered', answer = ?, value = ?, choice = ?, approved = ?, answered_at = ?, answered_by = ?, consumed = ?, result = coalesce(?, result) where id = ? and status = 'pending'",
       answer,
+      value ? JSON.stringify(value) : null,
       option ? input.choice! : null,
       approved === null ? null : approved ? 1 : 0,
       now(),
@@ -364,6 +418,7 @@ export function describeAnswer(a: Ask): string {
     return a.approved
       ? `本人批准了 ${a.tool}${a.answer ? `（附言：${a.answer}）` : ""}。执行结果：${a.result ?? "（无）"}`
       : `本人拒绝了 ${a.tool}${a.answer ? `，理由：${a.answer}` : "（没有说理由）"}。按理由调整做法，不要换个方式绕过。`;
+  if (a.value) return `本人填好了「${truncate(a.question, 80)}」：\n${a.answer ?? ""}\n结构化的值：${truncate(JSON.stringify(a.value), 4000)}`;
   return `本人回答了「${truncate(a.question, 80)}」：${a.answer ?? "（空）"}`;
 }
 

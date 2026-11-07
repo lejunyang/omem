@@ -1,4 +1,5 @@
-import { addAskSink, answerAsk, getAsk, isImmediateAsk, type Ask } from "../agents/asks.ts";
+import { addAskSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
+import { fieldsText, viewText } from "../agents/ui-blocks.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
@@ -78,15 +79,26 @@ function questionBlocks(app: App, ask: Ask): CardBlock[] {
 export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = {}): Record<string, unknown> {
   if (ask.status !== "pending") {
     const immediate = isImmediateAsk(ask) && ask.status === "answered";
-    const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : immediate ? ask.result ?? "已处理" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
-    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: immediate ? "已处理" : TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.result && !immediate ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
+    const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : immediate ? ask.result ?? "已处理" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : ask.value ? "已填写" : `已选：${ask.answer ?? ""}`;
+    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: immediate ? "已处理" : TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.value && ask.answer ? [{ markdown: cardText(truncate(ask.answer, 3000)) }] : []), ...(ask.result && !immediate ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
   }
   const blocks = questionBlocks(app, ask);
+  // What the agent showed with the question comes first, as text (docs/v2/interactive-ui.md).
+  if (ask.ui?.view?.length) blocks.push({ markdown: resolveCitationsSync(app, truncate(viewText(ask.ui.view), 3000)) });
   const at = ask.kind === "suggestion" ? "" : cardMentions([opts.mention]);
   if (at) {
     const first = blocks[0];
     if (first && "markdown" in first) blocks[0] = { markdown: `${at} ${first.markdown}` };
     else blocks.unshift({ markdown: at });
+  }
+  // A form is filled in on the web page of the question; a reply in the chat still answers it.
+  if (ask.ui?.fields?.length) {
+    const link = uiLink(app, ask.id);
+    blocks.push({ markdown: `要填的：
+${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` });
+    if (/^https?:/.test(link)) blocks.push({ buttons: [{ text: "打开填写", url: link, style: "primary" }] });
+    blocks.push({ note: /^https?:/.test(link) ? "也可以直接回复文字。" : "在 omem 网页上填写，或直接回复文字（设置 → 渠道 填网页地址后这里会有链接）。" });
+    return buildCard({ title: TITLE.question, color: "blue", blocks });
   }
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
   const elements = (card.body as { elements: unknown[] }).elements;

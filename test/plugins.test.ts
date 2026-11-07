@@ -114,9 +114,6 @@ describe("plugins", () => {
     expect(session).toMatchObject({ title: quiz.title });
     expect(JSON.parse(session.settings)).toEqual({ spec: "english-tutor" });
     expect(sessionView(app, getPlugin("english").env, session.id, "owner").blocks).toHaveLength(1);
-    // The host's blocks need a plugin run to know whose session it is.
-    const plain = toolContextForToken(app, issueToolToken({ runId: "r_web", spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
-    expect((await callTool(plain, "plugin_form", { title: "t", fields: [{ id: "a", label: "a", type: "text" }] })).text).toMatch(/只在插件的 Agent 运行里可用/);
     const assistant = toolContextForToken(app, issueToolToken({ runId: "r_web", spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
     expect((await callTool(assistant, "plugin_query", { collection: "attempts" })).text).toMatch(/只在插件的 Agent 运行里可用/);
     const { ctx } = await tutorTurn(app);
@@ -169,23 +166,26 @@ describe("plugins", () => {
     }
   });
 
-  it("the host's blocks: a form is checked and handed in like any block, a chart is only shown", async () => {
+  it("questions and views in a plugin session are its page's blocks: a form is checked and answered, a view is only shown", async () => {
     const app = await englishApp();
-    const { conversationId, ctx } = await tutorTurn(app);
+    const { conversationId, ctx, runId } = await tutorTurn(app);
     const env = getPlugin("english").env;
-    expect((await callTool(ctx, "plugin_form", { title: "目标", fields: [{ id: "a", label: "A", type: "choice", options: ["x"] }] })).text).toMatch(/至少要两个选项/);
-    await callTool(ctx, "plugin_form", { title: "这周的目标", fields: [{ id: "scene", label: "想练的场景", type: "multi", options: ["点餐", "面试", "邮件"], required: true }, { id: "minutes", label: "每天几分钟", type: "number" }, { id: "mood", label: "信心", type: "scale" }] });
-    expect((await callTool(ctx, "plugin_chart", { title: "近 3 天", labels: ["一", "二"], series: [{ name: "题数", values: [1, 2, 3] }] })).text).toMatch(/要一样多/);
-    await callTool(ctx, "plugin_chart", { title: "近 3 天", labels: ["一", "二", "三"], series: [{ name: "题数", values: [4, 0, 8] }] });
+    expect((await callTool(ctx, "ask_user", { question: "目标", fields: [{ id: "a", label: "A", type: "choice", options: ["x"] }], wait_seconds: 0 })).isError).toBe(true);
+    await callTool(ctx, "ask_user", { question: "这周的目标", fields: [{ id: "scene", label: "想练的场景", type: "multi", options: ["点餐", "面试", "邮件"], required: true }, { id: "minutes", label: "每天几分钟", type: "number", min: 5 }, { id: "mood", label: "信心", type: "scale" }], wait_seconds: 0 });
+    expect((await callTool(ctx, "show", { components: [{ type: "chart", title: "近 3 天", labels: ["一", "二"], series: [{ name: "题数", values: [1, 2, 3] }] }] })).text).toMatch(/要一样多/);
+    await callTool(ctx, "show", { title: "进展", components: [{ type: "chart", title: "近 3 天", labels: ["一", "二", "三"], series: [{ name: "题数", values: [4, 0, 8] }] }] });
     const [form, chart] = sessionView(app, env, conversationId, "owner").blocks;
-    expect([form.kind, form.status, chart.kind, chart.status]).toEqual(["form", "open", "chart", "shown"]);
-    await expect(submitBlock(app, env, { blockId: form.id, userId: "owner", answers: { minutes: "20" } })).rejects.toThrow(/还没填：想练的场景/);
+    expect([form.kind, form.status, chart.kind, chart.status]).toEqual(["ask", "open", "view", "shown"]);
+    expect(chart).toMatchObject({ runId, data: { title: "进展" } });
+    await expect(submitBlock(app, env, { blockId: form.id, userId: "owner", answers: { value: { minutes: "20" } } })).rejects.toThrow(/还没填：想练的场景/);
+    await expect(submitBlock(app, env, { blockId: form.id, userId: "owner", answers: { value: { scene: ["面试", "不存在"] } } })).rejects.toThrow(/不在选项里：不存在/);
+    await expect(submitBlock(app, env, { blockId: form.id, userId: "owner", answers: { value: { scene: ["面试"], minutes: 3 } } })).rejects.toThrow(/不能小于 5/);
     expect(sessionView(app, env, conversationId, "owner").blocks[0].status).toBe("open");
-    const r = await submitBlock(app, env, { blockId: form.id, userId: "owner", answers: { scene: ["面试", "不存在"], minutes: "20", mood: 9 } });
-    expect(r.result).toEqual({ values: { scene: "面试", minutes: "20", mood: "5" } });
-    const msg = one<{ text: string }>(app.db, "select text from messages where conversation_id = ? and role = 'user' order by created_at desc limit 1", conversationId)!;
-    expect(msg.text).toBe("【提交】这周的目标\n- 想练的场景：面试\n- 每天几分钟：20\n- 信心：5");
-    await expect(submitBlock(app, env, { blockId: chart.id, userId: "owner", answers: {} })).rejects.toThrow(/只用来展示/);
+    const r = await submitBlock(app, env, { blockId: form.id, userId: "owner", answers: { value: { scene: ["邮件", "面试"], minutes: "20", mood: 4 } } });
+    expect((r.result as { answer: string }).answer).toBe("- 想练的场景：面试、邮件\n- 每天几分钟：20\n- 信心：4 / 5");
+    const done = sessionView(app, env, conversationId, "owner").blocks[0];
+    expect([done.status, done.answers]).toEqual(["submitted", { scene: ["面试", "邮件"], minutes: 20, mood: 4 }]);
+    await expect(submitBlock(app, env, { blockId: chart.id, userId: "owner", answers: {} })).rejects.toThrow(/没有内容块/);
   });
 
   it("nav icons: the manifest's name or .svg, and the owner's choice over it", async () => {
@@ -215,7 +215,7 @@ describe("plugins", () => {
     const p = getPlugin("journal");
     expect(p.source).toBe("data");
     expect(p.trust).toBe("required");
-    expect(findAgentSpec(app, "journal-coach")!.tools.sort()).toEqual(["plugin_chart", "plugin_form", "plugin_put", "plugin_query", "recall"]);
+    expect(findAgentSpec(app, "journal-coach")!.tools.sort()).toEqual(["ask_user", "plugin_put", "plugin_query", "recall", "show", "wait_answer"]);
     expect(listSkills(app).map((s) => s.name)).toContain("journal-style");
     const server = await startServer(app, { port: 0, quiet: true });
     try {

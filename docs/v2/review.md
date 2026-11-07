@@ -181,7 +181,7 @@ review:
 - 编码前判档：读任务、事项材料和宿主算的指标，产出评审计划；
 - 编码后复核：拿实际 diff 和检查结果，必要时升档；
 - 每轮汇总：去重合并、裁决、打包修改单、决定复审范围；
-- 到停止条件时写“方案复核”，用 `ask_owner` 给本人选项。
+- 到停止条件时写“方案复核”，用 `ask_user` 给本人选项。
 
 计划存在发起 run 的 `output.reviewPlan`：`{tier, reasons, checks, estimatedRounds, briefRunId, createdAt}`，网页和飞书卡片都能看到；`confirmPlan` 的档位等本人点“开始”或改档后开始。
 
@@ -296,7 +296,7 @@ create table item_materials (
 - 不确定与冲突单独列，不猜；
 - 可选的 Mermaid 流程图（第一版由 analyst 写）。
 
-`brief: wait` 时用 `ask_owner` 请本人确认或指出问题让 analyst 改一轮；`optional` 时 lead 记“未确认”直接开始，业务评审按“待确认”给意见。编码完成后由业务评审回填每个变更点的实际实现位置（文件 / 行段 / 置信度），作为变更视图的映射。简报是工作文件不是记忆；其中长期稳定的业务规则照常由 ingest 沉淀为记忆 / Wiki。
+`brief: wait` 时用 `ask_user` 请本人确认或指出问题让 analyst 改一轮；`optional` 时 lead 记“未确认”直接开始，业务评审按“待确认”给意见。编码完成后由业务评审回填每个变更点的实际实现位置（文件 / 行段 / 置信度），作为变更视图的映射。简报是工作文件不是记忆；其中长期稳定的业务规则照常由 ingest 沉淀为记忆 / Wiki。
 
 ## 6. 评审结果与变更视图（运行详情）
 

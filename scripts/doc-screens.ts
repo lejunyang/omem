@@ -448,12 +448,12 @@ tutor.done();
 const journal = await pluginTurn("journal", "journal-coach", "personal", "10-30 复盘");
 addMessage(app, journal.conversationId, "user", "今天收工了，复盘一下");
 addMessage(app, journal.conversationId, "assistant", "先填一下今天的情况，我帮你排明天。下面是这周每天的专注时长：周三只有 2 小时，比计划少一半，那天下午被退款的线上问题打断了。", journal.runId);
-await callTool(journal.ctx, "plugin_form", { title: "今天", fields: [
+await callTool(journal.ctx, "ask_user", { question: "今天", wait_seconds: 0, fields: [
   { id: "done", label: "做完了什么", type: "text", required: true },
   { id: "first", label: "明天先做", type: "choice", options: ["退款回放", "评审小王的分支", "写周报"] },
   { id: "energy", label: "精力", type: "scale" },
 ] });
-await callTool(journal.ctx, "plugin_chart", { title: "这周每天的专注时长（小时）", kind: "bar", labels: ["周一", "周二", "周三", "周四", "周五"], series: [{ name: "计划", values: [5, 5, 4, 5, 4] }, { name: "实际", values: [3.5, 4.5, 2, 4, 3] }] });
+await callTool(journal.ctx, "show", { components: [{ type: "chart", title: "这周每天的专注时长", unit: "小时", kind: "bar", labels: ["周一", "周二", "周三", "周四", "周五"], series: [{ name: "计划", values: [5, 5, 4, 5, 4] }, { name: "实际", values: [3.5, 4.5, 2, 4, 3] }] }] });
 journal.done();
 
 // ---- capture ----------------------------------------------------------------------------------

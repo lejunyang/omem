@@ -1595,3 +1595,13 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 ## 2026-11-08：同步暂存只认本工作区的
 
 - Git 的 stash 是整个仓库共用的：以前任何一个工作区留下“同步前未提交的改动”，别的工作区都被当成同步没做完，新交办就不把复用的工作区切到分支最新提交，接着把远端合进上次留下的旧提交。现在 `src/agents/code-sync.ts` 暂存时把这条 stash 的提交记在本工作区自己的 Git 目录（`git rev-parse --git-path omem-sync-stash`），`hasSyncStash`、放回、放弃同步都只认这一条。`test/code-sync.test.ts` 加了两个工作区的用例。
+
+## 2026-11-08：界面块第一阶段（表单提问与展示块）
+
+- 设计在 `docs/v2/interactive-ui.md`。`src/agents/ui-blocks.ts`：展示组件（markdown、heading、table、chart 含 pie、metric、compare、timeline）和输入字段（text、textarea、number、choice、multi、scale、date、datetime、toggle、pick、checklist，`required`、`show_if`）的 zod schema，`normalizeAnswers` 检查回答，`summarizeAnswers` / `viewText` / `fieldsText` 给 Agent 和文字渠道读。
+- `ask_owner` 改名 `ask_user`（不保留旧名），加 `fields`、`view`、`submit_label`；`asks` 加 `ui`、`value` 两列，`answerAsk` 收 `value`，`describeAnswer` 给逐行摘要和 JSON。新工具 `show` 写 `ui_views`（同步表，`delivered_at` 本机），网页和插件页画在回复下面；飞书等渠道在 `showSuggestions`（回复发出后）收到文字版和 `#/ui/<id>` 链接。接口 `GET /api/ui/views?conversation=`、`GET /api/ui/:id`，`POST /api/asks/:id/answer` 收 `value`。
+- 飞书提问卡片（`lark-asks.ts`）：带表单的提问列出字段和“打开填写”按钮，不在卡片里填。
+- 插件：删 `src/plugins/generic.ts`（`plugin_form` / `plugin_chart`）；`PLUGIN_TOOLS` 改成 `plugin_query`、`plugin_put`、`ask_user`、`wait_answer`、`show`；`sessionView` 把会话的提问和展示列成 `ask` / `view` 块，`submitBlock` 对提问转给 `answerAsk`；提问和展示变化时发 `plugin` 事件（`nudgePlugin`）。渲染器 `packages/plugin-sdk/blocks.ts` 重写：`renderView`、`renderBlock`（`ask` / `view`）、`fieldVisible`、`initialValues`。
+- 网页：`UiView.vue`（SDK 渲染器 + Markdown 组件）、`UiFields.vue`（omem 控件的表单）、`AskCard` 带表单、问答页的表单跟在回复下面、`views/UiItem.vue`（`#/ui/:id`）。
+- 角色：`_common.md`“问本人、给本人选项”讲什么时候用表单、`pick`、`checklist` 和 `show`；`coder.md`、英语陪练改用新工具。`skills/omem/references/owner.md` 同步。
+- 同一次运行里再交一张表单（重答的一轮、改过的表单）会取消还没填的旧表单，避免会话里挂两张。真实 Agent（codex-cli）试过：团建这类要问好几项的问题，一张表问完（日期 `date`、人数和预算 `number`、方案 `pick` 带要点和代价），提交后下一轮照着值排了日程和预算。

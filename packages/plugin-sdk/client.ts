@@ -8,7 +8,7 @@ export type OmemEvent =
   | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean }
   | { type: "run"; runId: string; status: string };
 
-export { renderBlock, GENERIC_KINDS, type BlockView } from "./blocks";
+export { renderBlock, renderView, GENERIC_KINDS, type BlockView, type ViewComponent, type UiField } from "./blocks";
 
 export type Omem = {
   plugin: string;
