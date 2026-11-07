@@ -77,8 +77,18 @@ family = "docling"
 [deps.pnpm]
 auto = true
 # The workspace also has the docs site and the VS Code extension; the app needs only its own.
-run = "pnpm install --frozen-lockfile --filter omem-assistant"
+# confirmModulesPurge=false: without a TTY (remote update, services) pnpm aborts instead of asking.
+run = "pnpm install --frozen-lockfile --filter omem-assistant --config.confirmModulesPurge=false"
 allow_build_from_source = true
+
+# omem's dependencies are all public packages: install them from one public registry, whatever a
+# machine's .npmrc or pnpm settings point at. A company mirror can lack a version, or the publish time
+# pnpm's release-age check needs, and then installing fails. Scopes and credentials stay native.
+[settings.precedence]
+npm = "osdk"
+
+[registries.npm]
+default = "https://registry.npmmirror.com/"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"

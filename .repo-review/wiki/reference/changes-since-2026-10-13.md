@@ -1571,3 +1571,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `test/preview.test.ts`；设计在 docs/v2/preview.md。
 - 预览启动前，工作区没准备过依赖（比如交办应用后单独建的目录）或锁文件变了时，先跑仓库的准备命令（`setupCommandFor` / `setupKey` / `setupDone`，和编码前同一规则），状态“准备依赖”；命令在开出端口前结束时，原因写明“没有开出端口（看输出）”。在常驻服务器上第一次试时，应用后的目录里没有依赖，两个 dev 都起不来，才补上这一步。
 - 修复：预览命令在 `spawn` 时就被拒（命令里有空字符）时，记录留着进程号 -1、状态停在“启动中”，下一次启动按“同一仓库一个”去停它，`killPid(-1)` 退到 `process.kill(-1)`，给这个用户的所有进程发了 SIGTERM（在常驻服务器上实际发生过一次）。`killPid` 现在拒绝 ≤1 和自身的 pid；`spawn` 失败时预览直接以“命令没能运行”结束，不留占位 pid。`test/preview.test.ts` 覆盖。
+
+## 2026-11-07：升级用 osdk 安装依赖，npm 源由 osdk.toml 指定
+
+- 常驻服务器的 `.npmrc` 指向公司镜像，镜像里没有 `@nangohq/providers@0.72.2`，pnpm 11 的发布时间检查（minimumReleaseAge）因此拒绝安装，远程更新停在“安装依赖”。
+- `osdk.toml`：`[settings.precedence] npm = "osdk"` 和 `[registries.npm] default`（公开源）；osdk 给 pnpm 注入 `npm_config_registry` / `pnpm_config_registry`，覆盖 `.npmrc` 和 `pnpm-workspace.yaml` 的源，scope 和认证仍按原生配置。`[deps.pnpm]` 的命令加 `--config.confirmModulesPurge=false`（没有终端时 pnpm 不会停下来问）。
+- `scripts/upgrade.ts`：有 osdk 时 `osdk trust osdk.toml` → `osdk install` → `osdk run build`，之后还原本机改写的 `osdk.lock`（部署用的检出保持干净，下次 `git pull --ff-only` 不被挡）；没有 osdk 时照旧直接用 pnpm。

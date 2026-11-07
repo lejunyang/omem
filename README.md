@@ -105,7 +105,7 @@ npm install -g omem-assistant
 
 **后台服务**：`omem service start | stop | restart | status | logs`。用 omem 自带的 PM2 常驻运行（PM2 数据放在 `~/.omem/service/pm2`，不碰你自己的 PM2），崩溃自动重启，日志在 `~/.omem/service/logs` 按天和大小轮换。`omem service enable` 设置开机自启（macOS 用 LaunchAgent，Linux 用 systemd 用户服务并开启 linger、没有 systemd 时用 crontab `@reboot`，Windows 在“启动”文件夹放一个隐藏窗口的启动脚本，都不需要管理员权限），`omem service disable` 取消；`omem setup` 结束时也会问。自启用的是设置时终端里的 PATH，之后装了新 Agent 或换了 Node 版本再 `enable` 一次。前台调试用 `omem serve`。
 
-**更新**：在源码仓库里 `osdk run upgrade`（或 `node scripts/upgrade.ts`）：拉最新代码、装依赖、构建、`npm install -g .` 链接全局命令；加 `--restart` 顺便重启后台服务，`--no-global` 跳过全局安装。
+**更新**：在源码仓库里 `osdk run upgrade`（或 `node scripts/upgrade.ts`）：拉最新代码、装依赖、构建、`npm install -g .` 链接全局命令；加 `--restart` 顺便重启后台服务，`--no-global` 跳过全局安装。装了 osdk 时依赖由 osdk 安装，npm 包从 `osdk.toml` 里 `[registries.npm]` 指定的公开源下载，不管这台机器的 `.npmrc` 指向哪个镜像（公司镜像缺版本或缺发布时间时 pnpm 会装不上）；要换源改那一项。
 
 **传输压缩**：Web 服务为支持 gzip 的客户端压缩网页静态资源和超过 1 KB 的 JSON 等文本响应；实时事件保持流式发送。
 
