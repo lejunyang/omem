@@ -1569,3 +1569,4 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 按原端口号看：`omem peer open` 的本机进程处理 `/api/local/forwards`，在同样的端口号上监听，每个连接经 `tunnelConnect`（`Upgrade: omem-tcp`，`/api/previews/:id/tcp`，加进 `tunneled`）原样接到那台机器的端口，所以把 localhost 端口写死在开发配置里的多应用项目不用另配；接口与隧道在 `src/server/preview-http.ts`，只对本人。
 - 设置页 `?tab=spaces&space=<id>` 直接打开那个空间的设置。
 - `test/preview.test.ts`；设计在 docs/v2/preview.md。
+- 预览启动前，工作区没准备过依赖（比如交办应用后单独建的目录）或锁文件变了时，先跑仓库的准备命令（`setupCommandFor` / `setupKey` / `setupDone`，和编码前同一规则），状态“准备依赖”；命令在开出端口前结束时，原因写明“没有开出端口（看输出）”。在常驻服务器上第一次试时，应用后的目录里没有依赖，两个 dev 都起不来，才补上这一步。

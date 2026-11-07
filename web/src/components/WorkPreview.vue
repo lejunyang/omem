@@ -14,7 +14,7 @@ const props = defineProps<{ runId: string }>();
 type Command = { name: string; command: string };
 type Target = { space: string; spaceName: string; folder: string; kind: "work" | "applied"; branch: string | null; commands: Command[] };
 type Port = { port: number; hosts: string[]; page: boolean | null; connections: number };
-type Preview = { id: string; space: string; name: string; command: string; status: "starting" | "running" | "exited" | "stopped"; ports: Port[]; startedAt: string; endedAt: string | null; reason: string | null; log: string };
+type Preview = { id: string; space: string; name: string; command: string; status: "preparing" | "starting" | "running" | "exited" | "stopped"; ports: Port[]; startedAt: string; endedAt: string | null; reason: string | null; log: string };
 type Data = { local: boolean; targets: Target[]; previews: Preview[] };
 type ForwardPort = { port: number; ok: boolean; error: string | null };
 type Forwards = { forwarder: boolean; peer?: string; forwards?: { preview: string; ports: ForwardPort[] }[] };
@@ -26,7 +26,7 @@ const busy = ref("");
 let seq = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
-const live = (p: Preview) => p.status === "starting" || p.status === "running";
+const live = (p: Preview) => p.status === "preparing" || p.status === "starting" || p.status === "running";
 const active = computed(() => data.value?.previews.filter(live) ?? []);
 /** The newest preview of each repository (running or ended): what its row shows. */
 const latest = (space: string) => data.value?.previews.find((p) => p.space === space) ?? null;
@@ -59,7 +59,7 @@ async function syncForwards(d: Data) {
 function schedule() {
   if (timer) clearTimeout(timer);
   timer = null;
-  const starting = active.value.some((p) => p.status === "starting" || !p.ports.length);
+  const starting = active.value.some((p) => p.status !== "running" || !p.ports.length);
   if (!open.value && !active.value.length) return;
   timer = setTimeout(() => void load(), starting ? 2000 : 5000);
 }
@@ -100,7 +100,7 @@ async function stop(p: Preview) {
 /** Where this browser reaches a port: here directly, or through the local forward. */
 const forwardOf = (p: Preview, port: number) => fwd.value?.forwards?.find((f) => f.preview === p.id)?.ports.find((x) => x.port === port) ?? null;
 const reachable = (p: Preview, port: number) => !!data.value?.local || !!forwardOf(p, port)?.ok;
-const STATUS: Record<Preview["status"], string> = { starting: "启动中", running: "运行中", exited: "已退出", stopped: "已停止" };
+const STATUS: Record<Preview["status"], string> = { preparing: "准备依赖", starting: "启动中", running: "运行中", exited: "已退出", stopped: "已停止" };
 const logTail = (s: string) => s.split("\n").slice(-80).join("\n");
 
 const root = ref<HTMLElement | null>(null);
@@ -127,7 +127,7 @@ onBeforeUnmount(() => (open.value = false));
 <template>
   <div v-if="data?.targets.length" ref="root" class="pv" @keydown.esc="open = false">
     <button class="btn sm" :aria-expanded="open" @click="open = !open">
-      <Icon name="monitor" :size="14" />预览<span v-if="active.length" class="dot" :class="{ starting: active.some((p) => p.status === 'starting') }" aria-label="有预览在运行" />
+      <Icon name="monitor" :size="14" />预览<span v-if="active.length" class="dot" :class="{ starting: active.some((p) => p.status !== 'running') }" aria-label="有预览在运行" />
     </button>
     <div v-if="open" class="menu card" role="dialog" aria-label="预览" :style="{ top: `${at.top}px`, left: `${at.left}px`, width: `${at.width}px` }">
       <section v-for="t in data.targets" :key="t.space" class="target">
@@ -150,7 +150,7 @@ onBeforeUnmount(() => (open.value = false));
         <div v-if="latest(t.space)" class="run stack">
           <template v-for="p in [latest(t.space)!]" :key="p.id">
             <div class="row status">
-              <span class="badge" :class="{ ok: p.status === 'running', warn: p.status === 'starting' }">{{ STATUS[p.status] }}</span>
+              <span class="badge" :class="{ ok: p.status === 'running', warn: p.status === 'starting' || p.status === 'preparing' }">{{ STATUS[p.status] }}</span>
               <span class="small">{{ p.name }}</span>
               <span class="muted small grow">{{ live(p) ? `${relTime(p.startedAt)}开始` : p.reason ?? "" }}</span>
               <button v-if="live(p)" class="btn ghost sm" :disabled="busy === p.id" @click="stop(p)"><Icon name="stop" :size="13" />停止</button>
@@ -163,6 +163,7 @@ onBeforeUnmount(() => (open.value = false));
                 <span v-if="forwardOf(p, x.port)?.error" class="warn small">{{ forwardOf(p, x.port)!.error }}</span>
               </li>
             </ul>
+            <p v-else-if="p.status === 'preparing'" class="muted small">这个工作区还没装依赖，先运行仓库的准备命令，装好后自动启动。</p>
             <p v-else-if="p.status === 'starting'" class="muted small">等它开始监听端口（大仓库可能要几分钟）。</p>
             <details class="log">
               <summary class="small">输出</summary>

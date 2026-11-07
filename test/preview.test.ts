@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
@@ -122,11 +122,13 @@ describe("preview of a delegation's workspace", () => {
       s.listen(${port}, "::1", () => console.log("dev server ready"));
     `);
     writeFileSync(join(work, "launch.mjs"), `import { spawn } from "node:child_process"; spawn(process.execPath, ["server.mjs"], { stdio: "inherit" });`);
+    // A Git checkout that never ran the repository's setup command: the preview runs it first.
+    execFileSync("git", ["init", "-q"], { cwd: work });
 
     const box = testApp();
     box.config.token = "owner-secret";
     const repo = createSpace(box, { name: "示例商城前端", kind: "repo" });
-    updateSpace(box, repo.id, { settings: { previewCommands: `商城: "${process.execPath}" launch.mjs` } });
+    updateSpace(box, repo.id, { settings: { previewCommands: `商城: "${process.execPath}" launch.mjs`, setupCommand: `"${process.execPath}" -e "require('fs').writeFileSync('setup.txt','ok')"` } });
     const r = createRun(box, { kind: "code", spaceId: repo.id, title: "退款页改版", input: { task: "退款页改版" } });
     setRunOutput(box, r.id, { appliedTo: [{ space: repo.id, path: work, branch: "feat/refund" }] });
     const server = await startServer(box, { port: 0, host: "127.0.0.1", quiet: true });
@@ -152,13 +154,14 @@ describe("preview of a delegation's workspace", () => {
     expect(await (await fetch(`${base}/api/local/forwards`, { headers: { authorization: "Bearer owner-secret" } })).json()).toEqual({ forwarder: false });
 
     const started = await api<{ id: string; status: string }>("/api/previews", { method: "POST", body: JSON.stringify({ run: r.id, space: repo.id }) });
-    expect(started.status).toBe("starting");
+    expect(started.status).toBe("preparing");
     const running = await until(async () => {
       const p = await api<{ status: string; ports: { port: number; hosts: string[]; page: boolean | null }[]; log: string }>(`/api/previews/${started.id}`);
       return p.status === "running" && p.ports[0]?.page !== null ? p : null;
     });
     expect(running.ports).toEqual([{ port, hosts: ["::1"], page: true, connections: 0 }]);
-    expect(running.log).toMatch(/dev server ready/);
+    expect(running.log).toMatch(/依赖已准备[^]*launch.mjs[^]*dev server ready/);
+    expect(existsSync(join(work, "setup.txt"))).toBe(true);
 
     // A port that is not the preview's own is refused.
     await expect(tunnelConnect(laptop, "box", `/api/previews/${started.id}/tcp?port=${port + 1}`)).rejects.toMatchObject({ status: 404 });
@@ -192,7 +195,9 @@ describe("preview of a delegation's workspace", () => {
     }), 15_000);
 
     // The workspace goes away (applied elsewhere, reclaimed): the preview stops by itself.
-    const again = await api<{ id: string }>("/api/previews", { method: "POST", body: JSON.stringify({ run: r.id, space: repo.id }) });
+    // Prepared once: the next preview starts right away.
+    const again = await api<{ id: string; status: string }>("/api/previews", { method: "POST", body: JSON.stringify({ run: r.id, space: repo.id }) });
+    expect(again.status).toBe("starting");
     await until(async () => ((await api<{ status: string }>(`/api/previews/${again.id}`)).status === "running" ? true : null));
     setRunOutput(box, r.id, { appliedTo: [] });
     const gone = await until(async () => {
