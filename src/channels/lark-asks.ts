@@ -1,10 +1,10 @@
 import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
-import { viewCardBlocks, viewTarget } from "./lark-ui.ts";
+import { preparePageShots, viewCardBlocks, viewTarget } from "./lark-ui.ts";
 import { fieldsText, normalizeAnswers, type UiField } from "../agents/ui-blocks.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
-import { larkOpenIdOf, OWNER } from "../core/users.ts";
+import { larkOpenIdOf, OWNER, userName } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
 import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
@@ -84,6 +84,7 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
     return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: immediate ? "已处理" : TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.value && ask.answer ? [{ markdown: cardText(truncate(ask.answer, 3000)) }] : []), ...(ask.result && !immediate ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
   }
   const blocks = questionBlocks(app, ask);
+  if (ask.askedBy) blocks.unshift({ note: `${cardText(userName(app, ask.askedBy))} 的助手替 ta 问你，回答会交给 ta。` });
   // What the agent showed with the question comes first, as text (docs/v2/interactive-ui.md).
   if (ask.ui?.view?.length) {
     blocks.push(...viewCardBlocks(app, ask.ui.view));
@@ -141,6 +142,11 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
 
 /** Where an ask goes in Feishu, or null when this channel is not the one to show it. */
 function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { target: Target; chatId: string | null; bot: string } | null {
+  // Asked of someone else: their own private chat with the bot, never the asker's chat.
+  if (ask.askedBy) {
+    const openId = ask.userId === OWNER ? ownerOpenId : larkOpenIdOf(app, ask.userId);
+    return openId ? { target: { userId: openId, bot: "main" }, chatId: null, bot: "main" } : null;
+  }
   if (ask.kind === "approval" && (ask.tool?.startsWith("lark_doc_") || ask.tool === "lark_write")) {
     const openId = ask.userId === OWNER ? ownerOpenId : larkOpenIdOf(app, ask.userId);
     return openId ? { target: { userId: openId, bot: "main" }, chatId: null, bot: "main" } : null;
@@ -180,6 +186,7 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
   addViewSink(async (app, view) => {
     const to = viewTarget(app, view.conversationId);
     if (!to) return false;
+    await preparePageShots(app, view.components, to.bot ?? "main");
     await sendLark(to, { card: viewCard(app, view) });
     return true;
   });
@@ -191,6 +198,7 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       const who = ask.userId === OWNER ? larkOwnerOpenId(app, to.bot) : to.bot === "main" ? larkOpenIdOf(app, ask.userId) : larkUserIdOf(app, ask.userId);
       const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
       // In a group the card says whose turn it is; a private chat needs no @.
+      await preparePageShots(app, ask.ui?.view, to.bot);
       const card = askCard(app, ask, { mention: to.chatId && !larkPrivateChat(app, to.chatId) ? who : null });
       const bind = (value: unknown): void => {
         if (!value || typeof value !== "object") return;
@@ -272,6 +280,10 @@ export function cardFields(fields: UiField[]): CardField[] | null {
       case "pick":
         out.push({ type: "select", name, label, required, options: f.items.map((i) => ({ text: i.title, value: i.id })) });
         break;
+      case "rank":
+      case "table":
+        // Ordering and editing rows need the web page.
+        return null;
       case "checklist":
         if (f.items.length > CARD_CHECKLIST_MAX) return null;
         f.items.forEach((it, i) => {

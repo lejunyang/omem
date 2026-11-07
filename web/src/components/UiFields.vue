@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { fieldVisible, type UiField } from "omem-plugin-sdk/blocks";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiDateTime from "./UiDateTime.vue";
+import UiSelect from "./UiSelect.vue";
 
 /**
  * A question's fields (ask_user `fields`, docs/v2/interactive-ui.md) with omem's own controls.
@@ -25,6 +26,17 @@ const setCheck = (f: UiField, item: string, patch: { choice?: string; note?: str
   const m = checks(f);
   m[item] = { ...m[item], ...patch };
 };
+/** Move one entry of an order up or down. */
+function move(f: UiField, i: number, d: number) {
+  const next = [...((props.values[f.id] as string[]) ?? [])];
+  [next[i], next[i + d]] = [next[i + d], next[i]];
+  props.values[f.id] = next;
+}
+const titleOf = (f: UiField, id: string) => (f.type === "rank" ? f.items.find((x) => x.id === id)?.title ?? id : id);
+type Cells = Record<string, unknown>;
+const rowsOf = (f: UiField) => ((props.values[f.id] ??= [{}]) as Cells[]);
+const maxRows = (f: UiField) => (f.type === "table" ? f.max_rows : 0);
+
 /** A date field keeps the local day; the picker gives a moment. */
 const localDay = (iso: string | null) => {
   if (!iso) return undefined;
@@ -66,6 +78,32 @@ const asMoment = (day: unknown) => (typeof day === "string" && day ? new Date(`$
           <ul v-if="c.pros?.length" aria-label="优点"><li v-for="p in c.pros" :key="p" class="pro">{{ p }}</li></ul>
           <ul v-if="c.cons?.length" aria-label="代价"><li v-for="p in c.cons" :key="p" class="con">{{ p }}</li></ul>
         </button>
+      </div>
+      <ol v-else-if="f.type === 'rank'" class="rank" :aria-labelledby="fid(f)">
+        <li v-for="(id, i) in (values[f.id] as string[])" :key="id" class="check rank-row">
+          <span>{{ i + 1 }}. {{ titleOf(f, id) }}</span>
+          <span class="options">
+            <button type="button" class="btn sm" :disabled="i === 0" :aria-label="`${titleOf(f, id)} 上移`" @click="move(f, i, -1)">上移</button>
+            <button type="button" class="btn sm" :disabled="i === (values[f.id] as string[]).length - 1" :aria-label="`${titleOf(f, id)} 下移`" @click="move(f, i, 1)">下移</button>
+          </span>
+        </li>
+      </ol>
+      <div v-else-if="f.type === 'table'" class="grid-wrap">
+        <div class="grid-scroll">
+          <table class="grid" :aria-labelledby="fid(f)">
+            <thead><tr><th v-for="c in f.columns" :key="c.id" scope="col">{{ c.label }}</th><th /></tr></thead>
+            <tbody>
+              <tr v-for="(r, i) in rowsOf(f)" :key="i">
+                <td v-for="c in f.columns" :key="c.id">
+                  <UiSelect v-if="c.type === 'choice'" :model-value="(r[c.id] as string) ?? ''" size="sm" width="140px" :aria-label="`第 ${i + 1} 行 ${c.label}`" :options="[{ value: '', label: '（空）' }, ...(c.options ?? []).map((o) => ({ value: o, label: o }))]" @update:model-value="(v) => (r[c.id] = v)" />
+                  <input v-else class="input" :type="c.type === 'number' ? 'number' : 'text'" :value="r[c.id] ?? ''" :aria-label="`第 ${i + 1} 行 ${c.label}`" @input="r[c.id] = ($event.target as HTMLInputElement).value" />
+                </td>
+                <td><button type="button" class="btn ghost sm" :aria-label="`删除第 ${i + 1} 行`" @click="values[f.id] = rowsOf(f).filter((_, j) => j !== i)">删除</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button type="button" class="btn sm add" :disabled="rowsOf(f).length >= maxRows(f)" @click="values[f.id] = [...rowsOf(f), {}]">加一行</button>
       </div>
       <div v-else-if="f.type === 'checklist'" class="checklist">
         <div v-for="it in f.items" :key="it.id" class="check">
@@ -176,5 +214,45 @@ const asMoment = (day: unknown) => (typeof day === "string" && day ? new Date(`$
 }
 .pre {
   white-space: pre-wrap;
+}
+.rank {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rank-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.grid-wrap {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.grid-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.grid {
+  border-collapse: collapse;
+}
+.grid th {
+  text-align: left;
+  font-weight: 550;
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 0 6px 4px 0;
+  white-space: nowrap;
+}
+.grid td {
+  padding: 2px 6px 2px 0;
+}
+.grid .input {
+  min-width: 110px;
+}
+.add {
+  justify-self: start;
 }
 </style>

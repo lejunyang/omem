@@ -238,6 +238,8 @@ Agent 现在只能用文字和人沟通。少数地方有按钮（`ask_owner` �
    2026-11-08 已做：`web/lark/index.html`（Vite 的第二个入口，唯一加载飞书 JSSDK 1.5.48 的页面）和 `web/src/lark/`：先 `GET /api/auth/session`，没登录时在飞书里 `h5sdk.ready` 后 `tt.requestAccess({ appID, scopeList: [] })`（客户端太旧报 103 时退回 `tt.requestAuthCode`），把 code 交给 `POST /api/auth/lark/app`；服务端用 v2 token 接口换令牌（不带 `redirect_uri` 和 PKCE），按飞书登录同样的身份规则发会话；没开多人登录时只认 `ownerOpenId`。不在飞书里（UA 不含 Lark/Feishu）就跳到主站同一个地址，走普通登录。路由只有 `#/ui/<id>`，复用主站的 `UiItem.vue`。配置 `lark.webApp`（设置 → 渠道，网页地址下面的开关，写明开发者后台要填的主页 `<webUrl>/lark/` 和 H5 可信域名）；打开后 `uiLink` 给 AppLink：`https://applink.feishu.cn/client/web_app/open?appId=…&mode=sidebar&lk_target_url=<编码后的 /lark/#/ui/<id>>`（参数按飞书文档“打开网页应用”核对过：`mode=sidebar` 在侧边栏打开，`lk_target_url` 需要飞书 5.12 以上）。没在飞书真机上验过：`requestAccess` 的 code 不带 `redirect_uri` 换令牌（文档没写明），会话 cookie 在飞书 webview 里能否保持，内网 http 地址能否作为主页和可信域名。
 5. **补充**：`rank`、可编辑的表格、问别的用户（`to`）、给卡片用的页面截图（需要本机有浏览器）。
 
+   2026-11-08 已做：字段 `rank`（回答是 id 的顺序，每条恰好一次）和 `table`（列 `text` / `number` / `choice`，预填的行可改可删可加，空行丢掉，最多 `max_rows`）；两者在飞书卡片里不画，卡片退回网页链接。`ask_user` 的 `to`：只在本人自己会话里 `kind = ask` 的一轮可用，对方要是有效的 omem 用户并能读会话所在空间（`accessibleSpaces`）；提问记 `context.askedBy` / `toName`，归对方（`userId`），只发给对方（通知 + 飞书私聊，卡片和网页写明“X 的助手替 ta 问你”），不进提问人的群；回答以提问人的身份回到原会话（“[回答] 小李回答了…”）。成员自己发起的对话里，普通的 `ask_user` 本来就问那个成员。页面截图：发卡片前用 Playwright 的 Chromium 截 720×480，上传到飞书，`kv` 记下图片 key（按页面、版本、机器人），卡片里放截图；没有 Playwright 或浏览器时只放说明和链接（常驻服务器通常没有）。
+
 每个阶段按约定同步 README、architecture 状态表、acceptance、`.repo-review/wiki/reference/changes-since-2026-10-13.md`、`skills/omem/references/`；界面约定变了改 `.agents/skills/omem-design`。
 
 ## 10. 验证

@@ -43,6 +43,7 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
 <template>
   <div class="ask" :class="[ask.kind, { compact }]" role="group" :aria-label="title || '下一步'">
     <div v-if="title" class="ask-title small">{{ title }}</div>
+    <div v-if="ask.askedBy" class="muted small">{{ ask.askedByName || ask.askedBy }} 的助手替 ta 问你，回答会交给 ta</div>
     <Markdown v-if="ask.question" class="ask-q" :source="ask.question" />
     <UiView v-if="ask.ui?.view?.length" class="ask-view" :components="ask.ui.view" :ask-id="ask.id" :can-submit="!fields.length && ask.status === 'pending'" :draft="(ask as { draft?: unknown }).draft" @answered="emit('answered', ask)" />
     <form v-if="fields.length" class="ask-form" @submit.prevent="answer({ value: { ...values } })">

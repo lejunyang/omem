@@ -1622,3 +1622,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - `web/lark/index.html` + `web/src/lark/`（`main.ts`、`LarkApp.vue`、`LarkHome.vue`）：Vite 第二个入口（`web/vite.config.ts` 的 `rollupOptions.input`），只有它加载飞书 JSSDK；登录：`tt.requestAccess`（103 退回 `requestAuthCode`）→ `POST /api/auth/lark/app`（`AUTH_PUBLIC` 放行）→ `login.ts` 的 `larkAppLogin`（`lark.ts` 的 `exchange` 在没有 `redirectUri` / `verifier` 时不带这两个参数）；不在飞书里跳回主站。
 - 配置 `lark.webApp`，`/api/auth/session` 返回 `larkApp`；`asks.ts` 的 `larkAppLink`，`uiLink` 在打开后给 `applink.feishu.cn/client/web_app/open?…&mode=sidebar&lk_target_url=…`。设置 → 渠道的开关写明开发者后台要填的主页和可信域名。测试 `test/lark-webapp.test.ts`。
+
+## 2026-11-08：界面块第五阶段（排序、可编辑表格、问别人、页面截图）
+
+- `ui-blocks.ts`：字段 `rank`、`table`（`normalizeAnswers`、摘要、文字版）；`lark-asks.ts` 的 `cardFields` 遇到它们返回 null（退回网页）。网页 `UiFields.vue` 用上移 / 下移和带 `UiSelect` 的表格；SDK 渲染器同样支持。
+- `ask_user` 的 `to`（`tools.ts`）：本人自己会话里 `kind = ask` 的一轮、对方能读空间才行；提问 `context` 记 `askedBy` / `toName`（`Ask` 上的同名字段），`asks.ts` 的 `show` 只通知对方和发对方的飞书私聊（`lark-asks.ts` 的 `targetFor`），`describeAnswer` 用对方的名字，`deliverAnswer` 以提问人的身份回到原会话；`/api/asks` 和 `/api/ui/:id` 带 `askedByName`，`AskCard` 显示是谁的助手在问。
+- `lark-ui.ts` 的 `preparePageShots`：有 Playwright 时发卡片前给交互页截图并上传，`kv` 的 `ui_page_shot:<页>:<版>:<机器人>` 记图片 key，`viewCardBlocks` 放截图。测试 `test/ui-ask-others.test.ts`。

@@ -18,7 +18,7 @@ import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
-import { findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
+import { accessibleSpaces, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf } from "../auth/features.ts";
@@ -2656,6 +2656,7 @@ def({
     fields: fieldsSchema.optional().describe("要本人填的字段，一次问完几件事；只有一件事时不用"),
     view: viewSchema.optional().describe("答题时要看的内容，放在问题和字段之间；数据要来自工具查到的记录"),
     submit_label: z.string().max(20).optional().describe("提交按钮上的字（有 fields 时，默认“提交”）"),
+    to: z.string().max(80).optional().describe("问别人（omem 的用户 id 或名字），只在本人自己的对话里、本人让你去问时用；对方要能看这个会话所在的空间。问题只发给对方，回答回到这里"),
     wait_seconds: z.number().int().min(0).max(ASK_WAIT_MAX).optional().describe(`先等多久（默认 40，最多 ${ASK_WAIT_MAX}；表单填得慢，可以给 0 直接结束这一轮）`),
   }),
   handler: async (ctx, a) => {
@@ -2671,7 +2672,29 @@ def({
     // A form asked again in the same run (a retried turn, a corrected form) replaces the one not yet filled in.
     if (a.fields?.length && ctx.runId) for (const old of all<{ id: string }>(ctx.app.db, "select id from asks where run_id = ? and status = 'pending' and kind = 'question' and json_extract(ui, '$.fields') is not null", ctx.runId)) cancelAsk(ctx.app, old.id);
     const ui = a.fields || a.view ? { ...(a.fields ? { fields: a.fields } : {}), ...(a.view ? { view: a.view } : {}), ...(a.submit_label ? { submitLabel: a.submit_label } : {}) } : null;
-    const ask = createAsk(ctx.app, { runId: ctx.runId, userId: ctx.userId ?? OWNER, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true, ui });
+    const me = ctx.userId ?? OWNER;
+    let target = me;
+    let context: Record<string, unknown> | undefined;
+    if (a.to) {
+      // Asking someone else: only in a turn of the person's own conversation, of someone who can see its space.
+      const { conversationOfRun } = await import("./asks.ts");
+      const conversationId = conversationOfRun(ctx.app, ctx.runId);
+      const conv = conversationId ? one<{ user_id: string; space_id: string }>(ctx.app.db, "select user_id, space_id from conversations where id = ?", conversationId) : undefined;
+      if (!conv || conv.user_id !== me || !ctx.runId || getRun(ctx.app, ctx.runId).kind !== "ask") throw new HttpError(400, "只有在本人自己的对话里、回答本人的这一轮才能去问别人");
+      const { listUsers } = await import("../core/users.ts");
+      const who = findUser(ctx.app, a.to) ?? listUsers(ctx.app).find((u) => u.name === a.to!.trim()) ?? null;
+      if (!who || who.disabledAt || who.status !== "active") throw new HttpError(400, `没有这个人：${a.to}（写 omem 用户的 id 或名字）`);
+      if (who.id === me) throw new HttpError(400, "to 是本人自己：不用写 to");
+      const spaces = accessibleSpaces(ctx.app, who.id);
+      if (spaces && !spaces.includes(conv.space_id)) throw new HttpError(403, `${who.name} 看不到这个会话所在的空间，不能问 ta`);
+      target = who.id;
+      context = { askedBy: me, toName: who.name };
+    }
+    const ask = createAsk(ctx.app, { runId: ctx.runId, userId: target, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true, ui, ...(context ? { context } : {}) });
+    if (context) {
+      const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 0) * 1000);
+      return got.status === "pending" ? `已去问 ${context.toName}（${ask.id}），问题只发给了 ta。告诉本人你去问了谁、问了什么；ta 回答后会作为新消息回到这个会话。` : describeAnswer(got);
+    }
     const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 40) * 1000);
     return got.status === "pending"
       ? `已问本人（${ask.id}），还没回答。可以先做不依赖答案的部分，再 wait_answer(ask_id="${ask.id}") 接着等；这一轮结束时还没答，回答会作为新消息回到这个会话。`

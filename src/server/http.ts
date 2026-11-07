@@ -54,7 +54,7 @@ import { registerFederationRoutes } from "../core/federation-http.ts";
 import { can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
-import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
+import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, scopeFor, userForToken, userName } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
@@ -1802,7 +1802,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/asks", async (req) => {
     const { listAsks } = await import("../agents/asks.ts");
     const qs = req.query as { conversation?: string; status?: "pending" | "answered" | "cancelled" };
-    return listAsks(app, { conversationId: qs.conversation, status: qs.status, userId: who(req), limit: 100 });
+    // A question someone's assistant asked for them says who.
+    return listAsks(app, { conversationId: qs.conversation, status: qs.status, userId: who(req), limit: 100 }).map((a) => (a.askedBy ? { ...a, askedByName: userName(app, a.askedBy) } : a));
   });
   server.get("/api/asks/:id", async (req) => {
     const { getAsk } = await import("../agents/asks.ts");
@@ -1848,7 +1849,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getAsk, draftOf } = await import("../agents/asks.ts");
     const a = getAsk(app, id);
     if (a.userId !== who(req)) throw new HttpError(404, "没有这个内容");
-    return { type: "ask", ask: { ...a, draft: draftOf(app, id) } };
+    return { type: "ask", ask: { ...a, draft: draftOf(app, id), ...(a.askedBy ? { askedByName: userName(app, a.askedBy) } : {}) } };
   });
 
   // ----------------------------------------------------- notifications/status

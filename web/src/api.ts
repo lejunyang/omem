@@ -178,6 +178,9 @@ export type Ask = {
   /** A form and what to look at (docs/v2/interactive-ui.md). */
   ui?: { fields?: UiField[]; view?: ViewComponent[]; submitLabel?: string } | null;
   value?: Record<string, unknown> | null;
+  /** Asked for someone else by their assistant (`ask_user` with `to`). */
+  askedBy?: string | null;
+  askedByName?: string;
 };
 
 /** What an agent showed under a reply (`show`). */

@@ -82,6 +82,17 @@ const fieldSchema = z.discriminatedUnion("type", [
     choices: z.array(text(20)).min(2).max(4).default(["通过", "不通过"]).describe("每条可选的处理"),
     note: z.boolean().default(true).describe("每条能不能写备注"),
   }),
+  z.object({ ...base, type: z.literal("rank"), items: z.array(z.object({ id, title: text(200), detail: z.string().max(500).optional() })).min(2).max(20).describe("要排顺序的条目，按你建议的顺序给") }),
+  z.object({
+    ...base,
+    type: z.literal("table"),
+    columns: z
+      .array(z.object({ id, label: text(60), type: z.enum(["text", "number", "choice"]).default("text"), options: z.array(text(100)).max(12).optional().describe("choice 列的选项") }))
+      .min(1)
+      .max(8),
+    rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))).max(50).default([]).describe("预先填好的行（按列 id），本人可以改、删、加"),
+    max_rows: z.number().int().min(1).max(50).default(20),
+  }).describe("可编辑的表格：一行一条，按列填"),
 ]);
 export type UiField = z.infer<typeof fieldSchema>;
 export const fieldsSchema = z.array(fieldSchema).min(1).max(30);
@@ -96,7 +107,11 @@ export function checkFields(fields: UiField[]) {
     if (ids.has(f.id)) throw new HttpError(400, `字段 id 重复：${f.id}`);
     ids.add(f.id);
     if (f.type === "number" && f.min !== undefined && f.max !== undefined && f.min > f.max) throw new HttpError(400, `字段 ${f.id} 的 min 大于 max`);
-    if (f.type === "pick" || f.type === "checklist") {
+    if (f.type === "table") {
+      if (new Set(f.columns.map((c) => c.id)).size !== f.columns.length) throw new HttpError(400, `字段 ${f.id} 里有重复的列 id`);
+      for (const c of f.columns) if (c.type === "choice" && (c.options?.length ?? 0) < 2) throw new HttpError(400, `字段 ${f.id} 的列 ${c.id} 是 choice，至少要两个选项`);
+    }
+    if (f.type === "pick" || f.type === "checklist" || f.type === "rank") {
       const seen = new Set<string>();
       for (const it of f.items) {
         if (seen.has(it.id)) throw new HttpError(400, `字段 ${f.id} 里有重复的 id：${it.id}`);
@@ -121,7 +136,8 @@ export function checkView(view: ViewComponent[]) {
 
 // ------------------------------------------------------------------ answers
 
-type Value = string | number | boolean | string[] | Record<string, { choice: string; note?: string }>;
+type Row = Record<string, string | number | null>;
+type Value = string | number | boolean | string[] | Record<string, { choice: string; note?: string }> | Row[];
 const empty = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length) || (typeof v === "object" && !Array.isArray(v) && !Object.keys(v as object).length);
 
 export function visible(f: UiField, values: Record<string, unknown>) {
@@ -169,6 +185,39 @@ function normalize(f: UiField, v: unknown): { value?: Value; error?: string } {
       return typeof v === "boolean" ? { value: v } : v === "true" || v === "false" ? { value: v === "true" } : { error: "要选是或否" };
     case "pick":
       return typeof v === "string" && f.items.some((i) => i.id === v) ? { value: v } : { error: "没有这个方案" };
+    case "rank": {
+      const ids = f.items.map((i) => i.id);
+      const list = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+      if (list.length !== ids.length || new Set(list).size !== ids.length || list.some((x) => !ids.includes(x))) return { error: "要把每一条都排进去，各一次" };
+      return { value: list };
+    }
+    case "table": {
+      if (!Array.isArray(v)) return { error: "格式不对" };
+      const rows: Row[] = [];
+      for (const [i, raw] of v.entries()) {
+        if (!raw || typeof raw !== "object") return { error: `第 ${i + 1} 行格式不对` };
+        const row: Row = {};
+        for (const c of f.columns) {
+          const cell = (raw as Record<string, unknown>)[c.id];
+          if (cell === undefined || cell === null || cell === "") {
+            row[c.id] = null;
+            continue;
+          }
+          if (c.type === "number") {
+            const n = typeof cell === "number" ? cell : Number(String(cell).trim());
+            if (!Number.isFinite(n)) return { error: `第 ${i + 1} 行的“${c.label}”要填数字` };
+            row[c.id] = n;
+          } else if (c.type === "choice") {
+            if (typeof cell !== "string" || !(c.options ?? []).includes(cell)) return { error: `第 ${i + 1} 行的“${c.label}”不在选项里` };
+            row[c.id] = cell;
+          } else row[c.id] = String(cell).trim().slice(0, 1000);
+        }
+        // A row left empty is dropped.
+        if (Object.values(row).some((x) => x !== null)) rows.push(row);
+      }
+      if (rows.length > f.max_rows) return { error: `最多 ${f.max_rows} 行` };
+      return rows.length ? { value: rows } : {};
+    }
     case "checklist": {
       if (typeof v !== "object" || Array.isArray(v)) return { error: "格式不对" };
       const out: Record<string, { choice: string; note?: string }> = {};
@@ -221,6 +270,10 @@ function shown(f: UiField, v: Value | undefined): string {
       const it = f.items.find((i) => i.id === v);
       return it ? `${it.title}（${it.id}）` : String(v);
     }
+    case "rank":
+      return (v as string[]).map((id, i) => `\n  ${i + 1}. ${f.items.find((x) => x.id === id)?.title ?? id}`).join("");
+    case "table":
+      return (v as Row[]).map((r, i) => `\n  - 第 ${i + 1} 行：${f.columns.map((c) => `${c.label} ${r[c.id] ?? "（空）"}`).join("，")}`).join("");
     case "checklist": {
       const m = v as Record<string, { choice: string; note?: string }>;
       return f.items.map((it) => `\n  - ${it.title}：${m[it.id] ? `${m[it.id].choice}${m[it.id].note ? `（${m[it.id].note}）` : ""}` : "（没处理）"}`).join("");
@@ -285,6 +338,8 @@ export function fieldsText(fields: UiField[]) {
       if (f.type === "choice" || f.type === "multi") return `- ${f.label}${req}：${f.options.join(" / ")}`;
       if (f.type === "pick") return [`- ${f.label}${req}：`, ...f.items.map(cardText).map((l) => `  ${l}`)].join("\n");
       if (f.type === "checklist") return [`- ${f.label}${req}：逐条选 ${f.choices.join(" / ")}`, ...f.items.map((i) => `  - ${i.title}`)].join("\n");
+      if (f.type === "rank") return [`- ${f.label}${req}：排个顺序`, ...f.items.map((i, n) => `  ${n + 1}. ${i.title}`)].join("\n");
+      if (f.type === "table") return `- ${f.label}${req}：一行一条，列是 ${f.columns.map((c) => c.label).join("、")}`;
       return `- ${f.label}${req}`;
     })
     .join("\n");

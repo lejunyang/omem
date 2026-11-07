@@ -37,6 +37,8 @@ export type UiField = { id: string; label: string; help?: string; required?: boo
   | { type: "toggle"; default?: boolean }
   | { type: "pick"; items: Card[] }
   | { type: "checklist"; items: { id: string; title: string; detail?: string }[]; choices: string[]; note: boolean }
+  | { type: "rank"; items: { id: string; title: string; detail?: string }[] }
+  | { type: "table"; columns: { id: string; label: string; type: "text" | "number" | "choice"; options?: string[] }[]; rows: Record<string, string | number | null>[]; max_rows: number }
 );
 
 export type RenderOptions = {
@@ -97,6 +99,8 @@ const CSS = `
 .ob .ob-timeline time { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .ob .ob-check { display: grid; gap: 6px; border-bottom: 1px solid var(--line); padding: 6px 0; }
 .ob .ob-check:last-child { border-bottom: 0; }
+.ob .ob-rank { list-style: none; margin: 0; padding: 0; }
+.ob .ob-rank .ob-check { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .ob { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #8a63d2; --s6: #6b7a8f; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ob { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #9b78e0; --s6: #8593a6; } }
 :root[data-theme="dark"] .ob { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #9b78e0; --s6: #8593a6; }
@@ -361,7 +365,12 @@ export function fieldVisible(f: UiField, values: Record<string, unknown>) {
 /** A field's starting value: its default, if it has one. */
 export function initialValues(fields: UiField[]) {
   const out: Record<string, unknown> = {};
-  for (const f of fields) if ("default" in f && f.default !== undefined) out[f.id] = f.default;
+  for (const f of fields) {
+    if ("default" in f && f.default !== undefined) out[f.id] = f.default;
+    // An order starts as the one suggested; a table with the rows handed in, or one empty row.
+    if (f.type === "rank") out[f.id] = f.items.map((i) => i.id);
+    if (f.type === "table") out[f.id] = f.rows.length ? f.rows.map((r) => ({ ...r })) : [{}];
+  }
   return out;
 }
 
@@ -460,6 +469,36 @@ function fieldEl(doc: Document, blockId: string, f: UiField, values: Record<stri
         return b;
       }));
       break;
+    case "rank": {
+      const order = values[f.id] as string[];
+      control = h(doc, "ol", { class: "ob-rank", "aria-labelledby": labelId }, ...order.map((id, i) => {
+        const it = f.items.find((x) => x.id === id)!;
+        const move = (d: number) => {
+          const next = [...order];
+          [next[i], next[i + d]] = [next[i + d], next[i]];
+          set(next, true);
+        };
+        return h(doc, "li", { class: "ob-check" }, h(doc, "span", {}, `${i + 1}. ${it.title}`), h(doc, "span", { class: "ob-options" },
+          h(doc, "button", { type: "button", class: "btn sm", disabled: i === 0, "aria-label": `${it.title} 上移`, onclick: () => move(-1) }, "上移"),
+          h(doc, "button", { type: "button", class: "btn sm", disabled: i === order.length - 1, "aria-label": `${it.title} 下移`, onclick: () => move(1) }, "下移")));
+      }));
+      break;
+    }
+    case "table": {
+      const rows = values[f.id] as Record<string, unknown>[];
+      const head = h(doc, "tr", {}, ...f.columns.map((c) => h(doc, "th", {}, c.label)), h(doc, "th", {}, ""));
+      const body = rows.map((r, i) => h(doc, "tr", {}, ...f.columns.map((c) => {
+        const input = (c.type === "choice"
+          ? h(doc, "select", { class: "input", "aria-label": `第 ${i + 1} 行 ${c.label}` }, h(doc, "option", { value: "" }, ""), ...(c.options ?? []).map((o) => h(doc, "option", { value: o }, o)))
+          : h(doc, "input", { class: "input", type: c.type === "number" ? "number" : "text", "aria-label": `第 ${i + 1} 行 ${c.label}` })) as HTMLInputElement;
+        input.value = r[c.id] == null ? "" : String(r[c.id]);
+        input.addEventListener("input", () => (r[c.id] = input.value));
+        return h(doc, "td", {}, input);
+      }), h(doc, "td", {}, h(doc, "button", { type: "button", class: "btn sm", "aria-label": `删除第 ${i + 1} 行`, onclick: () => set(rows.filter((_, j) => j !== i), true) }, "删除"))));
+      const add = h(doc, "button", { type: "button", class: "btn sm", disabled: rows.length >= f.max_rows, onclick: () => set([...rows, {}], true) }, "加一行");
+      control = h(doc, "div", { class: "ob-field" }, h(doc, "div", { class: "ob-scroll" }, h(doc, "table", { "aria-labelledby": labelId }, h(doc, "thead", {}, head), h(doc, "tbody", {}, ...body))), add);
+      break;
+    }
     case "checklist": {
       const map = ((values[f.id] as Record<string, { choice: string; note?: string }> | undefined) ?? {});
       values[f.id] = map;

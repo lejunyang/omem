@@ -51,6 +51,9 @@ export type Ask = {
   ui: AskUi | null;
   /** The form's checked answers. */
   value: Record<string, unknown> | null;
+  /** Asked of someone else (`ask_user` with `to`): whose assistant asked, and the name of the person asked. */
+  askedBy: string | null;
+  toName: string | null;
 };
 
 type Row = {
@@ -103,6 +106,8 @@ const toAsk = (r: Row): Ask => ({
   handler: ((JSON.parse(r.context ?? "{}") as { handler?: unknown }).handler as string | undefined) ?? null,
   ui: r.ui ? (JSON.parse(r.ui) as AskUi) : null,
   value: r.value ? (JSON.parse(r.value) as Record<string, unknown>) : null,
+  askedBy: ((JSON.parse(r.context ?? "{}") as { askedBy?: unknown }).askedBy as string | undefined) ?? null,
+  toName: ((JSON.parse(r.context ?? "{}") as { toName?: unknown }).toName as string | undefined) ?? null,
 });
 
 export function getAsk(app: App, id: string): Ask {
@@ -173,6 +178,20 @@ export function createAsk(
 
 async function show(app: App, ask: Ask) {
   run(app.db, "update asks set shown_at = coalesce(shown_at, ?) where id = ?", now(), ask.id);
+  // Asked of someone else: only they see it (their notifications, their Feishu private chat), never the asker's chat.
+  if (ask.askedBy) {
+    const { notify } = await import("../core/notify.ts");
+    const { userName } = await import("../core/users.ts");
+    notify(app, { userId: ask.userId, title: `${userName(app, ask.askedBy)} 的助手请你回答`, body: truncate(ask.question, 300), link: `#/ui/${ask.id}` });
+    for (const s of sinks) {
+      try {
+        if (await s.show(app, ask)) return;
+      } catch (e) {
+        console.warn(`[omem] 提问 ${ask.id} 发送失败：${(e as Error).message}`);
+      }
+    }
+    return;
+  }
   for (const s of sinks) {
     try {
       if (await s.show(app, ask)) return;
@@ -461,14 +480,15 @@ export function draftOf(app: App, id: string) {
 
 /** How an answer reads for the agent. */
 export function describeAnswer(a: Ask): string {
-  if (a.status === "pending") return `本人还没回答（${a.id}）。`;
+  const who = a.toName ?? "本人";
+  if (a.status === "pending") return `${who}还没回答（${a.id}）。`;
   if (a.status === "cancelled") return `提问 ${a.id} 已失效（本人已经在对话里接着说了）。`;
   if (a.kind === "approval")
     return a.approved
       ? `本人批准了 ${a.tool}${a.answer ? `（附言：${a.answer}）` : ""}。执行结果：${a.result ?? "（无）"}`
       : `本人拒绝了 ${a.tool}${a.answer ? `，理由：${a.answer}` : "（没有说理由）"}。按理由调整做法，不要换个方式绕过。`;
-  if (a.value) return `本人${a.ui?.fields?.length ? "填好了" : "在交互页里选好了"}「${truncate(a.question, 80)}」：\n${a.answer ?? ""}\n结构化的值：${truncate(JSON.stringify(a.value), 4000)}`;
-  return `本人回答了「${truncate(a.question, 80)}」：${a.answer ?? "（空）"}`;
+  if (a.value) return `${who}${a.ui?.fields?.length ? "填好了" : "在交互页里选好了"}「${truncate(a.question, 80)}」：\n${a.answer ?? ""}\n结构化的值：${truncate(JSON.stringify(a.value), 4000)}`;
+  return `${who}回答了「${truncate(a.question, 80)}」：${a.answer ?? "（空）"}`;
 }
 
 /** An answer nobody waited for: a message in the conversation, so the next turn has it. */
@@ -480,7 +500,8 @@ async function deliverAnswer(app: App, ask: Ask) {
     return;
   }
   const { receive } = await import("./inbox.ts");
-  await receive(app, { conversationId: ask.conversationId, text: `[回答] ${describeAnswer(ask)}`, userId: ask.userId, fromAsk: true });
+  // Someone else's answer comes into the asker's conversation as the asker's turn.
+  await receive(app, { conversationId: ask.conversationId, text: `[回答] ${describeAnswer(ask)}`, userId: ask.askedBy ?? ask.userId, fromAsk: true });
 }
 
 /**
