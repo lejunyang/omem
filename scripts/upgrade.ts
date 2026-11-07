@@ -63,6 +63,8 @@ if (spawnSync("osdk", ["--version"], { cwd: root, stdio: "ignore", shell: win })
   process.on("exit", restoreLock);
   // Trust is bound to osdk.toml's content, so a changed one needs it again.
   step("信任 osdk.toml（osdk trust）", "osdk", ["--yes", "trust", join(root, "osdk.toml")]);
+  // Which registry pnpm will use and why (read-only): the first thing to look at when installing fails.
+  step("依赖源（osdk registry test pnpm）", "osdk", ["registry", "test", "pnpm"], { optional: true });
   step("安装工具与依赖（osdk install）", "osdk", ["--yes", "install"]);
   step("构建（osdk run build）", "osdk", ["--yes", "run", "build"]);
 } else {
