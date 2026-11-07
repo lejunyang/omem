@@ -167,9 +167,24 @@ describe("review tiers and checks", () => {
       const asked = listAsks(app, { status: "pending", userId: "owner", limit: 10 }).find((a) => a.runId === r.id)!;
       expect(asked.question).toContain("自动重试一次后仍然失败");
       expect(getRun(app, r.id).output.reviewAskId).toBe(asked.id);
+      // The others came through: the first choice retries only the failed check.
+      expect(asked.options.map((o) => o.label)).toEqual(["只重试不稳定", "全部重新评审", "不用了"]);
+      const kept = reviewsOf(app, [r.id]).find((x) => x.check_name === "reviewer")!;
       await answerAsk(app, asked.id, { choice: 0, by: "owner" });
-      const again = all<{ id: string; kind: string }>(app.db, "select id, kind from runs where parent_id = ? and kind = 'review'", r.id);
+      const again = all<{ id: string; kind: string; input: string }>(app.db, "select id, kind, input from runs where parent_id = ? and kind = 'review'", r.id);
       expect(again).toHaveLength(1);
+      expect(JSON.parse(again[0].input).only).toEqual(["flaky-review"]);
+      const retryStatuses: string[] = [];
+      await __testHandlers.get("review")!({
+        app, run: getRun(app, again[0].id), signal: new AbortController().signal,
+        event: (type, data) => { if (type === "status") retryStatuses.push((data as { text: string }).text); },
+        output: (data) => setRunOutput(app, again[0].id, data),
+      });
+      expect(retryStatuses[0]).toContain("重新评审没有完成的项：不稳定");
+      // The check that passed was not run again: its result is the same row.
+      const after = reviewsOf(app, [r.id]);
+      expect(after.find((x) => x.check_name === "reviewer")!.id).toBe(kept.id);
+      expect(after.find((x) => x.check_name === "flaky-review")!.verdict).toBe("failed");
     } finally {
       setReviewRetryDelayForTests(30_000);
       await server.close();

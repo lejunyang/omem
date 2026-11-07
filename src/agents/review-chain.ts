@@ -206,13 +206,22 @@ export type TaskReviewOptions = {
   onSession(check: string, id: string | undefined, used: number | undefined): void;
 };
 
-export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; task?: TaskReviewOptions } = {}): Promise<{ verdict: string; continuedRunId?: string; lead?: LeadResult }> {
+/** `only`: run just these checks again (the owner's retry of the ones that failed); the others keep this round's results. */
+export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; task?: TaskReviewOptions; only?: string[] } = {}): Promise<{ verdict: string; continuedRunId?: string; lead?: LeadResult }> {
   const { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask } = await reviewContext(app, codeRunId, opts.note, { since: opts.task?.since });
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
   // An outside Agent on a paired device already submitted every check (and the split, if it made one).
   const peer = input.peerReviewer;
   setRunOutput(app, run.id, { reviewStage: "checks" });
-  rc.event("status", { text: `独立评审中：「${plan.tierName}」档，${plan.checks.map(label).join("、")}（${plan.reasons.join("；")}）` });
+  // A retry of some checks keeps what the others concluded this round (a check without a usable result runs anyway).
+  const kept = new Map(opts.only && !opts.task && !peer ? plan.checks.flatMap((name) => {
+    const row = reviewFor(app, run.id, round, name);
+    return !opts.only!.includes(name) && row && row.verdict !== "failed" ? [[name, row] as const] : [];
+  }) : []);
+  const toRun = plan.checks.filter((n) => !kept.has(n));
+  rc.event("status", { text: kept.size
+    ? `重新评审没有完成的项：${toRun.map(label).join("、")}（${[...kept.keys()].map(label).join("、")}沿用这一轮的结论）`
+    : `独立评审中：「${plan.tierName}」档，${plan.checks.map(label).join("、")}（${plan.reasons.join("；")}）` });
   // The requirement split into change points runs as a session of its own next to the checks, in
   // every tier: left to the business check, a long submission would often come without it.
   const splitOnce = () => splitChangePoints(app, run.id, rc).then(() => true, (e) => {
@@ -220,7 +229,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     return false;
   });
   // The owner can leave the split out (“只做最简评审”): the change points stay as the last round had them.
-  const noSplit = !!peer || (run.input as { roundReview?: RoundReview }).roundReview?.split === false || (!!opts.task && !opts.task.split);
+  const noSplit = !!peer || kept.size > 0 || (run.input as { roundReview?: RoundReview }).roundReview?.split === false || (!!opts.task && !opts.task.split);
   const split = noSplit ? Promise.resolve(true) : splitOnce();
 
   // Each check is its own session with read-only tools; one failing does not stop the others.
@@ -261,7 +270,12 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     }
     return { name, text, ai: res.ai, profileId: res.profileId };
   };
-  const outcomes = await Promise.allSettled(plan.checks.map(runCheck));
+  const outcomes = await Promise.allSettled(plan.checks.map((name) => {
+    const row = kept.get(name);
+    if (!row) return runCheck(name);
+    const ai = { profile: row.profile_id ?? undefined, model: row.model ?? undefined, effort: row.effort ?? undefined };
+    return Promise.resolve({ name, text: row.summary, ai, profileId: row.profile_id ?? undefined });
+  }));
   const splitOk = await split;
   // A review is worth a second try (a stalled backend, a dropped connection); what fails again goes
   // to the owner, who decides whether to try once more. The split gets its second try alongside.
@@ -276,7 +290,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   }
   const failed = outcomes.flatMap((o, i) => (o.status === "rejected" ? [{ name: plan.checks[i], error: (o.reason as Error).message }] : []));
   if (failed.length && !rc.signal.aborted && !peer) {
-    const ask = askRetry(app, run, chainOf(app, run), failed.map((f) => ({ check: label(f.name), error: f.error })), failed.length === outcomes.length);
+    const ask = askRetry(app, run, chainOf(app, run), failed.map((f) => ({ name: f.name, check: label(f.name), error: f.error })), { all: failed.length === outcomes.length, partial: !opts.task });
     setRunOutput(app, run.id, { reviewAskId: ask.id });
   }
   if (failed.length === outcomes.length) throw new Error(`评审没有完成（已自动重试一次，是否再试已发给本人）：${failed.map((f) => `${label(f.name)}：${f.error}`).join("；")}`);
@@ -479,26 +493,43 @@ export function setReviewRetryDelayForTests(ms: number) {
   REVIEW_RETRY_DELAY_MS = ms;
 }
 
-/** Checks that failed twice: the owner decides whether to run the review again. */
-function askRetry(app: App, run: Run, chain: CodeChain | null, failed: { check: string; error: string }[], all: boolean) {
+const RETRY_FAILED = "只重试没完成的";
+const RETRY_ALL = "全部重新评审";
+const RETRY_NO = "不用了";
+
+/**
+ * Checks that failed twice: the owner decides whether to run them again. When the others came
+ * through, retrying just the failed ones is the first choice; a task-driven delegation has already
+ * turned the others' findings into tasks, so it only offers the whole round.
+ */
+function askRetry(app: App, run: Run, chain: CodeChain | null, failed: { name: string; check: string; error: string }[], o: { all: boolean; partial: boolean }) {
+  const { all } = o;
+  const partial = o.partial && !all;
+  const labels = partial ? [failed.length === 1 ? `只重试${failed[0].check}` : RETRY_FAILED, RETRY_ALL, RETRY_NO] : ["重试评审", RETRY_NO];
   return createAsk(app, {
     runId: run.id,
     conversationId: chain ? reportConversation(app, chain) : null,
     question: [
       `「${truncate(run.title, 40)}」的评审${all ? "没有完成" : `有 ${failed.length} 项没有完成，其余已出结论`}，自动重试一次后仍然失败：`,
       failed.map((f) => `- ${f.check}：${truncate(f.error, 160)}`).join("\n"),
-      "要再评审一次吗？（会重新跑这一轮的全部评审项）",
+      partial
+        ? "要重试吗？只重试没完成的项时，已出结论的项沿用这一轮的结果；也可以整轮重新评审。直接回一句补充要求的话，只重试没完成的项。"
+        : "要再评审一次吗？（会重新跑这一轮的全部评审项）",
     ].join("\n"),
-    options: [{ label: "重试评审" }, { label: "不用了" }],
-    context: { handler: "review-retry", codeRunId: run.id },
+    options: labels.map((label) => ({ label })),
+    context: { handler: "review-retry", codeRunId: run.id, ...(partial ? { failed: failed.map((f) => f.name), labels } : {}) },
   });
 }
 
-async function onRetryAnswer(app: App, ask: Ask, ctx: { codeRunId: string }) {
-  if (ask.choice !== 0 && !(ask.choice === null && ask.answer)) return;
+async function onRetryAnswer(app: App, ask: Ask, ctx: { codeRunId: string; failed?: string[]; labels?: string[] }) {
+  const typed = ask.choice === null && !!ask.answer;
+  // Cards from before the per-check choice: 0 = retry the round.
+  const picked = ask.choice === null ? null : ctx.labels ? ctx.labels[ask.choice] : ask.choice === 0 ? RETRY_ALL : RETRY_NO;
+  if (!typed && (!picked || picked === RETRY_NO)) return;
+  const only = ctx.failed?.length && picked !== RETRY_ALL ? ctx.failed : undefined;
   const run = getRun(app, ctx.codeRunId);
   setRunOutput(app, run.id, { verdict: null, reviewStage: "queued" });
-  createRun(app, { kind: "review", spaceId: run.spaceId, title: `重新评审：${truncate(run.title, 60)}`, input: { codeRunId: run.id, note: ask.choice === null ? ask.answer ?? undefined : undefined }, parentId: run.id });
+  createRun(app, { kind: "review", spaceId: run.spaceId, title: `${only ? "重试评审项" : "重新评审"}：${truncate(run.title, 60)}`, input: { codeRunId: run.id, note: typed ? ask.answer ?? undefined : undefined, ...(only ? { only } : {}) }, parentId: run.id });
 }
 
 /**
@@ -733,13 +764,13 @@ async function onEscalationAnswer(app: App, ask: Ask, ctx: { codeRunId: string; 
 }
 
 registerAskHandler("review-plan", (app, ask, ctx) => onPlanAnswer(app, ask, ctx as { codeRunId: string; tiers: string[] }));
-registerAskHandler("review-retry", (app, ask, ctx) => onRetryAnswer(app, ask, ctx as { codeRunId: string }));
+registerAskHandler("review-retry", (app, ask, ctx) => onRetryAnswer(app, ask, ctx as { codeRunId: string; failed?: string[]; labels?: string[] }));
 registerAskHandler("review-done", (app, ask, ctx) => onDoneAnswer(app, ask, ctx as { codeRunId: string; labels: string[] }));
 registerAskHandler("review-escalation",(app, ask, ctx) => onEscalationAnswer(app, ask, ctx as { codeRunId: string; labels: string[] }));
 
 // A confirmed plan reviews in a run of its own; the coding run it reviews keeps the results.
 registerHandler("review", async (ctx) => {
-  const { codeRunId, note, splitOnly, revise } = ctx.run.input as { codeRunId: string; note?: string; splitOnly?: boolean; revise?: boolean };
+  const { codeRunId, note, splitOnly, revise, only } = ctx.run.input as { codeRunId: string; note?: string; splitOnly?: boolean; revise?: boolean; only?: string[] };
   if (splitOnly) {
     await splitChangePoints(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note, revise });
     return { changePoints: true };
@@ -749,5 +780,5 @@ registerHandler("review", async (ctx) => {
     const { taskReview } = await import("./code-loop.ts");
     return taskReview(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event });
   }
-  return reviewRound(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note });
+  return reviewRound(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note, only });
 });
