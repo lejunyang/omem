@@ -1575,5 +1575,5 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 ## 2026-11-07：升级用 osdk 安装依赖，npm 源由 osdk.toml 指定
 
 - 常驻服务器的 `.npmrc` 指向公司镜像，镜像里没有 `@nangohq/providers@0.72.2`，pnpm 11 的发布时间检查（minimumReleaseAge）因此拒绝安装，远程更新停在“安装依赖”。
-- `osdk.toml`：`[settings.precedence] npm = "osdk"` 和 `[registries.npm] default`（公开源）；osdk 给 pnpm 注入 `npm_config_registry` / `pnpm_config_registry`，覆盖 `.npmrc` 和 `pnpm-workspace.yaml` 的源，scope 和认证仍按原生配置。`[deps.pnpm]` 的命令加 `--config.confirmModulesPurge=false`（没有终端时 pnpm 不会停下来问）。
+- `osdk.toml`：`[settings.precedence] npm = "osdk"` 和 `[registries.npm] default`（公开源）；osdk 给 pnpm 注入 `npm_config_registry` / `pnpm_config_registry`，覆盖 `.npmrc` 和 `pnpm-workspace.yaml` 的源，scope 和认证仍按原生配置。osdk 对写了自定义 `run` 的依赖不选源（`deps_cmd.rs` 只在 `run` 为空时注入），所以 `[deps.pnpm]` 另用 `env` 带上同样的两个变量，指向同一个源。`[deps.pnpm]` 的命令加 `--config.confirmModulesPurge=false`（没有终端时 pnpm 不会停下来问）。
 - `scripts/upgrade.ts`：有 osdk 时 `osdk trust osdk.toml` → `osdk install` → `osdk run build`，之后还原本机改写的 `osdk.lock`（部署用的检出保持干净，下次 `git pull --ff-only` 不被挡）；没有 osdk 时照旧直接用 pnpm。
