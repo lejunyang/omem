@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { languagePacks, packFor, rewriteWorkbench, translateMessages, workbenchNls } from "../src/server/ide-locale.ts";
 import { engineAllows, installOmemExtension, listedExtensions, readJsonc, reusableExtensions, reuseExtensions, reuseSources, seedMachineSettings, targetPlatform } from "../src/server/ide-setup.ts";
+import { folderOfIdeUrl, ideFolder, trustWorkbench } from "../src/server/ide-web.ts";
 
 const COMMIT = "a".repeat(40);
 const tmp = () => mkdtempSync(join(tmpdir(), "omem-ide-setup-"));
@@ -87,6 +88,18 @@ describe("web VS Code interface language", () => {
     expect(english).not.toContain("/_omem/nls/");
     // An English page has no such script and comes back unchanged.
     expect(rewriteWorkbench('<script type="module" src=""></script>', "/ide", () => true)).toBe('<script type="module" src=""></script>');
+  });
+
+  it("opens a coding folder trusted: reads the folder back from the URL and turns workspace trust off in the page", () => {
+    expect(folderOfIdeUrl(`/ide/?folder=${encodeURIComponent(ideFolder("E:\\work\\shop-api"))}`)).toBe("e:/work/shop-api");
+    expect(folderOfIdeUrl("/ide/?folder=%2Fhome%2Fa%2Fshop-api&ew=true")).toBe("/home/a/shop-api");
+    expect(folderOfIdeUrl("/ide/")).toBeNull();
+    const meta = (json: string) => `<meta id="vscode-workbench-web-configuration" data-settings="${json.replace(/"/g, "&quot;")}">`;
+    const page = meta(JSON.stringify({ serverBasePath: "/ide", enableWorkspaceTrust: true, folderUri: { path: "/w" } }));
+    const trusted = trustWorkbench(page);
+    expect(trusted).toContain("&quot;enableWorkspaceTrust&quot;:false");
+    expect(trusted).toContain("&quot;folderUri&quot;");
+    expect(trustWorkbench('{"enableWorkspaceTrust":true}')).toBe('{"enableWorkspaceTrust":false}');
   });
 });
 

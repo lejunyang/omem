@@ -276,6 +276,34 @@ export function ideFolder(path: string) {
   return /^[a-zA-Z]:/.test(p) ? `/${p[0].toLowerCase()}${p.slice(1)}` : p;
 }
 
+/** The local path in a workbench URL's `folder` query (ideFolder's form back), or null. */
+export function folderOfIdeUrl(url: string) {
+  const q = url.indexOf("?");
+  const folder = q < 0 ? null : new URLSearchParams(url.slice(q + 1)).get("folder");
+  if (!folder) return null;
+  return /^\/[a-zA-Z]:/.test(folder) ? folder.slice(1) : folder;
+}
+
+/**
+ * The workbench page with workspace trust turned off: VS Code then treats the folder as trusted
+ * without asking. Only for a coding delegation's own folder (its worktree or where it was applied):
+ * the trust VS Code remembers lives in the browser and goes by path, so every new worktree asked again.
+ */
+export function trustWorkbench(html: string) {
+  return html.replace(/(&quot;|")enableWorkspaceTrust\1:true/, "$1enableWorkspaceTrust$1:false");
+}
+
+async function isCodeFolder(app: App, url: string) {
+  const folder = folderOfIdeUrl(url);
+  if (!folder) return false;
+  const { codeRunsAt } = await import("../agents/code.ts");
+  try {
+    return codeRunsAt(app, folder, null).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** A session for the owner's browser: the cookie that opens /ide. */
 export function newIdeSession() {
   const id = randomBytes(24).toString("hex");
@@ -348,6 +376,7 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
   // here: both asked for uncompressed.
   const page = req.method === "GET" && /text\/html/.test(String(req.headers.accept ?? ""));
   if (page || packed) delete headers["accept-encoding"];
+  const trusted = page && app.config.ide.web.trustCodeFolders !== false && (await isCodeFolder(app, req.url ?? ""));
   const up = request({ host: "127.0.0.1", port: p, method: req.method, path: req.url, headers }, (r) => {
     // Poll in the background: a slow first download must not keep reloading the whole page.
     if (r.statusCode === 202 && req.method === "GET" && /text\/html/.test(String(r.headers["content-type"]))) {
@@ -359,7 +388,8 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
       const chunks: Buffer[] = [];
       r.on("data", (c: Buffer) => chunks.push(c));
       r.on("end", () => {
-        const body = Buffer.from(rewriteWorkbench(Buffer.concat(chunks).toString("utf8"), IDE_BASE, (commit, locale) => !!safeNls(app, commit, locale)), "utf8");
+        const html = rewriteWorkbench(Buffer.concat(chunks).toString("utf8"), IDE_BASE, (commit, locale) => !!safeNls(app, commit, locale));
+        const body = Buffer.from(trusted ? trustWorkbench(html) : html, "utf8");
         const out: Record<string, string | string[] | undefined> = { ...r.headers, "content-length": String(body.length) };
         delete out["transfer-encoding"];
         res.writeHead(200, out);

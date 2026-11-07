@@ -303,6 +303,8 @@ export const configSchema = z.object({
           reuseSettings: z.boolean().optional(),
           /** Copy the extensions Remote-SSH (or the desktop VS Code) installed here that fit this platform and server, each once (off unless true). */
           reuseExtensions: z.boolean().optional(),
+          /** Open a coding delegation's own folder (worktree or applied target) trusted, without VS Code's trust prompt (on unless false). */
+          trustCodeFolders: z.boolean().optional(),
           /** Where omem fetches VS Code server builds itself (with progress, newer ones in the background); "off" leaves it to serve-web. */
           updateUrl: z.string().optional(),
         })
