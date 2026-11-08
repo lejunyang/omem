@@ -1657,3 +1657,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 空间设置 `skills`（`specs.ts` 的 `spaceSkillNames` / `spaceSkillsText`）：`runner.ts` 按 `workRepos`（交办的 `repos` 或工作区，沿 `codeRunId` / `helperOf` / `continueFrom` 找）把本空间、所属业务、改到的仓库挂的技能单独列一节，`skillIndex` 不再列挂在别的空间上的技能；改到的仓库的 SPACE.md 也进说明；`code_workspace` brief 同样。
 - 产物（`artifacts.ts` 的 `take`）：记内容哈希 `run_artifacts.sha`，同样内容再交时硬链接到已存的文件；没有扩展名的文件按开头字节认出 png / jpg / gif / webp / webm / mp4 / mov / pdf 并补扩展名。
 - 网页：需求树标“测试通过 / 失败 N”，节点详情“测试结果”（`RunArtifacts` 支持直接给 `items`）；设置 → 空间“这个空间的技能”。接口 `GET /api/requirements` 带 `testState`，`GET /api/requirements/:id` 带 `testState`、`testResults`。
+
+## 2026-11-08：在交办之外做完的编码自动收尾
+
+- `code-branch.ts` 的 `settleCodeWorks`（每小时随 `item-sweep` 跑，`POST /api/items-expiry/sweep` 也会跑）：没在编码、评审和 Git 同步、一小时没动的交办，每个有提交的工作分支都已在 origin 上（`fetchBranch` 后本地分支是 `origin/<分支>` 的祖先，且不是 omem 自己推过的那个提交：`output.pushed`、`work.delivered`）时记成已确认（`appliedAt`、`settled: "pushed-outside"`，`pushed` 带 `outside: true`），留下的项照常由同一分支的下一次交办接上；否则同一分支上有在它最后一次动静之后开的交办时记 `supersededBy`，没做完的项标 `wontdo` 并写明去处。两种都取消这几轮的宿主卡片、归还工作区。
+- `code-works.ts`：`supersededBy` 显示“由新交办接着做”；本人停下的交办先于“等你决定”显示为“你停下的”。
+- 检查命令和外部 Agent 命令的输出在宿主收的时候去掉终端颜色代码（`util.ts` 的 `stripAnsi`，预览日志共用）；交办视图显示旧记录时也去掉。

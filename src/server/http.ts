@@ -1057,7 +1057,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/items-expiry/sweep", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能立即收尾");
     const { sweepItems } = await import("../agents/jobs.ts");
-    return sweepItems(app);
+    const { settleCodeWorks } = await import("../agents/code-branch.ts");
+    return { ...(await sweepItems(app)), code: await settleCodeWorks(app) };
   });
   server.post("/api/items/:id/keep", async (req) => {
     const id = (req.params as { id: string }).id;

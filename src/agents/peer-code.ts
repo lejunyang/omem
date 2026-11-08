@@ -5,7 +5,7 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { git, resolveRef } from "../core/git.ts";
 import { getSpace } from "../core/spaces.ts";
-import { HttpError, truncate } from "../core/util.ts";
+import { HttpError, stripAnsi, truncate } from "../core/util.ts";
 import { materialsBrief } from "../items/materials.ts";
 import type { CodeInput } from "./code.ts";
 import { getRun, runUser, type Run } from "./runs.ts";
@@ -108,7 +108,7 @@ export function peerCommands(app: App, spaceId: string): Record<string, string> 
 function runShell(command: string, cwd: string, job: Job, timeoutMs: number, env: Record<string, string> = {}) {
   const isWin = process.platform === "win32";
   const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], { cwd, windowsHide: true, windowsVerbatimArguments: isWin, env: { ...process.env, CI: "1", ...env } });
-  const add = (d: Buffer) => { job.output = (job.output + d.toString()).slice(-30000); };
+  const add = (d: Buffer) => { job.output = (job.output + stripAnsi(d.toString())).slice(-30000); };
   child.stdout.on("data", add);
   child.stderr.on("data", add);
   const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);

@@ -7,7 +7,7 @@ import { one, run } from "../core/db.ts";
 import { scanPorts } from "../core/listening.ts";
 import { commandLine, killPid } from "../core/procs.ts";
 import { findSpace } from "../core/spaces.ts";
-import { HttpError } from "../core/util.ts";
+import { HttpError, stripAnsi } from "../core/util.ts";
 import { codeFolders } from "./code.ts";
 import { getRun } from "./runs.ts";
 import { setupCommandFor, setupDone, setupKey } from "./workspaces.ts";
@@ -77,8 +77,6 @@ export function previewCommands(settings: Record<string, unknown>): PreviewComma
   }
   return out;
 }
-
-const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
 
 function view(p: Preview, logChars = 8000): PreviewView {
   const { pid: _pid, current: _c, idleSince: _i, commandAt: _a, everPorts: _e, lastScan: _l, scanning: _s, log, ...rest } = p;

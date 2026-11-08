@@ -451,6 +451,82 @@ export function releaseItemWorkspaces(app: App, itemId: string) {
   return released;
 }
 
+const SETTLE_AFTER_MS = 3600_000;
+const SETTLE_ASKS = [...ROUND_ASKS, "work-deliver", "code-task", "code-sync"];
+
+/**
+ * Work the owner finished elsewhere, settled hourly so it stops waiting on them (docs/v2/coding-work.md):
+ * - its branch is on origin with everything it committed, pushed by hand (not by omem's “推送”, which
+ *   keeps the work open): it counts as confirmed, and what it left carries on to the next delegation
+ *   on the branch, as after a confirm;
+ * - a later delegation works on the same branch: it ends there, its open tasks pointing to the newer one.
+ * Only work idle for an hour, with no round running and no Git operation stopped half way.
+ */
+export async function settleCodeWorks(app: App) {
+  const since = new Date(Date.now() - 60 * 86400_000).toISOString();
+  const roots = all<{ id: string; created_at: string; open: number }>(app.db, `select id, created_at,
+      (json_extract(output, '$.appliedAt') is null and json_extract(output, '$.discardedAt') is null and json_extract(output, '$.supersededBy') is null) open
+    from runs where kind = 'code' and json_extract(input, '$.continueFrom') is null and json_extract(input, '$.branches') is null and created_at > ? order by created_at`, since);
+  const branchesOf = (id: string) => ((getRun(app, id).output.worktrees ?? []) as WorktreeRef[]).map((w) => `${w.space}\0${w.targetBranch ?? w.branch}`);
+  const out = { pushed: [] as string[], superseded: [] as string[] };
+  for (const r of roots.filter((x) => x.open)) {
+    const list = all<{ id: string; status: string; at: string }>(app.db, "select id, status, coalesce(finished_at, started_at, created_at) at from runs where id = ? or (kind = 'code' and json_extract(input, '$.continueFrom') = ?)", r.id, r.id);
+    if (list.some((x) => ["queued", "running"].includes(x.status))) continue;
+    if (all(app.db, "select 1 from runs where kind = 'review' and status in ('queued', 'running') and parent_id in (" + list.map(() => "?").join(",") + ")", ...list.map((x) => x.id)).length) continue;
+    const lastAt = list.reduce((t, x) => (x.at > t ? x.at : t), r.created_at);
+    if (Date.now() - Date.parse(lastAt) < SETTLE_AFTER_MS) continue;
+    const first = getRun(app, r.id);
+    if ((first.output.syncPending as unknown[] | undefined)?.length) continue;
+    const wts = (first.output.worktrees ?? []) as WorktreeRef[];
+    if (!wts.length) continue;
+    const settle = (patch: Record<string, unknown>) => {
+      for (const id of list.map((x) => x.id)) {
+        setRunOutput(app, id, patch);
+        cancelHostAsks(app, id, SETTLE_ASKS);
+      }
+      releaseBranchRun(app, r.id);
+      for (const s of worktreeSpacesOf(app, r.id)) dropWorktreeSpace(app, s.id);
+    };
+    const pushed = pushedOutside(app, first.output, wts);
+    if (pushed) {
+      settle({ appliedAt: new Date().toISOString(), settled: "pushed-outside", pushed: [...((first.output.pushed ?? []) as unknown[]), ...pushed] });
+      out.pushed.push(r.id);
+      continue;
+    }
+    const mine = new Set(branchesOf(r.id));
+    const later = roots.find((x) => x.id !== r.id && x.created_at > lastAt && branchesOf(x.id).some((b) => mine.has(b)));
+    if (!later) continue;
+    const tasks = await import("./code-tasks.ts");
+    for (const t of tasks.listTasks(app, r.id))
+      if (["todo", "coding", "verify", "disputed", "assistant", "owner"].includes(t.state))
+        tasks.updateTask(app, r.id, t.seq, { state: "wontdo" }, { by: "host", kind: "host", text: `同一分支上后来的交办 ${later.id} 接着做了` });
+    settle({ supersededBy: later.id, settled: "superseded" });
+    out.superseded.push(r.id);
+  }
+  return out;
+}
+
+/** Each work branch on origin with all it committed, none of it pushed by omem: the branches as pushed, else null. */
+function pushedOutside(app: App, out: Record<string, unknown>, wts: WorktreeRef[]) {
+  const mine = wts.filter((w) => w.commits);
+  if (!mine.length || mine.some((w) => w.pending)) return null;
+  const delivered = new Set([
+    ...((out.pushed ?? []) as { space: string; head?: string }[]).map((p) => `${p.space}\0${p.head}`),
+    ...(((out.work as { delivered?: { branches: { space: string; head: string }[] }[] } | undefined)?.delivered ?? []).flatMap((d) => d.branches.map((b) => `${b.space}\0${b.head}`))),
+  ]);
+  const res: { space: string; branch: string; at: string; head: string; outside: true }[] = [];
+  for (const wt of mine) {
+    const root = findSpace(app, wt.space)?.rootPath;
+    const tip = root && existsSync(root) ? tipOf(root, wt.branch) : null;
+    if (!root || !tip || delivered.has(`${wt.space}\0${tip}`)) return null;
+    fetchBranch(root, wt.branch);
+    const remote = git(root, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${wt.branch}`]).stdout.trim();
+    if (!remote || !ancestor(root, tip, remote)) return null;
+    res.push({ space: wt.space, branch: wt.branch, at: new Date().toISOString(), head: tip, outside: true });
+  }
+  return res;
+}
+
 export const ownerOnly = (userId: string | null | undefined) => {
   if ((userId ?? OWNER) !== OWNER) throw new HttpError(403, "分支操作只对本人开放");
 };

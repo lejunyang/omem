@@ -8,7 +8,7 @@ import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core
 import { notify } from "../core/notify.ts";
 import { cancelHostAsks, createAsk, registerAskHandler, ROUND_ASKS } from "./asks.ts";
 import { businessOf, childSpaces, findSpace, getSpace, type Space } from "../core/spaces.ts";
-import { HttpError, truncate } from "../core/util.ts";
+import { HttpError, stripAnsi, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
@@ -41,7 +41,7 @@ export function shell(command: string, cwd: string, signal: AbortSignal, timeout
     child.on("close", (code) => {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
-      resolve({ code: code ?? -1, output, ms: Date.now() - started });
+      resolve({ code: code ?? -1, output: stripAnsi(output), ms: Date.now() - started });
     });
     child.on("error", (e) => resolve({ code: -1, output: String(e), ms: Date.now() - started }));
   });

@@ -8,6 +8,9 @@ export function newId(prefix = ""): string {
   return prefix + time + randomBytes(5).toString("hex");
 }
 
+/** Terminal colour and cursor codes (ESC `[32m`): a page shows them as stray “[32m”, and a model reads them as noise. */
+export const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+
 export const sha256 = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 /** Compare a presented secret with the expected one in constant time (hashed, so lengths match). */
 export const sameSecret = (given: string, expected: string) => !!expected && timingSafeEqual(createHash("sha256").update(given).digest(), createHash("sha256").update(expected).digest());

@@ -63,6 +63,7 @@ type RootRow = {
   id: string; space_id: string | null; user_id: string | null; status: string; title: string; created_at: string;
   task: string | null; item_id: string | null; repos: string | null; branches: string | null; from_branches: string | null; task_mode: number | null; peer: string | null;
   worktrees: string | null; applied_at: string | null; discarded_at: string | null; pushed: string | null; paused: string | null; until: number | null;
+  settled: string | null; superseded: string | null;
 };
 type RoundRow = { id: string; root: string; status: string; title: string; round: number | null; verdict: string | null; applied_at: string | null; discarded_at: string | null; stopped: string | null; stage: string | null; created_at: string; finished_at: string | null };
 
@@ -70,7 +71,8 @@ const ROOT_COLS = `id, space_id, user_id, status, title, created_at,
   substr(json_extract(input, '$.task'), 1, 4000) task, json_extract(input, '$.itemId') item_id, json_extract(input, '$.repos') repos,
   json_extract(input, '$.branches') branches, json_extract(input, '$.fromBranches') from_branches, json_extract(input, '$.taskMode') task_mode,
   json_extract(input, '$.peerCoder.caller') peer, json_extract(output, '$.worktrees') worktrees, json_extract(output, '$.appliedAt') applied_at,
-  json_extract(output, '$.discardedAt') discarded_at, json_extract(output, '$.pushed') pushed, json_extract(output, '$.work.paused') paused, json_extract(output, '$.work.until') until`;
+  json_extract(output, '$.discardedAt') discarded_at, json_extract(output, '$.pushed') pushed, json_extract(output, '$.work.paused') paused, json_extract(output, '$.work.until') until,
+  json_extract(output, '$.settled') settled, json_extract(output, '$.supersededBy') superseded`;
 
 export type WorkFilter = {
   /** Spaces the work belongs to: its own space or one of the repositories it changes. */
@@ -230,9 +232,10 @@ function describe(w: CodeWork, root: RootRow, list: RoundRow[], reviewing: boole
   const p = w.progress;
   const applied = root.applied_at ?? list.find((x) => x.applied_at)?.applied_at;
   const discarded = root.discarded_at ?? list.find((x) => x.discarded_at)?.discarded_at;
+  if (root.superseded) return set("ended", "由新交办接着做", "", "ended", `${round}后，同一分支上的交办 ${root.superseded} 接着做了`, "已结束。没做完的项在新的交办里接着看。");
   if (applied) {
     const text = w.branchReview ? "已清理" : w.branchWork ? "已推送" : "已应用";
-    return set("ended", text, "ok", "ended", `${text}，共 ${list.length} 轮`, w.branchReview ? "评审结束。要按意见修改，在这条分支上交办。" : `已结束。要接着改，在同一分支（${branchText}）上新交办，之前留下的项会接上。`);
+    return set("ended", text, "ok", "ended", root.settled === "pushed-outside" ? `你在 omem 外推送了这条分支，共 ${list.length} 轮` : `${text}，共 ${list.length} 轮`, w.branchReview ? "评审结束。要按意见修改，在这条分支上交办。" : `已结束。要接着改，在同一分支（${branchText}）上新交办，之前留下的项会接上。`);
   }
   if (discarded) return set("ended", w.branchReview ? "已清理" : "已丢弃", "", "ended", `${round}后丢弃`, "已结束。");
   if (last.status === "queued" || last.status === "running") {
@@ -250,6 +253,9 @@ function describe(w: CodeWork, root: RootRow, list: RoundRow[], reviewing: boole
     if (idleMs > STALE_MS) return set(key, `${text} · ${days} 天没动`, cls, "idle", now, next, actions);
     set(key, text, cls, group, now, next, actions);
   };
+  // Stopped by the owner: that says more than a question still open from the round they stopped.
+  if (last.status === "cancelled" && last.stopped)
+    return set("stopped", "你停下的", "", "idle", `${round}：${last.stopped}${p?.owner ? `（还有 ${p.owner} 项等你决定）` : ""}`, "接着做就重试这一轮（接着上次的进度）；不要了就丢弃。", ["retry", "discard"]);
   if (p?.owner) return waiting("owner-tasks", `等你决定 ${p.owner} 项`, "warn", "owner", "其他项照常推进", "回答“概览”里等你决定的问题，回答后马上排下一轮。");
   if (last.verdict === "sync-conflict") return waiting("sync", "同步有冲突", "warn", "owner", "Git 同步停在冲突上", "在“分支”里继续或放弃这次同步。", ["branch"]);
   if (last.status === "failed") return waiting("failed", "这一轮失败了", "danger", "owner", `${round}失败`, "重试会接着上次的进度做；不要了就丢弃。", ["retry", "discard"]);

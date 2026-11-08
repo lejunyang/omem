@@ -46,6 +46,9 @@ export const GROUPS: { id: WorkGroup; label: string }[] = [
   { id: "ended", label: "已结束" },
 ];
 
+/** Terminal colour codes in check output recorded before the host dropped them (ESC is invisible, “[32m” is not). */
+export const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+
 /** “需求 2/3 · 评审修改 3/5 · 第 3 轮”: how far it got, in the owner's words. */
 export function progressText(w: CodeWork) {
   const p = w.progress;

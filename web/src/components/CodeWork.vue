@@ -26,7 +26,7 @@ import { confirmDialog } from "../lib/dialog";
 import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
 import { refAction } from "../lib/refs";
 import { findingWhere, parsePatches, pointCount, pointQuote, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
-import { progressText, type CodeWorkDetail, type WorkAction } from "../lib/works";
+import { progressText, stripAnsi, type CodeWorkDetail, type WorkAction } from "../lib/works";
 import { fmtTime, openCitation, relTime, state, statusLabel, toast } from "../store";
 
 /**
@@ -462,7 +462,7 @@ const ctx = computed(() => detail.value?.context ?? null);
         </section>
         <section v-for="c in checks" :key="c.space" class="block">
           <div class="section-title">检查<template v-if="c.space"> · {{ spaceName(c.space) }}</template>：<span class="mono">{{ c.check.command }}</span> <span class="badge" :class="c.check.code === 0 ? 'ok' : 'danger'">退出码 {{ c.check.code }}</span> <span v-if="c.check.commit || c.check.ms" class="muted small"><template v-if="c.check.commit">提交 <span class="mono">{{ c.check.commit.slice(0, 8) }}</span></template><template v-if="c.check.commit && c.check.ms"> · </template><template v-if="c.check.ms">{{ Math.round(c.check.ms / 1000) }} 秒</template></span></div>
-          <pre class="log">{{ c.check.output }}</pre>
+          <pre class="log">{{ stripAnsi(c.check.output ?? "") }}</pre>
         </section>
         <p v-if="unchecked.length && !branchReview" class="muted small block">{{ unchecked.map(spaceName).join("、") }} 没有设检查命令：评审只能看编码 Agent 自己写的验证。在 设置 → 空间 里给仓库设检查命令后，宿主每轮都会跑并交给评审。</p>
         <section v-if="detail!.children.filter((c) => c.kind !== 'code').length" class="block">
