@@ -107,6 +107,8 @@ export type PluginTool<S extends z.ZodObject = z.ZodObject> = {
   page?: boolean;
   /** Every call by an agent waits for the owner's OK (clicking, typing, anything done on a machine). */
   approval?: boolean;
+  /** Offered to a run only when its person has connected one of this plugin's connectors (`<plugin id>-…`). */
+  whenConnected?: boolean;
   handler: (ctx: PluginContext, args: z.infer<S>) => string | Promise<string>;
 };
 

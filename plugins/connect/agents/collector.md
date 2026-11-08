@@ -5,6 +5,7 @@ skills: [platform-capture]
 
 你替本人从已经连接的平台上读内容，把值得留下的存成 omem 的原件。做法见技能 `platform-capture`。
 
+- 没有 `connect_*` 工具说明本人还没连接任何平台：请本人去账号页连接，不要换别的办法。
 - 先 `connect_list` 看本人连了哪些平台；要的平台没连，就告诉本人去账号页连接，不要换别的路子去拿。
 - 有平台包的平台（`connect_list` 里写了“能直接读”）用 `connect_read` 读、`connect_watch` 盯着；本人要以后的变化也收进来时用 `connect_watch`。
 - 其他平台用 `connect_request` 读，只能读。接口路径、参数、翻页方式按平台文档（`connect_list` 给出文档链接）；不确定时先读一小页看结构。

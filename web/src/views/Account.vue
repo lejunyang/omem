@@ -231,7 +231,7 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
       </div>
       <p class="muted small">连接后，助手和后台采集以你的身份读你在这个平台上能看到的内容；写入（文档、表格）不在你自己的文件里时先问你。令牌只存在运行 omem 的这台机器上。</p>
       <div v-if="conns && !conns.may" class="card pad muted small">你的角色不能连接第三方平台，需要的话请 omem 的主人调整。</div>
-      <p v-if="state.me?.role === 'owner'" class="muted small">你本人用 lark-cli 的登录读写飞书（设置 → 渠道），不用在这里连接。可以连接的其他平台在 设置 → 成员 → 平台应用 里开放。</p>
+      <p v-if="state.me?.role === 'owner'" class="muted small">你本人用 lark-cli 的登录读写飞书（设置 → 连接 → 你的飞书），不用在这里连接。可以连接的其他平台在 设置 → 连接 → 其他平台 里开放。</p>
       <input v-if="offeredProviders.length > 6" v-model="connQuery" class="input" type="search" placeholder="搜平台" aria-label="搜可以连接的平台" />
       <div v-for="p in shownProviders" :key="p.id" class="card pad stack">
         <div class="row wrap">
@@ -277,7 +277,7 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
         <div v-if="!connOf(p.id) && !p.credentials" class="row"><button class="btn sm primary" :disabled="!conns?.may || !!p.unavailable || !(picked[p.id] ?? []).length" @click="connect(p.id, picked[p.id] ?? [])">连接{{ p.label }}</button></div>
         <p v-if="connOf(p.id)?.lastError" class="small warn-text">{{ connOf(p.id)!.lastError }}</p>
         <div v-if="watchesOf(p.id).length" class="stack tight">
-          <span class="small muted">定时同步（在“平台采集”里让助手盯着某个文件、页面或仓库）：</span>
+          <span class="small muted">定时同步（让助手“盯着”某个文件、页面或仓库后出现在这里）：</span>
           <div v-for="w in watchesOf(p.id)" :key="w.id" class="row wrap feature">
             <div class="stack tight">
               <span>{{ w.title || w.target }}</span>

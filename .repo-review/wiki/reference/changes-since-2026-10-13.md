@@ -1558,6 +1558,11 @@ updated: 2026-11-08
 - `trust.ts` 记 `mode`（isolated / inprocess；以前的记录算 inprocess），`POST /api/plugins/:id/trust` 带 `mode`；加载失败或超出声明时撤回信任。设置页显示运行方式，“在 omem 里运行…”单独确认。
 - `test/plugin-sandbox.test.ts`。
 
+## 2026-11-08：设置页分组；平台工具只给连了平台的人
+
+- 设置拆出“连接”（`tab=connect`）：本人的飞书文档与个人消息采集（从“渠道”移来）和其他平台（`ProviderApps.vue` 自己加载、虚拟滚动、每行有说明：授权页连接要建应用，填 key 连接的由成员各自填 key，开放后才出现在账号页）。“渠道”只留机器人与聊天渠道（OneBot 卡片改名“QQ / 微信 机器人”）；“成员”去掉平台应用，登录方式链接到连接页；网页地址移到“设备”。设置页跟随 `?tab=` 变化切换标签。国内平台的用途分组改成社交媒体、聊天与通讯。
+- 工具 `available`（`dropUnavailable` 在 runner 里按这次运行的人去掉）；插件工具 `whenConnected`（含隔离运行的插件）：连了本插件某个连接器才给。`TOOL_GROUPS` 加 `connect`（由同名插件填充，说明 `skills/omem/references/connect.md`），主助手带 `group:connect`；连接插件去掉侧栏页，`connect-collector` 留作档案。
+
 ## 2026-11-07：网页版 VS Code 打开交办工作区不再问信任
 
 VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作区就要再点一次信任。`proxyIde` 在返回工作台页面时，若 `folder` 是编码交办自己的目录（`codeRunsAt`），把页面配置的 `enableWorkspaceTrust` 改成 `false`（`trustWorkbench`）；其他文件夹不变。配置 `ide.web.trustCodeFolders`（默认开）。实现：`src/server/ide-web.ts`；回归：`test/ide-setup.test.ts`；本地开发实例用真实 serve-web 对照过（交办工作区无受限模式，无关目录有）。

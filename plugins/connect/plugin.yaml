@@ -5,5 +5,3 @@ icon: link
 agents: [collector]
 skills: [platform-capture]
 tools: [list_spaces, list_sources, search, read_source]
-page:
-  title: 平台采集

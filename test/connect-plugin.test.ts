@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
+import { callTool, dropUnavailable, issueToolToken, toolContextForToken, toolList } from "../src/agents/tools.ts";
 import { appConfig, setAppConfig } from "../src/auth/apps.ts";
 import { connectWithCredentials } from "../src/auth/connections.ts";
 import { beginLogin, completeLogin } from "../src/auth/login.ts";
 import { canLogIn, loginProvider, loginProviders, setAuthFetchForTests } from "../src/auth/providers.ts";
-import { findConnection } from "../src/auth/vault.ts";
+import { findConnection, storeConnection } from "../src/auth/vault.ts";
 import { one } from "../src/core/db.ts";
 import { createUser, identitiesOf } from "../src/core/users.ts";
 import { loadPlugins } from "../src/plugins/registry.ts";
@@ -48,6 +48,17 @@ describe("connect plugin", async () => {
     expect(loginProvider("connect-fireflies")?.credentials?.fields.map((f) => f.key)).toEqual(["apiKey"]);
     // Not usable before the owner fills in the app.
     expect(loginProvider("connect-github")!.unavailable(app)).toMatch(/Client ID/);
+  });
+
+  it("offers its tools only to someone with a connection", () => {
+    const tool = toolList().find((t) => t.name === "connect_read")!;
+    createUser(app, { name: "小陈", id: "chen" });
+    expect(tool.available?.(app, "chen")).toBe(false);
+    storeConnection(app, { userId: "chen", provider: "connect-gitee", accountId: "g", accountName: "小陈", scopes: [], accessToken: "t" });
+    expect(tool.available?.(app, "chen")).toBe(true);
+    const names = new Set(["connect_read", "search"]);
+    dropUnavailable(app, "nobody", names);
+    expect([...names]).toEqual(["search"]);
   });
 
   it("keeps the owner's app settings in secrets, and asks for them on the authorization page", async () => {

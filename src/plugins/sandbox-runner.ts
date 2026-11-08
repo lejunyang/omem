@@ -88,7 +88,7 @@ async function main() {
     z,
     tool(t) {
       tools.set(t.name, t as PluginTool);
-      declared.tools.push({ name: t.name, description: t.description, jsonSchema: z.toJSONSchema(t.schema), write: !!t.write, page: !!t.page, approval: !!t.approval });
+      declared.tools.push({ name: t.name, description: t.description, jsonSchema: z.toJSONSchema(t.schema), write: !!t.write, page: !!t.page, approval: !!t.approval, whenConnected: !!t.whenConnected });
     },
     block: unsupported("内容块"),
     connector: unsupported("新的连接器"),

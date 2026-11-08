@@ -118,7 +118,7 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
     }
     // Too much for a card: just the link. Without a web address the fields are listed to answer in text.
     if (web) blocks.push({ buttons: [{ text: "打开填写", url: link, style: "primary" }] }, { note: "也可以直接回复文字。" });
-    else blocks.push({ markdown: `要填的：\n${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` }, { note: "在 omem 网页上填写，或直接回复文字（设置 → 渠道 填网页地址后这里会有链接）。" });
+    else blocks.push({ markdown: `要填的：\n${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` }, { note: "在 omem 网页上填写，或直接回复文字（设置 → 设备 填网页地址后这里会有链接）。" });
     return buildCard({ title: TITLE.question, color: "blue", blocks });
   }
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });

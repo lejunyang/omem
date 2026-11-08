@@ -57,6 +57,9 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "learning", label: "学习", doc: "learning", tools: ["create_card", "set_learning_goal", "learning_progress"] },
   { id: "media", label: "图片生成", doc: "media", tools: ["generate_image"] },
   { id: "plugins", label: "插件", doc: "plugins", tools: ["plugin_query", "plugin_put"] },
+  // Filled by the plugin of the same id when it loads (connect_list, connect_read…): roles name the group
+  // before the plugin is there, and its tools come with it.
+  { id: "connect", label: "已连接平台的读取与同步", doc: "connect", tools: [] },
 ];
 
 /**

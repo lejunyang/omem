@@ -22,20 +22,20 @@ omem 自己内置飞书。其他平台（Notion、GitHub、Google、Slack、Jira
 
 ## 主人要做的
 
-设置 → 成员 → 平台应用：
+设置 → 连接 → 其他平台（列表只画出看得到的行，滚动查看，可以按名字、用途、范围筛选）：
 
 1. 搜到平台，点“设置”。
 2. 在平台的开发者后台建应用，把这里给出的重定向 URL（`<网页地址>/api/auth/connect-<平台>/callback`）填进去。
 3. 把 Client ID、Secret 和平台要求的站点、租户填在这里。这些值存在 `secrets/connector-apps.json`，不进 `config.json`、快照和拉取，网页上只显示 secret 的后四位（`src/auth/apps.ts`）。
-4. “开放”给成员（`auth.connectors`）。第一次填好时会自动开放。能当身份的平台填好后会出现在上面的登录方式里，可以勾选用来登录，也可以设成主要登录方。
+4. “开放”给成员（`auth.connectors`）。第一次填好时会自动开放。能当身份的平台填好后会出现在 设置 → 成员 的登录方式里，可以勾选用来登录，也可以设成主要登录方。
 
-用 key 连接的平台不用建应用：开放之后，成员在账号页自己填 key。保存前 omem 会用平台的检查接口试一次。
+用 key 连接的平台（标“填 key 连接”，约 160 个，都是内容能变成原件的平台）不用建应用，所以大多没有要填的设置，行上只有“说明”。开放之后，每个成员在自己的账号页填自己在那个平台生成的 API Key（或账号密码），保存前 omem 用平台的检查接口试一次；之后助手以他的身份读那个平台。不开放就不出现在账号页，也没有人能连。少数要填站点（如 Confluence 的子域名）的，由主人在“设置”里填。
 
 默认只申请只读权限。Google 各产品、Jira、Confluence、Slack、Dropbox、GitLab、Linear 在 `plugins/connect/server.ts` 的 `READ_SCOPES` 里预置了读取用的 scope；其他平台由主人在“额外的权限”里按平台文档填写。Slack 用 `user_scope` 申请，拿到的是成员本人的令牌，不是机器人令牌。
 
 ## 读取与采集
 
-插件带三个工具和一个 Agent 档案（`connect-collector`，技能 `platform-capture`）：
+插件带几个工具（分组 `connect`，说明在 `skills/omem/references/connect.md`）和一个 Agent 档案（`connect-collector`，技能 `platform-capture`）。主助手的工具里有 `group:connect`；这些工具标了 `whenConnected`，只有这次运行的人连了这个插件的某个平台（连接正常）时才给（`Tool.available`、runner 的 `dropUnavailable`），没连平台的人和运行看不到它们。插件没有自己的侧栏页面，直接问主助手；大批量采集交给 `connect-collector`：
 
 - `connect_list`：本人连了哪些平台，各自的账号、接口地址和文档链接。
 - `connect_request`：以本人的身份读接口。宿主带上令牌，只能发往这个平台的接口地址。GET 随便用；POST 只放行搜索、查询（最后一段路径含 search、query）、GraphQL query（不能是 mutation），以及少数已知只读的接口（Notion 的 search 和数据库查询，Dropbox 的列目录）。二进制内容不读，返回大小和类型。

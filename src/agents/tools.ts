@@ -136,6 +136,8 @@ type Tool = {
   schema: z.ZodObject;
   /** The arguments as JSON Schema, when the tool checks them elsewhere (an isolated plugin's process). */
   jsonSchema?: Record<string, unknown>;
+  /** Offered to a run only when this says so for its person (a platform tool, once they connected one). */
+  available?: (app: App, userId: string) => boolean;
   write?: boolean;
   handler: (ctx: ToolContext, args: any) => Promise<string> | string;
 };
@@ -4942,6 +4944,11 @@ const alwaysApprove = new Set<string>();
 
 export function toolList(filter?: Set<string> | null) {
   return tools.filter((t) => !filter || filter.has(t.name));
+}
+
+/** Leave out the tools that are not for this person now (Tool.available). */
+export function dropUnavailable(app: App, userId: string, names: Set<string>) {
+  for (const t of tools) if (t.available && names.has(t.name) && !t.available(app, userId)) names.delete(t.name);
 }
 
 export function toolSchemas(filter?: Set<string> | null) {

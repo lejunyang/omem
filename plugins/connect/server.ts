@@ -68,12 +68,13 @@ export default function register(api: PluginApi) {
   const packOf = (d: Def) => api.platforms().find((p) => p.provider === `${api.id}-${d.id}`) ?? null;
   const connected = async (ctx: PluginContext, d: Def) => {
     const c = await ctx.connection(`${api.id}-${d.id}`);
-    if (!c) throw new Error(`本人还没有连接${d.label}：请本人在 omem 的账号页“已连接的应用”里连接（主人要先在 设置 → 成员 → 平台应用 打开它）`);
+    if (!c) throw new Error(`本人还没有连接${d.label}：请本人在 omem 的账号页“已连接的应用”里连接（主人要先在 设置 → 连接 → 其他平台 打开它）`);
     return c;
   };
 
   api.tool({
     name: "connect_list",
+    whenConnected: true,
     description: "列出本人已经连接的平台（Notion、GitHub、Google Drive、钉钉……）：每个平台的 id、账号、接口地址和接口文档。读平台内容前先用它确认连了哪些。",
     schema: z.object({ query: z.string().max(60).optional().describe("按名字筛选，如 notion、日历") }),
     handler: async (ctx, a) => {
@@ -97,6 +98,7 @@ export default function register(api: PluginApi) {
 
   api.tool({
     name: "connect_request",
+    whenConnected: true,
     description:
       "以本人的身份读一个已连接平台的接口：路径相对该平台的接口地址（connect_list 里的），宿主带上本人的令牌。只能读：GET；POST 只用于搜索、查询和 GraphQL query（不能 mutation）。翻页按平台文档带游标或页码，响应头里的 link 会一并返回。",
     schema: z.object({
@@ -138,6 +140,7 @@ export default function register(api: PluginApi) {
 
   api.tool({
     name: "connect_read",
+    whenConnected: true,
     description:
       "用平台包读一项内容（Figma 文件、Notion 页面、GitHub issue、Slack 一天的频道消息……），平台包已经把它整理成 Markdown；save 为 true 时同时存成原件。哪些平台、哪些类型能读看 connect_list。没有平台包的平台用 connect_request。",
     schema: z.object({
@@ -171,6 +174,7 @@ export default function register(api: PluginApi) {
 
   api.tool({
     name: "connect_watch",
+    whenConnected: true,
     description:
       "盯着平台上的一项内容或一个范围（Figma 项目、Notion 数据库、GitHub 仓库的 issue、Slack 频道……）：之后定时把改过的读成原件，存进指定空间，以本人的连接读。马上会先同步一次。能盯的类型看 connect_list 里标“可盯着同步”的，单项内容也能盯（改了就重读）。remove 给盯着的 id 时取消。",
     schema: z.object({
@@ -195,6 +199,7 @@ export default function register(api: PluginApi) {
 
   api.tool({
     name: "connect_save",
+    whenConnected: true,
     description:
       "把从已连接平台读到的一项内容（一篇文档、一个 issue、一段对话、一封邮件）存成原件。id 写平台上不会变的编号（如 Notion 页面 id、issue 的 owner/repo#12），同一个 id 再存是更新同一份原件。正文写整理好的纯文本或 Markdown，保留原文，不要改写成摘要。",
     schema: z.object({

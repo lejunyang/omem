@@ -23,7 +23,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(here, f)).find((f) => existsSync(f))!;
 
 type Declared = {
-  tools: { name: string; description: string; jsonSchema: Record<string, unknown>; write: boolean; page: boolean; approval: boolean }[];
+  tools: { name: string; description: string; jsonSchema: Record<string, unknown>; write: boolean; page: boolean; approval: boolean; whenConnected: boolean }[];
   platforms: (Omit<PluginPlatform, "readers"> & { readers: { kind: string; label: string; id: string; read: boolean; changes: boolean }[] })[];
 };
 type Pending = { ok: (v: any) => void; fail: (e: Error) => void; ctx?: ToolContext; timer: NodeJS.Timeout };
@@ -35,7 +35,7 @@ const CALL_MS = 5 * 60_000;
 export async function startSandbox(
   app: App,
   plugin: { id: string; dir: string; server: string; services: { name: string }[] },
-  opts: { prefix: string; packageRoot: string; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
+  opts: { prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
 ): Promise<Sandbox> {
   const data = join(app.home, "plugin-data", plugin.id);
   mkdirSync(data, { recursive: true });
@@ -166,6 +166,7 @@ export async function startSandbox(
         schema: z.object({}).passthrough(),
         jsonSchema: t.jsonSchema,
         write: t.write,
+        available: t.whenConnected ? opts.connected : undefined,
         handler: (ctx, args) => ask({ t: "call", tool: t.name, args, ctx: { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, conversationId: null, settings: opts.settings(ctx.userId ?? OWNER) } }, ctx).then(String),
       },
       { approval: t.approval },

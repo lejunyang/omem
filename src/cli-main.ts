@@ -943,7 +943,7 @@ user
     const { createInvite } = await import("./auth/login.ts");
     const app = open();
     const base = app.config.webUrl?.trim().replace(/\/+$/, "");
-    if (!base) throw new Error("先填网页地址：omem setup 或 设置 → 渠道 → 网页地址");
+    if (!base) throw new Error("先填网页地址：omem setup 或 设置 → 设备 → 网页地址");
     const spaces = [...(o.space ?? []).map((space: string) => ({ space, role: "reader" as const })), ...(o.edit ?? []).map((space: string) => ({ space, role: "editor" as const }))];
     const r = createInvite(app, "owner", { spaces, allowAny: !!o.any, note: o.note, days: Number(o.days) });
     console.log(`${base}/#/login?invite=${r.token}\n（只显示这一次；设置 → 成员 里可以撤销）`);

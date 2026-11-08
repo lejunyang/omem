@@ -625,7 +625,7 @@ async function setupChannelsSection(app: App) {
     message: "读取你自己的飞书（lark-cli 个人登录，只读，从不以你的身份发消息）",
     choices: [
       { value: "all", name: "所有有新消息的会话（群和私聊）", description: "增量拉取，附件和文档链接一并处理；可在配置里 exclude 掉不想要的群" },
-      { value: "subscribed", name: "只读订阅的会话 + @我 的消息", description: "在网页设置 → 渠道里勾选会话" },
+      { value: "subscribed", name: "只读订阅的会话 + @我 的消息", description: "在网页设置 → 连接里勾选会话" },
       { value: "off", name: "不读" },
     ],
     default: cap.mode,

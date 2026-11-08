@@ -16,6 +16,7 @@ import PluginsSettings from "../components/PluginsSettings.vue";
 import StorageUsage from "../components/StorageUsage.vue";
 import ShareSettings from "../components/ShareSettings.vue";
 import MembersSettings from "../components/MembersSettings.vue";
+import ProviderApps from "../components/ProviderApps.vue";
 import FederationSettings from "../components/FederationSettings.vue";
 import PeerSettings from "../components/PeerSettings.vue";
 import { fmtTime, kindLabel, loadSpaces, relTime, state, toast } from "../store";
@@ -24,11 +25,19 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
-type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "members" | "peers" | "shares" | "plugins" | "storage" | "about";
-const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "members", "peers", "shares", "plugins", "storage", "about"];
+type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "connect" | "members" | "peers" | "shares" | "plugins" | "storage" | "about";
+const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "connect", "members", "peers", "shares", "plugins", "storage", "about"];
 // Other pages link to a tab (?tab=agents from the Agent page's nightly replay).
-const asked = useRoute().query.tab;
+const settingsRoute = useRoute();
+const asked = settingsRoute.query.tab;
 const tab = ref<Tab>(TABS.includes(asked as Tab) ? (asked as Tab) : "spaces");
+// A link to another tab from inside the settings (成员 → 连接) changes only the query.
+watch(
+  () => settingsRoute.query.tab,
+  (t) => {
+    if (TABS.includes(t as Tab)) tab.value = t as Tab;
+  },
+);
 // Settings → AI is split by category: the agents (general), the models omem calls itself, and the API keys.
 type AiSection = "general" | "voice" | "decision" | "image" | "keys";
 const AI_SECTIONS: { value: AiSection; label: string }[] = [
@@ -699,7 +708,7 @@ async function saveEdit() {
   <div class="page">
     <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small">数据目录：{{ home }}</p></div></div>
     <div class="tabs">
-      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'AI'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['members', '成员'], ['peers', '设备'], ['shares', '分享'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
+      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'AI'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['connect', '连接'], ['members', '成员'], ['peers', '设备'], ['shares', '分享'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
     </div>
 
     <section v-if="tab === 'spaces'" class="stack">
@@ -1014,7 +1023,6 @@ async function saveEdit() {
         </div>
       </div>
       <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>
-      <label class="field"><span>网页地址（从飞书或其他设备打开 omem 页面用）</span><input class="input mono" :value="config.webUrl ?? ''" placeholder="如 http://192.0.2.10:4317，或反向代理的地址" @change="saveConfig({ webUrl: ($event.target as HTMLInputElement).value.trim() }, '已保存网页地址')" /><span class="muted small">填了以后，通知卡片里的“打开链接”和插件页的链接（如英语练习）在飞书里能直接打开，回答里引用的代码、工作文件、记忆和 Wiki 变成只读分享链接（设置 → 分享）；从其他设备打开还需要令牌（<span class="mono">omem link</span>）。</span></label>
       <div class="field">
         <UiCheckbox :model-value="!!config.lark.webApp" switch :disabled="!config.webUrl || !config.lark.appId" @change="(v) => saveConfig({ lark: { ...config.lark, webApp: v } }, v ? '已打开飞书网页应用' : '已关闭飞书网页应用')">飞书网页应用：表单和交互页在飞书侧边栏里打开，不用再登录</UiCheckbox>
         <span v-if="!config.webUrl || !config.lark.appId" class="muted small">先填上面的网页地址{{ config.lark.appId ? "" : "并接入飞书机器人" }}。</span>
@@ -1091,6 +1099,26 @@ async function saveEdit() {
         </label>
       </div>
 
+      <div class="card pad stack">
+        <UiCheckbox :model-value="config.telegram.enabled" switch @change="(v) => saveConfig({ telegram: { ...config.telegram, enabled: v } })"><strong>Telegram 机器人</strong></UiCheckbox>
+        <p class="muted small">用 @BotFather 创建机器人，把 token 放在环境变量 <span class="mono">{{ config.telegram.tokenEnv }}</span>。首次给机器人发消息会回复你的 chat id。</p>
+        <label class="field"><span>本人 chat id</span><input class="input mono" :value="config.telegram.ownerChatId ?? ''" @change="saveConfig({ telegram: { ...config.telegram, ownerChatId: ($event.target as HTMLInputElement).value || undefined } })" /></label>
+      </div>
+
+      <div class="card pad stack">
+        <UiCheckbox :model-value="config.onebot.enabled" switch @change="(v) => saveConfig({ onebot: { ...config.onebot, enabled: v } })"><strong>QQ / 微信 机器人（OneBot v11）</strong></UiCheckbox>
+        <p class="muted small">连接 NapCat、LLOneBot、Lagrange 等 OneBot 实现（正向 WebSocket）。私聊里只有本人能指挥助理；群消息保存为聊天原件并交给助理整理。</p>
+        <div class="grid2">
+          <label class="field"><span>WebSocket 地址</span><input class="input mono" :value="config.onebot.url ?? ''" placeholder="ws://127.0.0.1:3001" @change="saveConfig({ onebot: { ...config.onebot, url: ($event.target as HTMLInputElement).value || undefined } })" /></label>
+          <label class="field"><span>显示名</span><input class="input" :value="config.onebot.name" @change="saveConfig({ onebot: { ...config.onebot, name: ($event.target as HTMLInputElement).value } })" /></label>
+        </div>
+        <label class="field"><span>本人账号（QQ 号 / 微信 id）</span><input class="input mono" :value="config.onebot.ownerUserId ?? ''" @change="saveConfig({ onebot: { ...config.onebot, ownerUserId: ($event.target as HTMLInputElement).value || undefined } })" /></label>
+      </div>
+    </section>
+
+    <section v-else-if="tab === 'connect' && config" class="stack">
+      <p class="muted">omem 从哪些平台读内容：你本人的飞书（lark-cli 的个人登录，只读），以及成员各自连接的 Notion、GitHub、Google、钉钉等平台。机器人和聊天渠道在“渠道”里，谁能登录在“成员”里。</p>
+      <div class="section-title">你的飞书</div>
       <div class="card pad stack">
         <strong>飞书文档</strong>
         <p class="muted small">读飞书文档时，它链接的文档和它在知识库里的子页面一起导入，层数从最先给的那篇算起（不是每篇子文档各算一遍）。整个知识库或很大的目录交给助理用“知识库爬取”分批读，进度存在库里，可以配合定时规则每天读一批。</p>
@@ -1200,27 +1228,17 @@ async function saveEdit() {
         </template>
       </div>
 
-      <div class="card pad stack">
-        <UiCheckbox :model-value="config.telegram.enabled" switch @change="(v) => saveConfig({ telegram: { ...config.telegram, enabled: v } })"><strong>Telegram 机器人</strong></UiCheckbox>
-        <p class="muted small">用 @BotFather 创建机器人，把 token 放在环境变量 <span class="mono">{{ config.telegram.tokenEnv }}</span>。首次给机器人发消息会回复你的 chat id。</p>
-        <label class="field"><span>本人 chat id</span><input class="input mono" :value="config.telegram.ownerChatId ?? ''" @change="saveConfig({ telegram: { ...config.telegram, ownerChatId: ($event.target as HTMLInputElement).value || undefined } })" /></label>
-      </div>
-
-      <div class="card pad stack">
-        <UiCheckbox :model-value="config.onebot.enabled" switch @change="(v) => saveConfig({ onebot: { ...config.onebot, enabled: v } })"><strong>QQ / 微信（OneBot v11）</strong></UiCheckbox>
-        <p class="muted small">连接 NapCat、LLOneBot、Lagrange 等 OneBot 实现（正向 WebSocket）。私聊里只有本人能指挥助理；群消息保存为聊天原件并交给助理整理。</p>
-        <div class="grid2">
-          <label class="field"><span>WebSocket 地址</span><input class="input mono" :value="config.onebot.url ?? ''" placeholder="ws://127.0.0.1:3001" @change="saveConfig({ onebot: { ...config.onebot, url: ($event.target as HTMLInputElement).value || undefined } })" /></label>
-          <label class="field"><span>显示名</span><input class="input" :value="config.onebot.name" @change="saveConfig({ onebot: { ...config.onebot, name: ($event.target as HTMLInputElement).value } })" /></label>
-        </div>
-        <label class="field"><span>本人账号（QQ 号 / 微信 id）</span><input class="input mono" :value="config.onebot.ownerUserId ?? ''" @change="saveConfig({ onebot: { ...config.onebot, ownerUserId: ($event.target as HTMLInputElement).value || undefined } })" /></label>
-      </div>
+      <div class="section-title">其他平台</div>
+      <ProviderApps />
     </section>
-
     <section v-else-if="tab === 'members'" class="stack">
       <MembersSettings />
     </section>
     <section v-else-if="tab === 'peers'" class="stack">
+      <div v-if="config" class="card pad stack">
+        <strong>这台 omem 的网页地址</strong>
+      <label class="field"><span>从飞书、手机或其他设备打开 omem 用的地址；登录回调、邀请链接和分享链接也用它</span><input class="input mono" :value="config.webUrl ?? ''" placeholder="如 http://192.0.2.10:4317，或反向代理的地址" @change="saveConfig({ webUrl: ($event.target as HTMLInputElement).value.trim() }, '已保存网页地址')" /><span class="muted small">填了以后，通知卡片里的“打开链接”和插件页的链接（如英语练习）在飞书里能直接打开，回答里引用的代码、工作文件、记忆和 Wiki 变成只读分享链接（设置 → 分享）；从其他设备打开还需要令牌（<span class="mono">omem link</span>）。</span></label>
+      </div>
       <PeerSettings />
       <FederationSettings />
     </section>

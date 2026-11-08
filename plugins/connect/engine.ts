@@ -174,7 +174,7 @@ export function connector(api: PluginApi, d: Def, opts: { identity: boolean }): 
   const base = (c: Record<string, string>) => (d.base ? fill(d.base, vars(c)) : null);
   const missing = (c: Record<string, string>) => {
     const fields = appFields(d).filter((f) => !f.optional && !c[f.key]);
-    return fields.length ? `还没填${fields.map((f) => f.label).join("、")}（omem 的主人在 设置 → 成员 → 平台应用 里填）` : null;
+    return fields.length ? `还没填${fields.map((f) => f.label).join("、")}（omem 的主人在 设置 → 连接 → 其他平台 里填）` : null;
   };
 
   const sign = (c: Record<string, string>, req: { url: URL; headers: Headers }, secret: string) => {

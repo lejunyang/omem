@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import { del, get, patch, post, put } from "../api";
-import ProviderApps, { type Provider } from "./ProviderApps.vue";
+import type { Provider } from "./ProviderApps.vue";
 import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
@@ -218,7 +218,7 @@ onMounted(() => load().catch(fail));
       <div class="card pad stack">
         <UiCheckbox :model-value="auth.enabled" switch @change="(v) => saveAuth({ enabled: v })">打开多人登录</UiCheckbox>
         <p class="muted small">打开后，从别的机器打开网页会看到登录页；经同一台机器上的反向代理（带 X-Forwarded-For）进来的请求也要登录。</p>
-        <p v-if="!webUrl" class="small warn-text">还没有填“网页地址”（设置 → 渠道）：登录回调、邀请链接和机器人发的登录链接都要用它。</p>
+        <p v-if="!webUrl" class="small warn-text">还没有填“网页地址”（设置 → 设备）：登录回调、邀请链接和机器人发的登录链接都要用它。</p>
         <div v-for="p in logins" :key="p.id" class="provider stack">
           <div class="row wrap">
             <UiCheckbox :model-value="auth.providers.includes(p.id) || auth.primary === p.id" :disabled="auth.primary === p.id" @change="(v) => toggleProvider(p.id, v)">{{ p.label }}</UiCheckbox>
@@ -230,7 +230,7 @@ onMounted(() => load().catch(fail));
           <p v-if="p.unavailable" class="small warn-text">暂时不能用：{{ p.unavailable }}</p>
           <p v-if="p.callback" class="small muted">开发者后台的重定向 URL 要加上：<span class="mono break">{{ p.callback }}</span><button class="btn ghost sm" @click="copy(p.callback)">复制</button></p>
         </div>
-        <p class="muted small">GitHub、Google、钉钉、微信等能确认身份的平台，在下面“平台应用”里填好应用信息后出现在这里。</p>
+        <p class="muted small">GitHub、Google、钉钉、微信等能确认身份的平台，在 <a href="#/settings?tab=connect">设置 → 连接 → 其他平台</a> 里填好应用信息后出现在这里。</p>
         <div class="field">
           <span>主要登录方</span>
           <UiSelect :model-value="auth.primary ?? ''" width="220px" aria-label="主要登录方" :options="[{ value: '', label: '不设（打开的都能登录）' }, ...logins.map((p) => ({ value: p.id, label: p.label }))]" @change="setPrimary" />
@@ -238,8 +238,6 @@ onMounted(() => load().catch(fail));
         </div>
       </div>
 
-      <h2 class="section-title">平台应用</h2>
-      <ProviderApps :providers="providers" :offered="auth.connectors" @offer="(list) => saveAuth({ connectors: list })" @saved="load" />
 
       <template v-if="pending.length">
         <h2 class="section-title">等待批准</h2>

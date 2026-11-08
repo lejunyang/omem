@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { authFetch, loginProvider, registerLoginProvider } from "../auth/providers.ts";
 import { registerFeatures } from "../auth/features.ts";
 import { appConfig } from "../auth/apps.ts";
+import { listConnections } from "../auth/vault.ts";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import YAML from "yaml";
@@ -115,6 +116,9 @@ export function getPlugin(id: string) {
   return p;
 }
 
+/** A plugin's `whenConnected` tools: for people with a working connection to one of its connectors. */
+export const connectedTo = (plugin: string) => (app: App, userId: string) => listConnections(app, userId).some((c) => c.status === "active" && c.provider.startsWith(`${plugin}-`));
+
 /** The ToolContext of a plugin tool's call, narrowed to what server.ts may see. */
 function asPlugin(env: PluginEnv, ctx: ToolContext) {
   return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input), watches: watchesFor(ctx) };
@@ -180,7 +184,7 @@ async function loadCode(app: App, p: LoadedPlugin) {
     tool(t: PluginTool<any>) {
       if (!t.name.startsWith(prefix)) throw new Error(`插件 ${manifest.id} 的工具名要以 ${prefix} 开头：${t.name}`);
       if (p.source === "data" && t.write && !manifest.permissions.write) throw new Error(`插件 ${manifest.id} 的工具 ${t.name} 会写入，但清单没有声明 permissions.write`);
-      registerTool({ name: t.name, description: t.description, schema: t.schema, write: t.write, handler: (ctx, args) => t.handler(asPlugin(p.env, ctx), args) }, { approval: t.approval });
+      registerTool({ name: t.name, description: t.description, schema: t.schema, write: t.write, available: t.whenConnected ? connectedTo(manifest.id) : undefined, handler: (ctx, args) => t.handler(asPlugin(p.env, ctx), args) }, { approval: t.approval });
       p.tools.push({ name: t.name, page: !!t.page, write: !!t.write, approval: !!t.approval });
     },
     block(b: PluginBlock<any>) {
@@ -244,6 +248,7 @@ async function loadIsolated(app: App, p: LoadedPlugin) {
   const sb = await startSandbox(app, { id: manifest.id, dir: p.dir, server, services: manifest.services }, {
     prefix: `${manifest.id}_`,
     packageRoot: packageRoot(),
+    connected: connectedTo(manifest.id),
     settings: (userId) => pluginSettings(app, manifest.id, manifest.settings, userId),
     services: (name) => manifest.services.find((s) => s.name === name),
   });

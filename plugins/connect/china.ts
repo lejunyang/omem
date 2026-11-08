@@ -16,7 +16,7 @@ export const CHINA: Def[] = [
   {
     id: "wechat",
     label: "微信",
-    group: "登录",
+    group: "社交媒体",
     docs: "https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/Wechat_Login.html",
     mode: "oauth2",
     config: [],
@@ -42,7 +42,7 @@ export const CHINA: Def[] = [
   {
     id: "qq",
     label: "QQ",
-    group: "登录",
+    group: "社交媒体",
     docs: "https://wiki.connect.qq.com/",
     mode: "oauth2",
     config: [],
@@ -67,7 +67,7 @@ export const CHINA: Def[] = [
   {
     id: "weibo",
     label: "微博",
-    group: "登录",
+    group: "社交媒体",
     docs: "https://open.weibo.com/wiki/授权机制说明",
     mode: "oauth2",
     config: [],
@@ -87,7 +87,7 @@ export const CHINA: Def[] = [
   {
     id: "dingtalk",
     label: "钉钉",
-    group: "登录",
+    group: "聊天与通讯",
     docs: "https://open.dingtalk.com/document/orgapp/tutorial-obtaining-user-personal-information",
     mode: "oauth2",
     config: [],
@@ -106,7 +106,7 @@ export const CHINA: Def[] = [
   {
     id: "douyin",
     label: "抖音",
-    group: "登录",
+    group: "社交媒体",
     docs: "https://developer.open-douyin.com/docs/resource/zh-CN/dop/develop/openapi/account-permission/get-access-token",
     mode: "oauth2",
     config: [],
