@@ -28,6 +28,10 @@ export type McpAccess = {
 export type SessionCleanup = {
   created(sessionId: string): void;
   discard(sessionId: string, operation?: () => Promise<void>): Promise<void>;
+  /** Archive disposable backend helpers after a turn, even when its parent is kept. */
+  children?(sessionId: string): Promise<void>;
+  /** Live handles can serve later runs without reopening or changing their ledger record. */
+  active?(sessionId: string, active: boolean): void;
 };
 
 export type AgentRequest = {

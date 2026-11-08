@@ -405,6 +405,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         if (dead) throw new Error("Agent 进程已结束");
         if (busy) throw new Error("这个 Agent 会话正在处理上一条消息");
         busy = true;
+        opts.cleanup?.active?.(sessionId, true);
         emit = turnEmit;
         text = "";
         contextUsage = undefined;
@@ -487,7 +488,9 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
           signal?.removeEventListener("abort", onAbort);
           touch = () => {};
           emit = () => {};
-          busy = false;
+          try { await opts.cleanup?.children?.(sessionId); }
+          catch (e) { emitSetup({ type: "status", text: `后端子会话清理失败，稍后重试：${(e as Error).message.slice(0, 160)}` }); }
+          finally { opts.cleanup?.active?.(sessionId, false); busy = false; }
         }
       },
     };

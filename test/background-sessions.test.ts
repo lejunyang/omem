@@ -93,8 +93,7 @@ describe("background sessions", () => {
     expect(deleted()).not.toContain(persisted.session);
     app.config.sessions.background.liveMinutes = 0.0001;
     const short = await invoke();
-    await new Promise((r) => setTimeout(r, 100));
-    expect(deleted()).toContain(short.session);
+    await expect.poll(deleted, { timeout: 5000 }).toContain(short.session);
   }, 60000);
 
   it("requests CLI temporary sessions only for non-resumable runs", () => {

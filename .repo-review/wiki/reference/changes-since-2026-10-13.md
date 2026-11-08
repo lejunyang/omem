@@ -2,10 +2,16 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-07
+updated: 2026-11-08
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
+
+## 规则批次与 Codex 审批子会话清理（11-08）
+
+- 规则 Agent 的会话原来一律保留，批次结束和重启后换会话都可能积压。`session-cleanup.ts` 按排队续轮与有效的话题跟进判断是否还需要，完成、失败、取消且不再被引用的归档；`jobs.ts` 在换成新会话后退役旧的。会议、多 Agent 工作、聊天及编码续轮保持保留。
+- Codex 的 guardian 自动审批会话没有经 ACP 报出 ID，归档父会话也不会连带归档它。`catalog.ts` 为后端声明 `sessionHistory` 格式和目录；`session-children.ts` 只读 rollout 首条元数据，按 omem 来源、guardian 类型和已登记父会话精确识别，再通过 ACP 归档。普通工作子 Agent 和其他聊天不纳入，`CODEX_HOME` 覆盖默认目录。
+- 每轮结束处理子会话，失败单独持久登记；定时清理也检查已结束的保留会话，补宿主中断的遗漏。活跃的在线会话和其他存活进程拥有的会话不被后台检查打断。回归：`test/session-children.test.ts`、`test/session-cleanup.test.ts`、`test/rule-merge.test.ts`。
 
 ## 设置 → AI 与 API key（11-07）
 

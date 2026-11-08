@@ -18,6 +18,7 @@ export type CatalogEntry = {
   args?: string[];
   /** Archive via the same executable when the ACP agent does not advertise session/delete. */
   archiveArgs?: string[];
+  sessionHistory?: AgentProfile["sessionHistory"];
   env?: Record<string, string>;
   /** npm package that provides `command` (enables `npm i -g` / npx in setup). */
   npm?: string;
@@ -30,7 +31,7 @@ export type CatalogEntry = {
 };
 
 export const acpCatalog: CatalogEntry[] = [
-  { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low" },
+  { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" } },
   // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
   { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI" },
   { id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp" },
@@ -73,6 +74,7 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
     command: e.command,
     args: e.args ?? [],
     archiveArgs: e.archiveArgs,
+    sessionHistory: e.sessionHistory,
     model: e.model,
     effort: e.effort,
     env: e.env ?? {},
@@ -84,7 +86,7 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
 export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
   const e = p.transport === "acp" ? acpCatalog.find((x) => x.command === p.command) : undefined;
   const previous = e?.previousArgs?.some((a) => a.length === p.args.length && a.every((v, i) => v === p.args[i]));
-  return e ? { ...p, args: previous ? e.args ?? [] : p.args, archiveArgs: p.archiveArgs ?? e.archiveArgs } : p;
+  return e ? { ...p, args: previous ? e.args ?? [] : p.args, archiveArgs: p.archiveArgs ?? e.archiveArgs, sessionHistory: p.sessionHistory ?? e.sessionHistory } : p;
 }
 
 export function catalogEntry(id: string) {

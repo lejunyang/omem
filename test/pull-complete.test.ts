@@ -279,10 +279,10 @@ describe("complete portable pulls", () => {
   it.skipIf(process.platform === "win32")("SSH fetch includes a remote-only original and embedded media, and overwrite keeps every fetched file", async () => {
     const local = testApp();
     const remote = testApp();
-    upsertSource(remote, { spaceId: "personal", kind: "doc", uri: "report", title: "报告", text: "![图](/api/files/abcdef0123456789.png)", meta: { original: "report.pdf" } });
-    writeFileSync(join(remote.filesDir, "report.pdf"), "document");
+    upsertSource(remote, { spaceId: "personal", kind: "doc", uri: "report", title: "报告", text: "![图](/api/files/abcdef0123456789.png)", meta: { original: "0123456789abcdef.pdf" } });
+    writeFileSync(join(remote.filesDir, "0123456789abcdef.pdf"), "document");
     writeFileSync(join(remote.filesDir, "abcdef0123456789.png"), "image");
-    writeFileSync(join(local.filesDir, "report.pdf"), "document");
+    writeFileSync(join(local.filesDir, "0123456789abcdef.pdf"), "document");
     run(local.db, "insert into api_tokens(token_hash,user_id,label,created_at) values('local_hash','owner','local','2026-01-01')");
     run(remote.db, "insert into api_tokens(token_hash,user_id,label,created_at) values('remote_hash','owner','remote','2026-01-01')");
     run(local.db, "insert or replace into kv(key,value) values('capture_demo','local cursor')");
@@ -305,9 +305,9 @@ describe("complete portable pulls", () => {
       try { expect(all(copied.db, "select * from session_cleanup")).toEqual([]); }
       finally { copied.db.close(); }
       const backup = overwriteLocal(home, f);
-      expect(readFileSync(join(home, "files/report.pdf"), "utf8")).toBe("document");
+      expect(readFileSync(join(home, "files/0123456789abcdef.pdf"), "utf8")).toBe("document");
       expect(readFileSync(join(home, "files/abcdef0123456789.png"), "utf8")).toBe("image");
-      expect(readFileSync(join(backup, "files/report.pdf"), "utf8")).toBe("document");
+      expect(readFileSync(join(backup, "files/0123456789abcdef.pdf"), "utf8")).toBe("document");
       const after = App.open(home);
       try {
         expect(all(after.db, "select token_hash from api_tokens")).toEqual([{ token_hash: "local_hash" }]);

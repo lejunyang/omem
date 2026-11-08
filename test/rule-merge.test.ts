@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
 import { __testHandlers, addRunEvent, flushRunText, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
@@ -11,6 +12,7 @@ import { dispatchRuleEvent } from "../src/rules/engine.ts";
 import { listFirings, saveRule } from "../src/rules/store.ts";
 import type { RuleEvent } from "../src/rules/types.ts";
 import { testApp } from "./helpers.ts";
+import { recoverSessionCleanup } from "../src/agents/session-cleanup.ts";
 
 const alert = (id: string, text: string, chat = "oc_alerts"): RuleEvent => ({
   key: `lark:${id}`,
@@ -79,8 +81,9 @@ it("joins triggers that come while the rule's run for that chat is in progress",
 
 it("runs what joined after the run ended in that run's agent session, with every trigger in its task", async () => {
   const { app, agentRuns } = setup();
+  const deleted = join(app.home, "deleted.txt");
   app.config.agents.default = "fake";
-  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "echo" } })];
+  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "echo", FAKE_DELETE_LOG: deleted } })];
   const server = await startServer(app, { port: 0, quiet: true });
   const exec = async (id: string) => {
     const out = (await __testHandlers.get("agent")!({ app, run: getRun(app, id), signal: new AbortController().signal, event: (type, data) => addRunEvent(app, id, type, data), output: (data) => setRunOutput(app, id, data) })) as Record<string, unknown>;
@@ -97,6 +100,8 @@ it("runs what joined after the run ended in that run's agent session, with every
     await dispatchRuleEvent(app, alert("om_3", "接口超时率 12%"));
     // The first ends without another tool call, so nothing was handed to it: the waiting run goes next.
     const a = await exec(first.id);
+    await recoverSessionCleanup(app, () => {});
+    expect(existsSync(deleted)).toBe(false);
     const waiting = agentRuns().find((r) => r.status === "queued")!;
     const b = await exec(waiting.id);
     expect(b.session).toBe(a.session);
@@ -104,6 +109,9 @@ it("runs what joined after the run ended in that run's agent session, with every
     expect(b.prompt).toContain("om_2");
     expect(b.prompt).toContain("上一轮处理期间同一条规则又触发了 1 次");
     expect(b.prompt).toContain("om_3");
+    await recoverSessionCleanup(app, () => {});
+    expect(readFileSync(deleted, "utf8").trim()).toBe(a.session);
+    expect(all(app.db, "select session_id from session_cleanup")).toEqual([]);
   } finally {
     await server.close();
     setLarkClient(null);
@@ -130,8 +138,9 @@ it("starts every trigger on its own when the rule does not merge", async () => {
 
 it("queues separate replies in one agent session, preserving every trigger's task and reply target", async () => {
   const { app, rule, agentRuns } = setup(true, "separate");
+  const deleted = join(app.home, "deleted.txt");
   app.config.agents.default = "fake";
-  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "echo" } })];
+  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "echo", FAKE_DELETE_LOG: deleted } })];
   const replies: { messageId: string; inThread: boolean }[] = [];
   setLarkClient({ im: { message: { reply: async (p: { path: { message_id: string }; data: { reply_in_thread?: boolean } }) => {
     replies.push({ messageId: p.path.message_id, inThread: !!p.data.reply_in_thread });
@@ -171,8 +180,42 @@ it("queues separate replies in one agent session, preserving every trigger's tas
       expect(result.prompt).toContain("每次触发分别处理");
       expect(result.prompt).not.toContain("上一轮处理期间同一条规则又触发");
       if (i === 1) expect(result.prompt).toContain("独立核对标记");
+      await recoverSessionCleanup(app, () => {});
+      if (i < runs.length - 1) expect(existsSync(deleted)).toBe(false);
     }
+    expect(readFileSync(deleted, "utf8").trim()).toBe(session);
+    expect(all(app.db, "select session_id from session_cleanup")).toEqual([]);
     expect(replies).toEqual([{ messageId: "om_1", inThread: true }, { messageId: "om_2", inThread: true }, { messageId: "om_3", inThread: false }]);
+  } finally {
+    await server.close();
+    setLarkClient(null);
+    app.db.close();
+  }
+}, 60000);
+
+it("retires a restarted rule run's replaced session and cleans the last one when the batch ends", async () => {
+  const { app, agentRuns } = setup(true, "separate");
+  const deleted = join(app.home, "deleted.txt");
+  app.config.agents.default = "fake";
+  app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "echo", FAKE_DELETE_LOG: deleted } })];
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    await dispatchRuleEvent(app, alert("om_1", "检查任务状态"));
+    const [r] = agentRuns();
+    const exec = async () => {
+      run(app.db, "update runs set status='running' where id=?", r.id);
+      const out = await __testHandlers.get("agent")!({ app, run: getRun(app, r.id), signal: new AbortController().signal, event: (type, data) => addRunEvent(app, r.id, type, data), output: data => setRunOutput(app, r.id, data) }) as Record<string, unknown>;
+      setRunOutput(app, r.id, out);
+      return String(out.sessionId);
+    };
+    const old = await exec();
+    const next = await exec();
+    expect(next).not.toBe(old);
+    expect(readFileSync(deleted, "utf8").trim().split("\n")).toEqual([old]);
+    run(app.db, "update runs set status='done' where id=?", r.id);
+    await recoverSessionCleanup(app, () => {});
+    expect(readFileSync(deleted, "utf8").trim().split("\n")).toEqual([old, next]);
+    expect(all(app.db, "select session_id from session_cleanup")).toEqual([]);
   } finally {
     await server.close();
     setLarkClient(null);

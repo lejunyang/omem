@@ -3,8 +3,9 @@ import { existsSync } from "node:fs";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
-import { now } from "../core/util.ts";
+import { json, now } from "../core/util.ts";
 import { cleanupAcpSession } from "./acp.ts";
+import { disposableChildren } from "./session-children.ts";
 import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoSessionStatus, doubaoTokenExists } from "./doubao.ts";
 import type { AgentEvent, AgentRequest, SessionCleanup } from "./types.ts";
 
@@ -16,6 +17,8 @@ type Pending = {
 type Key = Pick<Pending, "backend_key" | "session_id">;
 type Emit = (e: AgentEvent) => void;
 const busy = new Set<string>();
+const activeTurns = new Set<string>();
+const sessionKey = (app: App, p: Key) => `${app.home}:${p.backend_key}:${p.session_id}`;
 
 // Resolve credentials from current configuration; never copy environment values into the ledger.
 function fingerprint(p: AgentProfile) {
@@ -29,15 +32,25 @@ export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<
   const hash = acp ? fingerprint(profile) : null;
   const backend = acp ? `acp:${hash}` : `doubao:${appId ?? ""}`;
   const retained = !!req.persistSession || !!req.resumeSessionId;
+  const record = (id: string, ready: number) => {
+    run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,?,?)
+      on conflict(backend_key,session_id) do update set run_id = coalesce(excluded.run_id, session_cleanup.run_id), owner_pid = excluded.owner_pid, ready = excluded.ready`, backend, id, profile.transport, profile.id, hash, appId, req.cwd, req.runId ?? null, process.pid, ready, now());
+  };
   return {
-    created(id) {
-      run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,?,?)
-        on conflict(backend_key,session_id) do update set run_id = coalesce(excluded.run_id, session_cleanup.run_id), owner_pid = excluded.owner_pid, ready = excluded.ready`, backend, id, profile.transport, profile.id, hash, appId, req.cwd, req.runId ?? null, process.pid, retained ? -1 : 0, now());
+    created(id) { record(id, retained ? -1 : 0); },
+    active(id, active) {
+      const key = sessionKey(app, { backend_key: backend, session_id: id });
+      if (active) activeTurns.add(key);
+      else activeTurns.delete(key);
+    },
+    async children(id) {
+      const p = one<Pending>(app.db, "select * from session_cleanup where backend_key = ? and session_id = ?", backend, id);
+      if (p) await cleanChildren(app, p, profile, emit);
     },
     async discard(id, operation) {
       run(app.db, "update session_cleanup set ready = 1 where backend_key = ? and session_id = ?", backend, id);
       const p = one<Pending>(app.db, "select * from session_cleanup where backend_key = ? and session_id = ?", backend, id);
-      if (p) await clean(app, p, emit, false, operation ?? (acp ? () => cleanupAcpSession(profile, id, req.cwd) : undefined));
+      if (p) await clean(app, p, emit, false, operation ?? (acp ? () => cleanupAcpSession(profile, id, req.cwd) : undefined), profile);
     },
   };
 }
@@ -61,14 +74,33 @@ function alive(pid: number) {
   try { process.kill(pid, 0); return true; }
   catch (e) { return (e as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
+function activeElsewhere(app: App, p: Pending) {
+  return activeTurns.has(sessionKey(app, p)) || (p.owner_pid !== process.pid && alive(p.owner_pid));
+}
 function update(app: App, p: Key, sql: string, ...args: (string | number)[]) {
   run(app.db, `update session_cleanup set ${sql} where backend_key = ? and session_id = ?`, ...args, p.backend_key, p.session_id);
 }
 
+async function cleanChildren(app: App, p: Pending, profile: AgentProfile, emit: Emit) {
+  for (const id of await disposableChildren(profile, p.session_id, p.cwd)) {
+    // Each helper gets its own durable retry, including when its parent is kept or already archived.
+    run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at)
+      values(?,?,?,?,?,?,?,?,?,1,?) on conflict(backend_key,session_id) do nothing`,
+    p.backend_key, id, p.transport, p.profile_id, p.fingerprint, p.app_id, p.cwd, p.run_id, process.pid, now());
+    const child = one<Pending>(app.db, "select * from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, id)!;
+    await clean(app, child, emit, false, () => cleanupAcpSession(profile, id, existsSync(p.cwd) ? p.cwd : app.home), profile);
+  }
+}
+
+function recordedProfile(app: App, p: Pending) {
+  const profile = allProfiles(app.config).find(a => a.id === p.profile_id && fingerprint(a) === p.fingerprint);
+  if (!profile) throw new Error("创建时使用的后端配置已变更或移除，等待原配置恢复后重试");
+  return profile;
+}
+
 async function perform(app: App, p: Pending, recovering: boolean): Promise<boolean> {
   if (p.transport === "acp") {
-    const profile = allProfiles(app.config).find(a => a.id === p.profile_id && fingerprint(a) === p.fingerprint);
-    if (!profile) throw new Error("创建时使用的后端配置已变更或移除，等待原配置恢复后重试");
+    const profile = recordedProfile(app, p);
     await cleanupAcpSession(profile, p.session_id, existsSync(p.cwd) ? p.cwd : app.home);
     return true;
   }
@@ -86,13 +118,14 @@ async function perform(app: App, p: Pending, recovering: boolean): Promise<boole
   return true;
 }
 
-async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, operation?: () => Promise<void>) {
-  const key = `${app.home}:${p.backend_key}:${p.session_id}`;
+async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, operation?: () => Promise<void>, profile?: AgentProfile) {
+  const key = sessionKey(app, p);
   if (busy.has(key)) return;
   busy.add(key);
   try {
     // Delay both failures and still-running cloud tasks; the next sweep tries again.
     update(app, p, "retry_at = ?", new Date(Date.now() + 60_000).toISOString());
+    if (p.transport === "acp") await cleanChildren(app, p, profile ?? recordedProfile(app, p), emit);
     if (operation) await operation();
     else if (!await perform(app, p, recovering)) return;
     run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);
@@ -102,8 +135,44 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
   } finally { busy.delete(key); }
 }
 
+/** A rule batch only needs its session while a queued successor or a followed topic can resume it. */
+function releaseRuleSessions(app: App) {
+  const active = all<{ id: string; lane: string | null; input: string }>(app.db, "select id,lane,input from runs where status in ('queued','running')");
+  const lanes = new Set(active.map(r => r.lane).filter(Boolean));
+  const resumeIds = new Set<string>();
+  const resumeRuns = new Set<string>();
+  for (const r of active) {
+    const input = json<Record<string, unknown>>(r.input, {});
+    if (typeof input.resumeSessionId === "string") resumeIds.add(input.resumeSessionId);
+    if (typeof input.resumeFromRun === "string") resumeRuns.add(input.resumeFromRun);
+  }
+  const followedRuns = new Set<string>();
+  for (const r of all<{ value: string }>(app.db, "select value from kv where key like 'rule_follow:%'")) {
+    const f = json<{ runId?: string; until?: string }>(r.value, {});
+    if (f.runId && f.until && f.until > now()) followedRuns.add(f.runId);
+  }
+  for (const runId of followedRuns) {
+    const r = one<{ output: string }>(app.db, "select output from runs where id = ?", runId);
+    const id = r && json<{ sessionId?: string }>(r.output, {}).sessionId;
+    if (id) resumeIds.add(id);
+  }
+  const kept = all<Pending & { input: string; output: string; status: string; lane: string | null }>(app.db,
+    `select s.*,r.input,r.output,r.status,r.lane from session_cleanup s join runs r on r.id=s.run_id
+     where s.ready=-1 and r.kind='agent' and r.status not in ('queued','running')`);
+  for (const p of kept) {
+    if (activeElsewhere(app, p)) continue;
+    const input = json<Record<string, unknown>>(p.input, {});
+    if (!input.rule || input.agentWorkId || input.meeting) continue;
+    if (resumeIds.has(p.session_id) || (p.lane && lanes.has(p.lane))) continue;
+    const currentId = json<{ sessionId?: string }>(p.output, {}).sessionId;
+    if (p.run_id && (resumeRuns.has(p.run_id) || followedRuns.has(p.run_id)) && (!currentId || currentId === p.session_id)) continue;
+    update(app, p, "ready = 1, retry_at = ?", now());
+  }
+}
+
 /** Recorded disposable sessions only; a live omem process retains ownership, including pool idle time. */
 export async function recoverSessionCleanup(app: App, emit: (runId: string | null, e: AgentEvent) => void) {
+  releaseRuleSessions(app);
   const pending = all<Pending>(app.db, "select * from session_cleanup where ready >= 0 and retry_at <= ? order by retry_at", now());
   let attempts = 0;
   for (const p of pending) {
@@ -112,6 +181,14 @@ export async function recoverSessionCleanup(app: App, emit: (runId: string | nul
     // A local cleanup record may outlive its run after a library is overwritten from another device.
     const runId = p.run_id && one(app.db, "select id from runs where id = ?", p.run_id) ? p.run_id : null;
     await clean(app, p, e => emit(runId, e), true);
+  }
+  // Retained coding/chat sessions can also have disposable helpers after an interrupted turn.
+  const retained = all<Pending>(app.db, `select s.* from session_cleanup s join runs r on r.id=s.run_id
+    where s.ready=-1 and s.transport='acp' and r.status not in ('queued','running')`);
+  for (const p of retained) {
+    if (activeElsewhere(app, p)) continue;
+    try { await cleanChildren(app, p, recordedProfile(app, p), e => emit(p.run_id, e)); }
+    catch (e) { emit(p.run_id, { type: "status", text: `后端子会话清理失败，稍后重试：${(e as Error).message.slice(0, 160)}` }); }
   }
 }
 

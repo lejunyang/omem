@@ -11,7 +11,7 @@ import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 import { testApp } from "./helpers.ts";
 import { agentProfileSchema, saveConfig } from "../src/core/config.ts";
 import { keepSession } from "../src/agents/code-overlap.ts";
-import { createRun } from "../src/agents/runs.ts";
+import { createRun, setRunOutput } from "../src/agents/runs.ts";
 
 const opened: App[] = [];
 const ok = (data: unknown) => new Response(JSON.stringify({ code: 0, data }));
@@ -134,6 +134,36 @@ function acpApp(protocol: boolean) {
 }
 
 describe("unified ACP cleanup", () => {
+  it("keeps a rule session for queued work and followed topics, then cleans after cancellation or expiry", async () => {
+    const { app, profile, deleted } = acpApp(true);
+    const r = createRun(app, { kind: "agent", title: "规则的一批任务", lane: "rule:test", input: { rule: { id: "test" }, silent: {} } });
+    const cleanup = await sessionCleanup(app, profile, { cwd: app.home, runId: r.id, persistSession: true }, () => {});
+    cleanup.created("rule-session"); setRunOutput(app, r.id, { sessionId: "rule-session" });
+    run(app.db, "update runs set status='done' where id=?", r.id);
+    const next = createRun(app, { kind: "agent", title: "下一条", lane: "rule:test", input: { rule: { id: "test" }, resumeFromRun: r.id } });
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual([]);
+    run(app.db, "insert into kv(key,value) values(?,?)", "rule_follow:chat#topic", JSON.stringify({ runId: r.id, until: new Date(Date.now() + 3600_000).toISOString() }));
+    run(app.db, "update runs set status='cancelled' where id=?", next.id);
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual([]);
+    run(app.db, "update kv set value=? where key=?", JSON.stringify({ runId: r.id, until: "2000-01-01T00:00:00Z" }), "rule_follow:chat#topic");
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual(["rule-session"]);
+    expect(pending(app)).toEqual([]);
+  });
+
+  it("releases completed and failed rule sessions, including an id lost when a run restarted", async () => {
+    const { app, profile, deleted } = acpApp(true);
+    const r = createRun(app, { kind: "agent", title: "规则重启", input: { rule: { id: "test" } } });
+    const cleanup = await sessionCleanup(app, profile, { cwd: app.home, runId: r.id, persistSession: true }, () => {});
+    cleanup.created("lost-at-restart"); cleanup.created("failed-attempt");
+    run(app.db, "update runs set status='failed' where id=?", r.id);
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted().sort()).toEqual(["failed-attempt", "lost-at-restart"]);
+    expect(pending(app)).toEqual([]);
+  });
+
   it("keeps the actual protocol error and retries, without switching to an archive command", async () => {
     const { app, profile, deleted } = acpApp(true);
     const failFile = join(app.home, "protocol-busy");

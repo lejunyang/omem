@@ -22,6 +22,8 @@ export const agentProfileSchema = z.object({
   args: z.array(z.string()).default([]),
   /** Same executable, followed by these arguments and the session id; fallback when ACP has no session/delete. */
   archiveArgs: z.array(z.string()).optional(),
+  /** Local history format used to discover disposable helper sessions absent from ACP updates. */
+  sessionHistory: z.object({ format: z.literal("codex-rollout"), root: z.string().min(1), env: z.string().optional() }).optional(),
   model: z.string().optional(),
   effort: z.string().optional(),
   env: z.record(z.string(), z.string()).default({}),

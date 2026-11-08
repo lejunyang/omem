@@ -18,6 +18,7 @@ import { deliverToThread, receive } from "./inbox.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import { replyOf } from "./types.ts";
 import { quietReason } from "./quiet.ts";
+import { retireRecordedSession } from "./session-cleanup.ts";
 import { maybeSummarize, threadTurn } from "./sessions.ts";
 import { readAgentSpec } from "./specs.ts";
 import { describeFlags, guardSource } from "../sources/guard.ts";
@@ -262,6 +263,7 @@ async function runAgentTask(ctx: RunContext) {
       persistSession: !!agentWorkId || !!silent || !!meeting || (!!triggers && !!ctx.run.lane),
       lark: assistantScope?.lark ?? lark,
     });
+  const previousSession = resumeSessionId ?? getRun(ctx.app, ctx.run.id).output.sessionId;
   let r;
   try { r = await go(resumeSessionId); }
   catch (e) {
@@ -269,6 +271,8 @@ async function runAgentTask(ctx: RunContext) {
     ctx.event("status", { text: "无法接上上一轮的 Agent 会话，改用新会话（带这项工作的经过）" });
     r = await go(undefined);
   }
+  if (typeof previousSession === "string" && r.sessionId && previousSession !== r.sessionId)
+    await retireRecordedSession(ctx.app, previousSession, e => ctx.event(e.type, e));
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
   // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).

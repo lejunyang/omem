@@ -6,7 +6,7 @@
  */
 import { PassThrough, Readable, Writable } from "node:stream";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentSideConnection, ndJsonStream, RequestError, type McpServer } from "@agentclientprotocol/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -113,6 +113,14 @@ new AgentSideConnection(
       if (process.env.FAKE_DELETE_FAIL_FILE && existsSync(process.env.FAKE_DELETE_FAIL_FILE))
         throw new RequestError(-32603, "Internal error", { details: "session still active" });
       if (process.env.FAKE_DELETE_LOG) appendFileSync(process.env.FAKE_DELETE_LOG, p.sessionId + "\n");
+      if (process.env.FAKE_HISTORY_ROOT) {
+        const from = join(process.env.FAKE_HISTORY_ROOT, "sessions", `rollout-${p.sessionId}.jsonl`);
+        if (existsSync(from)) {
+          const archived = join(process.env.FAKE_HISTORY_ROOT, "archived_sessions");
+          mkdirSync(archived, { recursive: true });
+          renameSync(from, join(archived, `rollout-${p.sessionId}.jsonl`));
+        }
+      }
       return {};
     },
     async cancel() {},
