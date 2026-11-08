@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { closeSync, copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -167,12 +167,31 @@ function take(app: App, runId: string, workId: string | null, spaceId: string | 
   if (size > (page ? MAX_WORK / 4 : MAX_FILE)) return { artifact: null, skipped: `${name}：${Math.round(size / MB)} MB，超过上限` };
   if (used(app, runId, workId) + size > MAX_WORK) return { artifact: null, skipped: `${name}：这次交办的产物已到 ${MAX_WORK / MB} MB 上限` };
   const id = newId("af");
-  const entry = page ? "index.html" : basename(from);
+  // A file without a known extension (a content-addressed store keeps hashes) is named by what it holds.
+  const sniffed = page || kindOf(basename(from)) !== "file" ? null : sniff(from);
+  const entry = page ? "index.html" : sniffed ? `${basename(from)}.${sniffed}` : basename(from);
+  if (sniffed && !name.endsWith(`.${sniffed}`)) name = `${name}.${sniffed}`;
   const dest = store(app, id);
   mkdirSync(dest, { recursive: true });
   const target = page ? dest : join(dest, entry);
+  // The same file handed in again (a screenshot that did not change, a recording copied twice) is
+  // a link to the one already kept: rows stay apart, the bytes are stored once.
+  const sha = page ? null : hashFile(from);
+  const same = sha ? one<Pick<Row, "id" | "entry">>(app.db, "select id, entry from run_artifacts where sha = ? limit 1", sha) : undefined;
+  let linked = false;
+  if (same) {
+    try {
+      linkSync(artifactPath(app, same), target);
+      if (move) rmSync(from, { force: true });
+      linked = true;
+    } catch {
+      // Another volume, or the kept file is gone: store a copy.
+    }
+  }
   try {
-    if (move) {
+    if (linked) {
+      // already in place
+    } else if (move) {
       try {
         if (page) {
           rmSync(dest, { recursive: true, force: true });
@@ -193,9 +212,39 @@ function take(app: App, runId: string, workId: string | null, spaceId: string | 
     id, key: randomBytes(18).toString("base64url"), run_id: runId, work_id: workId, space_id: spaceId, task: meta.task ?? null, req: meta.req ?? null,
     name, caption: (meta.caption ?? "").slice(0, 500), kind, mime: page ? "text/html; charset=utf-8" : mimeOf(entry), size, entry, source: meta.source, created_by: meta.by, created_at: now(),
   };
-  run(app.db, `insert into run_artifacts (id, key, run_id, work_id, space_id, task, req, name, caption, kind, mime, size, entry, source, created_by, created_at)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.id, row.key, row.run_id, row.work_id, row.space_id, row.task, row.req, row.name, row.caption, row.kind, row.mime, row.size, row.entry, row.source, row.created_by, row.created_at);
+  run(app.db, `insert into run_artifacts (id, key, run_id, work_id, space_id, task, req, name, caption, kind, mime, size, entry, source, created_by, created_at, sha)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.id, row.key, row.run_id, row.work_id, row.space_id, row.task, row.req, row.name, row.caption, row.kind, row.mime, row.size, row.entry, row.source, row.created_by, row.created_at, sha);
   return { artifact: toArtifact(row) };
+}
+
+function hashFile(file: string): string | null {
+  try {
+    return createHash("sha256").update(readFileSync(file)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/** What an extensionless file holds, by its first bytes: an extension for the kinds shown inline. */
+function sniff(file: string): string | null {
+  let head: Buffer;
+  try {
+    const fd = openSync(file, "r");
+    head = Buffer.alloc(16);
+    readSync(fd, head, 0, 16, 0);
+    closeSync(fd);
+  } catch {
+    return null;
+  }
+  const ascii = (from: number, to: number) => head.subarray(from, to).toString("latin1");
+  if (head[0] === 0x89 && ascii(1, 4) === "PNG") return "png";
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "jpg";
+  if (ascii(0, 4) === "GIF8") return "gif";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "webp";
+  if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return "webm";
+  if (ascii(4, 8) === "ftyp") return ascii(8, 10) === "qt" ? "mov" : "mp4";
+  if (ascii(0, 4) === "%PDF") return "pdf";
+  return null;
 }
 
 /** A task's number from an inbox path's first folder (`T3/…`), and the rest. */
@@ -373,3 +422,11 @@ export function takenText(r: { made: Artifact[]; skipped: string[] }) {
   return parts.join("。");
 }
 
+
+/** Artifacts by id (those still kept), in the order asked. */
+export function artifactsByIds(app: App, ids: string[]): Artifact[] {
+  if (!ids.length) return [];
+  const rows = all<Row>(app.db, `select * from run_artifacts where id in (${ids.map(() => "?").join(",")})`, ...ids);
+  const by = new Map(rows.map((r) => [r.id, toArtifact(r)]));
+  return ids.flatMap((id) => by.get(id) ?? []);
+}

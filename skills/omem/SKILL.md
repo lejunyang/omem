@@ -78,6 +78,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `coding` | 编码交办、评审、修改项、应用改动 | [references/code.md](references/code.md) |
 | `git` | 分支、工作区、Git 同步与提交 | 同上 |
 | `code-handin` | 编码与评审角色交结果（只给对应角色） | 同上 |
+| `code-results` | 编码的验证结果：截图、报告与测试结果（只给编码、评审角色和设备的外部 Agent） | 同上 |
 | `lark-msg` | 飞书消息、卡片、表情、文件 | [references/lark.md](references/lark.md) |
 | `lark-docs` | 以本人身份读改、新建、移动飞书文档 | 同上 |
 | `lark-owner` | 以本人身份跑 lark-cli 命令：读表格、多维表格、任务、日历、邮件、妙记等（`lark_read`），经批准写表格、多维表格、幻灯片、Markdown 文件、任务和评论（`lark_write`） | 同上 |

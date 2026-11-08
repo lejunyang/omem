@@ -7,7 +7,7 @@ import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile, type RoleName } from "../core/config.ts";
 import { findSpace, kindLabel, relatedSpaces, spaceDir } from "../core/spaces.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError } from "../core/util.ts";
+import { HttpError, json } from "../core/util.ts";
 import { spaceGuide } from "../wiki/store.ts";
 import { executionArgs, validateExecution, type Execution } from "./execution.ts";
 import { resolveRoleProfile } from "./models.ts";
@@ -21,7 +21,7 @@ import { issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { trimTools } from "../auth/tools.ts";
-import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
+import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools } from "./tool-help.ts";
 import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
@@ -342,6 +342,25 @@ export function recordRunAI(app: App, runId: string | null, profile: AgentProfil
   run(app.db, replace ? "update runs set ai = ?, profile_id = ? where id = ?" : "update runs set ai = coalesce(ai, ?), profile_id = coalesce(profile_id, ?) where id = ?", ai, profile.id, runId);
 }
 
+/**
+ * The repositories a coding run works in: a round's own (`repos`, or the worktrees it made), else
+ * those of the round it continues, helps (`helperOf`) or reviews (`codeRunId`).
+ */
+function workRepos(app: App, runId: string | null): string[] {
+  let id = runId;
+  for (let i = 0; id && i < 8; i++) {
+    const r = one<{ input: string; output: string }>(app.db, "select input, output from runs where id = ?", id);
+    if (!r) break;
+    const inp = json<Record<string, unknown>>(r.input, {});
+    const out = json<Record<string, unknown>>(r.output, {});
+    if (Array.isArray(inp.repos) && inp.repos.length) return inp.repos.filter((x): x is string => typeof x === "string");
+    if (Array.isArray(out.worktrees) && out.worktrees.length) return [...new Set((out.worktrees as { space?: string }[]).flatMap((w) => (w.space ? [w.space] : [])))];
+    const next = inp.codeRunId ?? inp.helperOf ?? inp.continueFrom;
+    id = typeof next === "string" ? next : null;
+  }
+  return [];
+}
+
 export function prepareRun(
   app: App,
   input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; replay?: ReplayArm },
@@ -409,16 +428,22 @@ export function prepareRun(
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   const guide = spaceGuide(app, space.id).trim();
+  // A coding run (a round, its reviews and helpers) also gets what its repositories say about themselves.
+  const repos = guest ? [] : workRepos(app, input.runId).filter((id) => id !== space.id).flatMap((id) => findSpace(app, id) ?? []);
+  const repoGuides = repos.map((r) => ({ r, text: spaceGuide(app, r.id).trim() })).filter((g) => g.text).map((g) => `## 仓库 ${g.r.name}（${g.r.id}）的说明（SPACE.md）\n\n${g.text}`).join("\n\n");
+  // Skills mounted on the space, the business it belongs to and the repositories it works in.
+  const parent = space.parentId ? findSpace(app, space.parentId) : null;
+  const mounted = guest ? { text: "", names: [] as string[] } : spaceSkillsText(app, [space, ...(parent ? [parent] : []), ...repos]);
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
   const lessons = guest ? "" : input.lessons ?? learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
-  const skills = guest ? "" : skillIndex(app, spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills);
+  const skills = guest ? "" : skillIndex(app, spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills, mounted.names);
   const agents = roleName === "assistant" && !spec ? agentIndex(app) : "";
   const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
     : `# 角色：${role!.description}\n\n${toolSections(role!.body, tools)}`;
   const common = commonGuide(tools);
-  const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
+  const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
   const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
   return {
@@ -427,7 +452,7 @@ export function prepareRun(
     system,
     // A replay arm answers as of the question's time.
     now: `现在：${localTime(app, input.replay?.view.asOf)}`,
-    parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length },
+    parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
     mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token), ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor(spec?.mcp ?? {}, !!input.replay),

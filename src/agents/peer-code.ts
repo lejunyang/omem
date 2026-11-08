@@ -149,6 +149,16 @@ export type WorkspaceAction = {
   review?: "peer" | "here";
 };
 
+/** Where an outside Agent's delegation takes hand-ins (report_tests): the current round and the folders it may hand in from. */
+export async function peerHandIn(app: App, runId: string, caller: string) {
+  const work = peerWork(app, runId, caller);
+  const art = await import("./artifacts.ts");
+  const round = work.last.id;
+  const multi = work.worktrees.length > 1;
+  const roots = [art.artifactInbox(app, round), ...(multi ? [join(app.runsDir, work.root.id, "work")] : []), ...work.worktrees.map((w) => workDirOf(w))];
+  return { round, rootId: work.root.id, roots, worktrees: work.worktrees };
+}
+
 export async function peerWorkspace(app: App, runId: string, caller: string, a: WorkspaceAction): Promise<string> {
   const work = peerWork(app, runId, caller);
   const { root, worktrees } = work;
@@ -162,6 +172,14 @@ export async function peerWorkspace(app: App, runId: string, caller: string, a: 
         return `- ${w.space}：分支 ${w.branch}（从 ${w.base.slice(0, 8)} 起）${Object.keys(cmds).length ? `\n  可以运行的命令（action=run，command 写名字，args 追加参数）：\n${Object.entries(cmds).map(([k, v]) => `  - ${k}：${v}`).join("\n")}` : "\n  本人没有给这个仓库设可以运行的命令（仓库设置里的检查命令、准备命令、设备 Agent 可运行的命令）"}`;
       }).join("\n");
       const item = input.itemId ? `\n\n${materialsBrief(app, input.itemId, runUser(app, root.id))}` : "";
+      // What the business and its repositories say about how they work: their SPACE.md and the skills mounted on them.
+      const { spaceGuide } = await import("../wiki/store.ts");
+      const { spaceSkillsText } = await import("./specs.ts");
+      const home = root.spaceId ? getSpace(app, root.spaceId) : null;
+      const spaces = [...(home ? [home] : []), ...worktrees.filter((w) => w.space !== home?.id).map((w) => getSpace(app, w.space))];
+      const guides = spaces.map((sp) => ({ sp, text: spaceGuide(app, sp.id).trim() })).filter((g) => g.text).map((g) => `## ${g.sp.name}（${g.sp.id}）的说明（SPACE.md）\n\n${g.text}`).join("\n\n");
+      const mounted = spaceSkillsText(app, spaces).text;
+      const notes = `${guides ? `\n\n${guides}` : ""}${mounted ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前用 read_skill 读全文并照做）\n\n${mounted}` : ""}`;
       // A round queued from here (the owner's fix request) waits for this Agent: its task is the ask.
       const ask = work.last.id !== root.id && work.last.output.verdict === "awaiting-peer-code" ? `
 
@@ -169,7 +187,7 @@ export async function peerWorkspace(app: App, runId: string, caller: string, a: 
 
 ${String(work.last.input.task ?? "")}` : "";
       const reviews = work.all.length > 1 ? `\n\n## 各轮\n\n${work.all.map((r, i) => `- 第 ${i + 1} 轮 ${r.id}：${r.status}${r.output.verdict ? `，${r.output.verdict}` : ""}`).join("\n")}\n\n评审要求修改时，在同一个工作区接着改，再 finish。评审结论用 read_run 看。` : "";
-      return `# 交办 ${root.id}：${root.title}\n\n状态：${stage}\n\n## 任务\n\n${input.task}${item}\n\n## 工作区\n\n${ws || "（还在准备）"}${multi ? "\n\n路径写成 仓库空间id/路径。" : ""}\n\n## 怎么做\n\n用 action=list / read / grep 看代码，write / edit / delete 改文件，run 运行上面的命令，git 看状态、diff、提交（按功能分几次提交，不用 push）。改完用 action=finish 写一段说明：这台机器提交剩下的改动、运行检查命令，再按 review 交给评审（peer = 你自己用 review_task / submit_review 评审，here = 这台机器的评审 Agent）。${reviews}`;
+      return `# 交办 ${root.id}：${root.title}\n\n状态：${stage}\n\n## 任务\n\n${input.task}${item}${notes}\n\n## 工作区\n\n${ws || "（还在准备）"}${multi ? "\n\n路径写成 仓库空间id/路径。" : ""}\n\n## 怎么做\n\n用 action=list / read / grep 看代码，write / edit / delete 改文件，run 运行上面的命令，git 看状态、diff、提交（按功能分几次提交，不用 push）。改完用 action=finish 写一段说明：这台机器提交剩下的改动、运行检查命令，再按 review 交给评审（peer = 你自己用 review_task / submit_review 评审，here = 这台机器的评审 Agent）。跑过的测试用 report_tests（带 run_id）交结果，每个用例写它对应的需求点或测试点 id。${reviews}`;
     }
     case "list": {
       const { dir, rel } = locate(work, a.path ?? (multi ? worktrees[0].space : ""));

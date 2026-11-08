@@ -9,7 +9,7 @@ import { checkFields, checkView, fieldsSchema, viewSchema } from "./ui-blocks.ts
 /** Kept in step with ui-pages.ts PAGE_MAX (imported lazily there). */
 const PAGE_MAX_CHARS = 300_000;
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
@@ -4568,6 +4568,83 @@ def({
     const r = await art.attachPath(ctx.app, ctx.runId, a.path, await artifactRoots(ctx), { caption: a.caption, task, req: a.req ?? null, name: a.name, source: "agent", by: ctx.role ?? ctx.spec ?? "agent" });
     if (!r.made.length) throw new HttpError(400, r.skipped.length ? `没收下：${r.skipped.join("；")}` : `${a.path} 里没有可收的文件`);
     return art.takenText(r);
+  },
+});
+
+def({
+  name: "report_tests",
+  description:
+    "交这一轮跑过的测试结果：每个用例对应哪个需求点或测试点（req，任务里“需求点”一节或 req_read 的 id）、结果、怎么跑的，可带截图、录屏、报告的路径。需求页上每个点显示最近的结果和产物，评审和下一轮拿得到。怎么跑测试、从哪里读结果按这个项目的技能或空间说明；跑一批交一次，重跑后再交一次（按时间取最新）。同一个测试只保留最近 3 次结果的产物。",
+  schema: z.object({
+    tests: z.array(z.object({
+      req: z.string().max(40).optional().describe("对应的需求点或测试点 id（q…）；需求外的测试不填"),
+      name: z.string().min(1).max(300).describe("用例名，和测试代码里的一致"),
+      file: z.string().max(500).optional().describe("测试文件（仓库里的相对路径）"),
+      status: z.enum(["passed", "failed", "skipped"]),
+      mode: z.string().max(40).optional().describe("怎么跑的：如 单元、组件（jsdom）、浏览器、真机、人工"),
+      note: z.string().max(1000).optional().describe("失败时：哪一步、期望什么、实际什么；人工验证写做了什么"),
+      artifacts: z.array(z.string().min(1).max(1000)).max(10).optional().describe("这个用例的截图、录屏、报告：工作区里的路径或 $OMEM_ARTIFACTS 下的文件"),
+    })).min(1).max(200),
+    commit: z.string().max(64).optional().describe("测试跑在哪个提交；不填时宿主按工作区当前的提交记（只有一个仓库时）"),
+    run_id: z.string().optional().describe("只在设备的外部 Agent 编码时填：delegate_code 返回的运行 id"),
+  }),
+  handler: async (ctx, a) => {
+    const art = await import("./artifacts.ts");
+    const rt = await import("../items/req-tests.ts");
+    let runId: string;
+    let roots: string[];
+    let dirs: string[];
+    let by: string;
+    if (ctx.peer) {
+      if (!a.run_id) throw new HttpError(400, "设备的外部 Agent 交测试结果要带 run_id");
+      const { peerHandIn } = await import("./peer-code.ts");
+      const { workDirOf } = await import("./workspaces.ts");
+      const h = await peerHandIn(ctx.app, a.run_id, ctx.peer.caller);
+      runId = h.round;
+      roots = h.roots;
+      dirs = h.worktrees.map((w) => workDirOf(w as import("./worktree-index.ts").WorktreeRef));
+      by = `peer:${ctx.peer.caller}`;
+    } else {
+      if (!ctx.runId) throw new HttpError(400, "report_tests 只能在运行里用");
+      runId = ctx.runId;
+      roots = await artifactRoots(ctx);
+      dirs = roots.slice(1);
+      by = ctx.role ?? ctx.spec ?? "agent";
+    }
+    const me = getRun(ctx.app, runId);
+    const unknown: string[] = [];
+    for (const t of a.tests) {
+      if (!t.req) continue;
+      const n = one<{ space_id: string }>(ctx.app.db, "select space_id from req_nodes where id = ?", t.req);
+      if (!n) unknown.push(t.req);
+      else space(ctx, n.space_id);
+    }
+    if (unknown.length) throw new HttpError(400, `这些需求点 id 不存在：${[...new Set(unknown)].join("、")}；照任务里“需求点”一节或 req_read 的 id 抄，需求外的测试不填 req`);
+    const skipped: string[] = [];
+    const tests = [];
+    for (const t of a.tests) {
+      const made = [];
+      for (const path of t.artifacts ?? []) {
+        try {
+          const r = await art.attachPath(ctx.app, runId, path, roots, { caption: `${t.status === "passed" ? "" : `${rt.TEST_STATUS_LABEL[t.status]} · `}${t.name}`, req: t.req ?? null, source: "agent", by });
+          made.push(...r.made);
+          skipped.push(...r.skipped);
+        } catch (e) {
+          skipped.push(`${path}：${(e as Error).message}`);
+        }
+      }
+      tests.push({ ...t, artifacts: made });
+    }
+    const workId = await art.workOf(ctx.app, runId);
+    let commit = a.commit;
+    const own = dirs.filter((d) => existsSync(join(d, ".git")));
+    if (!commit && own.length === 1) commit = git(own[0], ["rev-parse", "HEAD"]).stdout.trim() || undefined;
+    const round = Number((me.input as { round?: number }).round ?? 1);
+    const results = rt.recordTests(ctx.app, { runId, workId, spaceId: me.spaceId, round, commit, by, tests });
+    const count = (s: string) => results.filter((r) => r.status === s).length;
+    const mapped = results.filter((r) => r.nodeId).length;
+    const files = results.reduce((n, r) => n + r.artifacts.length, 0);
+    return `已记录 ${results.length} 个测试结果（通过 ${count("passed")}，失败 ${count("failed")}，跳过 ${count("skipped")}）${mapped ? `，${mapped} 个对上了需求点` : ""}${files ? `，收下 ${files} 个产物` : ""}。${skipped.length ? `没收的产物：${skipped.slice(0, 5).join("；")}` : ""}`;
   },
 });
 

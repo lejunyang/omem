@@ -1643,3 +1643,11 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - 去掉交互页截图（`lark-ui.ts` 的 `preparePageShots`、`kv` 的 `ui_page_shot:*`）：要服务器装浏览器，流程也绕。`viewCardBlocks(app, view, { linked })`：有链接时交互页不进卡片，由调用方放“打开交互页”按钮；没链接时写一行说明。
 - `lark-asks.ts`：卡片放不下的表单只放“打开填写”按钮，不再把字段列成文字；只有没设网页地址时才列字段让人回复文字。`show` 的卡片里有交互页时按钮是“打开交互页”。链接仍由 `uiLink` 决定：开了 `lark.webApp` 给 AppLink，否则是普通网页链接。
+
+## 2026-11-08：测试结果挂到需求点，技能挂到空间
+
+- `src/items/req-tests.ts`：表 `req_tests`（运行、交办、轮次、提交、用例名、文件、状态、方式、说明、产物 id）；`recordTests` 后 `pruneTest` 让同一个测试（点、文件、用例名）只有最近 3 次结果留着产物；`testState`、`testsText`（阶段评审材料的“测试结果”一节）。
+- 工具 `report_tests`（新分组 `code-results`，`attach_artifact` 从 `code-handin` 移过来；`ROLE_TOOLS`、`PEER_REVIEW_TOOLS`）：校验需求点 id 和空间，产物按 `attachPath` 收（`req` 指向那个点），不填 `commit` 时取唯一仓库工作区的 HEAD。外部 Agent 带 `run_id`（`peerHandIn`）。`roles/coder.md` 加“测试结果”。
+- 空间设置 `skills`（`specs.ts` 的 `spaceSkillNames` / `spaceSkillsText`）：`runner.ts` 按 `workRepos`（交办的 `repos` 或工作区，沿 `codeRunId` / `helperOf` / `continueFrom` 找）把本空间、所属业务、改到的仓库挂的技能单独列一节，`skillIndex` 不再列挂在别的空间上的技能；改到的仓库的 SPACE.md 也进说明；`code_workspace` brief 同样。
+- 产物（`artifacts.ts` 的 `take`）：记内容哈希 `run_artifacts.sha`，同样内容再交时硬链接到已存的文件；没有扩展名的文件按开头字节认出 png / jpg / gif / webp / webm / mp4 / mov / pdf 并补扩展名。
+- 网页：需求树标“测试通过 / 失败 N”，节点详情“测试结果”（`RunArtifacts` 支持直接给 `items`）；设置 → 空间“这个空间的技能”。接口 `GET /api/requirements` 带 `testState`，`GET /api/requirements/:id` 带 `testState`、`testResults`。

@@ -10,6 +10,7 @@ import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import CodeWork, { type ReqFocus, type WorkTab } from "../components/CodeWork.vue";
 import CodeWorkRow from "../components/CodeWorkRow.vue";
+import RunArtifacts, { type Artifact } from "../components/RunArtifacts.vue";
 import type { CodeWork as Work } from "../lib/works";
 import { POINT_STATUS, type ChangePoint } from "../lib/reviews";
 import { confirmDialog, promptDialog } from "../lib/dialog";
@@ -24,15 +25,20 @@ import { pageParam } from "../lib/route";
  */
 type Kind = "system" | "module" | "page" | "feature" | "test";
 type State = { runId: string; round: number; status: string; locations: { file: string; start?: number; end?: number }[]; note: string; at: string };
-type Node = { id: string; spaceId: string; parentId: string | null; kind: Kind; title: string; body: string; acceptance: string; refs: string[]; tests: { file?: string; name?: string }[]; confirmed: boolean; status: "active" | "deleted" | "removed"; version: number; createdBy: string; updatedAt: string; depth: number; state: State | null; links: number; work: { total: number; waiting: number } | null };
+type TestStatus = "passed" | "failed" | "skipped";
+type TestState = { status: TestStatus; passed: number; failed: number; skipped: number; at: string };
+// What a run's agent reported for this point (report_tests, src/items/req-tests.ts), newest first; old results keep no artifacts.
+type TestResult = { id: string; runId: string; workId: string | null; round: number; name: string; file: string; status: TestStatus; mode: string; note: string; commit: string; artifacts: Artifact[]; pruned: boolean; createdBy: string; at: string };
+type Node = { id: string; spaceId: string; parentId: string | null; kind: Kind; title: string; body: string; acceptance: string; refs: string[]; tests: { file?: string; name?: string }[]; confirmed: boolean; status: "active" | "deleted" | "removed"; version: number; createdBy: string; updatedAt: string; depth: number; state: State | null; testState?: TestState | null; links: number; work: { total: number; waiting: number } | null };
 type Version = { id: string; version: number; change: string; title: string; reason: string; sourceRefs: string[]; by: string; runId: string | null; at: string };
 type Link = { id: string; direction: "in" | "out"; note: string; other: { id: string; spaceId: string; kind: Kind; title: string; status: string } | null };
 // The delegations and branch reviews done for the items this node belongs to, as the run page's “编码” lists them (src/agents/code-works.ts).
-type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; works: Work[] };
+type Detail = { node: Node; path: { id: string; kind: Kind; title: string }[]; children: Node[]; versions: Version[]; links: Link[]; state: State | null; works: Work[]; testState: TestState | null; testResults: TestResult[] };
 
 const KIND: Record<Kind, string> = { system: "系统", module: "模块", page: "页面", feature: "功能", test: "测试点" };
 const CHANGE: Record<string, string> = { create: "新建", correct: "更正", change: "业务变更", delete: "删除（写错了）", remove: "移除（业务不要了）", confirm: "本人确认", restore: "恢复" };
 const STATE: Record<string, { text: string; cls: string }> = { done: { text: "已实现", cls: "ok" }, partial: { text: "部分实现", cls: "warn" }, missing: { text: "没实现", cls: "danger" }, extra: { text: "需求外", cls: "" } };
+const TEST: Record<TestStatus, { text: string; cls: string }> = { passed: { text: "通过", cls: "ok" }, failed: { text: "失败", cls: "danger" }, skipped: { text: "跳过", cls: "" } };
 const CHILD_KINDS: Record<Kind | "root", Kind[]> = { root: ["system", "module", "page", "feature"], system: ["module", "page", "feature"], module: ["module", "page", "feature"], page: ["feature"], feature: ["feature", "test"], test: ["test"] };
 
 const route = useRoute();
@@ -79,6 +85,20 @@ const extraPoints = computed(() => workPoints.value.filter((p) => !p.req && !p.p
 const live = computed(() => (detail.value?.works ?? []).filter((w) => w.stage.group !== "ended"));
 const past = computed(() => (detail.value?.works ?? []).filter((w) => w.stage.group === "ended"));
 const showPast = ref(false);
+/** The latest result of each test (file, name), and the earlier ones. */
+const latestTests = computed(() => {
+  const seen = new Set<string>();
+  return (detail.value?.testResults ?? []).filter((r) => {
+    const k = `${r.file}
+${r.name}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+});
+const olderTests = computed(() => { const latest = new Set(latestTests.value.map((r) => r.id)); return (detail.value?.testResults ?? []).filter((r) => !latest.has(r.id)); });
+const showOlderTests = ref(false);
+const reloadDetail = () => void loadDetail();
 /** The item of the open delegation, for the path above it; kept while another of its rounds opens. */
 const openedItem = ref<string | null>(null);
 watch([workId, () => detail.value?.works], () => {
@@ -377,6 +397,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
               <span v-if="pointsByNode.get(n.id)" class="badge" :class="POINT_STATUS[pointsByNode.get(n.id)!].cls">{{ POINT_STATUS[pointsByNode.get(n.id)!].text }}</span>
             </template>
             <span v-else-if="n.state && STATE[n.state.status]" class="badge" :class="STATE[n.state.status].cls">{{ STATE[n.state.status].text }}</span>
+            <span v-if="n.testState" class="badge" :class="TEST[n.testState.status].cls" :title="`测试：通过 ${n.testState.passed}，失败 ${n.testState.failed}，跳过 ${n.testState.skipped}`">测试{{ n.testState.status === "failed" ? `失败 ${n.testState.failed}` : TEST[n.testState.status].text }}</span>
             <span v-if="n.work?.waiting" class="badge accent" :title="`${n.work.waiting} 次编码或评审等你处理`">等你 {{ n.work.waiting }}</span>
             <span v-else-if="n.work?.total" class="muted wk" :title="`${n.work.total} 次编码或评审进行中`"><Icon name="code" :size="13" /></span>
             </button>
@@ -480,6 +501,30 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
           <div class="block-head"><strong>最近一次评审</strong><span class="badge" :class="STATE[detail.state.status]?.cls">{{ STATE[detail.state.status]?.text ?? detail.state.status }}</span><router-link :to="`/runs/${detail.state.runId}`" class="small">第 {{ detail.state.round }} 轮</router-link><span class="muted small">{{ relTime(detail.state.at) }}</span></div>
           <div v-if="detail.state.locations.length" class="small mono">{{ detail.state.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end ? `-${l.end}` : ""}` : ""}`).join("、") }}</div>
           <div v-if="detail.state.note" class="small">{{ detail.state.note }}</div>
+        </section>
+
+        <section v-if="detail.testResults.length" class="block">
+          <div class="block-head"><strong>测试结果</strong><span v-if="detail.testState" class="badge" :class="TEST[detail.testState.status].cls">{{ TEST[detail.testState.status].text }}</span><span class="muted small">每个测试最近一次的结果；编码 Agent 用 report_tests 交的</span></div>
+          <div v-for="r in latestTests" :key="r.id" class="test">
+            <div class="row wrap">
+              <span class="badge" :class="TEST[r.status].cls">{{ TEST[r.status].text }}</span>
+              <span class="small mono ellipsis grow" :title="[r.file, r.name].filter(Boolean).join(' › ')">{{ [r.file, r.name].filter(Boolean).join(" › ") }}</span>
+              <span v-if="r.mode" class="muted small">{{ r.mode }}</span>
+              <router-link :to="`/runs/${r.runId}`" class="small">第 {{ r.round }} 轮</router-link>
+              <span class="muted small">{{ relTime(r.at) }}</span>
+            </div>
+            <div v-if="r.note" class="small pre">{{ r.note }}</div>
+            <RunArtifacts v-if="r.artifacts.length" :items="r.artifacts" @changed="reloadDetail" />
+          </div>
+          <button v-if="olderTests.length" type="button" class="lnk small" :aria-expanded="showOlderTests" @click="showOlderTests = !showOlderTests">{{ showOlderTests ? "收起" : `更早的 ${olderTests.length} 次结果` }}</button>
+          <template v-if="showOlderTests">
+            <div v-for="r in olderTests" :key="r.id" class="row wrap small">
+              <span class="badge" :class="TEST[r.status].cls">{{ TEST[r.status].text }}</span>
+              <span class="mono ellipsis grow">{{ [r.file, r.name].filter(Boolean).join(" › ") }}</span>
+              <router-link :to="`/runs/${r.runId}`">第 {{ r.round }} 轮</router-link>
+              <span class="muted">{{ relTime(r.at) }}{{ r.pruned ? " · 产物已清理" : "" }}</span>
+            </div>
+          </template>
         </section>
 
         <section v-if="detail.node.body" class="block"><div class="block-head"><strong>{{ detail.node.kind === "test" ? "场景" : "需求" }}</strong></div><Markdown :source="detail.node.body" :space="detail.node.spaceId" /></section>
@@ -780,4 +825,7 @@ const unlink = (to: string) => apply([{ op: "unlink", id: selectedId.value, to }
     padding: 12px 16px 32px;
   }
 }
+.test { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--line); }
+.test:first-of-type { border-top: 0; }
+.test .pre { white-space: pre-wrap; }
 </style>

@@ -43,7 +43,7 @@ export const PEER_DENY = new Set([
  * reviewer (no model here is asked), and it reads and hands in the review through these;
  * delegate_code from another device makes it the coder, working through code_workspace.
  */
-export const PEER_REVIEW_TOOLS = ["review_task", "submit_review", "submit_change_points", "code_workspace"];
+export const PEER_REVIEW_TOOLS = ["review_task", "submit_review", "submit_change_points", "code_workspace", "report_tests"];
 
 /** Tools that only read (the same list `omem mcp --read-only` offers). */
 export const READ_ONLY_TOOLS = new Set(["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);

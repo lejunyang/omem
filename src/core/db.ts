@@ -1526,6 +1526,32 @@ export const migrations: readonly string[] = [
     primary key (id, version)
   );
   create index ui_pages_conversation on ui_pages(conversation_id);`,
+  // Test results per requirement / test point (src/items/req-tests.ts): what a run's agent ran and
+  // how it went, with the artifacts it handed in for it (only the latest few results keep theirs).
+  // An artifact file's content hash: the same file handed in again is a link to the stored one.
+  `create table req_tests (
+    id text primary key,
+    node_id text,
+    space_id text,
+    run_id text not null,
+    work_id text,
+    round integer not null default 1,
+    name text not null,
+    file text not null default '',
+    status text not null,
+    mode text not null default '',
+    note text not null default '',
+    commit_sha text not null default '',
+    artifacts text not null default '[]',
+    pruned integer not null default 0,
+    created_by text not null default '',
+    at text not null
+  );
+  create index req_tests_node on req_tests(node_id, at);
+  create index req_tests_run on req_tests(run_id);
+  create index req_tests_work on req_tests(work_id);
+  alter table run_artifacts add column sha text;
+  create index run_artifacts_sha on run_artifacts(sha);`,
 ];
 
 export type Db = DatabaseSync;

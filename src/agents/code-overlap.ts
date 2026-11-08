@@ -245,7 +245,7 @@ export async function verifyGroup(app: App, o: { run: Run; check: string; tasks:
       indexed: scope.indexed,
       runId: o.runId,
       signal: o.signal,
-      addTools: ["verify_tasks", "attach_artifact"],
+      addTools: ["verify_tasks", "attach_artifact", "report_tests"],
       onEvent: (e) => o.event(e.type, { ...e, phase: "reviewer", check: o.check, verify: true }),
     });
   } catch (e) {

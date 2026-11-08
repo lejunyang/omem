@@ -17,13 +17,19 @@ export type Artifact = {
 };
 type Data = { workId: string | null; artifacts: Artifact[]; perTask: Record<string, number>; tasks?: Record<string, string> };
 
-const props = defineProps<{ runId: string; task?: number | null }>();
-const emit = defineEmits<{ count: [n: number]; task: [seq: number | null] }>();
+/** `items`: show these (a test point's results) instead of loading a run's; no grouping by task. */
+const props = defineProps<{ runId?: string; task?: number | null; items?: Artifact[] }>();
+const emit = defineEmits<{ count: [n: number]; task: [seq: number | null]; changed: [] }>();
 
 const data = ref<Data | null>(null);
 const failed = ref("");
 let seq = 0;
 async function load() {
+  if (props.items) {
+    data.value = { workId: null, artifacts: props.items, perTask: {} };
+    return;
+  }
+  if (!props.runId) return;
   const mine = ++seq;
   try {
     const d = await get<Data>(`/api/runs/${props.runId}/artifacts`);
@@ -36,9 +42,10 @@ async function load() {
   }
 }
 watch(() => props.runId, () => { data.value = null; void load(); }, { immediate: true });
+watch(() => props.items, () => void load());
 let timer: ReturnType<typeof setTimeout> | null = null;
 const off = onServerEvent((e) => {
-  if (e.type !== "run") return;
+  if (e.type !== "run" || props.items) return;
   if (timer) clearTimeout(timer);
   timer = setTimeout(load, 800);
 });
@@ -106,9 +113,10 @@ function key(e: KeyboardEvent) {
 async function remove(a: Artifact) {
   if (!(await confirmDialog("删除这个产物？", { message: `${a.name}${a.caption ? `（${a.caption}）` : ""}，文件一起删掉，不能恢复。`, okText: "删除", danger: true }))) return;
   try {
-    await del(`/api/runs/${props.runId}/artifacts/${a.id}`);
+    await del(`/api/runs/${props.runId ?? a.runId}/artifacts/${a.id}`);
     if (open.value?.id === a.id) close();
-    await load();
+    if (props.items) emit("changed");
+    else await load();
   } catch (e) {
     toast((e as Error).message);
   }
@@ -119,14 +127,14 @@ async function remove(a: Artifact) {
   <div class="artifacts">
     <Skeleton v-if="!data && !failed" variant="cards" :rows="3" />
     <p v-else-if="failed" class="empty-tab">产物没能读出来：{{ failed }}</p>
-    <p v-else-if="!shown.length" class="empty-tab">
+    <p v-else-if="!shown.length && !items" class="empty-tab">
       <template v-if="task != null">T{{ task }} 还没有截图、录屏或报告。<button class="btn ghost sm" @click="emit('task', null)">看全部</button></template>
       <template v-else>还没有截图、录屏或报告。编码 Agent 和检查命令把文件放进 <code>$OMEM_ARTIFACTS</code>（放在 <code>T&lt;编号&gt;/</code> 下就归到那一项），或用 <code>attach_artifact</code> 交上来，这里就能看到。</template>
     </p>
     <template v-else>
       <div v-if="task != null" class="row small muted filter">只看 T{{ task }} 的 <button class="btn ghost sm" @click="emit('task', null)">看全部</button></div>
       <section v-for="g in groups" :key="g.key" class="group">
-        <div class="section-title">{{ g.label }} · {{ g.list.length }}</div>
+        <div v-if="!items" class="section-title">{{ g.label }} · {{ g.list.length }}</div>
         <div class="grid">
             <article v-for="a in g.list" :key="a.id" class="tile">
               <button class="thumb" :aria-label="`打开 ${base(a.name)}`" @click="show(a)">

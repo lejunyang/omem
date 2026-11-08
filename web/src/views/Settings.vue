@@ -67,6 +67,12 @@ const newSpace = ref({ name: "", kind: "project", rootPath: "", description: "" 
 const creatingSpace = ref(false);
 const editing = ref<Space | null>(null);
 const guide = ref("");
+/** Skills a space can mount (settings.skills): its own way of doing things, offered to runs there. */
+const skillOptions = ref<{ value: string; label: string; hint?: string }[]>([]);
+const spaceSkills = computed<string[]>({
+  get: () => (Array.isArray(editing.value?.settings.skills) ? (editing.value!.settings.skills as string[]) : []),
+  set: (v) => { if (editing.value) editing.value.settings.skills = v; },
+});
 const profileJson = ref("");
 type Policy = "ingest" | "involved" | "store" | "skip";
 const larkChats = ref<{ chatId: string; name: string; mode: string; kind: string; muted: boolean; policy: Policy }[]>([]);
@@ -359,6 +365,7 @@ async function openSpace(s: Space) {
   newRelated.value = { space: "", note: "" };
   slots.value = [];
   guide.value = (await get<{ guide: string }>(`/api/spaces/${s.id}`)).guide;
+  if (!skillOptions.value.length) skillOptions.value = (await get<{ name: string; description: string; status: string }[]>("/api/skills").catch(() => [])).map((k) => ({ value: k.name, label: k.status === "draft" ? `${k.name}（草稿）` : k.name, hint: k.description }));
   if (s.rootPath) slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
 }
 type WorkspaceSlot = { path: string; state: "free" | "leased" | "invalid" | "dirty"; run?: string; branch?: string | null; reason?: string };
@@ -1278,6 +1285,11 @@ async function saveEdit() {
           <span class="hint">移除 Agent 发现的关联后，它不会再被自动加回。</span>
         </div>
         <label class="field"><span>空间指南（SPACE.md，Agent 每次工作前都会读）</span><textarea v-model="guide" class="textarea mono" rows="10" /></label>
+        <div class="field">
+          <span>这个空间的技能</span>
+          <UiSelect v-model="spaceSkills" multiple width="320px" aria-label="这个空间的技能" placeholder="不挂技能" :options="skillOptions" />
+          <span class="hint">这里的做法写成技能（数据目录的 library/_skills，不放进仓库），挂到空间上：在这个空间里的运行、改到这个仓库的编码和评审会先看到它，别的空间不提供。比如这个仓库怎么跑测试、用例里怎么写需求点 id、怎么把结果交给 report_tests。</span>
+        </div>
         <UiCheckbox :model-value="editing.settings.autoIngest !== false && (editing.kind !== 'repo' || editing.settings.autoIngest === true)" @change="(v) => (editing!.settings.autoIngest = v)">新材料保存后让助理整理（更新记忆、事项、相关页面）</UiCheckbox>
         <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /><span class="hint">每轮编码结束后宿主在工作区运行，结果交给评审，评审不再自己跑测试。命令里可以用环境变量 OMEM_BASE（这次改动的起点提交），如用 <code>git diff --name-only $OMEM_BASE</code> 只测改到的部分。</span></label>
         <template v-if="editing.rootPath">

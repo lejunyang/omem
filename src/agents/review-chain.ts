@@ -125,6 +125,9 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const checked = preCheckOf(app, root);
   const art = await import("./artifacts.ts");
   const shots = branchReview ? [] : await art.listArtifacts(app, run.id);
+  const rt = await import("../items/req-tests.ts");
+  const tests = branchReview ? [] : rt.testsOfWork(app, { workId: (await art.workOf(app, run.id)) ?? run.id });
+  const shotPath = new Map(shots.map((a) => [a.id, art.artifactPath(app, a)]));
   const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
     input.itemId ? materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
@@ -134,6 +137,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
     `## 检查结果\n\n${checkText}`,
     checked ? preCheckText(checked, "review") : "",
+    tests.length ? `## 测试结果\n\n编码 Agent 用 report_tests 交的（每个测试取最近一次；是它自己报的，和检查结果、diff 对照着看）：\n\n${rt.testsText(app, tests, { artifactPath: (id) => shotPath.get(id) ?? null })}` : "",
     shots.length ? `## 截图、录屏和报告\n\n编码 Agent 和检查命令交的（T 编号是对应的修改项），文件在这台机器上，需要时打开看：\n\n${art.artifactsText(app, shots)}` : "",
     ignored ? `## 提交了被忽略的文件\n\n仓库的 .gitignore 忽略这些文件（生成代码、依赖、构建产物），改动却把它们加进了提交：\n\n${ignored}\n\n重新安装或生成时它们会被覆盖；除非任务要求入库，这是要改的问题。` : "",
     `## ${since ? "上次评审以后的改动统计" : "改动统计"}\n\n${statText}`,
@@ -280,7 +284,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       cwd,
       signal: rc.signal,
       // Screenshots of what it checked; not the artifacts folder, which is the coder's (the checks share its run).
-      addTools: ["attach_artifact"],
+      addTools: ["attach_artifact", "report_tests"],
       onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check: name }),
       profileId: info.builtin ? app.config.agents.roles[name] : undefined,
       // A check of a task-driven delegation keeps one session: it remembers what it raised and why.

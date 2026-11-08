@@ -5,7 +5,8 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { commitLibrary, fileHistory } from "../core/git.ts";
 import { roleNames } from "../core/config.ts";
-import { HttpError } from "../core/util.ts";
+import { HttpError, json } from "../core/util.ts";
+import { all } from "../core/db.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
 
 /**
@@ -314,20 +315,46 @@ export function deleteSkill(app: App, name: string, actor: "user" | "agent" = "u
   commitLibrary(app.libraryDir, `${actor}: delete skill ${name}`);
 }
 
-/** The progressive-disclosure index handed to agents: names and when to use, bodies on demand. */
-/** `names`: only these (an agent spec's skills); `first`: all, these listed first and marked (a role's regular ones). */
 /**
- * The skills a run is told about. `names`: its own (a profile's or a role's regular skills), each with
- * its description; the rest only by name, so a specialist does not carry every runbook's summary.
- * Without `names` (the main assistant, which hands work out) every skill is described.
+ * Skills mounted on a space (its settings' `skills`): how this business or repository does things
+ * (its test and requirement conventions, its scripts), kept in the data folder rather than the
+ * repository. Runs in the space, and coding runs that touch the repository, get them first; other
+ * runs are not offered them.
  */
-export function skillIndex(app: App, names?: string[]) {
-  const all = listSkills(app).filter((s) => skillUsable(app, s));
-  const line = (s: (typeof all)[number]) => `- ${s.name}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`;
-  if (!names) return all.map(line).join("\n");
-  const own = all.filter((s) => names.includes(s.name));
-  const rest = all.filter((s) => !names.includes(s.name));
-  return [...own.map(line), ...(rest.length ? [`- 其他技能（用到时 read_skill 读全文）：${rest.map((s) => s.name).join("、")}`] : [])].join("\n");
+export function spaceSkillNames(settings: Record<string, unknown> | undefined): string[] {
+  const v = settings?.skills;
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+}
+
+/** Every skill some space has mounted (offered only where it is mounted). */
+function boundSkills(app: App): Set<string> {
+  const rows = all<{ settings: string }>(app.db, "select settings from spaces where settings like '%\"skills\"%'");
+  return new Set(rows.flatMap((r) => spaceSkillNames(json(r.settings, {}))));
+}
+
+const skillLine = (s: Skill) => `- ${s.name}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`;
+
+/**
+ * The skills a run is told about. `names`: its own (a profile's or a role's regular skills), each
+ * with its description; the rest only by name, so a specialist does not carry every runbook's
+ * summary. Without `names` (the main assistant, which hands work out) every skill is described. `mounted`: the skills of the run's spaces, which go in their own
+ * section (spaceSkillsText) and so are left out here; skills mounted on other spaces are left out too.
+ */
+export function skillIndex(app: App, names?: string[], mounted: string[] = []) {
+  const bound = boundSkills(app);
+  const list = listSkills(app).filter((s) => skillUsable(app, s) && !mounted.includes(s.name) && (!bound.has(s.name) || names?.includes(s.name)));
+  if (!names) return list.map(skillLine).join("\n");
+  const own = list.filter((s) => names.includes(s.name));
+  const rest = list.filter((s) => !names.includes(s.name));
+  return [...own.map(skillLine), ...(rest.length ? [`- 其他技能（用到时 read_skill 读全文）：${rest.map((s) => s.name).join("、")}`] : [])].join("\n");
+}
+
+/** The skills mounted on these spaces, each with the spaces it is for. */
+export function spaceSkillsText(app: App, spaces: { id: string; name: string; settings: Record<string, unknown> }[]): { text: string; names: string[] } {
+  const by = new Map<string, string[]>();
+  for (const sp of spaces) for (const n of spaceSkillNames(sp.settings)) by.set(n, [...(by.get(n) ?? []), sp.name]);
+  const skills = listSkills(app).filter((s) => by.has(s.name) && skillUsable(app, s));
+  return { text: skills.map((s) => `${skillLine(s)}　用于：${by.get(s.name)!.join("、")}`).join("\n"), names: skills.map((s) => s.name) };
 }
 
 export function agentIndex(app: App) {

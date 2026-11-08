@@ -132,7 +132,7 @@ async function runHelper(app: App, roundRunId: string, rootId: string, h: Helper
     const where = h.worktrees.map((w) => round.where(w.slot ?? w.path, w)).join("\n");
     const res = await runRole(app, {
       role: "coder",
-      addTools: ["finish_task", "report_task", "ask_reviewer", "attach_artifact"],
+      addTools: ["finish_task", "report_task", "ask_reviewer", "attach_artifact", "report_tests"],
       artifacts: true,
       execution: round.execution,
       spaceId: getRun(app, roundRunId).spaceId!,

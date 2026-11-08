@@ -1097,7 +1097,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const links = all<{ node: string; n: number }>(app.db, `select node, count(*) n from (select from_id node from req_links union all select to_id node from req_links) where node in (select id from req_nodes where space_id = ?) group by node`, spaceId);
     const linkCount = new Map(links.map((l) => [l.node, l.n]));
     const work = (await import("../items/work.ts")).reqWorkMarks(app, spaceId, who(req));
-    return { nodes: nodes.map((n) => ({ ...n, state: states.get(n.id) ?? null, links: linkCount.get(n.id) ?? 0, work: work.get(n.id) ?? null })) };
+    const rt = await import("../items/req-tests.ts");
+    const tests = rt.testsOf(app, nodes.map((n) => n.id), 20);
+    return { nodes: nodes.map((n) => ({ ...n, state: states.get(n.id) ?? null, testState: rt.testState(tests.get(n.id) ?? []), links: linkCount.get(n.id) ?? 0, work: work.get(n.id) ?? null })) };
   });
   server.get("/api/requirements/:id", async (req) => {
     const { reqDetail } = await import("../items/requirements.ts");
@@ -1108,7 +1110,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const work = (await import("../items/work.ts")).reqWork(app, d.node.id, who(req));
     // The same entries as the run page's “编码” view (src/agents/code-works.ts), with the item each was done for.
     const works = (await import("../agents/code-works.ts")).listCodeWorks(app, { roots: work.map((w) => w.rootId), ended: true });
-    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)), work, works };
+    // Test results (items/req-tests.ts): the latest of each test, then earlier ones, with their kept artifacts.
+    const rt = await import("../items/req-tests.ts");
+    const { artifactsByIds } = await import("../agents/artifacts.ts");
+    const results = rt.testsOf(app, [d.node.id], 60).get(d.node.id) ?? [];
+    const shots = new Map(artifactsByIds(app, [...new Set(results.flatMap((r) => r.artifacts))]).map((a) => [a.id, a]));
+    const testResults = results.map((r) => ({ ...r, artifacts: r.artifacts.flatMap((id) => shots.get(id) ?? []) }));
+    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)), work, works, testState: rt.testState(results), testResults };
   });
   server.post("/api/requirements", async (req) => {
     const { reqOpSchema, saveReqs } = await import("../items/requirements.ts");
