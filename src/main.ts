@@ -85,6 +85,9 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   const app = App.open(home);
   ensurePersonalSpace(app);
   ensureDefaultSchedules(app);
+  // Built-in roles copied only to attach a skill follow the source again (builtin-roles.ts).
+  const { simplifyRoleCopies } = await import("./agents/builtin-roles.ts");
+  for (const n of simplifyRoleCopies(app)) console.log(`[omem] 内置角色 ${n} 只多挂了技能或工具：改成叠加设置，以后跟着源码更新`);
   for (const s of listSpaces(app)) syncWiki(app, s.id);
   sweepWorktreeSpaces(app);
   const { seedBuiltinSkills } = await import("./agents/specs.ts");

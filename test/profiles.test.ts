@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { customizeRole, listRoleStates, mergeRole, resetRole, roleOverrideText, roleSourceText, roleState, saveRoleOverride } from "../src/agents/builtin-roles.ts";
+import { customizeRole, listRoleStates, mergeRole, resetRole, roleOverrideText, roleSourceText, roleState, saveRoleOverride, simplifyRoleCopies } from "../src/agents/builtin-roles.ts";
 import { applyProposal, createProposal, rejectProposal } from "../src/agents/proposals.ts";
 import { reviewTask } from "../src/agents/profile-jobs.ts";
 import { profileDetail } from "../src/agents/profiles.ts";
@@ -91,7 +91,7 @@ describe("built-in roles as profiles", () => {
     app.db.close();
   });
 
-  it("teaches a built-in role: its own memories reach its runs, skills attach to its copy", async () => {
+  it("teaches a built-in role: its own memories reach its runs, skills attach without copying it", async () => {
     const app = testApp();
     const main = ctxFor(app);
     const r = await callTool(main, "remember", { kind: "preference", content: "评审 TypeScript 改动时先看类型是否被 any 绕过。", agent: "reviewer" });
@@ -102,7 +102,9 @@ describe("built-in roles as profiles", () => {
     const s = await callTool(main, "save_skill", { name: "ts-review", description: "TypeScript 评审清单", body: "1. 看 any。\n2. 看 as。", agent: "reviewer" });
     expect(s.text).toMatch(/挂到 reviewer/);
     expect(loadRole("reviewer", app).skills).toEqual(["ts-review"]);
-    expect(roleOverrideText(app, "reviewer")).toMatch(/^skills: \[ts-review\]$/m);
+    // Attached on top of the source: no copy that would need merging when the source changes.
+    expect(roleOverrideText(app, "reviewer")).toBeNull();
+    expect(roleState(app, "reviewer")).toMatchObject({ customized: false, overlay: { skills: { add: ["ts-review"], remove: [] } } });
     // A reviewer run is told its own preference and lists its skill first; another role is not.
     app.baseUrl = "http://127.0.0.1:1";
     const rev = prepareRun(app, { actor: { role: "reviewer" }, spaceId: "personal", runId: null });
@@ -118,6 +120,25 @@ describe("built-in roles as profiles", () => {
     expect((await callTool(ctxFor(app, { role: "tutor" }), "recall", {})).text).toBe("没有相关记忆。");
     // A spec cannot take a role's name.
     expect(() => saveAgentSpec(app, { name: "reviewer", description: "x", prompt: "y" }, "user")).toThrow(/内置角色/);
+    app.db.close();
+  });
+
+  it("turns a copy made only to attach a skill into an overlay, so the role follows the source again", () => {
+    const app = testApp();
+    customizeRole(app, "reviewer");
+    const copy = roleOverrideText(app, "reviewer")!;
+    // What attaching a skill used to do: the whole role copied with one more frontmatter line.
+    saveRoleOverride(app, "reviewer", copy.replace(/^---\n/, "---\nskills: [ts-review]\n"));
+    expect(roleState(app, "reviewer").customized).toBe(true);
+    expect(simplifyRoleCopies(app)).toEqual(["reviewer"]);
+    expect(roleOverrideText(app, "reviewer")).toBeNull();
+    const role = loadRole("reviewer", app);
+    expect(role.skills).toEqual(["ts-review"]);
+    expect(role.customized).toBe(false);
+    // A copy with its own text stays a copy, and keeps the skill on top.
+    saveRoleOverride(app, "reviewer", `${roleSourceText("reviewer")}\n多看一眼测试。\n`);
+    expect(simplifyRoleCopies(app)).toEqual([]);
+    expect(loadRole("reviewer", app)).toMatchObject({ customized: true, skills: ["ts-review"] });
     app.db.close();
   });
 

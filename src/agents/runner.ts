@@ -23,7 +23,7 @@ import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { trimTools } from "../auth/tools.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools } from "./tool-help.ts";
-import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
+import { applyOverlay, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
@@ -41,7 +41,7 @@ function relatedGuide(related: { space: string; name: string; kind: string; note
 }
 export type Role = { name: string; description: string; tools: string[]; writes: boolean; modes: string[]; skills: string[]; body: string; customized: boolean };
 
-function parseRole(name: string, raw: string, customized: boolean): Role {
+function parseRole(name: string, raw: string, customized: boolean, overlay?: RoleOverlay): Role {
   // Windows checkouts may have CRLF line endings.
   const text = raw.replace(/\r\n/g, "\n");
   const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
@@ -49,10 +49,10 @@ function parseRole(name: string, raw: string, customized: boolean): Role {
   return {
     name,
     description: meta.description ?? "",
-    tools: expandTools(meta.tools ?? []),
+    tools: expandTools(overlay ? applyOverlay(meta.tools ?? [], overlay.tools) : (meta.tools ?? [])),
     writes: !!meta.writes,
     modes: meta.modes ?? [],
-    skills: meta.skills ?? [],
+    skills: overlay ? applyOverlay(meta.skills ?? [], overlay.skills) : (meta.skills ?? []),
     body: m ? text.slice(m[0].length) : text,
     customized,
   };
@@ -62,17 +62,21 @@ const roleCache = new Map<string, Role>();
 /** A built-in role: the owner's customized copy in the library when there is one, else the package's. */
 export function loadRole(name: string, app?: App): Role {
   const own = app && isBuiltinRole(name) ? roleOverrideText(app, name) : null;
+  // Skills and tools the owner added on top, whichever version is in use (builtin-roles.ts).
+  const overlay = app && isBuiltinRole(name) ? roleOverlay(app, name) : undefined;
+  const adjusted = !!overlay && !overlayEmpty(overlay);
   if (own !== null) {
     try {
-      return parseRole(name, own, true);
+      return parseRole(name, own, true, overlay);
     } catch (e) {
       console.warn(`[omem] 自定义角色 ${name} 无法解析，改用源码版本：${(e as Error).message}`);
     }
   }
   const cached = roleCache.get(name);
-  if (cached && process.env.NODE_ENV === "production") return cached;
+  if (cached && !adjusted && process.env.NODE_ENV === "production") return cached;
   const file = join(rolesDir(), `${name}.md`);
   if (!existsSync(file)) throw new HttpError(400, `未知角色：${name}`);
+  if (adjusted) return parseRole(name, readFileSync(file, "utf8"), false, overlay);
   const role = parseRole(name, readFileSync(file, "utf8"), false);
   roleCache.set(name, role);
   return role;

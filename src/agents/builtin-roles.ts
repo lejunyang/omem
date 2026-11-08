@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { roleNames } from "../core/config.ts";
 import { commitLibrary, fileHistory, git } from "../core/git.ts";
-import { TOOL_GROUPS, unknownGroups } from "./tool-help.ts";
+import { expandTools, TOOL_GROUPS, unknownGroups } from "./tool-help.ts";
 import { HttpError } from "../core/util.ts";
 
 /**
@@ -68,10 +68,37 @@ function roleBaseText(app: App, name: string): string | null {
   return existsSync(f) ? readFileSync(f, "utf8").replace(/\r\n/g, "\n") : null;
 }
 
+/**
+ * Skills and tools the owner added to or took from a built-in role, kept apart from its text
+ * (_roles/<name>.overlay.yaml): they apply to whichever version is in use, so a source update reaches
+ * the role without a merge. Only editing the role's text makes a full copy.
+ */
+export type RoleOverlay = { skills: { add: string[]; remove: string[] }; tools: { add: string[]; remove: string[] } };
+const overlayFile = (app: App, name: string) => join(dir(app), `${name}.overlay.yaml`);
+export function roleOverlay(app: App, name: string): RoleOverlay {
+  const f = overlayFile(app, check(name));
+  const o = (existsSync(f) ? YAML.parse(readFileSync(f, "utf8")) : null) as Partial<RoleOverlay> | null;
+  const list = (x?: { add?: unknown; remove?: unknown }) => ({ add: Array.isArray(x?.add) ? x.add.map(String) : [], remove: Array.isArray(x?.remove) ? x.remove.map(String) : [] });
+  return { skills: list(o?.skills), tools: list(o?.tools) };
+}
+export const applyOverlay = (list: string[], d: { add: string[]; remove: string[] }) => [...new Set([...list.filter((x) => !d.remove.includes(x)), ...d.add])];
+const diffList = (from: string[], to: string[]) => ({ add: to.filter((x) => !from.includes(x)), remove: from.filter((x) => !to.includes(x)) });
+export const overlayEmpty = (o: RoleOverlay) => !o.skills.add.length && !o.skills.remove.length && !o.tools.add.length && !o.tools.remove.length;
+function writeOverlay(app: App, name: string, o: RoleOverlay) {
+  const f = overlayFile(app, name);
+  if (overlayEmpty(o)) rmSync(f, { force: true });
+  else {
+    mkdirSync(dir(app), { recursive: true });
+    writeFileSync(f, YAML.stringify(o));
+  }
+}
+
 export type RoleState = {
   name: string;
   description: string;
   customized: boolean;
+  /** Skills and tools added or taken out on top of the version in use (no copy needed). */
+  overlay: RoleOverlay;
   /** The source changed since the copy was made: reset or merge to pick it up. */
   sourceChanged: boolean;
 };
@@ -85,7 +112,7 @@ export function roleState(app: App, name: string): RoleState {
   const source = roleSourceText(name);
   const own = roleOverrideText(app, name);
   const base = own === null ? null : roleBaseText(app, name);
-  return { name, description: describe(own ?? source), customized: own !== null, sourceChanged: own !== null && base !== null && hash(base) !== hash(source) };
+  return { name, description: describe(own ?? source), customized: own !== null, overlay: roleOverlay(app, name), sourceChanged: own !== null && base !== null && hash(base) !== hash(source) };
 }
 
 export function listRoleStates(app: App) {
@@ -124,8 +151,20 @@ export function saveRoleOverride(app: App, name: string, text: string, actor: "u
   return roleState(app, name);
 }
 
-/** Change only the frontmatter of the customized copy (e.g. attach a skill), copying first. */
+/**
+ * Change a role's skills or tools (attaching a skill, an approved proposal): recorded in its overlay,
+ * so the role keeps following the source. Anything else in the frontmatter changes the copy (made first).
+ */
 export function updateRoleMeta(app: App, name: string, patch: (meta: z.infer<typeof roleMetaSchema>) => z.infer<typeof roleMetaSchema>, actor: "user" | "agent" = "agent") {
+  const current = parseRoleText(roleOverrideText(app, name) ?? roleSourceText(name)).meta;
+  const o = roleOverlay(app, name);
+  const wanted = patch({ ...current, skills: applyOverlay(current.skills, o.skills), tools: applyOverlay(current.tools, o.tools) });
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  if (same(wanted.description, current.description) && same(wanted.writes, current.writes) && same(wanted.modes, current.modes)) {
+    writeOverlay(app, name, { skills: diffList(current.skills, wanted.skills), tools: diffList(current.tools, wanted.tools) });
+    commitLibrary(app.libraryDir, `${actor}: adjust skills and tools of built-in role ${name}`);
+    return roleState(app, name);
+  }
   const text = customizeRole(app, name, actor);
   const { meta, body } = parseRoleText(text);
   const next = patch(meta);
@@ -143,7 +182,7 @@ function frontmatter(meta: Record<string, unknown>) {
     .join("\n");
 }
 
-/** Back to the source version: the customized copy is removed (its history stays in Git). */
+/** Back to the source version: the customized copy is removed (its history stays in Git); added skills and tools stay. */
 export function resetRole(app: App, name: string, actor: "user" | "agent" = "user") {
   check(name);
   rmSync(join(dir(app), `${name}.md`), { force: true });
@@ -193,6 +232,36 @@ export function resolveRoleMerge(app: App, name: string, text: string, actor: "u
   commitLibrary(app.libraryDir, `${actor}: merge source changes into built-in role ${name}`);
   return roleState(app, name);
 }
+
+/**
+ * A copy that differs from the version it was made from only in skills and tools (made by attaching a
+ * skill before overlays existed) becomes an overlay, and the role follows the source again.
+ */
+export function simplifyRoleCopy(app: App, name: string) {
+  const own = roleOverrideText(app, name);
+  const base = own === null ? null : roleBaseText(app, name);
+  if (own === null || base === null) return false;
+  let a, b;
+  try {
+    a = parseRoleText(own);
+    b = parseRoleText(base);
+  } catch {
+    return false;
+  }
+  const same = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
+  if (a.body.trim() !== b.body.trim() || !same(a.meta.description, b.meta.description) || !same(a.meta.writes, b.meta.writes) || !same(a.meta.modes, b.meta.modes)) return false;
+  const o = roleOverlay(app, name);
+  const merge = (d: { add: string[]; remove: string[] }, e: { add: string[]; remove: string[] }) => ({ add: [...new Set([...d.add, ...e.add])].filter((x) => !e.remove.includes(x)), remove: [...new Set([...d.remove, ...e.remove])].filter((x) => !e.add.includes(x)) });
+  // Tools spelled out next to groups that already hold them (left by older merges) add nothing.
+  const covered = new Set(expandTools(b.meta.tools));
+  const tools = diffList(b.meta.tools, a.meta.tools);
+  writeOverlay(app, name, { skills: merge(o.skills, diffList(b.meta.skills, a.meta.skills)), tools: merge(o.tools, { add: tools.add.filter((t) => !covered.has(t)), remove: tools.remove }) });
+  rmSync(join(dir(app), `${name}.md`), { force: true });
+  rmSync(join(baseDir(app), `${name}.md`), { force: true });
+  commitLibrary(app.libraryDir, `omem: built-in role ${name} only had added skills or tools; keep them as an overlay and follow the source`);
+  return true;
+}
+export const simplifyRoleCopies = (app: App) => roleNames.filter((n) => existsSync(join(dir(app), `${n}.md`)) && simplifyRoleCopy(app, n));
 
 export function roleHistory(app: App, name: string) {
   return fileHistory(app.libraryDir, `_roles/${check(name)}.md`, 30);

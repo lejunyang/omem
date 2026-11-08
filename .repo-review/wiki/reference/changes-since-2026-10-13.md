@@ -1561,6 +1561,7 @@ updated: 2026-11-08
 ## 2026-11-08：设置页分组；平台工具只给连了平台的人
 
 - 设置拆出“连接”（`tab=connect`）：本人的飞书文档与个人消息采集（从“渠道”移来）和其他平台（`ProviderApps.vue` 自己加载、虚拟滚动、每行有说明：授权页连接要建应用，填 key 连接的由成员各自填 key，开放后才出现在账号页）。“渠道”只留机器人与聊天渠道（OneBot 卡片改名“QQ / 微信 机器人”）；“成员”去掉平台应用，登录方式链接到连接页；网页地址移到“设备”。设置页跟随 `?tab=` 变化切换标签。国内平台的用途分组改成社交媒体、聊天与通讯。
+- 内置角色的技能和工具改成叠加设置：`updateRoleMeta`（挂技能、批准的增减工具建议）只写 `_roles/<名>.overlay.yaml`，`loadRole` 叠在源码或自定义副本上，源码更新不用合并；改说明正文或其他字段才复制。启动时 `simplifyRoleCopies` 把“和它所基于的版本只差技能 / 工具”的旧副本转成叠加设置并删掉副本。`RoleState.overlay`。
 - 工具 `available`（`dropUnavailable` 在 runner 里按这次运行的人去掉）；插件工具 `whenConnected`（含隔离运行的插件）：连了本插件某个连接器才给。`TOOL_GROUPS` 加 `connect`（由同名插件填充，说明 `skills/omem/references/connect.md`），主助手带 `group:connect`；连接插件去掉侧栏页，`connect-collector` 留作档案。
 
 ## 2026-11-07：网页版 VS Code 打开交办工作区不再问信任
