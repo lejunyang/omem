@@ -107,7 +107,7 @@ describe("component blocks", () => {
     expect(getAsk(app, ask.id)).toMatchObject({ status: "answered", value: { plan: "a", when: "2026-12-01", notify: true, rules: { r1: { choice: "通过" }, r2: { choice: "不通过", note: "运费不退" } } } });
   });
 
-  it("a form too big for a card lists what to fill in and links to its page", async () => {
+  it("a form too big for a card is only a link to its page", async () => {
     const { app, thread, ctx } = working("lark");
     app.config.webUrl = "https://omem.example.test/";
     const items = Array.from({ length: 20 }, (_, i) => ({ id: `r${i}`, title: `规则 ${i}` }));
@@ -115,7 +115,7 @@ describe("component blocks", () => {
     const ask = listAsks(app, { conversationId: thread.id })[0];
     const card = JSON.stringify(askCard(app, ask));
     expect(card).not.toContain('"tag":"form"');
-    expect(card).toContain("逐条确认退款规则（必填）");
+    expect(card).not.toContain("逐条确认退款规则（必填）");
     expect(card).toContain(`https://omem.example.test/#/ui/${ask.id}`);
   });
 

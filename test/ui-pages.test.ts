@@ -84,7 +84,7 @@ describe("interactive pages", () => {
     await callTool(ctx, "ask_user", { question: "选哪种？", view: [{ type: "page", id }], wait_seconds: 0 });
     const ask = listAsks(app, { conversationId: thread.id })[0];
     const card = JSON.stringify(askCard(app, ask));
-    expect(card).toContain("交互页“原型”");
+    expect(card).not.toContain("交互页“原型”");
     expect(card).toContain(`https://omem.example.test/#/ui/${ask.id}`);
     expect(card).toContain("打开交互页");
   });

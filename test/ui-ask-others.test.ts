@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerAsk, describeAnswer, getAsk, listAsks } from "../src/agents/asks.ts";
+import { answerAsk, createAsk, describeAnswer, getAsk, listAsks } from "../src/agents/asks.ts";
 import { normalizeAnswers, summarizeAnswers, type UiField } from "../src/agents/ui-blocks.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createThread, threadMessages } from "../src/agents/threads.ts";
@@ -39,12 +39,21 @@ describe("ordering, editable tables", () => {
     expect(cardFields(fields)).toBeNull();
     expect(cardFields([{ id: "x", label: "x", type: "text", required: false }])).toHaveLength(1);
   });
-  it("a page's screenshot, once taken, goes into the card", () => {
+  it("a card cannot run a page: with a link it is left to the button, without one it is named", () => {
     const app = testApp();
     const view = [{ type: "page" as const, id: "pg1", title: "原型" }];
     expect(JSON.stringify(viewCardBlocks(app, view))).toContain("交互页“原型”：在网页上打开才能操作");
-    run(app.db, "insert into kv(key, value) values(?, ?)", "ui_page_shot:pg1:latest:main", "img_v3_demo");
-    expect(viewCardBlocks(app, view)).toEqual([{ image: "img_v3_demo", alt: "原型" }, { note: "交互页“原型”的截图，打开后才能操作" }]);
+    expect(viewCardBlocks(app, view, { linked: true })).toEqual([]);
+  });
+  it("a form too much for a card is only a link when there is a web address", () => {
+    const app = testApp();
+    app.config.webUrl = "https://omem.example.test";
+    const ask = createAsk(app, { runId: null, conversationId: null, question: "排个序", ui: { fields } });
+    const card = JSON.stringify(askCard(app, ask));
+    expect(card).toContain("打开填写");
+    expect(card).not.toContain("要填的");
+    app.config.webUrl = "";
+    expect(JSON.stringify(askCard(app, ask))).toContain("要填的");
   });
 });
 

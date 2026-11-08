@@ -1,5 +1,5 @@
 import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
-import { preparePageShots, viewCardBlocks, viewTarget } from "./lark-ui.ts";
+import { viewCardBlocks, viewTarget } from "./lark-ui.ts";
 import { fieldsText, normalizeAnswers, type UiField } from "../agents/ui-blocks.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
@@ -87,10 +87,11 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
   if (ask.askedBy) blocks.unshift({ note: `${cardText(userName(app, ask.askedBy))} 的助手替 ta 问你，回答会交给 ta。` });
   // What the agent showed with the question comes first, as text (docs/v2/interactive-ui.md).
   if (ask.ui?.view?.length) {
-    blocks.push(...viewCardBlocks(app, ask.ui.view));
-    // An interactive page is used on the web: the card links to the question's page.
+    // An interactive page is used on the web: the card only links to the question's page.
     const link = uiLink(app, ask.id);
-    if (ask.status === "pending" && ask.ui.view.some((c) => c.type === "page") && /^https?:/.test(link)) blocks.push({ buttons: [{ text: "打开交互页", url: link, style: "primary" }] });
+    const web = /^https?:/.test(link);
+    blocks.push(...viewCardBlocks(app, ask.ui.view, { linked: web }));
+    if (web && ask.ui.view.some((c) => c.type === "page")) blocks.push({ buttons: [{ text: "打开交互页", url: link, style: "primary" }] });
   }
   const at = ask.kind === "suggestion" ? "" : cardMentions([opts.mention]);
   if (at) {
@@ -115,9 +116,9 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
       if (JSON.stringify(card).length <= CARD_FORM_MAX) return card;
       blocks.length = base;
     }
-    blocks.push({ markdown: `要填的：\n${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` });
-    if (web) blocks.push({ buttons: [{ text: "打开填写", url: link, style: "primary" }] });
-    blocks.push({ note: web ? "也可以直接回复文字。" : "在 omem 网页上填写，或直接回复文字（设置 → 渠道 填网页地址后这里会有链接）。" });
+    // Too much for a card: just the link. Without a web address the fields are listed to answer in text.
+    if (web) blocks.push({ buttons: [{ text: "打开填写", url: link, style: "primary" }] }, { note: "也可以直接回复文字。" });
+    else blocks.push({ markdown: `要填的：\n${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` }, { note: "在 omem 网页上填写，或直接回复文字（设置 → 渠道 填网页地址后这里会有链接）。" });
     return buildCard({ title: TITLE.question, color: "blue", blocks });
   }
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
@@ -179,14 +180,15 @@ function larkUserIdOf(app: App, userId: string) {
 /** A view shown under a reply (`show`), as a card of its own after the reply. */
 export function viewCard(app: App, view: { id: string; title: string; components: Parameters<typeof viewCardBlocks>[1] }) {
   const link = uiLink(app, view.id);
-  return buildCard({ ...(view.title ? { title: view.title } : {}), color: "grey", blocks: [...viewCardBlocks(app, view.components), ...(/^https?:/.test(link) ? [{ buttons: [{ text: "在网页上查看", url: link }] }] : [])] });
+  const web = /^https?:/.test(link);
+  const page = view.components.some((c) => c.type === "page");
+  return buildCard({ ...(view.title ? { title: view.title } : {}), color: "grey", blocks: [...viewCardBlocks(app, view.components, { linked: web }), ...(web ? [{ buttons: [page ? { text: "打开交互页", url: link, style: "primary" as const } : { text: "在网页上查看", url: link }] }] : [])] });
 }
 
 export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined) {
   addViewSink(async (app, view) => {
     const to = viewTarget(app, view.conversationId);
     if (!to) return false;
-    await preparePageShots(app, view.components, to.bot ?? "main");
     await sendLark(to, { card: viewCard(app, view) });
     return true;
   });
@@ -198,7 +200,6 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       const who = ask.userId === OWNER ? larkOwnerOpenId(app, to.bot) : to.bot === "main" ? larkOpenIdOf(app, ask.userId) : larkUserIdOf(app, ask.userId);
       const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
       // In a group the card says whose turn it is; a private chat needs no @.
-      await preparePageShots(app, ask.ui?.view, to.bot);
       const card = askCard(app, ask, { mention: to.chatId && !larkPrivateChat(app, to.chatId) ? who : null });
       const bind = (value: unknown): void => {
         if (!value || typeof value !== "object") return;
