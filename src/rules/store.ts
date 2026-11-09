@@ -7,6 +7,7 @@ import { HttpError, json, newId, now } from "../core/util.ts";
 import { readAgentSpec } from "../agents/specs.ts";
 import { validateExecution } from "../agents/execution.ts";
 import { fieldsOf } from "./conditions.ts";
+import { checkWaitRule } from "./fast.ts";
 import { ruleInputSchema, type Rule, type RuleAction, type RuleInput, type Temporary } from "./types.ts";
 import { OWNER } from "../core/users.ts";
 
@@ -120,10 +121,14 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
       if (a.fullAccess === undefined && had.includes(a.spec)) a.fullAccess = true;
     }
     // Where a rule forwards to (and may add the bot or make a group as the owner) is the owner's pick too.
-    const targets = (before ? JSON.parse(before.actions) as RuleAction[] : []).flatMap((a) => (a.type === "forward" ? [a.to.chatId] : []));
-    for (const a of r.actions) if (a.type === "forward" && !targets.includes(a.to.chatId) && !(opts.ownerAsked && !input.temporary)) throw new HttpError(403, "转发的目标要本人亲自指定（规则页，或本人在对话里要求的这一轮）：可能要以本人身份拉机器人进群或建群");
+    const target = (a: Extract<RuleAction, { type: "forward" }>) => (a.to.kind === "origin" ? "origin" : a.to.chatId);
+    const targets = (before ? JSON.parse(before.actions) as RuleAction[] : []).flatMap((a) => (a.type === "forward" ? [target(a)] : []));
+    for (const a of r.actions) if (a.type === "forward" && !targets.includes(target(a)) && !(opts.ownerAsked && !input.temporary)) throw new HttpError(403, "转发的目标要本人亲自指定（规则页，或本人在对话里要求的这一轮）：可能要以本人身份拉机器人进群或建群");
   }
   if (r.actions.some((a) => a.type === "forward") && r.trigger.event !== "message") throw new HttpError(400, "转发只用于“新消息”触发：要有一条消息可转发");
+  for (const a of r.actions) if (a.type === "forward" && a.to.kind !== "origin" && !a.to.chatId) throw new HttpError(400, "转发要选一个目标会话");
+  checkWaitRule(r);
+  if (r.trigger.fast && r.trigger.event !== "message") throw new HttpError(400, "快速检查只用于新消息规则");
   if (r.actions.at(-1)?.type === "delay") throw new HttpError(400, "延时后面要有动作");
   if (r.actions.at(-1)?.type === "check") throw new HttpError(400, "模型判断后面要有动作：它决定后面的动作做不做");
   if (r.spaceId) getSpace(app, r.spaceId);

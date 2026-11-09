@@ -16,10 +16,11 @@ import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./ty
  * Hand one event to every enabled rule that listens for it. Sources call this and forget it:
  * nothing here throws back at the capture or the bot.
  */
-export async function dispatchRuleEvent(app: App, e: RuleEvent) {
+/** `only`: the rules this event is for (the fast check reaches only rules set to it, fast.ts). */
+export async function dispatchRuleEvent(app: App, e: RuleEvent, only?: (r: Rule) => boolean) {
   let rules: Rule[];
   try {
-    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind && inScope(app, r, e));
+    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind && inScope(app, r, e) && (!only || only(r)));
   } catch {
     return;
   }

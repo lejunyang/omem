@@ -130,6 +130,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       if (app.config.lark.commands.enabled)
         import("./channels/lark-commands.ts").then((m) => m.pollOwnerCommands(app)).catch((e) => console.warn("[omem] 读取私聊指令失败：", e.message));
     }, 60_000).unref();
+    // Rules set to check every minute (a login code someone asks for): the owner's search, not the capture.
+    setInterval(() => {
+      import("./rules/fast.ts").then((m) => m.pollFastRules(app)).catch((e) => console.warn("[omem] 规则快速检查失败：", e.message));
+    }, 60_000).unref();
     // Documents rules watch that the bot cannot subscribe to: checked on the rule's schedule instead.
     setInterval(() => {
       import("./channels/lark-doc-events.ts").then((m) => m.pollRuleDocs(app)).catch((e) => console.warn("[omem] 定时检查规则盯的文档失败：", e.message));

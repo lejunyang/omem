@@ -121,8 +121,23 @@ export const actionSchema = z.discriminatedUnion("type", [
    */
   z.object({
     type: z.literal("forward"),
-    to: z.object({ chatId: z.string().trim().min(1), name: z.string().default(""), kind: z.enum(["group", "p2p"]) }),
+    /** `origin`: back to the chat the trigger came from (a reply under it in a group; for a private chat, a group with that person). */
+    to: z.object({ chatId: z.string().trim().default(""), name: z.string().default(""), kind: z.enum(["group", "p2p", "origin"]) }),
     note: z.string().default(""),
+  }),
+  /**
+   * Wait for a new message in another chat (a code bot's private chat): it is read every 10 seconds for
+   * up to `minutes`; the first one after the trigger that matches (`contains`, or the regex `matches`)
+   * is what the actions after this pass on. None in time: tell the owner (`onTimeout: notify`) or nothing.
+   */
+  z.object({
+    type: z.literal("wait-message"),
+    chatId: z.string().trim().min(1),
+    name: z.string().default(""),
+    minutes: z.number().int().min(1).max(30).default(5),
+    contains: z.string().default(""),
+    matches: z.string().default(""),
+    onTimeout: z.enum(["notify", "none"]).default("notify"),
   }),
   z.object({ type: z.literal("capture") }),
   z.object({ type: z.literal("notify"), urgent: z.boolean().default(false) }),
@@ -195,6 +210,11 @@ export const ruleInputSchema = z.object({
      * in the topic, or in the chat around it); answered — someone already replied. Either skips.
      */
     unless: z.array(z.enum(["owner-engaged", "answered"])).default([]),
+    /**
+     * Check every minute (fast.ts) instead of waiting for the capture (every 10 minutes or so): the
+     * owner's searches for group messages that @ them and for private-chat messages. Message rules only.
+     */
+    fast: z.boolean().optional(),
   }).default({ event: "message", once: "event", waitMinutes: 0, unless: [] }),
   conditions: conditionSchema.nullable().default(null),
   judge: z.enum(["code", "ai", "code+ai"]).default("code"),
@@ -229,4 +249,6 @@ export type RuleEvent = {
   via: "bot" | "capture" | "schedule" | "test" | "meeting" | "doc";
   /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */
   bot?: string;
+  /** The message a “wait for a message” step got (fast.ts); the actions after it use it as what to pass on. */
+  awaited?: { chatId: string; chatName: string; id: string; text: string; sender: string; at: string };
 };

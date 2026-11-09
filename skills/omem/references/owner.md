@@ -30,6 +30,7 @@
 - 会议动作 `meeting-bot.confirm` 可写 true（始终询问）、false（直接加入）或会议条件。比如“30 人及以上先问，否则直接拉”：整条规则 `conditions=null`，动作 `confirm={"field":"meeting.participantCount","op":"gte","value":"30"}`；若还限定会议标题，标题才放整条规则的 `conditions`。确认条件支持 all / any / not，只能用会议字段；数据未知时先问本人，按本次触发的数据判断。一次 `save_rule` 就能保存这条规则。
 - 定时任务 `reply=auto` 发回结果会话，`none` 通知本人，`draft` 的群消息先给本人确认。
 
+- 要几分钟内响应的（验证码之类，看的是群里 @ 本人或私聊）：`trigger.fast: true`，条件里写 `message.text contains` 的词（它就是每分钟搜的词）。要等另一个会话（验证码机器人的私聊）的新消息再转回给提问的人：`{"type":"wait-message","chatId":…,"minutes":5,"contains":"验证码"}` 后接 `{"type":"forward","to":{"kind":"origin"}}`；建议条件里限定发送人或群。
 - `forward`（转发到）的目标只能在本人亲自要求的那一轮新加或改（“转到这个群”写 `to: {"chatId": "current"}`，别的会话先 `list_lark_chats` 查 chat_id）；其他时候改规则把目标原样带上。
 - Agent 动作的 `fullAccess`（完全访问）只有本人能在规则页打开，`save_rule` 不能打开它；改规则时照原样带上或不写（不写保留原值）。
 - Agent 动作的 `hideThinking=true` 只隐藏过程气泡，成功的 `reply` 独立；`failureTo` 可选 `owner`（默认）或 `chat`。规则任务失败时调用 `report_rule_failure(summary)`，不要自行选择通知对象；宿主按本次规则保存的设置投递，并抑制重复最终回答。只能在本次规则运行里用。

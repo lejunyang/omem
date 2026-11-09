@@ -24,7 +24,8 @@ type Action =
   | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string }; fullAccess?: boolean }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
-  | { type: "forward"; to: { chatId: string; name: string; kind: "group" | "p2p" }; note: string }
+  | { type: "forward"; to: { chatId: string; name: string; kind: "group" | "p2p" | "origin" }; note: string }
+  | { type: "wait-message"; chatId: string; name: string; minutes: number; contains: string; matches: string; onTimeout: "notify" | "none" }
   | { type: "capture" }
   | { type: "notify"; urgent: boolean }
   | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; importShared: boolean; leaveWithOwner: boolean }
@@ -38,7 +39,7 @@ type Rule = {
   name: string;
   description: string;
   enabled: boolean;
-  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc"; docs?: string[]; pollMinutes?: number; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
+  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc"; docs?: string[]; pollMinutes?: number; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[]; fast?: boolean };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
   judgeWith?: "decision" | "general";
@@ -204,7 +205,7 @@ async function remove() {
 }
 
 // ---- actions ------------------------------------------------------------------------
-const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", forward: "转发到", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会", delay: "延时", check: "模型判断", script: "执行脚本" };
+const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", forward: "转发到", "wait-message": "等某个会话的新消息", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会", delay: "延时", check: "模型判断", script: "执行脚本" };
 const replyOptions = [
   { value: "none", label: "只告诉我" },
   { value: "draft", label: "先给我看" },
@@ -266,6 +267,7 @@ function addAction(type: string | null) {
     : type === "watch" ? { type, spec, on: "mention", reply: "draft" }
     : type === "notify" ? { type, urgent: false }
     : type === "forward" ? { type, to: { chatId: "", name: "", kind: "group" }, note: "" }
+    : type === "wait-message" ? { type, chatId: "", name: "", minutes: 5, contains: "", matches: "", onTimeout: "notify" }
     : type === "meeting-bot" ? meetingAction()
     : type === "delay" ? { type, minutes: 30 }
     : type === "check" ? { type, question: "" }
@@ -307,10 +309,20 @@ function setConfirmation(a: Extract<Action, { type: "meeting-bot" }>, mode: stri
   touch();
 }
 /** Captured chats a rule can forward to: groups, and people's private chats (a group is made for those). */
-const forwardOptions = computed(() => options.value.chats.map((c) => ({ value: c.chat_id, label: `${c.chat_mode === "p2p" ? "私聊" : "群"} · ${c.name}` })));
+const targetChats = computed(() => options.value.chats.map((c) => ({ value: c.chat_id, label: `${c.chat_mode === "p2p" ? "私聊" : "群"} · ${c.name}` })));
+const ORIGIN = "__origin";
+const forwardOptions = computed(() => [{ value: ORIGIN, label: "回到触发的会话（等到消息后）" }, ...targetChats.value]);
 function setForwardTarget(a: Extract<Action, { type: "forward" }>, chatId: string) {
-  const c = options.value.chats.find((x) => x.chat_id === chatId);
-  a.to = { chatId, name: c?.name ?? "", kind: c?.chat_mode === "p2p" ? "p2p" : "group" };
+  if (chatId === ORIGIN) a.to = { chatId: "", name: "", kind: "origin" };
+  else {
+    const c = options.value.chats.find((x) => x.chat_id === chatId);
+    a.to = { chatId, name: c?.name ?? "", kind: c?.chat_mode === "p2p" ? "p2p" : "group" };
+  }
+  touch();
+}
+function setWaitChat(a: Extract<Action, { type: "wait-message" }>, chatId: string) {
+  a.chatId = chatId;
+  a.name = options.value.chats.find((x) => x.chat_id === chatId)?.name ?? "";
   touch();
 }
 const addOptions = computed(() =>
@@ -319,7 +331,7 @@ const addOptions = computed(() =>
     // Without a chat (a schedule, a document change) only what needs none.
     .filter((t) => !(scheduleOnly.value || docRule.value) || ["agent", "notify", "delay", "check", "script"].includes(t))
     // Forwarding needs a message to forward.
-    .filter((t) => t !== "forward" || form.value?.trigger.event === "message")
+    .filter((t) => !["forward", "wait-message"].includes(t) || form.value?.trigger.event === "message")
     .map((t) => ({ value: t as string | null, label: ACTION_LABEL[t], hint: (t === "invite-bot" || t === "forward") && !options.value.botReady ? "需要先配置飞书机器人" : t === "script" && !isOwner.value ? "只有本人能保存带脚本的规则" : "" })),
 );
 
@@ -540,6 +552,7 @@ function startFrom(text: string) {
               分钟再处理</label>
             <UiCheckbox v-model="form.trigger.unless" value="owner-engaged" size="sm" @change="touch">我已在这段讨论里就跳过</UiCheckbox>
             <UiCheckbox v-model="form.trigger.unless" value="answered" size="sm" @change="touch">已有人回复就跳过</UiCheckbox>
+            <UiCheckbox :model-value="!!form.trigger.fast" size="sm" title="每分钟用你的身份搜一次群里 @ 你和私聊的消息（按条件里“正文包含”的词搜），不等平常的采集" @change="(v) => ((form!.trigger.fast = v || undefined), touch())">快速检查（每分钟）</UiCheckbox>
           </div>
           <small v-if="form.trigger.event === 'message'" class="muted">“每个群只一次”适合拉机器人、开始监听这类一次就够的事。等待和跳过在动手前看一眼这段讨论：你在话题里或半小时内在群里说过话，算“已在讨论里”。</small>
           <small v-else-if="form.trigger.event === 'schedule'" class="muted">cron 写法：分 时 日 月 周，例如 0 9 * * 1-5 是工作日早上 9 点。</small>
@@ -687,10 +700,25 @@ function startFrom(text: string) {
             </template>
             <template v-else-if="a.type === 'forward'">
               <div class="row wrap">
-                <UiSelect :model-value="a.to.chatId" size="sm" width="300px" :search-at="8" :options="forwardOptions" placeholder="转发到哪个群或私聊" aria-label="转发目标" @update:model-value="(v) => setForwardTarget(a, String(v || ''))" />
+                <UiSelect :model-value="a.to.kind === 'origin' ? ORIGIN : a.to.chatId" size="sm" width="300px" :search-at="8" :options="forwardOptions" placeholder="转发到哪个群或私聊" aria-label="转发目标" @update:model-value="(v) => setForwardTarget(a, String(v || ''))" />
               </div>
               <input v-model="a.note" class="input" placeholder="附言（可选），会写在转发内容前面" @input="touch" />
-              <small class="muted">{{ a.to.kind === "p2p" ? "机器人不能在私聊里发言：第一次转发时用你的身份建一个你、对方和机器人的群，之后都发到这个群。" : "用机器人发到这个群，带上来源和发送人；机器人不在群里时先用你的身份把它拉进去。" }}{{ options.botReady ? "" : "还没配置飞书机器人。" }}</small>
+              <small class="muted">{{ a.to.kind === "origin" ? "把前面“等某个会话的新消息”等到的那条发回给提问的人：群里回复在触发的消息下（机器人不在群里先用你的身份拉进去）；私聊则用你的身份建一个你、对方和机器人的群发进去，之后同一个人复用这个群。" : a.to.kind === "p2p" ? "机器人不能在私聊里发言：第一次转发时用你的身份建一个你、对方和机器人的群，之后都发到这个群。" : "用机器人发到这个群，带上来源和发送人；机器人不在群里时先用你的身份把它拉进去。" }}{{ options.botReady ? "" : "还没配置飞书机器人。" }}</small>
+            </template>
+            <template v-else-if="a.type === 'wait-message'">
+              <div class="row wrap">
+                <UiSelect :model-value="a.chatId" size="sm" width="300px" :search-at="8" :options="targetChats" placeholder="等哪个会话（比如验证码机器人的私聊）" aria-label="等哪个会话" @update:model-value="(v) => setWaitChat(a, String(v || ''))" />
+                <label class="row inline small">最多等
+                  <input v-model.number="a.minutes" class="input sm num" type="number" inputmode="numeric" min="1" max="30" aria-label="最多等几分钟" @input="touch" />
+                  分钟</label>
+              </div>
+              <div class="row wrap">
+                <input v-model="a.contains" class="input sm" placeholder="要包含的词，比如 验证码" aria-label="要包含的词" @input="touch" />
+                <input v-model="a.matches" class="input sm mono" placeholder="或正则，比如 \d{4,6}" aria-label="正则" @input="touch" />
+                <span class="small">没等到时</span>
+                <UiSegmented :model-value="a.onTimeout" size="sm" :options="[{ value: 'notify', label: '通知我' }, { value: 'none', label: '不做' }]" aria-label="没等到时" @update:model-value="(v: any) => ((a.onTimeout = v), touch())" />
+              </div>
+              <small class="muted">触发后每 10 秒读一次这个会话，等触发之后的第一条符合的新消息；等到了，后面的动作处理这一条（比如“转发到 · 回到触发的会话”）。</small>
             </template>
             <p v-else-if="a.type === 'invite-bot'" class="muted small">以你的身份把 omem 的机器人加进这个群（只加机器人，不发消息）。{{ options.botReady ? "" : "还没配置飞书机器人。" }}</p>
             <p v-else class="muted small">把这个群设为与你有关：立刻采集一次，之后每次都读并交给整理（免打扰的群也读）。</p>

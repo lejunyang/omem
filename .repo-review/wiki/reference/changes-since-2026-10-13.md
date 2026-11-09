@@ -1716,3 +1716,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - 会议结束后的结论投递到本人和机器人的私聊会话（`ownerChatThread`），飞书发送跟着会话的 `lastTopicId` 回复，本人上一条消息在私聊的某个话题里时结论就进了那个话题。会后那一轮的输入带 `topLevel`，`jobs.ts` 投递时带上，`lark-bot.ts` 的发送直接发到私聊本身，并把会话的 `lastTopicId` 清掉、`lastMessageId` 换成这条（下一步卡片跟着它）。回归：`test/lark-answers.test.ts`。
 - 下一步（suggestion）卡片在飞书上一律带输入框和“按我写的做”：选一项时写的话接在那项后面一起说，不选只写也行（`answerAsk` 合并 `option.message` 和文字）。回归：`test/asks.test.ts`。
+
+## 2026-11-09：规则的快速检查、“等某个会话的新消息”、转发回触发的会话
+
+- 本人要的场景：有人在群里 @ 或私聊要验证码，5 分钟内验证码机器人发来新码就自动发给他。原来私聊和没有机器人的群只靠采集（常驻服务器上每 10 分钟），赶不上；规则也不能等另一个会话的消息。
+- `rules/fast.ts`：`pollFastRules`（`main.ts` 每分钟；只在有勾了 `trigger.fast` 的启用规则时搜，`+messages-search` 群里 @ 本人 + 私聊，`--query` 取条件里 `message.text contains` 的词，kv `rule_fast_since_ms`，往前多看 2 分钟，`dispatchRuleEvent` 加 `only` 只交给这些规则）；`waitThenAct`（`wait-message` 动作排 `rule-fire` 运行，每 10 秒 `+chat-messages-list` 读目标会话，触发之后第一条符合的作为 `RuleEvent.awaited`，`fireAfterWait` 接着做后面的动作；超时按 `onTimeout`）。
+- `forward`：`awaited` 时转发等到的那条；`to.kind=origin` 回到触发的会话（群：机器人回复在触发消息下，必要时以本人身份拉机器人；私聊：对触发消息的发送人以本人身份建群并记住）。保存检查：`checkWaitRule`、`origin` 也算转发目标（非本人要求的一轮不能新加）。规则页：快速检查勾选、“等某个会话的新消息”编辑、“回到触发的会话”。AGENTS.md 的本人身份写操作清单跟着改。回归：`test/rule-fast.test.ts`。

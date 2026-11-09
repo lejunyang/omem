@@ -23,6 +23,8 @@ const ACTIONS = `动作（按顺序执行，至少一个）：
 - {"type":"watch","spec":"档案名","on":"all|mention|keyword","pattern":"关键词正则（keyword 时）","reply":"none|draft|auto"}：开始监听这个群，之后的消息交给它
 - {"type":"invite-bot"}：以本人身份把 omem 的机器人拉进这个群
 - {"type":"forward","to":{"chatId":"current 或 oc_ 开头的会话 id","name":"会话名"},"note":"附言"}：只用于新消息触发。把触发的消息转发到 to（“转到这个群”写 current，即本人说话的这个飞书会话）；群里没有机器人时以本人身份拉进去，to 是某人的私聊时以本人身份建一个本人、对方和机器人的群
+- {"type":"wait-message","chatId":"oc_ 开头的会话 id","name":"会话名","minutes":5,"contains":"要包含的词","matches":"正则（可空）","onTimeout":"notify|none"}：只用于新消息触发。等那个会话（比如验证码机器人的私聊）出现触发之后的新消息，最多 minutes 分钟，每 10 秒读一次；等到了，后面的动作处理等到的这条（forward 转发的就是它），没等到按 onTimeout 通知本人或不做
+- forward 的 to 也可以是 {"kind":"origin"}：回到触发的会话（群里回复在触发消息下，私聊则以本人身份建一个本人、对方和机器人的群），只在 wait-message 后面用
 - {"type":"capture"}：把这个群设为与本人有关，立刻采集一次
 - {"type":"notify","urgent":false}：通知本人
 - {"type":"delay","minutes":分钟数}：后面的动作过这么久再做（“半小时后再提醒”“第二天早上再处理”）
@@ -42,7 +44,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     `本人的规则：${description}`,
     current ? `\n当前版本（在它的基础上改，本人没提到的部分保持不变）：${JSON.stringify(current)}` : "",
     "",
-    "JSON 结构：{\"name\": \"十个字以内的名字\", \"trigger\": {\"event\": \"message|chat-new|schedule|meeting|doc\", \"docs\": [\"doc 规则要盯的文档链接（本人给了链接才写）\"], \"once\": \"event|chat\", \"cron\": \"定时规则的 cron\", \"waitMinutes\": 等几分钟再处理（默认 0）, \"unless\": [\"owner-engaged\", \"answered\"] 中要跳过的情况}, \"conditions\": 条件或 null, \"judge\": \"code|ai|code+ai\", \"judgeWith\": \"decision|general\", \"actions\": [...]}",
+    "JSON 结构：{\"name\": \"十个字以内的名字\", \"trigger\": {\"event\": \"message|chat-new|schedule|meeting|doc\", \"docs\": [\"doc 规则要盯的文档链接（本人给了链接才写）\"], \"once\": \"event|chat\", \"cron\": \"定时规则的 cron\", \"waitMinutes\": 等几分钟再处理（默认 0）, \"unless\": [\"owner-engaged\", \"answered\"] 中要跳过的情况, \"fast\": 要不要每分钟快速检查（true/false）}, \"conditions\": 条件或 null, \"judge\": \"code|ai|code+ai\", \"judgeWith\": \"decision|general\", \"actions\": [...]}",
     "",
     LANGUAGE,
     "",
@@ -56,6 +58,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     "- 能用条件说清楚的都写成条件（群名、发送人、关键词、@ 本人、消息类型），judge 用 code；条件说不清的部分（“报警需要关注”“问题是我们负责的”）用 code+ai：条件先缩小范围，模型再确认；完全没有可写的条件才用 ai。",
     "- judgeWith 默认 decision（有决策模型时用它做模型判断：快、便宜，只给是/否）；本人要求模型读完讨论、写理由，或者判断需要综合很多上下文时写 general。",
     "- 拉机器人、开始监听这类对一个群做一次就够的，trigger.once 用 chat；每条消息都要处理的用 event。",
+    "- 本人要求很快响应（几分钟内、验证码之类）且规则看的是群里 @ 本人或私聊的消息：trigger.fast 写 true（每分钟用本人身份搜一次，条件里 message.text contains 的词就是搜的词）。",
     "- 本人说“没人回应/超时没人理再处理”：waitMinutes 写等待的分钟数，unless 加 answered。说“我已经在跟进/在讨论时不要插手”：unless 加 owner-engaged（本人在这个话题里说过话，或半小时内在群里说过话就跳过）。",
     "- 本人说“静默排查”“有结论再发”：agent 动作的 reply 用 silent。只要求隐藏思考气泡、不输出过程时，用 hideThinking=true，成功结果的 reply 不变；failureTo=owner 表示失败通知本人，chat 表示失败发到群聊（默认 owner）。",
     "- 本人说某种情况要“加急”“加急提醒某人”：agent 动作的 allowUrgent 写 true，task 里写清什么情况加急、加急谁；说“只发给某人看”“别让群里其他人看到”“私下提醒”：allowPrivate 写 true，task 里写清给谁看。本人没说就都不写（默认不加急、所有人可见）。",

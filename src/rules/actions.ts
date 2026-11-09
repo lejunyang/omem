@@ -74,6 +74,19 @@ export async function runActions(app: App, rule: Rule, e: RuleEvent, reason: str
       out.push({ action: "delay", ok: true, detail: `${minutesText(a.minutes)}后接着做后面 ${rest.length} 个动作`, runId: r.id });
       break;
     }
+    if (a.type === "wait-message") {
+      const rest = actions.slice(i + 1);
+      // Messages from the trigger on count (the search gives minutes: from the start of that minute).
+      const since = Date.parse(e.at) || Date.now();
+      const r = createRun(app, {
+        kind: "rule-fire",
+        spaceId: rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal"),
+        title: `规则「${rule.name}」：等「${a.name || a.chatId}」的新消息（${a.minutes} 分钟内）`,
+        input: { ruleId: rule.id, key: e.key, event: e, wait: a, actions: rest, reason, since },
+      });
+      out.push({ action: "wait-message", ok: true, detail: `开始等「${a.name || a.chatId}」的新消息，最多 ${a.minutes} 分钟，等到后做后面 ${rest.length} 个动作`, runId: r.id });
+      break;
+    }
     if (a.type === "check") {
       let v: { yes: boolean; reason: string } | null = null;
       try {
@@ -179,6 +192,7 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
       return (await import("./script.ts")).scriptAction(app, rule, a, e, reason);
     case "delay":
     case "check":
+    case "wait-message":
       // Handled in runActions: they shape what runs after them.
       return { action: a.type, ok: true, detail: "" };
   }

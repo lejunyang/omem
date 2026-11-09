@@ -116,7 +116,8 @@
 要确认“这真是某个工单的群”、查工单状态，写成值班技能（里面用内部命令行），挂在处理这类群的 Agent 档案上，再加一个“交给 Agent”动作让它去查。内部系统只出现在技能里，不进 omem 的代码和配置（AGENTS.md）。
 - `watch`：开始监听这个群，后续消息交给某个 Agent（同 `/watch`：全部 / @ / 关键词，回复方式同上）。
 - `invite-bot`：以本人身份把 omem 自己的机器人加进这个群（lark-cli `im chat.members create`，只加 omem 的 app_id，不发消息、不加别的成员）。只在本人配置的规则里发生。
-- `forward`：把触发的消息（带来源会话、发送人、时间和本人的附言 `note`）用机器人发到 `to` 指定的会话，只用于“新消息”触发。`to.kind=group`：先查群里的机器人（`chatBots`），没有 omem 的机器人就以本人身份拉进去（同 `invite-bot`）。`to.kind=p2p`（某人和本人的私聊，机器人不能在里面发言）：第一次转发时以本人身份建一个本人、对方和机器人的群（lark-cli `im +chat-create --as user`，同私聊指令 `/ai拉群`；对方取这个私聊里采集到的最近一条非本人、非机器人消息的发送人），群 id 记在 kv `rule_forward_group:<私聊 id>`，之后都发到这个群。同一条消息重复触发只发一次（发送的 uuid 由规则、消息和目标算出）。来源可以是群，也可以是任何私聊——机器人私聊本人的消息同样会被采集并触发规则（`chat.kind=p2p`、`sender.kind=bot`），延迟是一次采集的间隔。目标由本人指定：规则页，或本人在对话里亲自要求的那一轮（`save_rule` 只在 `ownerAskedThisTurn` 时允许新加或改动目标，“这个群”写 `chatId: "current"`，换成本会话的飞书群；别的轮次被拒绝，不动目标的修改照常）。
+- `wait-message`：等另一个会话的新消息（`chatId`、`minutes` 1–30、`contains` / `matches`、`onTimeout: notify | none`），只用于新消息触发。执行到它时排一个 `rule-fire` 运行（输入带 `wait`、`since` = 触发时间、后面的动作），`rules/fast.ts` 的 `waitThenAct` 每 10 秒用本人身份 `+chat-messages-list` 读那个会话，触发之后第一条非本人、符合条件的消息作为事件的 `awaited`，接着做后面的动作；到时没有就按 `onTimeout` 通知本人或不做。
+- `forward`：把触发的消息（带来源会话、发送人、时间和本人的附言 `note`）用机器人发到 `to` 指定的会话，只用于“新消息”触发。`to.kind=group`：先查群里的机器人（`chatBots`），没有 omem 的机器人就以本人身份拉进去（同 `invite-bot`）。`to.kind=p2p`（某人和本人的私聊，机器人不能在里面发言）：第一次转发时以本人身份建一个本人、对方和机器人的群（lark-cli `im +chat-create --as user`，同私聊指令 `/ai拉群`；对方取这个私聊里采集到的最近一条非本人、非机器人消息的发送人），群 id 记在 kv `rule_forward_group:<私聊 id>`，之后都发到这个群。同一条消息重复触发只发一次（发送的 uuid 由规则、消息和目标算出）。来源可以是群，也可以是任何私聊——机器人私聊本人的消息同样会被采集并触发规则（`chat.kind=p2p`、`sender.kind=bot`），延迟是一次采集的间隔。前面有 `wait-message` 时转发的是等到的那条（`awaited`）。`to.kind=origin`：回到触发的会话，群里以机器人回复在触发消息下（没有机器人先以本人身份拉进去），私聊则对触发消息的发送人建群（同上，按那个私聊记住）；只能用在 `wait-message` 之后。目标由本人指定：规则页，或本人在对话里亲自要求的那一轮（`save_rule` 只在 `ownerAskedThisTurn` 时允许新加或改动目标，“这个群”写 `chatId: "current"`，换成本会话的飞书群；别的轮次被拒绝，不动目标的修改照常）。
 - `capture`：把这个群设为“与本人有关”并立刻采集一次（之后按 ingest 策略整理）。
 - `notify`：通知本人（可标紧急），正文带规则名、事件摘要和理由。
 
@@ -190,3 +191,8 @@
 ### 思考气泡和失败报告
 
 Agent 动作可勾选“隐藏思考气泡”（`hideThinking`），不影响成功结果的回复方式。“失败时”可选通知本人或发到群聊（`failureTo=owner|chat`，默认本人）。Agent 遇到无法完成的操作时用 `report_rule_failure` 报告，宿主按本次规则保存的目标发送；后端运行异常也走同一路径，群投递失败则回本人。一次运行不重复发送失败结论，原群不会再收到自动的结尾回复。
+
+## 快速检查
+
+`trigger.fast`（规则页“快速检查（每分钟）”，只用于新消息规则）：平常的采集（`lark-poll`，常驻服务器上每 10 分钟）之外，`rules/fast.ts` 的 `pollFastRules` 每分钟用本人的 lark-cli 搜两类消息：群里 @ 本人的（`+messages-search --at-chatter-ids <本人> --chat-type group`）和私聊的（`--chat-type p2p`），`--query` 是这些规则条件里 `message.text contains` 的词（没有就不带）。窗口从上次结束往前多看 2 分钟（搜索有延迟），只交给勾了快速检查的规则；同一条消息之后随采集再来时按 `rule_handled` 不重复触发。本人自己发的不算。实测常驻服务器上验证码机器人的私聊消息在搜索里马上能搜到（时间只到分钟）。
+
