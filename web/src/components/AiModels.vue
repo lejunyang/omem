@@ -172,8 +172,8 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       服务的环境里已经有 <span class="mono">{{ view.inherited.join("、") }}</span>：所有 Agent 启动时都会继承它，本机登录的 Codex / Claude Code 也可能因此按 API 计费。只想让下面生成的后端用 key 的话，从服务的环境里去掉它。
     </div>
     <div class="card">
-      <div v-for="p in providers" :key="p.id" class="prow wrap">
-        <div class="grow">
+      <div v-for="p in providers" :key="p.id" class="prow">
+        <div class="pmain">
           <div><strong>{{ p.name || p.id }}</strong> <span class="muted small mono">{{ p.id }}</span> <span class="badge">{{ KIND_LABEL[p.kind] }}</span></div>
           <div class="muted small">
             <span class="mono">{{ p.hasKey ? p.keyHint : "没有 key" }}</span><template v-if="p.baseUrl"> · <span class="mono">{{ p.baseUrl }}</span></template><template v-else-if="p.accountId"> · 账号 <span class="mono">{{ p.accountId }}</span></template> · 可用于：{{ KIND_USES[p.kind] }}
@@ -189,9 +189,11 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
             <button class="btn sm ghost" @click="delete replacing[p.id]">取消</button>
           </div>
         </div>
-        <button class="btn ghost sm" :disabled="tests[p.id]?.loading" @click="test(p.id)">{{ tests[p.id]?.loading ? "检查中…" : "检查" }}</button>
-        <button class="btn ghost sm" @click="replacing[p.id] = ''">更换 key</button>
-        <button class="btn ghost sm icon" :aria-label="`移除 ${p.name || p.id}`" title="移除" @click="remove(p)"><Icon name="x" :size="14" /></button>
+        <div class="pacts">
+          <button class="btn ghost sm" :disabled="tests[p.id]?.loading" @click="test(p.id)">{{ tests[p.id]?.loading ? "检查中…" : "检查" }}</button>
+          <button class="btn ghost sm" @click="replacing[p.id] = ''">更换 key</button>
+          <button class="btn ghost sm icon" :aria-label="`移除 ${p.name || p.id}`" title="移除" @click="remove(p)"><Icon name="x" :size="14" /></button>
+        </div>
       </div>
       <div v-if="view && !providers.length" class="prow muted">还没有 API key。</div>
     </div>
@@ -295,10 +297,23 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
 <style scoped>
 .prow {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: flex-start;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
+}
+/* Text takes the room, the buttons keep to the right edge; on a narrow screen they drop below. */
+.pmain {
+  flex: 1 1 280px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pacts {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .prow:last-child {
   border-bottom: 0;
