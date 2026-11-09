@@ -1664,6 +1664,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `code-works.ts`：`supersededBy` 显示“由新交办接着做”；本人停下的交办先于“等你决定”显示为“你停下的”。
 - 检查命令和外部 Agent 命令的输出在宿主收的时候去掉终端颜色代码（`util.ts` 的 `stripAnsi`，预览日志共用）；交办视图显示旧记录时也去掉。
 
-## 2026-11-09：规则里的主助手不再被告知可以交办
+## 2026-11-09：规则里的主助手可以把触发交给别的 Agent
 
 - `runner.ts`：环境里的“已有的 Agent 档案”按这次运行实际有的工具写用途：有 `run_agent` 写可交办，只有 `ask_agent`（规则运行的主助手，`rules/actions.ts` 的 `assistantScope` 去掉了交办工具）写“不能交办，用 ask_agent 请教”，都没有就不列。之前规则运行的主助手看到“可用 run_agent 交给它们”去找交办入口，找不到就调 `report_rule_failure`，规则显示为失败。
+- `tools.ts` 的 `ruleHandoff`：规则运行里调 `run_agent` 时，新运行沿用父运行的 `rule`、`lark`、`threadId`、`replyAt`、`silent`、`hideThinking`、`conversationId`，`denyTools` 去掉交办与请教，任务里附上父运行的原始任务；`rules/actions.ts` 的 `assistantScope` 不再拒绝 `run_agent`。静默排查时被交办的 Agent 在话题里发言，跟进记录记在交办它的运行上（`handoff`），话题里的回复回到主助手。回归：`test/rule-handoff.test.ts`。

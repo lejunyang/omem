@@ -1001,6 +1001,59 @@ function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, 
   return `已交给这台机器上的 ${spec.name}，运行 ${r.id}（用这台机器的模型）。用 read_run 看进度和结果，做完前状态是 queued / running。`;
 }
 
+/** What a rule's run hands on: where it may answer, how, and on whose behalf the rule fired. */
+const RULE_DELIVERY = ["rule", "lark", "threadId", "replyAt", "silent", "hideThinking", "conversationId"] as const;
+const HANDOFF_DENIED = ["run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run", "save_rule", "set_chat_watch"];
+
+/**
+ * run_agent inside a rule's run: the chosen agent takes this trigger over within the rule's limits —
+ * the same chat, reply mode and draft setting, failure reporting and thinking-bubble choice — and
+ * hands nothing further on. Replies in a topic it opens come back to the agent that handed it over.
+ */
+function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { name: string; space?: string }, task: string, execution: ReturnType<typeof validateExecution>) {
+  const rule = parent.rule as { id: string; name: string };
+  const from = String(parent.spec ?? "assistant");
+  if (spec.name === from) throw new HttpError(400, `这次运行就是 ${from}，不用交给自己`);
+  const inherited = Object.fromEntries(RULE_DELIVERY.filter((k) => parent[k] !== undefined).map((k) => [k, parent[k]]));
+  const reply = parent.silent
+    ? "你在静默排查：群里看不到你的过程，最后写的文字也不会发出去；有结论才用 lark_send 发到触发消息的话题里（reply_to 触发消息、in_thread=true），没有就什么都不发。"
+    : (parent.lark as { chats?: string[] } | undefined)?.chats?.length
+      ? (parent.lark as { draft?: boolean }).draft ? "你在群里要说的话用 lark_send 写，会先变成给本人确认的草稿。" : "你的最后回答会按规则发到触发的群或话题里；只能发到这个群。"
+      : "不要在群里发消息；最后的回答发给本人。";
+  const r = createRun(ctx.app, {
+    kind: "agent",
+    spaceId: spec.space ?? ctx.spaceId,
+    title: truncate(`${spec.name}（规则「${rule.name}」，${from} 交来）：${task.split("\n")[0]}`, 80),
+    input: {
+      spec: spec.name,
+      ...inherited,
+      ...(spec.name === "assistant" && parent.assistantScope ? { assistantScope: parent.assistantScope } : {}),
+      execution: execution ?? parent.execution,
+      denyTools: HANDOFF_DENIED,
+      handoff: { from, runId: ctx.runId },
+      task: [
+        `# 规则「${rule.name}」触发，${from} 交给你处理`,
+        "",
+        `## ${from} 要你做的`,
+        "",
+        task,
+        "",
+        "## 怎么交付",
+        "",
+        reply,
+        "执行失败或无法完成时调用 report_rule_failure(summary)，然后调用 stay_quiet 结束；已经用 lark_send 发过结论、或这次不用说什么的，调用 stay_quiet 结束。不能再交给别的 Agent。",
+        "",
+        `## 规则交给 ${from} 的原始任务（触发事件和规则要求，供参考）`,
+        "",
+        String(parent.task ?? ""),
+      ].join("\n"),
+    },
+    parentId: ctx.runId,
+    userId: OWNER,
+  });
+  return `已在规则「${rule.name}」的范围内交给 ${spec.name}（运行 ${r.id}）：它按规则的回复方式在原来的群或话题里处理，话题里的后续回复仍回到你这里。你这一轮不要再在群里回复同一件事，调用 stay_quiet 结束（还有别的事要做就先做完）。`;
+}
+
 def({
   name: "run_agent",
   description:
@@ -1017,6 +1070,8 @@ def({
     const spec = a.name === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     if (ctx.peer) return peerDispatch(ctx, spec, a.task, execution, a.space);
+    const parentInput = ctx.runId ? (getRun(ctx.app, ctx.runId).input ?? {}) as Record<string, unknown> : {};
+    if (parentInput.rule) return ruleHandoff(ctx, parentInput, spec, a.task, execution);
     const assistantScope = a.name === "assistant" ? assistantTaskScope(ctx) : undefined;
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
@@ -2335,10 +2390,12 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   const sent = await send.deliverLark({ ...target, runId: ctx.runId ?? null, conversationId: runThread(ctx) }, content, delivery);
   // A rule's silent agent that spoke in a topic follows it: replies there come back to it.
   if (ctx.runId && chat && sent.threadId) {
-    const input = (getRun(ctx.app, ctx.runId).input ?? {}) as { silent?: unknown; rule?: { id: string }; spec?: string };
+    const input = (getRun(ctx.app, ctx.runId).input ?? {}) as { silent?: unknown; rule?: { id: string }; spec?: string; handoff?: { from: string; runId: string } };
     if (input.silent && input.rule && input.spec) {
       const { followTopic } = await import("../rules/context.ts");
-      followTopic(ctx.app, { ruleId: input.rule.id, runId: ctx.runId, spec: input.spec, chatId: chat, topicId: sent.threadId });
+      // Handed over within a rule: replies go back to the agent the rule chose, which may hand on again.
+      const owner = input.handoff ?? { from: input.spec, runId: ctx.runId };
+      followTopic(ctx.app, { ruleId: input.rule.id, runId: owner.runId, spec: owner.from, chatId: chat, topicId: sent.threadId });
     }
   }
   if (opts.waitForAction)
