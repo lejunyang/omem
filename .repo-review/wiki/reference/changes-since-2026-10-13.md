@@ -1663,3 +1663,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `code-branch.ts` 的 `settleCodeWorks`（每小时随 `item-sweep` 跑，`POST /api/items-expiry/sweep` 也会跑）：没在编码、评审和 Git 同步、一小时没动的交办，每个有提交的工作分支都已在 origin 上（`fetchBranch` 后本地分支是 `origin/<分支>` 的祖先，且不是 omem 自己推过的那个提交：`output.pushed`、`work.delivered`）时记成已确认（`appliedAt`、`settled: "pushed-outside"`，`pushed` 带 `outside: true`），留下的项照常由同一分支的下一次交办接上；否则同一分支上有在它最后一次动静之后开的交办时记 `supersededBy`，没做完的项标 `wontdo` 并写明去处。两种都取消这几轮的宿主卡片、归还工作区。
 - `code-works.ts`：`supersededBy` 显示“由新交办接着做”；本人停下的交办先于“等你决定”显示为“你停下的”。
 - 检查命令和外部 Agent 命令的输出在宿主收的时候去掉终端颜色代码（`util.ts` 的 `stripAnsi`，预览日志共用）；交办视图显示旧记录时也去掉。
+
+## 2026-11-09：规则里的主助手不再被告知可以交办
+
+- `runner.ts`：环境里的“已有的 Agent 档案”按这次运行实际有的工具写用途：有 `run_agent` 写可交办，只有 `ask_agent`（规则运行的主助手，`rules/actions.ts` 的 `assistantScope` 去掉了交办工具）写“不能交办，用 ask_agent 请教”，都没有就不列。之前规则运行的主助手看到“可用 run_agent 交给它们”去找交办入口，找不到就调 `report_rule_failure`，规则显示为失败。
