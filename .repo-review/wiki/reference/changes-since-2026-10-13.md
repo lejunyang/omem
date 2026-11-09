@@ -1722,3 +1722,8 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 本人要的场景：有人在群里 @ 或私聊要验证码，5 分钟内验证码机器人发来新码就自动发给他。原来私聊和没有机器人的群只靠采集（常驻服务器上每 10 分钟），赶不上；规则也不能等另一个会话的消息。
 - `rules/fast.ts`：`pollFastRules`（`main.ts` 每分钟；只在有勾了 `trigger.fast` 的启用规则时搜，`+messages-search` 群里 @ 本人 + 私聊，`--query` 取条件里 `message.text contains` 的词，kv `rule_fast_since_ms`，往前多看 2 分钟，`dispatchRuleEvent` 加 `only` 只交给这些规则）；`waitThenAct`（`wait-message` 动作排 `rule-fire` 运行，每 10 秒 `+chat-messages-list` 读目标会话，触发之后第一条符合的作为 `RuleEvent.awaited`，`fireAfterWait` 接着做后面的动作；超时按 `onTimeout`）。
 - `forward`：`awaited` 时转发等到的那条；`to.kind=origin` 回到触发的会话（群：机器人回复在触发消息下，必要时以本人身份拉机器人；私聊：对触发消息的发送人以本人身份建群并记住）。保存检查：`checkWaitRule`、`origin` 也算转发目标（非本人要求的一轮不能新加）。规则页：快速检查勾选、“等某个会话的新消息”编辑、“回到触发的会话”。AGENTS.md 的本人身份写操作清单跟着改。回归：`test/rule-fast.test.ts`。
+
+## 2026-11-09：主聊天里的消息变成话题根后，后续消息不再跟进那个话题
+
+- 起因：常驻服务器上本人和机器人私聊的主会话 `lastMessageId` 指着一条已经用 /topic 拆成独立话题的消息。往主会话投递（唤醒、交办结果、会议结论）时 `lark-bot.ts` 的发送在主聊天里“回复”这条消息，飞书把对话题根的回复放进那个话题，于是发到了为别的任务开的话题里。多 Agent 工作话题、规则在消息下开话题同样会让主聊天的消息变成话题根。
+- `lark-send.ts`：回复带 `reply_in_thread` 且飞书返回 `thread_id` 时，发送记录带 `topicRoot`；`lark-bot.ts` 的 `releaseTopicRoot` 把同一个聊天主会话里还指着这条根消息的 `lastMessageId` 去掉（之后发到聊天本身），开话题的那个会话（或运行所属的会话）保留——编码进度卡片在请求下开的话题，结果本来就该回到那里。回归：`test/topic-root.test.ts`。已经指着话题根的旧会话不迁移：本人在主聊天里再发一条消息就换掉了。

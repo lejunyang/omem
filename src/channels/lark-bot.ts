@@ -255,7 +255,10 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   const botName = kv(app, key("lark_bot_name")) ?? ref;
   setLarkBotClient(ref, client, botOpenId, botName);
   // What every bot posts is recorded, so reactions on it find their run.
-  onLarkSent((sent) => recordLarkSent(app, sent));
+  onLarkSent((sent) => {
+    recordLarkSent(app, sent);
+    if (sent.topicRoot && sent.chatId) releaseTopicRoot(app, sent.chatId, sent.topicRoot.root, sent);
+  });
   // Shared by all bots; each follows the conversation or card it belongs to.
   if (!extra) {
     registerCodeProgress(app);
@@ -891,4 +894,24 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     /** The handling of the last message (tests wait for it). */
     settled: () => processing,
   };
+}
+
+/**
+ * A message in a chat's main stream became the root of a topic (/topic, a work topic, a rule's agent
+ * answering under it). A conversation of that main stream still pointing at it would reply to it later,
+ * and in Feishu a reply to a topic's root lands in that topic: a wake-up, a delegation's result or a
+ * meeting's conclusion went into a topic meant for something else. Those conversations stop pointing at
+ * it, so their next post goes to the chat itself. The conversation (or run) that opened the topic keeps
+ * it: its answer belongs there (a coding progress card opens a topic under the request).
+ */
+export function releaseTopicRoot(app: App, chatId: string, root: string, by: { conversationId: string | null; runId: string | null }) {
+  const opener = by.conversationId ?? (by.runId ? (one<{ c: string | null }>(app.db, "select json_extract(input, '$.conversationId') c from runs where id = ?", by.runId)?.c ?? null) : null);
+  run(
+    app.db,
+    "update conversations set settings = json_remove(settings, '$.lastMessageId') where external_id = ? and status = 'active' and json_extract(settings, '$.lastMessageId') = ? and (? is null or id != ?)",
+    chatId,
+    root,
+    opener,
+    opener,
+  );
 }

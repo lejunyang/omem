@@ -307,12 +307,13 @@ export type Target = {
  * Every message a bot posts is reported here (lark-feedback.ts keeps them, so reactions find their
  * run). Set once the bots start; tests and tools without it simply do not record.
  */
-type SentListener = (s: { messageId: string; chatId: string | null; runId: string | null; conversationId: string | null; purpose: SentPurpose; bot: string }) => void;
+/** `topicRoot`: this reply opened a topic under that message (it is now the topic's root). */
+type SentListener = (s: { messageId: string; chatId: string | null; runId: string | null; conversationId: string | null; purpose: SentPurpose; bot: string; topicRoot?: { root: string; topicId: string } }) => void;
 let sentListener: SentListener | null = null;
 export function onLarkSent(fn: SentListener | null) {
   sentListener = fn;
 }
-function reportSent(to: Target, content: Content | null, d: { message_id?: string; chat_id?: string } | undefined) {
+function reportSent(to: Target, content: Content | null, d: { message_id?: string; chat_id?: string; thread_id?: string } | undefined) {
   if (!sentListener || !d?.message_id) return;
   try {
     sentListener({
@@ -322,6 +323,7 @@ function reportSent(to: Target, content: Content | null, d: { message_id?: strin
       conversationId: to.conversationId ?? null,
       purpose: to.purpose ?? (content && !("card" in content) ? "answer" : "card"),
       bot: to.bot || currentBot(),
+      ...(to.replyTo && to.inThread && d.thread_id ? { topicRoot: { root: to.replyTo, topicId: d.thread_id } } : {}),
     });
   } catch (e) {
     console.warn(`[omem] 记录机器人发出的消息失败：${(e as Error).message}`);
