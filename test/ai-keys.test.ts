@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { boot } from "../src/main.ts";
-import { categoryStatus, keyEnv, readKeys, setKey, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
+import { categoryStatus, defaultFor, keyEnv, modelChoices, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
 import { allProfiles, configSchema, keyedProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
 
@@ -85,6 +85,34 @@ describe("API-key providers", () => {
     expect(calls[2]).toEqual(["https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/models/search?search=clef&per_page=1", { authorization: "Bearer k" }]);
   });
 
+  it("reads the models an account lists, and an empty field takes the newest of the default's family", async () => {
+    expect(newestOf("gpt-image-2.5-flare", ["gpt-image-2.5-sunburst", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-image-2.7-flare-2026-12-01"])).toBe("gpt-image-2.6-flare");
+    expect(newestOf("gpt-live-1", ["gpt-live-1.5", "gpt-live-mini"])).toBe("gpt-live-1.5");
+    expect(newestOf("gpt-transcribe", ["gpt-transcribe", "gpt-realtime-whisper"])).toBe("gpt-transcribe");
+    const home = mkdtempSync(join(tmpdir(), "omem-models-"));
+    setKey(home, "o", "k");
+    const listed = ["gpt-6-luna", "gpt-6.1-sol", "gpt-image-2.5-flare", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-live-1", "gpt-live-1.1", "gpt-realtime-2.1", "gpt-realtime-whisper", "gpt-realtime-translate", "gpt-transcribe", "text-embedding-3-large"];
+    const fake = (async (url: string, init: { headers: Record<string, string> }) => {
+      expect(url).toBe("https://api.openai.com/v1/models");
+      expect(init.headers.authorization).toBe("Bearer k");
+      return Response.json({ data: listed.map((id) => ({ id })) });
+    }) as unknown as typeof fetch;
+    const p = { id: "o", name: "", kind: "openai" as const, backends: [] };
+    await refreshModels(home, p, fake);
+    expect(modelChoices(home, p, "image")).toEqual({ default: "gpt-image-2.6-flare", models: ["gpt-image-2.5-flare", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"] });
+    expect(modelChoices(home, p, "voice.live").default).toBe("gpt-live-1.1");
+    expect(modelChoices(home, p, "voice.realtime").models).toEqual(["gpt-realtime-2.1"]);
+    expect(modelChoices(home, p, "voice.transcribe").models).toEqual(["gpt-realtime-whisper", "gpt-transcribe"]);
+    expect(modelChoices(home, p, "decision").models).toEqual(["gpt-6-luna", "gpt-6.1-sol"]);
+    const config = configSchema.parse({ ai: { providers: [p], image: { provider: "o" }, voice: { provider: "o" } } });
+    expect(categoryStatus(config, "image", home)).toMatchObject({ ready: true, model: "gpt-image-2.6-flare" });
+    expect(categoryStatus(config, "voice", home).model).toBe("gpt-live-1.1");
+    expect(defaultFor(config, home, "voice.transcribe")).toBe("gpt-transcribe");
+    // A failed refresh keeps the old list and says why.
+    await refreshModels(home, p, (async () => new Response("bad key", { status: 401 })) as unknown as typeof fetch);
+    expect(modelChoices(home, p, "image").default).toBe("gpt-image-2.6-flare");
+  });
+
   it("keeps keys out of config and settings, and drops a removed provider's key", async () => {
     const home = mkdtempSync(join(tmpdir(), "omem-keys-"));
     const b = await boot(home, { port: 0, quiet: true, background: false });
@@ -93,8 +121,11 @@ describe("API-key providers", () => {
       fetch(`${b.app.baseUrl}${path}`, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }).then(async (r) => ({ status: r.status, body: await r.json() }));
     expect((await api("/api/ai/keys/o", "PUT", { key: "sk-x" })).status).toBe(404);
     await api("/api/settings", "PUT", { ai: { ...b.app.config.ai, providers: [{ id: "o", name: "个人", kind: "openai", backends: ["codex"] }] } });
+    setModelListFetchForTests((async () => Response.json({ data: [{ id: "gpt-image-2.6-flare" }, { id: "gpt-6-luna" }] })) as unknown as typeof fetch);
     const v = await api("/api/ai/keys/o", "PUT", { key: "sk-secret-abcd" });
-    expect(v.body.providers[0]).toMatchObject({ id: "o", hasKey: true, keyHint: "…abcd" });
+    setModelListFetchForTests(null);
+    expect(v.body.providers[0]).toMatchObject({ id: "o", hasKey: true, keyHint: "…abcd", listed: { count: 2 } });
+    expect(v.body.choices.o.image).toEqual({ default: "gpt-image-2.6-flare", models: ["gpt-image-2.6-flare"] });
     expect(readFileSync(join(home, "config.json"), "utf8")).not.toContain("sk-secret");
     const settings = await api("/api/settings");
     expect(JSON.stringify(settings.body)).not.toContain("sk-secret");

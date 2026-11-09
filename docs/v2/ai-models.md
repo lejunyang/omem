@@ -36,6 +36,10 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 每类一个设置（`config.ai.voice` / `decision` / `image`）：提供方、模型（留空用默认），加上各自的参数。`categoryStatus` 判断能不能用：提供方存在、类型对得上、有 key、模型能确定。不能用时各页写明缺什么。
 
+**检测账号里的模型**：添加或更换 key、点“检查”通过、或列表超过一天时，omem 读提供方的模型列表（OpenAI 和兼容接口 `GET /models`，OpenRouter `GET /v1/models`，Cloudflare `GET …/ai/models/search?search=clef`；TypeSafe、Anthropic 没有），只存模型名到数据目录的 `cache/ai-models.json`（`refreshModels`）。读失败时保留旧列表，API key 页那一行写“模型列表读取失败”。各模型字段（图片、语音 Live / Realtime、转写、委托、决策）按名字筛出合用的（`modelChoices`：图片 `gpt-image-*`，Live `gpt-live*`，Realtime `gpt-realtime*` 去掉 whisper / translate，转写含 transcribe / whisper，委托和 OpenAI 决策是 `gpt-数字` 开头的文字模型，Cloudflare 是 `clef*`），设置页给下拉选，列表里没有的可以“手填其他…”。
+
+**留空 = 默认**：内置默认（图片 `gpt-image-2.6-flare`、Live `gpt-live-1`、Realtime `gpt-realtime-2.1`、转写 `gpt-transcribe`、委托和 OpenAI 决策 `gpt-6-luna`、Jev `jev-latest`、Clef `clef-flash`）会换成账号列表里同系列的最新版本（`newestOf`：把名字里的数字当版本号，其余部分一样才算同系列，所以 `gpt-image-2.5-flare` 会换成 `gpt-image-2.6-flare`，不会换成 `-sunburst` 或带日期的快照）。列表里没有同系列更新的就用内置的。
+
 ### 语音
 
 三个用处：
@@ -102,7 +106,7 @@ omem 统一成“材料 + 问题 + 选项 → 选中的一项和每项概率”�
 
 ### 图片生成
 
-OpenAI Images API（`POST /v1/images/generations`，返回 `data[0].b64_json`）。默认 `gpt-image-2.5-flare`（快），要精细用 `gpt-image-2.5-sunburst`；可设默认尺寸和质量。
+OpenAI Images API（`POST /v1/images/generations`，返回 `data[0].b64_json`）。默认 `gpt-image-2.6-flare`（快，2026-11-04 发布），要精细用 `gpt-image-2.6-sunburst`；可设默认尺寸和质量。
 
 可用后才有工具 `generate_image`（分组 `media`，主助手的 `tools` 里有 `group:media`；Agent 档案要用就加这个分组），以及内置技能 `image-generation`（`requires: [ai:image]`）：没配好时运行里没有这个工具（`runner.ts`），技能也不列给 Agent（`skillUsable`）。图片按内容哈希存进 `files/`，和其他附件一样由 `/api/files/<名字>.png` 提供；工具返回本机路径（给 `lark_send_file`）和网页地址（写进 Wiki 或回答的 Markdown）。每次生成记一条运行事件 `image`。
 

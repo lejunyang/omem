@@ -47,8 +47,8 @@ describe("image generation", () => {
     const calls = fake(() => ({ data: [{ b64_json: png.toString("base64"), revised_prompt: "a flow chart" }] }), setImageFetchForTests);
     const img = await generateImage(app, { prompt: "退款流程示意图", quality: "low" });
     expect(calls[0].url).toBe("https://api.openai.com/v1/images/generations");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ model: "gpt-image-2.5-flare", prompt: "退款流程示意图", n: 1, size: "1536x1024", quality: "low", output_format: "png" });
-    expect(img).toMatchObject({ url: `/api/files/${img.name}`, revisedPrompt: "a flow chart", model: "gpt-image-2.5-flare" });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ model: "gpt-image-2.6-flare", prompt: "退款流程示意图", n: 1, size: "1536x1024", quality: "low", output_format: "png" });
+    expect(img).toMatchObject({ url: `/api/files/${img.name}`, revisedPrompt: "a flow chart", model: "gpt-image-2.6-flare" });
     expect(readFileSync(img.path)).toEqual(png);
     // Served like any other stored file.
     const r = await fetch(`${app.baseUrl}${img.url}`, { headers: { connection: "close" } });

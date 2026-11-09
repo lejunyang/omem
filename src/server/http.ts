@@ -72,7 +72,7 @@ import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
 import { deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
-import { CATEGORY_KINDS, categoryStatus, defaultModel, inheritedKeyVars, keyHint, keyOf, readKeys, setKey, testProvider } from "../core/ai-keys.ts";
+import { CATEGORY_KINDS, categoryStatus, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider } from "../core/ai-keys.ts";
 
 /** GET /api/share/<token>: exactly this, no query, no other path under it. */
 const SHARE_ROUTE = /^\/api\/share\/[A-Za-z0-9_-]{43}$/;
@@ -2522,22 +2522,36 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ----------------------------------------------- AI providers and model categories (core/ai-keys.ts)
+  const MODEL_FIELDS: ModelField[] = ["image", "voice.live", "voice.realtime", "voice.transcribe", "voice.delegate", "decision"];
+  /** Provider model lists older than a day (or missing) are fetched again, waiting at most a few seconds. */
+  const freshModels = async (only?: string) => {
+    const cache = readModelCache(app.home);
+    const keys = readKeys(app.home);
+    const stale = app.config.ai.providers.filter((p) => (only ? p.id === only : true) && keys[p.id] && (only || !cache[p.id] || Date.now() - cache[p.id].at > MODEL_CACHE_MS));
+    if (stale.length) await Promise.race([Promise.allSettled(stale.map((p) => refreshModels(app.home, p))), new Promise((r) => setTimeout(r, 8_000))]);
+  };
   const aiView = () => {
     const keys = readKeys(app.home);
+    const cache = readModelCache(app.home);
     return {
-      providers: app.config.ai.providers.map((p) => ({ ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id] })),
+      providers: app.config.ai.providers.map((p) => ({ ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id], listed: cache[p.id] ? { at: cache[p.id].at, count: cache[p.id].models.length, error: cache[p.id].error } : null })),
       status: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, categoryStatus(app.config, c, app.home)])),
-      defaults: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, Object.fromEntries(["openai", "typesafe", "openrouter", "cloudflare", "openai-compatible", "realtime"].map((k) => [k, k === "realtime" ? defaultModel(c, "openai", "realtime") : defaultModel(c, k)]))])),
+      /** Per provider and field: the listed models that fit, and the model an empty field uses. */
+      choices: Object.fromEntries(app.config.ai.providers.map((p) => [p.id, Object.fromEntries(MODEL_FIELDS.map((f) => [f, modelChoices(app.home, p, f)]))])),
       kinds: CATEGORY_KINDS,
       inherited: inheritedKeyVars(),
     };
   };
-  server.get("/api/ai", async () => aiView());
+  server.get("/api/ai", async () => {
+    await freshModels();
+    return aiView();
+  });
   server.put("/api/ai/keys/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     if (!app.config.ai.providers.some((p) => p.id === id)) throw new HttpError(404, "没有这个提供方");
     const b = q(z.object({ key: z.string().trim().max(500).nullable() }), req.body);
     setKey(app.home, id, b.key || null);
+    if (b.key) await freshModels(id);
     return aiView();
   });
   // ----------------------------------------------------------------- voice (core/voice.ts)
@@ -2599,7 +2613,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/ai/providers/:id/test", async (req) => {
     const p = app.config.ai.providers.find((x) => x.id === (req.params as { id: string }).id);
     if (!p) throw new HttpError(404, "没有这个提供方");
-    return testProvider(p, keyOf(p.id, app.home));
+    const r = await testProvider(p, keyOf(p.id, app.home));
+    if (r.ok) await freshModels(p.id);
+    return r;
   });
 
   // ---------------------------------------------------------------- plugins

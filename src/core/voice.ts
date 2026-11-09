@@ -1,5 +1,5 @@
 import type { App } from "./app.ts";
-import { baseOf, categoryStatus, keyOf } from "./ai-keys.ts";
+import { baseOf, categoryStatus, defaultFor, keyOf } from "./ai-keys.ts";
 import { all, one, run } from "./db.ts";
 import { accessibleSpaces, OWNER } from "./users.ts";
 import { HttpError, json, newId, now } from "./util.ts";
@@ -110,7 +110,7 @@ export async function liveConnect(app: App, o: { purpose: VoicePurpose; scenario
     model: p.model,
     instructions: voiceInstructions(o.purpose, o.scenario),
     audio: { output: { voice: p.voice } },
-    delegation: { type: "responses", responses: { model: app.config.ai.voice.delegateModel || "gpt-6-luna", ...(tools.length ? { tools, tool_choice: "auto" } : {}) } },
+    delegation: { type: "responses", responses: { model: app.config.ai.voice.delegateModel || defaultFor(app.config, app.home, "voice.delegate"), ...(tools.length ? { tools, tool_choice: "auto" } : {}) } },
   };
   const r = await post(`${p.base}/live/sessions`, p.key, { session, transport: { type: "webrtc", sdp: o.sdp } }, "打开 GPT-Live 会话");
   const sdp = r.transport?.sdp;
@@ -124,7 +124,7 @@ export async function transcribe(app: App, audio: Buffer, mime: string) {
   const ext = /webm/.test(mime) ? "webm" : /ogg/.test(mime) ? "ogg" : /mp4|m4a|aac/.test(mime) ? "m4a" : /wav/.test(mime) ? "wav" : /mpeg|mp3/.test(mime) ? "mp3" : "webm";
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(audio)], { type: mime || "audio/webm" }), `speech.${ext}`);
-  form.append("model", app.config.ai.voice.transcribeModel || "gpt-transcribe");
+  form.append("model", app.config.ai.voice.transcribeModel || defaultFor(app.config, app.home, "voice.transcribe"));
   const r = await fetcher(`${p.base}/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${p.key}` }, body: form, signal: AbortSignal.timeout(60_000) });
   const text = await r.text();
   if (!r.ok) throw new HttpError(502, `语音转文字失败：${r.status} ${text.slice(0, 300)}`);

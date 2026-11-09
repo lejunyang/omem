@@ -129,7 +129,7 @@ export const CATEGORY_KINDS: Record<Category, string[]> = {
 /** Model a category uses when none is set, by provider kind (as of 2026-11). */
 export function defaultModel(cat: Category, kind: string, api?: string) {
   if (cat === "voice") return api === "realtime" ? "gpt-realtime-2.1" : "gpt-live-1";
-  if (cat === "image") return "gpt-image-2.5-flare";
+  if (cat === "image") return "gpt-image-2.6-flare";
   if (kind === "openai") return "gpt-6-luna";
   if (kind === "typesafe") return "jev-latest";
   if (kind === "openrouter") return "jev-latest";
@@ -166,10 +166,126 @@ export function categoryStatus(config: Config, cat: Category, home?: string): { 
   if (!CATEGORY_KINDS[cat].includes(p.kind)) return { ready: false, detail: `${p.name || p.id} 不提供这类模型` };
   if (!keyOf(p.id, home)) return { ready: false, detail: `${p.name || p.id} 还没有填写 API key` };
   if (p.kind === "cloudflare" && !baseOf(p)) return { ready: false, detail: `${p.name || p.id} 还没有填写 Cloudflare 账号 ID` };
-  const model = c.model || defaultModel(cat, p.kind, (c as { api?: string }).api);
+  const field: ModelField = cat === "voice" ? ((c as { api?: string }).api === "realtime" ? "voice.realtime" : "voice.live") : cat;
+  const model = c.model || (home ? modelChoices(home, p, field).default : builtinDefault(field, p.kind));
   if (!model) return { ready: false, detail: "要填写模型" };
   const media = cat === "decision" ? decisionMedia(p.kind, model) : [];
   return { ready: true, detail: `${p.name || p.id} · ${model}`, provider: p.id, model, ...(media.length ? { media } : {}) };
+}
+
+// ------------------------------------------------------------------ detected models
+
+/**
+ * What each provider says it serves (`GET /models` and the like), cached in cache/ai-models.json
+ * (model names only, nothing secret) and refreshed when the key is added, checked, or the list is a
+ * day old. Settings offer these per field; a field left empty uses the newest model of the default's
+ * family the account has (gpt-image-2.6-flare once it is listed, while the built-in default says 2.5).
+ */
+export type ModelField = "image" | "voice.live" | "voice.realtime" | "voice.transcribe" | "voice.delegate" | "decision";
+type ModelCache = Record<string, { at: number; models: string[]; error?: string }>;
+const cacheFile = (home: string) => join(home, "cache", "ai-models.json");
+export function readModelCache(home: string): ModelCache {
+  try {
+    const v = JSON.parse(readFileSync(cacheFile(home), "utf8"));
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+}
+function writeModelCache(home: string, c: ModelCache) {
+  mkdirSync(join(home, "cache"), { recursive: true });
+  writeFileSync(cacheFile(home), JSON.stringify(c, null, 2) + "\n");
+}
+export const MODEL_CACHE_MS = 24 * 3600_000;
+
+let listFetch: typeof fetch = (...a) => fetch(...a);
+/** Tests replace the network for model listing. */
+export function setModelListFetchForTests(f: typeof fetch | null) {
+  listFetch = f ?? ((...a) => fetch(...a));
+}
+
+/** Models a provider lists; null when it has no listing we know of (TypeSafe, Anthropic here). */
+export async function listModels(p: Provider, key: string, fetcher: typeof fetch = listFetch): Promise<string[] | null> {
+  const base = baseOf(p);
+  let url: string;
+  if (p.kind === "openai" || p.kind === "openai-compatible") url = `${base}/models`;
+  else if (p.kind === "openrouter") url = `${base}/v1/models`;
+  else if (p.kind === "cloudflare") url = `${base}/models/search?search=clef&per_page=50`;
+  else return null;
+  if (!base || !key) return null;
+  const r = await fetcher(url, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) });
+  if (!r.ok) throw new Error(`${r.status}：${(await r.text().catch(() => "")).slice(0, 200)}`);
+  const body = (await r.json()) as { data?: { id?: string }[]; result?: { name?: string }[] };
+  const ids = p.kind === "cloudflare" ? (body.result ?? []).map((m) => clefModel(String(m.name ?? ""))) : (body.data ?? []).map((m) => String(m.id ?? ""));
+  return [...new Set(ids.filter(Boolean))].sort();
+}
+
+/** Refresh one provider's cached list; failures are kept (with the old list) for the settings page. */
+export async function refreshModels(home: string, p: Provider, fetcher: typeof fetch = listFetch) {
+  const key = keyOf(p.id, home);
+  const old = readModelCache(home)[p.id];
+  let entry: ModelCache[string] | null;
+  try {
+    const models = await listModels(p, key, fetcher);
+    entry = models ? { at: Date.now(), models } : null;
+  } catch (e) {
+    entry = { at: Date.now(), models: old?.models ?? [], error: (e as Error).message.slice(0, 200) };
+  }
+  const c = readModelCache(home);
+  if (entry) c[p.id] = entry;
+  else delete c[p.id];
+  writeModelCache(home, c);
+  return entry;
+}
+
+const FIELD_FILTER: Record<ModelField, (m: string, kind: string) => boolean> = {
+  image: (m) => /^gpt-image-/.test(m),
+  "voice.live": (m) => /^gpt-live/.test(m),
+  "voice.realtime": (m) => /^gpt-realtime/.test(m) && !/whisper|translat|transcri/.test(m),
+  "voice.transcribe": (m) => /transcri|whisper/.test(m),
+  "voice.delegate": (m) => isTextModel(m),
+  decision: (m, kind) => (kind === "cloudflare" ? /^clef/.test(m) : kind === "openrouter" ? /jev|clef/i.test(m) : isTextModel(m)),
+};
+const isTextModel = (m: string) => /^(gpt-\d|o\d)/.test(m) && !/image|realtime|live|audio|tts|transcri|whisper|search|embed|translat/.test(m);
+
+/** The built-in default for a field, before looking at what the account lists. */
+export function builtinDefault(field: ModelField, kind: string) {
+  if (field === "voice.transcribe") return "gpt-transcribe";
+  if (field === "voice.delegate") return "gpt-6-luna";
+  if (field === "voice.live") return defaultModel("voice", kind, "live");
+  if (field === "voice.realtime") return defaultModel("voice", kind, "realtime");
+  return defaultModel(field, kind);
+}
+
+const family = (m: string) => m.replace(/\d+(?:\.\d+)*/g, "#");
+const version = (m: string) => (m.match(/\d+(?:\.\d+)*/g) ?? []).flatMap((s) => s.split(".").map(Number));
+function newer(a: number[], b: number[]) {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  return false;
+}
+/**
+ * The newest listed model of the same family as `base` (digits are the version: gpt-image-2.5-flare →
+ * gpt-image-2.6-flare, never -sunburst or a dated snapshot); `base` itself when none is newer.
+ */
+export function newestOf(base: string, models: string[]) {
+  if (!base) return base;
+  const f = family(base);
+  return models.reduce((best, m) => (family(m) === f && newer(version(m), version(best)) ? m : best), base);
+}
+
+/** Choices for one field of one provider: the listed models that fit, and what an empty field means. */
+export function modelChoices(home: string, p: Pick<Provider, "id" | "kind">, field: ModelField) {
+  const listed = readModelCache(home)[p.id]?.models ?? [];
+  const models = listed.filter((m) => FIELD_FILTER[field](m, p.kind));
+  return { default: newestOf(builtinDefault(field, p.kind), models), models };
+}
+
+/** The model an empty field uses for the provider a category picked. */
+export function defaultFor(config: Config, home: string | undefined, field: ModelField) {
+  const cat = field.split(".")[0] as Category;
+  const p = config.ai.providers.find((x) => x.id === config.ai[cat].provider);
+  if (!p) return builtinDefault(field, "openai");
+  return home ? modelChoices(home, p, field).default : builtinDefault(field, p.kind);
 }
 
 /** Whether a launch env already has a key from outside (the user's shell), for the hint in settings. */

@@ -6,6 +6,7 @@ import { toast } from "../store";
 import Icon from "./Icon.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
+import AiModelPick from "./AiModelPick.vue";
 import UiSelect from "./UiSelect.vue";
 
 /**
@@ -15,9 +16,10 @@ import UiSelect from "./UiSelect.vue";
  */
 type Kind = "openai" | "anthropic" | "typesafe" | "openrouter" | "cloudflare" | "openai-compatible";
 type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; accountId?: string; backends: string[] };
-type ProviderView = Provider & { keyHint: string; hasKey: boolean };
+type ProviderView = Provider & { keyHint: string; hasKey: boolean; listed: { at: number; count: number; error?: string } | null };
+type Choice = { default: string; models: string[] };
 type Status = { ready: boolean; detail: string; media?: ("images" | "audio" | "videos")[] };
-type AiView = { providers: ProviderView[]; status: Record<"voice" | "decision" | "image", Status>; defaults: Record<string, Record<string, string>>; kinds: Record<string, string[]>; inherited: string[] };
+type AiView = { providers: ProviderView[]; status: Record<"voice" | "decision" | "image", Status>; choices: Record<string, Record<string, Choice>>; kinds: Record<string, string[]>; inherited: string[] };
 type Section = "keys" | "voice" | "decision" | "image";
 
 const props = defineProps<{ section: Section; config: any }>();
@@ -129,14 +131,9 @@ const providerOptions = computed(() => {
   if (cat.value === "decision") opts.push({ value: "startlux", label: "StartLux-Decision（本机）", hint: "本地判官，和注入标记共用" });
   return [{ value: "", label: "不使用" }, ...opts];
 });
-const providerOf = (id: string) => providers.value.find((p) => p.id === id);
-const modelPlaceholder = computed(() => {
-  if (!cat.value || !catValue.value || !view.value) return "";
-  const v = catValue.value;
-  if (v.provider === "startlux") return "StartLux-Decision";
-  const kind = providerOf(v.provider)?.kind ?? "openai";
-  return (cat.value === "voice" && v.api === "realtime" ? view.value.defaults.voice.realtime : view.value.defaults[cat.value][kind]) || "模型名";
-});
+/** Detected models of the chosen provider for one field (`image`, `voice.live`, `voice.transcribe`, `decision`…). */
+const choiceOf = (field: string) => (catValue.value?.provider ? view.value?.choices[catValue.value.provider]?.[field] : undefined);
+const mainField = computed(() => (cat.value === "voice" ? (catValue.value?.api === "realtime" ? "voice.realtime" : "voice.live") : cat.value ?? ""));
 function setCat(patch: Record<string, unknown>, note = `已保存${cat.value ? CAT_LABEL[cat.value] : ""}`) {
   if (!cat.value) return;
   emit("save", { ...props.config.ai, [cat.value]: { ...props.config.ai[cat.value], ...patch } }, note);
@@ -176,7 +173,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
         <div class="pmain">
           <div><strong>{{ p.name || p.id }}</strong> <span class="muted small mono">{{ p.id }}</span> <span class="badge">{{ KIND_LABEL[p.kind] }}</span></div>
           <div class="muted small">
-            <span class="mono">{{ p.hasKey ? p.keyHint : "没有 key" }}</span><template v-if="p.baseUrl"> · <span class="mono">{{ p.baseUrl }}</span></template><template v-else-if="p.accountId"> · 账号 <span class="mono">{{ p.accountId }}</span></template> · 可用于：{{ KIND_USES[p.kind] }}
+            <span class="mono">{{ p.hasKey ? p.keyHint : "没有 key" }}</span><template v-if="p.baseUrl"> · <span class="mono">{{ p.baseUrl }}</span></template><template v-else-if="p.accountId"> · 账号 <span class="mono">{{ p.accountId }}</span></template> · 可用于：{{ KIND_USES[p.kind] }}<template v-if="p.listed"> · <span :class="{ 'err-text': p.listed.error }" :title="p.listed.error">{{ p.listed.error ? "模型列表读取失败" : `列出 ${p.listed.count} 个模型` }}</span></template>
           </div>
           <div v-if="tests[p.id] && !tests[p.id].loading" class="small" :class="tests[p.id].ok ? 'ok-text' : 'err-text'">{{ tests[p.id].detail }}</div>
           <div v-if="BACKENDS_OF[p.kind]" class="row wrap small be-row">
@@ -241,29 +238,29 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
     </template>
     <template v-else>
       <p class="muted">可用后，主助手和挂了 <span class="mono">group:media</span> 的 Agent 档案才拿到画图工具 <span class="mono">generate_image</span>，内置技能 <span class="mono">image-generation</span> 也才出现：给 Wiki 页配示意图，在飞书回复里发图，或者你在问答里直接让它画。图片存在数据目录，和其他附件一样。</p>
-      <p class="muted small">接口：OpenAI Images API（<span class="mono">/v1/images/generations</span>）。默认 <span class="mono">gpt-image-2.5-flare</span>（快），要更精细用 <span class="mono">gpt-image-2.5-sunburst</span>。</p>
+      <p class="muted small">接口：OpenAI Images API（<span class="mono">/v1/images/generations</span>）。默认 <span class="mono">gpt-image-2.6-flare</span>（快），要更精细用 <span class="mono">gpt-image-2.6-sunburst</span>；账号里有更新的同系列模型时默认自动用新的。</p>
     </template>
 
     <div v-if="noProviders" class="card pad small">还没有能提供{{ CAT_LABEL[cat] }}的 API key：先到“API key”里添加 OpenAI 的 key。</div>
     <div class="card pad stack">
       <div class="grid2">
         <div class="field"><span>提供方</span><UiSelect :model-value="catValue.provider" aria-label="提供方" :options="providerOptions" @change="(v) => setCat({ provider: v })" /></div>
-        <label v-if="catValue.provider !== 'startlux'" class="field">
-          <span>模型（留空用默认）</span>
-          <input :value="catValue.model" class="input mono" :placeholder="modelPlaceholder" @change="setCat({ model: ($event.target as HTMLInputElement).value.trim() })" />
-        </label>
+        <div v-if="catValue.provider && catValue.provider !== 'startlux'" class="field">
+          <span>{{ cat === "decision" ? "决策模型（这个提供方的决策接口用哪个模型）" : "模型" }}</span>
+          <AiModelPick :model-value="catValue.model" :choice="choiceOf(mainField)" label="模型" @change="(v) => setCat({ model: v })" />
+        </div>
       </div>
       <template v-if="cat === 'voice'">
         <div class="field"><span>接口</span><UiSegmented :model-value="catValue.api" aria-label="语音接口" :options="[{ value: 'live', label: 'GPT-Live' }, { value: 'realtime', label: 'Realtime' }]" @change="(v: string) => setCat({ api: v })" /></div>
         <div class="grid2">
           <label class="field"><span>声音（可选）</span><input :value="catValue.voice" class="input mono" placeholder="marin" @change="setCat({ voice: ($event.target as HTMLInputElement).value.trim() })" /></label>
-          <label class="field"><span>语音输入的转写模型</span><input :value="catValue.transcribeModel" class="input mono" placeholder="gpt-transcribe" @change="setCat({ transcribeModel: ($event.target as HTMLInputElement).value.trim() })" /></label>
-          <label v-if="catValue.api === 'live'" class="field"><span>委托模型（GPT-Live 查资料、调工具用）</span><input :value="catValue.delegateModel" class="input mono" placeholder="gpt-6-luna" @change="setCat({ delegateModel: ($event.target as HTMLInputElement).value.trim() })" /></label>
+          <div class="field"><span>语音输入的转写模型</span><AiModelPick :model-value="catValue.transcribeModel" :choice="choiceOf('voice.transcribe')" label="转写模型" @change="(v) => setCat({ transcribeModel: v })" /></div>
+          <div v-if="catValue.api === 'live'" class="field"><span>委托模型（GPT-Live 查资料、调工具用）</span><AiModelPick :model-value="catValue.delegateModel" :choice="choiceOf('voice.delegate')" label="委托模型" @change="(v) => setCat({ delegateModel: v })" /></div>
         </div>
       </template>
       <template v-else-if="cat === 'decision'">
         <div class="field">
-          <span>决策模型出错时（没有配置时总是用通用模型）</span>
+          <span>决策模型出错时（没有配置时总是用通用模型：规则或“访客提问把关”角色自己的 Agent 后端）</span>
           <UiSegmented :model-value="catValue.fallback" aria-label="决策模型出错时" :options="[{ value: 'general', label: '改用通用模型判断' }, { value: 'none', label: '不判断（按否处理）' }]" @change="(v: string) => setCat({ fallback: v })" />
         </div>
         <UiCheckbox :model-value="catValue.gatekeeper !== false" switch @change="(v) => setCat({ gatekeeper: v })">访客提问的把关先用决策模型（拒绝时回固定的一句话；关掉则由“访客提问把关”角色判断）</UiCheckbox>

@@ -1733,7 +1733,8 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 原来只有额度用完（报错）后才避开那个账号。现在读本机登录账号的剩余额度：Codex 起 `codex app-server` 调 `account/rateLimits/read`（Pro 套餐只有周窗口，没有 5 小时窗口，窗口按长度认），Claude 在 claude-agent-acp 的会话里发本地命令 `/usage`；都不耗额度。对话和运行里 Claude 报的限额事件随时更新。存在 kv `agent_quota`（`src/agents/quota.ts`）。
 - 快用完的账号（`agents.capacity.quotaAvoidAbove` 默认 90%，`quotaPerDayBelow` 每天剩余百分比默认不看）在角色运行的候选里排到最后；`list_ai_backends` 带 `quota`；设置 → AI → 并行 显示额度、阈值和“现在读取”；`peer call <设备> agents` 带 `quota`。回归：`test/quota-limits.test.ts`。
 
-## 2026-11-09：决策模型支持 Cloudflare Clef
+## 2026-11-09～10：决策模型支持 Cloudflare Clef；检测账号里的模型
 
 - 提供方新增 `cloudflare`（`config.ai.providers[].accountId` 填账号 ID），决策走 Workers AI 的 `…/accounts/<账号>/ai/run/@cf/cloudflare/<模型>`，格式同 Jev 的 System One，默认 `clef-flash`；返回包在 `{result}` 里也认（`src/core/decision.ts`）。
 - `decide` 可带 `media`（图片、音频、视频的 data URL）；`decisionMedia`（`src/core/ai-keys.ts`）给出模型能读的媒体：`clef-flash` / `clef` 读图片，`clef-omni` 还读音频和视频，其他模型只读文字，带了读不了的媒体直接报错。设置页决策的状态行写明能读什么。
+- 读提供方的模型列表（`refreshModels`，`cache/ai-models.json`，添加 key、检查通过或过一天时刷新）：设置页的图片、语音、转写、委托、决策模型改成下拉选，可手填；留空用账号里与内置默认同系列的最新版本（`newestOf`）。图片的内置默认改为 `gpt-image-2.6-flare`。
