@@ -98,26 +98,30 @@ const rec = (source: string, model: string) => load.value?.recent.find((r) => r.
       <label class="field"><span>周额度剩余 ÷ 距重置天数 低于（%/天）时避开（0 = 不看）</span><input v-model.number="draft.quotaPerDayBelow" class="input" type="number" inputmode="decimal" min="0" max="100" step="0.5" /></label>
     </div>
     <div class="row wrap"><button class="btn sm" :disabled="draft.limits.length >= 100" @click="add"><Icon name="plus" :size="13" />添加上限</button><span class="spacer" /><button class="btn primary sm" @click="save">保存并行设置</button></div>
-    <div class="row"><span class="section-title">现在</span><span class="spacer" /><button class="btn ghost sm" @click="refresh">刷新</button></div>
-    <ul v-if="load?.now.length" class="now small">
-      <li v-for="n in load.now" :key="n.source + n.model">
-        <span class="mono">{{ n.source }}{{ n.model ? ` · ${n.model}` : "" }}</span>：正在用 {{ n.used }}<template v-if="n.waiting">，等 {{ n.waiting }}</template>
-        <span v-if="rec(n.source, n.model)" class="muted">（近 7 天完成 {{ rec(n.source, n.model)!.done }}、失败 {{ rec(n.source, n.model)!.failed }}）</span>
-      </li>
-    </ul>
-    <p v-else class="muted small">现在没有在用的模型。</p>
-    <div class="row"><span class="section-title">账号额度</span><span class="muted small">本机登录的账号，几分钟读一次，不耗额度</span><span class="spacer" /><button v-if="load?.quota?.length" class="btn ghost sm" :disabled="reading" @click="readQuota">{{ reading ? "读取中…" : "现在读取" }}</button></div>
-    <ul v-if="load?.quota?.length" class="now small">
-      <li v-for="q in load.quota" :key="q.source">
-        <span class="mono">{{ q.source }}</span><span v-if="q.plan" class="muted">（{{ q.plan }}）</span>：
-        <template v-if="q.windows.length">
-          <span v-for="(w, i) in q.windows" :key="w.name">{{ i ? "；" : "" }}{{ windowLabel(w.name) }}已用 {{ w.used }}%<span v-if="w.resetsIn" class="muted">，{{ w.resetsIn }}后重置</span><span v-if="w.perDayLeft !== undefined" class="muted">，每天约 {{ w.perDayLeft }}%</span></span>
+    <section class="blk">
+      <div class="blk-head"><span class="section-title">现在</span><span class="spacer" /><button class="btn ghost sm" @click="refresh">刷新</button></div>
+      <div v-if="load?.now.length" class="lines small">
+        <template v-for="n in load.now" :key="n.source + n.model">
+          <span class="mono">{{ n.source }}{{ n.model ? ` · ${n.model}` : "" }}</span>
+          <span>正在用 {{ n.used }}<template v-if="n.waiting">，等 {{ n.waiting }}</template><span v-if="rec(n.source, n.model)" class="muted">（近 7 天完成 {{ rec(n.source, n.model)!.done }}、失败 {{ rec(n.source, n.model)!.failed }}）</span></span>
         </template>
-        <span v-else class="muted">{{ q.error ? `读不到：${q.error.slice(0, 80)}` : "还没读过" }}</span>
-        <span v-if="q.avoid" class="badge warn">避开：{{ q.avoid }}</span>
-      </li>
-    </ul>
-    <p v-else class="muted small">本机没有能读额度的后端（Codex、Claude Code 登录的账号；API Key 的没有套餐额度）。</p>
+      </div>
+      <p v-else class="muted small">现在没有在用的模型。</p>
+    </section>
+    <section class="blk">
+      <div class="blk-head"><span class="section-title">账号额度</span><span class="muted small">本机登录的账号，几分钟读一次，不耗额度</span><span class="spacer" /><button v-if="load?.quota?.length" class="btn ghost sm" :disabled="reading" @click="readQuota">{{ reading ? "读取中…" : "现在读取" }}</button></div>
+      <div v-if="load?.quota?.length" class="lines small">
+        <template v-for="q in load.quota" :key="q.source">
+          <span><span class="mono">{{ q.source }}</span><span v-if="q.plan" class="muted">（{{ q.plan }}）</span></span>
+          <span>
+            <template v-if="q.windows.length"><span v-for="(w, i) in q.windows" :key="w.name">{{ i ? "；" : "" }}{{ windowLabel(w.name) }}已用 {{ w.used }}%<span v-if="w.resetsIn" class="muted">，{{ w.resetsIn }}后重置</span><span v-if="w.perDayLeft !== undefined" class="muted">，每天约 {{ w.perDayLeft }}%</span></span></template>
+            <span v-else class="muted">{{ q.error ? `读不到：${q.error.slice(0, 80)}` : "还没读过" }}</span>
+            <span v-if="q.avoid" class="badge warn">避开：{{ q.avoid }}</span>
+          </span>
+        </template>
+      </div>
+      <p v-else class="muted small">本机没有能读额度的后端（Codex、Claude Code 登录的账号；API Key 的没有套餐额度）。</p>
+    </section>
     <template v-if="load?.outOfQuota?.length">
       <div class="section-title">额度用完</div>
       <p class="muted small">这些账号的额度用完了，到恢复时间前不会被自动选用，任务改用兜底和其他配置过的后端。已经充值或换了套餐可以提前恢复。</p>
@@ -142,8 +146,37 @@ const rec = (source: string, model: string) => load.value?.recent.find((r) => r.
   width: 64px;
   margin: 0 4px;
 }
-.now {
+/* A heading with its lines, kept together: the card's own gap only separates blocks. */
+.blk {
+  display: grid;
+  gap: 4px;
+}
+.blk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+.blk-head > .section-title {
+  white-space: nowrap;
+}
+.blk p {
   margin: 0;
-  padding-left: 18px;
+}
+/* Name | what it is doing, aligned in two columns; on a phone the details wrap under the name. */
+.lines {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+}
+@media (max-width: 560px) {
+  .lines {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .lines > :nth-child(2n) {
+    margin-bottom: 6px;
+  }
 }
 </style>

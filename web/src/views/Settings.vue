@@ -849,6 +849,7 @@ async function saveEdit() {
           <UiSelect :model-value="String(config.agents.queueTimeoutMinutes ?? 30)" size="sm" width="120px" aria-label="排队最多等待" :options="queueMinuteOptions" @change="saveQueueMinutes" />
           <span class="muted small">排队期间不算空闲超时</span>
         </div>
+        <div v-if="fallbacks.length" class="fb-list">
         <div v-for="(f, i) in fallbacks" :key="i" class="row wrap fb-row">
           <span class="fb-n small muted">{{ i + 1 }}</span>
           <UiSelect :model-value="f.profile" size="sm" width="200px" aria-label="兜底后端" :options="profileOptions" @change="(v) => setFallback(i, { profile: v, model: undefined, effort: undefined })" />
@@ -857,6 +858,7 @@ async function saveEdit() {
           <span class="spacer" />
           <button class="btn ghost sm" :disabled="i === 0" @click="moveFallback(i)">上移</button>
           <button class="btn ghost sm icon" aria-label="移除" @click="saveFallbacks(fallbacks.filter((_, j) => j !== i), '已移除兜底')"><Icon name="x" :size="14" /></button>
+        </div>
         </div>
         <div class="row"><button class="btn sm" :disabled="!installedProfiles.length" @click="addFallback"><Icon name="plus" :size="13" />添加兜底</button><span v-if="!fallbacks.length" class="muted small">还没有兜底：后端失败时直接报错。</span></div>
       </div>
@@ -1380,9 +1382,16 @@ async function saveEdit() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Rows sit flush (the card's gap would double the spacing), divided by a line. */
+.fb-list {
+  display: grid;
+}
 .fb-row {
   padding: 6px 0;
   border-top: 1px solid var(--line);
+}
+.fb-row:last-child {
+  border-bottom: 1px solid var(--line);
 }
 .fb-n {
   width: 16px;
