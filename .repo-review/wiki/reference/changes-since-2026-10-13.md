@@ -1737,4 +1737,4 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - 提供方新增 `cloudflare`（`config.ai.providers[].accountId` 填账号 ID），决策走 Workers AI 的 `…/accounts/<账号>/ai/run/@cf/cloudflare/<模型>`，格式同 Jev 的 System One，默认 `clef-flash`；返回包在 `{result}` 里也认（`src/core/decision.ts`）。
 - `decide` 可带 `media`（图片、音频、视频的 data URL）；`decisionMedia`（`src/core/ai-keys.ts`）给出模型能读的媒体：`clef-flash` / `clef` 读图片，`clef-omni` 还读音频和视频，其他模型只读文字，带了读不了的媒体直接报错。设置页决策的状态行写明能读什么。
-- 读提供方的模型列表（`refreshModels`，`cache/ai-models.json`，添加 key、检查通过或过一天时刷新）：设置页的图片、语音、转写、委托、决策模型改成下拉选，可手填；留空用账号里与内置默认同系列的最新版本（`newestOf`）。图片的内置默认改为 `gpt-image-2.6-flare`。
+- 读提供方的模型列表（`refreshModels`，`cache/ai-models.json`，添加 key、检查通过或过一天时刷新）：设置页的图片、语音、转写、委托、决策模型改成下拉选，可手填；留空用列表里版本号最大的模型（`newestOf`，列表为空时用内置默认）。图片的内置默认改为 `gpt-image-2.6-flare`。

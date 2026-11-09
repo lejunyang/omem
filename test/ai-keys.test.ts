@@ -86,9 +86,11 @@ describe("API-key providers", () => {
   });
 
   it("reads the models an account lists, and an empty field takes the newest of the default's family", async () => {
-    expect(newestOf("gpt-image-2.5-flare", ["gpt-image-2.5-sunburst", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-image-2.7-flare-2026-12-01"])).toBe("gpt-image-2.6-flare");
-    expect(newestOf("gpt-live-1", ["gpt-live-1.5", "gpt-live-mini"])).toBe("gpt-live-1.5");
-    expect(newestOf("gpt-transcribe", ["gpt-transcribe", "gpt-realtime-whisper"])).toBe("gpt-transcribe");
+    expect(newestOf(["gpt-image-2.5-sunburst", "gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "gpt-image-2.7-flare-2026-12-01"], "gpt-image-2.6-flare")).toBe("gpt-image-2.6-flare");
+    expect(newestOf(["gpt-image-2.5-flare", "gpt-image-2.7-sunburst"], "gpt-image-2.6-flare")).toBe("gpt-image-2.7-sunburst");
+    expect(newestOf(["gpt-live-1", "gpt-live-1.5", "gpt-live-mini"], "gpt-live-1")).toBe("gpt-live-1.5");
+    expect(newestOf(["clef", "clef-flash", "clef-omni"], "clef-flash")).toBe("clef-flash");
+    expect(newestOf([], "gpt-transcribe")).toBe("gpt-transcribe");
     const home = mkdtempSync(join(tmpdir(), "omem-models-"));
     setKey(home, "o", "k");
     const listed = ["gpt-6-luna", "gpt-6.1-sol", "gpt-image-2.5-flare", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-live-1", "gpt-live-1.1", "gpt-realtime-2.1", "gpt-realtime-whisper", "gpt-realtime-translate", "gpt-transcribe", "text-embedding-3-large"];
@@ -102,8 +104,8 @@ describe("API-key providers", () => {
     expect(modelChoices(home, p, "image")).toEqual({ default: "gpt-image-2.6-flare", models: ["gpt-image-2.5-flare", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"] });
     expect(modelChoices(home, p, "voice.live").default).toBe("gpt-live-1.1");
     expect(modelChoices(home, p, "voice.realtime").models).toEqual(["gpt-realtime-2.1"]);
-    expect(modelChoices(home, p, "voice.transcribe").models).toEqual(["gpt-realtime-whisper", "gpt-transcribe"]);
-    expect(modelChoices(home, p, "decision").models).toEqual(["gpt-6-luna", "gpt-6.1-sol"]);
+    expect(modelChoices(home, p, "voice.transcribe")).toEqual({ default: "gpt-transcribe", models: ["gpt-realtime-whisper", "gpt-transcribe"] });
+    expect(modelChoices(home, p, "decision")).toEqual({ default: "gpt-6.1-sol", models: ["gpt-6-luna", "gpt-6.1-sol"] });
     const config = configSchema.parse({ ai: { providers: [p], image: { provider: "o" }, voice: { provider: "o" } } });
     expect(categoryStatus(config, "image", home)).toMatchObject({ ready: true, model: "gpt-image-2.6-flare" });
     expect(categoryStatus(config, "voice", home).model).toBe("gpt-live-1.1");

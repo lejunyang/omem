@@ -38,7 +38,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 **检测账号里的模型**：添加或更换 key、点“检查”通过、或列表超过一天时，omem 读提供方的模型列表（OpenAI 和兼容接口 `GET /models`，OpenRouter `GET /v1/models`，Cloudflare `GET …/ai/models/search?search=clef`；TypeSafe、Anthropic 没有），只存模型名到数据目录的 `cache/ai-models.json`（`refreshModels`）。读失败时保留旧列表，API key 页那一行写“模型列表读取失败”。各模型字段（图片、语音 Live / Realtime、转写、委托、决策）按名字筛出合用的（`modelChoices`：图片 `gpt-image-*`，Live `gpt-live*`，Realtime `gpt-realtime*` 去掉 whisper / translate，转写含 transcribe / whisper，委托和 OpenAI 决策是 `gpt-数字` 开头的文字模型，Cloudflare 是 `clef*`），设置页给下拉选，列表里没有的可以“手填其他…”。
 
-**留空 = 默认**：内置默认（图片 `gpt-image-2.6-flare`、Live `gpt-live-1`、Realtime `gpt-realtime-2.1`、转写 `gpt-transcribe`、委托和 OpenAI 决策 `gpt-6-luna`、Jev `jev-latest`、Clef `clef-flash`）会换成账号列表里同系列的最新版本（`newestOf`：把名字里的数字当版本号，其余部分一样才算同系列，所以 `gpt-image-2.5-flare` 会换成 `gpt-image-2.6-flare`，不会换成 `-sunburst` 或带日期的快照）。列表里没有同系列更新的就用内置的。
+**留空 = 默认**：用这个字段列表里最新的模型（`newestOf`：名字里版本号最大的，带日期的快照不算；版本相同的几个，比如 `gpt-image-2.6-flare` 和 `-sunburst`、`clef` 和 `clef-flash`，取和内置默认同款的那个，再不行按名字排第一个）。列表为空或提供方没有列表时用内置默认（图片 `gpt-image-2.6-flare`、Live `gpt-live-1`、Realtime `gpt-realtime-2.1`、转写 `gpt-transcribe`、委托和 OpenAI 决策 `gpt-6-luna`、Jev `jev-latest`、Clef `clef-flash`）。OpenAI 的委托和决策字段列的是全部文字模型，留空会用版本号最大的那个，要固定用便宜的就在下拉里选定。
 
 ### 语音
 

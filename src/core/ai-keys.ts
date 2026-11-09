@@ -178,8 +178,8 @@ export function categoryStatus(config: Config, cat: Category, home?: string): { 
 /**
  * What each provider says it serves (`GET /models` and the like), cached in cache/ai-models.json
  * (model names only, nothing secret) and refreshed when the key is added, checked, or the list is a
- * day old. Settings offer these per field; a field left empty uses the newest model of the default's
- * family the account has (gpt-image-2.6-flare once it is listed, while the built-in default says 2.5).
+ * day old. Settings offer these per field; a field left empty uses the newest listed one (`newestOf`),
+ * the built-in default only when nothing fitting is listed.
  */
 export type ModelField = "image" | "voice.live" | "voice.realtime" | "voice.transcribe" | "voice.delegate" | "decision";
 type ModelCache = Record<string, { at: number; models: string[]; error?: string }>;
@@ -257,27 +257,38 @@ export function builtinDefault(field: ModelField, kind: string) {
   return defaultModel(field, kind);
 }
 
-const family = (m: string) => m.replace(/\d+(?:\.\d+)*/g, "#");
 const version = (m: string) => (m.match(/\d+(?:\.\d+)*/g) ?? []).flatMap((s) => s.split(".").map(Number));
 function newer(a: number[], b: number[]) {
   for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
   return false;
 }
+const dated = /-\d{4}-\d{2}-\d{2}$|-\d{8}$/;
+/** Same name once the version numbers are taken out: gpt-image-2.5-flare and gpt-image-2.6-flare. */
+const variant = (m: string) => m.replace(/\d+(?:\.\d+)*/g, "#");
 /**
- * The newest listed model of the same family as `base` (digits are the version: gpt-image-2.5-flare →
- * gpt-image-2.6-flare, never -sunburst or a dated snapshot); `base` itself when none is newer.
+ * The newest of the listed models: the largest version number in the name (dated snapshots left out).
+ * Between equal versions (gpt-image-2.6-flare / -sunburst, clef / clef-flash) the built-in default's
+ * variant, then the first by name. Nothing listed: the built-in default.
  */
-export function newestOf(base: string, models: string[]) {
-  if (!base) return base;
-  const f = family(base);
-  return models.reduce((best, m) => (family(m) === f && newer(version(m), version(best)) ? m : best), base);
+export function newestOf(models: string[], builtin: string) {
+  const live = models.filter((m) => !dated.test(m));
+  if (!live.length) return builtin;
+  const pick = (a: string, b: string) => {
+    const va = version(a), vb = version(b);
+    if (newer(va, vb)) return a;
+    if (newer(vb, va)) return b;
+    const ka = a === builtin || variant(a) === variant(builtin), kb = b === builtin || variant(b) === variant(builtin);
+    if (ka !== kb) return ka ? a : b;
+    return a <= b ? a : b;
+  };
+  return live.reduce(pick);
 }
 
 /** Choices for one field of one provider: the listed models that fit, and what an empty field means. */
 export function modelChoices(home: string, p: Pick<Provider, "id" | "kind">, field: ModelField) {
   const listed = readModelCache(home)[p.id]?.models ?? [];
   const models = listed.filter((m) => FIELD_FILTER[field](m, p.kind));
-  return { default: newestOf(builtinDefault(field, p.kind), models), models };
+  return { default: newestOf(models, builtinDefault(field, p.kind)), models };
 }
 
 /** The model an empty field uses for the provider a category picked. */

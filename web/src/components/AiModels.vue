@@ -238,7 +238,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
     </template>
     <template v-else>
       <p class="muted">可用后，主助手和挂了 <span class="mono">group:media</span> 的 Agent 档案才拿到画图工具 <span class="mono">generate_image</span>，内置技能 <span class="mono">image-generation</span> 也才出现：给 Wiki 页配示意图，在飞书回复里发图，或者你在问答里直接让它画。图片存在数据目录，和其他附件一样。</p>
-      <p class="muted small">接口：OpenAI Images API（<span class="mono">/v1/images/generations</span>）。默认 <span class="mono">gpt-image-2.6-flare</span>（快），要更精细用 <span class="mono">gpt-image-2.6-sunburst</span>；账号里有更新的同系列模型时默认自动用新的。</p>
+      <p class="muted small">接口：OpenAI Images API（<span class="mono">/v1/images/generations</span>）。默认 <span class="mono">gpt-image-2.6-flare</span>（快），要更精细用 <span class="mono">gpt-image-2.6-sunburst</span>；模型留空时用账号里最新的。</p>
     </template>
 
     <div v-if="noProviders" class="card pad small">还没有能提供{{ CAT_LABEL[cat] }}的 API key：先到“API key”里添加 OpenAI 的 key。</div>
