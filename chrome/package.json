@@ -1,0 +1,31 @@
+{
+  "name": "omem-chrome",
+  "version": "0.1.0",
+  "private": true,
+  "description": "omem 的 Chrome 扩展：高级网络面板、设备模拟、用户状态和页面走查。",
+  "type": "module",
+  "scripts": {
+    "build": "vite build && node scripts/build-inject.mjs",
+    "dev": "node scripts/build-inject.mjs && vite build --watch --emptyOutDir false",
+    "test": "vitest run",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "test:e2e:install-browser": "playwright install chromium",
+    "typecheck": "vue-tsc --noEmit",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "preview:test": "vite --host 127.0.0.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/node": "24.10.1",
+    "@vitejs/plugin-vue": "6.0.9",
+    "@vitest/browser-playwright": "^4.1.9",
+    "playwright": "^1.58.2",
+    "typescript": "5.9.3",
+    "vite": "7.3.1",
+    "vitest": "^4.1.9",
+    "vue-tsc": "3.1.4"
+  },
+  "dependencies": {
+    "vue": "3.5.43"
+  }
+}

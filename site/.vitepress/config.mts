@@ -79,6 +79,7 @@ export default defineConfig({
           { text: "工作分支与同步", link: "/features/git" },
           { text: "VS Code", link: "/features/ide" },
           { text: "引用与修改点", link: "/features/quotes" },
+          { text: "浏览器扩展：调试与拾取", link: "/features/chrome" },
         ],
       },
       {

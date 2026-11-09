@@ -4,6 +4,7 @@ packages:
   - packages/*
   - vscode
   - site
+  - chrome
 allowBuilds:
   '@larksuite/cli': true
   '@vscode/vsce-sign': true

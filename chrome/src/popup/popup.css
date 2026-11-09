@@ -1,0 +1,261 @@
+body {
+  width: 760px;
+  min-width: 760px;
+  max-width: 760px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.popup-app {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 600px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.popup-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-muted);
+}
+
+.popup-header strong {
+  color: var(--text);
+}
+
+.popup-tabs,
+.user-state-header,
+.user-state-row-title,
+.user-state-tags,
+.user-state-actions,
+.user-state-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.popup-tabs {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+
+
+.popup-app .mock-panel {
+  align-content: start;
+  flex: 0 1 auto;
+  gap: 8px;
+  max-height: none;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow: auto;
+  border-bottom: 0;
+}
+
+.popup-app .mock-panel-header {
+  padding-bottom: 4px;
+}
+
+.popup-app .mock-empty {
+  padding: 4px 0;
+}
+
+.popup-app .mock-section-header {
+  margin-top: 4px;
+}
+
+.popup-app .mock-group-card {
+  gap: 8px;
+  padding: 8px;
+}
+
+.popup-app .device-emulation-panel {
+  flex: 0 1 auto;
+  max-height: none;
+  min-height: 0;
+  overflow: auto;
+}
+
+.popup-app .device-emulation-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.popup-footer {
+  min-height: 0;
+  padding: 6px 10px;
+}
+
+.popup-footer .message {
+  color: var(--text-muted);
+}
+
+.user-state-panel {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow: auto;
+}
+
+.user-state-header {
+  justify-content: space-between;
+}
+
+.user-state-header div,
+.user-state-row,
+.user-state-detail,
+.user-state-form,
+.user-state-preview {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.user-state-header span {
+  color: var(--text-muted);
+}
+
+.user-state-create {
+  padding: 8px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.user-state-pattern-tag-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.user-state-pattern-tag {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 6px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.user-state-pattern-tag button {
+  padding: 0 2px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.user-state-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.user-state-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.user-state-row {
+  padding: 8px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.user-state-row.is-active {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+}
+
+.user-state-row-title {
+  justify-content: space-between;
+}
+
+.user-state-row-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-state-badge {
+  padding: 2px 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.user-state-badge.is-enabled {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: transparent;
+}
+
+.user-state-actions {
+  justify-content: flex-end;
+}
+
+.user-state-patterns {
+  min-height: 72px;
+}
+
+.user-state-preview {
+  padding: 8px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* ---------- 2026-11 界面整理 ---------- */
+.popup-header {
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  background: var(--panel);
+  border: 0;
+}
+.popup-brand { display: flex; align-items: center; gap: 8px; }
+.popup-brand span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: var(--panel); background: var(--ink); font-weight: 700; font-size: 13px; }
+.popup-brand strong { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+
+.pick-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--sunken);
+}
+.pick-strip-text { display: grid; gap: 1px; min-width: 0; }
+.pick-strip-text strong { font-size: 13px; }
+.pick-strip-text span { color: var(--muted); font-size: 12px; }
+.pick-strip-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick-error { flex-basis: 100%; margin: 0; color: var(--bad); font-size: 12px; }
+
+.popup-tabs { margin: 0 16px 10px; padding: 3px; border: 0; border-radius: 9px; background: var(--sunken-2); gap: 2px; }
+.popup-tabs .button { flex: 1; height: 28px; border-color: transparent; background: transparent; color: var(--ink-2); }
+.popup-tabs .button:hover { background-image: none; color: var(--ink); }
+.popup-tabs .button.is-active { border-color: transparent; background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 20, 20, 0.08); }
+.popup-app .device-emulation-header > div:first-child > strong { font-size: 15px; }
+.popup-app .mock-panel { padding: 0 16px 12px; }
+.popup-app .mock-panel-summary span:last-child { display: none; }

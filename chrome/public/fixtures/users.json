@@ -1,0 +1,15 @@
+{
+  "traceId": "advanced-network-demo-users",
+  "users": [
+    {
+      "id": 1,
+      "name": "Ada Lovelace",
+      "role": "admin"
+    },
+    {
+      "id": 2,
+      "name": "Grace Hopper",
+      "role": "developer"
+    }
+  ]
+}

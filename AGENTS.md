@@ -43,6 +43,7 @@
 - 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/architecture.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 omem 工具还要改 `skills/omem/references/` 里对应的分组，动了网页约定改 `.agents/skills/omem-design`。
 - README 和文档站介绍功能与使用方法，不罗列普通 bug 修复。只恢复既有预期行为的修复，不追加成功能特性；修复细节和验证结果记在开发文档、验收项或变更记录中。只有功能或使用方式实际变化时才更新对应的用户文档。
 - VS Code 插件在 `vscode/`（pnpm workspace 里的一个包，`pnpm install && pnpm --filter omem-vscode run build`；`node test/run.mjs` 在真实 VS Code 里测）。它只调 HTTP API，宿主改了运行、评审、问答、交办的接口要一起看它；设计在 docs/v2/ide.md。
+- Chrome 扩展在 `chrome/`（workspace 里的包 `omem-chrome`，`pnpm --filter omem-chrome run check`，e2e 用 `run test:e2e`）：DevTools 网络面板、Mock、设备模拟、用户状态和「拾取」。默认不连 `chrome.debugger`（Chrome 会显示调试提示条），新功能先做不用 CDP 的实现；扩展自己的约定在 `chrome/AGENTS.md`。
 - 文档站在 `site/`（VitePress，workspace 里的一个包，`pnpm --filter omem-docs run dev`；推到 main 后由 `.github/workflows/docs.yml` 发布到 GitHub Pages）。功能有变化时同步 `site/features/*.md` 或 `site/guide/*.md` 里对应的页面；主题沿用 `web/src/styles.css` 的 token（`site/.vitepress/theme/custom.css`），网页的颜色和字体变了这里一起改。
 - 截图：`site/public/screens/*.png` 按功能命名（`review-overview`、`wiki-citations`……），文档站和 README 共用。只有对应 UI 变化时才更新相应截图：`pnpm run build && node scripts/doc-screens.ts --only=<截图名,截图名>`，不要因提交而刷新未改界面的截图；公共样式变化时更新受影响的截图。新功能需要截图就在脚本里加演示数据和一项 `shots`。脚本用虚构的演示数据（示例商城 · 退款改造），不要换成本机或常驻服务器的真实数据截图。
 - 这是公开仓库：文档、角色说明、技能、测试、代码注释和提交信息里不写本人和他人的真实信息（姓名、同事名、公司、群名、主机名、真实聊天或记忆内容、Agent 档案名）。举例用虚构的（项目 A、小王、《差旅报销制度》）；用真实数据校准过的规则只写结论。

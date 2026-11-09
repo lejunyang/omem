@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Advanced Network Panel E2E Harness</title>
+    <script>
+      const requestListeners = [];
+      const navigatedListeners = [];
+      const storageChangeListeners = [];
+      const storageItems = {};
+
+      function removeListener(listeners, listener) {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) {
+          listeners.splice(index, 1);
+        }
+      }
+
+      function pickStorageItems(keys) {
+        if (keys === undefined || keys === null) {
+          return { ...storageItems };
+        }
+        if (typeof keys === "string") {
+          return { [keys]: storageItems[keys] };
+        }
+        if (Array.isArray(keys)) {
+          return Object.fromEntries(keys.map((key) => [key, storageItems[key]]));
+        }
+        return Object.fromEntries(Object.keys(keys).map((key) => [key, storageItems[key] ?? keys[key]]));
+      }
+
+      function notifyStorageChanged(changes) {
+        storageChangeListeners.forEach((listener) => listener(changes, "local"));
+      }
+
+      window.chrome = {
+        runtime: {
+          lastError: undefined,
+          connect() { return { postMessage() {}, disconnect() {} }; },
+          sendMessage(_message, callback) {
+            const response = { ok: true, mocked: false };
+            callback?.(response);
+            return Promise.resolve(response);
+          }
+        },
+        storage: {
+          local: {
+            get(keys, callback) {
+              const result = pickStorageItems(keys);
+              callback?.(result);
+              return Promise.resolve(result);
+            },
+            set(items, callback) {
+              const changes = Object.fromEntries(
+                Object.entries(items).map(([key, value]) => [key, { oldValue: storageItems[key], newValue: value }])
+              );
+              Object.assign(storageItems, items);
+              callback?.();
+              notifyStorageChanged(changes);
+              return Promise.resolve();
+            },
+            clear(callback) {
+              const changes = Object.fromEntries(
+                Object.entries(storageItems).map(([key, value]) => [key, { oldValue: value, newValue: undefined }])
+              );
+              Object.keys(storageItems).forEach((key) => {
+                delete storageItems[key];
+              });
+              callback?.();
+              notifyStorageChanged(changes);
+              return Promise.resolve();
+            }
+          },
+          onChanged: {
+            addListener(listener) {
+              storageChangeListeners.push(listener);
+            },
+            removeListener(listener) {
+              removeListener(storageChangeListeners, listener);
+            }
+          }
+        },
+        devtools: {
+          inspectedWindow: {
+            tabId: 1,
+            eval(_expression, callback) {
+              callback?.("https://example.com/", undefined);
+            }
+          },
+          network: {
+            getHAR(callback) {
+              const har = { entries: [] };
+              callback?.(har);
+              return Promise.resolve(har);
+            },
+            onRequestFinished: {
+              addListener(listener) {
+                requestListeners.push(listener);
+              },
+              removeListener(listener) {
+                removeListener(requestListeners, listener);
+              }
+            },
+            onNavigated: {
+              addListener(listener) {
+                navigatedListeners.push(listener);
+              },
+              removeListener(listener) {
+                removeListener(navigatedListeners, listener);
+              }
+            }
+          }
+        }
+      };
+
+      window.__advancedNetworkHarness = {
+        emitRequest(input) {
+          const request = typeof input === "string" ? { url: input } : input;
+          const responseBody = request.responseBody ?? "{}";
+          const entry = {
+            startedDateTime: new Date().toISOString(),
+            time: 12,
+            request: {
+              method: request.method ?? "GET",
+              url: request.url,
+              headers: [{ name: "content-type", value: "application/json" }],
+              postData: request.requestBody
+                ? {
+                    mimeType: "application/json",
+                    text: request.requestBody
+                  }
+                : undefined
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: [{ name: "content-type", value: "application/json" }],
+              content: {
+                mimeType: "application/json",
+                size: responseBody.length
+              },
+              bodySize: responseBody.length
+            },
+            getContent(callback) {
+              callback?.(responseBody, "");
+              return Promise.resolve({ content: responseBody, encoding: "" });
+            }
+          };
+          requestListeners.forEach((listener) => listener(entry));
+        },
+        emitNavigated(url) {
+          navigatedListeners.forEach((listener) => listener(url));
+        }
+      };
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/panel/panel.ts"></script>
+  </body>
+</html>
