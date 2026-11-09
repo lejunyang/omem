@@ -29,7 +29,7 @@ export async function detectProbe(id: string, refresh = false): Promise<Probe | 
 }
 
 /** The modes that mean 完全访问 (src/agents/acp.ts MODE_ALIASES["full-access"]). */
-const FULL_MODES = ["agent-full-access", "full-access", "bypassPermissions", "danger-full-access", "yolo"];
+const FULL_MODES = ["agent-full-access", "full-access", "bypassPermissions", "bypass_permissions", "danger-full-access", "yolo"];
 
 /**
  * Whether a backend can run 完全访问, by its last detection: the ACP mode it offers, or the

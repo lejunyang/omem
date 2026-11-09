@@ -12,6 +12,7 @@ describe("完全访问", () => {
   it("picks each backend's full-access mode, and the command-line flags of the fallbacks", () => {
     expect(pickMode(["full-access"], ["read-only", "workspace-write", "agent", "agent-full-access"])).toBe("agent-full-access");
     expect(pickMode(["full-access"], ["default", "acceptEdits", "plan", "auto", "bypassPermissions"])).toBe("bypassPermissions");
+    expect(pickMode(["full-access"], ["default", "plan", "auto", "bypass_permissions"])).toBe("bypass_permissions");
     expect(pickMode(["full-access"], ["default", "read-only"])).toBeUndefined();
     const cli = agentProfileSchema.parse({ id: "c", transport: "codex-cli", command: "codex" });
     expect(codexArgs(cli, { cwd: ".", prompt: "", fullAccess: true })).toContain("--dangerously-bypass-approvals-and-sandbox");

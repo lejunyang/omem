@@ -604,7 +604,7 @@ const MODE_ALIASES: Record<string, string[]> = {
   acceptEdits: ["acceptEdits", "accept-edits", "auto_edit", "autoEdit", "auto-edit"],
   auto: ["auto", "agent", "act"],
   // No sandbox and no approvals; only when the owner turned on 完全访问 for the run.
-  "full-access": ["agent-full-access", "full-access", "bypassPermissions", "danger-full-access", "yolo"],
+  "full-access": ["agent-full-access", "full-access", "bypassPermissions", "bypass_permissions", "danger-full-access", "yolo"],
 };
 export function pickMode(wanted: string[], available: string[]) {
   for (const w of wanted) for (const alias of MODE_ALIASES[w] ?? [w]) if (available.includes(alias)) return alias;
