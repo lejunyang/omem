@@ -1,3 +1,4 @@
+import { updateThread } from "../agents/threads.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
 import { chatSpace } from "./lark-personal.ts";
 import { notificationCard } from "./item-notification.ts";
@@ -332,6 +333,14 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
         );
       }
       await sent(opened.messageId);
+      return;
+    }
+    // News of its own (a meeting's conclusion): the chat itself, not the topic last written in; the chat
+    // then continues there (its suggestion card follows it).
+    if (meta.topLevel) {
+      const posted = await sendLark({ chatId, purpose: "answer", runId: cite.runId, conversationId: thread.id }, { markdown, ...(note ? { note } : {}) });
+      updateThread(app, thread.id, { settings: { ...thread.settings, lastTopicId: null, lastMessageId: posted.messageId } });
+      await sent(posted.messageId);
       return;
     }
     // A digest carries the agent's full report: one message, the answer on top and the record folded below.

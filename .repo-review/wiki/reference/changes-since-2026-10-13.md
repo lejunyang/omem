@@ -1711,3 +1711,8 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - 转发目标：`save_rule` 在回答本人自己消息的那一轮（`ownerAskedThisTurn`）可以新加或改动 `forward` 的目标，`chatId: "current"` 换成本会话的飞书群，名字和类型从 `lark_cursors` 补；`saveRule` 的 `opts.ownerAsked`。规则草稿（`compile.ts`）认识 forward。
 - 中途接收：常驻服务器上一轮在跑命令行时，本人的补充消息要等它下一次调用 omem 工具才能交进去，看上去像在排队。codex-acp 2.5.0 有扩展方法 `_session/steering`（`idleBehavior: "promptRequired"` 时没有进行中的一轮返回 `promptRequired`），本机实测 `injected` 且这一轮的回复包含补充内容；直接再发 `session/prompt` 只会排成下一轮。`AcpHandle.steer`；`steer.ts` 拆成 `claimSteering`（先看）+ `commit`（交出后再移走）；`inbox.ts` 收到消息后 `steerLiveTurn`，交不进去（后端不支持、这一轮已结束、发送人不同）就照旧等工具调用。回归：`test/steer-live.test.ts`（假 Agent 的 `FAKE_STEER`）、`test/rule-forward.test.ts`。
+
+## 2026-11-09：会议结论发在私聊里而不是上次的话题；下一步卡片可以直接写
+
+- 会议结束后的结论投递到本人和机器人的私聊会话（`ownerChatThread`），飞书发送跟着会话的 `lastTopicId` 回复，本人上一条消息在私聊的某个话题里时结论就进了那个话题。会后那一轮的输入带 `topLevel`，`jobs.ts` 投递时带上，`lark-bot.ts` 的发送直接发到私聊本身，并把会话的 `lastTopicId` 清掉、`lastMessageId` 换成这条（下一步卡片跟着它）。回归：`test/lark-answers.test.ts`。
+- 下一步（suggestion）卡片在飞书上一律带输入框和“按我写的做”：选一项时写的话接在那项后面一起说，不选只写也行（`answerAsk` 合并 `option.message` 和文字）。回归：`test/asks.test.ts`。

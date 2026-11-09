@@ -913,7 +913,8 @@ function startAgent(app: App, row: Row, plan: MeetingPlan, opts: { question?: Li
       meetingId: row.meeting_id,
       // While the meeting runs nothing reaches the owner (notify is not given): what concerns them is
       // the window's answer, gathered into the summary (heldNotes). The summary goes to their chat with the bot.
-      ...(opts.final ? (dm ? { threadId: dm } : {}) : { meeting: { id: row.meeting_id, bot: say?.bot ?? null, answer: !!say }, denyTools: ["notify"], ...(opts.question ? {} : { meetingWindow: true }) }),
+      // The conclusion is news of its own: the private chat itself, not the topic the owner last wrote in.
+      ...(opts.final ? (dm ? { threadId: dm, topLevel: true } : {}) : { meeting: { id: row.meeting_id, bot: say?.bot ?? null, answer: !!say }, denyTools: ["notify"], ...(opts.question ? {} : { meetingWindow: true }) }),
       ...(resume ? { resumeSessionId: resume } : {}),
     },
     lane,

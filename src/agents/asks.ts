@@ -391,6 +391,7 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
   if (input.value && pageAsk && JSON.stringify(input.value).length > 20_000) throw new HttpError(400, "交回的值太大（最多 20000 字符）");
   const value = input.value && fields ? normalizeAnswers(fields, input.value) : input.value && pageAsk ? input.value : null;
   if (before.kind === "question" && !option && !text && !value) throw new HttpError(400, "回答不能为空");
+  if (before.kind === "suggestion" && !option && !text) throw new HttpError(400, "写下要它做的再提交，或选一个建议");
   const approved = before.kind === "approval" ? !!input.approved : null;
   const answer = value && fields
     ? [summarizeAnswers(fields, value as Parameters<typeof summarizeAnswers>[1]), text ? `补充：${text}` : ""].filter(Boolean).join("\n")
@@ -437,7 +438,9 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
     if (ask.kind === "suggestion") {
       if (ask.conversationId && !input.viaMessage) {
         const { receive } = await import("./inbox.ts");
-        await receive(app, { conversationId: ask.conversationId, text: option?.message ?? answer ?? "", userId: ask.userId, fromAsk: true });
+        // A picked step with the owner's own words after it says both.
+        const said = option ? [option.message ?? option.label, text].filter(Boolean).join("\n") : text ?? answer ?? "";
+        await receive(app, { conversationId: ask.conversationId, text: said, userId: ask.userId, fromAsk: true });
       }
       return ask;
     }

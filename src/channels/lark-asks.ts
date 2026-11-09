@@ -51,10 +51,14 @@ function optionRow(label: string, i: number, inForm: boolean, suggestion: boolea
  * is too long for a button, every option is a numbered line with its own button, in order.
  */
 function optionRows(ask: Ask) {
+  const inForm = withText(ask);
   const short = ask.options.every((o) => textWidth(o.label) <= SHORT && !/[\r\n]/.test(o.label));
-  if (!short) return ask.options.map((o, i) => optionRow(o.label, i, ask.allowText, ask.kind === "suggestion"));
-  return buttonRows(ask.options.map((o, i) => ({ text: o.label, button: button(o.label, `opt_${i}`, i === 0 ? "primary" : "default", ask.allowText, `ask:${i}`) })));
+  if (!short) return ask.options.map((o, i) => optionRow(o.label, i, inForm, ask.kind === "suggestion"));
+  return buttonRows(ask.options.map((o, i) => ({ text: o.label, button: button(o.label, `opt_${i}`, i === 0 ? "primary" : "default", inForm, `ask:${i}`) })));
 }
+
+/** Next-step suggestions always take the owner's own words too: a box under the buttons (or instead of them). */
+const withText = (ask: Ask) => ask.allowText || ask.kind === "suggestion";
 
 /** A question that lists several points to answer (1. … 2. …, ①②) gets a box for several lines. */
 const manyPoints = (question: string) => (question.match(/^\s*(?:\d+\s*[.、．)）]|[①-⑩])/gm) ?? []).length >= 2;
@@ -124,9 +128,9 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
   const elements = (card.body as { elements: unknown[] }).elements;
   const choices = ask.kind === "approval" ? [row([button("批准", "approve", "primary", ask.allowText, "approve"), button("拒绝", "reject", "danger", ask.allowText, "reject")])] : optionRows(ask);
-  if (ask.allowText) {
+  if (withText(ask)) {
     const lines = ask.kind === "question" && manyPoints(ask.question);
-    const placeholder = ask.kind === "approval" ? "理由或附言（可不填）" : lines ? "可以整体回答，也可以按编号逐条写" : ask.options.length ? "也可以写别的回答" : "你的回答";
+    const placeholder = ask.kind === "approval" ? "理由或附言（可不填）" : ask.kind === "suggestion" ? "也可以写你要它做的，或在选的项后面补充" : lines ? "可以整体回答，也可以按编号逐条写" : ask.options.length ? "也可以写别的回答" : "你的回答";
     elements.push({
       tag: "form",
       name: "ask",
@@ -134,7 +138,7 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
       elements: [
         ...(ask.kind === "approval" ? [] : choices),
         { tag: "input", name: "text", width: "fill", placeholder: { tag: "plain_text", content: placeholder }, ...(lines ? { input_type: "multiline_text", rows: 3, auto_resize: true, max_rows: 8 } : {}) },
-        ...(ask.kind === "approval" ? choices : ask.kind === "question" ? [row([button(ask.options.length ? "用文字回答" : "回答", "answer", ask.options.length ? "default" : "primary", true, "")])] : []),
+        ...(ask.kind === "approval" ? choices : ask.kind === "question" ? [row([button(ask.options.length ? "用文字回答" : "回答", "answer", ask.options.length ? "default" : "primary", true, "")])] : ask.kind === "suggestion" ? [row([button("按我写的做", "answer", "default", true, "")])] : []),
       ],
     });
   } else elements.push(...choices);

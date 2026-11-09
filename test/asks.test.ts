@@ -106,6 +106,19 @@ describe("asking the owner", () => {
     expect(getAsk(app, next.id).status).toBe("cancelled");
   });
 
+  it("a suggestion card takes the owner's own words: alone, or after a picked step", async () => {
+    const { app, thread, runId } = working("done");
+    const a = createAsk(app, { runId, conversationId: thread.id, kind: "suggestion", question: "", options: [{ label: "核对上线准备", message: "帮我核对上线准备" }] });
+    const card = JSON.stringify(askCard(app, a));
+    expect(card).toContain("按我写的做");
+    expect(card).toContain("\"tag\":\"input\"");
+    await handleAskAction(app, "ci", a.id, { name: "opt_0", formValue: { text: "重点看 M2 合并" } }, "owner");
+    expect(threadMessages(app, thread.id).at(-1)).toMatchObject({ role: "user", text: "帮我核对上线准备\n重点看 M2 合并" });
+    const b = createAsk(app, { runId, conversationId: thread.id, kind: "suggestion", question: "", options: [{ label: "核对上线准备" }] });
+    expect((await handleAskAction(app, "ci", b.id, { name: "answer", formValue: { text: "先把会议纪要发到项目群" } }, "owner")).toast).toBe("收到，接着做");
+    expect(threadMessages(app, thread.id).at(-1)).toMatchObject({ role: "user", text: "先把会议纪要发到项目群" });
+  });
+
   it("holds a listed tool for approval; approved it runs in the original context, refused the reason goes back", async () => {
     const { app, ctx } = working();
     app.config.approvals = { tools: ["upsert_item"], waitSeconds: 0 };

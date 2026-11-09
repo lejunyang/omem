@@ -25,6 +25,10 @@ function fakeClient(replies: Reply[]) {
       return { code: 0, data: { message_id: `om_reply_${replies.length}` } };
     },
     "im.messageReaction.create": async () => ({ code: 0, data: { reaction_id: "r1" } }),
+    "im.message.create": async ({ data }: any) => {
+      replies.push({ to: data.receive_id, inThread: false, content: data.content });
+      return { code: 0, data: { message_id: `om_new_${replies.length}` } };
+    },
   };
   const make = (path: string): any =>
     new Proxy(function () {}, {
@@ -101,6 +105,17 @@ describe("answers in groups and where thinking bubbles go", async () => {
     expect(dm).toBeTruthy();
     expect(dm!.content).not.toContain("<at");
   }, 60_000);
+
+  it("a meeting's conclusion goes to the private chat itself, not the topic the owner last wrote in", async () => {
+    const { deliverToThread } = await import("../src/agents/inbox.ts");
+    const { getThread } = await import("../src/agents/threads.ts");
+    const t = createThread(app, { channel: "lark", key: "oc_owner_dm", spaceId: "personal", userId: "owner" });
+    updateThread(app, t.id, { settings: { lastMessageId: "om_in_other_task", lastTopicId: "omt_other_task" } });
+    await deliverToThread(app, t.id, "会议结论：下周二上线", { topLevel: true });
+    await expect.poll(() => replies.find((r) => r.content.includes("下周二上线")), { timeout: 5_000 }).toBeTruthy();
+    expect(replies.find((r) => r.content.includes("下周二上线"))).toMatchObject({ to: "oc_owner_dm", inThread: false });
+    expect(getThread(app, t.id).settings).toMatchObject({ lastTopicId: null, lastMessageId: expect.stringMatching(/^om_new_/) });
+  }, 30_000);
 
   it("a reply in a topic gets its thinking bubble in that topic, with the answer", async () => {
     await send(event({ id: "om_in_topic", chat: "oc_team", topic: "omt_t1", text: "那就按第二个方案", sender: "ou_owner" }));
