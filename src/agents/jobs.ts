@@ -53,20 +53,40 @@ function quietOf(ctx: RunContext, text: string) {
   return { quiet: !!reason, summary: text.trim() || reason || "" };
 }
 
+/** The Agent process went away (it died starting, or the pipe broke): worth one more try. */
+const CONNECTION_LOST = /EPIPE|ECONNRESET|connection closed/i;
+/** A failure this soon after starting, before any tool call, did nothing yet. */
+const RETRY_WITHIN_MS = 120_000;
+
 async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: string, spaces?: string[] | null, readSpaces?: string[]) {
-  const r = await runRole(ctx.app, {
-    role,
-    spaceId,
-    spaces,
-    alsoRead: readSpaces,
-    readScope: readSpaces,
-    task,
-    runId: ctx.run.id,
-    signal: ctx.signal,
-    onEvent: (e) => ctx.event(e.type, e),
-    userId: one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? undefined,
-    reuseSession: ["heartbeat", "ingest", "dreamer", "brief", "curator", "tutor", "wiki-writer", "wiki-linter"].includes(role),
-  });
+  let acted = false;
+  const attempt = () =>
+    runRole(ctx.app, {
+      role,
+      spaceId,
+      spaces,
+      alsoRead: readSpaces,
+      readScope: readSpaces,
+      task,
+      runId: ctx.run.id,
+      signal: ctx.signal,
+      onEvent: (e) => {
+        if (e.type === "tool") acted = true;
+        ctx.event(e.type, e);
+      },
+      userId: one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? undefined,
+      reuseSession: ["heartbeat", "ingest", "dreamer", "brief", "curator", "tutor", "wiki-writer", "wiki-linter"].includes(role),
+    });
+  const started = Date.now();
+  let r;
+  try {
+    r = await attempt();
+  } catch (e) {
+    const message = (e as Error).message;
+    if (ctx.signal.aborted || acted || Date.now() - started > RETRY_WITHIN_MS || !CONNECTION_LOST.test(message)) throw e;
+    ctx.event("status", { type: "status", text: `Agent 刚开始就断开了（${message}），重试一次` });
+    r = await attempt();
+  }
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   return r;
 }
@@ -930,6 +950,35 @@ export function dreamSince(app: App) {
   return one<{ value: string }>(app.db, "select value from kv where key = 'dream_at'")?.value ?? new Date(Date.now() - 7 * 86400_000).toISOString();
 }
 
+/** How many older memories a night checks for duplicates and conflicts; the walk goes round the whole store. */
+export const DREAM_STOCK_BATCH = 80;
+
+/**
+ * The next older memories (not changed since the last dream) in the walk through the store, and
+ * where the walk stands. The place is kept in kv dream_stock_cursor; after the newest it starts over.
+ */
+export function dreamStockBatch(app: App, since: string, limit = DREAM_STOCK_BATCH) {
+  const cursor = one<{ value: string }>(app.db, "select value from kv where key = 'dream_stock_cursor'")?.value ?? "";
+  const next = (after: string) => {
+    const [at = "", id = ""] = after ? after.split("|") : [];
+    return all<{ id: string; created_at: string }>(
+      app.db,
+      "select id, created_at from memories where status = 'active' and updated_at <= ? and (created_at > ? or (created_at = ? and id > ?)) order by created_at, id limit ?",
+      since,
+      at,
+      at,
+      id,
+      limit,
+    );
+  };
+  let rows = next(cursor);
+  if (!rows.length && cursor) rows = next("");
+  const total = one<{ n: number }>(app.db, "select count(*) n from memories where status = 'active' and updated_at <= ?", since)!.n;
+  const last = rows.at(-1);
+  if (last) run(app.db, "insert into kv(key,value) values('dream_stock_cursor', ?) on conflict(key) do update set value = excluded.value", `${last.created_at}|${last.id}`);
+  return { ids: rows.map((r) => r.id), total };
+}
+
 registerHandler("dream", async (ctx) => {
   const app = ctx.app;
   const since = dreamSince(app);
@@ -957,7 +1006,12 @@ registerHandler("dream", async (ctx) => {
   const merge = digestMergeText(app);
   // Nightly replay's evidence: memories that helped (keep them when merging), digest-written experience that misleads.
   const replayed = replayDreamText(app, mems.map((m) => m.id));
-  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps) && !merge) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
+  const pairs = sameTopicPairs(app, mems.filter((m) => m.status === "active").map((m) => m.id));
+  // Older memories, a batch a night: the store gets the same check, not only what changed today.
+  const stock = dreamStockBatch(app, since);
+  const seen = new Set(pairs.map((p) => [p.a.id, p.b.id].sort().join("|")));
+  const stockPairs = sameTopicPairs(app, stock.ids, 15).filter((p) => !seen.has([p.a.id, p.b.id].sort().join("|")));
+  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps) && !merge && !stockPairs.length) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
   const relations = listSpaces(app).flatMap((s) => relatedSpaces(app, s.id).filter((r) => s.id < r.space).map((r) => `- ${s.id} ↔ ${r.space}${r.note ? `：${r.note}` : ""}`));
   const task = [
     `上次整理：${since}`,
@@ -969,12 +1023,17 @@ registerHandler("dream", async (ctx) => {
     merge,
     replayed,
     (() => {
-      const pairs = sameTopicPairs(app, mems.filter((m) => m.status === "active").map((m) => m.id));
-      const helped = helpedCounts(app, pairs.flatMap((p) => [p.a.id, p.b.id]));
+      const helped = helpedCounts(app, [...pairs, ...stockPairs].flatMap((p) => [p.a.id, p.b.id]));
       const h = (id: string) => (helped.get(id) ? `（复盘里帮过 ${helped.get(id)} 次）` : "");
-      return pairs.length
-        ? `可能说的是同一件事的记忆（向量相近，宿主只负责找，是否重复、冲突由你读后判断；不同的事就不动；合并时保留复盘里帮过忙的那条）：\n${pairs.map((p) => `- ${p.a.id}「${truncate(p.a.content, 80)}」${h(p.a.id)} ↔ ${p.b.id}「${truncate(p.b.content, 80)}」${h(p.b.id)}`).join("\n")}`
-        : "";
+      const list = (ps: typeof pairs) => ps.map((p) => `- ${p.a.id}「${truncate(p.a.content, 80)}」${h(p.a.id)} ↔ ${p.b.id}「${truncate(p.b.content, 80)}」${h(p.b.id)}`).join("\n");
+      return [
+        pairs.length ? `可能说的是同一件事的记忆（向量相近，宿主只负责找，是否重复、冲突由你读后判断；不同的事就不动；合并时保留复盘里帮过忙的那条）：\n${list(pairs)}` : "",
+        stockPairs.length
+          ? `存量里可能说的是同一件事的记忆（每晚轮到 ${DREAM_STOCK_BATCH} 条较早的记忆，现有 ${stock.total} 条，约 ${Math.ceil(stock.total / DREAM_STOCK_BATCH)} 晚轮完一遍；做法同上）：\n${list(stockPairs)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
     })(),
     hasShortcomings(gaps)
       ? `日常运行里的不足信号（宿主按规则挑出来的，只是线索：先读原文判断是不是真的不足）：
@@ -983,13 +1042,14 @@ ${shortcomingsText(gaps)}
 
 能补的就补：缺的事实或约定从原件里找到后记下来；同一类错误反复出现就写一条 experience 记忆，过程复杂的写成案例页（cases/）；需要本人提供的知识建一个 todo 事项问本人。补不了或本来就答得对的不用管。`
       : "",
-    candidates.length ? `可能相关、还没关联的空间（宿主从引用、链接、依赖声明、标签里看到的迹象）：\n${candidates.map((c) => `- ${c.a} ↔ ${c.b}：${c.signals.join("；")}`).join("\n")}` : "",
+    candidates.length ? `可能相关、还没关联的空间（宿主从引用、链接、依赖声明、标签里看到的迹象；读过后判断无关的，用 relate_spaces decline=true 记下原因，同样的迹象就不会再列出）：\n${candidates.map((c) => `- ${c.a} ↔ ${c.b}：${c.signals.join("；")}`).join("\n")}` : "",
     "需要更多上下文时用 recall（可加 include_history）和 list_items 查同主题的其他记录。",
   ]
     .filter(Boolean)
     .join("\n\n");
   const r = await agent(ctx, "dreamer", ctx.run.spaceId ?? "personal", task, null);
-  return { summary: r.text.trim() };
+  // The report is its last message; the narration before it was progress.
+  return { summary: replyOf(r).trim() };
 });
 
 // -------------------------------------------------------------------- brief

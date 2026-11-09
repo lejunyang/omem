@@ -1,6 +1,6 @@
 import type { App } from "./app.ts";
-import { all } from "./db.ts";
-import { json } from "./util.ts";
+import { all, one, run } from "./db.ts";
+import { json, now } from "./util.ts";
 
 /**
  * Pairs of spaces that look related but are not yet (and were not rejected by the owner),
@@ -11,7 +11,8 @@ import { json } from "./util.ts";
  * - a repository's manifest naming another repository's package as a dependency
  * - the same memory tag used in both
  *
- * The dreamer decides from these whether to relate them (relate_spaces).
+ * The dreamer decides from these whether to relate them (relate_spaces). A pair it judged unrelated
+ * (relate_spaces decline) is not offered again until a new kind of evidence turns up.
  */
 export type RelationCandidate = { a: string; b: string; signals: string[] };
 
@@ -37,7 +38,63 @@ export function packageName(uri: string, text: string): string | null {
   return name && name.length >= 4 && !/^(app|main|demo|test|root|server|client|web)$/i.test(name) ? name : null;
 }
 
-export function relationCandidates(app: App, limit = 12): RelationCandidate[] {
+const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Whether a manifest declares `name` as a dependency: the name as a whole token where that file
+ * kind lists dependencies, never as part of a longer word ("view" is not in "preview").
+ */
+export function dependsOn(uri: string, text: string, name: string): boolean {
+  const file = uri.split("/").pop() ?? "";
+  const n = esc(name);
+  if (file === "package.json") {
+    try {
+      const pkg = JSON.parse(text) as Record<string, unknown>;
+      return ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].some((k) => {
+        const deps = pkg[k];
+        return !!deps && typeof deps === "object" && Object.prototype.hasOwnProperty.call(deps, name);
+      });
+    } catch {
+      return new RegExp(`"${n}"\\s*:`).test(text);
+    }
+  }
+  // require lines: the module path, alone or with a version after it.
+  if (file === "go.mod") return new RegExp(`(^|[\\s(])${n}(\\s|$)`, "m").test(text);
+  // A table key (name = "1.0" / name = { … }) or a renamed one (package = "name").
+  if (file === "Cargo.toml") return new RegExp(`^\\s*["']?${n}["']?\\s*=|package\\s*=\\s*"${n}"`, "m").test(text);
+  // A requirement string: the name, then a version, extra, marker or the end of the string.
+  if (file === "pyproject.toml" || file === "setup.py") return new RegExp(`["']${n}\\s*(?=[<>=!~\\[;,@"']|$)`, "m").test(text);
+  if (file === "pom.xml") return new RegExp(`<dependency>(?:(?!</dependency>)[\\s\\S])*<artifactId>${n}</artifactId>`).test(text);
+  // group:artifact[:version] in quotes.
+  return new RegExp(`["':]${n}(?=["':])`).test(text);
+}
+
+/** Evidence without its counts: "3 条记忆" and "5 条记忆" are the same kind of evidence. */
+const signalKind = (signal: string) => signal.replace(/\d+/g, "#");
+
+/**
+ * The dreamer read the evidence and found the two unrelated: remember the kinds of evidence it saw,
+ * so the pair comes back only when something new points at it.
+ */
+export function declineRelation(app: App, a: string, b: string, reason: string) {
+  const [x, y] = a < b ? [a, b] : [b, a];
+  const seen = relationCandidates(app, Infinity, { includeDeclined: true }).find((c) => c.a === x && c.b === y)?.signals ?? [];
+  const old = json<string[]>(one<{ signals: string }>(app.db, "select signals from space_relation_declines where space_a = ? and space_b = ?", x, y)?.signals ?? "[]", []);
+  const kinds = [...new Set([...old, ...seen.map(signalKind)])];
+  run(
+    app.db,
+    `insert into space_relation_declines(space_a, space_b, signals, reason, at) values(?,?,?,?,?)
+     on conflict(space_a, space_b) do update set signals = excluded.signals, reason = excluded.reason, at = excluded.at`,
+    x,
+    y,
+    JSON.stringify(kinds),
+    reason,
+    now(),
+  );
+  return kinds;
+}
+
+export function relationCandidates(app: App, limit = 12, opts: { includeDeclined?: boolean } = {}): RelationCandidate[] {
   const known = new Set(all<{ space_a: string; space_b: string }>(app.db, "select space_a, space_b from space_relations").map((r) => `${r.space_a}|${r.space_b}`));
   const found = new Map<string, Set<string>>();
   const add = (x: string, y: string, signal: string) => {
@@ -79,14 +136,19 @@ export function relationCandidates(app: App, limit = 12): RelationCandidate[] {
       where p.root_path is not null and s.deleted_at is null and (${MANIFESTS.map(() => "s.uri = ? or s.uri like ?").join(" or ")})`,
     ...MANIFESTS.flatMap((f) => [f, `%/${f}`]),
   );
-  const published = new Map<string, string>();
+  // Who publishes each name. A name several spaces publish (copies, forks, a shared workspace
+  // package) says nothing about which one is depended on.
+  const publishers = new Map<string, Set<string>>();
   for (const m of manifests) {
     const name = packageName(m.uri, m.text);
-    if (name && !published.has(name)) published.set(name, m.space_id);
+    if (name) publishers.set(name, (publishers.get(name) ?? new Set()).add(m.space_id));
   }
   for (const m of manifests)
-    for (const [name, owner] of published)
-      if (owner !== m.space_id && m.text.includes(name) && packageName(m.uri, m.text) !== name) add(m.space_id, owner, `${m.space_id} 的 ${m.uri} 依赖 ${owner} 发布的 ${name}`);
+    for (const [name, spaces] of publishers) {
+      if (spaces.size !== 1 || spaces.has(m.space_id)) continue;
+      const owner = [...spaces][0];
+      if (dependsOn(m.uri, m.text, name)) add(m.space_id, owner, `${m.space_id} 的 ${m.uri} 依赖 ${owner} 发布的 ${name}`);
+    }
 
   // The same tag in both.
   const tagSpaces = new Map<string, Set<string>>();
@@ -107,7 +169,11 @@ export function relationCandidates(app: App, limit = 12): RelationCandidate[] {
     add(a, b, `夜间复盘里 ${r.n} 次加上另一边的空间后答得更好`);
   }
 
+  const declined = new Map(
+    opts.includeDeclined ? [] : all<{ space_a: string; space_b: string; signals: string }>(app.db, "select space_a, space_b, signals from space_relation_declines").map((r) => [`${r.space_a}|${r.space_b}`, new Set(json<string[]>(r.signals, []))]),
+  );
   return [...found]
+    .filter(([k, s]) => !declined.has(k) || [...s].some((x) => !declined.get(k)!.has(signalKind(x))))
     .map(([k, s]) => ({ a: k.split("|")[0], b: k.split("|")[1], signals: [...s] }))
     .sort((x, y) => y.signals.length - x.signals.length)
     .slice(0, limit);

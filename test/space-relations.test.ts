@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { prepareRun } from "../src/agents/runner.ts";
 import { callTool, revokeToolToken, toolContextForToken, type ToolContext } from "../src/agents/tools.ts";
-import { relationCandidates, packageName } from "../src/core/space-candidates.ts";
+import { declineRelation, dependsOn, relationCandidates, packageName } from "../src/core/space-candidates.ts";
 import { createSpace, relatedIds, relatedSpaces, relateSpaces, spaceForDir, unrelateSpaces } from "../src/core/spaces.ts";
 import { remember } from "../src/memory/store.ts";
 import { importText } from "../src/sources/import.ts";
@@ -97,6 +97,47 @@ describe("space relations", () => {
     expect(relationCandidates(app).some((c) => c.a === "checkout" && c.b === "pay-sdk")).toBe(false);
     expect(packageName("go.mod", "module example.com/acme/pay\n\ngo 1.22")).toBe("example.com/acme/pay");
     expect(packageName("package.json", '{"name":"app"}')).toBeNull();
+  });
+
+  it("matches a dependency as a whole name, skips names several spaces publish, and remembers declined pairs", () => {
+    expect(dependsOn("package.json", '{"dependencies":{"@acme/view-kit":"1"},"scripts":{"preview":"vite preview"}}', "view")).toBe(false);
+    expect(dependsOn("package.json", '{"devDependencies":{"view":"1"}}', "view")).toBe(true);
+    expect(dependsOn("go.mod", "module example.com/a\n\nrequire (\n\texample.com/acme/pay v1.2.0\n\texample.com/acme/payment v1\n)", "example.com/acme/pay")).toBe(true);
+    expect(dependsOn("go.mod", "module example.com/a\n\nrequire example.com/acme/payment v1", "example.com/acme/pay")).toBe(false);
+    expect(dependsOn("Cargo.toml", '[package]\nname = "app-cli"\n\n[dependencies]\nacme-core = { path = "../core" }', "acme-core")).toBe(true);
+    expect(dependsOn("Cargo.toml", '[dependencies]\nacme-core-extra = "1"', "acme-core")).toBe(false);
+    expect(dependsOn("pyproject.toml", 'dependencies = ["acme-sdk>=1.2", "requests"]', "acme-sdk")).toBe(true);
+    expect(dependsOn("pyproject.toml", 'dependencies = ["acme-sdk-extra"]', "acme-sdk")).toBe(false);
+    expect(dependsOn("pom.xml", "<dependencies><dependency><groupId>a</groupId><artifactId>acme-pay</artifactId></dependency></dependencies>", "acme-pay")).toBe(true);
+    expect(dependsOn("build.gradle", "implementation 'com.acme:acme-pay:1.0'", "acme-pay")).toBe(true);
+
+    const dir = mkdtempSync(join(tmpdir(), "omem-dep-"));
+    for (const id of ["ui-kit", "admin", "fork-kit", "tools"]) createSpace(app, { id, name: id, kind: "repo", rootPath: dir });
+    upsertSource(app, { spaceId: "ui-kit", uri: "package.json", kind: "code", title: "package.json", text: '{ "name": "view" }' });
+    upsertSource(app, { spaceId: "admin", uri: "package.json", kind: "code", title: "package.json", text: '{ "name": "admin-site", "scripts": { "preview": "vite preview" } }' });
+    expect(relationCandidates(app, Infinity).some((c) => c.a === "admin" && c.b === "ui-kit")).toBe(false);
+    // A shared name (two spaces publish @acme/config) says nothing about which one is used.
+    upsertSource(app, { spaceId: "fork-kit", uri: "packages/config/package.json", kind: "code", title: "package.json", text: '{ "name": "@acme/config" }' });
+    upsertSource(app, { spaceId: "tools", uri: "packages/config/package.json", kind: "code", title: "package.json", text: '{ "name": "@acme/config" }' });
+    upsertSource(app, { spaceId: "admin", uri: "web/package.json", kind: "code", title: "package.json", text: '{ "name": "admin-web", "dependencies": { "@acme/config": "1", "view": "1" } }' });
+    const found = relationCandidates(app, Infinity);
+    expect(found.some((c) => c.a === "admin" && (c.b === "fork-kit" || c.b === "tools"))).toBe(false);
+    expect(found.find((c) => c.a === "admin" && c.b === "ui-kit")?.signals.join()).toMatch(/依赖 ui-kit 发布的 view/);
+
+    // Declined: gone until a new kind of evidence turns up (a different count is not new).
+    expect(declineRelation(app, "ui-kit", "admin", "只是同名的小组件，没有实际调用")).toEqual(["admin 的 web/package.json 依赖 ui-kit 发布的 view"]);
+    expect(relationCandidates(app, Infinity).some((c) => c.a === "admin" && c.b === "ui-kit")).toBe(false);
+    const doc = upsertSource(app, { spaceId: "ui-kit", kind: "doc", uri: "guide.md", title: "组件说明", text: "按钮用法" });
+    remember(app, { spaceId: "admin", kind: "fact", content: "后台的按钮沿用组件库的写法", sourceRefs: [`src:${doc.id}#L1-L1`] });
+    const back = relationCandidates(app, Infinity).find((c) => c.a === "admin" && c.b === "ui-kit");
+    expect(back?.signals.join()).toMatch(/1 条记忆引用 ui-kit/);
+  });
+
+  it("lets an agent decline a pair through relate_spaces", async () => {
+    const ctx: ToolContext = { app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" };
+    expect((await callTool(ctx, "relate_spaces", { a: "travel", b: "shop-web", decline: true })).text).toMatch(/为什么无关/);
+    expect((await callTool(ctx, "relate_spaces", { a: "travel", b: "shop-web", decline: true, note: "只是偶然提到" })).text).toMatch(/已记下 travel 与 shop-web 无关/);
+    expect(app.db.prepare("select reason from space_relation_declines where space_a = 'shop-web' and space_b = 'travel'").get()).toMatchObject({ reason: "只是偶然提到" });
   });
 
   it("picks the innermost linked space for a working directory", () => {

@@ -1552,6 +1552,18 @@ export const migrations: readonly string[] = [
   create index req_tests_work on req_tests(work_id);
   alter table run_artifacts add column sha text;
   create index run_artifacts_sha on run_artifacts(sha);`,
+  // Space pairs the dreamer read and found unrelated: the kinds of evidence it saw (counts left out),
+  // so relation candidates bring the pair back only when a new kind turns up. Nightly dream's walk
+  // through older memories keeps its place in kv (dream_stock_cursor).
+  `
+  create table space_relation_declines (
+    space_a text not null,
+    space_b text not null,
+    signals text not null default '[]',
+    reason text not null default '',
+    at text not null,
+    primary key (space_a, space_b)
+  );`,
 ];
 
 export type Db = DatabaseSync;

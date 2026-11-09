@@ -1674,6 +1674,15 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 起因：常驻服务器上 codex-acp 2.5.0 的每次 omem 调用都先发一次“MCP tool call approval”，11-07 起平均每次 30～40 秒，有的一直没有发出（规则运行因此报失败）。omem 的工具不带 MCP 注解，Codex 把它们当作有破坏性、会访问外部，只要不是“完全访问”模式就每次都问；`acp.ts` 每次选“允许一次”。
 - `mcp-server.ts`：列工具时都加 `destructiveHint: false`、`openWorldHint: false`（权限仍由 omem 每次调用时检查）。`acp.ts`：MCP 工具审批有“本会话允许”时选它。回归：`test/rule-handoff.test.ts` 的 MCP 注解一项；真实 codex-acp 下是否不再询问，部署后看运行事件里还有没有这类审批。
 
+## 2026-11-09：做梦轮查存量、关联候选记住判断无关的、错过的定时任务补跑
+
+- 起因：常驻服务器上 10-30～11-08 应跑 10 晚，2 晚计时器没触发（`last_run_at`、`dream_at` 都没动，日志无报错，同一秒的 heartbeat 照常），1 晚 Agent 启动即 EPIPE；跑完的 6 晚每晚只改 1～4 处：任务只给当天变化（每天新记忆个位数），digest 经验按“同一原件”分组几乎凑不出组（364 条里只有一个原件有 2 条），关联候选把 `view` 当依赖（`includes` 子串匹配，命中 preview）且没有否决记录，4 晚重复核对同一对。croner 10 在假时钟里 30 天每天都触发，没找到漏跑的根因。
+- `scheduler.ts`：触发包进 `fire`（更新 `last_run_at` 也在 try 里）；`catchUpSchedules` 每分钟一次（`restartScheduler` 里的 unref 定时器），上一个时间点过去 90 秒～6 小时、`last_run_at` 早于它的补跑并写日志；一小时内会再跑的和从没跑过的不补。
+- `jobs.ts` 的 `agent()`：EPIPE / ECONNRESET / connection closed，两分钟内且还没有工具事件时重试一次（运行里记一条状态）。做梦报告用 `replyOf`（最后一条消息）。
+- `dreamStockBatch`：每晚取 80 条上次做梦前就有的有效记忆（按 created_at、id，kv `dream_stock_cursor`，到头从头再来），`sameTopicPairs` 找相近的对，单独一节列给 dreamer（去掉和当天那节重复的对）；只有存量对时也会跑。
+- `digest-merge.ts`：按同空间、同档案的向量分组（以种子为中心，成员都和种子相近），组可以跨原件；没有向量时按同一原件。`DigestGroup` 改为 `memories[].sourceId` + `sources[]`。
+- `space-candidates.ts`：`dependsOn` 按清单类型整词匹配依赖名；多个空间发布同名包的不算；表 `space_relation_declines`、`declineRelation`，候选去掉被判断无关、且没有新一类依据（数字归一）的对。工具 `relate_spaces` 加 `decline`（note 写原因）。`roles/dreamer.md` 第 00、1、7 条跟着改。
+
 ## 2026-11-09：规则运行设了唤醒时保留它的后端会话
 
 - 起因：常驻服务器上一次报警规则运行设了 5 分钟后的 wake_later 接着查，运行结束 45 秒后它的会话就被清理，唤醒时恢复失败（Internal error），新会话拿不到上一轮的执行结果，只记了一笔就结束。`releaseRuleSessions` 只看排队中的 `resumeSessionId` / `resumeFromRun`、同一 lane 和跟进中的话题，没看排队中的唤醒（`kind='wake'`，原运行在 `target.resumeRunId`）。

@@ -69,6 +69,18 @@ export function registerScheduleKind(kind: string, runner: Runner) {
 }
 
 let jobs: Cron[] = [];
+let watchdog: NodeJS.Timeout | null = null;
+
+/** One firing: marks the schedule as run, then hands it to its kind. Nothing here may throw into croner. */
+function fire(app: App, s: Schedule, runner: Runner) {
+  try {
+    run(app.db, "update schedules set last_run_at = ? where id = ?", now(), s.id);
+    runner(app, s);
+  } catch (e) {
+    console.warn(`[omem] 定时任务 ${s.id} 失败`, e);
+  }
+}
+
 export function restartScheduler(app: App) {
   for (const j of jobs) j.stop();
   jobs = [];
@@ -76,17 +88,51 @@ export function restartScheduler(app: App) {
     if (!s.enabled) continue;
     const runner = runners.get(s.kind);
     if (!runner) continue;
-    jobs.push(
-      new Cron(s.cron, { timezone: app.config.timezone, protect: true }, () => {
-        run(app.db, "update schedules set last_run_at = ? where id = ?", now(), s.id);
-        try {
-          runner(app, s);
-        } catch (e) {
-          console.warn(`[omem] 定时任务 ${s.id} 失败`, e);
-        }
-      }),
-    );
+    jobs.push(new Cron(s.cron, { timezone: app.config.timezone, protect: true }, () => fire(app, s, runner)));
   }
+  // A firing the timer missed (it happened twice for the nightly dream with no trace, and a service
+  // that was down at the time misses it too) is made up for within a minute or so.
+  if (watchdog) clearInterval(watchdog);
+  watchdog = setInterval(() => catchUpSchedules(app), 60_000);
+  watchdog.unref();
+}
+
+/** How late a missed firing may still be made up: later than this it waits for its next time. */
+export const CATCH_UP_WITHIN_MS = 6 * 3600_000;
+/** The timer's own grace: a firing this recent is left to it. */
+const CATCH_UP_AFTER_MS = 90_000;
+/** A task whose next time is this close is not made up for. */
+const CATCH_UP_SKIP_NEXT_MS = 3600_000;
+
+/**
+ * Schedules whose last scheduled time passed without a firing (last_run_at older than it): run each
+ * once now and say so in the log. Tasks that run again within the hour wait for that; a schedule
+ * that never ran is left alone (a new library or a newly enabled task starts at its next time), so
+ * is one missed longer ago than CATCH_UP_WITHIN_MS.
+ */
+export function catchUpSchedules(app: App, at = new Date()): string[] {
+  const fired: string[] = [];
+  for (const s of listSchedules(app)) {
+    if (!s.enabled || !s.lastRunAt) continue;
+    const runner = runners.get(s.kind);
+    if (!runner) continue;
+    let due: Date | undefined, next: Date | null | undefined;
+    try {
+      const c = new Cron(s.cron, { paused: true, timezone: app.config.timezone });
+      due = c.previousRuns(1, at)[0];
+      next = c.nextRun(at);
+    } catch {
+      continue;
+    }
+    // Frequent tasks (every few minutes) just wait for their next time.
+    if (!due || (next && next.getTime() - at.getTime() < CATCH_UP_SKIP_NEXT_MS)) continue;
+    const late = at.getTime() - due.getTime();
+    if (late < CATCH_UP_AFTER_MS || late > CATCH_UP_WITHIN_MS || Date.parse(s.lastRunAt) >= due.getTime()) continue;
+    console.warn(`[omem] 定时任务 ${s.id} 错过了 ${due.toISOString()} 的时间点（上次 ${s.lastRunAt}），现在补跑`);
+    fire(app, s, runner);
+    fired.push(s.id);
+  }
+  return fired;
 }
 
 export function triggerSchedule(app: App, id: string) {

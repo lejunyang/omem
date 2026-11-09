@@ -389,7 +389,7 @@ def({
 def({
   name: "relate_spaces",
   description:
-    "记下两个空间之间的关联（仓库调用另一个仓库的接口、共用 SDK 或约定、项目和它的代码仓库）。关联后，限定在其中一个空间的运行也能读另一个，默认检索会带上它。要有实际依据：代码里的依赖或调用、两边原件说的是同一件事、本人说过。remove=true 取消（只能取消 Agent 加的；本人移除过的不会再加回）。",
+    "记下两个空间之间的关联（仓库调用另一个仓库的接口、共用 SDK 或约定、项目和它的代码仓库）。关联后，限定在其中一个空间的运行也能读另一个，默认检索会带上它。要有实际依据：代码里的依赖或调用、两边原件说的是同一件事、本人说过。remove=true 取消（只能取消 Agent 加的；本人移除过的不会再加回）。读过依据后判断两者无关的（如做梦里的关联候选），decline=true 并在 note 写原因：之后只有出现新的一类依据才会再列为候选。",
   write: true,
   schema: z.object({
     a: z.string(),
@@ -397,10 +397,17 @@ def({
     note: z.string().optional().describe("一句话写清是什么关系，如“调用 b 的订单接口”“a 是 b 的前端”"),
     evidence: z.string().optional().describe("依据：原件引用 src:<id>#L起-L止、依赖声明等"),
     remove: z.boolean().optional(),
+    decline: z.boolean().optional().describe("判断两者无关：不关联，记下这次看到的依据，同样的依据不再列为候选"),
   }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     for (const id of [a.a, a.b]) inScope(ctx, space(ctx, id), "关联");
     const by = ctx.actor === "user" ? "owner" : "agent";
+    if (a.decline) {
+      if (!a.note?.trim()) throw new HttpError(400, "写一句 note 说明为什么无关");
+      const { declineRelation } = await import("../core/space-candidates.ts");
+      const kinds = declineRelation(ctx.app, a.a, a.b, a.note.trim());
+      return `已记下 ${a.a} 与 ${a.b} 无关（${kinds.length ? `依据 ${kinds.length} 类` : "没有候选依据"}）；只有出现新的一类依据才会再列为候选。`;
+    }
     if (a.remove) {
       unrelateSpaces(ctx.app, a.a, a.b, by);
       return `已取消 ${a.a} 与 ${a.b} 的关联${by === "agent" ? "（本人确认过的关联要由本人在设置里移除）" : ""}。`;
