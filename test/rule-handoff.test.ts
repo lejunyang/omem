@@ -32,3 +32,17 @@ it("run_agent in a rule's run hands the trigger over within the rule's limits", 
     expect((await callTool(ctx, "run_agent", { name: "assistant", task: "再看看" })).isError).toBe(true);
   } finally { app.db.close(); }
 });
+
+it("lists omem tools to MCP clients as non-destructive and closed-world, so agents need not ask before each call", async () => {
+  const { createMcpServer } = await import("../src/agents/mcp-server.ts");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const server = createMcpServer({ list: async () => [{ name: "search", description: "检索", inputSchema: { type: "object" } }], call: async () => ({ text: "", isError: false }) });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  const client = new Client({ name: "t", version: "1" });
+  await client.connect(b);
+  const { tools } = await client.listTools();
+  expect(tools[0].annotations).toMatchObject({ destructiveHint: false, openWorldHint: false });
+  await client.close();
+});

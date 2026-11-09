@@ -145,7 +145,9 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         touch();
         const kind = request.toolCall.kind ?? "other";
         const allowed = opts.allowWrites || !["edit", "delete", "move"].includes(kind);
-        const option = request.options.find((o) => o.kind === (allowed ? "allow_once" : "reject_once")) ?? request.options.find((o) => o.kind.startsWith(allowed ? "allow" : "reject"));
+        // An omem tool is checked by omem on every call: allow it for the session so it is not asked again.
+        const mcpSession = allowed && request.toolCall.title === "MCP tool call approval" ? request.options.find((o) => o.optionId === "allow_session") : undefined;
+        const option = mcpSession ?? request.options.find((o) => o.kind === (allowed ? "allow_once" : "reject_once")) ?? request.options.find((o) => o.kind.startsWith(allowed ? "allow" : "reject"));
         emit({ type: "status", text: `${allowed ? "允许" : "拒绝"}操作：${request.toolCall.title ?? kind}` });
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
       },

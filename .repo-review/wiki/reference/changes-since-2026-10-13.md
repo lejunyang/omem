@@ -1668,3 +1668,8 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - `runner.ts`：环境里的“已有的 Agent 档案”按这次运行实际有的工具写用途：有 `run_agent` 写可交办，只有 `ask_agent`（规则运行的主助手，`rules/actions.ts` 的 `assistantScope` 去掉了交办工具）写“不能交办，用 ask_agent 请教”，都没有就不列。之前规则运行的主助手看到“可用 run_agent 交给它们”去找交办入口，找不到就调 `report_rule_failure`，规则显示为失败。
 - `tools.ts` 的 `ruleHandoff`：规则运行里调 `run_agent` 时，新运行沿用父运行的 `rule`、`lark`、`threadId`、`replyAt`、`silent`、`hideThinking`、`conversationId`，`denyTools` 去掉交办与请教，任务里附上父运行的原始任务；`rules/actions.ts` 的 `assistantScope` 不再拒绝 `run_agent`。静默排查时被交办的 Agent 在话题里发言，跟进记录记在交办它的运行上（`handoff`），话题里的回复回到主助手。回归：`test/rule-handoff.test.ts`。
+
+## 2026-11-09：Codex 不再为每次 omem 工具调用请求审批
+
+- 起因：常驻服务器上 codex-acp 2.5.0 的每次 omem 调用都先发一次“MCP tool call approval”，11-07 起平均每次 30～40 秒，有的一直没有发出（规则运行因此报失败）。omem 的工具不带 MCP 注解，Codex 把它们当作有破坏性、会访问外部，只要不是“完全访问”模式就每次都问；`acp.ts` 每次选“允许一次”。
+- `mcp-server.ts`：列工具时都加 `destructiveHint: false`、`openWorldHint: false`（权限仍由 omem 每次调用时检查）。`acp.ts`：MCP 工具审批有“本会话允许”时选它。回归：`test/rule-handoff.test.ts` 的 MCP 注解一项；真实 codex-acp 下是否不再询问，部署后看运行事件里还有没有这类审批。
