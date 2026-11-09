@@ -269,6 +269,7 @@ async function runAgentTask(ctx: RunContext) {
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
       addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : [])],
       execution,
+      fullAccess: !!(ctx.run.input as { fullAccess?: boolean }).fullAccess,
       spaces: assistantScope?.spaces,
       // A run may also be denied tools of its own (a meeting's windows: nothing reaches the owner until it ends).
       denyTools: [...(assistantScope?.denyTools ?? []), ...(((ctx.run.input as { denyTools?: string[] }).denyTools) ?? [])],

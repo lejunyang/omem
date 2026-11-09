@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { fullAccessHint, seedProbe } from "../lib/probes";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { del, get, onServerEvent, post, put } from "../api";
@@ -20,7 +21,7 @@ import { fmtTime, relTime, state, toast } from "../store";
 type Reply = "none" | "draft" | "auto";
 type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string } }
+  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string }; fullAccess?: boolean }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
@@ -239,6 +240,13 @@ const scheduleReplyOptions = computed(() => replyOptions.filter((o) => o.value !
 const specOptions = computed(() => options.value.specs.map((s) => ({ value: s.name, label: s.name === "assistant" ? "主助手" : s.name, hint: s.description })));
 /** The backend a profile runs on when the rule does not pick one. */
 const specAgent = (spec: string) => options.value.specs.find((s) => s.name === spec)?.agent ?? "";
+/** Whether the backend this action runs on can do 完全访问 (by its last detection). */
+function accessHint(a: { spec: string; ai?: { profile: string } }) {
+  const id = a.ai?.profile || specAgent(a.spec);
+  const backends = options.value.backends ?? [];
+  for (const b of backends) seedProbe(b.id, b.probe);
+  return fullAccessHint(id ? backends.find((b) => b.id === id) : undefined) + (id ? "" : "（用的是档案或助手的默认后端）");
+}
 type AgentAction = Extract<Action, { type: "agent" }>;
 function toggleAI(a: AgentAction, on: boolean) {
   a.ai = on ? { profile: specAgent(a.spec) || options.value.backends?.find((b) => b.installed)?.id || "" } : undefined;
@@ -590,6 +598,10 @@ function startFrom(text: string) {
                 <small class="muted">{{ a.ai ? "这条规则交出去的运行用下面选的后端、模型和思考强度。" : `不指定就用档案自己的设置${specAgent(a.spec) ? `（${specAgent(a.spec)}）` : ""}；模型写在要求里不会生效。` }}</small>
               </div>
               <AiDefaults v-if="a.ai" :model-value="{ agent: a.ai.profile, model: a.ai.model, effort: a.ai.effort }" :backends="options.backends ?? []" :default-backend="specAgent(a.spec)" @update:model-value="(v) => setAI(a, v)" @change="touch" />
+              <div class="row wrap">
+                <UiCheckbox :model-value="!!a.fullAccess" size="sm" @change="(v) => ((a.fullAccess = v || undefined), touch())">完全访问：命令不进沙箱、不经审批</UiCheckbox>
+                <small class="muted">{{ a.fullAccess ? accessHint(a) : "需要联网的命令行排查（报警、值班）每次都要审批时打开；交给别的 Agent 时它也照此运行。" }}</small>
+              </div>
               <textarea v-model="a.task" class="input" rows="2" placeholder="交给它的要求（触发的消息会自动附上），例如：分析报警，需要关注就 @ 值班人" @input="touch" />
             </template>
             <template v-else-if="a.type === 'watch'">

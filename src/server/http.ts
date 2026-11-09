@@ -746,7 +746,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/profile-proposals/:id/apply", async (req) => applyProposal(app, (req.params as { id: string }).id));
   server.post("/api/profile-proposals/:id/reject", async (req) => rejectProposal(app, (req.params as { id: string }).id));
-  server.put("/api/agents/:name", async (req) => saveAgentSpec(app, { ...(req.body as object), name: (req.params as { name: string }).name } as never, "user"));
+  server.put("/api/agents/:name", async (req) => {
+    // 完全访问 is the owner's alone; another user's edit keeps what the profile had.
+    const { fullAccess, ...body } = req.body as { fullAccess?: boolean };
+    return saveAgentSpec(app, { ...body, ...(who(req) === OWNER && fullAccess !== undefined ? { fullAccess } : {}), name: (req.params as { name: string }).name } as never, "user");
+  });
   server.delete("/api/agents/:name", async (req) => {
     deleteAgentSpec(app, (req.params as { name: string }).name, "user");
     return { ok: true };

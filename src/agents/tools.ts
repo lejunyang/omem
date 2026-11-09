@@ -1009,7 +1009,7 @@ function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, 
 }
 
 /** What a rule's run hands on: where it may answer, how, and on whose behalf the rule fired. */
-const RULE_DELIVERY = ["rule", "lark", "threadId", "replyAt", "silent", "hideThinking", "conversationId"] as const;
+const RULE_DELIVERY = ["rule", "lark", "threadId", "replyAt", "silent", "hideThinking", "conversationId", "fullAccess"] as const;
 const HANDOFF_DENIED = ["run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run", "save_rule", "set_chat_watch"];
 
 /**

@@ -1687,3 +1687,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - 起因：常驻服务器上一次报警规则运行设了 5 分钟后的 wake_later 接着查，运行结束 45 秒后它的会话就被清理，唤醒时恢复失败（Internal error），新会话拿不到上一轮的执行结果，只记了一笔就结束。`releaseRuleSessions` 只看排队中的 `resumeSessionId` / `resumeFromRun`、同一 lane 和跟进中的话题，没看排队中的唤醒（`kind='wake'`，原运行在 `target.resumeRunId`）。
 - `session-cleanup.ts`：排队中的唤醒和待触发的消息唤醒（临时规则的 wake 动作）指向的运行，会话保留到唤醒结束。回归：`test/session-cleanup.test.ts` 的唤醒一项。
+
+## 2026-11-09：规则和档案的“完全访问”
+
+- 起因：报警规则用的内部命令行工具在 Codex 只读沙箱里起不来（读网卡 EPERM、不能联网），每条命令都要走沙箱外执行的审批，一轮二三十次；codex-acp 2.5.0 偶尔把审批请求压几分钟才发出（这次 4 分钟，Agent 先报了失败，命令在它结束后才跑）。omem 本来就批准所有非编辑类命令，沙箱对这类运行只多了等待。
+- 规则的 agent 动作和 Agent 档案加 `fullAccess`（规则页、Agent 页的开关，默认关）。`runRole` 只在规则运行、档案打开时生效，评审检查、复盘、对比运行、访客不用；`acp.ts` 选 `full-access` 模式（`agent-full-access`、`bypassPermissions`、`danger-full-access`、`yolo`），没有时记一条状态照旧运行，此时审批也放行编辑；`cli.ts` 的 codex 用 `--dangerously-bypass-approvals-and-sandbox`，claude 用 `--permission-mode bypassPermissions`。后台会话池的键带上它。规则交给别的档案（`RULE_DELIVERY`）、唤醒续轮（`wakes.ts`）沿用。
+- 只有本人能打开：`saveRule` 非本人保存时新开的 `fullAccess` 返回 403，漏写的保留原值；`saveAgentSpec` 非 user 保存保留原值，`PUT /api/agents/:name` 只认本人的。检测结果记下后端的模式（`ProbeInfo.modes`），网页 `fullAccessHint` 按它说明当前后端支不支持。回归：`test/full-access.test.ts`、`test/rule-handoff.test.ts`。

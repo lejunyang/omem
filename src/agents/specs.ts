@@ -45,6 +45,11 @@ export const agentSpecSchema = z.object({
   tools: z.array(z.string()).default([]),
   /** May edit files in its working directory. */
   writes: z.boolean().default(false),
+  /**
+   * The owner's 完全访问: its commands run outside the backend's sandbox without approvals (codex
+   * agent-full-access, Claude bypassPermissions). Only the owner sets it, on the Agent page.
+   */
+  fullAccess: z.boolean().default(false),
   space: z.string().optional(),
   /** Other spaces it may read; ["*"] = all. */
   spaces: z.array(z.string()).default([]),
@@ -133,6 +138,8 @@ export function saveAgentSpec(app: App, input: Partial<z.input<typeof agentSpecS
   const prev = findAgentSpec(app, input.name);
   const { prompt, ...rest } = input;
   const merged = agentSpecSchema.parse({ ...(prev ?? {}), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) });
+  // An agent editing a profile (save_agent) keeps whatever the owner chose.
+  if (actor !== "user") merged.fullAccess = prev?.fullAccess ?? false;
   const body = (prompt ?? prev?.prompt ?? "").trim();
   if (!body) throw new HttpError(400, "需要写 system prompt（正文）");
   // The spec is identity only. Agents used to dump a whole investigation into the prompt.
@@ -150,6 +157,7 @@ export function saveAgentSpec(app: App, input: Partial<z.input<typeof agentSpecS
   for (const [k, v] of Object.entries(meta)) if (v === undefined || v === "" || (Array.isArray(v) && !v.length) || (v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length)) delete meta[k];
   if (meta.status === "active") delete meta.status;
   if (meta.writes === false) delete meta.writes;
+  if (meta.fullAccess === false) delete meta.fullAccess;
   mkdirSync(agentsDir(app), { recursive: true });
   writeFileSync(join(agentsDir(app), `${input.name}.md`), `---\n${YAML.stringify(meta).trim()}\n---\n\n${body}\n`);
   commitLibrary(app.libraryDir, `${actor}: ${prev ? "update" : "create"} agent ${input.name}${merged.status === "draft" ? " (draft)" : ""}`);

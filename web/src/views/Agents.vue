@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { fullAccessHint } from "../lib/probes";
 import { computed, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
@@ -23,7 +24,7 @@ import { state, toast } from "../store";
  * reset / merge when the source changes) and skills. A profile shows who it is (a form, or the
  * raw file), what it has learned and how it is evolving.
  */
-type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
+type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean };
 type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
@@ -42,6 +43,8 @@ const specs = ref<Spec[]>([]);
 const roles = ref<RoleState[]>([]);
 const skills = ref<Skill[]>([]);
 const options = ref<Options>({ backends: [], defaultBackend: "", globalDefaultBackend: "", tools: [], defaultTools: [] });
+/** Whether the profile's backend can run 完全访问 (by its last detection). */
+const accessHint = (agent?: string) => fullAccessHint(options.value.backends.find((b) => b.id === (agent || options.value.defaultBackend)));
 const loading = ref(true);
 async function loadLists() {
   try {
@@ -108,6 +111,7 @@ async function saveSpec() {
         effort: f.effort ?? "",
         tools: f.tools,
         writes: f.writes,
+        fullAccess: !!f.fullAccess,
         space: f.space ?? "",
         spaces: f.spaces,
         cwd: f.cwd?.trim() ?? "",
@@ -468,6 +472,10 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           </div>
           <div class="field switch">
             <UiCheckbox v-model="form.writes" switch @change="dirty = true">可以改工作目录里的文件</UiCheckbox>
+          </div>
+          <div class="field switch">
+            <UiCheckbox :model-value="!!form.fullAccess" switch @change="(v: boolean) => { form.fullAccess = v; dirty = true; }">完全访问：命令不进沙箱、不经审批</UiCheckbox>
+            <small class="muted">{{ accessHint(form.agent) }}</small>
           </div>
           <p v-if="mcpNames.length" class="muted small">额外 MCP：{{ mcpNames.join("、") }}（在“原文”里改）</p>
           <label class="field">

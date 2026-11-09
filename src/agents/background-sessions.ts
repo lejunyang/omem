@@ -50,7 +50,7 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
   const { app: _app, runId: _run, ...scope } = ctx;
   const key = createHash("sha256").update(JSON.stringify(stable({
     scope, system: prep.system, profile: prep.profile, cwd: prep.cwd,
-    extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, modes: prep.modes,
+    extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, modes: prep.modes, fullAccess: !!req.fullAccess,
   }))).digest("hex");
   let pool = pools.get(app);
   if (!pool) { pool = new Set(); pools.set(app, pool); }

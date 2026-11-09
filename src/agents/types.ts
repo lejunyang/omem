@@ -54,6 +54,12 @@ export type AgentRequest = {
   allowWrites?: boolean;
   /** Preferred session modes in order, e.g. ["read-only"] or ["acceptEdits", "auto"]. */
   modes?: string[];
+  /**
+   * The owner turned off the agent's own sandbox and approvals for this run (a rule's or profile's
+   * "完全访问"): its full-access mode when it has one (codex agent-full-access, Claude bypassPermissions).
+   * omem's own tools are still checked on every call.
+   */
+  fullAccess?: boolean;
   env?: Record<string, string>;
   signal?: AbortSignal;
   /** Only connect and report the agent's models/modes, no prompt. */

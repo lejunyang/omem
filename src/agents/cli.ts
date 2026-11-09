@@ -15,7 +15,8 @@ export function claudeArgs(profile: AgentProfile, req: AgentRequest) {
   if (req.mcp) servers.omem = { command: req.mcp.stdio.command, args: req.mcp.stdio.args, env: { OMEM_URL: req.mcp.baseUrl, OMEM_TOKEN: req.mcp.token } };
   for (const [name, srv] of Object.entries(req.extraMcp ?? {})) servers[name] = "url" in srv ? { type: "http", url: srv.url, headers: srv.headers } : srv;
   if (Object.keys(servers).length) args.push("--mcp-config", JSON.stringify({ mcpServers: servers }));
-  if (req.allowWrites) args.push("--permission-mode", "acceptEdits", "--allowedTools", [...READ_TOOLS, "Edit", "Write", "MultiEdit", "Bash"].join(","));
+  if (req.fullAccess) args.push("--permission-mode", "bypassPermissions");
+  else if (req.allowWrites) args.push("--permission-mode", "acceptEdits", "--allowedTools", [...READ_TOOLS, "Edit", "Write", "MultiEdit", "Bash"].join(","));
   else args.push("--allowedTools", READ_TOOLS.join(","), "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit");
   return args;
 }
@@ -25,7 +26,7 @@ function tomlString(s: string) {
 }
 
 export function codexArgs(profile: AgentProfile, req: AgentRequest) {
-  const args = [...profile.args, "exec", "--json", "--skip-git-repo-check", "--sandbox", req.allowWrites ? "workspace-write" : "read-only"];
+  const args = [...profile.args, "exec", "--json", "--skip-git-repo-check", ...(req.fullAccess ? ["--dangerously-bypass-approvals-and-sandbox"] : ["--sandbox", req.allowWrites ? "workspace-write" : "read-only"])];
   if (!req.persistSession && !req.resumeSessionId) args.push("--ephemeral");
   if (profile.model) args.push("-m", profile.model);
   if (profile.effort) args.push("-c", `model_reasoning_effort=${tomlString(profile.effort)}`);

@@ -30,6 +30,7 @@ export type AcpOpenOptions = {
   extraMcp?: AgentRequest["extraMcp"];
   allowWrites?: boolean;
   modes?: string[];
+  fullAccess?: boolean;
   env?: Record<string, string>;
   /** Continue an earlier agent session (resume, or load when only that is offered). */
   resumeSessionId?: string;
@@ -144,7 +145,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       async requestPermission(request) {
         touch();
         const kind = request.toolCall.kind ?? "other";
-        const allowed = opts.allowWrites || !["edit", "delete", "move"].includes(kind);
+        const allowed = opts.allowWrites || opts.fullAccess || !["edit", "delete", "move"].includes(kind);
         // An omem tool is checked by omem on every call: allow it for the session so it is not asked again.
         const mcpSession = allowed && request.toolCall.title === "MCP tool call approval" ? request.options.find((o) => o.optionId === "allow_session") : undefined;
         const option = mcpSession ?? request.options.find((o) => o.kind === (allowed ? "allow_once" : "reject_once")) ?? request.options.find((o) => o.kind.startsWith(allowed ? "allow" : "reject"));
@@ -337,7 +338,9 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     touch();
     // Permission mode: prefer the role's choice when the agent offers it.
     const modes = session.modes?.availableModes ?? [];
-    const wanted = pickMode(opts.modes ?? [], modes.map((m) => m.id));
+    const full = opts.fullAccess && !opts.probe ? pickMode(["full-access"], modes.map((m) => m.id)) : undefined;
+    if (opts.fullAccess && !opts.probe) emit({ type: "status", text: full ? `完全访问：${full}（命令不进沙箱、不审批）` : "这个后端没有完全访问模式，仍按沙箱和审批运行" });
+    const wanted = full ?? pickMode(opts.modes ?? [], modes.map((m) => m.id));
     if (wanted && session.modes?.currentModeId !== wanted) await Promise.race([connection.setSessionMode({ sessionId, modeId: wanted }), failed]);
     let options = session.configOptions ?? [];
     const agentName = init.agentInfo?.name ?? profile.command;
@@ -577,7 +580,7 @@ export async function cleanupAcpSession(profile: AgentProfile, sessionId: string
 export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const onAbort = () => {};
   req.signal?.addEventListener("abort", onAbort, { once: true });
-  const handle = await openAcp(profile, { cwd: req.cwd, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const handle = await openAcp(profile, { cwd: req.cwd, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");
@@ -600,6 +603,8 @@ const MODE_ALIASES: Record<string, string[]> = {
   default: ["default", "normal", "code"],
   acceptEdits: ["acceptEdits", "accept-edits", "auto_edit", "autoEdit", "auto-edit"],
   auto: ["auto", "agent", "act"],
+  // No sandbox and no approvals; only when the owner turned on 完全访问 for the run.
+  "full-access": ["agent-full-access", "full-access", "bypassPermissions", "danger-full-access", "yolo"],
 };
 export function pickMode(wanted: string[], available: string[]) {
   for (const w of wanted) for (const alias of MODE_ALIASES[w] ?? [w]) if (available.includes(alias)) return alias;

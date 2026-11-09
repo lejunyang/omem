@@ -7,7 +7,7 @@ import { HttpError, json, newId, now } from "../core/util.ts";
 import { readAgentSpec } from "../agents/specs.ts";
 import { validateExecution } from "../agents/execution.ts";
 import { fieldsOf } from "./conditions.ts";
-import { ruleInputSchema, type Rule, type RuleInput, type Temporary } from "./types.ts";
+import { ruleInputSchema, type Rule, type RuleAction, type RuleInput, type Temporary } from "./types.ts";
 import { OWNER } from "../core/users.ts";
 
 type Row = {
@@ -105,6 +105,17 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   const r = ruleInputSchema.parse(input);
   if (r.actions.some((a) => a.type === "script") && (by !== "user" || actor !== OWNER || input.temporary))
     throw new HttpError(403, "带脚本的规则只能由本人在规则页保存：脚本在这台机器上执行");
+  // 完全访问 is the owner's decision on the rules page; an agent saving the rule keeps what was there.
+  if (by !== "user" || actor !== OWNER || input.temporary) {
+    const before = input.id ? one<{ actions: string }>(app.db, "select actions from rules where id = ?", input.id) : undefined;
+    const had = (before ? JSON.parse(before.actions) as RuleAction[] : []).filter((a) => a.type === "agent" && a.fullAccess).map((a) => (a as { spec: string }).spec);
+    for (const a of r.actions) {
+      if (a.type !== "agent") continue;
+      if (a.fullAccess && !had.includes(a.spec)) throw new HttpError(403, "完全访问只能由本人在规则页打开：打开后这条规则的命令不进沙箱、不经审批");
+      // Left out by an agent's edit: the owner's choice stays.
+      if (a.fullAccess === undefined && had.includes(a.spec)) a.fullAccess = true;
+    }
+  }
   if (r.actions.at(-1)?.type === "delay") throw new HttpError(400, "延时后面要有动作");
   if (r.actions.at(-1)?.type === "check") throw new HttpError(400, "模型判断后面要有动作：它决定后面的动作做不做");
   if (r.spaceId) getSpace(app, r.spaceId);

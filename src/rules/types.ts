@@ -108,6 +108,8 @@ export const actionSchema = z.discriminatedUnion("type", [
       .object({ profile: z.string().trim().min(1), model: z.string().trim().optional(), effort: z.string().trim().optional() })
       .transform((v) => ({ profile: v.profile, ...(v.model ? { model: v.model } : {}), ...(v.effort ? { effort: v.effort } : {}) }))
       .optional(),
+    /** The owner's 完全访问 for these runs: commands outside the backend's sandbox, no approvals. Only the owner sets it, on the rules page. */
+    fullAccess: z.boolean().optional(),
   }),
   z.object({ type: z.literal("watch"), spec: z.string(), on: z.enum(["all", "mention", "keyword"]).default("mention"), pattern: z.string().optional(), reply: reply.default("draft") }),
   z.object({ type: z.literal("invite-bot") }),

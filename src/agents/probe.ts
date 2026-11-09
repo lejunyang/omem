@@ -18,6 +18,8 @@ export type ProbeInfo = {
   efforts: string[];
   /** Levels per model; a model with [] has no effort setting. Absent when the agent does not tell. */
   effortsByModel?: Record<string, string[]>;
+  /** The agent's permission modes (ACP); whether it has a full-access one decides 完全访问. */
+  modes?: string[];
   error?: string;
 };
 
@@ -75,6 +77,7 @@ export async function probeProfile(profile: AgentProfile, app?: App): Promise<Pr
       models: (modelOpt?.values ?? []).filter((v): v is string => typeof v === "string"),
       efforts,
       ...(by ? { effortsByModel: by } : {}),
+      modes: r.probe?.modes ?? [],
     };
   } catch (e) {
     return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: (e as Error).message.slice(0, 300) };

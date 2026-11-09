@@ -244,6 +244,8 @@ export type RoleRunInput = {
   shadow?: { parentRunId: string | null };
   /** omem tools this run must not have (a consulted agent cannot hand work on). */
   denyTools?: string[];
+  /** The owner's 完全访问 for this run (a rule's agent action); a profile can also have it (spec.fullAccess). */
+  fullAccess?: boolean;
   /** Feishu chats it may post into (a rule's agent: only the chat that triggered it), and whether it may buzz people or post to some members only. */
   lark?: LarkAccess;
   /** Running as a review check of a delegation: read-only tools plus submit_review, no writes or extra MCP. */
@@ -585,6 +587,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const execution = validateExecution(app, input.execution ?? runAI(app, input.runId));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
+  // 完全访问 is the owner's choice for a rule's runs or a profile; checks, replays, comparisons and guests never get it.
+  const fullAccess = !input.reviewCheck && !input.reviewLead && !input.replay && !input.shadow && input.role !== "guest" && !!(input.fullAccess || input.spec?.fullAccess);
   const lessons = await lessonsForTask(app, input);
   const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay });
   if (execution) {
@@ -632,6 +636,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           prompt: `（${prep.now}）\n\n# 任务\n\n${input.task}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
+          fullAccess,
           signal: input.signal,
           mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
           extraMcp: prep.extraMcp,
@@ -641,7 +646,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         };
         if (i > 0)
           emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
-        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${fullAccess ? " · 完全访问" : ""}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
         writesBefore = writes();

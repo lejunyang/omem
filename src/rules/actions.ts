@@ -184,7 +184,7 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
 
 /** The AI the owner picked for this rule's runs: the run's `execution`, as run_agent passes one. */
 function ruleAI(rule: Rule, a: Extract<RuleAction, { type: "agent" }>) {
-  return a.ai ? { execution: { ...a.ai, source: "user" as const, reason: `规则「${rule.name}」指定` } } : {};
+  return { ...(a.ai ? { execution: { ...a.ai, source: "user" as const, reason: `规则「${rule.name}」指定` } } : {}), ...(a.fullAccess ? { fullAccess: true } : {}) };
 }
 
 /** Urgent and members-only messages: only when the rule allows them. */
