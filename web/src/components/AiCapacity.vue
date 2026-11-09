@@ -91,13 +91,14 @@ const rec = (source: string, model: string) => load.value?.recent.find((r) => r.
       <span class="spacer" />
       <button class="btn ghost sm icon" aria-label="移除" @click="draft.limits.splice(i, 1)"><Icon name="x" :size="14" /></button>
     </div>
+    <div><button class="btn sm" :disabled="draft.limits.length >= 100" @click="add"><Icon name="plus" :size="13" />添加上限</button></div>
     <div class="section-title">额度快用完时</div>
     <p class="muted small">按下面读到的 Codex、Claude Code 套餐额度：满足任一条件的账号排到最后，后台任务先换用这个角色配置过的其他后端和兜底，助手交办时也会看到“避开”；本人发起的对话、点名用它的任务不受影响。</p>
     <div class="grid">
       <label class="field"><span>任一窗口用到（%）以上时避开（100 = 不避开）</span><input v-model.number="draft.quotaAvoidAbove" class="input" type="number" inputmode="numeric" min="50" max="100" /></label>
       <label class="field"><span>周额度剩余 ÷ 距重置天数 低于（%/天）时避开（0 = 不看）</span><input v-model.number="draft.quotaPerDayBelow" class="input" type="number" inputmode="decimal" min="0" max="100" step="0.5" /></label>
     </div>
-    <div class="row wrap"><button class="btn sm" :disabled="draft.limits.length >= 100" @click="add"><Icon name="plus" :size="13" />添加上限</button><span class="spacer" /><button class="btn primary sm" @click="save">保存并行设置</button></div>
+    <div class="row wrap"><span class="spacer" /><button class="btn primary sm" @click="save">保存并行设置</button></div>
     <section class="blk">
       <div class="blk-head"><span class="section-title">现在</span><span class="spacer" /><button class="btn ghost sm" @click="refresh">刷新</button></div>
       <div v-if="load?.now.length" class="lines small">
