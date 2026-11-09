@@ -36,7 +36,7 @@ plugins/<id>/
 - **工具与平台包**：它的工具和平台包的读取器在 omem 里注册成代理，调用时转给它的进程。参数由插件自己的 zod 定义检查，宿主列工具时用它给出的 JSON Schema。
 - **宿主代办的事**：要读平台（`ctx.connection(...).fetch`）、读写插件记录（`ctx.store`）、存原件（`ctx.saveSource`）、设盯着（`ctx.watches`）、启动服务时，进程向 omem 发请求。omem 按**正在进行的那次调用**的人和空间回答，不认插件自己报的身份。令牌由 omem 加在请求上，插件拿不到。
 - **写法要求**：`ctx.store`、`ctx.saveSource`、`ctx.watches` 在隔离运行时返回 Promise，所以要写 `await`；写了 `await` 在 omem 进程里运行时也照样能用。
-- **不能做的**：内容块（`api.block`）、新的连接器（`api.connector`、`api.appConfig`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
+- **不能做的**：内容块（`api.block`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
 
 **在 omem 里运行**：代码以 omem 的全部权限运行，只适合你自己写的或逐行看过的插件。运行方式记在 `secrets/plugin-trust.json` 的 `mode` 里；以前信任过的插件按原来的方式在 omem 里运行。代码注册了清单没声明的东西，或者没能启动，信任会被撤回。
 
@@ -148,6 +148,25 @@ api.tool({ name: "notes_recent", description, schema, handler: async (ctx) => {
 - 清单里写 `connectors: [{ provider: notes-api, features: [read] }]`，没连接或缺功能时插件页顶上提示去账号页连接。
 - 想让人用它登录，把它的 id 加进 `auth.providers`（设置 → 成员）。
 - 只用来读的平台写 `identity: false`：只存令牌，不登录、不绑定、不记身份。用 key 或账号密码连接的写 `credentials: { fields, verify }`，不用授权流程的三个函数。
+
+### 鉴权方式：认组织自己的凭据
+
+命令行和 MCP 连远程 omem 时（docs/v2/remote-clients.md），除了 omem 发的 API 令牌，还可以带组织自己的凭据（比如内部登录体系签发的 JWT，用 `OMEM_AUTH_CMD` 从内部命令行取）。认它的办法写在数据目录的插件里，不进仓库：
+
+```ts
+api.authenticator({
+  id: "acme-sso", label: "公司统一登录",              // id 以 <插件 id>- 开头，也是 identities 的 channel
+  claims: (token) => token.startsWith("eyJ"),        // 只看形状，不发请求
+  verify: async (token) => {                          // 验签名和有效期；不是有效凭据返回 null
+    const c = await checkWithOrgKeys(token);          // 插件自己的验证
+    return c ? { externalId: c.sub, name: c.name, email: c.email, emailVerified: true, expiresAt: c.exp * 1000 } : null;
+  },
+});
+```
+
+- 清单里声明 `permissions: { authenticators: [acme-sso] }`；只能在 omem 进程里运行（设置 → 插件 选“在 omem 里运行”）。
+- 宿主只认 `Authorization: Bearer`，按凭据的哈希记住结果到 `expiresAt`（最多 10 分钟），不保存凭据本身。
+- 认出的身份先按 `identities` 找账号，再按 `emailVerified` 的邮箱认领预建账号，都没有时按 `auth.signup[<id>]` 处理（默认等批准，命令行会收到“等 omem 的主人批准”）。
 - 主人要填的应用配置写 `appFields`（client id、secret、站点），在设置 → 连接 → 其他平台里填，存在 `secrets/connector-apps.json`，插件用 `api.appConfig(id)` 读；接口地址依赖它时 `apiBase` 写成函数。令牌不是 Bearer 时用 `sign(app, { url, headers }, secret)` 放进请求头或 query。插件自己发的请求（换令牌、查账号）用 `api.fetch`。
 - 工具写 `whenConnected: true`：只在这次运行的人连了本插件的某个连接器（`<插件 id>-…`）时给出。
 - 工具里 `ctx.saveSource({ uri, title, text, space? })` 存原件：`uri` 写 `平台:编号`，同一个 uri 再存是更新，也作 origin_key。

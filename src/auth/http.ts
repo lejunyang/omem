@@ -5,14 +5,16 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
-import { addMember, findUser, getUser, identitiesOf, listUsers, OWNER, removeMember, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
+import { addMember, createUser, emailHolder, findUser, getUser, identitiesOf, listUsers, ownTokens, OWNER, removeMember, revokeOwnToken, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
 import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
 import { connectionsOf, connectWithCredentials, disconnect, setFeatureOff } from "./connections.ts";
 import { appView, setAppConfig } from "./apps.ts";
 import { listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { featuresOf, scopesFor } from "./features.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
-import { approveUser, beginLogin, completeLogin, consumeLoginLink, larkAppLogin, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, validInvite } from "./login.ts";
+import { approveUser, beginLogin, completeLogin, consumeLoginLink, createLoginLink, larkAppLogin, createInvite, hasPrimary, listInvites, peekLoginLink, revokeInvite, safeReturn, validInvite } from "./login.ts";
+import { knownBearer } from "./authenticators.ts";
+import { approveCliLogin, cliLoginInfo, denyCliLogin, normalizeCode, pollCliLogin, startCliLogin } from "./cli-login.ts";
 import { canLogIn, enabledProviders, loginProvider, loginProviders, offeredConnectors } from "./providers.ts";
 import { clearSessionCookie, cookies, createSession, lastSeen, liftRestriction, listSessions, revokeSession, revokeSessionHash, revokeUserSessions, SESSION_COOKIE, sessionCookie, sessionFor } from "./sessions.ts";
 
@@ -21,7 +23,14 @@ import { clearSessionCookie, cookies, createSession, lastSeen, liftRestriction, 
  * login session cookie (a browser on another machine), or this machine itself (the owner, unless a
  * token is configured). With logging in on, a request a reverse proxy forwarded is not this machine.
  */
-export type RequestAuth = { userId: string; via: "token" | "session" | "local"; restricted: boolean; sessionHash: string | null };
+export type RequestAuth = {
+  userId: string;
+  via: "token" | "session" | "local";
+  restricted: boolean;
+  sessionHash: string | null;
+  /** A bearer credential an authenticator plugin recognized: its id (absent for API tokens). */
+  provider?: string;
+};
 
 export function bearerToken(req: FastifyRequest) {
   const h = req.headers.authorization;
@@ -34,7 +43,11 @@ export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
   const token = bearerToken(req);
   if (token) {
     const userId = userForToken(app, token);
-    return userId ? { userId, via: "token", restricted: false, sessionHash: null } : null;
+    if (userId) return { userId, via: "token", restricted: false, sessionHash: null };
+    // One an authenticator plugin checked before this request was resolved (authenticators.ts checkBearer).
+    const b = knownBearer(token);
+    const u = b ? findUser(app, b.userId) : null;
+    return b && u && !u.disabledAt ? { userId: b.userId, via: "token", restricted: false, sessionHash: null, provider: b.provider } : null;
   }
   const s = sessionFor(app, cookies(req.raw)[SESSION_COOKIE]);
   if (s) {
@@ -47,7 +60,7 @@ export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
 }
 
 /** Routes that find out who is asking themselves (logging in has to work before there is anyone). */
-export const AUTH_PUBLIC = /^\/api\/auth\/(session|logout|lark\/app|[a-z][a-z0-9-]*\/(start|callback)|link\/[A-Za-z0-9_-]{20,64})(\?.*)?$/;
+export const AUTH_PUBLIC = /^\/api\/auth\/(session|logout|lark\/app|cli\/(start|poll)|[a-z][a-z0-9-]*\/(start|callback)|link\/[A-Za-z0-9_-]{20,64})(\?.*)?$/;
 /** What a pending user or a restricted session may still reach: who am I, my account, binding, signing out. */
 export const AUTH_LIMITED = /^\/api\/(me|auth\/[^?]*)(\?.*)?$/;
 
@@ -138,7 +151,9 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       const named = (o.scopes ?? "").split(/[\s,]+/).filter(Boolean).slice(0, 30);
       // Logging in asks for nothing beyond who the person is, unless they ticked features on the login page.
       const features = (o.features ?? "").split(",").filter(Boolean);
-      const scopes = o.purpose === "connect" ? [...new Set([...scopesFor(provider, features), ...named, ...(named.length ? scopesFor(provider, ["offline"]) : [])])] : o.purpose === "login" ? scopesFor(provider, features) : [];
+      // Logging in and binding also ask for what recognizes an account made ahead of time (the email).
+      const identity = loginProvider(provider)?.identityScopes ?? [];
+      const scopes = o.purpose === "connect" ? [...new Set([...scopesFor(provider, features), ...named, ...(named.length ? scopesFor(provider, ["offline"]) : [])])] : o.purpose === "login" ? [...new Set([...identity, ...scopesFor(provider, features)])] : identity;
       const url = beginLogin(app, { provider, purpose: o.purpose, redirectUri: callbackUrl(base, provider), userId: a?.userId, sessionHash: a?.sessionHash, invite: o.invite, returnTo: o.return, scopes });
       return reply.header("cache-control", "no-store").redirect(url);
     } catch (e) {
@@ -179,18 +194,20 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
   server.get("/api/auth/link/:code", async (req, reply) => {
     const { code } = req.params as { code: string };
     reply.type("text/html; charset=utf-8").header("cache-control", "no-store").header("x-robots-tag", "noindex");
-    if (!peekLoginLink(app, code)) return page("链接已失效", `<h2>链接已失效</h2><p>登录链接 5 分钟内有效，只能用一次。在私聊里再发一次 /login。</p>`);
+    if (!peekLoginLink(app, code)) return page("链接已失效", `<h2>链接已失效</h2><p>登录链接 5 分钟内有效，只能用一次。在私聊里再发一次 /login，或在命令行里再执行 omem open。</p>`);
     return page("登录 omem", `<h2>登录 omem</h2><p>这个链接只能用一次，5 分钟内有效。</p><form method="post"><button type="submit">登录</button></form>`);
   });
   server.post("/api/auth/link/:code", async (req, reply) => {
     const { code } = req.params as { code: string };
     const base = baseUrl(app, req);
     const r = consumeLoginLink(app, code);
-    if (!r) return reply.type("text/html; charset=utf-8").send(page("链接已失效", `<h2>链接已失效</h2><p>在私聊里再发一次 /login。</p>`));
+    if (!r) return reply.type("text/html; charset=utf-8").send(page("链接已失效", `<h2>链接已失效</h2><p>在私聊里再发一次 /login，或在命令行里再执行 omem open。</p>`));
     const u = getUser(app, r.userId);
     const restricted = !!app.config.auth.primary && !u.settings.loginAny && !hasPrimary(app, r.userId);
-    startSession(req, reply, base, r.userId, "link", restricted);
-    return reply.code(303).header("cache-control", "no-store").header("location", `${base}/#/`).send();
+    startSession(req, reply, base, r.userId, r.channel === "cli" ? "cli" : "link", restricted);
+    // `omem open <页面>` comes back to that page.
+    const back = safeReturn((req.query as { return?: string } | null)?.return);
+    return reply.code(303).header("cache-control", "no-store").header("location", `${base}/#${back || "/"}`).send();
   });
 
   server.post("/api/auth/logout", async (req, reply) => {
@@ -264,6 +281,57 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     audit(app, who(req), "connection.remove", who(req), { provider });
     return { ok: true };
   });
+  // ---------------------------------------------- the command line (docs/v2/remote-clients.md)
+  // `omem login <地址>`: a code for the browser to allow; the command line polls with its secret.
+  server.post("/api/auth/cli/start", async (req) => {
+    const { client } = parse(z.object({ client: z.string().max(80).default("") }), req.body);
+    const r = startCliLogin(app, client);
+    return { ...r, url: `${baseUrl(app, req)}/#/cli-login?code=${encodeURIComponent(r.code)}` };
+  });
+  server.post("/api/auth/cli/poll", async (req, reply) => {
+    const { code, secret } = parse(z.object({ code: z.string().min(1).max(20), secret: z.string().min(1).max(100) }), req.body);
+    reply.header("cache-control", "no-store");
+    return pollCliLogin(app, code, secret);
+  });
+  server.get("/api/auth/cli/info", async (req) => {
+    const { code } = parse(z.object({ code: z.string().min(1).max(20) }), req.query);
+    const info = cliLoginInfo(app, code);
+    if (!info) throw new HttpError(410, "这个确认码已失效：在命令行里重新 omem login");
+    const u = getUser(app, who(req));
+    return { ...info, code: normalizeCode(code), user: { id: u.id, name: u.name }, may: u.id === OWNER || can(app, u.id, "tools.external") };
+  });
+  server.post("/api/auth/cli/approve", async (req) => {
+    const { code } = parse(z.object({ code: z.string().min(1).max(20) }), req.body);
+    const a = authOf(req);
+    if (a?.restricted) throw new HttpError(403, "请先绑定主要登录方");
+    const id = who(req);
+    if (id !== OWNER && !can(app, id, "tools.external")) throw new HttpError(403, "你的角色不能在自己的电脑上用 omem 工具，请联系 omem 的主人");
+    approveCliLogin(app, code, id);
+    audit(app, id, "token.cli", id, { code: normalizeCode(code) });
+    return { ok: true };
+  });
+  server.post("/api/auth/cli/deny", async (req) => {
+    const { code } = parse(z.object({ code: z.string().min(1).max(20) }), req.body);
+    denyCliLogin(app, code);
+    return { ok: true };
+  });
+  // `omem open`: a one-time link that signs this browser in as whoever the command line is.
+  server.post("/api/auth/open", async (req) => {
+    const a = authOf(req);
+    if (a?.via !== "token") throw new HttpError(400, "只给命令行用（带着令牌或凭据）");
+    const { path } = parse(z.object({ path: z.string().max(300).optional() }), req.body);
+    const code = createLoginLink(app, who(req), "cli");
+    const back = safeReturn(path);
+    return { url: `${baseUrl(app, req)}/api/auth/link/${code}${back ? `?return=${encodeURIComponent(back)}` : ""}` };
+  });
+  // One's own API tokens (paired devices and other servers are under devices).
+  server.get("/api/auth/tokens", async (req) => ({ tokens: ownTokens(app, who(req)) }));
+  server.delete("/api/auth/tokens/:id", async (req) => {
+    if (!revokeOwnToken(app, who(req), (req.params as { id: string }).id)) throw new HttpError(404, "没有这个令牌");
+    audit(app, who(req), "token.revoke", who(req), {});
+    return { tokens: ownTokens(app, who(req)) };
+  });
+
   server.delete("/api/auth/sessions/:id", async (req) => {
     revokeSession(app, who(req), (req.params as { id: string }).id);
     return { ok: true };
@@ -306,10 +374,44 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       }))
       .sort((a, b) => Number(b.status === "pending") - Number(a.status === "pending"));
   });
+  // An account made ahead of time by email (docs/v2/remote-clients.md §7.1): whoever later comes with
+  // that email (Feishu, an authenticator plugin) gets it, with the spaces and role set here.
+  server.post("/api/users", async (req) => {
+    manager(req);
+    const b = parse(
+      z.object({
+        name: z.string().trim().min(1).max(60),
+        email: z.string().trim().email().max(200),
+        role: z.string().default("member"),
+        spaces: z.array(z.object({ space: z.string(), role: z.string() })).max(50).default([]),
+        loginAny: z.boolean().default(false),
+      }),
+      req.body,
+    );
+    if (b.role !== "member") ownerOnly(req, "分配成员以外的全局角色");
+    const holder = emailHolder(app, b.email);
+    if (holder) throw new HttpError(409, `邮箱 ${b.email.toLowerCase()} 已经在账号 ${holder.name}（${holder.id}${holder.status === "pending" ? "，等待批准" : holder.disabledAt ? "，已停用" : ""}）上`);
+    for (const s of b.spaces) {
+      if (!findSpace(app, s.space)) throw new HttpError(404, `空间不存在：${s.space}`);
+      if (findRole(app, s.role)?.scope !== "space") throw new HttpError(400, `不是空间角色：${s.role}`);
+    }
+    const u = createUser(app, { name: b.name, email: b.email, status: "active" });
+    if (b.role !== "member") setUserRole(app, u.id, b.role);
+    if (b.loginAny) updateUser(app, u.id, { settings: { loginAny: true } });
+    for (const s of b.spaces) setMembership(req, s.space, u.id, s.role);
+    audit(app, who(req), "user.create", u.id, { email: u.email, role: b.role, spaces: b.spaces });
+    return userView(app, u.id);
+  });
   server.patch("/api/users/:id", async (req) => {
     manager(req);
     const { id } = req.params as { id: string };
-    const b = parse(z.object({ approve: z.boolean().optional(), role: z.string().optional(), disabled: z.boolean().optional(), loginAny: z.boolean().optional(), name: z.string().min(1).max(60).optional() }), req.body);
+    const b = parse(z.object({ approve: z.boolean().optional(), role: z.string().optional(), disabled: z.boolean().optional(), loginAny: z.boolean().optional(), name: z.string().min(1).max(60).optional(), email: z.string().trim().email().max(200).nullable().optional().or(z.literal("")) }), req.body);
+    if (b.email !== undefined) {
+      const holder = b.email ? emailHolder(app, b.email, id) : null;
+      if (holder) throw new HttpError(409, `邮箱 ${b.email!.toLowerCase()} 已经在账号 ${holder.name}（${holder.id}）上`);
+      updateUser(app, id, { email: b.email || null });
+      audit(app, who(req), "user.email", id, { email: b.email || null });
+    }
     if (b.disabled !== undefined || b.loginAny !== undefined || b.role) notOwner(id);
     if (b.role) {
       ownerOnly(req, "分配全局角色");

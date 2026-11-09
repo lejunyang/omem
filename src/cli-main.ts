@@ -17,6 +17,7 @@ import { createSpace, ensurePersonalSpace, getSpace, kindLabel, listSpaces, rela
 import { listItems, upsertItem } from "./items/store.ts";
 import { listMemories } from "./memory/store.ts";
 import { memoriesCommand } from "./cli-memories.ts";
+import { clientName, cliLogin, normalizeUrl, openBrowser, readClient, remoteApi, remoteToolBackend, resolveRemote, writeClient, type ClientInfo } from "./remote-client.ts";
 import { boot } from "./main.ts";
 import { search } from "./search/search.ts";
 import { importDirectory, importFile, importText, importUrl, syncDirectorySpace } from "./sources/import.ts";
@@ -957,14 +958,19 @@ user
   .option("--onebot <userId>", "QQ / 微信桥账号")
   .option("--space <ids...>", "可以读的空间")
   .option("--edit <ids...>", "可以写的空间")
+  .option("--email <email>", "邮箱：之后谁用这个邮箱来（飞书本企业账号、鉴权插件认出的身份），就对应到这个账号")
+  .option("--login-any", "允许用主要登录方以外的方式登录网页（还没有飞书的人）")
   .action(async (name, o) => {
-    const { createUser, linkIdentity, addMember } = await import("./core/users.ts");
+    const { createUser, linkIdentity, addMember, emailHolder, updateUser } = await import("./core/users.ts");
     const app = open();
-    const u = createUser(app, { name, id: o.id });
+    const holder = o.email ? emailHolder(app, o.email) : null;
+    if (holder) throw new Error(`邮箱 ${o.email} 已经在账号 ${holder.name}（${holder.id}）上`);
+    const u = createUser(app, { name, id: o.id, email: o.email ?? null });
+    if (o.loginAny) updateUser(app, u.id, { settings: { loginAny: true } });
     for (const [ch, v] of [["lark", o.lark], ["telegram", o.telegram], ["onebot", o.onebot]] as const) if (v) linkIdentity(app, u.id, ch, String(v));
     for (const sp of o.space ?? []) addMember(app, sp, u.id, "reader");
     for (const sp of o.edit ?? []) addMember(app, sp, u.id, "editor");
-    console.log(`已登记 ${u.id}（${u.name}），个人空间 personal-${u.id}`);
+    console.log(`已登记 ${u.id}（${u.name}${u.email ? `，${u.email}` : ""}），个人空间 personal-${u.id}`);
   });
 user
   .command("link <userId> <channel> <externalId>")
@@ -1352,6 +1358,19 @@ function externalToolContext(o: { readOnly?: boolean; space?: string }) {
   return { app, runId: null, spaceId, spaces: null, tools, actor: "agent" as const };
 }
 
+/** What `omem tool` / `omem mcp` tell a remote omem about this client (src/remote-client.ts). */
+function clientInfo(o: { space?: string; spaces?: string; readOnly?: boolean; session?: string; agent?: string; model?: string; effort?: string }, defaultSession: string): ClientInfo {
+  return {
+    session: o.session || process.env.OMEM_SESSION || process.env.OMEM_PEER_SESSION || defaultSession,
+    agent: o.agent || process.env.OMEM_AGENT || process.env.OMEM_PEER_AGENT || undefined,
+    model: o.model || process.env.OMEM_MODEL || process.env.OMEM_PEER_MODEL || undefined,
+    effort: o.effort || process.env.OMEM_EFFORT || process.env.OMEM_PEER_EFFORT || undefined,
+    space: o.space,
+    spaces: o.spaces,
+    readOnly: o.readOnly,
+  };
+}
+
 type PeerToolOptions = { peer: string; space?: string; spaces?: string; readOnly?: boolean; session?: string; agent?: string; model?: string; effort?: string };
 
 /**
@@ -1369,11 +1388,11 @@ async function peerToolBackend(o: PeerToolOptions, defaultSession: string) {
     space: o.space,
     spaces: o.spaces ? o.spaces.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
     readOnly: o.readOnly || undefined,
-    agent: o.agent || process.env.OMEM_PEER_AGENT || undefined,
-    model: o.model || process.env.OMEM_PEER_MODEL || undefined,
-    effort: o.effort || process.env.OMEM_PEER_EFFORT || undefined,
+    agent: o.agent || process.env.OMEM_AGENT || process.env.OMEM_PEER_AGENT || undefined,
+    model: o.model || process.env.OMEM_MODEL || process.env.OMEM_PEER_MODEL || undefined,
+    effort: o.effort || process.env.OMEM_EFFORT || process.env.OMEM_PEER_EFFORT || undefined,
   };
-  const session = o.session || process.env.OMEM_PEER_SESSION || defaultSession;
+  const session = o.session || process.env.OMEM_SESSION || process.env.OMEM_PEER_SESSION || defaultSession;
   const query = new URLSearchParams(Object.entries({ ...scope, spaces: scope.spaces?.join(","), readOnly: scope.readOnly ? "1" : undefined }).filter((e): e is [string, string] => typeof e[1] === "string")).toString();
   return {
     list: async () => (await peerJson<{ tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] }>(app, o.peer, `/api/peer/tools?${query}`, undefined, 30_000)).tools,
@@ -1394,14 +1413,22 @@ program
   .description("以 stdio MCP 服务暴露 omem 工具（供 Claude Code、Codex 等直接使用个人库）")
   .option("--read-only", "只开放读取类工具")
   .option("--space <id>", "默认空间（不填时按当前目录找关联了它的空间，找不到用 personal）")
-  .option("--peer <id>", "使用另一台设备上的库：工具在那台机器上执行，不含对外发消息、交办、唤醒这类的工具；每个 MCP 会话在对方记成一条运行")
-  .option("--spaces <ids>", "--peer 时只开放这些空间（逗号分隔）")
-  .option("--session <name>", "--peer 时的会话名（对方一个会话一条运行；默认每个 MCP 进程一个）")
-  .option("--agent <name>", "--peer 时在对方运行记录里登记的 Agent 名（如 claude-code；也可用环境变量 OMEM_PEER_AGENT）")
-  .option("--model <id>", "--peer 时登记的模型（也可用 OMEM_PEER_MODEL）")
-  .option("--effort <level>", "--peer 时登记的推理强度（也可用 OMEM_PEER_EFFORT）")
+  .option("--url <地址>", "使用远程 omem（以你自己的身份；凭据取 OMEM_TOKEN、OMEM_AUTH_CMD 或 omem login 存下的）；也可用环境变量 OMEM_URL")
+  .option("--remote <name>", "使用 omem remote add 存下的远程地址")
+  .option("--peer <id>", "使用本人另一台配对过的设备上的库：工具在那台机器上执行，不含对外发消息、交办、唤醒这类的工具；每个 MCP 会话在对方记成一条运行")
+  .option("--spaces <ids>", "远程或 --peer 时只开放这些空间（逗号分隔）")
+  .option("--session <name>", "远程或 --peer 时的会话名（对方一个会话一条运行；默认每个 MCP 进程一个）")
+  .option("--agent <name>", "远程或 --peer 时在对方运行记录里登记的 Agent 名（如 claude-code；也可用环境变量 OMEM_AGENT）")
+  .option("--model <id>", "远程或 --peer 时登记的模型（也可用 OMEM_MODEL）")
+  .option("--effort <level>", "远程或 --peer 时登记的推理强度（也可用 OMEM_EFFORT）")
   .action(async (o) => {
     const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+    const remote = o.peer ? null : resolveRemote(o);
+    if (remote) {
+      const backend = remoteToolBackend(remote, clientInfo(o, `mcp-${clientName()}-${Date.now().toString(36)}`));
+      await createMcpServer(backend).connect(new StdioServerTransport());
+      return;
+    }
     if (o.peer) {
       const { nodeId } = await import("./core/peers.ts");
       const backend = await peerToolBackend(o, `mcp-${nodeId(open())}-${Date.now().toString(36)}`);
@@ -1413,6 +1440,92 @@ program
     await server.connect(new StdioServerTransport());
   });
 
+const remoteCmd = program.command("remote").description("远程 omem 的地址（本机记一份，不配对）：omem tool / omem mcp 用 --remote <名字> 或默认地址连过去");
+remoteCmd
+  .command("add <name> <url>")
+  .description("记一个远程地址；--auth-cmd 给一条输出凭据（如 JWT）的命令，或之后用 omem login 换令牌")
+  .option("--auth-cmd <command>", "取凭据的命令：标准输出就是凭据，过期或被拒时重新执行")
+  .option("--token <token>", "直接用这个 API 令牌（om_ 开头）")
+  .option("--default", "设为默认：omem tool / omem mcp 不带地址时就连它")
+  .action((name: string, url: string, o: { authCmd?: string; token?: string; default?: boolean }) => {
+    const c = readClient();
+    const prev = c.remotes[name];
+    c.remotes[name] = { url: normalizeUrl(url), ...(o.authCmd ? { authCmd: o.authCmd } : prev?.authCmd && !o.token ? { authCmd: prev.authCmd } : {}), ...(o.token ? { token: o.token } : prev?.token && !o.authCmd ? { token: prev.token } : {}) };
+    if (o.default || !c.default) c.default = name;
+    writeClient(c);
+    console.log(`已记下 ${name} → ${c.remotes[name].url}${c.default === name ? "（默认）" : ""}${c.remotes[name].authCmd || c.remotes[name].token ? "" : `
+还没有凭据：omem login --remote ${name}，或 omem remote add ${name} ${url} --auth-cmd "<命令>"`}`);
+  });
+remoteCmd
+  .command("list")
+  .description("记下的远程地址")
+  .action(() => {
+    const c = readClient();
+    const names = Object.keys(c.remotes);
+    if (!names.length) return console.log("还没有。omem remote add <名字> <地址>");
+    for (const n of names) {
+      const e = c.remotes[n];
+      console.log(`${n === c.default ? "*" : "-"} ${n}  ${e.url}  ${e.authCmd ? `命令：${e.authCmd}` : e.token ? "API 令牌" : "没有凭据"}`);
+    }
+  });
+remoteCmd
+  .command("default <name>")
+  .description("设为默认远程地址；写 none 取消默认（不带地址时用本机的库）")
+  .action((name: string) => {
+    const c = readClient();
+    if (name !== "none" && !c.remotes[name]) throw new Error(`没有 ${name}`);
+    c.default = name === "none" ? undefined : name;
+    writeClient(c);
+    console.log(name === "none" ? "已取消默认" : `默认：${name}`);
+  });
+remoteCmd
+  .command("rm <name>")
+  .description("删掉一个远程地址（存的令牌一起删；服务器上的令牌到账号页撤销）")
+  .action((name: string) => {
+    const c = readClient();
+    if (!c.remotes[name]) throw new Error(`没有 ${name}`);
+    delete c.remotes[name];
+    if (c.default === name) c.default = undefined;
+    writeClient(c);
+    console.log(`已删除 ${name}`);
+  });
+
+program
+  .command("login [url]")
+  .description("在浏览器里确认后，拿一个以你的身份使用远程 omem 的令牌，记进 omem remote（omem tool / omem mcp 之后就能连过去）")
+  .option("--remote <name>", "记成哪个名字（默认按地址的主机名；已记下的名字就换掉它的凭据）")
+  .option("--no-browser", "不自动打开浏览器，只打印地址")
+  .option("--default", "设为默认远程地址")
+  .action(async (url: string | undefined, o: { remote?: string; browser?: boolean; default?: boolean }) => {
+    const c = readClient();
+    const saved = o.remote ? c.remotes[o.remote] : undefined;
+    const target = url ? normalizeUrl(url) : saved ? normalizeUrl(saved.url) : c.default && c.remotes[c.default] ? normalizeUrl(c.remotes[c.default].url) : null;
+    if (!target) throw new Error("要给地址：omem login https://omem.example.com");
+    const name = o.remote ?? Object.entries(c.remotes).find(([, e]) => normalizeUrl(e.url) === target)?.[0] ?? (new URL(target).hostname.split(".")[0] || "remote");
+    const r = await cliLogin(target, (line) => console.log(line), { browser: o.browser });
+    const fresh = readClient();
+    fresh.remotes[name] = { url: target, token: r.token };
+    if (o.default || !fresh.default) fresh.default = name;
+    writeClient(fresh);
+    console.log(`已登录为 ${r.user.name}（${r.user.id}），记成 ${name}${fresh.default === name ? "（默认）" : ""}。
+试试：omem tool --remote ${name} list_spaces；给 Agent 用：claude mcp add omem -- omem mcp --remote ${name}`);
+  });
+
+program
+  .command("open [page]")
+  .description("在浏览器里打开远程 omem 并以命令行的身份登录（一次性链接）；page 如 /wiki、/account")
+  .option("--url <地址>", "远程地址（也可用 OMEM_URL）")
+  .option("--remote <name>", "omem remote add 存下的远程地址")
+  .option("--print", "只打印链接，不打开浏览器")
+  .action(async (page: string | undefined, o: { url?: string; remote?: string; print?: boolean }) => {
+    const target = resolveRemote(o);
+    if (!target) throw new Error("没有远程地址：--url、--remote，或 omem remote add 一个默认的。本机直接打开 http://127.0.0.1:4317");
+    const r = await remoteApi(target).json<{ url: string }>("/api/auth/open", { body: { path: page ? (page.startsWith("/") ? page : `/${page}`) : undefined }, timeoutMs: 30_000 });
+    console.log(`${r.url}
+（5 分钟内有效，只能用一次）`);
+    if (!o.print) await openBrowser(r.url);
+  });
+
 program
   .command("tool")
   .description("在终端里调用 omem 工具（omem tool help 看说明）；omem 运行里的 Agent 带着本次运行的权限（OMEM_TOKEN）")
@@ -1421,24 +1534,23 @@ program
   .option("-f, --file <path>", "从文件读 JSON 参数（- 为标准输入）")
   .option("--read-only", "没有运行令牌时只开放读取类工具")
   .option("--space <id>", "没有运行令牌时的默认空间")
-  .option("--peer <id>", "在另一台设备上调用：那台机器上的库，不含对外发消息、交办、唤醒这类的工具；调用在对方记成一条运行（omem peer list 看设备）")
-  .option("--spaces <ids>", "--peer 时只开放这些空间（逗号分隔）")
-  .option("--session <name>", "--peer 时的会话名（对方一个会话一条运行；默认本机名加当天日期，也可用环境变量 OMEM_PEER_SESSION）")
-  .option("--agent <name>", "--peer 时在对方运行记录里登记的 Agent 名（如 claude-code；也可用环境变量 OMEM_PEER_AGENT）")
-  .option("--model <id>", "--peer 时登记的模型（也可用 OMEM_PEER_MODEL）")
-  .option("--effort <level>", "--peer 时登记的推理强度（也可用 OMEM_PEER_EFFORT）")
-  .action(async (name: string | undefined, rest: string[], o: { file?: string; readOnly?: boolean; space?: string; peer?: string; spaces?: string; session?: string; agent?: string; model?: string; effort?: string }) => {
+  .option("--url <地址>", "在远程 omem 上调用（以你自己的身份；凭据取 OMEM_TOKEN、OMEM_AUTH_CMD 或 omem login 存下的）；也可用环境变量 OMEM_URL")
+  .option("--remote <name>", "在 omem remote add 存下的远程地址上调用")
+  .option("--peer <id>", "在本人另一台配对过的设备上调用：那台机器上的库，不含对外发消息、交办、唤醒这类的工具；调用在对方记成一条运行（omem peer list 看设备）")
+  .option("--spaces <ids>", "远程或 --peer 时只开放这些空间（逗号分隔）")
+  .option("--session <name>", "远程或 --peer 时的会话名（对方一个会话一条运行；默认本机名加当天日期，也可用环境变量 OMEM_SESSION）")
+  .option("--agent <name>", "远程或 --peer 时在对方运行记录里登记的 Agent 名（如 claude-code；也可用环境变量 OMEM_AGENT）")
+  .option("--model <id>", "远程或 --peer 时登记的模型（也可用 OMEM_MODEL）")
+  .option("--effort <level>", "远程或 --peer 时登记的推理强度（也可用 OMEM_EFFORT）")
+  .action(async (name: string | undefined, rest: string[], o: { file?: string; readOnly?: boolean; space?: string; url?: string; remote?: string; peer?: string; spaces?: string; session?: string; agent?: string; model?: string; effort?: string }) => {
     const call = !name || name === "help" ? { tool: "omem_help", args: { topic: rest.join(",") || undefined } } : { tool: name, args: toolArgs(rest, o.file) };
-    const token = process.env.OMEM_TOKEN;
+    const remote = o.peer ? null : resolveRemote(o);
     let r: { text: string; isError: boolean };
     if (o.peer) {
       const { nodeId } = await import("./core/peers.ts");
       r = await (await peerToolBackend({ ...o, peer: o.peer }, `cli-${nodeId(open())}-${today()}`)).call(call.tool, call.args);
-    } else if (token) {
-      const url = process.env.OMEM_URL ?? "http://127.0.0.1:4317";
-      const res = await fetch(`${url}/api/tools/${encodeURIComponent(call.tool)}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(call.args) });
-      r = res.ok ? ((await res.json()) as typeof r) : { text: `调用失败：HTTP ${res.status} ${await res.text()}`, isError: true };
-    } else r = await callTool(externalToolContext(o), call.tool, call.args);
+    } else if (remote) r = await remoteToolBackend(remote, clientInfo(o, `cli-${clientName()}-${today()}`)).call(call.tool, call.args);
+    else r = await callTool(externalToolContext(o), call.tool, call.args);
     (r.isError ? process.stderr : process.stdout).write(r.text.endsWith("\n") ? r.text : r.text + "\n");
     if (r.isError) process.exitCode = 1;
   });

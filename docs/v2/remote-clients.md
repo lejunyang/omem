@@ -1,6 +1,6 @@
 # 远程使用：CLI、MCP 与外部身份（设计稿，未实现）
 
-状态：设计，2026-11-10；第 10 节的选择已由本人确定。实现前按本文核对，有变化改本文。和 [multi-user.md](multi-user.md)（账号、登录、权限）一起看。
+状态：已实现（2026-11-10），`test/remote-clients.test.ts`、`test/auth.test.ts`；没有连真实飞书核对邮箱字段（第 11 节）。和设计稿不同的地方已改进正文：运行类型沿用 `peer-agent`，记忆来源档案沿用 `peer:<主机名>`；邮箱只在账号没有时补上，不随每次登录更新；邮箱不加唯一索引（旧数据可能重复），查重放在建账号和改邮箱时。和 [multi-user.md](multi-user.md)（账号、登录、权限）一起看。
 
 ## 1. 要解决的问题
 
@@ -69,7 +69,7 @@
 3. CLI 轮询 `POST /api/auth/cli/poll`，批准后拿到一个新的 `om_` 令牌（标签 `cli:<主机名>`），存进 `client.json`。
 4. 账号页“API 令牌”列出这些令牌，可以逐个撤销；停用用户时一起失效（`userForToken` 已经只认 active 用户）。
 
-`code` 只存哈希，轮询要带 start 时拿到的另一半密钥（`secret`），防止别人知道 `code` 就能领走令牌。
+确认码是 `XXXX-XXXX`（不含容易看错的 0/O、1/I），终端和确认页都显示，本人核对一致再点“允许”。`code` 只存哈希，轮询要带 start 时拿到的另一半密钥（`secret`），防止别人知道 `code` 就能领走令牌。实现：`src/auth/cli-login.ts`，确认页 `web/src/views/CliLogin.vue`（`#/cli-login`，不带应用外框）。
 
 ### 4.3 `omem open`：从命令行打开网页
 
@@ -86,7 +86,7 @@
 
 | 请求头 | 含义 | 默认 |
 | --- | --- | --- |
-| `x-omem-session` | 会话名，一个会话一条运行 | MCP：每个进程一个；`omem tool`：`cli-<主机名>-<日期>` |
+| `x-omem-session` | 会话名，一个会话一条运行（值都按 URI 编码：请求头只能放 Latin-1，会话名常有中文） | MCP：每个进程一个；`omem tool`：`cli-<主机名>-<日期>` |
 | `x-omem-client` | 调用方主机名 | `os.hostname()` |
 | `x-omem-agent` / `x-omem-model` / `x-omem-effort` | 登记的 Agent、模型、强度 | `--agent` 等参数或 `OMEM_AGENT` 等环境变量 |
 | `x-omem-spaces` / `x-omem-read-only` | 再收窄空间、只给读取类工具 | `--spaces`、`--read-only` |
@@ -113,8 +113,8 @@
 
 - **工具**：现有的 `peerToolNames`（内置分组里的工具，去掉 `PEER_DENY` 里对外发消息、交办、唤醒、改配置的那些），再按这个人的全局权限裁剪（`src/auth/tools.ts`，和他在网页里的问答一样）。`--read-only` 时只给 `READ_ONLY_TOOLS`。
 - **空间**：`scopeFor(用户, 请求的空间)`；默认空间是他的个人空间（本人是 `personal`）。`x-omem-spaces` 可以再收窄，不能放宽。
-- **写入**：照常走工具层的检查（`canWrite`、`wiki.write`），记忆的来源档案记成 `external:<主机名>`，之后照常交给记忆复核。
-- **运行**：`kind = 'peer-agent'` 改名为 `external-agent`（迁移保留旧值的读法），`user_id` 是这个人，`input` 里记 `caller`、`session`、`agent`、`model`、`effort`、`via`（`token` / 认证插件 id）。15 分钟没有调用就结束，下一次调用再开（沿用现有逻辑）。
+- **写入**：照常走工具层的检查（`canWrite`、`wiki.write`），记忆的来源档案记成 `peer:<主机名>`（和配对设备一样），之后照常交给记忆复核。
+- **运行**：沿用 `kind = 'peer-agent'`（运行页叫“设备的外部 Agent”），`user_id` 是这个人（本人为空），标题“<名字> 在 <主机名> 上的外部 Agent（<会话>）”，会话按（人、主机名、会话名）区分，`input` 里记 `caller`、`session`、`agent`、`model`、`effort`、`via`（`token` / 认证插件 id）。15 分钟没有调用就结束，下一次调用再开（沿用现有逻辑）。
 - **权限**：新增全局权限 `tools.external`（“在自己的电脑上用 omem 工具（CLI、MCP）”），内置的 admin、member、viewer 都有（viewer 的工具按空间权限只剩读取类）。没有这个权限时返回 403 并说明。
 
 ### 5.3 凭据不进日志
@@ -186,7 +186,7 @@ api.authenticator({
 
 已经存在的账号：
 
-- 现在登录时只在账号没有邮箱时补上（`!u.email && who.email`，取 `enterprise_email || email`）。改成：本企业的飞书登录每次都按 `enterprise_email || email` 更新账号邮箱，变了记一条审计；其他租户和其他登录方仍然只补空的。
+- 登录时只在账号没有邮箱时补上（`enterprise_email || email`；邮箱已在别的账号上时不补）。不随每次登录更新：本人为了对上 JWT 手动改过的邮箱，不会被下一次飞书登录改回去。
 - 账号上只存一个邮箱。JWT 里的邮箱和飞书给的对不上时（比如公司邮箱有两个域名的别名），本人在成员页手动改这个账号的邮箱（`PATCH /api/users/:id` 加 `email`，查重规则同 §7.1）。没改之前，JWT 这一路认领不到，会建出一个待批准的新账号；已有的账号和它的飞书身份不受影响。本人在成员页拒绝这个待批准账号并解绑它的 JWT 身份（只拒绝不解绑的话，身份还挂在停用的账号上，之后会一直提示“账号已停用”），改好原账号的邮箱，这个人下次带 JWT 来就认领到原账号。
 
 ### 7.3 和“主要登录方”的关系
@@ -224,10 +224,10 @@ api.authenticator({
 
 | 表 | 变化 |
 | --- | --- |
-| `users` | `email` 存小写；加部分唯一索引 `(email) where email is not null and disabled_at is null` |
+| `users` | `email` 存小写（迁移时把已有的转成小写）；不加唯一索引，建账号、改邮箱时查重 |
 | `api_tokens` | 加 `client`（主机名）；账号页按它显示 |
 | `cli_logins` | 新表：`code_hash`、`secret_hash`、`user_id`（批准后填）、`client`、`created_at`、`expires_at`、`approved_at`、`token_issued_at` |
-| `runs` | `kind` 新值 `external-agent`（`peer-agent` 读法保留） |
+| `runs` | 不变：`peer-agent` 的运行带 `user_id` 和 `input.via` |
 | `identities` | 不变；认证插件的身份用插件 id 作 channel |
 
 ## 9. 分期

@@ -1564,6 +1564,22 @@ export const migrations: readonly string[] = [
     at text not null,
     primary key (space_a, space_b)
   );`,
+  // Using a remote omem from one's own computer (docs/v2/remote-clients.md): `omem login` asks in the
+  // browser and gets an API token for this client; tokens say which client holds them; emails are
+  // compared in lower case (accounts made ahead of time are claimed by email).
+  `
+  create table cli_logins (
+    code_hash text primary key,
+    secret_hash text not null,
+    client text not null default '',
+    user_id text,
+    created_at text not null,
+    expires_at text not null,
+    approved_at text,
+    issued_at text
+  );
+  alter table api_tokens add column client text not null default '';
+  update users set email = nullif(lower(trim(email)), '') where email is not null;`,
 ];
 
 export type Db = DatabaseSync;

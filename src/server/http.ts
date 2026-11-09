@@ -48,6 +48,8 @@ import { businessOf, createSpace, findSpace, getSpace, listSpaces, relatedSpaces
 import { HttpError, slugify } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
+import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
+import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute } from "../auth/routes.ts";
 import { hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
@@ -122,6 +124,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.addHook("onRequest", async (req, reply) => {
     // Tool routes check their own (per-run) token.
     if (!req.url.startsWith("/api/") || /^\/api\/tools(\/|\?|$)/.test(req.url)) return;
+    // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
+    await checkBearer(app, bearerToken(req));
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
     // returns only the snapshot that share holds.
     if (req.method === "GET" && SHARE_ROUTE.test(req.url)) return;
@@ -168,11 +172,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // ---------------------------------------------------------------- tools/MCP
   // A run's token, or a stand-in for another device's tools (its agent runs here, core/peer-acp.ts).
-  const toolBackend = (req: FastifyRequest) => {
+  const toolBackend = async (req: FastifyRequest) => {
     const relay = toolRelay(bearer(req));
     if (relay) return relay;
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) {
+      // Someone's own Agent on their own computer, with their credential (docs/v2/remote-clients.md).
+      await checkBearer(app, bearer(req));
+      const caller = externalCaller(app, req);
+      if (caller) return externalToolBackend(app, caller);
+      if (!bearer(req).startsWith("ot_")) throw new HttpError(401, bearer(req) ? "凭据无效或已过期（API 令牌被撤销，或 JWT 过期、没有对应的鉴权插件）" : "需要凭据：Authorization: Bearer <令牌>");
       // Tokens live in memory: an agent session kept across a restart still holds the old one.
       console.warn(`[omem] 工具调用被拒：令牌无效（${req.method} ${req.url}；常见于服务重启前开的 Agent 会话）`);
       throw new HttpError(401, "无效的工具令牌");
@@ -200,10 +209,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (ms > 60_000) console.warn(`[omem] 工具 ${label} 用了 ${Math.round(ms / 1000)} 秒${runId ? `（运行 ${runId}）` : ""}`);
     }
   };
-  server.get("/api/tools", async (req) => ({ tools: await toolBackend(req).list() }));
-  server.post("/api/tools/:name", async (req) => toolBackend(req).call((req.params as { name: string }).name, req.body));
+  server.get("/api/tools", async (req) => ({ tools: await (await toolBackend(req)).list() }));
+  server.post("/api/tools/:name", async (req) => (await toolBackend(req)).call((req.params as { name: string }).name, req.body));
   const mcp = async (req: FastifyRequest, reply: FastifyReply) => {
-    const mcpServer = createMcpServer(toolBackend(req));
+    const mcpServer = createMcpServer(await toolBackend(req));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.hijack();
     reply.raw.on("close", () => {

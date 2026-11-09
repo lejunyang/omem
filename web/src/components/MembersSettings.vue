@@ -7,7 +7,7 @@ import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
 import UiSelect from "./UiSelect.vue";
 import { fmtTime, state, toast } from "../store";
-import { confirmDialog } from "../lib/dialog";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 
 /**
  * Settings → 成员 (src/auth, docs/v2/multi-user.md): whether other people can log in and with what,
@@ -32,6 +32,8 @@ const log = ref<Audit[]>([]);
 const showLog = ref(false);
 const form = ref({ role: "member", spaces: [] as { space: string; role: string }[], allowAny: false, note: "", days: "7" });
 const made = ref<string | null>(null);
+/** An account made ahead of time by email (docs/v2/remote-clients.md §7.1). */
+const ahead = ref({ name: "", email: "", role: "member", spaces: [] as { space: string; role: string }[], loginAny: false });
 const adding = ref<Record<string, string>>({});
 const draft = ref<{ id?: string; name: string; scope: "global" | "space"; description: string; permissions: string[] } | null>(null);
 
@@ -59,6 +61,7 @@ const SIGNUP = [
 ];
 const ACTIONS: Record<string, string> = {
   "user.approve": "批准", "user.role": "改全局角色", "user.disable": "停用", "user.enable": "启用", "user.login-any": "改登录方式", "user.sign-out": "让所有设备退出",
+  "user.create": "按邮箱添加成员", "user.email": "改邮箱", "token.cli": "允许命令行", "token.revoke": "撤销令牌",
   "identity.unlink": "解绑身份", "space.member": "设置空间角色", "space.remove": "移出空间", "role.save": "保存角色", "role.delete": "删除角色", "invite.create": "生成邀请", "invite.revoke": "撤销邀请",
 };
 
@@ -147,6 +150,21 @@ async function setSpace(u: User, space: string, role: string | null) {
   } catch (e) {
     fail(e);
   }
+}
+async function addAhead() {
+  try {
+    const u = await post<{ name: string }>("/api/users", { name: ahead.value.name.trim(), email: ahead.value.email.trim(), role: ahead.value.role, spaces: ahead.value.spaces, loginAny: ahead.value.loginAny });
+    toast(`已添加 ${u.name}：用这个邮箱来时就对应到这个账号`, "ok");
+    ahead.value = { name: "", email: "", role: "member", spaces: [], loginAny: false };
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+async function editEmail(u: User) {
+  const v = await promptDialog(`${u.name} 的邮箱`, { message: "用这个邮箱来的人（飞书本企业账号、鉴权插件认出的身份）会对应到这个账号。留空清除。", value: u.email ?? "", placeholder: "name@example.com", okText: "保存" });
+  if (v === null) return;
+  await act(u, { email: v.trim() || null }, "已保存邮箱");
 }
 async function createInvite() {
   try {
@@ -263,7 +281,7 @@ onMounted(() => load().catch(fail));
             <img v-if="u.avatar" :src="u.avatar" alt="" class="avatar" referrerpolicy="no-referrer" />
             <div class="stack tight">
               <strong>{{ u.name }} <span class="muted small mono">{{ u.id }}</span></strong>
-              <span class="muted small">{{ u.disabledAt ? "已停用 · " : "" }}最近登录 {{ u.lastSeenAt ? fmtTime(u.lastSeenAt) : "没有" }}</span>
+              <span class="muted small">{{ u.disabledAt ? "已停用 · " : "" }}最近登录 {{ u.lastSeenAt ? fmtTime(u.lastSeenAt) : "没有" }}<template v-if="u.role !== 'owner'"> · <button class="link-btn" :title="`改 ${u.name} 的邮箱`" @click="editEmail(u)">{{ u.email || "没有邮箱" }}</button></template><template v-else-if="u.email"> · {{ u.email }}</template></span>
             </div>
             <span class="spacer" />
             <span v-if="u.role === 'owner'" class="badge accent">主人</span>
@@ -298,6 +316,32 @@ onMounted(() => load().catch(fail));
             </div>
             <UiCheckbox v-if="auth.primary" :model-value="u.loginAny" size="sm" @change="(v) => act(u, { loginAny: v }, '已保存')">允许用{{ label(auth.primary) }}以外的方式登录（企业外的人）</UiCheckbox>
           </template>
+        </div>
+      </div>
+
+      <h2 class="section-title">按邮箱添加成员</h2>
+      <div class="card pad stack">
+        <p class="muted small">先建好账号、分好空间。之后谁用这个邮箱来——飞书本企业的账号登录，或从命令行带着鉴权插件认得的凭据——就直接对应到这个账号，不用再批准。</p>
+        <div class="row wrap">
+          <input v-model="ahead.name" class="input" placeholder="名字" maxlength="60" aria-label="名字" />
+          <input v-model="ahead.email" class="input" type="email" placeholder="邮箱" maxlength="200" aria-label="邮箱" />
+        </div>
+        <div class="row wrap">
+          <span class="small muted">全局角色</span>
+          <UiSelect v-model="ahead.role" size="sm" width="120px" aria-label="全局角色" :options="globalRoles.filter((r) => isOwner || r.id === 'member').map((r) => ({ value: r.id, label: r.name }))" />
+          <UiSelect :model-value="''" size="sm" width="160px" placeholder="加入空间…" aria-label="加入的空间" :options="spaceOptions.filter((o) => !ahead.spaces.some((s) => s.space === o.value))" @change="(v) => ahead.spaces.push({ space: v, role: 'reader' })" />
+        </div>
+        <div v-if="ahead.spaces.length" class="small chips">
+          <span v-for="s in ahead.spaces" :key="s.space" class="space-chip">
+            <span class="ellipsis">{{ spaceOptions.find((o) => o.value === s.space)?.label ?? s.space }}</span>
+            <UiSelect v-model="s.role" variant="inline" aria-label="空间角色" :options="spaceRoles.map((r) => ({ value: r.id, label: r.name }))" />
+            <button class="x" aria-label="去掉" title="去掉这个空间" @click="ahead.spaces = ahead.spaces.filter((x) => x.space !== s.space)">×</button>
+          </span>
+        </div>
+        <div class="row wrap">
+          <UiCheckbox v-if="auth.primary" v-model="ahead.loginAny" size="sm">允许用{{ label(auth.primary) }}以外的方式登录网页（还没有{{ label(auth.primary) }}的人）</UiCheckbox>
+          <span class="spacer" />
+          <button class="btn sm primary" :disabled="!ahead.name.trim() || !ahead.email.trim()" @click="addAhead">添加</button>
         </div>
       </div>
 
@@ -461,6 +505,17 @@ onMounted(() => load().catch(fail));
   border-radius: var(--radius-sm);
   padding: 8px 10px;
   gap: 8px;
+}
+.link-btn {
+  all: unset;
+  cursor: pointer;
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.link-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .invite,
 .log {

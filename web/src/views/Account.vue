@@ -148,7 +148,24 @@ async function disconnectProvider(c: Conn) {
     toast((e as Error).message, "error");
   }
 }
-const VIA: Record<string, string> = { lark: "飞书", link: "机器人登录链接", invite: "邀请", local: "本机", token: "令牌" };
+const VIA: Record<string, string> = { lark: "飞书", link: "机器人登录链接", cli: "命令行（omem open）", invite: "邀请", local: "本机", token: "令牌" };
+
+/** API tokens of mine (omem login, omem user token): the command line and MCP on my own computers. */
+type Token = { id: string; label: string; client: string; createdAt: string; lastUsedAt: string | null };
+const tokens = ref<Token[] | null>(null);
+const origin = location.origin;
+async function loadTokens() {
+  tokens.value = (await get<{ tokens: Token[] }>("/api/auth/tokens")).tokens;
+}
+async function revokeToken(t: Token) {
+  if (!(await confirmDialog("撤销这个令牌？", { message: `${t.client || t.label || "这个令牌"} 上的 omem 命令行和 MCP 之后连不上，要在那台电脑上重新 omem login。`, okText: "撤销", danger: true }))) return;
+  try {
+    tokens.value = (await del<{ tokens: Token[] }>(`/api/auth/tokens/${t.id}`)).tokens;
+    toast("已撤销", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 const viaLabel = (v: string) => VIA[v] ?? acc.value?.providers.find((p) => p.id === v)?.label ?? v;
 const logins = computed(() => (acc.value?.identities ?? []).filter((i) => i.kind === "login"));
 const aliases = computed(() => (acc.value?.identities ?? []).filter((i) => i.kind === "alias"));
@@ -184,7 +201,7 @@ async function signOut(s: Session) {
     toast((e as Error).message, "error");
   }
 }
-onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e) => toast((e as Error).message, "error")));
+onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadTokens()]).catch((e) => toast((e as Error).message, "error")));
 </script>
 
 <template>
@@ -304,6 +321,22 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
           <button class="btn ghost sm" @click="signOut(s)">{{ s.current ? "退出登录" : "让它退出" }}</button>
         </div>
       </div>
+      <h2 class="section-title">命令行与 MCP</h2>
+      <div class="card pad stack tight">
+        <span class="small">在自己的电脑上用 omem 的工具（Claude Code、Codex 等通过 MCP，或终端里的 omem tool）：</span>
+        <code class="mono small cmd">omem login {{ origin }}</code>
+        <span class="muted small">浏览器里确认后，那台电脑拿到一个只属于你的令牌，之后 <span class="mono">omem mcp --url {{ origin }}</span> 就以你的身份、在你能看的空间里用工具。也可以用 <span class="mono">OMEM_AUTH_CMD</span> 给一条输出凭据的命令。</span>
+      </div>
+      <div v-if="tokens?.length" class="list">
+        <div v-for="t in tokens" :key="t.id" class="card pad row wrap">
+          <div class="stack tight">
+            <strong>{{ t.client || t.label || "API 令牌" }}</strong>
+            <span class="muted small">{{ fmtTime(t.createdAt) }} 发出 · {{ t.lastUsedAt ? `最近使用 ${fmtTime(t.lastUsedAt)}` : "还没用过" }}</span>
+          </div>
+          <span class="spacer" />
+          <button class="btn ghost sm" @click="revokeToken(t)">撤销</button>
+        </div>
+      </div>
       <template v-if="managed.length">
         <h2 class="section-title">我管理的空间</h2>
         <div v-for="sp in managed" :key="sp.id" class="card pad stack">
@@ -334,6 +367,9 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections()]).catch((e
 </template>
 
 <style scoped>
+.cmd {
+  overflow-wrap: anywhere;
+}
 .who {
   gap: 14px;
   min-width: 0;

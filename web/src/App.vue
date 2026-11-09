@@ -94,7 +94,7 @@ watch([() => route.path, owner], ([path]) => {
 });
 // A share link is opened by people without a token, the login page before logging in: no frame, nothing else loaded.
 const BARE = ["#/share/", "#/login"];
-const bare = computed(() => route.path.startsWith("/share/") || route.path === "/login" || (!route.matched.length && BARE.some((b) => location.hash.startsWith(b))));
+const bare = computed(() => route.path.startsWith("/share/") || route.path === "/login" || route.path === "/cli-login" || (!route.matched.length && BARE.some((b) => location.hash.startsWith(b))));
 onMounted(async () => {
   if (BARE.some((b) => location.hash.startsWith(b))) return;
   window.addEventListener("keydown", onKey);

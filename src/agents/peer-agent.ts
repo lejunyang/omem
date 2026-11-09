@@ -1,7 +1,9 @@
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { getSpace } from "../core/spaces.ts";
-import { OWNER } from "../core/users.ts";
+import { accessibleSpaces, OWNER, personalSpaceId, userName } from "../core/users.ts";
+import { can } from "../auth/permissions.ts";
+import { trimTools } from "../auth/tools.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
 import { ROLE_TOOLS, TOOL_GROUPS } from "./tool-help.ts";
 import { addRunEvent, createRun, flushRunText, getRun, setRunOutput } from "./runs.ts";
@@ -59,7 +61,12 @@ export function peerToolNames(opts: { readOnly?: boolean } = {}) {
 }
 
 export type PeerAgentScope = {
-  /** The calling device's node id (self-reported; the token only proves it is the owner's). */
+  /**
+   * Whose credential the call came with (docs/v2/remote-clients.md): the owner (a paired device, or
+   * the owner's own token over `--url`) or someone else using `omem tool` / `omem mcp` remotely.
+   */
+  userId?: string;
+  /** The calling device's node id or host name (self-reported; the credential only proves who). */
   caller?: string;
   /** One outside Agent session = one run. */
   session: string;
@@ -67,6 +74,8 @@ export type PeerAgentScope = {
   /** Narrow what may be read and written to these spaces (all by default). */
   spaces?: string[];
   readOnly?: boolean;
+  /** How the caller proved who it is: `peer` (a paired device), `token` (an API token) or an authenticator's id. */
+  via?: string;
   /** The Agent, model and effort on the other side, for the run's provenance (run page, memories). */
   agent?: string;
   model?: string;
@@ -75,20 +84,34 @@ export type PeerAgentScope = {
 
 const clean = (s: string | undefined, max: number, fallback: string) => (s ?? "").replace(/[\x00-\x1f]/g, " ").trim().slice(0, max) || fallback;
 
-/** The context of an outside Agent's calls: the owner, every space unless narrowed, the peer tool set. */
+/**
+ * The context of an outside Agent's calls: whose credential it came with, the spaces that person may
+ * read (every one for the owner) unless narrowed, the peer tool set minus what the person may not do.
+ */
 export function peerToolContext(app: App, scope: PeerAgentScope, runId: string | null): ToolContext {
-  const spaces = scope.spaces?.length ? [...new Set(scope.spaces.map((s) => getSpace(app, s).id))] : null;
-  const spaceId = scope.space ? getSpace(app, scope.space).id : spaces ? (spaces.includes("personal") ? "personal" : spaces[0]) : "personal";
-  if (spaces && !spaces.includes(spaceId)) throw new HttpError(400, `默认空间 ${spaceId} 不在限定的空间里`);
+  const userId = scope.userId ?? OWNER;
+  const allowed = accessibleSpaces(app, userId);
+  const mine = personalSpaceId(userId);
+  const asked = scope.spaces?.length ? [...new Set(scope.spaces.map((s) => getSpace(app, s).id))] : null;
+  if (asked && allowed) for (const s of asked) if (!allowed.includes(s)) throw new HttpError(403, `没有空间 ${s} 的权限`);
+  const spaces = asked ?? allowed;
+  const spaceId = scope.space ? getSpace(app, scope.space).id : spaces ? (spaces.includes(mine) ? mine : (spaces[0] ?? mine)) : mine;
+  if (spaces && !spaces.includes(spaceId)) throw new HttpError(asked ? 400 : 403, asked ? `默认空间 ${spaceId} 不在限定的空间里` : `没有空间 ${spaceId} 的权限`);
   const caller = clean(scope.caller, 40, "peer");
+  const tools = peerToolNames({ readOnly: scope.readOnly });
+  if (userId !== OWNER) {
+    trimTools(app, userId, tools);
+    // Being the coder or reviewer of a delegation is for those who may delegate code.
+    if (!can(app, userId, "code.delegate")) for (const t of PEER_REVIEW_TOOLS) tools.delete(t);
+  }
   return {
     app,
     runId,
     spaceId,
     spaces,
-    tools: peerToolNames({ readOnly: scope.readOnly }),
+    tools,
     actor: "agent",
-    userId: OWNER,
+    userId,
     agentProfile: `peer:${caller}`,
     peer: { caller, session: clean(scope.session, 80, "session") },
     model: scope.model ? clean(scope.model, 80, "") || null : null,
@@ -110,16 +133,20 @@ function finish(app: App, runId: string) {
 }
 
 /** The run of a session (made on first use; a run that went idle is reopened by its next call). */
+const SESSION_RUN = "select id, status from runs where kind = 'peer-agent' and coalesce(user_id, 'owner') = ? and json_extract(input, '$.caller') = ? and json_extract(input, '$.session') = ? order by created_at desc limit 1";
+
 function sessionRun(app: App, scope: PeerAgentScope, spaceId: string) {
+  const userId = scope.userId ?? OWNER;
   const caller = clean(scope.caller, 40, "peer");
   const session = clean(scope.session, 80, "session");
-  let r = one<{ id: string; status: string }>(app.db, "select id, status from runs where kind = 'peer-agent' and json_extract(input, '$.caller') = ? and json_extract(input, '$.session') = ? order by created_at desc limit 1", caller, session);
+  let r = one<{ id: string; status: string }>(app.db, SESSION_RUN, userId, caller, session);
   if (!r) {
     const created = createRun(app, {
       kind: "peer-agent",
       spaceId,
-      title: truncate(`设备 ${caller} 的外部 Agent（${session}）`, 80),
-      input: { caller, session, agent: scope.agent ? clean(scope.agent, 60, "") : undefined, model: scope.model ? clean(scope.model, 80, "") : undefined, effort: scope.effort ? clean(scope.effort, 40, "") : undefined, readOnly: scope.readOnly || undefined, spaces: scope.spaces },
+      title: truncate(userId === OWNER ? `设备 ${caller} 的外部 Agent（${session}）` : `${userName(app, userId)} 在 ${caller} 上的外部 Agent（${session}）`, 80),
+      input: { caller, session, agent: scope.agent ? clean(scope.agent, 60, "") : undefined, model: scope.model ? clean(scope.model, 80, "") : undefined, effort: scope.effort ? clean(scope.effort, 40, "") : undefined, readOnly: scope.readOnly || undefined, spaces: scope.spaces, via: scope.via },
+      userId: userId === OWNER ? null : userId,
     });
     // Claimed before the worker's next look (it runs on a microtask after this synchronous step);
     // a run left over from a restart is finished by the handler in jobs.ts.
@@ -165,7 +192,7 @@ export async function peerToolCall(app: App, scope: PeerAgentScope, name: string
   const base = peerToolContext(app, scope, null);
   const caller = clean(scope.caller, 40, "peer");
   const existing = help
-    ? one<{ id: string; status: string }>(app.db, "select id, status from runs where kind = 'peer-agent' and json_extract(input, '$.caller') = ? and json_extract(input, '$.session') = ? order by created_at desc limit 1", caller, clean(scope.session, 80, "session"))
+    ? one<{ id: string; status: string }>(app.db, SESSION_RUN, scope.userId ?? OWNER, caller, clean(scope.session, 80, "session"))
     : undefined;
   if (help) {
     // A run that is not open stays closed for a help request.

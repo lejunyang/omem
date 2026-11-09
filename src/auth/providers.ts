@@ -36,6 +36,12 @@ export type ProviderIdentity = {
   avatar?: string | null;
   /** The same person under other ids of this channel (Feishu: the open_id in this app). */
   aliases?: { externalId: string; appId?: string | null }[];
+  /**
+   * Emails the provider vouches for, best first (docs/v2/remote-clients.md §7): someone new whose
+   * email is on exactly one account made ahead of time gets that account instead of a new one.
+   * Feishu: the enterprise mailbox, then the email the tenant's admin entered.
+   */
+  verifiedEmails?: string[];
 };
 export type LoginProvider = {
   id: string;
@@ -59,6 +65,11 @@ export type LoginProvider = {
   credentials?: { fields: ProviderField[]; verify?(app: App, values: Record<string, string>): Promise<{ accountId: string; accountName: string }> };
   /** Why it cannot be used now (not configured), or null. */
   unavailable(app: App): string | null;
+  /**
+   * Scopes asked for with every login and bind, beyond who the person is: what `whoami` reads to
+   * recognize an account made ahead of time (Feishu: the email fields, docs/v2/remote-clients.md §7.4).
+   */
+  identityScopes?: string[];
   /** The authorization flow; a provider with `credentials` only has none. */
   authorizeUrl?(app: App, p: { state: string; challenge: string; redirectUri: string; scopes: string[] }): string;
   exchange?(app: App, p: { code: string; verifier: string; redirectUri: string }): Promise<ProviderTokens>;

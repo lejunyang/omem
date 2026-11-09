@@ -20,6 +20,7 @@ export const GLOBAL_PERMS = {
   "desktop.control": "操作桌面",
   "share.external": "生成对外分享链接",
   "connector.use": "连接第三方平台（飞书等）",
+  "tools.external": "在自己的电脑上用 omem 工具（omem tool、omem mcp 连远程地址）",
 } as const;
 export const SPACE_PERMS = {
   "space.read": "检索，读原件、Wiki、记忆、事项",
@@ -48,10 +49,10 @@ export const BUILTIN_ROLES: Role[] = [
     scope: "global",
     builtin: true,
     description: "所有空间（别人的个人空间除外）的管理者；能改 Agent、规则；不能改系统设置、设备、交办编码",
-    permissions: ["agents.manage", "spaces.create", "runs.read.all", "share.external", "connector.use", ...everySpace(SPACE_LIST)],
+    permissions: ["agents.manage", "spaces.create", "runs.read.all", "share.external", "connector.use", "tools.external", ...everySpace(SPACE_LIST)],
   },
-  { id: "member", name: "成员", scope: "global", builtin: true, description: "能新建空间、连接飞书、生成分享链接；只能用被加入的空间", permissions: ["spaces.create", "connector.use", "share.external"] },
-  { id: "viewer", name: "访客", scope: "global", builtin: true, description: "只读被加入的空间，可以提问", permissions: [] },
+  { id: "member", name: "成员", scope: "global", builtin: true, description: "能新建空间、连接飞书、生成分享链接；只能用被加入的空间", permissions: ["spaces.create", "connector.use", "share.external", "tools.external"] },
+  { id: "viewer", name: "访客", scope: "global", builtin: true, description: "只读被加入的空间，可以提问", permissions: ["tools.external"] },
   { id: "reader", name: "只读", scope: "space", builtin: true, description: "检索和阅读", permissions: ["space.read"] },
   { id: "contributor", name: "贡献者", scope: "space", builtin: true, description: "只读 + 导入原件、写记忆和事项", permissions: ["space.read", "source.write", "memory.write"] },
   { id: "editor", name: "编辑", scope: "space", builtin: true, description: "贡献者 + 写 Wiki、采集进来、看别人的运行", permissions: ["space.read", "source.write", "memory.write", "wiki.write", "capture.route", "runs.read"] },

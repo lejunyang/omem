@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { authFetch, loginProvider, registerLoginProvider } from "../auth/providers.ts";
+import { registerAuthenticator } from "../auth/authenticators.ts";
 import { registerFeatures } from "../auth/features.ts";
 import { appConfig } from "../auth/apps.ts";
 import { listConnections } from "../auth/vault.ts";
@@ -64,8 +65,8 @@ export const manifestSchema = z.object({
    * registers more than declared is refused.
    */
   permissions: z
-    .object({ write: z.boolean().default(false), connectors: z.array(z.string()).default([]), platforms: z.array(z.string()).default([]) })
-    .default({ write: false, connectors: [], platforms: [] }),
+    .object({ write: z.boolean().default(false), connectors: z.array(z.string()).default([]), platforms: z.array(z.string()).default([]), authenticators: z.array(z.string()).default([]) })
+    .default({ write: false, connectors: [], platforms: [], authenticators: [] }),
 });
 export type PluginManifest = z.infer<typeof manifestSchema>;
 
@@ -205,6 +206,11 @@ async function loadCode(app: App, p: LoadedPlugin) {
       p.connectors.push(registerLoginProvider(provider));
       p.providers.push(def.id);
       if (typeof features === "function" || features?.length) p.connectors.push(registerFeatures(def.id, features));
+    },
+    authenticator(def) {
+      if (!def.id.startsWith(`${manifest.id}-`)) throw new Error(`插件 ${manifest.id} 的鉴权方式 id 要以 ${manifest.id}- 开头：${def.id}`);
+      if (p.source === "data" && !manifest.permissions.authenticators.includes(def.id)) throw new Error(`插件 ${manifest.id} 注册的鉴权方式 ${def.id} 没有在 permissions.authenticators 里声明`);
+      p.connectors.push(registerAuthenticator(def));
     },
     fetch: authFetch,
     platform(def) {

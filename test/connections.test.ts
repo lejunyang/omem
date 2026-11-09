@@ -118,7 +118,8 @@ describe("connections", async () => {
 
   it("asks for the features ticked on the login page, and for nothing else without them", async () => {
     const plain = new URL((await remote("/api/auth/lark/start")).headers.get("location")!);
-    expect(plain.searchParams.get("scope")).toBeNull();
+    // Only what recognizes an account made ahead of time: the email fields.
+    expect(plain.searchParams.get("scope")!.split(" ").sort()).toEqual(["contact:user.email:readonly", "contact:user.employee:readonly"]);
     const ticked = new URL((await remote("/api/auth/lark/start?features=calendar")).headers.get("location")!);
     const asked = ticked.searchParams.get("scope")!.split(" ");
     expect(asked).toEqual(expect.arrayContaining([...scopesFor("lark", ["calendar"])]));

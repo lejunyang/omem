@@ -35,6 +35,8 @@ const routes: RouteRecordRaw[] = [
   view("/account", () => import("./views/Account.vue")),
   // Logging in (src/auth): like a share link, shown without the app frame.
   view("/login", () => import("./views/Login.vue")),
+  // `omem login <地址>` asks here (docs/v2/remote-clients.md); also without the app frame.
+  view("/cli-login", () => import("./views/CliLogin.vue")),
   // A read-only share link (no token, no app frame): App.vue renders it alone.
   view("/share/:token/:item?", () => import("./views/Share.vue"), "/share"),
 ];

@@ -92,6 +92,7 @@ async function main() {
     },
     block: unsupported("内容块"),
     connector: unsupported("新的连接器"),
+    authenticator: unsupported("鉴权方式"),
     appConfig: unsupported("连接器的应用配置"),
     service: (name) => ({ ensure: () => rpc("service.ensure", { name }) }),
     fetch: (...a) => fetch(...a),

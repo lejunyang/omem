@@ -44,6 +44,8 @@ export const larkProvider = {
     if (!secret(app)) return "缺少机器人应用的 App Secret";
     return null;
   },
+  // `email` needs the first, `enterprise_email` the second (Feishu's user_info).
+  identityScopes: ["contact:user.email:readonly", "contact:user.employee:readonly"],
   authorizeUrl(app: App, p: { state: string; challenge: string; redirectUri: string; scopes: string[] }) {
     const q = new URLSearchParams({ client_id: app.config.lark.appId ?? "", response_type: "code", redirect_uri: p.redirectUri, state: p.state, code_challenge: p.challenge, code_challenge_method: "S256" });
     if (p.scopes.length) q.set("scope", p.scopes.join(" "));
@@ -87,6 +89,8 @@ export const larkProvider = {
       email: d.enterprise_email || d.email || null,
       avatar: d.avatar_url || null,
       aliases: d.union_id && d.open_id ? [{ externalId: d.open_id, appId: app.config.lark.appId ?? null }] : [],
+      // A self-built app only lets people of its own tenant authorize: both are the tenant admin's.
+      verifiedEmails: [d.enterprise_email, d.email].filter((e): e is string => !!e?.trim()),
     };
   },
   isOwner(app: App, identity: ProviderIdentity) {

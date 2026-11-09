@@ -30,6 +30,15 @@ omem tool upsert_item -f item.json          # 参数多或在 Windows 上时用�
 
 在 omem 自己的运行里，Agent 进程带着 `OMEM_URL` 和 `OMEM_TOKEN`，`omem` 命令在 PATH 上：`omem tool` 用的是这次运行的令牌，能用的工具、能读写的空间、能发消息的飞书会话都和 MCP 一样由 omem 服务检查，环境变量本身不授予任何权限。没有令牌时（本人在终端里、外部 Agent）按 `omem mcp` 的范围在本机直接执行。
 
+**连别人的（或常驻服务器上的）omem，以你自己的身份**：不用配对，给地址和凭据就行。
+
+```bash
+omem login https://omem.example.com          # 浏览器里登录并确认，拿到一个只属于你的令牌，记成远程地址（omem remote list 看）
+omem tool --remote <名字> search query="退款"  # 或 --url <地址>；不带时用 omem remote default 设的默认地址
+```
+
+MCP 写 `["mcp", "--remote", "<名字>"]`（或 `["mcp", "--url", "<地址>"]`）。凭据按顺序取：记下的远程地址自己的（`omem login` 的令牌，或 `omem remote add <名字> <地址> --auth-cmd "<命令>"`），再是环境变量 `OMEM_TOKEN`（API 令牌）、`OMEM_AUTH_CMD`（一条输出凭据的命令，比如组织登录体系的 JWT，过期或被拒时重新执行；服务端要有认它的鉴权插件）。工具与下面 `--peer` 的那套相同（不对外发消息、不交办编码），再按你的角色和空间裁剪；会话、`--agent`、`--model`、`--effort`、`--spaces`、`--read-only` 用法相同（环境变量写 `OMEM_SESSION`、`OMEM_AGENT`、`OMEM_MODEL`、`OMEM_EFFORT`），每个会话在对方运行页记成你的一条运行。账号还在等批准、角色没有 `tools.external` 权限时，调用会返回原因。`omem open [页面]` 用同一个凭据在浏览器里登录对方的网页。
+
 **在另一台设备上用这个库**：本机和另一台装着 omem 的机器（常驻服务器）配过对（`omem peer add`，见 README“多台设备”），就可以用本机的模型整理那台机器上的原件、记忆、Wiki 和事项，不用它自己的模型：
 
 ```bash

@@ -4,7 +4,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError, json, newId, now, sha256 } from "../core/util.ts";
-import { addMember, createUser, getUser, identitiesOf, identityOwner, linkIdentity, OWNER, setUserRole, updateUser, type User } from "../core/users.ts";
+import { addMember, createUser, emailHolder, getUser, identitiesOf, identityOwner, linkIdentity, normalEmail, OWNER, setUserRole, updateUser, userName, type User } from "../core/users.ts";
 import { findRole, requirePerm } from "./permissions.ts";
 import { saveConnection } from "./connections.ts";
 import { findConnection } from "./vault.ts";
@@ -89,7 +89,9 @@ export async function completeLogin(app: App, input: { provider: string; state: 
   const r = st.purpose === "login" ? login(app, p, who, st.invite, st.return_to) : bind(app, p, who, st.user_id!, st.session_hash, st.return_to);
   // The tokens are kept for a connect, and whenever they bring scopes or there is a connection already:
   // a Feishu token carries every scope granted before, so a later login renews the connection.
-  const keep = st.purpose === "connect" || !!tokens.refreshToken || !!tokens.scope?.trim() || !!findConnection(app, r.userId, p.id);
+  // The scopes every login asks for (the email: identityScopes) are not a reason to keep anything.
+  const beyond = (tokens.scope ?? "").split(/\s+/).some((x) => x && !(p.identityScopes ?? []).includes(x));
+  const keep = st.purpose === "connect" || !!tokens.refreshToken || beyond || !!findConnection(app, r.userId, p.id);
   if (keep) saveConnection(app, r.userId, p.id, who, tokens);
   return r.kind === "bound" ? { ...r, connected: keep } : r;
 }
@@ -121,8 +123,35 @@ export const hasPrimary = (app: App, userId: string) => {
   return !primary || identitiesOf(app, userId).some((i) => i.channel === primary.channel && i.kind === "login");
 };
 
+/**
+ * An account made ahead of time for this person (docs/v2/remote-clients.md §7.2): the one active
+ * account whose email is one the provider vouches for (best first) and that has no login identity of
+ * this channel yet. Two such accounts: none is taken, the owner is told.
+ */
+export function claimByEmail(app: App, p: { channel: string; label: string }, who: ProviderIdentity): string | null {
+  for (const raw of who.verifiedEmails ?? []) {
+    const email = normalEmail(raw);
+    if (!email) continue;
+    const rows = all<{ id: string }>(
+      app.db,
+      "select id from users u where email = ? and kind = 'person' and status = 'active' and disabled_at is null and not exists (select 1 from identities i where i.user_id = u.id and i.channel = ? and i.kind = 'login')",
+      email,
+      p.channel,
+    );
+    if (rows.length === 1) {
+      notify(app, { title: "预建的账号已认领", body: `${who.name}（${email}）用${p.label}来了，已对应到账号 ${userName(app, rows[0].id)}（${rows[0].id}）。`, link: "#/settings?tab=members", urgency: "normal" });
+      return rows[0].id;
+    }
+    if (rows.length > 1) {
+      notify(app, { title: "邮箱对应了多个账号", body: `${who.name} 用${p.label}来了，邮箱 ${email} 在 ${rows.map((r) => r.id).join("、")} 上都有，没有自动对应：设置 → 成员 改掉重复的邮箱。`, link: "#/settings?tab=members", urgency: "normal" });
+      return null;
+    }
+  }
+  return null;
+}
+
 /** Record the identity (and its aliases) on the user; aliases someone else holds are left alone. */
-function record(app: App, p: LoginProvider, who: ProviderIdentity, userId: string) {
+function record(app: App, p: { channel: string }, who: ProviderIdentity, userId: string) {
   linkIdentity(app, userId, p.channel, who.externalId, { kind: "login", tenant: who.tenant, display: who.name, verified: true });
   for (const a of who.aliases ?? []) {
     const holder = identityOwner(app, p.channel, a.externalId);
@@ -135,6 +164,7 @@ function login(app: App, p: LoginProvider, who: ProviderIdentity, inviteToken: s
   let userId = identityOwner(app, p.channel, who.externalId);
   for (const a of who.aliases ?? []) userId ??= identityOwner(app, p.channel, a.externalId);
   if (!userId && p.isOwner?.(app, who)) userId = OWNER;
+  userId ??= claimByEmail(app, p, who);
   if (userId) {
     const u = getUser(app, userId);
     if (u.disabledAt) throw new HttpError(403, "这个账号已停用");
@@ -145,7 +175,7 @@ function login(app: App, p: LoginProvider, who: ProviderIdentity, inviteToken: s
       restricted = true;
     }
     record(app, p, who, userId);
-    if (!u.email && who.email) updateUser(app, userId, { email: who.email });
+    if (!u.email && who.email && !emailHolder(app, who.email, userId)) updateUser(app, userId, { email: who.email });
     if (!u.avatar && who.avatar) updateUser(app, userId, { avatar: who.avatar });
     return { kind: "session", userId, restricted, via: p.id, returnTo, created: false };
   }
@@ -158,7 +188,7 @@ function login(app: App, p: LoginProvider, who: ProviderIdentity, inviteToken: s
   if (policy === "closed") throw new HttpError(403, "这里只接受邀请：请向 omem 的主人要一个邀请链接");
   const status = policy === "approve" ? "pending" : "active";
   const user = tx(app.db, () => {
-    const u = createUser(app, { name: who.name, status, email: who.email ?? null, avatar: who.avatar ?? null });
+    const u = createUser(app, { name: who.name, status, email: who.email && !emailHolder(app, who.email) ? who.email : null, avatar: who.avatar ?? null });
     record(app, p, who, u.id);
     if (invite) useInvite(app, invite, u);
     return u;
@@ -174,6 +204,35 @@ function bind(app: App, p: LoginProvider, who: ProviderIdentity, userId: string,
   record(app, p, who, userId);
   const lifted = sessionHash && app.config.auth.primary === p.id ? sessionHash : null;
   return { kind: "bound", userId, via: p.id, returnTo, lifted, connected: false };
+}
+
+/**
+ * Someone a bearer credential an authenticator plugin checked stands for (src/auth/authenticators.ts):
+ * their account by this identity, else one made ahead of time for their email, else a new one by
+ * `auth.signup[<id>]` (default: waiting for approval; the owner is told once). With multi-user login
+ * off nobody new gets an account. The caller refuses disabled and waiting accounts.
+ */
+export function bearerLogin(app: App, p: { id: string; channel: string; label: string }, who: ProviderIdentity): string {
+  let userId = identityOwner(app, p.channel, who.externalId) ?? claimByEmail(app, p, who);
+  if (userId) {
+    const u = getUser(app, userId);
+    if (!u.disabledAt) record(app, p, who, userId);
+    if (!u.email && who.email && !emailHolder(app, who.email, userId)) updateUser(app, userId, { email: who.email });
+    return userId;
+  }
+  if (!app.config.auth.enabled) throw new HttpError(403, "omem 没有打开多人登录：请 omem 的主人先建好你的账号（设置 → 成员）");
+  const policy = app.config.auth.signup[p.id] ?? "approve";
+  if (policy === "closed") throw new HttpError(403, "这里只认 omem 的主人建好的账号：请联系 omem 的主人");
+  const status = policy === "approve" ? "pending" : "active";
+  const user = tx(app.db, () => {
+    const u = createUser(app, { name: who.name, status, email: who.email && !emailHolder(app, who.email) ? who.email : null, avatar: who.avatar ?? null });
+    record(app, p, who, u.id);
+    return u;
+  });
+  if (status === "pending")
+    notify(app, { title: "有人申请使用 omem", body: `${who.name}${who.email ? `（${who.email}）` : ""}用${p.label}从命令行来，等你批准：设置 → 成员。`, link: "#/settings?tab=members", urgency: "normal" });
+  userId = user.id;
+  return userId;
 }
 
 // ---- approving ---------------------------------------------------------------

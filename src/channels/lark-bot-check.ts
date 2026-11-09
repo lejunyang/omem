@@ -1,4 +1,5 @@
 import { featuresOf } from "../auth/features.ts";
+import { larkProvider } from "../auth/lark.ts";
 import type { App } from "../core/app.ts";
 import { reactionEventsQuiet } from "./lark-feedback.ts";
 import { DOC_SCOPES } from "./lark-doc-events.ts";
@@ -82,7 +83,9 @@ export function summarizeCheck(app: App, ref: string, appId: string, check: Lark
 }
 
 function memberScopes(appId: string, have: Set<string>) {
-  const lacking = featuresOf("lark").filter((f) => f.scopes.some((s) => !have.has(s)));
+  // What every login asks for (the email, to recognize accounts made ahead of time) counts as a feature here.
+  const login = { id: "login", label: "登录（读邮箱）", description: "", scopes: larkProvider.identityScopes };
+  const lacking = [login, ...featuresOf("lark")].filter((f) => f.scopes.some((s) => !have.has(s)));
   const missing = [...new Set(lacking.flatMap((f) => f.scopes.filter((s) => !have.has(s))))];
   return { missing, features: lacking.map((f) => f.label), link: missing.length ? larkScopeLink(appId, missing, undefined, "user") : null };
 }

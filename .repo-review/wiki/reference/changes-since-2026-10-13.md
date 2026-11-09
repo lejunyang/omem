@@ -1744,3 +1744,12 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 选 AI 收成一处（`src/agents/choose-ai.ts` 的 `chooseAI`）：没指定 AI 的运行开始前，从“按原来的设置”和任务选型的候选里挑一个，材料是任务、谁来做、现在时间、总体偏好，每个选项带适用说明、占用、账号额度和最近的故障。有决策模型时用它（`decide` 的 choice），`always` 档在没有决策模型或它出错时问通用模型（`askModel`）。按运行类型设置：`agents.routing.choose` 的 `conversation`（新开 Agent 会话时选，记在 `threads.settings.auto`）、`rules`（规则交给的 Agent）、`tasks`（交办和后台任务，编码、评审除外）。
 - 原来 Agent 档案的运行（规则交给的、交办出去的）只用档案的后端，不换；现在没指定 AI 时和角色运行一样按 `failoverProfiles`（选中的、原来的、角色在其他后端的模型、兜底、任务选型的候选）换。
 - 原来只有排队、限流、额度用完和“还没开始就失败”才换后端。现在后端本身出故障（`isBackendDown`：进程退出、连接断开、看门狗判定没有活动）也换，已经做了一半也换：接手的后端在任务前面看到上一个已做的写入（`retry.ts` 的 `partialAttemptNote`），出故障的后端 15 分钟内排到最后（`capacity.ts` 的 `markDown`）。对话也一样：看门狗超时不再在同一个后端重开会话，接手的后端拿到会话背景（原来只拿到新消息），下一轮留在它上面。
+
+## 2026-11-10：远程使用 CLI 与 MCP；鉴权插件；按邮箱预建账号
+
+- 设计与实现：docs/v2/remote-clients.md。`omem tool` / `omem mcp` 加 `--url`、`--remote`（`OMEM_URL` 同样），不用配对就以自己的身份连远程 omem；凭据取记下的远程地址（`~/.omem/client.json`，`omem remote add|list|default|rm`）、`OMEM_TOKEN`、`OMEM_AUTH_CMD`（`src/remote-client.ts`）。只有 `OMEM_TOKEN` 没有地址时仍连本机服务，omem 运行里的 Agent 行为不变。
+- `omem login <地址>`：确认码 + 浏览器确认（`#/cli-login`）换一个标签 `cli:<主机名>` 的 API 令牌（`src/auth/cli-login.ts`，表 `cli_logins`，`api_tokens.client`）；账号页“命令行与 MCP”列出和撤销。`omem open [页面]`：用命令行的凭据换一次性登录链接，登录后回到那一页。
+- `/api/tools`、`/mcp` 除了运行令牌也认用户凭据（`src/auth/external-tools.ts`）：工具是设备外部 Agent 那套（`peer-agent.ts` 从只给本人改成按用户：空间 `accessibleSpaces`、工具按全局权限裁剪，不能交办编码的去掉评审交付工具），会话信息在 `x-omem-*` 请求头（URI 编码），运行带 `user_id` 和 `via`。新全局权限 `tools.external`，内置管理员、成员、访客都有。设备交办（`run_agent` / `ask_agent`）排出的运行记在调用的人名下。
+- 鉴权插件 `api.authenticator`（`src/auth/authenticators.ts`）：只在 omem 进程里运行、要在清单 `permissions.authenticators` 声明；请求先经 `checkBearer` 验证，结果按凭据哈希缓存到过期（最多 10 分钟），`resolveAuth` 读缓存。认出的身份经 `bearerLogin` 找账号或认领预建账号，都没有时按 `auth.signup` 建等待批准的账号并通知一次。
+- 按邮箱预建账号：`POST /api/users`、成员页“按邮箱添加成员”、`omem user add --email [--login-any]`，`PATCH /api/users/:id` 可改邮箱；邮箱一律存小写（迁移时转换），建账号和改邮箱时查重。`claimByEmail`：飞书登录（`verifiedEmails`：企业邮箱优先，再是邮箱）和鉴权插件（`emailVerified`）按邮箱认领唯一的预建账号，多个时不认领并通知。飞书登录和绑定都申请 `contact:user.email:readonly`、`contact:user.employee:readonly`（`identityScopes`），只为这两项拿到的令牌不当作连接保存；机器人检查列出缺的这两项。
+- 修复：名字以非拉丁字符开头又带字母数字时（“用户 u200”）生成的用户 id 带前导连字符，个人空间对不上而建账号失败。

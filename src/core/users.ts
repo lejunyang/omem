@@ -68,8 +68,20 @@ export function personalSpaceId(userId: string) {
   return userId === OWNER ? "personal" : `personal-${userId}`;
 }
 
+/** Emails are kept and compared in lower case (an account made ahead of time is claimed by email). */
+export const normalEmail = (e: string | null | undefined) => (e ?? "").trim().toLowerCase() || null;
+
+/** Another person's account (any state) with this email, or null. */
+export function emailHolder(app: App, email: string | null | undefined, except?: string): User | null {
+  const e = normalEmail(email);
+  if (!e) return null;
+  const r = one<Row>(app.db, "select * from users where email = ? and kind = 'person' and id != ? order by created_at limit 1", e, except ?? "");
+  return r ? toUser(r) : null;
+}
+
 export function createUser(app: App, input: { name: string; id?: string; role?: string; status?: UserStatus; email?: string | null; avatar?: string | null }) {
-  let id = slugify(input.id ?? input.name).replace(/[^a-z0-9-]/g, "") || `u${Date.now().toString(36)}`;
+  // A name that is mostly not Latin (“用户 u200”) slugs to stray dashes; the personal space's id would not match.
+  let id = slugify(input.id ?? input.name).replace(/[^a-z0-9-]/g, "").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "") || `u${Date.now().toString(36)}`;
   if (findUser(app, id)) {
     // Someone logging in for the first time has no say in the id: take the next free one.
     if (input.id) throw new HttpError(409, `用户已存在：${id}`);
@@ -77,7 +89,7 @@ export function createUser(app: App, input: { name: string; id?: string; role?: 
     while (findUser(app, `${id}-${n}`)) n++;
     id = `${id}-${n}`;
   }
-  run(app.db, "insert into users(id,name,role,status,email,avatar,created_at) values(?,?,?,?,?,?,?)", id, input.name, input.role ?? "member", input.status ?? "active", input.email ?? null, input.avatar ?? null, now());
+  run(app.db, "insert into users(id,name,role,status,email,avatar,created_at) values(?,?,?,?,?,?,?)", id, input.name, input.role ?? "member", input.status ?? "active", normalEmail(input.email), input.avatar ?? null, now());
   const sp = personalSpaceId(id);
   if (!findSpace(app, sp)) createSpace(app, { id: sp, name: `${input.name} 的个人空间`, kind: "personal" });
   run(app.db, "update spaces set owner_id = ? where id = ?", id, sp);
@@ -191,7 +203,7 @@ export function updateUser(app: App, id: string, patch: { name?: string; status?
     "update users set name = ?, status = ?, email = ?, avatar = ?, settings = ?, disabled_at = ? where id = ?",
     patch.name ?? u.name,
     patch.status ?? u.status,
-    patch.email === undefined ? u.email : patch.email,
+    patch.email === undefined ? u.email : normalEmail(patch.email),
     patch.avatar === undefined ? u.avatar : patch.avatar,
     JSON.stringify(patch.settings ? { ...u.settings, ...patch.settings } : u.settings),
     patch.disabled === undefined ? u.disabledAt : patch.disabled ? (u.disabledAt ?? now()) : null,
@@ -202,11 +214,28 @@ export function updateUser(app: App, id: string, patch: { name?: string; status?
 
 // ---- API tokens --------------------------------------------------------------
 
-export function createApiToken(app: App, userId: string, label = "") {
+export function createApiToken(app: App, userId: string, label = "", client = "") {
   getUser(app, userId);
   const token = "om_" + randomBytes(24).toString("base64url");
-  run(app.db, "insert into api_tokens(token_hash,user_id,label,created_at) values(?,?,?,?)", sha256(token), userId, label, now());
+  run(app.db, "insert into api_tokens(token_hash,user_id,label,created_at,client) values(?,?,?,?,?)", sha256(token), userId, label, now(), client);
   return token;
+}
+
+/**
+ * A person's own API tokens for the account page (`omem login`, `omem user token`): paired devices
+ * and other servers (`peer:` / `fed:`) are managed under devices. `id` is the start of the hash.
+ */
+export function ownTokens(app: App, userId: string) {
+  return all<{ token_hash: string; label: string; client: string; created_at: string; last_used_at: string | null }>(
+    app.db,
+    "select token_hash, label, client, created_at, last_used_at from api_tokens where user_id = ? and label not like 'peer:%' and label not like 'fed:%' order by created_at",
+    userId,
+  ).map((t) => ({ id: t.token_hash.slice(0, 16), label: t.label, client: t.client, createdAt: t.created_at, lastUsedAt: t.last_used_at }));
+}
+
+export function revokeOwnToken(app: App, userId: string, id: string) {
+  if (!/^[0-9a-f]{16}$/.test(id)) return false;
+  return run(app.db, "delete from api_tokens where user_id = ? and substr(token_hash, 1, 16) = ? and label not like 'peer:%' and label not like 'fed:%'", userId, id).changes > 0;
 }
 
 export function listApiTokens(app: App, userId?: string) {

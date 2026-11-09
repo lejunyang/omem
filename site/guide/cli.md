@@ -63,6 +63,9 @@ omem replay run [--run <运行id>] [--axis M1]    # 立即复盘（先给 replay
 omem mcp [--read-only] [--space <id>]           # 作为 MCP 服务给其他 Agent 用
 omem tool [工具名] [JSON | 键=值 … | -f 文件]     # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明
 omem tool --peer <设备> [工具名] [参数…]         # 在设备上调用（用本机的模型整理它的库），mcp 也有 --peer；--model / --effort 登记用的模型
+omem login https://omem.example.com             # 连别人的 omem：浏览器里确认，拿到只属于你的令牌
+omem mcp --remote <名字> / --url <地址>           # 以你的身份用远程 omem 的工具；tool 同样；也认 OMEM_TOKEN、OMEM_AUTH_CMD
+omem remote add|list|default|rm                 # 记下的远程地址；omem open [页面] 在浏览器里登录它
 omem hook claude|codex                          # 把编码 Agent 的会话记进知识库
 ```
 
@@ -82,6 +85,7 @@ omem lark user-permissions [--grant] | bot-permissions [--scan]
 
 ```bash
 omem user add 小王 --id wang --lark ou_xxx --space team
+omem user add 小周 --email zhou@example.com --space team   # 按邮箱预建，之后用这个邮箱来的人对应到它
 omem user token wang
 omem user approve <id>              # 批准用登录建好的账号
 omem user invite --space team       # 邀请链接：用它登录的人直接建好账号

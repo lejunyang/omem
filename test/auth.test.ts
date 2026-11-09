@@ -5,13 +5,16 @@ import { afterAll, describe, expect, it } from "vitest";
 import { receive } from "../src/agents/inbox.ts";
 import { createLoginLink } from "../src/auth/login.ts";
 import { registerLoginProvider, setAuthFetchForTests } from "../src/auth/providers.ts";
-import { all, one } from "../src/core/db.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { createUser, identitiesOf, linkIdentity, resolveIdentity } from "../src/core/users.ts";
+import { addMember, createUser, identitiesOf, linkIdentity, resolveIdentity } from "../src/core/users.ts";
 import { boot } from "../src/main.ts";
 
 /** Feishu as the fake sees it: each authorization code is one person. */
-const people: Record<string, { open_id: string; union_id: string; name: string; tenant_key?: string }> = {
+const people: Record<string, { open_id: string; union_id: string; name: string; tenant_key?: string; email?: string; enterprise_email?: string }> = {
+  c_zhou: { open_id: "ou_zhou", union_id: "on_zhou", name: "小周", email: "zhou@contact.example", enterprise_email: "Zhou@Corp.example" },
+  c_wu: { open_id: "ou_wu", union_id: "on_wu", name: "小吴", email: "wu@corp.example" },
+  c_zheng: { open_id: "ou_zheng", union_id: "on_zheng", name: "小郑", enterprise_email: "same@corp.example" },
   c_owner: { open_id: "ou_owner", union_id: "on_owner", name: "本人" },
   c_wang: { open_id: "ou_wang", union_id: "on_wang", name: "小王" },
   c_li: { open_id: "ou_li", union_id: "on_li", name: "小李" },
@@ -114,6 +117,29 @@ describe("logging in", async () => {
     expect(resolveIdentity(app, "lark", "ou_wang")).toBe(wang.id);
     // Still a member: owner routes stay closed.
     expect((await remote("/api/settings", { cookie: `omem_sid=${cookie}` })).status).toBe(403);
+  });
+
+  it("gives an account made ahead of time to the Feishu login with its email, enterprise mailbox first", async () => {
+    createUser(app, { id: "zhou", name: "周（预建）", email: "zhou@corp.example" });
+    createUser(app, { id: "zhou-contact", name: "周的联系邮箱", email: "zhou@contact.example" });
+    createSpace(app, { id: "made-ahead", name: "预建空间" });
+    addMember(app, "made-ahead", "zhou", "reader");
+    const { redirect, cookie } = await loginAs("c_zhou");
+    expect(redirect).toBe("#/");
+    const mine = await (await me(cookie)).json();
+    expect(mine).toMatchObject({ id: "zhou", status: "active" });
+    expect(mine.spaces).toContain("made-ahead");
+    expect(identitiesOf(app, "zhou").map((i) => i.external_id)).toContain("on_zhou");
+    // The plain email claims too when there is no enterprise mailbox.
+    createUser(app, { id: "wu", name: "吴（预建）", email: "WU@corp.example" });
+    expect((await (await me((await loginAs("c_wu")).cookie)).json()).id).toBe("wu");
+    // Two accounts with the email: neither is taken, the newcomer waits, the owner hears why.
+    createUser(app, { id: "zheng-1", name: "郑一", email: "same@corp.example" });
+    run(app.db, "insert into users(id,name,role,status,email,created_at) values('zheng-2','郑二','member','active','same@corp.example',?)", new Date().toISOString());
+    const z = await (await me((await loginAs("c_zheng")).cookie)).json();
+    expect(z.id).not.toMatch(/^zheng-/);
+    expect(z.status).toBe("pending");
+    expect(one<{ title: string }>(app.db, "select title from notifications where user_id = 'owner' and title like '%多个账号%'")).toBeTruthy();
   });
 
   it("recognises someone already registered by their open_id", async () => {

@@ -1009,6 +1009,7 @@ function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, 
     title: `${spec.name}（设备 ${ctx.peer!.caller} 交办）：${truncate(task, 50)}`,
     input: { spec: spec.name, task, execution, assistantScope, fromPeer: ctx.peer!.caller },
     parentId: ctx.runId,
+    userId: ctx.userId && ctx.userId !== OWNER ? ctx.userId : null,
   });
   return `已交给这台机器上的 ${spec.name}，运行 ${r.id}（用这台机器的模型）。用 read_run 看进度和结果，做完前状态是 queued / running。`;
 }

@@ -269,6 +269,9 @@ omem mcp [--read-only] [--space <id>]       # 把个人库作为 MCP 服务给�
 omem tool [工具名] [JSON | 键=值 … | -f 文件]  # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明；omem 运行里的 Agent 带着本次运行的权限
 omem tool --peer <设备> [工具名] [参数…]      # 在设备（常驻服务器）上调用工具：用本机的模型整理它的数据，不含对外发消息、交办、唤醒（`review_branch`、`delegate_code` 例外：评审和编码由本机 Agent 自己做，`review_task` 取材料、`submit_review` 逐项交；`code_workspace` 在它的工作区里读写文件、运行本人允许的命令、提交）；调用记在它那里的一条“设备的外部 Agent”运行（--session 分会话，--space / --spaces / --read-only；--agent / --model / --effort 登记本机用的 Agent、模型和强度，显示在那条运行上）
 omem mcp --peer <设备>                      # 同上，作为 stdio MCP 服务给本机的 Claude Code、Codex 用
+omem login https://omem.example.com         # 用别人（或常驻服务器）的 omem：浏览器里登录并确认，拿到只属于你的令牌，记成一个远程地址
+omem mcp --remote <名字> / --url <地址>       # 以你的身份连远程 omem 的工具（你能看的空间、不含对外发消息与交办）；omem tool 同样；凭据也可以是 OMEM_TOKEN 或 OMEM_AUTH_CMD（输出 JWT 等凭据的命令，要有对应的鉴权插件）
+omem remote add|list|default|rm             # 记下的远程地址（~/.omem/client.json，不配对）；omem open [页面] 用命令行的身份在浏览器里登录远程 omem
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
@@ -402,12 +405,15 @@ omem 默认只服务你自己。要给同事用，在设置 → 成员里打开�
 - 第一次登录的人先进“等待批准”，你在成员页批准，或 `omem user approve <id>`。用邀请链接（成员页生成，或 `omem user invite --space team`）登录的人直接建好账号并加入选的空间。
 - 可以设一个主要登录方（比如飞书）：之后只能用它登录，其他方式只在账号页绑定；以前用别的方式建的账号，下次登录要先绑定它。企业外的人用不了飞书登录，可以在他的账号上允许其他登录方式，或者给他令牌。
 - 私聊机器人发 `/login`，会收到一个 5 分钟内有效、只能用一次的网页登录链接。
+- 可以按邮箱先建好账号（成员页“按邮箱添加成员”，或 `omem user add 小周 --email zhou@example.com --space team`），分好空间：之后谁用这个邮箱来——本企业的飞书账号登录（登录时读飞书的企业邮箱和邮箱，企业邮箱优先），或从命令行带着鉴权插件认得的凭据——就直接对应到这个账号，不用再批准。邮箱对应到多个账号时不自动对应，通知你处理。
+- 同事在自己的电脑上用 Claude Code、Codex 等时，运行 `omem login <网页地址>`，在浏览器里登录并确认，再 `omem mcp --url <网页地址>`：工具以他的身份、在他能看的空间里执行，每个会话在运行页记成他的一条运行。也可以不走浏览器，给 `OMEM_AUTH_CMD` 一条输出凭据（比如组织内部登录体系的 JWT）的命令，由数据目录里的鉴权插件（`api.authenticator`）验证并认人；内部系统怎么验证写在插件里，不进仓库。账号页“命令行与 MCP”能看到和撤销这些令牌；没有 `tools.external` 权限的角色用不了（内置的管理员、成员、访客都有）。设计见 [docs/v2/remote-clients.md](docs/v2/remote-clients.md)。
 - 每个人在“账号”页看自己的登录方式和登录过的设备，可以让某台设备退出；你在成员页能停用账号、让他所有设备退出、调整他能读写的空间。
 
 也可以在命令行登记：
 
 ```bash
 omem user add 小王 --id wang --lark ou_xxx --space team   # 建用户、绑定飞书身份、可读 team 空间（--edit 可写）
+omem user add 小周 --email zhou@example.com --space team   # 按邮箱预建：之后用这个邮箱来的人对应到这个账号（--login-any 允许不用飞书登录网页）
 omem user token wang                                # 给他发一个 API 令牌（只显示一次）
 omem space share project-a wang [--edit]           # 再开放一个空间
 ```

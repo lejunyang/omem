@@ -145,6 +145,12 @@ export type PluginApi = {
   service(name: string): { ensure(): Promise<{ url: string; token: string }> };
   /** A platform people can connect; its id must start with `<plugin id>-`. Gone when the plugin's code is unloaded. */
   connector(def: PluginConnector): void;
+  /**
+   * Recognize a bearer credential omem did not issue (an organization's JWT) and say who it is
+   * (docs/v2/remote-clients.md §6). Its id must start with `<plugin id>-` and, for a plugin in the
+   * data directory, be declared in `permissions.authenticators`; only code trusted to run inside omem.
+   */
+  authenticator(def: import("../auth/authenticators.ts").Authenticator): void;
   /** What the owner filled in for one of this plugin's connectors (its `appFields`: client id and secret…), read each time. */
   appConfig(provider: string): Record<string, string>;
   /** The host's fetch for a connector's own calls (exchanging codes, whoami): tests answer it without the network. */
