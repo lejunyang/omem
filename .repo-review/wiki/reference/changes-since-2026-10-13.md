@@ -1673,3 +1673,8 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - 起因：常驻服务器上 codex-acp 2.5.0 的每次 omem 调用都先发一次“MCP tool call approval”，11-07 起平均每次 30～40 秒，有的一直没有发出（规则运行因此报失败）。omem 的工具不带 MCP 注解，Codex 把它们当作有破坏性、会访问外部，只要不是“完全访问”模式就每次都问；`acp.ts` 每次选“允许一次”。
 - `mcp-server.ts`：列工具时都加 `destructiveHint: false`、`openWorldHint: false`（权限仍由 omem 每次调用时检查）。`acp.ts`：MCP 工具审批有“本会话允许”时选它。回归：`test/rule-handoff.test.ts` 的 MCP 注解一项；真实 codex-acp 下是否不再询问，部署后看运行事件里还有没有这类审批。
+
+## 2026-11-09：规则运行设了唤醒时保留它的后端会话
+
+- 起因：常驻服务器上一次报警规则运行设了 5 分钟后的 wake_later 接着查，运行结束 45 秒后它的会话就被清理，唤醒时恢复失败（Internal error），新会话拿不到上一轮的执行结果，只记了一笔就结束。`releaseRuleSessions` 只看排队中的 `resumeSessionId` / `resumeFromRun`、同一 lane 和跟进中的话题，没看排队中的唤醒（`kind='wake'`，原运行在 `target.resumeRunId`）。
+- `session-cleanup.ts`：排队中的唤醒和待触发的消息唤醒（临时规则的 wake 动作）指向的运行，会话保留到唤醒结束。回归：`test/session-cleanup.test.ts` 的唤醒一项。

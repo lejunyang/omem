@@ -145,6 +145,15 @@ function releaseRuleSessions(app: App) {
     const input = json<Record<string, unknown>>(r.input, {});
     if (typeof input.resumeSessionId === "string") resumeIds.add(input.resumeSessionId);
     if (typeof input.resumeFromRun === "string") resumeRuns.add(input.resumeFromRun);
+    // A pending wake_later continues the run that set it (wakes.ts fireWake resumes its session).
+    const wakeOf = (input.target as { resumeRunId?: unknown } | undefined)?.resumeRunId;
+    if (typeof wakeOf === "string") resumeRuns.add(wakeOf);
+  }
+  // So does a pending wake_on_message, kept as a temporary rule with a wake action.
+  for (const r of all<{ actions: string }>(app.db, "select actions from rules where temporary is not null and enabled = 1")) {
+    for (const a of json<{ type?: string; target?: { resumeRunId?: unknown } }[]>(r.actions, [])) {
+      if (a.type === "wake" && typeof a.target?.resumeRunId === "string") resumeRuns.add(a.target.resumeRunId);
+    }
   }
   const followedRuns = new Set<string>();
   for (const r of all<{ value: string }>(app.db, "select value from kv where key like 'rule_follow:%'")) {

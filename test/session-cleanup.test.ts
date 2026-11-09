@@ -153,6 +153,21 @@ describe("unified ACP cleanup", () => {
     expect(pending(app)).toEqual([]);
   });
 
+  it("keeps a rule session while a wake it set is pending, so the wake can continue it", async () => {
+    const { app, profile, deleted } = acpApp(true);
+    const r = createRun(app, { kind: "agent", title: "规则的报警", input: { spec: "assistant", rule: { id: "test" }, silent: {} } });
+    const cleanup = await sessionCleanup(app, profile, { cwd: app.home, runId: r.id, persistSession: true }, () => {});
+    cleanup.created("waking-session"); setRunOutput(app, r.id, { sessionId: "waking-session" });
+    run(app.db, "update runs set status='done' where id=?", r.id);
+    const { scheduleWake } = await import("../src/agents/wakes.ts");
+    const wake = scheduleWake(app, { at: new Date(Date.now() + 300_000).toISOString(), note: "五分钟后接着查", target: { spec: "assistant", resumeRunId: r.id }, setBy: { agent: "assistant", runId: r.id } });
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual([]);
+    run(app.db, "update runs set status='done' where id=?", wake.id);
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted()).toEqual(["waking-session"]);
+  });
+
   it("releases completed and failed rule sessions, including an id lost when a run restarted", async () => {
     const { app, profile, deleted } = acpApp(true);
     const r = createRun(app, { kind: "agent", title: "规则重启", input: { rule: { id: "test" } } });
