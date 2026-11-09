@@ -59,6 +59,11 @@ export type AcpHandle = {
   close(): void;
   /** Remove an omem-owned temporary session from the backend list, when advertised. */
   discard(): Promise<void>;
+  /**
+   * Hand words to the turn in progress without waiting for it to call a tool (codex-acp's
+   * `_session/steering`): "injected" when the turn took them; otherwise the caller keeps them for later.
+   */
+  steer(text: string): Promise<"injected" | "idle" | "unsupported" | "failed">;
   probe?: AgentProbe;
 };
 
@@ -358,7 +363,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         ...(effortsByModel ? { effortsByModel } : {}),
       };
       await discard();
-      return { sessionId, agent: agentName, resumed, system: false, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, discard, probe };
+      return { sessionId, agent: agentName, resumed, system: false, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, discard, steer: async () => "unsupported", probe };
     }
     for (const [key, value] of [
       ["model", profile.model],
@@ -398,6 +403,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     emitSetup({ type: "status", text: `${resumed ? "已恢复" : "已连接"} ${agentName}${profile.model ? ` · ${profile.model}` : ""}` });
     setupWatch.close();
     let busy = false;
+    /** Whether the agent takes words mid-turn (`_session/steering`); null until tried. */
+    let steerable: boolean | null = null;
     return {
       sessionId,
       agent: agentName,
@@ -406,6 +413,19 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       alive: () => !dead,
       close,
       discard: discard!,
+      async steer(steerText) {
+        if (dead || !busy) return "idle";
+        if (steerable === false) return "unsupported";
+        try {
+          const r = await connection.extMethod("_session/steering", { sessionId, prompt: [{ type: "text", text: steerText }], _meta: { steering: { idleBehavior: "promptRequired" } } }) as { outcome?: string };
+          steerable = true;
+          return r?.outcome === "injected" ? "injected" : r?.outcome === "promptRequired" ? "idle" : "failed";
+        } catch (e) {
+          // Agents without it answer "Method not found": stop asking for this session.
+          if (/method not found|-32601/i.test(`${(e as { message?: string }).message ?? ""} ${(e as { code?: number }).code ?? ""}`)) steerable = false;
+          return steerable === false ? "unsupported" : "failed";
+        }
+      },
       async prompt(promptText, turnEmit, signal) {
         if (dead) throw new Error("Agent 进程已结束");
         if (busy) throw new Error("这个 Agent 会话正在处理上一条消息");

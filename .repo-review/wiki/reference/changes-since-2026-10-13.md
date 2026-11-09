@@ -1706,3 +1706,8 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 本人要把通知机器人私聊自己的消息转到别的群，目标是人时建群转发。规则原来只能在触发的会话里发言、只能把机器人拉进触发的群。
 - `rules/forward.ts`：`forward` 动作（`to: { chatId, name, kind: group | p2p }`、`note`），机器人发出，uuid 由规则、消息、目标算出去重。群：`chatBots` 里没有 omem 的机器人就 `inviteOwnBot`。私聊：对方取采集到的最近一条 `sender_kind='user'` 的发送人，以本人身份 `im +chat-create --as user --users <对方> --bots <app_id>`，群 id 存 kv `rule_forward_group:<私聊 id>` 复用。只用于“新消息”触发；非本人保存时新加或改动目标返回 403。AGENTS.md 的本人身份写操作清单加上这两处。
 - 规则页“转发到”从采集过的会话里选目标（`rule-options` 的 chats 带 `chat_mode`）。回归：`test/rule-forward.test.ts`。
+
+## 2026-11-09：对话里指定转发目标；补充消息直接交给进行中的一轮
+
+- 转发目标：`save_rule` 在回答本人自己消息的那一轮（`ownerAskedThisTurn`）可以新加或改动 `forward` 的目标，`chatId: "current"` 换成本会话的飞书群，名字和类型从 `lark_cursors` 补；`saveRule` 的 `opts.ownerAsked`。规则草稿（`compile.ts`）认识 forward。
+- 中途接收：常驻服务器上一轮在跑命令行时，本人的补充消息要等它下一次调用 omem 工具才能交进去，看上去像在排队。codex-acp 2.5.0 有扩展方法 `_session/steering`（`idleBehavior: "promptRequired"` 时没有进行中的一轮返回 `promptRequired`），本机实测 `injected` 且这一轮的回复包含补充内容；直接再发 `session/prompt` 只会排成下一轮。`AcpHandle.steer`；`steer.ts` 拆成 `claimSteering`（先看）+ `commit`（交出后再移走）；`inbox.ts` 收到消息后 `steerLiveTurn`，交不进去（后端不支持、这一轮已结束、发送人不同）就照旧等工具调用。回归：`test/steer-live.test.ts`（假 Agent 的 `FAKE_STEER`）、`test/rule-forward.test.ts`。

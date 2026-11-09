@@ -1,3 +1,4 @@
+import { one } from "../core/db.ts";
 import { excluded, holdForRun } from "./capacity.ts";
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
@@ -75,6 +76,25 @@ export function liveSessionInfo(threadId: string) {
 }
 export function releaseThreadSession(threadId: string) {
   release(threadId);
+}
+
+/**
+ * New words for a conversation whose turn is running: hand them to the agent at once when it takes
+ * words mid-turn (codex-acp steering), instead of at the turn's next omem tool call (steer.ts).
+ * False when there is no such turn, the agent cannot, or the words belong to someone else's turn.
+ */
+export async function steerLiveTurn(app: App, threadId: string) {
+  const l = live.get(threadId);
+  if (!l?.busy || !l.handle.alive()) return false;
+  const running = one<{ id: string }>(app.db, "select id from runs where lane = ? and kind = 'ask' and status = 'running' limit 1", threadId);
+  if (!running) return false;
+  const { claimSteering } = await import("./steer.ts");
+  const claim = claimSteering(app, running.id);
+  if (!claim) return false;
+  if ((await l.handle.steer(claim.text)) !== "injected") return false;
+  // Given to the agent: from here it is that turn's (if the queue moved on meanwhile, the next turn has it too).
+  claim.commit();
+  return true;
 }
 
 function keepAlive(app: App, l: Live) {

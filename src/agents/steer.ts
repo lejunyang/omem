@@ -15,6 +15,17 @@ import { threadMessages } from "./threads.ts";
 export function takeSteering(app: App, runId: string): string | null {
   const r = one<{ kind: string; status: string; lane: string | null; input: string }>(app.db, "select kind, status, lane, input from runs where id = ?", runId);
   if (r?.kind === "agent" && r.status === "running" && r.lane?.startsWith("rule:")) return takeTriggers(app, runId, r.lane, JSON.parse(r.input));
+  const claim = claimSteering(app, runId);
+  return claim && claim.commit() ? claim.text : null;
+}
+
+/**
+ * The messages waiting for a running conversation turn, as it would read them, without taking them
+ * yet: `commit` moves them into the turn (false when the waiting turn changed meanwhile). Used at a
+ * tool call (takeSteering) and when the agent takes words mid-turn (sessions.ts steerLiveTurn).
+ */
+export function claimSteering(app: App, runId: string): { text: string; commit: () => boolean } | null {
+  const r = one<{ kind: string; status: string; lane: string | null; input: string }>(app.db, "select kind, status, lane, input from runs where id = ?", runId);
   if (!r || r.kind !== "ask" || r.status !== "running" || !r.lane) return null;
   const input = JSON.parse(r.input) as { conversationId?: string; userId?: string };
   if (!input.conversationId) return null;
@@ -25,20 +36,7 @@ export function takeSteering(app: App, runId: string): string | null {
   const msgs = threadMessages(app, input.conversationId, { limit: 400 }).filter((m) => ids.includes(m.id) && m.role === "user" && !m.meta.answer);
   if (!msgs.length) return null;
   const taken = new Set(msgs.map((m) => m.id));
-  const rest = ids.filter((id) => !taken.has(id));
-  if (rest.length) {
-    if (!updateQueuedRun(app, next.id, { input: { ...next.input, messageIds: rest } })) return null;
-  } else {
-    // Whoever waits for that turn's answer (a chat channel) learns it was taken by this one.
-    setRunOutput(app, next.id, { steeredInto: runId });
-    cancelRun(app, next.id);
-    if (one<{ status: string }>(app.db, "select status from runs where id = ?", next.id)?.status !== "cancelled") return null;
-  }
-  for (const id of taken) run(app.db, "update messages set run_id = ? where id = ?", runId, id);
-  const before = (one<{ s: string | null }>(app.db, "select json_extract(output, '$.steered') s from runs where id = ?", runId)?.s);
-  setRunOutput(app, runId, { steered: [...(before ? (JSON.parse(before) as string[]) : []), ...taken] });
-  addRunEvent(app, runId, "status", { text: `收到 ${taken.size} 条补充消息，交给正在进行的这一轮` });
-  return [
+  const text = [
     "",
     "---",
     "# 你工作期间收到的新消息",
@@ -47,6 +45,25 @@ export function takeSteering(app: App, runId: string): string | null {
     "",
     "结合它们继续当前的工作，不用停下重来；和正在做的事冲突时以新消息为准。最后的回复要一并回应它们。",
   ].join("\n");
+  const commit = () => {
+    const now = queuedInLane(app, r.lane!, "ask");
+    if (now?.id !== next.id) return false;
+    const rest = ((now.input.messageIds as string[] | undefined) ?? []).filter((id) => !taken.has(id));
+    if (rest.length) {
+      if (!updateQueuedRun(app, next.id, { input: { ...now.input, messageIds: rest } })) return false;
+    } else {
+      // Whoever waits for that turn's answer (a chat channel) learns it was taken by this one.
+      setRunOutput(app, next.id, { steeredInto: runId });
+      cancelRun(app, next.id);
+      if (one<{ status: string }>(app.db, "select status from runs where id = ?", next.id)?.status !== "cancelled") return false;
+    }
+    for (const id of taken) run(app.db, "update messages set run_id = ? where id = ?", runId, id);
+    const before = (one<{ s: string | null }>(app.db, "select json_extract(output, '$.steered') s from runs where id = ?", runId)?.s);
+    setRunOutput(app, runId, { steered: [...(before ? (JSON.parse(before) as string[]) : []), ...taken] });
+    addRunEvent(app, runId, "status", { text: `收到 ${taken.size} 条补充消息，交给正在进行的这一轮` });
+    return true;
+  };
+  return { text, commit };
 }
 
 type Trigger = { messageId: string | null; topicId: string | null; at: string; summary: string };

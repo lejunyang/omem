@@ -46,6 +46,9 @@ const resumed = new Set<string>();
 // FAKE_MODE=thread: no tools, answer with what the host sent (for session/thread tests).
 const threadMode = process.env.FAKE_MODE === "thread";
 const delay = Number(process.env.FAKE_DELAY ?? 0);
+/** Sessions with a turn in progress, and what was steered into each (FAKE_STEER). */
+const inTurn = new Set<string>();
+const steeredIn = new Map<string, string[]>();
 // FAKE_LEGACY=1: models via session.models + session/set_model, gemini-style mode ids.
 const legacy = process.env.FAKE_LEGACY === "1";
 // FAKE_STALL=before: print the traex skills notice, then never answer (provider not starting).
@@ -104,6 +107,15 @@ new AgentSideConnection(
     },
     async extMethod(method: string, params: Record<string, unknown>) {
       if (method === "session/set_model") state.model = String(params.modelId);
+      // FAKE_STEER: takes words mid-turn the way codex-acp's `_session/steering` does.
+      if (method === "_session/steering") {
+        if (!process.env.FAKE_STEER) throw Object.assign(new Error("Method not found"), { code: -32601 });
+        const id = String(params.sessionId);
+        if (!inTurn.has(id)) return { outcome: "promptRequired" };
+        const text = ((params.prompt as { text?: string }[]) ?? []).map((b) => b.text ?? "").join("");
+        steeredIn.set(id, [...(steeredIn.get(id) ?? []), ...[...text.matchAll(/本人（[^）]*）：([^\n]*)/g)].map((m) => m[1])]);
+        return { outcome: "injected" };
+      }
       return {};
     },
     async authenticate() {
@@ -460,11 +472,15 @@ ${JSON.stringify({ check, tools })}`);
       if (threadMode) {
         const n = (turns.get(p.sessionId) ?? 0) + 1;
         turns.set(p.sessionId, n);
+        inTurn.add(p.sessionId);
         if (delay) await new Promise((r) => setTimeout(r, delay));
+        inTurn.delete(p.sessionId);
+        const steered = steeredIn.get(p.sessionId) ?? [];
+        steeredIn.delete(p.sessionId);
         const part = prompt.slice(prompt.lastIndexOf("# 本人新消息"));
         const msgs = [...part.matchAll(/本人（[^）]*）：([^\n]*)/g)].map((m) => m[1]);
         const role = /# 角色：([^\n]*)/.exec(prompt)?.[1] ?? "";
-        const text = JSON.stringify({ session: p.sessionId, turn: n, resumed: resumed.has(p.sessionId), cold: prompt.includes("# 会话背景"), msgs, role, summary: /## 本会话到目前为止的摘要\n\n([^\n]*)/.exec(prompt)?.[1] ?? null, context: prompt.includes("的上下文，"), memories: [...part.matchAll(/- mem:(\w+)/g)].map((m) => m[1]), woken: prompt.includes("# 唤醒\n"), ...(legacy ? state : {}) });
+        const text = JSON.stringify({ session: p.sessionId, turn: n, resumed: resumed.has(p.sessionId), cold: prompt.includes("# 会话背景"), msgs, role, summary: /## 本会话到目前为止的摘要\n\n([^\n]*)/.exec(prompt)?.[1] ?? null, context: prompt.includes("的上下文，"), memories: [...part.matchAll(/- mem:(\w+)/g)].map((m) => m[1]), woken: prompt.includes("# 唤醒\n"), ...(steered.length ? { steered } : {}), ...(legacy ? state : {}) });
         await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
         return { stopReason: "end_turn" };
       }

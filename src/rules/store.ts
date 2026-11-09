@@ -101,7 +101,11 @@ export function getRule(app: App, id: string): Rule {
 
 /** Create or replace a rule; checks it can work (conditions for code judging, a cron for schedules). */
 /** `actor`: who saves it through the web or API; a script runs on this machine, so only the owner may write one. */
-export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user", actor?: string): Rule {
+/**
+ * `ownerAsked`: an agent saving the rule in a turn answering the owner's own message (save_rule), which
+ * may set where it forwards to, as set_chat_watch may add the bot in such a turn.
+ */
+export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user", actor?: string, opts: { ownerAsked?: boolean } = {}): Rule {
   const r = ruleInputSchema.parse(input);
   if (r.actions.some((a) => a.type === "script") && (by !== "user" || actor !== OWNER || input.temporary))
     throw new HttpError(403, "带脚本的规则只能由本人在规则页保存：脚本在这台机器上执行");
@@ -117,7 +121,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     }
     // Where a rule forwards to (and may add the bot or make a group as the owner) is the owner's pick too.
     const targets = (before ? JSON.parse(before.actions) as RuleAction[] : []).flatMap((a) => (a.type === "forward" ? [a.to.chatId] : []));
-    for (const a of r.actions) if (a.type === "forward" && !targets.includes(a.to.chatId)) throw new HttpError(403, "转发的目标只能由本人在规则页选：可能要以本人身份拉机器人进群或建群");
+    for (const a of r.actions) if (a.type === "forward" && !targets.includes(a.to.chatId) && !(opts.ownerAsked && !input.temporary)) throw new HttpError(403, "转发的目标要本人亲自指定（规则页，或本人在对话里要求的这一轮）：可能要以本人身份拉机器人进群或建群");
   }
   if (r.actions.some((a) => a.type === "forward") && r.trigger.event !== "message") throw new HttpError(400, "转发只用于“新消息”触发：要有一条消息可转发");
   if (r.actions.at(-1)?.type === "delay") throw new HttpError(400, "延时后面要有动作");

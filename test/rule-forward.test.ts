@@ -73,12 +73,35 @@ it("only the owner picks where a rule forwards to, and only message rules forwar
   const app = testApp();
   try {
     const rule = { name: "转发", description: "x", enabled: true, conditions: { field: "chat.name", op: "contains", value: "虚拟号" }, judge: "code", actions: [{ type: "forward", to: { chatId: "oc_duty", name: "值班群", kind: "group" }, note: "" }] } as never;
-    expect(() => saveRule(app, rule, "agent")).toThrow(/只能由本人/);
+    expect(() => saveRule(app, rule, "agent")).toThrow(/本人亲自指定/);
     const saved = saveRule(app, rule, "user", OWNER);
     // An agent may edit the rule as long as the target stays.
     expect(saveRule(app, { ...(rule as object), id: saved.id, description: "改了说明" } as never, "agent").description).toBe("改了说明");
-    expect(() => saveRule(app, { ...(rule as object), id: saved.id, actions: [{ type: "forward", to: { chatId: "oc_other", name: "别的群", kind: "group" }, note: "" }] } as never, "agent")).toThrow(/只能由本人/);
+    expect(() => saveRule(app, { ...(rule as object), id: saved.id, actions: [{ type: "forward", to: { chatId: "oc_other", name: "别的群", kind: "group" }, note: "" }] } as never, "agent")).toThrow(/本人亲自指定/);
     expect(getRule(app, saved.id).actions[0]).toMatchObject({ to: { chatId: "oc_duty" } });
     expect(() => saveRule(app, { ...(rule as object), trigger: { event: "schedule", cron: "0 9 * * *" }, conditions: null } as never, "user", OWNER)).toThrow(/新消息/);
+  } finally { app.db.close(); }
+});
+
+it("in the owner's own message in a group, the assistant may set a rule forwarding to that group", async () => {
+  const { callTool, issueToolToken, toolContextForToken } = await import("../src/agents/tools.ts");
+  const { createRun } = await import("../src/agents/runs.ts");
+  const { createThread, addMessage } = await import("../src/agents/threads.ts");
+  const app = testApp();
+  try {
+    run(app.db, "insert into lark_cursors(chat_id, name, chat_mode) values('oc_here','值班群','group')");
+    const t = createThread(app, { channel: "lark", key: "oc_here", spaceId: "personal", userId: "owner" });
+    const rule = { name: "虚拟号转群", description: "虚拟号通知私聊我的消息转到这个群", enabled: false, rule: { trigger: { event: "message" }, judge: "code", conditions: { field: "chat.name", op: "contains", value: "虚拟号" }, actions: [{ type: "forward", to: { chatId: "current" }, note: "" }] } };
+    const turn = (messageIds: string[]) => {
+      const r = createRun(app, { kind: "ask", title: "x", input: { conversationId: t.id, messageIds }, lane: `hold-${messageIds.length}`, notBefore: "2999-01-01T00:00:00Z" });
+      return toolContextForToken(app, issueToolToken({ runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "assistant" } as never))!;
+    };
+    // A wake-up (no owner message in the turn): refused.
+    expect((await callTool(turn([]), "save_rule", rule)).text).toMatch(/本人亲自指定/);
+    const said = addMessage(app, t.id, "user", "以后虚拟号通知私聊我的消息都转到这个群", null, {});
+    const out = await callTool(turn([said]), "save_rule", rule);
+    expect(out.isError).toBe(false);
+    const { listRules } = await import("../src/rules/store.ts");
+    expect(listRules(app)[0].actions[0]).toMatchObject({ type: "forward", to: { chatId: "oc_here", name: "值班群", kind: "group" } });
   } finally { app.db.close(); }
 });

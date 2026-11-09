@@ -22,6 +22,7 @@ const ACTIONS = `动作（按顺序执行，至少一个）：
 - {"type":"agent","spec":"档案名","task":"交给它的任务说明（触发的消息和正在进行的讨论会自动附上）","ownTopic":是否从触发消息开话题处理,"reply":"none|draft|auto|silent","hideThinking":false,"failureTo":"owner|chat","allowUrgent":false,"allowPrivate":false,"merge":true,"mergeReply":"combined|separate","ai":{"profile":"后端 id","model":"模型","effort":"思考强度"}}：ai 只在本人点名用哪个后端、模型或强度时写（profile 必须是下面列出的后端 id，model、effort 不确定就省略），不写就用档案自己的设置，模型偏好不要写进 task；merge 是处理中再次触发时并入同一会话（默认 true）；mergeReply 默认 combined（合并回复），本人要求每个触发分别回复、逐条完成任务时用 separate，仍 merge=true，依次在同一会话处理；只有本人要求不共用会话、独立并行处理时写 merge=false；allowUrgent 允许它在群里发消息时加急指定的人，allowPrivate 允许它发只给群里某些人看的消息（reply 不是 none 时才有用）；reply 的 none 只把结论发给本人；draft 它要在群里说的话先给本人确认；auto 可以直接在这个群/话题里回复和 @ 人，过程（思考气泡）可见；silent 静默排查：群里看不到过程，它自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题
 - {"type":"watch","spec":"档案名","on":"all|mention|keyword","pattern":"关键词正则（keyword 时）","reply":"none|draft|auto"}：开始监听这个群，之后的消息交给它
 - {"type":"invite-bot"}：以本人身份把 omem 的机器人拉进这个群
+- {"type":"forward","to":{"chatId":"current 或 oc_ 开头的会话 id","name":"会话名"},"note":"附言"}：只用于新消息触发。把触发的消息转发到 to（“转到这个群”写 current，即本人说话的这个飞书会话）；群里没有机器人时以本人身份拉进去，to 是某人的私聊时以本人身份建一个本人、对方和机器人的群
 - {"type":"capture"}：把这个群设为与本人有关，立刻采集一次
 - {"type":"notify","urgent":false}：通知本人
 - {"type":"delay","minutes":分钟数}：后面的动作过这么久再做（“半小时后再提醒”“第二天早上再处理”）

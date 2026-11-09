@@ -150,6 +150,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     const later = !!due?.not_before && due.not_before <= notBefore;
     if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids, ...(inb.fromAsk ? { fromAsk: true } : {}) }, notBefore: mergeMs && !later ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, 80) })) {
       app.db.prepare("update messages set run_id = ? where id = ?").run(waiting.id, messageId);
+      steerSoon(app, thread.id);
       return { thread, messageId, runId: waiting.id, merged: true, reply: null, started };
     }
   }
@@ -163,7 +164,13 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     notBefore: mergeMs ? notBefore : null,
   });
   app.db.prepare("update messages set run_id = ? where id = ?").run(run.id, messageId);
+  steerSoon(app, thread.id);
   return { thread, messageId, runId: run.id, merged: false, reply: null, started };
+}
+
+/** A turn already running in this conversation gets the new words now when its agent can take them. */
+function steerSoon(app: App, threadId: string) {
+  void import("./sessions.ts").then((m) => m.steerLiveTurn(app, threadId)).catch((e) => console.warn("[omem] 补充消息交给进行中的一轮失败：", (e as Error).message));
 }
 
 // ---- delivering to threads -------------------------------------------------
