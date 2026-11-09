@@ -139,7 +139,7 @@ export async function guestRun(ctx: RunContext): Promise<GuestVerdict> {
     "",
     "你最后写的文字会由机器人原样发给提问的人。",
   ].join("\n");
-  const r = await runRole(ctx.app, { role: "guest", spaceId, spaces, task, runId: ctx.run.id, signal: ctx.signal, lark: { chats: [] }, onEvent: (e) => ctx.event(e.type, e) });
+  const r = await runRole(ctx.app, { role: "guest", fullAccess: ctx.app.config.lark.guests.fullAccess, spaceId, spaces, task, runId: ctx.run.id, signal: ctx.signal, lark: { chats: [] }, onEvent: (e) => ctx.event(e.type, e) });
   return { verdict, reason, answer: replyOf(r).trim() };
 }
 

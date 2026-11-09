@@ -23,7 +23,7 @@ import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { trimTools } from "../auth/tools.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools } from "./tool-help.ts";
-import { applyOverlay, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
+import { applyOverlay, GUEST_ROLES, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
@@ -244,7 +244,7 @@ export type RoleRunInput = {
   shadow?: { parentRunId: string | null };
   /** omem tools this run must not have (a consulted agent cannot hand work on). */
   denyTools?: string[];
-  /** The owner's 完全访问 for this run (a rule's agent action); a profile can also have it (spec.fullAccess). */
+  /** 完全访问 decided for this run (a rule's switch, the guest setting); undefined = the profile's or role's own (prepareRun). */
   fullAccess?: boolean;
   /** Feishu chats it may post into (a rule's agent: only the chat that triggered it), and whether it may buzz people or post to some members only. */
   lark?: LarkAccess;
@@ -304,6 +304,8 @@ export type PreparedRun = {
   extraMcp: Record<string, McpServerSpec>;
   allowWrites: boolean;
   modes: string[];
+  /** Commands outside the backend's sandbox, no approvals (see prepareRun). */
+  fullAccess: boolean;
   label: string;
   /** What passive recall may draw on: readable spaces (null = all) and whose own memories count. */
   recall: { spaces: string[] | null; agent: string | null; userId: string } | null;
@@ -369,7 +371,7 @@ function workRepos(app: App, runId: string | null): string[] {
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; replay?: ReplayArm },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -455,6 +457,10 @@ export function prepareRun(
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
   const readOnly = !!(input.reviewCheck || input.reviewLead || input.replay);
+  // 完全访问: a run's own setting (a rule's switch, or the guest setting for a turn answering a guest) wins;
+  // otherwise the profile's or the built-in role's, for the owner's own runs only. Checks, replays and comparisons never.
+  const ownDefault = userId === OWNER && (spec ? spec.fullAccess : !GUEST_ROLES.includes(roleName) && !!roleOverlay(app, roleName).fullAccess);
+  const fullAccess = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
   return {
     profile,
     cwd,
@@ -466,6 +472,7 @@ export function prepareRun(
     mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token), ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor(spec?.mcp ?? {}, !!input.replay),
     allowWrites: readOnly ? false : spec ? spec.writes : role!.writes,
+    fullAccess,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,
     // Guests never see the owner's memories unasked.
@@ -587,10 +594,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const execution = validateExecution(app, input.execution ?? runAI(app, input.runId));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  // 完全访问 is the owner's choice for a rule's runs or a profile; checks, replays, comparisons and guests never get it.
-  const fullAccess = !input.reviewCheck && !input.reviewLead && !input.replay && !input.shadow && input.role !== "guest" && !!(input.fullAccess || input.spec?.fullAccess);
   const lessons = await lessonsForTask(app, input);
-  const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay });
+  const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
@@ -623,7 +628,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       const moved = slot.index > 0;
       i += slot.index;
       const profile = chain[i];
-      const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay });
+      const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
       try {
         const req = {
@@ -636,7 +641,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           prompt: `（${prep.now}）\n\n# 任务\n\n${input.task}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
-          fullAccess,
+          fullAccess: prep.fullAccess,
           signal: input.signal,
           mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
           extraMcp: prep.extraMcp,
@@ -646,7 +651,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         };
         if (i > 0)
           emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
-        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${fullAccess ? " · 完全访问" : ""}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
         writesBefore = writes();

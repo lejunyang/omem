@@ -166,7 +166,7 @@ async function saveGuestSpaces(spaces: string[]) {
   }
 }
 function saveGuests(patch: Record<string, unknown>, note = "已保存访客设置") {
-  const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" };
+  const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false };
   return saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
 }
 function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
@@ -1049,7 +1049,9 @@ async function saveEdit() {
         <strong>访客提问</strong>
         <p class="muted small">没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的后端和模型在“Agent”页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</p>
         <UiCheckbox :model-value="!!config.lark.guests?.enabled" switch @change="(v) => saveGuests({ enabled: v }, v ? '已开启访客提问' : '已关闭访客提问')">回答未登记的人和别的机器人</UiCheckbox>
-        <UiCheckbox :model-value="!!config.lark.guests?.p2p" :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ p2p: v })">也回答未登记的人与机器人的私聊（只读下方“开放给访客的空间”）</UiCheckbox>
+        <UiCheckbox :model-value="!!config.lark.guests?.p2p" switch :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ p2p: v })">也回答未登记的人与机器人的私聊（只读下方“开放给访客的空间”）</UiCheckbox>
+        <UiCheckbox :model-value="!!config.lark.guests?.fullAccess" switch :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ fullAccess: v }, v ? '已对访客打开完全访问' : '已对访客关闭完全访问')">回答访客时完全访问：命令不进沙箱、不经审批</UiCheckbox>
+        <p v-if="config.lark.guests?.fullAccess" class="muted small">回答访客的运行（“回答访客”角色，以及你在群里时由助理回答访客的那一轮）里，命令不再受后端沙箱限制、也不经审批，访客的话可能让它在这台机器上执行命令。只在回答访客的后端本来就不带本机命令行、或你信任群里的人时打开。</p>
         <div class="field"><span>你也在群里时</span>
           <UiSelect
             :model-value="config.lark.guests?.ownerPresent ?? 'guest'"

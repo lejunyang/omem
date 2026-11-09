@@ -1693,3 +1693,10 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 起因：报警规则用的内部命令行工具在 Codex 只读沙箱里起不来（读网卡 EPERM、不能联网），每条命令都要走沙箱外执行的审批，一轮二三十次；codex-acp 2.5.0 偶尔把审批请求压几分钟才发出（这次 4 分钟，Agent 先报了失败，命令在它结束后才跑）。omem 本来就批准所有非编辑类命令，沙箱对这类运行只多了等待。
 - 规则的 agent 动作和 Agent 档案加 `fullAccess`（规则页、Agent 页的开关，默认关）。`runRole` 只在规则运行、档案打开时生效，评审检查、复盘、对比运行、访客不用；`acp.ts` 选 `full-access` 模式（`agent-full-access`、`bypassPermissions`、`danger-full-access`、`yolo`），没有时记一条状态照旧运行，此时审批也放行编辑；`cli.ts` 的 codex 用 `--dangerously-bypass-approvals-and-sandbox`，claude 用 `--permission-mode bypassPermissions`。后台会话池的键带上它。规则交给别的档案（`RULE_DELIVERY`）、唤醒续轮（`wakes.ts`）沿用。
 - 只有本人能打开：`saveRule` 非本人保存时新开的 `fullAccess` 返回 403，漏写的保留原值；`saveAgentSpec` 非 user 保存保留原值，`PUT /api/agents/:name` 只认本人的。检测结果记下后端的模式（`ProbeInfo.modes`），网页 `fullAccessHint` 按它说明当前后端支不支持。回归：`test/full-access.test.ts`、`test/rule-handoff.test.ts`。
+
+## 2026-11-09：内置角色和访客的完全访问
+
+- 起因：网页对话里的主助手跑要联网的命令时同样一条条等审批（常驻服务器上一次数据对账 13 轮，几乎每次唤醒都是“先 functions.wait 某个 cell”），规则和档案的开关管不到它。
+- 判断集中到 `prepareRun`（`PreparedRun.fullAccess`）：运行自己的值（规则的开关、回答访客那一轮的访客开关）优先；否则本人的运行用档案或内置角色叠加设置（`_roles/<名>.overlay.yaml` 的 `fullAccess`）的值；别的用户的运行、评审检查、复盘、对比运行不开。规则运行在 `jobs.ts` 里总是给明确的值，不跟角色或档案走。
+- 内置角色：`setRoleFullAccess`、`PUT /api/roles/:name/full-access`（只认本人），改技能和工具时保留；`guest`、`gatekeeper` 不设，改在 `lark.guests.fullAccess`（设置 → 渠道 → 访客提问，默认关），`lark-guest.ts` 的回答访客运行和 `threadTurn` 里含访客消息（`meta.asker`）的那一轮用它。会话复用键带上它，访客一轮和本人一轮不会共用同一个完全访问的进程。
+- 访客提问的“也回答私聊”从勾选框改为开关，和上面的开关一致。回归：`test/full-access.test.ts`。

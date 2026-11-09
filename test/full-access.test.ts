@@ -7,6 +7,8 @@ import { readAgentSpec, saveAgentSpec } from "../src/agents/specs.ts";
 import { getRule, saveRule } from "../src/rules/store.ts";
 import { OWNER } from "../src/core/users.ts";
 import { testApp } from "./helpers.ts";
+import { prepareRun } from "../src/agents/runner.ts";
+import { roleOverlay, setRoleFullAccess, updateRoleMeta } from "../src/agents/builtin-roles.ts";
 
 describe("完全访问", () => {
   it("picks each backend's full-access mode, and the command-line flags of the fallbacks", () => {
@@ -53,6 +55,30 @@ describe("完全访问", () => {
       saveAgentSpec(app, { name: "investigator-x", fullAccess: true }, "user");
       saveAgentSpec(app, { name: "investigator-x", description: "排查报警", fullAccess: false }, "agent");
       expect(readAgentSpec(app, "investigator-x")).toMatchObject({ description: "排查报警", fullAccess: true });
+    } finally { app.db.close(); }
+  });
+
+  it("a built-in role's switch covers the owner's own runs; guests follow the guest setting", async () => {
+    const app = testApp(); app.baseUrl = "http://127.0.0.1:1";
+    try {
+      const prep = (input: Partial<Parameters<typeof prepareRun>[1]> = {}) => prepareRun(app, { actor: { role: "assistant" }, spaceId: "personal", runId: null, ...input } as never).fullAccess;
+      expect(prep()).toBe(false);
+      setRoleFullAccess(app, "assistant", true);
+      expect(prep()).toBe(true);
+      const { addMember, createUser } = await import("../src/core/users.ts");
+      createUser(app, { id: "colleague", name: "小王" }); addMember(app, "personal", "colleague");
+      expect(prep({ userId: "colleague" })).toBe(false);
+      // A rule's switch (or the guest setting) decides for its own runs.
+      expect(prep({ fullAccess: false })).toBe(false);
+      expect(prep({ reviewCheck: true })).toBe(false);
+      // Changing the role's tools keeps the switch.
+      updateRoleMeta(app, "assistant", (m) => ({ ...m, tools: [...m.tools, "list_runs"] }), "user");
+      expect(roleOverlay(app, "assistant").fullAccess).toBe(true);
+      expect(() => setRoleFullAccess(app, "guest", true)).toThrow(/访客提问/);
+      expect(prepareRun(app, { actor: { role: "guest" }, spaceId: "personal", runId: null }).fullAccess).toBe(false);
+      expect(prepareRun(app, { actor: { role: "guest" }, spaceId: "personal", runId: null, fullAccess: true }).fullAccess).toBe(true);
+      setRoleFullAccess(app, "assistant", false);
+      expect(prep()).toBe(false);
     } finally { app.db.close(); }
   });
 });

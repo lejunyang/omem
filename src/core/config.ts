@@ -620,8 +620,13 @@ export const configSchema = z.object({
            * free = the assistant answers right away.
            */
           ownerPresent: z.enum(["guest", "gated", "free"]).default("guest"),
+          /**
+           * 完全访问 for runs answering guests (the guest role, and the assistant's turns that answer
+           * a guest when ownerPresent is gated / free): commands outside the backend's sandbox, no approvals.
+           */
+          fullAccess: z.boolean().default(false),
         })
-        .default({ enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" }),
+        .default({ enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false }),
       /**
        * Commands the owner types in a one-to-one chat with someone (read with lark-cli once a
        * minute): `ai` has the assistant handle it and answer there as the owner, signed; `group`
@@ -685,7 +690,7 @@ export const configSchema = z.object({
         policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
         backfill: { days: 30, policies: ["ingest"], pagesPerMinute: 20, concurrency: 2 },
       },
-      guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" },
+      guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
       knowledge: { direction: "", autoApply: false, dailyDocs: 30 },
     }),

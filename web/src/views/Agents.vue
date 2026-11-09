@@ -25,7 +25,7 @@ import { state, toast } from "../store";
  * raw file), what it has learned and how it is evolving.
  */
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
-type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean };
+type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean } };
 type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
@@ -161,6 +161,16 @@ const mcpNames = computed(() => Object.keys(form.value.mcp ?? {}));
 const roleDetail = ref<RoleDetail | null>(null);
 const roleText = ref("");
 const roleAi = ref({ agent: "", model: "", effort: "" });
+/** 完全访问 of a built-in role: its runs for you (guests have their own switch under 设置 → 渠道 → 访客提问). */
+async function setRoleFullAccess(on: boolean) {
+  try {
+    const st = await put<RoleState>(`/api/roles/${encodeURIComponent(roleName.value!)}/full-access`, { on });
+    if (roleDetail.value) roleDetail.value.role = { ...roleDetail.value.role, ...st };
+    toast(on ? "已打开完全访问" : "已关闭完全访问", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 const roleAiDirty = ref(false);
 function updateRoleAi(v: { agent?: string; model?: string; effort?: string }) {
   if (v.agent !== roleAi.value.agent) {
@@ -473,7 +483,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <div class="field switch">
             <UiCheckbox v-model="form.writes" switch @change="dirty = true">可以改工作目录里的文件</UiCheckbox>
           </div>
-          <div class="field switch">
+          <div class="field">
             <UiCheckbox :model-value="!!form.fullAccess" switch @change="(v: boolean) => { form.fullAccess = v; dirty = true; }">完全访问：命令不进沙箱、不经审批</UiCheckbox>
             <small class="muted">{{ accessHint(form.agent) }}</small>
           </div>
@@ -515,6 +525,10 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <p class="muted small">这个角色平时用的 AI。助手为某个任务临时换用时不改这里。</p>
           <p v-if="roleDetail.notice" class="small role-notice">{{ roleDetail.notice }}</p>
           <AiDefaults :model-value="roleAi" :backends="options.backends" :default-backend="options.globalDefaultBackend" @update:model-value="updateRoleAi" />
+          <div v-if="!['guest', 'gatekeeper'].includes(roleName!)" class="field">
+            <UiCheckbox :model-value="!!roleDetail.role.overlay?.fullAccess" switch @change="setRoleFullAccess">完全访问：命令不进沙箱、不经审批</UiCheckbox>
+            <small class="muted">只对你自己的运行生效（你的对话、后台任务）；别的用户和访客不受影响，规则里的运行看规则上的开关。{{ accessHint(roleAi.agent || options.globalDefaultBackend) }}</small>
+          </div>
         </div>
         <p class="muted small meta">{{ roleDetail.description }} · 工具 {{ roleDetail.tools.length ? roleDetail.tools.join(", ") : "无" }}<span v-if="roleDetail.writes"> · 可改文件</span></p>
         <p v-if="!roleCustomized" class="muted small">这是 omem 源码里的版本。自定义会把它复制到知识库（<code>_roles/{{ roleName }}.md</code>），之后的运行用你的版本；omem 更新了这个角色时这里会提示，可以合并或恢复。</p>

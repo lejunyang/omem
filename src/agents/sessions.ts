@@ -235,7 +235,9 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // One agent session serves every kind of turn, so it always has stay_quiet; the tool refuses a turn
   // that answers someone (quiet.ts), and only the turns allowed to stay quiet mention it.
   const addTools = ["stay_quiet"];
-  const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined, denyTools, addTools });
+  // A turn answering a colleague in a group (ownerPresent gated / free) runs with the guest setting.
+  const fullAccess = messages.some((m) => typeof m.meta?.asker === "string") ? app.config.lark.guests.fullAccess : undefined;
+  const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined, denyTools, addTools, fullAccess });
   const emit = (e: AgentEvent) => ctx.event(e.type, e);
   // A reply never waits for a model slot, but it counts against the model's load (released with the run).
   holdForRun(app, prep.profile, ctx.run.id);
@@ -314,6 +316,7 @@ ${WAKE_NOTE}`
             prompt: resume ? `（${stamp(new Date().toISOString())}）\n\n${newPart}` : freshBody(),
             allowWrites: prep.allowWrites,
             modes: prep.modes,
+            fullAccess: prep.fullAccess,
             signal: ctx.signal,
             mcp: prep.mcp,
             extraMcp: prep.extraMcp,
@@ -355,7 +358,7 @@ ${WAKE_NOTE}`
       used = chain[step];
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools });
+      curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
       emit({ type: "status", text: `默认后端不可用（排队、限流或额度用完），改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
     }
@@ -372,6 +375,7 @@ ${WAKE_NOTE}`
             prompt: `（${curPrep.now}）\n\n${newPart}`,
             allowWrites: curPrep.allowWrites,
             modes: curPrep.modes,
+            fullAccess: curPrep.fullAccess,
             signal: ctx.signal,
             mcp: curPrep.mcp,
             extraMcp: curPrep.extraMcp,
@@ -383,7 +387,7 @@ ${WAKE_NOTE}`
         mode = "fresh";
         break;
       }
-      const stepKey = `${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}`;
+      const stepKey = `${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${userId === "owner" ? "" : `|${userId}`}`;
       let l = step === 0 ? live.get(threadId) : undefined;
       if (l && (l.key !== stepKey || !l.handle.alive() || tooLong)) {
         release(threadId);
@@ -406,6 +410,7 @@ ${WAKE_NOTE}`
               extraMcp: curPrep.extraMcp,
               allowWrites: curPrep.allowWrites,
               modes: curPrep.modes,
+              fullAccess: curPrep.fullAccess,
               system: curPrep.system,
               resumeSessionId: step === 0 && canResume ? t.agentSession! : undefined,
               queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
@@ -439,10 +444,10 @@ ${WAKE_NOTE}`
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools });
+          const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
           const handle = await openAcp(
             again.profile,
-            { cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
+            { cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
             emit,
           );
           l = { threadId, key: stepKey, handle, token: again.token, lastUsed: Date.now(), busy: true };

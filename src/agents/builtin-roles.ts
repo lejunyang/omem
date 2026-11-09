@@ -73,24 +73,42 @@ function roleBaseText(app: App, name: string): string | null {
  * (_roles/<name>.overlay.yaml): they apply to whichever version is in use, so a source update reaches
  * the role without a merge. Only editing the role's text makes a full copy.
  */
-export type RoleOverlay = { skills: { add: string[]; remove: string[] }; tools: { add: string[]; remove: string[] } };
+export type RoleOverlay = {
+  skills: { add: string[]; remove: string[] };
+  tools: { add: string[]; remove: string[] };
+  /** The owner's 完全访问 for this role's runs on the owner's behalf (never guests or other users). */
+  fullAccess?: boolean;
+};
 const overlayFile = (app: App, name: string) => join(dir(app), `${name}.overlay.yaml`);
 export function roleOverlay(app: App, name: string): RoleOverlay {
   const f = overlayFile(app, check(name));
   const o = (existsSync(f) ? YAML.parse(readFileSync(f, "utf8")) : null) as Partial<RoleOverlay> | null;
   const list = (x?: { add?: unknown; remove?: unknown }) => ({ add: Array.isArray(x?.add) ? x.add.map(String) : [], remove: Array.isArray(x?.remove) ? x.remove.map(String) : [] });
-  return { skills: list(o?.skills), tools: list(o?.tools) };
+  return { skills: list(o?.skills), tools: list(o?.tools), ...(o?.fullAccess === true ? { fullAccess: true } : {}) };
 }
 export const applyOverlay = (list: string[], d: { add: string[]; remove: string[] }) => [...new Set([...list.filter((x) => !d.remove.includes(x)), ...d.add])];
 const diffList = (from: string[], to: string[]) => ({ add: to.filter((x) => !from.includes(x)), remove: from.filter((x) => !to.includes(x)) });
-export const overlayEmpty = (o: RoleOverlay) => !o.skills.add.length && !o.skills.remove.length && !o.tools.add.length && !o.tools.remove.length;
+export const overlayEmpty = (o: RoleOverlay) => !o.skills.add.length && !o.skills.remove.length && !o.tools.add.length && !o.tools.remove.length && !o.fullAccess;
+/** Roles that answer people who are not the owner: their 完全访问 is the guest setting (lark.guests.fullAccess). */
+export const GUEST_ROLES = ["guest", "gatekeeper"];
 function writeOverlay(app: App, name: string, o: RoleOverlay) {
   const f = overlayFile(app, name);
+  // Changing skills or tools keeps the owner's 完全访问.
+  if (o.fullAccess === undefined && roleOverlay(app, name).fullAccess) o = { ...o, fullAccess: true };
+  if (!o.fullAccess) delete o.fullAccess;
   if (overlayEmpty(o)) rmSync(f, { force: true });
   else {
     mkdirSync(dir(app), { recursive: true });
     writeFileSync(f, YAML.stringify(o));
   }
+}
+
+/** Turn 完全访问 on or off for a built-in role (the owner, on the Agent page). */
+export function setRoleFullAccess(app: App, name: string, on: boolean) {
+  if (GUEST_ROLES.includes(check(name))) throw new HttpError(400, "访客的完全访问在 设置 → 渠道 → 访客提问 里设");
+  writeOverlay(app, name, { ...roleOverlay(app, name), fullAccess: on });
+  commitLibrary(app.libraryDir, `user: ${on ? "turn on" : "turn off"} full access of built-in role ${name}`);
+  return roleState(app, name);
 }
 
 export type RoleState = {

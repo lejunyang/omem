@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
 import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
-import { customizeRole, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride } from "../agents/builtin-roles.ts";
+import { customizeRole, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride, setRoleFullAccess } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
 import { cachedProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
@@ -722,6 +722,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.agents.roleModels[name] = { ...next.agents.roleModels[name], [b.profile]: { model: b.model.trim() || undefined, effort: b.effort.trim() || undefined } };
     saveConfig(next, app.home); Object.assign(app.config, next);
     return { ok: true };
+  });
+  server.put("/api/roles/:name/full-access", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "完全访问只能由本人设置");
+    return setRoleFullAccess(app, (req.params as { name: string }).name, q(z.object({ on: z.boolean() }), req.body).on);
   });
   server.put("/api/roles/:name", async (req) => saveRoleOverride(app, (req.params as { name: string }).name, q(z.object({ raw: z.string().min(1) }), req.body).raw, "user"));
   server.post("/api/roles/:name/customize", async (req) => ({ raw: customizeRole(app, (req.params as { name: string }).name, "user") }));
