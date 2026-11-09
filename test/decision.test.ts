@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { boot } from "../src/main.ts";
 import { setKey } from "../src/core/ai-keys.ts";
-import { decide, judgeYesNo, setDecisionFetchForTests } from "../src/core/decision.ts";
+import { decide, decisionReady, judgeYesNo, setDecisionFetchForTests } from "../src/core/decision.ts";
 import { aiJudge } from "../src/rules/compile.ts";
 import { decisionGate } from "../src/channels/lark-guest.ts";
 import type { App } from "../src/core/app.ts";
@@ -70,6 +70,32 @@ describe("decision model", () => {
     const calls = fake(() => ({ answers: { q: { type: "choice", choice: "b", probabilities: { a: 0.3, b: 0.7 }, confidence: 0.4 } } }));
     expect((await decide(app, "x", { type: "choice", instructions: "?", options: { a: "A", b: "B" } }))?.choice).toBe("b");
     expect(calls[0].url).toBe("https://openrouter.ai/api/v1/systemone");
+  });
+
+  it("asks Cloudflare's Clef through Workers AI, with pictures, sound and video where the model reads them", async () => {
+    const app = await appWith("cloudflare");
+    app.config.ai.providers[0].accountId = "0123456789abcdef0123456789abcdef";
+    const calls = fake(() => ({ result: { model: "clef-flash", answers: { q: { type: "noul", noul: 0.9 } }, usage: { input_tokens: 10, output_tokens: 0 } }, success: true, errors: [] }));
+    const img = "data:image/png;base64,iVBORw0KGgo=";
+    expect(await decide(app, "截图里是报错页吗？", { type: "yesno", instructions: "是报错页吗？" }, { media: { images: [img] } })).toMatchObject({ choice: "yes", by: "决策 · clef-flash" });
+    expect(calls[0].url).toBe("https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/cloudflare/clef-flash");
+    expect(calls[0].headers.authorization).toBe("Bearer key-1");
+    expect(calls[0].body).toMatchObject({ model: "clef-flash", state: "截图里是报错页吗？", images: [img], questions: { q: { type: "noul" } } });
+    await expect(decide(app, "x", { type: "yesno", instructions: "?" }, { media: { audio: ["data:audio/mpeg;base64,AA=="] } })).rejects.toThrow(/不读音频/);
+    expect(calls).toHaveLength(1);
+    app.config.ai.decision.model = "@cf/cloudflare/clef-omni";
+    await decide(app, "x", { type: "yesno", instructions: "?" }, { media: { audio: ["data:audio/mpeg;base64,AA=="], videos: ["data:video/mp4;base64,AA=="] } });
+    expect(calls[1].url).toMatch(/\/run\/@cf\/cloudflare\/clef-omni$/);
+    expect(calls[1].body).toMatchObject({ model: "clef-omni", audio: ["data:audio/mpeg;base64,AA=="], videos: ["data:video/mp4;base64,AA=="] });
+    // Other providers read text only.
+    const jev = await appWith("typesafe");
+    await expect(decide(jev, "x", { type: "yesno", instructions: "?" }, { media: { images: [img] } })).rejects.toThrow(/不读图片/);
+  });
+
+  it("needs a Cloudflare account before Clef is usable", async () => {
+    const app = await appWith("cloudflare");
+    expect(decisionReady(app)).toBe(false);
+    expect(await decide(app, "x", { type: "yesno", instructions: "?" })).toBeNull();
   });
 
   it("prefers the decision model and falls back to the general one", async () => {

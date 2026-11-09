@@ -421,9 +421,14 @@ export const configSchema = z.object({
       providers: z.array(z.object({
         id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
         name: z.string().trim().max(40).default(""),
-        /** typesafe: Jev (TypeSafe's own API); openrouter: OpenRouter (Jev and others); openai-compatible: any OpenAI-shaped API. */
-        kind: z.enum(["openai", "anthropic", "typesafe", "openrouter", "openai-compatible"]),
+        /**
+         * typesafe: Jev (TypeSafe's own API); openrouter: OpenRouter (Jev and others); cloudflare: Workers AI
+         * (the Clef decision models, Jev-shaped); openai-compatible: any OpenAI-shaped API.
+         */
+        kind: z.enum(["openai", "anthropic", "typesafe", "openrouter", "cloudflare", "openai-compatible"]),
         baseUrl: z.string().url().optional(),
+        /** cloudflare: the account whose Workers AI is called (not secret; the API token is the key). */
+        accountId: z.string().trim().regex(/^[0-9a-f]{32}$/i, "Cloudflare 账号 ID 是 32 位十六进制").optional(),
         backends: z.array(z.enum(AI_KEY_BACKENDS)).default([]),
       })).max(20).default([]),
       /** Voice: question-page voice input, live conversation, speaking practice. live = GPT-Live, realtime = Realtime API. */

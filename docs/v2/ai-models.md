@@ -14,9 +14,10 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 | `anthropic` | `https://api.anthropic.com` | Claude Code 后端 |
 | `typesafe` | `https://api.typesafe.ai` | 决策（Jev） |
 | `openrouter` | `https://openrouter.ai/api` | 决策（Jev 等） |
+| `cloudflare` | `https://api.cloudflare.com/client/v4/accounts/<账号 ID>/ai`（要填账号 ID；填了接口地址就替换这一整段） | 决策（Clef） |
 | `openai-compatible` | 必须填写 | 语音、图片 |
 
-“检查”只发不花钱的请求：OpenAI 和兼容接口用 `GET /models`，Anthropic 用 `GET /v1/models`，OpenRouter 用 `GET /v1/key`。TypeSafe 没有已知的免费检查接口，只看 key 是否填写。
+“检查”只发不花钱的请求：OpenAI 和兼容接口用 `GET /models`，Anthropic 用 `GET /v1/models`，OpenRouter 用 `GET /v1/key`，Cloudflare 用 `GET …/ai/models/search`（同时确认 token 和账号）。TypeSafe 没有已知的免费检查接口，只看 key 是否填写。
 
 ### 用 API key 生成后端
 
@@ -69,15 +70,27 @@ GPT-Live 的“client 委托”（`delegation.type = "client"`，由应用自己
 | OpenAI Decisions API | `POST https://api.openai.com/v1/decisions` | `gpt-6-luna` |
 | Jev（TypeSafe） | `POST https://api.typesafe.ai/v1/systemone` | `jev-latest` |
 | Jev（OpenRouter） | `POST https://openrouter.ai/api/v1/systemone`（接受 `jev-latest` 这样的短名） | `jev-latest` |
+| Clef（Cloudflare Workers AI） | `POST …/accounts/<账号 ID>/ai/run/@cf/cloudflare/<模型>` | `clef-flash` |
 | StartLux-Decision（本机） | 本地服务的 `/v1/systemone` | 和注入标记共用（`guard`） |
+
+Cloudflare 的 Clef 三个模型都和 Jev 用同一种格式（2026-11 查）：
+
+| 模型 | 能读 | 上下文 | 说明 |
+| --- | --- | --- | --- |
+| `clef-flash` | 文字、JSON、图片 | 24K | 9B，最便宜（每百万输入 token $0.038） |
+| `clef` | 文字、JSON、图片 | 64K | 27B，更准 |
+| `clef-omni` | 文字、JSON、图片、音频、视频 | 64K | 30B-A3B，每百万输入 token $0.15 |
+
+模型可以写短名（`clef-omni`），也可以写 `@cf/cloudflare/clef-omni`；请求体里的 `model` 一律发短名（Workers AI 要求它和地址里的模型一致）。返回可能包在 Cloudflare 的 `{result, success, errors}` 里，omem 两种都认。
 
 两种格式（`src/core/decision.ts`）：
 
 - **OpenAI**：`{model, input, questions: [{type, name, instructions, choices: [{value, description}]}]}`，`input` 是文字或 `input_json`；是 / 否用 `predicate`，回 `probability`；选择回 `choice`、`probabilities: [{value, probability}]`、`confidence`。答案是数组，按 `name` 对上。
-- **System One**（Jev、StartLux）：`{model, state, questions: {<编号>: {type, instructions, criteria: {选项: 说明}}}}`；是 / 否用 `noul`（`criteria: {true, false}`），回 `noul`；选择回 `choice`、`probabilities: {选项: 概率}`。StartLux 的是 / 否改问成两个选项的 `choice`，评测里这样更准（judge-models.md），它的 `state` 要是对象。
+- **System One**（Jev、Clef、StartLux）：`{model, state, questions: {<编号>: {type, instructions, criteria: {选项: 说明}}}}`；是 / 否用 `noul`（`criteria: {true, false}`），回 `noul`；选择回 `choice`、`probabilities: {选项: 概率}`。StartLux 的是 / 否改问成两个选项的 `choice`，评测里这样更准（judge-models.md），它的 `state` 要是对象。
+- **图片、音频、视频**：`decide` 的 `media`（`images` / `audio` / `videos`，每项是 data URL，例如 `data:image/png;base64,…`）原样放进 System One 请求体的同名字段。哪个模型读什么由 `decisionMedia`（`ai-keys.ts`）决定，现在只有 Clef：`clef-flash`、`clef` 读图片，`clef-omni` 还读音频（wav / mp3，最多 4 段、每段 5 分钟）和视频（mp4 / webm，最多 2 段、每段 1 分钟）；图片最多 4 张。配的模型不读的媒体，`decide` 直接报错，不悄悄丢掉只按文字判断。设置页决策的状态行写明除文字外还读什么。现在的调用方（规则判断、访客把关）只传文字。
 - 拒绝回答（`type: "refusal"`）、HTTP 出错、返回的不是 JSON，都算出错。
 
-omem 统一成“材料 + 问题 + 选项 → 选中的一项和每项概率”（`decide`），是 / 否另有 `judgeYesNo`：规则要求用决策模型且配好了就用它，没配好就用通用模型；出错时 `fallback` 是 `general` 就改用通用模型（理由前写明“决策模型出错，改用通用模型”），是 `none` 就按“否”处理。决策模型不写理由，记录里写成“决策模型（提供方 · 模型）：是 0.91”。三家的概率口径不同，阈值不能照搬，现在一律取概率最高的一项。
+omem 统一成“材料 + 问题 + 选项 → 选中的一项和每项概率”（`decide`），是 / 否另有 `judgeYesNo`：规则要求用决策模型且配好了就用它，没配好就用通用模型；出错时 `fallback` 是 `general` 就改用通用模型（理由前写明“决策模型出错，改用通用模型”），是 `none` 就按“否”处理。决策模型不写理由，记录里写成“决策模型（提供方 · 模型）：是 0.91”。各家的概率口径不同，阈值不能照搬，现在一律取概率最高的一项。
 
 用在哪里：
 
@@ -108,6 +121,7 @@ OpenAI Images API（`POST /v1/images/generations`，返回 `data[0].b64_json`）
 
 - GPT-Live：[OpenAI 公告](https://openai.com/index/introducing-gpt-live-1-in-the-api/)、[语音 WebSocket 指南](https://developers.openai.com/api/docs/guides/voice-websockets?api=live)
 - Decisions API：[官方指南](https://developers.openai.com/api/docs/guides/decisions)（请求与返回格式以它为准，每次最多 400 个问题，打分 2–10 档）
+- Clef：[Cloudflare 博客：Clef-omni 与更快更便宜的 Clef](https://blog.cloudflare.com/clef-faster-cheaper-multimodal/)、[Workers AI 更新记录](https://developers.cloudflare.com/changelog/post/2026-10-09-clef-omni-workers-ai/)、[Workers AI 的 clef-omni 页面](https://developers.cloudflare.com/workers-ai/models/clef-omni/)（输入输出格式和媒体上限）、[Hugging Face 上的 clef-flash](https://huggingface.co/Cloudflare/clef-flash)
 - Jev：[OpenRouter 的 Jev 文档](https://openrouter.ai/docs/guides/community/jev)、[TypeSafe SDK 经 OpenRouter](https://openrouter.ai/docs/guides/community/typesafe-sdk.md)、[MixRoute 的 Jev 接口](https://mixroute.ai/docs/api-reference/endpoint/jev)（选择最多 255 项）
 - GPT-Live 与 Realtime：[语音 WebRTC 指南](https://developers.openai.com/api/docs/guides/voice-webrtc?api=live)、[GPT-Live 委托](https://developers.openai.com/api/docs/guides/live-delegation)、[Realtime 服务端事件](https://developers.openai.com/api/reference/resources/realtime/server-events)、[语音转文字](https://developers.openai.com/api/docs/guides/speech-to-text)
 - 图片：[图片生成指南](https://developers.openai.com/api/docs/guides/image-generation)、[模型列表](https://developers.openai.com/api/docs/models)

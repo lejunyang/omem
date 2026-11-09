@@ -10,7 +10,7 @@ omem 不自带模型。理解、调查和写作交给你已经装好的 Agent（
 
 key 存在数据目录的 `secrets/ai-keys.json`，不写进配置文件，网页上只显示后 4 位；“检查”按钮发一个不花钱的请求确认 key 能用。删掉提供方时 key 和生成的后端一起删掉。
 
-设置 → AI 另有语音、决策、图片生成三个子页，选好提供方和模型后才启用对应的功能。
+设置 → AI 另有语音、决策、图片生成三个子页，选好提供方和模型后才启用对应的功能。决策模型可以用 OpenAI、Jev（TypeSafe 或 OpenRouter）、Cloudflare 的 Clef（填 API token 和账号 ID；`clef-flash` 便宜，`clef` 更准，`clef-omni` 还能看图、听音频、看视频），或本机的 StartLux。
 
 ## 豆包后端
 

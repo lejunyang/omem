@@ -1,5 +1,5 @@
 import type { App } from "./app.ts";
-import { baseOf, categoryStatus, keyOf } from "./ai-keys.ts";
+import { baseOf, categoryStatus, clefModel, type DecisionMedia, keyOf } from "./ai-keys.ts";
 
 /**
  * The decision model (docs/v2/ai-models.md): bounded judgments — one of a few options, or yes/no —
@@ -10,6 +10,10 @@ import { baseOf, categoryStatus, keyOf } from "./ai-keys.ts";
  *   choices: [{value, description}]}]`, yes/no as `predicate`; answers is an array.
  * - Jev (TypeSafe and OpenRouter, `POST …/v1/systemone`): `state` + `questions: {id: {type,
  *   instructions, criteria: {option: description}}}`, yes/no as `noul`; answers keyed by id.
+ * - Clef (Cloudflare Workers AI, `POST …/accounts/<账号>/ai/run/@cf/cloudflare/<模型>`): Jev's shape,
+ *   `model` is the short selector (clef-flash / clef / clef-omni), the answer may come wrapped in
+ *   Cloudflare's `{result, success}`. Clef and Clef-flash also read `images`; Clef-omni `audio` and
+ *   `videos` too (data URLs, `DecisionInput.media`).
  * - StartLux-Decision (the local judge, same shape as Jev): yes/no asked as a two-way choice, which
  *   the evaluation found more reliable for it (docs/v2/judge-models.md).
  *
@@ -20,6 +24,8 @@ export type DecisionQuestion =
   | { type: "yesno"; instructions: string; yes?: string; no?: string };
 export type DecisionResult = { choice: string; probabilities: Record<string, number>; confidence: number | null; by: string };
 export class DecisionRefused extends Error {}
+/** Pictures, sound or video to judge along with the material: data URLs (`data:image/png;base64,…`). */
+export type DecisionMediaInput = Partial<Record<DecisionMedia, string[]>>;
 
 type Fetch = typeof fetch;
 let fetcher: Fetch = (...a) => fetch(...a);
@@ -33,21 +39,30 @@ export function decisionReady(app: App) {
   return categoryStatus(app.config, "decision", app.home).ready;
 }
 
+const MEDIA_LABEL: Record<DecisionMedia, string> = { images: "图片", audio: "音频", videos: "视频" };
 const yesNoOptions = (q: Extract<DecisionQuestion, { type: "yesno" }>) => ({ yes: q.yes || "是", no: q.no || "否" });
 
 /**
  * Ask the decision model. `material` is what to judge (text, or an object of named parts); null when
  * no decision model is configured. Throws when the call fails or the model refuses.
  */
-export async function decide(app: App, material: string | Record<string, unknown>, q: DecisionQuestion, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<DecisionResult | null> {
+export async function decide(app: App, material: string | Record<string, unknown>, q: DecisionQuestion, opts: { timeoutMs?: number; signal?: AbortSignal; media?: DecisionMediaInput } = {}): Promise<DecisionResult | null> {
   const st = categoryStatus(app.config, "decision", app.home);
   if (!st.ready) return null;
+  const media = Object.fromEntries(Object.entries(opts.media ?? {}).filter(([, v]) => v?.length)) as DecisionMediaInput;
+  // Judging without the picture would answer a different question: refuse rather than drop it.
+  const unread = (Object.keys(media) as DecisionMedia[]).filter((k) => !st.media?.includes(k));
+  if (unread.length) throw new Error(`决策模型（${st.detail}）不读${unread.map((k) => MEDIA_LABEL[k]).join("、")}`);
   const signal = AbortSignal.any([AbortSignal.timeout(opts.timeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]);
   if (st.provider === "startlux") return startlux(app, material, q, signal);
   const p = app.config.ai.providers.find((x) => x.id === st.provider)!;
   const key = keyOf(p.id, app.home);
   const by = `${p.name || p.id} · ${st.model}`;
   if (p.kind === "openai") return { ...(await openaiDecide(baseOf(p), key, st.model!, material, q, signal)), by };
+  if (p.kind === "cloudflare") {
+    const model = clefModel(st.model!);
+    return { ...(await systemOne(`${baseOf(p)}/run/@cf/cloudflare/${model}`, { authorization: `Bearer ${key}` }, model, material, q, signal, false, media)), by };
+  }
   return { ...(await systemOne(`${baseOf(p)}/v1/systemone`, { authorization: `Bearer ${key}` }, st.model!, material, q, signal)), by };
 }
 
@@ -82,8 +97,8 @@ async function openaiDecide(base: string, key: string, model: string, material: 
   return { choice: String(a.choice ?? best(probabilities)), probabilities, confidence: typeof a.confidence === "number" ? a.confidence : null };
 }
 
-/** Jev's System One shape (TypeSafe, OpenRouter, StartLux). `model` empty for StartLux. */
-async function systemOne(url: string, headers: Record<string, string>, model: string, material: string | Record<string, unknown>, q: DecisionQuestion, signal: AbortSignal, yesNoAsChoice = false): Promise<Omit<DecisionResult, "by">> {
+/** Jev's System One shape (TypeSafe, OpenRouter, Clef, StartLux). `model` empty for StartLux. */
+async function systemOne(url: string, headers: Record<string, string>, model: string, material: string | Record<string, unknown>, q: DecisionQuestion, signal: AbortSignal, yesNoAsChoice = false, media: DecisionMediaInput = {}): Promise<Omit<DecisionResult, "by">> {
   let question: Record<string, unknown>;
   if (q.type === "yesno" && !yesNoAsChoice) {
     const o = yesNoOptions(q);
@@ -94,8 +109,10 @@ async function systemOne(url: string, headers: Record<string, string>, model: st
   } else {
     question = { type: "choice", instructions: q.instructions, criteria: q.options };
   }
-  const body = await post(url, headers, { ...(model ? { model } : {}), state: material, questions: { q: question } }, signal);
-  const a = body.answers?.q;
+  const raw = await post(url, headers, { ...(model ? { model } : {}), state: material, ...media, questions: { q: question } }, signal);
+  // Cloudflare's REST API wraps the body in {result, success, errors}.
+  const body = raw?.answers ? raw : (raw?.result ?? raw);
+  const a = body?.answers?.q;
   if (!a || a.type === "refusal") throw new DecisionRefused("决策模型拒绝回答这个问题");
   if (a.type === "noul") {
     const y = Number(a.noul);

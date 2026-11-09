@@ -13,10 +13,10 @@ import UiSelect from "./UiSelect.vue";
  * decision, image). Keys go to secrets/ai-keys.json through /api/ai/keys and come back only as
  * their last four characters; everything else is part of config `ai` (saved by the parent).
  */
-type Kind = "openai" | "anthropic" | "typesafe" | "openrouter" | "openai-compatible";
-type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; backends: string[] };
+type Kind = "openai" | "anthropic" | "typesafe" | "openrouter" | "cloudflare" | "openai-compatible";
+type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; accountId?: string; backends: string[] };
 type ProviderView = Provider & { keyHint: string; hasKey: boolean };
-type Status = { ready: boolean; detail: string };
+type Status = { ready: boolean; detail: string; media?: ("images" | "audio" | "videos")[] };
 type AiView = { providers: ProviderView[]; status: Record<"voice" | "decision" | "image", Status>; defaults: Record<string, Record<string, string>>; kinds: Record<string, string[]>; inherited: string[] };
 type Section = "keys" | "voice" | "decision" | "image";
 
@@ -31,22 +31,25 @@ onMounted(load);
 // The parent saves config `ai`; status depends on it.
 watch(() => JSON.stringify(props.config.ai), () => void load());
 
-const KIND_LABEL: Record<Kind, string> = { openai: "OpenAI", anthropic: "Anthropic（Claude）", typesafe: "TypeSafe（Jev）", openrouter: "OpenRouter", "openai-compatible": "OpenAI 兼容接口" };
+const KIND_LABEL: Record<Kind, string> = { openai: "OpenAI", anthropic: "Anthropic（Claude）", typesafe: "TypeSafe（Jev）", openrouter: "OpenRouter", cloudflare: "Cloudflare（Clef）", "openai-compatible": "OpenAI 兼容接口" };
 const KIND_USES: Record<Kind, string> = {
   openai: "Codex（ACP / 命令行）、语音（GPT-Live、Realtime）、决策（Decisions API）、图片（gpt-image）",
   anthropic: "Claude Code（ACP / 命令行）",
   typesafe: "决策（Jev）",
   openrouter: "决策（Jev 等）",
+  cloudflare: "决策（Clef-flash、Clef 读图片，Clef-omni 还读音频和视频）",
   "openai-compatible": "语音、图片（接口与 OpenAI 相同的服务，例如代理或 Azure）",
 };
 const BACKEND_LABEL: Record<string, string> = { claude: "Claude Code（ACP）", "claude-cli": "Claude Code（命令行）", codex: "Codex（ACP）", "codex-cli": "Codex（命令行）" };
 const BACKENDS_OF: Record<string, string[]> = { anthropic: ["claude", "claude-cli"], openai: ["codex", "codex-cli"] };
 
 const providers = computed<ProviderView[]>(() => view.value?.providers ?? []);
-const saveProviders = (list: Provider[], note: string) => emit("save", { ...props.config.ai, providers: list.map(({ id, name, kind, baseUrl, backends }) => ({ id, name, kind, ...(baseUrl ? { baseUrl } : {}), backends })) }, note);
+const plain = ({ id, name, kind, baseUrl, accountId, backends }: Provider) => ({ id, name, kind, ...(baseUrl ? { baseUrl } : {}), ...(accountId ? { accountId } : {}), backends });
+const saveProviders = (list: Provider[], note: string) => emit("save", { ...props.config.ai, providers: list.map(plain) }, note);
+const MEDIA_LABEL = { images: "图片", audio: "音频", videos: "视频" } as const;
 
 // ------------------------------------------------------------------ keys
-const draft = ref<{ kind: Kind; name: string; id: string; baseUrl: string; key: string; backends: string[] }>({ kind: "openai", name: "", id: "", baseUrl: "", key: "", backends: [] });
+const draft = ref<{ kind: Kind; name: string; id: string; baseUrl: string; accountId: string; key: string; backends: string[] }>({ kind: "openai", name: "", id: "", baseUrl: "", accountId: "", key: "", backends: [] });
 const busy = ref(false);
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
 const suggestedId = computed(() => {
@@ -61,14 +64,15 @@ async function addProvider() {
   const id = slug(d.id) || suggestedId.value;
   if (providers.value.some((p) => p.id === id)) return toast(`已有 ${id}`, "error");
   if (d.kind === "openai-compatible" && !d.baseUrl.trim()) return toast("OpenAI 兼容接口要填写地址", "error");
+  if (d.kind === "cloudflare" && !d.baseUrl.trim() && !/^[0-9a-f]{32}$/i.test(d.accountId.trim())) return toast("填写 Cloudflare 账号 ID（32 位，在控制台右侧栏或网址里）", "error");
   if (!d.key.trim()) return toast("填写 API key", "error");
   busy.value = true;
   try {
-    const list: Provider[] = [...providers.value, { id, name: d.name.trim(), kind: d.kind, baseUrl: d.baseUrl.trim() || undefined, backends: d.backends }];
+    const list: Provider[] = [...providers.value, { id, name: d.name.trim(), kind: d.kind, baseUrl: d.baseUrl.trim() || undefined, accountId: d.kind === "cloudflare" ? d.accountId.trim() || undefined : undefined, backends: d.backends }];
     // Config first (the key endpoint only takes known providers), then the key.
-    await put("/api/settings", { ai: { ...props.config.ai, providers: list.map(({ id, name, kind, baseUrl, backends }) => ({ id, name, kind, ...(baseUrl ? { baseUrl } : {}), backends })) } });
+    await put("/api/settings", { ai: { ...props.config.ai, providers: list.map(plain) } });
     view.value = await put<AiView>(`/api/ai/keys/${encodeURIComponent(id)}`, { key: d.key.trim() });
-    draft.value = { kind: d.kind, name: "", id: "", baseUrl: "", key: "", backends: [...(BACKENDS_OF[d.kind] ?? [])] };
+    draft.value = { kind: d.kind, name: "", id: "", baseUrl: "", accountId: "", key: "", backends: [...(BACKENDS_OF[d.kind] ?? [])] };
     emit("changed");
     toast(`已添加 ${d.name.trim() || id}`, "ok");
     void test(id);
@@ -172,7 +176,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
         <div class="grow">
           <div><strong>{{ p.name || p.id }}</strong> <span class="muted small mono">{{ p.id }}</span> <span class="badge">{{ KIND_LABEL[p.kind] }}</span></div>
           <div class="muted small">
-            <span class="mono">{{ p.hasKey ? p.keyHint : "没有 key" }}</span><template v-if="p.baseUrl"> · <span class="mono">{{ p.baseUrl }}</span></template> · 可用于：{{ KIND_USES[p.kind] }}
+            <span class="mono">{{ p.hasKey ? p.keyHint : "没有 key" }}</span><template v-if="p.baseUrl"> · <span class="mono">{{ p.baseUrl }}</span></template><template v-else-if="p.accountId"> · 账号 <span class="mono">{{ p.accountId }}</span></template> · 可用于：{{ KIND_USES[p.kind] }}
           </div>
           <div v-if="tests[p.id] && !tests[p.id].loading" class="small" :class="tests[p.id].ok ? 'ok-text' : 'err-text'">{{ tests[p.id].detail }}</div>
           <div v-if="BACKENDS_OF[p.kind]" class="row wrap small be-row">
@@ -197,9 +201,10 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
         <div class="field"><span>提供方</span><UiSelect v-model="draft.kind" aria-label="提供方" :options="(Object.keys(KIND_LABEL) as Kind[]).map((k) => ({ value: k, label: KIND_LABEL[k], hint: KIND_USES[k] }))" /></div>
         <label class="field"><span>名称（可选）</span><input v-model="draft.name" class="input" maxlength="40" placeholder="例如：个人、团队" /></label>
       </div>
-      <label class="field"><span>API key</span><input v-model="draft.key" class="input mono" type="password" autocomplete="off" required /></label>
+      <label class="field"><span>{{ draft.kind === "cloudflare" ? "API token（要有 Workers AI 权限）" : "API key" }}</span><input v-model="draft.key" class="input mono" type="password" autocomplete="off" required /></label>
+      <label v-if="draft.kind === 'cloudflare'" class="field"><span>账号 ID</span><input v-model="draft.accountId" class="input mono" maxlength="32" placeholder="32 位，在 Cloudflare 控制台右侧栏或网址里" /></label>
       <label class="field">
-        <span>接口地址{{ draft.kind === "openai-compatible" ? "" : "（可选，默认官方地址）" }}</span>
+        <span>接口地址{{ draft.kind === "openai-compatible" ? "" : draft.kind === "cloudflare" ? "（可选，替换 …/accounts/<账号>/ai 这一段）" : "（可选，默认官方地址）" }}</span>
         <input v-model="draft.baseUrl" class="input mono" :required="draft.kind === 'openai-compatible'" :placeholder="draft.kind === 'openai-compatible' ? 'https://example.com/v1' : '留空用官方地址'" />
       </label>
       <div v-if="BACKENDS_OF[draft.kind]" class="row wrap small">
@@ -218,6 +223,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
     <div class="row">
       <span class="badge" :class="{ ok: status?.ready }">{{ status?.ready ? "可用" : "未启用" }}</span>
       <span class="small muted">{{ status?.detail }}</span>
+      <span v-if="cat === 'decision' && status?.media?.length" class="small muted">· 除文字外还读{{ status.media.map((m) => MEDIA_LABEL[m]).join("、") }}</span>
     </div>
     <template v-if="cat === 'voice'">
       <p class="muted">可用后：问答页输入框旁出现麦克风（说完转成文字）和语音对话按钮（和助理实时说话，它能查你的原件、记忆和事项）；导航里出现“口语”（英语口语练习：按场景对话，卡住时用中文问，结束后给出真实水平的评价）。</p>
@@ -229,7 +235,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
     </template>
     <template v-else-if="cat === 'decision'">
       <p class="muted">决策模型只做有边界的判断：从几个选项里选一个、是或否、按几档打分，并给出每个选项的概率，比通用模型快很多也便宜很多。会用在访客提问的把关（回答 / 拒绝 / 不理）和规则的 AI 判断（规则上可选决策模型或通用模型，默认先用决策模型）。</p>
-      <p class="muted small">接口：<strong>OpenAI Decisions API</strong>（<span class="mono">POST /v1/decisions</span>，<span class="mono">gpt-6-luna</span>）、<strong>Jev</strong>（TypeSafe <span class="mono">/v1/systemone</span>，或经 OpenRouter）、本机的 <strong>StartLux-Decision</strong>（和注入标记共用）。三家的请求格式不同，omem 统一成“材料 + 问题 + 选项 → 每个选项的概率”。</p>
+      <p class="muted small">接口：<strong>OpenAI Decisions API</strong>（<span class="mono">POST /v1/decisions</span>，<span class="mono">gpt-6-luna</span>）、<strong>Jev</strong>（TypeSafe <span class="mono">/v1/systemone</span>，或经 OpenRouter）、Cloudflare 的 <strong>Clef</strong>（Workers AI，和 Jev 同一种格式：<span class="mono">clef-flash</span> 便宜快，<span class="mono">clef</span> 更准，两者都读图片；<span class="mono">clef-omni</span> 还读音频和视频）、本机的 <strong>StartLux-Decision</strong>（和注入标记共用）。各家的请求格式不同，omem 统一成“材料 + 问题 + 选项 → 每个选项的概率”。</p>
     </template>
     <template v-else>
       <p class="muted">可用后，主助手和挂了 <span class="mono">group:media</span> 的 Agent 档案才拿到画图工具 <span class="mono">generate_image</span>，内置技能 <span class="mono">image-generation</span> 也才出现：给 Wiki 页配示意图，在飞书回复里发图，或者你在问答里直接让它画。图片存在数据目录，和其他附件一样。</p>

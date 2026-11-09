@@ -72,7 +72,15 @@ export const DEFAULT_BASE: Record<string, string> = {
   typesafe: "https://api.typesafe.ai",
   openrouter: "https://openrouter.ai/api",
 };
-export const baseOf = (p: Pick<Provider, "kind" | "baseUrl">) => (p.baseUrl || DEFAULT_BASE[p.kind] || "").replace(/\/+$/, "");
+/**
+ * Where a provider's API is. Cloudflare's is per account: Workers AI under
+ * `…/accounts/<账号>/ai` (a custom base replaces that whole prefix), empty without an account.
+ */
+export const baseOf = (p: Pick<Provider, "kind" | "baseUrl"> & { accountId?: string }) => {
+  if (p.baseUrl) return p.baseUrl.replace(/\/+$/, "");
+  if (p.kind === "cloudflare") return p.accountId ? `https://api.cloudflare.com/client/v4/accounts/${p.accountId}/ai` : "";
+  return (DEFAULT_BASE[p.kind] || "").replace(/\/+$/, "");
+};
 
 /**
  * Check a provider's key with a request that costs nothing (list models / the key's own info).
@@ -88,6 +96,11 @@ export async function testProvider(p: Provider, key: string, fetcher: typeof fet
     headers = { "x-api-key": key, "anthropic-version": "2023-06-01" };
   } else if (p.kind === "openrouter") {
     url = `${base}/v1/key`;
+    headers = { authorization: `Bearer ${key}` };
+  } else if (p.kind === "cloudflare") {
+    if (!base) return { ok: false, detail: "Cloudflare 要填写账号 ID" };
+    // Listing the account's Workers AI models is free and checks both the token and the account.
+    url = `${base}/models/search?search=clef&per_page=1`;
     headers = { authorization: `Bearer ${key}` };
   } else if (p.kind === "typesafe") {
     return { ok: true, detail: "已填写（TypeSafe 没有免费的检查接口，第一次判断时才知道是否可用）" };
@@ -110,7 +123,7 @@ export type Category = "voice" | "decision" | "image";
 /** Which provider kinds can serve a category. startlux (decision) is the local judge, not a provider. */
 export const CATEGORY_KINDS: Record<Category, string[]> = {
   voice: ["openai", "openai-compatible"],
-  decision: ["openai", "typesafe", "openrouter"],
+  decision: ["openai", "typesafe", "openrouter", "cloudflare"],
   image: ["openai", "openai-compatible"],
 };
 /** Model a category uses when none is set, by provider kind (as of 2026-11). */
@@ -120,14 +133,27 @@ export function defaultModel(cat: Category, kind: string, api?: string) {
   if (kind === "openai") return "gpt-6-luna";
   if (kind === "typesafe") return "jev-latest";
   if (kind === "openrouter") return "jev-latest";
+  if (kind === "cloudflare") return "clef-flash";
   return "";
 }
+
+/** Media a decision model reads besides text and JSON. Only Cloudflare's Clef family says so (2026-11). */
+export type DecisionMedia = "images" | "audio" | "videos";
+export function decisionMedia(kind: string, model: string): DecisionMedia[] {
+  if (kind !== "cloudflare") return [];
+  const m = clefModel(model);
+  if (m === "clef-omni") return ["images", "audio", "videos"];
+  if (m === "clef" || m === "clef-flash") return ["images"];
+  return [];
+}
+/** Clef's `model` selector from what the user wrote (`clef-omni` or `@cf/cloudflare/clef-omni`). */
+export const clefModel = (model: string) => model.trim().replace(/^@cf\/cloudflare\//, "");
 
 /**
  * Whether a category is usable: a provider of a fitting kind with a key (for decision also the local
  * StartLux judge). Features and their skills turn on only when this says ready.
  */
-export function categoryStatus(config: Config, cat: Category, home?: string): { ready: boolean; detail: string; provider?: string; model?: string } {
+export function categoryStatus(config: Config, cat: Category, home?: string): { ready: boolean; detail: string; provider?: string; model?: string; media?: DecisionMedia[] } {
   const c = config.ai[cat];
   if (cat === "decision" && c.provider === "startlux") {
     const g = config.guard;
@@ -139,9 +165,11 @@ export function categoryStatus(config: Config, cat: Category, home?: string): { 
   if (!p) return { ready: false, detail: `提供方 ${c.provider} 不存在` };
   if (!CATEGORY_KINDS[cat].includes(p.kind)) return { ready: false, detail: `${p.name || p.id} 不提供这类模型` };
   if (!keyOf(p.id, home)) return { ready: false, detail: `${p.name || p.id} 还没有填写 API key` };
+  if (p.kind === "cloudflare" && !baseOf(p)) return { ready: false, detail: `${p.name || p.id} 还没有填写 Cloudflare 账号 ID` };
   const model = c.model || defaultModel(cat, p.kind, (c as { api?: string }).api);
   if (!model) return { ready: false, detail: "要填写模型" };
-  return { ready: true, detail: `${p.name || p.id} · ${model}`, provider: p.id, model };
+  const media = cat === "decision" ? decisionMedia(p.kind, model) : [];
+  return { ready: true, detail: `${p.name || p.id} · ${model}`, provider: p.id, model, ...(media.length ? { media } : {}) };
 }
 
 /** Whether a launch env already has a key from outside (the user's shell), for the hint in settings. */

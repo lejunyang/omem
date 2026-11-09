@@ -80,6 +80,9 @@ describe("API-key providers", () => {
     expect(calls[0][0]).toBe("https://api.openai.com/v1/models");
     expect(calls[1]).toEqual(["https://api.anthropic.com/v1/models", { "x-api-key": "k", "anthropic-version": "2023-06-01" }]);
     expect((await testProvider({ id: "x", name: "", kind: "openai", backends: [] }, "", fake)).ok).toBe(false);
+    expect((await testProvider({ id: "c", name: "", kind: "cloudflare", backends: [] }, "k", fake)).detail).toMatch(/账号 ID/);
+    expect((await testProvider({ id: "c", name: "", kind: "cloudflare", accountId: "0123456789abcdef0123456789abcdef", backends: [] }, "k", fake)).ok).toBe(true);
+    expect(calls[2]).toEqual(["https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/models/search?search=clef&per_page=1", { authorization: "Bearer k" }]);
   });
 
   it("keeps keys out of config and settings, and drops a removed provider's key", async () => {

@@ -2527,7 +2527,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return {
       providers: app.config.ai.providers.map((p) => ({ ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id] })),
       status: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, categoryStatus(app.config, c, app.home)])),
-      defaults: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, Object.fromEntries(["openai", "typesafe", "openrouter", "openai-compatible", "realtime"].map((k) => [k, k === "realtime" ? defaultModel(c, "openai", "realtime") : defaultModel(c, k)]))])),
+      defaults: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, Object.fromEntries(["openai", "typesafe", "openrouter", "cloudflare", "openai-compatible", "realtime"].map((k) => [k, k === "realtime" ? defaultModel(c, "openai", "realtime") : defaultModel(c, k)]))])),
       kinds: CATEGORY_KINDS,
       inherited: inheritedKeyVars(),
     };
