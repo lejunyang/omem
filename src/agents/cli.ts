@@ -1,6 +1,7 @@
 import type { AgentProfile } from "../core/config.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
 import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { claudeRateLimitEvent } from "./quota.ts";
 import { keyEnv } from "../core/ai-keys.ts";
 
 const READ_TOOLS = ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "mcp__omem"];
@@ -98,6 +99,10 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
             }
             else if (part.type === "thinking") emit({ type: "thought", text: part.thinking ?? "" });
           }
+        else if (item.type === "rate_limit_event") {
+          const limit = claudeRateLimitEvent(item.rate_limit_info);
+          if (limit) emit(limit);
+        }
         else if (item.type === "result" && item.is_error) failure = String(item.result ?? "Agent 返回错误");
       } else {
         const it = item.item ?? item.msg;

@@ -638,8 +638,8 @@ function modelOptionsFor(profileId: string | undefined, key: "model" | "effort",
   return [{ value: "", label: "跟随默认" }, ...list.map((v) => ({ value: v, label: v }))];
 }
 const probedModels = computed(() => Object.fromEntries(installedProfiles.value.map((p) => [p.id, probes.value[p.id]?.data?.models ?? []])));
-function saveCapacity(v: { concurrency: number; interactiveConcurrency: number; perModel: number; limits: { profile: string; model?: string; max: number }[] }) {
-  void saveConfig({ concurrency: v.concurrency, interactiveConcurrency: v.interactiveConcurrency, agents: { ...config.value.agents, capacity: { perModel: v.perModel, limits: v.limits } } }, "已保存并行设置");
+function saveCapacity(v: { concurrency: number; interactiveConcurrency: number; perModel: number; limits: { profile: string; model?: string; max: number }[]; quotaAvoidAbove: number; quotaPerDayBelow: number }) {
+  void saveConfig({ concurrency: v.concurrency, interactiveConcurrency: v.interactiveConcurrency, agents: { ...config.value.agents, capacity: { perModel: v.perModel, limits: v.limits, quotaAvoidAbove: v.quotaAvoidAbove, quotaPerDayBelow: v.quotaPerDayBelow } } }, "已保存并行设置");
 }
 const missingProfiles = computed(() => profiles.value.filter((p) => !p.installed));
 // Desktop and browser control (ai-auto-desktop's aad): optional, installed through osdk.
@@ -840,7 +840,7 @@ async function saveEdit() {
       </div>
       <p class="muted small">内置角色和自定义档案的默认 AI 统一在 <RouterLink to="/agents">Agent 档案</RouterLink> 中设置。</p>
       <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
-      <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, limits: config.agents.capacity?.limits ?? [] }" :backends="installedProfiles" :models="probedModels" @save="saveCapacity" />
+      <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, limits: config.agents.capacity?.limits ?? [], quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" :backends="installedProfiles" :models="probedModels" @save="saveCapacity" />
       <div class="card pad stack">
         <div class="section-title">排队与兜底</div>
         <p class="muted small">后端在排队或被限流时，按下面的顺序换一个后端重试一次；模型满了时也按这个顺序找有空位的。Agent 档案任务不会自动换后端。</p>

@@ -5,10 +5,19 @@ import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
 import { retireRecordedSession, sessionCleanup } from "./session-cleanup.ts";
 import { DOUBAO_TOOL_NOTE, runDoubaoCli } from "./doubao-cli.ts";
+import { afterTurn, quotaEvents } from "./quota.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 /** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
+  try {
+    return await runOn(app, profile, req, quotaEvents(app, profile, emit));
+  } finally {
+    afterTurn(app, profile);
+  }
+}
+
+async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const disposable = !req.persistSession && !req.resumeSessionId;
   if (profile.transport === "acp") return runAcp(profile, { ...req, cleanup: await sessionCleanup(app, profile, req, emit) }, emit);
   if (profile.transport === "doubao" || profile.transport === "doubao-cli") {

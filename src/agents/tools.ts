@@ -951,6 +951,10 @@ def({
       if (a.refresh || !cachedProbe(ctx.app, p.id)) { const probe = await probeProfile(p, ctx.app); if (!probe.error) saveProbe(ctx.app, p.id, probe); else return JSON.stringify({ profile: p.id, error: probe.error, routing: ctx.app.config.agents.routing }); }
     }
     const { backendLimitOf, choosableProfiles, limitOf, recentStats, usedOf } = await import("./capacity.ts");
+    const quota = await import("./quota.ts");
+    // Plan limits read in the last 10 minutes are used as they are; older ones are read again (not longer than 15 s).
+    const readable = (await quota.quotaProfiles(ctx.app)).filter((p) => !a.profile || p.id === a.profile);
+    await Promise.race([Promise.all(readable.map((p) => quota.refreshQuota(ctx.app, p))), new Promise((r) => setTimeout(r, 15_000))]);
     const choosable = new Set(choosableProfiles(ctx.app).map((p) => p.id));
     const stats = recentStats(ctx.app);
     // Nightly replay's single-variable comparisons of the last 28 days (replay.ts), n < 3 left out.
@@ -971,10 +975,11 @@ def({
       // Candidates may prefer some hours (off-peak prices, provider queues): the time to compare with.
       now: `${new Intl.DateTimeFormat("zh-CN", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(new Date())}（${tz}）`,
       routing: ctx.app.config.agents.routing,
-      note: "limit 为 0 的模型本人不想自动使用，不要选。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。replay28d 是夜间复盘近 28 天的单变量对比（type 题型，vs 对照的模型，w/t/l 胜/平/负，tokens 上下文峰值之比），样本小，只作参考。",
+      note: "limit 为 0 的模型本人不想自动使用，不要选。quota 是账号的套餐额度：windows 里 used 是已用百分比，resetsIn 是多久后重置，perDayLeft 是周额度剩下的平均到距重置的每一天（%/天）；有 avoid 的账号快用完了，同样合适时选别的。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。replay28d 是夜间复盘近 28 天的单变量对比（type 题型，vs 对照的模型，w/t/l 胜/平/负，tokens 上下文峰值之比），样本小，只作参考。",
       backends: backends.filter((p) => p.installed && choosable.has(p.id) && (!a.profile || p.id === a.profile)).map((p) => {
         const probe = cachedProbe(ctx.app, p.id);
-        return { id: p.id, name: p.name, transport: p.transport, tools: p.transport !== "doubao", model: p.model, effort: p.effort, backendLimit: backendLimitOf(ctx.app, p), models: models(p), efforts: probe?.effortsByModel ?? probe?.efforts };
+        const q = quota.quotaView(ctx.app, p);
+        return { id: p.id, name: p.name, transport: p.transport, tools: p.transport !== "doubao", model: p.model, effort: p.effort, backendLimit: backendLimitOf(ctx.app, p), models: models(p), efforts: probe?.effortsByModel ?? probe?.efforts, ...(q ? { quota: { plan: q.plan, windows: q.windows, ...(q.avoid ? { avoid: q.avoid } : {}), ...(q.error && !q.windows.length ? { error: q.error } : {}) } } : {}) };
       }),
     });
   },

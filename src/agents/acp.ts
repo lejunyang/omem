@@ -4,6 +4,7 @@ import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
 import { isQuotaMessage } from "./capacity.ts";
+import { claudeRateLimitEvent } from "./quota.ts";
 import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult, type SessionCleanup } from "./types.ts";
 import { keyEnv } from "../core/ai-keys.ts";
 
@@ -162,12 +163,16 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         touch();
         if (replaying) return; // history replayed by session/load is not new output
         switch (update.sessionUpdate) {
-          case "usage_update":
+          case "usage_update": {
+            // claude-agent-acp passes Claude's rate-limit info along on a usage update.
+            const limit = claudeRateLimitEvent((update._meta as Record<string, unknown> | undefined)?.["_claude/rateLimit"]);
+            if (limit) emit(limit);
             if (Number.isFinite(update.used) && update.used >= 0 && Number.isFinite(update.size) && update.size > 0) {
               contextUsage = { used: update.used, size: update.size };
               emit({ type: "usage", ...contextUsage });
             }
             break;
+          }
           case "agent_message_chunk":
             if (update.content.type === "text") {
               // CLI housekeeping notices (traex: "Skill descriptions were shortened…") are not the answer.

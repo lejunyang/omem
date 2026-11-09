@@ -17,6 +17,7 @@ import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
 import { WAKE_NOTE } from "./wakes.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
+import { afterTurn, noteRateLimit } from "./quota.ts";
 
 /**
  * Agent sessions behind threads. Three levels of continuity, cheapest first:
@@ -258,7 +259,12 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // A turn answering a colleague in a group (ownerPresent gated / free) runs with the guest setting.
   const fullAccess = messages.some((m) => typeof m.meta?.asker === "string") ? app.config.lark.guests.fullAccess : undefined;
   const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined, denyTools, addTools, fullAccess });
-  const emit = (e: AgentEvent) => ctx.event(e.type, e);
+  // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
+  const limitFor = { profile: prep.profile };
+  const emit = (e: AgentEvent) => {
+    if (e.type !== "rate-limit") return ctx.event(e.type, e);
+    try { noteRateLimit(app, limitFor.profile, e); } catch {}
+  };
   // A reply never waits for a model slot, but it counts against the model's load (released with the run).
   holdForRun(app, prep.profile, ctx.run.id);
   // Tool tokens are scoped to the sender, so each person gets their own agent session.
@@ -376,6 +382,7 @@ ${WAKE_NOTE}`
     if (!usable(step)) continue;
     if (step > 0) {
       used = chain[step];
+      limitFor.profile = used;
       release(threadId);
       revokeToolToken(curPrep.token);
       curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
@@ -480,6 +487,7 @@ ${WAKE_NOTE}`
         retireReplaced(l.handle.sessionId);
         answer = replyOf(r);
         done = true;
+        afterTurn(app, used);
         break;
       } catch (e) {
         if ((e as Error).message !== "CANCELLED" && !isRetryableAgentError(e)) release(threadId);

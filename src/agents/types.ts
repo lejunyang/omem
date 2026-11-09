@@ -11,7 +11,9 @@ export type AgentEvent =
   // The agent session this turn runs in (known before the turn ends).
   | { type: "session"; sessionId: string; resumed: boolean }
   // Provider-side queue (traex session_info_update._meta.trae.queueStatus, or queue text).
-  | { type: "queue"; queued: boolean; position?: number; message?: string };
+  | { type: "queue"; queued: boolean; position?: number; message?: string }
+  // The account's plan limit as the agent reports it during a turn (agents/quota.ts takes it out of the stream).
+  | { type: "rate-limit"; window: string; usedPercent?: number; resetsAt?: string };
 
 export type McpAccess = {
   /** Streamable-HTTP endpoint for agents that support it. */

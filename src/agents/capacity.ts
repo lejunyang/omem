@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { allProfiles, builtinProfiles, type AgentProfile } from "../core/config.ts";
 import { backendAvailable } from "./availability.ts";
+import { quotaAvoid } from "./quota.ts";
 
 /**
  * How many runs each model takes at a time. A provider's quota is per account (the source: an ACP
@@ -141,12 +142,13 @@ export function quotaResetAt(message: string, at = new Date()): Date {
 
 /**
  * Take a slot on the first option with room (options in order of preference: the run's own choice
- * first, then its alternatives). With none free, wait until one frees up. Excluded options (limit 0)
- * are skipped; when every option is excluded — the run was pinned to one by the owner — the first
+ * first, then its alternatives). With none free, wait until one frees up. An account whose plan limit
+ * is nearly used (quota.ts quotaAvoid) goes after the others. Excluded options (limit 0) are skipped; when every option is excluded — the run was pinned to one by the owner — the first
  * runs anyway, uncounted against anything else.
  */
 export async function acquire(app: App, options: AgentProfile[], opts: { runId: string | null; signal?: AbortSignal; onWait?: (text: string) => void }) {
-  const usable = options.filter((p) => !excluded(app, p));
+  const allowed = options.filter((p) => !excluded(app, p));
+  const usable = [...allowed.filter((p) => !quotaAvoid(app, p)), ...allowed.filter((p) => quotaAvoid(app, p))];
   if (!usable.length) return { index: 0, release: take(app, options[0], opts.runId) };
   const s = state(app);
   const marker: Slot = { key: keyOf(usable[0]), runId: opts.runId, waiting: true };

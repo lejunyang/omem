@@ -28,13 +28,19 @@ export type CatalogEntry = {
   effort?: string;
   /** Earlier default args: a saved profile still using one of them gets the current `args`. */
   previousArgs?: string[][];
+  /**
+   * How the plan's usage limits of the logged-in account can be read (agents/quota.ts):
+   * `codex-app-server` asks `codex app-server` (account/rateLimits/read), `claude-usage` runs the
+   * local `/usage` command in an ACP session. Accounts behind an API key have none.
+   */
+  quota?: "codex-app-server" | "claude-usage";
 };
 
 export const acpCatalog: CatalogEntry[] = [
-  { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" } },
+  { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server" },
   // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
   { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI" },
-  { id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp" },
+  { id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage" },
   { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
   { id: "copilot", name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
   { id: "qwen", name: "Qwen Code", command: "qwen", args: ["--acp"], npm: "@qwen-code/qwen-code" },

@@ -8,6 +8,7 @@ import { OWNER } from "./users.ts";
 import { HttpError, truncate } from "./util.ts";
 import { catalogEntry } from "../agents/catalog.ts";
 import { cachedProbe } from "../agents/probe.ts";
+import { quotaView } from "../agents/quota.ts";
 import { lessonsForTask, listAgentProfiles, prepareRun, type Actor } from "../agents/runner.ts";
 import { resolveCommand } from "../agents/spawn.ts";
 import { findAgentSpec } from "../agents/specs.ts";
@@ -68,6 +69,7 @@ export function agentsReport(app: App) {
       source: p.source ?? null,
       isDefault: app.config.agents.default === p.id,
       cachedProbe: cachedProbe(app, p.id),
+      quota: quotaView(app, p),
     };
   });
 }

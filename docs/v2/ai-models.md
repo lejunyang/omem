@@ -24,7 +24,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 - 启动时把 key 放进环境变量（`keyEnv`）：Claude Code 用 `ANTHROPIC_API_KEY`；Codex 同时设 `CODEX_API_KEY` 和 `OPENAI_API_KEY`（codex-acp 先读前者，`codex exec` 读前者）。key 不写进后端配置，也不出现在设置接口的返回里。
 - 自定义接口地址写在后端的 `env` 里（`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`）。
-- 来源是 `key:<编号>`：额度、并发和“额度用完”跟本机登录的那个分开算。
+- 来源是 `key:<编号>`：额度、并发和“额度用完”跟本机登录的那个分开算；它没有套餐额度，设置 → AI → 并行 的“账号额度”只列本机登录的 Codex、Claude Code。
 - key 被删掉时这个后端算“未安装”，选了它的运行直接报错，不会悄悄改用本机登录。
 
 服务的环境里本来就有 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `CODEX_API_KEY` 时，所有 Agent 都会继承它，API key 页会提示。

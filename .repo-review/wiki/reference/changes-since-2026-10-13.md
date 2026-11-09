@@ -1727,3 +1727,8 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - 起因：常驻服务器上本人和机器人私聊的主会话 `lastMessageId` 指着一条已经用 /topic 拆成独立话题的消息。往主会话投递（唤醒、交办结果、会议结论）时 `lark-bot.ts` 的发送在主聊天里“回复”这条消息，飞书把对话题根的回复放进那个话题，于是发到了为别的任务开的话题里。多 Agent 工作话题、规则在消息下开话题同样会让主聊天的消息变成话题根。
 - `lark-send.ts`：回复带 `reply_in_thread` 且飞书返回 `thread_id` 时，发送记录带 `topicRoot`；`lark-bot.ts` 的 `releaseTopicRoot` 把同一个聊天主会话里还指着这条根消息的 `lastMessageId` 去掉（之后发到聊天本身），开话题的那个会话（或运行所属的会话）保留——编码进度卡片在请求下开的话题，结果本来就该回到那里。回归：`test/topic-root.test.ts`。已经指着话题根的旧会话不迁移：本人在主聊天里再发一条消息就换掉了。
+
+## 2026-11-09：套餐额度纳入自动选择
+
+- 原来只有额度用完（报错）后才避开那个账号。现在读本机登录账号的剩余额度：Codex 起 `codex app-server` 调 `account/rateLimits/read`（Pro 套餐只有周窗口，没有 5 小时窗口，窗口按长度认），Claude 在 claude-agent-acp 的会话里发本地命令 `/usage`；都不耗额度。对话和运行里 Claude 报的限额事件随时更新。存在 kv `agent_quota`（`src/agents/quota.ts`）。
+- 快用完的账号（`agents.capacity.quotaAvoidAbove` 默认 90%，`quotaPerDayBelow` 每天剩余百分比默认不看）在角色运行的候选里排到最后；`list_ai_backends` 带 `quota`；设置 → AI → 并行 显示额度、阈值和“现在读取”；`peer call <设备> agents` 带 `quota`。回归：`test/quota-limits.test.ts`。

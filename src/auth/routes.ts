@@ -217,7 +217,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   // agents, skills, rules and schedules: shared by everyone, managed by a few
   ...Object.fromEntries(
     [
-      "GET /api/agents", "GET /api/agents/:name", "PUT /api/agents/:name", "DELETE /api/agents/:name", "GET /api/agents/load", "DELETE /api/agents/quota/:source",
+      "GET /api/agents", "GET /api/agents/:name", "PUT /api/agents/:name", "DELETE /api/agents/:name", "GET /api/agents/load", "DELETE /api/agents/quota/:source", "POST /api/agents/quota/refresh",
       "GET /api/roles", "GET /api/roles/:name", "PUT /api/roles/:name", "PUT /api/roles/:name/defaults", "PUT /api/roles/:name/full-access", "POST /api/roles/:name/customize", "POST /api/roles/:name/reset", "POST /api/roles/:name/merge",
       "GET /api/profile-options", "PUT /api/profiles/:name/skills", "POST /api/profiles/:name/review", "POST /api/profile-proposals/:id/apply", "POST /api/profile-proposals/:id/reject",
       "GET /api/library-files/:kind/:name", "PUT /api/library-files/:kind/:name",

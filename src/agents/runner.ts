@@ -15,6 +15,7 @@ import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
 import { acquire, choosableProfiles, excluded, isQuotaMessage, markOutOfQuota } from "./capacity.ts";
+import { quotaAvoid } from "./quota.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { DOUBAO_CLI_INSTALL } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
@@ -514,6 +515,7 @@ function routingGuide(app: App, profile: AgentProfile) {
     ...(r.candidates.length ? ["本人列出的候选：", ...r.candidates.map((c) => `- ${ai(c)}：${c.when}`)] : []),
     "偏好和候选里写了时段的（峰谷价格、排队高峰、某段时间不用），按每轮消息开头的现在时间对照着选。",
     "交办前用 list_ai_backends 看各模型现在的占用（正在用/上限）和近 7 天的完成、失败：同样合适时选空闲、失败少的，满了的会排队。",
+    "它的 quota 是账号的套餐额度（各窗口已用百分比、多久后重置、周额度每天还能用多少）：标了 avoid 的账号快用完了，同样合适时选别的；本人偏好里写了额度条件的，按这些数字对照。",
     ...(one(app.db, "select 1 from replays where verdict in ('win','loss','tie') and axis in ('A1','A2') limit 1") ? ["其中的 replay28d 是夜间复盘的单变量对比（同一题只换模型），样本小，只作参考。"] : []),
     ...(doubao ? ["doubao（豆包 OpenAPI）在云端运行，用不了 omem 的工具：只适合纯调研、写作。交给它时先自己把要用的材料取出来，原文一次性写进任务。"] : []),
   ].join("\n");
@@ -612,6 +614,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let leftBecause: { busy: boolean; why: string } | null = null;
   let acted = false;
   let writesBefore = 0;
+  // The default account's plan limit is nearly used: acquire puts it after the others.
+  const nearlySpent = chain.length > 1 ? quotaAvoid(app, chain[0]) : null;
   const writes = () => (input.runId ? one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", input.runId)!.n : 0);
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : null;
@@ -650,7 +654,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
         };
         if (i > 0)
-          emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
+          emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : nearlySpent ? `默认后端的额度快用完了（${nearlySpent}）` : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
         emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;

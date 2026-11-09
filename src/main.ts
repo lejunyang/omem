@@ -123,6 +123,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   if (opts.background !== false) {
     startMemoryWatch();
     restartScheduler(app);
+    // Plan usage limits of the logged-in accounts (agents/quota.ts), for choosing backends.
+    void import("./agents/quota.ts").then((m) => m.startQuotaWatch(app));
     // Wiki pages whose originals changed are checked, and loose pages sorted into folders (src/wiki/upkeep.ts).
     void import("./wiki/upkeep.ts").then((m) => m.startWikiUpkeep(app));
     // The owner's commands in one-to-one chats (lark.commands; nothing happens while it is off).

@@ -447,7 +447,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Models in use now against their limits, and how each did in the last 7 days.
   server.get("/api/agents/load", async () => {
     const c = await import("../agents/capacity.ts");
-    return { now: c.loadReport(app), recent: c.recentStats(app), outOfQuota: c.outOfQuotaList(app) };
+    const q = await import("../agents/quota.ts");
+    const quota = (await q.quotaProfiles(app)).map((p) => ({ profile: p.id, name: p.name ?? p.id, ...(q.quotaView(app, p) ?? { source: c.sourceOf(p), plan: null, readAt: null, windows: [] }) }));
+    return { now: c.loadReport(app), recent: c.recentStats(app), outOfQuota: c.outOfQuotaList(app), quota };
+  });
+  // Read the plan limits of every account now (Codex app-server, Claude /usage).
+  server.post("/api/agents/quota/refresh", async () => {
+    const q = await import("../agents/quota.ts");
+    await Promise.all((await q.quotaProfiles(app)).map((p) => q.refreshQuota(app, p, 0)));
+    return { ok: true };
   });
   // The owner says an account has quota again (bought credits): use it before the reset time.
   server.delete("/api/agents/quota/:source", async (req) => {
