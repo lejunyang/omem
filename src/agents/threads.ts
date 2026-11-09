@@ -23,6 +23,8 @@ export type ThreadSettings = {
   /** Temporary model/effort override for this thread (set with /model); cleared with /model off. */
   model?: string | null;
   effort?: string | null;
+  /** The AI chosen when the thread's current agent session started (agents/choose-ai.ts), or the one a failed-over turn moved to; used while nothing above pins one. */
+  auto?: { profile: string; model?: string; effort?: string } | null;
   /** Other threads whose summaries are included as background. */
   links?: string[];
   /** Last channel message id seen in this thread (replies go under it, e.g. inside a topic). */

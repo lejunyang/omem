@@ -266,6 +266,8 @@ async function runAgentTask(ctx: RunContext) {
     runRole(ctx.app, {
       role: "assistant",
       spec,
+      // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
+      choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
       addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : [])],
       execution,

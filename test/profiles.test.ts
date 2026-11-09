@@ -26,7 +26,7 @@ describe("task routing in view", () => {
   it("shows the owner's candidates to runs that delegate, only while automatic choice is on", () => {
     const app = testApp();
     app.baseUrl = "http://127.0.0.1:1";
-    app.config.agents.routing = { automatic: true, guidance: "评审用不同于编码的模型", candidates: [{ profile: "codex", model: "fast-1", when: "简单判断" }] };
+    app.config.agents.routing = { automatic: true, guidance: "评审用不同于编码的模型", candidates: [{ profile: "codex", model: "fast-1", when: "简单判断" }], choose: { conversation: "decision", rules: "decision", tasks: "off" } };
     const main = prepareRun(app, { actor: { role: "assistant" }, spaceId: "personal", runId: null });
     expect(main.system).toContain("## 任务选型");
     expect(main.system).toContain("- codex / fast-1：简单判断");

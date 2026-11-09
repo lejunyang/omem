@@ -147,6 +147,12 @@ new AgentSideConnection(
         await say(`${message}\n\n`);
         throw RequestError.internalError({ message, codexErrorInfo: "usageLimitExceeded" });
       }
+      // FAKE_DIE=1: the agent process dies in the middle of a turn (a crash, OOM kill).
+      if (process.env.FAKE_DIE === "1") {
+        await say("我先看一下……");
+        setTimeout(() => process.exit(1), 20);
+        await new Promise(() => {});
+      }
       if (process.env.FAKE_USAGE) {
         const values = process.env.FAKE_USAGE.split(",").map(Number);
         const used = values[Math.min(turns.get(p.sessionId) ?? 0, values.length - 1)];

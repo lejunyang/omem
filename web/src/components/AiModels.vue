@@ -233,7 +233,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       </div>
     </template>
     <template v-else-if="cat === 'decision'">
-      <p class="muted">决策模型只做有边界的判断：从几个选项里选一个、是或否、按几档打分，并给出每个选项的概率，比通用模型快很多也便宜很多。会用在访客提问的把关（回答 / 拒绝 / 不理）和规则的 AI 判断（规则上可选决策模型或通用模型，默认先用决策模型）。</p>
+      <p class="muted">决策模型只做有边界的判断：从几个选项里选一个、是或否、按几档打分，并给出每个选项的概率，比通用模型快很多也便宜很多。会用在访客提问的把关（回答 / 拒绝 / 不理）、规则的 AI 判断（规则上可选决策模型或通用模型，默认先用决策模型），以及运行开始前从任务选型的候选里选 AI（设置 → AI → 通用 → 任务选型）。</p>
       <p class="muted small">接口：<strong>OpenAI Decisions API</strong>（<span class="mono">POST /v1/decisions</span>，<span class="mono">gpt-6-luna</span>）、<strong>Jev</strong>（TypeSafe <span class="mono">/v1/systemone</span>，或经 OpenRouter）、Cloudflare 的 <strong>Clef</strong>（Workers AI，和 Jev 同一种格式：<span class="mono">clef-flash</span> 便宜快，<span class="mono">clef</span> 更准，两者都读图片；<span class="mono">clef-omni</span> 还读音频和视频）、本机的 <strong>StartLux-Decision</strong>（和注入标记共用）。各家的请求格式不同，omem 统一成“材料 + 问题 + 选项 → 每个选项的概率”。</p>
     </template>
     <template v-else>

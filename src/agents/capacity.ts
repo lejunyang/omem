@@ -81,6 +81,27 @@ export function releaseRun(runId: string) {
 export const excluded = (app: App, p: AgentProfile) => limitOf(app, p) <= 0 || outOfQuotaUntil(app, p) !== null;
 
 /**
+ * A backend that just broke down (its process died, the connection dropped, it went silent past the
+ * idle watchdog): runs try it after the others for a while, so each of them does not wait out the
+ * same hang. Kept in memory: a restart gives every backend a fresh start.
+ */
+const DOWN_MS = 15 * 60_000;
+const downs = new WeakMap<App, Map<string, { until: number; why: string }>>();
+export function markDown(app: App, p: AgentProfile, why: string, now = Date.now()) {
+  let m = downs.get(app);
+  if (!m) { m = new Map(); downs.set(app, m); }
+  m.set(sourceOf(p), { until: now + DOWN_MS, why: why.slice(0, 200) });
+}
+/** Why this backend is set aside for now (it broke down a few minutes ago), or null. */
+export function downReason(app: App, p: AgentProfile, now = Date.now()): string | null {
+  const e = downs.get(app)?.get(sourceOf(p));
+  return e && e.until > now ? e.why : null;
+}
+export function clearDown(app: App, p: AgentProfile) {
+  downs.get(app)?.delete(sourceOf(p));
+}
+
+/**
  * Usage quota per account (source): Codex says "You've hit your usage limit … try again at 2:36 PM"
  * when the plan's quota is spent, and every model of the account fails until then. The account is
  * left out of automatic choices until that time (an hour when the message gives none), so runs go to
@@ -143,12 +164,14 @@ export function quotaResetAt(message: string, at = new Date()): Date {
 /**
  * Take a slot on the first option with room (options in order of preference: the run's own choice
  * first, then its alternatives). With none free, wait until one frees up. An account whose plan limit
- * is nearly used (quota.ts quotaAvoid) goes after the others. Excluded options (limit 0) are skipped; when every option is excluded — the run was pinned to one by the owner — the first
+ * is nearly used (quota.ts quotaAvoid) goes after the others, and a backend that just broke down (markDown) after those. Excluded options (limit 0) are skipped; when every option is excluded — the run was pinned to one by the owner — the first
  * runs anyway, uncounted against anything else.
  */
 export async function acquire(app: App, options: AgentProfile[], opts: { runId: string | null; signal?: AbortSignal; onWait?: (text: string) => void }) {
   const allowed = options.filter((p) => !excluded(app, p));
-  const usable = [...allowed.filter((p) => !quotaAvoid(app, p)), ...allowed.filter((p) => quotaAvoid(app, p))];
+  // Healthy first, then accounts whose plan is nearly used, then backends that just broke down.
+  const rank = (p: AgentProfile) => (downReason(app, p) ? 2 : quotaAvoid(app, p) ? 1 : 0);
+  const usable = [0, 1, 2].flatMap((r) => allowed.filter((p) => rank(p) === r));
   if (!usable.length) return { index: 0, release: take(app, options[0], opts.runId) };
   const s = state(app);
   const marker: Slot = { key: keyOf(usable[0]), runId: opts.runId, waiting: true };

@@ -259,10 +259,23 @@ export const configSchema = z.object({
         automatic: z.boolean().default(true),
         guidance: z.string().max(8000).default(""),
         candidates: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional(), when: z.string().min(1).max(2000) })).max(50).default([]),
-      }).default(() => ({ automatic: true, guidance: "", candidates: [] })),
+        /**
+         * Choosing among the candidates before a run starts (agents/choose-ai.ts), per kind of run:
+         * `off` uses the profile's AI; `decision` asks the decision model when one is configured
+         * (otherwise the profile's AI); `always` asks the general model when there is no decision
+         * model. A conversation chooses when it starts a new agent session, and never asks the
+         * general model (a turn would wait for it). A rule that names its AI, a run the assistant gave
+         * an execution, and an owner's /model pick are never re-chosen.
+         */
+        choose: z.object({
+          conversation: z.enum(["off", "decision"]).default("decision"),
+          rules: z.enum(["off", "decision", "always"]).default("decision"),
+          tasks: z.enum(["off", "decision", "always"]).default("off"),
+        }).default(() => ({ conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const })),
+      }).default(() => ({ automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const } })),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [] }, profiles: [] })),
+    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const } }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

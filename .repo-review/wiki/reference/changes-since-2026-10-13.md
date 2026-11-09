@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-09
+updated: 2026-11-10
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -1738,3 +1738,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 提供方新增 `cloudflare`（`config.ai.providers[].accountId` 填账号 ID），决策走 Workers AI 的 `…/accounts/<账号>/ai/run/@cf/cloudflare/<模型>`，格式同 Jev 的 System One，默认 `clef-flash`；返回包在 `{result}` 里也认（`src/core/decision.ts`）。
 - `decide` 可带 `media`（图片、音频、视频的 data URL）；`decisionMedia`（`src/core/ai-keys.ts`）给出模型能读的媒体：`clef-flash` / `clef` 读图片，`clef-omni` 还读音频和视频，其他模型只读文字，带了读不了的媒体直接报错。设置页决策的状态行写明能读什么。
 - 读提供方的模型列表（`refreshModels`，`cache/ai-models.json`，添加 key、检查通过或过一天时刷新）：设置页的图片、语音、转写、委托、决策模型改成下拉选，可手填；留空用列表里版本号最大的模型（`newestOf`，列表为空时用内置默认）。图片的内置默认改为 `gpt-image-2.6-flare`。
+
+## 2026-11-10：运行前自动选 AI；后端出故障时换后端
+
+- 选 AI 收成一处（`src/agents/choose-ai.ts` 的 `chooseAI`）：没指定 AI 的运行开始前，从“按原来的设置”和任务选型的候选里挑一个，材料是任务、谁来做、现在时间、总体偏好，每个选项带适用说明、占用、账号额度和最近的故障。有决策模型时用它（`decide` 的 choice），`always` 档在没有决策模型或它出错时问通用模型（`askModel`）。按运行类型设置：`agents.routing.choose` 的 `conversation`（新开 Agent 会话时选，记在 `threads.settings.auto`）、`rules`（规则交给的 Agent）、`tasks`（交办和后台任务，编码、评审除外）。
+- 原来 Agent 档案的运行（规则交给的、交办出去的）只用档案的后端，不换；现在没指定 AI 时和角色运行一样按 `failoverProfiles`（选中的、原来的、角色在其他后端的模型、兜底、任务选型的候选）换。
+- 原来只有排队、限流、额度用完和“还没开始就失败”才换后端。现在后端本身出故障（`isBackendDown`：进程退出、连接断开、看门狗判定没有活动）也换，已经做了一半也换：接手的后端在任务前面看到上一个已做的写入（`retry.ts` 的 `partialAttemptNote`），出故障的后端 15 分钟内排到最后（`capacity.ts` 的 `markDown`）。对话也一样：看门狗超时不再在同一个后端重开会话，接手的后端拿到会话背景（原来只拿到新消息），下一轮留在它上面。

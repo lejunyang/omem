@@ -81,3 +81,24 @@ async function continueCode(app: App, r: Run, owner?: string): Promise<Run | nul
     ...(owner ? { userId: owner } : {}),
   });
 }
+
+/**
+ * The same for another backend taking over inside one run (runner.ts): what the attempt that broke
+ * down wrote after `skipWrites` earlier writes of the run, and how it failed.
+ */
+export function partialAttemptNote(app: App, runId: string | null, skipWrites: number, e: unknown, by: string) {
+  const writes = runId
+    ? all<{ data: string }>(app.db, "select data from run_events where run_id = ? and type = 'tool-write' order by seq limit -1 offset ?", runId, skipWrites).map((row) => {
+        const d = JSON.parse(row.data) as { name?: string; args?: unknown };
+        return `- ${d.name ?? "?"} ${truncate(JSON.stringify(d.args ?? {}), 300)}`;
+      })
+    : [];
+  return [
+    `# 上一个 AI（${by}）做到一半出错了，换你接着做`,
+    "",
+    `出错：${truncate(e instanceof Error ? e.message : String(e), 400)}`,
+    writes.length ? `\n它已经做过这些写入，不要重复（已发的消息不要再发，写过的文件接着用）：\n${writes.slice(-30).join("\n")}` : "\n它还没有做过写入，可能已经读过一些材料。",
+    "",
+    "接着把任务做完，不要重复已经完成的部分。",
+  ].join("\n");
+}

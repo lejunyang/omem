@@ -14,7 +14,8 @@ import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
-import { acquire, choosableProfiles, excluded, isQuotaMessage, markOutOfQuota } from "./capacity.ts";
+import { acquire, choosableProfiles, clearDown, excluded, isQuotaMessage, markDown, markOutOfQuota } from "./capacity.ts";
+import { aiLabel, candidateProfiles, chooseAI, type ChooseScene } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { DOUBAO_CLI_INSTALL } from "./doubao-cli.ts";
@@ -219,6 +220,8 @@ ${input.task}`, input.replay?.view);
 
 export type RoleRunInput = {
   execution?: Execution;
+  /** Which choice setting applies when nothing pins the AI (choose-ai.ts): a rule's run, or any other task (the default). */
+  choose?: ChooseScene;
   role: RoleName;
   spaceId: string;
   /** Spaces this run may touch; defaults to all for the assistant, the space otherwise. */
@@ -533,6 +536,28 @@ function distinctProfiles(list: AgentProfile[]) {
   return list.filter((p, i) => list.findIndex((q) => q.id === p.id && q.model === p.model && q.effort === p.effort) === i);
 }
 
+/**
+ * The backend itself broke down (its process died, the connection dropped, it went silent past the
+ * idle watchdog, the command is missing): another backend should take over, and this one is set
+ * aside for a while (capacity.ts markDown).
+ */
+export function isBackendDown(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (isAgentRunError(e) && e.kind === "idle") return true;
+  return /进程退出|进程已结束|connection closed|EPIPE|ECONNRESET|socket hang up|没有任何活动|长时间没有活动|退出码|找不到命令|spawn .*ENOENT/i.test(e.message);
+}
+
+/**
+ * Where a run may go when the AI it started on cannot finish: the run's own AI when another was
+ * chosen for it, the role's other configured backends, the fallbacks, then the owner's routing
+ * candidates. Duplicates and options left out (limit 0, quota spent) are dropped.
+ */
+export function failoverProfiles(app: App, actor: Actor, first: AgentProfile, own?: AgentProfile): AgentProfile[] {
+  const role = "spec" in actor ? "assistant" : (actor as { role: RoleName }).role;
+  const list = [first, ...(own ? [own] : []), ...roleAlternatives(app, role, first), ...fallbackProfiles(app, actor, first.id).slice(1), ...candidateProfiles(app).map(({ when: _, ...p }) => p as AgentProfile)];
+  return distinctProfiles(list).filter((p, i) => i === 0 || !excluded(app, p));
+}
+
 /** Whether a failure is worth retrying on a fallback backend/model. */
 export function isRetryableAgentError(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
@@ -597,21 +622,37 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const lessons = await lessonsForTask(app, input);
+  // Nothing pins the AI (no execution, no caller's pick, not a session being continued, not a coding
+  // or review run): choose among the owner's candidates (choose-ai.ts). The run's own AI then follows
+  // the chosen one as a failover.
+  let own: AgentProfile | undefined;
+  const runKind = input.runId ? one<{ kind: string }>(app.db, "select kind from runs where id = ?", input.runId)?.kind : undefined;
+  if (!execution && !input.shadow && !input.profileId && !input.model && !input.effort && !input.resumeSessionId && !input.replay && !input.reviewCheck && !input.reviewLead && !input.checkName && runKind !== "code" && runKind !== "review") {
+    const current = resolveRunProfile(app, { actor });
+    const say = (text: string) => input.onEvent?.({ type: "status", text });
+    const pick = await chooseAI(app, { scene: input.choose ?? "tasks", task: input.task, who: input.spec?.name ?? input.role, current, signal: input.signal, onStatus: say });
+    if (pick) {
+      own = current;
+      input = { ...input, profileId: pick.profile, model: pick.model, effort: pick.effort };
+      say(`自动选 AI：${aiLabel(pick)}（${pick.reason}）`);
+    }
+  }
   const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
   }
-  // Explicit agent specs choose their own backend; no silent rerouting. A role run may move to its
-  // other configured backends when its model is full, and to the fallbacks on a queue / rate limit.
-  const chain = input.spec || input.shadow || execution
-    ? [base.profile]
-    : distinctProfiles([base.profile, ...roleAlternatives(app, input.role, base.profile), ...fallbackProfiles(app, actor, base.profile.id).slice(1)]);
+  // An AI the owner or the assistant named for this run is used alone. Otherwise a run (a role's or
+  // an Agent 档案's) may move to its other configured backends when its model is full, and to the
+  // fallbacks when the backend is busy, out of quota, or breaks down (failoverProfiles).
+  const chain = input.shadow || execution ? [base.profile] : failoverProfiles(app, actor, base.profile, own);
   const emit = input.onEvent ?? (() => {});
   let lastError: unknown;
   let failed = false;
-  /** Why the previous backend was left: busy (queue, rate limit, quota) or it failed before doing anything. */
-  let leftBecause: { busy: boolean; why: string } | null = null;
+  /** Why the previous backend was left: busy (queue, rate limit, quota), it failed before doing anything, or it broke down midway. */
+  let leftBecause: { busy: boolean; untouched: boolean; why: string } | null = null;
+  /** What a backend that broke down midway already did, for the one taking over. */
+  let carry = "";
   let acted = false;
   let writesBefore = 0;
   // The default account's plan limit is nearly used: acquire puts it after the others.
@@ -642,7 +683,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           parts: prep.parts,
-          prompt: `（${prep.now}）\n\n# 任务\n\n${input.task}`,
+          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}# 任务\n\n${input.task}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
@@ -654,7 +695,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
         };
         if (i > 0)
-          emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : nearlySpent ? `默认后端的额度快用完了（${nearlySpent}）` : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
+          emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? leftBecause.untouched ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : `上一个后端中途出错（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : nearlySpent ? `默认后端的额度快用完了（${nearlySpent}）` : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
         emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
@@ -667,6 +708,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           ? await backgroundTurn(app, prep, req, input.task, input.runId, watch)
           : await runBackend(app, prep.profile, req, watch);
         revokeToolToken(prep.token);
+        clearDown(app, prep.profile);
         return { ...result, profileId: prep.profile.id, ai: { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort } };
       } catch (e) {
         revokeToolToken(prep.token);
@@ -674,9 +716,14 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         // A backend that failed before doing anything (it could not start, prepare its environment, log
         // in) is left for the next one too: nothing was done, so nothing is done twice.
         const busy = isRetryableAgentError(e);
+        // The backend broke down (crash, dropped connection, silent past the watchdog): another one
+        // takes over even midway, told what this attempt already wrote, and this one waits a while.
+        const down = !busy && isBackendDown(e);
+        if (down) markDown(app, prep.profile, (e as Error).message);
         const untouched = !acted && writes() === writesBefore;
-        if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !(busy || untouched) || i === chain.length - 1) throw e;
-        leftBecause = { busy, why: (e as Error).message.slice(0, 120) };
+        if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !(busy || untouched || down) || i === chain.length - 1) throw e;
+        if (!untouched) carry = (await import("./retry.ts")).partialAttemptNote(app, input.runId, writesBefore, e, aiLabel({ profile: prep.profile.id, model: prep.profile.model }));
+        leftBecause = { busy, untouched, why: (e as Error).message.slice(0, 120) };
         lastError = e;
         failed = true;
       } finally {

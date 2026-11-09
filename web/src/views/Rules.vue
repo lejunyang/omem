@@ -619,7 +619,7 @@ function startFrom(text: string) {
               </div>
               <div class="row wrap">
                 <UiCheckbox :model-value="!!a.ai" size="sm" @change="(v) => toggleAI(a, v)">指定 AI</UiCheckbox>
-                <small class="muted">{{ a.ai ? "这条规则交出去的运行用下面选的后端、模型和思考强度。" : `不指定就用档案自己的设置${specAgent(a.spec) ? `（${specAgent(a.spec)}）` : ""}；模型写在要求里不会生效。` }}</small>
+                <small class="muted">{{ a.ai ? "这条规则交出去的运行用下面选的后端、模型和思考强度。" : `不指定就用档案自己的设置${specAgent(a.spec) ? `（${specAgent(a.spec)}）` : ""}，按 设置 → AI → 任务选型 可在开始前自动换成更合适的候选，出错时换兜底；模型写在要求里不会生效。` }}</small>
               </div>
               <AiDefaults v-if="a.ai" :model-value="{ agent: a.ai.profile, model: a.ai.model, effort: a.ai.effort }" :backends="options.backends ?? []" :default-backend="specAgent(a.spec)" @update:model-value="(v) => setAI(a, v)" @change="touch" />
               <div class="row wrap">

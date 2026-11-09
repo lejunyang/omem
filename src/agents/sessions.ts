@@ -1,11 +1,12 @@
 import { one } from "../core/db.ts";
-import { excluded, holdForRun } from "./capacity.ts";
+import { clearDown, downReason, excluded, holdForRun, markDown } from "./capacity.ts";
+import { aiLabel, chooseAI } from "./choose-ai.ts";
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
-import { fallbackProfiles, isRetryableAgentError, noteQuota, prepareRun, recordRunAI, type Actor } from "./runner.ts";
+import { failoverProfiles, isBackendDown, isRetryableAgentError, noteQuota, prepareRun, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
@@ -258,7 +259,22 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const addTools = ["stay_quiet"];
   // A turn answering a colleague in a group (ownerPresent gated / free) runs with the guest setting.
   const fullAccess = messages.some((m) => typeof m.meta?.asker === "string") ? app.config.lark.guests.fullAccess : undefined;
-  const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined, denyTools, addTools, fullAccess });
+  // The AI of this thread: the owner's pick (/model, the thread's backend) if any; otherwise the one
+  // chosen when its agent session started (choose-ai.ts), kept for as long as that session goes on.
+  const pinned = !!(t.settings.profile || t.settings.model || t.settings.effort);
+  let auto = pinned ? null : (t.settings.auto ?? null);
+  let own: AgentProfile | undefined;
+  if (!pinned && (!t.agentSession || t.agentTurns >= app.config.sessions.maxTurns) && !live.has(threadId)) {
+    const current = resolveRunProfile(app, { actor });
+    const pick = await chooseAI(app, { scene: "conversation", task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }) });
+    auto = pick ? { profile: pick.profile, model: pick.model, effort: pick.effort } : null;
+    if (JSON.stringify(auto) !== JSON.stringify(t.settings.auto ?? null)) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, auto } });
+    if (pick) {
+      own = current;
+      ctx.event("status", { text: `自动选 AI：${aiLabel(pick)}（${pick.reason}）` });
+    }
+  }
+  const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess });
   // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
   const limitFor = { profile: prep.profile };
   const emit = (e: AgentEvent) => {
@@ -268,7 +284,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // A reply never waits for a model slot, but it counts against the model's load (released with the run).
   holdForRun(app, prep.profile, ctx.run.id);
   // Tool tokens are scoped to the sender, so each person gets their own agent session.
-  const sessionKey = `${prep.profile.id}|${label}|${prep.cwd}|${prep.profile.model ?? ""}|${prep.profile.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}`;
+  const keyOf = (p: AgentProfile) => `${p.id}|${label}|${prep.cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}`;
+  const sessionKey = keyOf(prep.profile);
   const watched = messages.some((m) => typeof m.meta.speaker === "string");
   const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
   const handoff = (ctx.run.input as { handoff?: { kind: string } }).handoff;
@@ -316,8 +333,8 @@ ${WAKE_NOTE}`
   const freshBody = () => `（${prep.now}）\n\n# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString())}\n\n---\n\n${newPart}`;
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
-  const save = (sessionId: string | undefined, turns: number) =>
-    updateThread(app, threadId, { agentProfile: sessionKey, agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns });
+  const save = (sessionId: string | undefined, turns: number, on: AgentProfile = prep.profile) =>
+    updateThread(app, threadId, { agentProfile: keyOf(on), agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns });
   // The session this thread had is not coming back once a new one replaced it: remove it from the
   // backend's own list (Codex, TraeX, Doubao keep every session the owner can browse).
   const retireReplaced = (sessionId: string | undefined) => {
@@ -371,15 +388,25 @@ ${WAKE_NOTE}`
 
   // ACP: reuse the live process when it is the same agent in the same place.
   // Provider queue/rate-limit failures fall through the configured fallback chain once.
-  const chain = fallbackProfiles(app, actor, prep.profile.id, { model: t.settings.model ?? null, effort: t.settings.effort ?? null });
+  // Where the turn goes when its AI cannot answer: the thread's own AI when another was chosen, the
+  // role's other backends, the fallbacks, the routing candidates (runner.ts failoverProfiles).
+  const chain = failoverProfiles(app, actor, prep.profile, own);
   let mode: TurnResult["mode"] = "fresh";
   let used: AgentProfile = prep.profile;
   let curPrep = prep;
   let answer: string | null = null;
-  // An account out of quota is skipped while another backend can take the turn.
-  const usable = (i: number) => !excluded(app, chain[i]) || !chain.slice(i + 1).some((p) => !excluded(app, p));
+  // An account out of quota, or a backend that broke down minutes ago, is skipped while another can take the turn.
+  const skip = (p: AgentProfile) => excluded(app, p) || !!downReason(app, p);
+  const usable = (i: number) => !skip(chain[i]) || !chain.slice(i + 1).some((p) => !skip(p));
+  const hasNext = (i: number) => chain.slice(i + 1).some((_, k) => usable(i + 1 + k));
+  const writeCount = () => one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", ctx.run.id)!.n;
+  /** Why the previous backend was left, and what it already wrote (for the one taking over). */
+  let left = "";
+  let carry = "";
+  let writesBefore = 0;
   for (let step = 0; step < chain.length; step++) {
     if (!usable(step)) continue;
+    writesBefore = writeCount();
     if (step > 0) {
       used = chain[step];
       limitFor.profile = used;
@@ -387,7 +414,7 @@ ${WAKE_NOTE}`
       revokeToolToken(curPrep.token);
       curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
-      emit({ type: "status", text: `默认后端不可用（排队、限流或额度用完），改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
+      emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
     }
     try {
       if (used.transport !== "acp") {
@@ -399,7 +426,7 @@ ${WAKE_NOTE}`
             runId: ctx.run.id,
             system: curPrep.system,
             parts: curPrep.parts,
-            prompt: `（${curPrep.now}）\n\n${newPart}`,
+            prompt: `${freshBody()}${carry ? `\n\n---\n\n${carry}` : ""}`,
             allowWrites: curPrep.allowWrites,
             modes: curPrep.modes,
             fullAccess: curPrep.fullAccess,
@@ -456,14 +483,15 @@ ${WAKE_NOTE}`
       let done = false;
       try {
         // A live or resumed session already has the instructions.
-        const promptText = sessionPrompt(mode === "fresh" ? l.handle : { resumed: true }, curPrep, mode === "fresh" ? (step === 0 ? freshBody() : `（${curPrep.now}）\n\n${newPart}`) : `（现在 ${stamp(new Date().toISOString())}）\n\n${newPart}`, emit);
+        const promptText = sessionPrompt(mode === "fresh" ? l.handle : { resumed: true }, curPrep, mode === "fresh" ? (step === 0 ? freshBody() : `${freshBody()}${carry ? `\n\n---\n\n${carry}` : ""}`) : `（现在 ${stamp(new Date().toISOString())}）\n\n${newPart}`, emit);
         let r;
         try {
           r = await l.handle.prompt(promptText, emit, ctx.signal);
         } catch (e) {
           if ((e as Error).message === "CANCELLED") throw e;
-          if (isRetryableAgentError(e)) {
-            // Provider queue/rate limit: drop the live session and let the outer chain try a fallback.
+          // Provider queue/rate limit, or the backend went silent past the watchdog: drop the live
+          // session and let the outer chain try a fallback (another wait on the same one helps nobody).
+          if (isRetryableAgentError(e) || (isBackendDown(e) && /没有任何活动|长时间没有活动/.test((e as Error).message) && hasNext(step))) {
             release(threadId);
             throw e;
           }
@@ -488,6 +516,12 @@ ${WAKE_NOTE}`
         answer = replyOf(r);
         done = true;
         afterTurn(app, used);
+        clearDown(app, used);
+        if (step > 0) {
+          save(l.handle.sessionId, 1, used);
+          // Not pinned by the owner: the next turns continue on the backend that answered.
+          if (!pinned) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, auto: { profile: used.id, model: used.model ?? undefined, effort: used.effort ?? undefined } } });
+        }
         break;
       } catch (e) {
         if ((e as Error).message !== "CANCELLED" && !isRetryableAgentError(e)) release(threadId);
@@ -502,8 +536,16 @@ ${WAKE_NOTE}`
       }
     } catch (e) {
       noteQuota(app, used, e, emit);
-      if ((e as Error).message === "CANCELLED" || ctx.signal?.aborted || !isRetryableAgentError(e) || !chain.slice(step + 1).some((_, k) => usable(step + 1 + k))) throw e;
-      emit({ type: "status", text: (e as Error).message.slice(0, 120) });
+      const busy = isRetryableAgentError(e);
+      // The backend broke down (crash, dropped connection, silent past the watchdog): another one takes
+      // over, told what this attempt already wrote, and this one waits a while (capacity.ts markDown).
+      const down = !busy && isBackendDown(e);
+      if (down) markDown(app, used, (e as Error).message);
+      if ((e as Error).message === "CANCELLED" || ctx.signal?.aborted || !(busy || down) || !hasNext(step)) throw e;
+      const why = (e as Error).message.slice(0, 120);
+      left = busy ? `${used.name ?? used.id} 不可用（${why}）` : `${used.name ?? used.id} 出错（${why}）`;
+      carry = writeCount() > writesBefore ? (await import("./retry.ts")).partialAttemptNote(app, ctx.run.id, writesBefore, e, aiLabel({ profile: used.id, model: used.model })) : "";
+      emit({ type: "status", text: why });
     }
   }
   // The live session keeps curPrep's token (retargeted on reuse); non-live paths revoked theirs.
