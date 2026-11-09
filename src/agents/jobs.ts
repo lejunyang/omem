@@ -299,6 +299,9 @@ async function runAgentTask(ctx: RunContext) {
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
   // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).
   const answer = replyOf(r).trim() || "（没有输出）";
+  // News of its own (a meeting's conclusion, which also carries the rule that brought the bot in):
+  // posted in the chat itself, not in the topic the conversation last replied in (lark-bot.ts).
+  const topLevel = (ctx.run.input as { topLevel?: boolean }).topLevel ? { topLevel: true } : {};
   if ((ctx.run.input as { wake?: boolean }).wake) {
     // A wake-up's process bubble is held until now: drop it when there is nothing to say, else
     // show it before the reply below.
@@ -314,14 +317,14 @@ async function runAgentTask(ctx: RunContext) {
     if (!one(ctx.app.db, "select 1 from lark_sent where run_id = ? limit 1", ctx.run.id)) return { answer, quiet: true, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
   } else if (rule) {
     // A rule's agent answers in the chat only when the rule says so; otherwise the owner gets it.
-    if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: name, rule: rule.id });
+    if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: name, rule: rule.id, ...topLevel });
     else if (replyAt) {
       const { sendLark } = await import("../channels/lark-send.ts");
       const { resolveCitations } = await import("../channels/common.ts");
       await sendLark({ replyTo: replyAt.messageId, inThread: replyAt.inThread !== false, bot: lark?.bot, runId: ctx.run.id }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
     }
     else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
-  } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name, ...((ctx.run.input as { topLevel?: boolean }).topLevel ? { topLevel: true } : {}) });
+  } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name, ...topLevel });
   return { answer, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
 }
 

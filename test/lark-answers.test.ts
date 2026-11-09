@@ -117,6 +117,18 @@ describe("answers in groups and where thinking bubbles go", async () => {
     expect(getThread(app, t.id).settings).toMatchObject({ lastTopicId: null, lastMessageId: expect.stringMatching(/^om_new_/) });
   }, 30_000);
 
+  it("a meeting run (it carries the rule that brought the bot in) posts its conclusion in the private chat itself", async () => {
+    const { waitForRun } = await import("../src/agents/runs.ts");
+    const t = createThread(app, { channel: "lark", key: "oc_owner_dm2", spaceId: "personal", userId: "owner" });
+    // The main stream last replied to a message that is now another task's topic root.
+    updateThread(app, t.id, { settings: { lastMessageId: "om_old_root", lastTopicId: null } });
+    const r = createRun(app, { kind: "agent", spaceId: "personal", title: "assistant（会议「周会」，会后）", input: { spec: "assistant", assistantScope: { spaces: ["personal"], userId: "owner", denyTools: [], lark: { chats: [], draft: false } }, task: "# 会议结束\n\n周会结论", threadId: t.id, topLevel: true, rule: { id: "rule_meet", name: "入会拉机器人" } } });
+    const done = await waitForRun(app, r.id);
+    expect(done.error).toBeNull();
+    await expect.poll(() => replies.find((x) => x.to === "oc_owner_dm2"), { timeout: 10_000 }).toBeTruthy();
+    expect(replies.some((x) => x.to === "om_old_root")).toBe(false);
+  }, 60_000);
+
   it("a reply in a topic gets its thinking bubble in that topic, with the answer", async () => {
     await send(event({ id: "om_in_topic", chat: "oc_team", topic: "omt_t1", text: "那就按第二个方案", sender: "ou_owner" }));
     expect(cots.find((c) => c.origin === "om_in_topic")).toEqual({ origin: "om_in_topic", inThread: true });
