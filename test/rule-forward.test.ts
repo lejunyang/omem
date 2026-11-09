@@ -1,0 +1,84 @@
+import { afterEach, expect, it } from "vitest";
+import { run } from "../src/core/db.ts";
+import { setLarkClient } from "../src/channels/lark-send.ts";
+import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
+import { forgetChatBots } from "../src/rules/engine.ts";
+import { forwardAction } from "../src/rules/forward.ts";
+import { getRule, saveRule } from "../src/rules/store.ts";
+import type { RuleEvent } from "../src/rules/types.ts";
+import { OWNER } from "../src/core/users.ts";
+import { testApp } from "./helpers.ts";
+
+afterEach(() => { setLarkClient(null); setLarkCliForTests(null); });
+
+const event = (over: Partial<RuleEvent> = {}): RuleEvent => ({
+  key: "lark:om_src", kind: "message", at: "2026-11-09T08:00:00Z",
+  chat: { id: "oc_vnumber", name: "虚拟号通知", kind: "p2p" },
+  sender: { id: "ou_bot", name: "虚拟号通知", kind: "bot" },
+  message: { id: "om_src", text: "账号 A 的虚拟号已换绑", type: "text", mentionsOwner: false, mentionsBot: false, topicId: null, cardTitle: null },
+  via: "capture", ...over,
+});
+
+function setup() {
+  const app = testApp();
+  app.config.lark.enabled = true; app.config.lark.appId = "cli_bot";
+  const sent: { chat: string; text: string; uuid?: string }[] = [];
+  const cli: string[][] = [];
+  setLarkClient({ im: { message: { create: async ({ data }: any) => { sent.push({ chat: data.receive_id, text: data.content, uuid: data.uuid }); return { code: 0, data: { message_id: `om_${sent.length}` } }; } } } });
+  return { app, sent, cli };
+}
+
+it("forwards to a group, adding the bot as the owner only when it is not there", async () => {
+  const { app, sent, cli } = setup();
+  try {
+    let botIn = false;
+    setLarkCliForTests(async (args) => {
+      cli.push(args);
+      if (args.includes("+chat-members-list")) return { data: { bots: botIn ? [{ app_id: "cli_bot", name: "omem" }] : [] } };
+      if (args.includes("chat.members")) { botIn = true; return { data: {} }; }
+      return {};
+    });
+    const rule = saveRule(app, { name: "虚拟号转群", description: "虚拟号通知转到值班群", enabled: true, conditions: { field: "chat.name", op: "contains", value: "虚拟号" }, judge: "code", actions: [{ type: "forward", to: { chatId: "oc_duty", name: "值班群", kind: "group" }, note: "请值班同学看下" }] } as never, "user", OWNER);
+    const r = await forwardAction(app, rule, rule.actions[0] as never, event());
+    expect(r.detail).toContain("已用你的身份把机器人拉进「值班群」");
+    expect(cli.some((a) => a.includes("chat.members") && a.includes("user"))).toBe(true);
+    expect(sent[0].chat).toBe("oc_duty");
+    expect(sent[0].text).toMatch(/转发自私聊「虚拟号通知」[\s\S]*请值班同学看下[\s\S]*虚拟号已换绑/);
+    // Next time the bot is there: no invite.
+    forgetChatBots("oc_duty"); cli.length = 0;
+    const again = await forwardAction(app, rule, rule.actions[0] as never, event({ key: "lark:om_2", message: { ...event().message!, id: "om_2" } }));
+    expect(again.detail).not.toContain("拉进");
+    expect(cli.some((a) => a.includes("chat.members"))).toBe(false);
+    expect(sent[1].uuid).not.toBe(sent[0].uuid);
+  } finally { app.db.close(); }
+});
+
+it("forwards to a person through a group made once with them and the bot", async () => {
+  const { app, sent, cli } = setup();
+  try {
+    run(app.db, "insert into lark_messages(message_id, chat_id, sender_id, sender_name, sender_kind, msg_type, content, create_ms, mentions) values('om_p','oc_wang','ou_wang','小王','user','text','在吗',1,'[]')");
+    setLarkCliForTests(async (args) => { cli.push(args); return args.includes("+chat-create") ? { data: { chat_id: "oc_made" } } : {}; });
+    const rule = saveRule(app, { name: "转给小王", description: "虚拟号通知转给小王", enabled: true, conditions: { field: "chat.name", op: "contains", value: "虚拟号" }, judge: "code", actions: [{ type: "forward", to: { chatId: "oc_wang", name: "小王", kind: "p2p" }, note: "" }] } as never, "user", OWNER);
+    const first = await forwardAction(app, rule, rule.actions[0] as never, event());
+    expect(first.detail).toContain("已用你的身份建群");
+    const create = cli.find((a) => a.includes("+chat-create"))!;
+    expect(create).toEqual(expect.arrayContaining(["--as", "user", "--users", "ou_wang", "--bots", "cli_bot"]));
+    await forwardAction(app, rule, rule.actions[0] as never, event({ message: { ...event().message!, id: "om_3" } }));
+    expect(cli.filter((a) => a.includes("+chat-create"))).toHaveLength(1);
+    expect(sent.map((s) => s.chat)).toEqual(["oc_made", "oc_made"]);
+  } finally { app.db.close(); }
+});
+
+it("only the owner picks where a rule forwards to, and only message rules forward", () => {
+  const app = testApp();
+  try {
+    const rule = { name: "转发", description: "x", enabled: true, conditions: { field: "chat.name", op: "contains", value: "虚拟号" }, judge: "code", actions: [{ type: "forward", to: { chatId: "oc_duty", name: "值班群", kind: "group" }, note: "" }] } as never;
+    expect(() => saveRule(app, rule, "agent")).toThrow(/只能由本人/);
+    const saved = saveRule(app, rule, "user", OWNER);
+    // An agent may edit the rule as long as the target stays.
+    expect(saveRule(app, { ...(rule as object), id: saved.id, description: "改了说明" } as never, "agent").description).toBe("改了说明");
+    expect(() => saveRule(app, { ...(rule as object), id: saved.id, actions: [{ type: "forward", to: { chatId: "oc_other", name: "别的群", kind: "group" }, note: "" }] } as never, "agent")).toThrow(/只能由本人/);
+    expect(getRule(app, saved.id).actions[0]).toMatchObject({ to: { chatId: "oc_duty" } });
+    expect(() => saveRule(app, { ...(rule as object), trigger: { event: "schedule", cron: "0 9 * * *" }, conditions: null } as never, "user", OWNER)).toThrow(/新消息/);
+  } finally { app.db.close(); }
+});

@@ -14,7 +14,7 @@ export function confirmRule(app: App, rule: Rule, runId: string, conversationId:
   if (rule.enabled) return null;
   const actions = rule.actions.map(a => a.type === "agent"
     ? `交给 ${a.spec ?? "assistant"}${a.task ? `：${a.task}` : ""}（${a.reply === "auto" ? "直接回复" : a.reply === "draft" ? "回复先确认" : a.reply === "silent" ? "静默排查" : "只告诉本人"}）`
-    : ({ notify: "通知本人", capture: "优先采集", watch: "持续监听", "invite-bot": "拉机器人进群", "meeting-bot": "拉机器人入会", wake: "唤醒", delay: "延时", check: "模型判断", script: "执行脚本" })[a.type]);
+    : ({ notify: "通知本人", capture: "优先采集", watch: "持续监听", "invite-bot": "拉机器人进群", forward: `转发到「${a.type === "forward" ? a.to.name || a.to.chatId : ""}」`, "meeting-bot": "拉机器人入会", wake: "唤醒", delay: "延时", check: "模型判断", script: "执行脚本" })[a.type]);
   return createAsk(app, {
     runId, conversationId, userId: OWNER,
     question: [

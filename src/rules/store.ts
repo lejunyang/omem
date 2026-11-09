@@ -115,7 +115,11 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
       // Left out by an agent's edit: the owner's choice stays.
       if (a.fullAccess === undefined && had.includes(a.spec)) a.fullAccess = true;
     }
+    // Where a rule forwards to (and may add the bot or make a group as the owner) is the owner's pick too.
+    const targets = (before ? JSON.parse(before.actions) as RuleAction[] : []).flatMap((a) => (a.type === "forward" ? [a.to.chatId] : []));
+    for (const a of r.actions) if (a.type === "forward" && !targets.includes(a.to.chatId)) throw new HttpError(403, "转发的目标只能由本人在规则页选：可能要以本人身份拉机器人进群或建群");
   }
+  if (r.actions.some((a) => a.type === "forward") && r.trigger.event !== "message") throw new HttpError(400, "转发只用于“新消息”触发：要有一条消息可转发");
   if (r.actions.at(-1)?.type === "delay") throw new HttpError(400, "延时后面要有动作");
   if (r.actions.at(-1)?.type === "check") throw new HttpError(400, "模型判断后面要有动作：它决定后面的动作做不做");
   if (r.spaceId) getSpace(app, r.spaceId);

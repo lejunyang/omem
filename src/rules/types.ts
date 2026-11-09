@@ -113,6 +113,17 @@ export const actionSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("watch"), spec: z.string(), on: z.enum(["all", "mention", "keyword"]).default("mention"), pattern: z.string().optional(), reply: reply.default("draft") }),
   z.object({ type: z.literal("invite-bot") }),
+  /**
+   * Post the triggering message (with where it came from and the owner's `note`) into another chat
+   * through omem's bot. A group the bot is not in gets it added as the owner first; a person's private
+   * chat gets a group of the owner, that person and the bot, made once as the owner (forward.ts).
+   * Only the owner sets the target, on the rules page.
+   */
+  z.object({
+    type: z.literal("forward"),
+    to: z.object({ chatId: z.string().trim().min(1), name: z.string().default(""), kind: z.enum(["group", "p2p"]) }),
+    note: z.string().default(""),
+  }),
   z.object({ type: z.literal("capture") }),
   z.object({ type: z.literal("notify"), urgent: z.boolean().default(false) }),
   /**

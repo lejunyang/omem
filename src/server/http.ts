@@ -2013,7 +2013,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       ],
       // The AI a rule's agent action may be pinned to (AiDefaults on the rules page).
       backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(app, p.id) })),
-      chats: all<{ chat_id: string; name: string }>(app.db, "select chat_id, name from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
+      chats: all<{ chat_id: string; name: string; chat_mode: string | null }>(app.db, "select chat_id, name, chat_mode from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
       conversations: all(app.db, "select id,title,channel,space_id,external_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
       groups: ruleGroups(app),

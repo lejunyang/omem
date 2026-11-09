@@ -1700,3 +1700,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 判断集中到 `prepareRun`（`PreparedRun.fullAccess`）：运行自己的值（规则的开关、回答访客那一轮的访客开关）优先；否则本人的运行用档案或内置角色叠加设置（`_roles/<名>.overlay.yaml` 的 `fullAccess`）的值；别的用户的运行、评审检查、复盘、对比运行不开。规则运行在 `jobs.ts` 里总是给明确的值，不跟角色或档案走。
 - 内置角色：`setRoleFullAccess`、`PUT /api/roles/:name/full-access`（只认本人），改技能和工具时保留；`guest`、`gatekeeper` 不设，改在 `lark.guests.fullAccess`（设置 → 渠道 → 访客提问，默认关），`lark-guest.ts` 的回答访客运行和 `threadTurn` 里含访客消息（`meta.asker`）的那一轮用它。会话复用键带上它，访客一轮和本人一轮不会共用同一个完全访问的进程。
 - 访客提问的“也回答私聊”从勾选框改为开关，和上面的开关一致。回归：`test/full-access.test.ts`。
+
+## 2026-11-09：规则动作“转发到”
+
+- 本人要把通知机器人私聊自己的消息转到别的群，目标是人时建群转发。规则原来只能在触发的会话里发言、只能把机器人拉进触发的群。
+- `rules/forward.ts`：`forward` 动作（`to: { chatId, name, kind: group | p2p }`、`note`），机器人发出，uuid 由规则、消息、目标算出去重。群：`chatBots` 里没有 omem 的机器人就 `inviteOwnBot`。私聊：对方取采集到的最近一条 `sender_kind='user'` 的发送人，以本人身份 `im +chat-create --as user --users <对方> --bots <app_id>`，群 id 存 kv `rule_forward_group:<私聊 id>` 复用。只用于“新消息”触发；非本人保存时新加或改动目标返回 403。AGENTS.md 的本人身份写操作清单加上这两处。
+- 规则页“转发到”从采集过的会话里选目标（`rule-options` 的 chats 带 `chat_mode`）。回归：`test/rule-forward.test.ts`。

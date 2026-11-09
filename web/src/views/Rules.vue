@@ -24,6 +24,7 @@ type Action =
   | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string }; fullAccess?: boolean }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
+  | { type: "forward"; to: { chatId: string; name: string; kind: "group" | "p2p" }; note: string }
   | { type: "capture" }
   | { type: "notify"; urgent: boolean }
   | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; importShared: boolean; leaveWithOwner: boolean }
@@ -48,7 +49,7 @@ type Rule = {
   createdBy?: string;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
+type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string; chat_mode?: string | null }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[]; note: string };
 
 const route = useRoute();
@@ -203,7 +204,7 @@ async function remove() {
 }
 
 // ---- actions ------------------------------------------------------------------------
-const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会", delay: "延时", check: "模型判断", script: "执行脚本" };
+const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", forward: "转发到", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会", delay: "延时", check: "模型判断", script: "执行脚本" };
 const replyOptions = [
   { value: "none", label: "只告诉我" },
   { value: "draft", label: "先给我看" },
@@ -264,6 +265,7 @@ function addAction(type: string | null) {
     type === "agent" ? { type, spec, task: "", ownTopic: false, reply: "none" }
     : type === "watch" ? { type, spec, on: "mention", reply: "draft" }
     : type === "notify" ? { type, urgent: false }
+    : type === "forward" ? { type, to: { chatId: "", name: "", kind: "group" }, note: "" }
     : type === "meeting-bot" ? meetingAction()
     : type === "delay" ? { type, minutes: 30 }
     : type === "check" ? { type, question: "" }
@@ -304,12 +306,21 @@ function setConfirmation(a: Extract<Action, { type: "meeting-bot" }>, mode: stri
   a.confirm = mode === "always" ? true : mode === "never" ? false : { field: "meeting.invitedCount", op: "gte", value: "30" };
   touch();
 }
+/** Captured chats a rule can forward to: groups, and people's private chats (a group is made for those). */
+const forwardOptions = computed(() => options.value.chats.map((c) => ({ value: c.chat_id, label: `${c.chat_mode === "p2p" ? "私聊" : "群"} · ${c.name}` })));
+function setForwardTarget(a: Extract<Action, { type: "forward" }>, chatId: string) {
+  const c = options.value.chats.find((x) => x.chat_id === chatId);
+  a.to = { chatId, name: c?.name ?? "", kind: c?.chat_mode === "p2p" ? "p2p" : "group" };
+  touch();
+}
 const addOptions = computed(() =>
   (Object.keys(ACTION_LABEL) as Action["type"][])
     .filter((t) => (meetingRule.value ? ["meeting-bot", "notify"].includes(t) : t !== "meeting-bot"))
     // Without a chat (a schedule, a document change) only what needs none.
     .filter((t) => !(scheduleOnly.value || docRule.value) || ["agent", "notify", "delay", "check", "script"].includes(t))
-    .map((t) => ({ value: t as string | null, label: ACTION_LABEL[t], hint: t === "invite-bot" && !options.value.botReady ? "需要先配置飞书机器人" : t === "script" && !isOwner.value ? "只有本人能保存带脚本的规则" : "" })),
+    // Forwarding needs a message to forward.
+    .filter((t) => t !== "forward" || form.value?.trigger.event === "message")
+    .map((t) => ({ value: t as string | null, label: ACTION_LABEL[t], hint: (t === "invite-bot" || t === "forward") && !options.value.botReady ? "需要先配置飞书机器人" : t === "script" && !isOwner.value ? "只有本人能保存带脚本的规则" : "" })),
 );
 
 // ---- meetings ---------------------------------------------------------------------------
@@ -673,6 +684,13 @@ function startFrom(text: string) {
               </div>
               <textarea v-if="a.approval.by === 'ai'" v-model="a.approval.hint" class="input" rows="2" placeholder="怎么找审批人，例如：改这篇文档的人的直属负责人；找不到就我批准" @input="touch" />
               <small class="muted">{{ a.approval.by === "none" ? "不批准就直接执行：只在你确定脚本对任何触发都安全时这样选。" : a.approval.by === "ai" ? "模型从这次的事件里找出审批人，找不到时由你批准。" : "机器人私聊审批人一张卡片，列出规则、触发的事件和脚本，点“执行”才执行；3 天内没人处理就作废。" }}</small>
+            </template>
+            <template v-else-if="a.type === 'forward'">
+              <div class="row wrap">
+                <UiSelect :model-value="a.to.chatId" size="sm" width="300px" :search-at="8" :options="forwardOptions" placeholder="转发到哪个群或私聊" aria-label="转发目标" @update:model-value="(v) => setForwardTarget(a, String(v || ''))" />
+              </div>
+              <input v-model="a.note" class="input" placeholder="附言（可选），会写在转发内容前面" @input="touch" />
+              <small class="muted">{{ a.to.kind === "p2p" ? "机器人不能在私聊里发言：第一次转发时用你的身份建一个你、对方和机器人的群，之后都发到这个群。" : "用机器人发到这个群，带上来源和发送人；机器人不在群里时先用你的身份把它拉进去。" }}{{ options.botReady ? "" : "还没配置飞书机器人。" }}</small>
             </template>
             <p v-else-if="a.type === 'invite-bot'" class="muted small">以你的身份把 omem 的机器人加进这个群（只加机器人，不发消息）。{{ options.botReady ? "" : "还没配置飞书机器人。" }}</p>
             <p v-else class="muted small">把这个群设为与你有关：立刻采集一次，之后每次都读并交给整理（免打扰的群也读）。</p>

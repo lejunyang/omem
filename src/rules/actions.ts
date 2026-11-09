@@ -147,6 +147,8 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
       await (await import("../channels/lark-watch.ts")).inviteOwnBot(app, id);
       return { action: "invite-bot", ok: true, detail: `已把机器人加进 ${e.chat?.name ?? id}` };
     }
+    case "forward":
+      return (await import("./forward.ts")).forwardAction(app, rule, a, e);
     case "capture": {
       const id = needChat();
       const { captureChatNow } = await import("../channels/lark-personal.ts");
