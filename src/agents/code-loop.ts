@@ -635,13 +635,14 @@ function ensureOwnerAsks(app: App, rootId: string) {
  * The assistant settles a task waiting on it — done again (with what to do differently), not done,
  * or passed on to the owner as a question with options — or relays the owner's answer to one waiting
  * on the owner. What it may do is decided here, not by its instructions:
- * - a task waiting on the owner moves only on the owner's words this turn, or an earlier requirement
- *   or permission the assistant quotes (`authorization`), and only to be done again;
+ * - a task waiting on the owner moves only on the owner's words this turn: once the card is out the
+ *   work waits for them (the assistant decided before asking, `toDecide`), it is not answered for them
+ *   in a background turn;
  * - one task goes back to be done at most ASSISTANT_RETRIES times by the assistant alone;
  * - a retry starts the next round only within the budget (advanceWork).
- * A card already sent closes.
+ * A card already sent closes, saying who answered it.
  */
-export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner" | "later"; text: string; ownerWords: boolean; authorization?: string; question?: string; options?: string[] }, by: string) {
+export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner" | "later"; text: string; ownerWords: boolean; question?: string; options?: string[] }, by: string) {
   const t = getTask(app, rootId, seq);
   // A review fix still to do may be set aside too: the assistant judges it against what the work is for.
   if (a.action === "later" && t.state === "todo") {
@@ -650,10 +651,9 @@ export function settleTask(app: App, rootId: string, seq: number, a: { action: "
     return advanceWork(app, rootId, { owner: a.ownerWords });
   }
   if (t.state !== "assistant" && t.state !== "owner") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等处理`);
-  const authorizedRetry = a.action === "retry" && !!a.authorization?.trim();
   if (t.state === "owner") {
     if (a.action === "owner") throw new HttpError(409, `${taskLabel(seq)} 已经在等本人`);
-    if (!a.ownerWords && !authorizedRetry) throw new HttpError(403, `${taskLabel(seq)} 在等本人决定：本人在这一轮回答了才转达；原需求或本人之前的话已经定了做法的，retry 并在 existing_authorization 写出原话或引用。不能替本人作新的决定，也不能替本人说不做`);
+    if (!a.ownerWords) throw new HttpError(403, `${taskLabel(seq)} 在等本人决定（卡片已经发给本人）：本人在这一轮回答了才转达，不替本人作决定，也不替本人说不做；在本人回答之前这一项不动，别的项照常推进`);
   }
   if (a.action === "retry" && t.state === "assistant" && !a.ownerWords && retriesBy(t) >= ASSISTANT_RETRIES)
     throw new HttpError(409, `${taskLabel(seq)} 你已经让它重做过 ${retriesBy(t)} 次还没好：换一种做法要本人定，用 owner 写清问题和两三个选项；做不了的用 skip 写理由`);
@@ -664,13 +664,14 @@ export function settleTask(app: App, rootId: string, seq: number, a: { action: "
     ensureOwnerAsks(app, rootId);
     return null;
   }
-  const note = { by, kind: "assistant" as const, text: `${{ skip: "不做", later: "以后再做", retry: "重做" }[a.action]}：${a.text}${authorizedRetry ? `\n已有授权依据：${a.authorization!.trim()}` : ""}` };
+  const verb = { skip: "不做", later: "以后再做", retry: "重做" }[a.action];
+  const note = { by, kind: "assistant" as const, text: `${verb}：${a.text}` };
   // The owner's words are their decision (taskText shows it); the assistant's stay a note on the task.
   const answer = a.ownerWords ? { answer: a.text } : {};
   if (a.action === "later") deferTask(app, rootId, seq, a.text, note);
   else if (a.action === "skip") updateTask(app, rootId, seq, { state: "wontdo", ...answer }, note);
   else updateTask(app, rootId, seq, { state: "todo", attempts: 0, ...answer }, note);
-  closeTaskAsk(app, rootId, seq);
+  closeTaskAsk(app, rootId, seq, `已由助手转达你在对话里的回答（${verb}）：${truncate(a.text, 300)}`);
   return advanceWork(app, rootId, { owner: a.ownerWords });
 }
 
@@ -747,11 +748,12 @@ export function reviewAgain(app: App, rootId: string, opts: { from?: number } = 
   return next;
 }
 
-export function closeTaskAsk(app: App, rootId: string, seq: number) {
+/** The task's card closes; `how` (who settled it, how) shows on the card instead of a bare “expired”. */
+export function closeTaskAsk(app: App, rootId: string, seq: number, how?: string) {
   const w = workState(app, rootId);
   const id = w.asks?.[String(seq)];
   if (!id) return;
-  cancelAsk(app, id);
+  cancelAsk(app, id, how);
   const asks = { ...(w.asks ?? {}) };
   delete asks[String(seq)];
   setWorkState(app, rootId, { asks });

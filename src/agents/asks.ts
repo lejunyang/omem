@@ -291,11 +291,12 @@ export function cancelHostAsks(app: App, runId: string, handler: string | string
 }
 
 /** One ask settled some other way (its task was decided on the web): the card stops taking answers. */
-export function cancelAsk(app: App, id: string) {
+/** `result`: who settled it instead and how; channels show it on the closed card. */
+export function cancelAsk(app: App, id: string, result?: string) {
   const r = one<Row>(app.db, "select * from asks where id = ? and status = 'pending'", id);
   if (!r) return;
-  run(app.db, "update asks set status = 'cancelled', answered_at = ? where id = ?", now(), id);
-  closed(app, { ...toAsk(r), status: "cancelled" });
+  run(app.db, "update asks set status = 'cancelled', answered_at = ?, result = coalesce(?, result) where id = ?", now(), result ?? null, id);
+  closed(app, { ...toAsk(r), status: "cancelled", ...(result ? { result } : {}) });
 }
 
 function cancelOpen(app: App, conversationId: string, kind: AskKind) {

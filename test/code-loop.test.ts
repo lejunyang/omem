@@ -427,12 +427,82 @@ describe("a delegation driven by tasks", () => {
       expect((await settle({ ...assistant, runId: turn.id } as ToolContext, scope.seq, "retry", "本人说：存量按新口径")).isError).toBe(false);
       expect(listTasks(app, r.id)[1]).toMatchObject({ state: "todo", answer: "本人说：存量按新口径" });
 
+      // Once the card is out the work waits for the owner: a background turn does not answer it for them,
+      // whatever earlier words it quotes.
       updateTask(app, r.id, scope.seq, { state: "owner" });
-      const oldAuthorization = await settle(assistant, scope.seq, "retry", "恢复既定口径，继续修复", { existing_authorization: "此前本人已明确：存量按新口径（msg_owner），本项没有新的取舍" });
-      expect(oldAuthorization.isError).toBe(false);
-      expect(listTasks(app, r.id)[1].notes.at(-1)?.text).toContain("已有授权依据");
-      updateTask(app, r.id, scope.seq, { state: "owner" });
-      expect((await settle(assistant, scope.seq, "skip", "先不做", { existing_authorization: "本人此前让继续" })).isError).toBe(true);
+      expect((await settle(assistant, scope.seq, "retry", "恢复既定口径，继续修复", { existing_authorization: "此前本人已明确：存量按新口径" })).isError).toBe(true);
+      expect((await settle(assistant, scope.seq, "skip", "先不做")).isError).toBe(true);
+      expect(listTasks(app, r.id)[1].state).toBe("owner");
+    } finally {
+      app.db.close();
+    }
+  });
+
+  it("gives a question the coder has for the owner to the assistant first; the owner is asked only when it passes it on, and then waited for", async () => {
+    const app = testApp();
+    try {
+      const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "交办", input: { conversationId: t.id } });
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true, round: 1 }, parentId: ask.id, userId: OWNER });
+      codeChainFor(app, r);
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      const test = addTask(app, r.id, { title: "旧测试断言离页后仍发请求", kind: "fix" }, "coder");
+      const scope = addTask(app, r.id, { title: "存量订单怎么算", kind: "build" }, "coder");
+      for (const x of [test, scope]) updateTask(app, r.id, x.seq, { state: "coding", coderRun: r.id });
+      const coder: ToolContext = { app, runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "coder" } as ToolContext;
+      const cards = () => listAsks(app, { status: "pending" }).filter((a) => a.handler === "code-task");
+      const wakes = () => all<{ id: string }>(app.db, "select id from runs where kind = 'ask' and json_extract(input, '$.handoff.kind') = 'code-tasks'");
+      const options = ["按新行为改写这个用例", "删掉这个用例"];
+      const said = await callTool(coder, "report_task", { task: `T${test.seq}`, kind: "owner", reason: "旧用例断言的是要修的缺陷", question: "这个失败的断言怎么处理？", options });
+      expect(said.text).toContain("发起交办的助手");
+      // The assistant has it, with the coder's question and options; no card, and it is woken now.
+      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "assistant", options });
+      expect(listTasks(app, r.id)[0].question).toContain("这个失败的断言怎么处理？");
+      expect(cards()).toHaveLength(0);
+      expect(wakes()).toHaveLength(1);
+      await callTool(coder, "report_task", { task: `T${scope.seq}`, kind: "owner", reason: "需求没写存量订单", question: "存量订单按哪个口径？", options: ["旧口径", "新口径"] });
+      // The round ends: still no card for either, nothing waits on the owner.
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      expect(cards()).toHaveLength(0);
+
+      const handoff = createRun(app, { kind: "ask", spaceId: "personal", title: "修改项等助手处理", input: { conversationId: t.id, handoff: { kind: "code-tasks", runId: r.id, workId: r.id } } });
+      const assistant: ToolContext = { app, runId: handoff.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
+      const settle = (seq: number, action: string, note: string, extra: Record<string, unknown> = {}) => callTool(assistant, "settle_code_task", { run_id: r.id, task: `T${seq}`, action, note, ...extra });
+      // What the requirement already settles, the assistant decides itself: the owner is never asked.
+      expect((await settle(test.seq, "retry", "需求要离页不再发请求：按新行为改写这个用例")).isError).toBe(false);
+      expect(listTasks(app, r.id)[0].state).toBe("todo");
+      expect(listAsks(app, {}).filter((a) => a.handler === "code-task")).toHaveLength(0);
+      // A business choice it cannot make goes to the owner, once, as a card.
+      expect((await settle(scope.seq, "owner", "需求和之前的对话都没提存量订单", { question: "存量订单按哪个口径？", options: ["旧口径", "新口径"] })).isError).toBe(false);
+      expect(listTasks(app, r.id)[1].state).toBe("owner");
+      expect(cards()).toHaveLength(1);
+      // From then on it waits for the owner: no background turn answers it, the card stays.
+      expect((await settle(scope.seq, "retry", "按新口径")).isError).toBe(true);
+      expect(listTasks(app, r.id)[1].state).toBe("owner");
+      expect(cards()).toHaveLength(1);
+      // The owner answers in the conversation and the assistant relays it: the card closes saying so.
+      run(app.db, "insert into messages(id, conversation_id, role, text, created_at) values(?,?,?,?,?)", "msg_owner", t.id, "user", "存量按新口径", new Date().toISOString());
+      const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "回答", input: { conversationId: t.id, messageIds: ["msg_owner"] } });
+      expect((await callTool({ ...assistant, runId: turn.id } as ToolContext, "settle_code_task", { run_id: r.id, task: `T${scope.seq}`, action: "retry", note: "本人说：存量按新口径" })).isError).toBe(false);
+      const closedCard = listAsks(app, {}).find((a) => a.handler === "code-task")!;
+      expect(closedCard).toMatchObject({ status: "cancelled" });
+      expect(closedCard.result).toContain("已由助手转达你在对话里的回答");
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      app.db.close();
+    }
+  });
+
+  it("asks the owner directly what the coder cannot decide when no assistant started the work", async () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "网页交办", input: { task: "退款", repos: ["personal"], taskMode: true, round: 1 }, userId: OWNER });
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      const x = addTask(app, r.id, { title: "存量订单怎么算", kind: "build" }, "coder");
+      updateTask(app, r.id, x.seq, { state: "coding", coderRun: r.id });
+      const coder: ToolContext = { app, runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "coder" } as ToolContext;
+      expect((await callTool(coder, "report_task", { task: `T${x.seq}`, kind: "owner", reason: "需求没写", question: "存量订单按哪个口径？", options: ["旧口径", "新口径"] })).text).toContain("交给本人");
+      expect(listTasks(app, r.id)[0]).toMatchObject({ state: "owner", question: "存量订单按哪个口径？", options: ["旧口径", "新口径"] });
     } finally {
       app.db.close();
     }

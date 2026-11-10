@@ -4748,7 +4748,7 @@ def({
 
 def({
   name: "report_task",
-  description: "编码 Agent 把一个修改项交出去，然后接着做别的项：owner = 要本人在业务或功能上取舍（写 question 和两三个 options，缺了会被拒绝）；disputed = 认为评审的问题不成立（写理由，交提出它的评审项再看）；blocked = 被权限、环境、外部依赖挡住了，或缺别的团队给的字段、接口（写清楚是什么），交给发起交办的助手处理。",
+  description: "编码 Agent 把一个修改项交出去，然后接着做别的项：owner = 认为要本人在业务或功能上取舍（写 question 和两三个 options，缺了会被拒绝；有发起交办的助手时先交给它，它定不了才问本人）；disputed = 认为评审的问题不成立（写理由，交提出它的评审项再看）；blocked = 被权限、环境、外部依赖挡住了，或缺别的团队给的字段、接口（写清楚是什么），交给发起交办的助手处理。",
   schema: z.object({
     task: z.union([z.string(), z.number()]),
     kind: z.enum(["owner", "disputed", "blocked"]),
@@ -4769,8 +4769,9 @@ def({
       const ruled = task.notes.some((n) => n.kind === "lead" && n.text.startsWith("裁决"));
       const note = { by: "coder", kind: "coder" as const, text: `有异议：${a.reason}` };
       if (ruled) {
-        t.updateTask(ctx.app, rootId, seq, { state: "owner", question: `${t.taskLabel(seq)}「${task.title}」评审负责人裁决后，编码 Agent 仍认为问题不成立：${truncate(a.reason, 600)}`, options: ["照评审的意见改", "不改"] }, note);
-        return `${t.taskLabel(seq)} 评审负责人已经裁决过，这次交给本人决定（这一项停着）。接着做别的项。`;
+        const after = t.toDecide(ctx.app, rootId, seq, { question: `${t.taskLabel(seq)}「${task.title}」评审负责人裁决后，编码 Agent 仍认为问题不成立：${truncate(a.reason, 600)}`, options: ["照评审的意见改", "不改"], why: a.reason }, note);
+        if (after.state === "assistant") (await import("./code-chain.ts")).wakeAssistantForTasks(ctx.app, rootId);
+        return `${t.taskLabel(seq)} 评审负责人已经裁决过，这次交给${after.state === "assistant" ? "发起交办的助手（它定不了才问本人）" : "本人"}（这一项停着）。接着做别的项。`;
       }
       if (before) {
         t.updateTask(ctx.app, rootId, seq, { state: "disputed" }, note);
@@ -4791,14 +4792,16 @@ def({
     const options = (a.options ?? []).map((o) => o.trim()).filter(Boolean);
     if (a.kind === "owner" && (!a.question?.trim() || options.length < 2))
       throw new HttpError(400, "要本人决定的写 question（要定什么、各自的影响）和两三个 options（可选的做法）。没有可选的做法、只是要别人做事（补字段、给接口、改环境）的，用 blocked");
-    t.updateTask(ctx.app, rootId, seq, { state: "owner", question: a.question!.trim(), options }, { by: "coder", kind: "coder", text: `要本人决定：${a.reason}` });
-    return `已把 ${t.taskLabel(seq)} 交给本人，这一项先停着。接着做别的项。`;
+    // The assistant looks first and asks the owner only what it cannot settle (toDecide).
+    const after = t.toDecide(ctx.app, rootId, seq, { question: a.question!.trim(), options, why: a.reason }, { by: "coder", kind: "coder", text: `要本人决定：${a.reason}` });
+    if (after.state === "assistant") (await import("./code-chain.ts")).wakeAssistantForTasks(ctx.app, rootId);
+    return `已把 ${t.taskLabel(seq)} 交给${after.state === "assistant" ? "发起交办的助手（它定不了才问本人）" : "本人"}，这一项先停着。接着做别的项。`;
   },
 });
 
 def({
   name: "settle_code_task",
-  description: "发起交办的助手处理停着的修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决、同一处修了几层）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（等别的团队、缺外部字段也是 skip）、later 记成以后再做（问题成立但和这次要的关系不大：不挡交付，同一分支下一次交办会接上；评审提的待做项也可以这样放下）、owner 只在要本人在业务或功能上取舍时，写 question 和两三个 options。「等你决定」的项只在本人这一轮回答了才转达（retry / skip）；原需求或本人之前的话已经定了做法的，retry 并在 existing_authorization 写出原话或引用。retry 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
+  description: "发起交办的助手处理停着的修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决、同一处修了几层）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（等别的团队、缺外部字段也是 skip）、later 记成以后再做（问题成立但和这次要的关系不大：不挡交付，同一分支下一次交办会接上；评审提的待做项也可以这样放下）、owner 只在要本人在业务或功能上取舍时，写 question 和两三个 options。编码 Agent 认为要本人定的也先到你这里：原需求、评审意见或本人之前的话已经定了做法的，你直接 retry / later / skip（note 写依据），确实要本人取舍才 owner。「等你决定」的项（卡片已经发给本人）只在本人这一轮回答了才转达（retry / skip），本人回答前不动它。retry 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
   write: true,
   schema: z.object({
     run_id: z.string().describe("这次交办的任一运行 id"),
@@ -4807,14 +4810,13 @@ def({
     note: z.string().min(1).max(3000).describe("retry：查到的原因、编码 Agent 这次具体怎么做；skip：为什么不做、在等什么；later：为什么现在不值得改、什么情况下才会碰到；owner：你查过什么、为什么只有本人能定"),
     question: z.string().max(1000).optional().describe("owner：给本人的问题，写要定什么和影响，不写调查过程"),
     options: z.array(z.string().min(1).max(60)).max(4).optional().describe("owner：两三个可选的做法"),
-    existing_authorization: z.string().min(1).max(2000).optional().describe("仅 retry「等你决定」的项：原需求或本人此前的原话或消息引用，及它怎么定了这一项的做法；不用于替本人作新的业务决定"),
   }),
   handler: async (ctx, a) => {
     const t = await import("./code-tasks.ts");
     const rootId = t.workRootOf(ctx.app, a.run_id);
     if (t.workOwner(ctx.app, rootId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能处理本人的交办");
     const seq = t.parseTaskRef(a.task);
-    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), authorization: a.existing_authorization, question: a.question, options: a.options }, "assistant");
+    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), question: a.question, options: a.options }, "assistant");
     const label = t.taskLabel(seq);
     if (a.action === "owner") return `已把 ${label} 交给本人（发了卡片）。`;
     if (a.action === "later") return `${label} 记成以后再做${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;

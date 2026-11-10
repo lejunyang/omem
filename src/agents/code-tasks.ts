@@ -254,6 +254,19 @@ export function toAssistant(app: App, rootId: string, seq: number, why: string, 
   return updateTask(app, rootId, seq, { ...patch, state: "owner", question: why, options: ["按原来的要求再做一次"] }, note);
 }
 
+/**
+ * The coder thinks a task needs the owner's call (a question with options): the assistant that
+ * started the work looks first — it decides what the requirement, the review or the owner's earlier
+ * words already settle, and passes on (settle_code_task owner) only what it cannot. Asking the owner
+ * and waking the assistant for the same task at once had the assistant answer a card the owner had
+ * just received. With no assistant (started on the web), the owner is asked.
+ */
+export function toDecide(app: App, rootId: string, seq: number, q: { question: string; options: string[]; why: string }, note?: Omit<TaskNote, "at">): CodeTask {
+  if (!hasAssistant(app, rootId)) return updateTask(app, rootId, seq, { state: "owner", question: q.question, options: q.options }, note);
+  const proposed = `编码 Agent 认为要本人决定：${q.question}\n它给的做法：${q.options.join(" / ")}\n原因：${q.why}\n\n先看原需求、评审意见和本人之前的话能不能定：能定就 retry（写清怎么做）、later 或 skip；确实要本人取舍才 owner（可以沿用上面的问题和做法）。`;
+  return updateTask(app, rootId, seq, { state: "assistant", question: proposed, options: q.options }, note);
+}
+
 const NOT_REACHED = "轮编码 Agent 停下时还没做这一项";
 
 /**

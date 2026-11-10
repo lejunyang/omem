@@ -84,7 +84,7 @@ function questionBlocks(app: App, ask: Ask): CardBlock[] {
 export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = {}): Record<string, unknown> {
   if (ask.status !== "pending") {
     const immediate = isImmediateAsk(ask) && ask.status === "answered";
-    const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : immediate ? ask.result ?? "已处理" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : ask.value ? "已填写" : `已选：${ask.answer ?? ""}`;
+    const how = ask.status === "cancelled" ? (ask.result ? "已在别处处理" : "已失效（在对话或网页上接着处理了）") : immediate ? ask.result ?? "已处理" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : ask.value ? "已填写" : `已选：${ask.answer ?? ""}`;
     return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: immediate ? "已处理" : TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.value && ask.answer ? [{ markdown: cardText(truncate(ask.answer, 3000)) }] : []), ...(ask.result && !immediate ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
   }
   const blocks = questionBlocks(app, ask);
