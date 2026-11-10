@@ -1,0 +1,11 @@
+{
+  "version": 3,
+  "file": "resource-search-fixture.js",
+  "sourceRoot": "",
+  "sources": ["src/original-resource-search-fixture.ts"],
+  "sourcesContent": [
+    "export const originalResourceSearchNeedle = \"source-map-resource-needle\";\nwindow.__advancedNetworkResourceSearchFixture = originalResourceSearchNeedle;\n"
+  ],
+  "names": [],
+  "mappings": ""
+}

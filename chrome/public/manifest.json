@@ -1,0 +1,67 @@
+{
+  "manifest_version": 3,
+  "name": "omem 助手",
+  "description": "omem 的浏览器扩展：高级网络面板、Mock、设备模拟、用户状态，以及截图和 UI 走查的「拾取」。默认不连接调试接口。",
+  "version": "0.1.0",
+  "icons": {
+    "16": "icons/icon-inactive-16.png",
+    "32": "icons/icon-inactive-32.png",
+    "48": "icons/icon-inactive-48.png",
+    "128": "icons/icon-inactive-128.png"
+  },
+  "devtools_page": "devtools.html",
+  "action": {
+    "default_title": "omem 助手",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-inactive-16.png",
+      "32": "icons/icon-inactive-32.png",
+      "48": "icons/icon-inactive-48.png",
+      "128": "icons/icon-inactive-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "debugger",
+    "offscreen",
+    "cookies",
+    "scripting",
+    "tabs",
+    "activeTab",
+    "sidePanel",
+    "unlimitedStorage",
+    "declarativeNetRequest"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*",
+    "<all_urls>"
+  ],
+  "sandbox": {
+    "pages": [
+      "mock-sandbox.html"
+    ]
+  },
+  "minimum_chrome_version": "125",
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "commands": {
+    "pick-element": {
+      "suggested_key": {
+        "default": "Alt+Shift+X"
+      },
+      "description": "拾取：选取页面元素"
+    },
+    "open-pick-basket": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "打开拾取篮"
+    }
+  }
+}

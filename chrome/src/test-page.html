@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>高级网络测试页</title>
+    <link rel="stylesheet" href="./resource-search-fixture.css" />
+  </head>
+  <body>
+    <main class="test-page">
+      <h1>高级网络测试页</h1>
+      <p>打开 DevTools 的「高级网络」面板后，点击按钮触发稳定的 fetch/XHR 请求。</p>
+      <div class="actions">
+        <button id="fetchUsers" type="button">Fetch users</button>
+        <button id="fetchMissing" type="button">Fetch 404</button>
+        <button id="xhrUsers" type="button">XHR users</button>
+        <button id="runAll" type="button">Run all</button>
+      </div>
+      <pre id="output"></pre>
+    </main>
+    <script src="./resource-search-fixture.js"></script>
+    <script type="module" src="./test-page/test-page.ts"></script>
+  </body>
+</html>

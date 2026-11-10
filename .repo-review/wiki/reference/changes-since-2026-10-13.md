@@ -7,6 +7,12 @@ updated: 2026-11-10
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## Chrome 扩展并入仓库：默认不连 CDP 与拾取（11-10）
+
+- 原来独立的 DevTools 扩展并入 workspace（`chrome/`，包 `omem-chrome`），界面换成 omem 的配色。约定在 `chrome/AGENTS.md`，设计在 `chrome/docs/changes/no-cdp-and-pick/design.md`。
+- 默认不连 `chrome.debugger`：面板一打开就连、且只在标签页关闭时才断，是 Chrome 顶部一直显示调试提示条的原因。现在 `attachDebugger` 只在「CDP 增强」开启时放行；不开时 Mock 和调用栈由页面钩子（`src/inject/page-hook.ts`）改写 fetch / XHR，资源搜索由面板读 `inspectedWindow.getResources()` 送给后台，模拟器用 DNR 会话规则，禁用缓存、限速、原页面模拟置灰。
+- 「拾取」：`src/inject/pick-overlay.ts` 在页面上选元素、量间距、框区域、整页逐屏拼接，`src/background/pick-service.ts` 截图裁剪后存 IndexedDB；侧栏 `src/sidepanel/` 是拾取篮（引用记录、导出 Markdown）。回归：`chrome/src/shared/pick.test.ts`、`no-cdp.test.ts`，e2e `chrome/e2e/pick-and-hook.e2e.test.ts`。
+
 ## 规则批次与 Codex 审批子会话清理（11-08）
 
 - 规则 Agent 的会话原来一律保留，批次结束和重启后换会话都可能积压。`session-cleanup.ts` 按排队续轮与有效的话题跟进判断是否还需要，完成、失败、取消且不再被引用的归档；`jobs.ts` 在换成新会话后退役旧的。会议、多 Agent 工作、聊天及编码续轮保持保留。

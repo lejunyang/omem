@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>退款申请 · 示例商城</title>
+    <style>
+      body { margin: 0; font: 14px/1.6 "PingFang SC", system-ui, sans-serif; color: #1f2328; background: #f7f6f3; }
+      header { position: sticky; top: 0; padding: 14px 24px; background: #fff; border-bottom: 1px solid #e4e1da; font-weight: 600; }
+      main { max-width: 720px; margin: 24px auto; display: grid; gap: 16px; }
+      .card { padding: 20px 24px; background: #fff; border: 1px solid #e4e1da; border-radius: 12px; }
+      .card h2 { margin: 0 0 8px; font-size: 18px; }
+      .actions { display: flex; gap: 12px; margin-top: 16px; }
+      .btn { height: 36px; padding: 0 16px; border-radius: 8px; border: 1px solid #d2cec5; background: #fff; font-size: 14px; }
+      .btn-primary { background: #2f5bd3; color: #fff; border-color: #2f5bd3; font-weight: 500; }
+      .tall { height: 1400px; display: grid; place-items: center; color: #7a7f88; }
+      #result, #xhr-result { font-family: monospace; }
+    </style>
+  </head>
+  <body>
+    <header>示例商城 · 退款改造</header>
+    <main>
+      <section class="card" id="refund-card">
+        <h2>申请退款</h2>
+        <p class="desc">订单 #20261110 · 退款金额 <b>¥128.00</b></p>
+        <div class="actions">
+          <button class="btn" id="cancel">取消</button>
+          <button class="btn btn-primary" id="submit">提交申请</button>
+        </div>
+      </section>
+      <section class="card">
+        <div>fetch：<span id="result">loading</span></div>
+        <div>xhr：<span id="xhr-result">loading</span></div>
+      </section>
+      <section class="card tall">长页面占位</section>
+    </main>
+    <script>
+      function load() {
+        fetch("/e2e/pick-data.json?from=fetch").then((r) => r.text()).then((t) => (document.getElementById("result").textContent = t.trim()));
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", "/e2e/pick-data.json?from=xhr");
+        xhr.onload = () => (document.getElementById("xhr-result").textContent = xhr.responseText.trim() + " " + xhr.status);
+        xhr.send();
+      }
+      // 稍后再发，让面板 eval 注入的钩子也能赶上（已授权站点由内容脚本在 document_start 注入，不需要等）。
+      setTimeout(load, Number(new URLSearchParams(location.search).get("delay") || 0));
+      window.reloadData = load;
+    </script>
+  </body>
+</html>

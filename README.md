@@ -94,7 +94,7 @@ flowchart LR
 osdk install && osdk deps --frozen
 osdk run dev          # API :4317 + 网页 :5173，数据在 ./.omem
 
-# 或直接用 npm/pnpm（pnpm workspace：应用、插件 SDK、VS Code 插件、文档站共用一份锁文件）
+# 或直接用 npm/pnpm（pnpm workspace：应用、插件 SDK、VS Code 插件、Chrome 扩展、文档站共用一份锁文件）
 pnpm install                      # 只要应用：pnpm install --filter omem-assistant
 pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 npm install -g .                  # 可选：把命令行 omem 链接到这个仓库
@@ -160,6 +160,7 @@ npm install -g omem-assistant
 | 清理交办留下的工作区和没确认的交办 | 跟助手说“把没确认的交办清理一下”：它先列出每次交办的仓库、分支、改了几个文件（还有没对应交办的遗留工作区，要的话连旧交办应用后留下的接收工作区），你同意哪些就只丢弃哪些（这次交办新建、没推送的分支一起删）。进行中的交办不动；事项结束时它的交办占着的工作区自动归还，分支保留 |
 | 在自己的另一份仓库上交办 | 把本地路径给助手：同一个仓库（git remote 相同）已经有空间时不会再建一个，助手告诉你用哪个空间；要让那个空间改用这份目录（比如这里装好了依赖），说一声它会改关联（那个空间还有没应用的交办时要先清理） |
 | 在 VS Code 里处理评审 | 装 `vscode/` 里的插件（`pnpm run package` 打出 .vsix）：打开交办的工作区后，评审问题挂在代码行上，线程标题点“改 / 暂不改 / 不改”；选中代码 `Ctrl+Alt+A` 提问或记修改点；侧栏“修改单”点“开始修改”续一轮；侧栏“交办”的 ＋ 写任务文档交办；状态栏看轮次和过程。经 Remote-SSH 打开时插件直接连那台机器上的 omem |
+| 走查页面、收集截图素材，再把问题写清楚 | 装 `chrome/` 里的浏览器扩展（`pnpm --filter omem-chrome run build`，在 `chrome://extensions` 加载 `chrome/dist`）。点扩展图标的「拾取」或按 `Alt+Shift+X`：单击元素看字体、颜色、内外边距、边框、圆角，`Shift` + 单击别的元素量间距，也可以框选区域、截可视区或整页，`Enter` 记下。`Alt+Shift+S` 打开侧边栏的拾取篮：点「引用」或输入 `#` 把记录插进输入框，接着写描述，复制成 Markdown。扩展默认不连 Chrome 调试接口（连了 Chrome 会一直显示调试提示条），Mock、调用栈、资源搜索用不需要它的做法；要禁用缓存、限速、原页面设备模拟时在扩展里打开「CDP 增强」 |
 | 不装 VS Code 也在浏览器里看交办的代码 | 运行页“在 VS Code 中打开”旁的齿轮里选“网页版 VS Code”（同一处能看用的是哪个 VS Code 命令行，找不到时填路径）：新标签页里就是这台机器上交办的工作区。用的是官方 `code serve-web`（机器上要有 VS Code 或它的命令行），所有项目共用服务端，已有完整缓存就直接进入（新版本在后台下载，下次启动时换上），首次下载时显示下载进度，准备好自动进入；omem 代理并鉴权，只对你开放；经 `omem peer open` 看常驻服务器时也能用。浏览器是中文时界面用已装语言包按键翻译（语言包比服务端旧，没翻到的显示英文，不会错位）；omem 自己的插件已经装好并连上这台 omem；交办的工作区直接按已信任打开，不用每次点信任（`ide.web.trustCodeFolders`）；网页版还没有自己的设置时，拿这台机器上 Remote-SSH（或桌面 VS Code）的设置做初始值（`ide.web.reuseSettings`），`ide.web.reuseExtensions: true` 时再把那边装的、适合这台机器和这一版的扩展各复制一份 |
 | 看交办改出来的页面效果 | 在设置 → 空间 → 编辑仓库里填“预览命令”（一行一个 `名字: 命令`，比如 `主站: pnpm --dir apps/main dev & pnpm --dir apps/sub dev & wait`，端口不用填）。交办视图点“预览”选一条启动：工作区没装过依赖时先跑仓库的准备命令（和编码前同一个规则），然后在这次交办的工作区里运行它，显示输出，认出它和它启动的进程在监听的端口；点 `localhost:<端口>` 打开。网页和 omem 在同一台机器时端口直接能开；在别的电脑上用 `omem peer open <设备>` 打开 omem，它会在你电脑上按同样的端口号监听并转过去（HTTP 和热更新的 WebSocket 都行），所以把 localhost 端口写死在开发配置里的多应用项目也能用。同一仓库同时只开一个，端口上 30 分钟没有连接就停（`preview.idleMinutes`），交办的工作区收回、应用或丢弃后也停；只对你开放 |
 | 看交办留下的截图、录屏和测试报告 | 交办视图的“产物”标签（有产物时才出现）按修改项列出；修改项展开后“看截图和报告”只看那一项。仓库里的测试脚本或技能把文件写到 `$OMEM_ARTIFACTS`（`T<编号>/` 子目录归到那一项，带 index.html 的目录是一份报告），omem 在编码 Agent 说一项做完、这一轮结束和每条命令跑完时收走；图片、视频、网页和报告都在页面上打开，从别的电脑经 `omem peer open` 也能看 |
@@ -529,6 +530,7 @@ skills/library  内置技能（如 lark-messaging、lark-docs、lark-suite、des
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
 vscode/       VS Code 插件（workspace 里的包 omem-vscode；omem 的网页版 VS Code 启动前从源码编译装进去，连本机 omem 不用设置）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
+chrome/       Chrome 扩展（workspace 里的包 omem-chrome）：DevTools 网络面板（筛选、Mock、资源搜索）、用户状态、设备模拟与居中模拟器、「拾取」（截图、元素样式与间距、侧栏拾取篮）；默认不连 CDP，注入页面的脚本在 chrome/src/inject，扩展自己的约定在 chrome/AGENTS.md，真实 Chromium 的 e2e 在 chrome/e2e
 site/         文档站（VitePress，workspace 里的包 omem-docs）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）
 web/          Vue 3 网页
 ```

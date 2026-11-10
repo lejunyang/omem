@@ -1,0 +1,11 @@
+{
+  "version": 3,
+  "file": "resource-search-fixture.css",
+  "sourceRoot": "",
+  "sources": ["src/original-resource-search-fixture.css"],
+  "sourcesContent": [
+    ".resource-search-fixture {\n  --original-css-needle: \"source-map-css-needle\";\n}\n"
+  ],
+  "names": [],
+  "mappings": ""
+}
