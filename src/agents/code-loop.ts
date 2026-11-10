@@ -10,7 +10,7 @@ import { addCodeNote } from "./code-steer.ts";
 import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
 import { changeBase } from "./code-branch.ts";
 import {
-  addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, tasksFromRuling, isLater, deferTask, deliverableStage, POLISH_STAGES,
+  addTask, followDepth, getTask, headsAt, listCheckpoints, listTasks, SIMPLIFY_LINES, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, tasksFromRuling, isLater, deferTask, deliverableStage, POLISH_STAGES,
   ownerQuestionText, stranded, taskLabel, toAssistant, toDecide, hasAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
@@ -188,6 +188,18 @@ function checkHistory(app: App, rootId: string) {
   return by;
 }
 
+/**
+ * Why the simplify check has to look at this stage, or null. Patching piles up where nobody asks
+ * "can this be less": it looks once when the change has grown large, and again whenever a fix of a
+ * fix was made since it last looked (the next patch on that spot is better not written at all).
+ */
+export function simplifyDue(app: App, rootId: string, codeLines: number): string | null {
+  const last = app.db.prepare("select max(r.created_at) as at from reviews r join runs x on x.id = r.code_run_id where (x.id = ? or json_extract(x.input, '$.continueFrom') = ?) and r.check_name = 'review-simplify'").get(rootId, rootId) as { at: string | null } | undefined;
+  if (!last?.at && codeLines >= SIMPLIFY_LINES) return `改动已有 ${codeLines} 行代码，还没有看过能不能写得更少`;
+  const deep = listTasks(app, rootId).filter((t) => t.kind === "fix" && (!last?.at || t.createdAt > last.at) && followDepth(app, rootId, t.seq) >= 2);
+  return deep.length ? `${deep.map((t) => taskLabel(t.seq)).join("、")} 是在修过的地方又修：先看这一处能不能收敛成更简单的写法` : null;
+}
+
 const PLAN_BRIEF = [
   "# 决定这次评审看什么",
   "这次交办按修改项推进，现在待做的项都做完了。你来决定这一段改动要哪些评审项看、各看什么。不按改动行数套档位：看改的是什么——业务逻辑、接口、数据、样式、测试、搬动的资源各需要不同的眼光；之前看过且没再动的地方不用再看；本人在任务里说了要怎么评审的照做。",
@@ -205,7 +217,10 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
   const input = root.input as { task?: string; reviewTier?: string; reviewChecks?: string[] };
   // Checks the owner named when delegating, or picked for the rounds since (运行页“之后的评审”).
   const must = [...new Set([...(input.reviewChecks ?? []), ...((run.input as { roundReview?: { checks?: string[] } }).roundReview?.checks ?? [])])];
-  const ownerSaid = [input.reviewTier ? `本人点名的评审档位：${input.reviewTier}` : "", must.length ? `本人要求加上的评审项：${must.join("、")}（必须选上）` : ""].filter(Boolean).join("\n");
+  const metrics = reviewMetrics(worktrees, (getRun(app, run.id).output.repos ?? []) as never, String(input.task ?? ""));
+  const simplify = checks.some((c) => c.name === "review-simplify") && !must.includes("review-simplify") ? simplifyDue(app, rootId, Number(metrics["change.codeLines"] ?? 0)) : null;
+  const ownerSaid = [input.reviewTier ? `本人点名的评审档位：${input.reviewTier}` : "", must.length ? `本人要求加上的评审项：${must.join("、")}（必须选上）` : "", simplify ? `这次必须选上 review-simplify：${simplify}` : ""].filter(Boolean).join("\n");
+  if (simplify) must.push("review-simplify");
   // The owner said either way (每轮换模型 / 不换模型), or there is no other model: not review-lead's call.
   const lookable = (app.config.review.rotation ?? []).length > 0 && (run.input as { roundReview?: { rotate?: boolean } }).roundReview?.rotate === undefined;
   const task = [
@@ -238,7 +253,6 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
     rc.event("status", { text: `评审负责人没有完成计划（${(e as Error).message}），按改动大小选评审项` });
   }
   const draft = getRun(app, run.id).output.reviewPlanDraft as { checks: { name: string; focus: string }[]; skipped?: { name: string; reason: string }[]; secondLook?: { name: string; focus: string }[]; summary: string } | null | undefined;
-  const metrics = reviewMetrics(worktrees, (getRun(app, run.id).output.repos ?? []) as never, String(input.task ?? ""));
   const w = workState(app, rootId);
   if (draft?.checks.length) {
     const names = [...new Set([...draft.checks.map((c) => c.name), ...must])].filter((n) => checks.some((c) => c.name === n));

@@ -71,6 +71,8 @@ export const isLater = (t: Pick<CodeTask, "state" | "origin">) => t.state === "w
  * finding on that goes to the assistant, which decides whether the part is worth more rounds.
  */
 export const MAX_FOLLOW_DEPTH = 2;
+/** Code lines changed in a delegation from which the simplify check looks once without being asked. */
+export const SIMPLIFY_LINES = 200;
 /** Stage reviews that may go on finding only review fixes after the requirement was done, before the loop stops for the assistant. */
 export const POLISH_STAGES = 3;
 /** After this many failed tries (or rounds that never got to it) a task goes to the assistant that started the work. */
