@@ -1772,3 +1772,55 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `WorktreeRef.diffBase`（`code-branch.ts`）：规划时先 fetch，取本地分支和 origin 的共同祖先；拉取 origin 时（`code-sync.ts` 的 `nextDiffBase` / `settleDiffBase`），只要 origin 没有这次交办的提交，就推进到拉进来的 origin 提交（冲突停下的同步处理完才生效）；origin 已经有交办的提交（推送过）时不动。`changeBase` 对较早的检查点取 `merge-base(diffBase, 终点)`。合并别的分支（`onto`）不改变比较起点。
 - 旧交办（没有 `diffBase`）读取时按“本地分支与 origin 的共同祖先”补上（`withDiffBase`，不写库，下一轮随工作区保存）；origin 已含它某一轮编码检查点的提交时保留原起点。保存的补丁、统计在能确定该轮终点（检查的提交或该轮检查点）时按新起点重算（`codeDiffView`，运行详情和评审共用）。首轮单项误记进修改项的公共提交在读取时排除（`ownCommits`）；首轮的提交归属从同步后（`syncHead`）算起。
 - 整段压缩、回到检查点：范围里有交办开始前分支上已有的提交（本人未推送的）或 origin 上已有的提交时拒绝，提示按修改项回退（`assertOwnRange`）；多仓库压缩在任何写入前先检查全部仓库。
+
+## 2026-11-11：网页版 VS Code 认本人的登录；实时连接按需建立；可选 HTTPS（HTTP/2）
+
+- **网页版 VS Code 在网页地址上打开**：`ideAllowed` 认本人的登录会话（`omem_sid`，本人、非受限、同源），omem 重启或直接打开 `/ide` 后不再 401；转发给 serve-web 时去掉登录 cookie；未登录打开 `/ide` 页面时给出登录入口。
+- 分享页“一直在加载”是浏览器在 http 下每个地址 6 条连接被各标签页的实时连接占满。实时连接改为按需建立（`web/src/lib/live.ts`：分享页、登录页不建）、后台 45 秒断开、冻结或进入往返缓存时立即断开、回前台重连并通知页面刷新（`onServerResync`）。
+- 新增可选 `https` 配置（`src/server/secure.ts`：`port`、`cert` / `key` 或 `selfSigned`、`hosts`），在原 http 端口之外再开一个 HTTPS 端口，浏览器在上面走 HTTP/2；`http2Compat` 补 Host、移走伪首部、去掉 HTTP/2 禁止的连接级首部。
+
+## 2026-11-11：飞书消息的加粗与引用编号；需决定的卡片统一收尾
+
+- 飞书发送统一经 `src/channels/lark-markdown.ts` 规范加粗：中文标点紧邻 `**` 时按 CommonMark 的规则不成立（`**建议：**先…`），发出前把句读移到加粗外、括号引号外侧补空格、去掉标记内侧空格；代码不动。
+- 句末引用编号改为 `(n)`（`citations.ts` 的 `citationMark`）：⑪ 以后的带圈数字在常用中文字体里缺字形，回退到别的字体后大小不一。
+- 需决定的卡片（提问、批准、草稿确认、规则脚本审批、访客审批、入会确认）收尾统一为 `decidedBlocks`：谁、何时、决定，一句结果，工具的原始输出放进折叠的“完整输出”。
+
+## 2026-11-11：有人找本人时先分诊再处理
+
+- “预筛 → 决策模型分诊（`roles/mention-triage.md`）→ 按需交给主助手或档案 → 可选回复对方”（`src/channels/lark-mentions.ts`、`mention-triage.ts`、`mention-reply.ts`，设计 docs/v2/mentions.md）。新运行类型 `mention`；处理是带 `input.mention` 的 `agent` 运行，最后的回答作为提醒，卡片关联运行以便接着聊。
+- 新工具 `reply_to_asker`（只给这类运行，目标固定，按 `lark.mentions.reply` 变草稿卡片或直接发，写 `audit_events`）；AGENTS.md “渠道”新增这一处以本人身份写。
+- `notify()` 对 6 小时内已提醒过的同一批聊天消息返回 409，要求用 `replaces`（原因：实时采集和轮询各排一个 `ingest`，读同一批行各提醒一次）。新设置 `lark.mentions`（`guidance`、`noDecision`、`perDay`、`reply`）。
+
+## 2026-11-11：编码交办里要本人定的问题先交给助手；精简评审
+
+- 编码 Agent 的 `report_task`(owner)、评审负责人的 `rule_review` / `rule_dispute` owner 和方案分歧都先进“等助手处理”（`code-tasks.ts` 的 `toDecide`）；助手可以 skip 驳回或 later 放下还没做的评审项，用 `settle_code_task` 的 `add` 新增需求漏掉的项（不经本人每次交办最多 5 项），定不了才 owner 发卡片。去掉 `existing_authorization`，卡片发出后只等本人；同一处助手放下两次后评审再提直接问本人；卡片因助手转达关闭时注明。起因：编码 Agent 的问题直接发给本人，同时被叫醒的助手又在后台把它处理掉，卡片只显示“已失效”。
+- 精简评审在补丁堆起来的地方自动加上（`code-loop.ts` 的 `simplifyDue`）：改动到 200 行代码而它还没看过，或它看过之后又出现“修过的地方又修”。`coder`、`reviewer`、`review-arch`、`review-simplify` 的说明加了不写防御性补丁、判断在边界上处理一次的要求。
+- 设计稿 docs/v2/coding-plan.md（方案与变更说明，未实现）。
+
+## 2026-11-11：一件事的后续消息跟着它最近在哪里聊
+
+- `src/agents/home.ts`：一件事是按 `parent_id` 连起来的一串运行，归属位置记在最上面那个运行的 `output.home`。唤醒、协调回复、编码汇报按它投递；本人在别处回复这件事的消息，或在别处用写工具操作它的运行，归属就迁到那里。
+- 飞书会话本身只引用这件事自己的上一条消息，没有就不引用；唤醒那一轮开的工作话题挂在这件事自己的消息下。原话题发不进去时退回本人私聊，并写明是哪件事的后续。
+
+## 2026-11-11：后端出错、换后端的顺序与选型记录
+
+- 上游流中断（stream disconnected、empty stream、RST_STREAM、502 / 503 / 504）算后端故障并按模型冷却；`stay_quiet` 之后后端对空的最终回复报错按完成处理（`runner.ts` 的 `quietAfterAll`）。
+- 点名的 AI 不可用时按 `agents.routing.pinnedFallback`（默认 unavailable）换并写明。所有换后端的地方都按选型说明排的顺序：运行前选型时决策模型给出整个排序，没经过选型的运行第一次要换时问一次（`fallbackOrder`，缓存 10 分钟），没有决策模型才用静态兜底顺序；记录里写明顺序来源。
+- 每次运行记一条带 `choice` 的状态事件（选了谁、理由，或为什么没选），换后端带 `failover`。
+- 按模型的每日额度：“今日额度用完”类错误只把那个模型排除到次日零点；设置 → AI → 并行 的单独上限加“每天最多”；ACP 探测保存每个模型的说明（`modelNotes`）。按修改项推进的交办续轮时保留新指定的 AI。
+
+## 2026-11-11：规则——电子表格按行比对、发到群、“这个群”、所属空间
+
+- 文档变化规则可指定“发到”会话（auto / draft），Agent 在那个群里回复指定消息或话题并 @ 修改人。
+- 电子表格存快照、逐行比对，每个新增或改动的行一个事件（`change.sheet` / `change.row` / `change.action`）；多维表格按记录分发（`change.recordId` / `change.tableId` / `change.action`）。新增条件字段 `change.byOwner`、`change.editorId`。规则运行用 `lark_write` 回写后 5 分钟内，只由本人造成的变化不再触发同一条规则（`src/rules/own-writes.ts`）。
+- `save_rule` 的条件 `chat.id` 和“发到”支持 `current`。规则页列表显示所属空间或“全局”，所有类型的规则都能改所属空间；规则换空间时挂在它上面的工作文件一起移过去，共享的工作文件可在原件页换空间（`moveWorkFile`）。
+
+## 2026-11-11：命令规则
+
+- 命令规则（docs/v2/command-gate.md）：配置 `security.commandRules`（仅本人经 `GET/PUT /api/security/command-rules` 修改）。`command-gate.ts` 在 `<home>/bin/guarded` 生成同名包装，放在 Agent 进程 PATH 最前；`POST /api/command-gate`（本机连接 + 运行令牌）按规则放行、拒绝或建审批（`asks`，`context.handler="command-gate"`），长轮询等 `waitSeconds`，之后才有结果的用 `fireWake` 唤醒。审计 `command.allow|ask|approve|reject|deny|pending|expire`。防误操作，拦不住绝对路径调用。
+
+## 2026-11-11：主线程卡顿监测；向量快照
+
+- 主线程卡顿监测（`src/core/loop-monitor.ts`，`diag` 的 `eventLoop`）：延迟超过 500 ms 记日志，带当时的 SQL / git 同步步骤。
+- 向量变更记录 `vector_log`（触发器）加量化快照（`cache/vectors`）：检索进程重启后读快照再重放记录，不再每次整份重读；向量通道空闲 30 分钟才退出，载入不会因超时被杀。
+- `page_cites` / `symbols` 加索引（`list_pages`、`find_symbol`）；网络 git（fetch / ls-remote）改为异步。
