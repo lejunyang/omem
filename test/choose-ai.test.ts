@@ -6,6 +6,7 @@ import { setKey } from "../src/core/ai-keys.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
 import { allProfiles } from "../src/core/config.ts";
 import { downReason, noteFailure } from "../src/agents/capacity.ts";
+import { noteRateLimit } from "../src/agents/quota.ts";
 import { receive } from "../src/agents/inbox.ts";
 import { runEvents, waitForRun } from "../src/agents/runs.ts";
 import { breakdownKind, isBackendDown, runRole } from "../src/agents/runner.ts";
@@ -107,6 +108,78 @@ describe("choosing the AI before a run", () => {
     const r = await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", execution: { profile: "slow", source: "user", reason: "规则指定" } });
     expect(r.profileId).toBe("slow");
     expect(bodies).toHaveLength(0);
+  }, 60_000);
+});
+
+describe("the order to move on in follows the routing notes", () => {
+  // The owner's notes say jia goes before yi; the static fallback list says yi first.
+  const setup = () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.profiles.push({ ...fakeAgent("def"), source: "claude" }, fakeAgent("yi"), fakeAgent("jia"), fakeAgent("dying", { FAKE_DIE: "1" }));
+    app.config.agents.default = "def";
+    app.config.agents.fallback = [{ profile: "yi" }, { profile: "jia" }];
+    app.config.agents.routing = { automatic: true, guidance: "jia 优先于 yi", candidates: [{ profile: "yi", when: "普通任务" }, { profile: "jia", when: "普通任务" }], choose: { conversation: "decision", rules: "decision", tasks: "decision" }, pinnedFallback: "unavailable" };
+    // The default account is nearly spent: it goes after the others when a slot is taken.
+    noteRateLimit(app, allProfiles(app.config).find((p) => p.id === "def")!, { type: "rate-limit", window: "five_hour", usedPercent: 97 });
+    return app;
+  };
+  // A decision model that reads the notes: jia first, then yi, the rest after.
+  const byNotes = (app: App) => withDecision(app, (body) => {
+    const choices = body.questions[0].choices as { value: string; description: string }[];
+    const score = (c: { description: string }) => (/^jia/.test(c.description) ? 0.6 : /^yi/.test(c.description) ? 0.3 : 0.1 / choices.length);
+    const best = choices.reduce((a, b) => (score(b) > score(a) ? b : a));
+    return { answers: [{ type: "choice", name: "q", choice: best.value, probabilities: choices.map((c) => ({ value: c.value, probability: score(c) })) }] };
+  });
+
+  it("the chooser ranks every option, the default nearly spent, and the run follows its order", async () => {
+    const app = setup();
+    const bodies = byNotes(app);
+    const events: AgentEvent[] = [];
+    expect((await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", onEvent: (e) => events.push(e) })).profileId).toBe("jia");
+    // It was told the notes and that the default is nearly spent.
+    expect(JSON.stringify(bodies[0].input)).toContain("jia 优先于 yi");
+    expect(bodies[0].questions[0].choices[0].description).toContain("快用完了");
+    const rec = events.find((e) => e.type === "status" && e.choice) as unknown as { text: string; choice: { outcome: string; order: string[]; reason: string } };
+    expect(rec.choice.outcome).toBe("chosen");
+    expect(rec.choice.order.slice(0, 2)).toEqual(["jia · m1", "yi · m1"]);
+    expect(rec.choice.reason).toContain("决策模型");
+    expect(rec.text).toContain("用不了时依次换 yi · m1");
+  }, 60_000);
+
+  it("a run that was not chosen for asks the decision model once when it has to move on, then uses that order a while", async () => {
+    const app = setup();
+    app.config.agents.routing.choose.tasks = "off";
+    const bodies = byNotes(app);
+    const events: AgentEvent[] = [];
+    expect((await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", onEvent: (e) => events.push(e) })).profileId).toBe("jia");
+    const moved = events.find((e) => e.type === "status" && e.failover) as unknown as { text: string; failover: { orderBy: string; orderReason: string } };
+    expect(moved.failover.orderBy).toBe("决策模型按选型说明排的顺序");
+    expect(moved.failover.orderReason).toContain("jia");
+    expect(moved.text).toContain("的额度快用完了");
+    expect(bodies).toHaveLength(1);
+    // The next run of the same kind with the same options: the order is reused, nothing is asked.
+    expect((await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "再总结" })).profileId).toBe("jia");
+    expect(bodies).toHaveLength(1);
+  }, 60_000);
+
+  it("a named AI that breaks down goes on in the notes' order too", async () => {
+    const app = setup();
+    byNotes(app);
+    const events: AgentEvent[] = [];
+    const r = await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", execution: { profile: "dying", source: "user", reason: "规则指定" }, onEvent: (e) => events.push(e) });
+    expect(r.profileId).toBe("jia");
+    const moved = events.find((e) => e.type === "status" && e.failover) as unknown as { failover: { orderBy: string; pinned: boolean } };
+    expect(moved.failover).toMatchObject({ orderBy: "决策模型按选型说明排的顺序", pinned: true });
+  }, 60_000);
+
+  it("without a decision model the static order stays, and the run says so", async () => {
+    const app = setup();
+    app.config.agents.routing.choose.tasks = "off";
+    const events: AgentEvent[] = [];
+    expect((await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", onEvent: (e) => events.push(e) })).profileId).toBe("yi");
+    const moved = events.find((e) => e.type === "status" && e.failover) as unknown as { failover: { orderBy: string } };
+    expect(moved.failover.orderBy).toBe("设置里的静态顺序（没有决策模型时）");
   }, 60_000);
 });
 

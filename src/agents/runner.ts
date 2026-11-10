@@ -14,8 +14,8 @@ import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
-import { acquire, choosableProfiles, clearDown, dailyCapReached, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
-import { aiLabel, candidateProfiles, choiceEvent, chooseAI, type ChooseScene } from "./choose-ai.ts";
+import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
+import { aiLabel, candidateProfiles, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { DOUBAO_CLI_INSTALL } from "./doubao-cli.ts";
@@ -533,7 +533,7 @@ function roleAlternatives(app: App, role: RoleName, base: AgentProfile): AgentPr
   const own = app.config.agents.roleModels[role] ?? {};
   return choosableProfiles(app).filter((p) => p.id !== base.id && own[p.id]).map((p) => resolveRoleProfile(app, p, role));
 }
-function distinctProfiles(list: AgentProfile[]) {
+export function distinctProfiles(list: AgentProfile[]) {
   return list.filter((p, i) => list.findIndex((q) => q.id === p.id && q.model === p.model && q.effort === p.effort) === i);
 }
 
@@ -668,6 +668,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // or review run): choose among the owner's candidates (choose-ai.ts). The run's own AI then follows
   // the chosen one as a failover.
   let own: AgentProfile | undefined;
+  let chosen: ChooseResult | null = null;
   const runKind = input.runId ? one<{ kind: string }>(app.db, "select kind from runs where id = ?", input.runId)?.kind : undefined;
   // Checks, replays and comparisons run on what their caller set and are not choices of their own.
   const internal = !!(input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName);
@@ -685,7 +686,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   else if (input.profileId || input.model || input.effort) notChosen("发起这次运行时已经定了 AI");
   else {
     const current = resolveRunProfile(app, { actor });
-    const pick = await chooseAI(app, { scene, task: input.task, who: input.spec?.name ?? input.role, current, signal: input.signal, onStatus: say, onRecord: (r) => input.onEvent?.(choiceEvent(r)) });
+    chosen = await chooseAI(app, { scene, task: input.task, who: input.spec?.name ?? input.role, current, signal: input.signal, onStatus: say, onRecord: (r) => input.onEvent?.(choiceEvent(r)) });
+    const pick = chosen?.pick;
     if (pick) {
       own = current;
       input = { ...input, profileId: pick.profile, model: pick.model, effort: pick.effort };
@@ -702,7 +704,26 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // run (a full model waits for it, a nearly spent account is still used); only when it cannot —
   // busy, out of quota, broke down — does the run move on, unless the owner set `pinnedFallback: never`.
   const pinned = !!execution;
-  const chain = input.shadow || (pinned && app.config.agents.routing.pinnedFallback === "never") ? [base.profile] : failoverProfiles(app, actor, base.profile, own);
+  // The order to move on in: the chooser's ranking by the owner's routing notes when it ran, then the
+  // static order (the role's other backends, the fallbacks, the candidates) for whatever it did not rank.
+  const single = !!input.shadow || (pinned && app.config.agents.routing.pinnedFallback === "never");
+  const chain = single ? [base.profile] : chosen ? distinctProfiles([base.profile, ...chosen.order, ...failoverProfiles(app, actor, base.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, base.profile, own);
+  let orderBy: OrderSource = chosen ? chosen.by : "static";
+  let orderReason = chosen?.reason ?? "";
+  /**
+   * A run the chooser did not rank (its AI was named, choosing is off, no decision model for it):
+   * the first time it has to move on, the decision model ranks what is left by the routing notes
+   * (cached per kind of run and set of options, fallbackOrder), else the static order stays.
+   */
+  let ordered = !!chosen || single;
+  const reorder = async (from: number, why: string) => {
+    if (ordered || chain.length - from < 2) return;
+    ordered = true;
+    const r = await fallbackOrder(app, { scene, who: input.spec?.name ?? input.role, from: chain[0], why, options: chain.slice(from), signal: input.signal });
+    chain.splice(from, chain.length - from, ...r.order);
+    orderBy = r.by;
+    orderReason = r.reason;
+  };
   const emit = input.onEvent ?? (() => {});
   let lastError: unknown;
   let failed = false;
@@ -729,8 +750,14 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           revokeToolToken(base.token);
           leftBecause = { busy: true, untouched: true, why, first: true };
           failed = true;
+          await reorder(1, why);
           continue;
         }
+      }
+      // The first AI will be set aside (nearly spent, just broke down): who goes instead follows the notes.
+      if (i === 0 && !pinned) {
+        const aside = quotaAvoid(app, chain[0]) ?? downReason(app, chain[0]);
+        if (aside) await reorder(1, aside);
       }
       let slot;
       try {
@@ -772,7 +799,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
             : nearlySpent ? `${firstWho}的额度快用完了（${nearlySpent}）`
             : `${firstWho}的模型已满`;
           const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
-          emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
+          emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
         }
         emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution && i === 0 ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
@@ -814,6 +841,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !movable || i === chain.length - 1) throw e;
         if (!untouched) carry = (await import("./retry.ts")).partialAttemptNote(app, input.runId, writesBefore, e, aiLabel({ profile: prep.profile.id, model: prep.profile.model }));
         leftBecause = { busy, untouched, why: (e as Error).message.slice(0, 120), first: i === 0 };
+        await reorder(i + 1, (e as Error).message);
         lastError = e;
         failed = true;
       } finally {

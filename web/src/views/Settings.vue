@@ -848,7 +848,7 @@ async function saveEdit() {
       <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, limits: config.agents.capacity?.limits ?? [], quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" :backends="installedProfiles" :models="probedModels" @save="saveCapacity" />
       <div class="card pad stack">
         <div class="section-title">排队与兜底</div>
-        <p class="muted small">后端在排队或被限流时，按下面的顺序换一个后端重试一次；模型满了时也按这个顺序找有空位的。Agent 档案任务不会自动换后端。</p>
+        <p class="muted small">后端排队、被限流、额度快用完或出故障时换一个后端接着做。配了决策模型时，换谁、按什么顺序由它按 任务选型 里的总体偏好和候选说明决定（运行前选 AI 时一起排好，没选过的运行在第一次要换时问一次），运行里写明顺序来自哪里；下面是没有决策模型时的顺序，也是决策模型没排到的后端的顺序。模型满了时按这个顺序找有空位的。</p>
         <div class="row wrap">
           <span class="small">排队最多等</span>
           <UiSelect :model-value="String(config.agents.queueTimeoutMinutes ?? 30)" size="sm" width="120px" aria-label="排队最多等待" :options="queueMinuteOptions" @change="saveQueueMinutes" />

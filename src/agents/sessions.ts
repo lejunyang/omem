@@ -1,12 +1,12 @@
 import { one } from "../core/db.ts";
 import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
-import { aiLabel, choiceEvent, chooseAI } from "./choose-ai.ts";
+import { aiLabel, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type OrderSource } from "./choose-ai.ts";
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
-import { failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, quietAfterAll, quietSet, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
+import { distinctProfiles, failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, quietAfterAll, quietSet, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
@@ -264,9 +264,11 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const pinned = !!(t.settings.profile || t.settings.model || t.settings.effort);
   let auto = pinned ? null : (t.settings.auto ?? null);
   let own: AgentProfile | undefined;
+  let chosen: ChooseResult | null = null;
   if (!pinned && (!t.agentSession || t.agentTurns >= app.config.sessions.maxTurns) && !live.has(threadId)) {
     const current = resolveRunProfile(app, { actor });
-    const pick = await chooseAI(app, { scene: "conversation", task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }), onRecord: (r) => ctx.event("status", choiceEvent(r)) });
+    chosen = await chooseAI(app, { scene: "conversation", task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }), onRecord: (r) => ctx.event("status", choiceEvent(r)) });
+    const pick = chosen?.pick;
     auto = pick ? { profile: pick.profile, model: pick.model, effort: pick.effort } : null;
     if (JSON.stringify(auto) !== JSON.stringify(t.settings.auto ?? null)) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, auto } });
     if (pick) own = current;
@@ -391,7 +393,20 @@ ${WAKE_NOTE}`
   // Provider queue/rate-limit failures fall through the configured fallback chain once.
   // Where the turn goes when its AI cannot answer: the thread's own AI when another was chosen, the
   // role's other backends, the fallbacks, the routing candidates (runner.ts failoverProfiles).
-  const chain = failoverProfiles(app, actor, prep.profile, own);
+  // The chooser's ranking by the owner's routing notes first (on the turn that chose), then the static order.
+  const chain = chosen ? distinctProfiles([prep.profile, ...chosen.order, ...failoverProfiles(app, actor, prep.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, prep.profile, own);
+  let orderBy: OrderSource = chosen ? chosen.by : "static";
+  let orderReason = chosen?.reason ?? "";
+  let ordered = !!chosen;
+  /** Not ranked by the chooser this turn: the first time it moves on, the decision model ranks what is left (fallbackOrder). */
+  const reorder = async (from: number, why: string) => {
+    if (ordered || chain.length - from < 2) return;
+    ordered = true;
+    const r = await fallbackOrder(app, { scene: "conversation", who: label, from: chain[0], why, options: chain.slice(from), signal: ctx.signal });
+    chain.splice(from, chain.length - from, ...r.order);
+    orderBy = r.by;
+    orderReason = r.reason;
+  };
   let mode: TurnResult["mode"] = "fresh";
   let used: AgentProfile = prep.profile;
   let curPrep = prep;
@@ -417,7 +432,7 @@ ${WAKE_NOTE}`
       revokeToolToken(curPrep.token);
       curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
-      emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to: aiLabel({ profile: used.id, model: used.model, effort: used.effort }), why: left || "默认后端不可用", ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
+      emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to: aiLabel({ profile: used.id, model: used.model, effort: used.effort }), why: left || "默认后端不可用", orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
     }
     try {
       if (used.transport !== "acp") {
@@ -561,6 +576,7 @@ ${WAKE_NOTE}`
       left = busy ? `${used.name ?? used.id} 不可用（${why}）` : `${used.name ?? used.id} 出错（${why}）`;
       carry = writeCount() > writesBefore ? (await import("./retry.ts")).partialAttemptNote(app, ctx.run.id, writesBefore, e, aiLabel({ profile: used.id, model: used.model })) : "";
       emit({ type: "status", text: why });
+      await reorder(step + 1, (e as Error).message);
     }
   }
   // The live session keeps curPrep's token (retargeted on reuse); non-live paths revoked theirs.
