@@ -10,6 +10,7 @@ import { fieldsOf } from "./conditions.ts";
 import { checkWaitRule } from "./fast.ts";
 import { ruleInputSchema, type Rule, type RuleAction, type RuleInput, type Temporary } from "./types.ts";
 import { OWNER } from "../core/users.ts";
+import { moveRuleWorkFiles } from "../sources/work.ts";
 
 type Row = {
   space_id: string | null;
@@ -182,6 +183,8 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     r.spaceId ?? null,
     r.conversationId ?? null,
   );
+  // What earlier firings left (reports, lists it keeps) follows the rule into its new space.
+  if (prev && r.spaceId && prev.space_id !== r.spaceId) moveRuleWorkFiles(app, id, r.spaceId);
   // A schedule rule runs from the scheduler like the built-in tasks (schedule id rule:<id>).
   if (r.trigger.event === "schedule") upsertSchedule(app, { id: `rule:${id}`, kind: "rule", cron: r.trigger.cron!, config: { ruleId: id }, enabled: r.enabled });
   else if (prev && JSON.parse(prev.trigger).event === "schedule") deleteSchedule(app, `rule:${id}`);

@@ -436,7 +436,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <div v-if="detail.citedBy.length" class="cited small">
             被引用：<router-link v-for="p in detail.citedBy" :key="p.page_id" :to="`/wiki/${p.page_id.split('/')[0]}/${p.page_id.split('/').slice(1).join('/')}`" class="badge accent">{{ p.title }}</router-link>
           </div>
-          <div v-if="!detail.source.deletedAt && !['code','conversation','activity','work'].includes(detail.source.kind)" class="archive-info small">
+          <div v-if="!detail.source.deletedAt && !['code','conversation','activity'].includes(detail.source.kind)" class="archive-info small">
             <div class="row wrap">
               <span class="muted">空间：{{ spaceName(detail.source.spaceId) }}<template v-if="archive?.route?.reason"> · {{ archive.route.reason }}</template></span>
               <button class="btn ghost sm" type="button" :aria-expanded="showMove" @click="showMove = !showMove">{{ showMove ? "收起" : "换空间" }}</button>

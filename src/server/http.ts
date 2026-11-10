@@ -1996,7 +1996,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/sources/:id/move", async req => {
     const b = q(z.object({ space: z.string(), hash: z.string(), reason: z.string().min(1).max(500) }), req.body);
-    return (await import("../sources/archive.ts")).moveSource(app, (req.params as { id: string }).id, b.space, b.reason, "manual", undefined, b.hash);
+    const id = (req.params as { id: string }).id;
+    // A working file is not archived by rules; the owner may still file it under another space.
+    if (getSource(app, id).kind === "work") {
+      if (getSource(app, id).hash !== b.hash) throw new HttpError(409, "原件已更新，请重新预览");
+      return (await import("../sources/work.ts")).moveWorkFile(app, id, b.space, b.reason);
+    }
+    return (await import("../sources/archive.ts")).moveSource(app, id, b.space, b.reason, "manual", undefined, b.hash);
   });
 
   // ------------------------------------------------------------------- rules

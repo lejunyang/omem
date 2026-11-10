@@ -1,7 +1,9 @@
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
+import { all, one, run, tx } from "../core/db.ts";
+import { getSpace } from "../core/spaces.ts";
+import { vectorIndex } from "../search/vectors.ts";
 import { HttpError, json, now } from "../core/util.ts";
-import { deleteSource, sourceText, upsertSource } from "./store.ts";
+import { deleteSource, getSource, sourceText, upsertSource } from "./store.ts";
 
 /**
  * Working files: originals an agent writes while it works — the current results of a long task
@@ -84,6 +86,44 @@ export function listWorkFiles(app: App, opts: { item?: string; rule?: string; sp
     const m = json(r.meta, {}) as WorkMeta;
     return { id: r.id, spaceId: r.space_id, uri: r.uri, title: r.title, updatedAt: r.updated_at, expiresAt: m.expiresAt ?? null, links: m.links ?? {}, lines: r.n };
   });
+}
+
+/**
+ * Move a working file to another space, keeping its id (citations and `src:` references stay valid).
+ * Used when the rule it belongs to changes space, or when the owner files it elsewhere by hand.
+ */
+export function moveWorkFile(app: App, id: string, target: string, reason: string) {
+  const s = getSource(app, id);
+  if (s.kind !== "work") throw new HttpError(400, "不是工作文件");
+  if (s.deletedAt) throw new HttpError(409, "原件已删除");
+  if (getSpace(app, target).kind === "worktree") throw new HttpError(400, "不能放进临时工作区");
+  if (s.spaceId === target) return s;
+  if (one(app.db, "select 1 from sources where space_id = ? and uri = ? and id != ?", target, s.uri, id)) throw new HttpError(409, `目标空间已有同路径的工作文件：${s.uri}`);
+  tx(app.db, () => {
+    run(app.db, "update sources set space_id = ? where id = ?", target, id);
+    run(app.db, "update chunks set space_id = ? where source_id = ?", target, id);
+    run(app.db, "insert into source_moves(source_id, from_space, to_space, reason, at) values(?,?,?,?,?)", id, s.spaceId, target, reason, now());
+  });
+  vectorIndex().evict([s.spaceId, target]);
+  app.emit({ type: "changed", entity: "source", id, spaceId: target });
+  return getSource(app, id);
+}
+
+/**
+ * A rule moved to another space takes its working files along: its agent reads and writes in the
+ * rule's space, and would not find what earlier firings left elsewhere. Returns what could not move.
+ */
+export function moveRuleWorkFiles(app: App, ruleId: string, target: string) {
+  const stuck: string[] = [];
+  for (const f of listWorkFiles(app, { rule: ruleId, limit: 500 })) {
+    if (f.spaceId === target) continue;
+    try {
+      moveWorkFile(app, f.id, target, "规则换了所属空间");
+    } catch {
+      stuck.push(f.uri);
+    }
+  }
+  return stuck;
 }
 
 /** One line per file, for a task prompt or a tool result. */

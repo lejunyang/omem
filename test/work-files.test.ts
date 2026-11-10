@@ -8,7 +8,8 @@ import { shortcomings, shortcomingsText } from "../src/memory/gaps.ts";
 import { fireScheduledRule } from "../src/rules/engine.ts";
 import { listFirings, saveRule } from "../src/rules/store.ts";
 import { getSource, sourceText } from "../src/sources/store.ts";
-import { expireWorkFiles, expiryFrom, listWorkFiles } from "../src/sources/work.ts";
+import { expireWorkFiles, expiryFrom, listWorkFiles, moveWorkFile } from "../src/sources/work.ts";
+import { createSpace } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
 
 const agentCtx = (app: ReturnType<typeof testApp>, runId: string | null = null) =>
@@ -74,6 +75,30 @@ describe("working files", () => {
     const task = JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", next)!.input).task as string;
     expect(task).toContain("这条规则的工作文件");
     expect(task).toContain("work/weekly/2026-W43");
+    app.db.close();
+  });
+
+  it("takes a rule's working files along when the rule moves to another space, and lets the owner move a shared one", async () => {
+    const app = testApp();
+    createSpace(app, { id: "project-a", name: "项目 A", kind: "project" });
+    saveAgentSpec(app, { name: "reporter", description: "整理周报", prompt: "整理周报。" }, "user");
+    const input = { name: "周报素材", description: "每天把今天的进展追加到本周周报草稿", enabled: true, trigger: { event: "schedule" as const, once: "event" as const, cron: "0 18 * * 1-5" }, judge: "code" as const, conditions: null, actions: [{ type: "agent" as const, spec: "reporter", task: "追加今天的进展", ownTopic: false, reply: "none" as const }] };
+    const rule = saveRule(app, { ...input, spaceId: "personal" });
+    await fireScheduledRule(app, rule.id);
+    const runId = listFirings(app, rule.id)[0].results[0].runId!;
+    const mine = idOf((await callTool(agentCtx(app, runId), "write_file", { path: "weekly/2026-W43", content: "周一：上线了 A" })).text);
+    // A list several rules read, tied to none of them.
+    const shared = idOf((await callTool(agentCtx(app), "write_file", { path: "duty/名单", content: "小王、小李" })).text);
+    saveRule(app, { ...input, id: rule.id, spaceId: "project-a" });
+    expect(getSource(app, mine).spaceId).toBe("project-a");
+    expect(getSource(app, shared).spaceId).toBe("personal");
+    expect(listWorkFiles(app, { rule: rule.id, spaces: ["project-a"] }).map((f) => f.id)).toEqual([mine]);
+    // The owner files the shared list under the project: same id, so what cites it still resolves.
+    expect(moveWorkFile(app, shared, "project-a", "规则都在项目 A").spaceId).toBe("project-a");
+    expect(sourceText(app, shared)).toContain("小王");
+    // A file already at that path in the target is not overwritten.
+    const other = idOf((await callTool(agentCtx(app), "write_file", { path: "duty/名单", content: "另一份" })).text);
+    expect(() => moveWorkFile(app, other, "project-a", "合并")).toThrow(/同路径/);
     app.db.close();
   });
 
