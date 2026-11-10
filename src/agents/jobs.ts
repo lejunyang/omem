@@ -937,6 +937,8 @@ registerHandler("heartbeat", async (ctx) => {
   expireWorkFiles(app);
   await expireTemporaryRules(app);
   (await import("../channels/lark-watch.ts")).expireWatches(app);
+  // Command approvals past their time (their timers do not survive a restart).
+  await (await import("./command-gate.ts")).expireCommandAsks(app);
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();

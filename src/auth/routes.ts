@@ -38,6 +38,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/me": "self",
   "GET /api/tools": "public",
   "POST /api/tools/:name": "public",
+  // Checks a run's token and that the request comes from this machine itself (agents/command-gate.ts).
+  "POST /api/command-gate": "public",
+  "GET /api/security/command-rules": "owner",
+  "PUT /api/security/command-rules": "owner",
   "GET /api/events": "self",
 
   // spaces

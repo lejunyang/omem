@@ -27,6 +27,7 @@ import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type Agent
 import { expandTools } from "./tool-help.ts";
 import { applyOverlay, GUEST_ROLES, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
+import { commandGateDir } from "./command-gate.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
@@ -473,7 +474,7 @@ export function prepareRun(
     now: `现在：${localTime(app, input.replay?.view.asOf)}`,
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
-    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token), ...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
+    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app)),...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
     extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor(spec?.mcp ?? {}, !!input.replay),
     allowWrites: readOnly ? false : spec ? spec.writes : role!.writes,
     fullAccess,

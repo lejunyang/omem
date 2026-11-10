@@ -168,8 +168,15 @@ export async function runScript(app: App, run: Run, signal?: AbortSignal) {
   const file = join(dir, `script${ext}`);
   writeFileSync(file, input.code);
   const started = Date.now();
+  // Command rules apply to scripts too (agents/command-gate.ts): the wrappers in front of PATH, and a
+  // token that only identifies this run to the gate (no tools).
+  const { commandGateDir, withGatePath } = await import("../agents/command-gate.ts");
+  const gateDir = commandGateDir(app);
+  const { issueToolToken, revokeToolToken } = await import("../agents/tools.ts");
+  const gateToken = gateDir ? issueToolToken({ runId: run.id, spaceId: run.spaceId ?? "personal", spaces: [], tools: new Set(), actor: "agent", userId: OWNER }) : null;
+  const env = gateDir ? withGatePath({ ...scriptEnv(input, dir), OMEM_URL: app.baseUrl, OMEM_TOKEN: gateToken! }, gateDir) : scriptEnv(input, dir);
   const result = await new Promise<{ code: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean }>((resolve) => {
-    const p = spawn(cmd, [file], { cwd: dir, env: scriptEnv(input, dir), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    const p = spawn(cmd, [file], { cwd: dir, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -186,6 +193,7 @@ export async function runScript(app: App, run: Run, signal?: AbortSignal) {
     p.stdin.on("error", () => {});
     p.stdin.end(JSON.stringify(input.event));
   });
+  if (gateToken) revokeToolToken(gateToken);
   // Nothing of the event or the code stays on disk once the output is in the run.
   rmSync(dir, { recursive: true, force: true });
   const ok = result.code === 0 && !result.timedOut;

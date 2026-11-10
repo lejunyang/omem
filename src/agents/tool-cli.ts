@@ -55,14 +55,16 @@ function shimDir(home: string) {
   }
 }
 
-/** Environment for an agent process of a run: its tool token, and `omem` on PATH. */
-export function agentToolEnv(home: string, baseUrl: string, token: string): Record<string, string> {
+/**
+ * Environment for an agent process of a run: its tool token, and `omem` on PATH. `gateDir`: the
+ * command rules' wrappers (command-gate.ts), put in front of everything else.
+ */
+export function agentToolEnv(home: string, baseUrl: string, token: string, gateDir: string | null = null): Record<string, string> {
   const env: Record<string, string> = { OMEM_URL: baseUrl, OMEM_TOKEN: token };
+  // Windows spells it Path; keep the one key the process already has.
+  const key = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
   const dir = shimDir(home);
-  if (dir) {
-    // Windows spells it Path; keep the one key the process already has.
-    const key = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
-    env[key] = [dir, process.env[key]].filter(Boolean).join(delimiter);
-  }
+  if (gateDir || dir) env[key] = [gateDir, dir, process.env[key]].filter(Boolean).join(delimiter);
+  if (gateDir) env.OMEM_COMMAND_GATE = gateDir;
   return env;
 }

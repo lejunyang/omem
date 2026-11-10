@@ -123,6 +123,33 @@ export function defaultReviewTiers() {
   ];
 }
 
+/**
+ * One command rule (docs/v2/command-gate.md). `approver`: `owner`, `user:<omem user id>`,
+ * `lark:<Feishu name or email>`, or `run` (the run names one of `approvers` in OMEM_APPROVER).
+ */
+export const commandRuleSchema = z
+  .object({
+    command: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/, "命令名只能是可执行文件名（字母、数字、. _ + -），不带路径"),
+    args: z.string().max(2000).default(""),
+    action: z.enum(["approve", "deny", "allow"]).default("approve"),
+    approver: z.string().trim().max(200).default("owner"),
+    approvers: z.array(z.string().trim().min(1).max(200)).max(20).default([]),
+    waitSeconds: z.number().int().min(5).max(300).default(90),
+    expireHours: z.number().min(0.1).max(168).default(24),
+    reuse: z.enum(["once", "window"]).default("once"),
+    note: z.string().max(1000).default(""),
+  })
+  .superRefine((r, ctx) => {
+    try {
+      new RegExp(r.args);
+    } catch (e) {
+      ctx.addIssue({ code: "custom", path: ["args"], message: `参数模式不是有效的正则：${(e as Error).message}` });
+    }
+    if (!/^(owner|run|user:.+|lark:.+)$/.test(r.approver)) ctx.addIssue({ code: "custom", path: ["approver"], message: "审批人要写 owner、run、user:<用户 id> 或 lark:<名字或邮箱>" });
+    for (const a of r.approvers) if (!/^(owner|user:.+|lark:.+)$/.test(a)) ctx.addIssue({ code: "custom", path: ["approvers"], message: `名单里的「${a}」要写 owner、user:<用户 id> 或 lark:<名字或邮箱>` });
+  });
+export type CommandRule = z.infer<typeof commandRuleSchema>;
+
 export const capturePolicy = z.enum(["ingest", "involved", "store", "skip"]);
 export type CapturePolicy = z.infer<typeof capturePolicy>;
 
@@ -339,6 +366,11 @@ export const configSchema = z.object({
     })
     .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [] })),
   approvals: z.object({ tools: z.array(z.string()).default([]), waitSeconds: z.number().int().min(0).max(50).default(40) }).default({ tools: [], waitSeconds: 40 }),
+  /**
+   * Commands an agent's processes may not run unchecked (docs/v2/command-gate.md): a wrapper of the
+   * same name in front of PATH asks omem first. Only the owner changes this (PUT /api/security/command-rules).
+   */
+  security: z.object({ commandRules: z.array(commandRuleSchema).max(200).default([]) }).default({ commandRules: [] }),
   /** Web VS Code under /ide: the official `code serve-web` behind omem's own auth (src/server/ide-web.ts). */
   ide: z
     .object({

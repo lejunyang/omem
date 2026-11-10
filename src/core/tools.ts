@@ -203,5 +203,8 @@ export function withAgentPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const extra = agentPathDirs();
   if (!extra.length) return env;
   const key = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
-  return { ...env, [key]: [...extra, env[key]].filter(Boolean).join(delimiter) };
+  // The command rules' wrappers (agents/command-gate.ts) stay in front of everything.
+  const gate = env.OMEM_COMMAND_GATE;
+  const rest = (env[key] ?? "").split(delimiter).filter((d) => d && d !== gate);
+  return { ...env, [key]: [...(gate ? [gate] : []), ...extra, ...rest].join(delimiter) };
 }

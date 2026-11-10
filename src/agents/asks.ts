@@ -421,7 +421,8 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
   if (!changed) throw new HttpError(409, "这个提问已经回答过了");
   // Persist and acknowledge a channel click before running effects that may block on Git.
   const finish = async (): Promise<Ask> => {
-    if (before.kind === "approval" && approved && executor) {
+    // An approval the host handles itself (a command held by the command rules) has no tool to run.
+    if (before.kind === "approval" && approved && executor && !before.handler) {
       const ctx = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}");
       const r = await executor(app, getAsk(app, id), ctx).catch((e: Error) => ({ text: e.message, isError: true }));
       run(app.db, "update asks set result = ? where id = ?", `${r.isError ? "失败：" : ""}${truncate(r.text, 4000)}`, id);

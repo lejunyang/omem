@@ -170,6 +170,8 @@ function answeredCard(app: App, ask: Ask): Record<string, unknown> {
 
 /** Where an ask goes in Feishu, or null when this channel is not the one to show it. */
 function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { target: Target; chatId: string | null; bot: string } | null {
+  // A command held by the command rules sends its own card to its approver (agents/command-gate.ts).
+  if (ask.handler === "command-gate") return null;
   // Asked of someone else: their own private chat with the bot, never the asker's chat.
   if (ask.askedBy) {
     const openId = ask.userId === OWNER ? ownerOpenId : larkOpenIdOf(app, ask.userId);

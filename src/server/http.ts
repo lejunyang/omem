@@ -40,13 +40,14 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueRe
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, configSchema, saveConfig } from "../core/config.ts";
+import { allProfiles, commandRuleSchema, configSchema, saveConfig } from "../core/config.ts";
+import { approverChoices, commandGate, syncCommandGate } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { businessOf, createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError, slugify } from "../core/util.ts";
-import { trustedLocal } from "./origin.ts";
+import { loopbackIp, trustedLocal, viaProxy } from "./origin.ts";
 import { listenSecure, type SecureListener } from "./secure.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
@@ -54,7 +55,7 @@ import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute } from "../auth/routes.ts";
 import { hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
-import { can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
+import { audit, can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
 import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, scopeFor, userForToken, userName } from "../core/users.ts";
@@ -130,7 +131,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
     // Tool routes check their own (per-run) token.
-    if (!req.url.startsWith("/api/") || /^\/api\/tools(\/|\?|$)/.test(req.url)) return;
+    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
     await checkBearer(app, bearerToken(req));
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
@@ -231,6 +232,32 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   };
   server.post("/mcp", mcp);
   server.get("/mcp", async (_req, reply) => reply.status(405).send({ error: "use POST" }));
+  // A protected command an agent's process is about to run (agents/command-gate.ts): only from this
+  // machine, only with a run's token; a long poll while the approver decides.
+  server.post("/api/command-gate", async (req) => {
+    const s = req.raw.socket;
+    if (viaProxy(req.raw) || !(loopbackIp(req.ip ?? "") || (!!s.remoteAddress && s.remoteAddress === s.localAddress))) throw new HttpError(403, "命令拦截只接受本机的请求");
+    const ctx = toolContextForToken(app, bearer(req));
+    if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
+    const b = q(z.object({ command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
+    return commandGate(app, ctx, b);
+  });
+  // The command rules: the owner's own, never an agent's (no tool writes them).
+  server.get("/api/security/command-rules", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "命令规则只有本人能看和改");
+    return { rules: app.config.security.commandRules, approvers: approverChoices(app), platform: process.platform };
+  });
+  server.put("/api/security/command-rules", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "命令规则只有本人能看和改");
+    const b = q(z.object({ rules: z.array(commandRuleSchema).max(200) }), req.body);
+    const next = structuredClone(app.config);
+    next.security = { ...next.security, commandRules: b.rules };
+    saveConfig(next, app.home);
+    Object.assign(app.config, next);
+    syncCommandGate(app.home, b.rules);
+    audit(app, who(req), "command.rules", "security", { count: b.rules.length });
+    return { rules: app.config.security.commandRules };
+  });
 
   // ------------------------------------------------------------------- events
   /**
@@ -2532,6 +2559,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app) }));
   server.put("/api/settings", async (req) => {
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });
+    // Command rules change only through their own owner-only route (agents/command-gate.ts).
+    next.security = structuredClone(app.config.security);
     // Everything else is read on use; these are only read when the service starts.
     const atStartup: [string, (c: typeof next) => unknown][] = [
       ["监听地址和端口", (c) => [c.host, c.port]],

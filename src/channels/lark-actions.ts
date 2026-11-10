@@ -123,6 +123,18 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
     }
   }
+  if (inter.purpose === "command-gate") {
+    // A command held by the command rules, waiting for its approver (agents/command-gate.ts).
+    const { decideCommandCard } = await import("../agents/command-gate.ts");
+    const approve = (value as { action?: string } | undefined)?.action === "approve";
+    try {
+      const card = await decideCommandCard(app, inter.payload as { askId?: string }, approve, operatorUser() ?? opName);
+      closeInteraction(app, inter.id, operator);
+      return { toast: { type: "success", content: approve ? "已批准" : "已拒绝" }, card: rawCard(buildCard(card as never)) };
+    } catch (e) {
+      return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
+    }
+  }
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);

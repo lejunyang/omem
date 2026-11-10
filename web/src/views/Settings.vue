@@ -15,6 +15,7 @@ import UiSelect from "../components/UiSelect.vue";
 import PluginsSettings from "../components/PluginsSettings.vue";
 import StorageUsage from "../components/StorageUsage.vue";
 import ShareSettings from "../components/ShareSettings.vue";
+import CommandRulesSettings from "../components/CommandRulesSettings.vue";
 import MembersSettings from "../components/MembersSettings.vue";
 import ProviderApps from "../components/ProviderApps.vue";
 import FederationSettings from "../components/FederationSettings.vue";
@@ -25,8 +26,8 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
-type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "connect" | "members" | "peers" | "shares" | "plugins" | "storage" | "about";
-const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "connect", "members", "peers", "shares", "plugins", "storage", "about"];
+type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "connect" | "members" | "peers" | "shares" | "security" | "plugins" | "storage" | "about";
+const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "connect", "members", "peers", "shares", "security", "plugins", "storage", "about"];
 // Other pages link to a tab (?tab=agents from the Agent page's nightly replay).
 const settingsRoute = useRoute();
 const asked = settingsRoute.query.tab;
@@ -712,7 +713,7 @@ async function saveEdit() {
   <div class="page">
     <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small">数据目录：{{ home }}</p></div></div>
     <div class="tabs">
-      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'AI'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['connect', '连接'], ['members', '成员'], ['peers', '设备'], ['shares', '分享'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
+      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'AI'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['connect', '连接'], ['members', '成员'], ['peers', '设备'], ['shares', '分享'], ['security', '安全'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
     </div>
 
     <section v-if="tab === 'spaces'" class="stack">
@@ -1265,6 +1266,9 @@ async function saveEdit() {
     </section>
     <section v-else-if="tab === 'shares'" class="stack">
       <ShareSettings />
+    </section>
+    <section v-else-if="tab === 'security'" class="stack">
+      <CommandRulesSettings />
     </section>
     <section v-else-if="tab === 'plugins'" class="stack">
       <PluginsSettings />
