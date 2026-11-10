@@ -1,7 +1,7 @@
 import { updateThread, type Thread } from "../agents/threads.ts";
 import { homeOf, noteAnchor, noteTopicRoot, replyAnchor } from "../agents/home.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
-import { queueMentionPrep } from "./lark-mentions.ts";
+import { isMentionRun, queueMention } from "./lark-mentions.ts";
 import { chatSpace } from "./lark-personal.ts";
 import { notificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
@@ -415,7 +415,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   const push = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0], deferred = false) => withBot(notifyConversation(n)?.bot, async () => {
     const to = targetOf(n);
     if (!to) return;
-    const target = { ...to, purpose: "notification" as const };
+    // A handling of someone looking for the owner (lark-mentions.ts): its card carries the run, so replying to it carries on with that work.
+    const target = { ...to, purpose: "notification" as const, ...(isMentionRun(app, n.runId) ? { runId: n.runId } : {}) };
     // The newer state of a card already sent (an authorization now done): edit that card, no new ping.
     const earlier = n.replaces ? notificationCardOf(app, n.replaces) : null;
     if (earlier) {
@@ -499,8 +500,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const r = persistChatMessages(app, { chatId: m.chatId, spaceId, name: before?.title ?? groupName(m.chatId), messages: [message], owner: ownerOpenId() });
     if (!r.id) return;
     lastCapture.set(m.messageId, r.id);
-    // Someone @-ing the owner here: the liaison reads up on it (lark-mentions.ts); an @ of the bot is the bot's to answer.
-    if (!m.mentions.includes(botOpenId ?? "")) queueMentionPrep(app, { id: m.chatId, name: before?.title ?? groupName(m.chatId), kind: "group" }, [message], ownerOpenId());
+    // Someone @-ing the owner here: triaged, maybe handled, before the owner is told (lark-mentions.ts); an @ of the bot is the bot's to answer.
+    if (!m.mentions.includes(botOpenId ?? "")) queueMention(app, { id: m.chatId, name: before?.title ?? groupName(m.chatId), kind: "group" }, [message], ownerOpenId());
     if (r.status === "unchanged") return;
     // Debounce: hand a burst of messages to the ingest role once.
     const sourceId = r.id;

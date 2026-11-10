@@ -135,6 +135,22 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
     }
   }
+  if (inter.purpose === "mention-reply") {
+    // A reply to someone who looked for the owner (mention-reply.ts): the owner sends it (maybe edited) or not.
+    const { decideMentionReply } = await import("./mention-reply.ts");
+    const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;
+    const edited = formValue && typeof formValue === "object" && typeof (formValue as { reply?: unknown }).reply === "string" ? String((formValue as { reply: string }).reply) : null;
+    const send = (value as { action?: string } | undefined)?.action !== "drop" && (edited !== null || (value as { action?: string } | undefined)?.action === "send");
+    closeInteraction(app, inter.id, operator);
+    try {
+      const card = await decideMentionReply(app, inter.payload as { runId: string; text: string }, send, edited, opName);
+      return { toast: { type: "success", content: send ? "已回复" : "不回复" }, card: rawCard(card) };
+    } catch (e) {
+      // Not sent: the card stays usable for another try.
+      run(app.db, "update card_interactions set status = 'open', handled_at = null, handled_by = null where id = ?", inter.id);
+      return { toast: { type: "error", content: `没有发出去：${(e as Error).message}`.slice(0, 80) } };
+    }
+  }
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);

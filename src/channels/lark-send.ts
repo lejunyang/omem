@@ -526,7 +526,7 @@ export type Interaction = {
   chatId: string | null;
   conversationId: string | null;
   runId: string | null;
-  purpose: "agent" | "draft" | "model" | "ask" | "guest-approval" | "meeting-join" | "rule-script" | "command-gate";
+  purpose: "agent" | "draft" | "model" | "ask" | "guest-approval" | "meeting-join" | "rule-script" | "command-gate" | "mention-reply";
   allowed: string[];
   payload: Record<string, unknown>;
   status: "open" | "done" | "expired";

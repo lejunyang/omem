@@ -37,7 +37,7 @@ function otherOf(app: App, p2pChatId: string) {
  * person's private chat — the bot cannot post there, so a group of the owner, that person and the
  * bot is made once (as the owner, like /ai拉群) and used from then on.
  */
-async function targetChat(app: App, rule: Rule, to: Target, person?: { id: string; name: string }): Promise<{ chatId: string; note: string }> {
+export async function targetChat(app: App, label: string, to: Target, person?: { id: string; name: string }): Promise<{ chatId: string; note: string }> {
   const appId = app.config.lark.appId;
   if (!appId || !app.config.lark.enabled) throw new HttpError(400, "没有配置飞书机器人（lark.appId），没法转发");
   if (to.kind === "group") {
@@ -53,7 +53,7 @@ async function targetChat(app: App, rule: Rule, to: Target, person?: { id: strin
   const other = person ? { sender_id: person.id, sender_name: person.name } : otherOf(app, to.chatId);
   if (!other) throw new HttpError(400, `私聊「${to.name || to.chatId}」里还没采集到对方的消息，不知道该拉谁进群`);
   const { larkCli } = await import("../channels/lark-cli.ts");
-  const name = truncate(`${rule.name}：${to.name || other.sender_name}`, 60);
+  const name = truncate(`${label}：${to.name || other.sender_name}`, 60);
   const created = await larkCli(["im", "+chat-create", "--as", "user", "--name", name, "--users", other.sender_id, "--bots", appId, "--format", "json"], 60_000);
   const chatId = String(created?.data?.chat_id ?? created?.chat_id ?? "");
   if (!chatId) throw new HttpError(502, "建群没有返回群 id");
@@ -72,17 +72,17 @@ export async function forwardAction(app: App, rule: Rule, a: ForwardAction, e: R
     if (!e.awaited) throw new HttpError(400, "“回到触发的会话”要放在“等某个会话的新消息”后面：转回去的是等到的那条");
     if (!e.chat) throw new HttpError(400, "这次触发没有会话");
     if (e.chat.kind === "group") {
-      const { note } = await targetChat(app, rule, { chatId: e.chat.id, name: e.chat.name, kind: "group" });
+      const { note } = await targetChat(app, rule.name, { chatId: e.chat.id, name: e.chat.name, kind: "group" });
       await sendLark({ replyTo: e.message.id, inThread: !!e.message.topicId, uuid: uuidFor(e.chat.id) }, { markdown: forwardText(e, a.note) });
       return { action: "forward", ok: true, detail: `已回复在「${e.chat.name}」的这条消息下${note}` };
     }
     if (e.sender?.kind !== "user" || !e.sender.id) throw new HttpError(400, "私聊的对方不是人（或不知道是谁），没法拉群");
-    const { chatId, note } = await targetChat(app, rule, { chatId: e.chat.id, name: e.chat.name, kind: "p2p" }, { id: e.sender.id, name: e.sender.name });
+    const { chatId, note } = await targetChat(app, rule.name, { chatId: e.chat.id, name: e.chat.name, kind: "p2p" }, { id: e.sender.id, name: e.sender.name });
     await sendLark({ chatId, uuid: uuidFor(chatId) }, { markdown: forwardText(e, a.note) });
     return { action: "forward", ok: true, detail: `已发到和 ${e.sender.name} 的群${note}` };
   }
   if (e.chat?.id === a.to.chatId && !e.awaited) return { action: "forward", ok: true, detail: "目标就是消息所在的会话，没有转发" };
-  const { chatId, note } = await targetChat(app, rule, a.to as Target);
+  const { chatId, note } = await targetChat(app, rule.name, a.to as Target);
   await sendLark({ chatId, uuid: uuidFor(chatId) }, { markdown: forwardText(e, a.note) });
   return { action: "forward", ok: true, detail: `已转发到「${a.to.name || a.to.chatId}」${note}` };
 }

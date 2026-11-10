@@ -415,21 +415,32 @@ ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
-      // FAKE_MODE=liaison: someone looking for the owner (lark-mentions.ts). Reads the cited line, then
-      // notifies with it (FAKE_LIAISON unset), stays quiet (=quiet) or ends without a word (=silent).
-      if (process.env.FAKE_MODE === "liaison") {
+      // FAKE_MODE=mention: someone looking for the owner (lark-mentions.ts). The triage on the general model
+      // answers FAKE_TRIAGE (JSON); a handling reads the cited line, replies to the asker when it may
+      // (FAKE_REPLY), then writes the reminder — or stays quiet (FAKE_MENTION=quiet), or says nothing (=silent).
+      if (process.env.FAKE_MODE === "mention") {
+        if (prompt.includes('只输出 JSON：{"action"')) {
+          await say(process.env.FAKE_TRIAGE ?? '{"action":"handle","what":"问退款口径","handler":"assistant","urgency":"normal","canProgress":true,"reason":"在问一个能查的问题"}');
+          return { stopReason: "end_turn" as const };
+        }
+        if (process.env.FAKE_PROMPT_FILE) appendFileSync(process.env.FAKE_PROMPT_FILE, JSON.stringify(prompt) + "\n");
         const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
-        const client = new Client({ name: "fake-liaison", version: "1" });
+        const client = new Client({ name: "fake-mention", version: "1" });
         await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
         try {
+          const direct = new Set((await client.listTools()).tools.map((t) => t.name));
+          const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
           const ref = /src:[A-Za-z0-9_-]+#L\d+/.exec(prompt)?.[0];
-          const tools = (await client.listTools()).tools.map((t) => t.name);
-          const read = ref ? await client.callTool({ name: "read_source", arguments: { source: ref.slice(4).split("#")[0] } }) : null;
-          let notified: unknown = null;
-          if (process.env.FAKE_LIAISON === "quiet") await client.callTool({ name: "stay_quiet", arguments: { reason: "群里已经有人回答了" } });
-          else if (process.env.FAKE_LIAISON !== "silent")
-            notified = await client.callTool({ name: "notify", arguments: { title: "小王问退款口径：按未发货行算，可直接回", body: `小王要退款金额的算法。案例页写明只退未发货的行。\n\n可以这样回：按未发货的行算，已发货的不退。\n\n[原消息](${ref})`, source_refs: ref ? [ref] : [] } });
-          await say(JSON.stringify({ tools, read: !!read && !read.isError, notified }));
+          const read = ref ? await call("read_source", { source: ref.slice(4).split("#")[0] }) : null;
+          if (process.env.FAKE_MENTION === "quiet") {
+            await call("stay_quiet", { reason: "群里已经有人回答了" });
+            await say("不用提醒");
+            return { stopReason: "end_turn" as const };
+          }
+          if (process.env.FAKE_MENTION === "silent") return { stopReason: "end_turn" as const };
+          const replied = process.env.FAKE_REPLY ? await call("reply_to_asker", { text: process.env.FAKE_REPLY }) : null;
+          const said = replied ? ((replied.content as { text?: string }[])[0]?.text ?? "") : "";
+          await say(`小王问退款口径：按未发货行算，可以直接回\n\n小王要退款金额的算法，案例页写明只退未发货的行。${read && !read.isError ? "（读了原件）" : ""}${said ? `\n\n回复：${said}` : ""}\n\n[原消息](${ref})`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }

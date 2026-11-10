@@ -6,7 +6,7 @@ import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
 
-export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "speaking-review" | "mention-prep";
+export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "speaking-review" | "mention";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
   /** Background run that found nothing to do; hidden from the default run list. */
@@ -456,7 +456,7 @@ function kick(app: App) {
         const status = controller.signal.aborted ? "cancelled" : "done";
         // A quiet background inspection (nothing new, stay_quiet) stays out of the run list; so does a
         // conversation turn that a wake-up or a watched group's batch started and that had nothing to say.
-        const quiet = status === "done" && out && (out as { quiet?: boolean }).quiet === true && (!INTERACTIVE.has(r.kind) || r.input.wake === true || r.kind === "ask") ? 1 : 0;
+        const quiet = status === "done" && out && (out as { quiet?: boolean }).quiet === true && (!INTERACTIVE.has(r.kind) || r.input.wake === true || !!r.input.mention || r.kind === "ask") ? 1 : 0;
         run(app.db, "update runs set status=?, quiet=?, finished_at=? where id=?", status, quiet, now(), r.id);
         if (r.kind === "code") trySettleCodeChain(app, r.id);
         if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);

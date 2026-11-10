@@ -9,8 +9,8 @@ import { threadMessages } from "./threads.ts";
  * happens to read "QUIET" is sent like any other.
  */
 export function mayStayQuiet(app: App, run: Run): boolean {
-  const input = run.input as { wake?: unknown; rule?: unknown; silent?: unknown; meeting?: unknown; coordinate?: unknown; fromAsk?: unknown; handoff?: { kind?: string }; conversationId?: string; messageIds?: string[] };
-  if (run.kind === "agent") return !!(input.wake || input.rule || input.silent || input.meeting);
+  const input = run.input as { wake?: unknown; rule?: unknown; silent?: unknown; meeting?: unknown; mention?: unknown; coordinate?: unknown; fromAsk?: unknown; handoff?: { kind?: string }; conversationId?: string; messageIds?: string[] };
+  if (run.kind === "agent") return !!(input.wake || input.rule || input.silent || input.meeting || input.mention);
   if (run.kind === "ask") {
     // Tasks handed back for the assistant to settle: the owner needs to hear only what is left for them.
     if (input.handoff?.kind === "code-tasks") return true;

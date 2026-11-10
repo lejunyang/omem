@@ -84,7 +84,7 @@ export const roleNames = [
   "req-splitter",
   "speaking-coach",
   "business-analyst",
-  "liaison",
+  "mention-triage",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -722,10 +722,16 @@ export const configSchema = z.object({
         })
         .default({ enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 }),
       /**
-       * Someone looking for the owner (src/channels/lark-mentions.ts): a person @-ing the owner in a group,
-       * or writing to them one-to-one (`p2p`). After `delayMinutes`, if the owner has not read, reacted or
-       * answered, the liaison role reads the context, looks up what is known and notifies with a conclusion
-       * and a draft reply; when it fails or runs past `timeoutMinutes`, the short reminder goes out instead.
+       * Someone looking for the owner (src/channels/lark-mentions.ts, docs/v2/mentions.md): a person
+       * @-ing the owner in a group, or writing to them one-to-one (`p2p`). Free checks first (after
+       * `delayMinutes`: read, reacted, answered, or a watch / rule already on it); then one small
+       * judgement (the mention-triage role, on the decision model; `noDecision` without one): ignore,
+       * a short reminder, or handle — the main assistant (or an Agent 档案) reads up and tells the owner,
+       * the short reminder going out when it fails or runs past `timeoutMinutes`. `guidance`: the
+       * owner's words for the triage. `perDay`: triages and handlings a day, past which the short
+       * reminder goes out. `reply`: whether the handler may answer the asker — off, a draft the owner
+       * sends with one click, or auto (only when the triage also found it can move on alone); a private
+       * chat is answered in a group of the owner, them and the bot (`p2pVia: group`) or as the owner, signed.
        */
       mentions: z
         .object({
@@ -733,8 +739,18 @@ export const configSchema = z.object({
           p2p: z.boolean().default(true),
           delayMinutes: z.number().int().min(0).max(240).default(3),
           timeoutMinutes: z.number().int().min(1).max(60).default(10),
+          guidance: z.string().max(4000).default(""),
+          noDecision: z.enum(["general", "notify", "handle"]).default("general"),
+          perDay: z.object({ triage: z.number().int().min(0).max(1000).default(80), handle: z.number().int().min(0).max(500).default(20) }).default({ triage: 80, handle: 20 }),
+          reply: z
+            .object({
+              group: z.enum(["off", "draft", "auto"]).default("off"),
+              p2p: z.enum(["off", "draft", "auto"]).default("off"),
+              p2pVia: z.enum(["group", "signed"]).default("group"),
+            })
+            .default({ group: "off", p2p: "off", p2pVia: "group" }),
         })
-        .default({ enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10 }),
+        .default({ enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { group: "off", p2p: "off", p2pVia: "group" } }),
       /**
        * Knowledge bases the owner can see (src/channels/lark-knowledge.ts, read-only): discovered weekly,
        * sorted into spaces by the kb-scout role along `direction` (the owner's words), and read a little
@@ -786,7 +802,7 @@ export const configSchema = z.object({
       },
       guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
-      mentions: { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10 },
+      mentions: { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { group: "off", p2p: "off", p2pVia: "group" } },
       knowledge: { direction: "", autoApply: false, dailyDocs: 30 },
     }),
   telegram: z
