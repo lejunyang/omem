@@ -6,6 +6,7 @@ import { getThread } from "./threads.ts";
 import type { Run } from "./runs.ts";
 import { createRun, getRun, setRunOutput, updateQueuedRun } from "./runs.ts";
 import { refreshWork, workForChild } from "./agent-work.ts";
+import { homeOf, moveHome } from "./home.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { goalText, isTaskWork, listTasks, POLISH_STAGES, waitingText, workRootOf, workState } from "./code-tasks.ts";
@@ -273,8 +274,9 @@ function assistantTurnFor(app: App, rootId: string) {
  * and cards all go there; the Feishu progress card stays where it was posted.
  */
 export function reportConversation(app: App, chain: CodeChain, r?: Run) {
-  const steered = chain.askRunId ? (getRun(app, chain.askRunId).output as { codeReportTo?: string }).codeReportTo : undefined;
-  if (steered) return steered;
+  // The owner carried the work on elsewhere (agents/home.ts; older chains kept it as codeReportTo).
+  const home = chain.askRunId ? homeOf(app, chain.askRunId) : null;
+  if (home && home.movedAt !== undefined) return home.conversationId;
   const work = (r ? workForChild(app, r) : null) ?? (chain.askRunId ? refreshWork(app, chain.askRunId) : null);
   return work?.workConversationId ?? chain.conversationId;
 }
@@ -291,8 +293,9 @@ export function followOwner(app: App, runId: string, conversationId: string | un
   const owner = (id: string) => one<{ user_id: string | null }>(app.db, "select user_id from conversations where id = ?", id)?.user_id ?? null;
   if (owner(conversationId) !== userId || owner(chain.conversationId) !== userId) return false;
   if (reportConversation(app, chain) === conversationId) return false;
-  setRunOutput(app, chain.askRunId, { codeReportTo: conversationId });
-  return true;
+  // Where the whole work is followed moves, not only this delegation's reports: wake-ups and other
+  // rounds started from the same request follow too.
+  return moveHome(app, chain.askRunId, conversationId, null, { pin: true });
 }
 
 /**

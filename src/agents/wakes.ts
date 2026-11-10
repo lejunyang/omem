@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run as exec } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { addMessage, findThread } from "./threads.ts";
+import { homeFor } from "./home.ts";
 import { cancelRun, createRun, getRun, queuedInLane, registerHandler, updateQueuedRun } from "./runs.ts";
 
 /**
@@ -79,7 +80,8 @@ function ownerSpokeSince(app: App, conversationId: string, since: string) {
  * it set the wake for itself, reporting to the conversation it was set from.
  */
 export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: string; skipped?: string } {
-  const { target } = w;
+  // Set where the work was then; the owner may have carried it on elsewhere since (agents/home.ts).
+  const target = w.target.conversationId ? { ...w.target, conversationId: homeFor(app, w.setBy.runId, w.target.conversationId, w.setAt) } : w.target;
   if (target.conversationId && w.skipIfOwnerSpoke && ownerSpokeSince(app, target.conversationId, w.setAt)) return { skipped: "本人之后已经说过话" };
   const stamp = (iso: string) => new Date(iso).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   const body = `${w.setBy.agent} 在 ${stamp(w.setAt)} 设的唤醒，现在（${stamp(now())}）到了${trigger ? `；触发它的事件：${trigger}` : ""}。备注：${w.note}`;

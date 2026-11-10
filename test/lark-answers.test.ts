@@ -138,10 +138,11 @@ describe("answers in groups and where thinking bubbles go", async () => {
   it("a background turn whose anchor has since become a topic's root shows its bubble inside that topic", async () => {
     const turn = async (anchor: string) => {
       const t = createThread(app, { channel: "lark", key: `oc_chat_${anchor}`, spaceId: "personal", userId: "owner" });
-      updateThread(app, t.id, { settings: { lastMessageId: anchor, lastTopicId: null } });
+      updateThread(app, t.id, { settings: { lastMessageId: "om_unrelated_meeting", lastTopicId: null } });
       // A delegation's result handed to the assistant (no worker picks it: it is already running).
       const id = newId("r");
-      run(app.db, "insert into runs(id,kind,space_id,status,title,input,created_at) values(?,?,?,?,?,?,?)", id, "ask", "personal", "running", "编码交办的结果", JSON.stringify({ conversationId: t.id, messageIds: [], handoff: { kind: "code", workId: "r_work" } }), new Date().toISOString());
+      // The work's own latest message in this chat is the anchor (agents/home.ts), not whatever the chat said last.
+      run(app.db, "insert into runs(id,kind,space_id,status,title,input,output,created_at) values(?,?,?,?,?,?,?,?)", id, "ask", "personal", "running", "编码交办的结果", JSON.stringify({ conversationId: t.id, messageIds: [], handoff: { kind: "code", workId: "r_work" } }), JSON.stringify({ home: { conversationId: t.id, anchor } }), new Date().toISOString());
       app.emit({ type: "run", runId: id, status: "running" });
       await expect.poll(() => cots.find((c) => c.origin === anchor), { timeout: 5_000 }).toBeTruthy();
       app.emit({ type: "run", runId: id, status: "done" });

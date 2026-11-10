@@ -48,6 +48,7 @@ import { addWatch, listWatches, removeWatch, syncWatches } from "../plugins/plat
 import { confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOutput } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
+import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
@@ -1111,11 +1112,16 @@ def({
         execution, assistantScope,
       });
       // Open the Feishu topic from the message that triggered this ask (lark only).
-      const larkChat = one<{ external_id: string }>(ctx.app.db, "select external_id from conversations where id = ?", conversationId);
-      const anchor = larkChat?.external_id && !larkChat.external_id.includes("#")
-        ? one<{ id: string }>(ctx.app.db, "select json_extract(meta, '$.externalId') id from messages where run_id = ? and role = 'user' order by created_at desc limit 1", ctx.runId!)?.id
+      const larkChat = one<{ channel: string; external_id: string | null }>(ctx.app.db, "select channel, external_id from conversations where id = ?", conversationId);
+      const inChat = !!larkChat?.external_id && (larkChat.channel === "lark" || larkChat.channel.startsWith("lark:")) && !larkChat.external_id.includes("#");
+      // The topic opens under the owner's message this turn answers; a turn nobody sent (a wake-up, a
+      // result handed back) opens it under this work's own latest message here (agents/home.ts).
+      const anchor = inChat
+        ? one<{ id: string }>(ctx.app.db, "select json_extract(meta, '$.externalId') id from messages where run_id = ? and role = 'user' and json_extract(meta, '$.externalId') is not null order by created_at desc limit 1", ctx.runId!)?.id
+          ?? replyAnchor(ctx.app, ctx.runId, conversationId) ?? undefined
         : undefined;
       if (anchor) void import("./agent-work.ts").then(({ openWorkTopic }) => openWorkTopic(ctx.app, w.work, anchor));
+      if (inChat && !anchor) return `已在独立工作会话把这件事交给 ${spec.name}，运行 ${w.runId}。这里没有这件事自己的飞书消息可以挂话题，它的结论和要本人决定的事会直接发在本会话（不是话题），不要说“已在话题里”。`;
       return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
     const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId }, parentId: ctx.runId });
@@ -5089,6 +5095,30 @@ async function followFrom(ctx: ToolContext, runId: string | undefined): Promise<
   }
 }
 
+/**
+ * The owner's turn acted on a run of some work (by its run or work id) from another conversation of
+ * theirs: the work is followed here from now on (agents/home.ts) — its wake-ups, results and replies
+ * come here. Reading about it (read_run) is not carrying it on; only a write does.
+ */
+function followWork(ctx: ToolContext, args: Record<string, unknown>): string {
+  const ids = [args.run_id, args.work_id].filter((x): x is string => typeof x === "string" && x.startsWith("r"));
+  if (!ids.length || !ctx.runId || !ownerAskedThisTurn(ctx)) return "";
+  const me = one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId);
+  const conversationId = me ? (JSON.parse(me.input) as { conversationId?: string }).conversationId : undefined;
+  if (!conversationId) return "";
+  const mine = (id: string) => one<{ user_id: string | null }>(ctx.app.db, "select user_id from conversations where id = ?", id)?.user_id === (ctx.userId ?? OWNER);
+  if (!mine(conversationId)) return "";
+  const anchor = one<{ id: string | null }>(ctx.app.db, "select json_extract(meta, '$.externalId') id from messages where run_id = ? and role = 'user' and json_extract(meta, '$.externalId') is not null order by created_at desc limit 1", ctx.runId)?.id ?? null;
+  let moved = false;
+  for (const id of ids) {
+    if (!one(ctx.app.db, "select 1 from runs where id = ?", id)) continue;
+    const from = homeOf(ctx.app, id)?.conversationId;
+    if (!from || from === conversationId || !mine(from)) continue;
+    if (moveHome(ctx.app, id, conversationId, anchor)) moved = true;
+  }
+  return moved ? "\n这件事之后的结果、唤醒和汇报都发在这个会话。" : "";
+}
+
 async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown): Promise<{ text: string; isError: boolean }> {
   const parsed = { data };
   try {
@@ -5096,7 +5126,7 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
     // ... and Feishu as the person this run works for (their own connection; src/auth/lark-user.ts).
     const text = await asLarkUser(ctx.app, ctx.userId ?? OWNER, () => withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data)));
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
-    const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : "";
+    const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : tool.write ? followWork(ctx, parsed.data as Record<string, unknown>) : "";
     return { text: text + moved + (await steering(ctx)), isError: false };
   } catch (error) {
     return { text: (error as Error).message + (await steering(ctx)), isError: true };

@@ -15,6 +15,7 @@ import { appendToSource, getSource, sourceText } from "../sources/store.ts";
 import { folderOverview, listPages, organizeNeeds, pageExists, syncWiki } from "../wiki/store.ts";
 import { runCodeTask } from "./code.ts";
 import { deliverToThread, receive } from "./inbox.ts";
+import { homeFor } from "./home.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import { replyOf } from "./types.ts";
 import { quietReason } from "./quiet.ts";
@@ -183,7 +184,11 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
     return `**${agent}**（运行 ${id}）\n\n${body}`;
   }).filter(Boolean);
   const details = reports.length ? { details: reports.join("\n\n---\n\n"), detailsTitle: reports.length > 1 ? `${reports.length} 份完整报告` : `完整报告（${reports[0].slice(2, reports[0].indexOf("**", 2))}）` } : {};
-  const target = work ? workDeliveryTarget(ctx.app, work) : workConv;
+  // Where the owner follows the work: its topic or where it was asked — or wherever they carried the
+  // work on since it started (agents/home.ts).
+  const planned = work ? workDeliveryTarget(ctx.app, work) : workConv;
+  const startedAt = one<{ created_at: string }>(ctx.app.db, "select created_at from conversations where id = ?", work?.workConversationId ?? workConv)?.created_at ?? "";
+  const target = homeFor(ctx.app, ctx.run.id, planned, startedAt);
   const full = { ...meta, runId: ctx.run.id, coordinate: coordinate.workId, ...details };
   // The work conversation keeps the reply either way (the assistant's next turn reads it there).
   const id = target === workConv ? null : addMessage(ctx.app, workConv, "assistant", answer, ctx.run.id, full);

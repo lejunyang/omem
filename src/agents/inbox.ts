@@ -4,6 +4,7 @@ import { HttpError, now, truncate } from "../core/util.ts";
 import { injectionScore } from "../sources/guard.ts";
 import { reviewReply, runCommand } from "./commands.ts";
 import { createRun, queuedInLane, updateQueuedRun } from "./runs.ts";
+import { moveHome, runOfLarkMessage } from "./home.ts";
 import { addMessage, createThread, findThread, resolveThread, updateThread, type Thread, type ThreadAddress } from "./threads.ts";
 
 /**
@@ -138,6 +139,8 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   if (inb.speaker) meta.speaker = inb.speaker;
   if (inb.asker) meta.asker = inb.asker;
   const messageId = addMessage(app, thread.id, "user", text, null, meta);
+  // The owner replying to a message of some work carries that work on here (agents/home.ts).
+  if (inb.quote?.messageId && userId === OWNER && !inb.speaker && !inb.asker) followQuoted(app, inb.quote.messageId, thread.id, inb.externalMessageId);
   const mergeMs = inb.mergeMs ?? (inb.conversationId || !inb.channel || inb.channel === "web" || inb.channel === "cli" ? 0 : app.config.sessions.mergeMs);
   const notBefore = new Date(Date.now() + mergeMs).toISOString();
 
@@ -166,6 +169,17 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   app.db.prepare("update messages set run_id = ? where id = ?").run(run.id, messageId);
   steerSoon(app, thread.id);
   return { thread, messageId, runId: run.id, merged: false, reply: null, started };
+}
+
+function followQuoted(app: App, quoted: string, conversationId: string, anchor: string | undefined) {
+  try {
+    const chatId = (findThread(app, conversationId)?.key ?? "").split("#")[0];
+    if (!chatId) return;
+    const runId = runOfLarkMessage(app, quoted, chatId);
+    if (runId) moveHome(app, runId, conversationId, anchor ?? null);
+  } catch (e) {
+    console.warn("[omem] 记录这件事换到哪里聊失败：", (e as Error).message);
+  }
 }
 
 /** A turn already running in this conversation gets the new words now when its agent can take them. */

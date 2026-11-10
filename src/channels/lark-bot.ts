@@ -1,4 +1,5 @@
-import { updateThread } from "../agents/threads.ts";
+import { updateThread, type Thread } from "../agents/threads.ts";
+import { homeOf, noteAnchor, noteTopicRoot, replyAnchor } from "../agents/home.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
 import { queueMentionPrep } from "./lark-mentions.ts";
 import { chatSpace } from "./lark-personal.ts";
@@ -258,6 +259,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   // What every bot posts is recorded, so reactions on it find their run.
   onLarkSent((sent) => {
     recordLarkSent(app, sent);
+    if (sent.topicRoot) noteTopicRoot(app, sent.topicRoot.root, sent);
     if (sent.topicRoot && sent.chatId) releaseTopicRoot(app, sent.chatId, sent.topicRoot.root, sent);
   });
   // Shared by all bots; each follows the conversation or card it belongs to.
@@ -309,18 +311,47 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   // Later results for a thread (delegated agents…) go back to the same chat, inside the topic when there is one.
   registerThreadSender(channel, (thread, raw, meta, omemId) => withBot(ref, async () => {
     const [chatId, keyTopic] = (thread.key ?? "").split("#");
+    if (!chatId) return;
+    const runId = typeof meta.runId === "string" ? meta.runId : null;
+    try {
+      await postToThread(thread, chatId, keyTopic, raw, meta, omemId, runId);
+    } catch (e) {
+      // The topic or chat is gone for the bot (deleted, bot removed): the owner's private chat, saying what it follows up.
+      if (!GONE.test(errorText(e)) || ownerPrivateChat(chatId)) throw e;
+      const to = kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null;
+      if (!to) throw e;
+      const line = homeOf(app, runId);
+      const lead = `（${line ? `「${truncateTitle(line.title)}」的后续` : "后续消息"}：原来的${keyTopic || thread.settings.lastTopicId ? "话题" : "群"}发不进去了，改发在这里）\n\n`;
+      const markdown = await resolveCitations(app, raw, { runId, chatId: "chatId" in to ? to.chatId : undefined });
+      const posted = await sendLark({ ...to, bot: "main", purpose: "answer", runId, conversationId: thread.id }, { markdown: lead + markdown });
+      run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?, '$.fallback', 'owner-chat') where id = ?", posted.messageId, omemId);
+    }
+  }));
+
+  /** Feishu errors meaning the place itself is gone for the bot, not a passing failure. */
+  const GONE = /230002|230011|not (a )?member|bot is not in|chat (does )?not exist|chat_not_found|been (deleted|recalled|withdrawn)|thread.{0,20}(not (found|exist)|deleted)/i;
+  const errorText = (e: unknown) => `${(e as Error)?.message ?? ""} ${String((e as any)?.response?.data?.code ?? (e as any)?.code ?? "")} ${String((e as any)?.response?.data?.msg ?? "")}`;
+  const ownerPrivateChat = (chatId: string) => chatId === kv(app, "lark_owner_chat");
+  const truncateTitle = (t: string) => (t.length > 40 ? `${t.slice(0, 40)}…` : t);
+
+  async function postToThread(thread: Thread, chatId: string, keyTopic: string | undefined, raw: string, meta: Record<string, unknown>, omemId: string, runId: string | null) {
     const topic = thread.settings.lastTopicId ?? keyTopic;
-    // What it became in Feishu: a later citation of it (`msg:`) opens the chat at it.
+    // What it became in Feishu: a later citation of it (`msg:`) opens the chat at it; in the work's
+    // home it is what the work's next post replies to (agents/home.ts).
     const sent = async (id: string | undefined) => {
       if (!id) return;
       run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where id = ?", id, omemId);
-      if (typeof meta.runId === "string") await showSuggestions(app, meta.runId).catch((e) => console.warn("[omem] 回答后的确认卡片发送失败：", (e as Error).message));
+      noteAnchor(app, runId, thread.id, id);
+      if (runId) await showSuggestions(app, runId).catch((e) => console.warn("[omem] 回答后的确认卡片发送失败：", (e as Error).message));
     };
-    if (!chatId) return;
     // Internal citations and paths on this machine mean nothing in Feishu.
-    const cite = { runId: typeof meta.runId === "string" ? meta.runId : null, chatId };
+    const cite = { runId, chatId };
     const markdown = await resolveCitations(app, raw, cite);
     const note = answerNote(app, cite.runId);
+    // Inside a topic any of its messages keeps the reply there. In the chat itself a reply quotes,
+    // so it quotes only this work's own latest message there, or nothing — never whatever the chat
+    // said last (a meeting's conclusion, another task's request).
+    const quote = topic ? thread.settings.lastMessageId : replyAnchor(app, runId, thread.id) ?? undefined;
     // First message of a multi-agent work topic: open the topic from the request message.
     if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
       const opened = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true, runId: cite.runId, conversationId: thread.id }, { markdown, note });
@@ -352,12 +383,12 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (details) {
       const { buildCard } = await import("./lark-send.ts");
       const card = buildCard({ wide: true, blocks: [{ markdown }, { fold: { title: String(meta.detailsTitle ?? "完整记录"), markdown: await resolveCitations(app, details, cite) } }, ...(note ? [{ note }] : [])] });
-      const to = thread.settings.lastMessageId ? { replyTo: thread.settings.lastMessageId, inThread: !!topic } : { chatId };
+      const to = quote ? { replyTo: quote, inThread: !!topic } : { chatId };
       await sent((await sendLark({ ...to, purpose: "answer", runId: cite.runId, conversationId: thread.id }, { card })).messageId);
       return;
     }
-    await sent((await reply(chatId, markdown, thread.settings.lastMessageId, !!topic, note, { runId: cite.runId, conversationId: thread.id })).messageId);
-  }));
+    await sent((await reply(chatId, markdown, quote, !!topic, note, { runId: cite.runId, conversationId: thread.id })).messageId);
+  }
 
   // Background work tied to a conversation goes there (its Feishu topic, through its bot), never as
   // a private DM; the rest reaches the owner through the main bot.
@@ -367,7 +398,9 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const t = one<{ channel: string; external_id: string | null; last: string | null; topic: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastTopicId') topic, json_extract(settings, '$.lastMessageId') last from conversations where id = ? and (channel = 'lark' or channel like 'lark:%')", cid);
     if (!t?.external_id) return null;
     const [chatId, topic] = t.external_id.split("#");
-    return { chatId, inThread: !!(t.topic ?? topic), replyTo: t.last ?? undefined, bot: botOfChannel(t.channel) };
+    const inThread = !!(t.topic ?? topic);
+    // In the chat itself only the work's own message is quoted (agents/home.ts), else none.
+    return { chatId, inThread, replyTo: (inThread ? t.last : replyAnchor(app, n.runId, cid)) ?? undefined, bot: botOfChannel(t.channel) };
   };
   const targetOf = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0]) => {
     const inThread = notifyConversation(n);

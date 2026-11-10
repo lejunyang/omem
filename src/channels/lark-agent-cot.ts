@@ -5,6 +5,7 @@ import { truncate } from "../core/util.ts";
 import { getRun, type Run } from "../agents/runs.ts";
 import { findThread } from "../agents/threads.ts";
 import { workInConversation } from "../agents/agent-work.ts";
+import { replyAnchor } from "../agents/home.ts";
 import { cotEvent, finishCot, hasCot, startCot } from "./lark-cot.ts";
 
 /**
@@ -67,7 +68,9 @@ function start(app: App, r: Run) {
   if (!t || !(t.channel === "lark" || t.channel.startsWith("lark:")) || !t.key) return false;
   const [chatId, keyTopic] = t.key.split("#");
   const topic = t.settings.lastTopicId ?? keyTopic;
-  const anchor = t.settings.lastMessageId;
+  // In the chat itself the bubble hangs under this work's own message, never one of another task
+  // (agents/home.ts); none: no bubble.
+  const anchor = topic ? t.settings.lastMessageId : replyAnchor(app, r.id, t.id);
   if (!chatId || !anchor) return false;
   // A work conversation shows its process in its own topic; before the topic exists, nowhere
   // (not in the group the work was started from).
