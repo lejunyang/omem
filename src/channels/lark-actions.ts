@@ -5,7 +5,8 @@ import { one, run, tx } from "../core/db.ts";
 import { OWNER, canWrite } from "../core/users.ts";
 import { currentBot } from "../core/bot-context.ts";
 import { larkUser } from "./lark-bots.ts";
-import { bindInteraction, buildCard, closeInteraction, deliverLark, describeAction, getInteraction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
+import { larkCardMarkdown } from "./lark-markdown.ts";
+import { bindInteraction, buildCard, closeInteraction, decidedBlocks, deliverLark, describeAction, getInteraction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
 
 /**
  * A button press, select or form submit on one of the bot's cards
@@ -96,7 +97,7 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     } catch (e) {
       return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
     }
-    return { toast: { type: "success", content: approve ? "已同意，正在处理" : "已忽略" }, card: rawCard(buildCard(guestApprovalCard(a, approve ? "approved" : "declined"))) };
+    return { toast: { type: "success", content: approve ? "已同意，正在处理" : "已忽略" }, card: rawCard(buildCard(guestApprovalCard(a, approve ? "approved" : "declined", { at: new Date().toISOString(), timeZone: app.config.timezone }))) };
   }
   if (inter.purpose === "meeting-join") {
     // A meeting rule asking whether to bring the bots in (lark-meetings.ts).
@@ -139,10 +140,9 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       addMessage(app, inter.conversationId, "assistant", choice === "send" ? "（本人确认，草稿已发出）" : "（本人决定不发这条草稿）", null, { command: true });
     // The new card goes back in the callback response, like the other cards here: an API update made
     // while the callback is still open does not reliably replace what the clicker sees.
-    const card =
-      choice === "send"
-        ? buildCard({ title: "已发送", color: "green", blocks: [{ markdown: previewOf(p.content) }, { note: `${opName} 确认发送` }] })
-        : buildCard({ title: "没有发送", color: "grey", blocks: [{ markdown: previewOf(p.content) }, { note: `${opName} 决定不发` }] });
+    const sent = choice === "send";
+    const decided = { by: opName, at: new Date().toISOString(), timeZone: app.config.timezone, verdict: sent ? "确认发送" : "决定不发" };
+    const card = buildCard({ title: sent ? "已发送" : "没有发送", color: sent ? "green" : "grey", blocks: [{ markdown: previewOf(p.content) }, ...decidedBlocks(decided)] });
     return { toast: { type: "success", content: choice === "send" ? "已发送" : "已放弃" }, card: rawCard(card) };
   }
   if (!inter.conversationId || !findThread(app, inter.conversationId)) {
@@ -259,7 +259,7 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
 
 /** The card in a card.action.trigger response must be { type: "raw", data: <card json> }. */
 export function rawCard(card: Record<string, unknown>) {
-  return { type: "raw", data: card };
+  return { type: "raw", data: larkCardMarkdown(card) };
 }
 
 function safeJson(s: string) {

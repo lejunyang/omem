@@ -7,6 +7,7 @@ import { OWNER } from "../core/users.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createRun, getRun, updateQueuedRun, cancelRun, type Run } from "../agents/runs.ts";
 import { eventSummary } from "./compile.ts";
+import { decidedBlocks } from "../channels/lark-send.ts";
 import type { Rule, RuleAction, RuleEvent } from "./types.ts";
 
 /**
@@ -92,7 +93,7 @@ async function pickApprover(app: App, a: ScriptAction, e: RuleEvent, reason: str
   return v?.who?.trim() ? { who: v.who.trim(), reason: String(v.reason ?? "") } : null;
 }
 
-export function scriptCard(input: ScriptInput, state?: "approved" | "declined" | "expired", note?: string) {
+export function scriptCard(input: ScriptInput, state?: "approved" | "declined" | "expired", note?: string, timeZone?: string) {
   const lines = input.code.split(/\r?\n/);
   const shown = lines.slice(0, 30).join("\n") + (lines.length > 30 ? `\n…（共 ${lines.length} 行）` : "");
   const blocks: Record<string, unknown>[] = [
@@ -102,7 +103,13 @@ export function scriptCard(input: ScriptInput, state?: "approved" | "declined" |
   ];
   if (input.approval.approver) blocks.push({ note: `审批人：${input.approval.approver.name}（${input.approval.approver.why}）` });
   if (!state) blocks.push({ buttons: [{ text: "执行", value: "approve", style: "primary" }, { text: "不执行", value: "decline" }] });
-  else blocks.push({ note: note ?? (state === "approved" ? "已批准，开始执行" : state === "declined" ? "不执行" : "已过期，没有执行") });
+  else
+    blocks.push(...decidedBlocks({
+      verdict: note ?? (state === "approved" ? "批准，开始执行" : state === "declined" ? "不执行" : "已过期，没有执行"),
+      by: state === "expired" ? null : input.approval.decidedBy,
+      at: state === "expired" ? null : input.approval.decidedAt,
+      timeZone,
+    }));
   return { title: state ? `规则「${input.ruleName}」的脚本` : "要执行这段脚本吗？", color: state === "approved" ? "green" : state ? "grey" : "orange", blocks };
 }
 
@@ -117,7 +124,7 @@ async function sendApprovalCard(app: App, rule: Rule, runId: string, input: Scri
 export function decideScript(app: App, payload: { runId: string }, approve: boolean, by: string) {
   const r = getRun(app, payload.runId);
   const input = r.input as unknown as ScriptInput;
-  if (r.status !== "queued") return scriptCard(input, r.status === "cancelled" ? "declined" : "approved", "已经处理过了");
+  if (r.status !== "queued") return scriptCard(input, r.status === "cancelled" ? "declined" : "approved", "已经处理过了", app.config.timezone);
   if (Date.parse(r.createdAt) + APPROVAL_DAYS * 86400_000 < Date.now()) {
     cancelRun(app, r.id);
     return scriptCard(input, "expired");
@@ -126,10 +133,10 @@ export function decideScript(app: App, payload: { runId: string }, approve: bool
   if (!approve) {
     updateQueuedRun(app, r.id, { input: { ...r.input, approval } });
     cancelRun(app, r.id);
-    return scriptCard({ ...input, approval }, "declined");
+    return scriptCard({ ...input, approval }, "declined", undefined, app.config.timezone);
   }
   updateQueuedRun(app, r.id, { input: { ...r.input, approval }, notBefore: new Date().toISOString() });
-  return scriptCard({ ...input, approval }, "approved");
+  return scriptCard({ ...input, approval }, "approved", undefined, app.config.timezone);
 }
 
 /** The program for a runtime, or why this machine cannot run it. */

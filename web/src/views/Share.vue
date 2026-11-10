@@ -23,7 +23,8 @@ const error = ref("");
 const current = computed(() => (route.params.item !== undefined && route.params.item !== "" ? Number(route.params.item) : null));
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
-const circled = (n: number) => (n <= 20 ? String.fromCodePoint(0x245f + n) : `(${n})`);
+/** The mark the message showed for it (src/channels/citations.ts citationMark). */
+const circled = (n: number) => `(${n})`;
 const KIND: Record<string, string> = { code: "代码", work: "工作文件", doc: "文档", note: "笔记", web: "网页", chat: "聊天", conversation: "对话", image: "图片" };
 
 /** Rendered Markdown with everything that would lead back into omem made inert. */

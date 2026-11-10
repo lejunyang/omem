@@ -6,7 +6,7 @@ import { jsonIn } from "../agents/oneshot.ts";
 import { runRole } from "../agents/runner.ts";
 import { createRun, getRun, waitForRun, type RunContext } from "../agents/runs.ts";
 import { replyOf } from "../agents/types.ts";
-import type { CardBlock } from "./lark-send.ts";
+import { decidedBlocks, type CardBlock } from "./lark-send.ts";
 
 /**
  * Guest mode: someone who is not a user @-ing the bot in a group (or writing to it one-to-one),
@@ -190,7 +190,7 @@ export function onGuestApproved(bot: string, fn: (inbound: unknown, by: string) 
 export type GuestApproval = { bot: string; runId: string; chatId: string; chatName?: string; senderName: string; text: string; reason: string; inbound: unknown };
 
 /** The card that asks the owner whether this person may use the assistant for this message. */
-export function guestApprovalCard(a: Pick<GuestApproval, "chatName" | "chatId" | "senderName" | "text" | "reason" | "runId">, state?: "approved" | "declined") {
+export function guestApprovalCard(a: Pick<GuestApproval, "chatName" | "chatId" | "senderName" | "text" | "reason" | "runId">, state?: "approved" | "declined", decided?: { at: string; timeZone?: string }) {
   const fields = [
     { label: "群", value: a.chatName ?? a.chatId },
     { label: "谁", value: a.senderName },
@@ -200,8 +200,18 @@ export function guestApprovalCard(a: Pick<GuestApproval, "chatName" | "chatId" |
     { markdown: `**请求**\n${truncate(a.text, 1200)}` },
     { markdown: `**门卫为什么拦下**\n${a.reason || "没有写理由"}` },
   ];
-  if (!state) blocks.push({ buttons: [{ text: "同意这次", value: "approve", style: "primary" }, { text: "不同意", value: "decline" }] });
-  blocks.push({ note: state === "approved" ? `已同意，主助手按你的身份处理这条请求 · 运行 ${a.runId}` : state === "declined" ? `已忽略 · 运行 ${a.runId}` : `只有你能看到这张卡片。同意后由主助手处理这条请求（能用你的工具和资料），不同意就不理会 · 运行 ${a.runId}` });
+  if (!state) {
+    blocks.push({ buttons: [{ text: "同意这次", value: "approve", style: "primary" }, { text: "不同意", value: "decline" }] });
+    blocks.push({ note: `只有你能看到这张卡片。同意后由主助手处理这条请求（能用你的工具和资料），不同意就不理会 · 运行 ${a.runId}` });
+  } else
+    blocks.push(...decidedBlocks({
+      verdict: state === "approved" ? "同意，主助手按你的身份处理这条请求" : "不同意，不理会",
+      by: "本人",
+      at: decided?.at,
+      timeZone: decided?.timeZone,
+      result: `运行 ${a.runId}`,
+      plain: true,
+    }));
   return { title: state === "approved" ? "已同意访客使用" : state === "declined" ? "没有同意访客使用" : "有人想用你的机器人，被门卫拦下了", color: state === "approved" ? "green" : state === "declined" ? "grey" : "orange", blocks };
 }
 

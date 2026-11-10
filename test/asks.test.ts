@@ -155,6 +155,39 @@ describe("asking the owner", () => {
     expect(JSON.stringify(askCard(app, getAsk(app, a.id)))).toContain("已拒绝");
   });
 
+  it("an answered approval card says who decided and when, and folds the tool's output under one line", () => {
+    const { app, runId } = working("done");
+    try {
+      app.config.timezone = "Asia/Shanghai";
+      const a = createAsk(app, { runId, kind: "approval", question: "以你的身份修改：\n- 别人的表格《项目 A 排期》", tool: "lark_write", args: {} });
+      const output = `已执行（sheets +cells-set，别人的表格《项目 A 排期》）：\n${JSON.stringify({ revision: 14, updated_cells_count: 500 }, null, 2)}\n写后用 lark_read 读一次核对。`;
+      run(app.db, "update asks set status = 'answered', approved = 1, answered_by = 'owner', answered_at = '2026-11-10T02:49:46.768Z', result = ? where id = ?", output, a.id);
+      const card = askCard(app, getAsk(app, a.id)) as any;
+      expect(card.header).toMatchObject({ title: { content: "已批准并执行" }, template: "green" });
+      const els = card.body.elements;
+      expect(els.map((e: any) => e.tag)).toEqual(["markdown", "markdown", "markdown", "collapsible_panel"]);
+      expect(els[1]).toMatchObject({ text_size: "notation", content: "<font color='grey'>本人 · 11-10 10&#58;49　批准</font>" });
+      expect(els[2].content).toBe("<font color='green'>完成</font>　已执行（sheets +cells-set，别人的表格《项目 A 排期》）");
+      // The output for the agent stays out of sight: folded, closed, in a code block.
+      expect(els[3]).toMatchObject({ expanded: false, header: { title: { content: "完整输出" } } });
+      expect(els[3].elements[0].content).toMatch(/^```\n\{\n {2}"revision": 14,[\s\S]*读一次核对。\n```$/);
+      expect(JSON.stringify(card)).not.toContain("\"button\"");
+      expect(els.slice(0, 3).map((e: any) => e.content).join("\n")).not.toContain("revision");
+
+      const failed = createAsk(app, { runId, kind: "approval", question: "改文档", tool: "lark_doc_update", args: {} });
+      run(app.db, "update asks set status = 'answered', approved = 1, answered_by = 'owner', answered_at = '2026-11-10T02:49:46.768Z', result = '失败：飞书 CLI 调用失败，请检查登录和网络' where id = ?", failed.id);
+      const f = askCard(app, getAsk(app, failed.id)) as any;
+      expect(f.header).toMatchObject({ title: { content: "已批准，执行失败" }, template: "red" });
+      expect(f.body.elements.at(-1).content).toBe("<font color='red'>失败</font>　飞书 CLI 调用失败，请检查登录和网络");
+
+      const refused = createAsk(app, { runId, kind: "approval", question: "删掉旧事项", tool: "forget", args: {} });
+      run(app.db, "update asks set status = 'answered', approved = 0, answer = '先别动', answered_by = 'owner', answered_at = '2026-11-10T02:49:46.768Z' where id = ?", refused.id);
+      const r = askCard(app, getAsk(app, refused.id)) as any;
+      expect(r.header).toMatchObject({ title: { content: "已拒绝" }, template: "grey" });
+      expect(r.body.elements.at(-1).content).toBe("<font color='grey'>本人 · 11-10 10&#58;49　拒绝：先别动</font>");
+    } finally { app.db.close(); }
+  });
+
   it("gives every long option its own wrapping row and keeps text submission after the input", async () => {
     const { app, runId } = working();
     const options = Array.from({ length: 6 }, (_, i) => ({ label: `方案${i + 1}：先核对旧订单退款口径，再分批处理历史数据并补充验收记录` }));

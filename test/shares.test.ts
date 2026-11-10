@@ -42,11 +42,11 @@ describe("citations in messages sent outside omem", () => {
     const token = tokenOf(out)!;
     expect(token).toBeTruthy();
     const lines = out.split("\n");
-    expect(lines[0]).toBe(`按[退款说明](https://tenant.larkoffice.com/docx/Guide)处理。[①](https://omem.example.test/#/share/${token}/0)`);
-    expect(lines[1]).toBe(`代码在这里。[②](https://omem.example.test/#/share/${token}/1) [③](https://omem.example.test/#/share/${token}/2)`);
+    expect(lines[0]).toBe(`按[退款说明](https://tenant.larkoffice.com/docx/Guide)处理。[(1)](https://omem.example.test/#/share/${token}/0)`);
+    expect(lines[1]).toBe(`代码在这里。[(2)](https://omem.example.test/#/share/${token}/1) [(3)](https://omem.example.test/#/share/${token}/2)`);
     // Feishu messages open in Feishu at the message when its position is known; without one, the chat
     // the answer goes to is where the reader already is, so the line is copied instead.
-    expect(lines[2]).toBe(`小王说的。[④](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=41) [⑤](https://omem.example.test/#/share/${token}/3)`);
+    expect(lines[2]).toBe(`小王说的。[(4)](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=41) [(5)](https://omem.example.test/#/share/${token}/3)`);
     expect(out).toContain("`[不动](src:x)`");
     expect(out).toContain("[也不动](src:y)");
     expect(out).not.toContain("(mem:");
@@ -93,8 +93,8 @@ describe("citations in messages sent outside omem", () => {
     const callback = { tag: "markdown", content: `[x](src:${code.id})` };
     const card = { body: { elements: [{ tag: "markdown", content: `第一段。[a](src:${code.id}#L1)` }, { tag: "markdown", content: `第二段。[b](src:${work.id}#L2)` }, { tag: "button", behaviors: [{ value: callback }] }] } };
     const out = (await resolveCardCitations(app, card, { runId: "r_owner" })) as typeof card;
-    expect(out.body.elements[0].content).toMatch(/^第一段。\[①\]\(https:\/\/omem\.example\.test\/#\/share\/[\w-]+\/0\)$/);
-    expect(out.body.elements[1].content).toMatch(/^第二段。\[②\]\(https:\/\/omem\.example\.test\/#\/share\/[\w-]+\/1\)$/);
+    expect(out.body.elements[0].content).toMatch(/^第一段。\[\(1\)\]\(https:\/\/omem\.example\.test\/#\/share\/[\w-]+\/0\)$/);
+    expect(out.body.elements[1].content).toMatch(/^第二段。\[\(2\)\]\(https:\/\/omem\.example\.test\/#\/share\/[\w-]+\/1\)$/);
     expect(out.body.elements[2].behaviors![0].value).toEqual(callback);
     expect(all(app.db, "select id from shares")).toHaveLength(1);
   });
@@ -107,7 +107,7 @@ describe("citations in messages sent outside omem", () => {
       return { ok: true, data: { messages: [{ message_id: "om_a2", message_position: "42" }] } };
     });
     const out = await resolveCitations(app, `他回了。[回复](src:${chat.id}#L2)`, {});
-    expect(out).toBe(`他回了。[①](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=42)`);
+    expect(out).toBe(`他回了。[(1)](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=42)`);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual(expect.arrayContaining(["+messages-mget", "om_a2", "--as", "user"]));
     await resolveCitations(app, `再看。[回复](src:${chat.id}#L2)`, {});
@@ -118,7 +118,7 @@ describe("citations in messages sent outside omem", () => {
     const { app } = fixture();
     run(app.db, "insert into conversations(id, space_id, channel, title, external_id, created_at, updated_at) values('c1', 'personal', 'lark', '群', ?, 'x', 'x')", `${CHAT}#omt_1`);
     run(app.db, "insert into messages(id, conversation_id, role, text, meta, created_at) values('msg0abcdefgh', 'c1', 'user', '帮我查一下', ?, 'x')", JSON.stringify({ externalId: "om_a1" }));
-    expect(resolveCitationsNow(app, ["你让我查的。msg:msg0abcdefgh"], {})[0]).toBe(`你让我查的。[①](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=41)`);
+    expect(resolveCitationsNow(app, ["你让我查的。msg:msg0abcdefgh"], {})[0]).toBe(`你让我查的。[(1)](https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}&position=41)`);
   });
 
   it("opens earlier messages of the owner's chat with the bot at them, or as a copy when Feishu has no place for them", async () => {
@@ -137,15 +137,15 @@ describe("citations in messages sent outside omem", () => {
     });
     const md = "你问过。[原话](msg:msg0asked0001)\n结论在这。[记录](msg:msg0record001)\n后来又问。[原话](msg:msg0nopos0001)";
     const out = (await resolveCitations(app, md, { chatId: DM, runId: "r_owner" })).split("\n");
-    expect(out[0]).toBe(`你问过。[①](https://applink.feishu.cn/client/chat/open?openChatId=${DM}&position=7)`);
+    expect(out[0]).toBe(`你问过。[(1)](https://applink.feishu.cn/client/chat/open?openChatId=${DM}&position=7)`);
     // Never sent to Feishu as a message, or no position known: not a link to the chat the reader is in.
-    expect(out[1]).toMatch(/^结论在这。\[②\]\(https:\/\/omem\.example\.test\/#\/share\//);
-    expect(out[2]).toMatch(/^后来又问。\[③\]\(https:\/\/omem\.example\.test\/#\/share\//);
+    expect(out[1]).toMatch(/^结论在这。\[\(2\)\]\(https:\/\/omem\.example\.test\/#\/share\//);
+    expect(out[2]).toMatch(/^后来又问。\[\(3\)\]\(https:\/\/omem\.example\.test\/#\/share\//);
     // The position is kept on the message: the next answer citing it reads nothing.
     await resolveCitations(app, "你问过。[原话](msg:msg0asked0001)", { chatId: DM });
     expect(calls).toHaveLength(1);
     // From another chat, the bot's chat itself is still the place to look.
-    expect(resolveCitationsNow(app, ["后来又问。[原话](msg:msg0nopos0001)"], { chatId: CHAT })[0]).toBe(`后来又问。[①](https://applink.feishu.cn/client/chat/open?openChatId=${DM})`);
+    expect(resolveCitationsNow(app, ["后来又问。[原话](msg:msg0nopos0001)"], { chatId: CHAT })[0]).toBe(`后来又问。[(1)](https://applink.feishu.cn/client/chat/open?openChatId=${DM})`);
   });
 });
 

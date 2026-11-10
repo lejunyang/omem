@@ -13,7 +13,7 @@ import { meetingConfirmation } from "../rules/meeting.ts";
 import type { RuleAction, RuleEvent } from "../rules/types.ts";
 import { upsertSource } from "../sources/store.ts";
 import { larkCli, larkCliCommand } from "./lark-cli.ts";
-import { larkBotInfo } from "./lark-send.ts";
+import { decidedBlocks, larkBotInfo } from "./lark-send.ts";
 
 /**
  * The owner's meetings, for rules triggered by "I joined a meeting" (docs/v2/rules.md).
@@ -413,7 +413,7 @@ function botName(app: App, ref: string) {
 
 type CardPayload = { meetingId: string };
 /** The card that asks the owner whether to bring the bots in. */
-export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "meeting_no" | "participants"> & { invited?: number | null }, plan: MeetingPlan, state?: "approved" | "declined" | "gone") {
+export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "meeting_no" | "participants"> & { invited?: number | null }, plan: MeetingPlan, state?: "approved" | "declined" | "gone", decided?: { at?: string; result?: string }) {
   const people = peopleOf(row);
   const doing = [
     plan.record ? "保存会议记录（转写、会中聊天、进出）" : "",
@@ -427,8 +427,16 @@ export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "m
     { markdown: `**拉进会的机器人**：${botNames(app, plan.bots).join("、")}${doing.length ? `\n**之后**：${doing.join("；")}` : ""}` },
     ...(plan.confirmationReason ? [{ markdown: `**确认方式**：${plan.confirmationReason}` }] : []),
   ];
-  if (!state) blocks.push({ buttons: [{ text: "拉进去", value: "approve", style: "primary" }, { text: "这次不用", value: "decline" }] });
-  blocks.push({ note: state === "approved" ? "已拉机器人入会" : state === "declined" ? "这场会议不拉机器人" : state === "gone" ? "会议已经结束" : "机器人入会后所有参会人都能看到它。会议需要允许智能体加入。" });
+  if (!state) {
+    blocks.push({ buttons: [{ text: "拉进去", value: "approve", style: "primary" }, { text: "这次不用", value: "decline" }] });
+    blocks.push({ note: "机器人入会后所有参会人都能看到它。会议需要允许智能体加入。" });
+  } else
+    blocks.push(...decidedBlocks({
+      verdict: state === "approved" ? "拉机器人入会" : state === "declined" ? "这场会议不拉机器人" : "会议已经结束",
+      ...(state === "gone" ? {} : { by: "本人", at: decided?.at, timeZone: app.config.timezone }),
+      result: decided?.result,
+      plain: true,
+    }));
   return { title: state ? `会议「${row.topic || "无标题"}」` : "要把机器人拉进会议吗？", color: state === "approved" ? "green" : state ? "grey" : "blue", blocks };
 }
 
@@ -449,13 +457,11 @@ export async function decideMeetingJoin(app: App, payload: CardPayload, approve:
   if (row.status === "ended") return meetingCard(app, row, plan, "gone");
   if (!approve) {
     update(app, row.meeting_id, { status: "declined" });
-    return meetingCard(app, row, plan, "declined");
+    return meetingCard(app, row, plan, "declined", { at: new Date().toISOString() });
   }
+  const at = new Date().toISOString();
   const detail = await startPlan(app, row.meeting_id, plan);
-  const after = getRow(app, row.meeting_id)!;
-  const card = meetingCard(app, after, plan, "approved");
-  card.blocks.splice(card.blocks.length - 1, 1, { note: detail });
-  return card;
+  return meetingCard(app, getRow(app, row.meeting_id)!, plan, "approved", { at, result: detail });
 }
 
 /** Bring the bots in and start listening, as the plan says. Returns what happened. */

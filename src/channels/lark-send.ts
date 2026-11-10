@@ -2,9 +2,10 @@ import { createReadStream, statSync } from "node:fs";
 import { basename, extname } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, json, newId, now } from "../core/util.ts";
+import { HttpError, json, newId, now, truncate } from "../core/util.ts";
 import { currentBot } from "../core/bot-context.ts";
 import type { SentPurpose } from "./lark-feedback.ts";
+import { larkCardMarkdown } from "./lark-markdown.ts";
 
 /**
  * Everything the Feishu bot can say: plain or Markdown text, replies (in a
@@ -284,6 +285,78 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
   };
 }
 
+// ---- a decided card ---------------------------------------------------------------
+
+/**
+ * How a card that asked for a decision (an approval, a draft to send, a rule's script, a guest, a
+ * meeting) ends once someone decided: who and when, the decision and their words, and what came of it
+ * in one line. Output meant for the agent (JSON, command output, notes to it) never goes on the card as
+ * is: only its first line, the rest in a closed fold, cut short.
+ */
+export type Decided = {
+  /** What was decided, in a few words: 已批准, 已拒绝, 确认发送… */
+  verdict: string;
+  /** Who decided (a name, or 本人). */
+  by?: string | null;
+  /** When (ISO); shown in `timeZone`. */
+  at?: string | null;
+  timeZone?: string;
+  /** Their words with it (a reason, a remark). */
+  words?: string | null;
+  /** What came of it: a sentence, or a tool's whole output ("失败：…" when it failed). */
+  result?: string | null;
+  /** The result is ours (a sentence written for the person), not a tool's output: shown whole. */
+  plain?: boolean;
+};
+
+/** The longest first line kept as a result's summary; longer ones are cut and the rest folded. */
+const SUMMARY_MAX = 120;
+const OUTPUT_MAX = 1500;
+
+/** A result as one line and the rest (output for the agent, folded on the card). */
+export function resultSummary(result: string): { ok: boolean; summary: string; rest: string } {
+  const text = result.trim();
+  const failed = /^失败[：:]/.test(text);
+  const body = failed ? text.replace(/^失败[：:]\s*/, "") : text;
+  const [first, ...more] = body.split("\n");
+  let summary = first.trim().replace(/[：:]\s*$/, "");
+  let rest = more.join("\n").trim();
+  if (summary.length > SUMMARY_MAX) {
+    rest = body;
+    summary = truncate(summary, SUMMARY_MAX);
+  }
+  return { ok: !failed, summary: summary || (failed ? "执行失败" : "已完成"), rest };
+}
+
+/** Month-day hour:minute in the given time zone. */
+export function shortTime(at: string, timeZone?: string) {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return "";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map((p) => [p.type, p.value]));
+  return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+/** The colour of a decided card's header: green when it went through, red when it failed, grey otherwise. */
+export function decidedColor(d: Pick<Decided, "result">, through: boolean) {
+  if (d.result && !resultSummary(d.result).ok) return "red";
+  return through ? "green" : "grey";
+}
+
+/** The blocks that end a decided card (put after what the card asked; no buttons). */
+export function decidedBlocks(d: Decided): CardBlock[] {
+  const who = [d.by, d.at ? shortTime(d.at, d.timeZone) : ""].filter(Boolean).join(" · ");
+  const blocks: CardBlock[] = [{ note: `${who ? `${cardText(who)}　` : ""}${cardText(d.verdict)}${d.words?.trim() ? `：${cardText(truncate(d.words.trim(), 300))}` : ""}` }];
+  if (!d.result?.trim()) return blocks;
+  if (d.plain) {
+    blocks.push({ markdown: truncate(d.result.trim(), 1500) });
+    return blocks;
+  }
+  const r = resultSummary(d.result);
+  blocks.push({ markdown: `${r.ok ? "<font color='green'>完成</font>" : "<font color='red'>失败</font>"}　${cardText(r.summary)}` });
+  if (r.rest) blocks.push({ fold: { title: r.ok ? "完整输出" : "错误详情", markdown: `\`\`\`\n${truncate(r.rest, OUTPUT_MAX).replace(/```/g, "'''")}\n\`\`\`` } });
+  return blocks;
+}
+
 // ---- sending ----------------------------------------------------------------------
 
 export type Target = {
@@ -336,11 +409,13 @@ export type Content =
   | { image: string }
   | { file: string };
 
-/** Markdown goes as a single-element card: Feishu renders it fully only inside cards. */
+/**
+ * Markdown goes as a single-element card: Feishu renders it fully only inside cards. Every card's
+ * Markdown is written the way Feishu renders bold (lark-markdown.ts), whoever built the card.
+ */
 function payload(c: Content): { msg_type: string; content: string } {
   if ("text" in c) return { msg_type: "text", content: JSON.stringify({ text: c.text }) };
-  if ("markdown" in c) return { msg_type: "interactive", content: JSON.stringify(buildCard({ title: c.title, blocks: [{ markdown: c.markdown }, ...(c.note ? [{ note: c.note }] : [])] })) };
-  if ("card" in c) return { msg_type: "interactive", content: JSON.stringify(c.card) };
+  if ("markdown" in c || "card" in c) return { msg_type: "interactive", content: JSON.stringify(asCard(c)) };
   if ("image" in c) return { msg_type: "image", content: JSON.stringify({ image_key: c.image }) };
   return { msg_type: "file", content: JSON.stringify({ file_key: c.file }) };
 }
@@ -374,7 +449,7 @@ const idField = (id: string) => (id.startsWith("ou_") ? "open_id" : "user_id");
  * call, both the bot and that person in the group; it cannot be a reply or open a topic).
  */
 export async function sendEphemeral(chatId: string, person: string, card: Record<string, unknown>, bot?: string | null): Promise<{ messageId: string }> {
-  const r = await larkClientFor(bot).request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card } });
+  const r = await larkClientFor(bot).request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card: larkCardMarkdown(card) } });
   const d = check(r, "发送仅部分人可见的卡片");
   reportSent({ chatId, bot, purpose: "card" }, null, d);
   return { messageId: d?.message_id };
@@ -391,11 +466,11 @@ export async function urgentLark(messageId: string, people: string[], bot?: stri
 /** Who sees a message beyond posting it: members only (`onlyTo`), and who is buzzed (`urgent`). */
 export type Delivery = { onlyTo?: { name: string; id: string }[]; urgent?: { name: string; id: string }[] };
 
-/** Card form of any text content (members-only messages must be cards). */
+/** Card form of any text content (members-only messages must be cards), its Markdown as Feishu renders it. */
 export function asCard(content: Content): Record<string, unknown> {
-  if ("card" in content) return content.card;
-  if ("markdown" in content) return buildCard({ title: content.title, blocks: [{ markdown: content.markdown }, ...(content.note ? [{ note: content.note }] : [])] });
-  if ("text" in content) return buildCard({ blocks: [{ markdown: content.text }] });
+  if ("card" in content) return larkCardMarkdown(content.card);
+  if ("markdown" in content) return larkCardMarkdown(buildCard({ title: content.title, blocks: [{ markdown: content.markdown }, ...(content.note ? [{ note: content.note }] : [])] }));
+  if ("text" in content) return larkCardMarkdown(buildCard({ blocks: [{ markdown: content.text }] }));
   throw new HttpError(400, "图片和文件不能只给部分人看");
 }
 
@@ -415,7 +490,7 @@ export async function deliverLark(to: Target, content: Content, d: Delivery = {}
 }
 
 export async function updateLarkCard(messageId: string, card: Record<string, unknown>, bot?: string | null) {
-  check(await larkClientFor(bot).im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } }), "更新卡片");
+  check(await larkClientFor(bot).im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(larkCardMarkdown(card)) } }), "更新卡片");
 }
 
 /** emoji_type: OnIt, DONE, THUMBSUP, OK, Get, CheckMark, CrossMark, Typing, SMILE … */

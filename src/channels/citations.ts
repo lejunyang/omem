@@ -19,7 +19,7 @@ import { prepareShare, type ShareRef } from "../core/shares.ts";
  *
  * A citation that is part of the sentence (`见[《差旅报销制度》](src:…)第 3 条`) keeps its words
  * and links them. One that trails a sentence (`…已通过。[日志摘录](src:…)`) is shown as a small
- * numbered link (①②…) instead of its label, so paragraphs do not end in a row of titles.
+ * numbered link ((1) (2)…) instead of its label, so paragraphs do not end in a row of titles.
  */
 
 export type CiteOptions = {
@@ -50,7 +50,12 @@ function normalize(ref: string): string {
   return ref.replace(/#.*$/, "");
 }
 
-const circled = (n: number) => (n <= 20 ? String.fromCodePoint(0x245f + n) : `(${n})`);
+/**
+ * A trailing citation's mark: plain digits in brackets, the same for every number. Circled digits
+ * looked alike only up to ⑩: common Chinese fonts (Microsoft YaHei, SimSun…) have ①–⑩ but not ⑪–⑳,
+ * which then came from a fallback font in another size, and from 21 on they were plain `(21)`.
+ */
+export const citationMark = (n: number) => `(${n})`;
 const chatLink = (chat: string, position?: number | null) =>
   `https://applink.feishu.cn/client/chat/open?openChatId=${encodeURIComponent(chat)}${position !== null && position !== undefined ? `&position=${position}` : ""}`;
 
@@ -195,7 +200,7 @@ function isTrailing(text: string, start: number, end: number, label: string | nu
 const titleOf = (md: string) =>
   md
     .split("\n")
-    .map((l) => l.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[①-⑳]/g, "").replace(/[#>*_`|[\]]/g, "").trim())
+    .map((l) => l.replace(/\[\(\d+\)\]\([^)]*\)/g, "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[#>*_`|[\]]/g, "").trim())
     .find(Boolean)
     ?.slice(0, 80) ?? "";
 
@@ -248,7 +253,7 @@ export function resolveCitationsNow(app: App, mds: string[], opts: CiteOptions =
           out += seg.text.slice(at, e.start);
           at = e.end;
           if (e.trailing) {
-            if (e.url) out += `[${circled(marks.get(e.ref)!)}](${e.url})`;
+            if (e.url) out += `[${citationMark(marks.get(e.ref)!)}](${e.url})`;
             else out = out.replace(/[ \t]+$/, "");
           } else out += e.url ? `[${e.label}](${e.url})` : (e.label ?? "");
         }

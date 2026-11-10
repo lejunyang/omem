@@ -114,7 +114,7 @@ describe("feishu bot messaging", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].args.data.reply_in_thread).toBe(true);
     const body = JSON.parse(sent[0].args.data.content).body.elements[0].content;
-    expect(body).toBe(`先确认，见[流程说明](${uri})。完成后可删除。[①](${uri})`);
+    expect(body).toBe(`先确认，见[流程说明](${uri})。完成后可删除。[(1)](${uri})`);
     // Posted its conclusion itself (lark_send to @ someone), then stay_quiet: nothing is sent twice.
     // (No API server here for the agent's tool call: what stay_quiet records is set on the run.)
     const profile = app.config.agents.profiles.find(p => p.id === "citation-test")!;

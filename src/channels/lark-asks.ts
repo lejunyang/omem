@@ -6,7 +6,7 @@ import { one, run } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { larkOpenIdOf, OWNER, userName } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
-import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, decidedBlocks, decidedColor, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, resultSummary, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
 import { getTask } from "../agents/code-tasks.ts";
 
@@ -82,11 +82,7 @@ function questionBlocks(app: App, ask: Ask): CardBlock[] {
  * in a group (only while it waits for them).
  */
 export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = {}): Record<string, unknown> {
-  if (ask.status !== "pending") {
-    const immediate = isImmediateAsk(ask) && ask.status === "answered";
-    const how = ask.status === "cancelled" ? (ask.result ? "已在别处处理" : "已失效（在对话或网页上接着处理了）") : immediate ? ask.result ?? "已处理" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : ask.value ? "已填写" : `已选：${ask.answer ?? ""}`;
-    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: immediate ? "已处理" : TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }, ...(ask.value && ask.answer ? [{ markdown: cardText(truncate(ask.answer, 3000)) }] : []), ...(ask.result && !immediate ? [{ markdown: resolveCitationsSync(app, ask.result) }] : [])] });
-  }
+  if (ask.status !== "pending") return answeredCard(app, ask);
   const blocks = questionBlocks(app, ask);
   if (ask.askedBy) blocks.unshift({ note: `${cardText(userName(app, ask.askedBy))} 的助手替 ta 问你，回答会交给 ta。` });
   // What the agent showed with the question comes first, as text (docs/v2/interactive-ui.md).
@@ -143,6 +139,33 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = 
     });
   } else elements.push(...choices);
   return card;
+}
+
+/**
+ * An ask once answered (or lapsed): what was asked, then who decided what and when and what came of it
+ * (decidedBlocks). An approval's result is the tool's output for the agent: one line on the card, the
+ * rest folded. No buttons.
+ */
+function answeredCard(app: App, ask: Ask): Record<string, unknown> {
+  const immediate = isImmediateAsk(ask) && ask.status === "answered";
+  const approval = ask.kind === "approval";
+  const question = ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, approval ? 800 : 1500)) }] : [];
+  // Someone omem does not know shows as a bare Feishu id: leave the name out then.
+  const name = ask.answeredBy ? userName(app, ask.answeredBy) : null;
+  const when = { by: name && !/^o[un]_/.test(name) ? name : null, at: ask.answeredAt, timeZone: app.config.timezone };
+  if (ask.status === "cancelled") {
+    // Closed with a note on how (the assistant passed on the owner's answer): say so, not just "lapsed".
+    const d = ask.result ? { verdict: "已在别处处理", result: resolveCitationsSync(app, ask.result), plain: true } : { verdict: "已失效（在对话或网页上接着处理了）" };
+    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: `${TITLE[ask.kind]} · ${ask.result ? "已在别处处理" : "已失效"}` }), blocks: [...question, ...decidedBlocks(d)] });
+  }
+  if (approval) {
+    const d = { ...when, verdict: ask.approved ? "批准" : "拒绝", words: ask.answer, result: ask.approved ? ask.result : null };
+    return buildCard({ title: ask.approved ? (d.result ? (resultSummary(d.result).ok ? "已批准并执行" : "已批准，执行失败") : "已批准") : "已拒绝", color: decidedColor(d, !!ask.approved), blocks: [...question, ...decidedBlocks(d)] });
+  }
+  if (immediate) return buildCard({ color: "grey", title: "已处理", blocks: [...question, ...decidedBlocks({ ...when, verdict: ask.result ?? "已处理" })] });
+  const blocks: CardBlock[] = [...question, ...decidedBlocks({ ...when, verdict: ask.value ? "已填写" : `已选：${ask.answer ?? ""}`, result: ask.result ? resolveCitationsSync(app, ask.result) : null, plain: true })];
+  if (ask.value && ask.answer) blocks.splice(question.length + 1, 0, { markdown: cardText(truncate(ask.answer, 3000)) });
+  return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: ask.kind === "question" ? "已回答" : TITLE[ask.kind] }), blocks });
 }
 
 /** Where an ask goes in Feishu, or null when this channel is not the one to show it. */
