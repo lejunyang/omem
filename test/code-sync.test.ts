@@ -109,11 +109,11 @@ describe("Git sync before coding", { timeout: 60000 }, () => {
     sh(root, "push", "origin", branch);
     sh(root, "reset", "--hard", old);
     const repo = createSpace(app, { id: "shop", name: "示例商城", kind: "repo", rootPath: root });
-    const plan = planBranch(repo, "r_new", { name: "feature/new" });
+    const plan = await planBranch(repo, "r_new", { name: "feature/new" });
     expect(plan.base).toBe(latest);
     expect(plan.cutFrom).toBe(branch);
     expect(sh(root, "rev-parse", "HEAD")).toBe(old);
-    const result = await syncWorktree(root, wt, { pull: true, onto: refreshDefaultBaseRef(root)! }, giveUp, noop);
+    const result = await syncWorktree(root, wt, { pull: true, onto: (await refreshDefaultBaseRef(root))! }, giveUp, noop);
     expect(result.stopped).toBeNull();
     expect(sh(wtPath, "show", "HEAD:upstream.txt")).toBe("new upstream code");
     expect(changeBase(wtPath, { ...wt, cutFrom: branch })).toBe(latest);
@@ -550,7 +550,7 @@ describe("a reused branch far behind origin", { timeout: 120000 }, () => {
       sql(app.db, "update runs set status = 'done' where id = ?", r2.id);
       recordCheckpoint(app, r.id, worktreesOf(app, r.id), r2.id, [], "第 2 轮");
       expect(worktreesOf(app, r.id)[0].diffBase).toBe(again);
-      const [whole] = workPatches(app, r.id, worktreesOf(app, r.id), { from: 0 });
+      const [whole] = await workPatches(app, r.id, worktreesOf(app, r.id), { from: 0 });
       expect(whole.patch).toContain("round = 1");
       expect(whole.patch).not.toContain("public-");
 

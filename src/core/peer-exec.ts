@@ -12,6 +12,7 @@ import { REPLAY_AXES, roleNames } from "./config.ts";
 import { desktopControl } from "./tools.ts";
 import { HttpError } from "./util.ts";
 import { memoryHistory, memoryNow } from "./memory-watch.ts";
+import { loopStats } from "./loop-monitor.ts";
 import { vectorIndex } from "../search/vectors.ts";
 import { searchLatency } from "../search/trace.ts";
 import { readProcessStats } from "../search/read-process.ts";
@@ -83,6 +84,8 @@ export async function diag(app: App) {
     // RSS minus V8 heap and buffers is native memory (the local embedding model's arena, SQLite).
     memory: { now: memoryNow(), vectorIndex: vectorIndex().stats(), searchProcess: readProcessStats(app), history: memoryHistory() },
     searchLatency: searchLatency(app),
+    // Main-thread stalls and the synchronous steps behind them (core/loop-monitor.ts).
+    eventLoop: loopStats(),
     now: new Date().toISOString(),
     home: app.home,
     baseUrl: app.baseUrl,

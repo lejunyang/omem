@@ -64,8 +64,8 @@ afterEach(async () => {
 });
 
 /** A delegation on the existing release branch, worktree detached at the local branch's tip. */
-function delegate(): { id: string; wt: WorktreeRef } {
-  const plan = planBranch(getSpace(app, "shop"), "r1", { from: "release" });
+async function delegate(): Promise<{ id: string; wt: WorktreeRef }> {
+  const plan = await planBranch(getSpace(app, "shop"), "r1", { from: "release" });
   sh(root, "worktree", "add", "-q", "--detach", path, plan.base);
   const wt: WorktreeRef = { space: "shop", path, branch: plan.branch, base: plan.base, start: plan.base, targetBranch: plan.branch, commits: true, ...(plan.diffBase ? { diffBase: plan.diffBase } : {}) };
   const r = createRun(app, { kind: "code", spaceId: "shop", title: "示例改动", input: { task: "改", taskMode: true } });
@@ -78,7 +78,7 @@ describe("the comparison base of a reused branch", { timeout: 60000 }, () => {
     const stale = sh(root, "rev-parse", "release");
     const ahead = advanceOrigin(4, "public");
     sh(root, "update-ref", "refs/remotes/origin/release", stale); // the planning machine has not fetched yet
-    const { wt } = delegate();
+    const { wt } = await delegate();
     expect(wt).toMatchObject({ start: stale, diffBase: stale });
     expect((await syncWorktree(root, wt, { pull: true }, noConflicts, () => {})).stopped).toBeNull();
     settleDiffBase(wt);
@@ -95,7 +95,7 @@ describe("the comparison base of a reused branch", { timeout: 60000 }, () => {
   });
 
   it("keeps the base when origin already has the work (it was pushed)", async () => {
-    const { wt } = delegate();
+    const { wt } = await delegate();
     const mine = commit(path, "app.ts", "export const a = 2;\n", "mine");
     const base = wt.diffBase;
     sh(path, "push", "-q", "origin", `${mine}:refs/heads/release`);
@@ -107,7 +107,7 @@ describe("the comparison base of a reused branch", { timeout: 60000 }, () => {
   });
 
   it("moves the base only once a pull stopped on conflicts is finished", async () => {
-    const { wt } = delegate();
+    const { wt } = await delegate();
     commit(path, "app.ts", "export const a = 2;\n", "mine");
     const other = join(app.home, "other");
     commit(other, "app.ts", "export const a = 3;\n", "theirs");
@@ -128,11 +128,11 @@ describe("the comparison base of a reused branch", { timeout: 60000 }, () => {
 });
 
 describe("whole-range operations take back only the delegation's commits", { timeout: 60000 }, () => {
-  it("refuses when the range holds the owner's unpushed commits or commits already on origin", () => {
+  it("refuses when the range holds the owner's unpushed commits or commits already on origin", async () => {
     sh(root, "checkout", "-q", "release");
     commit(root, "owner.ts", "owner\n", "owner's unpushed commit on release");
     sh(root, "checkout", "-q", "main");
-    const { wt } = delegate();
+    const { wt } = await delegate();
     const mine = commit(path, "app.ts", "export const a = 2;\n", "mine");
     expect(() => assertOwnRange(path, wt, changeBase(path, wt), mine)).toThrow(/交办开始前/);
     expect(() => assertOwnRange(path, wt, wt.start!, mine)).not.toThrow();
@@ -141,8 +141,8 @@ describe("whole-range operations take back only the delegation's commits", { tim
     expect(() => assertOwnRange(path, wt, wt.start!, mine)).toThrow(/origin\/release 上已有/);
   });
 
-  it("refuses back-to-checkpoint-0 when the change since the base was pushed", () => {
-    const { id, wt } = delegate();
+  it("refuses back-to-checkpoint-0 when the change since the base was pushed", async () => {
+    const { id, wt } = await delegate();
     const mine = commit(path, "app.ts", "export const a = 2;\n", "mine");
     recordCheckpoint(app, id, [wt], id, [], "第 1 轮");
     expect(() => scheduleWorkRevert(app, id, [wt], { checkpoint: 0 }, "owner")).not.toThrow();
@@ -154,10 +154,10 @@ describe("whole-range operations take back only the delegation's commits", { tim
 
 describe("delegations from before the comparison base was recorded", { timeout: 60000 }, () => {
   /** An old first round: stale start, the sync fast-forwarded to origin, the only task given every commit since the start. */
-  function legacy() {
+  async function legacy() {
     const stale = sh(root, "rev-parse", "release");
     const ahead = advanceOrigin(3, "public");
-    const { id, wt } = delegate();
+    const { id, wt } = await delegate();
     delete wt.diffBase;
     sh(path, "merge", "-q", "--ff-only", ahead);
     const mine = commit(path, "app.ts", "export const a = 2;\n", "mine");
@@ -169,23 +169,23 @@ describe("delegations from before the comparison base was recorded", { timeout: 
     return { id, wt: { ...wt, start: stale, base: stale }, stale, ahead, mine, seq: t.seq };
   }
 
-  it("reads the base where the branch meets origin and leaves pulled commits out of the task", () => {
-    const { id, wt, ahead, mine, seq } = legacy();
+  it("reads the base where the branch meets origin and leaves pulled commits out of the task", async () => {
+    const { id, wt, ahead, mine, seq } = await legacy();
     const read = withDiffBase(app, id, wt);
     expect(read.diffBase).toBe(ahead);
     expect(getTask(app, id, seq).commits.shop).toEqual([mine]);
   });
 
-  it("keeps the old start when origin already has a coding round", () => {
-    const { id, wt, mine } = legacy();
+  it("keeps the old start when origin already has a coding round", async () => {
+    const { id, wt, mine } = await legacy();
     sh(path, "push", "-q", "origin", `${mine}:refs/heads/release`);
     sh(root, "fetch", "-q", "origin");
     expect(withDiffBase(app, id, wt).diffBase).toBeUndefined();
   });
 
-  it("a new first round gives its task only the commits after its sync", () => {
+  it("a new first round gives its task only the commits after its sync", async () => {
     const ahead = advanceOrigin(2, "public");
-    const { id, wt } = delegate();
+    const { id, wt } = await delegate();
     sh(path, "merge", "-q", "--ff-only", ahead);
     wt.syncHead = ahead;
     const mine = commit(path, "app.ts", "export const a = 2;\n", "mine");

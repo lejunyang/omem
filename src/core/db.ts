@@ -1,4 +1,5 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { noteSync, sqlName } from "./loop-monitor.ts";
 
 /**
  * One SQLite file holds everything that is not a human-readable file:
@@ -1580,6 +1581,32 @@ export const migrations: readonly string[] = [
   );
   alter table api_tokens add column client text not null default '';
   update users set email = nullif(lower(trim(email)), '') where email is not null;`,
+  // Which chunk vectors changed, in order (src/search/vectors.ts): the search process keeps its
+  // in-memory matrices current from this log and trusts its on-disk snapshot only up to the log's
+  // position, instead of reading every vector again (a million 1024-dim vectors took 20+ seconds).
+  // Written by triggers so every writer counts, the directory-import process included. A row is
+  // "this id in this space may have changed": the reader drops it and reads it again if present.
+  // Wiki page citations by page: listing a space's pages counts stale citations per page (without
+  // it, 26k citations were scanned once per page, ~1.5 s on the main thread per list_pages). Symbols
+  // by name and by qualified name in any space for find_symbol (`name = ? or qname = ?` scanned
+  // every symbol of the spaces asked, a million in a code space).
+  `
+  create table vector_log (seq integer primary key, space_id text not null, chunk_id integer not null);
+  create index vector_log_space on vector_log(space_id, seq);
+  create trigger vector_log_insert after insert on chunks when new.embedding is not null begin
+    insert into vector_log(space_id, chunk_id) values (new.space_id, new.id);
+  end;
+  create trigger vector_log_update after update of embedding, space_id on chunks
+    when old.embedding is not null or new.embedding is not null begin
+    insert into vector_log(space_id, chunk_id) values (old.space_id, old.id);
+    insert into vector_log(space_id, chunk_id) select new.space_id, new.id where new.space_id != old.space_id;
+  end;
+  create trigger vector_log_delete after delete on chunks when old.embedding is not null begin
+    insert into vector_log(space_id, chunk_id) values (old.space_id, old.id);
+  end;
+  create index page_cites_page on page_cites(page_id);
+  create index symbols_qname on symbols(qname);
+  create index symbols_any_name on symbols(name);`,
 ];
 
 export type Db = DatabaseSync;
@@ -1614,12 +1641,19 @@ export function tx<T>(db: Db, fn: () => T): T {
   }
 }
 
+// Each call is timed (core/loop-monitor.ts): a query that holds the main thread is named in the stall log.
 export function all<T>(db: Db, sql: string, ...params: SQLInputValue[]): T[] {
-  return db.prepare(sql).all(...params) as T[];
+  const start = performance.now();
+  try { return db.prepare(sql).all(...params) as T[]; }
+  finally { noteSync(sqlName(sql), start); }
 }
 export function one<T>(db: Db, sql: string, ...params: SQLInputValue[]): T | undefined {
-  return db.prepare(sql).get(...params) as T | undefined;
+  const start = performance.now();
+  try { return db.prepare(sql).get(...params) as T | undefined; }
+  finally { noteSync(sqlName(sql), start); }
 }
 export function run(db: Db, sql: string, ...params: SQLInputValue[]) {
-  return db.prepare(sql).run(...params);
+  const start = performance.now();
+  try { return db.prepare(sql).run(...params); }
+  finally { noteSync(sqlName(sql), start); }
 }

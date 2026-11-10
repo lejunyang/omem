@@ -9,6 +9,7 @@ import { ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
 import { embedPending, embedPendingMemories } from "./search/embeddings.ts";
 import { readProcess } from "./search/read-process.ts";
 import { startMemoryWatch } from "./core/memory-watch.ts";
+import { startLoopMonitor } from "./core/loop-monitor.ts";
 import { startServer } from "./server/http.ts";
 import { syncWiki } from "./wiki/store.ts";
 
@@ -122,6 +123,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   });
   if (opts.background !== false) {
     startMemoryWatch();
+    startLoopMonitor();
     restartScheduler(app);
     // Plan usage limits of the logged-in accounts (agents/quota.ts), for choosing backends.
     void import("./agents/quota.ts").then((m) => m.startQuotaWatch(app));
@@ -169,6 +171,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
         try { m.tickAutoCompress(app); } catch (e) { console.warn("[omem] 自动压缩附件失败：", (e as Error).message); }
       }, 60_000).unref();
     });
+    // The vector change log keeps its recent part (search/vectors.ts).
+    setInterval(() => {
+      void import("./search/vectors.ts").then((m) => m.pruneVectorLog(app)).catch((e) => console.warn("[omem] 清理向量变更记录失败：", (e as Error).message));
+    }, 3600_000).unref();
     if (app.config.embeddings.provider !== "none") {
       const loop = async () => {
         try {
@@ -182,7 +188,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       setTimeout(loop, 3000).unref();
       // Load the vector matrices before the first question needs them.
       setTimeout(() => {
-        readProcess(app, "vector").request({ op: "prepare" }, 30_000).catch(() => {});
+        // A first load with no snapshot reads every vector (20+ s for a million); it is not cut short.
+        readProcess(app, "vector").request({ op: "prepare" }, 10 * 60_000).catch(() => {});
       }, 1000).unref();
     }
     if (app.config.telegram.enabled) {

@@ -30,7 +30,7 @@ import {
   addSourceNote, applyAttentionRulesToExisting, deleteAttentionRule, LEVEL_LABELS, LEVELS, levelCounts, levelOf, listAttentionRules, NOTE_KINDS, removeSourceNote,
   saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes, reviewQueue, reviewSourceNote, reviewNodeLevel,
 } from "../sources/attention.ts";
-import { defaultBaseRef, fetchBranch, git, isGitRepo, listBranches } from "../core/git.ts";
+import { defaultBaseRef, fetchBranchAsync, git, isGitRepo, listBranches } from "../core/git.ts";
 import { cloneRepository } from "../core/repositories.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
@@ -76,6 +76,7 @@ import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
 import { deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
+import { mark } from "../core/loop-monitor.ts";
 import { CATEGORY_KINDS, categoryStatus, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider } from "../core/ai-keys.ts";
 
 /** GET /api/share/<token>: exactly this, no query, no other path under it. */
@@ -130,6 +131,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // parsed (some rules find the space in it).
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
+    mark(`${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`);
     // Tool routes check their own (per-run) token.
     if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
@@ -706,7 +708,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/spaces/:id/branches", async (req) => {
     const s = repoFor(req, who(req));
     const o = q(z.object({ fetch: z.coerce.boolean().optional() }), req.query);
-    if (o.fetch) fetchBranch(s.rootPath, "*");
+    if (o.fetch) await fetchBranchAsync(s.rootPath, "*");
     return {
       current: git(s.rootPath, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim(),
       base: defaultBaseRef(s.rootPath),
@@ -1550,7 +1552,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const rootId = t.workRootOf(app, id);
     const tasks = o.tasks ? o.tasks.split(/[,\s]+/).filter(Boolean).map((x) => t.parseTaskRef(x)) : undefined;
     const { worktreesOf } = await import("../agents/code.ts");
-    return { patches: t.workPatches(app, rootId, worktreesOf(app, rootId), { tasks, from: o.from, to: o.to, since: o.since, base: o.base, userId: who(req) }) };
+    return { patches: await t.workPatches(app, rootId, worktreesOf(app, rootId), { tasks, from: o.from, to: o.to, since: o.since, base: o.base, userId: who(req) }) };
   });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.

@@ -1,5 +1,6 @@
 import { recordReqStatus, findReq } from "../items/requirements.ts";
 import { withBot } from "../core/bot-context.ts";
+import { mark } from "../core/loop-monitor.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
@@ -33,7 +34,7 @@ import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
 import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFolder, relocateFolder, removeFolder } from "../memory/folders.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
-import { defaultBaseRef, fetchBranch, git, listBranches, resolveRef } from "../core/git.ts";
+import { defaultBaseRef, fetchBranchAsync, git, listBranches, resolveRef } from "../core/git.ts";
 import { search, shadowedFiles, type HitType } from "../search/search.ts";
 import { branchIndexes, indexBranch, overlayRepo } from "./worktree-index.ts";
 import {
@@ -835,13 +836,20 @@ def({
     const sp = a.branch ? (await branchSpaces(ctx, a.space, a.branch)).spaces : spacesFor(ctx, a.space);
     const filter = sp ? `and y.space_id in (${sp.map(() => "?").join(",")})` : "";
     const shadow = shadowedFiles(ctx.app, sp);
-    const defs = all<{ source_id: string; space_id: string; uri: string; qname: string; kind: string; line_start: number; line_end: number; signature: string }>(
+    type Def = { id: number; source_id: string; space_id: string; uri: string; qname: string; kind: string; line_start: number; line_end: number; signature: string };
+    // By name and by qualified name as two indexed lookups: `name = ? or qname = ?` in one query
+    // scanned every symbol of the spaces (a code space has a million).
+    const lookup = (column: "name" | "qname") => all<Def>(
       ctx.app.db,
-      `select y.source_id, y.space_id, s.uri, y.qname, y.kind, y.line_start, y.line_end, y.signature from symbols y join sources s on s.id = y.source_id where (y.name = ? or y.qname = ?) ${filter} and s.deleted_at is null limit 20`,
-      a.name,
+      `select y.id, y.source_id, y.space_id, s.uri, y.qname, y.kind, y.line_start, y.line_end, y.signature from symbols y join sources s on s.id = y.source_id where y.${column} = ? ${filter} and s.deleted_at is null order by y.id limit 20`,
       a.name,
       ...(sp ?? []),
-    ).filter((d) => !shadow.get(d.space_id)?.has(d.uri));
+    );
+    const seen = new Set<number>();
+    const defs = [...lookup("name"), ...lookup("qname")]
+      .sort((x, y) => x.id - y.id)
+      .filter((d) => !seen.has(d.id) && seen.add(d.id) && !shadow.get(d.space_id)?.has(d.uri))
+      .slice(0, 20);
     type R = { source_id: string; uri: string; from_qname: string; line: number; kind: string; qualifier: string | null; to_qname: string | null; to_uri: string | null; to_name: string };
     const sel = `select r.source_id, s.uri, r.from_qname, r.line, r.kind, r.qualifier, r.to_qname, r.to_name, t.uri as to_uri from code_refs r join sources s on s.id = r.source_id left join sources t on t.id = r.to_source_id`;
     const at = (r: R) => `${r.uri}:${r.line} 在 ${r.from_qname || "(模块顶层)"} 中`;
@@ -3697,11 +3705,11 @@ def({
   name: "list_branches",
   description: "列出代码仓库空间的分支（本地和 origin 上的，按最近提交排序），以及已经建了检索索引的分支。查某个分支上的代码用 search / find_symbol 的 branch 参数。",
   schema: z.object({ space: z.string(), query: z.string().optional().describe("按名字筛选"), fetch: z.boolean().optional().describe("先从 origin 拉取全部分支（git fetch origin）") }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const id = space(ctx, a.space);
     const root = findSpace(ctx.app, id)!.rootPath;
     if (!root) throw new HttpError(400, `空间 ${id} 没有关联 Git 仓库`);
-    if (a.fetch) fetchBranch(root, "*");
+    if (a.fetch) await fetchBranchAsync(root, "*");
     const list = listBranches(root).filter((b) => !a.query || b.name.toLowerCase().includes(a.query.toLowerCase())).slice(0, 60);
     const indexed = branchIndexes(ctx.app, id);
     return [
@@ -5103,6 +5111,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   }
   const tool = tools.find((t) => t.name === name);
   if (!tool || (ctx.tools && !ctx.tools.has(name))) return { text: `工具 ${name} 不可用`, isError: true };
+  mark(`tool ${name}`);
   // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.
   if (!toolAllowed(ctx.app, ctx.userId, name)) return { text: `工具 ${name} 不可用：${userName(ctx.app, ctx.userId ?? OWNER)} 没有这项权限`, isError: true };
   const parsed = tool.schema.safeParse(args ?? {});

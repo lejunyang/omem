@@ -28,13 +28,20 @@ export class ReadProcess {
   private unlisten: (() => void) | null = null;
   stats = { spaces: 0, vectors: 0, bytes: 0 };
   readonly path: string;
-  constructor(path: string) { this.path = path; }
+  /** Idle time before the process exits, and whether a timed-out request kills it. */
+  private idleMs: number;
+  private killOnTimeout: boolean;
+  constructor(path: string, opts: { idleMs?: number; killOnTimeout?: boolean } = {}) {
+    this.path = path;
+    this.idleMs = opts.idleMs ?? 300_000;
+    this.killOnTimeout = opts.killOnTimeout ?? true;
+  }
 
   private start() {
     if (this.child?.connected) return this.child;
     this.unlisten?.(); this.unlisten = null;
     const file = new URL(import.meta.url.endsWith(".ts") ? "./read-worker.ts" : "./read-worker.js", import.meta.url);
-    const child = fork(fileURLToPath(file), [this.path], { serialization: "advanced", execArgv: [], stdio: ["ignore", "ignore", "inherit", "ipc"] });
+    const child = fork(fileURLToPath(file), [this.path, String(this.idleMs)], { serialization: "advanced", execArgv: [], stdio: ["ignore", "ignore", "inherit", "ipc"] });
     this.child = child;
     child.on("error", () => { if (this.child === child) this.active?.reject(new Error("检索进程无法启动")); });
     child.on("exit", () => {
@@ -45,7 +52,6 @@ export class ReadProcess {
       this.stats = { spaces: 0, vectors: 0, bytes: 0 };
     });
     const invalidate = (change: VectorChange) => {
-      if (change.op === "add" && (!change.home || join(change.home, "omem.db") !== this.path)) return;
       if (child.connected) child.send({ op: "invalidate", change }, () => {});
     };
     vectorChanges.on("change", invalidate);
@@ -61,7 +67,10 @@ export class ReadProcess {
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
-        if (this.active?.id === id) {
+        // A request still running is abandoned and the process stopped, unless its work is worth
+        // finishing (loading vectors: killing it threw a 20-second load away, and the next search
+        // started over and timed out again).
+        if (this.active?.id === id && this.killOnTimeout) {
           this.active.reject(new SearchTimeout());
           this.stop();
         }
@@ -117,7 +126,7 @@ export function readProcess(app: App, lane: Lane = "sql") {
   }
   let reader = lanes.get(lane);
   if (!reader) {
-    lanes.set(lane, reader = new ReadProcess(join(app.home, "omem.db")));
+    lanes.set(lane, reader = new ReadProcess(join(app.home, "omem.db"), lane === "vector" ? { idleMs: 30 * 60_000, killOnTimeout: false } : {}));
   }
   return reader;
 }

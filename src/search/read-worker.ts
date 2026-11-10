@@ -1,23 +1,25 @@
 import { DatabaseSync } from "node:sqlite";
+import { dirname, join } from "node:path";
 import type { App } from "../core/app.ts";
 import type { ReadJob } from "./read-process.ts";
-import { vectorIndex, type VectorChange } from "./vectors.ts";
+import { MemoryIndex, setVectorIndex, vectorIndex, type VectorChange } from "./vectors.ts";
 
 const db = new DatabaseSync(process.argv[2], { readOnly: true });
+// Large spaces' matrices are kept as files next to the library: the next process reads them back.
+setVectorIndex(new MemoryIndex({ snapshotDir: join(dirname(process.argv[2]), "cache", "vectors") }));
+// The vector lane holds the loaded matrices: it waits longer before giving their memory back.
+const idleMs = Number(process.argv[3]) || 300_000;
 process.removeAllListeners("warning");
 db.exec("pragma query_only = on; pragma busy_timeout = 1000;");
 let modelKey = "";
 let idle: ReturnType<typeof setTimeout>;
 let queue = Promise.resolve();
-const armIdle = () => { clearTimeout(idle); idle = setTimeout(() => process.exit(0), 300_000); idle.unref(); };
+const armIdle = () => { clearTimeout(idle); idle = setTimeout(() => process.exit(0), idleMs); idle.unref(); };
 process.on("disconnect", () => process.exit(0));
 process.on("message", (message: { id: number; job: ReadJob; op?: string; change?: VectorChange }) => {
   if (message.op === "invalidate") {
-    const c = message.change!;
-    if (c.op === "clear") vectorIndex().clear();
-    else if (c.op === "evict") vectorIndex().evict(c.spaces);
-    else if (c.op === "forget") vectorIndex().forget(c.ids);
-    else if (c.op === "add") vectorIndex().add({ db } as App, c.rows);
+    // Chunk changes reach the matrices through vector_log; only a clear (model change) is sent.
+    if (message.change?.op === "clear") vectorIndex().clear();
     return;
   }
   clearTimeout(idle);

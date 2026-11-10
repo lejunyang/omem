@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
-import { refreshDefaultBaseRef, fetchBranch, git, resolveRef } from "../core/git.ts";
+import { refreshDefaultBaseRef, fetchBranch, fetchBranchAsync, git, resolveRef } from "../core/git.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
@@ -120,7 +120,7 @@ export type BranchPlan = { branch: string; base: string; newBranch: boolean; cut
  * origin has it), a new one named `name` (an existing local one is used as it is), or a temporary
  * `omem/<run>` the coding Agent renames. New branches start at the refreshed default branch (local HEAD only without a default).
  */
-export function planBranch(repo: Space, runId: string, opts: { from?: string; name?: string }): BranchPlan {
+export async function planBranch(repo: Space, runId: string, opts: { from?: string; name?: string }): Promise<BranchPlan> {
   const root = repo.rootPath!;
   const existing = opts.from ?? (opts.name && tipOf(root, opts.name) ? opts.name : undefined);
   if (existing) {
@@ -134,15 +134,15 @@ export function planBranch(repo: Space, runId: string, opts: { from?: string; na
     }
     // The local copy may be far behind origin: the comparison starts where the two meet, not at
     // the local tip (the first round's sync pulls origin in and moves it on, code-sync.ts).
-    fetchBranch(root, name);
+    await fetchBranchAsync(root, name);
     const base = tipOf(root, name)!;
     return { branch: name, base, newBranch: false, diffBase: sharedWithOrigin(root, name, base) };
   }
   const name = (opts.name ?? `omem/${runId}`).replace(/^refs\/heads\//, "");
   if (!git(root, ["check-ref-format", `refs/heads/${name}`]).ok) throw new HttpError(400, `分支名不合法：${name}`);
-  const baseRef = refreshDefaultBaseRef(root);
+  const baseRef = await refreshDefaultBaseRef(root);
   if (baseRef && git(root, ["remote", "get-url", "origin"]).ok) {
-    const fetched = fetchBranch(root, baseRef);
+    const fetched = await fetchBranchAsync(root, baseRef);
     if (!fetched.ok) throw new HttpError(409, `更新默认分支失败：${fetched.stderr.trim().slice(0, 300)}`);
   }
   const base = (baseRef ? resolveRef(root, baseRef.startsWith("origin/") ? baseRef : `origin/${baseRef}`)?.commit ?? resolveRef(root, baseRef)?.commit : null) ?? head(root);
@@ -558,7 +558,7 @@ export async function settleCodeWorks(app: App) {
       releaseBranchRun(app, r.id);
       for (const s of worktreeSpacesOf(app, r.id)) dropWorktreeSpace(app, s.id);
     };
-    const pushed = pushedOutside(app, first.output, wts);
+    const pushed = await pushedOutside(app, first.output, wts);
     if (pushed) {
       settle({ appliedAt: new Date().toISOString(), settled: "pushed-outside", pushed: [...((first.output.pushed ?? []) as unknown[]), ...pushed] });
       out.pushed.push(r.id);
@@ -578,7 +578,7 @@ export async function settleCodeWorks(app: App) {
 }
 
 /** Each work branch on origin with all it committed, none of it pushed by omem: the branches as pushed, else null. */
-function pushedOutside(app: App, out: Record<string, unknown>, wts: WorktreeRef[]) {
+async function pushedOutside(app: App, out: Record<string, unknown>, wts: WorktreeRef[]) {
   const mine = wts.filter((w) => w.commits);
   if (!mine.length || mine.some((w) => w.pending)) return null;
   const delivered = new Set([
@@ -590,7 +590,7 @@ function pushedOutside(app: App, out: Record<string, unknown>, wts: WorktreeRef[
     const root = findSpace(app, wt.space)?.rootPath;
     const tip = root && existsSync(root) ? tipOf(root, wt.branch) : null;
     if (!root || !tip || delivered.has(`${wt.space}\0${tip}`)) return null;
-    fetchBranch(root, wt.branch);
+    await fetchBranchAsync(root, wt.branch);
     const remote = git(root, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${wt.branch}`]).stdout.trim();
     if (!remote || !ancestor(root, tip, remote)) return null;
     res.push({ space: wt.space, branch: wt.branch, at: new Date().toISOString(), head: tip, outside: true });

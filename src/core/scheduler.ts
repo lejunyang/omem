@@ -2,6 +2,7 @@ import { Cron } from "croner";
 import type { App } from "./app.ts";
 import { all, one, run } from "./db.ts";
 import { json, newId, now } from "./util.ts";
+import { mark } from "./loop-monitor.ts";
 
 export type Schedule = { id: string; kind: string; cron: string; spaceId: string | null; config: Record<string, unknown>; enabled: boolean; lastRunAt: string | null };
 type Row = { id: string; kind: string; cron: string; space_id: string | null; config: string; enabled: number; last_run_at: string | null };
@@ -74,6 +75,7 @@ let watchdog: NodeJS.Timeout | null = null;
 /** One firing: marks the schedule as run, then hands it to its kind. Nothing here may throw into croner. */
 function fire(app: App, s: Schedule, runner: Runner) {
   try {
+    mark(`schedule ${s.kind}`);
     run(app.db, "update schedules set last_run_at = ? where id = ?", now(), s.id);
     runner(app, s);
   } catch (e) {

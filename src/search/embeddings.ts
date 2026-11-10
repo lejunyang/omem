@@ -153,6 +153,9 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
     run(app.db, "update chunks set embedding = null");
     run(app.db, "update memories set embedding = null");
     run(app.db, "insert into kv(key,value) values('embedding_model', ?) on conflict(key) do update set value = excluded.value", e.id);
+    // Every vector is gone: readers start over on the model change, the log's entries for it are noise.
+    run(app.db, "insert into kv(key,value) values('vector_log_floor', (select coalesce(max(seq), 0) from vector_log)) on conflict(key) do update set value = excluded.value");
+    run(app.db, "delete from vector_log");
     vectorIndex().clear();
   }
   const rows = all<{ id: number; space_id: string; title: string; path: string; text: string }>(

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { defaultBaseRef, fetchBranch, git, resolveRef } from "../core/git.ts";
+import { defaultBaseRef, fetchBranchAsync, git, resolveRef } from "../core/git.ts";
 import { findSpace, getSpace, listSpaces, type Space } from "../core/spaces.ts";
 import { HttpError, now } from "../core/util.ts";
 import { resolveCodeRefs } from "../sources/callgraph.ts";
@@ -126,7 +126,7 @@ export async function indexBranch(app: App, repoId: string, branch: string, opts
   if (!baseRef) throw new HttpError(400, `${repoId} 找不到默认分支（main / master），请指定 base`);
   if (opts.fetch) {
     for (const name of new Set([branch, baseRef])) {
-      const f = fetchBranch(root, name);
+      const f = await fetchBranchAsync(root, name);
       if (!f.ok && !resolveRef(root, name)) throw new HttpError(400, `从 origin 拉取 ${name} 失败：${f.stderr.trim().slice(0, 300)}`);
     }
   }

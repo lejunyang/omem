@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { fetchBranch, git, resolveRef } from "../core/git.ts";
+import { fetchBranch, fetchBranchAsync, git, resolveRef } from "../core/git.ts";
 import { HttpError } from "../core/util.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 
@@ -228,7 +228,7 @@ async function syncSteps(root: string, wt: WorktreeRef, req: SyncRequest, resolv
   const path = wt.path;
   if (req.fetch !== false) {
     for (const name of new Set([req.pull ? wt.targetBranch : null, req.onto].filter((x): x is string => !!x))) {
-      const f = fetchBranch(root, name);
+      const f = await fetchBranchAsync(root, name);
       if (!f.ok && name === req.onto && git(root, ["remote", "get-url", "origin"]).ok) throw new HttpError(409, `更新基准分支 ${name} 失败：${f.stderr.trim().slice(0, 300)}`);
       if (!f.ok) status(`没能从 origin 拉取 ${name}：${f.stderr.trim().slice(0, 200)}（按本地已有的版本继续）`);
     }

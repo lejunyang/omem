@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { fetchBranch, git, resolveRef } from "../core/git.ts";
+import { fetchBranchAsync, git, resolveRef } from "../core/git.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 import type { FindingRow, LeadResult } from "./review.ts";
@@ -650,14 +650,14 @@ function taskPatch(dir: string, shas: string[]): string {
  * `base`: the whole branch against another one (`origin/main`, fetched first), from where they part:
  * for reviewing everything the branch will bring, not only this work's rounds.
  */
-export function workPatches(app: App, rootId: string, worktrees: WorktreeRef[], sel: { tasks?: number[]; from?: number; to?: number; since?: "viewed"; base?: string; userId?: string }): Patch[] {
+export async function workPatches(app: App, rootId: string, worktrees: WorktreeRef[], sel: { tasks?: number[]; from?: number; to?: number; since?: "viewed"; base?: string; userId?: string }): Promise<Patch[]> {
   const out: Patch[] = [];
   if (sel.base) {
     const lastHeads = headsAt(app, rootId, worktrees, listCheckpoints(app, rootId).at(-1)?.seq ?? 0);
     for (const wt of worktrees) {
       const dir = gitDirOf(app, wt);
       if (!dir) continue;
-      if (sel.base.startsWith("origin/")) fetchBranch(dir, sel.base, 60_000);
+      if (sel.base.startsWith("origin/")) await fetchBranchAsync(dir, sel.base, 60_000);
       const base = resolveRef(dir, sel.base);
       if (!base) throw new HttpError(400, `${wt.space} 里没有分支 ${sel.base}`);
       const own = wt.branch ? git(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${wt.branch}^{commit}`]).stdout.trim() : "";

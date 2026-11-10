@@ -1,6 +1,7 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { noteSync } from "./loop-monitor.ts";
 
 export type GitResult = { ok: boolean; stdout: string; stderr: string };
 
@@ -18,7 +19,9 @@ export function disableGitFsmonitor(env: NodeJS.ProcessEnv = process.env) {
   env.GIT_CONFIG_COUNT = String(n + 1);
 }
 
+/** Synchronous: the main thread waits for git (timed, core/loop-monitor.ts). Prefer `gitAsync` on request paths. */
 export function git(cwd: string, args: string[], input?: string): GitResult {
+  const start = performance.now();
   const r = spawnSync("git", args, {
     cwd,
     input,
@@ -27,7 +30,26 @@ export function git(cwd: string, args: string[], input?: string): GitResult {
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" },
     windowsHide: true,
   });
+  noteSync(`git ${args.filter((a) => !a.startsWith("-")).slice(0, 2).join(" ")}`, start);
   return { ok: r.status === 0, stdout: r.stdout ?? "", stderr: r.stderr ?? String(r.error ?? "") };
+}
+
+/**
+ * The same, without holding the main thread: for anything that goes over the network (fetch,
+ * ls-remote) or may take seconds on a large repository. Every HTTP request, tool call and timer
+ * waited while a synchronous `git fetch` ran (up to its two-minute timeout).
+ */
+export function gitAsync(cwd: string, args: string[], opts: { timeoutMs?: number } = {}): Promise<GitResult> {
+  return new Promise((resolve) => {
+    execFile("git", args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+      timeout: opts.timeoutMs ?? 0,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" },
+      windowsHide: true,
+    }, (error, stdout, stderr) => resolve({ ok: !error, stdout: stdout ?? "", stderr: stderr || (error ? String(error) : "") }));
+  });
 }
 
 let available: boolean | undefined;
@@ -125,28 +147,41 @@ export function resolveRef(dir: string, name: string): { ref: string; commit: st
   return null;
 }
 
-/** Bring one branch of `origin` up to date (its remote-tracking ref only; local branches stay as they are). */
+/**
+ * Bring one branch of `origin` up to date (its remote-tracking ref only; local branches stay as they
+ * are). Synchronous: the main thread waits on the network. Only for the CLI and the few delivery
+ * steps not yet moved; use `fetchBranchAsync`.
+ */
 export function fetchBranch(dir: string, name: string, timeoutMs = 120_000): GitResult {
   if (!git(dir, ["remote", "get-url", "origin"]).ok) return { ok: false, stdout: "", stderr: "没有名为 origin 的远端" };
-  const short = name.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
-  const r = spawnSync("git", ["fetch", "-q", "--no-tags", "origin", `+refs/heads/${short}:refs/remotes/origin/${short}`], {
+  const start = performance.now();
+  const r = spawnSync("git", fetchArgs(name), {
     cwd: dir,
     encoding: "utf8",
     timeout: timeoutMs,
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" },
     windowsHide: true,
   });
+  noteSync("git fetch", start);
   return { ok: r.status === 0, stdout: r.stdout ?? "", stderr: r.stderr || (r.error ? String(r.error) : "") };
 }
 
+const fetchArgs = (name: string) => {
+  const short = name.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+  return ["fetch", "-q", "--no-tags", "origin", `+refs/heads/${short}:refs/remotes/origin/${short}`];
+};
+
+/** `fetchBranch` off the main thread (prefer it wherever the caller can wait). */
+export async function fetchBranchAsync(dir: string, name: string, timeoutMs = 120_000): Promise<GitResult> {
+  if (!(await gitAsync(dir, ["remote", "get-url", "origin"])).ok) return { ok: false, stdout: "", stderr: "没有名为 origin 的远端" };
+  return gitAsync(dir, fetchArgs(name), { timeoutMs });
+}
+
 /** Read origin's advertised default branch; supports arbitrary branch names. */
-export function refreshDefaultBaseRef(dir: string): string | null {
-  if (!git(dir, ["remote", "get-url", "origin"]).ok) return defaultBaseRef(dir);
-  const result = spawnSync("git", ["ls-remote", "--symref", "origin", "HEAD"], {
-    cwd: dir, encoding: "utf8", timeout: 30_000,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" }, windowsHide: true,
-  });
-  if (result.status !== 0) throw new Error(`读取远端默认分支失败：${(result.stderr || String(result.error ?? "")).trim().slice(0, 300)}`);
+export async function refreshDefaultBaseRef(dir: string): Promise<string | null> {
+  if (!(await gitAsync(dir, ["remote", "get-url", "origin"])).ok) return defaultBaseRef(dir);
+  const result = await gitAsync(dir, ["ls-remote", "--symref", "origin", "HEAD"], { timeoutMs: 30_000 });
+  if (!result.ok) throw new Error(`读取远端默认分支失败：${result.stderr.trim().slice(0, 300)}`);
   const branch = /^ref: refs\/heads\/(.+)\s+HEAD$/m.exec(result.stdout)?.[1];
   if (!branch) return defaultBaseRef(dir);
   const ref = `refs/remotes/origin/${branch}`;

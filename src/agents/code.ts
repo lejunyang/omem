@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
-import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
+import { defaultBaseRef, fetchBranchAsync, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { cancelHostAsks, createAsk, registerAskHandler, ROUND_ASKS } from "./asks.ts";
 import { businessOf, childSpaces, findSpace, getSpace, type Space } from "../core/spaces.ts";
@@ -260,7 +260,7 @@ export async function runCodeTask(ctx: RunContext) {
     const was = known.find((w) => w.space === repo.id);
     // A work branch: every round places a workspace (kept, or lent again) on the branch's latest commit.
     if (was?.commits || (!was && !input.branches)) {
-      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id] }), log);
+      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? (await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id] })), log);
       worktrees.push(wt);
       branchNotes[repo.id] = note;
       if (!was) log(`${repo.id} 的工作分支 ${wt.branch}（${wt.newBranch ? `从${wt.cutFrom ? ` ${wt.cutFrom} 的` : ""} ${wt.base.slice(0, 8)} 切出` : `已有分支，从 ${wt.base.slice(0, 8)} 接着做`}），工作区 ${workDirOf(wt)}`);
@@ -271,7 +271,7 @@ export async function runCodeTask(ctx: RunContext) {
       continue;
     }
     if (input.branches) {
-      const wt = checkoutBranch(app, repo, rootRunId, input.branches[repo.id], path, input.fetch !== false, log);
+      const wt = await checkoutBranch(app, repo, rootRunId, input.branches[repo.id], path, input.fetch !== false, log);
       worktrees.push(wt);
       log(`已在 ${wt.slot ? `复用工作区 ${wt.slot}` : path} 检出 ${repo.id} 的分支 ${wt.ref}（${wt.tip!.slice(0, 8)}），评审它相对 ${wt.baseRef} 的改动（分叉点 ${wt.base.slice(0, 8)}）`);
       continue;
@@ -786,12 +786,12 @@ ${input.task}
  * moved back to where it left the base (`reset --soft`), so its changes are staged against HEAD
  * like a delegation's and the diff, metrics, index and file views work unchanged.
  */
-function checkoutBranch(app: App, repo: Space, runId: string, target: { branch: string; base?: string } | undefined, path: string, fetch: boolean, log: (text: string) => void): WorktreeRef {
+async function checkoutBranch(app: App, repo: Space, runId: string, target: { branch: string; base?: string } | undefined, path: string, fetch: boolean, log: (text: string) => void): Promise<WorktreeRef> {
   if (!target?.branch) throw new HttpError(400, `没有指定 ${repo.id} 要评审的分支`);
   const root = repo.rootPath!;
   const baseRef = target.base || defaultBaseRef(root);
   if (!baseRef) throw new HttpError(400, `${repo.id} 找不到默认分支（main / master），请指定基线分支`);
-  if (fetch) for (const name of new Set([target.branch, baseRef])) fetchBranch(root, name);
+  if (fetch) for (const name of new Set([target.branch, baseRef])) await fetchBranchAsync(root, name);
   const tip = resolveRef(root, target.branch);
   if (!tip) throw new HttpError(404, `${repo.id} 里没有分支 ${target.branch}`);
   const baseTip = resolveRef(root, baseRef);

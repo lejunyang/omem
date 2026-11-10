@@ -123,24 +123,24 @@ describe("a delegation driven by tasks", () => {
 
       // Each task's change on its own, and the stretch between checkpoints.
       const worktrees = worktreesOf(app, r1.id);
-      const fixPatch = workPatches(app, r1.id, worktrees, { tasks: [fix.seq] });
+      const fixPatch = await workPatches(app, r1.id, worktrees, { tasks: [fix.seq] });
       expect(fixPatch).toHaveLength(1);
       expect(fixPatch[0].label).toContain(`T${fix.seq}`);
       expect(listCheckpoints(app, r1.id).length).toBeGreaterThanOrEqual(4);
-      expect(workPatches(app, r1.id, worktrees, { from: 0 })[0].patch).toContain("refund.ts");
+      expect((await workPatches(app, r1.id, worktrees, { from: 0 }))[0].patch).toContain("refund.ts");
       // The whole branch against another one, from where they part (a review before it goes in).
       const start = worktrees[0].start ?? git("rev-parse", worktrees[0].base).trim();
       git("branch", "release-x", start);
-      const whole = workPatches(app, r1.id, worktrees, { base: "release-x" });
+      const whole = await workPatches(app, r1.id, worktrees, { base: "release-x" });
       expect(whole[0]).toMatchObject({ from: start });
       expect(whole[0].patch).toContain("refund.ts");
       // Where the tip is checked out (an editor's new side): the work's worktree; nowhere once it moves off.
       const norm = (p?: string) => p && realpathSync(p).replace(/\\/g, "/").toLowerCase();
       expect(norm(whole[0].at)).toBe(norm(worktrees[0].path));
       execFileSync("git", ["-C", worktrees[0].path, "checkout", "-q", "--detach", "HEAD~1"]);
-      expect(workPatches(app, r1.id, worktrees, { base: "release-x" })[0].at).toBeUndefined();
+      expect((await workPatches(app, r1.id, worktrees, { base: "release-x" }))[0].at).toBeUndefined();
       execFileSync("git", ["-C", worktrees[0].path, "checkout", "-q", "-"]);
-      expect(() => workPatches(app, r1.id, worktrees, { base: "no-such-branch" })).toThrow(/没有分支 no-such-branch/);
+      await expect(workPatches(app, r1.id, worktrees, { base: "no-such-branch" })).rejects.toThrow(/没有分支 no-such-branch/);
 
       // Back to checkpoint 1 on the owner's word: a round that only reverts — no coding Agent, no
       // review — and the tasks finished after that checkpoint count as reverted.
@@ -245,7 +245,7 @@ describe("a delegation driven by tasks", () => {
     }
   }, 120_000);
 
-  it("takes back a file or a hunk as a commit of its own, and hands a hunk that no longer applies to the coder", () => {
+  it("takes back a file or a hunk as a commit of its own, and hands a hunk that no longer applies to the coder", async () => {
     const app = testApp();
     const dir = mkdtempSync(join(tmpdir(), "omem-revert-"));
     const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: dir, encoding: "utf8" });
@@ -267,7 +267,7 @@ describe("a delegation driven by tasks", () => {
     git("commit", "-qam", "T2\n\nOmem-Task: T2");
     for (const title of ["改退款", "改费率"]) addTask(app, r.id, { title, kind: "build", state: "done" }, "coder");
     recordCheckpoint(app, r.id, worktrees, r.id, [1, 2], "第 1 轮");
-    const patch = workPatches(app, r.id, worktrees, { from: 0 })[0];
+    const patch = (await workPatches(app, r.id, worktrees, { from: 0 }))[0];
     expect(patch.from).toBe(base);
 
     // The rate file back as it was, and the first hunk of refund.ts (line 1) taken back.
