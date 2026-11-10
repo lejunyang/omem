@@ -1,5 +1,6 @@
 import { updateThread } from "../agents/threads.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
+import { queueMentionPrep } from "./lark-mentions.ts";
 import { chatSpace } from "./lark-personal.ts";
 import { notificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
@@ -465,6 +466,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const r = persistChatMessages(app, { chatId: m.chatId, spaceId, name: before?.title ?? groupName(m.chatId), messages: [message], owner: ownerOpenId() });
     if (!r.id) return;
     lastCapture.set(m.messageId, r.id);
+    // Someone @-ing the owner here: the liaison reads up on it (lark-mentions.ts); an @ of the bot is the bot's to answer.
+    if (!m.mentions.includes(botOpenId ?? "")) queueMentionPrep(app, { id: m.chatId, name: before?.title ?? groupName(m.chatId), kind: "group" }, [message], ownerOpenId());
     if (r.status === "unchanged") return;
     // Debounce: hand a burst of messages to the ingest role once.
     const sourceId = r.id;

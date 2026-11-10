@@ -39,6 +39,8 @@ import "./profile-jobs.ts";
 import "./req-split.ts";
 import "./wakes.ts";
 import "./digest.ts";
+// Also registers the mention-prep handler (someone looking for the owner).
+import { handedToLiaison } from "../channels/lark-mentions.ts";
 import { helpedCounts, replayDreamText } from "./replay.ts";
 
 registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
@@ -473,7 +475,10 @@ registerHandler("ingest", async (ctx) => {
     }
   });
   const known = await knownNearMaterial(ctx.app, ctx.run.spaceId!, sourceIds, sourceStarts);
-  const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}${known}`;
+  // Someone looking for the owner in these lines is the liaison's to notify about (lark-mentions.ts).
+  const handed = handedToLiaison(ctx.app, sourceIds);
+  const liaison = handed.length ? `\n\n有人找本人的这几条消息另有“有人找你”的运行查背景后提醒本人，不要为它们 notify（记忆、事项照常处理）：${handed.join("、")}` : "";
+  const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}${liaison}${known}`;
   // Comparison: the same material through other backends/models; their writes are only recorded.
   for (const c of ctx.app.config.memory.compare)
     createRun(ctx.app, {

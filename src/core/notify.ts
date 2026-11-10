@@ -70,7 +70,9 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; effects?: string[] }; replaces?: string },
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; effects?: string[] }; replaces?: string;
+    /** The host already gave the owner their time before this run started (lark-mentions.ts): no first-nudge grace. */
+    graceDone?: boolean },
 ) {
   const userId = input.userId ?? "owner";
   const replaced = input.replaces ? one<{ id: string; user_id: string }>(app.db, "select id, user_id from notifications where id = ?", input.replaces) : undefined;
@@ -90,11 +92,18 @@ export function notify(
     input = { ...input, eventId: event?.id };
   } else if (input.eventId !== undefined) throw new HttpError(400, "eventId 需要事项");
   validateItemRefs(app, sourceRefs, userId);
+  // The same chat messages already told the owner about a moment ago (two runs reading the same
+  // new lines, a later run repeating an earlier one): not again. A new state of it goes with `replaces`.
+  if (!input.scheduled && !input.replaces && !input.digest) {
+    const repeat = repeatOf(app, userId, sourceRefs);
+    if (repeat) throw new HttpError(409, `这几条消息 ${REPEAT_HOURS} 小时内已经提醒过本人（通知 ${repeat.id}「${repeat.title}」），不再重复提醒；这件事有了新状态就传 replaces=${repeat.id} 更新那条，没有就不用通知`);
+  }
   // Grace period for a normal, non-scheduled, non-urgent item's FIRST nudge:
   // give the owner time to handle it (read / reply / react) before pinging.
   // Enforced centrally so an over-eager ingest run cannot bypass it.
   if (
     input.entityId &&
+    !input.graceDone &&
     (input.urgency ?? "normal") !== "urgent" &&
     !input.scheduled &&
     !one(app.db, "select 1 from notifications where json_extract(context,'$.entityId') = ?", input.entityId)
@@ -129,6 +138,34 @@ export function notify(
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });
   for (const sink of sinks) Promise.resolve(sink(n)).catch((e) => console.warn("[omem] 通知发送失败", e));
   return n;
+}
+
+/** How long the same chat messages are not notified about again. */
+export const REPEAT_HOURS = 6;
+
+/** The Feishu messages behind `src:<chat source>#La-Lb` references (other references have none). */
+export function chatMessagesOf(app: App, refs: string[]): string[] {
+  const ids = new Set<string>();
+  for (const ref of refs) {
+    const m = /^src:([A-Za-z0-9_-]+)#L(\d+)(?:-L?(\d+))?$/.exec(ref);
+    if (!m) continue;
+    for (const r of all<{ message_id: string }>(app.db, "select message_id from lark_message_lines where source_id = ? and line between ? and ?", m[1], Number(m[2]), Number(m[3] ?? m[2])))
+      ids.add(r.message_id);
+  }
+  return [...ids];
+}
+
+/** An earlier notification (within REPEAT_HOURS) that already cited every chat message these references cite. */
+function repeatOf(app: App, userId: string, refs: string[]) {
+  const ids = chatMessagesOf(app, refs);
+  if (!ids.length) return null;
+  const since = new Date(Date.now() - REPEAT_HOURS * 3600_000).toISOString();
+  const told = new Set<string>();
+  for (const n of all<{ id: string; title: string; refs: string | null }>(app.db, "select id, title, json_extract(context, '$.sourceRefs') refs from notifications where user_id = ? and at > ? order by at desc", userId, since)) {
+    for (const id of chatMessagesOf(app, json<string[]>(n.refs, []))) told.add(id);
+    if (ids.every((id) => told.has(id))) return n;
+  }
+  return null;
 }
 
 /** One person's notifications, newest first (the owner's by default). */

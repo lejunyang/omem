@@ -169,6 +169,10 @@ function saveGuests(patch: Record<string, unknown>, note = "已保存访客设�
   const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false };
   return saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
 }
+function saveMentions(patch: Record<string, unknown>, note = "已保存") {
+  const cur = config.value.lark.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10 };
+  void saveConfig({ lark: { ...config.value.lark, mentions: { ...cur, ...patch } } }, note);
+}
 function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
   const cur = config.value.lark.commands ?? { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 };
   void saveConfig({ lark: { ...config.value.lark, commands: { ...cur, ...patch } } }, note);
@@ -1045,6 +1049,19 @@ async function saveEdit() {
         </div>
         <p v-if="!(config.lark.bots ?? []).length" class="muted small">还没有其他机器人。</p>
         <div class="row small"><span>机器人之间连续转交最多</span><UiSelect :model-value="String(config.lark.botRelay ?? 4)" size="sm" width="90px" aria-label="机器人之间连续转交上限" :options="['0', '1', '2', '4', '6', '10'].map((v) => ({ value: v, label: `${v} 次` }))" @change="(v) => saveConfig({ lark: { ...config.lark, botRelay: Number(v) } }, `机器人之间连续转交最多 ${v} 次`)" /><span class="muted">，之后等有人发话</span></div>
+      </div>
+
+      <div class="card pad stack">
+        <strong>有人找你</strong>
+        <p class="muted small">别的群里有人 @ 你，或有人私聊你，过几分钟你还没看、没回表情、也没回复时，先由“有人找你”角色读前后的聊天和链接的文档，查以前的事项、记忆和 Wiki，能回答的给出结论和回复草稿、要你定的列出选项，再提醒你。它只读，不替你在飞书里发消息。查不出来、出错或超时，照常发一条简短提醒（谁、在哪、说了什么）。这个角色的后端和模型在“Agent”页设置。</p>
+        <UiCheckbox :model-value="config.lark.mentions?.enabled !== false" switch @change="(v) => saveMentions({ enabled: v }, v ? '有人找你时先查背景再提醒' : '已关闭：有人找你时不再先查背景')">有人找你时先查背景再提醒</UiCheckbox>
+        <UiCheckbox :model-value="config.lark.mentions?.p2p !== false" switch :disabled="config.lark.mentions?.enabled === false" @change="(v) => saveMentions({ p2p: v })">私聊也算（同事私聊你的消息）</UiCheckbox>
+        <label class="field"><span>消息发出后等几分钟再开始（0–240，给你自己先看的时间）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="240" :disabled="config.lark.mentions?.enabled === false" :value="config.lark.mentions?.delayMinutes ?? 3" @change="saveMentions({ delayMinutes: Math.max(0, Math.min(240, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) })" />
+        </label>
+        <label class="field"><span>最多查几分钟，超过就发简短提醒（1–60）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="60" :disabled="config.lark.mentions?.enabled === false" :value="config.lark.mentions?.timeoutMinutes ?? 10" @change="saveMentions({ timeoutMinutes: intIn($event, 1, 60, 10) })" />
+        </label>
       </div>
 
       <div class="card pad stack">

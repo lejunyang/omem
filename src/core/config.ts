@@ -84,6 +84,7 @@ export const roleNames = [
   "req-splitter",
   "speaking-coach",
   "business-analyst",
+  "liaison",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -682,6 +683,20 @@ export const configSchema = z.object({
         })
         .default({ enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 }),
       /**
+       * Someone looking for the owner (src/channels/lark-mentions.ts): a person @-ing the owner in a group,
+       * or writing to them one-to-one (`p2p`). After `delayMinutes`, if the owner has not read, reacted or
+       * answered, the liaison role reads the context, looks up what is known and notifies with a conclusion
+       * and a draft reply; when it fails or runs past `timeoutMinutes`, the short reminder goes out instead.
+       */
+      mentions: z
+        .object({
+          enabled: z.boolean().default(true),
+          p2p: z.boolean().default(true),
+          delayMinutes: z.number().int().min(0).max(240).default(3),
+          timeoutMinutes: z.number().int().min(1).max(60).default(10),
+        })
+        .default({ enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10 }),
+      /**
        * Knowledge bases the owner can see (src/channels/lark-knowledge.ts, read-only): discovered weekly,
        * sorted into spaces by the kb-scout role along `direction` (the owner's words), and read a little
        * every night: `dailyDocs` docs in all, shared by the mapped ones by priority. `autoApply`: the
@@ -732,6 +747,7 @@ export const configSchema = z.object({
       },
       guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
+      mentions: { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10 },
       knowledge: { direction: "", autoApply: false, dailyDocs: 30 },
     }),
   telegram: z

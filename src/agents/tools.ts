@@ -3033,6 +3033,8 @@ def({
       runId: ctx.runId,
       replaces: a.replaces,
       ...(a.urgency ? { urgency: a.urgency } : {}),
+      // The liaison starts only after the owner had their time with the message (lark-mentions.ts).
+      ...(ctx.runId && one<{ kind: string }>(ctx.app.db, "select kind from runs where id = ?", ctx.runId)?.kind === "mention-prep" ? { graceDone: true } : {}),
     });
     return a.replaces ? `已更新通知 ${a.replaces}（新 id ${n.id}）` : `已通知（id ${n.id}；之后状态变了可传 replaces=${n.id} 更新这张卡片）`;
   },

@@ -415,6 +415,24 @@ ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      // FAKE_MODE=liaison: someone looking for the owner (lark-mentions.ts). Reads the cited line, then
+      // notifies with it (FAKE_LIAISON unset), stays quiet (=quiet) or ends without a word (=silent).
+      if (process.env.FAKE_MODE === "liaison") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-liaison", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const ref = /src:[A-Za-z0-9_-]+#L\d+/.exec(prompt)?.[0];
+          const tools = (await client.listTools()).tools.map((t) => t.name);
+          const read = ref ? await client.callTool({ name: "read_source", arguments: { source: ref.slice(4).split("#")[0] } }) : null;
+          let notified: unknown = null;
+          if (process.env.FAKE_LIAISON === "quiet") await client.callTool({ name: "stay_quiet", arguments: { reason: "群里已经有人回答了" } });
+          else if (process.env.FAKE_LIAISON !== "silent")
+            notified = await client.callTool({ name: "notify", arguments: { title: "小王问退款口径：按未发货行算，可直接回", body: `小王要退款金额的算法。案例页写明只退未发货的行。\n\n可以这样回：按未发货的行算，已发货的不退。\n\n[原消息](${ref})`, source_refs: ref ? [ref] : [] } });
+          await say(JSON.stringify({ tools, read: !!read && !read.isError, notified }));
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
       if (echo) {
         await say(JSON.stringify({ session: p.sessionId, resumed: resumed.has(p.sessionId), system: systems.get(p.sessionId) ?? null, prompt }));
         return { stopReason: "end_turn" };

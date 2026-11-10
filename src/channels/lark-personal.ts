@@ -15,6 +15,7 @@ import { findSourceByUri, upsertSource } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
 import { flattenReplies, persistChatMessages, isApp, keepResources, learnPeople, mentionIds, messageText, quotedMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
 import { routeWatchedMessages, watchRule, type ChatMessage } from "./lark-watch.ts";
+import { queueMentionPrep } from "./lark-mentions.ts";
 import type { RuleEvent } from "../rules/types.ts";
 
 /**
@@ -366,6 +367,8 @@ async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
       mentions: mentionIds(m),
     }));
     await routeWatchedMessages(app, chat.chatId, chat.name, watched);
+    // Someone looking for the owner: the liaison reads up on it before the owner is told.
+    if (kind === "p2p" || kind === "group" || kind === "topic") queueMentionPrep(app, { id: chat.chatId, name: chat.name, kind: kind === "p2p" ? "p2p" : "group" }, messages, owner);
     // Rules see every captured chat. Judging may ask the model: it does not hold up the capture.
     void import("../rules/engine.ts").then(({ dispatchRuleEvents }) => dispatchRuleEvents(app, ruleEvents(app, chat, messages, owner, !prev))).catch(() => {});
     return messages.length;
@@ -617,6 +620,7 @@ async function captureMentions(app: App, endMs: number, touched: Map<string, Set
     if (chatSettings(app, "lark-capture", m.chat_id!).policy === "skip") continue;
     const r = persistChatMessages(app, { chatId: m.chat_id!, spaceId: chatSpace(app, m.chat_id!), name: m.chat_name ?? m.chat_id!, messages: [m], owner });
     if (r.id) touched.set(r.spaceId, (touched.get(r.spaceId) ?? new Set()).add(r.id));
+    queueMentionPrep(app, { id: m.chat_id!, name: m.chat_name ?? m.chat_id!, kind: "group" }, [m], owner);
   }
   await learnPeople(app, found);
   run(app.db, "insert into kv(key,value) values('lark_mentions_since_ms', ?) on conflict(key) do update set value = excluded.value", String(endMs));
