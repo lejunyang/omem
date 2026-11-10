@@ -1,5 +1,5 @@
 import { reactive, watch } from "vue";
-import { get, onServerEvent, type Space } from "./api";
+import { get, onServerEvent, onServerResync, type Space } from "./api";
 
 export type CitationTarget =
   | { kind: "source"; id?: string; uri?: string; space?: string; from?: number; to?: number; label?: string }
@@ -88,6 +88,12 @@ onServerEvent((e) => {
     toast(e.title, "info", e.link ?? undefined);
   }
   if (e.type === "changed" && e.entity === "space") void loadSpaces();
+});
+// Back from a hidden tab (or a dropped connection): notifications and spaces may have changed.
+onServerResync(() => {
+  if (!state.spaces.length) return;
+  void refreshUnread();
+  void loadSpaces().catch(() => {});
 });
 
 /** What a source is, in words (search hits, lists). */

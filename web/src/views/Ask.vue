@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { del, get, onServerEvent, post, type Ask as AskItem, type UiViewItem } from "../api";
+import { del, get, onServerEvent, onServerResync, post, type Ask as AskItem, type UiViewItem } from "../api";
 import AskCard from "../components/AskCard.vue";
 import UiView from "../components/UiView.vue";
 import Icon from "../components/Icon.vue";
@@ -143,7 +143,18 @@ const off = onServerEvent((e) => {
     void loadList();
   }
 });
-onBeforeUnmount(() => off());
+// Back from a hidden tab: questions, views and the list may have moved; the thread is reloaded
+// only while a reply was still on its way (reloading scrolls to the bottom).
+const offResync = onServerResync(() => {
+  void loadAsks();
+  void loadViews();
+  void loadList();
+  if (pending.value.length) void loadConversation();
+});
+onBeforeUnmount(() => {
+  off();
+  offResync();
+});
 
 /** Runs that belong to a user message but have no assistant reply yet. */
 const pending = computed(() => {

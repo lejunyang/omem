@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { get, onServerEvent, post, type Ask, type Item, type Run } from "../api";
+import { get, onServerEvent, onServerResync, post, type Ask, type Item, type Run } from "../api";
 import AskCard from "../components/AskCard.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -35,7 +35,14 @@ const off = onServerEvent((e) => {
   if (e.type === "changed" || e.type === "run" || e.type === "notification") void load();
   if (e.type === "ask") void loadAsks();
 });
-onBeforeUnmount(() => off());
+const offResync = onServerResync(() => {
+  void load();
+  void loadAsks();
+});
+onBeforeUnmount(() => {
+  off();
+  offResync();
+});
 
 async function ask() {
   if (!question.value.trim()) return;

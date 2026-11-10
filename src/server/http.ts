@@ -47,6 +47,7 @@ import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedul
 import { businessOf, createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError, slugify } from "../core/util.ts";
 import { trustedLocal } from "./origin.ts";
+import { listenSecure, type SecureListener } from "./secure.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
 import { externalCaller, externalToolBackend } from "../auth/external-tools.ts";
 import { checkBearer } from "../auth/authenticators.ts";
@@ -95,8 +96,14 @@ const bearer = bearerToken;
 /** `METHOD /path` of every /api route registered so far. */
 export const registeredRoutes = new Set<string>();
 
-export async function startServer(app: App, opts: { port?: number; host?: string; quiet?: boolean } = {}) {
+export async function startServer(app: App, opts: { port?: number; host?: string; quiet?: boolean; secure?: boolean } = {}) {
   const server = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
+  let secure: SecureListener | null = null;
+  server.addHook("onClose", async () => {
+    const s = secure;
+    secure = null;
+    await s?.close();
+  });
   // Every API route, for test/route-perms.test.ts: each must say what it needs (src/auth/routes.ts).
   server.addHook("onRoute", (r) => {
     if (r.url.startsWith("/api/")) for (const m of [r.method].flat()) registeredRoutes.add(`${m} ${r.url}`);
@@ -2660,6 +2667,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const url = new URL(address);
   app.baseUrl = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${url.port}`;
   if (!opts.quiet) console.log(`omem 已启动：${app.baseUrl}${dist ? "" : "（未找到网页构建产物，仅 API）"}`);
+  // HTTPS (HTTP/2) for browsers beside the plain port (src/server/secure.ts). Not starting it does
+  // not stop omem: the plain port is still there.
+  const https = app.config.https;
+  if (https && (https.selfSigned || (https.cert && https.key)) && opts.secure !== false) {
+    try {
+      secure = await listenSecure(app, server, host, https, opts.quiet);
+      app.secureUrl = `https://${host === "0.0.0.0" ? "127.0.0.1" : host}:${secure.port}`;
+    } catch (e) {
+      console.error(`[omem] HTTPS 没有启动：${(e as Error).message}`);
+    }
+  }
   return server;
 }
 

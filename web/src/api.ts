@@ -9,6 +9,7 @@ export class ApiError extends Error {
 }
 
 import { promptDialog } from "./lib/dialog";
+import { browserPage, createLive, type LiveSource } from "./lib/live";
 import type { UiField, ViewComponent } from "omem-plugin-sdk/blocks";
 export type { UiField, ViewComponent };
 
@@ -186,23 +187,19 @@ export type Ask = {
 /** What an agent showed under a reply (`show`). */
 export type UiViewItem = { id: string; runId: string | null; conversationId?: string | null; title: string; components: ViewComponent[]; createdAt: string };
 
-type Listener = (e: ServerEvent) => void;
-const listeners = new Set<Listener>();
-let source: EventSource | null = null;
-export function onServerEvent(fn: Listener) {
-  listeners.add(fn);
-  if (!source) {
+// The live events (lib/live.ts): one connection per page, only while the app frame is shown
+// (App.vue enables it; a share link and the login page do not), closed while the page is hidden.
+const live = createLive<ServerEvent>({
+  open: () => {
     const t = token();
-    source = new EventSource(`/api/events${t ? `?token=${encodeURIComponent(t)}` : ""}`);
-    source.onmessage = (m) => {
-      try {
-        const e = JSON.parse(m.data) as ServerEvent;
-        for (const l of listeners) l(e);
-      } catch {}
-    };
-  }
-  return () => listeners.delete(fn);
-}
+    return new EventSource(`/api/events${t ? `?token=${encodeURIComponent(t)}` : ""}`) as unknown as LiveSource;
+  },
+  page: browserPage(),
+});
+export const onServerEvent = (fn: (e: ServerEvent) => void) => live.subscribe(fn);
+/** After the live connection was away (a hidden tab, a dropped connection): reload what may have changed. */
+export const onServerResync = (fn: () => void) => live.onResync(fn);
+export const setLiveEvents = (on: boolean) => live.enable(on);
 
 // ---- shared types (mirrors server) ----
 /** `via`: the repository's business space (`parent`) or one of its repositories (`child`), not a relation of its own. */

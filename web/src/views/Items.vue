@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { get, onServerEvent, patch, post, type Item, type ItemEvent } from "../api";
+import { get, onServerEvent, onServerResync, patch, post, type Item, type ItemEvent } from "../api";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import Markdown from "../components/Markdown.vue";
@@ -72,7 +72,15 @@ const off = onServerEvent((e) => {
     if (detail.value && e.id === detail.value.item.id) void loadDetail();
   }
 });
-onBeforeUnmount(() => off());
+const offResync = onServerResync(() => {
+  void load();
+  void loadExpiry();
+  if (detail.value) void loadDetail();
+});
+onBeforeUnmount(() => {
+  off();
+  offResync();
+});
 
 const columns = computed(() => {
   const open = items.value.filter((i) => !closedStatuses.includes(i.status));

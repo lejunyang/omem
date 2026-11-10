@@ -8,7 +8,7 @@ import DialogHost from "./components/DialogHost.vue";
 import Skeleton from "./components/Skeleton.vue";
 import UiSelect from "./components/UiSelect.vue";
 import Icon from "./components/Icon.vue";
-import { get } from "./api";
+import { get, setLiveEvents } from "./api";
 import { loadSpaces, refreshUnread, state } from "./store";
 import { spaceOptions } from "./lib/spaces";
 import { preloadRoute } from "./preload";
@@ -94,7 +94,9 @@ watch([() => route.path, owner], ([path]) => {
 });
 // A share link is opened by people without a token, the login page before logging in: no frame, nothing else loaded.
 const BARE = ["#/share/", "#/login"];
-const bare = computed(() => route.path.startsWith("/share/") || route.path === "/login" || route.path === "/cli-login" || (!route.matched.length && BARE.some((b) => location.hash.startsWith(b))));
+const bare = computed(() => route.path.startsWith("/share/") || route.path === "/login" || route.path === "/cli-login" || (!route.matched.length && [...BARE, "#/cli-login"].some((b) => location.hash.startsWith(b))));
+// Live events only with the app frame: a share link is read once, the login pages have nothing to follow.
+watch(bare, (b) => setLiveEvents(!b), { immediate: true });
 onMounted(async () => {
   if (BARE.some((b) => location.hash.startsWith(b))) return;
   window.addEventListener("keydown", onKey);

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { get, onServerEvent, type Run, type RunEvent } from "../api";
+import { get, onServerEvent, onServerResync, type Run, type RunEvent } from "../api";
 import Icon from "./Icon.vue";
 import { prettyTool } from "../lib/tools";
 import { openCitation, state } from "../store";
@@ -44,7 +44,14 @@ const off = onServerEvent(async (e) => {
     }
   }
 });
-onBeforeUnmount(() => off());
+// Back from a hidden tab: a run that was under way is read again whole (its events were missed).
+const offResync = onServerResync(() => {
+  if (!run.value || ["queued", "running"].includes(run.value.status)) void load();
+});
+onBeforeUnmount(() => {
+  off();
+  offResync();
+});
 
 /** Tool calls with their latest status, one row per call id. */
 const steps = computed(() => {

@@ -65,9 +65,19 @@ function where(it: Item) {
   return `Wiki${it.section ? ` · ${it.section}` : ""}`;
 }
 
+/** The server answers a share in milliseconds: a wait this long is the browser holding the request back. */
+const SLOW_MS = 8_000;
+const GIVE_UP_MS = 60_000;
+const slow = ref(false);
+
 onMounted(async () => {
+  const slowTimer = setTimeout(() => (slow.value = true), SLOW_MS);
+  const ctrl = new AbortController();
+  const giveUp = setTimeout(() => ctrl.abort(), GIVE_UP_MS);
   try {
-    const r = await fetch(`/api/share/${encodeURIComponent(String(route.params.token))}`, { headers: { accept: "application/json" } });
+    const r = await fetch(`/api/share/${encodeURIComponent(String(route.params.token))}`, { headers: { accept: "application/json" }, signal: ctrl.signal }).catch((e: Error) => {
+      throw new Error(e.name === "AbortError" ? "等了一分钟还没打开。多半是同一浏览器里开着太多这个地址的页面，连接被占满：关掉几个再刷新，或换个浏览器打开。" : `打开失败（${e.message}），稍后再试。`);
+    });
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(r.status === 404 ? "链接无效、已撤销或已过期，请向发链接的人要一个新的。" : `打开失败（${body.error ?? r.status}），稍后再试。`);
     share.value = body as Share;
@@ -76,6 +86,10 @@ onMounted(async () => {
     if (current.value !== null) document.getElementById(`item-${current.value}`)?.scrollIntoView({ block: "start" });
   } catch (e) {
     error.value = (e as Error).message;
+  } finally {
+    clearTimeout(slowTimer);
+    clearTimeout(giveUp);
+    slow.value = false;
   }
 });
 </script>
@@ -91,7 +105,10 @@ onMounted(async () => {
         <strong>打不开这个分享</strong>
         <p class="muted">{{ error }}</p>
       </div>
-      <Skeleton v-else-if="!share" variant="text" :rows="10" />
+      <template v-else-if="!share">
+        <p v-if="slow" class="muted small" role="status">还在等……同一浏览器里开着很多这个地址的页面时，浏览器会让这个请求排队；关掉几个页面，或换个浏览器打开。</p>
+        <Skeleton variant="text" :rows="10" />
+      </template>
       <template v-else>
         <h1>{{ share.title || "引用的内容" }}</h1>
         <p class="muted small meta">一条消息引用的 {{ share.items.length }} 处内容 · {{ when(share.createdAt) }} 复制 · {{ share.expiresAt ? `${when(share.expiresAt)} 失效` : "长期有效" }}</p>

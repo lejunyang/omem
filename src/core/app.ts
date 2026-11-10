@@ -22,6 +22,8 @@ export class App {
   readonly filesDir: string;
   readonly runsDir: string;
   baseUrl = "";
+  /** The HTTPS (HTTP/2) listener for browsers, when `https` is configured (server/secure.ts); "" otherwise. */
+  secureUrl = "";
   /** Token that internal tools (MCP bridge) use to call back into the API. */
   internalToken = "";
 

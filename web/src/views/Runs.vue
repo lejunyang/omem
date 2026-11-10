@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { idQuery } from "../../../src/core/id-query";
 import { useRoute, useRouter } from "vue-router";
-import { aiLabel, get, onServerEvent, post, type Run, type RunEvent } from "../api";
+import { aiLabel, get, onServerEvent, onServerResync, post, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
@@ -174,7 +174,12 @@ function onListScroll(ev: Event) {
   const el = ev.target as HTMLElement;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) void loadMore();
 }
-onBeforeUnmount(() => { ++listSeq; ++detailSeq; off(); clearTimeout(reloadTimer); clearTimeout(keywordTimer); });
+// Back from a hidden tab: runs started and finished meanwhile.
+const offResync = onServerResync(() => {
+  reloadSoon();
+  if (detail.value) void loadDetail();
+});
+onBeforeUnmount(() => { ++listSeq; ++detailSeq; off(); offResync(); clearTimeout(reloadTimer); clearTimeout(keywordTimer); });
 
 const out = computed(() => detail.value?.run.output ?? {});
 const ctxInfo = computed(() => detail.value?.context ?? null);

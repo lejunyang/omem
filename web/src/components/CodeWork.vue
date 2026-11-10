@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { aiLabel, get, onServerEvent, post, type Run, type RunEvent } from "../api";
+import { aiLabel, get, onServerEvent, onServerResync, post, type Run, type RunEvent } from "../api";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import Skeleton from "./Skeleton.vue";
@@ -84,7 +84,9 @@ const off = onServerEvent((e) => {
     timer = setTimeout(() => void load(), 500);
   }
 });
-onBeforeUnmount(() => { ++seq; off(); clearTimeout(timer); });
+// Back from a hidden tab: rounds and reviews may have moved on.
+const offResync = onServerResync(() => void load());
+onBeforeUnmount(() => { ++seq; off(); offResync(); clearTimeout(timer); });
 
 const run = computed(() => detail.value?.run ?? null);
 type Check = { command: string; code: number; output: string; ms?: number; commit?: string };

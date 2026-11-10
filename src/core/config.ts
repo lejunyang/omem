@@ -141,6 +141,22 @@ export const configSchema = z.object({
    */
   webUrl: z.string().optional(),
   /**
+   * An HTTPS listener beside `port`, for browsers (src/server/secure.ts): they speak HTTP/2 over it,
+   * one connection for all tabs instead of six per address. `cert` / `key`: paths (relative to the
+   * data directory, or `~/…`); or `selfSigned` makes one with openssl in `<data>/tls/` for this
+   * machine's names and addresses, `webUrl`'s host and `hosts` (browsers warn until it is trusted).
+   * The plain port keeps serving everything else (agents, the CLI, paired devices).
+   */
+  https: z
+    .object({
+      port: z.number().int().min(0).max(65535).default(4443),
+      cert: z.string().optional(),
+      key: z.string().optional(),
+      selfSigned: z.boolean().default(false),
+      hosts: z.array(z.string()).default([]),
+    })
+    .optional(),
+  /**
    * Read-only share links that messages sent outside omem (Feishu) use for what they cite
    * (core/shares.ts); they need `webUrl`. expiryDays 0: links do not expire (revoke them in settings).
    */

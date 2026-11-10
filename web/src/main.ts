@@ -49,7 +49,9 @@ const router = createRouter({
 
 setNavigation((to) => void router.isReady().then(() => router.replace(to)));
 
-// After the first view has settled, pull every other chunk at idle.
-router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/notifications", "/settings", "/account"]));
+// After the first view has settled, pull every other chunk at idle; a share link or a login page
+// (opened by someone who may never see the app) does not.
+const BARE_START = /^\/(share\/|login|cli-login)/;
+router.isReady().then(() => !BARE_START.test(router.currentRoute.value.path) && preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/notifications", "/settings", "/account"]));
 
 createApp(App).use(compositionGuard).use(router).mount("#app");
