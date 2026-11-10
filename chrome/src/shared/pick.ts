@@ -1,3 +1,4 @@
+import type { ElementContext, PageContext } from "./element-context";
 import { normalizeStoredList } from "./stored-list";
 
 // 「拾取」的数据模型和纯计算：样式整理、间距测量、截图裁剪与拼接规划、导出 Markdown。
@@ -32,6 +33,8 @@ export interface PickElement {
   /** 页面坐标（CSS px，含滚动） */
   rect: PickRect;
   styles: PickStyleGroup[];
+  /** 发给 omem 用的位置、属性、文本、精简 HTML（2026-11-10 之前的记录没有） */
+  context?: ElementContext;
 }
 
 export interface PickSpacing {
@@ -59,6 +62,8 @@ export interface PickRecord {
   note: string;
   pageUrl: string;
   pageTitle: string;
+  /** 页面描述、语言、视口、选中文字等（之前的记录没有） */
+  pageContext?: PageContext;
   createdAt: number;
   rect: PickRect;
   image: Blob;

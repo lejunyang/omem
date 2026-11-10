@@ -43,6 +43,12 @@
 - 开启时也要用完就断：没有功能需要时由 `maybeDetachDebugger` 断开；DevTools 关闭（面板 port 断开）时停掉调用栈观察。
 - 注入页面的脚本放 `src/inject/`，由 `scripts/build-inject.mjs` 各自打包成 IIFE；钩子和桥之间只传 JSON 字符串，桥只转发规则 id，不信任页面传来的脚本内容。
 
+## 连接 omem
+
+- 连接存在 `omem.connections`（`src/shared/connections.ts`），令牌只放扩展 storage。凭据一律是 Bearer `om_`（`omem login` 的确认页换来），不靠 cookie：omem 对带 cookie 的写请求要求同源，不要为扩展放开。
+- 没有令牌的直连一律当作未登录：本机 omem 会把扩展不带 Origin 的读请求当成本机网页放行，读得到不代表写得进去。
+- 发给 omem 走 `POST /api/clips`（仓库的 `src/sources/clips.ts`）；改发送内容的格式先改 `src/shared/pick-clip.ts` 和它的单元测试，元素上下文的上限在 `src/shared/element-context.ts`。e2e `e2e/omem-send.e2e.test.ts` 会起一个真实 omem（需要先构建 omem 的网页 `web/dist`）。
+
 ## Chrome Extension 约束
 
 - Manifest V3 配置位于 `public/manifest.json`，构建产物加载目录是 `dist/`。

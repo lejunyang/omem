@@ -562,6 +562,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const ingest = b.ingest && ids.length ? scheduleIngest(app, b.space, ids) : null;
     return { ...r, ingestRun: ingest?.id ?? null };
   });
+  // A clip from the browser extension's 拾取篮: screenshots as image originals, asked or kept as a note (sources/clips.ts).
+  server.post("/api/clips", async (req) => {
+    const { clipSchema, saveClip } = await import("../sources/clips.ts");
+    return saveClip(app, who(req), q(clipSchema, req.body));
+  });
   server.post("/api/sources/upload", async (req) => {
     const space = (req.query as { space?: string }).space ?? "personal";
     getSpace(app, space);

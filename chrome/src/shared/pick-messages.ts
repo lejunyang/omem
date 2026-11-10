@@ -1,3 +1,4 @@
+import type { PageContext } from "./element-context";
 import type { PickElement, PickKind, PickRect, PickSpacing } from "./pick";
 
 // popup / 侧栏 / 页面内容脚本 与后台之间的拾取消息。
@@ -14,6 +15,7 @@ export interface PickCommitPayload {
   spacings: PickSpacing[];
   pageUrl: string;
   pageTitle: string;
+  pageContext?: PageContext;
   viewport: { width: number; height: number };
   /** 整页：文档尺寸和逐屏截图的滚动位置（已由内容脚本按计划截好，见 pick:grab） */
   page?: { width: number; height: number; truncated: boolean };

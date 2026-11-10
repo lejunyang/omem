@@ -72,6 +72,7 @@ export function createPickService(deps: Dependencies) {
       note: "",
       pageUrl: payload.pageUrl,
       pageTitle: payload.pageTitle,
+      ...(payload.pageContext ? { pageContext: payload.pageContext } : {}),
       createdAt: Date.now(),
       rect: payload.rect,
       image,

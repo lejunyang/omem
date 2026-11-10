@@ -52,19 +52,19 @@ async function answer(allow: boolean) {
       <Skeleton v-else-if="!info" variant="text" :rows="3" />
       <template v-else-if="done === 'allowed'">
         <h2>已允许</h2>
-        <p class="muted">回到终端，{{ info.client }} 上的 omem 命令行会自动拿到令牌。之后可以在 账号 → 命令行与 MCP 里撤销。</p>
+        <p class="muted">回到发起登录的地方（终端里的 omem login，或 omem 浏览器扩展），它会自动拿到令牌。之后可以在 账号 → 命令行与 MCP 里撤销。</p>
       </template>
       <template v-else-if="done === 'denied'">
         <h2>已拒绝</h2>
         <p class="muted">这个确认码作废了。如果不是你发起的，不用做别的。</p>
       </template>
       <template v-else>
-        <h2>允许命令行使用 omem？</h2>
+        <h2>允许它使用 omem？</h2>
         <p class="muted">
-          <strong class="ink">{{ info.client }}</strong> 上的 omem 命令行请求以 <strong class="ink">{{ info.user.name }}</strong> 的身份使用 omem：检索、阅读你能看的空间，按你的权限写记忆和页面。
+          <strong class="ink">{{ info.client }}</strong> 请求以 <strong class="ink">{{ info.user.name }}</strong> 的身份使用 omem：检索、阅读你能看的空间，按你的权限写记忆、页面和原件。
         </p>
         <div class="code mono">{{ info.code }}</div>
-        <p class="muted small">先确认上面的确认码和终端里显示的一样；不是你刚才在终端里执行的 omem login，就点“拒绝”。</p>
+        <p class="muted small">先确认上面的确认码和发起登录的地方（终端里的 omem login，或 omem 浏览器扩展）显示的一样；不是你刚才发起的，就点“拒绝”。</p>
         <p v-if="!info.may" class="warn-text small">你的角色不能在自己的电脑上用 omem 工具，请联系 omem 的主人。</p>
         <div class="row wrap">
           <button class="btn primary" :disabled="busy || !info.may" @click="answer(true)">允许</button>

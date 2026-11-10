@@ -1,3 +1,4 @@
+import { omemBrowserCommands } from "./omem-browser-commands";
 import { pickBrowserCommands } from "./pick-browser-commands";
 import { simulatorBrowserCommands } from "./simulator-browser-commands";
 import type { Page, BrowserContext } from "playwright";
@@ -151,6 +152,7 @@ interface PanelHarnessRequest {
 export const browserCommands = {
   ...simulatorBrowserCommands,
   ...pickBrowserCommands,
+  ...omemBrowserCommands,
   runPanelNetworkPreserveLogScenario: createPlaywrightCommand(async (context, origin: string) => {
     const page = await context.newPage();
     try {

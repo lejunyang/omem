@@ -105,6 +105,32 @@ const runNoCdpScenario: BrowserCommand<[string], NoCdpScenarioResult> = async (c
   }
 };
 
+/** 清空拾取篮（记录、编号和输入框草稿），让每个用例从 #1 开始，不受先跑的用例影响。 */
+export async function clearPickBasket(page: Page): Promise<void> {
+  await page.evaluate(() => chrome.storage.local.remove("omem.pick.draft"));
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const request = indexedDB.open("omem-pick");
+        request.onsuccess = () => {
+          const db = request.result;
+          const stores = ["records", "meta"].filter((name) => db.objectStoreNames.contains(name));
+          if (!stores.length) {
+            db.close();
+            return resolve();
+          }
+          const tx = db.transaction(stores, "readwrite");
+          for (const name of stores) tx.objectStore(name).clear();
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+        };
+        request.onerror = () => resolve();
+      })
+  );
+}
+
 /** 记录条数（打开后立即关闭连接：开着的旧版本连接会挡住后台的版本升级）。 */
 async function recordCount(ext: Page): Promise<number> {
   return ext.evaluate(
@@ -144,6 +170,7 @@ const runPickScenario: BrowserCommand<[string], PickScenarioResult> = async (com
   const page = await context.newPage();
   const side = await context.newPage();
   try {
+    await clearPickBasket(ext);
     await page.setViewportSize({ width: 1200, height: 760 });
     const url = `${origin}/e2e/pick-fixture.html`;
     await page.goto(url);

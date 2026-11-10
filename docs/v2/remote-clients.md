@@ -69,7 +69,7 @@
 3. CLI 轮询 `POST /api/auth/cli/poll`，批准后拿到一个新的 `om_` 令牌（标签 `cli:<主机名>`），存进 `client.json`。
 4. 账号页“API 令牌”列出这些令牌，可以逐个撤销；停用用户时一起失效（`userForToken` 已经只认 active 用户）。
 
-确认码是 `XXXX-XXXX`（不含容易看错的 0/O、1/I），终端和确认页都显示，本人核对一致再点“允许”。`code` 只存哈希，轮询要带 start 时拿到的另一半密钥（`secret`），防止别人知道 `code` 就能领走令牌。实现：`src/auth/cli-login.ts`，确认页 `web/src/views/CliLogin.vue`（`#/cli-login`，不带应用外框）。
+确认码是 `XXXX-XXXX`（不含容易看错的 0/O、1/I），终端和确认页都显示，本人核对一致再点“允许”。`code` 只存哈希，轮询要带 start 时拿到的另一半密钥（`secret`），防止别人知道 `code` 就能领走令牌。实现：`src/auth/cli-login.ts`，确认页 `web/src/views/CliLogin.vue`（`#/cli-login`，不带应用外框）。浏览器扩展（`chrome/`）连接 omem 时也走这一套，客户端名是「omem 浏览器扩展（Chrome）」，确认页的文案按「发起登录的地方（终端或浏览器扩展）」写。
 
 ### 4.3 `omem open`：从命令行打开网页
 

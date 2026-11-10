@@ -7,6 +7,12 @@ updated: 2026-11-10
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## Chrome 扩展连接 omem：多连接与把拾取发给 omem（11-10）
+
+- 扩展存多条连接（本机、远程地址、经已登录连接转发的配对设备，`chrome/src/shared/connections.ts`），用 `omem login` 同一套确认页换 `om_` 令牌；浏览器 cookie 只用来提示「已登录为 X」，写请求不靠它（omem 对带 cookie 的写请求要求同源）。
+- 新接口 `POST /api/clips`（`src/sources/clips.ts`，路由权限是目标空间的 `source.write`）：截图校验后存成图片原件，正文里的 `{{image:key}}` 换成 `omem-file:` 和 `src:`；`mode: ask` 走问答入口，`mode: source` 存成笔记并排进整理。确认页 `CliLogin.vue` 的文案不再只说命令行。
+- 拾取时多记元素上下文（`chrome/src/shared/element-context.ts`：CSS 路径、属性、文字、精简 HTML、子元素概况、所在标题，各项有上限）和页面上下文。回归：`test/clips.test.ts`、`chrome/src/shared/omem-send.test.ts`，e2e `chrome/e2e/omem-send.e2e.test.ts`（起真实 omem）。
+
 ## Chrome 扩展并入仓库：默认不连 CDP 与拾取（11-10）
 
 - 原来独立的 DevTools 扩展并入 workspace（`chrome/`，包 `omem-chrome`），界面换成 omem 的配色。约定在 `chrome/AGENTS.md`，设计在 `chrome/docs/changes/no-cdp-and-pick/design.md`。

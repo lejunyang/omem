@@ -17,6 +17,7 @@ import {
   unionRect
 } from "../shared/pick";
 import type { PickCommitPayload, PickResponse, PickStartMode } from "../shared/pick-messages";
+import { elementContext, pageContext } from "./dom-context";
 import { OVERLAY_CSS } from "./pick-overlay-style";
 
 interface PickApi {
@@ -365,7 +366,7 @@ function createPicker(): PickApi {
 
   function collect(kind: PickKind): PickCommitPayload | null {
     const viewport = { width: window.innerWidth, height: window.innerHeight };
-    const base = { pageUrl: location.href, pageTitle: document.title, viewport };
+    const base = { pageUrl: location.href, pageTitle: document.title, pageContext: pageContext(), viewport };
     if (kind === "viewport") {
       const clip = { x: 0, y: 0, ...viewport };
       return { ...base, kind, clip, rect: { ...clip, x: scrollX, y: scrollY }, elements: [], spacings: [] };
@@ -375,7 +376,8 @@ function createPicker(): PickApi {
     }
     if (kind === "element" && primary) {
       const all = [primary, ...secondaries];
-      const elements = all.map((element) => elementInfo(element));
+      // 记下时才取完整上下文（路径、属性、精简 HTML）：大元素算一次就够，卡片刷新不用每次都算。
+      const elements = all.map((element) => elementInfo(element, true));
       const primaryRect = rectOf(primary);
       const spacings: PickSpacing[] = secondaries.map((element, index) => {
         const measures = measureBetween(primaryRect, rectOf(element));
@@ -419,6 +421,7 @@ function createPicker(): PickApi {
       spacings: [],
       pageUrl: location.href,
       pageTitle: document.title,
+      pageContext: pageContext(),
       viewport,
       page: { width: docWidth, height: plan.height, truncated: plan.truncated }
     };
@@ -498,7 +501,7 @@ function ownText(element: Element): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function elementInfo(element: Element): PickElement {
+function elementInfo(element: Element, withContext = false): PickElement {
   const computed = getComputedStyle(element);
   const style: PickComputedStyle = {};
   for (const property of PICK_STYLE_PROPERTIES) style[property] = computed.getPropertyValue(property);
@@ -509,7 +512,8 @@ function elementInfo(element: Element): PickElement {
     tag: element.tagName.toLowerCase(),
     text: text.slice(0, 120),
     rect: toPage(rect),
-    styles: groupPickStyles(style, Boolean(text))
+    styles: groupPickStyles(style, Boolean(text)),
+    ...(withContext ? { context: elementContext(element) } : {})
   };
 }
 

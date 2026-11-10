@@ -1,11 +1,28 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref } from "vue";
+import { buildClip } from "../shared/pick-clip";
 import type { PickStartMode } from "../shared/pick-messages";
+import { imageForUpload } from "./image-data";
+import OmemConnections from "./OmemConnections.vue";
 import PickComposer from "./PickComposer.vue";
 import PickRecordDetail from "./PickRecordDetail.vue";
+import { useOmem } from "./use-omem";
 import { usePickBasket } from "./use-pick-basket";
 
 const basket = usePickBasket();
+const omem = useOmem();
+const { status: omemStatus, active: omemActive, spaces: omemSpaces, space: omemSpace } = omem;
+const showConnections = ref(false);
+
+/** 发送的状态：发出去以后问答要等助手回答，这里轮询对话把回答显示出来。 */
+type SendState =
+  | { phase: "sending"; mode: "ask" | "source" }
+  | { phase: "error"; mode: "ask" | "source"; message: string }
+  | { phase: "done"; mode: "ask"; conversationId: string; link: string | null; reply: string | null; waiting: boolean }
+  | { phase: "done"; mode: "source"; sourceId: string; link: string | null };
+const sendState = ref<SendState | null>(null);
+let pollTimer = 0;
+onBeforeUnmount(() => clearTimeout(pollTimer));
 const { items, loading, draft, draftLoaded, notice, needsPermission } = basket;
 const expandedId = ref<string | null>(null);
 const flashId = ref<string | null>(null);
@@ -65,9 +82,68 @@ async function clearAll(): Promise<void> {
 }
 
 async function copyMarkdown(): Promise<void> {
-  await navigator.clipboard.writeText(basket.markdown());
+  const clip = buildClip(draft.value, records.value);
+  if (!clip) return;
+  const titles = new Map(clip.images.map((image) => [image.key, image.title]));
+  await navigator.clipboard.writeText(clip.text.replace(/\{\{image:([\w-]+)\}\}/g, (_, key: string) => `［截图：${titles.get(key) ?? key}］`));
   copyState.value = "已复制";
   setTimeout(() => (copyState.value = ""), 1800);
+}
+
+const canSend = computed(() => hasDraft.value && omemStatus.value.state === "ok" && !!omemSpace.value && sendState.value?.phase !== "sending");
+const sendHint = computed(() => {
+  if (!omemActive.value) return "先连接 omem";
+  if (omemStatus.value.state === "error") return omemStatus.value.message;
+  if (omemStatus.value.state !== "ok") return "正在连接 omem";
+  if (!omemSpace.value) return "这个账号没有可以写入的空间";
+  return hasDraft.value ? "" : "先写点什么，或引用一条记录";
+});
+
+/** 问 omem：作为一条消息发到问答（新对话）；存为原件：存成一篇笔记。截图都会变成图片原件。 */
+async function send(mode: "ask" | "source"): Promise<void> {
+  const clip = buildClip(draft.value, records.value);
+  if (!clip) return;
+  clearTimeout(pollTimer);
+  sendState.value = { phase: "sending", mode };
+  try {
+    const byId = new Map(records.value.map((record) => [record.id, record]));
+    const images = await Promise.all(
+      clip.images.map(async (image) => ({ key: image.key, title: image.title, data: await imageForUpload(byId.get(image.recordId)!.image) }))
+    );
+    const result = await omem.send({ mode, title: clip.title, text: clip.text, pageUrl: clip.pageUrl, images });
+    if (result.mode === "source") {
+      sendState.value = { phase: "done", mode: "source", sourceId: result.sourceId, link: omem.webUrl(`/sources/${result.sourceId}`) };
+      return;
+    }
+    sendState.value = { phase: "done", mode: "ask", conversationId: result.conversationId, link: omem.webUrl(`/ask/${result.conversationId}`), reply: null, waiting: true };
+    pollReply(result.conversationId, Date.now() + 5 * 60_000);
+  } catch (error) {
+    sendState.value = { phase: "error", mode, message: (error as Error).message };
+  }
+}
+
+/** 每 3 秒看一次对话里有没有助手的回答，最多等 5 分钟；之后去 omem 里看。 */
+function pollReply(conversationId: string, deadline: number): void {
+  pollTimer = window.setTimeout(async () => {
+    const state = sendState.value;
+    if (state?.phase !== "done" || state.mode !== "ask" || state.conversationId !== conversationId) return;
+    const messages = await omem.conversation(conversationId).catch(() => []);
+    const reply = [...messages].reverse().find((message) => message.role === "assistant");
+    if (reply) {
+      sendState.value = { ...state, reply: reply.text, waiting: false };
+      return;
+    }
+    if (Date.now() > deadline) {
+      sendState.value = { ...state, waiting: false };
+      return;
+    }
+    pollReply(conversationId, deadline);
+  }, 3000);
+}
+
+function clearAfterSend(): void {
+  composer.value?.clear();
+  sendState.value = null;
 }
 
 function host(url: string): string {
@@ -106,6 +182,28 @@ function time(value: number): string {
         </button>
       </div>
     </header>
+    <div class="omem-bar">
+      <button class="omem-chip" type="button" data-testid="omem-connection" :title="omemActive ? '切换或管理连接' : '连接 omem'" @click="showConnections = true">
+        <i class="omem-dot" :class="`is-${omemStatus.state}`" aria-hidden="true" />
+        <span>{{ omemActive ? omemActive.name : "连接 omem" }}</span>
+        <small v-if="omemStatus.state === 'ok'" class="muted">{{ omemStatus.me.name }}</small>
+      </button>
+      <select
+        v-if="omemSpaces.length"
+        class="preset-select omem-space"
+        :value="omemSpace"
+        title="发送到哪个空间"
+        aria-label="空间"
+        @change="omem.setSpace(($event.target as HTMLSelectElement).value)"
+      >
+        <option v-for="item in omemSpaces" :key="item.id" :value="item.id">{{ item.name }}</option>
+      </select>
+      <button v-if="omemStatus.state === 'error'" class="button button-ghost" type="button" @click="omemStatus.relogin && omemActive ? omem.login(omemActive.id) : omem.check()">
+        {{ omemStatus.relogin ? "登录" : "重试" }}
+      </button>
+    </div>
+    <OmemConnections v-if="showConnections" :omem="omem" @close="showConnections = false" />
+
     <p v-if="notice" class="basket-notice">
       <span>{{ notice }}</span>
       <button v-if="needsPermission" class="button" type="button" @click="basket.grantAllSites()">授权所有网站</button>
@@ -155,14 +253,34 @@ function time(value: number): string {
         @change="basket.setDraft"
         @focus-record="focusRecord"
       />
+      <div v-if="sendState" class="send-result" :class="`is-${sendState.phase}`" role="status" data-testid="send-result">
+        <template v-if="sendState.phase === 'sending'">{{ sendState.mode === "ask" ? "正在发给 omem…" : "正在保存为原件…" }}</template>
+        <template v-else-if="sendState.phase === 'error'">发送失败：{{ sendState.message }}</template>
+        <template v-else-if="sendState.mode === 'source'">
+          <span>已保存为原件，omem 会接着整理。</span>
+          <a v-if="sendState.link" :href="sendState.link" target="_blank" rel="noreferrer">在 omem 中查看</a>
+          <button class="button button-ghost" type="button" @click="clearAfterSend">清空输入框</button>
+        </template>
+        <template v-else>
+          <span>{{ sendState.waiting ? "已发送，等助手回答…" : sendState.reply ? "助手的回答：" : "已发送，回答会出现在 omem 的对话里。" }}</span>
+          <p v-if="sendState.reply" class="send-reply">{{ sendState.reply.length > 600 ? `${sendState.reply.slice(0, 600)}…` : sendState.reply }}</p>
+          <a v-if="sendState.link" :href="sendState.link" target="_blank" rel="noreferrer">在 omem 中继续</a>
+          <button class="button button-ghost" type="button" @click="clearAfterSend">清空输入框</button>
+        </template>
+      </div>
       <div class="composer-actions">
         <span class="muted">{{ citedCount ? `引用 ${citedCount} 条` : "" }}</span>
         <span class="grow" />
         <button v-if="items.length" class="button button-ghost" type="button" :class="{ 'button-danger': confirmClear }" @click="clearAll">
           {{ confirmClear ? "确认清空全部" : "清空" }}
         </button>
-        <button class="button" type="button" :disabled="!hasDraft" data-testid="pick-copy-markdown" @click="copyMarkdown">{{ copyState || "复制为 Markdown" }}</button>
-        <button class="button button-primary" type="button" disabled title="即将支持：整理后连同截图发给 omem">发给 omem</button>
+        <button class="button button-ghost" type="button" :disabled="!hasDraft" data-testid="pick-copy-markdown" @click="copyMarkdown">{{ copyState || "复制 Markdown" }}</button>
+      </div>
+      <div class="composer-actions">
+        <span class="muted send-hint">{{ sendHint }}</span>
+        <span class="grow" />
+        <button class="button" type="button" :disabled="!canSend" data-testid="pick-save-source" title="存成 omem 的一篇笔记原件，截图一起存" @click="send('source')">存为原件</button>
+        <button class="button button-primary" type="button" :disabled="!canSend" data-testid="pick-ask" title="作为问题发到 omem 的问答" @click="send('ask')">问 omem</button>
       </div>
     </footer>
   </main>

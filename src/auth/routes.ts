@@ -84,6 +84,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/sources/text": s("source.write", "b.space"),
   "POST /api/sources/url": s("source.write", "b.space"),
   "POST /api/sources/upload": s("source.write", "q.space"),
+  // The extension's clips: screenshots become originals in the space either way (sources/clips.ts).
+  "POST /api/clips": s("source.write", "b.space"),
   "GET /api/lark/messages/:mid/resources/:key": SETTINGS,
   "GET /api/messages/:id": "self",
   // Stored originals are named by their content hash: knowing the name is having the file.
