@@ -10,6 +10,7 @@ import type { App } from "../core/app.ts";
 import { resolveCommand } from "../agents/spawn.ts";
 import { findProcesses, freePort, killPid, reachable } from "../core/procs.ts";
 import { OWNER, userForToken } from "../core/users.ts";
+import { cookies, SESSION_COOKIE, sessionFor } from "../auth/sessions.ts";
 import { truncate } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "./origin.ts";
 import { NLS_ROUTE, packFor, rewriteWorkbench, translateMessages, workbenchNls } from "./ide-locale.ts";
@@ -20,7 +21,8 @@ import { extensionDigest, findExtensionSource, installOmemExtension, listedExten
  * Web VS Code under /ide (docs/v2/ide.md): the official `code serve-web`, started on first use on a
  * loopback port with a connection token only omem knows. omem proxies /ide (HTTP and WebSocket),
  * lets through only the owner (this machine without a configured token, or a session cookie the
- * owner got from `GET /api/ide/open`, or the owner's token from a forwarding omem), and adds the token on the way in. It is a shell on this
+ * owner got from `GET /api/ide/open`, the owner's login, or the owner's token from a forwarding
+ * omem), and adds the token on the way in. It is a shell on this
  * machine, so never for members or guests.
  */
 export const IDE_BASE = "/ide";
@@ -311,19 +313,22 @@ export function newIdeSession() {
   return `${COOKIE}=${id}; Path=${IDE_BASE}; HttpOnly; SameSite=Lax`;
 }
 
-function cookies(req: IncomingMessage) {
-  return Object.fromEntries((req.headers.cookie ?? "").split(";").map((c) => c.trim().split("=")).filter((p) => p[0]).map(([k, ...v]) => [k, v.join("=")]));
-}
-
 /**
  * The owner's: a session cookie, the owner's token (another omem forwarding for `omem peer open`),
- * or this machine when omem trusts loopback (no token configured).
+ * the owner's login (logging in on, the page opened at its own address), or this machine when omem
+ * trusts loopback (no token configured).
+ *
+ * The /ide session lives in memory: after omem restarts, or when /ide is opened directly (a bookmark,
+ * VS Code reloading its window), only the login is left, so the login has to count by itself.
  */
 export function ideAllowed(app: App, req: IncomingMessage) {
+  const jar = cookies(req);
   // The cookie is sent along with another site's WebSocket too; its Origin gives it away.
-  if (sessions.has(cookies(req)[COOKIE] ?? "")) return sameOrigin(req);
+  if (sessions.has(jar[COOKIE] ?? "")) return sameOrigin(req);
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ")) return userForToken(app, auth.slice(7)) === OWNER;
+  const login = sessionFor(app, jar[SESSION_COOKIE]);
+  if (login) return login.userId === OWNER && !login.restricted && sameOrigin(req);
   const ip = req.socket.remoteAddress ?? "";
   return !app.config.token && trustedLocal(req, ip, { refuseProxied: app.config.auth.enabled }) && !req.headers.authorization;
 }
@@ -332,7 +337,7 @@ export function ideAllowed(app: App, req: IncomingMessage) {
 function upstreamHeaders(req: IncomingMessage) {
   const out: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && k !== "cookie" && k !== "authorization") out[k] = v;
-  const kept = (req.headers.cookie ?? "").split(";").map((c) => c.trim()).filter((c) => c && !c.startsWith(`${COOKIE}=`) && !c.startsWith("vscode-tkn="));
+  const kept = (req.headers.cookie ?? "").split(";").map((c) => c.trim()).filter((c) => c && !c.startsWith(`${COOKIE}=`) && !c.startsWith(`${SESSION_COOKIE}=`) && !c.startsWith("vscode-tkn="));
   out.cookie = [...kept, `vscode-tkn=${token}`].join("; ");
   // The page tells the browser where to open its WebSocket from the host it was asked for: the
   // address the browser used (first hop's, through `omem peer open`), not serve-web's own port.
@@ -348,7 +353,15 @@ const deny = (res: { writeHead: (s: number, h: Record<string, string>) => void; 
 
 /** An HTTP request under /ide (the raw request; its body not read yet). */
 export async function proxyIde(app: App, req: IncomingMessage, res: import("node:http").ServerResponse) {
-  if (!ideAllowed(app, req)) return deny(res, 401, "网页版 VS Code 只对本人开放：在 omem 网页的运行页点“网页版 VS Code”打开。");
+  if (!ideAllowed(app, req)) {
+    const text = "网页版 VS Code 只对本人开放：在 omem 网页的运行页点“网页版 VS Code”打开。";
+    // The page itself, opened in a browser that is not logged in here: a way to log in first.
+    if (req.method === "GET" && /text\/html/.test(String(req.headers.accept ?? "")) && app.config.auth.enabled) {
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      return void res.end(`<!doctype html><meta charset="utf-8"><title>网页版 VS Code</title><p>${text}</p><p>还没有登录的话，先<a href="/#/login">登录 omem</a>，再回来刷新这一页。</p>`);
+    }
+    return deny(res, 401, text);
+  }
   const sub = (req.url ?? "").slice(IDE_BASE.length).replace(/\?.*$/, "");
   // The waiting page asks how the download goes, and starts it again after a failure.
   if (sub === DOWNLOAD_ROUTE) {

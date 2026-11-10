@@ -10,6 +10,8 @@ import { startServer } from "../src/server/http.ts";
 import { ideFolder, stopIdeWeb, updateIdeServer } from "../src/server/ide-web.ts";
 import { serverFiles, serverPlatform } from "../src/server/ide-download.ts";
 import { addPeer, openPeerUi } from "../src/core/peers.ts";
+import { createUser, OWNER } from "../src/core/users.ts";
+import { createSession } from "../src/auth/sessions.ts";
 import { testApp } from "./helpers.ts";
 
 /**
@@ -387,6 +389,76 @@ describe("web VS Code under /ide", () => {
     await mid.close();
     middle.db.close();
     laptop.db.close();
+  }, 30000);
+
+  it("opens at the configured web address (an IP over http) for the owner's login, also with no /ide session yet", async () => {
+    // Logging in on, no token configured, the page reached by IP from another machine: the browser
+    // sends that address as Host and Origin, so loopback trust does not apply.
+    stopIdeWeb();
+    const saved = { token: app.config.token, auth: app.config.auth.enabled, webUrl: app.config.webUrl };
+    app.config.token = undefined;
+    app.config.auth.enabled = true;
+    app.config.webUrl = "http://10.0.0.7:4317";
+    const at = "10.0.0.7:4317";
+    const page = { host: at, accept: "text/html" };
+    const owner = createSession(app, OWNER, { via: "lark" }).token;
+    createUser(app, { id: "xiaowang", name: "小王" });
+    const member = createSession(app, "xiaowang", { via: "lark" }).token;
+    const restricted = createSession(app, OWNER, { via: "lark", restricted: true }).token;
+    const send = (path: string, headers: Record<string, string>) =>
+      new Promise<{ status: number; location?: string; cookie?: string; body: string }>((ok, fail) => {
+        const req = request(`${base}${path}`, { headers }, (res) => {
+          let body = "";
+          res.on("data", (d) => (body += d)).on("end", () => ok({ status: res.statusCode!, location: res.headers.location, cookie: res.headers["set-cookie"]?.[0], body }));
+        });
+        req.on("error", fail);
+        req.end();
+      });
+    const upgrade = (headers: Record<string, string>) =>
+      new Promise<number>((ok, fail) => {
+        const req = request(`${base}/ide/remote`, { headers: { connection: "Upgrade", upgrade: "websocket", ...headers } });
+        req.on("upgrade", (res, socket) => (ok(res.statusCode!), socket.destroy()));
+        req.on("response", (res) => ok(res.statusCode!));
+        req.on("error", fail);
+        req.end();
+      });
+    try {
+      // The run page's button: the login cookie opens it, the /ide session comes along.
+      const open = await send(`/api/ide/open?folder=${encodeURIComponent("/srv/work/shop")}`, { host: at, cookie: `omem_sid=${owner}` });
+      expect(open.status).toBe(302);
+      const ide = open.cookie!.split(";")[0];
+      expect((await send("/ide/?folder=%2Fsrv%2Fwork%2Fshop", { ...page, cookie: `${ide}; omem_sid=${owner}` })).status).toBe(200);
+      expect(await upgrade({ host: at, origin: `http://${at}`, cookie: `${ide}; omem_sid=${owner}` })).toBe(101);
+
+      // Opened again later, from a bookmark or after omem restarted (the /ide session lives in
+      // memory): the owner's login is enough, page and WebSocket alike.
+      const seen = JSON.parse((await send("/ide/x", { host: at, cookie: `omem_ide=gone; omem_sid=${owner}` })).body);
+      expect(seen.cookie).not.toContain("omem_sid");
+      expect(seen.cookie).toMatch(/vscode-tkn=/);
+      expect((await send("/ide/?folder=%2Fsrv%2Fwork%2Fshop", { ...page, cookie: `omem_sid=${owner}` })).status).toBe(200);
+      expect(await upgrade({ host: at, origin: `http://${at}`, cookie: `omem_sid=${owner}` })).toBe(101);
+
+      // Not for another site's WebSocket carrying the cookie, a member, a restricted login, nobody.
+      expect(await upgrade({ host: at, origin: "http://evil.example", cookie: `omem_sid=${owner}` })).toBe(401);
+      expect((await send("/ide/", { ...page, cookie: `omem_sid=${member}` })).status).toBe(401);
+      expect(await upgrade({ host: at, origin: `http://${at}`, cookie: `omem_sid=${member}` })).toBe(401);
+      expect((await send("/ide/", { ...page, cookie: `omem_sid=${restricted}` })).status).toBe(401);
+      expect((await send("/ide/", page)).status).toBe(401);
+      expect(await upgrade({ host: at, origin: `http://${at}` })).toBe(401);
+      expect((await send("/api/ide/open", { host: at, cookie: `omem_sid=${member}` })).status).toBe(403);
+      // A browser page without a session is sent to log in and come back, not left on a bare 401.
+      const anon = await send("/ide/?folder=%2Fsrv%2Fwork%2Fshop", page);
+      expect(anon.body).toContain("#/login");
+
+      // On this machine (no token configured), loopback still opens it without a login; a reverse
+      // proxy on this machine does not count as this machine once logging in is on.
+      expect((await send("/ide/x", { host: `127.0.0.1:${new URL(base).port}` })).status).toBe(200);
+      expect((await send("/ide/x", { host: `127.0.0.1:${new URL(base).port}`, "x-forwarded-for": "10.0.0.9" })).status).toBe(401);
+    } finally {
+      Object.assign(app.config, { token: saved.token, webUrl: saved.webUrl });
+      app.config.auth.enabled = saved.auth;
+      stopIdeWeb();
+    }
   }, 30000);
 
   it("stops a serve-web an earlier omem left running before starting its own", async () => {
