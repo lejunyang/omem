@@ -76,6 +76,8 @@ const logEnd = (db: Db) => one<{ s: number | null }>(db, "select max(seq) s from
 const logFloor = (db: Db) => Number(one<{ value: string }>(db, "select value from kv where key = 'vector_log_floor'")?.value ?? 0) || 0;
 const modelHash = (model: string) => createHash("sha256").update(model).digest().subarray(0, 8);
 
+let tmpSeq = 0;
+
 export class MemoryIndex implements VectorIndex {
   private spaces = new Map<string, SpaceMatrix | null>();
   /** Log position the loaded spaces reflect; -1 before the first look. */
@@ -257,7 +259,8 @@ export class MemoryIndex implements VectorIndex {
       try {
         await mkdir(this.snapshotDir, { recursive: true });
         const file = this.snapshotFile(sp);
-        const tmp = `${file}.${process.pid}.tmp`;
+        // Its own name per write: two indexes of one process (tests) or an overlapping write must not share it.
+        const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;
         const head = Buffer.alloc(HEADER);
         head.writeUInt32LE(MAGIC, 0);
         head.writeUInt32LE(m.dims, 4);
