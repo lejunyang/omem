@@ -7,7 +7,8 @@ export type AgentEvent =
   | { type: "thought"; text: string }
   | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown; /** Duration, on the completed/failed event. */ ms?: number }
   | { type: "plan"; entries: { content: string; status: string }[] }
-  | { type: "status"; text: string }
+  // `choice`: how the AI was chosen before the run (choose-ai.ts ChoiceRecord); `failover`: why it moved to another AI (runner.ts).
+  | { type: "status"; text: string; choice?: Record<string, unknown>; failover?: Record<string, unknown> }
   // The agent session this turn runs in (known before the turn ends).
   | { type: "session"; sessionId: string; resumed: boolean }
   // Provider-side queue (traex session_info_update._meta.trae.queueStatus, or queue text).
@@ -82,6 +83,8 @@ export type AgentProbe = {
   options: { id: string; category: string | null; current: string | null; values: string[] }[];
   /** Effort levels per model: agents (traex) offer reasoning effort only once a model that has it is selected. */
   effortsByModel?: Record<string, string[]>;
+  /** What the agent says about each model in its list (description, `_meta`): limits a provider tells there reach the chooser this way. */
+  modelNotes?: Record<string, string>;
 };
 /** Why a run failed; used to decide whether a fallback backend/model is worth trying. */
 export type AgentFailureKind = "queue" | "idle" | "rate-limit" | "quota" | "other";

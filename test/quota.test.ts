@@ -6,7 +6,9 @@ import { receive } from "../src/agents/inbox.ts";
 import { runEvents, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { boot } from "../src/main.ts";
-import { clearOutOfQuota, excluded, outOfQuotaList, quotaResetAt } from "../src/agents/capacity.ts";
+import { clearOutOfQuota, dailyCapReached, excluded, isQuotaMessage, markOutOfQuota, outOfQuotaList, perDayOf, quotaResetAt, usedToday } from "../src/agents/capacity.ts";
+import { createRun } from "../src/agents/runs.ts";
+import { run } from "../src/core/db.ts";
 import { isRetryableAgentError, runRole } from "../src/agents/runner.ts";
 import { allProfiles } from "../src/core/config.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
@@ -23,6 +25,46 @@ describe("usage quota", () => {
     // Nothing usable: an hour.
     expect(quotaResetAt("You've hit your usage limit.", at)).toEqual(new Date(2026, 10, 4, 11, 30));
     expect(isRetryableAgentError(new Error("Internal error：{\"codexErrorInfo\":\"usageLimitExceeded\"}"))).toBe(true);
+  });
+
+  it("leaves out only the model whose own daily limit was reached, until the owner's next midnight", () => {
+    const app = testApp();
+    app.config.timezone = "Asia/Shanghai";
+    const base = { transport: "acp" as const, command: "x", args: [], env: {}, idleTimeoutMs: 1000 };
+    const big = { ...base, id: "acct", model: "big-model" };
+    const small = { ...base, id: "acct", model: "small-model" };
+    for (const text of ["Daily limit reached for this model", "该模型今日额度已用完，请明天再试", "今日调用次数已达上限", "model big-model: per-day quota exhausted"]) expect(isQuotaMessage(text)).toBe(true);
+    expect(isQuotaMessage("rate limit, slow down")).toBe(false);
+    // 2026-11-10 15:00 in Shanghai (07:00 UTC): the day ends at 16:00 UTC.
+    const at = new Date(Date.UTC(2026, 10, 10, 7, 0));
+    expect(quotaResetAt("该模型今日额度已用完", at, "Asia/Shanghai").toISOString()).toBe("2026-11-10T16:00:00.000Z");
+    // A time in the message still wins.
+    expect(quotaResetAt("daily limit reached, try again in 2 hours", at, "Asia/Shanghai").toISOString()).toBe("2026-11-10T09:00:00.000Z");
+    markOutOfQuota(app, big, "该模型今日额度已用完");
+    expect(excluded(app, big)).toBe(true);
+    expect(excluded(app, small)).toBe(false);
+    expect(outOfQuotaList(app)[0]).toMatchObject({ source: "acct|big-model", account: "acct", model: "big-model" });
+    clearOutOfQuota(app, "acct|big-model");
+    expect(excluded(app, big)).toBe(false);
+  });
+
+  it("keeps a model under the owner's own cap per day, counted from the runs that used it today", () => {
+    const app = testApp();
+    app.config.timezone = "Asia/Shanghai";
+    app.config.agents.profiles.push({ id: "acct", name: "acct", transport: "acp", command: "x", args: [], env: {}, idleTimeoutMs: 1000, model: "big-model" });
+    app.config.agents.capacity.limits = [{ profile: "acct", model: "big-model", max: 3, perDay: 2 }];
+    const big = allProfiles(app.config).find((p) => p.id === "acct")!;
+    expect(perDayOf(app, big)).toBe(2);
+    const now = Date.now();
+    for (let i = 0; i < 2; i++) {
+      const r = createRun(app, { kind: "ingest", spaceId: "personal", title: `第 ${i} 次`, input: {} });
+      run(app.db, "update runs set ai = ?, started_at = ? where id = ?", JSON.stringify({ profile: "acct", model: "big-model" }), new Date(now - 1000).toISOString(), r.id);
+    }
+    expect(usedToday(app, big, now)).toBe(2);
+    expect(dailyCapReached(app, big, now)).toContain("每天 2 次");
+    expect(excluded(app, big)).toBe(true);
+    // Another model of the same backend is not capped.
+    expect(excluded(app, { ...big, model: "small-model" })).toBe(false);
   });
 
   it("moves a run to the fallback when the account is out of quota, and leaves the account out until it resets", async () => {

@@ -75,30 +75,122 @@ export function releaseRun(runId: string) {
 }
 
 /**
- * A limit of 0 (the owner does not want this model or backend used automatically), or an account
- * whose usage quota ran out and has not reset yet.
+ * A limit of 0 (the owner does not want this model or backend used automatically), an account (or
+ * one of its models) whose usage quota ran out and has not reset yet, or a model that reached the
+ * owner's daily cap for it.
  */
-export const excluded = (app: App, p: AgentProfile) => limitOf(app, p) <= 0 || outOfQuotaUntil(app, p) !== null;
+export const excluded = (app: App, p: AgentProfile) => limitOf(app, p) <= 0 || outOfQuotaUntil(app, p) !== null || !!dailyCapReached(app, p);
+
+/** Why the option is left out of automatic choices, in words, or null. */
+export function excludedReason(app: App, p: AgentProfile): string | null {
+  if (limitOf(app, p) <= 0) return "并行上限设成了 0";
+  const until = outOfQuotaUntil(app, p);
+  if (until) return `额度用完，${new Date(until).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 恢复`;
+  return dailyCapReached(app, p);
+}
+
+/**
+ * The owner's cap on runs per day for one model (`limits[].perDay`): a provider that limits some
+ * models per day without saying how much is left (in its model list or its errors) is kept under it
+ * by omem's own count — runs that started on that backend and model since midnight in the owner's
+ * time zone. Counted again at most every 30 seconds.
+ */
+export function perDayOf(app: App, p: AgentProfile): number | undefined {
+  return limitsFor(app, p).find((l) => l.model && l.model === p.model && l.perDay !== undefined)?.perDay;
+}
+const dayCounts = new WeakMap<App, Map<string, { at: number; n: number }>>();
+export function usedToday(app: App, p: AgentProfile, now = Date.now()): number {
+  let m = dayCounts.get(app);
+  if (!m) { m = new Map(); dayCounts.set(app, m); }
+  const k = keyOf(p);
+  const hit = m.get(k);
+  if (hit && now - hit.at < 30_000) return hit.n;
+  const since = new Date(now - msSinceMidnight(app.config.timezone, now)).toISOString();
+  const ids = [...new Set([p.id, sourceOf(p), ...allProfiles(app.config).filter((q) => sourceOf(q) === sourceOf(p)).map((q) => q.id)])];
+  const n = one<{ n: number }>(
+    app.db,
+    "select count(*) n from runs where coalesce(started_at, created_at) >= ? and json_extract(ai, '$.profile') in (select value from json_each(?)) and lower(coalesce(json_extract(ai, '$.model'), '')) = lower(?)",
+    since,
+    JSON.stringify(ids),
+    p.model ?? "",
+  )?.n ?? 0;
+  m.set(k, { at: now, n });
+  return n;
+}
+export function dailyCapReached(app: App, p: AgentProfile, now = Date.now()): string | null {
+  const cap = perDayOf(app, p);
+  if (cap === undefined || !app.db) return null;
+  const used = usedToday(app, p, now);
+  return used >= cap ? `今天已用 ${used} 次，达到本人设的每天 ${cap} 次` : null;
+}
+
+/** How long since midnight in a time zone (the owner's day for daily caps and daily quotas). */
+export function msSinceMidnight(timeZone: string, now = Date.now()): number {
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" }).formatToParts(new Date(now)).map((x) => [x.type, x.value]));
+    return ((Number(parts.hour) % 24) * 3600 + Number(parts.minute) * 60 + Number(parts.second)) * 1000 + (now % 1000);
+  } catch {
+    const d = new Date(now);
+    return now - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  }
+}
 
 /**
  * A backend that just broke down (its process died, the connection dropped, it went silent past the
- * idle watchdog): runs try it after the others for a while, so each of them does not wait out the
- * same hang. Kept in memory: a restart gives every backend a fresh start.
+ * idle watchdog), or one of its models that keeps failing upstream or queued past the owner's limit:
+ * runs try it after the others for a while, so each of them does not wait out the same hang. A crash
+ * sets the whole backend aside; an upstream stream error (twice within the window) or a queue
+ * timeout only that model. Kept in memory: a restart gives every backend a fresh start.
  */
 const DOWN_MS = 15 * 60_000;
-const downs = new WeakMap<App, Map<string, { until: number; why: string }>>();
-export function markDown(app: App, p: AgentProfile, why: string, now = Date.now()) {
+type Down = { until: number; why: string };
+const downs = new WeakMap<App, Map<string, Down>>();
+const strikes = new WeakMap<App, Map<string, number[]>>();
+const downMap = (app: App) => {
   let m = downs.get(app);
   if (!m) { m = new Map(); downs.set(app, m); }
-  m.set(sourceOf(p), { until: now + DOWN_MS, why: why.slice(0, 200) });
+  return m;
+};
+export function markDown(app: App, p: AgentProfile, why: string, now = Date.now(), scope: "backend" | "model" = "backend") {
+  downMap(app).set(scope === "model" ? keyOf(p) : sourceOf(p), { until: now + DOWN_MS, why: why.slice(0, 200) });
 }
-/** Why this backend is set aside for now (it broke down a few minutes ago), or null. */
+/**
+ * One failure of a kind that says the backend is not usable right now. `crash` and `queue` set it
+ * aside at once; `transient` (the upstream stream broke) only on the second within the window, since
+ * one broken stream says little. Returns what was set aside, in words, or null.
+ */
+export function noteFailure(app: App, p: AgentProfile, kind: "crash" | "transient" | "queue", why: string, now = Date.now()): string | null {
+  const label = `${p.id}${p.model ? ` · ${p.model}` : ""}`;
+  if (kind === "crash") {
+    markDown(app, p, why, now);
+    return `${p.id} 刚出故障，15 分钟内排在其他后端之后`;
+  }
+  if (kind === "queue") {
+    markDown(app, p, why, now, "model");
+    return `${label} 排队太久，15 分钟内排在其他模型之后`;
+  }
+  let m = strikes.get(app);
+  if (!m) { m = new Map(); strikes.set(app, m); }
+  const k = keyOf(p);
+  const recent = [...(m.get(k) ?? []).filter((t) => now - t < DOWN_MS), now];
+  m.set(k, recent);
+  if (recent.length < 2) return null;
+  markDown(app, p, why, now, "model");
+  return `${label} ${Math.round(DOWN_MS / 60_000)} 分钟内上游出错 ${recent.length} 次，暂时排在其他模型之后`;
+}
+/** Why this backend or model is set aside for now (it broke down a few minutes ago), or null. */
 export function downReason(app: App, p: AgentProfile, now = Date.now()): string | null {
-  const e = downs.get(app)?.get(sourceOf(p));
-  return e && e.until > now ? e.why : null;
+  const m = downs.get(app);
+  for (const k of [sourceOf(p), keyOf(p)]) {
+    const e = m?.get(k);
+    if (e && e.until > now) return e.why;
+  }
+  return null;
 }
 export function clearDown(app: App, p: AgentProfile) {
   downs.get(app)?.delete(sourceOf(p));
+  downs.get(app)?.delete(keyOf(p));
+  strikes.get(app)?.delete(keyOf(p));
 }
 
 /**
@@ -111,35 +203,61 @@ const QUOTA_KEY = "agent_quota_exhausted";
 function quotaState(app: App): Record<string, { until: string; message: string }> {
   try { return JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", QUOTA_KEY)?.value ?? "{}"); } catch { return {}; }
 }
+/**
+ * Kept per account (`source`), or per model of an account (`source|model`) when the provider said a
+ * limit of one model was reached (a model's own daily limit): the account's other models stay usable.
+ */
 export function outOfQuotaUntil(app: App, p: AgentProfile): string | null {
-  const e = quotaState(app)[sourceOf(p)];
-  return e && Date.parse(e.until) > Date.now() ? e.until : null;
+  const st = quotaState(app);
+  for (const k of [sourceOf(p), ...(p.model ? [keyOf(p)] : [])]) {
+    const e = st[k];
+    if (e && Date.parse(e.until) > Date.now()) return e.until;
+  }
+  return null;
 }
 export function markOutOfQuota(app: App, p: AgentProfile, message: string, at = new Date()) {
   const st = Object.fromEntries(Object.entries(quotaState(app)).filter(([, e]) => Date.parse(e.until) > at.getTime()));
-  const until = quotaResetAt(message, at);
-  st[sourceOf(p)] = { until: until.toISOString(), message: message.slice(0, 300) };
+  const perModel = !!p.model && isModelQuotaMessage(message, p.model);
+  const until = quotaResetAt(message, at, app.config.timezone);
+  st[perModel ? keyOf(p) : sourceOf(p)] = { until: until.toISOString(), message: message.slice(0, 300) };
   run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", QUOTA_KEY, JSON.stringify(st));
   return until;
 }
-/** Owner's "it has more credits now": use the account again. */
+/** Owner's "it has more credits now": use the account (or the one model) again. */
 export function clearOutOfQuota(app: App, source: string) {
   const st = quotaState(app);
   delete st[source];
   run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", QUOTA_KEY, JSON.stringify(st));
 }
 export function outOfQuotaList(app: App) {
-  return Object.entries(quotaState(app)).filter(([, e]) => Date.parse(e.until) > Date.now()).map(([source, e]) => ({ source, ...e }));
+  return Object.entries(quotaState(app)).filter(([, e]) => Date.parse(e.until) > Date.now()).map(([key, e]) => {
+    const [source, model] = key.split("|");
+    return { source: key, ...(model ? { account: source, model } : {}), ...e };
+  });
 }
 
-/** Whether an error says the account's usage quota is spent (not a short rate limit). */
-export const isQuotaMessage = (text: string) => /usage limit|usageLimitExceeded|quota_exhausted|insufficient_quota|exceeded your current quota|out of credits|额度(已)?用(完|尽)/i.test(text);
+/** Wording of a limit counted per day ("daily limit", "今日额度"). */
+const DAILY = /\bdaily\b|per[ -]day|\btoday\b|今日|今天|每日|每天|单日|当日/i;
+
+/**
+ * Whether an error says a usage quota is spent (not a short rate limit): the account's plan, or one
+ * model's own limit ("daily limit reached for this model", "该模型今日额度已用完").
+ */
+export const isQuotaMessage = (text: string) =>
+  /usage limit|usageLimitExceeded|quota_exhausted|insufficient_quota|exceeded your current quota|out of credits|额度(已)?(用(完|尽)|耗尽)|(daily|per[ -]day) (usage |request |token )?(limit|quota)|(limit|quota) (has been |was )?(reached|exceeded|exhausted) for (this |the )?model|(今日|今天|每日|每天|单日|当日)[^。\n]{0,12}(上限|限额|额度|次数)[^。\n]{0,8}(已|用|达|超)/i.test(text);
+
+/** The spent limit is one model's (it is named, or the limit is per day): only that model is left out. */
+export function isModelQuotaMessage(text: string, model: string) {
+  return DAILY.test(text) || (model.length > 2 && text.toLowerCase().includes(model.toLowerCase()));
+}
 
 /**
  * When the quota resets, from the provider's message: "try again at 2:36 PM" (the machine's local
- * time, the next such time), "at Nov 6th, 2026 2:36 PM", or "in 3 hours 5 minutes". An hour when none.
+ * time, the next such time), "at Nov 6th, 2026 2:36 PM", or "in 3 hours 5 minutes". A limit worded
+ * per day without a time resets at the owner's next midnight; anything else in an hour.
  */
-export function quotaResetAt(message: string, at = new Date()): Date {
+export function quotaResetAt(message: string, at = new Date(), timeZone?: string): Date {
+  const fallback = DAILY.test(message) && timeZone ? new Date(at.getTime() + 86_400_000 - msSinceMidnight(timeZone, at.getTime())) : null;
   const ok = (d: Date) => d.getTime() > at.getTime() && d.getTime() - at.getTime() < 8 * 86_400_000;
   const tail = /try again (at|in) ([^.\n]+)/i.exec(message);
   let d: Date | null = null;
@@ -158,7 +276,7 @@ export function quotaResetAt(message: string, at = new Date()): Date {
       if (d.getTime() <= at.getTime()) d.setDate(d.getDate() + 1);
     } else d = new Date(Date.parse(text));
   }
-  return d && ok(d) ? d : new Date(at.getTime() + 3_600_000);
+  return d && ok(d) ? d : fallback ?? new Date(at.getTime() + 3_600_000);
 }
 
 /**

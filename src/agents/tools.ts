@@ -951,7 +951,7 @@ def({
       if (!p?.installed) throw new HttpError(400, "后端不可用");
       if (a.refresh || !cachedProbe(ctx.app, p.id)) { const probe = await probeProfile(p, ctx.app); if (!probe.error) saveProbe(ctx.app, p.id, probe); else return JSON.stringify({ profile: p.id, error: probe.error, routing: ctx.app.config.agents.routing }); }
     }
-    const { backendLimitOf, choosableProfiles, limitOf, recentStats, usedOf } = await import("./capacity.ts");
+    const { backendLimitOf, choosableProfiles, downReason, excludedReason, limitOf, perDayOf, recentStats, usedOf, usedToday } = await import("./capacity.ts");
     const quota = await import("./quota.ts");
     // Plan limits read in the last 10 minutes are used as they are; older ones are read again (not longer than 15 s).
     const readable = (await quota.quotaProfiles(ctx.app)).filter((p) => !a.profile || p.id === a.profile);
@@ -968,7 +968,9 @@ def({
         const q = { ...p, model };
         const st = stats.find((s) => s.profile === p.id && s.model === model);
         const rp = replayed.get(`${p.id}|${model}`);
-        return { model, used: usedOf(ctx.app, q), limit: limitOf(ctx.app, q), ...(st ? { recent7d: { done: st.done, failed: st.failed, medianMinutes: st.medianMinutes } } : {}), ...(rp?.length ? { replay28d: rp } : {}) };
+        const off = excludedReason(ctx.app, q) ?? downReason(ctx.app, q);
+        const perDay = perDayOf(ctx.app, q);
+        return { model, used: usedOf(ctx.app, q), limit: limitOf(ctx.app, q), ...(perDay !== undefined ? { today: `${usedToday(ctx.app, q)}/${perDay}` } : {}), ...(off ? { unavailable: off } : {}), ...(st ? { recent7d: { done: st.done, failed: st.failed, medianMinutes: st.medianMinutes } } : {}), ...(rp?.length ? { replay28d: rp } : {}) };
       });
     };
     const tz = ctx.app.config.timezone;
@@ -976,11 +978,11 @@ def({
       // Candidates may prefer some hours (off-peak prices, provider queues): the time to compare with.
       now: `${new Intl.DateTimeFormat("zh-CN", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(new Date())}（${tz}）`,
       routing: ctx.app.config.agents.routing,
-      note: "limit 为 0 的模型本人不想自动使用，不要选。quota 是账号的套餐额度：windows 里 used 是已用百分比，resetsIn 是多久后重置，perDayLeft 是周额度剩下的平均到距重置的每一天（%/天）；有 avoid 的账号快用完了，同样合适时选别的。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。replay28d 是夜间复盘近 28 天的单变量对比（type 题型，vs 对照的模型，w/t/l 胜/平/负，tokens 上下文峰值之比），样本小，只作参考。",
+      note: "limit 为 0 的模型本人不想自动使用，不要选；带 unavailable 的模型现在用不了（额度用完、到了每天的上限、刚出过故障），也不要选；today 是今天已用/本人设的每天上限。modelNotes 是后端对各模型的说明（可能写着限额）。quota 是账号的套餐额度：windows 里 used 是已用百分比，resetsIn 是多久后重置，perDayLeft 是周额度剩下的平均到距重置的每一天（%/天）；有 avoid 的账号快用完了，同样合适时选别的。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。replay28d 是夜间复盘近 28 天的单变量对比（type 题型，vs 对照的模型，w/t/l 胜/平/负，tokens 上下文峰值之比），样本小，只作参考。",
       backends: backends.filter((p) => p.installed && choosable.has(p.id) && (!a.profile || p.id === a.profile)).map((p) => {
         const probe = cachedProbe(ctx.app, p.id);
         const q = quota.quotaView(ctx.app, p);
-        return { id: p.id, name: p.name, transport: p.transport, tools: p.transport !== "doubao", model: p.model, effort: p.effort, backendLimit: backendLimitOf(ctx.app, p), models: models(p), efforts: probe?.effortsByModel ?? probe?.efforts, ...(q ? { quota: { plan: q.plan, windows: q.windows, ...(q.avoid ? { avoid: q.avoid } : {}), ...(q.error && !q.windows.length ? { error: q.error } : {}) } } : {}) };
+        return { id: p.id, name: p.name, transport: p.transport, tools: p.transport !== "doubao", model: p.model, effort: p.effort, backendLimit: backendLimitOf(ctx.app, p), models: models(p), efforts: probe?.effortsByModel ?? probe?.efforts, ...(probe?.modelNotes ? { modelNotes: probe.modelNotes } : {}), ...(q ? { quota: { plan: q.plan, windows: q.windows, ...(q.avoid ? { avoid: q.avoid } : {}), ...(q.error && !q.windows.length ? { error: q.error } : {}) } } : {}) };
       }),
     });
   },
@@ -2886,7 +2888,7 @@ def({
 def({
   name: "stay_quiet",
   description:
-    "这一轮没有要告诉本人或群里的：宿主不发这一轮的回答，思考过程也不留。只用于没人等你回答的一轮（唤醒、盯群的一批消息、规则触发、交办交回的修改项、后台整理），比如查过没有变化、这批消息不用管、结论已经用 lark_send 发过；有人问你、@ 你的一轮不能用，直接回答。调用后结束这一轮，不用再写回答。",
+    "这一轮没有要告诉本人或群里的：宿主不发这一轮的回答，思考过程也不留。只用于没人等你回答的一轮（唤醒、盯群的一批消息、规则触发、交办交回的修改项、后台整理），比如查过没有变化、这批消息不用管、结论已经用 lark_send 发过；有人问你、@ 你的一轮不能用，直接回答。调用后用一句很短的话结束这一轮（不会发出去），不用再写回答。",
   schema: z.object({ reason: z.string().min(1).max(300).describe("一句话：为什么这一轮不用说话") }),
   handler: async (ctx, a) => {
     const { mayStayQuiet } = await import("./quiet.ts");
@@ -2894,7 +2896,8 @@ def({
     if (!r || !mayStayQuiet(ctx.app, r)) throw new HttpError(409, "这一轮在回答别人的消息，不能不回：直接写回答。");
     setRunOutput(ctx.app, r.id, { stayQuiet: a.reason.trim() });
     addRunEvent(ctx.app, r.id, "status", { text: `这一轮不发回答：${a.reason.trim()}` });
-    return "好，这一轮不发回答。结束这一轮即可，不用再写回答。";
+    // A final message left empty fails on some providers ("empty stream"): a few words close the turn; they are not posted.
+    return "好，这一轮不发回答。用一句很短的话（比如“已结束”）结束这一轮，不要留空：这句话不会发出去。";
   },
 });
 
@@ -3736,11 +3739,14 @@ def({
     // A task-driven delegation: a new change is a task, coded with a fresh budget; words about how to go
     // on are the next round's instructions.
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
-    if (isTaskWork(ctx.app, last.id) && !a.sync && !a.onto_latest_target && !a.apply_first) {
+    const taskWork = isTaskWork(ctx.app, last.id);
+    // A new AI for task-driven work holds for the rounds it starts from now on, not only a round queued here.
+    const switched = taskWork ? (await import("./code-loop.ts")).setWorkAI(ctx.app, last.id, { execution, reviewExecution }) : "";
+    if (taskWork && !a.sync && !a.onto_latest_target && !a.apply_first) {
       const loop = await import("./code-loop.ts");
-      if (!a.new_item) return loop.workNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER);
+      if (!a.new_item) return [loop.workNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER), switched].filter(Boolean).join("\n");
       const made = loop.ownerNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER, { asTask: true })!;
-      return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，这一轮结束后接着做"}。`;
+      return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，这一轮结束后接着做"}。${switched}`;
     }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
     const extraInput = a.onto_latest_target ? { moveToTarget: true, moveToTargetMode: a.onto_latest_target_mode ?? "merge" } : a.sync ? { sync: a.sync } : undefined;

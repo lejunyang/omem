@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import type { Execution } from "./execution.ts";
 import { all, one } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { git } from "../core/git.ts";
@@ -449,10 +450,10 @@ function queueRound(app: App, rootId: string, last: Run, label?: string): Run | 
       const fresh = (getRun(app, chain.askRunId).output.codeChain as CodeChain | undefined) ?? chain;
       const ready = { ...fresh, maxRounds: w.until, awaitingUser: false, waitReason: undefined };
       saveCodeChain(app, ready, ready.askRunId, ...ready.rounds);
-      return queueNextCodeRound(app, ready, title, { manual: !running, resumeSessionId: sessionId })?.run ?? null;
+      return queueNextCodeRound(app, ready, title, { manual: !running, resumeSessionId: sessionId, execution: w.execution, reviewExecution: w.reviewExecution })?.run ?? null;
     }
     // Coded and reviewed here, also after rounds an outside Agent did (a delegation turned task-driven).
-    return queueStandaloneFix(app, rootId, last.id, title, runUser(app, last.id), { peerCoder: undefined, peerReviewer: undefined }, { allowRunning: last.id });
+    return queueStandaloneFix(app, rootId, last.id, title, runUser(app, last.id), { peerCoder: undefined, peerReviewer: undefined, ...(w.execution ? { execution: w.execution } : {}), ...(w.reviewExecution ? { reviewExecution: w.reviewExecution } : {}) }, { allowRunning: last.id });
   } catch (e) {
     if (e instanceof HttpError) return null;
     throw e;
@@ -786,6 +787,21 @@ export function ownerNote(app: App, runId: string, text: string, by: string, opt
   const first = text.trim().split("\n")[0];
   const task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: "owner", origin: { note: text.trim() } }, by);
   return { task, next: advanceWork(app, rootId, { owner: true }) };
+}
+
+/**
+ * The owner switched the AI of a task-driven delegation (continue_code_run's execution or
+ * review_execution): the rounds from the next one use it. A round still queued on its start keeps
+ * the AI it was given; the reply says so.
+ */
+export function setWorkAI(app: App, runId: string, ai: { execution?: Execution; reviewExecution?: Execution }): string {
+  if (!ai.execution && !ai.reviewExecution) return "";
+  const rootId = workRootOf(app, runId);
+  setWorkState(app, rootId, { ...(ai.execution ? { execution: ai.execution } : {}), ...(ai.reviewExecution ? { reviewExecution: ai.reviewExecution } : {}) });
+  const name = (e: Execution) => [e.profile, e.model, e.effort].filter(Boolean).join(" · ");
+  const last = lastRound(app, rootId);
+  const busy = last.status === "queued" || last.status === "running";
+  return `${ai.execution ? `编码改用 ${name(ai.execution)}` : ""}${ai.execution && ai.reviewExecution ? "，" : ""}${ai.reviewExecution ? `评审改用 ${name(ai.reviewExecution)}` : ""}，从${busy ? `下一轮起（${last.id} 正在进行，要现在换就先 stop_code_run 再继续）` : "这一轮起"}。`;
 }
 
 /**

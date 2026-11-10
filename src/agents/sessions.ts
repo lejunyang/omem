@@ -1,12 +1,12 @@
 import { one } from "../core/db.ts";
-import { clearDown, downReason, excluded, holdForRun, markDown } from "./capacity.ts";
-import { aiLabel, chooseAI } from "./choose-ai.ts";
+import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
+import { aiLabel, choiceEvent, chooseAI } from "./choose-ai.ts";
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
-import { failoverProfiles, isBackendDown, isRetryableAgentError, noteQuota, prepareRun, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
+import { failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, quietAfterAll, quietSet, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
@@ -266,13 +266,13 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   let own: AgentProfile | undefined;
   if (!pinned && (!t.agentSession || t.agentTurns >= app.config.sessions.maxTurns) && !live.has(threadId)) {
     const current = resolveRunProfile(app, { actor });
-    const pick = await chooseAI(app, { scene: "conversation", task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }) });
+    const pick = await chooseAI(app, { scene: "conversation", task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }), onRecord: (r) => ctx.event("status", choiceEvent(r)) });
     auto = pick ? { profile: pick.profile, model: pick.model, effort: pick.effort } : null;
     if (JSON.stringify(auto) !== JSON.stringify(t.settings.auto ?? null)) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, auto } });
-    if (pick) {
-      own = current;
-      ctx.event("status", { text: `自动选 AI：${aiLabel(pick)}（${pick.reason}）` });
-    }
+    if (pick) own = current;
+  } else if (pinned && !t.agentSession) {
+    const p = resolveRunProfile(app, { actor, profileId: t.settings.profile ?? undefined, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
+    ctx.event("status", choiceEvent({ scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: "这个会话用 /model 或会话设置指定了 AI" }));
   }
   const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess });
   // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
@@ -405,9 +405,11 @@ ${WAKE_NOTE}`
   let left = "";
   let carry = "";
   let writesBefore = 0;
+  let quietBefore = false;
   for (let step = 0; step < chain.length; step++) {
     if (!usable(step)) continue;
     writesBefore = writeCount();
+    quietBefore = quietSet(app, ctx.run.id);
     if (step > 0) {
       used = chain[step];
       limitFor.profile = used;
@@ -415,7 +417,7 @@ ${WAKE_NOTE}`
       revokeToolToken(curPrep.token);
       curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
-      emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
+      emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to: aiLabel({ profile: used.id, model: used.model, effort: used.effort }), why: left || "默认后端不可用", ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
     }
     try {
       if (used.transport !== "acp") {
@@ -490,6 +492,11 @@ ${WAKE_NOTE}`
           r = await l.handle.prompt(promptText, emit, ctx.signal);
         } catch (e) {
           if ((e as Error).message === "CANCELLED") throw e;
+          // Done already (stay_quiet): the outer catch ends the turn, nothing is asked again.
+          if (quietAfterAll(app, ctx.run.id, quietBefore, e)) {
+            release(threadId);
+            throw e;
+          }
           // Provider queue/rate limit, or the backend went silent past the watchdog: drop the live
           // session and let the outer chain try a fallback (another wait on the same one helps nobody).
           if (isRetryableAgentError(e) || (isBackendDown(e) && /没有任何活动|长时间没有活动/.test((e as Error).message) && hasNext(step))) {
@@ -536,12 +543,19 @@ ${WAKE_NOTE}`
         }
       }
     } catch (e) {
+      // It ended the turn with stay_quiet and only closing the turn failed: nothing to post, nothing to redo.
+      if (quietAfterAll(app, ctx.run.id, quietBefore, e)) {
+        emit({ type: "status", text: `这一轮已经用 stay_quiet 结束，后端收尾时出错（${(e as Error).message.slice(0, 120)}），按已完成处理` });
+        answer = "";
+        break;
+      }
       noteQuota(app, used, e, emit);
       const busy = isRetryableAgentError(e);
-      // The backend broke down (crash, dropped connection, silent past the watchdog): another one takes
-      // over, told what this attempt already wrote, and this one waits a while (capacity.ts markDown).
+      // The backend broke down (crash, dropped connection, silent past the watchdog, the upstream stream
+      // cut off): another one takes over, told what this attempt already wrote, and this one (or its
+      // model) waits a while (capacity.ts noteFailure).
       const down = !busy && isBackendDown(e);
-      if (down) markDown(app, used, (e as Error).message);
+      noteBreakdown(app, used, e, emit);
       if ((e as Error).message === "CANCELLED" || ctx.signal?.aborted || !(busy || down) || !hasNext(step)) throw e;
       const why = (e as Error).message.slice(0, 120);
       left = busy ? `${used.name ?? used.id} 不可用（${why}）` : `${used.name ?? used.id} 出错（${why}）`;

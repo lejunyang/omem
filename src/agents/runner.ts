@@ -14,8 +14,8 @@ import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
-import { acquire, choosableProfiles, clearDown, excluded, isQuotaMessage, markDown, markOutOfQuota } from "./capacity.ts";
-import { aiLabel, candidateProfiles, chooseAI, type ChooseScene } from "./choose-ai.ts";
+import { acquire, choosableProfiles, clearDown, dailyCapReached, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
+import { aiLabel, candidateProfiles, choiceEvent, chooseAI, type ChooseScene } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { DOUBAO_CLI_INSTALL } from "./doubao-cli.ts";
@@ -542,9 +542,49 @@ function distinctProfiles(list: AgentProfile[]) {
  * aside for a while (capacity.ts markDown).
  */
 export function isBackendDown(e: unknown): boolean {
-  if (!(e instanceof Error)) return false;
-  if (isAgentRunError(e) && e.kind === "idle") return true;
-  return /进程退出|进程已结束|connection closed|EPIPE|ECONNRESET|socket hang up|没有任何活动|长时间没有活动|退出码|找不到命令|spawn .*ENOENT/i.test(e.message);
+  return breakdownKind(e) !== null;
+}
+
+/**
+ * The provider's side broke off the model's answer (the stream was cut, came back empty, was reset):
+ * the backend process is fine and another try, or another backend, usually works.
+ */
+export function isTransientUpstream(e: unknown): boolean {
+  return e instanceof Error && /stream disconnected|empty (llm )?(response|stream)|llm response empty|RST_STREAM|stream (was )?(terminated|closed|reset)|upstream (error|connect|request timeout|timed out)|bad gateway|service unavailable|gateway time-?out|\b50[234] (bad gateway|service|gateway)|ECONNREFUSED|ETIMEDOUT|unexpected EOF/i.test(e.message);
+}
+
+/** How a backend broke down: its process or connection (`crash`), or the upstream model stream (`transient`); null when it did not. */
+export function breakdownKind(e: unknown): "crash" | "transient" | null {
+  if (!(e instanceof Error)) return null;
+  if (isAgentRunError(e) && e.kind === "idle") return "crash";
+  if (isTransientUpstream(e)) return "transient";
+  return /进程退出|进程已结束|connection closed|EPIPE|ECONNRESET|socket hang up|没有任何活动|长时间没有活动|退出码|找不到命令|spawn .*ENOENT/i.test(e.message) ? "crash" : null;
+}
+
+/**
+ * Set a backend (or its model) aside after a failure that says it is not usable now — a crash, a
+ * queue past the owner's limit, upstream errors in a row (capacity.ts noteFailure) — so the runs
+ * after this one go elsewhere first instead of each meeting the same failure.
+ */
+export function noteBreakdown(app: App, p: AgentProfile, e: unknown, emit: (e: AgentEvent) => void) {
+  const kind = breakdownKind(e) ?? (isAgentRunError(e) && e.kind === "queue" ? "queue" : null);
+  if (!kind) return;
+  const said = noteFailure(app, p, kind, (e as Error).message);
+  if (said) emit({ type: "status", text: said });
+}
+
+/** Whether the run said it has nothing more to say (stay_quiet): set in its output by the tool. */
+export function quietSet(app: App, runId: string | null) {
+  return !!runId && !!one<{ q: string | null }>(app.db, "select json_extract(output, '$.stayQuiet') q from runs where id = ?", runId)?.q;
+}
+
+/**
+ * The attempt ended its work with stay_quiet (nothing to post) and the backend failed only while
+ * closing the turn — some providers answer an empty final message with an error ("empty stream")
+ * after waiting minutes. Nothing is lost: the run is done, not failed, and no other backend redoes it.
+ */
+export function quietAfterAll(app: App, runId: string | null, quietBefore: boolean, e: unknown) {
+  return !quietBefore && e instanceof Error && e.message !== "CANCELLED" && quietSet(app, runId);
 }
 
 /**
@@ -572,7 +612,8 @@ export function isRetryableAgentError(e: unknown): boolean {
 export function noteQuota(app: App, profile: AgentProfile, e: unknown, emit: (e: AgentEvent) => void) {
   if (!(e instanceof Error) || !(isAgentRunError(e) ? e.kind === "quota" : isQuotaMessage(e.message))) return;
   const until = markOutOfQuota(app, profile, e.message);
-  emit({ type: "status", text: `${profile.name ?? profile.id} 的额度用完了，${until.toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 前自动改用其他后端` });
+  const one = !!profile.model && isModelQuotaMessage(e.message, profile.model);
+  emit({ type: "status", text: `${profile.name ?? profile.id}${one ? ` 的模型 ${profile.model}` : ""} 的额度用完了，${until.toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 前自动改用${one ? "其他模型和后端" : "其他后端"}` });
 }
 
 /** Build the ordered profile list for one role run: primary then configured fallbacks. */
@@ -627,14 +668,26 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // the chosen one as a failover.
   let own: AgentProfile | undefined;
   const runKind = input.runId ? one<{ kind: string }>(app.db, "select kind from runs where id = ?", input.runId)?.kind : undefined;
-  if (!execution && !input.shadow && !input.profileId && !input.model && !input.effort && !input.resumeSessionId && !input.replay && !input.reviewCheck && !input.reviewLead && !input.checkName && runKind !== "code" && runKind !== "review") {
+  // Checks, replays and comparisons run on what their caller set and are not choices of their own.
+  const internal = !!(input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName);
+  const scene = input.choose ?? "tasks";
+  const say = (text: string) => input.onEvent?.({ type: "status", text });
+  const notChosen = (reason: string) => {
+    const current = resolveRunProfile(app, { actor, profileId: input.profileId, model: input.model, effort: input.effort });
+    input.onEvent?.(choiceEvent({ scene, outcome: "skipped", current: aiLabel({ profile: current.id, model: current.model, effort: current.effort }), reason }));
+  };
+  if (internal) {
+    // nothing to record
+  } else if (execution) notChosen(`${execution.source === "user" ? "本人指定了" : "助手交办时选了"} ${aiLabel(execution)}（${execution.reason}）`);
+  else if (runKind === "code" || runKind === "review") notChosen("编码和评审按各自角色的设置，不在运行前自动选");
+  else if (input.resumeSessionId) notChosen("接着之前的 Agent 会话，沿用它的 AI");
+  else if (input.profileId || input.model || input.effort) notChosen("发起这次运行时已经定了 AI");
+  else {
     const current = resolveRunProfile(app, { actor });
-    const say = (text: string) => input.onEvent?.({ type: "status", text });
-    const pick = await chooseAI(app, { scene: input.choose ?? "tasks", task: input.task, who: input.spec?.name ?? input.role, current, signal: input.signal, onStatus: say });
+    const pick = await chooseAI(app, { scene, task: input.task, who: input.spec?.name ?? input.role, current, signal: input.signal, onStatus: say, onRecord: (r) => input.onEvent?.(choiceEvent(r)) });
     if (pick) {
       own = current;
       input = { ...input, profileId: pick.profile, model: pick.model, effort: pick.effort };
-      say(`自动选 AI：${aiLabel(pick)}（${pick.reason}）`);
     }
   }
   const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
@@ -642,15 +695,18 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
   }
-  // An AI the owner or the assistant named for this run is used alone. Otherwise a run (a role's or
-  // an Agent 档案's) may move to its other configured backends when its model is full, and to the
-  // fallbacks when the backend is busy, out of quota, or breaks down (failoverProfiles).
-  const chain = input.shadow || execution ? [base.profile] : failoverProfiles(app, actor, base.profile, own);
+  // A run (a role's or an Agent 档案's) may move to its other configured backends when its model is
+  // full, and to the fallbacks when the backend is busy, out of quota, or breaks down (failoverProfiles).
+  // An AI the owner or the assistant named for this run is used first and alone while it can take the
+  // run (a full model waits for it, a nearly spent account is still used); only when it cannot —
+  // busy, out of quota, broke down — does the run move on, unless the owner set `pinnedFallback: never`.
+  const pinned = !!execution;
+  const chain = input.shadow || (pinned && app.config.agents.routing.pinnedFallback === "never") ? [base.profile] : failoverProfiles(app, actor, base.profile, own);
   const emit = input.onEvent ?? (() => {});
   let lastError: unknown;
   let failed = false;
   /** Why the previous backend was left: busy (queue, rate limit, quota), it failed before doing anything, or it broke down midway. */
-  let leftBecause: { busy: boolean; untouched: boolean; why: string } | null = null;
+  let leftBecause: { busy: boolean; untouched: boolean; why: string; first?: boolean } | null = null;
   /** What a backend that broke down midway already did, for the one taking over. */
   let carry = "";
   let acted = false;
@@ -660,11 +716,24 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const writes = () => (input.runId ? one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", input.runId)!.n : 0);
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : null;
+  /** Who the first AI was, for the words when the run moves on. */
+  const firstWho = pinned ? `原指定的 AI（${aiLabel(execution!)}）` : own ? `自动选中的 AI（${aiLabel({ profile: chain[0].id, model: chain[0].model })}）` : "默认后端";
   try {
     for (let i = 0; i < chain.length; i++) {
+      // The named AI is out of quota or past the owner's daily cap: go straight to the next.
+      if (pinned && i === 0 && chain.length > 1) {
+        const until = outOfQuotaUntil(app, chain[0]);
+        const why = until ? `额度用完（${new Date(until).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 恢复）` : dailyCapReached(app, chain[0]);
+        if (why) {
+          revokeToolToken(base.token);
+          leftBecause = { busy: true, untouched: true, why, first: true };
+          failed = true;
+          continue;
+        }
+      }
       let slot;
       try {
-        slot = await acquire(app, chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
+        slot = await acquire(app, pinned && i === 0 ? [chain[0]] : chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
       } catch (e) {
         if (i === 0) revokeToolToken(base.token);
         throw e;
@@ -678,7 +747,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       try {
         const req = {
           runId: input.runId,
-          strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,
+          strictSelection: execution && i === 0 ? { model: !!execution.model, effort: !!execution.effort } : undefined,
           cwd: prep.cwd,
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
@@ -694,36 +763,56 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           persistSession: input.persistSession ?? !!input.resumeSessionId,
           queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
         };
-        if (i > 0)
-          emit({ type: "status", text: `${leftBecause && !leftBecause.busy && !moved ? leftBecause.untouched ? `上一个后端没有开始工作就失败了（${leftBecause.why}）` : `上一个后端中途出错（${leftBecause.why}）` : failed && !moved ? "默认后端不可用（排队、限流或额度用完）" : failed ? "重试时原来的模型已满" : nearlySpent ? `默认后端的额度快用完了（${nearlySpent}）` : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
-        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        if (i > 0) {
+          const why = leftBecause && !leftBecause.busy && !moved
+            ? `${leftBecause.first ? firstWho : "上一个后端"}${leftBecause.untouched ? "没有开始工作就失败了" : "中途出错"}（${leftBecause.why}）`
+            : failed && !moved ? `${firstWho}不可用（${leftBecause?.why ?? "排队、限流或额度用完"}）`
+            : failed ? "重试时原来的模型已满"
+            : nearlySpent ? `${firstWho}的额度快用完了（${nearlySpent}）`
+            : `${firstWho}的模型已满`;
+          const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
+          emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
+        }
+        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution && i === 0 ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
         writesBefore = writes();
+        const quietBefore = quietSet(app, input.runId);
         const watch = (e: AgentEvent) => {
           if (e.type === "tool") acted = true;
           emit(e);
         };
-        const result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
-          ? await backgroundTurn(app, prep, req, input.task, input.runId, watch)
-          : await runBackend(app, prep.profile, req, watch);
+        const ai = { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort };
+        let result: AgentResult;
+        try {
+          result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
+            ? await backgroundTurn(app, prep, req, input.task, input.runId, watch)
+            : await runBackend(app, prep.profile, req, watch);
+        } catch (e) {
+          if (!quietAfterAll(app, input.runId, quietBefore, e)) throw e;
+          emit({ type: "status", text: `这一轮已经用 stay_quiet 结束，后端收尾时出错（${(e as Error).message.slice(0, 120)}），按已完成处理` });
+          result = { text: "", stopReason: "end_turn", agent: prep.profile.name ?? prep.profile.id };
+        }
         revokeToolToken(prep.token);
         clearDown(app, prep.profile);
-        return { ...result, profileId: prep.profile.id, ai: { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort } };
+        return { ...result, profileId: prep.profile.id, ai };
       } catch (e) {
         revokeToolToken(prep.token);
         noteQuota(app, prep.profile, e, emit);
         // A backend that failed before doing anything (it could not start, prepare its environment, log
         // in) is left for the next one too: nothing was done, so nothing is done twice.
         const busy = isRetryableAgentError(e);
-        // The backend broke down (crash, dropped connection, silent past the watchdog): another one
-        // takes over even midway, told what this attempt already wrote, and this one waits a while.
+        // The backend broke down (crash, dropped connection, silent past the watchdog, the upstream
+        // stream cut off): another one takes over even midway, told what this attempt already wrote.
         const down = !busy && isBackendDown(e);
-        if (down) markDown(app, prep.profile, (e as Error).message);
+        // Set it (or its model) aside for a while, so the next runs go elsewhere first.
+        noteBreakdown(app, prep.profile, e, emit);
         const untouched = !acted && writes() === writesBefore;
-        if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !(busy || untouched || down) || i === chain.length - 1) throw e;
+        // The AI named for the run moves on only when it cannot take it (busy or broke down).
+        const movable = pinned && i === 0 ? busy || down : busy || untouched || down;
+        if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !movable || i === chain.length - 1) throw e;
         if (!untouched) carry = (await import("./retry.ts")).partialAttemptNote(app, input.runId, writesBefore, e, aiLabel({ profile: prep.profile.id, model: prep.profile.model }));
-        leftBecause = { busy, untouched, why: (e as Error).message.slice(0, 120) };
+        leftBecause = { busy, untouched, why: (e as Error).message.slice(0, 120), first: i === 0 };
         lastError = e;
         failed = true;
       } finally {

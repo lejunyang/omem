@@ -24,6 +24,32 @@ function optionValues(option: SessionConfigOption): string[] {  if (option.type 
   return out;
 }
 
+/**
+ * What the agent tells about each model besides its id: the entry's description and `_meta` (a
+ * provider may put a model's daily limit or what is left of it there). Kept as text, not parsed:
+ * which fields mean what differs per agent, and the chooser reads it as written.
+ */
+export function modelNotes(option: SessionConfigOption | undefined, available?: { modelId: string; name?: string; description?: string | null; _meta?: unknown }[] | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  const add = (id: unknown, e: { name?: unknown; description?: unknown; _meta?: unknown }) => {
+    if (typeof id !== "string") return;
+    const parts = [
+      typeof e.description === "string" && e.description.trim() ? e.description.trim() : "",
+      e._meta && typeof e._meta === "object" && Object.keys(e._meta).length ? JSON.stringify(e._meta) : "",
+    ].filter(Boolean);
+    if (parts.length) out[id] = parts.join(" ").slice(0, 300);
+  };
+  if (option?.type === "select") {
+    for (const o of option.options as unknown[]) {
+      const group = o as { options?: Record<string, unknown>[]; value?: unknown };
+      if (Array.isArray(group.options)) for (const x of group.options) add(x.value, x);
+      else add(group.value, group as Record<string, unknown>);
+    }
+  }
+  for (const m of available ?? []) add(m.modelId, m);
+  return out;
+}
+
 export type AcpOpenOptions = {
   cwd: string;
   cleanup?: SessionCleanup;
@@ -366,6 +392,10 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
             : []),
         ],
         ...(effortsByModel ? { effortsByModel } : {}),
+        ...(() => {
+          const notes = modelNotes(options.find(isModelOption), session.models?.availableModels);
+          return Object.keys(notes).length ? { modelNotes: notes } : {};
+        })(),
       };
       await discard();
       return { sessionId, agent: agentName, resumed, system: false, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, discard, steer: async () => "unsupported", probe };

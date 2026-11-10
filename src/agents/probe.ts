@@ -20,6 +20,8 @@ export type ProbeInfo = {
   effortsByModel?: Record<string, string[]>;
   /** The agent's permission modes (ACP); whether it has a full-access one decides 完全访问. */
   modes?: string[];
+  /** The agent's own words about each model (description, _meta), when it gives any. */
+  modelNotes?: Record<string, string>;
   error?: string;
 };
 
@@ -78,6 +80,7 @@ export async function probeProfile(profile: AgentProfile, app?: App): Promise<Pr
       efforts,
       ...(by ? { effortsByModel: by } : {}),
       modes: r.probe?.modes ?? [],
+      ...(r.probe?.modelNotes ? { modelNotes: r.probe.modelNotes } : {}),
     };
   } catch (e) {
     return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: (e as Error).message.slice(0, 300) };

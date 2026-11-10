@@ -99,7 +99,7 @@ omem 统一成“材料 + 问题 + 选项 → 选中的一项和每项概率”�
 用在哪里：
 
 - **规则**：`judge` 为 `ai` / `code+ai` 的判断和“模型判断”这一步（`check` 动作），按规则的 `judgeWith`：`decision`（默认，决策模型优先）或 `general`（通用模型读完规则和讨论再判断，会写理由）。材料是规则原话、已满足的条件、事件和所在的讨论。规则页“用哪个模型判断”可选，并显示现在有没有可用的决策模型。
-- **运行前选 AI**（`agents.routing.choose`，architecture.md 的“运行前自动选 AI”）：选项是“按原来的设置”和任务选型的各候选，每项写着适用说明、占用和账号额度，取概率最高的一项；对话、规则交给的 Agent、交办和后台任务分别设不选 / 有决策模型时选 / 总是选。
+- **运行前选 AI**（`agents.routing.choose`，architecture.md 的“运行前自动选 AI”）：选项是“按原来的设置”和任务选型的各候选，每项写着适用说明、占用和账号额度，取概率最高的一项；对话、规则交给的 Agent、交办和后台任务分别设不选 / 有决策模型时选 / 总是选。快用完（`quotaAvoid`）、刚出故障（`downReason`）、被排除（上限 0、额度用完、到了每天上限）的候选不进选项，写进记录的 `left`，免得选中后又被 `acquire` 排到后面。每次运行都记一条 `status` 事件，带 `choice`（`choose-ai.ts` 的 `ChoiceRecord`：`outcome` 为 chosen / kept / skipped / failed、`current`、`picked`、`by`、`reason`、`options`、`left`），没选的也写原因（关着、没有候选、没有决策模型、点名了 AI、接着之前的会话、编码和评审）；换后端的 `status` 事件带 `failover`（`from`、`to`、`why`、`pinned`、`chosen`）。
 - **访客提问的把关**（`ai.decision.gatekeeper`，默认开）：三个选项回答 / 拒绝 / 不理，说明取自 `gatekeeper` 角色。拒绝时回固定的一句（群里“这个需要机器人的主人同意，已经去问了。”，私聊或机器人“这个我不能帮忙。”）。出错时按 `fallback` 交给 `gatekeeper` 角色，或者不理。
 - 设置 → AI → 决策 有“试一下”：填材料、问题和选项（不填就是是 / 否），看选中的一项、每项概率、用时。
 

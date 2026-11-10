@@ -84,6 +84,9 @@ export const ASSISTANT_RETRIES = 2;
  * checkpoint, and the asks open for owner questions.
  */
 export type WorkState = {
+  /** The AI the owner switched the work to (continue_code_run's execution / review_execution): the rounds after it use it. */
+  execution?: import("./execution.ts").Execution;
+  reviewExecution?: import("./execution.ts").Execution;
   budget: number;
   /** owner: given when delegating (the coder's estimate does not replace it). */
   budgetBy?: "owner" | "coder";

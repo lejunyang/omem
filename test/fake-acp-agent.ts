@@ -464,6 +464,13 @@ ${JSON.stringify({ check, tools })}`);
           const r = await client.callTool(direct ? { name: "stay_quiet", arguments: args } : { name: "omem_call", arguments: { tool: "stay_quiet", args } });
           await client.close();
           if (r.isError) await say(`stay_quiet 不能用：${(r.content as { text?: string }[]).map((c) => c.text ?? "").join("")}\n\n`);
+          // FAKE_EMPTY_STREAM=1: a provider that fails the empty final message after stay_quiet.
+          if (process.env.FAKE_EMPTY_STREAM === "1") throw RequestError.internalError({ message: "stream disconnected before completion: llm response empty stream", will_retry: false });
+        }
+        // FAKE_STREAM_CUT=1: the upstream model stream breaks off mid-answer (the backend process lives on).
+        if (process.env.FAKE_STREAM_CUT === "1") {
+          await say("我先看一下……");
+          throw RequestError.internalError({ message: "stream disconnected before completion: upstream connect error", will_retry: false });
         }
         await say(fixed);
         return { stopReason: "end_turn" };

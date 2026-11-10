@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { mayStayQuiet } from "../src/agents/quiet.ts";
 import { loadRole } from "../src/agents/runner.ts";
-import { createRun, getRun, waitForRun, type Run } from "../src/agents/runs.ts";
+import { createRun, getRun, runEvents, waitForRun, type Run } from "../src/agents/runs.ts";
+import { saveAgentSpec } from "../src/agents/specs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { addMessage, createThread, threadMessages, updateThread } from "../src/agents/threads.ts";
 import { expandTools } from "../src/agents/tool-help.ts";
@@ -75,7 +76,7 @@ describe("staying quiet end to end", async () => {
   const home = mkdtempSync(join(tmpdir(), "omem-quiet-"));
   writeFileSync(
     join(home, "config.json"),
-    JSON.stringify({ agents: { default: "fake", profiles: [fake("fake", { FAKE_MODE: "thread" }), fake("quiet", { FAKE_SAY: "没有新变化。", FAKE_QUIET: "查过了，没有新变化" })] }, sessions: { mergeMs: 0 } }),
+    JSON.stringify({ agents: { default: "fake", profiles: [fake("fake", { FAKE_MODE: "thread" }), fake("quiet", { FAKE_SAY: "没有新变化。", FAKE_QUIET: "查过了，没有新变化" }), fake("emptyq", { FAKE_SAY: "没有新变化。", FAKE_QUIET: "查过了，没有新变化", FAKE_EMPTY_STREAM: "1" })] }, sessions: { mergeMs: 0 } }),
   );
   const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
   afterAll(() => {
@@ -105,5 +106,29 @@ describe("staying quiet end to end", async () => {
     const answer = replies().at(-1)!;
     expect(answer.text).toContain("stay_quiet 不能用");
     expect(answer.text).toContain("没有新变化。");
+  }, 60_000);
+
+  // Some providers fail the empty final message after stay_quiet ("llm response empty stream"): the
+  // work was done, so the run is too — not failed, and not redone on another backend.
+  it("a quiet turn whose backend fails only on its empty last message is done", async () => {
+    const q = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+    updateThread(app, q.id, { settings: { profile: "emptyq" } });
+    const note = addMessage(app, q.id, "assistant", "助理设的唤醒到了。备注：看看 CI", null, { wake: { note: "看看 CI" }, record: true });
+    const r = createRun(app, { kind: "ask", spaceId: "personal", title: "唤醒", input: { conversationId: q.id, messageIds: [note], wake: true }, lane: q.id });
+    const done = await waitForRun(app, r.id);
+    expect(done.error).toBeNull();
+    expect(done.status).toBe("done");
+    expect(done.output).toMatchObject({ quiet: true, stayQuiet: "查过了，没有新变化" });
+    expect(runEvents(app, r.id).some((e) => e.type === "status" && /按已完成处理/.test(String((e.data as { text?: string }).text)))).toBe(true);
+  }, 60_000);
+
+  it("so is an Agent 档案 run that stays quiet the same way", async () => {
+    saveAgentSpec(app, { name: "watcher-a", description: "看看", prompt: "看看", status: "active", agent: "emptyq" }, "user");
+    const r = createRun(app, { kind: "agent", spaceId: "personal", title: "唤醒", input: { spec: "watcher-a", task: "看看 CI 跑完没有", wake: true } });
+    const done = await waitForRun(app, r.id);
+    expect(done.error).toBeNull();
+    expect(done.status).toBe("done");
+    expect(done.output.stayQuiet).toBe("查过了，没有新变化");
+    expect(runEvents(app, r.id).some((e) => e.type === "status" && /按已完成处理/.test(String((e.data as { text?: string }).text)))).toBe(true);
   }, 60_000);
 });

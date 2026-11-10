@@ -648,6 +648,36 @@ describe("a delegation driven by tasks", () => {
     }
   });
 
+  it("keeps the AI the owner switched task-driven work to for the rounds after it", async () => {
+    const app = testApp();
+    try {
+      app.config.agents.profiles.push({ id: "other", name: "other", transport: "acp", command: process.execPath, args: [], env: {}, idleTimeoutMs: 60000 });
+      const t = createThread(app, { channel: "web", spaceId: "personal", userId: OWNER });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "交办", input: { conversationId: t.id } });
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: { task: "退款只按未发货的行计算", repos: ["personal"], taskMode: true }, parentId: ask.id, userId: OWNER });
+      codeChainFor(app, r);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      setRunOutput(app, r.id, { coderSummary: "做完了 T1" });
+      addTask(app, r.id, { title: "运费按比例退", kind: "build" }, "coder");
+      const assistant: ToolContext = { app, runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
+      const execution = { profile: "other", source: "user", reason: "本人说原来的一直排队，换一个" };
+      const said = await callTool(assistant, "continue_code_run", { run_id: r.id, task: "换个 AI 接着做", execution });
+      expect(said.text).toContain("编码改用 other");
+      const next = lastRound(app, r.id);
+      expect(next.id).not.toBe(r.id);
+      expect(next.input.execution).toMatchObject({ profile: "other" });
+      // The round after it (a new item, no execution given) stays on it.
+      run(app.db, "update runs set status = 'done' where id = ?", next.id);
+      setRunOutput(app, next.id, { coderSummary: "做完了" });
+      await callTool(assistant, "continue_code_run", { run_id: r.id, task: "退款单要显示退款原因", new_item: true });
+      const third = lastRound(app, r.id);
+      expect(third.id).not.toBe(next.id);
+      expect(third.input.execution).toMatchObject({ profile: "other" });
+    } finally {
+      app.db.close();
+    }
+  });
+
   it("finds the item of earlier work on a branch for a new delegation there", async () => {
     const app = testApp();
     try {

@@ -465,7 +465,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const c = await import("../agents/capacity.ts");
     const q = await import("../agents/quota.ts");
     const quota = (await q.quotaProfiles(app)).map((p) => ({ profile: p.id, name: p.name ?? p.id, ...(q.quotaView(app, p) ?? { source: c.sourceOf(p), plan: null, readAt: null, windows: [] }) }));
-    return { now: c.loadReport(app), recent: c.recentStats(app), outOfQuota: c.outOfQuotaList(app), quota };
+    // Daily caps the owner set per model, with today's count so far.
+    const specs = (await import("../core/config.ts")).allProfiles(app.config);
+    const daily = app.config.agents.capacity.limits.flatMap((l) => {
+      const p = specs.find((x) => x.id === l.profile);
+      return p && l.model && l.perDay !== undefined ? [{ profile: l.profile, model: l.model, perDay: l.perDay, used: c.usedToday(app, { ...p, model: l.model }) }] : [];
+    });
+    return { now: c.loadReport(app), recent: c.recentStats(app), outOfQuota: c.outOfQuotaList(app), quota, daily };
   });
   // Read the plan limits of every account now (Codex app-server, Claude /usage).
   server.post("/api/agents/quota/refresh", async () => {

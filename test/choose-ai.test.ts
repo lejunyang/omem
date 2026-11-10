@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setKey } from "../src/core/ai-keys.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
 import { allProfiles } from "../src/core/config.ts";
-import { downReason } from "../src/agents/capacity.ts";
+import { downReason, noteFailure } from "../src/agents/capacity.ts";
 import { receive } from "../src/agents/inbox.ts";
 import { runEvents, waitForRun } from "../src/agents/runs.ts";
-import { isBackendDown, runRole } from "../src/agents/runner.ts";
+import { breakdownKind, isBackendDown, runRole } from "../src/agents/runner.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { saveAgentSpec } from "../src/agents/specs.ts";
 import { getThread } from "../src/agents/threads.ts";
@@ -41,7 +41,7 @@ describe("choosing the AI before a run", () => {
     app.baseUrl = "http://127.0.0.1:1";
     app.config.agents.profiles.push(fakeAgent("slow"), fakeAgent("fast"));
     app.config.agents.default = "slow";
-    app.config.agents.routing = { automatic: true, guidance: "简单的活用快模型", candidates: [{ profile: "fast", model: "m1", when: "简单整理、总结" }], choose: { conversation: "decision", rules: "decision", tasks: "decision" } };
+    app.config.agents.routing = { automatic: true, guidance: "简单的活用快模型", candidates: [{ profile: "fast", model: "m1", when: "简单整理、总结" }], choose: { conversation: "decision", rules: "decision", tasks: "decision" }, pinnedFallback: "unavailable" };
     const bodies = withDecision(app, () => ({ answers: [{ type: "choice", name: "q", choice: "c1", probabilities: [{ value: "keep", probability: 0.2 }, { value: "c1", probability: 0.8 }] }] }));
     const events: AgentEvent[] = [];
     const r = await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结一下这段话", onEvent: (e) => events.push(e) });
@@ -62,7 +62,39 @@ describe("choosing the AI before a run", () => {
     withDecision(app, () => ({ error: "boom" }), 500);
     const failed: AgentEvent[] = [];
     expect((await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "又一段", onEvent: (e) => failed.push(e) })).profileId).toBe("slow");
-    expect(statuses(failed).some((t) => /决策模型选 AI 出错/.test(t))).toBe(true);
+    expect(statuses(failed).some((t) => /自动选 AI 没有选成，用原来的 slow · m1（决策模型：出错/.test(t))).toBe(true);
+  }, 60_000);
+
+  it("records every choice in the run, also when there was none and why", async () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.profiles.push(fakeAgent("slow"), fakeAgent("fast"), fakeAgent("flaky"));
+    app.config.agents.default = "slow";
+    app.config.agents.routing = { automatic: true, guidance: "", candidates: [{ profile: "fast", model: "", effort: "", when: "什么都行" }, { profile: "flaky", when: "也行" }], choose: { conversation: "decision", rules: "decision", tasks: "off" }, pinnedFallback: "unavailable" };
+    const choices = (events: AgentEvent[]) => events.flatMap((e) => (e.type === "status" && e.choice ? [e] : []));
+    // Off for this kind of run.
+    const off: AgentEvent[] = [];
+    await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", onEvent: (e) => off.push(e) });
+    expect(choices(off)).toHaveLength(1);
+    expect(choices(off)[0]).toMatchObject({ text: expect.stringContaining("没有自动选 AI，用 slow · m1：这类运行（交办和后台任务）设成了“不选”"), choice: { outcome: "skipped", scene: "tasks" } });
+    // Named by the owner.
+    const named: AgentEvent[] = [];
+    await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", execution: { profile: "fast", source: "user", reason: "本人要快的" }, onEvent: (e) => named.push(e) });
+    expect(choices(named)[0].type === "status" && choices(named)[0]).toMatchObject({ text: expect.stringContaining("本人指定了 fast（本人要快的）") });
+    // The chooser keeps the run's own AI: that is recorded too, with what it was offered. A candidate
+    // that just broke down is not offered (it would only be set aside after the pick), and one written
+    // with an empty model is the backend's own model, not a model named "".
+    app.config.agents.routing.choose.tasks = "decision";
+    noteFailure(app, allProfiles(app.config).find((p) => p.id === "flaky")!, "crash", "Agent 进程退出（1）");
+    const bodies = withDecision(app, () => ({ answers: [{ type: "choice", name: "q", choice: "keep", probabilities: [{ value: "keep", probability: 0.7 }] }] }));
+    const kept: AgentEvent[] = [];
+    expect((await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", onEvent: (e) => kept.push(e) })).profileId).toBe("slow");
+    const rec = choices(kept)[0] as unknown as { text: string; choice: { outcome: string; options: string[]; left: string[] } };
+    expect(rec.text).toMatch(/^自动选 AI：按原来的设置用 slow · m1（决策模型/);
+    expect(rec.choice.outcome).toBe("kept");
+    expect(rec.choice.left.join()).toContain("flaky · m1：刚出过故障");
+    expect(bodies[0].questions[0].choices.map((c: { value: string }) => c.value)).toEqual(["keep", "c1"]);
+    expect(bodies[0].questions[0].choices[1].description).toMatch(/^fast · m1：/);
   }, 60_000);
 
   it("never re-chooses an AI the caller named", async () => {
@@ -70,7 +102,7 @@ describe("choosing the AI before a run", () => {
     app.baseUrl = "http://127.0.0.1:1";
     app.config.agents.profiles.push(fakeAgent("slow"), fakeAgent("fast"));
     app.config.agents.default = "slow";
-    app.config.agents.routing = { automatic: true, guidance: "", candidates: [{ profile: "fast", when: "什么都行" }], choose: { conversation: "decision", rules: "decision", tasks: "decision" } };
+    app.config.agents.routing = { automatic: true, guidance: "", candidates: [{ profile: "fast", when: "什么都行" }], choose: { conversation: "decision", rules: "decision", tasks: "decision" }, pinnedFallback: "unavailable" };
     const bodies = withDecision(app, () => ({ answers: [{ type: "choice", name: "q", choice: "c1", probabilities: [] }] }));
     const r = await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", execution: { profile: "slow", source: "user", reason: "规则指定" } });
     expect(r.profileId).toBe("slow");
@@ -84,7 +116,45 @@ describe("moving on when a backend breaks down", () => {
     expect(isBackendDown(new Error("ACP connection closed"))).toBe(true);
     expect(isBackendDown(new Error("Agent 超过 600 秒没有任何活动，已停止"))).toBe(true);
     expect(isBackendDown(new Error("指定模型 x 不可用"))).toBe(false);
+    // The upstream model stream broke off: the backend lives on, another try or backend usually works.
+    const cut = new Error('Internal error：{"message":"stream disconnected before completion: llm response empty stream","will_retry":false}');
+    expect(breakdownKind(cut)).toBe("transient");
+    expect(breakdownKind(new Error("命令行后端退出码 1：rpc error: code = 13 desc = stream terminated by RST_STREAM with error code: INTERNAL_ERROR"))).toBe("transient");
+    expect(breakdownKind(new Error("Agent 进程退出（1）"))).toBe("crash");
+    expect(breakdownKind(new Error("Internal error：model `x` is unavailable because its metadata could not be resolved"))).toBeNull();
   });
+
+  it("sets a model aside after upstream errors in a row or a queue past the limit, and a backend after a crash", () => {
+    const app = testApp();
+    const p = (model: string) => ({ id: "acct", transport: "acp" as const, command: "x", args: [], env: {}, idleTimeoutMs: 1000, model });
+    const now = Date.now();
+    expect(noteFailure(app, p("a"), "transient", "stream disconnected", now)).toBeNull();
+    expect(downReason(app, p("a"), now)).toBeNull();
+    expect(noteFailure(app, p("a"), "transient", "stream disconnected", now + 1000)).toContain("上游出错 2 次");
+    expect(downReason(app, p("a"), now + 2000)).toBeTruthy();
+    expect(downReason(app, p("b"), now + 2000)).toBeNull();
+    expect(downReason(app, p("a"), now + 20 * 60_000)).toBeNull();
+    noteFailure(app, p("b"), "queue", "排队超过 10 分钟仍未开始，已停止", now);
+    expect(downReason(app, p("b"), now + 1000)).toContain("排队");
+    noteFailure(app, p("c"), "crash", "Agent 进程退出（1）", now);
+    expect(downReason(app, p("zzz"), now + 1000)).toContain("进程退出");
+  });
+
+  it("a run whose AI was named moves on when that AI breaks down, saying so; with fallback off it fails", async () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.profiles.push(fakeAgent("dying", { FAKE_DIE: "1" }), fakeAgent("spare"));
+    app.config.agents.default = "spare";
+    app.config.agents.fallback = [{ profile: "spare" }];
+    const events: AgentEvent[] = [];
+    const r = await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", execution: { profile: "dying", source: "user", reason: "规则指定" }, onEvent: (e) => events.push(e) });
+    expect(r.profileId).toBe("spare");
+    const moved = events.find((e) => e.type === "status" && !!e.failover) as { text: string; failover: Record<string, unknown> };
+    expect(moved.text).toMatch(/^原指定的 AI（dying）没有开始工作就失败了（(Agent 进程退出|ACP connection closed).*改用 spare/);
+    expect(moved.failover).toMatchObject({ from: "dying · m1", to: "spare · m1", pinned: true });
+    app.config.agents.routing.pinnedFallback = "never";
+    await expect(runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "再总结", execution: { profile: "dying", source: "user", reason: "规则指定" } })).rejects.toThrow(/进程退出|connection closed/);
+  }, 60_000);
 
   it("an Agent 档案 run moves to the fallback when its backend dies, and later runs try that backend last", async () => {
     const app = testApp();

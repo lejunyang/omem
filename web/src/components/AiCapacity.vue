@@ -11,11 +11,11 @@ import { toast } from "../store";
  * role is configured for, or wait; a limit of 0 keeps a model out of every automatic choice. Below:
  * each logged-in account's plan limits (agents/quota.ts) and when a nearly spent one goes last.
  */
-type Limit = { profile: string; model?: string; max: number };
+type Limit = { profile: string; model?: string; max: number; perDay?: number };
 type Value = { concurrency: number; interactiveConcurrency: number; perModel: number; limits: Limit[]; quotaAvoidAbove: number; quotaPerDayBelow: number };
 type QuotaWindow = { name: string; used: number; model?: string; resetsAt?: string; resetsIn?: string; perDayLeft?: number };
 type Quota = { profile: string; name: string; source: string; plan: string | null; readAt: string | null; windows: QuotaWindow[]; avoid?: string; error?: string };
-type Load = { now: { source: string; model: string; used: number; waiting: number }[]; recent: { profile: string; model: string; done: number; failed: number; medianMinutes: number | null }[]; outOfQuota?: { source: string; until: string; message: string }[]; quota?: Quota[] };
+type Load = { now: { source: string; model: string; used: number; waiting: number }[]; recent: { profile: string; model: string; done: number; failed: number; medianMinutes: number | null }[]; outOfQuota?: { source: string; account?: string; model?: string; until: string; message: string }[]; quota?: Quota[]; daily?: { profile: string; model: string; perDay: number; used: number }[] };
 const props = defineProps<{ value: Value; backends: { id: string; name?: string }[]; models: Record<string, string[]> }>();
 const emit = defineEmits<{ save: [value: Value] }>();
 const draft = ref<Value>({ concurrency: 2, interactiveConcurrency: 4, perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 });
@@ -48,7 +48,10 @@ function save() {
     concurrency: clamp(d.concurrency, 1, 32),
     interactiveConcurrency: clamp(d.interactiveConcurrency, 1, 16),
     perModel: clamp(d.perModel, 1, 32),
-    limits: d.limits.map((l) => ({ profile: l.profile, ...(l.model ? { model: l.model } : {}), max: clamp(l.max, 0, 32) })),
+    limits: d.limits.map((l) => {
+      const perDay = l.model && l.perDay !== undefined && String(l.perDay) !== "" ? clamp(l.perDay, 0, 100000) : undefined;
+      return { profile: l.profile, ...(l.model ? { model: l.model } : {}), max: clamp(l.max, 0, 32), ...(perDay !== undefined ? { perDay } : {}) };
+    }),
     quotaAvoidAbove: clamp(d.quotaAvoidAbove, 50, 100),
     quotaPerDayBelow: Math.max(0, Math.min(100, Number(d.quotaPerDayBelow) || 0)),
   });
@@ -72,6 +75,7 @@ async function readQuota() {
 }
 const windowLabel = (n: string) => n.replace(/^5h/, "5 小时").replace(/^7d/, "一周");
 const rec = (source: string, model: string) => load.value?.recent.find((r) => r.profile === source && r.model === model);
+const today = (l: Limit) => load.value?.daily?.find((d) => d.profile === l.profile && d.model === l.model);
 </script>
 
 <template>
@@ -83,11 +87,12 @@ const rec = (source: string, model: string) => load.value?.recent.find((r) => r.
       <label class="field"><span>对话同时最多（1–16）</span><input v-model.number="draft.interactiveConcurrency" class="input" type="number" inputmode="numeric" min="1" max="16" /></label>
       <label class="field"><span>每个模型默认最多（1–32）</span><input v-model.number="draft.perModel" class="input" type="number" inputmode="numeric" min="1" max="32" /></label>
     </div>
-    <p class="muted small">单独的上限：选具体模型是这个模型的上限，选“整个后端合计”是这个后端所有模型加起来的上限（可以不设，只靠模型上限）。设成 0 的不会被自动换用或被助手选中，只有你点名时才用。</p>
+    <p class="muted small">单独的上限：选具体模型是这个模型的上限，选“整个后端合计”是这个后端所有模型加起来的上限（可以不设，只靠模型上限）。设成 0 的不会被自动换用或被助手选中，只有你点名时才用。有的后端给部分模型设了每天的次数、又不告诉 omem 还剩多少：给这个模型填“每天最多”，omem 按自己记的当天（你的时区）在它上面开始的运行数算，到了就不再自动选它，直到第二天；后端报“今日额度用完”这类错误时，也会自动避开这个模型到第二天。</p>
     <div v-for="(l, i) in draft.limits" :key="i" class="row wrap lim">
       <UiSelect v-model="l.profile" size="sm" width="200px" aria-label="后端" :options="backendOptions()" @change="l.model = undefined" />
       <UiSelect :model-value="l.model ?? ''" size="sm" width="220px" aria-label="模型" :options="modelOptions(l)" @change="(v) => (l.model = v || undefined)" />
-      <label class="row small">最多<input v-model.number="l.max" class="input sm num" type="number" inputmode="numeric" min="0" max="32" aria-label="上限" />个</label>
+      <label class="row small">同时最多<input v-model.number="l.max" class="input sm num" type="number" inputmode="numeric" min="0" max="32" aria-label="上限" />个</label>
+      <label v-if="l.model" class="row small">每天最多<input v-model.number="l.perDay" class="input sm num" type="number" inputmode="numeric" min="0" placeholder="不限" aria-label="每天最多" />次<span v-if="today(l)" class="muted">（今天 {{ today(l)!.used }}）</span></label>
       <span class="spacer" />
       <button class="btn ghost sm icon" aria-label="移除" @click="draft.limits.splice(i, 1)"><Icon name="x" :size="14" /></button>
     </div>
@@ -127,7 +132,7 @@ const rec = (source: string, model: string) => load.value?.recent.find((r) => r.
       <div class="section-title">额度用完</div>
       <p class="muted small">这些账号的额度用完了，到恢复时间前不会被自动选用，任务改用兜底和其他配置过的后端。已经充值或换了套餐可以提前恢复。</p>
       <div v-for="q in load.outOfQuota" :key="q.source" class="row wrap small">
-        <span class="mono">{{ q.source }}</span><span class="muted">{{ when(q.until) }} 恢复</span><span class="spacer" />
+        <span class="mono">{{ q.model ? `${q.account} · ${q.model}` : q.source }}</span><span class="muted">{{ when(q.until) }} 恢复</span><span class="spacer" />
         <button class="btn ghost sm" @click="useAgain(q.source)">现在恢复使用</button>
       </div>
     </template>

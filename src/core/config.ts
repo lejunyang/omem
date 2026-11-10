@@ -268,7 +268,8 @@ export const configSchema = z.object({
        */
       capacity: z.object({
         perModel: z.number().int().min(1).max(32).default(3),
-        limits: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), max: z.number().int().min(0).max(32) })).max(100).default([]),
+        /** `perDay`: runs a day on this model at most (omem's own count, the owner's time zone), for providers that cap some models per day without reporting what is left. */
+        limits: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), max: z.number().int().min(0).max(32), perDay: z.number().int().min(0).max(100000).optional() })).max(100).default([]),
         quotaAvoidAbove: z.number().min(50).max(100).default(90),
         quotaPerDayBelow: z.number().min(0).max(100).default(0),
       }).default(() => ({ perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 })),
@@ -289,10 +290,16 @@ export const configSchema = z.object({
           rules: z.enum(["off", "decision", "always"]).default("decision"),
           tasks: z.enum(["off", "decision", "always"]).default("off"),
         }).default(() => ({ conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const })),
-      }).default(() => ({ automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const } })),
+        /**
+         * A run whose AI was named (by the owner, a rule, or the assistant's execution) when that AI
+         * cannot take it: `unavailable` moves it to the fallbacks and candidates when the named backend
+         * is busy (queue, rate limit, quota) or breaks down, saying so in the run; `never` lets it fail.
+         */
+        pinnedFallback: z.enum(["unavailable", "never"]).default("unavailable"),
+      }).default(() => ({ automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const })),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const } }, profiles: [] })),
+    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

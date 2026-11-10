@@ -7,17 +7,17 @@ import { toast } from "../store";
 
 type Candidate = { profile: string; model?: string; effort?: string; when: string };
 type Choose = { conversation: "off" | "decision"; rules: "off" | "decision" | "always"; tasks: "off" | "decision" | "always" };
-type Routing = { automatic: boolean; guidance: string; candidates: Candidate[]; choose: Choose };
+type Routing = { automatic: boolean; guidance: string; candidates: Candidate[]; choose: Choose; pinnedFallback: "unavailable" | "never" };
 const CHOOSE: Choose = { conversation: "decision", rules: "decision", tasks: "off" };
 const OFF = { value: "off", label: "不选" };
 const DECISION = { value: "decision", label: "有决策模型时选" };
 const ALWAYS = { value: "always", label: "总是选" };
 const props = defineProps<{ value: Routing; backends: { id: string; name?: string; installed: boolean; transport: string; model?: string; effort?: string }[] }>();
 const emit = defineEmits<{ save: [value: Routing] }>();
-const draft = ref<Routing>({ automatic: true, guidance: "", candidates: [], choose: { ...CHOOSE } });
+const draft = ref<Routing>({ automatic: true, guidance: "", candidates: [], choose: { ...CHOOSE }, pinnedFallback: "unavailable" });
 watch(() => props.value, (v) => {
   const next = JSON.parse(JSON.stringify(v ?? { automatic: true, guidance: "", candidates: [] }));
-  draft.value = { ...next, choose: { ...CHOOSE, ...(next.choose ?? {}) } };
+  draft.value = { ...next, choose: { ...CHOOSE, ...(next.choose ?? {}) }, pinnedFallback: next.pinnedFallback ?? "unavailable" };
 }, { immediate: true });
 function save() {
   if (draft.value.candidates.some((c) => !c.profile || !c.when.trim())) return toast("每个候选都需要后端和适用说明", "error");
@@ -40,6 +40,11 @@ function save() {
       <span class="small">交办和后台任务（编码、评审除外）</span>
       <UiSegmented v-model="draft.choose.tasks" size="sm" aria-label="交办和后台任务" :options="[OFF, DECISION, ALWAYS]" />
     </div>
+    <div class="choose">
+      <span class="small">点名的 AI（规则指定、交办时选的、本人指定的）排队、限流、额度用完或出故障时</span>
+      <UiSegmented v-model="draft.pinnedFallback" size="sm" aria-label="点名的 AI 不可用时" :options="[{ value: 'unavailable', label: '换兜底和候选' }, { value: 'never', label: '不换，直接失败' }]" />
+    </div>
+    <p class="muted small">换了的运行里写明“原指定的 AI、为什么换、换成了谁”。每次运行开始前选了谁、为什么没有选（关着、没有候选、点名了 AI），也都记在运行详情里。</p>
     <p class="muted small">候选：列出可以换用的后端和模型，各写一句适合什么任务。后端出错、额度用完时，候选也排在兜底后面接手。</p>
     <div v-for="(c, i) in draft.candidates" :key="i" class="candidate stack">
       <div class="row"><strong class="small">候选 {{ i + 1 }}</strong><span class="spacer" /><button class="btn ghost sm danger" @click="draft.candidates.splice(i, 1)">移除</button></div>
