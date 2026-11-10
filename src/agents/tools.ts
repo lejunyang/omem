@@ -4830,13 +4830,14 @@ def({
 
 def({
   name: "settle_code_task",
-  description: "发起交办的助手处理停着的修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决、同一处修了几层）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（等别的团队、缺外部字段也是 skip）、later 记成以后再做（问题成立但和这次要的关系不大：不挡交付，同一分支下一次交办会接上；评审提的待做项也可以这样放下）、owner 只在要本人在业务或功能上取舍时，写 question 和两三个 options。编码 Agent 认为要本人定的也先到你这里：原需求、评审意见或本人之前的话已经定了做法的，你直接 retry / later / skip（note 写依据），确实要本人取舍才 owner。「等你决定」的项（卡片已经发给本人）只在本人这一轮回答了才转达（retry / skip），本人回答前不动它。retry 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
+  description: "发起交办的助手处理修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决、同一处修了几层，编码 Agent 或评审负责人认为要本人定的）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（不合理的评审改动、等别的团队、缺外部字段）、later 记成以后再做（问题成立但和这次要的关系不大：不挡交付，同一分支下一次交办会接上）、owner 只在要本人在业务或功能上取舍、要新的授权或越出原需求时，写 question 和两三个 options。评审提的待做项（还没做的）也可以直接 skip 驳回或 later 放下，写清理由；同一处你放下两次后再被提出，会直接问本人。add 新增一项（不填 task，写 title 和 note 作完成标准）：需求要求了却没有哪一项在做、或评审漏了的必要修复。「等你决定」的项（卡片已经发给本人）只在本人这一轮回答了才转达（retry / skip），本人回答前不动它。retry 和 add 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
   write: true,
   schema: z.object({
     run_id: z.string().describe("这次交办的任一运行 id"),
-    task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
-    action: z.enum(["retry", "skip", "owner", "later"]),
-    note: z.string().min(1).max(3000).describe("retry：查到的原因、编码 Agent 这次具体怎么做；skip：为什么不做、在等什么；later：为什么现在不值得改、什么情况下才会碰到；owner：你查过什么、为什么只有本人能定"),
+    task: z.union([z.string(), z.number()]).optional().describe("修改项编号，如 T3；add 时不填"),
+    action: z.enum(["retry", "skip", "owner", "later", "add"]),
+    title: z.string().max(200).optional().describe("add：新的一项要做成什么，一句话"),
+    note: z.string().min(1).max(3000).describe("retry：查到的原因、编码 Agent 这次具体怎么做；skip：为什么不做、在等什么；later：为什么现在不值得改、什么情况下才会碰到；owner：你查过什么、为什么只有本人能定；add：完成标准，以及为什么需要（需求哪里要求的、谁漏了）"),
     question: z.string().max(1000).optional().describe("owner：给本人的问题，写要定什么和影响，不写调查过程"),
     options: z.array(z.string().min(1).max(60)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
@@ -4844,8 +4845,14 @@ def({
     const t = await import("./code-tasks.ts");
     const rootId = t.workRootOf(ctx.app, a.run_id);
     if (t.workOwner(ctx.app, rootId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能处理本人的交办");
+    if (a.action === "add") {
+      if (!a.title?.trim()) throw new HttpError(400, "add 要写 title（这一项要做成什么）");
+      const made = (await import("./code-loop.ts")).addAssistantTask(ctx.app, rootId, { title: a.title, doneWhen: a.note, ownerWords: ownerAskedThisTurn(ctx) }, "assistant");
+      return `已新增 ${t.taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮已排上（${made.next.id}）` : "，下一轮做"}。`;
+    }
+    if (a.task === undefined) throw new HttpError(400, `${a.action} 要填 task（修改项编号）`);
     const seq = t.parseTaskRef(a.task);
-    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action, text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), question: a.question, options: a.options }, "assistant");
+    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action as "retry" | "skip" | "owner" | "later", text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), question: a.question, options: a.options }, "assistant");
     const label = t.taskLabel(seq);
     if (a.action === "owner") return `已把 ${label} 交给本人（发了卡片）。`;
     if (a.action === "later") return `${label} 记成以后再做${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;

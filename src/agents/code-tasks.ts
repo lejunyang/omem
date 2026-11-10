@@ -289,10 +289,31 @@ export function toAssistant(app: App, rootId: string, seq: number, why: string, 
  * and waking the assistant for the same task at once had the assistant answer a card the owner had
  * just received. With no assistant (started on the web), the owner is asked.
  */
-export function toDecide(app: App, rootId: string, seq: number, q: { question: string; options: string[]; why: string }, note?: Omit<TaskNote, "at">): CodeTask {
+export function toDecide(app: App, rootId: string, seq: number, q: { question: string; options: string[]; why: string; from?: string }, note?: Omit<TaskNote, "at">): CodeTask {
   if (!hasAssistant(app, rootId)) return updateTask(app, rootId, seq, { state: "owner", question: q.question, options: q.options }, note);
-  const proposed = `编码 Agent 认为要本人决定：${q.question}\n它给的做法：${q.options.join(" / ")}\n原因：${q.why}\n\n先看原需求、评审意见和本人之前的话能不能定：能定就 retry（写清怎么做）、later 或 skip；确实要本人取舍才 owner（可以沿用上面的问题和做法）。`;
+  // The assistant set this part aside ASSISTANT_OVERRULES times and it is raised again: the owner settles it.
+  const overruled = overrules(app, rootId, seq);
+  if (overruled >= ASSISTANT_OVERRULES) {
+    return updateTask(app, rootId, seq, { state: "owner", question: `${q.question}\n\n（助手已经 ${overruled} 次驳回或放下这一处，${q.from ?? "评审"}仍要改；双方的理由在“之前的情况”里。）`, options: q.options }, note);
+  }
+  const proposed = `${q.from ?? "编码 Agent"}认为要本人决定：${q.question}\n给的做法：${q.options.join(" / ")}\n原因：${q.why}${overruled ? `\n你之前已经驳回或放下过这一处 ${overruled} 次（理由在“之前的情况”里）；再放下一次之后它再被提出就直接问本人。` : ""}\n\n先看原需求、本人之前的话、既有约定和评审意见能不能定：能定就 retry（写清怎么做）、later 或 skip（写理由）；确实要本人取舍才 owner（可以沿用上面的问题和做法）。`;
   return updateTask(app, rootId, seq, { state: "assistant", question: proposed, options: q.options }, note);
+}
+
+/** Times the assistant may set one part aside (skip / later) before it is raised to the owner when raised again. */
+export const ASSISTANT_OVERRULES = 2;
+
+/** What the assistant set aside on this part: its skip / later notes on the task and the ones it follows. */
+export function overrules(app: App, rootId: string, seq: number): number {
+  let n = 0;
+  const seen = new Set<number>();
+  for (let t: CodeTask | null = getTask(app, rootId, seq); t && !seen.has(t.seq); ) {
+    seen.add(t.seq);
+    n += t.notes.filter((x) => x.kind === "assistant" && /^(不做|以后再做)：/.test(x.text)).length;
+    const up: number | undefined = t.origin.follows;
+    t = up && one(app.db, "select 1 from code_tasks where work_id = ? and seq = ?", rootId, up) ? getTask(app, rootId, up) : null;
+  }
+  return n;
 }
 
 const NOT_REACHED = "轮编码 Agent 停下时还没做这一项";
@@ -352,7 +373,14 @@ export function joinTask(app: App, rootId: string, findingId: number, seq: numbe
 }
 
 /** The work's tasks as checks and review-lead read them: label, state, title. */
-export const taskList = (app: App, rootId: string) => listTasks(app, rootId).map((t) => `- ${taskLabel(t.seq)} [${stateLabel(t)}]${t.origin.follows ? `（接着 ${taskLabel(t.origin.follows)}）` : ""} ${t.title}`).join("\n");
+export const taskList = (app: App, rootId: string) => listTasks(app, rootId).map((t) => `- ${taskLabel(t.seq)} [${stateLabel(t)}]${t.origin.follows ? `（接着 ${taskLabel(t.origin.follows)}）` : ""} ${t.title}${setAsideWhy(t)}`).join("\n");
+
+/** Why the assistant set a task aside, for the reviews: they raise it again only with something new. */
+function setAsideWhy(t: CodeTask) {
+  if (t.state !== "wontdo") return "";
+  const n = [...t.notes].reverse().find((x) => x.kind === "assistant" && /^(不做|以后再做)：/.test(x.text));
+  return n ? `（助手${n.text.startsWith("不做") ? "驳回" : "放下"}：${truncate(n.text.replace(/^[^：]+：/, ""), 160)}）` : "";
+}
 
 /** How many follow-up fixes deep a task is: 0 for one of its own, 1 for a fix of it, 2 for a fix of that… */
 export function followDepth(app: App, rootId: string, seq: number): number {
@@ -385,8 +413,19 @@ export function tasksFromRuling(app: App, rootId: string, findings: (FindingRow 
     if (!take) continue;
     const owner = f.decision === "later" ? undefined : lead.owner?.[String(f.id)];
     const follows = lead.follows?.[String(f.id)];
-    let t = taskForFinding(app, rootId, f, "review-lead", owner ? { question: owner.question, options: owner.options } : undefined);
+    const existed = !!one(app.db, "select 1 from review_findings where id = ? and task_id is not null", f.id);
+    let t = taskForFinding(app, rootId, f, "review-lead");
     if (follows && follows !== t.seq && !t.origin.follows && one(app.db, "select 1 from code_tasks where work_id = ? and seq = ?", rootId, follows)) t = updateTask(app, rootId, t.seq, { origin: { ...t.origin, follows } });
+    const lead_ = { by: "review-lead", kind: "lead" as const };
+    if (existed && f.decision !== "later") {
+      // Already a task (ruled before): left as it is.
+    } else if (owner) {
+      // review-lead's question for the owner: the assistant looks first (toDecide).
+      t = toDecide(app, rootId, t.seq, { question: owner.question, options: owner.options, why: f.triage_note.trim() || f.title, from: "评审负责人" }, { ...lead_, text: `要本人决定：${owner.question}` });
+    } else if (f.decision !== "later" && t.state === "todo" && overrules(app, rootId, t.seq)) {
+      // Raised again on a part the assistant set aside: not coded behind its back.
+      t = toDecide(app, rootId, t.seq, { question: `评审负责人又提出了你之前放下的这一处：${t.title}`, options: ["照评审的意见改", "不改"], why: f.triage_note.trim() || f.title, from: "评审负责人" }, { ...lead_, text: "又提出了助手放下过的这一处" });
+    }
     if (f.decision === "later") {
       const why = f.triage_note.trim() || "和这次的需求关系不大";
       t = deferTask(app, rootId, t.seq, why, { by: "review-lead", kind: "lead", text: `以后再做：${why}` });

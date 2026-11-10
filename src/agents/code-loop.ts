@@ -11,7 +11,7 @@ import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./co
 import { changeBase } from "./code-branch.ts";
 import {
   addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, tasksFromRuling, isLater, deferTask, deliverableStage, POLISH_STAGES,
-  ownerQuestionText, stranded, taskLabel, toAssistant, hasAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
+  ownerQuestionText, stranded, taskLabel, toAssistant, toDecide, hasAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
 } from "./code-tasks.ts";
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
@@ -278,7 +278,9 @@ async function stageReview(app: App, run: Run, rc: RoundContext) {
   // A lead's ruling decides; without one (it failed), every finding is worth a task. Set aside ones do not count as left to do.
   const made = tasksFromRuling(app, rootId, roundFindings(app, run.id, round), lead).filter((t) => !isLater(t)).length;
   if (lead.verdict === "escalate" && lead.escalation) {
-    addTask(app, rootId, { title: "方案上的分歧", doneWhen: lead.escalation.summary, kind: "owner", state: "owner", question: lead.escalation.summary, options: lead.escalation.options }, "review-lead");
+    // The assistant looks first (toDecide): it settles what the requirement and the owner's words already do.
+    const split = addTask(app, rootId, { title: "方案上的分歧", doneWhen: lead.escalation.summary, kind: "owner" }, "review-lead");
+    toDecide(app, rootId, split.seq, { question: lead.escalation.summary, options: lead.escalation.options, why: lead.escalation.summary, from: "评审负责人" }, { by: "review-lead", kind: "lead", text: "方案上有分歧，交出去决定" });
   }
   const stages = [...(w.stages ?? []), made];
   // The requirement's own tasks are all done: what is left are review fixes, and the work can go out first.
@@ -550,7 +552,7 @@ export function ruleDispute(app: App, rootId: string, seq: number, a: { decision
     updateTask(app, rootId, seq, { state: "wontdo" }, note);
     for (const id of t.origin.findings ?? []) app.db.prepare("update review_findings set state = 'rejected', triage_note = ? where id = ?").run(`评审负责人裁决异议成立：${truncate(a.note, 900)}`, id);
   } else if (a.decision === "reviewer") updateTask(app, rootId, seq, { state: "todo" }, note);
-  else updateTask(app, rootId, seq, { state: "owner", question: a.question!.trim(), options: a.options ?? [] }, note);
+  else toDecide(app, rootId, seq, { question: a.question!.trim(), options: a.options ?? [], why: a.note.trim(), from: "评审负责人" }, note);
   return `已裁决 ${taskLabel(seq)}：${note.text.slice(3, 40)}。`;
 }
 
@@ -646,10 +648,14 @@ function ensureOwnerAsks(app: App, rootId: string) {
  */
 export function settleTask(app: App, rootId: string, seq: number, a: { action: "retry" | "skip" | "owner" | "later"; text: string; ownerWords: boolean; question?: string; options?: string[] }, by: string) {
   const t = getTask(app, rootId, seq);
-  // A review fix still to do may be set aside too: the assistant judges it against what the work is for.
-  if (a.action === "later" && t.state === "todo") {
-    if (t.kind !== "fix" && !a.ownerWords) throw new HttpError(409, `${taskLabel(seq)} 是需求本身的一项，只有本人能说以后再做`);
-    deferTask(app, rootId, seq, a.text, { by, kind: "assistant", text: `以后再做：${a.text}` });
+  // A review fix still to do may be set aside or turned down too: the assistant judges it against what the work is for.
+  if ((a.action === "later" || a.action === "skip") && t.state === "todo") {
+    if (t.kind !== "fix" && !a.ownerWords) throw new HttpError(409, `${taskLabel(seq)} 是需求本身的一项，只有本人能说不做或以后再做`);
+    if (a.action === "later") deferTask(app, rootId, seq, a.text, { by, kind: "assistant", text: `以后再做：${a.text}` });
+    else {
+      updateTask(app, rootId, seq, { state: "wontdo" }, { by, kind: "assistant", text: `不做：${a.text}` });
+      rejectFindings(app, t, a.text);
+    }
     return advanceWork(app, rootId, { owner: a.ownerWords });
   }
   if (t.state !== "assistant" && t.state !== "owner") throw new HttpError(409, `${taskLabel(seq)} 现在是「${TASK_STATE_LABEL[t.state]}」，不在等处理`);
@@ -671,10 +677,32 @@ export function settleTask(app: App, rootId: string, seq: number, a: { action: "
   // The owner's words are their decision (taskText shows it); the assistant's stay a note on the task.
   const answer = a.ownerWords ? { answer: a.text } : {};
   if (a.action === "later") deferTask(app, rootId, seq, a.text, note);
-  else if (a.action === "skip") updateTask(app, rootId, seq, { state: "wontdo", ...answer }, note);
-  else updateTask(app, rootId, seq, { state: "todo", attempts: 0, ...answer }, note);
+  else if (a.action === "skip") {
+    updateTask(app, rootId, seq, { state: "wontdo", ...answer }, note);
+    if (!a.ownerWords) rejectFindings(app, t, a.text);
+  } else updateTask(app, rootId, seq, { state: "todo", attempts: 0, ...answer }, note);
   closeTaskAsk(app, rootId, seq, `已由助手转达你在对话里的回答（${verb}）：${truncate(a.text, 300)}`);
   return advanceWork(app, rootId, { owner: a.ownerWords });
+}
+
+/** The findings behind a review fix the assistant turned down: rejected, with its reason, as review-lead's would be. */
+function rejectFindings(app: App, t: CodeTask, why: string) {
+  for (const id of t.origin.findings ?? []) app.db.prepare("update review_findings set state = 'rejected', triage_note = ? where id = ?").run(`助手驳回：${truncate(why, 900)}`, id);
+}
+
+/** Tasks the assistant may add on its own to one delegation (what the requirement asked and nobody did). */
+export const ASSISTANT_ADDS = 5;
+
+/**
+ * The assistant adds a task the work is missing: something the requirement asked for that no task
+ * covers, or a fix the reviews missed. Coded in the next round, within the budget like any retry.
+ */
+export function addAssistantTask(app: App, rootId: string, a: { title: string; doneWhen: string; ownerWords: boolean }, by: string) {
+  const added = listTasks(app, rootId).filter((t) => t.notes[0]?.kind === "assistant" && t.notes[0].text.startsWith("助手新增")).length;
+  if (!a.ownerWords && added >= ASSISTANT_ADDS) throw new HttpError(409, `这次交办你已经自己加了 ${added} 项；再加要本人同意（本人说了再在那一轮加），或者用 message_code_run 交代给编码 Agent`);
+  const task = addTask(app, rootId, { title: a.title.trim(), doneWhen: a.doneWhen.trim(), kind: "build", origin: { note: a.doneWhen.trim() } }, by);
+  updateTask(app, rootId, task.seq, {}, { by, kind: "assistant", text: `助手新增：${truncate(a.doneWhen.trim(), 1500)}` });
+  return { task: getTask(app, rootId, task.seq), next: advanceWork(app, rootId, { owner: a.ownerWords }) };
 }
 
 /** The owner's answer to a task's question: done their way, or not at all. Then the work goes on. */
