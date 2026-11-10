@@ -14,7 +14,7 @@ import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { leasedTo, leaseWorkspace, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "./workspaces.ts";
-import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, siblingsText } from "./code-branch.ts";
+import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, siblingsText, withDiffBase } from "./code-branch.ts";
 import { replyOf } from "./types.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
@@ -183,7 +183,8 @@ export function latestCheck(app: App, rootId: string, space: string): Check | nu
   }
   return null;
 }
-type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null; ignored?: IgnoredFiles[] };
+/** `base`: on a work branch, the commit the diff was taken from (changeBase). */
+type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null; ignored?: IgnoredFiles[]; base?: string };
 /** Files of the change that .gitignore covers, by the pattern that covers them. */
 export type IgnoredFiles = { pattern: string; files: number; example: string };
 
@@ -194,7 +195,7 @@ const FOLLOW_UPS = 8;
 export function worktreesOf(app: App, runId: string): WorktreeRef[] {
   const r = getRun(app, runId);
   const out = r.output as { worktrees?: WorktreeRef[]; worktree?: string; branch?: string; base?: string };
-  if (out.worktrees) return out.worktrees;
+  if (out.worktrees) return out.worktrees.map((w) => withDiffBase(app, String(r.input.continueFrom ?? r.id), w));
   return out.worktree && r.spaceId ? [{ space: r.spaceId, path: out.worktree, branch: out.branch ?? "", base: out.base ?? "" }] : [];
 }
 
@@ -449,6 +450,7 @@ ${input.task}
     for (const [i, wt] of worktrees.entries()) {
       const root = repos[i].rootPath!;
       wt.start ??= wt.base;
+      const syncBefore = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
       const resolver = resolverFor(wt);
       const status = (text: string) => ctx.event("status", { text: `${multi ? `${wt.space}：` : ""}${text}` });
       let steps: import("./code-sync.ts").SyncStep[] = [];
@@ -478,8 +480,10 @@ ${input.task}
         if (r.stopped) { stopped = r.stopped; pending.push({ space: wt.space, kind: "sync", label: r.stopped.label, conflicts: r.stopped.conflicts }); }
       }
       if (!stopped) {
+        cs.settleDiffBase(wt);
         const at = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
-        wt.syncHead = at !== wt.start ? at : undefined;
+        // On a work branch a sync that changed nothing keeps the last one: HEAD then holds coding, not synced commits.
+        if (!wt.commits || at !== syncBefore) wt.syncHead = at !== wt.start ? at : undefined;
       }
       for (const st of steps) {
         conflicts += st.conflicts.length;
@@ -556,7 +560,7 @@ ${input.task}
     // …and what the earlier rounds did, which it reads from the branch rather than from their history.
     const before = previousId ? String(getRun(app, previousId).output.coderSummary ?? "") : "";
     const commits = worktrees.map((wt) => {
-      const log = git(workDirOf(wt), ["log", "--oneline", "-30", `${wt.start ?? wt.base}..HEAD`]);
+      const log = git(workDirOf(wt), ["log", "--oneline", "-30", `${wt.commits ? changeBase(workDirOf(wt), wt) : wt.start ?? wt.base}..HEAD`]);
       return log.ok && log.stdout.trim() ? `${multi ? `${wt.space}：\n` : ""}${log.stdout.trim()}` : "";
     }).filter(Boolean).join("\n\n");
     // …and the check before coding, which came with the first round's task.
@@ -680,7 +684,7 @@ ${input.task}
     const stat = git(wt.path, ["diff", "--stat", ...range]).stdout.trim();
     writeFileSync(patchFile(app, run.id, repo.id), diff);
     const ignored = ignoredAdded(wt);
-    results.push({ space: repo.id, diffStat: stat, diffBytes: diff.length, check, ...(ignored.length ? { ignored } : {}) });
+    results.push({ space: repo.id, diffStat: stat, diffBytes: diff.length, check, ...(ignored.length ? { ignored } : {}), ...(wt.commits ? { base: range[0] } : {}) });
     if (diff.trim()) diffs.push(multi ? `### ${repo.id}\n\n${fence("diff", diff)}` : fence("diff", diff));
   }
   const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
@@ -890,9 +894,49 @@ function patchFiles(app: App, runId: string): { space: string; file: string }[] 
 }
 
 export function codePatches(app: App, runId: string): { space: string; patch: string }[] {
-  return patchFiles(app, runId)
+  return codeDiffView(app, runId).patches;
+}
+
+/**
+ * A round's patches and diff stat as the run page and reviewers see them. Rounds on a reused
+ * branch from before `diffBase` (code-branch.ts withDiffBase) saved a diff from the branch's old
+ * local commit, so everything the sync pulled from origin showed as theirs: when the round's end
+ * commit is known (its check or checkpoint), the diff is taken again from the corrected base.
+ * Nothing is written back.
+ */
+export function codeDiffView(app: App, runId: string): { output: Run["output"]; patches: { space: string; patch: string }[] } {
+  const run = getRun(app, runId);
+  const patches = patchFiles(app, runId)
     .map((p) => ({ space: p.space, patch: readFileSync(p.file, "utf8") }))
     .filter((p) => p.patch.trim());
+  const repos = (run.output as { repos?: RepoResult[] }).repos;
+  if (run.kind !== "code" || !repos?.some((r) => !r.base)) return { output: run.output, patches };
+  const first = String(run.input.continueFrom ?? run.id);
+  const worktrees = worktreesOf(app, first);
+  const cp = all<{ heads: string }>(app.db, "select heads from code_checkpoints where work_id = ? and by = ? order by seq desc limit 1", first, runId)[0];
+  const heads = cp ? (JSON.parse(cp.heads) as Record<string, string>) : {};
+  let changed = false;
+  const fixed = repos.map((r) => {
+    const wt = worktrees.find((w) => w.space === r.space);
+    const to = r.check?.commit ?? heads[r.space];
+    if (r.base || !wt?.commits || !wt.diffBase || !to) return r;
+    const dir = existsSync(wt.path) ? wt.path : findSpace(app, wt.space)?.rootPath;
+    const from = dir ? changeBase(dir, wt, to) : null;
+    if (!dir || !from || from === (wt.start ?? wt.base)) return r;
+    const diff = git(dir, ["diff", "--no-color", from, to]);
+    if (!diff.ok) return r;
+    changed = true;
+    const i = patches.findIndex((p) => p.space === r.space);
+    if (i >= 0) patches.splice(i, 1);
+    if (diff.stdout.trim()) patches.push({ space: r.space, patch: diff.stdout });
+    return { ...r, base: from, diffStat: git(dir, ["diff", "--stat", from, to]).stdout.trim(), diffBytes: diff.stdout.length };
+  });
+  if (!changed) return { output: run.output, patches };
+  const multi = fixed.length > 1;
+  return {
+    output: { ...run.output, repos: fixed, diffStat: fixed.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n"), diffBytes: fixed.reduce((n, r) => n + r.diffBytes, 0) },
+    patches,
+  };
 }
 
 function branchFromRef(ref: string): string | null {

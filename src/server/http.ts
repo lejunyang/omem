@@ -18,7 +18,7 @@ import fastifyCompress from "@fastify/compress";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
+import { applyCodeRun, codeApplyTargets, codeDiffView, codeFolders, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
 import { attachPluginStreams, registerPluginRoutes } from "../plugins/http.ts";
 import { IDE_BASE, IdeNotReady, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remote/http.ts";
@@ -1259,7 +1259,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ after: z.coerce.number().optional() }), req.query);
     const r = getRun(app, id);
     const children = listRuns(app, { parentId: id }).filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
-    return { run: { ...r, waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r), writes: runWrites(app, r) };
+    const diff = r.kind === "code" ? codeDiffView(app, id) : null;
+    return { run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r) };
   });
   // Folders to open in an editor; `local`: the page is on this machine (loopback, no token), so a
   // local link works; otherwise the viewer reaches them over SSH (`host` keys their alias for it).

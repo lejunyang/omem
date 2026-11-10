@@ -9,6 +9,7 @@ import { HttpError, now } from "../core/util.ts";
 import { resolveCodeRefs } from "../sources/callgraph.ts";
 import { purgeSource, upsertSource } from "../sources/store.ts";
 import { ensureGrammars } from "../sources/treesitter.ts";
+import { changeBase } from "./code-branch.ts";
 
 /**
  * The files a delegated coding run changed, searchable while its worktree exists; and the files
@@ -30,7 +31,10 @@ import { ensureGrammars } from "../sources/treesitter.ts";
 /** `slot`: a reusable worktree lent to the run (workspaces.ts); `path` is then a link to it. */
 export type WorktreeRef = { space: string; path: string; branch: string; base: string; ref?: string; tip?: string; baseRef?: string; targetBranch?: string | null; start?: string; syncHead?: string; slot?: string; inPlace?: boolean;
   /** On a work branch (code-branch.ts): `branch` gets commits; `newBranch` made by this delegation; `cutFrom` the branch it left; `pending` commits not yet on the branch. */
-  commits?: boolean; newBranch?: boolean; cutFrom?: string; pending?: string };
+  commits?: boolean; newBranch?: boolean; cutFrom?: string; pending?: string;
+  /** An existing branch reused as the work branch: the origin copy's commit the comparison starts from
+   * (changeBase), moved forward when a sync pulls origin in; `diffBaseNext`: such a move waiting for a stopped sync to finish. */
+  diffBase?: string; diffBaseNext?: string };
 /** A delegation's worktree (`runId`, `path`) or a branch index (`branch`, `commit`), both over repository `repo`. */
 type WorktreeSettings = { runId?: string; repo: string; path?: string; base: string; branch?: string; baseRef?: string; commit?: string; deleted?: string[] };
 
@@ -82,7 +86,8 @@ export async function indexWorktree(app: App, runId: string, wt: WorktreeRef): P
   const id = worktreeSpaceId(runId, repo.id);
   // Staged against the base: what the run added or changed, committed or not.
   git(wt.path, ["add", "-A"]);
-  const names = (filter: string) => git(wt.path, ["diff", "--cached", "--name-only", "--no-renames", `--diff-filter=${filter}`, "-z", wt.base]).stdout.split("\0").filter(Boolean);
+  const base = wt.commits ? changeBase(wt.path, wt) : wt.base;
+  const names = (filter: string) => git(wt.path, ["diff", "--cached", "--name-only", "--no-renames", `--diff-filter=${filter}`, "-z", base]).stdout.split("\0").filter(Boolean);
   saveIndexSpace(
     app,
     id,
@@ -90,7 +95,7 @@ export async function indexWorktree(app: App, runId: string, wt: WorktreeRef): P
     wt.ref
       ? `分支评审 ${runId} 检出的 ${repo.id} 分支 ${wt.ref}（${(wt.tip ?? "").slice(0, 8)}）相对 ${wt.baseRef ?? wt.base.slice(0, 8)} 改过的文件；和 ${repo.id} 一起检索时以这里为准。评审工作区删除后这个空间连同索引一起删除。`
       : `交办运行 ${runId} 在 ${repo.id} 里改过的文件（只含新增和修改的文件，其余以 ${repo.id} 为准）。工作区删除后这个空间连同索引一起删除。`,
-    { runId, repo: repo.id, path: wt.path, base: wt.base, deleted: names("D") },
+    { runId, repo: repo.id, path: wt.path, base, deleted: names("D") },
   );
   const files = names("ACM").map((rel): [string, () => string | null] => [rel, () => {
     const full = join(wt.path, rel);

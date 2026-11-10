@@ -8,6 +8,7 @@ import { OWNER } from "../core/users.ts";
 import type { FindingRow, LeadResult } from "./review.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
+import { assertOwnRange, changeBase, withDiffBase } from "./code-branch.ts";
 
 /**
  * A delegation driven by tasks instead of rounds (docs/v2/coding-loop.md): the work is a list of
@@ -203,12 +204,36 @@ export function renewBudget(app: App, rootId: string, round: number) {
 // ---- tasks ----------------------------------------------------------------------------------------
 
 export function listTasks(app: App, rootId: string): CodeTask[] {
-  return all<Row>(app.db, "select * from code_tasks where work_id = ? order by seq", rootId).map(toTask);
+  return ownCommits(app, rootId, all<Row>(app.db, "select * from code_tasks where work_id = ? order by seq", rootId).map(toTask));
 }
 export function getTask(app: App, rootId: string, seq: number): CodeTask {
   const r = one<Row>(app.db, "select * from code_tasks where work_id = ? and seq = ?", rootId, seq);
   if (!r) throw new HttpError(404, `这次交办没有修改项 ${taskLabel(seq)}`);
-  return toTask(r);
+  return ownCommits(app, rootId, [toTask(r)])[0];
+}
+
+/**
+ * The first round of a delegation on a reused branch used to give its only task every commit
+ * since the branch's old local commit, the ones its sync pulled from origin included. A commit
+ * the comparison base already contains is not the work's: it is left out wherever tasks are read
+ * (shown, reverted).
+ */
+function ownCommits(app: App, rootId: string, tasks: CodeTask[]): CodeTask[] {
+  if (!tasks.some((t) => Object.values(t.commits).some((l) => l.length))) return tasks;
+  const root = one<{ output: string }>(app.db, "select output from runs where id = ?", rootId);
+  if (!root) return tasks;
+  const wts = ((JSON.parse(root.output) as { worktrees?: WorktreeRef[] }).worktrees ?? []).map((w) => withDiffBase(app, rootId, w));
+  for (const wt of wts) {
+    const listed = [...new Set(tasks.flatMap((t) => t.commits[wt.space] ?? []))];
+    const dir = wt.commits && wt.diffBase && listed.length ? gitDirOf(app, wt) : null;
+    if (!dir) continue;
+    const base = changeBase(dir, wt, tipRef(wt));
+    const after = git(dir, ["rev-list", "--ignore-missing", "--stdin"], `${[...listed, `^${base}`].join("\n")}\n`);
+    if (!after.ok) continue;
+    const keep = new Set(after.stdout.split("\n").map((l) => l.trim()).filter(Boolean));
+    for (const t of tasks) if (t.commits[wt.space]) t.commits[wt.space] = t.commits[wt.space].filter((c) => keep.has(c));
+  }
+  return tasks;
 }
 
 export type NewTask = { title: string; doneWhen?: string; kind: TaskKind; origin?: CodeTask["origin"]; state?: TaskState; question?: string; options?: string[]; verifier?: string | null };
@@ -405,6 +430,19 @@ export function startHeads(worktrees: WorktreeRef[]): Record<string, string> {
   return Object.fromEntries(worktrees.map((w) => [w.space, w.start ?? w.base]));
 }
 
+/** Where a work branch is now: its worktree's HEAD, else the branch (or the commits not yet put back on it). */
+const tipRef = (wt: WorktreeRef) => (existsSync(wt.path) ? "HEAD" : wt.pending ?? `refs/heads/${wt.branch}`);
+
+/** Checkpoint 0 for a diff up to `to` (default: where the branch is now): on a work branch, where its changes start (changeBase). */
+function startAt(app: App, worktrees: WorktreeRef[], to: Record<string, string> = {}): Record<string, string> {
+  const heads = startHeads(worktrees);
+  for (const wt of worktrees) {
+    const dir = wt.commits ? gitDirOf(app, wt) : null;
+    if (dir) heads[wt.space] = changeBase(dir, wt, to[wt.space] ?? tipRef(wt));
+  }
+  return heads;
+}
+
 /**
  * Where the work branch is now, as a numbered checkpoint. A ref under refs/omem keeps its commits
  * alive whatever happens to the branch later (squash, rebase, revert).
@@ -459,8 +497,8 @@ export function recordOutsideChanges(app: App, rootId: string, runId: string, wo
 }
 
 /** The heads a checkpoint number stands for: 0 is where the work started. */
-export function headsAt(app: App, rootId: string, worktrees: WorktreeRef[], seq: number | null | undefined): Record<string, string> {
-  if (!seq) return startHeads(worktrees);
+export function headsAt(app: App, rootId: string, worktrees: WorktreeRef[], seq: number | null | undefined, to?: Record<string, string>): Record<string, string> {
+  if (!seq) return startAt(app, worktrees, to);
   const cp = listCheckpoints(app, rootId).find((c) => c.seq === seq);
   if (!cp) throw new HttpError(404, `没有检查点 ${seq}`);
   return { ...startHeads(worktrees), ...cp.heads };
@@ -480,7 +518,8 @@ export function settleCodingRound(app: App, rootId: string, runId: string, workt
   for (const wt of worktrees) {
     const dir = gitDirOf(app, wt);
     if (!dir) continue;
-    const from = before?.heads[wt.space] ?? wt.start ?? wt.base;
+    // The first round has no checkpoint before it: its commits start after its sync (syncHead), not at the branch's old start.
+    const from = before?.heads[wt.space] ?? wt.syncHead ?? wt.start ?? wt.base;
     for (const c of commitsByTask(dir, from)) {
       if (c.revert) continue;
       const named = c.tasks.length ? c.tasks : roundTasks.length === 1 ? [roundTasks[0].seq] : [];
@@ -536,7 +575,7 @@ export function attributeCommits(app: App, rootId: string, worktrees: WorktreeRe
     if (!dir) continue;
     const t = getTask(app, rootId, seq);
     const list = t.commits[wt.space] ?? [];
-    const mine = commitsByTask(dir, before?.heads[wt.space] ?? wt.start ?? wt.base).filter((c) => !c.revert && c.tasks.includes(seq) && !list.includes(c.sha)).map((c) => c.sha);
+    const mine = commitsByTask(dir, before?.heads[wt.space] ?? wt.syncHead ?? wt.start ?? wt.base).filter((c) => !c.revert && c.tasks.includes(seq) && !list.includes(c.sha)).map((c) => c.sha);
     if (mine.length) updateTask(app, rootId, seq, { commits: { ...t.commits, [wt.space]: [...list, ...mine] } });
   }
 }
@@ -605,8 +644,8 @@ export function workPatches(app: App, rootId: string, worktrees: WorktreeRef[], 
   const last = listCheckpoints(app, rootId).at(-1)?.seq ?? 0;
   const from = sel.since === "viewed" ? workState(app, rootId).viewed?.[sel.userId ?? OWNER] ?? 0 : sel.from ?? 0;
   const to = sel.to ?? last;
-  const a = headsAt(app, rootId, worktrees, from);
   const b = headsAt(app, rootId, worktrees, to);
+  const a = headsAt(app, rootId, worktrees, from, b);
   for (const wt of worktrees) {
     const dir = gitDirOf(app, wt);
     if (!dir || !a[wt.space] || !b[wt.space] || a[wt.space] === b[wt.space]) continue;
@@ -656,6 +695,7 @@ export function scheduleWorkRevert(app: App, rootId: string, worktrees: Worktree
   let entry: RevertOp;
   if (op.checkpoint !== undefined) {
     if (!listCheckpoints(app, rootId).some((c) => c.seq === op.checkpoint) && op.checkpoint !== 0) throw new HttpError(404, `没有检查点 ${op.checkpoint}`);
+    assertCheckpointRevert(app, worktrees, headsAt(app, rootId, worktrees, op.checkpoint));
     entry = { checkpoint: op.checkpoint, reason, by };
   } else if (op.file) {
     const wt = worktrees.find((w) => w.space === op.file!.space);
@@ -750,6 +790,14 @@ export function applyReverts(app: App, rootId: string, worktrees: WorktreeRef[],
   return done;
 }
 
+/** Back to a checkpoint undoes only this delegation's commits (code-branch.ts assertOwnRange). */
+function assertCheckpointRevert(app: App, worktrees: WorktreeRef[], heads: Record<string, string>) {
+  for (const wt of worktrees) {
+    const dir = wt.commits ? gitDirOf(app, wt) : null;
+    if (dir && heads[wt.space]) assertOwnRange(dir, wt, heads[wt.space], tipRef(wt));
+  }
+}
+
 /**
  * A checkpoint, a file or a hunk taken back, as one commit (`Omem-Revert: …`). Back to a checkpoint
  * reverses everything after it in one go, and the tasks done after it are marked reverted; a hunk
@@ -759,6 +807,11 @@ function applyOtherRevert(app: App, rootId: string, worktrees: WorktreeRef[], r:
   const trailer = `\n\n${truncate(r.reason, 1500)}\n\nOmem-Revert: ${revertLabel(r)}`;
   if (r.checkpoint !== undefined) {
     const heads = headsAt(app, rootId, worktrees, r.checkpoint);
+    try {
+      assertCheckpointRevert(app, worktrees, heads);
+    } catch {
+      return false;
+    }
     let changed = false;
     for (const wt of worktrees) {
       const from = heads[wt.space];

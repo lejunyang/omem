@@ -8,6 +8,7 @@ import { cancelAsk, createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { codeChainFor, queueNextCodeRound, reportConversation, saveCodeChain, wakeAssistantForTasks, type CodeChain } from "./code-chain.ts";
 import { addCodeNote } from "./code-steer.ts";
 import { ignoredText, reviewMetrics, worktreesOf, type IgnoredFiles } from "./code.ts";
+import { changeBase } from "./code-branch.ts";
 import {
   addTask, getTask, headsAt, listCheckpoints, listTasks, renewBudget, retryTask, revertsCleanly, scheduleRevert, setWorkState, tasksFromRuling, isLater, deferTask, deliverableStage, POLISH_STAGES,
   ownerQuestionText, stranded, taskLabel, toAssistant, hasAssistant, retriesBy, ASSISTANT_RETRIES, taskList, taskText, updateTask, workOwner, workRootOf, workState, lastRound, TASK_STATE_LABEL, type CodeTask,
@@ -200,7 +201,7 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
   const worktrees = worktreesOf(app, rootId);
   const checks = reviewChecks(app).filter((c) => !c.missing);
   const history = checkHistory(app, rootId);
-  const facts = worktrees.map((wt) => `${worktrees.length > 1 ? `### ${wt.space}\n\n` : ""}${changeFacts(workDirOf(wt), since?.[wt.space] ?? wt.start ?? wt.base)}`).join("\n\n");
+  const facts = worktrees.map((wt) => `${worktrees.length > 1 ? `### ${wt.space}\n\n` : ""}${changeFacts(workDirOf(wt), since?.[wt.space] ?? (wt.commits ? changeBase(workDirOf(wt), wt) : wt.start ?? wt.base))}`).join("\n\n");
   const input = root.input as { task?: string; reviewTier?: string; reviewChecks?: string[] };
   // Checks the owner named when delegating, or picked for the rounds since (运行页“之后的评审”).
   const must = [...new Set([...(input.reviewChecks ?? []), ...((run.input as { roundReview?: { checks?: string[] } }).roundReview?.checks ?? [])])];

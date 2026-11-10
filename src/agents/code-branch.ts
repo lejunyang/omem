@@ -44,17 +44,76 @@ export function checkedOutAt(root: string, branch: string, except?: string): str
   return null;
 }
 
-/** The commit the branch's changes are measured from: where it left the branch it was cut from, else where the work began. */
+/**
+ * The commit the branch's changes at `at` are measured from: where it left the branch it was cut
+ * from; on a reused existing branch, the latest commit of its origin copy the work contains
+ * (`diffBase`, merge-base for an older `at`); else where the work began.
+ */
 export function changeBase(dir: string, wt: WorktreeRef, at = "HEAD") {
   if (wt.cutFrom) {
     const baseRef = resolveRef(dir, `refs/remotes/origin/${wt.cutFrom}`) ? `refs/remotes/origin/${wt.cutFrom}` : `refs/heads/${wt.cutFrom}`;
     const mb = git(dir, ["merge-base", at, baseRef]);
     if (mb.ok && ancestor(dir, wt.base, mb.stdout.trim())) return mb.stdout.trim();
   }
+  if (wt.diffBase) {
+    // A checkpoint from before a later sync does not contain the newer diffBase: the origin commit it
+    // did contain is their merge-base.
+    const mb = git(dir, ["merge-base", wt.diffBase, at]);
+    if (mb.ok && mb.stdout.trim()) return mb.stdout.trim();
+  }
   return wt.start ?? wt.base;
 }
 
-export type BranchPlan = { branch: string; base: string; newBranch: boolean; cutFrom?: string };
+/** Where a reused branch's comparison starts: the newest commit both it and its origin copy have. */
+export function sharedWithOrigin(root: string, branch: string, at: string): string {
+  const remote = resolveRef(root, `refs/remotes/origin/${branch}`);
+  const mb = remote ? git(root, ["merge-base", at, remote.commit]) : null;
+  return mb?.ok && mb.stdout.trim() ? mb.stdout.trim() : at;
+}
+
+/**
+ * A delegation on a reused branch from before `diffBase` was recorded compared with the commit
+ * the branch was at when it was picked, so everything the first sync pulled from origin showed as
+ * its change. Its comparison starts where the branch and its origin copy meet now — unless origin
+ * already has one of the delegation's coding rounds (it was pushed): then that is not known and
+ * the recorded start stays. In memory only; the next round saves it with the worktrees.
+ */
+export function withDiffBase(app: App, rootId: string, wt: WorktreeRef): WorktreeRef {
+  if (!wt.commits || wt.newBranch || wt.cutFrom || wt.diffBase || !wt.targetBranch) return wt;
+  const root = findSpace(app, wt.space)?.rootPath;
+  if (!root || !resolveRef(root, `refs/remotes/origin/${wt.targetBranch}`)) return wt;
+  const tip = wt.pending ?? tipOf(root, wt.branch);
+  const start = wt.start ?? wt.base;
+  if (!tip) return wt;
+  const shared = sharedWithOrigin(root, wt.targetBranch, tip);
+  if (shared === start || shared === tip || !ancestor(root, start, shared)) return wt;
+  const rounds = new Set(all<{ id: string }>(app.db, "select id from runs where id = ? or json_extract(input, '$.continueFrom') = ?", rootId, rootId).map((r) => r.id));
+  const coded = all<{ heads: string; by: string }>(app.db, "select heads, by from code_checkpoints where work_id = ?", rootId)
+    .filter((c) => rounds.has(c.by)).map((c) => (JSON.parse(c.heads) as Record<string, string>)[wt.space]).filter(Boolean);
+  if (coded.some((h) => ancestor(root, h, shared))) return wt;
+  return { ...wt, diffBase: shared };
+}
+
+/**
+ * Squashing or reverting everything from `from` rewrites or undoes the commits in from..to; they
+ * must all be this delegation's. Refused, so the owner reverts by task instead, when some are on
+ * origin already (the branch was pushed, or a sync took in commits after the comparison base), or
+ * the branch had them before the delegation began (the owner's commits not yet pushed).
+ */
+export function assertOwnRange(dir: string, wt: WorktreeRef, from: string, to: string) {
+  if (!wt.commits) return;
+  const start = wt.start ?? wt.base;
+  if (ancestor(dir, start, to) && !ancestor(dir, start, from))
+    throw new HttpError(409, `${wt.space} 的这段提交里有交办开始前分支上就有的提交（${start.slice(0, 8)} 及以前，还没推送到 origin），整段压缩或回退会把它们一起撤掉；请按修改项回退`);
+  const name = wt.cutFrom ?? wt.targetBranch;
+  const remote = name ? resolveRef(dir, `refs/remotes/origin/${name}`) : null;
+  if (!remote) return;
+  const count = (...args: string[]) => git(dir, ["rev-list", "--count", ...args]).stdout.trim();
+  if (count(to, `^${from}`) !== count(to, `^${from}`, `^${remote.commit}`))
+    throw new HttpError(409, `${wt.space} 的这段提交里有 origin/${name} 上已有的提交（已推送，或同步进来的公共提交），整段压缩或回退会撤掉它们；请按修改项回退`);
+}
+
+export type BranchPlan = { branch: string; base: string; newBranch: boolean; cutFrom?: string; diffBase?: string };
 
 /**
  * The work branch of a new delegation in `repo`: an existing branch (`from`, made local when only
@@ -73,7 +132,11 @@ export function planBranch(repo: Space, runId: string, opts: { from?: string; na
       const made = git(root, ["branch", "--track", name, start.ref]);
       if (!made.ok) throw new HttpError(409, `没能建本地分支 ${name}：${made.stderr.trim().slice(0, 300)}`);
     }
-    return { branch: name, base: tipOf(root, name)!, newBranch: false };
+    // The local copy may be far behind origin: the comparison starts where the two meet, not at
+    // the local tip (the first round's sync pulls origin in and moves it on, code-sync.ts).
+    fetchBranch(root, name);
+    const base = tipOf(root, name)!;
+    return { branch: name, base, newBranch: false, diffBase: sharedWithOrigin(root, name, base) };
   }
   const name = (opts.name ?? `omem/${runId}`).replace(/^refs\/heads\//, "");
   if (!git(root, ["check-ref-format", `refs/heads/${name}`]).ok) throw new HttpError(400, `分支名不合法：${name}`);
@@ -114,7 +177,7 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
   const root = repo.rootPath!;
   const ref: WorktreeRef = "space" in wt
     ? { ...wt }
-    : { space: repo.id, path, branch: wt.branch, base: wt.base, start: wt.base, targetBranch: wt.branch, commits: true, ...(wt.newBranch ? { newBranch: true } : {}), ...(wt.cutFrom ? { cutFrom: wt.cutFrom } : {}) };
+    : { space: repo.id, path, branch: wt.branch, base: wt.base, start: wt.base, targetBranch: wt.branch, commits: true, ...(wt.newBranch ? { newBranch: true } : {}), ...(wt.cutFrom ? { cutFrom: wt.cutFrom } : {}), ...(wt.diffBase ? { diffBase: wt.diffBase } : {}) };
   const fresh = !existsSync(ref.path);
   if (fresh) {
     delete ref.slot;
@@ -231,7 +294,7 @@ type Target = { first: string; wt: WorktreeRef; root: string; wts: WorktreeRef[]
 function targetOf(app: App, runId: string, space: string, opts: { idle?: boolean } = {}): Target {
   const run = getRun(app, runId);
   const first = String(run.input.continueFrom ?? run.id);
-  const wts = (getRun(app, first).output.worktrees ?? []) as WorktreeRef[];
+  const wts = ((getRun(app, first).output.worktrees ?? []) as WorktreeRef[]).map((w) => withDiffBase(app, first, w));
   const wt = wts.find((w) => w.space === space && w.commits);
   if (!wt) throw new HttpError(404, `这次交办在 ${space} 上没有工作分支`);
   const root = findSpace(app, space)?.rootPath;
@@ -249,7 +312,7 @@ export function branchStatus(app: App, runId: string) {
   const run = getRun(app, runId);
   const first = String(run.input.continueFrom ?? run.id);
   const out = getRun(app, first).output;
-  return ((out.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits).map((wt) => {
+  return ((out.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits).map((w) => withDiffBase(app, first, w)).map((wt) => {
     const root = findSpace(app, wt.space)?.rootPath ?? "";
     const tip = root ? tipOf(root, wt.branch) : null;
     const base = tip ? changeBase(root, wt, tip) : wt.base;
@@ -299,14 +362,21 @@ export function checkoutInMain(app: App, runId: string, space: string) {
   return { path: t.root, branch: t.wt.branch, from: at || null };
 }
 
-/** Squash the work branch into one commit on top of where its changes start. */
-export function squashWorkBranch(app: App, runId: string, space: string, message: string) {
-  const t = targetOf(app, runId, space);
-  if (!message.trim()) throw new HttpError(400, "填写压缩后的提交信息");
+/** What squashing would fold into one commit; checked for every repository before any is squashed. */
+function squashRange(t: Target) {
   const tip = tipOf(t.root, t.wt.branch);
   if (!tip) throw new HttpError(404, `分支 ${t.wt.branch} 不在了`);
   const base = changeBase(t.root, t.wt, tip);
   if (base === tip) throw new HttpError(400, "分支上没有新提交");
+  assertOwnRange(t.root, t.wt, base, tip);
+  return { base, tip };
+}
+
+/** Squash the work branch into one commit on top of where its changes start. */
+export function squashWorkBranch(app: App, runId: string, space: string, message: string) {
+  const t = targetOf(app, runId, space);
+  if (!message.trim()) throw new HttpError(400, "填写压缩后的提交信息");
+  const { base, tip } = squashRange(t);
   const made = git(t.root, [...identity(t.root), "commit-tree", `${tip}^{tree}`, "-p", base, "-F", "-"], message.trim());
   if (!made.ok) throw new HttpError(409, `压缩失败：${made.stderr.trim().slice(0, 400)}`);
   const squashed = made.stdout.trim();
@@ -378,6 +448,7 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
   const wts = ((firstRun.output.worktrees ?? []) as WorktreeRef[]).filter((w) => w.commits);
   const pushed: { space: string; branch: string; at: string; forced?: boolean }[] = [];
   const notes: string[] = [];
+  if (opts.squash?.trim()) for (const wt of wts) squashRange(targetOf(app, runId, wt.space));
   for (const wt of wts) {
     const t = targetOf(app, runId, wt.space);
     if (wt.pending) throw new HttpError(409, `${wt.space} 有一轮的提交没能放回分支 ${wt.branch}（${wt.pending.slice(0, 8)}，在工作区里）：续一轮让编码 Agent 合并进来，再确认`);

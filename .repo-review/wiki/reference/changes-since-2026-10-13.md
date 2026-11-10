@@ -1765,3 +1765,10 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 鉴权插件 `api.authenticator`（`src/auth/authenticators.ts`）：只在 omem 进程里运行、要在清单 `permissions.authenticators` 声明；请求先经 `checkBearer` 验证，结果按凭据哈希缓存到过期（最多 10 分钟），`resolveAuth` 读缓存。认出的身份经 `bearerLogin` 找账号或认领预建账号，都没有时按 `auth.signup` 建等待批准的账号并通知一次。
 - 按邮箱预建账号：`POST /api/users`、成员页“按邮箱添加成员”、`omem user add --email [--login-any]`，`PATCH /api/users/:id` 可改邮箱；邮箱一律存小写（迁移时转换），建账号和改邮箱时查重。`claimByEmail`：飞书登录（`verifiedEmails`：企业邮箱优先，再是邮箱）和鉴权插件（`emailVerified`）按邮箱认领唯一的预建账号，多个时不认领并通知。飞书登录和绑定都申请 `contact:user.email:readonly`、`contact:user.employee:readonly`（`identityScopes`），只为这两项拿到的令牌不当作连接保存；机器人检查列出缺的这两项。
 - 修复：名字以非拉丁字符开头又带字母数字时（“用户 u200”）生成的用户 id 带前导连字符，个人空间对不上而建账号失败。
+
+## 2026-11-10：复用已有分支的交办只比较自己的改动
+
+- 修复：在已有分支上交办（`fromBranches`）时，比较起点是选分支时本地的旧提交；首轮同步把 origin 的新提交拉进来后，运行详情、diff 统计、评审输入、检查点 0（“全部改动”）、检查命令的 `OMEM_BASE`、临时索引都把这些公共提交算成交办的改动。
+- `WorktreeRef.diffBase`（`code-branch.ts`）：规划时先 fetch，取本地分支和 origin 的共同祖先；拉取 origin 时（`code-sync.ts` 的 `nextDiffBase` / `settleDiffBase`），只要 origin 没有这次交办的提交，就推进到拉进来的 origin 提交（冲突停下的同步处理完才生效）；origin 已经有交办的提交（推送过）时不动。`changeBase` 对较早的检查点取 `merge-base(diffBase, 终点)`。合并别的分支（`onto`）不改变比较起点。
+- 旧交办（没有 `diffBase`）读取时按“本地分支与 origin 的共同祖先”补上（`withDiffBase`，不写库，下一轮随工作区保存）；origin 已含它某一轮编码检查点的提交时保留原起点。保存的补丁、统计在能确定该轮终点（检查的提交或该轮检查点）时按新起点重算（`codeDiffView`，运行详情和评审共用）。首轮单项误记进修改项的公共提交在读取时排除（`ownCommits`）；首轮的提交归属从同步后（`syncHead`）算起。
+- 整段压缩、回到检查点：范围里有交办开始前分支上已有的提交（本人未推送的）或 origin 上已有的提交时拒绝，提示按修改项回退（`assertOwnRange`）；多仓库压缩在任何写入前先检查全部仓库。

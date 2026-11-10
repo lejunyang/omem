@@ -3,12 +3,13 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
-import { applyCodeRun, worktreesOf } from "../src/agents/code.ts";
+import { applyCodeRun, codeDiffView, codePatches, worktreesOf } from "../src/agents/code.ts";
+import { headsAt, recordCheckpoint, workPatches } from "../src/agents/code-tasks.ts";
 import { finishSync, hasSyncStash, moveToTarget, popWip, pushSyncStash, syncInProgress, syncWorktree, type Resolver } from "../src/agents/code-sync.ts";
 import { __testHandlers, addRunEvent, createRun, getRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
 import type { WorktreeRef } from "../src/agents/worktree-index.ts";
 import { git, refreshDefaultBaseRef } from "../src/core/git.ts";
-import { placeOnBranch, planBranch, changeBase } from "../src/agents/code-branch.ts";
+import { branchStatus, placeOnBranch, planBranch, changeBase, squashWorkBranch } from "../src/agents/code-branch.ts";
 import { run as sql } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { startServer } from "../src/server/http.ts";
@@ -487,6 +488,92 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
       expect((await exec(next.id)).verdict).toBe("synced");
       sql(app.db, "update runs set status = 'done' where id = ?", next.id);
       expect(sh(root, "show", "feature/refund:rules.txt")).toBe("refund: shipped lines only");
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("a reused branch far behind origin", { timeout: 120000 }, () => {
+  const exec = (id: string) => {
+    sql(app.db, "update runs set status = 'running' where id = ?", id);
+    return __testHandlers.get("code")!({
+      app, run: getRun(app, id), signal: new AbortController().signal,
+      event: (type, data) => addRunEvent(app, id, type, data),
+      output: (data) => setRunOutput(app, id, data),
+    }) as Promise<{ verdict: string }>;
+  };
+  /** Colleagues push `n` commits (a file each) to origin/feature/refund from another clone. */
+  const colleague = (n: number) => {
+    const other = join(app.home, "other");
+    if (!existsSync(other)) {
+      sh(app.home, "clone", "-q", "-b", "feature/refund", remote, other);
+      sh(other, "config", "core.autocrlf", "false");
+      sh(other, "config", "user.name", "Other");
+      sh(other, "config", "user.email", "other@example.com");
+    } else sh(other, "pull", "-q", "--ff-only");
+    const at = Number(sh(other, "rev-list", "--count", "HEAD"));
+    for (let i = 0; i < n; i++) commit(other, `public-${at + i}.txt`, `public ${i}\n`, `public ${at + i}`);
+    sh(other, "push", "-q", "origin", "feature/refund");
+    return sh(other, "rev-parse", "HEAD");
+  };
+
+  it("compares only this delegation's change, also after a later sync; an old delegation is corrected when read", async () => {
+    app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "review" }, idleTimeoutMs: 60000 });
+    app.config.agents.default = "fake";
+    createSpace(app, { id: "shop", name: "项目 A", kind: "repo", rootPath: root });
+    // The local feature/refund is where it was long ago; origin has moved on a lot.
+    const stale = sh(root, "rev-parse", "feature/refund");
+    const pushed = colleague(12);
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "shop", title: "退款只按未发货行", input: { task: "退款只按未发货的行计算", repos: ["shop"], fromBranches: { shop: "feature/refund" }, reviewTier: "light" } });
+      await exec(r.id);
+      sql(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const [w] = worktreesOf(app, r.id);
+      expect(w).toMatchObject({ start: stale, diffBase: pushed });
+      const out = getRun(app, r.id).output as { diffStat: string; repos: { base?: string }[] };
+      expect(out.repos[0].base).toBe(pushed);
+      expect(out.diffStat).toContain("1 file changed");
+      const [patch] = codePatches(app, r.id);
+      expect(patch.patch).toContain("round = 1");
+      expect(patch.patch).not.toContain("public-");
+      // Checkpoint 0 (“全部改动”) is the same base; a checkpoint after the round shows only this change.
+      expect(headsAt(app, r.id, worktreesOf(app, r.id), 0)).toEqual({ shop: pushed });
+      recordCheckpoint(app, r.id, worktreesOf(app, r.id), r.id, [], "第 1 轮");
+      expect(branchStatus(app, r.id)[0].commits).toHaveLength(1);
+
+      // Origin moves again; the next round merges it in and the comparison follows.
+      const again = colleague(3);
+      const r2 = createRun(app, { kind: "code", spaceId: "shop", title: "第 2 轮", input: { task: "继续", repos: ["shop"], fromBranches: { shop: "feature/refund" }, continueFrom: r.id, reviewTier: "light" } });
+      await exec(r2.id);
+      sql(app.db, "update runs set status = 'done' where id = ?", r2.id);
+      recordCheckpoint(app, r.id, worktreesOf(app, r.id), r2.id, [], "第 2 轮");
+      expect(worktreesOf(app, r.id)[0].diffBase).toBe(again);
+      const [whole] = workPatches(app, r.id, worktreesOf(app, r.id), { from: 0 });
+      expect(whole.patch).toContain("round = 1");
+      expect(whole.patch).not.toContain("public-");
+
+      // A delegation from before diffBase: its saved patch went from the stale local commit.
+      const old = { ...worktreesOf(app, r.id)[0] };
+      delete old.diffBase;
+      setRunOutput(app, r.id, { worktrees: [old] });
+      const tip = sh(root, "rev-parse", "feature/refund");
+      setRunOutput(app, r2.id, { repos: [{ space: "shop", diffStat: "36 files changed", diffBytes: 1, check: { command: "true", code: 0, output: "", ms: 1, commit: tip } }] });
+      writeFileSync(join(app.runsDir, r.id, "patches", "shop.patch"), git(root, ["diff", stale, tip]).stdout);
+      expect(worktreesOf(app, r.id)[0].diffBase).toBe(again);
+      const view = codeDiffView(app, r2.id);
+      expect(String(view.output.diffStat)).toContain("1 file changed");
+      expect(view.patches[0].patch).not.toContain("public-");
+      const detail = (await server.inject({ url: `/api/runs/${r2.id}` })).json() as { run: { output: { diffStat: string } }; patches: { patch: string }[] };
+      expect(detail.run.output.diffStat).toContain("1 file changed");
+      expect(detail.patches[0].patch).not.toContain("public-");
+      // Reading writes nothing back.
+      expect((getRun(app, r.id).output.worktrees as WorktreeRef[])[0].diffBase).toBeUndefined();
+
+      // Squashing keeps origin's history under the one commit.
+      const squashed = squashWorkBranch(app, r.id, "shop", "退款只按未发货行");
+      expect(sh(root, "rev-parse", `${squashed.head}^`)).toBe(again);
     } finally {
       await server.close();
     }

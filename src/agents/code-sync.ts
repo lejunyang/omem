@@ -36,6 +36,25 @@ function identity(path: string) {
   return git(path, ["config", "user.email"]).stdout.trim() ? [] : ID;
 }
 const head = (path: string) => git(path, ["rev-parse", "HEAD"]).stdout.trim();
+
+/**
+ * Pulling origin into a reused branch (`diffBase`, code-branch.ts) moves its comparison on to the
+ * pulled commit — unless origin already has some of the work (it was pushed): then the commits
+ * since the old base are still the work's and the base stays. The move waits in `diffBaseNext`
+ * until the merge or rebase is done (it may stop on conflicts); `settleDiffBase` makes it.
+ */
+function nextDiffBase(wt: WorktreeRef, remote: string) {
+  if (!wt.commits || !wt.diffBase || wt.cutFrom) return;
+  const at = head(wt.path);
+  const base = git(wt.path, ["merge-base", wt.diffBase, at]).stdout.trim() || wt.diffBase;
+  const shared = git(wt.path, ["merge-base", at, remote]).stdout.trim();
+  if (shared && git(wt.path, ["merge-base", "--is-ancestor", shared, base]).ok) wt.diffBaseNext = remote;
+}
+export function settleDiffBase(wt: WorktreeRef) {
+  if (!wt.diffBaseNext || syncInProgress(wt.path)) return;
+  if (git(wt.path, ["merge-base", "--is-ancestor", wt.diffBaseNext, "HEAD"]).ok) wt.diffBase = wt.diffBaseNext;
+  delete wt.diffBaseNext;
+}
 const unmerged = (path: string) => git(path, ["diff", "--name-only", "--diff-filter=U"]).stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 
 /** An unfinished Git operation belongs to this worktree, including a sequenced pick/revert. */
@@ -217,6 +236,7 @@ async function syncSteps(root: string, wt: WorktreeRef, req: SyncRequest, resolv
   if (req.pull && wt.targetBranch) {
     const remote = resolveRef(root, `refs/remotes/origin/${wt.targetBranch}`);
     const at = head(path);
+    if (remote) nextDiffBase(wt, remote.commit);
     if (!remote) status(`origin 上没有 ${wt.targetBranch}，跳过拉取`);
     else if (remote.commit === at || git(path, ["merge-base", "--is-ancestor", remote.commit, at]).ok) status(`${wt.targetBranch} 已经包含 origin 的最新提交`);
     else if (git(path, ["merge-base", "--is-ancestor", at, remote.commit]).ok) {

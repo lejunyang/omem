@@ -10,6 +10,7 @@ import { materialsBrief } from "../items/materials.ts";
 import type { CodeInput } from "./code.ts";
 import { getRun, runUser, type Run } from "./runs.ts";
 import { workDirOf } from "./workspaces.ts";
+import { changeBase } from "./code-branch.ts";
 
 /**
  * Coding by an outside Agent on a paired device (delegate_code over `--peer`): this machine makes
@@ -293,7 +294,7 @@ ${String(work.last.input.task ?? "")}` : "";
         const dir = workDirOf(w);
         const head = multi ? `## ${w.space}\n` : "";
         if (op === "status") out.push(head + (git(dir, ["status", "--short", "--branch"]).stdout.trim() || "（干净）"));
-        else if (op === "log") out.push(head + (git(dir, ["log", "--oneline", "-30", `${w.start ?? w.base}..HEAD`]).stdout.trim() || "（这次交办还没有提交）"));
+        else if (op === "log") out.push(head + (git(dir, ["log", "--oneline", "-30", `${w.commits ? changeBase(dir, w) : w.start ?? w.base}..HEAD`]).stdout.trim() || "（这次交办还没有提交）"));
         else if (op === "diff") {
           const d = git(dir, ["diff", "--no-color", "HEAD", ...(a.path ? ["--", locate(work, a.path).rel] : [])]).stdout;
           const from = a.from ?? 0;

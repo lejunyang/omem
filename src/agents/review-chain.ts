@@ -7,7 +7,7 @@ import { one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, reportConversation, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
-import { codePatches, ignoredText, isBranchReview, worktreesOf, type Check, type IgnoredFiles, type PeerReviewer } from "./code.ts";
+import { codeDiffView, ignoredText, isBranchReview, worktreesOf, type Check, type IgnoredFiles, type PeerReviewer } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
   blocksAt, checkBrief, FINDING_FORMAT, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
@@ -74,7 +74,8 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const run = getRun(app, codeRunId);
   const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string; peerReviewer?: PeerReviewer };
   const { decisionsBrief, workRuns } = await import("./review-fix.ts");
-  const out = run.output as Out;
+  const view = codeDiffView(app, codeRunId);
+  const out = view.output as Out;
   const plan = out.reviewPlan;
   const round = roundOf(run);
   const branchReview = isBranchReview(run);
@@ -94,7 +95,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     const to = opts.to?.[w.space] ?? "HEAD";
     return { space: w.space, patch: from ? git(dir, ["diff", "--no-color", from, to]).stdout : "", stat: from ? git(dir, ["diff", "--stat", from, to]).stdout.trim() : "" };
   }).filter((p) => p.patch.trim()) : null;
-  const patches = ranged ?? codePatches(app, run.id);
+  const patches = ranged ?? view.patches;
   const diffs = patches.map((p) => (multi ? `### ${p.space}\n\n${fence("diff", p.patch)}` : fence("diff", p.patch)));
   const statText = ranged
     ? ranged.map((r) => (multi ? `[${r.space}]\n${r.stat}` : r.stat)).join("\n\n")
