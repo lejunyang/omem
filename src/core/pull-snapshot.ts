@@ -14,6 +14,10 @@ db.prepare('vacuum into ?').run(path.join(dest, 'omem.db'));
 db.close();
 const snap = new DatabaseSync(path.join(dest, 'omem.db'));
 const has = (table) => !!snap.prepare("select 1 from sqlite_master where name=?").get(table);
+// The vector change log belongs to this device's search process: drop it, and its triggers, so that
+// stripping chunks below does not write a row for every chunk.
+for (const t of ['vector_log_insert', 'vector_log_update', 'vector_log_delete']) snap.exec('drop trigger if exists ' + t);
+if (has('vector_log')) snap.exec('delete from vector_log');
 for (const table of ['api_tokens', 'cli_logins', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines', 'shares', 'session_cleanup', 'remote_recordings', 'lark_doc_subscriptions', 'platform_watches'])
   if (has(table)) snap.exec('delete from ' + table);
 // A merge rebuilds the search index and code outline from the sources it takes (reindexSource):
