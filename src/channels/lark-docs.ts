@@ -231,7 +231,8 @@ async function replaceAsync(text: string, re: RegExp, fn: (m: RegExpExecArray) =
   return out + text.slice(last);
 }
 
-function csvRows(csv: string) {
+/** `keepEmpty`: keep blank rows, so a row's index is its place in the sheet. */
+export function csvRows(csv: string, keepEmpty = false) {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";
@@ -250,7 +251,7 @@ function csvRows(csv: string) {
     } else cell += c;
   }
   if (cell || row.length) row.push(cell), rows.push(row);
-  return rows.filter((r) => r.some((x) => x.trim()));
+  return keepEmpty ? rows : rows.filter((r) => r.some((x) => x.trim()));
 }
 
 export function csvToTable(csv: string, maxRows = SHEET_ROWS) {
@@ -264,12 +265,17 @@ export function csvToTable(csv: string, maxRows = SHEET_ROWS) {
   return [line(rows[0]), `| ${Array(width).fill("---").join(" | ")} |`, ...body].join("\n") + more;
 }
 
-async function sheetTable(token: string, sheetId: string) {
-  const v = await larkCli(["sheets", "+csv-get", "--spreadsheet-token", token, "--sheet-id", sheetId, "--include-row-prefix=false", "--max-chars", "200000", "--as", "user"], 60_000);
+/** One worksheet as CSV, read with the owner's lark-cli (read only). */
+export async function sheetCsv(token: string, sheetId: string, maxChars = 200_000) {
+  const v = await larkCli(["sheets", "+csv-get", "--spreadsheet-token", token, "--sheet-id", sheetId, "--include-row-prefix=false", "--max-chars", String(maxChars), "--as", "user"], 60_000);
   const d = v.data ?? v;
   const csv = [d.annotated_csv, d.csv, d.content, d.text].find((x) => typeof x === "string");
   if (typeof csv !== "string") throw new Error("表格内容为空");
-  return csvToTable(csv);
+  return csv;
+}
+
+async function sheetTable(token: string, sheetId: string) {
+  return csvToTable(await sheetCsv(token, sheetId));
 }
 
 function attr(s: string) {

@@ -37,8 +37,15 @@ export const FIELDS = {
   "change.kind": "变化类型（edit 内容编辑 / comment 评论 / record 多维表格记录 / field 多维表格字段）",
   "change.text": "变化的内容（新增和删掉的文字、评论、记录的前后值）",
   "change.added": "新增的文字（编辑时）",
-  "change.editor": "修改人 / 评论人（名字）",
+  "change.sheet": "电子表格的工作表名（每个新增或改动的行单独触发）",
+  "change.row": "电子表格的行号（表头是第 1 行）",
+  "change.recordId": "多维表格记录 id（每条记录单独触发）",
+  "change.tableId": "多维表格的数据表 id",
+  "change.action": "行或记录的变化（added 新增 / edited 修改 / deleted 删除，电子表格只有前两种）",
+  "change.editor": "修改人 / 评论人（名字；多维表格记录是这条记录的修改人）",
   "change.editorEmail": "修改人 / 评论人邮箱",
+  "change.editorId": "修改人的飞书 id（机器人能用它 @ 这个人）",
+  "change.byOwner": "是本人改的（这次的修改人只有本人；不知道修改人时不成立）",
   "change.mentions": "这次变化里被 @ 的人（名字）",
   "change.mentionsOwner": "这次变化 @ 了本人",
   "change.mentionsBot": "这次变化 @ 了 omem 机器人",
@@ -244,7 +251,33 @@ export type RuleEvent = {
   meeting?: { id: string; no?: string; title: string; participants: string[]; participantCount?: number | null; invitedCount?: number | null; host?: string; calendarEventId?: string };
   /** A document that changed (lark-doc-events.ts): what changed, who changed it, who it @-mentions. */
   doc?: { token: string; type: string; title: string; url: string; location?: string; space?: string; sourceId?: string };
-  change?: { kind: "edit" | "comment" | "record" | "field"; text: string; added?: string; editor?: string; editorEmail?: string | null; mentions: string[]; mentionsOwner: boolean; mentionsBot: boolean; commentId?: string };
+  change?: {
+    kind: "edit" | "comment" | "record" | "field";
+    text: string;
+    added?: string;
+    /** A spreadsheet's row (row 1 is the header) in a worksheet: each new or changed row is its own event. */
+    sheet?: string;
+    row?: number;
+    /** A multidimensional table's record: each record is its own event. */
+    recordId?: string;
+    tableId?: string;
+    action?: "added" | "edited" | "deleted";
+    editor?: string;
+    editorEmail?: string | null;
+    /** The editor's open_id as the bot sees them: what lark_send can @. */
+    editorId?: string;
+    mentions: string[];
+    mentionsOwner: boolean;
+    mentionsBot: boolean;
+    commentId?: string;
+    /** When the change was first heard (the burst may be handed on minutes later). */
+    heardAt?: string;
+    /**
+     * Everyone who made it is the owner (lark_write also writes as the owner, so a rule's own write-back
+     * is one); unset when who made it is unknown.
+     */
+    byOwner?: boolean;
+  };
   /** Where it came from: the bot sees groups it is in in real time; the owner's capture sees every chat. */
   via: "bot" | "capture" | "schedule" | "test" | "meeting" | "doc";
   /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */

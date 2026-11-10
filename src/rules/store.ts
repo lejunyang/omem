@@ -65,8 +65,11 @@ function checkDocRule(r: ReturnType<typeof ruleInputSchema.parse>) {
   if (bad.length) throw new HttpError(400, `文档变化规则只能用文档和变化的字段，不能用 ${[...new Set(bad)].join("、")}`);
   if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "文档变化规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
   const allowed = new Set(["notify", "delay", "check", "script"]);
-  if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply === "none")))
-    throw new HttpError(400, "文档变化规则没有群：只能交给 Agent（只告诉我）、通知本人、延时、模型判断或执行脚本");
+  // Like a schedule: the agent may post only into the conversation the rule names (发到).
+  if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
+    throw new HttpError(400, "文档变化规则没有群：只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断或执行脚本");
+  if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
+    throw new HttpError(400, "文档变化规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
 }
 
 /** A meeting has no chat or message; the meeting action needs a meeting. */

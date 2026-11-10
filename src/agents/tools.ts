@@ -54,6 +54,8 @@ import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.t
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { setApprovalExecutor } from "./asks.ts";
 import { confirmRule } from "../rules/confirmation.ts";
+import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
+import { currentChatIn } from "../rules/conditions.ts";
 import { helpText, metaSchemas, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
@@ -2660,7 +2662,7 @@ def({
 def({
   name: "save_rule",
   description:
-    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：会话中自动准备启用确认卡片，回复送达后展示，点击由宿主直接启用；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
+    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议、飞书文档或表格有改动）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。本人说“这个群 / 这里 / 当前会话”时不要按群名去查：条件写 {field: chat.id, op: equals, value: current}，保存时换成本会话的飞书群（不在飞书会话里会被拒绝）；定时和文档变化规则的结果默认发回本会话（“发到”，rule.conversationId 写 current 也是本会话），Agent 动作 reply 写 auto 才会在群里说话。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：会话中自动准备启用确认卡片，回复送达后展示，点击由宿主直接启用；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
   write: true,
   schema: z.object({
     id: z.string().optional().describe("修改已有规则时填（list_rules）"),
@@ -2686,10 +2688,14 @@ def({
     }
     const origin = ctx.runId ? getRun(ctx.app, ctx.runId).input.conversationId as string | undefined : undefined;
     input.spaceId = writeSpace(ctx, (input.spaceId as string | undefined) ?? current?.spaceId ?? ctx.spaceId);
-    input.conversationId = current?.conversationId ?? origin;
+    // Where replies go (发到): this conversation unless the rule already had one; “current” says so explicitly.
+    if (input.conversationId === "current" && !runLarkChat(ctx)) throw new HttpError(400, "这个会话不是飞书会话，“发到这个群”无从指定：请本人在规则页选择发到哪个会话");
+    input.conversationId = input.conversationId === "current" ? origin : current?.conversationId ?? origin;
     for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space);
     // Forward targets: "current" is this conversation's chat; new targets only when the owner asked in this turn.
     const here = runLarkChat(ctx);
+    // “This group” in the conditions: chat.id = current is the Feishu chat this conversation is in.
+    if (input.conditions) input.conditions = currentChatIn(input.conditions as never, here);
     const ownerAsked = ownerAskedThisTurn(ctx);
     for (const action of (input.actions ?? []) as { type?: string; to?: { chatId?: string; name?: string; kind?: string } }[]) {
       if (action.type !== "forward" || !action.to) continue;
@@ -3513,7 +3519,16 @@ def({
     const note = `批准范围：以上${target.key === "task" ? "飞书任务的创建、修改和指派" : "文件的写入"}，包括后续对话中的修改和失败重试；高风险操作、其他文件需另行批准。`;
     const wait = await ownerDocGate(ctx, "lark_write", a, `修改：\n${targets.map((t) => `- ${t.label}`).join("\n")}\n\n改动摘要：${a.summary}\n首次操作：${path.join(" ")}`, targets.every((t) => t.personal), scope, note);
     if (wait) return wait;
-    return `已执行（${path.join(" ")}，${target.label}）：\n${await c.larkWrite(ctx.app, a.command, path)}\n写后用 lark_read 读一次核对。`;
+    // A run a rule started writes back into the document the rule watches: note it, so the change it
+    // causes does not fire that rule again (rules/own-writes.ts).
+    const ruleId = ctx.runId ? ((getRun(ctx.app, ctx.runId).input.rule as { id?: string } | undefined)?.id) : undefined;
+    const written = ruleId
+      ? (output: string) => {
+          const tokens = [...target.tokens, ...a.command.flatMap((x) => [...x.matchAll(/\/(?:sheets|base|wiki|docx|docs|file|slides)\/([A-Za-z0-9]+)/g)].map((m) => m[1]))];
+          noteRuleWrite(ctx.app, tokens, { ruleId, runId: ctx.runId!, records: recordIdsIn(...a.command, output) });
+        }
+      : undefined;
+    return `已执行（${path.join(" ")}，${target.label}）：\n${await c.larkWrite(ctx.app, a.command, path, written)}\n写后用 lark_read 读一次核对。`;
   },
 });
 

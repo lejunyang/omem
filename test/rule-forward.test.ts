@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { run } from "../src/core/db.ts";
+import { one, run } from "../src/core/db.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { forgetChatBots } from "../src/rules/engine.ts";
@@ -103,5 +103,37 @@ it("in the owner's own message in a group, the assistant may set a rule forwardi
     expect(out.isError).toBe(false);
     const { listRules } = await import("../src/rules/store.ts");
     expect(listRules(app)[0].actions[0]).toMatchObject({ type: "forward", to: { chatId: "oc_here", name: "值班群", kind: "group" } });
+  } finally { app.db.close(); }
+});
+
+it("“this group” in a rule's conditions becomes the Feishu chat the owner is talking in", async () => {
+  const { callTool, issueToolToken, toolContextForToken } = await import("../src/agents/tools.ts");
+  const { createRun } = await import("../src/agents/runs.ts");
+  const { createThread } = await import("../src/agents/threads.ts");
+  const { listRules } = await import("../src/rules/store.ts");
+  const { currentChatIn } = await import("../src/rules/conditions.ts");
+  const app = testApp();
+  try {
+    const ctxIn = (channel: string, key: string) => {
+      const t = createThread(app, { channel, key, spaceId: "personal", userId: "owner" });
+      const r = createRun(app, { kind: "ask", title: "x", input: { conversationId: t.id }, lane: `hold-${key}`, notBefore: "2999-01-01T00:00:00Z" });
+      return toolContextForToken(app, issueToolToken({ runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", role: "assistant" } as never))!;
+    };
+    const rule = { description: "这个群里有人 @ 我就通知我", rule: { trigger: { event: "message" }, judge: "code", conditions: { all: [{ field: "chat.id", op: "equals", value: "current" }, { field: "message.mentionsOwner", op: "is", value: true }] }, actions: [{ type: "notify" }] } };
+    const group = ctxIn("lark", "oc_team#om_topic");
+    expect((await callTool(group, "save_rule", { ...rule, name: "群里 @ 我" })).isError).toBe(false);
+    const saved = listRules(app)[0];
+    expect(saved.conditions).toEqual({ all: [{ field: "chat.id", op: "equals", value: "oc_team" }, { field: "message.mentionsOwner", op: "is", value: true }] });
+    // Replies (发到) go back to this group's conversation, also for a document rule made here.
+    const here = saved.conversationId!;
+    expect(one<{ external_id: string }>(app.db, "select external_id from conversations where id = ?", here)!.external_id).toBe("oc_team#om_topic");
+    const sheetRule = { description: "排期表有别人新加的行就在这个群里 @ 修改人", rule: { conversationId: "current", trigger: { event: "doc", docs: ["https://tenant.larkoffice.com/sheets/SheetTok"] }, judge: "code", conditions: { field: "change.byOwner", op: "is", value: false }, actions: [{ type: "agent", reply: "auto", task: "回到群里对应的消息下 @ 修改人" }] } };
+    expect((await callTool(group, "save_rule", { ...sheetRule, name: "排期表新行" })).isError).toBe(false);
+    expect(listRules(app).find((r) => r.name === "排期表新行")!.conversationId).toBe(here);
+    // Not a Feishu conversation: no “this group”.
+    const web = await callTool(ctxIn("web", "w1"), "save_rule", { ...rule, name: "网页里" });
+    expect(web.text).toMatch(/不是飞书会话/);
+    // Inside an `in` list too; other fields are left alone.
+    expect(currentChatIn({ any: [{ field: "chat.id", op: "in", value: ["oc_a", "current"] }, { field: "chat.name", op: "equals", value: "current" }] }, "oc_b")).toEqual({ any: [{ field: "chat.id", op: "in", value: ["oc_a", "oc_b"] }, { field: "chat.name", op: "equals", value: "current" }] });
   } finally { app.db.close(); }
 });

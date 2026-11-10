@@ -153,7 +153,10 @@ export function checkTouches(args: string[], target: WriteTarget) {
   if (target.tokens.length && !args.some((a) => target.tokens.some((t) => a.includes(t)))) throw new HttpError(400, "command 里没有 target 那个文件：批准只对 target 有效，命令要改的必须是它");
 }
 
-export async function larkWrite(app: App, args: string[], path: string[]) {
+/** `written`: told the full output once the write succeeded (the record ids it made, say). */
+export async function larkWrite(app: App, args: string[], path: string[], written?: (output: string) => void) {
   const r = await run(app, args, `以本人身份写飞书（${path.join(" ")}）`);
-  return truncate(show(r.value), 4000);
+  const out = show(r.value);
+  written?.(out);
+  return truncate(out, 4000);
 }

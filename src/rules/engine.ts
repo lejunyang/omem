@@ -10,6 +10,7 @@ import { linkIsDoc } from "../channels/lark-doc-events.ts";
 import { createRun } from "../agents/runs.ts";
 import { discussion, discussionText, engagement, followedTopic, unfollowTopic, type Followed } from "./context.ts";
 import { addressed, claimEvent, deleteRule, listRules, recordFiring } from "./store.ts";
+import { ownWriteOf } from "./own-writes.ts";
 import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
 
 /**
@@ -68,6 +69,17 @@ async function consider(app: App, rule: Rule, e: RuleEvent) {
   if (followed?.ruleId === rule.id) return continueFollowed(app, rule, followed, e);
   const key = keyFor(rule, e);
   if (one(app.db, "select 1 from rule_handled where rule_id = ? and key = ?", rule.id, key)) return;
+  // A document change this very rule caused: its run wrote the document back (lark_write, as the owner)
+  // a moment ago, and the owner is the only one who changed it. Firing again would loop; other rules
+  // still see it (own-writes.ts). Logged as a skip, not counted.
+  const own = ownWriteOf(app, rule.id, e);
+  if (own) {
+    if (!claimEvent(app, rule.id, key)) return;
+    const why = `由规则自己的回写引起（运行 ${own.runId} 以本人身份写了这篇），已跳过`;
+    console.log(`[omem] 规则「${rule.name}」：${why}`);
+    recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: "code", reason: why, results: [{ action: "skip", ok: true, detail: why, runId: own.runId }] }, { skipped: true });
+    return;
+  }
   const waits = rule.trigger.waitMinutes > 0 || rule.trigger.unless.length > 0;
   // Without a wait or an engagement check the model judges right away, as before; with them the
   // conditions narrow it down now and the model looks at the discussion when it is time to act.

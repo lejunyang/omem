@@ -247,8 +247,11 @@ async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, r
   if (spec.status !== "active") throw new HttpError(400, `档案 ${a.spec} 是草稿`);
   const slot = joinLane(app, rule, a, e, ruleLane(rule.id, e.chat?.id));
   if ("joined" in slot) return slot.joined;
-  const origin = e.kind === "schedule" && rule.conversationId ? getThread(app, rule.conversationId) : undefined;
-  if (e.kind === "schedule" && a.reply !== "none" && !origin) throw new HttpError(400, "定时规则缺少投递会话，请在规则的“发到”中选择目标后保存；本次未执行");
+  // A schedule or a document change has no chat of its own: it may speak only in the one the rule
+  // names (发到, `conversationId`), through the bot.
+  const chatless = e.kind === "schedule" || e.kind === "doc";
+  const origin = chatless && rule.conversationId ? getThread(app, rule.conversationId) : undefined;
+  if (chatless && a.reply !== "none" && !origin) throw new HttpError(400, `${e.kind === "doc" ? "文档变化" : "定时"}规则缺少投递会话，请在规则的“发到”中选择目标后保存；本次未执行`);
   if (origin && origin.userId !== OWNER) throw new HttpError(403, "只能投递到本人的会话");
   const larkOrigin = !!origin && (["lark", "lark-watch"].includes(origin.channel) || origin.channel.startsWith("lark:"));
   const chatId = e.chat?.id ?? (larkOrigin ? origin!.key?.split("#")[0] : undefined);
@@ -281,6 +284,8 @@ async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, r
     "",
     `# 事件\n\n${eventSummary(e)}`,
     e.message ? `\n（飞书消息 ${e.message.id}${e.message.topicId ? `，话题 ${e.message.topicId}` : ""}；需要更多上下文用 read_source 读这个群的聊天原件或 read_conversation）` : "",
+    // A document change posting into the rule's chat: it may answer under an earlier message there.
+    e.kind === "doc" && chatId && reply !== "none" ? `\n（要发到的群是 ${chatId}。要回到群里对应的某条消息下：用 search / read_source 读这个群的聊天原件，或 lark_read 的 im +chat-messages-list，找到那条消息的 id，再用 lark_send 的 reply_to（in_thread=true 发在它的话题里）；要 @ 修改人时 mentions 填事件里的修改人 id。）` : "",
     a.task ? `\n# 要你做的\n\n${a.task}` : "",
     separateReplyNote(a),
     ruleFiles(app, rule),
@@ -295,14 +300,15 @@ async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, r
         ? "你在群里要说的话用 lark_send 写，会先变成给本人确认的草稿；最后的回答发给本人。"
         : "不要在群里发消息；最后的回答发给本人。",
   ].filter((x) => x !== "").join("\n");
-  const space = a.space ?? spec.space ?? rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal");
+  // Without a chat of its own, the chat it posts into (发到) decides where it reads, then the document's space.
+  const space = a.space ?? spec.space ?? rule.spaceId ?? (chatId ? chatSpace(app, chatId) : e.doc?.space ?? "personal");
   // It speaks through the bot that is in the chat (the one that saw the message).
   const bot = larkOrigin && origin!.channel.startsWith("lark:") ? origin!.channel.slice(5) : e.bot;
   const lark = { chats: chatId && reply !== "none" ? [chatId] : [], draft: reply === "draft", ...powers(a), ...(bot && bot !== "main" ? { bot } : {}) };
   const r = createRun(app, {
     kind: "agent",
     spaceId: space,
-    title: truncate(`${spec.name}（规则「${rule.name}」）：${e.message?.text.replace(/\s+/g, " ") ?? e.chat?.name ?? "定时"}`, 80),
+    title: truncate(`${spec.name}（规则「${rule.name}」）：${e.message?.text.replace(/\s+/g, " ") ?? e.chat?.name ?? e.doc?.title ?? "定时"}`, 80),
     input: {
       spec: spec.name,
       ...assistantScope(spec.name, space, lark),

@@ -28,7 +28,10 @@
 - `rule` 可含 `spaceId`、`trigger`、`conditions`、`judge`、`actions`。`agent` 动作的 `spec` 默认 `assistant`，可选 `space` 指定执行空间；省略时按档案、规则、触发空间解析。没有专用档案的日常任务用主助手，不挑最接近的档案代替。`agent` 动作默认处理中再次触发时并入同一会话（`merge`，默认 true）。`mergeReply` 默认 `combined`：后续触发可交给当前一轮合并回复；本人要每次触发分别回复、各自完成任务时写 `mergeReply: "separate"`，保持 `merge: true`，按触发顺序在同一 Agent 会话逐轮处理，每条保留完整任务和回复位置。只有本人要求独立会话、并行处理时写 `merge: false`。`delay`（`minutes`）让后面的动作过一阵再做，`check`（`question`）让模型中途判断是或否、否就不做后面的动作；两者都不能放在最后。`script`（执行脚本）只能由本人在规则页写，`save_rule` 带脚本会被拒绝。
 - 会议的人数有两个字段：`meeting.participantCount`（在会人数，入会那一刻在会里的人，不算机器人）和 `meeting.invitedCount`（会邀人数，日程邀请的人，群按成员算；临时会议为未知）。本人说“人多的会、大会”一般用会邀人数。本人在会议里邀请机器人不需要规则：机器人的应用订阅“机器人被邀请入会”事件即可。
 - 会议动作 `meeting-bot.confirm` 可写 true（始终询问）、false（直接加入）或会议条件。比如“30 人及以上先问，否则直接拉”：整条规则 `conditions=null`，动作 `confirm={"field":"meeting.participantCount","op":"gte","value":"30"}`；若还限定会议标题，标题才放整条规则的 `conditions`。确认条件支持 all / any / not，只能用会议字段；数据未知时先问本人，按本次触发的数据判断。一次 `save_rule` 就能保存这条规则。
-- 定时任务 `reply=auto` 发回结果会话，`none` 通知本人，`draft` 的群消息先给本人确认。
+- 定时任务 `reply=auto` 发回结果会话，`none` 通知本人，`draft` 的群消息先给本人确认。文档变化规则同样：`reply` 为 auto / draft 时发到规则的结果会话（“发到”），不开话题、不静默排查。
+- 本人在飞书群里说“这个群 / 这里 / 当前会话”：条件写 `{"field":"chat.id","op":"equals","value":"current"}`，保存时换成本会话的群，不要按群名去查；结果会话（“发到”）默认就是本会话，`rule.conversationId` 写 `current` 也一样。不在飞书会话里用 `current` 会被拒绝。
+- 文档变化的字段：电子表格每个新增或改动的行单独触发（`change.sheet`、`change.row`、`change.action` added / edited，`change.text` / `change.added` 是这一行的“列名：值”）；多维表格每条记录单独触发（`change.recordId`、`change.tableId`、`change.action` added / edited / deleted）。“不是我改的”写 `change.byOwner is false`。`change.editorId` 是修改人在机器人这边的 id。
+- 文档变化规则的 Agent 要回到群里对应的消息下 @ 修改人：用 `read_source` / `search` 读那个群的聊天原件（或 `lark_read` 的 `im +chat-messages-list`）找到消息 id，`lark_send` 写 `reply_to`（`in_thread: true` 发在话题里），`mentions` 填事件里的修改人 id。只能发到规则的“发到”那个群。规则运行里用 `lark_write` 回写被盯的表格，引起的改动不会再触发这条规则（几分钟内、只有本人改动的那些）。
 
 - 要几分钟内响应的（验证码之类，看的是群里 @ 本人或私聊）：`trigger.fast: true`，条件里写 `message.text contains` 的词（它就是每分钟搜的词）。要等另一个会话（验证码机器人的私聊）的新消息再转回给提问的人：`{"type":"wait-message","chatId":…,"minutes":5,"contains":"验证码"}` 后接 `{"type":"forward","to":{"kind":"origin"}}`；建议条件里限定发送人或群。
 - `forward`（转发到）的目标只能在本人亲自要求的那一轮新加或改（“转到这个群”写 `to: {"chatId": "current"}`，别的会话先 `list_lark_chats` 查 chat_id）；其他时候改规则把目标原样带上。

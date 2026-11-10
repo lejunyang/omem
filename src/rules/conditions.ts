@@ -1,3 +1,4 @@
+import { HttpError } from "../core/util.ts";
 import { FIELDS, type Condition, type Field, type Leaf, type RuleEvent } from "./types.ts";
 
 /**
@@ -78,6 +79,20 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
         return e.change?.text;
       case "change.added":
         return e.change?.added;
+      case "change.sheet":
+        return e.change?.sheet;
+      case "change.row":
+        return e.change?.row;
+      case "change.editorId":
+        return e.change?.editorId;
+      case "change.byOwner":
+        return e.change?.byOwner;
+      case "change.recordId":
+        return e.change?.recordId;
+      case "change.tableId":
+        return e.change?.tableId;
+      case "change.action":
+        return e.change?.action;
       case "change.editor":
         return e.change?.editor;
       case "change.editorEmail":
@@ -150,6 +165,25 @@ export function fieldsOf(c: Condition | null): Field[] {
   if ("any" in c) return c.any.flatMap(fieldsOf);
   if ("not" in c) return fieldsOf(c.not);
   return [c.field];
+}
+
+/**
+ * “This chat” in a condition: `chat.id` written as `current` (also inside an `in` list) becomes the
+ * Feishu chat the rule is being made in. `chat` is null outside a Feishu conversation: a condition that
+ * needs it is refused with what to do instead. Returns the condition unchanged when it has no `current`.
+ */
+export function currentChatIn(c: Condition | null, chat: string | null): Condition | null {
+  if (!c) return c;
+  if ("all" in c) return { all: c.all.map((x) => currentChatIn(x, chat)!) };
+  if ("any" in c) return { any: c.any.map((x) => currentChatIn(x, chat)!) };
+  if ("not" in c) return { not: currentChatIn(c.not, chat)! };
+  if (c.field !== "chat.id") return c;
+  const swap = (v: string) => {
+    if (v.trim().toLowerCase() !== "current") return v;
+    if (!chat) throw new HttpError(400, "这个会话不是飞书会话，条件里没有“这个群”可指：用 list_lark_chats 查到群的 chat_id 再写 chat.id");
+    return chat;
+  };
+  return { ...c, value: Array.isArray(c.value) ? c.value.map(swap) : typeof c.value === "string" ? swap(c.value) : c.value };
 }
 
 const OP_LABEL: Record<Leaf["op"], string> = { equals: "是", contains: "包含", startsWith: "开头是", endsWith: "结尾是", matches: "匹配", in: "是其中之一", is: "", gte: "至少", lte: "至多" };

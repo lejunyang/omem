@@ -218,6 +218,9 @@ const REPLY_HINT: Record<string, string> = {
   auto: "直接在群里（或它的话题里）回复，思考气泡可见。",
   silent: "群里看不到过程；它读完讨论自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题，你一插话它就停。",
 };
+/** Where a rule belongs: a space's name, or 全局 for one that belongs to none (listed in every space). */
+const spaceName = (id?: string) => (id ? (state.spaces.find((s) => s.id === id)?.name ?? id) : "全局");
+const SPACE_HINT = "消息和第一次看到的群只看这个空间的会话，文档变化只看这个空间的文档，会议记录放进这个空间；交给 Agent 时它默认在这个空间里查资料，读不到别的空间的工作文件（两个空间相关时除外）。全局规则不限空间，在每个空间的规则列表里都会列出。";
 const spaceOptions = (none: string) => [{ value: "", label: none }, ...state.spaces.map((s) => ({ value: s.id, label: s.name }))];
 // A whole group's conversation is shown as the group itself (its title is often just the first message there).
 const groupIds = computed(() => new Set((options.value.groups ?? []).map((g) => g.chat_id)));
@@ -286,6 +289,8 @@ function moveAction(i: number, d: number) {
 const scheduleOnly = computed(() => form.value?.trigger.event === "schedule");
 const meetingRule = computed(() => form.value?.trigger.event === "meeting");
 const docRule = computed(() => form.value?.trigger.event === "doc");
+/** No chat of its own (a schedule, a document change): replies go to the chat chosen in 发到. */
+const destRule = computed(() => scheduleOnly.value || docRule.value);
 const isOwner = computed(() => state.me?.role === "owner");
 /** What a new script starts as: reading the event it gets. */
 const SCRIPT_SAMPLE = [
@@ -356,7 +361,8 @@ function onTrigger() {
   if (f.trigger.event === "doc") {
     // A document change has no chat: the agent only reports to the owner, and nothing waits on a discussion.
     f.actions = f.actions.filter((a) => ["agent", "notify", "delay", "check", "script"].includes(a.type));
-    for (const a of f.actions) if (a.type === "agent") Object.assign(a, { reply: "none", ownTopic: false });
+    // It may still post into one chosen chat (发到, like a schedule); no topic, no silent investigation.
+    for (const a of f.actions) if (a.type === "agent") Object.assign(a, { reply: a.reply === "silent" ? "none" : a.reply, ownTopic: false });
     f.trigger.waitMinutes = 0;
     f.trigger.unless = [];
     f.trigger.docs ??= [];
@@ -445,7 +451,10 @@ function startFrom(text: string) {
           <button class="grow pick" type="button" @click="go({ id: r.id! })">
             <div class="row"><strong class="ellipsis">{{ r.name }}</strong><span v-if="r.createdBy === 'agent' && !r.enabled" class="badge">待确认</span></div>
             <div class="muted small clamp">{{ r.description }}</div>
-            <div class="muted small">命中 {{ r.hits ?? 0 }} 次<template v-if="r.lastFiredAt"> · {{ relTime(r.lastFiredAt) }}</template></div>
+            <div class="muted small">
+              <span :title="r.spaceId ? '只在这个空间的规则列表里出现' : '全局规则：在每个空间的规则列表里都会列出'">{{ spaceName(r.spaceId) }}</span>
+              · 命中 {{ r.hits ?? 0 }} 次<template v-if="r.lastFiredAt"> · {{ relTime(r.lastFiredAt) }}</template>
+            </div>
           </button>
           <UiCheckbox :model-value="r.enabled" switch size="sm" :aria-label="`启用 ${r.name}`" @change="toggle(r)" />
         </div>
@@ -538,13 +547,19 @@ function startFrom(text: string) {
         </section>
 
         <section class="block">
+          <div class="block-head"><h3>所属空间</h3></div>
+          <div class="row wrap">
+            <UiSelect :model-value="form.spaceId ?? ''" size="sm" width="220px" :options="spaceOptions('全局（不属于哪个空间）')" aria-label="所属空间" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
+          </div>
+          <small class="muted">{{ SPACE_HINT }}</small>
+        </section>
+
+        <section class="block">
           <div class="block-head"><h3>什么时候看</h3></div>
           <div class="row wrap">
             <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '我加入会议时' }, { value: 'doc', label: '文档变化' }]" aria-label="触发" @change="onTrigger" />
             <UiSegmented v-if="form.trigger.event === 'message'" v-model="form.trigger.once" size="sm" :options="[{ value: 'event', label: '每条消息' }, { value: 'chat', label: '每个群只一次' }]" aria-label="触发次数" @change="touch" />
             <input v-if="form.trigger.event === 'schedule'" v-model="form.trigger.cron" class="input sm mono cron" placeholder="0 9 * * 1-5" aria-label="cron" @input="touch" />
-            <UiSelect v-if="form.trigger.event !== 'schedule' && !meetingRule" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions(docRule ? '所有空间的文档' : '所有空间的群')" :aria-label="docRule ? '只看哪个空间的文档' : '只看哪个空间的群'" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
-            <UiSelect v-if="meetingRule" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions('会议记录放默认空间')" aria-label="会议记录放哪个空间" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
           </div>
           <div v-if="form.trigger.event === 'message'" class="row wrap">
             <label class="row inline small">命中后等
@@ -593,8 +608,8 @@ function startFrom(text: string) {
               <div class="row wrap">
                 <UiSelect v-model="a.spec" size="sm" width="180px" :options="specOptions" placeholder="交给谁" aria-label="Agent" @change="touch" />
                 <UiSelect :model-value="a.space ?? ''" size="sm" width="170px" :options="spaceOptions('默认空间')" aria-label="在哪个空间里查资料" title="Agent 在哪个空间里查资料。默认：档案固定的空间，其次是上面选的空间，再次是消息所在群的空间" @update:model-value="(v) => ((a.space = String(v || '')), touch())" />
-                <UiSegmented v-if="!docRule" v-model="a.reply" size="sm" :options="scheduleOnly ? scheduleReplyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
-                <UiCheckbox v-if="!scheduleOnly && !docRule && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
+                <UiSegmented v-model="a.reply" size="sm" :options="destRule ? scheduleReplyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
+                <UiCheckbox v-if="!destRule && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
               </div>
               <div class="row wrap">
                 <UiCheckbox :model-value="!!a.hideThinking" size="sm" @change="v => { a.hideThinking = v; touch(); }">隐藏思考气泡</UiCheckbox>
@@ -606,13 +621,13 @@ function startFrom(text: string) {
                 <UiSegmented :model-value="a.mergeReply ?? 'combined'" :options="[{ value: 'combined', label: '合并回复' }, { value: 'separate', label: '每次触发分别回复' }]" size="sm" aria-label="连续触发的回复方式" @update:model-value="v => { a.mergeReply = v; touch(); }" />
                 <small class="muted">{{ a.mergeReply === 'separate' ? '每次触发依次处理，复用前面的调查，各自完成任务并按上面的回复方式答复。' : '后续触发交给正在处理的一轮，可以一起给出结论。' }}</small>
               </div>
-              <div v-if="scheduleOnly && (a.reply !== 'none' || a.failureTo === 'chat')" class="row wrap">
+              <div v-if="destRule && (a.reply !== 'none' || a.failureTo === 'chat')" class="row wrap">
                 <span class="small">发到</span>
                 <UiSelect :model-value="destinationValue" size="sm" width="260px" :search-at="8" :options="conversationOptions" aria-label="结果发到哪个会话" @update:model-value="(v) => ((form!.conversationId = String(v || '')), touch())" />
               </div>
-              <small v-if="scheduleOnly && (a.reply !== 'none' || a.failureTo === 'chat') && !form.conversationId" class="muted">尚未指定投递目标。请选择会话或已采集的群聊；向群里发送需要机器人已在群中。</small>
-              <small class="muted">{{ scheduleOnly && a.reply !== 'none' ? (a.reply === 'auto' ? "结论直接发到选定的会话。" : "它要在群里说的话先变成给你确认的草稿，你点发送才发到这个群（话题）；结论另外发给你。") : REPLY_HINT[a.reply] }}</small>
-              <div v-if="!scheduleOnly && a.reply !== 'none'" class="row wrap">
+              <small v-if="destRule && (a.reply !== 'none' || a.failureTo === 'chat') && !form.conversationId" class="muted">尚未指定投递目标。请选择会话或已采集的群聊；向群里发送需要机器人已在群中。</small>
+              <small class="muted">{{ destRule && a.reply !== 'none' ? (a.reply === 'auto' ? "结论直接发到选定的会话。" : "它要在群里说的话先变成给你确认的草稿，你点发送才发到这个群（话题）；结论另外发给你。") : REPLY_HINT[a.reply] }}</small>
+              <div v-if="!destRule && a.reply !== 'none'" class="row wrap">
                 <UiCheckbox :model-value="!!a.allowUrgent" size="sm" @change="(v) => ((a.allowUrgent = v), touch())">允许加急</UiCheckbox>
                 <UiCheckbox :model-value="!!a.allowPrivate" size="sm" @change="(v) => ((a.allowPrivate = v), touch())">允许只给部分人看</UiCheckbox>
                 <small class="muted">什么时候用、对谁用写在要求里，没写就不用</small>

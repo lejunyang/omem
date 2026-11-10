@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { resolveIdentity, userName, OWNER, getUser } from "../core/users.ts";
@@ -142,6 +143,9 @@ export async function subscribeRuleDocs(app: App, links: string[], spaceId?: str
         const d = await readLarkDocument(ref.url).catch(() => null);
         if (d) run(app.db, "update lark_doc_subscriptions set snapshot = ?, title = case when ? != '' then ? else title end where file_token = ?", d.markdown.slice(0, SNAPSHOT_MAX), d.title, d.title, ref.token);
       }
+      // A spreadsheet's rows now: its first change can already be compared row by row.
+      if (ref.type === "sheet" && !one(app.db, "select 1 from lark_doc_subscriptions where file_token = ? and snapshot is not null", ref.token))
+        await keepSheetCopy(app, ref.token).catch((e) => console.warn(`[omem] 读表格内容失败 ${link}：${(e as Error).message}`));
       const title = ref.title || one<{ title: string }>(app.db, "select title from lark_doc_subscriptions where file_token = ?", ref.token)?.title || "";
       out.push({ link, title, ok: r.status === "ok", ...(r.error ? { error: r.error } : {}) });
     } catch (e) {
@@ -248,7 +252,7 @@ export async function pollRuleDocs(app: App) {
       changed++;
       // The editor is an open_id of the owner's lark-cli app: a name only when capture has seen them.
       const name = m.modifier ? one<{ name: string }>(app.db, "select name from lark_people where cli_open_id = ? and name != ''", m.modifier)?.name : undefined;
-      await flush(app, s.file_token, { type: s.file_type, bot: s.bot, editors: new Set(), names: name ? [name] : [], records: [], fields: [], first: Date.now(), polled: true }).catch((e) =>
+      await flush(app, s.file_token, { type: s.file_type, bot: s.bot, editors: new Set(), names: name ? [name] : [], polledIds: m.modifier ? [m.modifier] : [], records: new Map(), fields: [], first: Date.now(), polled: true }).catch((e) =>
         console.warn(`[omem] 处理定时检查到的文档改动失败 ${s.title || s.file_token}：${(e as Error).message}`),
       );
     }
@@ -273,8 +277,17 @@ export function subscribedSourceIds(app: App) {
 type EventId = string | { open_id?: string; union_id?: string; user_id?: string };
 const openIdOf = (id: EventId | undefined) => (typeof id === "string" ? id : id?.open_id) || "";
 
+/**
+ * One record of a multidimensional table, as changed within a burst: Feishu may send a record several
+ * times while someone types (and several records in one event); each record becomes its own rule event.
+ * `before` keeps the first value seen in the burst, `after` the last; `heard` is when it was first heard.
+ */
+type RecordChange = { tableId: string; recordId: string; action: "added" | "edited" | "deleted"; before: Map<string, CellValue>; after: Map<string, CellValue>; editors: Set<string>; heard: number; revision?: number };
+/** A cell as the event gives it: the raw value, and the names of people when Feishu adds them. */
+export type CellValue = { value: unknown; users?: string[] };
+
 /** `names`: editors already known by name (a scheduled check); `polled`: found by that check, not an event. */
-type Pending = { type: string; bot: string; editors: Set<string>; names?: string[]; records: string[]; fields: string[]; first: number; polled?: boolean; timer?: ReturnType<typeof setTimeout> };
+type Pending = { type: string; bot: string; editors: Set<string>; names?: string[]; polledIds?: string[]; records: Map<string, RecordChange>; fields: string[]; first: number; polled?: boolean; timer?: ReturnType<typeof setTimeout> };
 const pending = new Map<string, Pending>();
 
 /** One event from the bot's connection (lark-bot.ts). */
@@ -283,13 +296,20 @@ export function onDocEvent(app: App, bot: string, type: string, data: any) {
   const token = String(data?.file_token ?? "");
   if (!token) return;
   run(app.db, "update lark_doc_subscriptions set last_event_at = ? where file_token = ?", now(), token);
-  const p = pending.get(token) ?? { type: String(data.file_type ?? "docx"), bot, editors: new Set<string>(), records: [], fields: [], first: Date.now() };
+  const p: Pending = pending.get(token) ?? { type: String(data.file_type ?? "docx"), bot, editors: new Set<string>(), records: new Map(), fields: [], first: Date.now() };
+  const operators: string[] = [];
   for (const id of [...((data.operator_id_list as EventId[] | undefined) ?? []), data.operator_id as EventId | undefined]) {
     const o = openIdOf(id);
-    if (o) p.editors.add(o);
+    if (o) operators.push(o);
   }
-  if (type === "drive.file.bitable_record_changed_v1") p.records.push(...recordLines(data));
-  if (type === "drive.file.bitable_field_changed_v1") p.fields.push(...fieldLines(data));
+  // A record's editor is who changed that record, not everyone who touched the table in the burst.
+  if (type === "drive.file.bitable_record_changed_v1") addRecords(p, data, operators);
+  else for (const o of operators) p.editors.add(o);
+  if (type === "drive.file.bitable_field_changed_v1") {
+    p.fields.push(...fieldLines(data));
+    // The table's fields changed: read its field names again next time.
+    fieldSchemas.delete(`${token}:${data.table_id ?? ""}`);
+  }
   pending.set(token, p);
   clearTimeout(p.timer);
   // A burst of edits is one change: after it has been quiet a while, or at most this long after the first.
@@ -311,20 +331,279 @@ export async function flushDocEventsForTests(app: App) {
   }
 }
 
-const value = (v: unknown) => truncate(typeof v === "string" ? v : JSON.stringify(v ?? ""), 200);
-function recordLines(data: any): string[] {
-  const out: string[] = [];
-  for (const a of (data.action_list ?? []) as { record_id?: string; action?: string; before_value?: { field_id: string; field_value: unknown }[]; after_value?: { field_id: string; field_value: unknown }[] }[]) {
-    const before = new Map((a.before_value ?? []).map((f) => [f.field_id, f.field_value]));
-    const after = new Map((a.after_value ?? []).map((f) => [f.field_id, f.field_value]));
-    const label = a.action === "record_added" ? "新增记录" : a.action === "record_deleted" ? "删除记录" : "修改记录";
-    const changes = [...new Set([...before.keys(), ...after.keys()])]
-      .filter((k) => JSON.stringify(before.get(k)) !== JSON.stringify(after.get(k)))
-      .map((k) => `${k}：${before.has(k) ? value(before.get(k)) : "（空）"} → ${after.has(k) ? value(after.get(k)) : "（空）"}`);
-    out.push(`${label} ${a.record_id ?? ""}${data.table_id ? `（表 ${data.table_id}）` : ""}${changes.length ? `：${changes.join("；")}` : ""}`);
+const ACTION: Record<string, RecordChange["action"]> = { record_added: "added", record_deleted: "deleted", record_edited: "edited" };
+type RawCell = { field_id: string; field_value: unknown; field_identity_value?: { users?: { name?: string; en_name?: string }[] } };
+const cells = (list: RawCell[] | undefined) =>
+  new Map(
+    (list ?? []).map((f) => {
+      const users = (f.field_identity_value?.users ?? []).map((u) => u.name || u.en_name || "").filter(Boolean);
+      return [f.field_id, { value: f.field_value, ...(users.length ? { users } : {}) }] as const;
+    }),
+  );
+
+/** The records of one record-changed event, merged with what the burst already has for each. */
+function addRecords(p: Pending, data: any, operators: string[]) {
+  const tableId = String(data.table_id ?? "");
+  const revision = Number(data.revision) || undefined;
+  for (const a of (data.action_list ?? []) as { record_id?: string; action?: string; before_value?: RawCell[]; after_value?: RawCell[] }[]) {
+    const recordId = String(a.record_id ?? "");
+    const action = ACTION[a.action ?? ""] ?? "edited";
+    const key = `${tableId}:${recordId}`;
+    const was = p.records.get(key);
+    if (!was) {
+      p.records.set(key, { tableId, recordId, action, before: cells(a.before_value), after: cells(a.after_value), editors: new Set(operators), heard: Date.now(), revision });
+      continue;
+    }
+    // Added and then edited in the same burst is still a new record; deleted at any point is gone.
+    if (action === "deleted") was.action = "deleted";
+    for (const [k, v] of cells(a.before_value)) if (!was.before.has(k)) was.before.set(k, v);
+    for (const [k, v] of cells(a.after_value)) was.after.set(k, v);
+    for (const o of operators) was.editors.add(o);
+    if (revision && (!was.revision || revision > was.revision)) was.revision = revision;
+  }
+}
+
+/**
+ * A spreadsheet changed: compare its rows with the last copy and make one event per new or changed row
+ * (`doc:<token>:<sheet>:<hash of the row>`: the same row text fires once). The first time there is no
+ * copy yet, so this one becomes the copy and nothing fires; so does a sheet whose header row changed.
+ * A change that leaves every row as it was (formatting, say) fires nothing. null: unreadable.
+ */
+async function sheetRowEvents(app: App, token: string, p: Pending, sub: Sub, source: SourceRow | undefined, ownerId: (id: string) => boolean): Promise<RuleEvent[] | null> {
+  const before = json<SheetsCopy | null>(sub.snapshot ?? "null", null);
+  const after = await keepSheetCopy(app, token);
+  if (!before?.sheets) return [];
+  const editors = [...(await Promise.all([...p.editors].map((id) => personOf(app, p.bot, id)))), ...(p.names ?? []).map((name) => ({ name, email: null }))];
+  const ids = [...p.editors, ...(p.polledIds ?? [])];
+  const byOwner = ids.length ? ids.every(ownerId) : undefined;
+  const doc: NonNullable<RuleEvent["doc"]> = { token, type: p.type, title: source?.title ?? sub.title ?? "", url: sub.link || (source ? json<{ url?: string }>(source.meta, {}).url ?? source.uri : ""), ...(source ? { location: locationOf(source.meta), space: source.space_id, sourceId: source.id } : sub.space_id ? { space: sub.space_id } : {}) };
+  const out: RuleEvent[] = [];
+  for (const [id, now_] of Object.entries(after.sheets)) {
+    const was = before.sheets[id];
+    if (!was || was.header !== now_.header) continue;
+    for (const c of rowChanges(was.rows, now_.rows)) {
+      const notes = [now_.more ? `（这个工作表只比对了前 ${now_.rows.length} 行）` : "", p.polled ? "（定时检查发现的改动：机器人订阅不了这篇）" : ""].filter(Boolean).join("");
+      out.push({
+        key: `doc:${token}:${id}:${createHash("sha1").update(c.text).digest("hex").slice(0, 16)}`,
+        kind: "doc",
+        at: now(),
+        doc,
+        change: {
+          kind: "edit",
+          text: truncate(`${c.action === "added" ? "新增" : "改动"}「${now_.title}」第 ${c.row} 行：${c.text}${notes}`, TEXT_MAX),
+          added: c.text,
+          action: c.action,
+          row: c.row,
+          sheet: now_.title,
+          ...(editors[0] ? { editor: editors.map((x) => x.name).join("、"), editorEmail: editors[0].email } : {}),
+          ...(p.editors.size ? { editorId: [...p.editors][0] } : {}),
+          mentions: [],
+          mentionsOwner: false,
+          mentionsBot: false,
+          heardAt: new Date(p.first).toISOString(),
+          ...(byOwner === undefined ? {} : { byOwner }),
+        },
+        via: "doc",
+        bot: p.bot,
+      });
+    }
   }
   return out;
 }
+
+// ---- table fields: names, and values as a person reads them ---------------------------------------------
+
+/** A field of a multidimensional table: its name, type (Feishu's number) and the options of a choice field. */
+type FieldInfo = { name: string; type: number; options: Map<string, string> };
+const FIELD_TTL_MS = 3600_000;
+const fieldSchemas = new Map<string, { at: number; fields: Map<string, FieldInfo> | null }>();
+/** Tests: forget the field tables read so far. */
+export function clearFieldSchemasForTests() {
+  fieldSchemas.clear();
+}
+
+/**
+ * The fields of one table, read as the bot once and kept an hour (or until the table's fields change):
+ * record events name fields by id only. Unreadable (no permission, say): null, and the ids stay.
+ */
+async function tableFields(bot: string, appToken: string, tableId: string): Promise<Map<string, FieldInfo> | null> {
+  const key = `${appToken}:${tableId}`;
+  const c = fieldSchemas.get(key);
+  if (c && Date.now() - c.at < FIELD_TTL_MS) return c.fields;
+  let fields: Map<string, FieldInfo> | null = new Map();
+  try {
+    let pageToken: string | undefined;
+    for (let i = 0; i < 10; i++) {
+      const d = await botCall(bot, "GET", `/open-apis/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/fields`, { params: { page_size: 100, ...(pageToken ? { page_token: pageToken } : {}) } });
+      for (const f of (d.items ?? []) as { field_id?: string; field_name?: string; type?: number; property?: { options?: { id?: string; name?: string }[] } | null }[]) {
+        if (!f.field_id) continue;
+        const options = new Map((f.property?.options ?? []).filter((o) => o.id).map((o) => [o.id!, o.name ?? o.id!] as const));
+        fields.set(f.field_id, { name: f.field_name || f.field_id, type: Number(f.type) || 0, options });
+      }
+      if (!d.has_more || !d.page_token) break;
+      pageToken = d.page_token;
+    }
+  } catch {
+    fields = null;
+  }
+  fieldSchemas.set(key, { at: Date.now(), fields });
+  return fields;
+}
+
+/** Feishu's field types whose numbers are times: date, created time, modified time. */
+const TIME_TYPES = new Set([5, 1001, 1002]);
+/** Values often come as JSON in a string. */
+const parsed = (raw: unknown) => {
+  if (typeof raw !== "string") return raw;
+  if (!/^\s*[[{"]/.test(raw)) return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+};
+
+/**
+ * A cell as a person reads it: text, numbers, single and multiple choices (option names when the
+ * table's fields were read), people, dates, links, attachments. Anything else stays short JSON.
+ */
+export function cellText(cell: CellValue | undefined, f?: FieldInfo, timeZone?: string): string {
+  if (!cell) return "（空）";
+  if (cell.users?.length) return truncate(cell.users.join("、"), 200);
+  const v = parsed(cell.value);
+  if (v === null || v === undefined || v === "" || (Array.isArray(v) && !v.length)) return "（空）";
+  const show = (x: unknown): string => {
+    if (typeof x === "string") return f && TIME_TYPES.has(f.type) && /^\d{9,}$/.test(x) ? timeText(Number(x), timeZone) : (f?.options.get(x) ?? x);
+    if (typeof x === "number") return f && TIME_TYPES.has(f.type) ? timeText(x, timeZone) : String(x);
+    if (typeof x === "boolean") return x ? "是" : "否";
+    if (!x || typeof x !== "object") return JSON.stringify(x ?? "");
+    const o = x as Record<string, any>;
+    if (typeof o.link === "string") return o.text && o.text !== o.link ? `${o.text}（${o.link}）` : o.link;
+    if (typeof o.text === "string") return o.text;
+    if (typeof o.name === "string" && o.name) return o.name;
+    if (typeof o.en_name === "string" && o.en_name) return o.en_name;
+    const ids = o.link_record_ids ?? o.record_ids;
+    if (Array.isArray(ids)) return ids.join("、");
+    if (Array.isArray(o.users)) return o.users.map((u: any) => u?.name || u?.en_name || u?.id || "").filter(Boolean).join("、");
+    return JSON.stringify(o);
+  };
+  if (!Array.isArray(v)) return truncate(show(v), 200);
+  // Rich text comes as segments (text, @, link) read in a row; choices, people and files as a list.
+  const segments = v.every((x) => !!x && typeof x === "object" && typeof (x as any).type === "string" && ("text" in (x as any) || "link" in (x as any)));
+  return truncate(v.map(show).join(segments ? "" : "、"), 200);
+}
+
+function timeText(n: number, timeZone?: string) {
+  const ms = n < 1e12 ? n * 1000 : n;
+  try {
+    const s = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
+    return s.endsWith(" 00:00") ? s.slice(0, -6) : s;
+  } catch {
+    return new Date(ms).toISOString();
+  }
+}
+
+const ACTION_LABEL: Record<RecordChange["action"], string> = { added: "新增记录", edited: "修改记录", deleted: "删除记录" };
+/** What one record's change says: which fields went from what to what, by name where the table was read. */
+async function recordText(app: App, bot: string, token: string, r: RecordChange) {
+  const fields = r.tableId ? await tableFields(bot, token, r.tableId) : null;
+  const tz = app.config.timezone;
+  const same = (a?: CellValue, b?: CellValue) => JSON.stringify(a?.value) === JSON.stringify(b?.value) && JSON.stringify(a?.users) === JSON.stringify(b?.users);
+  const changes = [...new Set([...r.before.keys(), ...r.after.keys()])]
+    .filter((k) => !same(r.before.get(k), r.after.get(k)))
+    .map((k) => {
+      const f = fields?.get(k);
+      const name = f?.name ?? k;
+      if (r.action === "added") return `${name}：${cellText(r.after.get(k), f, tz)}`;
+      if (r.action === "deleted") return `${name}：${cellText(r.before.get(k), f, tz)}`;
+      return `${name}：${cellText(r.before.get(k), f, tz)} → ${cellText(r.after.get(k), f, tz)}`;
+    });
+  return `${ACTION_LABEL[r.action]} ${r.recordId}${r.tableId ? `（表 ${r.tableId}）` : ""}${changes.length ? `：${changes.join("；")}` : ""}`;
+}
+// ---- spreadsheets: rows compared with the last copy --------------------------------------------------------
+
+/**
+ * A spreadsheet's edit event only says someone edited it. Its worksheets are kept with the subscription
+ * (`snapshot`, JSON) as one line per row — “column: value；…” with the header row's names, blank rows
+ * kept empty so a line's place is its row — and compared line by line (lineDiff, as for documents).
+ * Big sheets keep their first rows only, within these limits; the rest is not compared.
+ */
+const SHEET_ROWS_MAX = 2000;
+const SHEETS_MAX = 20;
+const ROW_CHARS_MAX = 1000;
+type SheetCopy = { title: string; header: string; rows: string[]; more?: boolean };
+type SheetsCopy = { sheets: Record<string, SheetCopy> };
+
+/** One data row as text: the header's names for its cells, empty cells left out; a blank row is "". */
+export function rowText(header: string[], row: string[]) {
+  const width = Math.max(header.length, row.length);
+  const parts: string[] = [];
+  for (let i = 0; i < width; i++) {
+    const v = (row[i] ?? "").replace(/\s+/g, " ").trim();
+    if (!v) continue;
+    const h = (header[i] ?? "").replace(/\s+/g, " ").trim() || `第 ${i + 1} 列`;
+    parts.push(`${h}：${v}`);
+  }
+  return truncate(parts.join("；"), ROW_CHARS_MAX);
+}
+
+/** All worksheets of a spreadsheet as rows, read with the owner's lark-cli like a document is. */
+async function readSheets(token: string): Promise<SheetsCopy> {
+  const { larkCli } = await import("./lark-cli.ts");
+  const { csvRows, sheetCsv } = await import("./lark-docs.ts");
+  const v = await larkCli(["api", "GET", `/open-apis/sheets/v3/spreadsheets/${encodeURIComponent(token)}/sheets/query`, "--as", "user"], 30_000);
+  const list = ((v?.data ?? v)?.sheets ?? []) as { sheet_id?: string; title?: string; resource_type?: string }[];
+  const out: SheetsCopy = { sheets: {} };
+  let budget = SNAPSHOT_MAX;
+  for (const s of list.filter((x) => x.sheet_id && (!x.resource_type || x.resource_type === "sheet")).slice(0, SHEETS_MAX)) {
+    const all = csvRows(await sheetCsv(token, s.sheet_id!), true);
+    const header = all[0] ?? [];
+    const rows: string[] = [];
+    let more = all.length - 1 > SHEET_ROWS_MAX;
+    for (const r of all.slice(1, SHEET_ROWS_MAX + 1)) {
+      const line = rowText(header, r);
+      if (budget - line.length < 0) {
+        more = true;
+        break;
+      }
+      budget -= line.length + 4;
+      rows.push(line);
+    }
+    out.sheets[s.sheet_id!] = { title: s.title ?? s.sheet_id!, header: header.join("	"), rows, ...(more ? { more } : {}) };
+  }
+  return out;
+}
+
+/** Keep a spreadsheet's rows as the copy the next edit is compared with. */
+async function keepSheetCopy(app: App, token: string) {
+  const copy = await readSheets(token);
+  run(app.db, "update lark_doc_subscriptions set snapshot = ? where file_token = ?", JSON.stringify(copy), token);
+  return copy;
+}
+
+/**
+ * The rows that differ from the last copy: a line the last copy did not have. One whose row held other
+ * text that is gone now is `edited`; otherwise (inserted, or moved into a blank row) `added`.
+ */
+export function rowChanges(before: string[], after: string[]) {
+  const { added, removed } = lineDiff(before.join("\n"), after.join("\n"));
+  const count = (list: string[]) => list.reduce((m, l) => m.set(l, (m.get(l) ?? 0) + 1), new Map<string, number>());
+  const fresh = count(added);
+  const gone = count(removed);
+  const out: { row: number; text: string; action: "added" | "edited" }[] = [];
+  after.forEach((line, i) => {
+    const t = line.trim();
+    if (!t || !(fresh.get(t) ?? 0)) return;
+    fresh.set(t, fresh.get(t)! - 1);
+    const was = before[i]?.trim();
+    const edited = !!was && was !== t && (gone.get(was) ?? 0) > 0;
+    if (edited) gone.set(was, gone.get(was)! - 1);
+    // Row 1 is the header: data row i is row i + 2.
+    out.push({ row: i + 2, text: t, action: edited ? "edited" : "added" });
+  });
+  return out;
+}
+
 function fieldLines(data: any): string[] {
   return ((data.action_list ?? []) as { action?: string; field_id?: string; before_value?: { name?: string }; after_value?: { name?: string } }[]).map((a) => {
     const label = a.action === "field_added" ? "新增字段" : a.action === "field_deleted" ? "删除字段" : "修改字段";
@@ -342,7 +621,15 @@ async function personOf(app: App, bot: string, openId: string): Promise<{ name: 
   try {
     const d = await botCall(bot, "GET", `/open-apis/contact/v3/users/${encodeURIComponent(openId)}`, { params: { user_id_type: "open_id" } });
     const u = d.user ?? {};
-    if (u.name) return { name: String(u.name), email: u.enterprise_email || u.email || null };
+    if (u.name) {
+      const email = u.enterprise_email || u.email || null;
+      // Kept as someone the main bot knows by this id, so an agent can @ the editor (lark_send mentions).
+      if (bot === "main") {
+        const { rememberPerson } = await import("./lark-people.ts");
+        rememberPerson(app, { name: String(u.name), email, botOpenId: openId, userId: u.user_id ? String(u.user_id) : null });
+      }
+      return { name: String(u.name), email };
+    }
   } catch {
     /* The name stays unknown; the id stands in. */
   }
@@ -409,16 +696,75 @@ function locationOf(meta: string) {
   return m.wikiPath ?? m.wikiSpaceName ?? undefined;
 }
 
-/** A burst of changes to one document is over: read what changed and hand it to the rules. */
-async function flush(app: App, token: string, p: Pending) {
+/**
+ * A burst of changes to one document is over: read what changed and hand it to the rules. A
+ * multidimensional table's records go one event each (`doc:<token>:<table>:<record>:<action>`, an edit
+ * also keyed by its revision or burst so a later edit fires again; an added record fires once), field
+ * changes as one more; any other document is one event for the burst.
+ */
+async function flush(app: App, token: string, p: Pending): Promise<RuleEvent[]> {
   const sub = one<Sub>(app.db, "select * from lark_doc_subscriptions where file_token = ?", token);
   const source = sourceFor(app, token, sub);
-  const kind = p.records.length ? "record" : p.fields.length ? "field" : "edit";
+  const owner = await whoIsOwner(app);
+  const ownerId = (id: string) => owner.ids.has(id) || resolveIdentity(app, "lark", id) === OWNER;
+  const { dispatchRuleEvent } = await import("../rules/engine.ts");
+  if (p.records.size || p.fields.length) {
+    const doc: NonNullable<RuleEvent["doc"]> = { token, type: p.type, title: source?.title ?? sub?.title ?? "", url: sub?.link || (source ? json<{ url?: string }>(source.meta, {}).url ?? source.uri : ""), ...(source ? { location: locationOf(source.meta), space: source.space_id, sourceId: source.id } : sub?.space_id ? { space: sub.space_id } : {}) };
+    const events: RuleEvent[] = [];
+    for (const r of p.records.values()) {
+      const editors = await Promise.all([...r.editors].map((id) => personOf(app, p.bot, id)));
+      events.push({
+        key: `doc:${token}:${r.tableId}:${r.recordId}:${r.action}${r.action === "edited" ? `:${r.revision ?? r.heard}` : ""}`,
+        kind: "doc",
+        at: now(),
+        doc,
+        change: {
+          kind: "record",
+          text: truncate(await recordText(app, p.bot, token, r), TEXT_MAX),
+          recordId: r.recordId,
+          tableId: r.tableId,
+          action: r.action,
+          ...(editors[0] ? { editor: editors[0].name, editorEmail: editors[0].email } : {}),
+          mentions: [],
+          mentionsOwner: false,
+          mentionsBot: false,
+          heardAt: new Date(r.heard).toISOString(),
+          ...(r.editors.size ? { editorId: [...r.editors][0], byOwner: [...r.editors].every(ownerId) } : {}),
+        },
+        via: "doc",
+        bot: p.bot,
+      });
+    }
+    if (p.fields.length) {
+      const editors = await Promise.all([...p.editors].map((id) => personOf(app, p.bot, id)));
+      events.push({
+        key: `doc:${token}:fields:${p.first}`,
+        kind: "doc",
+        at: now(),
+        doc,
+        change: { kind: "field", text: truncate(p.fields.join("\n"), TEXT_MAX), ...(editors[0] ? { editor: editors.map((x) => x.name).join("、"), editorEmail: editors[0].email } : {}), mentions: [], mentionsOwner: false, mentionsBot: false, heardAt: new Date(p.first).toISOString(), ...(p.editors.size ? { editorId: [...p.editors][0], byOwner: [...p.editors].every(ownerId) } : {}) },
+        via: "doc",
+        bot: p.bot,
+      });
+    }
+    for (const e of events) await dispatchRuleEvent(app, e);
+    return events;
+  }
+  if (p.type === "sheet" && sub) {
+    const rows = await sheetRowEvents(app, token, p, sub, source, ownerId).catch((err) => {
+      console.warn(`[omem] 读表格内容失败 ${sub.title || token}：${(err as Error).message}`);
+      return null;
+    });
+    if (rows) {
+      for (const e of rows) await dispatchRuleEvent(app, e);
+      return rows;
+    }
+  }
   let title = source?.title ?? sub?.title ?? "";
   const url = sub?.link || (source ? json<{ url?: string }>(source.meta, {}).url ?? source.uri : "");
   let added: string[] = [];
   let removed: string[] = [];
-  if (kind === "edit" && ["docx", "doc", "wiki"].includes(p.type)) {
+  if (["docx", "doc", "wiki"].includes(p.type)) {
     if (source) {
       // The captured copy is read again (what the periodic check would have done) and compared.
       const before = source.text;
@@ -441,35 +787,36 @@ async function flush(app: App, token: string, p: Pending) {
     }
   }
   const editors = [...(await Promise.all([...p.editors].map((id) => personOf(app, p.bot, id)))), ...(p.names ?? []).map((name) => ({ name, email: null }))];
-  const owner = await whoIsOwner(app);
   const bots = botNames(app);
   const tags = mentionsIn(added.join("\n"));
   const mentionNames = await Promise.all(tags.map(async (t) => t.name ?? (t.id ? (await personOf(app, p.bot, t.id)).name : "")));
   const text =
-    kind === "record" ? p.records.join("\n") :
-    kind === "field" ? p.fields.join("\n") :
     [added.length ? `新增：\n${added.join("\n")}` : "", removed.length ? `删掉：\n${removed.join("\n")}` : ""].filter(Boolean).join("\n\n") ||
-    (source || sub?.snapshot ? "（格式或图片等改动，文字没有变化）" : sub?.link && ["docx", "doc"].includes(p.type) ? "（内容有改动；之前没有这篇的内容，从下一次改动起能说出改了什么）" : "（内容有改动；这篇没有存在 omem 里，读不到具体改了什么）");
+    // Spreadsheets and tables are not read here, captured or not: only that they changed is known.
+    (["sheet", "bitable"].includes(p.type) ? "（表格有改动，不比对单元格内容）" :
+    source || sub?.snapshot ? "（格式或图片等改动，文字没有变化）" : sub?.link && ["docx", "doc"].includes(p.type) ? "（内容有改动；之前没有这篇的内容，从下一次改动起能说出改了什么）" : "（内容有改动；这篇没有存在 omem 里，读不到具体改了什么）");
   const e: RuleEvent = {
     key: `doc:${token}:${Date.now()}`,
     kind: "doc",
     at: now(),
     doc: { token, type: p.type, title, url, ...(source ? { location: locationOf(source.meta), space: source.space_id, sourceId: source.id } : sub?.space_id ? { space: sub.space_id } : {}) },
     change: {
-      kind,
+      kind: "edit",
       text: truncate(p.polled ? `${text}\n（定时检查发现的改动：机器人订阅不了这篇）` : text, TEXT_MAX),
       ...(added.length ? { added: truncate(added.join("\n"), TEXT_MAX) } : {}),
       ...(editors[0] ? { editor: editors.map((x) => x.name).join("、"), editorEmail: editors[0].email } : {}),
       mentions: [...new Set(mentionNames.filter(Boolean))],
       mentionsOwner: tags.some((t) => (t.id && owner.ids.has(t.id)) || (!!t.name && t.name === owner.name)),
       mentionsBot: tags.some((t) => (t.id && bots.has(t.id)) || (!!t.name && bots.has(t.name))),
+      heardAt: new Date(p.first).toISOString(),
+      ...(p.editors.size ? { editorId: [...p.editors][0] } : {}),
+      ...(p.editors.size || p.polledIds?.length ? { byOwner: [...p.editors, ...(p.polledIds ?? [])].every(ownerId) } : {}),
     },
     via: "doc",
     bot: p.bot,
   };
-  const { dispatchRuleEvent } = await import("../rules/engine.ts");
   await dispatchRuleEvent(app, e);
-  return e;
+  return [e];
 }
 
 /**
@@ -525,7 +872,7 @@ async function onComment(app: App, bot: string, data: any) {
     change: {
       kind: "comment",
       text: truncate(text.trim(), TEXT_MAX),
-      ...(author ? { editor: author.name, editorEmail: author.email } : {}),
+      ...(author ? { editor: author.name, editorEmail: author.email, editorId: from, byOwner: owner.ids.has(from) || resolveIdentity(app, "lark", from) === OWNER } : {}),
       mentions: [...new Set(names)],
       mentionsOwner: mentioned.some((id) => owner.ids.has(id)),
       mentionsBot: !!data.is_mentioned,

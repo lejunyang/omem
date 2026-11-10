@@ -6,6 +6,8 @@ import { callTool, issueToolToken, toolContextForToken } from "../src/agents/too
 import { resetLarkAuthForTests } from "../src/channels/lark-auth.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { clearRiskCache } from "../src/channels/lark-cli-tools.ts";
+import { all } from "../src/core/db.ts";
+import { ownWriteOf } from "../src/rules/own-writes.ts";
 import { testApp } from "./helpers.ts";
 
 const ORIGIN = "https://tenant.larkoffice.com";
@@ -20,6 +22,7 @@ const RISK: Record<string, string> = {
   "drive +add-comment": "write",
   "drive +upload": "write",
   "skills read": "read",
+  "base +record-upsert": "write",
 };
 
 /** A fake lark-cli: --help gives each command's risk label, sheets are the owner's (MINE) or someone else's. */
@@ -39,16 +42,17 @@ function fakeCli() {
     }
     if (args[0] === "sheets" && args[1] === "+cells-get") return { ok: true, data: { values: [["A", 1]] } };
     if (args[0] === "sheets" || args[0] === "task" || args[0] === "drive") return { ok: true, data: { updated: true } };
+    if (args[0] === "base") return { ok: true, data: { record: { record_id: "recMadeNew1" } } };
     throw new Error(`unexpected ${args.join(" ")}`);
   });
   return calls;
 }
 
-function task() {
+function task(input: Record<string, unknown> = {}) {
   const app = testApp();
   app.config.approvals.waitSeconds = 0;
   const thread = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
-  const r = createRun(app, { kind: "ask", spaceId: "personal", title: "改表格", input: { conversationId: thread.id } });
+  const r = createRun(app, { kind: "ask", spaceId: "personal", title: "改表格", input: { conversationId: thread.id, ...input } });
   const ctx = { ...toolContextForToken(app, issueToolToken({ runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: null }))!, runId: r.id };
   return { app, ctx };
 }
@@ -107,5 +111,25 @@ describe("lark-cli commands run as the owner", () => {
     expect((await callTool(ctx, "lark_write", { command: ["im", "+messages-send", "--chat-id", "oc_1"], summary: "发消息" })).text).toContain("不能以本人身份发");
     expect((await callTool(ctx, "lark_write", { command: ["drive", "+upload", "--file", "a.txt"], summary: "上传" })).text).toContain("只能写评论");
     expect((await callTool(ctx, "lark_write", { command: ["sheets", "+cells-set", "--url", sheet, "--yes"], target: sheet, summary: "改" })).text).toContain("不要传 --yes");
+  });
+
+  it("notes what a rule's run wrote, so the change it causes does not fire that rule again", async () => {
+    const { app, ctx } = task({ rule: { id: "rule_table", name: "表格新行" } });
+    fakeCli();
+    const base = `${ORIGIN}/base/MINE`;
+    const out = await callTool(ctx, "lark_write", { command: ["base", "+record-upsert", "--base-token", "MINE", "--table-id", "tbl1", "--record-id", "recRowOne1", "--json", "{}"], target: base, summary: "把查询结果写回这一行。" });
+    expect(out.text).toContain("已执行");
+    const change = (recordId: string, byOwner = true) => ({ key: "k", kind: "doc" as const, at: new Date().toISOString(), via: "doc" as const, doc: { token: "MINE", type: "bitable", title: "", url: base }, change: { kind: "record" as const, text: "", recordId, mentions: [], mentionsOwner: false, mentionsBot: false, heardAt: new Date().toISOString(), byOwner } });
+    // The record it named and the one it made (from the output) are its own; another rule, another record or another editor are not.
+    expect(ownWriteOf(app, "rule_table", change("recRowOne1"))?.runId).toBe(ctx.runId);
+    expect(ownWriteOf(app, "rule_table", change("recMadeNew1"))).toBeTruthy();
+    expect(ownWriteOf(app, "rule_other", change("recRowOne1"))).toBeUndefined();
+    expect(ownWriteOf(app, "rule_table", change("recSomeoneElse"))).toBeUndefined();
+    expect(ownWriteOf(app, "rule_table", change("recRowOne1", false))).toBeUndefined();
+    // A run no rule started notes nothing.
+    const plain = task();
+    fakeCli();
+    await callTool(plain.ctx, "lark_write", { command: ["base", "+record-upsert", "--base-token", "MINE", "--table-id", "tbl1", "--json", "{}"], target: base, summary: "改一行。" });
+    expect(all(plain.app.db, "select 1 from kv where key like 'rule_own_writes:%'")).toHaveLength(0);
   });
 });

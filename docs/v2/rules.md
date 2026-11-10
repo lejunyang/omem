@@ -36,7 +36,9 @@
 ] }
 ```
 
-字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于在会人数和会邀人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。文档变化规则只用文档和变化的字段：`doc.title`、`doc.type`（docx / sheet / bitable）、`doc.url`、`doc.location`（知识库和目录）、`doc.space`、`change.kind`（edit / comment / record / field）、`change.text`、`change.added`、`change.editor`、`change.editorEmail`、`change.mentions`、`change.mentionsOwner`、`change.mentionsBot`。
+字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于在会人数和会邀人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。文档变化规则只用文档和变化的字段：`doc.title`、`doc.type`（docx / sheet / bitable）、`doc.url`、`doc.location`（知识库和目录）、`doc.space`、`change.kind`（edit / comment / record / field）、`change.text`、`change.added`、`change.sheet` / `change.row`（电子表格的工作表名和行号）、`change.recordId` / `change.tableId`（多维表格记录）、`change.action`（added / edited / deleted）、`change.editor`、`change.editorEmail`、`change.editorId`（修改人在机器人这边的 open_id，可用于 @）、`change.byOwner`（修改人只有本人；不知道修改人时不成立）、`change.mentions`、`change.mentionsOwner`、`change.mentionsBot`。
+
+`chat.id` 的值写 `current`（`in` 列表里也行）表示“这个群”：助理在飞书会话里用 `save_rule` 保存时换成这个会话的群 id，不在飞书会话里保存会被拒绝。
 
 “固化成代码”就是这份 JSON：宿主直接求值，不执行模型写的程序。模型从规则原话生成条件，本人在页面上看到的是一句句“群名包含 报警”，可以直接改；生成后先在最近的消息上试一遍，看命中了哪些。
 
@@ -69,11 +71,14 @@
 
 - **订阅**：机器人用自己的应用身份订阅一篇文档（`POST /open-apis/drive/v1/files/:token/subscribe?file_type=…`），知识库页面先换成它下面的文档（`wiki_nodes` 或读一次节点）。订阅结果存在 `lark_doc_subscriptions`。规则保存后的权限检查会订阅列出的文档，同时为 omem 没采集过的文档存一份当前的文字（`snapshot`），第一次改动就能说出改了什么。
 - **事件**：`drive.file.edit_v1`（编辑，只说谁改了）、`drive.file.bitable_record_changed_v1`（多维表格记录，带前后值）、`drive.file.bitable_field_changed_v1`（字段）、`drive.notice.comment_add_v1`（评论或回复，机器人被 @ 或被回复时收到，不用订阅）。机器人的应用要在“事件与回调”里订阅这几个，长连接接收。
-- **一次改动**：连续编辑合成一次，停下一分半钟（最多十分钟）后处理。采集过的文档按平常的导入重新读一遍并交给整理，和读之前的文字逐行比较；只有规则盯着的文档用 `snapshot` 比较。变化内容写“新增 / 删掉”的行，修改人按机器人看到的 open_id 认（omem 用户、见过的人，或通讯录）。新增的行里的 @（lark-cli 写成 `<mention-user …>`）算 `change.mentions`，是本人或机器人时 `mentionsOwner` / `mentionsBot` 为真。电子表格的编辑只知道有人改了。
+- **一次改动**：连续编辑合成一次，停下一分半钟（最多十分钟）后处理。采集过的文档按平常的导入重新读一遍并交给整理，和读之前的文字逐行比较；只有规则盯着的文档用 `snapshot` 比较。变化内容写“新增 / 删掉”的行，修改人按机器人看到的 open_id 认（omem 用户、见过的人，或通讯录）。新增的行里的 @（lark-cli 写成 `<mention-user …>`）算 `change.mentions`，是本人或机器人时 `mentionsOwner` / `mentionsBot` 为真。
+- **电子表格按行**：编辑事件只说有人改了。订阅时（规则保存后的检查）用本人的 lark-cli 只读读一遍各工作表（`sheets/v3/…/sheets/query` 列工作表，`sheets +csv-get` 读内容，和读文档同一身份），每行写成“列名：值；…”（表头是第 1 行，空单元格省略，空行保留位置），存进订阅的 `snapshot`（JSON）。之后每次改动重新读、逐行比较（同文档的 `lineDiff`），每个新增或改动的行一个事件：`change.text`（“新增 / 改动「工作表」第 N 行：…”）、`change.added`（这一行）、`change.sheet`、`change.row`、`change.action`（这一行原来有别的内容、且那内容已不在表里算 edited，否则 added）。事件键 `doc:<token>:<工作表 id>:<行内容的哈希>`：同样内容的行只触发一次。第一次没有存过的只存不触发；表头变了的工作表重新存、这次不触发；没有任何行变化（只改格式）不触发。每个工作表最多比对前 2000 行、总共约 40 万字，超出的在事件里注明。修改人用这一批事件的操作人。
+- **多维表格按记录**：记录事件按记录拆开，每条一个事件（`change.recordId`、`change.tableId`、`change.action`，`change.editor` 是这条记录的修改人），键 `doc:<token>:<表>:<记录>:<动作>`，修改再带上修订号（没有就用这一批的时间），所以同一条记录新增只触发一次、之后每次修改都能再触发。字段 id 换成字段名：第一次用到某张表时以机器人身份读一次它的字段（缓存一小时，字段变化事件来时作废），读不到就保留 id；文本、数字、单选多选（选项名）、人员、日期、链接、附件写成可读的文字，其余保留截短的 JSON。
+- **规则自己的回写**：规则触发的运行用 `lark_write` 写成功后，宿主记下它写了哪个文档（和命令、输出里出现的记录 id），存 kv `rule_own_writes:<token>`，五分钟内这篇的改动若只由本人做出（`change.byOwner`），就不再触发**这条**规则（触发记录里写“由规则自己的回写引起，已跳过”，不计命中）；别的规则照常。和条件 `change.byOwner is false` 互补：后者把本人的所有改动都排除掉。
 - **只发给管理者**：飞书只把编辑和多维表格的变化发给文档的管理者。机器人不是管理者时订阅被拒（1069603），权限检查列出“在文档右上角「…」→「添加文档应用」把机器人加进来并给可管理权限”。
-- **订阅不了时定时查**（`pollRuleDocs`，每分钟看一次哪些到期）：启用的规则列出的文档里，订阅被拒的、或一个月里没收到过任何文档事件时的全部，每 `trigger.pollMinutes`（默认 30，5 到 1440）分钟用本人的 lark-cli 登录只读查一次最后修改时间（`drive metas batch_query`，和每天的文档检查同一个接口），第一次只记下时间；之后改过就和事件一样处理：采集过的重新导入并逐行比较，只被规则盯着的和 `snapshot` 比较（规则保存后的检查不管订阅成没成都会存一份），变化内容末尾注明“定时检查发现的改动”。修改人是本人 lark-cli 应用里的 open_id，采集里见过的才有名字。电子表格、多维表格查到改动时只知道改了。
+- **订阅不了时定时查**（`pollRuleDocs`，每分钟看一次哪些到期）：启用的规则列出的文档里，订阅被拒的、或一个月里没收到过任何文档事件时的全部，每 `trigger.pollMinutes`（默认 30，5 到 1440）分钟用本人的 lark-cli 登录只读查一次最后修改时间（`drive metas batch_query`，和每天的文档检查同一个接口），第一次只记下时间；之后改过就和事件一样处理：采集过的重新导入并逐行比较，只被规则盯着的和 `snapshot` 比较（规则保存后的检查不管订阅成没成都会存一份），变化内容末尾注明“定时检查发现的改动”。修改人是本人 lark-cli 应用里的 open_id，采集里见过的才有名字。电子表格同样逐行比较（修改人是本人 lark-cli 应用里的 id，用来判断 change.byOwner）；多维表格查到改动时只知道改了。
 - **代替定时检查**：每天检查飞书文档更新前，机器人先为一批（50 篇）已采集的文档订阅，没试过的优先，被拒的三天后再试；刚把机器人加为管理者的，用远程命令 `lark-doc-subscribe`（`link` 订阅一篇，`retryFailed` 重试被拒的）或建一条列出它的文档变化规则，马上订阅。订阅成功、且最近一个月收到过文档事件（说明应用确实订阅了这些事件）的文档，定时检查不再看它，改动时由事件触发重新读。
-- **动作**：没有群，只能交给 Agent（只告诉我）、通知本人、延时、模型判断、执行脚本；不能等待回应或按讨论跳过。不列文档时规则看机器人订阅了的所有文档（每天订阅的一批和其他规则列出的）。
+- **动作**：没有触发的群，只能交给 Agent、通知本人、延时、模型判断、执行脚本；不能等待回应或按讨论跳过。交给 Agent 时和定时规则一样，可以在规则上选“发到”一个会话（`conversationId`），`reply` 为 auto / draft 时它只能往那个群发（机器人身份，不开话题、不静默排查）；没选就只能“只告诉我”。它可以先读这个群的聊天记录找到对应的消息，用 `lark_send` 的 `reply_to`（`in_thread`）回在下面，`mentions` 填 `change.editorId` @ 修改人；没有指定执行空间时，它在“发到”的群所在的空间里查资料。不列文档时规则看机器人订阅了的所有文档（每天订阅的一批和其他规则列出的）。
 - **权限**：应用身份 `docs:event:subscribe`、`docs:event.document_edited:read`、`docs:document.comment:read`、`base:record:read`、`base:field:read`、`drive:drive.metadata:readonly`（订阅接口还要求用户身份也开通 `docs:event:subscribe`）。设置 → 渠道 → 机器人权限与事件检查里有一行“文档变化规则”，扫码更新应用时一并申请。
 - **改动和整理**：采集过的文档被重新读以后照常交给整理（一次 AI 运行），和每天的检查一样；只要读到最新内容、不要整理的，把这篇的关注程度设为“仅检索”（`scheduleIngest` 跳过仅检索和忽略的原件），或关掉空间的自动整理。规则本身只按它的动作做事，不带额外的 AI 运行。
 - **还没有的**：别人在评论里只 @ 本人（没有 @ 机器人）时，事件发给本人的身份而不是机器人，omem 现在收不到；要收得以本人身份订阅用户云文档事件，不在本期。
@@ -176,7 +181,7 @@
 
 ## 所属空间与主助手
 
-任务规则保存 `spaceId`（所属空间；旧规则未设置时仍是全局）和可选 `conversationId`（结果会话）。主助手代建时从创建运行保存这两项，定时触发时不重新猜。消息规则只匹配所属空间的会话；网页列表包含当前空间与全局规则。动作的 `spec` 默认 `assistant`，不再自动挑第一个或最接近的档案。执行空间优先用动作的 `space`，其次档案固定空间、规则所属空间、触发会话空间。
+任务规则保存 `spaceId`（所属空间；没有设的是全局规则）和可选 `conversationId`（结果会话）。规则页列表每条写着所属空间或“全局”；全局规则在每个空间的列表里都会列出（`GET /api/rules?space=` 返回这个空间和全局的），不是重复。所有类型的规则都能在编辑页“所属空间”里改，走同一个保存接口。主助手代建时从创建运行保存这两项，定时触发时不重新猜。消息规则只匹配所属空间的会话；网页列表包含当前空间与全局规则。动作的 `spec` 默认 `assistant`，不再自动挑第一个或最接近的档案。执行空间优先用动作的 `space`，其次档案固定空间、规则所属空间、触发会话空间。
 
 定时任务直接回复或先给本人看都需保存结果会话；话题 ID 随会话保留。未设置结果会话请选择“只告诉我”。“先给我看”只对飞书会话有意义：Agent 用 `lark_send` 写的话变成给本人的确认卡片，确认后发到那个群（会话是话题时发在话题里），结论另外通知本人；网页会话只有本人看，选“先给我看”按直接回复处理，界面上只给飞书会话显示这一项。主助手的后台规则运行限定空间与发送范围，不交办编码、不创建规则；它可以用 `run_agent` 把这次触发交给某个档案（比如先看一眼再交给排查 Agent）：被交办的运行沿用规则的群、回复方式、草稿、失败去向和是否隐藏思考气泡，不能再交办或请教别的 Agent，静默排查时它开的话题里的后续回复仍回到主助手。自定义档案仍按自身权限执行。
 
