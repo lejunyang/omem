@@ -12,7 +12,13 @@ import { findPeer } from "./peers.ts";
  * remote session's viewer and its WebSocket); `/api/peer/acp` is a
  * device's agent used from here (peer-acp.ts).
  */
-export const tunneled = (path: string) => /^\/ide(\/|\?|$)/.test(path) || /^\/remote\//.test(path) || /^\/api\/ide\/open(\?|$)/.test(path) || /^\/api\/peer\/acp(\?|$)/.test(path) || PREVIEW_TCP.test(path);
+export const tunneled = (path: string) => /^\/ide(\/|\?|$)/.test(path) || /^\/remote\//.test(path) || /^\/api\/ide\/open(\?|$)/.test(path) || /^\/api\/peer\/acp(\?|$)/.test(path) || PREVIEW_TCP.test(path) || PLUGIN_STREAM.test(path);
+
+/**
+ * A plugin page's stream (a WebSocket the shell opens, docs/v2/plugins.md). Middle nodes pass any
+ * upgrade of their owner on, so only this end and the device at the end need to know it.
+ */
+export const PLUGIN_STREAM = /^\/api\/plugins\/[a-z][a-z0-9]{1,23}\/streams\/[a-z][a-z0-9-]{0,23}(\?|$)/;
 
 /** A preview's port as a raw byte stream (docs/v2/preview.md): `/api/previews/<id>/tcp?port=<n>`. */
 export const PREVIEW_TCP = /^\/api\/previews\/[^/?]+\/tcp(\?|$)/;

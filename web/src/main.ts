@@ -24,7 +24,6 @@ const routes: RouteRecordRaw[] = [
   view("/sources/kb", () => import("./views/KnowledgeBases.vue"), "/sources/kb"),
   view("/sources/:id?", () => import("./views/Sources.vue"), "/sources"),
   view("/learn", () => import("./views/Learn.vue")),
-  view("/speaking", () => import("./views/Speaking.vue")),
   view("/plugin/:id", () => import("./views/Plugin.vue"), "/plugin"),
   view("/runs/:id?", () => import("./views/Runs.vue"), "/runs"),
   view("/remote", () => import("./views/Remote.vue")),

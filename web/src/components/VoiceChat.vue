@@ -5,11 +5,12 @@ import { toast } from "../store";
 import Icon from "./Icon.vue";
 
 /**
- * A live voice conversation (lib/voice.ts): starts when shown, shows both sides as they speak, and
- * is saved when it ends (a practice then gets its review). The page decides what comes next.
+ * A live voice conversation with the assistant (lib/voice.ts): starts when shown, shows both sides as
+ * they speak, and is saved when it ends. The page decides what comes next. (Speaking practice is in
+ * the English plugin, which talks through the plugin page's shell, views/Plugin.vue.)
  */
-const props = defineProps<{ purpose: "chat" | "practice"; scenario?: string; space?: string }>();
-const emit = defineEmits<{ ended: [saved: { id: string; reviewRunId: string | null } | null, turns: VoiceTurn[]] }>();
+const props = defineProps<{ space?: string }>();
+const emit = defineEmits<{ ended: [saved: { id: string } | null, turns: VoiceTurn[]] }>();
 
 const turns = ref<VoiceTurn[]>([]);
 const state = ref<VoiceState>("connecting");
@@ -25,8 +26,6 @@ const TOOL_LABEL: Record<string, string> = { search: "检索原件", read_source
 onMounted(async () => {
   try {
     handle = await startVoice({
-      purpose: props.purpose,
-      scenario: props.scenario,
       space: props.space,
       onTurns: (t) => {
         turns.value = t;
@@ -49,10 +48,10 @@ async function end() {
   finished = true;
   handle?.stop();
   const said = turns.value.filter((t) => t.text.trim());
-  let saved: { id: string; reviewRunId: string | null } | null = null;
+  let saved: { id: string } | null = null;
   if (handle && said.length) {
     try {
-      saved = await saveVoice(handle, { purpose: props.purpose, scenario: props.scenario, space: props.space });
+      saved = await saveVoice(handle);
     } catch (e) {
       toast(`对话没有保存：${(e as Error).message}`, "error");
     }
@@ -79,9 +78,9 @@ defineExpose({ end });
       <button class="btn sm" :class="state === 'failed' ? 'ghost' : 'primary'" @click="end"><Icon name="stop" :size="13" />{{ state === "failed" ? "关闭" : "结束" }}</button>
     </div>
     <div ref="box" class="vturns" aria-live="polite">
-      <p v-if="!turns.length && state === 'live'" class="muted small">{{ purpose === "practice" ? "开口说吧。对方会先打招呼；不会说时可以直接用中文问。" : "直接说话就行，说完停一下等它回答。" }}</p>
+      <p v-if="!turns.length && state === 'live'" class="muted small">直接说话就行，说完停一下等它回答。</p>
       <div v-for="(t, i) in turns" :key="i" class="vturn" :class="t.role">
-        <span class="who small muted">{{ t.role === "user" ? "你" : purpose === "practice" ? "对方" : "助理" }}</span>
+        <span class="who small muted">{{ t.role === "user" ? "你" : "助理" }}</span>
         <span class="said" :class="{ partial: !t.final }">{{ t.text }}</span>
       </div>
     </div>

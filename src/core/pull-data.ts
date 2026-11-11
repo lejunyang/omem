@@ -73,7 +73,7 @@ export const pullTables: Table[] = [
   { name: "req_status", key: ["id"], newer: "at" },
   // A task-driven delegation's checkpoints (agents/code-tasks.ts): numbered within the delegation, never rewritten.
   { name: "code_checkpoints", key: ["work_id", "seq"] },
-  // Voice conversations and speaking practices (core/voice.ts): written once when the call ends.
+  // Voice conversations of the question page (core/voice.ts): written once when the call ends.
   { name: "voice_sessions", key: ["id"], newer: "started_at" },
   // Designs (src/designs): the latest version wins; versions are written once.
   { name: "designs", key: ["id"], newer: "updated_at" },

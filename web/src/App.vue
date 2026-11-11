@@ -48,7 +48,7 @@ const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; memb
 async function addPluginPages() {
   const plugins = await get<{ id: string; icon: string; page: { title: string } | null }[]>("/api/plugins").catch(() => []);
   const rest = nav.value.filter((n) => !n.to.startsWith("/plugin/"));
-  const at = rest.findIndex((n) => n.to === "/speaking") + 1 || rest.findIndex((n) => n.to === "/learn") + 1;
+  const at = rest.findIndex((n) => n.to === "/learn") + 1;
   rest.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon, member: true })));
   nav.value = rest;
 }
@@ -57,16 +57,6 @@ async function addRemotePage() {
   if (!owner.value && !state.me?.perms.includes("desktop.control")) return;
   const r = await get<{ available: boolean }>("/api/remote").catch(() => ({ available: false }));
   if (r.available && !nav.value.some((n) => n.to === "/remote")) nav.value = [...nav.value, { to: "/remote", label: "远程", icon: "monitor", perm: "desktop.control" }];
-}
-// Speaking practice (views/Speaking.vue) once a voice model is configured (settings → AI → 语音).
-async function addSpeakingPage() {
-  const r = await get<{ ready: boolean }>("/api/voice").catch(() => ({ ready: false }));
-  const has = nav.value.some((n) => n.to === "/speaking");
-  if (r.ready && !has) {
-    const rest = [...nav.value];
-    rest.splice(rest.findIndex((n) => n.to === "/learn") + 1, 0, { to: "/speaking", label: "口语", icon: "mic", member: true });
-    nav.value = rest;
-  } else if (!r.ready && has) nav.value = nav.value.filter((n) => n.to !== "/speaking");
 }
 // Settings → 插件 changed an icon.
 watch(() => state.pluginsChanged, addPluginPages);
@@ -106,7 +96,6 @@ onMounted(async () => {
     await refreshUnread();
     await addPluginPages();
     void addRemotePage();
-    void addSpeakingPage();
   } catch (e) {
     // Going to the login page: nothing failed.
     if (!(e as { login?: boolean }).login) loadError.value = (e as Error).message;

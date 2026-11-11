@@ -10,10 +10,12 @@ import type { PluginStore } from "../../src/plugins/types.ts";
  */
 export const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"] as const;
 export const SKILLS = ["vocab", "grammar", "listening", "translation", "reading"] as const;
+/** What the profile shows: the question skills, and speaking (rated from the tutor's assessment of a voice practice). */
+export const PROFILE_SKILLS = [...SKILLS, "speaking"] as const;
 export type Level = (typeof LEVELS)[number];
 export type Skill = (typeof SKILLS)[number];
 
-const DIFFICULTY: Record<Level, number> = { A1: 700, A2: 850, B1: 1000, B2: 1150, C1: 1300, C2: 1450 };
+export const DIFFICULTY: Record<Level, number> = { A1: 700, A2: 850, B1: 1000, B2: 1150, C1: 1300, C2: 1450 };
 export const START_RATING = 1000;
 /** A question counts as answered right from this score on (dictation, translation). */
 export const PASS = 0.7;
@@ -79,15 +81,41 @@ export function applyAttempt(store: PluginStore, a: Attempt) {
   if (a.score === null) return;
   const s = store.get<SkillState>("skills", a.skill) ?? { rating: START_RATING, attempts: 0, lastAt: a.at };
   store.put("skills", a.skill, { rating: nextRating(s.rating, a.level, a.score), attempts: s.attempts + 1, lastAt: a.at });
-  for (const point of a.points) {
-    const p = store.get<PointState>("points", point) ?? { seen: 0, correct: 0, streak: 0, lastScore: 0, lastCorrect: false, lastAt: a.at, errors: {} };
-    // The question's own verdict (a dictation needs 0.9), falling back to the pass line.
-    const ok = a.correct ?? a.score >= PASS;
-    const errors = { ...p.errors };
-    for (const t of a.errorTags) errors[t] = (errors[t] ?? 0) + 1;
-    store.put("points", point, { seen: p.seen + 1, correct: p.correct + (ok ? 1 : 0), streak: ok ? p.streak + 1 : 0, lastScore: a.score, lastCorrect: ok, lastAt: a.at, errors });
-  }
+  // The question's own verdict (a dictation needs 0.9), falling back to the pass line.
+  for (const point of a.points) applyPoint(store, point, a.correct ?? a.score >= PASS, a.score, a.errorTags, a.at);
 }
+
+/** One sighting of a knowledge point: in a question, or in what the learner said in a speaking practice. */
+export function applyPoint(store: PluginStore, point: string, ok: boolean, score: number, errorTags: string[], at: string) {
+  const p = store.get<PointState>("points", point) ?? { seen: 0, correct: 0, streak: 0, lastScore: 0, lastCorrect: false, lastAt: at, errors: {} };
+  const errors = { ...p.errors };
+  for (const t of errorTags) errors[t] = (errors[t] ?? 0) + 1;
+  store.put("points", point, { seen: p.seen + 1, correct: p.correct + (ok ? 1 : 0), streak: ok ? p.streak + 1 : 0, lastScore: score, lastCorrect: ok, lastAt: at, errors });
+}
+
+/**
+ * A speaking practice the tutor assessed: the estimated level pulls the speaking rating towards it
+ * (the first one sets it). An estimate from one conversation is noisy, so each later one moves the
+ * rating 40% of the way.
+ */
+export function applySpeaking(store: PluginStore, level: Level, at: string) {
+  const s = store.get<SkillState>("skills", "speaking");
+  const target = DIFFICULTY[level];
+  const rating = s ? Math.round((s.rating * 0.6 + target * 0.4) * 10) / 10 : target;
+  store.put("skills", "speaking", { rating, attempts: (s?.attempts ?? 0) + 1, lastAt: at });
+}
+
+/** A speaking practice as kept in the store (collection `speaking`, keyed by its block). */
+export type SpeakingRecord = {
+  scene: string;
+  goal?: string;
+  startedAt: string;
+  endedAt: string;
+  model: string;
+  transcript: { role: "user" | "assistant"; text: string }[];
+  assessment: SpeakingAssessment | null;
+};
+export type SpeakingAssessment = { level: Level; scores: Record<string, number | null>; review: string; at: string };
 
 const DAY = 86400_000;
 const localDate = (at: string | number) => {
@@ -100,7 +128,7 @@ const rate = (xs: Attempt[]) => (xs.length ? Math.round((xs.filter((x) => x.corr
 export function snapshot(store: PluginStore, at = Date.now()) {
   const attempts = store.list<Attempt>("attempts", { since: new Date(at - 30 * DAY).toISOString(), limit: 5000 }).map((r) => r.data).filter((a) => a.score !== null);
   const week = new Date(at - 7 * DAY).toISOString();
-  const skills = SKILLS.map((skill) => {
+  const skills = PROFILE_SKILLS.map((skill) => {
     const s = store.get<SkillState>("skills", skill);
     const mine = attempts.filter((a) => a.skill === skill);
     return {
@@ -128,6 +156,14 @@ export function snapshot(store: PluginStore, at = Date.now()) {
   for (const a of attempts) for (const t of a.errorTags) errorCount.set(t, (errorCount.get(t) ?? 0) + 1);
   const bank = new Map<string, number>();
   for (const e of store.list<BankEntry>("bank", { limit: 5000 })) bank.set(e.data.scene || "", (bank.get(e.data.scene || "") ?? 0) + 1);
+  const talks = store.list<SpeakingRecord>("speaking", { since: new Date(at - 30 * DAY).toISOString(), limit: 500 }).map((r) => r.data);
+  const lastTalk = talks.filter((t) => t.assessment).sort((a, b) => b.endedAt.localeCompare(a.endedAt))[0];
+  const speaking = {
+    total: store.count("speaking"),
+    last7: talks.filter((t) => t.endedAt >= week).length,
+    minutes7: Math.round(talks.filter((t) => t.endedAt >= week).reduce((n, t) => n + Math.max(0, Date.parse(t.endedAt) - Date.parse(t.startedAt)), 0) / 60_000),
+    last: lastTalk ? { scene: lastTalk.scene, at: lastTalk.endedAt, level: lastTalk.assessment!.level, scores: lastTalk.assessment!.scores } : null,
+  };
   const daily = Array.from({ length: 14 }, (_, i) => {
     const date = localDate(at - (13 - i) * DAY);
     const mine = attempts.filter((a) => localDate(a.at) === date);
@@ -141,6 +177,7 @@ export function snapshot(store: PluginStore, at = Date.now()) {
     due,
     errors: [...errorCount].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count).slice(0, 10),
     daily,
+    speaking,
     bank: { total: [...bank.values()].reduce((a, b) => a + b, 0), scenes: [...bank].map(([scene, count]) => ({ scene, count })).sort((a, b) => b.count - a.count) },
   };
 }
@@ -150,8 +187,11 @@ const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%
 const bankText = (s: ReturnType<typeof snapshot>) =>
   `题库：${s.bank.total ? `共 ${s.bank.total} 题（${s.bank.scenes.map((x) => `${x.scene || "不限场景"} ${x.count}`).join("、")}）` : "空"}`;
 
+const speakingText = (s: ReturnType<typeof snapshot>) =>
+  `口语练习：共 ${s.speaking.total} 次，近 7 天 ${s.speaking.last7} 次、约 ${s.speaking.minutes7} 分钟${s.speaking.last ? `；最近一次评价（${s.speaking.last.scene}）${s.speaking.last.level}，${Object.entries(s.speaking.last.scores).map(([k, v]) => `${k} ${v ?? "—"}`).join("、")}` : ""}`;
+
 export function snapshotText(s: ReturnType<typeof snapshot>) {
-  if (!s.total) return `还没有作答记录：第一次练习。先出一组覆盖词汇、语法、听力、翻译的摸底题（A2–B2 都有），根据结果再定方向。\n${bankText(s)}`;
+  if (!s.total) return `还没有作答记录：第一次练习。先出一组覆盖词汇、语法、听力、翻译的摸底题（A2–B2 都有），根据结果再定方向。\n${s.speaking.total ? `${speakingText(s)}\n` : ""}${bankText(s)}`;
   const lines = [
     `作答 ${s.total} 题，今天 ${s.today} 题。`,
     "技能水平（分数 / 等级 / 已答题数 / 近 7 天正确率 / 之前）：",
@@ -160,6 +200,7 @@ export function snapshotText(s: ReturnType<typeof snapshot>) {
     `该复习的知识点：${s.due.length ? s.due.map((d) => d.point).join("、") : "暂无"}`,
     `近 30 天常见错误：${s.errors.length ? s.errors.map((e) => `${e.tag} ${e.count}`).join("、") : "暂无"}`,
     `近 14 天每天题数：${s.daily.map((d) => d.count).join(" ")}`,
+    speakingText(s),
     bankText(s),
   ];
   return lines.join("\n");

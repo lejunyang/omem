@@ -18,6 +18,7 @@ import { setTrust } from "./trust.ts";
 import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
 import { savePluginSettings } from "./settings.ts";
 import { pluginStore } from "./store.ts";
+import { liveConnect, PLUGIN_INSTRUCTIONS_MAX, realtimeSecret, voiceStatus } from "../core/voice.ts";
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -92,6 +93,31 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
     const r = await callTool({ app, runId: null, spaceId: p.manifest.space?.id ?? "personal", spaces: null, tools: new Set([name]), actor: "user", userId, plugin: p.manifest.id }, name, req.body ?? {});
     if (r.isError) throw new HttpError(400, r.text);
     return { text: r.text };
+  });
+
+  // Voice (core/voice.ts): the shell, not the page, holds the microphone and the connection; these give
+  // it the session for this plugin's instructions, without omem's tools. The shell does not forward
+  // `voice/…` for the page (Plugin.vue), so a client secret never reaches the page.
+  const voicePlugin = (req: FastifyRequest) => {
+    const p = plugin(req);
+    if (!p.enabled || !p.manifest.voice) throw new HttpError(403, `插件 ${p.manifest.id} 没有声明语音（清单 voice: true）`);
+    return p;
+  };
+  const instructions = z.string().trim().min(1).max(PLUGIN_INSTRUCTIONS_MAX);
+  server.get("/api/plugins/:id/voice", async (req) => {
+    const p = plugin(req);
+    if (!p.manifest.voice) return { allowed: false, ready: false, detail: "这个插件没有声明语音", api: null, model: null };
+    return { allowed: true, ...voiceStatus(app) };
+  });
+  server.post("/api/plugins/:id/voice/realtime/secret", async (req) => {
+    const p = voicePlugin(req);
+    const b = parse(z.object({ instructions }), req.body);
+    return realtimeSecret(app, { kind: "plugin", plugin: p.manifest.id, instructions: b.instructions });
+  });
+  server.post("/api/plugins/:id/voice/live/sdp", async (req) => {
+    const p = voicePlugin(req);
+    const b = parse(z.object({ instructions, sdp: z.string().min(10).max(100_000) }), req.body);
+    return liveConnect(app, { kind: "plugin", plugin: p.manifest.id, instructions: b.instructions }, b.sdp);
   });
 
   // Trust: a data-directory plugin's code runs only after the owner confirms it (trust.ts).

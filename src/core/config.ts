@@ -82,7 +82,6 @@ export const roleNames = [
   "replay-judge",
   "kb-scout",
   "req-splitter",
-  "speaking-coach",
   "business-analyst",
   "designer",
   "mention-triage",
@@ -507,7 +506,7 @@ export const configSchema = z.object({
         accountId: z.string().trim().regex(/^[0-9a-f]{32}$/i, "Cloudflare 账号 ID 是 32 位十六进制").optional(),
         backends: z.array(z.enum(AI_KEY_BACKENDS)).default([]),
       })).max(20).default([]),
-      /** Voice: question-page voice input, live conversation, speaking practice. live = GPT-Live, realtime = Realtime API. */
+      /** Voice: question-page voice input and live conversation, plugin pages' voice (the English plugin's speaking practice). live = GPT-Live, realtime = Realtime API. */
       voice: z.object({
         provider: z.string().default(""),
         api: z.enum(["live", "realtime"]).default("live"),

@@ -1267,8 +1267,9 @@ registerHandler("rule-script", async (ctx) => (await import("../rules/script.ts"
 // left over from a restart is requeued by the worker and simply ends here.
 registerHandler("peer-agent", async () => ({ ended: "服务重启，会话结束；同一会话再次调用会重新打开这条运行" }));
 
-// An English speaking practice that ended (core/voice.ts): the speaking-coach role assesses it.
-registerHandler("speaking-review", async (ctx) => (await import("../core/voice.ts")).speakingReview(ctx));
+// Speaking practice moved into the English plugin (2026-11-11), which has its tutor assess it: a
+// review queued by an older omem just ends.
+registerHandler("speaking-review", async () => ({ ended: "口语练习已并入英语学习插件，由陪练评价；这条旧的评价运行不再执行" }));
 
 registerHandler("guest", async (ctx) => (await import("../channels/lark-guest.ts")).guestRun(ctx));
 

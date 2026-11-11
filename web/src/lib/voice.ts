@@ -14,7 +14,9 @@ import { get, post } from "../api";
  *   a turn ends when the other side starts); tool calls come from the delegated Responses model inside
  *   `response.event`, answered with `response.item.create` and `response.create`.
  *
- * Tools run on omem (`/api/voice/tool`), in the spaces the user can read.
+ * Tools run on omem (`/api/voice/tool`), in the spaces the user can read. A plugin page's conversation
+ * (`plugin`: views/Plugin.vue runs it for the page in its sandboxed frame) goes through the plugin's
+ * own routes with the plugin's instructions and has no tools.
  */
 export type VoiceTurn = { role: "user" | "assistant"; text: string; final: boolean };
 export type VoiceState = "connecting" | "live" | "ended" | "failed";
@@ -24,14 +26,16 @@ export type VoiceHandle = { stop(): void; mute(on: boolean): void; transcript: (
 export const voiceStatus = () => get<VoiceStatus>("/api/voice");
 
 export async function startVoice(o: {
-  purpose: "chat" | "practice";
-  scenario?: string;
   space?: string;
+  /** A plugin page's conversation: its routes and instructions, no tools. */
+  plugin?: { id: string; instructions: string };
   onTurns(turns: VoiceTurn[]): void;
   onState(s: VoiceState, detail?: string): void;
   onTool?(name: string, phase: "start" | "end"): void;
 }): Promise<VoiceHandle> {
-  const status = await voiceStatus();
+  const base = o.plugin ? `/api/plugins/${o.plugin.id}/voice` : "/api/voice";
+  const extra = o.plugin ? { instructions: o.plugin.instructions } : {};
+  const status = await get<VoiceStatus>(base);
   if (!status.ready) throw new Error(status.detail);
   o.onState("connecting");
   const turns: VoiceTurn[] = [];
@@ -75,6 +79,7 @@ export async function startVoice(o: {
   const send = (ev: Record<string, unknown>) => dc.readyState === "open" && dc.send(JSON.stringify(ev));
 
   const runTool = async (name: string, argsJson: string) => {
+    if (o.plugin) return `这次对话不能用工具 ${name}`;
     o.onTool?.(name, "start");
     let args: unknown = {};
     try {
@@ -149,13 +154,13 @@ export async function startVoice(o: {
     let answer: string;
     let model = status.model ?? "";
     if (status.api === "realtime") {
-      const s = await post<{ secret: string; callsUrl: string; model: string }>("/api/voice/realtime/secret", { purpose: o.purpose, scenario: o.scenario });
+      const s = await post<{ secret: string; callsUrl: string; model: string }>(`${base}/realtime/secret`, extra);
       model = s.model;
       const r = await fetch(s.callsUrl, { method: "POST", body: offer.sdp, headers: { authorization: `Bearer ${s.secret}`, "content-type": "application/sdp" } });
       if (!r.ok) throw new Error(`连接语音模型失败：${r.status} ${(await r.text()).slice(0, 200)}`);
       answer = await r.text();
     } else {
-      const s = await post<{ sdp: string; model: string }>("/api/voice/live/sdp", { purpose: o.purpose, scenario: o.scenario, sdp: offer.sdp });
+      const s = await post<{ sdp: string; model: string }>(`${base}/live/sdp`, { ...extra, sdp: offer.sdp });
       model = s.model;
       answer = s.sdp;
     }
@@ -175,12 +180,9 @@ export async function startVoice(o: {
   }
 }
 
-/** Save a finished conversation; a practice gets a review run. */
-export const saveVoice = (h: VoiceHandle, o: { purpose: "chat" | "practice"; scenario?: string; space?: string }) =>
-  post<{ id: string; reviewRunId: string | null }>("/api/voice/sessions", {
-    purpose: o.purpose,
-    scenario: o.scenario,
-    space: o.space,
+/** Save a finished conversation with the assistant (a plugin keeps its own). */
+export const saveVoice = (h: VoiceHandle) =>
+  post<{ id: string }>("/api/voice/sessions", {
     api: h.api,
     model: h.model,
     startedAt: h.startedAt,

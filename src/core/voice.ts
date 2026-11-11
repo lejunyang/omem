@@ -1,7 +1,7 @@
 import type { App } from "./app.ts";
 import { baseOf, categoryStatus, defaultFor, keyOf } from "./ai-keys.ts";
 import { all, one, run } from "./db.ts";
-import { accessibleSpaces, OWNER } from "./users.ts";
+import { accessibleSpaces } from "./users.ts";
 import { HttpError, json, newId, now } from "./util.ts";
 
 /**
@@ -16,10 +16,14 @@ import { HttpError, json, newId, now } from "./util.ts";
  *   session (`POST /live/sessions`, transport webrtc) with the key. Tool calls come wrapped in
  *   `response.event`.
  *
- * Either way the tools are omem's read tools (search, read_source…), run here in the user's scope.
+ * A conversation from the question page gets omem's read tools (search, read_source…), run here in
+ * the user's scope. A plugin page's conversation (docs/v2/plugins.md, “语音”) gets the plugin's own
+ * instructions and no tools: what to talk about is the plugin's business, omem only connects.
  * Speech to text for the input box is a plain `/audio/transcriptions` call.
  */
-export type VoicePurpose = "chat" | "practice";
+export type VoiceSpec = { kind: "chat" } | { kind: "plugin"; plugin: string; instructions: string };
+/** The longest instructions a plugin may give the voice model. */
+export const PLUGIN_INSTRUCTIONS_MAX = 6000;
 
 /** What a voice conversation may look up: reading only, in the spaces the user can read. */
 export const VOICE_TOOLS = ["list_spaces", "search", "read_source", "recall", "list_items", "read_page"];
@@ -42,21 +46,9 @@ export function voiceStatus(app: App) {
   return { ready: st.ready, detail: st.detail, api: app.config.ai.voice.api, model: st.model ?? null };
 }
 
-/**
- * What the voice model is told. Kept short: it speaks, it is not an agent. Practice: a scene partner
- * who stays in English, helps in the learner's language when asked, and leaves the assessment to the
- * review after the call (the speaking-coach role with the speaking-assessment skill).
- */
-export function voiceInstructions(purpose: VoicePurpose, scenario = "") {
-  if (purpose === "practice") {
-    return [
-      "You are an English conversation partner for a Chinese-speaking learner practising speaking.",
-      scenario ? `Scene: ${scenario}. Play the other person in this scene naturally and keep it going; start by greeting the learner in character.` : "Have a natural conversation on a topic the learner picks; start by asking what they want to talk about.",
-      "Speak natural, everyday English at the learner's level; keep each turn short so they speak more than you.",
-      "If the learner asks in Chinese (or another language) how to say something or what a word means, answer briefly in that language, give the English, then return to the scene in English.",
-      "Do not correct every mistake while talking. Only if a mistake blocks understanding, rephrase it naturally (\"Oh, you mean …?\") and go on. A detailed assessment comes after the call.",
-    ].join("\n");
-  }
+/** What the voice model is told: on the question page a short brief (it speaks, it is not an agent); in a plugin, the plugin's own. */
+export function voiceInstructions(spec: VoiceSpec) {
+  if (spec.kind === "plugin") return spec.instructions;
   return [
     "你是本人的语音助理（omem）。用自然、简短的口语回答，一次说清一件事；本人用什么语言你就用什么语言。",
     "问到本人的资料、文档、事项、记忆时，先用工具查（search 找原件，read_source 读原文，recall 查记忆，list_items 查事项），再按查到的说，说出依据的文档名；查不到就直说。",
@@ -82,18 +74,18 @@ async function post(url: string, key: string, body: unknown, what: string) {
 }
 
 /** Realtime: a client secret carrying the whole session; the browser connects with it. */
-export async function realtimeSecret(app: App, o: { purpose: VoicePurpose; scenario?: string }) {
+export async function realtimeSecret(app: App, spec: VoiceSpec) {
   const p = provider(app);
   if (p.api !== "realtime") throw new HttpError(409, "语音设置的接口是 GPT-Live，不是 Realtime");
   const session = {
     type: "realtime",
     model: p.model,
-    instructions: voiceInstructions(o.purpose, o.scenario),
+    instructions: voiceInstructions(spec),
     audio: {
       input: { transcription: { model: "gpt-live-transcribe" }, turn_detection: { type: "semantic_vad" } },
       output: { voice: p.voice },
     },
-    ...(o.purpose === "chat" ? { tools: await functionTools(), tool_choice: "auto" } : {}),
+    ...(spec.kind === "chat" ? { tools: await functionTools(), tool_choice: "auto" } : {}),
   };
   const r = await post(`${p.base}/realtime/client_secrets`, p.key, { expires_after: { anchor: "created_at", seconds: 600 }, session }, "创建 Realtime 临时凭证");
   const value = r.value ?? r.client_secret?.value;
@@ -102,20 +94,20 @@ export async function realtimeSecret(app: App, o: { purpose: VoicePurpose; scena
 }
 
 /** GPT-Live: omem opens the session with the browser's SDP offer and returns the answer. */
-export async function liveConnect(app: App, o: { purpose: VoicePurpose; scenario?: string; sdp: string }) {
+export async function liveConnect(app: App, spec: VoiceSpec, sdp: string) {
   const p = provider(app);
   if (p.api !== "live") throw new HttpError(409, "语音设置的接口是 Realtime，不是 GPT-Live");
-  const tools = o.purpose === "chat" ? await functionTools() : [];
+  const tools = spec.kind === "chat" ? await functionTools() : [];
   const session = {
     model: p.model,
-    instructions: voiceInstructions(o.purpose, o.scenario),
+    instructions: voiceInstructions(spec),
     audio: { output: { voice: p.voice } },
     delegation: { type: "responses", responses: { model: app.config.ai.voice.delegateModel || defaultFor(app.config, app.home, "voice.delegate"), ...(tools.length ? { tools, tool_choice: "auto" } : {}) } },
   };
-  const r = await post(`${p.base}/live/sessions`, p.key, { session, transport: { type: "webrtc", sdp: o.sdp } }, "打开 GPT-Live 会话");
-  const sdp = r.transport?.sdp;
-  if (!sdp) throw new HttpError(502, "GPT-Live 没有返回 SDP 应答");
-  return { api: "live" as const, model: p.model, sessionId: r.session?.id ?? null, sdp: String(sdp) };
+  const r = await post(`${p.base}/live/sessions`, p.key, { session, transport: { type: "webrtc", sdp } }, "打开 GPT-Live 会话");
+  const answer = r.transport?.sdp;
+  if (!answer) throw new HttpError(502, "GPT-Live 没有返回 SDP 应答");
+  return { api: "live" as const, model: p.model, sessionId: r.session?.id ?? null, sdp: String(answer) };
 }
 
 /** Speech to text for the voice input box. */
@@ -147,57 +139,28 @@ export async function voiceTool(app: App, userId: string, spaceId: string, name:
 
 // ---- conversations kept after the call -------------------------------------------------------
 
-export type VoiceTurn = { role: "user" | "assistant"; text: string };
-export type VoiceSession = { id: string; userId: string; purpose: VoicePurpose; scenario: string; api: string; model: string; transcript: VoiceTurn[]; startedAt: string; endedAt: string; reviewRunId: string | null };
-type Row = { id: string; user_id: string; purpose: string; scenario: string; api: string; model: string; transcript: string; started_at: string; ended_at: string; review_run_id: string | null };
-const toSession = (r: Row): VoiceSession => ({ id: r.id, userId: r.user_id, purpose: r.purpose as VoicePurpose, scenario: r.scenario, api: r.api, model: r.model, transcript: json(r.transcript, []), startedAt: r.started_at, endedAt: r.ended_at, reviewRunId: r.review_run_id });
-
 /**
- * Keep a finished conversation. A practice with something said by the learner gets a review run
- * (speaking-review: the speaking-coach role reads the transcript and assesses the learner's level).
+ * Conversations from the question page are kept here (`purpose` "chat"). Rows from before
+ * 2026-11-11 may say "practice": speaking practice has since moved into the English plugin, which
+ * keeps its own records in its plugin store. omem does not keep a plugin's conversations.
  */
-export async function saveVoiceSession(app: App, userId: string, o: { purpose: VoicePurpose; scenario?: string; api: string; model: string; transcript: VoiceTurn[]; startedAt: string; spaceId: string }) {
+export type VoiceTurn = { role: "user" | "assistant"; text: string };
+export type VoiceSession = { id: string; userId: string; purpose: string; api: string; model: string; transcript: VoiceTurn[]; startedAt: string; endedAt: string };
+type Row = { id: string; user_id: string; purpose: string; api: string; model: string; transcript: string; started_at: string; ended_at: string };
+const toSession = (r: Row): VoiceSession => ({ id: r.id, userId: r.user_id, purpose: r.purpose, api: r.api, model: r.model, transcript: json(r.transcript, []), startedAt: r.started_at, endedAt: r.ended_at });
+
+export function saveVoiceSession(app: App, userId: string, o: { api: string; model: string; transcript: VoiceTurn[]; startedAt: string }) {
   const id = newId("voice");
   const transcript = o.transcript.filter((t) => t.text.trim()).map((t) => ({ role: t.role, text: t.text.trim().slice(0, 4000) })).slice(0, 400);
-  run(app.db, "insert into voice_sessions(id, user_id, purpose, scenario, api, model, transcript, started_at, ended_at) values(?,?,?,?,?,?,?,?,?)", id, userId, o.purpose, o.scenario ?? "", o.api, o.model, JSON.stringify(transcript), o.startedAt, now());
-  let reviewRunId: string | null = null;
-  if (o.purpose === "practice" && transcript.some((t) => t.role === "user")) {
-    const { createRun } = await import("../agents/runs.ts");
-    reviewRunId = createRun(app, { kind: "speaking-review", spaceId: o.spaceId, title: `口语练习评价${o.scenario ? `：${o.scenario.slice(0, 40)}` : ""}`, input: { sessionId: id }, userId }).id;
-    run(app.db, "update voice_sessions set review_run_id = ? where id = ?", reviewRunId, id);
-  }
-  return { id, reviewRunId };
+  run(app.db, "insert into voice_sessions(id, user_id, purpose, scenario, api, model, transcript, started_at, ended_at) values(?,?,?,?,?,?,?,?,?)", id, userId, "chat", "", o.api, o.model, JSON.stringify(transcript), o.startedAt, now());
+  return { id };
 }
 
-export function listVoiceSessions(app: App, userId: string, purpose?: VoicePurpose, limit = 30): (VoiceSession & { review: string | null; reviewStatus: string | null })[] {
-  const rows = all<Row & { review_output: string | null; review_status: string | null }>(
-    app.db,
-    `select v.*, r.output as review_output, r.status as review_status from voice_sessions v left join runs r on r.id = v.review_run_id
-     where v.user_id = ? ${purpose ? "and v.purpose = ?" : ""} order by v.started_at desc limit ?`,
-    ...[userId, ...(purpose ? [purpose] : []), limit],
-  );
-  return rows.map((r) => ({ ...toSession(r), review: r.review_output ? (json<{ review?: string }>(r.review_output, {}).review ?? null) : null, reviewStatus: r.review_status }));
+export function listVoiceSessions(app: App, userId: string, limit = 30): VoiceSession[] {
+  return all<Row>(app.db, "select * from voice_sessions where user_id = ? and purpose = 'chat' order by started_at desc limit ?", userId, limit).map(toSession);
 }
 
 export function getVoiceSession(app: App, id: string) {
   const r = one<Row>(app.db, "select * from voice_sessions where id = ?", id);
   return r ? toSession(r) : null;
-}
-
-/** The review run: the speaking-coach role reads the transcript. */
-export async function speakingReview(ctx: import("../agents/runs.ts").RunContext) {
-  const s = getVoiceSession(ctx.app, (ctx.run.input as { sessionId: string }).sessionId);
-  if (!s) throw new Error("找不到这次练习的记录");
-  const { runRole } = await import("../agents/runner.ts");
-  const task = [
-    "评价这次英语口语练习。",
-    s.scenario ? `场景：${s.scenario}` : "场景：自由对话",
-    `用时：${Math.max(1, Math.round((Date.parse(s.endedAt) - Date.parse(s.startedAt)) / 60_000))} 分钟`,
-    "",
-    "对话记录（learner 是学习者，partner 是语音模型；学习者的话是语音转写，个别词可能转错）：",
-    ...s.transcript.map((t) => `${t.role === "user" ? "learner" : "partner"}: ${t.text}`),
-  ].join("\n");
-  const r = await runRole(ctx.app, { role: "speaking-coach", spaceId: ctx.run.spaceId!, spaces: [ctx.run.spaceId!], task, runId: ctx.run.id, signal: ctx.signal, userId: s.userId === OWNER ? undefined : s.userId });
-  const { replyOf } = await import("../agents/types.ts");
-  return { review: replyOf(r).trim() };
 }

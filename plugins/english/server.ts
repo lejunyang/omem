@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { PluginApi, PluginContext } from "../../src/plugins/types.ts";
-import { applyAttempt, LEVELS, normalize, PASS, pickFromBank, SKILLS, snapshot, snapshotText, wordAccuracy, type Attempt, type BankEntry } from "./learner.ts";
+import { applyAttempt, applyPoint, applySpeaking, LEVELS, normalize, PASS, pickFromBank, SKILLS, snapshot, snapshotText, wordAccuracy, type Attempt, type BankEntry, type SpeakingAssessment, type SpeakingRecord } from "./learner.ts";
 
 /**
  * English practice (docs/v2/plugins.md): the tutor hands in a batch of questions with
@@ -89,6 +89,65 @@ function checkItem(it: Item, i: number) {
 
 const BANK_MAX = 300;
 
+// ---------------------------------------------------------------- speaking practice
+
+/**
+ * Speaking practice is a block like a quiz: it waits in the session until the owner has talked it
+ * through on the page (the shell holds the microphone and the voice model, omem-plugin-sdk `voice`),
+ * then the transcript is handed in as the answer, and the tutor assesses it with english_speaking_grade.
+ */
+const speakingBlock = z.object({
+  scene: z.string().trim().min(1).max(120).describe("场景，如“在餐厅点餐，问推荐菜，说明忌口”；自由聊写“自由对话”"),
+  goal: z.string().trim().max(300).optional().describe("这次要刻意练的说法或目标（可选），如“用 Could I… / I'd like… 点餐”"),
+});
+type SpeakingBlock = z.infer<typeof speakingBlock>;
+const speakingAnswer = z.object({
+  transcript: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(4000) })).max(400),
+  startedAt: z.string().max(40),
+  endedAt: z.string().max(40),
+  model: z.string().max(100).default(""),
+});
+const DIMENSIONS = ["fluency", "grammar", "vocab", "fit"] as const;
+const dimension = z.number().int().min(1).max(5).nullable().default(null);
+
+/** What the voice model is told: play the other person, at the learner's level, help in Chinese when asked. */
+export function speakingInstructions(b: SpeakingBlock, o: { level: string | null; accent: string; phrases: string[] }) {
+  const free = /^自由(对话|聊)?$/.test(b.scene.trim());
+  return [
+    "You are an English conversation partner for a Chinese-speaking learner practising speaking.",
+    free
+      ? "Have a natural conversation on a topic the learner picks; start by asking what they want to talk about."
+      : `Scene: ${b.scene}. Play the other person in this scene naturally and keep it going; start by greeting the learner in character.`,
+    b.goal ? `What the learner wants to practise this time: ${b.goal}. Give them chances to use it.` : "",
+    o.level ? `The learner's speaking level is about ${o.level} (CEFR). Speak natural, everyday English a little above that level; keep each turn short so they speak more than you.` : "Speak natural, everyday English; keep each turn short so the learner speaks more than you.",
+    o.phrases.length ? `Expressions they are working on; bring a few into the conversation naturally: ${o.phrases.join(", ")}.` : "",
+    `Use ${o.accent === "en-GB" ? "British" : "American"} English.`,
+    "If the learner asks in Chinese (or another language) how to say something or what a word means, answer briefly in that language, give the English, then return to the scene in English.",
+    "Do not correct every mistake while talking. Only if a mistake blocks understanding, rephrase it naturally (\"Oh, you mean …?\") and go on. A detailed assessment comes after the call.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function gradeSpeaking(ctx: PluginContext & { blockId: string }, data: SpeakingBlock, answers: Record<string, unknown>) {
+  const a = speakingAnswer.safeParse(answers);
+  if (!a.success) throw new Error("口语练习的记录格式不对");
+  const transcript = a.data.transcript.map((t) => ({ role: t.role, text: t.text.trim() })).filter((t) => t.text);
+  if (!transcript.some((t) => t.role === "user")) throw new Error("这次还没有说话，没有可以交给陪练的记录");
+  const record: SpeakingRecord = { scene: data.scene, goal: data.goal, startedAt: a.data.startedAt, endedAt: a.data.endedAt, model: a.data.model, transcript, assessment: null };
+  ctx.store.put("speaking", ctx.blockId, record);
+  const minutes = Math.max(1, Math.round((Date.parse(a.data.endedAt) - Date.parse(a.data.startedAt)) / 60_000) || 1);
+  const message = [
+    `【口语练习】${data.scene}，约 ${minutes} 分钟，学习者说了 ${transcript.filter((t) => t.role === "user").length} 段。${data.goal ? `这次想练：${data.goal}。` : ""}`,
+    "",
+    "对话记录（learner 是学习者，partner 是语音模型；学习者的话是语音转写，个别词可能转错）：",
+    ...transcript.map((t) => `${t.role === "user" ? "learner" : "partner"}: ${t.text}`),
+    "",
+    `先 read_skill("english-speaking") 看评价标准，再用 english_speaking_grade(block_id="${ctx.blockId}") 交评价（水平、四项分、完整的评价文字、涉及的知识点）。评价会显示在练习页的这次对话下面，这一轮的文字只写一两句。`,
+  ].join("\n");
+  return { result: { ...record, minutes }, message };
+}
+
 export default function register(api: PluginApi) {
   api.block({
     kind: "quiz",
@@ -128,6 +187,79 @@ export default function register(api: PluginApi) {
     }),
     grade,
     presented: (q, id) => `已在练习页上展示“${q.title}”（${q.items.length} 题，${id}）。本人提交后，判过分的结果会作为下一条消息到达；这一轮只说一句开场白，不要在文字里重复题目。`,
+  });
+
+  api.block({
+    kind: "speaking",
+    description:
+      "在练习页上放一次英语口语练习：本人和语音模型按场景对话（语音模型扮演场景里的另一个人，卡住时可以用中文问），结束后对话记录作为下一条消息回来，你用 english_speaking_grade 评价。本人想练口语、或你觉得该练说的时候用；交出后这一轮只说一句开场白。",
+    schema: speakingBlock,
+    grade: gradeSpeaking,
+    presented: (b, id) => `已在练习页上放好口语练习“${b.scene}”（${id}）。本人对话结束后，记录会作为下一条消息到达；这一轮只说一句开场白。`,
+  });
+
+  api.tool({
+    name: "english_speaking_start",
+    description: "在练习页的会话里放一次口语练习（页面上的“开始对话”用）。",
+    schema: z.object({ session_id: z.string(), scene: speakingBlock.shape.scene, goal: speakingBlock.shape.goal }),
+    page: true,
+    write: true,
+    handler: (ctx, a) => JSON.stringify({ blockId: ctx.present("speaking", { scene: a.scene, goal: a.goal || undefined }, a.session_id) }),
+  });
+
+  api.tool({
+    name: "english_speaking_brief",
+    description: "一次口语练习给语音模型的说明：场景、本人的口语水平、正在练的说法、口音（页面开始对话前取）。",
+    schema: z.object({ block_id: z.string() }),
+    page: true,
+    handler: (ctx, a) => {
+      const block = ctx.block(a.block_id);
+      if (!block || block.kind !== "speaking") throw new Error(`没有这次口语练习：${a.block_id}`);
+      if (block.status !== "open") throw new Error("这次口语练习已经交过了；再练一次会新开一次");
+      const s = snapshot(ctx.store);
+      const speaking = s.skills.find((k) => k.skill === "speaking");
+      const level = speaking?.attempts ? speaking.level : s.total ? s.skills.filter((k) => k.attempts).sort((x, y) => y.attempts - x.attempts)[0]?.level ?? null : null;
+      // Weak phrases and words make good material; grammar points do not read out as expressions.
+      const phrases = s.weak.map((w) => w.point).filter((p) => /^(word|phrase):/.test(p)).slice(0, 6).map((p) => p.replace(/^[a-z]+:/, "").replace(/-/g, " "));
+      return JSON.stringify({ instructions: speakingInstructions(block.data as SpeakingBlock, { level, accent: String(ctx.settings().voice ?? "en-US"), phrases }) });
+    },
+  });
+
+  api.tool({
+    name: "english_speaking_grade",
+    description:
+      "给一次口语练习交评价（read_skill(\"english-speaking\") 里有标准）。level 是这次表现出的口语水平（CEFR）；scores 是四项 1–5 分：fluency 流利度、grammar 语法、vocab 词汇、fit 是否得体并完成场景里的事，证据不够的项写 null；review 是给本人看的完整评价（Markdown，中文，英文例句保留英文）；points 是对话里涉及的知识点（word:/phrase:/grammar:，小写英文），说错或要用中文求助的 correct=false，用得对的 correct=true。",
+    schema: z.object({
+      block_id: z.string(),
+      level: z.enum(LEVELS),
+      scores: z.object({ fluency: dimension, grammar: dimension, vocab: dimension, fit: dimension }),
+      review: z.string().trim().min(1).max(6000),
+      points: z.array(z.object({ point: z.string().max(60), correct: z.boolean(), error_tag: z.string().max(30).optional() })).max(15).default([]),
+    }),
+    write: true,
+    handler: (ctx, a) => {
+      const block = ctx.block(a.block_id);
+      if (!block || block.kind !== "speaking") return `没有这次口语练习：${a.block_id}`;
+      if (block.status !== "submitted" || !block.result) return "这次口语练习本人还没有交";
+      const at = new Date().toISOString();
+      const assessment: SpeakingAssessment = { level: a.level, scores: { ...a.scores }, review: a.review, at };
+      const first = !(block.result as SpeakingRecord).assessment;
+      ctx.setBlockResult(a.block_id, { ...block.result, assessment });
+      const record = ctx.store.get<SpeakingRecord>("speaking", a.block_id);
+      if (record) ctx.store.put("speaking", a.block_id, { ...record, assessment });
+      // A second assessment of the same practice corrects the first; it does not count twice.
+      if (first) {
+        applySpeaking(ctx.store, a.level, at);
+        const given = a.scores as Record<string, number | null>;
+        const known = DIMENSIONS.map((d) => given[d]).filter((v): v is number => typeof v === "number");
+        const score = known.length ? known.reduce((x, y) => x + y, 0) / known.length / 5 : 0.5;
+        for (const p of a.points) {
+          const point = p.point.trim().toLowerCase();
+          if (point) applyPoint(ctx.store, point, p.correct, p.correct ? Math.max(score, PASS) : Math.min(score, 0.5), p.error_tag ? [p.error_tag.trim().toLowerCase()] : [], at);
+        }
+      }
+      return `已记下评价（${a.level}${first ? `，口语水平和 ${a.points.length} 个知识点已更新` : "，改了上一次的评价"}）。`;
+    },
   });
 
   api.tool({

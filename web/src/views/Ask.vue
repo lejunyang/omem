@@ -260,7 +260,7 @@ function autosize(e: Event) {
       <div v-if="waiting.length" class="asks">
         <AskCard v-for="a in waiting" :key="a.id" :ask="a" @answered="loadAsks" />
       </div>
-      <VoiceChat v-if="talking" class="voice-panel" purpose="chat" :space="state.space" @ended="voiceEnded" />
+      <VoiceChat v-if="talking" class="voice-panel" :space="state.space" @ended="voiceEnded" />
       <form class="composer" @submit.prevent="send">
         <textarea ref="input" v-model="text" rows="1" :placeholder="recording ? '正在听，说完再点一下麦克风…' : transcribing ? '正在转成文字…' : '提问或交代事情；/help 查看命令（Shift+Enter 换行）'" @input="autosize" @keydown.enter.exact.prevent="send" />
         <template v-if="voiceReady">

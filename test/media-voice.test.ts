@@ -7,7 +7,7 @@ import { setKey } from "../src/core/ai-keys.ts";
 import { generateImage, setImageFetchForTests } from "../src/core/images.ts";
 import { liveConnect, listVoiceSessions, realtimeSecret, saveVoiceSession, setVoiceFetchForTests, transcribe, voiceTool } from "../src/core/voice.ts";
 import { listSkills, skillIndex, skillUsable } from "../src/agents/specs.ts";
-import { getRun } from "../src/agents/runs.ts";
+import { all, run } from "../src/core/db.ts";
 import type { App } from "../src/core/app.ts";
 
 const servers: { close(): Promise<unknown> }[] = [];
@@ -74,32 +74,37 @@ describe("voice", () => {
     const app = await appWithOpenAI();
     app.config.ai.voice = { ...app.config.ai.voice, provider: "o", api: "realtime" };
     const calls = fake(() => ({ value: "ek_123", expires_at: 1900000000 }), setVoiceFetchForTests);
-    const s = await realtimeSecret(app, { purpose: "chat" });
+    const s = await realtimeSecret(app, { kind: "chat" });
     expect(s).toEqual({ api: "realtime", model: "gpt-realtime-2.1", secret: "ek_123", expiresAt: 1900000000, callsUrl: "https://api.openai.com/v1/realtime/calls" });
     const body = JSON.parse(String(calls[0].init.body));
     expect(calls[0].url).toBe("https://api.openai.com/v1/realtime/client_secrets");
     expect(body.session).toMatchObject({ type: "realtime", model: "gpt-realtime-2.1", audio: { output: { voice: "marin" } }, tool_choice: "auto" });
     expect(body.session.tools.map((t: { name: string }) => t.name)).toEqual(expect.arrayContaining(["search", "read_source", "recall"]));
     expect(body.session.tools[0]).toMatchObject({ type: "function", parameters: { type: "object" } });
-    // A practice has no tools, and the scene in its instructions.
-    await realtimeSecret(app, { purpose: "practice", scenario: "在餐厅点餐" });
+    // A plugin's conversation: its own instructions, as given, and no tools.
+    await realtimeSecret(app, { kind: "plugin", plugin: "english", instructions: "Scene: ordering at a restaurant." });
     const p = JSON.parse(String(calls[1].init.body)).session;
     expect(p.tools).toBeUndefined();
-    expect(p.instructions).toContain("Scene: 在餐厅点餐");
-    await expect(liveConnect(app, { purpose: "chat", sdp: "v=0 offer" })).rejects.toThrow(/Realtime，不是 GPT-Live/);
+    expect(p.instructions).toBe("Scene: ordering at a restaurant.");
+    await expect(liveConnect(app, { kind: "chat" }, "v=0 offer")).rejects.toThrow(/Realtime，不是 GPT-Live/);
   });
 
   it("opens a GPT-Live session for the browser's SDP, delegating tools to a Responses model", async () => {
     const app = await appWithOpenAI();
     app.config.ai.voice = { ...app.config.ai.voice, provider: "o", api: "live", delegateModel: "gpt-6-sol" };
     const calls = fake(() => ({ session: { id: "live_1" }, transport: { type: "webrtc", sdp: "v=0 answer" } }), setVoiceFetchForTests);
-    expect(await liveConnect(app, { purpose: "chat", sdp: "v=0 offer" })).toEqual({ api: "live", model: "gpt-live-1", sessionId: "live_1", sdp: "v=0 answer" });
+    expect(await liveConnect(app, { kind: "chat" }, "v=0 offer")).toEqual({ api: "live", model: "gpt-live-1", sessionId: "live_1", sdp: "v=0 answer" });
     expect(calls[0].url).toBe("https://api.openai.com/v1/live/sessions");
     const body = JSON.parse(String(calls[0].init.body));
     expect(body.transport).toEqual({ type: "webrtc", sdp: "v=0 offer" });
     expect(body.session).toMatchObject({ model: "gpt-live-1", delegation: { type: "responses", responses: { model: "gpt-6-sol", tool_choice: "auto" } } });
     expect(body.session.delegation.responses.tools.some((t: { name: string }) => t.name === "search")).toBe(true);
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer sk-1");
+    // A plugin's: no tools for the delegated model either.
+    await liveConnect(app, { kind: "plugin", plugin: "english", instructions: "Play a waiter." }, "v=0 offer");
+    const plugin = JSON.parse(String(calls[1].init.body)).session;
+    expect(plugin.instructions).toBe("Play a waiter.");
+    expect(plugin.delegation.responses.tools).toBeUndefined();
   });
 
   it("transcribes a recording for the input box", async () => {
@@ -121,26 +126,17 @@ describe("voice", () => {
     expect(r.text).toContain("personal");
   });
 
-  it("keeps a practice and queues its review by the speaking coach", async () => {
+  it("keeps the assistant's conversations, without a review run", async () => {
     const app = await appWithOpenAI();
-    const chat = await saveVoiceSession(app, "owner", { purpose: "chat", api: "realtime", model: "m", startedAt: new Date().toISOString(), spaceId: "personal", transcript: [{ role: "user", text: "hi" }] });
-    expect(chat.reviewRunId).toBeNull();
     const t0 = new Date(Date.now() - 5 * 60_000).toISOString();
-    const p = await saveVoiceSession(app, "owner", {
-      purpose: "practice",
-      scenario: "在餐厅点餐",
-      api: "live",
-      model: "gpt-live-1",
-      startedAt: t0,
-      spaceId: "personal",
-      transcript: [{ role: "assistant", text: "Hi, ready to order?" }, { role: "user", text: "I want a coffee with no ice." }, { role: "user", text: "  " }],
-    });
-    expect(p.reviewRunId).toBeTruthy();
-    const run = getRun(app, p.reviewRunId!);
-    expect(run).toMatchObject({ kind: "speaking-review", title: "口语练习评价：在餐厅点餐" });
-    const list = listVoiceSessions(app, "owner", "practice");
+    const chat = saveVoiceSession(app, "owner", { api: "live", model: "gpt-live-1", startedAt: t0, transcript: [{ role: "assistant", text: "要查什么？" }, { role: "user", text: "明天的评审几点" }, { role: "user", text: "  " }] });
+    expect(all(app.db, "select id from runs where kind = 'speaking-review'")).toEqual([]);
+    const list = listVoiceSessions(app, "owner");
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ scenario: "在餐厅点餐", reviewRunId: p.reviewRunId, transcript: [{ role: "assistant" }, { role: "user", text: "I want a coffee with no ice." }] });
+    expect(list[0]).toMatchObject({ id: chat.id, purpose: "chat", transcript: [{ role: "assistant" }, { role: "user", text: "明天的评审几点" }] });
+    // A practice kept by an older omem is not the assistant's.
+    run(app.db, "insert into voice_sessions(id, user_id, purpose, scenario, api, model, transcript, started_at, ended_at) values('voice_old','owner','practice','在餐厅点餐','live','m','[]',?,?)", t0, t0);
+    expect(listVoiceSessions(app, "owner")).toHaveLength(1);
     expect(listVoiceSessions(app, "someone-else")).toEqual([]);
     expect(existsSync(join(app.home, "secrets", "ai-keys.json"))).toBe(true);
   });

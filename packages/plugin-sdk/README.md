@@ -10,10 +10,14 @@ const omem = await connect();             // waits for the shell: theme, route p
 const sessions = await omem.get("sessions");
 omem.on((event) => { /* this plugin's server events */ });
 const live = omem.stream("live");         // a WebSocket to the plugin's service, through omem
+// In a click handler, with `voice: true` in plugin.yaml: a conversation with omem's voice model.
+const call = await omem.voice({ instructions: "Play a waiter…", onTurns: (turns) => draw(turns) });
+const { transcript } = await call.stop();
 ```
 
 - `omem-plugin-sdk`: `connect()` → `get` / `post` (only `/api/plugins/<this plugin>/…`), `on`,
-  `navigate`, `openSettings`, `stream`, and `renderBlock` / `renderView` for the agent's questions (forms) and views (tables, charts, comparisons) in a session.
+  `navigate`, `openSettings`, `stream`, `voice` / `voiceStatus` (omem holds the microphone and the
+  connection; the page gets the transcript only), and `renderBlock` / `renderView` for the agent's questions (forms) and views (tables, charts, comparisons) in a session.
 - `omem-plugin-sdk/blocks`: `renderBlock` and `renderView` alone, without a framework.
 - `omem-plugin-sdk/service`: for a plugin's service (Node): `serve({ http, socket })` on
   `127.0.0.1:OMEM_SERVICE_PORT`, refusing requests without omem's token.
