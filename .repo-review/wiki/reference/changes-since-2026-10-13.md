@@ -1889,3 +1889,14 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `mergeRole`：frontmatter 按字段合并，`tools` 和 `skills` 按集合（源码现在有的，加上本人加的，去掉本人去掉的；分组已经带上的工具名不再单独列），只有正文按文本三方合并。合并或模型解决冲突之后，副本如果只剩技能和工具的差别，自动变回叠加设置。
 - `followRoleSource`（`POST /api/roles/:name/follow-source`，Agent 页“正文跟随源码”）：放弃副本的正文，保留副本比源码多的技能和工具（源码特意排除的工具不带回来），之后源码更新直接生效。
 - 模型解决冲突的说明：源码删掉或改写、本人没改过的段落按源码，不把旧写法和新写法并排留着；frontmatter 已合并好，不改。
+
+## 2026-11-11：会话与运行互相知道（docs/v2/awareness.md）
+
+起因：同一个群里两路同时处理同一件事各回一遍；后台在查的事本人中途插手了，后台照发过时的结论；一件事在几个会话里进行，各会话只看眼前。改法：
+
+- 运行的范围键：表 `run_scope`（迁移），`src/agents/run-scope.ts` 的 `recordRunStart` 在 `runs.ts` 认领运行后从输入得出（会话、飞书群和话题、触发消息、事项），事项工具（`read_item`、`upsert_item`、`settle_items`、`propose_item_update`、带 `entity_id` 的 `notify`）运行中补上。`relatedNote` 生成“同时在办的相关工作”（进行中或 30 分钟内结束，最多 6 条），`runner.ts` 的 `runRole` 和 `sessions.ts` 的 `threadTurn` 接在任务后面（`awareness.ts` 的 `awarenessNote`）。
+- 发出前复核：`awareness.ts` 的 `preSendCheck`（`tools.ts` 的 `runTool` 里，`notify`、`lark_send`、`lark_card`、`lark_send_file`、`reply_to_asker`）和 `recheckAnswer`（`jobs.ts` 的 `ask` 处理和 `runAgentTask`，最终回答）；只对 `mayStayQuiet` 的后台运行，每次运行一次（`output.awareness.recheckedAt`）。`ownerMoves` 收集运行排队后本人在范围里说的话。通知闸门的已读、表情、之后回复并进同一个检查；`lark-bot.ts` 推送时对复核过的运行不再拦（`checkedBeforeSend`），夜间攒下的照旧检查。
+- 运行中送达：`ownerNews` 接在 `tools.ts` 的 `steering` 后面，后台运行下一次工具调用的结果末尾附“本人刚说了”，每条一次。
+- 一件事跨会话：`src/items/places.ts`。会话和群聊是事项材料；`upsert_item` 写事项时自动关联运行所在的会话或群（`linkRunPlaces`）；“这件事还在这些会话里进行”（`itemPlacesNote`）；候选事项（`placeCandidates`，引用、链接或单号、人、共同的词、时间）；`read_item` 多返回 `places`、`runs`；`GET /api/items/:id` 多返回 `places`、`runs`（只给事项的主人）；事项页“在这些会话里进行”（`ItemPlaces.vue`）。
+- 接手：新工具 `take_over_run`（分组 `delegate`），停下同一个人的后台运行并返回它最后的文字、工作文件、碰过的事项和已发出的消息。
+- `roles/_common.md` 新增“同时在办的工作”；`skills/omem/references/items.md`、`agents.md` 同步；测试 `test/awareness.test.ts`（假 Agent 新增 `FAKE_MODE=aware`）。

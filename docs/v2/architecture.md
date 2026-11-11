@@ -440,6 +440,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 文档变化规则：电子表格逐行比对、多维表格按记录、发到群、回写不自触发、条件 chat.id=current、规则所属空间可改并带走工作文件 | 已实现；2026-11-11，飞书接口字段待真机核对 | `channels/lark-doc-events.ts`、`rules/own-writes.ts`、`rules/store.ts`、`sources/work.ts` |
 | 命令规则（PATH 垫片拦截 + 审批放行）；边界见 docs/v2/command-gate.md；凭据代理未做 | 已实现；2026-11-11，Linux 待跑 | `src/agents/command-gate.ts`、`POST /api/command-gate`、设置 → 安全 |
 | 主线程卡顿监测（diag 的 eventLoop）；向量变更记录与量化快照；网络 git 异步 | 已实现；2026-11-11 | `core/loop-monitor.ts`、`search/vectors.ts`、`core/git.ts` |
+| 会话与运行的感知（docs/v2/awareness.md）：运行的范围键（飞书会话和话题、会话、触发消息、事项，宿主从输入和事项工具得出，表 `run_scope`）；任务里的“同时在办的相关工作”（30 分钟内）；后台运行发出前（notify、飞书消息和卡片、回复对方、最终回答）本人在范围内说过话就交回再过一轮，每次运行一次，通知闸门的已读和表情信号并进同一个检查；后台运行下一次工具调用附上本人刚说的话；事项与会话自动关联（事项材料）、“这件事还在这些会话里进行”、候选事项；`read_item` 全貌；`take_over_run`；事项页“在这些会话里进行” | 已实现；2026-11-11，`test/awareness.test.ts`；真实模型和真机未验 | `src/agents/run-scope.ts`、`awareness.ts`、`src/items/places.ts`、`web/src/components/ItemPlaces.vue` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
 
 定时规则的投递目标可选择已有助理会话或已采集的飞书群。选择群后保存时建立本人所属的群会话，不发送消息、不复用访客会话；执行沿用所选会话的机器人。缺少目标的旧规则在动作阶段失败并记录原因，不再转为私发。实现：`src/rules/destinations.ts`、`actions.ts`、`web/src/views/Rules.vue`；专项测试覆盖。

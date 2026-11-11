@@ -19,6 +19,7 @@ import { homeFor } from "./home.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import { replyOf } from "./types.ts";
 import { quietReason } from "./quiet.ts";
+import { recheckAnswer } from "./awareness.ts";
 import { retireRecordedSession } from "./session-cleanup.ts";
 import { maybeSummarize, threadTurn } from "./sessions.ts";
 import { readAgentSpec } from "./specs.ts";
@@ -142,6 +143,8 @@ registerHandler("ask", async (ctx) => {
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, messageId: id, session: r.mode };
   }
+  // Nobody waits on it and the owner spoke in its scope meanwhile: one more turn with their words first (awareness.ts).
+  answer = await recheckAnswer(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner", prompt)).text);
   // It said it has nothing to say (stay_quiet, only where nobody waits on the turn): nothing is posted.
   const quiet = quietReason(ctx.app, ctx.run.id);
   // Woken by a wake-up it set: nobody waits on it either.
@@ -277,7 +280,7 @@ async function runAgentTask(ctx: RunContext) {
   // Retried: what the failed attempt already did comes first, so nothing is posted twice.
   const retryOf = (ctx.run.input as { retryOf?: string }).retryOf;
   if (retryOf) fullTask = `${(await import("./retry.ts")).attemptNote(ctx.app, retryOf)}\n\n---\n\n${fullTask}`;
-  const go = (resume?: string) =>
+  const go = (resume?: string, turnTask = fullTask) =>
     runRole(ctx.app, {
       role: "assistant",
       spec,
@@ -293,7 +296,7 @@ async function runAgentTask(ctx: RunContext) {
       denyTools: [...(assistantScope?.denyTools ?? []), ...(((ctx.run.input as { denyTools?: string[] }).denyTools) ?? [])],
       userId: assistantScope?.userId ?? one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? undefined,
       spaceId: ctx.run.spaceId ?? spec?.space ?? "personal",
-      task: fullTask,
+      task: turnTask,
       runId: ctx.run.id,
       signal: ctx.signal,
       onEvent: (e) => ctx.event(e.type, e),
@@ -315,7 +318,16 @@ async function runAgentTask(ctx: RunContext) {
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
   // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).
-  const answer = replyOf(r).trim() || "（没有输出）";
+  let answer = replyOf(r).trim() || "（没有输出）";
+  // A run nobody waits on whose answer is posted: when the owner spoke in its scope meanwhile, one more
+  // turn with their words (awareness.ts). Silent and meeting runs post through tools, checked there.
+  if (!silent && !meeting) {
+    const session = r.sessionId;
+    answer = await recheckAnswer(ctx, answer, async (prompt) => {
+      const again = await go(session, prompt).catch((e) => (session && !ctx.signal.aborted ? go(undefined, prompt) : Promise.reject(e)));
+      return replyOf(again).trim();
+    }, fullTask);
+  }
   // News of its own (a meeting's conclusion, which also carries the rule that brought the bot in):
   // posted in the chat itself, not in the topic the conversation last replied in (lark-bot.ts).
   const topLevel = (ctx.run.input as { topLevel?: boolean }).topLevel ? { topLevel: true } : {};

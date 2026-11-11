@@ -1154,7 +1154,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(app, { item: id, spaces: allowed });
     const { itemExpiry } = await import("../items/expiry.ts");
-    return { item, events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app)) };
+    // Where the work goes on and what runs for it now (items/places.ts): only for the item's own person.
+    const { itemPlaces, itemRuns } = await import("../items/places.ts");
+    const mine = item.userId === who(req);
+    return { item, events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app)), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.
