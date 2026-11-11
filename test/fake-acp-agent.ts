@@ -176,6 +176,57 @@ new AgentSideConnection(
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      // FAKE_MODE=design: the designer (src/designs). Assessing someone else's design: it reads the document,
+      // hands in what the author decided with concerns; assessing again, it first leaves out the old
+      // concern (refused), then gives its state. Writing an own design: one decision with every field.
+      if (process.env.FAKE_MODE === "design") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-design", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const direct = new Set((await client.listTools()).tools.map((t) => t.name));
+          const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
+          const text = (r: Awaited<ReturnType<typeof call>>) => ((r.content as { text?: string }[]) ?? []).map((c) => c.text ?? "").join("");
+          if (process.env.FAKE_DESIGN === "none") { await say("看完了，没交"); return { stopReason: "end_turn" as const }; }
+          if (prompt.includes("# 评估技术方案")) {
+            const ref = /src:([A-Za-z0-9_-]+)/.exec(prompt)?.[1];
+            const doc = ref ? await call("read_source", { source: ref }) : null;
+            const decisions = [
+              { kind: "change", title: "退款金额改由订单服务计算", fields: { behavior: { brief: "三个页面各算一遍 → 都调订单服务" } }, concerns: [{ level: "problem", text: "对账报表读的是落库前的金额，方案没有改它", where: ["report/daily.ts:88"] }, { level: "question", text: "旧订单的退款记录要不要回填" }] },
+              { kind: "add", title: "部分发货的订单按已发货行退", stated: false, fields: { behavior: { brief: "方案没写部分发货" } } },
+            ];
+            if (prompt.includes("## 上一版的评估")) {
+              const missing = await call("submit_design", { facts: [{ text: "文档第 2 版补了对账报表" }], decisions: [{ ...decisions[0], id: "D1", concerns: [] }] });
+              const done = await call("submit_design", {
+                facts: [{ text: "文档第 2 版补了对账报表" }],
+                decisions: [{ ...decisions[0], id: "D1", concerns: [{ id: "C2", level: "problem", text: "对账报表读的是落库前的金额，方案没有改它", state: "resolved", note: "第 2 版改了报表" }, { id: "C3", level: "question", text: "旧订单的退款记录要不要回填", state: "open" }] }, { ...decisions[1], id: "D2" }],
+                concerns: [{ id: "C1", level: "risk", text: "没写发布顺序", state: "dropped", note: "第 2 版写了" }],
+                note: "文档第 2 版",
+              });
+              await say(`重新评估 ${JSON.stringify({ missing: missing.isError ? text(missing) : null, done: done.isError ? text(done) : "ok" })}`);
+              return { stopReason: "end_turn" as const };
+            }
+            const r = await call("submit_design", { facts: [{ text: "退款金额现在在三个地方算", refs: ref ? [`src:${ref}`] : [] }], decisions, concerns: [{ level: "risk", text: "没写发布顺序" }] });
+            await say(`评估完成 ${JSON.stringify({ read: doc && !doc.isError, submitted: r.isError ? text(r) : "ok", hasDoc: prompt.includes("## 方案文档"), hasRepo: prompt.includes("## 要核对的仓库"), hasNote: prompt.includes("## 本人关心的") })}`);
+            return { stopReason: "end_turn" as const };
+          }
+          if (prompt.includes("# 写方案")) {
+            const field = (brief: string) => ({ brief });
+            const r = await call("submit_design", {
+              facts: [{ text: "退款金额在两个页面各算一遍", refs: ["refund.ts:1"] }],
+              decisions: [{
+                kind: "change", title: "退款金额在订单行上算，页面不再自己合计", reqs: ["退款只算已发货行"],
+                fields: { behavior: { brief: "页面合计 → computeRefund", table: { head: ["情况", "现在", "改后"], rows: [["部分发货", "全退", "只退已发货行"]] } }, where: field("order/refund.ts 一处"), callers: field("导出任务"), migration: field("不涉及：只改计算") },
+                question: { text: "运费怎么退", options: ["按金额比例", "按件数比例"], recommended: 0 },
+              }],
+            });
+            await say(`写好了 ${r.isError ? text(r) : "ok"}`);
+            return { stopReason: "end_turn" as const };
+          }
+          await say("不认识的任务");
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
       // FAKE_MODE=tasks: a delegation driven by tasks (code-loop.ts). The coder splits the work, commits
       // each task with its Omem-Task line and says it is done; review-lead plans the review and rules
       // (the business finding is fixed without the owner, the naming nit goes to the owner); the

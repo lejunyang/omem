@@ -6,6 +6,7 @@ import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
+import { designBodySchema } from "../designs/types.ts";
 import { checkFields, checkView, fieldsSchema, viewSchema } from "./ui-blocks.ts";
 /** Kept in step with ui-pages.ts PAGE_MAX (imported lazily there). */
 const PAGE_MAX_CHARS = 300_000;
@@ -4844,6 +4845,150 @@ def({
     const pc = await import("./pre-check.ts");
     pc.savePreCheck(ctx.app, workRootOf(ctx.app, me.id), a);
     return `已记下：${pc.preCheckLine(a)}。编码 Agent 拆修改项时会拿到它。`;
+  },
+});
+
+// ---- designs (src/designs, docs/v2/coding-plan.md) ------------------------------------------------
+
+/** A design this run may read (its space in the read scope). */
+async function readableDesign(ctx: ToolContext, id: string) {
+  const { getDesign } = await import("../designs/store.ts");
+  const d = getDesign(ctx.app, id);
+  if (!canRead(ctx, d.spaceId)) throw new HttpError(403, `本次任务不能访问方案 ${id} 所在的空间 ${d.spaceId}`);
+  return d;
+}
+/** The design a run is about: one bound to it, else the one its delegation or branch review is based on. */
+async function designOfRunId(ctx: ToolContext, runId: string) {
+  const s = await import("../designs/store.ts");
+  const r = getRun(ctx.app, runId);
+  const bound = (r.input as { designId?: string }).designId;
+  if (typeof bound === "string") return s.getDesign(ctx.app, bound);
+  if (r.kind === "code" || (r.kind === "review" && typeof r.input.codeRunId === "string")) {
+    const { workRootOf } = await import("./code-tasks.ts");
+    const d = s.designOfWork(ctx.app, workRootOf(ctx.app, r.id));
+    if (d) return d;
+  }
+  throw new HttpError(404, `运行 ${runId} 没有对应的方案`);
+}
+
+def({
+  name: "submit_design",
+  description:
+    "交一版方案：写进这次运行绑定的方案（编码前写的方案、评估别人的方案、编码后的变更说明、分支评审的拆分），版本号加一。方案是一组决定，前面三段很短：facts 影响方案的事实（每条带依据）、matrix 跨决定的整体行为表、gaps 和要求不一致的地方。每个决定按种类（add / change / remove / refactor）填它的栏目，每栏一句 brief，约定给 code（只写类型、接口参数和返回字段、表和列、配置项的签名和字段，一个决定不超过 30 行），行为给 table（行是情况，列是预期结果）。写边界上的东西，不写函数体、控制流、变量名、怎么拆文件、测试代码。要本人定的写 question（选项和建议）。评估别人的方案：文档没写的栏目留空，文档没写但实现时必须定的决定标 stated=false，意见写进 concerns（带位置和依据）；重新评估时上一版每条意见都要带 id 和现在的状态。再调用会再交一版。",
+  schema: designBodySchema.extend({ note: z.string().max(1000).optional().describe("这一版改了什么（第一版不用写）") }),
+  handler: async (ctx, a) => {
+    const me = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    const designId = me ? (me.input as { designId?: string }).designId : undefined;
+    if (!me || typeof designId !== "string")
+      throw new HttpError(400, "这次运行没有绑定方案：submit_design 只在写方案、评估别人的方案、编码后交变更说明或分支评审拆分的运行里用");
+    const { note, ...body } = a;
+    const { submitRevision } = await import("../designs/store.ts");
+    const { designLine } = await import("../designs/render.ts");
+    const d = submitRevision(ctx.app, designId, body, { runId: me.id, note });
+    return `已收下方案 ${d.id} 第 ${d.revision} 版：${designLine(d)}。决定 ${d.body.decisions.map((x) => x.id).join("、")}${(d.body.concerns?.length || d.body.decisions.some((x) => x.concerns?.length)) ? "；意见编号见 read_design" : ""}。`;
+  },
+});
+
+def({
+  name: "read_design",
+  description: "读一份方案（自己的方案、别人的方案的评估、变更说明）：事实、整体行为表、不一致的地方、整体意见，逐个决定的栏目（约定片段和行为表）、不选的做法、要本人定的问题、意见和状态。design_id 直接取；run_id 取这次交办 / 分支评审 / 评估运行对应的；item_id 取事项上最新的一份。",
+  schema: z.object({
+    design_id: z.string().optional(),
+    run_id: z.string().optional().describe("交办、分支评审或评估运行的任一运行 id"),
+    item_id: z.string().optional(),
+    revision: z.number().int().min(1).optional().describe("看第几版，默认最新"),
+    brief: z.boolean().optional().describe("true：每栏只要一句话"),
+  }),
+  handler: async (ctx, a) => {
+    const s = await import("../designs/store.ts");
+    const { designMarkdown } = await import("../designs/render.ts");
+    let d;
+    if (a.design_id) d = await readableDesign(ctx, a.design_id);
+    else if (a.run_id) d = await readableDesign(ctx, (await designOfRunId(ctx, a.run_id)).id);
+    else if (a.item_id) {
+      const item = getItem(ctx.app, a.item_id);
+      if (!canRead(ctx, item.spaceId) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读这个事项");
+      const list = s.designsOfItem(ctx.app, item.id).filter((x) => canRead(ctx, x.spaceId));
+      if (!list.length) throw new HttpError(404, `事项 ${item.id} 上没有方案`);
+      d = list[0];
+      if (list.length > 1) return `${designMarkdown(ctx.app, d, { revision: a.revision, mode: a.brief ? "brief" : "full" })}\n\n---\n\n事项上还有：${list.slice(1).map((x) => `${x.id}《${x.title}》（${x.origin}，${x.status}）`).join("、")}`;
+    } else throw new HttpError(400, "给 design_id、run_id 或 item_id 之一");
+    return designMarkdown(ctx.app, d, { revision: a.revision, mode: a.brief ? "brief" : "full" });
+  },
+});
+
+def({
+  name: "assess_design",
+  description: "跟进别人写的技术方案：让写方案的角色（designer）读文档和要改的仓库，如实提取作者决定了什么、回到代码核对事实，再逐个写意见（问题、风险、改进、要问作者的），交成一份“别人的方案”。后台运行，完成后通知本人，结果也回到这个会话。文档要先是原件（飞书文档或网页先 import_url）；有事项就挂上。文档更新后对同一份方案再调用（传 design_id），上一版的意见会逐条给出现在的状态。返回运行 id 和方案 id。",
+  write: true,
+  schema: z.object({
+    title: z.string().min(1).max(200).describe("方案的名字，一般是文档标题"),
+    sources: z.array(z.string().min(1)).min(1).max(10).describe("方案文档：src:<原件 id>、原件 id，或已收进来的文档链接"),
+    repo_spaces: z.array(z.string()).max(10).optional().describe("方案要改的代码仓库空间 id，用来核对事实"),
+    item_id: z.string().optional().describe("这份方案所属的事项"),
+    space: z.string().optional().describe("方案放在哪个空间，默认事项的空间，否则当前空间"),
+    author: z.string().max(80).optional().describe("方案作者（显示名）"),
+    note: z.string().max(4000).optional().describe("本人关心的点：要重点看什么、担心什么"),
+    design_id: z.string().optional().describe("重新评估已有的别人的方案（文档更新后）"),
+    execution: executionSchema.optional().describe("评估用哪个 AI；不给时按 designer 角色的设置"),
+  }),
+  handler: async (ctx, a) => {
+    const execution = validateExecution(ctx.app, a.execution);
+    const item = a.item_id ? getItem(ctx.app, itemFor(ctx, a.item_id)) : null;
+    const target = writeSpace(ctx, a.space ?? item?.spaceId);
+    const repos = [...new Set((a.repo_spaces ?? []).map((id) => space(ctx, id)))];
+    const as = await import("../designs/assess.ts");
+    const sources = await as.resolveDesignSources(ctx.app, a.sources, { userId: ctx.userId ?? OWNER, spaces: ctx.spaces });
+    if (a.design_id) await readableDesign(ctx, a.design_id);
+    const { design, run: r } = as.startAssessment(ctx.app, {
+      title: a.title, sources, repos, spaceId: target, userId: ctx.userId ?? OWNER, itemId: item?.id, author: a.author, note: a.note, designId: a.design_id, parentId: ctx.runId, ai: execution, readable: ctx.spaces,
+    });
+    return `已开始评估，运行 ${r.id}，方案 ${design.id}${design.revision ? `（第 ${design.revision + 1} 版）` : ""}；完成后会通知本人，结果也会回到这里。`;
+  },
+});
+
+def({
+  name: "settle_design",
+  description: "处理一份方案。自己的方案（等确认时）：approve 通过、comment 提意见（写 text，回到写方案的会话改一版）、rethink 换个思路；转达本人原话时 owner_words=true（这一轮本人说了才行）。没有本人原话时，只有设置为“由助手确认”且方案里没有要本人定的问题，才能自己 approve / comment / rethink。answer 回答某个决定的问题（decision + text，要本人原话）。concern 标一条意见的状态（concern + state + note），别人的方案和自己的都可以。",
+  write: true,
+  schema: z.object({
+    design_id: z.string(),
+    action: z.enum(["approve", "comment", "rethink", "answer", "concern"]),
+    text: z.string().max(4000).optional().describe("comment：意见；rethink：想换成什么思路；answer：回答（选项原文或本人的话）"),
+    owner_words: z.boolean().optional().describe("true：转达本人这一轮说的话"),
+    answers: z.record(z.string(), z.string().max(1000)).optional().describe("approve / comment 时一起回答的问题：{ D2: \"按金额比例\" }"),
+    decision: z.string().optional().describe("answer：决定 id，如 D2"),
+    concern: z.string().optional().describe("concern：意见 id，如 C3"),
+    state: z.enum(["open", "resolved", "dropped"]).optional().describe("concern：现在的状态"),
+    note: z.string().max(1000).optional().describe("concern：为什么（怎么解决的、为什么不再成立）"),
+  }),
+  handler: async (ctx, a) => {
+    const s = await import("../designs/store.ts");
+    const d = await readableDesign(ctx, a.design_id);
+    inScope(ctx, d.spaceId, "方案");
+    if (d.userId && d.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能处理本人的方案");
+    const ownerSaid = ownerAskedThisTurn(ctx);
+    if (a.owner_words && !ownerSaid) throw new HttpError(400, "这一轮没有本人的消息，不能当成本人原话转达；要本人定的先问本人（ask_user）");
+    const byOwner = !!a.owner_words;
+    if (a.action === "concern") {
+      if (!a.concern || !a.state) throw new HttpError(400, "concern 要写 concern（意见 id）和 state");
+      const after = s.setConcernState(ctx.app, d.id, a.concern, { state: a.state, note: a.note, by: byOwner ? "owner" : "assistant" });
+      const { designLine } = await import("../designs/render.ts");
+      return `已把 ${a.concern} 标为 ${a.state}。现在：${designLine(after)}`;
+    }
+    if (a.action === "answer") {
+      if (!a.decision || !a.text?.trim()) throw new HttpError(400, "answer 要写 decision（决定 id）和 text");
+      if (!byOwner) throw new HttpError(403, "决定上的问题由本人定：本人回答后用 owner_words=true 转达");
+      s.answerQuestion(ctx.app, d.id, a.decision, a.text);
+      return `已记下本人对 ${a.decision} 的回答。${d.status === "review" ? "其余问题都答了以后再转达通过。" : ""}`;
+    }
+    if (!byOwner) {
+      if (s.designSettings(ctx.app).confirm !== "assistant") throw new HttpError(403, "方案由本人确认（设置 agents.design.confirm = owner）：把方案和要定的问题告诉本人，本人说了再用 owner_words=true 转达");
+      if (Object.keys(a.answers ?? {}).length) throw new HttpError(403, "决定上的问题由本人定，不能自己回答");
+      if (s.designCounts(d.body).questions) throw new HttpError(403, "方案里有要本人定的问题，要本人确认");
+    }
+    const after = s.decideDesign(ctx.app, d.id, { action: a.action, text: a.text, answers: a.answers, by: byOwner ? "owner" : "assistant" });
+    return a.action === "approve" ? `方案 ${d.id} 已通过（第 ${after.revision} 版）。` : `已把${a.action === "rethink" ? "“换个思路”" : "意见"}记在方案 ${d.id} 上，写方案的会话会按它改一版。`;
   },
 });
 

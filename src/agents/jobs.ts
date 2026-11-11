@@ -38,6 +38,8 @@ import { digestMergeText } from "../memory/digest-merge.ts";
 import { readsSince } from "../channels/lark-knowledge.ts";
 import "./profile-jobs.ts";
 import "./req-split.ts";
+// Assessing someone else's technical design (designs/assess.ts).
+import "../designs/assess.ts";
 import "./wakes.ts";
 import "./digest.ts";
 // Also registers the mention handler (someone looking for the owner: triage, then maybe a handling).

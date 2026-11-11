@@ -35,6 +35,7 @@ const ROLE_RUNS: Record<string, string[]> = {
   guest: ["guest"],
   "kb-scout": ["kb-scout"],
   "req-splitter": ["req-split"],
+  designer: ["design"],
   "speaking-coach": ["speaking-review"],
   "mention-triage": ["mention"],
 };

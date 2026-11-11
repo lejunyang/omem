@@ -167,6 +167,13 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/requirements": "self",
   "GET /api/requirements/:id": "self",
   "POST /api/requirements": s("memory.write", "b.space"),
+  // designs (src/designs): the handlers keep to the spaces the person may read, and writers confirm
+  "GET /api/designs": "self",
+  "GET /api/designs/:id": "self",
+  "GET /api/designs/:id/diff": "self",
+  "POST /api/designs": "self",
+  "POST /api/designs/:id/decide": "self",
+  "POST /api/designs/:id/concerns/:cid": "self",
 
   // runs
   "GET /api/runs": "self",

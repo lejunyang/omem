@@ -17,7 +17,7 @@ export const CORE_TOOLS = new Set([
   "list_sources", "write_file", "list_runs", "read_run", "wake_later", "cancel_wake",
 ]);
 /** What a background role exists to hand in: always its own tool, and only for that role. */
-export const ROLE_TOOLS = ["describe_source", "classify_source", "propose_archive_rule", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "reply_to_asker"];
+export const ROLE_TOOLS = ["describe_source", "classify_source", "propose_archive_rule", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
 /**
  * A run allowed this few tools gets every one of them directly: a background role or profile
@@ -47,8 +47,9 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "wait_answer", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
   { id: "wake", label: "唤醒与规则", doc: "owner", tools: ["wake_later", "wake_on_message", "cancel_wake", "list_rules", "save_rule", "report_rule_failure"] },
   { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["delegate_code", "review_branch", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
+  { id: "design", label: "方案：读、评估别人的方案、确认", doc: "code", tools: ["read_design", "assess_design", "settle_design"] },
   { id: "git", label: "代码仓库与 Git", doc: "code", tools: ["list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "code_history"] },
-  { id: "code-handin", label: "编码与评审角色交结果", doc: "code", tools: ["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "submit_brief"] },
+  { id: "code-handin", label: "编码与评审角色交结果", doc: "code", tools: ["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "submit_brief", "submit_design"] },
   { id: "code-results", label: "编码的验证结果：截图、报告与测试结果", doc: "code", tools: ["attach_artifact", "report_tests"] },
   { id: "lark-msg", label: "飞书消息与卡片", doc: "lark", tools: ["lark_send", "lark_react", "meeting_send", "lark_card", "lark_update_card", "lark_send_file", "lark_message_file", "reply_to_asker"] },
   { id: "lark-docs", label: "以本人身份写飞书文档", doc: "lark", tools: ["lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"] },

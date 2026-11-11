@@ -21,6 +21,16 @@
 - `continue_code_run` 和 `fix_review` 也接受 `review_tier` / `review_checks` / `split` / `rotate_models`，`fix_review` 另可传 `review_execution`；两者的 `apply_first: true` 只对以前的交办有用（先应用再接着改）；工作分支上的交办每轮都已经提交在分支上。
 - `resplit_change_points`：重新整理已有评审的需求拆分（网页“变更”里的变更点），不重跑整个评审；没提到的保持，评审没有拆分时就新拆一份。
 
+## 方案（design）
+
+方案是一组决定（新增 / 修改 / 删除 / 重构，各有各的栏目），挂在事项上或放在一个空间里，有三种来历：自己的方案（交办编码前写，本人确认）、别人的方案（别人的技术方案文档，提取后评估）、变更说明（编码后补的）。决定和整份方案上可以挂意见：问题、风险、改进、要问作者的，各有 open / resolved / dropped 状态。设计见 docs/v2/coding-plan.md。
+
+- `read_design(design_id | run_id | item_id, revision?, brief?)`：读方案的 Markdown：事实、整体行为表、不一致的地方、整体意见，逐个决定的栏目（约定片段和行为表）、不选的做法、要本人定的问题、意见和状态。`run_id` 取那次交办、分支评审或评估运行对应的，`item_id` 取事项上最新的一份，`brief` 每栏只要一句。
+- `assess_design(title, sources, repo_spaces?, item_id?, space?, author?, note?, design_id?, execution?)`：跟进别人的技术方案。`sources` 是原件（`src:<id>`、原件 id 或已收进来的链接；飞书文档、网页先 `import_url`），逐个校验存在且可读；`repo_spaces` 是方案要改的仓库，用来核对事实；本人关心的点写 `note`。`designer` 在后台提取作者的决定、回到代码核对、写意见，交成别人的方案（“已评估”），完成后通知本人，发起的会话里也会收到结果。文档更新后对同一份方案再调用并传 `design_id`：版本号加一，上一版每条意见都会给出现在的状态。不替作者改方案，也不自动把意见发给作者。
+- `settle_design(design_id, action, …)`：自己的方案等确认时，`approve` 通过、`comment` 提意见（`text`，写方案的会话按它改一版）、`rethink` 换个思路；转达本人原话传 `owner_words: true`（这一轮本人说了才行）。设置 `agents.design.confirm` 为 `assistant` 时，没有要本人定的问题的方案助手可以自己确认。`answer`（`decision` + `text`）转达本人对某个决定的问题的回答，`approve` / `comment` 也可以带 `answers: { D2: "…" }` 一起回答；还有没回答的问题时不能通过。`concern`（`concern` + `state` + `note`）标一条意见的状态，别人的方案也可以。
+- `submit_design`：写方案、评估、交变更说明的运行交结果，写进这次运行绑定的方案（没有绑定时报错），版本号加一。按来历检查：自己的方案每个栏目都要有一句 `brief`，约定给签名和字段（一个决定不超过 30 行）、行为给表；别人的方案没写的栏目留空，文档没写但实现必须定的决定标 `stated: false`；变更说明只要标题、种类和行为上的变化。决定 id（D1…）和意见 id（C1…）由宿主编号，各版本保持不变：沿用上一版的写它的 id，新的不写。
+- 设置 `agents.design.mode`（`auto` / `always` / `never`）决定交办前要不要先写方案，`agents.design.confirm`（`owner` / `assistant`）决定谁确认。
+
 ## 工作分支、确认与 Git
 
 - 交办每个仓库一条工作分支：`delegate_code` 不传分支时从仓库目录当前的提交切出临时分支，编码 Agent 按功能改名；`from_branch` 接着已有分支提交；`branch` 指定新分支名（本人说了才传）。编码 Agent 按功能提交，一轮剩下没提交的由宿主提交；不要让它 push。同一个分支一次只有一个没确认的交办，新交办默认各开一条分支，可以并行。
