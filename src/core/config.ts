@@ -57,6 +57,7 @@ export const roleNames = [
   "wiki-writer",
   "wiki-linter",
   "wiki-organizer",
+  "wiki-checker",
   "heartbeat",
   "dreamer",
   "coder",

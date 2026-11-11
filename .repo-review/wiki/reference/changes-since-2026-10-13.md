@@ -1987,3 +1987,24 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 引用可达性（`src/sources/reach.ts`）：按空间读者和 `sourceVisible` 判断，不写死个人空间；只有本人能读的空间不报。
 - 群里再贴一次已移走文档的链接时，一天内读过的不再重读（`importLinkedDocs` 认 `source_locations`）。
 - 测试：`test/homing.test.ts`、`test/homing-agent.test.ts`（`FAKE_MODE=archive`）。验收 26a–26l。
+
+## Wiki 生成时的检查与核对（2026-11-11）
+
+起因：一次对夜间自动生成页面的审核，发现首页丢了目录入口、同一主题在几个相关空间各写一遍且不一致、流程步骤和代码不符、规划了的页面没写也没提示、“未取得”其实原件里有、业务页引用个人空间和临时分支的原件、代码空间索引过期只能写纯文本、页面过长和过程性语言。本人没时间逐页核对。设计在 docs/v2/wiki-verify.md。
+
+- 宿主检查（`src/wiki/checks.ts`，`write_page` 调用）：首页和目录页改写丢了仍然存在的页面入口时退回，同一运行再缺补在页尾；引用不存在、已删除、行号超出退回；共享空间页面引用个人空间、交办分支索引、部分读者无权限空间的原件退回，并给出本空间或相关业务空间里的同一份；能唯一对上索引的 `路径:行号` 和 `` `符号` `` 写成纯文本时退回并给出 `src:` 写法；超过 12000 字退回。新页面和相关空间页面标题相近时提示链接。
+- 代码索引：规划和每页写作前，相关代码空间的索引落后于仓库 HEAD 就先同步（`refreshCodeIndexes`）。
+- 规划：任务里列出相关空间已有的页面；`submit_plan` 新增 `overlap`（本空间另写的理由）和 `reuse`（链接过去的主题），同名主题两样都没有时退回。
+- 核对（`src/wiki/verify.ts`、新角色 `wiki-checker`、工具 `submit_page_check`）：写作运行里计划的那一页先存草稿（`read_page` 读到草稿），核对角色用自己的 AI（`runRole` 的 `ownAI`）逐条核对并交结构化结论，写作者改或反驳，最多 3 轮后发布；核对记录存 kv，`GET /api/wiki/:space/page/*` 的 `checks`，网页右栏“核对”（`WikiChecks.vue`）。空间设置 `wikiVerify: false` 关闭。
+- 生成对账：规划的各页和 `generate_wiki` 的 `pages` 记成一次生成（kv `wiki-gen:<id>`），每个写作运行结束时 `settleWikiRun` 判断；没写成的重试一次，都结束后发一条通知（有未解决时普通通知，否则 silent），规划运行的输出带 `report`。
+- 角色说明与技能：`wiki-planner`（相关空间同主题、保留首页入口、调查入口写到代码）、`wiki-writer`（按代码数步骤、写“没有”前先找、引用只用业务空间、代码写成引用、6000 字以上拆、核对意见怎么处理）、`wiki-linter`（同样的写入规则）、技能 `wiki-writing`（事实上最常出错的几处、自查项）。
+- 测试：`test/wiki-checks.test.ts`、`test/wiki-verify.test.ts`；假 Agent 的 wiki 模式加了核对角色（`FAKE_WIKI_CHECK_FILE`：pass / once / always）和按核对改写。
+
+## Wiki 写法：过程性与防御性语言、拿不准的问本人、只放知识、图表（2026-11-12）
+
+本人看了一批自动生成的页面后提的四件事，设计补在 docs/v2/wiki-verify.md 的第 9–12 类。
+
+- 过程性和防御性语言：核对角色新增 `wording` / `hedge` 两类，逐句给出改后的句子；技能 wiki-writing 加了“整理过程、防御性的话：改写对照”表和自查项，要点取自开发用的表达检查技能里对知识页面适用的几条（整理过程、写给审稿人的话、退路、先立误解再推翻、冒号前的提示语、起手式），不改小标题编号、“这意味着”、句子长短。宿主不堆正则。
+- 拿不准的不写进页面：`write_page` 加 `questions`（写作运行的草稿上，跨版本保留），核对角色的 `unsure` 带 `question`；页面里不留“待确认/还没查清”小节（技能、写作、distiller、`_common.md` 的案例页结构同步去掉）。一次生成结束把问题合成一张表单（`handler: wiki-questions`，不单独通知，链接在那条通知里），本人填了的按页面排一次 `generate_wiki` 的 `pages` 补进去。
+- Wiki 只放知识：规划、写作、技能写清知识和流水记录的区别，核对角色新增 `log`；超过 6000 字的页面每轮由宿主自己记一条 length，发布前一定退回去拆。
+- 图表：`write_page` 用 mermaid 自己的解析器在 Node 里检查语法（DOMPurify 补上不做事的方法），语法错的拒写并给出行号。网页上带箭头的流程图之前一张都没渲染：DOMPurify 删掉了值里含 `-->` 的 `data-mermaid` 属性，现在属性里放编码后的源码；`import("mermaid")` 失败不再缓存；画不出来的图显示原因、靠左的源码和“重试”；切页面时动态分块取不到（服务更新后）自动刷新一次，页面内后加载的部分取不到时提示刷新。

@@ -861,17 +861,30 @@ registerHandler("wiki-plan", async (ctx) => {
   const allowed = scopeFor(ctx.app, userId, null);
   const sources = (readSpaces ?? [spaceId]).filter(id => !allowed || allowed.includes(id));
   const existing = listPages(ctx.app, spaceId);
+  // The code the plan reads, indexed as it is now; and what related spaces already cover (wiki/checks.ts, verify.ts).
+  const { codeSpaces, refreshCodeIndexes } = await import("../wiki/checks.ts");
+  const indexes = await refreshCodeIndexes(ctx.app, codeSpaces(ctx.app, spaceId, scopeFor(ctx.app, userId, sources)), (text) => ctx.event("status", { text }));
+  const relatedPages = relatedIds(ctx.app, spaceId)
+    .filter((id) => !allowed || allowed.includes(id))
+    .map((id) => {
+      const pages = listPages(ctx.app, id).filter((p) => p.slug !== "index");
+      return pages.length ? `空间 ${id}（${pages.length} 页）：\n${pages.length > 60 ? `${folderOverview(pages)}\n用 list_pages(space="${id}", folder=…) 看具体页面` : pages.map((p) => `- ${id}:${p.slug}「${p.title}」`).join("\n")}` : "";
+    })
+    .filter(Boolean);
   const r = await agent(
     ctx,
     "wiki-planner",
     spaceId,
     [
       focus ? `本人的要求：${focus}` : "为这个空间规划完整的 Wiki。",
+      indexes.synced.length ? `规划前已同步这些代码空间的索引：${indexes.synced.join("、")}。` : "",
+      indexes.notes.join("\n"),
+      relatedPages.length ? `相关空间已有的页面（同一主题已经写过的，计划里写明链接过去还是在本空间写）：\n${relatedPages.join("\n\n")}` : "",
       existing.length
         ? `已有页面（${existing.length} 页，路径里的 / 是目录）：\n${existing.length > 80 ? `${folderOverview(existing)}\n页面太多没有逐个列出：用 list_pages(folder=…) 看某个目录里的页面。` : existing.map((p) => `- ${p.slug}「${p.title}」`).join("\n")}`
         : "目前还没有页面。",
       ...sources.map(id => `材料空间 ${id}：\n${sourceMap(ctx.app, id)}`),
-    ].join("\n\n"),
+    ].filter(Boolean).join("\n\n"),
     [spaceId],
     readSpaces,
   );
@@ -882,35 +895,19 @@ registerHandler("wiki-plan", async (ctx) => {
   const wrote = !submitted && !!one(ctx.app.db, "select 1 from run_events where run_id = ? and type = 'tool-write' and json_extract(data, '$.name') in ('write_page', 'move_page') limit 1", ctx.run.id);
   if (!submitted && !wrote) throw new Error("规划没有提交页面计划（submit_plan）");
   const pages = (submitted ?? []) as PageBrief[];
-  if (autoWrite)
-    // Pages are written with the AI the plan was given, if any.
-    for (const page of pages) createRun(ctx.app, { kind: "wiki-write", spaceId, title: `写作：${page.title}`, input: { brief: page, instructions: focus, readSpaces, ai: ctx.run.input.ai }, parentId: ctx.run.id, userId });
-  return { summary: r.text.trim(), pages: pages.length };
+  if (autoWrite && pages.length) {
+    // Pages are written with the AI the plan was given, if any; the generation is settled and reported when the last one ends (wiki/verify.ts).
+    const writes = pages.map((page) => ({ slug: page.slug, title: page.title, runId: createRun(ctx.app, { kind: "wiki-write", spaceId, title: `写作：${page.title}`, input: { brief: page, instructions: focus, readSpaces, ai: ctx.run.input.ai, generation: ctx.run.id }, parentId: ctx.run.id, userId }).id }));
+    const { startGeneration } = await import("../wiki/verify.ts");
+    startGeneration(ctx.app, { id: ctx.run.id, spaceId, userId, planRunId: ctx.run.id, notes: indexes.notes, writes });
+  }
+  return { summary: r.text.trim(), pages: pages.length, ...(indexes.synced.length ? { synced: indexes.synced } : {}) };
 });
 
-export type PageBrief = { slug: string; title: string; kind: string; question: string; outline: string; entry_points: string[]; section?: string };
+export type PageBrief = { slug: string; title: string; kind: string; question: string; outline: string; entry_points: string[]; section?: string; overlap?: { pages: string[]; decision: string; reason: string } };
 
-registerHandler("wiki-write", async (ctx) => {
-  const spaceId = ctx.run.spaceId!;
-  const { brief, instructions, readSpaces } = ctx.run.input as { brief: PageBrief; instructions?: string; readSpaces?: string[] };
-  const exists = pageExists(ctx.app, spaceId, brief.slug);
-  const pagesNow = listPages(ctx.app, spaceId);
-  const task = [
-    `页面：${brief.slug}「${brief.title}」（类型：${brief.kind}）`,
-    `用户问题：${brief.question}`,
-    `讲解路线：${brief.outline}`,
-    `调查入口：${(brief.entry_points ?? []).join("、") || "自行调查"}`,
-    exists ? "这个页面已经存在：先 read_page，保留仍然正确且有用的内容，在此基础上改进。" : "",
-    instructions ? `本人的补充要求：${instructions}` : "",
-    "其他已有/计划中的页面（需要时链接它们，不要重复讲）：\n" +
-      (pagesNow.length > 80 ? `${folderOverview(pagesNow)}\n页面太多没有逐个列出：用 list_pages(folder=…) 看相关目录。` : pagesNow.map((p) => `- [[${p.slug}]] ${p.title}`).join("\n")),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  const r = await agent(ctx, "wiki-writer", spaceId, task, [spaceId], readSpaces);
-  if (!pageExists(ctx.app, spaceId, brief.slug)) throw new Error(`写作结束但没有提交页面 ${brief.slug}`);
-  return { summary: r.text.trim(), page: `${spaceId}/${brief.slug}` };
-});
+// The writer writes, the wiki-checker role checks before the page is saved, the writer revises (wiki/verify.ts).
+registerHandler("wiki-write", async (ctx) => (await import("../wiki/verify.ts")).writeAndVerify(ctx));
 
 /** Pages whose cited originals changed since they were written. */
 export function stalePages(app: App, spaceId: string) {

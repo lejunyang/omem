@@ -897,7 +897,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const v = (req.query as { version?: string }).version;
     if (v) return pageVersion(app, space, slug, v);
     const page = readPage(app, space, slug);
-    return { ...page, context: pageContext(app, space, page.slug) };
+    // What the checker found when the page was last written (wiki/verify.ts).
+    const { pageChecks } = await import("../wiki/verify.ts");
+    return { ...page, context: pageContext(app, space, page.slug), checks: pageChecks(app, space, page.slug) };
   });
   server.put("/api/wiki/:space/page/*", async (req) => {
     const { space, "*": slug } = req.params as { space: string; "*": string };

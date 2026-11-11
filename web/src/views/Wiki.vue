@@ -7,6 +7,7 @@ import Skeleton from "../components/Skeleton.vue";
 import UiSelect from "../components/UiSelect.vue";
 import WikiAttention, { type StalePage, type Upkeep } from "../components/WikiAttention.vue";
 import WikiTree from "../components/WikiTree.vue";
+import WikiChecks, { type CheckRecord } from "../components/WikiChecks.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import type { NavNode } from "../lib/wikiTree";
 import Markdown from "../components/Markdown.vue";
@@ -26,6 +27,7 @@ type PageData = {
     missingLinks: string[];
     history: { hash: string; at: string; message: string }[];
   };
+  checks?: CheckRecord[];
 };
 
 const route = useRoute();
@@ -393,6 +395,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
           <span class="ellipsis">{{ s.uri }}</span>
         </a>
       </div>
+      <WikiChecks v-if="page.checks?.length" :checks="page.checks" class="block" />
       <div v-if="page.context.history.length" class="block">
         <div class="section-title">历史</div>
         <a v-for="h in page.context.history.slice(0, 8)" :key="h.hash" href="#" class="hist" @click.prevent="showVersion(h.hash)">

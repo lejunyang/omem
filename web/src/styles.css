@@ -657,6 +657,25 @@ input[type="number"].input::-webkit-outer-spin-button {
   max-width: 100%;
   height: auto;
 }
+/* A diagram that did not draw: the reason and a retry, then its source as code (left-aligned, not a broken layout). */
+.prose .mermaid-box.failed {
+  text-align: left;
+  border-color: var(--warn);
+  padding: 12px;
+}
+.prose .mermaid-box .mermaid-failed {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--warn);
+  margin-bottom: 8px;
+}
+.prose .mermaid-box.failed pre {
+  margin: 0;
+  text-align: left;
+}
 
 /* highlight.js minimal theme using tokens */
 .hljs-keyword,

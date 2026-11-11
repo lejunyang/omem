@@ -5,6 +5,7 @@ import { HttpError } from "../core/util.ts";
 import { createRun } from "../agents/runs.ts";
 import type { Execution } from "../agents/execution.ts";
 import { listPages } from "./store.ts";
+import { startGeneration } from "./verify.ts";
 
 /** Chat, HTTP and CLI enter the same planning/writing pipeline. */
 export function generateWiki(app: App, input: {
@@ -45,6 +46,8 @@ export function generateWiki(app: App, input: {
         input: { brief: { slug, title: p.title, kind: p.kind, question: p.summary || p.title, outline: "按本人的补充要求修改这一页，其余内容保留", entry_points: [] }, instructions: input.focus, readSpaces, ai: input.ai },
       });
     });
+    // Reported together when the last of them ends (verify.ts).
+    startGeneration(app, { spaceId, userId, writes: runs.map((r) => ({ slug: (r.input as { brief: { slug: string } }).brief.slug, title: r.title.replace(/^写作：/, ""), runId: r.id })) });
     return Object.assign(runs[0], { writeRuns: runs.map((r) => r.id) });
   }
   return createRun(app, {
