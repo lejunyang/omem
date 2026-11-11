@@ -220,25 +220,92 @@ export function mergeRole(app: App, name: string): MergeResult {
   if (own === null) throw new HttpError(400, `${name} 没有自定义，直接使用源码版本`);
   const source = roleSourceText(name);
   const base = roleBaseText(app, name) ?? own;
+  // The frontmatter is merged field by field, tools and skills as sets: as text its tools are one
+  // long line, which conflicts whenever both sides touched it (the source adds a group, the copy has
+  // a skill). Only the body is merged as text. A copy whose frontmatter no longer parses is merged whole.
+  const parts = (() => {
+    try {
+      return { o: parseRoleText(own), b: parseRoleText(base), s: parseRoleText(source) };
+    } catch {
+      return null;
+    }
+  })();
+  const head = parts ? `---\n${frontmatter(metaOut(mergeMeta(parts.o.meta, parts.b.meta, parts.s.meta)))}\n---\n` : "";
   const tmp = mkdtempSync(join(tmpdir(), "omem-role-"));
   try {
     const [o, b, s] = ["own.md", "base.md", "source.md"].map((f) => join(tmp, f));
-    writeFileSync(o, own);
-    writeFileSync(b, base);
-    writeFileSync(s, source);
+    writeFileSync(o, parts ? parts.o.body : own);
+    writeFileSync(b, parts ? parts.b.body : base);
+    writeFileSync(s, parts ? parts.s.body : source);
     const r = git(tmp, ["merge-file", "-p", "-L", "自定义", "-L", "原版本", "-L", "新源码", o, b, s]);
     // merge-file exits with the number of conflicts (negative on error).
     const conflicts = (r.stdout.match(/^<{7} /gm) ?? []).length;
     if (!r.stdout.trim()) throw new HttpError(500, `合并失败：${r.stderr.trim()}`);
-    if (conflicts) return { state: roleState(app, name), conflicts, text: r.stdout };
-    parseRoleText(r.stdout);
-    writeFileSync(join(dir(app), `${name}.md`), r.stdout);
+    const text = `${head}${r.stdout}`;
+    if (conflicts) return { state: roleState(app, name), conflicts, text };
+    parseRoleText(text);
+    writeFileSync(join(dir(app), `${name}.md`), text);
     writeFileSync(join(baseDir(app), `${name}.md`), source);
     commitLibrary(app.libraryDir, `omem: merge source changes into built-in role ${name}`);
+    // What is left may be only added skills or tools: then no copy is needed any more.
+    simplifyRoleCopy(app, name);
     return { state: roleState(app, name), conflicts: 0 };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+type RoleMeta = z.infer<typeof roleMetaSchema>;
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** Tool entries without the names a group in the same list already brings. */
+function compactTools(list: string[]) {
+  const wide = list.filter((t) => t.startsWith("group:") || t.startsWith("-"));
+  const covered = new Set(expandTools(wide));
+  return [...new Set(list.filter((t) => t.startsWith("group:") || t.startsWith("-") || !covered.has(t)))];
+}
+
+/**
+ * The frontmatter of a merge: a field the owner left alone follows the source; one they changed stays
+ * theirs. Lists merge as sets: what the source has now, plus what the owner added, minus what they took out.
+ */
+function mergeMeta(own: RoleMeta, base: RoleMeta, source: RoleMeta): RoleMeta {
+  const pick = <K extends keyof RoleMeta>(k: K) => (sameValue(own[k], base[k]) ? source[k] : own[k]);
+  const list = (o: string[], b: string[], s: string[]) => {
+    const d = diffList(b, o);
+    return [...new Set([...s.filter((x) => !d.remove.includes(x)), ...d.add])];
+  };
+  return { description: pick("description"), writes: pick("writes"), modes: pick("modes"), tools: compactTools(list(own.tools, base.tools, source.tools)), skills: list(own.skills, base.skills, source.skills) };
+}
+
+function metaOut(meta: RoleMeta) {
+  const out: Record<string, unknown> = { ...meta };
+  if (!meta.skills.length) delete out.skills;
+  return out;
+}
+
+/**
+ * Give up the copy's own text and follow the source again, keeping what the owner attached: the skills
+ * the copy has that the source does not, and the tools it grants beyond the source's (never one the
+ * source leaves out on purpose). For a copy that was only ever meant to carry a skill and drifted
+ * through merges. The copy stays in the library's Git history.
+ */
+export function followRoleSource(app: App, name: string, actor: "user" | "agent" = "user") {
+  const own = roleOverrideText(app, check(name));
+  if (own === null) return roleState(app, name);
+  const a = parseRoleText(own).meta;
+  const s = parseRoleText(roleSourceText(name)).meta;
+  const has = new Set(expandTools(s.tools));
+  const left = new Set(s.tools.filter((t) => t.startsWith("-")).map((t) => t.slice(1)));
+  const o = roleOverlay(app, name);
+  writeOverlay(app, name, {
+    skills: { add: [...new Set([...o.skills.add, ...a.skills.filter((x) => !s.skills.includes(x))])], remove: o.skills.remove },
+    tools: { add: [...new Set([...o.tools.add, ...expandTools(a.tools).filter((t) => !has.has(t) && !left.has(t))])], remove: o.tools.remove },
+  });
+  rmSync(join(dir(app), `${name}.md`), { force: true });
+  rmSync(join(baseDir(app), `${name}.md`), { force: true });
+  commitLibrary(app.libraryDir, `${actor}: built-in role ${name} follows the source again, keeping its added skills and tools`);
+  return roleState(app, name);
 }
 
 /** Save an agent's resolution of a conflicted merge: the new source becomes the base. */
@@ -248,6 +315,7 @@ export function resolveRoleMerge(app: App, name: string, text: string, actor: "u
   writeFileSync(join(dir(app), `${check(name)}.md`), text.endsWith("\n") ? text : `${text}\n`);
   writeFileSync(join(baseDir(app), `${name}.md`), roleSourceText(name));
   commitLibrary(app.libraryDir, `${actor}: merge source changes into built-in role ${name}`);
+  simplifyRoleCopy(app, name);
   return roleState(app, name);
 }
 

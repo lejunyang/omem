@@ -215,13 +215,14 @@ async function loadRole(quiet = false) {
     if (current()) detailLoading.value = false;
   }
 }
-async function roleAction(action: "customize" | "reset" | "merge") {
+async function roleAction(action: "customize" | "reset" | "merge" | "follow-source") {
   const name = roleName.value!;
   if (action === "reset" && !(await confirmDialog(`把 ${name} 恢复为源码版本？`, { message: "你的自定义内容会移出知识库（Git 历史里仍可找回）；它的专属记忆和挂载技能的记录不受影响，但挂载写在自定义文件里，恢复后需要重新挂。", okText: "恢复源码版本", danger: true }))) return;
+  if (action === "follow-source" && !(await confirmDialog(`让 ${name} 的正文跟随源码？`, { message: "你对正文的改动会移出知识库（Git 历史里仍可找回），挂的技能和加的工具留着；以后源码更新直接生效，不用再合并。", okText: "正文跟随源码" }))) return;
   try {
     const r = await post<{ merged?: boolean; conflicts?: number; runId?: string }>(`/api/roles/${encodeURIComponent(name)}/${action}`);
     if (action === "merge") toast(r.merged ? "已合并源码更新，没有冲突" : `${r.conflicts} 处冲突，已交给模型合并`, "ok", r.runId ? `#/runs/${r.runId}` : undefined);
-    else toast(action === "customize" ? "已复制到知识库，可以改了" : "已恢复源码版本", "ok");
+    else toast(action === "customize" ? "已复制到知识库，可以改了" : action === "follow-source" ? "正文已跟随源码，挂的技能和工具保留" : "已恢复源码版本", "ok");
     await Promise.all([loadLists(), loadRole(true)]);
   } catch (e) {
     toast((e as Error).message, "error");
@@ -516,6 +517,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <template v-else>
             <button v-if="roleDetail.role.sourceChanged" class="btn sm" title="把源码的更新合并进你的版本；冲突交给模型" @click="roleAction('merge')">合并源码更新</button>
             <button class="btn ghost sm" @click="showSource = !showSource">{{ showSource ? "编辑" : "对比源码" }}</button>
+            <button class="btn ghost sm" title="正文回到源码版本并跟着它更新，你挂的技能和加的工具留着；适合只是挂了技能、却每次更新都要合并的角色" @click="roleAction('follow-source')">正文跟随源码</button>
             <button class="btn ghost sm" @click="roleAction('reset')">恢复源码版本</button>
             <button class="btn sm primary" :disabled="saving || !dirty" @click="saveRole">保存</button>
           </template>

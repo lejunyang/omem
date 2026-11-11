@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
 import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
-import { customizeRole, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride, setRoleFullAccess } from "../agents/builtin-roles.ts";
+import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride, setRoleFullAccess } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
 import { cachedProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
@@ -795,6 +795,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.put("/api/roles/:name", async (req) => saveRoleOverride(app, (req.params as { name: string }).name, q(z.object({ raw: z.string().min(1) }), req.body).raw, "user"));
   server.post("/api/roles/:name/customize", async (req) => ({ raw: customizeRole(app, (req.params as { name: string }).name, "user") }));
   server.post("/api/roles/:name/reset", async (req) => resetRole(app, (req.params as { name: string }).name, "user"));
+  server.post("/api/roles/:name/follow-source", async (req) => followRoleSource(app, (req.params as { name: string }).name, "user"));
   server.post("/api/roles/:name/merge", async (req) => {
     const name = (req.params as { name: string }).name;
     const r = mergeRole(app, name);

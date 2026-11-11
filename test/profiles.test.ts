@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { customizeRole, listRoleStates, mergeRole, resetRole, roleOverrideText, roleSourceText, roleState, saveRoleOverride, simplifyRoleCopies } from "../src/agents/builtin-roles.ts";
+import { customizeRole, followRoleSource, listRoleStates, mergeRole, resetRole, roleOverrideText, roleSourceText, roleState, saveRoleOverride, simplifyRoleCopies } from "../src/agents/builtin-roles.ts";
 import { applyProposal, createProposal, rejectProposal } from "../src/agents/proposals.ts";
 import { reviewTask } from "../src/agents/profile-jobs.ts";
 import { profileDetail } from "../src/agents/profiles.ts";
@@ -88,6 +88,31 @@ describe("built-in roles as profiles", () => {
     expect(conflicted.conflicts).toBeGreaterThan(0);
     expect(conflicted.text).toMatch(/^<{7} 自定义/m);
     expect(roleOverrideText(app, "reviewer")).toBe(before);
+    app.db.close();
+  });
+
+  it("merges the frontmatter by field, so a copy with a skill and spelled-out tools does not conflict when the source changes its tools", () => {
+    const app = testApp();
+    customizeRole(app, "reviewer");
+    const copy = roleOverrideText(app, "reviewer")!;
+    const tools = /^tools: \[(.*)\]$/m.exec(copy)![1].split(", ");
+    // The copy: a skill attached, the tools rewritten (quoted, one more of its own), and a line of its own in the body.
+    saveRoleOverride(app, "reviewer", `${copy.replace(/^tools: .*$/m, `tools: [${[...tools, "notify"].map((t) => JSON.stringify(t)).join(", ")}]\nskills: [ts-review]`)}\n多看一眼测试。\n`);
+    // The source it was copied from had one tool fewer: the source has since added it, on the same line.
+    changeBase(app, "reviewer", (s) => s.replace(/^tools: \[(.*)\]$/m, (_m, l: string) => `tools: [${l.split(", ").slice(0, -1).join(", ")}]`));
+    const r = mergeRole(app, "reviewer");
+    expect(r.conflicts).toBe(0);
+    const merged = loadRole("reviewer", app);
+    expect(merged.skills).toEqual(["ts-review"]);
+    expect(merged.tools).toEqual(expect.arrayContaining([...tools, "notify"]));
+    expect(roleOverrideText(app, "reviewer")).toContain("多看一眼测试。");
+    expect(roleState(app, "reviewer").sourceChanged).toBe(false);
+
+    // Following the source again: the copy's text goes, the skill and the extra tool stay on top.
+    const s = followRoleSource(app, "reviewer");
+    expect(s).toMatchObject({ customized: false, overlay: { skills: { add: ["ts-review"] }, tools: { add: ["notify"] } } });
+    expect(roleOverrideText(app, "reviewer")).toBeNull();
+    expect(loadRole("reviewer", app).tools).toContain("notify");
     app.db.close();
   });
 
