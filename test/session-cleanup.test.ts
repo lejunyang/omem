@@ -106,7 +106,7 @@ describe("durable Doubao cleanup", () => {
     expect(pending(app)).toEqual([]);
   });
 
-  it("lets go of the sessions a delegation kept once it is confirmed or discarded, and of idle agent work after a week", async () => {
+  it("lets go of the sessions a delegation kept once it is confirmed or discarded, and of agent work idle for two days", async () => {
     const app = authorized();
     const keep = (runId: string, id: string) =>
       run(app.db, "insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,-1,'')", "doubao:cli_bot", id, "doubao-cli", "doubao-cli", null, "cli_bot", app.home, runId, process.pid);

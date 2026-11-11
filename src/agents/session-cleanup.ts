@@ -17,7 +17,7 @@ type Pending = {
 type Key = Pick<Pending, "backend_key" | "session_id">;
 type Emit = (e: AgentEvent) => void;
 /** How long the sessions of work handed to agents are kept after the last run in it. */
-const RETAIN_IDLE_MS = 7 * 86400_000;
+const RETAIN_IDLE_MS = 2 * 86400_000;
 const busy = new Set<string>();
 const activeTurns = new Set<string>();
 const sessionKey = (app: App, p: Key) => `${app.home}:${p.backend_key}:${p.session_id}`;
@@ -195,7 +195,7 @@ function releaseRuleSessions(app: App) {
     }
     if (over.get(rootId)) update(app, p, "ready = 1, retry_at = ?", now());
   }
-  // Work handed to agents has no end of its own: its sessions go once nothing ran in it for a week.
+  // Work handed to agents has no end of its own: its sessions go once nothing ran in it for two days.
   const weekAgo = new Date(Date.now() - RETAIN_IDLE_MS).toISOString();
   const working = new Set(active.map((r) => json<{ agentWorkId?: string }>(r.input, {}).agentWorkId).filter(Boolean));
   const idle = all<Pending & { input: string }>(app.db,
