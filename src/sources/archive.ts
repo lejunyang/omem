@@ -95,7 +95,10 @@ export function matchesArchive(c: ArchiveCondition | null, input: UpsertInput): 
 }
 /** Route reason when the owner asks for material to be judged again (the archivist decides, not a sibling). */
 export const RECHECK = "本人请求重新判断";
-export type Route = { source_id: string; origin_space: string; mode: "manual" | "binding" | "rule" | "ai" | "fallback"; reason: string; rule_id: string | null; decision_hash: string | null; pending: number; ingest: number };
+/** Route reason prefix when new evidence sent a source back to the archivist (src/sources/homing.ts). */
+export const REJUDGE = "有新旁证，重新判断";
+const askedAgain = (reason: string) => reason === RECHECK || reason.startsWith(REJUDGE);
+export type Route = { source_id: string; origin_space: string; mode: "manual" | "binding" | "rule" | "ai" | "fallback"; reason: string; rule_id: string | null; decision_hash: string | null; pending: number; ingest: number; verdict?: string | null; suggested?: string | null };
 export function sourceRoute(app: App, id: string) { return one<Route>(app.db, "select * from source_routes where source_id=?", id); }
 export function routedSource(app: App, origin: string, uri: string) {
   return one<{ id: string; space_id: string }>(app.db, "select s.id,s.space_id from source_locations l join sources s on s.id=l.source_id where l.origin_space=? and l.uri=? and s.deleted_at is null", origin, uri);
@@ -131,7 +134,7 @@ export function prepareArchive(app: App, input: UpsertInput): { input: UpsertInp
   if (chatId) {
     if (prev?.mode === "fallback" && prev.decision_hash) return { sourceId: found?.id, input: { ...input, spaceId: found!.space_id }, mode: "fallback", reason: prev.reason, origin, decided: true };
     // Not when the owner asked for this one to be judged again.
-    const sibling = !prev || (prev.mode === "fallback" && !prev.decision_hash && prev.reason !== RECHECK) ? chatJudgement(app, chatId, found?.id) : undefined;
+    const sibling = !prev || (prev.mode === "fallback" && !prev.decision_hash && !askedAgain(prev.reason)) ? chatJudgement(app, chatId, found?.id) : undefined;
     if (sibling?.mode === "fallback") return { sourceId: found?.id, input: { ...input, spaceId: sibling.space_id }, mode: "fallback", reason: sibling.reason, origin, decided: true };
     if (sibling) return { sourceId: found?.id, input: { ...input, spaceId: sibling.space_id }, mode: "ai", reason: `同一会话的归属：${sibling.reason}`, origin };
   }
@@ -191,7 +194,7 @@ export function compactArchiveQueue(app: App) {
 }
 
 /** Keep IDs, chunk IDs, embeddings, message positions and citations stable. */
-export function moveSource(app: App, id: string, target: string, reason: string, mode: Route["mode"] = "manual", ruleId?: string, expectedHash?: string) {
+export function moveSource(app: App, id: string, target: string, reason: string, mode: Route["mode"] = "manual", ruleId?: string, expectedHash?: string, detail?: Record<string, unknown>) {
   const s = getSource(app, id);
   if (s.deletedAt) throw new HttpError(409, "原件已删除");
   if (expectedHash && s.hash !== expectedHash) throw new HttpError(409, "原件已更新，请重新预览");
@@ -203,14 +206,15 @@ export function moveSource(app: App, id: string, target: string, reason: string,
     run(app.db, "update sources set space_id=? where id=?", target, id);
     for (const table of ["chunks", "symbols", "code_refs"]) run(app.db, `update ${table} set space_id=? where source_id=?`, target, id);
     run(app.db, `insert into source_routes(source_id,origin_space,mode,reason,rule_id,decision_hash,pending) values(?,?,?,?,?,?,0)
-      on conflict(source_id) do update set mode=excluded.mode,reason=excluded.reason,rule_id=excluded.rule_id,decision_hash=excluded.decision_hash,pending=0`, id, s.spaceId, mode, reason, ruleId ?? null, s.hash);
-    run(app.db, "insert into source_moves(source_id,from_space,to_space,reason,at) values(?,?,?,?,?)", id, s.spaceId, target, reason, now());
+      on conflict(source_id) do update set mode=excluded.mode,reason=excluded.reason,rule_id=excluded.rule_id,decision_hash=excluded.decision_hash,pending=0,verdict=null,suggested='[]'`, id, s.spaceId, mode, reason, ruleId ?? null, s.hash);
+    run(app.db, "insert into source_moves(source_id,from_space,to_space,reason,at,mode,detail) values(?,?,?,?,?,?,?)", id, s.spaceId, target, reason, now(), mode, JSON.stringify(detail ?? {}));
+    run(app.db, "delete from archive_recheck where source_id=?", id);
   });
   vectorIndex().evict([s.spaceId, target]);
   app.emit({ type: "changed", entity: "source", id, spaceId: target });
   return getSource(app, id);
 }
-export function archiveHistory(app: App, id: string) { return all(app.db, "select from_space,to_space,reason,at from source_moves where source_id=? order by id desc limit 50", id); }
+export function archiveHistory(app: App, id: string) { return all(app.db, "select from_space,to_space,reason,at,mode from source_moves where source_id=? order by id desc limit 50", id); }
 
 /** Preview current-space historical material without changing it; applying rechecks the hash and rule. */
 export function previewArchive(app: App, spaceId: string, limit = 100, offset = 0) {

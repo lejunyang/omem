@@ -32,13 +32,15 @@
 
 - `import_url`：保存网页或飞书文档；读飞书文档时可给 `depth`（链接和知识库子页面往下几层），整个知识库用 `lark_wiki_crawl`（见 lark 分组）。
 - `save_note`：把本人明确要求保存的内容存为笔记原件，之后可检索和引用。
-- `write_file(path, content, mode?, expires?, item?, rule?)`：写工作文件（原件 `work/<path>`）——长任务的当前成果、定时任务逐天累积的周报素材。`mode: "append"` 追加；`expires` 设过期（`30d`、日期，`never` 永久）；`item` / `rule` 挂到事项或规则上。解决过的问题写成案例页：`write_page(kind: "case", page: "cases/<主题>")`。
+- `write_file(path, content, mode?, expires?, item?, rule?)`：写工作文件（原件 `work/<path>`）——长任务的当前成果、定时任务逐天累积的周报素材。`mode: "append"` 追加；`expires` 设过期（`30d`、日期，`never` 永久）；`item` / `rule` 挂到事项或规则上。放在哪个空间：给了 `space` 放那里；挂事项时放事项所在空间；在本人个人空间里为某个业务空间的事项、会话、绑定的群或规则工作时，自动放进那个业务空间（结果里会说明）；要留在个人空间就明确写 `space`。解决过的问题写成案例页：`write_page(kind: "case", page: "cases/<主题>")`。
 - `digest_sources` 整理存量材料：`parallel`（同时几批）、`batch`（每批几份）、`chars`（精读每批附多少字正文）；`after`（等另一个整理任务做完再开始，如先分级再精读）；`action: "pace"` 调整已有任务。
 
 ## 原件归档
 
 - 原件归档优先用设置与规则，不确定的仍留在个人空间；不创建“待归档”空间。规则与历史预览在网页 `#/rules/archive` 管理，归属修正在原件详情。迁移保留 ID 和引用，目标重复时拒绝覆盖。
 - `classify_source(source_id, hash, space, reason)` 只开放给内置 `archivist` 运行，只处理本次清单内、仍待判断且版本一致的原件，同时校验源和目标空间权限，不能覆盖手动指定或当前规则。
+- `classify_source` 的 `verdict`：`business`（归到业务空间）、`personal`（确实个人，留下）、`unsure`（判断不了，留下，`candidates` 写可能的空间，本人在网页“从个人空间归位”里定）。任务里每份原件的 `evidence` 是宿主查到的旁证（知识库位置与归入的空间、同目录文档去向、引用它的其他空间、贴过它的群、关注程度、工作文件的事项），`again` 是重新判断的原因。自动移动关闭（`archive.autoMove`）时归到业务空间的判断只记成建议。
+- 留在个人空间的原件出现新旁证（被业务页面 / 事项 / 记忆引用、同目录文档已归档、知识库归入空间）或空间、归档规则有变化时，每晚检查会再交给 archivist；本人移回或指定过的不再自动移动。业务页面引用的原件读者能不能打开，用 `GET /api/spaces/<空间>/citation-reach` 查。
 - `propose_archive_rule(name, description, target, enabled, conditions)` 只开放给 `archive-rule-writer`，结果为本次运行中的草稿，不保存或启用。外部客户端和主助手不能冒充内部角色调用。条件组合用 all / any / not，不执行模型生成的程序。
 - 归档条件的 kind 使用 doc（文档）、chat、note、web、image、event、meeting；equals / in 不接受未知类型，文档不能写成 document。
 - 归档条件使用类型、标题、正文、网址 / 路径、采集渠道及中文知识库 / 目录名称。`meta.wikiSpaceName` 是知识库名，`meta.wikiParentTitle` 是直接父目录名，`meta.wikiPath` 是不含当前文档标题的祖先目录路径。目录下任意层级用路径包含目录名；不支持会话 ID、知识库 ID、节点 token、作者或父页面地址。缺失字段的排除条件也不会命中。

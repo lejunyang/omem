@@ -1975,3 +1975,15 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 过期（`expireOverlays`）：交办应用、确认、丢弃、被接替时删每一轮的工作区索引，14 天没动静也删；sha 分支索引 3 天、没登记跟的分支索引 14 天没用就删；`repo-sync` 每小时和启动时清理。
 - 版本说明：`search` 头部、`find_symbol` 末尾、`read_source` 头部写“代码来自”（`codeVersion`）；`roles/_common.md` 加一条：回答代码问题说明依据的分支，问分支或交办的事带 `branch`。
 - 接口（`src/sources/code-index-http.ts`）：`GET/PUT /api/spaces/:id/code-index`、`POST /api/spaces/:id/code-index/refresh`、`GET/POST/DELETE /api/code-index/hook`（变更通知令牌，存 kv `code_hook_token` 的哈希）、`POST /api/code-index/notify`（独立令牌或本人凭据；按 git remote 或空间匹配，后台拉取刷新）。网页仓库设置的“代码索引”（`web/src/components/CodeIndexPanel.vue`），业务空间的仓库列表显示索引到哪个提交。设计 `docs/v2/code-index.md`。
+## 2026-11-12：材料从个人空间归位
+
+起因：个人空间堆了大量业务文档和工作记录（一台实际使用的机器上三千多份文档、一百多份工作文件，业务页面引用个人空间原件七十多处）。archivist 只看正文、一判定终身、“不确定就留个人”；主助手在个人空间里为业务事项写的工作文件留在个人空间；协作者打不开业务页面引用的个人空间原件。设计在 docs/v2/archive-routing.md。
+
+- 旁证（`src/sources/homing.ts` 的 `archiveEvidence`）：知识库位置和本人归入的空间、同目录文档的去向、引用它的其他空间的页面 / 事项 / 记忆（含合并前旧 id）、贴过它的群和群的空间、手动定的关注程度、工作文件的事项或规则。`archive` 运行把它和重判原因（`again`）一起交给 archivist。`roles/archivist.md` 改为：旁证指向同一业务空间就归过去，矛盾或只有弱旁证时留下记“判断不了”，日常个人内容记“确实个人”。
+- `classify_source` 加 `verdict`、`candidates`；`source_routes.verdict` / `suggested`，`source_moves.mode` / `detail`（迁移）。`archive.autoMove`（默认开）关掉时 AI 的判断只记成建议。
+- 重判：`archive_evidence` 记判断时的旁证指纹，`archive_recheck` 是队列；`collectRecheck` 找新旁证、空间或归档规则变化（第一次只记状态）；每晚 `archive-sweep`（01:40，`archive.nightly` 默认 60）按优先级交出，规则能定的直接移，没有待判的不跑。理由“有新旁证，重新判断”的原件不跟随同一会话的旧判断（`archive.ts` 的 `REJUDGE`）。
+- 工作文件：`write_file` 在本人个人空间里、运行范围只指向一个业务空间时写到那里（`matterSpace`，同路径旧版本一起移），挂在业务事项或规则上的旧工作文件每晚跟过去（`followWorkFiles`）。
+- 网页：归档规则页左侧“从个人空间归位”（`ArchiveHoming.vue`）：自动移走的及依据、移回并记住、等你定的批量指定、读者打不开的引用、两个设置。接口 `GET /api/archive/homing`、`POST /api/archive/homing/{return,assign,sweep}`、`GET /api/spaces/:id/citation-reach`、`POST /api/spaces/:id/citation-reach/recheck`。
+- 引用可达性（`src/sources/reach.ts`）：按空间读者和 `sourceVisible` 判断，不写死个人空间；只有本人能读的空间不报。
+- 群里再贴一次已移走文档的链接时，一天内读过的不再重读（`importLinkedDocs` 认 `source_locations`）。
+- 测试：`test/homing.test.ts`、`test/homing-agent.test.ts`（`FAKE_MODE=archive`）。验收 26a–26l。

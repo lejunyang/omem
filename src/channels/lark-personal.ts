@@ -219,9 +219,10 @@ const DOC_LINK = /https?:\/\/[\w.-]*(?:feishu\.cn|larksuite\.com|larkoffice\.com
 async function importLinkedDocs(app: App, spaceId: string, text: string): Promise<string[]> {
   const ids: string[] = [];
   for (const url of new Set(text.match(DOC_LINK) ?? [])) {
-    const existing = findSourceByUri(app, spaceId, url);
+    // Also one filed into another space since (source_locations remembers where it came from).
+    const updatedAt = findSourceByUri(app, spaceId, url)?.updatedAt ?? (await import("./lark-docs.ts")).findLarkDoc(app, spaceId, url, true)?.updated_at;
     // A doc linked again within a day is not re-read.
-    if (existing && Date.now() - Date.parse(existing.updatedAt) < 86400_000) continue;
+    if (updatedAt && Date.now() - Date.parse(updatedAt) < 86400_000) continue;
     try {
       const r = await importUrl(app, spaceId, url, { archive: true });
       ids.push(r.id, ...(r.related ?? []));
