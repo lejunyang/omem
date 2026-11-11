@@ -251,7 +251,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
     [
       "GET /api/settings", "PUT /api/settings", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
       "PUT /api/lark/chats/:id/policy", "GET /api/lark/subscriptions", "PUT /api/lark/subscriptions", "POST /api/lark/poll", "GET /api/lark/user-permissions", "POST /api/lark/user-permissions",
-      "GET /api/lark/bot-check", "POST /api/lark/bot-check/:ref/scan", "GET /api/lark/wiki-crawls", "POST /api/lark/wiki-crawls/:id/:op", "GET /api/lark/kb", "POST /api/lark/kb/discover",
+      "GET /api/lark/bot-check", "POST /api/lark/bot-check/:ref/scan", "GET /api/lark/doubao-send", "POST /api/lark/doubao-send/test", "GET /api/lark/wiki-crawls", "POST /api/lark/wiki-crawls/:id/:op", "GET /api/lark/kb", "POST /api/lark/kb/discover",
       "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "POST /api/agents/:id/probe", "PUT /api/agent-role-model", "GET /api/agent-registry", "POST /api/agent-registry/:id",
       "GET /api/diag", "GET /api/storage", "POST /api/storage/scan", "GET /api/media", "POST /api/media/ffmpeg/install", "POST /api/media/compress", "POST /api/media/stop", "POST /api/media/resume",
       "POST /api/media/delete-originals", "PUT /api/plugins/:id/settings", "PUT /api/plugins/:id/icon", "POST /api/plugins/:id/trust", "DELETE /api/plugins/:id/trust", "GET /api/plugins/:id/services",

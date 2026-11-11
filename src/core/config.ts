@@ -736,8 +736,10 @@ export const configSchema = z.object({
           group: z.string().min(1).default("/ai拉群"),
           signature: z.string().default("（此消息由 AI 代发）"),
           context: z.number().int().min(1).max(100).default(30),
+          /** How `/ai` sends as the owner: lark-cli's user identity, or a one-off Doubao session (channels/doubao-send.ts). */
+          signedVia: z.enum(["lark-cli", "doubao"]).default("lark-cli"),
         })
-        .default({ enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 }),
+        .default({ enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30, signedVia: "lark-cli" }),
       /**
        * Adding members to the owner's groups as the owner (`lark_invite`, src/channels/lark-invite.ts):
        * people always wait for the owner's OK; bots omem knows by name join directly unless `botApproval`.
@@ -797,7 +799,7 @@ export const configSchema = z.object({
         backfill: { days: 30, policies: ["ingest"], pagesPerMinute: 20, concurrency: 2 },
       },
       guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false },
-      commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
+      commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30, signedVia: "lark-cli" },
       invite: { botApproval: false },
       knowledge: { direction: "", autoApply: false, dailyDocs: 30 },
     }),
@@ -819,7 +821,8 @@ export const configSchema = z.object({
    * the triage. `perDay`: triages and handlings a day, past which the short reminder goes out.
    * `reply.<channel>`: whether the handler may answer the asker there — off, a draft the owner sends
    * with one click, or auto (only when the triage also found it can move on alone). On Feishu a private
-   * chat is answered in a group of the owner, them and the bot (`p2pVia: group`) or as the owner, signed.
+   * chat is answered in a group of the owner, them and the bot (`p2pVia: group`) or as the owner, signed
+   * (`signedVia`: lark-cli, or Doubao where the tenant keeps lark-cli from sending private messages).
    */
   mentions: z
     .object({
@@ -837,12 +840,14 @@ export const configSchema = z.object({
               group: z.enum(["off", "draft", "auto"]).default("off"),
               p2p: z.enum(["off", "draft", "auto"]).default("off"),
               p2pVia: z.enum(["group", "signed"]).default("group"),
+              /** `signed` goes out as the owner through lark-cli, or through a one-off Doubao session where lark-cli may not send (channels/doubao-send.ts). */
+              signedVia: z.enum(["lark-cli", "doubao"]).default("lark-cli"),
             })
-            .default({ group: "off", p2p: "off", p2pVia: "group" }),
+            .default({ group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" }),
         })
-        .default({ lark: { group: "off", p2p: "off", p2pVia: "group" } }),
+        .default({ lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } }),
     })
-    .default({ enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group" } } }),
+    .default({ enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } }),
   /**
    * When omem may push to chat channels. Defaults:
    * - quiet hours: nothing outside urgent/overdue 22:00–09:00 local;

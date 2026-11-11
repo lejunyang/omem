@@ -492,6 +492,18 @@ doubao
     const after = await checkDoubaoApp(app.home, target);
     console.log(after.authorized ? `✓ 已授权，豆包可用（后端 id：doubao）` : `授权已保存，但豆包接口还不能用：${after.error ?? "未知原因"}`);
   });
+doubao
+  .command("send-test")
+  .description("经豆包以本人身份给自己发一条测试私聊，再读私聊核对（只给自己发；“有人找你”和 /ai 选“经豆包发送”前先试）")
+  .action(async () => {
+    const app = open();
+    const { doubaoSelfTest } = await import("./channels/doubao-send.ts");
+    const r = await doubaoSelfTest(app);
+    console.log(`${r.ok ? "✓" : "✗"} ${r.line}`);
+    if (r.raw) console.log(`豆包的回答：${r.raw}`);
+    console.log(`豆包会话 ${r.sessionId ?? "（没有建起来）"}${r.sessionId ? "：已删除，或记进待清理（失败会稍后重试）" : ""}`);
+    process.exitCode = r.ok ? 0 : 1;
+  });
 
 const lark = program.command("lark").description("飞书个人采集（只读）：文档");
 lark

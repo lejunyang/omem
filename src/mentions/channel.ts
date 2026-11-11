@@ -29,7 +29,11 @@ export type MentionChat = { id: string; name: string; kind: "p2p" | "group" };
 export type ReplyMode = "off" | "draft" | "auto";
 
 /** A reply sent to the asker (run output `mentionReply`). */
-export type Replied = { via: string; by: "auto" | "owner"; at: string; messageId: string | null; chatId: string; where: string };
+export type Replied = {
+  via: string; by: "auto" | "owner"; at: string; messageId: string | null; chatId: string; where: string;
+  /** A send whose result is checked afterwards (Feishu through Doubao): false when it did not go out as written. */
+  ok?: boolean; problem?: string;
+};
 
 /** A handling's view of what it handles (run input `mention`). */
 export type MentionInfo = {

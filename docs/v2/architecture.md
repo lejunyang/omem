@@ -446,6 +446,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
 | 工作近况与人物卡（docs/v2/work-state.md）：每晚 `work-state` 角色按宿主列的事实（本人发言多的会话、打开或发过链接的文档、编码交办、事项、会议、找助手做的事）改 personal 的 `state/work`，给有新消息的常打交道的人写 `people/<名字>`（每晚上限）；“本人补充”一节 Agent 写入时原样保留；摘要和人物卡经 `ownerContextParts` 注入对话、巡检、有人找你、会后说明 | 已实现；2026-11-11，真实数据上的整理质量待验 | `agents/work-state.ts`、`agents/work-state-job.ts`、`agents/owner-now.ts`、`roles/work-state.md`、定时任务 work-state |
 | 多 Agent 工作的过程消息收敛（`agents.progress.messages`，默认只在完成和卡住时发：只是接着推进的协调回复留在工作会话，话题里一张原地更新的进度卡）；思考气泡三档（`agents.progress.thinking`，默认只给回答本人自己消息的那一轮）；交办时借工具（`extra_tools`，只借发起方自己有的，不借以本人身份写飞书、发消息、再交办的） | 已实现；2026-11-11，测试覆盖，飞书真机未验 | `src/agents/agent-work.ts` 的 `onlyMovedOn`、`src/agents/jobs.ts`、`src/channels/lark-work-progress.ts`、`lark-agent-cot.ts` 的 `showThinking`、`lark-progress.ts`、`src/agents/tools.ts` 的 `lendTools`、`test/agent-work-progress.test.ts` |
+| 经豆包以本人身份发私聊：“有人找你”私聊回复（`mentions.reply.lark.signedVia`）和 `/ai`（`lark.commands.signedVia`）可选 `doubao`；每条消息建一个新的豆包 OpenAPI 会话，只交给它定稿全文和对方（姓名、邮箱、user_id、chat_id），固定一行结果，用完删除（失败进 `session_cleanup`）；lark-cli 只读私聊核对，未核对 / 不一致 / 失败单独告诉本人；审计；本人手动试发 `omem doubao send-test` / 设置页按钮 | 已实现；2026-11-11 假豆包接口和假 lark-cli 测试，豆包真机待验（见 docs/v2/mentions.md “经豆包发送”） | `src/channels/doubao-send.ts`、`mention-reply.ts`、`lark-commands.ts`、`web/src/components/DoubaoSendStatus.vue` |
 
 定时规则的投递目标可选择已有助理会话或已采集的飞书群。选择群后保存时建立本人所属的群会话，不发送消息、不复用访客会话；执行沿用所选会话的机器人。缺少目标的旧规则在动作阶段失败并记录原因，不再转为私发。实现：`src/rules/destinations.ts`、`actions.ts`、`web/src/views/Rules.vue`；专项测试覆盖。
 

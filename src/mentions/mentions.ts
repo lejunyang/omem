@@ -342,7 +342,7 @@ export async function runMentionHandling(ctx: RunContext, inner: (ctx: RunContex
         const head = lines.findIndex((l) => l.trim());
         const title = truncate(lines[head].replace(/^[#>*\s]+|[*\s]+$/g, ""), 60) || `${m.senderName} ${whereOf(m)}找你`;
         const replied = getRun(app, ctx.run.id).output.mentionReply as Partial<Replied> | undefined;
-        const body = [lines.slice(head + 1).join("\n").trim() || answer, replied?.via ? `\n（已替你回复对方：${replied.where}）` : "", m.refs.length && !answer.includes("src:") ? `\n[原消息](${m.refs.at(-1)})` : ""].join("");
+        const body = [lines.slice(head + 1).join("\n").trim() || answer, replied?.via ? (replied.ok === false ? `\n（回复对方没有成功：${replied.problem ?? replied.where}）` : `\n（已替你回复对方：${replied.where}）`) : "", m.refs.length && !answer.includes("src:") ? `\n[原消息](${m.refs.at(-1)})` : ""].join("");
         try {
           notify(app, { title, body, sourceRefs: m.refs, runId: ctx.run.id, link: `#/runs/${ctx.run.id}`, urgency: m.urgency });
         } catch (e) {
