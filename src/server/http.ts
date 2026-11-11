@@ -2015,6 +2015,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Temporary wake-up rules are listed with the timed wakes (/api/wakes).
     return listRules(app).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
   });
+  // 有人找你, listed last on the rules page: the default for messages looking for the owner that no rule took.
+  server.get("/api/mentions", async () => {
+    const { mentionUsage } = await import("../mentions/mentions.ts");
+    const c = app.config.mentions;
+    return { enabled: c.enabled, p2p: c.p2p, delayMinutes: c.delayMinutes, perDay: c.perDay, today: mentionUsage(app) };
+  });
   // Wake-ups agents set for themselves: timed (queued runs) and on a message (temporary rules).
   server.get("/api/wakes", async () => (await import("../agents/wakes.ts")).pendingWakes(app));
   // Groups being watched (set_chat_watch): listed with the wake-ups, can be stopped.

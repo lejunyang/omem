@@ -219,6 +219,47 @@ export function addressed(app: App, key: string) {
 export function claimedByRule(app: App, key: string) {
   return !!one(app.db, "select 1 from rule_handled where key = ? and rule_id != ?", key, ADDRESSED);
 }
+/**
+ * Events the rules are judging right now, in this process (by event key; engine.ts marks them).
+ * 有人找你 starts on a message only after the rules had their say on it (src/mentions/mentions.ts):
+ * taken by a rule, it steps aside; so a rule's model and the triage never both judge one message.
+ */
+const judging = new Map<string, number>();
+export function startJudging(key: string) {
+  judging.set(key, (judging.get(key) ?? 0) + 1);
+}
+export function endJudging(key: string) {
+  const n = (judging.get(key) ?? 1) - 1;
+  if (n > 0) judging.set(key, n);
+  else judging.delete(key);
+}
+export function rulesJudging(key: string) {
+  return judging.has(key);
+}
+
+/**
+ * The rule that took a message, for 有人找你 (src/mentions/mentions.ts), which steps aside for it: one
+ * that fired on it (whatever its actions; a skip because the owner or someone else was already on it
+ * counts too), followed up on it in a topic its agent spoke in, or claimed it and is still at it —
+ * waiting (a queued rule-fire run) or acting. A rule that did not match is not here; nor one whose
+ * wait ended with the model saying no (claimed, no firing, its rule-fire run over).
+ * `chatKey` (`chat:<id>`): a rule firing once per chat counts from `since` (the message's time) on.
+ */
+export function ruleClaim(app: App, key: string, chatKey: string, since: string): { rule: string; waiting: boolean } | null {
+  const fired = one<{ name: string }>(app.db,
+    `select r.name from rule_firings f join rules r on r.id = f.rule_id
+      where f.event_key in (?, ?) or (f.event_key = ? and f.at >= ?) order by f.id desc limit 1`,
+    key, `follow:${key}`, chatKey, since);
+  if (fired) return { rule: fired.name, waiting: false };
+  const pending = one<{ name: string }>(app.db,
+    `select r.name from rule_handled h join rules r on r.id = h.rule_id
+      where r.enabled = 1 and (h.key = ? or (h.key = ? and h.at >= ?))
+        and exists (select 1 from runs where kind = 'rule-fire' and status in ('queued','running')
+                     and json_extract(input, '$.ruleId') = h.rule_id and json_extract(input, '$.key') = h.key)
+      limit 1`,
+    key, chatKey, since);
+  return pending ? { rule: pending.name, waiting: true } : null;
+}
 export function releaseEvent(app: App, ruleId: string, key: string) {
   run(app.db, "delete from rule_handled where rule_id = ? and key = ?", ruleId, key);
 }

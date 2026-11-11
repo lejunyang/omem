@@ -127,7 +127,7 @@ npm install -g omem-assistant
 
 | 想做的事 | 怎么做 |
 | --- | --- |
-| 有人在别的群 @ 你或私聊你，想让助理先查清楚再提醒 | 设置 → 渠道 → 有人找你：你几分钟内没看时，先免费筛掉已看过、已回过、有规则在管的；剩下的用决策模型分诊，值得查的交给主助手读上下文、查事项和资料，提醒里给结论、依据和建议的回复。可选让它回复对方：草稿由你点发送，或在你允许时自动回 |
+| 有人在别的群 @ 你或私聊你，想让助理先查清楚再提醒 | 设置 → 渠道 → 有人找你（规则页列表最后一条也通向这里）：排在所有规则之后，你几分钟内没看时，先免费筛掉已看过、已回过、有规则接手（触发过或在等）的；剩下的用决策模型分诊，值得查的交给主助手读上下文、查事项和资料，提醒里给结论、依据和建议的回复。可选让它回复对方：草稿由你点发送，或在你允许时自动回 |
 | 盯一张飞书表格，有人新增一行就查一下并回到群里 | 规则 → 文档变化：电子表格按行比对，每个新增或改动的行单独触发；条件里可以排除本人的改动；“发到”选一个群，Agent 回复在对应消息下并 @ 修改人；规则自己回写表格不会再次触发。在群里对助手说“这个群……”就能给当前群建规则 |
 | 某些命令会改敏感数据，想先审批 | 设置 → 安全 → 命令规则：写命令名和参数正则，Agent 和它脚本里的子进程执行时先问 omem，需要审批的发飞书卡片或网页待办，批准后放行；防误操作，拦不住绝对路径调用（docs/v2/command-gate.md） |
 | 浏览器开了很多 omem 标签页后页面打不开 | 后台的标签页 45 秒后自动断开实时连接，回到前台再连；想彻底不受 http 每个地址 6 条连接的限制，配置 `https` 开一个 HTTPS（HTTP/2）端口 |
@@ -515,6 +515,7 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 src/auth      登录：登录方（providers.ts，飞书在 lark.ts）、登录与绑定、邀请、机器人登录链接（login.ts）、会话 cookie（sessions.ts）、谁在请求与相关接口（http.ts）；权限（permissions.ts、routes.ts、tools.ts）；连接器：令牌保管（vault.ts）、刷新与续期（connections.ts）、功能与 scope（features.ts）、主人填的平台应用配置（apps.ts）、以某人身份用 lark-cli（lark-user.ts）
 src/core      配置、AI 提供方与 API key（ai-keys.ts）、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）、进程监听的端口（listening.ts）与预览的本机转发（preview-forward.ts）
 src/rules     任务规则、条件判断、执行动作与触发记录
+src/mentions  有人找你：预筛、等规则和整理、每日上限、分诊、处理与兜底、回复对方的检查（和渠道无关，channel.ts 是渠道接口；飞书的实现在 channels/lark-mentions.ts、mention-reply.ts）
 src/remote    远程操作：aad 的进程（assist、mcp、record）、会话与画面转发（/remote）、录制与回放
 src/sources   归档规则与原件迁移（archive.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合、重排（rerank.ts）

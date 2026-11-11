@@ -2450,10 +2450,10 @@ def({
 def({
   name: "reply_to_asker",
   description:
-    "只在处理“有人找你”的运行里可用：回复这次找本人的那个人（目标固定，不能换）。按本人的设置：变成本人一键发送的草稿卡片，或在本人允许“自动”时直接发出（群里机器人在对方那条消息的话题里回复；私聊按设置拉三人群回复或以本人身份带署名回复）。只写要发给对方的话；一次处理只回一次。",
+    "只在处理“有人找你”的运行里可用：回复这次找本人的那个人（目标固定，不能换）。按本人的设置：变成本人一键发送的草稿卡片，或在本人允许“自动”时直接发出（怎么发由消息所在的渠道决定，任务里写着；飞书：群里机器人在对方那条消息的话题里回复，私聊按设置拉三人群回复或以本人身份带署名回复）。只写要发给对方的话；一次处理只回一次。",
   write: true,
   schema: z.object({ text: z.string().min(1).max(4000).describe("发给对方的回复，用本人这边的口吻，短，带对方要的结论、数字或链接") }),
-  handler: async (ctx, a) => (await import("../channels/mention-reply.ts")).replyToAsker(ctx.app, ctx.runId, a.text),
+  handler: async (ctx, a) => (await import("../mentions/mentions.ts")).replyToAsker(ctx.app, ctx.runId, a.text),
 });
 
 def({
@@ -3065,7 +3065,7 @@ def({
       runId: ctx.runId,
       replaces: a.replaces,
       ...(a.urgency ? { urgency: a.urgency } : {}),
-      // A handling of someone looking for the owner starts only after the owner had their time with the message (lark-mentions.ts).
+      // A handling of someone looking for the owner starts only after the owner had their time with the message (mentions/mentions.ts).
       ...(ctx.runId && one(ctx.app.db, "select 1 from runs where id = ? and json_extract(input, '$.mention') is not null", ctx.runId) ? { graceDone: true } : {}),
     });
     return a.replaces ? `已更新通知 ${a.replaces}（新 id ${n.id}）` : `已通知（id ${n.id}；之后状态变了可传 replaces=${n.id} 更新这张卡片）`;

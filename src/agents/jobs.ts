@@ -41,7 +41,9 @@ import "./req-split.ts";
 import "./wakes.ts";
 import "./digest.ts";
 // Also registers the mention handler (someone looking for the owner: triage, then maybe a handling).
-import { handedToMentions, mentionTools, runMentionHandling } from "../channels/lark-mentions.ts";
+import { handedToMentions, mentionTools, runMentionHandling, type MentionInfo } from "../mentions/mentions.ts";
+// The Feishu channel of 有人找你 (runs queued before a restart find it registered).
+import "../channels/lark-mentions.ts";
 import { helpedCounts, replayDreamText } from "./replay.ts";
 
 registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
@@ -198,7 +200,7 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
 registerHandler("agent", async (ctx) => {
-  // Someone looking for the owner, handled (lark-mentions.ts): its time limit and the short reminder when it fails.
+  // Someone looking for the owner, handled (mentions/mentions.ts): its time limit and the short reminder when it fails.
   if (ctx.run.input.mention) return runMentionHandling(ctx, runAgentTask);
   try { return await runAgentTask(ctx); }
   catch (e) {
@@ -278,7 +280,7 @@ async function runAgentTask(ctx: RunContext) {
       // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
       choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
-      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: import("../channels/mention-reply.ts").MentionInfo }).mention)],
+      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention)],
       execution,
       // A rule's runs follow the rule's switch; others the profile's (prepareRun).
       fullAccess: rule ? !!(ctx.run.input as { fullAccess?: boolean }).fullAccess : undefined,
@@ -513,7 +515,7 @@ registerHandler("ingest", async (ctx) => {
     }
   });
   const known = await knownNearMaterial(ctx.app, ctx.run.spaceId!, sourceIds, sourceStarts);
-  // Someone looking for the owner in these lines: triaged and maybe handled apart (lark-mentions.ts), which tells the owner.
+  // Someone looking for the owner in these lines: triaged and maybe handled apart (mentions/mentions.ts), which tells the owner.
   const handed = handedToMentions(ctx.app, sourceIds);
   const mentions = handed.length ? `\n\n有人找本人的这几条消息另有“有人找你”的运行分诊、需要时查背景后提醒本人，不要为它们 notify（记忆、事项照常处理）：${handed.join("、")}` : "";
   const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}${mentions}${known}`;

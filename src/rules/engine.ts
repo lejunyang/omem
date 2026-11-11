@@ -9,7 +9,7 @@ import { meetingConfirmation } from "./meeting.ts";
 import { linkIsDoc } from "../channels/lark-doc-events.ts";
 import { createRun } from "../agents/runs.ts";
 import { discussion, discussionText, engagement, followedTopic, unfollowTopic, type Followed } from "./context.ts";
-import { addressed, claimEvent, deleteRule, listRules, recordFiring } from "./store.ts";
+import { addressed, claimEvent, deleteRule, endJudging, listRules, recordFiring, startJudging } from "./store.ts";
 import { ownWriteOf } from "./own-writes.ts";
 import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
 
@@ -25,12 +25,18 @@ export async function dispatchRuleEvent(app: App, e: RuleEvent, only?: (r: Rule)
   } catch {
     return;
   }
-  for (const rule of rules) {
-    try {
-      await consider(app, rule, e);
-    } catch (err) {
-      console.warn(`[omem] 规则「${rule.name}」处理失败：${(err as Error).message}`);
+  if (!rules.length) return;
+  startJudging(e.key);
+  try {
+    for (const rule of rules) {
+      try {
+        await consider(app, rule, e);
+      } catch (err) {
+        console.warn(`[omem] 规则「${rule.name}」处理失败：${(err as Error).message}`);
+      }
     }
+  } finally {
+    endJudging(e.key);
   }
 }
 
@@ -45,7 +51,14 @@ function inScope(app: App, r: Rule, e: RuleEvent) {
 /** Several events (a capture batch) in order. */
 export async function dispatchRuleEvents(app: App, events: RuleEvent[]) {
   if (!events.length || !listRules(app, { enabledOnly: true }).length) return;
-  for (const e of events) await dispatchRuleEvent(app, e);
+  // The whole batch is being judged from now: later events wait their turn behind the model calls of earlier ones.
+  const keys = events.map((e) => e.key);
+  keys.forEach(startJudging);
+  try {
+    for (const e of events) await dispatchRuleEvent(app, e);
+  } finally {
+    keys.forEach(endJudging);
+  }
 }
 
 /** A schedule rule's tick (scheduler kind "rule"). */

@@ -722,36 +722,6 @@ export const configSchema = z.object({
         })
         .default({ enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 }),
       /**
-       * Someone looking for the owner (src/channels/lark-mentions.ts, docs/v2/mentions.md): a person
-       * @-ing the owner in a group, or writing to them one-to-one (`p2p`). Free checks first (after
-       * `delayMinutes`: read, reacted, answered, or a watch / rule already on it); then one small
-       * judgement (the mention-triage role, on the decision model; `noDecision` without one): ignore,
-       * a short reminder, or handle — the main assistant (or an Agent 档案) reads up and tells the owner,
-       * the short reminder going out when it fails or runs past `timeoutMinutes`. `guidance`: the
-       * owner's words for the triage. `perDay`: triages and handlings a day, past which the short
-       * reminder goes out. `reply`: whether the handler may answer the asker — off, a draft the owner
-       * sends with one click, or auto (only when the triage also found it can move on alone); a private
-       * chat is answered in a group of the owner, them and the bot (`p2pVia: group`) or as the owner, signed.
-       */
-      mentions: z
-        .object({
-          enabled: z.boolean().default(true),
-          p2p: z.boolean().default(true),
-          delayMinutes: z.number().int().min(0).max(240).default(3),
-          timeoutMinutes: z.number().int().min(1).max(60).default(10),
-          guidance: z.string().max(4000).default(""),
-          noDecision: z.enum(["general", "notify", "handle"]).default("general"),
-          perDay: z.object({ triage: z.number().int().min(0).max(1000).default(80), handle: z.number().int().min(0).max(500).default(20) }).default({ triage: 80, handle: 20 }),
-          reply: z
-            .object({
-              group: z.enum(["off", "draft", "auto"]).default("off"),
-              p2p: z.enum(["off", "draft", "auto"]).default("off"),
-              p2pVia: z.enum(["group", "signed"]).default("group"),
-            })
-            .default({ group: "off", p2p: "off", p2pVia: "group" }),
-        })
-        .default({ enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { group: "off", p2p: "off", p2pVia: "group" } }),
-      /**
        * Knowledge bases the owner can see (src/channels/lark-knowledge.ts, read-only): discovered weekly,
        * sorted into spaces by the kb-scout role along `direction` (the owner's words), and read a little
        * every night: `dailyDocs` docs in all, shared by the mapped ones by priority. `autoApply`: the
@@ -802,7 +772,6 @@ export const configSchema = z.object({
       },
       guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
-      mentions: { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { group: "off", p2p: "off", p2pVia: "group" } },
       knowledge: { direction: "", autoApply: false, dailyDocs: 30 },
     }),
   telegram: z
@@ -813,6 +782,40 @@ export const configSchema = z.object({
       defaultSpace: z.string().default("personal"),
     })
     .default({ enabled: false, tokenEnv: "OMEM_TELEGRAM_TOKEN", defaultSpace: "personal" }),
+  /**
+   * 有人找你 (src/mentions/mentions.ts, docs/v2/mentions.md): someone @-ing the owner in a group, or
+   * writing to them one-to-one (`p2p`), on any chat channel — for what no rule took. Free checks first
+   * (after `delayMinutes`: read, reacted, answered, or a watch already on it); then one small judgement
+   * (the mention-triage role, on the decision model; `noDecision` without one): ignore, a short
+   * reminder, or handle — the main assistant (or an Agent 档案) reads up and tells the owner, the short
+   * reminder going out when it fails or runs past `timeoutMinutes`. `guidance`: the owner's words for
+   * the triage. `perDay`: triages and handlings a day, past which the short reminder goes out.
+   * `reply.<channel>`: whether the handler may answer the asker there — off, a draft the owner sends
+   * with one click, or auto (only when the triage also found it can move on alone). On Feishu a private
+   * chat is answered in a group of the owner, them and the bot (`p2pVia: group`) or as the owner, signed.
+   */
+  mentions: z
+    .object({
+      enabled: z.boolean().default(true),
+      p2p: z.boolean().default(true),
+      delayMinutes: z.number().int().min(0).max(240).default(3),
+      timeoutMinutes: z.number().int().min(1).max(60).default(10),
+      guidance: z.string().max(4000).default(""),
+      noDecision: z.enum(["general", "notify", "handle"]).default("general"),
+      perDay: z.object({ triage: z.number().int().min(0).max(1000).default(80), handle: z.number().int().min(0).max(500).default(20) }).default({ triage: 80, handle: 20 }),
+      reply: z
+        .object({
+          lark: z
+            .object({
+              group: z.enum(["off", "draft", "auto"]).default("off"),
+              p2p: z.enum(["off", "draft", "auto"]).default("off"),
+              p2pVia: z.enum(["group", "signed"]).default("group"),
+            })
+            .default({ group: "off", p2p: "off", p2pVia: "group" }),
+        })
+        .default({ lark: { group: "off", p2p: "off", p2pVia: "group" } }),
+    })
+    .default({ enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group" } } }),
   /**
    * When omem may push to chat channels. Defaults:
    * - quiet hours: nothing outside urgent/overdue 22:00–09:00 local;
@@ -951,10 +954,27 @@ export function loadConfig(home = omemHome()): Config {
   // that value in a file is the old default rather than a choice; "localhost" is how to
   // keep it local now.
   if (raw.host === "127.0.0.1") delete raw.host;
+  moveOldSettings(raw);
   const config = configSchema.parse(raw);
   if (process.env.OMEM_PORT) config.port = Number(process.env.OMEM_PORT);
   loadedAs.set(resolve(home), structuredClone(config));
   return config;
+}
+
+/**
+ * Settings that moved, carried over from a file written before (in place). 有人找你 was `lark.mentions`
+ * until 2026-11-11 and is `mentions` now (its reply settings under `mentions.reply.lark`). It had not
+ * been turned on anywhere yet, so this can go after a release or two.
+ */
+export function moveOldSettings(raw: Record<string, any>) {
+  const old = raw?.lark?.mentions;
+  if (!old || typeof old !== "object") return raw;
+  delete raw.lark.mentions;
+  if (raw.mentions === undefined) {
+    const { reply, ...rest } = old;
+    raw.mentions = { ...rest, ...(reply ? { reply: { lark: reply } } : {}) };
+  }
+  return raw;
 }
 
 /** The config each home was last loaded or saved as by this process: what a save diffs against. */
@@ -992,6 +1012,8 @@ export function saveConfig(config: Config, home = omemHome()) {
   let theirs: unknown;
   try {
     theirs = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined;
+    // The file may still have settings in their old place: merged as they are now, or they would come back.
+    if (isObject(theirs)) moveOldSettings(theirs);
   } catch {
     theirs = undefined;
   }

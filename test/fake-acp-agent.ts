@@ -415,7 +415,7 @@ ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
-      // FAKE_MODE=mention: someone looking for the owner (lark-mentions.ts). The triage on the general model
+      // FAKE_MODE=mention: someone looking for the owner (mentions/mentions.ts). The triage on the general model
       // answers FAKE_TRIAGE (JSON); a handling reads the cited line, replies to the asker when it may
       // (FAKE_REPLY), then writes the reminder — or stays quiet (FAKE_MENTION=quiet), or says nothing (=silent).
       if (process.env.FAKE_MODE === "mention") {

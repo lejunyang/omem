@@ -1785,11 +1785,18 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 句末引用编号改为 `(n)`（`citations.ts` 的 `citationMark`）：⑪ 以后的带圈数字在常用中文字体里缺字形，回退到别的字体后大小不一。
 - 需决定的卡片（提问、批准、草稿确认、规则脚本审批、访客审批、入会确认）收尾统一为 `decidedBlocks`：谁、何时、决定，一句结果，工具的原始输出放进折叠的“完整输出”。
 
+## 2026-11-11：“有人找你”和渠道分开；规则先于它
+
+- 流程搬到 `src/mentions/`（`mentions.ts` 预筛、等待、每日上限、处理与兜底、`reply_to_asker` 的检查；`triage.ts` 分诊；`channel.ts` 渠道接口 `MentionChannel`）。飞书实现接口：`src/channels/lark-mentions.ts`（挑出找本人的消息、读消息和引用、已读、前后聊天、发送人、盯群和机器人直接回答、规则键 `lark:<id>`），`mention-reply.ts`（在飞书上回复和草稿卡片）。`src/channels/mention-triage.ts` 移到 `src/mentions/triage.ts`，前后聊天和发送人改由渠道提供。运行类型、`input.mention`、`handled_messages` 的 `lark-mention` 不变；`input.mention` 多了 `channel`（没有的按飞书）。
+- 设置从 `lark.mentions` 移到顶层 `mentions`，回复方式按渠道放在 `mentions.reply.lark`（`group` / `p2p` / `p2pVia`）。读取配置时把旧位置迁过去（`config.ts moveOldSettings`，保存时对文件里的旧位置同样处理），之后可删。设置页文案不再只说飞书。
+- 和规则的先后：规则在这条消息上触发过（不论动作类型，跳过也算），或认领后正在等（`rule-fire` 运行排着或在跑），“有人找你”让开；规则还在判断（`dispatchRuleEvent` 进行中，`rules/store.ts rulesJudging`）时等一分钟，和等 ingest 合计最多 8 次。判断在 `rules/store.ts ruleClaim`。原来只在规则带“交给 Agent”动作时让开，只通知、只转发的规则会和这里各提醒一次；带等待的规则等待比 `delayMinutes` 长时两边都处理。
+- 规则页列表最后一条“没有规则处理的、找你的消息 → 有人找你”（不能删除，显示开关和今天的次数，点进去到 设置 → 渠道）；新接口 `GET /api/mentions`。docs/v2/mentions.md 加“消息先经过谁”“渠道”，“和规则的关系”重写；docs/v2/rules.md 加“和‘有人找你’的先后”。
+
 ## 2026-11-11：有人找本人时先分诊再处理
 
-- “预筛 → 决策模型分诊（`roles/mention-triage.md`）→ 按需交给主助手或档案 → 可选回复对方”（`src/channels/lark-mentions.ts`、`mention-triage.ts`、`mention-reply.ts`，设计 docs/v2/mentions.md）。新运行类型 `mention`；处理是带 `input.mention` 的 `agent` 运行，最后的回答作为提醒，卡片关联运行以便接着聊。
-- 新工具 `reply_to_asker`（只给这类运行，目标固定，按 `lark.mentions.reply` 变草稿卡片或直接发，写 `audit_events`）；AGENTS.md “渠道”新增这一处以本人身份写。
-- `notify()` 对 6 小时内已提醒过的同一批聊天消息返回 409，要求用 `replaces`（原因：实时采集和轮询各排一个 `ingest`，读同一批行各提醒一次）。新设置 `lark.mentions`（`guidance`、`noDecision`、`perDay`、`reply`）。
+- “预筛 → 决策模型分诊（`roles/mention-triage.md`）→ 按需交给主助手或档案 → 可选回复对方”（现在在 `src/mentions/`，见上一节；设计 docs/v2/mentions.md）。新运行类型 `mention`；处理是带 `input.mention` 的 `agent` 运行，最后的回答作为提醒，卡片关联运行以便接着聊。
+- 新工具 `reply_to_asker`（只给这类运行，目标固定，按 `mentions.reply.lark` 变草稿卡片或直接发，写 `audit_events`）；AGENTS.md “渠道”新增这一处以本人身份写。
+- `notify()` 对 6 小时内已提醒过的同一批聊天消息返回 409，要求用 `replaces`（原因：实时采集和轮询各排一个 `ingest`，读同一批行各提醒一次）。新设置 `mentions`（原为 `lark.mentions`；`guidance`、`noDecision`、`perDay`、`reply`）。
 
 ## 2026-11-11：编码交办里要本人定的问题先交给助手；精简评审
 

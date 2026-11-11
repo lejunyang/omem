@@ -4,44 +4,27 @@ import { audit } from "../auth/permissions.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { getRun, setRunOutput } from "../agents/runs.ts";
+import type { MentionInfo, Replied } from "../mentions/channel.ts";
+import { mentionOf } from "../mentions/mentions.ts";
 
 /**
- * Answering the person who looked for the owner (docs/v2/mentions.md “回复对方”), only through what
- * omem already does in Feishu: in a group the bot replies in a topic under their message (the owner's
- * identity only brings omem's own bot in when it is not there); a private chat is answered in a group
- * of the owner, them and the bot (made once, the one a rule's forward uses) or, when the owner chose
- * so, as the owner in that chat with the signature of /ai. Draft: the owner sends it from a card.
- * Auto: the owner's standing permission in settings → 渠道 → 有人找你, and only when the triage found
- * it can move on alone. Every reply goes to audit_events.
+ * Answering the person who looked for the owner on Feishu (docs/v2/mentions.md “回复对方”; the tool
+ * and its checks are src/mentions/mentions.ts replyToAsker), only through what omem already does in
+ * Feishu: in a group the bot replies in a topic under their message (the owner's identity only brings
+ * omem's own bot in when it is not there); a private chat is answered in a group of the owner, them and
+ * the bot (made once, the one a rule's forward uses) or, when the owner chose so, as the owner in that
+ * chat with the signature of /ai. Draft: the owner sends it from a card. Auto: the owner's standing
+ * permission in settings → 渠道 → 有人找你 (`mentions.reply.lark`), and only when the triage found it
+ * can move on alone. Every reply goes to audit_events.
  */
-export type MentionInfo = {
-  /** The mention run that triaged it. */
-  from: string;
-  chatId: string;
-  chatName: string;
-  chatKind: "p2p" | "group";
-  topicId: string | null;
-  messageIds: string[];
-  /** The message a group reply goes under (the newest one). */
-  lastMessageId: string;
-  senderId: string | null;
-  senderName: string;
-  /** Citations of the messages (chat lines). */
-  refs: string[];
-  /** What the handler may do with an answer, from the settings and the triage. */
-  reply: "off" | "draft" | "auto";
-  urgency: "normal" | "urgent";
-  what: string;
-};
 
-type Replied = { via: "group" | "p2p-group" | "signed"; by: "auto" | "owner"; at: string; messageId: string | null; chatId: string; where: string };
+const whereOf = (m: Pick<MentionInfo, "chatKind" | "senderName" | "chatName">) => (m.chatKind === "p2p" ? `和 ${m.senderName} 的私聊` : `群「${m.chatName}」`);
 
-export function mentionOf(app: App, runId: string | null | undefined): MentionInfo | null {
-  if (!runId) return null;
-  return (getRun(app, runId).input.mention as MentionInfo | undefined) ?? null;
+/** How a reply goes out, in a sentence (the handler's task, the draft card). */
+export function replyHow(app: App, m: Pick<MentionInfo, "chatKind" | "senderName">) {
+  if (m.chatKind === "group") return "机器人在对方那条消息的话题里回复（机器人不在群里时先用本人身份把它拉进来）";
+  return app.config.mentions.reply.lark.p2pVia === "group" ? `拉一个本人、${m.senderName} 和机器人的群（只建一次），机器人在群里回复` : `以本人身份在私聊里发，结尾带“${app.config.lark.commands.signature}”`;
 }
-
-const whereOf = (m: MentionInfo) => (m.chatKind === "p2p" ? `和 ${m.senderName} 的私聊` : `群「${m.chatName}」`);
 
 /** The person as lark-cli (the owner's identity) knows them: capture by the bot records the bot's ids. */
 function cliIdOf(app: App, id: string | null) {
@@ -53,29 +36,13 @@ function botIdOf(app: App, id: string | null) {
   return one<{ bot_open_id: string | null }>(app.db, "select bot_open_id from lark_people where cli_open_id = ? or bot_open_id = ? limit 1", id, id)?.bot_open_id ?? null;
 }
 
-/** The tool (reply_to_asker): send, make a draft for the owner, or refuse, as the settings say. */
-export async function replyToAsker(app: App, runId: string | null | undefined, text: string): Promise<string> {
-  const m = mentionOf(app, runId);
-  if (!m || !runId) throw new HttpError(403, "只有处理“有人找你”的运行能回复对方");
-  const done = getRun(app, runId).output.mentionReply as Replied | { draft: string } | undefined;
-  if (done) throw new HttpError(409, "这次已经回复过对方（或已经给本人发了草稿），不再重复");
-  if (m.reply === "off") throw new HttpError(400, "本人没有打开“回复对方”：把建议的话写进给本人的提醒里");
-  if (m.reply === "draft") {
-    const id = await draftCard(app, runId, m, text);
-    setRunOutput(app, runId, { mentionReply: { draft: id } });
-    return "已作为草稿发给本人确认（还没有发出）：本人可以改一下再发，或者不发。提醒里说一句你拟了回复。";
-  }
-  const r = await sendMentionReply(app, runId, text, "auto");
-  return `已回复对方：${r.where}${r.note}。在给本人的提醒里写清回了什么。`;
-}
-
-/** The card the owner sends the reply from: the text in an editable box, 发送 and 不发. */
-async function draftCard(app: App, runId: string, m: MentionInfo, text: string) {
+/** The card the owner sends the reply from: the text in an editable box, 发送 and 不发. Returns the interaction's id. */
+export async function draftMentionReply(app: App, runId: string, m: MentionInfo, text: string) {
   const { buildCard, recordInteraction, sendLark, larkOwnerOpenId } = await import("./lark-send.ts");
   const owner = larkOwnerOpenId(app, "main");
   const dm = one<{ value: string }>(app.db, "select value from kv where key = 'lark_owner_chat'")?.value;
   if (!owner && !dm) throw new HttpError(400, "主机器人还不知道你是谁，没法发草稿卡片");
-  const how = m.chatKind === "group" ? "机器人在对方那条消息的话题里回复" : app.config.lark.mentions.reply.p2pVia === "group" ? `拉一个你、${m.senderName} 和机器人的群（只建一次），机器人在群里回复` : `以你的身份在私聊里发，结尾带“${app.config.lark.commands.signature}”`;
+  const how = m.chatKind === "group" ? "机器人在对方那条消息的话题里回复" : app.config.mentions.reply.lark.p2pVia === "group" ? `拉一个你、${m.senderName} 和机器人的群（只建一次），机器人在群里回复` : `以你的身份在私聊里发，结尾带“${app.config.lark.commands.signature}”`;
   const card = buildCard({
     title: `回复 ${m.senderName} 吗？`,
     color: "orange",
@@ -125,7 +92,7 @@ export async function sendMentionReply(app: App, runId: string, text: string, by
     const sent = await sendLark({ replyTo: m.lastMessageId, inThread: true, runId, purpose: "answer" }, { markdown: `${at ? `<at id=${at}></at> ` : ""}${text}` });
     r = { via: "group", by, at: new Date().toISOString(), messageId: sent.messageId, chatId: m.chatId, where: `在${whereOf(m)}里 ${m.senderName} 那条消息的话题里` };
     follow(app, runId, m.chatId, sent.threadId ?? m.topicId, m.chatName, sent.messageId);
-  } else if (cfg.mentions.reply.p2pVia === "group") {
+  } else if (app.config.mentions.reply.lark.p2pVia === "group") {
     const { targetChat } = await import("../rules/forward.ts");
     const person = cliIdOf(app, m.senderId);
     const t = await targetChat(app, "有人找你", { chatId: m.chatId, name: m.senderName, kind: "p2p" }, person ? { id: person, name: m.senderName } : undefined);

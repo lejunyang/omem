@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import AiRouting from "../components/AiRouting.vue";
@@ -171,8 +171,13 @@ function saveGuests(patch: Record<string, unknown>, note = "已保存访客设�
   return saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
 }
 function saveMentions(patch: Record<string, unknown>, note = "已保存") {
-  const cur = config.value.lark.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { group: "off", p2p: "off", p2pVia: "group" } };
-  void saveConfig({ lark: { ...config.value.lark, mentions: { ...cur, ...patch } } }, note);
+  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group" } } };
+  void saveConfig({ mentions: { ...cur, ...patch } }, note);
+}
+/** Answering the asker is per channel (`mentions.reply.<channel>`); Feishu is the one there is. */
+function saveMentionReply(patch: Record<string, unknown>) {
+  const reply = config.value.mentions?.reply ?? {};
+  saveMentions({ reply: { ...reply, lark: { ...(reply.lark ?? { group: "off", p2p: "off", p2pVia: "group" }), ...patch } } });
 }
 function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
   const cur = config.value.lark.commands ?? { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 };
@@ -271,6 +276,8 @@ async function load() {
   rerank.value = s.rerank;
   profiles.value = s.agents;
   home.value = s.home;
+  // A link to one card (the rules page's last entry opens 有人找你: ?tab=lark&focus=mentions).
+  if (route.query.focus === "mentions" && tab.value === "lark") void nextTick(() => document.getElementById("settings-mentions")?.scrollIntoView({ block: "start" }));
   const sc = await get<{ schedules: Schedule[]; next: Record<string, string | null>; labels: Record<string, string> }>("/api/schedules");
   schedules.value = sc.schedules;
   next.value = sc.next;
@@ -1052,23 +1059,24 @@ async function saveEdit() {
         <div class="row small"><span>机器人之间连续转交最多</span><UiSelect :model-value="String(config.lark.botRelay ?? 4)" size="sm" width="90px" aria-label="机器人之间连续转交上限" :options="['0', '1', '2', '4', '6', '10'].map((v) => ({ value: v, label: `${v} 次` }))" @change="(v) => saveConfig({ lark: { ...config.lark, botRelay: Number(v) } }, `机器人之间连续转交最多 ${v} 次`)" /><span class="muted">，之后等有人发话</span></div>
       </div>
 
-      <div class="card pad stack">
+      <div id="settings-mentions" class="card pad stack">
         <strong>有人找你</strong>
-        <p class="muted small">别的群里有人 @ 你，或同事私聊你，过几分钟你还没看、没回表情、也没回复时：先用决策模型（一次很小的判断）看是什么事——不用管、简短提醒你，还是值得先查；值得查的交给主助手（或某个 Agent 档案）以你的身份读上下文、查事项和资料，再提醒你结论和建议的回复。你回复那条提醒就接着和它聊这件事。查不出来、出错或超时，照常发简短提醒（谁、在哪、说了什么）。分诊的判断标准是“有人找你·分诊”角色，在“Agent”页可以改。</p>
-        <UiCheckbox :model-value="config.lark.mentions?.enabled !== false" switch @change="(v) => saveMentions({ enabled: v }, v ? '有人找你时先分诊再提醒' : '已关闭：有人找你时不再分诊')">有人找你时先分诊再提醒</UiCheckbox>
-        <UiCheckbox :model-value="config.lark.mentions?.p2p !== false" switch :disabled="config.lark.mentions?.enabled === false" @change="(v) => saveMentions({ p2p: v })">私聊也算（同事私聊你的消息）</UiCheckbox>
+        <p class="muted small">在 omem 采集的聊天渠道里（现在是飞书），有人在群里 @ 你，或同事私聊你，过几分钟你还没看、没回表情、也没回复时：先用决策模型（一次很小的判断）看是什么事——不用管、简短提醒你，还是值得先查；值得查的交给主助手（或某个 Agent 档案）以你的身份读上下文、查事项和资料，再提醒你结论和建议的回复。你回复那条提醒就接着和它聊这件事。查不出来、出错或超时，照常发简短提醒（谁、在哪、说了什么）。分诊的判断标准是“有人找你·分诊”角色，在“Agent”页可以改。</p>
+        <p class="muted small">它排在所有规则之后：规则在这条消息上触发过（不论做了什么）或正等着处理它，这里就不管；规则还在判断时先等一等。规则页列表最后一条就是它。</p>
+        <UiCheckbox :model-value="config.mentions?.enabled !== false" switch @change="(v) => saveMentions({ enabled: v }, v ? '有人找你时先分诊再提醒' : '已关闭：有人找你时不再分诊')">有人找你时先分诊再提醒</UiCheckbox>
+        <UiCheckbox :model-value="config.mentions?.p2p !== false" switch :disabled="config.mentions?.enabled === false" @change="(v) => saveMentions({ p2p: v })">私聊也算（同事私聊你的消息）</UiCheckbox>
         <label class="field"><span>消息发出后等几分钟再开始（0–240，给你自己先看的时间）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="240" :disabled="config.lark.mentions?.enabled === false" :value="config.lark.mentions?.delayMinutes ?? 3" @change="saveMentions({ delayMinutes: Math.max(0, Math.min(240, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) })" />
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="240" :disabled="config.mentions?.enabled === false" :value="config.mentions?.delayMinutes ?? 3" @change="saveMentions({ delayMinutes: Math.max(0, Math.min(240, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) })" />
         </label>
         <label class="field"><span>分诊说明（写给判断的模型：哪些人、哪些群、哪类事一定要查或不用管）</span>
-          <textarea class="textarea" rows="3" :disabled="config.lark.mentions?.enabled === false" :value="config.lark.mentions?.guidance ?? ''" placeholder="例如：项目 A 群里问接口和数据口径的都先查；行政通知、团建不用提醒；小王找我的一律提醒" @change="saveMentions({ guidance: ($event.target as HTMLTextAreaElement).value.trim() })" />
+          <textarea class="textarea" rows="3" :disabled="config.mentions?.enabled === false" :value="config.mentions?.guidance ?? ''" placeholder="例如：项目 A 群里问接口和数据口径的都先查；行政通知、团建不用提醒；小王找我的一律提醒" @change="saveMentions({ guidance: ($event.target as HTMLTextAreaElement).value.trim() })" />
         </label>
         <div class="field"><span>没有配置决策模型时</span>
           <UiSelect
-            :model-value="config.lark.mentions?.noDecision ?? 'general'"
+            :model-value="config.mentions?.noDecision ?? 'general'"
             width="100%"
             aria-label="没有决策模型时怎么分诊"
-            :disabled="config.lark.mentions?.enabled === false"
+            :disabled="config.mentions?.enabled === false"
             :options="[
               { value: 'general', label: '用通用模型分诊（助手的后端，一次不带工具的调用）' },
               { value: 'notify', label: '不分诊，都发简短提醒' },
@@ -1079,24 +1087,24 @@ async function saveEdit() {
         </div>
         <div class="row wrap small">
           <span>每天最多分诊</span>
-          <input class="input" style="width: 90px" type="number" inputmode="numeric" min="0" max="1000" :disabled="config.lark.mentions?.enabled === false" :value="config.lark.mentions?.perDay?.triage ?? 80" @change="saveMentions({ perDay: { ...(config.lark.mentions?.perDay ?? { triage: 80, handle: 20 }), triage: Math.max(0, Math.min(1000, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
+          <input class="input" style="width: 90px" type="number" inputmode="numeric" min="0" max="1000" :disabled="config.mentions?.enabled === false" :value="config.mentions?.perDay?.triage ?? 80" @change="saveMentions({ perDay: { ...(config.mentions?.perDay ?? { triage: 80, handle: 20 }), triage: Math.max(0, Math.min(1000, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
           <span>次，交给助手查</span>
-          <input class="input" style="width: 90px" type="number" inputmode="numeric" min="0" max="500" :disabled="config.lark.mentions?.enabled === false" :value="config.lark.mentions?.perDay?.handle ?? 20" @change="saveMentions({ perDay: { ...(config.lark.mentions?.perDay ?? { triage: 80, handle: 20 }), handle: Math.max(0, Math.min(500, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
+          <input class="input" style="width: 90px" type="number" inputmode="numeric" min="0" max="500" :disabled="config.mentions?.enabled === false" :value="config.mentions?.perDay?.handle ?? 20" @change="saveMentions({ perDay: { ...(config.mentions?.perDay ?? { triage: 80, handle: 20 }), handle: Math.max(0, Math.min(500, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
           <span class="muted">次；超过就只发简短提醒</span>
         </div>
         <label class="field"><span>查背景最多几分钟，超过就发简短提醒（1–60）</span>
-          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="60" :disabled="config.lark.mentions?.enabled === false" :value="config.lark.mentions?.timeoutMinutes ?? 10" @change="saveMentions({ timeoutMinutes: intIn($event, 1, 60, 10) })" />
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="60" :disabled="config.mentions?.enabled === false" :value="config.mentions?.timeoutMinutes ?? 10" @change="saveMentions({ timeoutMinutes: intIn($event, 1, 60, 10) })" />
         </label>
         <strong class="small">回复对方</strong>
-        <p class="muted small">查完以后要不要替你回对方。草稿：提醒旁边多一张卡片，你可以改了再点发送。自动：分诊也认为不用你拍板时直接回，回了什么会写在提醒里，每次都记进审计；拿不准时仍是草稿。群里由机器人在对方那条消息的话题里回（机器人不在群里时用你的身份把它拉进来）。</p>
-        <div class="row wrap small"><span style="min-width: 4em">群里</span>
-          <UiSegmented size="sm" aria-label="群里回复对方" :model-value="config.lark.mentions?.reply?.group ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentions({ reply: { ...(config.lark.mentions?.reply ?? { group: 'off', p2p: 'off', p2pVia: 'group' }), group: v } })" />
+        <p class="muted small">查完以后要不要替你回对方，按渠道分别设（现在只有飞书）。草稿：提醒旁边多一张卡片，你可以改了再点发送。自动：分诊也认为不用你拍板时直接回，回了什么会写在提醒里，每次都记进审计；拿不准时仍是草稿。飞书群里由机器人在对方那条消息的话题里回（机器人不在群里时用你的身份把它拉进来）。</p>
+        <div class="row wrap small"><span style="min-width: 4em">飞书群里</span>
+          <UiSegmented size="sm" aria-label="群里回复对方" :model-value="config.mentions?.reply?.lark?.group ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentionReply({ group: v })" />
         </div>
-        <div class="row wrap small"><span style="min-width: 4em">私聊</span>
-          <UiSegmented size="sm" aria-label="私聊回复对方" :model-value="config.lark.mentions?.reply?.p2p ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentions({ reply: { ...(config.lark.mentions?.reply ?? { group: 'off', p2p: 'off', p2pVia: 'group' }), p2p: v } })" />
+        <div class="row wrap small"><span style="min-width: 4em">飞书私聊</span>
+          <UiSegmented size="sm" aria-label="私聊回复对方" :model-value="config.mentions?.reply?.lark?.p2p ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentionReply({ p2p: v })" />
         </div>
-        <div v-if="(config.lark.mentions?.reply?.p2p ?? 'off') !== 'off'" class="row wrap small"><span style="min-width: 4em">私聊怎么回</span>
-          <UiSegmented size="sm" aria-label="私聊怎么回" :model-value="config.lark.mentions?.reply?.p2pVia ?? 'group'" :options="[{ value: 'group', label: '拉你、对方和机器人的群' }, { value: 'signed', label: '以你的身份回，带署名' }]" @change="(v: string) => saveMentions({ reply: { ...(config.lark.mentions?.reply ?? { group: 'off', p2p: 'off', p2pVia: 'group' }), p2pVia: v } })" />
+        <div v-if="(config.mentions?.reply?.lark?.p2p ?? 'off') !== 'off'" class="row wrap small"><span style="min-width: 4em">私聊怎么回</span>
+          <UiSegmented size="sm" aria-label="私聊怎么回" :model-value="config.mentions?.reply?.lark?.p2pVia ?? 'group'" :options="[{ value: 'group', label: '拉你、对方和机器人的群' }, { value: 'signed', label: '以你的身份回，带署名' }]" @change="(v: string) => saveMentionReply({ p2pVia: v })" />
         </div>
       </div>
 

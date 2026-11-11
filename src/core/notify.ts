@@ -71,7 +71,7 @@ export function addNotificationSink(sink: Sink) {
 export function notify(
   app: App,
   input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; effects?: string[] }; replaces?: string;
-    /** The host already gave the owner their time before this run started (lark-mentions.ts): no first-nudge grace. */
+    /** The host already gave the owner their time before this run started (mentions/mentions.ts): no first-nudge grace. */
     graceDone?: boolean },
 ) {
   const userId = input.userId ?? "owner";

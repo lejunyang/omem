@@ -1,7 +1,8 @@
 import { updateThread, type Thread } from "../agents/threads.ts";
 import { homeOf, noteAnchor, noteTopicRoot, replyAnchor } from "../agents/home.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
-import { isMentionRun, queueMention } from "./lark-mentions.ts";
+import { queueMention } from "./lark-mentions.ts";
+import { isMentionRun } from "../mentions/mentions.ts";
 import { chatSpace } from "./lark-personal.ts";
 import { notificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
@@ -415,7 +416,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   const push = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0], deferred = false) => withBot(notifyConversation(n)?.bot, async () => {
     const to = targetOf(n);
     if (!to) return;
-    // A handling of someone looking for the owner (lark-mentions.ts): its card carries the run, so replying to it carries on with that work.
+    // A handling of someone looking for the owner (mentions/mentions.ts): its card carries the run, so replying to it carries on with that work.
     const target = { ...to, purpose: "notification" as const, ...(isMentionRun(app, n.runId) ? { runId: n.runId } : {}) };
     // The newer state of a card already sent (an authorization now done): edit that card, no new ping.
     const earlier = n.replaces ? notificationCardOf(app, n.replaces) : null;

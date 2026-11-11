@@ -72,12 +72,15 @@ let listSeq = 0;
 async function loadList() {
   const seq = ++listSeq, space = state.space;
   try {
-    const result = await Promise.all([get<Rule[]>(`/api/rules?space=${encodeURIComponent(space)}`), get<Wake[]>("/api/wakes").catch(() => []), get<Watch[]>("/api/watches").catch(() => [])]);
-    if (seq === listSeq && space === state.space) [rules.value, wakes.value, watches.value] = result;
+    const result = await Promise.all([get<Rule[]>(`/api/rules?space=${encodeURIComponent(space)}`), get<Wake[]>("/api/wakes").catch(() => []), get<Watch[]>("/api/watches").catch(() => []), get<Mentions>("/api/mentions").catch(() => null)]);
+    if (seq === listSeq && space === state.space) [rules.value, wakes.value, watches.value, mentions.value] = result;
   } finally {
     if (seq === listSeq) loading.value = false;
   }
 }
+// 有人找你: not a rule, the default after all of them for messages looking for the owner (settings → 渠道).
+type Mentions = { enabled: boolean; p2p: boolean; delayMinutes: number; perDay: { triage: number; handle: number }; today: { triage: number; handle: number } };
+const mentions = ref<Mentions | null>(null);
 // Wake-ups agents set for their own follow-up work: after a while, or on a message in a chat.
 type Wake = { id: string; kind: "timed" | "event"; note: string; at: string | null; expiresAt: string | null; setBy: { agent: string; runId: string | null }; target: { conversationId?: string; spec?: string }; detail: string };
 const wakes = ref<Wake[]>([]);
@@ -459,6 +462,13 @@ function startFrom(text: string) {
           <UiCheckbox :model-value="r.enabled" switch size="sm" :aria-label="`启用 ${r.name}`" @change="toggle(r)" />
         </div>
         <p v-if="!loading && !rules.length" class="muted small hint">还没有任务规则。点 ＋ 新建，或对助理说“以后值班群里我被 @ 就把机器人拉进去”。</p>
+        <div v-if="!loading && mentions" class="li fallback" title="排在所有规则之后：规则在这条消息上触发过或正等着处理它时不管；不能删除，在设置里开关和调整">
+          <router-link class="grow pick" to="/settings?tab=lark&focus=mentions">
+            <div class="row"><span class="badge">最后</span><strong class="ellipsis">没有规则处理的、找你的消息 → 有人找你</strong></div>
+            <div class="muted small clamp">有人 @ 你{{ mentions.p2p ? "或私聊你" : "" }}、{{ mentions.delayMinutes }} 分钟后你还没看，又没有规则接手时：先分诊，再提醒你或交给助手查。</div>
+            <div class="muted small">{{ mentions.enabled ? `已开启 · 今天分诊 ${mentions.today.triage}/${mentions.perDay.triage} 次，查背景 ${mentions.today.handle}/${mentions.perDay.handle} 次` : "已关闭" }} · 在设置 → 渠道里调整</div>
+          </router-link>
+        </div>
         <template v-if="wakes.length">
           <div class="group muted small" title="Agent 为自己的后续工作设的，触发或到期后自动删除">临时唤醒</div>
           <div v-for="w in wakes" :key="w.id" class="li wake" :class="{ on: w.id === selectedWake?.id }">
@@ -837,8 +847,17 @@ function startFrom(text: string) {
   border-top: 1px solid var(--line);
   margin-top: 8px;
 }
-.wake .row {
+.wake .row,
+.fallback .row {
   gap: 6px;
+}
+.fallback {
+  border-top: 1px dashed var(--line);
+  margin-top: 6px;
+  border-radius: 0 0 8px 8px;
+}
+.fallback .pick {
+  text-decoration: none;
 }
 .li.on {
   background: var(--accent-soft);

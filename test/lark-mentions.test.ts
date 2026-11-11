@@ -12,11 +12,15 @@ import { setDecisionFetchForTests } from "../src/core/decision.ts";
 import { notify } from "../src/core/notify.ts";
 import { OWNER } from "../src/core/users.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { handedToMentions, MENTION_DENY, mentionTools, mentionUsage, queueMention } from "../src/channels/lark-mentions.ts";
+import { queueMention } from "../src/channels/lark-mentions.ts";
+import { handedToMentions, MENTION_DENY, mentionTools, mentionUsage, replyToAsker, type MentionInfo } from "../src/mentions/mentions.ts";
 import { persistChatMessages, type LarkMessage } from "../src/channels/lark-messages.ts";
-import { decideMentionReply, replyToAsker, sendMentionReply, type MentionInfo } from "../src/channels/mention-reply.ts";
+import { decideMentionReply } from "../src/channels/mention-reply.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
-import { forgetChatBots } from "../src/rules/engine.ts";
+import { moveOldSettings } from "../src/core/config.ts";
+import { dispatchRuleEvent, forgetChatBots } from "../src/rules/engine.ts";
+import { deleteRule, endJudging, ruleClaim, saveRule, startJudging } from "../src/rules/store.ts";
+import type { RuleEvent } from "../src/rules/types.ts";
 import { boot } from "../src/main.ts";
 
 const fake = (id: string, env: Record<string, string>) => ({ id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env });
@@ -122,7 +126,7 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
   };
 
   it("picks people @-ing the owner (or writing one-to-one), once each, one waiting run per topic", async () => {
-    app.config.lark.mentions.delayMinutes = 30;
+    app.config.mentions.delayMinutes = 30;
     const at = msg("@勒 退款按什么口径算？");
     const notMe = msg("大家看下这个", { mentions: [{ id: "ou_li" }] });
     const bot = msg("值班提醒 @勒", { sender: { id: "cli_other", name: "值班机器人", sender_type: "app" } });
@@ -145,14 +149,14 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     const p2p = msg("在吗，问个事", { chat_id: "oc_p2p", mentions: [] });
     store([p2p], "oc_p2p");
     expect(queueMention(app, { id: "oc_p2p", name: "小王", kind: "p2p" }, [p2p], "ou_owner")).not.toBeNull();
-    app.config.lark.mentions.p2p = false;
+    app.config.mentions.p2p = false;
     expect(queueMention(app, { id: "oc_p2p", name: "小王", kind: "p2p" }, [msg("在吗", { chat_id: "oc_p2p", mentions: [] })], "ou_owner")).toBeNull();
-    app.config.lark.mentions.p2p = true;
-    app.config.lark.mentions.enabled = false;
+    app.config.mentions.p2p = true;
+    app.config.mentions.enabled = false;
     expect(queueMention(app, group, [msg("@勒 再问一次")], "ou_owner")).toBeNull();
-    app.config.lark.mentions.enabled = true;
+    app.config.mentions.enabled = true;
     run(app.db, "update runs set status = 'cancelled' where kind = 'mention' and status = 'queued'");
-    app.config.lark.mentions.delayMinutes = 0;
+    app.config.mentions.delayMinutes = 0;
   });
 
   it("a message the owner already read costs no model call", async () => {
@@ -222,12 +226,12 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     expect(r.output.triage).toMatchObject({ action: "notify", what: "约周五评审", by: "通用模型" });
     expect(notifiedBy(r.id)!.title).toBe("小王 在「项目 A 讨论群」找你：约周五评审");
     app.config.agents.default = "handle";
-    app.config.lark.mentions.noDecision = "notify";
+    app.config.mentions.noDecision = "notify";
     const m2 = msg("@勒 看下这个", { thread_id: "omt_g2" });
     store([m2]);
     const r2 = await waitForRun(app, queueMention(app, group, [m2], "ou_owner")!.id);
     expect(r2.output.triage).toMatchObject({ action: "notify", by: "设置" });
-    app.config.lark.mentions.noDecision = "general";
+    app.config.mentions.noDecision = "general";
   }, 60000);
 
   it("the short reminder goes out when the handling says nothing, fails or runs too long; not when it stays quiet", async () => {
@@ -249,12 +253,12 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     expect(died.status).toBe("failed");
     expect(died.error).toContain("已发出简短提醒");
     expect(notifiedBy(died.id)!.body).toContain("发布单要你审批");
-    app.config.lark.mentions.timeoutMinutes = 0.05;
+    app.config.mentions.timeoutMinutes = 0.05;
     const late = await go("handle-hangs", "@勒 能帮忙看下这个权限吗", "omt_h");
     expect(late.status).toBe("failed");
     expect(late.error).toContain("超过");
     expect(notifiedBy(late.id)!.body).toContain("权限");
-    app.config.lark.mentions.timeoutMinutes = 10;
+    app.config.mentions.timeoutMinutes = 10;
     app.config.agents.default = "handle";
   }, 120000);
 
@@ -278,14 +282,88 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
   it("daily limits: past them, the short reminder", async () => {
     useDecision(true);
     const calls = decision.calls;
-    app.config.lark.mentions.perDay.triage = mentionUsage(app).triage;
+    app.config.mentions.perDay.triage = mentionUsage(app).triage;
     const m = msg("@勒 有空吗", { thread_id: "omt_cap" });
     store([m]);
     const r = await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id);
     expect(decision.calls).toBe(calls);
     expect(notifiedBy(r.id)!.body).toContain("分诊次数用完了");
-    app.config.lark.mentions.perDay.triage = 80;
+    app.config.mentions.perDay.triage = 80;
   }, 30000);
+
+  it("the settings moved from lark.mentions to mentions (the old file is carried over)", () => {
+    // This test's config.json still has them under lark.mentions.
+    expect(app.config.mentions.enabled).toBe(true);
+    expect((app.config.lark as Record<string, unknown>).mentions).toBeUndefined();
+    const raw = { lark: { appId: "cli_x", mentions: { enabled: false, guidance: "小王找我的都提醒", reply: { group: "draft", p2p: "off", p2pVia: "signed" } } } };
+    expect(moveOldSettings(raw)).toEqual({ lark: { appId: "cli_x" }, mentions: { enabled: false, guidance: "小王找我的都提醒", reply: { lark: { group: "draft", p2p: "off", p2pVia: "signed" } } } });
+    // Already in the new place: the new one stands, the old one goes.
+    expect(moveOldSettings({ lark: { mentions: { enabled: false } }, mentions: { enabled: true } })).toEqual({ lark: {}, mentions: { enabled: true } });
+  });
+
+  const ruleEvent = (m: LarkMessage): RuleEvent => ({
+    key: `lark:${m.message_id}`,
+    kind: "message",
+    at: new Date().toISOString(),
+    chat: group,
+    sender: { id: m.sender!.id, name: m.sender!.name!, kind: "user" },
+    message: { id: m.message_id, text: String(m.content), type: "text", mentionsOwner: true, mentionsBot: false, topicId: m.thread_id ?? null, cardTitle: null },
+    via: "test",
+  });
+
+  it("rules come first: a rule that fired on the message, whatever its actions, or waits on it, and this steps aside", async () => {
+    useDecision(true);
+    decision.action = "handle";
+    const calls = decision.calls;
+    // Only a notification, no agent: still the rule's.
+    const told = saveRule(app, { name: "被 @ 就通知", description: "有人 @ 我就通知我", enabled: true, conditions: { field: "message.mentionsOwner", op: "is", value: true }, judge: "code", actions: [{ type: "notify" }] });
+    const a = msg("@勒 周会改到三点", { thread_id: "omt_rule1" });
+    store([a]);
+    await dispatchRuleEvent(app, ruleEvent(a));
+    const first = await waitForRun(app, queueMention(app, group, [a], "ou_owner")!.id);
+    expect(first.quiet).toBe(true);
+    expect(first.output.summary).toContain("规则「被 @ 就通知」处理了");
+    expect(decision.calls).toBe(calls);
+    deleteRule(app, told.id);
+
+    // A rule waiting for someone to answer (longer than this waits): this steps aside meanwhile.
+    const waits = saveRule(app, { name: "十分钟没人回", description: "有人 @ 我，10 分钟没人回就交给助手", enabled: true, trigger: { event: "message", once: "event", waitMinutes: 10, unless: ["answered"] }, conditions: { field: "message.mentionsOwner", op: "is", value: true }, judge: "code", actions: [{ type: "agent", spec: "assistant", task: "先查", ownTopic: false, reply: "none" }] });
+    const b = msg("@勒 退款口径？", { thread_id: "omt_rule2" });
+    store([b]);
+    await dispatchRuleEvent(app, ruleEvent(b));
+    const second = await waitForRun(app, queueMention(app, group, [b], "ou_owner")!.id);
+    expect(second.output.summary).toContain("规则「十分钟没人回」在等着处理");
+    expect(decision.calls).toBe(calls);
+    // Its wait ending with nothing done (the model said no): no longer the rule's.
+    const since = new Date(Date.now() - 60_000).toISOString();
+    expect(ruleClaim(app, `lark:${b.message_id}`, "chat:oc_team", since)).toMatchObject({ waiting: true });
+    run(app.db, "update runs set status = 'done' where kind = 'rule-fire' and json_extract(input, '$.ruleId') = ?", waits.id);
+    expect(ruleClaim(app, `lark:${b.message_id}`, "chat:oc_team", since)).toBeNull();
+    deleteRule(app, waits.id);
+
+    // A rule not matching the message is not a claim.
+    const other = saveRule(app, { name: "报警卡片", description: "报警卡片通知我", enabled: true, conditions: { field: "message.type", op: "equals", value: "interactive" }, judge: "code", actions: [{ type: "notify" }] });
+    const c = msg("@勒 有空吗", { thread_id: "omt_rule3" });
+    store([c]);
+    await dispatchRuleEvent(app, ruleEvent(c));
+    expect(ruleClaim(app, `lark:${c.message_id}`, "chat:oc_team", since)).toBeNull();
+    deleteRule(app, other.id);
+  }, 60000);
+
+  it("while the rules are still judging the message, it waits for them", async () => {
+    const m = msg("@勒 看下这个", { thread_id: "omt_judging" });
+    store([m]);
+    startJudging(`lark:${m.message_id}`);
+    try {
+      const r = await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id);
+      expect(r.output.summary).toContain("规则还在判断");
+      const again = one<{ id: string; input: string }>(app.db, "select id, input from runs where kind = 'mention' and status = 'queued' and json_extract(input, '$.topicId') = 'omt_judging'")!;
+      expect(JSON.parse(again.input).waited).toBe(1);
+      run(app.db, "update runs set status = 'cancelled' where id = ?", again.id);
+    } finally {
+      endJudging(`lark:${m.message_id}`);
+    }
+  });
 
   it("answering the asker: off refuses; in a group the bot replies in the topic, brought in when missing; audited", async () => {
     app.config.lark.enabled = true;
@@ -309,19 +387,19 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
   it("a private chat: a group of the owner, them and the bot (made once), or the owner's own signed reply", async () => {
     app.config.lark.enabled = true;
     const p2p = { chatId: "oc_p2p2", chatKind: "p2p" as const, chatName: "小王", reply: "auto" as const };
-    app.config.lark.mentions.reply.p2pVia = "group";
+    app.config.mentions.reply.lark.p2pVia = "group";
     await replyToAsker(app, handling(p2p), "我看一下");
     await replyToAsker(app, handling(p2p), "看完了");
     expect(cli.filter((a) => a.includes("+chat-create"))).toHaveLength(1);
     expect(sent.every((s) => s.to.startsWith("oc_made"))).toBe(true);
-    app.config.lark.mentions.reply.p2pVia = "signed";
+    app.config.mentions.reply.lark.p2pVia = "signed";
     const id = handling(p2p);
     await replyToAsker(app, id, "下午给你结论");
     const send = cli.find((a) => a.includes("+messages-send"))!;
     expect(send).toEqual(expect.arrayContaining(["--as", "user", "--chat-id", "oc_p2p2"]));
     expect(send[send.indexOf("--markdown") + 1]).toContain(app.config.lark.commands.signature);
     expect(getRun(app, id).output.mentionReply).toMatchObject({ via: "signed" });
-    app.config.lark.mentions.reply.p2pVia = "group";
+    app.config.mentions.reply.lark.p2pVia = "group";
   });
 
   it("draft: a card the owner sends from, edited or not, or drops", async () => {
@@ -351,7 +429,7 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     forgetChatBots("oc_team");
     useDecision(true);
     decision.action = "handle";
-    app.config.lark.mentions.reply.group = "auto";
+    app.config.mentions.reply.lark.group = "auto";
     app.config.agents.default = "handle-reply";
     decision.progress = 0.9;
     const m = msg("@勒 退款按什么口径？", { thread_id: "omt_r" });
@@ -367,7 +445,7 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     const h2 = handlingOf((await waitForRun(app, queueMention(app, group, [m2], "ou_owner")!.id)).id);
     expect((h2.input.mention as MentionInfo).reply).toBe("draft");
     await waitForRun(app, h2.id);
-    app.config.lark.mentions.reply.group = "off";
+    app.config.mentions.reply.lark.group = "off";
     app.config.agents.default = "handle";
   }, 90000);
 
