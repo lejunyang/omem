@@ -76,6 +76,7 @@ export function openCitation(target: CitationTarget, replace = false) {
   else state.trail.push(target);
 }
 
+let unreadTimer: ReturnType<typeof setTimeout> | undefined;
 export async function refreshUnread() {
   try {
     state.unread = (await get<{ unread: number }>("/api/notifications")).unread;
@@ -84,7 +85,9 @@ export async function refreshUnread() {
 
 onServerEvent((e) => {
   if (e.type === "notification") {
-    state.unread++;
+    // Unread is only what reaches no other channel (core/notify.ts countsAsUnread): ask once the push has had its moment.
+    clearTimeout(unreadTimer);
+    unreadTimer = setTimeout(() => void refreshUnread(), 4000);
     toast(e.title, "info", e.link ?? undefined);
   }
   if (e.type === "changed" && e.entity === "space") void loadSpaces();

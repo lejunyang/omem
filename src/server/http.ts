@@ -1949,7 +1949,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // ----------------------------------------------------- notifications/status
   server.get("/api/notifications", async (req) => {
     const list = listNotifications(app, 50, who(req));
-    return { notifications: list, unread: list.filter((n) => !n.readAt).length };
+    // Unread on the web: only what reached the person nowhere else (core/notify.ts countsAsUnread).
+    return { notifications: list, unread: list.filter((n) => n.unread).length };
   });
   server.post("/api/notifications/read", async (req) => {
     markRead(app, (req.body as { id?: string } | null)?.id, who(req));

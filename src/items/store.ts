@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { lapseItemAsks } from "../agents/ask-expiry.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 
@@ -180,6 +181,8 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
   app.emit({ type: "changed", entity: "item", id, spaceId: old.spaceId });
   // An item that ended gives back the workspaces its delegations still hold (their branches stay).
   if (closing) void import("../agents/code-branch.ts").then((m) => m.releaseItemWorkspaces(app, id)).catch(() => {});
+  // …and what its runs still ask lapses, its notifications count as read (agents/ask-expiry.ts).
+  if (closing) lapseItemAsks(app, id);
   return getItem(app, id);
 }
 

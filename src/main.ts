@@ -120,6 +120,16 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     const r = reconcileWaiting(app);
     if (r.closed || r.woken || r.moved) console.log(`[omem] 修改项：关掉 ${r.closed} 张已经不等本人的卡片，为 ${r.woken} 个交办叫醒发起的助手，${r.moved} 个没有助手的交办交给本人`);
   }
+  {
+    // What piled up before questions lapsed by themselves (agents/ask-expiry.ts), and notifications
+    // pushed before that was recorded (channels/notify-read.ts): cleared at start, not one by one later.
+    const { sweepStaleAsks } = await import("./agents/ask-expiry.ts");
+    const s = sweepStaleAsks(app);
+    if (s.message + s.work + s.item + s.stale) console.log(`[omem] 失效的提问：本人已接着说了别的 ${s.message}，交办已结束 ${s.work}，事项已关闭 ${s.item}，太久没回答 ${s.stale}`);
+    const { backfillPushed } = await import("./channels/notify-read.ts");
+    const n = backfillPushed(app);
+    if (n) console.log(`[omem] ${n} 条以前推到飞书的通知记为已推送，网页不再算未读`);
+  }
   startWorker(app);
   startSessionCleanup(app, (runId, e) => {
     if (runId) addRunEvent(app, runId, e.type, e);

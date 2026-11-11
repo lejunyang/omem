@@ -383,6 +383,8 @@ export const configSchema = z.object({
     })
     .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [] })),
   approvals: z.object({ tools: z.array(z.string()).default([]), waitSeconds: z.number().int().min(0).max(50).default(40) }).default({ tools: [], waitSeconds: 40 }),
+  /** Questions, suggestions and approvals nobody answered for this many days lapse (agents/ask-expiry.ts); 0 keeps them. */
+  asks: z.object({ staleDays: z.number().int().min(0).max(365).default(7) }).default({ staleDays: 7 }),
   /**
    * Commands an agent's processes may not run unchecked (docs/v2/command-gate.md): a wrapper of the
    * same name in front of PATH asks omem first. Only the owner changes this (PUT /api/security/command-rules).

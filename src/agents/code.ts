@@ -7,6 +7,7 @@ import { all, one } from "../core/db.ts";
 import { defaultBaseRef, fetchBranchAsync, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { cancelHostAsks, createAsk, registerAskHandler, ROUND_ASKS } from "./asks.ts";
+import { lapseWorkAsks } from "./ask-expiry.ts";
 import { businessOf, childSpaces, findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, stripAnsi, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
@@ -1189,6 +1190,8 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
   for (const id of new Set([firstId, runId])) setRunOutput(app, id, { appliedAt, appliedTo });
   removeWorktrees(app, runId, { applied: true });
   for (const id of workRoundIds(app, firstId)) cancelHostAsks(app, id, ROUND_ASKS);
+  // Questions its agents still had open lapse with it (ask-expiry.ts).
+  lapseWorkAsks(app, firstId);
   return { applied: true, spaces: applied, targets: appliedTo };
 }
 
@@ -1199,6 +1202,7 @@ export function discardCodeRun(app: App, runId: string) {
   removeWorktrees(app, runId);
   setRunOutput(app, runId, { discardedAt: new Date().toISOString() });
   for (const id of workRoundIds(app, String(r.input.continueFrom ?? r.id))) cancelHostAsks(app, id, [...ROUND_ASKS, "code-sync", "work-deliver", "design-confirm"]);
+  lapseWorkAsks(app, runId);
 }
 
 /** Every round of a delegation or branch review, from its first run. */

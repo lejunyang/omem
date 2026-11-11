@@ -79,7 +79,30 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 760px;
+  /* Whatever the question holds (a long link, a wide table, a code line) stays inside the card. */
+  box-sizing: border-box;
+  max-width: min(760px, 100%);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ask > * {
+  min-width: 0;
+  max-width: 100%;
+}
+/* Wide tables and code scroll sideways inside the card; cells keep their words whole instead of breaking every number. */
+.ask-q :deep(pre),
+.ask-q :deep(table) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.ask-q :deep(th),
+.ask-q :deep(td) {
+  overflow-wrap: normal;
+  word-break: normal;
+  min-width: 4em;
+}
+.ask-q :deep(th) {
+  white-space: nowrap;
 }
 .ask.approval {
   border-left-color: var(--warn);

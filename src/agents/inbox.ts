@@ -115,6 +115,9 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     }
   }
 
+  // The owner replying to a notification's card in Feishu has read it (channels/notify-read.ts).
+  if (inb.quote?.messageId && userId === OWNER && !inb.speaker && !inb.asker) (await import("../channels/notify-read.ts")).markCardRead(app, inb.quote.messageId);
+
   // A reply to an open question (or a number picking a suggested step). When an agent is waiting
   // for it inside its turn, it is the answer there and starts no turn of its own.
   if (!freshTask && !inb.fromAsk && !inb.speaker && !inb.asker && !inb.meta) {

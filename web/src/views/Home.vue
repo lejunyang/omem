@@ -13,7 +13,7 @@ type HomeData = {
   waiting: Item[];
   runs: Run[];
   study: { total: number; due: number; reviewedToday: number };
-  notifications: { id: string; at: string; title: string; body: string; link: string | null; readAt: string | null }[];
+  notifications: { id: string; at: string; title: string; body: string; link: string | null; readAt: string | null; unread?: boolean }[];
   recentSources: { id: string; spaceId: string; kind: string; uri: string; title: string; updatedAt: string }[];
 };
 const router = useRouter();
@@ -122,7 +122,7 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
         <div v-if="data.notifications.length" class="block">
           <h2 class="section-title">最近通知</h2>
           <div class="list">
-            <a v-for="n in data.notifications.slice(0, 5)" :key="n.id" :href="n.link ?? '#/notifications'" class="li" :class="{ unread: !n.readAt }"><Icon name="bell" :size="16" /><div class="grow"><div>{{ n.title }}</div><div v-if="n.body" class="muted small clamp">{{ n.body }}</div></div><span class="muted small">{{ relTime(n.at) }}</span></a>
+            <a v-for="n in data.notifications.slice(0, 5)" :key="n.id" :href="n.link ?? '#/notifications'" class="li" :class="{ unread: n.unread }"><Icon name="bell" :size="16" /><div class="grow"><div>{{ n.title }}</div><div v-if="n.body" class="muted small clamp">{{ n.body }}</div></div><span class="muted small">{{ relTime(n.at) }}</span></a>
           </div>
         </div>
       </section>
@@ -206,8 +206,18 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
 }
 .col {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   align-content: start;
+  min-width: 0;
+}
+/* Long questions and their tables stay in their column (AskCard scrolls what is wider). */
+.block,
+.block .stack {
+  min-width: 0;
+}
+.block .stack {
+  grid-template-columns: minmax(0, 1fr);
 }
 .block .list {
   margin: 0 -12px;

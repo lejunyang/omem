@@ -58,6 +58,10 @@ export type Notification = {
   /** Set by the Feishu channel: the card it sent (or edited) for this notification, so a later one can replace it. */
   larkMessageId?: string;
   larkBot?: string | null;
+  /** A channel delivered it (the Feishu card, or a list of what waited the night): the web does not count it as unread. */
+  pushed?: { channel: string; at: string; messageId?: string | null };
+  /** A channel took it and chose not to ping (an ignore rule, the owner already on it): not unread on the web either. */
+  quiet?: string;
 };
 
 type Sink = (n: Notification) => Promise<void> | void;
@@ -175,7 +179,35 @@ export function listNotifications(app: App, limit = 50, userId = "owner") {
     "select * from notifications where user_id = ? order by at desc limit ?",
     userId,
     limit,
-  ).map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: r.read_at }));
+  ).map((r) => {
+    const n = { ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: r.read_at };
+    return { ...n, unread: countsAsUnread(n) };
+  });
+}
+
+/**
+ * What the web counts as unread (the bell's number, the dot): only what reached the person nowhere
+ * else. A notification pushed to Feishu was seen there, or will be; one a channel deliberately kept
+ * quiet, or sent as in-app only (`silent`), is not a reminder either. The list still shows them all.
+ */
+export function countsAsUnread(n: Pick<Notification, "readAt" | "pushed" | "larkMessageId" | "quiet" | "urgency">) {
+  return !n.readAt && !n.pushed && !n.larkMessageId && !n.quiet && n.urgency !== "silent";
+}
+
+/** A channel delivered the notification (`messageId`: the Feishu message it went out as). */
+export function markPushed(app: App, id: string, channel = "lark", messageId?: string | null) {
+  run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.pushed', json_object('channel', ?, 'at', ?, 'messageId', ?)) where id = ?", channel, now(), messageId ?? null, id);
+}
+
+/** A channel took the notification and chose not to ping (`why`, shown on the web). */
+export function markQuiet(app: App, id: string, why: string) {
+  run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.quiet', ?) where id = ?", why, id);
+}
+
+/** Notifications read some other way (in Feishu, by dealing with what they were about). */
+export function markReadIds(app: App, ids: string[]) {
+  if (!ids.length) return 0;
+  return Number(run(app.db, `update notifications set read_at = ? where read_at is null and id in (${ids.map(() => "?").join(",")})`, now(), ...ids).changes);
 }
 
 /** A push held back by quiet hours: sent after them if still unread (takeDeferred). */
@@ -196,6 +228,7 @@ export function takeDeferred(app: App): Notification[] {
 /** Remember the Feishu card a notification went out as (see `replaces`). */
 export function setNotificationCard(app: App, id: string, messageId: string, bot?: string | null) {
   run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.larkMessageId', ?, '$.larkBot', ?) where id = ?", messageId, bot ?? null, id);
+  markPushed(app, id, "lark", messageId);
 }
 /** The Feishu card sent for a notification, if any. */
 export function notificationCardOf(app: App, id: string) {

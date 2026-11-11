@@ -6,7 +6,9 @@ import Skeleton from "../components/Skeleton.vue";
 import Markdown from "../components/Markdown.vue";
 import { fmtTime, state } from "../store";
 
-type N = { id: string; at: string; title: string; body: string; link: string | null; readAt: string | null };
+/** `unread`: reached the person nowhere else (pushed to Feishu, kept quiet or in-app only are not); `pushed`: went out to Feishu. */
+type N = { id: string; at: string; title: string; body: string; link: string | null; readAt: string | null; unread?: boolean; pushed?: { channel: string; at: string } | null; larkMessageId?: string; quiet?: string };
+const inFeishu = (n: N) => !!(n.pushed || n.larkMessageId);
 const list = ref<N[]>([]);
 const loading = ref(true);
 async function load() {
@@ -31,17 +33,19 @@ onMounted(async () => {
     <div class="page-head">
       <div>
         <h1>通知</h1>
-        <p>提醒、需要你决定的变化和后台任务结果。没有重要变化时，助理保持安静。</p>
+        <p>提醒、需要你决定的变化和后台任务结果。发到飞书的以飞书为准，这里只把没能发到飞书的标为未读。</p>
       </div>
       <span class="spacer" />
       <button class="btn sm" @click="readAll">全部标为已读</button>
     </div>
     <Skeleton v-if="loading" variant="cards" :rows="4" />
     <div v-else-if="!list.length" class="empty"><Icon name="bell" :size="32" /><h3>没有通知</h3></div>
-    <div v-for="n in list" :key="n.id" class="n" :class="{ unread: !n.readAt }">
-      <div class="row">
+    <div v-for="n in list" :key="n.id" class="n" :class="{ unread: n.unread }">
+      <div class="row head">
         <strong>{{ n.title }}</strong>
         <span class="spacer" />
+        <span v-if="inFeishu(n)" class="tag small" title="这条通知已经推到飞书">已发到飞书</span>
+        <span v-else-if="n.quiet" class="tag small" :title="n.quiet">没有推送</span>
         <span class="muted small">{{ fmtTime(n.at) }}</span>
       </div>
       <Markdown v-if="n.body" :source="n.body" class="body" />
@@ -69,5 +73,20 @@ onMounted(async () => {
 }
 .body {
   font-size: 14px;
+}
+.head {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tag {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 </style>
