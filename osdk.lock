@@ -947,17 +947,17 @@ sha256 = "94b8c002ac9b077e32106882014eddce6da80ce4e3c25bfc3672748858b37a75"
 
 [skills.lieflat-less-ai-tone]
 source = "github:larashero3-dotcom/lieflat-less-ai-tone"
-content_hash = "b3-v2:1c0a9d1dfc38ee2a1a01006c25ddca69b1de74cb3d171b0766bbf70a51e87fc1"
+content_hash = "b3-v2:1a8b35df94891b52b430ad47ed31875f9d29e2a9ce8a34feb51a61e3d11c9845"
 requested_ref = "branch:main"
-resolved_commit = "fe13f1a0712cd2c138b6cdc500a77927d5bf04ec"
+resolved_commit = "fe77df00a27cf94428632ad449a4aecdcb83db41"
 agents = ["universal"]
 install_mode = "copy"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"
-content_hash = "b3-v2:53d69d90eae02ecd9a4194f3fc10020e67f9540ed5e5a2a4d23ee0a080d21592"
+content_hash = "b3-v2:bfd3849e5158e3bd4d45ad14c9cb68519b47d54bf8bebcca0768157376dcd31d"
 requested_ref = "default"
-resolved_commit = "8a30f0abbaf6dc9668fd6357a0bc0a9d7be97990"
+resolved_commit = "d685429329212bd32006235381f5039c6e8730c0"
 agents = [
     "universal",
     "claude-code",

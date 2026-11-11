@@ -23,12 +23,12 @@
 | 形式 | 示例 | 关键选项 |
 | --- | --- | --- |
 | `npm:<package>` | `npm:prettier@3`、`npm:@antfu/ni` | `installer=npm\|pnpm`、`allow_builds=a,b` |
-| `cargo:<crate>` | `cargo:ripgrep@14` | `features=a,b`、`no-default-features=true` |
-| `cargo:<https-git-url>` | `cargo:https://github.com/o/r.git@tag:v1` | `package=`、`bins=` |
+| `cargo:<crate>` | `cargo:ripgrep@14` | `features=a,b`、`default-features=false`、`locked=true`、`bin=`；需要 `osdk trust`（编译会运行 `build.rs`） |
+| `cargo:<https-git-url>` | `cargo:https://github.com/o/r.git@tag:v1` | `crate=`、`bin=`，及上一行的构建选项 |
 | `go:<module-or-command>` | `go:golang.org/x/tools/gopls@0.20.0` | `tags=`、`env=K=V,...` |
 | `conda:<package>` | `conda:cuda-toolkit@12.8` | `channels=`、`with=` |
-| `pypi:<project>` | `pypi:httpie@3` | `python=`、`extras=`、`index=`、`extra-index=`、`allow-build-from-source=true` |
-| `github:owner/repo` | `github:sharkdp/fd@10` | `asset=`、`bin=` / `bins=`、`strip-components=` |
+| `pypi:<project>` | `pypi:httpie@3` | `extras=a,b`、`allow_builds=true`（默认只装 wheel；打开即允许构建 sdist，需要 `osdk trust`） |
+| `github:owner/repo` | `github:sharkdp/fd@10` | `asset-regex=` / `asset-template=`、`os=` / `arch=` / `libc=`、`bin=` / `bins=`、`strip-components=` |
 | `http:https://...{version}` | 直接 HTTPS 制品 | `sha256=`、`kind=file\|zip\|tar.gz\|tar.xz`、`bin=` / `bins=`、`subdir=`、`rename=`、`strip-components=` |
 
 动态工具名作为 TOML 键时要加引号：
@@ -58,4 +58,12 @@ rust = { version = "1.98.0", profile = "minimal", components = "rustfmt,clippy" 
 java = { version = "21", distribution = "zulu", package-type = "jdk" }
 ```
 
+Java 的 `distribution` 同时决定安装与选择：非 Temurin 安装目录带发行版前缀
+（`zulu-21.0.5+11`），`java = "temurin-21"` 不会选中版本号更高的 Zulu。
+
 不要把 lock 内部的 replay metadata 当作公开 `-o` 选项；未知或私有选项会被拒绝。
+
+`install` / `use` / `lock` 的动态请求先合并重复 `-o key=value` 再验证必需选项，例如 HTTP 的 `sha256`；相同键由 `-o` 覆盖内联选项。
+
+Cargo Git selector 的编码路径会使用独立私有构建目录；无需为此传入链接器覆盖选项，
+selector 和安装身份保持不变。

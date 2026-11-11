@@ -3,7 +3,7 @@
 安装一个或多个工具；不带操作数时按当前项目配置和 lock 复现。
 
 ```bash
-osdk install [TOOL[@VERSION]...] [-o KEY=VALUE]... [--force] [--no-deps]
+osdk install [TOOL[@VERSION]...] [-o KEY=VALUE]... [--force] [--no-deps] [--include-lazy]
 ```
 
 | 参数 | 语义 |
@@ -12,13 +12,18 @@ osdk install [TOOL[@VERSION]...] [-o KEY=VALUE]... [--force] [--no-deps]
 | `-o, --opt KEY=VALUE` | backend 选项，可重复，对本次列出的所有工具生效 |
 | `--force` | 已存在也重装；适合修复 `doctor --verify` 报告的漂移 |
 | `--no-deps` | 仅裸 `install` 时跳过 `[deps]` 自动兑现；显式工具本就不跑 deps |
+| `--include-lazy` | 裸安装也包含 `[tools]` 中 `lazy = true` 的条目；显式点名不需要此开关 |
 
 ```bash
 osdk install node@20 python@3.12
 osdk install rust@1.98.0 -o profile=minimal -o components=rustfmt,clippy
 osdk install github:sharkdp/fd@10
 osdk install                       # 按 osdk.toml / osdk.lock
+osdk install --include-lazy        # 连同 lazy 工具一起安装
 ```
+
+下载在单条带名称的进度行更新，并发下载各占一行；未知总大小时显示已下载字节，
+续传从已有字节数继续。使用全局参数 `--quiet` 隐藏 osdk 进度。
 
 相关配置：`[tools]` 见 `reference/configuration/tools.md`；自动应用依赖见
 `reference/configuration/deps.md`；源与校验策略见 `reference/configuration/sources.md`
@@ -28,9 +33,24 @@ osdk install                       # 按 osdk.toml / osdk.lock
 `install` 安装开发工具；项目自身依赖使用 `osdk deps`。模型不会作为裸 `install` 的副作用
 下载，使用 `osdk model sync`。
 
-项目内的裸 `install` 优先复现当前平台 lock；没有可用平台条目而回退到配置时，只处理
-项目声明，不枚举用户全局配置中无关的固定版本，并在安装全部成功后把精确结果写回当前
-平台 lock。项目外的裸 `install` 才应用全局配置，也不会在当前目录凭空创建项目 lock。
+项目内的裸 `install` 优先复现当前平台 lock；当前平台整段缺失时，会从其他平台区段继承
+与当前声明兼容且一致的精确工具版本，再为当前平台重新解析 artifact、checksum 与平台专属
+元数据。若其他平台对同一工具锁出了多个兼容版本则明确报错；没有可继承版本时才按配置解析
+最新匹配版本。配置回退只处理项目声明，不枚举用户全局配置中无关的固定版本，并在安装全部
+成功后把精确结果写回当前平台 lock。项目外的裸 `install` 才应用全局配置，也不会在当前目录
+凭空创建项目 lock。
 显式 `install TOOL...` 是一次性共享安装，不修改 `[tools]` 或 lock；需要项目选择时使用
 `use`。工具文件仍在用户级安装池中共享，因此项目请求的同一版本已存在时会直接复用并提示
 已安装。
+
+结构化工具条目的 `lazy = true` 只影响裸安装的默认批次；显式 operand 和被其他已纳入
+工具需要的 runtime 依赖不会被跳过。已有 lock 缺少 lazy 条目时，`--include-lazy` 会从
+当前配置补齐它们，同时保留 lock 中已有的精确请求。
+
+`install --force` 会在持有安装锁时清除精确解析出的动态安装身份的完成标记，使 Go/Cargo 原生工具真正重建，而不是静默复用旧产物。
+
+项目隔离的原生 npm 安装同样保留 NODE_EXTRA_CA_CERTS，并在切换到临时项目目录之前解析其文件路径；其他环境 npm 配置仍保持隔离。
+
+## 已存在的环境变量告警
+
+安装工具时，osdk 会检查该工具相关的环境变量是否已**持久**设置在用户/系统环境里（Windows 上读注册表 User/Machine 级，不看当前 shell 的临时 `Process` 变量；其他平台只看持久配置）。若已存在，会打印 warning，说明该变量会被 osdk 受管值覆盖，建议你清除它；或用 `[settings.<tool>] override_env = true`（顶层 `override_tools_env = true` 则对所有工具生效）显式让 osdk 忽略并覆盖这些已存在的可重定向变量。
