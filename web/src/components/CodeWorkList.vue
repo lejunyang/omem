@@ -56,6 +56,7 @@ const ended = computed(() => works.value.filter((w) => w.stage.group === "ended"
       </section>
       <button v-if="ended >= 10 && !allEnded" type="button" class="lnk small more" @click="allEnded = true">看更早结束的</button>
       <p v-if="!works.length" class="muted small empty">{{ q.trim() ? "没有符合条件的交办。" : "这里还没有交办。让助手改代码、评审分支，或点右上角的“交办”。" }}</p>
+      <router-link to="/designs" class="small designs-link">方案与变更说明 →</router-link>
     </template>
   </div>
 </template>
@@ -66,4 +67,6 @@ const ended = computed(() => works.value.filter((w) => w.stage.group === "ended"
 .gh b { color: var(--ink-2); font-weight: 600; }
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 6px 10px; justify-self: start; }
 .empty { padding: 10px; margin: 0; }
+.designs-link { justify-self: start; padding: 10px 10px 6px; color: var(--muted); }
+.designs-link:hover { color: var(--accent); }
 </style>

@@ -71,6 +71,7 @@ const navs = [
   { label: "记忆", to: "/memory", icon: "brain" },
   { label: "原件", to: "/sources", icon: "file" },
   { label: "运行记录", to: "/runs", icon: "activity" },
+  { label: "方案", to: "/designs", icon: "layers" },
   { label: "学习", to: "/learn", icon: "cap" },
   { label: "设置", to: "/settings", icon: "settings" },
 ];

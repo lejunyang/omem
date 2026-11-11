@@ -2,6 +2,7 @@
  * Coding work as the run page's “编码” view and the requirements page show it (src/agents/code-works.ts):
  * one entry per delegation or branch review with all its rounds.
  */
+import type { DesignCounts, DesignOrigin, DesignStatus } from "./designs";
 export type WorkGroup = "owner" | "active" | "assistant" | "idle" | "ended";
 export type WorkAction = "stop" | "retry" | "discard" | "confirm" | "apply" | "move" | "code-here" | "clean" | "branch";
 export type WorkRepo = { space: string; branch: string | null; base: string | null; cutFrom: string | null; newBranch: boolean; pushedAt: string | null };
@@ -36,7 +37,9 @@ export type PreCheck = {
   regressions?: { text: string; how?: string; reqs?: string[]; auto: boolean }[];
   questions?: string[];
 };
-export type CodeWorkDetail = CodeWork & { task: string; roundList: WorkRound[]; points: { id: string; title: string; status: string | null; at: string | null }[]; artifacts?: number; preCheck?: PreCheck | null };
+/** The design the work is based on (docs/v2/coding-plan.md §6.4). */
+export type WorkDesign = { id: string; origin: DesignOrigin; status: DesignStatus; revision: number; counts: DesignCounts };
+export type CodeWorkDetail = CodeWork & { task: string; roundList: WorkRound[]; points: { id: string; title: string; status: string | null; at: string | null }[]; artifacts?: number; preCheck?: PreCheck | null; design?: WorkDesign | null };
 
 export const GROUPS: { id: WorkGroup; label: string }[] = [
   { id: "owner", label: "等你" },

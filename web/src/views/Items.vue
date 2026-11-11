@@ -10,6 +10,9 @@ import UiDateTime from "../components/UiDateTime.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
+import DesignRow from "../components/DesignRow.vue";
+import DesignStart from "../components/DesignStart.vue";
+import type { DesignSummary } from "../lib/designs";
 import { fmtTime, itemKindLabel, openCitation, relTime, state, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { pageParam } from "../lib/route";
@@ -57,7 +60,12 @@ async function loadDetail() {
   if (detail.value?.item.id !== id) detail.value = null;
   const result = id ? await get<NonNullable<typeof detail.value>>(`/api/items/${id}`).catch(() => null) : null;
   if (seq === detailSeq && id === itemId.value) detail.value = result;
+  // The item's designs (own, someone else's, change descriptions): docs/v2/coding-plan.md §5.
+  const list = id ? await get<{ designs: DesignSummary[] }>(`/api/designs?item=${encodeURIComponent(id)}`).catch(() => null) : null;
+  if (seq === detailSeq && id === itemId.value) designs.value = list?.designs ?? [];
 }
+const designs = ref<DesignSummary[]>([]);
+const startingDesign = ref(false);
 onMounted(() => {
   void load();
   void loadDetail();
@@ -276,6 +284,12 @@ async function addNote() {
           <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
         <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" @changed="loadDetail" />
+        <div class="designs">
+          <div class="section-title row">方案<span class="spacer" /><button class="btn ghost sm" @click="startingDesign = true"><Icon name="plus" :size="13" />跟进一份技术方案</button></div>
+          <DesignRow v-for="d in designs" :key="d.id" :design="d" />
+          <p v-if="!designs.length" class="muted small">交办这件事时助手会按需要先写方案请你确认；别人写的技术方案可以在这里跟进，助手会核对代码、写出问题和要问作者的。</p>
+        </div>
+        <DesignStart v-if="startingDesign" :item-id="detail.item.id" :item-title="detail.item.title" @close="startingDesign = false; loadDetail()" />
         <div v-if="detail.files?.length" class="refs">
           <div class="section-title">工作文件</div>
           <a v-for="f in detail.files" :key="f.id" href="#" class="ref" @click.prevent="openCitation({ kind: 'source', id: f.id }, true)">
@@ -586,6 +600,14 @@ async function addNote() {
 .refs {
   display: grid;
   gap: 6px;
+}
+.designs {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.designs .section-title {
+  margin-bottom: 4px;
 }
 .ref {
   display: grid;

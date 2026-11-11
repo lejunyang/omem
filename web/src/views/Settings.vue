@@ -542,6 +542,13 @@ async function savePreCheck(v: boolean) {
   await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, preCheck: v } } }, v ? "新交办开始编码前先做检查" : "新交办直接开始编码");
   void load();
 }
+/** agents.design (docs/v2/coding-plan.md §3): whether delegations write a design first, and who confirms it. */
+async function saveDesign(patch: { mode?: string; confirm?: string }) {
+  const cur = config.value.agents.design ?? { mode: "auto", confirm: "owner" };
+  const next = { ...cur, ...patch };
+  await saveConfig({ agents: { ...config.value.agents, design: next } }, patch.mode ? `方案先行：${({ auto: "按编码前检查的判断", always: "每次交办都先写方案", never: "不写方案" } as Record<string, string>)[next.mode]}` : next.confirm === "assistant" ? "没有要你定的问题时由助手确认方案" : "方案都由你确认");
+  void load();
+}
 async function addProfile() {
   try {
     const p = JSON.parse(profileJson.value);
@@ -884,6 +891,17 @@ async function saveEdit() {
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="20" :value="config.agents.autoAdvance?.codeRounds ?? 3" @change="saveAutoAdvance('codeRounds', ($event.target as HTMLInputElement).value)" />
         </label>
         <UiCheckbox :model-value="config.agents.autoAdvance?.preCheck !== false" switch @change="savePreCheck">编码前检查：新交办开始编码前，先查改动会碰到什么、这里以前出过什么问题、改完要回归什么（角色“编码前检查”，在 Agent 页选模型）</UiCheckbox>
+      </div>
+      <div class="card pad stack">
+        <div class="section-title">方案先行</div>
+        <p class="muted small">值得的交办在编码前先写一份方案：几个决定，每个说清改什么、为什么、不选什么，有要你定的就问你。你确认后编码 Agent 照它做，评审也对照它看。写方案的是角色“写方案”，在 Agent 页给它选最强的模型。</p>
+        <div class="field"><span>什么时候先写方案</span>
+          <UiSegmented :model-value="config.agents.design?.mode ?? 'auto'" style="justify-self: start" size="sm" aria-label="什么时候先写方案" :options="[{ value: 'auto', label: '自动', title: '编码前检查认为要改现有分工或接口、有几种说得通的做法、或任务要求重构时' }, { value: 'always', label: '总是' }, { value: 'never', label: '从不' }]" @change="(v) => saveDesign({ mode: v })" />
+          <span class="hint">自动：编码前检查认为要改现有的分工或接口、有两种以上说得通的做法、或任务要求重构收敛时才写。仓库空间的设置里也可以让某个仓库总是先写；你对助手说“不用方案，直接改”时这次不写。</span>
+        </div>
+        <div class="field"><span>谁来确认</span>
+          <UiSegmented :model-value="config.agents.design?.confirm ?? 'owner'" style="justify-self: start" size="sm" aria-label="谁来确认方案" :options="[{ value: 'owner', label: '我确认' }, { value: 'assistant', label: '没有要我定的问题时由助手确认' }]" @change="(v) => saveDesign({ confirm: v })" />
+        </div>
       </div>
       <div v-if="config.memory" class="card pad stack">
         <div class="section-title">记忆质量</div>
@@ -1383,6 +1401,7 @@ async function saveEdit() {
           <span class="hint">这里的做法写成技能（数据目录的 library/_skills，不放进仓库），挂到空间上：在这个空间里的运行、改到这个仓库的编码和评审会先看到它，别的空间不提供。比如这个仓库怎么跑测试、用例里怎么写需求点 id、怎么把结果交给 report_tests。</span>
         </div>
         <UiCheckbox :model-value="editing.settings.autoIngest !== false && (editing.kind !== 'repo' || editing.settings.autoIngest === true)" @change="(v) => (editing!.settings.autoIngest = v)">新材料保存后让助理整理（更新记忆、事项、相关页面）</UiCheckbox>
+        <UiCheckbox v-if="editing.rootPath" :model-value="editing.settings.design === 'always'" @change="(v) => (editing!.settings.design = v ? 'always' : null)">这个仓库的交办总是先写方案（不管设置 → AI 里的“方案先行”怎么设）</UiCheckbox>
         <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /><span class="hint">每轮编码结束后宿主在工作区运行，结果交给评审，评审不再自己跑测试。命令里可以用环境变量 OMEM_BASE（这次改动的起点提交），如用 <code>git diff --name-only $OMEM_BASE</code> 只测改到的部分。</span></label>
         <template v-if="editing.rootPath">
           <div v-if="editing.kind === 'repo'" class="field fit">

@@ -11,6 +11,7 @@ import CodeDiffList from "./CodeDiffList.vue";
 import CodeLanding, { type ApplyTarget } from "./CodeLanding.vue";
 import CodeSteer from "./CodeSteer.vue";
 import CodeTasks from "./CodeTasks.vue";
+import DesignView from "./DesignView.vue";
 import ContextUsage from "./ContextUsage.vue";
 import FixBasket from "./FixBasket.vue";
 import OpenInIde from "./OpenInIde.vue";
@@ -27,19 +28,21 @@ import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
 import { refAction } from "../lib/refs";
 import { findingWhere, parsePatches, pointCount, pointQuote, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
 import { progressText, stripAnsi, type CodeWorkDetail, type WorkAction } from "../lib/works";
+import { countLine } from "../lib/designs";
 import { fmtTime, openCitation, relTime, state, statusLabel, toast } from "../store";
 
 /**
  * One delegation or branch review, the same on the run page and the requirements page
  * (docs/v2/coding-work.md): what it is for, where it stands, what comes next and its branches at the
  * top; then 概览 (tasks, the owner's questions, the review), 需求点, 变更, 评审, 活动 (every round and
- * what happened in it) and 分支, all available while it still codes. `runId` is any of its rounds: the
+ * what happened in it) and 分支, all available while it still codes. A work based on a design has
+ * 方案 (DesignView) in place of 需求点 and 变更. `runId` is any of its rounds: the
  * one opened (活动 shows it; the rest follows the latest). On the requirements page `focus` is the node
  * chosen in the tree: “需求点” shows that node's part of the change, and the change points go up
  * (`points`) so the tree can mark each node with this round's status.
  */
 export type ReqFocus = { id: string; title: string; ids: string[]; body: string; acceptance: string };
-export type WorkTab = "overview" | "req" | "change" | "review" | "artifacts" | "activity" | "branch";
+export type WorkTab = "overview" | "design" | "req" | "change" | "review" | "artifacts" | "activity" | "branch";
 const props = defineProps<{ runId: string; focus?: ReqFocus | null; tab?: WorkTab; from?: "runs" | "reqs" }>();
 const emit = defineEmits<{ close: []; open: [runId: string]; points: [points: ChangePoint[], from: string | null]; "update:tab": [tab: WorkTab] }>();
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
@@ -232,10 +235,17 @@ const openArtifacts = (seq: number | null) => {
 };
 const localTab = ref<WorkTab>("overview");
 const tab = computed<WorkTab>({ get: () => props.tab ?? localTab.value, set: (t) => { localTab.value = t; emit("update:tab", t); } });
+// A work with a design shows it in place of 需求点 and 变更 (docs/v2/coding-plan.md §5).
+const design = computed(() => work.value?.design ?? null);
+const designWaits = computed(() => design.value?.origin === "own" && design.value.status === "review");
 const tabs = computed(() => [
   { id: "overview" as const, label: "概览" },
-  ...(props.focus || work.value?.points.length ? [{ id: "req" as const, label: props.focus ? `需求点 ${focusPoints.value.length ? pointCount(focusPoints.value) : 0}` : `需求点 ${work.value!.points.length}` }] : []),
-  { id: "change" as const, label: rv.changePoints.value.length ? `变更 ${pointCount(rv.changePoints.value)}` : "变更" },
+  ...(design.value
+    ? [{ id: "design" as const, label: designWaits.value ? "方案 · 等你确认" :`方案 ${design.value.counts.decisions || ""}`.trim() }]
+    : [
+        ...(props.focus || work.value?.points.length ? [{ id: "req" as const, label: props.focus ? `需求点 ${focusPoints.value.length ? pointCount(focusPoints.value) : 0}` : `需求点 ${work.value!.points.length}` }] : []),
+        { id: "change" as const, label: rv.changePoints.value.length ? `变更 ${pointCount(rv.changePoints.value)}` : "变更" },
+      ]),
   { id: "review" as const, label: "评审" },
   ...(artifactCount.value ? [{ id: "artifacts" as const, label: `产物 ${artifactCount.value}` }] : []),
   { id: "activity" as const, label: `活动 ${work.value?.rounds ?? ""}`.trim() },
@@ -381,6 +391,11 @@ const ctx = computed(() => detail.value?.context ?? null);
       </nav>
 
       <template v-if="tab === 'overview'">
+        <section v-if="design && designWaits" class="design-wait row wrap" role="status">
+          <Icon name="alert" :size="16" />
+          <span class="grow"><strong>方案等你确认</strong><span class="muted small"> · {{ countLine(design.counts) }}。通过后按它编码。</span></span>
+          <button class="btn sm primary" @click="tab = 'design'">去看方案</button>
+        </section>
         <!-- Task-driven: its tasks, the owner's questions, the budget and the changes by task. -->
         <CodeTasks v-if="!branchReview" :key="`tasks:${run.id}`" :run-id="run.id" @artifacts="openArtifacts" />
         <PreCheckCard v-if="work.preCheck" :key="`pre:${work.rootId}`" :check="work.preCheck" :space="run.spaceId ?? undefined" data-ask-label="编码前的检查" />
@@ -394,6 +409,10 @@ const ctx = computed(() => detail.value?.context ?? null);
           <div class="row"><strong class="small">交办时的任务</strong><span class="spacer" /><button v-if="taskLong" class="btn ghost sm" @click="taskOpen = !taskOpen">{{ taskOpen ? "收起" : "展开全文" }}</button></div>
           <div class="pre small task" :class="{ clipped: taskLong && !taskOpen }">{{ work.task }}</div>
         </section>
+      </template>
+
+      <template v-else-if="tab === 'design' && design">
+        <DesignView :key="design.id" :design-id="design.id" embedded data-ask-label="方案" @loaded="(d) => d.status !== design?.status && load()" />
       </template>
 
       <template v-else-if="tab === 'req'">
@@ -526,6 +545,8 @@ const ctx = computed(() => detail.value?.context ?? null);
 .point { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-top: 1px solid var(--line); color: inherit; min-width: 0; }
 .point:hover { text-decoration: none; background: var(--hover); }
 .point .ellipsis { flex: 1; min-width: 0; }
+.design-wait { gap: 8px 10px; padding: 10px 14px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }
+.design-wait .grow { flex: 1 1 14em; min-width: 0; }
 .empty-tab { color: var(--muted); font-size: 13px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius); margin: 0; }
 .rounds { display: grid; gap: 2px; max-height: 320px; overflow: auto; }
 .round { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
