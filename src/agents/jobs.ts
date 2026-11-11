@@ -982,6 +982,9 @@ registerHandler("heartbeat", async (ctx) => {
   (await import("../channels/lark-watch.ts")).expireWatches(app);
   // Command approvals past their time (their timers do not survive a restart).
   await (await import("./command-gate.ts")).expireCommandAsks(app);
+  // Questions nobody waits for any more lapse; notifications the owner read in Feishu count as read.
+  (await import("./ask-expiry.ts")).sweepStaleAsks(app);
+  await (await import("../channels/notify-read.ts")).syncNotificationReads(app).catch((e: Error) => console.warn("[omem] 同步通知已读失败：", e.message));
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();

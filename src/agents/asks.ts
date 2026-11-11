@@ -54,6 +54,8 @@ export type Ask = {
   /** Asked of someone else (`ask_user` with `to`): whose assistant asked, and the name of the person asked. */
   askedBy: string | null;
   toName: string | null;
+  /** Why it lapsed without an answer (ask-expiry.ts: the owner went on, its work or item ended, left too long, withdrawn). */
+  lapsed?: string | null;
 };
 
 type Row = {
@@ -108,6 +110,7 @@ const toAsk = (r: Row): Ask => ({
   value: r.value ? (JSON.parse(r.value) as Record<string, unknown>) : null,
   askedBy: ((JSON.parse(r.context ?? "{}") as { askedBy?: unknown }).askedBy as string | undefined) ?? null,
   toName: ((JSON.parse(r.context ?? "{}") as { toName?: unknown }).toName as string | undefined) ?? null,
+  lapsed: ((JSON.parse(r.context ?? "{}") as { lapsed?: unknown }).lapsed as string | undefined) ?? null,
 });
 
 export function getAsk(app: App, id: string): Ask {
@@ -299,6 +302,20 @@ export function cancelAsk(app: App, id: string, result?: string) {
   closed(app, { ...toAsk(r), status: "cancelled", ...(result ? { result } : {}) });
 }
 
+/**
+ * An open ask nobody is going to answer any more (ask-expiry.ts): closed with the reason, so the web
+ * stops listing it and its Feishu card turns into a lapsed record without buttons. False when it was
+ * no longer open.
+ */
+export function lapseAsk(app: App, id: string, reason: string) {
+  const r = one<Row>(app.db, "select * from asks where id = ? and status = 'pending'", id);
+  if (!r) return false;
+  const changed = run(app.db, "update asks set status = 'cancelled', answered_at = ?, context = json_set(coalesce(context, '{}'), '$.lapsed', ?) where id = ? and status = 'pending'", now(), reason, id).changes;
+  if (!changed) return false;
+  closed(app, getAsk(app, id));
+  return true;
+}
+
 function cancelOpen(app: App, conversationId: string, kind: AskKind) {
   const open = all<Row>(app.db, "select * from asks where conversation_id = ? and kind = ? and status = 'pending'", conversationId, kind).map(toAsk);
   if (!open.length) return;
@@ -487,7 +504,7 @@ export function draftOf(app: App, id: string) {
 export function describeAnswer(a: Ask): string {
   const who = a.toName ?? "本人";
   if (a.status === "pending") return `${who}还没回答（${a.id}）。`;
-  if (a.status === "cancelled") return `提问 ${a.id} 已失效（本人已经在对话里接着说了）。`;
+  if (a.status === "cancelled") return a.lapsed ? `提问 ${a.id} 已失效：${a.lapsed}。` : `提问 ${a.id} 已失效（本人已经在对话里接着说了）。`;
   if (a.kind === "approval")
     return a.approved
       ? `本人批准了 ${a.tool}${a.answer ? `（附言：${a.answer}）` : ""}。执行结果：${a.result ?? "（无）"}`
@@ -535,7 +552,15 @@ export async function settleAsks(app: App, runId: string) {
  * a bare number or a message that starts with one of their options (“按评审修改，另外……”).
  */
 export async function answerFromMessage(app: App, conversationId: string, text: string, userId: string): Promise<boolean> {
-  const open = all<Row>(app.db, "select * from asks where conversation_id = ? and user_id = ? and status = 'pending' and shown_at is not null order by created_at desc", conversationId, userId).map(toAsk);
+  const taken = await takeAnswer(app, conversationId, text, userId);
+  // Earlier questions nobody waits for any more lapse: the owner went on (ask-expiry.ts).
+  const { lapseAfterMessage } = await import("./ask-expiry.ts");
+  lapseAfterMessage(app, conversationId, userId);
+  return taken;
+}
+
+async function takeAnswer(app: App, conversationId: string, text: string, userId: string): Promise<boolean> {
+  const open =all<Row>(app.db, "select * from asks where conversation_id = ? and user_id = ? and status = 'pending' and shown_at is not null order by created_at desc", conversationId, userId).map(toAsk);
   if (!open.length) return false;
   const pick = /^\s*(\d{1,2})\s*[.。、)）]?\s*$/.exec(text);
   if (pick) {

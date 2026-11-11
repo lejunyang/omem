@@ -14,7 +14,7 @@ import { registerThreadSender } from "../agents/inbox.ts";
 import { getRun } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
-import { addNotificationSink, deferNotification, notificationCardOf, setNotificationCard, takeDeferred } from "../core/notify.ts";
+import { addNotificationSink, deferNotification, markPushed, markQuiet, markReadIds, notificationCardOf, setNotificationCard, takeDeferred } from "../core/notify.ts";
 import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
@@ -442,13 +442,14 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     {
       const { aiIgnoreMatch } = await import("../core/notify-ai-gate.ts");
       const hit = await aiIgnoreMatch(app, n).catch(() => null);
-      if (hit) { console.info(`[omem] 通知按忽略规则静默：${hit.rule.id}（${hit.reason}）`); return; }
+      if (hit) { console.info(`[omem] 通知按忽略规则静默：${hit.rule.id}（${hit.reason}）`); markQuiet(app, n.id, "按你的免提醒规则没有推到飞书"); return; }
     }
     // Suppress when the owner has clearly seen/handled the triggering chat:
     // read status, an OK/DONE reaction, or a later reply in the same topic.
     if (app.config.notify.onlyUnread && n.sourceRefs?.length) {
       const { ownerAlreadyHandled } = await import("./notify-gate.ts");
-      if (await ownerAlreadyHandled(app, n).catch(() => false)) return;
+      // The owner is already on it in Feishu: read as well as not pushed.
+      if (await ownerAlreadyHandled(app, n).catch(() => false)) { markQuiet(app, n.id, "你已经在飞书上看过或处理了，没有再推"); markReadIds(app, [n.id]); return; }
     }
     // Cards keep external notification links; internal routes stay in the web app.
     const card = notificationCard(app, n);
@@ -457,6 +458,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       const { recordInteraction } = await import("./lark-send.ts");
       const sent = await sendLark(target, { card });
       recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { digest: true, itemIds: [...n.digest.closed, ...n.digest.soon], effectIds: n.digest.effects ?? [], notificationId: n.id, userId: n.userId } });
+      markPushed(app, n.id, "lark", sent.messageId);
       return;
     }
     if (n.entity === "item" && n.entityId) {
@@ -464,6 +466,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       const { recordInteraction } = await import("./lark-send.ts");
       const sent = await sendLark(target, { card });
       recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId } });
+      markPushed(app, n.id, "lark", sent.messageId);
       return;
     }
     const sent = await sendLark(target, { card });
@@ -485,7 +488,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       if (!target) continue;
       const { buildCard } = await import("./lark-send.ts");
       const lines = items.map((n) => `- ${n.title}`).join("\n");
-      await sendLark({ ...target, purpose: "notification" }, { card: buildCard({ title: `夜里的 ${items.length} 条通知`, blocks: [{ markdown: lines }, { note: "详情在网页的通知里" }] }) }).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
+      const sent = await sendLark({ ...target, purpose: "notification" }, { card: buildCard({ title: `夜里的 ${items.length} 条通知`, blocks: [{ markdown: lines }, { note: "详情在网页的通知里" }] }) }).catch((e) => void console.warn("[omem] 夜间通知补发失败", e));
+      if (sent) for (const n of items) markPushed(app, n.id, "lark", sent.messageId);
     }
   };
   if (!extra) setInterval(() => void sendDeferred().catch(() => {}), 5 * 60_000).unref();

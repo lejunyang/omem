@@ -153,6 +153,8 @@ function answeredCard(app: App, ask: Ask): Record<string, unknown> {
   // Someone omem does not know shows as a bare Feishu id: leave the name out then.
   const name = ask.answeredBy ? userName(app, ask.answeredBy) : null;
   const when = { by: name && !/^o[un]_/.test(name) ? name : null, at: ask.answeredAt, timeZone: app.config.timezone };
+  // Lapsed without an answer (agents/ask-expiry.ts): why, and no buttons.
+  if (ask.status === "cancelled" && ask.lapsed) return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: `${TITLE[ask.kind]} · 已失效` }), blocks: [...question, ...decidedBlocks({ verdict: `已失效：${ask.lapsed}`, at: ask.answeredAt, timeZone: app.config.timezone })] });
   if (ask.status === "cancelled") {
     // Closed with a note on how (the assistant passed on the owner's answer): say so, not just "lapsed".
     const d = ask.result ? { verdict: "已在别处处理", result: resolveCitationsSync(app, ask.result), plain: true } : { verdict: "已失效（在对话或网页上接着处理了）" };

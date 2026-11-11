@@ -44,7 +44,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "delegate", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", "continue_agent_work", "ask_agent", "list_ai_backends", "switch_run_ai", "list_runs", "read_run"] },
   { id: "skills", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "save_agent", "propose_profile_change"] },
   { id: "remote", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },
-  { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "wait_answer", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
+  { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "wait_answer", "withdraw_ask", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
   { id: "wake", label: "唤醒与规则", doc: "owner", tools: ["wake_later", "wake_on_message", "cancel_wake", "list_rules", "save_rule", "report_rule_failure"] },
   { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["delegate_code", "review_branch", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
   { id: "design", label: "方案：读、评估别人的方案、确认", doc: "code", tools: ["read_design", "assess_design", "settle_design"] },

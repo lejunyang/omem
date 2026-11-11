@@ -441,6 +441,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 命令规则（PATH 垫片拦截 + 审批放行）；边界见 docs/v2/command-gate.md；凭据代理未做 | 已实现；2026-11-11，Linux 待跑 | `src/agents/command-gate.ts`、`POST /api/command-gate`、设置 → 安全 |
 | 主线程卡顿监测（diag 的 eventLoop）；向量变更记录与量化快照；网络 git 异步 | 已实现；2026-11-11 | `core/loop-monitor.ts`、`search/vectors.ts`、`core/git.ts` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
+| 提问自己失效（本人接着说了别的、交办结束、事项关闭、`asks.staleDays` 天没人回答）与 `withdraw_ask`；网页通知以飞书为准（推过的不算未读，飞书里读过、回复、表情、点按钮记已读） | 已实现；2026-11-11，lark-cli 读机器人卡片的已读状态待真机 | `agents/ask-expiry.ts`、`channels/notify-read.ts`、`core/notify.ts` |
 
 定时规则的投递目标可选择已有助理会话或已采集的飞书群。选择群后保存时建立本人所属的群会话，不发送消息、不复用访客会话；执行沿用所选会话的机器人。缺少目标的旧规则在动作阶段失败并记录原因，不再转为私发。实现：`src/rules/destinations.ts`、`actions.ts`、`web/src/views/Rules.vue`；专项测试覆盖。
 

@@ -2884,6 +2884,30 @@ def({
 });
 
 def({
+  name: "withdraw_ask",
+  description:
+    "撤回你（或这个会话里之前的 Agent）向本人提的、还没回答的问题（ask_user 的提问 id）：本人改了主意、给了别的指示，或者你已经不需要这个答案时用。撤回后网页上不再列出，飞书卡片变成“已失效”、不能再点。宿主自己的决定卡片（评审计划、交办的修改项等）和待批准的操作不能撤回。",
+  write: true,
+  schema: z.object({
+    ask_id: z.string().describe("ask_user 返回的提问 id"),
+    reason: z.string().max(200).optional().describe("一句话说明为什么不再需要（会显示在失效的卡片上），默认“提问的 Agent 已撤回”"),
+  }),
+  handler: async (ctx, a) => {
+    const { conversationOfRun, getAsk, lapseAsk } = await import("./asks.ts");
+    const ask = getAsk(ctx.app, a.ask_id);
+    const me = ctx.userId ?? OWNER;
+    // Its own question, or one asked earlier in the conversation this run works in, of this person or on their behalf.
+    const conversation = conversationOfRun(ctx.app, ctx.runId);
+    const mine = ask.runId === ctx.runId || (!!conversation && ask.conversationId === conversation);
+    if (!mine || (ask.userId !== me && ask.askedBy !== me)) throw new HttpError(403, "只能撤回这次运行或这个会话里提的问题");
+    if (ask.kind !== "question" || ask.handler) throw new HttpError(400, "只能撤回 ask_user 的提问；宿主的决定卡片和待批准的操作不能撤回");
+    if (ask.status !== "pending") return `提问 ${ask.id} 已经${ask.status === "answered" ? "回答过了" : "失效了"}，不用撤回。`;
+    lapseAsk(ctx.app, ask.id, a.reason?.trim() || "提问的 Agent 已撤回");
+    return `已撤回提问 ${ask.id}。`;
+  },
+});
+
+def({
   name: "suggest_next",
   description:
     "给这次回答附上本人可以一键推进的下一步（按钮）：你的回答以一个建议、待本人拍板的选择或可以接着做的事结尾时用，本人点一下就等于说了那句话，不用再复述。1–3 个，推荐的放第一个；message 写成本人的口吻、具体到你能直接照做（“按方案 A 改，改完跑测试”）。没有值得推进的下一步就不用。",

@@ -3,6 +3,7 @@ import { addMessage, findThread } from "../agents/threads.ts";
 import type { App } from "../core/app.ts";
 import { one, run, tx } from "../core/db.ts";
 import { OWNER, canWrite } from "../core/users.ts";
+import { markReadIds } from "../core/notify.ts";
 import { currentBot } from "../core/bot-context.ts";
 import { larkUser } from "./lark-bots.ts";
 import { larkCardMarkdown } from "./lark-markdown.ts";
@@ -73,6 +74,9 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     return { toast: { type: "error", content: `只有 ${who} 可以处理` } };
   }
   if (inter.status !== "open") return { toast: { type: "info", content: "已经处理过了" } };
+  // A button on a notification's card (an item's 已处理 / 忽略, the digest): the notification has been read.
+  const notificationId = (inter.payload as { notificationId?: unknown } | null)?.notificationId;
+  if (typeof notificationId === "string") markReadIds(app, [notificationId]);
   const opName = operatorUser() === OWNER ? "本人" : await quickName(nameOf, operator);
   if (inter.purpose === "ask") {
     // A question, suggested step or approval (agents/asks.ts): answered here, no agent turn of its own.
