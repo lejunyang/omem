@@ -331,9 +331,18 @@ export const configSchema = z.object({
        * — the owner, or the assistant that delegated when no question in it waits on the owner.
        */
       design: z.object({ mode: z.enum(["auto", "always", "never"]).default("auto"), confirm: z.enum(["owner", "assistant"]).default("owner") }).default({ mode: "auto", confirm: "owner" }),
+      /**
+       * What reaches the chat while agents work (channels/lark-work-progress.ts, lark-agent-cot.ts):
+       * `messages` — `milestones`: a multi-agent work keeps one progress card in its topic, updated in
+       * place, and posts only when it is done, needs the owner, or answers the owner's words there
+       * (a coordination turn that only handed out the next round stays in the work conversation);
+       * `all`: every coordination reply is posted. `thinking` — native thinking bubbles: `all` for
+       * every run, `own` only for the turn answering the owner's own message, `off` never.
+       */
+      progress: z.object({ messages: z.enum(["milestones", "all"]).default("milestones"), thinking: z.enum(["all", "own", "off"]).default("own") }).default({ messages: "milestones", thinking: "own" }),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

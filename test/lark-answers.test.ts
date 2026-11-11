@@ -161,6 +161,8 @@ describe("answers in groups and where thinking bubbles go", async () => {
   }, 60_000);
 
   it("a background turn whose anchor has since become a topic's root shows its bubble inside that topic", async () => {
+    // Background turns have bubbles only with settings → 思考气泡 = all (the default shows the owner's own turns).
+    app.config.agents.progress = { ...app.config.agents.progress, thinking: "all" };
     const turn = async (anchor: string) => {
       const t = createThread(app, { channel: "lark", key: `oc_chat_${anchor}`, spaceId: "personal", userId: "owner" });
       updateThread(app, t.id, { settings: { lastMessageId: "om_unrelated_meeting", lastTopicId: null } });
@@ -177,6 +179,7 @@ describe("answers in groups and where thinking bubbles go", async () => {
     expect(await turn("om_became_root")).toEqual({ origin: "om_became_root", inThread: true });
     // Still in the main stream: stays there.
     expect(await turn("om_plain")).toEqual({ origin: "om_plain", inThread: false });
+    app.config.agents.progress = { ...app.config.agents.progress, thinking: "own" };
   }, 30_000);
 
   it("a rule's agent that stays quiet posts nothing, and its bubble does not stay", async () => {

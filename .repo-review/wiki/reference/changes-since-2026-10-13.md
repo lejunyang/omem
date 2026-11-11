@@ -1881,3 +1881,15 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 运行页“所在会话与关联”把结果只是发到那个会话的运行（有人找你的处理、会后说明）也当成会话里的一轮，列出了整个主会话的几十轮对话：现在只有本身是对话轮次的运行才列，长会话只列前后 9 轮；别的运行那一行写“结果发到”。
 - 本人在话题里说“换另一个 AI 再试”，助手对自己这一轮调用 `switch_run_ai`：这一轮被停下重排，但对话轮次按会话的后端运行，不认运行上的选择，重排后还在原来的后端上，续接的旧会话里工具令牌也已失效。现在目标是对话轮次时改的是会话的后端、模型和强度并放掉旧会话，重排的这一轮和之后的轮次都在新的 AI 上（`tools.ts` 的 `switch_run_ai`）；角色说明写明这种要求不另外交给别的 Agent。
 - 系统自动发的通知卡片被整理成待办并定时提醒，本人直接忽略：`roles/ingest.md` 写明这类卡片默认不建事项、不设提醒。
+
+## 2026-11-11：多 Agent 工作的过程消息收敛、思考气泡三档、交办时借工具
+
+起因：在飞书话题里交给另一个档案做的一件事走了 5 轮，每轮有协调回复、唤醒轮和几个思考气泡，话题里十几条中间消息本人并不需要；那个档案没有读写表格的工具，每轮都回头找主助手代做。
+
+- 新设置 `agents.progress`（设置 → AI → 过程消息）。`messages`：`milestones`（默认）/ `all`。`thinking`：`all` / `own`（默认）/ `off`。
+- “只是接着推进”的判定（`agent-work.ts` 的 `onlyMovedOn`）：这一轮排出了下一轮（`queueAgentRound` 记 `queuedBy`，`run_agent` / `continue_agent_work` 都带）、这一轮没有 `asks`（提问或审批）、回答的消息里没有本人自己的话、工作不在等本人。满足时 `deliverCoordination` 只把回复存进工作会话（`meta.progressOnly`），不发；工作会话里的唤醒回合同样处理（`jobs.ts`）。协调出错、到自动推进上限、没再交办（做完）都照常发。
+- 进度卡：`src/channels/lark-work-progress.ts`（`watchWorkProgress` 由主机器人注册），按运行状态变化 0.5 秒、步骤 8 秒合并更新；卡片写第几轮、谁在做什么、最近一个工具或状态、运行记录链接，消息 id 和内容指纹存在发起 ask 运行的 `output.workProgress`，内容不变不更新；话题开出来之前不发；`all` 模式不发。
+- 思考气泡：`lark-agent-cot.ts` 的 `showThinking` 统一判断，两处起气泡的地方都问它：`lark-bot.ts` 回答消息时（本人自己发的、不是访客或机器人的消息才算 `own`），`startReplyProgress` 多 `bubble` 参数，关掉时只加“处理中”表情，不起气泡、不发兜底卡片；后台运行（交办的轮次、请教、协调、编码交办结果、规则）只有回答本人自己消息的 ask 轮在 `own` 下显示。
+- 借工具：`run_agent` / `continue_agent_work` 多 `extra_tools`（最多 12 件）。`tools.ts` 的 `lendTools`：必须是发起这次交办的运行令牌里有的工具（被禁用的、本人没权限的本来就不在里面）；`LEND_DENIED` 不借以本人身份写飞书（`lark_write`、`lark_invite`、`lark_doc_create/update/move/copy/authorize`）、发消息（`lark_send` 等 lark-msg 里发送的）、再交办（`run_agent`、`continue_agent_work`、`ask_agent`、`delegate_code`、`review_branch`、`continue_code_run`）、`stay_quiet`、`report_rule_failure` 和 `ROLE_TOOLS`；从别的设备或规则运行里交办不能借。借出的记在这一轮的 `input.extraTools`，`runAgentTask` 去掉这次运行被禁用的再交给 `addTools`，任务末尾写明借到了什么；`prepareRun` 照常按本人权限裁剪，空间范围不变。
+- `roles/assistant.md`、协调说明（`sessions.ts` 的 `coordinationNote`）：交办前看对方档案的工具，缺的自己做或借；只是接着交办的那一轮回复写一两句记录。设置页加“过程消息”一节（两个 `UiSegmented`）。
+- 测试：`test/agent-work-progress.test.ts`、`test/agent-work-lend.test.ts`，`test/agent-work.test.ts` 多一条默认设置下的循环。验收 17a–17d。

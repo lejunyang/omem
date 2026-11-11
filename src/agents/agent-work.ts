@@ -78,6 +78,7 @@ export function startAgentWork(app: App, input: {
   execution?: Execution;
   /** Open a new Feishu topic from this message (the ask), instead of another plain reply. */
   anchorLarkMessageId?: string;
+  extraTools?: string[];
 }): { work: AgentWork; runId: string; larkThreadMessageId?: string } {
   const root = getThread(app, input.rootConversationId);
   const lark = root?.channel === "lark" || !!root?.channel.startsWith("lark:");
@@ -99,7 +100,7 @@ export function startAgentWork(app: App, input: {
   // Record the request in the work conversation.
   addWorkMessage(app, work, { role: "user", text: input.startMessage, meta: { agentWork: true, spec: input.agent } });
 
-  const runId = queueAgentRound(app, work, { agent: input.agent, task: input.task, execution: input.execution, assistantScope: input.assistantScope });
+  const runId = queueAgentRound(app, work, { agent: input.agent, task: input.task, execution: input.execution, assistantScope: input.assistantScope, queuedBy: input.askRunId, extraTools: input.extraTools });
   return { work, runId };
 }
 
@@ -129,6 +130,10 @@ export type AgentRoundInput = {
   agent: string;
   task: string;
   spaceId?: string;
+  /** The run that handed this round out (a coordination turn, the owner's turn in the topic). */
+  queuedBy?: string | null;
+  /** Tools lent for this round only, checked against the lender's own (tools.ts lendTools). */
+  extraTools?: string[];
 };
 
 /** Queue the next agent round inside an existing work conversation. */
@@ -138,7 +143,7 @@ export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): 
     kind: "agent",
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
-    input: { spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId },
+    input: { spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
     parentId: work.askRunId,
   });
   const id = r.id;
@@ -299,7 +304,7 @@ export async function openWorkTopic(app: App, work: AgentWork, anchorMessageId: 
  * makes every later report and coordination reply land in the new conversation. The old work is
  * left in place (its history stays readable) and marked so it is not picked up twice.
  */
-export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string; execution?: Execution; assistantScope?: AssistantScope }): { work: AgentWork; runId: string } {
+export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string; execution?: Execution; assistantScope?: AssistantScope; queuedBy?: string | null; extraTools?: string[] }): { work: AgentWork; runId: string } {
   const prev = refreshWork(app, opts.askRunId);
   if (!prev) throw new Error("找不到要继续的工作");
   const workThread = createWorkThread(app, { rootId: opts.rootConversationId, spaceId: opts.spaceId, title: opts.title });
@@ -326,6 +331,36 @@ export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversa
   saveWork(app, work, [opts.askRunId]);
   // Old ask runs keep the previous work so earlier rounds' reports still resolve where they ran.
   addWorkMessage(app, work, { role: "user", text: opts.task, meta: { agentWork: true, spec: opts.agent, movedFrom: prev.workConversationId } });
-  const runId = queueAgentRound(app, work, { agent: opts.agent, task: opts.task, execution: opts.execution, assistantScope: opts.assistantScope });
+  const runId = queueAgentRound(app, work, { agent: opts.agent, task: opts.task, execution: opts.execution, assistantScope: opts.assistantScope, queuedBy: opts.queuedBy, extraTools: opts.extraTools });
   return { work, runId };
+}
+
+// ----------------------------------------------------------------- what reaches the chat
+
+/** settings → AI → 过程消息: `milestones` (default) or `all`. */
+export const progressMessages = (app: App) => app.config.agents.progress?.messages ?? "milestones";
+
+/**
+ * A turn in a work that only moved it on, so in `milestones` mode its reply stays in the work
+ * conversation (the web shows it) and the topic's progress card says what is going on instead:
+ * - it handed out a next round itself (continue_agent_work / run_agent queued one with its id),
+ * - it asked the owner nothing (no ask_user, no approval held for the owner in this run),
+ * - none of the messages it answered is the owner's (a reply to the owner always goes out),
+ * - the work is not waiting for the owner.
+ * Everything else is a milestone and is posted: the result (nothing handed on), a question, a
+ * failure to hand on (the cap, an error), a turn that answered the owner.
+ */
+export function onlyMovedOn(app: App, turnRunId: string, workId: string, messageIds: string[] = []): boolean {
+  if (progressMessages(app) !== "milestones") return false;
+  const work = refreshWork(app, workId);
+  if (!work || work.awaitingUser || work.supersededBy) return false;
+  if (!one(app.db, "select 1 from runs where kind = 'agent' and json_extract(input, '$.queuedBy') = ? and json_extract(input, '$.agentWorkId') = ? limit 1", turnRunId, workId)) return false;
+  if (one(app.db, "select 1 from asks where run_id = ? limit 1", turnRunId)) return false;
+  for (const id of messageIds) {
+    const m = one<{ role: string; meta: string }>(app.db, "select role, meta from messages where id = ?", id);
+    if (!m || m.role !== "user") continue;
+    const meta = JSON.parse(m.meta || "{}") as Record<string, unknown>;
+    if (!meta.agentReport && !meta.wake && !meta.codeResult && !meta.command) return false;
+  }
+  return true;
 }

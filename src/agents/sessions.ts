@@ -13,7 +13,7 @@ import { findAgentSpec } from "./specs.ts";
 import { chatSettings, describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
 import { retargetToolToken, revokeToolToken } from "./tools.ts";
 import { replyOf, sessionPrompt, type AgentEvent } from "./types.ts";
-import { autoTurnsSinceOwner, maxAutoTurns, refreshWork } from "./agent-work.ts";
+import { autoTurnsSinceOwner, maxAutoTurns, progressMessages, refreshWork } from "./agent-work.ts";
 import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
 import { WAKE_NOTE } from "./wakes.ts";
@@ -225,14 +225,15 @@ function coordinationNote(app: App, workId: string, messages: ThreadMessage[]) {
   // The count includes this turn.
   const done = work ? Math.max(0, autoTurnsSinceOwner(app, work) - 1) : 0;
   const owner = messages.some((m) => m.role === "user");
+  const quietProgress = progressMessages(app) === "milestones";
   return [
     `# 协作进展`,
     "",
     renderMessages(messages, app),
     "",
-    `你是这项工作的负责人${work ? `（目标：${work.title}）` : ""}。上面是交办出去的 Agent 交回的结果${owner ? "，以及本人在这里的新消息" : ""}。对照本人要的东西和完成标准判断下一步，然后写一条给本人的回复：它发在这项工作的话题里，Agent 的完整报告折叠在你的回复下面，所以不用转述全文。`,
+    `你是这项工作的负责人${work ? `（目标：${work.title}）` : ""}。上面是交办出去的 Agent 交回的结果${owner ? "，以及本人在这里的新消息" : ""}。对照本人要的东西和完成标准判断下一步，然后写一条给本人的回复：${quietProgress ? "做完、要本人决定或卡住时它发在这项工作的话题里，Agent 的完整报告折叠在下面，所以不用转述全文；只是接着交办（这一轮调用了 continue_agent_work / run_agent、没有问本人）时它只留在工作会话里，话题里的进度卡会显示进展，本人不会收到新消息，写一两句记录即可。" : "它发在这项工作的话题里，Agent 的完整报告折叠在你的回复下面，所以不用转述全文。"}`,
     "",
-    "1. 还有明确的下一步、不需要本人决定：直接推进。`continue_agent_work` 交给同一个 Agent，或 `run_agent(name, task, own_topic=true)` 换更合适的 Agent；任务写具体：做什么、怎样算完成、上一轮哪些结论可以直接用。报告里有你能用工具自己核实或补上的，先做，不要只当传话筒。回复里说这一轮得到了什么、接下来让谁做什么。",
+    "1. 还有明确的下一步、不需要本人决定：直接推进。`continue_agent_work` 交给同一个 Agent，或 `run_agent(name, task, own_topic=true)` 换更合适的 Agent；任务写具体：做什么、怎样算完成、上一轮哪些结论可以直接用。报告里有你能用工具自己核实或补上的，先做，不要只当传话筒。Agent 回头找你代做的（它的档案缺工具），你自己做完那一步，或下一轮用 extra_tools 借给它。回复里说这一轮得到了什么、接下来让谁做什么。",
     "2. 已经得到本人要的东西：整理成本人能直接用的样子，具体的 id、数据、命令照抄，依据和没查实的分开写。",
     "3. 卡住了（缺权限、缺信息、需要本人选择或授权）：说清卡在哪、要本人做什么、有哪些选项和你的建议。",
     "4. Agent 失败了：能换个做法或换个 Agent 就重试，不能就说明原因。",
