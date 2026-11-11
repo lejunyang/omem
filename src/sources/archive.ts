@@ -7,7 +7,7 @@ import { HttpError, json, newId, now, sha256 } from "../core/util.ts";
 import { createRun } from "../agents/runs.ts";
 import { leafMatches } from "../rules/conditions.ts";
 import { OPS } from "../rules/types.ts";
-import { getSource, sourceText, type UpsertInput } from "./store.ts";
+import { getSource, purgeSource, sourceText, type UpsertInput } from "./store.ts";
 import { vectorIndex } from "../search/vectors.ts";
 
 export const ARCHIVE_FIELDS = { kind: "材料类型", title: "标题 / 群名", uri: "网址 / 路径", text: "正文", channel: "采集渠道", "meta.wikiSpaceName": "知识库名称", "meta.wikiParentTitle": "所在目录", "meta.wikiPath": "上级目录路径" } as const;
@@ -200,7 +200,10 @@ export function moveSource(app: App, id: string, target: string, reason: string,
   if (expectedHash && s.hash !== expectedHash) throw new HttpError(409, "原件已更新，请重新预览");
   if (["code", "conversation", "activity", "work"].includes(s.kind)) throw new HttpError(400, "代码、对话、活动和工作文件由所属工作区管理");
   if (getSpace(app, target).kind === "worktree") throw new HttpError(400, "不能归档到临时工作区");
-  if (one(app.db, "select 1 from sources where space_id=? and uri=? and id!=?", target, s.uri, id)) throw new HttpError(409, "目标空间已有同地址原件，请先处理重复材料");
+  // A deleted original still holds its address (the tombstone): it makes way for the one moving in.
+  const there = one<{ id: string; deleted_at: string | null }>(app.db, "select id, deleted_at from sources where space_id=? and uri=? and id!=?", target, s.uri, id);
+  if (there && !there.deleted_at) throw new HttpError(409, "目标空间已有同地址原件，请先处理重复材料");
+  if (there) purgeSource(app, there.id);
   tx(app.db, () => {
     run(app.db, "insert or ignore into source_locations(origin_space,uri,source_id) values(?,?,?)", s.spaceId, s.uri, id);
     run(app.db, "update sources set space_id=? where id=?", target, id);

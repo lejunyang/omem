@@ -3,7 +3,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { getSpace } from "../core/spaces.ts";
 import { vectorIndex } from "../search/vectors.ts";
 import { HttpError, json, now } from "../core/util.ts";
-import { deleteSource, getSource, sourceText, upsertSource } from "./store.ts";
+import { deleteSource, getSource, purgeSource, sourceText, upsertSource } from "./store.ts";
 
 /**
  * Working files: originals an agent writes while it works — the current results of a long task
@@ -98,7 +98,10 @@ export function moveWorkFile(app: App, id: string, target: string, reason: strin
   if (s.deletedAt) throw new HttpError(409, "原件已删除");
   if (getSpace(app, target).kind === "worktree") throw new HttpError(400, "不能放进临时工作区");
   if (s.spaceId === target) return s;
-  if (one(app.db, "select 1 from sources where space_id = ? and uri = ? and id != ?", target, s.uri, id)) throw new HttpError(409, `目标空间已有同路径的工作文件：${s.uri}`);
+  // A deleted file still holds its path (the tombstone): it makes way for the one moving in.
+  const there = one<{ id: string; deleted_at: string | null }>(app.db, "select id, deleted_at from sources where space_id = ? and uri = ? and id != ?", target, s.uri, id);
+  if (there && !there.deleted_at) throw new HttpError(409, `目标空间已有同路径的工作文件：${s.uri}`);
+  if (there) purgeSource(app, there.id);
   tx(app.db, () => {
     run(app.db, "update sources set space_id = ? where id = ?", target, id);
     run(app.db, "update chunks set space_id = ? where source_id = ?", target, id);

@@ -7,7 +7,7 @@ import { upsertItem } from "../src/items/store.ts";
 import { shortcomings, shortcomingsText } from "../src/memory/gaps.ts";
 import { fireScheduledRule } from "../src/rules/engine.ts";
 import { listFirings, saveRule } from "../src/rules/store.ts";
-import { getSource, sourceText } from "../src/sources/store.ts";
+import { deleteSource, getSource, sourceText } from "../src/sources/store.ts";
 import { expireWorkFiles, expiryFrom, listWorkFiles, moveWorkFile } from "../src/sources/work.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
@@ -99,6 +99,11 @@ describe("working files", () => {
     // A file already at that path in the target is not overwritten.
     const other = idOf((await callTool(agentCtx(app), "write_file", { path: "duty/名单", content: "另一份" })).text);
     expect(() => moveWorkFile(app, other, "project-a", "合并")).toThrow(/同路径/);
+    // Once the one in the target is deleted, its tombstone makes way: the other moves in under its own id.
+    deleteSource(app, shared);
+    expect(moveWorkFile(app, other, "project-a", "合并").spaceId).toBe("project-a");
+    expect(sourceText(app, other)).toContain("另一份");
+    expect(one(app.db, "select 1 from sources where id = ?", shared)).toBeUndefined();
     app.db.close();
   });
 
