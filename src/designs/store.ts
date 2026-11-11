@@ -113,6 +113,18 @@ export function designOfWork(app: App, rootRunId: string): Design | null {
   return r ? toDesign(r) : null;
 }
 
+/**
+ * The design a delegation or branch review (its first run) goes by: the one bound to it, else the
+ * one its first run names (`input.designId`: an earlier branch review of someone else's design that a
+ * later review has since taken over).
+ */
+export function designForWork(app: App, rootRunId: string): Design | null {
+  const bound = designOfWork(app, rootRunId);
+  if (bound) return bound;
+  const r = one<{ id: string | null }>(app.db, "select json_extract(input, '$.designId') id from runs where id = ?", rootRunId);
+  return r?.id ? findDesign(app, r.id) : null;
+}
+
 /** An item's designs, newest first. */
 export function designsOfItem(app: App, itemId: string): Design[] {
   return all<Row>(app.db, "select * from designs where item_id = ? order by updated_at desc, rowid desc", itemId).map(toDesign);
@@ -245,6 +257,9 @@ export function submitRevision(app: App, id: string, input: unknown, opts: { run
   });
 }
 
+/** In a transaction of its own, or in the caller's. */
+const atomic = <T>(app: App, fn: () => T): T => (app.db.isTransaction ? fn() : tx(app.db, fn));
+
 /** Changes to the current version in place (a concern's state, an answer): the version kept for it too. */
 function rewriteCurrent(app: App, d: Design, body: DesignBody) {
   const at = now();
@@ -279,6 +294,66 @@ export function setConcernState(app: App, id: string, concernId: string, change:
   if (change.by) c.by = change.by;
   rewriteCurrent(app, d, body);
   return getDesign(app, id);
+}
+
+/**
+ * What came of a decision after the code (§2.4): the coder's deviation and simpler way per task, the
+ * review lead's done / deviation on a branch. `append`: one decision with several tasks gets each
+ * one's words as its own paragraph (`label`, e.g. T3), not the last one only. Written into the current
+ * version in place.
+ */
+export function setDecisionAfter(app: App, id: string, decisionId: string, after: { deviation?: string; simpler?: string; done?: "yes" | "partly" | "no"; by: string; label?: string; append?: boolean }): Design {
+  return atomic(app, () => {
+    const d = getDesign(app, id);
+    const body = structuredClone(d.body);
+    const x = body.decisions.find((y) => y.id === decisionId);
+    if (!x) throw new HttpError(404, `方案 ${id} 没有决定 ${decisionId}`);
+    const prev = x.after ?? {};
+    const join = (old: string | undefined, add: string | undefined) => {
+      const text = add?.trim();
+      if (!text) return old;
+      const line = after.label ? `${after.label}：${text}` : text;
+      if (!after.append || !old?.trim()) return line;
+      // The same task saying it again replaces its own paragraph.
+      const kept = after.label ? old.split("\n\n").filter((p) => !p.startsWith(`${after.label}：`)) : old.split("\n\n");
+      return [...kept, line].join("\n\n");
+    };
+    x.after = {
+      ...prev,
+      ...(after.deviation?.trim() ? { deviation: join(prev.deviation, after.deviation) } : {}),
+      ...(after.simpler?.trim() ? { simpler: join(prev.simpler, after.simpler) } : {}),
+      ...(after.done ? { done: after.done } : {}),
+      by: after.by,
+      at: now(),
+    };
+    rewriteCurrent(app, d, body);
+    return getDesign(app, id);
+  });
+}
+
+/**
+ * A branch review's split onto someone else's (or an own) design: which of the branch's files each
+ * decision is about, and the files under none. Only where the code landed is written — the design's
+ * text is its author's — into the current version, without a new version number.
+ */
+export function attributeFiles(app: App, id: string, split: { files: Record<string, string[]>; outside: string[] }): Design {
+  return atomic(app, () => {
+    const d = getDesign(app, id);
+    if (!d.revision) throw new HttpError(409, `方案 ${id} 还没有内容，不能归属文件`);
+    const body = structuredClone(d.body);
+    const unknown = Object.keys(split.files).filter((k) => !body.decisions.some((x) => x.id === k));
+    if (unknown.length) throw new HttpError(400, `方案 ${id} 没有决定 ${unknown.join("、")}`);
+    for (const x of body.decisions) {
+      const files = [...new Set(split.files[x.id] ?? [])];
+      if (files.length) x.files = files;
+      else delete x.files;
+    }
+    const outside = [...new Set(split.outside)];
+    if (outside.length) body.outside = outside;
+    else delete body.outside;
+    rewriteCurrent(app, d, body);
+    return getDesign(app, id);
+  });
 }
 
 export function answerQuestion(app: App, id: string, decisionId: string, text: string): Design {

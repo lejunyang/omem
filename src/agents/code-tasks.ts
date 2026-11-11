@@ -43,7 +43,7 @@ export type CodeTask = {
    * delegation on the branch; follows: the task this one is a follow-up fix of (it did not come out
    * right or broke something); carried: the task of an earlier delegation it continues.
    */
-  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[]; later?: boolean; follows?: number; carried?: { work: string; seq: number } };
+  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[]; later?: boolean; follows?: number; carried?: { work: string; seq: number }; decision?: string };
   state: TaskState;
   question: string | null;
   options: string[];

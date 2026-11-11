@@ -20,6 +20,7 @@ import { checkLabel, planReview, reviewChecks, roundFindings, type ReviewPlan } 
 import { runRole } from "./runner.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import { workDirOf } from "./workspaces.ts";
+import { designDigest } from "../designs/work.ts";
 
 /**
  * What happens after a coding round of a delegation driven by tasks (docs/v2/coding-loop.md §4):
@@ -373,7 +374,10 @@ function completed(app: App, rootId: string, run: Run) {
   const tasks = listTasks(app, rootId);
   const count = (s: CodeTask["state"]) => tasks.filter((t) => t.state === s).length;
   const fixes = tasks.filter((t) => t.kind === "fix" && t.state === "done").length;
+  // With a design (designs/work.ts) the owner reads the work by its decisions; the tasks follow.
+  const design = designDigest(app, rootId);
   const digest = [
+    design,
     `**修改项**：完成 ${count("done")} 项${fixes ? `（其中评审问题 ${fixes} 个）` : ""}${count("wontdo") ? `，不做 ${count("wontdo")} 项` : ""}${count("reverted") ? `，回退 ${count("reverted")} 项` : ""}`,
     tasks.filter((t) => t.state === "done").slice(0, 8).map((t) => `- ${taskLabel(t.seq)} ${t.title}`).join("\n"),
   ].filter(Boolean).join("\n");

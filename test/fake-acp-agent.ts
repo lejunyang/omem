@@ -237,18 +237,38 @@ new AgentSideConnection(
         const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
         const client = new Client({ name: "fake-tasks", version: "1" });
         await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        let direct: Set<string> | null = null;
         const call = async (name: string, args: Record<string, unknown>) => {
-          const r = await client.callTool({ name, arguments: args });
+          direct ??= new Set((await client.listTools()).tools.map((t) => t.name));
+          const r = await client.callTool(direct.has(name) || !direct.has("omem_call") ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
           if (process.env.FAKE_TOOL_LOG) appendFileSync(process.env.FAKE_TOOL_LOG, JSON.stringify({ name, args, error: r.isError ? r.content : null }) + "\n");
           return r;
         };
         try {
           if (prompt.includes("只输出一个 JSON")) { await say("{}"); return { stopReason: "end_turn" as const }; }
+          // FAKE_DESIGN_NEEDED: the designer before coding (designs/work.ts). A first version with a question
+          // for the owner; asked again with what the owner said, the next version under the same id.
+          if (prompt.includes("# 写方案")) {
+            const again = prompt.includes("## 上一版");
+            const r = await call("submit_design", {
+              facts: [{ text: "退款金额在退款单和对账两处各算一遍", refs: ["refund.ts:1"] }],
+              decisions: [{
+                ...(again ? { id: "D1" } : {}),
+                kind: "change", title: again ? "退款金额只在 refund.ts 里算，对账直接调用" : "退款金额在 refund.ts 里算", reqs: ["退款只按未发货的行计算"],
+                fields: { behavior: { brief: "全退 → 只退未发货的行", table: { head: ["情况", "现在", "改后"], rows: [["部分发货", "全退", "只退未发货的行"]] } }, where: { brief: "refund.ts 一处" }, callers: { brief: "对账脚本" }, migration: { brief: "不涉及：只改计算" } },
+                question: { text: "运费怎么退", options: ["按金额比例", "按件数比例"], recommended: 0 },
+              }],
+              ...(again ? { note: "按意见改了对账" } : {}),
+            });
+            await say(`写好了 ${r.isError ? JSON.stringify(r.content) : "ok"}${again ? "（第二版）" : ""}`);
+            return { stopReason: "end_turn" as const };
+          }
           // The check before coding (business-analyst): the history of the file, then the brief.
           if (prompt.includes("# 编码前检查")) {
             const history = await call("code_history", { space: "shop-api", paths: ["refund.ts"] });
             const said = ((history.content as { text: string }[])[0]?.text ?? "").includes("最近的提交") ? "提交记录里只有初始化" : "没有记录";
             await call("submit_brief", {
+              ...(process.env.FAKE_DESIGN_NEEDED ? { design: { needed: true, why: "要改退款金额在退款单和对账之间的分工" } } : {}),
               summary: `改退款计算会影响退款单列表和对账（${said}）`,
               impacts: [{ text: "对账脚本按退款金额汇总，金额口径变了要一起改", where: ["refund.ts"] }],
               history: [{ text: "以前把未发货的行也算进了退款", refs: ["run:r-old"] }],
@@ -345,7 +365,9 @@ new AgentSideConnection(
             if (sent.isError) await say(`分派失败 ${JSON.stringify(sent.content)}`);
             seqs = [planned[0]];
           } else if (prompt.includes(PLAN_ASK)) {
-            const made = await call("plan_tasks", { tasks: [{ title: "退款只算未发货的行", done_when: "已发货的行不计入退款" }, { title: "补退款测试", done_when: "有覆盖已发货行的测试" }], rounds: 6 });
+            const byDesign = prompt.includes("## 方案（");
+            if (byDesign) await call("plan_tasks", { tasks: [{ title: "不存在的决定", decision: "D9" }] });
+            const made = await call("plan_tasks", { tasks: [{ title: "退款只算未发货的行", done_when: "已发货的行不计入退款", ...(byDesign ? { decision: "D1" } : {}) }, { title: "补退款测试", done_when: "有覆盖已发货行的测试" }], rounds: 6 });
             seqs = [...String((made.content as { text: string }[])[0].text).matchAll(/T(\d+) /g)].map((m) => Number(m[1]));
           } else seqs = [...prompt.matchAll(/^### T(\d+) /gm)].map((m) => Number(m[1]));
           // FAKE_ONE_PER_TURN: like a coder that does one task and ends its turn.
@@ -365,7 +387,7 @@ new AgentSideConnection(
                 writeFileSync(join(process.env.OMEM_ARTIFACTS, `T${seqs[1]}`, "测试报告.txt"), "2 passed");
               }
             }
-            await call("finish_task", { task: `T${seq}`, summary: `做完了 T${seq}，跑了测试` });
+            await call("finish_task", { task: `T${seq}`, summary: `做完了 T${seq}，跑了测试`, ...(seq === 1 && prompt.includes("## 方案（") ? { deviation: "对账脚本也顺手改成调用 refund.ts", simpler: "导出任务也可以改成同一个函数，这次没做" } : {}) });
           }
           // FAKE_OVERLAP: still at work while its checks verify and a second look runs; what comes back
           // in a tool result (not fixed, new from the second look) is done in this same turn.
@@ -383,6 +405,11 @@ new AgentSideConnection(
               }
               if (added) break;
             }
+          }
+          // FAKE_DERIVED: without a design, what it changed as a change description at the end.
+          if (process.env.FAKE_DERIVED && prompt.includes(PLAN_ASK)) {
+            const r = await call("submit_design", { decisions: [{ kind: "change", title: "退款只算未发货的行", fields: { behavior: { brief: "全退 → 只退未发货的行" } }, tasks: [...new Set(seqs)].slice(0, 1) }] });
+            await say(`变更说明 ${r.isError ? JSON.stringify(r.content) : "ok"}`);
           }
           await say(`做完了 ${seqs.map((n) => `T${n}`).join("、")}`);
         } finally { await client.close(); }
@@ -407,9 +434,31 @@ new AgentSideConnection(
             const tools = (await client.listTools()).tools.map((t) => t.name);
             const ids = [...prompt.matchAll(/- #(\d+) \[([^\]]+)\]/g)].map((m) => ({ id: Number(m[1]), tag: m[2] }));
             const rulings = ids.map((x) => (x.tag.startsWith("业务") && x.tag.includes("严重") ? { id: x.id, decision: "accept" } : { id: x.id, decision: "reject", note: "不影响这次需求" }));
-            const res = await client.callTool({ name: "rule_review", arguments: { rulings, verdict: rulings.some((r) => r.decision === "accept") ? "revise" : "approve", summary: `第 ${leadRound} 轮：业务问题要改`, change_request: "1. refund.ts:1 已发货行不能退：过滤已发货行", rerun: ["review-business"] } });
+            // Against a design: what came of each decision, and the assessment's concern now.
+            const byDesign = prompt.includes("## 方案：") ? { decisions: [{ id: "D1", done: "partly", deviation: "金额在网关里又算了一遍", concerns: [{ id: "C1", state: "resolved", note: "分支改了对账" }] }] } : {};
+            const res = await client.callTool({ name: "rule_review", arguments: { rulings, verdict: rulings.some((r) => r.decision === "accept") ? "revise" : "approve", summary: `第 ${leadRound} 轮：业务问题要改`, change_request: "1. refund.ts:1 已发货行不能退：过滤已发货行", rerun: ["review-business"], ...byDesign } });
             await say(`负责人结论
 ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
+          } finally { await client.close(); }
+          return { stopReason: "end_turn" as const };
+        }
+        // The split of a branch review against a design: files under decisions, one file not in the diff refused first.
+        if (prompt.includes("把改动归到方案的决定上") || prompt.includes("写一份变更说明")) {
+          const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+          const client = new Client({ name: "fake-design-split", version: "1" });
+          await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+          try {
+            const direct = new Set((await client.listTools()).tools.map((t) => t.name));
+            const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
+            const text = (r: Awaited<ReturnType<typeof call>>) => ((r.content as { text?: string }[]) ?? []).map((c) => c.text ?? "").join("");
+            if (prompt.includes("写一份变更说明")) {
+              const r = await call("submit_design", { decisions: [{ kind: "change", title: "只退未发货的行", fields: { behavior: { brief: "全退 → 只退未发货的行" } }, files: ["refund.ts", "lines.ts"] }], outside: ["legacy.ts"] });
+              await say(`变更说明 ${r.isError ? text(r) : "ok"}`);
+              return { stopReason: "end_turn" as const };
+            }
+            const bad = await call("submit_change_points", { decisions: [{ decision: "D1", files: ["nope.ts"] }] });
+            const ok = await call("submit_change_points", { decisions: [{ decision: "D1", files: ["refund.ts", "lines.ts"] }] });
+            await say(`归属 ${JSON.stringify({ bad: bad.isError ? text(bad) : "accepted", ok: ok.isError ? text(ok) : text(ok) })}`);
           } finally { await client.close(); }
           return { stopReason: "end_turn" as const };
         }
@@ -460,7 +509,8 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
           const asks = check === "业务";
           // The business check also maps the requirement to the code; a review of an item says it read the materials.
           const changePoints = asks ? [{ id: "C1", title: "只退未发货的行", status: "partial", requirement: "退款只按未发货的行计算", locations: [{ file: "refund.ts", start: 1, end: 3 }] }] : undefined;
-          await client.callTool({ name: "submit_review", arguments: { verdict: asks ? "changes_requested" : "approved", summary: `${check}评审${prompt.includes("## 所属事项") ? "（读了事项材料）" : ""}`, findings: asks ? [{ severity: "major", file: "refund.ts", line: 1, title: "已发货行不能退", suggestion: "过滤已发货行" }, { severity: "nit", title: "命名可以更具体" }] : [{ severity: "minor", title: "可以补一条测试" }], change_points: changePoints } });
+          const decision = prompt.includes("## 方案：") ? { decision: "D1" } : {};
+          await client.callTool({ name: "submit_review", arguments: { verdict: asks ? "changes_requested" : "approved", summary: `${check}评审${prompt.includes("## 所属事项") ? "（读了事项材料）" : ""}`, findings: asks ? [{ severity: "major", file: "refund.ts", line: 1, title: "已发货行不能退", suggestion: "过滤已发货行", ...decision }, { severity: "nit", title: "命名可以更具体" }] : [{ severity: "minor", title: "可以补一条测试" }], change_points: changePoints } });
           await say(`结论：${asks ? "需要修改" : "通过"}
 ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }

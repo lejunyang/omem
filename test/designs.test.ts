@@ -135,7 +135,7 @@ describe("design store", () => {
     expect(() => answerQuestion(app, d.id, "D9", "x")).toThrow(/D9/);
   });
 
-  it("finds designs by item and work, and says where decisions landed", () => {
+  it("finds designs by item and work, and says where decisions landed", async () => {
     const item = upsertItem(app, undefined, { title: "退款改造", spaceId: "shop" }, "user");
     const work = createRun(app, { kind: "code", spaceId: "shop", title: "交办：退款", input: { task: "改退款", repos: ["shop-api"] } });
     const d = createDesign(app, { spaceId: "shop", title: "退款", origin: "derived", itemId: item.id, repos: ["shop-api"] });
@@ -143,7 +143,7 @@ describe("design store", () => {
     const done = submitRevision(app, d.id, { decisions: [{ kind: "change", title: "只退已发货行", fields: { behavior: field("全退 → 只退已发货行") }, files: ["shop-api/order/refund.ts"] }], outside: ["shop-api/README.md", "notes.md"] });
     expect(designOfWork(app, work.id)!.id).toBe(d.id);
     expect(designsOfItem(app, item.id).map((x) => x.id)).toEqual([d.id]);
-    expect(designChanges(app, done)).toEqual({
+    expect(await designChanges(app, done)).toEqual({
       changes: [{ decision: "D1", tasks: [], commits: 0, files: [{ space: "shop-api", path: "order/refund.ts", add: 0, del: 0 }], findings: { open: 0, total: 0 } }],
       outside: [{ space: "shop-api", path: "README.md", add: 0, del: 0 }, { space: "shop-api", path: "notes.md", add: 0, del: 0 }],
     });
@@ -276,7 +276,9 @@ describe("design HTTP", async () => {
     const detail = (await call(`/api/designs/${d.id}`)).body;
     expect(Object.keys(detail).sort()).toEqual(["author", "body", "changes", "counts", "id", "item", "itemId", "origin", "outside", "reqs", "repos", "revision", "revisions", "sources", "spaceId", "status", "title", "updatedAt", "work", "workId"].sort());
     expect(detail).toMatchObject({ item: { id: item.id, title: "HTTP 退款" }, reqs: [], work: { rootId: work.id, title: "交办：HTTP 退款", branchReview: false }, revisions: [{ revision: 1, note: "", runId: null }], changes: [{ decision: "D1", tasks: [], commits: 0, files: [], findings: { open: 0, total: 0 } }], outside: [] });
-    expect((await call(`/api/designs/${d.id}/diff?decision=D1`)).status).toBe(404);
+    // Tied to a delegation that has not coded anything for it yet: an empty patch list, as task-diff gives.
+    expect((await call(`/api/designs/${d.id}/diff?decision=D1`)).body).toEqual({ patches: [] });
+    expect((await call(`/api/designs/${d.id}/diff?decision=D9`)).status).toBe(404);
 
     // A reader may look but not confirm.
     expect((await call(`/api/designs/${d.id}/decide`, { method: "POST", body: { action: "approve", answers: { D1: "按金额比例" } }, token })).status).toBe(403);

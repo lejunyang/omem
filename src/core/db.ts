@@ -1641,6 +1641,9 @@ export const migrations: readonly string[] = [
     run_id text, note text not null default '', at text not null,
     primary key (design_id, revision)
   );`,
+  // A review finding names the design's decision it is about (docs/v2/coding-plan.md §3); `decision`
+  // is the owner's fix / later / wontfix and stays as it is.
+  `alter table review_findings add column design_decision text;`,
 ];
 
 export type Db = DatabaseSync;

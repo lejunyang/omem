@@ -60,7 +60,7 @@ function workOf(item: { id: string; title: string }, rounds: RunRow[], open: num
     : ["queued", "running"].includes(last.status) ? (branchReview ? "reviewing" : "coding")
     : reviewing ? "reviewing"
     : verdict === "awaiting-peer" || verdict === "awaiting-peer-code" ? "peer"
-    : branchReview && last.status === "done" && verdict !== "awaiting-plan" && (verdict === "approved" || !open) ? "done"
+    : branchReview && last.status === "done" && verdict !== "awaiting-plan" && verdict !== "awaiting-design" && (verdict === "approved" || !open) ? "done"
     // Waiting on the assistant that started it, not on the owner.
     : verdict === "awaiting-assistant" ? "assistant"
     : "owner";

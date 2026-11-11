@@ -110,6 +110,10 @@ export type CodeInput = {
    */
   taskMode?: boolean;
   maxRounds?: number;
+  /** Whether to write a design before coding (designs/work.ts wantsDesign); default auto. */
+  design?: "auto" | "always" | "never";
+  /** A branch review: the design it is reviewed against (the design keeps only the latest review as its work). */
+  designId?: string;
   /** A task-driven later round: what the owner or the assistant said for it since the last one (code-steer.ts notesText). */
   roundNotes?: string;
 };
@@ -130,7 +134,7 @@ export type BranchReviewRequest = {
   fetch?: boolean;
   /** Spaces the reviewers may read besides the repositories (already checked against the caller's access). */
   readSpaces?: string[];
-} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "itemId" | "peerReviewer">;
+} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "itemId" | "peerReviewer" | "designId">;
 
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
 export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null, userId = OWNER) {
@@ -153,6 +157,7 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
       readSpaces: req.readSpaces?.length ? [...new Set(req.readSpaces)] : undefined,
       itemId: req.itemId,
       peerReviewer: req.peerReviewer,
+      designId: req.designId,
     } satisfies CodeInput,
     parentId: parentId ?? undefined,
     userId,
@@ -402,6 +407,22 @@ ${input.task}
     pre = await pc.runPreCheck(app, { run, task: `${input.task}${itemBrief}`, spaces, cwd, repos: repos.map((r, i) => ({ id: r.id, name: r.name, dir: workDirOf(worktrees[i]) })), signal: ctx.signal, event: ctx.event });
   }
   if (pre && !continueFrom) coderTask = `${coderTask}\n\n${pc.preCheckText(pre, "coder")}`;
+  // The design (designs/work.ts): written and confirmed before a new delegation's first round codes,
+  // when it is worth one; the round ends while it waits. Coding goes by an approved own design or
+  // someone else's taken as the baseline; without one the coder hands in a change description.
+  const dw = await import("../designs/work.ts");
+  if (!continueFrom && !retried && !ranBefore && !skipCoder && !gitOnly && !input.peerCoder && !input.branches && !input.syncResume) {
+    const stage = await dw.designStage(app, { run, task: [`${input.task}${itemBrief}`, pre ? pc.preCheckText(pre, "design") : ""].filter(Boolean).join("\n\n"), spaces, cwd, signal: ctx.signal, event: ctx.event, pre });
+    if (stage.wait) {
+      ctx.event("status", { phase: "design", text: "方案已交，等确认后再编码（这一轮先结束，不占并发）" });
+      return { verdict: "awaiting-design" };
+    }
+  }
+  const coding = !input.branches && !skipCoder && !input.peerCoder && !gitOnly;
+  const going = coding ? dw.goesBy(app, rootRunId) : null;
+  if (going && !continueFrom) coderTask = `${coderTask}\n\n${dw.designCoderText(app, going)}`;
+  // Without a design to go by, the coder describes what it changed at the end (submit_design).
+  const describes = coding && !going && dw.ensureDerived(app, getRun(app, rootRunId)).origin === "derived";
   if (input.peerCoder && !input.peerFinished && !skipCoder) {
     // The other device's Agent codes now; the run ends so it holds no slot meanwhile.
     ctx.event("status", { text: `工作区已准备好，等设备 ${input.peerCoder.caller} 的外部 Agent 编码（code_workspace，run_id=${run.id}）` });
@@ -542,7 +563,7 @@ ${input.task}
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
       role: "coder",
-      addTools: [...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests"],
+      addTools: [...(taskMode ? ["plan_tasks", "finish_task", "report_task", "ask_reviewer", ...(app.config.agents.autoAdvance.parallelCoders ? ["dispatch_tasks"] : [])] : []), "attach_artifact", "report_tests", ...(describes ? ["submit_design"] : [])],
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,
@@ -566,7 +587,7 @@ ${input.task}
     // …and the check before coding, which came with the first round's task.
     const checked = (await import("./pre-check.ts")).preCheckOf(app, rootRunId);
     const freshTask = first ? [
-      `# 原始任务\n\n${first}${checked ? `\n\n${(await import("./pre-check.ts")).preCheckText(checked, "coder")}` : ""}`,
+      `# 原始任务\n\n${first}${checked ? `\n\n${(await import("./pre-check.ts")).preCheckText(checked, "coder")}` : ""}${going ? `\n\n${dw.designCoderText(app, going)}` : ""}`,
       `# 之前各轮已经做的\n\n这是一个新会话。之前各轮的改动都在工作区里${commits ? `，工作分支上的提交：\n\n${fence("", commits)}` : ""}\n\n需要时用 git log / git diff 看具体改动，不要重做。${before ? `\n\n上一轮编码 Agent 的说明：\n\n${truncate(before, 4000)}` : ""}`,
       coderTask,
     ].join("\n\n") : coderTask;
@@ -1177,7 +1198,7 @@ export function discardCodeRun(app: App, runId: string) {
   releaseBranchRun(app, runId, { discard: true });
   removeWorktrees(app, runId);
   setRunOutput(app, runId, { discardedAt: new Date().toISOString() });
-  for (const id of workRoundIds(app, String(r.input.continueFrom ?? r.id))) cancelHostAsks(app, id, [...ROUND_ASKS, "code-sync", "work-deliver"]);
+  for (const id of workRoundIds(app, String(r.input.continueFrom ?? r.id))) cancelHostAsks(app, id, [...ROUND_ASKS, "code-sync", "work-deliver", "design-confirm"]);
 }
 
 /** Every round of a delegation or branch review, from its first run. */

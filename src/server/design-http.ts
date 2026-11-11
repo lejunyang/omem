@@ -49,7 +49,7 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
       : [];
     const workRow = d.workId ? one<{ id: string; title: string; branches: string | null }>(app.db, "select id, title, json_extract(input, '$.branches') branches from runs where id = ?", d.workId) : undefined;
     const work = workRow ? { rootId: workRow.id, title: workRow.title, branchReview: !!workRow.branches } : null;
-    const { changes, outside } = designChanges(app, shown);
+    const { changes, outside } = await designChanges(app, shown);
     return {
       ...designSummary(shown),
       revision: o.revision ?? d.revision,
@@ -61,7 +61,7 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
 
   server.get("/api/designs/:id/diff", async (req) => {
     const o = parse(z.object({ decision: z.string().min(1) }), req.query);
-    return designDiff(app, visible(req, (req.params as { id: string }).id), o.decision);
+    return await designDiff(app, visible(req, (req.params as { id: string }).id), o.decision);
   });
 
   server.post("/api/designs", async (req) => {

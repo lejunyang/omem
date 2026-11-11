@@ -185,6 +185,8 @@ export function settleCodeChain(app: App, runId: string) {
     const r = getRun(app, runId);
     const chain = (r.output.codeChain as CodeChain | undefined);
     if (!chain || chain.lastCodeRunId !== r.id || !["done", "failed", "cancelled"].includes(r.status)) return;
+    // The design waits to be confirmed (designs/work.ts): the confirmation is the next step, asked already; nothing to hand off.
+    if (r.status === "done" && r.output.verdict === "awaiting-design") return;
     const approved = r.status === "done" && r.output.verdict === "approved";
     // Coding is done and the review plan waits for the owner: no handoff yet, the plan ask is it.
     if (r.status === "done" && r.output.verdict === "awaiting-plan") {
@@ -335,7 +337,7 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   const r = getRun(app, runId);
   const chain = r.output.codeChain as CodeChain | undefined;
   const messageId = r.output.codeResultMessageId as string | undefined;
-  if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id || r.output.verdict === "awaiting-plan") return;
+  if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id || r.output.verdict === "awaiting-plan" || r.output.verdict === "awaiting-design") return;
   // Stopped on the owner's word: whoever stopped it already told them.
   if (r.output.stoppedByOwner) return;
   // An automatic next round is already queued: nothing to tell yet.

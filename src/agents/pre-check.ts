@@ -27,6 +27,10 @@ export const briefSchema = z.object({
   regressions: z.array(z.object({ text: z.string().min(1).max(400), how: z.string().max(400).optional(), reqs: z.array(z.string().max(80)).max(10).optional(), auto: z.boolean() })).max(40).optional()
     .describe("改完要回归的：auto=true 是有现成的自动化测试（how 写命令或用例），false 是要人看的（how 写步骤）"),
   questions: z.array(z.string().max(400)).max(10).optional().describe("查不清、需要本人或助手确认的"),
+  design: z.object({
+    needed: z.boolean().describe("true：编码前要先写方案交本人确认"),
+    why: z.string().max(400).describe("一句话：满足了哪一条，或为什么不用"),
+  }).optional().describe("要不要先写方案（docs/v2/coding-plan.md §3）：要改现有的分工或接口、有两种以上说得通且影响别的模块的做法、任务要求重构收敛统一，满足任一条就要"),
 });
 export type Brief = z.infer<typeof briefSchema>;
 export type PreCheck = Brief & { at: string; by: { profile: string; model?: string; effort?: string } | null };
@@ -50,9 +54,11 @@ const tail = (x: { where?: string[]; reqs?: string[]; refs?: string[] }) =>
  * The brief as a section of a task. `coder`: what to build into the tasks; `review`: what to check
  * against (was it kept working, were the old problems avoided, were the regressions run).
  */
-export function preCheckText(pc: PreCheck, mode: "coder" | "review"): string {
+export function preCheckText(pc: PreCheck, mode: "coder" | "review" | "design"): string {
   const parts = [
-    mode === "coder"
+    mode === "design"
+      ? "## 编码前的检查\n\n另一个 Agent 刚查过这次改动会碰到什么、这里以前出过什么问题。写方案时用上：要顾及的调用方和功能写进对应决定的影响和行为表，以前的问题别再犯；觉得哪条不对，写进事实或和要求不一致的地方。"
+      : mode === "coder"
       ? "## 编码前的检查\n\n开始编码前，另一个 Agent 查了这次改动会碰到什么、这里以前出过什么问题。拆修改项时用上：要顾及的写进相关项的完成标准（需要单独改的另列一项），以前的问题别再犯，回归清单里有自动化测试的，在对应的项做完后跑一遍、写进 finish_task 的说明。觉得哪条不对，在说明里写理由，不用照做。"
       : "## 编码前的检查\n\n编码前查出的影响面、以前的问题和回归清单（编码 Agent 拆修改项时拿到过）。核对改动有没有顾及这些、有没有重犯以前的问题、回归有没有做；这次实际改的超出这里的，再按你的角度看。",
     `### 概要\n\n${pc.summary}`,
@@ -61,6 +67,7 @@ export function preCheckText(pc: PreCheck, mode: "coder" | "review"): string {
     pc.history?.length ? `### 以前出过的问题\n\n${list(pc.history.map((x) => `${x.text}（${tail(x)}）`))}` : "",
     pc.regressions?.length ? `### 回归清单\n\n${list(pc.regressions.map((x) => `${x.auto ? "[自动]" : "[人工]"} ${x.text}${x.how ? `：${x.how}` : ""}${x.reqs?.length ? `（需求点：${x.reqs.map((r) => `req:${r}`).join("、")}）` : ""}`))}` : "",
     pc.questions?.length ? `### 没查清的\n\n${list(pc.questions)}` : "",
+    mode === "design" && pc.design?.why ? `### 为什么要先写方案\n\n${pc.design.why}` : "",
   ];
   return parts.filter(Boolean).join("\n\n");
 }
@@ -92,7 +99,7 @@ export async function runPreCheck(app: App, o: { run: Run; task: string; spaces:
       spaces: o.spaces,
       task: [
         "# 编码前检查",
-        "下面这次交办马上开始编码。你先查清改动会碰到什么、这里以前出过什么问题，用 submit_brief 交一份检查结果：编码 Agent 拆修改项时照着补上要顾及的点，评审时也拿它核对。",
+        "下面这次交办马上开始编码。你先查清改动会碰到什么、这里以前出过什么问题，用 submit_brief 交一份检查结果：编码 Agent 拆修改项时照着补上要顾及的点，评审时也拿它核对。也回答要不要先写方案（design）。",
         `## 交办的任务\n\n${o.task}`,
         `## 仓库\n\n${o.repos.map((r) => `- ${r.id}（${r.name}）：工作区 ${r.dir}（只读）`).join("\n")}\n\n查文件的历史用 code_history（space 写仓库 id）。`,
       ].join("\n\n"),

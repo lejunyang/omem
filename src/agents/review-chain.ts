@@ -20,6 +20,7 @@ import { readAgentSpec } from "./specs.ts";
 import { replyOf } from "./types.ts";
 import { workDirOf } from "./workspaces.ts";
 import { git } from "../core/git.ts";
+import { designDigest, designReviewText } from "../designs/work.ts";
 
 /**
  * One review round of a coding delegation (docs/v2/review.md §4): the planned checks run in their
@@ -129,6 +130,8 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const rt = await import("../items/req-tests.ts");
   const tests = branchReview ? [] : rt.testsOfWork(app, { workId: (await art.workOf(app, run.id)) ?? run.id });
   const shotPath = new Map(shots.map((a) => [a.id, art.artifactPath(app, a)]));
+  // The design the work goes by (designs/work.ts): findings name the decision they are about.
+  const designText = designReviewText(app, root);
   const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
     input.itemId ? materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
@@ -138,6 +141,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
     `## 检查结果\n\n${checkText}`,
     checked ? preCheckText(checked, "review") : "",
+    designText,
     tests.length ? `## 测试结果\n\n编码 Agent 用 report_tests 交的（每个测试取最近一次；是它自己报的，和检查结果、diff 对照着看）：\n\n${rt.testsText(app, tests, { artifactPath: (id) => shotPath.get(id) ?? null })}` : "",
     shots.length ? `## 截图、录屏和报告\n\n编码 Agent 和检查命令交的（T 编号是对应的修改项），文件在这台机器上，需要时打开看：\n\n${art.artifactsText(app, shots)}` : "",
     ignored ? `## 提交了被忽略的文件\n\n仓库的 .gitignore 忽略这些文件（生成代码、依赖、构建产物），改动却把它们加进了提交：\n\n${ignored}\n\n重新安装或生成时它们会被覆盖；除非任务要求入库，这是要改的问题。` : "",
@@ -167,7 +171,13 @@ const SPLIT_BRIEF = [
  * The business reviewer's role does it, reading what the checks read.
  */
 export async function splitChangePoints(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; revise?: boolean } = {}) {
-  const { run, input, cwd, spaces, indexed, reviewTask } = await reviewContext(app, codeRunId);
+  const { run, input, cwd, spaces, indexed, reviewTask, branchReview, root } = await reviewContext(app, codeRunId);
+  // A branch review goes by a design (designs/): its split puts the files under the decisions, or —
+  // with no design to hold the branch against — writes the change description. A delegation's tasks
+  // name their decisions themselves, so its split stays the requirement's change points.
+  const design = branchReview ? (await import("../designs/store.ts")).designForWork(app, root) : null;
+  if (design && design.origin !== "derived" && design.revision) return splitOntoDesign(app, run, rc, { cwd, spaces, indexed, reviewTask, execution: input.reviewExecution }, opts.note);
+  if (design?.origin === "derived") return describeBranch(app, run, design.id, rc, { cwd, spaces, indexed, reviewTask, execution: input.reviewExecution }, opts.note);
   // Reworking an earlier split: the points as they stand and what the owner wants changed.
   const before = opts.revise ? currentPoints(app, run) : [];
   const revise = [
@@ -192,6 +202,80 @@ export async function splitChangePoints(app: App, codeRunId: string, rc: RoundCo
   });
   const saved = (getRun(app, run.id).output as { changePoints?: { round: number } }).changePoints;
   if (saved?.round !== roundOf(run)) throw new Error("没有提交变更点");
+}
+
+type SplitContext = { cwd: string | undefined; spaces: string[]; indexed: string[]; reviewTask: string; execution?: import("./execution.ts").Execution };
+
+const DESIGN_SPLIT = [
+  "## 你这次只做拆分：把改动归到方案的决定上",
+  "这条分支照上面“方案”一节的方案做（那是方案作者的，不要改写它）。不评问题，只看 diff 里每个改到的文件是在实现哪个决定：",
+  "- 一个文件可以归到几个决定；只是顺带改动（格式化、生成的文件、锁文件）且说不上属于哪个决定的不归；",
+  "- 归不上任何决定的文件不用列，宿主把它们算作“方案之外的改动”；",
+  "- 路径照 diff 里的写（几个仓库时写成 仓库空间id/路径）。",
+  "读完方案和 diff 后调用一次 `submit_change_points`，只传 `decisions`（每项 decision 和 files），再用一两句话说明：哪些决定没有对应的改动、方案之外的改动是什么。",
+].join("\n");
+
+const DESCRIBE_SPLIT = [
+  "## 你这次只做拆分：写一份变更说明",
+  "这条分支没有可以对照的方案。不评问题，读完材料和 diff 后，把改动写成一份变更说明（`submit_design`），本人从它走到代码：",
+  "- 每个决定是这条分支做的一件事：`kind` 按它对现有代码做的事选（add 新增 / change 修改 / remove 删除 / refactor 重构），`title` 一句话写做法；",
+  "- 修改和新增写 `behavior` 的 brief（行为上的变化：原来怎样 → 现在怎样），删除写 `removes`，重构写 `structure`；其余栏目看得出来再写；",
+  "- `reqs` 写对应的需求点 id（任务里有“需求点”一节时照它的 id 抄），没有需求页时写需求说明里的那一句；",
+  "- `files` 写归到这个决定的文件（照 diff 里的路径，几个仓库时写成 仓库空间id/路径）；说不上属于哪件事的放进 `outside`；",
+  "- 通常几个决定就够，按业务分，不按文件分；不写意见（concerns）。",
+  "调用一次 `submit_design`，再用一两句话说明拆分的思路。",
+].join("\n");
+
+/** A branch review against a design: the split only says where the code landed (attributeBranch). */
+async function splitOntoDesign(app: App, run: Run, rc: RoundContext, c: SplitContext, note?: string) {
+  rc.event("status", { text: "把分支的改动归到方案的各个决定上" });
+  await runRole(app, {
+    role: "review-business",
+    reviewCheck: true,
+    spaceId: run.spaceId!,
+    spaces: c.spaces,
+    alsoRead: c.indexed,
+    task: [c.reviewTask, DESIGN_SPLIT, note?.trim() ? `## 本人这次的要求\n\n${note.trim()}` : ""].filter(Boolean).join("\n\n"),
+    runId: rc.runId,
+    cwd: c.cwd,
+    signal: rc.signal,
+    onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check: "split" }),
+    profileId: app.config.agents.roles["review-business"],
+    userId: runUser(app, run.id),
+    execution: c.execution,
+  });
+  const saved = (getRun(app, run.id).output as { designSplit?: { round: number } }).designSplit;
+  if (saved?.round !== roundOf(run)) throw new Error("没有把改动归到方案的决定上");
+}
+
+/** A branch review with no design to hold it against: the split is the change description. */
+async function describeBranch(app: App, run: Run, designId: string, rc: RoundContext, c: SplitContext, note?: string) {
+  const { getDesign } = await import("../designs/store.ts");
+  const { designMarkdown } = await import("../designs/render.ts");
+  const before = getDesign(app, designId);
+  rc.event("status", { text: before.revision ? "重新整理变更说明" : "写变更说明：把分支的改动按做的事分开" });
+  await runRole(app, {
+    role: "review-business",
+    reviewCheck: true,
+    addTools: ["submit_design"],
+    spaceId: run.spaceId!,
+    spaces: c.spaces,
+    alsoRead: c.indexed,
+    task: [
+      c.reviewTask,
+      DESCRIBE_SPLIT,
+      before.revision ? `## 之前的变更说明\n\n按本人的要求在它的基础上改，没提到的决定保留 id 和内容：\n\n${designMarkdown(app, before, { mode: "brief" })}` : "",
+      note?.trim() ? `## 本人这次的要求\n\n${note.trim()}` : "",
+    ].filter(Boolean).join("\n\n"),
+    runId: rc.runId,
+    cwd: c.cwd,
+    signal: rc.signal,
+    onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check: "split" }),
+    profileId: app.config.agents.roles["review-business"],
+    userId: runUser(app, run.id),
+    execution: c.execution,
+  });
+  if (getDesign(app, designId).revision <= before.revision) throw new Error("没有交变更说明");
 }
 
 /**
@@ -583,6 +667,7 @@ function reviewDigest(app: App, run: Run, round: number, lead: LeadResult, chang
   const where = (f: { file_path: string | null; line: number | null }) => (f.file_path ? ` — \`${f.file_path}${f.line ? `:${f.line}` : ""}\`` : "");
   const pts = currentPoints(app, run);
   const POINT: Record<string, string> = { done: "已实现", partial: "部分实现", missing: "没实现", extra: "需求外" };
+  const design = designDigestOf(app, run);
   return [
     lead.summary ? `**结论**：${truncate(lead.summary, 400)}` : "",
     change ? `**改动**：${change}` : "",
@@ -590,8 +675,12 @@ function reviewDigest(app: App, run: Run, round: number, lead: LeadResult, chang
     toFix.slice(0, 5).map((f, i) => `${i + 1}. [${SEVERITY_LABEL[f.severity as Severity]}] ${f.title}${where(f)}`).join("\n"),
     toFix.length > 5 ? `……另有 ${toFix.length - 5} 个` : "",
     pts.length ? `**需求拆分**：${pts.length} 个变更点（${Object.keys(POINT).map((s) => [s, pts.filter((p) => p.status === s).length] as const).filter(([, n]) => n).map(([s, n]) => `${POINT[s]} ${n}`).join("、")}）` : "",
+    design,
   ].filter(Boolean).join("\n");
 }
+
+/** The design's decisions for a closing card (designs/work.ts), or nothing. */
+const designDigestOf = (app: App, run: Run) => designDigest(app, String((run.input as { continueFrom?: string }).continueFrom ?? run.id));
 
 /** The findings a fix takes up without the owner picking: their own “改”, else the accepted and the serious open ones. */
 function fixCandidates(app: App, codeRunId: string, round: number) {

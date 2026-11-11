@@ -108,6 +108,20 @@ export function createRun(
   return getRun(app, id);
 }
 
+/**
+ * A finished run queued again to go on from where it stopped (a delegation's first round that ended
+ * waiting for its design to be confirmed, designs/work.ts): its output is kept, `output` patched in.
+ * False when it is not finished (another call got there first).
+ */
+export function requeueRun(app: App, id: string, output: Record<string, unknown> = {}): boolean {
+  const changed = run(app.db, "update runs set status = 'queued', started_at = null, finished_at = null, error = null where id = ? and status = 'done'", id).changes === 1;
+  if (!changed) return false;
+  if (Object.keys(output).length) setRunOutput(app, id, output);
+  app.emit({ type: "run", runId: id, status: "queued" });
+  queueMicrotask(() => kick(app));
+  return true;
+}
+
 /** The run still waiting in a lane (for merging new messages into it), if any. */
 export function queuedInLane(app: App, lane: string, kind: RunKind): Run | null {
   const r = one<Row>(app.db, "select * from runs where lane = ? and kind = ? and status = 'queued' order by created_at desc limit 1", lane, kind);

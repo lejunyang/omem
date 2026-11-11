@@ -102,6 +102,7 @@ function taskStatus(app: App, rootId: string, latest: ReturnType<typeof getRun>)
   const mine = listTasks(app, rootId).filter((t) => t.state === "assistant").length;
   const stage = String(latest.output.reviewStage ?? "");
   if (["queued", "running"].includes(latest.status)) return latest.status === "queued" ? "排队中" : stage === "verify" ? "逐项验证中" : stage === "arbitrate" ? "评审负责人裁决异议中" : stage === "plan" ? "评审负责人在定这次评审看什么" : ["checks", "lead"].includes(stage) ? "阶段评审中" : "编码中";
+  if (latest.output.verdict === "awaiting-design") return (latest.output.designWait as { by?: string } | undefined)?.by === "assistant" ? "方案写好了，助手在确认" : "方案写好了，等你确认（卡片在下面）";
   if (w.paused) return PAUSED[w.paused] ?? "已暂停";
   if (owner) return `等你决定 ${owner} 项（卡片在下面）${mine ? `，${mine} 项助手在处理` : ""}，其余照常推进`;
   if (mine) return `${mine} 项助手在处理（没有要你决定的）`;
@@ -139,6 +140,7 @@ export function snapshot(app: App, chain: CodeChain) {
   const approved = latest.status === "done" && latest.output.verdict === "approved";
   const stop = latest.output.reviewStop as StopReason | null | undefined;
   const status = reviewing ? "评审中"
+    : latest.output.verdict === "awaiting-design" ? "方案写好了，等确认后编码"
     : latest.output.verdict === "awaiting-plan" ? "编码完成，评审计划等你确认"
     : terminal && stop && !approved ? `停下来等你决定：${STOP_LABEL[stop]}`
     : terminal

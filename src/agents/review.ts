@@ -342,6 +342,8 @@ export const findingSchema = z.object({
   suggestion: z.string().max(4000).default(""),
   evidence: z.array(z.string().max(300)).max(20).default([]),
   confidence: z.enum(["high", "medium", "low"]).default("medium"),
+  /** The design's decision it is about (designs/), when the work goes by one; none: outside the design. */
+  decision: z.string().max(12).optional(),
 });
 export type Finding = z.infer<typeof findingSchema>;
 /**
@@ -398,7 +400,7 @@ export const inlineRefs = (...texts: (string | null | undefined)[]) =>
   texts.flatMap((t) => [...(t ?? "").matchAll(/(?<![\w/])(src|mem):([A-Za-z0-9_-]+)/g)].map((m) => `${m[1]}:${m[2]}`));
 
 export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
-export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null };
+export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; design_decision?: string | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null };
 /** The suggestion to act on: the owner's rewrite when there is one (review-fix.ts setFindingSuggestion). */
 export const suggestionOf = (f: Pick<FindingRow, "suggestion" | "owner_suggestion">) => f.owner_suggestion?.trim() || f.suggestion;
 
@@ -413,8 +415,8 @@ export function recordReview(app: App, r: { codeRunId: string; round: number; ch
     run(app.db, "insert into reviews(id, code_run_id, round, check_name, tier, profile_id, model, effort, verdict, summary, change_points, created_at) values(?,?,?,?,?,?,?,?,?,?,?,?)",
       id, r.codeRunId, r.round, r.check, r.tier ?? null, r.ai?.profile ?? null, r.ai?.model ?? null, r.ai?.effort ?? null, r.verdict, r.summary, r.changePoints?.length ? JSON.stringify(r.changePoints) : null, now());
     for (const f of r.findings) {
-      run(app.db, "insert into review_findings(review_id, severity, file_path, line, title, detail, suggestion, evidence, confidence) values(?,?,?,?,?,?,?,?,?)",
-        id, f.severity, f.file ?? null, f.line ?? null, f.title, f.detail, f.suggestion, JSON.stringify(f.evidence), f.confidence);
+      run(app.db, "insert into review_findings(review_id, severity, file_path, line, title, detail, suggestion, evidence, confidence, design_decision) values(?,?,?,?,?,?,?,?,?,?)",
+        id, f.severity, f.file ?? null, f.line ?? null, f.title, f.detail, f.suggestion, JSON.stringify(f.evidence), f.confidence, f.decision ?? null);
     }
   });
   return id;

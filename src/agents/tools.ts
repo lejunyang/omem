@@ -3648,6 +3648,8 @@ def({
     sync_only: z.boolean().optional().describe("这次只做 Git 同步（拉取、合并、变基、解决冲突），不再编码；结果的提交在应用时快进到目标分支"),
     pre_check: z.boolean().optional().describe("编码前检查（默认做：查改动会碰到什么、以前出过的问题、要回归的）。改文案、样式这类一眼看得清影响的小改动填 false"),
     parallel: z.boolean().optional().describe("本人明确要求在同一个分支上另开一次交办时才传 true；默认同一分支已有没应用的交办时拒绝，应续在那次交办上"),
+    design: z.enum(["auto", "always", "never"]).optional().describe("编码前要不要先写方案交本人确认：auto（默认，按仓库和设置，再看编码前检查的判断）；本人说“先出方案”传 always，“不用方案，直接改”传 never"),
+    design_id: z.string().optional().describe("以一份已有的方案为基线编码，不再写方案：本人确认过的自己的方案，或评估完的别人的方案（现在由 omem 来实现）"),
   }),
   handler: async (ctx, a) => {
     // From another device the caller codes: this machine only prepares the worktree (peer-code.ts).
@@ -3672,15 +3674,24 @@ def({
       const open = openDelegationOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER);
       if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办 ${open.id}（${open.title}，${open.status}）。新的要求续在它上面：进行中用 message_code_run 补充，结束后用 continue_code_run；本人明确要另开一次才传 parallel: true`);
     }
+    // A design to code from: the owner's, approved, or someone else's, assessed (designs/work.ts).
+    const baseline = a.design_id ? await readableDesign(ctx, a.design_id) : null;
+    if (baseline) {
+      if (ctx.peer) throw new HttpError(400, "设备的外部 Agent 交办的编码由它自己做，不能带方案");
+      if (!((baseline.origin === "own" && baseline.status === "approved") || (baseline.origin === "external" && baseline.status === "assessed")))
+        throw new HttpError(400, `方案 ${baseline.id} 不能作为基线：要本人确认过的自己的方案，或评估完的别人的方案（现在：${baseline.origin}，${baseline.status}）`);
+      if (baseline.origin === "own" && baseline.workId) throw new HttpError(409, `方案 ${baseline.id} 已经是交办 ${baseline.workId} 的基线`);
+    }
     const r = createRun(ctx.app, {
       kind: "code",
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, execution, reviewExecution, ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
     if (itemId) (await import("../items/materials.ts")).linkRunToItem(ctx.app, r, itemId, ctx.userId ?? OWNER);
+    if (baseline) (await import("../designs/store.ts")).setDesignWork(ctx.app, baseline.id, r.id);
     // Pushed and confirmed before, more to do now: what the earlier delegations there left carries on.
     let carried = "";
     if (r.input.taskMode && onBranch) {
@@ -3694,7 +3705,8 @@ def({
     const { codeChainFor } = await import("./code-chain.ts");
     const chain = codeChainFor(ctx.app, r);
     const tasks = !!r.input.taskMode;
-    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。${carried}`;
+    const designNote = baseline ? `照方案 ${baseline.id}《${baseline.title}》实现。` : a.design === "always" ? "编码前先写方案，写好后等本人确认。" : a.design === "never" ? "不写方案，直接编码。" : "";
+    return `已交办，运行 ${r.id}（${ids.join("、")}），${tasks ? "按修改项推进：编码 Agent 拆分后逐项做，评审问题自动变成修改项，只有业务或功能上的取舍才问本人" : "共一个会话，评审要求修改会自动续轮"}。${designNote}完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。${carried}`;
   },
 });
 
@@ -3732,6 +3744,7 @@ def({
     review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择（设备的外部 Agent 发起时不用填：评审由它自己做）"),
     read_spaces: z.array(z.string()).optional().describe("评审者还要读的空间：需求文档所在的空间、迁移需求的源仓库、相关案例所在的项目空间"),
     item_id: z.string().optional().describe("这次评审所属的事项（需求）：评审者会读到事项的材料，评审和分支记到事项上，结论写进事项时间线。大型需求先用 upsert_item 建事项、挂好材料再评审"),
+    design_id: z.string().optional().describe("对照的方案（别人的技术方案评估后的、或自己的）：拆分把分支改到的文件归到各个决定上，评审按决定看。不传时取事项上最新的方案；都没有就由拆分写一份变更说明"),
   }),
   handler: async (ctx, a) => {
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
@@ -3741,16 +3754,26 @@ def({
     const readSpaces = (a.read_spaces ?? []).map((r) => space(ctx, r));
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => space(ctx, r)))];
+    const itemId = a.item_id ? itemFor(ctx, a.item_id) : undefined;
+    // The design the branch is held against: the one named, else the item's latest that says how it should be done.
+    const ds = await import("../designs/store.ts");
+    let against = a.design_id ? await readableDesign(ctx, a.design_id) : null;
+    if (against && against.origin === "derived") throw new HttpError(400, `方案 ${against.id} 是变更说明，不能拿来对照；对照别人的方案或自己的方案`);
+    if (against && !against.revision) throw new HttpError(409, `方案 ${against.id} 还没有内容（评估或写方案还没完成）`);
+    if (!against && itemId) against = ds.designsOfItem(ctx.app, itemId).find((d) => d.origin !== "derived" && d.revision > 0 && canRead(ctx, d.spaceId)) ?? null;
     const { createBranchReview } = await import("./code.ts");
     const r = createBranchReview(ctx.app, {
       space: a.space ? space(ctx, a.space) : undefined, repos: ids, branch: a.branch, branches: a.branches, base: a.base, task: a.task, title: a.title, fetch: a.fetch,
-      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution, readSpaces, itemId: a.item_id ? itemFor(ctx, a.item_id) : undefined, peerReviewer,
+      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution, readSpaces, itemId, peerReviewer, designId: against?.id,
     }, ctx.runId, ctx.userId ?? OWNER);
+    // Someone else's design may be reviewed against several branches in turn: the latest review is its work.
+    if (against) ds.setDesignWork(ctx.app, against.id, r.id);
+    else ds.createDesign(ctx.app, { spaceId: r.spaceId!, title: r.title, origin: "derived", itemId: itemId ?? null, repos: ids, workId: r.id, userId: ctx.userId ?? OWNER });
     if (peerReviewer) return `已开始准备评审，运行 ${r.id}：这台机器检出分支、取改动、建索引，评审项留给你。用 review_task（run_id=${r.id}）取材料和各评审项的要求，评审后用 submit_review 逐项提交。`;
     // The chain carries the result back to this conversation (and the Feishu progress card).
     const { codeChainFor } = await import("./code-chain.ts");
     codeChainFor(ctx.app, r);
-    return `已开始评审，运行 ${r.id}（${ids.map((id) => `${id}:${a.branches?.[id] ?? a.branch}`).join("、")}）。评审完成后会通知；进度用 read_run 查看。`;
+    return `已开始评审，运行 ${r.id}（${ids.map((id) => `${id}:${a.branches?.[id] ?? a.branch}`).join("、")}）${against ? `，对照方案 ${against.id}《${against.title}》` : ""}。评审完成后会通知；进度用 read_run 查看。`;
   },
 });
 
@@ -3820,6 +3843,12 @@ def({
     if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
     for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
+    // Waiting for its design to be confirmed: going on means coding without waiting (designs/work.ts).
+    if (last.output.verdict === "awaiting-design") {
+      const { skipDesign } = await import("../designs/work.ts");
+      skipDesign(ctx.app, last.id, ctx.userId ?? OWNER, a.task);
+      return `交办 ${last.id} 不再等方案确认，现在开始编码（方案保留着，只作参考，不再是这次交办的基线；这段话交给编码 Agent）。要按方案改就别用这个，用 settle_design 转达本人的确认或意见。`;
+    }
     // A failed round may have no session of its own: resume the latest one that has.
     // A task-driven delegation: a new change is a task, coded with a fresh budget; words about how to go
     // on are the next round's instructions.
@@ -3900,6 +3929,10 @@ def({
     }
     const { addCodeNote } = await import("./code-steer.ts");
     const r = addCodeNote(ctx.app, a.run_id, a.text, ctx.userId ?? OWNER);
+    if (getRun(ctx.app, r.runId).output.verdict === "awaiting-design") {
+      const wait = getRun(ctx.app, r.runId).output.designWait as { designId?: string } | undefined;
+      return `交办在等方案${wait?.designId ? ` ${wait.designId}` : ""} 确认，还没开始编码：这段补充记下了，开始编码时交给编码 Agent。是对方案的意见就用 settle_design（comment）转达，写方案的会话会改一版；本人要不等方案直接改，用 continue_code_run。`;
+    }
     return r.stage === "coding" ? `已交给正在编码的 ${r.runId}：它下一次调用 omem 工具时收到，最晚在这一轮检查之前。`
       : r.stage === "queued" ? `${r.runId} 还在排队，开始编码时一起交给它。`
       : r.stage === "review" ? `${r.runId} 已经写完代码、在评审中：补充记下了，随下一轮的任务交给编码 Agent。评审结束后要马上改就用 continue_code_run。`
@@ -4503,6 +4536,7 @@ def({
       suggestion: z.string().max(4000).optional(),
       evidence: z.array(z.string().max(300)).max(20).optional().describe("正文里没引用到的补充依据：src:<原件id>#L起-L止、mem:<id>，或 文件:行"),
       confidence: z.enum(["high", "medium", "low"]).optional(),
+      decision: z.string().max(12).optional().describe("任务里有“方案”一节时：这条问题属于哪个决定（D1…）；对不上任何决定和需求点的（方案之外的改动）不填"),
     })).max(100),
     change_points: z.array(z.object({
       id: z.string().max(12).describe("编号：C1、C2…"),
@@ -4526,6 +4560,13 @@ def({
     if (!r || !check || !(plan?.checks.includes(check) || plan?.looks?.includes(check))) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
     const { changePointSchema, findingSchema, recordReview } = await import("./review.ts");
     const findings = a.findings.map((f) => findingSchema.parse(f));
+    const named = [...new Set(findings.map((f) => f.decision).filter((x): x is string => !!x))];
+    if (named.length) {
+      const { workRootOf } = await import("./code-tasks.ts");
+      const d = (await import("../designs/store.ts")).designForWork(ctx.app, workRootOf(ctx.app, r.id));
+      const bad = named.filter((id) => !d?.body.decisions.some((x) => x.id === id));
+      if (bad.length) throw new HttpError(400, d ? `方案 ${d.id} 没有决定 ${bad.join("、")}；有的是 ${d.body.decisions.map((x) => x.id).join("、")}` : "这次评审没有方案，decision 不用填");
+    }
     const changePoints = (a.change_points ?? []).map((c) => changePointSchema.parse(c));
     const { deadRefs, inlineRefs, pointTreeProblem } = await import("./review.ts");
     const badTree = pointTreeProblem(changePoints);
@@ -4544,8 +4585,12 @@ def({
 
 def({
   name: "submit_change_points",
-  description: "提交需求拆分（只在交办编码 / 分支评审的评审会话里可用）：需求拆成的变更点和各自的实现位置，网页“变更”视图按它把需求和代码对上。再次提交覆盖这一轮之前的。",
+  description: "提交需求拆分（只在交办编码 / 分支评审的评审会话里可用）。分支评审对照方案时：传 decisions，把这条分支改到的文件归到方案的各个决定上（不改方案正文，归不上的文件自动算方案之外）。其他时候传 change_points：需求拆成的变更点和各自的实现位置，网页“变更”视图按它把需求和代码对上。再次提交覆盖这一轮之前的。",
   schema: z.object({
+    decisions: z.array(z.object({
+      decision: z.string().max(12).describe("决定 id（D1…）"),
+      files: z.array(z.string().min(1).max(500)).max(200).describe("归到这个决定的文件：这次 diff 里的路径（几个仓库时写成 仓库空间id/路径）"),
+    })).max(60).optional().describe("对照方案的分支评审：每个决定落在哪些文件"),
     change_points: z.array(z.object({
       id: z.string().max(12).describe("编号：C1、C2…；分组节点也可以用 M1、P1"),
       parent: z.string().max(12).optional().describe("上一级变更点的编号：需求涉及几个页面或模块时，先建页面 / 模块节点，再把变更点挂在下面，最多 4 层；平铺就不填"),
@@ -4556,7 +4601,7 @@ def({
       refs: z.array(z.string().max(300)).max(20).optional(),
       locations: z.array(z.object({ file: z.string().max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional(),
       req: z.string().max(40).optional().describe("事项有需求点时：这个变更点对应的需求点 id（q…）。每个需求点都要有一个变更点；需求外的改动不填"),
-    })).min(1).max(100),
+    })).min(1).max(100).optional(),
     run_id: z.string().optional().describe("只在设备的外部 Agent 评审时填：review_branch 返回的运行 id"),
   }),
   handler: async (ctx, a) => {
@@ -4564,6 +4609,11 @@ def({
     if (ctx.peer && !a.run_id) throw new HttpError(400, "设备的外部 Agent 提交需求拆分要带 run_id");
     const r = ctx.peer ? acceptPeerSubmission(ctx.app, a.run_id!, ctx.peer.caller) : codeRunOf(ctx.app, ctx.runId);
     if (!r) throw new HttpError(400, "submit_change_points 只能在交办编码或分支评审的评审里使用");
+    if (a.decisions) {
+      const { attributeBranch } = await import("../designs/changes.ts");
+      return attributeBranch(ctx.app, r, a.decisions);
+    }
+    if (!a.change_points?.length) throw new HttpError(400, "传 change_points（需求拆分），或对照方案时传 decisions");
     const { changePointSchema, deadRefs, pointTreeProblem } = await import("./review.ts");
     const points = a.change_points.map((c) => changePointSchema.parse(c));
     const bad = pointTreeProblem(points);
@@ -4599,12 +4649,31 @@ def({
     change_request: z.string().max(12000).optional().describe("revise 时交给编码 Agent 的修改单：只列接受的问题，写清位置、问题、怎么改"),
     rerun: z.array(z.string()).optional().describe("revise 时下一轮需要重新评审的评审项名"),
     escalation: z.object({ summary: z.string().min(1).max(4000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("escalate 时：分歧点、各方依据、建议，以及给本人选的做法"),
+    decisions: z.array(z.object({
+      id: z.string().max(12).describe("决定 id（D1…）"),
+      done: z.enum(["yes", "partly", "no"]).describe("代码做了没有：yes 做了 / partly 部分 / no 没做"),
+      deviation: z.string().max(2000).optional().describe("实际做法和方案不一样的地方；一样就不填"),
+      concerns: z.array(z.object({ id: z.string().max(12).describe("意见 id（C…）"), state: z.enum(["open", "resolved", "dropped"]), note: z.string().max(1000).optional() })).max(30).optional()
+        .describe("方案评估时的意见现在是否还成立：resolved 代码解决了 / dropped 不再成立 / open 仍然存在"),
+    })).max(60).optional().describe("任务里有“方案”一节时：逐个决定写代码做了没有、和方案的偏差、评估时的意见现在的状态"),
   }),
   handler: async (ctx, a) => {
     const { codeRunOf } = await import("./review-chain.ts");
     const r = codeRunOf(ctx.app, ctx.runId);
     const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
     if (!r || ctx.role !== "review-lead" || !plan) throw new HttpError(400, "rule_review 只能在交办编码的评审负责人运行里使用");
+    // Checked before anything is recorded: the decisions and concerns it names are the design's.
+    let design: import("../designs/store.ts").Design | null = null;
+    if (a.decisions?.length) {
+      const { workRootOf } = await import("./code-tasks.ts");
+      design = (await import("../designs/store.ts")).designForWork(ctx.app, workRootOf(ctx.app, r.id));
+      if (!design || design.origin === "derived") throw new HttpError(400, "这次评审没有对照方案，decisions 不用填");
+      const ids = new Set(design.body.decisions.map((x) => x.id));
+      const concerns = new Set([...(design.body.concerns ?? []), ...design.body.decisions.flatMap((x) => x.concerns ?? [])].map((c) => c.id));
+      const bad = a.decisions.filter((x) => !ids.has(x.id)).map((x) => x.id);
+      const badC = a.decisions.flatMap((x) => (x.concerns ?? []).filter((c) => !concerns.has(c.id)).map((c) => c.id));
+      if (bad.length || badC.length) throw new HttpError(400, `方案 ${design.id} 没有${bad.length ? `决定 ${bad.join("、")}` : ""}${bad.length && badC.length ? "，也没有" : ""}${badC.length ? `意见 ${badC.join("、")}` : ""}`);
+    }
     const round = (r.input as { round?: number }).round ?? 1;
     const { applyRulings, reviewChecks } = await import("./review.ts");
     for (const x of a.rulings) if (x.decision === "reject" && !x.note?.trim()) throw new HttpError(400, `驳回问题 ${x.id} 要写理由`);
@@ -4642,7 +4711,14 @@ def({
     for (const x of rulings) if (x.task) t.joinTask(ctx.app, rootId!, x.id, x.task);
     const owner = Object.fromEntries(a.rulings.filter((x) => x.owner).map((x) => [String(x.id), x.owner!]));
     setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}), ...(Object.keys(follows).length ? { follows } : {}) } });
-    return `已记录第 ${round} 轮裁决（${a.verdict}，${a.rulings.length} 条）。`;
+    if (design && a.decisions?.length) {
+      const ds = await import("../designs/store.ts");
+      for (const x of a.decisions) {
+        ds.setDecisionAfter(ctx.app, design.id, x.id, { done: x.done, deviation: x.deviation, by: "review-lead" });
+        for (const c of x.concerns ?? []) ds.setConcernState(ctx.app, design.id, c.id, { state: c.state, note: c.note, by: "review-lead" });
+      }
+    }
+    return `已记录第 ${round} 轮裁决（${a.verdict}，${a.rulings.length} 条）${a.decisions?.length ? `，方案 ${design!.id} 的 ${a.decisions.length} 个决定` : ""}。`;
   },
 });
 
@@ -4670,6 +4746,7 @@ def({
       title: z.string().min(1).max(200).describe("一句话：这一项要做成什么"),
       done_when: z.string().max(2000).optional().describe("完成标准：怎样算做完（可核对）"),
       files: z.array(z.string().max(500)).max(30).optional().describe("预计改的文件"),
+      decision: z.string().max(12).optional().describe("交办照方案实现时：这一项属于方案的哪个决定（D1…）；不属于任何决定的不填"),
     })).min(1).max(60),
     rounds: z.number().int().min(1).max(50).optional().describe("估计自动推进几轮能做完（含评审后的修改）；本人给了预算时不用填"),
   }),
@@ -4677,8 +4754,16 @@ def({
     const { run: r, rootId, helper } = await taskRound(ctx, "plan_tasks");
     if (helper) throw new HttpError(400, "编码助手只做分给它的项；要加修改项告诉编码负责人（在说明里写）");
     const t = await import("./code-tasks.ts");
+    const named = a.tasks.filter((x) => x.decision);
+    if (named.length) {
+      const { goesBy } = await import("../designs/work.ts");
+      const d = goesBy(ctx.app, rootId);
+      if (!d) throw new HttpError(400, "这次交办没有照方案实现，decision 不用填");
+      const bad = [...new Set(named.map((x) => x.decision!).filter((id) => !d.body.decisions.some((y) => y.id === id)))];
+      if (bad.length) throw new HttpError(400, `方案 ${d.id} 没有决定 ${bad.join("、")}；有的是 ${d.body.decisions.map((y) => y.id).join("、")}`);
+    }
     const made = a.tasks.map((x) => {
-      const task = t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", state: "coding", origin: x.files?.length ? { files: x.files } : {} }, "coder");
+      const task = t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", state: "coding", origin: { ...(x.files?.length ? { files: x.files } : {}), ...(x.decision ? { decision: x.decision } : {}) } }, "coder");
       return t.updateTask(ctx.app, rootId, task.seq, { coderRun: r.id });
     });
     const w = a.rounds ? t.estimateBudget(ctx.app, rootId, a.rounds) : t.workState(ctx.app, rootId);
@@ -4692,6 +4777,8 @@ def({
   schema: z.object({
     task: z.union([z.string(), z.number()]).describe("修改项编号，如 T3"),
     summary: z.string().min(1).max(4000).describe("做了什么、改了哪些文件、怎么验证的（命令和结果）"),
+    deviation: z.string().max(2000).optional().describe("照方案实现时：实际做法和方案不一样的地方和原因；一样就不填"),
+    simpler: z.string().max(2000).optional().describe("照方案实现时：做完以后看，有没有更简单或可以统一的做法没做"),
   }),
   handler: async (ctx, a) => {
     const { rootId, actor, worktrees, helper } = await taskRound(ctx, "finish_task");
@@ -4712,7 +4799,18 @@ def({
     // The round's own tasks are verified as they are finished, while it codes on (code-overlap.ts).
     const started = !helper && task.verifier ? (await import("./code-overlap.ts")).taskFinished(ctx.app, actor, seq) : false;
     const left = t.listTasks(ctx.app, rootId).filter((x) => x.coderRun === actor && x.state === "coding");
-    return `已记下 ${t.taskLabel(seq)}${committed.length ? "，工作区里没提交的改动已作为这一项提交" : ""}${taken.made.length || taken.skipped.length ? `；${art.takenText(taken)}` : ""}${task.verifier ? `，交给 ${task.verifier} 验证${started ? "（已经开始，你接着做别的项；没改好会在这一轮告诉你）" : ""}` : ""}。${left.length ? `这一轮还有：${left.map((x) => t.taskLabel(x.seq)).join("、")}` : "这一轮的项都做完了，写最后的说明。"}`;
+    // What departed from the design, or could be simpler, goes onto the decision the task is under.
+    let after = "";
+    if (a.deviation?.trim() || a.simpler?.trim()) {
+      const { goesBy } = await import("../designs/work.ts");
+      const d = goesBy(ctx.app, rootId);
+      if (d && task.origin.decision && d.body.decisions.some((x) => x.id === task.origin.decision)) {
+        (await import("../designs/store.ts")).setDecisionAfter(ctx.app, d.id, task.origin.decision, { deviation: a.deviation, simpler: a.simpler, by: "coder", label: t.taskLabel(seq), append: true });
+        after = `；${a.deviation?.trim() ? "偏差" : ""}${a.deviation?.trim() && a.simpler?.trim() ? "和" : ""}${a.simpler?.trim() ? "更简单的做法" : ""}记在 ${task.origin.decision} 上`;
+      } else after = "；这一项没有挂在方案的决定上，偏差只留在这一项的说明里";
+      t.updateTask(ctx.app, rootId, seq, {}, { by: "coder", kind: "coder", text: [a.deviation?.trim() ? `偏差：${a.deviation.trim()}` : "", a.simpler?.trim() ? `更简单的做法：${a.simpler.trim()}` : ""].filter(Boolean).join("\n") });
+    }
+    return `已记下 ${t.taskLabel(seq)}${after}${committed.length ? "，工作区里没提交的改动已作为这一项提交" : ""}${taken.made.length || taken.skipped.length ? `；${art.takenText(taken)}` : ""}${task.verifier ? `，交给 ${task.verifier} 验证${started ? "（已经开始，你接着做别的项；没改好会在这一轮告诉你）" : ""}` : ""}。${left.length ? `这一轮还有：${left.map((x) => t.taskLabel(x.seq)).join("、")}` : "这一轮的项都做完了，写最后的说明。"}`;
   },
 });
 
@@ -4844,7 +4942,7 @@ def({
     const { workRootOf } = await import("./code-tasks.ts");
     const pc = await import("./pre-check.ts");
     pc.savePreCheck(ctx.app, workRootOf(ctx.app, me.id), a);
-    return `已记下：${pc.preCheckLine(a)}。编码 Agent 拆修改项时会拿到它。`;
+    return `已记下：${pc.preCheckLine(a)}${a.design ? `；${a.design.needed ? "要" : "不用"}先写方案` : ""}。编码 Agent 拆修改项时会拿到它。`;
   },
 });
 
@@ -4878,11 +4976,23 @@ def({
   schema: designBodySchema.extend({ note: z.string().max(1000).optional().describe("这一版改了什么（第一版不用写）") }),
   handler: async (ctx, a) => {
     const me = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
-    const designId = me ? (me.input as { designId?: string }).designId : undefined;
+    const s = await import("../designs/store.ts");
+    // Bound by the run (an assessment), else the design of the delegation or branch review it works for.
+    let designId = me ? (me.input as { designId?: string }).designId : undefined;
+    const { codeRunOf } = await import("./review-chain.ts");
+    const code = me && (me.kind === "code" || me.kind === "review") ? codeRunOf(ctx.app, me.id) : null;
+    if (code) {
+      const { workRootOf } = await import("./code-tasks.ts");
+      designId = s.designForWork(ctx.app, workRootOf(ctx.app, code.id))?.id ?? designId;
+    }
     if (!me || typeof designId !== "string")
       throw new HttpError(400, "这次运行没有绑定方案：submit_design 只在写方案、评估别人的方案、编码后交变更说明或分支评审拆分的运行里用");
+    // Only the designer writes an own or someone else's design; the coder and the split write change descriptions.
+    const target = s.getDesign(ctx.app, designId);
+    if (target.origin !== "derived" && ctx.role !== "designer")
+      throw new HttpError(400, `这次${code && !(code.input as { branches?: unknown }).branches ? "交办照方案" : "评审对照方案"} ${target.id} 做，不交变更说明：${code && (code.input as { branches?: unknown }).branches ? "拆分用 submit_change_points 的 decisions 把文件归到决定上" : "偏差和更简单的做法写在 finish_task 里"}`);
     const { note, ...body } = a;
-    const { submitRevision } = await import("../designs/store.ts");
+    const { submitRevision } = s;
     const { designLine } = await import("../designs/render.ts");
     const d = submitRevision(ctx.app, designId, body, { runId: me.id, note });
     return `已收下方案 ${d.id} 第 ${d.revision} 版：${designLine(d)}。决定 ${d.body.decisions.map((x) => x.id).join("、")}${(d.body.concerns?.length || d.body.decisions.some((x) => x.concerns?.length)) ? "；意见编号见 read_design" : ""}。`;

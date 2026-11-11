@@ -3,7 +3,7 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { json } from "../core/util.ts";
 import { reqStatuses } from "../items/requirements.ts";
-import { designCounts, designOfWork, type DesignCounts } from "../designs/store.ts";
+import { designCounts, designForWork, type DesignCounts } from "../designs/store.ts";
 import type { DesignOrigin, DesignStatus } from "../designs/types.ts";
 
 /**
@@ -69,7 +69,7 @@ type RootRow = {
   worktrees: string | null; applied_at: string | null; discarded_at: string | null; pushed: string | null; paused: string | null; until: number | null;
   settled: string | null; superseded: string | null;
 };
-type RoundRow = { id: string; root: string; status: string; title: string; round: number | null; verdict: string | null; applied_at: string | null; discarded_at: string | null; stopped: string | null; stage: string | null; created_at: string; finished_at: string | null };
+type RoundRow = { id: string; root: string; status: string; title: string; round: number | null; verdict: string | null; applied_at: string | null; discarded_at: string | null; stopped: string | null; stage: string | null; design_by: string | null; created_at: string; finished_at: string | null };
 
 const ROOT_COLS = `id, space_id, user_id, status, title, created_at,
   substr(json_extract(input, '$.task'), 1, 4000) task, json_extract(input, '$.itemId') item_id, json_extract(input, '$.repos') repos,
@@ -132,7 +132,7 @@ export function codeWork(app: App, runId: string, visibleTo?: WorkFilter["visibl
   const [work] = buildWorks(app, [root]);
   const roundList = roundsOf(app, [root.id]).map((x, i) => ({ id: x.id, round: x.round ?? i + 1, status: x.status, title: x.title, verdict: x.verdict, createdAt: x.created_at, finishedAt: x.finished_at }));
   const artifacts = all<{ n: number }>(app.db, "select count(*) n from run_artifacts where work_id = ?", root.id)[0]?.n ?? 0;
-  const d = designOfWork(app, root.id);
+  const d = designForWork(app, root.id);
   const design = d ? { id: d.id, origin: d.origin, status: d.status, revision: d.revision, counts: designCounts(d.body) } : null;
   return { ...work, task: root.task ?? "", roundList, points: featurePoints(app, work.reqs.map((n) => n.id)), artifacts, preCheck: preCheckOf(app, root.id), design };
 }
@@ -142,7 +142,7 @@ function roundsOf(app: App, roots: string[]): RoundRow[] {
   const marks = roots.map(() => "?").join(",");
   return all<RoundRow>(app.db, `select id, coalesce(json_extract(input, '$.continueFrom'), id) root, status, title, json_extract(input, '$.round') round,
       json_extract(output, '$.verdict') verdict, json_extract(output, '$.appliedAt') applied_at, json_extract(output, '$.discardedAt') discarded_at,
-      json_extract(output, '$.stoppedByOwner') stopped, json_extract(output, '$.reviewStage') stage, created_at, finished_at
+      json_extract(output, '$.stoppedByOwner') stopped, json_extract(output, '$.reviewStage') stage, json_extract(output, '$.designWait.by') design_by, created_at, finished_at
     from runs where kind = 'code' and (id in (${marks}) or json_extract(input, '$.continueFrom') in (${marks})) order by created_at`, ...roots, ...roots);
 }
 
@@ -245,7 +245,7 @@ function describe(w: CodeWork, root: RootRow, list: RoundRow[], reviewing: boole
   }
   if (discarded) return set("ended", w.branchReview ? "已清理" : "已丢弃", "", "ended", `${round}后丢弃`, "已结束。");
   if (last.status === "queued" || last.status === "running") {
-    const text = last.status === "queued" ? "排队中" : w.branchReview ? "评审中" : last.stage === "verify" ? "逐项验证中" : ["plan", "checks", "lead"].includes(last.stage ?? "") ? "阶段评审中" : "编码中";
+    const text = last.status === "queued" ? "排队中" : w.branchReview ? "评审中" : last.stage === "design" ? "写方案中" : last.stage === "verify" ? "逐项验证中" : ["plan", "checks", "lead"].includes(last.stage ?? "") ? "阶段评审中" : "编码中";
     return set("running", text, "accent", "active", `${round}${what ? `：${what}` : ""}`, w.branchReview ? "评审完成后在这里看结论。" : "编码 Agent 在做这一轮；有补充可以直接写给它，或者停下这一轮。", w.branchReview ? [] : ["stop"]);
   }
   if (reviewing) return set("reviewing", "评审中", "accent", "active", `${round}的改动在评审`, "评审完成后自动接着做。");
@@ -280,6 +280,9 @@ function describe(w: CodeWork, root: RootRow, list: RoundRow[], reviewing: boole
       : waiting("done", "完成，等你应用", "ok", "owner", "评审通过", "应用到原分支（写成未提交的修改），目标分支有新提交时先移到它的最新提交。", ["apply", "move", "discard"]);
   }
   if (last.verdict === "changes-requested") return waiting("findings", w.open ? `${w.open} 个问题待定` : "等你决定要改的问题", "warn", "owner", "评审要求修改", "在“概览”里决定要改的问题，开始修改后接着做。", w.branchReview ? ["clean"] : ["discard"]);
+  if (last.verdict === "awaiting-design") return last.design_by === "assistant"
+    ? waiting("design", "助手在确认方案", "accent", "assistant", "方案写好了，设置为由发起交办的助手确认", "助手确认后开始编码；你也可以在“方案”里自己确认。")
+    : waiting("design", "等你确认方案", "warn", "owner", "方案写好了，等你确认", "在“方案”里通过、提意见或换个思路；不要方案就说“直接改”，按现在的样子开始编码。", ["discard"]);
   if (last.verdict === "awaiting-plan") return waiting("plan", "确认评审计划", "warn", "owner", "编码完成，评审计划等你确认", "在“概览”里确认或调整评审计划。");
   if (last.verdict === "no-changes") return waiting("no-changes", "没有改动", "warn", "owner", `${round}没有产生改动`, "补充要求接着做，或者丢弃。", ["discard"]);
   set("stalled", "停住了", "", "idle", `${round}结束后没有接着排`, "重试最后一轮接着做，或者丢弃。", ["retry", "discard"]);

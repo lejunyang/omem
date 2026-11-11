@@ -13,9 +13,13 @@ import { getDesign, type Design } from "./store.ts";
  */
 export async function runDesigner(app: App, o: {
   design: Design; run: Run; task: string; cwd?: string; spaces?: string[] | null; signal: AbortSignal; event: (type: string, data: unknown) => void;
-}): Promise<{ design: Design | null; text: string; ai: { profile: string; model?: string; effort?: string } }> {
+  /** The session that wrote the last version (a comment is worked in where it was written); none: a new one. */
+  resumeSessionId?: string;
+}): Promise<{ design: Design | null; text: string; ai: { profile: string; model?: string; effort?: string }; sessionId?: string }> {
   const { runRole } = await import("../agents/runner.ts");
-  if ((o.run.input as { designId?: string }).designId !== o.design.id) throw new Error(`运行 ${o.run.id} 没有绑定方案 ${o.design.id}`);
+  // Bound by the run's input (an assessment), or as the design of the delegation the run is a round of.
+  const root = String((o.run.input as { continueFrom?: string }).continueFrom ?? o.run.id);
+  if ((o.run.input as { designId?: string }).designId !== o.design.id && o.design.workId !== root) throw new Error(`运行 ${o.run.id} 没有绑定方案 ${o.design.id}`);
   o.event("status", { phase: "design", text: o.design.revision ? `改方案：按意见写第 ${o.design.revision + 1} 版` : "写方案：调查后交一份方案，等本人确认后再编码" });
   const before = o.design.revision;
   const res = await runRole(app, {
@@ -34,7 +38,9 @@ export async function runDesigner(app: App, o: {
     cwd: o.cwd,
     signal: o.signal,
     onEvent: (e) => o.event(e.type, { ...e, phase: "design" }),
+    ...(o.resumeSessionId ? { resumeSessionId: o.resumeSessionId } : {}),
+    persistSession: true,
   });
   const after = getDesign(app, o.design.id);
-  return { design: after.revision > before && after.runId === o.run.id ? after : null, text: String(res.text ?? ""), ai: res.ai };
+  return { design: after.revision > before && after.runId === o.run.id ? after : null, text: String(res.text ?? ""), ai: res.ai, sessionId: res.sessionId };
 }

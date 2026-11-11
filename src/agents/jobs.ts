@@ -40,6 +40,8 @@ import "./profile-jobs.ts";
 import "./req-split.ts";
 // Assessing someone else's technical design (designs/assess.ts).
 import "../designs/assess.ts";
+// A delegation's design: confirming it (the card's answer) and going on to code once it is (designs/work.ts).
+import "../designs/work.ts";
 import "./wakes.ts";
 import "./digest.ts";
 // Also registers the mention handler (someone looking for the owner: triage, then maybe a handling).
@@ -160,7 +162,7 @@ registerHandler("ask", async (ctx) => {
     // What the turn left unsettled is said where the owner reads it, not left as a silent wait.
     const { listTasks, taskLabel } = await import("./code-tasks.ts");
     const left = handoff?.workId ? listTasks(ctx.app, handoff.workId).filter((t) => t.state === "assistant") : [];
-    if (handoff?.kind === "code-tasks" && quiet && !left.length) return { answer, quiet: true, session: r.mode };
+    if ((handoff?.kind === "code-tasks" || handoff?.kind === "design") && quiet && !left.length) return { answer, quiet: true, session: r.mode };
     const note = left.length ? `\n\n（${left.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 40)}」`).join("、")} 交给了助手，这一轮还没处理，交办在这几项上停着。）` : "";
     answer = `${quiet ? "" : answer}${note}`.trim() || answer;
     await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });

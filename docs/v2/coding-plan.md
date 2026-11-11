@@ -255,7 +255,9 @@ type DesignBody = {
 | `submit_review` | 评审 | 问题多 `decision` |
 | `submit_brief` | `business-analyst` | 多 `design: { needed, why }` |
 
-原来的 `submit_change_points` 由 `submit_design` 取代（旧运行的变更拆分照原样显示）。
+分支评审的拆分：有方案时仍用 `submit_change_points`，但只传 `decisions: [{ decision, files }]`，宿主只写归属（各决定的 `files` 和整份的 `outside`，不改正文、不加版本号）；没有方案时用 `submit_design` 交 `derived` 的方案。不带 `decisions` 的需求拆分（`change_points`）保留：交办编码的拆分、外部设备的评审仍用它，旧运行照原样显示。评审负责人逐个决定的结论不另开工具，放在 `rule_review` 的 `decisions`（`done`、`deviation`、`concerns` 的状态）。
+
+等方案确认的那一轮以 verdict `awaiting-design` 结束（交办视图阶段 `design`：“等你确认方案” / “助手在确认方案”）。这时 `continue_code_run` 表示不等方案直接编码（方案保留但不再是基线，之后交变更说明）；`message_code_run` 的话记下，开始编码时交给编码 Agent，对方案的意见走 `settle_design`。
 
 ### 6.4 HTTP
 

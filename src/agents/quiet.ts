@@ -13,7 +13,7 @@ export function mayStayQuiet(app: App, run: Run): boolean {
   if (run.kind === "agent") return !!(input.wake || input.rule || input.silent || input.meeting || input.mention);
   if (run.kind === "ask") {
     // Tasks handed back for the assistant to settle: the owner needs to hear only what is left for them.
-    if (input.handoff?.kind === "code-tasks") return true;
+    if (input.handoff?.kind === "code-tasks" || input.handoff?.kind === "design") return true;
     if (input.handoff || input.coordinate || input.fromAsk || !input.conversationId) return false;
     const ids = input.messageIds ?? [];
     const msgs = threadMessages(app, input.conversationId, { limit: 400 }).filter((m) => ids.includes(m.id));

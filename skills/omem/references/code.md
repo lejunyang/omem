@@ -31,6 +31,22 @@
 - `submit_design`：写方案、评估、交变更说明的运行交结果，写进这次运行绑定的方案（没有绑定时报错），版本号加一。按来历检查：自己的方案每个栏目都要有一句 `brief`，约定给签名和字段（一个决定不超过 30 行）、行为给表；别人的方案没写的栏目留空，文档没写但实现必须定的决定标 `stated: false`；变更说明只要标题、种类和行为上的变化。决定 id（D1…）和意见 id（C1…）由宿主编号，各版本保持不变：沿用上一版的写它的 id，新的不写。
 - 设置 `agents.design.mode`（`auto` / `always` / `never`）决定交办前要不要先写方案，`agents.design.confirm`（`owner` / `assistant`）决定谁确认。
 
+### 交办里的方案
+
+- 要不要写：`delegate_code` 的 `design`（`always` 本人说先出方案 / `never` 本人说直接改；不传为 `auto`）→ 任一涉及的仓库空间设置 `design: "always"` → `agents.design.mode` → `auto` 时看编码前检查 `submit_brief` 的 `design: { needed, why }`（要改现有分工或接口、有两种以上影响别处的做法、任务要求重构收敛统一，任一条就要；没答就不写）。`design_id` 以一份已有的方案为基线（本人确认过的自己的方案，或评估完的别人的方案），这次不再写方案。
+- 流程：编码前检查之后，`designer` 在工作区里只读地写方案（`submit_design`），交了以后这一轮以 `awaiting-design` 结束，不占并发；本人收到确认卡片（每个决定一行、链接到方案页，有要定的问题时卡片上直接选），通过 / 提意见（同一个写方案的会话改一版）/ 换个思路（新会话重写）。卡片、网页和 `settle_design` 任一处确认都只处理一次，交办接着编码。`agents.design.confirm = assistant` 且没有要本人定的问题时不问本人，叫醒发起交办的助手用 `settle_design` 确认。写方案的角色没交方案时直接编码，不卡住交办。
+- 等确认时：`message_code_run` 的话记下，开始编码时交给编码 Agent（对方案的意见用 `settle_design` comment）；`continue_code_run` 表示不等方案直接编码，方案留着只作参考，不再是基线。
+- 编码时：编码 Agent 的任务里带方案全文。`plan_tasks` 每项可填 `decision`（方案里的决定 id，填错会被拒绝）；`finish_task` 可填 `deviation`（实际做法和方案哪里不一样）、`simpler`（做完看出的更简单做法），写进那一项所属决定的“偏差 / 更简单的做法”，同一决定几项时各占一段。做不下去要换做法时 `report_task` 说明，不要悄悄偏离。
+- 没走方案的交办：宿主在第一轮建一份空的变更说明，编码 Agent 结束前用 `submit_design` 交（通常一两个决定，`tasks` 写对应的修改项）；没交不算失败。照方案做的交办不交变更说明。
+- 评审：各评审项和评审负责人的材料里有“方案”一节，`submit_review` 的每条问题可填 `decision`；对不上任何决定和需求点的是方案之外的改动，评审负责人默认记成以后再做。精简评审对照删除、重构决定的“删掉”看是不是真删了。交办结束的汇总按决定列（每个决定一行：标题、做了没有、有偏差的标出）。
+
+### 分支评审对照方案
+
+- `review_branch` 的 `design_id`：对照的方案；不传而有 `item_id` 时取事项上最新的别人的或自己的方案；都没有就建一份空的变更说明。一份别人的方案可以先后对照几条分支，方案的 `work` 记最新一次，旧的评审仍能从它的运行找到方案。
+- 有方案时，评审开始时的拆分只把分支改到的文件归到各个决定上：`submit_change_points` 传 `decisions: [{ decision, files }]`（决定 id 要在方案里、文件要在这次的 diff 里；没归到的文件自动算方案之外），不改方案正文、不加版本号。没有方案时，拆分用 `submit_design` 交变更说明（每个决定带 `files`）。不带 `decisions` 的 `change_points` 需求拆分照旧可用（交办编码、外部设备的评审仍用它）。
+- 评审负责人的 `rule_review` 可带 `decisions: [{ id, done, deviation?, concerns?: [{ id, state, note? }] }]`：逐个决定写代码做了没有（yes / partly / no）、和方案的偏差、方案评估时的每条意见现在是否还成立。
+- 方案页的 `changes`：交办按决定的修改项汇总提交、文件和增删行数，分支评审按归属的文件在这次 diff 里数；带这个决定的评审问题数（open / total）。`GET /api/designs/:id/diff?decision=D1`（或 `outside`）返回和 `/api/runs/:id/task-diff` 同样结构的补丁。
+
 ## 工作分支、确认与 Git
 
 - 交办每个仓库一条工作分支：`delegate_code` 不传分支时从仓库目录当前的提交切出临时分支，编码 Agent 按功能改名；`from_branch` 接着已有分支提交；`branch` 指定新分支名（本人说了才传）。编码 Agent 按功能提交，一轮剩下没提交的由宿主提交；不要让它 push。同一个分支一次只有一个没确认的交办，新交办默认各开一条分支，可以并行。

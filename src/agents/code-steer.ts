@@ -88,7 +88,8 @@ export function takeCodeSteering(app: App, runId: string): string | null {
   const r = one<{ kind: string; status: string }>(app.db, "select kind, status from runs where id = ?", runId);
   if (r?.kind !== "code" || r.status !== "running") return null;
   const run = getRun(app, runId);
-  if (roundStage(run) !== "coding") return null;
+  // The design is being written before coding (designs/work.ts): the owner's words wait for the coder.
+  if (roundStage(run) !== "coding" || run.output.reviewStage === "design") return null;
   const notes = pendingNotes(app, runId);
   const checks = takeRoundFeedback(runId);
   if (!notes.length && !checks) return null;
