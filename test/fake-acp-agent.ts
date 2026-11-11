@@ -185,6 +185,15 @@ new AgentSideConnection(
             await say(JSON.stringify({ prompt, skipped: true }));
             return { stopReason: "end_turn" as const };
           }
+          // An investigation of open questions (wiki-resolve): it settles the first one itself, the rest are the owner's.
+          if (prompt.includes("在问本人之前，你先查")) {
+            const ids = [...prompt.matchAll(/^- (wq[\w-]+)：/gm)].map((m) => m[1]);
+            const settled = [];
+            for (const [i, id] of ids.entries())
+              settled.push(await call("settle_wiki_question", i === 0 ? { id, outcome: "resolved", note: "代码里查到了，写进了页面" } : { id, outcome: "needs-owner", importance: 3, note: "原件里没有，只有本人知道" }));
+            await say(JSON.stringify({ prompt, settled }));
+            return { stopReason: "end_turn" as const };
+          }
           if (prompt.includes("核对角色看了你提交的页面")) {
             const written = await call("write_page", { page: /页面 ([^\s「]+)「/.exec(prompt)?.[1] ?? "overview", title: "概览", kind: "guide", summary: "示例说明", body: "示例正文（已按核对改）" });
             await say(JSON.stringify({ prompt, revised: true, written }));

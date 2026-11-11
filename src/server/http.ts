@@ -897,9 +897,49 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const v = (req.query as { version?: string }).version;
     if (v) return pageVersion(app, space, slug, v);
     const page = readPage(app, space, slug);
-    // What the checker found when the page was last written (wiki/verify.ts).
+    // What the checker found when the page was last written (wiki/verify.ts), and — for those who may
+    // write the Wiki — what the page leaves open (wiki/questions.ts); readers see only the page.
     const { pageChecks } = await import("../wiki/verify.ts");
-    return { ...page, context: pageContext(app, space, page.slug), checks: pageChecks(app, space, page.slug) };
+    const writer = can(app, who(req), "wiki.write", space);
+    const questions = writer ? (await import("../wiki/questions.ts")).listQuestions(app, { spaceId: space, page: page.slug }) : undefined;
+    return { ...page, context: pageContext(app, space, page.slug), checks: pageChecks(app, space, page.slug), ...(questions ? { questions } : {}) };
+  });
+  // Open questions of a space's pages (wiki/questions.ts): the list, answering one, dropping one,
+  // having an agent look into the ones nobody has, and putting existing pages through the checks again.
+  server.get("/api/wiki/:space/questions", async (req) => {
+    const space = (req.params as { space: string }).space;
+    const { listQuestions, questionCounts } = await import("../wiki/questions.ts");
+    const { migrateState } = await import("../wiki/migrate.ts");
+    const titles = new Map(listPages(app, space).map((p) => [p.slug, p.title]));
+    const questions = listQuestions(app, { spaceId: space }).map((q) => ({ ...q, pageTitle: titles.get(q.page) ?? q.page }));
+    const resolving = one<{ id: string }>(app.db, "select id from runs where kind = 'wiki-resolve' and space_id = ? and status in ('queued','running')", space)?.id ?? null;
+    return { questions, counts: questionCounts(app, space), migration: migrateState(app), resolving };
+  });
+  server.post("/api/wiki/:space/questions/:id/answer", async (req) => {
+    const { space, id } = req.params as { space: string; id: string };
+    const b = q(z.object({ answer: z.string().min(1).max(4000) }), req.body);
+    const qs = await import("../wiki/questions.ts");
+    const item = qs.getQuestion(app, id);
+    if (!item || item.spaceId !== space) throw new HttpError(404, "没有这个未决问题");
+    const { writeAnswers } = await import("../wiki/verify.ts");
+    return { writeRuns: await writeAnswers(app, space, [{ id, answer: b.answer }], who(req)) };
+  });
+  server.post("/api/wiki/:space/questions/:id/drop", async (req) => {
+    const { space, id } = req.params as { space: string; id: string };
+    const b = q(z.object({ note: z.string().max(1000).optional() }), req.body ?? {});
+    const qs = await import("../wiki/questions.ts");
+    const item = qs.getQuestion(app, id);
+    if (!item || item.spaceId !== space) throw new HttpError(404, "没有这个未决问题");
+    return qs.updateQuestion(app, id, { status: "dropped", note: b.note ?? "本人说不用管" });
+  });
+  server.post("/api/wiki/:space/questions/resolve", async (req) => {
+    const space = (req.params as { space: string }).space;
+    return (await import("../wiki/verify.ts")).queueResolve(app, space, { userId: who(req) });
+  });
+  server.post("/api/wiki/:space/recheck", async (req) => {
+    const space = (req.params as { space: string }).space;
+    const b = q(z.object({ limit: z.number().int().min(1).max(50).optional() }), req.body ?? {});
+    return (await import("../wiki/verify.ts")).recheckPages(app, space, { limit: b.limit, userId: who(req) });
   });
   server.put("/api/wiki/:space/page/*", async (req) => {
     const { space, "*": slug } = req.params as { space: string; "*": string };

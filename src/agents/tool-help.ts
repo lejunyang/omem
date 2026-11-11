@@ -17,7 +17,7 @@ export const CORE_TOOLS = new Set([
   "list_sources", "write_file", "list_runs", "read_run", "wake_later", "cancel_wake",
 ]);
 /** What a background role exists to hand in: always its own tool, and only for that role. */
-export const ROLE_TOOLS = ["describe_source", "classify_source", "propose_archive_rule", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check"];
+export const ROLE_TOOLS = ["describe_source", "classify_source", "propose_archive_rule", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "settle_wiki_question"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
 /**
  * A run allowed this few tools gets every one of them directly: a background role or profile
@@ -40,7 +40,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "memory", label: "记忆", doc: "memory", tools: ["recall", "remember", "supersede", "forget", "review_memories", "list_memory_folders", "organize_memories"] },
   { id: "track", label: "事项与需求", doc: "items", tools: ["req_tree", "req_read", "save_requirements", "split_requirements", "list_items", "read_item", "upsert_item", "settle_items", "propose_item_update", "list_item_proposals", "resolve_item_proposal"] },
   { id: "notifications", label: "事项通知排查", doc: "items", tools: ["repair_item_association", "inspect_item_notification", "read_item_repair", "refresh_item_notification", "ignore_notification_rule"] },
-  { id: "wiki", label: "Wiki", doc: "wiki", tools: ["list_pages", "read_page", "write_page", "move_page", "confirm_page", "generate_wiki", "submit_plan", "submit_page_check"] },
+  { id: "wiki", label: "Wiki", doc: "wiki", tools: ["list_pages", "read_page", "write_page", "move_page", "confirm_page", "generate_wiki", "submit_plan", "submit_page_check", "settle_wiki_question"] },
   { id: "delegate", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", "continue_agent_work", "ask_agent", "list_ai_backends", "switch_run_ai", "list_runs", "read_run", "take_over_run"] },
   { id: "skills", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "save_agent", "propose_profile_change"] },
   { id: "remote", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },

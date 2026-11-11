@@ -44,6 +44,9 @@ import "./req-split.ts";
 import "../designs/assess.ts";
 // A delegation's design: confirming it (the card's answer) and going on to code once it is (designs/work.ts).
 import "../designs/work.ts";
+// Wiki: investigating open questions (wiki-resolve) and the one-time move of old “还没查清” sections (wiki-migrate).
+import "../wiki/verify.ts";
+import "../wiki/migrate.ts";
 import "./wakes.ts";
 import "./digest.ts";
 // The nightly write-up of the owner's work state and person cards (agents/work-state-job.ts).

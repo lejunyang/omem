@@ -1670,6 +1670,27 @@ export const migrations: readonly string[] = [
    create table archive_recheck (source_id text primary key, reason text not null, priority integer not null default 1, queued_at text not null);
    create index archive_recheck_order on archive_recheck(priority, queued_at);
    create table archive_evidence (source_id text primary key, fingerprint text not null, at text not null);`,
+  // Open questions of a Wiki page (src/wiki/questions.ts, docs/v2/wiki-verify.md): what the writer was not
+  // sure of, kept out of the page. Investigated by an agent first; only what it cannot settle reaches the owner.
+  `create table wiki_questions (
+    id text primary key,
+    space_id text not null,
+    page text not null,
+    question text not null,
+    why text not null default '',
+    refs text not null default '[]',
+    source text not null,
+    status text not null,
+    importance integer not null default 2,
+    answer text,
+    note text not null default '',
+    ask_id text,
+    run_id text,
+    created_at text not null,
+    updated_at text not null
+  );
+  create index wiki_questions_page on wiki_questions(space_id, page, status);
+  create index wiki_questions_status on wiki_questions(space_id, status, importance);`,
 ];
 
 export type Db = DatabaseSync;

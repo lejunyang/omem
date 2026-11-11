@@ -98,6 +98,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   const { simplifyRoleCopies } = await import("./agents/builtin-roles.ts");
   for (const n of simplifyRoleCopies(app)) console.log(`[omem] 内置角色 ${n} 只多挂了技能或工具：改成叠加设置，以后跟着源码更新`);
   for (const s of listSpaces(app)) syncWiki(app, s.id);
+  // Once: the old template's “还没查清” sections leave the pages for their open questions (wiki/migrate.ts).
+  (await import("./wiki/migrate.ts")).queueMigration(app);
   sweepWorktreeSpaces(app);
   {
     // repo-sync on for libraries that never ran it; overlays left from before they expired go now.
