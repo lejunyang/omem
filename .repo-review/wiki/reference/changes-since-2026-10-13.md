@@ -1946,3 +1946,12 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
   - 变成已读：本人引用回复了通知卡片（`inbox.ts`）、点了通知卡片上的按钮（`lark-actions.ts`）、事项关闭；巡检时 `syncNotificationReads` 查最近 7 天推过还没读的：卡片上有本人的表情、有引用它的回复，或 lark-cli 的已读状态（一次最多 50 条，一批一次调用）说读过。
   - 升级后第一次启动 `backfillPushed` 把以前推过的（记过卡片 id 的、有事项或汇总卡片交互记录的）补记为已推送，只跑一次（`kv.notify_pushed_backfill`）。
 - 没有在真机上验证：lark-cli 的 `+messages-read-status` 能否读到机器人发给本人的卡片的已读状态（读不到时不改，靠表情、回复和事项关闭）。
+
+## 2026-11-11：口语练习并入英语练习；`omem peer open` 下插件页面加载失败
+
+起因：设置 → AI → 语音加进来时，网页多了一个单独的“口语”页（`Speaking.vue`、导航项、`/speaking`），评价由宿主的 `speaking-coach` 角色写，按钮是浏览器原生样式，和英语练习是两套东西。另外在一台电脑上 `omem peer open` 打开经中间设备转发的设备网页时，英语练习页控制台报 `blocked by CORS policy`，页面空白。
+
+- 宿主给插件页面的语音会话：清单 `voice: true`；`GET /api/plugins/:id/voice`、`POST …/voice/realtime/secret`、`POST …/voice/live/sdp` 带插件的 `instructions`（最多 6000 字），不带 omem 工具，也不进 `voice_sessions`（`core/voice.ts` 的 `VoiceSpec`）。外壳 `Plugin.vue` 收到页面的 `voice-start` 后用 `lib/voice.ts` 拿麦克风、建 WebRTC，只把转写和结束时的记录转给页面；要求页面里刚有点击（`navigator.userActivation`），进行中顶上显示“正在使用麦克风”和“结束”，不替页面转发 `voice/…`（临时凭证不进沙箱）。SDK 加 `omem.voice()` / `voiceStatus()`。
+- 英语插件：内容块 `speaking`（场景、想练的说法），页面工具 `english_speaking_start`、`english_speaking_brief`（按口语等级、薄弱短语、口音写给语音模型的说明），提交时存 `speaking` 记录并把对话记录交给陪练；陪练按插件技能 `english-speaking`（由原 `speaking-assessment` 改写）用 `english_speaking_grade` 交等级、四项分、评价和知识点，进同一份画像（`PROFILE_SKILLS` 多了 speaking，`snapshot.speaking`）。页面“新练习”里“做题 / 口语对话”并列，口语卡片 `SpeakingCard.vue` 用 omem 的样式；没配语音模型时说明去哪里配。
+- 删掉：`web/src/views/Speaking.vue`、导航项和 `/speaking` 路由、`roles/speaking-coach.md`（`roleNames` 同步）、`speaking-review` 的评价逻辑（旧的排队运行直接结束）、`voice_sessions` 的练习写入（表保留，旧的 `practice` 行不再列出）。已经播种到数据目录的 `speaking-assessment` 技能不会被删，不再有角色用它。
+- CORS：问题在第一跳，`omem peer open` 的本机代理。沙箱 iframe 以 `Origin: null` 按 CORS 方式取 module script 和样式表，本机代理的本机信任检查（`trustedLocal` → `sameOrigin`，10-30 起）把 `Origin: null` 当作别的网站，直接回 403，没有跨域头，浏览器就报 CORS。直接访问目标设备时不经过这层所以正常。现在本机代理对 `Origin: null` 只放行插件页面的文件（`pluginPageFile`：`/plugins/<id>/…`、`/plugins/_sdk/…`，只允许普通路径字符、不含点段和 `%`，免得 `..` 在转发时被解析成别的路径），并在响应上自己补 `access-control-allow-origin: *`，所以中间设备是 11-07（d25fbf62）之前的版本、转发时丢掉这个头也没关系；只需要更新运行 `omem peer open` 的那台电脑。插件页面的流（`/api/plugins/<id>/streams/…`）加进本机代理的原始隧道（`PLUGIN_STREAM`），中间设备 11-07（6050f807）起原样转发本人的升级请求。`test/peer-plugin-page.test.ts`：三台 omem 两级转发，以及一个丢掉跨域头的旧中间设备。

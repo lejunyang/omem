@@ -93,6 +93,7 @@ agents: [tutor]                                         # → english-tutor
 skills: [english-item-writing]
 tools: [recall, remember, supersede, notify, create_card, learning_progress]   # 插件档案可用的宿主工具
 page: { title: 英语练习 }                                # 出现在导航；没有 web/ 时用默认页
+voice: true                                             # 页面可以开语音对话（见“语音”）
 settings:                                               # 本人的设置，外壳统一渲染
   - { key: quizSize, label: 每组题数, type: select, options: ["6", "8", "10", "12"], default: "8" }
   - { key: dailyGoal, label: 每天目标题数, type: number, min: 5, max: 300, default: 30 }
@@ -208,6 +209,26 @@ streams:
 - **流**：页面 `omem.stream("live")` → 外壳打开 `ws(s)://…/api/plugins/<id>/streams/<name>`（带本人的令牌，和事件流一样）→ omem 检查是本人、插件的代码已被信任、流已声明 → 启动服务 → 把连接原样转到服务的 `path`，请求头里换成服务的令牌。外壳和页面之间用 postMessage 中继，二进制帧转移所有权、不复制（截屏这类每秒几帧的数据可以直接走）。有流打开时服务不会被当成空闲。
 - 页面写成普通 HTML 时，`<script type="module">import { connect } from "/plugins/_sdk/omem.js"</script>` 就能用 SDK（同一份 `packages/plugin-sdk/client.ts`，构建时打包成一个模块，含表单和图表的渲染），`<link rel="stylesheet" href="/plugins/_sdk/omem.css">` 拿到 omem 的按钮、输入框、卡片等样式。
 
+## 语音
+
+清单写 `voice: true` 的插件，页面可以和语音模型（设置 → AI → 语音，docs/v2/ai-models.md）对话。宿主只负责接通，说什么由插件定：
+
+```ts
+const status = await omem.voiceStatus();   // { allowed, ready, detail, api, model }；没配好时 detail 说明原因
+const call = await omem.voice({            // 在点击里调用
+  instructions: "Play a waiter in a café…", // 给语音模型的说明，最多 6000 字
+  onTurns: (turns) => draw(turns),          // [{ role: "user" | "assistant", text, final }]，边说边更新
+  onState: (state, detail) => …,            // connecting / live / ended / failed
+});
+call.mute(true);
+const record = await call.stop();           // 或 await call.ended：{ transcript, startedAt, endedAt, api, model }
+```
+
+- **麦克风和连接在外壳里**：沙箱页面没有 omem 的来源，不给它麦克风。页面发 `voice-start`，外壳（`web/src/views/Plugin.vue`）用 `web/src/lib/voice.ts` 拿麦克风、建 WebRTC 连接、放对方的声音，只把转写的文字转给页面；页面拿不到音频，也拿不到连接用的临时凭证（外壳不替页面转发 `voice/…`）。浏览器的麦克风授权是给 omem 的地址的，在 omem 里授过一次就行。
+- **只在点击之后开始**：外壳收到 `voice-start` 时检查本人刚在页面里点过（点击的激活会传到外壳的窗口），没有就拒绝（`code: "gesture"`），页面再放一个按钮让本人点。进行中外壳顶上显示“<页面名>正在使用麦克风”，带“静音”和“结束”，本人随时可以停；离开页面时自动结束。同一时间只有一段。
+- **宿主给的会话**：`GET /api/plugins/:id/voice` 是状态；`POST …/voice/realtime/secret`（Realtime：临时凭证）和 `POST …/voice/live/sdp`（GPT-Live：omem 用 key 开会话）带上插件的 `instructions`。插件的会话不带任何 omem 工具，也不进 `voice_sessions`；记录怎么存、交给谁评价由插件自己做（英语练习把它当成一个内容块，见下）。没声明 `voice` 的插件调这两个接口得到 403。
+- **没配语音模型时**：状态里 `ready: false`，`detail` 写原因；页面应说明去 设置 → AI → 语音 配置（`omem.navigate("/settings?tab=agents&section=voice")`），不要把入口藏起来。
+
 ### 例子：看机器状态
 
 一个只有四个文件的数据目录插件（开发时的验收用例）：`plugin.yaml` 声明服务 `probe` 和流 `live`；`probe.mjs` 用 `service.mjs` 每秒把 CPU、内存推给所有连接，HTTP `/now` 返回当前值；`server.ts` 注册工具 `pulse_read`（`api.service("probe").ensure()` 后请求 `/now`）；`web/index.html` 打开流画两条进度条。信任之后，页面每秒更新；`/as pulse-watcher 机器现在负载怎么样？` 时档案调用 `pulse_read` 回答。
@@ -264,7 +285,7 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 - 页面用 omem 自己的样式和组件，不另做一套：内置插件的页面直接引入 `web/src/styles.css`（`.btn`、`.btn.primary`、`.input`、`.textarea`、`.card`、`.badge`……）和 `web/src/components` 里不依赖主站状态的组件（`UiSegmented`、`UiCheckbox`、`UiSelect`、`Skeleton`、`Icon`）；普通 HTML 页面引入 `/plugins/_sdk/omem.css`（构建时从 `styles.css` 复制）。SDK 画的表单和图表也用这些类，只补自己的布局。
 - 外壳把服务端事件里和本插件有关的（`plugin`、`run`）转给页面，页面据此刷新；初始化时还带上路由的查询参数（`params.session` 指定打开哪个会话）。
 - 页面调 `openSettings()` 让外壳打开设置弹窗；保存后页面收到 `settings: true` 的事件。
-- 插件页面的静态文件带 `access-control-allow-origin: *`（沙箱里的 module script 要求跨源许可），只是公开的构建产物。
+- 插件页面的静态文件带 `access-control-allow-origin: *`（沙箱里的 module script 要求跨源许可），只是公开的构建产物。`omem peer open` 的本机代理对 `Origin: null` 的请求只放行这些文件（`/plugins/<id>/…`、`/plugins/_sdk/…`，不含 `..` 和 `%`），并自己补上这个头，所以经过的中间设备是旧版本（2026-11-07 之前转发时会丢掉它）也能加载；页面的流在本机代理上走原始隧道。
 - 构建和开发：内置插件的页面就是一个 Vite 页面。`pnpm run build` 最后一步（`scripts/build-plugins.ts`）把每个 `plugins/<id>/web/index.html` 构建到 `web/dist/plugins/<id>/`，再打包 SDK（`/plugins/_sdk/omem.js`、`omem.css`）。开发时（`pnpm run dev`）不构建：网页的 Vite 开发服务器在同一个 `/plugins/<id>/` 直接从源码提供页面（`web/vite-plugin-pages.ts`），改页面、SDK 或 omem 的样式和组件都热更新，不用刷新；只给插件页面会加载的路径（页面源码、SDK、`web/src`、依赖、Vite 客户端）加跨源许可。数据目录插件的页面不经过 Vite，仍由 API 提供。
 
 ### 插件接口
@@ -283,6 +304,8 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 | `POST` / `DELETE /api/plugins/:id/trust` | 信任数据目录插件的代码 / 撤销 |
 | `GET /api/plugins/:id/services`、`POST …/services/:name/start`、`…/stop` | 服务状态与最近输出；启动、停止（代码未被信任时拒绝） |
 | `GET /api/plugins/:id/streams/:name`（WebSocket） | 流，只给本人，转到插件的服务 |
+| `GET /api/plugins/:id/voice` | 语音能不能用（清单声明了没有、语音模型配好了没有） |
+| `POST /api/plugins/:id/voice/realtime/secret`、`POST …/voice/live/sdp` | 外壳为页面开语音会话，带插件的说明、不带工具；外壳不替页面转发 |
 
 ## 英语学习插件
 
@@ -298,6 +321,14 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 | `translate`：中译英、英译中 | 多行输入 | Agent（`english_grade`，0–1 分 + 点评 + 错误类型） |
 
 每题带 `skill`（vocab / grammar / listening / translation / reading）、`level`（A1–C2）和 `points`（考的知识点，如 `word:bill`、`phrase:to-go`、`grammar:present-perfect`）。
+
+**口语对话**（页面上“新练习”里和做题并列的一种方式）：选场景（可写这次想刻意练的说法），和语音模型把场景演一遍。
+
+- 一次口语练习是一个内容块 `speaking`（`{ scene, goal? }`）：页面用 `english_speaking_start` 放进会话（会话标题以“口语 · ”开头），陪练也可以用 `english_speaking` 交出一个。
+- 开始时页面调 `english_speaking_brief` 取给语音模型的说明：扮演场景里的另一个人、按本人的口语等级说话（还没有就用练得最多的那项技能的等级）、把薄弱的单词和短语自然地带进对话、口音跟设置走、本人用中文问时简短用中文答再回到英文、中途不逐句纠错。然后 `omem.voice()`。
+- 结束后对话记录作为这个块的答案提交：插件存进 `speaking` 记录，消息“【口语练习】……对话记录……”交给陪练；一句没说的不交，块留着可以再开始。
+- 陪练按技能 `english-speaking` 评价，用 `english_speaking_grade` 交：CEFR 等级、四项 1–5 分（流利度、语法、词汇、得体，看不出的写 null）、给本人看的评价、涉及的知识点。等级把画像里的“口语”分数拉向它（第一次直接定，之后每次走 40%）；知识点按对错进画像，薄弱的之后会出现在题里。同一次再交一遍是更正，不重复计入。
+- `english_snapshot` 多了口语的次数、近 7 天分钟数和最近一次评价。
 
 **听力**用浏览器的 `speechSynthesis` 朗读，页面需要拿到朗读的原文，所以听写的原文会到达页面（不显示）；以后接服务端语音合成后可以只给音频。
 
@@ -323,4 +354,5 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 2. **第二期**（2026-10-28）：插件设置；宿主通用块（当时的 `plugin_form`、`plugin_chart`，2026-11-08 起由 `ask_user` 的表单和 `show` 代替）和默认插件页；数据目录里的声明式插件；英语题库（陪练补题、宿主按画像选题）；插件会话链接与网页地址（飞书里交出的块转成练习页链接）。
    还没做：内容块在问答页和运行详情里显示、“每日练习”规则模板、服务端语音合成（听写原文就不用发到页面）。
 3. **第三期**（2026-10-28）：数据目录里带代码的插件与信任确认（代码哈希，改了重新确认，撤销立即卸载）；`services`（按需启动、空闲停止、清理遗留进程、输出可看）与 `streams`（本人鉴权后转发 WebSocket，外壳中继给沙箱页面）；`approval: true` 的插件工具每次等本人批准；`packages/plugin-sdk/service.mjs` 和 `/plugins/_sdk/omem.js` 让数据目录插件不装包也能写服务和页面；设置 → 插件。
-   还没做：`omem peer open` 经中间设备转发流；服务作为 MCP 服务器直接给 Agent 提供工具（现在经 `server.ts` 的工具转一层）；截屏、输入这类系统相关的现成插件。
+   还没做：服务作为 MCP 服务器直接给 Agent 提供工具（现在经 `server.ts` 的工具转一层）；截屏、输入这类系统相关的现成插件。
+4. **语音**（2026-11-11）：清单 `voice: true`，SDK 的 `omem.voice()` / `voiceStatus()`，外壳拿麦克风和连接、只给页面转写；英语练习的“口语对话”（`speaking` 块、陪练按 `english-speaking` 评价、口语进画像），代替原来网页上单独的“口语”页和 `speaking-coach` 角色。`omem peer open` 下插件页面的文件和流（本机代理放行沙箱的跨域请求并补上跨域头）。

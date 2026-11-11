@@ -46,7 +46,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 - **问答页语音输入**：输入框旁的麦克风，录下来交给 `/v1/audio/transcriptions`（默认 `gpt-transcribe`，`ai.voice.transcribeModel`），文字填进输入框，你再改再发。和选哪种实时接口无关。
 - **语音对话**：问答页的波形按钮，和助理实时说话。它能用 omem 的只读工具（`list_spaces`、`search`、`read_source`、`recall`、`list_items`、`read_page`），在你能读的空间里查，说出依据的文档名。结束后对话记录存进 `voice_sessions`。
-- **口语练习**（导航“口语”，语音可用后才出现）：选一个场景（或自己写），语音模型扮演场景里的另一个人，用英语对话；卡住时直接用中文问“这个怎么说”，它用中文答一句再回到场景。中途不逐句纠错，结束后由 `speaking-coach` 角色读对话记录，按内置技能 `speaking-assessment` 写评价（CEFR 估计、四个维度的分、挑真说过的句子给出改法、这次学到的说法、下次练什么）。
+- **插件页面的语音**：清单写了 `voice: true` 的插件，页面可以开一段语音对话（docs/v2/plugins.md 的“语音”）。说明由插件给，不带工具。英语练习的“口语对话”就是这样做的：语音模型扮演场景里的另一个人，卡住时用中文问，结束后由插件的陪练按技能 `english-speaking` 评价并记进学习画像。（2026-11-11 之前它是导航里单独的“口语”页，由 `speaking-coach` 角色评价，已并入英语练习。）
 
 #### GPT-Live 和 Realtime 的差别，以及 omem 怎么接
 
@@ -61,7 +61,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 两种接口在网页里共用一套（`web/src/lib/voice.ts`）：麦克风是 WebRTC 音轨，事件走 `oai-events` 数据通道；差别只在怎么拿到 SDP answer 和读哪些事件，读出来统一成“你 / 它的一段话”和“要调用的工具”。工具由浏览器转给 omem（`POST /api/voice/tool`），按这个用户能读的空间执行，只放行上面那几个只读工具。key 始终不进浏览器。
 
-口语练习不给工具；场景写进语音模型的说明（`voiceInstructions`）。练习结束保存时如果学习者说过话，就排一条 `speaking-review` 运行。
+插件的语音对话走插件自己的接口（`/api/plugins/<id>/voice/…`），说明是插件给的，不给工具，omem 也不保存记录。麦克风和连接在网页外壳里，插件页面只拿到转写。
 
 GPT-Live 的“client 委托”（`delegation.type = "client"`，由应用自己处理请求、用 `session.commentary.append` 让它说结果）可以把整个 omem 主助手接进来，但主助手一次要几十秒，现在不用；以后要在语音里交办事情时再考虑。
 
@@ -114,14 +114,14 @@ OpenAI Images API（`POST /v1/images/generations`，返回 `data[0].b64_json`）
 
 ### 技能的 `requires`
 
-技能的 frontmatter 可以写 `requires: [ai:image]`（或 `ai:voice`、`ai:decision`）：对应的模型没配好时，这个技能不出现在给 Agent 的技能列表和 `list_skills` 里。内置的 `image-generation`、`speaking-assessment` 都这样标。
+技能的 frontmatter 可以写 `requires: [ai:image]`（或 `ai:voice`、`ai:decision`）：对应的模型没配好时，这个技能不出现在给 Agent 的技能列表和 `list_skills` 里。内置的 `image-generation`、英语插件的 `english-speaking` 都这样标。
 
 ## 实现顺序
 
 1. 设置页分类、API key 与提供方、用 key 生成后端、三类模型的设置和可用状态（已完成）。
 2. 图片：画图工具（新分组）和配套技能，只在图片模型可用时给出（已完成）。
 3. 决策：统一的判断接口（几家 API + StartLux + 通用模型兜底），接入 `gatekeeper` 和规则判断（已完成）。
-4. 语音：问答页语音输入、实时对话、口语练习（已完成）。
+4. 语音：问答页语音输入、实时对话、口语练习（已完成；口语练习 2026-11-11 并入英语练习插件，宿主改为给插件页面提供语音会话）。
 
 ## 资料（2026-11-07 查）
 

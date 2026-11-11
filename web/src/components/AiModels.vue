@@ -225,7 +225,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       <span v-if="cat === 'decision' && status?.media?.length" class="small muted">· 除文字外还读{{ status.media.map((m) => MEDIA_LABEL[m]).join("、") }}</span>
     </div>
     <template v-if="cat === 'voice'">
-      <p class="muted">可用后：问答页输入框旁出现麦克风（说完转成文字）和语音对话按钮（和助理实时说话，它能查你的原件、记忆和事项）；导航里出现“口语”（英语口语练习：按场景对话，卡住时用中文问，结束后给出真实水平的评价）。</p>
+      <p class="muted">可用后：问答页输入框旁出现麦克风（说完转成文字）和语音对话按钮（和助理实时说话，它能查你的原件、记忆和事项）；英语练习里的“口语对话”可以用（按场景对话，卡住时用中文问，结束后陪练给出真实水平的评价）。</p>
       <div class="cmp small">
         <div><strong>GPT-Live</strong>（<span class="mono">gpt-live-1</span>）：全双工，边听边说，你随时插话它会停下；它自己只管说话，查资料和工具交给下面的“委托模型”（Responses 模型）去做，它在等的时候会先应一声。浏览器把连接请求交给 omem，由 omem 用 key 开会话。按分钟计费。</div>
         <div><strong>Realtime</strong>（<span class="mono">gpt-realtime-2.1</span>）：一问一答，听到你停顿后回答；同一个模型自己调用工具。omem 发一次性的临时凭证，浏览器直接连 OpenAI。按音频 token 计费。</div>

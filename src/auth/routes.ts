@@ -291,6 +291,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/plugins/:id/settings": "self",
   "GET /api/plugins/:id/data/:collection": "self",
   "POST /api/plugins/:id/call/:tool": "self",
+  // A plugin page's voice conversation (the shell asks for it): like /api/voice, anyone who may use the plugin.
+  "GET /api/plugins/:id/voice": "self",
+  "POST /api/plugins/:id/voice/realtime/secret": "self",
+  "POST /api/plugins/:id/voice/live/sdp": "self",
 
   // devices
   ...Object.fromEntries(

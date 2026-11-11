@@ -29,6 +29,7 @@ const width = (rating: number) => `${Math.max(4, Math.min(100, ((rating - 600) /
           <span class="level">{{ s.attempts ? s.level : "—" }}</span>
         </li>
       </ul>
+      <p v-if="snap.speaking?.total" class="small muted">口语对话近 7 天 {{ snap.speaking.last7 }} 次、约 {{ snap.speaking.minutes7 }} 分钟{{ snap.speaking.last ? `；最近一次 ${snap.speaking.last.level}` : "" }}</p>
       <div>
         <p class="small muted">近 14 天</p>
         <div class="days" role="img" :aria-label="`近 14 天每天题数：${snap.daily.map((d) => d.count).join('、')}`">

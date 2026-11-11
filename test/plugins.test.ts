@@ -45,7 +45,7 @@ describe("plugins", () => {
     expect(findSpace(app, "english")).toMatchObject({ kind: "learning" });
     expect(listSkills(app).map((s) => s.name)).toContain("english-item-writing");
     const spec = findAgentSpec(app, "english-tutor")!;
-    expect(spec).toMatchObject({ plugin: "english", space: "english", skills: ["english-item-writing"] });
+    expect(spec).toMatchObject({ plugin: "english", space: "english", skills: ["english-item-writing", "english-speaking"] });
     expect(spec.tools).toEqual(expect.arrayContaining(["english_quiz", "english_grade", "english_snapshot", "plugin_query", "plugin_put", "recall", "remember"]));
     expect(listAgentSpecs(app).map((s) => s.name)).toContain("english-tutor");
     expect(getPlugin("english").tools.find((t) => t.name === "english_snapshot")?.page).toBe(true);

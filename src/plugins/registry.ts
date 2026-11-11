@@ -52,6 +52,11 @@ export const manifestSchema = z.object({
   /** Host tools the plugin's agents may use, besides its own and the plugin tools (plugin_query, ask_user, show…). */
   tools: z.array(z.string()).default([]),
   page: z.object({ title: z.string() }).optional(),
+  /**
+   * Its page may hold a voice conversation (docs/v2/plugins.md, “语音”): the shell takes the microphone
+   * and connects to the voice model (settings → AI → 语音) with the plugin's instructions, no tools.
+   */
+  voice: z.boolean().default(false),
   settings: z.array(settingFieldSchema).default([]),
   /** Processes the plugin keeps running (services.ts); code, so a data-directory plugin needs trust. */
   services: z.array(serviceSchema).default([]),
@@ -512,6 +517,8 @@ export function describePlugin(p: LoadedPlugin) {
     services: p.manifest.services.map((s) => ({ name: s.name, description: s.description, command: [s.command, ...s.args].join(" ") })),
     streams: p.manifest.streams.map((s) => ({ name: s.name, description: s.description, service: s.service })),
     connectors: p.manifest.connectors,
+    // Its page may hold voice conversations (the shell takes the microphone).
+    voice: p.manifest.voice,
     // What it may do, for the owner deciding to trust or keep it.
     // Before its code runs, what the manifest declares.
     permissions: {

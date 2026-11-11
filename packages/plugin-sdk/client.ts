@@ -27,6 +27,28 @@ export type Omem = {
    * as the owner and relayed here. Binary messages arrive as ArrayBuffer.
    */
   stream(name: string): OmemStream;
+  /**
+   * A voice conversation (the manifest says `voice: true`). The shell takes the microphone and talks to
+   * the voice model of settings → AI → 语音 with `instructions` and no tools; this page gets the
+   * transcript as it grows and the whole of it at the end, never the audio. Call it from a click: the
+   * shell refuses a start the person did not just ask for (the promise rejects, `code: "gesture"`).
+   */
+  voice(o: { instructions: string; onTurns?: (turns: VoiceTurn[]) => void; onState?: (state: VoiceState, detail?: string) => void }): Promise<OmemVoice>;
+  /** Whether voice can be used now, and why not (not declared, no voice model yet: `detail` says where to set it up). */
+  voiceStatus(): Promise<VoiceStatus>;
+};
+
+export type VoiceTurn = { role: "user" | "assistant"; text: string; final: boolean };
+export type VoiceState = "connecting" | "live" | "ended" | "failed";
+export type VoiceStatus = { allowed: boolean; ready: boolean; detail: string; api: "live" | "realtime" | null; model: string | null };
+/** What a finished conversation leaves: both sides as text, when it ran, on which model. */
+export type VoiceRecord = { transcript: { role: "user" | "assistant"; text: string }[]; startedAt: string; endedAt: string; api: string; model: string };
+export type OmemVoice = {
+  /** End it (or take what is left after the other side ended it). */
+  stop(): Promise<VoiceRecord>;
+  mute(on: boolean): void;
+  /** Resolves when the conversation ends, by stop(), by the shell's own “结束” button, or by a dropped connection. */
+  ended: Promise<VoiceRecord>;
 };
 
 export type OmemStream = {
@@ -43,6 +65,14 @@ let seq = 0;
 const waiting = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 const listeners = new Set<(e: OmemEvent) => void>();
 const streams = new Map<number, OmemStream>();
+type VoiceWait = {
+  started: { resolve: (v: OmemVoice) => void; reject: (e: Error) => void } | null;
+  ended: (r: VoiceRecord) => void;
+  onTurns?: (turns: VoiceTurn[]) => void;
+  onState?: (state: VoiceState, detail?: string) => void;
+  voice: OmemVoice;
+};
+const voices = new Map<number, VoiceWait>();
 const send = (m: Record<string, unknown>) => window.parent.postMessage({ omem: 1, ...m }, "*");
 
 function applyTheme(vars: Record<string, string>, scheme: string) {
@@ -93,6 +123,23 @@ export function connect(): Promise<Omem> {
             send({ type: "stream-open", sid, name });
             return st;
           },
+          voiceStatus: () => request<VoiceStatus>("GET", "voice"),
+          voice: (o) =>
+            new Promise<OmemVoice>((resolve, reject) => {
+              const vid = ++seq;
+              let ended!: (r: VoiceRecord) => void;
+              const done = new Promise<VoiceRecord>((r) => (ended = r));
+              const voice: OmemVoice = {
+                stop: () => {
+                  send({ type: "voice-stop", vid });
+                  return done;
+                },
+                mute: (on) => send({ type: "voice-mute", vid, on }),
+                ended: done,
+              };
+              voices.set(vid, { started: { resolve, reject }, ended, onTurns: o.onTurns, onState: o.onState, voice });
+              send({ type: "voice-start", vid, instructions: o.instructions });
+            }),
         });
       } else if (m.type === "response") {
         const w = waiting.get(m.id as number);
@@ -101,6 +148,23 @@ export function connect(): Promise<Omem> {
         if (m.ok) w.resolve(m.data);
         else w.reject(new Error(String(m.error ?? "请求失败")));
       } else if (m.type === "event") for (const l of listeners) l(m.event as OmemEvent);
+      else if (m.type === "voice-event") {
+        const v = voices.get(m.vid as number);
+        if (!v) return;
+        if (m.event === "turns") v.onTurns?.(m.turns as VoiceTurn[]);
+        else if (m.event === "state") v.onState?.(m.state as VoiceState, m.detail ? String(m.detail) : undefined);
+        else if (m.event === "started") {
+          v.started?.resolve(v.voice);
+          v.started = null;
+        } else if (m.event === "error") {
+          // Refused or failed before it started.
+          v.started?.reject(Object.assign(new Error(String(m.error ?? "语音没有连上")), { code: m.code ? String(m.code) : undefined }));
+          voices.delete(m.vid as number);
+        } else if (m.event === "ended") {
+          v.ended(m.record as VoiceRecord);
+          voices.delete(m.vid as number);
+        }
+      }
       else if (m.type === "stream-event") {
         const st = streams.get(m.sid as number);
         if (!st) return;

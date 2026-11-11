@@ -233,6 +233,16 @@ export function codeVersion(root: string) {
 }
 
 /**
+ * A built plugin page's file (`/plugins/<id>/…`, or the SDK under `/plugins/_sdk/`). Plain path
+ * characters only and no dot segments: the URL is passed on as it is, and `..` (or `%2e%2e`) would
+ * be resolved on the way into some other path.
+ */
+export function pluginPageFile(url: string) {
+  const path = url.split("?")[0];
+  return /^\/plugins\/[a-z_][a-z0-9_]{1,23}\/[A-Za-z0-9_.\-/]*$/.test(path) && !path.split("/").some((s) => s === "." || s === "..");
+}
+
+/**
  * A local web server that shows a peer's web UI: every request goes to the peer
  * (through its `via` chain if any) with the paired token, so the browser needs no
  * token and the peer need not be reachable from here. Listens on 127.0.0.1 only.
@@ -248,7 +258,11 @@ export async function openPeerUi(app: App, id: string, port = 0) {
   // Everything here goes out with the owner's token: only this machine's browser, not another site's page.
   // A run artifact's file is fetched by a sandboxed report page (Origin: null); its key is the capability.
   const artifact = (req: import("node:http").IncomingMessage) => (req.method === "GET" || req.method === "HEAD") && /^\/api\/artifacts\//.test(req.url ?? "") && req.headers.origin === "null";
-  const refuse = (req: import("node:http").IncomingMessage) => !trustedLocal(artifact(req) ? { headers: { ...req.headers, origin: undefined } } : req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
+  // A plugin page's own files are public build output, and its sandboxed iframe (Origin: null)
+  // loads its module script and stylesheet in CORS mode: let those through, with the CORS header.
+  const pageFile = (req: import("node:http").IncomingMessage) => (req.method === "GET" || req.method === "HEAD") && pluginPageFile(req.url ?? "");
+  const nullOrigin = (req: import("node:http").IncomingMessage) => req.headers.origin === "null" && (artifact(req) || pageFile(req));
+  const refuse = (req: import("node:http").IncomingMessage) => !trustedLocal(nullOrigin(req) ? { headers: { ...req.headers, origin: undefined } } : req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
   // Previews of the peer's workspaces on the same port numbers here (docs/v2/preview.md).
   const { PreviewForwards } = await import("./preview-forward.ts");
   const forwards = new PreviewForwards(app, id);
@@ -290,6 +304,8 @@ export async function openPeerUi(app: App, id: string, port = 0) {
       up.headers.forEach((v, k) => {
         if (!["content-encoding", "content-length", "transfer-encoding", "connection"].includes(k)) out[k] = v;
       });
+      // Added here as well: a middle node older than 2026-11-07 (d25fbf62) drops the peer's own.
+      if (pageFile(req)) out["access-control-allow-origin"] = "*";
       res.writeHead(up.status, out);
       if (!up.body) return void res.end();
       const stream = Readable.fromWeb(up.body as never);
@@ -297,7 +313,7 @@ export async function openPeerUi(app: App, id: string, port = 0) {
       stream.on("error", () => res.end());
       stream.pipe(res);
     } catch (e) {
-      if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
+      if (!res.headersSent) res.writeHead(502, { "content-type": "application/json", ...(pageFile(req) ? { "access-control-allow-origin": "*" } : {}) });
       res.end(JSON.stringify({ error: (e as Error).message }));
     }
   });

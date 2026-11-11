@@ -2648,15 +2648,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return aiView();
   });
   // ----------------------------------------------------------------- voice (core/voice.ts)
-  const voicePurpose = z.enum(["chat", "practice"]);
+  // The question page's conversations; a plugin page has its own routes (plugins/http.ts).
   server.get("/api/voice", async () => (await import("../core/voice.ts")).voiceStatus(app));
-  server.post("/api/voice/realtime/secret", async (req) => {
-    const b = q(z.object({ purpose: voicePurpose, scenario: z.string().max(1000).optional() }), req.body);
-    return (await import("../core/voice.ts")).realtimeSecret(app, b);
-  });
+  server.post("/api/voice/realtime/secret", async () => (await import("../core/voice.ts")).realtimeSecret(app, { kind: "chat" }));
   server.post("/api/voice/live/sdp", async (req) => {
-    const b = q(z.object({ purpose: voicePurpose, scenario: z.string().max(1000).optional(), sdp: z.string().min(10).max(100_000) }), req.body);
-    return (await import("../core/voice.ts")).liveConnect(app, b);
+    const b = q(z.object({ sdp: z.string().min(10).max(100_000) }), req.body);
+    return (await import("../core/voice.ts")).liveConnect(app, { kind: "chat" }, b.sdp);
   });
   server.post("/api/voice/transcribe", async (req) => {
     const b = q(z.object({ audio: z.string().min(1).max(30_000_000), mime: z.string().max(100).default("audio/webm") }), req.body);
@@ -2666,24 +2663,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ name: z.string(), args: z.unknown().optional(), space: z.string().default("personal") }), req.body);
     return (await import("../core/voice.ts")).voiceTool(app, who(req), b.space, b.name, b.args ?? {});
   });
-  server.get("/api/voice/sessions", async (req) => {
-    const o = q(z.object({ purpose: voicePurpose.optional() }), req.query);
-    return { sessions: (await import("../core/voice.ts")).listVoiceSessions(app, who(req), o.purpose) };
-  });
+  server.get("/api/voice/sessions", async (req) => ({ sessions: (await import("../core/voice.ts")).listVoiceSessions(app, who(req)) }));
   server.post("/api/voice/sessions", async (req) => {
     const b = q(z.object({
-      purpose: voicePurpose,
-      scenario: z.string().max(1000).optional(),
       api: z.string().max(20),
       model: z.string().max(100),
       startedAt: z.string(),
-      space: z.string().default("personal"),
       transcript: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(20_000) })).max(2000),
     }), req.body);
-    const spaces = accessibleSpaces(app, who(req));
-    const spaceId = !spaces || spaces.includes(b.space) ? b.space : spaces[0];
-    if (!spaceId) throw new HttpError(403, "没有可用的空间");
-    return (await import("../core/voice.ts")).saveVoiceSession(app, who(req), { ...b, spaceId });
+    return (await import("../core/voice.ts")).saveVoiceSession(app, who(req), b);
   });
 
   // Settings → AI → 决策: try a question on the configured decision model.

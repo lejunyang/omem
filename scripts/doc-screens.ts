@@ -401,9 +401,8 @@ writeFileSync(join(journalDir, "plugin.yaml"), [
 ].join("\n"));
 writeFileSync(join(journalDir, "agents", "coach.md"), "---\ndescription: 陪本人做每日复盘\n---\n\n每天收工前问本人今天做了什么、卡在哪里、明天先做什么，用表单收集，用图表看一周的节奏。\n");
 await loadPlugins(app);
-const pluginTurn = async (plugin: string, agent: string, spaceId: string, title: string) => {
+const pluginTurn = async (plugin: string, agent: string, spaceId: string, title: string, runId = `r_${plugin}_demo`) => {
   const { id: conversationId } = await createSession(app, { plugin, agent, spaceId, userId: "owner", title });
-  const runId = `r_${plugin}_demo`;
   run(app.db, "insert into runs(id,kind,space_id,status,title,input,created_at,lane) values(?,?,?,?,?,?,?,?)", runId, "ask", spaceId, "running", title, JSON.stringify({ conversationId }), new Date().toISOString(), conversationId);
   const spec = findAgentSpec(app, agent)!;
   const ctx = toolContextForToken(app, issueToolToken({ runId, spaceId, spaces: [spaceId], tools: new Set(spec.tools), actor: "agent", spec: spec.name, plugin: spec.plugin }))!;
@@ -445,6 +444,53 @@ addMessage(app, tutor.conversationId, "user", gradedQuiz.message, null, { submis
 await callTool(tutor.ctx, "english_grade", { block_id: handedIn.id, grades: [{ item_id: "q4", score: 0.8, feedback: "意思对了。peanuts 要用复数；“里面有吗”更自然的说法是 Are there any in this dish?", error_tags: ["plural"] }, { item_id: "q3", feedback: "I'd like 的 'd 很轻，听到 like 前面那一下停顿就是它" }] });
 addMessage(app, tutor.conversationId, "assistant", "这组对了 3 题。听写里 **I'd like** 又听成了 I like，这是第三次了，下一组多放两道带 'd 的句子；翻译意思都对，注意 peanuts 用复数。题库里还有 18 道餐厅的题，点“下一组”就能接着做。", tutor.runId);
 tutor.done();
+// A speaking practice talked through (the transcript as the shell hands it in) and assessed by the tutor.
+const talk = await pluginTurn("english", "english-tutor", "english", "口语 · 在咖啡店点单 · 2026/11/11", "r_english_talk");
+const pageTool = (tool: string, args: unknown) => callTool({ app, runId: null, spaceId: "english", spaces: null, tools: new Set([tool]), actor: "user", userId: "owner", plugin: "english" }, tool, args);
+const talkBlock = (JSON.parse((await pageTool("english_speaking_start", { session_id: talk.conversationId, scene: "在咖啡店点单", goal: "用 Could I get… / I'd like… 点单" })).text) as { blockId: string }).blockId;
+const talkAnswers = {
+  transcript: [
+    { role: "assistant", text: "Hi there! What can I get for you today?" },
+    { role: "user", text: "I want a latte, oat milk, and less ice." },
+    { role: "assistant", text: "Sure, an oat milk latte. Hot or iced?" },
+    { role: "user", text: "Iced. 少冰怎么说？" },
+    { role: "assistant", text: "少冰 is “light ice”. So, an iced oat latte with light ice?" },
+    { role: "user", text: "Yes, light ice please. And can I pay by phone?" },
+    { role: "assistant", text: "Of course, just tap your phone here." },
+  ],
+  startedAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+  endedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+  model: "gpt-live-1",
+};
+const talkData = JSON.parse(one<{ data: string }>(app.db, "select data from plugin_blocks where id = ?", talkBlock)!.data);
+const talked = await englishEnv.def("speaking")!.grade!({ ...pluginContext(app, englishEnv, { userId: "owner", spaceId: "english", runId: null, actor: "user", conversationId: talk.conversationId }), blockId: talkBlock }, talkData, talkAnswers);
+run(app.db, "update plugin_blocks set status = 'submitted', answers = ?, result = ?, submitted_at = ?, updated_at = ? where id = ?", JSON.stringify(talkAnswers), JSON.stringify(talked.result ?? null), new Date().toISOString(), new Date().toISOString(), talkBlock);
+addMessage(app, talk.conversationId, "user", talked.message, null, { submission: talkBlock });
+await callTool(talk.ctx, "english_speaking_grade", {
+  block_id: talkBlock,
+  level: "A2",
+  scores: { fluency: 3, grammar: 3, vocab: 2, fit: 3 },
+  review: [
+    "**一句话结论**：能把单点完，意思都清楚；开口用 I want 显得生硬，点单的常用句型还没用上。",
+    "",
+    "**改一改**",
+    "",
+    "- I want a latte, oat milk, and less ice. → **Could I get an oat milk latte with light ice?**（点单用 Could I get… 更礼貌；“少冰”是 light ice，不说 less ice）",
+    "- can I pay by phone? → **Can I pay with my phone?**（用手机付款是 pay with）",
+    "",
+    "**这次学到的说法**",
+    "",
+    "| 英文 | 中文 |",
+    "| --- | --- |",
+    "| light ice | 少冰 |",
+    "| oat milk latte | 燕麦拿铁 |",
+    "",
+    "**下次练什么**：再点一次单，开口就用 Could I get…，再加一个要求（换杯型、加一份浓缩）。",
+  ].join("\n"),
+  points: [{ point: "phrase:light-ice", correct: false, error_tag: "word-choice" }, { point: "phrase:could-i-get", correct: false, error_tag: "word-choice" }, { point: "phrase:pay-with", correct: false, error_tag: "preposition" }],
+});
+addMessage(app, talk.conversationId, "assistant", "这次最该改的是开口那句：点单时用 **Could I get…**，比 I want 自然得多。再练一次时试着每句都用它开头。", talk.runId);
+talk.done();
 
 // A plugin with no page of its own: the agent asks with a form and shows a chart.
 const journal = await pluginTurn("journal", "journal-coach", "personal", "10-30 复盘");
@@ -597,7 +643,7 @@ if (serveOnly) {
   await new Promise(() => {});
 }
 const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : { channel: process.platform === "win32" ? "msedge" : "chrome" });
-const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; prepare?: (page: Page) => Promise<void> }[] = [
+const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; before?: (page: Page) => Promise<void>; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "today", path: "/" },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },
@@ -661,6 +707,15 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "ask-view", path: `/ask/${rollout.id}`, prepare: async (p) => { await p.waitForTimeout(800); await p.locator(".ui-view").first().scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
   { name: "ask-page", path: `/ask/${proto.id}`, prepare: async (p) => { await p.waitForTimeout(1500); await p.locator(".ui-page").scrollIntoViewIfNeeded(); await p.waitForTimeout(500); } },
   { name: "plugin-english", path: `/plugin/english?session=${tutor.conversationId}`, prepare: async (p) => { await p.waitForTimeout(1500); } },
+  // Speaking practice inside the English page: an assessed talk (a voice model configured), and starting one without a voice model yet.
+  { name: "english-speaking", path: `/plugin/english?session=${talk.conversationId}`, before: async (p) => void (await p.route("**/api/plugins/english/voice", (r) => r.fulfill({ json: { allowed: true, ready: true, detail: "", api: "live", model: "gpt-live-1" } }))), prepare: async (p) => { await p.waitForTimeout(1500); } },
+  { name: "english-speaking-setup", path: `/plugin/english?session=${talk.conversationId}`, prepare: async (p) => {
+    const f = p.frameLocator("iframe");
+    await f.getByRole("button", { name: "新练习" }).click();
+    await f.getByRole("radio", { name: "口语对话" }).click();
+    await f.getByText("语音模型还没配好").waitFor();
+    await p.waitForTimeout(300);
+  } },
   { name: "plugin-default", path: `/plugin/journal?session=${journal.conversationId}`, space: "personal", prepare: async (p) => { await p.waitForTimeout(1500); } },
   { name: "share-link", path: `/share/${shareToken}` },
   { name: "share-link-mobile", path: `/share/${shareToken}/1`, width: 390 },
@@ -683,6 +738,7 @@ for (const s of shots.filter((s) => !only || only.includes(s.name))) {
   }, [s.space ?? "shop", s.init ?? {}] as const);
   await page.route(`**/api/rules/${meetingRule.id}/permissions`, route => route.fulfill({ json: { issues: [], ok: ["演示数据：会议权限已配置"], notes: ["会议需要允许智能体加入"] } }));
   try {
+    if (s.before) await s.before(page);
     await page.goto(`${url}/#${s.path}`);
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(800);

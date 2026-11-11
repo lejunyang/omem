@@ -38,11 +38,20 @@ export type Snapshot = {
   due: { point: string }[];
   errors: { tag: string; count: number }[];
   daily: { date: string; count: number; accuracy: number | null }[];
+  speaking: { total: number; last7: number; minutes7: number; last: { scene: string; at: string; level: string } | null };
   bank: { total: number; scenes: { scene: string; count: number }[] };
   settings: { source: string; quizSize: string; voice: string; rate: string; dailyGoal: number };
 };
 
-export const SKILL_LABEL: Record<string, string> = { vocab: "词汇", grammar: "语法", listening: "听力", translation: "翻译", reading: "阅读" };
+/** A speaking practice (server.ts `speaking` block): waiting to be talked through, then its record and assessment. */
+export type SpeakingAssessment = { level: string; scores: Record<string, number | null>; review: string; at: string };
+export type SpeakingResult = { scene: string; goal?: string; startedAt: string; endedAt: string; minutes: number; transcript: { role: "user" | "assistant"; text: string }[]; assessment: SpeakingAssessment | null };
+export type SpeakingBlock = Omit<Block, "data" | "result"> & { data: { scene: string; goal?: string }; result: SpeakingResult | null };
+
+export const SKILL_LABEL: Record<string, string> = { vocab: "词汇", grammar: "语法", listening: "听力", translation: "翻译", reading: "阅读", speaking: "口语" };
+export const SCORE_LABEL: Record<string, string> = { fluency: "流利度", grammar: "语法", vocab: "词汇", fit: "得体" };
+/** A speaking session's title: "口语 · <scene> · <date>". */
+export const SPEAKING_PREFIX = "口语 · ";
 export const TYPE_LABEL: Record<string, string> = { choice: "选择", cloze: "填空", dictation: "听写", translate: "翻译" };
 
 /** Read aloud with the browser's voices; the owner's accent and speed (settings) win over the item's. */
