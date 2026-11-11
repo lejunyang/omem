@@ -8,6 +8,7 @@ import UiSelect from "../components/UiSelect.vue";
 import WikiAttention, { type StalePage, type Upkeep } from "../components/WikiAttention.vue";
 import WikiTree from "../components/WikiTree.vue";
 import WikiChecks, { type CheckRecord } from "../components/WikiChecks.vue";
+import WikiQuestions, { type WikiQuestion } from "../components/WikiQuestions.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import type { NavNode } from "../lib/wikiTree";
 import Markdown from "../components/Markdown.vue";
@@ -28,6 +29,8 @@ type PageData = {
     history: { hash: string; at: string; message: string }[];
   };
   checks?: CheckRecord[];
+  /** Only for those who may write the Wiki. */
+  questions?: WikiQuestion[];
 };
 
 const route = useRoute();
@@ -57,6 +60,28 @@ const newPage = ref({ title: "", question: "", outline: "", slug: "", folder: ""
 const planFocus = ref("");
 const navOpen = ref(false);
 const version = ref<{ hash: string; diff: string } | null>(null);
+// Open questions of the space's pages (writers only: readers get a 403 and see nothing).
+const questionCount = ref(0);
+const questionsOpen = ref(route.query.questions === "1");
+watch(() => route.query.questions, (v) => v === "1" && (questionsOpen.value = true));
+async function loadQuestionCount() {
+  try {
+    const r = await get<{ counts: Record<string, number> }>(`/api/wiki/${space.value}/questions`);
+    questionCount.value = Object.values(r.counts).reduce((a, b) => a + b, 0);
+  } catch {
+    questionCount.value = 0;
+  }
+}
+watch(space, loadQuestionCount, { immediate: true });
+function openQuestionPage(slug: string) {
+  questionsOpen.value = false;
+  void router.push(`/wiki/${space.value}/${slug}`);
+}
+function closeQuestions() {
+  questionsOpen.value = false;
+  void loadQuestionCount();
+  if (route.query.questions) void router.replace({ query: {} });
+}
 
 if (!route.params.space) router.replace(`/wiki/${state.space}`);
 else if (route.params.space !== state.space && state.spaces.some((x) => x.id === route.params.space)) state.space = route.params.space as string;
@@ -282,6 +307,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         </div>
         <input v-model="filter" class="input filter" placeholder="筛选页面" aria-label="筛选页面" />
         <button v-if="stalePageList.length" class="nav-warn" type="button" @click="toNotice"><Icon name="alert" :size="13" />{{ stalePageList.length }} 页的原件已变化</button>
+        <button v-if="questionCount" class="nav-warn" type="button" title="写作时拿不准、没写进页面的点" @click="questionsOpen = true"><Icon name="chat" :size="13" />{{ questionCount }} 个未决问题</button>
       </div>
       <div class="tree">
         <router-link v-if="hasHome" :to="`/wiki/${space}`" class="home" :class="{ on: currentSlug === 'index' }" @click="navOpen = false"><Icon name="home" :size="14" />首页</router-link>
@@ -396,6 +422,11 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         </a>
       </div>
       <WikiChecks v-if="page.checks?.length" :checks="page.checks" class="block" />
+      <div v-if="page.questions?.length" class="block">
+        <div class="section-title">未决问题 {{ page.questions.length }}</div>
+        <div v-for="q in page.questions.slice(0, 6)" :key="q.id" class="small pq">{{ q.question }}</div>
+        <a href="#" class="small" @click.prevent="questionsOpen = true">查看和回答</a>
+      </div>
       <div v-if="page.context.history.length" class="block">
         <div class="section-title">历史</div>
         <a v-for="h in page.context.history.slice(0, 8)" :key="h.hash" href="#" class="hist" @click.prevent="showVersion(h.hash)">
@@ -404,6 +435,8 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         </a>
       </div>
     </aside>
+
+    <WikiQuestions v-if="questionsOpen" :space="space" @close="closeQuestions" @open="openQuestionPage" />
 
     <div v-if="version" class="modal-overlay" @mousedown.self="version = null">
       <div class="modal">
@@ -653,6 +686,11 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
   font-family: var(--sans);
   display: grid;
   gap: 0;
+}
+.pq {
+  color: var(--ink-2);
+  padding: 2px 0;
+  overflow-wrap: anywhere;
 }
 .src.stale {
   color: var(--warn);

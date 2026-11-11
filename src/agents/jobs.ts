@@ -42,6 +42,9 @@ import "./req-split.ts";
 import "../designs/assess.ts";
 // A delegation's design: confirming it (the card's answer) and going on to code once it is (designs/work.ts).
 import "../designs/work.ts";
+// Wiki: investigating open questions (wiki-resolve) and the one-time move of old “还没查清” sections (wiki-migrate).
+import "../wiki/verify.ts";
+import "../wiki/migrate.ts";
 import "./wakes.ts";
 import "./digest.ts";
 // Also registers the mention handler (someone looking for the owner: triage, then maybe a handling).

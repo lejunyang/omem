@@ -1,6 +1,6 @@
 ---
 description: 按页面计划调查并写一篇 Wiki 页面
-tools: [search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, write_page, read_skill]
+tools: [search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, write_page, read_skill, settle_wiki_question]
 skills: [wiki-writing]
 writes: false
 modes: [read-only, default, plan]
@@ -44,6 +44,8 @@ modes: [read-only, default, plan]
 
 写作运行里提交的这一页先是草稿：核对角色对照原件和代码逐条核对，问题会交回给你。逐条处理：成立的改正文后整页重新提交；你认为核对错了的不改，在回复里写明依据（原件行或代码位置）。
 
-拿不准、因此没写进页面的点，写成给本人的问题放进 `write_page` 的 `questions`（一句一个，本人答了就能补进页面，例如“A 业务的退款上限是 3000 元还是 5000 元？”）。一次生成结束后宿主把这些问题汇总给本人，回答后补进页面。
+拿不准、因此没写进页面的点，放进 `write_page` 的 `questions`：每条写问题（一句话，答了就能写进页面，例如“A 业务的退款上限是 3000 元还是 5000 元？”）、为什么拿不准（查过哪里、哪两份材料说法不同）、相关引用。它们记成这页的未决问题，读者看不到；之后先由 Agent 再查，查不清的才问本人，答了再写回页面。
+
+任务里列出这页已经挂着的未决问题时，先查它们：查清了写进页面，用 `settle_wiki_question` 标成 resolved；只有本人能定的标成 needs-owner 并给出 importance。
 
 提交后简短说明写了什么、哪些地方是推断、留了哪些问题。

@@ -1530,7 +1530,20 @@ def({
     body: z.string().describe("正文 Markdown，不要再写一级标题"),
     space: z.string().optional(),
     reason: z.string().optional().describe("这次修改的原因，写入版本历史"),
-    questions: z.array(z.string().max(500)).max(20).optional().describe("Wiki 写作运行里：拿不准、因此没写进页面、要本人回答的问题（一句一个）；本人回答后会补进页面"),
+    questions: z
+      .array(
+        z.union([
+          z.string().max(500),
+          z.object({
+            question: z.string().max(500).describe("问题，一句话，答了就能写进页面"),
+            why: z.string().max(500).optional().describe("为什么拿不准：查过哪里、哪两份材料说法不同"),
+            refs: z.array(z.string()).max(10).optional().describe("相关引用，如 src:<原件id>#L起-L止"),
+          }),
+        ]),
+      )
+      .max(20)
+      .optional()
+      .describe("拿不准、因此没写进页面的点（页面里不写“待确认”）：记成这页的未决问题，读者看不到；之后先由 Agent 去查，查不清的才问本人，答了再写回页面"),
   }),
   handler: async (ctx, a) => {
     const id = wikiSpace(ctx, a.space);
@@ -1557,20 +1570,45 @@ def({
     }
     if (checked.fixes.length) wv.noteWriteCheck(ctx.app, ctx.runId, { restored: 1 });
     const body = checked.body;
+    const questions = (a.questions ?? []).map((q) => (typeof q === "string" ? { question: q } : q)).filter((q) => q.question.trim());
     const notes = checked.notes.length ? `\n${checked.notes.map((n) => `- ${n}`).join("\n")}` : "";
     if (draft) {
-      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind: a.kind ?? "page", body, reason: a.reason, questions: a.questions?.map((q) => q.trim()).filter(Boolean) });
+      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind: a.kind ?? "page", body, reason: a.reason, questions });
       setRunOutput(ctx.app, ctx.runId!, { writeNotes: checked.notes });
       return `已保存页面 ${id}/${slug} 的草稿（${wc.textLength(body)} 字）：写作结束后由核对角色对照原件和代码核对，有问题会交回给你改，通过后发布。${notes}`;
     }
     const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
     appendLog(ctx.app, id, `${existed ? "更新" : "新建"} [[${p.slug}]]${a.reason ? "：" + a.reason : ""}`);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: new Date().toISOString() } });
+    // What the writer was not sure of: kept as the page's open questions (wiki/questions.ts), not in the page.
+    const asked = questions.length ? (await import("../wiki/questions.ts")).addQuestions(ctx.app, id, p.slug, questions, { source: "writer", runId: ctx.runId }) : [];
     const c = pageContext(ctx.app, id, p.slug);
     const folders = !existed && !p.slug.includes("/") && p.slug !== "index" ? [...new Set(listPages(ctx.app, id).filter((x) => x.slug.includes("/")).map((x) => x.slug.split("/")[0]))] : [];
     return `已${existed ? "更新" : "创建"}页面 ${p.id}。引用原件 ${c.sources.length} 个${c.missingLinks.length ? `；这些链接目标还不存在：${c.missingLinks.join(", ")}` : ""}${
       folders.length ? `\n这页放在了顶层；空间里已有目录：${folders.slice(0, 20).join("、")}。有合适的就用 move_page 移进去（旧路径的链接会自动跟过去）。` : ""
-    }${notes}`;
+    }${asked.length ? `\n记下了这页的 ${asked.length} 个未决问题（不在页面里）。` : ""}${notes}`;
+  },
+});
+
+def({
+  name: "settle_wiki_question",
+  description:
+    "处理 Wiki 页面的一个未决问题（写作时拿不准、没写进页面的点）：查清了并已把结论写进页面就标 resolved；查不清、只有本人能定的标 needs-owner，给出 importance（3 = 不定就会误导读者）。note 写查过哪里、写进了哪一段或为什么定不了。",
+  write: true,
+  schema: z.object({
+    id: z.string().describe("未决问题 id（wq 开头）"),
+    outcome: z.enum(["resolved", "needs-owner"]),
+    note: z.string().min(1).max(1000),
+    importance: z.number().int().min(1).max(3).optional(),
+  }),
+  handler: async (ctx, a) => {
+    const qs = await import("../wiki/questions.ts");
+    const q = qs.getQuestion(ctx.app, a.id);
+    if (!q) throw new HttpError(404, `没有未决问题 ${a.id}`);
+    wikiSpace(ctx, q.spaceId);
+    if (q.status === "resolved" || q.status === "dropped") return `问题 ${a.id} 已经是 ${q.status}，不用再处理。`;
+    qs.updateQuestion(ctx.app, a.id, { status: a.outcome, note: a.note, ...(a.importance ? { importance: a.importance } : {}) });
+    return a.outcome === "resolved" ? `已关掉 ${a.id}。` : `已记为要本人定（重要度 ${a.importance ?? q.importance}）：${a.id}。`;
   },
 });
 

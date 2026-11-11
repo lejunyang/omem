@@ -488,6 +488,8 @@ export function movePages(app: App, spaceId: string, input: PageMove[], opts: { 
     for (const c of r.was) run(app.db, "update page_cites set hash = ? where page_id = ? and source_id = ?", c.hash, `${spaceId}/${r.to}`, c.source_id);
   }
   for (const r of read) pruneEmptyDirs(dirname(pageFile(app, spaceId, r.from)), root);
+  // A page's open questions (wiki/questions.ts) go with it.
+  for (const m of moves) run(app.db, "update wiki_questions set page = ? where space_id = ? and page = ?", m.to, spaceId, m.from);
   // 3. Other pages that link to a moved page.
   let linksFixed = 0;
   for (const id of linkers) {
@@ -571,6 +573,19 @@ export function restoreAliases(app: App, spaceId: string, opts: { dryRun?: boole
   }
   if (restored.length && !opts.dryRun) commitLibrary(app.libraryDir, `omem: restore old paths of ${restored.length} pages in ${spaceId}`);
   return { dryRun: !!opts.dryRun, pages: restored.length, aliases: restored.reduce((n, r) => n + r.aliases.length, 0), sample: restored.slice(0, 20) };
+}
+
+/**
+ * Replace a page's body without re-checking it (a mechanical edit: a section moved out): meta, old
+ * paths and the recorded state of what each remaining citation was when written are kept, so a page
+ * whose originals changed still says so. `commit: false` leaves the commit to the caller (batches).
+ */
+export function rewritePageBody(app: App, spaceId: string, slug: string, body: string, opts: { message: string; commit?: boolean }) {
+  const file = pageFile(app, spaceId, slug);
+  const { meta } = parsePage(readFileSync(file, "utf8"));
+  writeFileSync(file, serializePage(meta, body));
+  indexPage(app, spaceId, slug, meta, body.trim() + "\n", statSync(file).mtime.toISOString(), { fromId: `${spaceId}/${slug}` });
+  if (opts.commit !== false) commitLibrary(app.libraryDir, opts.message);
 }
 
 /** The page was checked and still holds: its recorded state of what it cited is brought up to date. Content is untouched. */

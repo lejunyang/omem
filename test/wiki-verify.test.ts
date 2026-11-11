@@ -13,6 +13,7 @@ import { pageExists, readPage } from "../src/wiki/store.ts";
 import { getGeneration, pageChecks, reportText, startGeneration } from "../src/wiki/verify.ts";
 import { answerAsk, getAsk } from "../src/agents/asks.ts";
 import { getRun } from "../src/agents/runs.ts";
+import { listQuestions } from "../src/wiki/questions.ts";
 import { testApp } from "./helpers.ts";
 
 const app = testApp();
@@ -116,20 +117,32 @@ it("takes what nobody is sure of out of the page, asks the owner once, and fills
   writeFileSync(checkFile, "pass");
   const rec = pageChecks(app, "project", "overview")[0];
   expect([...(rec.questions ?? [])].sort()).toEqual(["A 业务的退款上限是多少？", "退款是原路退回还是退到余额？"].sort());
-  expect(g.report!.questions).toHaveLength(2);
+  // Both became the page's open questions, outside the page; an agent looked first and settled one itself.
+  expect(readPage(app, "project", "overview").body).not.toMatch(/待确认|还没查清/);
+  const qs = listQuestions(app, { spaceId: "project", page: "overview", status: ["open", "needs-owner", "asked", "answered", "resolved"] });
+  expect(qs.map((q) => [q.question, q.source, q.status]).sort()).toEqual([
+    ["A 业务的退款上限是多少？", "checker", "asked"],
+    ["退款是原路退回还是退到余额？", "writer", "resolved"],
+  ]);
+  expect(g.resolveRunId).toBeTruthy();
+  expect(g.report).toMatchObject({ resolvedByAgent: 1, moreInList: 0 });
+  expect(g.report!.questions.map((q) => q.question)).toEqual(["A 业务的退款上限是多少？"]);
   const n = lastNotice();
-  expect(n.title).toContain("2 个问题要你回答");
-  expect(n.body).toContain("A 业务的退款上限是多少？");
+  expect(n.title).toContain("1 个问题要你定");
+  expect(n.body).toContain("1 个问题已经查清");
   // One form, opened from that message rather than announced on its own.
   const ask = getAsk(app, g.report!.askId!);
   expect(ask).toMatchObject({ kind: "question", handler: "wiki-questions", status: "pending" });
-  expect(ask.ui?.fields).toHaveLength(2);
+  expect(ask.ui?.fields).toHaveLength(1);
   const before = listRuns(app, { kind: "wiki-write", limit: 100 }).length;
-  const field = ask.ui!.fields!.find((f) => f.label.includes("上限"))!;
-  await answerAsk(app, ask.id, { value: { [field.id]: "3000 元" }, by: "owner" });
+  await answerAsk(app, ask.id, { value: { [ask.ui!.fields![0].id]: "3000 元" }, by: "owner" });
   const after = listRuns(app, { kind: "wiki-write", limit: 100 });
   expect(after.length).toBe(before + 1);
   const instructions = String((getRun(app, after[0].id).input as { instructions?: string }).instructions);
   expect(instructions).toContain("答：3000 元");
   expect(instructions).not.toContain("原路退回");
+  // The page written with the answer closes the question.
+  const until = Date.now() + 60_000;
+  while (getRun(app, after[0].id).status !== "done" && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
+  expect(listQuestions(app, { spaceId: "project", page: "overview", status: ["resolved"] }).map((q) => q.question).sort()).toEqual(["A 业务的退款上限是多少？", "退款是原路退回还是退到余额？"].sort());
 }, 120000);
