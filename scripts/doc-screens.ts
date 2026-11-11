@@ -168,6 +168,10 @@ upsertSource(app, { spaceId: "refund", kind: "chat", uri: "lark:oc_demo_alert", 
 upsertSource(app, { spaceId: "refund", kind: "chat", uri: "lark:oc_demo_dm", title: "与 小王 的私聊", text: "[10-22 15:00] 小王: 接口今天能联调", meta: { chatId: "oc_demo_dm", chatMode: "p2p" } });
 upsertSource(app, { spaceId: "refund", kind: "web", uri: "https://example.com/payments/refund-rounding", title: "退款金额的尾差处理", text: "尾差归最后一行是常见做法。", meta: { url: "https://example.com/payments/refund-rounding" } });
 upsertSource(app, { spaceId: "refund", kind: "meeting", uri: "lark:minutes:demo_weekly", title: "妙记：退款改造周会", text: "阿青：周四上线。", meta: { date: "2026-10-23" } });
+// A repository under the project: a folder of its catalog tree on the sources page.
+mkdirSync(join(home, "refund-web"));
+createSpace(app, { id: "refund-web", name: "退款前端", kind: "repo", rootPath: join(home, "refund-web"), parentId: "refund" });
+for (const uri of ["src/pages/RefundApply.vue", "src/pages/RefundRecords.vue", "src/api/refund.ts"]) upsertSource(app, { spaceId: "refund-web", kind: "code", uri, title: uri, text: `// ${uri}\nexport default {};\n` });
 setNodeLevel(app, "refund", "chat:oc_demo_alert", "ignore", "owner", { reason: "机器人通知" });
 setNodeLevel(app, "refund", "wn:wn_old", "reference", "agent", { reason: "已被 2026 年的方案取代" });
 setAttention(app, [kbPrd], "focus", "owner");
@@ -658,7 +662,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.waitForTimeout(400);
   } },
   { name: "sources", path: `/sources/${prd}` },
-  { name: "sources-catalog", path: `/sources/${kbPrd}`, space: "refund", init: { "omem.sourceTree.refund": JSON.stringify(["wiki:kb_demo", "wn:wn_root", "wn:wn_refund", "chat:group", "chat:oc_demo_team", "lark-drive"]) } },
+  { name: "sources-catalog", path: `/sources/${kbPrd}`, space: "refund", init: { "omem.sourceTree.refund": JSON.stringify(["wiki:kb_demo", "wn:wn_root", "wn:wn_refund", "chat:group", "chat:oc_demo_team", "lark-drive", "@refund-web@", "@refund-web@dir:src"]) } },
   { name: "sources-review", path: `/sources/${kbOld}`, space: "refund", prepare: async (p) => { await p.getByRole("button", { name: /待复核/ }).click(); await p.waitForTimeout(600); } },
   { name: "memory", path: "/memory" },
   { name: "items", path: `/items/${item.id}` },

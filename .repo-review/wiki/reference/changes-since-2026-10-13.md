@@ -1955,3 +1955,12 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 英语插件：内容块 `speaking`（场景、想练的说法），页面工具 `english_speaking_start`、`english_speaking_brief`（按口语等级、薄弱短语、口音写给语音模型的说明），提交时存 `speaking` 记录并把对话记录交给陪练；陪练按插件技能 `english-speaking`（由原 `speaking-assessment` 改写）用 `english_speaking_grade` 交等级、四项分、评价和知识点，进同一份画像（`PROFILE_SKILLS` 多了 speaking，`snapshot.speaking`）。页面“新练习”里“做题 / 口语对话”并列，口语卡片 `SpeakingCard.vue` 用 omem 的样式；没配语音模型时说明去哪里配。
 - 删掉：`web/src/views/Speaking.vue`、导航项和 `/speaking` 路由、`roles/speaking-coach.md`（`roleNames` 同步）、`speaking-review` 的评价逻辑（旧的排队运行直接结束）、`voice_sessions` 的练习写入（表保留，旧的 `practice` 行不再列出）。已经播种到数据目录的 `speaking-assessment` 技能不会被删，不再有角色用它。
 - CORS：问题在第一跳，`omem peer open` 的本机代理。沙箱 iframe 以 `Origin: null` 按 CORS 方式取 module script 和样式表，本机代理的本机信任检查（`trustedLocal` → `sameOrigin`，10-30 起）把 `Origin: null` 当作别的网站，直接回 403，没有跨域头，浏览器就报 CORS。直接访问目标设备时不经过这层所以正常。现在本机代理对 `Origin: null` 只放行插件页面的文件（`pluginPageFile`：`/plugins/<id>/…`、`/plugins/_sdk/…`，只允许普通路径字符、不含点段和 `%`，免得 `..` 在转发时被解析成别的路径），并在响应上自己补 `access-control-allow-origin: *`，所以中间设备是 11-07（d25fbf62）之前的版本、转发时丢掉这个头也没关系；只需要更新运行 `omem peer open` 的那台电脑。插件页面的流（`/api/plugins/<id>/streams/…`）加进本机代理的原始隧道（`PLUGIN_STREAM`），中间设备 11-07（6050f807）起原样转发本人的升级请求。`test/peer-plugin-page.test.ts`：三台 omem 两级转发，以及一个丢掉跨域头的旧中间设备。
+
+## 2026-11-12：原件页的仓库目录、筛选和滚动加载
+
+起因：业务空间挂了十几个仓库、一万多份原件时，原件页顶部一排仓库按钮换了七八行，关注程度和类型两排一样的按钮挨在一起，筛选区占了半屏；目录树滚到底会闪、反复加载。
+
+- 滚到底反复加载：目录树（非仓库空间）和仓库路径树自己取数据，但列表栏的滚动监听仍按平铺列表的分页判断：平铺列表是空的，总数却是目录树报上来的整个空间的份数，于是每次接近底部都去取 `/api/sources` 的下一页（这一页根本不显示），底部的“加载中…”一出一没又改变了高度和滚动位置，接着再触发。现在只有平铺列表（没选空间）分页，判断抽成 `web/src/lib/sources.ts` 的 `shouldLoadMore`（某页返回空就停，即使总数说还有）；底部那一行在还有下一页时一直占位，只换文字。
+- 仓库进目录树（`SourceTree.vue`）：业务空间名下的仓库作为顶层目录，展开是从仓库空间加载的路径树（节点 key 加 `@<仓库>@` 前缀，设关注程度时按仓库空间写）；6 个以上收进一个“仓库”目录。份数并进标题旁的总数。仓库行的菜单显示本地路径和“单独打开”。顶部的仓库按钮去掉，仓库空间里留“属于 业务空间”的返回链接。
+- 筛选：关键词 + 类型下拉一行，关注程度下拉（选项带份数）+“待复核”一行；“待复核”打开后变成“回到目录”。标题行的整理、知识库在列表栏里是图标按钮，手机上显示文字；手机上没选原件时列表占满屏。
+- 验证：`test/sources-web.test.ts`；本地演示数据（5000 份、15 个仓库）在 1440 / 1060 / 390 宽度截图，没有横向溢出。验收 25a–25g。
