@@ -7,7 +7,7 @@ import { saveAgentSpec } from "../src/agents/specs.ts";
 import { createThread, updateThread } from "../src/agents/threads.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { newId } from "../src/core/util.ts";
-import { run } from "../src/core/db.ts";
+import { one, run } from "../src/core/db.ts";
 import { setupLarkBot } from "../src/channels/lark-bot.ts";
 import { setCotSdk } from "../src/channels/lark-cot.ts";
 import { setLarkBotClient } from "../src/channels/lark-send.ts";
@@ -104,6 +104,31 @@ describe("answers in groups and where thinking bubbles go", async () => {
     const dm = answerTo("om_dm");
     expect(dm).toBeTruthy();
     expect(dm!.content).not.toContain("<at");
+  }, 60_000);
+
+  it("@s the person the answer is for as well, each person once", async () => {
+    // The owner asks the bot to look at something for a colleague: the answer names them (the fake agent
+    // answers with what it was sent, `@小王` included).
+    const e = event({ id: "om_for_wang", chat: "oc_team", text: "帮 @_user_2 看下这个，查到了告诉 @_user_2", sender: "ou_owner" });
+    e.message.mentions.push({ key: "@_user_2", name: "小王", id: { open_id: "ou_wang" } });
+    await send(e);
+    const content = answerTo("om_for_wang")!.content;
+    expect(content.split("<at id=ou_wang></at>")).toHaveLength(2);
+    expect(content.split("<at id=ou_owner></at>")).toHaveLength(2);
+    expect(content).not.toContain("@小王");
+  }, 60_000);
+
+  it("a message @-ing the bot in a watched chat is answered once, by the conversation it was asked in", async () => {
+    const { setWatchRule, watchPurpose } = await import("../src/channels/lark-watch.ts");
+    setWatchRule(app, "oc_watched", { spec: "assistant", on: "all", reply: "auto", note: "有人要查审核单号就帮着查" });
+    await send(event({ id: "om_watched_at", chat: "oc_watched", text: "查一下这个账号", sender: "ou_owner" }));
+    // Answered where it was asked, knowing what the owner wants from this chat…
+    expect(answerTo("om_watched_at")?.content).toContain("<at id=ou_owner></at>");
+    expect(watchPurpose(app, "oc_watched")).toContain("有人要查审核单号就帮着查");
+    // …and not handed to the watch as well.
+    expect(one<{ rule: string }>(app.db, "select rule from handled_messages where channel = 'lark' and message_id = 'om_watched_at'")?.rule).toBe("direct");
+    expect(one(app.db, "select 1 from conversations where channel = 'lark-watch' and external_id = 'oc_watched'")).toBeUndefined();
+    setWatchRule(app, "oc_watched", null);
   }, 60_000);
 
   it("a meeting's conclusion goes to the private chat itself, not the topic the owner last wrote in", async () => {

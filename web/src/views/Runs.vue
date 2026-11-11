@@ -43,7 +43,7 @@ const statusOptions = [{ value: "" as const, label: "全部" }, { value: "queued
 type Brief = { id: string; kind: string; title: string; status: string };
 type RunContextInfo = {
   items: { id: string; title: string; status: string }[];
-  conversation: { id: string; title: string; channel: string; topic: boolean; work: boolean; parentId: string | null; parentTitle: string | null; turns: { id: string; title: string; status: string; createdAt: string }[] } | null;
+  conversation: { id: string; title: string; channel: string; topic: boolean; work: boolean; parentId: string | null; parentTitle: string | null; own: boolean; turnCount: number; turns: { id: string; title: string; status: string; createdAt: string }[] } | null;
   parent: Brief | null;
   source: Brief | null;
   work: { id: string; title: string; rounds: { runId: string; agent: string; kind: string; status: string; title: string }[] } | null;
@@ -354,7 +354,7 @@ const kindOptions = computed(() => [
         <section v-if="ctxInfo && (ctxInfo.conversation || ctxInfo.parent || ctxInfo.work)" class="card pad block ctx">
           <div class="section-title">所在会话与关联</div>
           <div v-if="ctxInfo.conversation" class="ctx-row">
-            <span class="muted small">会话</span>
+            <span class="muted small">{{ ctxInfo.conversation.own ? "会话" : "结果发到" }}</span>
             <span class="grow">
               <router-link :to="`/ask/${ctxInfo.conversation.id}`">{{ ctxInfo.conversation.title || ctxInfo.conversation.id }}</router-link>
               <span class="badge">{{ ctxInfo.conversation.work ? "多 Agent 工作会话" : ctxInfo.conversation.topic ? "飞书话题" : ctxInfo.conversation.channel === "lark" ? "飞书会话" : ctxInfo.conversation.channel }}</span>
@@ -378,7 +378,7 @@ const kindOptions = computed(() => [
             </router-link>
           </div>
           <div v-if="ctxInfo.conversation && ctxInfo.conversation.turns.length > 1" class="ctx-steps">
-            <div class="muted small">同一会话里的对话轮次（{{ ctxInfo.conversation.turns.length }}）</div>
+            <div class="muted small">同一会话里的对话轮次（{{ ctxInfo.conversation.turnCount > ctxInfo.conversation.turns.length ? `共 ${ctxInfo.conversation.turnCount} 轮，这是前后的 ${ctxInfo.conversation.turns.length} 轮` : ctxInfo.conversation.turns.length }}）</div>
             <router-link v-for="t in ctxInfo.conversation.turns" :key="t.id" :to="`/runs/${t.id}`" class="li" :class="{ on: t.id === detail.run.id }" :title="t.title">
               <span class="st" :class="t.status" /><span class="grow ellipsis">{{ t.title }}</span><span class="muted small">{{ fmtTime(t.createdAt) }}</span>
             </router-link>

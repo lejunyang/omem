@@ -994,7 +994,10 @@ registerHandler("heartbeat", async (ctx) => {
   run(app.db, "insert into kv(key,value) values('heartbeat_at', ?) on conflict(key) do update set value = excluded.value", started);
   if (!fresh.length || !watching.length) return { quiet: true, reminders: due.length, summary: due.length ? `发送了 ${due.length} 条提醒` : "没有新动静" };
   const sent = all<{ at: string; title: string }>(app.db, "select at, title from notifications where at > ? order by at", last);
+  const ownerAt = (await import("./owner-now.ts")).ownerNow(app);
   const task = [
+    ownerAt ? `本人此刻（本人在场听到、看到的内容不用再提醒）：
+${ownerAt}` : "",
     sent.length ? `上次巡检以来已经发给本人的通知（不要重复这些内容）：\n${sent.map((n) => `- ${n.at.slice(0, 16)} ${n.title}`).join("\n")}` : "",
     `关注/等待中的事项：\n${watching.map((i) => `- ${i.id} [${i.kind}] ${i.title}${i.waitingOn ? `（等待 ${i.waitingOn}）` : ""}${i.watch?.query ? `：关注 ${i.watch.query}` : ""}`).join("\n")}`,
     `上次巡检（${last}）以来新增或变化的材料：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n")}`,

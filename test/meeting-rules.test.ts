@@ -202,7 +202,9 @@ describe("meetings the owner joins", () => {
     expect(one<{ status: string; error: string }>(app.db, "select status, error from lark_meetings where meeting_id = 'm1'")).toMatchObject({ status: "ended", error: "owner-left" });
     const last = JSON.parse(all<{ input: string }>(app.db, "select input from runs where lane = 'meeting:m1' order by rowid").at(-1)!.input);
     expect(last.meeting).toBeUndefined();
-    expect(last.task).toContain("会后纪要");
+    expect(last.task).toContain("# 会议结束");
+    // Nothing forced: no todo for the owner and nothing worth keeping ends the run quietly.
+    expect(last.task).toContain("stay_quiet");
     expect(last.task).toContain("小李说接口文档晚点发");
     expect(last.task).not.toContain("这一段都在排期");
     expect(last.task).toContain("suggest_next");
@@ -286,6 +288,19 @@ describe("meetings the owner joins", () => {
     const n = listNotifications(app)[0];
     expect(n?.title).toContain("没能入会");
     expect(n?.body).toContain("允许智能体加入");
+  });
+
+  it("writes no record and no summary for a meeting nothing was heard of", async () => {
+    const { app } = setup();
+    setLarkClient({ request: async () => ({ code: 121005, msg: "meeting not exist" }) }, "ou_bot", "小助理");
+    saveRule(app, { name: "入会旁听", description: "入会旁听", enabled: true, trigger: { event: "meeting" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: true, spec: "assistant" }] });
+    await ownerJoinedMeeting(app, { id: "m4", no: "444444444", topic: "临时通话" });
+    expect(listNotifications(app)[0]?.title).toContain("没能入会");
+    const { meetingEnded } = await import("../src/channels/lark-meetings.ts");
+    await meetingEnded(app, "m4", "ended");
+    expect(one<{ status: string }>(app.db, "select status from lark_meetings where meeting_id = 'm4'")?.status).not.toBe("listening");
+    expect(one(app.db, "select 1 from sources where uri = 'lark:meeting:m4'")).toBeUndefined();
+    expect(all(app.db, "select id from runs where lane = 'meeting:m4'")).toHaveLength(0);
   });
 
   it("says plainly when AI Summary is off, and brings the bot in once the owner turns it on", async () => {

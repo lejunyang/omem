@@ -115,6 +115,23 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
   return n;
 }
 
+/**
+ * A message that @s the bot is answered where it was asked (lark-bot.ts), by one run: the watch on the
+ * chat does not take it as well. Recorded as handled, so the owner's capture seeing it later leaves it too.
+ */
+export function answeredDirectly(app: App, chatId: string, messageId: string) {
+  if (!watchRule(app, chatId)) return false;
+  run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values('lark',?,'direct',?)", messageId, now());
+  return true;
+}
+
+/** What the owner wants from a watched chat, for the run that answers someone @-ing the bot there. */
+export function watchPurpose(app: App, chatId: string) {
+  const w = watchRule(app, chatId);
+  if (!w || (w.expiresAt && w.expiresAt < now())) return "";
+  return `本人让你盯着这个群：${w.note ?? "（没有写目的）"}。这条消息 @ 了你，由你在这里回答，盯群的那一路不再处理它；群里别的消息仍由那一路看。`;
+}
+
 /** Rules bring omem's bot into a chat with this (lark-invite.ts, shared with `lark_invite`). */
 export { inviteOwnBot } from "./lark-invite.ts";
 

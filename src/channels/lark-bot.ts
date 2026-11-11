@@ -31,7 +31,7 @@ import { handleCardAction } from "./lark-actions.ts";
 import { larkBotInfo, larkOwnerOpenId, onLarkSent, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark } from "./lark-send.ts";
 import { bindAnswerer, botChannel, botRoster, chatContext, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, type BotRef } from "./lark-bots.ts";
 import { larkAppSecret } from "./lark-setup.ts";
-import { routeWatchedMessages } from "./lark-watch.ts";
+import { answeredDirectly, routeWatchedMessages, watchPurpose } from "./lark-watch.ts";
 import { askAsGuest, guestApprovalCard, guestsAllowed, onGuestApproved, ownerInChat, waitGuest, type GuestApproval } from "./lark-guest.ts";
 import { claimedByRule, markAddressed } from "../rules/store.ts";
 import { larkSenderNames } from "./lark-sender.ts";
@@ -105,7 +105,9 @@ type Inbound = {
   /** Topic (话题) the message belongs to: thread_id in topic groups and threaded replies. */
   topicId?: string;
   /** Quoted / reply-referenced message, resolved to readable text. */
-  quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
+  quote?: { messageId?: string; sender?: string; senderId?: string; text?: string; origin?: string };
+  /** People this message brings up besides its sender, by name, with the open_id this bot knows them by: who it @s, who wrote the message it quotes. */
+  people?: Record<string, string>;
   /** Feishu message type (text, post, share_chat…). */
   type?: string;
   raw?: string;
@@ -548,7 +550,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       const senderId = typeof orig.sender?.id === "string" ? orig.sender.id : orig.sender?.id?.open_id;
       const own = one<{ text: string }>(app.db, "select text from messages where role = 'assistant' and json_extract(meta, '$.larkMessageId') = ? order by created_at desc limit 1", parentId);
       const text = own ? `（助手之前的回复）${own.text}` : await describeLarkContent(app, { messageId: parentId, type: orig.msg_type ?? orig.message_type, content: orig.body?.content }, lookups);
-      return { messageId: parentId, sender: senderId ? await nameOf(senderId) : undefined, text: text.slice(0, 2000) || undefined };
+      return { messageId: parentId, sender: senderId ? await nameOf(senderId) : undefined, senderId: senderId?.startsWith("ou_") ? senderId : undefined, text: text.slice(0, 2000) || undefined };
     } catch {
       return { messageId: parentId };
     }
@@ -582,8 +584,21 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
    * An answer in a group @s whoever asked (they see it among everything else); a private chat needs no
    * @, and another bot is never @-ed back (that would hand the turn back and forth).
    */
-  const toAsker = (m: Inbound, text: string) =>
-    m.chatType === "group" && !m.fromApp && m.senderId && !text.includes(`<at id=${m.senderId}>`) ? `<at id=${m.senderId}></at> ${text}` : text;
+  const toAsker = (m: Inbound, text: string) => {
+    if (m.chatType !== "group") return text;
+    // `@名字` the agent wrote for someone this exchange is about (the asker, whoever the message @-ed,
+    // whoever wrote the quoted message) becomes the real @: the answer may be for them as much as for
+    // the asker. Each person once; a name written again stays a name.
+    const people: Record<string, string> = { ...m.people, ...(!m.fromApp && m.senderId && m.senderName ? { [m.senderName]: m.senderId } : {}) };
+    let out = text;
+    for (const name of Object.keys(people).filter(Boolean).sort((a, b) => b.length - a.length)) {
+      if (!out.includes(`@${name}`)) continue;
+      const tag = `<at id=${people[name]}></at>`;
+      if (!out.includes(tag)) out = out.replace(`@${name}`, tag);
+      out = out.replaceAll(`@${name}`, name);
+    }
+    return !m.fromApp && m.senderId && !out.includes(`<at id=${m.senderId}>`) ? `<at id=${m.senderId}></at> ${out}` : out;
+  };
 
   /** The bot's own @ goes away; other people keep their name (「结合 @小李 在文档里…」 means something). */
   const spoken = (m: Inbound) =>
@@ -659,9 +674,14 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       if (!m.fromApp) personSpoke(m.chatId, m.topicId);
       // A person @-ing the bot asks it directly, and it answers (a user, or a guest when allowed):
       // the rules (waits, silent checks) are for what nobody asked and step aside.
-      if (m.mentionsBot && !m.fromApp && (who(m) || guestsAllowed(app, "group"))) markAddressed(app, `lark:${m.messageId}`);
-      else if (keeps) ruled = dispatchToRules(m).catch(() => {});
-      if (keeps) await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
+      // The same goes for a watch on the chat: one answer, from the conversation the question was asked in.
+      if (m.mentionsBot && !m.fromApp && (who(m) || guestsAllowed(app, "group"))) {
+        markAddressed(app, `lark:${m.messageId}`);
+        if (keeps) answeredDirectly(app, m.chatId, m.messageId);
+      } else if (keeps) {
+        ruled = dispatchToRules(m).catch(() => {});
+        await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
+      }
       if (!m.mentionsBot) return;
     }
     if (!ownerOpenId()) {
@@ -683,7 +703,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const text = spoken(m);
     const context = [
       approved ? `本人看过门卫拦下的这条请求，同意让 ${m.senderName} 这次使用你：照常处理，结果回在群里。` : "",
-      ...(m.chatType === "group" ? [rosterNote(app, ref), groupContext(m)] : []),
+      ...(m.chatType === "group" ? [rosterNote(app, ref), watchPurpose(app, m.chatId), groupContext(m)] : []),
     ].filter(Boolean).join("\n\n");
     if (!text) return;
     const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : userId === OWNER ? cfg.defaultSpace : undefined;
@@ -869,6 +889,14 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
     if (msg.message_type !== "image" && msg.message_type !== "file") {
       if (who(m) === OWNER) m.quote = await fetchQuote(msg);
+      if (m.chatType === "group") {
+        m.people = Object.fromEntries(
+          ((msg.mentions ?? []) as { name?: string; id?: { open_id?: string } }[])
+            .filter((x) => x.name && x.id?.open_id?.startsWith("ou_") && x.id.open_id !== botOpenId)
+            .map((x) => [x.name!, x.id!.open_id!]),
+        );
+        if (m.quote?.sender && m.quote.senderId && m.quote.senderId !== botOpenId) m.people[m.quote.sender] = m.quote.senderId;
+      }
       await handle(m);
     } else if (m.chatType === "group" && keeps) captureGroup(m);
   };

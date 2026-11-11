@@ -2754,6 +2754,10 @@ function materialForPage(app: App) {
   };
 }
 
+/** How many turns of a long conversation a run's page lists, and how many of them come before the run's own. */
+const TURNS_SHOWN = 9;
+const TURNS_BEFORE = 5;
+
 /**
  * Where a run sits: the conversation it answers in (and whether that is a Feishu topic or a work
  * session of a multi-agent task), the run that started it, and the rounds of the work it is part of.
@@ -2769,6 +2773,19 @@ function runContext(app: App, r: ReturnType<typeof getRun>) {
   const parent = brief(r.parentId);
   const workId = input.agentWorkId ?? ((r.output as { agentWork?: { askRunId?: string } }).agentWork?.askRunId === r.id ? r.id : undefined);
   const work = workId ? (getRun(app, workId).output as { agentWork?: { title: string; workConversationId: string; rootConversationId: string; rounds: { runId: string; agent: string }[] } }).agentWork : undefined;
+  // Other turns in the same conversation: one line of work in Feishu is one conversation here. Only
+  // for a run that is itself one of them: a run that merely reports there (someone looking for the
+  // owner, a meeting's summary going to the owner's chat with the bot) has nothing to do with what
+  // else was said in it. A long conversation shows the turns around this one.
+  const turns = conv && r.kind === "ask"
+    ? all<{ id: string; title: string; status: string; created_at: string }>(
+        app.db,
+        "select id, title, status, created_at from runs where kind = 'ask' and json_extract(input,'$.conversationId') = ? order by created_at",
+        conv.id,
+      ).map((x) => ({ id: x.id, title: x.title, status: x.status, createdAt: x.created_at }))
+    : [];
+  const at = turns.findIndex((t) => t.id === r.id);
+  const from = Math.max(0, Math.min(at - TURNS_BEFORE, turns.length - TURNS_SHOWN));
   const conversation = conv
     ? {
         id: conv.id,
@@ -2778,12 +2795,10 @@ function runContext(app: App, r: ReturnType<typeof getRun>) {
         work: !!work && work.workConversationId === conv.id,
         parentId: conv.parent_id,
         parentTitle: conv.parent_id ? one<{ title: string }>(app.db, "select title from conversations where id = ?", conv.parent_id)?.title ?? null : null,
-        // Other turns in the same conversation: one line of work in Feishu is one conversation here.
-        turns: all<{ id: string; title: string; status: string; created_at: string }>(
-          app.db,
-          "select id, title, status, created_at from runs where kind = 'ask' and json_extract(input,'$.conversationId') = ? order by created_at",
-          conv.id,
-        ).map((x) => ({ id: x.id, title: x.title, status: x.status, createdAt: x.created_at })),
+        /** Whether this run is a turn of the conversation, not only reporting into it. */
+        own: at >= 0,
+        turns: at < 0 ? [] : turns.slice(from, from + TURNS_SHOWN),
+        turnCount: at < 0 ? 0 : turns.length,
       }
     : null;
   // The items this work was done for: later rounds and re-reviews belong to the first round's items.
