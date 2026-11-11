@@ -20,14 +20,14 @@ export function disableGitFsmonitor(env: NodeJS.ProcessEnv = process.env) {
 }
 
 /** Synchronous: the main thread waits for git (timed, core/loop-monitor.ts). Prefer `gitAsync` on request paths. */
-export function git(cwd: string, args: string[], input?: string): GitResult {
+export function git(cwd: string, args: string[], input?: string, env?: Record<string, string>): GitResult {
   const start = performance.now();
   const r = spawnSync("git", args, {
     cwd,
     input,
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" },
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8", ...env },
     windowsHide: true,
   });
   noteSync(`git ${args.filter((a) => !a.startsWith("-")).slice(0, 2).join(" ")}`, start);

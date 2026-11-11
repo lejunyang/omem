@@ -337,6 +337,17 @@ describe("a branch review against a design", () => {
       expect(diff.patches).toHaveLength(1);
       expect(diff.patches[0].patch).toContain("shippedOnly");
       expect(diff.patches[0].patch).not.toContain("legacy.ts");
+      // Both ends of the review's diff come along, so an editor can show the two sides of each file.
+      const { fileAt, workPatches } = await import("../src/agents/code-tasks.ts");
+      const { worktreesOf } = await import("../src/agents/code.ts");
+      expect(diff.patches[0].from).toMatch(/^[0-9a-f]{40}$/);
+      expect(diff.patches[0].to).toMatch(/^[0-9a-f]{40}$/);
+      expect(fileAt(app, worktreesOf(app, r.id), "shop-api", "refund.ts", diff.patches[0].to!)!.toString()).toContain("shippedOnly");
+      expect(fileAt(app, worktreesOf(app, r.id), "shop-api", "refund.ts", diff.patches[0].from!)?.toString() ?? "").not.toContain("shippedOnly");
+      // The whole of a branch review's change: the branch against its base.
+      const [whole] = await workPatches(app, r.id, worktreesOf(app, r.id), { work: true });
+      expect(whole).toMatchObject({ space: "shop-api", from: diff.patches[0].from, to: diff.patches[0].to });
+      expect(whole.patch).toContain("legacy.ts");
       expect((await designDiff(app, after, "outside")).patches[0].patch).toContain("legacy.ts");
       expect((await designDiff(app, after, "D2")).patches).toEqual([]);
     } finally {

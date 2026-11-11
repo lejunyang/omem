@@ -16,6 +16,10 @@ export type Task = { seq: number; title: string; doneWhen: string; kind: string;
 export type Checkpoint = { seq: number; tasks: number[]; by: string; label: string; createdAt: string };
 export type Work = { budget: number; budgetBy: string | null; until: number; round: number; lastRunId: string; paused: string | null; viewed: number; status: string; verdict: string | null; stage: string | null; reverts: number[]; pending: string[]; max: number };
 export type TaskData = { taskMode: boolean; rootId?: string; tasks?: Task[]; checkpoints?: Checkpoint[]; work?: Work };
+/** One repository's part of a change, as `/api/runs/:id/task-diff` and `/api/designs/:id/diff` give it: the two commits it is between, and where its tip is checked out. */
+export type Patch = { space: string; patch: string; from?: string; to?: string; at?: string };
+/** `to` when the right side is the workspace's files as they are now (uncommitted edits included). */
+export const WORKTREE = "worktree";
 
 export const TASK_STATE: Record<TaskState, string> = { todo: "待做", coding: "编码中", verify: "待验证", disputed: "裁决中", done: "已完成", owner: "等你决定", wontdo: "不做", reverted: "已回退" };
 const PAUSE: Record<string, string> = { budget: "暂停：自动推进的轮数用完了", owner: "你暂停了", "not-converging": "暂停：修改没有收敛", paused: "已暂停" };
@@ -157,20 +161,30 @@ export class Tasks implements vscode.TreeDataProvider<TaskItem>, vscode.TextDocu
     return r.binary ? "（二进制文件，不显示内容）" : r.text;
   }
 
+  /** `rev` "worktree" is the workspace's file as it is now: it changes, so each look gets its own URI (VS Code keeps a document per URI). */
   private revUri(run: string, space: string, path: string, rev: string | null, side: "before" | "after", at?: vscode.Uri) {
-    if (at) return at.with({ scheme: "omem-rev", query: new URLSearchParams({ run, space, rev: rev ?? "", side, file: path }).toString() });
-    return vscode.Uri.from({ scheme: "omem-rev", path: `/${path}`, query: new URLSearchParams({ run, space, rev: rev ?? "", side }).toString() });
+    const live: Record<string, string> = rev === WORKTREE ? { v: String(Date.now()) } : {};
+    if (at) return at.with({ scheme: "omem-rev", query: new URLSearchParams({ run, space, rev: rev ?? "", side, file: path, ...live }).toString() });
+    return vscode.Uri.from({ scheme: "omem-rev", path: `/${path}`, query: new URLSearchParams({ run, space, rev: rev ?? "", side, ...live }).toString() });
   }
 
   /**
    * Open a change in the multi-file diff: one task, a checkpoint's step, since a checkpoint, since the
-   * owner last looked, or the branch against another. `local`: the right side is the work folder's own
-   * file (the branch tip is what is checked out there), so questions and fix points work on it.
+   * owner last looked, the branch against another, or everything the work changed as it stands
+   * (`work=1`: any delegation, also one an outside Agent codes and has not handed in). `local`: the
+   * right side is the work folder's own file (the tip is what is checked out there), so questions and
+   * fix points work on it.
    */
   async showChanges(title: string, query: string, local = false) {
     const run = this.current.run;
     if (!run) return;
-    const { patches } = await this.api.get<{ patches: { space: string; patch: string; from?: string; to?: string; at?: string }[] }>(`/api/runs/${run.id}/task-diff?${query}`);
+    const { patches } = await this.api.get<{ patches: Patch[] }>(`/api/runs/${run.id}/task-diff?${query}`);
+    return this.showPatches(title, run.id, patches, local);
+  }
+
+  /** Patches omem gave (a task's, a design decision's, the whole work's) as a change to read: `run` is the work they are of. */
+  async showPatches(title: string, runId: string, patches: Patch[], local = false) {
+    const run = { id: runId };
     const files: ChangedFile[] = [];
     for (const p of patches) {
       // Only a checkout of exactly the compared tip (omem says where): another folder of the work may be

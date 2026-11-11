@@ -1548,13 +1548,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/runs/:id/task-diff", async (req) => {
     const id = (req.params as { id: string }).id;
     ownRun(req, id);
-    const o = q(z.object({ tasks: z.string().regex(/^[\dTt, ]+$/).optional(), from: z.coerce.number().int().min(0).optional(), to: z.coerce.number().int().min(0).optional(), since: z.enum(["viewed"]).optional(), base: z.string().max(200).regex(/^(?!-)[\w./-]+$/, "分支名不对").optional() }), req.query);
+    const o = q(z.object({ tasks: z.string().regex(/^[\dTt, ]+$/).optional(), from: z.coerce.number().int().min(0).optional(), to: z.coerce.number().int().min(0).optional(), since: z.enum(["viewed"]).optional(), base: z.string().max(200).regex(/^(?!-)[\w./-]+$/, "分支名不对").optional(), work: z.enum(["1"]).optional() }), req.query);
     const t = await import("../agents/code-tasks.ts");
-    if (!t.isTaskWork(app, id)) throw new HttpError(400, "这次交办不是按修改项推进的");
+    // Tasks and checkpoints only exist on a task-driven work; the whole change (`work`) and the branch
+    // against another (`base`) are there for every delegation and branch review, also one an outside
+    // Agent codes and has not handed in yet.
+    const byTask = o.tasks !== undefined || o.from !== undefined || o.to !== undefined || o.since !== undefined;
+    const taskWork = t.isTaskWork(app, id);
+    if (!taskWork && byTask) throw new HttpError(400, "这次交办不是按修改项推进的：只能看全部改动（work=1）或和某个分支比较（base=）");
     const rootId = t.workRootOf(app, id);
     const tasks = o.tasks ? o.tasks.split(/[,\s]+/).filter(Boolean).map((x) => t.parseTaskRef(x)) : undefined;
     const { worktreesOf } = await import("../agents/code.ts");
-    return { patches: await t.workPatches(app, rootId, worktreesOf(app, rootId), { tasks, from: o.from, to: o.to, since: o.since, base: o.base, userId: who(req) }) };
+    const work = !o.base && (!!o.work || (!taskWork && !byTask));
+    return { patches: await t.workPatches(app, rootId, worktreesOf(app, rootId), { tasks, from: o.from, to: o.to, since: o.since, base: o.base, work, userId: who(req) }) };
   });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.

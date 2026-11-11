@@ -151,6 +151,8 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
     if (uri.scheme !== "omem-rev") return `${this.current.run ? this.current.relative(uri) : vscode.workspace.asRelativePath(uri)}:${lines}（工作区里的文件）`;
     const q = new URLSearchParams(uri.query);
     const path = `${this.current.folders.length > 1 ? `${q.get("space")}/` : ""}${q.get("file") ?? uri.path.replace(/^\//, "")}`;
+    // The workspace's file as it is now (uncommitted edits included) is no commit.
+    if (q.get("rev") === "worktree") return `${path}:${lines}（工作区里的文件）`;
     const rev = q.get("rev")?.slice(0, 8);
     const side = q.get("side") === "before" ? "改动前的版本" : "改动后的版本";
     return `${path}:${lines}（${side}${rev ? ` ${rev}` : ""}）`;

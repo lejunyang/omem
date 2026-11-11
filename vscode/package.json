@@ -70,6 +70,7 @@
       "omem": [
         { "id": "omem.runs", "name": "交办" },
         { "id": "omem.tasks", "name": "修改项", "when": "omem.taskMode" },
+        { "id": "omem.design", "name": "方案", "when": "omem.hasDesign" },
         { "id": "omem.changes", "name": "改动的文件", "when": "omem.hasChanges" },
         { "id": "omem.review", "name": "修改单" }
       ]
@@ -112,6 +113,9 @@
       { "command": "omem.work.resume", "title": "继续推进", "category": "omem", "icon": "$(debug-continue)" },
       { "command": "omem.work.sinceViewed", "title": "我上次看过之后的改动", "category": "omem", "icon": "$(history)" },
       { "command": "omem.work.compareBase", "title": "和分支比较…", "category": "omem", "icon": "$(git-compare)" },
+      { "command": "omem.work.changes", "title": "看全部改动", "category": "omem", "icon": "$(diff)" },
+      { "command": "omem.design.diff", "title": "看这个决定的改动", "category": "omem", "icon": "$(diff-multiple)" },
+      { "command": "omem.design.openWeb", "title": "在网页中看方案", "category": "omem", "icon": "$(link-external)" },
       { "command": "omem.changes.openAll", "title": "全部打开", "category": "omem", "icon": "$(diff-multiple)" },
       { "command": "omem.changes.clear", "title": "关掉", "category": "omem", "icon": "$(close)" },
       { "command": "omem.checkpoint.step", "title": "看这一步", "category": "omem" },
@@ -147,7 +151,10 @@
         { "command": "omem.work.pause", "when": "omem.taskMode" },
         { "command": "omem.work.resume", "when": "omem.taskMode" },
         { "command": "omem.work.sinceViewed", "when": "omem.taskMode" },
-        { "command": "omem.work.compareBase", "when": "omem.taskMode" },
+        { "command": "omem.work.compareBase", "when": "omem.hasRun" },
+        { "command": "omem.work.changes", "when": "omem.hasRun" },
+        { "command": "omem.design.diff", "when": "false" },
+        { "command": "omem.design.openWeb", "when": "omem.hasDesign" },
         { "command": "omem.changes.openAll", "when": "omem.hasChanges" },
         { "command": "omem.changes.clear", "when": "omem.hasChanges" }
       ],
@@ -173,6 +180,9 @@
         { "command": "omem.refresh", "when": "view == omem.runs || view == omem.review", "group": "navigation@9" },
         { "command": "omem.startFix", "when": "view == omem.review && omem.hasRun", "group": "navigation@1" },
         { "command": "omem.showProgress", "when": "view == omem.review && omem.hasRun", "group": "navigation@2" },
+        { "command": "omem.work.changes", "when": "view == omem.review && omem.hasRun", "group": "navigation@3" },
+        { "command": "omem.work.compareBase", "when": "view == omem.review && omem.hasRun && !omem.taskMode", "group": "navigation@4" },
+        { "command": "omem.design.openWeb", "when": "view == omem.design", "group": "navigation@1" },
         { "command": "omem.task.add", "when": "view == omem.tasks", "group": "navigation@1" },
         { "command": "omem.work.sinceViewed", "when": "view == omem.tasks", "group": "navigation@2" },
         { "command": "omem.work.compareBase", "when": "view == omem.tasks", "group": "navigation@2" },
@@ -180,12 +190,14 @@
         { "command": "omem.changes.clear", "when": "view == omem.changes", "group": "navigation@9" },
         { "command": "omem.work.pause", "when": "view == omem.tasks && !omem.paused", "group": "navigation@3" },
         { "command": "omem.work.resume", "when": "view == omem.tasks && omem.paused", "group": "navigation@3" },
-        { "command": "omem.refresh", "when": "view == omem.tasks", "group": "navigation@9" }
+        { "command": "omem.refresh", "when": "view == omem.tasks || view == omem.design", "group": "navigation@9" }
       ],
       "view/item/context": [
         { "command": "omem.openRunFolder", "when": "view == omem.runs && viewItem =~ /folder/", "group": "inline@1" },
         { "command": "omem.openWeb", "when": "view == omem.runs && viewItem =~ /^run/", "group": "inline@2" },
         { "command": "omem.showRun", "when": "view == omem.runs && viewItem =~ /^run/", "group": "1@1" },
+        { "command": "omem.work.changes", "when": "view == omem.runs && viewItem =~ /^run/", "group": "1@2" },
+        { "command": "omem.design.diff", "when": "view == omem.design && viewItem == decision-files", "group": "inline@1" },
         { "command": "omem.finding.fix", "when": "view == omem.review && viewItem =~ /^finding(-later|-wontfix)?$/", "group": "1@1" },
         { "command": "omem.finding.later", "when": "view == omem.review && viewItem =~ /^finding(-fix|-wontfix)?$/", "group": "1@2" },
         { "command": "omem.finding.wontfix", "when": "view == omem.review && viewItem =~ /^finding(-fix|-later)?$/", "group": "1@3" },

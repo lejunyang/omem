@@ -1858,3 +1858,13 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 交办：`submit_brief` 多 `design: { needed, why }`；`delegate_code` 多 `design`（auto / always / never）和 `design_id`；方案阶段在编码前检查之后（`src/designs/work.ts` 的 `designStage`），等确认时这一轮以 `awaiting-design` 结束（交办阶段 `design`），确认走 `decideDesign`（卡片 handler `design-confirm`、`POST /api/designs/:id/decide`、`settle_design`），通过后同一轮重新排队；`continue_code_run` 表示不等方案直接编码。`plan_tasks` 每项可带 `decision`，`finish_task` 可带 `deviation`、`simpler`；`submit_review` 的问题可带 `decision`（新列 `review_findings.design_decision`）。
 - 分支评审：`review_branch` 多 `design_id`（不传取事项上最新的 own / external 方案）；有方案时拆分用 `submit_change_points` 的 `decisions: [{ decision, files }]` 只写归属（`attributeFiles`，其余进 `outside`），`rule_review` 多 `decisions`（`done`、`deviation`、意见状态）；没有方案的照旧。
 - 接口与网页：`/api/designs`（列表、详情含 `changes` / `outside` / `runId`、发起或重新评估、`decide`、`concerns/:cid`、`diff?decision=`，补丁结构同 `task-diff`）；`/api/code-works/:id` 多 `design`（没交的变更说明不算）；方案变化发 `changed` 事件（entity `design`）。网页 `DesignView`、`#/design/:id`、`#/designs`、交办视图“方案”标签、事项页“方案”一栏、设置 → AI → 方案先行、仓库空间“总是先写方案”。
+
+## 2026-11-11：没交结果的交办也能看改动；VS Code 插件按决定看改动
+
+起因：外部设备的 Agent 编码（`code_workspace`）在 `finish` 之前不保存补丁，网页“变更”只读保存的补丁，所以一直显示“这一轮没有改动”；插件的看改动接口只认按修改项推进的交办，这类交办连“和分支比较”都用不了。
+
+- `workPatches` 多一种取法 `work`（`GET /api/runs/:id/task-diff?work=1`）：每个仓库从 `changeBase` 到工作区现在的样子。工作区有没提交的改动时，用索引的一份副本（`GIT_INDEX_FILE`）`add -A` 后 `diff --cached`，新文件也在，工作区自己的索引不动；`to` 是 `worktree`。都提交了就是两个提交之间的差异。分支评审是 `base` 到 `tip`。`core/git.ts` 的 `git()` 多一个可选的环境变量参数。
+- `task-diff`：不按修改项推进的交办不带参数就是 `work`，`base=` 同样可用；只有 `tasks` / `from` / `to` / `since` 还要求按修改项推进。`file-at` 的 `rev=worktree` 读工作区里现在的文件（路径不出工作区、不进 `.git`、不跟出去的链接）。
+- 网页 `CodeWork` 的“变更”：最新一轮没有保存的补丁、交办没结束时，打开标签读一次 `work=1`，带“刷新”。
+- 方案：`designDiff` 在分支评审时给补丁带上 `from` / `to`；交办没有修改项时（外部 Agent 编码的、只有变更说明的），决定的补丁是它列的文件在全部改动里的那几段。
+- 插件：`tasks.ts` 的 `showPatches`（原 `showChanges` 拆出来，任何来源的补丁都能打开）；`design.ts` 的“方案”视图（`omem.hasDesign`）；命令 `omem.work.changes`、`omem.design.diff`、`omem.design.openWeb`；`omem.work.compareBase` 不再限于按修改项推进的交办。测试数据加了一份方案和一次没交结果的外部编码。

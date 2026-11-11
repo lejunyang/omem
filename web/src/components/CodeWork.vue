@@ -103,6 +103,21 @@ const roundNo = computed(() => work.value?.roundList.find((r) => r.id === props.
 const rv = useReviews(computed(() => run.value?.id ?? ""), computed(() => run.value?.status));
 const hasReview = computed(() => !!rv.data.value && (rv.reviews.value.length > 0 || !!rv.current.value?.plan));
 const diffs = computed(() => parsePatches(detail.value?.patches ?? []));
+// The latest round has saved no change yet — still coding, or an outside Agent that has not handed
+// in — so the workspace is read as it stands (uncommitted edits too) when “变更” is opened.
+const live = ref<{ space: string; patch: string }[] | null>(null);
+const liveLoading = ref(false);
+const liveDiffs = computed(() => parsePatches(live.value ?? []));
+const canLive = computed(() => latest.value && !branchReview.value && !diffs.value.length && !!work.value && work.value.stage.group !== "ended");
+let liveSeq = 0;
+async function loadLive() {
+  const request = ++liveSeq, id = props.runId;
+  liveLoading.value = true;
+  const r = await get<{ patches: { space: string; patch: string }[] }>(`/api/runs/${id}/task-diff?work=1`).catch(() => null);
+  if (request !== liveSeq) return;
+  live.value = r?.patches ?? [];
+  liveLoading.value = false;
+}
 const checks = computed(() => {
   if (out.value.repos?.length) return out.value.repos.flatMap((r) => (r.check ? [{ space: out.value.repos!.length > 1 ? r.space : "", check: r.check }] : []));
   return out.value.check ? [{ space: "", check: out.value.check }] : [];
@@ -254,6 +269,10 @@ const tabs = computed(() => [
   ...(branchReview.value ? [] : [{ id: "branch" as const, label: "分支" }]),
 ]);
 watch(tabs, (list) => { if (!list.some((t) => t.id === tab.value)) tab.value = "overview"; });
+watch(() => [tab.value, canLive.value, props.runId] as const, ([t, can]) => {
+  if (!can) live.value = null;
+  else if (t === "change") void loadLive();
+}, { immediate: true });
 const processFocus = ref<string | null>(null);
 watch(tab, (t) => { if (t !== "activity") processFocus.value = null; });
 const taskOpen = ref(false);
@@ -450,7 +469,12 @@ const ctx = computed(() => detail.value?.context ?? null);
       <template v-else-if="tab === 'change'">
         <ChangeView v-if="rv.changePoints.value.length" :rv="rv" :run-id="run.id" :diffs="diffs" @explain="explain" />
         <CodeDiffList v-else-if="diffs.length" :run-id="run.id" :diffs="diffs" :indexed="!out.appliedAt && !out.discardedAt ? out.indexedSpaces : undefined" />
-        <p v-else class="empty-tab">{{ busy ? "这一轮还在编码，结束后这里显示改动。" : "这一轮没有改动。" }}<template v-if="work.taskMode">每个修改项自己的改动、两个检查点之间、我上次看过之后，在“概览”的修改项里“看改动”。</template></p>
+        <template v-else-if="canLive && liveDiffs.length">
+          <p class="live-note muted small">这一轮还没交结果，下面是工作区现在的改动（没提交的也算）。<button class="btn ghost sm" :disabled="liveLoading" @click="loadLive">{{ liveLoading ? "读取中…" : "刷新" }}</button></p>
+          <CodeDiffList :run-id="run.id" :diffs="liveDiffs" />
+        </template>
+        <Skeleton v-else-if="canLive && live === null" :rows="4" variant="lines" />
+        <p v-else class="empty-tab">{{ canLive ? "工作区里还没有改动。" : busy ? "这一轮还在编码，结束后这里显示改动。" : "这一轮没有改动。" }}<button v-if="canLive" class="btn ghost sm" :disabled="liveLoading" @click="loadLive">{{ liveLoading ? "读取中…" : "刷新" }}</button><template v-if="work.taskMode">每个修改项自己的改动、两个检查点之间、我上次看过之后，在“概览”的修改项里“看改动”。</template></p>
       </template>
 
       <template v-else-if="tab === 'review'">
@@ -549,6 +573,8 @@ const ctx = computed(() => detail.value?.context ?? null);
 .point .ellipsis { flex: 1; min-width: 0; }
 .design-wait { gap: 8px 10px; padding: 10px 14px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }
 .design-wait .grow { flex: 1 1 14em; min-width: 0; }
+.live-note { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.empty-tab .btn { margin-left: 8px; }
 .empty-tab { color: var(--muted); font-size: 13px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius); margin: 0; }
 .rounds { display: grid; gap: 2px; max-height: 320px; overflow: auto; }
 .round { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; padding: 5px 6px; border-radius: 6px; cursor: pointer; }

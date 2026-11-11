@@ -5,6 +5,7 @@ import { Connection } from "./connection";
 import { Current } from "./current";
 import { ChangedFiles } from "./changes";
 import { Delegate } from "./delegate";
+import { Design, DesignItem, OUTSIDE } from "./design";
 import { Progress } from "./progress";
 import { RunItem, Runs } from "./runs";
 import { Workbench } from "./review";
@@ -25,11 +26,13 @@ export async function activate(context: vscode.ExtensionContext) {
   const runs = new Runs(api, current);
   const changed = new ChangedFiles();
   const tasks = new Tasks(api, current, context.workspaceState, changed);
+  const design = new Design(api, current, tasks);
   const delegate = new Delegate(api, current);
   const progress = new Progress(api, current, () => {
     runs.refresh();
     void bench.load().catch(fail);
     void tasks.load().catch(fail);
+    void design.load().catch(fail);
   });
   current.onDidChange(() => void bench.load().catch(fail));
 
@@ -60,6 +63,7 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider("omem.runs", runs),
     vscode.window.registerTreeDataProvider("omem.review", bench),
     vscode.window.registerTreeDataProvider("omem.tasks", tasks),
+    vscode.window.registerTreeDataProvider("omem.design", design),
     vscode.window.createTreeView("omem.changes", { treeDataProvider: changed, showCollapseAll: true }),
     vscode.workspace.registerTextDocumentContentProvider("omem-rev", tasks),
     vscode.languages.registerCodeLensProvider({ language: "markdown" }, delegate),
@@ -82,6 +86,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (current.run) await current.select(current.run.id);
     else await current.detect();
     await tasks.load();
+    await design.load();
   });
   cmd("omem.setToken", async () => {
     const token = await vscode.window.showInputBox({ title: `${api.conn.describe()} 的访问令牌`, prompt: "omem 所在机器上运行 omem user token 得到；留空则删除", password: true, ignoreFocusOut: true });
@@ -167,6 +172,27 @@ export async function activate(context: vscode.ExtensionContext) {
   cmd("omem.work.resume", () => tasks.pause(false));
   cmd("omem.work.sinceViewed", () => tasks.sinceViewed());
   cmd("omem.work.compareBase", () => tasks.compareBase());
+  // Everything a work changed as it stands, uncommitted edits too: for any delegation, also one an
+  // outside Agent codes and has not handed in, and a branch review.
+  cmd("omem.work.changes", async (arg) => {
+    const id = arg instanceof RunItem ? arg.run?.id : undefined;
+    if (id && !current.run?.rounds.includes(id)) await current.select(id);
+    if (!current.run) return void vscode.window.showInformationMessage("先在“交办”里选一个交办");
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "正在读这次交办的改动…" }, () => tasks.showChanges(`${current.run!.title} 的全部改动`, "work=1", true));
+  });
+  // The design the work is based on: the part of the change under one decision, or one file of it.
+  cmd("omem.design.diff", async (arg) => {
+    const n = arg instanceof DesignItem ? arg.node : null;
+    if (n?.kind === "decision") await design.showDecision(n.d.id);
+    else if (n?.kind === "outside") await design.showDecision(OUTSIDE);
+    else if (n?.kind === "file") await design.showDecision(n.decision, n.file);
+  });
+  cmd("omem.design.openWeb", () => {
+    if (!design.data) return;
+    const uri = api.conn.web(`/design/${design.data.id}`);
+    if (uri) void vscode.env.openExternal(uri);
+    else void vscode.window.showInformationMessage(`连配对的设备时，网页在本机终端里用 omem peer open ${api.conn.peer} 打开，再到“方案”里找《${design.data.title}》`);
+  });
   cmd("omem.changes.openAll", () => changed.openAll());
   cmd("omem.changes.clear", () => changed.clear());
   cmd("omem.checkpoint.step", async (arg) => {
@@ -197,7 +223,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   if (await status.check()) await current.detect().catch(() => current.set(null));
   else await current.set(null).catch(() => {});
-  return { api, status, current, bench, runs, delegate, tasks, changed };
+  return { api, status, current, bench, runs, delegate, tasks, changed, design };
 }
 
 export function deactivate() {}

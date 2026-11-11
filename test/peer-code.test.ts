@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
-import { discardCodeRun } from "../src/agents/code.ts";
+import { discardCodeRun, worktreesOf } from "../src/agents/code.ts";
+import { fileAt, workPatches, WORKTREE } from "../src/agents/code-tasks.ts";
+import { startServer } from "../src/server/http.ts";
 import { __testHandlers, addRunEvent, createRun, getRun, listRuns, setRunOutput } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
@@ -64,6 +66,35 @@ describe("coding an outside Agent on another device does itself", () => {
     // A new file in new directories (the workspace may sit behind a link, e.g. a linked home directory).
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "write", path: "tests/ui/new-dir/deep.test.ts", content: "// nested\n" })).text).toMatch(/已新建/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "grep", pattern: "shipped" })).text).toMatch(/refund\.ts:2/);
+    // Before the Agent hands anything in, the owner sees what it has changed so far: uncommitted edits and
+    // new files too, read without touching the workspace's own index.
+    const wts = worktreesOf(app, runId);
+    const [loose] = await workPatches(app, runId, wts, { work: true });
+    expect(loose.to).toBe(WORKTREE);
+    expect(loose.patch).toContain("+  return lines.filter");
+    expect(loose.patch).toContain("+++ b/lines.test.ts");
+    expect(loose.patch).toContain("+++ b/tests/ui/new-dir/deep.test.ts");
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: wts[0].path, encoding: "utf8" })).toContain("?? lines.test.ts");
+    expect(fileAt(app, wts, "shop-api", "lines.test.ts", WORKTREE)!.toString()).toBe("// shipped lines\n");
+    expect(fileAt(app, wts, "shop-api", "refund.ts", loose.from!)!.toString()).toContain("return 0;");
+    expect(fileAt(app, wts, "shop-api", "no-such.ts", WORKTREE)).toBeNull();
+    expect(() => fileAt(app, wts, "shop-api", "../outside.ts", WORKTREE)).toThrow(/路径/);
+    // Over HTTP (the web page's “变更” and the editor): a work not driven by tasks gives its whole change, not a refusal.
+    const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
+    try {
+      const api = async (path: string) => { const r = await fetch(`${app.baseUrl}${path}`); return { status: r.status, body: (await r.json()) as any }; };
+      const whole = await api(`/api/runs/${runId}/task-diff`);
+      expect(whole.status).toBe(200);
+      expect(whole.body.patches[0]).toMatchObject({ space: "shop-api", to: WORKTREE, from: loose.from });
+      expect((await api(`/api/runs/${runId}/task-diff?work=1`)).body.patches[0].patch).toBe(whole.body.patches[0].patch);
+      const byTask = await api(`/api/runs/${runId}/task-diff?tasks=1`);
+      expect(byTask.status).toBe(400);
+      expect(byTask.body.error).toMatch(/不是按修改项推进的/);
+      expect((await api(`/api/runs/${runId}/file-at?space=shop-api&path=lines.test.ts&rev=worktree`)).body.text).toBe("// shipped lines\n");
+      expect((await api(`/api/runs/${runId}/task-diff?base=main`)).status).toBe(200);
+    } finally {
+      await server.close();
+    }
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "rm", args: ["-rf"] })).text).toMatch(/只能运行本人给仓库/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "test", args: ["a;rm"] })).text).toMatch(/shell 符号/);
     const ran = (await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "test", args: ["lines.test.ts"] })).text;
@@ -75,6 +106,22 @@ describe("coding an outside Agent on another device does itself", () => {
     const { listArtifacts } = await import("../src/agents/artifacts.ts");
     expect((await listArtifacts(app, runId)).map((a) => [a.name, a.source, a.caption])).toEqual([["shot.txt", "command", "命令 node -e \"require('fs').writeFileSync(require('path').join(process.env.OMEM_ARTIFACTS, 'shot.txt'), 'list')\""], ["lines.test.ts", "agent", "新加的测试"]]);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "commit", message: "只退未发货的行" })).text).toMatch(/已提交/);
+    // Everything committed: the change is between two commits.
+    const [committed] = await workPatches(app, runId, worktreesOf(app, runId), { work: true });
+    expect(committed.to).toMatch(/^[0-9a-f]{40}$/);
+    expect(committed.patch).toContain("+++ b/lines.test.ts");
+    expect(fileAt(app, worktreesOf(app, runId), "shop-api", "lines.test.ts", committed.to!)!.toString()).toBe("// shipped lines\n");
+    // A design over a work with no tasks: a decision's change is its files' part of the whole change.
+    const { createDesign, getDesign, submitRevision } = await import("../src/designs/store.ts");
+    const { designDiff } = await import("../src/designs/changes.ts");
+    const dsg = createDesign(app, { spaceId: "shop-api", title: "退款按行算", origin: "external", repos: ["shop-api"], workId: runId });
+    submitRevision(app, dsg.id, { decisions: [{ kind: "change", title: "只退未发货的行", files: ["refund.ts"] }], outside: ["shop-api/lines.test.ts"] });
+    const part = await designDiff(app, getDesign(app, dsg.id), "D1");
+    expect(part.patches).toHaveLength(1);
+    expect(part.patches[0]).toMatchObject({ space: "shop-api", from: committed.from, to: committed.to });
+    expect(part.patches[0].patch).toContain("+++ b/refund.ts");
+    expect(part.patches[0].patch).not.toContain("lines.test.ts");
+    expect((await designDiff(app, getDesign(app, dsg.id), "outside")).patches[0].patch).toContain("+++ b/lines.test.ts");
     // Another branch merged in: the conflict stays in the file, the Agent fixes it and commits.
     git("checkout", "-q", "-b", "feat/other", "main");
     writeFileSync(join(dir, "refund.ts"), "export function refundAmount() {\n  return -1;\n}\n");

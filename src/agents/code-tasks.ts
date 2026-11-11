@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { fetchBranchAsync, git, resolveRef } from "../core/git.ts";
@@ -9,6 +10,7 @@ import type { FindingRow, LeadResult } from "./review.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 import { assertOwnRange, changeBase, withDiffBase } from "./code-branch.ts";
+import { workDirOf } from "./workspaces.ts";
 
 /**
  * A delegation driven by tasks instead of rounds (docs/v2/coding-loop.md): the work is a list of
@@ -644,14 +646,62 @@ function taskPatch(dir: string, shas: string[]): string {
   return shas.map((s) => git(dir, ["show", "--no-color", "--format=", s]).stdout).join("\n");
 }
 
+/** `to` of a patch whose right side is the workspace's files as they are (uncommitted edits included), and the `rev` fileAt reads them by. */
+export const WORKTREE = "worktree";
+
+/**
+ * A workspace against a commit with what is not committed counted in (new files too), or null when
+ * everything is committed. Taken through a copy of the index, so the workspace's own index — and
+ * whoever is committing in it — is left alone.
+ */
+function looseDiff(path: string, from: string): string | null {
+  if (!git(path, ["status", "--porcelain"]).stdout.trim()) return null;
+  const gitDir = git(path, ["rev-parse", "--absolute-git-dir"]).stdout.trim();
+  if (!gitDir) return null;
+  const index = join(gitDir, `omem-view-index-${process.pid}`);
+  try {
+    if (existsSync(join(gitDir, "index"))) copyFileSync(join(gitDir, "index"), index);
+    const env = { GIT_INDEX_FILE: index };
+    if (!git(path, ["add", "-A"], undefined, env).ok) return null;
+    const d = git(path, ["diff", "--cached", "--no-color", from], undefined, env);
+    return d.ok ? d.stdout : null;
+  } finally {
+    rmSync(index, { force: true });
+    rmSync(`${index}.lock`, { force: true });
+  }
+}
+
 /**
  * The change a viewer asked for: some tasks, the stretch between two checkpoints, or everything
  * after the checkpoint they last looked at (`since: "viewed"`). Checkpoint 0 is the start.
  * `base`: the whole branch against another one (`origin/main`, fetched first), from where they part:
  * for reviewing everything the branch will bring, not only this work's rounds.
+ * `work`: everything the work changed as it stands now — its commits and what sits uncommitted in
+ * its workspace (a round still coding, an outside Agent that has not handed in) — for any delegation
+ * or branch review, task-driven or not.
  */
-export async function workPatches(app: App, rootId: string, worktrees: WorktreeRef[], sel: { tasks?: number[]; from?: number; to?: number; since?: "viewed"; base?: string; userId?: string }): Promise<Patch[]> {
+export async function workPatches(app: App, rootId: string, worktrees: WorktreeRef[], sel: { tasks?: number[]; from?: number; to?: number; since?: "viewed"; base?: string; work?: boolean; userId?: string }): Promise<Patch[]> {
   const out: Patch[] = [];
+  if (sel.work) {
+    for (const wt of worktrees) {
+      const dir = gitDirOf(app, wt);
+      if (!dir) continue;
+      // A branch review: the branch against where it left its base.
+      if (wt.tip) {
+        const patch = git(dir, ["diff", "--no-color", wt.base, wt.tip]).stdout;
+        if (patch.trim()) out.push({ space: wt.space, patch, from: wt.base, to: wt.tip });
+        continue;
+      }
+      const here = existsSync(wt.path);
+      const tip = git(dir, ["rev-parse", "--verify", "--quiet", `${tipRef(wt)}^{commit}`]).stdout.trim();
+      if (!tip) continue;
+      const from = wt.commits ? changeBase(dir, wt, tip) : tip;
+      const loose = here ? looseDiff(wt.path, from) : null;
+      const patch = loose ?? git(dir, ["diff", "--no-color", from, tip]).stdout;
+      if (patch.trim()) out.push({ space: wt.space, patch, from, to: loose === null ? tip : WORKTREE, at: here ? workDirOf(wt) : checkoutAt(dir, wt, tip) });
+    }
+    return out;
+  }
   if (sel.base) {
     const lastHeads = headsAt(app, rootId, worktrees, listCheckpoints(app, rootId).at(-1)?.seq ?? 0);
     for (const wt of worktrees) {
@@ -698,12 +748,23 @@ export async function workPatches(app: App, rootId: string, worktrees: WorktreeR
 
 /**
  * A file as it was at a commit of one of the work's repositories (VS Code shows both sides of a task's
- * change from these). Missing at that commit: null.
+ * change from these). Missing at that commit: null. `rev` WORKTREE: the file in the work's workspace now.
  */
 export function fileAt(app: App, worktrees: WorktreeRef[], space: string, path: string, rev: string): Buffer | null {
   const wt = worktrees.find((w) => w.space === space);
   const dir = wt && gitDirOf(app, wt);
   if (!dir) throw new HttpError(404, `这次交办没有改 ${space}`);
+  if (rev === WORKTREE) {
+    if (!existsSync(wt.path)) throw new HttpError(409, "这次交办的工作区已经释放了");
+    if (path.split("/").includes("..") || path.startsWith("/") || isAbsolute(path) || /(^|\/)\.git(\/|$)/.test(path)) throw new HttpError(400, "文件路径不对");
+    const top = git(wt.path, ["rev-parse", "--show-toplevel"]).stdout.trim() || workDirOf(wt);
+    const file = join(top, path);
+    if (!existsSync(file) || !statSync(file).isFile()) return null;
+    // A link out of the workspace is not the work's file.
+    const inside = relative(realpathSync(top), realpathSync(file));
+    if (inside.startsWith("..") || isAbsolute(inside)) return null;
+    return readFileSync(file);
+  }
   if (!/^[0-9a-f]{7,64}$/.test(rev) || git(dir, ["cat-file", "-t", rev]).stdout.trim() !== "commit") throw new HttpError(400, `${rev} 不是这个仓库里的提交`);
   if (path.split("/").includes("..") || path.startsWith("/")) throw new HttpError(400, "文件路径不对");
   const shown = spawnSync("git", ["show", `${rev}:${path}`], { cwd: dir, maxBuffer: 64 * 1024 * 1024, windowsHide: true });

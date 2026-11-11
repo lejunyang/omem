@@ -17,7 +17,7 @@ exports.run = async function run() {
   const G = vscode.ConfigurationTarget.Global;
   const port = Number(new URL(process.env.OMEM_TEST_URL).port);
   const ext = vscode.extensions.getExtension("omem.omem-vscode");
-  const { api, status, current, bench, runs, delegate, tasks, changed } = await ext.activate();
+  const { api, status, current, bench, runs, delegate, tasks, changed, design } = await ext.activate();
   const step = (s) => console.log(`  · ${s}`);
 
   step("连接：这台机器上的 omem（只填端口）");
@@ -209,6 +209,58 @@ exports.run = async function run() {
   assert.equal(tasks.data.work.paused, "owner");
   await tasks.pause(false);
   assert.equal(tasks.data.work.paused, null);
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+
+  step("方案视图：决定、意见和落在它下面的文件；点一个决定看它自己的改动");
+  const dz = await design.load();
+  assert.equal(dz.title, "退款原因必填的方案");
+  const rows = design.getChildren();
+  assert.equal(rows.length, 3, "方案一行，两个决定");
+  assert.equal(design.getTreeItem(rows[0]).contextValue, "design");
+  const d1 = design.getTreeItem(rows[1]);
+  assert.equal(d1.label, "D1 提交退款时校验原因");
+  assert.equal(d1.description, "新增 · 1 个文件 +1 −0 · 意见 1");
+  assert.equal(d1.contextValue, "decision-files");
+  assert.match(d1.tooltip.value, /入口.*退款表单的提交按钮/);
+  assert.match(d1.tooltip.value, /T1 退款原因必填/);
+  const d2 = design.getTreeItem(rows[2]);
+  assert.equal(d2.description, "修改 · 没有改动");
+  assert.equal(d2.command, undefined, "没有改动的决定点不开");
+  const kids = design.getChildren(rows[1]);
+  assert.deepEqual(kids.map((k) => design.getTreeItem(k).label), ["风险：旧版客户端不带原因字段，上线顺序没写", "reason.ts"]);
+  assert.equal(await design.showDecision("D1"), 1);
+  assert.equal(changed.title, "D1 提交退款时校验原因");
+  assert.equal(changed.files[0].path, "reason.ts");
+  assert.equal(changed.files[0].status, "A");
+  assert.match((await vscode.workspace.openTextDocument(changed.files[0].right)).getText(), /requireReason/, "两边从 omem 读");
+  assert.equal(await design.showDecision("D1", kids[1].node.file), 1, "只看决定里的一个文件");
+  assert.equal(changed.title, "reason.ts（D1 提交退款时校验原因）");
+  await changed.clear();
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+
+  step("外部 Agent 还没交结果的交办：没有修改项和方案，也能看全部改动（没提交的算在内）、和分支比较");
+  const peerRun = process.env.OMEM_TEST_PEER_RUN;
+  await current.select(peerRun);
+  assert.equal((await tasks.load()).taskMode, false);
+  assert.equal(await design.load(), null);
+  assert.equal(await tasks.showChanges("全部改动", "work=1", true), 2);
+  const byPath = Object.fromEntries(changed.files.map((f) => [f.path, f]));
+  assert.deepEqual(Object.keys(byPath).sort(), ["format.ts", "refund.ts"]);
+  assert.equal(byPath["format.ts"].status, "A", "没提交的新文件也在");
+  assert.equal(byPath["refund.ts"].status, "M");
+  assert.equal(byPath["refund.ts"].right.scheme, "file", "工作区在这台机器上：右边是工作区里的文件");
+  assert.match((await vscode.workspace.openTextDocument(byPath["refund.ts"].left)).getText(), /return amount;/, "左边是交办开始时的版本");
+  // The work folder on a machine this window cannot open: the right side is read from omem too, as the workspace has it now.
+  const { patches: live } = await api.get(`/api/runs/${peerRun}/task-diff?work=1`);
+  assert.equal(live[0].to, "worktree");
+  assert.equal(await tasks.showPatches("全部改动", peerRun, live.map((x) => ({ ...x, at: undefined })), true), 2);
+  const remote = changed.files.find((f) => f.path === "format.ts");
+  assert.equal(remote.right.scheme, "omem-rev");
+  assert.equal(new URLSearchParams(remote.right.query).get("rev"), "worktree");
+  assert.match((await vscode.workspace.openTextDocument(remote.right)).getText(), /thousands/);
+  assert.equal(await tasks.showChanges("和 main 比较", "base=main", true), 1, "和分支比较只算提交了的");
+  await assert.rejects(api.get(`/api/runs/${peerRun}/task-diff?tasks=1`), /不是按修改项推进的/);
+  await changed.clear();
   await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 
   step("写任务文档交办");

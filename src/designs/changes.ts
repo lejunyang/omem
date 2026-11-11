@@ -22,7 +22,7 @@ export type DecisionChange = {
   findings: { open: number; total: number };
 };
 /** The same shape as `/api/runs/:id/task-diff` (the web parses both alike). */
-export type DesignPatch = { space: string; patch: string; label?: string; from?: string; to?: string };
+export type DesignPatch = { space: string; patch: string; label?: string; from?: string; to?: string; at?: string };
 
 type TaskRow = { seq: number; title: string; state: string; origin: { decision?: string }; commits: Record<string, string[]>; kind: string };
 
@@ -215,16 +215,29 @@ export async function designDiff(app: App, design: Design, decision: string): Pr
       const d = diff.get(`${file.space}/${file.path}`);
       if (d) by.set(file.space, [...(by.get(file.space) ?? []), d.text]);
     }
-    return { patches: [...by].map(([space, parts]) => ({ space, patch: parts.join(""), label: decision === "outside" ? "方案之外" : decision })) };
+    // Both ends of the review's diff, so an editor can show the two sides of each file (`/api/runs/:id/file-at`).
+    const { worktreesOf } = await import("../agents/code.ts");
+    const ends = new Map(worktreesOf(app, root.id).map((w) => [w.space, w.tip ? { from: w.base, to: w.tip } : {}]));
+    return { patches: [...by].map(([space, parts]) => ({ space, patch: parts.join(""), label: decision === "outside" ? "方案之外" : decision, ...ends.get(space) })) };
   }
   const tasks = tasksOfWork(app, root.id);
   const { by, outside } = taskSplit(design, tasks);
   const mine = decision === "outside" ? outside : by.get(decision) ?? [];
-  if (!mine.length) return { patches: [] };
   const { worktreesOf } = await import("../agents/code.ts");
   const { workPatches } = await import("../agents/code-tasks.ts");
   try {
-    return { patches: await workPatches(app, root.id, worktreesOf(app, root.id), { tasks: mine.map((t) => t.seq) }) };
+    if (mine.length) return { patches: await workPatches(app, root.id, worktreesOf(app, root.id), { tasks: mine.map((t) => t.seq) }) };
+    // No task carries it (a work not driven by tasks, a change description that lists files): its
+    // files' part of everything the work changed.
+    const named = (decision === "outside" ? design.body.outside ?? [] : design.body.decisions.find((d) => d.id === decision)!.files ?? []).map((f) => splitFile(design, f));
+    if (!named.length) return { patches: [] };
+    const whole = await workPatches(app, root.id, worktreesOf(app, root.id), { work: true });
+    return {
+      patches: whole.flatMap((p) => {
+        const parts = patchSections(p.patch).filter((s) => named.some((f) => f.path === s.path && (!f.space || f.space === p.space)));
+        return parts.length ? [{ ...p, patch: parts.map((s) => s.text).join("") }] : [];
+      }),
+    };
   } catch {
     return { patches: [] };
   }
