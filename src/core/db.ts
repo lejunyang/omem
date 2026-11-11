@@ -1691,6 +1691,14 @@ export const migrations: readonly string[] = [
   );
   create index wiki_questions_page on wiki_questions(space_id, page, status);
   create index wiki_questions_status on wiki_questions(space_id, status, importance);`,
+  // What the nightly “从个人空间归位” check (src/sources/homing.ts) looks up per source, indexed so it
+  // never scans: a source's knowledge-base folder, a source's moves, the archivist's open verdicts, and
+  // which captured messages link which Feishu document (lark_doc_links: written when messages are
+  // stored, older messages filled in by the check in batches, src/sources/doc-links.ts).
+  `create index sources_wiki_parent on sources(json_extract(meta, '$.wikiParentNodeToken')) where json_extract(meta, '$.wikiParentNodeToken') is not null;
+   create index source_moves_source on source_moves(source_id, id);
+   create index source_routes_verdict on source_routes(verdict) where verdict is not null;
+   create table lark_doc_links (token text not null, message_id text not null, chat_id text not null, primary key(token, message_id));`,
 ];
 
 export type Db = DatabaseSync;

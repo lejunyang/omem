@@ -2064,7 +2064,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/archive/homing/sweep", async req => {
     const b = q(z.object({ budget: z.number().int().min(0).max(500).optional() }), req.body ?? {});
-    return (await import("../sources/homing.ts")).sweepHoming(app, b);
+    // In the background: a check on a large library takes minutes; progress is in GET /api/archive/homing.
+    return (await import("../sources/homing.ts")).startSweep(app, b);
   });
   server.get("/api/spaces/:id/citation-reach", async req => (await import("../sources/reach.ts")).citationReach(app, (req.params as { id: string }).id, who(req)));
   server.post("/api/spaces/:id/citation-reach/recheck", async req => (await import("../sources/reach.ts")).queueUnreachable(app, (req.params as { id: string }).id));

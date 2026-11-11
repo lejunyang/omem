@@ -23,7 +23,7 @@
 | `wiki` | 飞书知识库名、目录路径、直接父目录；`kbSpace`：本人把这个知识库归入的空间 | `meta.wikiSpaceName` / `wikiPath` / `wikiParentTitle`，`wiki_spaces.status = mapped` 的 `target_space` |
 | `siblings` | 同一目录（同一 `wikiParentNodeToken`）的其他文档现在各在哪个空间、几份 | `sources.meta` |
 | `citedBy` | 哪些其他空间的 Wiki 页面、事项（`source_refs` 或材料关联）、记忆引用了它，合并过的重复原件的旧 id 也算 | `page_cites`、`items`、`item_materials`、`memories`、`source_aliases` |
-| `linkedIn` | 哪些采集的群在消息里贴过它（按文档 token 查），群绑定或所在的空间 | `lark_messages`、`chatBinding` |
+| `linkedIn` | 哪些采集的群在消息里贴过它（按文档 token 查），群绑定或所在的空间 | `lark_doc_links`（见第 7 节）、`chatBinding` |
 | `attention` | 本人或 Agent 手动定的关注程度（规则和目录继承的不算） | `sources.attention` |
 | `belongsTo` | 工作文件挂着的事项或规则，及其空间 | `meta.links` |
 
@@ -47,14 +47,15 @@
 
 ### 每晚检查
 
-定时任务 `archive-sweep`（默认每天 01:40，开着），`sweepHoming`：
+定时任务 `archive-sweep`（默认每天 01:40，开着），`sweepHoming`，在后台跑（第 7 节）：
 
 1. 工作文件跟着事项或规则走（第 3 节）；
-2. 收集新旁证，排队；
-3. 按优先级取队列：已启用的归档规则或会话绑定现在能定的直接移走，不算预算；其余最多 `archive.nightly` 份（默认 60）标为待判断（`source_routes.reason` 以“有新旁证，重新判断”开头），交给 `archive` 运行（按来源空间每 40 份一批）；
-4. 结果记在 `kv.archive_sweep_last`。
+2. 读一批旧消息里的文档链接（最多用总时长的 40%）；
+3. 收集新旁证，排队；
+4. 按优先级取队列：已启用的归档规则或会话绑定现在能定的直接移走，不算预算；其余最多 `archive.nightly` 份（默认 60）标为待判断（`source_routes.reason` 以“有新旁证，重新判断”开头），交给 `archive` 运行（按来源空间每 40 份一批）；
+5. 结果记在 `kv.archive_sweep_last`（含用时、是否到了时间上限），进度在 `kv.archive_sweep_progress`。
 
-没有待判断的就不建运行、不调用模型。网页上的“现在检查”立即跑一遍（`POST /api/archive/homing/sweep`）。
+没有待判断的就不建运行、不调用模型。网页上的“现在检查”（`POST /api/archive/homing/sweep`）立即返回“已开始”，检查在后台进行，页面每两秒刷新进度。
 
 为什么每晚 60 份：重判是读整份原件，60 份大约两三批归档运行；有新旁证的通常每晚只有个位数到几十份，空间或规则变化后的积压按这个速度几天到几十天清完，不挤占白天的整理。可在归档规则页改成 0（只移工作文件和按规则归档）、20、120、300。
 
@@ -95,11 +96,31 @@
 - 全文检索跟着 `chunks.space_id` 走，向量经 `vector_log` 触发器更新到新空间的矩阵；
 - `source_locations` 记住原来的采集入口：同一份文档再采集（会议、知识库、群里再贴一次链接）会更新原来那份，不在个人空间里重复建一份；群里再贴一次链接时，一天内读过的不再读（`importLinkedDocs` 现在也认已移走的文档）。
 
-测试：`test/homing.test.ts`、`test/homing-agent.test.ts`（真实 ACP + MCP 路径，`FAKE_MODE=archive`）。
+## 7. 大库上不占住服务
+
+第一版在一个真实大小的库上（个人空间约 3000 份、全库原件一万多条加几万条代码、记忆和事项各几千、页面一千多、引用几万、消息几十万行）点“现在检查”后把服务卡死：`collectRecheck` 对几千个候选逐个算指纹，每个都对事项和记忆的 `source_refs` 做 `json_each` 全表展开、按 `json_extract(meta)` 扫整张 `sources` 表找同目录文档，全部在主线程上同步执行；判断时每份原件还对 `lark_messages.content` 做一次 `like '%token%'` 全表扫描。现在：
+
+- **按集合算**：检查先用几条查询建出映射——引用（`page_cites`、事项、记忆按 rowid 每页 1000 行读）、“原件 → 被哪些空间引用”、“目录 → 已在哪些业务空间”（表达式索引 `sources_wiki_parent`）、“知识库 → 目标空间”、上次的指纹，再在内存里给每份留在个人空间的原件算指纹，不再按候选发查询。交给 archivist 的一批原件也一次算旁证（`archiveEvidenceFor`：事项和记忆一批只读一遍，同目录和消息链接都走索引）。
+- **不占住主线程**：检查是一个后台任务，每做 30 毫秒同步工作就用 `setImmediate` 让出一次（`yielder`）；同一时间只跑一个（再点“现在检查”或定时任务撞上时不另起）；总时长上限 5 分钟（`SWEEP_MAX_MS`），到了就停，队列和读消息的进度都留着，下次接着。HTTP 接口立即返回。
+- **消息里的文档链接**：新表 `lark_doc_links(token, message_id, chat_id)`。采集消息时顺手写入（`storeMessages`），已有消息由每晚检查按 rowid 每批 500 行补（游标在 `kv.lark_doc_links_backfill`，从别的设备拉来的消息 rowid 更大，也会被补上），每次检查最多用总时长的 40%。旁证里的“贴过它的群”只查这张表；补完之前，较早消息里的链接暂时看不到。
+- **其他地方**：可达性检查按“读者 × 空间”算一次能不能读，只有自己设了可见范围或按飞书权限过滤的原件才逐人判断，分批读原件并让出；批量指定空间逐份让出；首页清单的查询都有索引（`source_moves_source`、`source_routes_verdict`）且有条数上限；工作文件跟随在到时间上限时停。
+
+规模测试（`test/homing-scale.test.ts`）：3000 份个人空间原件、12000 份其他原件、事项和记忆各 3000、页面 1000、引用 20000、消息 60000。
+
+| | 改前 | 改后 |
+| --- | --- | --- |
+| 一次检查总用时 | 约 28 秒 | 约 0.75 秒（含补 6 万行消息的链接）；和其他测试并行时 1.1–1.5 秒 |
+| 主线程最长一次被占住 | 约 28 秒（整次检查同步） | 约 70 毫秒；并行时 100–250 毫秒 |
+| 没有新旁证时再查一次 | 0.5 秒（同步） | 0.2–0.3 秒（分段让出） |
+| 一批 40 份原件的旁证 | 约 2 秒 | 约 55–70 毫秒 |
+
+写入按小批提交（排队每 100 条一个事务，交给归档的一次一个事务），磁盘忙时一次提交（尤其碰上 SQLite 的自动检查点）仍可能停顿几百毫秒，这和别处的写入一样，不是检查本身的计算。
+
+测试：`test/homing.test.ts`、`test/homing-agent.test.ts`（真实 ACP + MCP 路径，`FAKE_MODE=archive`）、`test/homing-scale.test.ts`。
 
 ## 部署后
 
-迁移只加列和两张表，不改已有数据。之后：
+迁移只加列、索引和三张表（`archive_recheck`、`archive_evidence`、`lark_doc_links`），不改已有数据。之后：
 
 1. 打开归档规则 → 从个人空间归位，点“现在检查”：第一遍会把已经被业务页面、事项、记忆引用的个人空间原件，以及挂在业务事项上的工作文件处理掉（工作文件直接移，原件每晚 60 份交给 archivist）。
 2. 对有协作者的业务空间看“页面引用的原件，读者打不开”，点“送去重新判断”。

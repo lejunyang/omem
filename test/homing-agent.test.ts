@@ -10,6 +10,7 @@ import { now } from "../src/core/util.ts";
 import { startServer } from "../src/server/http.ts";
 import { REJUDGE, sourceRoute } from "../src/sources/archive.ts";
 import { collectRecheck, sweepHoming } from "../src/sources/homing.ts";
+import { noteDocLinks } from "../src/sources/doc-links.ts";
 import { getSource, upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
@@ -47,6 +48,8 @@ it("hands the archivist the evidence and files by it; contradictions and no evid
   run(app.db, "insert into items(id, space_id, kind, title, source_refs, created_at, updated_at) values('it1', 'project-b', 'todo', '核对排期', ?, ?, ?)", JSON.stringify([`src:${mixed.id}#L1`]), now(), now());
   setChatSettings(app, "lark", "oc_b", { spaceId: "project-b" });
   run(app.db, "insert into lark_messages(message_id, chat_id, content, create_ms) values('m1', 'oc_b', '接口说明见 https://tenant.larkoffice.com/docx/LINKED000001', 1)");
+  // What storeMessages does when it captures a message (src/sources/doc-links.ts).
+  noteDocLinks(app, 'm1', 'oc_b', '接口说明见 https://tenant.larkoffice.com/docx/LINKED000001');
 
   const archive = listRuns(app, { kind: "archive" });
   expect(archive).toHaveLength(1);
@@ -69,14 +72,14 @@ it("hands the archivist the evidence and files by it; contradictions and no evid
   expect(JSON.parse(sourceRoute(app, mixed.id)!.suggested as unknown as string).sort()).toEqual(["project-a", "project-b"]);
   // What each was judged with is kept: the same evidence does not queue it again.
   expect(one(app.db, "select 1 from archive_evidence where source_id = ?", mixed.id)).toBeTruthy();
-  expect(collectRecheck(app).citedByPage).toBe(0);
+  expect((await collectRecheck(app)).citedByPage).toBe(0);
 });
 
 it("judges a kept source again when new evidence appears, within the nightly budget, and starts nothing without any", async () => {
   const plain = all<{ id: string }>(app.db, "select id from sources where uri = 'note/books'")[0];
   page("project-b", "reading", [plain.id]);
   const before = listRuns(app, { kind: "archive" }).length;
-  const report = sweepHoming(app, { budget: 5 });
+  const report = await sweepHoming(app, { budget: 5 });
   expect(report).toMatchObject({ queued: 1, left: 0, found: { citedByPage: 1 } });
   expect(sourceRoute(app, plain.id)?.reason.startsWith(REJUDGE)).toBe(true);
   const again = listRuns(app, { kind: "archive" }).filter((r) => r.status !== "done");
@@ -88,7 +91,7 @@ it("judges a kept source again when new evidence appears, within the nightly bud
 
   // Nothing new: no run.
   const runs = listRuns(app, { kind: "archive" }).length;
-  expect(sweepHoming(app, { budget: 5 })).toMatchObject({ queued: 0 });
+  expect(await sweepHoming(app, { budget: 5 })).toMatchObject({ queued: 0 });
   expect(listRuns(app, { kind: "archive" })).toHaveLength(runs);
   expect(runs).toBe(before + 1);
 });

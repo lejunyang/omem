@@ -2021,3 +2021,14 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 存量迁移 `src/wiki/migrate.ts`：升级后启动时排一次，按标题识别“还没查清”等一节，逐条拆成问题（保留引用），只删这一节、保留其余引用状态、Git 留历史；每批 200 页，可重入，进度记在 kv。正文中间的过程性语言不动，留给重新核对（`recheckPages`，一次 10 页、最多 50 页）。
 - 约定和模板：wiki-writer、distiller、wiki-linter、`_common.md`、技能 wiki-writing 的“还没查清”都改成交 `questions`。
 - 测试：`test/wiki-questions.test.ts`、`test/wiki-verify.test.ts`（假 Agent 的调查运行）。
+
+## 2026-11-12：从个人空间归位不再占住服务
+
+第一版的“现在检查”在一个真实大小的库上把服务卡死：`collectRecheck` 对几千个候选逐个算指纹，每个都对事项、记忆的 `source_refs` 做 `json_each` 全表展开、按 `json_extract(meta)` 扫整张 `sources`，全部在主线程同步执行；判断时每份原件还对 `lark_messages.content` 做 `like '%token%'`。
+
+- 指纹按集合算：几条（分页）查询建出“原件 → 引用它的空间”“目录 → 已在的业务空间”“知识库 → 目标空间”，在内存里比对；一批原件的旁证一次算（`archiveEvidenceFor`）。
+- 检查在后台跑，每 30 毫秒让出事件循环，同一时间一个，总时长上限 5 分钟，到了停下次接着；`POST /api/archive/homing/sweep` 立即返回，进度在 `kv.archive_sweep_progress`，网页显示进度和上次用时。
+- 新表 `lark_doc_links`：采集消息时写入，已有消息由检查分批补（游标 `kv.lark_doc_links_backfill`）；“贴过它的群”只查这张表。
+- 可达性检查按“读者 × 空间”算一次，分批让出；批量指定空间逐份让出。
+- 迁移：表达式索引 `sources_wiki_parent`、`source_moves_source`、`source_routes_verdict`，表 `lark_doc_links`。
+- 规模测试 `test/homing-scale.test.ts`（3000 份个人空间原件、12000 份其他、引用 20000、消息 60000）：一次检查从约 28 秒同步变成约 1 秒、主线程最长约 0.1 秒；一批 40 份的旁证从约 2 秒到约 0.06 秒。验收 26m–26o。

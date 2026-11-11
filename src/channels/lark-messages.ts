@@ -9,6 +9,7 @@ import { resourceKeys } from "./lark-resource-keys.ts";
 import { queueResourceParsing } from "./lark-resource-parse.ts";
 import { findSourceByUri, sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
+import { noteDocLinks } from "../sources/doc-links.ts";
 import { cliIdsIn, learnCliPeople, peopleByCliIds } from "./lark-people.ts";
 
 /**
@@ -281,6 +282,8 @@ export function storeMessages(
         positionOf(m),
       ),
     );
+    // Which documents each message links (src/sources/doc-links.ts).
+    for (const m of messages) noteDocLinks(app, m.message_id, m.chat_id ?? chatId, messageText(m));
     // Its line in this chat source; the same message can be a line of several (each person's copy of a shared chat).
     if (opts.sourceId)
       messages.forEach((m, i) => {

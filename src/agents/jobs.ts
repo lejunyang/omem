@@ -1,7 +1,7 @@
 import { canWrite, OWNER, scopeFor } from "../core/users.ts";
 import { can } from "../auth/permissions.ts";
 import { sourceRoute, moveSource, prepareArchive } from "../sources/archive.ts";
-import { archiveEvidence, noteJudged, previousJudgement, type Evidence } from "../sources/homing.ts";
+import { archiveEvidenceFor, noteJudged, previousJudgement, type Evidence } from "../sources/homing.ts";
 import { executionArgs, type Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
 import type { RoleName } from "../core/config.ts";
@@ -501,17 +501,21 @@ registerHandler("archive", async ctx => {
           run(ctx.app.db, "update source_routes set pending=0,decision_hash=? where source_id=?", s.hash, id);
           continue;
         }
-        // The facts the host has on where it belongs (src/sources/homing.ts); the archivist judges.
-        const evidence = archiveEvidence(ctx.app, id);
         const again = previousJudgement(ctx.app, id);
-        candidates.push({ id, hash: s.hash, title: s.title, ...(Object.keys(evidence).length ? { evidence } : {}), ...(again ? { again } : {}) });
-        noteJudged(ctx.app, id);
+        candidates.push({ id, hash: s.hash, title: s.title, ...(again ? { again } : {}) });
       } catch (error) {
         run(ctx.app.db, "update source_routes set pending=0 where source_id=?", id);
         ctx.event("status", { text: `原件 ${id} 暂未归档：${(error as Error).message}` });
       }
     }
     if (!candidates.length) return { quiet: true };
+    // The facts the host has on where they belong (src/sources/homing.ts), for the whole batch at once; the archivist judges.
+    const evidence = archiveEvidenceFor(ctx.app, candidates.map((c) => c.id));
+    for (const c of candidates) {
+      const e = evidence.get(c.id)!;
+      if (Object.keys(e).length) c.evidence = e;
+      noteJudged(ctx.app, c.id, e);
+    }
     const r = await agent(ctx, "archivist", ctx.run.spaceId!, `判断这些原件的空间归属（evidence 是宿主查到的旁证，again 是这次重新判断的原因）：${JSON.stringify(candidates)}`, null);
     completed = true;
     return { summary: r.text.trim() };

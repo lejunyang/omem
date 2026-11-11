@@ -10,7 +10,7 @@ import { upsertItem } from "../src/items/store.ts";
 import { search } from "../src/search/search.ts";
 import { vectorIndex } from "../src/search/vectors.ts";
 import { moveSource, prepareArchive, saveArchiveRule, sourceRoute } from "../src/sources/archive.ts";
-import { assignSources, collectRecheck, followWorkFiles, homingOverview, matterSpace, returnSource, sweepHoming } from "../src/sources/homing.ts";
+import { archiveEvidence, assignSources, collectRecheck, startSweep, followWorkFiles, homingOverview, matterSpace, returnSource, sweepHoming } from "../src/sources/homing.ts";
 import { citationReach, queueUnreachable } from "../src/sources/reach.ts";
 import { getSource, readSource, sourceText, upsertSource } from "../src/sources/store.ts";
 import { writeWorkFile } from "../src/sources/work.ts";
@@ -41,14 +41,14 @@ const page = (app: App, space: string, slug: string, cites: string[]) => {
   for (const id of cites) run(app.db, "insert into page_cites(page_id, source_id, line_start, line_end, hash) values(?,?,1,1,'h')", `${space}/${slug}`, id);
 };
 
-describe("judging kept sources again", () => {
-  it("queues by evidence priority, hands at most the budget to the archivist, and keeps the rest for later nights", () => {
+describe("judging kept sources again", async () => {
+  it("queues by evidence priority, hands at most the budget to the archivist, and keeps the rest for later nights", async () => {
     const app = setup();
     const ids = ["a", "b", "c"].map((x) => kept(app, `doc/${x}`));
     const memo = kept(app, "doc/memo");
     for (const id of ids) page(app, "project-a", `p-${id}`, [id]);
     run(app.db, "insert into memories(id, space_id, kind, content, source_refs, created_at, updated_at) values('m1', 'project-b', 'fact', '退款走原路', ?, ?, ?)", JSON.stringify([`src:${memo}#L1`]), now(), now());
-    const report = sweepHoming(app, { budget: 2 });
+    const report = await sweepHoming(app, { budget: 2 });
     expect(report.found).toMatchObject({ citedByPage: 3, cited: 1 });
     expect(report).toMatchObject({ queued: 2, left: 2 });
     const archive = listRuns(app, { kind: "archive" });
@@ -59,30 +59,30 @@ describe("judging kept sources again", () => {
     expect(homingOverview(app).queue.reduce((a, q) => a + q.n, 0)).toBe(2);
   });
 
-  it("starts no run when there is nothing to judge, and records the first state of spaces and rules without queueing", () => {
+  it("starts no run when there is nothing to judge, and records the first state of spaces and rules without queueing", async () => {
     const app = setup();
     kept(app, "doc/a");
-    expect(sweepHoming(app)).toMatchObject({ queued: 0, left: 0 });
+    expect(await sweepHoming(app)).toMatchObject({ queued: 0, left: 0 });
     expect(listRuns(app, { kind: "archive" })).toHaveLength(0);
     // A new space (or archive rule) puts every kept source back in line, last.
     createSpace(app, { id: "project-c", name: "项目 C", kind: "project", description: "退款改造" });
-    expect(collectRecheck(app).context).toBe(1);
+    expect((await collectRecheck(app)).context).toBe(1);
     expect(one<{ priority: number }>(app.db, "select priority from archive_recheck")?.priority).toBe(3);
   });
 
-  it("moves what an archive rule now decides without spending the budget", () => {
+  it("moves what an archive rule now decides without spending the budget", async () => {
     const app = setup();
     const id = kept(app, "doc/rule", "项目 A 周报");
-    collectRecheck(app);
+    await collectRecheck(app);
     saveArchiveRule(app, { name: "项目 A", description: "", enabled: true, target: "project-a", conditions: { field: "title", op: "contains", value: "项目 A" } });
-    expect(sweepHoming(app, { budget: 0 })).toMatchObject({ byRule: 1, queued: 0 });
+    expect(await sweepHoming(app, { budget: 0 })).toMatchObject({ byRule: 1, queued: 0 });
     expect(getSource(app, id).spaceId).toBe("project-a");
     expect(sourceRoute(app, id)?.mode).toBe("rule");
   });
 });
 
-describe("the owner's say", () => {
-  it("moves an automatic move back, remembers it, and never queues it again", () => {
+describe("the owner's say", async () => {
+  it("moves an automatic move back, remembers it, and never queues it again", async () => {
     const app = setup();
     const id = kept(app, "doc/back");
     moveSource(app, id, "project-a", "旁证都指向项目 A", "ai", undefined, undefined, { citedBy: [{ space: "project-a" }] });
@@ -93,7 +93,7 @@ describe("the owner's say", () => {
     expect(sourceRoute(app, id)?.mode).toBe("manual");
     expect(homingOverview(app).moved[0].returnable).toBe(false);
     page(app, "project-a", "cites", [id]);
-    expect(collectRecheck(app).citedByPage).toBe(0);
+    expect((await collectRecheck(app)).citedByPage).toBe(0);
     // Captured again: stays where the owner put it.
     const s = getSource(app, id);
     expect(prepareArchive(app, { ...s, text: sourceText(app, id), archive: true })?.input.spaceId).toBe("personal");
@@ -111,8 +111,8 @@ describe("the owner's say", () => {
       expect(res.isError).toBe(false);
     }
     expect(homingOverview(app).undecided.map((u) => u.id).sort()).toEqual([...ids].sort());
-    expect(assignSources(app, ids.slice(0, 2), "project-b").every((x) => x.ok)).toBe(true);
-    expect(assignSources(app, [ids[2]], "personal")[0].ok).toBe(true);
+    expect((await assignSources(app, ids.slice(0, 2), "project-b")).every((x) => x.ok)).toBe(true);
+    expect((await assignSources(app, [ids[2]], "personal"))[0].ok).toBe(true);
     expect(ids.map((id) => getSource(app, id).spaceId)).toEqual(["project-b", "project-b", "personal"]);
     expect(ids.map((id) => sourceRoute(app, id)?.mode)).toEqual(["manual", "manual", "manual"]);
     expect(homingOverview(app).undecided).toHaveLength(0);
@@ -130,7 +130,7 @@ describe("the owner's say", () => {
   });
 });
 
-describe("working files follow the work", () => {
+describe("working files follow the work", async () => {
   it("writes into the item's space from a personal run, moves older files along, and leaves files the owner put back", async () => {
     const app = setup();
     const item = upsertItem(app, undefined, { spaceId: "project-a", kind: "todo", title: "退款对账" });
@@ -153,21 +153,21 @@ describe("working files follow the work", () => {
     expect(getRun(app, two.id)).toBeTruthy();
   });
 
-  it("moves earlier working files of a business item out of the personal space each night; one moved back stays", () => {
+  it("moves earlier working files of a business item out of the personal space each night; one moved back stays", async () => {
     const app = setup();
     const item = upsertItem(app, undefined, { spaceId: "project-b", kind: "todo", title: "上线检查" });
     const f = writeWorkFile(app, { spaceId: "personal", path: "launch/check", text: "清单", links: { item: item.id } });
-    expect(followWorkFiles(app)).toBe(1);
+    expect(await followWorkFiles(app)).toBe(1);
     expect(getSource(app, f.id).spaceId).toBe("project-b");
     expect(homingOverview(app).moved[0]).toMatchObject({ sourceId: f.id, mode: "follow", returnable: true });
     returnSource(app, f.id);
     expect(getSource(app, f.id).spaceId).toBe("personal");
-    expect(followWorkFiles(app)).toBe(0);
+    expect(await followWorkFiles(app)).toBe(0);
   });
 });
 
-describe("citations readers cannot open", () => {
-  it("goes by the space's readers, resolves merged duplicates, and sends personal ones to be judged first", () => {
+describe("citations readers cannot open", async () => {
+  it("goes by the space's readers, resolves merged duplicates, and sends personal ones to be judged first", async () => {
     const app = setup();
     const mine = kept(app, "doc/mine", "退款方案草稿");
     const own = upsertSource(app, { spaceId: "project-a", kind: "doc", uri: "doc/own", title: "项目 A 文档", text: "正文" }).id;
@@ -175,23 +175,23 @@ describe("citations readers cannot open", () => {
     run(app.db, "insert into source_aliases(alias_id, source_id, reason, created_at) values('s_old', ?, 'merge', ?)", mine, now());
     page(app, "project-a", "refund", ["s_old", own, other]);
     // Only the owner reads project A: nothing is out of reach.
-    expect(citationReach(app, "project-a").entries).toHaveLength(0);
+    expect((await citationReach(app, "project-a")).entries).toHaveLength(0);
     createUser(app, { id: "colleague", name: "小王" });
     addMember(app, "project-a", "colleague", "reader");
-    const r = citationReach(app, "project-a");
+    const r = await citationReach(app, "project-a");
     expect(r.readers.sort()).toEqual(["colleague", "owner"]);
     expect(r.entries.map((e) => [e.sourceId, e.blocked, e.rejudgeable]).sort()).toEqual([[mine, ["colleague"], true], [other, ["colleague"], false]].sort());
     // The colleague asking sees no title of what they may not read.
-    expect(citationReach(app, "project-a", "colleague").entries.every((e) => e.title === "")).toBe(true);
-    expect(queueUnreachable(app, "project-a")).toEqual({ queued: 1, found: 1 });
+    expect((await citationReach(app, "project-a", "colleague")).entries.every((e) => e.title === "")).toBe(true);
+    expect(await queueUnreachable(app, "project-a")).toEqual({ queued: 1, found: 1 });
     expect(one<{ priority: number; source_id: string }>(app.db, "select priority, source_id from archive_recheck")).toEqual({ priority: 0, source_id: mine });
     // Readable once it is filed into project A.
     moveSource(app, mine, "project-a", "本人指定");
-    expect(citationReach(app, "project-a").entries.map((e) => e.sourceId)).toEqual([other]);
+    expect((await citationReach(app, "project-a")).entries.map((e) => e.sourceId)).toEqual([other]);
   });
 });
 
-describe("a moved source is still found", () => {
+describe("a moved source is still found", async () => {
   it("search, reading and citations by id follow it into the new space; a recapture reaches the same original", async () => {
     const app = setup();
     const s = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "https://example.com/refund", title: "退款对账说明", text: "退款对账每天凌晨跑一次", archive: true });
@@ -202,12 +202,40 @@ describe("a moved source is still found", () => {
     const inPersonal = await search(app, "退款对账", { spaces: ["personal"] });
     expect(inPersonal.some((h) => h.sourceId === s.id)).toBe(false);
     expect(readSource(app, s.id).source.spaceId).toBe("project-a");
-    expect(citationReach(app, "project-a").citedSources).toBe(1);
+    expect((await citationReach(app, "project-a")).citedSources).toBe(1);
     const again = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "https://example.com/refund", title: "退款对账说明", text: "退款对账每天凌晨两点跑一次", archive: true });
     expect(again.id).toBe(s.id);
     expect(getSource(app, s.id).spaceId).toBe("project-a");
     expect(all(app.db, "select id from sources where uri = 'https://example.com/refund'")).toHaveLength(1);
     // Not waiting for the archivist again for the new text: the AI's decision stands.
     expect(sourceRoute(app, s.id)).toMatchObject({ mode: "ai", pending: 0 });
+  });
+});
+
+describe("the check on a busy server", () => {
+  it("runs once at a time in the background, reports progress, and stops at its time limit to carry on next time", async () => {
+    const app = setup();
+    for (let i = 0; i < 30; i++) {
+      const id = kept(app, `doc/many-${i}`);
+      page(app, "project-a", `many-${i}`, [id]);
+    }
+    expect(startSweep(app, { budget: 5 }).started).toBe(true);
+    expect(startSweep(app).started).toBe(false);
+    const report = await sweepHoming(app);
+    expect(report.queued).toBe(5);
+    expect(homingOverview(app).progress).toMatchObject({ running: false, phase: "完成" });
+    // No time at all: nothing is handed over, the queue is kept for the next check.
+    expect(await sweepHoming(app, { budget: 5, maxMs: 0 })).toMatchObject({ stopped: true, queued: 0, left: 25 });
+  });
+
+  it("reads older messages for document links in batches, so the archivist sees the chats that posted a document", async () => {
+    const app = setup();
+    const s = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "https://tenant.larkoffice.com/docx/OLDLINKED0001", title: "旧文档", text: "正文" });
+    // Captured before lark_doc_links existed.
+    run(app.db, "insert into lark_messages(message_id, chat_id, content, create_ms) values('old1', 'oc_old', '见 https://tenant.larkoffice.com/docx/OLDLINKED0001', 1)");
+    expect(archiveEvidence(app, s.id).linkedIn).toBeUndefined();
+    const report = await sweepHoming(app);
+    expect(report.links).toEqual({ read: 1, complete: true });
+    expect(archiveEvidence(app, s.id).linkedIn).toMatchObject([{ chat: "oc_old", messages: 1 }]);
   });
 });

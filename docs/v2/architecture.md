@@ -482,4 +482,4 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 `source_routes` 保存归属依据、已判断版本与待整理状态；`source_locations` 保存原采集入口；`source_moves` 记迁移历史。迁移只改原件及索引的空间字段，不改正文、行号和已有派生知识。目标已有同 URI 原件时拒绝迁移，不覆盖或合并。历史应用校验预览时的 hash，规则变化或材料被手动指定后旧预览失效。
 
-交给 `archivist` 的每份原件带宿主查到的旁证（`src/sources/homing.ts` 的 `archiveEvidence`）；留在个人空间的记下判断时的旁证指纹（`archive_evidence`）和结论（`source_routes.verdict`：personal / unsure / proposed），指纹变了或空间、归档规则变了时进入 `archive_recheck`，由每晚的 `archive-sweep` 按预算重判。`source_moves.mode` / `detail` 记每次移动的方式和当时的旁证，“从个人空间归位”据此列出、移回（移回即本人指定，不再自动移动）。工作文件按运行范围（`run_scope`）里唯一的业务空间落位。页面引用的可达性在 `src/sources/reach.ts`。详见 docs/v2/archive-routing.md。
+交给 `archivist` 的每份原件带宿主查到的旁证（`src/sources/homing.ts` 的 `archiveEvidence`）；留在个人空间的记下判断时的旁证指纹（`archive_evidence`）和结论（`source_routes.verdict`：personal / unsure / proposed），指纹变了或空间、归档规则变了时进入 `archive_recheck`，由每晚的 `archive-sweep` 按预算重判。`source_moves.mode` / `detail` 记每次移动的方式和当时的旁证，“从个人空间归位”据此列出、移回（移回即本人指定，不再自动移动）。工作文件按运行范围（`run_scope`）里唯一的业务空间落位。页面引用的可达性在 `src/sources/reach.ts`。检查在后台按集合算、分段让出事件循环、同一时间一个、5 分钟上限；“贴过它的群”查 `lark_doc_links`（采集时写入，旧消息由检查分批补）。详见 docs/v2/archive-routing.md。

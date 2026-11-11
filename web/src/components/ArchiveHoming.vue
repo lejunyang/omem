@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { get, post, put } from "../api";
 import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
@@ -15,8 +15,9 @@ import { state, toast } from "../store";
  */
 type Moved = { moveId: number; sourceId: string; title: string; kind: string; from: string; to: string; now: string; reason: string; mode: string | null; at: string; returnable: boolean };
 type Undecided = { id: string; title: string; space: string; reason: string; verdict: string; suggested: string[] };
-type Report = { at: string; followed: number; byRule: number; queued: number; left: number };
-type Overview = { moved: Moved[]; undecided: Undecided[]; queue: { priority: number; n: number }[]; last: Report | null; settings: { autoMove: boolean; nightly: number } };
+type Report = { at: string; followed: number; byRule: number; queued: number; left: number; ms?: number; stopped?: boolean };
+type Progress = { running: boolean; phase: string; done: number; total: number; startedAt: string };
+type Overview = { moved: Moved[]; undecided: Undecided[]; queue: { priority: number; n: number }[]; last: Report | null; progress: Progress | null; settings: { autoMove: boolean; nightly: number } };
 type Reach = { readers: string[]; citedSources: number; entries: { sourceId: string; title: string; space: string; pages: { slug: string; title: string }[]; blocked: string[]; unknown: string[]; rejudgeable: boolean }[] };
 
 const data = ref<Overview | null>(null);
@@ -35,12 +36,19 @@ const BUDGETS = [0, 20, 60, 120, 300].map((n) => ({ value: String(n), label: n ?
 const MODE: Record<string, string> = { ai: "AI 判断", rule: "归档规则", binding: "会话绑定", follow: "跟着事项或规则" };
 const when = (at: string) => at.slice(0, 16).replace("T", " ");
 
+let timer: ReturnType<typeof setTimeout> | undefined;
+let disposed = false;
+onUnmounted(() => { disposed = true; clearTimeout(timer); });
 async function load() {
+  clearTimeout(timer);
   try {
     data.value = await get<Overview>("/api/archive/homing");
     picked.value = picked.value.filter((id) => data.value!.undecided.some((u) => u.id === id));
-  } catch (e) { toast((e as Error).message, "error"); }
+  } catch (e) { toast((e as Error).message, "error"); return; }
+  // A check runs in the background (minutes on a large library): follow its progress.
+  if (!disposed && data.value?.progress?.running) timer = setTimeout(load, 2000);
 }
+const running = computed(() => !!data.value?.progress?.running);
 onMounted(async () => {
   await load();
   reachSpace.value = businessOptions.value[0]?.value ?? "";
@@ -59,8 +67,8 @@ async function saveSettings(patch: Partial<Overview["settings"]>) {
 async function sweep() {
   busy.value = true;
   try {
-    const r = await post<Report>("/api/archive/homing/sweep", {});
-    toast(`工作文件跟过去 ${r.followed} 份，按规则归档 ${r.byRule} 份，交给 AI 判断 ${r.queued} 份${r.left ? `，还有 ${r.left} 份排着` : ""}`, "ok");
+    const r = await post<{ started: boolean }>("/api/archive/homing/sweep", {});
+    toast(r.started ? "开始检查，在后台进行" : "已经在检查了", "ok");
     await load();
   } catch (e) { toast((e as Error).message, "error"); }
   finally { busy.value = false; }
@@ -114,7 +122,7 @@ async function rejudge() {
   <section class="page homing">
     <header class="row wrap">
       <h2>从个人空间归位</h2><span class="spacer" />
-      <button class="btn sm" :disabled="busy" title="现在跑一遍每晚的检查" @click="sweep">现在检查</button>
+      <button class="btn sm" :disabled="busy || running" title="现在跑一遍每晚的检查（在后台进行）" @click="sweep">{{ running ? '检查中…' : '现在检查' }}</button>
     </header>
     <p class="muted small">业务材料留在个人空间，协作者打不开，引用它的页面也会断。每晚检查一次：挂在业务事项或规则上的工作文件跟过去；被业务页面、事项或记忆引用、同目录文档已归档、空间或归档规则有变化的材料交给 AI 重新判断。移走的都能移回，移回后不再自动移动。</p>
     <Skeleton v-if="!data" :rows="5" />
@@ -123,7 +131,8 @@ async function rejudge() {
         <UiCheckbox :model-value="data.settings.autoMove" switch @change="(v: boolean) => saveSettings({ autoMove: v })">AI 判断属于业务空间时直接移过去</UiCheckbox>
         <span class="muted small">关掉后 AI 的判断放进下面“等你定”。</span>
         <UiSelect :model-value="String(data.settings.nightly)" :options="BUDGETS" width="min(100%, 320px)" aria-label="每晚交给 AI 的份数" @update:model-value="(v: string) => saveSettings({ nightly: Number(v) })" />
-        <p class="muted small">排队 {{ queued }} 份<template v-if="data.last">；上次检查 {{ when(data.last.at) }}：工作文件 {{ data.last.followed }}，按规则 {{ data.last.byRule }}，交给 AI {{ data.last.queued }}</template>。</p>
+        <p v-if="running && data.progress" class="small" role="status">正在检查：{{ data.progress.phase }}<template v-if="data.progress.total">（{{ data.progress.done }} / {{ data.progress.total }}）</template><template v-else-if="data.progress.done">（{{ data.progress.done }}）</template></p>
+        <p class="muted small">排队 {{ queued }} 份<template v-if="data.last">；上次检查 {{ when(data.last.at) }}<template v-if="data.last.ms !== undefined">，用时 {{ Math.max(1, Math.round(data.last.ms / 1000)) }} 秒</template>：工作文件 {{ data.last.followed }}，按规则 {{ data.last.byRule }}，交给 AI {{ data.last.queued }}<template v-if="data.last.stopped">（到了时间上限，剩下的下次接着做）</template></template>。</p>
       </div>
 
       <h3>最近自动移走的</h3>

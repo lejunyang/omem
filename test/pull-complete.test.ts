@@ -45,7 +45,9 @@ describe("complete portable pulls", () => {
     const derived = new Set(["vector_log", "chunks", "symbols", "code_refs", "pages", "page_rowids", "page_links", "page_cites", "page_aliases", "memory_rowids", "req_rowids", "lark_message_lines", "source_viewers", "source_access"]);
     const device = new Set(["kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
-      "archive_recheck", "archive_evidence"]);
+      "archive_recheck", "archive_evidence",
+      // Which messages link which document (sources/doc-links.ts): rebuilt from lark_messages.
+      "lark_doc_links"]);
     const covered = new Set(["spaces", "sources", "lark_people", ...pullTables.map((t) => t.name)]);
     const tables = all<{ name: string }>(app.db, "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name not like '%_fts%' and name not like 'memory_fts%'");
     expect(tables.map((t) => t.name).filter((n) => !derived.has(n) && !device.has(n) && !covered.has(n))).toEqual([]);
