@@ -59,7 +59,7 @@ import { setApprovalExecutor } from "./asks.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
-import { helpText, metaSchemas, splitDirect } from "./tool-help.ts";
+import { helpText, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
@@ -1011,6 +1011,38 @@ function assistantTaskScope(ctx: ToolContext) {
 }
 
 /**
+ * Never lent with a hand-off (run_agent / continue_agent_work `extra_tools`): writing Feishu as the
+ * owner, speaking in chats (what reaches the owner stays with the one who handed the work out),
+ * handing work on again, and a role's own hand-in tools.
+ */
+const LEND_DENIED = new Set([
+  "lark_write", "lark_invite", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize",
+  "lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "meeting_send", "reply_to_asker",
+  "run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run",
+  "stay_quiet", "report_rule_failure", ...ROLE_TOOLS,
+]);
+const MAX_LENT_TOOLS = 12;
+
+/**
+ * Tools the caller lends the agent it hands a round to, for that run only: each must be one this
+ * run may use itself (so nothing it was denied, nothing its person may not do), and none of
+ * LEND_DENIED. Spaces are not widened: the round keeps its own scope, and every tool checks it.
+ */
+function lendTools(ctx: ToolContext, names: string[] | undefined): string[] {
+  const wanted = [...new Set((names ?? []).map((n) => n.trim()).filter(Boolean))];
+  if (!wanted.length) return [];
+  if (wanted.length > MAX_LENT_TOOLS) throw new HttpError(400, `一次最多借 ${MAX_LENT_TOOLS} 件工具`);
+  const known = new Set(toolList().map((t) => t.name));
+  for (const n of wanted) {
+    if (!known.has(n)) throw new HttpError(400, `没有工具 ${n}（用 omem_help 看本次能用的工具）`);
+    if (LEND_DENIED.has(n)) throw new HttpError(403, `${n} 不能借给别的 Agent（以本人身份写飞书、在群里发消息、再交办和角色专用的工具都不外借）：这一步你自己做，或让对方把要写的内容交回给你`);
+    if (ctx.tools && !ctx.tools.has(n)) throw new HttpError(403, `你这次运行自己没有 ${n}，不能借出`);
+  }
+  return wanted;
+}
+const extraToolsSchema = z.array(z.string()).max(MAX_LENT_TOOLS).optional().describe("这一轮临时借给对方的工具名（只在这一轮有效）：对方档案里没有、做完这件事又要用的，比如读写某类数据的工具。只能借你这次自己能用的；以本人身份写飞书、在群里发消息、再交办的工具不能借");
+
+/**
  * An outside Agent on a paired device hands work to one of this machine's Agents (peer-agent.ts):
  * queued as a run of the device's session, with this machine's models; the device reads the result
  * with read_run. There is no conversation to report back to, so the run only keeps its result.
@@ -1085,22 +1117,26 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
 def({
   name: "run_agent",
   description:
-    "把一件事交给某个 Agent 档案去做（后台运行）。没有专门档案时 name=assistant 使用主助手角色完成这次任务，不新建档案。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；你的回复发在话题里，报告折叠在下面。当前会话不会被长输出刷屏。简单一次性的事保持 false，结果直接发回本会话。",
+    "把一件事交给某个 Agent 档案去做（后台运行）。没有专门档案时 name=assistant 使用主助手角色完成这次任务，不新建档案。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；只是接着交办时你的回复留在工作会话里（话题里有一张原地更新的进度卡），做完、要本人决定或卡住时才发到话题里，报告折叠在下面。交办前看对方档案（list_agents）有没有做完这件事要用的工具：没有的，那一步你自己做，或用 extra_tools 借给它这一轮，不要让它每轮回头找你代做。简单一次性的事 own_topic 保持 false，结果直接发回本会话。",
   schema: z.object({
     execution: executionSchema.optional(),
     name: z.string(),
     task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入"),
     space: z.string().optional(),
     own_topic: z.boolean().optional().describe("长任务/多 Agent 协同：单独工作会话（飞书新话题），每轮报告交回给你继续推进"),
+    extra_tools: extraToolsSchema,
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
     const spec = a.name === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
+    const extraTools = lendTools(ctx, a.extra_tools);
+    if (extraTools.length && (ctx.peer || (ctx.runId && (getRun(ctx.app, ctx.runId).input as { rule?: unknown }).rule))) throw new HttpError(400, "从别的设备交办、或在规则的运行里交办时不能借工具");
     if (ctx.peer) return peerDispatch(ctx, spec, a.task, execution, a.space);
     const parentInput = ctx.runId ? (getRun(ctx.app, ctx.runId).input ?? {}) as Record<string, unknown> : {};
     if (parentInput.rule) return ruleHandoff(ctx, parentInput, spec, a.task, execution);
     const assistantScope = a.name === "assistant" ? assistantTaskScope(ctx) : undefined;
+    const lentNote = extraTools.length ? `；这一轮借给它 ${extraTools.join("、")}` : "";
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
     if (!conversationId) throw new HttpError(400, "只能在一个会话里交办 Agent");
@@ -1112,8 +1148,8 @@ def({
       const existing = workInConversation(ctx.app, conversationId);
       if (existing) {
         await autoTurnGuard(ctx, existing);
-        const id = queueAgentRound(ctx.app, existing, { agent: spec.name, task: a.task, execution, assistantScope });
-        return `已在这项工作的话题里安排 ${spec.name} 的下一轮 ${id}；它交回报告后你会在这里接着处理。`;
+        const id = queueAgentRound(ctx.app, existing, { agent: spec.name, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
+        return `已在这项工作的话题里安排 ${spec.name} 的下一轮 ${id}${lentNote}；它交回报告后你会在这里接着处理。`;
       }
       const w = startAgentWork(ctx.app, {
         askRunId: ctx.runId!,
@@ -1123,7 +1159,7 @@ def({
         agent: spec.name,
         task: a.task,
         startMessage: a.task,
-        execution, assistantScope,
+        execution, assistantScope, extraTools,
       });
       // Open the Feishu topic from the message that triggered this ask (lark only).
       const larkChat = one<{ channel: string; external_id: string | null }>(ctx.app.db, "select channel, external_id from conversations where id = ?", conversationId);
@@ -1136,10 +1172,10 @@ def({
         : undefined;
       if (anchor) void import("./agent-work.ts").then(({ openWorkTopic }) => openWorkTopic(ctx.app, w.work, anchor));
       if (inChat && !anchor) return `已在独立工作会话把这件事交给 ${spec.name}，运行 ${w.runId}。这里没有这件事自己的飞书消息可以挂话题，它的结论和要本人决定的事会直接发在本会话（不是话题），不要说“已在话题里”。`;
-      return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
+      return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}${lentNote}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
-    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId }, parentId: ctx.runId });
-    return `已交给 ${spec.name}，运行 ${r.id}，完成后结果会发回本会话。`;
+    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId });
+    return `已交给 ${spec.name}，运行 ${r.id}${lentNote}，完成后结果会发回本会话。`;
   },
 });
 
@@ -1147,16 +1183,19 @@ def({
 def({
   name: "continue_agent_work",
   description:
-    "继续一个已经在独立工作会话（飞书话题）里进行的多 Agent 任务：本人补充了要求，或你看了报告认为还要再推进时用。在原工作会话里排下一轮（同一条话题，同一个 Agent 会接着它上一轮的会话，并能看到这项工作到目前为止的经过）；交回报告后你会再次接手。不要用 run_agent 新开一个。",
+    "继续一个已经在独立工作会话（飞书话题）里进行的多 Agent 任务：本人补充了要求，或你看了报告认为还要再推进时用。在原工作会话里排下一轮（同一条话题，同一个 Agent 会接着它上一轮的会话，并能看到这项工作到目前为止的经过）；交回报告后你会再次接手。不要用 run_agent 新开一个。上一轮它回头找你代做的（缺工具），这一轮用 extra_tools 借给它，或你先做完那一步再交办。",
   write: true,
   schema: z.object({
     execution: executionSchema.optional(),
     work_id: z.string().optional().describe("发起那次工作的 ask 运行 id（r…）；不传时取本会话最近一个仍在进行的工作会话"),
     agent: z.string().optional().describe("这一轮用哪个 Agent 档案；不传沿用上一轮的 Agent"),
     task: z.string().describe("这一轮要做什么：本人的新要求或你判断还需要推进的事，写具体"),
+    extra_tools: extraToolsSchema,
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
+    const extraTools = lendTools(ctx, a.extra_tools);
+    const lentNote = extraTools.length ? `；这一轮借给它 ${extraTools.join("、")}` : "";
     const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
@@ -1173,21 +1212,21 @@ def({
       const here = getThread(ctx.app, conv);
       const otherTopic = !!String(here?.key ?? "").includes("#") && here?.key !== work.larkKey;
       if (otherTopic || work.rootConversationId !== conv) {
-        const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task, execution, assistantScope });
-        return `已把这项工作转到当前话题继续（运行 ${f.runId}）；后续 ${agent} 的报告和协调回复都在这里，不再回到旧话题。旧话题里的经过可以用 read_conversation 读工作会话 ${work.workConversationId}。`;
+        const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
+        return `已把这项工作转到当前话题继续（运行 ${f.runId}${lentNote}）；后续 ${agent} 的报告和协调回复都在这里，不再回到旧话题。旧话题里的经过可以用 read_conversation 读工作会话 ${work.workConversationId}。`;
       }
     }
     await autoTurnGuard(ctx, work);
     let id: string;
     try {
-      id = queueAgentRound(ctx.app, work, { agent, task: a.task, execution, assistantScope });
+      id = queueAgentRound(ctx.app, work, { agent, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
     } catch (e) {
       if (!String((e as Error).message).includes("已达上限")) throw e;
       // A cap is only a guard against loops, not a reason to drop the user's request:
       // the main assistant takes over the remaining work directly in this conversation.
       return `这项工作在独立工作会话里已循环 ${MAX_AGENT_WORK_RUNS} 轮（防失控上限）。不要再开新的工作会话；请你直接在本会话完成本人这条要求：${a.task}。需要的上下文用 read_conversation 读该工作会话，结论直接回复本人。`;
     }
-    return `已在原工作会话安排 ${agent} 的下一轮 ${id}；它交回报告后你会接着处理。`;
+    return `已在原工作会话安排 ${agent} 的下一轮 ${id}${lentNote}；它交回报告后你会接着处理。`;
   },
 });
 

@@ -42,8 +42,13 @@ export async function startProgress(_app: App, at: { messageId: string; inThread
   };
 }
 
-/** Own all asynchronous presentation work so a late card/reaction is settled with the answer. */
-export function startReplyProgress(app: App, at: { chatId: string; messageId: string; inThread: boolean }, runId: string) {
+/**
+ * Own all asynchronous presentation work so a late card/reaction is settled with the answer.
+ * `bubble: false` (settings → 思考气泡 off, or not the owner's own message under `own`): only the
+ * "on it" reaction, no thinking bubble and no fallback card; the answer is posted as a reply.
+ */
+export function startReplyProgress(app: App, at: { chatId: string; messageId: string; inThread: boolean }, runId: string, opts: { bubble?: boolean } = {}) {
+  const bubble = opts.bubble !== false;
   // Updates come from run events (any context): they go through the bot that took the message.
   const bot = currentBot();
   let closed = false;
@@ -59,8 +64,9 @@ export function startReplyProgress(app: App, at: { chatId: string; messageId: st
   const begin = () => {
     if (closed || started) return;
     started = true;
-    const native = startCot(app, runId, { chatId: at.chatId, originMessageId: at.messageId, inThread: at.inThread, bot });
     beginning = reactLark(at.messageId, "OnIt", bot).then((id) => { working = id; }).catch(() => {});
+    if (!bubble) return;
+    const native = startCot(app, runId, { chatId: at.chatId, originMessageId: at.messageId, inThread: at.inThread, bot });
     if (!native) fallback();
     else {
       timer = setInterval(() => {
@@ -72,7 +78,7 @@ export function startReplyProgress(app: App, at: { chatId: string; messageId: st
   const listener = (e: { type: string; runId?: string; status?: string; event?: { type: string; data: unknown } }) => {
     if (closed || e.runId !== runId) return;
     if (e.type === "run" && e.status === "running") begin();
-    if (e.type === "run-event" && e.event) cotEvent(app, runId, e.event);
+    if (bubble && e.type === "run-event" && e.event) cotEvent(app, runId, e.event);
   };
   app.events.on("event", listener);
   if (getRun(app, runId).status === "running") begin();

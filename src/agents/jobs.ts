@@ -134,7 +134,7 @@ registerHandler("ask", async (ctx) => {
     r = await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner");
   } catch (e) {
     // Nobody waits on a coordination turn: say it stopped, where the owner follows the work.
-    if (coordinate && !ctx.signal.aborted) await deliverCoordination(ctx, coordinate, `协调这一轮时出错，工作停在这里：${(e as Error).message}\n\n回复这条话题可以让我接着做。`).catch(() => {});
+    if (coordinate && !ctx.signal.aborted) await deliverCoordination(ctx, coordinate, `协调这一轮时出错，工作停在这里：${(e as Error).message}\n\n回复这条话题可以让我接着做。`, { failed: true }).catch(() => {});
     throw e;
   }
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
@@ -149,6 +149,14 @@ registerHandler("ask", async (ctx) => {
   // Woken by a wake-up it set: nobody waits on it either.
   if ((ctx.run.input as { wake?: unknown }).wake && msgs.every((m) => !!m.meta.wake)) {
     if (quiet) return { answer, quiet: true, session: r.mode };
+    // Woken inside a multi-agent work and it only handed out the next round: like a coordination
+    // turn, kept in the work conversation (settings → 过程消息).
+    const { workInConversation, onlyMovedOn } = await import("./agent-work.ts");
+    const work = workInConversation(ctx.app, input.conversationId);
+    if (work && onlyMovedOn(ctx.app, ctx.run.id, work.askRunId, ids)) {
+      const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids, progressOnly: true });
+      return { answer, messageId: id, session: r.mode };
+    }
     await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode };
@@ -181,7 +189,7 @@ registerHandler("ask", async (ctx) => {
  * Feishu topic, else the conversation it was asked from), with each agent's full report folded below.
  */
 export async function deliverCoordination(ctx: RunContext, coordinate: { workId: string; sourceRunIds?: string[] }, answer: string, meta: Record<string, unknown> = {}) {
-  const { refreshWork, workDeliveryTarget } = await import("./agent-work.ts");
+  const { refreshWork, workDeliveryTarget, onlyMovedOn } = await import("./agent-work.ts");
   const work = refreshWork(ctx.app, coordinate.workId);
   const workConv = (ctx.run.input as { conversationId: string }).conversationId;
   const reports = (coordinate.sourceRunIds ?? []).map((id) => {
@@ -198,6 +206,12 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
   const startedAt = one<{ created_at: string }>(ctx.app.db, "select created_at from conversations where id = ?", work?.workConversationId ?? workConv)?.created_at ?? "";
   const target = homeFor(ctx.app, ctx.run.id, planned, startedAt);
   const full = { ...meta, runId: ctx.run.id, coordinate: coordinate.workId, ...details };
+  // It only handed out the next round (settings → 过程消息: milestones): kept in the work
+  // conversation, not posted; the topic's progress card shows the work moving on.
+  const answered = (ctx.run.input as { messageIds?: string[] }).messageIds ?? [];
+  if (!meta.failed && onlyMovedOn(ctx.app, ctx.run.id, coordinate.workId, answered)) {
+    return addMessage(ctx.app, workConv, "assistant", answer, ctx.run.id, { ...full, progressOnly: true });
+  }
   // The work conversation keeps the reply either way (the assistant's next turn reads it there).
   const id = target === workConv ? null : addMessage(ctx.app, workConv, "assistant", answer, ctx.run.id, full);
   await deliverToThread(ctx.app, target, answer, full);
@@ -276,6 +290,11 @@ async function runAgentTask(ctx: RunContext) {
       if (context) fullTask = `${context}\n\n---\n\n# 这一轮的任务\n\n${task}`;
     }
   }
+  // Tools the one who handed this round out lent for it (tools.ts lendTools checked them against its
+  // own); never one this run is denied. The person's permissions are applied again in prepareRun.
+  const runDenied = new Set([...(assistantScope?.denyTools ?? []), ...(((ctx.run.input as { denyTools?: string[] }).denyTools) ?? [])]);
+  const lent = (((ctx.run.input as { extraTools?: string[] }).extraTools) ?? []).filter((t) => !runDenied.has(t));
+  if (lent.length) fullTask = `${fullTask}\n\n---\n\n这一轮交办方临时借给你的工具（只在这一轮可用）：${lent.join("、")}。做这件事要用到它们时直接用，不用再回头找交办方代做。`;
   // Retried: what the failed attempt already did comes first, so nothing is posted twice.
   const retryOf = (ctx.run.input as { retryOf?: string }).retryOf;
   if (retryOf) fullTask = `${(await import("./retry.ts")).attemptNote(ctx.app, retryOf)}\n\n---\n\n${fullTask}`;
@@ -286,7 +305,7 @@ async function runAgentTask(ctx: RunContext) {
       // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
       choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
-      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention)],
+      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...lent],
       execution,
       // A rule's runs follow the rule's switch; others the profile's (prepareRun).
       fullAccess: rule ? !!(ctx.run.input as { fullAccess?: boolean }).fullAccess : undefined,

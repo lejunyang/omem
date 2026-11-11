@@ -53,8 +53,31 @@ function placeOf(app: App, r: Run): { conversationId: string; title: string } | 
   return null;
 }
 
+/**
+ * settings → AI → 过程消息 → 思考气泡 (agents.progress.thinking): every run's bubble (`all`), only the turn
+ * answering the owner's own message (`own`, default), or none (`off`). Both places that open a
+ * bubble ask this: the reply to a message (lark-progress.ts) and background runs (below).
+ */
+export function showThinking(app: App, answersOwner: boolean): boolean {
+  const mode = app.config.agents.progress?.thinking ?? "own";
+  return mode === "all" || (mode === "own" && answersOwner);
+}
+
+/** A conversation turn that answers words the owner wrote (not a report, a wake-up, a colleague, a watched group). */
+function answersOwner(app: App, r: Run): boolean {
+  const ids = r.kind === "ask" ? ((r.input as { messageIds?: string[] }).messageIds ?? []) : [];
+  if ((r.input as { userId?: string }).userId && (r.input as { userId?: string }).userId !== "owner") return false;
+  return ids.some((id) => {
+    const m = one<{ role: string; meta: string }>(app.db, "select role, meta from messages where id = ?", id);
+    if (m?.role !== "user") return false;
+    const meta = JSON.parse(m.meta || "{}") as Record<string, unknown>;
+    return !meta.agentReport && !meta.wake && !meta.codeResult && !meta.command && typeof meta.speaker !== "string" && typeof meta.asker !== "string" && (meta.userId === undefined || meta.userId === "owner");
+  });
+}
+
 function start(app: App, r: Run) {
   if (r.input.hideThinking) return false;
+  if (!showThinking(app, answersOwner(app, r))) return false;
   // A rule's agent answering under the triggering message: its bubble opens the topic there.
   const input = r.input as { replyAt?: { chatId: string; messageId: string; inThread?: boolean }; spec?: string; wake?: boolean; lark?: { bot?: string } };
   // A wake-up re-check: nobody waits on it, and most end with nothing new (stay_quiet). Its process is

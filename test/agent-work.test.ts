@@ -184,6 +184,28 @@ describe("multi-agent work", () => {
       quiet1();
     }
   }, 90000);
+
+  it("with milestones (default) only the turn that stopped is posted; turns that handed on stay in the work conversation", async () => {
+    app.config.agents.autoAdvance = { ...app.config.agents.autoAdvance, turns: 2 };
+    const restore = stubHandlers(app, async (tctx) => {
+      const r = await callTool(tctx, "continue_agent_work", { task: "继续" });
+      return r.isError ? "到上限了：进展是……要继续吗？" : "让它接着查。";
+    });
+    try {
+      saveAgentSpec(app, { name: "loop-m", description: "调研", prompt: "只做调研", status: "active" }, "user");
+      const root = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "长任务", input: { conversationId: root.id } });
+      await callTool({ app, runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" }, "run_agent", { name: "loop-m", own_topic: true, task: "第一轮" });
+      const w = await settle(app, ask.id, 40000);
+      expect(w.rounds.length).toBe(3);
+      const posted = threadMessages(app, root.id, { limit: 50 }).filter((m) => m.role === "assistant");
+      expect(posted.map((m) => m.text)).toEqual(["到上限了：进展是……要继续吗？"]);
+      const kept = threadMessages(app, w.workConversationId, { limit: 50 }).filter((m) => m.meta.progressOnly);
+      expect(kept.map((m) => m.text)).toEqual(["让它接着查。", "让它接着查。"]);
+    } finally {
+      restore();
+    }
+  }, 60000);
 });
 
 describe("replies", () => {

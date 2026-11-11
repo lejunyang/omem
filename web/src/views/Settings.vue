@@ -547,6 +547,15 @@ async function savePreCheck(v: boolean) {
   await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, preCheck: v } } }, v ? "新交办开始编码前先做检查" : "新交办直接开始编码");
   void load();
 }
+/** agents.progress: what reaches Feishu while agents work (process messages, thinking bubbles). */
+async function saveProgress(patch: { messages?: string; thinking?: string }) {
+  const cur = config.value.agents.progress ?? { messages: "milestones", thinking: "own" };
+  const next = { ...cur, ...patch };
+  await saveConfig({ agents: { ...config.value.agents, progress: next } }, patch.messages
+    ? next.messages === "all" ? "多 Agent 工作的每轮回复都发到话题" : "多 Agent 工作只在完成和卡住时发消息"
+    : `思考气泡：${({ all: "全部显示", own: "只在回答你的消息时显示", off: "关闭" } as Record<string, string>)[next.thinking]}`);
+  void load();
+}
 /** agents.design (docs/v2/coding-plan.md §3): whether delegations write a design first, and who confirms it. */
 async function saveDesign(patch: { mode?: string; confirm?: string }) {
   const cur = config.value.agents.design ?? { mode: "auto", confirm: "owner" };
@@ -896,6 +905,18 @@ async function saveEdit() {
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="20" :value="config.agents.autoAdvance?.codeRounds ?? 3" @change="saveAutoAdvance('codeRounds', ($event.target as HTMLInputElement).value)" />
         </label>
         <UiCheckbox :model-value="config.agents.autoAdvance?.preCheck !== false" switch @change="savePreCheck">编码前检查：新交办开始编码前，先查改动会碰到什么、这里以前出过什么问题、改完要回归什么（角色“编码前检查”，在 Agent 页选模型）</UiCheckbox>
+      </div>
+      <div class="card pad stack">
+        <div class="section-title">过程消息</div>
+        <p class="muted small">Agent 干活时飞书里能看到多少过程。过程都留在网页的运行页和工作会话里，这里只决定发不发到飞书。</p>
+        <div class="field"><span>多 Agent 工作的话题里</span>
+          <UiSegmented :model-value="config.agents.progress?.messages ?? 'milestones'" style="justify-self: start" size="sm" aria-label="多 Agent 工作的过程消息" :options="[{ value: 'milestones', label: '只在完成和卡住时发' }, { value: 'all', label: '全部发' }]" @change="(v) => saveProgress({ messages: v })" />
+          <span class="hint">只在完成和卡住时发：话题里只有一张原地更新的进度卡（第几轮、谁在做什么、最近一步、运行记录链接）；做完、要你决定或卡住、回答你在话题里说的话时才发消息。全部发：主助手每轮看完报告的回复都发出来。</span>
+        </div>
+        <div class="field"><span>思考气泡</span>
+          <UiSegmented :model-value="config.agents.progress?.thinking ?? 'own'" style="justify-self: start" size="sm" aria-label="思考气泡" :options="[{ value: 'own', label: '只在回答我的消息时' }, { value: 'all', label: '全部' }, { value: 'off', label: '关' }]" @change="(v) => saveProgress({ thinking: v })" />
+          <span class="hint">只在回答我的消息时：你自己发的消息，回答它的那一轮显示思考气泡；交办出去的 Agent、主助手看报告、唤醒、规则触发的运行都不显示。</span>
+        </div>
       </div>
       <div class="card pad stack">
         <div class="section-title">方案先行</div>

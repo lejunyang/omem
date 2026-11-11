@@ -26,7 +26,8 @@ import { registerLarkAsks } from "./lark-asks.ts";
 import { showSuggestions } from "../agents/asks.ts";
 import { startReplyProgress } from "./lark-progress.ts";
 import { finishCot } from "./lark-cot.ts";
-import { watchAgentBubbles } from "./lark-agent-cot.ts";
+import { showThinking, watchAgentBubbles } from "./lark-agent-cot.ts";
+import { watchWorkProgress } from "./lark-work-progress.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { larkBotInfo, larkOwnerOpenId, onLarkSent, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark } from "./lark-send.ts";
 import { bindAnswerer, botChannel, botRoster, chatContext, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, type BotRef } from "./lark-bots.ts";
@@ -270,6 +271,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     registerCodeProgress(app);
     registerLarkAsks(app, () => cfg.ownerOpenId);
     watchAgentBubbles(app);
+    watchWorkProgress(app);
   }
 
   const nameOf = larkSenderNames(app, client);
@@ -741,7 +743,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
         {
           onStart: async (id) => {
             runId = id;
-            presentation = startReplyProgress(app, { chatId: m.chatId, messageId: replyMessageId, inThread: replyInThread }, id);
+            // settings → 思考气泡: by default only the owner's own message gets one.
+            presentation = startReplyProgress(app, { chatId: m.chatId, messageId: replyMessageId, inThread: replyInThread }, id, { bubble: showThinking(app, userId === OWNER && !asker && !m.fromApp) });
           },
           onMerged: async () => {
             const { reactLark } = await import("./lark-send.ts");
