@@ -299,12 +299,10 @@ function applyAnswers(id: string, body: DesignBody, answers: Record<string, stri
   }
 }
 
-const feedbackKey = (id: string) => `design_feedback:${id}`;
-
 /** What was said about the design since its current version (for the run that writes the next one). */
 export function designFeedback(app: App, id: string): DesignFeedback[] {
   const d = getDesign(app, id);
-  const v = one<{ value: string }>(app.db, "select value from kv where key = ?", feedbackKey(id))?.value;
+  const v = one<{ feedback: string }>(app.db, "select feedback from designs where id = ?", id)?.feedback;
   return json<DesignFeedback[]>(v ?? "[]", []).filter((f) => f.revision === d.revision);
 }
 
@@ -340,9 +338,9 @@ export function decideDesign(app: App, id: string, input: { action: DesignAction
   tx(app.db, () => {
     rewriteCurrent(app, d, body);
     setDesignStatus(app, id, input.action === "approve" ? "approved" : "drafting");
-    const prev = json<DesignFeedback[]>(one<{ value: string }>(app.db, "select value from kv where key = ?", feedbackKey(id))?.value ?? "[]", []);
+    const prev = json<DesignFeedback[]>(one<{ feedback: string }>(app.db, "select feedback from designs where id = ?", id)?.feedback ?? "[]", []);
     const entry: DesignFeedback = { revision: d.revision, action: input.action, text, answers, by: input.by, at: now() };
-    run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", feedbackKey(id), JSON.stringify([...prev, entry].slice(-50)));
+    run(app.db, "update designs set feedback = ? where id = ?", JSON.stringify([...prev, entry].slice(-50)), id);
   });
   const after = getDesign(app, id);
   for (const l of [...listeners]) {

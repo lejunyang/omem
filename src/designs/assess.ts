@@ -132,11 +132,13 @@ registerHandler("design", async (ctx) => {
   }
   const line = designLine(after);
   const title = `方案评估完成：《${after.title}》`;
-  try { notify(ctx.app, { title, body: line, link: `#/design/${after.id}`, runId: ctx.run.id, userId: user }); }
-  catch (e) { ctx.event("status", { text: `通知没有发出：${(e as Error).message}` }); }
-  // Asked by the assistant in a conversation: the result goes back there, like a task handed to an agent.
+  // Asked by the assistant in a conversation: the result goes back there, like a task handed to an
+  // agent, and the assistant tells the owner; started from the web, a notification does.
   const home = homeOf(ctx.app, ctx.run.id);
-  if (home && home.root !== ctx.run.id) {
+  if (!home || home.root === ctx.run.id) {
+    try { notify(ctx.app, { title, body: line, link: `#/design/${after.id}`, runId: ctx.run.id, userId: user }); }
+    catch (e) { ctx.event("status", { text: `通知没有发出：${(e as Error).message}` }); }
+  } else {
     const { deliverToThread } = await import("../agents/inbox.ts");
     await deliverToThread(ctx.app, home.conversationId, `${title}（方案 ${after.id}，第 ${after.revision} 版）\n\n${line}\n\n全文用 read_design 看；要问作者的和问题可以整理给本人，发不发由本人决定。`, { runId: ctx.run.id, design: after.id });
   }

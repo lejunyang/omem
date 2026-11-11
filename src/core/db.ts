@@ -1626,6 +1626,7 @@ export const migrations: readonly string[] = [
     status text not null,
     revision integer not null default 0,
     body text not null default '{}',
+    feedback text not null default '[]',
     work_id text,
     run_id text,
     user_id text,

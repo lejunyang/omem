@@ -40,9 +40,11 @@ it("assesses someone else's design through ACP/MCP, notifies, reports back, and 
   const d = getDesign(app, job.input.designId as string);
   expect(d).toMatchObject({ origin: "external", status: "assessed", revision: 1, runId: job.id });
   expect(d.body.decisions.map((x) => [x.id, x.stated])).toEqual([["D1", undefined], ["D2", false]]);
-  const notes = all<{ title: string; body: string; link: string }>(app.db, "select title, body, link from notifications");
-  expect(notes).toContainEqual({ title: "方案评估完成：《退款改造技术方案》", body: "2 个决定；问题 1 风险 1 要问 1", link: `#/design/${d.id}` });
-  expect(threadMessages(app, t.id).map((m) => m.text).join("\n")).toContain("方案评估完成：《退款改造技术方案》");
+  // Asked from a conversation: the result goes back there and the assistant tells the owner, no second notification.
+  expect(all(app.db, "select 1 from notifications where title like '方案评估完成%'")).toHaveLength(0);
+  const told = threadMessages(app, t.id).map((m) => m.text).join("\n");
+  expect(told).toContain("方案评估完成：《退款改造技术方案》");
+  expect(told).toContain("2 个决定；问题 1 风险 1 要问 1");
 
   // The document changed: the same design again; leaving out the old concerns is refused, then each is given its state.
   const again = await callTool(ctx, "assess_design", { title: "退款改造技术方案", sources: [`src:${doc.id}`], design_id: d.id });

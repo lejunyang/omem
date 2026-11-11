@@ -191,6 +191,7 @@ create table designs (
   status text not null,                -- drafting | review | approved | assessed | recorded
   revision integer not null default 0, -- 0：还没交过
   body text not null default '{}',     -- 当前版本的 DesignBody
+  feedback text not null default '[]', -- 本人对当前版本说的（提意见、换思路），重写的运行读它
   work_id text,                        -- 以它为基线的交办或分支评审的首个运行
   run_id text,                         -- 写出当前版本的运行
   user_id text,
