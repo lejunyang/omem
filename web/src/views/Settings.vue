@@ -16,6 +16,7 @@ import PluginsSettings from "../components/PluginsSettings.vue";
 import StorageUsage from "../components/StorageUsage.vue";
 import ShareSettings from "../components/ShareSettings.vue";
 import CommandRulesSettings from "../components/CommandRulesSettings.vue";
+import DoubaoSendStatus from "../components/DoubaoSendStatus.vue";
 import MembersSettings from "../components/MembersSettings.vue";
 import ProviderApps from "../components/ProviderApps.vue";
 import FederationSettings from "../components/FederationSettings.vue";
@@ -171,16 +172,16 @@ function saveGuests(patch: Record<string, unknown>, note = "已保存访客设�
   return saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
 }
 function saveMentions(patch: Record<string, unknown>, note = "已保存") {
-  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group" } } };
+  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } };
   void saveConfig({ mentions: { ...cur, ...patch } }, note);
 }
 /** Answering the asker is per channel (`mentions.reply.<channel>`); Feishu is the one there is. */
 function saveMentionReply(patch: Record<string, unknown>) {
   const reply = config.value.mentions?.reply ?? {};
-  saveMentions({ reply: { ...reply, lark: { ...(reply.lark ?? { group: "off", p2p: "off", p2pVia: "group" }), ...patch } } });
+  saveMentions({ reply: { ...reply, lark: { ...(reply.lark ?? { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" }), ...patch } } });
 }
 function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
-  const cur = config.value.lark.commands ?? { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 };
+  const cur = config.value.lark.commands ?? { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30, signedVia: "lark-cli" };
   void saveConfig({ lark: { ...config.value.lark, commands: { ...cur, ...patch } } }, note);
 }
 
@@ -1124,6 +1125,15 @@ async function saveEdit() {
         <div v-if="(config.mentions?.reply?.lark?.p2p ?? 'off') !== 'off'" class="row wrap small"><span style="min-width: 4em">私聊怎么回</span>
           <UiSegmented size="sm" aria-label="私聊怎么回" :model-value="config.mentions?.reply?.lark?.p2pVia ?? 'group'" :options="[{ value: 'group', label: '拉你、对方和机器人的群' }, { value: 'signed', label: '以你的身份回，带署名' }]" @change="(v: string) => saveMentionReply({ p2pVia: v })" />
         </div>
+        <template v-if="(config.mentions?.reply?.lark?.p2p ?? 'off') !== 'off' && config.mentions?.reply?.lark?.p2pVia === 'signed'">
+          <div class="row wrap small"><span style="min-width: 4em">以你的身份</span>
+            <UiSegmented size="sm" aria-label="以你的身份怎么发" :model-value="config.mentions?.reply?.lark?.signedVia ?? 'lark-cli'" :options="[{ value: 'lark-cli', label: '用 lark-cli 发' }, { value: 'doubao', label: '经豆包发送' }]" @change="(v: string) => saveMentionReply({ signedVia: v })" />
+          </div>
+          <template v-if="config.mentions?.reply?.lark?.signedVia === 'doubao'">
+            <p class="muted small">企业不让 lark-cli 以你的身份发私聊时用这个：每条回复建一个新的豆包会话，只交给它定稿的回复和对方是谁（姓名、邮箱、id），让它原样发出，用完删除会话；发完用 lark-cli 读那个私聊核对。没核对上或没发出都会单独告诉你，不算回复成功。</p>
+            <DoubaoSendStatus />
+          </template>
+        </template>
       </div>
 
       <div class="card pad stack">
@@ -1174,6 +1184,13 @@ async function saveEdit() {
         <label class="field"><span>拉群：建一个你、对方和机器人的群，机器人在群里接着处理</span>
           <input class="input mono" style="width: 200px" :value="config.lark.commands?.group ?? '/ai拉群'" @change="saveCommands({ group: ($event.target as HTMLInputElement).value.trim() || '/ai拉群' })" />
         </label>
+        <div class="row wrap small"><span>代回怎么发</span>
+          <UiSegmented size="sm" aria-label="代回怎么发" :model-value="config.lark.commands?.signedVia ?? 'lark-cli'" :options="[{ value: 'lark-cli', label: '用 lark-cli 发' }, { value: 'doubao', label: '经豆包发送' }]" @change="(v: string) => saveCommands({ signedVia: v })" />
+        </div>
+        <template v-if="config.lark.commands?.signedVia === 'doubao'">
+          <p class="muted small">每次代回建一个新的豆包会话，只交给它定稿的回复和对方是谁，让它原样发出，用完删除；发完读私聊核对，没核对上或没发出会单独告诉你。</p>
+          <DoubaoSendStatus />
+        </template>
         <label class="field"><span>代回消息结尾的署名</span>
           <input class="input" :value="config.lark.commands?.signature ?? '（此消息由 AI 代发）'" @change="saveCommands({ signature: ($event.target as HTMLInputElement).value.trim() || '（此消息由 AI 代发）' })" />
         </label>

@@ -2199,6 +2199,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const ref = q(z.object({ ref: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/) }), req.params).ref;
     return (await import("../channels/lark-bot-check.ts")).updateLarkBotByScan(app, ref);
   });
+  // Sending one-to-one messages as the owner through Doubao (doubao-send.ts): whether it can, and the owner's test message to themselves.
+  server.get("/api/lark/doubao-send", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能看豆包发送的状态");
+    return (await import("../channels/doubao-send.ts")).doubaoSendStatus(app);
+  });
+  server.post("/api/lark/doubao-send/test", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能试发");
+    return (await import("../channels/doubao-send.ts")).doubaoSelfTest(app);
+  });
   // Reactions on what the bots sent, by profile and model (lark-feedback.ts).
   server.get("/api/feedback/stats", async (req) => {
     const days = q(z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }), req.query ?? {}).days;

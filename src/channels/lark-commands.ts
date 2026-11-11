@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { audit } from "../auth/permissions.ts";
 import { one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { OWNER } from "../core/users.ts";
@@ -15,8 +16,9 @@ import { chatSpace, fetchMessages, messageText, ownBotChat, ownerOpenId, timeMs 
  * owner's lark-cli once a minute:
  *
  * - `/ai …`: the assistant reads the recent chat (and what follows the command) and answers in
- *   that chat as the owner, signed as sent by AI. The only messages omem sends as the owner,
- *   and only when the owner asked for it in that chat just now.
+ *   that chat as the owner, signed as sent by AI, only when the owner asked for it in that chat just
+ *   now. Through lark-cli, or a one-off Doubao session (`signedVia: doubao`, doubao-send.ts) where the
+ *   tenant keeps lark-cli from sending private messages.
  * - `/ai拉群 …`: a new group of the owner, that person and omem's bot (created as the owner),
  *   where the bot picks the matter up from the private chat and answers itself.
  */
@@ -97,7 +99,7 @@ export async function commandRun(ctx: RunContext) {
   if (!owner) throw new Error("读不到本人的飞书身份（lark-cli 未登录）");
   try {
     const { transcript, other } = await recentChat(app, c, owner);
-    return c.kind === "ai" ? await aiReply(ctx, c, transcript, other?.name ?? c.chatName) : await groupUp(ctx, c, transcript, other);
+    return c.kind === "ai" ? await aiReply(ctx, c, transcript, other) : await groupUp(ctx, c, transcript, other);
   } catch (e) {
     notify(app, { title: `私聊指令没有完成（${c.chatName}）`, body: (e as Error).message, link: `#/runs/${ctx.run.id}` });
     throw e;
@@ -105,8 +107,9 @@ export async function commandRun(ctx: RunContext) {
 }
 
 /** `/ai`: the assistant answers in the private chat, as the owner, signed. */
-async function aiReply(ctx: RunContext, c: Command, transcript: string, name: string) {
+async function aiReply(ctx: RunContext, c: Command, transcript: string, other: { id: string; name: string } | null) {
   const app = ctx.app;
+  const name = other?.name ?? c.chatName;
   const cfg = app.config.lark.commands;
   const sessionKey = `lark_cmd_session:${c.chatId}`;
   const task = [
@@ -140,9 +143,27 @@ async function aiReply(ctx: RunContext, c: Command, transcript: string, name: st
   if (!answer || /^NO_REPLY\s*$/i.test(answer)) return { answer, sent: false };
   const { resolveCitations } = await import("./common.ts");
   const { larkMarkdown } = await import("./lark-markdown.ts");
-  const body = larkMarkdown(`${await resolveCitations(app, answer, { runId: ctx.run.id, chatId: c.chatId })}\n\n${cfg.signature}`.trim());
+  const resolved = await resolveCitations(app, answer, { runId: ctx.run.id, chatId: c.chatId });
+  if (cfg.signedVia === "doubao") return doubaoAnswer(ctx, c, `${resolved}\n\n${cfg.signature}`.trim(), other, name, answer);
+  const body = larkMarkdown(`${resolved}\n\n${cfg.signature}`.trim());
   await larkCli(["im", "+messages-send", "--as", "user", "--chat-id", c.chatId, "--markdown", body, "--idempotency-key", `omem-${c.messageId}`.slice(0, 50), "--format", "json"], 60_000);
   return { answer, sent: true };
+}
+
+/**
+ * `/ai` through a one-off Doubao session (`lark.commands.signedVia: doubao`, doubao-send.ts), where the
+ * tenant keeps lark-cli from sending as the owner. The owner hears how it went unless it was found in
+ * the chat as written; every attempt is audited.
+ */
+async function doubaoAnswer(ctx: RunContext, c: Command, body: string, other: { id: string; name: string } | null, name: string, answer: string) {
+  const app = ctx.app;
+  const { sendViaDoubao, recipientOf, doubaoOutcomeLine } = await import("./doubao-send.ts");
+  const d = await sendViaDoubao(app, { body, to: recipientOf(app, other?.id ?? null, name, c.chatId), runId: ctx.run.id, signal: ctx.signal });
+  const line = doubaoOutcomeLine(d);
+  audit(app, OWNER, "lark.command-reply", c.chatId, { runId: ctx.run.id, command: c.messageId, via: "doubao", ok: d.ok, outcome: d.outcome, report: d.report, problem: d.problem, raw: d.raw, doubaoSession: d.sessionId, doubaoApp: d.appId, messageId: d.messageId, text: truncate(body, 1000) });
+  ctx.event("status", { text: line });
+  if (d.outcome !== "verified") notify(app, { title: d.ok ? `已代回 ${name}（未核对）` : `代回 ${name} 没有成功`, body: `${line}\n\n${d.ok ? "发出的内容" : "要发的内容"}：\n${truncate(body, 1500)}`, link: `#/runs/${ctx.run.id}` });
+  return { answer, sent: d.ok, via: "doubao", outcome: d.outcome, ...(d.problem ? { problem: d.problem } : {}) };
 }
 
 /** `/ai拉群`: a group of the owner, the other person and the bot; the bot carries on there. */

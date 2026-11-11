@@ -1881,3 +1881,13 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 运行页“所在会话与关联”把结果只是发到那个会话的运行（有人找你的处理、会后说明）也当成会话里的一轮，列出了整个主会话的几十轮对话：现在只有本身是对话轮次的运行才列，长会话只列前后 9 轮；别的运行那一行写“结果发到”。
 - 本人在话题里说“换另一个 AI 再试”，助手对自己这一轮调用 `switch_run_ai`：这一轮被停下重排，但对话轮次按会话的后端运行，不认运行上的选择，重排后还在原来的后端上，续接的旧会话里工具令牌也已失效。现在目标是对话轮次时改的是会话的后端、模型和强度并放掉旧会话，重排的这一轮和之后的轮次都在新的 AI 上（`tools.ts` 的 `switch_run_ai`）；角色说明写明这种要求不另外交给别的 Agent。
 - 系统自动发的通知卡片被整理成待办并定时提醒，本人直接忽略：`roles/ingest.md` 写明这类卡片默认不建事项、不设提醒。
+
+## 2026-11-11：经豆包以本人身份发私聊
+
+起因：有的企业禁用了 lark-cli 以本人身份发私聊消息的权限，“有人找你”的私聊回复（`p2pVia = signed`）和 `/ai` 都发不出去；豆包 OpenAPI 的云端会话以本人身份运行，能发飞书私聊。
+
+- 设置：`mentions.reply.lark.signedVia` 和 `lark.commands.signedVia`，`lark-cli`（默认）或 `doubao`。设置 → 渠道 → 有人找你（私聊“以你的身份回”下面）和 私聊指令 各有一个选项；选了豆包时显示能不能用（`GET /api/lark/doubao-send`，没授权、缺权限、授权过期写原因）和“给自己发一条测试私聊”（`POST /api/lark/doubao-send/test`，只有本人）。命令行 `omem doubao send-test`。
+- 发送：`src/channels/doubao-send.ts` 的 `sendViaDoubao`。每条消息建一个新豆包会话（`runBackend` 的豆包后端，临时档案 `doubao-send` 只带 `DOUBAO_APP_ID`），提示里只有定稿全文（含署名）和收件人（`recipientOf`：`lark_people` 里的姓名、邮箱、user_id，私聊 chat_id，lark-cli 下的 open_id），要求原样发、只回一行 `OMEM_SEND_RESULT: OK` 或 `FAILED <原因>`（`parseDoubaoReport`，同时有 OK 和 FAILED 算失败）。会话用完删，删不掉进 `session_cleanup` 重试。
+- 核对：lark-cli 只读那个私聊（不知道 chat_id 时读本人这段时间发出的单聊消息），去掉空白和 Markdown 标记后比对。结果 `verified` / `unverified`（豆包说发了、私聊读不了）/ `mismatch` / `failed`；后两种不算成功，单独通知本人（原因加全文）。会话建起来以后这次处理就记为已回复，不再发第二次。
+- 草稿点发送后卡片立刻变成“正在经豆包发送”（卡片回调等不了几十秒），结果另发提醒；自动档核对上时写在处理运行的提醒里。`Replied` 多可选的 `ok`、`problem`，处理运行的提醒在 `ok === false` 时写“回复对方没有成功”。审计 `lark.mention-reply` / `lark.command-reply`（新）/ `lark.doubao-send.test`（新），带结果、豆包的回报（截断）、会话 id 和应用。
+- AGENTS.md 渠道一节写进了这条以本人身份写飞书的路径。提示原文和真机待验的点在 docs/v2/mentions.md “经豆包发送”。验收 19a–19e（文末一节）。

@@ -441,6 +441,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 命令规则（PATH 垫片拦截 + 审批放行）；边界见 docs/v2/command-gate.md；凭据代理未做 | 已实现；2026-11-11，Linux 待跑 | `src/agents/command-gate.ts`、`POST /api/command-gate`、设置 → 安全 |
 | 主线程卡顿监测（diag 的 eventLoop）；向量变更记录与量化快照；网络 git 异步 | 已实现；2026-11-11 | `core/loop-monitor.ts`、`search/vectors.ts`、`core/git.ts` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
+| 经豆包以本人身份发私聊：“有人找你”私聊回复（`mentions.reply.lark.signedVia`）和 `/ai`（`lark.commands.signedVia`）可选 `doubao`；每条消息建一个新的豆包 OpenAPI 会话，只交给它定稿全文和对方（姓名、邮箱、user_id、chat_id），固定一行结果，用完删除（失败进 `session_cleanup`）；lark-cli 只读私聊核对，未核对 / 不一致 / 失败单独告诉本人；审计；本人手动试发 `omem doubao send-test` / 设置页按钮 | 已实现；2026-11-11 假豆包接口和假 lark-cli 测试，豆包真机待验（见 docs/v2/mentions.md “经豆包发送”） | `src/channels/doubao-send.ts`、`mention-reply.ts`、`lark-commands.ts`、`web/src/components/DoubaoSendStatus.vue` |
 
 定时规则的投递目标可选择已有助理会话或已采集的飞书群。选择群后保存时建立本人所属的群会话，不发送消息、不复用访客会话；执行沿用所选会话的机器人。缺少目标的旧规则在动作阶段失败并记录原因，不再转为私发。实现：`src/rules/destinations.ts`、`actions.ts`、`web/src/views/Rules.vue`；专项测试覆盖。
 

@@ -16,6 +16,9 @@ import { dispatchRuleEvent } from "../src/rules/engine.ts";
 import { claimedByRule, listFirings, markAddressed, saveRule } from "../src/rules/store.ts";
 import type { RuleEvent } from "../src/rules/types.ts";
 import { boot } from "../src/main.ts";
+import { saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts";
+import { setDoubaoVerifyDelaysForTests } from "../src/channels/doubao-send.ts";
+import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 
 const fake = (id: string, env: Record<string, string>) => ({ id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env });
 
@@ -139,6 +142,55 @@ describe("guests, rules stepping aside and the owner's private-chat commands", a
     expect(body.endsWith("（此消息由 AI 代发）")).toBe(true);
     expect((getRun(app, row.id).output as { sent?: boolean }).sent).toBe(true);
     expect(all(app.db, "select id from runs where kind = 'lark-command'")).toHaveLength(1);
+  }, 60000);
+
+  it("/ai through Doubao: a one-off session sends it, the chat is read back, audited; lark-cli never sends", async () => {
+    app.config.lark.commands = { ...app.config.lark.commands, enabled: true, signedVia: "doubao" };
+    app.config.lark.appId = "cli_bot";
+    saveLarkSecret(app.home, { appId: "cli_bot", appSecret: "s" });
+    saveDoubaoToken(app.home, { appId: "cli_bot", accessToken: "u", expiresAt: new Date(Date.now() + 3600_000).toISOString(), savedAt: "" });
+    setDoubaoVerifyDelaysForTests([0]);
+    const now = Date.now();
+    const chat: any[] = [{ message_id: "om_q3", chat_id: "oc_p2p", msg_type: "text", content: "登录一直报 401", create_time: String(now - 60_000), sender: { id: "ou_wang", name: "小王", sender_type: "user" } }];
+    const cli: string[][] = [];
+    setLarkCliForTests(async (args) => {
+      cli.push(args);
+      if (args[0] === "auth") return { identities: { user: { openId: "ou_me" } } };
+      if (args.includes("+chat-messages-list")) return { data: { has_more: false, messages: chat } };
+      throw new Error(`unexpected ${args.join(" ")}`);
+    });
+    const prompts: string[] = [];
+    const deleted: string[] = [];
+    const ok = (data: unknown) => new Response(JSON.stringify({ code: 0, msg: "ok", data }));
+    setDoubaoFetchForTests(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "DELETE") return (deleted.push(url.split("/v1/sessions/")[1]), ok({}));
+      if (init?.method === "POST" && url.endsWith("/v1/sessions")) {
+        const p = JSON.parse(String(init.body)).initial_events[0].contents[0].text as string;
+        prompts.push(p);
+        const body = p.split("<<<OMEM_MESSAGE_BEGIN>>>\n")[1].split("\n<<<OMEM_MESSAGE_END>>>")[0];
+        chat.push({ message_id: "om_dou", chat_id: "oc_p2p", msg_type: "text", content: body, create_time: String(Date.now()), sender: { id: "ou_me", name: "我" } });
+        return ok({ id: "SD", messages: [{ id: "Q1" }] });
+      }
+      if (url.endsWith("/events/Q1"))
+        return new Response(`event: text\ndata: ${JSON.stringify({ id: "t", seq: 1, text: "OMEM_SEND_RESULT: OK" })}\n\nevent: message.completed\ndata: ${JSON.stringify({ message: { id: "A", status: "completed" } })}\n\n`);
+      throw new Error(`unexpected ${url}`);
+    });
+    try {
+      const r = createRun(app, { kind: "lark-command", title: "代回", input: { kind: "ai", chatId: "oc_p2p", chatName: "小王", messageId: "om_c3", text: "帮我回复他", at: now } });
+      const done = await waitForRun(app, r.id);
+      expect(done.error).toBeNull();
+      expect(done.output).toMatchObject({ sent: true, via: "doubao", outcome: "verified" });
+      expect(prompts[0]).toContain("（此消息由 AI 代发）\n<<<OMEM_MESSAGE_END>>>");
+      expect(prompts[0]).toContain("chat_id：oc_p2p");
+      expect(deleted).toEqual(["SD"]);
+      expect(cli.some((a) => a.includes("+messages-send"))).toBe(false);
+      expect(one(app.db, "select 1 from audit_events where action = 'lark.command-reply' and json_extract(detail, '$.outcome') = 'verified'")).toBeTruthy();
+    } finally {
+      setDoubaoFetchForTests(null);
+      setDoubaoVerifyDelaysForTests(null);
+      app.config.lark.commands = { ...app.config.lark.commands, signedVia: "lark-cli" };
+    }
   }, 60000);
 
   it("/ai拉群: a group of the owner, the other person and the bot, where the bot carries on", async () => {
