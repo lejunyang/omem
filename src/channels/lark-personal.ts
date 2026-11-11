@@ -651,6 +651,7 @@ export async function captureRecentDocs(app: App, touched: Map<string, Set<strin
   for (let page = 0; page < 3 && read < RECENT_DOCS_PER_POLL; page++) {
     const v = await larkCli(["drive", "+search", "--as", "user", "--query", "", "--opened-since", `${cfg.recentDocsDays}d`, "--sort", "open_time", "--doc-types", "docx,doc,wiki", "--page-size", "20", ...(token ? ["--page-token", token] : []), "--format", "json"]);
     const d = v.data ?? v;
+    if (page === 0 && !who) noteOpenedDocs(app, ((d.results ?? []) as Record<string, any>[]).map((r) => String(r.result_meta?.url ?? r.url ?? "")).filter((u) => /^https?:\/\//.test(u)));
     for (const r of (d.results ?? []) as Record<string, any>[]) {
       if (read >= RECENT_DOCS_PER_POLL) break;
       const url = String(r.result_meta?.url ?? r.url ?? "");
@@ -671,6 +672,18 @@ export async function captureRecentDocs(app: App, touched: Map<string, Set<strin
     token = d.page_token;
   }
   return read;
+}
+
+/**
+ * When the owner last opened a document, as close as the search allows: it has no open time, but
+ * comes sorted by it. A document that enters the first page (it was not there last poll) was opened
+ * now: kv `lark_doc_opened:<url>`. The work state's facts read these (agents/work-state.ts).
+ */
+export function noteOpenedDocs(app: App, urls: string[]) {
+  const before = new Set(json<string[]>(one<{ value: string }>(app.db, "select value from kv where key = 'lark_doc_open_top'")?.value ?? "[]", []));
+  const at = now();
+  for (const url of urls) if (!before.has(url)) run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", `lark_doc_opened:${url}`, at);
+  run(app.db, "insert into kv(key,value) values('lark_doc_open_top', ?) on conflict(key) do update set value = excluded.value", JSON.stringify(urls));
 }
 
 function hourlyDue(app: App, key: string, minutes = 60) {

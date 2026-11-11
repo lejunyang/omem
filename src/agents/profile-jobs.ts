@@ -38,6 +38,7 @@ const ROLE_RUNS: Record<string, string[]> = {
   designer: ["design"],
   "speaking-coach": ["speaking-review"],
   "mention-triage": ["mention"],
+  "work-state": ["work-state"],
 };
 
 type EvidenceRun = { id: string; kind: string; status: string; title: string; error: string | null; created_at: string; finished_at: string | null; input: string; output: string | null };

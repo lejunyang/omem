@@ -489,6 +489,11 @@ async function saveItemDays(kind: string, raw: string) {
   if (!Number.isFinite(n) || n < 1 || n > 365) return toast("天数要在 1 到 365 之间", "error");
   await saveItems({ days: { ...config.value.items.days, [kind]: n } });
 }
+async function saveWorkState(key: "days" | "people", raw: string, min: number, max: number) {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n) || n < min || n > max) return toast(`要在 ${min} 到 ${max} 之间`, "error");
+  await saveConfig({ workState: { ...config.value.workState, [key]: n } }, "已保存");
+}
 async function runNow(s: Schedule) {
   await post(`/api/schedules/${s.id}/run`);
   toast("已触发", "ok", "#/runs");
@@ -957,6 +962,14 @@ async function saveEdit() {
           <button class="btn sm" @click="runNow(s)"><Icon name="play" :size="13" />立即运行</button>
         </div>
         <CronEditor :model-value="s.cron" :timezone="config?.timezone" @change="(c) => saveCron(s, c)" />
+        <template v-if="s.kind === 'work-state' && config?.workState">
+          <p class="muted small">结果在 Wiki 的个人空间：<a href="#/wiki/personal/state/work">工作近况</a>和 people/ 下的人物卡，可以直接改；页面里“本人补充”一节整理时原样保留。</p>
+          <div class="row wrap days">
+            <label class="field"><span>看最近几天</span><input class="input" type="number" inputmode="numeric" min="3" max="60" :value="config.workState.days" @change="saveWorkState('days', ($event.target as HTMLInputElement).value, 3, 60)" /></label>
+            <label class="field"><span>每晚最多更新几张人物卡</span><input class="input" type="number" inputmode="numeric" min="0" max="50" :value="config.workState.people" @change="saveWorkState('people', ($event.target as HTMLInputElement).value, 0, 50)" /></label>
+          </div>
+          <UiCheckbox :model-value="config.workState.inject" switch @change="(v) => saveConfig({ workState: { ...config.workState, inject: v } }, '已保存')">把近况摘要带进对话、巡检、有人找你的分诊和会后说明</UiCheckbox>
+        </template>
         <label v-if="s.kind === 'lark-curate'" class="field"><span>筛选方向</span><textarea class="textarea" rows="2" :value="s.config.direction ?? ''" placeholder="例如：和项目A、后端架构、我负责的模块相关的群；需要我回复或决定的讨论" @change="saveScheduleConfig(s, { direction: ($event.target as HTMLTextAreaElement).value })" /></label>
         <div class="muted small">上次：{{ s.lastRunAt ? fmtTime(s.lastRunAt) : "从未" }}<template v-if="!s.enabled"> · 已停用</template></div>
       </div>

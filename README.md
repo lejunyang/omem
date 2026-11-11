@@ -215,6 +215,7 @@ npm install -g omem-assistant
 | 从新上下文开始任务，或把任务放在独立飞书话题里 | `/new 任务描述` 开新会话并立即执行；在飞书群聊或机器人私聊的主界面发送 `/topic 任务描述`（群里需 @ 机器人），以本条消息开启话题并保持独立上下文；话题内拒绝此指令 |
 | 某次任务想用特定 AI，或不同部分用不同模型 | 直接说“这次用某后端、模型和强度做……”；只影响这次交办。设置 → AI → 任务选型可填写总体偏好和候选组合的适用说明，也能关闭自主选择；开着时候选会写进助手的环境说明，助手每次交办都对照着挑。没指定 AI 的运行也能在开始前自动选：配了决策模型时它一两秒从候选里挑一个，和助手的对话、规则交给的 Agent、交办和后台任务分别设“不选 / 有决策模型时选 / 总是选”（总是选在没有决策模型时让通用模型挑） |
 | 让 Agent 越用越顺，包括内置的独立评审 | 纠正它时说“以后评审先看错误处理”，助理记成它的专属记忆或挂一个技能；内置角色（独立评审、编码、整理…）在“Agent”页也能自定义，omem 更新后可合并或恢复源码版本（`omem roles`）；每晚复盘有纠正、失败或收到表情的档案，提示词和技能的改动提成建议等你采纳（14 天没处理自动过期，过期前两天提醒一次） |
+| 让助手记得我这几周在忙什么、常打交道的人是谁 | 每晚整理（设置 → 定时任务 → 工作近况和人物卡，默认开）：按最近几周你说过话的会话、打开的文档、编码、事项、会议，在 Wiki 个人空间写“工作近况”（`state/work`），给常打交道、有新消息的人写人物卡（`people/`）。在网页上直接改；页面里“本人补充”一节（要追踪的对象、内部概念、更正）整理时原样保留。对话、巡检、有人找你和会后说明会带上近况摘要和对方的人物卡；助手和你都处理不了的事，它会按人物卡建议拉谁进来 |
 
 档案里的 AI 是默认值。助手可用 `list_ai_backends` 核对实际可用的后端与模型，在交办、请教或续轮时通过 `execution` 临时选择；编码和独立评审可分别选择。没有专门档案的一次性任务可交给 `assistant`，不创建新档案。选择及理由保存在运行中，不改变档案工具和权限。内置后台任务仍按角色默认运行；已开始的当前对话不会在一轮中途更换后端。
 
@@ -530,7 +531,7 @@ src/designs   方案：决定、意见与版本（store.ts）、给 Agent 读的
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）
-src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）
+src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md

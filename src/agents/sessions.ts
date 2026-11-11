@@ -19,6 +19,7 @@ import { recordRecalls } from "../memory/recall-stats.ts";
 import { WAKE_NOTE } from "./wakes.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
 import { afterTurn, noteRateLimit } from "./quota.ts";
+import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
 
 /**
  * Agent sessions behind threads. Three levels of continuity, cheapest first:
@@ -175,9 +176,10 @@ export function renderMessages(msgs: ThreadMessage[], app?: App) {
 }
 
 /** Background for a session that does not remember this thread yet. */
-function coldContext(app: App, t: Thread, before: string) {
+function coldContext(app: App, t: Thread, before: string, owner: string[] = []) {
   const parts: string[] = [];
   parts.push(`这是会话 ${t.id}（${t.channel}${t.key ? ` ${t.key}` : ""}）。之前的完整记录可用 read_conversation 读取；其他会话用 list_conversations 查找。`);
+  parts.push(...owner);
   if (t.summary) parts.push(`## 本会话到目前为止的摘要\n\n${t.summary}`);
   if (t.parentId) {
     const p = findThread(app, t.parentId);
@@ -297,6 +299,17 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const tooLong = t.agentTurns >= app.config.sessions.maxTurns;
   const canResume = !!t.agentSession && t.agentProfile === sessionKey && t.agentCwd === prep.cwd && !tooLong;
   const said = coordinate || handoff || watched || woken ? "" : messages.filter((m) => m.role === "user").map((m) => m.text).join("\n");
+  // The owner's own turns carry the work state of the last weeks (agents/work-state.ts): with a new
+  // session's background, and again in a running one once the nightly write-up changed it. In a group,
+  // the cards of the people who write there. Not for a colleague's question, nor turns nobody typed.
+  const ownerTurn = userId === "owner" && !coordinate && !handoff && !watched && !woken && !messages.some((m) => typeof m.meta?.asker === "string");
+  const brief = ownerTurn && app.config.workState.inject ? workStateBrief(app) : "";
+  const briefStamp = brief ? workStateStamp(app) : null;
+  const briefNew = !!brief && canResume && t.settings.workStateSeen !== briefStamp;
+  if (brief && t.settings.workStateSeen !== briefStamp) updateThread(app, threadId, { settings: { ...getThread(app, threadId).settings, workStateSeen: briefStamp } });
+  const chatId = t.channel === "lark" && t.settings.group && t.key ? t.key.split("#")[0] : "";
+  const people = ownerTurn && chatId ? peopleInChat(app, chatId) : [];
+  const ownerCold = [...(brief ? [`## 本人近况\n\n${brief}`] : []), ...(people.length ? [`## 这个群里常和本人打交道的人\n\n${people.join("\n")}`] : [])];
   const recalled = await passiveForTurn(app, ctx.run.id, threadId, prep, said, canResume || live.has(threadId));
   const newPart = coordinate
     ? coordinationNote(app, coordinate.workId, messages)
@@ -343,9 +356,9 @@ ${renderMessages(messages, app)}
 ${WAKE_NOTE}`
       : watched
       ? watchedNote(app, t, messages)
-      : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${NEW_TURN_NOTE}${recalled ? `\n\n${recalled}` : ""}`;
+      : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${NEW_TURN_NOTE}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${brief}` : ""}`;
   // A new session's first turn; the standing instructions go with it (sessionPrompt) or as its system prompt.
-  const freshBody = () => `（${prep.now}）\n\n# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString())}\n\n---\n\n${newPart}`;
+  const freshBody = () => `（${prep.now}）\n\n# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString(), ownerCold)}\n\n---\n\n${newPart}`;
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
   const save = (sessionId: string | undefined, turns: number, on: AgentProfile = prep.profile) =>

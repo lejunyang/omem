@@ -57,6 +57,7 @@ export default defineConfig({
           { text: "Wiki：多份材料写成一页", link: "/features/wiki" },
           { text: "记忆", link: "/features/memory" },
           { text: "事项", link: "/features/items" },
+          { text: "工作近况与人物卡", link: "/features/work-state" },
           { text: "学习与进步", link: "/features/learning" },
         ],
       },

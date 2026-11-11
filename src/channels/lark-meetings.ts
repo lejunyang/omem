@@ -14,6 +14,7 @@ import type { RuleAction, RuleEvent } from "../rules/types.ts";
 import { upsertSource } from "../sources/store.ts";
 import { larkCli, larkCliCommand } from "./lark-cli.ts";
 import { decidedBlocks, larkBotInfo } from "./lark-send.ts";
+import { ownerContextText } from "../agents/owner-now.ts";
 
 /**
  * The owner's meetings, for rules triggered by "I joined a meeting" (docs/v2/rules.md).
@@ -861,9 +862,12 @@ function startAgent(app: App, row: Row, plan: MeetingPlan, opts: { question?: Li
   if (opts.final) {
     const all_ = all<LineRow>(app.db, "select seq, at_ms, kind, speaker, text from lark_meeting_lines where meeting_id = ? order by at_ms, seq", row.meeting_id);
     const noted = heldNotes(app, lane);
+    // What the owner has been working on these weeks: which of the meeting's points land on one of those lines.
+    const state = ownerContextText(app, { state: true, hints: { 本人近况: "判断会上哪些事和本人手上的事有关时参照" } });
     task = [
       `# 会议结束（你替本人旁听的）`,
       ...head,
+      state ? `\n${state}` : "",
       row.source_id ? "" : `\n# 会中记录\n\n${truncate(all_.map(lineText).join("\n"), 60_000)}`,
       noted ? `\n# 会中记下的和本人有关的事（会上没有发给本人，都在这里）\n\n${truncate(noted, 20_000)}` : "",
       "",
