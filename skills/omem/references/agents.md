@@ -13,7 +13,7 @@
 
 - `list_ai_backends()` 返回可用后端、默认模型、缓存的模型 / 强度、各模型现在的占用与上限（`limit` 为 0 是本人不想自动用的，不要选）、近 7 天的完成和失败，以及本人的任务选型偏好；同一账号的命令行后端不单独列出；传 `profile` 可检测该后端，`refresh: true` 强制刷新。模型上的 `replay28d` 是夜间复盘近 28 天的单变量对比（同一题只换模型重答后盲评）：`type` 题型、`vs` 对照的模型、`w/t/l` 胜平负（从这个模型看）、`tokens` 上下文峰值之比，少于 3 次的不列；样本小，只作参考，不要因此改档案的默认模型。后端上的 `quota` 是本机登录账号的套餐额度：`windows` 每项 `used` 已用百分比、`resetsIn` 多久后重置、`perDayLeft` 一周这类窗口剩下的平均到距重置的每一天（%/天）；有 `avoid` 的账号快用完了（本人在设置里定的阈值），同样合适时选别的，本人偏好里写了额度条件的按这些数字对照。准备临时换 AI 时先核对，未知选项不要猜；同样合适时选空闲的。豆包（`tools: false`）用不了 omem 工具，交给它时把材料原文写进任务。
 - `run_agent`、`continue_agent_work`、`ask_agent` 可传 `execution: {profile, model?, effort?, source: "user" | "auto", reason}`；`profile` 是后端 id，`name` / `agent` 仍是档案名。本人明确指定填 `user`，助手根据任务选择填 `auto`；关闭自主选型时后者被拒绝。普通 Agent 工作的后续轮次需继续显式传入本人的指定。选择只作用于任务并留运行记录；更换后端或模型时使用新会话并携带工作经过。
-- `switch_run_ai(run_id, execution, with_children?)`：给已经安排的运行换 AI（后端一直排队或失败、本人要求中途换模型）。排队中的直接改，进行中的停下后重新排队，失败的用新 AI 重试，默认连同子运行（如 Wiki 各页写作）；编码交办改用 `continue_code_run` 的 `execution`。
+- `switch_run_ai(run_id, execution, with_children?)`：给已经安排的运行换 AI（后端一直排队或失败、本人要求中途换模型）。排队中的直接改，进行中的停下后重新排队，失败的用新 AI 重试，默认连同子运行（如 Wiki 各页写作）；编码交办改用 `continue_code_run` 的 `execution`。 运行是对话轮次（ask）时，换的是它所在会话的后端、模型和强度（等同 `/agent`、`/model`），这一轮重新排队后和之后的轮次都用新的 AI、开新会话。
 
 ## 技能与改进
 

@@ -92,6 +92,13 @@ describe("temporary AI choices", () => {
     expect(getRun(app, write.id).input.ai).toEqual(other);
     const retried = listRuns(app, { parentId: plan.id }).find((x) => x.title === "写作 2" && x.status === "queued")!;
     expect(retried.input.ai).toEqual(other);
+    // A conversation turn: the conversation itself moves to the new AI, so the turn queued again runs on it.
+    const { createThread, findThread } = await import("../src/agents/threads.ts");
+    const conv = createThread(app, { channel: "web", spaceId: "personal", userId: "owner" });
+    const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "换个 AI 再试", input: { conversationId: conv.id, messageIds: [] } });
+    app.db.prepare("update runs set status = 'failed' where id = ?").run(turn.id);
+    expect((await callTool(ctx, "switch_run_ai", { run_id: turn.id, execution: other })).isError).toBe(false);
+    expect(findThread(app, conv.id)!.settings).toMatchObject({ profile: other.profile, model: "m2", effort: "low" });
     const code = createRun(app, { kind: "code", spaceId: "personal", title: "改", input: { task: "改" } });
     expect((await callTool(ctx, "switch_run_ai", { run_id: code.id, execution: other })).text).toContain("continue_code_run");
   });

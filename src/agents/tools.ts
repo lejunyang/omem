@@ -4150,7 +4150,7 @@ def({
 def({
   name: "switch_run_ai",
   description:
-    "给已经安排的运行换 AI（后端、模型、强度）：比如某个后端一直排队或失败、本人要求中途换模型。传运行 id；with_children=true 时连同它的子运行（如 Wiki 规划下的各页写作）一起换。排队中的直接改；进行中的停下后用新 AI 重新排队；失败的用新 AI 重试；已完成和已取消的不动。编码交办不用这个，用 continue_code_run 的 execution / review_execution。",
+    "给已经安排的运行换 AI（后端、模型、强度）：比如某个后端一直排队或失败、本人要求中途换模型。传运行 id；本人在对话里说“换某个 AI 再试”时传这一轮自己的运行 id：这个会话从这一轮起都改用新的 AI，这一轮由它重新做，不用另外交给别的 Agent；with_children=true 时连同它的子运行（如 Wiki 规划下的各页写作）一起换。排队中的直接改；进行中的停下后用新 AI 重新排队；失败的用新 AI 重试；已完成和已取消的不动。编码交办不用这个，用 continue_code_run 的 execution / review_execution。",
   write: true,
   schema: z.object({
     run_id: z.string(),
@@ -4168,6 +4168,15 @@ def({
     const { cancelRun } = await import("./runs.ts");
     const done: string[] = [];
     for (const r of targets) {
+      // A conversation turn runs on its conversation's backend: the choice goes there (as /agent and
+      // /model do), so the turn queued again, and the ones after it, run on the new one in a new session.
+      const conv = r.kind === "ask" ? findThread(ctx.app, String((r.input as { conversationId?: string }).conversationId ?? "")) : null;
+      if (conv) {
+        const { updateThread } = await import("./threads.ts");
+        const { releaseThreadSession } = await import("./sessions.ts");
+        updateThread(ctx.app, conv.id, { settings: { profile: execution.profile, model: execution.model ?? null, effort: execution.effort ?? null } });
+        releaseThreadSession(conv.id);
+      }
       // Agent rounds keep their choice in execution (it decides whether a session can be resumed); others in ai.
       const input = r.kind === "agent" ? { ...r.input, execution } : { ...r.input, ai: execution };
       if (r.status === "queued") {
