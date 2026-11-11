@@ -47,7 +47,7 @@ import { canonicalSourceId } from "../sources/duplicates.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { addWatch, listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
-import { confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
+import { checkSlug, confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOutput } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
@@ -1364,12 +1364,16 @@ def({
   name: "read_page",
   description: "读取 Wiki 页面全文，以及反向链接、引用原件和是否过期。",
   schema: z.object({ page: z.string().describe("页面路径（slug），可写成 space/slug"), space: z.string().optional() }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     let sp = a.space;
     let slug = a.page.replace(/^wiki:/, "");
     if (!sp && slug.includes("/") && findSpace(ctx.app, slug.split("/")[0])) [sp, slug] = [slug.split("/")[0], slug.split("/").slice(1).join("/")];
     if (ctx.view?.noPages) throw new HttpError(404, "这次不看 Wiki 页面");
     const id = space(ctx, sp);
+    // The page this writing run is drafting: its draft (wiki/verify.ts).
+    const wv = await import("../wiki/verify.ts");
+    const draft = wv.draftTarget(ctx.app, ctx.runId, id, checkSlug(slug)) ? wv.draftOf(ctx.app, ctx.runId!) : null;
+    if (draft) return `页面 ${id}/${draft.slug} 的草稿（还没发布，你这次提交的版本）·${draft.kind}\n---\n# ${draft.title}\n> ${draft.summary}\n\n${draft.body}`;
     const p = readPage(ctx.app, id, slug);
     const c = pageContext(ctx.app, id, p.slug);
     const stale = c.sources.filter((s) => s.stale || s.deleted);
@@ -1527,7 +1531,7 @@ def({
     space: z.string().optional(),
     reason: z.string().optional().describe("这次修改的原因，写入版本历史"),
   }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const id = wikiSpace(ctx, a.space);
     // A page in a shared space is read by everyone there: it may not quote what only some of them may see.
     if (findSpace(ctx.app, id)?.kind !== "personal") {
@@ -1536,7 +1540,26 @@ def({
       if (kept.length) throw new HttpError(400, `共享空间的页面不能引用只对部分人开放的原件：${kept.join("、")}。换成可以公开给空间成员的依据，或写进个人空间。`);
     }
     const existed = pageExists(ctx.app, id, a.page);
-    const body = a.body.replace(/^#\s+.+\n+/, "");
+    // The host's checks (wiki/checks.ts): lost entries, citations that do not hold or others cannot open,
+    // code named in plain text that could be cited, length. A writing run's own page is a draft until checked (wiki/verify.ts).
+    const wc = await import("../wiki/checks.ts");
+    const wv = await import("../wiki/verify.ts");
+    const slug = checkSlug(a.page);
+    const draft = wv.draftTarget(ctx.app, ctx.runId, id, slug);
+    const before = existed ? readPage(ctx.app, id, slug).body : null;
+    const checked = wc.checkPageWrite(ctx.app, { spaceId: id, slug, kind: a.kind, title: a.title, body: a.body.replace(/^#\s+.+\n+/, ""), before, readable: ctx.spaces, restoreLost: wv.refusals(ctx.app, ctx.runId, "lost-entries") > 0 || !ctx.runId });
+    if (checked.errors.length) {
+      wv.noteWriteCheck(ctx.app, ctx.runId, { rejected: [...new Set(checked.errors.map((e) => e.kind))] });
+      throw new HttpError(400, `页面没有保存，先改这些地方再提交：\n${checked.errors.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}`);
+    }
+    if (checked.fixes.length) wv.noteWriteCheck(ctx.app, ctx.runId, { restored: 1 });
+    const body = checked.body;
+    const notes = checked.notes.length ? `\n${checked.notes.map((n) => `- ${n}`).join("\n")}` : "";
+    if (draft) {
+      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind: a.kind ?? "page", body, reason: a.reason });
+      setRunOutput(ctx.app, ctx.runId!, { writeNotes: checked.notes });
+      return `已保存页面 ${id}/${slug} 的草稿（${wc.textLength(body)} 字）：写作结束后由核对角色对照原件和代码核对，有问题会交回给你改，通过后发布。${notes}`;
+    }
     const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
     appendLog(ctx.app, id, `${existed ? "更新" : "新建"} [[${p.slug}]]${a.reason ? "：" + a.reason : ""}`);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: new Date().toISOString() } });
@@ -1544,7 +1567,7 @@ def({
     const folders = !existed && !p.slug.includes("/") && p.slug !== "index" ? [...new Set(listPages(ctx.app, id).filter((x) => x.slug.includes("/")).map((x) => x.slug.split("/")[0]))] : [];
     return `已${existed ? "更新" : "创建"}页面 ${p.id}。引用原件 ${c.sources.length} 个${c.missingLinks.length ? `；这些链接目标还不存在：${c.missingLinks.join(", ")}` : ""}${
       folders.length ? `\n这页放在了顶层；空间里已有目录：${folders.slice(0, 20).join("、")}。有合适的就用 move_page 移进去（旧路径的链接会自动跟过去）。` : ""
-    }`;
+    }${notes}`;
   },
 });
 
@@ -4208,14 +4231,67 @@ def({
           outline: z.string().describe("计划的讲解路线：用哪个真实例子、按什么顺序讲"),
           entry_points: z.array(z.string()).describe("调查入口：文件路径、符号或文档"),
           section: z.string().optional().describe("目录中的分组名"),
+          overlap: z
+            .object({
+              pages: z.array(z.string()).min(1).describe("相关空间里同主题的页面，写成 空间:路径"),
+              decision: z.literal("write-here").describe("仍在本空间写这一页（链接过去的主题不放进 pages，写进 reuse）"),
+              reason: z.string().describe("为什么本空间还要一页：讲的是本空间特有的哪一部分，和那边怎么分工"),
+            })
+            .optional()
+            .describe("相关空间已有同主题页面时必填"),
         }),
       )
       .describe("要新写或重写的页面；现有页面已经够用、这次只移动或不用动时传空数组"),
+    reuse: z
+      .array(z.object({ topic: z.string(), page: z.string().describe("相关空间的页面，空间:路径"), reason: z.string() }))
+      .optional()
+      .describe("相关空间已经写过、本空间不再写而是链接过去的主题；index 里用 [[空间:路径|标题]] 链接"),
+  }),
+  handler: async (ctx, a) => {
+    if (!ctx.runId) throw new HttpError(400, "只能在规划运行中提交");
+    // The same topic already written in a related space: the plan says whether to link there or why to write here (wiki/checks.ts).
+    const { sameTopicElsewhere } = await import("../wiki/checks.ts");
+    const target = getRun(ctx.app, ctx.runId).spaceId ?? ctx.spaceId;
+    const unexplained = a.pages
+      .filter((p) => !p.overlap && p.kind !== "index")
+      .map((p) => ({ p, same: sameTopicElsewhere(ctx.app, target, p.title, ctx.spaces) }))
+      .filter((x) => x.same.length);
+    if (unexplained.length)
+      throw new HttpError(
+        400,
+        `计划没有收下：这些页面在相关空间已有同主题的页面，先读那边的页面再决定——同一件事就从 pages 里去掉、写进 reuse 链接过去；本空间确实要另写（讲本空间特有的部分）就在这一页的 overlap 里写明理由：\n${unexplained.map((x) => `- ${x.p.slug}「${x.p.title}」：${x.same.map((s) => `${s.space}:${s.slug}「${s.title}」`).join("、")}`).join("\n")}`,
+      );
+    setRunOutput(ctx.app, ctx.runId, { plan: a.pages, ...(a.reuse?.length ? { reuse: a.reuse } : {}) });
+    return `${a.pages.length ? `已收到 ${a.pages.length} 页的计划` : "已收到：这次没有要写的页面"}${a.reuse?.length ? `；${a.reuse.length} 个主题链接到相关空间` : ""}`;
+  },
+});
+
+def({
+  name: "submit_page_check",
+  description:
+    "交核对结论（只在核对 Wiki 页面草稿时用）：逐条列出草稿里站不住的地方，每条写原句、问题、依据。没有问题就传空的 findings。再调用会整份替换。",
+  write: true,
+  schema: z.object({
+    findings: z
+      .array(
+        z.object({
+          quote: z.string().describe("草稿里有问题的那一句（原文摘录，够定位即可）"),
+          kind: z
+            .enum(["cite", "code", "negative", "duplicate", "conflict", "wording", "length", "other"])
+            .describe("cite 论断和它贴的引用对不上；code 流程、步骤、字段和代码不符；negative “没有/未取得/找不到”这类说法不属实；duplicate 相关空间已有同主题页面，应链接过去；conflict 和本空间或相关空间已有页面说法冲突；wording 写了调查过程或写给审稿人的话；length 太长要拆；other"),
+          problem: z.string().describe("一句话：哪里不对"),
+          basis: z.string().describe("依据：原件行（src:<id>#L起-L止）、代码位置、页面路径（空间:路径），或你查过的地方"),
+          fix: z.string().optional().describe("怎么改"),
+        }),
+      )
+      .describe("没有问题传 []"),
+    summary: z.string().optional().describe("一两句总评"),
   }),
   handler: (ctx, a) => {
-    if (!ctx.runId) throw new HttpError(400, "只能在规划运行中提交");
-    setRunOutput(ctx.app, ctx.runId, { plan: a.pages });
-    return a.pages.length ? `已收到 ${a.pages.length} 页的计划` : "已收到：这次没有要写的页面";
+    const me = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    if (!me || me.kind !== "wiki-write" || me.status !== "running") throw new HttpError(400, "submit_page_check 只在核对 Wiki 页面草稿时用");
+    setRunOutput(ctx.app, me.id, { pageCheck: { findings: a.findings, summary: a.summary } });
+    return a.findings.length ? `已交 ${a.findings.length} 个问题，会交回写作者修改。` : "已记下：这一版没有问题。";
   },
 });
 

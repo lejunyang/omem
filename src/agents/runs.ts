@@ -475,6 +475,7 @@ function kick(app: App) {
         if (r.kind === "code") trySettleCodeChain(app, r.id);
         if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
         settleWorkRound(app, r);
+        settleWikiWrite(app, r);
         app.emit({ type: "run", runId: r.id, status });
       })
       .catch((error: Error) => {
@@ -485,6 +486,7 @@ function kick(app: App) {
         if (r.kind === "code") trySettleCodeChain(app, r.id);
         if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
         settleWorkRound(app, r);
+        settleWikiWrite(app, r);
         if (!cancelled) addRunEvent(app, r.id, "error", { message: error.message });
         app.emit({ type: "run", runId: r.id, status: cancelled ? "cancelled" : "failed" });
       })
@@ -511,6 +513,14 @@ function settleWorkRound(app: App, r: Run) {
     .catch((e) => console.warn(`[omem] 多 Agent 工作推进失败：${(e as Error).message}`));
 }
 
+/** A Wiki page's writing ended: its generation retries what was not written, or reports (wiki/verify.ts). */
+function settleWikiWrite(app: App, r: Run) {
+  if (r.kind !== "wiki-write") return;
+  import("../wiki/verify.ts")
+    .then(({ settleWikiRun }) => settleWikiRun(app, getRun(app, r.id)))
+    .catch((e) => console.warn(`[omem] Wiki 生成收尾失败：${(e as Error).message}`));
+}
+
 export function cancelRun(app: App, id: string) {
   const r = getRun(app, id);
   if (r.status === "queued") {
@@ -518,6 +528,7 @@ export function cancelRun(app: App, id: string) {
     if (r.kind === "code") trySettleCodeChain(app, id);
     // A confirmed review plan ran on its own: the coding run it reviewed now has its result.
     if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
+    settleWikiWrite(app, r);
     app.emit({ type: "run", runId: id, status: "cancelled" });
   } else controllers.get(id)?.abort();
   return getRun(app, id);

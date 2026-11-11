@@ -166,6 +166,28 @@ new AgentSideConnection(
         try {
           const names = (await client.listTools()).tools.map(t => t.name);
           const call = (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
+          // The page's checker (src/wiki/verify.ts). FAKE_WIKI_CHECK_FILE holds how it judges: pass (default),
+          // once (one finding in the first round, none after), always (a finding every round).
+          const control = (env: string, fallback: string) => (process.env[env] && existsSync(process.env[env]!) ? readFileSync(process.env[env]!, "utf8").trim() : fallback);
+          if (names.includes("submit_page_check")) {
+            const mode = control("FAKE_WIKI_CHECK_FILE", "pass");
+            const round = Number(/第 (\d+) 轮核对/.exec(prompt)?.[1] ?? 1);
+            const finding = { quote: "示例正文", kind: "negative", problem: "说没有转写，原件里有转写", basis: "materials:README.md 第 1 行", fix: "删掉这句" };
+            const findings = mode === "always" || (mode === "once" && round === 1) ? [finding] : [];
+            const checked = await call("submit_page_check", { findings, summary: findings.length ? "有一处不属实" : "可以发布" });
+            await say(JSON.stringify({ prompt, checked, round }));
+            return { stopReason: "end_turn" as const };
+          }
+          // A writer told what the checker found: it revises the page. FAKE_WIKI_WRITE_FILE=skip: it writes nothing.
+          if (!names.includes("submit_plan") && control("FAKE_WIKI_WRITE_FILE", "write") === "skip") {
+            await say(JSON.stringify({ prompt, skipped: true }));
+            return { stopReason: "end_turn" as const };
+          }
+          if (prompt.includes("核对角色看了你提交的页面")) {
+            const written = await call("write_page", { page: /页面 ([^\s「]+)「/.exec(prompt)?.[1] ?? "overview", title: "概览", kind: "guide", summary: "示例说明", body: "示例正文（已按核对改）" });
+            await say(JSON.stringify({ prompt, revised: true, written }));
+            return { stopReason: "end_turn" as const };
+          }
           const read = await call("list_sources", { space: "materials" });
           const blockedRead = await call("list_sources", { space: "excluded" });
           const blockedWrite = await call("write_page", { space: "materials", page: "forbidden", title: "禁止", summary: "禁止", body: "禁止" });

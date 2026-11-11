@@ -245,6 +245,8 @@ export type RoleRunInput = {
   persistSession?: boolean;
   /** Reuse a measured, live ACP session for recurring background work. */
   reuseSession?: boolean;
+  /** A second role inside someone else's run (a Wiki page's checker): its own role's AI, not the run's `ai` nor a chooser's pick. */
+  ownAI?: boolean;
   /** Comparison run: writes are recorded, not applied; no fallback. */
   shadow?: { parentRunId: string | null };
   /** omem tools this run must not have (a consulted agent cannot hand work on). */
@@ -660,7 +662,7 @@ function runAI(app: App, runId: string | null): Execution | undefined {
 }
 
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
-  const execution = validateExecution(app, input.execution ?? runAI(app, input.runId));
+  const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const lessons = await lessonsForTask(app, input);
@@ -671,7 +673,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let chosen: ChooseResult | null = null;
   const runKind = input.runId ? one<{ kind: string }>(app.db, "select kind from runs where id = ?", input.runId)?.kind : undefined;
   // Checks, replays and comparisons run on what their caller set and are not choices of their own.
-  const internal = !!(input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName);
+  const internal = !!(input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName || input.ownAI);
   const scene = input.choose ?? "tasks";
   const say = (text: string) => input.onEvent?.({ type: "status", text });
   const notChosen = (reason: string) => {
