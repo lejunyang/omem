@@ -30,10 +30,46 @@ export type TreeEntry = {
   url?: string;
   /** A knowledge base Feishu will not name (not a member): titled by a page in it, the owner can name it. */
   unnamed?: boolean;
+  /** A repository folder (kind "repo") and the “仓库” folder holding them (kind "repos"). */
+  repo?: { id: string; name: string; rootPath?: string | null };
+  repoCount?: number;
 };
 
-const props = defineProps<{ space: string; kind?: string; level?: string; q?: string; current?: string }>();
-const emit = defineEmits<{ total: [n: number] }>();
+/**
+ * A business space's repositories (spaces of their own underneath) are folders of this tree: each
+ * is a top-level folder with its directory tree below (more than REPO_GROUP_AT go into one “仓库”
+ * folder). Their nodes carry the repository in the key — `@<space>@<node>` — and load from that space.
+ */
+type Repo = { id: string; name: string; rootPath?: string | null };
+const props = defineProps<{ space: string; repos?: Repo[]; kind?: string; level?: string; q?: string; current?: string }>();
+const emit = defineEmits<{ total: [n: number]; "open-space": [space: string] }>();
+const REPO_GROUP_AT = 6;
+const REPOS = "@repos";
+/** Which space a tree key belongs to and its key there. */
+function locate(key: string) {
+  const m = /^@([^@]+)@(.*)$/s.exec(key);
+  return m ? { space: m[1], node: m[2], prefix: `@${m[1]}@` } : { space: props.space, node: key, prefix: "" };
+}
+const filtering = computed(() => !!(props.kind || props.level || props.q));
+/** Each repository's top level, as loaded (total and levels under the filter). */
+const repoTotals = ref(new Map<string, { total: number; levels: Record<Level, number> }>());
+const repoEntries = computed<TreeEntry[]>(() =>
+  [...(props.repos ?? [])].sort((a, b) => a.name.localeCompare(b.name, "zh")).flatMap((r) => {
+    const t = repoTotals.value.get(r.id);
+    if (filtering.value && !t?.total) return [];
+    return [{ key: `@${r.id}@`, title: r.name, kind: "repo", count: t?.total ?? 0, levels: t?.levels ?? { focus: 0, normal: 0, reference: 0, ignore: 0 }, notes: 0, hasChildren: !!t?.total, repo: r }];
+  }),
+);
+function childrenOf(key: string): TreeEntry[] {
+  if (key === REPOS) return repoEntries.value;
+  const own = children.value.get(key) ?? [];
+  if (key !== "") return own;
+  const repos = repoEntries.value;
+  if (repos.length < REPO_GROUP_AT) return [...own, ...repos];
+  const levels = { focus: 0, normal: 0, reference: 0, ignore: 0 };
+  for (const r of repos) for (const l of Object.keys(levels) as Level[]) levels[l] += r.levels[l];
+  return [...own, { key: REPOS, title: "仓库", kind: "repos", count: repos.reduce((a, r) => a + r.count, 0), levels, notes: 0, hasChildren: true, repoCount: repos.length }];
+}
 
 const children = ref(new Map<string, TreeEntry[]>());
 const loading = ref(new Set<string>());
@@ -54,40 +90,58 @@ function saveExpanded() {
 }
 
 let seq = 0;
-async function load(key: string, s = seq) {
-  const p = new URLSearchParams({ space: props.space, node: key });
+/** Loads a folder's children; returns the total under the filter at the top of a space (or null). */
+async function load(key: string, s = seq): Promise<number | null> {
+  if (key === REPOS) return null;
+  const at = locate(key);
+  const p = new URLSearchParams({ space: at.space, node: at.node });
   if (props.kind) p.set("kind", props.kind);
   if (props.level) p.set("level", props.level);
   if (props.q) p.set("q", props.q);
   loading.value = new Set(loading.value).add(key);
   try {
     const r = await get<{ nodes: TreeEntry[]; total: number }>(`/api/sources/tree?${p}`);
-    if (s !== seq) return;
+    if (s !== seq) return null;
     const next = new Map(children.value);
-    next.set(key, r.nodes);
+    next.set(key, at.prefix ? r.nodes.map((n) => ({ ...n, key: at.prefix + n.key })) : r.nodes);
     children.value = next;
-    if (key === "") emit("total", r.total);
+    if (at.prefix && !at.node) {
+      const levels = { focus: 0, normal: 0, reference: 0, ignore: 0 };
+      for (const n of r.nodes) for (const l of Object.keys(levels) as Level[]) levels[l] += n.levels[l];
+      repoTotals.value = new Map(repoTotals.value).set(at.space, { total: r.total, levels });
+    }
+    return key === "" || (at.prefix && !at.node) ? r.total : null;
   } catch (e) {
     toast((e as Error).message, "error");
+    return null;
   } finally {
     const l = new Set(loading.value);
     l.delete(key);
     loading.value = l;
   }
 }
-/** Reload the top and every open folder (after a filter or a level changed). */
+/** Reload the top (the space's own and each repository's) and every open folder (after a filter or a level changed). */
 async function reload() {
   const s = ++seq;
   rootLoading.value = !children.value.size;
-  const keep = [...expanded.value];
-  await load("", s);
+  // Repository tops are loaded below; a folder of a repository no longer under this space is skipped.
+  const repoIds = new Set((props.repos ?? []).map((r) => r.id));
+  const keep = [...expanded.value].filter((k) => {
+    if (k === REPOS) return false;
+    const at = locate(k);
+    return !at.prefix || (!!at.node && repoIds.has(at.space));
+  });
+  const totals = await Promise.all(["", ...(props.repos ?? []).map((r) => `@${r.id}@`)].map((k) => load(k, s)));
+  if (s !== seq) return;
   rootLoading.value = false;
+  emit("total", totals.reduce<number>((a, n) => a + (n ?? 0), 0));
   await Promise.all(keep.map((k) => load(k, s)));
 }
-watch(() => [props.space, props.kind, props.level, props.q] as const, (now, prev) => {
-  if (now[0] !== prev?.[0]) {
+watch(() => [props.space, props.kind, props.level, props.q, (props.repos ?? []).map((r) => r.id).join(",")] as const, (now, prev) => {
+  if (now[0] !== prev?.[0] || now[4] !== prev?.[4]) {
     expanded.value = readExpanded();
     children.value = new Map();
+    repoTotals.value = new Map();
   }
   void reload();
 }, { immediate: true });
@@ -108,11 +162,11 @@ const menuFor = ref<string | null>(null);
 const rows = computed(() => {
   const out: Row[] = [];
   const walk = (key: string, depth: number) => {
-    for (const e of children.value.get(key) ?? []) {
+    for (const e of childrenOf(key)) {
       out.push({ type: "node", entry: e, depth });
       if (menuFor.value === e.key) out.push({ type: "menu", entry: e, depth });
       if (e.hasChildren && expanded.value.has(e.key)) {
-        if (children.value.has(e.key)) walk(e.key, depth + 1);
+        if (e.key === REPOS || children.value.has(e.key)) walk(e.key, depth + 1);
         else out.push({ type: "loading", key: e.key, depth: depth + 1 });
       }
     }
@@ -137,8 +191,9 @@ function levelNote(e: TreeEntry) {
 
 async function setLevel(e: TreeEntry, level: Level | null) {
   try {
+    const at = locate(e.key);
     if (e.kind === "source" && e.sourceId) await put(`/api/sources/${e.sourceId}/attention`, { level: level === "normal" ? null : level });
-    else await put("/api/sources/node-level", { space: props.space, node: e.key, level });
+    else await put("/api/sources/node-level", { space: at.space, node: at.node, level });
     menuFor.value = null;
     toast(e.kind === "source" ? "已设置" : `已设置「${e.title}」及其下面的原件`, "ok");
     await reload();
@@ -175,18 +230,27 @@ async function capture(e: TreeEntry) {
   }
 }
 const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "chat", note: "edit", web: "link", image: "eye", conversation: "chat", work: "layers", meeting: "clock", event: "clock" };
-const nodeIcon = (e: TreeEntry) => (e.sourceId && !e.hasChildren ? (kindIcon[e.sourceKind ?? ""] ?? "file") : e.kind === "chat" || e.kind === "chat-type" ? "chat" : e.kind === "site" ? "link" : e.kind === "wiki-space" ? "book" : "folder");
+const nodeIcon = (e: TreeEntry) => (e.sourceId && !e.hasChildren ? (kindIcon[e.sourceKind ?? ""] ?? "file") : e.kind === "chat" || e.kind === "chat-type" ? "chat" : e.kind === "site" ? "link" : e.kind === "wiki-space" ? "book" : e.kind === "repo" || e.kind === "repos" ? "code" : "folder");
+/** What a row's title says on hover: a repository's directory on disk. */
+const rowTitle = (e: TreeEntry) => (e.repo ? `${e.title}${e.repo.rootPath ? ` · ${e.repo.rootPath}` : ""}` : e.kind === "repos" ? `这个空间的 ${e.repoCount} 个仓库` : e.title);
+/** Rows with a menu: levels for folders and sources; a repository's own (open it alone). The “仓库” folder has none. */
+const hasMenu = (e: TreeEntry) => !e.uncaptured && e.kind !== "repos";
 defineExpose({ reload });
 </script>
 
 <template>
   <Skeleton v-if="rootLoading && !children.size" :rows="8" />
-  <div v-else-if="!(children.get('') ?? []).length" class="empty small">
+  <div v-else-if="!childrenOf('').length" class="empty small">
     <p>{{ q || kind || level ? "没有符合筛选的原件。" : "这个空间还没有原件。" }}</p>
   </div>
   <VirtualList v-else :items="rows" :item-key="rowKey" :estimate="30">
     <template #default="{ item: r }">
       <div v-if="r.type === 'loading'" class="tree-row muted small" :style="{ paddingLeft: 28 + r.depth * 14 + 'px' }">加载中…</div>
+      <div v-else-if="r.type === 'menu' && r.entry.repo" class="tree-menu small" :style="{ paddingLeft: 28 + r.depth * 14 + 'px' }">
+        <span class="muted path" :title="r.entry.repo.rootPath ?? ''">{{ r.entry.repo.rootPath || "仓库空间" }}</span>
+        <button class="btn ghost sm" type="button" title="切到这个仓库空间：同步目录、看它自己的原件" @click="menuFor = null; emit('open-space', r.entry.repo.id)"><Icon name="right" :size="13" />单独打开</button>
+        <button class="btn ghost sm icon" type="button" title="收起" aria-label="收起" @click="menuFor = null"><Icon name="x" :size="13" /></button>
+      </div>
       <div v-else-if="r.type === 'menu'" class="tree-menu small" :style="{ paddingLeft: 28 + r.depth * 14 + 'px' }">
         <span class="muted">{{ r.entry.kind === "source" ? "这份原件" : "这个目录和以后进来的" }}</span>
         <UiSegmented :model-value="ownLevel(r.entry)" size="sm" aria-label="关注程度" :options="levelOptions" @change="(v) => setLevel(r.entry, v)" />
@@ -201,7 +265,7 @@ defineExpose({ reload });
         <span v-else class="twisty-pad" />
         <Icon :name="nodeIcon(r.entry)" :size="14" class="ico" />
         <router-link v-if="r.entry.sourceId" :to="`/sources/${r.entry.sourceId}`" class="name ellipsis" :title="r.entry.title">{{ r.entry.title }}</router-link>
-        <button v-else-if="!r.entry.uncaptured" class="name ellipsis plain" type="button" :title="r.entry.title" @click="r.entry.hasChildren && toggle(r.entry)">{{ r.entry.title }}</button>
+        <button v-else-if="!r.entry.uncaptured" class="name ellipsis plain" type="button" :title="rowTitle(r.entry)" @click="r.entry.hasChildren && toggle(r.entry)">{{ r.entry.title }}</button>
         <span v-else class="name ellipsis" :title="`${r.entry.title}（未采集）`">{{ r.entry.title }}</span>
         <span v-if="r.entry.level" class="lv" :class="[r.entry.level.level, { inherited: r.entry.level.inherited }]" :title="levelNote(r.entry)">{{ LEVEL_LABEL[r.entry.level.level] }}</span>
         <span class="dots" :title="dotsOf(r.entry).map((d) => `${LEVEL_LABEL[d.level]} ${d.n}`).join('，')">
@@ -209,7 +273,7 @@ defineExpose({ reload });
         </span>
         <button v-if="r.entry.uncaptured && r.entry.url" class="btn ghost sm" type="button" :disabled="capturing.has(r.entry.key)" @click="capture(r.entry)">{{ capturing.has(r.entry.key) ? "采集中" : "采集" }}</button>
         <span v-else-if="!r.entry.sourceId || r.entry.hasChildren" class="muted small count">{{ r.entry.count }}</span>
-        <button v-if="!r.entry.uncaptured" class="btn ghost sm icon more" type="button" :aria-expanded="menuFor === r.entry.key" :title="r.entry.kind === 'source' ? '关注程度' : '设关注程度（含子树）'" @click="menuFor = menuFor === r.entry.key ? null : r.entry.key">
+        <button v-if="hasMenu(r.entry)" class="btn ghost sm icon more" type="button" :aria-expanded="menuFor === r.entry.key" :title="r.entry.repo ? '仓库' : r.entry.kind === 'source' ? '关注程度' : '设关注程度（含子树）'" :aria-label="r.entry.repo ? '仓库' : '关注程度'" @click="menuFor = menuFor === r.entry.key ? null : r.entry.key">
           <Icon name="menu" :size="13" />
         </button>
       </div>
@@ -329,6 +393,14 @@ defineExpose({ reload });
 .more:hover,
 .more[aria-expanded="true"] {
   opacity: 1;
+}
+.tree-menu .path {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
 }
 .tree-menu {
   display: flex;

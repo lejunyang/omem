@@ -10,7 +10,7 @@ import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
 import SourceTree from "../components/SourceTree.vue";
 import SourceReview from "../components/SourceReview.vue";
-import { readsAsDocument } from "../lib/sources";
+import { readsAsDocument, shouldLoadMore } from "../lib/sources";
 import UiSelect from "../components/UiSelect.vue";
 import Icon from "../components/Icon.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
@@ -44,9 +44,13 @@ const level = ref("");
 const levelCounts = ref<Record<string, number> | null>(null);
 const LEVEL_SHORT: Record<string, string> = { focus: "重点", reference: "仅检索", ignore: "忽略" };
 const levelOptions = computed(() => [
-  { value: "", label: "全部" },
+  { value: "", label: "所有关注程度" },
   ...(["focus", "normal", "reference", "ignore"] as const).map((v) => ({ value: v, label: `${{ focus: "重点", normal: "一般", reference: "仅检索", ignore: "忽略" }[v]}${levelCounts.value?.[v] ? ` ${levelCounts.value[v]}` : ""}` })),
 ]);
+const kindOptions = [
+  { value: "", label: "所有类型" },
+  ...Object.entries({ doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话", work: "工作文件" }).map(([value, label]) => ({ value, label })),
+];
 const digestOpen = ref(false);
 async function loadLevels() {
   try {
@@ -92,6 +96,8 @@ const repos = computed(() => state.spaces.filter((s) => s.parentId === state.spa
 const parentSpace = computed(() => state.spaces.find((s) => s.id === space.value?.parentId) ?? null);
 /** Spaces other than repositories are browsed as the catalog tree (SourceTree loads it lazily). */
 const catalogView = computed(() => !!space.value && space.value.kind !== "repo");
+/** Only the flat list (no space chosen) pages through /api/sources; the tree and a repository do not. */
+const paged = computed(() => !catalogView.value && space.value?.kind !== "repo");
 const qApplied = ref("");
 const treeRef = ref<InstanceType<typeof SourceTree> | null>(null);
 const reviewRef = ref<InstanceType<typeof SourceReview> | null>(null);
@@ -109,6 +115,7 @@ async function loadReviewCount() {
 async function load() {
   const seq = ++loadSeq;
   qApplied.value = q.value;
+  exhausted.value = false;
   if (catalogView.value) {
     list.value = [];
     listLoading.value = false;
@@ -141,10 +148,7 @@ async function load() {
 async function fillScreen() {
   await nextTick();
   const el = itemsEl.value;
-  if (el && list.value.length < total.value && el.scrollHeight - el.clientHeight < 500) {
-    await loadMore();
-    void fillScreen();
-  }
+  if (el && wantsMore(el.scrollHeight - el.clientHeight - el.scrollTop) && (await loadMore())) void fillScreen();
 }
 async function loadPage(offset: number) {
   const p = new URLSearchParams({ space: state.space, limit: String(PAGE), offset: String(offset) });
@@ -153,20 +157,30 @@ async function loadPage(offset: number) {
   if (level.value) p.set("level", level.value);
   return get<{ total: number; sources: Source[] }>(`/api/sources?${p}`);
 }
+/** A page came back empty: stop even if the total says there is more. Reset by `load`. */
+const exhausted = ref(false);
+function wantsMore(distance = 0) {
+  return shouldLoadMore({ paged: paged.value, loading: loadingMore.value, loaded: list.value.length, total: total.value, exhausted: exhausted.value, distance });
+}
+/** The next page of the flat list; false when nothing was loaded. */
 async function loadMore() {
-  if (loadingMore.value || list.value.length >= total.value) return;
+  if (!wantsMore()) return false;
+  const seq = loadSeq;
   loadingMore.value = true;
   try {
     const r = await loadPage(list.value.length);
+    if (seq !== loadSeq) return false;
+    if (!r.sources.length) exhausted.value = true;
     list.value.push(...r.sources);
     total.value = r.total;
+    return r.sources.length > 0;
   } finally {
     loadingMore.value = false;
   }
 }
 function onListScroll(ev: Event) {
   const el = ev.target as HTMLElement;
-  if (el.scrollHeight - el.scrollTop - el.clientHeight < 500) void loadMore();
+  if (wantsMore(el.scrollHeight - el.scrollTop - el.clientHeight)) void loadMore();
 }
 /** The owner asked for the whole text of this source. */
 const wantAll = ref(false);
@@ -350,35 +364,40 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
 </script>
 
 <template>
-  <div class="sources">
+  <div class="sources" :class="{ picked: !!id }">
     <aside class="list-col">
       <div class="head">
-        <div class="row">
-          <strong>原件</strong>
-          <span class="muted small">{{ listLoading && !list.length ? "" : total }}</span>
+        <div class="title-row">
+          <strong class="title">原件</strong>
+          <span class="muted small count" :title="catalogView && repos.length ? '含下面各仓库的原件' : undefined">{{ listLoading && !list.length ? "" : total }}</span>
           <span class="spacer" />
-          <button v-if="space?.kind !== 'repo'" class="btn ghost sm" title="分级、整理已入库的材料" @click="digestOpen = true"><Icon name="layers" :size="14" />整理</button>
-          <router-link to="/sources/kb" class="btn ghost sm" title="你能看到的飞书知识库：归入空间，每晚读一些"><Icon name="book" :size="14" />知识库</router-link>
-          <button v-if="space?.rootPath" class="btn ghost sm icon" title="同步关联目录" @click="sync"><Icon name="refresh" :size="15" /></button>
-          <button class="btn ghost sm icon" title="保存材料" @click="state.capture = true"><Icon name="plus" :size="15" /></button>
+          <!-- Secondary actions are icons in the narrow column; their words come back when the column is the whole width (≤760px). -->
+          <button v-if="space?.kind !== 'repo'" class="btn ghost sm tool" title="分级、整理已入库的材料" aria-label="整理" @click="digestOpen = true"><Icon name="layers" :size="15" /><span class="lbl">整理</span></button>
+          <router-link to="/sources/kb" class="btn ghost sm tool" title="你能看到的飞书知识库：归入空间，每晚读一些" aria-label="知识库"><Icon name="book" :size="15" /><span class="lbl">知识库</span></router-link>
+          <button v-if="space?.rootPath" class="btn ghost sm icon" title="同步关联目录" aria-label="同步关联目录" @click="sync"><Icon name="refresh" :size="15" /></button>
+          <button class="btn ghost sm icon" title="保存材料" aria-label="保存材料" @click="state.capture = true"><Icon name="plus" :size="15" /></button>
         </div>
-        <input v-model="q" class="input" placeholder="按标题或路径筛选" />
-        <!-- A business space's repositories, and the way back from one (docs/v2/coding-work.md 第 4 节). -->
-        <div v-if="repos.length || parentSpace" class="repos row wrap small">
-          <template v-if="repos.length"><span class="muted">仓库</span><button v-for="r in repos" :key="r.id" type="button" class="kind" :title="r.rootPath ?? ''" @click="state.space = r.id"><Icon name="code" :size="12" />{{ r.name }}</button></template>
-          <template v-else-if="parentSpace"><span class="muted">属于</span><button type="button" class="kind" @click="state.space = parentSpace.id"><Icon name="left" :size="12" />{{ parentSpace.name }}</button></template>
+        <!-- The way back from a repository to its business space (docs/v2/coding-work.md 第 4 节); a business space lists its repositories in the tree. -->
+        <button v-if="space?.kind === 'repo' && parentSpace" type="button" class="back small" :title="`回到${parentSpace.name}的原件目录`" @click="state.space = parentSpace.id">
+          <Icon name="left" :size="13" /><span class="muted">属于</span><span class="ellipsis">{{ parentSpace.name }}</span>
+        </button>
+        <!-- What the sources are: the words and the type. -->
+        <div class="filter-row">
+          <input v-model="q" class="input sm grow" placeholder="按标题或路径筛选" aria-label="按标题或路径筛选" />
+          <UiSelect v-model="kind" size="sm" width="96px" aria-label="原件类型" :options="kindOptions" />
         </div>
-        <div v-if="space?.kind !== 'repo'" class="kinds row wrap" role="group" aria-label="关注程度">
-          <button v-for="o in levelOptions" :key="o.value" class="kind" :class="{ on: !reviewing && level === o.value }" :aria-pressed="!reviewing && level === o.value" @click="level = o.value; reviewing = false">{{ o.label }}</button>
-          <button class="kind review" :class="{ on: reviewing }" :aria-pressed="reviewing" title="Agent 写的标注和目录定级，按影响排序，确认或否定" @click="reviewing = !reviewing">待复核{{ reviewCount ? ` ${reviewCount}` : "" }}</button>
-        </div>
-        <div class="kinds row wrap">
-          <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web', 'image', 'conversation', 'work']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话", work: "工作文件" }[k] }}</button>
+        <!-- How much the owner cares, and the review queue: one is a filter, the other a list of work. -->
+        <div v-if="space?.kind !== 'repo'" class="filter-row">
+          <UiSelect v-model="level" size="sm" width="132px" aria-label="关注程度" :options="levelOptions" :disabled="reviewing" />
+          <span class="spacer" />
+          <button v-if="catalogView" type="button" class="btn sm review" :class="reviewing ? 'primary' : 'ghost'" :aria-pressed="reviewing" title="Agent 写的标注和目录定级，按影响排序，确认或否定" @click="reviewing = !reviewing">
+            <Icon :name="reviewing ? 'left' : 'check'" :size="14" />{{ reviewing ? "回到目录" : "待复核" }}<span v-if="!reviewing && reviewCount" class="badge accent n">{{ reviewCount }}</span>
+          </button>
         </div>
       </div>
       <div ref="itemsEl" class="items" @scroll.passive="onListScroll">
         <SourceReview v-if="catalogView && reviewing" ref="reviewRef" :space="state.space" @count="(n) => (reviewCount = n)" @changed="attentionChanged" />
-        <SourceTree v-else-if="catalogView" ref="treeRef" :space="state.space" :kind="kind" :level="level" :q="qApplied" :current="id" @total="(n) => (total = n)" />
+        <SourceTree v-else-if="catalogView" ref="treeRef" :space="state.space" :repos="repos" :kind="kind" :level="level" :q="qApplied" :current="id" @total="(n) => (total = n)" @open-space="(s) => (state.space = s)" />
         <Skeleton v-else-if="listLoading && !list.length" :rows="8" />
         <VirtualList v-else-if="isTree" :items="tree" :item-key="(r) => (r.kind === 'dir' ? `d:${r.path}` : r.source.id)" :estimate="28">
           <template #default="{ item: r }">
@@ -402,7 +421,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <p>这个空间还没有原件。</p>
           <button class="btn sm" @click="state.capture = true"><Icon name="plus" :size="14" />保存材料</button>
         </div>
-        <div v-else-if="loadingMore" class="list-foot">加载中…</div>
+        <!-- Same height whether it is loading or waiting: a row that comes and goes moves the scroll position. -->
+        <div v-else-if="paged && list.length < total && !exhausted" class="list-foot muted small">{{ loadingMore ? "加载中…" : "" }}</div>
       </div>
     </aside>
 
@@ -546,30 +566,64 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
   gap: 8px;
   border-bottom: 1px solid var(--line);
 }
-.kinds {
+.title-row,
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.title-row {
+  gap: 2px;
+}
+.title-row .title {
+  white-space: nowrap;
+  margin-right: 4px;
+}
+.title-row .count {
+  white-space: nowrap;
+}
+.filter-row .grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.filter-row :deep(.ui-select) {
+  flex: none;
+}
+.tool {
+  padding-inline: 6px;
+}
+.tool .lbl {
+  display: none;
+}
+.review {
+  flex: none;
   gap: 4px;
 }
-.repos {
-  gap: 4px 6px;
+.review .n {
+  margin-left: 2px;
 }
-.repos .kind {
+.back {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-.kind {
-  border: 1px solid var(--line);
+  min-width: 0;
+  max-width: 100%;
+  justify-self: start;
+  border: 0;
   background: none;
-  border-radius: 999px;
-  padding: 1px 9px;
-  font-size: 12px;
-  cursor: pointer;
+  padding: 0;
   color: var(--ink-2);
+  cursor: pointer;
 }
-.kind.on {
-  background: var(--ink);
-  color: var(--bg);
-  border-color: var(--ink);
+.back:hover {
+  color: var(--accent);
+}
+.list-foot {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .items {
   overflow-y: auto;
@@ -691,6 +745,17 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
     max-height: 40vh;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+  /* Nothing chosen yet: the list is the page (the empty detail only says “选择一份原件”). */
+  .sources:not(.picked) .list-col {
+    max-height: none;
+    flex: 1;
+  }
+  .sources:not(.picked) .detail {
+    display: none;
+  }
+  .tool .lbl {
+    display: inline;
   }
   .detail {
     padding: 16px;
