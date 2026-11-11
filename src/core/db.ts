@@ -1609,6 +1609,37 @@ export const migrations: readonly string[] = [
   create index symbols_any_name on symbols(name);`,
   // How often cleaning a backend session has failed: retries back off, and give up in the end.
   `alter table session_cleanup add column attempts integer not null default 0`,
+  // Designs (src/designs, docs/v2/coding-plan.md): a set of decisions on an item or in a space — the
+  // owner's own (written before coding, confirmed by the owner), someone else's technical design as
+  // assessed, or a change description written after the code. `body` is the current version; every
+  // version handed in is kept in design_revisions.
+  `
+  create table designs (
+    id text primary key,
+    space_id text not null,
+    item_id text,
+    title text not null,
+    origin text not null,
+    author text,
+    sources text not null default '[]',
+    repos text not null default '[]',
+    status text not null,
+    revision integer not null default 0,
+    body text not null default '{}',
+    work_id text,
+    run_id text,
+    user_id text,
+    created_at text not null,
+    updated_at text not null
+  );
+  create index designs_item on designs(item_id, updated_at);
+  create index designs_space on designs(space_id, updated_at);
+  create index designs_work on designs(work_id);
+  create table design_revisions (
+    design_id text not null, revision integer not null, body text not null,
+    run_id text, note text not null default '', at text not null,
+    primary key (design_id, revision)
+  );`,
 ];
 
 export type Db = DatabaseSync;

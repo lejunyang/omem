@@ -84,6 +84,7 @@ export const roleNames = [
   "req-splitter",
   "speaking-coach",
   "business-analyst",
+  "designer",
   "mention-triage",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
@@ -324,9 +325,15 @@ export const configSchema = z.object({
          */
         pinnedFallback: z.enum(["unavailable", "never"]).default("unavailable"),
       }).default(() => ({ automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const })),
+      /**
+       * Designs (docs/v2/coding-plan.md §3): `mode` whether a delegation first writes a design (`auto`:
+       * when the check before coding says so; `always`; `never`); `confirm` who confirms an own design
+       * — the owner, or the assistant that delegated when no question in it waits on the owner.
+       */
+      design: z.object({ mode: z.enum(["auto", "always", "never"]).default("auto"), confirm: z.enum(["owner", "assistant"]).default("owner") }).default({ mode: "auto", confirm: "owner" }),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

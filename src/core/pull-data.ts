@@ -75,6 +75,9 @@ export const pullTables: Table[] = [
   { name: "code_checkpoints", key: ["work_id", "seq"] },
   // Voice conversations and speaking practices (core/voice.ts): written once when the call ends.
   { name: "voice_sessions", key: ["id"], newer: "started_at" },
+  // Designs (src/designs): the latest version wins; versions are written once.
+  { name: "designs", key: ["id"], newer: "updated_at" },
+  { name: "design_revisions", key: ["design_id", "revision"] },
   ...[
     ["item_events", ["item_id", "at", "kind", "text"]],
     ["memory_recalls", ["memory_id", "run_id", "agent_profile", "at", "via"]],
