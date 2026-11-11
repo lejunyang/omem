@@ -30,6 +30,7 @@ import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
+import { createDesign, getDesign, setConcernState, submitRevision } from "../src/designs/store.ts";
 import { saveReqs } from "../src/items/requirements.ts";
 import { remember } from "../src/memory/store.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
@@ -495,6 +496,99 @@ h3{margin:0 0 6px;font:600 15px/1.4 var(--serif)} p{color:var(--muted);margin:0 
 <p style="margin-top:10px">状态：<button>申请中</button> <button class="primary">已同意</button> <button>已到账</button></p>` });
 createAsk(app, { runId: "r_proto_demo", conversationId: proto.id, kind: "question", question: "试一下两个版本，选一个：", ui: { view: [{ type: "page", id: page.id, title: "退款进度的两种展示" }] } });
 
+// ---- designs: an own one waiting for the owner, someone else's assessed and checked against the branch
+const ownDesign = createDesign(app, { spaceId: "shop", itemId: item.id, title: "退款金额改到订单行上算", origin: "own", sources: [`src:${prd}`], repos: ["shop"], userId: "owner" });
+submitRevision(app, ownDesign.id, {
+  facts: [
+    { text: "退款申请页、售后详情和导出各自合计退款金额，部分发货时三处结果不一样", refs: [`src:${chat}#L1-L2`] },
+    { text: "refundAmount 现在按订单所有行求和，不看发货状态", refs: [`src:${code}#L1-L6`] },
+  ],
+  gaps: ["需求说“运费按实际情况退”，没有说部分发货时怎么算：放进 D2 请你定"],
+  decisions: [
+    {
+      kind: "change", title: "退款金额在订单行上算，页面不再自己合计", reqs: ["退款只算已发货行", "导出与页面一致"],
+      fields: {
+        behavior: { brief: "三个页面各算一遍 → 都调 refundAmount", table: { head: ["情况", "现在", "改后"], rows: [["部分发货", "按整单退", "只退已发货的行"], ["有订单优惠", "各页面自己分摊，尾差不一", "按实付比例分摊，尾差归最后一行"], ["导出", "按整单金额", "和页面一致"]] } },
+        where: { brief: "refund.js 一处；页面只展示结果", text: "页面拿到的是每行可退金额，不再自己求和。" },
+        callers: { brief: "退款申请页、售后详情、导出任务、对账报表" },
+        migration: { brief: "已发起的退款单不重算，只影响新发起的退款" },
+      },
+      rejected: [{ text: "在网关里统一算", why: "网关拿不到发货状态，要多查一次订单服务" }],
+    },
+    {
+      kind: "add", title: "运费按已发货行的金额比例退", reqs: ["部分发货可退运费"],
+      fields: {
+        entry: { brief: "退款申请页提交时，refundAmount 带上运费" },
+        layer: { brief: "和行金额一起放在 refund.js，运费规则只在这里" },
+        contract: { brief: "refundLineAmounts 多返回运费一项", code: "type RefundResult = {\n  lines: number[];      // 每行可退（分）\n  shipping: number;     // 可退运费（分）\n};\nfunction refundLineAmounts(order: Order): RefundResult;", lang: "ts" },
+        reuse: { brief: "沿用按比例分摊、尾差归最后一行的做法" },
+        behavior: { brief: "按情况决定退多少运费", table: { head: ["情况", "可退运费"], rows: [["全部发货", "全部运费"], ["部分发货", "按已发货行金额占比"], ["都没发货", "走取消流程，不在这里"]] } },
+        excludes: { brief: "不处理运费险和包邮券" },
+      },
+      question: { text: "部分发货时运费怎么退？", options: ["按已发货行的金额比例", "按已发货的件数比例", "这次不退运费，全部发货后一起退"], recommended: 0 },
+    },
+    {
+      kind: "remove", title: "删掉页面里的两份合计（约 80 行）", reqs: ["导出与页面一致"],
+      fields: {
+        removes: { brief: "售后详情和导出任务里各自的 sumRefund" },
+        users: { brief: "全仓库只有这两处调用，搜索 sumRefund 没有别的结果" },
+        fallback: { brief: "页面改为展示 refundAmount 的结果，界面不变" },
+        cleanup: { brief: "导出任务的单元测试改用 refundAmount 的结果" },
+      },
+    },
+  ],
+}, { note: "第一版" });
+
+const extDesign = createDesign(app, { spaceId: "shop", itemId: item.id, title: "退款改造技术方案", origin: "external", author: "小王", sources: [`src:${tech}`], repos: ["shop"], userId: "owner" });
+submitRevision(app, extDesign.id, {
+  facts: [
+    { text: "对账报表读的是落库前的退款金额（report/daily.js 第 88 行），不经过 refundAmount", refs: [`src:${code}#L1-L6`] },
+    { text: "满减分摊出过负数，讨论群里有记录", refs: [`src:${chat}#L6-L6`] },
+  ],
+  concerns: [
+    { level: "risk", text: "方案没有写回滚：新算法上线后发现问题，已经按新口径退出去的单子怎么处理", where: ["技术方案 · 上线计划"] },
+    { level: "question", text: "回放上月 2000 笔部分发货退款时，结果不一致的单子由谁看、看到什么程度算通过？" },
+  ],
+  decisions: [
+    {
+      kind: "change", title: "退款金额改由订单服务计算", reqs: ["退款只算已发货行"],
+      fields: { behavior: { brief: "只退已发货的行，优惠按实付比例分摊" }, where: { brief: "订单服务的 refundAmount" } },
+      concerns: [
+        { level: "problem", text: "对账报表读的是落库前的金额，方案没有改它，上线后报表和实际退款会对不上", where: ["report/daily.js:88"], refs: [`src:${code}#L1-L6`] },
+        { level: "question", text: "旧订单的退款记录要不要按新口径回填？" },
+      ],
+      files: ["shop/refund.js", "shop/report/daily.js"],
+    },
+    {
+      kind: "add", title: "新增 refundLineAmounts 返回每行可退金额", reqs: ["导出与页面一致"],
+      fields: {
+        contract: { brief: "refundAmount 签名不变，新增按行的结果", code: "function refundAmount(order: Order): number;\nfunction refundLineAmounts(order: Order): number[]; // 分", lang: "ts" },
+        behavior: { brief: "金额换算成分计算，尾差归最后一行" },
+      },
+      concerns: [{ level: "improve", text: "导出任务可以直接用 refundLineAmounts 的结果，不用再保留自己的合计，能少维护一份口径" }],
+      files: ["shop/refund.js", "shop/test.js"],
+    },
+    {
+      kind: "change", title: "金额超过两位小数时报错", reqs: ["金额精度两位小数"], stated: false,
+      fields: { behavior: { brief: "需求要求超出精度直接报错，方案没有提" } },
+      concerns: [{ level: "question", text: "文档没写超出两位小数怎么办；代码现在是四舍五入，和需求不一致，要问作者打算怎么处理" }],
+    },
+    {
+      kind: "remove", title: "去掉页面里自己算的合计", reqs: [],
+      fields: { removes: { brief: "售后详情的 sumRefund" } },
+      concerns: [{ level: "risk", text: "导出任务里还有一份合计，方案只删了页面的，两处口径会继续不一致", where: ["export/refund.js:40"] }],
+    },
+  ],
+  outside: ["shop/README.md"],
+}, { note: "评估技术方案" });
+// The branch came out: checked against the design (a second version with what the code did).
+const ext1 = getDesign(app, extDesign.id).body;
+ext1.decisions[0].after = { done: "partly", deviation: "方案说在订单服务算，实际在网关里又算了一遍：网关的结果只用来展示，但两处口径以后可能分开", simpler: "网关直接用订单服务返回的金额，不用再算" };
+ext1.decisions[1].after = { done: "yes" };
+ext1.decisions[3].after = { done: "no", deviation: "分支里没有删 sumRefund，页面仍在自己合计" };
+submitRevision(app, extDesign.id, ext1, { note: "对照分支 feature/refund" });
+const extConcern = getDesign(app, extDesign.id).body.decisions[1].concerns?.[0];
+if (extConcern) setConcernState(app, extDesign.id, extConcern.id, { state: "resolved", note: "分支里导出任务已改用 refundLineAmounts", by: "owner" });
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -574,6 +668,8 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "ask-citations-dark", path: `/ask/${t.id}`, dark: true },
   { name: "memory-dark", path: "/memory", dark: true },
   { name: "sources-dark", path: `/sources/${prd}`, dark: true },
+  { name: "design-own", path: `/design/${ownDesign.id}` },
+  { name: "design-external", path: `/design/${extDesign.id}` },
   { name: "review-change-mobile", path: `/runs/${r.id}`, width: 390, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.waitForTimeout(400); } },
 ];
 let failed = 0;
