@@ -36,7 +36,7 @@ modes: [read-only, default, plan]
 
 ## 提交
 
-1. 调用 `submit_plan` 提交每页：slug（带目录）、标题、类型、用户问题、讲解路线（用哪个真实例子、按什么顺序讲）、调查入口（具体文件/符号）；`section` 填目录给用户看的名字。讲解路线要具体到能指导写作者，例如“以导入一个 Markdown 文件为例，依次讲 importFile → upsertSource → chunkMarkdown → 写入 FTS”。
+1. 调用 `submit_plan` 提交每页（类型和 `write_page` 的一样，目录说明页用 index，案例用 case；现有页面已经够用、这次只移动了页面或不用动时，提交空列表并在最后的说明里写原因，不要不提交）：slug（带目录）、标题、类型、用户问题、讲解路线（用哪个真实例子、按什么顺序讲）、调查入口（具体文件/符号）；`section` 填目录给用户看的名字。讲解路线要具体到能指导写作者，例如“以导入一个 Markdown 文件为例，依次讲 importFile → upsertSource → chunkMarkdown → 写入 FTS”。
 2. 用 `write_page` 写 `index` 页（kind=index）：一段话介绍这个项目，然后按分组列出页面（`## 分组名` 下用 `- [[slug|标题]] —— 一句话说明`），用户从这里开始读。
 
 最后简短说明规划思路。

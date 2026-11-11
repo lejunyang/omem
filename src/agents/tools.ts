@@ -4106,19 +4106,19 @@ def({
         z.object({
           slug: z.string(),
           title: z.string(),
-          kind: z.enum(["guide", "concept", "howto", "reference", "topic"]),
+          kind: z.enum(["index", "guide", "concept", "howto", "reference", "topic", "person", "project", "log", "case"]).describe("和 write_page 的 kind 相同；目录说明页用 index，解决过的问题用 case"),
           question: z.string().describe("这页要回答的用户问题"),
           outline: z.string().describe("计划的讲解路线：用哪个真实例子、按什么顺序讲"),
           entry_points: z.array(z.string()).describe("调查入口：文件路径、符号或文档"),
           section: z.string().optional().describe("目录中的分组名"),
         }),
       )
-      .min(1),
+      .describe("要新写或重写的页面；现有页面已经够用、这次只移动或不用动时传空数组"),
   }),
   handler: (ctx, a) => {
     if (!ctx.runId) throw new HttpError(400, "只能在规划运行中提交");
     setRunOutput(ctx.app, ctx.runId, { plan: a.pages });
-    return `已收到 ${a.pages.length} 页的计划`;
+    return a.pages.length ? `已收到 ${a.pages.length} 页的计划` : "已收到：这次没有要写的页面";
   },
 });
 

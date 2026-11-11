@@ -1824,3 +1824,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 主线程卡顿监测（`src/core/loop-monitor.ts`，`diag` 的 `eventLoop`）：延迟超过 500 ms 记日志，带当时的 SQL / git 同步步骤。
 - 向量变更记录 `vector_log`（触发器）加量化快照（`cache/vectors`）：检索进程重启后读快照再重放记录，不再每次整份重读；向量通道空闲 30 分钟才退出，载入不会因超时被杀。
 - `page_cites` / `symbols` 加索引（`list_pages`、`find_symbol`）；网络 git（fetch / ls-remote）改为异步。
+
+## 2026-11-11：Wiki 规划接受目录说明页、案例页和空计划
+
+- `submit_plan` 的页面类型原来只有 guide / concept / howto / reference / topic，而规划角色被要求给新目录计划 `<目录>/index`（kind=index），已有空间里又多是案例页（case）：带这两类的计划被参数校验拒绝，运行以“规划没有提交页面计划”失败。现在类型和 `write_page` 一致；现有页面够用、这次只移动页面时可以提交空计划，运行按完成结束。

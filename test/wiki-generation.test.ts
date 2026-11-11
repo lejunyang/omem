@@ -93,3 +93,19 @@ it("exposes the entry to the assistant, keeps writers separate, and rejects a re
   expect(assistant.system).toContain("generate_wiki");
   expect(() => prepareRun(app, { actor: { role: "wiki-writer" }, spaceId: "project", runId: null, spaces: ["project"], readScope: ["materials"] })).toThrow("不能访问");
 });
+
+it("takes a plan with directory index and case pages, and an empty plan when nothing needs writing", async () => {
+  const { issueToolToken, toolContextForToken } = await import("../src/agents/tools.ts");
+  const { run } = await import("../src/core/db.ts");
+  const planning = createRun(app, { kind: "wiki-plan", spaceId: "project", title: "规划 Wiki 目录", input: {} });
+  // Not for the worker: only the tool is under test here.
+  run(app.db, "update runs set status = 'done' where id = ?", planning.id);
+  const ctx = toolContextForToken(app, issueToolToken({ runId: planning.id, spaceId: "project", spaces: null, tools: null, actor: "agent" }))!;
+  const page = { question: "怎么查？", outline: "按一次真实的排查讲", entry_points: ["materials:README.md"] };
+  const r = await callTool(ctx, "submit_plan", { pages: [{ slug: "cases/index", title: "排查案例", kind: "index", ...page }, { slug: "cases/refund-timeout", title: "退款超时", kind: "case", ...page }] });
+  expect(r.text).toContain("2 页");
+  expect(JSON.parse(one<{ output: string }>(app.db, "select output from runs where id = ?", planning.id)!.output).plan).toHaveLength(2);
+  // The pages there are enough: an empty plan is recorded, so the run does not end as "no plan".
+  expect((await callTool(ctx, "submit_plan", { pages: [] })).text).toContain("没有要写的页面");
+  expect(JSON.parse(one<{ output: string }>(app.db, "select output from runs where id = ?", planning.id)!.output).plan).toEqual([]);
+});
