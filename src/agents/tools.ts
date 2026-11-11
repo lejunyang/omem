@@ -48,6 +48,7 @@ import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { addWatch, listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
+import { keepOwnerSection } from "./work-state.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOutput } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
@@ -1536,13 +1537,17 @@ def({
       if (kept.length) throw new HttpError(400, `共享空间的页面不能引用只对部分人开放的原件：${kept.join("、")}。换成可以公开给空间成员的依据，或写进个人空间。`);
     }
     const existed = pageExists(ctx.app, id, a.page);
-    const body = a.body.replace(/^#\s+.+\n+/, "");
+    let body = a.body.replace(/^#\s+.+\n+/, "");
+    // The section headed 本人补充 is the owner's (agents/work-state.ts): an agent's rewrite keeps it word for word.
+    const kept = existed && ctx.actor === "agent" ? keepOwnerSection(readPage(ctx.app, id, a.page).body, body) : body;
+    const ownerKept = kept !== body;
+    body = kept;
     const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
     appendLog(ctx.app, id, `${existed ? "更新" : "新建"} [[${p.slug}]]${a.reason ? "：" + a.reason : ""}`);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: new Date().toISOString() } });
     const c = pageContext(ctx.app, id, p.slug);
     const folders = !existed && !p.slug.includes("/") && p.slug !== "index" ? [...new Set(listPages(ctx.app, id).filter((x) => x.slug.includes("/")).map((x) => x.slug.split("/")[0]))] : [];
-    return `已${existed ? "更新" : "创建"}页面 ${p.id}。引用原件 ${c.sources.length} 个${c.missingLinks.length ? `；这些链接目标还不存在：${c.missingLinks.join(", ")}` : ""}${
+    return `已${existed ? "更新" : "创建"}页面 ${p.id}。${ownerKept ? "“本人补充”一节是本人写的，按本人的原文保留（不要改它）。" : ""}引用原件 ${c.sources.length} 个${c.missingLinks.length ? `；这些链接目标还不存在：${c.missingLinks.join(", ")}` : ""}${
       folders.length ? `\n这页放在了顶层；空间里已有目录：${folders.slice(0, 20).join("、")}。有合适的就用 move_page 移进去（旧路径的链接会自动跟过去）。` : ""
     }`;
   },

@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
+import { personLine, workStateBrief } from "./work-state.ts";
 
 /**
  * What the owner is doing, as far as omem can see, for the runs that decide whether to tell them
@@ -16,7 +17,7 @@ const SPOKE_MS = 3600_000;
 const hm = (app: App, iso: string | number) => new Date(iso).toLocaleTimeString("zh-CN", { hour12: false, timeZone: app.config.timezone, hour: "2-digit", minute: "2-digit" });
 
 /** The name a chat goes by: its conversation's title, or the title of what was captured from it. */
-function chatName(app: App, chatId: string) {
+export function chatName(app: App, chatId: string) {
   return (
     one<{ title: string }>(app.db, "select title from sources where uri = ? and deleted_at is null limit 1", `lark:${chatId}`)?.title ??
     one<{ title: string }>(app.db, "select title from conversations where channel = 'lark-watch' and external_id = ? limit 1", chatId)?.title ??
@@ -63,4 +64,38 @@ export function ownerInChat(app: App, chatId: string, at = Date.now()): string {
     wrote?.n ? `- 近 14 天本人在这里发了 ${wrote.n} 条消息，最近一次 ${new Date(wrote.last!).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}。` : "- 近 14 天本人没有在这里发过言。",
     asks.length ? `- 这里有人 @ 过助手（最近 ${asks.length} 次）：${asks.map((a) => `“${truncate(a.title.replace(/\s+/g, " "), 40)}”`).join("、")}。` : "",
   ].filter(Boolean).join("\n");
+}
+
+/**
+ * The owner's context for a run that decides on its own what to tell them, in one place: this moment
+ * (ownerNow), the work state of the last weeks (the summary of personal/state/work, agents/work-state.ts),
+ * how the owner uses the chat at hand (ownerInChat) and who the person at hand is (their card).
+ * Named parts; each run takes the ones it needs and words its own heading around them.
+ */
+export function ownerContextParts(app: App, opts: { now?: boolean; state?: boolean; chatId?: string; person?: { id?: string | null; name?: string | null } } = {}): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (opts.chatId) {
+    const here = ownerInChat(app, opts.chatId);
+    if (here) out["本人在这个会话里"] = here;
+  }
+  if (opts.now) {
+    const at = ownerNow(app);
+    if (at) out["本人此刻"] = at;
+  }
+  if (opts.state && app.config.workState.inject) {
+    const brief = workStateBrief(app);
+    if (brief) out["本人近况"] = brief;
+  }
+  if (opts.person) {
+    const line = personLine(app, opts.person);
+    if (line) out["对方的人物卡"] = line;
+  }
+  return out;
+}
+
+/** The same as text: a heading line per part (`hints` adds a note after a heading). */
+export function ownerContextText(app: App, opts: Parameters<typeof ownerContextParts>[1] & { hints?: Record<string, string> } = {}): string {
+  return Object.entries(ownerContextParts(app, opts))
+    .map(([k, v]) => `${k}${opts.hints?.[k] ? `（${opts.hints[k]}）` : ""}：\n${v}`)
+    .join("\n\n");
 }

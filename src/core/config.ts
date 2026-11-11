@@ -86,6 +86,7 @@ export const roleNames = [
   "business-analyst",
   "designer",
   "mention-triage",
+  "work-state",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -905,6 +906,21 @@ export const configSchema = z.object({
       infer: z.boolean().default(true),
     })
     .default({ expiry: true, days: { todo: 14, decision: 7, watch: 7, waiting: 14, reminder: 1 }, infer: true }),
+  /**
+   * The owner's work state (docs/v2/work-state.md): the nightly `work-state` job hands the role of
+   * that name `days` of facts (chats the owner spoke in, documents, coding, items, meetings, asks)
+   * and rewrites the page personal/state/work, then updates up to `people` person cards
+   * (personal/people/*) of those with new messages. `inject`: a summary of up to `briefChars` goes
+   * into the main assistant's turns, the patrol, the triage of 有人找你 and meeting summaries.
+   */
+  workState: z
+    .object({
+      days: z.number().int().min(3).max(60).default(21),
+      people: z.number().int().min(0).max(50).default(8),
+      briefChars: z.number().int().min(100).max(2000).default(500),
+      inject: z.boolean().default(true),
+    })
+    .default({ days: 21, people: 8, briefChars: 500, inject: true }),
   /**
    * Compressing stored media (src/core/media.ts): how many ffmpeg run at once, and whether media
    * downloaded from now on is compressed by itself (with these settings) while ffmpeg is there.

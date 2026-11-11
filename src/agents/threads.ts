@@ -39,6 +39,8 @@ export type ThreadSettings = {
   review?: { cardId: string; stage: "front" | "rate"; goalId?: string; done: number } | null;
   /** Feishu chats this thread's agent may post into, and whether posts are drafts for the owner. */
   lark?: { chats: string[] | null; draft?: boolean };
+  /** The version of the owner's work state (agents/work-state.ts) this thread's agent was last given. */
+  workStateSeen?: string | null;
 };
 export type Thread = {
   id: string;

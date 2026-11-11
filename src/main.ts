@@ -17,6 +17,10 @@ registerScheduleKind("heartbeat", (app) => {
   if (!listRuns(app, { kind: "heartbeat", status: "running" }).length && !listRuns(app, { kind: "heartbeat", status: "queued" }).length)
     createRun(app, { kind: "heartbeat", spaceId: "personal", title: "巡检" });
 });
+registerScheduleKind("work-state", (app) => {
+  if (!listRuns(app, { kind: "work-state", status: "queued" }).length && !listRuns(app, { kind: "work-state", status: "running" }).length)
+    createRun(app, { kind: "work-state", spaceId: "personal", title: "整理工作近况与人物卡" });
+});
 registerScheduleKind("dream", (app) => createRun(app, { kind: "dream", spaceId: "personal", title: "整理记忆与页面" }));
 registerScheduleKind("repo-sync", (app) => {
   for (const s of listSpaces(app)) if (s.rootPath) scheduleSpaceSync(app, s.id);

@@ -511,6 +511,31 @@ ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      // FAKE_MODE=work-state: the nightly write-up (agents/work-state-job.ts). It rewrites the work state with
+      // a 本人补充 of its own (the host keeps the owner's), and writes a card for each person the task lists.
+      if (process.env.FAKE_MODE === "work-state") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-work-state", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const direct = new Set((await client.listTools()).tools.map((t) => t.name));
+          const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
+          const text = (r: Awaited<ReturnType<typeof call>>) => ((r.content as { text?: string }[]) ?? []).map((c) => c.text ?? "").join("");
+          const chat = /src:([A-Za-z0-9_-]+)/.exec(prompt.split("# 事实")[1] ?? "")?.[1];
+          const state = await call("write_page", {
+            space: "personal", page: "state/work", title: "工作近况", summary: "本人这几周在推进的事", kind: "topic",
+            body: `## 摘要\n\n- 退款改造：接口联调中，下一步对账${chat ? `（[群](src:${chat})）` : ""}\n\n## 在推进的事\n\n### 退款改造\n\n- 目标：上线部分退款\n\n## 本人补充\n\n（整理时写的，应被替换）`,
+          });
+          const cards = [];
+          for (const m of prompt.matchAll(/→ (people\/\S+?)（/g)) {
+            const ref = /src:[A-Za-z0-9_-]+#L\d+/.exec(prompt.slice(m.index))?.[0];
+            const r = await call("write_page", { space: "personal", page: m[1], title: m[1].slice(7), kind: "person", summary: "项目 A 后端，常找本人确认退款字段", body: `## 团队和角色\n\n项目 A 后端${ref ? `（[消息](${ref})）` : ""}` });
+            cards.push(r.isError ? text(r) : m[1]);
+          }
+          await say(`近况已更新 ${JSON.stringify({ state: state.isError ? text(state) : "ok", cards, hasOwner: prompt.includes("## 本人补充（本人手写") })}`);
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
       // FAKE_MODE=mention: someone looking for the owner (mentions/mentions.ts). The triage on the general model
       // answers FAKE_TRIAGE (JSON); a handling reads the cited line, replies to the asker when it may
       // (FAKE_REPLY), then writes the reminder — or stays quiet (FAKE_MENTION=quiet), or says nothing (=silent).
