@@ -18,9 +18,10 @@ import { findSpace, relatedIds } from "../core/spaces.ts";
 import { OWNER, scopeFor } from "../core/users.ts";
 import { json, newId, now, truncate } from "../core/util.ts";
 import { createRun, getRun, setRunOutput, type Run, type RunContext } from "../agents/runs.ts";
+import { createAsk, registerAskHandler } from "../agents/asks.ts";
 import type { RoleName } from "../core/config.ts";
 import { extractCites, folderOverview, listPages, pageExists, writePage, appendLog } from "./store.ts";
-import { codeSpaces, refreshCodeIndexes, sameTopicElsewhere, SOFT_LENGTH, textLength } from "./checks.ts";
+import { codeSpaces, mermaidCheckable, refreshCodeIndexes, sameTopicElsewhere, SOFT_LENGTH, textLength } from "./checks.ts";
 
 /** Checks of one page in one run: the first look and up to two after revisions. */
 export const CHECK_ROUNDS = 3;
@@ -28,8 +29,8 @@ export const CHECK_ROUNDS = 3;
 export const WRITE_ATTEMPTS = 2;
 
 export type PageBrief = { slug: string; title: string; kind: string; question: string; outline: string; entry_points: string[]; section?: string; overlap?: { pages: string[]; decision: string; reason: string } };
-export type Finding = { quote: string; kind: string; problem: string; basis: string; fix?: string };
-export type Draft = { slug: string; title: string; summary: string; kind: string; body: string; reason?: string };
+export type Finding = { quote: string; kind: string; problem: string; basis: string; fix?: string; question?: string };
+export type Draft = { slug: string; title: string; summary: string; kind: string; body: string; reason?: string; questions?: string[] };
 export type CheckRecord = {
   runId: string;
   at: string;
@@ -44,6 +45,8 @@ export type CheckRecord = {
   open: Finding[];
   notes: string[];
   history: { round: number; findings: Finding[]; summary?: string }[];
+  /** What was left out of the page because nobody was sure: questions for the owner (the writer's and the checker's). */
+  questions?: string[];
 };
 
 // ---------------------------------------------------------------- drafts
@@ -62,6 +65,9 @@ export function draftTarget(app: App, runId: string | null | undefined, spaceId:
 }
 export const draftOf = (app: App, runId: string) => (getRun(app, runId).output.draft as Draft | undefined) ?? null;
 export function saveDraft(app: App, runId: string, draft: Draft) {
+  // Questions handed in with an earlier version of the page stay: a revision need not repeat them.
+  const before = draftOf(app, runId)?.questions ?? [];
+  draft = { ...draft, questions: [...new Set([...before, ...(draft.questions ?? [])])] };
   setRunOutput(app, runId, { draft, drafts: ((getRun(app, runId).output.drafts as number | undefined) ?? 0) + 1 });
 }
 
@@ -161,7 +167,7 @@ function checkerTask(app: App, spaceId: string, brief: PageBrief, draft: Draft, 
     `## 可以查的代码空间\n\n${codeSpaces(app, spaceId, readSpaces).join("、")}`,
     relatedPages.length ? `## 相关空间已有的页面\n\n${relatedPages.join("\n\n")}` : "相关空间还没有页面。",
     same.length ? `标题相近的页面（先读它们，看是不是同一主题）：${same.map((p) => `${p.space}:${p.slug}「${p.title}」`).join("、")}` : "",
-    len > SOFT_LENGTH ? `正文约 ${len} 字，偏长：看能不能按读者的问题拆开，能拆就提一条 length。` : "",
+    len > SOFT_LENGTH ? `正文约 ${len} 字，超过 ${SOFT_LENGTH}：宿主已经记了一条 length，你看清它该怎么拆（按读者的哪几个问题、哪些段落是流水记录该移出），写进你那一条 length 的建议里。` : "",
     notes.length ? `宿主写入时的提示：\n${notes.map((n) => `- ${n}`).join("\n")}` : "",
     history.length
       ? `## 之前几轮提的问题\n\n${history.map((h) => `第 ${h.round} 轮：\n${h.findings.map((f, i) => `${i + 1}. [${f.kind}] “${f.quote}” —— ${f.problem}`).join("\n") || "（无）"}`).join("\n\n")}\n\n写作者的回复：\n${writerReply || "（没有说明）"}\n\n只提这一版里仍然存在的问题；写作者给了依据反驳的，看依据成不成立。`
@@ -176,6 +182,9 @@ function reviseTask(draft: Draft, findings: Finding[], round: number) {
     `核对角色看了你提交的页面 ${draft.slug}「${draft.title}」（第 ${round} 轮），提出下面这些问题。逐条处理：`,
     findings.map((f, i) => `${i + 1}. [${f.kind}] “${f.quote}”\n   问题：${f.problem}\n   依据：${f.basis}${f.fix ? `\n   建议：${f.fix}` : ""}`).join("\n"),
     "- 问题成立：改正文，事实以原件和代码为准；相关空间已有同主题页面的，链接过去，只留本空间特有的内容。",
+    "- unsure（拿不准的内容）：从页面里拿掉，不留“待确认”之类的小节；要问本人的，写进 write_page 的 questions（一句一个），本人回答后会补进页面。",
+    "- log（流水记录）：提炼成一句站得住的结论（流程、口径、做法），提炼不出的删掉；那是事项、案例页或工作文件的内容。",
+    "- length：按读者的问题拆成几页（同目录下的新页面，用 write_page 直接写），这页留开头的结论和到各页的链接。",
     "- 认为核对错了：不改，在回复里逐条写明你的依据（原件行或代码位置）。",
     "改完用 write_page 重新提交整页（路径不变）；回复里按编号说明每条怎么处理的。",
     `你上次提交的全文：\n\n${draft.body}`,
@@ -230,12 +239,13 @@ export async function writeAndVerify(ctx: RunContext) {
   let status: CheckRecord["status"] = "passed";
   let open: Finding[] = [];
   let raised = 0;
+  const questions = new Set<string>();
   for (let round = 1; round <= CHECK_ROUNDS; round++) {
     const draft = draftOf(app, ctx.run.id)!;
     setRunOutput(app, ctx.run.id, { pageCheck: null });
     const checkScope = scopeFor(app, userId, [...new Set([...readSpaces, ...relatedIds(app, spaceId)])]) ?? [...new Set([...readSpaces, ...relatedIds(app, spaceId)])];
     try {
-      await role(ctx, "wiki-checker", spaceId, checkerTask(app, spaceId, brief, draft, checkScope, round, history, round > 1 ? reply : "", (getRun(app, ctx.run.id).output.writeNotes as string[] | undefined) ?? []), { spaces: [spaceId], readSpaces: checkScope, ownAI: true });
+      await role(ctx, "wiki-checker", spaceId, checkerTask(app, spaceId, brief, draft, checkScope, round, history, round > 1 ? reply : "", [...((getRun(app, ctx.run.id).output.writeNotes as string[] | undefined) ?? []), ...(/```\s*mermaid/i.test(draft.body) && !(await mermaidCheckable()) ? ["宿主这次没能检查 mermaid 图的语法（mermaid 没有加载成功），请按第 8 条看一下图"] : [])]), { spaces: [spaceId], readSpaces: checkScope, ownAI: true });
     } catch (e) {
       if (ctx.signal.aborted) throw e;
       notes.push(`核对没有完成（${truncate((e as Error).message, 120)}）`);
@@ -248,6 +258,11 @@ export async function writeAndVerify(ctx: RunContext) {
       status = "unchecked";
       break;
     }
+    // Length is not the checker's call: over the limit, the host says so itself every round.
+    const len = textLength(draft.body);
+    const longPage = !/(^|\/)index$/.test(draft.slug) && draft.kind !== "index" && len > SOFT_LENGTH;
+    if (longPage && !got.findings.some((f) => f.kind === "length")) got.findings.push({ quote: "（整页）", kind: "length", problem: `正文约 ${len} 字，超过 ${SOFT_LENGTH}，一页只回答一个问题`, basis: "宿主按正文字数统计（不计链接地址）", fix: "按读者的问题拆成几页，流水记录提炼成结论或移出，这页留结论和链接" });
+    for (const f of got.findings) if (f.kind === "unsure") questions.add((f.question ?? f.problem).trim());
     history.push({ round, findings: got.findings, summary: got.summary });
     ctx.event("status", { text: got.findings.length ? `核对第 ${round} 轮：${got.findings.length} 个问题` : `核对第 ${round} 轮：没有问题` });
     if (!got.findings.length) {
@@ -265,11 +280,12 @@ export async function writeAndVerify(ctx: RunContext) {
   // Raised before a revision and no longer there afterwards (roughly: an open one may be an old one still standing).
   const fixed = status === "open" ? Math.max(0, raised - open.length) : raised;
   const draft = draftOf(app, ctx.run.id)!;
+  for (const q of draft.questions ?? []) questions.add(q);
   const existed = pageExists(app, spaceId, draft.slug);
   const p = writePage(app, spaceId, draft.slug, { meta: { title: draft.title, summary: draft.summary, kind: draft.kind }, body: draft.body }, { actor: "agent", message: `agent: ${existed ? "update" : "create"} ${spaceId}/${draft.slug}${draft.reason ? " — " + draft.reason : ""} (run ${ctx.run.id}; 核对 ${history.length} 轮${open.length ? `，${open.length} 条未解决` : ""})` });
   appendLog(app, spaceId, `${existed ? "更新" : "新建"} [[${p.slug}]]${draft.reason ? "：" + draft.reason : ""}（核对 ${history.length} 轮${open.length ? `，${open.length} 条未解决` : ""}）`);
   app.emit({ type: "run-event", runId: ctx.run.id, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: now() } });
-  const rec: CheckRecord = { runId: ctx.run.id, at: now(), status, rounds: history.length, fixed, ...writeCounts(app, ctx.run.id), open, notes, history };
+  const rec: CheckRecord = { runId: ctx.run.id, at: now(), status, rounds: history.length, fixed, ...writeCounts(app, ctx.run.id), open, notes, history, questions: [...questions].filter(Boolean) };
   recordCheck(app, spaceId, p.slug, rec);
   return { summary: reply.trim(), page: p.id, published: true, check: status, rounds: history.length, open: open.length, notes };
 }
@@ -291,6 +307,9 @@ export type GenerationReport = {
   open: { slug: string; title: string; text: string }[];
   missing: { slug: string; title: string; reason: string }[];
   notes: string[];
+  /** Left out of the pages because nobody was sure: put to the owner as one form (`askId`), filled in when answered. */
+  questions: { slug: string; title: string; question: string }[];
+  askId?: string;
 };
 
 const genKey = (id: string) => `wiki-gen:${id}`;
@@ -353,7 +372,7 @@ export function settleWikiRun(app: App, r: Run) {
 }
 
 export function generationReport(app: App, g: Generation): GenerationReport {
-  const report: GenerationReport = { written: [], fixed: 0, rejected: 0, restored: 0, open: [], missing: [], notes: [...g.notes] };
+  const report: GenerationReport = { written: [], fixed: 0, rejected: 0, restored: 0, open: [], missing: [], notes: [...g.notes], questions: [] };
   for (const p of g.pages) {
     const last = getRun(app, p.runs.at(-1)!);
     // Refusals and fixes over every attempt.
@@ -373,6 +392,7 @@ export function generationReport(app: App, g: Generation): GenerationReport {
     for (const f of rec.open) report.open.push({ slug: p.slug, title: p.title, text: `${f.problem}（“${truncate(f.quote, 40)}”）` });
     if (rec.status === "unchecked") report.open.push({ slug: p.slug, title: p.title, text: rec.notes.find((n) => n.startsWith("核对")) ?? "核对没有完成" });
     for (const n of rec.notes) if (!n.startsWith("核对") && !report.notes.includes(n)) report.notes.push(n);
+    for (const q of rec.questions ?? []) report.questions.push({ slug: p.slug, title: p.title, question: q });
   }
   return report;
 }
@@ -387,21 +407,36 @@ export function reportText(g: Generation, r: GenerationReport) {
   if (auto) lines.push(`自动修了 ${auto} 处：写入时拦下 ${r.rejected} 处、核对后改正 ${r.fixed} 处${r.restored ? `、补回入口 ${r.restored} 处` : ""}。`);
   const left = [...r.missing.map((m) => `- 没写成「${m.title}」：${m.reason}`), ...r.open.map((o) => `- 「${o.title}」${o.text} ${pageLink(g.spaceId, o.slug)}`), ...r.notes.map((n) => `- ${n}`)];
   if (left.length) lines.push(`还有 ${left.length} 条没解决：\n${left.slice(0, 20).join("\n")}${left.length > 20 ? `\n…另有 ${left.length - 20} 条，见运行详情` : ""}`);
-  else lines.push("没有需要你看的。");
+  if (r.questions.length) lines.push(`有 ${r.questions.length} 个问题要你回答（拿不准，没有写进页面；回答后补进去）：\n${r.questions.slice(0, 12).map((q) => `- 「${q.title}」${q.question}`).join("\n")}${r.questions.length > 12 ? `\n…另有 ${r.questions.length - 12} 个` : ""}`);
+  if (!left.length && !r.questions.length) lines.push("没有需要你看的。");
   return lines.join("\n");
 }
 
 function deliverReport(app: App, g: Generation, r: GenerationReport) {
   const left = r.missing.length + r.open.length + r.notes.length;
   const name = findSpace(app, g.spaceId)?.name ?? g.spaceId;
+  // The questions go in as one form, opened from this message (not a second one: afterReply keeps it from announcing itself).
+  if (r.questions.length) {
+    const items = r.questions.slice(0, 30).map((q, i) => ({ id: `q${i + 1}`, ...q }));
+    const ask = createAsk(app, {
+      runId: g.planRunId ?? null, conversationId: null, userId: g.userId, kind: "question",
+      question: `Wiki「${name}」写作时拿不准、没写进页面的 ${items.length} 个问题。能答的写一下，答了的会补进对应页面；不知道的留空。`,
+      allowText: false,
+      ui: { fields: items.map((q) => ({ id: q.id, type: "textarea" as const, label: truncate(`「${q.title}」${q.question}`, 200), required: false })), submitLabel: "补进页面" },
+      context: { handler: "wiki-questions", afterReply: true, spaceId: g.spaceId, items },
+    });
+    r.askId = ask.id;
+    if (g.planRunId && one(app.db, "select 1 from runs where id = ?", g.planRunId)) setRunOutput(app, g.planRunId, { report: r });
+    saveGeneration(app, { ...g, report: r });
+  }
   try {
     notify(app, {
-      title: left ? `Wiki「${name}」写完了，${left} 条要你看` : `Wiki「${name}」写完了 ${r.written.length} 页`,
+      title: left || r.questions.length ? `Wiki「${name}」写完了，${[left ? `${left} 条要你看` : "", r.questions.length ? `${r.questions.length} 个问题要你回答` : ""].filter(Boolean).join("，")}` : `Wiki「${name}」写完了 ${r.written.length} 页`,
       body: reportText(g, r),
-      link: r.open[0] ? pageLink(g.spaceId, r.open[0].slug) : `#/wiki/${encodeURIComponent(g.spaceId)}`,
+      link: r.askId ? `#/ui/${r.askId}` : r.open[0] ? pageLink(g.spaceId, r.open[0].slug) : `#/wiki/${encodeURIComponent(g.spaceId)}`,
       userId: g.userId,
       runId: g.planRunId ?? null,
-      urgency: left ? "normal" : "silent",
+      urgency: left || r.questions.length ? "normal" : "silent",
     });
   } catch (e) {
     console.warn(`[omem] Wiki 生成报告发送失败：${(e as Error).message}`);
@@ -413,3 +448,22 @@ export const generationOf = (app: App, runId: string) => {
   const id = (getRun(app, runId).input as { generation?: string }).generation;
   return id ? getGeneration(app, id) : null;
 };
+
+/**
+ * The owner answered the questions a generation left: the pages they are about are revised with the
+ * answers (a new generation, checked like any other). Unanswered ones are left out.
+ */
+registerAskHandler("wiki-questions", async (app, ask, context) => {
+  const { spaceId, items } = context as { spaceId: string; items: { id: string; slug: string; title: string; question: string }[] };
+  const value = (ask.value ?? {}) as Record<string, unknown>;
+  const answered = items.map((q) => ({ ...q, answer: String(value[q.id] ?? "").trim() })).filter((q) => q.answer);
+  if (!answered.length) return;
+  const pages = [...new Set(answered.map((q) => q.slug))].filter((slug) => pageExists(app, spaceId, slug));
+  if (!pages.length) return;
+  const focus = [
+    "本人回答了上次写这几页时拿不准的问题。把回答确认了的内容补进对应页面，写成肯定的结论，别的内容保留；回答里没说清的仍然不写。",
+    ...answered.filter((q) => pages.includes(q.slug)).map((q) => `- [[${q.slug}]] 问：${q.question}\n  答：${q.answer}`),
+  ].join("\n");
+  const { generateWiki } = await import("./generate.ts");
+  generateWiki(app, { spaceId, pages, focus, userId: ask.userId });
+});

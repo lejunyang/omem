@@ -443,6 +443,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 主线程卡顿监测（diag 的 eventLoop）；向量变更记录与量化快照；网络 git 异步 | 已实现；2026-11-11 | `core/loop-monitor.ts`、`search/vectors.ts`、`core/git.ts` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
 | Wiki 生成时的检查与核对（docs/v2/wiki-verify.md）：`write_page` 的宿主检查（首页丢入口先退回、同一运行再缺则补回；引用不存在、已删、行号超出、共享页面引用个人空间 / 交办分支 / 部分读者无权限的原件并给出业务空间的同一份；能对上索引的纯文本代码位置和符号；超过 12000 字）；规划和写作前同步落后的代码索引；`submit_plan` 对相关空间同名主题要 `overlap` 或 `reuse`；写作运行的页面先存草稿，`wiki-checker` 角色（自己的 AI）逐条核对、`submit_page_check` 交结构化结论，写作者改或反驳，最多 3 轮后发布；核对记录（kv，页面右栏）；一次生成结束对账，没写成的重试一次，只发一条通知（无未解决时 silent） | 已实现；2026-11-11，`test/wiki-checks.test.ts`、`test/wiki-verify.test.ts`（假 Agent）；真实模型的核对质量待验 | `src/wiki/checks.ts`、`src/wiki/verify.ts`、`roles/wiki-checker.md`、`web/src/components/WikiChecks.vue` |
+| Wiki 写法的追加检查（docs/v2/wiki-verify.md 第 9–12 类）：核对角色的 wording / hedge / unsure / log；拿不准的经 `write_page` 的 `questions` 和核对的 `question` 汇成一张表单（`wiki-questions`），回答后按页面补写；超过 6000 字由宿主每轮记 length；`write_page` 用 mermaid 解析器检查图的语法；网页 mermaid 渲染修复（`data-mermaid` 编码、加载失败重试、失败显示原因和源码、分块失效时刷新） | 已实现；2026-11-12，`test/wiki-checks.test.ts`、`test/wiki-verify.test.ts`，网页 1440 / 390 看过；真实模型的写法核对待验 | `src/wiki/checks.ts`、`src/wiki/verify.ts`、`web/src/lib/markdown.ts`、`web/src/main.ts`、`skills/library/wiki-writing` |
 
 定时规则的投递目标可选择已有助理会话或已采集的飞书群。选择群后保存时建立本人所属的群会话，不发送消息、不复用访客会话；执行沿用所选会话的机器人。缺少目标的旧规则在动作阶段失败并记录原因，不再转为私发。实现：`src/rules/destinations.ts`、`actions.ts`、`web/src/views/Rules.vue`；专项测试覆盖。
 

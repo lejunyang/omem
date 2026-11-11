@@ -16,7 +16,7 @@ import { extractCites, extractLinks, folderOf, listPages, resolveSlug, resolveSo
 export const HARD_LENGTH = 12000;
 export const SOFT_LENGTH = 6000;
 
-export type Issue = { kind: "lost-entries" | "cite-missing" | "cite-deleted" | "cite-range" | "cite-unreachable" | "plain-code" | "too-long"; text: string };
+export type Issue = { kind: "lost-entries" | "cite-missing" | "cite-deleted" | "cite-range" | "cite-unreachable" | "plain-code" | "too-long" | "mermaid"; text: string };
 
 /** What a reader reads: link targets (`](src:…)`, `](https://…)`) and front matter do not count. */
 export function textLength(body: string) {
@@ -219,6 +219,62 @@ export function checkPageWrite(app: App, input: { spaceId: string; slug: string;
   const same = input.before === null ? sameTopicElsewhere(app, input.spaceId, input.title, input.readable) : [];
   if (same.length) notes.push(`相关空间已有同主题的页面：${same.map((p) => `[[${p.space}:${p.slug}|${p.title}]]`).join("、")}。两边讲的是同一件事就链接过去、只写本空间特有的部分；说法不一致的在页面里写清以哪边为准`);
   return { errors, notes, body, fixes, length: len };
+}
+
+// ---------------------------------------------------------------- diagrams
+
+type MermaidLib = { parse(text: string): Promise<unknown> };
+let mermaidLib: Promise<MermaidLib | null> | null = null;
+/**
+ * mermaid's own parser, in Node. Parsing a valid flowchart sanitizes its labels with DOMPurify, which
+ * has no window here: it gets inert stand-ins (nothing on the host renders HTML with DOMPurify, and
+ * parsing only checks syntax). Null when mermaid cannot be loaded: the checker role looks instead.
+ */
+function loadMermaid() {
+  mermaidLib ??= (async () => {
+    try {
+      const purify = (await import("dompurify")).default as unknown as Record<string, unknown>;
+      if (typeof purify.addHook !== "function") Object.assign(purify, { addHook() {}, removeHook() {}, removeHooks() {}, removeAllHooks() {}, sanitize: (s: unknown) => String(s) });
+      return (await import("mermaid")).default as unknown as MermaidLib;
+    } catch (e) {
+      console.warn(`[omem] mermaid 加载失败，Wiki 图表的语法检查交给核对角色：${(e as Error).message}`);
+      return null;
+    }
+  })();
+  return mermaidLib;
+}
+
+/** Whether mermaid could be loaded here to check diagrams (when not, the checker role is told to look). */
+export const mermaidCheckable = async () => !!(await loadMermaid());
+
+/** ```mermaid blocks of a page that mermaid cannot parse, with the page line the error is on. */
+export async function mermaidIssues(body: string): Promise<Issue[]> {
+  const blocks: { start: number; text: string }[] = [];
+  const lines = body.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*```+\s*mermaid\s*$/i.test(lines[i])) continue;
+    const start = i + 1;
+    let j = start;
+    while (j < lines.length && !/^\s*```+\s*$/.test(lines[j])) j++;
+    blocks.push({ start, text: lines.slice(start, j).join("\n") });
+    i = j;
+  }
+  if (!blocks.length) return [];
+  const mermaid = await loadMermaid();
+  if (!mermaid) return [];
+  const out: Issue[] = [];
+  for (const [n, b] of blocks.entries()) {
+    try {
+      await mermaid.parse(b.text);
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e);
+      const at = /line (\d+)/i.exec(msg);
+      const pageLine = b.start + (at ? Number(at[1]) : 1);
+      const detail = msg.split("\n").slice(0, 3).join(" ").replace(/\s+/g, " ").slice(0, 300);
+      out.push({ kind: "mermaid", text: `第 ${n + 1} 张 mermaid 图语法错误，在正文第 ${pageLine} 行附近：${detail}。常见原因：节点或连线文字里有括号、以 / 开头（会被当成形状），把文字用双引号包起来，如 A["调用 apply(order)"]、-->|"成功(200)"|` });
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- the code index

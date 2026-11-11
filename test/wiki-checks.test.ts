@@ -10,7 +10,7 @@ import { run } from "../src/core/db.ts";
 import { createSpace, relateSpaces, updateSpace } from "../src/core/spaces.ts";
 import { addMember, createUser } from "../src/core/users.ts";
 import { upsertSource } from "../src/sources/store.ts";
-import { checkPageWrite, citeIssues, codeRefIssues, lostEntries, HARD_LENGTH, staleCodeIndexes, textLength } from "../src/wiki/checks.ts";
+import { checkPageWrite, citeIssues, codeRefIssues, lostEntries, HARD_LENGTH, mermaidIssues, staleCodeIndexes, textLength } from "../src/wiki/checks.ts";
 import { readPage, writePage } from "../src/wiki/store.ts";
 import { testApp } from "./helpers.ts";
 
@@ -150,6 +150,37 @@ describe("length and the same topic elsewhere", () => {
     expect(linked.text).toContain("1 个主题链接到相关空间");
     expect(getRun(app, plan.id).output.reuse).toHaveLength(1);
   });
+});
+
+describe("diagrams", () => {
+  const page = (diagram: string) => `开头一句。\n\n\`\`\`mermaid\n${diagram}\n\`\`\`\n`;
+  it("turns away mermaid that mermaid itself cannot parse, saying on which line", async () => {
+    // Unquoted parentheses in a node or an edge label, and a label starting with / (read as a shape).
+    const paren = await mermaidIssues(page("flowchart TD\n  A[调用 apply(order)] --> B[完成]"));
+    expect(paren).toHaveLength(1);
+    expect(paren[0].text).toContain("正文第 5 行");
+    expect((await mermaidIssues(page("flowchart TD\n  A -->|成功(200)| B"))).length).toBe(1);
+    expect((await mermaidIssues(page("flowchart TD\n  A[/api/refund 接口] --> B[完成]"))).length).toBe(1);
+    expect((await mermaidIssues(page("flowchart TD\n  A --> "))).length).toBe(1);
+  }, 60000);
+
+  it("lets through what draws: quoted text, a slash inside a label, a parallelogram with a line break, other diagram types", async () => {
+    for (const ok of [
+      "flowchart TD\n  A[\"调用 apply(order)\"] --> B[完成]",
+      "flowchart TD\n  A[退款/取消] --> B[完成]",
+      // Checked with mermaid 11's parser: <br/> inside [/…/] parses.
+      "flowchart TD\n  A[/输入<br/>订单号/] --> B[完成]",
+      "sequenceDiagram\n  A->>B: 申请退款",
+    ])
+      expect(await mermaidIssues(page(ok))).toEqual([]);
+    expect(await mermaidIssues("没有图的页面")).toEqual([]);
+  }, 60000);
+
+  it("write_page refuses a page whose diagram will not draw", async () => {
+    const r = await callTool(agentCtx(null), "write_page", { page: "flows/diagram", title: "图", summary: "s", body: page("flowchart TD\n  A[调用 f(x)] --> B") });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("mermaid");
+  }, 60000);
 });
 
 describe("the code index", () => {

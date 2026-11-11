@@ -50,7 +50,8 @@ marked.use({
   renderer: {
     code({ text, lang }) {
       const language = (lang ?? "").trim().split(/\s+/)[0];
-      if (language === "mermaid") return `<div class="mermaid-box" data-mermaid="${escapeHtml(text)}"><pre>${escapeHtml(text)}</pre></div>`;
+      // The source rides in the attribute URI-encoded: DOMPurify drops attribute values containing "-->" (every flowchart has one).
+      if (language === "mermaid") return `<div class="mermaid-box" data-mermaid="${encodeURIComponent(text)}"><pre>${escapeHtml(text)}</pre></div>`;
       return `<pre><code class="hljs${language ? " language-" + escapeHtml(language) : ""}">${highlight(text, language)}</code></pre>`;
     },
     image({ href, title, text }) {
@@ -98,22 +99,78 @@ export function renderMarkdown(md: string, opts: { breaks?: boolean } = {}): str
 }
 
 let mermaidLoader: Promise<typeof import("mermaid").default> | null = null;
-export async function renderMermaid(root: HTMLElement) {
-  const boxes = [...root.querySelectorAll<HTMLElement>(".mermaid-box[data-mermaid]")].filter((b) => !b.dataset.done);
-  if (!boxes.length) return;
-  mermaidLoader ??= import("mermaid").then((m) => {
-    const dark = matchMedia("(prefers-color-scheme: dark)").matches && document.documentElement.dataset.theme !== "light";
-    m.default.initialize({ startOnLoad: false, theme: dark || document.documentElement.dataset.theme === "dark" ? "dark" : "neutral", securityLevel: "strict", fontFamily: "inherit" });
-    return m.default;
+/** Loaded once; a failed load (a chunk gone after an update, a dropped connection) is not kept, so the next try loads again. */
+function loadMermaid() {
+  mermaidLoader ??= import("mermaid")
+    .then((m) => {
+      const dark = matchMedia("(prefers-color-scheme: dark)").matches && document.documentElement.dataset.theme !== "light";
+      m.default.initialize({ startOnLoad: false, theme: dark || document.documentElement.dataset.theme === "dark" ? "dark" : "neutral", securityLevel: "strict", fontFamily: "inherit" });
+      return m.default;
+    })
+    .catch((e) => {
+      mermaidLoader = null;
+      throw e;
+    });
+  return mermaidLoader;
+}
+
+/** A diagram box's source (kept URI-encoded in data-mermaid). */
+function mermaidSource(box: HTMLElement) {
+  try {
+    return decodeURIComponent(box.dataset.mermaid ?? "");
+  } catch {
+    return box.dataset.mermaid ?? "";
+  }
+}
+
+/** A diagram that did not draw: says so, shows its source left-aligned, and offers another try. */
+function showFailed(box: HTMLElement, reason: string) {
+  box.dataset.done = "1";
+  box.classList.add("failed");
+  box.replaceChildren();
+  const head = document.createElement("div");
+  head.className = "mermaid-failed";
+  const text = document.createElement("span");
+  text.textContent = reason;
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "btn ghost sm";
+  retry.textContent = "重试";
+  retry.addEventListener("click", () => {
+    delete box.dataset.done;
+    box.classList.remove("failed");
+    void renderMermaid(box.parentElement ?? box, [box]);
   });
-  const mermaid = await mermaidLoader;
+  head.append(text, retry);
+  const pre = document.createElement("pre");
+  const code = document.createElement("code");
+  code.textContent = mermaidSource(box);
+  pre.append(code);
+  box.append(head, pre);
+}
+
+export async function renderMermaid(root: HTMLElement, only?: HTMLElement[]) {
+  const boxes = (only ?? [...root.querySelectorAll<HTMLElement>(".mermaid-box[data-mermaid]")]).filter((b) => !b.dataset.done);
+  if (!boxes.length) return;
+  let mermaid: Awaited<ReturnType<typeof loadMermaid>>;
+  try {
+    mermaid = await loadMermaid();
+  } catch {
+    for (const box of boxes) showFailed(box, "画图组件没有加载成功（服务更新过的话，刷新页面后再试）。下面是这张图的源码。");
+    return;
+  }
   for (const box of boxes) {
     box.dataset.done = "1";
+    const id = `m${Math.random().toString(36).slice(2)}`;
     try {
-      const { svg } = await mermaid.render(`m${Math.random().toString(36).slice(2)}`, box.dataset.mermaid!);
+      const { svg } = await mermaid.render(id, mermaidSource(box));
       box.innerHTML = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ["foreignObject"] });
-    } catch {
-      box.classList.add("failed");
+    } catch (e) {
+      // mermaid leaves its scratch element behind when a diagram fails.
+      document.getElementById(`d${id}`)?.remove();
+      document.getElementById(id)?.remove();
+      const why = String((e as Error)?.message ?? "").split("\n")[0].replace(/[:：]\s*$/, "").slice(0, 160);
+      showFailed(box, `这张图没画出来${why ? `：${why}` : ""}。下面是它的源码。`);
     }
   }
 }

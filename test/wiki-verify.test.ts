@@ -11,6 +11,8 @@ import { startServer } from "../src/server/http.ts";
 import { importText } from "../src/sources/import.ts";
 import { pageExists, readPage } from "../src/wiki/store.ts";
 import { getGeneration, pageChecks, reportText, startGeneration } from "../src/wiki/verify.ts";
+import { answerAsk, getAsk } from "../src/agents/asks.ts";
+import { getRun } from "../src/agents/runs.ts";
 import { testApp } from "./helpers.ts";
 
 const app = testApp();
@@ -19,8 +21,9 @@ relateSpaces(app, "project", "materials", { origin: "owner" });
 importText(app, "materials", { uri: "README.md", text: "项目 A 的示例材料" });
 const dir = mkdtempSync(join(tmpdir(), "omem-wiki-verify-"));
 const checkFile = join(dir, "check");
+const writeFile = join(dir, "write");
 app.config.agents.default = "fake";
-app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "wiki", FAKE_WIKI_CHECK_FILE: checkFile } })];
+app.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "wiki", FAKE_WIKI_CHECK_FILE: checkFile, FAKE_WIKI_WRITE_FILE: writeFile } })];
 const server = await startServer(app, { port: 0, quiet: true });
 startWorker(app);
 afterAll(async () => {
@@ -91,4 +94,42 @@ it("saves at once and records it when the space turned checking off", async () =
   expect(readPage(app, "project", "overview").body).toBe("示例正文\n");
   expect(pageChecks(app, "project", "overview")[0]).toMatchObject({ status: "off", rounds: 0 });
   updateSpace(app, "project", { settings: { wikiVerify: true } });
+}, 120000);
+
+it("sends a page over the length limit back to be split, whatever the checker says", async () => {
+  writeFileSync(checkFile, "pass");
+  writeFileSync(writeFile, "long");
+  await generate("g5", [{ slug: "overview", title: "概览" }]);
+  writeFileSync(writeFile, "write");
+  const rec = pageChecks(app, "project", "overview")[0];
+  // The checker passed it; the host's own length finding sent it back once, and the shorter version passed.
+  expect(rec.history[0].findings).toEqual([expect.objectContaining({ kind: "length", basis: expect.stringContaining("宿主") })]);
+  expect(rec).toMatchObject({ status: "passed", rounds: 2, fixed: 1 });
+  expect(readPage(app, "project", "overview").body).toBe("示例正文（已按核对改）\n");
+}, 120000);
+
+it("takes what nobody is sure of out of the page, asks the owner once, and fills the answers in", async () => {
+  writeFileSync(checkFile, "unsure");
+  writeFileSync(writeFile, "questions");
+  const g = await generate("g6", [{ slug: "overview", title: "概览" }]);
+  writeFileSync(writeFile, "write");
+  writeFileSync(checkFile, "pass");
+  const rec = pageChecks(app, "project", "overview")[0];
+  expect([...(rec.questions ?? [])].sort()).toEqual(["A 业务的退款上限是多少？", "退款是原路退回还是退到余额？"].sort());
+  expect(g.report!.questions).toHaveLength(2);
+  const n = lastNotice();
+  expect(n.title).toContain("2 个问题要你回答");
+  expect(n.body).toContain("A 业务的退款上限是多少？");
+  // One form, opened from that message rather than announced on its own.
+  const ask = getAsk(app, g.report!.askId!);
+  expect(ask).toMatchObject({ kind: "question", handler: "wiki-questions", status: "pending" });
+  expect(ask.ui?.fields).toHaveLength(2);
+  const before = listRuns(app, { kind: "wiki-write", limit: 100 }).length;
+  const field = ask.ui!.fields!.find((f) => f.label.includes("上限"))!;
+  await answerAsk(app, ask.id, { value: { [field.id]: "3000 元" }, by: "owner" });
+  const after = listRuns(app, { kind: "wiki-write", limit: 100 });
+  expect(after.length).toBe(before + 1);
+  const instructions = String((getRun(app, after[0].id).input as { instructions?: string }).instructions);
+  expect(instructions).toContain("答：3000 元");
+  expect(instructions).not.toContain("原路退回");
 }, 120000);

@@ -1530,6 +1530,7 @@ def({
     body: z.string().describe("正文 Markdown，不要再写一级标题"),
     space: z.string().optional(),
     reason: z.string().optional().describe("这次修改的原因，写入版本历史"),
+    questions: z.array(z.string().max(500)).max(20).optional().describe("Wiki 写作运行里：拿不准、因此没写进页面、要本人回答的问题（一句一个）；本人回答后会补进页面"),
   }),
   handler: async (ctx, a) => {
     const id = wikiSpace(ctx, a.space);
@@ -1548,6 +1549,8 @@ def({
     const draft = wv.draftTarget(ctx.app, ctx.runId, id, slug);
     const before = existed ? readPage(ctx.app, id, slug).body : null;
     const checked = wc.checkPageWrite(ctx.app, { spaceId: id, slug, kind: a.kind, title: a.title, body: a.body.replace(/^#\s+.+\n+/, ""), before, readable: ctx.spaces, restoreLost: wv.refusals(ctx.app, ctx.runId, "lost-entries") > 0 || !ctx.runId });
+    // Diagrams that will not draw (mermaid's own parser, the one the web page uses).
+    checked.errors.push(...(await wc.mermaidIssues(checked.body)));
     if (checked.errors.length) {
       wv.noteWriteCheck(ctx.app, ctx.runId, { rejected: [...new Set(checked.errors.map((e) => e.kind))] });
       throw new HttpError(400, `页面没有保存，先改这些地方再提交：\n${checked.errors.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}`);
@@ -1556,7 +1559,7 @@ def({
     const body = checked.body;
     const notes = checked.notes.length ? `\n${checked.notes.map((n) => `- ${n}`).join("\n")}` : "";
     if (draft) {
-      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind: a.kind ?? "page", body, reason: a.reason });
+      wv.saveDraft(ctx.app, ctx.runId!, { slug, title: a.title, summary: a.summary, kind: a.kind ?? "page", body, reason: a.reason, questions: a.questions?.map((q) => q.trim()).filter(Boolean) });
       setRunOutput(ctx.app, ctx.runId!, { writeNotes: checked.notes });
       return `已保存页面 ${id}/${slug} 的草稿（${wc.textLength(body)} 字）：写作结束后由核对角色对照原件和代码核对，有问题会交回给你改，通过后发布。${notes}`;
     }
@@ -4277,11 +4280,12 @@ def({
         z.object({
           quote: z.string().describe("草稿里有问题的那一句（原文摘录，够定位即可）"),
           kind: z
-            .enum(["cite", "code", "negative", "duplicate", "conflict", "wording", "length", "other"])
-            .describe("cite 论断和它贴的引用对不上；code 流程、步骤、字段和代码不符；negative “没有/未取得/找不到”这类说法不属实；duplicate 相关空间已有同主题页面，应链接过去；conflict 和本空间或相关空间已有页面说法冲突；wording 写了调查过程或写给审稿人的话；length 太长要拆；other"),
+            .enum(["cite", "code", "negative", "duplicate", "conflict", "wording", "hedge", "unsure", "log", "length", "other"])
+            .describe("cite 论断和它贴的引用对不上；code 流程、步骤、字段和代码不符；negative “没有/未取得/找不到”这类说法不属实；duplicate 相关空间已有同主题页面，应链接过去；conflict 和本空间或相关空间已有页面说法冲突；wording 写了整理过程或写给审稿人的话；hedge 结论上堆“可能”“以实际为准”“建议进一步确认”这类退路；unsure 没查清、拿不准的内容写进了页面（含“待确认”小节），应从页面拿掉、变成问本人的问题；log 某天谁说了什么、沟通流水、临时安排、个人待办这类记录，应提炼成结论或移出 Wiki；length 太长或一页不止回答一个问题，要拆；other"),
           problem: z.string().describe("一句话：哪里不对"),
           basis: z.string().describe("依据：原件行（src:<id>#L起-L止）、代码位置、页面路径（空间:路径），或你查过的地方"),
-          fix: z.string().optional().describe("怎么改"),
+          fix: z.string().optional().describe("怎么改（wording / hedge 给出改后的句子）"),
+          question: z.string().max(500).optional().describe("kind=unsure 时：要问本人的那个问题，一句话，本人答了就能补进页面"),
         }),
       )
       .describe("没有问题传 []"),
