@@ -1607,6 +1607,8 @@ export const migrations: readonly string[] = [
   create index page_cites_page on page_cites(page_id);
   create index symbols_qname on symbols(qname);
   create index symbols_any_name on symbols(name);`,
+  // How often cleaning a backend session has failed: retries back off, and give up in the end.
+  `alter table session_cleanup add column attempts integer not null default 0`,
 ];
 
 export type Db = DatabaseSync;

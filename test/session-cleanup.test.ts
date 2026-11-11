@@ -271,3 +271,21 @@ describe("unified ACP cleanup", () => {
     expect(pending(app)).toEqual([]);
   });
 });
+
+describe("a cleanup that keeps failing", () => {
+  it("is retried less and less often and dropped in the end", async () => {
+    const app = testApp(); opened.push(app);
+    // An ACP session whose backend configuration is gone: every attempt fails.
+    run(app.db, "insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values('acp:x','gone-1','acp','missing','x',null,?,null,?,1,'')", app.home, process.pid);
+    const said: string[] = [];
+    const sweep = async () => { run(app.db, "update session_cleanup set retry_at = ''"); await recoverSessionCleanup(app, (_r, e) => { if (e.type === "status") said.push(e.text); }); };
+    await sweep();
+    const first = all<{ attempts: number; retry_at: string }>(app.db, "select attempts, retry_at from session_cleanup")[0];
+    expect(first.attempts).toBe(1);
+    // Two minutes after the first failure, not one.
+    expect(Date.parse(first.retry_at) - Date.now()).toBeGreaterThan(100_000);
+    for (let i = 0; i < 11; i++) await sweep();
+    expect(all(app.db, "select 1 from session_cleanup")).toEqual([]);
+    expect(said.at(-1)).toContain("不再重试");
+  });
+});

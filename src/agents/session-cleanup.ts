@@ -12,12 +12,15 @@ import type { AgentEvent, AgentRequest, SessionCleanup } from "./types.ts";
 type Pending = {
   backend_key: string; session_id: string; transport: string; profile_id: string | null;
   fingerprint: string | null; app_id: string | null; cwd: string; run_id: string | null;
-  owner_pid: number; ready: number; retry_at: string;
+  owner_pid: number; ready: number; retry_at: string; attempts?: number;
 };
 type Key = Pick<Pending, "backend_key" | "session_id">;
 type Emit = (e: AgentEvent) => void;
 /** How long the sessions of work handed to agents are kept after the last run in it. */
 const RETAIN_IDLE_MS = 2 * 86400_000;
+/** A cleanup that keeps failing is retried less and less often, then dropped: the session is most likely gone on the backend's side. */
+const GIVE_UP_AFTER = 12;
+const retryDelay = (attempts: number) => Math.min(60_000 * 2 ** attempts, 6 * 3600_000);
 const busy = new Set<string>();
 const activeTurns = new Set<string>();
 const sessionKey = (app: App, p: Key) => `${app.home}:${p.backend_key}:${p.session_id}`;
@@ -126,14 +129,22 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
   busy.add(key);
   try {
     // Delay both failures and still-running cloud tasks; the next sweep tries again.
-    update(app, p, "retry_at = ?", new Date(Date.now() + 60_000).toISOString());
+    update(app, p, "retry_at = ?", new Date(Date.now() + retryDelay(p.attempts ?? 0)).toISOString());
     if (p.transport === "acp") await cleanChildren(app, p, profile ?? recordedProfile(app, p), emit);
     if (operation) await operation();
     else if (!await perform(app, p, recovering)) return;
     run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);
     emit({ type: "status", text: `已清理后端会话 ${p.session_id}（${p.profile_id ?? p.transport}${p.app_id ? `，应用 ${p.app_id}` : ""}${recovering ? "，恢复待清理会话" : ""}）` });
   } catch (e) {
-    emit({ type: "status", text: `后端会话清理失败，稍后重试：${(e as Error).message.slice(0, 160)}` });
+    const attempts = (p.attempts ?? 0) + 1;
+    const why = (e as Error).message.slice(0, 160);
+    if (attempts >= GIVE_UP_AFTER) {
+      run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);
+      emit({ type: "status", text: `后端会话 ${p.session_id}（${p.profile_id ?? p.transport}）清理了 ${attempts} 次都失败，不再重试：${why}` });
+    } else {
+      update(app, p, "attempts = ?, retry_at = ?", attempts, new Date(Date.now() + retryDelay(attempts)).toISOString());
+      emit({ type: "status", text: `后端会话清理失败，稍后重试（第 ${attempts} 次）：${why}` });
+    }
   } finally { busy.delete(key); }
 }
 
