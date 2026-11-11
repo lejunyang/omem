@@ -108,6 +108,14 @@ function matchedRule(app: App, input: UpsertInput) {
 }
 
 /** Called before storing captured material. Explicit imports never opt into automatic routing. */
+/**
+ * A one-to-one chat (with a colleague, a bot, the assistant). It never leaves the space it is in by
+ * inference: what two people said in private does not become readable to a business space's members
+ * because a model found it on topic. Only the owner moves one (by hand, a chat binding or a rule).
+ */
+export const isPrivateChat = (s: { kind: string; meta?: Record<string, unknown> | null }) => s.kind === "chat" && (s.meta?.chatKind === "p2p" || s.meta?.chatMode === "p2p");
+export const PRIVATE_CHAT_REASON = "私聊留在原处，只由本人手动归档";
+
 export function prepareArchive(app: App, input: UpsertInput): { input: UpsertInput; mode: Route["mode"]; reason: string; ruleId?: string; origin: string; sourceId?: string; decided?: boolean } | null {
   if (!input.archive || ["code", "conversation", "activity", "work"].includes(input.kind)) return null;
   const found = routedSource(app, input.spaceId, input.uri) ?? one<{ id: string; space_id: string }>(app.db, "select id,space_id from sources where space_id=? and uri=?", input.spaceId, input.uri);
@@ -127,6 +135,7 @@ export function prepareArchive(app: App, input: UpsertInput): { input: UpsertInp
     getSpace(app, rule.target);
     return { sourceId: found?.id, input: { ...input, spaceId: rule.target }, mode: "rule", reason: `归档规则：${rule.name}`, ruleId: rule.id, origin };
   }
+  if (isPrivateChat(input)) return { sourceId: found?.id, input: { ...input, spaceId: found?.space_id ?? input.spaceId }, mode: prev?.mode === "ai" ? "ai" : "fallback", reason: prev?.mode === "ai" ? prev.reason : PRIVATE_CHAT_REASON, origin, decided: true };
   if (prev?.mode === "ai") return { sourceId: found?.id, input: { ...input, spaceId: found!.space_id }, mode: "ai", reason: prev.reason, origin };
   // A conversation is judged as a whole: new messages appended to a chat the archivist already
   // kept in personal, and history pages of a chat already judged, follow that judgement instead of

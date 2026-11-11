@@ -3,7 +3,7 @@ import { withBot } from "../core/bot-context.ts";
 import { mark } from "../core/loop-monitor.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
-import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
+import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
@@ -2845,6 +2845,7 @@ def({
     writeSpace(ctx, s.spaceId);
     const target = writeSpace(ctx, a.space);
     if (s.hash !== a.hash) throw new HttpError(409, "原件已更新，请重新读取并使用新的 hash");
+    if (isPrivateChat(s) && target !== s.spaceId) throw new HttpError(400, "这是一对一私聊：不自动归到别的空间，只由本人手动移动。space 填它现在的空间，verdict 填 personal");
     if (!sourceRoute(ctx.app, s.id)?.pending) throw new HttpError(409, "归属已由设置或其他任务确定");
     const p = prepareArchive(ctx.app, { ...s, text: sourceText(ctx.app, s.id), archive: true });
     if (p && p.mode !== "fallback") throw new HttpError(409, "已有设置或规则确定归属，不能覆盖");

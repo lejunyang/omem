@@ -239,3 +239,23 @@ describe("the check on a busy server", () => {
     expect(archiveEvidence(app, s.id).linkedIn).toMatchObject([{ chat: "oc_old", messages: 1 }]);
   });
 });
+
+describe("one-to-one chats", () => {
+  it("stay where they are: not queued when cited from a business space, not sent to the archivist on capture", async () => {
+    const app = setup();
+    // A private chat with a colleague, all about project A, cited by a page of project A.
+    const chat = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_private", title: "与 小王 的私聊", text: "[2026-03-04 10:00] 小王: 退款流程周四上线", meta: { chatId: "oc_private", chatKind: "p2p" }, archive: true });
+    expect(sourceRoute(app, chat.id)).toMatchObject({ mode: "fallback", pending: 0 });
+    page(app, "project-a", "refund", [chat.id]);
+    // A group chat cited the same way is judged again; the private one is left alone.
+    const group = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_group", title: "退款项目群", text: "[2026-03-04 10:00] 小王: 退款流程周四上线", meta: { chatId: "oc_group", chatKind: "group" } });
+    run(app.db, "insert into source_routes(source_id, origin_space, mode, reason, decision_hash, pending) values(?,?,?,?,?,0) on conflict(source_id) do update set mode = 'fallback', pending = 0", group.id, "personal", "fallback", "未命中归档规则，暂存个人空间", getSource(app, group.id).hash);
+    page(app, "project-a", "refund-group", [group.id]);
+    await collectRecheck(app);
+    const queued = all<{ source_id: string }>(app.db, "select source_id from archive_recheck").map((r) => r.source_id);
+    expect(queued).toContain(group.id);
+    expect(queued).not.toContain(chat.id);
+    // New messages of the private chat keep it in the personal space, decided, without asking again.
+    expect(prepareArchive(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_private", title: "与 小王 的私聊", text: "更多", meta: { chatId: "oc_private", chatKind: "p2p" }, archive: true })).toMatchObject({ mode: "fallback", decided: true, input: { spaceId: "personal" } });
+  });
+});

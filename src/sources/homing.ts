@@ -201,6 +201,7 @@ export const PRIORITY = { unreachable: 0, citedByPage: 0, cited: 1, knowledgeBas
 /** Sources in the owner's personal spaces that the archivist may judge again (not pinned by hand, a binding or a rule). */
 function eligibleSql(homes: string[], alias = "s") {
   return `${alias}.deleted_at is null and ${alias}.space_id in (${placeholders(homes.length)}) and ${alias}.kind not in (${NOT_ARCHIVED.map((k) => `'${k}'`).join(",")})
+    and not (${alias}.kind = 'chat' and coalesce(json_extract(${alias}.meta, '$.chatKind'), json_extract(${alias}.meta, '$.chatMode'), '') = 'p2p')
     and not exists (select 1 from source_routes r where r.source_id = ${alias}.id and (r.mode in ('manual', 'binding', 'rule') or r.pending = 1))`;
 }
 export function isEligible(app: App, id: string) {
