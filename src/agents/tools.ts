@@ -4,6 +4,7 @@ import { mark } from "../core/loop-monitor.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
+import { archiveEvidence, matterSpace } from "../sources/homing.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
 import { designBodySchema } from "../designs/types.ts";
@@ -2746,9 +2747,17 @@ function ownerAskedThisTurn(ctx: ToolContext) {
 
 def({
   name: "classify_source",
-  description: "给待归档原件确定空间，保留 ID、引用和迁移记录。只处理本次归档任务的原件；不确定用 personal。",
+  description:
+    "给待归档原件确定空间，保留 ID、引用和迁移记录。只处理本次归档任务的原件。留在个人空间时 space 填 personal，verdict 说明是确实个人的（personal）还是判断不了（unsure，candidates 写可能的空间，交给本人定）。",
   write: true,
-  schema: z.object({ source_id: z.string(), hash: z.string(), space: z.string(), reason: z.string().trim().min(1).max(500) }),
+  schema: z.object({
+    source_id: z.string(),
+    hash: z.string(),
+    space: z.string(),
+    reason: z.string().trim().min(1).max(500),
+    verdict: z.enum(["business", "personal", "unsure"]).optional().describe("business：归到业务空间；personal：确实是个人的；unsure：判断不了"),
+    candidates: z.array(z.string()).max(5).optional().describe("unsure 时可能的空间"),
+  }),
   handler: (ctx, a) => {
     if (ctx.role !== "archivist" || !ctx.runId) throw new HttpError(403, "仅归档角色可使用");
     const ids = getRun(ctx.app, ctx.runId).input.sourceIds as string[];
@@ -2760,7 +2769,20 @@ def({
     if (!sourceRoute(ctx.app, s.id)?.pending) throw new HttpError(409, "归属已由设置或其他任务确定");
     const p = prepareArchive(ctx.app, { ...s, text: sourceText(ctx.app, s.id), archive: true });
     if (p && p.mode !== "fallback") throw new HttpError(409, "已有设置或规则确定归属，不能覆盖");
-    moveSource(ctx.app, s.id, target, a.reason, target === "personal" ? "fallback" : "ai", undefined, a.hash);
+    const kept = target === s.spaceId || findSpace(ctx.app, target)?.kind === "personal";
+    const candidates = (a.candidates ?? []).filter((id) => findSpace(ctx.app, id) && id !== s.spaceId);
+    // With automatic moves off, a judgement for a business space waits for the owner (src/sources/homing.ts).
+    if (!kept && !ctx.app.config.archive.autoMove) {
+      run(ctx.app.db, "update source_routes set pending=0, decision_hash=?, mode='fallback', reason=?, verdict='proposed', suggested=? where source_id=?", a.hash, a.reason, JSON.stringify([target]), s.id);
+      return `已记下建议归到 ${target}；自动移动已关闭，等本人在归档规则页“从个人空间归位”里确认。`;
+    }
+    const detail = kept ? {} : (archiveEvidence(ctx.app, s.id) as Record<string, unknown>);
+    moveSource(ctx.app, s.id, target, a.reason, kept ? "fallback" : "ai", undefined, a.hash, detail);
+    if (kept) {
+      const verdict = a.verdict === "unsure" || (candidates.length && a.verdict !== "personal") ? "unsure" : "personal";
+      run(ctx.app.db, "update source_routes set verdict=?, suggested=? where source_id=?", verdict, JSON.stringify(candidates), s.id);
+      return verdict === "unsure" ? `留在 ${s.spaceId}，记为“判断不了”，本人会在归档规则页看到${candidates.length ? `（可能的空间：${candidates.join("、")}）` : ""}。` : `留在 ${s.spaceId}；有新旁证时会再判断。`;
+    }
     return `已归档到 ${target}；原件 ID ${s.id} 保持不变。`;
   },
 });
@@ -3243,7 +3265,7 @@ def({
 def({
   name: "write_file",
   description:
-    "写工作文件（原件，可检索、可用 src:<id> 引用）：长任务的当前成果（扫过哪些、找到什么、下一步从哪接着做），或定时任务逐天累积的周报/季报素材。mode=append 在末尾追加，replace 整体替换。expires 设过期（30d、12h、2w、日期，never=永久；不传时新文件永久、旧文件不变），过期后删除只留墓碑。item / rule 把文件挂到事项或规则上：事项详情里能看到，规则下次触发时会把它列给处理的 Agent（规则触发的运行里默认挂到那条规则）。",
+    "写工作文件（原件，可检索、可用 src:<id> 引用）：长任务的当前成果（扫过哪些、找到什么、下一步从哪接着做），或定时任务逐天累积的周报/季报素材。mode=append 在末尾追加，replace 整体替换。expires 设过期（30d、12h、2w、日期，never=永久；不传时新文件永久、旧文件不变），过期后删除只留墓碑。item / rule 把文件挂到事项或规则上：事项详情里能看到，规则下次触发时会把它列给处理的 Agent（规则触发的运行里默认挂到那条规则）。文件放在哪个空间：给了 space 就放那里；挂到事项时放在事项所在的空间；在个人空间里为某个业务空间的事项、会话、绑定的群或规则工作时，放在那个业务空间（结果里会说明）；要放个人空间就明确写 space。",
   write: true,
   schema: z.object({
     path: z.string().describe("文件路径，如 oncall/一年内的群、weekly/2026-W43、reports/2026-Q4"),
@@ -3264,13 +3286,37 @@ def({
       if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能给他人的事项挂文件");
       if (!a.space) spaceId = item.spaceId;
     }
+    // A run in the owner's personal space working on one business space's item, conversation, bound
+    // chat or rule writes there (src/sources/homing.ts), when this run may write there.
+    let followed = "";
+    if (!a.space && !a.item && ctx.runId) {
+      let m: ReturnType<typeof matterSpace> = null;
+      try {
+        m = matterSpace(ctx.app, ctx.runId, spaceId);
+      } catch (e) {
+        console.warn(`[omem] 判断工作文件该放哪个空间失败：${(e as Error).message}`);
+      }
+      const { workUri, moveWorkFile } = await import("../sources/work.ts");
+      const here = one<{ id: string }>(ctx.app.db, "select id from sources where space_id = ? and uri = ? and deleted_at is null", spaceId, workUri(a.path));
+      // A file the owner put back in the personal space stays there.
+      const pinned = here && sourceRoute(ctx.app, here.id)?.mode === "manual";
+      if (m && !pinned) {
+        try {
+          const target = writeSpace(ctx, m.space);
+          // An earlier version of the file moves along (same id, citations stay valid).
+          if (here && !one(ctx.app.db, "select 1 from sources where space_id = ? and uri = ?", target, workUri(a.path))) moveWorkFile(ctx.app, here.id, target, `跟着${m.why}`, "follow");
+          spaceId = target;
+          followed = `，跟着${m.why}放在空间 ${m.space}`;
+        } catch {}
+      }
+    }
     const runRule = ctx.runId ? (getRun(ctx.app, ctx.runId).input as { rule?: { id: string } }).rule?.id : undefined;
     const rule = a.rule ?? runRule;
     if (a.rule) (await import("../rules/store.ts")).getRule(ctx.app, a.rule);
     const r = writeWorkFile(ctx.app, { spaceId, path: a.path, title: a.title, text: a.content, mode: a.mode, expires: a.expires === undefined ? undefined : a.expires, links: { item: a.item, rule }, runId: ctx.runId });
     if (a.item && r.created) (await import("../items/store.ts")).addItemEvent(ctx.app, a.item, "note", `工作文件 ${r.uri}`, ctx.actor, [`src:${r.id}`]);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "source", id: r.id }, at: now() } });
-    return `${r.created ? "已新建" : r.status === "unchanged" ? "内容没变" : a.mode === "append" ? "已追加到" : "已更新"}工作文件 src:${r.id}（${r.uri}，${r.lines} 行${r.expiresAt ? `，${r.expiresAt.slice(0, 10)} 过期` : "，永久"}${a.item ? `，挂在事项 ${a.item}` : ""}${rule ? `，挂在规则 ${rule}` : ""}）`;
+    return `${r.created ? "已新建" : r.status === "unchanged" ? "内容没变" : a.mode === "append" ? "已追加到" : "已更新"}工作文件 src:${r.id}（${r.uri}，${r.lines} 行${r.expiresAt ? `，${r.expiresAt.slice(0, 10)} 过期` : "，永久"}${a.item ? `，挂在事项 ${a.item}` : ""}${rule ? `，挂在规则 ${rule}` : ""}${followed}）`;
   },
 });
 

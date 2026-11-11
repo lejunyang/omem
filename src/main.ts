@@ -79,6 +79,10 @@ registerScheduleKind("lark-kb-discover", (app) => {
     .then((m) => m.discoverKnowledgeBases(app, { scheduled: true }))
     .catch((e) => console.warn("[omem] 发现飞书知识库失败：", e.message));
 });
+// Material leaving the owner's personal space (sources/homing.ts): working files follow their item, new evidence is judged again.
+registerScheduleKind("archive-sweep", (app) => {
+  import("./sources/homing.ts").then((m) => m.sweepHoming(app)).catch((e) => console.warn("[omem] 个人空间归位巡检失败：", e.message));
+});
 registerScheduleKind("platform-sync", (app) => void import("./plugins/platforms.ts").then((m) => m.syncWatches(app)).catch((e) => console.warn(`[omem] 平台同步失败：${(e as Error).message}`)));
 registerScheduleKind("lark-kb-read", (app) => {
   import("./channels/lark-knowledge.ts")

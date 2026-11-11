@@ -33,6 +33,7 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "lark-poll", kind: "lark-poll", cron: "*/10 * * * *", enabled: false, label: "采集飞书消息（全部或已订阅的会话，含附件和文档）、日程和妙记（只读）；被监听的群交给处理 Agent" },
   { id: "lark-kb-discover", kind: "lark-kb-discover", cron: "20 2 * * 0", enabled: true, label: "每周列出能看到的飞书知识库：新出现的浅读一层目录，交给助理按本人写的方向提归属建议（只读；lark-cli 没有本人登录时什么都不做）" },
   { id: "platform-sync", kind: "platform-sync", cron: "*/20 * * * *", enabled: true, label: "同步盯着的平台内容：Figma、Notion、GitHub 等平台上你让助手盯着的文件、页面、仓库，改过的重新存成原件（以盯的人的连接读；没有盯着的东西时什么都不做）" },
+  { id: "archive-sweep", kind: "archive-sweep", cron: "40 1 * * *", enabled: true, label: "每晚把该归到业务空间的材料从个人空间移走：挂在业务事项或规则上的工作文件跟过去；被业务页面、事项或记忆引用、同目录文档已归档、空间或归档规则有变化的个人空间原件，按预算交给归档判断（预算在归档规则页改；没有待判的什么都不做）" },
   { id: "lark-kb-read", kind: "lark-kb-read", cron: "30 2 * * *", enabled: true, label: "每晚从已归入空间的飞书知识库读一些文档并交给整理：总篇数和各库份额在原件 → 知识库里设，空间里已有的不重复读（没有归入的知识库时什么都不做）" },
 ];
 export const scheduleLabels = Object.fromEntries(DEFAULTS.map((d) => [d.kind, d.label]));

@@ -56,7 +56,7 @@ import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute } from "../auth/routes.ts";
 import { hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
-import { audit, can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
+import { audit, can, canReadRun, globalPerms, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
 import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, scopeFor, userForToken, userName } from "../core/users.ts";
@@ -2003,6 +2003,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     }
     return { queued: b.ids.length };
   });
+  // Material leaving the owner's personal space (sources/homing.ts) and citations readers cannot open (sources/reach.ts).
+  server.get("/api/archive/homing", async () => (await import("../sources/homing.ts")).homingOverview(app));
+  server.post("/api/archive/homing/return", async req => {
+    const b = q(z.object({ id: z.string() }), req.body);
+    return (await import("../sources/homing.ts")).returnSource(app, b.id);
+  });
+  server.post("/api/archive/homing/assign", async req => {
+    const b = q(z.object({ ids: z.array(z.string()).min(1).max(300), space: z.string() }), req.body);
+    for (const id of b.ids) requirePerm(app, who(req), "source.write", getSource(app, id).spaceId);
+    requirePerm(app, who(req), "source.write", b.space);
+    return (await import("../sources/homing.ts")).assignSources(app, b.ids, b.space);
+  });
+  server.post("/api/archive/homing/sweep", async req => {
+    const b = q(z.object({ budget: z.number().int().min(0).max(500).optional() }), req.body ?? {});
+    return (await import("../sources/homing.ts")).sweepHoming(app, b);
+  });
+  server.get("/api/spaces/:id/citation-reach", async req => (await import("../sources/reach.ts")).citationReach(app, (req.params as { id: string }).id, who(req)));
+  server.post("/api/spaces/:id/citation-reach/recheck", async req => (await import("../sources/reach.ts")).queueUnreachable(app, (req.params as { id: string }).id));
   server.get("/api/sources/:id/archive", async req => {
     const id = (req.params as { id: string }).id;
     getSource(app, id);

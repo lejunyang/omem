@@ -92,7 +92,7 @@ export function listWorkFiles(app: App, opts: { item?: string; rule?: string; sp
  * Move a working file to another space, keeping its id (citations and `src:` references stay valid).
  * Used when the rule it belongs to changes space, or when the owner files it elsewhere by hand.
  */
-export function moveWorkFile(app: App, id: string, target: string, reason: string) {
+export function moveWorkFile(app: App, id: string, target: string, reason: string, mode: "manual" | "follow" = "manual") {
   const s = getSource(app, id);
   if (s.kind !== "work") throw new HttpError(400, "不是工作文件");
   if (s.deletedAt) throw new HttpError(409, "原件已删除");
@@ -102,7 +102,7 @@ export function moveWorkFile(app: App, id: string, target: string, reason: strin
   tx(app.db, () => {
     run(app.db, "update sources set space_id = ? where id = ?", target, id);
     run(app.db, "update chunks set space_id = ? where source_id = ?", target, id);
-    run(app.db, "insert into source_moves(source_id, from_space, to_space, reason, at) values(?,?,?,?,?)", id, s.spaceId, target, reason, now());
+    run(app.db, "insert into source_moves(source_id, from_space, to_space, reason, at, mode) values(?,?,?,?,?,?)", id, s.spaceId, target, reason, now(), mode);
   });
   vectorIndex().evict([s.spaceId, target]);
   app.emit({ type: "changed", entity: "source", id, spaceId: target });

@@ -1955,3 +1955,16 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 英语插件：内容块 `speaking`（场景、想练的说法），页面工具 `english_speaking_start`、`english_speaking_brief`（按口语等级、薄弱短语、口音写给语音模型的说明），提交时存 `speaking` 记录并把对话记录交给陪练；陪练按插件技能 `english-speaking`（由原 `speaking-assessment` 改写）用 `english_speaking_grade` 交等级、四项分、评价和知识点，进同一份画像（`PROFILE_SKILLS` 多了 speaking，`snapshot.speaking`）。页面“新练习”里“做题 / 口语对话”并列，口语卡片 `SpeakingCard.vue` 用 omem 的样式；没配语音模型时说明去哪里配。
 - 删掉：`web/src/views/Speaking.vue`、导航项和 `/speaking` 路由、`roles/speaking-coach.md`（`roleNames` 同步）、`speaking-review` 的评价逻辑（旧的排队运行直接结束）、`voice_sessions` 的练习写入（表保留，旧的 `practice` 行不再列出）。已经播种到数据目录的 `speaking-assessment` 技能不会被删，不再有角色用它。
 - CORS：问题在第一跳，`omem peer open` 的本机代理。沙箱 iframe 以 `Origin: null` 按 CORS 方式取 module script 和样式表，本机代理的本机信任检查（`trustedLocal` → `sameOrigin`，10-30 起）把 `Origin: null` 当作别的网站，直接回 403，没有跨域头，浏览器就报 CORS。直接访问目标设备时不经过这层所以正常。现在本机代理对 `Origin: null` 只放行插件页面的文件（`pluginPageFile`：`/plugins/<id>/…`、`/plugins/_sdk/…`，只允许普通路径字符、不含点段和 `%`，免得 `..` 在转发时被解析成别的路径），并在响应上自己补 `access-control-allow-origin: *`，所以中间设备是 11-07（d25fbf62）之前的版本、转发时丢掉这个头也没关系；只需要更新运行 `omem peer open` 的那台电脑。插件页面的流（`/api/plugins/<id>/streams/…`）加进本机代理的原始隧道（`PLUGIN_STREAM`），中间设备 11-07（6050f807）起原样转发本人的升级请求。`test/peer-plugin-page.test.ts`：三台 omem 两级转发，以及一个丢掉跨域头的旧中间设备。
+
+## 2026-11-12：材料从个人空间归位
+
+起因：个人空间堆了大量业务文档和工作记录（一台实际使用的机器上三千多份文档、一百多份工作文件，业务页面引用个人空间原件七十多处）。archivist 只看正文、一判定终身、“不确定就留个人”；主助手在个人空间里为业务事项写的工作文件留在个人空间；协作者打不开业务页面引用的个人空间原件。设计在 docs/v2/archive-routing.md。
+
+- 旁证（`src/sources/homing.ts` 的 `archiveEvidence`）：知识库位置和本人归入的空间、同目录文档的去向、引用它的其他空间的页面 / 事项 / 记忆（含合并前旧 id）、贴过它的群和群的空间、手动定的关注程度、工作文件的事项或规则。`archive` 运行把它和重判原因（`again`）一起交给 archivist。`roles/archivist.md` 改为：旁证指向同一业务空间就归过去，矛盾或只有弱旁证时留下记“判断不了”，日常个人内容记“确实个人”。
+- `classify_source` 加 `verdict`、`candidates`；`source_routes.verdict` / `suggested`，`source_moves.mode` / `detail`（迁移）。`archive.autoMove`（默认开）关掉时 AI 的判断只记成建议。
+- 重判：`archive_evidence` 记判断时的旁证指纹，`archive_recheck` 是队列；`collectRecheck` 找新旁证、空间或归档规则变化（第一次只记状态）；每晚 `archive-sweep`（01:40，`archive.nightly` 默认 60）按优先级交出，规则能定的直接移，没有待判的不跑。理由“有新旁证，重新判断”的原件不跟随同一会话的旧判断（`archive.ts` 的 `REJUDGE`）。
+- 工作文件：`write_file` 在本人个人空间里、运行范围只指向一个业务空间时写到那里（`matterSpace`，同路径旧版本一起移），挂在业务事项或规则上的旧工作文件每晚跟过去（`followWorkFiles`）。
+- 网页：归档规则页左侧“从个人空间归位”（`ArchiveHoming.vue`）：自动移走的及依据、移回并记住、等你定的批量指定、读者打不开的引用、两个设置。接口 `GET /api/archive/homing`、`POST /api/archive/homing/{return,assign,sweep}`、`GET /api/spaces/:id/citation-reach`、`POST /api/spaces/:id/citation-reach/recheck`。
+- 引用可达性（`src/sources/reach.ts`）：按空间读者和 `sourceVisible` 判断，不写死个人空间；只有本人能读的空间不报。
+- 群里再贴一次已移走文档的链接时，一天内读过的不再重读（`importLinkedDocs` 认 `source_locations`）。
+- 测试：`test/homing.test.ts`、`test/homing-agent.test.ts`（`FAKE_MODE=archive`）。验收 26a–26l。

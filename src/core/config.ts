@@ -385,6 +385,12 @@ export const configSchema = z.object({
   /** Questions, suggestions and approvals nobody answered for this many days lapse (agents/ask-expiry.ts); 0 keeps them. */
   asks: z.object({ staleDays: z.number().int().min(0).max(365).default(7) }).default({ staleDays: 7 }),
   /**
+   * Material leaving the owner's personal space (src/sources/homing.ts): `autoMove` lets the archivist
+   * move what it judged to belong to a business space (off: its judgement waits for the owner);
+   * `nightly` caps how many sources the nightly check hands it again.
+   */
+  archive: z.object({ autoMove: z.boolean().default(true), nightly: z.number().int().min(0).max(500).default(60) }).default({ autoMove: true, nightly: 60 }),
+  /**
    * Commands an agent's processes may not run unchecked (docs/v2/command-gate.md): a wrapper of the
    * same name in front of PATH asks omem first. Only the owner changes this (PUT /api/security/command-rules).
    */

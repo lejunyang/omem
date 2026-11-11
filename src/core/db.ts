@@ -1659,6 +1659,17 @@ export const migrations: readonly string[] = [
     primary key (run_id, kind, key, topic)
   );
   create index run_scope_key on run_scope(kind, key);`,
+  // Material leaving the owner's personal space (src/sources/homing.ts, docs/v2/archive-routing.md):
+  // how each move was made (manual | rule | binding | ai | follow) and the facts it was made on; the
+  // archivist's verdict on what it kept (personal | unsure | proposed) with the spaces it considered;
+  // the queue of sources to be judged again and the evidence each one was last judged with.
+  `alter table source_moves add column mode text;
+   alter table source_moves add column detail text not null default '{}';
+   alter table source_routes add column verdict text;
+   alter table source_routes add column suggested text not null default '[]';
+   create table archive_recheck (source_id text primary key, reason text not null, priority integer not null default 1, queued_at text not null);
+   create index archive_recheck_order on archive_recheck(priority, queued_at);
+   create table archive_evidence (source_id text primary key, fingerprint text not null, at text not null);`,
 ];
 
 export type Db = DatabaseSync;

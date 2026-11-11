@@ -176,6 +176,35 @@ new AgentSideConnection(
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      // FAKE_MODE=archive: the archivist (src/sources/homing.ts). It reads the candidates and their
+      // evidence from the task: every fact pointing at one business space files it there, none keeps it
+      // personal, facts pointing at several leave it to the owner with those spaces as candidates.
+      if (process.env.FAKE_MODE === "archive") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-archive", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const direct = new Set((await client.listTools()).tools.map((t) => t.name));
+          const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
+          const at = prompt.indexOf("判断这些原件的空间归属");
+          const start = prompt.indexOf("[", at);
+          const end = prompt.indexOf("\n", start);
+          type Cand = { id: string; hash: string; evidence?: { wiki?: { kbSpace?: string }; siblings?: { space: string }[]; citedBy?: { space: string }[]; linkedIn?: { space: string | null }[] }; again?: string };
+          const cands = JSON.parse(prompt.slice(start, end < 0 ? undefined : end)) as Cand[];
+          const results: Record<string, unknown>[] = [];
+          for (const c of cands) {
+            const e = c.evidence ?? {};
+            const spaces = new Set([e.wiki?.kbSpace, ...(e.siblings ?? []).map((s) => s.space), ...(e.citedBy ?? []).map((s) => s.space), ...(e.linkedIn ?? []).map((s) => s.space)].filter((s): s is string => !!s && !s.startsWith("personal")));
+            const args = spaces.size === 1
+              ? { space: [...spaces][0], verdict: "business", reason: "旁证都指向这个空间" }
+              : spaces.size ? { space: "personal", verdict: "unsure", candidates: [...spaces], reason: "旁证指向不同空间" } : { space: "personal", verdict: "personal", reason: "没有旁证，正文是个人内容" };
+            const r = await call("classify_source", { source_id: c.id, hash: c.hash, ...args });
+            results.push({ id: c.id, again: c.again ?? null, evidence: Object.keys(e), ...args, error: r.isError ? r.content : null });
+          }
+          await say(JSON.stringify(results));
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
       // FAKE_MODE=design: the designer (src/designs). Assessing someone else's design: it reads the document,
       // hands in what the author decided with concerns; assessing again, it first leaves out the old
       // concern (refused), then gives its state. Writing an own design: one decision with every field.

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { del, get, post, put, type Run } from "../api";
 import RuleConditions, { type Condition } from "../components/RuleConditions.vue";
+import ArchiveHoming from "../components/ArchiveHoming.vue";
 import Icon from "../components/Icon.vue";
 import RuleTabs from "../components/RuleTabs.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -38,6 +39,11 @@ const busy = ref(false);
 const drafting = ref(false);
 const dirty = ref(false);
 const organizing = ref(false);
+const homing = ref(false);
+async function openHoming() {
+  if (!(await leave())) return;
+  form.value = null; dirty.value = false; organizing.value = false; homing.value = true;
+}
 const options = ref<{ fields: Record<string, string>; descriptions?: Record<string, string>; valueOptions?: Record<string, { value: string; label: string }[]>; ops: string[] }>({ fields: {}, ops: [] });
 const preview = ref<Preview[] | null>(null);
 const selected = ref<string[]>([]);
@@ -56,13 +62,13 @@ const leave = async () => !dirty.value || await confirmDialog("放弃未保存�
 onBeforeRouteLeave(leave);
 async function edit(rule?: Rule) {
   if (!(await leave())) return;
-  organizing.value = false;
+  organizing.value = false; homing.value = false;
   form.value = rule ? JSON.parse(JSON.stringify(rule)) : { name: "", description: "", target: state.space, enabled: false, conditions: null };
   dirty.value = false;
 }
 async function organize() {
   if (!(await leave())) return;
-  form.value = null; dirty.value = false; organizing.value = true;
+  form.value = null; dirty.value = false; organizing.value = true; homing.value = false;
   await pollFolders();
   if (!preview.value) await previewBatch(0);
 }
@@ -172,10 +178,14 @@ async function classify() {
         <button v-if="!loading" class="li organize" :class="{ on: organizing }" type="button" :disabled="drafting" @click="organize">
           <Icon name="folder" :size="15" /><span class="grow"><strong>整理已有材料</strong><span class="muted small sub">预览当前空间里的材料该归到哪</span></span>
         </button>
+        <button v-if="!loading" class="li organize next" :class="{ on: homing }" type="button" :disabled="drafting" @click="openHoming">
+          <Icon name="folder" :size="15" /><span class="grow"><strong>从个人空间归位</strong><span class="muted small sub">自动移走了哪些、等你定的、读者打不开的引用</span></span>
+        </button>
       </div>
     </aside>
     <main class="detail">
-    <section v-if="organizing" class="page history">
+    <ArchiveHoming v-if="homing" />
+    <section v-else-if="organizing" class="page history">
       <header class="row wrap">
         <h2>整理已有材料</h2><span class="spacer" />
         <button class="btn sm" :disabled="busy || folderProgress?.running" title="较早采集的飞书文档可能没有记下所在目录；只读目录名，不重新下载正文" @click="refreshFolders">更新飞书目录</button>
@@ -360,6 +370,7 @@ async function classify() {
 .history h2 { margin: 0; }
 .organize { width: 100%; border: 0; background: none; text-align: left; font: inherit; color: var(--ink); cursor: pointer; margin-top: 6px; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; gap: 10px; }
 .organize .sub { display: block; }
+.organize.next { margin-top: 0; border-top: 0; }
 .center { justify-content: center; }
 .preview-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(100px, 180px); gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
 .preview-row > * { min-width: 0; }
