@@ -20,6 +20,8 @@ import MembersSettings from "../components/MembersSettings.vue";
 import ProviderApps from "../components/ProviderApps.vue";
 import FederationSettings from "../components/FederationSettings.vue";
 import PeerSettings from "../components/PeerSettings.vue";
+import CodeIndexPanel from "../components/CodeIndexPanel.vue";
+import { codeIndexLabel } from "../lib/code-index";
 import { fmtTime, kindLabel, loadSpaces, relTime, state, toast } from "../store";
 import { nestedSpaces } from "../lib/spaces";
 import { confirmDialog, promptDialog } from "../lib/dialog";
@@ -1369,7 +1371,7 @@ async function saveEdit() {
             <button class="btn ghost sm" @click="suggestions = suggestions.filter((x) => x.space !== r.space)">不是</button>
           </div>
           <div v-for="c in reposOf(editing.id)" :key="c.id" class="row repo-row">
-            <div class="grow fit"><strong>{{ c.name }}</strong> <span class="muted small">{{ c.settings?.lastSync ? `${relTime(String(c.settings.lastSync))}同步` : "还没同步" }}</span><div class="mono small muted slot-path" :title="c.rootPath ?? ''">{{ c.rootPath }}</div></div>
+            <div class="grow fit"><strong>{{ c.name }}</strong> <span class="muted small">{{ codeIndexLabel(c) }}</span><div class="mono small muted slot-path" :title="c.rootPath ?? ''">{{ c.rootPath }}</div></div>
             <button class="btn ghost sm" @click="syncRepo(c.id)">同步</button>
             <button class="btn sm" @click="openSpace(c)">设置</button>
             <button class="btn ghost sm danger" @click="moveRepo(c.id, null)">移出</button>
@@ -1412,6 +1414,7 @@ async function saveEdit() {
             </div>
             <span class="hint">同一个仓库在别处的克隆（remote 相同）可以换过来，比如你平时开发的目录。在这个目录检出交办的分支，每轮的提交会自动快进过来。</span>
           </div>
+          <CodeIndexPanel :space-id="editing.id" @config="(c) => (editing!.settings.codeIndex = c)" />
           <label class="field">
             <span>准备命令（新工作区或锁文件变了时，编码前运行）</span>
             <input v-model="editing.settings.setupCommand" class="input mono" placeholder="不填按锁文件自动选（pnpm / yarn / npm / bun）；填 none 不准备" />

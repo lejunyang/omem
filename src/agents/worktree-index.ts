@@ -7,6 +7,7 @@ import { defaultBaseRef, fetchBranchAsync, git, resolveRef } from "../core/git.t
 import { findSpace, getSpace, listSpaces, type Space } from "../core/spaces.ts";
 import { HttpError, now } from "../core/util.ts";
 import { resolveCodeRefs } from "../sources/callgraph.ts";
+import { baselineRef, codeIndexConfig } from "../sources/code-baseline.ts";
 import { purgeSource, upsertSource } from "../sources/store.ts";
 import { ensureGrammars } from "../sources/treesitter.ts";
 import { changeBase } from "./code-branch.ts";
@@ -36,7 +37,9 @@ export type WorktreeRef = { space: string; path: string; branch: string; base: s
    * (changeBase), moved forward when a sync pulls origin in; `diffBaseNext`: such a move waiting for a stopped sync to finish. */
   diffBase?: string; diffBaseNext?: string };
 /** A delegation's worktree (`runId`, `path`) or a branch index (`branch`, `commit`), both over repository `repo`. */
-type WorktreeSettings = { runId?: string; repo: string; path?: string; base: string; branch?: string; baseRef?: string; commit?: string; deleted?: string[] };
+type WorktreeSettings = { runId?: string; repo: string; path?: string; base: string; branch?: string; baseRef?: string; commit?: string; deleted?: string[];
+  /** A branch index: the commit's date, and when a search or a review last asked for it (expiry, code-index.ts). */
+  committedAt?: string | null; usedAt?: string };
 
 const MAX_BYTES = 1_000_000;
 
@@ -116,13 +119,14 @@ export type BranchIndex = { space: string; repo: string; branch: string; baseRef
  * `base` (default: origin's default branch), read from the commit (`git show`), no checkout. Only
  * re-reads when the branch or the base moved. `fetch` first updates both from origin.
  */
-export async function indexBranch(app: App, repoId: string, branch: string, opts: { base?: string; fetch?: boolean } = {}): Promise<BranchIndex> {
+export async function indexBranch(app: App, repoId: string, branch: string, opts: { base?: string; fetch?: boolean; touch?: boolean } = {}): Promise<BranchIndex> {
   const repo = getSpace(app, repoId);
   const root = repo.rootPath;
   if (repo.kind === "worktree" || !root || !existsSync(root) || !git(root, ["rev-parse", "--git-dir"]).ok) throw new HttpError(400, `空间 ${repoId} 没有关联 Git 仓库`);
   const id = branchSpaceId(repo.id, branch);
   const before = findSpace(app, id)?.settings as WorktreeSettings | undefined;
-  const baseRef = opts.base ?? before?.baseRef ?? defaultBaseRef(root);
+  // Compared with the repository's baseline when it has one (docs/v2/code-index.md), else origin's default branch.
+  const baseRef = opts.base ?? before?.baseRef ?? repoBaseline(repo) ?? defaultBaseRef(root);
   if (!baseRef) throw new HttpError(400, `${repoId} 找不到默认分支（main / master），请指定 base`);
   if (opts.fetch) {
     for (const name of new Set([branch, baseRef])) {
@@ -137,21 +141,25 @@ export async function indexBranch(app: App, repoId: string, branch: string, opts
   const mb = git(root, ["merge-base", baseTip.commit, tip.commit]);
   if (!mb.ok) throw new HttpError(400, `${branch} 和 ${baseRef} 没有共同的提交`);
   const base = mb.stdout.trim();
+  const usedAt = opts.touch === false ? before?.usedAt : now();
   if (before && before.commit === tip.commit && before.base === base && before.baseRef === baseRef) {
+    if (usedAt !== before.usedAt) run(app.db, "update spaces set settings = json_set(settings, '$.usedAt', ?) where id = ?", usedAt ?? null, id);
     const files = one<{ n: number }>(app.db, "select count(*) n from sources where space_id = ?", id)!.n;
     return { space: id, repo: repo.id, branch, baseRef, base, commit: tip.commit, files, deleted: before.deleted?.length ?? 0, refreshed: false };
   }
-  const changes = git(root, ["diff", "--name-status", "--no-renames", "-z", base, tip.commit]).stdout.split("\0").filter(Boolean);
+  // Paths relative to the space's directory, which may be a folder inside the repository (`--relative`, `<commit>:./path`).
+  const changes = git(root, ["diff", "--name-status", "--no-renames", "--relative", "-z", base, tip.commit]).stdout.split("\0").filter(Boolean);
   const added: string[] = [];
   const deleted: string[] = [];
   for (let i = 0; i + 1 < changes.length; i += 2) (changes[i] === "D" ? deleted : added).push(changes[i + 1]);
+  const committedAt = git(root, ["show", "-s", "--format=%cI", tip.commit]).stdout.trim() || null;
   saveIndexSpace(app, id, `${repo.name} · 分支 ${branch}`,
     `${repo.id} 的分支 ${branch}（${tip.commit.slice(0, 8)}）相对 ${baseRef} 改过的文件；和 ${repo.id} 一起检索时以这里为准，其余文件以 ${repo.id} 为准。`,
-    { repo: repo.id, branch, baseRef, base, commit: tip.commit, deleted });
+    { repo: repo.id, branch, baseRef, base, commit: tip.commit, deleted, committedAt, ...(usedAt ? { usedAt } : {}) });
   const files = added.map((rel): [string, () => string | null] => [rel, () => {
-    const size = Number(git(root, ["cat-file", "-s", `${tip.commit}:${rel}`]).stdout.trim());
+    const size = Number(git(root, ["cat-file", "-s", `${tip.commit}:./${rel}`]).stdout.trim());
     if (!size || size > MAX_BYTES) return null;
-    const r = git(root, ["show", `${tip.commit}:${rel}`]);
+    const r = git(root, ["show", `${tip.commit}:./${rel}`]);
     return !r.ok || r.stdout.slice(0, 8000).includes("\0") ? null : r.stdout;
   }]);
   const n = await indexFiles(app, id, files, { branch, repo: repo.id, commit: tip.commit });
@@ -183,8 +191,40 @@ export function dropWorktreeSpace(app: App, id: string) {
   app.emit({ type: "changed", entity: "space", id });
 }
 
+/**
+ * The indexes of a delegation's or branch review's worktrees, every round's: each round indexes under
+ * its own run id (wt-<round>-<repo>), and asking with any round finds them all. Dropping only the
+ * applied or first round's left the other rounds' spaces behind for good when the worktree path
+ * stayed (a reused slot, a work branch's worktree).
+ */
 export function worktreeSpacesOf(app: App, runId: string): Space[] {
-  return listSpaces(app, { worktrees: true }).filter((s) => s.kind === "worktree" && (s.settings as WorktreeSettings).runId === runId);
+  const r = one<{ id: string; input: string }>(app.db, "select id, input from runs where id = ?", runId);
+  const root = r ? ((JSON.parse(r.input || "{}") as { continueFrom?: string }).continueFrom ?? r.id) : runId;
+  const rounds = new Set([runId, root, ...all<{ id: string }>(app.db, "select id from runs where json_extract(input, '$.continueFrom') = ?", root).map((x) => x.id)]);
+  return listSpaces(app, { worktrees: true }).filter((s) => s.kind === "worktree" && rounds.has(String((s.settings as WorktreeSettings).runId ?? "")));
+}
+
+/**
+ * The worktree indexes this run belongs with: it is a round of a delegation or branch review, or a
+ * run started under one (a review check, a helper). Searches of such a run include them; others see
+ * only the repositories' baselines (docs/v2/code-index.md).
+ */
+export function runOverlaySpaces(app: App, runId: string | null | undefined): string[] {
+  const out = new Set<string>();
+  let id: string | null | undefined = runId;
+  for (let depth = 0; id && depth < 6; depth++) {
+    const r = one<{ id: string; kind: string; parent_id: string | null }>(app.db, "select id, kind, parent_id from runs where id = ?", id);
+    if (!r) break;
+    if (r.kind === "code" || r.kind === "review") for (const s of worktreeSpacesOf(app, r.id)) out.add(s.id);
+    id = r.parent_id;
+  }
+  return [...out];
+}
+
+/** The ref a repository space's index follows, when it is indexed from a baseline. */
+function repoBaseline(repo: Space) {
+  const c = codeIndexConfig(repo);
+  return c.mode === "baseline" && repo.rootPath ? baselineRef(repo.rootPath, c) : null;
 }
 
 /** Worktree spaces whose worktree is gone (removed by hand, or the run was cleaned up); branch indexes whose repository or branch is gone. */
@@ -207,7 +247,7 @@ export function sweepWorktreeSpaces(app: App): number {
 export async function refreshBranchIndexes(app: App) {
   for (const s of branchIndexes(app)) {
     try {
-      await indexBranch(app, s.settings.repo, s.settings.branch!, { base: s.settings.baseRef });
+      await indexBranch(app, s.settings.repo, s.settings.branch!, { base: s.settings.baseRef, touch: false });
     } catch (e) {
       console.warn(`[omem] 更新分支索引 ${s.id} 失败：${(e as Error).message}`);
     }

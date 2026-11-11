@@ -1889,3 +1889,14 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `mergeRole`：frontmatter 按字段合并，`tools` 和 `skills` 按集合（源码现在有的，加上本人加的，去掉本人去掉的；分组已经带上的工具名不再单独列），只有正文按文本三方合并。合并或模型解决冲突之后，副本如果只剩技能和工具的差别，自动变回叠加设置。
 - `followRoleSource`（`POST /api/roles/:name/follow-source`，Agent 页“正文跟随源码”）：放弃副本的正文，保留副本比源码多的技能和工具（源码特意排除的工具不带回来），之后源码更新直接生效。
 - 模型解决冲突的说明：源码删掉或改写、本人没改过的段落按源码，不把旧写法和新写法并排留着；frontmatter 已合并好，不改。
+
+## 2026-11-12：代码索引有了基线，分支和交办的索引按需用、自动过期
+
+起因：本人问代码问题，助手拿之前某次交办分支上的代码回答。两条路都会这样：仓库的索引就是 `rootPath` 目录检出的样子（目录停在功能分支或交办检出的分支上时，那就是“仓库的代码”）；`space: "*"` 或不限空间的检索把所有交办工作区（`wt-…`）和分支索引（`br-…`）都带上，而且这时分支版本不替代仓库同名文件，各个版本并排出现。另外 `repo-sync` 默认关、从没跑过；交办续轮的 `wt-<轮>-<仓库>` 只删了第一轮或被应用那一轮的；按提交 sha 建的分支索引永远解析得到、永远不删。
+
+- 基线（`src/sources/code-baseline.ts`）：仓库空间的 `settings.codeIndex`（`mode` baseline / directory、`ref`、`branches`）。按基线时用 `git ls-tree` + `cat-file --batch` 从提交里读，按 blob id（`meta.blob`）只重读变了的文件，基线提交没变就什么都不读；子目录空间路径相对子目录，已检出的子模块按记录的提交读。状态写 `settings.codeIndexState`（ref、提交、提交时间、索引时间、拉取时间、错误、跟的分支的错误），网页保存空间设置时不覆盖它。原件仍按“空间 + 路径”定 id，切换和更新后 `src:` 不变。已有空间不自动切换（按目录，也记下当时检出的分支和有没有未提交改动），新接入、有 origin 的仓库第一次同步就按基线。
+- 定期更新（`src/sources/code-index.ts`）：`repo-sync` 改成 `repoSyncTick`，默认开，从没运行过的库启动时打开一次（kv `repo_sync_default_on`）。按 Git 仓库（common dir）分组，每组一次 fetch（只拉基线和跟的分支），按目录的空间看 `HEAD` + `git status` 指纹，变了才排 `sync` 运行；然后刷新跟的分支和最近用过的分支索引、清理过期索引。
+- 叠加索引：`search.ts` 的 `withOverlays` / `overlays` 选项，不列空间的检索排除所有叠加索引（全文、符号、向量），列了空间时只加允许的；`tools.ts` 的 `search`、`find_symbol`、`scan` 跟着改，运行属于某次交办或分支评审时自动带上那次的工作区索引（`worktree-index.ts` 的 `runOverlaySpaces`）。`worktreeSpacesOf` 按整次交办找所有轮次。`indexBranch` 记 `usedAt`、`committedAt`，相对仓库的基线比较，子目录仓库用 `--relative`。
+- 过期（`expireOverlays`）：交办应用、确认、丢弃、被接替时删每一轮的工作区索引，14 天没动静也删；sha 分支索引 3 天、没登记跟的分支索引 14 天没用就删；`repo-sync` 每小时和启动时清理。
+- 版本说明：`search` 头部、`find_symbol` 末尾、`read_source` 头部写“代码来自”（`codeVersion`）；`roles/_common.md` 加一条：回答代码问题说明依据的分支，问分支或交办的事带 `branch`。
+- 接口（`src/sources/code-index-http.ts`）：`GET/PUT /api/spaces/:id/code-index`、`POST /api/spaces/:id/code-index/refresh`、`GET/POST/DELETE /api/code-index/hook`（变更通知令牌，存 kv `code_hook_token` 的哈希）、`POST /api/code-index/notify`（独立令牌或本人凭据；按 git remote 或空间匹配，后台拉取刷新）。网页仓库设置的“代码索引”（`web/src/components/CodeIndexPanel.vue`），业务空间的仓库列表显示索引到哪个提交。设计 `docs/v2/code-index.md`。

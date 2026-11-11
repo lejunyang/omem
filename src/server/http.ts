@@ -56,6 +56,7 @@ import { checkBearer } from "../auth/authenticators.ts";
 import { checkRoute } from "../auth/routes.ts";
 import { hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
+import { registerCodeIndexRoutes } from "../sources/code-index-http.ts";
 import { audit, can, canReadRun, globalPerms, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
@@ -134,7 +135,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.addHook("onRequest", async (req, reply) => {
     mark(`${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`);
     // Tool routes check their own (per-run) token.
-    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate)(\/|\?|$)/.test(req.url)) return;
+    // So does the code change notification (its hook token, sources/code-index-http.ts).
+    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|code-index\/notify)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
     await checkBearer(app, bearerToken(req));
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
@@ -162,6 +164,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const authOf = (req: FastifyRequest) => (req as FastifyRequest & { auth?: RequestAuth }).auth ?? null;
   registerAuthRoutes(server, app, who, authOf);
   registerFederationRoutes(server, app, who);
+  registerCodeIndexRoutes(server, app, who);
 
   // ------------------------------------------------------------------- shares
   server.get("/api/share/:token", async (req, reply) => {
@@ -369,6 +372,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const extra = Object.keys(b.settings ?? {}).filter((k) => k !== "larkAccess");
     if (who(req) !== OWNER && extra.length) throw new HttpError(403, `只有 omem 的主人能改这些设置：${extra.join("、")}`);
     if (b.guide !== undefined) writeSpaceGuide(app, id, b.guide);
+    // What the last sync found is omem's to write: a page saving the settings it loaded earlier must not roll it back.
+    if (b.settings) delete b.settings.codeIndexState;
     return updateSpace(app, id, { name: b.name, description: b.description, settings: b.settings ? { ...getSpace(app, id).settings, ...b.settings } : undefined });
   });
   server.post("/api/spaces/:id/sync", async (req) => scheduleSpaceSync(app, (req.params as { id: string }).id));

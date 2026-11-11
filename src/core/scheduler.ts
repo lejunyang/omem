@@ -25,7 +25,7 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: true, label: "每晚整理记忆与页面：合并重复和存量整理写下的经验记忆、处理冲突与过期、按不足信号补漏（第一次只看最近 7 天）" },
   { id: "profile-review", kind: "profile-review", cron: "10 4 * * *", enabled: true, label: "复盘 Agent 档案和内置角色：最近的运行和本人随后的纠正沉淀成它们的记忆，提示词、技能和设置的改动提为待确认的建议（最近没有足够运行或没有纠正时什么都不做）" },
   { id: "replay", kind: "replay", cron: "30 4 * * *", enabled: false, label: "夜间复盘：挑最近的问题回到提问时重答，基线和只改一处的变体对比，盲评后把结论用在记忆复核、原件级别和任务选型上（先给 replay-judge 选模型；每晚题数在设置 → AI 里改）" },
-  { id: "repo-sync", kind: "repo-sync", cron: "0 * * * *", enabled: false, label: "每小时同步代码仓库空间并检查受影响页面" },
+  { id: "repo-sync", kind: "repo-sync", cron: "0 * * * *", enabled: true, label: "每小时同步代码仓库：拉取远端（只 fetch，不动工作目录），基线或工作目录有变化才重读变了的文件，刷新跟着的分支，清理过期的分支和交办索引，并检查受影响页面（没有变化时只问一次远端各分支的位置，不拉取）" },
   { id: "lark-curate", kind: "lark-curate", cron: "15 9 * * 1", enabled: false, label: "每周按设定方向筛选值得关注的飞书群（需要填写方向）" },
   { id: "lark-docs-watch", kind: "lark-docs-watch", cron: "40 4 * * *", enabled: true, label: "检查飞书文档有没有更新：上次修改后 7 天、1 个月、3 个月、半年、一年各查一次，有修改才重新读（没有飞书文档时什么都不做）" },
   { id: "digest", kind: "digest", cron: "*/10 * * * *", enabled: true, label: "整理存量材料：按本人开的整理任务，一批一批地给原件分级、把重点材料提炼成知识页和记忆（没有进行中的整理任务时什么都不做）" },

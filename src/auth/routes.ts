@@ -61,6 +61,14 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/spaces/:id/branches": s("space.read", "p.id"),
   "POST /api/spaces/:id/branches/index": s("source.write", "p.id"),
   "DELETE /api/spaces/:id/branches/index": s("source.write", "p.id"),
+  // code indexes (sources/code-index-http.ts): baseline and followed branches; the notification checks its own hook token
+  "GET /api/spaces/:id/code-index": s("space.read", "p.id"),
+  "PUT /api/spaces/:id/code-index": s("space.manage", "p.id"),
+  "POST /api/spaces/:id/code-index/refresh": s("source.write", "p.id"),
+  "GET /api/code-index/hook": "owner",
+  "POST /api/code-index/hook": "owner",
+  "DELETE /api/code-index/hook": "owner",
+  "POST /api/code-index/notify": "public",
 
   // sources
   "GET /api/sources": s("space.read", "q.space"),
