@@ -109,3 +109,16 @@ it("takes a plan with directory index and case pages, and an empty plan when not
   expect((await callTool(ctx, "submit_plan", { pages: [] })).text).toContain("没有要写的页面");
   expect(JSON.parse(one<{ output: string }>(app.db, "select output from runs where id = ?", planning.id)!.output).plan).toEqual([]);
 });
+
+it("sends named existing pages straight to a writer, without planning", async () => {
+  const { writePage } = await import("../src/wiki/store.ts");
+  writePage(app, "project", "systems/refund", { meta: { title: "退款流程", kind: "concept" } as never, body: "# 退款流程\n\n按已发货行计算。" }, { commit: false });
+  expect(() => generateWiki(app, { spaceId: "project", focus: "补上运费的算法", pages: ["systems/none"] })).toThrow(/没有页面/);
+  expect(() => generateWiki(app, { spaceId: "project", pages: ["systems/refund"] })).toThrow(/改什么/);
+  const before = listRuns(app, { limit: 200 }).length;
+  const r = generateWiki(app, { spaceId: "project", focus: "补上运费的算法", pages: ["systems/refund"] });
+  expect(r.kind).toBe("wiki-write");
+  expect(r.input).toMatchObject({ brief: { slug: "systems/refund", title: "退款流程", kind: "concept" }, instructions: "补上运费的算法" });
+  // One writing run, no planning run.
+  expect(listRuns(app, { limit: 200 }).length).toBe(before + 1);
+});

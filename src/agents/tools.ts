@@ -4041,20 +4041,23 @@ def({
 
 def({
   name: "generate_wiki",
-  description: "生成或重新规划空间 Wiki：与网页和 CLI 相同，先由 wiki-planner 调查并规划目录，再由 wiki-writer 逐页写作。不要自己写正文或用 run_agent 调用这些内置角色。返回规划运行 ID；规划完成不代表所有页面已写完，用 read_run 查看子运行。",
+  description: "生成或重新规划空间 Wiki：与网页和 CLI 相同，先由 wiki-planner 调查并规划目录，再由 wiki-writer 逐页写作。不要自己写正文或用 run_agent 调用这些内置角色。只改已有的一两页时传 pages，直接交给写作、不重新规划。返回规划运行 ID；规划完成不代表所有页面已写完，用 read_run 查看子运行。",
   write: true,
   schema: z.object({
     space: z.string().optional().describe("Wiki 写入空间；不填为当前空间"),
     focus: z.string().optional().describe("完整要求：用户、范围、资料优先级、图文要求、已有草稿和原件线索；会传给规划和每页写作"),
     source_spaces: z.array(z.string()).optional().describe("额外只读材料空间，如前端、后端和文档空间；不填使用目标的相关空间"),
     auto_write: z.boolean().optional().describe("默认 true；本人只要目录规划时设 false"),
+    pages: z.array(z.string()).max(30).optional().describe("只修改这些已有页面（slug）：不规划，每页直接交给写作，focus 写清改什么。要改一两页已有内容时用它，不要为此重新规划整个空间"),
     execution: executionSchema.optional().describe("规划和每页写作用的 AI 的临时选择；已经在跑的 Wiki 要换 AI 用 switch_run_ai"),
   }),
   handler: (ctx, a) => {
     const r = generateWiki(ctx.app, {
-      spaceId: wikiSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution),
+      spaceId: wikiSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution), pages: a.pages,
       userId: ctx.userId, parentId: ctx.runId, readable: ctx.spaces, writable: ctx.writable ?? ctx.spaces,
     });
+    const writes = (r as { writeRuns?: string[] }).writeRuns;
+    if (writes) return `已安排修改 ${writes.length} 页，写作运行 ${writes.join("、")}，写入空间 ${r.spaceId}。用 read_run 查看；目前尚未完成。`;
     return `已安排 Wiki ${a.auto_write === false ? "目录规划" : "规划与逐页写作"}，运行 ${r.id}，状态 ${r.status}，写入空间 ${r.spaceId}。用 read_run 查看计划和写作子运行；目前尚未生成完成。`;
   },
 });

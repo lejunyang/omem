@@ -803,8 +803,10 @@ registerHandler("wiki-plan", async (ctx) => {
   const plan = (one<{ output: string }>(ctx.app.db, "select output from runs where id = ?", ctx.run.id)?.output ?? "{}");
   const submitted = json<{ plan?: PageBrief[] }>(plan, {}).plan;
   // An empty plan is an answer too (the pages there are enough, or it only moved some); no plan at all is not.
-  if (!submitted) throw new Error("规划没有提交页面计划（submit_plan）");
-  const pages = submitted as PageBrief[];
+  // Asked to touch up a page or two, the planner does it itself and has nothing to plan: its writes are the result.
+  const wrote = !submitted && !!one(ctx.app.db, "select 1 from run_events where run_id = ? and type = 'tool-write' and json_extract(data, '$.name') in ('write_page', 'move_page') limit 1", ctx.run.id);
+  if (!submitted && !wrote) throw new Error("规划没有提交页面计划（submit_plan）");
+  const pages = (submitted ?? []) as PageBrief[];
   if (autoWrite)
     // Pages are written with the AI the plan was given, if any.
     for (const page of pages) createRun(ctx.app, { kind: "wiki-write", spaceId, title: `写作：${page.title}`, input: { brief: page, instructions: focus, readSpaces, ai: ctx.run.input.ai }, parentId: ctx.run.id, userId });
