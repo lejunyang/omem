@@ -262,10 +262,9 @@ describe("watched chats", () => {
   it("lets the assistant watch a group in batches, in one context, until a time", async () => {
     const app = testApp();
     app.config.lark.ownerOpenId = "ou_owner";
-    // Not asked by the owner in this turn (a wake-up, a watched batch…): no inviting the bot.
+    // Bringing the bot in is lark_invite's (test/lark-invite.test.ts); set_chat_watch only sets the watch.
     const ask = createRun(app, { kind: "ask", title: "x", input: { conversationId: "c_none", messageIds: [] }, lane: "test-hold", notBefore: "2999-01-01T00:00:00Z" });
     const ctx = toolContextForToken(app, issueToolToken({ runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
-    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", note: "有人问接口进度就帮我回", invite_bot: true })).text).toMatch(/本人亲自要求/);
     expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", note: "有人问接口进度就帮我回" })).text).toMatch(/开始盯 oc_proj：消息每 10 分钟一批交给 assistant/);
     const t = Date.now();
     await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p1", time: String(t), sender: "小王", text: "接口今天能联调吗", topicId: "omt_a" }]);

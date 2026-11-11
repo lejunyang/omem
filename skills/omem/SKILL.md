@@ -90,7 +90,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `code-results` | 编码的验证结果：截图、报告与测试结果（只给编码、评审角色和设备的外部 Agent） | 同上 |
 | `lark-msg` | 飞书消息、卡片、表情、文件 | [references/lark.md](references/lark.md) |
 | `lark-docs` | 以本人身份读改、新建、移动飞书文档 | 同上 |
-| `lark-owner` | 以本人身份跑 lark-cli 命令：读表格、多维表格、任务、日历、邮件、妙记等（`lark_read`），经批准写表格、多维表格、幻灯片、Markdown 文件、任务和评论（`lark_write`） | 同上 |
+| `lark-owner` | 以本人身份跑 lark-cli 命令：读表格、多维表格、任务、日历、邮件、妙记等（`lark_read`），经批准写表格、多维表格、幻灯片、Markdown 文件、任务和评论（`lark_write`），把人或机器人拉进本人的群（`lark_invite`，拉人每次经本人批准） | 同上 |
 | `lark-capture` | 飞书会话列表、盯群、采集设置、历史回溯、知识库归属 | 同上 |
 | `learning` | 学习目标与卡片 | [references/learning.md](references/learning.md) |
 | `media` | 图片生成（配好图片模型后才有） | [references/media.md](references/media.md) |

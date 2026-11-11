@@ -722,6 +722,15 @@ export const configSchema = z.object({
         })
         .default({ enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 }),
       /**
+       * Adding members to the owner's groups as the owner (`lark_invite`, src/channels/lark-invite.ts):
+       * people always wait for the owner's OK; bots omem knows by name join directly unless `botApproval`.
+       */
+      invite: z
+        .object({
+          botApproval: z.boolean().default(false),
+        })
+        .default({ botApproval: false }),
+      /**
        * Knowledge bases the owner can see (src/channels/lark-knowledge.ts, read-only): discovered weekly,
        * sorted into spaces by the kb-scout role along `direction` (the owner's words), and read a little
        * every night: `dailyDocs` docs in all, shared by the mapped ones by priority. `autoApply`: the
@@ -772,6 +781,7 @@ export const configSchema = z.object({
       },
       guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
+      invite: { botApproval: false },
       knowledge: { direction: "", autoApply: false, dailyDocs: 30 },
     }),
   telegram: z

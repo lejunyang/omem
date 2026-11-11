@@ -2557,7 +2557,7 @@ def({
     "盯一个飞书群：之后群里的消息按批交给你（spec=assistant，默认）或一个更合适的 Agent 档案，在同一个上下文里读，有能回答的、要排查的、要本人知道的再动手，其余不管。本人说“帮我盯一下这个群”“分享群给你帮我看着”时用；长期的分工（报警群→告警 Agent）也用它。" +
     "note 写本人要的东西（原话）；until 按本人的说法定（2h、3d、ISO 时间；本人说长期才用 never，默认 3d）；batch_minutes 是攒多久看一次（默认 10，@本人或机器人的消息 30 秒内就看），盯的过程中觉得太频繁或太慢可以只传 chat_id 和 batch_minutes 调整。" +
     "on：all 全部消息 / mention 只在 @本人或机器人时 / keyword 匹配 pattern；reply：none 只看不回 / draft 回复先给本人确认 / auto 直接用机器人回复。" +
-    "invite_bot=true 用本人身份把 omem 的机器人拉进群（机器人不在群里时回复不了、也收不到实时消息），只在本人亲自要求盯群的这一轮可用。remove=true 不再盯。",
+    "机器人不在群里时回复不了、也收不到实时消息：先用 lark_invite（bots: [\"self\"]）把 omem 的机器人拉进群。remove=true 不再盯。",
   write: true,
   schema: z.object({
     chat_id: z.string().describe("群 chat_id（oc_…）：当前群从会话里看，分享的群在消息里，也可用 list_lark_chats 查"),
@@ -2569,19 +2569,16 @@ def({
     pattern: z.string().optional(),
     reply: z.enum(["none", "draft", "auto"]).optional(),
     space: z.string().optional().describe("这个群的材料与记录放哪个空间"),
-    invite_bot: z.boolean().optional(),
     remove: z.boolean().optional(),
   }),
   handler: async (ctx, a) => {
     if ((ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "只有本人可以设置盯群");
-    const { setWatchRule, watchRule, inviteOwnBot, DEFAULT_BATCH_MINUTES } = await import("../channels/lark-watch.ts");
+    const { setWatchRule, watchRule, DEFAULT_BATCH_MINUTES } = await import("../channels/lark-watch.ts");
     const prev = watchRule(ctx.app, a.chat_id);
     if (a.remove) {
       setWatchRule(ctx.app, a.chat_id, null);
       return `不再盯 ${a.chat_id}。`;
     }
-    // The bot joins as the owner only when the owner asked for this in their own message.
-    if (a.invite_bot && !ownerAskedThisTurn(ctx)) throw new HttpError(403, "拉机器人进群要本人亲自要求：只能在回答本人消息的这一轮做");
     const expiresAt = a.until === undefined ? (prev ? prev.expiresAt : untilTime("3d")) : a.until === "never" ? undefined : untilTime(a.until);
     const rule = {
       ...prev,
@@ -2595,13 +2592,68 @@ def({
       expiresAt,
     };
     setWatchRule(ctx.app, a.chat_id, rule);
-    let invited = "";
-    if (a.invite_bot) {
-      await inviteOwnBot(ctx.app, a.chat_id);
-      invited = "已用本人身份把机器人拉进群。";
-    }
     const what = rule.on === "mention" ? " @ 消息" : rule.on === "keyword" ? `匹配 ${rule.pattern} 的消息` : "消息";
-    return `${prev ? "已更新" : "开始盯"} ${a.chat_id}：${what}每 ${rule.batchMinutes} 分钟一批交给 ${rule.spec}，回复方式 ${rule.reply}，${rule.expiresAt ? `到 ${rule.expiresAt.slice(0, 16).replace("T", " ")}（UTC）` : "直到取消"}。${invited}`;
+    return `${prev ? "已更新" : "开始盯"} ${a.chat_id}：${what}每 ${rule.batchMinutes} 分钟一批交给 ${rule.spec}，回复方式 ${rule.reply}，${rule.expiresAt ? `到 ${rule.expiresAt.slice(0, 16).replace("T", " ")}（UTC）` : "直到取消"}。`;
+  },
+});
+
+/** One `lark_invite` call: at most this many groups and members in all, so the approval card shows every one. */
+const INVITE_MAX_CHATS = 20;
+const INVITE_MAX_MEMBERS = 200;
+
+def({
+  name: "lark_invite",
+  description:
+    "以本人身份把人或机器人拉进本人所在的飞书群，一批群一次调用。people 每项是本人身份（lark-cli）下的 open_id（ou_…）、邮箱或姓名：重名时会列出候选，用 open_id 或邮箱指明，不要猜。" +
+    "bots 每项是 self（omem 自己的机器人）、lark.bots 里的机器人 id、app_id（cli_…）或机器人名字；别的机器人要先在本人的某个群里见过才认得，不认识就传 bots_seen_in（它已经在的群）。" +
+    "有人的调用每次都要本人批准（卡片列出每个群和每个人，批准后一次全部执行）；只拉认得出的机器人默认直接执行，执行后在回复里告诉本人拉了谁进哪个群。" +
+    `一次最多 ${INVITE_MAX_CHATS} 个群、合计 ${INVITE_MAX_MEMBERS} 个成员。`,
+  write: true,
+  schema: z.object({
+    invites: z
+      .array(
+        z.object({
+          chat_id: z.string().describe("群 chat_id（oc_…），用 lark_read 的 im +chat-search 查"),
+          people: z.array(z.string().min(1)).max(INVITE_MAX_MEMBERS).optional(),
+          bots: z.array(z.string().min(1)).max(15).optional(),
+        }),
+      )
+      .min(1)
+      .max(INVITE_MAX_CHATS),
+    reason: z.string().trim().min(1).max(300).describe("给本人看的一句：为什么拉"),
+    bots_seen_in: z.array(z.string()).max(10).optional().describe("要拉的机器人已经在的群（oc_…），从这些群的成员里认出机器人的名字"),
+  }),
+  handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以用本人身份拉人进群");
+    ownerOnly(ctx, "messages");
+    const empty = a.invites.filter((i) => !i.people?.length && !i.bots?.length).map((i) => i.chat_id);
+    if (empty.length) throw new HttpError(400, `这些群没有要拉的人或机器人：${empty.join("、")}`);
+    const total = a.invites.reduce((n, i) => n + (i.people?.length ?? 0) + (i.bots?.length ?? 0), 0);
+    if (total > INVITE_MAX_MEMBERS) throw new HttpError(400, `一次最多拉 ${INVITE_MAX_MEMBERS} 个成员（这次 ${total} 个）：分几次调用`);
+    const inv = await import("../channels/lark-invite.ts");
+    const resolved = await inv.resolveInvites(ctx.app, a.invites, a.bots_seen_in ?? []);
+    const hasPeople = resolved.some((r) => r.people.length > 0);
+    const ownAppId = ctx.app.config.lark.appId;
+    const onlySelf = !hasPeople && resolved.every((r) => r.bots.every((b) => b.appId === ownAppId));
+    const direct =
+      ctx.actor === "user" ||
+      ctx.approved ||
+      (!hasPeople && (!ctx.app.config.lark.invite.botApproval || (onlySelf && ownerAskedThisTurn(ctx))));
+    if (!direct) {
+      // What the owner approves are ids: the held call runs again on exactly these.
+      const normalized = { invites: resolved.map((r) => ({ chat_id: r.chatId, ...(r.people.length ? { people: r.people.map((p) => p.openId) } : {}), ...(r.bots.length ? { bots: r.bots.map((b) => b.appId) } : {}) })), reason: a.reason };
+      const pending = one<{ id: string }>(ctx.app.db, "select id from asks where user_id = ? and tool = 'lark_invite' and status = 'pending' and args = ? order by created_at desc limit 1", ctx.userId ?? OWNER, JSON.stringify(normalized));
+      if (pending) return `同样的拉人请求正在等本人批准（${pending.id}），用 wait_answer 等结果，不要重复申请。`;
+      const question = inv.inviteQuestion(resolved, a.reason);
+      // The card shows the whole list: well within a Feishu card's size (about 30 KB) and a Markdown block's 20k characters.
+      if (Buffer.byteLength(question) > 20_000) throw new HttpError(400, "这次的名单太长，审批卡片放不下：分几次调用");
+      const r = await held(ctx, "lark_invite", normalized, question);
+      if (r.isError) throw new HttpError(403, r.text);
+      return r.text;
+    }
+    const outcomes = await inv.runInvites(ctx.app, resolved, { runId: ctx.runId, approved: !!ctx.approved });
+    const text = inv.describeOutcomes(outcomes);
+    return ctx.approved || ctx.actor === "user" ? text : `${text}\n（没有经过审批：在回复里告诉本人拉了谁进哪个群。）`;
   },
 });
 

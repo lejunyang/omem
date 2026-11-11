@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { HttpError, now } from "../core/util.ts";
+import { now } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { findAgentSpec } from "../agents/specs.ts";
 import { chatSettings, setChatSettings, type WatchRule } from "../agents/threads.ts";
@@ -115,18 +115,8 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
   return n;
 }
 
-/**
- * Add omem's own bot to a chat the owner is in, as the owner (lark-cli): the one write to Feishu
- * done as the owner outside the owner's own messages. Only for what the owner set up or asked for
- * themself: a rule's action, or a watch the owner asked for in their own message.
- */
-export async function inviteOwnBot(app: App, chatId: string) {
-  const appId = app.config.lark.appId;
-  if (!appId) throw new HttpError(400, "没有配置飞书机器人（lark.appId）");
-  const { larkCli } = await import("./lark-cli.ts");
-  await larkCli(["im", "chat.members", "create", "--chat-id", chatId, "--member-id-type", "app_id", "--succeed-type", "1", "--data", JSON.stringify({ id_list: [appId] }), "--as", "user"], 60_000);
-  (await import("../rules/engine.ts")).forgetChatBots(chatId);
-}
+/** Rules bring omem's bot into a chat with this (lark-invite.ts, shared with `lark_invite`). */
+export { inviteOwnBot } from "./lark-invite.ts";
 
 export type WatchInfo = WatchRule & { chatId: string; name: string; conversationId: string | null };
 

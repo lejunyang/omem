@@ -177,7 +177,8 @@ function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { targe
     const openId = ask.userId === OWNER ? ownerOpenId : larkOpenIdOf(app, ask.userId);
     return openId ? { target: { userId: openId, bot: "main" }, chatId: null, bot: "main" } : null;
   }
-  if (ask.kind === "approval" && (ask.tool?.startsWith("lark_doc_") || ask.tool === "lark_write")) {
+  // Approvals that name other people's files or other people (lark_invite) go to the owner alone, never a group.
+  if (ask.kind === "approval" && (ask.tool?.startsWith("lark_doc_") || ask.tool === "lark_write" || ask.tool === "lark_invite")) {
     const openId = ask.userId === OWNER ? ownerOpenId : larkOpenIdOf(app, ask.userId);
     return openId ? { target: { userId: openId, bot: "main" }, chatId: null, bot: "main" } : null;
   }

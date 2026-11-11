@@ -236,6 +236,8 @@ export async function chatBots(app: App, chatId: string): Promise<ChatBot[] | nu
     const v = await larkCli(["im", "+chat-members-list", "--chat-id", chatId, "--member-types", "bot", "--page-all", "--as", "user", "--format", "json"], 60_000);
     const bots: { app_id?: string; name?: string; bot_name?: string }[] = v?.data?.bots ?? v?.bots ?? [];
     out = bots.map((b) => ({ appId: b.app_id ? String(b.app_id) : undefined, name: String(b.name ?? b.bot_name ?? "") })).filter((b) => b.name || b.appId);
+    // Names of bots seen in the owner's groups: `lark_invite` takes a bot by name from these.
+    (await import("../channels/lark-invite.ts")).rememberBots(app, out);
   } catch {
     out = null;
   }

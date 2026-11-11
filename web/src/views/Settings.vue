@@ -1165,6 +1165,12 @@ async function saveEdit() {
       </div>
 
       <div class="card pad stack">
+        <strong>拉人进群</strong>
+        <p class="muted small">助手可以用你的身份把人或机器人拉进你所在的群（lark_invite）。拉人进群每次都要你批准，卡片上列出每个群和每个人。拉机器人（omem 自己的，或在你的群里见过、认得出名字的）默认直接拉，事后在回复里告诉你。</p>
+        <UiCheckbox :model-value="!!config.lark.invite?.botApproval" switch @change="(v) => saveConfig({ lark: { ...config.lark, invite: { ...(config.lark.invite ?? {}), botApproval: v } } }, v ? '拉机器人进群也要你批准' : '拉机器人进群不用批准')">拉机器人进群也要我批准</UiCheckbox>
+      </div>
+
+      <div class="card pad stack">
         <UiCheckbox :model-value="config.telegram.enabled" switch @change="(v) => saveConfig({ telegram: { ...config.telegram, enabled: v } })"><strong>Telegram 机器人</strong></UiCheckbox>
         <p class="muted small">用 @BotFather 创建机器人，把 token 放在环境变量 <span class="mono">{{ config.telegram.tokenEnv }}</span>。首次给机器人发消息会回复你的 chat id。</p>
         <label class="field"><span>本人 chat id</span><input class="input mono" :value="config.telegram.ownerChatId ?? ''" @change="saveConfig({ telegram: { ...config.telegram, ownerChatId: ($event.target as HTMLInputElement).value || undefined } })" /></label>

@@ -83,6 +83,8 @@ export const LARK_BOT_ADDONS = {
       ...FEATURES.lark.flatMap((f) => f.scopes),
       "offline_access",
       "im:chat:read",
+      // Adding people and bots to the owner's groups (lark_invite, rules that bring the bot in).
+      "im:chat.members:write_only",
       "im:message:readonly",
       "im:message.group_msg:get_as_user",
       "im:message.p2p_msg:get_as_user",
