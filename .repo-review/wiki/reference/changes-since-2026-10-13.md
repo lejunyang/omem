@@ -1844,3 +1844,9 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 ## 2026-11-11：同一批聊天消息只整理一次
 
 - 机器人实时收到和本人身份轮询各自为同一个会话排整理（ingest），说明文字不同所以不合并，而且都从同一行读起：同一批消息被读两遍。现在已经在排队的运行里有这个原件时，不看说明直接并进去；整理运行开始读时记下读到第几行（kv `ingest_to:<原件>`），之后再为同样的行排队就跳过，新的运行从上次读完的下一行开始（不再从“最后一次追加的位置”开始，中间追加的行不会漏）。
+
+## 2026-11-11：拉人进群
+
+- 新工具 `lark_invite`（分组 `lark-owner`，`src/channels/lark-invite.ts`）：以本人身份把人或机器人拉进本人的群，一批群一次调用。`resolveInvites` 一次列出全部问题：群读名字、拒绝单聊；人按 `lark_people` 的 `cli_open_id`、`contact +search-user` 完全匹配，重名列候选，`ou_` 取不到名字的拒绝，查到的 `rememberPerson`；机器人按 `self`、`lark.bots`、kv `lark_known_bots`（`chatBots` 读到时写入）、`bots_seen_in`。
+- 有人时整次 `held` 审批，参数存成只含 id 的规范形式，相同参数在等批准时不再发卡，卡片固定发到本人私聊、全文不截断（超 20 KB 要求分次）；只拉认得出的机器人默认直接执行，新配置 `lark.invite.botApproval`（设置 → 渠道 → 拉人进群）打开后机器人也审批，只拉 `self` 且 `ownerAskedThisTurn` 的那一轮除外。
+- `runInvites` 人 50、机器人 5 一批 `chat.members create --succeed-type 1`，逐群写结果和 `audit_events`（`lark.invite`）。`inviteOwnBot` 移到这里共用 `addChatMembers`；`set_chat_watch` 去掉 `invite_bot`；lark-cli 用户 scope 补 `im:chat.members:write_only`；经 `--peer` 的外部 Agent 和“有人找你”的处理不给这个工具。
