@@ -51,6 +51,7 @@ import { confirmPage, folderOf, folderOverview, listPages, movePages, pageContex
 import { keepOwnerSection } from "./work-state.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOutput } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
+import { afterToolCall, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
@@ -1549,6 +1550,21 @@ def({
   },
 });
 
+def({
+  name: "take_over_run",
+  description:
+    "接手一个正在后台办同一件事的运行（“同时在办的相关工作”里列出的：巡检、有人找你的处理、盯群、唤醒、规则触发的 Agent）：停下它，并拿到它已经查到的——最后写的文字、写过的工作文件、碰过的事项、已经发出的消息，接着做而不用重查。只在本人正在问你同一件事、由你来回答更合适时用；它已经结束的也可以用来取它的结果。编码交办和评审用 stop_code_run。",
+  write: true,
+  schema: z.object({ run_id: z.string() }),
+  handler: async (ctx, a) => {
+    const r = getRun(ctx.app, a.run_id);
+    const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
+    if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
+    const { takeOverRun } = await import("./awareness.ts");
+    return takeOverRun(ctx.app, { runId: ctx.runId, userId: ctx.userId }, a.run_id);
+  },
+});
+
 // --------------------------------------------------------------- write tools
 
 const refs = z.array(z.string()).optional().describe("来源引用，如 src:<原件id>#L10-L20、mem:<记忆id>、msg:<消息id>");
@@ -1899,7 +1915,7 @@ def({
 def({
   name: "upsert_item",
   description:
-    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。",
+    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。会话和群聊也是这件事“在哪里进行”：你写了事项，宿主会把它关联到你这次所在的会话或群；同一件事在别的会话里也在谈，用 materials_add（kind=conversation，或群聊原件 kind=source）关联过去，不是同一件事用 materials_remove 取消。",
   write: true,
   schema: z.object({
     id: z.string().optional(),
@@ -2017,7 +2033,7 @@ def({
 
 def({
   name: "read_item",
-  description: "读取事项完整字段、当前来源及全部时间线，纠正前先读。跨空间发现仍只读。",
+  description: "读取一件事项的全貌：完整字段、当前来源、全部时间线、材料、工作文件，以及它在哪些会话和群里进行（places：每处最近的一句话或摘要）、正在为它跑的运行（runs）。纠正前先读。跨空间发现仍只读。",
   schema: z.object({ item_id: z.string() }),
   handler: async (ctx, a) => {
     const item = getItem(ctx.app, a.item_id);
@@ -2027,7 +2043,11 @@ def({
     const files = listWorkFiles(ctx.app, { item: item.id }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
     const { materialViews } = await import("../items/materials.ts");
     const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
-    return JSON.stringify({ item, events: itemEvents(ctx.app, item.id), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
+    // Where the work goes on and what is running for it (items/places.ts).
+    const { itemPlaces, itemRuns } = await import("../items/places.ts");
+    const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
+    const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER).filter((r) => r.id !== ctx.runId);
+    return JSON.stringify({ item, events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
   },
 });
 def({
@@ -5530,12 +5550,16 @@ function followWork(ctx: ToolContext, args: Record<string, unknown>): string {
 async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown): Promise<{ text: string; isError: boolean }> {
   const parsed = { data };
   try {
+    // A background run about to post, and the owner spoke in its scope since it began: its words go back to it first (awareness.ts).
+    const recheck = await preSendCheck(ctx.app, ctx.runId, name, data as Record<string, unknown>);
+    if (recheck) return recheck;
     // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
     // ... and Feishu as the person this run works for (their own connection; src/auth/lark-user.ts).
     const text = await asLarkUser(ctx.app, ctx.userId ?? OWNER, () => withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data)));
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
     const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : tool.write ? followWork(ctx, parsed.data as Record<string, unknown>) : "";
-    return { text: text + moved + (await steering(ctx)), isError: false };
+    const linked = afterToolCall(ctx.app, ctx.runId, ctx.userId, name, parsed.data as Record<string, unknown>, String(text));
+    return { text: text + moved + linked + (await steering(ctx)), isError: false };
   } catch (error) {
     return { text: (error as Error).message + (await steering(ctx)), isError: true };
   }
@@ -5545,7 +5569,8 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
 async function steering(ctx: ToolContext) {
   if (!ctx.runId) return "";
   try {
-    return (await import("./steer.ts")).takeSteering(ctx.app, ctx.runId) ?? takeCodeSteering(ctx.app, ctx.runId) ?? "";
+    // …and what the owner said in a background run's scope meanwhile (awareness.ts), each message once.
+    return ((await import("./steer.ts")).takeSteering(ctx.app, ctx.runId) ?? takeCodeSteering(ctx.app, ctx.runId) ?? "") + (ctx.shadow || ctx.view ? "" : ownerNews(ctx.app, ctx.runId));
   } catch (e) {
     console.warn("[omem] 补充消息没能交给正在进行的一轮：", (e as Error).message);
     return "";

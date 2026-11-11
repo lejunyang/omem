@@ -20,6 +20,7 @@ import { WAKE_NOTE } from "./wakes.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
 import { afterTurn, noteRateLimit } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
+import { awarenessNote } from "./awareness.ts";
 
 /**
  * Agent sessions behind threads. Three levels of continuity, cheapest first:
@@ -252,7 +253,7 @@ export type TurnResult = { text: string; agent: string; profileId: string; mode:
  * Answer the newest messages of a thread, continuing its agent session when
  * possible. One turn per thread at a time (the run lane guarantees it).
  */
-export async function threadTurn(ctx: RunContext, threadId: string, messages: ThreadMessage[], userId = "owner"): Promise<TurnResult> {
+export async function threadTurn(ctx: RunContext, threadId: string, messages: ThreadMessage[], userId = "owner", promptOverride?: string): Promise<TurnResult> {
   const app = ctx.app;
   const t = getThread(app, threadId);
   const { actor, label } = actorFor(app, t);
@@ -312,7 +313,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const people = ownerTurn && chatId ? peopleInChat(app, chatId) : [];
   const ownerCold = [...(brief ? [`## 本人近况\n\n${brief}`] : []), ...(people.length ? [`## 这个群里常和本人打交道的人\n\n${people.join("\n")}`] : [])];
   const recalled = await passiveForTurn(app, ctx.run.id, threadId, prep, said, canResume || live.has(threadId));
-  const newPart = coordinate
+  // `promptOverride`: one more turn in the same run (the check before a background turn posts, awareness.ts).
+  const newPart = promptOverride ?? (coordinate
     ? coordinationNote(app, coordinate.workId, messages)
     : handoff?.kind === "code-tasks"
       ? `# 交办里有修改项等你处理
@@ -357,7 +359,7 @@ ${renderMessages(messages, app)}
 ${WAKE_NOTE}`
       : watched
       ? watchedNote(app, t, messages)
-      : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${NEW_TURN_NOTE}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${brief}` : ""}`;
+      : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${NEW_TURN_NOTE}${recalled ? `\n\n${recalled}` : ""}${briefNew ? `\n\n# 本人近况（会话开始后重新整理过）\n\n${brief}` : ""}`) + (promptOverride ? "" : awarenessNote(app, ctx.run.id));
   // A new session's first turn; the standing instructions go with it (sessionPrompt) or as its system prompt.
   const freshBody = () => `（${prep.now}）\n\n# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString(), ownerCold)}\n\n---\n\n${newPart}`;
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });

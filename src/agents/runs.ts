@@ -1,6 +1,7 @@
 import { releaseRun } from "./capacity.ts";
 import { withBot } from "../core/bot-context.ts";
 import { trySettleCodeChain } from "./code-chain.ts";
+import { recordRunStart } from "./run-scope.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
@@ -439,6 +440,8 @@ function kick(app: App) {
     // Atomic claim: several processes (server, CLI) may share one library.
     if (run(app.db, "update runs set status='running', started_at=? where id=? and status='queued'", now(), next.id).changes !== 1) continue;
     app.emit({ type: "run", runId: next.id, status: "running" });
+    // What it works on (the chat, conversation, messages and items its input names), for the runs beside it.
+    recordRunStart(app, next.id);
     active[cls]++;
     heartbeats.set(next.id, Date.now());
     const controller = new AbortController();

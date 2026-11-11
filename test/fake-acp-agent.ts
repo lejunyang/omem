@@ -565,6 +565,44 @@ ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      // FAKE_MODE=aware (test/awareness.test.ts): the task is a script. `@wait <file>` writes <file>.ready and
+      // waits for <file> (the test speaks as the owner meanwhile); `@call <tool> <json>` calls an omem tool and
+      // logs its result to FAKE_TOOL_LOG. Then it answers FAKE_ANSWER. The check before posting (“# 发出前复核”)
+      // is answered with a rewritten conclusion, or with stay_quiet when FAKE_AWARE_QUIET is set.
+      if (process.env.FAKE_MODE === "aware") {
+        if (process.env.FAKE_PROMPT_FILE) appendFileSync(process.env.FAKE_PROMPT_FILE, JSON.stringify(prompt) + "\n");
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-aware", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const direct = new Set((await client.listTools()).tools.map((t) => t.name));
+          const call = async (name: string, args: Record<string, unknown>) => {
+            const r = await client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
+            const text = (r.content as { text?: string }[]).map((c) => c.text ?? "").join("");
+            if (process.env.FAKE_TOOL_LOG) appendFileSync(process.env.FAKE_TOOL_LOG, JSON.stringify({ name, text, isError: !!r.isError }) + "\n");
+            return text;
+          };
+          if (prompt.includes("# 发出前复核")) {
+            if (process.env.FAKE_AWARE_QUIET) {
+              await call("stay_quiet", { reason: "本人已经处理了" });
+              await say("已结束");
+            } else await say("复核后的结论：本人已经补充了，按本人说的办");
+            return { stopReason: "end_turn" as const };
+          }
+          for (const line of prompt.split("\n")) {
+            const wait = /^@wait (\S+)$/.exec(line.trim());
+            if (wait) {
+              writeFileSync(`${wait[1]}.ready`, "1");
+              while (!existsSync(wait[1])) await new Promise((r) => setTimeout(r, 50));
+              continue;
+            }
+            const c = /^@call (\S+) (.*)$/.exec(line.trim());
+            if (c) await call(c[1], JSON.parse(c[2]));
+          }
+          await say(process.env.FAKE_ANSWER ?? "结论：要本人看一下");
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
       if (echo) {
         await say(JSON.stringify({ session: p.sessionId, resumed: resumed.has(p.sessionId), system: systems.get(p.sessionId) ?? null, prompt }));
         return { stopReason: "end_turn" };

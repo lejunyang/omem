@@ -448,9 +448,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     }
     // Suppress when the owner has clearly seen/handled the triggering chat:
     // read status, an OK/DONE reaction, or a later reply in the same topic.
+    // A run that already went through the same check before it posted (agents/awareness.ts) decided with it; only a push held overnight is checked again.
     if (app.config.notify.onlyUnread && n.sourceRefs?.length) {
       const { ownerAlreadyHandled } = await import("./notify-gate.ts");
-      if (await ownerAlreadyHandled(app, n).catch(() => false)) return;
+      const { checkedBeforeSend } = await import("../agents/awareness.ts");
+      if ((deferred || !checkedBeforeSend(app, n.runId)) && await ownerAlreadyHandled(app, n).catch(() => false)) return;
     }
     // Cards keep external notification links; internal routes stay in the web app.
     const card = notificationCard(app, n);

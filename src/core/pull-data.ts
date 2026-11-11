@@ -25,6 +25,7 @@ export const pullTables: Table[] = [
   { name: "card_interactions", key: ["id"], newer: "coalesce(handled_at, created_at)" },
   { name: "messages", key: ["id"] },
   { name: "run_events", key: ["run_id", "seq"] },
+  { name: "run_scope", key: ["run_id", "kind", "key", "topic"] },
   { name: "card_reviews", key: ["card_id", "at", "user_id"] },
   { name: "notifications", key: ["id"] },
   { name: "handled_messages", key: ["channel", "message_id"] },

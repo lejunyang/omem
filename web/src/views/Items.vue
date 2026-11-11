@@ -10,6 +10,7 @@ import UiDateTime from "../components/UiDateTime.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
+import ItemPlaces, { type Place, type ItemRun } from "../components/ItemPlaces.vue";
 import DesignRow from "../components/DesignRow.vue";
 import DesignStart from "../components/DesignStart.vue";
 import type { DesignSummary } from "../lib/designs";
@@ -23,7 +24,7 @@ const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
 type WorkFile = { id: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; lines: number };
-const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[] } | null>(null);
+const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[] } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const adding = ref(false);
@@ -283,6 +284,7 @@ async function addNote() {
           <span class="spacer" />
           <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
+        <ItemPlaces :places="detail.places ?? []" :runs="detail.runs ?? []" />
         <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" @changed="loadDetail" />
         <div class="designs">
           <div class="section-title row">方案<span class="spacer" /><button class="btn ghost sm" @click="startingDesign = true"><Icon name="plus" :size="13" />跟进一份技术方案</button></div>

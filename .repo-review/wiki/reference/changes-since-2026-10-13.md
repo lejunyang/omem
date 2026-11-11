@@ -1908,3 +1908,14 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 借工具：`run_agent` / `continue_agent_work` 多 `extra_tools`（最多 12 件）。`tools.ts` 的 `lendTools`：必须是发起这次交办的运行令牌里有的工具（被禁用的、本人没权限的本来就不在里面）；`LEND_DENIED` 不借以本人身份写飞书（`lark_write`、`lark_invite`、`lark_doc_create/update/move/copy/authorize`）、发消息（`lark_send` 等 lark-msg 里发送的）、再交办（`run_agent`、`continue_agent_work`、`ask_agent`、`delegate_code`、`review_branch`、`continue_code_run`）、`stay_quiet`、`report_rule_failure` 和 `ROLE_TOOLS`；从别的设备或规则运行里交办不能借。借出的记在这一轮的 `input.extraTools`，`runAgentTask` 去掉这次运行被禁用的再交给 `addTools`，任务末尾写明借到了什么；`prepareRun` 照常按本人权限裁剪，空间范围不变。
 - `roles/assistant.md`、协调说明（`sessions.ts` 的 `coordinationNote`）：交办前看对方档案的工具，缺的自己做或借；只是接着交办的那一轮回复写一两句记录。设置页加“过程消息”一节（两个 `UiSegmented`）。
 - 测试：`test/agent-work-progress.test.ts`、`test/agent-work-lend.test.ts`，`test/agent-work.test.ts` 多一条默认设置下的循环。验收 17a–17d。
+
+## 2026-11-11：会话与运行互相知道（docs/v2/awareness.md）
+
+起因：同一个群里两路同时处理同一件事各回一遍；后台在查的事本人中途插手了，后台照发过时的结论；一件事在几个会话里进行，各会话只看眼前。改法：
+
+- 运行的范围键：表 `run_scope`（迁移），`src/agents/run-scope.ts` 的 `recordRunStart` 在 `runs.ts` 认领运行后从输入得出（会话、飞书群和话题、触发消息、事项），事项工具（`read_item`、`upsert_item`、`settle_items`、`propose_item_update`、带 `entity_id` 的 `notify`）运行中补上。`relatedNote` 生成“同时在办的相关工作”（进行中或 30 分钟内结束，最多 6 条），`runner.ts` 的 `runRole` 和 `sessions.ts` 的 `threadTurn` 接在任务后面（`awareness.ts` 的 `awarenessNote`）。
+- 发出前复核：`awareness.ts` 的 `preSendCheck`（`tools.ts` 的 `runTool` 里，`notify`、`lark_send`、`lark_card`、`lark_send_file`、`reply_to_asker`）和 `recheckAnswer`（`jobs.ts` 的 `ask` 处理和 `runAgentTask`，最终回答）；只对 `mayStayQuiet` 的后台运行，每次运行一次（`output.awareness.recheckedAt`）。`ownerMoves` 收集运行排队后本人在范围里说的话。通知闸门的已读、表情、之后回复并进同一个检查；`lark-bot.ts` 推送时对复核过的运行不再拦（`checkedBeforeSend`），夜间攒下的照旧检查。
+- 运行中送达：`ownerNews` 接在 `tools.ts` 的 `steering` 后面，后台运行下一次工具调用的结果末尾附“本人刚说了”，每条一次。
+- 一件事跨会话：`src/items/places.ts`。会话和群聊是事项材料；`upsert_item` 写事项时自动关联运行所在的会话或群（`linkRunPlaces`）；“这件事还在这些会话里进行”（`itemPlacesNote`）；候选事项（`placeCandidates`，引用、链接或单号、人、共同的词、时间）；`read_item` 多返回 `places`、`runs`；`GET /api/items/:id` 多返回 `places`、`runs`（只给事项的主人）；事项页“在这些会话里进行”（`ItemPlaces.vue`）。
+- 接手：新工具 `take_over_run`（分组 `delegate`），停下同一个人的后台运行并返回它最后的文字、工作文件、碰过的事项和已发出的消息。
+- `roles/_common.md` 新增“同时在办的工作”；`skills/omem/references/items.md`、`agents.md` 同步；测试 `test/awareness.test.ts`（假 Agent 新增 `FAKE_MODE=aware`）。

@@ -740,6 +740,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : null;
   /** Who the first AI was, for the words when the run moves on. */
   const firstWho = pinned ? `原指定的 AI（${aiLabel(execution!)}）` : own ? `自动选中的 AI（${aiLabel({ profile: chain[0].id, model: chain[0].model })}）` : "默认后端";
+  // Other runs on the same chat, message or item, and where its item goes on elsewhere (awareness.ts).
+  const aware = internal ? "" : (await import("./awareness.ts")).awarenessNote(app, input.runId);
   try {
     for (let i = 0; i < chain.length; i++) {
       // The named AI is out of quota or past the owner's daily cap: go straight to the next.
@@ -780,7 +782,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           parts: prep.parts,
-          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}# 任务\n\n${input.task}`,
+          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}# 任务\n\n${input.task}${aware}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
@@ -814,7 +816,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         let result: AgentResult;
         try {
           result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
-            ? await backgroundTurn(app, prep, req, input.task, input.runId, watch)
+            ? await backgroundTurn(app, prep, req, `${input.task}${aware}`, input.runId, watch)
             : await runBackend(app, prep.profile, req, watch);
         } catch (e) {
           if (!quietAfterAll(app, input.runId, quietBefore, e)) throw e;

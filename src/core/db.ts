@@ -1644,6 +1644,21 @@ export const migrations: readonly string[] = [
   // A review finding names the design's decision it is about (docs/v2/coding-plan.md §3); `decision`
   // is the owner's fix / later / wontfix and stays as it is.
   `alter table review_findings add column design_decision text;`,
+  // What each run is working on (src/agents/run-scope.ts, docs/v2/awareness.md): the Feishu chat and
+  // topic it answers in or was triggered from, the conversation, the messages that started it, and the
+  // items it was given or touched. Derived by the host, never stated by the model; runs that share a
+  // key see each other, and the owner's words in their scope are checked before they post.
+  `
+  create table run_scope (
+    run_id text not null,
+    kind text not null,                 -- chat | conversation | item | message
+    key text not null,
+    topic text not null default '',     -- chat: the topic (thread) id, '' for the chat as a whole
+    via text not null default 'input',  -- input | tool
+    at text not null,
+    primary key (run_id, kind, key, topic)
+  );
+  create index run_scope_key on run_scope(kind, key);`,
 ];
 
 export type Db = DatabaseSync;
