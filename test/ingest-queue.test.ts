@@ -26,6 +26,29 @@ describe("ingest batching", () => {
     expect(one<{ not_before: string }>(app.db, "select not_before from runs where id=?", first.id)!.not_before).toBe(due);
   });
 
+  it("reads a chat's lines once when two capture paths ask for the same messages", () => {
+    const app = setup();
+    const input = { spaceId: "personal", kind: "chat" as const, uri: "chat:b", title: "项目 B" };
+    const a = appendToSource(app, { ...input, lines: ["小王：@你 退款口径是什么"] });
+    // The poll asks first; the bot's own request for the same message comes while that run waits.
+    const first = scheduleIngest(app, "personal", [a.id], "飞书新消息、日程或妙记")!;
+    expect(scheduleIngest(app, "personal", [a.id], "飞书群新消息")!.id).toBe(first.id);
+    expect(listRuns(app, { kind: "ingest" })).toHaveLength(1);
+    // The run starts reading: what is in the chat now is its to read.
+    run(app.db, "update runs set status = 'running' where id = ?", first.id);
+    run(app.db, "insert into kv(key, value) values(?, ?)", `ingest_to:${a.id}`, "1");
+    // The other path asks again for the same message: nothing new, no second run.
+    expect(scheduleIngest(app, "personal", [a.id], "飞书群新消息")).toBeNull();
+    expect(listRuns(app, { kind: "ingest" })).toHaveLength(1);
+    // Two more messages, the request for the first of them arriving late: the next run starts after
+    // what was read, not at the last append.
+    appendToSource(app, { ...input, lines: ["小李：我看看"] });
+    appendToSource(app, { ...input, lines: ["小李：按已发货行算"] });
+    const next = scheduleIngest(app, "personal", [a.id], "飞书群新消息")!;
+    expect(next.id).not.toBe(first.id);
+    expect(next.input.sourceStarts).toEqual({ [a.id]: 2 });
+  });
+
   it("bounds batches, isolates spaces and instructions, and leaves running/cancelled inputs intact", () => {
     const app = setup();
     createSpace(app, { id: "project-a", name: "项目 A", kind: "project" });
