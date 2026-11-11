@@ -106,6 +106,33 @@ describe("durable Doubao cleanup", () => {
     expect(pending(app)).toEqual([]);
   });
 
+  it("lets go of the sessions a delegation kept once it is confirmed or discarded, and of idle agent work after a week", async () => {
+    const app = authorized();
+    const keep = (runId: string, id: string) =>
+      run(app.db, "insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,-1,'')", "doubao:cli_bot", id, "doubao-cli", "doubao-cli", null, "cli_bot", app.home, runId, process.pid);
+    const done = (id: string, at?: string) => run(app.db, "update runs set status = 'done', finished_at = ? where id = ?", at ?? new Date().toISOString(), id);
+    // A discarded delegation and its second round, each with a reviewer's kept session; an open one.
+    const gone = createRun(app, { kind: "code", spaceId: "personal", title: "退款改造", input: { task: "t" } });
+    const round = createRun(app, { kind: "code", spaceId: "personal", title: "第 2 轮", input: { task: "t", continueFrom: gone.id } });
+    const open = createRun(app, { kind: "code", spaceId: "personal", title: "导出改造", input: { task: "t" } });
+    for (const r of [gone, round, open]) done(r.id);
+    setRunOutput(app, gone.id, { discardedAt: new Date().toISOString() });
+    keep(gone.id, "review-1"); keep(round.id, "review-2"); keep(open.id, "review-open");
+    // Work handed to an agent: one whose last run was ten days ago, one from yesterday.
+    const old = createRun(app, { kind: "agent", spaceId: "personal", title: "调查", input: { spec: "assistant", task: "t", agentWorkId: "w-old" } });
+    const recent = createRun(app, { kind: "agent", spaceId: "personal", title: "调查", input: { spec: "assistant", task: "t", agentWorkId: "w-new" } });
+    done(old.id, new Date(Date.now() - 10 * 86400_000).toISOString()); done(recent.id, new Date(Date.now() - 86400_000).toISOString());
+    keep(old.id, "work-old"); keep(recent.id, "work-new");
+    const deleted: string[] = [];
+    setDoubaoFetchForTests(async (input, init) => {
+      if (init?.method === "DELETE") { deleted.push(String(input).split("/").pop()!.split("?")[0]); return ok({}); }
+      return ok({ session: { status: "idle" } });
+    });
+    await recoverSessionCleanup(app, () => {});
+    expect(deleted.sort()).toEqual(["review-1", "review-2", "work-old"]);
+    expect(pending(app).map((x) => [x.session_id, x.ready]).sort()).toEqual([["review-open", -1], ["work-new", -1]]);
+  });
+
   it("forgets an already deleted session, while retaining denied or malformed queries", async () => {
     const app = authorized();
     const cleanup = await sessionCleanup(app, { id: "doubao-cli", transport: "doubao-cli", command: "doubao", args: [], env: {}, idleTimeoutMs: 5000 }, { cwd: app.home }, () => {});

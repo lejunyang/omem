@@ -16,6 +16,8 @@ type Pending = {
 };
 type Key = Pick<Pending, "backend_key" | "session_id">;
 type Emit = (e: AgentEvent) => void;
+/** How long the sessions of work handed to agents are kept after the last run in it. */
+const RETAIN_IDLE_MS = 7 * 86400_000;
 const busy = new Set<string>();
 const activeTurns = new Set<string>();
 const sessionKey = (app: App, p: Key) => `${app.home}:${p.backend_key}:${p.session_id}`;
@@ -175,6 +177,35 @@ function releaseRuleSessions(app: App) {
     if (resumeIds.has(p.session_id) || (p.lane && lanes.has(p.lane))) continue;
     const currentId = json<{ sessionId?: string }>(p.output, {}).sessionId;
     if (p.run_id && (resumeRuns.has(p.run_id) || followedRuns.has(p.run_id)) && (!currentId || currentId === p.session_id)) continue;
+    update(app, p, "ready = 1, retry_at = ?", now());
+  }
+  // A delegation that was confirmed or discarded will not resume its coder's or its reviewers'
+  // sessions: without this they stay in the backend's history for good (every check keeps one).
+  const coding = all<Pending & { rid: string; input: string }>(app.db,
+    `select s.*, r.id rid, r.input from session_cleanup s join runs r on r.id = s.run_id
+     where s.ready = -1 and r.kind = 'code' and r.status not in ('queued','running')`);
+  const over = new Map<string, boolean>();
+  for (const p of coding) {
+    if (activeElsewhere(app, p) || resumeIds.has(p.session_id)) continue;
+    const rootId = String(json<{ continueFrom?: string }>(p.input, {}).continueFrom ?? p.rid);
+    if (!over.has(rootId)) {
+      const root = one<{ output: string }>(app.db, "select output from runs where id = ?", rootId);
+      const o = json<{ appliedAt?: string; discardedAt?: string }>(root?.output ?? "{}", {});
+      over.set(rootId, !root || !!o.appliedAt || !!o.discardedAt);
+    }
+    if (over.get(rootId)) update(app, p, "ready = 1, retry_at = ?", now());
+  }
+  // Work handed to agents has no end of its own: its sessions go once nothing ran in it for a week.
+  const weekAgo = new Date(Date.now() - RETAIN_IDLE_MS).toISOString();
+  const working = new Set(active.map((r) => json<{ agentWorkId?: string }>(r.input, {}).agentWorkId).filter(Boolean));
+  const idle = all<Pending & { input: string }>(app.db,
+    `select s.*, r.input from session_cleanup s join runs r on r.id = s.run_id
+     where s.ready = -1 and r.kind = 'agent' and r.status not in ('queued','running') and coalesce(r.finished_at, r.created_at) < ?`, weekAgo);
+  for (const p of idle) {
+    const workId = json<{ agentWorkId?: string }>(p.input, {}).agentWorkId;
+    if (!workId || working.has(workId) || activeElsewhere(app, p) || resumeIds.has(p.session_id) || (p.run_id && resumeRuns.has(p.run_id))) continue;
+    const last = one<{ at: string | null }>(app.db, "select max(coalesce(finished_at, created_at)) at from runs where json_extract(input, '$.agentWorkId') = ?", workId)?.at;
+    if (last && last >= weekAgo) continue;
     update(app, p, "ready = 1, retry_at = ?", now());
   }
 }
