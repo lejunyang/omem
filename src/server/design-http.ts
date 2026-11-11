@@ -56,6 +56,8 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
       sources: d.sources, repos: d.repos, body,
       revisions: designRevisions(app, d.id).map((r) => ({ revision: r.revision, at: r.at, note: r.note, runId: r.runId })),
       item, reqs, work, changes, outside,
+      // The run writing or assessing it now, else the one that wrote the current version.
+      runId: one<{ id: string }>(app.db, "select id from runs where status in ('queued', 'running') and json_extract(input, '$.designId') = ? order by created_at desc limit 1", d.id)?.id ?? d.runId,
     };
   });
 
@@ -68,6 +70,8 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
     const b = parse(z.object({
       title: z.string().min(1).max(200), sources: z.array(z.string().min(1)).min(1).max(10), repos: z.array(z.string()).max(10).default([]),
       itemId: z.string().optional(), space: z.string().optional(), author: z.string().max(80).optional(), note: z.string().max(4000).optional(),
+      /** Assess this external design again (its document changed): a new version of the same design. */
+      designId: z.string().optional(),
     }), req.body);
     const user = who(req);
     const allowed = accessibleSpaces(app, user);
@@ -77,12 +81,13 @@ export function registerDesignRoutes(server: FastifyInstance, app: App, who: (re
     };
     const item = b.itemId ? getItem(app, b.itemId) : null;
     if (item && item.userId !== user) throw new HttpError(403, "只能用自己的事项");
-    const target = readable(b.space ?? item?.spaceId ?? "personal");
+    const again = b.designId ? visible(req, b.designId) : null;
+    const target = readable(again?.spaceId ?? b.space ?? item?.spaceId ?? "personal");
     if (!canWrite(app, user, target) || findSpace(app, target)!.kind === "worktree") throw new HttpError(403, `无权修改空间 ${target}`);
     const repos = [...new Set(b.repos.map(readable))];
     const { resolveDesignSources, startAssessment } = await import("../designs/assess.ts");
     const sources = await resolveDesignSources(app, b.sources, { userId: user, spaces: allowed });
-    const { design, run } = startAssessment(app, { title: b.title, sources, repos, spaceId: target, userId: user, itemId: item?.id, author: b.author, note: b.note, readable: allowed });
+    const { design, run } = startAssessment(app, { title: b.title, sources, repos, spaceId: target, userId: user, itemId: item?.id ?? again?.itemId, author: b.author, note: b.note, designId: again?.id, readable: allowed });
     return { id: design.id, runId: run.id };
   });
 

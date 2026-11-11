@@ -1,6 +1,6 @@
 # 方案与变更说明：自己的交办、别人的方案、别人的分支
 
-状态：实现中（2026-11-11 起）。相关：[coding-loop.md](coding-loop.md)（修改项与推进）、[coding-work.md](coding-work.md)（交办视图）、[pre-check.md](pre-check.md)（编码前检查）、[review.md](review.md)、[requirements.md](requirements.md)。
+状态：已实现（2026-11-11），真实模型和真机待验；VS Code 插件里按决定看改动没做。相关：[coding-loop.md](coding-loop.md)（修改项与推进）、[coding-work.md](coding-work.md)（交办视图）、[pre-check.md](pre-check.md)（编码前检查）、[review.md](review.md)、[requirements.md](requirements.md)。
 
 ## 1. 要解决的问题
 
@@ -17,7 +17,7 @@
 | --- | --- | --- | --- | --- |
 | `own` 自己的方案 | omem 的写方案角色，本人确认 | `designer` | 交办编码之前 | 通过后是这次交办的基线 |
 | `external` 别人的方案 | 别人（技术方案文档） | `designer` 读文档和代码，如实提取决定，再逐个评估 | 本人让助手跟进时；文档更新后可重新评估 | 别人的分支出来后，评审对照它 |
-| `derived` 事后的变更说明 | 已经写完的代码 | 编码 Agent（小改动不走方案）或评审时的拆分（别人的分支没有方案） | 编码结束 / 评审开始 | 只用来看改动 |
+| `derived` 事后的变更说明 | 已经写完的代码 | 编码 Agent（小改动不走方案） | 编码结束 / 评审开始 | 只用来看改动 |
 
 代码这一侧同样统一：一个决定最后落在哪些改动上。
 
@@ -133,14 +133,14 @@
 `review_branch` 多一个 `design_id`（不传时取事项上最新的方案）：
 
 - 有方案：评审开始时的拆分把分支改到的文件归到各个决定上（归不上的进“方案之外的改动”）；评审负责人和各评审项拿到决定和当时的意见。评审问题带 `decision`。负责人汇总时逐个决定写：做了没有、和方案的偏差（`after.deviation`）、方案评估时的每条意见现在是否还成立（更新意见状态）。
-- 没有方案：拆分直接产出一份 `derived` 的方案（就是原来的变更拆分，多了种类和行为变化），之后一样按决定看。
+- 没有方案：和原来一样，拆分是按需求的变更拆分（交办视图的“变更”），需求点的状态照旧从它来。
 
 结果在同一个方案页上：每个决定下面是方案怎么写的、代码怎么做的、偏差、意见和评审问题。这就是“综合”：方案评估和代码评审对着同一组决定。
 
 ## 5. 在哪里看
 
 - **方案页**（`#/design/<id>`，组件 `DesignView`）：顶部是事实、整体行为表、不一致的地方和整体意见；下面左边需求点、右边决定卡片。卡片收起时每栏一句话，点开才显示约定片段和行为表；有意见的卡片标出各级数量；编码后多出改动、偏差、更简单的做法，“看 diff”只看这个决定的改动。版本可切换。
-- **交办视图**（`CodeWork`）：标签改为 `[概览] [方案] [评审] [活动] [分支]`，“方案”就是这次交办或这次分支评审对应的方案页内容（取代“需求点”“变更”两个标签；没有方案的旧交办照旧显示）。
+- **交办视图**（`CodeWork`）：标签改为 `[概览] [方案] [评审] [活动] [分支]`，“方案”就是这次交办或这次分支评审对应的方案页内容（取代“需求点”“变更”两个标签）；只有变更说明的交办保留这两个标签，另加一个“变更说明”；没有方案的照旧显示。
 - **事项 / 需求页**：事项下列出它的方案（自己的、别人的）和状态，“跟进一份技术方案”从这里发起。
 - **方案列表**（`#/designs`）：全部方案按更新时间排，可按来历和空间筛选；入口在运行页“编码”列表底部和命令面板，不进主菜单。
 - **飞书**：自己的方案写好时发确认卡片（几个决定、要本人定的问题直接在卡片上选，链接到方案页）；别人的方案评估完发一条通知。交办结束的汇总按决定列。
@@ -245,7 +245,7 @@ type DesignBody = {
 
 | 工具 | 给谁 | 作用 |
 | --- | --- | --- |
-| `submit_design` | `designer`、编码 Agent（`derived`）、评审拆分（分支评审），放 `ROLE_TOOLS` | 交一版方案：写进本次运行绑定的方案（`input.designId`），版本号加一；按来历校验栏目 |
+| `submit_design` | `designer`、编码 Agent（`derived`），放 `ROLE_TOOLS` | 交一版方案：写进本次运行绑定的方案（`input.designId`），版本号加一；按来历校验栏目 |
 | `read_design` | 助手、编码、评审（`coding` 组） | 读方案的 Markdown（`design_id`，或 `run_id` / `item_id` 取对应的）；`revision` 可选 |
 | `assess_design` | 助手（`coding` 组） | 跟进别人的技术方案（4.1），返回运行 id |
 | `settle_design` | 助手（`coding` 组） | 转达本人对自己方案的确认 / 意见 / 换思路，或回答某个决定的问题；`agents.design.confirm=assistant` 时助手自己确认；也用来标意见的状态 |
@@ -255,7 +255,7 @@ type DesignBody = {
 | `submit_review` | 评审 | 问题多 `decision` |
 | `submit_brief` | `business-analyst` | 多 `design: { needed, why }` |
 
-分支评审的拆分：有方案时仍用 `submit_change_points`，但只传 `decisions: [{ decision, files }]`，宿主只写归属（各决定的 `files` 和整份的 `outside`，不改正文、不加版本号）；没有方案时用 `submit_design` 交 `derived` 的方案。不带 `decisions` 的需求拆分（`change_points`）保留：交办编码的拆分、外部设备的评审仍用它，旧运行照原样显示。评审负责人逐个决定的结论不另开工具，放在 `rule_review` 的 `decisions`（`done`、`deviation`、`concerns` 的状态）。
+分支评审的拆分：有方案时仍用 `submit_change_points`，但只传 `decisions: [{ decision, files }]`，宿主只写归属（各决定的 `files` 和整份的 `outside`，不改正文、不加版本号）。不带 `decisions` 的需求拆分（`change_points`）保留：没有方案的分支评审、交办编码的拆分、外部设备的评审仍用它。评审负责人逐个决定的结论不另开工具，放在 `rule_review` 的 `decisions`（`done`、`deviation`、`concerns` 的状态）。
 
 等方案确认的那一轮以 verdict `awaiting-design` 结束（交办视图阶段 `design`：“等你确认方案” / “助手在确认方案”）。这时 `continue_code_run` 表示不等方案直接编码（方案保留但不再是基线，之后交变更说明）；`message_code_run` 的话记下，开始编码时交给编码 Agent，对方案的意见走 `settle_design`。
 

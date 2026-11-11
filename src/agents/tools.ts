@@ -3768,7 +3768,6 @@ def({
     }, ctx.runId, ctx.userId ?? OWNER);
     // Someone else's design may be reviewed against several branches in turn: the latest review is its work.
     if (against) ds.setDesignWork(ctx.app, against.id, r.id);
-    else ds.createDesign(ctx.app, { spaceId: r.spaceId!, title: r.title, origin: "derived", itemId: itemId ?? null, repos: ids, workId: r.id, userId: ctx.userId ?? OWNER });
     if (peerReviewer) return `已开始准备评审，运行 ${r.id}：这台机器检出分支、取改动、建索引，评审项留给你。用 review_task（run_id=${r.id}）取材料和各评审项的要求，评审后用 submit_review 逐项提交。`;
     // The chain carries the result back to this conversation (and the Feishu progress card).
     const { codeChainFor } = await import("./code-chain.ts");

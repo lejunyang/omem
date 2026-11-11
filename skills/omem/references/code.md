@@ -42,8 +42,8 @@
 
 ### 分支评审对照方案
 
-- `review_branch` 的 `design_id`：对照的方案；不传而有 `item_id` 时取事项上最新的别人的或自己的方案；都没有就建一份空的变更说明。一份别人的方案可以先后对照几条分支，方案的 `work` 记最新一次，旧的评审仍能从它的运行找到方案。
-- 有方案时，评审开始时的拆分只把分支改到的文件归到各个决定上：`submit_change_points` 传 `decisions: [{ decision, files }]`（决定 id 要在方案里、文件要在这次的 diff 里；没归到的文件自动算方案之外），不改方案正文、不加版本号。没有方案时，拆分用 `submit_design` 交变更说明（每个决定带 `files`）。不带 `decisions` 的 `change_points` 需求拆分照旧可用（交办编码、外部设备的评审仍用它）。
+- `review_branch` 的 `design_id`：对照的方案；不传而有 `item_id` 时取事项上最新的别人的或自己的方案；都没有就照原来的做法评审（拆分是按需求的变更拆分）。
+- 有方案时，评审开始时的拆分只把分支改到的文件归到各个决定上：`submit_change_points` 传 `decisions: [{ decision, files }]`（决定 id 要在方案里、文件要在这次的 diff 里；没归到的文件自动算方案之外），不改方案正文、不加版本号。不带 `decisions` 的 `change_points` 需求拆分照旧可用（交办编码、外部设备的评审仍用它）。
 - 评审负责人的 `rule_review` 可带 `decisions: [{ id, done, deviation?, concerns?: [{ id, state, note? }] }]`：逐个决定写代码做了没有（yes / partly / no）、和方案的偏差、方案评估时的每条意见现在是否还成立。
 - 方案页的 `changes`：交办按决定的修改项汇总提交、文件和增删行数，分支评审按归属的文件在这次 diff 里数；带这个决定的评审问题数（open / total）。`GET /api/designs/:id/diff?decision=D1`（或 `outside`）返回和 `/api/runs/:id/task-diff` 同样结构的补丁。
 

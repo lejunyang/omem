@@ -235,14 +235,16 @@ const openArtifacts = (seq: number | null) => {
 };
 const localTab = ref<WorkTab>("overview");
 const tab = computed<WorkTab>({ get: () => props.tab ?? localTab.value, set: (t) => { localTab.value = t; emit("update:tab", t); } });
-// A work with a design shows it in place of 需求点 and 变更 (docs/v2/coding-plan.md §5).
+// A work with a design shows it in place of 需求点 and 变更 (docs/v2/coding-plan.md §5); a change
+// description written after the code sits beside them.
 const design = computed(() => work.value?.design ?? null);
 const designWaits = computed(() => design.value?.origin === "own" && design.value.status === "review");
 const tabs = computed(() => [
   { id: "overview" as const, label: "概览" },
-  ...(design.value
+  ...(design.value && design.value.origin !== "derived"
     ? [{ id: "design" as const, label: designWaits.value ? "方案 · 等你确认" :`方案 ${design.value.counts.decisions || ""}`.trim() }]
     : [
+        ...(design.value ? [{ id: "design" as const, label: `变更说明 ${design.value.counts.decisions || ""}`.trim() }] : []),
         ...(props.focus || work.value?.points.length ? [{ id: "req" as const, label: props.focus ? `需求点 ${focusPoints.value.length ? pointCount(focusPoints.value) : 0}` : `需求点 ${work.value!.points.length}` }] : []),
         { id: "change" as const, label: rv.changePoints.value.length ? `变更 ${pointCount(rv.changePoints.value)}` : "变更" },
       ]),

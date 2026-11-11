@@ -47,6 +47,9 @@ const toDesign = (r: Row): Design => ({
   body: { ...emptyBody(), ...json<Partial<DesignBody>>(r.body, {}) }, workId: r.work_id, runId: r.run_id, userId: r.user_id, createdAt: r.created_at, updatedAt: r.updated_at,
 });
 
+/** Pages showing the design (and the work it belongs to) reload. */
+const touched = (app: App, d: Pick<Design, "id" | "spaceId">) => app.emit({ type: "changed", entity: "design", id: d.id, spaceId: d.spaceId });
+
 export function createDesign(app: App, input: { spaceId: string; title: string; origin: DesignOrigin; itemId?: string | null; author?: string | null; sources?: string[]; repos?: string[]; workId?: string | null; userId?: string | null }): Design {
   const id = newId("dsg");
   const at = now();
@@ -253,6 +256,7 @@ export function submitRevision(app: App, id: string, input: unknown, opts: { run
     const at = now();
     run(app.db, "insert into design_revisions(design_id,revision,body,run_id,note,at) values(?,?,?,?,?,?)", id, revision, JSON.stringify(body), opts.runId ?? null, opts.note?.trim() ?? "", at);
     run(app.db, "update designs set body = ?, revision = ?, status = ?, run_id = ?, updated_at = ? where id = ?", JSON.stringify(body), revision, NEXT_STATUS[d.origin], opts.runId ?? null, at, id);
+    touched(app, d);
     return getDesign(app, id);
   });
 }
@@ -265,6 +269,7 @@ function rewriteCurrent(app: App, d: Design, body: DesignBody) {
   const at = now();
   run(app.db, "update designs set body = ?, updated_at = ? where id = ?", JSON.stringify(body), at, d.id);
   if (d.revision > 0) run(app.db, "update design_revisions set body = ? where design_id = ? and revision = ?", JSON.stringify(body), d.id, d.revision);
+  touched(app, d);
 }
 
 /** What the design is about, not what it decides: its title, documents, repositories, author, item. */
@@ -278,6 +283,8 @@ export function updateDesign(app: App, id: string, patch: { title?: string; sour
 
 export function setDesignStatus(app: App, id: string, status: DesignStatus) {
   run(app.db, "update designs set status = ?, updated_at = ? where id = ?", status, now(), id);
+  const d = findDesign(app, id);
+  if (d) touched(app, d);
 }
 /** The delegation or branch review (its first run) this design is the baseline of. */
 export function setDesignWork(app: App, id: string, workId: string | null) {

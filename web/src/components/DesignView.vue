@@ -147,6 +147,28 @@ function typeAnswer(d: Decision, text: string) {
 const unanswered = computed(() => decisions.value.filter((d) => pending(d) && !answers.value[d.id]?.trim()));
 const givenAnswers = computed(() => Object.fromEntries(Object.entries(answers.value).filter(([id, v]) => v.trim() && decisions.value.some((d) => d.id === id && pending(d)))));
 
+// ---- assessing someone else's design again (its document changed) -------------------------------
+async function reassess() {
+  const d = detail.value;
+  if (!d || working.value) return;
+  const said = await promptDialog("重新评估", {
+    message: "方案文档更新后用：重新提取决定、核对代码，上一版的每条意见都会给出现在的状态，写成新的一版。",
+    placeholder: "这次要特别看什么（可不填）",
+    okText: "开始评估",
+  });
+  if (said === null) return;
+  working.value = true;
+  try {
+    await post("/api/designs", { title: d.title, sources: d.sources, repos: d.repos, author: d.author ?? undefined, note: said.trim() || undefined, designId: d.id });
+    toast("已开始重新评估，完成后这里换成新的一版", "ok");
+    await load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    working.value = false;
+  }
+}
+
 // ---- deciding on an own design ------------------------------------------------------------------
 const working = ref(false);
 async function decide(action: "approve" | "comment" | "rethink") {
@@ -207,7 +229,8 @@ async function showDiff(key: string, title: string) {
   try {
     const r = await get<{ patches: { space: string; patch: string }[] }>(`/api/designs/${d.id}/diff?decision=${encodeURIComponent(key)}`);
     if (shown.value?.key !== key) return;
-    shown.value = { key, title, loading: false, files: parsePatches(r.patches ?? []), missing: false };
+    const files = parsePatches(r.patches ?? []);
+    shown.value = { key, title, loading: false, files, missing: !files.some((f) => f.files.length) };
   } catch (e) {
     if (shown.value?.key !== key) return;
     const msg = (e as Error).message;
@@ -251,6 +274,7 @@ watch(() => props.designId, () => {
           <UiSelect v-if="detail.revisions.length > 1" v-model="shownRevision" size="sm" width="auto" aria-label="看哪一版" :options="revisionOptions" />
           <span v-else-if="detail.revision" class="muted">第 {{ detail.revision }} 版</span>
           <span class="muted">{{ spaceName(detail.spaceId) }} · {{ relTime(detail.updatedAt) }}更新</span>
+          <button v-if="detail.origin === 'external' && detail.status === 'assessed' && current" class="lnk" :disabled="working" @click="reassess">重新评估</button>
         </div>
         <div v-if="counts && detail.revision" class="row wrap small tally">
           <span>{{ counts.head }}</span>

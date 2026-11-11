@@ -443,7 +443,7 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
           return { stopReason: "end_turn" as const };
         }
         // The split of a branch review against a design: files under decisions, one file not in the diff refused first.
-        if (prompt.includes("把改动归到方案的决定上") || prompt.includes("写一份变更说明")) {
+        if (prompt.includes("把改动归到方案的决定上")) {
           const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
           const client = new Client({ name: "fake-design-split", version: "1" });
           await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
@@ -451,11 +451,6 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
             const direct = new Set((await client.listTools()).tools.map((t) => t.name));
             const call = (name: string, args: Record<string, unknown>) => client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
             const text = (r: Awaited<ReturnType<typeof call>>) => ((r.content as { text?: string }[]) ?? []).map((c) => c.text ?? "").join("");
-            if (prompt.includes("写一份变更说明")) {
-              const r = await call("submit_design", { decisions: [{ kind: "change", title: "只退未发货的行", fields: { behavior: { brief: "全退 → 只退未发货的行" } }, files: ["refund.ts", "lines.ts"] }], outside: ["legacy.ts"] });
-              await say(`变更说明 ${r.isError ? text(r) : "ok"}`);
-              return { stopReason: "end_turn" as const };
-            }
             const bad = await call("submit_change_points", { decisions: [{ decision: "D1", files: ["nope.ts"] }] });
             const ok = await call("submit_change_points", { decisions: [{ decision: "D1", files: ["refund.ts", "lines.ts"] }] });
             await say(`归属 ${JSON.stringify({ bad: bad.isError ? text(bad) : "accepted", ok: ok.isError ? text(ok) : text(ok) })}`);

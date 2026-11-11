@@ -133,7 +133,8 @@ export function codeWork(app: App, runId: string, visibleTo?: WorkFilter["visibl
   const roundList = roundsOf(app, [root.id]).map((x, i) => ({ id: x.id, round: x.round ?? i + 1, status: x.status, title: x.title, verdict: x.verdict, createdAt: x.created_at, finishedAt: x.finished_at }));
   const artifacts = all<{ n: number }>(app.db, "select count(*) n from run_artifacts where work_id = ?", root.id)[0]?.n ?? 0;
   const d = designForWork(app, root.id);
-  const design = d ? { id: d.id, origin: d.origin, status: d.status, revision: d.revision, counts: designCounts(d.body) } : null;
+  // A change description nobody handed in yet is nothing to show.
+  const design = d && (d.origin !== "derived" || d.revision > 0) ? { id: d.id, origin: d.origin, status: d.status, revision: d.revision, counts: designCounts(d.body) } : null;
   return { ...work, task: root.task ?? "", roundList, points: featurePoints(app, work.reqs.map((n) => n.id)), artifacts, preCheck: preCheckOf(app, root.id), design };
 }
 

@@ -344,22 +344,11 @@ describe("a branch review against a design", () => {
     }
   }, 120000);
 
-  it("writes a change description as its split when there is no design to hold the branch against", async () => {
-    const server = await startServer(app, { port: 0, quiet: true });
-    try {
-      const res = await callTool(ctx, "review_branch", { repo_spaces: ["shop-api"], branch: "feature/refund", task: "评审退款分支", fetch: false });
-      const r = getRun(app, /运行 (r\w+)/.exec(res.text)![1]);
-      const d = designForWork(app, r.id)!;
-      expect(d).toMatchObject({ origin: "derived", revision: 0 });
-      await exec(r.id);
-      run(app.db, "update runs set status = 'done' where id = ?", r.id);
-      const after = getDesign(app, d.id);
-      expect(after).toMatchObject({ status: "recorded", revision: 1 });
-      expect(after.body.decisions[0].files).toEqual(["refund.ts", "lines.ts"]);
-      const { changes } = await designChanges(app, after);
-      expect(changes[0].files.map((f) => [f.space, f.path])).toEqual([["shop-api", "refund.ts"], ["shop-api", "lines.ts"]]);
-    } finally {
-      await server.close();
-    }
-  }, 120000);
+  it("keeps the requirement's change points as its split when there is no design to hold the branch against", async () => {
+    const res = await callTool(ctx, "review_branch", { repo_spaces: ["shop-api"], branch: "feature/refund", task: "评审退款分支", fetch: false });
+    const r = getRun(app, /运行 (r\w+)/.exec(res.text)![1]);
+    expect(res.text).not.toContain("对照方案");
+    expect(designForWork(app, r.id)).toBeNull();
+    expect(all(app.db, "select id from designs where work_id = ?", r.id)).toEqual([]);
+  });
 });

@@ -274,7 +274,7 @@ describe("design HTTP", async () => {
     expect((await call(`/api/designs/${secret.id}`, { token })).status).toBe(404);
 
     const detail = (await call(`/api/designs/${d.id}`)).body;
-    expect(Object.keys(detail).sort()).toEqual(["author", "body", "changes", "counts", "id", "item", "itemId", "origin", "outside", "reqs", "repos", "revision", "revisions", "sources", "spaceId", "status", "title", "updatedAt", "work", "workId"].sort());
+    expect(Object.keys(detail).sort()).toEqual(["author", "body", "changes", "counts", "id", "item", "itemId", "origin", "outside", "reqs", "repos", "revision", "revisions", "runId", "sources", "spaceId", "status", "title", "updatedAt", "work", "workId"].sort());
     expect(detail).toMatchObject({ item: { id: item.id, title: "HTTP 退款" }, reqs: [], work: { rootId: work.id, title: "交办：HTTP 退款", branchReview: false }, revisions: [{ revision: 1, note: "", runId: null }], changes: [{ decision: "D1", tasks: [], commits: 0, files: [], findings: { open: 0, total: 0 } }], outside: [] });
     // Tied to a delegation that has not coded anything for it yet: an empty patch list, as task-diff gives.
     expect((await call(`/api/designs/${d.id}/diff?decision=D1`)).body).toEqual({ patches: [] });
