@@ -68,13 +68,39 @@ export type SearchOptions = {
    * of one chat or document are merged, so the copy they can read is the one shown.
    */
   visible?: (sourceId: string) => boolean;
+  /**
+   * Branch or delegation indexes (spaces of kind worktree) this search may use besides those named
+   * in `spaces`: a run's own delegation (worktree-index.ts runOverlaySpaces). They join only next to
+   * their repository. Every other overlay stays out unless named: without `spaces` a search sees
+   * the repositories' baselines only, not every branch anyone indexed (docs/v2/code-index.md).
+   */
+  overlays?: string[];
 };
 
 const RRF_K = 60;
 
-function spaceFilter(column: string, spaces?: string[]) {
-  if (!spaces?.length) return { sql: "", params: [] as string[] };
+function spaceFilter(column: string, spaces?: string[], exclude: string[] = []) {
+  if (!spaces?.length) return exclude.length ? { sql: ` and ${column} not in (${exclude.map(() => "?").join(",")})`, params: exclude } : { sql: "", params: [] as string[] };
   return { sql: ` and ${column} in (${spaces.map(() => "?").join(",")})`, params: spaces };
+}
+
+/** Overlay spaces (branch and delegation indexes) with the repository each is over. */
+export function overlaySpaces(app: App): Map<string, string> {
+  return new Map(all<{ id: string; repo: string | null }>(app.db, "select id, json_extract(settings, '$.repo') repo from spaces where kind = 'worktree'").map((r) => [r.id, r.repo ?? ""]));
+}
+
+/**
+ * The spaces a search covers once overlays are settled: named spaces plus the allowed overlays over
+ * a named repository; with no spaces named, everything except the overlays not allowed (`exclude`).
+ */
+export function withOverlays(app: App, spaces: string[] | undefined, allowed: string[] = []): { spaces?: string[]; exclude: string[]; overlays: string[] } {
+  const all_ = overlaySpaces(app);
+  if (spaces?.length) {
+    const extra = allowed.filter((id) => all_.has(id) && spaces.includes(all_.get(id)!) && !spaces.includes(id));
+    return { spaces: extra.length ? [...spaces, ...extra] : spaces, exclude: [], overlays: extra };
+  }
+  const ok = new Set(allowed);
+  return { spaces: undefined, exclude: [...all_.keys()].filter((id) => !ok.has(id)), overlays: allowed.filter((id) => all_.has(id)) };
 }
 
 /** Pick the most query-dense window of a chunk as a readable snippet. */
@@ -102,13 +128,15 @@ export function snippet(text: string, query: string, size = 360): string {
  * repository's copy is left out. Only for indexes named in `spaces` (searching everything mixes
  * every branch and must not hide the checked-out code).
  */
-export function shadowedFiles(app: App, spaces?: string[]): Map<string, Set<string>> {
+export function shadowedFiles(app: App, spaces?: string[], overlays: string[] = []): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
-  if (!spaces?.length) return out;
-  const rows = all<{ id: string; settings: string }>(app.db, `select id, settings from spaces where kind = 'worktree' and id in (${spaces.map(() => "?").join(",")})`, ...spaces);
+  // Searching everything: only overlays allowed explicitly (a run's own delegation) stand in for their repository.
+  const ids = spaces?.length ? spaces : overlays;
+  if (!ids.length) return out;
+  const rows = all<{ id: string; settings: string }>(app.db, `select id, settings from spaces where kind = 'worktree' and id in (${ids.map(() => "?").join(",")})`, ...ids);
   for (const r of rows) {
     const st = JSON.parse(r.settings || "{}") as { repo?: string; deleted?: string[] };
-    if (!st.repo || !spaces.includes(st.repo)) continue;
+    if (!st.repo || (spaces?.length && !spaces.includes(st.repo))) continue;
     const set = out.get(st.repo) ?? new Set<string>();
     for (const f of all<{ uri: string }>(app.db, "select uri from sources where space_id = ? and deleted_at is null", r.id)) set.add(f.uri);
     for (const f of st.deleted ?? []) set.add(f);
@@ -171,7 +199,10 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   return traceSearch(app, query, opts.spaces, () => searchInner(app, query, opts));
 }
 
-async function searchInner(app: App, query: string, opts: SearchOptions): Promise<Hit[]> {
+async function searchInner(app: App, query: string, input: SearchOptions): Promise<Hit[]> {
+  const ov = withOverlays(app, input.spaces, input.overlays);
+  const opts: SearchOptions = { ...input, spaces: ov.spaces };
+  const excluded = new Set(ov.exclude);
   const limit = opts.limit ?? 20;
   const pool = Math.max(60, limit * 4);
   const types = new Set(opts.types ?? ["chunk", "page", "memory", "symbol", "requirement"]);
@@ -186,7 +217,7 @@ async function searchInner(app: App, query: string, opts: SearchOptions): Promis
   const underSql = underIds ? " and c.source_id in (select value from json_each(?))" : "";
   const underParams = underIds ? [JSON.stringify(underIds)] : [];
   if (match && types.has("chunk") && route.fts) {
-    const sf = spaceFilter("c.space_id", opts.spaces);
+    const sf = spaceFilter("c.space_id", opts.spaces, ov.exclude);
     const kinds = opts.sourceKinds?.length ? ` and s.kind in (${opts.sourceKinds.map(() => "?").join(",")})` : "";
     const rows = await searchRows<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null; hash: string }>(
       app, "fts",
@@ -227,7 +258,7 @@ async function searchInner(app: App, query: string, opts: SearchOptions): Promis
   if ((types.has("chunk") || types.has("symbol")) && route.symbol) {
     const idents = [...new Set(query.match(/[A-Za-z_$][\w$]{2,}/g) ?? [])];
     if (idents.length) {
-      const sf = spaceFilter("y.space_id", opts.spaces);
+      const sf = spaceFilter("y.space_id", opts.spaces, ov.exclude);
       const rows = await searchRows<{ source_id: string; space_id: string; name: string; qname: string; kind: string; line_start: number; line_end: number; signature: string; uri: string }>(
         app, "symbol",
         `select y.source_id, y.space_id, y.name, y.qname, y.kind, y.line_start, y.line_end, y.signature, s.uri
@@ -338,7 +369,7 @@ async function searchInner(app: App, query: string, opts: SearchOptions): Promis
       lists.push(
         vec
           .map((v) => byId.get(v.chunkId))
-          .filter((r): r is NonNullable<typeof r> => !!r && !r.deleted_at && (!kinds || kinds.has(r.kind)) && (opts.includeIgnored || r.attention !== "ignore") && (!inUnder || inUnder.has(r.source_id)))
+          .filter((r): r is NonNullable<typeof r> => !!r && !r.deleted_at && !excluded.has(r.space_id) && (!kinds || kinds.has(r.kind)) && (opts.includeIgnored || r.attention !== "ignore") && (!inUnder || inUnder.has(r.source_id)))
           .map((r, i) => ({
             key: `chunk:${r.id}`,
             rank: i,
@@ -379,7 +410,7 @@ async function searchInner(app: App, query: string, opts: SearchOptions): Promis
         if (!prev.via.includes(item.via)) prev.via.push(item.via);
       } else fused.set(item.key, { ...item.hit, score: add, via: [item.via] });
     }
-  const shadow = shadowedFiles(app, opts.spaces);
+  const shadow = shadowedFiles(app, opts.spaces, ov.overlays);
   const hits = weigh(app, [...fused.values()].filter((h) => !(h.uri && shadow.get(h.spaceId)?.has(h.uri))), opts.spaces).sort((a, b) => b.score - a.score);
   // A symbol hit and a chunk covering the same lines are the same evidence.
   const out: Hit[] = [];

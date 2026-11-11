@@ -183,8 +183,14 @@ export async function syncDirectorySpace(app: App, spaceId: string, onProgress?:
 
 /** Runs only in the import process: parsing, indexing and reference resolution may be expensive. */
 export async function syncDirectoryLocally(app: App, spaceId: string, onProgress?: (done: number, total: number) => Promise<void>): Promise<ImportReport> {
-  const space = getSpace(app, spaceId);
+  let space = getSpace(app, spaceId);
   if (!space.rootPath) throw new HttpError(400, "这个空间没有关联目录");
+  // A repository indexed from its baseline commit, not the working tree (code-baseline.ts, docs/v2/code-index.md).
+  const baseline = await import("./code-baseline.ts");
+  if (baseline.usesBaseline(space)) {
+    if (!baseline.codeIndexConfig(space).mode) space = updateSpace(app, spaceId, { settings: { ...space.settings, codeIndex: { ...baseline.codeIndexConfig(space), mode: "baseline" } } });
+    return baseline.syncBaselineLocally(app, spaceId, onProgress);
+  }
   const report = emptyReport();
   // Space settings may exclude paths (archives, vendored docs): prefixes or simple globs.
   const exclude = ((space.settings.exclude as string[] | undefined) ?? []).map(globToRegex);
@@ -223,7 +229,8 @@ export async function syncDirectoryLocally(app: App, spaceId: string, onProgress
     }
   }
   if (report.created || report.updated || report.removed || !space.settings.lastSync) resolveCodeRefs(app, spaceId);
-  updateSpace(app, spaceId, { settings: { ...space.settings, lastSync: new Date().toISOString(), commit: headCommit(space.rootPath) } });
+  updateSpace(app, spaceId, { settings: { ...getSpace(app, spaceId).settings, lastSync: new Date().toISOString(), commit: headCommit(space.rootPath) } });
+  baseline.recordDirectoryState(app, spaceId);
   return report;
 }
 

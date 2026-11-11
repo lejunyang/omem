@@ -1,8 +1,8 @@
 import "./agents/jobs.ts";
-import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, scheduleSpaceSync, sendItemDigests, sweepItems } from "./agents/jobs.ts";
+import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, sendItemDigests, sweepItems } from "./agents/jobs.ts";
 import { addRunEvent, createRun, listRuns, startWorker } from "./agents/runs.ts";
 import { startSessionCleanup } from "./agents/session-cleanup.ts";
-import { refreshBranchIndexes, sweepWorktreeSpaces } from "./agents/worktree-index.ts";
+import { sweepWorktreeSpaces } from "./agents/worktree-index.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
 import { ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
@@ -22,12 +22,8 @@ registerScheduleKind("work-state", (app) => {
     createRun(app, { kind: "work-state", spaceId: "personal", title: "整理工作近况与人物卡" });
 });
 registerScheduleKind("dream", (app) => createRun(app, { kind: "dream", spaceId: "personal", title: "整理记忆与页面" }));
-registerScheduleKind("repo-sync", (app) => {
-  for (const s of listSpaces(app)) if (s.rootPath) scheduleSpaceSync(app, s.id);
-  // Delegation worktrees removed by hand take their temporary index with them; branch indexes follow their branch.
-  sweepWorktreeSpaces(app);
-  void refreshBranchIndexes(app);
-});
+// Fetch, sync the repositories whose baseline moved, refresh followed branches, expire overlays (sources/code-index.ts).
+registerScheduleKind("repo-sync", (app) => void import("./sources/code-index.ts").then((m) => m.repoSyncTick(app)).catch((e) => console.warn(`[omem] 同步代码仓库失败：${(e as Error).message}`)));
 
 registerScheduleKind("memory-review", (app) => scheduleMemoryReview(app));
 registerScheduleKind("digest", (app) => void import("./agents/digest.ts").then((m) => m.tickDigestJobs(app)));
@@ -99,6 +95,12 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   for (const n of simplifyRoleCopies(app)) console.log(`[omem] 内置角色 ${n} 只多挂了技能或工具：改成叠加设置，以后跟着源码更新`);
   for (const s of listSpaces(app)) syncWiki(app, s.id);
   sweepWorktreeSpaces(app);
+  {
+    // repo-sync on for libraries that never ran it; overlays left from before they expired go now.
+    const ci = await import("./sources/code-index.ts");
+    if (ci.adoptRepoSyncDefault(app)) console.log("[omem] 打开了每小时同步代码仓库（之前关着、从没运行过）");
+    void ci.expireOverlays(app).then((r) => r.dropped.length && console.log(`[omem] 清理了 ${r.dropped.length} 个过期的分支或交办索引`)).catch((e) => console.warn(`[omem] 清理分支索引失败：${(e as Error).message}`));
+  }
   const { seedBuiltinSkills } = await import("./agents/specs.ts");
   const { packageRoot } = await import("./setup.ts");
   seedBuiltinSkills(app, packageRoot());

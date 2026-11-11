@@ -36,8 +36,9 @@ import { getMemory, listMemories, memoryHistory, remember, retract, supersede, t
 import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFolder, relocateFolder, removeFolder } from "../memory/folders.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
 import { defaultBaseRef, fetchBranchAsync, git, listBranches, resolveRef } from "../core/git.ts";
-import { search, shadowedFiles, type HitType } from "../search/search.ts";
-import { branchIndexes, indexBranch, overlayRepo } from "./worktree-index.ts";
+import { search, shadowedFiles, withOverlays, type HitType } from "../search/search.ts";
+import { codeVersion, codeVersions } from "../sources/code-index.ts";
+import { branchIndexes, indexBranch, overlayRepo, runOverlaySpaces } from "./worktree-index.ts";
 import {
   addSourceNote, applyAttentionRulesToExisting, attentionRuleSchema, deleteAttentionRule, LEVEL_LABELS, LEVELS, listAttentionRules, NOTE_KINDS, NOTE_LABELS, notesOn, noteText,
   removeSourceNote, saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceNotes, levelSql, type Level,
@@ -171,6 +172,13 @@ async function branchSpaces(ctx: ToolContext, requested: string | null | undefin
   const repo = space(ctx, requested);
   const idx = await indexBranch(ctx.app, repo, branch);
   return { spaces: [repo, idx.space], idx };
+}
+/** Overlays searched without naming a branch: only this run's own delegation's or branch review's (docs/v2/code-index.md). */
+const runOverlays = (ctx: ToolContext) => (ctx.runId ? runOverlaySpaces(ctx.app, ctx.runId).filter((id) => canRead(ctx, id)) : []);
+/** Which ref and commit the code hits come from, one line per code space (the baseline included). */
+function codeVersionHead(ctx: ToolContext, hits: { type: string; sourceKind?: string; spaceId: string }[]) {
+  const lines = codeVersions(ctx.app, hits.filter((h) => h.type === "symbol" || h.sourceKind === "code").map((h) => h.spaceId));
+  return lines.length ? `代码来自：\n${lines.join("\n")}\n\n` : "";
 }
 /** Reject objects that live outside the spaces this caller may write. */
 function inScope(ctx: ToolContext, spaceId: string, what: string) {
@@ -447,10 +455,11 @@ def({
       limit: a.limit ?? 12,
       sourceKinds: a.source_kind ? [a.source_kind] : undefined,
       ...(underSpace ? { under: { space: underSpace, node: a.under! } } : {}),
+      ...(onBranch ? {} : { overlays: runOverlays(ctx) }),
     });
     const head = onBranch ? `分支 ${onBranch.idx.branch}（${onBranch.idx.commit.slice(0, 8)}）相对 ${onBranch.idx.baseRef} 改了 ${onBranch.idx.files} 个文件、删了 ${onBranch.idx.deleted} 个，这些按分支上的版本（空间 ${onBranch.idx.space}），其余按 ${onBranch.idx.repo}。\n\n` : "";
     if (!hits.length) return `${head}没有命中。换个说法、换关键词、去掉限定或搜索其他空间。`;
-    return head + hits
+    return head + codeVersionHead(ctx, hits) + hits
       .map((h, i) => {
         const where =
           h.type === "page"
@@ -526,7 +535,8 @@ def({
     const level = lv.level !== "normal" ? ` · ${LEVEL_LABELS[lv.level as Level] ?? lv.level}${lv.by === "owner" ? "（本人设的）" : ""}${lv.inherited ? "（随所在目录）" : ""}` : "";
     const notes = notesOn(sourceNotes(ctx.app, s.id).filter((n) => n.status !== "rejected"), r.lineStart, r.lineEnd);
     const noteText_ = notes.length ? `\n标注（以标注为准，不要引用已过时、有误或不检索的段落作为现状）：\n${notes.map((n) => `- #${n.id} ${noteText(n)}${n.by === "owner" ? "（本人）" : n.status === "confirmed" ? "（本人确认）" : ""}`).join("\n")}` : "";
-    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${level}${file}${warn}${replayNote}${noteText_}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
+    const version = s.kind === "code" || s.kind === "doc" ? codeVersion(ctx.app, s.spaceId) : null;
+    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${level}${version ? `\n代码来自：${version}` : ""}${file}${warn}${replayNote}${noteText_}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
   },
 });
 
@@ -589,7 +599,8 @@ def({
     const terms = a.terms.map((t) => t.toLowerCase());
     const where = [
       "deleted_at is null",
-      sp ? `space_id in (${sp.map(() => "?").join(",")})` : "1=1",
+      // Everything readable: the repositories' baselines, not every branch or delegation index.
+      sp ? `space_id in (${sp.map(() => "?").join(",")})` : "space_id not in (select id from spaces where kind = 'worktree')",
       a.source_kind ? "kind = ?" : "1=1",
       a.since ? "coalesce(json_extract(meta,'$.date'), captured_at) >= ?" : "1=1",
       a.until ? "coalesce(json_extract(meta,'$.date'), captured_at) <= ?" : "1=1",
@@ -836,9 +847,12 @@ def({
     "代码导航：按名称（或 Class.method）找定义，以及谁调用它、它调用了谁。已按导入关系解析到具体定义的列在“已解析”，只能按名称匹配的（可能同名误报）单独列出。",
   schema: z.object({ name: z.string(), space: z.string().optional(), branch: z.string().optional().describe("看某个分支上的定义（space 填仓库空间）") }),
   handler: async (ctx, a) => {
-    const sp = a.branch ? (await branchSpaces(ctx, a.space, a.branch)).spaces : spacesFor(ctx, a.space);
-    const filter = sp ? `and y.space_id in (${sp.map(() => "?").join(",")})` : "";
-    const shadow = shadowedFiles(ctx.app, sp);
+    // Without a branch: the repositories' baselines, plus this run's own delegation (docs/v2/code-index.md).
+    const ov = a.branch ? { spaces: (await branchSpaces(ctx, a.space, a.branch)).spaces, exclude: [] as string[], overlays: [] as string[] } : withOverlays(ctx.app, spacesFor(ctx, a.space), runOverlays(ctx));
+    const sp = ov.spaces;
+    const filter = sp ? `and y.space_id in (${sp.map(() => "?").join(",")})` : ov.exclude.length ? `and y.space_id not in (${ov.exclude.map(() => "?").join(",")})` : "";
+    const filterParams = sp ?? ov.exclude;
+    const shadow = shadowedFiles(ctx.app, sp, ov.overlays);
     type Def = { id: number; source_id: string; space_id: string; uri: string; qname: string; kind: string; line_start: number; line_end: number; signature: string };
     // By name and by qualified name as two indexed lookups: `name = ? or qname = ?` in one query
     // scanned every symbol of the spaces (a code space has a million).
@@ -846,7 +860,7 @@ def({
       ctx.app.db,
       `select y.id, y.source_id, y.space_id, s.uri, y.qname, y.kind, y.line_start, y.line_end, y.signature from symbols y join sources s on s.id = y.source_id where y.${column} = ? ${filter} and s.deleted_at is null order by y.id limit 20`,
       a.name,
-      ...(sp ?? []),
+      ...filterParams,
     );
     const seen = new Set<number>();
     const defs = [...lookup("name"), ...lookup("qname")]
@@ -874,9 +888,11 @@ def({
       ctx.app.db,
       `${sel} where r.to_name = ? and r.kind = 'call' and r.to_qname is null ${filter.replace(/y\./g, "r.")} and s.deleted_at is null limit 40`,
       short,
-      ...(sp ?? []),
+      ...filterParams,
     );
     if (loose.length) out.push(`\n仅按名称匹配的调用（未能解析，可能是同名或动态调用，${loose.length}）：`, ...loose.map((r) => `- ${at(r)}${r.qualifier ? `（${r.qualifier}.${r.to_name}）` : ""}`));
+    const versions = codeVersions(ctx.app, defs.map((d) => d.space_id));
+    if (versions.length) out.push(`\n代码来自：\n${versions.join("\n")}`);
     return out.join("\n");
   },
 });
