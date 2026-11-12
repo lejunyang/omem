@@ -5,6 +5,8 @@ import { now, localStamp } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { findAgentSpec } from "../agents/specs.ts";
 import { chatSettings, setChatSettings, type WatchRule } from "../agents/threads.ts";
+import { rulesNaming } from "../rules/store.ts";
+import { ownerContextParts } from "../agents/owner-now.ts";
 
 /**
  * Watched chats: an alert group, an on-call group, a group the owner asked the assistant to keep
@@ -156,7 +158,7 @@ export function listWatches(app: App): WatchInfo[] {
  * with a decision model. Messages that @ the owner or the bot always go through; so does a batch when
  * the model fails. Returns why the batch is skipped, or null to hand it over.
  */
-export async function prefilterBatch(app: App, conversationId: string, batch: { text: string; meta: Record<string, unknown> }[], signal?: AbortSignal): Promise<string | null> {
+export async function prefilterBatch(app: App, conversationId: string, batch: { id?: string; text: string; meta: Record<string, unknown> }[], signal?: AbortSignal): Promise<string | null> {
   const { findThread, threadMessages } = await import("../agents/threads.ts");
   const t = findThread(app, conversationId);
   if (!t || t.channel !== WATCH_CHANNEL) return null;
@@ -165,14 +167,27 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
   if (batch.some((m) => m.meta.addressed)) return null;
   const { decide, decisionReady, describeDecision } = await import("../core/decision.ts");
   if (!decisionReady(app)) return null;
-  const said = threadMessages(app, conversationId, { limit: 12 }).filter((m) => m.role === "assistant" && !m.meta.prefiltered).slice(-3);
+  const chatId = (t.key ?? "").split("#")[0];
+  const history = threadMessages(app, conversationId, { limit: 80 });
+  const inBatch = new Set(batch.map((m) => m.id).filter(Boolean));
+  const before = history.filter((m) => !inBatch.has(m.id));
+  const said = before.filter((m) => m.role === "assistant" && !m.meta.prefiltered).slice(-3);
+  // What the owner said in this conversation (replies to its notes, instructions): no speaker of their own.
+  const owner = before.filter((m) => m.role === "user" && typeof m.meta.speaker !== "string").slice(-5);
+  const group = before.filter((m) => typeof m.meta.speaker === "string").slice(-10);
+  const batchText = batch.map((m) => `${String(m.meta.speaker ?? "?")}：${m.text.slice(0, 600)}`).join("\n");
   try {
     const r = await decide(app, {
       群: t.title || t.key,
       盯群的目的: rule.note ?? "（没写）",
+      本人在这里的指示: owner.map((m) => m.text.slice(0, 400)).join("\n") || "（无）",
+      管这个群的规则: rulesNaming(app, chatId, t.title) || "（无）",
+      ...ownerContextParts(app, { chatId }),
+      相关的记忆: await memoriesFor(app, `${t.title ?? ""} ${rule.note ?? ""}\n${batchText}`.slice(0, 2000), rule.spaceId) || "（无）",
       之前的摘要: t.summary || "（无）",
       最近的处理: said.map((m) => m.text.slice(0, 400)).join("\n---\n") || "（无）",
-      这一批消息: batch.map((m) => `${String(m.meta.speaker ?? "?")}：${m.text.slice(0, 600)}`).join("\n"),
+      这一批之前的群聊: group.map((m) => `${String(m.meta.speaker)}：${m.text.slice(0, 200)}`).join("\n") || "（无）",
+      这一批消息: batchText,
     }, {
       type: "yesno",
       instructions: "这是本人让助手盯着的一个群新来的一批消息。助手在这个群里的用处由“盯群的目的”和群里的场景决定：不一定是找本人的事，也可能是替群里的人解答问题、查东西、排查报上来的问题、跟进之前处理过的事。判断这一批里有没有助手能有效介入的：有人提问或求助、要查什么、报了问题或异常、和盯群目的相关、或是在接着之前助手处理的事，选“要看”；只是闲聊、客套、“稍等”“收到”、进度播报、系统通知，没人需要帮忙，选“不用看”。拿不准选“要看”。",
@@ -183,5 +198,16 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
     return describeDecision(r, { yes: "要看", no: "不用看" });
   } catch {
     return null;
+  }
+}
+
+/** The owner's memories closest to the group and the batch (instructions and lessons included), a few lines. */
+async function memoriesFor(app: App, text: string, spaceId?: string) {
+  try {
+    const { nearMemories } = await import("../memory/passive.ts");
+    const hits = await nearMemories(app, { text, spaces: [...new Set(["personal", ...(spaceId ? [spaceId] : [])])], userId: "owner", threshold: app.config.memory.passive.threshold, limit: 5 });
+    return hits.map(({ memory: m }) => `- ${m.subject ? `${m.subject}：` : ""}${m.content.replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
+  } catch {
+    return "";
   }
 }

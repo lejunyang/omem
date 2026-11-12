@@ -281,3 +281,15 @@ export function listFirings(app: App, ruleId: string, limit = 50): Firing[] {
     limit,
   ).map((r) => ({ id: r.id, ruleId: r.rule_id, eventKey: r.event_key, at: r.at, summary: r.summary, judgedBy: r.judged_by, reason: r.reason, results: json(r.results, []) }));
 }
+
+/** Enabled rules whose trigger or conditions name this chat (its id, or its name), one line each: what the owner set up for it. */
+export function rulesNaming(app: App, chatId: string, title?: string | null, limit = 5): string {
+  return listRules(app, { enabledOnly: true })
+    .filter((r) => {
+      const c = JSON.stringify([r.trigger, r.conditions]);
+      return c.includes(chatId) || (!!title && title.length >= 2 && c.includes(title));
+    })
+    .slice(0, limit)
+    .map((r) => `「${r.name}」：${r.description.replace(/\s+/g, " ").slice(0, 300)}`)
+    .join("\n");
+}

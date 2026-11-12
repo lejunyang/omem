@@ -8,6 +8,7 @@ import { truncate } from "../core/util.ts";
 import { loadRole } from "../agents/runner.ts";
 import { listAgentSpecs } from "../agents/specs.ts";
 import { ownerContextParts } from "../agents/owner-now.ts";
+import { rulesNaming } from "../rules/store.ts";
 import { personLine } from "../agents/work-state.ts";
 import type { MentionChannel, MentionMessage } from "./channel.ts";
 
@@ -114,6 +115,12 @@ export async function triageMaterial(app: App, channel: MentionChannel, input: T
   const links = linkLines(app, input.messages.map((m) => m.text));
   const talk = channel.talkAround(app, input.chatId, input.topicId, input.messages);
   const guidance = app.config.mentions.guidance.trim();
+  // What the owner set up for this chat, and how messages here were handled lately.
+  const rules = rulesNaming(app, input.chatId, input.chatKind === "group" ? input.chatName : null);
+  const earlier = all<{ created_at: string; output: string | null }>(app.db,
+    `select created_at, output from runs where kind = 'agent' and status = 'done' and json_extract(input, '$.mention.chatId') = ? and created_at > ? order by created_at desc limit 3`,
+    input.chatId, new Date(Date.now() - 7 * 86400_000).toISOString(),
+  ).map((r) => `- ${localTime(app, Date.parse(r.created_at))}：${truncate(String((JSON.parse(r.output ?? "{}") as { answer?: string }).answer ?? "").replace(/\s+/g, " "), 300)}`).filter((l) => !l.endsWith("："));
   // This moment, the work state of the last weeks, and how the owner uses this chat (agents/owner-now.ts).
   const owner = ownerContextParts(app, { now: true, state: true, ...(input.chatKind === "group" ? { chatId: input.chatId } : {}) });
   // Who sent it, with their card when there is one (one line; the card itself via read_page).
@@ -132,6 +139,8 @@ export async function triageMaterial(app: App, channel: MentionChannel, input: T
     ...(hits.length ? { 相关的记忆和页面: hits.join("\n") } : {}),
     可以交给: Object.values(handlerOptions(app)).map((x) => `- ${x}`).join("\n"),
     ...(guidance ? { 本人的分诊说明: guidance } : {}),
+    ...(rules ? { 本人给这个会话设的规则: rules } : {}),
+    ...(earlier.length ? { 最近在这个会话里的处理: earlier.join("\n") } : {}),
     ...(ignore.length ? { 本人说过不用提醒的: ignore.join("\n") } : {}),
     现在: new Date().toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, weekday: "short", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }),
   };

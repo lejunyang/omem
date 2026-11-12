@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { ask } from "../src/agents/jobs.ts";
 import { ownerContextParts } from "../src/agents/owner-now.ts";
 import { createRun, waitForRun } from "../src/agents/runs.ts";
+import { OWNER } from "../src/core/users.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { keepOwnerSection, personCard, personLine, sectionOf, workStateBrief } from "../src/agents/work-state.ts";
@@ -136,6 +137,15 @@ describe("work state: facts, the nightly write-up, and where it is read", async 
     expect(material.本人近况).toContain("退款改造：接口联调中");
     expect(material.发送人).toContain("项目 A 后端，常找本人确认退款字段（人物卡 personal:people/小李）");
     expect(material.本人在这个会话里).toContain("发了 1 条消息");
+    expect(material.本人给这个会话设的规则).toBeUndefined();
+    // A rule naming the chat, and an earlier handling there, go in as well.
+    const { saveRule } = await import("../src/rules/store.ts");
+    saveRule(app, { name: "讨论群评审", description: "讨论群里有人约评审就看日历", enabled: true, trigger: { event: "message" }, conditions: { all: [{ field: "chat.id", op: "equals", value: "oc_team" }] }, judge: "code", actions: [{ type: "notify" }] } as never, "user", OWNER);
+    const handled = createRun(app, { kind: "agent", spaceId: "personal", title: "处理", input: { mention: { chatId: "oc_team" } } });
+    run(app.db, "update runs set status = 'done', output = ? where id = ?", JSON.stringify({ answer: "小李约了周三的评审，已经回复" }), handled.id);
+    const again = await triageMaterial(app, mentionChannel("lark"), { chatId: "oc_team", chatName: "项目 A 讨论群", chatKind: "group", topicId: null, spaceId: "personal", messages: [] });
+    expect(again.本人给这个会话设的规则).toContain("讨论群评审");
+    expect(again.最近在这个会话里的处理).toContain("小李约了周三的评审");
     app.config.workState.inject = false;
     expect(ownerContextParts(app, { state: true })).toEqual({});
     app.config.workState.inject = true;

@@ -35,3 +35,25 @@ it("screens a watched group's batch with the decision model: chatter is skipped,
   setDecisionFetchForTests((async () => new Response("{}", { status: 500 })) as unknown as typeof fetch);
   expect(await prefilterBatch(app, conv.id, chatter)).toBeNull();
 });
+
+it("gives the decision model the context: the owner's words here, rules on the group, earlier group lines", async () => {
+  const app = testApp(); apps.push(app);
+  const { addMessage } = await import("../src/agents/threads.ts");
+  const { saveRule } = await import("../src/rules/store.ts");
+  const { OWNER } = await import("../src/core/users.ts");
+  const conv = resolveThread(app, { channel: WATCH_CHANNEL, chatId: "oc_help", isGroup: true, title: "项目 A 答疑群", spaceId: "personal", userId: "owner" }).thread;
+  setWatchRule(app, "oc_help", { spec: "assistant", on: "all", reply: "auto", note: "帮群里的人解答接口问题", batchMinutes: 5 });
+  addMessage(app, conv.id, "user", "退款相关的问题都帮他们查一下", null, {});
+  addMessage(app, conv.id, "user", "这个接口返回 403 是怎么回事", null, { speaker: "小王" });
+  saveRule(app, { name: "答疑群报错", description: "答疑群里有人贴报错就查日志", enabled: true, trigger: { event: "message" }, conditions: { all: [{ field: "chat.id", op: "equals", value: "oc_help" }] }, judge: "code", actions: [{ type: "notify" }] } as never, "user", OWNER);
+  app.config.ai.providers = [{ id: "d", name: "决策", kind: "openai" as never, backends: [] }];
+  app.config.ai.decision = { provider: "d", model: "", fallback: "general", gatekeeper: true };
+  setKey(app.home, "d", "key-1");
+  let body = "";
+  setDecisionFetchForTests((async (_u: string, init: RequestInit) => ((body = String(init.body)), new Response(JSON.stringify({ answers: [{ type: "predicate", name: "q", probability: 0.9 }] })))) as unknown as typeof fetch);
+  expect(await prefilterBatch(app, conv.id, [{ text: "能帮忙看下吗", meta: { speaker: "小李" } }])).toBeNull();
+  expect(body).toContain("退款相关的问题都帮他们查一下");
+  expect(body).toContain("答疑群报错");
+  expect(body).toContain("这个接口返回 403");
+  expect(body).toContain("帮群里的人解答接口问题");
+});
