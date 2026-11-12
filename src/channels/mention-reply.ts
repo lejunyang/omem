@@ -106,7 +106,7 @@ export async function sendMentionReply(app: App, runId: string, text: string, by
     const { targetChat } = await import("../rules/forward.ts");
     note = (await targetChat(app, "有人找你", { chatId: m.chatId, name: m.chatName, kind: "group" })).note;
     const at = botIdOf(app, m.senderId);
-    const sent = await sendLark({ replyTo: m.lastMessageId, inThread: true, runId, purpose: "answer" }, { markdown: `${at ? `<at id=${at}></at> ` : ""}${text}` });
+    const sent = await sendLark({ replyTo: m.lastMessageId, inThread: true, runId, purpose: "answer" }, { markdown: atAsker(text, m.senderName, at) });
     r = { via: "group", by, at: new Date().toISOString(), messageId: sent.messageId, chatId: m.chatId, where: `在${whereOf(m)}里 ${m.senderName} 那条消息的话题里` };
     follow(app, runId, m.chatId, sent.threadId ?? m.topicId, m.chatName, sent.messageId);
   } else if (app.config.mentions.reply.lark.p2pVia === "group") {
@@ -179,4 +179,17 @@ function follow(app: App, runId: string, chatId: string, topicId: string | null,
     const t = resolveThread(app, { channel: "lark", chatId, topicId: topicId ?? undefined, isGroup: true, title, spaceId: captureSpace(app, chatId), userId: OWNER }).thread;
     moveHome(app, runId, t.id, messageId);
   })().catch((e) => console.warn("[omem] 回复后记录这件事在哪里聊失败：", (e as Error).message));
+}
+
+/**
+ * The reply @s the asker once: where the text already names them (“@小王 …”, written by the handler)
+ * that becomes the real mention; otherwise one goes in front. Both at once showed one working @ and
+ * one plain “@小王”.
+ */
+export function atAsker(text: string, name: string, at: string | null | undefined) {
+  if (!at) return text;
+  const tag = `<at id=${at}></at>`;
+  const i = name ? text.indexOf(`@${name}`) : -1;
+  if (i < 0) return `${tag} ${text}`;
+  return `${text.slice(0, i)}${tag}${text.slice(i + name.length + 1)}`;
 }
