@@ -139,6 +139,8 @@ export type WatchRule = {
   note?: string;
   /** Minutes new messages are collected before the handler looks (it adjusts this); unset: 5 seconds. */
   batchMinutes?: number;
+  /** Whether the decision model screens each batch before the handler starts (unset: lark.watchPrefilter, on by default). */
+  prefilter?: boolean;
   /** The watch ends then (ISO); unset: until removed. */
   expiresAt?: string;
 };

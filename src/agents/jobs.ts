@@ -134,6 +134,17 @@ registerHandler("ask", async (ctx) => {
   const msgs = all.filter((m) => ids.includes(m.id));
   if (!msgs.length) return { answer: "", skipped: "消息已不存在" };
   const coordinate = (ctx.run.input as { coordinate?: { workId: string; sourceRunIds?: string[] } }).coordinate;
+  // A watched group's batch: the decision model screens it first (channels/lark-watch.ts prefilterBatch).
+  if (msgs.every((m) => typeof m.meta.speaker === "string")) {
+    const { prefilterBatch } = await import("../channels/lark-watch.ts");
+    const skipped = await prefilterBatch(ctx.app, input.conversationId, msgs, ctx.signal);
+    if (skipped) {
+      ctx.event("status", { text: `预筛：这一批不用看（${skipped}）` });
+      // Kept in the conversation, so the next batch's handler knows these were seen.
+      addMessage(ctx.app, input.conversationId, "assistant", `（预筛跳过这 ${msgs.length} 条：${skipped}）`, ctx.run.id, { replyTo: ids, prefiltered: true });
+      return { answer: "", quiet: true, prefiltered: skipped };
+    }
+  }
   let r;
   try {
     r = await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner");

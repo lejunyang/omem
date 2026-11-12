@@ -608,6 +608,8 @@ export const configSchema = z.object({
         .refine((bots) => new Set(bots.map((b) => b.id)).size === bots.length, "机器人 id 不能重复"),
       /** Bots @-ing one another in a chat: at most this many hand-offs in a row before a person speaks again. */
       botRelay: z.number().int().min(0).max(20).default(4),
+      /** Watched groups: the decision model screens each batch before the handler runs (channels/lark-watch.ts prefilterBatch); a watch may say otherwise. */
+      watchPrefilter: z.boolean().default(true),
       /** Reading the owner's own Feishu (lark-cli, user identity, read-only). */
       capture: z
         .object({
@@ -781,6 +783,7 @@ export const configSchema = z.object({
       defaultSpace: "personal",
       bots: [],
       botRelay: 4,
+      watchPrefilter: true,
       capture: {
         mode: "subscribed",
         exclude: [],

@@ -1119,6 +1119,12 @@ async function saveEdit() {
         <div class="row small"><span>机器人之间连续转交最多</span><UiSelect :model-value="String(config.lark.botRelay ?? 4)" size="sm" width="90px" aria-label="机器人之间连续转交上限" :options="['0', '1', '2', '4', '6', '10'].map((v) => ({ value: v, label: `${v} 次` }))" @change="(v) => saveConfig({ lark: { ...config.lark, botRelay: Number(v) } }, `机器人之间连续转交最多 ${v} 次`)" /><span class="muted">，之后等有人发话</span></div>
       </div>
 
+      <div class="card pad stack">
+        <strong>盯群</strong>
+        <p class="muted small">助手盯着的群（你让它“帮我盯一下这个群”的）每攒一批消息交给它看一次。配了决策模型时，每批先由它判断值不值得看：闲聊、“稍等”“收到”、和你要的无关的就不交给助手，省下一次完整运行；@ 你或 @ 机器人的消息不筛，判断出错时照常交给助手。单个群可以让助手按你的话单独开关。</p>
+        <UiCheckbox :model-value="config.lark.watchPrefilter !== false" switch @change="(v) => saveConfig({ lark: { ...config.lark, watchPrefilter: v } }, v ? '盯群的每批消息先由决策模型筛一遍' : '盯群的每批消息都交给助手看')">每批消息先由决策模型筛一遍</UiCheckbox>
+      </div>
+
       <div id="settings-mentions" class="card pad stack">
         <strong>有人找你</strong>
         <p class="muted small">在 omem 采集的聊天渠道里（现在是飞书），有人在群里 @ 你，或同事私聊你，过几分钟你还没处理（哪些算处理过在下面选）时：先用决策模型（一次很小的判断）看是什么事——不用管、简短提醒你，还是值得先查；值得查的交给主助手（或某个 Agent 档案）以你的身份读上下文、查事项和资料，再提醒你结论和建议的回复。你回复那条提醒就接着和它聊这件事。查不出来、出错或超时，照常发简短提醒（谁、在哪、说了什么）。分诊的判断标准是“有人找你·分诊”角色，在“Agent”页可以改。</p>

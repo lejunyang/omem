@@ -105,6 +105,8 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
       text: `${m.text}
 （飞书消息 ${m.id}${m.topicId ? `，话题 ${m.topicId}` : ""}，群「${chatName}」 ${chatId}）`,
       externalMessageId: m.id,
+      // Addressed to the owner or the bot: never screened out (prefilterBatch).
+      ...(mentioned(m, who) ? { meta: { addressed: true } } : {}),
       mergeMs: mentioned(m, who) ? Math.min(batch, MENTION_MS) : batch,
       // A busy group must not keep pushing the batch back: the window starts with its first message.
       fixedWindow: true,
@@ -144,4 +146,42 @@ export function listWatches(app: App): WatchInfo[] {
     const name = conv?.title ?? one<{ title: string }>(app.db, "select title from sources where uri = ? and deleted_at is null limit 1", `lark:${r.chat_id}`)?.title ?? r.chat_id;
     return { ...(JSON.parse(r.settings) as { watch: WatchRule }).watch, chatId: r.chat_id, name, conversationId: conv?.id ?? null };
   });
+}
+
+/**
+ * Before a watched group's batch goes to its handler (a full agent run), the decision model asks
+ * whether it is worth a look at all, given what the owner wants from the watch: most batches of a
+ * busy group (chatter, "稍等", a video call notice) end with the handler saying nothing. On unless the
+ * watch says otherwise (`prefilter`) or the owner turned it off (`lark.watchPrefilter`), and only
+ * with a decision model. Messages that @ the owner or the bot always go through; so does a batch when
+ * the model fails. Returns why the batch is skipped, or null to hand it over.
+ */
+export async function prefilterBatch(app: App, conversationId: string, batch: { text: string; meta: Record<string, unknown> }[], signal?: AbortSignal): Promise<string | null> {
+  const { findThread, threadMessages } = await import("../agents/threads.ts");
+  const t = findThread(app, conversationId);
+  if (!t || t.channel !== WATCH_CHANNEL) return null;
+  const rule = watchRule(app, (t.key ?? "").split("#")[0]);
+  if (!rule || !(rule.prefilter ?? app.config.lark.watchPrefilter !== false)) return null;
+  if (batch.some((m) => m.meta.addressed)) return null;
+  const { decide, decisionReady, describeDecision } = await import("../core/decision.ts");
+  if (!decisionReady(app)) return null;
+  const said = threadMessages(app, conversationId, { limit: 12 }).filter((m) => m.role === "assistant" && !m.meta.prefiltered).slice(-3);
+  try {
+    const r = await decide(app, {
+      群: t.title || t.key,
+      本人要的: rule.note ?? "（没写）",
+      之前的摘要: t.summary || "（无）",
+      最近的处理: said.map((m) => m.text.slice(0, 400)).join("\n---\n") || "（无）",
+      这一批消息: batch.map((m) => `${String(m.meta.speaker ?? "?")}：${m.text.slice(0, 600)}`).join("\n"),
+    }, {
+      type: "yesno",
+      instructions: "这是本人让助手盯着的一个群新来的一批消息。判断要不要交给助手处理（读上下文、查资料、回复或告诉本人）。按“本人要的”判断：和它有关的、有人提问或求助的、出了问题的、需要跟进之前处理的，选“要看”；闲聊、客套、“稍等”“收到”、系统通知、和本人要的无关的，选“不用看”。拿不准选“要看”。",
+      yes: "要看",
+      no: "不用看",
+    }, { signal });
+    if (!r || r.choice === "yes") return null;
+    return describeDecision(r, { yes: "要看", no: "不用看" });
+  } catch {
+    return null;
+  }
 }

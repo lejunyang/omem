@@ -2729,6 +2729,7 @@ def({
     "盯一个飞书群：之后群里的消息按批交给你（spec=assistant，默认）或一个更合适的 Agent 档案，在同一个上下文里读，有能回答的、要排查的、要本人知道的再动手，其余不管。本人说“帮我盯一下这个群”“分享群给你帮我看着”时用；长期的分工（报警群→告警 Agent）也用它。" +
     "note 写本人要的东西（原话）；until 按本人的说法定（2h、3d、ISO 时间；本人说长期才用 never，默认 3d）；batch_minutes 是攒多久看一次（默认 10，@本人或机器人的消息 30 秒内就看），盯的过程中觉得太频繁或太慢可以只传 chat_id 和 batch_minutes 调整。" +
     "on：all 全部消息 / mention 只在 @本人或机器人时 / keyword 匹配 pattern；reply：none 只看不回 / draft 回复先给本人确认 / auto 直接用机器人回复。" +
+    "配了决策模型时每批消息先由它筛一遍（@本人或机器人的不筛），不值得看的不交给你。" +
     "机器人不在群里时回复不了、也收不到实时消息：先用 lark_invite（bots: [\"self\"]）把 omem 的机器人拉进群。remove=true 不再盯。",
   write: true,
   schema: z.object({
@@ -2741,6 +2742,7 @@ def({
     pattern: z.string().optional(),
     reply: z.enum(["none", "draft", "auto"]).optional(),
     space: z.string().optional().describe("这个群的材料与记录放哪个空间"),
+    prefilter: z.boolean().optional().describe("每批消息先让决策模型判断值不值得看（配了决策模型时默认按设置 → 渠道 的总开关，一般开着）；本人要求这个群每批都看或都先筛时才传"),
     remove: z.boolean().optional(),
   }),
   handler: async (ctx, a) => {
@@ -2761,6 +2763,7 @@ def({
       spaceId: a.space ? writeSpace(ctx, a.space) : prev?.spaceId,
       note: a.note ?? prev?.note,
       batchMinutes: a.batch_minutes ?? prev?.batchMinutes ?? DEFAULT_BATCH_MINUTES,
+      prefilter: a.prefilter ?? prev?.prefilter,
       expiresAt,
     };
     setWatchRule(ctx.app, a.chat_id, rule);
