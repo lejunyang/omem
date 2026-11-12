@@ -837,6 +837,8 @@ export const configSchema = z.object({
       enabled: z.boolean().default(true),
       p2p: z.boolean().default(true),
       delayMinutes: z.number().int().min(0).max(240).default(3),
+      /** Which of the owner's own signals mean they have it already: read, an emoji reaction, a reply after it. */
+      skipWhen: z.object({ read: z.boolean().default(true), reacted: z.boolean().default(true), replied: z.boolean().default(true) }).default({ read: true, reacted: true, replied: true }),
       timeoutMinutes: z.number().int().min(1).max(60).default(10),
       guidance: z.string().max(4000).default(""),
       noDecision: z.enum(["general", "notify", "handle"]).default("general"),
@@ -855,7 +857,7 @@ export const configSchema = z.object({
         })
         .default({ lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } }),
     })
-    .default({ enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } }),
+    .default({ enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } }),
   /**
    * When omem may push to chat channels. Defaults:
    * - quiet hours: nothing outside urgent/overdue 22:00–09:00 local;

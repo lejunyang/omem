@@ -51,18 +51,22 @@ function refChatLines(app: App, ref: string): ChatLine[] {
   return lines.slice(from - 1, to).map((l) => parseChatLine(m[1], chatId, l)).filter((x): x is ChatLine => !!x);
 }
 
-export async function ownerAlreadyHandled(app: App, n: NotificationLike): Promise<boolean> {
+/** Which of the owner's signals count as handled (有人找你 lets each be turned off: mentions.skipWhen); all by default. */
+export type HandledSignals = { read?: boolean; reacted?: boolean; replied?: boolean };
+
+export async function ownerAlreadyHandled(app: App, n: NotificationLike, signals: HandledSignals = {}): Promise<boolean> {
+  const { read: byRead = true, reacted: byReaction = true, replied: byReply = true } = signals;
   const refs = n.sourceRefs ?? [];
   const triggers = refs.length ? refs.flatMap((r) => refChatLines(app, r)) : [];
 
   // The strongest, timing-independent signal: the owner sent a message in the
   // same chat/topic after the trigger. Works even when the trigger message is
   // not resolvable (so fall back to "this chat, recent" when refs resolve to none).
-  if (triggers.length) {
+  if (byReply && triggers.length) {
     for (const h of triggers) {
       if (ownerRepliedAfter(app, h.chatId, h.topicId, h.atMs)) return true;
     }
-  } else if (refs.length) {
+  } else if (byReply && refs.length) {
     for (const ref of refs) {
       const chat = chatOfRef(app, ref);
       if (chat && ownerRepliedRecently(app, chat, 30 * 60_000)) return true;
@@ -72,9 +76,9 @@ export async function ownerAlreadyHandled(app: App, n: NotificationLike): Promis
   // Read status + reactions require concrete trigger message ids.
   if (!triggers.length) return false;
   const ids = triggers.map((h) => h.messageId).filter((x): x is string => !!x);
-  const read = ids.length ? await readMessageIds(app, ids) : new Set<string>();
-  if (ids.length && triggers.every((h) => h.messageId && read.has(h.messageId))) return true;
-  for (const h of triggers) {
+  const read = byRead && ids.length ? await readMessageIds(app, ids) : new Set<string>();
+  if (byRead && ids.length && triggers.every((h) => h.messageId && read.has(h.messageId))) return true;
+  if (byReaction) for (const h of triggers) {
     if (h.messageId && (await ownerReacted(app, h.messageId))) return true;
   }
   return false;

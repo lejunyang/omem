@@ -41,7 +41,14 @@ export const DOUBAO_CLI_INSTALL = "npm i -g @bytedance/doubao-cli，再 doubao l
 
 /** What the agent is told when omem's tools come through its shell. */
 export const DOUBAO_TOOL_NOTE =
-  "【omem 工具】这次运行没有 MCP 工具。说明里提到的 omem 工具（omem_help、omem_call 和各个工具名）都在终端里调用：`omem tool <工具名> 键=值 …`，参数复杂时写进 JSON 文件再 `omem tool <工具名> -f 参数.json`，`omem tool help [分组]` 看说明。权限与这次运行相同。\n\n【子任务】这一轮自己做完，不要另开子 Agent 或并行子任务：它们的过程 omem 看不到，读到的也不会交回这一轮。要别的 Agent 帮忙用 omem 的 run_agent / ask_agent；原件按需读，先 search 找到要看的，不要逐份通读。";
+  "【omem 工具】这次运行没有 MCP 工具。说明里提到的 omem 工具（omem_help、omem_call 和各个工具名）都在终端里调用：`omem tool <工具名> 键=值 …`，参数复杂时写进 JSON 文件再 `omem tool <工具名> -f 参数.json`，`omem tool help [分组]` 看说明。权限与这次运行相同。要说某件事“没有工具、做不了”之前，先 `omem tool help` 看各分组（比如改规则是 wake 分组的 list_rules / save_rule），真的找不到再这样说。\n\n【子任务】这一轮自己做完，不要另开子 Agent 或并行子任务：它们的过程 omem 看不到，读到的也不会交回这一轮。要别的 Agent 帮忙用 omem 的 run_agent / ask_agent；原件按需读，先 search 找到要看的，不要逐份通读。";
+
+/**
+ * Runs on the Doubao CLI right now. It prints nothing until the turn is over, so the omem tools it
+ * calls through `omem tool` are what shows of its work: the tool endpoint records each as a step
+ * (`tool` events) for these runs (server/http.ts).
+ */
+export const shellToolRuns = new Set<string>();
 
 /** Longest prompt passed as an argument; longer ones go through a file. */
 const INLINE_MAX = 6000;
@@ -72,7 +79,8 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
   }
   // -p 从参数读提示；新版 CLI 无法把 Node 子进程默认的 socket 接为 stdin。
   const child = launch(exe, doubaoArgs(profile, req, prompt), { cwd: req.cwd, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore" });
-  emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复" });
+  emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
+  if (req.runId) shellToolRuns.add(req.runId);
   let stdout = "";
   let stderr = "";
   let sessionId: string | undefined;
@@ -112,6 +120,7 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
     });
   } finally {
     if (file) rmSync(file, { force: true });
+    if (req.runId) shellToolRuns.delete(req.runId);
   }
   const text = stdout.trim();
   if (text) emit({ type: "text", text });

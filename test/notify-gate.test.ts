@@ -41,6 +41,10 @@ describe("notify gate: owner already handled", () => {
     // Known read suppresses; unknown (no is_read) above did not.
     const read = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_test3", title: "项目 C 群", text: line(t, "小王", "@本人 周报发了", "om_r1") });
     expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${read.id}#L1`] })).toBe(true);
+    // 有人找你 can count only some signals (mentions.skipWhen): read but not answered still counts as open.
+    expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${read.id}#L1`] }, { read: false })).toBe(false);
+    expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${src.id}#L1`] }, { replied: false })).toBe(false);
+    expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${src.id}#L1`] }, { read: false, reacted: false })).toBe(true);
     setLarkCliForTests(null);
     app.db.close();
   });

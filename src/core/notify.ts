@@ -10,6 +10,8 @@ export type NotifyAction = { label: string; action: string; style?: "primary" | 
 /** normal: respect quiet hours and read state; urgent: pushes even at night; silent: in-app only. */
 export type NotifyUrgency = "normal" | "urgent" | "silent";
 
+export type NotifyTone = "warning" | "done";
+
 /**
  * Channel delivery policy, registered per channel. Returning false keeps the
  * notification in the in-app list but skips the push (e.g. the owner already
@@ -53,6 +55,8 @@ export type Notification = {
   larkConversationId?: string;
   /** The daily item digest: items that closed by themselves (can be reopened) and that close soon (can be kept); `effects`: nightly replay suggestions to adopt or ignore. */
   digest?: { closed: string[]; soon: string[]; effects?: string[] };
+  /** How the card reads: `warning` waits on the owner (an authorization, an approval: orange like approval cards), `done` is that settled (green). */
+  tone?: NotifyTone;
   /** This is the newer state of an earlier notification (a pending authorization now done): channels edit the card they sent for it instead of sending another. */
   replaces?: string;
   /** Set by the Feishu channel: the card it sent (or edited) for this notification, so a later one can replace it. */
@@ -74,7 +78,7 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; effects?: string[] }; replaces?: string;
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
     /** The host already gave the owner their time before this run started (mentions/mentions.ts): no first-nudge grace. */
     graceDone?: boolean },
 ) {
@@ -134,9 +138,11 @@ export function notify(
     ...(input.scheduled ? { scheduled: true } : {}),
     ...(input.digest ? { digest: input.digest } : {}),
     ...(replaced ? { replaces: replaced.id } : {}),
+    // Updating a card that waited on the owner without saying how it reads now: it is settled (green).
+    ...(input.tone ? { tone: input.tone } : replaced && one<{ t: string | null }>(app.db, "select json_extract(context, '$.tone') t from notifications where id = ?", replaced.id)?.t === "warning" ? { tone: "done" as const } : {}),
     ...(input.entityId ? { entity: input.entity ?? "item", entityId: input.entityId, actions: input.actions ?? [] } : {}),
   };
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest, replaces: n.replaces }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest, replaces: n.replaces, tone: n.tone }));
   // The earlier one is now history: read, and no longer waiting for the morning.
   if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });

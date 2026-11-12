@@ -251,6 +251,10 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
         toast: { type: "success", content: op === "done" ? "已标记为已处理" : "已忽略" },
       };
     }
+    // A card an agent run posted outside any conversation (a rule's agent replying under the triggering
+    // message): the same agent picks the click up, continuing its session, whenever it comes.
+    const resumed = await resumeAgentFromCard(app, inter, messageId, describeAction({ tag: action.tag, name: action.name, value, formValue: typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value, option: action.option, options: action.options, input: action.input_value, checked: action.checked }), opName, operator);
+    if (resumed) return resumed;
     return { toast: { type: "warning", content: "找不到对应的会话" } };
   }
   // The /model card changes the thread's model settings directly; no agent turn.
@@ -287,6 +291,29 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     });
   })().catch((e) => console.warn("[omem] 卡片操作续聊失败", e));
   return { toast: { type: "info", content: "已收到，处理中" } };
+}
+
+/** Starts the agent that posted a card again with the click as its next step; null when the card has no such run. */
+async function resumeAgentFromCard(app: App, inter: { id: string; runId: string | null }, messageId: string, desc: string, opName: string, operator: string) {
+  if (!inter.runId) return null;
+  const { createRun, getRun } = await import("../agents/runs.ts");
+  let prev;
+  try { prev = getRun(app, inter.runId); } catch { return null; }
+  const input = prev.input as { spec?: string; task?: string; triggers?: unknown; moreTriggers?: unknown; resumeSessionId?: unknown };
+  if (prev.kind !== "agent" || !input.spec) return null;
+  const { triggers: _t, moreTriggers: _m, resumeSessionId: _s, ...rest } = input;
+  const task = [
+    "# 卡片操作",
+    "",
+    `${opName}（${operator}）在你之前（运行 ${prev.id}）发的卡片 ${messageId} 上${desc}。按这个选择接着把事情做完。之前的过程在你的会话里；会话接不上时用 read_run 读运行 ${prev.id}。`,
+    "",
+    "# 原来的任务",
+    "",
+    input.task ?? "",
+  ].join("\n");
+  const next = createRun(app, { kind: "agent", spaceId: prev.spaceId, title: `${input.spec}：处理卡片上的选择`, input: { ...rest, task, resumeFromRun: prev.id }, parentId: prev.parentId, lane: prev.lane, userId: OWNER });
+  run(app.db, "update card_interactions set handled_at = datetime('now'), handled_by = ? where id = ?", operator, inter.id);
+  return { toast: { type: "info" as const, content: `已收到，${input.spec} 接着处理（运行 ${next.id}）` } };
 }
 
 /** The card in a card.action.trigger response must be { type: "raw", data: <card json> }. */

@@ -3287,6 +3287,7 @@ def({
     event_id: z.number().int().positive().optional(),
     urgency: z.enum(["normal", "urgent"]).optional().describe("紧急（高优先级、已过期、点名本人且限时）才传 urgent：可在免打扰时段推送。默认 normal"),
     replaces: z.string().optional().describe("之前一条通知的 id（发通知时返回的 n…）：这条是它的新状态（授权已完成、等待已结束），飞书里直接改那张卡片，不另发；原通知标为已读"),
+    tone: z.enum(["warning", "done"]).optional().describe("warning：要本人去做的事（授权、登录、审批），飞书卡片是橙色；done：那件事已经办好（配合 replaces 更新原卡片），卡片变绿色（更新一张 warning 卡片时不传也按 done；还在等就再传 warning）。普通通知不传"),
   }),
   handler: (ctx, a) => {
     if (a.entity_id) {
@@ -3307,6 +3308,7 @@ def({
       eventId: a.event_id,
       runId: ctx.runId,
       replaces: a.replaces,
+      ...(a.tone ? { tone: a.tone } : {}),
       ...(a.urgency ? { urgency: a.urgency } : {}),
       // A handling of someone looking for the owner starts only after the owner had their time with the message (mentions/mentions.ts).
       ...(ctx.runId && one(ctx.app.db, "select 1 from runs where id = ? and json_extract(input, '$.mention') is not null", ctx.runId) ? { graceDone: true } : {}),
@@ -4397,8 +4399,10 @@ def({
         run(ctx.app.db, "update runs set input = ? where id = ? and status = 'queued'", JSON.stringify(input), r.id);
         done.push(`${r.id} 改为新 AI 排队`);
       } else if (r.status === "running" || r.status === "failed") {
-        if (r.status === "running") cancelRun(ctx.app, r.id);
         const next = createRun(ctx.app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane });
+        // Whoever waits on the old run (a chat channel answering the owner) follows the new one (channels/common.ts).
+        setRunOutput(ctx.app, r.id, { replacedBy: next.id });
+        if (r.status === "running") cancelRun(ctx.app, r.id);
         done.push(`${r.id} ${r.status === "running" ? "已停下" : "失败"}，用新 AI 重新排队为 ${next.id}`);
       }
     }

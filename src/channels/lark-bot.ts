@@ -749,6 +749,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
         },
         {
           onStart: async (id) => {
+            // The turn was handed to a run on another AI: the old bubble goes away, the new run gets its own.
+            if (runId && runId !== id) {
+              finishCot(app, runId, true, true);
+              await presentation?.close();
+            }
             runId = id;
             // settings → 思考气泡: by default only the owner's own message gets one.
             presentation = startReplyProgress(app, { chatId: m.chatId, messageId: replyMessageId, inThread: replyInThread }, id, { bubble: showThinking(app, userId === OWNER && !asker && !m.fromApp) });

@@ -176,7 +176,7 @@ registerHandler("mention", async (ctx: RunContext) => {
       continue;
     }
     if (channel.takenElsewhere(app, input.chatId, m)) continue;
-    if (await channel.ownerSeen(app, m)) continue;
+    if (await channel.ownerSeen(app, m, app.config.mentions.skipWhen)) continue;
     open.push(m);
   }
   if (!open.length) return { quiet: true, summary: taken.length ? `${[...new Set(taken)].join("；")}，这里不再处理` : "本人已经看过或回复了，或者已经有别的处理者在管，不用提醒" };

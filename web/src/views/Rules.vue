@@ -465,7 +465,7 @@ function startFrom(text: string) {
         <div v-if="!loading && mentions" class="li fallback" title="排在所有规则之后：规则在这条消息上触发过或正等着处理它时不管；不能删除，在设置里开关和调整">
           <router-link class="grow pick" to="/settings?tab=lark&focus=mentions">
             <div class="row"><span class="badge">最后</span><strong class="ellipsis">没有规则处理的、找你的消息 → 有人找你</strong></div>
-            <div class="muted small clamp">有人 @ 你{{ mentions.p2p ? "或私聊你" : "" }}、{{ mentions.delayMinutes }} 分钟后你还没看，又没有规则接手时：先分诊，再提醒你或交给助手查。</div>
+            <div class="muted small clamp">有人 @ 你{{ mentions.p2p ? "或私聊你" : "" }}、{{ mentions.delayMinutes }} 分钟后你还没处理，又没有规则接手时：先分诊，再提醒你或交给助手查。</div>
             <div class="muted small">{{ mentions.enabled ? `已开启 · 今天分诊 ${mentions.today.triage}/${mentions.perDay.triage} 次，查背景 ${mentions.today.handle}/${mentions.perDay.handle} 次` : "已关闭" }} · 在设置 → 渠道里调整</div>
           </router-link>
         </div>

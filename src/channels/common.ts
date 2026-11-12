@@ -25,7 +25,14 @@ export async function answerFromChannel(
     return null;
   }
   await hooks.onStart?.(r.runId);
-  const done = await waitForRun(app, r.runId);
+  let done = await waitForRun(app, r.runId);
+  // Switched to another AI mid-turn (switch_run_ai): the turn is done again by a new run; its answer is this one.
+  for (let hops = 0; done.status !== "done" && getRun(app, done.id).output.replacedBy && hops < 5; hops++) {
+    const next = String(getRun(app, done.id).output.replacedBy);
+    r.runId = next;
+    await hooks.onStart?.(next);
+    done = await waitForRun(app, next);
+  }
   // Card answers may merge into this turn. That background turn posts through the thread sender.
   if (getRun(app, r.runId).output.channelDelivered) return null;
   // The turn that was running when it came took the message (steer.ts) and answers it.

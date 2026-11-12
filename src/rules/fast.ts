@@ -90,7 +90,7 @@ export function waitMatches(a: Pick<WaitAction, "contains" | "matches">, text: s
 
 /**
  * A “wait for a message” step (rule-fire run with `wait`): read that chat every 10 seconds until a
- * matching message newer than `since` arrives or time is up; then the actions after the step run with
+ * matching message stamped at or after `since` (the trigger minute less a short look-back, actions.ts) arrives; the newest one wins or time is up; then the actions after the step run with
  * it as `awaited`.
  */
 export async function waitThenAct(app: App, input: { ruleId: string; key: string; event: RuleEvent; wait: WaitAction; actions: RuleAction[]; reason?: string; since: number }, signal?: AbortSignal) {
@@ -99,12 +99,13 @@ export async function waitThenAct(app: App, input: { ruleId: string; key: string
   if (!rule) return { summary: "规则已停用或删除，没有执行" };
   const { fetchMessages, ownerOpenId } = await import("../channels/lark-personal.ts");
   const owner = await ownerOpenId();
-  const until = input.since + input.wait.minutes * 60_000;
+  // The wait runs from the trigger, not from the look-back start.
+  const until = Math.max(Date.parse(input.event.at) || 0, input.since) + input.wait.minutes * 60_000;
   const name = input.wait.name || input.wait.chatId;
   while (!signal?.aborted) {
     const got = (await fetchMessages(["+chat-messages-list", "--chat-id", input.wait.chatId, "--order", "asc"], input.since - 1000, Date.now() + 1000, { pages: 1 }).catch(() => [] as LarkMessage[]))
-      .filter((m) => m.msg_type !== "system" && m.sender?.id !== owner && timeMs(m.create_time) >= input.since - 1000)
-      .find((m) => waitMatches(input.wait, messageText(m)));
+      .filter((m) => m.msg_type !== "system" && m.sender?.id !== owner && timeMs(m.create_time) >= input.since && waitMatches(input.wait, messageText(m)))
+      .sort((x, y) => timeMs(y.create_time) - timeMs(x.create_time))[0];
     if (got) {
       const awaited = { chatId: input.wait.chatId, chatName: name, id: got.message_id, text: messageText(got), sender: got.sender?.name ?? "?", at: new Date(timeMs(got.create_time)).toISOString() };
       const { fireAfterWait } = await import("./engine.ts");

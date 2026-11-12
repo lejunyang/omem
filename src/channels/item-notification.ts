@@ -56,6 +56,7 @@ export function notificationCard(app: App, n: Notification) {
   const buttons = linkButton(app, n.link);
   return buildCard({
     title: n.title,
+    ...(n.tone ? { color: n.tone === "warning" ? "orange" : "green" } : {}),
     blocks: [
       { markdown: resolveCitationsSync(app, n.body) || " " },
       ...(buttons.length ? [{ buttons }] : []),

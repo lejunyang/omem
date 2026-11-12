@@ -102,7 +102,7 @@ const lark: MentionChannel = {
   messages: storedMessages,
   spaceOf: (app, chatId, messageId) =>
     one<{ space_id: string }>(app.db, "select s.space_id from lark_messages m join sources s on s.id = m.source_id where m.message_id = ? and s.deleted_at is null", messageId)?.space_id ?? captureSpace(app, chatId),
-  ownerSeen: async (app, m) => !!m.ref && (await ownerAlreadyHandled(app, { sourceRefs: [m.ref] })),
+  ownerSeen: async (app, m, skipWhen) => !!m.ref && (await ownerAlreadyHandled(app, { sourceRefs: [m.ref] }, skipWhen)),
   // A watch's handler (channel `lark` in handled_messages, lark-watch.ts; the bots' own rows only record
   // delivery), or the bot answering someone who @-ed it (rules/store.ts markAddressed).
   takenElsewhere: (app, chatId, m) => !!watchRule(app, chatId) || !!one(app.db, "select 1 from handled_messages where message_id = ? and channel = 'lark'", m.id) || addressed(app, `lark:${m.id}`),

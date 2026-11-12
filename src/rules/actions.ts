@@ -57,6 +57,9 @@ function joinLane(app: App, rule: Rule, a: AgentAction, e: RuleEvent, lane: stri
  * run that starts later (continueActions), with the actions as they were now; a check the model answers
  * “no” ends the list there. `actions`: what is left to do (a continuation), else the rule's own.
  */
+/** How far before the trigger minute a wait step still takes a message (a code is usually sent just before someone asks for it). */
+export const WAIT_LOOKBACK_MS = 60_000;
+
 export async function runActions(app: App, rule: Rule, e: RuleEvent, reason: string, extra: { discussion?: string } = {}, actions: RuleAction[] = rule.actions): Promise<ActionResult[]> {
   const out: ActionResult[] = [];
   for (let i = 0; i < actions.length; i++) {
@@ -76,8 +79,11 @@ export async function runActions(app: App, rule: Rule, e: RuleEvent, reason: str
     }
     if (a.type === "wait-message") {
       const rest = actions.slice(i + 1);
-      // Messages from the trigger on count (the search gives minutes: from the start of that minute).
-      const since = Date.parse(e.at) || Date.now();
+      // Feishu times are whole minutes: a code sent seconds before the request, or just after it in the same
+      // minute, is stamped earlier than the trigger. Messages count from the start of the trigger minute,
+      // less WAIT_LOOKBACK_MS (the newest match wins, fast.ts).
+      const at = Date.parse(e.at) || Date.now();
+      const since = at - (at % 60_000) - WAIT_LOOKBACK_MS;
       const r = createRun(app, {
         kind: "rule-fire",
         spaceId: rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal"),

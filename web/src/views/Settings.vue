@@ -173,8 +173,13 @@ function saveGuests(patch: Record<string, unknown>, note = "已保存访客设�
   const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false };
   return saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
 }
+const skipKeys = [
+  { key: "read" as const, label: "已读" },
+  { key: "reacted" as const, label: "回了表情" },
+  { key: "replied" as const, label: "在那里回复了" },
+];
 function saveMentions(patch: Record<string, unknown>, note = "已保存") {
-  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } };
+  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 20 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } };
   void saveConfig({ mentions: { ...cur, ...patch } }, note);
 }
 /** Answering the asker is per channel (`mentions.reply.<channel>`); Feishu is the one there is. */
@@ -1116,13 +1121,19 @@ async function saveEdit() {
 
       <div id="settings-mentions" class="card pad stack">
         <strong>有人找你</strong>
-        <p class="muted small">在 omem 采集的聊天渠道里（现在是飞书），有人在群里 @ 你，或同事私聊你，过几分钟你还没看、没回表情、也没回复时：先用决策模型（一次很小的判断）看是什么事——不用管、简短提醒你，还是值得先查；值得查的交给主助手（或某个 Agent 档案）以你的身份读上下文、查事项和资料，再提醒你结论和建议的回复。你回复那条提醒就接着和它聊这件事。查不出来、出错或超时，照常发简短提醒（谁、在哪、说了什么）。分诊的判断标准是“有人找你·分诊”角色，在“Agent”页可以改。</p>
+        <p class="muted small">在 omem 采集的聊天渠道里（现在是飞书），有人在群里 @ 你，或同事私聊你，过几分钟你还没处理（哪些算处理过在下面选）时：先用决策模型（一次很小的判断）看是什么事——不用管、简短提醒你，还是值得先查；值得查的交给主助手（或某个 Agent 档案）以你的身份读上下文、查事项和资料，再提醒你结论和建议的回复。你回复那条提醒就接着和它聊这件事。查不出来、出错或超时，照常发简短提醒（谁、在哪、说了什么）。分诊的判断标准是“有人找你·分诊”角色，在“Agent”页可以改。</p>
         <p class="muted small">它排在所有规则之后：规则在这条消息上触发过（不论做了什么）或正等着处理它，这里就不管；规则还在判断时先等一等。规则页列表最后一条就是它。</p>
         <UiCheckbox :model-value="config.mentions?.enabled !== false" switch @change="(v) => saveMentions({ enabled: v }, v ? '有人找你时先分诊再提醒' : '已关闭：有人找你时不再分诊')">有人找你时先分诊再提醒</UiCheckbox>
         <UiCheckbox :model-value="config.mentions?.p2p !== false" switch :disabled="config.mentions?.enabled === false" @change="(v) => saveMentions({ p2p: v })">私聊也算（同事私聊你的消息）</UiCheckbox>
         <label class="field"><span>消息发出后等几分钟再开始（0–240，给你自己先看的时间）</span>
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="240" :disabled="config.mentions?.enabled === false" :value="config.mentions?.delayMinutes ?? 3" @change="saveMentions({ delayMinutes: Math.max(0, Math.min(240, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) })" />
         </label>
+        <div class="field"><span>你做了这些就算已经处理，不再分诊</span>
+          <div class="row wrap">
+            <UiCheckbox v-for="k in skipKeys" :key="k.key" :model-value="config.mentions?.skipWhen?.[k.key] !== false" :disabled="config.mentions?.enabled === false" @change="(v) => saveMentions({ skipWhen: { read: true, reacted: true, replied: true, ...(config.mentions?.skipWhen ?? {}), [k.key]: v } }, v ? `${k.label}算已处理` : `${k.label}不再算已处理`)">{{ k.label }}</UiCheckbox>
+          </div>
+          <span class="muted small">都不勾时，只要没有规则接手，过了上面的时间就分诊。</span>
+        </div>
         <label class="field"><span>分诊说明（写给判断的模型：哪些人、哪些群、哪类事一定要查或不用管）</span>
           <textarea class="textarea" rows="3" :disabled="config.mentions?.enabled === false" :value="config.mentions?.guidance ?? ''" placeholder="例如：项目 A 群里问接口和数据口径的都先查；行政通知、团建不用提醒；小王找我的一律提醒" @change="saveMentions({ guidance: ($event.target as HTMLTextAreaElement).value.trim() })" />
         </label>

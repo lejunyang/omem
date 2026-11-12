@@ -65,6 +65,7 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
   let failure = "";
   let buffer = "";
   let sessionId: string | undefined;
+  const toolNames = new Map<string, string>();
   await new Promise<void>((resolve, reject) => {
     const watchdog = idleWatchdog(profile.idleTimeoutMs, () => {
       stop(child);
@@ -95,9 +96,15 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
               emit({ type: "text", text: part.text });
             } else if (part.type === "tool_use") {
               cut();
+              toolNames.set(part.id, part.name);
               emit({ type: "tool", id: part.id, title: part.name, status: "in_progress", input: part.input });
             }
             else if (part.type === "thinking") emit({ type: "thought", text: part.thinking ?? "" });
+          }
+        // A step's result comes back in the next user message.
+        else if (item.type === "user")
+          for (const part of Array.isArray(item.message?.content) ? item.message.content : []) {
+            if (part?.type === "tool_result" && part.tool_use_id) emit({ type: "tool", id: part.tool_use_id, title: toolNames.get(part.tool_use_id) ?? "工具", status: part.is_error ? "failed" : "completed" });
           }
         else if (item.type === "rate_limit_event") {
           const limit = claudeRateLimitEvent(item.rate_limit_info);
@@ -110,9 +117,14 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
           text += (text ? "\n\n" : "") + it.text;
           segments[segments.length - 1] += (segments[segments.length - 1] ? "\n\n" : "") + it.text;
           emit({ type: "text", text: it.text });
-        } else if (item.type === "item.started" && it?.type) {
-          cut();
-          emit({ type: "tool", id: it.id ?? String(Math.random()), title: it.command ?? it.type, status: "in_progress" });
+        } else if (it?.type === "reasoning") {
+          // Its reasoning summary, when the model gives one.
+          if (item.type === "item.completed" && it.text) emit({ type: "thought", text: String(it.text) });
+        } else if ((item.type === "item.started" || item.type === "item.completed") && it?.type) {
+          if (item.type === "item.started") cut();
+          const title = it.command ?? (it.type === "mcp_tool_call" && it.tool ? `${it.server ? `${it.server}.` : ""}${it.tool}` : it.type === "file_change" && Array.isArray(it.changes) ? `改文件：${it.changes.map((c: { path?: string }) => c.path).filter(Boolean).join("、")}` : it.type);
+          const failed = it.status === "failed" || (typeof it.exit_code === "number" && it.exit_code !== 0);
+          emit({ type: "tool", id: it.id ?? String(Math.random()), title, status: item.type === "item.started" ? "in_progress" : failed ? "failed" : "completed" });
         }
         else if (item.type === "error" || item.type === "turn.failed") failure = item.message ?? item.error?.message ?? "Agent 返回错误";
       }

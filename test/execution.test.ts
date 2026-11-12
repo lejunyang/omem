@@ -99,6 +99,9 @@ describe("temporary AI choices", () => {
     app.db.prepare("update runs set status = 'failed' where id = ?").run(turn.id);
     expect((await callTool(ctx, "switch_run_ai", { run_id: turn.id, execution: other })).isError).toBe(false);
     expect(findThread(app, conv.id)!.settings).toMatchObject({ profile: other.profile, model: "m2", effort: "low" });
+    // The old turn points at the one that does it again: a chat channel waiting on it follows (channels/common.ts).
+    const again = listRuns(app, {}).find((x) => x.kind === "ask" && x.id !== turn.id && x.input.conversationId === conv.id)!;
+    expect(getRun(app, turn.id).output.replacedBy).toBe(again.id);
     const code = createRun(app, { kind: "code", spaceId: "personal", title: "改", input: { task: "改" } });
     expect((await callTool(ctx, "switch_run_ai", { run_id: code.id, execution: other })).text).toContain("continue_code_run");
   });

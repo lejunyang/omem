@@ -1,3 +1,4 @@
+import { shellToolRuns } from "../agents/doubao-cli.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { presentHits } from "../search/present.ts";
 import { spawnSync } from "node:child_process";
@@ -212,6 +213,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const runId = ctx.runId && one(app.db, "select 1 from runs where id = ?", ctx.runId) ? ctx.runId : null;
     const started = Date.now();
     if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "start" });
+    // A backend that shows nothing of its own work (the Doubao CLI): its omem calls are its steps.
+    const step = runId && shellToolRuns.has(runId) ? `omem-${started}-${Math.random().toString(36).slice(2, 8)}` : null;
+    if (step) addRunEvent(app, runId!, "tool", { id: step, title: label, kind: "omem", status: "in_progress", input: JSON.stringify(args ?? {}).slice(0, 2000) });
     let ok = false;
     try {
       const r = await searchRun.run(runId ?? "", () => callTool(ctx, name, args));
@@ -220,6 +224,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     } finally {
       const ms = Date.now() - started;
       if (runId) addRunEvent(app, runId, "tool-call", { name: label, phase: "end", ms, ok });
+      if (step) addRunEvent(app, runId!, "tool", { id: step, title: label, kind: "omem", status: ok ? "completed" : "failed" });
       if (ms > 60_000) console.warn(`[omem] 工具 ${label} 用了 ${Math.round(ms / 1000)} 秒${runId ? `（运行 ${runId}）` : ""}`);
     }
   };

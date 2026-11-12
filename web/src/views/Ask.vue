@@ -286,6 +286,10 @@ function autosize(e: Event) {
   max-height: 40vh;
   overflow-y: auto;
 }
+/* Cards keep their full height and the strip scrolls; a shrunk card lets its code and buttons spill out of the frame. */
+.asks > * {
+  flex: none;
+}
 .convs {
   width: 260px;
   flex: none;

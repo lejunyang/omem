@@ -80,7 +80,8 @@ export async function requestUserScopes(app: App, scopes: string[], reason: stri
   if (!url || !code) throw new Error("lark-cli 没有返回授权链接");
   const seconds = Number(d?.expires_in) || 600;
   pending.set(key, { url, until: Date.now() + seconds * 1000 });
-  notify(app, {
+  const asked = notify(app, {
+    tone: "warning",
     title: "飞书授权：需要补一项权限",
     body: `${reason}需要你在 lark-cli 的登录里授权：${key}\n\n在飞书里打开链接确认（${Math.round(seconds / 60)} 分钟内有效）：${url}\n\n确认后 omem 会自动完成登录，之后重试即可。`,
     urgency: "normal",
@@ -89,7 +90,7 @@ export async function requestUserScopes(app: App, scopes: string[], reason: stri
   void larkCli(["auth", "login", "--device-code", code, "--json"], seconds * 1000 + 30_000)
     .then(() => {
       cached = null;
-      notify(app, { title: "飞书授权已完成", body: `lark-cli 已获得：${key}`, urgency: "silent" });
+      notify(app, { title: "飞书授权已完成", body: `lark-cli 已获得：${key}`, tone: "done", replaces: asked.id });
     })
     .catch((e) => console.warn(`[omem] 飞书授权没有完成（${key}）：${(e as Error).message}`))
     .finally(() => pending.delete(key));
@@ -111,7 +112,7 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>)
     const actor = larkActing();
     if (actor) {
       const { userName } = await import("../core/users.ts");
-      notify(app, { userId: actor.userId, title: "飞书授权：需要补一项权限", body: `${reason}需要你给 omem 授权：${scope}。在账号页点“授权”，在飞书里确认后再试。`, link: `#/account?connect=lark&scopes=${encodeURIComponent(scope)}`, urgency: "normal" });
+      notify(app, { userId: actor.userId, tone: "warning", title: "飞书授权：需要补一项权限", body: `${reason}需要你给 omem 授权：${scope}。在账号页点“授权”，在飞书里确认后再试。`, link: `#/account?connect=lark&scopes=${encodeURIComponent(scope)}`, urgency: "normal" });
       throw new HttpError(403, `缺少飞书权限 ${e.scopes.join(" 或 ")}。已把授权链接发给 ${userName(app, actor.userId)}；对方授权后再试，不要换别的方式绕过。`);
     }
     let link = "";
