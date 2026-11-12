@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
-import { createSpace, findSpace } from "../core/spaces.ts";
+import { createSpace, findSpace, spaceFamily } from "../core/spaces.ts";
 import { truncate } from "../core/util.ts";
 import { jsonIn } from "../agents/oneshot.ts";
 import { runRole } from "../agents/runner.ts";
@@ -69,12 +69,16 @@ export function guestsAllowed(app: App, chatType: "p2p" | "group") {
   return g.enabled && (chatType === "group" || g.p2p);
 }
 
-/** Spaces a guest's question may read: the group's (unless personal) and the ones opened to guests. */
+/**
+ * Spaces a guest's question may read: the group's (unless personal) and the ones opened to guests,
+ * each a business space with its repositories (like members' grants, auth/permissions.ts).
+ */
 export function guestSpaces(app: App, groupSpace?: string): string[] {
   const out: string[] = [];
   const g = groupSpace ? findSpace(app, groupSpace) : null;
-  if (g && g.kind !== "personal") out.push(g.id);
-  for (const id of app.config.lark.guests.spaces) if (findSpace(app, id) && !out.includes(id)) out.push(id);
+  const add = (id: string) => { for (const s of spaceFamily(app, id)) if (!out.includes(s)) out.push(s); };
+  if (g && g.kind !== "personal") add(g.id);
+  for (const id of app.config.lark.guests.spaces) if (findSpace(app, id)) add(id);
   return out;
 }
 

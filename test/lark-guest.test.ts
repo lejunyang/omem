@@ -51,6 +51,14 @@ describe("guests, rules stepping aside and the owner's private-chat commands", a
   it("guests read the group's space, never a personal one, and nothing of the owner's", async () => {
     expect(guestSpaces(app, "personal")).toEqual([]);
     expect(guestSpaces(app, "team")).toEqual(["team"]);
+    // A business space opened to guests brings its repositories, as members' grants do.
+    createSpace(app, { id: "team-repo", name: "项目 A 后端", kind: "project" });
+    app.db.prepare("update spaces set parent_id = 'team' where id = 'team-repo'").run();
+    expect(guestSpaces(app, "team")).toEqual(["team", "team-repo"]);
+    app.config.lark.guests.spaces = ["team"];
+    expect(guestSpaces(app)).toEqual(["team", "team-repo"]);
+    app.config.lark.guests.spaces = [];
+    app.db.prepare("update spaces set parent_id = null where id = 'team-repo'").run();
     const prep = prepareRun(app, { actor: { role: "guest" }, spaceId: "team", spaces: ["team"], runId: null, lark: { chats: [] } });
     const ctx = toolContextForToken(app, prep.token)!;
     const tools = [...(ctx.tools ?? [])];
