@@ -37,6 +37,16 @@ function joinLane(app: App, rule: Rule, a: AgentAction, e: RuleEvent, lane: stri
   if (a.merge === false) return { triggers: [trigger] };
   const own = runsInLane(app, lane).filter((r) => r.kind === "agent" && (r.input.rule as { id?: string } | undefined)?.id === rule.id);
   if (a.mergeReply === "separate") {
+    // A wave (alerts one after another): the triggers wait together in the lane's next run, which
+    // handles them in one go, each still done and answered on its own. The running one is left alone.
+    const queued = own.find((r) => r.status === "queued" && (r.input.rule as { mergeReply?: string }).mergeReply === "separate");
+    if (queued) {
+      const triggers = [...((queued.input.triggers as RuleTrigger[] | undefined) ?? []), trigger];
+      const kept = triggers.slice(0, MAX_TRIGGERS);
+      const more = ((queued.input.moreTriggers as number | undefined) ?? 0) + triggers.length - kept.length;
+      if (updateQueuedRun(app, queued.id, { input: { ...queued.input, triggers: kept, ...(more ? { moreTriggers: more } : {}) } }))
+        return { joined: { action: "agent", ok: true, detail: `排进同一轮，和前面排着的一起处理、分别回复（这一轮 ${kept.length + more} 条）`, runId: queued.id } };
+    }
     const previous = own.at(-1);
     return { lane, triggers: [trigger], ...(previous ? { resumeFromRun: previous.id } : {}) };
   }
@@ -222,7 +232,7 @@ function powerNote(a: Extract<RuleAction, { type: "agent" }>) {
 
 function separateReplyNote(a: AgentAction) {
   return a.merge !== false && a.mergeReply === "separate"
-    ? "\n# 每次触发分别处理\n\n本轮只处理当前触发；之前的调查可以复用，但每次触发都要独立完成任务说明中的操作，并核对本条的处理结果。不能因为同因、重复或其他触发已经处理就省略本条任务。按规则的回复方式回复本条消息，不用其他消息下的汇总代替；无需重复的操作先核对当前对象的状态，再说明依据。直接回复模式下每次都要给本条结论；只有已用 lark_send 回复本条后才调用 stay_quiet 避免重复投递。"
+    ? "\n# 每次触发分别处理\n\n本轮处理当前触发（排队期间同一规则又触发的会列在最后，一起处理）；之前的调查可以复用，但每次触发都要独立完成任务说明中的操作，并核对本条的处理结果。不能因为同因、重复或其他触发已经处理就省略本条任务。按规则的回复方式回复本条消息，不用其他消息下的汇总代替；无需重复的操作先核对当前对象的状态，再说明依据。直接回复模式下每次都要给本条结论；只有已用 lark_send 回复本条后才调用 stay_quiet 避免重复投递。"
     : "";
 }
 

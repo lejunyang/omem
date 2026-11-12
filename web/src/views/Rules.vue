@@ -649,7 +649,7 @@ function startFrom(text: string) {
               <AiDefaults v-if="a.ai" :model-value="{ agent: a.ai.profile, model: a.ai.model, effort: a.ai.effort }" :backends="options.backends ?? []" :default-backend="specAgent(a.spec)" @update:model-value="(v) => setAI(a, v)" @change="touch" />
               <div class="row wrap">
                 <UiCheckbox :model-value="!!a.fullAccess" size="sm" @change="(v) => ((a.fullAccess = v || undefined), touch())">完全访问：命令不进沙箱、不经审批</UiCheckbox>
-                <small class="muted">{{ a.fullAccess ? accessHint(a) : "需要联网的命令行排查（报警、值班）每次都要审批时打开；交给别的 Agent 时它也照此运行。" }}</small>
+                <small class="muted">{{ a.fullAccess ? accessHint(a) : "不勾时跟这个 Agent 自己的设置（Agent 页里打开了完全访问就同样不进沙箱）；那里没开、这条规则又要联网排查（报警、值班）时在这里打开。交给别的 Agent 时它也照此运行。" }}</small>
               </div>
               <textarea v-model="a.task" class="input" rows="2" placeholder="交给它的要求（触发的消息会自动附上），例如：分析报警，需要关注就 @ 值班人" @input="touch" />
             </template>

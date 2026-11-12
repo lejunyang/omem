@@ -1538,6 +1538,33 @@ def({
       .join("\n") || "（无）",
 });
 
+/**
+ * What a run did, as a later round needs it: each tool step with how it ended (and the end of what a
+ * command printed), omem's answers to permission requests, and steps still going when the run ended.
+ * Without this a woken run read only the final text and took a finished query for one awaiting approval.
+ */
+function runSteps(events: { type: string; data: unknown }[], status: string): string {
+  const steps = new Map<string, { title: string; status: string; output?: string }>();
+  const lines: string[] = [];
+  for (const e of events) {
+    const d = (e.data ?? {}) as { id?: string; title?: string; status?: string; output?: string; text?: string };
+    if (e.type === "tool" && d.id) {
+      const prev = steps.get(d.id);
+      if (!prev) lines.push(`step:${d.id}`);
+      steps.set(d.id, { title: d.title ?? prev?.title ?? "工具", status: d.status ?? prev?.status ?? "", output: d.output ?? prev?.output });
+    } else if (e.type === "status" && d.text && /^(允许|拒绝)操作/.test(d.text)) lines.push(`宿主${d.text}（omem 当场回答，不用等审批）`);
+  }
+  if (!lines.length) return "";
+  const ended = ["done", "failed", "cancelled"].includes(status);
+  const shown = lines.slice(-40).map((l) => {
+    if (!l.startsWith("step:")) return `- ${l}`;
+    const t = steps.get(l.slice(5))!;
+    const state = t.status === "completed" ? "完成" : t.status === "failed" ? "失败" : ended ? "运行结束时还没跑完" : "进行中";
+    return `- ${truncate(t.title.replace(/\s+/g, " "), 200)}：${state}${t.output ? `\n  输出末尾：${truncate(t.output.replace(/\n+/g, " ⏎ "), 600)}` : ""}`;
+  });
+  return `过程（最近 ${shown.length} 步）：\n${shown.join("\n")}\n`;
+}
+
 def({
   name: "read_run",
   description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。",
@@ -1567,7 +1594,7 @@ def({
       const rows = reviews.filter((x) => x.round === round).flatMap((x) => x.findings.map((f) => `- #${f.id} [${SEVERITY_LABEL[f.severity]} · ${x.check_name}] ${f.title}${f.file_path ? ` — ${f.file_path}${f.line ? `:${f.line}` : ""}` : ""}${f.state !== "open" ? ` · 负责人：${f.state}` : ""}${f.decision ? ` · 本人：${DECISION_LABEL[f.decision]}${f.decision_note ? `（${f.decision_note}）` : ""}` : ""}`));
       if (rows.length) findingText = `第 ${round} 轮评审的问题（fix_review 用这些编号）：\n${rows.join("\n")}\n`;
     }
-    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}${findingText}${childText}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
+    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}${findingText}${childText}${runSteps(events, r.status)}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
   },
 });
 
@@ -3913,7 +3940,7 @@ def({
     if (r.input.taskMode && onBranch) {
       const { confirmedWorkOn } = await import("./review-fix.ts");
       const { carryTasks, taskLabel } = await import("./code-tasks.ts");
-      const c = carryTasks(ctx.app, r.id, confirmedWorkOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER, r.id));
+      const c = carryTasks(ctx.app, r.id, confirmedWorkOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER, r.id), { viaAssistant: !!ctx.runId });
       if (c.todo.length || c.later.length) carried = `\n接上了这条分支上之前交办留下的：${c.todo.length ? `没做完的 ${c.todo.length} 项（${c.todo.map((t) => taskLabel(t.seq)).join("、")}，这一轮一起做）` : ""}${c.todo.length && c.later.length ? "；" : ""}${c.later.length ? `记成以后再做的 ${c.later.length} 项（${c.later.map((t) => `${taskLabel(t.seq)} ${truncate(t.title, 40)}`).join("、")}，不做，本人要做哪项再说）` : ""}。`;
     }
     if (ctx.peer) return `已开始准备，运行 ${r.id}：这台机器建工作分支和工作区、装依赖，代码由你来写。用 code_workspace（run_id=${r.id}，action=brief）看任务、工作区和能运行的命令；准备好之前 brief 会说明。`;
@@ -5024,7 +5051,7 @@ def({
   schema: z.object({
     tasks: z.array(z.object({
       title: z.string().min(1).max(200).describe("一句话：这一项要做成什么"),
-      done_when: z.string().max(2000).optional().describe("完成标准：怎样算做完（可核对）"),
+      done_when: z.string().max(2000).optional().describe("完成标准：怎样算做完（可核对）。只写在仓库和工作区里能做到、能验证的；把结果挂回事项、写工作文件、通知本人这些由发起的助手做，不拆成修改项"),
       files: z.array(z.string().max(500)).max(30).optional().describe("预计改的文件"),
       decision: z.string().max(12).optional().describe("交办照方案实现时：这一项属于方案的哪个决定（D1…）；不属于任何决定的不填"),
     })).min(1).max(60),

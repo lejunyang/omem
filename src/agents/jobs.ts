@@ -276,7 +276,8 @@ async function runAgentTask(ctx: RunContext) {
   let fullTask = task;
   if (triggers && triggers.length + (moreTriggers ?? 0) > 1) {
     const { triggerNote } = await import("./steer.ts");
-    fullTask = `${fullTask}\n\n---\n\n${triggerNote(triggers.slice(1), moreTriggers ?? 0, !!lark?.chats?.length, "上一轮处理期间")}`;
+    const separate = (rule as { mergeReply?: string } | undefined)?.mergeReply === "separate";
+    fullTask = `${fullTask}\n\n---\n\n${triggerNote(triggers.slice(1), moreTriggers ?? 0, !!lark?.chats?.length, separate ? "排队期间" : "上一轮处理期间", separate)}`;
   }
   if (resumeFromRun && !resumeSessionId) {
     const previous = getRun(ctx.app, resumeFromRun);
@@ -314,8 +315,10 @@ async function runAgentTask(ctx: RunContext) {
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
       addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...lent],
       execution,
-      // A rule's runs follow the rule's switch; others the profile's (prepareRun).
-      fullAccess: rule ? !!(ctx.run.input as { fullAccess?: boolean }).fullAccess : undefined,
+      // A rule's switch turns it on for its runs; left off, they follow the agent's own setting (prepareRun),
+      // like every other run of that agent. (Off used to mean off even with the assistant on full access:
+      // network commands then failed in the sandbox first and the model waited on approvals omem had given.)
+      fullAccess: rule && (ctx.run.input as { fullAccess?: boolean }).fullAccess ? true : undefined,
       spaces: assistantScope?.spaces,
       // A run may also be denied tools of its own (a meeting's windows: nothing reaches the owner until it ends).
       denyTools: [...(assistantScope?.denyTools ?? []), ...(((ctx.run.input as { denyTools?: string[] }).denyTools) ?? [])],

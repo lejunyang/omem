@@ -90,7 +90,20 @@ function takeTriggers(app: App, runId: string, lane: string, input: { rule?: { i
 }
 
 /** The joined triggers as the agent reads them, and how to answer them (also for a run that starts with several, jobs.ts). */
-export function triggerNote(triggers: Trigger[], more: number, canPost: boolean, when: string) {
+export function triggerNote(triggers: Trigger[], more: number, canPost: boolean, when: string, separate = false) {
+  // Separate replies (rules/actions.ts): a wave waited together, each still done and answered on its own.
+  if (separate)
+    return [
+      `# ${when}同一条规则又触发了 ${triggers.length + more} 次，这一轮一起处理`,
+      "",
+      ...triggers.map((t) => `- ${t.summary.replace(/\n+/g, " ")}${t.messageId ? `（飞书消息 ${t.messageId}${t.topicId ? `，话题 ${t.topicId}` : ""}）` : ""}`),
+      more ? `- ……另有 ${more} 条，没有列出` : "",
+      "",
+      "连同本条，每一条都要独立完成任务说明里的操作、核对它自己的结果；调查可以复用，同一个报警重复出现的，结论可以指向第一次的处理，但它自己的操作仍要做。先处理看起来最紧急的（如 P0、影响面大的），再处理其余的。",
+      canPost
+        ? "每一条处理完就用 lark_send 回复那条消息（reply_to 填它的消息 id，in_thread=true），不要等全部做完再一起回；本条的结论作为最后的回答。"
+        : "最后的回答里逐条写结论。",
+    ].filter((x) => x !== "").join("\n");
   return [
     `# ${when}同一条规则又触发了 ${triggers.length + more} 次`,
     "",

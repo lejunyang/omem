@@ -5,7 +5,7 @@ export type AgentEvent =
   | { type: "prompt"; via: "system" | "message" | "resumed" | "none"; instructions: number; message: number; parts?: InstructionParts }
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
-  | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown; /** Duration, on the completed/failed event. */ ms?: number }
+  | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown; /** Duration, on the completed/failed event. */ ms?: number; /** What a command printed (the end of it), on the completed/failed event, so a later round can read it. */ output?: string }
   | { type: "plan"; entries: { content: string; status: string }[] }
   // `choice`: how the AI was chosen before the run (choose-ai.ts ChoiceRecord); `failover`: why it moved to another AI (runner.ts).
   | { type: "status"; text: string; choice?: Record<string, unknown>; failover?: Record<string, unknown> }

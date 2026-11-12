@@ -236,7 +236,10 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
             tools.set(update.toolCallId, t);
             // How long the call took (diag reports the p90; slow omem tools show up there).
             const { startedAt, ...shown } = t;
-            if (update.status === "completed" || update.status === "failed") emit({ type: "tool", id: update.toolCallId, ...shown, ...(startedAt ? { ms: Date.now() - startedAt } : {}) });
+            if (update.status === "completed" || update.status === "failed") {
+              const output = toolOutput(update.content, update.rawOutput);
+              emit({ type: "tool", id: update.toolCallId, ...shown, ...(startedAt ? { ms: Date.now() - startedAt } : {}), ...(output ? { output } : {}) });
+            }
             break;
           }
           case "plan":
@@ -716,4 +719,21 @@ async function probeEfforts(connection: ClientSideConnection, sessionId: string,
     }
   }
   return out;
+}
+
+/** The end of what a finished tool call printed (its text content, else its raw output), at most OUTPUT_KEEP characters. */
+const OUTPUT_KEEP = 3000;
+export function toolOutput(content: unknown, raw: unknown): string {
+  const parts: string[] = [];
+  for (const c of Array.isArray(content) ? content : []) {
+    const inner = (c as { content?: { type?: string; text?: string } })?.content;
+    if (inner?.type === "text" && inner.text) parts.push(inner.text);
+  }
+  let text = parts.join("\n");
+  if (!text && raw != null) {
+    const r = raw as { stdout?: unknown; output?: unknown; formatted_output?: unknown };
+    text = typeof raw === "string" ? raw : String(r.formatted_output ?? r.output ?? r.stdout ?? "") || JSON.stringify(raw);
+  }
+  text = text.trim();
+  return text.length > OUTPUT_KEEP ? `…${text.slice(-OUTPUT_KEEP)}` : text;
 }

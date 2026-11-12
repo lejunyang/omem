@@ -8,6 +8,7 @@ import { HttpError, now, truncate, localStamp } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 import type { FindingRow, LeadResult } from "./review.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
+import { lapseAsk } from "./asks.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 import { assertOwnRange, changeBase, withDiffBase } from "./code-branch.ts";
 import { workDirOf } from "./workspaces.ts";
@@ -1030,8 +1031,16 @@ const UNFINISHED: TaskState[] = ["todo", "coding", "verify", "disputed", "assist
  * tasks to do again, those set aside staying set aside (in view, so reviews do not raise them anew,
  * and the owner can take one up). Each old task notes where it went and is carried once.
  */
-export function carryTasks(app: App, rootId: string, from: string[]): { todo: CodeTask[]; later: CodeTask[] } {
+export function carryTasks(app: App, rootId: string, from: string[], opts: { viaAssistant?: boolean } = {}): { todo: CodeTask[]; later: CodeTask[] } {
   const out = { todo: [] as CodeTask[], later: [] as CodeTask[] };
+  // One that waited on the owner there: with an assistant behind the new work, it looks first
+  // (toDecide) — the old question may be settled by now, or be no decision at all (a tool the coder lacked).
+  const waiting = (t: CodeTask) =>
+    opts.viaAssistant
+      ? { state: "assistant" as const, question: `上一次交办里这一项在等本人：${t.question ?? ""}
+
+先看现在还是不是问题、是不是只有本人能定；能定的自己处理，真要本人定的再交给本人（带选项）。`, options: [] }
+      : { state: "owner" as const, question: t.question ?? undefined, options: t.options };
   for (const old of [...from].reverse()) {
     for (const t of listTasks(app, old)) {
       if (t.notes.some((n) => n.kind === "host" && n.text.startsWith("接到交办")) || !(UNFINISHED.includes(t.state) || isLater(t))) continue;
@@ -1041,8 +1050,13 @@ export function carryTasks(app: App, rootId: string, from: string[]): { todo: Co
         doneWhen: truncate(taskText(app, t).split("\n").slice(1).join("\n").trim(), 4000),
         kind: t.kind,
         origin: { carried: { work: old, seq: t.seq }, ...(t.origin.files ? { files: t.origin.files } : {}), ...(t.origin.note ? { note: t.origin.note } : {}) },
-        ...(t.state === "owner" && !later ? { state: "owner" as const, question: t.question ?? undefined, options: t.options } : {}),
+        ...(t.state === "owner" && !later ? waiting(t) : {}),
       }, "host");
+      // Its card on the old work is not the place to answer any more.
+      if (t.state === "owner" && !later) {
+        const oldAsk = (workState(app, old).asks ?? {})[String(t.seq)];
+        if (oldAsk) lapseAsk(app, oldAsk, `这一项接到了交办 ${rootId}（${taskLabel(n.seq)}）`);
+      }
       if (later) out.later.push(deferTask(app, rootId, n.seq, t.answer ?? "上一次交办记成以后再做", { by: "host", kind: "host", text: `上一次交办（${old} 的 ${taskLabel(t.seq)}）记成以后再做的` }));
       else out.todo.push(n);
       updateTask(app, old, t.seq, later ? {} : { state: "wontdo" }, { by: "host", kind: "host", text: `接到交办 ${rootId} 的 ${taskLabel(n.seq)}` });

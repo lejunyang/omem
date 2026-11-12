@@ -1124,7 +1124,19 @@ describe("a delegation driven by tasks", () => {
       // A third delegation does not take them again.
       const third = createRun(app, { kind: "code", spaceId: "personal", title: "再改", input: { task: "x", repos: ["personal"], taskMode: true }, userId: OWNER });
       expect(carryTasks(app, third.id, [old.id])).toEqual({ todo: [], later: [] });
+      // One that waited on the owner there: delegated by the assistant, it goes to the assistant first, and the old card lapses.
+      const { setWorkState } = await import("../src/agents/code-tasks.ts");
+      const { createAsk, getAsk } = await import("../src/agents/asks.ts");
+      const asked = addTask(app, third.id, { title: "证据挂回事项", kind: "build", state: "owner", question: "编码 Agent 没有 write_file", options: ["补开"] }, "coder");
+      const card = createAsk(app, { runId: third.id, conversationId: null, question: "要补开吗", options: [{ label: "补开" }] });
+      setWorkState(app, third.id, { asks: { [String(asked.seq)]: card.id } });
+      const fourth = createRun(app, { kind: "code", spaceId: "personal", title: "第四次", input: { task: "y", repos: ["personal"], taskMode: true }, userId: OWNER });
+      const moved = carryTasks(app, fourth.id, [third.id], { viaAssistant: true }).todo;
+      expect(moved.map((x) => [x.title, x.state])).toEqual([["证据挂回事项", "assistant"]]);
+      expect(moved[0].question).toContain("没有 write_file");
+      expect(getAsk(app, card.id)).toMatchObject({ status: "cancelled", lapsed: expect.stringContaining(fourth.id) });
     } finally {
+      await new Promise((resolve) => setTimeout(resolve, 100));
       app.db.close();
     }
   });
