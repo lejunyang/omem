@@ -150,7 +150,7 @@ export function listWatches(app: App): WatchInfo[] {
 
 /**
  * Before a watched group's batch goes to its handler (a full agent run), the decision model asks
- * whether it is worth a look at all, given what the owner wants from the watch: most batches of a
+ * whether there is anything an assistant can usefully step in on — given what the watch is for and the group, not only what concerns the owner (it may be there to answer others or look things up): most batches of a
  * busy group (chatter, "稍等", a video call notice) end with the handler saying nothing. On unless the
  * watch says otherwise (`prefilter`) or the owner turned it off (`lark.watchPrefilter`), and only
  * with a decision model. Messages that @ the owner or the bot always go through; so does a batch when
@@ -169,13 +169,13 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
   try {
     const r = await decide(app, {
       群: t.title || t.key,
-      本人要的: rule.note ?? "（没写）",
+      盯群的目的: rule.note ?? "（没写）",
       之前的摘要: t.summary || "（无）",
       最近的处理: said.map((m) => m.text.slice(0, 400)).join("\n---\n") || "（无）",
       这一批消息: batch.map((m) => `${String(m.meta.speaker ?? "?")}：${m.text.slice(0, 600)}`).join("\n"),
     }, {
       type: "yesno",
-      instructions: "这是本人让助手盯着的一个群新来的一批消息。判断要不要交给助手处理（读上下文、查资料、回复或告诉本人）。按“本人要的”判断：和它有关的、有人提问或求助的、出了问题的、需要跟进之前处理的，选“要看”；闲聊、客套、“稍等”“收到”、系统通知、和本人要的无关的，选“不用看”。拿不准选“要看”。",
+      instructions: "这是本人让助手盯着的一个群新来的一批消息。助手在这个群里的用处由“盯群的目的”和群里的场景决定：不一定是找本人的事，也可能是替群里的人解答问题、查东西、排查报上来的问题、跟进之前处理过的事。判断这一批里有没有助手能有效介入的：有人提问或求助、要查什么、报了问题或异常、和盯群目的相关、或是在接着之前助手处理的事，选“要看”；只是闲聊、客套、“稍等”“收到”、进度播报、系统通知，没人需要帮忙，选“不用看”。拿不准选“要看”。",
       yes: "要看",
       no: "不用看",
     }, { signal });

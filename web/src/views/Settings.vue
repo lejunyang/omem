@@ -1121,7 +1121,7 @@ async function saveEdit() {
 
       <div class="card pad stack">
         <strong>盯群</strong>
-        <p class="muted small">助手盯着的群（你让它“帮我盯一下这个群”的）每攒一批消息交给它看一次。配了决策模型时，每批先由它判断值不值得看：闲聊、“稍等”“收到”、和你要的无关的就不交给助手，省下一次完整运行；@ 你或 @ 机器人的消息不筛，判断出错时照常交给助手。单个群可以让助手按你的话单独开关。</p>
+        <p class="muted small">助手盯着的群（你让它“帮我盯一下这个群”的）每攒一批消息交给它看一次。配了决策模型时，每批先由它判断有没有助手能介入的事（按盯这个群的目的和群里的情况，不一定是找你的：替别人解答、帮忙查东西也算）：只是闲聊、“稍等”“收到”、进度播报的就不交给助手，省下一次完整运行；@ 你或 @ 机器人的消息不筛，判断出错时照常交给助手。单个群可以让助手按你的话单独开关。</p>
         <UiCheckbox :model-value="config.lark.watchPrefilter !== false" switch @change="(v) => saveConfig({ lark: { ...config.lark, watchPrefilter: v } }, v ? '盯群的每批消息先由决策模型筛一遍' : '盯群的每批消息都交给助手看')">每批消息先由决策模型筛一遍</UiCheckbox>
       </div>
 
