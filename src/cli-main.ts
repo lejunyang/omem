@@ -1,3 +1,4 @@
+import { localStamp } from "./core/util.ts";
 import { generateWiki } from "./wiki/generate.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -305,7 +306,7 @@ peer
   .description("列出关注的其他服务的空间")
   .action(async () => {
     const { listSubscriptions } = await import("./core/federation.ts");
-    for (const s of listSubscriptions(open())) console.log(`${s.id}  ${s.peer}:${s.remoteSpace} → ${s.localSpace}  ${s.mode}  ${s.syncedAt ? `同步于 ${s.syncedAt.slice(0, 16)}` : ""}${s.error ? `  出错：${s.error}` : ""}`);
+    for (const s of listSubscriptions(open())) console.log(`${s.id}  ${s.peer}:${s.remoteSpace} → ${s.localSpace}  ${s.mode}  ${s.syncedAt ? `同步于 ${localStamp(s.syncedAt)}` : ""}${s.error ? `  出错：${s.error}` : ""}`);
   });
 peer
   .command("sync [id]")
@@ -1004,7 +1005,7 @@ user
   .description("列出 API 令牌（标签、创建与最近使用时间）")
   .action(async (userId?: string) => {
     const { listApiTokens } = await import("./core/users.ts");
-    for (const t of listApiTokens(open(), userId)) console.log(`${t.user_id}  ${t.label || "（无标签）"}  创建 ${t.created_at.slice(0, 16)}  最近使用 ${t.last_used_at?.slice(0, 16) ?? "-"}`);
+    for (const t of listApiTokens(open(), userId)) console.log(`${t.user_id}  ${t.label || "（无标签）"}  创建 ${localStamp(t.created_at)}  最近使用 ${t.last_used_at ? localStamp(t.last_used_at) : "-"}`);
   });
 user
   .command("revoke <userId> <label>")

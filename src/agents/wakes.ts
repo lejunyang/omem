@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { all, one, run as exec } from "../core/db.ts";
-import { HttpError, now, truncate } from "../core/util.ts";
+import { HttpError, now, truncate, localStamp } from "../core/util.ts";
 import { addMessage, findThread } from "./threads.ts";
 import { homeFor } from "./home.ts";
 import { cancelRun, createRun, getRun, queuedInLane, registerHandler, updateQueuedRun } from "./runs.ts";
@@ -36,7 +36,7 @@ export type PendingWake = { id: string; kind: "timed" | "event"; note: string; a
 export function pendingWakes(app: App, opts: { conversationId?: string; spec?: string } = {}): PendingWake[] {
   const timed = all<{ id: string; input: string; not_before: string }>(app.db, "select id, input, not_before from runs where kind = 'wake' and status = 'queued' order by not_before").map((r) => {
     const w = JSON.parse(r.input) as WakeInput;
-    return { id: r.id, kind: "timed" as const, note: w.note, at: r.not_before, expiresAt: null, target: w.target, setBy: w.setBy, detail: `${r.not_before.slice(0, 16)} 唤醒` };
+    return { id: r.id, kind: "timed" as const, note: w.note, at: r.not_before, expiresAt: null, target: w.target, setBy: w.setBy, detail: `${localStamp(r.not_before, app.config.timezone)} 唤醒` };
   });
   const events = all<{ id: string; description: string; temporary: string; actions: string }>(app.db, "select id, description, temporary, actions from rules where temporary is not null and enabled = 1 order by created_at").map((r) => {
     const t = JSON.parse(r.temporary) as { expiresAt: string; setBy: WakeInput["setBy"]; watch: string };

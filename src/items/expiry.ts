@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { now, truncate } from "../core/util.ts";
+import { now, truncate, localStamp } from "../core/util.ts";
 import { getItem, isClosed, itemEvents, listItems, upsertItem, type Item, type ItemKind } from "./store.ts";
 
 /**
@@ -169,10 +169,10 @@ export function candidatesTask(app: App, cs: Candidate[]) {
   return cs
     .map((c) => {
       const i = c.item;
-      const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+      const fmt = (ms: number) => localStamp(ms, app.config.timezone);
       return [
         `### ${i.id} [${i.kind}/${i.status}] ${i.title}`,
-        `建于 ${i.createdAt.slice(0, 16).replace("T", " ")}${i.waitingOn ? `；等待 ${i.waitingOn}` : ""}${i.dueAt ? `；截止 ${i.dueAt}` : ""}；来源 ${i.sourceRefs.join(" ")}`,
+        `建于 ${localStamp(i.createdAt, app.config.timezone)}${i.waitingOn ? `；等待 ${i.waitingOn}` : ""}${i.dueAt ? `；截止 ${i.dueAt}` : ""}；来源 ${i.sourceRefs.join(" ")}`,
         i.detail ? `详情：${truncate(i.detail, 300)}` : "",
         c.reactions.length ? `本人对来源消息回了表情：${c.reactions.join("、")}` : "",
         c.lines.length ? `本人之后在同一会话里说的话：\n${c.lines.map((l) => `- ${fmt(l.atMs)} ${truncate(l.text, 200)}（${l.ref}）`).join("\n")}` : "",

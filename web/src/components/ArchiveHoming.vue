@@ -5,7 +5,7 @@ import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
-import { state, toast } from "../store";
+import { fmtTime, state, toast } from "../store";
 
 /**
  * “从个人空间归位” on the archive rules page (src/sources/homing.ts, docs/v2/archive-routing.md):
@@ -34,7 +34,7 @@ const spaceOptions = computed(() => state.spaces.filter((s) => s.kind !== "workt
 const queued = computed(() => (data.value?.queue ?? []).reduce((a, q) => a + q.n, 0));
 const BUDGETS = [0, 20, 60, 120, 300].map((n) => ({ value: String(n), label: n ? `每晚最多 ${n} 份` : "不交给 AI（只移工作文件和按规则归档）" }));
 const MODE: Record<string, string> = { ai: "AI 判断", rule: "归档规则", binding: "会话绑定", follow: "跟着事项或规则" };
-const when = (at: string) => at.slice(0, 16).replace("T", " ");
+const when = (at: string) => fmtTime(at);
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let disposed = false;

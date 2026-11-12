@@ -1,3 +1,4 @@
+import { localStamp } from "./util.ts";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -148,7 +149,7 @@ export async function manageService(home: string, action: ServiceAction) {
 
 export function formatService(s: Awaited<ReturnType<typeof manageService>>) {
   return [
-    `服务：${s.state}${s.pid ? ` · PID ${s.pid}` : ""}${s.restarts ? ` · 重启过 ${s.restarts} 次` : ""}${s.since ? ` · 启动于 ${s.since.slice(0, 19).replace("T", " ")}` : ""}`,
+    `服务：${s.state}${s.pid ? ` · PID ${s.pid}` : ""}${s.restarts ? ` · 重启过 ${s.restarts} 次` : ""}${s.since ? ` · 启动于 ${localStamp(s.since, undefined, { seconds: true })}` : ""}`,
     `网页：${s.url}（${s.healthy ? "正常" : "无响应"}）`,
     `日志：${s.logs.join("  ")}`,
     s.autostart ? `开机自启：已设置（${s.autostart}）` : "开机自启：未设置（omem service enable）；电脑重启后需要 omem service start。",

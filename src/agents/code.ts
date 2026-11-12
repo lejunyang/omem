@@ -438,7 +438,7 @@ ${input.task}
   // What the owner added while this round waited in the queue.
   const early =input.branches || skipCoder || input.peerCoder ? [] : pendingNotes(app, run.id);
   if (early.length) {
-    coderTask = `${coderTask}\n\n${notesText(early)}`;
+    coderTask = `${coderTask}\n\n${notesText(early, app.config.timezone)}`;
     markNotesDelivered(app, run.id, early);
   }
   // The failed attempt finished coding and stopped later (checks, review): only those are redone.
@@ -631,7 +631,7 @@ ${input.task}
         if (!notes.length) break;
         markNotesDelivered(app, run.id, notes);
         ctx.event("status", { phase: "coder", text: `把 ${notes.length} 条本人补充交给编码 Agent，接着改` });
-        coder = await runCoder(notesText(notes), coder.sessionId);
+        coder = await runCoder(notesText(notes, app.config.timezone), coder.sessionId);
         reply = `${reply}\n\n## 按本人补充继续\n\n${replyOf(coder)}`;
       }
       // Its turn is over: the checks verify what it finished; what is not fixed, what a second look found
@@ -650,7 +650,7 @@ ${input.task}
         const notes = pendingNotes(app, run.id);
         if (notes.length) markNotesDelivered(app, run.id, notes);
         ctx.event("status", { phase: "coder", text: back.includes("## 这一轮还没做的项") ? "这一轮还有项没做，让编码 Agent 在同一会话里接着做" : "把评审的反馈交给编码 Agent，在这一轮接着改" });
-        coder = await runCoder([back, notes.length ? notesText(notes) : ""].filter(Boolean).join("\n\n"), coder.sessionId);
+        coder = await runCoder([back, notes.length ? notesText(notes, app.config.timezone) : ""].filter(Boolean).join("\n\n"), coder.sessionId);
         reply = `${reply}\n\n## 接着做\n\n${replyOf(coder)}`;
         const now = progress();
         moved = now !== mark;

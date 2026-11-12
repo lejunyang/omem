@@ -107,9 +107,9 @@ export function queueNextCodeRound(
     const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; fromReview?: string; taskMode?: boolean };
     // What the owner added while the last round ran and nobody delivered yet goes with this round's task.
     const notes = pendingNotes(app, chain.lastCodeRunId!);
-    const roundNotes = notes.length ? notesText(notes) : null;
+    const roundNotes = notes.length ? notesText(notes, app.config.timezone) : null;
     if (notes.length) {
-      task = `${task}\n\n${notesText(notes)}`;
+      task = `${task}\n\n${notesText(notes, app.config.timezone)}`;
       markNotesDelivered(app, chain.lastCodeRunId!, notes);
     }
     const next: CodeChain = { ...chain, round: chain.round + 1, awaitingUser: false, waitReason: undefined, rounds: [...chain.rounds] };

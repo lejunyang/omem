@@ -1,3 +1,4 @@
+import { localStamp } from "./core/util.ts";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command } from "commander";
@@ -72,7 +73,7 @@ memoriesCommand
   .action((o) => {
     const app = openApp();
     for (const r of recentRejections(app, Number(o.limit)))
-      console.log(`${r.at.slice(0, 16)} ${r.shadow ? "[对比] " : ""}${[r.agent_profile, r.model].filter(Boolean).join(" · ") || "?"} [${r.codes.join(",")}] ${r.content.slice(0, 90).replace(/\n/g, " ")}`);
+      console.log(`${localStamp(r.at)} ${r.shadow ? "[对比] " : ""}${[r.agent_profile, r.model].filter(Boolean).join(" · ") || "?"} [${r.codes.join(",")}] ${r.content.slice(0, 90).replace(/\n/g, " ")}`);
   });
 
 function openApp() {

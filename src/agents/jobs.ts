@@ -8,7 +8,7 @@ import type { RoleName } from "../core/config.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace, getSpace, listSpaces, relatedIds, relatedSpaces, updateSpace } from "../core/spaces.ts";
-import { json, newId, now, truncate } from "../core/util.ts";
+import { json, newId, now, truncate, localStamp } from "../core/util.ts";
 import { deliverDueReminders } from "../items/reminders.ts";
 import { listItems, upsertItem, UTC } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
@@ -387,7 +387,7 @@ registerHandler("thread-summary", async (ctx) => {
   const t = getThread(ctx.app, threadId);
   const fresh = threadMessages(ctx.app, threadId, { after: t.summaryAt, limit: 80 }).filter((m) => !m.meta.command);
   if (!fresh.length) return { quiet: true };
-  const transcript = fresh.map((m) => `${m.role === "user" ? "本人" : "助理"}（${m.createdAt.slice(0, 16).replace("T", " ")}）：${truncate(m.text, 1200)}`).join("\n\n");
+  const transcript = fresh.map((m) => `${m.role === "user" ? "本人" : "助理"}（${localStamp(m.createdAt, ctx.app.config.timezone)}）：${truncate(m.text, 1200)}`).join("\n\n");
   const task = `${t.summary ? `## 之前的摘要\n\n${t.summary}\n\n` : ""}## 之后的新对话\n\n${transcript}`;
   const r = await agent(ctx, "summarizer", t.spaceId, task, [t.spaceId]);
   const summary = r.text.trim();
@@ -1046,7 +1046,7 @@ registerHandler("heartbeat", async (ctx) => {
   });
   const task = [
     owner,
-    sent.length ? `上次巡检以来已经发给本人的通知（不要重复这些内容）：\n${sent.map((n) => `- ${n.at.slice(0, 16)} ${n.title}`).join("\n")}` : "",
+    sent.length ? `上次巡检以来已经发给本人的通知（不要重复这些内容）：\n${sent.map((n) => `- ${localStamp(n.at, app.config.timezone)} ${n.title}`).join("\n")}` : "",
     `关注/等待中的事项：\n${watching.map((i) => `- ${i.id} [${i.kind}] ${i.title}${i.waitingOn ? `（等待 ${i.waitingOn}）` : ""}${i.watch?.query ? `：关注 ${i.watch.query}` : ""}`).join("\n")}`,
     `上次巡检（${last}）以来新增或变化的材料：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n")}`,
   ]
@@ -1130,7 +1130,7 @@ registerHandler("dream", async (ctx) => {
     `上次整理：${since}`,
     `有变化的记忆（${mems.length}）：\n${mems.map((m) => `- ${m.id} [${m.space_id}/${m.kind}/${m.status}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 160)}`).join("\n")}`,
     `有变化或已过期的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.space_id}/${i.kind}/${i.status}] ${i.title}${i.due_at ? " 截止 " + i.due_at : ""}${i.remind_at ? " 提醒 " + i.remind_at : ""}`).join("\n")}`,
-    said.length ? `期间本人说过的话（检查有没有漏记的计划、承诺、等待和长期事实；来源写 msg:<id>）：\n${said.map((m) => `- msg:${m.id} ${m.created_at.slice(0, 16)}：${truncate(m.text.replace(/\s+/g, " "), 300)}`).join("\n")}` : "",
+    said.length ? `期间本人说过的话（检查有没有漏记的计划、承诺、等待和长期事实；来源写 msg:<id>）：\n${said.map((m) => `- msg:${m.id} ${localStamp(m.created_at, app.config.timezone)}：${truncate(m.text.replace(/\s+/g, " "), 300)}`).join("\n")}` : "",
     runs.length ? `期间的后台运行（用于提炼经验）：\n${runs.map((r) => `- [${r.kind}/${r.status}] ${r.title}${r.error ? "：" + truncate(r.error, 120) : ""}`).join("\n")}` : "",
     relations.length ? `已关联的空间：\n${relations.join("\n")}` : "",
     merge,
@@ -1184,7 +1184,7 @@ registerHandler("brief", async (ctx) => {
   run(app.db, "insert into kv(key,value) values('brief_at', ?) on conflict(key) do update set value = excluded.value", now());
   const task = [
     `时间范围：${since} 至今`,
-    `进行中的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? " 截止 " + i.dueAt : ""}${i.remindAt ? " 提醒 " + i.remindAt : ""}${i.waitingOn ? " 等待 " + i.waitingOn : ""}（更新于 ${i.updatedAt.slice(0, 16)}）`).join("\n") || "（无）"}`,
+    `进行中的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? " 截止 " + i.dueAt : ""}${i.remindAt ? " 提醒 " + i.remindAt : ""}${i.waitingOn ? " 等待 " + i.waitingOn : ""}（更新于 ${localStamp(i.updatedAt, app.config.timezone)}）`).join("\n") || "（无）"}`,
     `期间新增或更新的材料（${fresh.length}）：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n") || "（无）"}`,
     `期间完成的后台运行：\n${runs.map((r) => `- ${r.id} [${r.kind}/${r.status}] ${r.title}`).join("\n") || "（无）"}`,
     (() => {

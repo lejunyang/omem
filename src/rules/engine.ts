@@ -140,7 +140,7 @@ export async function fireAfterWait(app: App, ruleId: string, key: string, e: Ru
  */
 async function act(app: App, rule: Rule, e: RuleEvent, key: string) {
   const said = e.message ? await discussion(app, e) : [];
-  const talk = discussionText(e, said);
+  const talk = discussionText(e, said, 30, app.config.timezone);
   const skip = (why: string) => {
     recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: "code", reason: why, results: [{ action: "skip", ok: true, detail: why }] }, { skipped: true });
     return `跳过：${why}`;
@@ -182,7 +182,7 @@ async function continueFollowed(app: App, rule: Rule, f: Followed, e: RuleEvent)
   if (one(app.db, "select 1 from runs where lane = ? and status = 'queued'", lane)) return;
   const said = await discussion(app, e);
   const { followUp } = await import("./actions.ts");
-  const r = await followUp(app, rule, f, e, discussionText(e, said), lane);
+  const r = await followUp(app, rule, f, e, discussionText(e, said, 30, app.config.timezone), lane);
   recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: "code", reason: "Agent 跟进的话题有新消息", results: [r] });
 }
 

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, post } from "../api";
-import { toast } from "../store";
+import { fmtTime, toast } from "../store";
 import { renderBlock, type BlockView } from "omem-plugin-sdk/blocks";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
       <aside v-if="sessions?.length" class="history card pad">
         <div class="muted small">会话</div>
         <button v-for="s in sessions" :key="s.id" class="li" :class="{ on: current?.id === s.id }" @click="open(s.id)">
-          <span class="ellipsis">{{ s.title || "会话" }}</span><span class="muted small">{{ s.updatedAt.slice(5, 16).replace("T", " ") }}</span>
+          <span class="ellipsis">{{ s.title || "会话" }}</span><span class="muted small">{{ fmtTime(s.updatedAt) }}</span>
         </button>
       </aside>
     </div>

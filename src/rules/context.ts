@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { json, truncate } from "../core/util.ts";
+import { json, truncate, localStamp } from "../core/util.ts";
 import type { RuleEvent } from "./types.ts";
 
 /**
@@ -87,9 +87,9 @@ export function engagement(e: RuleEvent, said: Said[]) {
 }
 
 /** The discussion as lines for the model to read (newest last), the triggering message marked. */
-export function discussionText(e: RuleEvent, said: Said[], max = 30) {
+export function discussionText(e: RuleEvent, said: Said[], max = 30, timeZone?: string) {
   if (!said.length) return "";
-  const fmt = (ms: number) => new Date(ms + 8 * 3600_000).toISOString().slice(5, 16).replace("T", " ");
+  const fmt = (ms: number) => localStamp(ms, timeZone, { short: true });
   return said
     .slice(-max)
     .map((m) => `${m.id === e.message?.id ? "→ " : ""}[${fmt(m.at)}] ${m.who}${m.kind === "owner" ? "（本人）" : m.kind === "bot" ? "（机器人）" : ""}: ${truncate(m.text.replace(/\s+/g, " "), 400)} (${m.id})`)

@@ -2,7 +2,7 @@ import { ownerCorrections } from "../items/requirements.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { now, truncate } from "../core/util.ts";
+import { now, truncate, localStamp } from "../core/util.ts";
 import { isBuiltinRole, listRoleStates, mergeRole, resolveRoleMerge, roleOverrideText, roleSourceText } from "./builtin-roles.ts";
 import { askModel } from "./oneshot.ts";
 import { profileDetail } from "./profiles.ts";
@@ -102,11 +102,11 @@ export function reviewTask(app: App, name: string, since: string) {
   const evidence = runs.map((r) => {
     const said = ownerAfter(app, r);
     return [
-      `### ${r.id}（${r.kind}/${r.status}，${r.created_at.slice(0, 16)}）${r.title}`,
+      `### ${r.id}（${r.kind}/${r.status}，${localStamp(r.created_at, app.config.timezone)}）${r.title}`,
       r.error ? `错误：${truncate(r.error, 300)}` : "",
       `产出：${truncate(resultOf(name, r).trim() || "（无）", 1500)}`,
       ...(name === "req-splitter" ? [reqFixesText(app, r.id)] : []),
-      said.length ? `之后本人说：\n${said.map((m) => `- msg:${m.id}（${m.created_at.slice(0, 16)}）${truncate(m.text.replace(/\s+/g, " "), 400)}`).join("\n")}` : "之后本人没有说什么",
+      said.length ? `之后本人说：\n${said.map((m) => `- msg:${m.id}（${localStamp(m.created_at, app.config.timezone)}）${truncate(m.text.replace(/\s+/g, " "), 400)}`).join("\n")}` : "之后本人没有说什么",
       (() => {
         const r_ = runReactionsText(app, r.id);
         return r_ ? `飞书里对它的回复加的表情：${r_}（确认收到类表情只表示看到了，不算好坏）` : "";

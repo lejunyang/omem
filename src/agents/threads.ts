@@ -1,7 +1,7 @@
 import { captureSpace } from "../core/capture-space.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, json, newId, now, truncate } from "../core/util.ts";
+import { HttpError, json, newId, now, truncate, localStamp } from "../core/util.ts";
 import { recordCites } from "../sources/cites.ts";
 import { appendToSource } from "../sources/store.ts";
 
@@ -298,9 +298,9 @@ export function listThreads(app: App, opts: { channel?: string; spaceId?: string
 }
 
 /** One line per thread for prompts and commands. */
-export function describeThread(t: Thread & { messages?: number }) {
+export function describeThread(t: Thread & { messages?: number }, timeZone?: string) {
   const where = t.key ? `${t.channel}:${t.key}` : t.channel;
-  return `${t.id}「${t.title || "(无标题)"}」${where} · ${t.updatedAt.slice(0, 16).replace("T", " ")}${t.messages !== undefined ? ` · ${t.messages} 条` : ""}${t.status === "archived" ? " · 已归档" : ""}${t.summary ? `\n  ${truncate(t.summary.replace(/\s+/g, " "), 160)}` : ""}`;
+  return `${t.id}「${t.title || "(无标题)"}」${where} · ${localStamp(t.updatedAt, timeZone)}${t.messages !== undefined ? ` · ${t.messages} 条` : ""}${t.status === "archived" ? " · 已归档" : ""}${t.summary ? `\n  ${truncate(t.summary.replace(/\s+/g, " "), 160)}` : ""}`;
 }
 
 

@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { now } from "../core/util.ts";
+import { now, localStamp } from "../core/util.ts";
 import { receive } from "../agents/inbox.ts";
 import { findAgentSpec } from "../agents/specs.ts";
 import { chatSettings, setChatSettings, type WatchRule } from "../agents/threads.ts";
@@ -55,7 +55,7 @@ export function expireWatches(app: App, at = now()) {
     WATCH_CHANNEL, WATCH_CHANNEL, at);
   for (const w of due) {
     setWatchRule(app, w.chat_id, null);
-    notify(app, { title: `不再盯「${w.name ?? w.chat_id}」了`, body: `到了设定的时间（${w.until.slice(0, 16).replace("T", " ")}）。还要继续就再说一声。` });
+    notify(app, { title: `不再盯「${w.name ?? w.chat_id}」了`, body: `到了设定的时间（${localStamp(w.until, app.config.timezone)}）。还要继续就再说一声。` });
   }
   return due.length;
 }

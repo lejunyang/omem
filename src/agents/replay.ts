@@ -6,7 +6,7 @@ import { allProfiles, DEFAULT_REPLAY_PLAN, REPLAY_AXES, type AgentProfile, type 
 import { all, one, run } from "../core/db.ts";
 import { relatedIds } from "../core/spaces.ts";
 import { OWNER, scopeFor } from "../core/users.ts";
-import { HttpError, json, newId, now, truncate } from "../core/util.ts";
+import { HttpError, json, newId, now, truncate, localStamp } from "../core/util.ts";
 import { CORRECTION, NOT_FOUND } from "../memory/gaps.ts";
 import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { search } from "../search/search.ts";
@@ -150,7 +150,7 @@ export function questionOf(app: App, r: RunRow): Question | null {
     return {
       run: r, kind: "ask", spec: null, spaceId: r.space_id ?? "personal", asOf,
       question: msgs.map((m) => m.text).join("\n"), answer, conversationId: input.conversationId,
-      context: before.map((m) => `${m.role === "user" ? "本人" : "助理"}（${m.created_at.slice(0, 16).replace("T", " ")}）：${truncate(m.text.replace(/\s+/g, " "), 1500)}`).join("\n"),
+      context: before.map((m) => `${m.role === "user" ? "本人" : "助理"}（${localStamp(m.created_at, app.config.timezone)}）：${truncate(m.text.replace(/\s+/g, " "), 1500)}`).join("\n"),
       reaction: { said: after, emoji },
     };
   }
@@ -500,7 +500,7 @@ async function armTask(app: App, q: Question, view: RunView, axis: ReplayAxis | 
   return [
     head,
     q.context ? `# 会话背景（提问前的最近 ${CONTEXT_TURNS} 轮）\n\n${q.context}` : "",
-    `# 本人新消息\n\n本人（${q.asOf.slice(0, 16).replace("T", " ")}）：${q.question}`,
+    `# 本人新消息\n\n本人（${localStamp(q.asOf, app.config.timezone)}）：${q.question}`,
     note ?? "",
     passive,
   ].filter(Boolean).join("\n\n");

@@ -1,3 +1,4 @@
+import { localStamp } from "../core/util.ts";
 import type { App } from "../core/app.ts";
 import { designBodyAt, designCounts, designFeedback, designRevisions, type Design } from "./store.ts";
 import { CONCERN_LEVELS, DECISION_FIELDS, KIND_LABELS, LEVEL_LABELS, ORIGIN_LABELS, STATE_LABELS, STATUS_LABELS, type Concern, type Decision, type DesignBody, type Table } from "./types.ts";
@@ -36,9 +37,9 @@ export function designMarkdown(app: App, design: Design, opts: { revision?: numb
   if (body.outside?.length) parts.push(`## 方案之外的改动\n\n${body.outside.map((f) => `- ${f}`).join("\n")}`);
   if (full && revision === design.revision) {
     const fb = design.origin === "own" ? designFeedback(app, design.id) : [];
-    if (fb.length) parts.push(`## 对这一版的意见\n\n${fb.map((f) => `- ${f.action === "rethink" ? "换个思路" : f.action === "approve" ? "通过" : "提意见"}（${f.by}，${f.at.slice(0, 16).replace("T", " ")}）${f.text ? `：${f.text}` : ""}${Object.keys(f.answers).length ? `；回答：${Object.entries(f.answers).map(([k, v]) => `${k} → ${v}`).join("；")}` : ""}`).join("\n")}`);
+    if (fb.length) parts.push(`## 对这一版的意见\n\n${fb.map((f) => `- ${f.action === "rethink" ? "换个思路" : f.action === "approve" ? "通过" : "提意见"}（${f.by}，${localStamp(f.at, app.config.timezone)}）${f.text ? `：${f.text}` : ""}${Object.keys(f.answers).length ? `；回答：${Object.entries(f.answers).map(([k, v]) => `${k} → ${v}`).join("；")}` : ""}`).join("\n")}`);
     const revs = designRevisions(app, design.id);
-    if (revs.length > 1) parts.push(`## 版本\n\n${revs.map((r) => `- 第 ${r.revision} 版 ${r.at.slice(0, 16).replace("T", " ")}${r.note ? `：${r.note}` : ""}`).join("\n")}`);
+    if (revs.length > 1) parts.push(`## 版本\n\n${revs.map((r) => `- 第 ${r.revision} 版 ${localStamp(r.at, app.config.timezone)}${r.note ? `：${r.note}` : ""}`).join("\n")}`);
   }
   return parts.join("\n\n");
 }

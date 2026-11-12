@@ -28,7 +28,7 @@ import { featuresOf } from "../auth/features.ts";
 import { can, requirePerm } from "../auth/permissions.ts";
 import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
 import { hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
-import { HttpError, newId, now, sameSecret, slugify, truncate } from "../core/util.ts";
+import { HttpError, newId, now, sameSecret, slugify, truncate, localStamp } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
@@ -526,7 +526,7 @@ def({
         const body = kept.map((x) => `${String(x.n).padStart(5)}│${x.l}`).join("\n");
         return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind}\n这一段有 ${hidden} 行晚于提问时间，没有显示。\n引用格式：[${s.uri}:${kept[0].n}-${kept[kept.length - 1].n}](src:${s.id}#L${kept[0].n}-L${kept[kept.length - 1].n})\n\n${body}`;
       }
-    } else if (view?.asOf && s.updatedAt > view.asOf) replayNote = `\n注意：这份原件在提问之后更新过（${s.updatedAt.slice(0, 16).replace("T", " ")}），这里只有最新版，内容可能包含提问之后的信息。`;
+    } else if (view?.asOf && s.updatedAt > view.asOf) replayNote = `\n注意：这份原件在提问之后更新过（${localStamp(s.updatedAt, ctx.app.config.timezone)}），这里只有最新版，内容可能包含提问之后的信息。`;
     const more = r.lineEnd < (s.lines ?? 0) ? `\n……还有 ${(s.lines ?? 0) - r.lineEnd} 行，继续用 from=${r.lineEnd + 1}` : "";
     const original = (s.meta as { original?: string }).original;
     const file = original ? `\n原始文件：${storedPath(ctx.app, original) ?? join(ctx.app.filesDir, original)}${s.kind === "image" ? "（图片，可用你的文件或图片工具查看）" : ""}` : "";
@@ -904,7 +904,7 @@ def({
   schema: z.object({ query: z.string().optional().describe("按标题或摘要筛选"), channel: z.string().optional(), include_archived: z.boolean().optional(), limit: z.number().int().min(1).max(50).optional() }),
   handler: (ctx, a) => {
     const list = listThreads(ctx.app, { query: a.query, channel: a.channel, includeArchived: a.include_archived ?? !!a.query, limit: a.limit ?? 20, userId: ctx.userId ?? "owner" }).filter((t) => !ctx.spaces || ctx.spaces.includes(t.spaceId));
-    return list.length ? list.map(describeThread).join("\n") : "没有找到会话。也可以用 search 搜对话内容（原件类型 conversation）。";
+    return list.length ? list.map((t) => describeThread(t, ctx.app.config.timezone)).join("\n") : "没有找到会话。也可以用 search 搜对话内容（原件类型 conversation）。";
   },
 });
 
@@ -918,8 +918,8 @@ def({
     if (ctx.spaces && !ctx.spaces.includes(t.spaceId)) throw new HttpError(403, `本次任务不能访问空间 ${t.spaceId} 的会话`);
     if (t.userId !== (ctx.userId ?? "owner") && (ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "不能读别人的会话");
     const msgs = threadMessages(ctx.app, t.id, { limit: a.limit ?? 30, before: a.before });
-    const head = describeThread(t);
-    return `${head}\n\n${msgs.map((m) => `[${m.createdAt.slice(0, 16).replace("T", " ")}] ${m.role === "user" ? "本人" : "助理"}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
+    const head = describeThread(t, ctx.app.config.timezone);
+    return `${head}\n\n${msgs.map((m) => `[${localStamp(m.createdAt, ctx.app.config.timezone)}] ${m.role === "user" ? "本人" : "助理"}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
   },
 });
 
@@ -1300,7 +1300,7 @@ def({
     const { listRecordings } = await import("../remote/recordings.ts");
     const list = listRecordings(ctx.app, ctx.userId ?? OWNER, a.limit ?? 20);
     if (!list.length) return "还没有录制。";
-    return list.map((r) => `- ${r.id}（${r.kind === "browser" ? "浏览器" : "桌面"}，${r.createdAt.slice(0, 16).replace("T", " ")}，${r.status}）${r.goal || "（没写要做的事）"}：${r.summary.replayable ?? 0} 步可回放${r.summary.requests ? `，${r.summary.requests} 个请求` : ""}${r.skill ? `，已成技能 ${r.skill}` : ""}`).join("\n");
+    return list.map((r) => `- ${r.id}（${r.kind === "browser" ? "浏览器" : "桌面"}，${localStamp(r.createdAt, ctx.app.config.timezone)}，${r.status}）${r.goal || "（没写要做的事）"}：${r.summary.replayable ?? 0} 步可回放${r.summary.requests ? `，${r.summary.requests} 个请求` : ""}${r.skill ? `，已成技能 ${r.skill}` : ""}`).join("\n");
   },
 });
 
@@ -1522,7 +1522,7 @@ def({
       .map((i) => {
         const head = `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? ` 截止 ${i.dueAt}` : ""}${i.remindAt ? ` 提醒 ${i.remindAt}` : ""}${i.waitingOn ? ` 等待 ${i.waitingOn}` : ""}（空间 ${i.spaceId}；${(!ctx.writable || ctx.writable.includes(i.spaceId)) && canWrite(ctx.app, ctx.userId ?? OWNER, i.spaceId) ? "可写" : "只读：用 propose_item_update 路由，勿挂到其他事项"}）${i.detail ? "\n  " + truncate(i.detail, 200) : ""}`;
         if (!a.with_timeline) return head;
-        return head + "\n" + itemEvents(ctx.app, i.id).filter((e) => !asOf || e.at <= asOf).slice(-6).map((e) => `    · ${e.at.slice(0, 16)} ${e.actor}: ${truncate(e.text, 160)} [事件 ${e.id}] ${e.sourceRefs.join(" ")}`).join("\n");
+        return head + "\n" + itemEvents(ctx.app, i.id).filter((e) => !asOf || e.at <= asOf).slice(-6).map((e) => `    · ${localStamp(e.at, ctx.app.config.timezone)} ${e.actor}: ${truncate(e.text, 160)} [事件 ${e.id}] ${e.sourceRefs.join(" ")}`).join("\n");
       })
       .join("\n");
   },
@@ -1534,7 +1534,7 @@ def({
   schema: z.object({ kind: z.string().optional(), status: z.string().optional(), limit: z.number().int().optional() }),
   handler: (ctx, a) =>
     listRuns(ctx.app, { kind: a.kind, status: a.status, limit: a.limit ?? 20 })
-      .map((r) => `- ${r.id} [${r.kind}/${r.status}] ${r.title} · ${r.createdAt.slice(0, 16)}${r.error ? " · 错误：" + truncate(r.error, 100) : ""}`)
+      .map((r) => `- ${r.id} [${r.kind}/${r.status}] ${r.title} · ${localStamp(r.createdAt, ctx.app.config.timezone)}${r.error ? " · 错误：" + truncate(r.error, 100) : ""}`)
       .join("\n") || "（无）",
 });
 
@@ -2738,7 +2738,7 @@ def({
     };
     setWatchRule(ctx.app, a.chat_id, rule);
     const what = rule.on === "mention" ? " @ 消息" : rule.on === "keyword" ? `匹配 ${rule.pattern} 的消息` : "消息";
-    return `${prev ? "已更新" : "开始盯"} ${a.chat_id}：${what}每 ${rule.batchMinutes} 分钟一批交给 ${rule.spec}，回复方式 ${rule.reply}，${rule.expiresAt ? `到 ${rule.expiresAt.slice(0, 16).replace("T", " ")}（UTC）` : "直到取消"}。`;
+    return `${prev ? "已更新" : "开始盯"} ${a.chat_id}：${what}每 ${rule.batchMinutes} 分钟一批交给 ${rule.spec}，回复方式 ${rule.reply}，${rule.expiresAt ? `到 ${localStamp(rule.expiresAt, ctx.app.config.timezone)}` : "直到取消"}。`;
   },
 });
 
@@ -3269,7 +3269,7 @@ def({
     const input = (ctx.runId ? getRun(ctx.app, ctx.runId).input : {}) as { conversationId?: string; threadId?: string; spec?: string };
     const conversationId = input.conversationId ?? input.threadId;
     const list = pendingWakes(ctx.app, conversationId ? { conversationId } : input.spec ? { spec: input.spec } : {});
-    return list.length ? list.map((w) => `- ${w.id} [${w.kind === "timed" ? "定时" : "消息"}] ${w.detail}${w.expiresAt ? `（${w.expiresAt.slice(0, 16)} 失效）` : ""}：${truncate(w.note, 120)}`).join("\n") : "没有待触发的唤醒";
+    return list.length ? list.map((w) => `- ${w.id} [${w.kind === "timed" ? "定时" : "消息"}] ${w.detail}${w.expiresAt ? `（${localStamp(w.expiresAt, ctx.app.config.timezone)} 失效）` : ""}：${truncate(w.note, 120)}`).join("\n") : "没有待触发的唤醒";
   },
 });
 
@@ -4682,7 +4682,7 @@ def({
       d.children.length ? `## 下级\n\n${d.children.map((c) => `- [${REQ_KIND_LABEL[c.kind]} ${c.id}] ${c.title}`).join("\n")}` : "",
       d.links.length ? `## 关联\n\n${d.links.map((l) => `- ${l.direction === "out" ? "→" : "←"} ${l.other ? `${l.other.id}「${l.other.title}」（空间 ${l.other.spaceId}）` : "（已不存在）"}${l.note ? `：${l.note}` : ""}`).join("\n")}` : "",
       d.state ? `## 最近一次评审\n\n${d.state.runId} 第 ${d.state.round} 轮：${d.state.status}${d.state.locations.length ? `；位置：${d.state.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end ? `-${l.end}` : ""}` : ""}`).join("、")}` : ""}${d.state.note ? `；${d.state.note}` : ""}` : "",
-      `## 时间线\n\n${d.versions.map((v) => `- ${v.at.slice(0, 16).replace("T", " ")} 第 ${v.version} 版 ${REQ_CHANGE_LABEL[v.change]}（${v.by}）${v.reason ? `：${v.reason}` : ""}${v.sourceRefs.length ? ` ${v.sourceRefs.join(" ")}` : ""}`).join("\n")}`,
+      `## 时间线\n\n${d.versions.map((v) => `- ${localStamp(v.at, ctx.app.config.timezone)} 第 ${v.version} 版 ${REQ_CHANGE_LABEL[v.change]}（${v.by}）${v.reason ? `：${v.reason}` : ""}${v.sourceRefs.length ? ` ${v.sourceRefs.join(" ")}` : ""}`).join("\n")}`,
     ].filter(Boolean).join("\n\n");
   },
 });
@@ -5600,7 +5600,7 @@ def({
     }
     const rows = store.list(a.collection, { limit: a.limit ?? 50, since: a.since });
     if (!rows.length) return `${a.collection} 里还没有记录`;
-    return truncate(rows.map((r) => `- ${r.key}（${r.createdAt.slice(0, 16)}）：${JSON.stringify(r.data)}`).join("\n"), 30_000);
+    return truncate(rows.map((r) => `- ${r.key}（${localStamp(r.createdAt, ctx.app.config.timezone)}）：${JSON.stringify(r.data)}`).join("\n"), 30_000);
   },
 });
 

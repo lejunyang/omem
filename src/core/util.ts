@@ -68,3 +68,15 @@ export function webLink(app: { config: { webUrl?: string } }, link: string) {
   if (!base || !link.startsWith("#/")) return link;
   return `${base}/${link}`;
 }
+
+/**
+ * "YYYY-MM-DD HH:mm" in the given time zone (the owner's `config.timezone`; omitted = this machine's).
+ * Stored times are UTC ISO strings; anything shown to the owner or handed to a model to relay goes through this.
+ * `short` drops the year.
+ */
+export function localStamp(t: string | number | Date, timeZone?: string, opts: { short?: boolean; seconds?: boolean } = {}): string {
+  const d = t instanceof Date ? t : new Date(t);
+  if (Number.isNaN(d.getTime())) return String(t);
+  const s = d.toLocaleString("sv-SE", { timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", ...(opts.seconds ? { second: "2-digit" } : {}) });
+  return opts.short ? s.slice(5) : s;
+}

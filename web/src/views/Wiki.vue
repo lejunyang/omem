@@ -499,15 +499,21 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
   top: 0;
   height: 100vh;
   overflow-y: auto;
-  padding: 14px 10px 20px;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding: 14px 12px 20px 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 .nav-head {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 0 4px;
+}
+.nav-head strong {
+  min-width: 0;
 }
 .filter {
   height: 30px;
@@ -516,6 +522,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
 }
 .tree {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1px;
 }
 .home {
@@ -625,6 +632,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
   font-weight: 700;
   letter-spacing: -0.01em;
   margin-bottom: 10px;
+  overflow-wrap: anywhere;
 }
 .lead {
   font-size: 16.5px;

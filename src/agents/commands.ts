@@ -120,7 +120,7 @@ const commands: Record<string, Command> = {
     help: "最近的会话（含其他群和渠道）",
     run: ({ app, args, inb }) => {
       const list = listThreads(app, { query: args || undefined, limit: 12, includeArchived: !!args, userId: inb.userId ?? OWNER });
-      return list.length ? list.map(describeThread).join("\n") : "没有找到会话。";
+      return list.length ? list.map((t) => describeThread(t, app.config.timezone)).join("\n") : "没有找到会话。";
     },
   },
   resume: {

@@ -2,7 +2,7 @@ import { one } from "../core/db.ts";
 import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
 import { aiLabel, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type OrderSource } from "./choose-ai.ts";
 import type { App } from "../core/app.ts";
-import { truncate } from "../core/util.ts";
+import { truncate, localStamp } from "../core/util.ts";
 import { userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
@@ -188,7 +188,7 @@ function coldContext(app: App, t: Thread, before: string, owner: string[] = []) 
   }
   for (const id of t.settings.links ?? []) {
     const l = findThread(app, id);
-    if (l) parts.push(`## 关联会话 ${describeThread(l).split("\n")[0]}\n\n${l.summary || renderMessages(threadMessages(app, l.id, { limit: 6 }), app)}`);
+    if (l) parts.push(`## 关联会话 ${describeThread(l, app.config.timezone).split("\n")[0]}\n\n${l.summary || renderMessages(threadMessages(app, l.id, { limit: 6 }), app)}`);
   }
   const recent = threadMessages(app, t.id, { before, limit: 12 }).filter((m) => !m.meta.command);
   if (recent.length) parts.push(`## 最近的对话\n\n${recent.map((m) => ({ ...m, text: truncate(m.text, 1500) }))
@@ -206,7 +206,7 @@ function watchedNote(app: App, t: Thread, messages: ThreadMessage[]) {
   return [
     head,
     "",
-    `本人要你盯这个群（${chatId}）：${w.note ?? "（没有写目的）"}${w.expiresAt ? `；盯到 ${w.expiresAt.slice(0, 16).replace("T", " ")}（UTC）` : ""}。`,
+    `本人要你盯这个群（${chatId}）：${w.note ?? "（没有写目的）"}${w.expiresAt ? `；盯到 ${localStamp(w.expiresAt, app.config.timezone)}` : ""}。`,
     "",
     "- 多数消息不用管。只在有用时动手：能查到资料或结论回答别人的、值得排查的、本人需要知道或决定的。",
     `- 回复：${reply}。同一件事的后续回在它原来的话题里，不为它另开话题。本人需要知道或决定的用 notify，不在群里 @ 本人。`,

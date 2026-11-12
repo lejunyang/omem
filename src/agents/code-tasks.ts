@@ -4,7 +4,7 @@ import { isAbsolute, join, relative } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { fetchBranchAsync, git, resolveRef } from "../core/git.ts";
-import { HttpError, now, truncate } from "../core/util.ts";
+import { HttpError, now, truncate, localStamp } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 import type { FindingRow, LeadResult } from "./review.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
@@ -1077,7 +1077,7 @@ export function goalText(app: App, rootId: string) {
   const progress = [
     `- 需求拆出的修改项：完成 ${count(own, (t) => t.state === "done")} / ${own.length}${unfinished.length ? `（没完成：${unfinished.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 60)}」`).join("、")}）` : ""}`,
     `- 评审提的修改项：${fixes.length} 项，完成 ${count(fixes, (t) => t.state === "done")}，以后再做 ${count(fixes, isLater)}，待做 ${count(fixes, (t) => t.state === "todo")}；其中修了又修的 ${count(fixes, (t) => !!t.origin.follows)} 项`,
-    `- 第 ${lastRound(app, rootId).input.round ?? 1} 轮，阶段评审 ${(w.stages ?? []).length} 次${w.deliverableAt != null ? `（第 ${w.deliverableAt + 1} 次时需求就做完了）` : ""}${w.delivered?.length ? `；推送过 ${w.delivered.length} 次，最近 ${w.delivered.at(-1)!.at.slice(0, 16)}` : ""}`,
+    `- 第 ${lastRound(app, rootId).input.round ?? 1} 轮，阶段评审 ${(w.stages ?? []).length} 次${w.deliverableAt != null ? `（第 ${w.deliverableAt + 1} 次时需求就做完了）` : ""}${w.delivered?.length ? `；推送过 ${w.delivered.length} 次，最近 ${localStamp(w.delivered.at(-1)!.at, app.config.timezone)}` : ""}`,
   ];
   return `## 这次交办原来要的\n\n${truncate(String(root.input.task ?? root.title), 3000)}\n\n## 进展\n\n${progress.join("\n")}`;
 }

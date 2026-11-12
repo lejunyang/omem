@@ -4,7 +4,7 @@ import { trySettleCodeChain } from "./code-chain.ts";
 import { recordRunStart } from "./run-scope.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, json, newId, now } from "../core/util.ts";
+import { HttpError, json, newId, now, localStamp } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
 
 export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state";
@@ -361,7 +361,7 @@ export function queueReason(app: App, r: Run): string | null {
   if (r.status !== "queued") return null;
   const row = one<Row>(app.db, "select * from runs where id = ?", r.id);
   if (!row) return null;
-  if (row.not_before && row.not_before > now()) return `定时，${row.not_before.slice(0, 16).replace("T", " ")} 开始`;
+  if (row.not_before && row.not_before > now()) return `定时，${localStamp(row.not_before, app.config.timezone)} 开始`;
   if (row.lane) {
     const busy = one<{ id: string }>(app.db, "select id from runs where lane = ? and status = 'running'", row.lane);
     const older = one<{ n: number }>(app.db, "select count(*) n from runs where lane = ? and status = 'queued' and created_at < ?", row.lane, row.created_at)!.n;

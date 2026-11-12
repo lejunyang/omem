@@ -245,7 +245,7 @@ async function loadBranches(fetch = false) {
     branchLoading.value = false;
   }
 }
-const branchOptions = computed(() => (branchList.value?.branches ?? []).map((b) => ({ value: b.name, label: b.name, hint: `${b.at.slice(0, 10)} · ${b.subject}` })));
+const branchOptions = computed(() => (branchList.value?.branches ?? []).map((b) => ({ value: b.name, label: b.name, hint: `${fmtTime(b.at, false)} · ${b.subject}` })));
 const baseOptions = computed(() => [{ value: "", label: `默认（${branchList.value?.base ?? "main"}）` }, ...branchOptions.value]);
 const fromOptions = computed(() => [{ value: "", label: `当前检出（${branchList.value?.current ?? "HEAD"}）` }, ...branchOptions.value]);
 watch([delegateOpen, () => task.value.repos[0]], ([open]) => {
