@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalog.ts";
+import { omemHome } from "./home.ts";
 
 /** Agents that can run with an API key of their vendor instead of the login on this machine. */
 export const AI_KEY_BACKENDS = ["claude", "claude-cli", "codex", "codex-cli"] as const;
@@ -997,10 +997,7 @@ const doubaoCliProfile: AgentProfile = { id: "doubao-cli", name: "豆包 (CLI)",
 /** ACP agents from the catalog (codex, claude, gemini, copilot, …) plus the one-shot CLI fallbacks. Order = auto-pick priority. */
 export const builtinProfiles: AgentProfile[] = [...acpCatalog.slice(0, 3).map(catalogProfile), ...cliProfiles, ...acpCatalog.slice(3).map(catalogProfile), doubaoCliProfile, doubaoProfile];
 
-export function omemHome(): string {
-  if (process.env.OMEM_HOME) return resolve(process.env.OMEM_HOME);
-  return join(homedir(), ".omem");
-}
+export { omemHome };
 
 export function configPath(home = omemHome()) {
   return join(home, "config.json");

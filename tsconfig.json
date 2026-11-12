@@ -15,5 +15,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "plugins/*/*.ts", "web/vite-plugin-pages.ts"]
+  "include": ["src/**/*.ts", "packages/cli/src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "plugins/*/*.ts", "web/vite-plugin-pages.ts"]
 }

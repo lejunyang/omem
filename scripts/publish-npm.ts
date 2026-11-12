@@ -4,6 +4,7 @@
  *
  *   omem-assistant    the app (the repository root)
  *   omem-plugin-sdk   packages/plugin-sdk
+ *   omem-cli          packages/cli (the light client for a remote omem: one bundled file)
  *
  * A package whose version is already published is skipped, so bumping only one of them publishes
  * only that one. `--dry-run` shows what would be published without publishing.
@@ -19,7 +20,7 @@ const registry = "https://registry.npmjs.org";
 const npm = (args: string[], cwd: string) => spawnSync("npm", args, { cwd, encoding: "utf8", shell: process.platform === "win32" });
 
 let failed = false;
-for (const dir of [root, join(root, "packages", "plugin-sdk")]) {
+for (const dir of [root, join(root, "packages", "plugin-sdk"), join(root, "packages", "cli")]) {
   const { name, version } = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name: string; version: string };
   const seen = npm(["view", `${name}@${version}`, "version", "--registry", registry], dir);
   if (seen.status === 0 && seen.stdout.trim() === version) {

@@ -35,6 +35,12 @@ npm install -g .          # 把 omem 命令链接到这个仓库（可选）
 npm install -g omem-assistant
 ```
 
+只用别人（或常驻服务器）的 omem、不在本机运行服务时，装轻量命令行就够了（单文件、无依赖，命令也是 omem，只有 `login`、`tool`、`mcp`、`open`、`remote`）：
+
+```bash
+npm install -g omem-cli
+```
+
 用 osdk 管理 Node、pnpm 和可选的本地模型时：
 
 ```bash

@@ -2,10 +2,15 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-10
+updated: 2026-11-13
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
+
+## 轻量命令行 omem-cli（11-13）
+
+- 新包 `packages/cli`（npm `omem-cli`，命令也是 `omem`）：只有连远程 omem 的 `login`、`open`、`remote` 和远程的 `tool` / `mcp`，Vite 打成一个无依赖的文件，给只用别人 omem 的人装，不带服务端的依赖。
+- `remote`、`login`、`open` 三组命令和 `clientInfo` 从 `cli-main.ts` 移到 `src/remote-commands.ts`，两个命令行共用；`omemHome()` 移到 `src/core/home.ts`（`config.ts` 照旧导出）。`scripts/publish-npm.ts` 和 `publish.yml` 多发这个包。回归：`test/omem-cli.test.ts`。
 
 ## Chrome 扩展连接 omem：多连接与把拾取发给 omem（11-10）
 

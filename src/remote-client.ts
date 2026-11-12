@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
-import { omemHome } from "./core/config.ts";
+import { omemHome } from "./core/home.ts";
 
 /**
  * The client side of using a remote omem (docs/v2/remote-clients.md): `omem tool` and `omem mcp`

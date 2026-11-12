@@ -1,0 +1,28 @@
+{
+  "name": "omem-cli",
+  "version": "0.0.1",
+  "description": "Light command line for a remote omem: call its tools from a terminal and connect agents over MCP, as yourself. No local server.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "omem": "dist/omem.js"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "commander": "15.0.0",
+    "vite": "7.3.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lejunyang/omem.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": { "access": "public" }
+}

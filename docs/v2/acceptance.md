@@ -1378,6 +1378,7 @@ TraeX 与其他 ACP 的清理补验：
 | 13f | 设置 → 渠道 → 机器人检查 | 成员权限里列出“登录（读邮箱）”缺的 `contact:user.email:readonly`、`contact:user.employee:readonly`；开通并发版后飞书登录的授权页包含读邮箱 | 待真机 |
 | 13g | 数据目录里放一个带 `api.authenticator` 的插件（清单 `permissions.authenticators`，在 omem 里运行）；在另一台电脑设 `OMEM_AUTH_CMD` 为输出 JWT 的命令，`omem tool --url <地址> list_spaces` | 邮箱对上预建账号时直接可用；对不上时返回“在等 omem 的主人批准”，成员页多一个等待批准的账号，本人收到一次通知；JWT 过期后命令被重新执行 | 自动测试通过（测试用插件），待真机 |
 | 13h | 一个自定义全局角色（不含 `tools.external`）的账号用 `omem login` | 确认页提示角色不能用，“允许”不可点；直接带令牌调工具返回 403 并说明缺这项权限 | 自动测试通过 |
+| 13i | 在一台没装 omem 的电脑上 `npm i -g omem-cli`，然后照 13a、13b 做一遍；再不带地址运行 `omem tool list_spaces` | 安装只有一个包、几百 KB；13a、13b 的结果相同；没有地址时提示加 `--url` / `omem login`，并说本机运行要装 omem-assistant | 自动测试通过，未发布，待真机 |
 
 ## Chrome 扩展：默认不连 CDP 与拾取（2026-11-10）
 

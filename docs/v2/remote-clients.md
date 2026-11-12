@@ -97,6 +97,15 @@
 
 `--peer` 保留，给本人自己的设备用（配对、经中间节点转发、`peer call` 的那套命令）。`--url` / `--remote` 是给所有人的普通客户端，不配对，也不经中间节点。本人也可以用 `--url`，效果和 `--peer` 相同，只是不走配对令牌。
 
+### 4.5 轻量客户端 `omem-cli`（2026-11-13）
+
+只连远程的人不需要服务端：完整包 `omem-assistant` 带着向量模型（transformers / onnxruntime，约 840 MB）、tree-sitter、lark-cli、fastify、pm2 和网页。`packages/cli` 发成 `omem-cli`：
+
+- 命令和完整版同名同参数：`omem login`、`omem open`、`omem remote …`，`omem tool` / `omem mcp` 只有远程这一种（`--url`、`--remote`、`OMEM_URL`、默认地址），没有地址时报错并提示装完整版；没有 `--peer`（要本机的库和配对信息）。
+- 代码只有一份：入口 `packages/cli/src/main.ts` 直接用应用里的 `src/remote-client.ts`、`src/remote-commands.ts`（`remote`、`login`、`open` 三组命令和 `clientInfo`，完整版的 `cli-main.ts` 也调它）、`src/agents/mcp-server.ts`、`src/agents/tool-cli.ts` 的参数解析；数据目录 `omemHome()` 单独放在 `src/core/home.ts`，不带进配置的 schema。`test/omem-cli.test.ts` 检查入口的导入只到这几份文件。
+- 用 Vite 打成一个文件（commander 和 MCP SDK 打进去，约 630 KB），包里没有依赖，Node 20 以上可用。两个包共用 `~/.omem/client.json`。
+- 两个包的命令都叫 `omem`，同一台机器只装一个；完整版包含这些命令。
+
 ## 5. 服务端：工具接口按用户开放
 
 ### 5.1 认人
