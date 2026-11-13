@@ -106,7 +106,7 @@ export async function sendMentionReply(app: App, runId: string, text: string, by
     const { targetChat } = await import("../rules/forward.ts");
     note = (await targetChat(app, "有人找你", { chatId: m.chatId, name: m.chatName, kind: "group" })).note;
     const at = botIdOf(app, m.senderId);
-    const sent = await sendLark({ replyTo: m.lastMessageId, inThread: true, runId, purpose: "answer" }, { markdown: atAsker(text, m.senderName, at) });
+    const sent = await sendLark({ replyTo: m.lastMessageId, inThread: true, runId, purpose: "answer" }, { markdown: await atEveryone(app, text, m.chatId, m.senderName, at) });
     r = { via: "group", by, at: new Date().toISOString(), messageId: sent.messageId, chatId: m.chatId, where: `在${whereOf(m)}里 ${m.senderName} 那条消息的话题里` };
     follow(app, runId, m.chatId, sent.threadId ?? m.topicId, m.chatName, sent.messageId);
   } else if (app.config.mentions.reply.lark.p2pVia === "group") {
@@ -192,4 +192,43 @@ export function atAsker(text: string, name: string, at: string | null | undefine
   const i = name ? text.indexOf(`@${name}`) : -1;
   if (i < 0) return `${tag} ${text}`;
   return `${text.slice(0, i)}${tag}${text.slice(i + name.length + 1)}`;
+}
+
+/** The asker @-ed once, and everyone else the reply names who is in the chat. */
+async function atEveryone(app: App, text: string, chatId: string, askerName: string, askerAt: string | null | undefined) {
+  const { resolveMention } = await import("./lark-people.ts");
+  const others = await atOthers(
+    text,
+    askerName,
+    (name) => !!one(app.db, "select 1 from lark_people where name = ? limit 1", name),
+    async (name) => {
+      const r = await resolveMention(app, name, chatId);
+      return "all" in r ? null : r.userId;
+    },
+  );
+  return atAsker(others, askerName, askerAt);
+}
+
+/** `@名字` in a reply: the run of name characters after it (a space, punctuation or another @ ends it). */
+const AT_NAME = /@([^\s@<>，。、；：！？,.;:!?（）()【】「」“”"']{1,20})/g;
+
+/**
+ * Every other `@名字` the handler wrote becomes a real mention when that person is in the chat
+ * (`resolve`: lark-people resolveMention, which checks the chat's members); a name it cannot place
+ * stays as written. A name run on into the next words (“@小李确认下”) is tried shortest-known first:
+ * the longest prefix that is a known person.
+ */
+export async function atOthers(text: string, skip: string, known: (name: string) => boolean, resolve: (name: string) => Promise<string | null>) {
+  let out = text;
+  const done = new Set<string>([skip]);
+  for (const m of [...text.matchAll(AT_NAME)]) {
+    const run = m[1];
+    let name = run;
+    for (let n = Math.min(run.length, 12); n >= 2; n--) if (known(run.slice(0, n))) { name = run.slice(0, n); break; }
+    if (done.has(name)) continue;
+    done.add(name);
+    const id = await resolve(name).catch(() => null);
+    if (id) out = out.replace(`@${name}`, `<at id=${id}></at>`);
+  }
+  return out;
 }
