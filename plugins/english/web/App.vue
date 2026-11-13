@@ -2,7 +2,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
-import { connect, type Omem, type VoiceStatus } from "omem-plugin-sdk";
+import { connect, type Omem, type VoiceStatus } from "@omem-ai/plugin-sdk";
 import Skeleton from "../../../web/src/components/Skeleton.vue";
 import UiSegmented from "../../../web/src/components/UiSegmented.vue";
 import GenericBlock from "./GenericBlock.vue";
@@ -16,7 +16,7 @@ import { SPEAKING_PREFIX, type Block, type Message, type Session, type SessionIn
  * hands in batches (english_quiz), the owner answers and submits each batch, the tutor reads the
  * graded result and goes on. Speaking: the owner talks a scene through with the voice model
  * (a `speaking` block; the shell holds the microphone), the transcript goes to the tutor, who
- * assesses it. Everything goes through the shell (omem-plugin-sdk), never straight to /api.
+ * assesses it. Everything goes through the shell (@omem-ai/plugin-sdk), never straight to /api.
  */
 let omem: Omem | null = null;
 const api = shallowRef<Omem | null>(null);

@@ -1,5 +1,5 @@
 {
-  "name": "omem-cli",
+  "name": "@omem-ai/cli",
   "version": "0.0.1",
   "description": "Light command line for a remote omem: call its tools from a terminal and connect agents over MCP, as yourself. No local server.",
   "license": "Apache-2.0",

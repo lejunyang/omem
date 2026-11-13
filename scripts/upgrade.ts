@@ -8,7 +8,7 @@
  * 1. git pull --ff-only          (skipped with --no-pull, or when this is not a git checkout)
  * 2. osdk install --no-deps, osdk deps   (the toolchain from osdk.toml, then [deps.pnpm]: only the app,
  *                                 from the registry osdk.toml names); without osdk, pnpm install
- *                                 --frozen-lockfile --filter omem-assistant with the machine's own registry
+ *                                 --frozen-lockfile --filter @omem-ai/app with the machine's own registry
  * 3. osdk run build (pnpm run build without osdk)
  * 4. npm install -g .            (links the global `omem` to this checkout; --no-global skips;
  *                                 a failure here, e.g. no permission, is reported and skipped)
@@ -74,14 +74,15 @@ if (spawnSync("osdk", ["--version"], { cwd: root, stdio: "ignore", shell: win })
 } else {
   // Without osdk: pnpm directly, with the machine's own registry. Without a TTY (peer update,
   // services) pnpm aborts instead of asking when it must rebuild node_modules.
-  step("安装依赖", "pnpm", ["install", "--frozen-lockfile", "--filter", "omem-assistant", "--config.confirmModulesPurge=false"]);
+  step("安装依赖", "pnpm", ["install", "--frozen-lockfile", "--filter", "@omem-ai/app", "--config.confirmModulesPurge=false"]);
   step("构建", "pnpm", ["run", "build"]);
 }
 if (!has("--no-global")) {
-  // The package was called "omem" before it became omem-assistant: a global link under the old name
-  // owns the `omem` command, and npm would refuse to link the new one over it.
+  // The package was called "omem", then "omem-assistant", before it became @omem-ai/app: a global
+  // link under an old name owns the `omem` command, and npm would refuse to link the new one over it.
   const globalRoot = spawnSync("npm", ["root", "-g"], { cwd: root, encoding: "utf8", shell: win }).stdout?.trim();
-  if (globalRoot && existsSync(join(globalRoot, "omem"))) step("移除旧名字的全局 omem（npm uninstall -g omem）", "npm", ["uninstall", "-g", "omem"], { optional: true });
+  for (const old of ["omem", "omem-assistant"])
+    if (globalRoot && existsSync(join(globalRoot, old))) step(`移除旧名字的全局 omem（npm uninstall -g ${old}）`, "npm", ["uninstall", "-g", old], { optional: true });
   step("安装为全局 omem（npm install -g .）", "npm", ["install", "-g", "."], { optional: true });
 }
 if (has("--restart")) step("重启后台服务", process.execPath, [join(root, "dist", "src", "cli.js"), ...(home ? ["--home", home] : []), "service", "restart"]);

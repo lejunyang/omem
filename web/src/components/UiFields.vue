@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { fieldVisible, type UiField } from "omem-plugin-sdk/blocks";
+import { fieldVisible, type UiField } from "@omem-ai/plugin-sdk/blocks";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiDateTime from "./UiDateTime.vue";
 import UiSelect from "./UiSelect.vue";

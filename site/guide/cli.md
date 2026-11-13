@@ -66,7 +66,7 @@ omem tool --peer <设备> [工具名] [参数…]         # 在设备上调用�
 omem login https://omem.example.com             # 连别人的 omem：浏览器里确认，拿到只属于你的令牌
 omem mcp --remote <名字> / --url <地址>           # 以你的身份用远程 omem 的工具；tool 同样；也认 OMEM_TOKEN、OMEM_AUTH_CMD
 omem remote add|list|default|rm                 # 记下的远程地址；omem open [页面] 在浏览器里登录它
-                                                # 只用这几个远程命令时装轻量的 omem-cli（npm i -g omem-cli）
+                                                # 只用这几个远程命令时装轻量的 @omem-ai/cli（npm i -g @omem-ai/cli）
 omem hook claude|codex                          # 把编码 Agent 的会话记进知识库
 ```
 

@@ -93,7 +93,7 @@ const BANK_MAX = 300;
 
 /**
  * Speaking practice is a block like a quiz: it waits in the session until the owner has talked it
- * through on the page (the shell holds the microphone and the voice model, omem-plugin-sdk `voice`),
+ * through on the page (the shell holds the microphone and the voice model, @omem-ai/plugin-sdk `voice`),
  * then the transcript is handed in as the answer, and the tutor assesses it with english_speaking_grade.
  */
 const speakingBlock = z.object({

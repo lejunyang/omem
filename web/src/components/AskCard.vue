@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
-import { initialValues } from "omem-plugin-sdk/blocks";
+import { initialValues } from "@omem-ai/plugin-sdk/blocks";
 import { post, type Ask } from "../api";
 import Markdown from "./Markdown.vue";
 import UiFields from "./UiFields.vue";

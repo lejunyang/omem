@@ -203,7 +203,7 @@ export function connectAcp(app: App, id: string, agent: string): Promise<{ socke
 
 async function mcpClient(spec: McpSpec) {
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-  const client = new Client({ name: "omem-peer-acp", version: "0.2.0" });
+  const client = new Client({ name: "omem-peer-acp", version: "0.0.1" });
   const pairs = (xs?: { name: string; value: string }[]) => Object.fromEntries((xs ?? []).map((x) => [x.name, x.value]));
   if (spec.url) {
     const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");

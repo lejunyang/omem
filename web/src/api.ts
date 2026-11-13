@@ -10,7 +10,7 @@ export class ApiError extends Error {
 
 import { promptDialog } from "./lib/dialog";
 import { browserPage, createLive, type LiveSource } from "./lib/live";
-import type { UiField, ViewComponent } from "omem-plugin-sdk/blocks";
+import type { UiField, ViewComponent } from "@omem-ai/plugin-sdk/blocks";
 export type { UiField, ViewComponent };
 
 // Opening the page from another machine needs an API token (`omem user token owner`

@@ -29,16 +29,16 @@ pnpm run build
 npm install -g .          # 把 omem 命令链接到这个仓库（可选）
 ```
 
-也可以直接装 npm 上的发布版（包名 omem-assistant，命令是 omem）：
+也可以直接装 npm 上的发布版（包名 @omem-ai/app，命令是 omem）：
 
 ```bash
-npm install -g omem-assistant
+npm install -g @omem-ai/app
 ```
 
 只用别人（或常驻服务器）的 omem、不在本机运行服务时，装轻量命令行就够了（单文件、无依赖，命令也是 omem，只有 `login`、`tool`、`mcp`、`open`、`remote`）：
 
 ```bash
-npm install -g omem-cli
+npm install -g @omem-ai/cli
 ```
 
 用 osdk 管理 Node、pnpm 和可选的本地模型时：

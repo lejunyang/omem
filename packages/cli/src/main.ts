@@ -1,7 +1,7 @@
 /**
- * omem-cli: the light client for a remote omem (docs/v2/remote-clients.md). `omem tool` and
+ * @omem-ai/cli: the light client for a remote omem (docs/v2/remote-clients.md). `omem tool` and
  * `omem mcp` against `--url` / `--remote` / `OMEM_URL`, plus `omem login`, `omem open` and
- * `omem remote`. Same commands and the same `~/.omem/client.json` as the full app (omem-assistant);
+ * `omem remote`. Same commands and the same `~/.omem/client.json` as the full app (@omem-ai/app);
  * no local library, no server, no agents. Bundled into one file with no dependencies (vite.config.ts).
  *
  * Only the remote modules of the app are imported here (test/omem-cli.test.ts checks that).
@@ -16,7 +16,7 @@ declare const __OMEM_CLI_VERSION__: string | undefined;
 const version = typeof __OMEM_CLI_VERSION__ === "string" ? __OMEM_CLI_VERSION__ : "dev";
 
 const program = new Command();
-program.name("omem").description("omem 的轻量命令行：以你自己的身份在远程 omem 上用工具（omem tool）、给 Agent 接 MCP（omem mcp）。本机运行 omem 服务要装 omem-assistant。").version(version);
+program.name("omem").description("omem 的轻量命令行：以你自己的身份在远程 omem 上用工具（omem tool）、给 Agent 接 MCP（omem mcp）。本机运行 omem 服务要装 @omem-ai/app。").version(version);
 program.option("--home <dir>", "存远程地址和令牌的目录（默认 ~/.omem，或环境变量 OMEM_HOME）");
 program.hook("preAction", () => {
   const home = program.opts().home as string | undefined;
@@ -28,7 +28,7 @@ type ToolOptions = { file?: string; readOnly?: boolean; space?: string; url?: st
 /** Without an address there is nothing to use: this package has no local library. */
 function target(o: { url?: string; remote?: string }): RemoteTarget {
   const t = resolveRemote(o);
-  if (!t) throw new Error("没有远程地址：加 --url <地址> 或 --remote <名字>，设 OMEM_URL，或者 omem login <地址> 记一个默认的。\n（在本机运行 omem 服务、用本机的库，要装完整版：npm i -g omem-assistant）");
+  if (!t) throw new Error("没有远程地址：加 --url <地址> 或 --remote <名字>，设 OMEM_URL，或者 omem login <地址> 记一个默认的。\n（在本机运行 omem 服务、用本机的库，要装完整版：npm i -g @omem-ai/app）");
   return t;
 }
 

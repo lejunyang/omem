@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { renderView, type ViewComponent } from "omem-plugin-sdk/blocks";
+import { renderView, type ViewComponent } from "@omem-ai/plugin-sdk/blocks";
 import Markdown from "./Markdown.vue";
 import UiPage from "./UiPage.vue";
 

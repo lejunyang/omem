@@ -1,11 +1,11 @@
-# omem-cli
+# @omem-ai/cli
 
 在自己的电脑上用一台远程的 omem：在终端里调它的工具，或者把它作为 MCP 服务接给 Claude Code、Codex 这类 Agent。工具以你自己的身份运行，只能用你看得到的空间。
 
-这个包只有一个文件，不带依赖，不含服务端（向量、飞书、Agent 运行、网页）。要在本机运行 omem 服务、用本机的库，请装完整版 `omem-assistant`。两个包的命令都叫 `omem`，同一台机器上装一个就行：完整版也有下面这些命令。
+这个包只有一个文件，不带依赖，不含服务端（向量、飞书、Agent 运行、网页）。要在本机运行 omem 服务、用本机的库，请装完整版 `@omem-ai/app`。两个包的命令都叫 `omem`，同一台机器上装一个就行：完整版也有下面这些命令。
 
 ```bash
-npm install -g omem-cli        # Node 20 以上
+npm install -g @omem-ai/cli        # Node 20 以上
 ```
 
 ```bash

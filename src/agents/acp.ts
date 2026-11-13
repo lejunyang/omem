@@ -278,7 +278,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       connection.initialize({
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-        clientInfo: { name: "omem", version: "0.2.0" },
+        clientInfo: { name: "omem", version: "0.0.1" },
       }),
       failed,
     ]);
@@ -612,7 +612,7 @@ export async function deleteAcpSession(profile: AgentProfile, sessionId: string,
   try {
     await Promise.race([
       (async () => {
-        const init = await connection.initialize({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "omem", version: "0.2.0" } });
+        const init = await connection.initialize({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "omem", version: "0.0.1" } });
         if (!(init.agentCapabilities as { sessionCapabilities?: { delete?: unknown } } | undefined)?.sessionCapabilities?.delete) throw Object.assign(new Error("该后端不支持自动清理会话：未声明 session/delete"), { unsupportedCleanup: true });
         await connection.deleteSession({ sessionId }).catch(e => { throw promptError(e); });
       })(),

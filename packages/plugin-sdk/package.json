@@ -1,5 +1,5 @@
 {
-  "name": "omem-plugin-sdk",
+  "name": "@omem-ai/plugin-sdk",
   "version": "0.0.1",
   "description": "SDK for omem plugin pages and services: talk to omem through the shell, draw its forms and charts, serve HTTP and WebSocket to omem.",
   "license": "Apache-2.0",

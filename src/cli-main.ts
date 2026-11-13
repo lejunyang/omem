@@ -26,7 +26,7 @@ import { importDirectory, importFile, importText, importUrl, syncDirectorySpace 
 import { listPages, readPage, syncWiki } from "./wiki/store.ts";
 
 const program = new Command();
-program.name("omem").description("个人记忆与助理：理解材料、带依据地回答、跟进事项、交办 Agent。").version("0.2.0");
+program.name("omem").description("个人记忆与助理：理解材料、带依据地回答、跟进事项、交办 Agent。").version("0.0.1");
 program.option("--home <dir>", "数据目录（默认 ~/.omem，或环境变量 OMEM_HOME）");
 
 const home = () => (program.opts().home ? resolve(program.opts().home) : omemHome());

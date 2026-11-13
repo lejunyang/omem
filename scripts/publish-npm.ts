@@ -2,9 +2,9 @@
  * Publish the npm packages whose version is not on npm yet (.github/workflows/publish.yml runs this
  * when a pushed commit says [publish]; it needs the build first):
  *
- *   omem-assistant    the app (the repository root)
- *   omem-plugin-sdk   packages/plugin-sdk
- *   omem-cli          packages/cli (the light client for a remote omem: one bundled file)
+ *   @omem-ai/app    the app (the repository root)
+ *   @omem-ai/plugin-sdk   packages/plugin-sdk
+ *   @omem-ai/cli          packages/cli (the light client for a remote omem: one bundled file)
  *
  * A package whose version is already published is skipped, so bumping only one of them publishes
  * only that one. `--dry-run` shows what would be published without publishing.

@@ -96,18 +96,18 @@ osdk install && osdk deps --frozen
 osdk run dev          # API :4317 + 网页 :5173，数据在 ./.omem
 
 # 或直接用 npm/pnpm（pnpm workspace：应用、插件 SDK、VS Code 插件、Chrome 扩展、文档站共用一份锁文件）
-pnpm install                      # 只要应用：pnpm install --filter omem-assistant
+pnpm install                      # 只要应用：pnpm install --filter @omem-ai/app
 pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 npm install -g .                  # 可选：把命令行 omem 链接到这个仓库
 
-# 或从 npm 装发布版（包名 omem-assistant，命令是 omem）
-npm install -g omem-assistant
+# 或从 npm 装发布版（包名 @omem-ai/app，命令是 omem）
+npm install -g @omem-ai/app
 
 # 只用别人（或常驻服务器）的 omem：轻量命令行，单文件、无依赖，命令也是 omem
-npm install -g omem-cli
+npm install -g @omem-ai/cli
 ```
 
-`omem-cli`（`packages/cli`）只有连远程 omem 的命令：`omem login`、`omem tool`、`omem mcp`、`omem open`、`omem remote`，不含服务端、本机的库和 `--peer`。两个包装一个就行，完整版也有这些命令。
+`@omem-ai/cli`（`packages/cli`）只有连远程 omem 的命令：`omem login`、`omem tool`、`omem mcp`、`omem open`、`omem remote`，不含服务端、本机的库和 `--peer`。两个包装一个就行，完整版也有这些命令。
 
 第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型与重排模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、桌面与浏览器控制（可选）、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
 
@@ -292,7 +292,7 @@ omem tool --peer <设备> [工具名] [参数…]      # 在设备（常驻服�
 omem mcp --peer <设备>                      # 同上，作为 stdio MCP 服务给本机的 Claude Code、Codex 用
 omem login https://omem.example.com         # 用别人（或常驻服务器）的 omem：浏览器里登录并确认，拿到只属于你的令牌，记成一个远程地址
 omem mcp --remote <名字> / --url <地址>       # 以你的身份连远程 omem 的工具（你能看的空间、不含对外发消息与交办）；omem tool 同样；凭据也可以是 OMEM_TOKEN 或 OMEM_AUTH_CMD（输出 JWT 等凭据的命令，要有对应的鉴权插件）
-omem remote add|list|default|rm             # 记下的远程地址（~/.omem/client.json，不配对）；omem open [页面] 用命令行的身份在浏览器里登录远程 omem；只做这些的话装轻量的 omem-cli
+omem remote add|list|default|rm             # 记下的远程地址（~/.omem/client.json，不配对）；omem open [页面] 用命令行的身份在浏览器里登录远程 omem；只做这些的话装轻量的 @omem-ai/cli
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
@@ -428,7 +428,7 @@ omem 默认只服务你自己。要给同事用，在设置 → 成员里打开�
 - 可以设一个主要登录方（比如飞书）：之后只能用它登录，其他方式只在账号页绑定；以前用别的方式建的账号，下次登录要先绑定它。企业外的人用不了飞书登录，可以在他的账号上允许其他登录方式，或者给他令牌。
 - 私聊机器人发 `/login`，会收到一个 5 分钟内有效、只能用一次的网页登录链接。
 - 可以按邮箱先建好账号（成员页“按邮箱添加成员”，或 `omem user add 小周 --email zhou@example.com --space team`），分好空间：之后谁用这个邮箱来——本企业的飞书账号登录（登录时读飞书的企业邮箱和邮箱，企业邮箱优先），或从命令行带着鉴权插件认得的凭据——就直接对应到这个账号，不用再批准。邮箱对应到多个账号时不自动对应，通知你处理。
-- 同事在自己的电脑上用 Claude Code、Codex 等时，运行 `omem login <网页地址>`，在浏览器里登录并确认，再 `omem mcp --url <网页地址>`（他们只需 `npm i -g omem-cli`，不用装完整的 omem）：工具以他的身份、在他能看的空间里执行，每个会话在运行页记成他的一条运行。也可以不走浏览器，给 `OMEM_AUTH_CMD` 一条输出凭据（比如组织内部登录体系的 JWT）的命令，由数据目录里的鉴权插件（`api.authenticator`）验证并认人；内部系统怎么验证写在插件里，不进仓库。账号页“命令行与 MCP”能看到和撤销这些令牌；没有 `tools.external` 权限的角色用不了（内置的管理员、成员、访客都有）。设计见 [docs/v2/remote-clients.md](docs/v2/remote-clients.md)。
+- 同事在自己的电脑上用 Claude Code、Codex 等时，运行 `omem login <网页地址>`，在浏览器里登录并确认，再 `omem mcp --url <网页地址>`（他们只需 `npm i -g @omem-ai/cli`，不用装完整的 omem）：工具以他的身份、在他能看的空间里执行，每个会话在运行页记成他的一条运行。也可以不走浏览器，给 `OMEM_AUTH_CMD` 一条输出凭据（比如组织内部登录体系的 JWT）的命令，由数据目录里的鉴权插件（`api.authenticator`）验证并认人；内部系统怎么验证写在插件里，不进仓库。账号页“命令行与 MCP”能看到和撤销这些令牌；没有 `tools.external` 权限的角色用不了（内置的管理员、成员、访客都有）。设计见 [docs/v2/remote-clients.md](docs/v2/remote-clients.md)。
 - 每个人在“账号”页看自己的登录方式和登录过的设备，可以让某台设备退出；你在成员页能停用账号、让他所有设备退出、调整他能读写的空间。
 
 也可以在命令行登记：
@@ -548,8 +548,8 @@ src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
 plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/；connect：Nango 目录与国内平台的连接器、只读请求与存原件的工具、采集档案；figma、notion、github、google、slack、atlassian、linear：平台包，读取器与定时同步）
-packages/cli          轻量命令行（omem-cli）：只有连远程 omem 的命令，入口 src/main.ts 复用应用里的 remote-client.ts、remote-commands.ts、mcp-server.ts，打包成一个无依赖的文件
-packages/plugin-sdk   插件 SDK（omem-plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
+packages/cli          轻量命令行（@omem-ai/cli）：只有连远程 omem 的命令，入口 src/main.ts 复用应用里的 remote-client.ts、remote-commands.ts、mcp-server.ts，打包成一个无依赖的文件
+packages/plugin-sdk   插件 SDK（@omem-ai/plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
 skills/library  内置技能（如 lark-messaging、lark-docs、lark-suite、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
@@ -563,7 +563,7 @@ web/          Vue 3 网页
 
 角色说明在 `roles/*.md`，改它们就能调整 Agent 的工作方式，不需要改代码。
 
-**发布到 npm**：三个包，`omem-assistant`（应用，仓库根目录）、`omem-plugin-sdk`（`packages/plugin-sdk`）和 `omem-cli`（`packages/cli`）。改好 `package.json` 的 `version`，提交信息里写 `[publish]`，推到 main 后 `.github/workflows/publish.yml` 构建并发布版本号还没发过的那几个，带 provenance；也可以在 Actions 页手动运行。本地看会发出什么：`node scripts/publish-npm.ts --dry-run`（先 `pnpm run build`、`pnpm --filter omem-plugin-sdk run build` 和 `pnpm --filter omem-cli run build`）。VS Code 插件和文档站不发 npm。
+**发布到 npm**：三个包，`@omem-ai/app`（应用，仓库根目录）、`@omem-ai/plugin-sdk`（`packages/plugin-sdk`）和 `@omem-ai/cli`（`packages/cli`）。改好 `package.json` 的 `version`，提交信息里写 `[publish]`，推到 main 后 `.github/workflows/publish.yml` 构建并发布版本号还没发过的那几个，带 provenance；也可以在 Actions 页手动运行。本地看会发出什么：`node scripts/publish-npm.ts --dry-run`（先 `pnpm run build`、`pnpm --filter @omem-ai/plugin-sdk run build` 和 `pnpm --filter @omem-ai/cli run build`）。VS Code 插件和文档站不发 npm。
 
 ## 当前限制
 

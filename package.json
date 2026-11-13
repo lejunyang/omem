@@ -1,6 +1,6 @@
 {
-  "name": "omem-assistant",
-  "version": "0.2.0",
+  "name": "@omem-ai/app",
+  "version": "0.0.1",
   "description": "Personal memory and assistant: understand materials, find answers with evidence, follow up and delegate work to agents.",
   "license": "Apache-2.0",
   "type": "module",
@@ -84,6 +84,9 @@
     "LICENSE",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/lejunyang/omem.git"

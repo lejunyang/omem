@@ -2,7 +2,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import type { Omem, OmemVoice, VoiceStatus, VoiceTurn } from "omem-plugin-sdk";
+import type { Omem, OmemVoice, VoiceStatus, VoiceTurn } from "@omem-ai/plugin-sdk";
 import Icon from "../../../web/src/components/Icon.vue";
 import { SCORE_LABEL, type SpeakingBlock } from "./types";
 

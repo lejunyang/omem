@@ -1,4 +1,4 @@
-# npm packages (scripts/publish-npm.ts): omem-assistant (the app), omem-plugin-sdk and omem-cli. Runs on a push
+# npm packages (scripts/publish-npm.ts): @omem-ai/app (the app), @omem-ai/plugin-sdk and omem-cli. Runs on a push
 # to main when one of the pushed commits has [publish] in its message, or by hand. Only a package whose
 # version is not on npm yet is published: bump "version" in its package.json in that push.
 #
@@ -35,11 +35,11 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       # Only the published packages, not the docs site or the VS Code extension.
-      - run: pnpm install --frozen-lockfile --filter omem-assistant --filter omem-plugin-sdk --filter omem-cli
+      - run: pnpm install --frozen-lockfile --filter @omem-ai/app --filter @omem-ai/plugin-sdk --filter @omem-ai/cli
       - run: pnpm run typecheck
       - run: pnpm run build
-      - run: pnpm --filter omem-plugin-sdk run build
-      - run: pnpm --filter omem-cli run build
+      - run: pnpm --filter @omem-ai/plugin-sdk run build
+      - run: pnpm --filter @omem-ai/cli run build
       - run: node scripts/publish-npm.ts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

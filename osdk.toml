@@ -78,7 +78,7 @@ family = "docling"
 auto = true
 # The workspace also has the docs site and the VS Code extension; the app needs only its own.
 # confirmModulesPurge=false: without a TTY (remote update, services) pnpm aborts instead of asking.
-run = "pnpm install --frozen-lockfile --filter omem-assistant --config.confirmModulesPurge=false"
+run = "pnpm install --frozen-lockfile --filter @omem-ai/app --config.confirmModulesPurge=false"
 allow_build_from_source = true
 # osdk does not pick a registry for a custom `run`, so this one names it itself: the same variables osdk
 # sets for pnpm, and the same registry as [registries.npm] below (keep the two in step).

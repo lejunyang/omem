@@ -10,7 +10,7 @@ import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { boot } from "../src/main.ts";
 
 /**
- * The light client (packages/cli, npm omem-cli): only the remote modules of the app go into its
+ * The light client (packages/cli, npm @omem-ai/cli): only the remote modules of the app go into its
  * bundle, and its `omem tool` / `omem mcp` work against a real server with a person's own token.
  */
 const root = resolve(import.meta.dirname, "..");
@@ -23,7 +23,7 @@ const run = (args: string[], env: NodeJS.ProcessEnv) =>
     ),
   );
 
-describe("omem-cli", async () => {
+describe("@omem-ai/cli", async () => {
   it("imports nothing of the app but the remote client", () => {
     const allowed = ["src/agents/mcp-server.ts", "src/agents/tool-cli.ts", "src/core/home.ts", "src/remote-client.ts", "src/remote-commands.ts", "packages/cli/src/main.ts"];
     const seen = new Set<string>();

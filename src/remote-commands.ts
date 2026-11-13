@@ -3,7 +3,7 @@ import { cliLogin, normalizeUrl, openBrowser, readClient, remoteApi, resolveRemo
 
 /**
  * The commands for using a remote omem that both CLIs have: the full app (src/cli-main.ts) and the
- * light client (packages/cli, `omem-cli`). Only Node built-ins and remote-client.ts here: the light
+ * light client (packages/cli, `@omem-ai/cli`). Only Node built-ins and remote-client.ts here: the light
  * client bundles this file and must not pull in the server.
  */
 
