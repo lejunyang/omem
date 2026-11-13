@@ -119,6 +119,8 @@ export function profileDir(app: App, name: string, userId: string = OWNER) {
   return userId === OWNER ? join(app.home, "remote", "profiles", name) : join(app.home, "remote", "profiles", `@${userId}`, name);
 }
 
+export const browserWindowAvailable = () => process.platform !== "linux" || !!process.env.DISPLAY;
+
 const BROWSERS = ["chrome", "edge", "brave"] as const;
 const BROWSER_NAMES: Record<string, string> = { chrome: "Chrome", edge: "Edge", brave: "Brave" };
 
@@ -143,7 +145,13 @@ export async function browserProfiles() {
  * the browser using that profile must be closed first (`closeRunning` closes it).
  */
 export async function openBrowser(app: App, opts: { url?: string; browser?: string; profile?: string; copyFrom?: { browser: string; id: string }; closeRunning?: boolean; visible?: boolean; viewer?: string[]; userId: string }) {
+  if (opts.visible && !browserWindowAvailable()) throw new HttpError(409, "后台服务没有连接到 X11 桌面。请取消显示电脑窗口，或从桌面终端重启 omem 服务。");
   if (opts.url && !/^https?:\/\//.test(opts.url)) throw new HttpError(400, "网址要以 http:// 或 https:// 开头");
+  if (opts.profile && opts.closeRunning) {
+    for (const session of [...live.values()]) {
+      if (session.userId === opts.userId && session.browser?.profile === opts.profile) await closeSession(app, session.id);
+    }
+  }
   const mcp = await new AadMcp(["--allow-input", ...(opts.copyFrom ? ["--allow-profile-copy"] : [])]).start();
   try {
     const args: Record<string, unknown> = { headless: !opts.visible, ...(opts.url ? { url: opts.url } : {}) };
@@ -154,8 +162,8 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
     }
     if (opts.copyFrom) {
       args.copy_profile = opts.copyFrom.id;
-      if (opts.closeRunning) args.close_running = true;
     }
+    if (opts.closeRunning) args.close_running = true;
     // The browser asked for (the copied profile's), else the first one this machine has.
     let opened: any = null;
     let failure: Error | null = null;
@@ -165,10 +173,15 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
         break;
       } catch (e) {
         failure = e as Error;
+        // Trying another browser with the same directory after a startup error
+        // can both hide the actual error and leave a second stale lock.
+        if (!/executable not found|not installed|no .+ executable/i.test(failure.message)) break;
       }
     }
-    if (!opened && opts.copyFrom && !opts.closeRunning && /in use|running|lock/i.test(failure?.message ?? ""))
-      throw new HttpError(409, `${BROWSER_NAMES[opts.copyFrom.browser]} 正开着这份资料，复制不了登录。关掉它再试，或勾选“先关掉本机正在运行的 ${BROWSER_NAMES[opts.copyFrom.browser]}”。`);
+    if (!opened && opts.copyFrom && !opts.closeRunning && /occupied by browser PID|profile is in use by a running browser/i.test(failure?.message ?? "")) {
+      const pids = /PID(?:\(s\))?\s+([\d, ]+)/.exec(failure?.message ?? "")?.[1]?.trim();
+      throw new HttpError(409, `${BROWSER_NAMES[opts.copyFrom.browser]} 正开着这份资料${pids ? `（PID ${pids}）` : ""}，复制不了登录。关掉它再试，或勾选“先关闭占用这份资料的浏览器”。`);
+    }
     if (!opened) throw failure ?? new HttpError(502, "没能打开浏览器");
     const source = ["--browser-port", String(opened.port), "--page", String(opened.page_id)];
     const assist = await startAssist([...source, ...(opts.viewer ?? [])]);

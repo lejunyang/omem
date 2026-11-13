@@ -36,6 +36,7 @@ describe("remote operation", () => {
     delete process.env.FAKE_AAD_LOG;
     delete process.env.FAKE_AAD_NO_CHROME;
     delete process.env.FAKE_AAD_CLOSE_MS;
+    delete process.env.FAKE_AAD_START_ERROR;
   });
   const api = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const r = await fetch(app.baseUrl + path, { method, headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual" });
@@ -195,6 +196,7 @@ describe("remote operation", () => {
     const refused = await api("POST", "/api/remote/sessions", { kind: "browser", copyFrom: { browser: "edge", id: "Default" } });
     expect(refused.status).toBe(409);
     expect(refused.body.error).toMatch(/Edge 正开着这份资料/);
+    expect(refused.body.error).toContain("PID 1234");
     const s = (await api("POST", "/api/remote/sessions", { kind: "browser", copyFrom: { browser: "edge", id: "Default" }, closeRunning: true })).body;
     expect(s.browser).toMatchObject({ name: "edge", profile: "Edge · Default" });
     const open = calls().filter((c) => c[2] === "browser_open").at(-1)!;
@@ -218,6 +220,49 @@ describe("remote operation", () => {
     expect(reopened.status).toBe(200);
     expect((await api("DELETE", `/api/remote/sessions/${reopened.body.id}`)).status).toBe(200);
   }, 10_000);
+
+  it("closes the existing session for a persistent profile and passes close_running", async () => {
+    const first = await api("POST", "/api/remote/sessions", { kind: "browser", profile: "replaceable" });
+    expect(first.status).toBe(200);
+    const next = await api("POST", "/api/remote/sessions", { kind: "browser", profile: "replaceable", closeRunning: true });
+    expect(next.status).toBe(200);
+    expect(calls().filter((c) => c[2] === "browser_open").at(-1)![3]).toMatchObject({ close_running: true });
+    expect((await api("GET", "/api/remote")).body.sessions.some((s: { id: string }) => s.id === first.body.id)).toBe(false);
+    expect((await api("DELETE", `/api/remote/sessions/${next.body.id}`)).status).toBe(200);
+  });
+
+  it("preserves the startup failure instead of trying other browsers on the same profile", async () => {
+    const before = calls().filter((c) => c[2] === "browser_open").length;
+    process.env.FAKE_AAD_START_ERROR = "browser exited before CDP startup: Missing X server";
+    let result;
+    try {
+      result = await api("POST", "/api/remote/sessions", { kind: "browser", profile: "failed" });
+    } finally {
+      delete process.env.FAKE_AAD_START_ERROR;
+    }
+    expect(result.status).toBe(502);
+    expect(result.body.error).toContain("Missing X server");
+    expect(calls().filter((c) => c[2] === "browser_open")).toHaveLength(before + 1);
+  });
+
+  it.runIf(process.platform === "linux")("rejects window mode without a display before closing an existing profile", async () => {
+    const opened = await api("POST", "/api/remote/sessions", { kind: "browser", profile: "no-display" });
+    expect(opened.status).toBe(200);
+    const display = process.env.DISPLAY;
+    let refused;
+    try {
+      delete process.env.DISPLAY;
+      expect((await api("GET", "/api/remote")).body.windowAvailable).toBe(false);
+      refused = await api("POST", "/api/remote/sessions", { kind: "browser", profile: "no-display", closeRunning: true, visible: true });
+    } finally {
+      if (display === undefined) delete process.env.DISPLAY;
+      else process.env.DISPLAY = display;
+    }
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toContain("X11");
+    expect((await api("GET", "/api/remote")).body.sessions.some((s: { id: string }) => s.id === opened.body.id)).toBe(true);
+    expect((await api("DELETE", `/api/remote/sessions/${opened.body.id}`)).status).toBe(200);
+  });
 
   it("sends the picture as each user set it, and gives an open session a viewer with new settings", async () => {
     expect((await api("GET", "/api/remote/settings")).body).toMatchObject({ settings: { format: "auto", quality: 70, fps: 0, maxWidth: 1600, cursor: true, clipboard: true, browser: "" }, video: null });

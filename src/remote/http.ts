@@ -12,7 +12,7 @@ import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
-import { assistOf, browserProfiles, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, replayRecording, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
+import { assistOf, browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, replayRecording, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
 import { cachedProbe, probeRunning, probeVideo, readSettings, remoteSettingsSchema, saveSettings, viewerArgs } from "./settings.ts";
 
 /**
@@ -156,7 +156,7 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
   // Whether the page is offered at all: aad installed on this machine.
   server.get("/api/remote", async (req) => {
     const status = desktopControl.status();
-    return { available: status.installed, version: status.version, sessions: status.installed ? listSessions(who(req)) : [], profiles: profiles(app, who(req)) };
+    return { available: status.installed, version: status.version, sessions: status.installed ? listSessions(who(req)) : [], profiles: profiles(app, who(req)), windowAvailable: browserWindowAvailable() };
   });
   server.get("/api/remote/screens", async () => screens());
   // This machine's own browser profiles, whose logins a session can start from a copy of.

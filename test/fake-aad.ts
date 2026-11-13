@@ -51,7 +51,8 @@ function mcp() {
     browser_profiles: (a) => (a.browser === "edge" ? { browser: "edge", profiles: [{ id: "Default", name: "工作", path: "x" }] } : (() => { throw new Error(`no ${a.browser} user data`); })()),
     browser_open: (a) => {
       if (a.browser === "chrome" && process.env.FAKE_AAD_NO_CHROME) throw new Error("chrome is not installed");
-      if (a.copy_profile && !a.close_running) throw new Error("the profile is in use by a running browser");
+      if (process.env.FAKE_AAD_START_ERROR) throw new Error(process.env.FAKE_AAD_START_ERROR);
+      if (a.copy_profile && !a.close_running) throw new Error("the profile is in use by a running browser (PID 1234)");
       if (a.profile_dir) {
         const lock = join(a.profile_dir, ".aad-recording.lock");
         writeFileSync(lock, "", { flag: "wx" });

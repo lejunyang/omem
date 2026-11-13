@@ -111,7 +111,7 @@ export async function manageService(home: string, action: ServiceAction) {
                 merge_logs: true,
                 time: true,
                 // Agents, uv, llama-server… are found through the PATH of whoever started the service.
-                env: { NODE_ENV: "production", OMEM_HOME: home, PATH: process.env.PATH ?? "" },
+                env: { NODE_ENV: "production", OMEM_HOME: home, PATH: process.env.PATH ?? "", ...serviceEnvironment(process.env) },
               },
             ],
           },
@@ -154,4 +154,14 @@ export function formatService(s: Awaited<ReturnType<typeof manageService>>) {
     `日志：${s.logs.join("  ")}`,
     s.autostart ? `开机自启：已设置（${s.autostart}）` : "开机自启：未设置（omem service enable）；电脑重启后需要 omem service start。",
   ].join("\n");
+}
+
+/** Preserve the desktop session explicitly: an existing PM2 daemon may have
+ * started before login and otherwise keep its old, display-less environment.
+ * Explicit OMEM_TOOL_* programs must also reach a service started through it. */
+export function serviceEnvironment(env: NodeJS.ProcessEnv) {
+  return {
+    ...Object.fromEntries(["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"].map((key) => [key, env[key] ?? ""])),
+    ...Object.fromEntries(Object.entries(env).filter(([key, value]) => /^OMEM_TOOL_[A-Z0-9_]+$/.test(key) && value)),
+  };
 }

@@ -37,6 +37,7 @@ const profile = ref("");
 const browserProfiles = ref<BrowserProfile[] | null>(null);
 const closeRunning = ref(false);
 const visible = ref(false);
+const windowAvailable = ref(true);
 const area = ref("all");
 const screens = ref<Screens | null>(null);
 
@@ -73,11 +74,13 @@ function setConversation(id: string | null) {
 
 async function load() {
   try {
-    const r = await get<{ available: boolean; version: string | null; sessions: Session[]; profiles: string[] }>("/api/remote");
+    const r = await get<{ available: boolean; version: string | null; sessions: Session[]; profiles: string[]; windowAvailable: boolean }>("/api/remote");
     available.value = r.available;
     version.value = r.version;
     sessions.value = r.sessions;
     profiles.value = r.profiles;
+    windowAvailable.value = r.windowAvailable;
+    if (!r.windowAvailable) visible.value = false;
     if (r.available) recordings.value = await get<Recording[]>("/api/remote/recordings");
     // Back on the page with a session still open: show it again (the viewer cookie comes with it).
     if (!active.value && r.sessions.length) await show(r.sessions[0]);
@@ -213,7 +216,7 @@ async function open() {
   try {
     const shared = area.value.startsWith("w:") ? screens.value?.windows.find((w) => w.window === area.value.slice(2)) : undefined;
     const body = kind.value === "browser"
-      ? { kind: "browser", url: url.value.trim() || undefined, ...(copying.value ? { copyFrom: copying.value, closeRunning: closeRunning.value } : { profile: profile.value || undefined }), visible: visible.value }
+      ? { kind: "browser", url: url.value.trim() || undefined, ...(copying.value ? { copyFrom: copying.value } : { profile: profile.value || undefined }), closeRunning: closeRunning.value, visible: visible.value }
       : { kind: "desktop", ...(area.value.startsWith("m:") ? { monitor: Number(area.value.slice(2)) } : shared ? { window: shared.window, title: shared.title } : {}) };
     const s = await post<Session>("/api/remote/sessions", body);
     sessions.value = [...sessions.value, s];
@@ -402,10 +405,11 @@ const counts = (r: Recording) => {
               <span v-if="copying" class="hint">把这份资料的登录复制到一份临时资料里打开，你平时用的资料不会被改动，关掉会话就删掉。个别网站的登录可能带不过来。</span>
               <span v-else-if="!profile" class="hint">什么都没登录，关掉就清空。要保留登录，新建一份长期资料，或复制这台机器上浏览器的登录。</span>
             </div>
-            <UiCheckbox v-if="copying" v-model="closeRunning">如果这台机器上的 {{ BROWSER_NAMES[copying.browser] }} 正开着，先关掉它（会关掉它的所有窗口）</UiCheckbox>
+            <UiCheckbox v-if="profile" v-model="closeRunning" aria-label="先关闭占用这份资料的浏览器">先关闭占用这份资料的浏览器（会关闭它的所有窗口，并清理已退出进程留下的锁）</UiCheckbox>
             <div class="field">
-              <UiCheckbox v-model="visible">在运行 omem 的电脑桌面上也显示浏览器窗口</UiCheckbox>
-              <span class="hint">默认只在当前远程画面里看和操作。勾选后，那台电脑前的人也能直接看和操作这个窗口。</span>
+              <UiCheckbox v-model="visible" :disabled="!windowAvailable" aria-label="在运行 omem 的电脑桌面上也显示浏览器窗口">在运行 omem 的电脑桌面上也显示浏览器窗口</UiCheckbox>
+              <span v-if="windowAvailable" class="hint">默认只在当前远程画面里看和操作。勾选后，那台电脑前的人也能直接看和操作这个窗口。</span>
+              <span v-else class="hint">后台服务没有连接到桌面，浏览器仍可在远程画面里使用。要在电脑上也显示窗口，请从那台电脑的桌面终端重启 omem 服务。</span>
             </div>
           </template>
           <div v-else class="field">
