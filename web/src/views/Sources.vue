@@ -11,6 +11,7 @@ import VirtualList from "../components/VirtualList.vue";
 import SourceTree from "../components/SourceTree.vue";
 import SourceReview from "../components/SourceReview.vue";
 import { readsAsDocument, shouldLoadMore } from "../lib/sources";
+import { citedDocumentParts } from "../lib/cited-document";
 import UiSelect from "../components/UiSelect.vue";
 import Icon from "../components/Icon.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
@@ -202,7 +203,8 @@ async function loadDetail(full = wantAll.value) {
     archive.value = history;
     moveReason.value = "";
     // Chats open as a chat even from a citation; the highlighted message is scrolled to.
-    raw.value = d.source.kind === "code" || (!!hl.value && d.source.kind !== "chat");
+    // A document reads laid out with the cited part set off (docParts), like the citation drawer.
+    raw.value = d.source.kind === "code" || (!!hl.value && d.source.kind !== "chat" && !readsAsDocument(d.source));
   } finally {
     if (seq === detailSeq) detailLoading.value = false;
   }
@@ -312,6 +314,10 @@ async function backfill() {
   }
 }
 const isMarkdown = computed(() => !!detail.value && readsAsDocument(detail.value.source));
+/** A cited document: the text before, the cited blocks (highlighted, scrolled to) and after. */
+const docParts = computed(() => (detail.value && hl.value ? citedDocumentParts(detail.value.text, detail.value.lineStart, hl.value.from, hl.value.to) : null));
+const citedEl = ref<HTMLElement>();
+watch(citedEl, (el) => el?.scrollIntoView({ block: "center" }));
 const outline = computed(() => {
   if (!detail.value) return [];
   const o = detail.value.outline;
@@ -478,6 +484,11 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
             </div>
             <ChatView v-if="isChat && !raw" :source-id="detail.source.id" :text="detail.text" :start="detail.lineStart" :space="detail.source.spaceId" :from="hl?.from" :to="hl?.to" />
             <CodeView v-else-if="raw || !isMarkdown" :text="detail.text" :start="detail.lineStart" :path="detail.source.uri" :from="hl?.from" :to="hl?.to" :wrap="isMarkdown || isChat" />
+            <div v-else-if="docParts?.cited.trim()" class="card pad doc">
+              <Markdown v-if="docParts.before.trim()" :source="docParts.before" :space="detail.source.spaceId" />
+              <div ref="citedEl" class="cited-lines"><Markdown :source="docParts.cited" :space="detail.source.spaceId" /></div>
+              <Markdown v-if="docParts.after.trim()" :source="docParts.after" :space="detail.source.spaceId" />
+            </div>
             <div v-else class="card pad doc"><Markdown :source="detail.text" :space="detail.source.spaceId" /></div>
           </div>
           <aside v-if="outline.length" class="outline">

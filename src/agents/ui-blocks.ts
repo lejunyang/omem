@@ -26,15 +26,38 @@ const table = z.object({
 const chart = z.object({
   type: z.literal("chart"),
   title: text(80),
-  kind: z.enum(["bar", "line", "pie"]).default("bar"),
-  labels: z.array(z.string().max(40)).min(1).max(60).describe("横轴标签（饼图是各块的名字）"),
+  kind: z
+    .enum(["bar", "line", "area", "hbar", "pie"])
+    .default("bar")
+    .describe("bar 柱状（对比）；line 折线（趋势）；area 面积（趋势里看量）；hbar 横向条形（排行、标签长）；pie 饼图（构成，最多 8 块）"),
+  labels: z.array(z.string().max(40)).min(1).max(60).describe("横轴标签（饼图是各块的名字；hbar 是每一行的名字，按要展示的顺序）"),
   series: z.array(z.object({ name: z.string().max(40), values: z.array(z.number()) })).min(1).max(4).describe("饼图只用第一组"),
+  stack: z.boolean().optional().describe("几组数据堆叠起来（bar / hbar / area），看合计和构成"),
+  goal: z.number().optional().describe("目标线的值（bar / hbar / line / area）"),
   unit: z.string().max(10).optional(),
-  note: z.string().max(500).optional(),
+  note: z.string().max(500).optional().describe("口径、时间范围、来源"),
+});
+const metricItem = z.object({
+  label: text(40),
+  value: z.union([z.string().max(40), z.number()]),
+  unit: z.string().max(10).optional(),
+  change: z.string().max(40).optional().describe("变化，如 +12% / 比上周少 3"),
+  trend: z.enum(["up", "down", "flat"]).optional().describe("变化的方向；不给时按 change 开头的 + / - / ↑ / ↓ 判断"),
+  good: z.enum(["up", "down", "none"]).optional().describe("哪个方向是好事：up（默认，涨是好事）、down（成本、故障、耗时这类越少越好）、none（不分好坏）"),
+  note: z.string().max(40).optional().describe("对比基准或口径，如 较上周、近 7 天"),
+  spark: z.array(z.number()).min(2).max(60).optional().describe("这项指标最近的走势（按时间先后），网页上画成小折线"),
 });
 const metric = z.object({
   type: z.literal("metric"),
-  items: z.array(z.object({ label: text(40), value: z.union([z.string().max(40), z.number()]), unit: z.string().max(10).optional(), change: z.string().max(40).optional().describe("变化，如 +12% / 比上周少 3") })).min(1).max(8),
+  title: z.string().max(80).optional(),
+  items: z.array(metricItem).min(1).max(8),
+  note: z.string().max(500).optional().describe("口径、时间范围、来源"),
+});
+const callout = z.object({
+  type: z.literal("callout"),
+  tone: z.enum(["info", "success", "warning", "danger", "neutral"]).default("info").describe("info 结论 / 说明；success 达成、通过；warning 需要关注；danger 故障、失败、严重风险；neutral 中性"),
+  title: z.string().max(80).optional().describe("一句话结论"),
+  text: text(2000).describe("Markdown：依据、影响或建议的下一步，短一些"),
 });
 const card = z.object({
   id,
@@ -54,7 +77,7 @@ const page = z.object({
   title: z.string().max(80).optional().describe("（宿主填）"),
 });
 
-export const viewComponent = z.discriminatedUnion("type", [markdown, heading, table, chart, metric, compare, timeline, page]);
+export const viewComponent = z.discriminatedUnion("type", [markdown, heading, callout, metric, table, chart, compare, timeline, page]);
 export type ViewComponent = z.infer<typeof viewComponent>;
 export const viewSchema = z.array(viewComponent).min(1).max(40);
 
@@ -127,6 +150,8 @@ export function checkView(view: ViewComponent[]) {
   for (const c of view) {
     if (c.type === "chart" && c.kind !== "pie") for (const s of c.series) if (s.values.length !== c.labels.length) throw new HttpError(400, `图表“${c.title}”的“${s.name}”有 ${s.values.length} 个值，横轴有 ${c.labels.length} 个标签，要一样多`);
     if (c.type === "chart" && c.kind === "pie" && c.series[0].values.length !== c.labels.length) throw new HttpError(400, `饼图“${c.title}”的值和名字要一样多`);
+    if (c.type === "chart" && c.kind === "pie" && c.labels.length > 8) throw new HttpError(400, `饼图“${c.title}”有 ${c.labels.length} 块，最多 8 块：小的并成“其他”，或改用 hbar`);
+    if (c.type === "chart" && c.kind === "pie" && c.series[0].values.some((v) => v < 0)) throw new HttpError(400, `饼图“${c.title}”有负数，构成不能是负的：改用 bar`);
     if (c.type === "compare") {
       const ids = new Set(c.items.map((i) => i.id));
       if (ids.size !== c.items.length) throw new HttpError(400, "方案对比里有重复的 id");
@@ -292,6 +317,37 @@ export function summarizeAnswers(fields: UiField[], values: Record<string, Value
 
 const cell = (v: unknown) => (v === null || v === undefined ? "" : String(v).replace(/\|/g, "\\|").replace(/\n/g, " "));
 
+type MetricItem = z.infer<typeof metricItem>;
+
+/** Which way a metric moved: as given, else read off the start of its change (+12%, ↓3, -0.4pct). */
+export function metricTrend(m: Pick<MetricItem, "trend" | "change">): "up" | "down" | "flat" | null {
+  if (m.trend) return m.trend;
+  const c = m.change?.trim();
+  if (!c) return null;
+  if (/^[+＋↑▲]/.test(c)) return /^[+＋]\s*0+(\.0+)?(?![\d.])/.test(c) ? "flat" : "up";
+  if (/^[-−–↓▼]/.test(c)) return /^[-−–]\s*0+(\.0+)?(?![\d.])/.test(c) ? "flat" : "down";
+  if (/^(持平|不变|0+(\.0+)?%?$)/.test(c)) return "flat";
+  return null;
+}
+
+/** Whether that move is good news (green), bad news (red) or neither (grey). */
+export function metricTone(m: Pick<MetricItem, "trend" | "change" | "good">): "good" | "bad" | "neutral" | null {
+  const t = metricTrend(m);
+  if (!t) return null;
+  if (t === "flat" || m.good === "none") return "neutral";
+  return t === (m.good ?? "up") ? "good" : "bad";
+}
+
+const ARROW = { up: "↑", down: "↓", flat: "→" } as const;
+/** A change with its arrow (unless it already starts with one), so the direction never rests on colour alone. */
+export function changeText(m: Pick<MetricItem, "trend" | "change">) {
+  const t = metricTrend(m);
+  if (!m.change) return "";
+  return t && !/^[↑↓→▲▼]/.test(m.change.trim()) ? `${ARROW[t]} ${m.change.trim()}` : m.change.trim();
+}
+
+const CALLOUT_LABEL = { info: "", success: "✓ ", warning: "⚠ ", danger: "⚠ ", neutral: "" } as const;
+
 /** A view as Markdown, for channels that cannot draw it (Feishu text, notifications). */
 export function viewText(view: ViewComponent[]): string {
   const out: string[] = [];
@@ -303,16 +359,19 @@ export function viewText(view: ViewComponent[]): string {
       case "heading":
         out.push(`**${c.text}**`);
         break;
+      case "callout":
+        out.push([c.title ? `**${CALLOUT_LABEL[c.tone]}${c.title}**` : "", c.title ? c.text : `${CALLOUT_LABEL[c.tone]}${c.text}`].filter(Boolean).join("\n"));
+        break;
       case "table":
-        out.push([c.title ? `**${c.title}**` : "", `| ${c.columns.map(cell).join(" | ")} |`, `| ${c.columns.map(() => "---").join(" | ")} |`, ...c.rows.slice(0, 30).map((r) => `| ${c.columns.map((_, i) => cell(r[i])).join(" | ")} |`), c.rows.length > 30 ? `（共 ${c.rows.length} 行，只列前 30 行）` : "", c.note ?? ""].filter(Boolean).join("\n"));
+        out.push([c.title ? `**${c.title}**` : "", `| ${c.columns.map(cell).join(" | ")} |`, `| ${c.columns.map(() => ":---").join(" | ")} |`, ...c.rows.slice(0, 30).map((r) => `| ${c.columns.map((_, i) => cell(r[i])).join(" | ")} |`), c.rows.length > 30 ? `（共 ${c.rows.length} 行，只列前 30 行）` : "", c.note ?? ""].filter(Boolean).join("\n"));
         break;
       case "chart": {
         const series = c.kind === "pie" ? c.series.slice(0, 1) : c.series;
-        out.push([`**${c.title}**${c.unit ? `（${c.unit}）` : ""}`, ...c.labels.map((l, i) => `- ${l}：${series.map((s) => `${series.length > 1 ? `${s.name} ` : ""}${s.values[i]}`).join("，")}`), c.note ?? ""].filter(Boolean).join("\n"));
+        out.push([`**${c.title}**${c.unit ? `（${c.unit}）` : ""}`, ...c.labels.map((l, i) => `- ${l}：${series.map((s) => `${series.length > 1 ? `${s.name} ` : ""}${s.values[i]}`).join("，")}`), c.goal !== undefined && c.kind !== "pie" ? `- 目标：${c.goal}` : "", c.note ?? ""].filter(Boolean).join("\n"));
         break;
       }
       case "metric":
-        out.push(c.items.map((m) => `- ${m.label}：${m.value}${m.unit ?? ""}${m.change ? `（${m.change}）` : ""}`).join("\n"));
+        out.push([c.title ? `**${c.title}**` : "", ...c.items.map((m) => `- ${m.label}：${m.value}${m.unit ?? ""}${m.change ? `（${[m.note, changeText(m)].filter(Boolean).join(" ")}）` : m.note ? `（${m.note}）` : ""}`), c.note ?? ""].filter(Boolean).join("\n"));
         break;
       case "compare":
         out.push([c.title ? `**${c.title}**` : "", ...c.items.map(cardText)].filter(Boolean).join("\n"));

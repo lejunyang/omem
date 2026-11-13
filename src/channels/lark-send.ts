@@ -100,6 +100,8 @@ export type CardSpec = {
   color?: string;
   blocks: CardBlock[];
   wide?: boolean;
+  /** What the chat list and notifications show for the card (the title when not given). */
+  summary?: string;
 };
 
 const plain = (content: string) => ({ tag: "plain_text", content });
@@ -279,7 +281,7 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
   }
   return {
     schema: "2.0",
-    config: { update_multi: true, width_mode: spec.wide ? "fill" : "default" },
+    config: { update_multi: true, width_mode: spec.wide ? "fill" : "default", ...(spec.summary ? { summary: { content: spec.summary } } : {}) },
     ...(spec.title ? { header: { title: plain(spec.title), ...(spec.subtitle ? { subtitle: plain(spec.subtitle) } : {}), template: spec.color ?? "blue" } } : {}),
     body: { elements },
   };

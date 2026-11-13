@@ -492,6 +492,15 @@ input[type="number"].input::-webkit-outer-spin-button {
   font-weight: 550;
 }
 
+/* The cited part of a document read laid out (citation drawer, source page). */
+.cited-lines {
+  background: var(--warn-soft);
+  border-left: 3px solid var(--warn);
+  border-radius: 0 8px 8px 0;
+  padding: 2px 12px;
+  margin: 6px 0;
+}
+
 /* ---------- prose (wiki, answers) ---------- */
 .prose {
   font-size: 15.5px;

@@ -2091,3 +2091,11 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 过程气泡（`RunActivity`）：命令很长时“进行中 · N 步”和转圈被挤成一字一行；标签不换行、不收缩，只让命令那段截断。
 - 录制整理成技能：请求按形态分出噪音（`src/remote/requests.ts`：资源类型、事件批次请求体、监控样子的路径和主机、不变的反复 GET），剩下的按“方法 + 主机 + 路径”合并、写操作在前；`read_recording` 概要列“调用的接口”，`part=requests` 默认不列噪音（`noise=true` 全列），steps 里也不列噪音请求。技能只带 `recording/requests.md`（`save_skill` 的 `recording_requests` 挑接口，不填时是去噪后的全部），不再带 `workflow.yaml` 和 aad 的完整操作说明。原来 `requests.md` 是录制的前 100 个原始请求：常驻服务器上一次 1152 个请求的录制，前 100 个里 63 个埋点、14 个扫码轮询、4 个预检，真正配置接口的请求一个都没进去。`skill-from-recording` 写明录制不是剧本，先从试错里找出真正完成这件事的步骤和接口。
 - Windows 上找 aad：PATH 上只有 osdk 的 `aad.cmd` 垫片时，原来照样返回 `aad`，不经 shell 起进程报 ENOENT，而且这个错误没人接，整个 omem 退出。现在 Windows 上先找 PATH 上的 `aad.exe`，没有就用 osdk 安装目录里的（`exeOnPath`）；aad 起不来时请求返回“aad 没能启动”，`aad mcp` 已退出时后续请求立刻失败，不再等 30 秒超时。
+
+## 2026-11-14：展示组件的版式、引用原件的排版
+
+- 展示组件（`src/agents/ui-blocks.ts`）：新 `callout`（tone、title、text）；`metric` 加分组 `title` / `note`，每项加 `trend`、`good`、`note`、`spark`（`metricTrend` / `metricTone` 按 change 开头的符号判断方向、按 good 定好坏）；`chart` 加 `area`、`hbar`、`stack`、`goal`，饼图最多 8 块、不能有负数。
+- 飞书卡片（`src/channels/lark-ui.ts`）：指标画成等宽分栏里的灰底块，结论是浅灰底的 `interactive_container`，只有图标库图标按语气着色，方案对比是并排的列；表格有表头样式、数字格式、宽表冻结首列；图表显式写 8 个系列色、细柱圆角、平滑折线、`markLine` 目标线，饼图把占比写进名字；卡片头只有结论是需要关注或故障时才是橙、红色，`config.summary` 写标题加结论（`buildCard` 的 `summary`）。
+- 网页（`packages/plugin-sdk/blocks.ts`）：图表重画——整数刻度、一个轴一种写法、平滑折线和淡色面积、柱状整格高亮、横向条形、圆环饼图带合计、目标线、悬停提示列出所有系列、方向键逐个看；指标卡按个数排成整齐的几行，变化只给文字着色，带走势小折线；结论块是浅灰底、只有图标着色。系列色换成一套 8 个颜色（靛蓝、青、珊瑚红、琥珀……，从六套候选里选定），浅色、深色各一套、色相一致，按 omem 的面板做过色觉区分和对比度校验。`UiView.vue` 把组件里的 Markdown 交给 omem 自己的 Markdown 组件画。
+- Agent 说明：`roles/_common.md` 和 `skills/omem/references/owner.md` 写了报告的顺序（先结论、再指标、再图表和明细）和图表类型怎么选；`show` 工具的说明同步。
+- 原件页：带引用行号打开的文档（飞书文档、Markdown）不再退回原文行号，按排版显示并把引用的段落标出来、滚到中间；引用落在飞书的提示块或分栏里时整块标出，两边不留半个容器（`web/src/lib/cited-document.ts`，引用抽屉同样受益）。

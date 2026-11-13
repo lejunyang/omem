@@ -307,13 +307,6 @@ header {
   max-width: 100%;
   height: auto;
 }
-.cited-lines {
-  background: var(--warn-soft);
-  border-left: 3px solid var(--warn);
-  border-radius: 0 8px 8px 0;
-  padding: 2px 12px;
-  margin: 6px 0;
-}
 .actions {
   margin-top: 4px;
 }

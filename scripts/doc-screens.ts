@@ -513,7 +513,8 @@ const rollout = createThread(app, { channel: "web", spaceId: "shop", title: "退
 addMessage(app, rollout.id, "user", "退款改造下周上线，比较一下两种上线方式，方案和规则让我一次定完。");
 addMessage(app, rollout.id, "assistant", "按过去两周的退款数据比了一下，灰度影响的订单少得多。方式和三条退款规则请在下面一次定完。", "r_rollout_demo");
 run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,components,created_at) values(?,?,?,?,?,?,?)", "uv_rollout_demo", "r_rollout_demo", rollout.id, "owner", "过去两周的退款", JSON.stringify([
-  { type: "metric", items: [{ label: "退款单", value: 482, change: "比上两周 +12%" }, { label: "部分退款", value: 97, change: "占 20%" }, { label: "人工介入", value: 31, unit: " 单" }] },
+  { type: "callout", tone: "info", title: "灰度 10% 影响的订单只有一次上线的十分之一", text: "回滚 5 分钟内完成，也不用客服提前准备话术。" },
+  { type: "metric", items: [{ label: "退款单", value: 482, unit: "单", change: "+12%", note: "比上两周", spark: [30, 34, 29, 41, 38, 22, 19, 36, 40, 33, 45, 44, 25, 21] }, { label: "部分退款", value: 97, unit: "单", note: "占 20%" }, { label: "人工介入", value: 31, unit: "单", change: "-4", good: "down", note: "比上两周" }] },
   { type: "chart", title: "每天的退款单", kind: "line", labels: ["周一", "周二", "周三", "周四", "周五", "周六", "周日"], series: [{ name: "上周", values: [30, 34, 29, 41, 38, 22, 19] }, { name: "本周", values: [36, 40, 33, 45, 44, 25, 21] }] },
   { type: "table", title: "两种方式", columns: ["方式", "影响订单", "回滚用时（分钟）", "要客服配合"], rows: [["灰度 10%", 48, 5, "否"], ["一次上线", 482, 30, "是"]] },
 ]), new Date().toISOString());

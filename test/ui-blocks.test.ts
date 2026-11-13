@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { answerAsk, describeAnswer, getAsk, listAsks, showSuggestions } from "../src/agents/asks.ts";
-import { normalizeAnswers, viewText, type UiField } from "../src/agents/ui-blocks.ts";
+import { changeText, metricTone, metricTrend, normalizeAnswers, viewText, type UiField, type ViewComponent } from "../src/agents/ui-blocks.ts";
+import { SERIES } from "../src/channels/lark-ui.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { run } from "../src/core/db.ts";
@@ -93,7 +94,8 @@ describe("component blocks", () => {
     await callTool(ctx, "ask_user", { question: "怎么上线？", fields: plan, view: [{ type: "metric", items: [{ label: "待退款", value: 12, unit: " 单" }] }], wait_seconds: 0 });
     const ask = listAsks(app, { conversationId: thread.id })[0];
     const card = JSON.stringify(askCard(app, ask));
-    expect(card).toContain("待退款：12 单");
+    expect(card).toContain("<font color='grey'>待退款</font>");
+    expect(card).toContain("**12** <font color='grey'>单</font>");
     expect(card).toContain('"tag":"form"');
     for (const tag of ["select_static", "date_picker", "checker"]) expect(card).toContain(`"tag":"${tag}"`);
     expect(card).toContain('"name":"c_rules__r2"');
@@ -156,14 +158,64 @@ describe("component blocks", () => {
     ] });
     const els = (card.body as { elements: Record<string, any>[] }).elements;
     const tableEl = els.find((e) => e.tag === "table")!;
-    expect(tableEl.columns).toEqual([{ name: "c0", display_name: "方式", data_type: "text" }, { name: "c1", display_name: "影响订单", data_type: "number", horizontal_align: "right" }]);
+    expect(tableEl.columns).toEqual([{ name: "c0", display_name: "方式", data_type: "text" }, { name: "c1", display_name: "影响订单", data_type: "number", horizontal_align: "right", format: { precision: 0, separator: true } }]);
     expect(tableEl.rows).toEqual([{ c0: "灰度", c1: 48 }, { c0: "一次上线", c1: 482 }]);
+    expect(tableEl.header_style).toMatchObject({ bold: true, background_style: "grey" });
     const [bar, pie] = els.filter((e) => e.tag === "chart");
-    expect(bar.chart_spec).toMatchObject({ type: "bar", xField: ["x", "s"], yField: "v", seriesField: "s" });
+    expect(bar.chart_spec).toMatchObject({ type: "bar", xField: ["x", "s"], yField: "v", seriesField: "s", color: SERIES });
     expect(bar.chart_spec.data.values).toContainEqual({ x: "周二", s: "本周", v: 6 });
-    expect(pie.chart_spec).toMatchObject({ type: "pie", valueField: "value", categoryField: "type", data: { values: [{ type: "质量", value: 7 }, { type: "其他", value: 3 }] } });
-    expect(JSON.stringify(els)).toContain("退款单：482");
+    expect(pie.chart_spec).toMatchObject({ type: "pie", valueField: "value", categoryField: "type", data: { values: [{ type: "质量 70%", value: 7 }, { type: "其他 30%", value: 3 }] } });
+    // A metric is a tile: its label and figure as their own lines on a grey surface.
+    const tile = els.find((e) => e.tag === "column_set")!.columns[0];
+    expect(tile.background_style).toBe("grey-50");
+    expect(tile.elements.map((e: { content: string }) => e.content)).toEqual(["<font color='grey'>退款单</font>", "**482**"]);
+    expect(card.config).toMatchObject({ summary: { content: "退款：退款单 482" } });
     expect(JSON.stringify(els)).toContain("https://omem.example.test/#/ui/uv1");
+  });
+
+  it("a metric's change reads its direction and whether that way is good", () => {
+    expect(metricTrend({ change: "+6.2%" })).toBe("up");
+    expect(metricTrend({ change: "+0.3pct" })).toBe("up");
+    expect(metricTrend({ change: "+0.0%" })).toBe("flat");
+    expect(metricTrend({ change: "−12 单" })).toBe("down");
+    expect(metricTrend({ change: "比上周少 3" })).toBeNull();
+    expect(metricTrend({ change: "比上周少 3", trend: "down" })).toBe("down");
+    expect(metricTone({ change: "+5%" })).toBe("good");
+    expect(metricTone({ change: "+5%", good: "down" })).toBe("bad");
+    expect(metricTone({ change: "-5%", good: "down" })).toBe("good");
+    expect(metricTone({ change: "+5%", good: "none" })).toBe("neutral");
+    expect(changeText({ change: "+5%" })).toBe("↑ +5%");
+    expect(changeText({ change: "↓ 3" })).toBe("↓ 3");
+  });
+
+  it("a Feishu card draws tiles, callouts and options with the card's own surfaces", () => {
+    const app = testApp();
+    const view = [
+      { type: "callout", tone: "warning", title: "退款率比上周高", text: "主要是尺码问题。" },
+      { type: "metric", title: "本周", items: [{ label: "退款率", value: "4.8", unit: "%", change: "+0.6pct", good: "down", note: "较上周" }, { label: "退款单", value: 482 }, { label: "人工介入", value: 31 }, { label: "平均时长", value: "2.1", unit: "天", change: "-0.4", good: "down" }], note: "口径：已支付订单" },
+      { type: "compare", items: [{ id: "a", title: "灰度", summary: "先 10%", pros: ["稳"], cons: [] }, { id: "b", title: "全量", pros: [], cons: ["回滚难"] }] },
+      { type: "chart", title: "退款排行", kind: "hbar", labels: ["尺码", "质量", "物流"], series: [{ name: "单", values: [120, 80, 30] }], goal: 100 },
+      { type: "chart", title: "每天", kind: "area", labels: ["周一", "周二"], series: [{ name: "退款", values: [3, 4] }, { name: "换货", values: [1, 2] }], stack: true },
+    ] as ViewComponent[];
+    const card = viewCard(app, { id: "uv2", title: "退款周报", components: view });
+    expect(card.header).toMatchObject({ template: "orange" });
+    const els = (card.body as { elements: Record<string, any>[] }).elements;
+    const box = els.find((e) => e.tag === "interactive_container")!;
+    expect(box).toMatchObject({ background_style: "grey-50", behaviors: [] });
+    expect(box.elements[0].icon).toMatchObject({ tag: "standard_icon", token: "warning_filled" });
+    const rows = els.filter((e) => e.tag === "column_set");
+    // Four tiles go two by two; an increase in something that should fall is red, with its arrow.
+    expect(rows[0].columns).toHaveLength(2);
+    expect(rows[1].columns).toHaveLength(2);
+    const rate = JSON.stringify(rows[0].columns[0]);
+    expect(rate).toContain("<font color='red'>↑ +0.6pct</font>");
+    expect(JSON.stringify(rows[1].columns[1])).toContain("<font color='green'>↓ -0.4</font>");
+    expect(JSON.stringify(els)).toContain("口径：已支付订单");
+    expect(JSON.stringify(rows[2])).toContain("<font color='red'>－</font> 回滚难");
+    const [hbar, area] = els.filter((e) => e.tag === "chart").map((e) => e.chart_spec);
+    expect(hbar).toMatchObject({ type: "bar", direction: "horizontal", xField: "v", yField: "x", bar: { style: { cornerRadius: [0, 4, 4, 0] } } });
+    expect(hbar.markLine[0]).toMatchObject({ x: 100 });
+    expect(area).toMatchObject({ type: "area", stack: true, seriesField: "s" });
   });
 
   it("views read as text where they cannot be drawn", () => {

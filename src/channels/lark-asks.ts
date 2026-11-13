@@ -1,5 +1,5 @@
 import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
-import { viewCardBlocks, viewTarget } from "./lark-ui.ts";
+import { viewCardBlocks, viewColor, viewSummary, viewTarget } from "./lark-ui.ts";
 import { fieldsText, normalizeAnswers, type UiField } from "../agents/ui-blocks.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
@@ -216,7 +216,8 @@ export function viewCard(app: App, view: { id: string; title: string; components
   const link = uiLink(app, view.id);
   const web = /^https?:/.test(link);
   const page = view.components.some((c) => c.type === "page");
-  return buildCard({ ...(view.title ? { title: view.title } : {}), color: "grey", blocks: [...viewCardBlocks(app, view.components, { linked: web }), ...(web ? [{ buttons: [page ? { text: "打开交互页", url: link, style: "primary" as const } : { text: "在网页上查看", url: link }] }] : [])] });
+  const summary = viewSummary(view.title, view.components);
+  return buildCard({ ...(view.title ? { title: view.title } : {}), color: viewColor(view.components), ...(summary ? { summary } : {}), blocks: [...viewCardBlocks(app, view.components, { linked: web }), ...(web ? [{ buttons: [page ? { text: "打开交互页", url: link, style: "primary" as const } : { text: "在网页上查看", url: link }] }] : [])] });
 }
 
 /** Who may answer, in the posting bot's ids (the owner's open_id there; others by their main-bot id or user_id). */
