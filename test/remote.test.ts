@@ -248,6 +248,18 @@ describe("remote operation", () => {
     }
   });
 
+  it("answers with the reason when aad cannot start, instead of ending omem", async () => {
+    setToolResolverForTests((name) => (name === "aad" ? [join(tmpdir(), "no-such-aad.exe")] : null));
+    try {
+      const r = await api("POST", "/api/remote/sessions", { kind: "browser" });
+      expect(r.status).toBe(502);
+      expect(r.body.error).toMatch(/aad 没能启动/);
+      expect((await api("GET", "/api/remote")).status).toBe(200);
+    } finally {
+      setToolResolverForTests((name) => (name === "aad" ? [process.execPath, fake] : null));
+    }
+  });
+
   it("starts a browser from a copy of one of this machine's browser profiles", async () => {
     expect((await api("GET", "/api/remote/browser-profiles")).body).toEqual([{ browser: "edge", id: "Default", name: "工作" }]);
     // The browser using it is open: said so, and nothing is closed unasked.

@@ -2090,3 +2090,4 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - aad 的查看页连接断开后只显示“已断开”，不重连：远程页（同源）盯查看页的状态行，断开时按 1、2、4…秒（最长 30 秒，最多 8 次）重新 `view` 并重新加载查看页，会话已结束就去掉标签；地址栏旁（桌面会话在画面上方）加“刷新画面”。
 - 过程气泡（`RunActivity`）：命令很长时“进行中 · N 步”和转圈被挤成一字一行；标签不换行、不收缩，只让命令那段截断。
 - 录制整理成技能：请求按形态分出噪音（`src/remote/requests.ts`：资源类型、事件批次请求体、监控样子的路径和主机、不变的反复 GET），剩下的按“方法 + 主机 + 路径”合并、写操作在前；`read_recording` 概要列“调用的接口”，`part=requests` 默认不列噪音（`noise=true` 全列），steps 里也不列噪音请求。技能只带 `recording/requests.md`（`save_skill` 的 `recording_requests` 挑接口，不填时是去噪后的全部），不再带 `workflow.yaml` 和 aad 的完整操作说明。原来 `requests.md` 是录制的前 100 个原始请求：常驻服务器上一次 1152 个请求的录制，前 100 个里 63 个埋点、14 个扫码轮询、4 个预检，真正配置接口的请求一个都没进去。`skill-from-recording` 写明录制不是剧本，先从试错里找出真正完成这件事的步骤和接口。
+- Windows 上找 aad：PATH 上只有 osdk 的 `aad.cmd` 垫片时，原来照样返回 `aad`，不经 shell 起进程报 ENOENT，而且这个错误没人接，整个 omem 退出。现在 Windows 上先找 PATH 上的 `aad.exe`，没有就用 osdk 安装目录里的（`exeOnPath`）；aad 起不来时请求返回“aad 没能启动”，`aad mcp` 已退出时后续请求立刻失败，不再等 30 秒超时。

@@ -70,7 +70,13 @@ export function toolCommand(name: string): string[] | null {
   if (override) return override(name);
   const own = pinned(name);
   if (own) return [own];
-  if (DIR_TOOLS.has(name) || USE_GLOBAL.has(name) ? pathWorks(name) : commandExists(name)) return [name];
+  if (DIR_TOOLS.has(name) || USE_GLOBAL.has(name) ? pathWorks(name) : commandExists(name)) {
+    // A directory tool is spawned without a shell, which on Windows starts only an .exe: run the one
+    // on PATH, or look in osdk's install directory when PATH has just a .cmd shim (osdk's own).
+    if (!DIR_TOOLS.has(name) || process.platform !== "win32") return [name];
+    const exe = exeOnPath(name);
+    if (exe) return [exe];
+  }
   if (!commandExists("osdk")) return null;
   if (DIR_TOOLS.has(name)) {
     const dir = osdkToolDir(name);
@@ -78,6 +84,18 @@ export function toolCommand(name: string): string[] | null {
   }
   const spec = (OSDK_TOOLS[name] ?? []).find(osdkHas);
   return spec ? ["osdk", "exec", "--no-deps", "-t", spec, "--", name] : null;
+}
+
+/** The full path of `name.exe` (or `.com`) on PATH, which a spawn without a shell can start; null on other systems or when PATH has only a script. */
+export function exeOnPath(name: string, path = process.env.PATH ?? process.env.Path ?? "", platform: string = process.platform): string | null {
+  if (platform !== "win32") return null;
+  for (const dir of path.split(";").filter(Boolean)) {
+    for (const ext of [".exe", ".com"]) {
+      const file = join(dir.replace(/^"|"$/g, ""), name + ext);
+      if (existsSync(file)) return file;
+    }
+  }
+  return null;
 }
 
 const works = new Map<string, { at: number; ok: boolean }>();

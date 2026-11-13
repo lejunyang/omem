@@ -32,7 +32,16 @@ export function aadJson(args: string[], timeoutMs = 60_000): any {
 /** A long-lived aad process, its standard input kept open (closing it is how `record` is stopped). */
 export function spawnAad(args: string[]): ChildProcess {
   const [bin, ...rest] = aadCommand();
-  return spawn(bin, [...rest, ...args], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const proc = spawn(bin, [...rest, ...args], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  // A program that cannot start emits "error" and no "exit": unhandled, it would end omem. Report it
+  // the way an early exit is reported, so whoever waits on the process fails with the reason.
+  let exited = false;
+  proc.once("exit", () => (exited = true));
+  proc.once("error", (e) => {
+    proc.stderr?.emit("data", Buffer.from(`aad 没能启动（${bin}）：${e.message}`));
+    if (!exited) proc.emit("exit", null, null);
+  });
+  return proc;
 }
 
 /** The first line a process prints, as JSON (`aad assist` announces where it listens that way). */
@@ -92,6 +101,8 @@ export class AadMcp {
   private waiting = new Map<number, { ok: (v: any) => void; fail: (e: Error) => void }>();
   private err = "";
   private closing?: Promise<void>;
+  /** Why the process is no longer there: a request after that fails at once instead of waiting. */
+  private gone: Error | null = null;
 
   constructor(args: string[]) {
     this.proc = spawnAad(["mcp", ...args]);
@@ -110,13 +121,15 @@ export class AadMcp {
       else w.ok(msg.result);
     });
     this.proc.on("exit", (code) => {
-      for (const w of this.waiting.values()) w.fail(new HttpError(502, `aad mcp 退出了（${code}）${this.err.trim() ? `：${this.err.trim().slice(-300)}` : ""}`));
+      this.gone = new HttpError(502, `aad mcp 退出了（${code}）${this.err.trim() ? `：${this.err.trim().slice(-300)}` : ""}`);
+      for (const w of this.waiting.values()) w.fail(this.gone);
       this.waiting.clear();
     });
   }
 
   private request(method: string, params: unknown, timeoutMs: number): Promise<any> {
     const id = this.next++;
+    if (this.gone) return Promise.reject(this.gone);
     return new Promise((ok, fail) => {
       const timer = setTimeout(() => {
         this.waiting.delete(id);
