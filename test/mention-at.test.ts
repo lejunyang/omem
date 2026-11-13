@@ -46,3 +46,30 @@ it("sendLark turns @名字 into real mentions for every path, and leaves code an
     setMentionResolver(null);
   }
 });
+
+it("cards too: @名字 in a card's Markdown, when sent and when the card is updated (the answer written into a progress card)", async () => {
+  const app = testApp(); apps.push(app);
+  const { sendLark, updateLarkCard, buildCard, setMentionResolver } = await import("../src/channels/lark-send.ts");
+  const { run } = await import("../src/core/db.ts");
+  const posted: string[] = [];
+  setLarkClient({ im: {
+    chatMembers: { get: async () => ({ code: 0, data: { items: [{ member_id: "ou_yq", name: "杨祺" }, { member_id: "ou_zx", name: "张欣" }], has_more: false } }) },
+    message: {
+      create: async ({ data }: any) => (posted.push(data.content), { code: 0, data: { message_id: "om_card" } }),
+      patch: async ({ data }: any) => (posted.push(data.content), { code: 0, data: {} }),
+    },
+  } });
+  setMentionResolver((md, where) => {
+    const chatId = where.chatId ?? (where.replyTo ? (app.db.prepare("select chat_id from lark_sent where message_id = ?").get(where.replyTo) as { chat_id?: string } | undefined)?.chat_id : undefined);
+    return realMentions(app, md, chatId ?? null);
+  });
+  try {
+    await sendLark({ chatId: "oc_ops" }, { card: buildCard({ title: "处理中", blocks: [{ markdown: "请 @杨祺 和 @张欣 看一下" }] }) });
+    expect(posted[0]).toContain("<at id=ou_yq></at> 和 <at id=ou_zx></at> 看一下");
+    run(app.db, "insert into lark_sent(message_id, chat_id, purpose, bot, at) values('om_card','oc_ops','progress','main',?)", new Date().toISOString());
+    await updateLarkCard("om_card", buildCard({ blocks: [{ markdown: "@杨祺 申请单已取消，@张欣 跟进一下" }] }));
+    expect(posted[1]).toContain("<at id=ou_yq></at> 申请单已取消，<at id=ou_zx></at> 跟进一下");
+  } finally {
+    setMentionResolver(null);
+  }
+});

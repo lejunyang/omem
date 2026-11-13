@@ -2073,3 +2073,4 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 验证：`LANGUAGE=C pnpm run check` 通过（230 个文件、1359 项测试）；最后的 PID 展示和服务环境改动另跑对应专项、类型检查与构建。真实 Edge 占用独立资料时核对旧 PID 退出，新浏览器可打开；同一资料关闭后立即重开、已退出 PID 的锁恢复、无 DISPLAY 时保留原占用浏览器均通过。网页在 1440 / 390 宽度可勾选关闭，无桌面时窗口模式禁用，无横向溢出。aad 的 CDP / CLI 测试与 Clippy 通过；MCP 原有的 `an_agent_can_keep_what_it_worked_out` 因 `secret_input must be savable` 失败，其他 MCP 回归通过。
 
 - 机器人发到会话里的 Markdown 统一在 `sendLark` 里把“@名字”换成真 @（`setMentionResolver` → `lark-people.ts` 的 `realMentions`：先认这次对话里已知的人，再核对群成员；名字后面紧跟着字时按前缀核对；代码和邮箱里的 @ 不动；同一个人只 @ 一次）。原来机器人回答、话题后续、规则 Agent 回答、有人找你的回复各自处理，覆盖的人不同，常留下纯文字 @。
+- 卡片也一样：新发的卡片和更新卡片（进度卡片收尾时写进回答）里每段 Markdown 的“@名字”都换成真 @；同一会话里核对过的名字缓存 10 分钟。

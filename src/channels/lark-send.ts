@@ -431,12 +431,32 @@ export function setMentionResolver(f: MentionResolver | null) {
   mentionResolver = f;
 }
 
+/** Every Markdown element of a card (its body, columns, panels…), with the resolver applied; the rest as it was. */
+async function cardWithMentions(card: unknown, where: { chatId?: string; replyTo?: string }): Promise<unknown> {
+  if (!mentionResolver || !JSON.stringify(card).includes("@")) return card;
+  const walk = async (v: unknown): Promise<unknown> => {
+    if (Array.isArray(v)) return Promise.all(v.map(walk));
+    if (!v || typeof v !== "object") return v;
+    const o = v as Record<string, unknown>;
+    if (o.tag === "markdown" && typeof o.content === "string" && o.content.includes("@")) {
+      const original = o.content;
+      return { ...o, content: await mentionResolver!(original, where).catch(() => original) };
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(o)) out[k] = await walk(x);
+    return out;
+  };
+  return walk(card);
+}
+
 export async function sendLark(to: Target, content: Content): Promise<{ messageId: string; threadId?: string }> {
   const c = larkClientFor(to.bot);
+  const where = { chatId: to.chatId, replyTo: to.replyTo };
   if (mentionResolver && "markdown" in content && content.markdown.includes("@") && (to.chatId || to.replyTo)) {
     const original = content.markdown;
-    content = { ...content, markdown: await mentionResolver(original, { chatId: to.chatId, replyTo: to.replyTo }).catch(() => original) };
+    content = { ...content, markdown: await mentionResolver(original, where).catch(() => original) };
   }
+  if ("card" in content && (to.chatId || to.replyTo)) content = { ...content, card: (await cardWithMentions(content.card, where)) as Record<string, unknown> };
   const p = payload(content);
   let r;
   if (to.replyTo) r = await c.im.message.reply({ path: { message_id: to.replyTo }, data: { ...p, reply_in_thread: !!to.inThread, ...(to.uuid ? { uuid: to.uuid } : {}) } });
@@ -505,7 +525,9 @@ export async function deliverLark(to: Target, content: Content, d: Delivery = {}
 }
 
 export async function updateLarkCard(messageId: string, card: Record<string, unknown>, bot?: string | null) {
-  check(await larkClientFor(bot).im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(larkCardMarkdown(card)) } }), "更新卡片");
+  // The card's own message tells the chat (lark-bot's resolver looks it up).
+  const shown = (await cardWithMentions(larkCardMarkdown(card), { replyTo: messageId })) as Record<string, unknown>;
+  check(await larkClientFor(bot).im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(shown) } }), "更新卡片");
 }
 
 /** emoji_type: OnIt, DONE, THUMBSUP, OK, Get, CheckMark, CrossMark, Typing, SMILE … */

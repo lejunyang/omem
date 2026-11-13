@@ -258,6 +258,10 @@ export function applyMentions(text: string, people: Resolved[], kind: "text" | "
   return lead.length ? `${lead.join(" ")} ${out}` : out;
 }
 
+/** Who a name is in a chat, for a while: cards are updated again and again with the same text. */
+const MEMBER_CACHE_MS = 10 * 60_000;
+const memberCache = new Map<string, { id: string | null; until: number }>();
+
 /** `@名字` in text the bot posts: the run of name characters after it (a space, punctuation or another @ ends it). */
 const AT_NAME = /@([^\s@<>，。、；：！？,.;:!?（）()【】「」“”"']{1,20})/g;
 
@@ -284,12 +288,18 @@ export async function realMentions(app: App, text: string, chatId: string | null
     done.add(name);
     let id: string | null = known[name] ?? null;
     const inChat = async (n: string) => {
+      const key = `${chatId}|${n}`;
+      const hit = memberCache.get(key);
+      if (hit && hit.until > Date.now()) return hit.id;
+      let id: string | null = null;
       try {
         const r = await resolveMention(app, n, chatId!);
-        return "all" in r ? null : r.userId;
+        id = "all" in r ? null : r.userId;
       } catch {
-        return null;
+        id = null;
       }
+      memberCache.set(key, { id, until: Date.now() + MEMBER_CACHE_MS });
+      return id;
     };
     if (!id && chatId) id = await inChat(name);
     // A name run on into the next words that nobody here knew yet: the chat's members, longest prefix first.
