@@ -1,8 +1,9 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
+import { endpoints, example, isWrite, noiseNote, type Endpoint } from "./requests.ts";
 
 /**
  * Recordings made in remote sessions (docs/v2/remote.md): what someone did in a browser page or a
@@ -135,7 +136,7 @@ function replayLine(s: any, i: number): string {
 }
 
 /** What read_recording shows: the summary, steps, requests, or the walkthrough aad wrote. */
-export function readRecording(app: App, id: string, userId: string, o: { part?: "summary" | "steps" | "requests" | "replay"; from?: number; limit?: number; filter?: string; bodies?: boolean }) {
+export function readRecording(app: App, id: string, userId: string, o: { part?: "summary" | "steps" | "requests" | "replay"; from?: number; limit?: number; filter?: string; bodies?: boolean; noise?: boolean }) {
   const r = getRecording(app, id, userId);
   const part = o.part ?? "summary";
   const limit = Math.min(Math.max(o.limit ?? 30, 1), 100);
@@ -151,8 +152,9 @@ export function readRecording(app: App, id: string, userId: string, o: { part?: 
       `动作 ${s.actions ?? 0} 个，可回放 ${s.replayable ?? 0} 步，跳过 ${s.skipped ?? 0} 个，请求 ${s.requests ?? 0} 个，截图 ${s.screenshots ?? 0} 张${s.workflow ? "；有 workflow.yaml" : ""}`,
       r.skill ? `已整理成技能：${r.skill}` : "",
       walkthrough ? `\n## aad 写的操作说明\n\n${truncate(walkthrough, 12_000)}` : replay?.steps?.length ? `\n## 步骤\n\n${replay.steps.slice(0, 60).map(replayLine).join("\n")}` : "",
+      apiOverview(r.dir),
       replay?.skipped?.length ? `\n## 没能成为步骤的操作\n\n${replay.skipped.slice(0, 20).map((x: any) => `- ${x.reason ?? ""}${x.summary ? `：${typeof x.summary === "string" ? x.summary : JSON.stringify(x.summary)}` : ""}`).join("\n")}` : "",
-      "\n用 part=steps 看每一步（带引起的变化和请求），part=requests 看请求，part=replay 看可回放的步骤。",
+      "\n录制时可能有试错和多余的操作：按要做的事挑出真正完成它的那几步和接口。part=steps 看每一步（带引起的变化和请求），part=requests 看接口（bodies=true 带请求体和响应体），part=replay 看可回放的步骤。",
     ].filter(Boolean).join("\n");
   }
   if (part === "replay") {
@@ -164,42 +166,77 @@ export function readRecording(app: App, id: string, userId: string, o: { part?: 
   if (part === "steps") {
     const steps = jsonLines(join(r.dir, "steps.jsonl"));
     if (!steps.length) return readRecording(app, id, userId, { part: "replay", from, limit });
+    const noisy = new Set(endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl"))).filter((e) => e.noise).flatMap((e) => e.requests.map((q) => `${q.method} ${q.url}`)));
     const page = steps.filter((s) => s.id >= from).slice(0, limit);
-    return page.map(stepLine).join("\n") + (steps.some((s) => s.id > (page.at(-1)?.id ?? 0)) ? `\n……from=${(page.at(-1)?.id ?? 0) + 1} 接着看` : "");
+    return page.map((s) => stepLine({ ...s, network: (s.network ?? []).filter((n: any) => !noisy.has(`${String(n.method ?? "").toUpperCase()} ${n.url ?? ""}`)) })).join("\n") + (steps.some((s) => s.id > (page.at(-1)?.id ?? 0)) ? `\n……from=${(page.at(-1)?.id ?? 0) + 1} 接着看` : "");
   }
+  const list = endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl")));
+  if (!list.length) return "这次录制没有记下请求。";
   const want = (o.filter ?? "").toLowerCase();
-  const requests = jsonLines(join(r.dir, "evidence", "network.jsonl")).filter((q) => !want || `${q.method ?? q.request?.method ?? ""} ${q.url ?? q.request?.url ?? ""}`.toLowerCase().includes(want));
-  if (!requests.length) return want ? `没有地址或方法包含“${o.filter}”的请求。` : "这次录制没有记下请求。";
-  const page = requests.slice(from - 1, from - 1 + limit);
-  return page
-    .map((q, i) => {
-      const req = q.request ?? q;
-      const res = q.response ?? q;
-      const head = `${from + i}. ${req.method ?? ""} ${truncate(String(req.url ?? ""), 200)} → ${res.status ?? q.status ?? "?"}${q.count > 1 ? ` ×${q.count}` : ""}${q.step_id ? `（第 ${q.step_id} 步）` : ""}${q.id ? ` [${q.id}]` : ""}`;
-      if (!o.bodies) return head;
-      const body = (v: unknown) => (v == null ? "" : truncate(typeof v === "string" ? v : JSON.stringify(v), 1_500));
-      const sent = body(req.body ?? req.post_data ?? req.postData);
-      // aad keeps the response body beside request and response.
-      const got = body(q.body ?? res.body);
-      return [head, sent ? `   请求体：${sent}` : "", got ? `   响应体：${got}` : ""].filter(Boolean).join("\n");
-    })
-    .join("\n") + (requests.length > from - 1 + limit ? `\n……共 ${requests.length} 个，from=${from + limit} 接着看` : "");
+  const matches = (e: Endpoint) => !want || haystack(e).includes(want);
+  const shown = ordered(list.filter((e) => (o.noise || !e.noise) && matches(e)));
+  const skipped = o.noise ? "" : noiseNote(list.filter((e) => e.noise && matches(e)));
+  if (!shown.length) return want ? `没有地址、方法或编号包含“${o.filter}”的接口${skipped ? `（略去的${skipped}里有，noise=true 看）` : ""}。` : `这次录制只有${skipped}，没有别的接口。`;
+  const page = shown.slice(from - 1, from - 1 + limit);
+  return [
+    `共 ${shown.length} 个接口（同一个接口的多次调用合成一行）${skipped ? `，另略去${skipped}（noise=true 也列出）` : ""}；先列写操作。`,
+    ...page.map((e, i) => endpointText(e, from + i, !!o.bodies)),
+    shown.length > from - 1 + limit ? `……from=${from + limit} 接着看` : "",
+  ].filter(Boolean).join("\n");
+}
+
+/** What a filter or a pick is matched against: "POST /api/x", the host-qualified endpoint, any address or request id. */
+const haystack = (e: Endpoint) => [e.key, `${e.method} ${e.path}`, ...e.requests.flatMap((q) => [`${q.method} ${q.path}`, q.url, q.id])].join(" ").toLowerCase();
+
+/** Writes first (they are what a task does), then reads; each in the order it was first called. */
+const ordered = (list: Endpoint[]) => [...list.filter(isWrite), ...list.filter((e) => !isWrite(e))];
+
+function endpointText(e: Endpoint, n: number, bodies: boolean): string {
+  const steps = e.steps.length ? `（第 ${e.steps.slice(0, 6).join("、")}${e.steps.length > 6 ? " 等" : ""} 步）` : "（不在哪一步里）";
+  const ex = example(e);
+  const head = `${n}. ${e.method} ${e.host}${e.path} → ${e.statuses.slice(0, 3).join("/")}${e.requests.length > 1 ? ` ×${e.requests.length}` : ""}${steps}${e.noise ? ` [${e.noise}]` : ""} [${ex.id}]`;
+  if (!bodies) return head;
+  const body = (v: unknown) => (v == null || v === "" ? "" : truncate(typeof v === "string" ? v : JSON.stringify(v), 1_500));
+  const query = ex.url.includes("?") ? truncate(ex.url.slice(ex.url.indexOf("?")), 300) : "";
+  return [head, query ? `   参数：${query}` : "", body(ex.sent) ? `   请求体：${body(ex.sent)}` : "", body(ex.got) ? `   响应体：${body(ex.got)}` : ""].filter(Boolean).join("\n");
 }
 
 /**
- * The files a skill made from this recording carries: the steps that replay it, and the requests it
- * made in a form someone writing an API call can read.
+ * The file a skill made from this recording carries: the endpoints the task went through, with an
+ * example of each, so whoever does it again can call them. `keep` (endpoint, address or request id
+ * fragments) is what the agent picked; without it, everything but the noise. The replay steps and
+ * aad's full walkthrough stay with the recording: they hold every detour the person took.
  */
-export function skillFilesOf(app: App, id: string, userId: string): Record<string, string> {
+export function skillFilesOf(app: App, id: string, userId: string, keep?: string[]): Record<string, string> {
   const r = getRecording(app, id, userId);
-  const out: Record<string, string> = {};
-  const workflow = join(r.dir, "workflow.yaml");
-  if (existsSync(workflow)) out["recording/workflow.yaml"] = readFileSync(workflow, "utf8");
-  if (existsSync(join(r.dir, "evidence", "network.jsonl"))) {
-    const text = readRecording(app, id, userId, { part: "requests", limit: 100, bodies: true });
-    out["recording/requests.md"] = `# 录制时的请求\n\n录制 ${r.id}（${r.createdAt.slice(0, 10)}）。cookie、令牌、密码等敏感值已由 aad 替换；请求体和响应体只保留开头。\n\n${text}\n`;
-  }
-  const walkthrough = join(r.dir, "walkthrough.md");
-  if (existsSync(walkthrough) && statSync(walkthrough).size < 200_000) out["recording/walkthrough.md"] = readFileSync(walkthrough, "utf8");
-  return out;
+  const list = endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl")));
+  const wanted = keep?.map((k) => k.trim().toLowerCase()).filter(Boolean);
+  const chosen = wanted?.length
+    ? list.filter((e) => wanted.some((k) => haystack(e).includes(k)))
+    : list.filter((e) => !e.noise).slice(0, 60);
+  if (!chosen.length) return {};
+  const skipped = noiseNote(list.filter((e) => e.noise));
+  return {
+    "recording/requests.md": [
+      "# 录制时调用的接口",
+      "",
+      `录制 ${r.id}（${r.createdAt.slice(0, 10)}）。${wanted?.length ? "整理技能时挑出的接口。" : `${skipped ? `去掉了${skipped}，` : ""}同一个接口合成一条。`}cookie、令牌、密码等敏感值已由 aad 替换；请求体和响应体只保留开头。`,
+      "",
+      ...ordered(chosen).map((e, i) => endpointText(e, i + 1, true)),
+      "",
+    ].join("\n"),
+  };
+}
+
+/** The endpoints a recording called, for the summary: what the task most likely went through. */
+function apiOverview(dir: string): string {
+  const list = endpoints(jsonLines(join(dir, "evidence", "network.jsonl")));
+  if (!list.length) return "";
+  const kept = ordered(list.filter((e) => !e.noise));
+  const skipped = noiseNote(list.filter((e) => e.noise));
+  return [
+    `\n## 调用的接口（${kept.length} 个${skipped ? `；略去${skipped}` : ""}）\n`,
+    ...kept.slice(0, 25).map((e) => `- ${e.method} ${e.host}${e.path}${e.requests.length > 1 ? ` ×${e.requests.length}` : ""}${e.steps.length ? `（第 ${e.steps.slice(0, 4).join("、")} 步）` : ""}`),
+    kept.length > 25 ? `- ……共 ${kept.length} 个，part=requests 翻页` : "",
+  ].filter(Boolean).join("\n");
 }

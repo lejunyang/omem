@@ -58,7 +58,7 @@ function mcp() {
         writeFileSync(lock, "", { flag: "wx" });
         profileLock = lock;
       }
-      return { browser: a.browser, port: 9333, page_id: "PAGE1", profile_dir: a.profile_dir ?? scratch(), temporary_profile: !a.profile_dir };
+      return { browser: a.browser, port: Number(process.env.FAKE_AAD_CDP_PORT ?? 9333), page_id: "PAGE1", profile_dir: a.profile_dir ?? scratch(), temporary_profile: !a.profile_dir };
     },
     browser_close: async () => {
       if (profileLock) {
@@ -73,14 +73,24 @@ function mcp() {
       const step = (id: number, action: Record<string, unknown>, network: unknown[] = []) => JSON.stringify({ id, at_ms: id, page_id: "PAGE1", frame_id: "", kind: "action", action: { url: "https://example.test/admin", ...action }, changes: [], screenshots: [], network });
       writeFileSync(join(recording, "steps.jsonl"), [JSON.stringify({ id: 0, kind: "baseline", action: { title: "后台" } }), step(1, { kind: "input", label: "商户号", value: "B-1001", control: { role: "textbox", name: "商户号" } }), step(2, { kind: "click", label: "开通", control: { role: "button", name: "开通" } }, [{ method: "POST", url: "https://example.test/api/refund/grant", status: 200 }])].join("\n") + "\n");
       mkdirSync(join(recording, "evidence"), { recursive: true });
-      writeFileSync(join(recording, "evidence", "network.jsonl"), JSON.stringify({ id: "req-1", step_id: 2, count: 1, request: { method: "POST", url: "https://example.test/api/refund/grant", postData: '{"merchant":"B-1001","token":"[REDACTED]"}' }, response: { status: 200 }, body: '{"ok":true}' }) + "\n");
+      // The one call the task made, among what a page sends on its own: scripts, telemetry, a preflight, polling.
+      const net = [
+        { id: "req-1", type: "Script", request: { method: "GET", url: "https://example.test/static/app.3f2a.js" }, response: { status: 200 } },
+        { id: "req-2", type: "Fetch", request: { method: "GET", url: "https://example.test/api/merchants/1001" }, response: { status: 200 }, step_id: 1, body: '{"name":"B-1001"}' },
+        ...[3, 4, 5].map((n) => ({ id: `req-${n}`, type: "XHR", request: { method: "POST", url: "https://mon.example.test/monitor_browser/collect", postData: '[{"events":[{"event":"click"}]}]' }, response: { status: 204 } })),
+        { id: "req-6", type: "Preflight", request: { method: "OPTIONS", url: "https://example.test/api/refund/grant" }, response: { status: 204 } },
+        { id: "req-7", type: "Fetch", step_id: 2, count: 1, request: { method: "POST", url: "https://example.test/api/refund/grant", postData: '{"merchant":"B-1001","token":"[REDACTED]"}' }, response: { status: 200 }, body: '{"ok":true}' },
+        ...[8, 9, 10, 11, 12].map((n) => ({ id: `req-${n}`, type: "XHR", request: { method: "GET", url: `https://example.test/api/qr/check?t=${n}` }, response: { status: 200 }, body: '{"status":"waiting"}' })),
+      ];
+      writeFileSync(join(recording, "evidence", "network.jsonl"), net.map((q) => JSON.stringify(q)).join("\n") + "\n");
       mkdirSync(join(recording, "screenshots"), { recursive: true });
       writeFileSync(join(recording, "screenshots", "s1.png"), "png");
       writeFileSync(join(recording, "walkthrough.md"), "# 浏览器操作记录\n\n## 1. 填写「商户号」：B-1001\n\n## 2. 点击「开通」\n");
       return { out: recording, files: ["steps.jsonl", "evidence/network.jsonl"] };
     },
     control_targets: () => ({ resources: [{ resource_id: "browser.cdp:PAGE1", metadata: { page_id: "PAGE1", main_frame: true } }] }),
-    control_observe: () => ({ nodes: [{ role: "document", target: { node_id: "doc" } }] }),
+    // A real page has more nodes than omem asks for: aad says the capture is truncated and refuses to act on it.
+    control_observe: () => ({ nodes: [{ role: "document", target: { node_id: "doc" } }], truncated: !!process.env.FAKE_AAD_TRUNCATED }),
     control_act: () => ({ applied: true }),
     run_workflow: (a) => ({ status: "succeeded", name: a.name }),
   };

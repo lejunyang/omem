@@ -89,7 +89,7 @@ defineExpose({ text });
     <button v-if="steps.length || running" class="summary" :aria-expanded="expanded" @click="expanded = !expanded">
       <span v-if="running" class="spin" aria-hidden="true" />
       <Icon v-else name="check" :size="14" />
-      <span>{{ running ? (run?.status === "queued" ? "排队中" : "进行中") : "过程" }} · {{ steps.length }} 步</span>
+      <span class="label">{{ running ? (run?.status === "queued" ? "排队中" : "进行中") : "过程" }} · {{ steps.length }} 步</span>
       <span v-if="running && steps.length" class="muted ellipsis last">{{ prettyTool(steps[steps.length - 1].title) }}</span>
       <Icon :name="expanded ? 'down' : 'right'" :size="14" />
     </button>
@@ -160,7 +160,15 @@ defineExpose({ text });
 .summary:hover {
   background: var(--hover);
 }
-.last {
+.summary > * {
+  flex: none;
+}
+.summary > .label {
+  white-space: nowrap;
+}
+.summary > .last {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 260px;
 }
 .spin {

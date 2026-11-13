@@ -16,7 +16,7 @@ import { relTime, toast } from "../store";
  */
 type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; window: string | null; recording: string | null; viewers: number; src?: string };
 type BrowserProfile = { browser: "chrome" | "edge" | "brave"; id: string; name: string };
-type Recording = { id: string; kind: "browser" | "desktop"; goal: string; target: string; status: "recording" | "done" | "failed"; summary: Record<string, any>; replay: { at: string; ok: boolean; error?: string; result?: any } | null; conversationId: string | null; skill: string | null; createdAt: string };
+type Recording = { id: string; kind: "browser" | "desktop"; goal: string; target: string; status: "recording" | "done" | "failed"; summary: Record<string, any>; conversationId: string | null; skill: string | null; createdAt: string };
 type Settings = { format: string; quality: number; fps: number; maxWidth: number; cursor: boolean; clipboard: boolean; browser: "" | "chrome" | "edge" | "brave" };
 type VideoProbe = { at: string; ffmpeg: string | null; encoders: Record<string, string> };
 type Screens = { monitors: { monitor: number; name: string; primary?: boolean; width: number; height: number }[]; windows: { window: string; title: string }[]; recordable: { resourceId: string; name: string; process: string | null }[] };
@@ -104,7 +104,77 @@ onMounted(() => {
 });
 onBeforeUnmount(() => timer && clearInterval(timer));
 
+// The viewer's WebSocket can drop (a proxy closing it, the machine sleeping) and aad's page does not
+// try again: it shows "已断开". omem serves that page from its own origin, so watch its status line
+// and load the viewer again; a session that ended meanwhile leaves the list.
+const frame = ref<HTMLIFrameElement>();
+const frameKey = ref(0);
+const reconnecting = ref<"" | "waiting" | "failed">("");
+let watcher: MutationObserver | null = null;
+let retry: ReturnType<typeof setTimeout> | null = null;
+let attempts = 0;
+const DISCONNECTED = ["已断开", "Disconnected"];
+function frameLoaded() {
+  watcher?.disconnect();
+  watcher = null;
+  let status: HTMLElement | null | undefined;
+  try {
+    status = frame.value?.contentDocument?.getElementById("status");
+  } catch { /* not the viewer */ }
+  if (!status) return;
+  const check = () => {
+    const text = status!.textContent?.trim() ?? "";
+    if (DISCONNECTED.includes(text)) scheduleReconnect();
+    else if (text && reconnecting.value === "waiting" && !retry) (attempts = 0), (reconnecting.value = "");
+  };
+  watcher = new MutationObserver(check);
+  watcher.observe(status, { childList: true, characterData: true, subtree: true });
+  check();
+}
+function scheduleReconnect() {
+  if (retry) return;
+  if (attempts >= 8) return void (reconnecting.value = "failed");
+  reconnecting.value = "waiting";
+  const wait = Math.min(30_000, 1000 * 2 ** attempts++);
+  retry = setTimeout(() => {
+    retry = null;
+    if (document.hidden) return void document.addEventListener("visibilitychange", () => void reconnect(), { once: true });
+    void reconnect();
+  }, wait);
+}
+function clearReconnect() {
+  if (retry) clearTimeout(retry);
+  retry = null;
+  attempts = 0;
+  reconnecting.value = "";
+}
+/** Load the viewer again; by hand (the refresh button) it starts over from the first attempt. */
+async function reconnect(byHand = false) {
+  const s = active.value;
+  if (!s) return;
+  if (byHand) clearReconnect();
+  try {
+    const next = await post<Session>(`/api/remote/sessions/${s.id}/view`);
+    if (active.value?.id !== s.id) return;
+    active.value = { ...s, ...next };
+    frameKey.value++;
+  } catch (e) {
+    if ((e as { status?: number }).status === 404 || /已经结束/.test((e as Error).message)) {
+      toast("远程会话已经结束", "error");
+      sessions.value = sessions.value.filter((x) => x.id !== s.id);
+      if (active.value?.id === s.id) active.value = null;
+      clearReconnect();
+      void loadRecordings();
+    } else scheduleReconnect();
+  }
+}
+onBeforeUnmount(() => {
+  watcher?.disconnect();
+  if (retry) clearTimeout(retry);
+});
+
 async function show(s: Session) {
+  clearReconnect();
   active.value = { ...s, ...(await post<Session>(`/api/remote/sessions/${s.id}/view`)) };
   address.value = s.browser?.url ?? "";
   if (s.recording) startedAt.value = startedAt.value || Date.now();
@@ -299,18 +369,6 @@ const elapsed = computed(() => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 });
 
-async function replay(r: Recording) {
-  busy.value = `replay:${r.id}`;
-  try {
-    const next = await post<Recording>(`/api/remote/recordings/${r.id}/replay`, { sessionId: active.value?.id });
-    recordings.value = recordings.value.map((x) => (x.id === r.id ? next : x));
-    toast(next.replay?.ok ? "回放完成" : `回放失败：${next.replay?.error ?? ""}`, next.replay?.ok ? "ok" : "error");
-  } catch (e) {
-    toast((e as Error).message, "error");
-  } finally {
-    busy.value = "";
-  }
-}
 async function organize(r: Recording) {
   try {
     const out = await post<{ conversationId: string }>(`/api/remote/recordings/${r.id}/organize`, { conversationId: conversationId.value ?? undefined });
@@ -324,7 +382,7 @@ const counts = (r: Recording) => {
   const s = r.summary ?? {};
   if (r.status === "failed") return String(s.error ?? "没有完成");
   if (r.status === "recording") return "录制中";
-  return [`${s.replayable ?? 0} 步可回放`, s.skipped ? `跳过 ${s.skipped}` : "", s.requests ? `${s.requests} 个请求` : ""].filter(Boolean).join(" · ");
+  return [`${s.replayable ?? 0} 步`, s.skipped ? `跳过 ${s.skipped}` : "", s.requests ? `${s.requests} 个请求` : ""].filter(Boolean).join(" · ");
 };
 </script>
 
@@ -426,9 +484,18 @@ const counts = (r: Recording) => {
             <Icon name="globe" :size="15" />
             <input v-model="address" class="input grow" placeholder="输入网址，回车前往" aria-label="网址" />
             <button class="btn sm" :disabled="busy === 'go'">{{ busy === "go" ? "前往中…" : "前往" }}</button>
+            <button type="button" class="btn ghost sm icon" aria-label="刷新画面" title="重新连接画面（页面本身不刷新）" @click="reconnect(true)"><Icon name="refresh" :size="14" /></button>
           </form>
+          <div v-else class="address row">
+            <span class="muted small grow">{{ active.title }}</span>
+            <button type="button" class="btn ghost sm icon" aria-label="刷新画面" title="重新连接画面" @click="reconnect(true)"><Icon name="refresh" :size="14" /></button>
+          </div>
           <div class="viewer">
-            <iframe :key="active.id" :src="active.src" :title="`远程画面：${active.title}`" allow="clipboard-read; clipboard-write" />
+            <iframe ref="frame" :key="`${active.id}:${frameKey}`" :src="active.src" :title="`远程画面：${active.title}`" allow="clipboard-read; clipboard-write" @load="frameLoaded" />
+            <div v-if="reconnecting" class="reconnect small" role="status">
+              {{ reconnecting === "waiting" ? "画面断开了，正在重新连接…" : "重新连接没有成功" }}
+              <button class="btn ghost sm" @click="reconnect(true)"><Icon name="refresh" :size="13" />现在刷新</button>
+            </div>
           </div>
           <div class="controls row">
             <template v-if="!active.recording">
@@ -465,10 +532,8 @@ const counts = (r: Recording) => {
             <div class="grow">
               <div class="ellipsis" :title="r.goal">{{ r.goal || "（没写要做的事）" }}</div>
               <div class="muted small">{{ r.kind === "browser" ? "浏览器" : "桌面" }} · {{ relTime(r.createdAt) }} · {{ counts(r) }}<span v-if="r.skill"> · 技能 {{ r.skill }}</span></div>
-              <div v-if="r.replay" class="small" :class="r.replay.ok ? 'ok' : 'bad'">{{ r.replay.ok ? "上次回放成功" : `上次回放失败：${r.replay.error ?? ""}` }} · {{ relTime(r.replay.at) }}</div>
             </div>
             <div v-if="r.status === 'done'" class="row acts">
-              <button class="btn ghost sm" :disabled="!r.summary.workflow || !!busy" :title="r.summary.workflow ? '在当前会话里重放这次录制' : '没有可回放的步骤'" @click="replay(r)"><Icon name="play" :size="13" />{{ busy === `replay:${r.id}` ? "回放中…" : "回放" }}</button>
               <button class="btn ghost sm" title="交给助手整理成技能" @click="organize(r)"><Icon name="sparkles" :size="13" />整理</button>
             </div>
           </div>
@@ -639,9 +704,25 @@ const counts = (r: Recording) => {
   border-bottom: 1px solid var(--line);
 }
 .viewer {
+  position: relative;
   flex: 1;
   min-height: 320px;
   background: var(--sunken);
+}
+.reconnect {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  white-space: nowrap;
 }
 .viewer iframe {
   width: 100%;

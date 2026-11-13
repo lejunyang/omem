@@ -294,7 +294,6 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/remote/recordings": g("desktop.control"),
   "GET /api/remote/recordings/:id": g("desktop.control"),
   "POST /api/remote/recordings/:id/organize": g("desktop.control"),
-  "POST /api/remote/recordings/:id/replay": g("desktop.control"),
 
   // plugins: each person's own sessions and records
   "GET /api/plugins": "self",

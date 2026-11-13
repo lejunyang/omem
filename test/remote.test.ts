@@ -1,9 +1,9 @@
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
-import { request } from "node:http";
+import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { readSkill } from "../src/agents/specs.ts";
+import { readSkill, readSkillFile } from "../src/agents/specs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import type { App } from "../src/core/app.ts";
 import { setToolResolverForTests } from "../src/core/tools.ts";
@@ -11,10 +11,11 @@ import { organizeText } from "../src/remote/http.ts";
 import { getRecording, readRecording } from "../src/remote/recordings.ts";
 import { profileDir } from "../src/remote/sessions.ts";
 import { startServer } from "../src/server/http.ts";
+import { WebSocketServer } from "ws";
 import { testApp } from "./helpers.ts";
 
 // Remote operation (docs/v2/remote.md) against a fake aad (test/fake-aad.ts): the page's API, the
-// forwarded viewer and its WebSocket, recordings, the tools that read them, and replay.
+// forwarded viewer and its WebSocket, recordings and the tools that read them.
 const fake = join(import.meta.dirname, "fake-aad.ts");
 const DEFAULT_VIEWER = ["--codecs", "auto", "--quality", "70", "--max-width", "1600"];
 
@@ -37,6 +38,8 @@ describe("remote operation", () => {
     delete process.env.FAKE_AAD_NO_CHROME;
     delete process.env.FAKE_AAD_CLOSE_MS;
     delete process.env.FAKE_AAD_START_ERROR;
+    delete process.env.FAKE_AAD_TRUNCATED;
+    delete process.env.FAKE_AAD_CDP_PORT;
   });
   const api = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const r = await fetch(app.baseUrl + path, { method, headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual" });
@@ -121,7 +124,7 @@ describe("remote operation", () => {
     }
   });
 
-  it("records a browser task, keeps what an agent needs, makes a skill of it and replays it", async () => {
+  it("records a browser task, keeps what an agent needs and makes a skill of it", async () => {
     const started = await api("POST", `/api/remote/sessions/${browser.id}/recording`, { goal: "给商户开通退款权限" });
     expect(started.body).toMatchObject({ kind: "browser", status: "recording", goal: "给商户开通退款权限", target: "https://example.test/admin" });
     const start = calls().find((c) => c[0] === "mcp" && c[2] === "browser_record_start")!;
@@ -131,10 +134,10 @@ describe("remote operation", () => {
     const stopped = await api("DELETE", `/api/remote/sessions/${browser.id}/recording?organize=0`);
     const r = stopped.body.recording;
     expect(r.status).toBe("done");
-    expect(r.summary).toEqual({ actions: 2, replayable: 2, skipped: 0, requests: 1, screenshots: 1, workflow: true, firstPage: "https://example.test/admin" });
+    expect(r.summary).toEqual({ actions: 2, replayable: 2, skipped: 0, requests: 12, screenshots: 1, workflow: true, firstPage: "https://example.test/admin" });
     for (const f of ["steps.jsonl", "walkthrough.md", "record.json", "workflow.yaml", join("evidence", "network.jsonl")]) expect(existsSync(join(r.dir, f))).toBe(true);
     expect(calls()).toContainEqual(["browser-record", "steps", "--out", r.dir, "--save", `omem-${r.id}`, "--overwrite"]);
-    expect(organizeText(getRecording(app, r.id))).toMatch(new RegExp(`录制 ${r.id}.*给商户开通退款权限[^]*2 步可以回放[^]*1 个请求[^]*skill-from-recording`));
+    expect(organizeText(getRecording(app, r.id))).toMatch(new RegExp(`录制 ${r.id}.*给商户开通退款权限[^]*2 个动作[^]*12 个请求[^]*skill-from-recording`));
 
     // What an agent reads: the walkthrough, steps with their requests, request bodies (already redacted).
     expect(readRecording(app, r.id, "owner", {})).toMatch(/要做的事：给商户开通退款权限[^]*填写「商户号」/);
@@ -142,7 +145,17 @@ describe("remote operation", () => {
     expect(steps).toContain("#1 填写「商户号」：B-1001（textbox） @ https://example.test/admin");
     expect(steps).toContain("请求：POST https://example.test/api/refund/grant → 200");
     const requests = readRecording(app, r.id, "owner", { part: "requests", filter: "refund", bodies: true });
-    expect(requests).toMatch(/POST https:\/\/example\.test\/api\/refund\/grant → 200（第 2 步）[^]*"merchant":"B-1001","token":"\[REDACTED\]"[^]*\{"ok":true\}/);
+    expect(requests).toMatch(/POST example\.test\/api\/refund\/grant → 200（第 2 步） \[req-7\][^]*"merchant":"B-1001","token":"\[REDACTED\]"[^]*\{"ok":true\}/);
+    // Noise set aside: telemetry, the preflight, the script, the polling; one line per endpoint, writes first.
+    const apis = readRecording(app, r.id, "owner", { part: "requests" });
+    expect(apis).toMatch(/共 2 个接口[^]*略去[^]*埋点 3 个[^]*\n1\. POST example\.test\/api\/refund\/grant[^]*\n2\. GET example\.test\/api\/merchants\/:id → 200（第 1 步）/);
+    expect(apis).not.toMatch(/collect|qr\/check|app\.3f2a/);
+    const everything = readRecording(app, r.id, "owner", { part: "requests", noise: true });
+    expect(everything).toMatch(/monitor_browser\/collect → 204 ×3（不在哪一步里） \[埋点\]/);
+    expect(everything).toMatch(/GET example\.test\/api\/qr\/check → 200 ×5[^\n]*\[轮询\]/);
+    expect(everything).toMatch(/OPTIONS [^\n]*\[预检\]/);
+    expect(everything).toMatch(/app\.3f2a\.js[^\n]*\[静态资源\]/);
+    expect(readRecording(app, r.id, "owner", {})).toMatch(/## 调用的接口（2 个；略去[^]*- POST example\.test\/api\/refund\/grant（第 2 步）/);
     expect(readRecording(app, r.id, "owner", { part: "requests", filter: "nothing" })).toMatch(/没有/);
     expect(() => readRecording(app, r.id, "someone-else", {})).toThrow(/没有录制/);
 
@@ -152,13 +165,19 @@ describe("remote operation", () => {
     const saved = await callTool(ctx, "save_skill", { name: "grant-refund", description: "给商户开通退款权限", body: "## 步骤\n…", from_recording: r.id, attach: false });
     expect(saved.isError).toBe(false);
     const skill = readSkill(app, "grant-refund");
-    expect(skill.files).toEqual(expect.arrayContaining(["recording/workflow.yaml", "recording/requests.md", "recording/walkthrough.md"]));
+    // Only the endpoints go with the skill; the replay steps and aad's walkthrough of every detour stay with the recording.
+    expect(skill.files).toEqual(["recording/requests.md"]);
+    const kept = readSkillFile(app, "grant-refund", "recording/requests.md");
+    expect(kept).toMatch(/去掉了静态资源 1 个、埋点 3 个、预检 1 个、轮询 5 个，[^]*1\. POST example\.test\/api\/refund\/grant[^]*"merchant":"B-1001"[^]*2\. GET example\.test\/api\/merchants\/:id/);
+    expect(kept).not.toMatch(/collect|qr\/check/);
     expect(getRecording(app, r.id).skill).toBe("grant-refund");
+    // The agent picks the endpoints the task used.
+    const second = await callTool(ctx, "save_skill", { name: "grant-refund-picked", description: "给商户开通退款权限", body: "## 步骤\n…", from_recording: r.id, recording_requests: ["POST /api/refund/grant"], attach: false });
+    expect(second.isError).toBe(false);
+    const picked = readSkillFile(app, "grant-refund-picked", "recording/requests.md");
+    expect(picked).toMatch(/挑出的接口[^]*1\. POST example\.test\/api\/refund\/grant/);
+    expect(picked).not.toContain("merchants");
 
-    // Replay: the page back where the recording started, then the saved steps.
-    const replayed = await api("POST", `/api/remote/recordings/${r.id}/replay`, { sessionId: browser.id });
-    expect(replayed.body.replay).toMatchObject({ ok: true, result: { status: "succeeded", name: `omem-${r.id}` } });
-    expect(calls()).toContainEqual(["mcp", "tools/call", "control_act", { target: { node_id: "doc" }, action: { type: "navigate", url: "https://example.test/admin" } }]);
   });
 
   it("shares the desktop and records one window until stopped", async () => {
@@ -176,9 +195,6 @@ describe("remote operation", () => {
     expect(r).toMatchObject({ status: "done", target: "desktop.fake:notepad", summary: { replayable: 1, skipped: 1, workflow: true } });
     expect(readRecording(app, r.id, "owner", {})).toMatch(/#1 \{"type":"click"\} → button「保存」 @ notepad\.exe[^]*无法识别操作的元素/);
 
-    const replayed = await api("POST", `/api/remote/recordings/${r.id}/replay`, {});
-    expect(replayed.body.replay.ok).toBe(true);
-    expect(calls()).toContainEqual(["run", join(r.dir, "workflow.yaml"), "--permission", "desktop.input", "--permission", "desktop.observe"]);
 
     expect((await api("DELETE", `/api/remote/sessions/${desk.id}`)).status).toBe(200);
 
@@ -188,6 +204,48 @@ describe("remote operation", () => {
     const watched = (await api("POST", `/api/remote/sessions/${one.id}/recording`, { goal: "保存笔记" })).body;
     expect(calls()).toContainEqual(["record", "desktop.fake:notepad", "--until-stdin-closes", "--save", `omem-${watched.id}`, "--overwrite"]);
     expect((await api("DELETE", `/api/remote/sessions/${one.id}`)).status).toBe(200);
+  });
+
+  it("takes the page to an address, through DevTools when aad's capture of the page is truncated", async () => {
+    const small = (await api("POST", "/api/remote/sessions", { kind: "browser" })).body;
+    expect((await api("POST", `/api/remote/sessions/${small.id}/navigate`, { url: "https://example.test/a" })).status).toBe(200);
+    expect(calls()).toContainEqual(["mcp", "tools/call", "control_act", { target: { node_id: "doc" }, action: { type: "navigate", url: "https://example.test/a" } }]);
+    expect((await api("DELETE", `/api/remote/sessions/${small.id}`)).status).toBe(200);
+
+    // A browser's DevTools endpoint: the page list and one page's socket.
+    const sent: unknown[] = [];
+    const http = createServer((req, res) => {
+      const port = (http.address() as { port: number }).port;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([{ id: "OTHER", webSocketDebuggerUrl: `ws://127.0.0.1:${port}/other` }, { id: "PAGE1", webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/PAGE1` }]));
+    });
+    const wss = new WebSocketServer({ server: http });
+    wss.on("connection", (ws, req) => {
+      expect(req.url).toBe("/devtools/page/PAGE1");
+      ws.on("message", (raw) => {
+        const m = JSON.parse(String(raw));
+        sent.push({ method: m.method, params: m.params });
+        ws.send(JSON.stringify({ id: m.id, result: {} }));
+        if (m.method === "Page.navigate") setTimeout(() => ws.send(JSON.stringify({ method: "Page.loadEventFired", params: {} })), 20);
+      });
+    });
+    await new Promise<void>((ok) => http.listen(0, "127.0.0.1", ok));
+    process.env.FAKE_AAD_CDP_PORT = String((http.address() as { port: number }).port);
+    process.env.FAKE_AAD_TRUNCATED = "1";
+    try {
+      const big = (await api("POST", "/api/remote/sessions", { kind: "browser" })).body;
+      const went = await api("POST", `/api/remote/sessions/${big.id}/navigate`, { url: "https://example.test/b" });
+      expect(went.status).toBe(200);
+      expect(went.body.browser.url).toBe("https://example.test/b");
+      expect(sent).toContainEqual({ method: "Page.navigate", params: { url: "https://example.test/b" } });
+      expect(calls()).not.toContainEqual(expect.arrayContaining([{ target: { node_id: "doc" }, action: { type: "navigate", url: "https://example.test/b" } }]));
+      expect((await api("DELETE", `/api/remote/sessions/${big.id}`)).status).toBe(200);
+    } finally {
+      delete process.env.FAKE_AAD_TRUNCATED;
+      delete process.env.FAKE_AAD_CDP_PORT;
+      wss.close();
+      http.close();
+    }
   });
 
   it("starts a browser from a copy of one of this machine's browser profiles", async () => {

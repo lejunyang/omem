@@ -12,7 +12,7 @@ import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
 import { getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
-import { assistOf, browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, replayRecording, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
+import { assistOf, browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
 import { cachedProbe, probeRunning, probeVideo, readSettings, remoteSettingsSchema, saveSettings, viewerArgs } from "./settings.ts";
 
 /**
@@ -130,7 +130,7 @@ export function organizeText(r: Recording) {
   const what = r.kind === "browser" ? `浏览器（${r.target || "页面"}）` : `窗口（${r.target}）`;
   return [
     `我录好了要教你的操作（录制 ${r.id}，在${what}）：${r.goal || "见对话里我说的"}。`,
-    `一共 ${s.actions ?? 0} 个动作，${s.replayable ?? 0} 步可以回放${s.skipped ? `，${s.skipped} 个没能成为步骤` : ""}${s.requests ? `，记下 ${s.requests} 个请求` : ""}。`,
+    `一共 ${s.actions ?? 0} 个动作${s.requests ? `，记下 ${s.requests} 个请求` : ""}。录的时候可能有试错和多余的操作，请只留下真正完成这件事的步骤和接口。`,
     "请按技能 skill-from-recording 看这次录制，先跟我确认流程、每次会变的值和成功的标志，再保存成技能。",
   ].join("\n");
 }
@@ -224,10 +224,6 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
     const r = getRecording(app, (req.params as { id: string }).id, who(req));
     const sent = await organize(app, r, who(req), b.conversationId);
     return { conversationId: sent.conversationId };
-  });
-  server.post("/api/remote/recordings/:id/replay", async (req) => {
-    const b = q(z.object({ sessionId: z.string().optional() }), req.body);
-    return replayRecording(app, (req.params as { id: string }).id, b.sessionId ?? null, who(req));
   });
 
   // The viewer itself, raw: no body parsing, the check above instead of the /api auth hook.

@@ -5,7 +5,7 @@ import type { App } from "../core/app.ts";
 import { HttpError, newId, now } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 import { AadMcp, aadJson, finalJson, firstJsonLine, spawnAad } from "./aad.ts";
-import { createRecording, getRecording, recordingDir, recordingSummary, updateRecording, type Recording } from "./recordings.ts";
+import { createRecording, recordingDir, recordingSummary, updateRecording, type Recording } from "./recordings.ts";
 
 /**
  * Remote sessions (docs/v2/remote.md): a browser page or the desktop of this machine, shown and driven
@@ -345,31 +345,6 @@ function keepReplay(dir: string, answer: any) {
   if (workflow && existsSync(workflow)) copyFileSync(workflow, join(dir, "workflow.yaml"));
 }
 
-/**
- * Run a recording's steps again. A browser recording runs in the session's browser, after taking its
- * page back to where the recording started; a desktop one runs on this machine's desktop.
- */
-export async function replayRecording(app: App, recordingId: string, sessionId: string | null, userId: string) {
-  const r = getRecording(app, recordingId, userId);
-  const workflow = join(r.dir, "workflow.yaml");
-  if (!existsSync(workflow)) throw new HttpError(409, "这次录制没有可回放的步骤");
-  let result: any;
-  try {
-    if (r.kind === "browser") {
-      const s = sessionId ? getSession(sessionId, userId) : [...live.values()].find((x) => x.kind === "browser" && x.userId === userId);
-      if (!s?.mcp) throw new HttpError(409, "回放浏览器录制要先打开一个浏览器会话");
-      const first = (r.summary.firstPage as string | undefined) ?? r.target;
-      if (first) await goTo(s, first);
-      result = await s.mcp.call("run_workflow", { name: workflowName(r.id) }, 300_000);
-    } else {
-      result = aadJson(["run", workflow, "--permission", "desktop.input", "--permission", "desktop.observe"], 300_000);
-    }
-    return updateRecording(app, r.id, { replay: { at: now(), ok: true, result } });
-  } catch (e) {
-    return updateRecording(app, r.id, { replay: { at: now(), ok: false, error: (e as Error).message } });
-  }
-}
-
 /** The address bar the viewer does not have: take a browser session's page somewhere. */
 export async function navigate(sessionId: string, url: string, userId: string) {
   const s = getSession(sessionId, userId);
@@ -381,7 +356,11 @@ export async function navigate(sessionId: string, url: string, userId: string) {
   return sessionView(s);
 }
 
-/** Take the session's page to `url` and wait until it has loaded. */
+/**
+ * Take the session's page to `url` and wait until it has loaded. aad acts only on a complete
+ * observation, and a real page has more nodes than the few this needs, so when the capture comes back
+ * truncated the page goes there through the browser's own DevTools port (the one aad opened it on).
+ */
 async function goTo(s: Live, url: string) {
   const mcp = s.mcp!;
   const targets = await mcp.call("control_targets", {});
@@ -389,6 +368,37 @@ async function goTo(s: Live, url: string) {
   if (!page) throw new HttpError(409, "找不到会话里的页面");
   const observed = await mcp.call("control_observe", { resource_id: page.resource_id, max_nodes: 20 });
   const doc = (observed.nodes ?? []).find((n: any) => n.role === "document");
-  if (!doc) throw new HttpError(409, "读不到页面");
-  await mcp.call("control_act", { target: doc.target, action: { type: "navigate", url } }, 60_000);
+  if (observed.truncated !== true && doc) return void (await mcp.call("control_act", { target: doc.target, action: { type: "navigate", url } }, 60_000));
+  await devtoolsNavigate(s.browser!.port, s.browser!.pageId, url);
+}
+
+/** `Page.navigate` on one page over the browser's DevTools protocol, waiting for its load event. */
+export async function devtoolsNavigate(port: number, pageId: string, url: string, timeoutMs = 60_000) {
+  const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(10_000) })
+    .then((r) => r.json() as Promise<{ id: string; webSocketDebuggerUrl?: string }[]>)
+    .catch((e) => {
+      throw new HttpError(502, `连不上浏览器的调试端口：${(e as Error).message}`);
+    });
+  const target = list.find((t) => t.id === pageId)?.webSocketDebuggerUrl;
+  if (!target) throw new HttpError(409, "找不到会话里的页面");
+  const socket = new WebSocket(target);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new HttpError(504, "页面加载超时")), timeoutMs);
+      const done = (e?: Error) => (clearTimeout(timer), e ? reject(e) : resolve());
+      socket.addEventListener("error", () => done(new HttpError(502, "浏览器的调试连接出错")));
+      socket.addEventListener("close", () => done(new HttpError(502, "浏览器的调试连接断开了")));
+      socket.addEventListener("open", () => {
+        socket.send(JSON.stringify({ id: 1, method: "Page.enable" }));
+        socket.send(JSON.stringify({ id: 2, method: "Page.navigate", params: { url } }));
+      });
+      socket.addEventListener("message", (e) => {
+        const m = JSON.parse(String(e.data));
+        if (m.id === 2 && (m.error || m.result?.errorText)) done(new HttpError(502, `打不开这个网址：${m.error?.message ?? m.result.errorText}`));
+        else if (m.method === "Page.loadEventFired") done();
+      });
+    });
+  } finally {
+    socket.close();
+  }
 }
