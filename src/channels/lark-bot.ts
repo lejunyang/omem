@@ -2,7 +2,7 @@ import { updateThread, type Thread } from "../agents/threads.ts";
 import { homeOf, noteAnchor, noteTopicRoot, replyAnchor } from "../agents/home.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
 import { queueMention } from "./lark-mentions.ts";
-import { isMentionRun } from "../mentions/mentions.ts";
+import { isMentionRun, mentionOf } from "../mentions/mentions.ts";
 import { chatSpace } from "./lark-personal.ts";
 import { notificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scheduleIngest } from "../agents/jobs.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
-import { getRun } from "../agents/runs.ts";
+import { getRun, setRunOutput } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink, deferNotification, markPushed, markQuiet, markReadIds, notificationCardOf, setNotificationCard, takeDeferred } from "../core/notify.ts";
@@ -357,6 +357,12 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       noteAnchor(app, runId, thread.id, id);
       if (runId) await showSuggestions(app, runId).catch((e) => console.warn("[omem] 回答后的确认卡片发送失败：", (e as Error).message));
     };
+    // It asked the owner on a card here and the answer only says that again: into the card, not a second message.
+    if (runId) {
+      const { foldIntoAsk } = await import("./lark-asks.ts");
+      const folded = await foldIntoAsk(app, runId, chatId, raw).catch((e) => void console.warn(`[omem] 回答并进提问卡片失败，照常发出：${(e as Error).message}`));
+      if (folded) return sent(folded);
+    }
     // Internal citations and paths on this machine mean nothing in Feishu.
     const cite = { runId, chatId };
     const markdown = await resolveCitations(app, raw, cite);
@@ -464,6 +470,18 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       const { checkedBeforeSend } = await import("../agents/awareness.ts");
       if ((deferred || !checkedBeforeSend(app, n.runId)) && await ownerAlreadyHandled(app, n).catch(() => false)) { markQuiet(app, n.id, "你已经在飞书上看过或处理了，没有再推"); markReadIds(app, [n.id]); return; }
     }
+    // A handling's reminder with the reply it drafted: one card, the reminder on top and the draft to send under it.
+    if (n.replyDraft && n.runId) {
+      const m = mentionOf(app, n.runId);
+      if (m) {
+        const { draftMentionReply } = await import("./mention-reply.ts");
+        const { resolveCitationsSync } = await import("./common.ts");
+        const r = await draftMentionReply(app, n.runId, m, n.replyDraft, { title: n.title, markdown: resolveCitationsSync(app, n.body) }, target);
+        setRunOutput(app, n.runId, { mentionReply: { draft: r.id } });
+        setNotificationCard(app, n.id, r.messageId, notifyConversation(n)?.bot);
+        return;
+      }
+    }
     // Cards keep external notification links; internal routes stay in the web app.
     const card = notificationCard(app, n);
     if (n.digest) {
@@ -492,7 +510,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (inQuietHours(app)) return;
     const byUser = new Map<string, ReturnType<typeof takeDeferred>>();
     for (const n of takeDeferred(app)) byUser.set(n.userId, [...(byUser.get(n.userId) ?? []), n]);
-    for (const items of byUser.values()) {
+    for (const all of byUser.values()) {
+      // A reminder carrying a drafted reply keeps its own card: a list has nowhere to send it from.
+      for (const n of all.filter((x) => x.replyDraft)) await push(n, true).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
+      const items = all.filter((x) => !x.replyDraft);
+      if (!items.length) continue;
       if (items.length <= 3) {
         for (const n of items) await push(n, true).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
         continue;

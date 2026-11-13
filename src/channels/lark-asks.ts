@@ -81,9 +81,11 @@ function questionBlocks(app: App, ask: Ask): CardBlock[] {
  * `mention`: the person who has to answer, in the posting bot's ids; @-ed at the top of a card posted
  * in a group (only while it waits for them).
  */
-export function askCard(app: App, ask: Ask, opts: { mention?: string | null } = {}): Record<string, unknown> {
+export function askCard(app: App, ask: Ask, opts: { mention?: string | null; note?: string } = {}): Record<string, unknown> {
   if (ask.status !== "pending") return answeredCard(app, ask);
   const blocks = questionBlocks(app, ask);
+  // The asking turn's answer, when it only said again what the card says (foldIntoAsk): kept, folded.
+  if (opts.note) blocks.push({ fold: { title: "这一轮的说明", markdown: resolveCitationsSync(app, truncate(opts.note, 6000)) } });
   if (ask.askedBy) blocks.unshift({ note: `${cardText(userName(app, ask.askedBy))} 的助手替 ta 问你，回答会交给 ta。` });
   // What the agent showed with the question comes first, as text (docs/v2/interactive-ui.md).
   if (ask.ui?.view?.length) {
@@ -217,6 +219,77 @@ export function viewCard(app: App, view: { id: string; title: string; components
   return buildCard({ ...(view.title ? { title: view.title } : {}), color: "grey", blocks: [...viewCardBlocks(app, view.components, { linked: web }), ...(web ? [{ buttons: [page ? { text: "打开交互页", url: link, style: "primary" as const } : { text: "在网页上查看", url: link }] }] : [])] });
 }
 
+/** Who may answer, in the posting bot's ids (the owner's open_id there; others by their main-bot id or user_id). */
+function answererId(app: App, ask: Ask, bot: string) {
+  return ask.userId === OWNER ? larkOwnerOpenId(app, bot) : bot === "main" ? larkOpenIdOf(app, ask.userId) : larkUserIdOf(app, ask.userId);
+}
+
+/** In a group the card says whose turn it is; a private chat needs no @. */
+const groupMention = (app: App, chatId: string | null, who: string | null | undefined) => (chatId && !larkPrivateChat(app, chatId) ? who ?? null : null);
+
+/** The card's buttons answer through this interaction. */
+function bindCard(card: Record<string, unknown>, id: string) {
+  const bind = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    const node = value as Record<string, unknown>;
+    if (node.tag === "button") {
+      node.name = `${node.name}__${id}`;
+      for (const behavior of (node.behaviors ?? []) as { type: string; value?: Record<string, unknown> }[]) {
+        if (behavior.type === "callback") behavior.value = { ...behavior.value, interactionId: id };
+      }
+    }
+    for (const child of Object.values(node)) if (child && typeof child === "object") {
+      if (Array.isArray(child)) child.forEach(bind);
+      else bind(child);
+    }
+  };
+  bind(card);
+  return card;
+}
+
+/** Text as pieces of four characters, without markup, links and spacing: what two texts share. */
+function grams(text: string) {
+  const plain = text.replace(/\]\([^)]*\)/g, "]").replace(/[\s*_`|#>\-\[\]（）()，。、：:；;！!？?“”"'·…]+/g, "");
+  const out = new Set<string>();
+  for (let i = 0; i + 4 <= plain.length; i++) out.add(plain.slice(i, i + 4));
+  return out;
+}
+
+/** How much of `answer` the `question` already says (0–1): the share of its pieces found there. */
+export function alreadySaid(answer: string, question: string) {
+  const a = grams(answer);
+  if (!a.size) return 1;
+  const q = grams(question);
+  let hit = 0;
+  for (const g of a) if (q.has(g)) hit++;
+  return hit / a.size;
+}
+
+/** An answer this short after a question card only points at it (“卡片已发给你”). */
+const POINTS_ONLY = 30;
+/** An answer saying this much of the question again repeats it. */
+const REPEATS = 0.4;
+
+/**
+ * The turn's answer right after its own question in the same chat (ask_user, still waiting): when it
+ * only points at the card or mostly says the question again, it goes into the card, folded, instead
+ * of out as a second message saying the same. Returns the card's message id, or null to send it.
+ */
+export async function foldIntoAsk(app: App, runId: string, chatId: string, answer: string): Promise<string | null> {
+  const ask = one<{ id: string }>(app.db, "select id from asks where run_id = ? and status = 'pending' and kind in ('question','approval') order by created_at desc limit 1", runId);
+  if (!ask) return null;
+  const inter = one<{ id: string; message_id: string; bot: string | null; payload: string }>(app.db,
+    "select id, message_id, bot, payload from card_interactions where purpose = 'ask' and status = 'open' and message_id is not null and chat_id = ? and json_extract(payload, '$.askId') = ? order by created_at desc limit 1", chatId, ask.id);
+  if (!inter) return null;
+  const a = getAsk(app, ask.id);
+  const plain = answer.replace(/\s+/g, "");
+  if (plain.length > POINTS_ONLY && alreadySaid(answer, a.question) < REPEATS) return null;
+  const bot = inter.bot ?? "main";
+  await updateLarkCard(inter.message_id, bindCard(askCard(app, a, { mention: groupMention(app, chatId, answererId(app, a, bot)), note: answer }), inter.id), bot);
+  run(app.db, "update card_interactions set payload = json_set(payload, '$.note', ?) where id = ?", answer, inter.id);
+  return inter.message_id;
+}
+
 export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined) {
   addViewSink(async (app, view) => {
     const to = viewTarget(app, view.conversationId);
@@ -228,26 +301,9 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
     async show(app, ask) {
       const to = targetFor(app, ask, ownerOpenId());
       if (!to) return false;
-      // Who may answer, in the posting bot's ids (the owner's open_id there; others by their main-bot id or user_id).
-      const who = ask.userId === OWNER ? larkOwnerOpenId(app, to.bot) : to.bot === "main" ? larkOpenIdOf(app, ask.userId) : larkUserIdOf(app, ask.userId);
+      const who = answererId(app, ask, to.bot);
       const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
-      // In a group the card says whose turn it is; a private chat needs no @.
-      const card = askCard(app, ask, { mention: to.chatId && !larkPrivateChat(app, to.chatId) ? who : null });
-      const bind = (value: unknown): void => {
-        if (!value || typeof value !== "object") return;
-        const node = value as Record<string, unknown>;
-        if (node.tag === "button") {
-          node.name = `${node.name}__${id}`;
-          for (const behavior of (node.behaviors ?? []) as { type: string; value?: Record<string, unknown> }[]) {
-            if (behavior.type === "callback") behavior.value = { ...behavior.value, interactionId: id };
-          }
-        }
-        for (const child of Object.values(node)) if (child && typeof child === "object") {
-          if (Array.isArray(child)) child.forEach(bind);
-          else bind(child);
-        }
-      };
-      bind(card);
+      const card = bindCard(askCard(app, ask, { mention: groupMention(app, to.chatId, who) }), id);
       try {
         const sent = await sendLark(to.target, { card });
         bindInteraction(app, id, sent.messageId);

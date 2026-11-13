@@ -619,6 +619,7 @@ ${JSON.stringify({ check, tools })}`);
           const ref = /src:[A-Za-z0-9_-]+#L\d+/.exec(prompt)?.[0];
           const read = ref ? await call("read_source", { source: ref.slice(4).split("#")[0] }) : null;
           if (process.env.FAKE_MENTION === "quiet") {
+            if (process.env.FAKE_REPLY) await call("reply_to_asker", { text: process.env.FAKE_REPLY });
             await call("stay_quiet", { reason: "群里已经有人回答了" });
             await say("不用提醒");
             return { stopReason: "end_turn" as const };

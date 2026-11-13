@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { getRun, type Run } from "./runs.ts";
 import { threadMessages } from "./threads.ts";
+import { hostToldOwner } from "./code-chain.ts";
 
 /**
  * Saying nothing is a tool call (stay_quiet), never a word in the answer. A run nobody waits on may
@@ -14,6 +15,8 @@ export function mayStayQuiet(app: App, run: Run): boolean {
   if (run.kind === "ask") {
     // Tasks handed back for the assistant to settle: the owner needs to hear only what is left for them.
     if (input.handoff?.kind === "code-tasks" || input.handoff?.kind === "design") return true;
+    // A round's result the host already put before the owner on its own card: the turn may have nothing to add.
+    if (input.handoff?.kind === "code" && hostToldOwner(app, input.handoff as { kind: string; runId?: string; workId?: string }).length) return true;
     if (input.handoff || input.coordinate || input.fromAsk || !input.conversationId) return false;
     const ids = input.messageIds ?? [];
     const msgs = threadMessages(app, input.conversationId, { limit: 400 }).filter((m) => ids.includes(m.id));

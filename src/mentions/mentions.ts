@@ -259,7 +259,7 @@ function messageLines(app: App, channel: MentionChannel, open: MentionMessage[])
 function replyNote(app: App, channel: MentionChannel, m: Pick<MentionInfo, "chatKind" | "senderName">, mode: ReplyMode) {
   if (mode === "off" || !channel.reply) return "你不能替本人回复对方：建议的回复写在给本人的提醒里。";
   const how = channel.reply.how(app, m);
-  if (mode === "draft") return `要回复对方时，用 reply_to_asker(text) 写好回复（${how}）：它先变成给本人的确认卡片，本人可以改了再发。只写要发给对方的话，用本人这边的口吻；提醒里说一句拟了回复。`;
+  if (mode === "draft") return `要回复对方时，用 reply_to_asker(text) 写好回复（${how}）：它附在给本人的提醒下面，和提醒是同一张卡片，本人可以改了再发；你最后调用 stay_quiet 的话它不会发出去。只写要发给对方的话，用本人这边的口吻；提醒正文里不要再抄一遍这段回复。`;
   return `查清楚、答复不涉及承诺、排期、审批、权限或本人的意见时，可以用 reply_to_asker(text) 直接回复对方（${how}）；拿不准就不回，把建议的话写进提醒。回复了就在提醒里写清回了什么。`;
 }
 
@@ -333,7 +333,19 @@ export async function runMentionHandling(ctx: RunContext, inner: (ctx: RunContex
   const found = () => channel.messages(app, m.messageIds);
   try {
     const out = await inner({ ...ctx, signal: AbortSignal.any([ctx.signal, timeout]) });
-    if (quietReason(app, ctx.run.id)) return { ...out, quiet: true };
+    // A reply drafted for the owner (reply_to_asker in draft mode), not sent yet.
+    const held = getRun(app, ctx.run.id).output.mentionReply as { pending?: string } | undefined;
+    const draft = typeof held?.pending === "string" && held.pending.trim() ? held.pending : "";
+    // Nothing for the owner: the draft goes nowhere either.
+    if (quietReason(app, ctx.run.id)) {
+      if (draft) setRunOutput(app, ctx.run.id, { mentionReply: { dropped: draft } });
+      return { ...out, quiet: true };
+    }
+    // It told the owner itself (notify): the draft comes as its own card.
+    if (notified() && draft && channel.reply) {
+      const id = await channel.reply.draft(app, ctx.run.id, m, draft).catch((e) => void console.warn(`[omem] 有人找你的回复草稿没有发出：${(e as Error).message}`));
+      if (id) setRunOutput(app, ctx.run.id, { mentionReply: { draft: id } });
+    }
     if (!notified()) {
       const answer = String(out.answer ?? "").trim();
       if (!answer || answer === "（没有输出）") shortReminder(app, m, found(), ctx.run.id, "查背景的运行没有写出结论", m.what, m.urgency);
@@ -344,7 +356,7 @@ export async function runMentionHandling(ctx: RunContext, inner: (ctx: RunContex
         const replied = getRun(app, ctx.run.id).output.mentionReply as Partial<Replied> | undefined;
         const body = [lines.slice(head + 1).join("\n").trim() || answer, replied?.via ? (replied.ok === false ? `\n（回复对方没有成功：${replied.problem ?? replied.where}）` : `\n（已替你回复对方：${replied.where}）`) : "", m.refs.length && !answer.includes("src:") ? `\n[原消息](${m.refs.at(-1)})` : ""].join("");
         try {
-          notify(app, { title, body, sourceRefs: m.refs, runId: ctx.run.id, link: `#/runs/${ctx.run.id}`, urgency: m.urgency });
+          notify(app, { title, body, sourceRefs: m.refs, runId: ctx.run.id, link: `#/runs/${ctx.run.id}`, urgency: m.urgency, ...(draft ? { replyDraft: draft } : {}) });
         } catch (e) {
           console.warn(`[omem] 有人找你的提醒没有发出：${(e as Error).message}`);
         }
@@ -385,14 +397,15 @@ export function mentionOf(app: App, runId: string | null | undefined): MentionIn
 export async function replyToAsker(app: App, runId: string | null | undefined, text: string): Promise<string> {
   const m = mentionOf(app, runId);
   if (!m || !runId) throw new HttpError(403, "只有处理“有人找你”的运行能回复对方");
-  const done = getRun(app, runId).output.mentionReply as Replied | { draft: string } | undefined;
-  if (done) throw new HttpError(409, "这次已经回复过对方（或已经给本人发了草稿），不再重复");
+  const done = getRun(app, runId).output.mentionReply as Replied | { draft: string } | { pending: string } | undefined;
+  if (done && !("pending" in done)) throw new HttpError(409, "这次已经回复过对方（或已经给本人发了草稿），不再重复");
   const reply = mentionChannel(m.channel).reply;
   if (m.reply === "off" || !reply) throw new HttpError(400, "本人没有打开“回复对方”：把建议的话写进给本人的提醒里");
   if (m.reply === "draft") {
-    const id = await reply.draft(app, runId, m, text);
-    setRunOutput(app, runId, { mentionReply: { draft: id } });
-    return "已作为草稿发给本人确认（还没有发出）：本人可以改一下再发，或者不发。提醒里说一句你拟了回复。";
+    // Held until the handling ends: it goes out on the reminder's own card, or not at all when the
+    // handling stays quiet (a draft card and a reminder about the same message were two messages).
+    setRunOutput(app, runId, { mentionReply: { pending: text } });
+    return `已拟好${done ? "（替换了之前拟的）" : ""}，还没有发出：它会附在给本人的提醒下面，本人确认后才发。提醒正文里不要再抄这段回复；最后调用 stay_quiet 的话它不会发出。`;
   }
   const r = await reply.send(app, runId, text, "auto");
   return `已回复对方：${r.where}${r.note}。在给本人的提醒里写清回了什么。`;

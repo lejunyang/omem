@@ -140,7 +140,7 @@ registerHandler("wake", async (ctx) => {
 
 /** The turn's framing when a conversation's agent is woken (sessions.ts). */
 export const WAKE_NOTE =
-  "这是你（或别的 Agent）之前设的唤醒，不是本人发的消息。按备注接着做：查看进展、继续未完成的步骤。有需要本人知道或决定的再写给本人；没有新东西要说就调用 stay_quiet（写一句原因）结束这一轮，本人不会收到任何消息。";
+  "这是你（或别的 Agent）之前设的唤醒，不是本人发的消息。按备注接着做：查看进展、继续未完成的步骤。只有要本人做或决定的事，或者事情有了结果（办成、办不成、对方不用了），才写给本人；别人还在跟、你又排了下次复查这类进展，记进事项就够了，调用 stay_quiet（写一句原因）结束这一轮，本人不会收到任何消息。写给本人时不要重复之前已经告诉过本人的内容。";
 
 /** Temporary rules past their time (heartbeat). */
 export async function expireTemporaryRules(app: App, at = now()) {

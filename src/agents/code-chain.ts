@@ -372,3 +372,50 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
     parentId: chain.askRunId,
   });
 }
+
+type Handoff = { kind: string; runId?: string; workId?: string };
+
+/**
+ * A turn in the same conversation that was about this very work (its wake note or messages name the
+ * round or the work) and ended after the round did, saying something: it has told the owner the
+ * result already (a wake-up the assistant set to check on the round fired while it finished). The
+ * handoff turn then has nothing to add. Returns that turn's id.
+ */
+export function reportedSince(app: App, conversationId: string, handoff: Handoff, self: string): string | null {
+  if (handoff.kind !== "code" || !handoff.runId) return null;
+  const finished = getRun(app, handoff.runId).finishedAt;
+  if (!finished) return null;
+  const names = [handoff.runId, handoff.workId].filter((x): x is string => !!x);
+  const turns = all<{ id: string; input: string }>(app.db,
+    `select id, input from runs where kind = 'ask' and status = 'done' and id != ? and json_extract(input, '$.conversationId') = ?
+       and json_extract(input, '$.handoff') is null and finished_at > ? and coalesce(json_extract(output, '$.quiet'), 0) = 0 order by finished_at desc limit 5`,
+    self, conversationId, finished);
+  for (const t of turns) {
+    const ids = ((JSON.parse(t.input) as { messageIds?: string[] }).messageIds ?? []);
+    if (!ids.length) continue;
+    const said = all<{ text: string }>(app.db, `select text from messages where id in (${ids.map(() => "?").join(",")})`, ...ids).map((m) => m.text).join("\n");
+    if (names.some((n) => said.includes(n))) return t.id;
+  }
+  return null;
+}
+
+/**
+ * What the host itself already put before the owner about this round: its cards (the confirm, the
+ * “先推送验证” offer, questions on the work's tasks) and notifications (paused, out of rounds). The
+ * handoff turn reports only what these do not say.
+ */
+export function hostToldOwner(app: App, handoff: Handoff): string[] {
+  if (handoff.kind !== "code" || !handoff.runId) return [];
+  const started = getRun(app, handoff.runId).createdAt;
+  const asks = all<{ question: string; options: string }>(app.db,
+    "select question, options from asks where status = 'pending' and created_at >= ? and json_extract(context, '$.handler') is not null and (run_id = ? or json_extract(context, '$.rootId') = ? or json_extract(context, '$.workId') = ?)",
+    started, handoff.runId, handoff.workId ?? "", handoff.workId ?? "");
+  const notes = all<{ title: string; body: string }>(app.db,
+    "select title, body from notifications where at >= ? and (link like ? or link like ? or json_extract(context, '$.runId') = ?)",
+    started, `%${handoff.runId}%`, `%${handoff.workId ?? handoff.runId}%`, handoff.runId);
+  const cut = (s: string) => (s.length > 1500 ? `${s.slice(0, 1500)}…` : s);
+  return [
+    ...asks.map((a) => `- 卡片：${cut(a.question)}${(JSON.parse(a.options) as { label: string }[]).length ? `\n  按钮：${(JSON.parse(a.options) as { label: string }[]).map((o) => o.label).join(" / ")}` : ""}`),
+    ...notes.map((n) => `- 通知「${n.title}」：${cut(n.body)}`),
+  ];
+}

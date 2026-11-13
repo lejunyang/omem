@@ -134,6 +134,17 @@ registerHandler("ask", async (ctx) => {
   const msgs = all.filter((m) => ids.includes(m.id));
   if (!msgs.length) return { answer: "", skipped: "消息已不存在" };
   const coordinate = (ctx.run.input as { coordinate?: { workId: string; sourceRunIds?: string[] } }).coordinate;
+  // A coding round's result handed to the assistant, already told by a turn about the same work that
+  // ended after it (a wake-up it set for the round): not a second report of the same result.
+  const handedOff = (ctx.run.input as { handoff?: { kind: string; runId?: string; workId?: string } }).handoff;
+  if (handedOff?.kind === "code") {
+    const { reportedSince } = await import("./code-chain.ts");
+    const by = reportedSince(ctx.app, input.conversationId, handedOff, ctx.run.id);
+    if (by) {
+      ctx.event("status", { text: `这一轮的结果 ${by} 已经告诉本人了，不再汇报` });
+      return { answer: "", quiet: true, skipped: `已由 ${by} 汇报` };
+    }
+  }
   // A watched group's batch: the decision model screens it first (channels/lark-watch.ts prefilterBatch).
   if (msgs.every((m) => typeof m.meta.speaker === "string")) {
     const { prefilterBatch } = await import("../channels/lark-watch.ts");
@@ -190,7 +201,7 @@ registerHandler("ask", async (ctx) => {
     // What the turn left unsettled is said where the owner reads it, not left as a silent wait.
     const { listTasks, taskLabel } = await import("./code-tasks.ts");
     const left = handoff?.workId ? listTasks(ctx.app, handoff.workId).filter((t) => t.state === "assistant") : [];
-    if ((handoff?.kind === "code-tasks" || handoff?.kind === "design") && quiet && !left.length) return { answer, quiet: true, session: r.mode };
+    if ((handoff?.kind === "code-tasks" || handoff?.kind === "design" || handoff?.kind === "code") && quiet && !left.length) return { answer, quiet: true, session: r.mode };
     const note = left.length ? `\n\n（${left.map((t) => `${taskLabel(t.seq)}「${truncate(t.title, 40)}」`).join("、")} 交给了助手，这一轮还没处理，交办在这几项上停着。）` : "";
     answer = `${quiet ? "" : answer}${note}`.trim() || answer;
     await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });

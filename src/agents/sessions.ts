@@ -1,4 +1,5 @@
 import { one } from "../core/db.ts";
+import { hostToldOwner } from "./code-chain.ts";
 import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
 import { aiLabel, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type OrderSource } from "./choose-ai.ts";
 import type { App } from "../core/app.ts";
@@ -196,6 +197,21 @@ function coldContext(app: App, t: Thread, before: string, owner: string[] = []) 
   return parts.join("\n\n");
 }
 
+/**
+ * The host's own cards and notifications about the round, which the owner has already: the handoff
+ * report says only what they do not.
+ */
+function hostToldNote(app: App, handoff: { kind: string; runId?: string; workId?: string } | undefined) {
+  const told = handoff ? hostToldOwner(app, handoff) : [];
+  if (!told.length) return "";
+  return `
+本人已经收到宿主关于这一轮的卡片和通知（下面），内容本人看得到：
+${told.join("\n")}
+
+汇报不要再写一遍这些（做完了哪些、剩哪几个问题、按钮里的选择），只写它们没有的：你的判断和建议、发现的偏离、你这一轮处理了什么。卡片已经说全、你也没有要补的，调用 stay_quiet（一句原因）结束这一轮，本人不会再收到消息。
+`;
+}
+
 /** A batch from a group being watched (lark-watch.ts): what the owner wants from it, and how to work it. */
 function watchedNote(app: App, t: Thread, messages: ThreadMessage[]) {
   const chatId = (t.key ?? "").split("#")[0];
@@ -349,7 +365,7 @@ ${renderMessages(messages, app)}
 1. 用 settle_code_task 处理“等你处理”的项（retry 写清这次怎么做，later 记成以后再做，skip 写理由，owner 只在要本人取舍时写 question 和 options）；需求已经做完、剩下的待做项和原来要的无关的，也可以 later。你 retry 的项在自动推进的轮数之内会接着开下一轮。
 2. 给本人写一条汇报，用本人的话，不用修改项编号和宿主的说法（“阶段评审”“修改项”“T41–T45”都不要出现，要指某一处就说它是什么问题）：本人要的哪些已经能用、还差什么、你的判断和建议（比如“功能已经齐了，剩下的是并发边界，建议先推上去在真机上试，剩下的记着以后再说”）。发现交办偏离了原来的问题，直接说出来。
 3. 只有“在等本人决定”的项、宿主问本人要不要先推送，以及轮数用完、本人暂停、运行失败时，才需要本人回复；写清本人要决定的是什么，给的选择是本人看得懂的做法，不是转给编码 Agent 的指令。其余不要让本人确认或回复。
-
+${hostToldNote(app, handoff)}
 这一轮不能交办、续轮或推送（continue_code_run、apply_code_run 不可用）。`
       : woken
       ? `# 唤醒

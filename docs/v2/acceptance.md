@@ -664,7 +664,7 @@ TraeX 与其他 ACP 的清理补验：
 - 页面写成普通 HTML、从 `/plugins/_sdk/omem.js` 引入 SDK 能用（插件页在沙箱 iframe 里）；引入 `/plugins/_sdk/omem.css` 后按钮、输入框、卡片和主站一样。
 - 英语练习页和 SDK 画的表单、图表用的是 omem 的样式和组件：主按钮是主站的深色按钮（不是蓝色），侧重用分段选择，加载时是骨架；深浅色都对。
 - 侧栏里英语练习的图标和“学习”不一样；设置 → 插件里点插件名前的图标，选一个后侧栏马上换，“用插件自己的图标”恢复。数据目录插件的清单写 `icon: 文件名.svg`（放在 `web/` 里）时侧栏显示这个图形，颜色跟随文字。
-- `pnpm run dev` 时改 `plugins/english/web/*.vue`、`omem-plugin-sdk` 或 `web/src/styles.css`，打开着的英语练习页原地更新；`pnpm run build` 后不开 dev 也能打开（`web/dist/plugins/english`）。
+- `pnpm run dev` 时改 `plugins/english/web/*.vue`、`@omem-ai/plugin-sdk` 或 `web/src/styles.css`，打开着的英语练习页原地更新；`pnpm run build` 后不开 dev 也能打开（`web/dist/plugins/english`）。
 - 根目录 `pnpm install` 装好应用、VS Code 插件和文档站；`pnpm install --frozen-lockfile --filter omem` 只装应用；`pnpm --filter omem-vscode run build`、`pnpm --filter omem-docs run build` 能构建。
 - 回归：`test/plugin-services.test.ts`（信任前不运行、信任后工具与服务、改代码要重新确认、撤销即卸载、需批准的工具、流的文本与二进制、令牌与未知流被拒）。
 
@@ -1378,7 +1378,7 @@ TraeX 与其他 ACP 的清理补验：
 | 13f | 设置 → 渠道 → 机器人检查 | 成员权限里列出“登录（读邮箱）”缺的 `contact:user.email:readonly`、`contact:user.employee:readonly`；开通并发版后飞书登录的授权页包含读邮箱 | 待真机 |
 | 13g | 数据目录里放一个带 `api.authenticator` 的插件（清单 `permissions.authenticators`，在 omem 里运行）；在另一台电脑设 `OMEM_AUTH_CMD` 为输出 JWT 的命令，`omem tool --url <地址> list_spaces` | 邮箱对上预建账号时直接可用；对不上时返回“在等 omem 的主人批准”，成员页多一个等待批准的账号，本人收到一次通知；JWT 过期后命令被重新执行 | 自动测试通过（测试用插件），待真机 |
 | 13h | 一个自定义全局角色（不含 `tools.external`）的账号用 `omem login` | 确认页提示角色不能用，“允许”不可点；直接带令牌调工具返回 403 并说明缺这项权限 | 自动测试通过 |
-| 13i | 在一台没装 omem 的电脑上 `npm i -g omem-cli`，然后照 13a、13b 做一遍；再不带地址运行 `omem tool list_spaces` | 安装只有一个包、几百 KB；13a、13b 的结果相同；没有地址时提示加 `--url` / `omem login`，并说本机运行要装 omem-assistant | 自动测试通过，未发布，待真机 |
+| 13i | 在一台没装 omem 的电脑上 `npm i -g @omem-ai/cli`，然后照 13a、13b 做一遍；再不带地址运行 `omem tool list_spaces` | 安装只有一个包、几百 KB；13a、13b 的结果相同；没有地址时提示加 `--url` / `omem login`，并说本机运行要装 @omem-ai/app | 自动测试通过，未发布，待真机 |
 
 ## Chrome 扩展：默认不连 CDP 与拾取（2026-11-10）
 
@@ -1591,3 +1591,16 @@ TraeX 与其他 ACP 的清理补验：
 - Linux 后台服务没有 DISPLAY：网页禁用“在电脑桌面上也显示”，仍可无窗口打开；aad 在创建资料和结束占用进程前拒绝窗口启动。从桌面终端重启服务后，保留 DISPLAY、XAUTHORITY 等当前桌面环境。
 - 浏览器提前退出时报告 stderr；只有没安装浏览器才换下一个，不掩盖启动失败。失败启动和正常关闭后的本次进程锁会释放。
 - 自动回归：`test/remote.test.ts`、`test/service-environment.test.ts`；aad 的 `launch::occupancy` 和启动失败测试。真实 Edge 验证过占用 PID 退出、残留锁恢复、同一资料立即重开和无 DISPLAY 时不关闭原浏览器；1440 / 390 截图与交互检查无横向溢出。后台服务真实接口打开长期资料、复制已有资料（有 / 无窗口）和关闭均返回 200。
+
+## 一件事一条消息（2026-11-13）
+
+同一件事不再一张卡片之后跟一条意思差不多的回复。
+
+| 编号 | 怎么做 | 应该看到 | 状态 |
+|---|---|---|---|
+| 28a | 设置 → 渠道 → 有人找你，群回复设为“草稿”；同事在群里 @ 你问一个能查的问题 | 只收到一张卡片：上面是提醒（结论、依据），下面是拟好的回复和“发送 / 不发”；点发送后提醒的正文还在，只有回复那段变成“已回复” | 测试覆盖（`test/lark-mentions.test.ts`），真机待验 |
+| 28b | 同上，但同事只是抄送你（别人已在处理） | 处理运行拟了回复后调用 `stay_quiet`：什么都不发，运行的 output 里 `mentionReply.dropped` 是那段草稿 | 测试覆盖（假 Agent） |
+| 28c | 让助手做一件要你批准的事（“清理一下，给我确认参数”） | 只有一张审批卡片；助手这一轮的回答如果只是说“审批卡已发给你”或把参数再列一遍，就并进卡片里折起来的“这一轮的说明”，不另发；回答里有卡片上没有的新情况时照常另发 | 测试覆盖（`test/one-message.test.ts`），真机待验 |
+| 28d | 编码交办做完（宿主发“交办完成”或“需求做完了”卡片） | 助手接手的那一轮只补卡片上没有的（判断、建议）；没有可补的就不发 | 测试覆盖（`hostToldOwner`、`mayStayQuiet`），真实模型待验 |
+| 28e | 助手给交办设了“过一会儿看结果”的唤醒，正好在这一轮结束时醒来并汇报了结果 | 不再出现第二条“编码交办第 N 轮结束”的汇报；运行页那一轮的状态写“这一轮的结果 … 已经告诉本人了” | 测试覆盖（`reportedSince`） |
+| 28f | 有人找你的事建了事项并设了复查，复查时别人还在跟、没有结果 | 复查安静结束，只更新事项；事情办完或办不成时才发一条 | 唤醒说明已改，真实模型待验 |

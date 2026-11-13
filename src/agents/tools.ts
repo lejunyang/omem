@@ -3061,7 +3061,7 @@ def({
     }
     const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 40) * 1000);
     return got.status === "pending"
-      ? `已问本人（${ask.id}），还没回答。可以先做不依赖答案的部分，再 wait_answer(ask_id="${ask.id}") 接着等；这一轮结束时还没答，回答会作为新消息回到这个会话。`
+      ? `已问本人（${ask.id}），还没回答。可以先做不依赖答案的部分，再 wait_answer(ask_id="${ask.id}") 接着等；这一轮结束时还没答，回答会作为新消息回到这个会话。问题和背景本人在提问卡片上看得到：这一轮的回答不要再写一遍，只写卡片上没有的（先做了什么、查到的新情况）；没有就一句话。`
       : describeAnswer(got);
   },
 });

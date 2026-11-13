@@ -15,7 +15,7 @@ import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { queueMention } from "../src/channels/lark-mentions.ts";
 import { handedToMentions, MENTION_DENY, mentionTools, mentionUsage, replyToAsker, type MentionInfo } from "../src/mentions/mentions.ts";
 import { persistChatMessages, type LarkMessage } from "../src/channels/lark-messages.ts";
-import { decideMentionReply } from "../src/channels/mention-reply.ts";
+import { decideMentionReply, draftMentionReply } from "../src/channels/mention-reply.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { moveOldSettings } from "../src/core/config.ts";
 import { dispatchRuleEvent, forgetChatBots } from "../src/rules/engine.ts";
@@ -38,6 +38,7 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
           fake("handle-quiet", { FAKE_MODE: "mention", FAKE_MENTION: "quiet" }),
           fake("handle-silent", { FAKE_MODE: "mention", FAKE_MENTION: "silent" }),
           fake("handle-reply", { FAKE_MODE: "mention", FAKE_REPLY: "按未发货的行算，已发货的不退。" }),
+          fake("handle-reply-quiet", { FAKE_MODE: "mention", FAKE_MENTION: "quiet", FAKE_REPLY: "按未发货的行算。" }),
           fake("handle-dies", { FAKE_DIE: "1" }),
           fake("handle-hangs", { FAKE_STALL: "before" }),
           fake("triage-notify", { FAKE_MODE: "mention", FAKE_TRIAGE: '{"action":"notify","what":"约周五评审","handler":"assistant","urgency":"normal","canProgress":false,"reason":"只是约时间"}' }),
@@ -402,26 +403,68 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     app.config.mentions.reply.lark.p2pVia = "group";
   });
 
-  it("draft: a card the owner sends from, edited or not, or drops", async () => {
+  it("draft: held until the handling ends, then one card with the reminder; sent edited, or dropped", async () => {
     app.config.lark.enabled = true;
     run(app.db, "insert into kv(key,value) values('lark_owner_chat','oc_owner') on conflict(key) do update set value = excluded.value");
     botIn = true;
     forgetChatBots("oc_team");
     const id = handling({ reply: "draft" });
-    expect(await replyToAsker(app, id, "周四可以上线。")).toContain("草稿");
+    // Nothing goes out while the handling runs: no draft card ahead of the reminder.
+    expect(await replyToAsker(app, id, "周四可以上线。")).toContain("附在给本人的提醒下面");
+    expect(sent).toHaveLength(0);
+    expect(getRun(app, id).output.mentionReply).toEqual({ pending: "周四可以上线。" });
+    // Drafted again: the later one stands.
+    await replyToAsker(app, id, "周四下午可以上线。");
+    expect(getRun(app, id).output.mentionReply).toEqual({ pending: "周四下午可以上线。" });
+    // The reminder's card carries it (the Feishu sink): one card, reminder on top, the draft under it.
+    const m = getRun(app, id).input.mention as MentionInfo;
+    const r = await draftMentionReply(app, id, m, "周四下午可以上线。", { title: "小王问上线时间：周四可以", markdown: "查了排期，周四下午能上。" }, { chatId: "oc_owner" });
     expect(sent).toHaveLength(1);
-    expect(sent[0].to).toBe("oc_owner");
-    const inter = one<{ id: string; payload: string }>(app.db, "select id, payload from card_interactions where purpose = 'mention-reply' and run_id = ?", id)!;
-    await decideMentionReply(app, JSON.parse(inter.payload), true, "周四下午可以上线。", "本人");
-    expect(sent[1].content).toContain("周四下午可以上线");
+    expect(sent[0].content).toContain("小王问上线时间：周四可以");
+    expect(sent[0].content).toContain("拟好的回复");
+    const inter = one<{ id: string; payload: string }>(app.db, "select id, payload from card_interactions where id = ?", r.id)!;
+    const decided = await decideMentionReply(app, JSON.parse(inter.payload), true, "周四下午三点可以上线。", "本人");
+    expect(sent[1].content).toContain("周四下午三点可以上线");
+    // The decided card keeps what the reminder said.
+    expect(JSON.stringify(decided)).toContain("查了排期，周四下午能上。");
     expect(one(app.db, "select 1 from audit_events where action = 'lark.mention-reply' and actor = 'owner' and json_extract(detail, '$.runId') = ?", id)).toBeTruthy();
+    // On its own card (the handling told the owner itself): dropped.
     const dropped = handling({ reply: "draft" });
-    await replyToAsker(app, dropped, "算了");
-    const i2 = one<{ payload: string }>(app.db, "select payload from card_interactions where purpose = 'mention-reply' and run_id = ?", dropped)!;
+    const d = await draftMentionReply(app, dropped, getRun(app, dropped).input.mention as MentionInfo, "算了");
+    const i2 = one<{ payload: string }>(app.db, "select payload from card_interactions where id = ?", d.id)!;
     const card = await decideMentionReply(app, JSON.parse(i2.payload), false, null, "本人");
     expect(JSON.stringify(card)).toContain("决定不发");
     expect(sent).toHaveLength(3);
   });
+
+  it("a drafted reply rides on the reminder; staying quiet drops it", async () => {
+    app.config.lark.enabled = true;
+    botIn = true;
+    forgetChatBots("oc_team");
+    useDecision(true);
+    decision.action = "handle";
+    decision.progress = 0.1;
+    app.config.mentions.reply.lark.group = "draft";
+    app.config.agents.default = "handle-reply";
+    const m = msg("@勒 退款口径定了吗？", { thread_id: "omt_d1" });
+    store([m]);
+    const h = handlingOf((await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id)).id);
+    await waitForRun(app, h.id);
+    expect(getRun(app, h.id).output.mentionReply).toEqual({ pending: "按未发货的行算，已发货的不退。" });
+    expect(JSON.parse(notifiedBy(h.id)!.context).replyDraft).toBe("按未发货的行算，已发货的不退。");
+    // No card of the handling's own: the reminder (the channel's sink) is the one message.
+    expect(one(app.db, "select 1 from card_interactions where purpose = 'mention-reply' and run_id = ?", h.id)).toBeUndefined();
+    app.config.agents.default = "handle-reply-quiet";
+    const m2 = msg("@勒 退款口径？", { thread_id: "omt_d2" });
+    store([m2]);
+    const h2 = handlingOf((await waitForRun(app, queueMention(app, group, [m2], "ou_owner")!.id)).id);
+    await waitForRun(app, h2.id);
+    expect(getRun(app, h2.id).output.mentionReply).toEqual({ dropped: "按未发货的行算。" });
+    expect(notifiedBy(h2.id)).toBeUndefined();
+    expect(one(app.db, "select 1 from card_interactions where purpose = 'mention-reply' and run_id = ?", h2.id)).toBeUndefined();
+    app.config.mentions.reply.lark.group = "off";
+    app.config.agents.default = "handle";
+  }, 90000);
 
   it("a handling replies through the tool; auto without the triage's go-ahead becomes a draft", async () => {
     app.config.lark.enabled = true;

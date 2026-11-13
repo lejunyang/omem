@@ -7,9 +7,10 @@ updated: 2026-11-13
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
-## 轻量命令行 omem-cli（11-13）
+## 轻量命令行 @omem-ai/cli（11-13）
 
-- 新包 `packages/cli`（npm `omem-cli`，命令也是 `omem`）：只有连远程 omem 的 `login`、`open`、`remote` 和远程的 `tool` / `mcp`，Vite 打成一个无依赖的文件，给只用别人 omem 的人装，不带服务端的依赖。
+- 新包 `packages/cli`（npm `@omem-ai/cli`，命令也是 `omem`）：只有连远程 omem 的 `login`、`open`、`remote` 和远程的 `tool` / `mcp`，Vite 打成一个无依赖的文件，给只用别人 omem 的人装，不带服务端的依赖。
+- npm 包统一放到 `@omem-ai` 下（11-13）：应用 `omem-assistant` → `@omem-ai/app`，SDK `omem-plugin-sdk` → `@omem-ai/plugin-sdk`（`web/vite-plugin-pages.ts` 的别名、`web/tsconfig.json` 的 paths 一起改），三个包都从 0.0.1 起；`omem-cli` 因和别的包名太像发不出去，用 `@omem-ai/cli`。`scripts/upgrade.ts` 会先卸掉旧名字 `omem-assistant` 的全局链接。
 - `remote`、`login`、`open` 三组命令和 `clientInfo` 从 `cli-main.ts` 移到 `src/remote-commands.ts`，两个命令行共用；`omemHome()` 移到 `src/core/home.ts`（`config.ts` 照旧导出）。`scripts/publish-npm.ts` 和 `publish.yml` 多发这个包。回归：`test/omem-cli.test.ts`。
 
 ## Chrome 扩展连接 omem：多连接与把拾取发给 omem（11-10）
@@ -2074,3 +2075,10 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 
 - 机器人发到会话里的 Markdown 统一在 `sendLark` 里把“@名字”换成真 @（`setMentionResolver` → `lark-people.ts` 的 `realMentions`：先认这次对话里已知的人，再核对群成员；名字后面紧跟着字时按前缀核对；代码和邮箱里的 @ 不动；同一个人只 @ 一次）。原来机器人回答、话题后续、规则 Agent 回答、有人找你的回复各自处理，覆盖的人不同，常留下纯文字 @。
 - 卡片也一样：新发的卡片和更新卡片（进度卡片收尾时写进回答）里每段 Markdown 的“@名字”都换成真 @；同一会话里核对过的名字缓存 10 分钟。
+
+## 2026-11-13：一件事一条消息
+
+- 有人找你的“草稿”档：`reply_to_asker` 只把草稿记在运行上（`mentionReply.pending`），处理结束时随提醒一起发（`notify` 的 `replyDraft`，飞书在同一张卡片里放提醒和可编辑的回复，`draftMentionReply` 带 `head`，点了之后提醒正文保留）；处理 `stay_quiet` 时草稿作废（`mentionReply.dropped`）；处理自己 `notify` 过时草稿单独一张卡片。原来草稿卡片一拟好就发，之后再来一条提醒，处理决定不提醒时草稿卡片也已经发出去了。夜里攒下的通知超过 3 条合成一张列表时，带草稿的仍单独发。
+- `ask_user` 之后的回答：飞书上这一轮的回答紧跟在它自己还没回答的提问卡片后面、在同一个群，回答只是指向卡片（30 字以内）或四字片段有四成以上在问题里出现时，不另发，并进卡片里折起来的“这一轮的说明”（`foldIntoAsk`，卡片按钮仍绑在原来的交互上）。`ask_user` 的工具结果和 `_common.md` 也写明问完不要再写一遍。
+- 编码交办停下后交给助手的那一轮：宿主已经发给本人的卡片和通知（`hostToldOwner`：这一轮的宿主提问、交办的通知）列进任务，汇报只写卡片上没有的，有这些卡片时可以 `stay_quiet`；同一会话里一个提到这一轮或这次交办运行 id 的唤醒在这一轮结束后汇报过，就不再起交给助手的那一轮（`reportedSince`）。
+- 唤醒说明（`WAKE_NOTE`）：只有要本人做或决定的事、或者事情有了结果才写给本人，别人还在跟、排了下次复查这类进展记进事项后安静结束。

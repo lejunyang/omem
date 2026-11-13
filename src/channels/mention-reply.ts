@@ -45,29 +45,47 @@ function botIdOf(app: App, id: string | null) {
   return one<{ bot_open_id: string | null }>(app.db, "select bot_open_id from lark_people where cli_open_id = ? or bot_open_id = ? limit 1", id, id)?.bot_open_id ?? null;
 }
 
-/** The card the owner sends the reply from: the text in an editable box, 发送 and 不发. Returns the interaction's id. */
-export async function draftMentionReply(app: App, runId: string, m: MentionInfo, text: string) {
+/** What the reminder said, kept on a card that carries the draft too (the decided card keeps it). */
+export type DraftHead = { title: string; markdown: string };
+
+/** The draft as card blocks: the text in an editable box, 发送 and 不发. */
+function draftBlocks(app: App, m: MentionInfo, text: string, withHead: boolean) {
+  const how = m.chatKind === "group" ? "机器人在对方那条消息的话题里回复" : replyHow(app, m, "你");
+  return [
+    { markdown: withHead ? `**拟好的回复**（${how}；发之前可以改）` : `${whereOf(m)}${m.what ? `：${m.what}` : ""}
+发送方式：${how}` },
+    { form: { name: "mention_reply", fields: [{ type: "input" as const, name: "reply", label: "回复内容（可以直接改）", multiline: true, default: text.slice(0, 2000) }], submit: "发送" } },
+    { buttons: [{ text: "不发", value: "drop" }] },
+  ];
+}
+
+/**
+ * The card the owner sends the reply from. With `head` (the handling's reminder) it is one card: the
+ * reminder on top, the draft under it — not a draft card and a reminder card about the same message.
+ * `to`: where the reminder goes (the notification sink's target); else the owner's private chat.
+ * Returns the interaction's id and the card's message id.
+ */
+export async function draftMentionReply(app: App, runId: string, m: MentionInfo, text: string, head?: DraftHead, to?: Record<string, unknown>) {
   const { buildCard, recordInteraction, sendLark, larkOwnerOpenId } = await import("./lark-send.ts");
   const owner = larkOwnerOpenId(app, "main");
   const dm = one<{ value: string }>(app.db, "select value from kv where key = 'lark_owner_chat'")?.value;
-  if (!owner && !dm) throw new HttpError(400, "主机器人还不知道你是谁，没法发草稿卡片");
-  const how = m.chatKind === "group" ? "机器人在对方那条消息的话题里回复" : replyHow(app, m, "你");
-  const card = buildCard({
-    title: `回复 ${m.senderName} 吗？`,
-    color: "orange",
-    blocks: [
-      { markdown: `${whereOf(m)}${m.what ? `：${m.what}` : ""}\n发送方式：${how}` },
-      { form: { name: "mention_reply", fields: [{ type: "input", name: "reply", label: "回复内容（可以直接改）", multiline: true, default: text.slice(0, 2000) }], submit: "发送" } },
-      { buttons: [{ text: "不发", value: "drop" }] },
-    ],
-  });
-  const sent = await sendLark(dm ? { chatId: dm, bot: "main", runId, purpose: "card" } : { userId: owner!, bot: "main", runId, purpose: "card" }, { card });
-  return recordInteraction(app, { messageId: sent.messageId, chatId: dm ?? null, conversationId: null, runId, purpose: "mention-reply", allowed: owner ? [owner] : [], payload: { runId, text }, bot: "main" });
+  if (!to && !owner && !dm) throw new HttpError(400, "主机器人还不知道你是谁，没法发草稿卡片");
+  const card = head
+    ? buildCard({ title: head.title, color: "orange", blocks: [{ markdown: head.markdown || " " }, ...draftBlocks(app, m, text, true)] })
+    : buildCard({ title: `回复 ${m.senderName} 吗？`, color: "orange", blocks: draftBlocks(app, m, text, false) });
+  const target = (to ?? (dm ? { chatId: dm, bot: "main" } : { userId: owner!, bot: "main" })) as Parameters<typeof sendLark>[0];
+  const sent = await sendLark({ ...target, runId, purpose: "card" } as Parameters<typeof sendLark>[0], { card });
+  const chatId = (target as { chatId?: string }).chatId ?? dm ?? null;
+  const id = recordInteraction(app, { messageId: sent.messageId, chatId, conversationId: null, runId, purpose: "mention-reply", allowed: owner ? [owner] : [], payload: { runId, text, ...(head ? { head } : {}) }, bot: "main" });
+  return { id, messageId: sent.messageId };
 }
 
 /** The owner answered the draft card (lark-actions.ts). Returns the card to show instead. */
-export async function decideMentionReply(app: App, payload: { runId: string; text: string }, send: boolean, edited: string | null, by: string) {
-  const { buildCard, decidedBlocks } = await import("./lark-send.ts");
+export async function decideMentionReply(app: App, payload: { runId: string; text: string; head?: DraftHead }, send: boolean, edited: string | null, by: string) {
+  const { buildCard: build, decidedBlocks } = await import("./lark-send.ts");
+  // A reminder carrying the draft keeps what it said; only the draft part becomes the decision.
+  const head = payload.head;
+  const buildCard = (spec: Parameters<typeof build>[0]) => head ? build({ ...spec, title: head.title, blocks: [{ markdown: head.markdown || " " }, ...(spec.title ? [{ markdown: `**${spec.title}**` }] : []), ...spec.blocks] }) : build(spec);
   const m = mentionOf(app, payload.runId);
   const text = (edited ?? payload.text).trim();
   const decided = { by, at: new Date().toISOString(), timeZone: app.config.timezone };

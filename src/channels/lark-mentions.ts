@@ -124,7 +124,7 @@ const lark: MentionChannel = {
     mode: (app, kind) => app.config.mentions.reply.lark[kind],
     how: replyHow,
     send: (app, runId, text, by) => sendMentionReply(app, runId, text, by),
-    draft: draftMentionReply,
+    draft: async (app, runId, m, text) => (await draftMentionReply(app, runId, m, text)).id,
   },
 };
 registerMentionChannel(lark);
