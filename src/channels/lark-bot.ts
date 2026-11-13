@@ -38,6 +38,8 @@ import { claimedByRule, markAddressed } from "../rules/store.ts";
 import { larkSenderNames } from "./lark-sender.ts";
 import { markLarkSent, onLarkReaction, recordLarkSent } from "./lark-feedback.ts";
 import { DOC_EVENTS, onDocEvent } from "./lark-doc-events.ts";
+import { realMentions } from "./lark-people.ts";
+import { setMentionResolver } from "./lark-send.ts";
 
 /** Events apps often subscribe to that omem reads another way; seen on a real bot during meetings and group changes. */
 const QUIET_EVENTS = [
@@ -260,6 +262,12 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   }
   const botName = kv(app, key("lark_bot_name")) ?? ref;
   setLarkBotClient(ref, client, botOpenId, botName);
+  // `@名字` in whatever the bots post into a chat (lark-send.ts): the chat's members.
+  if (!extra)
+    setMentionResolver((markdown, where) => {
+      const chatId = where.chatId ?? (where.replyTo ? one<{ chat_id: string }>(app.db, "select chat_id from lark_messages where message_id = ? union all select chat_id from lark_sent where message_id = ? limit 1", where.replyTo, where.replyTo)?.chat_id : undefined);
+      return realMentions(app, markdown, chatId ?? null);
+    });
   // What every bot posts is recorded, so reactions on it find their run.
   onLarkSent((sent) => {
     recordLarkSent(app, sent);
@@ -593,19 +601,14 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
    * An answer in a group @s whoever asked (they see it among everything else); a private chat needs no
    * @, and another bot is never @-ed back (that would hand the turn back and forth).
    */
-  const toAsker = (m: Inbound, text: string) => {
+  const toAsker = async (m: Inbound, text: string) => {
     if (m.chatType !== "group") return text;
-    // `@名字` the agent wrote for someone this exchange is about (the asker, whoever the message @-ed,
-    // whoever wrote the quoted message) becomes the real @: the answer may be for them as much as for
-    // the asker. Each person once; a name written again stays a name.
+    // `@名字` the agent wrote becomes the real @: first the people this exchange is about (the asker,
+    // whoever the message @-ed, whoever wrote the quoted message: bots too); anyone else in the chat
+    // when it is sent. Each person once; a name written again stays a name.
     const people: Record<string, string> = { ...m.people, ...(!m.fromApp && m.senderId && m.senderName ? { [m.senderName]: m.senderId } : {}) };
-    let out = text;
-    for (const name of Object.keys(people).filter(Boolean).sort((a, b) => b.length - a.length)) {
-      if (!out.includes(`@${name}`)) continue;
-      const tag = `<at id=${people[name]}></at>`;
-      if (!out.includes(tag)) out = out.replace(`@${name}`, tag);
-      out = out.replaceAll(`@${name}`, name);
-    }
+    // Others in the chat: sendLark (lark-send.ts setMentionResolver).
+    const out = await realMentions(app, text, null, people);
     return !m.fromApp && m.senderId && !out.includes(`<at id=${m.senderId}>`) ? `<at id=${m.senderId}></at> ${out}` : out;
   };
 
@@ -645,7 +648,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (working) await unreactLark(m.messageId, working);
     if (withOwner && v?.verdict === "answer") return true;
     const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
-    if (say) await reply(m.chatId, toAsker(m, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId })), m.messageId, !!m.topicId, answerNote(app, r.id), { runId: r.id }).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+    if (say) await reply(m.chatId, await toAsker(m, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId })), m.messageId, !!m.topicId, answerNote(app, r.id), { runId: r.id }).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
     // A person (not a bot) refused in a group: ask the owner whether to let this one through.
     if (v?.verdict === "refuse" && !m.fromApp && m.chatType === "group") await askOwnerAboutGuest(m, r.id, v.reason).catch((e) => console.warn("[omem] 访客确认卡片发送失败", e));
     return false;
@@ -785,7 +788,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       answered = true;
       if (runId) finishCot(app, runId, true);
       const p = await presentation?.close();
-      const shown = toAsker(m, renderBotMentions(app, ref, answer));
+      const shown = await toAsker(m, renderBotMentions(app, ref, answer));
       // Read the recorded AI after completion so fallbacks show the backend that answered.
       const note = answerNote(app, runId);
       const sentId = p ? (await p.finish(shown, note), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread, note, { runId })).messageId;

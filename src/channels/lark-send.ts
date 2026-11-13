@@ -420,8 +420,23 @@ function payload(c: Content): { msg_type: string; content: string } {
   return { msg_type: "file", content: JSON.stringify({ file_key: c.file }) };
 }
 
+/**
+ * Turns `@名字` in Markdown the bots post into real mentions (lark-people.ts realMentions, set by the
+ * bot channel at start): one place for every answer, follow-up, rule reply and notice, so no path
+ * leaves a plain “@名字”. Given the chat (or the message replied to) the text goes to.
+ */
+type MentionResolver = (markdown: string, where: { chatId?: string; replyTo?: string }) => Promise<string>;
+let mentionResolver: MentionResolver | null = null;
+export function setMentionResolver(f: MentionResolver | null) {
+  mentionResolver = f;
+}
+
 export async function sendLark(to: Target, content: Content): Promise<{ messageId: string; threadId?: string }> {
   const c = larkClientFor(to.bot);
+  if (mentionResolver && "markdown" in content && content.markdown.includes("@") && (to.chatId || to.replyTo)) {
+    const original = content.markdown;
+    content = { ...content, markdown: await mentionResolver(original, { chatId: to.chatId, replyTo: to.replyTo }).catch(() => original) };
+  }
   const p = payload(content);
   let r;
   if (to.replyTo) r = await c.im.message.reply({ path: { message_id: to.replyTo }, data: { ...p, reply_in_thread: !!to.inThread, ...(to.uuid ? { uuid: to.uuid } : {}) } });

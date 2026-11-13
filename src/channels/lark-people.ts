@@ -257,3 +257,70 @@ export function applyMentions(text: string, people: Resolved[], kind: "text" | "
   }
   return lead.length ? `${lead.join(" ")} ${out}` : out;
 }
+
+/** `@名字` in text the bot posts: the run of name characters after it (a space, punctuation or another @ ends it). */
+const AT_NAME = /@([^\s@<>，。、；：！？,.;:!?（）()【】「」“”"']{1,20})/g;
+
+/**
+ * Every `@名字` in an answer the bot posts into a group becomes a real mention (`<at id>`, cards and
+ * Markdown) when the person can be placed: first those this exchange is about (`known`: name → id the
+ * bot can use), then the chat's members (resolveMention checks them). Each person once; a name written
+ * again stays a name, and one it cannot place stays as written. A name run on into the next words
+ * (“@小李确认下”) takes the longest prefix that is a known person.
+ */
+export async function realMentions(app: App, text: string, chatId: string | null | undefined, known: Record<string, string> = {}): Promise<string> {
+  let out = text;
+  const done = new Set<string>();
+  const isPerson = (n: string) => n in known || !!one(app.db, "select 1 from lark_people where name = ? limit 1", n);
+  // Code (```…``` and `…`) keeps its @ (decorators, emails in snippets): never a person to look up.
+  const code = [...text.matchAll(/```[\s\S]*?```|`[^`\n]*`/g)].map((c) => [c.index!, c.index! + c[0].length]);
+  const inCode = (i: number) => code.some(([a, b]) => i >= a && i < b);
+  for (const m of [...text.matchAll(AT_NAME)]) {
+    if (inCode(m.index!) || (m.index! > 0 && /[A-Za-z0-9._%+-]/.test(text[m.index! - 1]))) continue;
+    const run = m[1];
+    let name = run;
+    for (let n = Math.min(run.length, 12); n >= 2; n--) if (isPerson(run.slice(0, n))) { name = run.slice(0, n); break; }
+    if (done.has(name)) continue;
+    done.add(name);
+    let id: string | null = known[name] ?? null;
+    const inChat = async (n: string) => {
+      try {
+        const r = await resolveMention(app, n, chatId!);
+        return "all" in r ? null : r.userId;
+      } catch {
+        return null;
+      }
+    };
+    if (!id && chatId) id = await inChat(name);
+    // A name run on into the next words that nobody here knew yet: the chat's members, longest prefix first.
+    if (!id && chatId && name === run)
+      for (let n = Math.min(run.length - 1, 6); n >= 2 && !id; n--) {
+        id = await inChat(run.slice(0, n));
+        if (id) name = run.slice(0, n);
+      }
+    if (!id) continue;
+    const tag = `<at id=${id}></at>`;
+    // The first time it is written outside code and not inside an email becomes the mention; later
+    // ones stay plain names.
+    let first = !out.includes(tag);
+    out = replaceStandalone(out, `@${name}`, () => {
+      if (!first) return name;
+      first = false;
+      return tag;
+    });
+  }
+  return out;
+}
+
+/** Replace `needle` where it stands on its own: not in code, not right after letters or digits (an email). */
+function replaceStandalone(text: string, needle: string, by: () => string) {
+  const code = [...text.matchAll(/```[\s\S]*?```|`[^`\n]*`/g)].map((c) => [c.index!, c.index! + c[0].length]);
+  let out = "";
+  let from = 0;
+  for (let i = text.indexOf(needle); i >= 0; i = text.indexOf(needle, i + needle.length)) {
+    if (code.some(([a, b]) => i >= a && i < b) || (i > 0 && /[A-Za-z0-9._%+-]/.test(text[i - 1]))) continue;
+    out += text.slice(from, i) + by();
+    from = i + needle.length;
+  }
+  return out + text.slice(from);
+}
