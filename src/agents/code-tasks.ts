@@ -453,7 +453,7 @@ export function tasksFromRuling(app: App, rootId: string, findings: (FindingRow 
     } else if (t.state === "todo" && followDepth(app, rootId, t.seq) > MAX_FOLLOW_DEPTH) {
       const chain: number[] = [];
       for (let x = t; x.origin.follows && !chain.includes(x.origin.follows); x = getTask(app, rootId, x.origin.follows)) chain.unshift(x.origin.follows);
-      t = toAssistant(app, rootId, t.seq, `这一处已经连着修了 ${chain.length} 层（${[...chain, t.seq].map(taskLabel).join(" → ")}），每次修完，评审又在新改的代码里找出问题。先判断它对这次的需求还重要吗：重要就想清楚换什么做法再 retry；只是现在的用法碰不到的边界情况，就 later 记成以后再做。`);
+      t = toAssistant(app, rootId, t.seq, `这一处已经连着修了 ${chain.length} 层（${[...chain, t.seq].map(taskLabel).join(" → ")}），每次修完，评审又在新改的代码里找出问题。先判断它对这次的需求还重要吗：重要就想清楚换什么做法再 retry，换做法时可以给这一轮另选一个更强的编码 AI（execution），它从新的会话开始，不带着前几次修补的思路；只是现在的用法碰不到的边界情况，就 later 记成以后再做。`);
     }
     made.push(t);
   }
