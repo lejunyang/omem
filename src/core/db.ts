@@ -1784,6 +1784,10 @@ export const migrations: readonly string[] = [
      insert into vector_log(space_id, chunk_id) values (old.space_id, old.id);
      insert into vector_log(space_id, chunk_id) select new.space_id, new.id where new.space_id != old.space_id;
    end;`,
+  // The chunks still waiting for a vector are looked for every half minute (embedPending). Without an
+  // index that reads the whole table, and packed vectors sit in the table's own pages, where a scan
+  // cannot skip them the way it skipped the overflow pages of the float32 values.
+  `create index chunks_unembedded on chunks(space_id) where embedding is null;`,
 ];
 
 export type Db = DatabaseSync;

@@ -314,4 +314,25 @@ describe("vectors stored packed", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("finds the chunks waiting for a vector through their index, not by reading the table", async () => {
+    const app = testApp();
+    const { embedPending, setEmbedderForTests } = await import("../src/search/embeddings.ts");
+    fill(app, "personal", 300, spread);
+    createSpace(app, { id: "wt-review", name: "评审用的工作区" });
+    fill(app, "wt-review", 5, spread);
+    run(app.db, "update chunks set embedding = null where space_id = 'wt-review' or id in (select id from chunks where space_id = 'personal' order by id limit 3)");
+    const plan = app.db.prepare("explain query plan select id, space_id, title, path, text from chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%' limit ?").all(32) as { detail: string }[];
+    expect(plan.map((p) => p.detail).join(" ")).toMatch(/USING INDEX chunks_unembedded/);
+    setEmbedderForTests({ id: "t", embed: async (texts) => texts.map((_, i) => spread(i)) });
+    try {
+      run(app.db, "insert into kv(key, value) values('embedding_model', 't') on conflict(key) do update set value = excluded.value");
+      expect(await embedPending(app)).toBe(3);
+      expect(await embedPending(app)).toBe(0);
+      // A review's worktree index stays without vectors.
+      expect((app.db.prepare("select count(*) n from chunks where embedding is null").get() as { n: number }).n).toBe(5);
+    } finally {
+      setEmbedderForTests(null);
+    }
+  });
 });

@@ -8,10 +8,10 @@ import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
 
 /**
- * Optional dense retrieval. Vectors live next to chunks as Float32 BLOBs and are
- * searched by brute-force cosine: a personal library (≤ a few hundred thousand
- * chunks) fits in memory and needs no ANN index. Changing the model clears all
- * vectors, so mixed embeddings never compete in one ranking.
+ * Optional dense retrieval. Vectors live next to chunks, packed to one signed byte a dimension
+ * (vector-codec.ts), and are searched by brute-force cosine: a personal library fits in memory
+ * and needs no ANN index. Changing the model clears all vectors, so mixed embeddings never
+ * compete in one ranking.
  */
 type Embedder = { id: string; embed(texts: string[], kind: "query" | "passage"): Promise<Float32Array[]> };
 
@@ -161,7 +161,9 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   }
   const rows = all<{ id: number; space_id: string; title: string; path: string; text: string }>(
     app.db,
-    "select id, space_id, title, path, text from chunks where embedding is null and space_id not like 'wt-%' limit ?",
+    // Through the index of chunks without a vector (`chunks_unembedded`): usually there are none, and
+    // finding that out by reading the table took half a second on a large library, every half minute.
+    "select id, space_id, title, path, text from chunks indexed by chunks_unembedded where embedding is null and space_id not like 'wt-%' limit ?",
     batch,
   );
   if (!rows.length) return 0;
