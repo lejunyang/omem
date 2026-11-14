@@ -111,7 +111,9 @@ function save(root, target, space, parent = null, subpath = null) {
     if (fs.lstatSync(from).isDirectory()) continue;
     const to = path.join(dir, 'tree', name);
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    fs.cpSync(from, to, { verbatimSymlinks: true });
+    // A file or a symbolic link, the link as written. "recursive" only so that cpSync takes a link
+    // to a directory: without it, it refuses one as a directory.
+    fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true });
     hash.update(name).update(String(fs.lstatSync(from).mode));
     hash.update(fs.lstatSync(from).isSymbolicLink() ? fs.readlinkSync(from) : fs.readFileSync(from));
   }

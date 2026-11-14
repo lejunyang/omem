@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -201,6 +201,11 @@ describe("complete portable pulls", () => {
     git(root, ["add", "app.txt"]);
     writeFileSync(join(root, "app.txt"), "unstaged\n");
     writeFileSync(join(root, "new.txt"), "new\n");
+    // A link to a directory, as Agent tools leave them (one skills folder shared by two of them).
+    mkdirSync(join(root, "guides"));
+    writeFileSync(join(root, "guides/start.md"), "# 开始\n");
+    let linked = true;
+    try { symlinkSync("guides", join(root, "guides-link"), "dir"); } catch { linked = false; } // Windows without the privilege
     mkdirSync(join(root, "ignored"));
     writeFileSync(join(root, "ignored/secret.txt"), "local-only");
     writeFileSync(join(root, ".git/hooks/post-checkout"), "private hook");
@@ -222,6 +227,12 @@ describe("complete portable pulls", () => {
       expect(git(dest, ["show", ":app.txt"]).stdout).toBe("staged\n");
       expect(git(dest, ["rev-parse", "feature/demo"]).ok).toBe(true);
       expect(readFileSync(join(dest, "new.txt"), "utf8")).toBe("new\n");
+      expect(readFileSync(join(dest, "guides/start.md"), "utf8")).toBe("# 开始\n");
+      if (linked) {
+        expect(readFileSync(join(dest, "guides-link/start.md"), "utf8")).toBe("# 开始\n");
+        // Git for Windows lists a linked directory's files, not the link: it arrives as a directory there.
+        if (process.platform !== "win32") expect(lstatSync(join(dest, "guides-link")).isSymbolicLink()).toBe(true);
+      }
       expect(existsSync(join(dest, "ignored/secret.txt"))).toBe(false);
       expect(existsSync(join(dest, ".git/hooks/post-checkout"))).toBe(false);
       const out = JSON.parse(one<{ output: string }>(local.db, "select output from runs where id=?", job.id)!.output);

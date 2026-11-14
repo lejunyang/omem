@@ -45,13 +45,16 @@ function localize(db: DatabaseSync, from: "r" | "main", protectedRuns: string[] 
   }
 }
 
+/** For one file or symbolic link: the link is copied as written. `recursive` only so that cpSync takes a link to a directory, which it otherwise refuses as a directory. */
+const LINK_AS_WRITTEN = { recursive: true, verbatimSymlinks: true };
+
 function copyDirContents(from: string, to: string) {
   mkdirSync(to, { recursive: true });
   for (const name of readdirSync(from)) {
     const src = join(from, name);
     const dest = join(to, name);
     if (lstatSync(src).isDirectory()) copyDirContents(src, dest);
-    else if (!existsSync(dest)) cpSync(src, dest, { verbatimSymlinks: true });
+    else if (!existsSync(dest)) cpSync(src, dest, LINK_AS_WRITTEN);
   }
 }
 
@@ -63,7 +66,7 @@ function copyArtifacts(db: DatabaseSync, from: string, to: string) {
     if (lstatSync(src).isDirectory()) {
       mkdirSync(dest, { recursive: true });
       for (const name of readdirSync(src)) copy(join(src, name), join(dest, name));
-    } else if (!existsSync(dest)) cpSync(src, dest, { verbatimSymlinks: true });
+    } else if (!existsSync(dest)) cpSync(src, dest, LINK_AS_WRITTEN);
     else if (lstatSync(src).isFile() && lstatSync(dest).isFile() && !readFileSync(src).equals(readFileSync(dest))) {
       const backup = `${dest}.local-${sha256(readFileSync(dest)).slice(0, 12)}`;
       if (!existsSync(backup)) cpSync(dest, backup);
