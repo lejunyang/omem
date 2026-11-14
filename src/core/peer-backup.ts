@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { App } from "./app.ts";
 import { saveConfig } from "./config.ts";
@@ -18,7 +18,7 @@ import { HttpError, json, now } from "./util.ts";
  * its way to the device during the day catches up the evening it is back.
  *
  * The pull runs in a process of its own: merging a large database would hold this service's event
- * loop. The directory is a data directory like any other: `omem --home <dir> serve --no-background`
+ * loop; its temporary files go under the backup directory (`.pull-tmp`). The directory is a data directory like any other: `omem --home <dir> serve --no-background`
  * opens it to look at.
  */
 export const BACKUP_PARTS = ["library", "files", "repos", "runs"] as const;
@@ -81,7 +81,11 @@ type Puller = (app: App, b: Backup) => Promise<{ ok: boolean; output: string }>;
 /** The pull, in a process of its own: what `omem peer pull <device> --to <dir> --only … -y` prints. */
 const pullInChild: Puller = (app, b) =>
   new Promise((done) => {
-    const child = spawn(process.execPath, [cliScript(), "--home", app.home, "peer", "pull", b.peer, "--to", b.to, "--only", b.parts.join(","), "-y"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    // The snapshot is unpacked next to where it goes: a large one must not fill the system's temporary
+    // directory (often a smaller disk than the one chosen for the backup).
+    const tmp = join(b.to, ".pull-tmp");
+    mkdirSync(tmp, { recursive: true });
+    const child = spawn(process.execPath, [cliScript(), "--home", app.home, "peer", "pull", b.peer, "--to", b.to, "--only", b.parts.join(","), "-y"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp } });
     let out = "";
     const take = (d: Buffer) => (out = (out + d.toString()).slice(-4000));
     child.stdout.on("data", take);
