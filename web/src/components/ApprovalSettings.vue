@@ -13,8 +13,13 @@ const loaded = ref(false);
 const error = ref("");
 const filter = ref("");
 const options = [{ value: "ask", label: "每次问我" }, { value: "report", label: "做完告诉我" }, { value: "free", label: "不用问" }];
-const shown = computed(() => tools.value.filter((t) => `${t.name} ${t.description}`.includes(filter.value)));
 const rung = (t: Tool) => t.always || props.config.approvals.tools.includes(t.name) ? "ask" : (props.config.approvals.report ?? []).includes(t.name) ? "report" : "free";
+// Every tool is a long page: without a search only the ones that ask or report are listed.
+const shown = computed(() => {
+  const q = filter.value.trim();
+  return q ? tools.value.filter((t) => `${t.name} ${t.description}`.includes(q)) : tools.value.filter((t) => rung(t) !== "free");
+});
+const free = computed(() => tools.value.filter((t) => rung(t) === "free").length);
 async function load() {
   error.value = "";
   try {
@@ -38,7 +43,8 @@ async function set(t: Tool, value: string) {
     <p v-if="error" role="alert">{{ error }} <button class="btn sm" @click="load">重试</button></p>
     <Skeleton v-else-if="!loaded" :rows="3" />
     <template v-else>
-      <input v-model="filter" class="input" aria-label="筛选工具" placeholder="筛选工具名或用途" />
+      <input v-model="filter" class="input" aria-label="筛选工具" placeholder="输入工具名或用途，找到别的工具来改" />
+      <p class="hint">{{ filter.trim() ? `匹配 ${shown.length} 个工具` : shown.length ? `下面是要你批准或做完告诉你的 ${shown.length} 个工具；其余 ${free} 个不用问，在上面输入工具名或用途可以找到并修改。` : `现在没有要你批准的工具（${free} 个都不用问）。在上面输入工具名或用途，可以把某个工具改成每次问你。` }}</p>
       <VirtualList :items="shown" :item-key="(t) => t.name" :estimate="100"><template #default="{ item: t }">
         <div class="tool stack">
           <span class="mono" :title="t.description">{{ t.name }}</span>

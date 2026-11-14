@@ -53,7 +53,7 @@ async function ignore(chat: Chat) {
   </div>
   <div class="card pad stack">
     <strong>提醒的效果</strong>
-    <HelpText>近 30 天的提醒在发出 48 小时后统计。处理包括一天内点按钮、回应表情、修改事项或在来源会话里发言；这是可观察的反应，不代表每条都由提醒促成。已并入汇总的计入“发了”，不再重复归入其他列。</HelpText>
+    <HelpText>近 30 天的提醒在发出 48 小时后统计。处理包括一天内点按钮、回应表情、修改事项或在来源会话里发言；这是可观察的反应，不代表每条都由提醒促成。并进清单一起发的不单独统计。</HelpText>
     <p v-if="error" role="alert">{{ error }} <button class="btn sm" @click="load">重试</button></p>
     <Skeleton v-else-if="!data" :rows="3" />
     <template v-else>
