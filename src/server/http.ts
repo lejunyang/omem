@@ -2348,7 +2348,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/lark/kb", async (req) => {
     const o = q(z.object({ status: z.enum(["new", "proposed", "later", "mapped", "ignored", "gone", "all"]).optional() }), req.query ?? {});
     const k = await import("../channels/lark-knowledge.ts");
-    const strays = (await import("../sources/kb-home.ts")).kbStrayCounts(app);
+    const strays = await (await import("../sources/kb-home.ts")).kbStrayCounts(app);
     return { ...k.knowledgeOverview(app), kbs: k.listKnowledgeBases(app, { status: o.status ?? "all" }).map((kb) => ({ ...kb, strays: strays.get(kb.id) ?? null })), origin: k.knowledgeOrigin(app) };
   });
   server.post("/api/lark/kb/discover", async (req) => {

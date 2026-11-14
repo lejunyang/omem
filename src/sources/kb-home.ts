@@ -181,10 +181,25 @@ export function kbStrays(app: App, opts: { kb?: string } = {}): Stray[] {
   return out;
 }
 
+/**
+ * The strays of every filed knowledge base, one knowledge base at a time with a turn of the event
+ * loop in between: a library with tens of thousands of knowledge-base documents is not read in one
+ * synchronous step (each knowledge base is one indexed query, sources_wiki_space).
+ */
+export async function allKbStrays(app: App): Promise<Stray[]> {
+  const ids = all<{ id: string }>(app.db, "select id from wiki_spaces where status = 'mapped' union select wiki_space_id from wiki_node_homes where wiki_space_id is not null").map((r) => r.id);
+  const out: Stray[] = [];
+  for (const id of ids) {
+    out.push(...kbStrays(app, { kb: id }));
+    await new Promise<void>((r) => setImmediate(r));
+  }
+  return out;
+}
+
 /** Per knowledge base: how many of its documents sit outside its space, and where. */
-export function kbStrayCounts(app: App) {
+export async function kbStrayCounts(app: App) {
   const by = new Map<string, { away: number; kept: number; spaces: Record<string, number> }>();
-  for (const s of kbStrays(app)) {
+  for (const s of await allKbStrays(app)) {
     const e = by.get(s.kb) ?? by.set(s.kb, { away: 0, kept: 0, spaces: {} }).get(s.kb)!;
     if (s.action === "keep") e.kept++;
     else {
@@ -203,7 +218,7 @@ export type RehomeReport = { dryRun: boolean; moved: number; merged: number; kep
  * absorbs the stray copy, whose id keeps resolving (source_aliases). Yields to the event loop as it goes.
  */
 export async function rehomeKb(app: App, opts: { kb?: string; dryRun?: boolean; limit?: number } = {}): Promise<RehomeReport> {
-  const strays = kbStrays(app, { kb: opts.kb });
+  const strays = opts.kb ? kbStrays(app, { kb: opts.kb }) : await allKbStrays(app);
   const todo = strays.filter((s) => s.action !== "keep").slice(0, opts.limit ?? 5000);
   const bySpace: Record<string, number> = {};
   for (const s of todo) bySpace[s.from] = (bySpace[s.from] ?? 0) + 1;
