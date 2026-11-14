@@ -1,7 +1,10 @@
 /**
  * Calibrate the passive-recall gate (src/memory/passive.ts).
  *
- *   node scripts/eval-recall-gate.ts <corpus.jsonl> <queries.jsonl> <neg_queries.jsonl> [--chars N] [--home DIR] [--limit 5] [--rerank [MODEL]]
+ *   node scripts/eval-recall-gate.ts <corpus.jsonl> <queries.jsonl> <neg_queries.jsonl> [--chars N] [--home DIR] [--limit 5] [--embed MODEL [--family bge-m3]] [--rerank [MODEL]]
+ *
+ * --embed: the embedding model (id or directory; default embeddings.model, bge-small-zh). Give each
+ * model its own --home: a home keeps the vectors of the model it was first run with.
  *
  * Each corpus document becomes one memory (cut to --chars, default whole text). queries.jsonl
  * have relevant documents in the corpus ({"id","text","rels"}); neg_queries.jsonl have none
@@ -38,6 +41,9 @@ const fresh = !existsSync(join(home, "omem.db"));
 const app = App.open(home);
 ensurePersonalSpace(app);
 app.config.embeddings.provider = "local";
+// The gate depends on the embedding model's score distribution: calibrate with the one in use.
+const embed = opt("--embed", "");
+if (embed) app.config.embeddings = { ...app.config.embeddings, model: embed, ...(opt("--family", "") ? { family: opt("--family", "") as never } : {}) };
 if (rerank) {
   const m = opt("--rerank", "");
   app.config.rerank = { ...app.config.rerank, enabled: true, passiveThreshold: 0, timeoutMs: 120_000, ...(m && !m.startsWith("--") ? { model: m } : {}) };

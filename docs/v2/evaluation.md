@@ -171,6 +171,34 @@ node scripts/eval-recall-gate.ts corpus.jsonl queries.jsonl neg_queries.jsonl --
 node scripts/eval-recall-gate.ts corpus.jsonl pos.jsonl neg.jsonl --chars 120 --rerank "$(osdk model path rerank-m3 --stable)"
 ```
 
+#### 换成 bge-m3 以后（2026-11-14）
+
+上面两张表的向量是 bge-small-zh。用 bge-m3（osdk `memory-m3`，量化 ONNX）在同一份数据上重跑（`--embed` 指定向量模型，每个模型用自己的 `--home`）：
+
+| 门槛（向量 bge-m3） | 正例：带上了相关记忆 | 带上的记忆中相关的比例 | 正例平均带几条 | 反例：带上了任何记忆 | 反例平均带几条 |
+| --- | --- | --- | --- | --- | --- |
+| 余弦 0.55 | 90.0% | 90.1% | 3.55 | 40.5% | 1.14 |
+| 余弦 0.575 | 88.5% | 93.7% | 3.26 | 26.5% | 0.64 |
+| **余弦 0.60（默认）** | **86.5%** | **95.9%** | 2.96 | **15.0%** | 0.28 |
+| 余弦 0.625 | 81.0% | 97.7% | 2.64 | 8.5% | 0.14 |
+| 余弦 0.65 | 74.5% | 99.1% | 2.23 | 4.5% | 0.06 |
+| 重排 0.35 | 87.5% | 95.9% | 2.95 | 24.0% | 0.75 |
+| **重排 0.50（默认）** | **85.0%** | **98.4%** | 2.73 | **14.0%** | 0.27 |
+| 重排 0.55 | 84.0% | 98.5% | 2.66 | 9.0% | 0.17 |
+| 重排 0.60 | 82.5% | 98.6% | 2.57 | 6.0% | 0.07 |
+| 重排 0.70 | 79.0% | 98.8% | 2.42 | 2.5% | 0.03 |
+
+结论：
+
+- 余弦 0.60 在 bge-m3 上仍然可用，比在 bge-small-zh 上松一点：多带上 6 个点的相关记忆，反例误带从约 11% 升到 15%。要和 bge-small-zh 时一样的误带率用 0.625。默认值不改。
+- 开着重排时，bge-m3 下同一个门槛的误带率是 bge-small-zh 下的两倍（0.50：14% 对 7%）。原因在预筛：bge-m3 的余弦整体偏高，0.4 的预筛几乎不筛（反例里 99% 的问题都有候选过线），重排每次都拿到满 20 条候选，误判的机会更多。用 bge-m3 时把 `rerank.passiveThreshold` 设到 0.60（误带 6%，相关记忆带上 82.5%），或者保持 0.50 换更多召回。
+- 这组数字只说明门槛怎么取，不说明真实使用里带上的记忆有没有用；后者看“记忆 → 召回”里自动带上的次数和夜间复盘的 M 轴。
+
+```bash
+node scripts/eval-recall-gate.ts corpus.jsonl pos.jsonl neg.jsonl --chars 120 --embed "$(osdk model path memory-m3 --stable)" --family bge-m3 --home .scratch/eval-gate-m3-120
+node scripts/eval-recall-gate.ts corpus.jsonl pos.jsonl neg.jsonl --chars 120 --embed "$(osdk model path memory-m3 --stable)" --family bge-m3 --home .scratch/eval-gate-m3-120 --rerank "$(osdk model path rerank-m3 --stable)"
+```
+
 ### 写记忆前的近邻门槛（2026-10-22）
 
 `remember` 写入前按记忆与记忆的向量余弦（passage 对 passage）找同一空间里相近的记忆，≥ 0.75 就先列出来让 Agent 决定（更正 / 不写 / 另一件事）。用 bge-small-zh 在 14 对手写的记忆上看分布：
