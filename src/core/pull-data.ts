@@ -168,15 +168,16 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
     const find = (id: string, space: string, uri: string) => {
       const here = lookup.get(space, uri) as Source | undefined;
       if (here) return here;
-      let was: Source | undefined;
-      for (const origin of earlier.get(id) ?? []) {
-        if (origin === space || other.get(...(named ? [origin, uri, id, origin, uri, id] : [origin, uri, id]))) continue;
-        if ((was = lookup.get(origin, uri) as Source | undefined)) break;
-      }
-      if (!was) {
-        const same = byId.get(id) as Source | undefined;
-        if (same && same.uri === uri) was = same;
-      }
+      // The same id first: that is certain. A place it left may by now hold the remains of another
+      // source that was deleted there, which is not it.
+      const same = byId.get(id) as Source | undefined;
+      let was = same && same.uri === uri ? same : undefined;
+      if (!was)
+        for (const origin of earlier.get(id) ?? []) {
+          if (origin === space || other.get(...(named ? [origin, uri, id, origin, uri, id] : [origin, uri, id]))) continue;
+          const there = lookup.get(origin, uri) as Source | undefined;
+          if (there && !there.deleted_at) { was = there; break; }
+        }
       if (was && !was.deleted_at) prepared.moves.push({ id: was.id, to: space });
       return was;
     };
