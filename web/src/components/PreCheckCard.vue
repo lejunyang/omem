@@ -18,6 +18,7 @@ const sections = computed(() => {
   const out: { title: string; lines: Line[] }[] = [];
   const meta = (x: { reqs?: string[]; refs?: string[] }) => [x.reqs?.length ? `需求点 ${x.reqs.join("、")}` : "", x.refs?.length ? `依据 ${x.refs.join("、")}` : ""].filter(Boolean).join(" · ");
   if (c.impacts?.length) out.push({ title: "要顾及的", lines: c.impacts.map((x) => ({ text: x.text, where: x.where, note: meta(x) })) });
+  if (c.reuse?.length) out.push({ title: "可以直接用的已有实现", lines: c.reuse.map((x) => ({ text: x.what, where: [x.where], note: [x.how ? `用法：${x.how}` : "", x.gap ? `差在：${x.gap}` : ""].filter(Boolean).join("；") })) });
   if (c.history?.length) out.push({ title: "以前出过的问题", lines: c.history.map((x) => ({ text: x.text, where: x.where, note: meta(x) })) });
   if (c.regressions?.length) out.push({ title: "回归清单", lines: c.regressions.map((x) => ({ text: x.text, tag: x.auto ? "自动" : "人工", note: [x.how ?? "", x.reqs?.length ? `需求点 ${x.reqs.join("、")}` : ""].filter(Boolean).join(" · ") })) });
   if (c.areas?.length) out.push({ title: "预计改动的位置", lines: c.areas.map((a) => ({ text: a.note || "", where: a.files })) });
@@ -26,6 +27,7 @@ const sections = computed(() => {
 });
 const counts = computed(() => [
   props.check.impacts?.length ? `要顾及 ${props.check.impacts.length} 处` : "",
+  props.check.reuse?.length ? `已有实现 ${props.check.reuse.length} 项` : "",
   props.check.history?.length ? `以前的问题 ${props.check.history.length} 条` : "",
   props.check.regressions?.length ? `回归 ${props.check.regressions.length} 项` : "",
   props.check.questions?.length ? `没查清 ${props.check.questions.length} 条` : "",

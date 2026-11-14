@@ -33,6 +33,7 @@ export type PreCheck = {
   summary: string; at: string; by: { profile: string; model?: string } | null;
   areas?: { files: string[]; note: string }[];
   impacts?: { text: string; where?: string[]; reqs?: string[]; refs?: string[] }[];
+  reuse?: { what: string; where: string; how?: string; gap?: string }[];
   history?: { text: string; where?: string[]; refs: string[] }[];
   regressions?: { text: string; how?: string; reqs?: string[]; auto: boolean }[];
   questions?: string[];

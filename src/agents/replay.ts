@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { allProfiles, DEFAULT_REPLAY_PLAN, REPLAY_AXES, type AgentProfile, type ReplayAxis, type ReplaySignal } from "../core/config.ts";
+import { modelFamily } from "./families.ts";
 import { all, one, run } from "../core/db.ts";
 import { relatedIds } from "../core/spaces.ts";
 import { OWNER, scopeFor } from "../core/users.ts";
@@ -98,7 +99,8 @@ export function judgeChoice(app: App): { chosen: boolean; profile?: AgentProfile
   }
 }
 
-const family = (p: { id: string; model?: string | null }) => normalizeModel(p.model ?? "").split(/[-.\d]/).find(Boolean) ?? "";
+// The maker when the name is a known one (families.ts, shared with code review); else the name's first word, so two unknown models of one line still count as the same.
+const family = (p: { id: string; model?: string | null }) => modelFamily({ profile: p.id, model: p.model }) ?? normalizeModel(p.model ?? "").split(/[-.\d]/).find(Boolean) ?? "";
 /** Judge and arm on the same backend account or model family: allowed, but the owner is told (a model favours its own style). */
 export function sameFamily(app: App, a: AgentProfile, b: { id: string; model?: string | null }) {
   const pb = allProfiles(app.config).find((p) => p.id === b.id);

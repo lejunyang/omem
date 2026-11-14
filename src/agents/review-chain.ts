@@ -1,7 +1,7 @@
 import type { ViewComponent } from "./ui-blocks.ts";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
-import type { RoleName } from "../core/config.ts";
+import { allProfiles, type RoleName } from "../core/config.ts";
 import { notify } from "../core/notify.ts";
 import { one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
@@ -12,9 +12,15 @@ import type { RoundReview } from "./code-steer.ts";
 import {
   blocksAt, checkBrief, FINDING_FORMAT, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
   SEVERITY_LABEL, STOP_LABEL, type ChangePoint, type LeadResult, type ReviewPlan, type Severity, type StopReason,
-  checkLabel, lookBase,
+  checkLabel, lookBase, coderAI, independenceWarnings,
 } from "./review.ts";
-import { loadRole, runRole } from "./runner.ts";
+import { loadRole, runRole, resolveRunProfile, type Actor } from "./runner.ts";
+import { reviewerFor } from "./families.ts";
+import { backendAvailable } from "./availability.ts";
+import { excluded, downReason } from "./capacity.ts";
+import { quotaAvoid } from "./quota.ts";
+import type { Execution } from "./execution.ts";
+import { thirdFixText, workRootOf } from "./code-tasks.ts";
 import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
 import { replyOf } from "./types.ts";
@@ -276,6 +282,24 @@ export type TaskReviewOptions = {
   onSession(check: string, id: string | undefined, used: number | undefined): void;
 };
 
+/** Only replaces a check's own AI. Rotation and owner choices are resolved by the caller first. */
+export function crossFamilyExecution(app: App, codeRunId: string, actor: Actor): Execution | undefined {
+  if ((app.config.review.crossFamily ?? "prefer") === "off") return undefined;
+  const own = resolveRunProfile(app, { actor });
+  const profiles = allProfiles(app.config);
+  const others = !app.config.agents.routing.automatic ? [] : [...(app.config.review.rotation ?? []), ...app.config.agents.routing.candidates].flatMap((c) => {
+    const p = profiles.find((p) => p.id === c.profile);
+    if (!p || !backendAvailable(p, app.home)) return [];
+    const model = c.model || p.model;
+    const effort = c.effort || (model === p.model ? p.effort : undefined);
+    const resolved = { ...p, model, effort };
+    if (excluded(app, resolved) || downReason(app, resolved) || quotaAvoid(app, resolved)) return [];
+    return [{ profile: p.id, model, effort }];
+  });
+  const { pick } = reviewerFor(coderAI(app, codeRunId), { profile: own.id, model: own.model }, others);
+  return pick ? { ...pick, source: "auto", reason: "和编码不是同一家模型" } : undefined;
+}
+
 /** `only`: run just these checks again (the owner's retry of the ones that failed); the others keep this round's results. */
 export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; task?: TaskReviewOptions; only?: string[] } = {}): Promise<{ verdict: string; continuedRunId?: string; lead?: LeadResult }> {
   const { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask } = await reviewContext(app, codeRunId, opts.note, { since: opts.task?.since });
@@ -311,14 +335,18 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       return { name, text: row.summary, ai: { profile, model: row.model ?? undefined, effort: row.effort ?? undefined }, profileId: profile };
     }
     const info = infos.get(name)!;
+    const spec = info.builtin ? undefined : readAgentSpec(app, name);
+    const actor: Actor = spec ? { spec } : { role: name as RoleName };
+    const prior = (opts.task ? null : rotatedExecution(app, round, plan.checks.indexOf(name), (run.input as { roundReview?: RoundReview }).roundReview?.rotate ?? plan.rotateModels)) ?? (name === "reviewer" ? input.reviewExecution : undefined);
+    const execution = prior ?? crossFamilyExecution(app, run.id, actor);
     const res = await runRole(app, {
       role: (info.builtin ? name : "reviewer") as RoleName,
-      ...(info.builtin ? {} : { spec: readAgentSpec(app, name) }),
+      ...(spec ? { spec } : {}),
       reviewCheck: true,
       // Rounds after the first may each take another model (the tier's or the owner's choice), for a different take.
       // Not a task-driven delegation's: each check keeps its model and session there, and another
       // model takes a second look under its own name instead (code-overlap.ts).
-      execution: (opts.task ? null : rotatedExecution(app, round, plan.checks.indexOf(name), (run.input as { roundReview?: RoundReview }).roundReview?.rotate ?? plan.rotateModels)) ?? (name === "reviewer" ? input.reviewExecution : undefined),
+      execution,
       spaceId: run.spaceId!,
       spaces,
       alsoRead: indexed,
@@ -369,9 +397,9 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   for (const f of failed) recordReview(app, { codeRunId: run.id, round, check: f.name, tier: plan.tier, verdict: "failed", summary: f.error, findings: [] });
   const done = outcomes.flatMap((o) => (o.status === "fulfilled" ? [o.value] : []));
   const single = plan.checks.length === 1 && done.length === 1;
-  const reviewText = single
+  const reviewText = [single
     ? done[0].text
-    : [...done.map((d) => `### ${label(d.name)}（${reviewFor(app, run.id, round, d.name)?.verdict === "approved" ? "通过" : "需要修改"}）\n\n${d.text}`), ...failed.map((f) => `### ${label(f.name)}（没有完成）\n\n${f.error}`)].join("\n\n");
+    : [...done.map((d) => `### ${label(d.name)}（${reviewFor(app, run.id, round, d.name)?.verdict === "approved" ? "通过" : "需要修改"}）\n\n${d.text}`), ...failed.map((f) => `### ${label(f.name)}（没有完成）\n\n${f.error}`)].join("\n\n"), independenceWarnings(app, run.id, round)].filter(Boolean).join("\n\n");
   setRunOutput(app, run.id, { review: reviewText, reviewAI: done[0]?.ai, reviewAgent: done[0]?.profileId });
 
   // ---- ruling: review-lead, or the host's simple merge ----------------------------------------
@@ -401,6 +429,9 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       rc.event("status", { text: `评审负责人没有完成（${(e as Error).message}），按各评审项的结论合并` });
     }
   }
+
+  const warnings = independenceWarnings(app, run.id, round);
+  if (warnings) lead = { ...lead, summary: `${lead.summary}\n${warnings}` };
 
   // A task-driven delegation decides what comes next from its task list (code-loop.ts).
   if (opts.task) {
@@ -526,14 +557,16 @@ function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, fail
   });
   const reviews = plan.checks.map((n) => {
     const row = reviewFor(app, run.id, round, n);
-    return `- ${infos.get(n)?.label ?? n}（${n}）：${row ? `${row.verdict}；${truncate(row.summary.replace(/\s+/g, " "), 300)}` : "没有结果"}`;
+    return `- ${infos.get(n)?.label ?? n}（${n}）：${row ? `${[row.profile_id, row.model, row.effort].filter(Boolean).join(" · ") || "模型未记录"}${row.independence === "same" ? "（和编码同一家模型）" : ""}；${row.verdict}；${truncate(row.summary.replace(/\s+/g, " "), 300)}` : "没有结果"}`;
   });
   return [
     `## 你在裁决第 ${round} 轮（「${plan.tierName}」档，最多 ${plan.maxRounds} 轮）`,
     `## 各评审项的结论\n\n${reviews.join("\n")}${failed.length ? `\n\n没有完成的评审项：${failed.join("、")}（不要替它们下结论，在 summary 里说明缺了哪项）` : ""}`,
+    independenceWarnings(app, run.id, round),
     `## 这一轮的问题\n\n${now.map(fmt).join("\n") || "（没有问题）"}`,
     earlier.length ? `## 之前的轮次\n\n${earlier.join("\n\n")}\n\n同一个问题修过还在报时，判断是没修好还是评审要求不合理；连续僵持说明该交给本人（escalate）。` : "",
     tasks !== undefined ? `## 已有的修改项\n\n${tasks || "（没有）"}\n\n${TASK_RULING}` : `## 评审项（下一轮可选择只复审其中受影响的）\n\n${plan.checks.map((n) => `- ${n}（${infos.get(n)?.label ?? n}）：${SEVERITY_LABEL[infos.get(n)?.blocks ?? "major"]}及以上阻塞`).join("\n")}`,
+    tasks !== undefined ? thirdFixText(app, workRootOf(app, run.id)) : "",
     reviewTask,
   ].filter(Boolean).join("\n\n");
 }
@@ -619,6 +652,7 @@ async function onRetryAnswer(app: App, ask: Ask, ctx: { codeRunId: string; faile
  * and the requirement split.
  */
 function reviewDigest(app: App, run: Run, round: number, lead: LeadResult, change: string) {
+  const warnings = independenceWarnings(app, run.id, round);
   const findings = roundFindings(app, run.id, round).filter((f) => !["rejected", "merged"].includes(f.state));
   const counts = (["blocker", "major", "minor", "nit"] as const).map((s) => [s, findings.filter((f) => f.severity === s).length] as const).filter(([, n]) => n);
   const toFix = fixCandidates(app, run.id, round);
@@ -627,7 +661,8 @@ function reviewDigest(app: App, run: Run, round: number, lead: LeadResult, chang
   const POINT: Record<string, string> = { done: "已实现", partial: "部分实现", missing: "没实现", extra: "需求外" };
   const design = designDigestOf(app, run);
   return [
-    lead.summary ? `**结论**：${truncate(lead.summary, 400)}` : "",
+    lead.summary ? `**结论**：${truncate(warnings ? lead.summary.replace(warnings, "").trim() : lead.summary, 400)}` : "",
+    warnings,
     change ? `**改动**：${change}` : "",
     counts.length ? `**问题**：${counts.map(([s, n]) => `${SEVERITY_LABEL[s]} ${n}`).join(" · ")}${toFix.length ? `，默认要改 ${toFix.length} 个` : ""}` : "**问题**：没有",
     toFix.slice(0, 5).map((f, i) => `${i + 1}. [${SEVERITY_LABEL[f.severity as Severity]}] ${f.title}${where(f)}`).join("\n"),

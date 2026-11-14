@@ -25,7 +25,7 @@ describe("review tiers and checks", () => {
     saveAgentSpec(app, { name: "security-review", description: "只看鉴权和越权", prompt: "评审", tools: ["search"] }, "user");
     app.config.review.checks = { "security-review": { label: "安全", blocks: "major", guide: "", when: { field: "change.paths", op: "contains", value: "auth" } } };
     expect(planReview(app, metrics()).tier).toBe("light");
-    expect(planReview(app, metrics({ "change.lines": 120 }))).toMatchObject({ tier: "standard", checks: ["reviewer", "review-business", "review-style"] });
+    expect(planReview(app, metrics({ "change.lines": 120 }))).toMatchObject({ tier: "standard", checks: ["reviewer", "review-simplify", "review-business"] });
     expect(planReview(app, metrics({ "change.repos": 2 })).tier).toBe("full");
     expect(planReview(app, metrics(), { tier: "完整" }).tier).toBe("full");
     const standard = planReview(app, metrics({ "change.lines": 120 }));

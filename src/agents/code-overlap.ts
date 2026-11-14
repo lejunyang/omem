@@ -8,12 +8,12 @@ import { HttpError, now, truncate } from "../core/util.ts";
 import { checkCommandOf, latestCheck, worktreesOf } from "./code.ts";
 import { addRoundFeedback, takeRoundFeedback, type RoundReview } from "./code-steer.ts";
 import {
-  getTask, headsAt, lastRound, listTasks, setWorkState, tasksFromRuling, isLater, taskLabel, taskList, taskText, updateTask, workRootOf, workState,
+  getTask, headsAt, lastRound, listTasks, setWorkState, tasksFromRuling, isLater, taskLabel, taskList, taskText, thirdFixText, updateTask, workRootOf, workState,
   type CodeTask, type LookState,
 } from "./code-tasks.ts";
 import type { Execution } from "./execution.ts";
-import { reviewContext, taskCheckBrief, TASK_RULING } from "./review-chain.ts";
-import { checkBrief, checkLabel, isLook, lookBase, lookName, recordReview, reviewChecks, reviewFor, roundFindings, SEVERITY_LABEL, type LeadResult, type ReviewPlan } from "./review.ts";
+import { reviewContext, taskCheckBrief, TASK_RULING, crossFamilyExecution } from "./review-chain.ts";
+import { checkBrief, checkLabel, independenceWarnings, isLook, lookBase, lookName, recordReview, reviewChecks, reviewFor, roundFindings, SEVERITY_LABEL, type LeadResult, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, getRun, runUser, setRunOutput, trackAbort, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
@@ -79,13 +79,15 @@ export function checkArgs(app: App, rootId: string, check: string, run: Run) {
   const info = reviewChecks(app).find((c) => c.name === base);
   if (!info || info.missing) throw new HttpError(404, `评审项 ${base} 已经不在了`);
   const ai = isLook(check) ? workState(app, rootId).lookAI?.[base] : undefined;
+  const spec = info.builtin ? undefined : readAgentSpec(app, base);
   if (isLook(check) && !ai) throw new HttpError(409, `${check} 还没有选定模型`);
   const execution: Execution | undefined = ai
     ? { ...ai, source: "user", reason: "评审设置里的轮换模型：换模型复看" }
-    : base === "reviewer" ? (run.input as { reviewExecution?: Execution }).reviewExecution : undefined;
+    : (base === "reviewer" ? (run.input as { reviewExecution?: Execution }).reviewExecution : undefined)
+      ?? crossFamilyExecution(app, run.id, spec ? { spec } : { role: base as RoleName });
   return {
     role: (info.builtin ? base : "reviewer") as RoleName,
-    ...(info.builtin ? {} : { spec: readAgentSpec(app, base) }),
+    ...(spec ? { spec } : {}),
     reviewCheck: true,
     ...(isLook(check) ? { checkName: check } : {}),
     ...(execution ? { execution } : { profileId: info.builtin ? app.config.agents.roles[base] : undefined }),
@@ -544,6 +546,10 @@ async function lookRuling(app: App, rootId: string, reviewed: Run, round: number
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
   const fmt = (f: (typeof fresh)[number]) => `- #${f.id} [${checkLabel(infos, f.check_name)} · ${SEVERITY_LABEL[f.severity]}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${f.detail ? `\n  ${truncate(f.detail, 600)}` : ""}${f.suggestion ? `\n  建议：${truncate(f.suggestion, 400)}` : ""}`;
   const host: LeadResult = { round, verdict: "revise", summary: "", changeRequest: "", rerun: [], by: "host" };
+  const models = [...new Set(fresh.map((f) => f.check_name))].map((name) => {
+    const row = reviewFor(app, reviewed.id, round, name);
+    return `- ${checkLabel(infos, name)}：${[row?.profile_id, row?.model, row?.effort].filter(Boolean).join(" · ") || "模型未记录"}${row?.independence === "same" ? "（和编码同一家模型）" : ""}`;
+  }).join("\n");
   setRunOutput(app, reviewed.id, { reviewLeadDraft: null });
   try {
     await runRole(app, {
@@ -551,7 +557,7 @@ async function lookRuling(app: App, rootId: string, reviewed: Run, round: number
       reviewLead: true,
       spaceId: reviewed.spaceId!,
       spaces: (await checkScope(app, reviewed)).spaces,
-      task: [LOOK_RULING, `## 已有的修改项\n\n${taskList(app, rootId) || "（没有）"}`, `## 复看提的问题\n\n${fresh.map(fmt).join("\n")}`, TASK_RULING, reviewTask].join("\n\n"),
+      task: [LOOK_RULING, `## 复看所用模型\n\n${models}`, independenceWarnings(app, reviewed.id, round), `## 已有的修改项\n\n${taskList(app, rootId) || "（没有）"}`, thirdFixText(app, rootId), `## 复看提的问题\n\n${fresh.map(fmt).join("\n")}`, TASK_RULING, reviewTask].filter(Boolean).join("\n\n"),
       runId,
       signal,
       onEvent: (e) => event(e.type, { ...e, phase: "lead" }),

@@ -6,6 +6,7 @@ import { HttpError, newId, now } from "../core/util.ts";
 import { leafMatches } from "../rules/conditions.ts";
 import { isBuiltinRole } from "./builtin-roles.ts";
 import { findAgentSpec } from "./specs.ts";
+import { independence, type AI, type Independence } from "./families.ts";
 
 /**
  * Code review after a delegation (docs/v2/review.md, phase 1): ordered tiers pick which review
@@ -21,7 +22,7 @@ export const BUILTIN_CHECKS: Record<string, { label: string; about: string }> = 
   reviewer: { label: "功能", about: "需求是否实现、边界与错误处理、测试覆盖、多余改动" },
   "review-business": { label: "业务", about: "对照需求逐条核对业务规则是否实现一致" },
   "review-arch": { label: "架构", about: "模块边界、依赖方向、抽象取舍、跨仓库接口" },
-  "review-style": { label: "规范", about: "只报违反项目明确约定的地方" },
+  "review-style": { label: "规范", about: "项目写明的约定有没有被违反，命名、注释和类型写法会不会误导人" },
   "review-history": { label: "历史", about: "以前类似改动踩过的坑" },
   "review-simplify": { label: "精简", about: "功能不变时能删、能合并、能内联或改用已有实现的代码" },
 };
@@ -116,7 +117,7 @@ export const tierSchema = z.object({
 /** The models review rounds rotate through (tiers with `rotateModels`). */
 export const rotationSchema = z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).default([]);
 export const checkSettingSchema = z.object({ label: z.string().trim().min(1).max(12), blocks: z.enum(["blocker", "major", "minor"]), when: reviewCondition.nullable(), guide: z.string().trim().max(2000).default("") });
-export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema), rereviewAllEvery: z.number().int().min(1).max(10).default(2), rotation: rotationSchema });
+export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema), rereviewAllEvery: z.number().int().min(1).max(10).default(2), rotation: rotationSchema, crossFamily: z.enum(["off", "prefer", "require"]).default("prefer") });
 
 /** Check names must exist; the last tier is the catch-all (no condition), so every change has one. */
 export function validateReviewSettings(app: App, input: unknown) {
@@ -139,7 +140,7 @@ export function validateReviewSettings(app: App, input: unknown) {
 }
 
 export function defaultReviewSettings() {
-  return { tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [] };
+  return { tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [], crossFamily: "prefer" as const };
 }
 
 // ---- planning ----------------------------------------------------------------------------------
@@ -399,7 +400,7 @@ export function deadRefs(app: App, refs: string[]) {
 export const inlineRefs = (...texts: (string | null | undefined)[]) =>
   texts.flatMap((t) => [...(t ?? "").matchAll(/(?<![\w/])(src|mem):([A-Za-z0-9_-]+)/g)].map((m) => `${m[1]}:${m[2]}`));
 
-export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
+export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; independence: Independence | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
 export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; design_decision?: string | null; decision_note?: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null };
 /** The suggestion to act on: the owner's rewrite when there is one (review-fix.ts setFindingSuggestion). */
 export const suggestionOf = (f: Pick<FindingRow, "suggestion" | "owner_suggestion">) => f.owner_suggestion?.trim() || f.suggestion;
@@ -407,13 +408,36 @@ export const suggestionOf = (f: Pick<FindingRow, "suggestion" | "owner_suggestio
 const RANK: Record<Severity, number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
 export const blocksAt = (severity: Severity, level: CheckSetting["blocks"]) => RANK[severity] <= RANK[level];
 
+/** Prefer the AI actually recorded for this round, then the work's requested execution. */
+export function coderAI(app: App, codeRunId: string): AI | null {
+  const row = one<{ ai: string | null; input: string }>(app.db, "select ai, input from runs where id = ?", codeRunId);
+  if (!row) return null;
+  if (row.ai) return JSON.parse(row.ai) as AI;
+  const input = JSON.parse(row.input) as { execution?: AI; continueFrom?: string };
+  if (input.execution) return input.execution;
+  if (input.continueFrom && input.continueFrom !== codeRunId) {
+    const root = one<{ input: string }>(app.db, "select input from runs where id = ?", input.continueFrom);
+    return root ? (JSON.parse(root.input) as { execution?: AI }).execution ?? null : null;
+  }
+  return null;
+}
+
+/** A warning is informational: even require never blocks a round. */
+export function independenceWarnings(app: App, codeRunId: string, round: number): string {
+  if ((app.config.review.crossFamily ?? "prefer") !== "require") return "";
+  const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
+  return all<{ check_name: string }>(app.db, "select check_name from reviews where code_run_id = ? and round = ? and independence = 'same'", codeRunId, round)
+    .map((r) => `${checkLabel(infos, r.check_name)} 和编码是同一家模型，没有别家的可换：这一项不算独立评审`).join("\n");
+}
+
 /** One check's result for one round; a resubmission in the same round replaces the earlier one. */
 export function recordReview(app: App, r: { codeRunId: string; round: number; check: string; tier?: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; findings: Finding[]; changePoints?: ChangePoint[]; ai?: { profile?: string; model?: string; effort?: string } }) {
   const id = newId("rv");
   tx(app.db, () => {
     run(app.db, "delete from reviews where code_run_id = ? and round = ? and check_name = ?", r.codeRunId, r.round, r.check);
-    run(app.db, "insert into reviews(id, code_run_id, round, check_name, tier, profile_id, model, effort, verdict, summary, change_points, created_at) values(?,?,?,?,?,?,?,?,?,?,?,?)",
-      id, r.codeRunId, r.round, r.check, r.tier ?? null, r.ai?.profile ?? null, r.ai?.model ?? null, r.ai?.effort ?? null, r.verdict, r.summary, r.changePoints?.length ? JSON.stringify(r.changePoints) : null, now());
+    const relation = r.ai && !r.ai.profile?.startsWith("peer:") ? independence(coderAI(app, r.codeRunId), r.ai) : null;
+    run(app.db, "insert into reviews(id, code_run_id, round, check_name, tier, profile_id, model, effort, verdict, summary, change_points, created_at, independence) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      id, r.codeRunId, r.round, r.check, r.tier ?? null, r.ai?.profile ?? null, r.ai?.model ?? null, r.ai?.effort ?? null, r.verdict, r.summary, r.changePoints?.length ? JSON.stringify(r.changePoints) : null, now(), relation);
     for (const f of r.findings) {
       run(app.db, "insert into review_findings(review_id, severity, file_path, line, title, detail, suggestion, evidence, confidence, design_decision) values(?,?,?,?,?,?,?,?,?,?)",
         id, f.severity, f.file ?? null, f.line ?? null, f.title, f.detail, f.suggestion, JSON.stringify(f.evidence), f.confidence, f.decision ?? null);

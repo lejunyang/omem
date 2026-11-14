@@ -284,7 +284,7 @@ async function answer(choice: number | null) {
       <div v-if="rv.reviews.value.length" class="checks">
         <div v-for="r in rv.reviews.value" :key="r.id" class="check-row">
           <span class="st" :class="r.verdict" :title="r.verdict" />
-          <strong>{{ rv.label(r.check_name) }}</strong>
+          <span class="check-name"><strong>{{ rv.label(r.check_name) }}</strong><span v-if="r.independence === 'same'" class="badge warn">同一家模型</span></span>
           <span class="muted small ellipsis" :title="r.summary">{{ r.verdict === "failed" ? `没有完成：${r.summary}` : r.summary.split("\n")[0] }}</span>
           <span class="row sev"><span v-for="c in severityCounts(r)" :key="c.s" class="badge" :class="SEV[c.s].cls">{{ SEV[c.s].text }} {{ c.n }}</span><span v-if="!severityCounts(r).length && r.verdict === 'approved'" class="badge">无问题</span></span>
           <span class="muted small mono ai">{{ reviewAi(r) }}</span>
@@ -400,7 +400,8 @@ async function answer(choice: number | null) {
 .stop { margin: 0; color: var(--warn); }
 .esc { margin: 0; white-space: pre-wrap; }
 .checks { display: grid; grid-template-columns: minmax(0, 1fr); }
-.check-row { display: grid; grid-template-columns: 10px 64px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.check-row { display: grid; grid-template-columns: 10px 84px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.check-name { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .sev { gap: 4px; }
 .ai { white-space: nowrap; }
 .st { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
@@ -449,7 +450,7 @@ async function answer(choice: number | null) {
 .fix p { margin: 0; }
 .actions { gap: 8px; align-items: flex-start; }
 @media (max-width: 760px) {
-  .check-row { grid-template-columns: 10px 52px minmax(0, 1fr) auto; }
+  .check-row { grid-template-columns: 10px 84px minmax(0, 1fr) auto; }
   .ai { display: none; }
 }
 </style>

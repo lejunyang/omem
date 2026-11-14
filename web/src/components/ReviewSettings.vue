@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { get, put } from "../api";
 import Icon from "./Icon.vue";
+import HelpText from "./HelpText.vue";
 import RuleConditions, { type Condition } from "./RuleConditions.vue";
 import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
@@ -22,7 +23,7 @@ type Tier = { id: string; name: string; when: Condition | null; guide: string; c
 type Pick = { profile: string; model?: string; effort?: string };
 type Backend = { id: string; name?: string; installed: boolean; transport: string; model?: string; effort?: string };
 type Check = { name: string; label: string; blocks: Blocks; when: Condition | null; guide: string; builtin: boolean; about: string; missing: boolean; ai: { profile: string; model?: string; effort?: string } | null };
-type Settings = { tiers: Tier[]; rereviewAllEvery: number; rotation?: Pick[]; checks: Check[]; specs: { name: string; description: string }[]; recent: Record<string, number> };
+type Settings = { tiers: Tier[]; rereviewAllEvery: number; rotation?: Pick[]; crossFamily?: "off" | "prefer" | "require"; checks: Check[]; specs: { name: string; description: string }[]; recent: Record<string, number> };
 
 const route = useRoute();
 const router = useRouter();
@@ -36,6 +37,7 @@ const rereviewAllEvery = ref(2);
 // The models another look takes (review.rotation): a task-driven delegation's second look, and the
 // rounds of a tier that turns rotation on. Its own page, not under a tier: second looks use it either way.
 const rotation = ref<Pick[]>([]);
+const crossFamily = ref<"off" | "prefer" | "require">("prefer");
 const backends = ref<Backend[]>([]);
 const options = ref<{ fields: Record<string, string>; descriptions: Record<string, string>; ops: string[] }>({ fields: {}, descriptions: {}, ops: [] });
 const NUMERIC = ["change.lines", "change.codeLines", "change.files", "change.repos"];
@@ -57,6 +59,7 @@ function reset(s: Settings) {
   tiers.value = JSON.parse(JSON.stringify(s.tiers));
   checks.value = JSON.parse(JSON.stringify(s.checks));
   rereviewAllEvery.value = s.rereviewAllEvery ?? 2;
+  crossFamily.value = s.crossFamily ?? "prefer";
   rotation.value = JSON.parse(JSON.stringify(s.rotation ?? []));
   dirty.value = false;
 }
@@ -87,6 +90,7 @@ async function save() {
     const body = {
       tiers: tiers.value,
       rereviewAllEvery: rereviewAllEvery.value,
+      crossFamily: crossFamily.value,
       rotation: rotation.value.filter((p) => p.profile),
       checks: Object.fromEntries(checks.value.map((c) => [c.name, { label: c.label, blocks: c.blocks, when: c.when, guide: c.guide ?? "" }])),
     };
@@ -195,7 +199,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
 
           <div class="group">模型</div>
           <button class="li" :class="{ on: rotating }" @click="go({ rotation: '1' })">
-            <span class="grow"><strong>换模型复审</strong><span class="muted small sub">{{ rotation.length ? `${rotation.length} 个模型` : "没有设置：不复看、不换模型" }}</span></span>
+            <span class="grow"><strong>换模型复审</strong><span class="muted small sub">{{ rotation.length ? `${rotation.length} 个模型` : "没有设置：复看与轮换停用" }}</span></span>
           </button>
         </template>
       </div>
@@ -306,7 +310,12 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
           <span class="spacer" />
           <button class="btn sm primary" :disabled="saving || !dirty" @click="save">保存</button>
         </header>
-        <p class="muted about">评审要用另一个模型再看一遍时，从这里选模型。列表为空时不复看，也不换模型。</p>
+        <p class="muted about">评审要用另一个模型再看一遍时，从这里选模型。列表为空时不复看、不逐轮换模型；默认评审仍可从任务选型候选找别家的模型。</p>
+        <section class="block stack">
+          <div class="block-head"><h3>评审换模型</h3></div>
+          <UiSegmented v-model="crossFamily" class="cross-family" :options="[{ value: 'off', label: '不管' }, { value: 'prefer', label: '尽量换成别家的模型' }, { value: 'require', label: '换不了就标出来' }]" aria-label="评审与编码的模型来源" @update:model-value="touch" />
+          <HelpText>同一家的模型审自己写的代码，容易对同样的写法习惯视而不见。打开后，评审项默认用的模型和编码是同一家时，改用“评审换模型”列表或任务选型候选里第一个别家的；没有别家的可用时照常评审，并标出这一项不算独立评审。</HelpText>
+        </section>
         <section class="block">
           <div class="block-head"><h3>用在哪里</h3></div>
           <ul class="uses small">
@@ -351,6 +360,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
 </template>
 
 <style scoped>
+.cross-family { flex-wrap: wrap; }
 .rotation { display: grid; gap: 8px; padding: 4px 0 10px; min-width: 0; }
 .uses { margin: 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.6; }
 .review { display: flex; height: 100%; }

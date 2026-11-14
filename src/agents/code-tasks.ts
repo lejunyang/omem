@@ -75,7 +75,7 @@ export const isLater = (t: Pick<CodeTask, "state" | "origin">) => t.state === "w
  */
 export const MAX_FOLLOW_DEPTH = 2;
 /** Code lines changed in a delegation from which the simplify check looks once without being asked. */
-export const SIMPLIFY_LINES = 200;
+export const SIMPLIFY_LINES = 40;
 /** Stage reviews that may go on finding only review fixes after the requirement was done, before the loop stops for the assistant. */
 export const POLISH_STAGES = 3;
 /** After this many failed tries (or rounds that never got to it) a task goes to the assistant that started the work. */
@@ -398,6 +398,22 @@ export function followDepth(app: App, rootId: string, seq: number): number {
     t = toTask(next);
   }
   return depth;
+}
+
+/** The lead sees the whole chain before deciding whether this spot needs a different approach. */
+export function thirdFixText(app: App, rootId: string): string {
+  const tasks = listTasks(app, rootId);
+  const bySeq = new Map(tasks.map((t) => [t.seq, t]));
+  const chains = tasks.filter((t) => followDepth(app, rootId, t.seq) >= 3).map((t) => {
+    const chain: string[] = [];
+    const seen = new Set<number>();
+    for (let at: CodeTask | undefined = t; at && !seen.has(at.seq); at = at.origin.follows ? bySeq.get(at.origin.follows) : undefined) {
+      seen.add(at.seq);
+      chain.unshift(`${taskLabel(at.seq)} ${at.title}`);
+    }
+    return `- ${chain.join(" → ")}`;
+  });
+  return chains.length ? `## 已经修到第三次的位置\n\n${chains.join("\n")}` : "";
 }
 
 /** Set a task aside: it does not hold the work up, and the next delegation on the branch takes it up again. */

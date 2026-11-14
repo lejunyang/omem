@@ -66,7 +66,9 @@ const traeOptions = (model: string) => [
   { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: Object.keys(TRAE_EFFORTS).map((v) => ({ value: v, name: v })) },
   ...(TRAE_EFFORTS[model].length ? [{ id: "reasoning_effort", name: "Effort", category: "thought_level", type: "select", currentValue: TRAE_EFFORTS[model][0], options: TRAE_EFFORTS[model].map((v) => ({ value: v, name: v })) }] : []),
 ];
-const state = { model: "m1", mode: "default" };
+const reviewModels = process.env.FAKE_REVIEW_MODELS?.split(",");
+const reviewModelOptions = (model: string) => [{ id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: reviewModels!.map((value) => ({ value, name: value })) }];
+const state = { model: reviewModels?.[0] ?? "m1", mode: "default" };
 new AgentSideConnection(
   (conn) => ({
     async initialize() {
@@ -88,12 +90,13 @@ new AgentSideConnection(
           modes: { currentModeId: "default", availableModes: ["default", "autoEdit", "yolo"].map((m) => ({ id: m, name: m })) },
           models: { currentModelId: "m1", availableModels: [{ modelId: "m1", name: "M1" }, { modelId: "m2", name: "M2" }] },
         } as never;
+      if (reviewModels) return { sessionId: id, configOptions: reviewModelOptions(state.model) } as never;
       if (trae) return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] }, configOptions: traeOptions("m1") } as never;
       return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }, { id: "read-only", name: "ro" }] } };
     },
     async setSessionConfigOption(p: { configId: string; value: unknown }) {
       if (p.configId === "model") state.model = String(p.value);
-      return { configOptions: traeOptions(state.model) } as never;
+      return { configOptions: reviewModels ? reviewModelOptions(state.model) : traeOptions(state.model) } as never;
     },
     async resumeSession(p: { sessionId: string; mcpServers?: McpServer[]; cwd?: string }) {
       sessions.set(p.sessionId, p.mcpServers ?? []);
@@ -336,6 +339,7 @@ new AgentSideConnection(
             await call("submit_brief", {
               ...(process.env.FAKE_DESIGN_NEEDED ? { design: { needed: true, why: "要改退款金额在退款单和对账之间的分工" } } : {}),
               summary: `改退款计算会影响退款单列表和对账（${said}）`,
+              reuse: [{ what: "退款金额计算", where: "refund.ts:1", how: "调用 computeRefund", gap: "补上未发货行的过滤" }],
               impacts: [{ text: "对账脚本按退款金额汇总，金额口径变了要一起改", where: ["refund.ts"] }],
               history: [{ text: "以前把未发货的行也算进了退款", refs: ["run:r-old"] }],
               regressions: [{ text: "退款金额的单元测试", how: "node --test refund.test.ts", auto: true }, { text: "退款单列表展示的金额", how: "打开退款单列表看金额", auto: false }],

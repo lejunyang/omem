@@ -27,6 +27,7 @@ const toggle = (id: string) => { const n = new Set(open.value); n.has(id) ? n.de
       <button class="check-head" :aria-expanded="open.has(r.id)" @click="toggle(r.id)">
         <span class="st" :class="r.verdict" />
         <strong>{{ rv.label(r.check_name) }}</strong>
+        <span v-if="r.independence === 'same'" class="badge warn">同一家模型</span>
         <span class="muted small">{{ VERDICT[r.verdict] ?? r.verdict }}</span>
         <span class="row sev"><span v-for="c in severityCounts(r)" :key="c.s" class="badge" :class="SEV[c.s].cls">{{ SEV[c.s].text }} {{ c.n }}</span></span>
         <span class="spacer" />

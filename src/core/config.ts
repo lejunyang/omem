@@ -129,9 +129,9 @@ const replayPlanSchema = z.object(Object.fromEntries(REPLAY_SIGNALS.map((s) => [
 /** Light = today's single reviewer; heavier tiers add independent checks for larger changes. */
 export function defaultReviewTiers() {
   return [
-    { id: "full", name: "完整", guide: "", checks: ["reviewer", "review-business", "review-arch", "review-history", "review-style", "review-simplify"], maxRounds: 3, lead: true, confirmPlan: true, rotateModels: false,
+    { id: "full", name: "完整", guide: "", checks: ["reviewer", "review-simplify", "review-arch", "review-business", "review-history", "review-style"], maxRounds: 3, lead: true, confirmPlan: true, rotateModels: false,
       when: { any: [{ field: "change.repos", op: "gte", value: 2 }, { field: "change.lines", op: "gte", value: 600 }, { field: "change.paths", op: "contains", value: "migration" }] } },
-    { id: "standard", name: "标准", guide: "", checks: ["reviewer", "review-business", "review-style"], maxRounds: 3, lead: true, confirmPlan: false, rotateModels: false,
+    { id: "standard", name: "标准", guide: "", checks: ["reviewer", "review-simplify", "review-business"], maxRounds: 3, lead: true, confirmPlan: false, rotateModels: false,
       when: { any: [{ field: "change.lines", op: "gte", value: 80 }, { field: "change.files", op: "gte", value: 3 }] } },
     { id: "light", name: "轻", guide: "", checks: ["reviewer"], maxRounds: 3, lead: false, confirmPlan: false, rotateModels: false, when: null },
   ];
@@ -390,10 +390,12 @@ export const configSchema = z.object({
       })).default({}),
       /** With a lead, rounds re-review only the checks the fixes touch; every this many rounds all run again. */
       rereviewAllEvery: z.number().int().min(1).max(10).default(2),
+      /** Prefer a different maker than the coder; require only adds a warning when unavailable. */
+      crossFamily: z.enum(["off", "prefer", "require"]).optional(),
       /** The models review rounds rotate through (tiers with `rotateModels`, or the owner's choice for a delegation). */
       rotation: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).optional(),
     })
-    .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [] })),
+    .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [], crossFamily: "prefer" as const })),
   /**
    * Tools that need the owner (agents/approval-ladder.ts): `tools` wait for an OK every time; `report`
    * run and the owner is told afterwards. After `promoteAfter` approvals in a row of a tool in `tools`

@@ -479,7 +479,7 @@ describe("a branch review an outside Agent on another device does itself", () =>
     // The brief: the materials, each check's own guide, how to hand in; the diff by pages.
     const brief = (await callTool(ctx, "review_task", { run_id: runId })).text;
     expect(brief).toContain("退款只按未发货的行计算");
-    expect(brief).toContain("规范与代码质量评审者");
+    expect(brief).toContain("你是规范评审者");
     expect(brief).toMatch(/还没提交：.*、/);
     const diff = (await callTool(ctx, "review_task", { run_id: runId, part: "diff" })).text;
     expect(diff).toContain("shippedOnly");

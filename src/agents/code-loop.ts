@@ -16,7 +16,7 @@ import {
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
 import { queueStandaloneFix } from "./review-fix.ts";
-import { checkLabel, planReview, reviewChecks, roundFindings, type ReviewPlan } from "./review.ts";
+import { checkLabel, planReview, reviewChecks, roundFindings, independenceWarnings, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import { workDirOf } from "./workspaces.ts";
@@ -176,10 +176,13 @@ function changeFacts(dir: string, from: string): string {
 }
 
 /** How each check did on this work so far: what it raised and what became of it. */
-function checkHistory(app: App, rootId: string) {
-  const rows = app.db.prepare(`select r.check_name as check_name, f.state as state, f.task_id as task_id from review_findings f join reviews r on r.id = f.review_id join runs x on x.id = r.code_run_id where x.id = ? or json_extract(x.input, '$.continueFrom') = ?`).all(rootId, rootId) as { check_name: string; state: string; task_id: number | null }[];
+export function checkHistory(app: App, rootId: string, repositorySpaces?: string[]) {
+  const fields = "r.check_name as check_name, f.state as state, f.task_id as task_id";
+  const rows = repositorySpaces
+    ? repositorySpaces.length ? app.db.prepare(`select ${fields} from runs x join reviews r on r.code_run_id = x.id join review_findings f on f.review_id = r.id where x.kind = 'code' and x.space_id in (${repositorySpaces.map(() => "?").join(",")}) and x.created_at >= ? and x.id != ? and coalesce(json_extract(x.input, '$.continueFrom'), '') != ?`).all(...repositorySpaces, new Date(Date.now() - 30 * 86400_000).toISOString(), rootId, rootId) : []
+    : app.db.prepare(`select ${fields} from runs x join reviews r on r.code_run_id = x.id join review_findings f on f.review_id = r.id where x.id = ? or json_extract(x.input, '$.continueFrom') = ?`).all(rootId, rootId);
   const by = new Map<string, { raised: number; accepted: number; rejected: number }>();
-  for (const r of rows) {
+  for (const r of rows as { check_name: string; state: string; task_id: number | null }[]) {
     const c = by.get(r.check_name) ?? { raised: 0, accepted: 0, rejected: 0 };
     c.raised++;
     if (r.task_id || r.state === "accepted") c.accepted++;
@@ -214,6 +217,7 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
   const worktrees = worktreesOf(app, rootId);
   const checks = reviewChecks(app).filter((c) => !c.missing);
   const history = checkHistory(app, rootId);
+  const recent = checkHistory(app, rootId, [...new Set(worktrees.map((w) => w.space))]);
   const facts = worktrees.map((wt) => `${worktrees.length > 1 ? `### ${wt.space}\n\n` : ""}${changeFacts(workDirOf(wt), since?.[wt.space] ?? (wt.commits ? changeBase(workDirOf(wt), wt) : wt.start ?? wt.base))}`).join("\n\n");
   const input = root.input as { task?: string; reviewTier?: string; reviewChecks?: string[] };
   // Checks the owner named when delegating, or picked for the rounds since (运行页“之后的评审”).
@@ -229,7 +233,7 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
     lookable ? SECOND_LOOK_BRIEF : "",
     `## 这一段改动（${since ? "上次评审以后" : "从开始到现在"}）\n\n${facts}`,
     `## 修改项\n\n${taskList(app, rootId) || "（没有）"}`,
-    `## 可用的评审项\n\n${checks.map((c) => { const h = history.get(c.name); return `- ${c.name}（${c.label}）：${c.about}${c.guide ? `；本人说：${c.guide}` : ""}${h ? `；这次交办里提过 ${h.raised} 条，采纳 ${h.accepted}，驳回 ${h.rejected}` : ""}`; }).join("\n")}`,
+    `## 可用的评审项\n\n${checks.map((c) => { const h = history.get(c.name) ?? { raised: 0, accepted: 0, rejected: 0 }; const r = recent.get(c.name) ?? { raised: 0, accepted: 0, rejected: 0 }; return `- ${c.name}（${c.label}）：${c.about}${c.guide ? `；本人说：${c.guide}` : ""}；这次交办里提过 ${h.raised} 条，采纳 ${h.accepted}，驳回 ${h.rejected}；这个仓库近 30 天提过 ${r.raised} 条，采纳 ${r.accepted}，驳回 ${r.rejected}`; }).join("\n")}`,
     ownerSaid,
     `## 交办任务（本人的原话）\n\n${truncate(String(input.task ?? ""), 6000)}`,
   ].filter(Boolean).join("\n\n");
@@ -378,6 +382,7 @@ function completed(app: App, rootId: string, run: Run) {
   const design = designDigest(app, rootId);
   const digest = [
     design,
+    independenceWarnings(app, run.id, roundOf(run)),
     `**修改项**：完成 ${count("done")} 项${fixes ? `（其中评审问题 ${fixes} 个）` : ""}${count("wontdo") ? `，不做 ${count("wontdo")} 项` : ""}${count("reverted") ? `，回退 ${count("reverted")} 项` : ""}`,
     tasks.filter((t) => t.state === "done").slice(0, 8).map((t) => `- ${taskLabel(t.seq)} ${t.title}`).join("\n"),
   ].filter(Boolean).join("\n");

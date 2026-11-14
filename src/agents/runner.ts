@@ -853,7 +853,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       i += slot.index;
       const profile = chain[i];
       const prep = i === 0 ? base : prepareRun(app, { actor, lessons, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
-      if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
+      // A check may fall back inside the code run: its AI belongs on the review, not over the coder's.
+      if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, runKind !== "code" || !(input.reviewCheck || input.reviewLead));
       try {
         const req = {
           runId: input.runId,

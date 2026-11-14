@@ -22,6 +22,7 @@ export const briefSchema = z.object({
   areas: z.array(z.object({ files: z.array(z.string().max(300)).max(20), note: z.string().max(500) })).max(20).optional().describe("预计要改的位置"),
   impacts: z.array(z.object({ text: z.string().min(1).max(600), where, reqs: z.array(z.string().max(80)).max(10).optional(), refs })).max(30).optional()
     .describe("改动会波及、编码时要顾及的现有功能、调用方、共用的接口和类型"),
+  reuse: z.array(z.object({ what: z.string().min(1).max(600), where: z.string().min(1).max(300), how: z.string().max(600).optional(), gap: z.string().max(600).optional() })).max(20).optional().describe("可以直接用的已有实现、用法和还差什么"),
   history: z.array(z.object({ text: z.string().min(1).max(600), where, refs: z.array(z.string().max(200)).min(1).max(10) })).max(20).optional()
     .describe("这些地方以前出过的问题、修过的坑（必须带依据）"),
   regressions: z.array(z.object({ text: z.string().min(1).max(400), how: z.string().max(400).optional(), reqs: z.array(z.string().max(80)).max(10).optional(), auto: z.boolean() })).max(40).optional()
@@ -64,6 +65,7 @@ export function preCheckText(pc: PreCheck, mode: "coder" | "review" | "design"):
     `### 概要\n\n${pc.summary}`,
     pc.areas?.length ? `### 预计改动的位置\n\n${list(pc.areas.map((a) => `${a.files.join("、")}${a.note ? `：${a.note}` : ""}`))}` : "",
     pc.impacts?.length ? `### 要顾及的\n\n${list(pc.impacts.map((x) => `${x.text}${tail(x) ? `（${tail(x)}）` : ""}`))}` : "",
+    pc.reuse?.length ? `### 可以直接用的已有实现\n\n${list(pc.reuse.map((x) => `${x.what} — ${x.where}${x.how ? `；用法：${x.how}` : ""}${x.gap ? `；差在：${x.gap}` : ""}`))}` : "",
     pc.history?.length ? `### 以前出过的问题\n\n${list(pc.history.map((x) => `${x.text}（${tail(x)}）`))}` : "",
     pc.regressions?.length ? `### 回归清单\n\n${list(pc.regressions.map((x) => `${x.auto ? "[自动]" : "[人工]"} ${x.text}${x.how ? `：${x.how}` : ""}${x.reqs?.length ? `（需求点：${x.reqs.map((r) => `req:${r}`).join("、")}）` : ""}`))}` : "",
     pc.questions?.length ? `### 没查清的\n\n${list(pc.questions)}` : "",
@@ -74,7 +76,7 @@ export function preCheckText(pc: PreCheck, mode: "coder" | "review" | "design"):
 
 /** One line for status events and notifications. */
 export const preCheckLine = (pc: Brief) =>
-  [`要顾及 ${pc.impacts?.length ?? 0} 处`, `以前的问题 ${pc.history?.length ?? 0} 条`, `回归 ${pc.regressions?.length ?? 0} 项`, pc.questions?.length ? `没查清 ${pc.questions.length} 条` : ""].filter(Boolean).join("，");
+  [`要顾及 ${pc.impacts?.length ?? 0} 处`, `已有实现 ${pc.reuse?.length ?? 0} 项`, `以前的问题 ${pc.history?.length ?? 0} 条`, `回归 ${pc.regressions?.length ?? 0} 项`, pc.questions?.length ? `没查清 ${pc.questions.length} 条` : ""].filter(Boolean).join("，");
 
 /** Whether a new delegation gets the check: on unless the owner turned it off, or the delegation said no. */
 export function wantsPreCheck(app: App, root: Run) {

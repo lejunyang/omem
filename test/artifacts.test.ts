@@ -8,7 +8,7 @@ import { artifactFile, artifactInbox, attachPath, collectInbox, listArtifacts } 
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { addTask, listTasks } from "../src/agents/code-tasks.ts";
 import { codeHistory } from "../src/agents/code-history.ts";
-import { preCheckOf, preCheckText } from "../src/agents/pre-check.ts";
+import { briefSchema, savePreCheck, preCheckLine, preCheckOf, preCheckText } from "../src/agents/pre-check.ts";
 import { __testHandlers, addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
@@ -158,10 +158,13 @@ describe("run artifacts", () => {
       const coder = sent.find((p) => p.includes("先用 `plan_tasks` 拆分"))!;
       expect(coder).toContain("## 编码前的检查");
       expect(coder).toContain("对账脚本按退款金额汇总");
+      expect(coder).toContain("可以直接用的已有实现");
+      expect(pc.reuse?.[0].where).toBe("refund.ts:1");
       // The stage review's checks read the brief and the screenshots (with their files on this machine).
       const check = sent.find((p) => p.includes("你负责的评审项："))!;
       expect(check).toContain("## 编码前的检查");
       expect(check).toContain("## 截图、录屏和报告");
+      expect(check).toContain("调用 computeRefund");
 
       const tasks = listTasks(app, r1.id).filter((x) => x.kind === "build");
       const shots = await listArtifacts(app, r1.id);
@@ -194,5 +197,25 @@ describe("run artifacts", () => {
     const ctx: ToolContext = { app, runId: null, spaceId: "shop-api", spaces: ["personal"], tools: null, actor: "agent" };
     expect(await callTool(ctx, "code_history", { space: "shop-api", paths: ["refund.ts"] })).toMatchObject({ isError: true });
     expect(await callTool({ ...ctx, spaces: ["shop-api"] }, "code_history", { space: "shop-api", paths: ["refund.ts"] })).toMatchObject({ isError: false });
+  });
+});
+
+
+describe("pre-check reuse", () => {
+  it("round-trips optional reuse and renders it for the coder, reviewers and designer", () => {
+    const app = testApp();
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "personal", title: "退款", input: {} });
+      const brief = briefSchema.parse({ summary: "沿用退款计算", reuse: [{ what: "金额计算", where: "refund.ts:1", how: "调用 computeRefund", gap: "增加过滤参数" }] });
+      savePreCheck(app, r.id, brief);
+      const pc = preCheckOf(app, r.id)!;
+      expect(pc.reuse).toEqual(brief.reuse);
+      expect(preCheckLine(pc)).toContain("已有实现 1 项");
+      for (const mode of ["coder", "review", "design"] as const) {
+        expect(preCheckText(pc, mode)).toContain("### 可以直接用的已有实现\n\n- 金额计算 — refund.ts:1；用法：调用 computeRefund；差在：增加过滤参数");
+      }
+      expect(briefSchema.parse({ summary: "无复用" }).reuse).toBeUndefined();
+      expect(briefSchema.safeParse({ summary: "过多", reuse: Array(21).fill({ what: "计算", where: "a.ts" }) }).success).toBe(false);
+    } finally { app.db.close(); }
   });
 });

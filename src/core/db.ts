@@ -1830,6 +1830,8 @@ export const migrations: readonly string[] = [
    );
    create index quality_audits_pipeline on quality_audits(pipeline, at);
    create index quality_audits_target on quality_audits(space_id, target, at);`,
+  `alter table reviews add column independence text;`,
+  `create index runs_code_history on runs(space_id, created_at) where kind = 'code';`,
 ];
 
 export type Db = DatabaseSync;
