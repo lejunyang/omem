@@ -12,7 +12,7 @@ import { describePlugin, forgetPlugin, getPlugin, reloadPlugin, setPluginEnabled
 import { savePluginSettings } from "../src/plugins/settings.ts";
 import { getRun } from "../src/agents/runs.ts";
 
-type Fixture = { receive: (m: Record<string, unknown>) => Promise<void>; sent: { to: { chatId: string; topicId?: string }; text: string }[]; fail: boolean };
+type Fixture = { receive: (m: Record<string, unknown>) => Promise<void>; sent: { to: { chatId: string; topicId?: string }; text: string }[]; fail: boolean; closed?: number };
 const fixture = () => (globalThis as unknown as { pluginChannelFixture: Fixture }).pluginChannelFixture;
 
 describe("插件聊天渠道", async () => {
@@ -24,6 +24,7 @@ describe("插件聊天渠道", async () => {
     const state = globalThis.pluginChannelFixture = { sent: [], fail: false };
     const channel = api.channel({ id: "matrix", label: "Matrix", maxLength: 4000,
       owner: (settings) => settings.ownerId,
+      close: () => { state.closed = (state.closed ?? 0) + 1; },
       send: async (to, text) => { if (state.fail) throw new Error("示例发送失败"); state.sent.push({ to, text }); } });
     state.receive = channel.receive;
   }`);
@@ -91,6 +92,8 @@ describe("插件聊天渠道", async () => {
     await old.receive(message("owner-platform"));
     await new Promise((r) => setTimeout(r, 30));
     expect(old.sent).toHaveLength(before);
+    // The plugin was told once to close what it opened itself.
+    expect(old.closed).toBe(1);
     expect(resolveIdentity(app, "chatfixture-matrix", "owner-platform")).toBeNull();
     expect(getPlugin("chatfixture").channels[0].running).toBe(false);
     await setPluginEnabled(app, "chatfixture", true);

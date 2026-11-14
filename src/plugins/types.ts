@@ -22,6 +22,8 @@ export type PluginChannel = {
   send(to: { chatId: string; topicId?: string }, text: string): Promise<void>;
   maxLength: number;
   owner?: (settings: PluginSettings) => string | number | boolean | undefined;
+  /** Called once when the host stops the channel (plugin turned off, trust withdrawn, reloaded): close the listener, timers and sockets the plugin opened itself. */
+  close?: () => void | Promise<void>;
 };
 
 export type PluginContext = {

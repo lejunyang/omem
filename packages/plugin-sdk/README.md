@@ -44,6 +44,8 @@ export default function register(api) {
     send: async ({ chatId, topicId }, text) => {
       // text 已按 maxLength 分段，用平台客户端发送。
     },
+    // 渠道被停掉时调用一次：关掉自己开的监听、定时器和连接。
+    close: () => client.stop(),
   });
   // 平台监听器收到消息时：
   // await channel.receive({ chatId, topicId, isGroup, senderId, text, messageId, addressed: true });

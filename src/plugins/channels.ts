@@ -33,7 +33,13 @@ export function registerPluginChannel(app: App, p: LoadedPlugin, def: PluginChan
   });
   return {
     state,
-    stop() { state.running = false; undoSender(); undoSink(); undoOwner(); },
+    stop() {
+      if (!state.running) return;
+      state.running = false;
+      undoSender(); undoSink(); undoOwner();
+      // What the plugin opened itself (a poll timer, a socket) is its own to close; a failure there does not keep the channel alive.
+      void Promise.resolve().then(() => def.close?.()).catch((e) => console.warn(`[omem] 插件渠道 ${id} 关闭自己的连接时出错：${(e as Error).message}`));
+    },
     async receive(m: PluginChannelMessage) {
       if (!state.running || !m.text || (m.isGroup && !m.addressed)) return;
       const userId = resolveIdentity(app, id, m.senderId);
