@@ -9,6 +9,7 @@ import { leafMatches } from "../rules/conditions.ts";
 import { OPS } from "../rules/types.ts";
 import { getSource, purgeSource, sourceText, type UpsertInput } from "./store.ts";
 import { vectorIndex } from "../search/vectors.ts";
+import { kbHomeFor, pinned } from "./kb-home.ts";
 
 export const ARCHIVE_FIELDS = { kind: "材料类型", title: "标题 / 群名", uri: "网址 / 路径", text: "正文", channel: "采集渠道", "meta.wikiSpaceName": "知识库名称", "meta.wikiParentTitle": "所在目录", "meta.wikiPath": "上级目录路径" } as const;
 export const ARCHIVE_FIELD_HELP: Record<keyof typeof ARCHIVE_FIELDS, string> = {
@@ -121,6 +122,14 @@ export function prepareArchive(app: App, input: UpsertInput): { input: UpsertInp
   const found = routedSource(app, input.spaceId, input.uri) ?? one<{ id: string; space_id: string }>(app.db, "select id,space_id from sources where space_id=? and uri=?", input.spaceId, input.uri);
   const prev = found ? sourceRoute(app, found.id) : undefined;
   const origin = prev?.origin_space ?? input.spaceId;
+  // A knowledge-base document lives where its knowledge base (or its directory) is filed, whichever
+  // way it came in; only a move by the owner's hand keeps it elsewhere (kb-home.ts).
+  const home = input.kind === "doc" && !pinned(prev) ? kbHomeFor(app, input.meta, input.spaceId) : null;
+  if (home) {
+    // A copy already at home takes the new text; the stray one waits for the nightly pass to merge it.
+    const there = found && found.space_id !== home.space ? one<{ id: string }>(app.db, "select id from sources where space_id=? and uri=? and deleted_at is null", home.space, input.uri) : undefined;
+    return { sourceId: there?.id ?? found?.id, input: { ...input, spaceId: home.space }, mode: "binding", reason: home.why, origin };
+  }
   if (prev?.mode === "manual") return { sourceId: found?.id, input: { ...input, spaceId: found!.space_id }, mode: prev.mode, reason: prev.reason, origin };
   const chatId = typeof input.meta?.chatId === "string" ? input.meta.chatId : undefined;
   const bound = chatId ? chatBinding(app, chatId) : undefined;

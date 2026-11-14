@@ -1699,6 +1699,63 @@ export const migrations: readonly string[] = [
    create index source_moves_source on source_moves(source_id, id);
    create index source_routes_verdict on source_routes(verdict) where verdict is not null;
    create table lark_doc_links (token text not null, message_id text not null, chat_id text not null, primary key(token, message_id));`,
+  // A knowledge base's documents live in the space it is filed under (src/sources/kb-home.ts): the
+  // documents of one knowledge base by index, and directories filed under a space of their own.
+  `create index sources_wiki_space on sources(json_extract(meta, '$.wikiSpaceId'), space_id) where json_extract(meta, '$.wikiSpaceId') is not null;
+   create table wiki_node_homes (token text primary key, wiki_space_id text, space_id text not null, by text not null default 'owner', at text not null);
+   create index wiki_node_homes_kb on wiki_node_homes(wiki_space_id);`,
+  // How a run came about and whose message or action led to it (src/core/run-trigger.ts); the person's
+  // key on its own column for the run page's filter. Older runs: what their input says.
+  `alter table runs add column trigger text;
+   alter table runs add column trigger_by text;
+   create index runs_trigger_by on runs(trigger_by, created_at) where trigger_by is not null;
+   update runs set
+     trigger_by = (case when json_extract(input, '$.fromApp') then 'bot:' else 'lark:' end) || json_extract(input, '$.senderId'),
+     trigger = json_object('via', 'guest',
+       'by', json_object('key', (case when json_extract(input, '$.fromApp') then 'bot:' else 'lark:' end) || json_extract(input, '$.senderId'), 'name', coalesce(json_extract(input, '$.senderName'), '')),
+       'where', case when json_extract(input, '$.chatType') = 'p2p' then '私聊机器人' else coalesce(json_extract(input, '$.chatName'), '群聊') end)
+     where kind = 'guest' and json_extract(input, '$.senderId') is not null;
+   update runs set
+     trigger_by = 'lark:' || json_extract(input, '$.mention.senderId'),
+     trigger = json_object('via', 'mention',
+       'by', json_object('key', 'lark:' || json_extract(input, '$.mention.senderId'), 'name', coalesce(json_extract(input, '$.mention.senderName'), '')),
+       'where', case when json_extract(input, '$.mention.chatKind') = 'p2p' then '私聊' else json_extract(input, '$.mention.chatName') end)
+     where kind = 'agent' and json_extract(input, '$.mention.senderId') is not null;
+   update runs set
+     trigger_by = 'user:' || coalesce(user_id, 'owner'),
+     trigger = json_object('via', 'chat', 'by', json_object('key', 'user:' || coalesce(user_id, 'owner'),
+       'name', case when coalesce(user_id, 'owner') = 'owner' then '你' else coalesce((select name from users where id = runs.user_id), user_id) end))
+     where kind = 'ask';`,
+  // What the owner does when someone looks for them (src/mentions/reply-learn.ts): one row per
+  // message that reached 有人找你 — the draft, what became of it, and the owner's own reply or silence.
+  `create table reply_samples (
+     id text primary key,                 -- the mention run
+     handle_run text,                     -- the handling run, when one started
+     channel text not null,
+     chat_id text not null,
+     chat_kind text not null,
+     chat_name text not null default '',
+     topic_id text,
+     asker_id text,
+     asker_name text not null default '',
+     ask text not null,
+     what text not null default '',
+     message_ids text not null default '[]',
+     last_ms integer not null,
+     draft text,
+     decision text,                       -- sent | edited | dropped | auto
+     final text,
+     reason text,                         -- why a draft was not sent: no-need | verbose | no-conclusion | self
+     decided_at text,
+     owner_reply text,                    -- what the owner wrote there themselves afterwards
+     owner_reply_at text,
+     settled_at text,                     -- no longer watched for the owner's own reply
+     created_at text not null
+   );
+   create index reply_samples_asker on reply_samples(asker_id, created_at);
+   create index reply_samples_chat on reply_samples(chat_id, created_at);
+   create index reply_samples_open on reply_samples(created_at) where settled_at is null;
+   create index reply_samples_handle on reply_samples(handle_run) where handle_run is not null;`,
 ];
 
 export type Db = DatabaseSync;

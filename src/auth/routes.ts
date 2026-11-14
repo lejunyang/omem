@@ -192,6 +192,13 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
 
   // runs
   "GET /api/runs": "self",
+  "GET /api/runs/triggerers": "self",
+  // Assistants (agents/assistants.ts): everyone sees who is here; each manages their own, the owner all.
+  "GET /api/assistants": "self",
+  "POST /api/assistants": "self",
+  "POST /api/assistants/scan": "self",
+  "PATCH /api/assistants/:id": "self",
+  "DELETE /api/assistants/:id": "self",
   "GET /api/runs/:id": RUN,
   "POST /api/runs/:id/cancel": RUN,
   "POST /api/runs/:id/retry": RUN,
@@ -268,7 +275,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "GET /api/settings", "PUT /api/settings", "GET /api/ai", "PUT /api/ai/keys/:id", "POST /api/ai/providers/:id/test", "POST /api/ai/decision/test", "GET /api/lark/chats", "GET /api/lark/captured", "POST /api/lark/chats/:id/backfill", "POST /api/lark/fill-files", "GET /api/lark/fill-files",
       "PUT /api/lark/chats/:id/policy", "GET /api/lark/subscriptions", "PUT /api/lark/subscriptions", "POST /api/lark/poll", "GET /api/lark/user-permissions", "POST /api/lark/user-permissions",
       "GET /api/lark/bot-check", "POST /api/lark/bot-check/:ref/scan", "GET /api/lark/doubao-send", "POST /api/lark/doubao-send/test", "GET /api/lark/wiki-crawls", "POST /api/lark/wiki-crawls/:id/:op", "GET /api/lark/kb", "POST /api/lark/kb/discover",
-      "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "POST /api/agents/:id/probe", "PUT /api/agent-role-model", "GET /api/agent-registry", "POST /api/agent-registry/:id",
+      "POST /api/lark/kb/read", "PUT /api/lark/kb/settings", "POST /api/lark/kb/:id", "GET /api/lark/kb-home", "POST /api/lark/kb-home", "PUT /api/lark/kb-home/dir", "POST /api/agents/:id/probe", "PUT /api/agent-role-model", "GET /api/agent-registry", "POST /api/agent-registry/:id",
       "GET /api/diag", "GET /api/storage", "POST /api/storage/scan", "GET /api/media", "POST /api/media/ffmpeg/install", "POST /api/media/compress", "POST /api/media/stop", "POST /api/media/resume",
       "POST /api/media/delete-originals", "PUT /api/plugins/:id/settings", "PUT /api/plugins/:id/icon", "POST /api/plugins/:id/trust", "DELETE /api/plugins/:id/trust", "GET /api/plugins/:id/services",
       "POST /api/plugins/:id/services/:name/start", "POST /api/plugins/:id/services/:name/stop", "PUT /api/plugins/:id/enabled", "POST /api/plugins/install",

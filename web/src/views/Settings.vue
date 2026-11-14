@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import HelpText from "../components/HelpText.vue";
+import AssistantsSettings from "../components/AssistantsSettings.vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import AiRouting from "../components/AiRouting.vue";
@@ -31,6 +33,13 @@ type Profile = { id: string; name?: string; transport: string; command: string; 
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
 type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "connect" | "members" | "peers" | "shares" | "security" | "plugins" | "storage" | "about";
 const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "connect", "members", "peers", "shares", "security", "plugins", "storage", "about"];
+// The tabs by what they are about (the page's left column).
+const NAV: { label: string; tabs: [Tab, string][] }[] = [
+  { label: "知识", tabs: [["spaces", "空间"], ["connect", "连接"], ["search", "检索"], ["storage", "占用"]] },
+  { label: "AI 与任务", tabs: [["agents", "AI"], ["schedules", "定时任务"], ["plugins", "插件"]] },
+  { label: "渠道与协作", tabs: [["lark", "渠道"], ["members", "成员"], ["peers", "设备"], ["shares", "分享"]] },
+  { label: "系统", tabs: [["security", "安全"], ["about", "外观与说明"]] },
+];
 // Other pages link to a tab (?tab=agents from the Agent page's nightly replay).
 const settingsRoute = useRoute();
 const asked = settingsRoute.query.tab;
@@ -61,6 +70,63 @@ watch(() => route.query.section, (v) => {
   tab.value = "agents";
 });
 const config = ref<any>(null);
+// The page's own contents (the right column): the cards of the open tab, by their titles. Read from
+// what is rendered, so cards of the sub-pages (members, devices, plugins…) are listed too.
+const content = ref<HTMLElement>();
+const toc = ref<{ id: string; title: string }[]>([]);
+const tocAt = ref("");
+let tocTimer = 0;
+let tocWatch: MutationObserver | null = null;
+let tocSpy: IntersectionObserver | null = null;
+function buildToc() {
+  const el = content.value;
+  if (!el) return;
+  const out: { id: string; title: string }[] = [];
+  let i = 0;
+  for (const card of el.querySelectorAll<HTMLElement>(".card")) {
+    if (card.parentElement?.closest(".card") || card.closest(".modal")) continue;
+    const first = card.firstElementChild;
+    const title = ((first?.tagName === "STRONG" ? first : first?.querySelector("strong"))?.textContent ?? "").trim();
+    if (!title || title.length > 24) continue;
+    card.id ||= `set-${tab.value}-${i++}`;
+    out.push({ id: card.id, title });
+  }
+  toc.value = out.length > 1 ? out : [];
+  tocSpy?.disconnect();
+  tocSpy = new IntersectionObserver((entries) => {
+    const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (top) tocAt.value = top.target.id;
+  }, { rootMargin: "-8% 0px -70% 0px" });
+  for (const t of out) tocSpy.observe(document.getElementById(t.id)!);
+}
+// What became of the drafted replies to people who looked for the owner, and what the owner wrote themselves (渠道 → 有人找你).
+type ReplyStats = { samples: number; drafts: number; sent: number; edited: number; dropped: number; ownReplies: number; noReply: number; reasons: Record<string, number>; typicalLength: number };
+const replyStats = ref<ReplyStats | null>(null);
+const REASON: Record<string, string> = { "no-need": "不用回", verbose: "太啰嗦", "no-conclusion": "没有结论", self: "我自己回" };
+const reasonText = (r: Record<string, number>) => Object.entries(r).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${REASON[k] ?? k} ${n}`).join("、");
+watch(tab, (t) => {
+  if (t === "lark") void get<{ replies: ReplyStats | null }>("/api/mentions").then((r) => (replyStats.value = r.replies)).catch(() => {});
+  // The open category stays in sight in the narrow layout's scrolling row.
+  void nextTick(() => document.querySelector(".set-nav button.on")?.scrollIntoView({ block: "nearest", inline: "center" }));
+}, { immediate: true });
+const tocSoon = () => {
+  clearTimeout(tocTimer);
+  tocTimer = window.setTimeout(buildToc, 150);
+};
+function goCard(id: string) {
+  tocAt.value = id;
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+onMounted(() => {
+  tocWatch = new MutationObserver(tocSoon);
+  if (content.value) tocWatch.observe(content.value, { childList: true, subtree: true });
+  tocSoon();
+});
+onBeforeUnmount(() => {
+  tocWatch?.disconnect();
+  tocSpy?.disconnect();
+  clearTimeout(tocTimer);
+});
 /** The host Feishu has to trust for the web app (H5 可信域名). */
 const webHost = computed(() => {
   try {
@@ -746,14 +812,19 @@ async function saveEdit() {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page settings">
     <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small">数据目录：{{ home }}</p></div></div>
-    <div class="tabs">
-      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'AI'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['connect', '连接'], ['members', '成员'], ['peers', '设备'], ['shares', '分享'], ['security', '安全'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
-    </div>
+    <div class="set-layout">
+    <nav class="set-nav" aria-label="设置分类">
+      <div v-for="g in NAV" :key="g.label" class="group">
+        <span>{{ g.label }}</span>
+        <button v-for="[k, l] in g.tabs" :key="k" type="button" :class="{ on: tab === k }" :aria-current="tab === k ? 'page' : undefined" @click="tab = k">{{ l }}</button>
+      </div>
+    </nav>
+    <div ref="content" class="set-content">
 
     <section v-if="tab === 'spaces'" class="stack">
-      <p class="muted">空间把不同领域的知识分开：每个空间有自己的原件、Wiki、记忆和事项。助理默认在当前空间和它的相关空间里调查，需要时才查所有空间；整理、复核这类只管一个空间的任务也能读相关空间，但只写自己的。代码仓库挂在它所属的业务空间下（业务空间的设置里“添加仓库”），检索、交办、评审和编码记录都算在业务空间里；不属于任何业务的仓库单独列出。</p>
+      <HelpText lead>空间把不同领域的知识分开：每个空间有自己的原件、Wiki、记忆和事项。助理默认在当前空间和它的相关空间里调查，需要时才查所有空间；整理、复核这类只管一个空间的任务也能读相关空间，但只写自己的。代码仓库挂在它所属的业务空间下（业务空间的设置里“添加仓库”），检索、交办、评审和编码记录都算在业务空间里；不属于任何业务的仓库单独列出。</HelpText>
       <div class="spaces">
         <div v-for="s in spaceCards" :key="s.id" class="card pad sp">
           <div class="row sp-head">
@@ -852,10 +923,10 @@ async function saveEdit() {
           <span v-if="desktop.installed" class="badge ok">已安装{{ desktop.version ? ` ${desktop.version}` : "" }}</span>
           <span v-else class="badge">未安装</span>
         </div>
-        <p class="muted small">
+        <HelpText>
           ai-auto-desktop（<span class="mono">aad</span>）让带命令行的 Agent 看和操作本机的桌面程序与浏览器：先读出界面结构，再对读到的元素动手。用法在内置技能 <span class="mono">desktop-control</span>：默认只看，动手前先问你，不输入密码。装好后导航里会出现“远程”：在网页上操作这台机器的浏览器页面或桌面，并把做一遍的过程录成技能。
           <template v-if="desktop.installed && desktop.via === 'osdk'">在 osdk 安装目录里，omem 启动 Agent 时会把它加进 PATH。</template>
-        </p>
+        </HelpText>
         <div class="row">
           <button class="btn ghost sm" :disabled="desktopBusy" @click="installDesktop">{{ desktopBusy ? "安装中…" : desktop.installed ? "更新到最新" : "安装" }}</button>
           <span class="muted small">经 osdk 安装 <span class="mono">{{ desktop.spec }}</span>；终端里 <span class="mono">omem setup desktop</span> 同样可用并带环境检查</span>
@@ -863,7 +934,7 @@ async function saveEdit() {
       </div>
       <div class="card pad stack">
         <div class="row"><div class="section-title grow">ACP 注册表</div><button class="btn ghost sm" @click="loadRegistry">{{ registry ? "刷新" : "浏览" }}</button></div>
-        <p class="muted small">任何支持 Agent Client Protocol 的 Agent 都能接入。这里列出官方注册表里的 Agent，可以用 npx / uvx 运行，或下载对应平台的程序到数据目录。</p>
+        <HelpText>任何支持 Agent Client Protocol 的 Agent 都能接入。这里列出官方注册表里的 Agent，可以用 npx / uvx 运行，或下载对应平台的程序到数据目录。</HelpText>
         <div v-for="a in registry ?? []" :key="a.id" class="prow">
           <div class="grow">
             <div><strong>{{ a.name }}</strong> <span class="muted small mono">{{ a.id }} v{{ a.version }}</span></div>
@@ -884,7 +955,7 @@ async function saveEdit() {
       <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, limits: config.agents.capacity?.limits ?? [], quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" :backends="installedProfiles" :models="probedModels" @save="saveCapacity" />
       <div class="card pad stack">
         <div class="section-title">排队与兜底</div>
-        <p class="muted small">后端排队、被限流、额度快用完或出故障时换一个后端接着做。配了决策模型时，换谁、按什么顺序由它按 任务选型 里的总体偏好和候选说明决定（运行前选 AI 时一起排好，没选过的运行在第一次要换时问一次），运行里写明顺序来自哪里；下面是没有决策模型时的顺序，也是决策模型没排到的后端的顺序。模型满了时按这个顺序找有空位的。</p>
+        <HelpText>后端排队、被限流、额度快用完或出故障时换一个后端接着做。配了决策模型时，换谁、按什么顺序由它按 任务选型 里的总体偏好和候选说明决定（运行前选 AI 时一起排好，没选过的运行在第一次要换时问一次），运行里写明顺序来自哪里；下面是没有决策模型时的顺序，也是决策模型没排到的后端的顺序。模型满了时按这个顺序找有空位的。</HelpText>
         <div class="row wrap">
           <span class="small">排队最多等</span>
           <UiSelect :model-value="String(config.agents.queueTimeoutMinutes ?? 30)" size="sm" width="120px" aria-label="排队最多等待" :options="queueMinuteOptions" @change="saveQueueMinutes" />
@@ -928,7 +999,7 @@ async function saveEdit() {
       </div>
       <div class="card pad stack">
         <div class="section-title">方案先行</div>
-        <p class="muted small">值得的交办在编码前先写一份方案：几个决定，每个说清改什么、为什么、不选什么，有要你定的就问你。你确认后编码 Agent 照它做，评审也对照它看。写方案的是角色“写方案”，在 Agent 页给它选最强的模型。</p>
+        <HelpText>值得的交办在编码前先写一份方案：几个决定，每个说清改什么、为什么、不选什么，有要你定的就问你。你确认后编码 Agent 照它做，评审也对照它看。写方案的是角色“写方案”，在 Agent 页给它选最强的模型。</HelpText>
         <div class="field"><span>什么时候先写方案</span>
           <UiSegmented :model-value="config.agents.design?.mode ?? 'auto'" style="justify-self: start" size="sm" aria-label="什么时候先写方案" :options="[{ value: 'auto', label: '自动', title: '编码前检查认为要改现有分工或接口、有几种说得通的做法、或任务要求重构时' }, { value: 'always', label: '总是' }, { value: 'never', label: '从不' }]" @change="(v) => saveDesign({ mode: v })" />
           <span class="hint">自动：编码前检查认为要改现有的分工或接口、有两种以上说得通的做法、或任务要求重构收敛时才写。仓库空间的设置里也可以让某个仓库总是先写；你对助手说“不用方案，直接改”时这次不写。</span>
@@ -939,7 +1010,7 @@ async function saveEdit() {
       </div>
       <div v-if="config.memory" class="card pad stack">
         <div class="section-title">记忆质量</div>
-        <p class="muted small">新记忆写入前会先过一遍规则检查（免责式、超长（400 字以上）、转述原件、事件复述、无来源、重复），不合格的退回给模型并说明原因。之后每小时由复核模型逐条保留、改写或撤回；复核模型最好和写入的不是同一个，避免一个模型的习惯由它自己评判。结果在“记忆 → 质量”里按模型统计。</p>
+        <HelpText>新记忆写入前会先过一遍规则检查（免责式、超长（400 字以上）、转述原件、事件复述、无来源、重复），不合格的退回给模型并说明原因。之后每小时由复核模型逐条保留、改写或撤回；复核模型最好和写入的不是同一个，避免一个模型的习惯由它自己评判。结果在“记忆 → 质量”里按模型统计。</HelpText>
         <UiCheckbox :model-value="config.memory.review.enabled" switch @change="(v) => saveReview({ enabled: v })">复核新记忆（只有复核保留或本人写的经验、偏好才会放进每次运行的提示里）</UiCheckbox>
         <div class="row wrap">
           <span class="small muted">复核用</span>
@@ -948,7 +1019,7 @@ async function saveEdit() {
           <UiSelect :model-value="config.memory.review.effort ?? ''" size="sm" width="120px" aria-label="复核强度" :options="modelOptionsFor(config.memory.review.profile, 'effort', config.memory.review.effort, config.memory.review.model)" @change="(v) => saveReview({ effort: v || undefined })" />
         </div>
         <div class="section-title" style="margin-top: 8px">对比运行</div>
-        <p class="muted small">每次整理新材料时，再用下面的模型各跑一遍：它们的写入只记录不生效，经过同样的检查和复核，用来横向比较哪个模型记得更好。每多一个模型，整理的花费多一份。</p>
+        <HelpText>每次整理新材料时，再用下面的模型各跑一遍：它们的写入只记录不生效，经过同样的检查和复核，用来横向比较哪个模型记得更好。每多一个模型，整理的花费多一份。</HelpText>
         <div v-for="(c, i) in config.memory.compare" :key="i" class="row cmp-row">
           <span class="mono small grow">{{ [c.profile, c.model, c.effort].filter(Boolean).join(" · ") }}</span>
           <button class="btn ghost sm icon" aria-label="移除" @click="removeCompare(i)"><Icon name="x" :size="14" /></button>
@@ -975,7 +1046,7 @@ async function saveEdit() {
       <p class="muted">后台任务按设定的时间运行（时区：{{ config?.timezone }}）。巡检只在到期提醒或关注对象有新材料时才调用 Agent。</p>
       <div v-if="config?.items" class="card pad stack">
         <div class="section-title">事项自动收尾</div>
-        <p class="muted small">做完的事不用回来点完成。一件事项在下面的天数里没有新进展（你改动它、或有新的材料记进来），就标为“过期”；截止或提醒时间还没到的不会过期，提醒在时间过后一天过期。过期不算完成，有新进展会自动重新打开。由“事项收尾”任务每小时执行，每天的“事项清点”卡片里可以逐条保留或恢复。</p>
+        <HelpText>做完的事不用回来点完成。一件事项在下面的天数里没有新进展（你改动它、或有新的材料记进来），就标为“过期”；截止或提醒时间还没到的不会过期，提醒在时间过后一天过期。过期不算完成，有新进展会自动重新打开。由“事项收尾”任务每小时执行，每天的“事项清点”卡片里可以逐条保留或恢复。</HelpText>
         <UiCheckbox :model-value="config.items.expiry" switch @change="(v) => saveItems({ expiry: v })">没有进展的事项按期限自动过期</UiCheckbox>
         <div v-if="config.items.expiry" class="row wrap days">
           <label v-for="[k, l] in itemKinds" :key="k" class="field"><span>{{ l }}（天）</span>
@@ -1013,7 +1084,7 @@ async function saveEdit() {
       <label v-if="config.embeddings.provider === 'openai'" class="field"><span>接口地址</span><input class="input mono" :value="config.embeddings.url ?? ''" placeholder="https://api.openai.com/v1" @change="saveConfig({ embeddings: { ...config.embeddings, url: ($event.target as HTMLInputElement).value } })" /></label>
       <div v-if="config.rerank" class="card pad stack">
         <div class="section-title">重排</div>
-        <p class="muted small">检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。模型在终端用 <span class="mono">omem setup rerank</span> 经 osdk 下载并锁定版本；改这里的设置不用重启服务。</p>
+        <HelpText>检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。模型在终端用 <span class="mono">omem setup rerank</span> 经 osdk 下载并锁定版本；改这里的设置不用重启服务。</HelpText>
         <UiCheckbox :model-value="config.rerank.enabled" switch @change="(v) => saveRerank({ enabled: v })">开启</UiCheckbox>
         <p v-if="rerankLine" class="small" :class="rerank?.state === 'failed' ? 'warn-text' : 'muted'">{{ rerankLine }}</p>
         <template v-if="config.rerank.enabled">
@@ -1024,12 +1095,12 @@ async function saveEdit() {
             <label class="field"><span>线程数</span><input class="input" type="number" inputmode="numeric" min="0" max="256" :value="config.rerank.threads" @change="saveRerank({ threads: numberIn($event, 0, 256, config.rerank.threads) })" /></label>
             <label class="field"><span>超时（秒）</span><input class="input" type="number" inputmode="numeric" min="1" max="120" :value="config.rerank.timeoutMs / 1000" @change="saveRerank({ timeoutMs: numberIn($event, 1, 120, config.rerank.timeoutMs / 1000) * 1000 })" /></label>
           </div>
-          <p class="muted small">重排前 20 条、每条 512 token 时效果和前 50 条差不多；条数或 token 减半大约快一倍，排序略差。线程数 0 表示用全部核，和别的任务抢 CPU 时调小。</p>
+          <HelpText>重排前 20 条、每条 512 token 时效果和前 50 条差不多；条数或 token 减半大约快一倍，排序略差。线程数 0 表示用全部核，和别的任务抢 CPU 时调小。</HelpText>
         </template>
       </div>
       <div v-if="config.memory?.passive" class="card pad stack">
         <div class="section-title">对话前带上相关记忆</div>
-        <p class="muted small">你发消息时，先按这条消息找相似的记忆（事实、约定、人物、决定），相似度过了门槛的最多 {{ config.memory.passive.limit }} 条附在消息后面，助理不用先想起来去查。没过门槛就什么都不加。需要开启向量检索。门槛越高带得越少、越准：0.6 时，有相关记忆的问题约八成能带上，带上的约 96% 相关；无关的问题约一成会带上一两条（bge-small-zh，见 docs/v2/evaluation.md）。</p>
+        <HelpText>你发消息时，先按这条消息找相似的记忆（事实、约定、人物、决定），相似度过了门槛的最多 {{ config.memory.passive.limit }} 条附在消息后面，助理不用先想起来去查。没过门槛就什么都不加。需要开启向量检索。门槛越高带得越少、越准：0.6 时，有相关记忆的问题约八成能带上，带上的约 96% 相关；无关的问题约一成会带上一两条（bge-small-zh，见 docs/v2/evaluation.md）。</HelpText>
         <UiCheckbox :model-value="config.memory.passive.enabled" switch @change="(v) => savePassive({ enabled: v })">开启</UiCheckbox>
         <label class="field"><span>相似度门槛（0.4–0.9）</span>
           <input class="input" style="width: 120px" type="number" inputmode="decimal" min="0.4" max="0.9" step="0.025" :value="config.memory.passive.threshold" @change="savePassive({ threshold: Math.max(0.4, Math.min(0.9, Number(($event.target as HTMLInputElement).value) || 0.6)) })" />
@@ -1051,7 +1122,7 @@ async function saveEdit() {
           <span v-if="config.lark.appId" class="badge">已绑定 {{ config.lark.appId }} · {{ config.lark.ownerOpenId ? '本人已确认' : '待确认本人' }}</span>
           <span v-else class="badge">未绑定</span>
         </div>
-        <p class="muted small">在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书机器人：扫码创建新机器人，或绑定 lark-cli 里已有的应用；权限、长连接事件和卡片回调一并申请，不用在开放平台手工配置，也不用复制 App Secret。密钥只存在本机 <span class="mono">secrets/lark.json</span>（环境变量 {{ config.lark.appSecretEnv }} 可覆盖）。</p>
+        <HelpText>在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书机器人：扫码创建新机器人，或绑定 lark-cli 里已有的应用；权限、长连接事件和卡片回调一并申请，不用在开放平台手工配置，也不用复制 App Secret。密钥只存在本机 <span class="mono">secrets/lark.json</span>（环境变量 {{ config.lark.appSecretEnv }} 可覆盖）。</HelpText>
         <label class="field"><span>本人 open_id（setup 扫码通常自动填）</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="不知道可先私聊机器人一句，再运行 omem setup" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
       </div>
       <div v-if="config.lark.appId" class="card pad stack">
@@ -1059,7 +1130,7 @@ async function saveEdit() {
           <strong>机器人权限与事件</strong><span class="spacer" />
           <button class="btn sm" :disabled="botChecking" @click="checkBots">{{ botChecking ? "检查中…" : "检查" }}</button>
         </div>
-        <p class="muted small">omem 用到的应用权限（机器人的、成员连接飞书的）、事件订阅和卡片回调。缺什么都点“扫码更新”，在飞书里确认后一次补齐；之后在开发者后台发布新版本才生效，再点“检查”看结果。在后台手动加的权限同样要发布新版本才算开通。</p>
+        <HelpText>omem 用到的应用权限（机器人的、成员连接飞书的）、事件订阅和卡片回调。缺什么都点“扫码更新”，在飞书里确认后一次补齐；之后在开发者后台发布新版本才生效，再点“检查”看结果。在后台手动加的权限同样要发布新版本才算开通。</HelpText>
         <div v-for="b in botCheck ?? []" :key="b.ref" class="bot-row stack">
           <div class="row wrap">
             <strong>{{ b.name ?? b.ref }}</strong><span class="muted small mono">{{ b.appId }}</span><span class="spacer" />
@@ -1103,32 +1174,23 @@ async function saveEdit() {
         <span v-else class="muted small">打开前在飞书开发者后台给主机器人的应用（{{ config.lark.appId }}）：添加“网页应用”能力，桌面端和移动端主页都填 <span class="mono">{{ config.webUrl.replace(/\/+$/, "") }}/lark/</span>；安全设置的 H5 可信域名加上 <span class="mono">{{ webHost }}</span>；然后发布版本。手机和电脑都要能访问这个地址。打开后卡片上的“打开填写”“打开交互页”会在飞书侧边栏里打开。</span>
       </div>
 
+      <AssistantsSettings />
+
       <div class="card pad stack">
-        <strong>其他机器人</strong>
-        <p class="muted small">再绑定几个飞书机器人，每个由一个 Agent 档案回答，有自己的会话；能做的事和主机器人一样（进度与思考气泡、卡片和按钮、@ 人、加急、访客提问，上面的访客和私聊设置对所有机器人生效）。同一个群里可以同时 @ 几个，它们知道彼此是谁、各管什么，回复里 @ 另一个就交给它接着做。群消息的采集和规则只做一次：主机器人在群里就由它做，不在才由这个机器人做；不属于某个会话的通知仍从主机器人发。添加：在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书 → 添加机器人（扫码）。改回答者不用重启；增删或启停要重启服务。</p>
-        <div v-for="(b, i) in config.lark.bots ?? []" :key="b.id" class="bot-row">
-          <div class="row wrap">
-            <strong class="mono">{{ b.id }}</strong><span class="muted small mono">{{ b.appId }}</span><span class="spacer" />
-            <UiCheckbox :model-value="b.enabled" switch size="sm" @change="(v) => saveBot(i, { enabled: v })">启用</UiCheckbox>
-            <button class="btn ghost sm danger" @click="removeBot(i)">移除</button>
-          </div>
-          <div class="field"><span>回答者</span><UiSelect :model-value="b.agent" width="100%" aria-label="回答者" :options="botAgentOptions(b.agent)" @change="(v) => saveBot(i, { agent: v })" /></div>
-          <label class="field"><span>本人在这个应用里的 open_id（每个应用不同，扫码时自动填）</span><input class="input mono" :value="b.ownerOpenId ?? ''" placeholder="不知道可先私聊这个机器人一句，它会告诉你" @change="saveBot(i, { ownerOpenId: ($event.target as HTMLInputElement).value.trim() || undefined })" /></label>
-        </div>
-        <p v-if="!(config.lark.bots ?? []).length" class="muted small">还没有其他机器人。</p>
+        <strong>助手之间的转交</strong>
         <div class="row small"><span>机器人之间连续转交最多</span><UiSelect :model-value="String(config.lark.botRelay ?? 4)" size="sm" width="90px" aria-label="机器人之间连续转交上限" :options="['0', '1', '2', '4', '6', '10'].map((v) => ({ value: v, label: `${v} 次` }))" @change="(v) => saveConfig({ lark: { ...config.lark, botRelay: Number(v) } }, `机器人之间连续转交最多 ${v} 次`)" /><span class="muted">，之后等有人发话</span></div>
       </div>
 
       <div class="card pad stack">
         <strong>盯群</strong>
-        <p class="muted small">助手盯着的群（你让它“帮我盯一下这个群”的）每攒一批消息交给它看一次。配了决策模型时，每批先由它判断有没有助手能介入的事（按盯这个群的目的和群里的情况，不一定是找你的：替别人解答、帮忙查东西也算）：只是闲聊、“稍等”“收到”、进度播报的就不交给助手，省下一次完整运行；@ 你或 @ 机器人的消息不筛，判断出错时照常交给助手。单个群可以让助手按你的话单独开关。</p>
+        <HelpText>助手盯着的群（你让它“帮我盯一下这个群”的）每攒一批消息交给它看一次。配了决策模型时，每批先由它判断有没有助手能介入的事（按盯这个群的目的和群里的情况，不一定是找你的：替别人解答、帮忙查东西也算）：只是闲聊、“稍等”“收到”、进度播报的就不交给助手，省下一次完整运行；@ 你或 @ 机器人的消息不筛，判断出错时照常交给助手。单个群可以让助手按你的话单独开关。</HelpText>
         <UiCheckbox :model-value="config.lark.watchPrefilter !== false" switch @change="(v) => saveConfig({ lark: { ...config.lark, watchPrefilter: v } }, v ? '盯群的每批消息先由决策模型筛一遍' : '盯群的每批消息都交给助手看')">每批消息先由决策模型筛一遍</UiCheckbox>
       </div>
 
       <div id="settings-mentions" class="card pad stack">
         <strong>有人找你</strong>
-        <p class="muted small">在 omem 采集的聊天渠道里（现在是飞书），有人在群里 @ 你，或同事私聊你，过几分钟你还没处理（哪些算处理过在下面选）时：先用决策模型（一次很小的判断）看是什么事——不用管、简短提醒你，还是值得先查；值得查的交给主助手（或某个 Agent 档案）以你的身份读上下文、查事项和资料，再提醒你结论和建议的回复。你回复那条提醒就接着和它聊这件事。查不出来、出错或超时，照常发简短提醒（谁、在哪、说了什么）。分诊的判断标准是“有人找你·分诊”角色，在“Agent”页可以改。</p>
-        <p class="muted small">它排在所有规则之后：规则在这条消息上触发过（不论做了什么）或正等着处理它，这里就不管；规则还在判断时先等一等。规则页列表最后一条就是它。</p>
+        <HelpText>在 omem 采集的聊天渠道里（现在是飞书），有人在群里 @ 你，或同事私聊你，过几分钟你还没处理（哪些算处理过在下面选）时：先用决策模型（一次很小的判断）看是什么事——不用管、简短提醒你，还是值得先查；值得查的交给主助手（或某个 Agent 档案）以你的身份读上下文、查事项和资料，再提醒你结论和建议的回复。你回复那条提醒就接着和它聊这件事。查不出来、出错或超时，照常发简短提醒（谁、在哪、说了什么）。分诊的判断标准是“有人找你·分诊”角色，在“Agent”页可以改。</HelpText>
+        <HelpText>它排在所有规则之后：规则在这条消息上触发过（不论做了什么）或正等着处理它，这里就不管；规则还在判断时先等一等。规则页列表最后一条就是它。</HelpText>
         <UiCheckbox :model-value="config.mentions?.enabled !== false" switch @change="(v) => saveMentions({ enabled: v }, v ? '有人找你时先分诊再提醒' : '已关闭：有人找你时不再分诊')">有人找你时先分诊再提醒</UiCheckbox>
         <UiCheckbox :model-value="config.mentions?.p2p !== false" switch :disabled="config.mentions?.enabled === false" @change="(v) => saveMentions({ p2p: v })">私聊也算（同事私聊你的消息）</UiCheckbox>
         <label class="field"><span>消息发出后等几分钟再开始（0–240，给你自己先看的时间）</span>
@@ -1168,7 +1230,8 @@ async function saveEdit() {
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="60" :disabled="config.mentions?.enabled === false" :value="config.mentions?.timeoutMinutes ?? 10" @change="saveMentions({ timeoutMinutes: intIn($event, 1, 60, 10) })" />
         </label>
         <strong class="small">回复对方</strong>
-        <p class="muted small">查完以后要不要替你回对方，按渠道分别设（现在只有飞书）。草稿：提醒旁边多一张卡片，你可以改了再点发送。自动：分诊也认为不用你拍板时直接回，回了什么会写在提醒里，每次都记进审计；拿不准时仍是草稿。飞书群里由机器人在对方那条消息的话题里回（机器人不在群里时用你的身份把它拉进来）。</p>
+        <p v-if="replyStats?.samples" class="muted small">近 60 天 {{ replyStats.samples }} 条找你的消息：<template v-if="replyStats.drafts">拟了 {{ replyStats.drafts }} 条回复，照发 {{ replyStats.sent }}、改后发 {{ replyStats.edited }}、没发 {{ replyStats.dropped }}<template v-if="reasonText(replyStats.reasons)">（{{ reasonText(replyStats.reasons) }}）</template>；</template>你自己回了 {{ replyStats.ownReplies }} 条<template v-if="replyStats.typicalLength">，通常 {{ replyStats.typicalLength }} 字左右</template>，没回 {{ replyStats.noReply }} 条。之后的分诊和草稿会参照这些：你怎么回、回多长、哪些不回。</p>
+        <HelpText>查完以后要不要替你回对方，按渠道分别设（现在只有飞书）。草稿：提醒旁边多一张卡片，你可以改了再点发送。自动：分诊也认为不用你拍板时直接回，回了什么会写在提醒里，每次都记进审计；拿不准时仍是草稿。飞书群里由机器人在对方那条消息的话题里回（机器人不在群里时用你的身份把它拉进来）。</HelpText>
         <div class="row wrap small"><span style="min-width: 4em">飞书群里</span>
           <UiSegmented size="sm" aria-label="群里回复对方" :model-value="config.mentions?.reply?.lark?.group ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentionReply({ group: v })" />
         </div>
@@ -1183,7 +1246,7 @@ async function saveEdit() {
             <UiSegmented size="sm" aria-label="以你的身份怎么发" :model-value="config.mentions?.reply?.lark?.signedVia ?? 'lark-cli'" :options="[{ value: 'lark-cli', label: '用 lark-cli 发' }, { value: 'doubao', label: '经豆包发送' }]" @change="(v: string) => saveMentionReply({ signedVia: v })" />
           </div>
           <template v-if="config.mentions?.reply?.lark?.signedVia === 'doubao'">
-            <p class="muted small">企业不让 lark-cli 以你的身份发私聊时用这个：每条回复建一个新的豆包会话，只交给它定稿的回复和对方是谁（姓名、邮箱、id），让它原样发出，用完删除会话；发完用 lark-cli 读那个私聊核对。没核对上或没发出都会单独告诉你，不算回复成功。</p>
+            <HelpText>企业不让 lark-cli 以你的身份发私聊时用这个：每条回复建一个新的豆包会话，只交给它定稿的回复和对方是谁（姓名、邮箱、id），让它原样发出，用完删除会话；发完用 lark-cli 读那个私聊核对。没核对上或没发出都会单独告诉你，不算回复成功。</HelpText>
             <DoubaoSendStatus />
           </template>
         </template>
@@ -1191,7 +1254,7 @@ async function saveEdit() {
 
       <div class="card pad stack">
         <strong>访客提问</strong>
-        <p class="muted small">没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的后端和模型在“Agent”页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</p>
+        <HelpText>没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的后端和模型在“Agent”页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</HelpText>
         <UiCheckbox :model-value="!!config.lark.guests?.enabled" switch @change="(v) => saveGuests({ enabled: v }, v ? '已开启访客提问' : '已关闭访客提问')">回答未登记的人和别的机器人</UiCheckbox>
         <UiCheckbox :model-value="!!config.lark.guests?.p2p" switch :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ p2p: v })">也回答未登记的人与机器人的私聊（只读下方“开放给访客的空间”）</UiCheckbox>
         <UiCheckbox :model-value="!!config.lark.guests?.fullAccess" switch :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ fullAccess: v }, v ? '已对访客打开完全访问' : '已对访客关闭完全访问')">回答访客时完全访问：命令不进沙箱、不经审批</UiCheckbox>
@@ -1229,7 +1292,7 @@ async function saveEdit() {
 
       <div class="card pad stack">
         <strong>私聊指令</strong>
-        <p class="muted small">在你和别人的私聊里输入指令（每分钟用 lark-cli 读一次你发的私聊消息）。只有你亲手发出指令时，omem 才会以你的身份在那个私聊里发一条消息，结尾带上署名。</p>
+        <HelpText>在你和别人的私聊里输入指令（每分钟用 lark-cli 读一次你发的私聊消息）。只有你亲手发出指令时，omem 才会以你的身份在那个私聊里发一条消息，结尾带上署名。</HelpText>
         <UiCheckbox :model-value="!!config.lark.commands?.enabled" switch @change="(v) => saveCommands({ enabled: v }, v ? '已开启私聊指令' : '已关闭私聊指令')">开启私聊指令</UiCheckbox>
         <label class="field"><span>代回：读最近的私聊（和指令后面的说明）处理，并以你的身份回复对方</span>
           <input class="input mono" style="width: 200px" :value="config.lark.commands?.ai ?? '/ai'" @change="saveCommands({ ai: ($event.target as HTMLInputElement).value.trim() || '/ai' })" />
@@ -1241,7 +1304,7 @@ async function saveEdit() {
           <UiSegmented size="sm" aria-label="代回怎么发" :model-value="config.lark.commands?.signedVia ?? 'lark-cli'" :options="[{ value: 'lark-cli', label: '用 lark-cli 发' }, { value: 'doubao', label: '经豆包发送' }]" @change="(v: string) => saveCommands({ signedVia: v })" />
         </div>
         <template v-if="config.lark.commands?.signedVia === 'doubao'">
-          <p class="muted small">每次代回建一个新的豆包会话，只交给它定稿的回复和对方是谁，让它原样发出，用完删除；发完读私聊核对，没核对上或没发出会单独告诉你。</p>
+          <HelpText>每次代回建一个新的豆包会话，只交给它定稿的回复和对方是谁，让它原样发出，用完删除；发完读私聊核对，没核对上或没发出会单独告诉你。</HelpText>
           <DoubaoSendStatus />
         </template>
         <label class="field"><span>代回消息结尾的署名</span>
@@ -1254,7 +1317,7 @@ async function saveEdit() {
 
       <div class="card pad stack">
         <strong>拉人进群</strong>
-        <p class="muted small">助手可以用你的身份把人或机器人拉进你所在的群（lark_invite）。拉人进群每次都要你批准，卡片上列出每个群和每个人。拉机器人（omem 自己的，或在你的群里见过、认得出名字的）默认直接拉，事后在回复里告诉你。</p>
+        <HelpText>助手可以用你的身份把人或机器人拉进你所在的群（lark_invite）。拉人进群每次都要你批准，卡片上列出每个群和每个人。拉机器人（omem 自己的，或在你的群里见过、认得出名字的）默认直接拉，事后在回复里告诉你。</HelpText>
         <UiCheckbox :model-value="!!config.lark.invite?.botApproval" switch @change="(v) => saveConfig({ lark: { ...config.lark, invite: { ...(config.lark.invite ?? {}), botApproval: v } } }, v ? '拉机器人进群也要你批准' : '拉机器人进群不用批准')">拉机器人进群也要我批准</UiCheckbox>
       </div>
 
@@ -1266,7 +1329,7 @@ async function saveEdit() {
 
       <div class="card pad stack">
         <UiCheckbox :model-value="config.onebot.enabled" switch @change="(v) => saveConfig({ onebot: { ...config.onebot, enabled: v } })"><strong>QQ / 微信 机器人（OneBot v11）</strong></UiCheckbox>
-        <p class="muted small">连接 NapCat、LLOneBot、Lagrange 等 OneBot 实现（正向 WebSocket）。私聊里只有本人能指挥助理；群消息保存为聊天原件并交给助理整理。</p>
+        <HelpText>连接 NapCat、LLOneBot、Lagrange 等 OneBot 实现（正向 WebSocket）。私聊里只有本人能指挥助理；群消息保存为聊天原件并交给助理整理。</HelpText>
         <div class="grid2">
           <label class="field"><span>WebSocket 地址</span><input class="input mono" :value="config.onebot.url ?? ''" placeholder="ws://127.0.0.1:3001" @change="saveConfig({ onebot: { ...config.onebot, url: ($event.target as HTMLInputElement).value || undefined } })" /></label>
           <label class="field"><span>显示名</span><input class="input" :value="config.onebot.name" @change="saveConfig({ onebot: { ...config.onebot, name: ($event.target as HTMLInputElement).value } })" /></label>
@@ -1280,7 +1343,7 @@ async function saveEdit() {
       <div class="section-title">你的飞书</div>
       <div class="card pad stack">
         <strong>飞书文档</strong>
-        <p class="muted small">读飞书文档时，它链接的文档和它在知识库里的子页面一起导入，层数从最先给的那篇算起（不是每篇子文档各算一遍）。整个知识库或很大的目录交给助理用“知识库爬取”分批读，进度存在库里，可以配合定时规则每天读一批。</p>
+        <HelpText>读飞书文档时，它链接的文档和它在知识库里的子页面一起导入，层数从最先给的那篇算起（不是每篇子文档各算一遍）。整个知识库或很大的目录交给助理用“知识库爬取”分批读，进度存在库里，可以配合定时规则每天读一批。</HelpText>
         <div class="grid2">
           <label class="field"><span>跟随层数（0–5，0 = 只读这一篇）</span>
             <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="5" :value="config.lark.capture.docLinkDepth ?? 2" @change="saveCapture({ docLinkDepth: intIn($event, 0, 5, 2) })" />
@@ -1309,7 +1372,7 @@ async function saveEdit() {
           </div>
         </template>
         <div class="section-title">以你的身份写文档</div>
-        <p class="muted small">你让助理整理成文档时，它用 lark-cli 以你的身份新建、编辑和移动飞书文档。放在你的个人文档库或你自己的云空间文件夹里直接做；放进别人也在用的知识库、别人的文件夹或文档时，每次新建、编辑、覆盖和移动都会先把具体位置发给你批准。lark-cli 缺权限时会把授权链接发到你的飞书私聊。</p>
+        <HelpText>你让助理整理成文档时，它用 lark-cli 以你的身份新建、编辑和移动飞书文档。放在你的个人文档库或你自己的云空间文件夹里直接做；放进别人也在用的知识库、别人的文件夹或文档时，每次新建、编辑、覆盖和移动都会先把具体位置发给你批准。lark-cli 缺权限时会把授权链接发到你的飞书私聊。</HelpText>
         <div class="row wrap">
           <button class="btn sm" :disabled="permsLoading" @click="checkPerms">{{ permsLoading ? "检查中…" : "检查 lark-cli 授权" }}</button>
           <span v-if="perms?.user?.name" class="muted small">已登录：{{ perms.user.name }}</span>
@@ -1324,7 +1387,7 @@ async function saveEdit() {
 
       <div class="card pad stack">
         <div class="row wrap"><strong>个人消息采集（只读）</strong><span class="spacer" /><button class="btn sm" @click="loadLarkChats">读取最近会话</button><button class="btn sm" @click="pollNow">立即采集</button></div>
-        <p class="muted small">使用本机 lark-cli 的个人登录读取会话；除了你亲手发出的私聊指令（见下）和规则里的“拉机器人进群”，从不以你的身份发消息或操作（写文档见上面“飞书文档”）；定时采集在“定时任务”中开启。omem 机器人自己的私聊和它在群里发的消息不会被采集。</p>
+        <HelpText>使用本机 lark-cli 的个人登录读取会话；除了你亲手发出的私聊指令（见下）和规则里的“拉机器人进群”，从不以你的身份发消息或操作（写文档见上面“飞书文档”）；定时采集在“定时任务”中开启。omem 机器人自己的私聊和它在群里发的消息不会被采集。</HelpText>
         <div class="field">
           <span>采集范围</span>
           <UiSegmented
@@ -1420,6 +1483,12 @@ async function saveEdit() {
         <div class="muted">omem 也可以作为 MCP 服务给其他 Agent 使用：<span class="mono">omem mcp</span>（加 <span class="mono">--read-only</span> 只开放读取）。</div>
       </div>
     </section>
+    </div>
+    <aside v-if="toc.length" class="set-toc" aria-label="本页内容">
+      <span class="muted small">本页</span>
+      <a v-for="t in toc" :key="t.id" href="#" :class="{ on: tocAt === t.id }" @click.prevent="goCard(t.id)">{{ t.title }}</a>
+    </aside>
+    </div>
 
     <div v-if="editing" class="modal-overlay" @mousedown.self="editing = null">
       <div class="modal stack">
@@ -1521,6 +1590,113 @@ async function saveEdit() {
 </template>
 
 <style scoped>
+/* Categories on the left, the open one in the middle, its cards listed on the right. */
+.settings {
+  max-width: 1320px;
+}
+.set-layout {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) 160px;
+  gap: 28px;
+  align-items: start;
+}
+.set-content {
+  min-width: 0;
+}
+.set-nav {
+  position: sticky;
+  top: 12px;
+  display: grid;
+  gap: 14px;
+}
+.set-nav .group {
+  display: grid;
+  gap: 1px;
+}
+.set-nav .group > span {
+  padding: 0 10px 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.set-nav button {
+  border: 0;
+  background: none;
+  padding: 6px 10px;
+  border-radius: 7px;
+  text-align: left;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.set-nav button:hover {
+  background: var(--hover);
+}
+.set-nav button.on {
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-weight: 550;
+}
+.set-toc {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  display: grid;
+  gap: 2px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  font-size: 13px;
+}
+.set-toc > span {
+  padding-bottom: 4px;
+}
+.set-toc a {
+  padding: 3px 0;
+  color: var(--muted);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-toc a:hover {
+  color: var(--ink);
+}
+.set-toc a.on {
+  color: var(--accent);
+}
+.set-content :deep(.card) {
+  scroll-margin-top: 12px;
+}
+@media (max-width: 1200px) {
+  .set-layout {
+    grid-template-columns: 140px minmax(0, 1fr);
+  }
+  .set-toc {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .set-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .set-nav {
+    position: static;
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 6px;
+  }
+  .set-nav .group {
+    display: contents;
+  }
+  .set-nav .group > span {
+    display: none;
+  }
+}
 .spaces {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));

@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-13
+updated: 2026-11-14
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -2099,3 +2099,14 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 网页（`packages/plugin-sdk/blocks.ts`）：图表重画——整数刻度、一个轴一种写法、平滑折线和淡色面积、柱状整格高亮、横向条形、圆环饼图带合计、目标线、悬停提示列出所有系列、方向键逐个看；指标卡按个数排成整齐的几行，变化只给文字着色，带走势小折线；结论块是浅灰底、只有图标着色。系列色换成一套 8 个颜色（靛蓝、青、珊瑚红、琥珀……，从六套候选里选定），浅色、深色各一套、色相一致，按 omem 的面板做过色觉区分和对比度校验。`UiView.vue` 把组件里的 Markdown 交给 omem 自己的 Markdown 组件画。
 - Agent 说明：`roles/_common.md` 和 `skills/omem/references/owner.md` 写了报告的顺序（先结论、再指标、再图表和明细）和图表类型怎么选；`show` 工具的说明同步。
 - 原件页：带引用行号打开的文档（飞书文档、Markdown）不再退回原文行号，按排版显示并把引用的段落标出来、滚到中间；引用落在飞书的提示块或分栏里时整块标出，两边不留半个容器（`web/src/lib/cited-document.ts`，引用抽屉同样受益）。
+
+## 2026-11-14：学本人怎么回、知识库的文档归位、表格与提示块、触发人、设置页
+
+- 有人找你（`src/mentions/reply-learn.ts`，表 `reply_samples`）：每条进到这个流程的消息记一个样本——对方问了什么、助手拟了什么、本人怎么处置（照发 / 改后发 / 没发和原因）、本人之后自己在那个会话里回了什么或没回（`MentionChannel.ownerSaid`，飞书按 `lark_messages` 里本人的消息，24 小时内，带 `/ai` 署名的不算）。分诊材料多一行“本人以往回不回”（`habitLine`），处理运行的任务多一节“本人以往怎么回”（`replyHabits`：同一个人、同一个会话的例子在前）。草稿卡片的“不发”换成带原因的四个按钮（`DROP_REASONS`）；`reply_to_asker` 对远长于本人平时的回复拒一次（`typicalReplyLength`）。草稿档的说明改成“有能直接给对方的结论才拟，一两句”。设计见 docs/v2/mentions.md“学本人怎么回”。
+- 知识库的文档归位（`src/sources/kb-home.ts`，表 `wiki_node_homes`，索引 `sources_wiki_space`）：知识库归入业务空间后，它的文档不管从哪个入口进来都落在那个空间——`prepareArchive` 对自动采集按它归属，`importLarkDocument` 对跟着链接读进来的文档按它落位（已有的未固定副本移过去）；本人手动移动过的不动（`pinned`）。目录可以单独归到别的空间（`setDirHome`，原件目录树的行菜单）。存量：`kbStrays` / `rehomeKb`（移动，目标已有同一篇就并成一份，`duplicates.ts mergeSources`），入口是知识库页的“收回”、`/api/lark/kb-home`、远程命令 `lark-kb-home`，每晚的归位巡检也先做这一步（`archive.autoMove` 开着且待归位的不超过 50 份时；更多的等本人点“收回”）。归入个人空间的知识库不适用。
+- 文档排版（`web/src/lib/doc-layout.ts`）：`sizeTables` 给每张表按内容算列宽（文档带宽度时用文档的），比正文宽的在 `.table-wrap` 里横向滚动；`layoutCallouts` 把飞书高亮块排成图标在左、文字在右；`docBlocks` 把另一种导出格式（`<lark-table column-widths>`、`<quote-container>`、`<callout emoji>`）转成普通 HTML。`styles.css` 补了 `.doc-callout`、`.doc-grid`、`.doc-col` 的样式（之前没有）；采集时带上高亮块的颜色（`lark-docs.ts calloutColor`）。
+- 虚拟列表（`web/src/components/VirtualList.vue`）：每次更新重新找滚动容器，滚动事件在 window 上捕获。之前只在挂载时找一次：面板当时还没溢出就认了窗口，之后在面板里滚动不再补行，下面留一大段空白。
+- 运行的触发方式和触发人（`src/core/run-trigger.ts`，列 `runs.trigger` / `trigger_by`）：对话、访客提问、有人找你、规则、定时、同伴设备、成员操作；人是 omem 用户（`user:<id>`）、飞书上的人（`lark:<open_id>`）或别的机器人；创建运行时给出，或从输入读出，或沿用上一级运行的；定时任务的执行器里建的运行带上是哪个定时（`withTrigger`）。`GET /api/runs?by=` 按人筛选，`GET /api/runs/triggerers` 列近 30 天的人。运行页列表显示触发人，头部多“触发人”下拉。迁移回填了访客、有人找你和对话三类旧运行。
+- 设置页（`web/src/views/Settings.vue`、`components/HelpText.vue`）：分类移到左边分组显示，右边是当前分类的卡片目录；长说明用 `HelpText` 收成一行，全文在 ⓘ 的悬浮层里。约定写进 `.agents/skills/omem-design`。
+- docs/v2/mesh.md：组网运行（名片、问对方的 Agent、借 AI、按空间定主从与发件箱、租约）和助手的设计，各节写了实现到哪。
+- 助手（`src/agents/assistants.ts`）：`lark.bots` 的机器人加 `userId`（谁的助手）、`name`、`description`、`dailyRuns`；`botSender` 把建机器人的人认成它的主人（成员），`botRoster` 写明是谁的助手；`overDailyLimit` 在 `inbox.receive` 里拦超过每天次数的轮次；`/api/assistants`；`AssistantsSettings.vue` 用在账号页（我的助手）和 设置 → 渠道（全部助手，替换原来的“其他机器人”列表），可以“用飞书创建机器人”（`scanNewAssistant`，`registerLarkBot` 的确认链接）或填已有应用。

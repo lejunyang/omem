@@ -586,6 +586,96 @@ input[type="number"].input::-webkit-outer-spin-button {
   background: var(--sunken);
   font-weight: 600;
 }
+/* Tables with column widths (lib/doc-layout.ts sizeTables): each column as wide as what it holds; a
+   table wider than the text scrolls inside its own box instead of crushing its columns. */
+.prose .table-wrap {
+  overflow-x: auto;
+  margin: 0 0 1em;
+}
+.prose .table-wrap > table {
+  display: table;
+  table-layout: fixed;
+  margin: 0;
+  overflow: visible;
+}
+.prose table.sized td,
+.prose table.sized th {
+  overflow-wrap: break-word;
+}
+.prose td > :first-child,
+.prose th > :first-child {
+  margin-top: 0;
+}
+.prose td > :last-child,
+.prose th > :last-child {
+  margin-bottom: 0;
+}
+.prose td ul,
+.prose td ol {
+  padding-left: 1.2em;
+}
+/* Feishu callouts and column layouts (src/channels/lark-docs.ts layout). */
+.prose blockquote.doc-callout {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--sunken);
+  color: var(--ink);
+  padding: 10px 14px;
+}
+.prose .doc-callout-icon {
+  flex: none;
+  font-size: 1.1em;
+  line-height: 1.65;
+}
+.prose .doc-callout-body {
+  flex: 1;
+  min-width: 0;
+}
+.prose .doc-callout-body > :first-child {
+  margin-top: 0;
+}
+.prose .doc-callout-body > :last-child {
+  margin-bottom: 0;
+}
+.prose blockquote.doc-callout[data-color="blue"],
+.prose blockquote.doc-callout[data-color="purple"] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.prose blockquote.doc-callout[data-color="orange"],
+.prose blockquote.doc-callout[data-color="yellow"] {
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
+}
+.prose blockquote.doc-callout[data-color="green"] {
+  background: var(--ok-soft);
+  border-color: color-mix(in srgb, var(--ok) 22%, transparent);
+}
+.prose blockquote.doc-callout[data-color="red"] {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+.prose .doc-grid {
+  display: flex;
+  gap: 18px;
+  margin: 0 0 1em;
+}
+.prose .doc-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.prose .doc-col > :last-child {
+  margin-bottom: 0;
+}
+@media (max-width: 640px) {
+  .prose .doc-grid {
+    flex-direction: column;
+    gap: 0;
+  }
+}
 .prose hr {
   border: 0;
   border-top: 1px solid var(--line);

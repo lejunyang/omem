@@ -144,10 +144,13 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     const { decideMentionReply } = await import("./mention-reply.ts");
     const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;
     const edited = formValue && typeof formValue === "object" && typeof (formValue as { reply?: unknown }).reply === "string" ? String((formValue as { reply: string }).reply) : null;
-    const send = (value as { action?: string } | undefined)?.action !== "drop" && (edited !== null || (value as { action?: string } | undefined)?.action === "send");
+    // 不发 carries why (drop:<reason>): what later drafts learn from.
+    const act = String((value as { action?: string } | undefined)?.action ?? "");
+    const dropped = act === "drop" || act.startsWith("drop:");
+    const send = !dropped && (edited !== null || act === "send");
     closeInteraction(app, inter.id, operator);
     try {
-      const card = await decideMentionReply(app, inter.payload as { runId: string; text: string }, send, edited, opName);
+      const card = await decideMentionReply(app, inter.payload as { runId: string; text: string }, send, edited, opName, dropped ? act.slice(5) || null : null);
       return { toast: { type: "success", content: send ? "已回复" : "不回复" }, card: rawCard(card) };
     } catch (e) {
       // Not sent: the card stays usable for another try.

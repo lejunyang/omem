@@ -20,6 +20,12 @@ description: 修改 omem v2 的 Vue 网页（web/）时使用：阅读优先的�
 
 同一页面的几类对象（Agent 档案 / 技能、任务规则 / 归档规则）用列表顶部的标签切换，不在侧栏加二级菜单。
 
+设置页是例外：分类多，放在页内左侧按“知识 / AI 与任务 / 渠道与协作 / 系统”分组（`Settings.vue` 的 `NAV`），右侧是当前分类的卡片目录（从渲染出的卡片标题读出，新卡片以 `<strong>` 开头就会进目录）；窄屏时分类变成横向滚动的一行，目录隐藏。新增设置放进已有分类的一张卡片里，卡片标题不超过 24 个字。
+
+说明文字：一个功能的说明超过一行时用 `components/HelpText`（`lead` 用于分类开头的一段，显示两行）——开头一句说它是什么，其余在 ⓘ 的悬浮层里（悬停、聚焦或点开）。所以第一句要能单独读懂，不要以“在……里”这类铺垫开头。字段下的一句提示仍用 `.hint`，不收起。
+
+正文里的表格由 `lib/doc-layout.ts` 的 `sizeTables` 定列宽（`Markdown` 组件渲染后调用）：不要给 `.prose table` 另写宽度；飞书文档的高亮块、分栏用 `.doc-callout`、`.doc-grid` / `.doc-col`（`styles.css`）。
+
 按钮用 `styles.css` 的 `.btn` 变体：实心的 `.primary`（深色）、`.accent`、`.danger-fill`（红色，危险确认），描边的 `.danger`（红字）、`.ghost`。通用悬停只在原底色上叠一层 `--hover`（`background-image`），不要在组件里给 `.btn:hover` 写 `background: var(--hover)`；新的实心按钮放进 `styles.css`，悬停和另外三种一样变淡（`opacity`），否则悬停时会变成浅底白字。
 
 确认弹窗保持短标题，详细说明放 `message`。`DialogHost` 内容区负责长链接换行和限高滚动，操作按钮留在内容区外；检查手机和较矮视口，不能靠横向裁切隐藏溢出。

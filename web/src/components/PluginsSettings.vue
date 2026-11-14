@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { onMounted, ref } from "vue";
 import { del, get, post, put } from "../api";
 import { PLUGIN_ICONS } from "../lib/icons";
@@ -170,7 +171,7 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
 
 <template>
   <div class="stack">
-    <p class="muted">插件带来自己的 Agent 档案、技能、工具和页面。内置插件随 omem 更新；放在数据目录 <span class="mono">plugins/</span> 里的是你自己的；装进来的和你自己的，带代码的都要你看过权限、确认后才运行。写法见 docs/v2/plugins.md。</p>
+    <HelpText lead>插件带来自己的 Agent 档案、技能、工具和页面。内置插件随 omem 更新；放在数据目录 <span class="mono">plugins/</span> 里的是你自己的；装进来的和你自己的，带代码的都要你看过权限、确认后才运行。写法见 docs/v2/plugins.md。</HelpText>
     <div class="card pad stack">
       <strong>安装插件</strong>
       <div class="row wrap">

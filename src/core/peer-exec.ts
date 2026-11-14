@@ -427,6 +427,11 @@ export const peerCommands: Record<string, Command> = {
     schema: z.object({ space: z.string().max(64).optional(), dryRun: z.boolean().default(true), limit: z.number().int().min(1).max(10_000).optional() }),
     run: async (app, a) => (await import("../sources/duplicates.ts")).mergeDuplicateDocs(app, a),
   },
+  "lark-kb-home": {
+    description: "已归入业务空间的飞书知识库里，落在别的空间的文档（文档里的链接跟着读进了父文档的空间、最近打开的文档留在个人空间等）：默认只列出会移动、合并（目标空间已有同一篇）和不动（本人手动放的）的数量与样例（dryRun），dryRun: false 才执行；kb 只看一个知识库。id、标注和引用不变",
+    schema: z.object({ kb: z.string().max(80).optional(), dryRun: z.boolean().default(true) }),
+    run: async (app, a) => (await import("../sources/kb-home.ts")).rehomeKb(app, a),
+  },
   "lark-kb-list": {
     description: "能看到的飞书知识库（发现过的）：状态（还没判断 / 有建议 / 先放着 / 已归入 / 不读，gone 是已看不到的）、建议的空间和理由、优先级、每晚读的进度；附发现和最近一晚读取的情况",
     schema: z.object({ status: z.enum(["new", "proposed", "later", "mapped", "ignored", "gone", "all"]).optional(), limit: z.number().int().min(1).max(2000).default(200) }),

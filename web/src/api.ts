@@ -254,7 +254,16 @@ export type MemoryQuality = {
 };
 export type Item = { id: string; spaceId: string; kind: string; title: string; detail: string; status: string; priority: number; dueAt: string | null; remindAt: string | null; waitingOn: string | null; watch: any; sourceRefs: string[]; createdAt: string; updatedAt: string; closedAt: string | null; /** When it closes by itself, and why then (open items). */ expiresAt?: string; expiryText?: string };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
-export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; ai?: { profile: string; model?: string; effort?: string } | null; waiting?: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean };
+export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; ai?: { profile: string; model?: string; effort?: string } | null; waiting?: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean; trigger?: RunTrigger | null };
+/** How a run came about and who was behind it (src/core/run-trigger.ts). */
+export type RunTrigger = { via: "chat" | "guest" | "mention" | "rule" | "schedule" | "peer" | "member"; by?: { key: string; name: string }; where?: string; source?: { kind: string; id: string; name: string } };
+const VIA: Record<RunTrigger["via"], string> = { chat: "对话", guest: "访客提问", mention: "有人找你", rule: "规则", schedule: "定时", peer: "同伴设备", member: "成员操作" };
+/** "小王 · 访客提问": the person first, then how; a rule or schedule by its name. `full` adds where it happened. */
+export function triggerLabel(t: RunTrigger | null | undefined, full = false) {
+  if (!t) return "";
+  const how = t.source && t.via !== "peer" ? `${VIA[t.via]}「${t.source.name}」` : VIA[t.via];
+  return [t.by?.name, how, full || t.via === "peer" ? t.where : ""].filter(Boolean).join(" · ");
+}
 /** "codex · gpt-6.1-sol · low": what a run ran on, or its backend alone for runs recorded before models were. */
 export const aiLabel = (r: Pick<Run, "ai" | "profileId">) => (r.ai ? [r.ai.profile, r.ai.model, r.ai.effort].filter(Boolean).join(" · ") : r.profileId ?? "");
 export type RunEvent = { seq: number; at: string; type: string; data: any };

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { computed, onMounted, ref } from "vue";
 import { del, get, post, put } from "../api";
 import UiCheckbox from "./UiCheckbox.vue";
@@ -129,7 +130,7 @@ onMounted(() => load().catch(fail));
 <template>
   <div class="stack">
     <h2 class="section-title">和别人的 omem 共享</h2>
-    <p class="muted small">给别人的 omem 服务开放几个空间：对方只能检索、读这些空间里你选的内容，或者把它们同步过去。它用自己的服务账号，看不到别的空间和你的个人空间；随时可以停止。</p>
+    <HelpText>给别人的 omem 服务开放几个空间：对方只能检索、读这些空间里你选的内容，或者把它们同步过去。它用自己的服务账号，看不到别的空间和你的个人空间；随时可以停止。</HelpText>
 
     <div class="card pad stack">
       <div class="section-title">新的共享</div>
@@ -172,7 +173,7 @@ onMounted(() => load().catch(fail));
     </div>
 
     <h2 class="section-title">关注别人共享的空间</h2>
-    <p class="muted small">先把对方给的配对码加到上面的设备里。关注后，检索和助手能查到这些空间（助手引用时先把原件取到本机）；“同步”的空间每半小时同步到本机一个只读空间。</p>
+    <HelpText>先把对方给的配对码加到上面的设备里。关注后，检索和助手能查到这些空间（助手引用时先把原件取到本机）；“同步”的空间每半小时同步到本机一个只读空间。</HelpText>
     <div class="card pad stack">
       <div class="row wrap">
         <UiSelect :model-value="subForm.peer" size="sm" width="180px" placeholder="选设备…" aria-label="设备" :options="peers.map((p) => ({ value: p.id, label: p.id }))" @change="pickPeer" />

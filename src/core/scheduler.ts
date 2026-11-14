@@ -3,6 +3,7 @@ import type { App } from "./app.ts";
 import { all, one, run } from "./db.ts";
 import { json, newId, now } from "./util.ts";
 import { mark } from "./loop-monitor.ts";
+import { withTrigger } from "./run-trigger.ts";
 
 export type Schedule = { id: string; kind: string; cron: string; spaceId: string | null; config: Record<string, unknown>; enabled: boolean; lastRunAt: string | null };
 type Row = { id: string; kind: string; cron: string; space_id: string | null; config: string; enabled: number; last_run_at: string | null };
@@ -79,7 +80,8 @@ function fire(app: App, s: Schedule, runner: Runner) {
   try {
     mark(`schedule ${s.kind}`);
     run(app.db, "update schedules set last_run_at = ? where id = ?", now(), s.id);
-    runner(app, s);
+    // Runs the runner creates right away say which schedule fired them.
+    withTrigger({ via: "schedule", source: { kind: "schedule", id: s.id, name: DEFAULTS.find((d) => d.id === s.id)?.label.split(/[：:（]/)[0] ?? s.id } }, () => runner(app, s));
   } catch (e) {
     console.warn(`[omem] 定时任务 ${s.id} 失败`, e);
   }

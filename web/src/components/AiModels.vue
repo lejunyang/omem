@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { get, post, put } from "../api";
 import { confirmDialog } from "../lib/dialog";
@@ -161,10 +162,10 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
 
 <template>
   <div v-if="section === 'keys'" class="stack">
-    <p class="muted">
+    <HelpText lead>
       用 API key 直接调用模型：语音、决策、图片三类模型用它们；OpenAI 和 Anthropic 的 key 还可以让 Codex / Claude Code 按 API 计费运行，作为单独的后端出现在“通用”里，和本机登录的那个并存，额度和并发分开算。key 存在数据目录的
       <span class="mono">secrets/ai-keys.json</span>，不写进 config.json，网页上只显示后 4 位。
-    </p>
+    </HelpText>
     <div v-if="view?.inherited.length" class="card pad small">
       服务的环境里已经有 <span class="mono">{{ view.inherited.join("、") }}</span>：所有 Agent 启动时都会继承它，本机登录的 Codex / Claude Code 也可能因此按 API 计费。只想让下面生成的后端用 key 的话，从服务的环境里去掉它。
     </div>
@@ -214,7 +215,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
     </form>
     <div class="card pad stack small">
       <div class="section-title">哪些后端能用 API key</div>
-      <p class="muted">这里能直接生成的是 Codex 和 Claude Code。OpenCode、goose、Cline、Kilo、pi、DeepAgents、Factory Droid 也支持自带 OpenAI / Anthropic 的 key，按它们自己的方式配置（多数是环境变量或它们的设置文件，可以写进“通用”里该后端配置的 <span class="mono">env</span>）。Copilot、Cursor、Amp、Junie、Devin、Gemini CLI、Qwen Code 用自家账号或自家的 key，不吃这两家的 key。</p>
+      <HelpText lead>这里能直接生成的是 Codex 和 Claude Code。OpenCode、goose、Cline、Kilo、pi、DeepAgents、Factory Droid 也支持自带 OpenAI / Anthropic 的 key，按它们自己的方式配置（多数是环境变量或它们的设置文件，可以写进“通用”里该后端配置的 <span class="mono">env</span>）。Copilot、Cursor、Amp、Junie、Devin、Gemini CLI、Qwen Code 用自家账号或自家的 key，不吃这两家的 key。</HelpText>
     </div>
   </div>
 
@@ -233,12 +234,12 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
       </div>
     </template>
     <template v-else-if="cat === 'decision'">
-      <p class="muted">决策模型只做有边界的判断：从几个选项里选一个、是或否、按几档打分，并给出每个选项的概率，比通用模型快很多也便宜很多。会用在访客提问的把关（回答 / 拒绝 / 不理）、规则的 AI 判断（规则上可选决策模型或通用模型，默认先用决策模型），以及运行开始前从任务选型的候选里选 AI（设置 → AI → 通用 → 任务选型）。</p>
-      <p class="muted small">接口：<strong>OpenAI Decisions API</strong>（<span class="mono">POST /v1/decisions</span>，<span class="mono">gpt-6-luna</span>）、<strong>Jev</strong>（TypeSafe <span class="mono">/v1/systemone</span>，或经 OpenRouter）、Cloudflare 的 <strong>Clef</strong>（Workers AI，和 Jev 同一种格式：<span class="mono">clef-flash</span> 便宜快，<span class="mono">clef</span> 更准，两者都读图片；<span class="mono">clef-omni</span> 还读音频和视频）、本机的 <strong>StartLux-Decision</strong>（和注入标记共用）。各家的请求格式不同，omem 统一成“材料 + 问题 + 选项 → 每个选项的概率”。</p>
+      <HelpText lead>决策模型只做有边界的判断：从几个选项里选一个、是或否、按几档打分，并给出每个选项的概率，比通用模型快很多也便宜很多。会用在访客提问的把关（回答 / 拒绝 / 不理）、规则的 AI 判断（规则上可选决策模型或通用模型，默认先用决策模型），以及运行开始前从任务选型的候选里选 AI（设置 → AI → 通用 → 任务选型）。</HelpText>
+      <HelpText>接口：<strong>OpenAI Decisions API</strong>（<span class="mono">POST /v1/decisions</span>，<span class="mono">gpt-6-luna</span>）、<strong>Jev</strong>（TypeSafe <span class="mono">/v1/systemone</span>，或经 OpenRouter）、Cloudflare 的 <strong>Clef</strong>（Workers AI，和 Jev 同一种格式：<span class="mono">clef-flash</span> 便宜快，<span class="mono">clef</span> 更准，两者都读图片；<span class="mono">clef-omni</span> 还读音频和视频）、本机的 <strong>StartLux-Decision</strong>（和注入标记共用）。各家的请求格式不同，omem 统一成“材料 + 问题 + 选项 → 每个选项的概率”。</HelpText>
     </template>
     <template v-else>
-      <p class="muted">可用后，主助手和挂了 <span class="mono">group:media</span> 的 Agent 档案才拿到画图工具 <span class="mono">generate_image</span>，内置技能 <span class="mono">image-generation</span> 也才出现：给 Wiki 页配示意图，在飞书回复里发图，或者你在问答里直接让它画。图片存在数据目录，和其他附件一样。</p>
-      <p class="muted small">接口：OpenAI Images API（<span class="mono">/v1/images/generations</span>）。默认 <span class="mono">gpt-image-2.6-flare</span>（快），要更精细用 <span class="mono">gpt-image-2.6-sunburst</span>；模型留空时用账号里最新的。</p>
+      <HelpText lead>可用后，主助手和挂了 <span class="mono">group:media</span> 的 Agent 档案才拿到画图工具 <span class="mono">generate_image</span>，内置技能 <span class="mono">image-generation</span> 也才出现：给 Wiki 页配示意图，在飞书回复里发图，或者你在问答里直接让它画。图片存在数据目录，和其他附件一样。</HelpText>
+      <HelpText>接口：OpenAI Images API（<span class="mono">/v1/images/generations</span>）。默认 <span class="mono">gpt-image-2.6-flare</span>（快），要更精细用 <span class="mono">gpt-image-2.6-sunburst</span>；模型留空时用账号里最新的。</HelpText>
     </template>
 
     <div v-if="noProviders" class="card pad small">还没有能提供{{ CAT_LABEL[cat] }}的 API key：先到“API key”里添加 OpenAI 的 key。</div>

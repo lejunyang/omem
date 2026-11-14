@@ -37,8 +37,9 @@ async function finish(r: Run) {
 }
 
 it("hands the archivist the evidence and files by it; contradictions and no evidence stay with a verdict", async () => {
-  // A knowledge base the owner filed under project A, a folder whose other page is already there.
-  run(app.db, "insert into wiki_spaces(id, name, status, target_space, discovered_at) values('kb1', '项目 A 知识库', 'mapped', 'project-a', ?)", now());
+  // A knowledge base the owner has not filed yet, a folder whose other page is already in project A. (Documents
+  // of a filed knowledge base go to its space without a judgement, sources/kb-home.ts.)
+  run(app.db, "insert into wiki_spaces(id, name, status, discovered_at) values('kb1', '项目 A 知识库', 'later', ?)", now());
   doc("https://tenant.larkoffice.com/wiki/SIBLING00001", "周会 9 月", { wikiSpaceId: "kb1", wikiParentNodeToken: "P1" }, "project-a", false);
   const wiki = doc("https://tenant.larkoffice.com/wiki/WEEKLY000001", "周会 10 月", { wikiSpaceId: "kb1", wikiSpaceName: "项目 A 知识库", wikiPath: "项目 A / 周会", wikiParentTitle: "周会", wikiParentNodeToken: "P1" });
   const plain = doc("note/books", "读书笔记");
@@ -63,7 +64,7 @@ it("hands the archivist the evidence and files by it; contradictions and no evid
   expect(getSource(app, linked.id).spaceId).toBe("project-b");
   const move = one<{ mode: string; detail: string }>(app.db, "select mode, detail from source_moves where source_id = ? order by id desc limit 1", wiki.id)!;
   expect(move.mode).toBe("ai");
-  expect(JSON.parse(move.detail)).toMatchObject({ wiki: { kbSpace: "project-a" }, siblings: [{ space: "project-a", n: 1 }] });
+  expect(JSON.parse(move.detail)).toMatchObject({ wiki: { kb: "项目 A 知识库" }, siblings: [{ space: "project-a", n: 1 }] });
 
   expect(getSource(app, plain.id).spaceId).toBe("personal");
   expect(sourceRoute(app, plain.id)).toMatchObject({ mode: "fallback", verdict: "personal", pending: 0 });

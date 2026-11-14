@@ -1291,13 +1291,37 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // --------------------------------------------------------------------- runs
   server.get("/api/runs", async (req) => {
-    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
+    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), by: z.string().max(200).optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     // Someone other than the owner: their own runs and the ones they may read (src/auth/permissions.ts).
     const spaces = runReadableSpaces(app, who(req));
     const visibleTo = spaces === null ? undefined : { userId: who(req), spaces };
-    const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, visibleTo };
+    const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, by: o.by, visibleTo };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
+  });
+  // Assistants (agents/assistants.ts): the main one and the bots of lark.bots, each someone's. Members add and manage their own.
+  server.get("/api/assistants", async (req) => {
+    const { listAssistants } = await import("../agents/assistants.ts");
+    const me = who(req);
+    return { assistants: (await listAssistants(app)).map((a) => ({ ...a, appId: me === OWNER || a.userId === me ? a.appId : null, ownerOpenId: me === OWNER || a.userId === me ? a.ownerOpenId : null, mine: a.userId === me, manage: (me === OWNER || a.userId === me) && a.id !== "main" })), larkEnabled: app.config.lark.enabled };
+  });
+  server.post("/api/assistants", async (req) => {
+    const b = q(z.object({ name: z.string().max(40).optional(), description: z.string().max(200).optional(), agent: z.string().max(80).optional(), appId: z.string().max(80), appSecret: z.string().max(200), ownerOpenId: z.string().max(80).optional() }), req.body);
+    return (await import("../agents/assistants.ts")).createAssistant(app, who(req), b);
+  });
+  server.post("/api/assistants/scan", async (req) => {
+    const b = q(z.object({ name: z.string().max(40).optional(), description: z.string().max(200).optional(), agent: z.string().max(80).optional() }), req.body ?? {});
+    return (await import("../agents/assistants.ts")).scanNewAssistant(app, who(req), b);
+  });
+  server.patch("/api/assistants/:id", async (req) => {
+    const b = q(z.object({ name: z.string().max(40).optional(), description: z.string().max(200).optional(), agent: z.string().max(80).optional(), enabled: z.boolean().optional(), dailyRuns: z.number().int().min(1).max(100000).nullable().optional(), ownerOpenId: z.string().max(80).optional() }), req.body);
+    return (await import("../agents/assistants.ts")).updateAssistant(app, who(req), (req.params as { id: string }).id, b);
+  });
+  server.delete("/api/assistants/:id", async (req) => (await import("../agents/assistants.ts")).removeAssistant(app, who(req), (req.params as { id: string }).id));
+  // People behind recent runs (the run page's “触发人” filter); someone other than the owner sees those of their own runs.
+  server.get("/api/runs/triggerers", async (req) => {
+    const { triggerers } = await import("../core/run-trigger.ts");
+    return { people: triggerers(app, { visibleTo: runReadableSpaces(app, who(req)) === null ? undefined : who(req) }) };
   });
   // Coding work, one entry per delegation or branch review (src/agents/code-works.ts): the run page's “编码” view.
   server.get("/api/code-works", async (req) => {
@@ -2100,10 +2124,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return listRules(app).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
   });
   // 有人找你, listed last on the rules page: the default for messages looking for the owner that no rule took.
-  server.get("/api/mentions", async () => {
+  server.get("/api/mentions", async (req) => {
     const { mentionUsage } = await import("../mentions/mentions.ts");
     const c = app.config.mentions;
-    return { enabled: c.enabled, p2p: c.p2p, delayMinutes: c.delayMinutes, perDay: c.perDay, today: mentionUsage(app) };
+    // What became of the drafted replies lately, and what the owner did themselves (mentions/reply-learn.ts).
+    const replies = who(req) === OWNER ? (await import("../mentions/reply-learn.ts")).replyStats(app) : null;
+    return { enabled: c.enabled, p2p: c.p2p, delayMinutes: c.delayMinutes, perDay: c.perDay, today: mentionUsage(app), replies };
   });
   // Wake-ups agents set for themselves: timed (queued runs) and on a message (temporary rules).
   server.get("/api/wakes", async () => (await import("../agents/wakes.ts")).pendingWakes(app));
@@ -2317,7 +2343,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/lark/kb", async (req) => {
     const o = q(z.object({ status: z.enum(["new", "proposed", "later", "mapped", "ignored", "gone", "all"]).optional() }), req.query ?? {});
     const k = await import("../channels/lark-knowledge.ts");
-    return { ...k.knowledgeOverview(app), kbs: k.listKnowledgeBases(app, { status: o.status ?? "all" }), origin: k.knowledgeOrigin(app) };
+    const strays = (await import("../sources/kb-home.ts")).kbStrayCounts(app);
+    return { ...k.knowledgeOverview(app), kbs: k.listKnowledgeBases(app, { status: o.status ?? "all" }).map((kb) => ({ ...kb, strays: strays.get(kb.id) ?? null })), origin: k.knowledgeOrigin(app) };
   });
   server.post("/api/lark/kb/discover", async (req) => {
     ownerOnly(req);
@@ -2339,6 +2366,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // A changed direction brings the knowledge bases put aside back to the scout.
     if (changed) (await import("../channels/lark-knowledge.ts")).directionChanged(app);
     return { settings: app.config.lark.knowledge };
+  });
+  // Documents of filed knowledge bases that sit in another space (sources/kb-home.ts): list, bring home, and directories filed elsewhere.
+  server.get("/api/lark/kb-home", async (req) => {
+    ownerOnly(req);
+    const o = q(z.object({ kb: z.string().max(80).optional() }), req.query ?? {});
+    const h = await import("../sources/kb-home.ts");
+    return { ...(await h.rehomeKb(app, { kb: o.kb, dryRun: true })), dirs: h.listDirHomes(app) };
+  });
+  server.post("/api/lark/kb-home", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ kb: z.string().max(80).optional(), dryRun: z.boolean().default(false) }), req.body ?? {});
+    return (await import("../sources/kb-home.ts")).rehomeKb(app, b);
+  });
+  server.put("/api/lark/kb-home/dir", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ token: z.string().min(1).max(80), space: z.string().max(80).nullable() }), req.body ?? {});
+    const h = await import("../sources/kb-home.ts");
+    const dirs = h.setDirHome(app, b.token, b.space);
+    // What is already read follows at once (the knowledge base's other strays with it).
+    const kb = one<{ wiki_space_id: string | null }>(app.db, "select wiki_space_id from wiki_nodes where token = ?", b.token)?.wiki_space_id;
+    const moved = kb ? await h.rehomeKb(app, { kb, dryRun: false }) : null;
+    return { dirs, moved };
   });
   server.post("/api/lark/kb/:id", async (req) => {
     ownerOnly(req);

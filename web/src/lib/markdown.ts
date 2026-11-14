@@ -16,6 +16,7 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yamlLang from "highlight.js/lib/languages/yaml";
 import { Marked } from "marked";
+import { docBlocks } from "./doc-layout";
 
 for (const [name, lang] of Object.entries({ bash, css, diff, go, java, javascript, json: jsonLang, markdown: markdownLang, python, rust, sql, typescript, xml, yaml: yamlLang }))
   hljs.registerLanguage(name, lang);
@@ -86,7 +87,7 @@ marked.use({
  * (Feishu docs) uses `src="omem-file:…"` for local files and `href="src:<id>"` for local sources.
  */
 function preprocess(md: string) {
-  return md
+  return docBlocks(md)
     .replace(/\b(src|href)="omem-file:([\w.-]+)"/g, (_, a: string, name: string) => `${a}="${escapeHtml(authUrl(`/api/files/${encodeURIComponent(name)}`))}"`)
     .replace(/<a\b([^>]*?)\bhref="src:([\w-]+)"/g, (_, pre: string, id: string) => `<a${pre}href="#" class="cite doc" data-cite="source" data-ref="${id}"`)
     .replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_, target: string, label?: string) => `[${(label ?? target.split("/").pop() ?? target).replace(/[[\]]/g, "")}](wiki:${encodeURIComponent(target.trim())})`)

@@ -4,6 +4,8 @@ import { HttpError, now, truncate } from "../core/util.ts";
 import { injectionScore } from "../sources/guard.ts";
 import { reviewReply, runCommand } from "./commands.ts";
 import { createRun, queuedInLane, updateQueuedRun } from "./runs.ts";
+import { larkBy, userBy } from "../core/run-trigger.ts";
+import { overDailyLimit } from "./assistants.ts";
 import { moveHome, runOfLarkMessage } from "./home.ts";
 import { addMessage, createThread, findThread, resolveThread, updateThread, type Thread, type ThreadAddress } from "./threads.ts";
 
@@ -160,6 +162,9 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
       return { thread, messageId, runId: waiting.id, merged: true, reply: null, started };
     }
   }
+  // An assistant with a daily limit (agents/assistants.ts): past it the sender is told, nothing runs.
+  const over = overDailyLimit(app, thread.channel);
+  if (over) return { thread, messageId, runId: null, merged: false, reply: over, started };
   const run = createRun(app, {
     kind: "ask",
     spaceId: thread.spaceId,
@@ -168,6 +173,8 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     lane: thread.id,
     userId,
     notBefore: mergeMs ? notBefore : null,
+    // A colleague asking in the owner's group, or the speaker of a watched chat, is the one behind it; else the sender.
+    trigger: { via: "chat", by: inb.asker ? larkBy(null, inb.asker) : inb.speaker ? larkBy(null, inb.speaker) : userBy(app, userId), where: thread.channel === "web" ? "网页" : thread.title || thread.channel },
   });
   app.db.prepare("update messages set run_id = ? where id = ?").run(run.id, messageId);
   steerSoon(app, thread.id);

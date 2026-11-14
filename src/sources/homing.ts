@@ -362,7 +362,9 @@ export async function followWorkFiles(app: App, clock: Clock = freeClock()) {
   return moved;
 }
 
-export type SweepReport = { at: string; followed: number; found: Awaited<ReturnType<typeof collectRecheck>>; byRule: number; queued: number; left: number; links: { read: number; complete: boolean }; ms: number; stopped: boolean };
+/** Documents of filed knowledge bases the nightly check brings home by itself; more than this waits for the owner. */
+const KB_HOME_NIGHTLY = 50;
+export type SweepReport = { at: string; followed: number; kbHome?: { moved: number; merged: number; failed: number; waiting?: number }; found: Awaited<ReturnType<typeof collectRecheck>>; byRule: number; queued: number; left: number; links: { read: number; complete: boolean }; ms: number; stopped: boolean };
 export type SweepProgress = { running: boolean; phase: string; done: number; total: number; startedAt: string };
 
 /** How long one check may run before it stops and leaves the rest for next time. */
@@ -421,6 +423,18 @@ async function runSweep(app: App, opts: { budget?: number; maxMs?: number }): Pr
   const clock = freeClock(maxMs, (p) => save(p.phase, p.done, p.total));
   save("工作文件", 0, 0);
   const followed = await followWorkFiles(app, clock);
+  // Documents of filed knowledge bases that sit elsewhere go to their knowledge base's space: the
+  // owner's own decision (kb-home.ts), no judgement needed.
+  save("知识库的文档归位", 0, 0);
+  let kbHome: SweepReport["kbHome"];
+  if (app.config.archive.autoMove) {
+    // The nightly trickle only: a large backlog (the first time, a knowledge base newly filed) waits for the owner's own 收回 on the knowledge-base page.
+    const { rehomeKb } = await import("./kb-home.ts");
+    const plan = await rehomeKb(app, { dryRun: true }).catch(() => null);
+    const waiting = plan ? plan.moved + plan.merged : 0;
+    const r = waiting && waiting <= KB_HOME_NIGHTLY ? await rehomeKb(app, { dryRun: false }).catch((e) => void console.warn("[omem] 知识库归位失败：", (e as Error).message)) : null;
+    kbHome = r ? { moved: r.moved, merged: r.merged, failed: r.failed.length } : { moved: 0, merged: 0, failed: 0, ...(waiting ? { waiting } : {}) };
+  }
   // Older messages' document links: a share of the time, a batch at a time.
   let read = 0;
   save("读消息里的文档链接", 0, 0);
@@ -470,7 +484,7 @@ async function runSweep(app: App, opts: { budget?: number; maxMs?: number }): Pr
   });
   const queued = chosen.length;
   const left = one<{ n: number }>(app.db, "select count(*) n from archive_recheck")!.n;
-  const report: SweepReport = { at: now(), followed, found, byRule, queued, left, links: { read, complete: docLinksComplete(app) }, ms: Math.round(performance.now() - start), stopped: clock.over() };
+  const report: SweepReport = { at: now(), followed, ...(kbHome ? { kbHome } : {}), found, byRule, queued, left, links: { read, complete: docLinksComplete(app) }, ms: Math.round(performance.now() - start), stopped: clock.over() };
   run(app.db, "insert into kv(key, value) values('archive_sweep_last', ?) on conflict(key) do update set value = excluded.value", JSON.stringify(report));
   save("完成", 1, 1);
   return report;

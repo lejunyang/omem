@@ -75,7 +75,7 @@ function refTables(app: App) {
 }
 
 /** Merge one pair: the docx copy's notes, level and references move to the wiki copy; it becomes an alias. */
-function mergePair(app: App, p: DuplicatePair) {
+function mergePair(app: App, p: Pick<DuplicatePair, "docx" | "wiki">, reason = "docx-wiki") {
   const d = one<{ text: string; attention: string | null; attention_by: string | null; deleted_at: string | null }>(app.db, "select text, attention, attention_by, deleted_at from sources where id = ?", p.docx.id);
   const w = one<{ text: string; attention: string | null; attention_by: string | null; deleted_at: string | null }>(app.db, "select text, attention, attention_by, deleted_at from sources where id = ?", p.wiki.id);
   if (!d || !w || d.deleted_at || w.deleted_at) return null;
@@ -128,7 +128,24 @@ function mergePair(app: App, p: DuplicatePair) {
   for (const t of ["chunks", "symbols", "code_refs"]) run(app.db, `delete from ${t} where source_id = ?`, p.docx.id);
   run(app.db, "update sources set deleted_at = ?, updated_at = ? where id = ?", now(), now(), p.docx.id);
   run(app.db, "update source_aliases set source_id = ? where source_id = ?", p.wiki.id, p.docx.id);
-  run(app.db, "insert or replace into source_aliases(alias_id, source_id, reason, detail, created_at) values(?, ?, 'docx-wiki', ?, ?)", p.docx.id, p.wiki.id, JSON.stringify(detail), now());
+  run(app.db, "insert or replace into source_aliases(alias_id, source_id, reason, detail, created_at) values(?, ?, ?, ?, ?)", p.docx.id, p.wiki.id, reason, JSON.stringify(detail), now());
+  return detail;
+}
+
+/**
+ * One copy absorbs another of the same document (the caller holds the transaction): the dropped copy's
+ * notes, level and references move to the kept one, whichever space each is in; its id becomes an alias.
+ */
+export function mergeSources(app: App, dropId: string, keepId: string, reason: string) {
+  const row = (id: string) => one<{ id: string; title: string; uri: string; space_id: string }>(app.db, "select id, title, uri, space_id from sources where id = ?", id);
+  const drop = row(dropId);
+  const keep = row(keepId);
+  if (!drop || !keep || dropId === keepId) return null;
+  const detail = mergePair(app, { docx: drop, wiki: keep }, reason);
+  if (detail) {
+    vectorIndex().evict([drop.space_id]);
+    app.emit({ type: "changed", entity: "source", id: keepId, spaceId: keep.space_id });
+  }
   return detail;
 }
 

@@ -5,6 +5,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
  * Renders only the rows near the viewport. Rows may have any height: each rendered row is
  * measured (ResizeObserver) and unmeasured rows use `estimate`. The list scrolls with the
  * nearest scrollable ancestor (or the window), so it can sit inside an existing page layout.
+ * Which ancestor that is can change after mounting (a pane that did not overflow while the list
+ * was short scrolls once it grows), so it is looked up again on every update, and scrolling is
+ * heard from any ancestor.
  * Rows that grow above the viewport shift the scroll position by the same amount, so what
  * you are reading does not jump.
  */
@@ -62,6 +65,7 @@ function lowerBound(y: number) {
 function update() {
   frame = 0;
   if (!root.value) return;
+  scroller = findScroller(root.value);
   const v = viewport();
   const top = v.top - listTop();
   const start = Math.max(0, lowerBound(top - props.overscan));
@@ -72,7 +76,14 @@ const schedule = () => {
   if (!frame) frame = requestAnimationFrame(update);
 };
 
+/** A scroll somewhere on the page: only one of the page or an ancestor moves this list. */
+function onScroll(e: Event) {
+  const t = e.target;
+  if (t === document || (t instanceof Node && root.value && t.contains(root.value))) schedule();
+}
+
 function measure(entries: ResizeObserverEntry[]) {
+  scroller = findScroller(root.value);
   let changed = false;
   let shift = 0;
   const next = new Map(heights.value);
@@ -109,6 +120,7 @@ function observeRows() {
 async function scrollToIndex(index: number, align: "start" | "center" = "center") {
   if (index < 0 || index >= props.items.length) return;
   const place = () => {
+    scroller = findScroller(root.value);
     const v = viewport();
     const y = listTop() + offsets.value[index] - (align === "center" ? Math.max(0, (v.height - (heights.value.get(keys.value[index]) ?? props.estimate)) / 2) : 0);
     if (scroller === window) window.scrollTo({ top: y });
@@ -127,14 +139,15 @@ defineExpose({ scrollToIndex });
 
 onMounted(() => {
   scroller = findScroller(root.value);
-  scroller.addEventListener("scroll", schedule, { passive: true });
+  // Scroll events do not bubble; capturing on the window hears every ancestor's.
+  window.addEventListener("scroll", onScroll, { passive: true, capture: true });
   window.addEventListener("resize", schedule);
   observer = new ResizeObserver(measure);
   update();
   void nextTick(observeRows);
 });
 onBeforeUnmount(() => {
-  scroller.removeEventListener("scroll", schedule);
+  window.removeEventListener("scroll", onScroll, { capture: true });
   window.removeEventListener("resize", schedule);
   observer?.disconnect();
   if (frame) cancelAnimationFrame(frame);

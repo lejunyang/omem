@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { computed, onMounted, ref } from "vue";
 import { get, post, put } from "../api";
 import { fmtTime, toast } from "../store";
@@ -135,7 +136,7 @@ const lastText = computed(() => {
       <UiCheckbox v-if="status" :model-value="status.enabled" switch @change="toggle">每天 4:30 运行</UiCheckbox>
       <button class="btn sm" :disabled="running" @click="runNow"><Icon name="play" :size="13" />{{ running ? "排队中…" : "立即运行" }}</button>
     </div>
-    <p class="muted small">挑最近的问题，回到提问时（那时的记忆、聊天和原件）重答两次：一次设置不变，一次只改一处（检索方式、原件级别、记忆、页面或模型）。两份回答先过引用检查，再由 replay-judge 两种顺序各评一次，一致才算胜负。结论用来把误导的记忆送回复核、给页面排检查、提原件级别的建议，并作为任务选型的参考；模型不会被自动换掉。</p>
+    <HelpText>挑最近的问题，回到提问时（那时的记忆、聊天和原件）重答两次：一次设置不变，一次只改一处（检索方式、原件级别、记忆、页面或模型）。两份回答先过引用检查，再由 replay-judge 两种顺序各评一次，一致才算胜负。结论用来把误导的记忆送回复核、给页面排检查、提原件级别的建议，并作为任务选型的参考；模型不会被自动换掉。</HelpText>
     <p v-if="failed" class="muted small">{{ failed }}</p>
     <template v-else-if="status">
       <p v-if="status.notice" class="warn small">
@@ -147,9 +148,9 @@ const lastText = computed(() => {
         <RouterLink class="muted" :to="{ path: '/agents', query: { tab: 'agents', role: 'replay-judge' } }">改</RouterLink>
         <span v-if="status.judge.sameFamilyAsAssistant" class="muted">（和主助手是同一家的模型，评判可能偏向同类写法；能选别家的更好）</span>
       </p>
-      <p class="muted small">
+      <HelpText>
         上次：{{ lastText }}。近 28 天：变体胜 {{ verdicts.win ?? 0 }}、基线胜 {{ verdicts.loss ?? 0 }}、持平 {{ verdicts.tie ?? 0 }}、作废 {{ verdicts.void ?? 0 }}<template v-if="status.days28.judged">；评判两种顺序一致 {{ status.days28.agreed }}/{{ status.days28.judged }}</template><template v-if="status.pendingEffects">；{{ status.pendingEffects }} 条建议待你决定（<RouterLink to="/agents">Agent 页</RouterLink>）</template>。
-      </p>
+      </HelpText>
     </template>
 
     <div class="row wrap">

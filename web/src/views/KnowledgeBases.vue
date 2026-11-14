@@ -34,6 +34,8 @@ type Kb = {
   proposal: Proposal | null;
   decidedBy: string | null;
   paused: boolean;
+  /** Its documents that sit in another space (文档里的链接跟着读进了别的空间、最近打开的留在个人空间); kept: put there by hand. */
+  strays: { away: number; kept: number; spaces: Record<string, number> } | null;
   progress: { nodes: number; captured: number; read: number; known: number; skipped: number; failed: number; lastReadAt: string | null; crawl: { status: string; queued: number } | null };
 };
 type Report = { at: string; found?: number; added?: number; gone?: number; walked?: number; errors?: string[]; skipped?: string; read?: number; budget?: number };
@@ -175,6 +177,33 @@ async function ignore(k: Kb) {
   await act(k, { action: "ignore" }, "不再读这个知识库");
 }
 
+// Documents of a filed knowledge base that sit in another space: bring them to its space.
+const strayTotal = computed(() => (data.value?.kbs ?? []).reduce((n, k) => n + (k.status === "mapped" && !k.goneAt ? (k.strays?.away ?? 0) : 0), 0));
+const strayText = (k: Kb) => Object.entries(k.strays?.spaces ?? {}).sort((a, b) => b[1] - a[1]).map(([s, n]) => `${spaceName(s)} ${n}`).join("、");
+type Rehome = { moved: number; merged: number; kept: number; failed: { title: string; error: string }[] };
+async function rehome(k?: Kb) {
+  const key = k?.id ?? "*";
+  busy.value = key;
+  try {
+    const q = k ? `?kb=${encodeURIComponent(k.id)}` : "";
+    const plan = await get<Rehome>(`/api/lark/kb-home${q}`);
+    if (!plan.moved && !plan.merged) return toast("没有要收回的文档", "ok");
+    const what = k ? `《${k.name}》` : "已归入空间的知识库";
+    const ok = await confirmDialog(`把 ${plan.moved + plan.merged} 篇文档收回到知识库所在的空间？`, {
+      message: `${what}有 ${plan.moved} 篇在别的空间，会移过去${plan.merged ? `；另有 ${plan.merged} 篇在目标空间已有同一篇，会并成一份` : ""}。原件的 id、标注和引用都不变，别的空间的页面照常能引用它们。${plan.kept ? `你手动放在别处的 ${plan.kept} 篇不动。` : ""}`,
+      okText: "收回",
+    });
+    if (!ok) return;
+    const r = await post<Rehome>("/api/lark/kb-home", k ? { kb: k.id } : {});
+    toast(`移动 ${r.moved} 篇，合并 ${r.merged} 篇${r.failed.length ? `，${r.failed.length} 篇没成（${r.failed[0].error}）` : ""}`, r.failed.length ? "error" : "ok");
+    await load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    busy.value = null;
+  }
+}
+
 // Changing the target: an existing space or a new one, with priority and initial level.
 const editing = ref<string | null>(null);
 const edit = reactive({ mode: "map" as "map" | "create", space: "", priority: "normal" as Priority, level: "normal" as Level, id: "", name: "", kind: "topic" as NewSpace["kind"], description: "" });
@@ -275,6 +304,10 @@ const lastReading = computed(() => {
           <span class="spacer" />
           <button class="btn ghost sm" :aria-expanded="settingsOpen" @click="settingsOpen = !settingsOpen"><Icon name="settings" :size="14" />{{ settingsOpen ? "收起设置" : "设置" }}</button>
         </div>
+        <div v-if="strayTotal" class="row wrap gap small strays">
+          <span>已归入空间的知识库里，有 {{ strayTotal }} 篇文档在别的空间（被别处的文档链接带进去的，或你最近打开后留在个人空间的）。</span>
+          <button class="btn sm" :disabled="busy === '*'" @click="rehome()">全部收回</button>
+        </div>
         <p v-for="(e, i) in data.discovery.last?.errors ?? []" :key="i" class="muted small">{{ e }}</p>
         <div v-if="settingsOpen" class="stack settings">
           <label class="field">
@@ -343,6 +376,10 @@ const lastReading = computed(() => {
               </div>
               <div class="muted">
                 已读 {{ k.progress.read }} 篇<template v-if="k.progress.known"> · 空间里已有 {{ k.progress.known }}</template><template v-if="k.progress.failed"> · 失败 {{ k.progress.failed }}</template> · 目录里见过 {{ k.progress.nodes }} 个页面<template v-if="k.progress.crawl"> · {{ k.progress.crawl.status === "done" ? "已读完，下周再看有没有新页面" : `还有 ${k.progress.crawl.queued} 项待看` }}</template><template v-if="k.progress.lastReadAt"> · 最近 {{ fmtTime(k.progress.lastReadAt) }}</template>
+              </div>
+              <div v-if="k.strays?.away" class="row wrap gap strays">
+                <span>另有 {{ k.strays.away }} 篇在别的空间：{{ strayText(k) }}</span>
+                <button class="btn ghost sm" :disabled="busy === k.id" @click="rehome(k)">收回到「{{ spaceName(k.targetSpace) }}」</button>
               </div>
             </div>
 
@@ -494,6 +531,9 @@ const lastReading = computed(() => {
   display: grid;
   gap: 2px;
   overflow-wrap: anywhere;
+}
+.strays {
+  align-items: center;
 }
 .mapped {
   display: grid;

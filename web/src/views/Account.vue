@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { del, get, logout, patch, post, put } from "../api";
 import UiSelect from "../components/UiSelect.vue";
+import AssistantsSettings from "../components/AssistantsSettings.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { fmtTime, state, toast } from "../store";
@@ -239,6 +240,8 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
         <p v-if="!acc.providers.length" class="muted small">还没有打开任何登录方式。</p>
       </div>
       <p v-if="aliases.length" class="muted small">渠道里的身份（机器人靠它认出你）：{{ aliases.map((a) => `${a.provider} ${a.externalId}`).join("、") }}</p>
+
+      <AssistantsSettings own />
 
       <h2 class="section-title">已连接的应用</h2>
       <div v-if="askScopes" class="card pad stack warn-box">

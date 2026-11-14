@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { computed, onMounted, ref } from "vue";
 import { del, get, put } from "../api";
 import Skeleton from "./Skeleton.vue";
@@ -57,7 +58,7 @@ onMounted(() => load().catch((e) => toast((e as Error).message, "error")));
 
 <template>
   <div class="stack">
-    <p class="muted">飞书里的回答引用了 omem 自己的东西（代码、工作文件、记忆、Wiki）时，发送那一刻会把被引的部分复制成一个只读分享，回答里的 (1) (2) 链接打开它。打开不用令牌，只能看到那条消息引用的部分；文档和飞书消息直接链到原处，不经过这里。</p>
+    <HelpText lead>飞书里的回答引用了 omem 自己的东西（代码、工作文件、记忆、Wiki）时，发送那一刻会把被引的部分复制成一个只读分享，回答里的 (1) (2) 链接打开它。打开不用令牌，只能看到那条消息引用的部分；文档和飞书消息直接链到原处，不经过这里。</HelpText>
     <div v-if="!webUrl" class="card pad warn-box">还没有填“网页地址”（设置 → 设备）：没有地址就不生成分享，回答里这类引用会直接省略。</div>
     <div class="field"><span>新分享的有效期</span><UiSelect :model-value="String(expiry)" width="200px" aria-label="新分享的有效期" :options="EXPIRY" @change="saveExpiry" /></div>
     <div class="row wrap">

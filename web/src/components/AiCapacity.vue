@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { onMounted, ref, watch } from "vue";
 import { del, get, post } from "../api";
 import Icon from "./Icon.vue";
@@ -81,13 +82,13 @@ const today = (l: Limit) => load.value?.daily?.find((d) => d.profile === l.profi
 <template>
   <div class="card pad stack">
     <div class="section-title">并行</div>
-    <p class="muted small">后台任务（整理、Wiki、评审、存量整理的每一批）和对话各有总数；每个模型另有上限，满了的任务会换到这个角色配置过的其他模型（Agent 档案里按后端设的模型）和兜底，都满了就排队。同一账号的 ACP 和命令行后端算一个。对话回复不排队，但算在模型的占用里。</p>
+    <HelpText>后台任务（整理、Wiki、评审、存量整理的每一批）和对话各有总数；每个模型另有上限，满了的任务会换到这个角色配置过的其他模型（Agent 档案里按后端设的模型）和兜底，都满了就排队。同一账号的 ACP 和命令行后端算一个。对话回复不排队，但算在模型的占用里。</HelpText>
     <div class="grid">
       <label class="field"><span>后台任务同时最多（1–32）</span><input v-model.number="draft.concurrency" class="input" type="number" inputmode="numeric" min="1" max="32" /></label>
       <label class="field"><span>对话同时最多（1–16）</span><input v-model.number="draft.interactiveConcurrency" class="input" type="number" inputmode="numeric" min="1" max="16" /></label>
       <label class="field"><span>每个模型默认最多（1–32）</span><input v-model.number="draft.perModel" class="input" type="number" inputmode="numeric" min="1" max="32" /></label>
     </div>
-    <p class="muted small">单独的上限：选具体模型是这个模型的上限，选“整个后端合计”是这个后端所有模型加起来的上限（可以不设，只靠模型上限）。设成 0 的不会被自动换用或被助手选中，只有你点名时才用。有的后端给部分模型设了每天的次数、又不告诉 omem 还剩多少：给这个模型填“每天最多”，omem 按自己记的当天（你的时区）在它上面开始的运行数算，到了就不再自动选它，直到第二天；后端报“今日额度用完”这类错误时，也会自动避开这个模型到第二天。</p>
+    <HelpText>单独的上限：选具体模型是这个模型的上限，选“整个后端合计”是这个后端所有模型加起来的上限（可以不设，只靠模型上限）。设成 0 的不会被自动换用或被助手选中，只有你点名时才用。有的后端给部分模型设了每天的次数、又不告诉 omem 还剩多少：给这个模型填“每天最多”，omem 按自己记的当天（你的时区）在它上面开始的运行数算，到了就不再自动选它，直到第二天；后端报“今日额度用完”这类错误时，也会自动避开这个模型到第二天。</HelpText>
     <div v-for="(l, i) in draft.limits" :key="i" class="row wrap lim">
       <UiSelect v-model="l.profile" size="sm" width="200px" aria-label="后端" :options="backendOptions()" @change="l.model = undefined" />
       <UiSelect :model-value="l.model ?? ''" size="sm" width="220px" aria-label="模型" :options="modelOptions(l)" @change="(v) => (l.model = v || undefined)" />
@@ -98,7 +99,7 @@ const today = (l: Limit) => load.value?.daily?.find((d) => d.profile === l.profi
     </div>
     <div><button class="btn sm" :disabled="draft.limits.length >= 100" @click="add"><Icon name="plus" :size="13" />添加上限</button></div>
     <div class="section-title">额度快用完时</div>
-    <p class="muted small">按下面读到的 Codex、Claude Code 套餐额度：满足任一条件的账号排到最后，后台任务先换用这个角色配置过的其他后端和兜底，助手交办时也会看到“避开”；本人发起的对话、点名用它的任务不受影响。</p>
+    <HelpText>按下面读到的 Codex、Claude Code 套餐额度：满足任一条件的账号排到最后，后台任务先换用这个角色配置过的其他后端和兜底，助手交办时也会看到“避开”；本人发起的对话、点名用它的任务不受影响。</HelpText>
     <div class="grid">
       <label class="field"><span>任一窗口用到（%）以上时避开（100 = 不避开）</span><input v-model.number="draft.quotaAvoidAbove" class="input" type="number" inputmode="numeric" min="50" max="100" /></label>
       <label class="field"><span>周额度剩余 ÷ 距重置天数 低于（%/天）时避开（0 = 不看）</span><input v-model.number="draft.quotaPerDayBelow" class="input" type="number" inputmode="decimal" min="0" max="100" step="0.5" /></label>

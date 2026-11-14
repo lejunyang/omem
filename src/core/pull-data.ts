@@ -60,6 +60,8 @@ export const pullTables: Table[] = [
   // Feishu knowledge-base tree (sources/catalog.ts): what was read last wins.
   { name: "wiki_spaces", key: ["id"], newer: "max(coalesce(checked_at, ''), coalesce(updated_at, ''))" },
   { name: "wiki_nodes", key: ["token"], newer: "coalesce(checked_at, '')" },
+  { name: "wiki_node_homes", key: ["token"], newer: "at" },
+  { name: "reply_samples", key: ["id"], newer: "max(created_at, coalesce(decided_at, ''), coalesce(settled_at, ''))" },
   { name: "source_node_levels", key: ["space_id", "node_key"], newer: "updated_at" },
   { name: "source_cites", key: ["source_id", "ref"] },
   { name: "source_aliases", key: ["alias_id"] },

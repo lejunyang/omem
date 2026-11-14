@@ -147,6 +147,7 @@ function sessionRun(app: App, scope: PeerAgentScope, spaceId: string) {
       title: truncate(userId === OWNER ? `设备 ${caller} 的外部 Agent（${session}）` : `${userName(app, userId)} 在 ${caller} 上的外部 Agent（${session}）`, 80),
       input: { caller, session, agent: scope.agent ? clean(scope.agent, 60, "") : undefined, model: scope.model ? clean(scope.model, 80, "") : undefined, effort: scope.effort ? clean(scope.effort, 40, "") : undefined, readOnly: scope.readOnly || undefined, spaces: scope.spaces, via: scope.via },
       userId: userId === OWNER ? null : userId,
+      trigger: { via: "peer", by: { key: `user:${userId}`, name: userId === OWNER ? "你" : userName(app, userId) }, where: caller, source: { kind: "peer", id: caller, name: caller } },
     });
     // Claimed before the worker's next look (it runs on a microtask after this synchronous step);
     // a run left over from a restart is finished by the handler in jobs.ts.

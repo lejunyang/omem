@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { idQuery } from "../../../src/core/id-query";
 import { useRoute, useRouter } from "vue-router";
-import { aiLabel, get, onServerEvent, onServerResync, post, type Run, type RunEvent } from "../api";
+import { aiLabel, get, onServerEvent, onServerResync, post, triggerLabel, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
@@ -39,6 +39,16 @@ const keyword = ref("");
 const showQuiet = ref(false);
 /** One status to show; empty: all. */
 const statusFilter = ref<"" | "queued" | "running" | "failed">("");
+// The person behind a run (someone asking the bot, someone looking for you, a member, yourself).
+const byFilter = ref("");
+const people = ref<{ key: string; name: string; runs: number }[]>([]);
+const byOptions = computed(() => [{ value: "", label: "所有人" }, ...people.value.map((p) => ({ value: p.key, label: p.name, hint: `近 30 天 ${p.runs} 次` })), ...(byFilter.value && !people.value.some((p) => p.key === byFilter.value) ? [{ value: byFilter.value, label: byFilter.value }] : [])]);
+const loadPeople = () => get<{ people: { key: string; name: string; runs: number }[] }>("/api/runs/triggerers").then((r) => (people.value = r.people)).catch(() => {});
+function filterBy(key: string) {
+  view.value = "all";
+  scope.value = "all";
+  byFilter.value = key;
+}
 const statusOptions = [{ value: "" as const, label: "全部" }, { value: "queued" as const, label: "排队中" }, { value: "running" as const, label: "进行中" }, { value: "failed" as const, label: "失败" }];
 type Brief = { id: string; kind: string; title: string; status: string };
 type RunContextInfo = {
@@ -95,6 +105,7 @@ function pageQuery() {
   if (kindFilter.value.length) q.set("kind", kindFilter.value.join(","));
   if (showQuiet.value) q.set("all", "true");
   if (statusFilter.value) q.set("status", statusFilter.value);
+  if (byFilter.value) q.set("by", byFilter.value);
   return q;
 }
 function loadPage(offset: number, query = pageQuery()) {
@@ -142,6 +153,8 @@ watch(scope, load);
 watch(kindFilter, load);
 watch(showQuiet, load);
 watch(statusFilter, load);
+watch(byFilter, load);
+onMounted(loadPeople);
 watch(() => state.space, load);
 let keywordTimer: ReturnType<typeof setTimeout> | undefined;
 watch(keyword, () => {
@@ -297,6 +310,7 @@ const kindOptions = computed(() => [
         <template v-if="view === 'all'">
           <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
           <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
+          <div class="by-filter"><UiSelect v-model="byFilter" size="sm" width="132px" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" /></div>
           <UiCheckbox v-model="showQuiet" size="sm" class="small muted quiet" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
         </template>
         <UiSegmented v-model="scope" class="scope-filter" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
@@ -313,6 +327,7 @@ const kindOptions = computed(() => [
               <div class="grow">
                 <div class="ellipsis">{{ r.title }}</div>
                 <div class="muted small ellipsis">{{ runKindLabel[r.kind] ?? r.kind }} · {{ statusLabel[r.status] }} · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template><template v-if="aiLabel(r)"> · <span class="mono">{{ aiLabel(r) }}</span></template></div>
+                <div v-if="r.trigger && (r.trigger.via !== 'chat' || r.trigger.by?.key !== 'user:owner')" class="muted small ellipsis by" :title="triggerLabel(r.trigger, true)"><Icon :name="r.trigger.by ? 'user' : r.trigger.via === 'schedule' ? 'clock' : 'zap'" :size="11" />{{ triggerLabel(r.trigger) }}</div>
                 <div v-if="r.waiting" class="muted small ellipsis" :title="r.waiting">{{ r.waiting }}</div>
               </div>
             </router-link>
@@ -341,6 +356,7 @@ const kindOptions = computed(() => [
             <span class="muted">{{ fmtTime(detail.run.createdAt) }}<template v-if="detail.run.finishedAt"> → {{ fmtTime(detail.run.finishedAt) }}</template></span>
             <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· <span class="mono">{{ aiLabel(detail.run) }}</span></span>
             <span v-if="detail.run.spaceId" class="muted">· {{ spaceName(detail.run.spaceId) }}</span>
+            <span v-if="detail.run.trigger" class="muted">· 触发：<button v-if="detail.run.trigger.by" class="linkish" type="button" title="看这个人触发的全部运行" @click="filterBy(detail.run.trigger.by.key)">{{ detail.run.trigger.by.name }}</button><template v-if="detail.run.trigger.by"> · </template>{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</span>
             <router-link v-for="it in ctxInfo?.items ?? []" :key="it.id" :to="`/items/${it.id}`" class="item-link" :title="it.title">事项：{{ it.title }}</router-link>
           </div>
           <h1 :title="hintOf(detail.run)">{{ detail.run.title }}</h1>
@@ -505,7 +521,7 @@ const kindOptions = computed(() => [
     "search search search"
     "status status status"
     "scope scope quiet"
-    "kind kind kind";
+    "kind kind by";
   row-gap: 8px;
   align-items: center;
 }
@@ -522,6 +538,10 @@ const kindOptions = computed(() => [
 .head .delegate { grid-area: delegate; }
 .head .kind-filter { grid-area: kind; justify-self: start; }
 .head .status-filter { grid-area: status; justify-self: start; }
+.head .by-filter { grid-area: by; justify-self: end; align-self: start; }
+.run .by { display: flex; align-items: center; gap: 4px; }
+.linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.linkish:hover { text-decoration: underline; }
 .head .scope-filter { grid-area: scope; justify-self: start; }
 .head .quiet { grid-area: quiet; justify-self: end; white-space: nowrap; }
 .sm-select {

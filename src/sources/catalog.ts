@@ -376,6 +376,8 @@ export type TreeEntry = {
   url?: string;
   updatedAt?: string;
   unnamed?: boolean;
+  /** A knowledge-base directory filed under a space of its own (sources/kb-home.ts). */
+  home?: string;
 };
 
 const emptyLevels = (): Record<Level, number> => ({ focus: 0, normal: 0, reference: 0, ignore: 0 });
@@ -405,6 +407,7 @@ export function treeChildren(app: App, spaceId: string, key: string, f: TreeFilt
   }
   const levels = new Map(nodeLevels(app, spaceId, { all: true }).map((l) => [l.key, l]));
   const visible = (k: string) => (filtering ? (stats.get(k)?.count ?? 0) > 0 : true);
+  const homes = new Map(all<{ token: string; space_id: string }>(app.db, "select token, space_id from wiki_node_homes").map((h) => [`wn:${h.token}`, h.space_id]));
   const nodes: TreeEntry[] = [];
   for (const k of cat.children.get(key) ?? []) {
     if (!visible(k)) continue;
@@ -426,6 +429,7 @@ export function treeChildren(app: App, spaceId: string, key: string, f: TreeFilt
       ...(n.uncaptured ? { uncaptured: true } : {}),
       ...(n.url ? { url: n.url } : {}),
       ...(n.unnamed ? { unnamed: true } : {}),
+      ...(homes.has(k) ? { home: homes.get(k) } : {}),
     });
   }
   const path: { key: string; title: string }[] = [];

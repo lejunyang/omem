@@ -7,6 +7,7 @@ import { HttpError, truncate } from "../core/util.ts";
 import { getRun, setRunOutput } from "../agents/runs.ts";
 import type { MentionInfo, Replied } from "../mentions/channel.ts";
 import { mentionOf } from "../mentions/mentions.ts";
+import { DROP_REASONS, noteDecision, type DropReason } from "../mentions/reply-learn.ts";
 
 /**
  * Answering the person who looked for the owner on Feishu (docs/v2/mentions.md “回复对方”; the tool
@@ -55,7 +56,8 @@ function draftBlocks(app: App, m: MentionInfo, text: string, withHead: boolean) 
     { markdown: withHead ? `**拟好的回复**（${how}；发之前可以改）` : `${whereOf(m)}${m.what ? `：${m.what}` : ""}
 发送方式：${how}` },
     { form: { name: "mention_reply", fields: [{ type: "input" as const, name: "reply", label: "回复内容（可以直接改）", multiline: true, default: text.slice(0, 2000) }], submit: "发送" } },
-    { buttons: [{ text: "不发", value: "drop" }] },
+    // Not sending says why: what the next drafts learn from (mentions/reply-learn.ts).
+    { buttons: Object.entries(DROP_REASONS).map(([reason, text]) => ({ text: reason === "no-need" || reason === "self" ? text : `不发：${text}`, value: `drop:${reason}` })) },
   ];
 }
 
@@ -81,7 +83,7 @@ export async function draftMentionReply(app: App, runId: string, m: MentionInfo,
 }
 
 /** The owner answered the draft card (lark-actions.ts). Returns the card to show instead. */
-export async function decideMentionReply(app: App, payload: { runId: string; text: string; head?: DraftHead }, send: boolean, edited: string | null, by: string) {
+export async function decideMentionReply(app: App, payload: { runId: string; text: string; head?: DraftHead }, send: boolean, edited: string | null, by: string, reason: string | null = null) {
   const { buildCard: build, decidedBlocks } = await import("./lark-send.ts");
   // A reminder carrying the draft keeps what it said; only the draft part becomes the decision.
   const head = payload.head;
@@ -91,9 +93,12 @@ export async function decideMentionReply(app: App, payload: { runId: string; tex
   const decided = { by, at: new Date().toISOString(), timeZone: app.config.timezone };
   if (!m) throw new HttpError(404, "找不到这次处理");
   if (!send || !text) {
-    audit(app, OWNER, "lark.mention-reply.drop", m.chatId, { runId: payload.runId });
-    return buildCard({ title: "没有回复", color: "grey", blocks: [{ markdown: `${whereOf(m)}：${truncate(payload.text, 600)}` }, ...decidedBlocks({ ...decided, verdict: "决定不发" })] });
+    audit(app, OWNER, "lark.mention-reply.drop", m.chatId, { runId: payload.runId, reason });
+    noteDecision(app, payload.runId, "dropped", null, reason);
+    const why = reason && reason in DROP_REASONS ? DROP_REASONS[reason as DropReason] : "";
+    return buildCard({ title: "没有回复", color: "grey", blocks: [{ markdown: `${whereOf(m)}：${truncate(payload.text, 600)}` }, ...decidedBlocks({ ...decided, verdict: why ? `决定不发（${why}）` : "决定不发" })] });
   }
+  noteDecision(app, payload.runId, text === payload.text.trim() ? "sent" : "edited", text, null);
   if (viaDoubao(app, m)) {
     // Doubao and the check after it take far longer than a card callback may: the result comes as a reminder.
     void sendMentionReply(app, payload.runId, text, "owner", true).catch((e) => {

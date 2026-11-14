@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { ref, watch } from "vue";
 import AiDefaults from "./AiDefaults.vue";
 import UiCheckbox from "./UiCheckbox.vue";
@@ -27,11 +28,11 @@ function save() {
 <template>
   <div class="card pad stack">
     <div class="section-title">任务选型</div>
-    <p class="muted small">平时用档案里设的 AI。你在对话里点名要某个模型时，助手临时换用；打开下面的开关，助手交办时会按偏好自己挑，没指定 AI 的运行也可以在开始前自动选。每次换用和理由都记在运行里。</p>
+    <HelpText>平时用档案里设的 AI。你在对话里点名要某个模型时，助手临时换用；打开下面的开关，助手交办时会按偏好自己挑，没指定 AI 的运行也可以在开始前自动选。每次换用和理由都记在运行里。</HelpText>
     <UiCheckbox v-model="draft.automatic" switch>允许按任务自动选择 AI</UiCheckbox>
     <label class="field"><span>总体偏好</span><textarea v-model="draft.guidance" class="input" rows="4" maxlength="8000" placeholder="例如：简单整理优先快模型；涉及多个模块的改动用较强的推理模型；评审尽量用不同于编码的模型。" /></label>
     <div class="section-title">运行前自动选</div>
-    <p class="muted small">没有指定 AI 的运行，开始前从下面的候选和它原来的 AI 里挑一个：按总体偏好、各候选的适用说明、现在的时间、占用和账号额度。决策模型（设置 → AI → 决策）一两秒就能选完；“总是选”在没有决策模型时让通用模型选（多等十几秒）。选中的先用，原来的 AI 和兜底排在后面，出错照样换。规则指定的 AI、助手交办时选的 AI、对话里 /model 选的不会被改。</p>
+    <HelpText>没有指定 AI 的运行，开始前从下面的候选和它原来的 AI 里挑一个：按总体偏好、各候选的适用说明、现在的时间、占用和账号额度。决策模型（设置 → AI → 决策）一两秒就能选完；“总是选”在没有决策模型时让通用模型选（多等十几秒）。选中的先用，原来的 AI 和兜底排在后面，出错照样换。规则指定的 AI、助手交办时选的 AI、对话里 /model 选的不会被改。</HelpText>
     <div class="choose">
       <span class="small">和助手的对话（新开 Agent 会话时选，会话延续期间不换）</span>
       <UiSegmented v-model="draft.choose.conversation" size="sm" aria-label="对话" :options="[OFF, DECISION]" />
@@ -44,7 +45,7 @@ function save() {
       <span class="small">点名的 AI（规则指定、交办时选的、本人指定的）排队、限流、额度用完或出故障时</span>
       <UiSegmented v-model="draft.pinnedFallback" size="sm" aria-label="点名的 AI 不可用时" :options="[{ value: 'unavailable', label: '换兜底和候选' }, { value: 'never', label: '不换，直接失败' }]" />
     </div>
-    <p class="muted small">换了的运行里写明“原指定的 AI、为什么换、换成了谁”。每次运行开始前选了谁、为什么没有选（关着、没有候选、点名了 AI），也都记在运行详情里。</p>
+    <HelpText>换了的运行里写明“原指定的 AI、为什么换、换成了谁”。每次运行开始前选了谁、为什么没有选（关着、没有候选、点名了 AI），也都记在运行详情里。</HelpText>
     <p class="muted small">候选：列出可以换用的后端和模型，各写一句适合什么任务。后端出错、额度用完时，候选也排在兜底后面接手。</p>
     <div v-for="(c, i) in draft.candidates" :key="i" class="candidate stack">
       <div class="row"><strong class="small">候选 {{ i + 1 }}</strong><span class="spacer" /><button class="btn ghost sm danger" @click="draft.candidates.splice(i, 1)">移除</button></div>

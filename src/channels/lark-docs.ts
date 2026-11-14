@@ -9,6 +9,8 @@ import { accessibleSpaces } from "../core/users.ts";
 import { keepOriginal } from "../sources/import.ts";
 import { hasStoredFile } from "../core/stored-files.ts";
 import { sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
+import { moveSource, sourceRoute } from "../sources/archive.ts";
+import { kbHomeFor, noteKbRoute, pinned, type KbHome } from "../sources/kb-home.ts";
 import { larkActing, larkCli } from "./lark-cli.ts";
 import { clearWikiLocationCache } from "./lark-wiki.ts";
 import { withExtension } from "./lark-messages.ts";
@@ -25,7 +27,8 @@ import { withExtension } from "./lark-messages.ts";
  *   the source's meta, so a re-read only fetches new media;
  * - embedded sheets become Markdown tables; bitables stay links;
  * - synced blocks are read from their source document;
- * - linked docs (`<cite>` and plain links) are imported into the same space and the
+ * - linked docs (`<cite>` and plain links) are imported into the same space (a knowledge-base
+ *   document into the space its knowledge base is filed under, sources/kb-home.ts) and the
  *   link becomes `src:<id>`, `lark.capture.docLinkDepth` levels deep (at most
  *   `docMaxLinked` per doc); beyond that, links point at local copies when those exist.
  *   Docs that cannot be read are kept as Feishu links, the owner is told once, and
@@ -369,6 +372,12 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
   return layout(out);
 }
 
+/** A callout's Feishu background colour (light-orange, red, …) as one the page draws (web/src/styles.css). */
+function calloutColor(name: string | undefined) {
+  const c = /red|orange|yellow|green|blue|purple|gr[ae]y/.exec(name ?? "")?.[0];
+  return c ? ` data-color="${c === "grey" ? "gray" : c}"` : "";
+}
+
 /**
  * DocxXML layout blocks → HTML. Markdown inside an HTML block is only parsed after a blank line,
  * so grids, columns and callouts get blank lines around their tags.
@@ -382,7 +391,7 @@ function layout(text: string) {
       return `\n\n<div class="doc-col"${ratio > 0 ? ` style="flex-grow: ${Math.round(ratio * 100)}"` : ""}>\n\n`;
     })
     .replace(/<\/column>/g, "\n\n</div>\n\n")
-    .replace(/<callout\b[^>]*>/g, (tag) => `\n\n<blockquote class="doc-callout">\n\n${attrs(tag).emoji ? `${attrs(tag).emoji} ` : ""}`)
+    .replace(/<callout\b[^>]*>/g, (tag) => `\n\n<blockquote class="doc-callout"${calloutColor(attrs(tag)["background-color"])}>\n\n${attrs(tag).emoji ? `${attrs(tag).emoji} ` : ""}`)
     .replace(/<\/callout>/g, "\n\n</blockquote>\n\n")
     .replace(/<button\b[^>]*?\bsrc="([^"]*)"[^>]*>/g, '<a href="$1">')
     .replace(/<\/button>/g, "</a>")
@@ -576,6 +585,26 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   // One copy per document (sources/duplicates.ts): a knowledge-base page is kept under its /wiki/ link,
   // whichever link came first — a docx link finds the wiki copy, a wiki link finds an older docx copy.
   const wikiUrl = wiki?.nodeToken && wiki.nodeType !== "shortcut" ? `${origin}/wiki/${wiki.nodeToken}` : null;
+  // A knowledge-base document lives where its knowledge base (or its directory) is filed, whichever
+  // space asked for it — a link followed from a document of another space, a link in a chat
+  // (sources/kb-home.ts). A copy the owner moved by hand stays where they put it.
+  const asked = spaceId;
+  const home = kbHomeFor(app, wikiMeta, spaceId, larkActing()?.userId);
+  let redirected: KbHome | null = null;
+  if (home && home.space !== spaceId) {
+    const here = existing ?? (wikiUrl ? findLarkDoc(app, spaceId, wikiUrl, !!opts.archive) : undefined);
+    const hereSpace = here ? one<{ space_id: string }>(app.db, "select space_id from sources where id = ?", here.id)?.space_id : null;
+    if (!(here && hereSpace !== home.space && pinned(sourceRoute(app, here.id)))) {
+      const there = hereSpace === home.space ? here
+        : findLarkDoc(app, home.space, url) ?? (wikiUrl ? findLarkDoc(app, home.space, wikiUrl) : undefined) ?? (doc.documentId ? findLarkDoc(app, home.space, `${origin}/docx/${doc.documentId}`) : undefined);
+      // No copy at home yet: the one here moves there (a copy at home takes over; the stray one is merged by the nightly pass).
+      if (!there && here) moveSource(app, here.id, home.space, home.why, "binding");
+      existing = there ?? here;
+      prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
+      spaceId = home.space;
+      redirected = home;
+    }
+  }
   if (!existing && wikiUrl) {
     existing = findLarkDoc(app, spaceId, wikiUrl, !!opts.archive) ?? (doc.documentId ? findLarkDoc(app, spaceId, `${origin}/docx/${doc.documentId}`, !!opts.archive) : undefined);
     prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
@@ -595,6 +624,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     if (opts.archive) upsertSource(app, { archive: true, spaceId, kind: "doc", uri, title: existing.title, text: sourceText(app, existing.id), meta });
     run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), existing.id);
     if (wiki) linkWikiSource(app, wiki.nodeToken, existing.id);
+    if (redirected) noteKbRoute(app, existing.id, asked, uri, redirected);
     return { id: existing.id, status: "unchanged", related: [], missing: [] };
   }
 
@@ -614,7 +644,8 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   let followed = 0;
   const childUrls = new Set(children.map((c) => c.url));
   for (const link of links.values()) {
-    const have = findLarkDoc(app, spaceId, link.url, !!opts.archive);
+    // A linked document may live in its knowledge base's space: found through where it was asked for.
+    const have = findLarkDoc(app, spaceId, link.url, true);
     const fresh = have && Date.now() - Date.parse(have.updated_at) < (opts.freshMs ?? 86400_000);
     if (have && (fresh || depth <= 0)) {
       local.set(link.url, { id: have.id, title: have.title });
@@ -675,6 +706,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const r = upsertSource(app, { archive: opts.archive, spaceId, kind: "doc", uri, title: doc.title, text, meta });
   if (r.status === "unchanged") run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), r.id);
   if (wiki) linkWikiSource(app, wiki.nodeToken, r.id);
+  if (redirected) noteKbRoute(app, r.id, asked, uri, redirected);
   if (missing.length) unreadable.push(...recordMissing(app, spaceId, r.id, doc.title, missing));
   // Linked docs that link back were saved before this one existed.
   if (r.status === "created") for (const id of related) relinkParent(app, id, url, r.id, doc.title);

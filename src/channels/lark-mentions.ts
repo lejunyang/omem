@@ -119,6 +119,20 @@ const lark: MentionChannel = {
     const chat = one<{ value: string }>(app.db, "select value from kv where key = 'lark_owner_chat'")?.value;
     return chat ? one<{ id: string }>(app.db, "select id from conversations where channel = 'lark' and external_id = ? and status = 'active' order by updated_at desc limit 1", chat)?.id ?? null : null;
   },
+  // The owner's own messages after the ask: under it (a quote reply, the topic), or the next ones in a
+  // private chat; in a group's main stream only within two hours. Signed ones were sent by omem.
+  ownerSaid: (app, at, afterMs, beforeMs) => {
+    const signature = app.config.lark.commands.signature.trim();
+    const ids = at.messageIds.length ? at.messageIds : [""];
+    const rows = all<{ content: string; create_ms: number; parent_id: string | null; thread_id: string | null }>(app.db,
+      `select content, create_ms, parent_id, thread_id from lark_messages where chat_id = ? and sender_kind = 'owner' and create_ms > ? and create_ms < ? and msg_type in ('text', 'post') order by create_ms limit 20`,
+      at.chatId, afterMs, beforeMs);
+    return rows
+      .filter((r) => (r.parent_id && ids.includes(r.parent_id)) || (at.topicId ? r.thread_id === at.topicId : at.chatKind === "p2p" || (!r.thread_id && r.create_ms < afterMs + 2 * 3600_000)))
+      .filter((r) => r.content.trim() && !(signature && r.content.includes(signature)))
+      .slice(0, 3)
+      .map((r) => ({ text: r.content, atMs: r.create_ms }));
+  },
   readHint: "消息里的文档已收进来的用 search / read_source 读，没收进来的飞书文档用 lark_doc_fetch（只读）。",
   reply: {
     mode: (app, kind) => app.config.mentions.reply.lark[kind],

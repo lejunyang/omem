@@ -602,6 +602,13 @@ export const configSchema = z.object({
             agent: z.string().min(1).default("assistant"),
             enabled: z.boolean().default(true),
             ownerOpenId: z.string().optional(),
+            /** Whose assistant this bot is (src/agents/assistants.ts): a member's runs as that member; left out, the owner's. `ownerOpenId` is then that person's id in this app. */
+            userId: z.string().max(64).optional(),
+            /** What the assistant is called and what it is for (shown to the other bots and on the node's card). */
+            name: z.string().max(40).optional(),
+            description: z.string().max(200).optional(),
+            /** Turns a day in this bot's conversations; past it the sender is told to come back tomorrow. */
+            dailyRuns: z.number().int().min(1).max(100000).optional(),
           }),
         )
         .default([])

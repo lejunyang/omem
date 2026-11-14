@@ -80,6 +80,12 @@ export type MentionChannel = {
   handedLines(app: App, sourceIds: string[], since: string): string[];
   /** The owner's own conversation with omem on this channel: a handling's home, so a reply to its reminder carries on there. */
   ownerConversation(app: App): string | null;
+  /**
+   * What the owner wrote there themselves between two moments, oldest first: in the topic, as a reply to
+   * the messages, or (a private chat, a group's main stream) in the chat. Not what omem sent for them.
+   * A channel without it: samples only know what became of drafts (reply-learn.ts).
+   */
+  ownerSaid?(app: App, at: { chatId: string; chatKind: "p2p" | "group"; topicId: string | null; messageIds: string[] }, afterMs: number, beforeMs: number): { text: string; atMs: number }[];
   /** How to read more, for the handler's task (documents the messages link to, say). */
   readHint: string;
   /** Answering the asker. A channel without it: the reply is only ever suggested in the reminder. */

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { computed, nextTick, onMounted, ref } from "vue";
 import { del, get, patch, post, put } from "../api";
 import type { Provider } from "./ProviderApps.vue";
@@ -321,7 +322,7 @@ onMounted(() => load().catch(fail));
 
       <h2 class="section-title">按邮箱添加成员</h2>
       <div class="card pad stack">
-        <p class="muted small">先建好账号、分好空间。之后谁用这个邮箱来——飞书本企业的账号登录，或从命令行带着鉴权插件认得的凭据——就直接对应到这个账号，不用再批准。</p>
+        <HelpText>先建好账号、分好空间。之后谁用这个邮箱来——飞书本企业的账号登录，或从命令行带着鉴权插件认得的凭据——就直接对应到这个账号，不用再批准。</HelpText>
         <div class="row wrap">
           <input v-model="ahead.name" class="input" placeholder="名字" maxlength="60" aria-label="名字" />
           <input v-model="ahead.email" class="input" type="email" placeholder="邮箱" maxlength="200" aria-label="邮箱" />
@@ -382,7 +383,7 @@ onMounted(() => load().catch(fail));
 
       <h2 class="section-title">角色</h2>
       <div class="card pad stack">
-        <p class="muted small">全局角色决定能不能改 Agent、规则、建空间等全库共用的事，也可以给“所有空间”的权限（别人的个人空间除外）；空间角色决定在一个空间里能读、写什么。内置角色不能改，复制一份再改。</p>
+        <HelpText>全局角色决定能不能改 Agent、规则、建空间等全库共用的事，也可以给“所有空间”的权限（别人的个人空间除外）；空间角色决定在一个空间里能读、写什么。内置角色不能改，复制一份再改。</HelpText>
         <div v-if="draft" class="card pad stack editor">
           <strong>{{ draft.id ? "编辑角色" : `新建${draft.scope === "global" ? "全局" : "空间"}角色` }}</strong>
           <input v-model="draft.name" class="input" placeholder="名字，如：审稿人" maxlength="40" />

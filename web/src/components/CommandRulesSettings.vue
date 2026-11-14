@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HelpText from "./HelpText.vue";
 import { computed, onMounted, ref } from "vue";
 import { get, put } from "../api";
 import Skeleton from "./Skeleton.vue";
@@ -108,9 +109,9 @@ onMounted(() => load().catch((e) => toast((e as Error).message, "error")));
       <button class="btn ghost sm" :disabled="!rules" @click="add">添加规则</button>
       <button class="btn primary sm" :disabled="!dirty || saving" @click="save">{{ saving ? "保存中…" : "保存" }}</button>
     </div>
-    <p class="muted small">
+    <HelpText>
       Agent（以及规则里的脚本）通过 PATH 执行这里列出的命令时，先问 omem：需要审批的会给审批人发卡片，批准后才执行；没等到批准，命令以退出码 126 返回，批准后唤醒发起的运行，让它原样重跑。规则从上到下匹配，第一条命中的生效，都不命中就放行；“放行”用来在更宽的规则前开口子。参数模式是正则，匹配按空格连起来的参数，留空表示任何参数。
-    </p>
+    </HelpText>
     <div class="card pad small muted stack">
       <span>能拦住：shell 直接执行、shell 脚本、Python 的 subprocess、Node 的 spawn / execFile 等经 PATH 查找的调用。拦不住：用绝对路径调用、Agent 自己改 PATH 或删掉拦截目录、直接调命令背后的接口。它防的是误操作和默认路径，不是对抗性的 Agent；真正要保护的凭据不要放在 Agent 进程能读到的地方。</span>
       <span v-if="platform === 'win32'">这台是 Windows：cmd、PowerShell、Git Bash 里按名字执行能拦住；Node 不带 shell 的 execFile、Python 列表形式的 subprocess 只找 .exe，若真正的命令是 .exe，这两种调用拦不住。</span>

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { linkifyPaths, renderMarkdown, renderMermaid } from "../lib/markdown";
+import { layoutCallouts, sizeTables } from "../lib/doc-layout";
 import { openCitation, state } from "../store";
 
 /** `runId`: the text is about a coding run (a review finding); `路径:行` opens that run's file instead of an indexed original. */
@@ -15,6 +16,8 @@ async function enhance() {
   await nextTick();
   if (!root.value) return;
   if (props.linkify) linkifyPaths(root.value);
+  layoutCallouts(root.value);
+  sizeTables(root.value);
   if (props.existingPages) {
     const set = new Set(props.existingPages);
     for (const a of root.value.querySelectorAll<HTMLAnchorElement>("a.wikilink")) {

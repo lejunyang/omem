@@ -6,6 +6,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now, localStamp } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
+import { triggerFor, type RunTrigger } from "../core/run-trigger.ts";
 
 export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -28,6 +29,8 @@ export type Run = {
   startedAt: string | null;
   finishedAt: string | null;
   lane: string | null;
+  /** How it came about and who was behind it (core/run-trigger.ts); null: the system's own work. */
+  trigger: RunTrigger | null;
 };
 type Row = {
   id: string;
@@ -47,6 +50,7 @@ type Row = {
   lane: string | null;
   not_before: string | null;
   quiet: number;
+  trigger: string | null;
 };
 const toRun = (r: Row): Run => ({
   id: r.id,
@@ -65,6 +69,7 @@ const toRun = (r: Row): Run => ({
   finishedAt: r.finished_at,
   lane: r.lane ?? null,
   quiet: !!r.quiet,
+  trigger: r.trigger ? json<RunTrigger | null>(r.trigger, null) : null,
 } as Run);
 
 export function createRun(
@@ -81,15 +86,18 @@ export function createRun(
     notBefore?: string | null;
     /** Who asked for it (for per-user history and limits). */
     userId?: string | null;
+    /** How it came about and who was behind it; left out, read from the input or taken over from the parent run (core/run-trigger.ts). */
+    trigger?: RunTrigger | null;
   },
 ) {
   const id = newId("r");
   // The spaces it can read at most (src/auth/permissions.ts canReadRun: who else may read the run). Null: everything, the owner's.
   const asked = Array.isArray(input.input?.spaces) ? (input.input!.spaces as string[]) : null;
   const scope = scopeFor(app, input.userId ?? "owner", asked);
+  const trigger = triggerFor(app, input);
   run(
     app.db,
-    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before,user_id,scope) values(?,?,?,?,?,?,?,?,?,?,?,?)",
+    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before,user_id,scope,trigger,trigger_by) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     id,
     input.kind,
     input.spaceId ?? null,
@@ -102,6 +110,8 @@ export function createRun(
     input.notBefore ?? null,
     input.userId ?? null,
     scope === null ? null : JSON.stringify(scope),
+    trigger ? JSON.stringify(trigger) : null,
+    trigger?.by?.key ?? null,
   );
   app.emit({ type: "run", runId: id, status: "queued" });
   queueMicrotask(() => kick(app));
@@ -157,13 +167,13 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; visibleTo?: { userId: string; spaces: string[] } };
+type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; visibleTo?: { userId: string; spaces: string[] } };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
  * the runs a built-in role took part in. Any of them matches; `exclude` lists kinds left out (the run
  * page lists coding work on its own). `q` matches the title, the id or the
- * task. `visibleTo`: someone other than the owner sees their own runs, and those whose every
+ * task. `by`: the person behind it (a trigger key, `user:<id>` / `lark:<open_id>` …). `visibleTo`: someone other than the owner sees their own runs, and those whose every
  * readable space is in `spaces` (src/auth/permissions.ts canReadRun).
  */
 function runWhere(opts: RunFilter) {
@@ -192,6 +202,7 @@ function runWhere(opts: RunFilter) {
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.spaceIds?.length) where.push(`space_id in (${opts.spaceIds.map(() => "?").join(",")})`), params.push(...opts.spaceIds);
   if (opts.status) where.push("status = ?"), params.push(opts.status);
+  if (opts.by) where.push("trigger_by = ?"), params.push(opts.by);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
   if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
   const q = opts.q?.trim();

@@ -11,6 +11,7 @@ import { ownerContextParts } from "../agents/owner-now.ts";
 import { rulesNaming } from "../rules/store.ts";
 import { personLine } from "../agents/work-state.ts";
 import type { MentionChannel, MentionMessage } from "./channel.ts";
+import { habitLine } from "./reply-learn.ts";
 
 /**
  * The triage of a message looking for the owner (docs/v2/mentions.md): one small judgement — ignore,
@@ -128,6 +129,9 @@ export async function triageMaterial(app: App, channel: MentionChannel, input: T
     const card = personLine(app, { id: m.senderId, name: m.sender });
     return `${channel.senderLine(app, m)}${card ? `；${card}` : ""}`;
   });
+  // What the owner did with this person's and this chat's earlier messages (reply-learn.ts).
+  const first = input.messages[input.messages.length - 1];
+  const habit = first ? habitLine(app, { askerId: first.senderId, askerName: first.sender, chatId: input.chatId, chatKind: input.chatKind }) : "";
   return {
     会话: `${channel.label}上${where}（${input.chatKind === "p2p" ? "私聊" : "群聊"}）；所在空间：${space?.name ?? input.spaceId}${related.length ? `，相关空间：${related.join("、")}` : ""}`,
     发送人: [...new Set(senders)].join("；"),
@@ -141,6 +145,7 @@ export async function triageMaterial(app: App, channel: MentionChannel, input: T
     ...(guidance ? { 本人的分诊说明: guidance } : {}),
     ...(rules ? { 本人给这个会话设的规则: rules } : {}),
     ...(earlier.length ? { 最近在这个会话里的处理: earlier.join("\n") } : {}),
+    ...(habit ? { 本人以往回不回: habit } : {}),
     ...(ignore.length ? { 本人说过不用提醒的: ignore.join("\n") } : {}),
     现在: new Date().toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, weekday: "short", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }),
   };

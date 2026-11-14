@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { currentBot } from "../core/bot-context.ts";
 import { one, run } from "../core/db.ts";
-import { OWNER, resolveIdentity } from "../core/users.ts";
+import { OWNER, resolveIdentity, userName } from "../core/users.ts";
 import { findAgentSpec } from "../agents/specs.ts";
 import { resolveThread, updateThread, type ThreadAddress } from "../agents/threads.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
@@ -45,7 +45,9 @@ export function botRoster(app: App): { ref: BotRef; name: string; role: string }
     const info = larkBotInfo(b.id);
     if (!b.enabled || !info) continue;
     const spec = b.agent === "assistant" ? null : findAgentSpec(app, b.agent);
-    out.push({ ref: b.id, name: info.name, role: spec ? `Agent 档案 ${spec.name}：${spec.description}` : "主助手角色（独立的会话）" });
+    const whose = b.userId && b.userId !== OWNER ? `${userName(app, b.userId)}的助手，` : "";
+    const what = b.description ? `${b.description}（${spec ? `Agent 档案 ${spec.name}` : "主助手角色"}）` : spec ? `Agent 档案 ${spec.name}：${spec.description}` : "主助手角色（独立的会话）";
+    out.push({ ref: b.id, name: info.name, role: `${whose}${what}` });
   }
   return out;
 }
@@ -117,7 +119,8 @@ export function learnPeerIds(app: App, self: BotRef, mentions: { name?: string; 
 
 /** Who wrote to one of lark.bots: the owner by this app's id, or a person the main bot knows by user_id. */
 export function botSender(app: App, bot: LarkBot, sender: { open_id?: string; user_id?: string }): string | null {
-  if (bot.ownerOpenId && sender.open_id === bot.ownerOpenId) return OWNER;
+  // The person the bot was made by: the owner, or the member whose assistant it is.
+  if (bot.ownerOpenId && sender.open_id === bot.ownerOpenId) return bot.userId ?? OWNER;
   if (!sender.user_id) return null;
   const known = one<{ bot_open_id: string | null }>(app.db, "select bot_open_id from lark_people where user_id = ? and bot_open_id is not null", sender.user_id);
   return known?.bot_open_id ? resolveIdentity(app, "lark", known.bot_open_id) : null;

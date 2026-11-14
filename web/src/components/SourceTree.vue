@@ -2,10 +2,11 @@
 import { computed, ref, watch } from "vue";
 import { get, post, put } from "../api";
 import { promptDialog } from "../lib/dialog";
-import { toast } from "../store";
+import { state, toast } from "../store";
 import Icon from "./Icon.vue";
 import Skeleton from "./Skeleton.vue";
 import UiSegmented from "./UiSegmented.vue";
+import UiSelect from "./UiSelect.vue";
 import VirtualList from "./VirtualList.vue";
 
 /**
@@ -30,6 +31,8 @@ export type TreeEntry = {
   url?: string;
   /** A knowledge base Feishu will not name (not a member): titled by a page in it, the owner can name it. */
   unnamed?: boolean;
+  /** A knowledge-base directory filed under a space of its own. */
+  home?: string;
   /** A repository folder (kind "repo") and the “仓库” folder holding them (kind "repos"). */
   repo?: { id: string; name: string; rootPath?: string | null };
   repoCount?: number;
@@ -213,6 +216,20 @@ async function nameSpace(e: TreeEntry) {
     toast((err as Error).message, "error");
   }
 }
+// A knowledge-base directory that belongs to another business: it and what is below go to that space.
+const FOLLOW = "";
+const homeOptions = computed(() => [{ value: FOLLOW, label: "跟随知识库" }, ...state.spaces.filter((s) => !["personal", "repo", "worktree"].includes(s.kind)).map((s) => ({ value: s.id, label: s.name }))]);
+async function setHome(e: TreeEntry, space: string) {
+  try {
+    const r = await put<{ moved: { moved: number; merged: number } | null }>("/api/lark/kb-home/dir", { token: e.key.slice("wn:".length), space: space || null });
+    menuFor.value = null;
+    const n = (r.moved?.moved ?? 0) + (r.moved?.merged ?? 0);
+    toast(space ? `「${e.title}」下的文档以后放到那个空间${n ? `，已移过去 ${n} 篇` : ""}` : `「${e.title}」跟随知识库${n ? `，已移回 ${n} 篇` : ""}`, "ok");
+    await reload();
+  } catch (err) {
+    toast((err as Error).message, "error");
+  }
+}
 const capturing = ref(new Set<string>());
 async function capture(e: TreeEntry) {
   if (!e.url) return;
@@ -256,6 +273,10 @@ defineExpose({ reload });
         <UiSegmented :model-value="ownLevel(r.entry)" size="sm" aria-label="关注程度" :options="levelOptions" @change="(v) => setLevel(r.entry, v)" />
         <button v-if="r.entry.level && !r.entry.level.inherited" class="btn ghost sm" type="button" @click="setLevel(r.entry, null)">清除</button>
         <button v-if="r.entry.kind === 'wiki-space' && r.entry.unnamed" class="btn ghost sm" type="button" @click="nameSpace(r.entry)">命名</button>
+        <template v-if="r.entry.kind === 'wiki-node' && r.entry.hasChildren">
+          <span class="muted" title="知识库的文档默认都放在知识库归入的空间；个别目录属于别的业务时，在这里单独指定">放在</span>
+          <UiSelect :model-value="r.entry.home ?? FOLLOW" size="sm" width="150px" aria-label="这个目录放在哪个空间" :options="homeOptions" @change="(v) => setHome(r.entry, String(v))" />
+        </template>
         <button class="btn ghost sm icon" type="button" title="收起" @click="menuFor = null"><Icon name="x" :size="13" /></button>
       </div>
       <div v-else class="tree-row" :class="{ on: r.entry.sourceId && r.entry.sourceId === current, grey: r.entry.uncaptured }" :style="{ paddingLeft: 6 + r.depth * 14 + 'px' }">
