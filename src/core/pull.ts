@@ -178,7 +178,7 @@ function narrow(fetched: Fetched) {
   writeFileSync(join(fetched.dbDir, "pull-manifest.json"), JSON.stringify(manifest));
 }
 
-export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun?: boolean; log?: (s: string) => void } = {}): MergeReport {
+export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun?: boolean; log?: (s: string) => void; preferRemote?: boolean } = {}): MergeReport {
   const log = opts.log ?? (() => {});
   if (typeof fetched !== "string") narrow(fetched);
   const dir = typeof fetched === "string" ? fetched : fetched.dbDir;
@@ -306,7 +306,7 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
   finally { db.exec("detach database r"); }
   if (!opts.dryRun) {
     rewriteLibrary(lib, prepared, paths);
-    report.wiki = mergeWikiFiles(app, lib, log);
+    report.wiki = mergeWikiFiles(app, lib, log, !!opts.preferRemote);
     for (const s of listSpaces(app)) syncWiki(app, s.id);
     if (report.rules?.added || report.schedules?.added) log("新拉来的任务规则和定时任务已停用；在本机启用后才执行。");
   }
@@ -315,7 +315,12 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
 class DryRun extends Error {}
 
 /** Merge the remote library's Git history; on conflicts keep ours and write theirs beside it. */
-function mergeWikiFiles(app: App, remoteLibrary: string, log: (s: string) => void) {
+/**
+ * Merge the other side's library (a Git history) into this one. A page changed on both sides keeps
+ * this side's text, the other's saved beside it as `.remote.md`; with `preferRemote` (a directory
+ * kept as a backup of the other side) it is the other way round, this side's saved as `.local.md`.
+ */
+function mergeWikiFiles(app: App, remoteLibrary: string, log: (s: string) => void, preferRemote = false) {
   const conflicts: string[] = [];
   if (!existsSync(join(remoteLibrary, ".git"))) {
     // No history to merge: copy files that do not exist here.
@@ -339,22 +344,23 @@ function mergeWikiFiles(app: App, remoteLibrary: string, log: (s: string) => voi
     const unmerged = git(lib, ["diff", "--name-only", "--diff-filter=U"]).stdout.split("\n").filter(Boolean);
     if (!unmerged.length) throw new Error(`知识库合并失败：${merge.stderr.trim().slice(-400)}`);
     for (const path of unmerged) {
-      // Keep ours; save theirs next to it so nothing is lost.
+      // Keep one side; save the other next to it so nothing is lost.
       const ours = spawnSync("git", ["show", `:2:${path}`], { cwd: lib, maxBuffer: 256 * 1024 ** 2 });
       const theirs = spawnSync("git", ["show", `refs/omem/pulled:${path}`], { cwd: lib, maxBuffer: 256 * 1024 ** 2 });
-      if (ours.status === 0) {
+      const [kept, aside, suffix] = preferRemote ? [theirs, ours, ".local"] : [ours, theirs, ".remote"];
+      if (kept.status === 0) {
         mkdirSync(dirname(join(lib, path)), { recursive: true });
-        writeFileSync(join(lib, path), ours.stdout);
+        writeFileSync(join(lib, path), kept.stdout);
       } else rmSync(join(lib, path), { force: true });
-      if (theirs.status === 0) {
-        const alt = path.replace(/(\.md)?$/, ".remote$1");
+      if (aside.status === 0) {
+        const alt = path.replace(/(\.md)?$/, `${suffix}$1`);
         mkdirSync(dirname(join(lib, alt)), { recursive: true });
-        writeFileSync(join(lib, alt), theirs.stdout);
+        writeFileSync(join(lib, alt), aside.stdout);
       }
       conflicts.push(path);
     }
     git(lib, ["add", "-A"]);
-    const saved = git(lib, ["-c", "user.name=omem", "-c", "user.email=omem@localhost", "commit", "-q", "--no-edit", "-m", "pull: merge remote library (kept local on conflicts)"]);
+    const saved = git(lib, ["-c", "user.name=omem", "-c", "user.email=omem@localhost", "commit", "-q", "--no-edit", "-m", `pull: merge remote library (kept ${preferRemote ? "remote" : "local"} on conflicts)`]);
     if (!saved.ok) throw new Error(`知识库冲突已保存，但提交失败：${saved.stderr.trim().slice(-400)}`);
   }
   git(lib, ["update-ref", "-d", "refs/omem/pulled"]);

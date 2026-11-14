@@ -512,6 +512,7 @@ omem tool --peer <设备> search query=退款     # 用本机的 Agent 整理它
 omem peer pull <设备>                     # 经 HTTP 合并：数据库总会拉，在终端里逐项选知识库、附件、仓库、编码工作区和拉进哪个目录
 omem peer pull <设备> --only library,files --to ~/omem-copy -y  # 不询问：只拉这几项，合并进另一个数据目录
 omem peer pull <设备> --dry-run           # 预览数据库合并，不改本机数据或仓库
+omem peer pull <设备> --prefer-remote     # 知识库页面两边都改过时用对方的版本（本机的存为 .local.md）；自动备份就是这样拉的
 omem peer pull <设备> --overwrite         # 停掉本机服务后替换；旧数据库、文件和仓库留备份
 omem peer open <设备>                     # 在本机浏览器打开它的网页，经中间机器的也行，不用令牌；交办的预览按原端口号转到本机
 omem peer remove <设备>                   # 移除；先请对方撤销给本机的令牌，本机用它的 Agent 一并删除

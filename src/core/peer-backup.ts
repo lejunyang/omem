@@ -86,7 +86,7 @@ const pullInChild: Puller = (app, b) =>
     // directory (often a smaller disk than the one chosen for the backup).
     const tmp = join(b.to, ".pull-tmp");
     mkdirSync(tmp, { recursive: true });
-    const child = spawn(process.execPath, [cliScript(), "--home", app.home, "peer", "pull", b.peer, "--to", b.to, "--only", b.parts.join(","), "-y"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp } });
+    const child = spawn(process.execPath, [cliScript(), "--home", app.home, "peer", "pull", b.peer, "--to", b.to, "--only", b.parts.join(","), "--prefer-remote", "-y"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp } });
     let out = "";
     const take = (d: Buffer) => (out = (out + d.toString()).slice(-4000));
     child.stdout.on("data", take);

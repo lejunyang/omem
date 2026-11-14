@@ -226,6 +226,7 @@ peer
   .option("--overwrite", "替换本地业务数据、文件与托管仓库并备份（总是完整拉取）；本机配置、密钥、令牌和采集游标保留")
   .option("--dry-run", "只统计合并结果，不写入（附件只数缺多少）")
   .option("--full", "拉完整的数据库；默认从同一台机器再次拉取时，原件和运行事件只取上次成功之后变过的")
+  .option("--prefer-remote", "知识库的页面两边都改过时用对方的版本，本机的另存为同名 .local.md（给别的设备做备份的目录用；默认保留本机的）")
   .action(async (host: string, o) => {
     if (o.overwrite && o.dryRun) throw new Error("--overwrite 不能与 --dry-run 同时使用；预览合并时只加 --dry-run。");
     if (o.overwrite && o.only !== undefined) throw new Error("--overwrite 总是完整拉取，不能和 --only 一起用。");
@@ -284,11 +285,11 @@ peer
         console.log(`已用 ${host} 的数据替换 ${target.home}。原数据在 ${backup}；配置、密钥、令牌和采集游标保留。任务规则和定时任务已停用，请按需启用。`);
         return;
       }
-      const r = mergeLibrary(target, fetched, { dryRun: o.dryRun, log });
+      const r = mergeLibrary(target, fetched, { dryRun: o.dryRun, log, preferRemote: !!o.preferRemote });
       const names: Record<string, string> = { spaces: "空间", sources: "原件", memories: "记忆", memory_folders: "记忆目录", items: "事项", item_events: "事项时间线", conversations: "会话", messages: "消息", runs: "运行", run_events: "运行事件", cards: "卡片", card_reviews: "复习记录", notifications: "通知", files: "原件文件" };
       for (const [k, v] of Object.entries(r))
         if (k !== "wiki" && "added" in v && (v.added || v.updated)) console.log(`${(names[k] ?? k).padEnd(8)} 新增 ${v.added}${v.updated ? `，更新 ${v.updated}` : ""}${v.kept ? `，保留本地 ${v.kept}` : ""}`);
-      if (r.wiki?.conflicts.length) console.log(`知识库冲突 ${r.wiki.conflicts.length} 处：保留本地版本，远端版本存为同名 .remote.md：\n  ${r.wiki.conflicts.join("\n  ")}`);
+      if (r.wiki?.conflicts.length) console.log(`知识库冲突 ${r.wiki.conflicts.length} 处：${o.preferRemote ? "用了对方的版本，本机的存为同名 .local.md" : "保留本地版本，远端版本存为同名 .remote.md"}：\n  ${r.wiki.conflicts.join("\n  ")}`);
       // What the next pull from here starts from: when this snapshot was taken, by the other side's clock.
       const taken = readPullManifest(fetched.dbDir)?.takenAt;
       if (!o.dryRun && taken) target.db.prepare("insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value").run(sinceKey, taken);

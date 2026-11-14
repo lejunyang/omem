@@ -98,6 +98,7 @@ omem peer call <设备> update
 omem peer pull <设备>              # 在终端里选拉哪些、拉进哪个数据目录
 omem peer pull <设备> --only library,files --to ~/omem-copy -y
 omem peer pull <设备> --dry-run
+omem peer pull <设备> --prefer-remote  # 页面两边都改过时用对方的版本；自动备份这样拉
 omem peer pull <设备> --overwrite  # 先停本机服务；旧数据留备份
 omem peer open <设备>
 omem link

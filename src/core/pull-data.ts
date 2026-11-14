@@ -136,8 +136,11 @@ function mapRange(map: number[] | undefined, start: number, end: number) {
 }
 
 export function rewriteRefs(text: string, prepared: Pick<Prepared, "ids" | "lines">) {
-  return text.replace(/src:([\w-]+)(?:#L(\d+)(?:-L?(\d+))?)?/g, (_m, id: string, a: string, b: string) => {
+  return text.replace(/src:([\w-]+)(?:#L(\d+)(?:-L?(\d+))?)?/g, (m: string, id: string, a: string, b: string) => {
     const target = prepared.ids.get(id) ?? id;
+    // Nothing of it changes here: left as written. Writing `#L8-L8` as `#L8` anyway made every pull
+    // rewrite hundreds of pages, and the library here drift from the one it is a copy of.
+    if (target === id && !prepared.lines.has(id)) return m;
     if (!a) return `src:${target}`;
     const [start, end] = mapRange(prepared.lines.get(id), Number(a), Number(b ?? a));
     return `src:${target}#L${start}${end !== start ? `-L${end}` : ""}`;

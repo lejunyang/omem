@@ -124,6 +124,22 @@ describe("pulling a library from another machine", () => {
     expect(readFileSync(join(local.libraryDir, "personal/wiki/same.remote.md"), "utf8")).toContain("远端版本");
   });
 
+  it("takes the other side's page on a conflict when the directory is its backup, and rewrites no citation that maps to itself", () => {
+    const local = testApp();
+    const remote = testApp();
+    const doc = upsertSource(remote, { spaceId: "personal", kind: "doc", uri: "rules.md", title: "制度", text: "一\n二\n三" });
+    writePage(local, "personal", "same", { meta: { title: "同名" }, body: "本地版本" });
+    writePage(remote, "personal", "same", { meta: { title: "同名" }, body: "远端版本" });
+    // Written with a one-line range: the same on both sides after a pull, not shortened to `#L2`.
+    writePage(remote, "personal", "cites", { meta: { title: "引用" }, body: `见 [制度](src:${doc.id}#L2-L2)。` });
+    const f = snapshot(remote);
+    const r = mergeLibrary(local, { dbDir: f, libraryDir: join(f, "library"), filesDir: "", fetchedFiles: [] }, { preferRemote: true });
+    expect(r.wiki?.conflicts).toEqual(["personal/wiki/same.md"]);
+    expect(readFileSync(join(local.libraryDir, "personal/wiki/same.md"), "utf8")).toContain("远端版本");
+    expect(readFileSync(join(local.libraryDir, "personal/wiki/same.local.md"), "utf8")).toContain("本地版本");
+    expect(readFileSync(join(local.libraryDir, "personal/wiki/cites.md"), "utf8")).toContain(`(src:${doc.id}#L2-L2)`);
+  });
+
   it("overwrite replaces data, keeps config and a backup, and defuses queued runs", () => {
     const remote = testApp();
     createRun(remote, { kind: "dream", spaceId: "personal", title: "整理" });
