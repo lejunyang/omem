@@ -5,6 +5,7 @@ import { startSessionCleanup } from "./agents/session-cleanup.ts";
 import { sweepWorktreeSpaces } from "./agents/worktree-index.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
+import { runCoverage } from "./wiki/coverage.ts";
 import { ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
 import { embedPending, embedPendingMemories } from "./search/embeddings.ts";
 import { readProcess } from "./search/read-process.ts";
@@ -13,6 +14,7 @@ import { startLoopMonitor } from "./core/loop-monitor.ts";
 import { startServer } from "./server/http.ts";
 import { syncWiki } from "./wiki/store.ts";
 
+registerScheduleKind("wiki-coverage", (app) => { runCoverage(app); });
 registerScheduleKind("heartbeat", (app) => {
   if (!listRuns(app, { kind: "heartbeat", status: "running" }).length && !listRuns(app, { kind: "heartbeat", status: "queued" }).length)
     createRun(app, { kind: "heartbeat", spaceId: "personal", title: "巡检" });

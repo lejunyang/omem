@@ -456,8 +456,9 @@ export const configSchema = z.object({
   backups: z.array(z.object({ peer: z.string().min(1), to: z.string().min(1), everyHours: z.number().int().min(1).max(720).default(12), /** Once a day from this time on (HH:mm, the configured timezone) instead of every `everyHours`. */ at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(), parts: z.array(z.enum(["library", "files", "repos", "runs"])).default(["library", "files", "repos"]) })).default([]),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
   wiki: z.object({
+    coverage: z.object({ nightly: z.number().int().min(0).default(3), perSpace: z.number().int().min(0).default(2) }).default(() => ({ nightly: 3, perSpace: 2 })),
     questions: z.object({ nightly: z.number().int().min(0).default(20), expireDays: z.number().int().min(1).default(45) }).default(() => ({ nightly: 20, expireDays: 45 })),
-  }).default(() => ({ questions: { nightly: 20, expireDays: 45 } })),
+  }).default(() => ({ questions: { nightly: 20, expireDays: 45 }, coverage: { nightly: 3, perSpace: 2 } })),
   /** A reply that says nothing (only an intent, an acknowledgement, a way out) goes back to the agent once before it is posted (agents/reply-check.ts). */
   replies: z.object({ check: z.boolean().default(true) }).default(() => ({ check: true })),
   notes: z.object({

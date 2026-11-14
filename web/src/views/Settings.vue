@@ -417,6 +417,17 @@ watch(
   },
 );
 
+async function saveCoverage(key: "nightly" | "perSpace", event: Event) {
+  const input = event.target as HTMLInputElement;
+  const value = Number(input.value);
+  if (!input.value.trim() || !Number.isSafeInteger(value) || value < 0) {
+    input.value = String(config.value.wiki.coverage[key]);
+    toast("请填写 0 或正整数", "error");
+    return;
+  }
+  await saveConfig({ wiki: { ...config.value.wiki, coverage: { ...config.value.wiki.coverage, [key]: value } } });
+}
+
 async function saveConfig(partial: Record<string, unknown>, note = "已保存") {
   try {
     const r = await put<{ config: any; restart?: string[] }>("/api/settings", partial);
@@ -1108,6 +1119,14 @@ async function saveEdit() {
 
     <section v-else-if="tab === 'schedules'" class="stack">
       <p class="muted">后台任务按设定的时间运行（时区：{{ config?.timezone }}）。到期提醒直接发送；巡检在关注、等待中的事项有新材料时按预筛结果调用助手。</p>
+      <div v-if="config?.wiki?.coverage" class="card pad stack">
+        <strong>重点文档补写</strong>
+        <HelpText>每晚把还没被 Wiki 引用的重点文档写进页面。按贴链接、引用和事项等计数排序，沿用规划、写作和核对；30 天内不重复选，关闭自动整理的空间不参加。Wiki 顶部可以展开候选和手动补写。每晚总额设为 0 停止自动补写；每空间额度为 0 时手动也暂停。</HelpText>
+        <div class="row wrap">
+          <label class="field"><span>每晚总额（份）</span><input class="input" style="width: 120px; max-width: 100%" type="number" min="0" step="1" inputmode="numeric" :value="config.wiki.coverage.nightly" @change="saveCoverage('nightly', $event)" /></label>
+          <label class="field"><span>每空间最多（份）</span><input class="input" style="width: 120px; max-width: 100%" type="number" min="0" step="1" inputmode="numeric" :value="config.wiki.coverage.perSpace" @change="saveCoverage('perSpace', $event)" /></label>
+        </div>
+      </div>
       <div v-if="config?.heartbeat" class="card pad stack">
         <strong>巡检预筛</strong>
         <HelpText>巡检默认每 15 分钟一次。打开后先让决策模型看一眼新材料和关注、等待中的事项有没有关系，没关系就不启动助手；被跳过的材料每隔下面设定的小时数由助手完整看一遍。没有配置决策模型时这个开关不起作用，可在 <a href="#/settings?tab=agents&amp;section=decision">AI → 决策</a> 配置。</HelpText>

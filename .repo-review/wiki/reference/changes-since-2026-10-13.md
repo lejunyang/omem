@@ -31,6 +31,11 @@ updated: 2026-11-15
 - `jobs.ts` 的 dream 任务加“经验太多的目录”，无其他变化也可启动；成功后才写 `kv` 的 `dream_consolidated:<档案>:<目录>`（条数、日期、技能名）。通过草稿正文的 `mem:` 出处对应原目录，增长至少 30% 或对应技能删除后才重交；已被复盘启用的技能不算删除。运行摘要列出提炼的技能草稿和归属。
 - `tools.ts` 的 `recall` 原已允许指定别的档案读取，现在补 `limit` / `offset`，可翻完超过 200 条的目录；`save_skill(agent, draft=true)` 沿用原有挂载路径，记录做梦保存的草稿，由既有夜间复盘 K1 试用后启用；原经验不删改。`peer call … config` 自动包含新设置。`test/dream-consolidate.test.ts` 覆盖筛选、去重交接、失败和 ACP + MCP 保存与挂载。
 - `docs/v2/review.md` 同步 `_common.md` 的运行行为证据约定：实际运行附命令和关键输出，只读代码推断要明说未运行并给行号。
+## 重点文档每晚补写进 Wiki（11-15）
+
+- `wiki/coverage.ts`：有效级别为 focus 的文档统计覆盖率；尚无页面引用的按贴链接次数、发帖人数、引用、事项、本人定级和近期修改排序，不读取候选正文。`wiki_coverage_tries` 记录生成尝试并同步，30 天内不重复选。
+- `wiki/generate.ts` 新增 `sourceIds`，只规划指定文档涉及的内容，优先补已有页面，沿用现有写作与核对。默认 `wiki-coverage` 每天 04:10 全局最多 3 份，每空间最多 2 份，跳过关闭自动整理和代码空间。
+- 空间 Wiki 顶部的覆盖数字可展开前 20 份候选和具体信号，写权限用户可点“现在写这几份”；两个 coverage HTTP 路由均需 wiki.write；只读 peer 命令 `wiki-coverage` 返回各空间数字。设置 → 定时任务可调整额度或关闭。回归在 `test/wiki-coverage.test.ts`、`test/permissions.test.ts`。
 
 ## Agent 页按分组选工具；技能可以停用（11-14）
 

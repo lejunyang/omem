@@ -72,6 +72,18 @@ flowchart TD
 | 核对角色的 AI | 角色 `wiki-checker` 的设置（Agent 页），最好选和写作不同的模型 | `config.agents.roles` |
 | 通知 | 有没解决的或没写成的：普通通知，标题写“N 条要你看”，每条一行加页面链接；都解决了：只在网页通知里（`silent`） | `deliverReport` |
 
+## 重点文档覆盖（2026-11-15）
+
+`src/wiki/coverage.ts` 按空间统计重点文档已有多少份被 `page_cites` 引用。文档包括 `doc`、`web`、`note`，不含聊天、代码、图片和工作文件；有效关注程度复用 `attention.ts` 的 `levelSql`（自己的级别与最近目录级别按设置者优先级决胜），必须为 `focus`。删除、忽略以及整份原件被本人或确认标为“不检索 / 有误”的不计入；局部标注、待确认、撤回和已失效的标注不排除整份文档。任意空间的页面引用都算覆盖，一份只计一次。
+
+候选的分数 = 贴链接次数 + 2 × 发帖人数 + 3 × 引用次数 + 3 × 关联事项数 + 本人有效定级 × 2 + 最近 90 天修改 × 1。权重在 coverage.ts 的命名常量中；只用宿主能统计的信号。链接通过 `lark_doc_links` 按 token 查找，以消息主键关联发送者；文档的知识库 token 与底层文档 token 去重，同一消息只算一次，应用消息不算人数。旧消息尚未回填链接表时只统计已回填部分（沿用归档检查的回填）。引用数复用 `citeCounts`；事项的 `source_refs` 一次集合展开，与 `item_materials` 合并，同一事项只计一次，取消的事项不计。候选统计不读正文，不扫描运行和块表。
+
+`wiki-coverage` 默认开启，每天 04:10（应用时区），跳过 `autoOrganize: false`、repo、worktree；各空间先取 `wiki.coverage.perSpace`（默认 2）份，再在全局按分数选 `wiki.coverage.nightly`（默认 3）份。总额为 0 停止自动补写。按空间分组调用唯一入口 `generateWiki`，新增的最小选项 `sourceIds` 指定这次规划的材料，要求先找已有同题页面补入并引用，没有再新建；不附整空间材料图，继续走原有规划、写作、核对及生成通知。原来的 `pages` 只改已有页面、跳过规划，不能用于决定新主题的归处。
+
+每次排入生成与 `wiki_coverage_tries(space_id, source_id, at, generation_id)` 的写入在一个事务中，generation_id 是规划运行 id；失败或空计划也算尝试，30 天内不重复选，被任何页面引用后自行退出。此表在 `pull-data.ts` 登记，设备拉取时合并。候选列表不含冷却中的文档，覆盖分母仍包含它们。
+
+空间 Wiki 顶部显示“重点文档 X / Y 份已写进页面”，展开前 20 份候选及各项数字，“现在写这几份”只运行当前空间，沿用每空间额度与冷却期；手动调用可用于关闭自动整理的空间。`GET /api/wiki/:space/coverage` 和 `POST /api/wiki/:space/coverage/run` 均需 `wiki.write`，POST 保留调用者身份。设置 → 定时任务可调整额度、关闭任务；只读 peer 命令 `wiki-coverage` 返回所有空间的覆盖数字。
+
 ## 4. 没做的部分
 
 - `wiki-lint`（原件变化后的修正）和 `ingest` 等角色直接改页面时只经过宿主检查，没有发布前核对角色；这些页面现在由[每晚抽检](quality.md)抽样核对。规划者自己写的 index 仍不核对，也不抽检。

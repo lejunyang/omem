@@ -15,6 +15,7 @@ const toSchedule = (r: Row): Schedule => ({ id: r.id, kind: r.kind, cron: r.cron
  * by default does not switch it on for libraries that already had it off.
  */
 const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; label: string }[] = [
+  { id: "wiki-coverage", kind: "wiki-coverage", cron: "10 4 * * *", enabled: true, label: "每晚把尚未被页面引用的重点文档写进 Wiki（按统计信号排序，沿用规划、写作和核对）" },
   { id: "heartbeat", kind: "heartbeat", cron: "*/15 * * * *", enabled: true, label: "巡检：到期提醒、等待回复与关注事项" },
   { id: "activity", kind: "activity", cron: "*/30 * * * *", enabled: true, label: "记录代码仓库的活动：新提交和未提交的改动（只读本机 Git）" },
   { id: "learn", kind: "learn", cron: "*/15 * * * *", enabled: true, label: "学习：每天按学习目标出新卡，到点提醒复习（没有学习目标时什么都不做）" },

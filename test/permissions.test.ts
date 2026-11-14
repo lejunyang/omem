@@ -1,8 +1,8 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { createRun } from "../src/agents/runs.ts";
+import { createRun, stopWorker } from "../src/agents/runs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { can, canReadRun, spacesWith } from "../src/auth/permissions.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
@@ -19,7 +19,12 @@ describe("roles and permissions", async () => {
   const home = mkdtempSync(join(tmpdir(), "omem-perms-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({}));
   const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
-  afterAll(() => server.close());
+  afterAll(async () => {
+    await server.close();
+    stopWorker();
+    app.db.close();
+    rmSync(home, { recursive: true, force: true });
+  });
   const base = app.baseUrl!;
 
   createSpace(app, { id: "team", name: "团队" });
@@ -89,6 +94,13 @@ describe("roles and permissions", async () => {
     expect(listed.every((x) => ["team", "personal-ann"].includes(x.spaceId))).toBe(true);
     expect((await as("ann", "/api/memories?space=other")).status).toBe(403);
     expect((await as("ann", "/api/memory-folders?space=other")).status).toBe(403);
+  });
+  it("restricts coverage statistics and manual generation to Wiki writers", async () => {
+    expect((await as("ann", "/api/wiki/team/coverage")).status).toBe(403);
+    expect((await as("ann", "/api/wiki/team/coverage/run", { method: "POST", body: "{}" })).status).toBe(403);
+    expect((await as("bob", "/api/wiki/team/coverage")).status).toBe(200);
+    expect((await as("bob", "/api/wiki/team/coverage/run", { method: "POST", body: "{}" })).status).toBe(200);
+    expect((await as("bob", "/api/wiki/other/coverage")).status).toBe(403);
   });
 
   it("keeps the shared setup to those who manage it", async () => {

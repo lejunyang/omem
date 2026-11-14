@@ -565,6 +565,15 @@ export const peerCommands: Record<string, Command> = {
     schema: z.object({ space: z.string().max(200).optional() }),
     run: async (app, a) => (await import("../sources/attention.ts")).levelCounts(app, null, a.space),
   },
+  "wiki-coverage": {
+    description: "各空间重点文档已有多少份被 Wiki 引用（只读）",
+    schema: z.object({}),
+    run: async (app) => {
+      const { coverage } = await import("../wiki/coverage.ts");
+      const { listSpaces } = await import("./spaces.ts");
+      return listSpaces(app).map((s) => ({ spaceId: s.id, name: s.name, ...coverage(app, s.id) }));
+    },
+  },
   "memories-stats": {
     description: "按模型的记忆质量统计",
     schema: z.object({ days: z.number().int().min(1).max(365).default(30) }),

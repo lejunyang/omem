@@ -1844,6 +1844,11 @@ export const migrations: readonly string[] = [
    alter table source_notes add column reviewed_by text;
    alter table source_notes add column review_note text;`,
   `alter table rules add column origin text;`,
+  // Coverage attempts survive device pulls; the compound key also serves the 30-day exclusion.
+  `create table wiki_coverage_tries (
+     space_id text not null, source_id text not null, at text not null, generation_id text not null,
+     primary key(space_id, source_id, at)
+   );`,
 ];
 
 export type Db = DatabaseSync;

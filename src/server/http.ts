@@ -6,6 +6,7 @@ import { toolAlwaysApproves } from "../agents/tools.ts";
 import { addIgnoreRule } from "../core/notify-lessons.ts";
 import { shellToolRuns } from "../agents/doubao-cli.ts";
 import { generateWiki } from "../wiki/generate.ts";
+import { coverage, uncovered, runCoverage } from "../wiki/coverage.ts";
 import { presentHits } from "../search/present.ts";
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -994,6 +995,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const space = (req.params as { space: string }).space;
     const b = q(z.object({ limit: z.number().int().min(1).max(50).optional() }), req.body ?? {});
     return (await import("../wiki/verify.ts")).recheckPages(app, space, { limit: b.limit, userId: who(req) });
+  });
+  server.get("/api/wiki/:space/coverage", async (req) => {
+    const space = (req.params as { space: string }).space;
+    return { ...coverage(app, space), uncovered: uncovered(app, space, 20), perSpace: app.config.wiki.coverage.perSpace };
+  });
+  server.post("/api/wiki/:space/coverage/run", async (req) => {
+    return runCoverage(app, { spaceId: (req.params as { space: string }).space, userId: who(req) });
   });
   server.put("/api/wiki/:space/page/*", async (req) => {
     const { space, "*": slug } = req.params as { space: string; "*": string };

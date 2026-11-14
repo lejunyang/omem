@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { findSpace, relatedIds } from "../core/spaces.ts";
 import { canWrite, OWNER, scopeFor } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
+import { all } from "../core/db.ts";
 import { createRun } from "../agents/runs.ts";
 import type { Execution } from "../agents/execution.ts";
 import { listPages } from "./store.ts";
@@ -21,6 +22,8 @@ export function generateWiki(app: App, input: {
   ai?: Execution;
   /** Existing pages to revise as the focus says: each goes straight to a writer, nothing is planned. */
   pages?: string[];
+  /** Plan only from these originals, merging into existing pages where the topic fits. */
+  sourceIds?: string[];
 }) {
   const userId = input.userId ?? OWNER;
   const allowed = scopeFor(app, userId, input.readable ?? null);
@@ -34,6 +37,15 @@ export function generateWiki(app: App, input: {
     throw new HttpError(403, `本次任务不能写入空间 ${spaceId} 的 Wiki`);
   const sources = input.sourceSpaces ?? relatedIds(app, spaceId).filter(id => !allowed || allowed.includes(id));
   const readSpaces = [...new Set([spaceId, ...sources.map(checkRead)])];
+  let focus = input.focus;
+  if (input.sourceIds?.length) {
+    if (input.pages?.length) throw new HttpError(400, "sourceIds 与 pages 不能同时使用");
+    const ids = [...new Set(input.sourceIds)];
+    const selected = all<{ id: string; title: string }>(app.db,
+      "select id, title from sources where space_id = ? and deleted_at is null and id in (select value from json_each(?))", spaceId, JSON.stringify(ids));
+    if (selected.length !== ids.length) throw new HttpError(404, "所选原件不在目标空间或已删除");
+    focus = [focus, "只围绕以下原件规划要补写或新建的页面，先阅读原件；已有同题页面就补进去并引用，不要另起整套目录。", ...selected.map((s) => `- src:${s.id}「${s.title}」`)].filter(Boolean).join("\n");
+  }
   if (input.pages?.length) {
     if (!input.focus?.trim()) throw new HttpError(400, "更新指定页面要在 focus 里写清改什么");
     const existing = new Map(listPages(app, spaceId).map((p) => [p.slug, p]));
@@ -52,6 +64,6 @@ export function generateWiki(app: App, input: {
   }
   return createRun(app, {
     kind: "wiki-plan", spaceId, title: "规划 Wiki 目录", userId, parentId: input.parentId,
-    input: { focus: input.focus, autoWrite: input.autoWrite ?? true, readSpaces, ai: input.ai },
+    input: { focus, sourceIds: input.sourceIds, autoWrite: input.autoWrite ?? true, readSpaces, ai: input.ai },
   });
 }

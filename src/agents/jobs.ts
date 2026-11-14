@@ -926,7 +926,7 @@ function sourceMap(app: App, spaceId: string, maxLines = 120) {
 
 registerHandler("wiki-plan", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
-  const { focus, autoWrite = true, readSpaces } = ctx.run.input as { focus?: string; autoWrite?: boolean; readSpaces?: string[] };
+  const { focus, autoWrite = true, readSpaces, sourceIds } = ctx.run.input as { focus?: string; autoWrite?: boolean; readSpaces?: string[]; sourceIds?: string[] };
   const userId = one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? OWNER;
   if (!can(ctx.app, userId, "wiki.write", spaceId)) throw new Error("无权写入目标空间的 Wiki");
   const allowed = scopeFor(ctx.app, userId, null);
@@ -954,7 +954,7 @@ registerHandler("wiki-plan", async (ctx) => {
       existing.length
         ? `已有页面（${existing.length} 页，路径里的 / 是目录）：\n${existing.length > 80 ? `${folderOverview(existing)}\n页面太多没有逐个列出：用 list_pages(folder=…) 看某个目录里的页面。` : existing.map((p) => `- ${p.slug}「${p.title}」`).join("\n")}`
         : "目前还没有页面。",
-      ...sources.map(id => `材料空间 ${id}：\n${sourceMap(ctx.app, id)}`),
+      ...(sourceIds?.length ? [] : sources.map(id => `材料空间 ${id}：\n${sourceMap(ctx.app, id)}`)),
     ].filter(Boolean).join("\n\n"),
     [spaceId],
     readSpaces,

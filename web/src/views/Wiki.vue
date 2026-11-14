@@ -9,6 +9,7 @@ import WikiAttention, { type StalePage, type Upkeep } from "../components/WikiAt
 import WikiTree from "../components/WikiTree.vue";
 import WikiChecks, { type CheckRecord } from "../components/WikiChecks.vue";
 import WikiQuestions, { type WikiQuestion } from "../components/WikiQuestions.vue";
+import WikiCoverage from "../components/WikiCoverage.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import type { NavNode } from "../lib/wikiTree";
 import Markdown from "../components/Markdown.vue";
@@ -339,6 +340,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
       <div ref="noticeEl" class="notice-anchor">
         <WikiAttention :space="space" :pages="stalePageList" :titles="titles" :upkeep="upkeep" :expanded="!slug" @check="lint" />
       </div>
+      <WikiCoverage :key="space" :space="space" />
 
       <div v-if="(spaceLoading && !pages.length) || pageLoading" class="page-loading"><Skeleton variant="text" :rows="12" /></div>
       <div v-else-if="!pages.length && !page" class="empty">
