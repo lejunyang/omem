@@ -1483,7 +1483,8 @@ def({
     // A replay arm sees memories as they were at the question's time (replay-view.ts): no history, no later versions.
     const view = ctx.view;
     let mems = query
-      ? (await viewSearch(ctx, query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
+      ? // A folder or one profile's memories narrow the hits afterwards: search wider so the narrowing still leaves the closest.
+        (await viewSearch(ctx, query, { spaces: sp, types: ["memory"], limit: folder !== undefined || a.agent || a.tag || a.subject ? 100 : 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
       : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history || view?.asOf ? "all" : "active", subject: a.subject, tag: a.tag, folder, agent: a.agent ?? ownProfile(ctx) ?? undefined, limit: folder !== undefined ? 200 : 50 });
     if (view) {
       const ok = visibleMemories(ctx.app, view, mems.map((m) => m.id));
@@ -1497,6 +1498,7 @@ def({
     // A running spec or role only sees shared memories and its own; the main assistant may name one to inspect.
     const scopeSpec = a.agent ?? ownProfile(ctx);
     if (scopeSpec) mems = mems.filter((m) => !m.agent || m.agent === scopeSpec);
+    if (query) mems = mems.slice(0, 20);
     if (!mems.length) return "没有相关记忆。";
     // Recall accounting (best effort): which memories surfaced for this run, so their value
     // can be measured. Marking "used" happens when the run finishes (see runs worker).

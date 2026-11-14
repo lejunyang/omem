@@ -2,7 +2,7 @@
 
 ## 查
 
-- `recall`：查记忆，可按 `subject`、`tag`、`folder`（含子目录，`"未归档"` 看没放目录的）筛；问“之前 / 变化”时加 `include_history: true` 看版本链。
+- `recall`：查记忆，可按 `subject`、`tag`、`folder`（含子目录，`"未归档"` 看没放目录的）筛；目录内找相关经验可用 `recall(folder: "工作/项目A/发布", query: "回滚检查")`：先扩大候选再按目录（含子目录）筛，最多返回 20 条；`agent`、`tag`、`subject` 配合 `query` 同样先取候选再筛。问“之前 / 变化”时加 `include_history: true` 看版本链。
 - 某个 Agent 档案或内置角色的专属记忆：`recall(agent: "名字")`。
 
 ## 写

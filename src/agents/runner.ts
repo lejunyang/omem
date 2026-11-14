@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile, type RoleName } from "../core/config.ts";
+import { ownFolderNote } from "../memory/folders.ts";
+import { passiveBlock, passiveRecall } from "../memory/passive.ts";
+import { recallPurpose, recordRecalls } from "../memory/recall-stats.ts";
 import { findSpace, kindLabel, relatedSpaces, spaceDir } from "../core/spaces.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json } from "../core/util.ts";
@@ -147,15 +150,16 @@ function localTime(app: App, at?: string) {
  * Self-improvement loop: preferences the owner stated and lessons distilled by
  * the dreamer (experience memories) are handed to every future run.
  */
-type Lesson = { kind: string; subject: string; content: string; agent: string | null; embedding: Uint8Array | null };
+type Lesson = { id: string; kind: string; subject: string; content: string; agent: string | null; embedding: Uint8Array | null };
 
+/** `spec`: whose own memories count besides the shared ones — a profile, a built-in role, or `assistant` for the main assistant. */
 function lessonRows(app: App, spaceId: string, userId: string, spec: string | null, vectors = false, view?: RunView) {
   // With review on, only memories the reviewer (or the owner) accepted are handed to every run:
   // a bad lesson repeated in every prompt costs more than a missing one.
   const vetted = app.config.memory.review.enabled ? "and (created_by = 'user' or review_verdict = 'keep')" : "";
   // A replay arm: the lessons as they stood at the question's time, minus what its variant leaves out.
   const w = memoryWhere(view, "memories");
-  return all<Lesson & { id: string }>(
+  return all<Lesson>(
     app.db,
     // A profile's own experience goes with it whatever space it runs in (an investigator learns from
     // the on-call groups of one project space and is called from the personal space).
@@ -174,50 +178,89 @@ function lessonRows(app: App, spaceId: string, userId: string, spec: string | nu
 
 const lessonLines = (rows: Lesson[]) => rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
 
-/** With no task in view (a conversation's standing context): the newest, preferences first. */
-function learnedContext(app: App, spaceId: string, userId: string, spec: string | null) {
-  return lessonLines(lessonRows(app, spaceId, userId, spec).slice(0, 24));
-}
+/** The preferences and experience a run is told, and which memories those are (passive recall and the recall accounting leave them out or count them). */
+export type LessonSet = { text: string; ids: string[] };
 
+/** Preferences a conversation carries whatever it turns out to be about. */
+const STANDING_PREFS = 60;
+/**
+ * A profile's own experience is told whole while there is this little of it. Past that a run gets
+ * the closest to its task (a conversation, having no task yet, the newest few); the rest it looks up
+ * by folder, or passive recall brings it when a message or task is close to it.
+ */
+const OWN_WHOLE = 12;
+const OWN_RECENT = 6;
+const OWN_PREFS = 16;
 /** Shared preferences and experience a task run is told: the closest to the task, at most this many. */
 const TASK_LESSONS = 8;
+/** A task can be a whole diff; what it is about is at its start. */
+const ABOUT_CHARS = 2000;
+
+function lessonSet(app: App, rows: Lesson[], own: string, left: number, canRecall: boolean): LessonSet {
+  const where = left > 0 && canRecall ? ownFolderNote(app, own) : "";
+  const note = where ? `你自己的经验还有 ${left} 条没列在这里，按目录放着；做到相关的事时用 recall(folder="目录", query="关键词") 查：\n${where}` : "";
+  return { text: [lessonLines(rows), note].filter(Boolean).join("\n\n"), ids: rows.map((r) => r.id) };
+}
 
 /**
- * For a task: the profile's or role's own lessons, and of the shared ones only the closest to the task
- * (cosine on memory vectors; the newest without vectors). A coder is not told how the owner swipes
- * back on a phone or how on-call cases were triaged.
+ * With no task in view (a conversation's standing context): every preference, and the profile's own
+ * experience while it is small. Shared experience and whatever did not fit reach a turn through
+ * passive recall (sessions.ts), which is told these ids so it does not repeat them.
  */
-async function taskLessons(app: App, spaceId: string, userId: string, spec: string | null, about: string, view?: RunView) {
-  const rows = lessonRows(app, spaceId, userId, spec, true, view);
-  const own = rows.filter((r) => r.agent).slice(0, 16);
+function standingLessons(app: App, spaceId: string, userId: string, own: string, canRecall: boolean): LessonSet {
+  const rows = lessonRows(app, spaceId, userId, own);
+  const prefs = rows.filter((r) => r.kind === "preference").slice(0, STANDING_PREFS);
+  const exp = rows.filter((r) => r.kind === "experience" && r.agent);
+  const shown = exp.length <= OWN_WHOLE ? exp : exp.slice(0, OWN_RECENT);
+  return lessonSet(app, [...prefs, ...shown], own, exp.length - shown.length, canRecall);
+}
+
+/**
+ * For a task: the profile's or role's own preferences, its own experience (whole while small, else
+ * the closest to the task), and of the shared lessons only the closest to the task (cosine on memory
+ * vectors; the newest without vectors). A coder is not told how the owner swipes back on a phone, and
+ * an investigator with hundreds of cases is told the ones like this one, not the last ones it wrote.
+ */
+async function taskLessons(app: App, spaceId: string, userId: string, own: string, about: string, canRecall: boolean, view?: RunView): Promise<LessonSet> {
+  const rows = lessonRows(app, spaceId, userId, own, true, view);
+  const mine = rows.filter((r) => r.agent);
+  const exp = mine.filter((r) => r.kind === "experience");
   const shared = rows.filter((r) => !r.agent);
-  const q = shared.length > TASK_LESSONS ? await embedQuery(app, about, "query").catch(() => null) : null;
-  let near = shared.slice(0, TASK_LESSONS);
-  if (q) {
-    const score = (e: Uint8Array) => {
-      const v = new Float32Array(e.buffer, e.byteOffset, e.byteLength / 4);
-      if (v.length !== q.length) return -1;
+  const q = shared.length > TASK_LESSONS || exp.length > OWN_WHOLE ? await embedQuery(app, about.slice(0, ABOUT_CHARS), "query").catch(() => null) : null;
+  const closest = (list: Lesson[], n: number) => {
+    if (list.length <= n || !q) return list.slice(0, n);
+    const scored = list.flatMap((r) => {
+      if (!r.embedding) return [];
+      const v = new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4);
+      if (v.length !== q.length) return [];
       let s = 0;
       for (let i = 0; i < v.length; i++) s += v[i] * q[i];
-      return s;
-    };
-    near = shared.filter((r) => r.embedding).map((r) => ({ r, s: score(r.embedding!) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, TASK_LESSONS).map((x) => x.r);
-  }
-  return lessonLines([...own, ...near]);
+      return s > 0 ? [{ r, s }] : [];
+    });
+    // No vectors yet (just written, or the model changed): the newest, as without a model.
+    return scored.length ? scored.sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.r) : list.slice(0, n);
+  };
+  const told = closest(exp, OWN_WHOLE);
+  return lessonSet(app, [...mine.filter((r) => r.kind === "preference").slice(0, OWN_PREFS), ...told, ...closest(shared, TASK_LESSONS)], own, exp.length - told.length, canRecall);
+}
+
+type LessonInput = { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string; replay?: ReplayArm };
+
+/** The lessons that bear on a task run (a conversation gets the standing ones instead, see prepareRun). */
+async function lessonsOfTask(app: App, input: LessonInput): Promise<LessonSet> {
+  if (input.role === "guest" && !input.spec) return { text: "", ids: [] };
+  const tools = input.spec ? (input.spec.tools.length ? expandTools(input.spec.tools) : DEFAULT_SPEC_TOOLS) : loadRole(input.role, app).tools;
+  return taskLessons(app, input.spec?.space && !input.spaceId ? input.spec.space : input.spaceId, input.userId ?? OWNER, input.spec?.name ?? input.role, `${input.spec?.description ?? loadRole(input.role, app).description}
+${input.task}`, tools.includes("recall"), input.replay?.view);
 }
 
 /** The ids of the lessons a task run is told (a replay records what the original run had in view). */
-export async function lessonIdsForTask(app: App, input: { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string; replay?: ReplayArm }) {
-  const text = await lessonsForTask(app, input);
-  const rows = lessonRows(app, input.spec?.space && !input.spaceId ? input.spec.space : input.spaceId, input.userId ?? OWNER, input.spec?.name ?? (input.role === "assistant" ? null : input.role), false, input.replay?.view);
-  return rows.filter((r) => text.includes(r.content)).map((r) => r.id);
+export async function lessonIdsForTask(app: App, input: LessonInput) {
+  return (await lessonsOfTask(app, input)).ids;
 }
 
-/** The lessons that bear on a task run (a conversation gets the newest instead, see prepareRun). */
-export async function lessonsForTask(app: App, input: { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string; replay?: ReplayArm }) {
-  if (input.role === "guest" && !input.spec) return "";
-  return taskLessons(app, input.spec?.space && !input.spaceId ? input.spec.space : input.spaceId, input.userId ?? OWNER, input.spec?.name ?? (input.role === "assistant" ? null : input.role), `${input.spec?.description ?? loadRole(input.role, app).description}
-${input.task}`, input.replay?.view);
+export async function lessonsForTask(app: App, input: LessonInput) {
+  return (await lessonsOfTask(app, input)).text;
 }
 
 export type RoleRunInput = {
@@ -315,8 +358,10 @@ export type PreparedRun = {
   /** Commands outside the backend's sandbox, no approvals (see prepareRun). */
   fullAccess: boolean;
   label: string;
+  /** The memories behind the preferences and experience in `system` (passive recall leaves them out). */
+  lessonIds: string[];
   /** What passive recall may draw on: readable spaces (null = all) and whose own memories count. */
-  recall: { spaces: string[] | null; agent: string | null; userId: string } | null;
+  recall: { spaces: string[] | null; agent: string | null; own: string; userId: string } | null;
 };
 
 /** Resolve defaults and one-run overrides without creating a tool token or session. */
@@ -379,7 +424,7 @@ function workRepos(app: App, runId: string | null): string[] {
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; replay?: ReplayArm; fullAccess?: boolean },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -452,7 +497,9 @@ export function prepareRun(
   const parent = space.parentId ? findSpace(app, space.parentId) : null;
   const mounted = guest ? { text: "", names: [] as string[] } : spaceSkillsText(app, [space, ...(parent ? [parent] : []), ...repos]);
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
-  const lessons = guest ? "" : input.lessons ?? learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
+  // The main assistant's own are the ones taught to `assistant` (a nightly review writes them there).
+  const told: LessonSet = guest ? { text: "", ids: [] } : input.lessons !== undefined ? { text: input.lessons, ids: input.lessonIds ?? [] } : standingLessons(app, space.id, userId, spec?.name ?? roleName, tools.has("recall"));
+  const lessons = told.text;
   const skills = guest ? "" : skillIndex(app, spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills, mounted.names);
   // Only what this run can do with them: an assistant run by a rule may consult but not hand work over.
   const agentUse = tools.has("run_agent") ? "可用 run_agent 交给它们" : tools.has("ask_agent") ? "这次运行不能交办，需要它们的专长时用 ask_agent 请教" : "";
@@ -485,8 +532,10 @@ export function prepareRun(
     fullAccess,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,
-    // Guests never see the owner's memories unasked.
-    recall: guest ? null : { spaces: readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), userId },
+    lessonIds: told.ids,
+    // Guests never see the owner's memories unasked. `agent` names the run in the recall accounting
+    // (none for the main assistant); `own` is whose memories it sees besides the shared ones.
+    recall: guest ? null : { spaces: readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), own: spec?.name ?? roleName, userId },
   };
 }
 
@@ -668,7 +717,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  const lessons = await lessonsForTask(app, input);
+  const told = await lessonsOfTask(app, input);
+  const lessons = told.text;
   // Nothing pins the AI (no execution, no caller's pick, not a session being continued, not a coding
   // or review run): choose among the owner's candidates (choose-ai.ts). The run's own AI then follows
   // the chosen one as a failover.
@@ -698,7 +748,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       input = { ...input, profileId: pick.profile, model: pick.model, effort: pick.effort };
     }
   }
-  const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
+  const base = prepareRun(app, { actor, lessons, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
@@ -753,6 +803,22 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const firstWho = pinned ? `原指定的 AI（${aiLabel(execution!)}）` : own ? `自动选中的 AI（${aiLabel({ profile: chain[0].id, model: chain[0].model })}）` : "默认后端";
   // Other runs on the same chat, message or item, and where its item goes on elsewhere (awareness.ts).
   const aware = internal ? "" : (await import("./awareness.ts")).awarenessNote(app, input.runId);
+  // Memories close to the task that its instructions did not carry (memory/passive.ts), for the runs
+  // that answer or act. The roles that keep the knowledge in order look memories up themselves, and
+  // a replay arm is given its own (replay.ts). A comparison run sees the same and is not counted.
+  let task = input.task;
+  if (base.recall && !input.replay && recallPurpose(input.spec?.name ?? input.role) === "answer") {
+    const by = { runId: input.runId, profile: base.profile.id, spec: base.recall.agent ?? undefined };
+    const count = !!input.runId && !input.shadow;
+    if (count) recordRecalls(app, told.ids, { ...by, via: "lesson" });
+    try {
+      const hits = await passiveRecall(app, { text: input.task.slice(0, ABOUT_CHARS), spaces: base.recall.spaces, userId: base.recall.userId, spec: base.recall.own, exclude: new Set(told.ids) });
+      if (hits.length) task = [input.task, passiveBlock(hits, "这次任务")].join("\n\n");
+      if (count) recordRecalls(app, hits.map((h) => h.memory.id), { ...by, via: "passive" });
+    } catch (e) {
+      console.warn("[omem] 给任务带上相关记忆失败：", (e as Error).message);
+    }
+  }
   try {
     for (let i = 0; i < chain.length; i++) {
       // The named AI is out of quota or past the owner's daily cap: go straight to the next.
@@ -783,7 +849,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       const moved = slot.index > 0;
       i += slot.index;
       const profile = chain[i];
-      const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
+      const prep = i === 0 ? base : prepareRun(app, { actor, lessons, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
       if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
       try {
         const req = {
@@ -793,7 +859,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           parts: prep.parts,
-          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}# 任务\n\n${input.task}${aware}`,
+          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
@@ -827,7 +893,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         let result: AgentResult;
         try {
           result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
-            ? await backgroundTurn(app, prep, req, `${input.task}${aware}`, input.runId, watch)
+            ? await backgroundTurn(app, prep, req, `${task}${aware}`, input.runId, watch)
             : await runBackend(app, prep.profile, req, watch);
         } catch (e) {
           if (!quietAfterAll(app, input.runId, quietBefore, e)) throw e;

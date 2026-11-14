@@ -21,8 +21,8 @@ type NearInput = {
   userId?: string | null;
   /** Shared memories plus this profile's own (undefined = all profiles' memories). */
   spec?: string | null;
-  /** Leave out preferences and experience (every run already carries them). */
-  factsOnly?: boolean;
+  /** Preferences and experience only once the reviewer (or the owner) accepted them, as in the lessons every run is told. */
+  vettedLessons?: boolean;
   exclude?: Set<string>;
   kind?: "query" | "passage";
 };
@@ -35,7 +35,7 @@ export async function nearMemories(app: App, input: NearInput): Promise<PassiveH
   if (!q) return [];
   const where = ["status = 'active'", "embedding is not null"];
   const params: (string | number)[] = [];
-  if (input.factsOnly) where.push("kind not in ('preference', 'experience')");
+  if (input.vettedLessons) where.push("(kind not in ('preference', 'experience') or created_by = 'user' or review_verdict = 'keep')");
   if (input.spec !== undefined) where.push("(agent is null or agent = ?)") && params.push(input.spec ?? "");
   if (input.userId) where.push("(user_id is null or user_id = ?)") && params.push(input.userId);
   if (input.spaces) where.push(`space_id in (${input.spaces.map(() => "?").join(",")})`) && params.push(...input.spaces);
@@ -59,12 +59,14 @@ export const RERANK_PREFILTER = 0.4;
 const RERANK_WAIT_MS = 3000;
 
 /**
- * Passive recall: before a chat turn, memories close enough to the new message are put in front
- * of the agent so it does not have to think of calling `recall` first. Only a gate decides —
- * below it nothing is added, so an unrelated message costs no tokens. The gate is the cosine, or
- * with reranking on, the reranker's relevance of the closest candidates (`score` is then that
- * relevance); when the reranker gives no answer in time, the cosine gate applies.
- * Preferences and experience are left out: every run already gets them (runner.learnedContext).
+ * Passive recall: before a chat turn or a task, memories close enough to the new message (or the
+ * task) are put in front of the agent so it does not have to think of calling `recall` first. Only
+ * a gate decides — below it nothing is added, so an unrelated message costs no tokens. The gate is
+ * the cosine, or with reranking on, the reranker's relevance of the closest candidates (`score` is
+ * then that relevance); when the reranker gives no answer in time, the cosine gate applies.
+ * Every kind of memory takes part. What the run was already told (the preferences and experience in
+ * its instructions, runner.ts) comes in `exclude`: a run is told only so many of those, and the rest
+ * reach it this way.
  */
 export async function passiveRecall(
   app: App,
@@ -72,7 +74,7 @@ export async function passiveRecall(
 ): Promise<PassiveHit[]> {
   const cfg = app.config.memory.passive;
   if (!cfg.enabled) return [];
-  const near = { ...input, spec: input.spec ?? null, factsOnly: true };
+  const near = { ...input, spec: input.spec ?? null, vettedLessons: app.config.memory.review.enabled };
   const threshold = input.threshold ?? cfg.threshold;
   const limit = input.limit ?? cfg.limit;
   const rr = app.config.rerank;
@@ -91,11 +93,11 @@ export async function passiveRecall(
   return nearMemories(app, { ...near, threshold, limit });
 }
 
-/** The block a chat turn carries; empty when nothing passed the gate. */
-export function passiveBlock(hits: PassiveHit[]): string {
+/** The block a chat turn (or a task) carries; empty when nothing passed the gate. */
+export function passiveBlock(hits: PassiveHit[], about: "这条消息" | "这次任务" = "这条消息"): string {
   if (!hits.length) return "";
-  const lines = hits.map(({ memory: m }) => `- mem:${m.id} [${m.kind}] ${m.subject ? m.subject + "：" : ""}${m.content}（${m.validFrom?.slice(0, 10) ?? "?"} 起）`);
-  return `## 可能相关的记忆\n\n按这条消息自动找到的，只供参考：不相关就忽略，不要为了用上而提起；用到时照常写 mem:<id>，要核实或找更多用 recall。\n\n${lines.join("\n")}`;
+  const lines = hits.map(({ memory: m }) => `- mem:${m.id} [${m.kind}${m.agent ? "，本档案" : ""}] ${m.subject ? m.subject + "：" : ""}${m.content}（${m.validFrom?.slice(0, 10) ?? "?"} 起）`);
+  return `## 可能相关的记忆\n\n按${about}自动找到的，只供参考：不相关就忽略，不要为了用上而提起；用到时照常写 mem:<id>，要核实或找更多用 recall。\n\n${lines.join("\n")}`;
 }
 
 /** Cosine between two memories' vectors above which they are probably about the same thing (bge-small-zh, see docs/v2/evaluation.md). */

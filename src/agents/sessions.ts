@@ -48,10 +48,12 @@ const passiveSeen = new Map<string, Set<string>>();
 /** Memories close to what the person just said, for this turn (empty when none pass the gate). */
 async function passiveForTurn(app: App, runId: string, threadId: string, prep: ReturnType<typeof prepareRun>, text: string, continuing: boolean): Promise<string> {
   if (!prep.recall || !text.trim()) return "";
-  const seen = (continuing && passiveSeen.get(threadId)) || new Set<string>();
+  // A new agent session starts from what its instructions already carry (the preferences and the
+  // profile's own experience, runner.standingLessons): those are not repeated, the rest may come.
+  const seen = (continuing && passiveSeen.get(threadId)) || new Set<string>(prep.lessonIds);
   passiveSeen.set(threadId, seen);
   try {
-    const hits = await passiveRecall(app, { text, spaces: prep.recall.spaces, userId: prep.recall.userId, spec: prep.recall.agent, exclude: seen });
+    const hits = await passiveRecall(app, { text, spaces: prep.recall.spaces, userId: prep.recall.userId, spec: prep.recall.own, exclude: seen });
     for (const h of hits) seen.add(h.memory.id);
     recordRecalls(app, hits.map((h) => h.memory.id), { runId, profile: prep.profile.id, spec: prep.recall.agent ?? undefined, via: "passive" });
     return passiveBlock(hits);

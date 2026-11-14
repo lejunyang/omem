@@ -7,6 +7,12 @@ updated: 2026-11-14
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 记忆按对话与任务供给，召回区分回答与整理（11-14）
+
+- `src/agents/runner.ts`：对话常驻偏好和自身经验，小量经验全带、超量带最新 6 条；任务按相关性挑最多 12 条自身经验与 8 条共享偏好、经验，无向量时取最新。主助手的自身记忆归属为 `assistant`。`src/memory/folders.ts` 的 `ownFolderNote` 提供目录、说明和条数。
+- `src/memory/passive.ts`、`sessions.ts`、`replay.ts`：所有类型参与自动召回，排除说明已带上的记忆；复核开启时偏好、经验只用本人写入或已保留的；回答和办事任务也带上相关记忆，整理角色不带。
+- `src/memory/recall-stats.ts` 与“记忆 → 召回”：`purpose` 分回答、办事与整理，`via` 分主动查、自动带上、任务挑选；整理次数单列，偏好不计从未召回。`recall` 的目录等筛选配合 query 时先扩大候选再筛，最多返回 20 条。回归：`test/memory-recall-scope.test.ts`。
+
 ## 轻量命令行 @omem-ai/cli（11-13）
 
 - 新包 `packages/cli`（npm `@omem-ai/cli`，命令也是 `omem`）：只有连远程 omem 的 `login`、`open`、`remote` 和远程的 `tool` / `mcp`，Vite 打成一个无依赖的文件，给只用别人 omem 的人装，不带服务端的依赖。

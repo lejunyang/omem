@@ -252,7 +252,8 @@ watch(days, loadQuality);
 const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
 
 // ---- recall effectiveness --------------------------------------------------------
-type RecallStats = { total: number; recalled: number; neverRecalled: number; totalRecalls: number; usedRecalls: number; distinctRecalls: number; distinctUsed: number; passiveRecalls: number; passiveUsed: number };
+type RecallViaStats = { shown: number; used: number; memories: number; runs: number };
+type RecallStats = { standing: number; upkeepRecalls: number; byVia: Record<"passive" | "lesson" | "recall", RecallViaStats>; total: number; recalled: number; neverRecalled: number; totalRecalls: number; usedRecalls: number; distinctRecalls: number; distinctUsed: number; passiveRecalls: number; passiveUsed: number };
 type RecallRow = { id: string; spaceId: string; kind: string; subject: string; content: string; status: string; agent: string | null; updatedAt: string; recalls: number; used: number; lastRecalledAt: string | null };
 const recall = ref<{ stats: RecallStats; memories: RecallRow[] } | null>(null);
 const recallSort = ref<"recalls" | "never" | "unused" | "recent">("recalls");
@@ -462,8 +463,11 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
         <div class="row wrap qhead">
           <span class="badge ok">记忆 {{ recall.stats.total }} 条</span>
           <span class="badge">被召回过 {{ recall.stats.recalled }}</span>
-          <span class="badge warn">从未召回 {{ recall.stats.neverRecalled }}</span>
-          <span class="muted small">召回 {{ recall.stats.totalRecalls }} 次；其中真正用上 {{ recall.stats.usedRecalls }} 次（{{ pct(recall.stats.usedRecalls, recall.stats.totalRecalls) }}）<template v-if="recall.stats.passiveRecalls">；对话前自动带上 {{ recall.stats.passiveRecalls }} 次，用上 {{ recall.stats.passiveUsed }} 次（{{ pct(recall.stats.passiveUsed, recall.stats.passiveRecalls) }}）</template></span>
+          <span class="badge warn">从未召回 {{ recall.stats.neverRecalled }}（不含偏好）</span>
+          <span class="muted small">回答和办事时带上 {{ recall.stats.totalRecalls }} 次，回答里引用 {{ recall.stats.usedRecalls }} 次（{{ pct(recall.stats.usedRecalls, recall.stats.totalRecalls) }}）</span>
+          <span v-for="[via, label] in ([['passive', '自动带上（对话或任务前）'], ['lesson', '按任务挑的偏好与经验'], ['recall', '助手主动查']] as const)" :key="via" class="muted small">{{ label }}：带上 {{ recall.stats.byVia[via].shown }} 次，引用 {{ recall.stats.byVia[via].used }} 次</span>
+          <span class="muted small">偏好 {{ recall.stats.standing }} 条在对话里常驻</span>
+          <span class="muted small">整理时查看 {{ recall.stats.upkeepRecalls }} 次，不计入</span>
           <span class="spacer" />
           <UiSegmented v-model="recallSort" size="sm" aria-label="排序" :options="[
             { value: 'recalls', label: '召回最多' },

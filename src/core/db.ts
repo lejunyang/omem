@@ -1788,6 +1788,14 @@ export const migrations: readonly string[] = [
   // index that reads the whole table, and packed vectors sit in the table's own pages, where a scan
   // cannot skip them the way it skipped the overflow pages of the float32 values.
   `create index chunks_unembedded on chunks(space_id) where embedding is null;`,
+  // Recall accounting keeps apart the runs that answer or act and the roles that keep the knowledge
+  // in order (config.upkeepRoles as of this migration): the latter look memories up before writing,
+  // which is most of the rows and says nothing about a memory's use (memory/recall-stats.ts).
+  `alter table memory_recalls add column purpose text not null default 'answer';
+   update memory_recalls set purpose = 'upkeep' where agent_spec in ('ingest', 'archivist', 'archive-rule-writer', 'wiki-planner', 'wiki-writer', 'wiki-linter',
+     'wiki-organizer', 'wiki-checker', 'dreamer', 'curator', 'triager', 'distiller', 'summarizer', 'memory-reviewer', 'memory-organizer', 'item-keeper', 'coach',
+     'replay-judge', 'kb-scout', 'req-splitter', 'tutor', 'work-state');
+   create index memory_recalls_run on memory_recalls(run_id);`,
 ];
 
 export type Db = DatabaseSync;

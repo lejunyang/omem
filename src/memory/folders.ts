@@ -156,6 +156,30 @@ export function removeFolder(app: App, spaceId: string, path: string, by: "agent
   return relocateFolder(app, spaceId, path, parentFolder(path), by);
 }
 
+/**
+ * Where a profile's (or a built-in role's) own memories are: the folders holding most of them and
+ * what belongs in each. A run is told only a few of its own memories (runner.ts); this is the map it
+ * looks the rest up with.
+ */
+export function ownFolderNote(app: App, agent: string, limit = 12): string {
+  const rows = all<{ space_id: string; folder: string; n: number }>(app.db, "select space_id, folder, count(*) n from memories where status = 'active' and agent = ? group by space_id, folder order by n desc", agent);
+  const filed = rows.filter((r) => r.folder);
+  if (!filed.length) return "";
+  const spaces = [...new Set(rows.map((r) => r.space_id))];
+  const described = new Map(
+    all<{ space_id: string; path: string; description: string }>(app.db, `select space_id, path, description from memory_folders where description != '' and space_id in (${spaces.map(() => "?").join(",")})`, ...spaces).map((d) => [`${d.space_id}\n${d.path}`, d.description]),
+  );
+  const top = filed.slice(0, limit);
+  const rest = rows.reduce((n, r) => n + r.n, 0) - top.reduce((n, r) => n + r.n, 0);
+  return [
+    ...top.map((r) => {
+      const d = described.get(`${r.space_id}\n${r.folder}`);
+      return `- ${spaces.length > 1 ? `空间 ${r.space_id} · ` : ""}${r.folder}（${r.n} 条）${d ? `：${d}` : ""}`;
+    }),
+    rest ? `- 其他目录和未归档的共 ${rest} 条` : "",
+  ].filter(Boolean).join("\n");
+}
+
 /** The folder tree of a space as text for agents: path, counts, description. */
 export function folderTreeText(app: App, spaceId: string) {
   const folders = listFolders(app, spaceId);

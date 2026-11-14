@@ -486,17 +486,20 @@ const VARIANT_NOTE: Partial<Record<ReplayAxis, string>> = {
 };
 
 /** The task an arm gets: the question as it was asked, with the conversation before it. */
-async function armTask(app: App, q: Question, view: RunView, axis: ReplayAxis | null) {
+async function armTask(app: App, q: Question, view: RunView, axis: ReplayAxis | null, spec: AgentSpec | null) {
   const when = localTime(app, q.asOf);
   const note = axis ? VARIANT_NOTE[axis] : undefined;
   const head = `这是一次重答：下面的问题是在 ${when} 提的，把现在当作那个时间照常回答。这次只能读：写入、发消息、交办都用不了，也不需要；直接回答问题，引用照常写 src:/mem:。`;
-  if (q.kind === "agent") return `${head}${note ? `\n\n${note}` : ""}\n\n---\n\n${q.question}`;
+  // What the original run was given unasked: memories close to the question (memory/passive.ts), as
+  // they stood then, without the ones the arm's own instructions will carry.
   let passive = "";
   try {
-    const hits = await passiveRecall(app, { text: q.question, spaces: null, userId: OWNER, spec: null });
+    const told = await lessonIdsForTask(app, { role: "assistant", spec: spec ?? undefined, spaceId: q.spaceId, userId: OWNER, task: q.question, replay: { view, tools: REPLAY_TOOLS } });
+    const hits = await passiveRecall(app, { text: q.question, spaces: null, userId: OWNER, spec: spec?.name ?? "assistant", exclude: new Set(told) });
     const ok = visibleMemories(app, view, hits.map((h) => h.memory.id));
-    passive = passiveBlock(hits.filter((h) => ok.has(h.memory.id)));
+    passive = passiveBlock(hits.filter((h) => ok.has(h.memory.id)), q.kind === "agent" ? "这次任务" : "这条消息");
   } catch {}
+  if (q.kind === "agent") return [`${head}${note ? `\n\n${note}` : ""}\n\n---\n\n${q.question}`, passive].filter(Boolean).join("\n\n");
   return [
     head,
     q.context ? `# 会话背景（提问前的最近 ${CONTEXT_TURNS} 轮）\n\n${q.context}` : "",
@@ -518,7 +521,7 @@ async function runArm(app: App, parent: RunContext, q: Question, label: string, 
   timer.unref();
   parent.signal.addEventListener("abort", () => ctrl.abort(), { once: true });
   try {
-    const task = await armTask(app, q, opts.view, opts.axis);
+    const task = await armTask(app, q, opts.view, opts.axis, opts.spec);
     const tools = opts.view.noPages ? REPLAY_TOOLS.filter((t) => !PAGE_TOOLS.includes(t)) : REPLAY_TOOLS;
     const res = await runRole(app, {
       role: "assistant",

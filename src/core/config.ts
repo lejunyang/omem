@@ -91,6 +91,18 @@ export const roleNames = [
 export type RoleName = (typeof roleNames)[number];
 
 /**
+ * Roles whose job is keeping the knowledge in order (taking material in, writing and checking pages,
+ * reviewing and filing memories). When they look memories up it is to avoid writing one twice, not to
+ * answer with it, so recall accounting keeps them apart (memory/recall-stats.ts) and their runs are
+ * not handed memories unasked (runner.ts).
+ */
+export const upkeepRoles: ReadonlySet<string> = new Set<RoleName>([
+  "ingest", "archivist", "archive-rule-writer", "wiki-planner", "wiki-writer", "wiki-linter", "wiki-organizer", "wiki-checker",
+  "dreamer", "curator", "triager", "distiller", "summarizer", "memory-reviewer", "memory-organizer", "item-keeper", "coach",
+  "replay-judge", "kb-scout", "req-splitter", "tutor", "work-state",
+]);
+
+/**
  * Nightly replay (src/agents/replay.ts, docs/v2/replay.md). Signals a past run shows, and the axes a
  * variant arm may change: retrieval (R1 deep search, R2 related spaces, R3 a research profile), source
  * levels (S1 focus+reference only, S2 ignore too), memories (M1 without the ones the run touched, M2

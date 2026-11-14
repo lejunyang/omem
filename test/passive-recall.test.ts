@@ -16,7 +16,9 @@ async function setup() {
   const ids = {
     deploy: remember(app, { spaceId: "personal", kind: "fact", content: "项目 A 每周二下午发布，发布前要先跑回归测试。" }).id,
     other: remember(app, { spaceId: "personal", kind: "fact", content: "小王的生日是三月十二日。" }).id,
-    pref: remember(app, { spaceId: "personal", kind: "preference", content: "项目 A 发布说明用中文写，周二发布。" }).id,
+    pref: remember(app, { spaceId: "personal", kind: "preference", content: "项目 A 发布说明用中文写，周二发布。", createdBy: "user" }).id,
+    // Written by an agent and not reviewed yet: lessons are only handed out once accepted.
+    unreviewed: remember(app, { spaceId: "personal", kind: "experience", content: "项目 A 周二发布前先在群里说一声再跑回归测试。" }).id,
     elsewhere: remember(app, { spaceId: "proj", kind: "fact", content: "项目 A 每周二下午发布，发布前跑回归测试。" }).id,
     spec: remember(app, { spaceId: "personal", kind: "fact", content: "项目 A 每周二发布前要先跑回归测试。", agent: "reviewer" }).id,
   };
@@ -26,13 +28,16 @@ async function setup() {
 }
 
 describe("passive recall", () => {
-  it("adds only memories above the gate, within the run's spaces and agent, never preferences", async () => {
+  it("adds only memories above the gate, within the run's spaces and agent, of every kind but what the run was already told", async () => {
     const { app, ids } = await setup();
     const hits = await passiveRecall(app, { text: "项目 A 周二发布前要做什么？", spaces: ["personal"], userId: "owner", threshold: 0.5 });
     const got = hits.map((h) => h.memory.id);
     expect(got).toContain(ids.deploy);
     expect(got).not.toContain(ids.other);
-    expect(got).not.toContain(ids.pref);
+    // A preference close to the message comes too, unless the run's instructions already carry it.
+    expect(got).toContain(ids.pref);
+    expect((await passiveRecall(app, { text: "项目 A 周二发布前要做什么？", spaces: ["personal"], userId: "owner", threshold: 0.5, exclude: new Set([ids.pref]) })).map((h) => h.memory.id)).not.toContain(ids.pref);
+    expect(got).not.toContain(ids.unreviewed);
     expect(got).not.toContain(ids.elsewhere);
     expect(got).not.toContain(ids.spec);
     // The spec sees its own memories; all spaces (null) include the project's.
