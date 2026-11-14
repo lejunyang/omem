@@ -461,6 +461,13 @@ def({
     });
     const head = onBranch ? `分支 ${onBranch.idx.branch}（${onBranch.idx.commit.slice(0, 8)}）相对 ${onBranch.idx.baseRef} 改了 ${onBranch.idx.files} 个文件、删了 ${onBranch.idx.deleted} 个，这些按分支上的版本（空间 ${onBranch.idx.space}），其余按 ${onBranch.idx.repo}。\n\n` : "";
     if (!hits.length) return `${head}没有命中。换个说法、换关键词、去掉限定或搜索其他空间。`;
+    // Memories a search turned up count as looked up, like recall's (recall-stats.ts); a replay arm's are its own business.
+    const found = hits.flatMap((h) => (h.type === "memory" ? [h.id] : []));
+    if (found.length && !ctx.view)
+      try {
+        const { recordRecalls } = await import("../memory/recall-stats.ts");
+        recordRecalls(ctx.app, found, { runId: ctx.runId, profile: ctx.agentProfile, spec: ownProfile(ctx) ?? undefined });
+      } catch { /* accounting only */ }
     return head + codeVersionHead(ctx, hits) + hits
       .map((h, i) => {
         const where =
