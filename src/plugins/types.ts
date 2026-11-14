@@ -14,6 +14,15 @@ export type PluginBlockState = { id: string; kind: string; data: any; status: Bl
 
 /** The owner's settings for a plugin, as the manifest declares them (strings, numbers, booleans). */
 export type PluginSettings = Record<string, string | number | boolean>;
+/** Messages from a plugin's platform enter the same inbox as built-in chat channels. */
+export type PluginChannelMessage = { chatId: string; topicId?: string; isGroup: boolean; senderId: string; text: string; messageId?: string; addressed?: boolean };
+export type PluginChannel = {
+  id: string;
+  label: string;
+  send(to: { chatId: string; topicId?: string }, text: string): Promise<void>;
+  maxLength: number;
+  owner?: (settings: PluginSettings) => string | number | boolean | undefined;
+};
 
 export type PluginContext = {
   app: App;
@@ -139,6 +148,8 @@ export type PluginApi = {
   id: string;
   /** The host's zod: plugins in the data directory cannot import packages. */
   z: typeof import("zod").z;
+  /** In-process only. The host resolves identities, splits deliveries and unregisters on stop. */
+  channel(def: PluginChannel): { receive(message: PluginChannelMessage): Promise<void> };
   tool<S extends z.ZodObject>(tool: PluginTool<S>): void;
   block<S extends z.ZodObject>(block: PluginBlock<S>): void;
   /** One of the services the manifest declares: started on first use, its address and the token it expects. */

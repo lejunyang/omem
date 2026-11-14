@@ -21,6 +21,11 @@ updated: 2026-11-14
 - `sources/attention.ts`、`agents/jobs.ts`、`roles/note-reviewer.md`：每小时独立复核 Agent 标注，保留按八成、撤回归零，拿不准才进本人清单；本人可恢复近 14 天撤回的标注，只有本人确认的有误、不检索才移出检索结果。`review_notes` 只给复核角色，记录模型、时间和依据；候选按排名影响、搜索命中和时间排序。
 - `channels/lark-knowledge.ts`：autoApply 改 off/safe/all，旧布尔兼容，新配置默认 safe；归入已有空间和忽略直接应用，新建仍等确认，通知分列处理与等待，原有 reset 可撤销。
 - `wiki/questions.ts`：新增阅读次数、夜间候选排序与预算、旧问题过期函数；网页能筛选过期并重开。定时任务 `wiki-resolve`（每天 05:40，`wiki/verify.ts` 的 `resolveNightly`）先过期、再把当晚选出的问题按空间各排一次调查；`queueResolve` 可以接指定的问题 id 和当晚的日期。
+## 场景包与插件聊天渠道（11-14）
+
+- 插件可带规则与 MCP：规则首次导入停用并记来源，删后不重建；MCP 只留密钥名，命令先经插件信任，同名不覆盖，卸载后保留。`src/plugins/contributions.ts`、`registry.ts`，规则的 `origin` 在 `src/rules/store.ts`。
+- `omem plugin pack`、本人专用 `POST /api/plugins/pack` 和 设置 → 插件 的“打成场景包”导出已有配置，技能含全部资源；文本含已存密钥或用户目录绝对路径时拒绝写包，用户目录路径可按文件放行、已存密钥不能；带脚本或转发的规则不随包走，完全访问、会话、指定的 AI、接收方没有的空间去掉（`contributions.ts` 的 `portableRule`，导入时同样处理，不创建的规则在插件详情里写原因）；插件档案只能用包自带的 MCP 服务，技能目录里的符号链接不复制；安装支持本地目录，复制而非链接。入口 `src/plugins/pack.ts`、`install.ts`、`http.ts`、`web/src/components/PluginPack.vue`。
+- `api.channel` 接聊天平台，在 omem 进程里运行。宿主负责身份、会话、回复、通知分段、发送错误与注销，停用或撤销信任立即断开投递入口；设置 → 渠道 显示状态。入口 `src/plugins/channels.ts`、`types.ts`、`web/src/components/PluginChannels.vue`。
 
 ## 每晚抽检（11-14）
 

@@ -48,6 +48,7 @@ type Rule = {
   lastFiredAt?: string | null;
   conditionText?: string;
   createdBy?: string;
+  origin?: { plugin: string; name: string; file: string } | null;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
 type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string; chat_mode?: string | null }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
@@ -453,6 +454,7 @@ function startFrom(text: string) {
         <div v-for="r in rules" v-else :key="r.id" class="li" :class="{ on: r.id === selectedId }">
           <button class="grow pick" type="button" @click="go({ id: r.id! })">
             <div class="row"><strong class="ellipsis">{{ r.name }}</strong><span v-if="r.createdBy === 'agent' && !r.enabled" class="badge">待确认</span></div>
+            <div v-if="r.origin" class="muted small">来自插件 {{ r.origin.name }}{{ r.enabled ? "，已启用" : "，还没启用" }}</div>
             <div class="muted small clamp">{{ r.description }}</div>
             <div class="muted small">
               <span :title="r.spaceId ? '只在这个空间的规则列表里出现' : '全局规则：在每个空间的规则列表里都会列出'">{{ spaceName(r.spaceId) }}</span>

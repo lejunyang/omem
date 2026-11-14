@@ -30,7 +30,7 @@
 - **方案与变更说明**（`docs/v2/coding-plan.md`）：值得的交办在编码前先写方案——几个决定，分新增 / 修改 / 删除 / 重构，各写要点：行为对照表、对外的约定、删什么、不选什么——你在卡片或方案页上通过、提意见或换个思路，通过后照它编码，每个修改项挂到决定上，偏差和“有没有更简单的做法”写回决定；不走方案的交办结束时交一份变更说明。别人的技术方案也能交给助理跟进：提取作者的决定、回到代码核对，写出问题、风险、改进和要问作者的，文档更新后重新评估；别人的分支出来后对照同一份方案评审，改动归到决定上，逐个决定看做了没有、偏差在哪。
 - **编码前先查影响面**：新交办开始编码前，另一个 Agent 查改动会碰到什么、这些文件以前出过什么问题（需求点、交办、评审问题、提交）、改完要回归什么；编码 Agent 拆修改项时照着补，评审拿它核对。
 - **记忆有版本，事项会收尾**：约定被纠正时旧版本保留并指向新版本；事项有时间线和期限，没进展自己过期，有新消息再打开。
-- **插件做强交互的事**：一个插件打包 Agent 档案、技能、工具、数据和独立页面。内置的“英语练习”按场景出一组题（中英互选、填空、听写、翻译），一次提交，宿主判客观题、陪练评翻译并点评；陪练在后台补题库，“下一组”按你的水平和薄弱点当场挑出来；也可以和语音模型按场景说英语，陪练评价口语，记进同一份学习画像。自己的插件放数据目录，只写清单和档案就能用表单、图表和默认页面；带代码和常驻服务的（比如实时看机器状态）要你在设置 → 插件里确认后才运行，页面能经 omem 和服务保持 WebSocket 连接，声明了语音的页面能和语音模型对话（麦克风在 omem 的页面里，插件只拿到文字）。
+- **插件做强交互的事**：一个插件打包 Agent 档案、技能、工具、数据和独立页面。内置的“英语练习”按场景出一组题（中英互选、填空、听写、翻译），一次提交，宿主判客观题、陪练评翻译并点评；陪练在后台补题库，“下一组”按你的水平和薄弱点当场挑出来；也可以和语音模型按场景说英语，陪练评价口语，记进同一份学习画像。自己的插件放数据目录，只写清单和档案就能用表单、图表和默认页面；带代码和常驻服务的（比如实时看机器状态）要你在设置 → 插件里确认后才运行，页面能经 omem 和服务保持 WebSocket 连接，声明了语音的页面能和语音模型对话（麦克风在 omem 的页面里，插件只拿到文字）。不带代码的插件叫“场景包”：可把已有档案、完整技能、停用规则和不含密钥值的 MCP 定义一起打包，交给别人安装；命令 MCP 仍须先确认信任。插件也能接入自己的聊天渠道，身份、会话、回复和通知由宿主管理。
 - **飞书里用**：机器人回答带进度卡片和思考过程，规则一句话写成“遇到什么就做什么”，提问和评审结果都是带按钮的卡片。
 - **给 Agent 接 MCP 服务**：Agent 页 → MCP 服务 配置命令或网址，再到档案或内置角色里勾选；环境变量和请求头的值按密钥保存，保存后只显示是否已设置。可检测连接并查看工具，删除前列出使用它的档案和角色。仅你自己的运行带这些服务，其他成员、访客和评审不带；夜间复盘只用标为只读的服务。
 - **不自带模型**：理解和写作交给你已安装的 Agent（Codex、Claude Code、Gemini CLI 等），omem 管存储、索引、调度和权限。
@@ -214,6 +214,7 @@ npm install -g @omem-ai/cli
 | 让同事也能问机器人项目的事 | 设置 → 渠道 开启访客提问，在“开放给访客的空间”按名称多选；群聊还可读群所属的非个人空间，私聊需另外开启且只读选中的空间，未选择时没有资料可查 |
 | 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 连接 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
 | 成组练英语，按水平和薄弱点出题 | 左侧“英语练习”：选场景和侧重点开始，做完一组一起提交；选择、填空、听写当场判分，翻译由陪练评分点评。“下一组”从陪练补好的题库里按你的情况马上挑（设置里可改成每组由陪练现出），题库里没这个场景的题时由陪练出。右侧是各项水平、今天的目标、近 14 天练习量和薄弱点；“设置”里改每组题数、朗读口音和语速。陪练是 Agent 页里的 `english-tutor`，可以改说明、挂技能 |
+| 把工作配置交给别人 | 设置 → 插件 → 打成场景包，勾选档案、技能、规则、MCP，填名字并写出目录；对方用 `omem plugin install <目录>` 安装。MCP 值不导出，文本含已存密钥或用户目录绝对路径会先拒绝 |
 | 装别人写的插件 | 设置 → 插件 → 安装插件，填 `npm:包名@版本` 或 `github:owner/repo#tag`（或 `omem plugin install …`）；看过它声明的权限后点“信任并运行”。不想用的插件（内置的也可以）在同一页关掉，不用重启 |
 | 做一个自己的小插件（复盘、问卷、打卡） | 在数据目录建 `plugins/<id>/plugin.yaml`、`agents/<名>.md`（可带 `skills/`、`settings`），重启后侧栏出现它的页面：和它的 Agent 对话，Agent 能发表单让你填、画图给你看。不加载数据目录里的代码。格式见 [docs/v2/plugins.md](docs/v2/plugins.md) |
 | 插件要一个常驻进程（采集、看屏幕、连设备），页面实时显示 | 清单里写 `services` 和 `streams`，服务用 `packages/plugin-sdk/service.mjs`，页面 `omem.stream(名)`；数据目录插件带代码时在设置 → 插件里点“信任并运行”，代码改了要重新确认；服务的状态和输出也在那里看。点击、输入这类工具标 `approval: true`，每次等你批准 |
@@ -319,7 +320,8 @@ omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / 
 omem doubao status                           # 哪个飞书应用有豆包权限、本机是否已授权
 omem doubao login [--app <appId>]            # 设备码授权豆包（在飞书里打开链接确认）
 omem doubao send-test                        # 经豆包以本人身份给自己发一条测试私聊并核对（“经豆包发送”前先试）
-omem plugin list|install|remove|enable|disable   # 插件：列出、装 npm 包或 GitHub tag、删除、启用和停用
+omem plugin list|install|remove|enable|disable   # 插件：列出、装本地目录 / npm 包 / GitHub tag、删除、启用和停用
+omem plugin pack --id projecta --name "项目 A" --agents helper --skills project-guide   # 打成场景包；也可选 --rules、--mcp，默认写到数据目录 plugins-out/
 omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见“多人使用”
 omem user approve <id> / omem user invite [--space …] [--edit …] [--any]  # 批准登录建好的账号；生成邀请链接（只能用一次）
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
@@ -431,9 +433,9 @@ omem link                                   # 从其他设备打开网页的链�
 - `none` 只处理不回复；`draft` 回复先变成草稿卡片发给你，你点“发送”才发出；`auto` 直接用机器人回复（机器人需在群里）。
 - 每个群（或话题）是处理 Agent 的一个连续会话，每条消息只处理一次；机器人在群里时实时处理，不在时随采集处理。
 
-## Telegram 与 QQ / 微信
+## Telegram、QQ / 微信与插件渠道
 
-`omem setup` 的渠道部分开启。Telegram 的机器人 token 放在环境变量 `OMEM_TELEGRAM_TOKEN`，再填你的 chat id，私聊、群、论坛话题与飞书一样各是一个会话；QQ / 微信经 OneBot v11 兼容桥（NapCat、LLOneBot 等）接入，没有话题，每个私聊或群一个会话。命令与飞书相同。
+`omem setup` 的渠道部分开启。Telegram 的机器人 token 放在环境变量 `OMEM_TELEGRAM_TOKEN`，再填你的 chat id，私聊、群、论坛话题与飞书一样各是一个会话；QQ / 微信经 OneBot v11 兼容桥（NapCat、LLOneBot 等）接入，没有话题，每个私聊或群一个会话。命令与飞书相同。插件还能通过 `api.channel` 接入其他聊天平台：信任并启用后在 设置 → 渠道 显示，绑定身份才回答，群里只答明确发给它的消息；停用后回复和通知入口一起注销。插件渠道需要选择“在 omem 里运行”，不支持隔离模式。
 
 ## 多人使用
 
@@ -559,7 +561,7 @@ src/designs   方案：决定、意见与版本（store.ts）、给 Agent 读的
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测、写入检查与发布前核对（checks.ts、verify.ts）、页面的未决问题与旧页面迁移（questions.ts、migrate.ts）；问题的阅读次数、候选排序、过期与重开（questions.ts）
 src/quality   每晚抽检助手自主写入的页面、按运行类型统计与加严、交回修改（audit.ts）
 src/learn     FSRS 卡片、学习目标
-src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）
+src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）；场景包导入（contributions.ts）、打包（pack.ts）、插件渠道（channels.ts）
 src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
               MCP 服务配置与密钥（mcp-servers.ts）、连接检测和工具列表（mcp-test.ts）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot

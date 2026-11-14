@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { HttpError, now } from "../core/util.ts";
@@ -14,12 +14,13 @@ import { builtinPluginsDir, dataPluginsDir, manifestSchema } from "./registry.ts
  * of it runs here: no install scripts, dependencies installed with --ignore-scripts; its code waits for
  * the owner's trust like any plugin with code. Where it came from is kept in .omem-install.json.
  */
-export type InstallSource = { kind: "npm"; spec: string } | { kind: "github"; owner: string; repo: string; ref: string };
+export type InstallSource = { kind: "local"; dir: string } | { kind: "npm"; spec: string } | { kind: "github"; owner: string; repo: string; ref: string };
 export type InstallInfo = { source: string; version: string; installedAt: string };
 const INFO = ".omem-install.json";
 
 export function parseSource(spec: string): InstallSource {
   const s = spec.trim();
+  if (existsSync(s) && lstatSync(s).isDirectory()) return { kind: "local", dir: resolve(s) };
   const gh = /^(?:github:|https:\/\/github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:#|\/tree\/|@)([\w./-]+)$/.exec(s);
   if (gh) return { kind: "github", owner: gh[1], repo: gh[2], ref: gh[3] };
   if (/^(github:|https:\/\/github\.com\/)/.test(s)) throw new HttpError(400, "GitHub 来源要带 tag 或提交：github:owner/repo#v1.0.0");
@@ -27,7 +28,7 @@ export function parseSource(spec: string): InstallSource {
   if (!/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(@[\w.^~<>=*-]+)?$/i.test(npm)) throw new HttpError(400, `看不懂的来源：${spec}（npm:包名@版本 或 github:owner/repo#tag）`);
   return { kind: "npm", spec: npm };
 }
-export const sourceText = (s: InstallSource) => (s.kind === "npm" ? `npm:${s.spec}` : `github:${s.owner}/${s.repo}#${s.ref}`);
+export const sourceText = (s: InstallSource) => (s.kind === "local" ? s.dir : s.kind === "npm" ? `npm:${s.spec}` : `github:${s.owner}/${s.repo}#${s.ref}`);
 
 const win = process.platform === "win32";
 function sh(cmd: string, args: string[], cwd: string) {
@@ -45,6 +46,21 @@ export function setInstallFetchForTests(fn: typeof fetch | null) {
 
 /** Download and unpack into a fresh directory; returns the directory holding plugin.yaml. */
 async function fetchInto(src: InstallSource, work: string) {
+  if (src.kind === "local") {
+    const dest = join(work, "local");
+    // Local packages are independent copies; links (including directory junctions) are refused.
+    const copy = (from: string, to: string) => {
+      if (lstatSync(from).isSymbolicLink()) throw new HttpError(400, "本地插件不能含符号链接");
+      mkdirSync(to, { recursive: true });
+      for (const e of readdirSync(from, { withFileTypes: true })) {
+        if (e.isSymbolicLink()) throw new HttpError(400, "本地插件不能含符号链接");
+        if (e.isDirectory()) copy(join(from, e.name), join(to, e.name));
+        else if (e.isFile()) cpSync(join(from, e.name), join(to, e.name));
+      }
+    };
+    copy(src.dir, dest);
+    return dest;
+  }
   const tgz = join(work, "pkg.tgz");
   if (src.kind === "npm") {
     const out = sh("npm", ["pack", src.spec, "--ignore-scripts", "--json", "--pack-destination", work], work);
@@ -72,6 +88,17 @@ export function installInfo(dir: string): InstallInfo | null {
   }
 }
 
+/** A recursive removal may only affect one direct child of the live plugin directory. */
+function checkedTarget(app: App, id: string) {
+  const root = resolve(dataPluginsDir(app)), target = resolve(root, id);
+  if (dirname(target) !== root || !/^[a-z][a-z0-9]{1,23}$/.test(id)) throw new HttpError(400, "插件目录不合法");
+  if (existsSync(target)) {
+    const rel = relative(realpathSync(root), realpathSync(target));
+    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel) || lstatSync(target).isSymbolicLink()) throw new HttpError(400, "插件目录不能是符号链接或指向 plugins/ 之外");
+  }
+  return target;
+}
+
 /**
  * Install or update: unpack, check the manifest, refuse an id a built-in plugin or a hand-made one in the
  * data directory already has, put the dependencies in without scripts, then swap the directory in.
@@ -85,7 +112,7 @@ export async function installPlugin(app: App, spec: string): Promise<{ id: strin
     if (!existsSync(join(dir, "plugin.yaml"))) throw new HttpError(400, "包里没有 plugin.yaml：不是 omem 插件");
     const manifest = manifestSchema.parse(YAML.parse(readFileSync(join(dir, "plugin.yaml"), "utf8")));
     if (existsSync(join(builtinPluginsDir(), manifest.id))) throw new HttpError(409, `插件 id ${manifest.id} 和内置插件重名`);
-    const target = join(dataPluginsDir(app), manifest.id);
+    const target = checkedTarget(app, manifest.id);
     const replaced = existsSync(target);
     if (replaced && !installInfo(target)) throw new HttpError(409, `数据目录里已经有你自己放的插件 ${manifest.id}，不覆盖`);
     const pkg = existsSync(join(dir, "package.json")) ? (JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { version?: string; dependencies?: Record<string, string> }) : {};
@@ -103,7 +130,7 @@ export async function installPlugin(app: App, spec: string): Promise<{ id: strin
 
 /** Remove an installed plugin's directory (only one this installer put there). */
 export function removeInstalled(app: App, id: string) {
-  const dir = join(dataPluginsDir(app), id);
+  const dir = checkedTarget(app, id);
   if (!installInfo(dir)) throw new HttpError(400, `插件 ${id} 不是装进来的，不删除；要删就自己删 ${dir}`);
   rmSync(dir, { recursive: true, force: true });
 }

@@ -1843,6 +1843,7 @@ export const migrations: readonly string[] = [
   `alter table source_notes add column reviewed_at text;
    alter table source_notes add column reviewed_by text;
    alter table source_notes add column review_note text;`,
+  `alter table rules add column origin text;`,
 ];
 
 export type Db = DatabaseSync;

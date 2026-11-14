@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import PluginPack from "./PluginPack.vue";
+import PluginSettings from "./PluginSettings.vue";
+import { useRoute } from "vue-router";
 import HelpText from "./HelpText.vue";
-import { onMounted, ref } from "vue";
+import { nextTick, onMounted, ref, watch } from "vue";
 import { del, get, post, put } from "../api";
 import { PLUGIN_ICONS } from "../lib/icons";
 import { confirmDialog, promptDialog } from "../lib/dialog";
@@ -25,6 +28,10 @@ type Plugin = {
   iconChosen: boolean;
   trust: "builtin" | "none" | "trusted" | "required" | "changed";
   agents: { name: string }[];
+  skills: string[];
+  settings: boolean;
+  rules: { file: string; id: string | null; name: string; enabled: boolean; created: boolean; error?: string | null }[];
+  mcp: { name: string; added: boolean; missing: string[] }[];
   tools: string[];
   page: { title: string } | null;
   services: { name: string; description: string; command: string }[];
@@ -36,6 +43,8 @@ type Plugin = {
   permissions: { tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; uses: string[]; services: string[]; space: string | null };
 };
 
+const route = useRoute();
+const editing = ref<Plugin | null>(null);
 const plugins = ref<Plugin[] | null>(null);
 const services = ref<Record<string, Service[]>>({});
 const openLog = ref<string | null>(null);
@@ -108,7 +117,7 @@ async function setEnabled(p: Plugin, on: boolean) {
   }
 }
 
-const TRUST: Record<Plugin["trust"], string> = { builtin: "内置", none: "只有声明，不含代码", trusted: "已信任", required: "带代码，未信任", changed: "代码改过，需要重新确认" };
+const TRUST: Record<Plugin["trust"], string> = { builtin: "内置", none: "声明式场景包", trusted: "已信任", required: "需要信任，尚未确认", changed: "代码改过，需要重新确认" };
 
 async function load() {
   plugins.value = await get<Plugin[]>("/api/plugins");
@@ -123,8 +132,8 @@ async function trust(p: Plugin, mode: "isolated" | "inprocess" = "isolated") {
   const what = [...permissionLines(p), p.installed ? `来源：${p.installed.source}` : "", `目录：${p.dir}`].filter(Boolean).join("\n");
   const how =
     mode === "isolated"
-      ? "它的代码在单独的进程里运行：只能读它自己的目录、写它自己的数据目录，读不到 omem 的密钥和你的其他文件，也不能启动别的程序；读平台、存原件都经过 omem，按调用它的人的权限。"
-      : "它的代码在 omem 的进程里运行，能读写你能读写的所有文件、用 omem 的全部权限。只对你自己写的或逐行看过的插件这样做；内容块和新的连接器只能这样运行。";
+      ? "它的代码在单独的进程里运行：只能读它自己的目录、写它自己的数据目录，读不到 omem 的密钥和你的其他文件，也不能启动别的程序（信任后单独加入的命令 MCP 除外）；读平台、存原件都经过 omem，按调用它的人的权限。"
+      : "它的代码在 omem 的进程里运行，能读写你能读写的所有文件、用 omem 的全部权限。只对你自己写的或逐行看过的插件这样做；内容块、新的连接器、鉴权方式和聊天渠道只能这样运行。";
   const ok = await confirmDialog(`信任插件“${p.name}”？`, {
     message: `${how}代码以后有改动，要在这里重新确认。\n\n${what}`,
     okText: mode === "isolated" ? "隔离运行" : "在 omem 里运行",
@@ -166,23 +175,31 @@ async function setIcon(p: Plugin, icon: string) {
   }
 }
 
-onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
+async function locate() {
+  await nextTick();
+  const id = route.query.plugin;
+  if (typeof id === "string") document.getElementById(`plugin-${id}`)?.scrollIntoView({ block: "start" });
+}
+watch(() => route.query.plugin, locate);
+onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message, "error")));
 </script>
 
 <template>
   <div class="stack">
-    <HelpText lead>插件带来自己的 Agent 档案、技能、工具和页面。内置插件随 omem 更新；放在数据目录 <span class="mono">plugins/</span> 里的是你自己的；装进来的和你自己的，带代码的都要你看过权限、确认后才运行。写法见 docs/v2/plugins.md。</HelpText>
+    <HelpText lead>插件带来档案、技能、规则、MCP、工具、页面和聊天渠道。内置插件随 omem 更新；放在数据目录 <span class="mono">plugins/</span> 里的是你自己的；装进来的和你自己的，带代码的都要你看过权限、确认后才运行。写法见 docs/v2/plugins.md。</HelpText>
     <div class="card pad stack">
       <strong>安装插件</strong>
       <div class="row wrap">
-        <input v-model="source" class="input grow" placeholder="npm:omem-plugin-示例@1.0.0 或 github:owner/repo#v1.0.0" aria-label="插件来源" @keydown.enter="install" />
+        <input v-model="source" class="input grow" placeholder="本地目录、npm:包名@版本 或 github:owner/repo#tag" aria-label="插件来源" @keydown.enter="install" />
         <button class="btn sm primary" :disabled="busy || !source.trim()" @click="install">{{ busy ? "安装中…" : "安装" }}</button>
       </div>
       <p class="muted small">不运行包里的安装脚本；GitHub 来源要写 tag 或提交，分支会在信任之后变。</p>
     </div>
+    <PluginPack />
+    <PluginSettings v-if="editing" :key="editing.id" :plugin="editing.id" :title="editing.name" @close="editing = null" @saved="load" />
     <Skeleton v-if="!plugins" variant="text" :rows="4" />
     <p v-else-if="!plugins.length" class="muted">还没有插件。</p>
-    <div v-for="p in plugins ?? []" :key="p.id" class="card pad stack">
+    <div v-for="p in plugins ?? []" :key="p.id" :id="`plugin-${p.id}`" class="card pad stack plugin-card">
       <div class="row wrap">
         <button
           v-if="p.page"
@@ -198,6 +215,7 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
         <span class="badge" :class="{ warn: p.trust === 'required' || p.trust === 'changed', ok: p.trust === 'trusted' }">{{ TRUST[p.trust] }}</span>
         <span v-if="p.source !== 'builtin' || p.version" class="muted small">{{ p.source === "builtin" ? "" : sourceLabel(p) }}{{ p.version ? `${p.source === "builtin" ? "" : " · "}${p.version}` : "" }}</span>
         <span class="spacer" />
+        <button v-if="p.settings" class="btn ghost sm" @click="editing = p">设置</button>
         <UiCheckbox :model-value="p.enabled" switch size="sm" :aria-label="`启用${p.name}`" @change="(v) => setEnabled(p, v)">启用</UiCheckbox>
         <span v-if="p.trust === 'trusted' && p.runMode" class="badge" :class="{ warn: p.runMode === 'inprocess' }">{{ p.runMode === "isolated" ? "隔离运行" : "在 omem 里运行" }}</span>
         <button v-if="p.trust === 'required' || p.trust === 'changed'" class="btn sm primary" @click="trust(p)">信任并运行</button>
@@ -233,7 +251,15 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
       <div class="small facts">
         <span v-if="p.page">页面：{{ p.page.title }}</span>
         <span v-if="p.agents.length">档案：<span class="mono">{{ p.agents.map((a) => a.name).join("、") }}</span></span>
+        <span v-if="p.skills.length">技能：{{ p.skills.join("、") }}</span>
         <span v-if="p.tools.length">工具：<span class="mono">{{ p.tools.join("、") }}</span></span>
+      </div>
+      <div v-for="r in p.rules" :key="r.file" class="small">
+        规则：<RouterLink v-if="r.id" class="lnk" :to="`/rules?id=${r.id}`">{{ r.name }}</RouterLink><span v-else>{{ r.name }}</span>
+        · {{ r.id ? r.enabled ? "已启用" : "还没启用" : r.created ? "已删除，不再自动创建" : r.error ? `没有创建：${r.error}` : "尚未导入" }}
+      </div>
+      <div v-for="m in p.mcp" :key="m.name" class="small">
+        MCP：<RouterLink class="lnk" to="/agents?tab=mcp">{{ m.name }}</RouterLink> · {{ m.added ? "已加入" : "等待启用或信任" }}<span v-if="m.missing.length"> · 还要填：{{ m.missing.join("、") }}</span>
       </div>
       <div v-for="s in services[p.id] ?? []" :key="s.name" class="service stack">
         <div class="row wrap small">
@@ -254,6 +280,7 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
 </template>
 
 <style scoped>
+.plugin-card { min-width: 0; overflow-wrap: anywhere; }
 .facts {
   display: flex;
   flex-wrap: wrap;

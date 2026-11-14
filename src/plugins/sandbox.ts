@@ -1,5 +1,5 @@
 import { fork, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -41,7 +41,7 @@ export async function startSandbox(
   mkdirSync(data, { recursive: true });
   const child: ChildProcess = fork(runner(), [], {
     // omem's code and packages only, not the whole checkout: a development data directory can sit inside it.
-    execArgv: ["--permission", `--allow-fs-read=${plugin.dir}`, ...["src", "dist", "node_modules", "package.json"].map((x) => `--allow-fs-read=${join(opts.packageRoot, x)}`), `--allow-fs-read=${data}`, `--allow-fs-write=${data}`],
+    execArgv: ["--permission", `--allow-fs-read=${plugin.dir}`, ...["src", "dist", "node_modules", "package.json"].flatMap((x) => { const path = join(opts.packageRoot, x); return [...new Set([path, ...(existsSync(path) ? [realpathSync(path)] : [])])].map((p) => `--allow-fs-read=${p}`); }), `--allow-fs-read=${data}`, `--allow-fs-write=${data}`],
     // Nothing of omem's environment (tokens, keys) goes in.
     env: { OMEM_PLUGIN_ID: plugin.id, OMEM_PLUGIN_DIR: plugin.dir, OMEM_PLUGIN_SERVER: plugin.server, OMEM_PLUGIN_DATA: data, OMEM_PLATFORMS: JSON.stringify(platformList()), NODE_ENV: process.env.NODE_ENV ?? "production" },
     cwd: plugin.dir,

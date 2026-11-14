@@ -34,7 +34,7 @@ export type McpServerInput = {
   command?: string;
   args?: string[];
   url?: string;
-  /** Environment variables or headers by name. A string sets the value; null keeps the stored one; a name left out is removed. */
+  /** Environment variables or headers by name. A string sets the value; null keeps the stored one (or none, when none is stored yet); a name left out is removed. */
   secrets?: Record<string, string | null>;
 };
 
@@ -73,21 +73,24 @@ export function saveMcpServer(app: App, name: string, input: McpServerInput): Mc
   if (!!command === !!url) throw new HttpError(400, "填启动命令，或者填网址，二选一");
   if (url && !/^https?:\/\//i.test(url)) throw new HttpError(400, "网址要以 http:// 或 https:// 开头");
   const before = secretsOf(app, name);
+  // A name may be kept without a value yet (a server a plugin brought, a key the owner fills in
+  // later): the view says it is not set, and a run is simply given the server without it.
+  const names: string[] = [];
   const values: Record<string, string> = {};
   for (const [k, v] of Object.entries(input.secrets ?? {})) {
     const key = k.trim();
     if (!key) continue;
     if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(key)) throw new HttpError(400, `名字不合法：${key}`);
+    names.push(key);
     const value = v === null ? before[key] : v;
-    if (!value) throw new HttpError(400, `${key} 还没有值`);
-    values[key] = value;
+    if (value) values[key] = value;
   }
   app.config.mcp.servers[name] = {
     description: input.description?.trim() ?? "",
     ...(url ? { url } : { command }),
     args: url ? [] : (input.args ?? []).map((a) => a.trim()).filter(Boolean),
-    env: url ? [] : Object.keys(values),
-    headers: url ? Object.keys(values) : [],
+    env: url ? [] : names,
+    headers: url ? names : [],
     readOnly: !!input.readOnly,
   };
   setKey(app.home, secretId(name), Object.keys(values).length ? JSON.stringify(values) : null);

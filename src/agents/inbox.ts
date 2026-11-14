@@ -206,6 +206,7 @@ const senders = new Map<string, Sender>();
 /** Channels register how to post into one of their threads (chat, topic). */
 export function registerThreadSender(channel: string, send: Sender) {
   senders.set(channel, send);
+  return () => { if (senders.get(channel) === send) senders.delete(channel); };
 }
 
 /**

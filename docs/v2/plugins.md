@@ -2,7 +2,7 @@
 
 有些场景要的不是一问一答，而是一组题、一张表、一块屏幕：出一批题、本人一次提交、AI 看结果再出下一批，过程里记下水平和薄弱点。机器人只适合一条一条地说，这类强交互放在网页里做，由插件提供。
 
-插件把一个场景需要的东西打成一个包：Agent 档案、技能、工具、数据和独立页面。宿主负责加载、权限、存储和转发；理解和出题交给插件里的档案。第一个内置插件是英语学习（`plugins/english`）。
+插件把一个场景需要的东西打成一个包：Agent 档案、技能、规则、MCP 服务、工具、数据和独立页面，也可以接入聊天渠道。宿主负责加载、权限、存储和转发；理解和出题交给插件里的档案。第一个内置插件是英语学习（`plugins/english`）。
 
 ## 目录
 
@@ -11,6 +11,7 @@ plugins/<id>/
   plugin.yaml          清单
   agents/<名>.md        Agent 档案（格式同 library/_agents），对外名字是 <id>-<名>
   skills/<名>/SKILL.md  技能，首次启动播种到 library/_skills（已有的不覆盖）
+  rules/<名>.yaml       任务规则（首次启用时导入，默认停用）
   server.ts            服务端代码：工具、内容块、判分（数据目录里也可以是 server.js / server.mjs）
   web/                 页面：内置插件放源码，构建到 web/dist/plugins/<id>/；数据目录里的插件放构建好的文件（或手写的 HTML）
   其他文件              服务的程序（清单 services 里的命令在插件目录里运行）
@@ -22,7 +23,7 @@ plugins/<id>/
 
 ### 信任
 
-数据目录里的插件带代码（`server.*` 或 `services`）时，代码以本人的身份运行，所以**本人确认之前一行都不运行**：清单、档案、技能和页面照常可用，工具、内容块和服务不注册、不启动。设置 → 插件列出每个插件的来源、状态、目录、服务的命令；“信任并运行”后立即加载，不用重启。
+数据目录里的插件带代码（`server.*` 或 `services`）或命令 MCP 时，代码以本人的身份运行，所以**本人确认之前一行都不运行**：清单、档案、技能和页面照常可用，工具、内容块和服务不注册、不启动。设置 → 插件列出每个插件的来源、状态、目录、服务的命令；“信任并运行”后立即加载，不用重启。
 
 确认的是代码此刻的样子：清单加上插件目录里除 `web/`、`agents/`、`skills/`、`node_modules/` 以外的所有文件的哈希（超过 50 MB 的文件按大小和修改时间算），存在本机的 `secrets/plugin-trust.json`（不随多设备同步，每台机器各自确认）。代码改过，状态变成“代码改过，需要重新确认”，重启后不再加载。撤销信任时它的工具马上注销、服务停止。
 
@@ -36,7 +37,7 @@ plugins/<id>/
 - **工具与平台包**：它的工具和平台包的读取器在 omem 里注册成代理，调用时转给它的进程。参数由插件自己的 zod 定义检查，宿主列工具时用它给出的 JSON Schema。
 - **宿主代办的事**：要读平台（`ctx.connection(...).fetch`）、读写插件记录（`ctx.store`）、存原件（`ctx.saveSource`）、设盯着（`ctx.watches`）、启动服务时，进程向 omem 发请求。omem 按**正在进行的那次调用**的人和空间回答，不认插件自己报的身份。令牌由 omem 加在请求上，插件拿不到。
 - **写法要求**：`ctx.store`、`ctx.saveSource`、`ctx.watches` 在隔离运行时返回 Promise，所以要写 `await`；写了 `await` 在 omem 进程里运行时也照样能用。
-- **不能做的**：内容块（`api.block`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
+- **不能做的**：内容块（`api.block`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）、聊天渠道（`api.channel`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
 
 **在 omem 里运行**：代码以 omem 的全部权限运行，只适合你自己写的或逐行看过的插件。运行方式记在 `secrets/plugin-trust.json` 的 `mode` 里；以前信任过的插件按原来的方式在 omem 里运行。代码注册了清单没声明的东西，或者没能启动，信任会被撤回。
 
@@ -49,6 +50,7 @@ plugins/<id>/
 **来源**：
 
 - npm 包：`npm:包名@版本`，或直接写包名。npm 包有版本号和完整性校验，也能带依赖，是推荐的发布方式。
+- 本地目录：`omem plugin install ./plugins-out/example`，安装时复制整个目录，不建立链接；带符号链接的本地包会被拒绝。
 - GitHub：`github:owner/repo#tag`，也可以写提交 hash。必须指定 tag 或提交，因为分支会在信任之后改变。
 
 在设置 → 插件 → 安装插件里填写，或者用命令行 `omem plugin install <来源>`。安装器（`src/plugins/install.ts`）的做法：
@@ -91,6 +93,18 @@ space: { id: english, name: 英语学习, kind: learning }   # 不存在就建
 icon: languages                                         # 导航图标：图标名（web/src/lib/icons.ts），或页面目录里的 .svg
 agents: [tutor]                                         # → english-tutor
 skills: [english-item-writing]
+rules: [oncall-first-look]                              # rules/oncall-first-look.yaml
+mcp:
+  web-search:
+    description: 通用网页搜索
+    url: https://search.example/mcp
+    headers: [Authorization]                            # 只声明名字；本人在 Agent 页填值
+    readOnly: true
+  local-tool:
+    description: 本机的一个命令
+    command: npx
+    args: ["-y", "some-mcp-server"]
+    env: [API_KEY]
 tools: [recall, remember, supersede, notify, create_card, learning_progress]   # 插件档案可用的宿主工具
 page: { title: 英语练习 }                                # 出现在导航；没有 web/ 时用默认页
 voice: true                                             # 页面可以开语音对话（见“语音”）
@@ -103,6 +117,49 @@ settings:                                               # 本人的设置，外�
 - 插件档案和普通档案一样出现在 Agent 页，可以 `/as english-tutor`、`run_agent`、挂技能、有专属记忆、由 coach 复盘。本人在 Agent 页改它，就在 `library/_agents/` 存一份自定义版本（带 `plugin` 字段）；删掉自定义版本回到插件自带的版本。
 - 导航图标：`icon` 写图标名（`web/src/lib/icons.ts`，设置 → 插件的图标选择里列出的那些），或页面目录里的一个 `.svg`（内置插件放 `web/public/`，数据目录插件放 `web/`），按当前文字颜色画出。本人可以在设置 → 插件里点图标换一个，存在配置的 `plugins.icons`，“用插件自己的图标”恢复。
 - 名字带插件前缀：档案 `english-tutor`，工具 `english_quiz`，避免与内置角色、本人的档案和别的插件撞名。宿主不按插件名特判任何逻辑。
+
+## 规则与 MCP 服务
+
+`rules` 列出的每个文件按 `src/rules/types.ts` 的规则格式保存，例如：
+
+```yaml
+# rules/oncall-first-look.yaml
+name: 项目 A 初看
+description: 项目 A 有需要关注的新消息时通知本人
+judge: ai
+trigger: { event: message }
+actions: [{ type: notify }]
+```
+
+- 插件启用时，每个文件只导入一次，始终**停用**，由本人持有；规则页显示“来自插件 <名字>，还没启用”。本人看过条件和动作后再打开。规则动作引用本插件的档案时可以用短名，导入时加插件前缀。
+- 已导入的文件名记在插件自己的保留状态中。本人删掉规则后，重启、停用再启用或卸载重装都不重建。同一插件新增的规则文件仍会导入。
+- 停用、撤销信任或删除插件都保留规则和来源；本人可在规则页删除。规则已经启用时，停用插件也不会替本人关闭它。
+
+`mcp` 的值只含传输定义和密钥名：网址用 `headers`，命令用 `env`，两者都是字符串列表，不能填写值。启用后通过宿主的 MCP 保存接口加入本人的列表，名字是 `<插件 id>-<短名>`；同名服务已存在时不覆盖。档案 frontmatter 的 `mcpServers: [web-search]` 会解析成带前缀的名字。
+
+**带 `command` 的项必须先信任插件**：即使没有 `server.*`，设置 → 插件 也会要求确认，确认框列出全部 MCP 命令。信任只把定义加入列表，实际启动由使用它的 Agent 后端负责；插件代码选了隔离运行，也不把外部 MCP 命令放进插件沙箱。网址 MCP 不需要代码信任。初次加入的密钥值全空，Agent 页列出每项未填的名字，运行时不传未填的变量或请求头。
+
+插件卡片列出它的档案、技能、规则状态和 MCP 服务；规则链接到规则页，MCP 链接到 Agent 页，并提示“还要填：<名字>”。删除插件会保留 MCP 服务，它们可能已有本人填的密钥。
+
+## 场景包：不带代码的插件
+
+场景包把一类工作的档案、技能、规则和 MCP 定义交给另一个人。设置 → 插件 → **打成场景包**，勾选这四类对象并填 id、名字和说明，完成后显示服务器上写到的目录和遗漏依赖提醒。命令行等价：
+
+```bash
+omem plugin pack --id projecta --name "项目 A" --description "项目 A 的处理做法" --agents helper --skills project-guide --rules <规则id> --mcp web-search
+omem plugin pack --id projecta --name "项目 A" --skills project-guide --out ./projecta-pack
+omem plugin install ./projecta-pack
+```
+
+- 默认写到 `<数据目录>/plugins-out/<id>/`，`--out` 可改；拒绝已有目录，不能写进仓库或正在使用的 `<数据目录>/plugins/`，经过目录链接也一样。
+- 档案写到 `agents/<名>.md`，技能复制完整目录（包括 `references/`、脚本和其他资源），规则写到 `rules/` 并列进清单，导出时也停用。档案引用的技能和 MCP 未被选中时逐项提醒。
+- MCP **始终不导出变量或请求头的值**。旧档案内嵌的 MCP 会转成清单项，密钥只留名字，命令同样等待信任；档案原有的 `plugin` 归属去掉，由安装后的新包决定。
+- 写入前扫描全部复制的文本：本人的已存密钥（包括 MCP 密钥映射中的值）和 macOS、Linux、Windows 用户目录绝对路径，命中按文件和行报告，整个包不写入。CLI 可重复 `--allow <包内相对文件>` 逐文件放行用户目录路径；已存密钥不能放行，要先从文件里拿掉；不会把密钥值印在报告里。命令帮助说明同样的限制。含会话或人员的 id、邮箱的文件照常打包，但在提醒里列出，分享前自己核对。
+- 规则里本人在这台机器上选的东西不随包走（`contributions.ts` 的 `portableRule`，打包和导入都过它）：带脚本或转发的规则不打包、导入时也不创建（插件详情里写明原因，其余规则照常导入）；完全访问、发到的会话、指定的 AI、接收方没有的空间去掉，定时规则原本回复到那个会话的改成只告诉本人。这些要本人装上后在规则页重新选。
+- 插件的档案只能用插件自己带来的 MCP 服务（清单 `mcp` 里的，名字加插件前缀）；写了别的名字会被忽略，本人已有的服务和上面的凭据不会因为装了一个包就被它用上。插件技能目录里的符号链接不复制。
+- 为保留 `<id>-<名>` 的约定，档案加前缀后最多 48 字符、MCP 服务最多 40 字符；超长时拒绝写包，需要缩短名字或 id。包不包含后端安装、空间、本人密钥和现有插件的代码，引用这些本机配置的档案需要接收者自行补齐。
+
+`POST /api/plugins/pack` 接受 `id`、`name`、`description`、`agents`、`skills`、`rules`、`mcp`、`out`、`allow`，列表字段用数组，返回 `{ dir, warnings }`。`GET /api/plugins/pack` 给表单列选择项。两个接口都只给本人。装到别处后，场景包无代码时不需要信任；带命令 MCP 时仍需先看命令、确认信任。
 
 ## 服务端代码
 
@@ -192,6 +249,41 @@ api.platform({
 - `read` 把一项读成 Markdown。`changes` 列出容器里 `cursor` 之后改过的东西，按时间从旧到新，每项最好带上自己的位置。`c` 是这次用的人的连接（`ctx.connection` 的同一个对象）。
 - 用户通过 `connect_read`、`connect_watch` 使用这些读取器，宿主负责定时同步和写原件（docs/v2/connectors.md）。
 - `api.text.html(html)` 把 HTML 转成 Markdown。
+
+## 渠道
+
+插件可以实现一个聊天平台，把它接到 omem 的同一个收件箱：
+
+```ts
+export default function register(api: PluginApi) {
+  const channel = api.channel({
+    id: "matrix",                        // 对外为 <插件 id>-matrix
+    label: "Matrix",
+    owner: (settings) => settings.ownerId,
+    // 已由宿主按 maxLength 分段的纯文本：回复或通知
+    send: async (to: { chatId: string; topicId?: string }, text: string) => {
+      // 用插件自己的平台客户端发送
+    },
+    maxLength: 4000,
+  });
+  // 插件监听器收到平台消息时调用；监听也可由声明的服务提供数据。
+  // channel.receive({ chatId, topicId, isGroup, senderId, text, messageId, addressed: true });
+}
+```
+
+清单为本人绑定身份声明设置：
+
+```yaml
+settings:
+  - { key: ownerId, label: 本人在这个平台上的 id, type: text }
+```
+
+- **仅在 omem 进程里运行**：与连接器、内容块一样，`api.channel` 不能用于隔离模式；数据目录插件要在 设置 → 插件 选择“在 omem 里运行…”并确认，且插件启用后才注册。
+- `receive` 通过 `resolveIdentity(app, "<插件 id>-matrix", senderId)` 认人。本人绑定从 `owner(settings)` 每次读取，设置保存后立即生效；成员用同一渠道的身份绑定。没人绑定的发送者不回答；还没设本人时，仅私聊提示一次绑定方法。群里只处理 `addressed: true` 的消息。
+- 消息走 `answerFromChannel`，与 Telegram 相同，命令、线程、合并、权限和 ACP 运行都由宿主管理。平台客户端和监听协议由插件实现。
+- 初次回复经渠道的 `send` 返回原会话，后续回复经 `registerThreadSender`；通知经可注销的 notification sink，给本人的设置 id 或成员在该渠道的身份 id 发 `title\nbody`。这个 API 约定平台身份 id 也是私聊 chat id。
+- 宿主按 `maxLength` 分段。`send` 出错只记日志和最近错误，不抛进 Agent 运行；渠道行显示运行状态、最近发送错误和插件设置链接。
+- 停用、卸载或撤销信任时，宿主注销发送器和通知 sink，旧的 `receive` 随即失效，已经在途的一轮完成后也不再发。插件服务沿用服务管理器停止；平台监听器如在服务端代码里自行开连接，由插件自行管理连接资源，宿主会关闭其消息和投递入口。
 
 ## 服务与流
 
@@ -292,7 +384,8 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 
 | 接口 | 用途 |
 | --- | --- |
-| `GET /api/plugins` | 已加载的插件（导航用） |
+| `GET /api/plugins` | 已加载的插件（导航用），含带来的规则、MCP 和渠道状态 |
+| `GET` / `POST /api/plugins/pack` | 本人列出可打包对象 / 写出场景包 |
 | `GET /api/plugins/:id/sessions` | 本人在这个插件里的会话 |
 | `POST /api/plugins/:id/sessions` | 新会话（可指定插件里的档案，默认第一个） |
 | `GET /api/plugins/:id/sessions/:cid` | 会话的消息、内容块（publicView + 结果）、是否在运行 |

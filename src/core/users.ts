@@ -137,9 +137,19 @@ export function scopeFor(app: App, userId: string, requested: string[] | null): 
 // ---- channel identities ----------------------------------------------------
 
 /** The owner's ids from the channel configs count as identities without registration. */
+const channelOwners = new Map<string, { app: App; owner: () => string }>();
+/** Plugin channels read their owner's binding from current settings; unloading removes it. */
+export function registerChannelOwner(app: App, channel: string, owner: () => string) {
+  const entry = { app, owner };
+  channelOwners.set(channel, entry);
+  return () => { if (channelOwners.get(channel) === entry) channelOwners.delete(channel); };
+}
 function configuredOwner(app: App, channel: string, externalId: string) {
   const c = app.config;
+  const plugin = channelOwners.get(channel);
+  const owner = plugin?.app === app ? plugin.owner() : "";
   return (
+    (!!owner && owner === externalId) ||
     (channel === "lark" && !!c.lark.ownerOpenId && c.lark.ownerOpenId === externalId) ||
     (channel === "telegram" && !!c.telegram.ownerChatId && String(c.telegram.ownerChatId) === externalId) ||
     (channel === "onebot" && !!c.onebot.ownerUserId && String(c.onebot.ownerUserId) === externalId)

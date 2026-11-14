@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { authFetch, loginProvider, registerLoginProvider } from "../auth/providers.ts";
 import { registerAuthenticator } from "../auth/authenticators.ts";
 import { registerFeatures } from "../auth/features.ts";
@@ -15,7 +15,7 @@ import { createSpace, findSpace, type SpaceKind } from "../core/spaces.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
-import { CORE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
+import { CORE_TOOLS, TOOL_GROUPS, expandTools } from "../agents/tool-help.ts";
 import { registerTool, saveSourceFor, toolList, unregisterTools, watchesFor, type ToolContext } from "../agents/tools.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
 import { htmlToMarkdown } from "../sources/html.ts";
@@ -25,6 +25,8 @@ import { pluginSettings, settingFieldSchema } from "./settings.ts";
 import { setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
 import { startSandbox } from "./sandbox.ts";
 import { installInfo } from "./install.ts";
+import { broughtBy, seedContributions, pluginMcpSchema } from "./contributions.ts";
+import { registerPluginChannel, type ChannelState } from "./channels.ts";
 import type { PluginApi, PluginBlock, PluginRegister, PluginSourceInput, PluginTool } from "./types.ts";
 
 /**
@@ -49,6 +51,8 @@ export const manifestSchema = z.object({
   space: z.object({ id: z.string(), name: z.string(), kind: z.enum(["learning", "topic", "project"]).default("topic"), description: z.string().default("") }).optional(),
   agents: z.array(z.string().regex(SPEC)).default([]),
   skills: z.array(z.string()).default([]),
+  rules: z.array(z.string().regex(SPEC)).default([]),
+  mcp: z.record(z.string().regex(SPEC), pluginMcpSchema).default({}),
   /** Host tools the plugin's agents may use, besides its own and the plugin tools (plugin_query, ask_user, show…). */
   tools: z.array(z.string()).default([]),
   page: z.object({ title: z.string() }).optional(),
@@ -72,7 +76,8 @@ export const manifestSchema = z.object({
   permissions: z
     .object({ write: z.boolean().default(false), connectors: z.array(z.string()).default([]), platforms: z.array(z.string()).default([]), authenticators: z.array(z.string()).default([]) })
     .default({ write: false, connectors: [], platforms: [], authenticators: [] }),
-});
+}).refine((m) => Object.keys(m.mcp).every((n) => /^[a-z][a-z0-9-]{0,39}$/.test(`${m.id}-${n}`)), "MCP 服务加插件前缀后最多 40 个字符")
+  .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符");
 export type PluginManifest = z.infer<typeof manifestSchema>;
 
 export type LoadedPlugin = {
@@ -96,6 +101,7 @@ export type LoadedPlugin = {
   blocks: Map<string, PluginBlock>;
   /** Undo what api.connector registered (providers and their features). */
   connectors: (() => void)[];
+  channels: ChannelState[];
   env: PluginEnv;
 };
 
@@ -141,7 +147,7 @@ async function importServer(dir: string, id: string, source: LoadedPlugin["sourc
 
 const SERVER_FILES = ["server.ts", "server.js", "server.mjs"];
 /** A data plugin brings code when it has a server file or services. */
-export const hasCode = (dir: string, m: PluginManifest) => m.services.length > 0 || SERVER_FILES.some((f) => existsSync(join(dir, f)));
+export const hasCode = (dir: string, m: PluginManifest) => m.services.length > 0 || Object.values(m.mcp).some((s) => !!s.command) || SERVER_FILES.some((f) => existsSync(join(dir, f)));
 
 /** Tools and blocks are process-wide (like the host's own tools); register a plugin once. */
 async function register(app: App, dir: string, manifest: PluginManifest, source: LoadedPlugin["source"]): Promise<LoadedPlugin> {
@@ -160,6 +166,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     platforms: [],
     blocks,
     connectors: [],
+    channels: [],
     env: {
       id: manifest.id,
       title: manifest.page?.title ?? manifest.name,
@@ -171,12 +178,15 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
       },
     },
   };
-  if (!p.enabled) {
-    // Turned off: nothing of it runs or shows.
-  } else if (p.trust === "builtin" || p.trust === "trusted") await loadCode(app, p);
-  else if (p.trust !== "none") console.warn(`[omem] 插件 ${manifest.id} 带代码，${p.trust === "changed" ? "代码在信任之后改过" : "还没有被信任"}：在设置 → 插件里确认后才会运行；档案、技能和页面照常可用`);
-  p.specs = readSpecs(p);
-  return p;
+  try {
+    if (p.enabled && (p.trust === "builtin" || p.trust === "trusted")) await loadCode(app, p);
+    else if (p.enabled && p.trust !== "none") console.warn(`[omem] 插件 ${manifest.id} 需要信任：在设置 → 插件里看过代码和 MCP 命令、确认后才会运行；档案、技能和页面照常可用`);
+    p.specs = readSpecs(p);
+    return p;
+  } catch (e) {
+    unloadCode(p);
+    throw e;
+  }
 }
 
 /** Run the plugin's server code: its tools and blocks register. Data plugins only once trusted. */
@@ -187,6 +197,13 @@ async function loadCode(app: App, p: LoadedPlugin) {
   const api: PluginApi = {
     id: manifest.id,
     z,
+    channel(def) {
+      const channel = registerPluginChannel(app, p, def);
+      p.channels = p.channels.filter((c) => c.id !== channel.state.id);
+      p.channels.push(channel.state);
+      p.connectors.push(channel.stop);
+      return { receive: channel.receive };
+    },
     tool(t: PluginTool<any>) {
       if (!t.name.startsWith(prefix)) throw new Error(`插件 ${manifest.id} 的工具名要以 ${prefix} 开头：${t.name}`);
       if (p.source === "data" && t.write && !manifest.permissions.write) throw new Error(`插件 ${manifest.id} 的工具 ${t.name} 会写入，但清单没有声明 permissions.write`);
@@ -285,6 +302,7 @@ export async function trustPlugin(app: App, id: string, mode: RunMode = "isolate
     p.trust = "trusted";
     try {
       if (p.enabled) await loadCode(app, p);
+      if (p.enabled) seedContributions(app, p);
     } catch (e) {
       // Code that does not load (or does more than it declares) is not trusted after all.
       unloadCode(p);
@@ -334,11 +352,18 @@ export async function setPluginEnabled(app: App, id: string, on: boolean) {
   if (p.enabled !== on) {
     unloadCode(p);
     p.enabled = on;
-    if (on && (p.trust === "builtin" || p.trust === "trusted")) await loadCode(app, p);
-    p.specs = readSpecs(p);
-    if (on) {
-      ensureSpace(app, p.manifest);
-      seedSkills(app, p);
+    try {
+      if (on && (p.trust === "builtin" || p.trust === "trusted")) await loadCode(app, p);
+      p.specs = readSpecs(p);
+      if (on) {
+        ensureSpace(app, p.manifest);
+        seedSkills(app, p);
+        seedContributions(app, p);
+      }
+    } catch (e) {
+      unloadCode(p);
+      p.specs = readSpecs(p);
+      throw e;
     }
   }
   return describePlugin(p);
@@ -363,14 +388,14 @@ export function forgetPlugin(id: string) {
 function readSpecs(p: LoadedPlugin): AgentSpec[] {
   const { manifest } = p;
   if (!p.enabled) return [];
-  const allowed = new Set([...manifest.tools, ...p.tools.map((t) => t.name), ...PLUGIN_TOOLS]);
+  const allowed = new Set([...expandTools(manifest.tools), ...p.tools.map((t) => t.name), ...PLUGIN_TOOLS]);
   const known = new Set(toolList().map((t) => t.name));
   for (const t of allowed) if (!known.has(t)) console.warn(`[omem] 插件 ${manifest.id} 声明了不存在的工具 ${t}`);
   return manifest.agents.map((n) => {
     const file = join(p.dir, "agents", `${n}.md`);
     if (!existsSync(file)) throw new Error(`插件 ${manifest.id} 缺少档案 agents/${n}.md`);
     const { meta, body } = splitFrontmatter(readFileSync(file, "utf8"));
-    const listed = Array.isArray(meta.tools) ? (meta.tools as string[]) : null;
+    const listed = Array.isArray(meta.tools) ? expandTools(meta.tools as string[]) : null;
     for (const t of listed ?? []) if (!allowed.has(t)) console.warn(`[omem] 插件 ${manifest.id} 的档案 ${n} 用了清单之外的工具 ${t}，已忽略`);
     const spec = agentSpecSchema.parse({
       ...meta,
@@ -379,6 +404,8 @@ function readSpecs(p: LoadedPlugin): AgentSpec[] {
       space: meta.space ?? manifest.space?.id,
       tools: (listed ?? [...allowed]).filter((t) => allowed.has(t) && known.has(t)),
       skills: meta.skills ?? manifest.skills,
+      // Only the servers the plugin brings: the owner's own (and their credentials) are not a plugin's to name.
+      mcpServers: Array.isArray(meta.mcpServers) ? meta.mcpServers.filter((n: string) => manifest.mcp[n]).map((n: string) => `${manifest.id}-${n}`) : [],
     });
     return { ...spec, prompt: body };
   });
@@ -418,7 +445,8 @@ function seedSkills(app: App, p: LoadedPlugin) {
     const dest = join(app.libraryDir, "_skills", name);
     if (!existsSync(src) || existsSync(join(dest, "SKILL.md"))) continue;
     mkdirSync(dest, { recursive: true });
-    writeFileSync(join(dest, "SKILL.md"), readFileSync(src, "utf8"));
+    // The files themselves, never what a link in the plugin points at (anything on this machine).
+    cpSync(dirname(src), dest, { recursive: true, filter: (from) => !lstatSync(from).isSymbolicLink() });
     added.push(name);
   }
   if (added.length) commitLibrary(app.libraryDir, `omem: add skills of plugin ${p.manifest.id}: ${added.join(", ")}`);
@@ -468,8 +496,11 @@ export async function loadPlugins(app: App, roots: { dir: string; source: Loaded
           p = await register(app, dir, manifest, root.source);
           plugins.set(manifest.id, p);
         }
-        ensureSpace(app, p.manifest);
-        seedSkills(app, p);
+        if (p.enabled) {
+          ensureSpace(app, p.manifest);
+          seedSkills(app, p);
+          seedContributions(app, p);
+        }
       } catch (e) {
         console.warn(`[omem] 跳过插件 ${entry.name}：${(e as Error).message}`);
       }
@@ -503,7 +534,10 @@ export function describePlugin(p: LoadedPlugin) {
     iconChosen: !!host?.config.plugins.icons[p.manifest.id],
     source: p.source,
     space: p.manifest.space?.id ?? null,
-    agents: p.specs.map((s) => ({ name: s.name, description: s.description })),
+    agents: p.manifest.agents.map((n) => ({ name: `${p.manifest.id}-${n}`, description: p.specs.find((s) => s.name === `${p.manifest.id}-${n}`)?.description ?? "" })),
+    skills: p.manifest.skills,
+    ...(host ? broughtBy(host, p) : { rules: [], mcp: [] }),
+    channels: p.channels,
     // own: the plugin's page in a sandboxed frame (built or not yet); otherwise the shell's default page.
     page: p.enabled && p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) || devPages(p) } : null,
     enabled: p.enabled,
@@ -528,7 +562,7 @@ export function describePlugin(p: LoadedPlugin) {
       providers: codeRuns(p) ? p.providers : p.manifest.permissions.connectors,
       platforms: codeRuns(p) ? p.platforms : p.manifest.permissions.platforms,
       uses: p.manifest.connectors.map((c) => c.provider),
-      services: p.manifest.services.map((s) => [s.command, ...s.args].join(" ")),
+      services: [...p.manifest.services.map((s) => [s.command, ...s.args].join(" ")), ...Object.values(p.manifest.mcp).filter((s) => s.command).map((s) => [s.command, ...s.args].join(" "))],
       space: p.manifest.space?.id ?? null,
     },
   };

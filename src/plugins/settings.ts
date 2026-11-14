@@ -17,7 +17,7 @@ export const settingFieldSchema = z.object({
   options: z.array(z.union([z.string(), z.object({ value: z.string(), label: z.string() })])).default([]),
   min: z.number().optional(),
   max: z.number().optional(),
-  default: z.union([z.string(), z.number(), z.boolean()]),
+  default: z.union([z.string(), z.number(), z.boolean()]).default(""),
 });
 export type SettingField = z.infer<typeof settingFieldSchema>;
 

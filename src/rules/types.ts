@@ -236,7 +236,7 @@ export const ruleInputSchema = z.object({
 export type RuleInput = z.input<typeof ruleInputSchema>;
 /** A rule an agent set to be woken by an event: gone after it fires once (when `once`) or expires. */
 export type Temporary = { expiresAt: string; once: boolean; setBy: { runId: string | null; agent: string }; setAt: string; watch: string };
-export type Rule = z.infer<typeof ruleInputSchema> & { id: string; createdAt: string; updatedAt: string; createdBy: string; hits: number; lastFiredAt: string | null; temporary: Temporary | null };
+export type Rule = z.infer<typeof ruleInputSchema> & { id: string; origin?: { plugin: string; name: string; file: string } | null; createdAt: string; updatedAt: string; createdBy: string; hits: number; lastFiredAt: string | null; temporary: Temporary | null };
 
 /** What a rule sees of one event. Only filled what the source knows; `chat.bots` is read on demand. */
 export type RuleEvent = {

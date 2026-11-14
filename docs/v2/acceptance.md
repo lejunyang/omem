@@ -1113,6 +1113,25 @@ TraeX 与其他 ACP 的清理补验：
 - 内置角色挂技能：在 Agent 页给主助手挂一个技能，`library/_roles/` 下只多一个 `assistant.overlay.yaml`，没有 `assistant.md`；omem 更新后主助手照常用新说明、技能还在，不提示合并。以前为挂技能复制过的主助手，更新后启动日志有“内置角色 assistant 只多挂了技能或工具：改成叠加设置”，Agent 页不再显示“已自定义”。
 - 侧栏没有“平台采集”。没连任何平台时问主助手“把我 Notion 里的 X 存进来”，它没有 `connect_*` 工具，会请你去账号页连接；连了 Notion 以后再问，它用 `connect_list`、`connect_read` 读并存成原件。
 
+## 场景包与插件渠道（2026-11-14）
+
+| 编号 | 操作 | 预期 | 验证 |
+| --- | --- | --- | --- |
+| PL1 | 启用带规则的插件；启用规则，停用再启用插件；删除规则后重载 / 重装 | 第一次导入停用，来源可见；本人改过的状态保留；删除后不重建；插件新增文件照常导入 | `test/plugin-pack.test.ts` |
+| PL2 | 启用同时带网址和命令 MCP 的无代码插件；填密钥后停用再启用 | 网址项保留未填密钥名；命令项等信任，确认框列命令；档案短名加插件前缀；同名服务不覆盖；卸载后服务器和密钥仍在 | `test/plugin-pack.test.ts` |
+| PL3 | `omem plugin pack` 或设置页打包档案、技能、规则、MCP，再在另一个数据目录 `plugin install <目录>` | 全部技能资源被复制；规则停用；MCP 无值；缺技能 / MCP 的档案有提醒；安装是副本，无代码不要求信任，命令 MCP 仍要求 | `test/plugin-pack.test.ts`；网页表单见下方验证记录 |
+| PL4 | 复制文本含已存密钥（含跨行）、用户目录路径；逐文件 `--allow`；非本人调用打包 API | 未放行时报告文件和行、没有输出；放行只针对精确文件、只放行用户目录路径，已存密钥放行了也拒绝；MCP 值不导出；不能写入 live / 仓库 plugins 或已有目录；非本人 403 | `test/plugin-pack.test.ts` |
+| PL4a | 打包一条带脚本的规则；打包一条带完全访问和所属空间的规则；装一个规则里带脚本、转发、完全访问的包 | 带脚本的拒绝打包；完全访问、空间、会话、指定的 AI 不进包并有提醒；导入时带脚本或转发的不创建、插件详情写明原因，其余规则停用着导入且没有完全访问；包里档案写的不是包自带的 MCP 服务名被忽略 | `test/plugin-pack.test.ts` |
+| PL5 | 在临时数据目录安装渠道测试插件，隔离信任，再选择在 omem 里运行；绑定本人并收发；未绑定人和未 addressed 群消息 | 隔离模式明确拒绝；未绑定时不启动运行；本人发言经假 ACP Agent 的真实 ACP/MCP 桥跑完一轮、回复经 send；后续线程发送和本人 / 成员通知到对的 chat / topic | `test/plugin-channels.test.ts` |
+| PL6 | 渠道 send 抛错；停用，再启用和撤销信任 | 出错只记录，不抛进运行；设置 → 渠道 有最近错误和插件设置链接；停用后 sender / sink / 旧 receive 都失效，重启不重复注册 | `test/plugin-channels.test.ts`；1440 / 390 界面检查见下方验证记录 |
+
+验证记录（重启后重新执行）：
+
+- `npx vitest run test/plugin-pack.test.ts test/plugin-channels.test.ts test/plugins.test.ts test/plugin-install.test.ts test/plugin-connectors.test.ts test/plugin-sandbox.test.ts test/plugin-services.test.ts test/plugin-voice.test.ts test/connect-plugin.test.ts test/peer-plugin-page.test.ts test/mcp-servers.test.ts --maxWorkers=2 --configLoader runner --no-cache`：11 个文件、70 项通过，0 失败；新增打包测试 13 项、渠道测试 5 项。`runner` 与关闭缓存避免写入共享依赖目录。
+- `npx tsc --noEmit -p .`、`npx vue-tsc --noEmit -p web/tsconfig.json`：都通过、0 项诊断。Vue 检查通过临时 Node 预加载在内存中指定生成声明的位置，不改原 tsconfig、不写共享依赖目录；验证后删除临时声明和脚本。
+- 用虚构的“示例商城 / 项目 A”临时数据运行 `node scripts/screens.ts <预览地址> <临时截图目录>`，检查设置 → 插件、渠道和规则页的 1440 / 390 视口；另用浏览器走过展开勾选、写包和遗漏依赖提醒、渠道设置链接、本人 id 设置、规则来源，共 10 个视图检查通过，0 个页面横向溢出、0 个脚本错误。没有更新仓库截图。
+- 未接真实聊天平台，未调用真实模型。既有名字上限仍有效（档案加前缀后 48、MCP 40）；插件自建的定时器 / 网络监听没有关闭回调接口，宿主关闭消息和投递入口，不能代替插件关闭任意自建资源（见 plugins.md“渠道”）。
+
 ## 插件管理与第三方插件（2026-11-07，docs/v2/plugins.md）
 
 - 设置 → 插件：每个插件显示来源（内置 / 来源字符串 / 数据目录里的）、版本，以及它会做什么。关掉 Figma 平台包的“启用”：账号页 Figma 只剩一项“读取”，`connect_list` 不再列出 Figma 的读取类型；再打开就恢复，都不用重启。关掉英语练习，侧栏入口消失。

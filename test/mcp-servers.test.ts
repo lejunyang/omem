@@ -88,7 +88,10 @@ it("validates command-or-url, URL, names and missing kept values without changin
   const app = setup();
   for (const input of [{}, { command: "node", url: "https://example.com/mcp" }, { url: "file:///example" }]) expect(() => saveMcpServer(app, "docs", input)).toThrow();
   expect(() => saveMcpServer(app, "Bad Name", command)).toThrow("名称");
-  expect(() => saveMcpServer(app, "docs", { ...command, secrets: { TOKEN: null } })).toThrow("还没有值");
+  // A name with no value yet is kept and shown as not set; a run gets the server without it.
+  expect(saveMcpServer(app, "unfilled", { ...command, secrets: { TOKEN: null } }).secrets).toEqual([{ name: "TOKEN", set: false }]);
+  expect(mcpServersFor(app, ["unfilled"]).unfilled).toMatchObject({ env: {} });
+  deleteMcpServer(app, "unfilled");
   expect(listMcpServers(app)).toEqual([]);
 });
 

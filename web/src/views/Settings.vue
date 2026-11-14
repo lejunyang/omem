@@ -16,6 +16,7 @@ import CronEditor from "../components/CronEditor.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
+import PluginChannels from "../components/PluginChannels.vue";
 import PluginsSettings from "../components/PluginsSettings.vue";
 import StorageUsage from "../components/StorageUsage.vue";
 import ShareSettings from "../components/ShareSettings.vue";
@@ -1373,6 +1374,7 @@ async function saveEdit() {
         <UiCheckbox :model-value="!!config.lark.invite?.botApproval" switch @change="(v) => saveConfig({ lark: { ...config.lark, invite: { ...(config.lark.invite ?? {}), botApproval: v } } }, v ? '拉机器人进群也要你批准' : '拉机器人进群不用批准')">拉机器人进群也要我批准</UiCheckbox>
       </div>
 
+      <PluginChannels />
       <div class="card pad stack">
         <UiCheckbox :model-value="config.telegram.enabled" switch @change="(v) => saveConfig({ telegram: { ...config.telegram, enabled: v } })"><strong>Telegram 机器人</strong></UiCheckbox>
         <p class="muted small">用 @BotFather 创建机器人，把 token 放在环境变量 <span class="mono">{{ config.telegram.tokenEnv }}</span>。首次给机器人发消息会回复你的 chat id。</p>

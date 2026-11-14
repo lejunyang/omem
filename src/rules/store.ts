@@ -30,10 +30,12 @@ type Row = {
   hits: number;
   last_fired_at: string | null;
   temporary: string | null;
+  origin: string | null;
 };
 
 const toRule = (r: Row): Rule => ({
   id: r.id,
+  origin: r.origin ? json(r.origin, null) : null,
   spaceId: r.space_id ?? undefined,
   conversationId: r.conversation_id ?? undefined,
   name: r.name,
@@ -110,7 +112,7 @@ export function getRule(app: App, id: string): Rule {
  * `ownerAsked`: an agent saving the rule in a turn answering the owner's own message (save_rule), which
  * may set where it forwards to, as set_chat_watch may add the bot in such a turn.
  */
-export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user", actor?: string, opts: { ownerAsked?: boolean } = {}): Rule {
+export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user", actor?: string, opts: { ownerAsked?: boolean; origin?: Rule["origin"] } = {}): Rule {
   const r = ruleInputSchema.parse(input);
   if (r.actions.some((a) => a.type === "script") && (by !== "user" || actor !== OWNER || input.temporary))
     throw new HttpError(403, "带脚本的规则只能由本人在规则页保存：脚本在这台机器上执行");
@@ -164,9 +166,9 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
   run(
     app.db,
-    `insert into rules(id, name, description, enabled, trigger, conditions, judge, judge_with, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `insert into rules(id, name, description, enabled, trigger, conditions, judge, judge_with, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id, origin) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      on conflict(id) do update set name = excluded.name, description = excluded.description, enabled = excluded.enabled, trigger = excluded.trigger,
-       conditions = excluded.conditions, judge = excluded.judge, judge_with = excluded.judge_with, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary), space_id = excluded.space_id, conversation_id = excluded.conversation_id`,
+       conditions = excluded.conditions, judge = excluded.judge, judge_with = excluded.judge_with, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary), space_id = excluded.space_id, conversation_id = excluded.conversation_id, origin = coalesce(rules.origin, excluded.origin)`,
     id,
     r.name,
     r.description,
@@ -182,6 +184,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     input.temporary ? JSON.stringify(input.temporary) : null,
     r.spaceId ?? null,
     r.conversationId ?? null,
+    opts.origin ? JSON.stringify(opts.origin) : null,
   );
   // What earlier firings left (reports, lists it keeps) follows the rule into its new space.
   if (prev && r.spaceId && prev.space_id !== r.spaceId) moveRuleWorkFiles(app, id, r.spaceId);

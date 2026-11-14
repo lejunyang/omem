@@ -81,9 +81,13 @@ export type Notification = {
 
 type Sink = (n: Notification) => Promise<void> | void;
 const sinks: Sink[] = [];
-/** External channels (Feishu bot, Telegram…) register here to receive notifications. */
+/** External channels (Feishu bot, Telegram, a plugin's channel…) register here to receive notifications; the returned function takes the sink out again. */
 export function addNotificationSink(sink: Sink) {
   sinks.push(sink);
+  return () => {
+    const i = sinks.indexOf(sink);
+    if (i >= 0) sinks.splice(i, 1);
+  };
 }
 
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */

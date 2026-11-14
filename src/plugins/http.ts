@@ -14,6 +14,7 @@ import { callTool } from "../agents/tools.ts";
 import { createSession, listSessions, sendMessage, sessionView, submitBlock } from "./blocks.ts";
 import { codeRuns, describePlugin, findPlugin, forgetPlugin, getPlugin, listPlugins, pluginWebDir, reloadPlugin, setPluginEnabled, setPluginIcon, trustPlugin, untrustPlugin } from "./registry.ts";
 import { installInfo, installPlugin, removeInstalled } from "./install.ts";
+import { packChoices, packPlugin, packSchema } from "./pack.ts";
 import { setTrust } from "./trust.ts";
 import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
 import { savePluginSettings } from "./settings.ts";
@@ -45,6 +46,8 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   const plugin = (req: FastifyRequest) => getPlugin((req.params as { id: string }).id);
 
   server.get("/api/plugins", async () => listPlugins().map(describePlugin));
+  server.get("/api/plugins/pack", async () => packChoices(app));
+  server.post("/api/plugins/pack", async (req) => packPlugin(app, parse(packSchema, req.body)));
   server.get("/api/plugins/:id", async (req) => describePlugin(plugin(req)));
   server.get("/api/plugins/:id/sessions", async (req) => listSessions(app, plugin(req).manifest.id, who(req)));
   server.post("/api/plugins/:id/sessions", async (req) => {
