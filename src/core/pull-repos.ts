@@ -40,7 +40,9 @@ function restore(asset: string, target: string, repo: Repository) {
   mkdirSync(target, { recursive: true });
   check(target, ["init", "-q"]);
   const bundle = join(asset, "repo.bundle");
-  if (existsSync(bundle)) check(target, ["fetch", "-q", bundle, "+refs/*:refs/*"]);
+  // The new repository's HEAD already names a branch (git's default, say master): fetching a branch of
+  // that name is refused as "checked out" unless told the head may be updated. Nothing is checked out yet.
+  if (existsSync(bundle)) check(target, ["fetch", "-q", "--update-head-ok", bundle, "+refs/*:refs/*"]);
   if (repo.origin && /^(https?:\/\/|ssh:\/\/|git:\/\/|[^@\s]+@[^:\s]+:)/.test(repo.origin)) check(target, ["remote", "add", "origin", repo.origin]);
   if (repo.branch) check(target, ["symbolic-ref", "HEAD", `refs/heads/${repo.branch}`]);
   if (repo.head) {

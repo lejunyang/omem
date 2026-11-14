@@ -187,6 +187,12 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
   const tally = (name: string) => (report[name] ??= { added: 0, updated: 0, kept: 0 });
   const db = app.db;
   const protectedRuns = all<{ id: string }>(db, "select id from runs where status in ('queued','running')").map((r) => r.id);
+  // Attachments first: they are named by their content, so they are right whatever happens next, and
+  // a later step that fails does not send tens of thousands of them over the network again.
+  if (!opts.dryRun && existsSync(files)) {
+    tally("files").added = readdirSync(files).filter((name) => !existsSync(join(app.filesDir, name))).length;
+    copyDirContents(files, app.filesDir);
+  }
   // A dry run never fetches into existing checkouts or restores files.
   const paths = opts.dryRun ? new Map<string, string>() : installRepositories(app.home, db, dir, log);
   const prepared = prepareData(db, dir, paths);
@@ -248,10 +254,6 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
   } catch (e) { if (!(e instanceof DryRun)) throw e; }
   finally { db.exec("detach database r"); }
   if (!opts.dryRun) {
-    if (existsSync(files)) {
-      tally("files").added = readdirSync(files).filter((name) => !existsSync(join(app.filesDir, name))).length;
-      copyDirContents(files, app.filesDir);
-    }
     rewriteLibrary(lib, prepared, paths);
     report.wiki = mergeWikiFiles(app, lib, log);
     for (const s of listSpaces(app)) syncWiki(app, s.id);

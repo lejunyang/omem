@@ -264,6 +264,40 @@ describe("complete portable pulls", () => {
     } finally { cleanupFetched(f); }
   });
 
+  it("restores a repository on the branch a new repository starts with, and keeps the attachments when a repository fails", async () => {
+    const local = testApp();
+    const remote = testApp();
+    // No `-b`: the branch is the name `git init` gives here, the one the restored copy starts on too.
+    const root = mkdtempSync(join(tmpdir(), "omem-repo-test-"));
+    git(root, ["init", "-q"]);
+    git(root, ["config", "user.name", "test"]);
+    git(root, ["config", "user.email", "test@example.com"]);
+    writeFileSync(join(root, "app.txt"), "base\n");
+    git(root, ["add", "."]);
+    git(root, ["commit", "-qm", "initial"]);
+    createSpace(remote, { id: "demo", name: "示例仓库", kind: "repo", rootPath: root });
+    writeFileSync(join(remote.filesDir, "0123456789abcdef.png"), "image");
+    const f = await snapshot(remote);
+    try {
+      mergeLibrary(local, f);
+      const dest = getSpace(local, "demo").rootPath!;
+      expect(readFileSync(join(dest, "app.txt"), "utf8")).toBe("base\n");
+      expect(git(dest, ["rev-parse", "HEAD"]).stdout.trim()).toBe(git(root, ["rev-parse", "HEAD"]).stdout.trim());
+    } finally { cleanupFetched(f); }
+
+    // A snapshot whose repository cannot be restored: the attachments are already in place.
+    const other = testApp();
+    const g = await snapshot(remote);
+    const manifestPath = join(g.dbDir, "pull-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.repositories[0].key = "../outside";
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    try {
+      expect(() => mergeLibrary(other, g)).toThrow(/标识不合法/);
+      expect(readFileSync(join(other.filesDir, "0123456789abcdef.png"), "utf8")).toBe("image");
+    } finally { cleanupFetched(g); }
+  });
+
   it("fast-forwards a clean existing checkout and restores checked-out submodules", async () => {
     const local = testApp();
     const remote = testApp();
