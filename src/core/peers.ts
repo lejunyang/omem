@@ -201,6 +201,17 @@ export async function peerFetch(app: App, id: string, path: string, init: Reques
   try {
     return await go(p.url);
   } catch (e) {
+    // A connection kept from an earlier request can be gone by the time it is used again (a long
+    // download, then minutes of unpacking): a read is asked once more before the address is doubted.
+    const read = !init.method || /^(get|head)$/i.test(init.method);
+    if (read && !/^(TimeoutError|AbortError)$/.test((e as Error).name)) {
+      await new Promise((r) => setTimeout(r, 500));
+      try {
+        return await go(p.url);
+      } catch {
+        // falls through to the other addresses
+      }
+    }
     // The address in use stopped answering: try the others from the code once, and
     // remember the one that works.
     for (const u of (p.urls ?? []).filter((u) => u !== p.url)) {

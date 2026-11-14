@@ -214,8 +214,19 @@ export async function fetchPeer(app: App, peerId: string, opts: FetchOptions = {
       const res = await peerFetch(app, peerId, "/api/peer/files");
       if (!res.ok) throw new Error(`读取对方附件列表失败：${res.status}`);
       const { names } = (await res.json()) as { names: string[] };
-      await pullMissingFiles(fetched, names, opts, (batch, archive) =>
-        download("/api/peer/files", archive, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ names: batch }) }));
+      // Hundreds of batches over a link that may pass through another device: one that breaks is
+      // asked again (it only reads), so a hiccup does not throw away the snapshot already fetched.
+      await pullMissingFiles(fetched, names, opts, async (batch, archive) => {
+        for (let attempt = 1; ; attempt++) {
+          try {
+            return await download("/api/peer/files", archive, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ names: batch }) });
+          } catch (e) {
+            if (attempt >= 3) throw e;
+            log(`  这一批附件没拉下来（${(e as Error).message.slice(0, 120)}），${attempt * 5} 秒后再试`);
+            await new Promise((r) => setTimeout(r, attempt * 5000));
+          }
+        }
+      });
     } else if (!selective(dir)) log("对方版本较旧，发来了全部内容；只合并选中的部分。");
     fetched.fetchedFiles = readdirSync(fetched.filesDir);
     return fetched;
