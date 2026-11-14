@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-14
+updated: 2026-11-15
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -25,6 +25,12 @@ updated: 2026-11-14
 - `loadLocalModel`（`embeddings.ts`）在每个进程里都先查 osdk 的目录；主进程的 `getEmbedder` 和 `rerankScores` 负责发起下载（`prepareLocalModel`）。
 - 设置 → 检索：向量和重排各有一行写明模型从哪里来（本地目录 / osdk 锁定的目录 / 自己下载的缓存 / osdk 正在下载 / osdk 失败的原因）。重排的状态不再把“模型在读进程里加载失败”显示成“还没用过”：读进程把失败原因抛回来（`read-worker.ts`），首次下载期间的超时显示成“正在下载或加载”。
 - 测试 `test/local-models.test.ts`（osdk 用替身，测试进程里不碰真的 osdk）。
+## 经验目录过大时，做梦提炼技能草稿（11-15）
+
+- `src/agents/dream-consolidate.ts`：统计档案和内置角色名下有效的专属经验，按目录条数排序，附最多 12 个标题（回答时召回次数优先，其次新写的）。`dream.consolidate.min` 默认 30，`perNight` 默认 2、0 关闭；同一时区日期内手动再跑也计入额度。共享记忆不计数，空间范围按运行和用户权限限定。
+- `jobs.ts` 的 dream 任务加“经验太多的目录”，无其他变化也可启动；成功后才写 `kv` 的 `dream_consolidated:<档案>:<目录>`（条数、日期、技能名）。通过草稿正文的 `mem:` 出处对应原目录，增长至少 30% 或对应技能删除后才重交；已被复盘启用的技能不算删除。运行摘要列出提炼的技能草稿和归属。
+- `tools.ts` 的 `recall` 原已允许指定别的档案读取，现在补 `limit` / `offset`，可翻完超过 200 条的目录；`save_skill(agent, draft=true)` 沿用原有挂载路径，记录做梦保存的草稿，由既有夜间复盘 K1 试用后启用；原经验不删改。`peer call … config` 自动包含新设置。`test/dream-consolidate.test.ts` 覆盖筛选、去重交接、失败和 ACP + MCP 保存与挂载。
+- `docs/v2/review.md` 同步 `_common.md` 的运行行为证据约定：实际运行附命令和关键输出，只读代码推断要明说未运行并给行号。
 
 ## Agent 页按分组选工具；技能可以停用（11-14）
 

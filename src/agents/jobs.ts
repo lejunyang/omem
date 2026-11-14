@@ -40,6 +40,7 @@ import { expireWorkFiles } from "../sources/work.ts";
 import { expireTemporaryRules } from "./wakes.ts";
 import { hasShortcomings, shortcomings, shortcomingsText } from "../memory/gaps.ts";
 import { digestMergeText } from "../memory/digest-merge.ts";
+import { dreamFolders, dreamFoldersText, markDreamFolders } from "./dream-consolidate.ts";
 // Also registers the kb-scout handler (channels/lark-knowledge.ts).
 import { readsSince } from "../channels/lark-knowledge.ts";
 import "./profile-jobs.ts";
@@ -1207,6 +1208,8 @@ registerHandler("dream", async (ctx) => {
   const candidates = relationCandidates(app);
   const gaps = shortcomings(app, { since });
   const merge = digestMergeText(app);
+  const dreamUser = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? OWNER;
+  const consolidate = dreamFolders(app, scopeFor(app, dreamUser, Array.isArray(ctx.run.input.spaces) ? ctx.run.input.spaces as string[] : null));
   // Nightly replay's evidence: memories that helped (keep them when merging), digest-written experience that misleads.
   const replayed = replayDreamText(app, mems.map((m) => m.id));
   const pairs = sameTopicPairs(app, mems.filter((m) => m.status === "active").map((m) => m.id));
@@ -1214,7 +1217,7 @@ registerHandler("dream", async (ctx) => {
   const stock = dreamStockBatch(app, since);
   const seen = new Set(pairs.map((p) => [p.a.id, p.b.id].sort().join("|")));
   const stockPairs = sameTopicPairs(app, stock.ids, 15).filter((p) => !seen.has([p.a.id, p.b.id].sort().join("|")));
-  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps) && !merge && !stockPairs.length) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
+  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps) && !merge && !stockPairs.length && !consolidate.length) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
   const relations = listSpaces(app).flatMap((s) => relatedSpaces(app, s.id).filter((r) => s.id < r.space).map((r) => `- ${s.id} ↔ ${r.space}${r.note ? `：${r.note}` : ""}`));
   const task = [
     `上次整理：${since}`,
@@ -1224,6 +1227,7 @@ registerHandler("dream", async (ctx) => {
     runs.length ? `期间的后台运行（用于提炼经验）：\n${runs.map((r) => `- [${r.kind}/${r.status}] ${r.title}${r.error ? "：" + truncate(r.error, 120) : ""}`).join("\n")}` : "",
     relations.length ? `已关联的空间：\n${relations.join("\n")}` : "",
     merge,
+    dreamFoldersText(consolidate),
     replayed,
     (() => {
       const helped = helpedCounts(app, [...pairs, ...stockPairs].flatMap((p) => [p.a.id, p.b.id]));
@@ -1251,8 +1255,10 @@ ${shortcomingsText(gaps)}
     .filter(Boolean)
     .join("\n\n");
   const r = await agent(ctx, "dreamer", ctx.run.spaceId ?? "personal", task, null);
+  if (ctx.signal.aborted) throw new Error("CANCELLED");
+  const drafts = markDreamFolders(app, consolidate, ctx.run.id);
   // The report is its last message; the narration before it was progress.
-  return { summary: replyOf(r).trim() };
+  return { summary: [replyOf(r).trim(), drafts.length ? `经验目录提炼的技能草稿：\n${drafts.map((s) => `- ${s.skill}（${s.profile} · ${s.folder}）`).join("\n")}` : ""].filter(Boolean).join("\n\n") };
 });
 
 // -------------------------------------------------------------------- brief

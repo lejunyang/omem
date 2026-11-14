@@ -1397,7 +1397,9 @@ def({
       }
     }
     const where = attachedTo ? `，并挂到 ${attachedTo}` : "";
-    return `已保存技能 ${sk.name}${sk.status === "draft" ? "（草稿，本人 /approve skill " + sk.name + " 后启用）" : ""}${where}。`;
+    if (ctx.role === "dreamer" && ctx.runId && attachedTo && sk.status === "draft")
+      addRunEvent(ctx.app, ctx.runId, "dream-skill", { name: sk.name, agent: attachedTo });
+    return `已保存技能 ${sk.name}${sk.status === "draft" ? ctx.role === "dreamer" ? "（草稿，等待夜间复盘试用）" : "（草稿，本人 /approve skill " + sk.name + " 后启用）" : ""}${where}。`;
   },
 });
 
@@ -1478,6 +1480,8 @@ def({
     folder: z.string().optional().describe("只看某个记忆目录（含子目录）；填“未归档”看还没放进目录的"),
     /** Inspect one spec's own memories (shared ones still included); used when teaching/reviewing an agent. */
     agent: z.string().optional().describe("只看某个 Agent 档案或内置角色的专属记忆（仍包含共享记忆）"),
+    limit: z.number().int().min(1).max(200).optional().describe("不传 query 时每页条数，目录默认 200，其他默认 50"),
+    offset: z.number().int().min(0).optional().describe("不传 query 时跳过的条数，用于读完大目录"),
     space: z.string().optional(),
   }),
   handler: async (ctx, a) => {
@@ -1489,7 +1493,7 @@ def({
     let mems = query
       ? // A folder or one profile's memories narrow the hits afterwards: search wider so the narrowing still leaves the closest.
         (await viewSearch(ctx, query, { spaces: sp, types: ["memory"], limit: folder !== undefined || a.agent || a.tag || a.subject ? 100 : 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
-      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history || view?.asOf ? "all" : "active", subject: a.subject, tag: a.tag, folder, agent: a.agent ?? ownProfile(ctx) ?? undefined, limit: folder !== undefined ? 200 : 50 });
+      : listMemories(ctx.app, { spaceIds: sp ?? undefined, status: a.include_history || view?.asOf ? "all" : "active", subject: a.subject, tag: a.tag, folder, agent: a.agent ?? ownProfile(ctx) ?? undefined, limit: (a.limit ?? (folder !== undefined ? 200 : 50)) + 1, offset: a.offset });
     if (view) {
       const ok = visibleMemories(ctx.app, view, mems.map((m) => m.id));
       mems = mems.filter((m) => ok.has(m.id)).map((m) => ({ ...m, status: "active" as const, content: asOfContent(view, m.content), validTo: null, supersededBy: null, supersedes: view.asOf ? null : m.supersedes }));
@@ -1503,6 +1507,9 @@ def({
     const scopeSpec = a.agent ?? ownProfile(ctx);
     if (scopeSpec) mems = mems.filter((m) => !m.agent || m.agent === scopeSpec);
     if (query) mems = mems.slice(0, 20);
+    const limit = a.limit ?? (folder !== undefined ? 200 : 50);
+    const more = !query && mems.length > limit;
+    if (more) mems = mems.slice(0, limit);
     if (!mems.length) return "没有相关记忆。";
     // Recall accounting (best effort): which memories surfaced for this run, so their value
     // can be measured. Marking "used" happens when the run finishes (see runs worker).
@@ -1519,7 +1526,7 @@ def({
           chain.length > 1 ? "\n  版本链：" + chain.map((c) => `${c.id}(${c.status}) ${truncate(c.content, 60)}`).join(" → ") : ""
         }`;
       })
-      .join("\n");
+      .join("\n") + (more ? `\n还有记忆，用相同条件和 offset=${(a.offset ?? 0) + limit} 继续读。` : "");
   },
 });
 

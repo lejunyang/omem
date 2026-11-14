@@ -229,7 +229,7 @@ export function updateMemoryText(app: App, id: string, patch: { content?: string
   return getMemory(app, id);
 }
 
-export function listMemories(app: App, opts: { spaceId?: string; /** only these spaces (what someone other than the owner can read) */ spaceIds?: string[]; status?: string; kind?: string; subject?: string; tag?: string; /** that folder and everything under it; null = not filed */ folder?: string | null; agent?: string | null; /** "visible" (default): shared + that spec; "own": that spec only */ agentScope?: "own" | "visible"; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number }) {
+export function listMemories(app: App, opts: { spaceId?: string; /** only these spaces (what someone other than the owner can read) */ spaceIds?: string[]; status?: string; kind?: string; subject?: string; tag?: string; /** that folder and everything under it; null = not filed */ folder?: string | null; agent?: string | null; /** "visible" (default): shared + that spec; "own": that spec only */ agentScope?: "own" | "visible"; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number; offset?: number }) {
   const where: string[] = [];
   const params: string[] = [];
   if (opts.folder === null) where.push("folder = ''");
@@ -249,7 +249,7 @@ export function listMemories(app: App, opts: { spaceId?: string; /** only these 
   if (opts.status && opts.status !== "all") where.push("status = ?"), params.push(opts.status);
   if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
   if (opts.subject) where.push("subject like ?"), params.push(`%${opts.subject}%`);
-  return all<Row>(app.db, `select * from memories ${where.length ? "where " + where.join(" and ") : ""} order by updated_at desc limit ?`, ...params, opts.limit ?? 200).map(toMemory);
+  return all<Row>(app.db, `select * from memories ${where.length ? "where " + where.join(" and ") : ""} order by updated_at desc, id desc limit ? offset ?`, ...params, opts.limit ?? 200, opts.offset ?? 0).map(toMemory);
 }
 
 /** The full chain of versions that a memory belongs to, oldest first. */

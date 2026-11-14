@@ -644,6 +644,32 @@ ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      // A dreamer reads another profile's folder and attaches a draft through the real MCP bridge.
+      if (process.env.FAKE_MODE === "dream") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-dream", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const direct = new Set((await client.listTools()).tools.map((t) => t.name));
+          const call = async (name: string, args: Record<string, unknown>) => {
+            const r = await client.callTool(direct.has(name) ? { name, arguments: args } : { name: "omem_call", arguments: { tool: name, args } });
+            if (r.isError) throw new Error(JSON.stringify(r.content));
+            return (r.content as { text?: string }[]).map((b) => b.text ?? "").join("\n");
+          };
+          const folder = /经验太多的目录：\n- 档案\/角色 (\S+) · 目录 (.+) · \d+ 条经验/.exec(prompt);
+          if (!folder) throw new Error("没有收到经验目录");
+          const memories = await call("recall", { agent: folder[1], folder: folder[2] });
+          const id = /^- (m_[\w-]+)/m.exec(memories)?.[1];
+          if (!id) throw new Error("没有读到档案经验");
+          await call("save_skill", { name: "folder-troubleshooting", description: "排查项目 A 的重复故障", body: `先核对现象，再按经验查原因。\n\n| 现象 | 原因 | 处理 |\n| --- | --- | --- |\n| 超时 | 连接耗尽 | 检查连接池，见 mem:${id} |`, draft: true, agent: folder[1] });
+          await say("已读完目录并保存技能草稿，经验保持原样。");
+        } finally {
+          await client.close();
+          // This stand-in serves one turn; exit even where Windows taskkill is unavailable.
+          setTimeout(() => process.exit(0), 500).unref();
+        }
+        return { stopReason: "end_turn" as const };
+      }
       // FAKE_MODE=aware (test/awareness.test.ts): the task is a script. `@wait <file>` writes <file>.ready and
       // waits for <file> (the test speaks as the owner meanwhile); `@call <tool> <json>` calls an omem tool and
       // logs its result to FAKE_TOOL_LOG. Then it answers FAKE_ANSWER. The check before posting (“# 发出前复核”)

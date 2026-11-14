@@ -21,6 +21,7 @@
 
 - `list_skills` / `read_skill`：本人沉淀的做法。`read_skill(name, file="references/checks.md")` 可读技能内的多层附属文本文件；返回的文件列表使用相对路径。不接受越界或符号链接，文本限 2 MB。
 - `save_skill`：把可复用做法存成技能；`agent="档案名"` 保存后直接挂到该档案或内置角色（主助手教档案时用；内置角色会先复制成本人的自定义版本），档案内运行不填默认挂当前档案，`attach: false` 只建技能不挂；名字不存在会报错。
+- 做梦提炼某个档案或角色的经验目录时，用 `save_skill(agent="名字", draft=true)` 挂到原归属；正文保留 `mem:` 出处。草稿交给夜间复盘 K1 试用，达到启用门槛后才生效，原经验保留。
 - `propose_profile_change(target, kind, title, reason, …)`：给档案或内置角色提改进建议（`prompt` 新正文、`skill` 新技能全文、`settings` 加减工具和技能），本人在 Agent 页采纳后才生效；偏好和经验直接 `remember(agent=…)`。
 
 ## 运行记录

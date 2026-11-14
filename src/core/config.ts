@@ -231,6 +231,12 @@ export const configSchema = z.object({
   concurrency: z.number().int().min(1).max(32).default(2),
   /** Conversation turns at the same time (one per thread; threads run in parallel). */
   interactiveConcurrency: z.number().int().min(1).max(16).default(4),
+  dream: z.object({
+    consolidate: z.object({
+      min: z.number().int().min(1).default(30),
+      perNight: z.number().int().min(0).default(2),
+    }).default(() => ({ min: 30, perNight: 2 })),
+  }).default(() => ({ consolidate: { min: 30, perNight: 2 } })),
   sessions: z
     .object({
       /** Keep a thread's agent process alive this long after a reply (ACP agents). */
