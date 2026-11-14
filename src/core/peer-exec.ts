@@ -152,6 +152,15 @@ const LARK_READ = ["+chat-list", "+chat-messages-list", "+threads-messages-list"
 type Command = { description: string; schema: z.ZodTypeAny; run: (app: App, args: any) => Promise<unknown> | unknown };
 
 export const peerCommands: Record<string, Command> = {
+  quality: {
+    description: "每晚抽检：各类运行的统计、加严名单、待检页数和最近 20 条结果（不含问题正文）",
+    schema: z.object({}).strict(),
+    run: async (app) => {
+      const { qualityOverview, recentAudits } = await import("../quality/audit.ts");
+      const { pipelines, flagged, waiting } = qualityOverview(app);
+      return { pipelines, flagged, waiting, recent: recentAudits(app, 20).map(({ id, at, pipeline, spaceId, target, verdict, wrong, style, fixRun }) => ({ id, at, pipeline, space: spaceId, page: target, verdict, wrong, style, fixRun })) };
+    },
+  },
   diag: { description: "健康状态：版本、计数、定时任务、最近失败、飞书采集状态", schema: z.object({}), run: (app) => diag(app) },
   logs: {
     description: "服务日志最后几行（stream=out|err）",

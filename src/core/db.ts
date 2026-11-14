@@ -1796,6 +1796,40 @@ export const migrations: readonly string[] = [
      'wiki-organizer', 'wiki-checker', 'dreamer', 'curator', 'triager', 'distiller', 'summarizer', 'memory-reviewer', 'memory-organizer', 'item-keeper', 'coach',
      'replay-judge', 'kb-scout', 'req-splitter', 'tutor', 'work-state');
    create index memory_recalls_run on memory_recalls(run_id);`,
+  // The nightly audit (quality/audit.ts) samples what the agents wrote on their own. It needs to know
+  // who wrote each page version (page_writes: the run, or the owner), which pages the runs that answer
+  // or act actually read (page_reads, a count per day), and keeps what each audit found (quality_audits).
+  `create table page_writes (
+     id integer primary key autoincrement,
+     space_id text not null,
+     slug text not null,
+     at text not null,
+     actor text not null,                 -- agent | user
+     run_id text
+   );
+   create index page_writes_at on page_writes(at);
+   create index page_writes_page on page_writes(space_id, slug, at);
+   create table page_reads (space_id text not null, slug text not null, day text not null, n integer not null default 0, primary key(space_id, slug, day));
+   create table quality_audits (
+     id text primary key,
+     at text not null,
+     pipeline text not null,              -- the kind of run that wrote it (ingest, wiki-lint, digest…)
+     space_id text not null,
+     target text not null,                -- page slug
+     written_at text not null,            -- the version looked at
+     writer_run text,
+     writer_ai text,
+     checker_ai text,
+     audit_run text,
+     verdict text not null,               -- ok | style | wrong | unchecked
+     wrong integer not null default 0,    -- findings about facts (cite, code, negative, conflict)
+     style integer not null default 0,    -- findings about the writing
+     findings text not null default '[]',
+     why text not null default '',        -- why this page was picked
+     fix_run text
+   );
+   create index quality_audits_pipeline on quality_audits(pipeline, at);
+   create index quality_audits_target on quality_audits(space_id, target, at);`,
 ];
 
 export type Db = DatabaseSync;

@@ -70,6 +70,24 @@ watch(() => route.query.section, (v) => {
   tab.value = "agents";
 });
 const config = ref<any>(null);
+const auditFields = [
+  { key: 'max', label: '每晚最多几页', max: 100 },
+  { key: 'perPipeline', label: '每类运行最多几页', max: 50 },
+  { key: 'strictMax', label: '加严时每晚最多几页', max: 100 },
+] as const;
+function saveAudit(change: Record<string, unknown>) {
+  return saveConfig({ quality: { ...config.value.quality, audit: { ...config.value.quality.audit, ...change } } });
+}
+function auditNumber(event: Event, key: string, max: number, percentage = false) {
+  const input = event.target as HTMLInputElement;
+  const value = Number(input.value);
+  if (!input.value || !Number.isFinite(value) || value < (percentage ? 0 : 1) || value > max || (!percentage && !Number.isInteger(value))) {
+    input.value = String(config.value.quality.audit[key] * (percentage ? 100 : 1));
+    toast('请输入范围内的数字', 'error');
+    return;
+  }
+  void saveAudit({ [key]: percentage ? value / 100 : value });
+}
 // The page's own contents (the right column): the cards of the open tab, by their titles. Read from
 // what is rendered, so cards of the sub-pages (members, devices, plugins…) are listed too.
 const content = ref<HTMLElement>();
@@ -1015,6 +1033,15 @@ async function saveEdit() {
         <div class="field"><span>谁来确认</span>
           <UiSegmented :model-value="config.agents.design?.confirm ?? 'owner'" style="justify-self: start" size="sm" aria-label="谁来确认方案" :options="[{ value: 'owner', label: '我确认' }, { value: 'assistant', label: '没有要我定的问题时由助手确认' }]" @change="(v) => saveDesign({ confirm: v })" />
         </div>
+      </div>
+      <div v-if="config.quality?.audit" class="card pad stack">
+        <strong>每晚抽检</strong>
+        <HelpText>助手在整理材料、修正页面时自己写的页面没有人逐页看；每晚抽几页由核对角色对照原件和代码看一遍，有事实问题的交回修改。某一类运行写的页面准确率掉到门槛以下，就改成它写的每一页都看，直到恢复。核对角色用的模型在 Agent 页给 wiki-checker 选，最好和写作的不是同一个。</HelpText>
+        <UiCheckbox :model-value="config.quality.audit.enabled" switch @change="(v) => saveAudit({ enabled: v })">启用每晚抽检</UiCheckbox>
+        <label v-for="f in auditFields" :key="f.key" class="field"><span>{{ f.label }}</span><input class="input" style="width: min(100%, 160px)" type="number" min="1" :max="f.max" step="1" :value="config.quality.audit[f.key]" @change="auditNumber($event, f.key, f.max)" /></label>
+        <label class="field"><span>低于多少算不合格（%）</span><input class="input" style="width: min(100%, 160px)" type="number" min="0" max="100" :value="config.quality.audit.threshold * 100" @change="auditNumber($event, 'threshold', 100, true)" /></label>
+        <UiSegmented :model-value="config.quality.audit.fix" aria-label="抽检后交回修改" :options="[{ value: 'off', label: '不交回' }, { value: 'wrong', label: '有事实问题的交回修改' }, { value: 'all', label: '写法问题也交回' }]" @change="(v) => saveAudit({ fix: v })" />
+        <a class="small" href="#/quality">查看抽检结果</a>
       </div>
       <div v-if="config.memory" class="card pad stack">
         <div class="section-title">记忆质量</div>

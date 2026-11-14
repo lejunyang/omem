@@ -25,6 +25,7 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "memory-organize", kind: "memory-organize", cron: "50 */2 * * *", enabled: true, label: "整理记忆目录：把还没归档的记忆放进目录，每周看一遍目录结构（拆、并、改名、补说明；没有新记忆时什么都不做）" },
   { id: "work-state", kind: "work-state", cron: "50 2 * * *", enabled: true, label: "每晚整理工作近况和人物卡：按最近几周本人说过话的会话、打开的文档、编码、事项、会议和找助手做的事，更新个人空间的 state/work 页面，给有新消息、常打交道的人更新人物卡（people/；没有新材料时什么都不做）" },
   { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: true, label: "每晚整理记忆与页面：合并重复和存量整理写下的经验记忆、处理冲突与过期、按不足信号补漏（第一次只看最近 7 天）" },
+  { id: "quality-audit", kind: "quality-audit", cron: "10 5 * * *", enabled: true, label: "每晚抽检：从助手自己写的页面里抽几页，由核对角色对照原件和代码看一遍，有事实问题的交回修改；按运行类型统计准确率，掉下来的那一类改成每页都看（没有新写的页面时什么都不做）" },
   { id: "profile-review", kind: "profile-review", cron: "10 4 * * *", enabled: true, label: "复盘 Agent 档案和内置角色：最近的运行和本人随后的纠正沉淀成它们的记忆，提示词、技能和设置的改动提为待确认的建议（最近没有足够运行或没有纠正时什么都不做）" },
   { id: "replay", kind: "replay", cron: "30 4 * * *", enabled: false, label: "夜间复盘：挑最近的问题回到提问时重答，基线和只改一处的变体对比，盲评后把结论用在记忆复核、原件级别和任务选型上（先给 replay-judge 选模型；每晚题数在设置 → AI 里改）" },
   { id: "repo-sync", kind: "repo-sync", cron: "0 * * * *", enabled: true, label: "每小时同步代码仓库：拉取远端（只 fetch，不动工作目录），基线或工作目录有变化才重读变了的文件，刷新跟着的分支，清理过期的分支和交办索引，并检查受影响页面（没有变化时只问一次远端各分支的位置，不拉取）" },

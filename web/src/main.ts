@@ -12,6 +12,7 @@ const view = (pattern: string, loader: () => Promise<unknown>, key = pattern.rep
   ({ path: pattern, component: preloadable(key, loader) } as unknown as RouteRecordRaw);
 
 const routes: RouteRecordRaw[] = [
+  view("/quality", () => import("./views/Quality.vue")),
   view("/", () => import("./views/Home.vue")),
   view("/ask/:id?", () => import("./views/Ask.vue"), "/ask"),
   view("/ui/:id", () => import("./views/UiItem.vue"), "/ui"),

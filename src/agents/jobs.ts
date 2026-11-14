@@ -51,6 +51,7 @@ import "./wakes.ts";
 import "./digest.ts";
 // The nightly write-up of the owner's work state and person cards (agents/work-state-job.ts).
 import "./work-state-job.ts";
+import "../quality/audit.ts";
 // Also registers the mention handler (someone looking for the owner: triage, then maybe a handling).
 import { handedToMentions, mentionTools, runMentionHandling, type MentionInfo } from "../mentions/mentions.ts";
 // The Feishu channel of 有人找你 (runs queued before a restart find it registered).

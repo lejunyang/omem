@@ -150,7 +150,22 @@ export function citedExcerpts(app: App, body: string, budget = 14000) {
   return parts.join("\n\n");
 }
 
-function checkerTask(app: App, spaceId: string, brief: PageBrief, draft: Draft, readSpaces: string[], round: number, history: CheckRecord["history"], writerReply: string, notes: string[]) {
+/**
+ * A published page looked at by the checker alone (the nightly audit, quality/audit.ts): the same
+ * material a draft's check gets, in the audit's own run, with nobody to hand the findings back to.
+ * Returns the findings, or null when the checker did not hand any conclusion in.
+ */
+export async function checkPublished(ctx: RunContext, spaceId: string, page: { slug: string; title: string; summary: string; kind: string; body: string }, readSpaces: string[]): Promise<{ findings: Finding[]; summary?: string; ai: string } | null> {
+  const app = ctx.app;
+  setRunOutput(app, ctx.run.id, { pageCheck: null });
+  const draft: Draft = { slug: page.slug, title: page.title, summary: page.summary, kind: page.kind, body: page.body };
+  const brief: PageBrief = { slug: page.slug, title: page.title, kind: page.kind, question: page.summary || page.title, outline: "", entry_points: [] };
+  const r = await role(ctx, "wiki-checker", spaceId, checkerTask(app, spaceId, brief, draft, readSpaces, 1, [], "", [], true), { spaces: [spaceId], readSpaces, ownAI: true });
+  const got = getRun(app, ctx.run.id).output.pageCheck as { findings: Finding[]; summary?: string } | null | undefined;
+  return got ? { ...got, ai: [r.ai.profile, r.ai.model].filter(Boolean).join(" · ") } : null;
+}
+
+function checkerTask(app: App, spaceId: string, brief: PageBrief, draft: Draft, readSpaces: string[], round: number, history: CheckRecord["history"], writerReply: string, notes: string[], published = false) {
   const related = relatedIds(app, spaceId).filter((id) => readSpaces.includes(id));
   const relatedPages = related
     .map((id) => {
@@ -162,7 +177,9 @@ function checkerTask(app: App, spaceId: string, brief: PageBrief, draft: Draft, 
   const same = sameTopicElsewhere(app, spaceId, draft.title, readSpaces);
   const len = textLength(draft.body);
   return [
-    `核对空间 ${spaceId} 的页面草稿 ${draft.slug}「${draft.title}」（类型 ${draft.kind}，第 ${round} 轮核对）。它还没有发布。`,
+    published
+      ? `抽检空间 ${spaceId} 已发布的页面 ${draft.slug}「${draft.title}」（类型 ${draft.kind}）。下面说的“草稿”就是这一页现在的正文；照核对草稿的标准逐条看，结论照常用 submit_page_check 交，没有人会当场改，所以每条写清原句和依据。`
+      : `核对空间 ${spaceId} 的页面草稿 ${draft.slug}「${draft.title}」（类型 ${draft.kind}，第 ${round} 轮核对）。它还没有发布。`,
     `这页要回答：${brief.question}`,
     `## 草稿全文\n\n${draft.body}`,
     `## 草稿引用的原件行（宿主按引用摘出）\n\n${citedExcerpts(app, draft.body) || "（草稿没有引用原件）"}`,
@@ -285,7 +302,7 @@ export async function writeAndVerify(ctx: RunContext) {
   const fixed = status === "open" ? Math.max(0, raised - open.length) : raised;
   const draft = draftOf(app, ctx.run.id)!;
   const existed = pageExists(app, spaceId, draft.slug);
-  const p = writePage(app, spaceId, draft.slug, { meta: { title: draft.title, summary: draft.summary, kind: draft.kind }, body: draft.body }, { actor: "agent", message: `agent: ${existed ? "update" : "create"} ${spaceId}/${draft.slug}${draft.reason ? " — " + draft.reason : ""} (run ${ctx.run.id}; 核对 ${history.length} 轮${open.length ? `，${open.length} 条未解决` : ""})` });
+  const p = writePage(app, spaceId, draft.slug, { meta: { title: draft.title, summary: draft.summary, kind: draft.kind }, body: draft.body }, { actor: "agent", runId: ctx.run.id, message: `agent: ${existed ? "update" : "create"} ${spaceId}/${draft.slug}${draft.reason ? " — " + draft.reason : ""} (run ${ctx.run.id}; 核对 ${history.length} 轮${open.length ? `，${open.length} 条未解决` : ""})` });
   appendLog(app, spaceId, `${existed ? "更新" : "新建"} [[${p.slug}]]${draft.reason ? "：" + draft.reason : ""}（核对 ${history.length} 轮${open.length ? `，${open.length} 条未解决` : ""}）`);
   app.emit({ type: "run-event", runId: ctx.run.id, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: now() } });
   // What was left out of the page goes to its open questions; answers this run was given to write in are done.

@@ -46,6 +46,8 @@ describe("complete portable pulls", () => {
     const device = new Set(["kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "peer_grants", "fed_outbox", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
+      // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
+      "page_writes", "page_reads", "quality_audits",
       // Which messages link which document (sources/doc-links.ts): rebuilt from lark_messages.
       "lark_doc_links"]);
     const covered = new Set(["spaces", "sources", "lark_people", ...pullTables.map((t) => t.name)]);

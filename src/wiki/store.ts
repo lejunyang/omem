@@ -149,9 +149,11 @@ export function writePage(
   spaceId: string,
   slugInput: string,
   input: { meta: PageMeta; body: string },
-  opts: { actor?: string; message?: string; commit?: boolean } = {},
+  opts: { actor?: string; message?: string; commit?: boolean; /** The run that wrote it, for the nightly audit (quality/audit.ts). */ runId?: string | null } = {},
 ): Page {
   const slug = checkSlug(slugInput);
+  // Who wrote this version: an agent's run or the owner (a page mirrored from another node is neither).
+  if (opts.actor !== "peer") run(app.db, "insert into page_writes(space_id, slug, at, actor, run_id) values(?,?,?,?,?)", spaceId, slug, now(), opts.actor === "user" ? "user" : "agent", opts.runId ?? null);
   const file = pageFile(app, spaceId, slug);
   mkdirSync(dirname(file), { recursive: true });
   // A rewrite keeps the paths the page used to have (move_page records them): links and memories

@@ -394,7 +394,14 @@ export const configSchema = z.object({
       rotation: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).optional(),
     })
     .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [] })),
-  approvals: z.object({ tools: z.array(z.string()).default([]), waitSeconds: z.number().int().min(0).max(50).default(40) }).default({ tools: [], waitSeconds: 40 }),
+  /**
+   * Tools that need the owner (agents/approval-ladder.ts): `tools` wait for an OK every time; `report`
+   * run and the owner is told afterwards. After `promoteAfter` approvals in a row of a tool in `tools`
+   * the owner is asked once whether it may move to `report` (0: never asked).
+   */
+  approvals: z
+    .object({ tools: z.array(z.string()).default([]), report: z.array(z.string()).optional(), promoteAfter: z.number().int().min(0).max(100).optional(), waitSeconds: z.number().int().min(0).max(50).default(40) })
+    .default({ tools: [], waitSeconds: 40 }),
   /** Questions, suggestions and approvals nobody answered for this many days lapse (agents/ask-expiry.ts); 0 keeps them. */
   asks: z.object({ staleDays: z.number().int().min(0).max(365).default(7) }).default({ staleDays: 7 }),
   /**
@@ -906,8 +913,10 @@ export const configSchema = z.object({
       firstNudgeDelayMinutes: z.number().int().min(0).default(30),
       quietStart: z.number().int().min(0).max(23).default(22),
       quietEnd: z.number().int().min(0).max(23).default(9),
+      /** When what was sent as `later` (nothing to do now: finished background work, reports) goes out together, HH:mm on the server's clock; empty = at once, like normal ones. */
+      laterTimes: z.array(z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/)).max(12).default(["09:30", "13:30", "18:30"]),
     })
-    .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9 }),
+    .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9, laterTimes: ["09:30", "13:30", "18:30"] }),
   /**
    * MCP servers the owner set up for agents (Agent 页 → MCP, agents/mcp-servers.ts): a command to
    * start (stdio) or a URL (HTTP). An Agent 档案 names the ones it uses (`mcpServers`), a built-in
@@ -933,6 +942,32 @@ export const configSchema = z.object({
         .default({}),
     })
     .default(() => ({ servers: {} })),
+  /**
+   * The nightly audit (quality/audit.ts): pages the agents wrote on their own (while taking material
+   * in, fixing pages after a source changed, distilling…) are sampled and read by the checker role.
+   * `max` pages a night, at most `perPipeline` from one kind of run, among those written in the last
+   * `lookbackDays`. A kind of run whose share of pages without factual findings over `days` days
+   * (with at least `minSamples` judged) falls below `threshold` has every page audited, up to
+   * `strictMax` a night, until the share is back. `fix`: which pages go back to a writer — those
+   * with factual findings (`wrong`), also those with writing findings only (`all`), or none (`off`).
+   */
+  quality: z
+    .object({
+      audit: z
+        .object({
+          enabled: z.boolean().default(true),
+          max: z.number().int().min(1).max(100).default(8),
+          perPipeline: z.number().int().min(1).max(50).default(3),
+          strictMax: z.number().int().min(1).max(100).default(12),
+          lookbackDays: z.number().int().min(1).max(30).default(3),
+          days: z.number().int().min(1).max(90).default(14),
+          minSamples: z.number().int().min(1).max(100).default(6),
+          threshold: z.number().min(0).max(1).default(0.8),
+          fix: z.enum(["off", "wrong", "all"]).default("wrong"),
+        })
+        .default(() => ({ enabled: true, max: 8, perPipeline: 3, strictMax: 12, lookbackDays: 3, days: 14, minSamples: 6, threshold: 0.8, fix: "wrong" as const })),
+    })
+    .default(() => ({ audit: { enabled: true, max: 8, perPipeline: 3, strictMax: 12, lookbackDays: 3, days: 14, minSamples: 6, threshold: 0.8, fix: "wrong" as const } })),
   /**
    * The heartbeat (agents/jobs.ts): due reminders are delivered by the host; the agent is only needed
    * when new material may bear on something watched or waited for. `gate: decision` asks the decision

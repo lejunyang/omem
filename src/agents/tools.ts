@@ -17,6 +17,7 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
+import { upkeepRoles } from "../core/config.ts";
 import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
@@ -1448,6 +1449,9 @@ def({
     const draft = wv.draftTarget(ctx.app, ctx.runId, id, checkSlug(slug)) ? wv.draftOf(ctx.app, ctx.runId!) : null;
     if (draft) return `页面 ${id}/${draft.slug} 的草稿（还没发布，你这次提交的版本）·${draft.kind}\n---\n# ${draft.title}\n> ${draft.summary}\n\n${draft.body}`;
     const p = readPage(ctx.app, id, slug);
+    // Which pages are actually used: counted for the runs that answer or act (the nightly audit looks at those first).
+    if (ctx.actor === "agent" && !ctx.view && !upkeepRoles.has(ownProfile(ctx) ?? ""))
+      run(ctx.app.db, "insert into page_reads(space_id, slug, day, n) values(?,?,?,1) on conflict(space_id, slug, day) do update set n = n + 1", id, p.slug, new Date().toISOString().slice(0, 10));
     const c = pageContext(ctx.app, id, p.slug);
     const stale = c.sources.filter((s) => s.stale || s.deleted);
     const asOf = ctx.view?.asOf;
@@ -1697,7 +1701,7 @@ def({
       setRunOutput(ctx.app, ctx.runId!, { writeNotes: checked.notes });
       return `已保存页面 ${id}/${slug} 的草稿（${wc.textLength(body)} 字）：写作结束后由核对角色对照原件和代码核对，有问题会交回给你改，通过后发布。${notes}`;
     }
-    const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
+    const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, runId: ctx.runId, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
     appendLog(ctx.app, id, `${existed ? "更新" : "新建"} [[${p.slug}]]${a.reason ? "：" + a.reason : ""}`);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: new Date().toISOString() } });
     // What the writer was not sure of: kept as the page's open questions (wiki/questions.ts), not in the page.
@@ -4532,7 +4536,8 @@ def({
   }),
   handler: (ctx, a) => {
     const me = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
-    if (!me || me.kind !== "wiki-write" || me.status !== "running") throw new HttpError(400, "submit_page_check 只在核对 Wiki 页面草稿时用");
+    // A page being written (wiki/verify.ts), or a published one the nightly audit picked (quality/audit.ts).
+    if (!me || (me.kind !== "wiki-write" && me.kind !== "quality-audit") || me.status !== "running") throw new HttpError(400, "submit_page_check 只在核对 Wiki 页面草稿时用");
     setRunOutput(ctx.app, me.id, { pageCheck: { findings: a.findings, summary: a.summary } });
     return a.findings.length ? `已交 ${a.findings.length} 个问题，会交回写作者修改。` : "已记下：这一版没有问题。";
   },

@@ -60,7 +60,7 @@ import { checkRoute } from "../auth/routes.ts";
 import { hitFilter, setVisibility, sourceVisible, viewersOf, visibleHits } from "../auth/visibility.ts";
 import { registerFederationRoutes } from "../core/federation-http.ts";
 import { registerCodeIndexRoutes } from "../sources/code-index-http.ts";
-import { audit, can, canReadRun, globalPerms, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
+import { audit, can, canReadRun, globalPerms, isOwner, requirePerm, runReadableSpaces, spacesWith } from "../auth/permissions.ts";
 import { ACP_PATH, closeAcpServing, serveAcp, toolRelay } from "../core/peer-acp.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
 import { accessibleSpaces, addMember, canWrite, findUser, getUser, OWNER, scopeFor, userForToken, userName } from "../core/users.ts";
@@ -932,7 +932,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { pageChecks } = await import("../wiki/verify.ts");
     const writer = can(app, who(req), "wiki.write", space);
     const questions = writer ? (await import("../wiki/questions.ts")).listQuestions(app, { spaceId: space, page: page.slug }) : undefined;
-    return { ...page, context: pageContext(app, space, page.slug), checks: pageChecks(app, space, page.slug), ...(questions ? { questions } : {}) };
+    const audit = isOwner(app, who(req)) ? one(app.db, "select at, verdict from quality_audits where space_id = ? and target = ? order by at desc limit 1", space, page.slug) : undefined;
+    return { ...page, context: pageContext(app, space, page.slug), checks: pageChecks(app, space, page.slug), audit, ...(questions ? { questions } : {}) };
   });
   // Open questions of a space's pages (wiki/questions.ts): the list, answering one, dropping one,
   // having an agent look into the ones nobody has, and putting existing pages through the checks again.
@@ -2745,6 +2746,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return reply.send(res.body ? (await import("node:stream")).Readable.fromWeb(res.body as never) : "");
   });
 
+  server.get("/api/quality", async () => {
+    const { qualityOverview } = await import("../quality/audit.ts");
+    const overview = qualityOverview(app);
+    return { ...overview, recent: overview.recent.map((a) => ({ ...a, title: one<{ title: string }>(app.db, "select title from pages where space_id = ? and slug = ?", a.spaceId, a.target)?.title })) };
+  });
+  server.post("/api/quality/audit", async () => {
+    const { scheduleAudit } = await import("../quality/audit.ts");
+    const active = one(app.db, "select 1 from runs where kind = 'quality-audit' and status in ('queued','running') limit 1");
+    const queued = scheduleAudit(app);
+    return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
+  });
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app) }));
   server.put("/api/settings", async (req) => {
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });

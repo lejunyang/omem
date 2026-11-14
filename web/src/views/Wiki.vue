@@ -29,6 +29,7 @@ type PageData = {
     history: { hash: string; at: string; message: string }[];
   };
   checks?: CheckRecord[];
+  audit?: { at: string; verdict: string };
   /** Only for those who may write the Wiki. */
   questions?: WikiQuestion[];
 };
@@ -422,6 +423,11 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         </a>
       </div>
       <WikiChecks v-if="page.checks?.length" :checks="page.checks" class="block" />
+      <div v-if="page.audit" class="block small">
+        <strong>每晚抽检</strong>
+        <p>{{ fmtTime(page.audit.at) }} · {{ ({ ok: '没问题', style: '只有写法问题', wrong: '有事实问题', unchecked: '没核完' } as Record<string, string>)[page.audit.verdict] }}</p>
+        <a href="#/quality">查看抽检记录</a>
+      </div>
       <div v-if="page.questions?.length" class="block">
         <div class="section-title">未决问题 {{ page.questions.length }}</div>
         <div v-for="q in page.questions.slice(0, 6)" :key="q.id" class="small pq">{{ q.question }}</div>

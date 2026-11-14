@@ -2,6 +2,16 @@
 
 按你最初列的目标和日常用途逐项验收。每项写了操作和预期结果；“云端已验”指我在云端用 Claude Code（haiku）实际跑过，“待你验”指需要你的账号或本机环境。
 
+## 每晚抽检
+
+| # | 操作 | 预期 | 状态 |
+| --- | --- | --- | --- |
+| QA1 | 用 ingest 运行写一页引用原件的 Wiki，执行 quality-audit；假 ACP 核对角色提交 cite 问题 | 记录 wrong、写作运行类型与问题；排 wiki-write，修改要求含问题；报告链接到抽检页，输出 audited / wrong / fixing 各 1 | `test/quality-audit-run.test.ts`；真实模型效果待验 |
+| QA2 | 核对无问题、不提交结论、关闭交回修改，分别抽检 | ok 无修改且通知 silent；不提交为 unchecked，不入比例与加严判定；fix=off 不排修改 | 同上 |
+| QA3 | 关闭抽检、无候选、有 queued / running 抽检时调用排队与 HTTP 接口 | 不重复排；HTTP 给出 disabled / nothing to audit / already under way | 同上 |
+| QA4 | 用主助手和 ingest 调 read_page，再用 write_page 写页面；读设置、修改并保存抽检字段 | 只有回答角色的读取计数；写入带 run_id；设置往返不丢字段；quality peer 摘要不含问题正文且拒绝多余参数 | 同上 |
+| QA5 | 打开抽检页、Wiki 侧栏和设置 → AI → 每晚抽检；在 1440 / 390 宽度查看 | 统计、抽到原因、展开问题、修改与抽检运行链接可用；同模型提示；设置使用统一控件，页面无横向溢出 | 页面检查；真实夜间通知待验 |
+
 ## 准备
 
 ```powershell
