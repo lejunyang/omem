@@ -7,6 +7,12 @@ updated: 2026-11-15
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 通知负反馈改变下次行为；会议结束释放通知（11-15）
+
+- `src/core/notify-reactions.ts`、`src/channels/lark-feedback.ts`：本人对工具完成汇报回负面表情，按通知 `reportTool` 立即用 `setRung` 改回 ask，重算批准连续次数，later 告知一次；普通通知复用“忽略”按钮的模型路径，通知保存生成的规则，一次性事件不告知。紧急提醒与工具汇报不学忽略规则，`notify.learnFromReactions` 默认开，可在渠道设置关闭。通知页展示、删除忽略规则，并显示通知学出的规则。
+- `src/core/notify-outcome.ts`：标为 negative 时补做同一处理，覆盖服务停机期间已存到 `feedback` 的反应；重复事件与重复标注不重复执行。`src/channels/lark-actions.ts` 的本人“忽略”也共用通知上的处理记录。
+- `src/channels/lark-meetings.ts`：会议结束或本人离会调用 `releaseLater(app, new Date(), { now: true })`，立即放出攒着的通知，不占下个固定时点。本次不增加会中扣留逻辑。测试见 `notify-reactions`、`notify-outcome`、`approval-ladder`、`meeting-rules`、`notification-settings`。
+
 ## 简报先替本人备好；会后放出攒着的通知（11-15）
 
 - `roles/brief.md`：写简报之前，先按任务里的“本人近况”（`work-state.ts` 的摘要）逐条线看有没有现在就能做完、又不需要本人拍板的准备（查出会上要用的数字、理好要回的消息的背景、先读要评审的文档），每条线最多一件、一共不超过三件，只读、只写工作文件和事项时间线；简报里单列“已备好”。角色多了 `write_file`、`read_item`、`list_pages`、`source_outline`。`jobs.ts` 的简报任务带上近况。

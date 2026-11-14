@@ -929,13 +929,14 @@ export const configSchema = z.object({
   notify: z
     .object({
       onlyUnread: z.boolean().default(true),
+      learnFromReactions: z.boolean().default(true),
       firstNudgeDelayMinutes: z.number().int().min(0).default(30),
       quietStart: z.number().int().min(0).max(23).default(22),
       quietEnd: z.number().int().min(0).max(23).default(9),
       /** When what was sent as `later` (nothing to do now: finished background work, reports) goes out together, HH:mm on the server's clock; empty = at once, like normal ones. */
       laterTimes: z.array(z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/)).max(12).default(["09:30", "13:30", "18:30"]),
     })
-    .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9, laterTimes: ["09:30", "13:30", "18:30"] }),
+    .default({ onlyUnread: true, learnFromReactions: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9, laterTimes: ["09:30", "13:30", "18:30"] }),
   /**
    * MCP servers the owner set up for agents (Agent 页 → MCP, agents/mcp-servers.ts): a command to
    * start (stdio) or a URL (HTTP). An Agent 档案 names the ones it uses (`mcpServers`), a built-in

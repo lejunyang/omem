@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { rmSync } from "node:fs";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { botInvitedToMeeting, ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
+import { botInvitedToMeeting, meetingEnded, ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { listNotifications } from "../src/core/notify.ts";
+import { addNotificationSink, listNotifications, notify, releaseLater } from "../src/core/notify.ts";
 import { evaluate, eventReader } from "../src/rules/conditions.ts";
 import { listFirings, saveRule, getRule } from "../src/rules/store.ts";
 import { testRule } from "../src/rules/engine.ts";
@@ -19,7 +20,7 @@ afterEach(() => {
   setLarkCliForTests(null);
   setMeetingConsumerForTests(null);
   resetMeetingsForTests();
-  for (const app of apps.splice(0)) app.db.close();
+  for (const app of apps.splice(0)) { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
 });
 
 const at = (min: number) => String(Date.parse("2026-10-28T02:00:00Z") + min * 60_000);
@@ -196,10 +197,12 @@ describe("meetings the owner joins", () => {
 
     // The owner leaves: the bot leaves too, the record is final, the agent writes a short summary for the owner.
     resetMeetingsForTests();
+    const held = notify(app, { title: "另一项工作已查完", urgency: "later" });
     botEvents.push([{ event_id: "e4", activity_event_type: "participant_left", event_time: at(5), participant_left_items: [{ participant: { id: "ou_owner", name: "我" } }] }]);
     await tickMeetings(app);
     expect(calls.at(-1)).toMatchObject({ method: "POST", url: "/open-apis/vc/v1/bots/leave", data: { meeting_id: "m1" } });
     expect(one<{ status: string; error: string }>(app.db, "select status, error from lark_meetings where meeting_id = 'm1'")).toMatchObject({ status: "ended", error: "owner-left" });
+    expect(listNotifications(app).find((n) => n.id === held.id)?.held).toBeUndefined();
     const last = JSON.parse(all<{ input: string }>(app.db, "select input from runs where lane = 'meeting:m1' order by rowid").at(-1)!.input);
     expect(last.meeting).toBeUndefined();
     expect(last.task).toContain("# 会议结束");
@@ -333,6 +336,31 @@ describe("meetings the owner joins", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("held notifications after a meeting", () => {
+  it.each(["会议结束", "owner-left"])("releases at %s before a set time, and keeps the next set time usable", async (why) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 15, 9, 15));
+    const sent: string[] = [];
+    const stop = addNotificationSink((n) => { sent.push(n.id); });
+    try {
+      const { app } = setup();
+      app.config.notify.laterTimes = ["09:30", "13:30"];
+      // No rule/plan was needed to know the owner was in this meeting.
+      await ownerJoinedMeeting(app, { id: "release", topic: "项目 A 讨论" });
+      const first = notify(app, { title: "资料已查完", urgency: "later" });
+      expect(sent).toEqual([]);
+      await meetingEnded(app, "release", why);
+      expect(sent).toEqual([first.id]);
+      expect(one(app.db, "select value from kv where key = 'notify_later_slot'")).toBeUndefined();
+      const next = notify(app, { title: "另一份资料已查完", urgency: "later" });
+      expect(releaseLater(app)).toBe(0);
+      vi.setSystemTime(new Date(2026, 10, 15, 9, 30));
+      expect(releaseLater(app)).toBe(1);
+      expect(sent).toEqual([first.id, next.id]);
+    } finally { stop(); vi.useRealTimers(); }
   });
 });
 

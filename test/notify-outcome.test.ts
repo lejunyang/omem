@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { rmSync } from "node:fs";
+import { askModel } from "../src/agents/oneshot.ts";
+import { reportDone, rungOf, setRung } from "../src/agents/approval-ladder.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { labelOutcomes, outcomeBreakdown, outcomeLine, outcomeStats } from "../src/core/notify-outcome.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -6,12 +9,17 @@ import { upsertItem } from "../src/items/store.ts";
 import { triageMaterial } from "../src/mentions/triage.ts";
 import type { MentionChannel } from "../src/mentions/channel.ts";
 import { testApp } from "./helpers.ts";
+import { listNotifications, setNotificationCard } from "../src/core/notify.ts";
+import { handleNegativeNotification } from "../src/core/notify-reactions.ts";
+import { listIgnoreRules } from "../src/core/notify-lessons.ts";
+
+vi.mock("../src/agents/oneshot.ts", async (original) => ({ ...await original<typeof import("../src/agents/oneshot.ts")>(), askModel: vi.fn() }));
 
 let app: ReturnType<typeof testApp>;
 const old = () => new Date(Date.now() - 72 * 3600_000).toISOString();
 const after = (at: string, hours = 1) => new Date(Date.parse(at) + hours * 3600_000).toISOString();
-beforeEach(() => { app = testApp(); });
-afterEach(() => app.db.close());
+beforeEach(() => { app = testApp(); vi.mocked(askModel).mockReset().mockResolvedValue('{"rule":""}'); });
+afterEach(() => { app.db.close(); rmSync(app.home, { recursive: true, force: true }); });
 function n(id: string, context = {}, read = false, at = old(), user = "owner") {
   run(app.db, "insert into notifications(id, at, title, body, user_id, context, read_at) values(?,?,?,'',?,?,?)", id, at, id, user, JSON.stringify(context), read ? after(at) : null);
   return at;
@@ -21,7 +29,7 @@ function feedback(message: string, polarity: string, at: string, extra: { actor?
 }
 const outcome = (id: string) => one<{ outcome: string | null }>(app.db, "select outcome from notifications where id = ?", id)?.outcome;
 
-it("negative wins over acted, known and read; removed and other people's reactions do not count", () => {
+it("negative wins over acted, known and read; removed and other people's reactions do not count", async () => {
   const at = n("negative", { larkMessageId: "m1", quiet: "你已经在飞书上看过或处理了，没有再推" }, true);
   feedback("m1", "negative", after(at, 30));
   feedback("m1", "ack", after(at));
@@ -31,6 +39,39 @@ it("negative wins over acted, known and read; removed and other people's reactio
   labelOutcomes(app);
   expect(outcome("negative")).toBe("negative");
   expect(outcome("removed")).toBe("unread");
+  await handleNegativeNotification(app, "negative");
+});
+
+it("catches up a missed report reaction when labelling negative, once", async () => {
+  setRung(app, "lark_write", "report");
+  reportDone(app, { who: "助理" }, "lark_write", {}, { text: "已更新", isError: false });
+  const report = listNotifications(app)[0];
+  setNotificationCard(app, report.id, "missed-report");
+  run(app.db, "update notifications set at = ? where id = ?", old(), report.id);
+  feedback("missed-report", "negative", after(old()));
+  expect(labelOutcomes(app)).toBe(1);
+  expect(outcome(report.id)).toBe("negative");
+  expect(rungOf(app, "lark_write")).toBe("ask");
+  await handleNegativeNotification(app, report.id);
+  expect(labelOutcomes(app)).toBe(0);
+  expect(listNotifications(app)).toHaveLength(2);
+  expect(askModel).not.toHaveBeenCalled();
+});
+
+it("catches up a missed ordinary reaction through the shared lesson path, once", async () => {
+  const rule = "项目 A 群内未点名本人且没有期限的日常进展不再提醒";
+  vi.mocked(askModel).mockResolvedValue(JSON.stringify({ rule }));
+  const at = n("missed", { pushed: { channel: "lark", messageId: "missed-card" } });
+  feedback("missed-card", "negative", after(at));
+  labelOutcomes(app);
+  await handleNegativeNotification(app, "missed");
+  expect(outcome("missed")).toBe("negative");
+  expect(listIgnoreRules(app)).toHaveLength(1);
+  expect(listNotifications(app).find((r) => r.id === "missed")?.ignoreRule?.rule).toBe(rule);
+  expect(listNotifications(app).find((r) => r.id !== "missed")?.urgency).toBe("later");
+  expect(labelOutcomes(app)).toBe(0);
+  expect(askModel).toHaveBeenCalledOnce();
+  expect(listNotifications(app)).toHaveLength(2);
 });
 
 it.each(["positive", "ack"])("%s within 24 hours is acted and beats known/read", (polarity) => {

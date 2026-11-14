@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { json, now, sha256, truncate } from "../core/util.ts";
+import { notificationForReaction, queueNegativeNotification } from "../core/notify-reactions.ts";
 
 /**
  * Reactions as feedback. Every message omem's bots post is recorded in `lark_sent` (which run and
@@ -138,6 +139,10 @@ export function onLarkReaction(app: App, bot: string, d: ReactionEvent, kind: "c
     polarity,
     atOf(d.action_time),
   );
+  if (actorKind === "owner" && polarity === "negative") {
+    const notificationId = notificationForReaction(app, messageId);
+    if (notificationId) queueNegativeNotification(app, notificationId);
+  }
   return { id, polarity, actorKind, onBot };
 }
 

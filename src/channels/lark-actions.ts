@@ -230,20 +230,20 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
         run(app.db, "update card_interactions set status='done', handled_at=datetime('now'), handled_by=? where id=?", operator, inter.id);
         return { title: getItem(app, id).title, toast: { type: "success", content: "" } };
       });
-      if (result.title && op === "cancel") {
+      if (result.title && op === "cancel" && operatorUser() === OWNER) {
         // "忽略" is a lesson: the model phrases a short "don't ping me for this"
         // rule. Fire-and-forget — card callbacks must answer Feishu within a few
         // seconds; the AI summarization can finish in the background.
-        const noteRow = one<{ title: string; body: string }>(
+        const clicked = typeof notificationId === "string" ? notificationId : null;
+        const noteRow = one<{ id: string }>(
           app.db,
-          "select title, body from notifications where json_extract(context,'$.entityId') = ? order by at desc limit 1",
-          id,
+          "select id from notifications where user_id = 'owner' and json_extract(context,'$.entityId') = ? and (? is null or id = ?) order by at desc limit 1",
+          id, clicked, clicked,
         );
         if (noteRow) {
-          void import("../core/notify-ai-gate.ts")
-            .then(({ learnIgnoreFromNotification }) => learnIgnoreFromNotification(app, noteRow))
-            .then((rule) => { if (rule) console.info(`[omem] 已学习免提醒规则：${rule.rule}`); })
-            .catch(() => {});
+          void import("../core/notify-reactions.ts")
+            .then(({ handleNegativeNotification }) => handleNegativeNotification(app, noteRow.id, "ignore"))
+            .catch((e) => console.warn(`[omem] 学习免提醒规则失败：${(e as Error).message}`));
         }
       }
       if (!result.title) return { toast: result.toast };

@@ -4,13 +4,33 @@ import { get, post } from "../api";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import Markdown from "../components/Markdown.vue";
-import { fmtTime, state } from "../store";
+import { fmtTime, state, toast } from "../store";
 
 /** `unread`: reached the person nowhere else (pushed to Feishu, kept quiet or in-app only are not); `pushed`: went out to Feishu. */
-type N = { id: string; at: string; title: string; body: string; link: string | null; readAt: string | null; unread?: boolean; held?: boolean; bundleItems?: { id: string; title: string; link: string | null }[]; pushed?: { channel: string; at: string } | null; larkMessageId?: string; quiet?: string };
+type N = { id: string; at: string; title: string; body: string; link: string | null; readAt: string | null; unread?: boolean; held?: boolean; bundleItems?: { id: string; title: string; link: string | null }[]; pushed?: { channel: string; at: string } | null; larkMessageId?: string; quiet?: string; ignoreRule?: { id: string; rule: string } | null };
 const inFeishu = (n: N) => !!(n.pushed || n.larkMessageId);
 const list = ref<N[]>([]);
 const loading = ref(true);
+const rules = ref<{ id: string; rule: string }[]>([]);
+const rulesLoading = ref(true);
+const rulesError = ref("");
+const deleting = ref<string[]>([]);
+async function loadRules() {
+  rulesError.value = "";
+  rulesLoading.value = true;
+  try { rules.value = (await get<{ rules: typeof rules.value }>("/api/notify-ignore-rules")).rules; }
+  catch (e) { rulesError.value = (e as Error).message; }
+  finally { rulesLoading.value = false; }
+}
+async function deleteRule(id: string) {
+  deleting.value.push(id);
+  try {
+    await post("/api/notify-ignore-rules/delete", { id });
+    rules.value = rules.value.filter((r) => r.id !== id);
+    toast("已删除忽略规则", "ok");
+  } catch (e) { toast((e as Error).message, "error"); }
+  finally { deleting.value = deleting.value.filter((r) => r !== id); }
+}
 async function load() {
   try {
     list.value = (await get<{ notifications: N[] }>("/api/notifications")).notifications;
@@ -24,7 +44,7 @@ async function readAll() {
   void load();
 }
 onMounted(async () => {
-  await load();
+  await Promise.all([load(), state.me?.id === "owner" ? loadRules() : Promise.resolve()]);
 });
 </script>
 
@@ -38,6 +58,18 @@ onMounted(async () => {
       <span class="spacer" />
       <button class="btn sm" @click="readAll">全部标为已读</button>
     </div>
+    <section v-if="state.me?.id === 'owner'" id="ignore-rules" class="card pad stack rules">
+      <strong>忽略规则</strong>
+      <p class="hint">助手从你的“忽略”和负面表情记下的规则。不合适的删掉，以后这类提醒就可以再发。</p>
+      <p v-if="rulesError" role="alert">{{ rulesError }} <button class="btn sm" @click="loadRules">重试</button></p>
+      <Skeleton v-else-if="rulesLoading" :rows="2" />
+      <template v-else>
+        <div v-for="rule in rules" :key="rule.id" class="row rule">
+          <span>{{ rule.rule }}</span><button class="btn sm" :disabled="deleting.includes(rule.id)" :aria-label="`删除忽略规则：${rule.rule}`" @click="deleteRule(rule.id)">删除</button>
+        </div>
+        <p v-if="!rules.length" class="muted small">还没有忽略规则。</p>
+      </template>
+    </section>
     <Skeleton v-if="loading" variant="cards" :rows="4" />
     <div v-else-if="!list.length" class="empty"><Icon name="bell" :size="32" /><h3>没有通知</h3></div>
     <div v-for="n in list" :key="n.id" class="n" :class="{ unread: n.unread }">
@@ -52,12 +84,18 @@ onMounted(async () => {
       </div>
       <ul v-if="n.bundleItems?.length"><li v-for="item in n.bundleItems" :key="item.id"><a v-if="item.link" :href="item.link">{{ item.title }}</a><span v-else>{{ item.title }}</span></li></ul>
       <Markdown v-else-if="n.body" :source="n.body" class="body" />
+      <p v-if="n.ignoreRule" class="hint lesson">从这条提醒记下的忽略规则：{{ n.ignoreRule.rule }}</p>
       <a v-if="n.link" :href="n.link" class="small">查看详情 →</a>
     </div>
   </div>
 </template>
 
 <style scoped>
+.rules { margin-bottom: 20px; }
+.rule { align-items: flex-start; }
+.rule span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rule button { flex: none; }
+.lesson { overflow-wrap: anywhere; }
 .n {
   border-top: 1px solid var(--line);
   padding: 14px 0;

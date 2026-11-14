@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { boot } from "../src/main.ts";
@@ -9,7 +9,7 @@ import { upsertSource } from "../src/sources/store.ts";
 import { listIgnoreRules } from "../src/core/notify-lessons.ts";
 
 const { app, server } = await boot(mkdtempSync(join(tmpdir(), "omem-notification-settings-")), { port: 0, quiet: true, background: false });
-afterAll(() => server.close());
+afterAll(async () => { await server.close(); app.db.close(); rmSync(app.home, { recursive: true, force: true }); });
 const request = (path: string, init: RequestInit = {}) => fetch(app.baseUrl + path, init);
 
 it("owner gets outcome breakdown and source titles; invalid days rejected", async () => {
@@ -50,4 +50,15 @@ it("bundle entries resolve their own links even beyond the first page", async ()
   run(app.db, "insert into notifications(id,at,title,body,context) values('bundle',?,'进展清单','',?)", at, JSON.stringify({ bundle: ["original"] }));
   const result = await (await request("/api/notifications")).json();
   expect(result.notifications.find((n: { id: string }) => n.id === "bundle").bundleItems).toEqual([{ id: "original", title: "查询完成", link: "#/runs/result" }]);
+});
+
+it("reaction learning defaults on, persists off, and rules can be read and deleted on the notification page", async () => {
+  expect(app.config.notify.learnFromReactions).toBe(true);
+  const saved = await request("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ notify: { learnFromReactions: false } }) });
+  expect(saved.status).toBe(200);
+  expect(app.config.notify.learnFromReactions).toBe(false);
+  const rules = await (await request("/api/notify-ignore-rules")).json();
+  expect(rules.rules).toHaveLength(1);
+  expect((await request("/api/notify-ignore-rules/delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: rules.rules[0].id }) })).status).toBe(200);
+  expect(await (await request("/api/notify-ignore-rules")).json()).toEqual({ rules: [] });
 });

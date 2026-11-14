@@ -105,14 +105,18 @@ omem 里每个会话（飞书群、群里的话题、私聊、网页对话）是
 | known | 飞书因“你已经在飞书上看过或处理了，没有再推”静默，免提醒规则造成的静默不算 |
 | read / unread | 有 / 没有 read_at，且不满足上面的条件 |
 
-规则只记录文字与标题，没有通知或消息 ID，因此不能据此判某一条为 negative。发言和事项动作是观察信号，不证明由提醒促成；超过 48 小时标注后不持续追改。查询待标注通知按只含合格行的时间索引、统计按本人 / 时间索引，事项按 item / 时间，聊天按 chat / create_ms，原件按主键，测试用 `explain query plan` 核对。
+本人对飞书通知卡片回负面表情时，`notify-reactions.ts` 按 `context.larkMessageId`（没有时取 `pushed.messageId`）找到通知，复用“忽略”按钮的 `learnIgnoreFromNotification`，由模型总结带对象和场景边界的免提醒规则。通知的 `ignoreRule` 保存规则 ID 与文字，`negativeHandledAt` 标记已处理；模型认为一次性事件时保存空规则，不告知。每条只学一次，按钮和表情共用记录；成功学到规则后发一条 later 告知，通知页能查看、删除忽略规则，也能看到哪条通知生成了哪条规则。紧急通知和工具完成汇报不学忽略规则；`notify.learnFromReactions` 默认 true，可在设置 → 渠道 → 提醒的效果关闭，手动点“忽略”仍生效。
+
+负反馈先在表情到达时处理，`labelOutcomes` 将通知标为 negative 时也调用同一路径，补上服务停机期间已入库而未处理的反应。规则本身不另作统计证据。发言和事项动作是观察信号，不证明由提醒促成；超过 48 小时标注后不持续追改。查询待标注通知按只含合格行的时间索引、统计按本人 / 时间索引，事项按 item / 时间，聊天按 chat / create_ms，原件按主键，测试用 `explain query plan` 核对。
 
 `outcomeStats` 默认 30 天，sender 按 runId 对应的 runs.kind（没有运行的为 host），sourceId 按引用指向的聊天原件。并入汇总清单发出的（bundled）不计入 sent，也不归入其余五列：一条清单里的单条说明不了本人对它的反应。`outcomeLine` 少于 5 条为空；巡检预筛的“本人对以往巡检提醒的反应”、巡检任务的“本人对以往提醒的反应”、聊天整理及找人分诊的“本人对这个会话里以往提醒的反应”用同一句计数交给判断者。只供判断参照，宿主不按低处理率自动禁用提醒。
 
 本人可从 `GET /api/notifications/outcomes?days=30` 看各运行类型及提醒最多的 20 个聊天原件；至少 8 条且无 acted 的会话在设置页可确认后创建既有语义免提醒规则。`POST /api/notifications/outcomes/ignore` 接受 sourceId，宿主读原件标题生成规则，保留点名和限时例外；这两个接口只给本人。
 
+飞书的会议结束或本人离会进入 `meetingEnded` 时，调用 `releaseLater(app, new Date(), { now: true })`，立即放出已攒的不急通知，不占用当天的定时发送时段。即使没有安排机器人旁听也生效；这一切片不增加会中扣留通知的条件。
+
 ## 8. 工具审批的三档
 
 设置 → 安全 → 工具审批逐项选择 ask / report / free，分别保存到 `approvals.tools`、`approvals.report` 或两者都不列；保存时 ask 优先，两个清单不重叠。`GET /api/approvals/ladder` 只给本人，返回两张清单的工具、档位、连续批准次数。`approvals.promoteAfter` 默认 10，范围 0–100，0 不提议。连续批准的统计回看 60 天、最多 200 次，拒绝打断，提议后 30 天不重复问；只有本人选择“直接做，做完告诉我”才转 report。强制审批插件工具始终 ask。
 
-report 调用完成后通过 later 告知工具、参数与结果；对比运行及已批准的执行不重复报告。原有 lark 写入等专门审批要求仍由工具本身执行。
+report 调用完成后通过 later 告知工具、参数与结果，通知 `context.reportTool` 保存工具名；对比运行及已批准的执行不重复报告。本人对该卡片回负面表情后立即用 `setRung` 改回 ask，以 `approval_streak_reset:<工具>` 记录重新计数的起点，保留原有审批历史，并只发一条 later 告知本人可在设置 → 安全改回。重复表情、再次标注结果不重复降档或告知；关闭从表情学习忽略规则也不关闭这条审批回退。原有 lark 写入等专门审批要求仍由工具本身执行。

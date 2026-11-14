@@ -39,10 +39,18 @@ export function setRung(app: App, tool: string, rung: Rung) {
 const STREAK_DAYS = 60;
 const ASK_AGAIN_DAYS = 30;
 const askedKey = (tool: string) => `approval_promote:${tool}`;
+const resetKey = (tool: string) => `approval_streak_reset:${tool}`;
+
+/** Disliking a completed call starts a new streak without changing past approval records. */
+export function resetApprovalStreak(app: App, tool: string) {
+  run(app.db, "insert into kv(key,value) values(?, ?) on conflict(key) do update set value = excluded.value", resetKey(tool), now());
+}
 
 /** The owner's latest answers to this tool's approval requests, newest first: how many approvals before the first refusal. */
 export function approvalStreak(app: App, tool: string, userId = OWNER): number {
-  const since = new Date(Date.now() - STREAK_DAYS * 86400_000).toISOString();
+  const window = new Date(Date.now() - STREAK_DAYS * 86400_000).toISOString();
+  const reset = userId === OWNER ? one<{ value: string }>(app.db, "select value from kv where key = ?", resetKey(tool))?.value : undefined;
+  const since = reset && reset > window ? reset : window;
   const rows = all<{ approved: number | null }>(
     app.db,
     "select approved from asks where kind = 'approval' and tool = ? and user_id = ? and status = 'answered' and answered_at > ? order by answered_at desc limit 200",
@@ -92,6 +100,7 @@ export function reportDone(app: App, by: { who: string; userId?: string | null; 
     notify(app, {
       userId: by.userId ?? OWNER,
       runId: by.runId ?? null,
+      reportTool: tool,
       title: `${by.who} ${result.isError ? "调用失败" : "已调用"} ${tool}`,
       body: [truncate(JSON.stringify(args, null, 1), 800), `结果：${truncate(result.text.replace(/\s+/g, " "), 300)}`, "这个工具现在是“直接做，做完告诉你”；要改回每次先问，在 设置 → 安全 → 工具审批。"].join("\n\n"),
       link: "#/settings?tab=security",

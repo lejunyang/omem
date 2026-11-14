@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import type { App } from "../core/app.ts";
 import { captureSpace } from "../core/capture-space.ts";
 import { all, one, run } from "../core/db.ts";
-import { notify } from "../core/notify.ts";
+import { notify, releaseLater } from "../core/notify.ts";
 import { findSpace } from "../core/spaces.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
@@ -962,6 +962,7 @@ export async function sendMeetingMessage(app: App, meetingId: string, bot: strin
 export async function meetingEnded(app: App, id: string, why: string) {
   const row = getRow(app, id);
   if (!row || row.status === "ended") return;
+  releaseLater(app, new Date(), { now: true });
   const plan = row.plan ? json<MeetingPlan>(row.plan, null as never) : null;
   const bots = json<Joined[]>(row.bots, []);
   if (why === "owner-left" && plan?.leaveWithOwner)

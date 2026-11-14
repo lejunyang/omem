@@ -3,6 +3,7 @@ import { all, one, run, tx } from "./db.ts";
 import { json, now } from "./util.ts";
 import { resolveIdentity } from "./users.ts";
 import { QUIET_HANDLED } from "./notify.ts";
+import { queueNegativeNotification } from "./notify-reactions.ts";
 
 export type Outcome = "negative" | "acted" | "known" | "read" | "unread" | "bundled";
 export type OutcomeStats = { sent: number; acted: number; known: number; read: number; unread: number; negative: number };
@@ -24,6 +25,7 @@ function chats(app: App, refs: string[] = []) {
 /** One bounded pass after the owner has had two days to react. First matching rule wins. */
 export function labelOutcomes(app: App, { limit = 300 } = {}) {
   const at = now();
+  const negative: string[] = [];
   const rows = all<Row>(app.db, `select id, at, read_at, context from notifications indexed by notifications_outcome_pending
     where outcome is null and at < ? and user_id = 'owner'
       and coalesce(json_extract(context, '$.urgency'), '') != 'silent'
@@ -49,7 +51,11 @@ export function labelOutcomes(app: App, { limit = 300 } = {}) {
       outcome = acted ? "acted" : c.quiet === QUIET_HANDLED ? "known" : n.read_at ? "read" : "unread";
     }
     run(app.db, "update notifications set outcome = ?, outcome_at = ? where id = ? and outcome is null", outcome, at, n.id);
+    // Catching up a reaction the event handler missed, not replaying old history: a dislike from long
+    // ago (everything unlabelled is labelled on the first run) does not turn into a rule today.
+    if (outcome === "negative" && Date.parse(n.at) > Date.now() - 7 * 86400_000) negative.push(n.id);
   } });
+  for (const id of negative) queueNegativeNotification(app, id);
   return rows.length;
 }
 

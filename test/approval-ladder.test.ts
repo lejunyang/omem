@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "vitest";
-import { approvalStreak, reportDone, rungOf, setRung, suggestPromotion } from "../src/agents/approval-ladder.ts";
+import { rmSync } from "node:fs";
+import { approvalStreak, reportDone, resetApprovalStreak, rungOf, setRung, suggestPromotion } from "../src/agents/approval-ladder.ts";
 import { answerAsk, createAsk, getAsk } from "../src/agents/asks.ts";
 import { one, run } from "../src/core/db.ts";
 import { listNotifications } from "../src/core/notify.ts";
@@ -10,7 +11,7 @@ const apps: TestApp[] = [];
 // A new question is shown to the owner a moment after it is created: let that finish before the library closes.
 afterEach(async () => {
   await new Promise((r) => setTimeout(r, 80));
-  for (const app of apps.splice(0)) app.db.close();
+  for (const app of apps.splice(0)) { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
 });
 function setup() {
   const app = testApp();
@@ -87,8 +88,23 @@ it("tells the owner what a reported call did, as something that can wait", () =>
   const app = setup();
   reportDone(app, { who: "助理", runId: null }, "lark_write", { command: "sheets +append", row: ["项目 A", "已完成"] }, { text: "写入 1 行", isError: false });
   const sent = listNotifications(app)[0];
-  expect(sent).toMatchObject({ title: "助理 已调用 lark_write", urgency: "later" });
+  expect(sent).toMatchObject({ title: "助理 已调用 lark_write", urgency: "later", reportTool: "lark_write" });
   expect(sent.body).toContain("项目 A");
   expect(sent.body).toContain("写入 1 行");
   expect(one<{ n: number }>(app.db, "select count(*) n from notifications")?.n).toBe(1);
+});
+
+it("restarts the approval streak after negative feedback without erasing approval history", () => {
+  const app = setup();
+  answered(app, "lark_write", true, 20);
+  answered(app, "lark_write", true, 10);
+  answered(app, "code_git_action", true, 5);
+  expect(approvalStreak(app, "lark_write")).toBe(2);
+  resetApprovalStreak(app, "lark_write");
+  expect(approvalStreak(app, "lark_write")).toBe(0);
+  expect(approvalStreak(app, "code_git_action")).toBe(1);
+  const next = answered(app, "lark_write", true, 0);
+  run(app.db, "update asks set answered_at = ? where id = ?", new Date(Date.now() + 1000).toISOString(), next.id);
+  expect(approvalStreak(app, "lark_write")).toBe(1);
+  expect(one<{ n: number }>(app.db, "select count(*) n from asks where tool = 'lark_write'")?.n).toBe(3);
 });

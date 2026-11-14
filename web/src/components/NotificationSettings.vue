@@ -5,6 +5,7 @@ import { runKindLabel, toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
 import HelpText from "./HelpText.vue";
 import Skeleton from "./Skeleton.vue";
+import UiCheckbox from "./UiCheckbox.vue";
 const props = defineProps<{ config: any; save: (patch: Record<string, unknown>) => Promise<void> }>();
 type Counts = { sent: number; acted: number; known: number; read: number; unread: number; negative: number };
 type Chat = Counts & { sourceId: string; title: string };
@@ -53,6 +54,8 @@ async function ignore(chat: Chat) {
   </div>
   <div class="card pad stack">
     <strong>提醒的效果</strong>
+    <UiCheckbox switch :model-value="config.notify.learnFromReactions" @change="saveNotify({ learnFromReactions: $event })">从负面表情学习不再提醒的事</UiCheckbox>
+    <p class="hint">你对飞书通知回负面表情后，助手记下这类不再提醒；紧急提醒不受影响。工具汇报被否定后仍会改回每次先问你。</p>
     <HelpText>近 30 天的提醒在发出 48 小时后统计。处理包括一天内点按钮、回应表情、修改事项或在来源会话里发言；这是可观察的反应，不代表每条都由提醒促成。并进清单一起发的不单独统计。</HelpText>
     <p v-if="error" role="alert">{{ error }} <button class="btn sm" @click="load">重试</button></p>
     <Skeleton v-else-if="!data" :rows="3" />
