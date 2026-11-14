@@ -7,6 +7,13 @@ updated: 2026-11-14
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 巡检预筛与定期补看（11-14）
+
+- `src/agents/heartbeat-gate.ts`、`jobs.ts`：巡检前由决策模型看关注、等待事项、新材料标题与片段、事项来源、已发通知和本人状态；判断无关则安静结束，输出 `gated: true` 和预筛摘要。未配模型、调用失败或新材料超过 30 份时直接交给助手，到期提醒不受预筛影响。
+- `heartbeat_skipped` 保存跳过的材料；默认每 12 小时由助手补看，补看不问决策模型，完成后清空。设置 → 定时任务 → 巡检预筛可关闭，并将 `heartbeat.sweepHours` 设为 1–72 小时；决策模型在 AI → 决策 配置。
+- `test/heartbeat-gate.test.ts` 覆盖门函数；`test/heartbeat-handler.test.ts` 走真实 handler 与 fake ACP，覆盖跳过、启动、13 小时后无新材料的补看、关闭预筛。
+- 一次巡检最多交给助手 60 份材料：补看清单里放不下的留在记录里，下一次巡检接着看，全部看完才重新计时（`test/heartbeat-handler.test.ts` 的容量用例）。
+
 ## 记忆按对话与任务供给，召回区分回答与整理（11-14）
 
 - `src/agents/runner.ts`：对话常驻偏好和自身经验，小量经验全带、超量带最新 6 条；任务按相关性挑最多 12 条自身经验与 8 条共享偏好、经验，无向量时取最新。主助手的自身记忆归属为 `assistant`。`src/memory/folders.ts` 的 `ownFolderNote` 提供目录、说明和条数。

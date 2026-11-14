@@ -359,6 +359,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 记忆质量：写入检查（免责式、超长、转述原件、事件复述、助理汇报、运行流水、无来源、重复）退回并说明原因；每小时盲评复核（保留/改写/撤回，可用不同模型）；对比运行（其他模型的写入只记录）；按模型统计；记忆标签与档案专属记忆 | 已实现，测试覆盖；规则用一批真实运行产生的 Agent 记忆校准过；复核与对比运行待真实模型验收 | `src/memory/quality.ts`、`roles/memory-reviewer.md`、网页“记忆 → 质量”、`omem memories` |
 | 代码仓库 Wiki：规划 → 逐页写作 → 原件变化后检查 | 已实现；zustand 12 页实测 | `roles/wiki-*.md` |
 | 巡检（到期提醒不调模型；关注/等待有新材料时才调用） | 已实现 | `roles/heartbeat.md` |
+| 巡检预筛：决策模型判断新材料是否关联关注、等待中的事项，无关则安静跳过；默认每 12 小时补看跳过的材料，设置 → 定时任务可关闭或改为 1–72 小时；未配决策模型、模型出错或新材料超过 30 份时直接交给助手 | 基本流程已实现，handler 的 ACP 回归通过（含补看超过 60 份时分次看完）；真实模型效果待验 | `src/agents/heartbeat-gate.ts`、`src/agents/jobs.ts`、`test/heartbeat-handler.test.ts` |
 | 简报、做梦整理、经验与偏好回灌到后续任务；做梦第一次只看 7 天、新库默认开、存量整理的经验记忆分组逐晚合并、记忆页显示整理状态；较早记忆逐晚轮查、关联候选记住判断无关的、错过的定时任务补跑 | 已实现；做梦部分 2026-10-30，轮查与补跑 2026-11-09，`test/dream.test.ts`、`test/space-relations.test.ts` | `roles/brief.md`、`dreamer.md`、`runner.ts`、`src/agents/jobs.ts`、`src/memory/digest-merge.ts` |
 | 交办编码：worktree → 检查 → 独立评审 → 确认后应用；评审不通过自动续轮（最多 3 轮），复用同一 worktree 和编码 Agent 会话；长任务 `run_agent(own_topic=true)` 开独立工作会话（飞书话题），digester 只把结论回主会话 | 已实现，演示仓库实测 | `src/agents/code.ts`、`code-chain.ts`、`agent-work.ts` |
 | 编码进度卡片：已有话题解析真实消息锚点，原卡片跨轮更新；创建/更新失败持久记录脱敏错误、有限重试和重启恢复，显式 `retry_code_progress` 恢复；自动三轮上限后持久等待本人，手动继续可到第 4 轮及以后 | 假客户端和工具回归覆盖；真实飞书待应用后验收 | `src/channels/lark-code-progress.ts`、`src/agents/code-chain.ts`、`tools.ts` |

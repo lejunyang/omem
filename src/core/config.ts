@@ -558,10 +558,17 @@ export const configSchema = z.object({
        * Decision model: bounded judgments (one of a few options, yes/no, a score) with probabilities.
        * provider "startlux" is the local judge (`guard`). Where a decision is wanted and this is not
        * configured or fails, `fallback` "general" asks a general model (the role's agent) instead.
+       *
+       * Several may be named: `provider` / `model` is the first, `others` the rest. `pick: fixed`
+       * (the default) asks the first usable one in that order; `random` asks any usable one, so no
+       * single provider's limits or habits decide everything. Either way one that is not usable, or
+       * fails, is passed over and the next is asked (core/decision.ts).
        */
       decision: z.object({
         provider: z.string().default(""),
         model: z.string().default(""),
+        others: z.array(z.object({ provider: z.string().min(1), model: z.string().default("") })).max(8).optional(),
+        pick: z.enum(["fixed", "random"]).optional(),
         fallback: z.enum(["general", "none"]).default("general"),
         /** The guest gatekeeper (lark-guest.ts) asks the decision model first. */
         gatekeeper: z.boolean().default(true),
@@ -901,6 +908,40 @@ export const configSchema = z.object({
       quietEnd: z.number().int().min(0).max(23).default(9),
     })
     .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9 }),
+  /**
+   * MCP servers the owner set up for agents (Agent 页 → MCP, agents/mcp-servers.ts): a command to
+   * start (stdio) or a URL (HTTP). An Agent 档案 names the ones it uses (`mcpServers`), a built-in
+   * role in its overlay; only the owner's own runs are given them. `env` / `headers` list the names
+   * only: their values are keys and live in the secrets file, never here or in the library's Git.
+   * `readOnly`: it only looks things up — the only kind a nightly replay arm is given.
+   */
+  mcp: z
+    .object({
+      servers: z
+        .record(
+          z.string(),
+          z.object({
+            description: z.string().default(""),
+            command: z.string().optional(),
+            args: z.array(z.string()).default([]),
+            env: z.array(z.string()).default([]),
+            url: z.string().optional(),
+            headers: z.array(z.string()).default([]),
+            readOnly: z.boolean().default(false),
+          }),
+        )
+        .default({}),
+    })
+    .default(() => ({ servers: {} })),
+  /**
+   * The heartbeat (agents/jobs.ts): due reminders are delivered by the host; the agent is only needed
+   * when new material may bear on something watched or waited for. `gate: decision` asks the decision
+   * model first (agents/heartbeat-gate.ts) and skips the agent on a "no"; what was skipped is handed
+   * to the agent in a full sweep at least every `sweepHours`. `off`: the agent looks every time.
+   */
+  heartbeat: z
+    .object({ gate: z.enum(["off", "decision"]).default("decision"), sweepHours: z.number().min(1).max(72).default(12) })
+    .default({ gate: "decision", sweepHours: 12 }),
   /**
    * Reactions on what the bots sent (src/channels/lark-feedback.ts). Feishu emoji_type names, matched
    * without case; anything not listed is neutral. Acknowledgements (OK, DONE, +1…) say "received", not

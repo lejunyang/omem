@@ -555,6 +555,14 @@ async function saveScheduleConfig(s: Schedule, config: Record<string, unknown>) 
   void load();
 }
 const itemKinds = [["todo", "待办"], ["decision", "待决定"], ["watch", "关注"], ["waiting", "等待回复"], ["reminder", "提醒过后"]] as const;
+async function saveHeartbeat(patch: { gate?: "off" | "decision"; sweepHours?: number }) {
+  await saveConfig({ heartbeat: { ...config.value.heartbeat, ...patch } }, "已保存巡检预筛设置");
+}
+async function saveSweepHours(raw: string) {
+  const n = Number(raw);
+  if (!raw.trim() || !Number.isFinite(n) || n < 1 || n > 72) return toast("小时数要在 1 到 72 之间", "error");
+  await saveHeartbeat({ sweepHours: n });
+}
 async function saveItems(patch: Record<string, unknown>) {
   await saveConfig({ items: { ...config.value.items, ...patch } }, "已保存事项收尾设置");
 }
@@ -1043,7 +1051,15 @@ async function saveEdit() {
     </section>
 
     <section v-else-if="tab === 'schedules'" class="stack">
-      <p class="muted">后台任务按设定的时间运行（时区：{{ config?.timezone }}）。巡检只在到期提醒或关注对象有新材料时才调用 Agent。</p>
+      <p class="muted">后台任务按设定的时间运行（时区：{{ config?.timezone }}）。到期提醒直接发送；巡检在关注、等待中的事项有新材料时按预筛结果调用助手。</p>
+      <div v-if="config?.heartbeat" class="card pad stack">
+        <strong>巡检预筛</strong>
+        <HelpText>巡检默认每 15 分钟一次。打开后先让决策模型看一眼新材料和关注、等待中的事项有没有关系，没关系就不启动助手；被跳过的材料每隔下面设定的小时数由助手完整看一遍。没有配置决策模型时这个开关不起作用，可在 <a href="#/settings?tab=agents&amp;section=decision">AI → 决策</a> 配置。</HelpText>
+        <UiCheckbox :model-value="config.heartbeat.gate === 'decision'" switch @change="(v) => saveHeartbeat({ gate: v ? 'decision' : 'off' })">先预筛新材料</UiCheckbox>
+        <label class="field"><span>完整补看的间隔（小时，1–72）</span>
+          <input class="input" style="width: 120px; max-width: 100%" type="number" inputmode="decimal" min="1" max="72" step="any" :value="config.heartbeat.sweepHours" @change="saveSweepHours(($event.target as HTMLInputElement).value)" />
+        </label>
+      </div>
       <div v-if="config?.items" class="card pad stack">
         <div class="section-title">事项自动收尾</div>
         <HelpText>做完的事不用回来点完成。一件事项在下面的天数里没有新进展（你改动它、或有新的材料记进来），就标为“过期”；截止或提醒时间还没到的不会过期，提醒在时间过后一天过期。过期不算完成，有新进展会自动重新打开。由“事项收尾”任务每小时执行，每天的“事项清点”卡片里可以逐条保留或恢复。</HelpText>

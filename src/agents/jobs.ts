@@ -1055,15 +1055,36 @@ registerHandler("heartbeat", async (ctx) => {
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();
-  const fresh = all<{ id: string; space_id: string; uri: string; title: string; kind: string }>(
+  let fresh = all<{ id: string; space_id: string; uri: string; title: string; kind: string }>(
     app.db,
     "select id, space_id, uri, title, kind from sources where updated_at > ? and deleted_at is null and kind in ('chat','doc','note','web') order by updated_at desc limit 60",
     last,
   );
   const watching = listItems(app, { status: "active" }).filter((i) => i.kind === "watch" || i.kind === "waiting");
   run(app.db, "insert into kv(key,value) values('heartbeat_at', ?) on conflict(key) do update set value = excluded.value", started);
+  // 3. The agent takes minutes and nearly always finds nothing to tell: the decision model screens the
+  // new material first (heartbeat-gate.ts). What it screened out is looked at in the next sweep.
+  const gate = await import("./heartbeat-gate.ts");
+  const sweep = watching.length ? gate.sweepDue(app) : [];
+  // A tick hands the agent 60 sources at most: what of the skipped ones does not fit waits for the next tick.
+  let handed: typeof sweep = [];
+  if (sweep.length) {
+    const seen = new Set(fresh.map((s) => s.id));
+    fresh = [...fresh, ...sweep.filter((s) => !seen.has(s.id))].slice(0, 60);
+    const now60 = new Set(fresh.map((s) => s.id));
+    handed = sweep.filter((s) => now60.has(s.id));
+    ctx.event("status", { text: `这次连同之前预筛跳过的 ${handed.length} 份材料一起看${handed.length < sweep.length ? `（还有 ${sweep.length - handed.length} 份下次看）` : ""}` });
+  }
   if (!fresh.length || !watching.length) return { quiet: true, reminders: due.length, summary: due.length ? `发送了 ${due.length} 条提醒` : "没有新动静" };
   const sent = all<{ at: string; title: string }>(app.db, "select at, title from notifications where at > ? order by at", last);
+  if (!sweep.length) {
+    const g = await gate.heartbeatGate(app, watching, fresh, sent, ctx.signal);
+    if (g.why) ctx.event("status", { text: g.why });
+    if (!g.look) {
+      gate.keepSkipped(app, fresh);
+      return { quiet: true, reminders: due.length, summary: g.why, gated: true };
+    }
+  }
   const owner = (await import("./owner-now.ts")).ownerContextText(app, {
     now: true,
     state: true,
@@ -1078,6 +1099,7 @@ registerHandler("heartbeat", async (ctx) => {
     .filter(Boolean)
     .join("\n\n");
   const r = await agent(ctx, "heartbeat", "personal", task, null);
+  if (sweep.length) gate.swept(app, handed);
   return { ...quietOf(ctx, r.text), reminders: due.length };
 });
 

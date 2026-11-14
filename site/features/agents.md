@@ -12,6 +12,8 @@ key 存在数据目录的 `secrets/ai-keys.json`，不写进配置文件，网�
 
 设置 → AI 另有语音、决策、图片生成三个子页，选好提供方和模型后才启用对应的功能。决策模型可以用 OpenAI、Jev（TypeSafe 或 OpenRouter）、Cloudflare 的 Clef（填 API token 和账号 ID；`clef-flash` 便宜，`clef` 更准，`clef-omni` 还能看图、听音频、看视频），或本机的 StartLux。
 
+决策模型也用于[巡检预筛](./collaboration#事件自动触发)：新材料和关注、等待中的事项无关时，不启动助手；跳过的材料定期完整补看。开关和补看间隔在 设置 → 定时任务。
+
 ## 豆包后端
 
 本机豆包 CLI 用 `doubao-cli` 后端，omem 工具经终端里的 `omem tool` 调用；OpenAPI 用 `doubao` 后端，在云端回答，不能调用本机工具。CLI 按 `doubao` 命令识别，同名命令由哪个发行包安装不影响接入。
