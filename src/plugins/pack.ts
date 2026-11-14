@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { readKeys } from "../core/ai-keys.ts";
 import { HttpError } from "../core/util.ts";
+import { findSpace, getSpace, listSpaces } from "../core/spaces.ts";
 import { listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, splitFrontmatter } from "../agents/specs.ts";
 import { expandTools } from "../agents/tool-help.ts";
 import { listMcpServers } from "../agents/mcp-servers.ts";
@@ -16,6 +17,7 @@ import { portableRule } from "./contributions.ts";
 export const packSchema = z.object({
   id: z.string(), name: z.string().trim().min(1), description: z.string().default(""),
   agents: z.array(z.string()).default([]), skills: z.array(z.string()).default([]), rules: z.array(z.string()).default([]), mcp: z.array(z.string()).default([]),
+  spaces: z.array(z.string()).default([]),
   out: z.string().optional(), allow: z.array(z.string()).default([]),
 });
 export type PackInput = z.input<typeof packSchema>;
@@ -55,6 +57,7 @@ function secretValues(app: App) {
 
 export function packChoices(app: App) {
   return { agents: listAgentSpecs(app).map((a) => ({ id: a.name, name: a.name })),
+    spaces: listSpaces(app).filter((s) => ["project", "topic", "learning"].includes(s.kind) && !s.rootPath).map((s) => ({ id: s.id, name: s.name })),
     skills: listSkills(app).map((s) => ({ id: s.name, name: s.name })),
     rules: listRules(app).filter((r) => !r.temporary).map((r) => ({ id: r.id, name: r.name })),
     mcp: listMcpServers(app).map((s) => ({ id: s.name, name: s.name })) };
@@ -74,10 +77,23 @@ export function packPlugin(app: App, input: PackInput) {
   if (existsSync(dir)) throw new HttpError(409, "输出目录已存在，请换一个目录");
   const files = new Map<string, Buffer>(), warnings: string[] = [], tools = new Set<string>();
   const agents = [...new Set(o.agents)], skills = [...new Set(o.skills)], rules = [...new Set(o.rules)], mcp = [...new Set(o.mcp)];
+  const spaceIds = new Set(o.spaces);
+  const spaceName = (id: string) => { const s = findSpace(app, id); return s ? `${s.name}（${s.id}）` : id; };
+  const spaces = [...spaceIds].map((id) => {
+    const s = getSpace(app, id);
+    if (s.kind === "personal" || s.id === "personal") throw new HttpError(400, `个人空间不能打包：${s.name}`);
+    if (s.kind === "repo" || s.rootPath) throw new HttpError(400, `代码仓库空间不能打包：${s.name}`);
+    if (s.kind !== "project" && s.kind !== "topic" && s.kind !== "learning") throw new HttpError(400, `这种空间不能打包：${s.name}`);
+    const mounted = Array.isArray(s.settings.skills) ? s.settings.skills.filter((n): n is string => typeof n === "string") : [];
+    for (const skill of mounted) if (!skills.includes(skill)) warnings.push(`空间 ${spaceName(id)} 的技能 ${skill} 未打包`);
+    // Only shape: never copy settings, directories, membership or any space content.
+    return { id: s.id, name: s.name, kind: s.kind, description: s.description, skills: mounted.filter((n) => skills.includes(n)) };
+  });
   const definitions: Record<string, unknown> = {};
   for (const name of agents) {
     const raw = readRaw(app, "agent", name), { meta, body } = splitFrontmatter(raw);
     delete meta.plugin;
+    if (typeof meta.space === "string" && !spaceIds.has(meta.space)) warnings.push(`档案 ${name} 引用了未打包的空间 ${spaceName(meta.space)}`);
     for (const kind of ["mcpServers", "skills"] as const) {
       const selected = kind === "skills" ? skills : mcp;
       for (const n of Array.isArray(meta[kind]) ? meta[kind] : []) if (!selected.includes(String(n))) warnings.push(`档案 ${name} 的 ${kind} 引用了未打包的 ${n}`);
@@ -105,12 +121,13 @@ export function packPlugin(app: App, input: PackInput) {
     const name = `rule-${i + 1}`;
     // Stored ids, origin, counters and timestamps belong to this installation only.
     // What the owner chose for this installation (a script, a forward target, 完全访问, the conversation,
-    // the AI, the space) stays here: contributions.ts portableRule.
+    // the AI, an unpacked space) stays here: contributions.ts portableRule.
     let data;
-    try { data = portableRule(ruleInputSchema.parse({ ...rule, enabled: false }), () => false); }
+    try { data = portableRule(ruleInputSchema.parse({ ...rule, enabled: false }), (id) => spaceIds.has(id)); }
     catch (e) { throw new HttpError(400, `规则「${rule.name}」：${(e as Error).message}`); }
-    if (rule.spaceId || rule.conversationId || rule.actions.some((a) => a.type === "agent" && (a.space || a.ai || a.fullAccess)))
-      warnings.push(`规则「${rule.name}」的所属空间、发到的会话、指定的 AI 和完全访问没有带走：装上后在规则页重新选`);
+    const omitted = [...new Set([rule.spaceId, ...rule.actions.flatMap((a) => a.type === "agent" ? [a.space] : [])].filter((id): id is string => !!id && !spaceIds.has(id)))];
+    if (omitted.length || rule.conversationId || rule.actions.some((a) => a.type === "agent" && (a.ai || a.fullAccess)))
+      warnings.push(`规则「${rule.name}」的${omitted.length ? `所属空间 ${omitted.map(spaceName).join("、")} 未打包；` : ""}发到的会话、指定的 AI 和完全访问没有带走：装上后在规则页重新选`);
     files.set(`rules/${name}.yaml`, Buffer.from(YAML.stringify(data)));
     return name;
   });
@@ -120,7 +137,7 @@ export function packPlugin(app: App, input: PackInput) {
     if (!s) throw new HttpError(404, `没有 MCP 服务 ${name}`);
     definitions[name] = { description: s.description, readOnly: s.readOnly, ...(s.kind === "url" ? { url: s.url, headers: s.secrets.map((s) => s.name) } : { command: s.command, args: s.args, env: s.secrets.map((s) => s.name) }) };
   }
-  const manifest = manifestSchema.parse({ id: o.id, name: o.name, description: o.description, agents, skills, rules: ruleNames, mcp: definitions, tools: [...tools] });
+  const manifest = manifestSchema.parse({ id: o.id, name: o.name, description: o.description, spaces, agents, skills, rules: ruleNames, mcp: definitions, tools: [...tools] });
   files.set("plugin.yaml", Buffer.from(YAML.stringify(manifest)));
   const keys = secretValues(app), hits: string[] = [], personal = new Set<string>();
   for (const [file, bytes] of files) {

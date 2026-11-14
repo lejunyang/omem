@@ -11,7 +11,6 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { saveConfig } from "../core/config.ts";
 import { commitLibrary } from "../core/git.ts";
-import { createSpace, findSpace, type SpaceKind } from "../core/spaces.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
@@ -26,6 +25,7 @@ import { setTrust, trustMode, trustState, type RunMode } from "./trust.ts";
 import { startSandbox } from "./sandbox.ts";
 import { installInfo } from "./install.ts";
 import { broughtBy, seedContributions, pluginMcpSchema } from "./contributions.ts";
+import { pluginSpaceSchema, pluginSpaces, ensurePluginSpaces, describeSpaces } from "./spaces.ts";
 import { registerPluginChannel, type ChannelState } from "./channels.ts";
 import type { PluginApi, PluginBlock, PluginRegister, PluginSourceInput, PluginTool } from "./types.ts";
 
@@ -48,7 +48,8 @@ export const manifestSchema = z.object({
   version: z.string().optional(),
   /** The nav icon: a name from web/src/lib/icons.ts, or an .svg in the page's directory (web/, or web/public/ for a built page). */
   icon: z.string().regex(/^([a-z][a-z0-9-]*|[\w./-]+\.svg)$/, "图标写图标名，或页面目录里的 .svg 文件").default("box"),
-  space: z.object({ id: z.string(), name: z.string(), kind: z.enum(["learning", "topic", "project"]).default("topic"), description: z.string().default("") }).optional(),
+  space: pluginSpaceSchema.optional(),
+  spaces: z.array(pluginSpaceSchema).default([]),
   agents: z.array(z.string().regex(SPEC)).default([]),
   skills: z.array(z.string()).default([]),
   rules: z.array(z.string().regex(SPEC)).default([]),
@@ -77,7 +78,13 @@ export const manifestSchema = z.object({
     .object({ write: z.boolean().default(false), connectors: z.array(z.string()).default([]), platforms: z.array(z.string()).default([]), authenticators: z.array(z.string()).default([]) })
     .default({ write: false, connectors: [], platforms: [], authenticators: [] }),
 }).refine((m) => Object.keys(m.mcp).every((n) => /^[a-z][a-z0-9-]{0,39}$/.test(`${m.id}-${n}`)), "MCP 服务加插件前缀后最多 40 个字符")
-  .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符");
+  .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符")
+  .superRefine((m, ctx) => {
+    const spaces = pluginSpaces(m);
+    if (new Set(spaces.map((s) => s.id)).size !== spaces.length) ctx.addIssue({ code: "custom", message: "space 和 spaces 的空间 id 不能重复" });
+    for (const s of spaces) for (const skill of s.skills ?? [])
+      if (!m.skills.includes(skill)) ctx.addIssue({ code: "custom", message: `空间 ${s.id} 的技能 ${skill} 不在本包中` });
+  });
 export type PluginManifest = z.infer<typeof manifestSchema>;
 
 export type LoadedPlugin = {
@@ -356,8 +363,8 @@ export async function setPluginEnabled(app: App, id: string, on: boolean) {
       if (on && (p.trust === "builtin" || p.trust === "trusted")) await loadCode(app, p);
       p.specs = readSpecs(p);
       if (on) {
-        ensureSpace(app, p.manifest);
         seedSkills(app, p);
+        ensurePluginSpaces(app, p.manifest.id, p.manifest);
         seedContributions(app, p);
       }
     } catch (e) {
@@ -452,10 +459,6 @@ function seedSkills(app: App, p: LoadedPlugin) {
   if (added.length) commitLibrary(app.libraryDir, `omem: add skills of plugin ${p.manifest.id}: ${added.join(", ")}`);
 }
 
-function ensureSpace(app: App, m: PluginManifest) {
-  if (m.space && !findSpace(app, m.space.id)) createSpace(app, { id: m.space.id, name: m.space.name, kind: m.space.kind as SpaceKind, description: m.space.description });
-}
-
 /**
  * Load (once per process) and set up for this library: space, skills. Built-in plugins first; a
  * plugin in the data directory with the same id is skipped. A broken plugin is skipped with a warning.
@@ -497,8 +500,8 @@ export async function loadPlugins(app: App, roots: { dir: string; source: Loaded
           plugins.set(manifest.id, p);
         }
         if (p.enabled) {
-          ensureSpace(app, p.manifest);
           seedSkills(app, p);
+          ensurePluginSpaces(app, p.manifest.id, p.manifest);
           seedContributions(app, p);
         }
       } catch (e) {
@@ -534,6 +537,7 @@ export function describePlugin(p: LoadedPlugin) {
     iconChosen: !!host?.config.plugins.icons[p.manifest.id],
     source: p.source,
     space: p.manifest.space?.id ?? null,
+    spaces: describeSpaces(host, p.manifest.id, p.manifest),
     agents: p.manifest.agents.map((n) => ({ name: `${p.manifest.id}-${n}`, description: p.specs.find((s) => s.name === `${p.manifest.id}-${n}`)?.description ?? "" })),
     skills: p.manifest.skills,
     ...(host ? broughtBy(host, p) : { rules: [], mcp: [] }),

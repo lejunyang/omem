@@ -29,6 +29,7 @@ type Plugin = {
   trust: "builtin" | "none" | "trusted" | "required" | "changed";
   agents: { name: string }[];
   skills: string[];
+  spaces: { id: string; name: string; status: string }[];
   settings: boolean;
   rules: { file: string; id: string | null; name: string; enabled: boolean; created: boolean; error?: string | null }[];
   mcp: { name: string; added: boolean; missing: string[] }[];
@@ -186,7 +187,7 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
 
 <template>
   <div class="stack">
-    <HelpText lead>插件带来档案、技能、规则、MCP、工具、页面和聊天渠道。内置插件随 omem 更新；放在数据目录 <span class="mono">plugins/</span> 里的是你自己的；装进来的和你自己的，带代码的都要你看过权限、确认后才运行。写法见 docs/v2/plugins.md。</HelpText>
+    <HelpText lead>插件带来空间、档案、技能、规则、MCP、工具、页面和聊天渠道。内置插件随 omem 更新；放在数据目录 <span class="mono">plugins/</span> 里的是你自己的；装进来的和你自己的，带代码的都要你看过权限、确认后才运行。写法见 docs/v2/plugins.md。</HelpText>
     <div class="card pad stack">
       <strong>安装插件</strong>
       <div class="row wrap">
@@ -254,6 +255,7 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
         <span v-if="p.skills.length">技能：{{ p.skills.join("、") }}</span>
         <span v-if="p.tools.length">工具：<span class="mono">{{ p.tools.join("、") }}</span></span>
       </div>
+      <div v-for="s in p.spaces" :key="s.id" class="small path">空间：{{ s.name }}（{{ s.id }}） · {{ s.status }}</div>
       <div v-for="r in p.rules" :key="r.file" class="small">
         规则：<RouterLink v-if="r.id" class="lnk" :to="`/rules?id=${r.id}`">{{ r.name }}</RouterLink><span v-else>{{ r.name }}</span>
         · {{ r.id ? r.enabled ? "已启用" : "还没启用" : r.created ? "已删除，不再自动创建" : r.error ? `没有创建：${r.error}` : "尚未导入" }}

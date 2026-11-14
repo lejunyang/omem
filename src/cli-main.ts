@@ -971,7 +971,7 @@ plugin
   });
 plugin
   .command("pack")
-  .description("把档案、技能、规则和 MCP 打成场景包；不导出 MCP 密钥值。扫描文本中的已存密钥和用户目录绝对路径，命中时拒绝写入；用户目录路径可用 --allow <file> 逐文件放行，已存密钥不能放行。带脚本或转发的规则不打包")
+  .description("把空间、档案、技能、规则和 MCP 打成场景包；空间只带结构，不带内容。不导出 MCP 密钥值。扫描文本中的已存密钥和用户目录绝对路径，命中时拒绝写入；用户目录路径可用 --allow <file> 逐文件放行，已存密钥不能放行。带脚本或转发的规则不打包")
   .requiredOption("--id <id>", "插件 id")
   .requiredOption("--name <名字>", "场景包名称")
   .option("--description <说明>", "说明")
@@ -979,6 +979,7 @@ plugin
   .option("--skills <x,y>", "技能")
   .option("--rules <r1,r2>", "规则 id")
   .option("--mcp <m1,m2>", "MCP 服务")
+  .option("--space <id>", "空间 id，可重复；不含个人或代码仓库空间", (v: string, all: string[]) => [...all, v], [])
   .option("--out <dir>", "输出目录，默认 <数据目录>/plugins-out/<id>/；不能写入仓库或正在使用的 plugins/")
   .option("--allow <file>", "允许一个含用户目录路径的包内文件，可重复", (v: string, all: string[]) => [...all, v], [])
   .action(async (o) => {
@@ -987,7 +988,7 @@ plugin
     const { loadPlugins } = await import("./plugins/registry.ts");
     const app = open();
     await loadPlugins(app);
-    const r = packPlugin(app, { ...o, agents: list(o.agents), skills: list(o.skills), rules: list(o.rules), mcp: list(o.mcp) });
+    const r = packPlugin(app, { ...o, spaces: o.space, agents: list(o.agents), skills: list(o.skills), rules: list(o.rules), mcp: list(o.mcp) });
     console.log(`已写入 ${r.dir}`);
     for (const warning of r.warnings) console.log(`提醒：${warning}`);
   });

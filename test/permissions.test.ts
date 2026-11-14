@@ -71,6 +71,13 @@ describe("roles and permissions", async () => {
     expect(can(app, "cat", "agents.manage")).toBe(true);
   });
 
+  it("keeps space selection in scenario packs restricted to the owner", async () => {
+    for (const user of ["ann", "cat", "dan"]) {
+      expect((await as(user, "/api/plugins/pack")).status).toBe(403);
+      expect((await as(user, "/api/plugins/pack", { method: "POST", body: JSON.stringify({ id: "restrictedpack", name: "示例", spaces: ["team", "personal"] }) })).status).toBe(403);
+    }
+  });
+
   it("opens the pages of a space by its role", async () => {
     writePage(app, "team", "intro", { meta: { title: "介绍" }, body: "团队介绍" });
     expect(((await json("ann", "/api/spaces")) as { id: string }[]).map((s) => s.id).sort()).toEqual(["personal-ann", "team"]);

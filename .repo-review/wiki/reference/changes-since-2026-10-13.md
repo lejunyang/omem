@@ -12,6 +12,11 @@ updated: 2026-11-15
 - `src/core/notify-reactions.ts`、`src/channels/lark-feedback.ts`：本人对工具完成汇报回负面表情，按通知 `reportTool` 立即用 `setRung` 改回 ask，重算批准连续次数，later 告知一次；普通通知复用“忽略”按钮的模型路径，通知保存生成的规则，一次性事件不告知。紧急提醒与工具汇报不学忽略规则，`notify.learnFromReactions` 默认开，可在渠道设置关闭。通知页展示、删除忽略规则，并显示通知学出的规则。
 - `src/core/notify-outcome.ts`：标为 negative 时补做同一处理，覆盖服务停机期间已存到 `feedback` 的反应；重复事件与重复标注不重复执行。`src/channels/lark-actions.ts` 的本人“忽略”也共用通知上的处理记录。
 - `src/channels/lark-meetings.ts`：会议结束或本人离会调用 `releaseLater(app, new Date(), { now: true })`，立即放出攒着的通知，不占下个固定时点。本次不增加会中扣留逻辑。测试见 `notify-reactions`、`notify-outcome`、`approval-ladder`、`meeting-rules`、`notification-settings`。
+## 场景包带空间结构（11-15）
+
+- `src/plugins/registry.ts`、`spaces.ts`：清单增加 `spaces`，与旧 `space` 合并；挂载技能须由本包声明，拒绝重复 id、无效 id，忽略未声明字段。启用时按清单顺序创建空间，已有同 id 空间完整保留；详情记录“已创建”或“已有同名空间，没有改动”，停用和卸载不删空间。空间表无插件来源字段，未新增列；创建记录使用插件的保留安装状态。
+- `src/plugins/pack.ts`、`cli-main.ts`、`web/src/components/PluginPack.vue`、`PluginsSettings.vue`：API 的 `spaces`、可重复的 `--space <id>` 和同一打包表单选择空间，只带名称、类型、说明和技能挂载，不读取或复制空间内容，不带成员、仓库路径、会话或其他设置。个人和代码仓库空间拒绝打包；遗漏空间或挂载技能按名称提醒。规则复用 `portableRule`，保留包内空间，安装先建空间再导入停用规则；接收方已有空间的行为保持不变。
+- 测试 `test/plugin-pack.test.ts`、`test/permissions.test.ts`；验收 PL7–PL9。
 
 ## 简报先替本人备好；会后放出攒着的通知（11-15）
 

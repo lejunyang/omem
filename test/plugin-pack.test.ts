@@ -1,9 +1,10 @@
-import { existsSync, lstatSync, mkdirSync, symlinkSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import YAML from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
-import { testApp } from "./helpers.ts";
+import { testApp as openTestApp } from "./helpers.ts";
+import { createSpace, findSpace, getSpace, updateSpace } from "../src/core/spaces.ts";
 import { saveAgentSpec, saveSkill } from "../src/agents/specs.ts";
 import { listMcpServers, saveMcpServer } from "../src/agents/mcp-servers.ts";
 import { setKey } from "../src/core/ai-keys.ts";
@@ -12,12 +13,17 @@ import { manifestSchema } from "../src/plugins/registry.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
 import { startServer } from "../src/server/http.ts";
 import { packPlugin } from "../src/plugins/pack.ts";
-import { installPlugin } from "../src/plugins/install.ts";
+import { installPlugin, removeInstalled } from "../src/plugins/install.ts";
 import { describePlugin, forgetPlugin, getPlugin, loadPlugins, reloadPlugin, setPluginEnabled, trustPlugin } from "../src/plugins/registry.ts";
 import { deleteRule, getRule, listRules, saveRule } from "../src/rules/store.ts";
 
 const ids = new Set<string>();
-afterEach(() => { for (const id of ids) forgetPlugin(id); ids.clear(); });
+const apps: ReturnType<typeof openTestApp>[] = [];
+function testApp() { const app = openTestApp(); apps.push(app); return app; }
+afterEach(() => {
+  for (const id of ids) forgetPlugin(id); ids.clear();
+  for (const app of apps.splice(0)) { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
+});
 const rule = { name: "项目 A 提醒", description: "项目 A 有新消息时通知本人", judge: "ai" as const, actions: [{ type: "notify" as const }] };
 function fixture(app: ReturnType<typeof testApp>, id: string, manifest: string, files: Record<string, string> = {}) {
   ids.add(id);
@@ -29,6 +35,120 @@ function fixture(app: ReturnType<typeof testApp>, id: string, manifest: string, 
 }
 
 describe("场景包与插件带来的配置", () => {
+  it("空间只导出结构；按清单顺序创建、挂包内技能，档案和停用规则一起落到空间；停用和卸载保留空间", async () => {
+    const app = testApp();
+    createSpace(app, { id: "project-a", name: "项目 A", kind: "project", description: "项目 A 的范围" });
+    createSpace(app, { id: "project-notes", name: "项目 A 笔记", kind: "topic" });
+    updateSpace(app, "project-notes", { settings: { skills: ["guide"], chatIds: ["private-chat-marker"], custom: "private-settings-marker" } });
+    writeFileSync(join(app.libraryDir, "project-notes/wiki/private.md"), "private-page-marker");
+    saveSkill(app, { name: "guide", description: "项目 A 做法", body: "先查原件。" });
+    saveAgentSpec(app, { name: "helper", description: "项目 A", space: "project-notes", skills: ["guide"], prompt: "查资料。" }, "user");
+    const r = saveRule(app, { ...rule, spaceId: "project-notes", actions: [{ type: "agent", spec: "helper", space: "project-notes", task: "查项目 A" }] }, "user", "owner");
+    const packed = packPlugin(app, { id: "spacepack", name: "示例商城", spaces: ["project-notes", "project-a"], skills: ["guide"], agents: ["helper"], rules: [r.id] });
+    expect(packed.warnings).toEqual([]);
+    const manifest = YAML.parse(readFileSync(join(packed.dir, "plugin.yaml"), "utf8"));
+    expect(manifest.spaces).toEqual([
+      { id: "project-notes", name: "项目 A 笔记", kind: "topic", description: "", skills: ["guide"] },
+      { id: "project-a", name: "项目 A", kind: "project", description: "项目 A 的范围", skills: [] },
+    ]);
+    expect(JSON.stringify(manifest)).not.toContain("private-");
+    expect(existsSync(join(packed.dir, "project-notes"))).toBe(false);
+    const receiver = testApp(), order: string[] = [];
+    receiver.events.on("event", (e) => { if (e.type === "changed" && e.entity === "space") order.push(e.id); });
+    const installed = await installPlugin(receiver, packed.dir); ids.add(installed.id);
+    await reloadPlugin(receiver, installed.id);
+    expect([...new Set(order)]).toEqual(["project-notes", "project-a"]);
+    expect(getSpace(receiver, "project-notes")).toMatchObject({ parentId: null, rootPath: null, settings: { skills: ["guide"] } });
+    expect(existsSync(join(receiver.libraryDir, "_skills/guide/SKILL.md"))).toBe(true);
+    expect(getPlugin(installed.id).specs[0].space).toBe("project-notes");
+    expect(listRules(receiver)[0]).toMatchObject({ spaceId: "project-notes", enabled: false, actions: [{ type: "agent", space: "project-notes", spec: "spacepack-helper" }] });
+    expect(describePlugin(getPlugin(installed.id)).spaces.every((s) => s.created && s.status === "已创建")).toBe(true);
+    await reloadPlugin(receiver, installed.id);
+    expect(describePlugin(getPlugin(installed.id)).spaces.every((s) => s.created)).toBe(true);
+    const created = getSpace(receiver, "project-notes");
+    await setPluginEnabled(receiver, installed.id, false);
+    expect(getSpace(receiver, "project-notes")).toEqual(created);
+    forgetPlugin(installed.id); removeInstalled(receiver, installed.id);
+    expect(getSpace(receiver, "project-notes")).toEqual(created);
+  });
+
+  it("空间清单忽略未知字段，parent 不会设置仓库归属", async () => {
+    const app = testApp();
+    const manifest = { space: { id: "legacy", name: "旧空间", parent: "notes" }, spaces: [{ id: "notes", name: "项目笔记", parent: "legacy" }] };
+    const parsed = manifestSchema.parse({ id: "ignoredfields", name: "示例", ...manifest });
+    expect(parsed.space).not.toHaveProperty("parent");
+    expect(parsed.spaces[0]).not.toHaveProperty("parent");
+    fixture(app, "ignoredfields", YAML.stringify(manifest));
+    await reloadPlugin(app, "ignoredfields");
+    for (const id of ["legacy", "notes"]) expect(getSpace(app, id).parentId).toBeNull();
+    for (const space of describePlugin(getPlugin("ignoredfields")).spaces) expect(space).not.toHaveProperty("parent");
+  });
+
+  it("已有同 id 空间完整保留并报告，停用时不建空间，旧 space 和 spaces 一起生效", async () => {
+    const app = testApp();
+    createSpace(app, { id: "project-a", name: "本人项目", kind: "learning", description: "本人说明" });
+    updateSpace(app, "project-a", { settings: { skills: ["owner-guide"], custom: true } });
+    const before = getSpace(app, "project-a");
+    app.config.plugins.disabled.push("existingpack");
+    fixture(app, "existingpack", YAML.stringify({ space: { id: "legacy", name: "旧空间" }, spaces: [{ id: "project-a", name: "包里项目", kind: "project", skills: ["guide"] }], skills: ["guide"] }), { "skills/guide/SKILL.md": "---\ndescription: 示例\n---\n查原件。" });
+    await reloadPlugin(app, "existingpack");
+    expect(findSpace(app, "legacy")).toBeNull();
+    expect(describePlugin(getPlugin("existingpack")).spaces[0].status).toBe("等待启用");
+    await setPluginEnabled(app, "existingpack", true);
+    expect(getSpace(app, "project-a")).toEqual(before);
+    expect(getSpace(app, "legacy").name).toBe("旧空间");
+    expect(describePlugin(getPlugin("existingpack")).spaces[1]).toMatchObject({ created: false, existing: true, status: "已有同名空间，没有改动" });
+    await reloadPlugin(app, "existingpack");
+    await setPluginEnabled(app, "existingpack", false);
+    expect(getSpace(app, "project-a")).toEqual(before);
+    expect(describePlugin(getPlugin("existingpack")).spaces[1].existing).toBe(true);
+  });
+
+  it("拒绝个人、代码仓库和临时工作区，失败不写出包", () => {
+    const app = testApp();
+    createSpace(app, { id: "repo-a", name: "代码 A", kind: "repo", rootPath: app.home });
+    createSpace(app, { id: "temp-a", name: "临时 A", kind: "worktree" });
+    for (const [space, message] of [["personal", "个人空间不能打包"], ["repo-a", "代码仓库空间不能打包"], ["temp-a", "这种空间不能打包"]]) {
+      expect(() => packPlugin(app, { id: "blockedspace", name: "示例", spaces: [space] })).toThrow(message);
+      expect(existsSync(join(app.home, "plugins-out/blockedspace"))).toBe(false);
+    }
+  });
+
+  it("清单拒绝包外技能、重复 id 和不规范 id，两个空间字段共用检查", () => {
+    const base = { id: "badspacepack", name: "示例" }, space = { id: "project-a", name: "项目 A" };
+    expect(() => manifestSchema.parse({ ...base, spaces: [{ ...space, skills: ["missing"] }] })).toThrow(/技能.*不在本包中/);
+    expect(() => manifestSchema.parse({ ...base, space, spaces: [space] })).toThrow(/不能重复/);
+    for (const key of ["space", "spaces"]) for (const id of ["_reserved", "../escape", "UPPER", "", "..", "a".repeat(81)])
+      expect(() => manifestSchema.parse({ ...base, [key]: key === "space" ? { ...space, id } : [{ ...space, id }] })).toThrow();
+    expect(() => manifestSchema.parse({ ...base, spaces: [{ ...space, kind: "repo" }] })).toThrow();
+  });
+
+  it("未带走的空间和挂载技能逐项提示名字", () => {
+    const app = testApp();
+    createSpace(app, { id: "project-a", name: "项目 A" });
+    createSpace(app, { id: "notes", name: "项目笔记" });
+    updateSpace(app, "notes", { settings: { skills: ["unpacked-guide"] } });
+    saveAgentSpec(app, { name: "helper", description: "示例", space: "project-a", prompt: "查资料。" }, "user");
+    const r = saveRule(app, { ...rule, spaceId: "project-a", actions: [{ type: "agent", spec: "helper", space: "project-a", task: "查一下" }] }, "user", "owner");
+    const packed = packPlugin(app, { id: "omittedspaces", name: "示例", spaces: ["notes"], agents: ["helper"], rules: [r.id] });
+    expect(packed.warnings).toHaveLength(3);
+    expect(packed.warnings).toEqual(expect.arrayContaining([expect.stringContaining("unpacked-guide"), expect.stringContaining("档案 helper 引用了未打包的空间 项目 A（project-a）"), expect.stringContaining("所属空间 项目 A（project-a）")]));
+    const manifest = YAML.parse(readFileSync(join(packed.dir, "plugin.yaml"), "utf8"));
+    expect(manifest.spaces[0]).not.toHaveProperty("parent");
+    expect(manifest.spaces[0].skills).toEqual([]);
+    const data = YAML.parse(readFileSync(join(packed.dir, "rules/rule-1.yaml"), "utf8"));
+    expect(data.spaceId).toBeUndefined(); expect(data.actions[0].space).toBeUndefined();
+  });
+
+  it("导入保留接收方已有的空间，动作里未知空间仍去掉", async () => {
+    const app = testApp();
+    fixture(app, "knownspace", "rules: [first]\n", { "rules/first.yaml": YAML.stringify({ ...rule, spaceId: "personal", actions: [{ type: "agent", spec: "assistant", space: "personal", task: "查一下" }, { type: "agent", spec: "assistant", space: "missing", task: "再查一下" }] }) });
+    await reloadPlugin(app, "knownspace");
+    expect(listRules(app)[0].spaceId).toBe("personal");
+    expect(listRules(app)[0].actions[0]).toHaveProperty("space", "personal");
+    expect(listRules(app)[0].actions[1]).not.toHaveProperty("space");
+  });
+
   it("规则只导入一次且停用，保留来源；删除后重载和重装也不重建", async () => {
     const app = testApp();
     fixture(app, "packrules", "rules: [first]\n", { "rules/first.yaml": YAML.stringify({ ...rule, enabled: true, id: "foreign", createdBy: "agent" }) });
@@ -210,12 +330,15 @@ describe("场景包与插件带来的配置", () => {
 
   it("CLI 帮助说明扫描与 allow，pack 命令实际导出配置", () => {
     const help = spawnSync(process.execPath, [resolve("src/cli.ts"), "plugin", "pack", "--help"], { encoding: "utf8", timeout: 20_000 });
-    expect(help.status).toBe(0); expect(help.stdout).toContain("--allow"); expect(help.stdout).toContain("绝对路径");
+    expect(help.status).toBe(0); expect(help.stdout).toContain("--allow"); expect(help.stdout).toContain("绝对路径"); expect(help.stdout).toContain("--space <id>");
     const app = testApp();
     saveAgentSpec(app, { name: "helper", description: "示例商城", prompt: "处理项目 A。" }, "user");
-    const output = spawnSync(process.execPath, [resolve("src/cli.ts"), "--home", app.home, "plugin", "pack", "--id", "clipack", "--name", "示例商城", "--agents", "helper"], { encoding: "utf8", timeout: 20_000 });
+    createSpace(app, { id: "project-a", name: "项目 A" });
+    createSpace(app, { id: "learning-a", name: "学习 A", kind: "learning" });
+    const output = spawnSync(process.execPath, [resolve("src/cli.ts"), "--home", app.home, "plugin", "pack", "--id", "clipack", "--name", "示例商城", "--agents", "helper", "--space", "project-a", "--space", "learning-a"], { encoding: "utf8", timeout: 20_000 });
     expect(output.status, output.stderr).toBe(0);
     expect(readFileSync(join(app.home, "plugins-out/clipack/agents/helper.md"), "utf8")).toContain("处理项目 A。");
+    expect(YAML.parse(readFileSync(join(app.home, "plugins-out/clipack/plugin.yaml"), "utf8")).spaces.map((s: { id: string }) => s.id)).toEqual(["project-a", "learning-a"]);
   }, 60_000);
 
   it("打包 API 和选择列表只给本人，返回目录和提醒", async () => {
@@ -223,9 +346,14 @@ describe("场景包与插件带来的配置", () => {
     expect(ROUTE_RULES["GET /api/plugins/pack"]).toBe("owner");
     const app = testApp(), server = await startServer(app, { port: 0, quiet: true });
     try {
-      const result = await server.inject({ method: "POST", url: "/api/plugins/pack", payload: { id: "apipack", name: "示例商城" } });
+      createSpace(app, { id: "project-a", name: "项目 A" });
+      createSpace(app, { id: "repo-a", name: "代码 A", kind: "repo", rootPath: app.home });
+      const result = await server.inject({ method: "POST", url: "/api/plugins/pack", payload: { id: "apipack", name: "示例商城", spaces: ["project-a"] } });
       expect(result.statusCode).toBe(200); expect(result.json()).toMatchObject({ dir: join(app.home, "plugins-out/apipack"), warnings: [] });
       expect((await server.inject({ url: "/api/plugins/pack" })).json()).toHaveProperty("agents");
+      expect((await server.inject({ url: "/api/plugins/pack" })).json().spaces).toEqual([{ id: "project-a", name: "项目 A" }]);
+      expect(YAML.parse(readFileSync(join(app.home, "plugins-out/apipack/plugin.yaml"), "utf8")).spaces[0].id).toBe("project-a");
+      expect((await server.inject({ method: "POST", url: "/api/plugins/pack", payload: { id: "badapipack", name: "示例", spaces: ["personal"] } })).statusCode).toBe(400);
       const member = createUser(app, { name: "小王", role: "admin" });
       const token = createApiToken(app, member.id);
       const headers = { authorization: `Bearer ${token}` };

@@ -1141,11 +1141,21 @@ TraeX 与其他 ACP 的清理补验：
 | PL2 | 启用同时带网址和命令 MCP 的无代码插件；填密钥后停用再启用 | 网址项保留未填密钥名；命令项等信任，确认框列命令；档案短名加插件前缀；同名服务不覆盖；卸载后服务器和密钥仍在 | `test/plugin-pack.test.ts` |
 | PL3 | `omem plugin pack` 或设置页打包档案、技能、规则、MCP，再在另一个数据目录 `plugin install <目录>` | 全部技能资源被复制；规则停用；MCP 无值；缺技能 / MCP 的档案有提醒；安装是副本，无代码不要求信任，命令 MCP 仍要求 | `test/plugin-pack.test.ts`；网页表单见下方验证记录 |
 | PL4 | 复制文本含已存密钥（含跨行）、用户目录路径；逐文件 `--allow`；非本人调用打包 API | 未放行时报告文件和行、没有输出；放行只针对精确文件、只放行用户目录路径，已存密钥放行了也拒绝；MCP 值不导出；不能写入 live / 仓库 plugins 或已有目录；非本人 403 | `test/plugin-pack.test.ts` |
-| PL4a | 打包一条带脚本的规则；打包一条带完全访问和所属空间的规则；装一个规则里带脚本、转发、完全访问的包 | 带脚本的拒绝打包；完全访问、空间、会话、指定的 AI 不进包并有提醒；导入时带脚本或转发的不创建、插件详情写明原因，其余规则停用着导入且没有完全访问；包里档案写的不是包自带的 MCP 服务名被忽略 | `test/plugin-pack.test.ts` |
+| PL4a | 打包一条带脚本的规则；打包一条带完全访问和所属空间的规则；装一个规则里带脚本、转发、完全访问的包 | 带脚本的拒绝打包；完全访问、未打包的空间、会话、指定的 AI 不进包并有提醒；导入时带脚本或转发的不创建、插件详情写明原因，其余规则停用着导入且没有完全访问；包里档案写的不是包自带的 MCP 服务名被忽略 | `test/plugin-pack.test.ts` |
 | PL5 | 在临时数据目录安装渠道测试插件，隔离信任，再选择在 omem 里运行；绑定本人并收发；未绑定人和未 addressed 群消息 | 隔离模式明确拒绝；未绑定时不启动运行；本人发言经假 ACP Agent 的真实 ACP/MCP 桥跑完一轮、回复经 send；后续线程发送和本人 / 成员通知到对的 chat / topic | `test/plugin-channels.test.ts` |
 | PL6 | 渠道 send 抛错；停用，再启用和撤销信任 | 出错只记录，不抛进运行；设置 → 渠道 有最近错误和插件设置链接；停用后 sender / sink / 旧 receive 都失效，重启不重复注册 | `test/plugin-channels.test.ts`；1440 / 390 界面检查见下方验证记录 |
+| PL7 | 打包多个空间、挂载技能、空间内的规则和档案，装到全新数据目录并启用 | 清单只带结构，无原件、页面、记忆、成员、路径、会话或其他设置；按清单顺序创建、未知字段忽略、技能挂到 settings.skills，档案和规则落到该空间，规则停用；旧 space 与 spaces 合并，详情显示创建状态 | `test/plugin-pack.test.ts` |
+| PL8 | 同 id 空间已有本人设置时启用；停用插件再启用、重载、卸载 | 已有空间全部字段不变，详情显示“已有同名空间，没有改动”；创建记录跨重载保留，停用和卸载都不删除空间；停用的包不建新空间 | `test/plugin-pack.test.ts` |
+| PL9 | 打包个人 / 代码仓库空间；清单引用包外技能、id 重复或不规范；遗漏规则 / 档案空间和挂载技能；重复 CLI --space；非本人请求带 spaces 的 API | 不可打包类型明确报错且不写文件；无效清单拒绝；遗漏依赖提醒含空间名称与 id；CLI 和网页 API 共用检查，选择项不列个人或仓库空间，非本人 403 | `test/plugin-pack.test.ts`、`test/permissions.test.ts` |
 
-验证记录（重启后重新执行）：
+空间结构验证（2026-11-15）：
+
+- `npx vitest run test/plugin-pack.test.ts test/permissions.test.ts --maxWorkers=2 --no-cache --configLoader runner`：2 个文件，33 项通过、0 失败（打包 22 项、权限 11 项）；只运行本次改动的测试文件，关闭缓存并用 runner 避免写共享依赖目录。
+- `npx tsc --noEmit -p .`、`npx vue-tsc --noEmit -p web/tsconfig.json`：均通过，0 项诊断。Vue 检查用临时 Node 预加载在内存中指定声明输出位置，避免写入共享依赖目录，原配置不改。
+- `node scripts/screens.ts <预览地址> <临时截图目录>`，另用 Playwright 检查浅色 / 深色的 1440 / 390 视口：展开表单、选择空间与依赖、写包、遗漏提示、插件创建 / 已有状态、Esc 收起共 4 组通过，0 横向溢出、0 页面脚本错误。虚构数据与临时截图验证后删除，仓库截图未更新；未运行全套测试、未调用真实模型。
+- 空间没有来源列，因此仅用插件安装记录保存创建结果。
+
+原有验证记录（2026-11-14）：
 
 - `npx vitest run test/plugin-pack.test.ts test/plugin-channels.test.ts test/plugins.test.ts test/plugin-install.test.ts test/plugin-connectors.test.ts test/plugin-sandbox.test.ts test/plugin-services.test.ts test/plugin-voice.test.ts test/connect-plugin.test.ts test/peer-plugin-page.test.ts test/mcp-servers.test.ts --maxWorkers=2 --configLoader runner --no-cache`：11 个文件、70 项通过，0 失败；新增打包测试 13 项、渠道测试 5 项。`runner` 与关闭缓存避免写入共享依赖目录。
 - `npx tsc --noEmit -p .`、`npx vue-tsc --noEmit -p web/tsconfig.json`：都通过、0 项诊断。Vue 检查通过临时 Node 预加载在内存中指定生成声明的位置，不改原 tsconfig、不写共享依赖目录；验证后删除临时声明和脚本。

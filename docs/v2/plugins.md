@@ -2,7 +2,7 @@
 
 有些场景要的不是一问一答，而是一组题、一张表、一块屏幕：出一批题、本人一次提交、AI 看结果再出下一批，过程里记下水平和薄弱点。机器人只适合一条一条地说，这类强交互放在网页里做，由插件提供。
 
-插件把一个场景需要的东西打成一个包：Agent 档案、技能、规则、MCP 服务、工具、数据和独立页面，也可以接入聊天渠道。宿主负责加载、权限、存储和转发；理解和出题交给插件里的档案。第一个内置插件是英语学习（`plugins/english`）。
+插件把一个场景需要的东西打成一个包：空间结构、Agent 档案、技能、规则、MCP 服务、工具、数据和独立页面，也可以接入聊天渠道。宿主负责加载、权限、存储和转发；理解和出题交给插件里的档案。第一个内置插件是英语学习（`plugins/english`）。
 
 ## 目录
 
@@ -90,6 +90,8 @@ id: english
 name: 英语学习
 description: 按场景出题、批量提交、AI 点评，记录水平和薄弱点
 space: { id: english, name: 英语学习, kind: learning }   # 不存在就建
+spaces:                                                # 可带多个空间，与旧 space 合并
+  - { id: english-notes, name: 学习笔记, kind: topic, description: 练习后的笔记, skills: [english-item-writing] }
 icon: languages                                         # 导航图标：图标名（web/src/lib/icons.ts），或页面目录里的 .svg
 agents: [tutor]                                         # → english-tutor
 skills: [english-item-writing]
@@ -113,6 +115,8 @@ settings:                                               # 本人的设置，外�
   - { key: dailyGoal, label: 每天目标题数, type: number, min: 5, max: 300, default: 30 }
 ```
 
+- `spaces` 每项含 `id`、`name`、`kind`、`description`，`kind` 可用 `project` / `learning` / `topic`（默认 `topic`），`description` 默认空。可选 `skills` 指向本包 `skills` 列出的技能，挂载在空间的 `settings.skills`。原有 `space` 仍可用，也计入本包；它仍是档案没有写 `space` 时的默认空间，`spaces` 列表不隐式指定默认空间。
+- 两种空间声明共用 id 检查：须是规范化后的 id（最长 80 字符，不以下划线开头、不用路径）；重复 id、包外技能都在读清单时拒绝。空间声明与相邻的清单对象一样忽略未知字段，未声明字段不会参与创建。启用时按清单顺序创建（旧 `space` 在 `spaces` 列表之前），按 id 判断是否已存在；已有空间的全部字段均不改动，详情显示“已有同名空间，没有改动”，新建的显示“已创建”。空间本身没有插件来源字段，创建结果保存在插件的安装记录中；停用和卸载都不删除空间。
 - 插件档案能用的工具 = 清单 `tools` + 插件自己注册的工具 + 通用插件工具（`plugin_query`、`plugin_put`，以及提问和展示用的 `ask_user`、`wait_answer`、`show`）。档案 frontmatter 里写的 `tools` 只能在这个范围内选，超出的忽略并警告。
 - 插件档案和普通档案一样出现在 Agent 页，可以 `/as english-tutor`、`run_agent`、挂技能、有专属记忆、由 coach 复盘。本人在 Agent 页改它，就在 `library/_agents/` 存一份自定义版本（带 `plugin` 字段）；删掉自定义版本回到插件自带的版本。
 - 导航图标：`icon` 写图标名（`web/src/lib/icons.ts`，设置 → 插件的图标选择里列出的那些），或页面目录里的一个 `.svg`（内置插件放 `web/public/`，数据目录插件放 `web/`），按当前文字颜色画出。本人可以在设置 → 插件里点图标换一个，存在配置的 `plugins.icons`，“用插件自己的图标”恢复。
@@ -143,23 +147,24 @@ actions: [{ type: notify }]
 
 ## 场景包：不带代码的插件
 
-场景包把一类工作的档案、技能、规则和 MCP 定义交给另一个人。设置 → 插件 → **打成场景包**，勾选这四类对象并填 id、名字和说明，完成后显示服务器上写到的目录和遗漏依赖提醒。命令行等价：
+场景包把一类工作的空间结构、档案、技能、规则和 MCP 定义交给另一个人。设置 → 插件 → **打成场景包**，勾选对象并填 id、名字和说明，完成后显示服务器上写到的目录和遗漏依赖提醒。命令行等价：
 
 ```bash
-omem plugin pack --id projecta --name "项目 A" --description "项目 A 的处理做法" --agents helper --skills project-guide --rules <规则id> --mcp web-search
+omem plugin pack --id projecta --name "项目 A" --description "项目 A 的处理做法" --space project-a --space project-notes --agents helper --skills project-guide --rules <规则id> --mcp web-search
 omem plugin pack --id projecta --name "项目 A" --skills project-guide --out ./projecta-pack
 omem plugin install ./projecta-pack
 ```
 
 - 默认写到 `<数据目录>/plugins-out/<id>/`，`--out` 可改；拒绝已有目录，不能写进仓库或正在使用的 `<数据目录>/plugins/`，经过目录链接也一样。
+- `--space <id>` 可重复；网页用同一打包表单勾选空间。只导出 id、名称、类型、说明、同时选中的技能挂载；不导出空间设置的其他字段、原件、页面、记忆、成员、仓库路径或会话 id，也不读取空间正文。个人、代码仓库和临时工作区不能打包。未选中的挂载技能，以及规则或档案引用的未选空间，逐项提示名称和 id，方便补选。
 - 档案写到 `agents/<名>.md`，技能复制完整目录（包括 `references/`、脚本和其他资源），规则写到 `rules/` 并列进清单，导出时也停用。档案引用的技能和 MCP 未被选中时逐项提醒。
 - MCP **始终不导出变量或请求头的值**。旧档案内嵌的 MCP 会转成清单项，密钥只留名字，命令同样等待信任；档案原有的 `plugin` 归属去掉，由安装后的新包决定。
 - 写入前扫描全部复制的文本：本人的已存密钥（包括 MCP 密钥映射中的值）和 macOS、Linux、Windows 用户目录绝对路径，命中按文件和行报告，整个包不写入。CLI 可重复 `--allow <包内相对文件>` 逐文件放行用户目录路径；已存密钥不能放行，要先从文件里拿掉；不会把密钥值印在报告里。命令帮助说明同样的限制。含会话或人员的 id、邮箱的文件照常打包，但在提醒里列出，分享前自己核对。
-- 规则里本人在这台机器上选的东西不随包走（`contributions.ts` 的 `portableRule`，打包和导入都过它）：带脚本或转发的规则不打包、导入时也不创建（插件详情里写明原因，其余规则照常导入）；完全访问、发到的会话、指定的 AI、接收方没有的空间去掉，定时规则原本回复到那个会话的改成只告诉本人。这些要本人装上后在规则页重新选。
+- 规则打包和导入都经过 `contributions.ts` 的 `portableRule`：带脚本或转发的规则不打包、导入时也不创建（插件详情里写明原因，其余规则照常导入）；完全访问、发到的会话、指定的 AI 去掉，定时规则原本回复到那个会话的改成只告诉本人。规则的 `spaceId` 和 Agent 动作的 `space` 在打包时仅保留本包带的空间，导入时仅保留接收方已有的空间（含本次先创建的），因此规则和空间一起打包后，停用着导入到原来的空间。未带走的空间有名称提醒，装上后可在规则页重新选。
 - 插件的档案只能用插件自己带来的 MCP 服务（清单 `mcp` 里的，名字加插件前缀）；写了别的名字会被忽略，本人已有的服务和上面的凭据不会因为装了一个包就被它用上。插件技能目录里的符号链接不复制。
-- 为保留 `<id>-<名>` 的约定，档案加前缀后最多 48 字符、MCP 服务最多 40 字符；超长时拒绝写包，需要缩短名字或 id。包不包含后端安装、空间、本人密钥和现有插件的代码，引用这些本机配置的档案需要接收者自行补齐。
+- 为保留 `<id>-<名>` 的约定，档案加前缀后最多 48 字符、MCP 服务最多 40 字符；超长时拒绝写包，需要缩短名字或 id。包不包含后端安装、本人密钥和现有插件的代码，引用这些本机配置的档案需要接收者自行补齐。
 
-`POST /api/plugins/pack` 接受 `id`、`name`、`description`、`agents`、`skills`、`rules`、`mcp`、`out`、`allow`，列表字段用数组，返回 `{ dir, warnings }`。`GET /api/plugins/pack` 给表单列选择项。两个接口都只给本人。装到别处后，场景包无代码时不需要信任；带命令 MCP 时仍需先看命令、确认信任。
+`POST /api/plugins/pack` 接受 `id`、`name`、`description`、`spaces`（空间 id 数组）、`agents`、`skills`、`rules`、`mcp`、`out`、`allow`，列表字段用数组，返回 `{ dir, warnings }`。`GET /api/plugins/pack` 给表单列选择项（含可打包的 `spaces`）。两个接口都只给本人，网页与 CLI 共用打包检查。装到别处后，场景包无代码时不需要信任；带命令 MCP 时仍需先看命令、确认信任。
 
 ## 服务端代码
 
