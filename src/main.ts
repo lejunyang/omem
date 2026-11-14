@@ -202,6 +202,18 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     setInterval(() => {
       void import("./search/vectors.ts").then((m) => m.pruneVectorLog(app)).catch((e) => console.warn("[omem] 清理向量变更记录失败：", (e as Error).message));
     }, 3600_000).unref();
+    // Vectors stored as float32 values are stored packed, a small batch a second, until none are left (search/vectors.ts).
+    void import("./search/vectors.ts").then((m) => {
+      const step = () => {
+        try {
+          if (m.packStoredVectors(app) > 0) setTimeout(step, 1000).unref();
+        } catch (e) {
+          console.warn("[omem] 向量改存紧凑格式失败：", (e as Error).message);
+          setTimeout(step, 60_000).unref();
+        }
+      };
+      setTimeout(step, 20_000).unref();
+    });
     if (app.config.embeddings.provider !== "none") {
       const loop = async () => {
         try {

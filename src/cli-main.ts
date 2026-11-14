@@ -152,6 +152,32 @@ program
   });
 
 program
+  .command("db [action]")
+  .description("数据库：不带参数看大小和向量改存紧凑格式的进度；vacuum 回收空闲页让文件变小（要先停服务；库多大就要多少空闲磁盘，十几 GB 的库要几分钟）")
+  .action(async (action: string | undefined) => {
+    const app = open();
+    const file = join(app.home, "omem.db");
+    const gb = () => `${(statSync(file).size / 1e9).toFixed(2)} GB`;
+    const kv = (k: string) => (app.db.prepare("select value from kv where key = ?").get(k) as { value: string } | undefined)?.value;
+    const packed = kv("vector_packed") === "1";
+    const last = Number((app.db.prepare("select coalesce(max(id), 0) n from chunks").get() as { n: number }).n);
+    const progress = packed ? "已全部是紧凑格式" : last ? `改存紧凑格式进行到 ${Math.min(100, Math.round((Number(kv("vector_pack_cursor") ?? 0) / last) * 100))}%（服务运行时在后台进行）` : "还没有向量";
+    if (!action || action === "status") {
+      const free = Number((app.db.prepare("pragma freelist_count").get() as { freelist_count: number }).freelist_count) * Number((app.db.prepare("pragma page_size").get() as { page_size: number }).page_size);
+      console.log(`${file}：${gb()}，其中空闲页 ${(free / 1e9).toFixed(2)} GB（vacuum 后归还磁盘）\n向量：${progress}`);
+      return;
+    }
+    if (action !== "vacuum") throw new Error("用法：omem db [status | vacuum]");
+    if (await runningServer(app)) throw new Error(`${app.home} 的服务正在运行；先 omem service stop（vacuum 期间别的连接写不进去）。`);
+    if (!packed && last) console.error(`注意：向量${progress}，现在 vacuum 回收不到那部分；等它做完再来一次更划算。`);
+    const before = gb();
+    console.error("正在整理数据库，请不要中断…");
+    app.db.exec("vacuum");
+    app.db.exec("pragma wal_checkpoint(truncate)");
+    console.log(`完成：${before} → ${gb()}`);
+  });
+
+program
   .command("service [action]")
   .description("后台常驻服务（自带 PM2，崩溃自动重启、日志轮换）：start | stop | restart | status | logs | enable | disable（开机自启）")
   .option("-n, --lines <n>", "logs：显示最近多少行", (v) => Number(v), 80)

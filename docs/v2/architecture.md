@@ -223,6 +223,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 向量紧凑存储：`chunks.embedding` 存 int8 量化后的向量（4 字节标记 + float32 比例 + 每维 1 字节），是内存索引本来就用的量化结果，占原来 float32 的四分之一；旧的 float32 行照常能读，服务运行时每秒一小批在后台改存，不记变更、不影响已载入的索引和快照文件；`omem db` 看进度，`omem db vacuum`（停服务后）把空出来的页还给磁盘。没有把向量拆成独立文件：分块删除、换空间靠主库里的触发器记变更，跨文件做不到，分块 id 又会被复用，拆开后漏删一次就会把旧向量挂到新分块上 | 已实现；2026-11-14，`test/vectors.test.ts`（两种格式检索结果一致、转换不记变更、快照仍有效）；大库上的转换耗时和 vacuum 待真机 | `src/search/vector-codec.ts`、`vectors.ts`（`packStoredVectors`）、`embeddings.ts`、`omem db` |
 | 有人找你 · 学本人怎么回（docs/v2/mentions.md）：每条进到流程的消息记一个样本（对方问的、助手拟的、本人照发 / 改后发 / 没发和原因、本人之后自己回的话或没回）；分诊材料带“本人以往回不回”，处理任务带“本人以往怎么回”（同一个人、同一会话的例子在前）；草稿卡片的“不发”带原因；远长于本人平时的回复拒一次；设置页显示近 60 天的统计 | 已实现；2026-11-14，`test/reply-learn.test.ts`；真实卡片回调和草稿通过率待看 | `src/mentions/reply-learn.ts`、`mentions.ts`、`triage.ts`、`src/channels/mention-reply.ts`、`lark-mentions.ts` |
 | 知识库的文档归位（docs/v2/archive-routing.md）：知识库归入业务空间后，它的文档从任何入口进来都落在那个空间（自动采集、跟着链接读进来的）；目录可单独归到别的空间；本人手动放的不动；存量可预览后收回（移动，或并进目标空间已有的同一篇），每晚巡检自动处理零星新增（不超过 50 份） | 已实现；2026-11-14，`test/kb-home.test.ts`；链接跟读的整条路径和页面待真机 | `src/sources/kb-home.ts`、`archive.ts`、`duplicates.ts`、`src/channels/lark-docs.ts`、`web/src/views/KnowledgeBases.vue`、`components/SourceTree.vue`、远程命令 `lark-kb-home` |
 | 文档排版：表格按内容分列宽、超宽横向滚动；飞书高亮块图标在左、带色系；分栏并排；另一种导出格式的表格标签转成普通表格。虚拟列表每次更新重新找滚动容器 | 已实现；2026-11-14，本地开发实例 1440 / 390 宽度看过 | `web/src/lib/doc-layout.ts`、`styles.css`、`components/Markdown.vue`、`VirtualList.vue` |

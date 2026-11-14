@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { vectorIndex } from "./vectors.ts";
+import { pack, toFloats } from "./vector-codec.ts";
 import { all, one, run } from "../core/db.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
@@ -172,7 +173,8 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   const known = new Map<number, Float32Array>();
   for (const r of rows) {
     const t = twin.get(r.text.length, r.text.slice(0, 80), r.text, r.path || r.title, r.id) as { embedding: Uint8Array } | undefined;
-    if (t?.embedding) known.set(r.id, new Float32Array(t.embedding.buffer.slice(t.embedding.byteOffset, t.embedding.byteOffset + t.embedding.byteLength)));
+    // The twin's stored vector, packed or the older float32 form (vector-codec.ts).
+    if (t?.embedding) known.set(r.id, toFloats(t.embedding));
   }
   // Within the batch too: identical inputs are embedded once.
   const input = (r: (typeof rows)[number]) => `${r.path || r.title}\n${r.text}`.slice(0, 2000);
@@ -183,7 +185,8 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   const upd = app.db.prepare("update chunks set embedding = ? where id = ?");
   for (const r of rows) {
     const v = known.get(r.id)!;
-    upd.run(new Uint8Array(v.buffer, v.byteOffset, v.byteLength), r.id);
+    // Stored packed: one signed byte a dimension, what the index searches with (vector-codec.ts).
+    upd.run(pack(v), r.id);
   }
   vectorIndex().add(app, rows.map((r) => ({ id: r.id, spaceId: r.space_id, vec: known.get(r.id)! })));
   return rows.length;

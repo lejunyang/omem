@@ -1774,6 +1774,16 @@ export const migrations: readonly string[] = [
      sent_at text
    );
    create index fed_outbox_waiting on fed_outbox(created_at) where status = 'waiting';`,
+  // Chunk vectors are stored packed (search/vector-codec.ts, a quarter of the float32 values). Storing
+  // an old row's same vector packed is not a change: it is what the index already holds for it.
+  `drop trigger if exists vector_log_update;
+   create trigger vector_log_update after update of embedding, space_id on chunks
+     when (old.embedding is not null or new.embedding is not null)
+      and not (old.embedding is not null and new.embedding is not null and old.space_id = new.space_id
+               and substr(old.embedding, 1, 4) != x'4F563801' and substr(new.embedding, 1, 4) = x'4F563801') begin
+     insert into vector_log(space_id, chunk_id) values (old.space_id, old.id);
+     insert into vector_log(space_id, chunk_id) select new.space_id, new.id where new.space_id != old.space_id;
+   end;`,
 ];
 
 export type Db = DatabaseSync;

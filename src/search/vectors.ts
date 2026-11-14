@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { dimsOf, isPacked, pack, unpackInto } from "./vector-codec.ts";
 
 /** Read-only search processes drop their matrices when the host clears them (model change). */
 export const vectorChanges = new EventEmitter();
@@ -56,19 +57,6 @@ const LOG_PAGE = 20_000;
 const MAGIC = 0x31564d4f; // "OMV1"
 const HEADER = 32;
 
-/** A stored vector as floats; SQLite's buffer is used in place when aligned. */
-function asFloats(b: Uint8Array) {
-  if (b.byteOffset % 4 === 0) return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4);
-  return new Float32Array(b.slice().buffer);
-}
-
-function quantize(v: Float32Array, codes: Int8Array, offset: number) {
-  let max = 0;
-  for (let k = 0; k < v.length; k++) max = Math.max(max, Math.abs(v[k]));
-  const scale = max / 127 || 1;
-  for (let k = 0; k < v.length; k++) codes[offset + k] = Math.round(v[k] / scale);
-  return scale;
-}
 
 const yieldLoop = () => new Promise<void>((ok) => setImmediate(ok));
 const modelOf = (db: Db) => one<{ value: string }>(db, "select value from kv where key = 'embedding_model'")?.value ?? "";
@@ -163,8 +151,8 @@ export class MemoryIndex implements VectorIndex {
       const part = list.slice(i, i + 500);
       const rows = all<{ id: number; embedding: Uint8Array }>(db, `select id, embedding from chunks where space_id = ? and embedding is not null and id in (${part.map(() => "?").join(",")})`, sp, ...part);
       for (const r of rows) {
-        target ??= alloc(r.embedding.byteLength / 4, rows.length);
-        push(target, r.id, asFloats(r.embedding));
+        target ??= alloc(dimsOf(r.embedding), rows.length);
+        push(target, r.id, r.embedding);
       }
     }
     if (target !== m) this.spaces.set(sp, target);
@@ -197,8 +185,8 @@ export class MemoryIndex implements VectorIndex {
     for (;;) {
       const rows = all<{ id: number; embedding: Uint8Array }>(db, "select id, embedding from chunks where space_id = ? and embedding is not null and id > ? order by id limit ?", sp, cursor, PAGE);
       if (!rows.length) break;
-      m ??= alloc(rows[0].embedding.byteLength / 4, Math.max(total, rows.length) + 64);
-      for (const r of rows) push(m, r.id, asFloats(r.embedding));
+      m ??= alloc(dimsOf(rows[0].embedding), Math.max(total, rows.length) + 64);
+      for (const r of rows) push(m, r.id, r.embedding);
       cursor = rows[rows.length - 1].id;
       await yieldLoop();
     }
@@ -346,8 +334,9 @@ function alloc(dims: number, cap: number): SpaceMatrix {
   return { dims, segs: [seg(dims, cap)] };
 }
 
-function push(m: SpaceMatrix, id: number, v: Float32Array) {
-  if (v.length !== m.dims) return;
+/** A row from a stored vector, packed or the older float32 form (vector-codec.ts). */
+function push(m: SpaceMatrix, id: number, v: Uint8Array) {
+  if (dimsOf(v) !== m.dims) return;
   let g = m.segs[m.segs.length - 1];
   if (g.n === g.ids.length) {
     // A new segment instead of growing in place: copying a gigabyte of codes to add one row would
@@ -357,7 +346,7 @@ function push(m: SpaceMatrix, id: number, v: Float32Array) {
     if (g.n === g.ids.length) m.segs.push((g = seg(m.dims, Math.max(1024, Math.ceil(count(m) * 0.1)))));
   }
   g.ids[g.n] = id;
-  g.scales[g.n] = quantize(v, g.codes, g.n * m.dims);
+  g.scales[g.n] = unpackInto(v, g.codes, g.n * m.dims);
   g.n++;
 }
 
@@ -383,8 +372,8 @@ function sampleMatches(db: Db, sp: string, m: SpaceMatrix, samples = 16) {
     let at = Math.floor(((k + 0.5) * total) / Math.min(samples, total));
     const g = m.segs.find((s) => (at < s.n ? true : ((at -= s.n), false)))!;
     const row = one<{ embedding: Uint8Array }>(db, "select embedding from chunks where id = ? and space_id = ? and embedding is not null", g.ids[at], sp);
-    if (!row || row.embedding.byteLength !== m.dims * 4) return false;
-    const scale = quantize(asFloats(row.embedding), codes, 0);
+    if (!row || dimsOf(row.embedding) !== m.dims) return false;
+    const scale = unpackInto(row.embedding, codes, 0);
     if (Math.abs(scale - g.scales[at]) > 1e-6 * Math.max(1, scale)) return false;
     for (let d = 0; d < m.dims; d++) if (codes[d] !== g.codes[at * m.dims + d]) return false;
   }
@@ -407,6 +396,35 @@ function removeIds(m: SpaceMatrix, ids: Set<number>) {
       g.n--;
     }
   }
+}
+
+/**
+ * Store the next vectors still held as float32 values packed (vector-codec.ts), a batch at a time,
+ * oldest chunk first; returns how many it looked at (0: none are left). The packed form is exactly
+ * what the index quantizes a vector to, so nothing is logged (the `vector_log_update` trigger leaves a
+ * re-encoding out) and loaded matrices and their snapshot files stay as they are. The file only
+ * gets smaller after a `vacuum` (`omem db vacuum`, with the service stopped).
+ */
+export function packStoredVectors(app: App, batch = 500): number {
+  if (one<{ value: string }>(app.db, "select value from kv where key = 'vector_packed'")?.value === "1") return 0;
+  const cursor = Number(one<{ value: string }>(app.db, "select value from kv where key = 'vector_pack_cursor'")?.value ?? 0) || 0;
+  const rows = all<{ id: number; embedding: Uint8Array | null }>(app.db, "select id, embedding from chunks where id > ? order by id limit ?", cursor, batch);
+  const set = (key: string, value: string) => run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", key, value);
+  if (!rows.length) {
+    set("vector_packed", "1");
+    return 0;
+  }
+  const upd = app.db.prepare("update chunks set embedding = ? where id = ?");
+  app.db.exec("begin immediate");
+  try {
+    for (const r of rows) if (r.embedding && !isPacked(r.embedding) && r.embedding.byteLength % 4 === 0) upd.run(pack(new Float32Array(r.embedding.buffer.slice(r.embedding.byteOffset, r.embedding.byteOffset + r.embedding.byteLength))), r.id);
+    set("vector_pack_cursor", String(rows[rows.length - 1].id));
+    app.db.exec("commit");
+  } catch (e) {
+    app.db.exec("rollback");
+    throw e;
+  }
+  return rows.length;
 }
 
 /**

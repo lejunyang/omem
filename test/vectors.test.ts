@@ -245,3 +245,73 @@ describe("vector index loading", () => {
     } finally { app.db.close(); }
   });
 });
+
+describe("vectors stored packed", () => {
+  it("packs to exactly what the index quantizes to, and reads both forms", async () => {
+    const { pack, isPacked, dimsOf, toFloats } = await import("../src/search/vector-codec.ts");
+    const v = spread(42);
+    const p = pack(v);
+    expect(isPacked(p)).toBe(true);
+    expect(p.byteLength).toBe(8 + 32);
+    expect(dimsOf(p)).toBe(32);
+    expect(isPacked(blob(v))).toBe(false);
+    expect(dimsOf(blob(v))).toBe(32);
+    // The values come back to within the quantization step.
+    const back = toFloats(p);
+    for (let k = 0; k < 32; k++) expect(Math.abs(back[k] - v[k])).toBeLessThan(0.01);
+
+    // A space holding both forms searches the same as one holding only float32 values.
+    const app = testApp();
+    createSpace(app, { id: "mixed", name: "混合" });
+    createSpace(app, { id: "floats", name: "浮点" });
+    fill(app, "floats", 300, spread);
+    fill(app, "mixed", 300, spread);
+    const mixed = ids(app, "mixed");
+    for (let i = 0; i < mixed.length; i += 2) run(app.db, "update chunks set embedding = ? where id = ?", pack(spread(i)), mixed[i]);
+    const floats = ids(app, "floats");
+    const rank = (hits: { chunkId: number; score: number }[], all: number[]) => hits.map((h) => [all.indexOf(h.chunkId), Number(h.score.toFixed(6))]);
+    expect(rank(await fresh(app, spread(7), ["mixed"]), mixed)).toEqual(rank(await fresh(app, spread(7), ["floats"]), floats));
+  });
+
+  it("converts stored float32 vectors in batches without logging a change, leaving search and snapshots as they were", async () => {
+    const { packStoredVectors } = await import("../src/search/vectors.ts");
+    const { isPacked } = await import("../src/search/vector-codec.ts");
+    const app = testApp();
+    const dir = mkdtempSync(join(tmpdir(), "omem-vec-pack-"));
+    try {
+      app.db.prepare("insert into kv(key, value) values('embedding_model', 'test:model')").run();
+      fill(app, "personal", 1200, spread);
+      const idx = new MemoryIndex({ snapshotDir: dir, snapshotMin: 100 });
+      await idx.prepare(app, ["personal"]);
+      const before = idx.search(app, spread(3), ["personal"], 10);
+      await idx.prepare(app, ["personal"]);
+      expect(idx.counters.snapshotWrites).toBe(1);
+      const logged = (app.db.prepare("select count(*) n from vector_log").get() as { n: number }).n;
+      const bytes = () => (app.db.prepare("select sum(length(embedding)) n from chunks").get() as { n: number }).n;
+      const was = bytes();
+
+      let looked = 0;
+      for (let n = packStoredVectors(app, 500); n; n = packStoredVectors(app, 500)) looked += n;
+      expect(looked).toBeGreaterThanOrEqual(1200);
+      expect(packStoredVectors(app)).toBe(0);
+      const rows = app.db.prepare("select embedding from chunks where embedding is not null").all() as { embedding: Uint8Array }[];
+      expect(rows.every((r) => isPacked(r.embedding))).toBe(true);
+      expect(bytes()).toBe(1200 * (8 + 32));
+      expect(bytes()).toBeLessThan(was / 3);
+      // Not a change: nothing logged, the loaded index and a fresh one (from its snapshot) answer the same.
+      expect((app.db.prepare("select count(*) n from vector_log").get() as { n: number }).n).toBe(logged);
+      await idx.prepare(app, ["personal"]);
+      expect(idx.search(app, spread(3), ["personal"], 10)).toEqual(before);
+      const again = new MemoryIndex({ snapshotDir: dir, snapshotMin: 100 });
+      await again.prepare(app, ["personal"]);
+      expect(again.counters).toMatchObject({ snapshotReads: 1, fullLoads: 0 });
+      expect(again.search(app, spread(3), ["personal"], 10)).toEqual(before);
+      // A real change to a packed row is still logged.
+      const first = ids(app, "personal")[0];
+      run(app.db, "update chunks set embedding = null where id = ?", first);
+      expect((app.db.prepare("select count(*) n from vector_log").get() as { n: number }).n).toBe(logged + 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
