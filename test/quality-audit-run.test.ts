@@ -58,6 +58,7 @@ it("audits an ingest page through ACP and hands a cite finding back to a checked
   const fix = getRun(app, row.fixRun!);
   expect(fix).toMatchObject({ kind: "wiki-write", status: "queued" });
   expect(JSON.stringify(fix.input)).toContain("说没有转写，原件里有转写");
+  expect(String(fix.input.instructions).split("说没有转写，原件里有转写")).toHaveLength(2);
   expect(done.output).toMatchObject({ audited: 1, wrong: 1, fixing: 1 });
   expect(one<{ link: string }>(app.db, "select link from notifications where json_extract(context, '$.runId') = ?", done.id)?.link).toBe("#/quality");
 }, 120000);

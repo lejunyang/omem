@@ -457,8 +457,9 @@ export const configSchema = z.object({
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
   wiki: z.object({
     coverage: z.object({ nightly: z.number().int().min(0).default(3), perSpace: z.number().int().min(0).default(2) }).default(() => ({ nightly: 3, perSpace: 2 })),
+    corrections: z.object({ sweep: z.number().int().min(0).default(15) }).default(() => ({ sweep: 15 })),
     questions: z.object({ nightly: z.number().int().min(0).default(20), expireDays: z.number().int().min(1).default(45) }).default(() => ({ nightly: 20, expireDays: 45 })),
-  }).default(() => ({ questions: { nightly: 20, expireDays: 45 }, coverage: { nightly: 3, perSpace: 2 } })),
+  }).default(() => ({ questions: { nightly: 20, expireDays: 45 }, coverage: { nightly: 3, perSpace: 2 }, corrections: { sweep: 15 } })),
   /** A reply that says nothing (only an intent, an acknowledgement, a way out) goes back to the agent once before it is posted (agents/reply-check.ts). */
   replies: z.object({ check: z.boolean().default(true) }).default(() => ({ check: true })),
   notes: z.object({

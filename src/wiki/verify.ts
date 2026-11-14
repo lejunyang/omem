@@ -23,6 +23,7 @@ import type { RoleName } from "../core/config.ts";
 import { extractCites, folderOverview, listPages, pageExists, writePage, appendLog } from "./store.ts";
 import { addQuestions, ASK_LIMIT, getQuestion, lapseQuestions, listQuestions, nightlyQuestionCandidates, questionsText, RESOLVE_LIMIT, refsIn, updateQuestion, type QuestionInput } from "./questions.ts";
 import { codeSpaces, mermaidCheckable, refreshCodeIndexes, sameTopicElsewhere, SOFT_LENGTH, textLength } from "./checks.ts";
+import { correctionLessons } from "./corrections.ts";
 
 /** Checks of one page in one run: the first look and up to two after revisions. */
 export const CHECK_ROUNDS = 3;
@@ -155,12 +156,12 @@ export function citedExcerpts(app: App, body: string, budget = 14000) {
  * material a draft's check gets, in the audit's own run, with nobody to hand the findings back to.
  * Returns the findings, or null when the checker did not hand any conclusion in.
  */
-export async function checkPublished(ctx: RunContext, spaceId: string, page: { slug: string; title: string; summary: string; kind: string; body: string }, readSpaces: string[]): Promise<{ findings: Finding[]; summary?: string; ai: string } | null> {
+export async function checkPublished(ctx: RunContext, spaceId: string, page: { slug: string; title: string; summary: string; kind: string; body: string }, readSpaces: string[], focus = ""): Promise<{ findings: Finding[]; summary?: string; ai: string } | null> {
   const app = ctx.app;
   setRunOutput(app, ctx.run.id, { pageCheck: null });
   const draft: Draft = { slug: page.slug, title: page.title, summary: page.summary, kind: page.kind, body: page.body };
   const brief: PageBrief = { slug: page.slug, title: page.title, kind: page.kind, question: page.summary || page.title, outline: "", entry_points: [] };
-  const r = await role(ctx, "wiki-checker", spaceId, checkerTask(app, spaceId, brief, draft, readSpaces, 1, [], "", [], true), { spaces: [spaceId], readSpaces, ownAI: true });
+  const r = await role(ctx, "wiki-checker", spaceId, [checkerTask(app, spaceId, brief, draft, readSpaces, 1, [], "", [], true), focus].filter(Boolean).join("\n\n"), { spaces: [spaceId], readSpaces, ownAI: true });
   const got = getRun(app, ctx.run.id).output.pageCheck as { findings: Finding[]; summary?: string } | null | undefined;
   return got ? { ...got, ai: [r.ai.profile, r.ai.model].filter(Boolean).join(" · ") } : null;
 }
@@ -181,6 +182,7 @@ function checkerTask(app: App, spaceId: string, brief: PageBrief, draft: Draft, 
       ? `抽检空间 ${spaceId} 已发布的页面 ${draft.slug}「${draft.title}」（类型 ${draft.kind}）。下面说的“草稿”就是这一页现在的正文；照核对草稿的标准逐条看，结论照常用 submit_page_check 交，没有人会当场改，所以每条写清原句和依据。`
       : `核对空间 ${spaceId} 的页面草稿 ${draft.slug}「${draft.title}」（类型 ${draft.kind}，第 ${round} 轮核对）。它还没有发布。`,
     `这页要回答：${brief.question}`,
+    correctionLessons(app, spaceId),
     `## 草稿全文\n\n${draft.body}`,
     `## 草稿引用的原件行（宿主按引用摘出）\n\n${citedExcerpts(app, draft.body) || "（草稿没有引用原件）"}`,
     `## 可以查的代码空间\n\n${codeSpaces(app, spaceId, readSpaces).join("、")}`,
@@ -323,7 +325,7 @@ function writeCounts(app: App, runId: string) {
 // ---------------------------------------------------------------- a generation
 
 type GenPage = { slug: string; title: string; runs: string[] };
-export type Generation = { id: string; spaceId: string; userId: string; planRunId?: string; startedAt: string; pages: GenPage[]; notes: string[]; resolveRunId?: string; reportedAt?: string; report?: GenerationReport };
+export type Generation = { id: string; spaceId: string; userId: string; planRunId?: string; startedAt: string; pages: GenPage[]; notes: string[]; resolveRunId?: string; reportedAt?: string; report?: GenerationReport; notify?: boolean };
 export type GenerationReport = {
   written: { slug: string; title: string }[];
   fixed: number;
@@ -350,8 +352,9 @@ const patchInput = (app: App, runId: string, patch: Record<string, unknown>) => 
 };
 
 /** A generation's writing runs, queued together: settled (and reported) when the last one ends. */
-export function startGeneration(app: App, input: { id?: string; spaceId: string; userId?: string | null; planRunId?: string; notes?: string[]; writes: { slug: string; title: string; runId: string }[] }) {
+export function startGeneration(app: App, input: { id?: string; spaceId: string; userId?: string | null; planRunId?: string; notes?: string[]; notify?: boolean; writes: { slug: string; title: string; runId: string }[] }) {
   const g: Generation = { id: input.id ?? newId("wg"), spaceId: input.spaceId, userId: input.userId ?? OWNER, planRunId: input.planRunId, startedAt: now(), pages: input.writes.map((w) => ({ slug: w.slug, title: w.title, runs: [w.runId] })), notes: input.notes ?? [] };
+  g.notify = input.notify;
   saveGeneration(app, g);
   for (const w of input.writes) patchInput(app, w.runId, { generation: g.id });
   return g;
@@ -417,7 +420,7 @@ function finish(app: App, g: Generation) {
   g.report = report;
   g.reportedAt = now();
   saveGeneration(app, g);
-  deliverReport(app, g, report);
+  if (g.notify !== false) deliverReport(app, g, report);
   if (g.planRunId && one(app.db, "select 1 from runs where id = ?", g.planRunId)) setRunOutput(app, g.planRunId, { report: g.report });
   saveGeneration(app, g);
   return g.report;

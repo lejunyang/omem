@@ -1849,6 +1849,16 @@ export const migrations: readonly string[] = [
      space_id text not null, source_id text not null, at text not null, generation_id text not null,
      primary key(space_id, source_id, at)
    );`,
+  `create table page_corrections (
+     id text primary key, space_id text not null, slug text not null,
+     wrong text not null, right text not null, "by" text not null, at text not null,
+     pipeline text, status text not null default 'open' check(status in ('open','swept')),
+     sweep_run_id text, checked integer not null default 0, fixed integer not null default 0,
+     updated_at text not null
+   );
+   create index page_corrections_space on page_corrections(space_id, at desc);
+   create index page_writes_latest on page_writes(space_id, slug, id desc);
+   create index page_writes_space_at on page_writes(space_id, at);`,
 ];
 
 export type Db = DatabaseSync;

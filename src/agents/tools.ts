@@ -1653,6 +1653,18 @@ def({
 const refs = z.array(z.string()).optional().describe("来源引用，如 src:<原件id>#L10-L20、mem:<记忆id>、msg:<消息id>");
 
 def({
+  name: "correct_page",
+  description: "本人指出 Wiki 页面的一个错误时使用：记下哪里不对和应该是什么，安排修改这页、排查同空间的同类错误，并让以后的核对记住。不用于 Agent 自己的疑问。",
+  write: true,
+  schema: z.object({ space: z.string().optional(), page: z.string().trim().min(1), wrong: z.string().trim().min(1).max(4000), right: z.string().trim().min(1).max(4000) }),
+  handler: async (ctx, a) => {
+    const { createCorrection } = await import("../wiki/corrections.ts");
+    const r = createCorrection(ctx.app, wikiSpace(ctx, a.space), { slug: a.page, wrong: a.wrong, right: a.right }, { userId: ctx.userId, parentId: ctx.runId, readable: ctx.spaces, writable: ctx.writable ?? ctx.spaces });
+    return JSON.stringify({ ...r, message: "已安排修改和同类排查，尚未完成。" });
+  },
+});
+
+def({
   name: "write_page",
   description:
     "创建或整体替换一篇 Wiki 页面（Markdown，会进入 Git 历史）。正文中用 [[slug]] 链接其他页面，用 [文字](src:<原件id>#L起-L止) 引用原件。修改已有页面前先 read_page。",
@@ -4580,7 +4592,7 @@ def({
   handler: (ctx, a) => {
     const me = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
     // A page being written (wiki/verify.ts), or a published one the nightly audit picked (quality/audit.ts).
-    if (!me || (me.kind !== "wiki-write" && me.kind !== "quality-audit") || me.status !== "running") throw new HttpError(400, "submit_page_check 只在核对 Wiki 页面草稿时用");
+    if (!me || !["wiki-write", "quality-audit", "wiki-sweep"].includes(me.kind) || me.status !== "running") throw new HttpError(400, "submit_page_check 只在核对 Wiki 页面时用");
     setRunOutput(ctx.app, me.id, { pageCheck: { findings: a.findings, summary: a.summary } });
     return a.findings.length ? `已交 ${a.findings.length} 个问题，会交回写作者修改。` : "已记下：这一版没有问题。";
   },

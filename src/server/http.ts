@@ -1003,6 +1003,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/wiki/:space/coverage/run", async (req) => {
     return runCoverage(app, { spaceId: (req.params as { space: string }).space, userId: who(req) });
   });
+  server.get("/api/wiki/:space/corrections", async (req) => {
+    const space = (req.params as { space: string }).space;
+    return (await import("../wiki/corrections.ts")).listCorrections(app, space);
+  });
+  server.post("/api/wiki/:space/corrections", async (req) => {
+    const space = (req.params as { space: string }).space;
+    const { correctionInput, createCorrection } = await import("../wiki/corrections.ts");
+    return createCorrection(app, space, q(correctionInput, req.body), { userId: who(req) });
+  });
   server.put("/api/wiki/:space/page/*", async (req) => {
     const { space, "*": slug } = req.params as { space: string; "*": string };
     const b = q(z.object({ title: z.string(), summary: z.string().optional(), kind: z.string().optional(), body: z.string() }), req.body);

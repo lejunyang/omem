@@ -224,6 +224,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
 | 重点文档覆盖统计与按计数信号补写：每晚 04:10，全局默认 3 份、每空间 2 份，尊重 autoOrganize，跳过代码空间；30 天尝试冷却；指定 sourceIds 规划后沿用写作核对；Wiki 展开前 20 份和手动运行、设置额度、只读 peer 数字 | 已实现；专项回归覆盖，真实模型成文效果待验 | `src/wiki/coverage.ts`、`generate.ts`、`web/src/components/WikiCoverage.vue`、`test/wiki-coverage.test.ts` |
+| Wiki 本人指正与同类排查：网页一次填写哪里不对、应该是什么，工具 `correct_page`；`page_corrections` 记录原话与最后写入的运行类型；先改原页，再查同空间同类运行近 90 天写的页及搜索命中，同目录优先、默认最多 15 页；共用夜间抽检退回路径，实际发布且核对通过才计已改，一条 later 汇总；本空间最近 20 条指正进入后续每轮核对 | 已实现；2026-11-15，`test/wiki-corrections.test.ts`（ACP + MCP 假 Agent）；真实模型判断质量待验 | `src/wiki/corrections.ts`、`verify.ts`、`generate.ts`、`web/src/views/Wiki.vue`、`web/src/components/WikiQuestions.vue` |
 | Agent 原件标注独立复核：每小时 35 分，一空间一批，排序判断优先，其次搜索影响、时间；保留八成、撤回归零、拿不准交本人；近 14 天撤回可恢复 | 已实现；`test/note-review.test.ts` | `attention.ts`、`jobs.ts`、`roles/note-reviewer.md`、`review_notes` |
 | 知识库建议三档生效：新配置默认 safe，归入和忽略直接生效、新建仍确认；all 全部生效、off 全部确认，旧布尔兼容；通知分列应用与待确认，保留撤销 | 已实现；`test/lark-knowledge.test.ts` | `src/channels/lark-knowledge.ts`、原件 → 知识库 |
 | Wiki 问题积压：阅读次数、候选全局预算、无阅读旧问题过期、筛选与重开 | 已实现：每天 05:40 先让长期没人读的页面上的旧问题过期，再按页面阅读量取一批、每个空间排一次调查（`resolveNightly`）；网页可筛选过期并重开 | `src/wiki/questions.ts`、`src/wiki/verify.ts`、`test/wiki-question-backlog.test.ts` |

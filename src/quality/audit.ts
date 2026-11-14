@@ -227,7 +227,6 @@ export function qualityOverview(app: App) {
   return { settings: app.config.quality.audit, pipelines: pipelineStats(app), flagged: flaggedPipelines(app), recent: recentAudits(app), waiting: auditCandidates(app).length };
 }
 
-const findingLine = (f: Finding, i: number) => `${i + 1}. [${f.kind}] “${truncate(f.quote, 200)}”——${f.problem}（依据：${f.basis}${f.fix ? `；建议：${f.fix}` : ""}）`;
 
 /** Queue tonight's audit when there is something to look at and none is under way. */
 export function scheduleAudit(app: App) {
@@ -295,16 +294,13 @@ registerHandler("quality-audit", async (ctx: RunContext) => {
 /** Wrong pages go back to a writer with what was found, a space at a time (one generation, one report). */
 async function sendBack(ctx: RunContext, rows: AuditRow[]): Promise<AuditRow[]> {
   const app = ctx.app;
-  const { generateWiki } = await import("../wiki/generate.ts");
+  const { sendPagesBack } = await import("../wiki/generate.ts");
   const sent: AuditRow[] = [];
   for (const spaceId of new Set(rows.map((r) => r.spaceId))) {
     const here = rows.filter((r) => r.spaceId === spaceId);
-    const focus = [
-      "夜间抽检在下面几页里发现了问题。你负责的是任务开头写的那一页：只改它名下列出的这些，事实以原件和代码为准，其余内容原样保留；别的页不用管。",
-      ...here.map((r) => `## ${r.target}\n${r.findings.map(findingLine).join("\n")}`),
-    ].join("\n\n");
+    const focus = "夜间抽检在下面几页里发现了问题。你负责的是任务开头写的那一页：只改它名下列出的这些，事实以原件和代码为准，其余内容原样保留；别的页不用管。";
     try {
-      const g = generateWiki(app, { spaceId, pages: here.map((r) => r.target), focus, parentId: ctx.run.id }) as { writeRuns?: string[] };
+      const g = sendPagesBack(app, { spaceId, pages: here.map((r) => ({ slug: r.target, findings: r.findings })), focus, parentId: ctx.run.id });
       here.forEach((r, i) => {
         r.fixRun = g.writeRuns?.[i] ?? null;
         run(app.db, "update quality_audits set fix_run = ? where id = ?", r.fixRun, r.id);

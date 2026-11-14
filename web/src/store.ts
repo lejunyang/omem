@@ -117,6 +117,7 @@ export const runKindLabel: Record<string, string> = {
   "archive-rule-draft": "编写归档规则",
   "wiki-plan": "规划目录",
   "wiki-write": "写作页面",
+  "wiki-sweep": "按指正排查",
   "wiki-lint": "检查页面",
   "wiki-organize": "整理 Wiki 目录",
   heartbeat: "巡检",

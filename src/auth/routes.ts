@@ -162,6 +162,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/wiki/:space/questions/:id/reopen": s("wiki.write", "p.space"),
   "POST /api/wiki/:space/questions/resolve": s("wiki.write", "p.space"),
   "POST /api/wiki/:space/recheck": s("wiki.write", "p.space"),
+  "GET /api/wiki/:space/corrections": s("wiki.write", "p.space"),
+  "POST /api/wiki/:space/corrections": s("wiki.write", "p.space"),
 
   // memories
   // Without a space: what this person can read (the handler narrows it).

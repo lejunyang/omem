@@ -76,6 +76,12 @@ describe("roles and permissions", async () => {
     expect(((await json("ann", "/api/spaces")) as { id: string }[]).map((s) => s.id).sort()).toEqual(["personal-ann", "team"]);
     expect((await as("ann", "/api/wiki/team")).status).toBe(200);
     expect((await as("ann", "/api/wiki/other")).status).toBe(403);
+    expect((await as("ann", "/api/wiki/team/corrections")).status).toBe(403);
+    expect((await as("bob", "/api/wiki/team/corrections")).status).toBe(200);
+    expect((await as("bob", "/api/wiki/other/corrections")).status).toBe(403);
+    const correction = { method: "POST", body: JSON.stringify({ slug: "intro", wrong: "旧说法", right: "新说法" }) };
+    expect((await as("ann", "/api/wiki/team/corrections", correction)).status).toBe(403);
+    expect((await as("bob", "/api/wiki/other/corrections", correction)).status).toBe(403);
     const page = JSON.stringify({ title: "介绍", body: "改过了" });
     expect((await as("ann", "/api/wiki/team/page/intro", { method: "PUT", body: page })).status).toBe(403);
     expect((await as("bob", "/api/wiki/team/page/intro", { method: "PUT", body: page })).status).toBe(200);

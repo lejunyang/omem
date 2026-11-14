@@ -8,7 +8,7 @@ import { HttpError, json, newId, now, localStamp } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
 import { triggerFor, type RunTrigger } from "../core/run-trigger.ts";
 
-export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "note-review" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state" | "quality-audit";
+export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "note-review" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state" | "quality-audit" | "wiki-sweep";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
   /** Background run that found nothing to do; hidden from the default run list. */
@@ -324,8 +324,10 @@ const INTERACTIVE = new Set<string>(["ask", "agent"]);
  * The bulk digest of stored material (digest.ts: grading and distilling batch after batch) gets a
  * slot of its own, one at a time: new material (ingest), the heartbeat and other background work
  * keep their slots and are never queued behind a long digest batch.
+ * A correction sweep also uses this slot: it waits for checked writing runs in the background
+ * class, so it must not occupy their last slot when background concurrency is one.
  */
-const BULK = new Set<string>(["digest", "triage"]);
+const BULK = new Set<string>(["digest", "triage", "wiki-sweep"]);
 export const BULK_SLOTS = 1;
 type Cls = "interactive" | "background" | "bulk";
 const classOf = (kind: string): Cls => (INTERACTIVE.has(kind) ? "interactive" : BULK.has(kind) ? "bulk" : "background");

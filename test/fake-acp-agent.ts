@@ -125,6 +125,7 @@ new AgentSideConnection(
       return {};
     },
     async deleteSession(p: { sessionId: string }) {
+      if (process.env.FAKE_EXIT_ON_DELETE) setTimeout(() => process.exit(0), 50).unref();
       if (process.env.FAKE_DELETE_FAIL_FILE && existsSync(process.env.FAKE_DELETE_FAIL_FILE))
         throw new RequestError(-32603, "Internal error", { details: "session still active" });
       if (process.env.FAKE_DELETE_LOG) appendFileSync(process.env.FAKE_DELETE_LOG, p.sessionId + "\n");
@@ -187,7 +188,8 @@ new AgentSideConnection(
             const round = Number(/第 (\d+) 轮核对/.exec(prompt)?.[1] ?? 1);
             const finding = { quote: "示例正文", kind: "negative", problem: "说没有转写，原件里有转写", basis: "materials:README.md 第 1 行", fix: "删掉这句" };
             const unsure = { quote: "上限待确认", kind: "unsure", problem: "退款上限没查清，写成了待确认", basis: "原件里没有上限", fix: "从页面拿掉", question: "A 业务的退款上限是多少？" };
-            const findings = mode === "cite" ? [{ ...finding, kind: "cite" }] : mode === "always" || (mode === "once" && round === 1) ? [finding] : mode === "unsure" && round === 1 ? [unsure] : [];
+            const sameMistake = mode === "corrections" && /## 草稿全文\s+[^#]*错误样本/.test(prompt);
+            const findings = sameMistake ? [finding] : mode === "cite" ? [{ ...finding, kind: "cite" }] : mode === "always" || (mode === "once" && round === 1) ? [finding] : mode === "unsure" && round === 1 ? [unsure] : [];
             const checked = await call("submit_page_check", { findings, summary: findings.length ? "有一处不属实" : "可以发布" });
             await say(JSON.stringify({ prompt, checked, round }));
             return { stopReason: "end_turn" as const };
@@ -219,7 +221,8 @@ new AgentSideConnection(
           // FAKE_WIKI_WRITE_FILE=long: the first version is far too long; questions: it hands in one question it left out.
           const writeMode = control("FAKE_WIKI_WRITE_FILE", "write");
           const body = planner ? "- [[overview|概览]]" : writeMode === "long" ? "这一段讲退款的一个步骤。".repeat(700) : "示例正文";
-          const written = await call("write_page", { page: planner ? "index" : "overview", title: planner ? "目录" : "概览", kind: planner ? "index" : "guide", summary: "示例说明", body, ...(writeMode === "questions" && !planner ? { questions: ["退款是原路退回还是退到余额？"] } : {}) });
+          const target = writeMode === "corrections" ? /^页面：([^「]+)「/m.exec(prompt)?.[1] ?? "overview" : "overview";
+          const written = await call("write_page", { page: planner ? "index" : target, title: planner ? "目录" : "概览", kind: planner ? "index" : "guide", summary: "示例说明", body, ...(writeMode === "questions" && !planner ? { questions: ["退款是原路退回还是退到余额？"] } : {}) });
           await say(JSON.stringify({ prompt, read, blockedRead, blockedWrite, written }));
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };

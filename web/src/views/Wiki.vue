@@ -92,6 +92,18 @@ function closeQuestions() {
   void loadQuestionCount();
   if (route.query.questions) void router.replace({ query: {} });
 }
+async function correctPage() {
+  const selected = space.value, target = page.value;
+  if (!target) return;
+  const answer = await promptDialog("这页有错", {
+    message: `指出《${target.meta.title}》的一处错误。助理会修改这页，排查同类错误，以后的核对也会记住。`,
+    fields: [{ id: "wrong", label: "哪里不对", value: "", required: true, maxLength: 4000 }, { id: "right", label: "应该是什么", value: "", required: true, maxLength: 4000 }],
+    okText: "指正并排查",
+  });
+  if (!answer) return;
+  await post(`/api/wiki/${selected}/corrections`, { slug: target.slug, ...answer });
+  toast("已安排修改和同类排查");
+}
 
 if (!route.params.space) router.replace(`/wiki/${state.space}`);
 else if (route.params.space !== state.space && state.spaces.some((x) => x.id === route.params.space)) state.space = route.params.space as string;
@@ -317,7 +329,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         </div>
         <input v-model="filter" class="input filter" placeholder="筛选页面" aria-label="筛选页面" />
         <button v-if="stalePageList.length" class="nav-warn" type="button" @click="toNotice"><Icon name="alert" :size="13" />{{ stalePageList.length }} 页的原件已变化</button>
-        <button v-if="questionCount || lapsedCount" class="nav-warn" type="button" title="写作时拿不准、没写进页面的点" @click="questionsOpen = true"><Icon name="chat" :size="13" />{{ questionCount }} 个未决问题<span v-if="lapsedCount"> · {{ lapsedCount }} 个已过期</span></button>
+        <button v-if="state.me?.wiki === null || state.me?.wiki?.includes(space)" class="nav-warn" type="button" title="未决问题和本人指正" @click="questionsOpen = true"><Icon name="chat" :size="13" />未决问题 {{ questionCount }} · 本人指正<span v-if="lapsedCount"> · {{ lapsedCount }} 个已过期</span></button>
       </div>
       <div class="tree">
         <router-link v-if="hasHome" :to="`/wiki/${space}`" class="home" :class="{ on: currentSlug === 'index' }" @click="navOpen = false"><Icon name="home" :size="14" />首页</router-link>
@@ -406,6 +418,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
           <button v-if="pageStale" class="btn ghost sm" :disabled="upkeep?.running" @click="lint([page.slug])"><Icon name="refresh" :size="14" />检查这页</button>
           <span class="spacer" />
           <button class="btn ghost sm" @click="startEdit"><Icon name="edit" :size="14" />编辑</button>
+          <button v-if="state.me?.wiki === null || state.me?.wiki?.includes(space)" class="btn ghost sm" @click="correctPage">这页有错</button>
           <button v-if="page.slug !== 'index'" class="btn ghost sm" @click="movePage"><Icon name="folder" :size="14" />移动</button>
           <button class="btn ghost sm" @click="rewriteOpen = true"><Icon name="sparkles" :size="14" />让助理改写</button>
           <button class="btn ghost sm icon danger" title="删除页面" @click="remove"><Icon name="trash" :size="14" /></button>

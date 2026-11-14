@@ -36,6 +36,11 @@ updated: 2026-11-15
 - `wiki/coverage.ts`：有效级别为 focus 的文档统计覆盖率；尚无页面引用的按贴链接次数、发帖人数、引用、事项、本人定级和近期修改排序，不读取候选正文。`wiki_coverage_tries` 记录生成尝试并同步，30 天内不重复选。
 - `wiki/generate.ts` 新增 `sourceIds`，只规划指定文档涉及的内容，优先补已有页面，沿用现有写作与核对。默认 `wiki-coverage` 每天 04:10 全局最多 3 份，每空间最多 2 份，跳过关闭自动整理和代码空间。
 - 空间 Wiki 顶部的覆盖数字可展开前 20 份候选和具体信号，写权限用户可点“现在写这几份”；两个 coverage HTTP 路由均需 wiki.write；只读 peer 命令 `wiki-coverage` 返回各空间数字。设置 → 定时任务可调整额度或关闭。回归在 `test/wiki-coverage.test.ts`、`test/permissions.test.ts`。
+## Wiki 指正：改这一页、排查同类、后续核对记住（11-15）
+
+- `src/wiki/corrections.ts`：`page_corrections` 保存本人原话、正确说法和最后写入的运行类型，支持设备拉取合并；网页与 `correct_page` 共用写权限和空间范围检查。原页直接进现有写作核对，再由 `wiki-sweep` 选同空间同类运行近 90 天写的页与搜索命中，同目录优先、默认最多 15 页（0 关闭）。
+- `verify.ts` 每轮草稿核对和 `checkPublished` 都带本空间最近 20 条指正；排查只找同类问题，通过 `generate.ts` 的 `sendPagesBack` 与夜间抽检共用退回路径。等写作与核对完成再计已改，只有一条 later 汇总，0 页不通知。网页页面操作“这页有错”用双字段弹窗，未决问题清单列指正和进度。
+- 验证：`test/wiki-corrections.test.ts` 走 ACP + MCP 假 Agent；权限、工具分组与夜间抽检定向回归。真实模型同类问题判断待验。
 
 ## Agent 页按分组选工具；技能可以停用（11-14）
 

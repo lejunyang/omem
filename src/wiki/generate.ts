@@ -24,6 +24,8 @@ export function generateWiki(app: App, input: {
   pages?: string[];
   /** Plan only from these originals, merging into existing pages where the topic fits. */
   sourceIds?: string[];
+  /** A correction sweep sends one report after its checked writes finish. */
+  notify?: boolean;
 }) {
   const userId = input.userId ?? OWNER;
   const allowed = scopeFor(app, userId, input.readable ?? null);
@@ -59,11 +61,17 @@ export function generateWiki(app: App, input: {
       });
     });
     // Reported together when the last of them ends (verify.ts).
-    startGeneration(app, { spaceId, userId, writes: runs.map((r) => ({ slug: (r.input as { brief: { slug: string } }).brief.slug, title: r.title.replace(/^写作：/, ""), runId: r.id })) });
-    return Object.assign(runs[0], { writeRuns: runs.map((r) => r.id) });
+    const generation = startGeneration(app, { spaceId, userId, notify: input.notify, writes: runs.map((r) => ({ slug: (r.input as { brief: { slug: string } }).brief.slug, title: r.title.replace(/^写作：/, ""), runId: r.id })) });
+    return Object.assign(runs[0], { writeRuns: runs.map((r) => r.id), generation: generation.id });
   }
   return createRun(app, {
     kind: "wiki-plan", spaceId, title: "规划 Wiki 目录", userId, parentId: input.parentId,
     input: { focus, sourceIds: input.sourceIds, autoWrite: input.autoWrite ?? true, readSpaces, ai: input.ai },
   });
+}
+
+/** Published checks and correction sweeps use the same checked writing handoff. */
+export function sendPagesBack(app: App, input: { spaceId: string; pages: { slug: string; findings: import("./verify.ts").Finding[] }[]; focus: string; userId?: string; parentId: string; readable?: string[] | null; notify?: boolean }) {
+  const focus = [input.focus, ...input.pages.map((p) => `## ${p.slug}\n${p.findings.map((f) => `- [${f.kind}] “${f.quote}”：${f.problem}\n  依据：${f.basis}${f.fix ? `\n  建议：${f.fix}` : ""}`).join("\n")}`)].join("\n\n");
+  return generateWiki(app, { ...input, pages: input.pages.map((p) => p.slug), focus }) as ReturnType<typeof generateWiki> & { writeRuns: string[]; generation: string };
 }

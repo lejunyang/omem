@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { get, post } from "../api";
-import { toast } from "../store";
+import { get, post, onServerEvent } from "../api";
+import { onBeforeUnmount } from "vue";
+import { toast, relTime } from "../store";
 import UiSegmented from "./UiSegmented.vue";
 import VirtualList from "./VirtualList.vue";
 import Icon from "./Icon.vue";
@@ -27,6 +28,8 @@ type Migration = { pages: number; questions: number; done: boolean } | null;
 const props = defineProps<{ space: string }>();
 const emit = defineEmits<{ close: []; open: [slug: string] }>();
 const items = ref<WikiQuestion[]>([]);
+type Correction = { id: string; slug: string; title: string; wrong: string; right: string; at: string; checked: number; fixed: number; status: string; sweep_run_id: string | null };
+const corrections = ref<Correction[]>([]);
 const migration = ref<Migration>(null);
 const resolving = ref<string | null>(null);
 const loading = ref(true);
@@ -40,10 +43,15 @@ async function load() {
   const space = props.space, status = filter.value;
   loading.value = true;
   items.value = [];
+  corrections.value = [];
   try {
-    const r = await get<{ questions: WikiQuestion[]; migration: Migration; resolving: string | null }>(`/api/wiki/${space}/questions?status=${status}`);
+    const [r, recent] = await Promise.all([
+      get<{ questions: WikiQuestion[]; migration: Migration; resolving: string | null }>(`/api/wiki/${space}/questions?status=${status}`),
+      get<Correction[]>(`/api/wiki/${space}/corrections`),
+    ]);
     if (seq !== loadSeq || space !== props.space || status !== filter.value) return;
     items.value = r.questions;
+    corrections.value = recent;
     migration.value = r.migration;
     resolving.value = r.resolving;
   } catch (e) {
@@ -53,6 +61,11 @@ async function load() {
   }
 }
 watch([() => props.space, filter], load, { immediate: true });
+let reload: ReturnType<typeof setTimeout> | undefined;
+const off = onServerEvent((e) => {
+  if (e.type === "run" && !reload) reload = setTimeout(() => { reload = undefined; void load(); }, 2000);
+});
+onBeforeUnmount(() => { off(); clearTimeout(reload); ++loadSeq; });
 
 const groups = computed(() => {
   const by = new Map<string, WikiQuestion[]>();
@@ -109,8 +122,16 @@ async function recheck() {
       </div>
       <div v-if="migration && migration.pages" class="muted small">升级时从 {{ migration.pages }} 页移出了旧的“还没查清”一节，变成 {{ migration.questions }} 个问题{{ migration.done ? "" : "（还在进行）" }}。</div>
       <Skeleton v-if="loading" :rows="5" variant="lines" />
-      <div v-else-if="!items.length" class="muted pad">没有未决问题。</div>
-      <div v-else class="groups">
+      <section v-if="!loading && corrections.length" class="group corrections">
+        <strong>本人指正（最近 20 条）</strong>
+        <div v-for="c in corrections" :key="c.id" class="q">
+          <div class="row wrap"><span class="muted small">{{ relTime(c.at) }}</span><a href="#" @click.prevent="emit('open', c.slug)">{{ c.title }}</a></div>
+          <div class="text">{{ c.wrong }} → {{ c.right }}</div>
+          <div class="small muted">{{ c.status === 'swept' ? '排查结束' : '正在修改和排查' }} · 检查 {{ c.checked }} 页 / 已改 {{ c.fixed }} 页 <router-link v-if="c.sweep_run_id" :to="`/runs/${c.sweep_run_id}`">查看排查运行</router-link></div>
+        </div>
+      </section>
+      <div v-if="!loading && !items.length" class="muted pad">没有未决问题。</div>
+      <div v-if="!loading && items.length" class="groups">
         <section v-for="g in groups" :key="g.page" class="group">
           <a href="#" class="ptitle" @click.prevent="emit('open', g.page)">{{ g.title }}</a>
           <VirtualList :items="g.list" :item-key="(q: WikiQuestion) => q.id" :estimate="120"><template #default="{ item: q }"><div class="q">
@@ -199,6 +220,10 @@ async function recheck() {
   gap: 8px;
 }
 .text {
+  overflow-wrap: anywhere;
+}
+.corrections a {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 .refs {

@@ -40,6 +40,7 @@ export const pullTables: Table[] = [
   { name: "ui_pages", key: ["id", "version"] },
   { name: "wiki_questions", key: ["id"], newer: "updated_at" },
   { name: "wiki_coverage_tries", key: ["space_id", "source_id", "at"] },
+  { name: "page_corrections", key: ["id"], newer: "updated_at" },
   { name: "rules", key: ["id"], newer: "updated_at", local: ["enabled"] },
   { name: "archive_rules", key: ["id"], newer: "sync_updated_at" },
   { name: "attention_rules", key: ["id"], newer: "sync_updated_at" },
