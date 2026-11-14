@@ -977,6 +977,7 @@ export const configSchema = z.object({
         .object({
           enabled: z.boolean().default(true),
           max: z.number().int().min(1).max(100).default(8),
+          levels: z.number().int().min(0).max(100).default(6),
           perPipeline: z.number().int().min(1).max(50).default(3),
           strictMax: z.number().int().min(1).max(100).default(12),
           lookbackDays: z.number().int().min(1).max(30).default(3),
@@ -985,9 +986,9 @@ export const configSchema = z.object({
           threshold: z.number().min(0).max(1).default(0.8),
           fix: z.enum(["off", "wrong", "all"]).default("wrong"),
         })
-        .default(() => ({ enabled: true, max: 8, perPipeline: 3, strictMax: 12, lookbackDays: 3, days: 14, minSamples: 6, threshold: 0.8, fix: "wrong" as const })),
+        .default(() => ({ enabled: true, max: 8, levels: 6, perPipeline: 3, strictMax: 12, lookbackDays: 3, days: 14, minSamples: 6, threshold: 0.8, fix: "wrong" as const })),
     })
-    .default(() => ({ audit: { enabled: true, max: 8, perPipeline: 3, strictMax: 12, lookbackDays: 3, days: 14, minSamples: 6, threshold: 0.8, fix: "wrong" as const } })),
+    .default(() => ({ audit: { enabled: true, max: 8, levels: 6, perPipeline: 3, strictMax: 12, lookbackDays: 3, days: 14, minSamples: 6, threshold: 0.8, fix: "wrong" as const } })),
   /**
    * The heartbeat (agents/jobs.ts): due reminders are delivered by the host; the agent is only needed
    * when new material may bear on something watched or waited for. `gate: decision` asks the decision

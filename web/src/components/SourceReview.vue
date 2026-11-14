@@ -13,7 +13,7 @@ import VirtualList from "./VirtualList.vue";
  * Notes whose passage is gone after a re-read are listed too.
  */
 type Note = { id: number; sourceId: string; title: string; lineStart: number | null; lineEnd: number | null; kind: string; note: string; ref: string | null; quote: string | null; by: string; status: string; staleAt: string | null; reviewNote: string | null; reviewedBy: string | null; hits: number };
-type LevelItem = { key: string; title: string; path: string; level: string; reason: string; sources: number; at: string };
+type LevelItem = { key: string; title: string; path: string; level: string; reason: string; sources: number; at: string; type?: "source" | "node"; auditId?: string; suggestedLevel?: string; reviewReason?: string };
 type Item = { type: "note"; note: Note } | { type: "level"; level: LevelItem };
 
 const props = defineProps<{ space: string }>();
@@ -49,6 +49,7 @@ async function decide(i: Item, decision: "confirm" | "reject") {
   busy.value = new Set(busy.value).add(k);
   try {
     if (i.type === "note") await post(`/api/source-notes/${i.note.id}/review`, { decision });
+    else if (i.level.auditId) await post("/api/sources/level-audit/review", { space: props.space, auditId: i.level.auditId, decision: decision === "confirm" ? "accept" : "keep" });
     else await post("/api/sources/node-level/review", { space: props.space, node: i.level.key, decision });
     await load();
     emit("changed");
@@ -71,9 +72,11 @@ async function decide(i: Item, decision: "confirm" | "reject") {
     <template #default="{ item: i }">
       <div class="rv">
         <template v-if="i.type === 'level'">
-          <div class="head"><span class="badge accent">目录定级</span><span class="lv">{{ LEVEL_LABEL[i.level.level] }}</span><span class="muted small">{{ i.level.sources }} 份</span></div>
-          <div class="ttl ellipsis" :title="i.level.path">{{ i.level.path }}</div>
+          <div class="head"><span class="badge accent">{{ i.level.type === 'source' ? '原件定级' : '目录定级' }}</span><span class="lv">{{ LEVEL_LABEL[i.level.level] }}</span><span class="muted small">{{ i.level.sources }} 份</span></div>
+          <router-link v-if="i.level.type === 'source'" :to="`/sources/${i.level.key}`" class="ttl ellipsis" :title="i.level.path">{{ i.level.title }}</router-link>
+          <div v-else class="ttl ellipsis" :title="i.level.path">{{ i.level.path }}</div>
           <div v-if="i.level.reason" class="muted small why">{{ i.level.reason }}</div>
+          <div v-if="i.level.suggestedLevel" class="small why">抽检建议：{{ LEVEL_LABEL[i.level.suggestedLevel] }}。{{ i.level.reviewReason }}</div>
         </template>
         <template v-else>
           <div class="head">
@@ -87,8 +90,8 @@ async function decide(i: Item, decision: "confirm" | "reject") {
           <div class="small why">{{ i.note.note }}<span v-if="i.note.ref" class="muted"> · 以 {{ i.note.ref }} 为准</span></div>
         </template>
         <div class="row gap acts">
-          <button class="btn sm" type="button" :disabled="busy.has(keyOf(i))" @click="decide(i, 'confirm')">确认</button>
-          <button class="btn ghost sm" type="button" :disabled="busy.has(keyOf(i))" @click="decide(i, 'reject')">否定</button>
+          <button class="btn sm" type="button" :disabled="busy.has(keyOf(i))" @click="decide(i, 'confirm')">{{ i.type === 'level' && i.level.auditId ? '采纳' : '确认' }}</button>
+          <button class="btn ghost sm" type="button" :disabled="busy.has(keyOf(i))" @click="decide(i, 'reject')">{{ i.type === 'level' && i.level.auditId ? '保持' : '否定' }}</button>
         </div>
       </div>
     </template>

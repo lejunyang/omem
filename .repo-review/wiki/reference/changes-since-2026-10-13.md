@@ -17,6 +17,11 @@ updated: 2026-11-15
 - `src/plugins/registry.ts`、`spaces.ts`：清单增加 `spaces`，与旧 `space` 合并；挂载技能须由本包声明，拒绝重复 id、无效 id，忽略未声明字段。启用时按清单顺序创建空间，已有同 id 空间完整保留；详情记录“已创建”或“已有同名空间，没有改动”，停用和卸载不删空间。空间表无插件来源字段，未新增列；创建记录使用插件的保留安装状态。
 - `src/plugins/pack.ts`、`cli-main.ts`、`web/src/components/PluginPack.vue`、`PluginsSettings.vue`：API 的 `spaces`、可重复的 `--space <id>` 和同一打包表单选择空间，只带名称、类型、说明和技能挂载，不读取或复制空间内容，不带成员、仓库路径、会话或其他设置。个人和代码仓库空间拒绝打包；遗漏空间或挂载技能按名称提醒。规则复用 `portableRule`，保留包内空间，安装先建空间再导入停用规则；接收方已有空间的行为保持不变。
 - 测试 `test/plugin-pack.test.ts`、`test/permissions.test.ts`；验收 PL7–PL9。
+## 夜间抽检 Agent 的原件与目录定级（11-15）
+
+- `src/quality/levels.ts`：同一次夜间审计除页面外还抽最多 6 条 Agent 定级（`quality.audit.levels`，0 关闭）。目录先于单篇、忽略和仅检索先于其他，大目录先查，再按定级时间。少量目录候选按空间共用现有内存目录，取路径和原件数；单篇通过部分索引做 SQL 限额查询，只取剩余额度。选中后才取正文前 4000 字；目录从原件 ID 列表等距选最多 15 个 ID，一次只读这些标题。目录不落库，采集时不维护审计专用的目录关系。`wiki-checker` 的工具列表和说明包含 `submit_level_check`，工具只在定级核对步骤接受结论。
+- `src/sources/attention.ts`、`SourceReview.vue`：不对的决策带建议级别和理由进入原件 → 待复核；本人采纳或保持，审计不自行修改。建议绑定当时的决策；更新定级后旧建议失效。单篇定级新增时间、理由和运行，老决策可抽一次。
+- `src/quality/audit.ts`、`Quality.vue`：定级沿用 `quality_audits`，记录来源运行类型；报告增定级行，相同窗口单列准确率，不触发自动加严。测试在 `test/quality-audit*.test.ts`。
 
 ## 简报先替本人备好；会后放出攒着的通知（11-15）
 

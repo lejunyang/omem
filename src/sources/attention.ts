@@ -43,32 +43,34 @@ export function effectiveLevel(r: { attention?: string | null; attention_by?: st
   const own = { level: (r.attention as Level | null) ?? "normal", by: (r.attention_by as SetBy | null) ?? null, inherited: false };
   if (!r.node_level) return own;
   const nodeBy = (r.node_level_by as SetBy | null) ?? "agent";
-  if (r.attention && RANK[nodeBy] <= RANK[(r.attention_by as SetBy | null) ?? "agent"]) return own;
+  if ((r.attention || r.attention_by) && RANK[nodeBy] <= RANK[(r.attention_by as SetBy | null) ?? "agent"]) return own;
   return { level: r.node_level as Level, by: nodeBy, inherited: true };
 }
 
 /** SQL for the effective level of `sources <alias>` (null = normal), the same rule as `effectiveLevel`. */
 export const levelSql = (a = "s") =>
-  `(case when ${a}.node_level is not null and (${a}.attention is null or instr('rule,agent,owner', coalesce(${a}.node_level_by, 'agent')) > instr('rule,agent,owner', coalesce(${a}.attention_by, 'agent'))) then nullif(${a}.node_level, 'normal') else ${a}.attention end)`;
+  `(case when ${a}.node_level is not null and ((${a}.attention is null and ${a}.attention_by is null) or instr('rule,agent,owner', coalesce(${a}.node_level_by, 'agent')) > instr('rule,agent,owner', coalesce(${a}.attention_by, 'agent'))) then nullif(${a}.node_level, 'normal') else ${a}.attention end)`;
 
 /**
  * Set the level of some sources. A lower-ranked setter never overrides a higher one (an agent cannot
  * undo the owner's choice). `null` clears it back to normal (owner only clears the owner's).
  */
-export function setAttention(app: App, ids: string[], level: Level | null, by: SetBy): { changed: number; kept: number } {
+export function setAttention(app: App, ids: string[], level: Level | null, by: SetBy, opts: { reason?: string; runId?: string | null } = {}): { changed: number; kept: number } {
   let changed = 0;
   let kept = 0;
   tx(app.db, () => {
     for (const id of new Set(ids)) {
-      const row = one<{ attention: string | null; attention_by: SetBy | null }>(app.db, "select attention, attention_by from sources where id = ?", id);
+      const row = one<{ attention: string | null; attention_by: SetBy | null; attention_at: string | null }>(app.db, "select attention, attention_by, attention_at from sources where id = ?", id);
       if (!row) continue;
       if (row.attention_by && RANK[row.attention_by] > RANK[by]) {
         kept++;
         continue;
       }
       const value = level === "normal" ? null : level;
-      if (row.attention === value && (value === null || row.attention_by === by)) continue;
-      run(app.db, "update sources set attention = ?, attention_by = ? where id = ?", value, value === null && by !== "owner" ? null : by, id);
+      const setter = level === null && by !== "owner" ? null : by;
+      if (row.attention === value && row.attention_by === setter) continue;
+      const at = new Date(Math.max(Date.now(), Date.parse(row.attention_at ?? '') + 1 || 0)).toISOString();
+      run(app.db, "update sources set attention = ?, attention_by = ?, attention_at = ?, attention_reason = ?, attention_run = ? where id = ?", value, setter, at, opts.reason ?? "", opts.runId ?? null, id);
       changed++;
     }
   });
@@ -103,7 +105,7 @@ export function setNodeLevel(app: App, spaceId: string, key: string, level: Leve
   const cat = catalog(app, spaceId);
   // `future`: a node its sources will bring (a knowledge base mapped to the space before its first page is read).
   if (!cat.nodes.has(key) && !opts.future) throw new HttpError(404, `目录里没有这个节点：${key}（用 list_sources 看节点）`);
-  const have = one<{ level: string; by: SetBy; status: string }>(app.db, "select level, by, status from source_node_levels where space_id = ? and node_key = ?", spaceId, key);
+  const have = one<{ level: string; by: SetBy; status: string; updated_at: string | null }>(app.db, "select level, by, status, updated_at from source_node_levels where space_id = ? and node_key = ?", spaceId, key);
   if (have && have.status !== "rejected" && RANK[have.by] > RANK[by]) return { changed: false, kept: true, sources: 0 };
   if (have?.status === "rejected" && by !== "owner" && have.level === (level ?? "normal")) return { changed: false, kept: true, rejected: true, sources: 0 };
   if (level === null) {
@@ -112,7 +114,7 @@ export function setNodeLevel(app: App, spaceId: string, key: string, level: Leve
   } else
     run(app.db, `insert into source_node_levels(space_id, node_key, level, by, status, reason, run_id, updated_at) values(?,?,?,?,?,?,?,?)
       on conflict(space_id, node_key) do update set level = excluded.level, by = excluded.by, status = excluded.status, reason = excluded.reason, run_id = excluded.run_id, updated_at = excluded.updated_at`,
-      spaceId, key, level, by, by === "owner" ? "confirmed" : "active", opts.reason ?? "", opts.runId ?? null, now());
+      spaceId, key, level, by, by === "owner" ? "confirmed" : "active", opts.reason ?? "", opts.runId ?? null, new Date(Math.max(Date.now(), Date.parse(have?.updated_at ?? '') + 1 || 0)).toISOString());
   const sources = applyNodeLevels(app, spaceId).changed;
   app.emit({ type: "changed", entity: "source", id: key, spaceId });
   return { changed: true, kept: false, sources };
@@ -469,6 +471,31 @@ export function relocateNotes(app: App, sourceId: string, old: string, text: str
 
 // ---- review: agents' judgements the owner has not looked at ---------------------------------------
 
+/** Suggestions apply only to the exact agent decision checked, never to a newer/owner decision. */
+export function levelAuditReviews(app: App, spaceId: string) {
+  return all<{ id: string; key: string; type: "source" | "node"; title: string; level: Level; suggestedLevel: Level; reviewReason: string; writtenAt: string }>(app.db, `
+    select a.id, s.id key, 'source' type, s.title, a.level, a.suggested_level suggestedLevel, a.review_reason reviewReason, a.written_at writtenAt
+    from quality_audits a join sources s on s.id = substr(a.target, 14) and a.target like 'level-source:%' and s.space_id = a.space_id
+    where a.space_id = ? and a.category = 'level' and a.verdict = 'wrong' and a.resolved_at is null
+      and s.attention_by = 'agent' and s.deleted_at is null and coalesce(s.attention_at, '') = a.written_at and coalesce(s.attention, 'normal') = a.level
+    union all
+    select a.id, l.node_key, 'node', l.node_key, a.level, a.suggested_level, a.review_reason, a.written_at
+    from quality_audits a join source_node_levels l on l.node_key = substr(a.target, 12) and a.target like 'level-node:%' and l.space_id = a.space_id
+    where a.space_id = ? and a.category = 'level' and a.verdict = 'wrong' and a.resolved_at is null
+      and l.by = 'agent' and l.status = 'active' and coalesce(l.updated_at, '') = a.written_at and l.level = a.level`, spaceId, spaceId);
+}
+
+/** Both choices become the owner's decision; keeping a level also clears the ordinary folder queue. */
+export function reviewLevelAudit(app: App, spaceId: string, auditId: string, decision: "accept" | "keep") {
+  const a = levelAuditReviews(app, spaceId).find((r) => r.id === auditId);
+  if (!a) throw new HttpError(409, "这条建议已处理，或原定级已变化，请刷新待复核");
+  const level = decision === "accept" ? a.suggestedLevel : a.level;
+  if (a.type === "source") setAttention(app, [a.key], level, "owner", { reason: decision === "accept" ? a.reviewReason : "本人复核后保持原级别" });
+  else setNodeLevel(app, spaceId, a.key, level, "owner", { reason: decision === "accept" ? a.reviewReason : "本人复核后保持原级别" });
+  run(app.db, "update quality_audits set resolved_at = ? where id = ?", now(), a.id);
+  app.emit({ type: "changed", entity: "source", id: a.key, spaceId });
+}
+
 /** Count notes that shaped search results (device-local, for ordering the review list by impact). */
 export function countNoteHits(app: App, ids: number[]) {
   if (!ids.length) return;
@@ -494,10 +521,19 @@ export function reviewQueue(app: App, spaceId: string, limit = 200) {
     spaceId, direct, limit,
   ).map((r) => ({ ...toNote(r), title: r.title, hits: r.hits ?? 0 }));
   const cat = catalog(app, spaceId);
+  const suggestions = levelAuditReviews(app, spaceId);
   const levels = nodeLevels(app, spaceId)
     .filter((l) => l.by === "agent" && l.status === "active" && cat.nodes.has(l.key))
-    .map((l) => ({ ...l, title: cat.nodes.get(l.key)!.title, path: nodePath(cat, l.key), sources: sourcesUnder(cat, l.key).length }))
+    .map((l) => {
+      const suggestion = suggestions.find((a) => a.type === "node" && a.key === l.key);
+      return { ...l, type: "node" as const, title: cat.nodes.get(l.key)!.title, path: nodePath(cat, l.key), sources: sourcesUnder(cat, l.key).length,
+        auditId: suggestion?.id, suggestedLevel: suggestion?.suggestedLevel, reviewReason: suggestion?.reviewReason };
+    })
     .sort((a, b) => b.sources - a.sources);
+  const documents = suggestions.filter((a) => a.type === "source").map((a) => ({
+    key: a.key, type: "source" as const, title: a.title, path: nodePath(cat, cat.nodeOf.get(a.key) ?? '') || a.title,
+    level: a.level, reason: "", sources: 1, at: a.writtenAt, auditId: a.id, suggestedLevel: a.suggestedLevel, reviewReason: a.reviewReason,
+  }));
   const counts = one<{ pending: number; reviewed: number; rejected: number }>(app.db, `select
     coalesce(sum(n.status = 'pending' and n.reviewed_at is null), 0) pending,
     coalesce(sum(n.status = 'reviewed'), 0) reviewed,
@@ -508,7 +544,7 @@ export function reviewQueue(app: App, spaceId: string, limit = 200) {
     where s.space_id = ? and s.deleted_at is null and n.by != 'owner' and n.status = 'rejected'
       and n.reviewed_at >= ? order by n.reviewed_at desc`, spaceId, new Date(Date.now() - 14 * 86400_000).toISOString())
     .map((r) => ({ ...toNote(r), title: r.title, hits: 0 }));
-  return { notes, levels, counts, rejected };
+  return { notes, levels: [...levels, ...documents], counts, rejected };
 }
 
 /** Agent notes eligible for independent review, ranking judgements and search impact first. */

@@ -96,6 +96,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/source-notes/:id/review": s("source.write", "note:p.id"),
   "DELETE /api/source-notes/:id": s("source.write", "note:p.id"),
   "POST /api/sources/node-level/review": s("source.write", "b.space"),
+  "POST /api/sources/level-audit/review": "owner",
   "PUT /api/sources/node-level": s("source.write", "b.space"),
   "PUT /api/sources/wiki-space-name": SETTINGS,
   "GET /api/sources/:id": s("space.read", "src:p.id"),

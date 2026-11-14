@@ -39,7 +39,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
   addSourceNote, applyAttentionRulesToExisting, deleteAttentionRule, LEVEL_LABELS, LEVELS, levelCounts, levelOf, listAttentionRules, NOTE_KINDS, removeSourceNote,
-  saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes, reviewQueue, reviewSourceNote, reviewNodeLevel,
+  saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes, reviewQueue, reviewSourceNote, reviewNodeLevel, reviewLevelAudit,
 } from "../sources/attention.ts";
 import { defaultBaseRef, fetchBranchAsync, git, isGitRepo, listBranches } from "../core/git.ts";
 import { cloneRepository } from "../core/repositories.ts";
@@ -460,6 +460,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ownerOnly(req);
     const b = q(z.object({ decision: z.enum(["confirm", "reject"]) }), req.body);
     reviewSourceNote(app, Number((req.params as { id: string }).id), b.decision);
+    return { ok: true };
+  });
+  server.post("/api/sources/level-audit/review", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ space: z.string(), auditId: z.string(), decision: z.enum(["accept", "keep"]) }), req.body);
+    reviewLevelAudit(app, b.space, b.auditId, b.decision);
     return { ok: true };
   });
   server.post("/api/sources/node-level/review", async (req) => {
@@ -2805,7 +2811,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/quality", async () => {
     const { qualityOverview } = await import("../quality/audit.ts");
     const overview = qualityOverview(app);
-    return { ...overview, recent: overview.recent.map((a) => ({ ...a, title: one<{ title: string }>(app.db, "select title from pages where space_id = ? and slug = ?", a.spaceId, a.target)?.title })) };
+    const { catalog } = await import("../sources/catalog.ts");
+    return { ...overview, recent: overview.recent.map((a) => ({ ...a, title: a.category === "level" ? (a.target.startsWith("level-source:") ? one<{ title: string }>(app.db, "select title from sources where id = ?", a.target.slice(13))?.title : catalog(app, a.spaceId).nodes.get(a.target.slice(11))?.title) : one<{ title: string }>(app.db, "select title from pages where space_id = ? and slug = ?", a.spaceId, a.target)?.title })) };
   });
   server.post("/api/quality/audit", async () => {
     const { scheduleAudit } = await import("../quality/audit.ts");

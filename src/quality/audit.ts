@@ -7,6 +7,7 @@ import { json, newId, now, truncate } from "../core/util.ts";
 import { createRun, registerHandler, type RunContext } from "../agents/runs.ts";
 import { readPage } from "../wiki/store.ts";
 import { checkPublished, type Finding } from "../wiki/verify.ts";
+import { auditLevel, levelCandidates } from "./levels.ts";
 
 /**
  * The nightly audit: nobody reads everything the agents write on their own, so a sample of it is
@@ -80,7 +81,7 @@ export function auditCandidates(app: App, at = Date.now()): Candidate[] {
     all<{ space_id: string; slug: string; n: number }>(app.db, "select space_id, slug, sum(n) n from page_reads where day >= ? group by space_id, slug", daysAgo(at, READ_DAYS).slice(0, 10)).map((r) => [`${r.space_id}/${r.slug}`, r.n]),
   );
   const since = daysAgo(at, SIBLING_DAYS);
-  const wrongRuns = new Set(all<{ writer_run: string }>(app.db, "select distinct writer_run from quality_audits where verdict = 'wrong' and writer_run is not null and at > ?", since).map((r) => r.writer_run));
+  const wrongRuns = new Set(all<{ writer_run: string }>(app.db, "select distinct writer_run from quality_audits where category = 'page' and verdict = 'wrong' and writer_run is not null and at > ?", since).map((r) => r.writer_run));
   const correctedRuns = new Set(
     all<{ run_id: string }>(
       app.db,
@@ -165,12 +166,12 @@ export function pipelineStats(app: App, at = Date.now()): PipelineStats[] {
   const flagged = new Set(flaggedPipelines(app));
   return all<{ pipeline: string; audited: number; ok: number; style: number; wrong: number; unchecked: number }>(
     app.db,
-    `select pipeline, count(*) audited, sum(verdict = 'ok') ok, sum(verdict = 'style') style, sum(verdict = 'wrong') wrong, sum(verdict = 'unchecked') unchecked
-     from quality_audits where at > ? group by pipeline order by audited desc`,
+    `select case when category = 'level' then 'level' else pipeline end pipeline, count(*) audited, sum(verdict = 'ok') ok, sum(verdict = 'style') style, sum(verdict = 'wrong') wrong, sum(verdict = 'unchecked') unchecked
+     from quality_audits where at > ? group by case when category = 'level' then 'level' else pipeline end order by audited desc`,
     daysAgo(at, app.config.quality.audit.days),
   ).map((r) => {
     const judged = r.ok + r.style + r.wrong;
-    return { ...r, accuracy: judged ? (r.ok + r.style) / judged : null, flagged: flagged.has(r.pipeline) };
+    return { ...r, accuracy: judged ? (r.ok + r.style) / judged : null, flagged: r.pipeline !== "level" && flagged.has(r.pipeline) };
   });
 }
 
@@ -182,6 +183,7 @@ export function updateFlags(app: App, at = Date.now()): { flagged: string[]; add
   const added: PipelineStats[] = [];
   const cleared: PipelineStats[] = [];
   for (const s of pipelineStats(app, at)) {
+    if (s.pipeline === "level") continue;
     if (s.accuracy === null || s.ok + s.style + s.wrong < cfg.minSamples) continue;
     if (s.accuracy < cfg.threshold && !before.has(s.pipeline)) after.add(s.pipeline), added.push(s);
     if (s.accuracy >= cfg.threshold && before.has(s.pipeline)) after.delete(s.pipeline), cleared.push(s);
@@ -194,6 +196,9 @@ export function updateFlags(app: App, at = Date.now()): { flagged: string[]; add
 // ------------------------------------------------------------------ the run
 
 export type AuditRow = {
+  category?: "page" | "level";
+  suggestedLevel?: string | null;
+  reviewReason?: string | null;
   id: string;
   at: string;
   pipeline: string;
@@ -212,8 +217,9 @@ export type AuditRow = {
   fixRun: string | null;
 };
 
-type Row = { id: string; at: string; pipeline: string; space_id: string; target: string; written_at: string; writer_run: string | null; writer_ai: string | null; checker_ai: string | null; audit_run: string | null; verdict: string; wrong: number; style: number; findings: string; why: string; fix_run: string | null };
+type Row = { id: string; at: string; pipeline: string; space_id: string; target: string; written_at: string; writer_run: string | null; writer_ai: string | null; checker_ai: string | null; audit_run: string | null; verdict: string; wrong: number; style: number; findings: string; why: string; fix_run: string | null; category: "page" | "level"; suggested_level: string | null; review_reason: string | null };
 const toAudit = (r: Row): AuditRow => ({
+  category: r.category, suggestedLevel: r.suggested_level, reviewReason: r.review_reason,
   id: r.id, at: r.at, pipeline: r.pipeline, spaceId: r.space_id, target: r.target, writtenAt: r.written_at, writerRun: r.writer_run, writerAi: r.writer_ai ?? "", checkerAi: r.checker_ai ?? "",
   auditRun: r.audit_run, verdict: r.verdict as Verdict, wrong: r.wrong, style: r.style, findings: json<Finding[]>(r.findings, []), why: r.why, fixRun: r.fix_run,
 });
@@ -232,15 +238,16 @@ export function qualityOverview(app: App) {
 export function scheduleAudit(app: App) {
   if (!app.config.quality.audit.enabled) return null;
   if (one(app.db, "select 1 from runs where kind = 'quality-audit' and status in ('queued', 'running') limit 1")) return null;
-  if (!auditCandidates(app).length) return null;
-  return createRun(app, { kind: "quality-audit", spaceId: "personal", title: "抽检昨天写的页面" });
+  if (!auditCandidates(app).length && !levelCandidates(app, Math.min(1, app.config.quality.audit.levels)).length) return null;
+  return createRun(app, { kind: "quality-audit", spaceId: "personal", title: "抽检页面与定级" });
 }
 
 registerHandler("quality-audit", async (ctx: RunContext) => {
   const app = ctx.app;
   const cfg = app.config.quality.audit;
   const picks = pickSamples(auditCandidates(app), { max: cfg.max, perPipeline: cfg.perPipeline, strictMax: cfg.strictMax, flagged: new Set(flaggedPipelines(app)) });
-  if (!picks.length) return { quiet: true, summary: "没有要抽检的页面" };
+  const levels = levelCandidates(app);
+  if (!picks.length && !levels.length) return { quiet: true, summary: "没有要抽检的页面或定级" };
   const done: AuditRow[] = [];
   for (const c of picks) {
     if (ctx.signal.aborted) break;
@@ -272,23 +279,31 @@ registerHandler("quality-audit", async (ctx: RunContext) => {
     done.push(row);
     ctx.event("status", { text: v.verdict === "ok" ? "没有问题" : v.verdict === "unchecked" ? "没核完" : `${v.wrong} 处事实问题，${v.style} 处写法问题` });
   }
+  const levelDone = [];
+  for (const c of levels) {
+    if (ctx.signal.aborted) break;
+    ctx.event("status", { text: `抽检定级 ${c.spaceId}/${c.key}` });
+    const checked = await auditLevel(ctx, c);
+    if (checked) levelDone.push(checked);
+  }
+  const levelResult = { audited: levelDone.length, wrong: levelDone.filter((r) => r.verdict === "wrong").length, unchecked: levelDone.filter((r) => r.verdict === "unchecked").length };
   const fixing = cfg.fix === "off" ? [] : await sendBack(ctx, done.filter((r) => r.verdict === "wrong" || (cfg.fix === "all" && r.verdict === "style")));
   const flags = updateFlags(app);
-  const text = reportText(app, done, fixing.length, flags);
+  const text = reportText(app, done, fixing.length, flags, levelResult);
   const count = (v: Verdict) => done.filter((r) => r.verdict === v).length;
   try {
     notify(app, {
-      title: count("wrong") ? `抽检 ${done.length} 页，${count("wrong")} 页有事实问题` : `抽检 ${done.length} 页，没有事实问题`,
+      title: levelResult.audited ? `抽检 ${done.length} 页、${levelResult.audited} 条定级，${count("wrong")} 页有事实问题、${levelResult.wrong} 条定级不对` : count("wrong") ? `抽检 ${done.length} 页，${count("wrong")} 页有事实问题` : `抽检 ${done.length} 页，没有事实问题`,
       body: text,
       link: "#/quality",
       runId: ctx.run.id,
       // Nothing wrong and no flag changed: on the web only.
-      urgency: count("wrong") || flags.added.length || flags.cleared.length ? "normal" : "silent",
+      urgency: count("wrong") || levelResult.wrong || flags.added.length || flags.cleared.length ? "normal" : "silent",
     });
   } catch (e) {
     console.warn(`[omem] 抽检报告发送失败：${(e as Error).message}`);
   }
-  return { summary: text, audited: done.length, ok: count("ok"), style: count("style"), wrong: count("wrong"), unchecked: count("unchecked"), fixing: fixing.length, flagged: flags.flagged };
+  return { summary: text, audited: done.length, ok: count("ok"), style: count("style"), wrong: count("wrong"), unchecked: count("unchecked"), levels: levelResult, fixing: fixing.length, flagged: flags.flagged };
 });
 
 /** Wrong pages go back to a writer with what was found, a space at a time (one generation, one report). */
@@ -315,14 +330,15 @@ async function sendBack(ctx: RunContext, rows: AuditRow[]): Promise<AuditRow[]> 
 
 const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%`);
 
-export function reportText(app: App, done: AuditRow[], fixing: number, flags: { added: PipelineStats[]; cleared: PipelineStats[] }) {
+export function reportText(app: App, done: AuditRow[], fixing: number, flags: { added: PipelineStats[]; cleared: PipelineStats[] }, levels = { audited: 0, wrong: 0 }) {
   const cfg = app.config.quality.audit;
   const n = (v: Verdict) => done.filter((r) => r.verdict === v).length;
   const lines = [
+    `定级：抽了 ${levels.audited} 个，${levels.wrong} 个不对（见原件 → 待复核）`,
     `抽检了 ${done.length} 页：${n("wrong")} 页有事实问题${fixing ? `（${fixing} 页已交回修改）` : ""}，${n("style")} 页只有写法问题，${n("ok")} 页没有问题${n("unchecked") ? `，${n("unchecked")} 页没核完` : ""}。`,
     ...done.filter((r) => r.verdict === "wrong").map((r) => `- [[${r.spaceId}:${r.target}]]（${r.pipeline} 写的）：${truncate(r.findings.find((f) => FACT_KINDS.has(f.kind))?.problem ?? "", 120)}`),
   ];
-  const stats = pipelineStats(app).filter((s) => s.accuracy !== null);
+  const stats = pipelineStats(app).filter((s) => s.pipeline !== "level" && s.accuracy !== null);
   if (stats.length) lines.push(`近 ${cfg.days} 天没有事实问题的比例：${stats.map((s) => `${s.pipeline} ${pct(s.accuracy)}（${s.ok + s.style + s.wrong} 页）`).join("，")}。`);
   for (const s of flags.added) lines.push(`${s.pipeline} 写的页面近 ${cfg.days} 天 ${s.ok + s.style + s.wrong} 页里 ${s.wrong} 页有事实问题，低于 ${pct(cfg.threshold)}：从现在起它写的每一页都核（每晚最多 ${cfg.strictMax} 页），回到 ${pct(cfg.threshold)} 以上再恢复抽检。`);
   for (const s of flags.cleared) lines.push(`${s.pipeline} 写的页面回到 ${pct(s.accuracy)}，恢复抽检。`);

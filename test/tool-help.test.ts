@@ -13,6 +13,8 @@ describe("omem tools offered to agents", () => {
   it("puts every tool in exactly one group, each with a reference page", () => {
     expect(TOOL_GROUPS.find((g) => g.id === "wiki")?.tools).toContain("correct_page");
     expect(CORE_TOOLS).not.toContain("correct_page");
+    expect(ROLE_TOOLS).toContain("submit_level_check");
+    expect(expandTools(["group:wiki"])).not.toContain("submit_level_check");
     const names = toolList().map((t) => t.name);
     const grouped = TOOL_GROUPS.flatMap((g) => g.tools);
     expect(grouped.length).toBe(new Set(grouped).size);

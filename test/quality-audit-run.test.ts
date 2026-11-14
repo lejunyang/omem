@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
 import "../src/quality/audit.ts";
@@ -14,6 +15,9 @@ import { ROUTE_RULES } from "../src/auth/routes.ts";
 import { qualityOverview, scheduleAudit } from "../src/quality/audit.ts";
 import { registeredRoutes, startServer } from "../src/server/http.ts";
 import { importText } from "../src/sources/import.ts";
+import { levelOf, reviewQueue, setAttention, setNodeLevel } from "../src/sources/attention.ts";
+import { levelCandidates } from "../src/quality/levels.ts";
+import { upsertSource } from "../src/sources/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 import { testApp } from "./helpers.ts";
 
@@ -26,7 +30,7 @@ const server = await startServer(app, { port: 0, quiet: true });
 app.events.on("event", (e: { type: string; runId?: string }) => {
   if (e.type === "run" && e.runId) run(app.db, "update runs set not_before = '2099-01-01T00:00:00.000Z' where id = ? and kind = 'wiki-write' and status = 'queued'", e.runId);
 });
-afterAll(async () => { stopWorker(); await server.close(); });
+afterAll(async () => { stopWorker(); await server.close(); app.db.close(); await rm(dirname(control), { recursive: true, force: true }); });
 let seq = 0;
 function seed() {
   const writer = createRun(app, { kind: "ingest", spaceId: "personal", title: "整理示例材料" });
@@ -154,4 +158,78 @@ it("exposes owner routes, settings round trips, page titles and a validated read
   expect(JSON.stringify(result)).not.toContain('"findings"');
   expect(peerCommands.quality.schema.safeParse({ shell: "anything" }).success).toBe(false);
   expect(all(app.db, "select * from quality_audits")).toHaveLength(4);
+});
+
+it("audits levels in the page audit's run via ACP, offers owner suggestions, and reports separate accuracy", async () => {
+  run(app.db, "delete from page_writes");
+  run(app.db, "update runs set status = 'cancelled' where status in ('queued','running')");
+  const { writer } = seed();
+  const source = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "level-review/a.md", title: "流程说明", text: "本周仍使用的流程说明。" });
+  setAttention(app, [source.id], "ignore", "agent", { reason: "只作存档", runId: writer.id });
+  setNodeLevel(app, "personal", "dir:level-review", "reference", "agent", { reason: "历史材料", runId: writer.id });
+  writeFileSync(control, "level-wrong");
+  const task = scheduleAudit(app)!;
+  expect(task).toBeTruthy();
+  startWorker(app);
+  const done = await waitForRun(app, task.id);
+  expect(done.status, done.error ?? "").toBe("done");
+  expect(done.output).toMatchObject({ audited: 1, levels: { audited: 2, wrong: 2, unchecked: 0 } });
+  expect(done.output.summary).toContain("定级：抽了 2 个，2 个不对（见原件 → 待复核）");
+  expect(one<{ body: string }>(app.db, "select body from notifications where json_extract(context, '$.runId') = ?", task.id)?.body).toContain("定级：抽了 2 个，2 个不对");
+  const rows = qualityOverview(app).recent.filter((r) => r.category === "level");
+  expect(rows).toHaveLength(2);
+  expect(rows.every((r) => r.auditRun === task.id && r.pipeline === "ingest" && r.verdict === "wrong" && r.suggestedLevel === "normal" && r.fixRun === null)).toBe(true);
+  const overview = await server.inject({ method: "GET", url: "/api/quality" });
+  expect(overview.statusCode, overview.body).toBe(200);
+  expect(overview.json().recent.find((r: { target: string }) => r.target === "level-node:dir:level-review").title).toBe("level-review");
+  expect(levelOf(app, source.id)).toMatchObject({ level: "ignore", by: "agent" });
+  const queue = (await server.inject({ method: "GET", url: "/api/sources/review?space=personal" })).json().levels;
+  expect(queue).toHaveLength(2);
+  expect(queue.every((r: { suggestedLevel: string }) => r.suggestedLevel === "normal")).toBe(true);
+  const member = createUser(app, { id: "level-reader", name: "示例成员" });
+  addMember(app, "personal", member.id, "editor");
+  const payload = { space: "personal", auditId: queue.find((r: { type: string }) => r.type === "source").auditId, decision: "accept" };
+  const headers = { authorization: `Bearer ${createApiToken(app, member.id, "定级建议权限测试")}` };
+  expect((await server.inject({ method: "POST", url: "/api/sources/level-audit/review", headers, payload })).statusCode).toBe(403);
+  expect((await server.inject({ method: "POST", url: "/api/sources/level-audit/review", payload })).statusCode).toBe(200);
+  expect(levelOf(app, source.id)).toMatchObject({ level: "normal", by: "owner" });
+  const folder = queue.find((r: { type: string }) => r.type === "node");
+  expect((await server.inject({ method: "POST", url: "/api/sources/level-audit/review", payload: { ...payload, auditId: folder.auditId, decision: "keep" } })).statusCode).toBe(200);
+  expect(levelOf(app, source.id, true)).toMatchObject({ level: "normal", by: "owner" });
+  expect(reviewQueue(app, "personal").levels).toEqual([]);
+  expect(levelCandidates(app)).toEqual([]);
+  expect(qualityOverview(app).pipelines.find((r) => r.pipeline === "level")).toMatchObject({ audited: 2, wrong: 2, accuracy: 0, flagged: false });
+  expect(qualityOverview(app).flagged).not.toContain("level");
+}, 120000);
+
+it("schedules a level-only audit, records unsure once, and disables level sampling with zero", async () => {
+  run(app.db, "delete from page_writes");
+  const source = importText(app, "personal", { uri: "unsure-level.md", text: "只有标题的示例材料。" });
+  setAttention(app, [source.id], "reference", "agent");
+  app.config.quality.audit.levels = 0;
+  expect(scheduleAudit(app)).toBeNull();
+  app.config.quality.audit.levels = 6;
+  writeFileSync(control, "level-unsure");
+  const task = scheduleAudit(app)!;
+  expect(task).toBeTruthy();
+  startWorker(app);
+  const done = await waitForRun(app, task.id);
+  expect(done.status, done.error ?? "").toBe("done");
+  expect(done.output).toMatchObject({ audited: 0, levels: { audited: 1, wrong: 0, unchecked: 1 } });
+  expect(qualityOverview(app).pipelines.find((r) => r.pipeline === "level")).toMatchObject({ audited: 3, wrong: 2, unchecked: 1, accuracy: 0 });
+  expect(scheduleAudit(app)).toBeNull();
+  expect(reviewQueue(app, "personal").levels).toEqual([]);
+}, 120000);
+
+it("restricts the level hand-in tool to its scoped checker sub-step", async () => {
+  const task = createRun(app, { kind: "quality-audit", spaceId: "personal", title: "提交边界" });
+  run(app.db, "update runs set status = 'running', output = ? where id = ?", JSON.stringify({ levelTarget: { spaceId: "personal", target: "level-source:demo" } }), task.id);
+  const ctx: ToolContext = { app, runId: task.id, spaceId: "personal", spaces: ["personal"], tools: new Set(["submit_level_check"]), actor: "agent", role: "wiki-checker" };
+  const verdict = { verdict: "wrong", suggestedLevel: "normal", reason: "示例依据" };
+  expect((await callTool({ ...ctx, role: "assistant" }, "submit_level_check", verdict)).isError).toBe(true);
+  expect((await callTool({ ...ctx, spaces: [] }, "submit_level_check", verdict)).isError).toBe(true);
+  expect((await callTool(ctx, "submit_level_check", { verdict: "wrong", reason: "未给级别" })).isError).toBe(true);
+  expect((await callTool(ctx, "submit_level_check", verdict)).isError).toBe(false);
+  run(app.db, "update runs set status = 'done', output = '{}' where id = ?", task.id);
+  expect((await callTool(ctx, "submit_level_check", verdict)).isError).toBe(true);
 });

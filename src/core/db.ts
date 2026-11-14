@@ -1859,6 +1859,24 @@ export const migrations: readonly string[] = [
    create index page_corrections_space on page_corrections(space_id, at desc);
    create index page_writes_latest on page_writes(space_id, slug, id desc);
    create index page_writes_space_at on page_writes(space_id, at);`,
+  // Agent level decisions: provenance, audit identity and the owner's disposition.
+  `alter table sources add column attention_at text;
+   alter table sources add column attention_reason text not null default '';
+   alter table sources add column attention_run text;
+   create trigger sources_attention_timestamp after update of attention, attention_by on sources
+     when (old.attention is not new.attention or old.attention_by is not new.attention_by) and old.attention_at is new.attention_at begin
+     update sources set attention_at = max(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', coalesce(old.attention_at, '1970-01-01'), '+0.001 seconds')),
+       attention_reason = '', attention_run = null where id = new.id;
+   end;
+   create index sources_agent_attention on sources(space_id, attention_at) where attention_by = 'agent' and deleted_at is null;
+   alter table quality_audits add column category text not null default 'page';
+   alter table quality_audits add column level text;
+   alter table quality_audits add column suggested_level text;
+   alter table quality_audits add column review_reason text;
+   alter table quality_audits add column resolved_at text;
+   create index quality_audits_decision on quality_audits(space_id, target, written_at) where category = 'level';
+   create index quality_audits_level_review on quality_audits(space_id, target) where category = 'level' and verdict = 'wrong' and resolved_at is null;
+   create index source_node_levels_agent on source_node_levels(space_id, updated_at) where by = 'agent' and status = 'active';`,
 ];
 
 export type Db = DatabaseSync;

@@ -16,6 +16,9 @@ import { remember } from "../src/memory/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 
 describe("roles and permissions", async () => {
+  it("keeps level audit decisions owner-only", () => {
+    expect(ROUTE_RULES["POST /api/sources/level-audit/review"]).toBe("owner");
+  });
   const home = mkdtempSync(join(tmpdir(), "omem-perms-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({}));
   const { app, server } = await boot(home, { port: 0, quiet: true, background: false });

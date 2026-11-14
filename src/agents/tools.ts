@@ -737,7 +737,7 @@ def({
     if (!a.ids?.length && !a.chat_id && !a.title_contains && !a.wiki_path_contains) throw new HttpError(400, "给出 under、ids、chat_id、title_contains 或 wiki_path_contains 之一");
     const rows = selectSources(ctx.app, filter, ctx.writable ?? ctx.spaces ?? null);
     if (!rows.length) return "没有符合条件的原件（或不在本次能改的空间里）。";
-    const r = setAttention(ctx.app, rows.map((x) => x.id), a.level, by);
+    const r = setAttention(ctx.app, rows.map((x) => x.id), a.level, by, { reason: a.reason, runId: ctx.runId });
     if (ctx.runId) addRunEvent(ctx.app, ctx.runId, "status", { text: `${LEVEL_LABELS[a.level]}：${rows.length} 份（${a.reason}）` });
     return `${rows.length} 份原件 → ${LEVEL_LABELS[a.level]}：改了 ${r.changed} 份${r.kept ? `，${r.kept} 份是本人定的，没动` : ""}。`;
   },
@@ -4564,6 +4564,27 @@ def({
       );
     setRunOutput(ctx.app, ctx.runId, { plan: a.pages, ...(a.reuse?.length ? { reuse: a.reuse } : {}) });
     return `${a.pages.length ? `已收到 ${a.pages.length} 页的计划` : "已收到：这次没有要写的页面"}${a.reuse?.length ? `；${a.reuse.length} 个主题链接到相关空间` : ""}`;
+  },
+});
+
+def({
+  name: "submit_level_check",
+  description: "夜间定级抽检交结论：对 / 不对（给出建议级别和理由）/ 看不出来。只记录，不改级别。",
+  write: true,
+  schema: z.object({
+    verdict: z.enum(["ok", "wrong", "unchecked"]),
+    suggestedLevel: z.enum(LEVELS).optional(),
+    reason: z.string().trim().min(1).max(2000),
+  }),
+  handler: (ctx, a) => {
+    const me = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    const target = me?.output.levelTarget as { spaceId: string; target: string } | null;
+    if (!me || me.kind !== "quality-audit" || me.status !== "running" || ctx.role !== "wiki-checker" || !target)
+      throw new HttpError(400, "只能在夜间定级核对步骤中提交");
+    inScope(ctx, target.spaceId, "定级抽检");
+    if (a.verdict === "wrong" && !a.suggestedLevel) throw new HttpError(400, "不对时要给出建议级别");
+    setRunOutput(ctx.app, me.id, { levelCheck: a });
+    return "已记录定级核对结论；建议由本人复核。";
   },
 });
 

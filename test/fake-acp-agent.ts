@@ -182,6 +182,15 @@ new AgentSideConnection(
           // once (one finding in the first round, none after), always (a finding every round), unsure (the first round finds
           // something nobody is sure of: it should leave the page and become a question for the owner).
           const control = (env: string, fallback: string) => (process.env[env] && existsSync(process.env[env]!) ? readFileSync(process.env[env]!, "utf8").trim() : fallback);
+          if (names.includes("submit_level_check") && prompt.includes("定级抽检：")) {
+            const mode = control("FAKE_WIKI_CHECK_FILE", "pass");
+            const checked = mode === "nothing" ? null : await call("submit_level_check", {
+              verdict: mode === "level-wrong" ? "wrong" : mode === "level-unsure" ? "unchecked" : "ok",
+              ...(mode === "level-wrong" ? { suggestedLevel: "normal" } : {}), reason: "示例材料仍有日常使用价值",
+            });
+            await say(JSON.stringify({ prompt, checked }));
+            return { stopReason: "end_turn" as const };
+          }
           if (names.includes("submit_page_check")) {
             const mode = control("FAKE_WIKI_CHECK_FILE", "pass");
             if (mode === "nothing") { await say("没有提交核对结论"); return { stopReason: "end_turn" as const }; }

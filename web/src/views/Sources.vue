@@ -103,7 +103,8 @@ const qApplied = ref("");
 const treeRef = ref<InstanceType<typeof SourceTree> | null>(null);
 const reviewRef = ref<InstanceType<typeof SourceReview> | null>(null);
 /** The review list (agents' notes and folder levels waiting for the owner) instead of the tree. */
-const reviewing = ref(false);
+const reviewing = ref(route.query.review === "1");
+watch(() => route.query.review, (v) => { reviewing.value = v === "1"; });
 const reviewCount = ref(0);
 async function loadReviewCount() {
   try {

@@ -23,3 +23,5 @@
 - `settle_wiki_question(id, outcome, note, importance?)`：处理页面的一个未决问题。查清了、已经写进页面就 `resolved`；只有本人能定的 `needs-owner`，`importance` 1–3（3 是不定就会误导读者）。Wiki 写作运行的任务里会列出这页挂着的问题。
 - `submit_page_check` 只开放给 Wiki 核对角色：逐条交草稿里站不住的地方（原句、类型、问题、依据、建议），没有问题交空列表。类型除了引用、代码、否定说法、重复、冲突、篇幅，还有 `wording`（整理过程、写给审稿人的话）、`hedge`（结论上的退路）、`unsure`（拿不准的内容，带 `question`）、`log`（流水记录）。
 - 一次生成（规划的各页，或 `generate_wiki` 的 `pages`）结束后，没写成的页面再试一次，然后本人收到一条通知：写了哪些页、自动修了几处、还剩哪几条没解决。规划运行的 `read_run` 输出里有 `report`。
+
+- `submit_level_check` 只在夜间抽检的定级核对步骤开放给 Wiki 核对角色：`verdict` 为 `ok`（对）、`wrong`（不对）或 `unchecked`（看不出来），附 `reason`；不对时必须给 `suggestedLevel`（focus / normal / reference / ignore）。只记录建议，不修改级别，由本人在原件 → 待复核选择采纳或保持。

@@ -20,6 +20,8 @@
 
 **每晚抽检助手自己写的页面。** 每晚 05:10 从整理材料、修正页面等运行写的 Wiki 里抽几页，核对角色对照原件和代码检查，有事实问题的交回修改；按运行类型统计，低于门槛的一类加严。运行旁的“抽检”可看问题与修改进展，设置 → AI 可改开关、页数、门槛和交回方式。设计见 [docs/v2/quality.md](docs/v2/quality.md)。
 
+每晚也会抽查 Agent 给原件和目录定的关注程度，优先看“忽略”“仅检索”和大目录；不对的在“原件 → 待复核”给出建议，由你采纳或保持。
+
 **还有：**
 
 - **选中就能引用**：在差异、评审或打开的原件里选中几段，编号后一起提问，或攒成下一轮的修改点；提问抽屉可以缩小成可拖动的图标。
@@ -570,7 +572,7 @@ src/memory    记忆（目录、有效期、版本链、写入检查与复核统
 src/items     事项（时间线）、需求树（requirements.ts）、需求点下的编码（work.ts）、一件事在哪些会话里进行（places.ts）
 src/designs   方案：决定、意见与版本（store.ts）、给 Agent 读的 Markdown（render.ts）、评估别人的方案（assess.ts）、交办里的方案阶段与确认（work.ts）、按决定汇总改动（changes.ts）
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测、写入检查与发布前核对（checks.ts、verify.ts）、页面的未决问题与旧页面迁移（questions.ts、migrate.ts）；问题的阅读次数、候选排序、过期与重开（questions.ts）
-src/quality   每晚抽检助手自主写入的页面、按运行类型统计与加严、交回修改（audit.ts）
+src/quality   每晚抽检助手自主写入的页面和定级；页面按运行类型统计与加严、交回修改（audit.ts），错级交本人复核（levels.ts）
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）；场景包导入（contributions.ts）、打包（pack.ts）、插件渠道（channels.ts）
 src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
