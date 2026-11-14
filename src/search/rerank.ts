@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { loadLocalModel } from "./embeddings.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
+import { modelSource, prepareLocalModel } from "./local-models.ts";
 
 /**
  * Optional reranking: a cross-encoder (bge-reranker-v2-m3 by default, ONNX q8 through
@@ -20,6 +21,8 @@ let queue: Promise<unknown> = Promise.resolve();
 const BATCH = 8;
 /** What settings → 检索 shows: whether the model loaded, and how the recent calls went. */
 const stats = { state: "idle" as "idle" | "loading" | "ready" | "failed", error: "", calls: 0, timeouts: 0, lastMs: 0 };
+/** Models that have scored at least once in this run of the service. */
+const everReady = new Set<string>();
 
 function keyOf(app: App) {
   const c = app.config.rerank;
@@ -75,20 +78,40 @@ async function getScorer(app: App): Promise<Scorer | null> {
 export async function rerankScores(app: App, query: string, passages: string[], timeoutMs?: number): Promise<number[] | null> {
   if (!app.config.rerank.enabled || !passages.length || !query.trim()) return null;
   if (testScorer) return rerankLocally(app, query, passages, timeoutMs);
+  const model = app.config.rerank.model;
+  // osdk first (local-models.ts): while it is downloading a model nothing has fetched before, searches
+  // keep their own order instead of starting a second download next to it.
+  const src = modelSource(model);
+  if (src.via === "hub" && src.osdk && src.known) {
+    void prepareLocalModel(model);
+    if (modelSource(model).syncing && !src.cached) {
+      stats.state = "loading";
+      return null;
+    }
+  }
   const budget = Math.min(app.config.rerank.timeoutMs, timeoutMs ?? Infinity);
   stats.calls++;
-  stats.state = "loading";
+  if (!everReady.has(model)) stats.state = "loading";
   const start = performance.now();
   try {
     const scores = await searchStage("rerank", () => readProcess(app, "rerank").request<number[] | null>({ op: "rerank", query, passages, config: { rerank: app.config.rerank }, timeoutMs: budget }, budget));
-    stats.state = scores ? "ready" : "idle";
     stats.lastMs = Math.round(performance.now() - start);
-    if (scores) stats.error = "";
+    if (scores) {
+      everReady.add(model);
+      stats.state = "ready";
+      stats.error = "";
+    } else stats.timeouts++;
     return scores;
   } catch (e) {
-    if ((e as Error).name === "SearchTimeout") stats.timeouts++;
-    stats.state = "failed";
-    stats.error = (e as Error).message;
+    const timedOut = (e as Error).name === "SearchTimeout";
+    if (timedOut) stats.timeouts++;
+    // The first calls can run out of time while the model is still being downloaded or loaded: that is
+    // “loading”, not a failure. A model that does not load says so itself (read-worker.ts).
+    if (timedOut && !everReady.has(model)) stats.state = "loading";
+    else if (!timedOut) {
+      stats.state = "failed";
+      stats.error = (e as Error).message;
+    }
     return null;
   }
 }
@@ -115,8 +138,10 @@ export async function rerankLocally(app: App, query: string, passages: string[],
 
 export function rerankStatus(app: App) {
   const c = app.config.rerank;
-  return { enabled: c.enabled, model: c.model, ...stats };
+  return { enabled: c.enabled, model: c.model, ...stats, source: modelSource(c.model) };
 }
+/** Whether the model failed to load in this process (the read process tells the main one through an error). */
+export const rerankLoadError = () => (stats.state === "failed" ? stats.error || "重排模型没有加载成功" : "");
 
 /** Tests: a stand-in scorer (null turns it back to the model). */
 export function setRerankerForTests(score: ((query: string, passages: string[]) => number[]) | null) {

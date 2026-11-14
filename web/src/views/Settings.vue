@@ -156,8 +156,22 @@ const webHost = computed(() => {
     return "";
   }
 });
-type RerankStatus = { enabled: boolean; model: string; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number };
+type ModelSource = { via: "local" | "osdk" | "hub"; path?: string; syncing?: boolean; error?: string; osdk: boolean; known: boolean; cached?: boolean; size?: string };
+type RerankStatus = { enabled: boolean; model: string; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number; source?: ModelSource };
+/** Where a local model comes from, in the owner's words (search/local-models.ts: osdk first, then its own download). */
+function sourceLine(s: ModelSource | null | undefined) {
+  if (!s) return "";
+  const size = s.size ? `（${s.size}）` : "";
+  if (s.via === "local") return `从本地目录加载：${s.path}`;
+  if (s.via === "osdk") return `由 osdk 下载并锁定版本，离线加载：${s.path}`;
+  if (s.syncing) return `osdk 正在下载模型${size}，下完自动改用它。${s.cached ? "这期间先用以前自己下载的那份。" : "下完之前这项功能不生效。"}`;
+  if (s.error) return `osdk 没能下载（${s.error}），改为自己从 Hugging Face 下载${s.cached ? "，已经下好" : size}。十分钟后再试 osdk。`;
+  if (!s.osdk) return `这台机器没有 osdk：模型在第一次使用时自己从 Hugging Face 下载${s.cached ? "，已经下好" : size}，放在依赖目录的缓存里，不锁定版本，重装依赖后要重新下载。`;
+  if (!s.known) return `这个模型不在 omem 交给 osdk 管理的清单里：第一次使用时自己从 Hugging Face 下载${s.cached ? "，已经下好" : ""}。`;
+  return `有 osdk：下一次用到时由 osdk 下载并锁定版本${size}${s.cached ? "；这之前先用以前自己下载的那份" : ""}。`;
+}
 const rerank = ref<RerankStatus | null>(null);
+const embeddingSource = ref<ModelSource | null>(null);
 const profiles = ref<Profile[]>([]);
 const home = ref("");
 const schedules = ref<Schedule[]>([]);
@@ -366,7 +380,8 @@ async function grantPerms() {
 }
 
 async function load() {
-  const s = await get<{ config: any; agents: Profile[]; home: string; rerank: RerankStatus }>("/api/settings");
+  const s = await get<{ config: any; agents: Profile[]; home: string; rerank: RerankStatus; embeddingSource?: ModelSource | null }>("/api/settings");
+  embeddingSource.value = s.embeddingSource ?? null;
   config.value = s.config;
   rerank.value = s.rerank;
   profiles.value = s.agents;
@@ -753,7 +768,7 @@ const rerankLine = computed(() => {
   if (!r?.enabled) return "";
   const tail = r.timeouts ? `，${r.timeouts} 次超时没用上` : "";
   if (r.state === "ready") return `已加载 · 用过 ${r.calls} 次${r.lastMs ? `，上一次 ${(r.lastMs / 1000).toFixed(1)} 秒` : ""}${tail}`;
-  if (r.state === "loading") return "正在加载模型";
+  if (r.state === "loading") return r.source?.syncing ? "模型还在下载" : "正在下载或加载模型（第一次要下载，可能要几分钟），这期间检索保持原来的顺序";
   if (r.state === "failed") return `加载失败：${r.error}`;
   return "还没用过（第一次检索时加载）";
 });
@@ -1132,13 +1147,15 @@ async function saveEdit() {
       <div class="field"><span>向量检索</span>
         <UiSegmented :model-value="config.embeddings.provider" aria-label="向量检索" :options="[{ value: 'none', label: '关闭' }, { value: 'local', label: '本地模型（transformers.js）' }, { value: 'openai', label: 'OpenAI 兼容接口' }]" @change="(v) => saveConfig({ embeddings: { ...config.embeddings, provider: v } })" />
       </div>
-      <label class="field"><span>模型</span><input class="input mono" :value="config.embeddings.model" @change="saveConfig({ embeddings: { ...config.embeddings, model: ($event.target as HTMLInputElement).value } })" /><span class="hint">本地默认 Xenova/bge-small-zh-v1.5（首次使用会下载约 100MB，也可以填本地目录）。</span></label>
+      <label class="field"><span>模型</span><input class="input mono" :value="config.embeddings.model" @change="saveConfig({ embeddings: { ...config.embeddings, model: ($event.target as HTMLInputElement).value } })" /><span class="hint">本地默认 Xenova/bge-small-zh-v1.5（也可以填本地目录）。有 osdk 时由 osdk 下载并锁定版本，没有才自己下载。</span></label>
+      <p v-if="config.embeddings.provider === 'local' && sourceLine(embeddingSource)" class="small" :class="embeddingSource?.error ? 'warn-text' : 'muted'">{{ sourceLine(embeddingSource) }}</p>
       <label v-if="config.embeddings.provider === 'openai'" class="field"><span>接口地址</span><input class="input mono" :value="config.embeddings.url ?? ''" placeholder="https://api.openai.com/v1" @change="saveConfig({ embeddings: { ...config.embeddings, url: ($event.target as HTMLInputElement).value } })" /></label>
       <div v-if="config.rerank" class="card pad stack">
         <div class="section-title">重排</div>
-        <HelpText>检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。模型在终端用 <span class="mono">omem setup rerank</span> 经 osdk 下载并锁定版本；改这里的设置不用重启服务。</HelpText>
+        <HelpText>检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。机器上有 osdk 时模型由 osdk 下载并锁定版本，没有才自己下载；改这里的设置不用重启服务。</HelpText>
         <UiCheckbox :model-value="config.rerank.enabled" switch @change="(v) => saveRerank({ enabled: v })">开启</UiCheckbox>
         <p v-if="rerankLine" class="small" :class="rerank?.state === 'failed' ? 'warn-text' : 'muted'">{{ rerankLine }}</p>
+        <p v-if="config.rerank.enabled && sourceLine(rerank?.source)" class="small" :class="rerank?.source?.error ? 'warn-text' : 'muted'">{{ sourceLine(rerank?.source) }}</p>
         <template v-if="config.rerank.enabled">
           <label class="field"><span>模型</span><input class="input mono" :value="config.rerank.model" @change="saveRerank({ model: ($event.target as HTMLInputElement).value.trim() || config.rerank.model })" /><span class="hint">osdk 下载的本地目录，或 Hugging Face 上的 ONNX 模型 id（首次使用时下载，不锁定版本）。</span></label>
           <div class="row wrap days">

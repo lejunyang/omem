@@ -6,6 +6,7 @@ import { pack, toFloats } from "./vector-codec.ts";
 import { all, one, run } from "../core/db.ts";
 import { readProcess } from "./read-process.ts";
 import { searchStage } from "./trace.ts";
+import { modelSource, osdkModelDir, prepareLocalModel } from "./local-models.ts";
 
 /**
  * Optional dense retrieval. Vectors live next to chunks, packed to one signed byte a dimension
@@ -46,6 +47,13 @@ async function getEmbedder(app: App, inProcess = false): Promise<Embedder | null
     return embedder;
   }
   if (!inProcess && !testEmbedder) {
+    // osdk first: while it is still downloading a model nothing has fetched before, there are no vectors
+    // yet (asked again on the next use) rather than a second download racing it.
+    const src = modelSource(cfg.model);
+    if (src.via === "hub" && src.osdk && src.known) {
+      void prepareLocalModel(cfg.model);
+      if (modelSource(cfg.model).syncing && !src.cached) return null;
+    }
     try {
       // Validate in the child before embedPending is allowed to replace an old model's vectors.
       await readProcess(app, "embedding").request({ op: "embed", texts: [], kind: "passage", config: { embeddings: cfg } }, 120_000);
@@ -95,10 +103,12 @@ let loading: Promise<unknown> = Promise.resolve();
 export function loadLocalModel<T>(model: string, load: (mod: any, id: string) => Promise<T>): Promise<T> {
   const next = loading.then(async () => {
     const mod = (await import("@huggingface/transformers")) as any;
-    const local = existsSync(model);
-    mod.env.localModelPath = local ? dirname(resolve(model)) + "/" : "/models/";
-    mod.env.allowRemoteModels = !local;
-    return load(mod, local ? basename(resolve(model)) : model);
+    // A directory the owner set, else osdk's pinned copy of a model named by its hub id (local-models.ts);
+    // only without either does transformers.js download it itself.
+    const dir = existsSync(model) ? model : osdkModelDir(model);
+    mod.env.localModelPath = dir ? dirname(resolve(dir)) + "/" : "/models/";
+    mod.env.allowRemoteModels = !dir;
+    return load(mod, dir ? basename(resolve(dir)) : model);
   });
   loading = next.catch(() => {});
   return next;

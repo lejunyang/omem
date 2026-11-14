@@ -332,6 +332,7 @@ omem user approve <id> / omem user invite [--space …] [--edit …] [--any]  # 
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
 omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
 omem setup rerank [--threads 16]            # 开启重排（经 osdk 下载 bge-reranker-v2-m3，约 570MB）；--off 关闭
+                                            # 在网页上直接打开也一样：有 osdk 时由 osdk 下载并锁定版本，没有才自己下载
 omem setup desktop                          # 安装或更新桌面与浏览器控制（ai-auto-desktop 的 aad），并做只读的环境检查
 omem setup ffmpeg                           # 经 osdk 安装 ffmpeg（osdk use -g conda:ffmpeg），用来压缩附件里的图片、视频和音频
 omem setup ffmpeg --concurrency 4 --auto lossy  # 同时压 4 个；新下载的附件自动有损压缩（off 关掉）

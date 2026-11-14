@@ -36,8 +36,10 @@ process.on("message", (message: { id: number; job: ReadJob; op?: string; change?
       if (job.op === "sql") result = await measure(`${job.stage ?? "read"}.sql`, async () => db.prepare(job.sql).all(...job.params));
       else if (job.op === "prepare") result = await measure("vector.load", () => vectorIndex().prepare({ db } as App, job.spaces));
       else if (job.op === "rerank") {
-        const { rerankLocally } = await import("./rerank.ts");
+        const { rerankLocally, rerankLoadError } = await import("./rerank.ts");
         result = await measure("rerank.score", () => rerankLocally({ db, config: job.config } as App, job.query, job.passages, job.timeoutMs));
+        // No scores because the model would not load: say why, so the settings page can show it.
+        if (result === null && rerankLoadError()) throw new Error(rerankLoadError());
       } else {
         const mod = await import("./embeddings.ts");
         const key = JSON.stringify(job.config.embeddings);

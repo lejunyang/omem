@@ -7,6 +7,14 @@ updated: 2026-11-14
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 本地模型优先经 osdk 下载（11-15）
+
+- `src/search/local-models.ts`：向量模型和重排模型在配置里写的是 Hugging Face 的 id 时，机器上有 osdk 就先用 osdk 下载并锁定版本（清单 `OSDK_MODELS`，和 `osdk.toml`、`omem setup` 里的别名、来源、文件一致），加载时从 osdk 的目录离线读；没有 osdk、清单里没有这个模型、或 osdk 下载失败（十分钟后再试）时，才由 transformers.js 自己下载到依赖目录的缓存里。配置里的模型名不改：向量模型的名字就是它的身份，改了会清空向量。
+- 以前自己下载过的那份还在缓存里时，osdk 下载期间先用它，功能不断；什么都没有时，osdk 下完之前重排不生效、向量不生成，不会两边同时下载。
+- `loadLocalModel`（`embeddings.ts`）在每个进程里都先查 osdk 的目录；主进程的 `getEmbedder` 和 `rerankScores` 负责发起下载（`prepareLocalModel`）。
+- 设置 → 检索：向量和重排各有一行写明模型从哪里来（本地目录 / osdk 锁定的目录 / 自己下载的缓存 / osdk 正在下载 / osdk 失败的原因）。重排的状态不再把“模型在读进程里加载失败”显示成“还没用过”：读进程把失败原因抛回来（`read-worker.ts`），首次下载期间的超时显示成“正在下载或加载”。
+- 测试 `test/local-models.test.ts`（osdk 用替身，测试进程里不碰真的 osdk）。
+
 ## Agent 页按分组选工具；技能可以停用（11-14）
 
 - `web/src/components/ToolPicker.vue`：档案和内置角色的 omem 工具不再是一个长下拉。已选的显示成标签（整组一个标签，带“排除 N 个”），“按分组选择”展开面板：勾分组名写成 `group:<id>`，整组里取消一个写成 `-<工具>`，展开后逐个勾写成工具名；可搜索；底下按档案文件的写法显示结果。`GET /api/profile-options` 多了 `toolGroups` 和每个工具的 `roleOnly`（内置角色交结果用的，不随整组）。
