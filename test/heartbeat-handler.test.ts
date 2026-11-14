@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createRun, runEvents, waitForRun } from "../src/agents/runs.ts";
 import { setKey } from "../src/core/ai-keys.ts";
+import { addNotificationSink, notify } from "../src/core/notify.ts";
 import { one, run } from "../src/core/db.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
 import { upsertItem } from "../src/items/store.ts";
@@ -24,6 +25,7 @@ describe("巡检 handler 的预筛与补看（真实 ACP 路径）", async () =>
   let asked = 0;
   let probability = 0.1;
   let sourceId = "";
+  let gateBody = "";
   const promptLog = () => existsSync(prompts) ? readFileSync(prompts, "utf8").trim().split("\n").filter(Boolean).map((s) => JSON.parse(s) as string) : [];
   const skipped = () => JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_skipped'")?.value ?? "[]");
   const tick = async () => {
@@ -41,6 +43,9 @@ describe("巡检 handler 的预筛与补看（真实 ACP 路径）", async () =>
   };
   beforeEach(() => {
     asked = 0;
+    gateBody = "";
+    run(app.db, "delete from notifications");
+    run(app.db, "delete from kv where key = 'notify_later_slot'");
     probability = 0.1;
     app.config.heartbeat.gate = "decision";
     run(app.db, "delete from kv where key in ('heartbeat_at', 'heartbeat_skipped', 'heartbeat_sweep_at')");
@@ -49,7 +54,8 @@ describe("巡检 handler 的预筛与补看（真实 ACP 路径）", async () =>
     writeFileSync(prompts, "");
     upsertItem(app, undefined, { spaceId: "personal", title: "等待审计材料", kind: "waiting", waitingOn: "小王" }, "user");
     sourceId = upsertSource(app, { spaceId: "personal", kind: "doc", uri: `doc:menu-${Date.now()}`, title: "食堂本周菜单", text: "周一：番茄炒蛋。" }).id;
-    setDecisionFetchForTests((async () => {
+    setDecisionFetchForTests((async (_url, init) => {
+      gateBody = String(init?.body);
       asked++;
       return new Response(JSON.stringify({ answers: [{ type: "predicate", name: "q", probability }] }));
     }) as typeof fetch);
@@ -58,6 +64,39 @@ describe("巡检 handler 的预筛与补看（真实 ACP 路径）", async () =>
     setDecisionFetchForTests(null);
     await server.close();
   });
+
+  it("历史反应同时交给预筛和 Agent", async () => {
+    probability = 0.9;
+    const at = new Date(Date.now() - 72 * 3600_000).toISOString();
+    run(app.db, "insert into runs(id,kind,status,title,created_at) values('history','heartbeat','done','以前的巡检',?)", at);
+    for (let i = 0; i < 5; i++) run(app.db, "insert into notifications(id,at,title,body,context,outcome,outcome_at) values(?,?,?,'',?,'unread',?)", `old${i}`, at, "以前的提醒", JSON.stringify({ runId: "history" }), at);
+    await tick();
+    const sentence = "近 30 天发了 5 条：本人处理了 0 条，本人先一步已经知道 0 条，只看了 0 条，没看 5 条，表示过反感 0 条";
+    expect(gateBody).toContain("本人对以往巡检提醒的反应"); expect(gateBody).toContain(sentence);
+    expect(promptLog()[0]).toContain("本人对以往提醒的反应"); expect(promptLog()[0]).toContain(sentence);
+  }, 60_000);
+
+  it("没有新材料的 tick 仍然释放稍后通知", async () => {
+    run(app.db, "update sources set updated_at = ? where id = ?", new Date(Date.now() - 72 * 3600_000).toISOString(), sourceId);
+    app.config.notify.laterTimes = ["00:00"];
+    const delivered: string[] = [];
+    addNotificationSink((n) => { if (n.title === "后台查询已完成") delivered.push(n.id); });
+    const held = notify(app, { title: "后台查询已完成", urgency: "later" });
+    expect(delivered).toEqual([]);
+    await tick();
+    expect(asked).toBe(0); expect(delivered).toEqual([held.id]);
+    expect(one<{ held: number | null }>(app.db, "select json_extract(context, '$.held') held from notifications where id = ?", held.id)?.held).toBeNull();
+  }, 60_000);
+
+  it("聊天整理任务带上这个会话以往提醒的反应", async () => {
+    const chat = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_context", title: "项目 A 会话", text: "需要核对退款口径。" });
+    const at = new Date(Date.now() - 72 * 3600_000).toISOString();
+    for (let i = 0; i < 5; i++) run(app.db, "insert into notifications(id,at,title,body,context,outcome,outcome_at) values(?,?,?,'',?,'unread',?)", `context${i}`, at, "以前的提醒", JSON.stringify({ sourceRefs: [`src:${chat.id}#L1`] }), at);
+    const queued = createRun(app, { kind: "ingest", spaceId: "personal", title: "整理会话", input: { sourceIds: [chat.id] } });
+    const done = await waitForRun(app, queued.id);
+    expect(done.error).toBeNull();
+    expect(promptLog()[0]).toContain("本人对这个会话里以往提醒的反应：近 30 天发了 5 条");
+  }, 60_000);
 
   it("无关材料安静跳过，不启动 Agent，并保存材料 ID", async () => {
     const done = await tick();

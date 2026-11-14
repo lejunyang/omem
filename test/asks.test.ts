@@ -139,6 +139,51 @@ describe("asking the owner", () => {
     expect((await callTool(owner, "upsert_item", { title: "本人自己建的", kind: "todo" })).text).not.toMatch(/批准/);
   });
 
+  it("report runs without an ask and reports once; shadow and approved calls do not report", async () => {
+    const { app, ctx } = working();
+    try {
+      app.config.approvals.report = ["upsert_item"];
+      const result = await callTool(ctx, "upsert_item", { title: "核对退款金额", kind: "todo" });
+      expect(result.isError).toBe(false);
+      expect(listAsks(app)).toHaveLength(0);
+      const notices = all<{ title: string; body: string; context: string }>(app.db, "select title,body,context from notifications");
+      expect(notices).toHaveLength(1);
+      expect(notices[0].title).toContain("upsert_item"); expect(notices[0].body).toContain("结果：");
+      expect(JSON.parse(notices[0].context)).toMatchObject({ urgency: "later", held: 1 });
+      await callTool({ ...ctx, shadow: { parentRunId: null } }, "upsert_item", { title: "对比", kind: "todo" });
+      await callTool({ ...ctx, approved: true }, "upsert_item", { title: "已经批准", kind: "todo" });
+      expect(all(app.db, "select id from notifications")).toHaveLength(1);
+    } finally { app.db.close(); }
+  });
+
+  it("consecutive answerAsk approvals offer promotion once; the first choice moves it to report", async () => {
+    const { app, ctx } = working();
+    try {
+      app.config.approvals = { tools: ["upsert_item"], report: [], promoteAfter: 2, waitSeconds: 0 };
+      for (let i = 0; i < 3; i++) {
+        const held = await callTool(ctx, "upsert_item", { title: `核对 ${i}`, kind: "todo" });
+        expect(held.text).toContain("需要本人批准");
+        const ask = listAsks(app, { status: "pending" }).find((a) => a.kind === "approval")!;
+        await answerAsk(app, ask.id, { approved: true, by: "owner" });
+        // Promotion is scheduled by the approval executor's dynamic import.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const promotions = listAsks(app).filter((a) => a.question.includes("直接做、做完告诉你"));
+      expect(promotions).toHaveLength(1);
+      expect(promotions[0].options[0].label).toBe("直接做，做完告诉我");
+      await answerAsk(app, promotions[0].id, { choice: 0, by: "owner" });
+      expect(app.config.approvals.tools).toEqual([]); expect(app.config.approvals.report).toEqual(["upsert_item"]);
+    } finally { app.db.close(); }
+  });
+
+  it("notify accepts later through the tool and holds its result", async () => {
+    const { app, ctx } = working();
+    try {
+      expect((await callTool(ctx, "notify", { title: "查询已完成", body: "已查清退款口径", urgency: "later" })).isError).toBe(false);
+      expect(JSON.parse(one<{ context: string }>(app.db, "select context from notifications")!.context)).toMatchObject({ urgency: "later", held: 1 });
+    } finally { app.db.close(); }
+  });
+
   it("answers from a Feishu card: option buttons, a typed answer, approve or refuse with a reason", async () => {
     const { app, runId } = working();
     const q = createAsk(app, { runId, question: "哪天发布？", options: [{ label: "周四" }, { label: "周五" }] });

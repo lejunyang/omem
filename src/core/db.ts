@@ -1832,6 +1832,13 @@ export const migrations: readonly string[] = [
    create index quality_audits_target on quality_audits(space_id, target, at);`,
   `alter table reviews add column independence text;`,
   `create index runs_code_history on runs(space_id, created_at) where kind = 'code';`,
+  `alter table notifications add column outcome text;
+   alter table notifications add column outcome_at text;
+   create index notifications_outcome_pending on notifications(at) where outcome is null and user_id = 'owner'
+     and coalesce(json_extract(context, '$.urgency'), '') != 'silent'
+     and json_extract(context, '$.replacedBy') is null and json_extract(context, '$.bundle') is null;
+   create index notifications_user_at on notifications(user_id, at);
+   create index item_events_item_at on item_events(item_id, at);`,
 ];
 
 export type Db = DatabaseSync;

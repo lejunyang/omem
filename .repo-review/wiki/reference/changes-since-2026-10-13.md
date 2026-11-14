@@ -11,6 +11,11 @@ updated: 2026-11-14
 
 - `review-chain.ts` / `review.ts` / `families.ts`：默认 prefer 在评审项与编码同家时，从评审换模型列表和任务选型候选顺序找可用别家；保留本人、轮换与复看选择。记录实际独立性，same 在网页有徽标，require 在摘要与裁决材料说明不算独立评审，不拦运行。
 - `code-tasks.ts` / `code-loop.ts` / `code-overlap.ts`：40 行源代码即要求精简；新库标准档功能、精简、业务，完整档再加架构、历史、规范（已有档位不迁移）。阶段计划加同仓库近 30 天采纳 / 驳回史，裁决（含复看）列深度至少 3 的修补链。`pre-check.ts` 的 reuse 清单给编码、方案与评审，概览卡片可展开。细节见 `docs/v2/review.md` 末节。
+## 不急的进展汇总与提醒效果（11-14）
+
+- `src/agents/jobs.ts` 把 `releaseLater` 与 `labelOutcomes` 接入巡检杂务，无新材料也执行。通知工具接受 later；网页区分等待 / 已并入汇总，汇总标题各自可打开；设置 → 渠道编辑时间和查看近 30 天效果。
+- `src/core/notify-outcome.ts` 在超过 48 小时后每轮最多标注 300 条，按负面、处理、先已知道、只读、未读区分，并入汇总单记 bundled。统计按运行类型与聊天原件回给巡检、整理与找人分诊；至少 8 条且从未处理的会话可确认后设免提醒，保留点名、限时例外。忽略规则没记录来源 ID，未拿它判 negative。
+- `web/src/components/ApprovalSettings.vue`：工具审批可选每次问 / 做完告诉 / 不用问，显示连续批准次数、可调提议门槛；report 用 later 告知。核心在 `src/agents/approval-ladder.ts`，强制审批插件不升档。行为回归见 `test/asks.test.ts`；统计、接口、巡检分别见 `notify-outcome`、`notification-settings`、`heartbeat-handler` 测试。
 
 ## 每晚抽检（11-14）
 

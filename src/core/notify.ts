@@ -7,8 +7,13 @@ import { HttpError, json, newId, now } from "./util.ts";
 
 export type NotifyAction = { label: string; action: string; style?: "primary" | "danger" | "default" };
 
-/** normal: respect quiet hours and read state; urgent: pushes even at night; silent: in-app only. */
-export type NotifyUrgency = "normal" | "urgent" | "silent";
+/**
+ * normal: respect quiet hours and read state; urgent: pushes even at night; silent: in-app only;
+ * later: nothing the person has to do now (a finished background job, a report, a change to know
+ * of) — in-app at once, and pushed together with the others of its kind at the next of the set
+ * times of day (`notify.laterTimes`, releaseLater), so a day of them is a few messages, not dozens.
+ */
+export type NotifyUrgency = "normal" | "urgent" | "silent" | "later";
 
 export type NotifyTone = "warning" | "done";
 
@@ -66,6 +71,10 @@ export type Notification = {
   pushed?: { channel: string; at: string; messageId?: string | null };
   /** A channel took it and chose not to ping (an ignore rule, the owner already on it): not unread on the web either. */
   quiet?: string;
+  /** A `later` one still waiting for its time of day (releaseLater). */
+  held?: boolean;
+  /** The `later` notifications this one lists (they went out as its lines). */
+  bundle?: string[];
   /** A reply to the person who looked for the owner, drafted by the handling (mentions/mentions.ts): the channel puts it on this notification's own card for the owner to send or drop. */
   replyDraft?: string;
 };
@@ -83,7 +92,9 @@ export function notify(
   input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
     /** The host already gave the owner their time before this run started (mentions/mentions.ts): no first-nudge grace. */
     graceDone?: boolean;
-    replyDraft?: string },
+    replyDraft?: string;
+    /** The `later` notifications this one stands for (releaseLater). */
+    bundle?: string[] },
 ) {
   const userId = input.userId ?? "owner";
   const replaced = input.replaces ? one<{ id: string; user_id: string }>(app.db, "select id, user_id from notifications where id = ?", input.replaces) : undefined;
@@ -145,13 +156,74 @@ export function notify(
     ...(input.tone ? { tone: input.tone } : replaced && one<{ t: string | null }>(app.db, "select json_extract(context, '$.tone') t from notifications where id = ?", replaced.id)?.t === "warning" ? { tone: "done" as const } : {}),
     ...(input.entityId ? { entity: input.entity ?? "item", entityId: input.entityId, actions: input.actions ?? [] } : {}),
     ...(input.replyDraft ? { replyDraft: input.replyDraft } : {}),
+    ...(input.bundle?.length ? { bundle: input.bundle } : {}),
   };
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft }));
+  // Not for now: it waits for the next set time of day. (The newer state of a card already sent goes
+  // straight to the channels, which edit that card without a ping.)
+  const held = n.urgency === "later" && !replaced && app.config.notify.laterTimes.length > 0;
+  if (held) n.held = true;
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
   // The earlier one is now history: read, and no longer waiting for the morning.
   if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });
-  for (const sink of sinks) Promise.resolve(sink(n)).catch((e) => console.warn("[omem] 通知发送失败", e));
+  if (!held) deliver(n);
   return n;
+}
+
+const deliver = (n: Notification) => {
+  for (const sink of sinks) Promise.resolve(sink(n)).catch((e) => console.warn("[omem] 通知发送失败", e));
+};
+
+/** More than this many held at once go out as one list instead of one by one. */
+const LATER_SINGLY = 2;
+/** A held notification older than this is no longer worth a push (it stays in the list). */
+const LATER_KEEP_MS = 48 * 3600_000;
+
+/** The latest of the set times of day that has passed today (the server's clock, as quiet hours), as a key; null before the first. */
+export function laterSlot(app: App, at = new Date()): string | null {
+  const now_ = at.getHours() * 60 + at.getMinutes();
+  const passed = app.config.notify.laterTimes
+    .map((t) => /^(\d{1,2}):(\d{2})$/.exec(t))
+    .flatMap((m) => (m ? [Number(m[1]) * 60 + Number(m[2])] : []))
+    .filter((m) => m <= now_)
+    .sort((a, b) => b - a)[0];
+  if (passed === undefined) return null;
+  const day = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+  return `${day} ${String(Math.floor(passed / 60)).padStart(2, "0")}:${String(passed % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Send what `later` held, once per set time of day: per person, one or two go out as they are; more
+ * go out as one notification that lists them (the originals count as delivered with it). Read ones
+ * and ones older than two days are let go without a push. Returns how many were released.
+ */
+export function releaseLater(app: App, at = new Date()): number {
+  const slot = laterSlot(app, at);
+  // No times of day set any more: what was held before that goes out now instead of waiting for ever.
+  if (app.config.notify.laterTimes.length) {
+    if (!slot || one<{ value: string }>(app.db, "select value from kv where key = 'notify_later_slot'")?.value === slot) return 0;
+    run(app.db, "insert into kv(key,value) values('notify_later_slot', ?) on conflict(key) do update set value = excluded.value", slot);
+  }
+  const rows = all<{ id: string; at: string; title: string; body: string; link: string | null; user_id: string; read_at: string | null; context: string | null }>(app.db, "select * from notifications where json_extract(context, '$.held') = 1 order by at");
+  if (!rows.length) return 0;
+  run(app.db, `update notifications set context = json_remove(context, '$.held') where id in (${rows.map(() => "?").join(",")})`, ...rows.map((r) => r.id));
+  const byUser = new Map<string, Notification[]>();
+  for (const r of rows) {
+    if (r.read_at || at.getTime() - Date.parse(r.at) > LATER_KEEP_MS) continue;
+    const n: Notification = { ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: null, userId: r.user_id, held: false };
+    byUser.set(n.userId, [...(byUser.get(n.userId) ?? []), n]);
+  }
+  let released = 0;
+  for (const [userId, list] of byUser) {
+    released += list.length;
+    if (list.length <= LATER_SINGLY) {
+      for (const n of list) deliver({ ...n, urgency: "normal" });
+      continue;
+    }
+    notify(app, { title: `这段时间的 ${list.length} 条进展`, body: `${list.map((n) => `- ${n.title}`).join("\n")}\n\n详情在网页的通知里。`, link: "#/notifications", userId, bundle: list.map((n) => n.id) });
+    for (const n of list) markPushed(app, n.id, "bundle");
+  }
+  return released;
 }
 
 /** How long the same chat messages are not notified about again. */
@@ -209,6 +281,8 @@ export function markPushed(app: App, id: string, channel = "lark", messageId?: s
   run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.pushed', json_object('channel', ?, 'at', ?, 'messageId', ?)) where id = ?", channel, now(), messageId ?? null, id);
 }
 
+/** Why a push was dropped when the owner had already seen or dealt with it in the chat (notify-outcome.ts reads it as “known”). */
+export const QUIET_HANDLED = "你已经在飞书上看过或处理了，没有再推";
 /** A channel took the notification and chose not to ping (`why`, shown on the web). */
 export function markQuiet(app: App, id: string, why: string) {
   run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.quiet', ?) where id = ?", why, id);

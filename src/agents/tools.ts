@@ -3336,7 +3336,7 @@ def({
     entity_id: z.string().optional().describe("关联事项 id：飞书会收到带 已处理/忽略 按钮的卡片"),
     source_refs: refs.describe("仅本次变化的来源；不传时兼容读取该事项最近事件，绝不读取全部历史来源"),
     event_id: z.number().int().positive().optional(),
-    urgency: z.enum(["normal", "urgent"]).optional().describe("紧急（高优先级、已过期、点名本人且限时）才传 urgent：可在免打扰时段推送。默认 normal"),
+    urgency: z.enum(["normal", "urgent", "later"]).optional().describe("紧急（高优先级、已过期、点名本人且限时）才传 urgent：可在免打扰时段推送。默认 normal。later：不需要本人现在做什么的进展或结果（后台的事做完了、你替他查清的结论、一条供了解的变化），不单独推送，和别的攒到固定时点一起发；要本人处理、决定、回复的不用 later"),
     replaces: z.string().optional().describe("之前一条通知的 id（发通知时返回的 n…）：这条是它的新状态（授权已完成、等待已结束），飞书里直接改那张卡片，不另发；原通知标为已读"),
     tone: z.enum(["warning", "done"]).optional().describe("warning：要本人去做的事（授权、登录、审批），飞书卡片是橙色；done：那件事已经办好（配合 replaces 更新原卡片），卡片变绿色（更新一张 warning 卡片时不传也按 done；还在等就再传 warning）。普通通知不传"),
   }),
@@ -5718,6 +5718,7 @@ export function unregisterTools(names: string[]) {
 }
 /** Tools that wait for the owner's OK whatever approvals.tools says (a plugin's clicks and keystrokes on a machine). */
 const alwaysApprove = new Set<string>();
+export const toolAlwaysApproves = (name: string) => alwaysApprove.has(name);
 
 // ------------------------------------------------------------------ registry
 
@@ -5769,7 +5770,11 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
     const there = await forwardToHome(ctx.app, ctx, name, parsed.data as Record<string, unknown>);
     if (there) return there;
   }
-  return runTool(ctx, tool, name, parsed.data);
+  const out = await runTool(ctx, tool, name, parsed.data);
+  // On the middle rung (approval-ladder.ts): done without asking, and the owner is told what was done.
+  if (ctx.actor === "agent" && !ctx.approved && (ctx.app.config.approvals.report ?? []).includes(name))
+    (await import("./approval-ladder.ts")).reportDone(ctx.app, { who: ctx.spec ?? ctx.role ?? "助理", userId: ctx.userId, runId: ctx.runId }, name, parsed.data as Record<string, unknown>, out);
+  return out;
 }
 
 /** Tools the owner steers a delegation with: when used from another conversation of theirs, its reports follow there. */
@@ -5872,7 +5877,10 @@ setApprovalExecutor(async (app, ask, snapshot) => {
   const tool = tools.find((t) => t.name === ask.tool);
   if (!tool) return { text: `工具 ${ask.tool} 已不存在`, isError: true };
   const s = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null };
-  return runTool({ ...s, app, tools: s.tools ? new Set(s.tools) : null, approved: true }, tool, ask.tool!, ask.args ?? {});
+  const out = await runTool({ ...s, app, tools: s.tools ? new Set(s.tools) : null, approved: true }, tool, ask.tool!, ask.args ?? {});
+  // The owner keeps approving this tool: ask once whether it may run and be reported instead (approval-ladder.ts).
+  void import("./approval-ladder.ts").then((m) => m.suggestPromotion(app, ask, (t) => !alwaysApprove.has(t))).catch((e) => console.warn(`[omem] 审批阶梯：${(e as Error).message}`));
+  return out;
 });
 
 /**

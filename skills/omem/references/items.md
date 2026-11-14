@@ -45,3 +45,5 @@
 - 它精确移动事件、保留未迁移事件共用的来源（预览 / 审计列出 retainedSourceRefs 与 removedSourceRefs）、撤回其余错误引用、修正通知和交互 payload、给原运行加纠正标注；保留审计快照，原卡片停用，不发消息。
 - `inspect_item_notification(notification_id)` 在修复前读取通知及全部交互记录，`read_item_repair(repair_id)` 查看审计。
 - 本人要求修复原飞书卡片时 `refresh_item_notification(interaction_id, reason)` 更新原消息；卡片与 payload 使用同一事项，失败保持失效可重试，需要本次飞书会话权限。
+
+- `notify(urgency="later")`：不需要本人现在做什么的进展或结果（后台的事做完了、你替他查清的结论、一条供了解的变化），不单独推送，和别的攒到固定时点一起发；要本人处理、决定、回复的不用 later。默认服务器时间 09:30、13:30、18:30，超过两条合成清单；本人在设置 → 渠道可调整，清空后新通知立即发。通知先出现在网页；不要为同一结果再发一条 normal。

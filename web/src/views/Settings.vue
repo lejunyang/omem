@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import NotificationSettings from "../components/NotificationSettings.vue";
+import ApprovalSettings from "../components/ApprovalSettings.vue";
 import HelpText from "../components/HelpText.vue";
 import AssistantsSettings from "../components/AssistantsSettings.vue";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -1157,6 +1159,7 @@ async function saveEdit() {
     </section>
 
     <section v-else-if="tab === 'lark' && config" class="stack">
+      <NotificationSettings v-if="!state.me || state.me.role === 'owner'" :config="config" :save="saveConfig" />
       <p class="muted">飞书机器人是日常指挥入口：私聊可以提问、交代事项、交办任务；机器人所在的群聊会被保存为聊天原件并交给助理整理。通知也会发到私聊。</p>
       <UiCheckbox :model-value="config.lark.enabled" switch @change="(v) => saveConfig({ lark: { ...config.lark, enabled: v } })">启用飞书机器人</UiCheckbox>
       <div class="card pad stack">
@@ -1511,6 +1514,7 @@ async function saveEdit() {
       <ShareSettings />
     </section>
     <section v-else-if="tab === 'security'" class="stack">
+      <ApprovalSettings v-if="config && (!state.me || state.me.role === 'owner')" :config="config" :save="saveConfig" />
       <CommandRulesSettings />
     </section>
     <section v-else-if="tab === 'plugins'" class="stack">

@@ -18,7 +18,7 @@ import { addNotificationSink, deferNotification, markPushed, markQuiet, markRead
 import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
-import { inQuietHours } from "../core/notify.ts";
+import { inQuietHours, QUIET_HANDLED } from "../core/notify.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress } from "./lark-code-progress.ts";
@@ -468,7 +468,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       // The owner is already on it in Feishu: read as well as not pushed. A run that went through the
       // check before sending (awareness.ts) has had this looked at already.
       const { checkedBeforeSend } = await import("../agents/awareness.ts");
-      if ((deferred || !checkedBeforeSend(app, n.runId)) && await ownerAlreadyHandled(app, n).catch(() => false)) { markQuiet(app, n.id, "你已经在飞书上看过或处理了，没有再推"); markReadIds(app, [n.id]); return; }
+      if ((deferred || !checkedBeforeSend(app, n.runId)) && await ownerAlreadyHandled(app, n).catch(() => false)) { markQuiet(app, n.id, QUIET_HANDLED); markReadIds(app, [n.id]); return; }
     }
     // A handling's reminder with the reply it drafted: one card, the reminder on top and the draft to send under it.
     if (n.replyDraft && n.runId) {

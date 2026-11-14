@@ -1,3 +1,7 @@
+import { outcomeBreakdown } from "../core/notify-outcome.ts";
+import { approvalStreak, rungOf } from "../agents/approval-ladder.ts";
+import { toolAlwaysApproves } from "../agents/tools.ts";
+import { addIgnoreRule } from "../core/notify-lessons.ts";
 import { shellToolRuns } from "../agents/doubao-cli.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { presentHits } from "../search/present.ts";
@@ -2053,11 +2057,27 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { type: "ask", ask: { ...a, draft: draftOf(app, id), ...(a.askedBy ? { askedByName: userName(app, a.askedBy) } : {}) } };
   });
 
+  server.get("/api/approvals/ladder", async () => [...new Set([...app.config.approvals.tools, ...(app.config.approvals.report ?? [])])].map((tool) => ({ tool, rung: toolAlwaysApproves(tool) ? "ask" : rungOf(app, tool), streak: approvalStreak(app, tool) })));
+  server.get("/api/notifications/outcomes", async (req) => {
+    const { days } = q(z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }), req.query);
+    return outcomeBreakdown(app, days);
+  });
+  server.post("/api/notifications/outcomes/ignore", async (req) => {
+    const { sourceId } = q(z.object({ sourceId: z.string().min(1) }), req.body);
+    const s = one<{ title: string }>(app.db, "select title from sources where id = ? and kind = 'chat' and deleted_at is null", sourceId);
+    if (!s) throw new HttpError(404, "没有这个会话原件");
+    const rule = addIgnoreRule(app, `${s.title} 里的消息不用提醒我，点名我或限时的事除外`, s.title);
+    return { rule };
+  });
   // ----------------------------------------------------- notifications/status
   server.get("/api/notifications", async (req) => {
     const list = listNotifications(app, 50, who(req));
     // Unread on the web: only what reached the person nowhere else (core/notify.ts countsAsUnread).
-    return { notifications: list, unread: list.filter((n) => n.unread).length };
+    const notifications = list.map((n) => ({ ...n, ...(n.bundle?.length ? { bundleItems: n.bundle.flatMap((id) => {
+      const item = one<{ id: string; title: string; link: string | null }>(app.db, "select id, title, link from notifications where id = ? and user_id = ?", id, who(req));
+      return item ? [item] : [];
+    }) } : {}) }));
+    return { notifications, unread: list.filter((n) => n.unread).length };
   });
   server.post("/api/notifications/read", async (req) => {
     markRead(app, (req.body as { id?: string } | null)?.id, who(req));
@@ -2757,9 +2777,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const queued = scheduleAudit(app);
     return queued ? { runId: queued.id } : { runId: null, reason: !app.config.quality.audit.enabled ? "disabled" : active ? "already under way" : "nothing to audit" };
   });
-  server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app) }));
+  server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app), approvalTools: toolList().map((t) => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }));
   server.put("/api/settings", async (req) => {
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });
+    next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
     next.security = structuredClone(app.config.security);
     // Everything else is read on use; these are only read when the service starts.

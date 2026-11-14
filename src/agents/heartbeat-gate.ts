@@ -31,7 +31,7 @@ const setKv = (app: App, key: string, value: string) => run(app.db, "insert into
 /** The sources an item's refs name ("src:<id>#L1-L4" or a bare id). */
 const refIds = (refs: string[]) => refs.map((r) => r.replace(/^src:/, "").split("#")[0]);
 
-export function gateMaterial(app: App, watching: Item[], fresh: Fresh[], sent: { title: string }[]): Record<string, string> {
+export function gateMaterial(app: App, watching: Item[], fresh: Fresh[], sent: { title: string }[], extra: Record<string, string> = {}): Record<string, string> {
   const snippets = new Map(
     fresh.length
       ? all<{ id: string; snip: string }>(
@@ -53,6 +53,8 @@ export function gateMaterial(app: App, watching: Item[], fresh: Fresh[], sent: {
       .join("\n"),
     这段时间已经发给本人的通知: sent.map((n) => `- ${n.title}`).join("\n") || "（无）",
     ...ownerContextParts(app, { now: true, state: true }),
+    // What the caller knows besides (how the owner took earlier reminders of this kind, core/notify-outcome.ts).
+    ...extra,
   };
 }
 
@@ -62,13 +64,13 @@ const INSTRUCTIONS =
 export type Gate = { look: boolean; why: string };
 
 /** Whether the agent should look at this tick's new material; `why` goes on the run. */
-export async function heartbeatGate(app: App, watching: Item[], fresh: Fresh[], sent: { title: string }[], signal?: AbortSignal): Promise<Gate> {
+export async function heartbeatGate(app: App, watching: Item[], fresh: Fresh[], sent: { title: string }[], signal?: AbortSignal, extra: Record<string, string> = {}): Promise<Gate> {
   if (app.config.heartbeat.gate === "off") return { look: true, why: "" };
   if (fresh.length > MAX_FRESH) return { look: true, why: `新材料 ${fresh.length} 份，超过预筛能看的 ${MAX_FRESH} 份，直接交给助手` };
   const { decide, decisionReady, describeDecision } = await import("../core/decision.ts");
   if (!decisionReady(app)) return { look: true, why: "" };
   try {
-    const r = await decide(app, gateMaterial(app, watching, fresh, sent), { type: "yesno", instructions: INSTRUCTIONS, yes: "要看", no: "不用看" }, { signal });
+    const r = await decide(app, gateMaterial(app, watching, fresh, sent, extra), { type: "yesno", instructions: INSTRUCTIONS, yes: "要看", no: "不用看" }, { signal });
     if (!r) return { look: true, why: "" };
     const said = describeDecision(r, { yes: "要看", no: "不用看" });
     return r.choice === "yes" ? { look: true, why: `预筛：${said}` } : { look: false, why: `预筛：新材料和关注、等待的事项无关（${said}）` };
