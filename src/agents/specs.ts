@@ -312,10 +312,26 @@ export function saveSkill(app: App, input: { name: string; description: string; 
   return readSkill(app, input.name);
 }
 
+/**
+ * Turn a skill on or off: a draft is in no agent's list. The rest of its frontmatter and its files
+ * stay as they are. Turned off by the owner it is marked `tryout: false`: the nightly replay does
+ * not try it out (and so cannot turn it back on) until the owner enables it again.
+ */
 export function setSkillStatus(app: App, name: string, status: "active" | "draft", actor: "user" | "agent" = "user") {
   const s = readSkill(app, name);
-  return saveSkill(app, { name, description: s.description, body: s.body, status }, actor);
+  const { meta } = splitFrontmatter(readRaw(app, "skill", name));
+  delete meta.status;
+  delete meta.tryout;
+  if (status === "draft") {
+    meta.status = "draft";
+    if (actor === "user") meta.tryout = false;
+  }
+  writeFileSync(join(skillsDir(app), name, "SKILL.md"), ["---", YAML.stringify(meta).trim(), "---", "", s.body.trim(), ""].join("\n"));
+  commitLibrary(app.libraryDir, `${actor}: turn skill ${name} ${status === "draft" ? "off" : "on"}`);
+  return readSkill(app, name);
 }
+/** A draft the owner turned off themselves (setSkillStatus): not a candidate for trying out. */
+export const skillHeld = (app: App, name: string) => splitFrontmatter(readRaw(app, "skill", name)).meta.tryout === false;
 
 export function deleteSkill(app: App, name: string, actor: "user" | "agent" = "user") {
   const dir = join(skillsDir(app), checkName(name));

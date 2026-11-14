@@ -935,7 +935,7 @@ export const migrations: readonly string[] = [
     task_run_id text,                         -- the replay run (kind replay)
     signal text not null,                     -- negative | correction | notFound | timeout | slow | normal | positive | manual
     task_type text,
-    axis text not null,                       -- R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2
+    axis text not null,                       -- R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2 K1
     variant text not null default '{}',       -- what the variant arm changed
     as_of text not null,
     base_run_id text not null,                -- the original run

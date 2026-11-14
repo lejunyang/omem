@@ -269,7 +269,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "GET /api/roles", "GET /api/roles/:name", "PUT /api/roles/:name", "PUT /api/roles/:name/defaults", "PUT /api/roles/:name/full-access", "POST /api/roles/:name/customize", "POST /api/roles/:name/follow-source", "POST /api/roles/:name/reset", "POST /api/roles/:name/merge",
       "GET /api/profile-options", "PUT /api/profiles/:name/skills", "POST /api/profiles/:name/review", "POST /api/profile-proposals/:id/apply", "POST /api/profile-proposals/:id/reject",
       "GET /api/library-files/:kind/:name", "PUT /api/library-files/:kind/:name",
-      "GET /api/skills", "GET /api/skills/:name", "PUT /api/skills/:name", "DELETE /api/skills/:name", "GET /api/skills/:name/files", "GET /api/skills/:name/file", "PUT /api/skills/:name/file", "DELETE /api/skills/:name/file",
+      "GET /api/skills", "GET /api/skills/:name", "PUT /api/skills/:name", "PUT /api/skills/:name/status", "DELETE /api/skills/:name", "GET /api/skills/:name/files", "GET /api/skills/:name/file", "PUT /api/skills/:name/file", "DELETE /api/skills/:name/file",
       "GET /api/rules", "GET /api/rules/:id", "GET /api/rules/:id/permissions", "POST /api/rules", "PUT /api/rules/:id", "DELETE /api/rules/:id", "POST /api/rules/draft", "POST /api/rules/test",
       "GET /api/rule-options", "POST /api/rule-conversations", "GET /api/wakes", "DELETE /api/wakes/:id", "GET /api/mentions", "GET /api/watches", "DELETE /api/watches/:chatId",
       "GET /api/notify-ignore-rules", "POST /api/notify-ignore-rules/delete", "GET /api/schedules", "PUT /api/schedules/:id", "POST /api/schedules/:id/run",

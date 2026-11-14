@@ -1,3 +1,4 @@
+import { skillDisplayTally } from "../agents/replay-skills.ts";
 import { outcomeBreakdown } from "../core/notify-outcome.ts";
 import { approvalStreak, rungOf } from "../agents/approval-ladder.ts";
 import { toolAlwaysApproves } from "../agents/tools.ts";
@@ -8,7 +9,7 @@ import { presentHits } from "../search/present.ts";
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
-import { agentSpecSchema, splitFrontmatter, deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
+import { agentSpecSchema, splitFrontmatter, deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, setSkillStatus, saveRaw, saveSkill } from "../agents/specs.ts";
 import { listMcpServers, saveMcpServer, deleteMcpServer } from "../agents/mcp-servers.ts";
 import { testMcpServer } from "../agents/mcp-test.ts";
 import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride, setRoleFullAccess, setRoleMcp } from "../agents/builtin-roles.ts";
@@ -884,7 +885,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     deleteSkillFile(app, (req.params as { name: string }).name, q(z.object({ path: z.string() }), req.query).path);
     return { ok: true };
   });
-  server.get("/api/skills", async () => listSkills(app, { includeDrafts: true }));
+  server.get("/api/skills", async () => listSkills(app, { includeDrafts: true }).map((s) => ({ ...s, replay: skillDisplayTally(app, s.name) })));
+  // Turning a skill off here is the owner's decision: the nightly replay does not try it out again (specs.ts setSkillStatus).
+  server.put("/api/skills/:name/status", async (req) => setSkillStatus(app, (req.params as { name: string }).name, q(z.object({ status: z.enum(["active", "draft"]) }), req.body).status, "user"));
   server.get("/api/skills/:name", async (req) => readSkill(app, (req.params as { name: string }).name));
   server.put("/api/skills/:name", async (req) => {
     const b = q(z.object({ description: z.string(), body: z.string(), status: z.enum(["active", "draft"]).optional() }), req.body);

@@ -25,6 +25,7 @@ import { filterHits, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView
 import { lessonIdsForTask, loadRole, resolveRunProfile, runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, registerHandler, setRunOutput, type RunContext } from "./runs.ts";
 import { findAgentSpec, listAgentSpecs, type AgentSpec } from "./specs.ts";
+import { decideSkill, fittingSkills, skillCandidates, skillTried, type SkillCandidate } from "./replay-skills.ts";
 import { replyOf, type AgentEvent } from "./types.ts";
 
 /**
@@ -66,6 +67,7 @@ export const AXIS_LABEL: Record<ReplayAxis, string> = {
   W2: "先读 Wiki 页面",
   A1: "模型降一档",
   A2: "模型升一档",
+  K1: "加挂一个候选技能",
 };
 export const SIGNAL_LABEL: Record<ReplaySignal | "manual", string> = {
   negative: "负面表情",
@@ -218,13 +220,14 @@ export function touchedBy(app: App, runId: string, answer: string): Touched {
 // ------------------------------------------------------------------ precheck and axis
 
 /** Where the question's words land, as of its time (no model): the run's spaces, ignored sources, other spaces, pages. */
-export type Precheck = { own: number; ignored: number; other: number; pages: number };
+export type Precheck = { own: number; ignored: number; other: number; pages: number; skill?: SkillCandidate & { score: number } };
 
-export async function precheck(app: App, q: Question): Promise<Precheck> {
+export async function precheck(app: App, q: Question, candidates?: SkillCandidate[]): Promise<Precheck> {
   const base = new Set([q.spaceId, ...relatedIds(app, q.spaceId)]);
   const view: RunView = { asOf: q.asOf, sourceLevels: [...LEVELS] };
   const hits = filterHits(app, view, await search(app, q.question.slice(0, 500), { spaces: scopeFor(app, OWNER, null) ?? undefined, includeIgnored: true, limit: 30 }).catch(() => []));
-  const out: Precheck = { own: 0, ignored: 0, other: 0, pages: 0 };
+  const skill = (await fittingSkills(app, q, candidates))[0];
+  const out: Precheck = { own: 0, ignored: 0, other: 0, pages: 0, ...(skill ? { skill } : {}) };
   for (const h of hits) {
     if (h.type === "page") {
       if (base.has(h.spaceId)) out.pages++;
@@ -281,6 +284,7 @@ export function axisApplies(app: App, axis: ReplayAxis, c: AxisContext): boolean
   const { pre, touched, signal } = c;
   const notFound = signal === "notFound";
   switch (axis) {
+    case "K1": return !!pre.skill;
     case "R1": return !notFound || pre.own > 0;
     case "R2": return pre.other > 0 && (!notFound || (pre.own === 0 && pre.ignored === 0));
     case "R3": return researchProfiles(app).length > 0 && (!notFound || pre.own + pre.ignored + pre.other === 0);
@@ -301,18 +305,18 @@ export function chooseAxis(app: App, c: AxisContext): ReplayAxis | null {
   const plan = app.config.replay.plan[c.signal] ?? DEFAULT_REPLAY_PLAN[c.signal];
   for (const a of plan) {
     if (a === "random") {
-      const open = REPLAY_AXES.filter((x) => !c.tried.has(x) && axisApplies(app, x, c));
+      const open = REPLAY_AXES.filter((x) => (x === "K1" || !c.tried.has(x)) && axisApplies(app, x, c));
       if (open.length) return open[Math.floor(Math.random() * open.length)];
       continue;
     }
-    if (!c.tried.has(a) && axisApplies(app, a, c)) return a;
+    if ((a === "K1" || !c.tried.has(a)) && axisApplies(app, a, c)) return a;
   }
   return null;
 }
 
 const triedOn = (app: App, runId: string) => new Set(all<{ axis: string }>(app.db, "select axis from replays where base_run_id = ? and status != 'failed'", runId).map((r) => r.axis));
 
-export type Pick = { runId: string; signal: ReplaySignal; axis: ReplayAxis; question: string };
+export type Pick = { runId: string; signal: ReplaySignal; axis: ReplayAxis; question: string; candidateId?: string };
 
 /**
  * Tonight's questions (at most replay.max): asks and profile runs of the last `replay.days`, by the
@@ -320,7 +324,7 @@ export type Pick = { runId: string; signal: ReplaySignal; axis: ReplayAxis; ques
  * as a control, slow, normal), each with the plan's first applicable axis. With two or more a night,
  * one is kept for a model step down when any run allows it: that is where routing evidence comes from.
  */
-export async function selectQuestions(app: App, opts: { max?: number; now?: Date } = {}): Promise<Pick[]> {
+export async function selectQuestions(app: App, opts: { max?: number; now?: Date; skillTurn?: boolean } = {}): Promise<Pick[]> {
   const max = opts.max ?? app.config.replay.max;
   const since = new Date((opts.now ?? new Date()).getTime() - app.config.replay.days * 86400_000).toISOString();
   const rows = all<RunRow>(
@@ -330,6 +334,7 @@ export async function selectQuestions(app: App, opts: { max?: number; now?: Date
       order by created_at desc limit 300`,
     since,
   );
+  const candidates = skillCandidates(app);
   const slow = new Map<string, number | null>();
   const ranked: (AxisContext & { rank: number })[] = [];
   for (const r of rows) {
@@ -344,10 +349,10 @@ export async function selectQuestions(app: App, opts: { max?: number; now?: Date
   const picks: Pick[] = [];
   let positives = 0;
   const take = async (c: AxisContext) => {
-    if (c.signal === "notFound" || c.signal === "positive") c.pre = await precheck(app, c.q);
-    else c.pre = { own: 0, ignored: 0, other: 0, pages: await precheck(app, c.q).then((p) => p.pages) };
+    const pre = await precheck(app, c.q, candidates);
+    c.pre = c.signal === "notFound" || c.signal === "positive" ? pre : { own: 0, ignored: 0, other: 0, pages: pre.pages, skill: pre.skill };
     const axis = chooseAxis(app, c);
-    return axis ? { runId: c.q.run.id, signal: c.signal, axis, question: truncate(c.q.question.replace(/\s+/g, " "), 200) } : null;
+    return axis ? { runId: c.q.run.id, signal: c.signal, axis, question: truncate(c.q.question.replace(/\s+/g, " "), 200), ...(axis === "K1" ? { candidateId: c.pre.skill!.id } : {}) } : null;
   };
   for (const c of ranked) {
     if (picks.length >= max) break;
@@ -361,9 +366,31 @@ export async function selectQuestions(app: App, opts: { max?: number; now?: Date
     for (const c of ranked.filter((x) => (x.signal === "normal" || x.signal === "slow") && !picks.some((p) => p.runId === x.q.run.id))) {
       if (c.tried.has("A1") || !axisApplies(app, "A1", c)) continue;
       const p = { runId: c.q.run.id, signal: c.signal, axis: "A1" as const, question: truncate(c.q.question.replace(/\s+/g, " "), 200) };
-      if (picks.length >= max) picks[picks.length - 1] = p;
+      if (picks.length >= max) {
+        const slot = picks.findLastIndex((x) => x.signal !== "negative" && x.signal !== "correction");
+        if (slot < 0) break;
+        picks[slot] = p;
+      }
       else picks.push(p);
       break;
+    }
+  }
+  if (opts.skillTurn && picks.length && !picks.some((p) => p.axis === "K1")) {
+    const untried = candidates.filter((s) => !skillTried(app, s.id));
+    let best: { c: AxisContext; skill: SkillCandidate & { score: number } } | undefined;
+    // The strongest-signal questions are enough to find one that fits: not every question of the last days.
+    for (const c of ranked.slice(0, 60)) {
+      if (picks.some((p) => p.runId === c.q.run.id && (p.signal === "negative" || p.signal === "correction"))) continue;
+      const skill = (await fittingSkills(app, c.q, untried))[0];
+      if (skill && (!best || skill.score > best.skill.score)) best = { c, skill };
+    }
+    const slot = picks.reduce((i, p, k) => p.signal !== "negative" && p.signal !== "correction" && (i < 0 || SIGNAL_RANK[p.signal] >= SIGNAL_RANK[picks[i].signal]) ? k : i, -1);
+    if (best && slot >= 0) {
+      const { c, skill } = best;
+      const existing = picks.findIndex((p) => p.runId === c.q.run.id);
+      const target = existing >= 0 ? existing : slot;
+      if (picks[target].signal !== "negative" && picks[target].signal !== "correction")
+        picks[target] = { runId: c.q.run.id, signal: c.signal, axis: "K1", question: truncate(c.q.question.replace(/\s+/g, " "), 200), candidateId: skill.id };
     }
   }
   return picks;
@@ -488,9 +515,9 @@ const VARIANT_NOTE: Partial<Record<ReplayAxis, string>> = {
 };
 
 /** The task an arm gets: the question as it was asked, with the conversation before it. */
-async function armTask(app: App, q: Question, view: RunView, axis: ReplayAxis | null, spec: AgentSpec | null) {
+async function armTask(app: App, q: Question, view: RunView, axis: ReplayAxis | null, spec: AgentSpec | null, skill?: SkillCandidate) {
   const when = localTime(app, q.asOf);
-  const note = axis ? VARIANT_NOTE[axis] : undefined;
+  const note = axis === "K1" && skill ? `这次多给你一份做法（候选技能「${skill.name}」）。适用就照着做，不适用就忽略：\n\n${skill.text.slice(0, 6000)}` : axis ? VARIANT_NOTE[axis] : undefined;
   const head = `这是一次重答：下面的问题是在 ${when} 提的，把现在当作那个时间照常回答。这次只能读：写入、发消息、交办都用不了，也不需要；直接回答问题，引用照常写 src:/mem:。`;
   // What the original run was given unasked: memories close to the question (memory/passive.ts), as
   // they stood then, without the ones the arm's own instructions will carry.
@@ -513,7 +540,7 @@ async function armTask(app: App, q: Question, view: RunView, axis: ReplayAxis | 
 
 type ArmResult = { runId: string; answer: string; error: string | null; ms: number; peak: number; ai: AI | null };
 
-async function runArm(app: App, parent: RunContext, q: Question, label: string, opts: { view: RunView; axis: ReplayAxis | null; ai: AI; spec: AgentSpec | null; spaces?: string[] | null }): Promise<ArmResult> {
+async function runArm(app: App, parent: RunContext, q: Question, label: string, opts: { view: RunView; axis: ReplayAxis | null; ai: AI; spec: AgentSpec | null; spaces?: string[] | null; skill?: SkillCandidate }): Promise<ArmResult> {
   const id = childRun(app, parent.run.id, "replay-arm", `${label}：${q.question.replace(/\s+/g, " ")}`, q.spaceId, { baseRunId: q.run.id, axis: opts.axis, asOf: q.asOf, model: opts.ai });
   const cwd = mkdtempSync(join(tmpdir(), "omem-replay-"));
   const started = Date.now();
@@ -523,7 +550,7 @@ async function runArm(app: App, parent: RunContext, q: Question, label: string, 
   timer.unref();
   parent.signal.addEventListener("abort", () => ctrl.abort(), { once: true });
   try {
-    const task = await armTask(app, q, opts.view, opts.axis, opts.spec);
+    const task = await armTask(app, q, opts.view, opts.axis, opts.spec, opts.skill);
     const tools = opts.view.noPages ? REPLAY_TOOLS.filter((t) => !PAGE_TOOLS.includes(t)) : REPLAY_TOOLS;
     const res = await runRole(app, {
       role: "assistant",
@@ -628,13 +655,18 @@ function addEffect(app: App, replayId: string, e: { targetKind: string; targetId
 export function applyEffects(app: App, replayId: string) {
   const r = one<ReplayRow>(app.db, "select * from replays where id = ?", replayId);
   if (!r || !["win", "loss"].includes(r.verdict ?? "")) return [];
-  const variant = json<{ exclude?: string[]; spec?: string; question?: string }>(r.variant, {});
+  const variant = json<{ exclude?: string[]; spec?: string; question?: string; candidateId?: string }>(r.variant, {});
   const checks = json<{ baseline?: ArmCheck; variant?: ArmCheck }>(r.checks, {});
   const touched = json<Touched>(r.touched, { memories: [], sources: [], pages: [] });
   const win = r.verdict === "win";
   const out: string[] = [];
   const cited = (c?: ArmCheck) => [...new Set((c?.cites ?? []).filter((x) => x.ok && x.ref.startsWith("src:")).map((x) => canonicalSourceId(app, /src:([\w-]+)/.exec(x.ref)![1])))];
-  if (r.axis === "M1") {
+  if (r.axis === "K1" && variant.candidateId) {
+    if (one(app.db, "select 1 from replay_effects where replay_id = ? and target_kind = 'skill'", r.id)) return [];
+    const id = variant.candidateId;
+    out.push(addEffect(app, r.id, { targetKind: "skill", targetId: id, effect: win ? "helped" : "hurt", note: win ? "加上技能后答得更好" : "加上技能后答得更差", status: "applied" }));
+    decideSkill(app, id, r.id, () => { out.push(addEffect(app, r.id, { targetKind: "skill", targetId: id, effect: "adopt", note: "复盘后自动启用", status: "applied" })); });
+  } else if (r.axis === "M1") {
     for (const id of variant.exclude ?? []) {
       const m = one<{ created_by: string; status: string }>(app.db, "select created_by, status from memories where id = ?", id);
       if (!m) continue;
@@ -710,7 +742,7 @@ const digestBusy = (app: App) => !!one(app.db, "select 1 from runs where kind in
 
 registerHandler("replay", async (ctx) => {
   const app = ctx.app;
-  const input = ctx.run.input as { baseRunId: string; signal: ReplaySignal | "manual"; axis?: ReplayAxis; tries?: number };
+  const input = ctx.run.input as { baseRunId: string; signal: ReplaySignal | "manual"; axis?: ReplayAxis; candidateId?: string; tries?: number };
   if (digestBusy(app)) {
     const tries = (input.tries ?? 0) + 1;
     if (tries > DEFER_TRIES) throw new Error(`存量整理一直在跑，等了 ${DEFER_TRIES} 次（每次 ${DEFER_MINUTES} 分钟）后放弃，今晚不复盘`);
@@ -732,7 +764,10 @@ registerHandler("replay", async (ctx) => {
   const touched = touchedBy(app, q.run.id, q.answer);
   const signal = input.signal === "manual" ? (signalOf(app, q, null) ?? "normal") : input.signal;
   const tried = triedOn(app, q.run.id);
-  const axis = input.axis ?? chooseAxis(app, { q, signal, touched, pre: await precheck(app, q), tried });
+  const pre = await precheck(app, q);
+  const axis = input.axis ?? chooseAxis(app, { q, signal, touched, pre, tried });
+  const skill = axis === "K1" ? (input.candidateId ? (await fittingSkills(app, q)).find((s) => s.id === input.candidateId) : pre.skill) : undefined;
+  if (axis === "K1" && !skill) return { quiet: true, summary: "没有适合这题且尚未试过的候选技能" };
   if (!axis) return { quiet: true, summary: "这个问题没有能换的轴（都试过了，或缺少需要的信息）" };
   const ai = baseAI(app, q);
   const cache = new Map<string, unknown>();
@@ -751,16 +786,17 @@ registerHandler("replay", async (ctx) => {
     ...(axis === "W1" ? { noPages: true } : {}),
   };
   const replayId = newId("rp");
-  const variant = { label: AXIS_LABEL[axis], question: truncate(q.question.replace(/\s+/g, " "), 200), ...(axis === "M1" ? { exclude: excluded } : {}), ...(variantAI !== ai ? { ai: variantAI } : {}), ...(research ? { spec: research.name } : spec ? { spec: spec.name } : {}) };
+  const axisTitle = `${AXIS_LABEL[axis]}${skill ? `「${skill.name}」` : ""}`;
+  const variant = { ...(skill ? { candidateId: skill.id, skillName: skill.name } : {}), label: axisTitle, question: truncate(q.question.replace(/\s+/g, " "), 200), ...(axis === "M1" ? { exclude: excluded } : {}), ...(variantAI !== ai ? { ai: variantAI } : {}), ...(research ? { spec: research.name } : spec ? { spec: spec.name } : {}) };
   run(
     app.db,
     "insert into replays(id, task_run_id, signal, axis, variant, as_of, base_run_id, touched, status, at) values(?,?,?,?,?,?,?,?,?,?)",
     replayId, ctx.run.id, signal, axis, JSON.stringify(variant), q.asOf, q.run.id, JSON.stringify({ ...touched, lessons }), "running", now(),
   );
-  ctx.event("status", { text: `复盘 ${replayId}：${SIGNAL_LABEL[signal]} → ${AXIS_LABEL[axis]}` });
+  ctx.event("status", { text: `复盘 ${replayId}：${SIGNAL_LABEL[signal]} → ${axisTitle}` });
   try {
     const b = await runArm(app, ctx, q, "复盘重答（基线）", { view: baseView, axis: null, ai, spec });
-    const v = await runArm(app, ctx, q, `复盘重答（${axis}）`, { view, axis, ai: variantAI, spec: research ?? spec, spaces: axis === "R2" ? null : undefined });
+    const v = await runArm(app, ctx, q, `复盘重答（${axis}）`, { view, axis, ai: variantAI, spec: research ?? spec, spaces: axis === "R2" ? null : undefined, skill });
     run(app.db, "update replays set baseline_run_id = ?, arm_run_id = ? where id = ?", b.runId, v.runId, replayId);
     const bc = checkArm(app, q.asOf, b.answer, b.error);
     const vc = checkArm(app, q.asOf, v.answer, v.error);
@@ -786,7 +822,7 @@ registerHandler("replay", async (ctx) => {
     run(app.db, "update replays set checks = ?, verdict = ?, judge = ?, task_type = ?, cost = ?, status = 'done', finished_at = ? where id = ?", JSON.stringify({ baseline: bc, variant: vc }), verdict, JSON.stringify(judged), taskType, JSON.stringify(cost), now(), replayId);
     const effects = applyEffects(app, replayId);
     noteLast(app, { replayId, verdict });
-    return { replayId, axis, signal, verdict, effects: effects.length, summary: `${SIGNAL_LABEL[signal]} · ${AXIS_LABEL[axis]} · ${VERDICT_LABEL[verdict]}${judged.reason ? `：${judged.reason}` : ""}` };
+    return { replayId, axis, signal, verdict, effects: effects.length, summary: `${SIGNAL_LABEL[signal]} · ${axisTitle} · ${VERDICT_LABEL[verdict]}${judged.reason ? `：${judged.reason}` : ""}` };
   } catch (e) {
     run(app.db, "update replays set status = 'failed', verdict = 'failed', finished_at = ? where id = ?", now(), replayId);
     throw e;
@@ -823,8 +859,8 @@ export async function scheduleReplays(app: App, opts: { runId?: string; axis?: R
     noteLast(app, { scheduled: 1, manual: true });
     return { skipped: null, runs: [created.id] };
   }
-  const picks = await selectQuestions(app);
-  const runs = picks.map((p) => createRun(app, { kind: "replay", spaceId: one<{ space_id: string | null }>(app.db, "select space_id from runs where id = ?", p.runId)?.space_id ?? "personal", title: truncate(`夜间复盘：${p.question}`, 80), input: { baseRunId: p.runId, signal: p.signal, axis: p.axis }, lane: "replay" }).id);
+  const picks = await selectQuestions(app, { skillTurn: true });
+  const runs = picks.map((p) => createRun(app, { kind: "replay", spaceId: one<{ space_id: string | null }>(app.db, "select space_id from runs where id = ?", p.runId)?.space_id ?? "personal", title: truncate(`夜间复盘：${p.question}`, 80), input: { baseRunId: p.runId, signal: p.signal, axis: p.axis, candidateId: p.candidateId }, lane: "replay" }).id);
   noteLast(app, { scheduled: runs.length, ...(runs.length ? {} : { note: "最近没有可以复盘的问题" }) });
   return { skipped: null, runs };
 }
@@ -838,12 +874,12 @@ export type ReplayView = {
 };
 
 function toView(app: App, r: ReplayRow): ReplayView {
-  const v = json<{ question?: string }>(r.variant, {});
+  const v = json<{ question?: string; skillName?: string }>(r.variant, {});
   const j = json<{ reason?: string; by?: string; agree?: boolean; sameFamily?: boolean }>(r.judge, {});
   const c = json<{ baseline?: ArmCheck; variant?: ArmCheck }>(r.checks, {});
   const issues = (x?: ArmCheck) => [...(x?.leaks ?? []), ...(x?.problems ?? [])];
   return {
-    id: r.id, at: r.at, finishedAt: r.finished_at, status: r.status, signal: r.signal, axis: r.axis, axisLabel: AXIS_LABEL[r.axis] ?? r.axis, verdict: r.verdict, verdictLabel: VERDICT_LABEL[r.verdict ?? ""] ?? "进行中",
+    id: r.id, at: r.at, finishedAt: r.finished_at, status: r.status, signal: r.signal, axis: r.axis, axisLabel: `${AXIS_LABEL[r.axis] ?? r.axis}${v.skillName ? `「${v.skillName}」` : ""}`, verdict: r.verdict, verdictLabel: VERDICT_LABEL[r.verdict ?? ""] ?? "进行中",
     taskType: r.task_type, question: v.question ?? "", reason: j.reason ?? "", by: j.by ?? null, agree: j.agree ?? null, sameFamily: !!j.sameFamily, baseRunId: r.base_run_id, runId: r.task_run_id,
     checks: { baseline: issues(c.baseline), variant: issues(c.variant) },
     effects: all<{ id: string; effect: string; target_kind: string; target_id: string | null; note: string; status: string }>(app.db, "select id, effect, target_kind, target_id, note, status from replay_effects where replay_id = ? order by at", r.id).map((e) => ({ id: e.id, effect: e.effect, targetKind: e.target_kind, targetId: e.target_id, note: e.note, status: e.status })),

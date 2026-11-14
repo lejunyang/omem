@@ -13,7 +13,7 @@ import UiSelect from "./UiSelect.vue";
  * the Agent page (built-in role replay-judge); until then nothing runs.
  */
 type Ai = { profile: string; model?: string; effort?: string };
-type Replay = { max: number; days: number; taskTypes: string[]; plan: Record<string, string[]>; models: Ai[] };
+type Replay = { skills?: { adoptAfter: number }; max: number; days: number; taskTypes: string[]; plan: Record<string, string[]>; models: Ai[] };
 type Status = { enabled: boolean; cron: string | null; judge: { profile: string; model: string | null; effort: string | null; sameFamilyAsAssistant: boolean } | null; notice: string | null; last: Record<string, unknown> | null; days28: { verdicts: Record<string, number>; judged: number; agreed: number }; pendingEffects: number };
 type Option = { value: string; label: string; hint?: string };
 
@@ -42,11 +42,12 @@ const AXES: Option[] = [
   { value: "W2", label: "W2 先读页面" },
   { value: "A1", label: "A1 模型降一档" },
   { value: "A2", label: "A2 模型升一档" },
+  { value: "K1", label: "K1 加挂一个候选技能" },
   { value: "random", label: "随机一个（对照）" },
 ];
 const axisLabel = (a: string) => AXES.find((x) => x.value === a)?.label ?? a;
 const DEFAULT_TYPES = ["事实查询", "汇总计数", "代码路径", "时间线与变化", "排查", "写作"];
-const DEFAULT_PLAN: Record<string, string[]> = { negative: ["M1", "S1", "W1", "A2"], correction: ["M1", "S1", "W1", "A2"], notFound: ["S2", "R2", "R1", "R3", "A2"], timeout: ["A1"], slow: ["A1", "M3"], normal: ["A1"], positive: ["random"] };
+const DEFAULT_PLAN: Record<string, string[]> = { negative: ["M1", "K1", "S1", "W1", "A2"], correction: ["M1", "K1", "S1", "W1", "A2"], notFound: ["S2", "R2", "R1", "R3", "A2"], timeout: ["A1"], slow: ["K1", "A1", "M3"], normal: ["K1", "A1"], positive: ["random"] };
 
 const status = ref<Status | null>(null);
 const failed = ref("");
@@ -136,7 +137,7 @@ const lastText = computed(() => {
       <UiCheckbox v-if="status" :model-value="status.enabled" switch @change="toggle">每天 4:30 运行</UiCheckbox>
       <button class="btn sm" :disabled="running" @click="runNow"><Icon name="play" :size="13" />{{ running ? "排队中…" : "立即运行" }}</button>
     </div>
-    <HelpText>挑最近的问题，回到提问时（那时的记忆、聊天和原件）重答两次：一次设置不变，一次只改一处（检索方式、原件级别、记忆、页面或模型）。两份回答先过引用检查，再由 replay-judge 两种顺序各评一次，一致才算胜负。结论用来把误导的记忆送回复核、给页面排检查、提原件级别的建议，并作为任务选型的参考；模型不会被自动换掉。</HelpText>
+    <HelpText>挑最近的问题，回到提问时（那时的记忆、聊天和原件）重答两次：一次设置不变，一次只改一处（检索方式、原件级别、记忆、页面、模型或候选技能）。两份回答先过引用检查，再由 replay-judge 两种顺序各评一次，一致才算胜负。结论用来把误导的记忆送回复核、给页面排检查、提原件级别的建议，并作为任务选型的参考；模型不会被自动换掉。</HelpText>
     <p v-if="failed" class="muted small">{{ failed }}</p>
     <template v-else-if="status">
       <p v-if="status.notice" class="warn small">
@@ -159,6 +160,11 @@ const lastText = computed(() => {
       <span class="small">从</span>
       <UiSelect :model-value="String(r.days)" size="sm" width="130px" aria-label="选题范围" :options="dayOptions" @change="(v) => save({ days: Number(v) })" />
       <span class="muted small">的问答和档案运行里挑；没有 token 上限，每一臂照常受空闲超时限制</span>
+    </div>
+
+    <div class="row wrap">
+      <span class="small">技能自动启用门槛</span>
+      <UiSelect :model-value="String(r.skills?.adoptAfter ?? 2)" size="sm" width="150px" aria-label="技能自动启用胜场" :options="[0, 1, 2, 3, 5].map((n) => ({ value: String(n), label: n ? `${n} 胜且胜多于负` : '只试用，不自动启用' }))" @change="(v) => save({ skills: { adoptAfter: Number(v) } })" />
     </div>
 
     <div class="field">

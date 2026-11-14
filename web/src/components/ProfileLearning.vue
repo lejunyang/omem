@@ -14,11 +14,12 @@ import MemoryCard from "./MemoryCard.vue";
  * What a profile (agent spec or built-in role) has learned and how it is evolving: its mounted
  * skills, its own memories, the changes its reviews proposed, its use and its history.
  */
+export type SkillReplay = { wins: number; losses: number; adopted: boolean };
 type Counts = { positive: number; negative: number; ack: number; neutral: number };
-export type Proposal = { id: string; kind: "prompt" | "skill" | "settings"; title: string; body: string; reason: string; status: string; createdAt: string; runId: string | null };
+export type Proposal = { replay?: SkillReplay; id: string; kind: "prompt" | "skill" | "settings"; title: string; body: string; reason: string; status: string; createdAt: string; runId: string | null };
 export type ProfileDetail = {
   kind: "spec" | "role";
-  skills: { name: string; description: string; status: string }[];
+  skills: { name: string; description: string; status: string; replay?: SkillReplay }[];
   availableSkills: { name: string; description: string; status: string }[];
   memories: Memory[];
   proposals: Proposal[];
@@ -116,6 +117,7 @@ const daysLeft = (p: Proposal) => Math.ceil((Date.parse(expiresAt(p)) - Date.now
         <h3>挂载技能</h3>
         <span class="muted small">可复用的做法；它做对应的事前会先读。点名字查看与编辑</span>
       </div>
+      <p v-for="s in detail.skills.filter((s) => s.replay)" :key="s.name" class="small muted">{{ s.name }} · 复盘 {{ s.replay!.wins }} 胜 {{ s.replay!.losses }} 负<span v-if="s.replay!.adopted"> · 复盘后自动启用</span></p>
       <ChipPicker :model-value="skillNames" :options="skillOptions" :missing="missing" add-label="＋ 挂载技能" openable @update:model-value="setSkills" @open="(n) => router.push({ path: '/agents', query: { tab: 'skills', name: n } })" />
     </section>
 
@@ -144,14 +146,15 @@ const daysLeft = (p: Proposal) => Math.ceil((Date.parse(expiresAt(p)) - Date.now
         <span v-if="fb" :title="'确认类表情（OK、DONE、+1…）只表示收到，不算好坏'">你的表情 正面 <b>{{ fb.owner.positive }}</b> · 负面 <b>{{ fb.owner.negative }}</b> · 确认 {{ fb.owner.ack }}</span>
         <span v-if="fb && (fb.others.positive + fb.others.negative + fb.guests.positive + fb.guests.negative)" class="muted">其他人 正面 {{ fb.others.positive + fb.guests.positive }} · 负面 {{ fb.others.negative + fb.guests.negative }}</span>
       </div>
-      <p class="muted small">每晚复盘最近有纠正、失败或收到表情的档案：经验和偏好直接记成它的专属记忆（经过检查和复核），提示词、技能、设置的改动列在下面，你采纳后才生效；14 天没处理的建议会过期，过期前两天提醒一次。</p>
+      <p class="muted small">每晚复盘最近有纠正、失败或收到表情的档案：经验和偏好直接记成它的专属记忆（经过检查和复核），提示词、技能、设置的改动列在下面，提示词和设置由你采纳；技能草稿由夜间复盘试用，达到胜场门槛且胜多于负时自动启用。14 天没处理的建议会过期；有胜场、还没达到门槛的技能继续等复盘。</p>
 
       <div v-for="p in pending" :key="p.id" class="proposal">
         <div class="row">
           <span class="badge accent">{{ kindLabel[p.kind] }}</span>
           <strong class="grow">{{ p.title }}</strong>
-          <span class="muted small" :title="`${fmtTime(expiresAt(p))} 过期，到期前两天提醒`">{{ relTime(p.createdAt) }} · {{ daysLeft(p) > 0 ? `${daysLeft(p)} 天后过期` : "今天过期" }}</span>
+          <span v-if="!p.replay?.wins" class="muted small" :title="`${fmtTime(expiresAt(p))} 过期，到期前两天提醒`">{{ relTime(p.createdAt) }} · {{ daysLeft(p) > 0 ? `${daysLeft(p)} 天后过期` : "今天过期" }}</span>
         </div>
+        <p v-if="p.replay" class="small muted">复盘 {{ p.replay.wins }} 胜 {{ p.replay.losses }} 负<span v-if="p.replay.wins"> · 继续等待复盘</span></p>
         <div v-if="p.reason" class="muted small reason"><Markdown :source="p.reason" /></div>
         <div v-if="p.kind === 'prompt'" class="diff">
           <div v-for="(l, i) in promptDiff(p)" :key="i" :class="l.op === '+' ? 'a' : l.op === '-' ? 'r' : l.op === '…' ? 'gap' : ''">{{ l.op === "…" ? "…" : `${l.op === "=" ? " " : l.op} ${l.text}` }}</div>
@@ -172,7 +175,7 @@ const daysLeft = (p: Proposal) => Math.ceil((Date.parse(expiresAt(p)) - Date.now
       <p v-if="!pending.length" class="muted small">没有待确认的建议。</p>
       <details v-if="resolved.length || detail.history.length" class="history">
         <summary class="small">历史</summary>
-        <div v-for="p in resolved" :key="p.id" class="small hist-line"><span class="badge">{{ p.status === "applied" ? "已采纳" : p.status === "expired" ? "已过期" : "已忽略" }}</span> {{ kindLabel[p.kind] }} · {{ p.title }}</div>
+        <div v-for="p in resolved" :key="p.id" class="small hist-line"><span class="badge">{{ p.status === "applied" ? "已采纳" : p.status === "expired" ? "已过期" : "已忽略" }}</span> {{ kindLabel[p.kind] }} · {{ p.title }}<template v-if="p.replay"> · 复盘 {{ p.replay.wins }} 胜 {{ p.replay.losses }} 负<span v-if="p.replay.adopted"> · 复盘后自动启用</span></template></div>
         <div v-for="c in detail.history" :key="c.hash" class="small hist-line mono"><span class="muted">{{ fmtTime(c.at) }}</span> {{ c.message }}</div>
       </details>
     </section>

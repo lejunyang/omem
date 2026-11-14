@@ -8,7 +8,7 @@ import { findAgentSpec, saveAgentSpec, saveSkill } from "./specs.ts";
 /**
  * Changes proposed for a profile (agent spec or built-in role) by its review: a new prompt, a
  * skill to write and attach, or settings (tools, skills). They change behaviour for every later
- * run, so nothing applies until the owner says so on the profile page.
+ * run, so prompt/settings changes wait for the owner; candidate skills may also be adopted by replay.
  */
 export const proposalContent = {
   prompt: z.object({ prompt: z.string().trim().min(1).max(12000) }),
@@ -114,13 +114,16 @@ export async function expireProposals(app: App, at = Date.now()) {
   const cutoff = new Date(at - PROPOSAL_DAYS * 86400_000).toISOString();
   const soon = new Date(at - (PROPOSAL_DAYS - PROPOSAL_NOTICE_DAYS) * 86400_000).toISOString();
   const told = new Date(at - PROPOSAL_NOTICE_DAYS * 86400_000).toISOString();
-  const expired = run(app.db, "update profile_proposals set status = 'expired', resolved_at = ?, resolved_by = 'system' where status = 'pending' and created_at < ? and expiry_notice_at <= ?", new Date(at).toISOString(), cutoff, told).changes;
+  const keepSkill = `and not (kind = 'skill' and
+    (select count(*) from replay_effects e where e.target_kind = 'skill' and e.target_id = 'proposal:' || profile_proposals.id and e.effect = 'helped' and e.status = 'applied') between 1 and ?)`;
+  const keepBelow = app.config.replay.skills.adoptAfter === 0 ? 2147483647 : app.config.replay.skills.adoptAfter - 1;
+  const expired = run(app.db, `update profile_proposals set status = 'expired', resolved_at = ?, resolved_by = 'system' where status = 'pending' and created_at < ? and expiry_notice_at <= ? ${keepSkill}`, new Date(at).toISOString(), cutoff, told, keepBelow).changes;
   // Announced now: two days from now at the earliest.
   const expiresOn = (created: string) => new Date(Math.max(Date.parse(proposalExpiresAt(created)), at + PROPOSAL_NOTICE_DAYS * 86400_000)).toISOString().slice(0, 10);
   const due = all<{ id: string; target: string; kind: string; title: string; created_at: string }>(
     app.db,
-    "select id, target, kind, title, created_at from profile_proposals where status = 'pending' and created_at < ? and expiry_notice_at is null order by target, created_at",
-    soon,
+    `select id, target, kind, title, created_at from profile_proposals where status = 'pending' and created_at < ? and expiry_notice_at is null ${keepSkill} order by target, created_at`,
+    soon, keepBelow,
   );
   if (due.length) {
     const { notify } = await import("../core/notify.ts");

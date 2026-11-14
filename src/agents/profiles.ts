@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { listMemories } from "../memory/store.ts";
 import { isBuiltinRole, roleHistory, roleOverrideText, roleSourceText, roleState } from "./builtin-roles.ts";
+import { skillTally, skillDisplayTally } from "./replay-skills.ts";
 import { loadRole } from "./runner.ts";
 import { feedbackStats } from "../channels/lark-feedback.ts";
 import { agentSpecHistory, listSkills, readAgentSpec, readSkill } from "./specs.ts";
@@ -17,19 +18,19 @@ export function profileDetail(app: App, name: string) {
   const skills = skillNames.map((n) => {
     try {
       const s = readSkill(app, n);
-      return { name: s.name, description: s.description, status: s.status as string, body: s.body, files: s.files };
+      return { replay: skillDisplayTally(app, s.name), name: s.name, description: s.description, status: s.status as string, body: s.body, files: s.files };
     } catch {
       return { name: n, description: "（技能不存在）", status: "missing", body: "", files: [] as string[] };
     }
   });
-  const availableSkills = listSkills(app, { includeDrafts: true }).map((s) => ({ name: s.name, description: s.description, status: s.status }));
+  const availableSkills = listSkills(app, { includeDrafts: true }).map((s) => ({ replay: skillDisplayTally(app, s.name), name: s.name, description: s.description, status: s.status }));
   // Only memories that belong to this profile; shared ones live on the memory page.
   const memories = listMemories(app, { agent: name, agentScope: "own", status: "active", limit: 200 });
   const proposals = all<{ id: string; kind: string; title: string; body: string; reason: string; status: string; created_at: string; run_id: string | null }>(
     app.db,
     "select id, kind, title, body, reason, status, created_at, run_id from profile_proposals where target = ? order by created_at desc limit 50",
     name,
-  ).map((p) => ({ id: p.id, kind: p.kind, title: p.title, body: p.body, reason: p.reason, status: p.status, createdAt: p.created_at, runId: p.run_id }));
+  ).map((p) => ({ replay: p.kind === "skill" ? skillTally(app, `proposal:${p.id}`) : undefined, id: p.id, kind: p.kind, title: p.title, body: p.body, reason: p.reason, status: p.status, createdAt: p.created_at, runId: p.run_id }));
   return {
     kind: role ? ("role" as const) : ("spec" as const),
     skills,

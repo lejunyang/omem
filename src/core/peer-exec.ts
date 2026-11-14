@@ -608,7 +608,7 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "replay-run": {
-    description: "立即排一次夜间复盘：不带参数按选题规则挑 replay.max 题；run_id 复盘那一次运行（问答或档案运行），axis 指定轴（R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2）。没给 replay-judge 选模型时不运行并返回原因",
+    description: "立即排一次夜间复盘：不带参数按选题规则挑 replay.max 题；run_id 复盘那一次运行（问答或档案运行），axis 指定轴（R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2 K1）。没给 replay-judge 选模型时不运行并返回原因",
     schema: z.object({ run_id: z.string().regex(/^r[0-9a-z]{6,40}$/).optional(), axis: z.enum(REPLAY_AXES).optional() }),
     run: async (app, a) => (await import("../agents/replay.ts")).scheduleReplays(app, { runId: a.run_id, axis: a.axis }),
   },

@@ -12,7 +12,7 @@ import ReviewSettings from "../components/ReviewSettings.vue";
 import FeedbackStats from "../components/FeedbackStats.vue";
 import ReplayList from "../components/ReplayList.vue";
 import Markdown from "../components/Markdown.vue";
-import ProfileLearning, { type ProfileDetail } from "../components/ProfileLearning.vue";
+import ProfileLearning, { type ProfileDetail, type SkillReplay } from "../components/ProfileLearning.vue";
 import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSelect from "../components/UiSelect.vue";
@@ -27,7 +27,7 @@ import { state, toast } from "../store";
  */
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
-type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
+type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; files: string[] };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
 type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
@@ -355,8 +355,18 @@ async function saveSkill() {
 const currentSkill = computed(() => skills.value.find((s) => s.name === skillName.value));
 async function approveSkill() {
   if (skillPath.value !== "SKILL.md") { await openSkillFile("SKILL.md"); if (skillPath.value !== "SKILL.md") return; }
-  skillRaw.value = skillRaw.value.replace(/^status:\s*draft\s*\n/m, "");
+  skillRaw.value = skillRaw.value.replace(/^status:\s*draft\s*\n/m, "").replace(/^tryout:\s*false\s*\n/m, "");
   await saveSkill();
+}
+/** Off: in no agent's list, and the nightly replay does not try it out (so cannot turn it back on). */
+async function pauseSkill() {
+  if (!skillName.value || (dirty.value && !(await confirmDialog("有未保存的修改，放弃并停用吗？", { okText: "放弃并停用", danger: true })))) return;
+  try {
+    await put(`/api/skills/${encodeURIComponent(skillName.value)}/status`, { status: "draft" });
+    dirty.value = false;
+    await loadLists();
+    await openSkillFile("SKILL.md");
+  } catch (e) { toast((e as Error).message, "error"); }
 }
 async function removeSkill() {
   if (!skillName.value || !(await confirmDialog(`删除技能 ${skillName.value}？`, { message: "文件的历史仍保留在知识库 Git 中；挂载它的档案会显示为已不存在。", okText: "删除", danger: true }))) return;
@@ -449,6 +459,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <div class="grow">
               <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span></div>
               <div class="muted small clamp">{{ x.description }}</div>
+              <div v-if="x.replay" class="muted small">复盘 {{ x.replay.wins }} 胜 {{ x.replay.losses }} 负<span v-if="x.replay.adopted"> · 复盘后自动启用</span></div>
             </div>
           </button>
           <p v-if="!skills.length" class="muted small hint">还没有技能。点 ＋ 新建，或对助理说“把刚才整理周报的做法记成技能”。</p>
@@ -611,8 +622,10 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <header class="dh row">
           <h2 class="mono">{{ skillName }}</h2>
           <span v-if="currentSkill?.status === 'draft'" class="badge">草稿</span>
+          <span v-if="currentSkill?.replay" class="muted small">复盘 {{ currentSkill.replay.wins }} 胜 {{ currentSkill.replay.losses }} 负<span v-if="currentSkill.replay.adopted"> · 复盘后自动启用</span></span>
           <span class="spacer" />
           <button v-if="currentSkill?.status === 'draft'" class="btn sm" @click="approveSkill"><Icon name="check" :size="14" />启用</button>
+          <button v-else-if="currentSkill" class="btn ghost sm" title="停用后不再出现在任何 Agent 的技能里，夜间复盘也不会再试用它" @click="pauseSkill">停用</button>
           <button class="btn sm primary" :disabled="saving || !dirty" @click="saveSkill">保存</button>
           <button v-if="currentSkill" class="btn ghost sm icon danger" title="删除" @click="removeSkill"><Icon name="trash" :size="14" /></button>
         </header>

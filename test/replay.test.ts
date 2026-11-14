@@ -1,8 +1,15 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { stopWorker } from "../src/agents/runs.ts";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { applyEffects, checkArm, combine, crossCheck, JUDGE_NOT_CHOSEN, judgeChoice, modelStep, replayDigest, resolveEffect, scheduleReplays, selectQuestions, touchedBy } from "../src/agents/replay.ts";
+import { axisApplies, precheck, questionOf } from "../src/agents/replay.ts";
+import { fittingSkills, skillCandidates, skillTally } from "../src/agents/replay-skills.ts";
+import { saveAgentSpec, saveSkill, readSkill } from "../src/agents/specs.ts";
+import { createProposal, expireProposals } from "../src/agents/proposals.ts";
+import { profileDetail } from "../src/agents/profiles.ts";
+import { setEmbedderForTests } from "../src/search/embeddings.ts";
 import { visibleLines, visibleMemories, type RunView } from "../src/agents/replay-view.ts";
 import { createRun, getRun, listRuns, waitForRun } from "../src/agents/runs.ts";
 import { addMessage, ensureConversation } from "../src/agents/threads.ts";
@@ -12,10 +19,102 @@ import { all, one, run } from "../src/core/db.ts";
 import { remember, retract, supersede } from "../src/memory/store.ts";
 import { setAttention } from "../src/sources/attention.ts";
 import { upsertSource } from "../src/sources/store.ts";
-import { testApp } from "./helpers.ts";
+import { fakeEmbedder, testApp as makeTestApp } from "./helpers.ts";
+
+// These tests exercise file writes and adoption without creating library Git history.
+vi.mock("../src/core/git.ts", async (original) => ({ ...await original<typeof import("../src/core/git.ts")>(), ensureLibraryRepo: () => {}, commitLibrary: () => null }));
+
+const cleanupApps: App[] = [];
+function testApp() { const app = makeTestApp(); cleanupApps.push(app); return app; }
+afterAll(async () => {
+  stopWorker();
+  for (const app of cleanupApps) app.db.close();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  for (const app of cleanupApps) {
+    try { rmSync(app.home, { recursive: true, force: true }); }
+    catch { console.log(`Temporary test directory awaiting process exit: ${app.home}`); }
+  }
+}, 60000);
 
 const FAKE = { id: "fake", transport: "acp" as const, command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: {}, idleTimeoutMs: 600_000 };
 const at = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+
+describe("K1 candidates, rotation and expiry", () => {
+  it("matches drafts and proposals, respects profile/role ownership and tries each candidate once per question", async () => {
+    const app = testApp();
+    try {
+      saveSkill(app, { name: "refund", description: "退款对账如何核对", body: "先核对流水", status: "draft" });
+      saveAgentSpec(app, { name: "accounting", description: "核对账目", prompt: "核对账目", skills: ["refund"] });
+      saveAgentSpec(app, { name: "other", description: "其他档案", prompt: "回答问题" });
+      const q = { question: "退款对账如何核对", spec: "other", run: { id: "r-other" } };
+      expect(await fittingSkills(app, q)).toEqual([]);
+      expect(await fittingSkills(app, { ...q, spec: null })).toEqual([]);
+      expect((await fittingSkills(app, { ...q, spec: "accounting" }))[0].id).toBe("skill:refund");
+      const proposal = createProposal(app, { target: "assistant", kind: "skill", title: "核对", reason: "反复使用", content: { name: "audit", description: q.question, body: "先查原件" }, runId: null });
+      expect((await fittingSkills(app, { ...q, spec: null }))[0].id).toBe(`proposal:${proposal}`);
+      expect(skillCandidates(app)).toHaveLength(2);
+      run(app.db, "insert into replays(id, axis, signal, variant, base_run_id, as_of, status, at) values('rp-tried', 'K1', 'normal', ?, ?, ?, 'done', ?)", JSON.stringify({ candidateId: `proposal:${proposal}` }), q.run.id, at(-1), at(-1));
+      expect(await fittingSkills(app, { ...q, spec: null })).toEqual([]);
+      // The async precheck supplies K1 applicability; axisApplies itself stays synchronous.
+      const base = pastAsk(app, q.question, "原回答");
+      const question = questionOf(app, one<any>(app.db, "select * from runs where id = ?", base.runId)!)!;
+      const pre = await precheck(app, question);
+      expect(axisApplies(app, "K1", { q: question, pre, signal: "normal", touched: { memories: [], sources: [], pages: [] }, tried: new Set() })).toBe(true);
+      app.config.embeddings.provider = "local";
+      setEmbedderForTests(fakeEmbedder());
+      expect((await fittingSkills(app, { ...q, spec: "accounting", run: { id: "r-vector" } }))[0].score).toBeGreaterThanOrEqual(0.5);
+      expect(await fittingSkills(app, { ...q, question: "天气晴朗", spec: "accounting" })).toEqual([]);
+    } finally { setEmbedderForTests(null);  }
+  });
+
+  it("swaps only the weakest unprotected pick for the best fitting recent question, at most once", async () => {
+    const app = testApp();
+    {
+      app.config.agents.profiles = [FAKE];
+      app.config.agents.roles["replay-judge"] = "fake";
+      app.config.replay.plan.normal = ["A1"];
+      app.config.replay.max = 2;
+      saveSkill(app, { name: "refund", description: "退款对账如何核对", body: "核对流水", status: "draft" });
+      const best = pastAsk(app, "退款对账如何核对", "原回答", { minutesAgo: 100 });
+      pastAsk(app, "退款对账是否完成", "原回答", { minutesAgo: 90 });
+      pastAsk(app, "周报写了吗", "原回答", { minutesAgo: 10 });
+      const neg = pastAsk(app, "发布窗口是哪天", "原回答", { minutesAgo: 5 });
+      run(app.db, "insert into feedback(id, channel, message_id, run_id, actor_id, actor_kind, emoji, polarity, at) values('fb-k1', 'lark', 'om_demo', ?, 'u1', 'owner', 'ThumbsDown', 'negative', ?)", neg.runId, at(-4));
+      const picks = await selectQuestions(app, { skillTurn: true });
+      const inputs = picks.map((p) => ({ baseRunId: p.runId, signal: p.signal, axis: p.axis, candidateId: p.candidateId }));
+      expect(inputs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ baseRunId: neg.runId, signal: "negative" }),
+        expect.objectContaining({ baseRunId: best.runId, axis: "K1", candidateId: "skill:refund" }),
+      ]));
+      expect(inputs.filter((p) => p.axis === "K1")).toHaveLength(1);
+      app.config.replay.max = 1;
+      expect((await selectQuestions(app, { skillTurn: true }))[0]).toMatchObject({ runId: neg.runId, signal: "negative" });
+      run(app.db, "delete from feedback where id = 'fb-k1'");
+      const correction = addMessage(app, neg.conv, "user", "不对，是周五");
+      run(app.db, "update messages set created_at = ? where id = ?", at(-2), correction);
+      const corrected = questionOf(app, one<any>(app.db, "select * from runs where id = ?", neg.runId)!)!;
+      expect(corrected.reaction.said).toBe("不对，是周五");
+      expect((await selectQuestions(app, { skillTurn: true }))[0]).toMatchObject({ runId: neg.runId, signal: "correction" });
+    }
+  });
+
+  it("keeps a winning proposal while it awaits more wins, including when automatic adoption is disabled", async () => {
+    const app = testApp();
+    {
+      const id = createProposal(app, { target: "assistant", kind: "skill", title: "核对", reason: "反复使用", content: { name: "audit", description: "退款核对", body: "先查原件" }, runId: null });
+      const ignored = createProposal(app, { target: "assistant", kind: "skill", title: "其他", reason: "建议", content: { name: "other", description: "其他", body: "做法" }, runId: null });
+      run(app.db, "update profile_proposals set created_at = ?, expiry_notice_at = ?", at(-30 * 1440), at(-5 * 1440));
+      run(app.db, "insert into replays(id, axis, signal, variant, base_run_id, as_of, status, verdict, at) values('rp-expiry', 'K1', 'normal', ?, 'r0', ?, 'done', 'win', ?)", JSON.stringify({ candidateId: `proposal:${id}` }), at(-60), at(-1));
+      applyEffects(app, "rp-expiry");
+      expect((await expireProposals(app)).expired).toBe(1);
+      expect(one<any>(app.db, "select status from profile_proposals where id = ?", id).status).toBe("pending");
+      expect(one<any>(app.db, "select status from profile_proposals where id = ?", ignored).status).toBe("expired");
+      app.config.replay.skills.adoptAfter = 0;
+      expect((await expireProposals(app, Date.now() + 60 * 86400_000)).expired).toBe(0);
+      expect(profileDetail(app, "assistant").proposals.find((p) => p.id === id)?.replay).toMatchObject({ wins: 1, losses: 0, adopted: false });
+    }
+  });
+});
 
 /** A finished ask run: the owner's question in a conversation and the assistant's answer. */
 function pastAsk(app: App, question: string, answer: string, opts: { minutesAgo?: number; ai?: Record<string, string> } = {}) {
@@ -31,7 +130,6 @@ function pastAsk(app: App, question: string, answer: string, opts: { minutesAgo?
 
 describe("replay: as of the question's time", () => {
   const app = testApp();
-  afterAll(() => app.db.close());
 
   it("sees memories through the supersede chain and nothing written later", () => {
     const old = remember(app, { spaceId: "personal", kind: "fact", content: "发布在周四。" });
@@ -105,7 +203,6 @@ describe("replay: as of the question's time", () => {
 
 describe("replay: checks, judge, effects", () => {
   const app = testApp();
-  afterAll(() => app.db.close());
 
   it("checks references without a model: missing, out of range, after the question (void)", () => {
     const s = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "plan.md", title: "计划", text: "第一行\n第二行\n第三行" });
@@ -200,7 +297,6 @@ describe("replay: checks, judge, effects", () => {
 describe("replay: choosing questions", () => {
   const app = testApp();
   app.config.agents.profiles = [FAKE];
-  afterAll(() => app.db.close());
 
   it("does not run without a judge the owner chose, and says why", async () => {
     expect(judgeChoice(app).chosen).toBe(false);
@@ -262,7 +358,8 @@ describe("replay end to end over ACP: both arms read only, the judge in both ord
   const { ask } = await import("../src/agents/jobs.ts");
   const { importText } = await import("../src/sources/import.ts");
   const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
-  afterAll(() => server.close());
+  cleanupApps.push(app);
+  afterAll(async () => { await server.close(); });
 
   it("replays an answered question: a baseline and an R1 variant, checked and judged, nothing written", async () => {
     importText(app, "personal", { title: "约定", text: "每周四下午三点和小王同步项目A进度。" });
@@ -292,5 +389,92 @@ describe("replay end to end over ACP: both arms read only, the judge in both ord
     expect(toolsOf(arm.output.answer)).toBeLessThan(toolsOf(original.output.answer));
     expect(one<{ n: number }>(app.db, "select count(*) n from memories")!.n).toBe(memoriesBefore);
     expect(all(app.db, "select * from shadow_writes where run_id in (?, ?)", rp.baseline_run_id, rp.arm_run_id)).toHaveLength(0);
+  }, 180_000);
+});
+
+describe("K1 end to end over ACP", async () => {
+  const home = mkdtempSync(join(tmpdir(), "omem-k1-"));
+  const resultFile = join(home, "result.txt");
+  const promptFile = join(home, "prompts.jsonl");
+  writeFileSync(resultFile, "win");
+  writeFileSync(join(home, "config.json"), JSON.stringify({ agents: {
+    default: "fake", roles: { "replay-judge": "fake-judge" }, profiles: [
+      { ...FAKE, env: { FAKE_REPLAY_RESULT: resultFile, FAKE_PROMPT_LOG: promptFile } },
+      { ...FAKE, id: "fake-judge", env: { FAKE_MODE: "replay-judge", FAKE_REPLAY_RESULT: resultFile } },
+    ],
+  } }));
+  const { boot } = await import("../src/main.ts");
+  const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
+  cleanupApps.push(app);
+  afterAll(async () => { await server.close(); });
+
+  async function replay(question = "退款对账如何核对") {
+    const base = pastAsk(app, question, "原回答");
+    const scheduled = await scheduleReplays(app, { runId: base.runId, axis: "K1" });
+    const task = await waitForRun(app, scheduled.runs[0]);
+    expect(task.error).toBeNull();
+    expect(task.status).toBe("done");
+    return one<{ id: string; verdict: string; variant: string; baseline_run_id: string; arm_run_id: string }>(app.db, "select * from replays where task_run_id = ?", task.id)!;
+  }
+
+  it("injects only candidate text, records helped, activates after the second win, notifies once with later", async () => {
+    const body = `先核对流水，再读原件。${"候选正文".repeat(1800)}尾部不应传入`;
+    saveSkill(app, { name: "refund", description: "退款对账如何核对", body, status: "draft" });
+    const first = await replay();
+    expect(first.verdict).toBe("win");
+    expect(JSON.parse(first.variant)).toMatchObject({ candidateId: "skill:refund", skillName: "refund" });
+    expect(skillTally(app, "skill:refund")).toEqual({ wins: 1, losses: 0, adopted: false });
+    expect(readSkill(app, "refund").status).toBe("draft");
+    const prompts = readFileSync(promptFile, "utf8").trim().split("\n").map((s) => JSON.parse(s) as string);
+    expect(prompts[0]).not.toContain("这次多给你一份做法");
+    expect(prompts[1]).toContain(`这次多给你一份做法（候选技能「refund」）。适用就照着做，不适用就忽略：\n\n${body.slice(0, 6000)}`);
+    expect(prompts[1]).not.toContain("尾部不应传入");
+    const tools = (id: string) => /^tools=(\d+);/.exec(String(getRun(app, id).output.answer))?.[1];
+    expect(tools(first.arm_run_id)).toBe(tools(first.baseline_run_id));
+    expect(all(app.db, "select * from shadow_writes where run_id in (?, ?)", first.arm_run_id, first.baseline_run_id)).toHaveLength(0);
+    const second = await replay();
+    expect(second.verdict).toBe("win");
+    expect(readSkill(app, "refund").status).toBe("active");
+    expect(skillTally(app, "skill:refund")).toEqual({ wins: 2, losses: 0, adopted: true });
+    expect(applyEffects(app, second.id)).toEqual([]);
+    const notices = all<{ body: string; context: string }>(app.db, "select body, context from notifications where title = ?", "技能「refund」复盘后自动启用");
+    expect(notices).toHaveLength(1);
+    expect(notices[0].body).toContain("在 2 次复盘里让回答变好");
+    expect(JSON.parse(notices[0].context).urgency).toBe("later");
+  }, 180_000);
+
+  it("applies a proposal through its existing path after two wins, attributed to the replay", async () => {
+    const id = createProposal(app, { target: "assistant", kind: "skill", title: "对账做法", reason: "复用", content: { name: "audit", description: "退款对账如何核对", body: "查原件，逐笔核对" }, runId: null });
+    await replay();
+    expect(one<any>(app.db, "select status from profile_proposals where id = ?", id)!.status).toBe("pending");
+    const second = await replay();
+    expect(one<any>(app.db, "select status, resolved_by from profile_proposals where id = ?", id)).toMatchObject({ status: "applied", resolved_by: `replay:${second.id}` });
+    expect(readSkill(app, "audit").status).toBe("active");
+    expect(profileDetail(app, "assistant").skills.find((s) => s.name === "audit")?.replay).toEqual({ wins: 2, losses: 0, adopted: true });
+    expect(profileDetail(app, "assistant").proposals.find((p) => p.id === id)?.replay).toEqual({ wins: 2, losses: 0, adopted: true });
+    expect(all(app.db, "select id from notifications where title = ?", "技能「audit」复盘后自动启用")).toHaveLength(1);
+  }, 180_000);
+
+  it("rejects a proposal after two losses and no win; a losing draft stays a draft", async () => {
+    writeFileSync(resultFile, "loss");
+    const id = createProposal(app, { target: "assistant", kind: "skill", title: "另一做法", reason: "试用", content: { name: "bad", description: "退款对账如何核对", body: "错误做法" }, runId: null });
+    expect((await replay()).verdict).toBe("loss");
+    expect((await replay()).verdict).toBe("loss");
+    expect(one<any>(app.db, "select status, reason from profile_proposals where id = ?", id)).toMatchObject({ status: "rejected", reason: "试用\n复盘里加上它两次都答得更差" });
+    expect(skillTally(app, `proposal:${id}`)).toEqual({ wins: 0, losses: 2, adopted: false });
+    saveSkill(app, { name: "draft", description: "退款对账如何核对", body: "另一做法", status: "draft" });
+    await replay(); await replay();
+    expect(readSkill(app, "draft").status).toBe("draft");
+    expect(skillTally(app, "skill:draft")).toMatchObject({ wins: 0, losses: 2 });
+  }, 180_000);
+
+  it("does not adopt by itself when adoptAfter is zero", async () => {
+    writeFileSync(resultFile, "win");
+    app.config.replay.skills.adoptAfter = 0;
+    const question = "检查报销发票金额与日期";
+    saveSkill(app, { name: "no-auto", description: question, body: "核对发票", status: "draft" });
+    await replay(question); await replay(question);
+    expect(readSkill(app, "no-auto").status).toBe("draft");
+    expect(skillTally(app, "skill:no-auto")).toMatchObject({ wins: 2, losses: 0, adopted: false });
   }, 180_000);
 });

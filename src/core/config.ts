@@ -111,20 +111,20 @@ export const upkeepRoles: ReadonlySet<string> = new Set<RoleName>([
  * (A1 one step down, A2 one step up). `random` picks any axis that applies (a control).
  */
 export const REPLAY_SIGNALS = ["negative", "correction", "notFound", "timeout", "slow", "normal", "positive"] as const;
-export const REPLAY_AXES = ["R1", "R2", "R3", "S1", "S2", "M1", "M2", "M3", "W1", "W2", "A1", "A2"] as const;
+export const REPLAY_AXES = ["R1", "R2", "R3", "S1", "S2", "M1", "M2", "M3", "W1", "W2", "A1", "A2", "K1"] as const;
 export type ReplaySignal = (typeof REPLAY_SIGNALS)[number];
 export type ReplayAxis = (typeof REPLAY_AXES)[number];
 export const DEFAULT_REPLAY_TASK_TYPES = ["事实查询", "汇总计数", "代码路径", "时间线与变化", "排查", "写作"];
 export const DEFAULT_REPLAY_PLAN: Record<ReplaySignal, (ReplayAxis | "random")[]> = {
-  negative: ["M1", "S1", "W1", "A2"],
-  correction: ["M1", "S1", "W1", "A2"],
+  negative: ["M1", "K1", "S1", "W1", "A2"],
+  correction: ["M1", "K1", "S1", "W1", "A2"],
   notFound: ["S2", "R2", "R1", "R3", "A2"],
   timeout: ["A1"],
-  slow: ["A1", "M3"],
-  normal: ["A1"],
+  slow: ["K1", "A1", "M3"],
+  normal: ["K1", "A1"],
   positive: ["random"],
 };
-const replayAxes = z.array(z.enum([...REPLAY_AXES, "random"])).max(12);
+const replayAxes = z.array(z.enum([...REPLAY_AXES, "random"])).max(14);
 const replayPlanSchema = z.object(Object.fromEntries(REPLAY_SIGNALS.map((s) => [s, replayAxes.default(DEFAULT_REPLAY_PLAN[s])])) as Record<ReplaySignal, z.ZodDefault<typeof replayAxes>>);
 
 /** Light = today's single reviewer; heavier tiers add independent checks for larger changes. */
@@ -1010,17 +1010,18 @@ export const configSchema = z.object({
    */
   replay: z
     .object({
+      skills: z.object({ adoptAfter: z.number().int().min(0).default(2) }).default(() => ({ adoptAfter: 2 })),
       max: z.number().int().min(1).max(20).default(1),
       /** Questions are picked from runs of the last this many days. */
       days: z.number().int().min(1).max(14).default(3),
       /** Task types the judge labels questions with (routing evidence is kept per type). */
       taskTypes: z.array(z.string().trim().min(1).max(20)).min(1).max(20).default(DEFAULT_REPLAY_TASK_TYPES),
       /** Signal → axes to try in order; the first that applies and was not tried on that question is used. */
-      plan: replayPlanSchema.default(DEFAULT_REPLAY_PLAN),
+      plan: replayPlanSchema.default(() => structuredClone(DEFAULT_REPLAY_PLAN)),
       /** The A axis: models from cheaper to stronger. Without it, one effort level down / up on the same model. */
       models: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).default([]),
     })
-    .default({ max: 1, days: 3, taskTypes: DEFAULT_REPLAY_TASK_TYPES, plan: DEFAULT_REPLAY_PLAN, models: [] }),
+    .prefault({}),
   /**
    * Items close themselves: one with no new progress for `days[kind]` (counted from its
    * last activity: the owner touching it or new evidence) becomes "expired"; a reminder

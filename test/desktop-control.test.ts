@@ -16,6 +16,7 @@ describe("desktop-control skill", () => {
     saveSkill(app, { name: "lark-messaging", description: "owner edited", body: "我改过的内容" }, "user");
     const added = seedBuiltinSkills(app, root);
     expect(added).toContain("desktop-control");
+    expect(added).toEqual(expect.arrayContaining(["research", "improve-loop"]));
     expect(added).not.toContain("lark-messaging");
     expect(readSkill(app, "lark-messaging").body).toBe("我改过的内容");
     const s = readSkill(app, "desktop-control");

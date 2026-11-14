@@ -144,6 +144,14 @@ new AgentSideConnection(
       // FAKE_PROMPT_LOG=file: each turn's prompt, one JSON string a line (what the host sent).
       if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, JSON.stringify(prompt) + "\n");
       const say =(text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      // Replay tests: prefer the arm that read the candidate, consistently in both blind orders.
+      if (process.env.FAKE_MODE === "replay-judge") {
+        const first = prompt.split("# 甲的回答\n\n")[1]?.split("# 乙的回答")[0] ?? "";
+        const win = !process.env.FAKE_REPLAY_RESULT || readFileSync(process.env.FAKE_REPLAY_RESULT, "utf8").trim() !== "loss";
+        const candidateFirst = first.includes("候选技能已读");
+        await say(JSON.stringify({ better: candidateFirst === win ? "甲" : "乙", reason: "比较两份回答", taskType: "事实查询" }));
+        return { stopReason: "end_turn" };
+      }
       // FAKE_QUOTA=1: Codex with the plan's quota spent (the message as text, then "Internal error" with codexErrorInfo).
       if (process.env.FAKE_QUOTA === "1") {
         const message = "You've hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again in 2 hours.";
@@ -766,7 +774,7 @@ ${JSON.stringify({ check, tools })}`);
       await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed" } });
       await client.callTool({ name: "remember", arguments: { content: `FAKE: ${message}`, kind: "fact" } });
       await client.close();
-      const text = `tools=${tools.length}; search=${found.content[0].text.slice(0, 40).replace(/\n/g, " ")}`;
+      const text = `tools=${tools.length}; search=${found.content[0].text.slice(0, 40).replace(/\n/g, " ")}${process.env.FAKE_REPLAY_RESULT && prompt.includes("这次多给你一份做法") ? "; 候选技能已读" : ""}`;
       await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
       return { stopReason: "end_turn" };
     },

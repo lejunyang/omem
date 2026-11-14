@@ -1370,7 +1370,7 @@ replay
   .command("run")
   .description("立即复盘：不带参数按选题规则挑 replay.max 题；--run 指定一次问答或档案运行，--axis 指定轴")
   .option("--run <id>", "要复盘的运行 id")
-  .option("--axis <axis>", "R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2")
+  .option("--axis <axis>", "R1 R2 R3 S1 S2 M1 M2 M3 W1 W2 A1 A2 K1")
   .action(async (o) => {
     const local = open();
     const remote = await runningServer(local);
