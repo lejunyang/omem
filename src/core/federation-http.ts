@@ -46,6 +46,25 @@ export function registerFederationRoutes(server: FastifyInstance, app: App, who:
     const b = parse(z.object({ grants: z.array(z.object({ kind: z.enum(["agent", "ai", "card"]), name: z.string().min(1).max(80), daily: z.number().int().min(1).max(100000).nullable().optional() })).max(100) }), req.body);
     return { grants: setGrants(app, (req.params as { user: string }).user, b.grants) };
   });
+  // Copies of other devices' data kept here by themselves (peer-backup.ts).
+  server.get("/api/peer/backups", async () => ({ backups: (await import("./peer-backup.ts")).listBackups(app) }));
+  server.put("/api/peer/backups", async (req) => {
+    const b = parse(z.object({ peer: z.string().min(1).max(80), to: z.string().min(1).max(500), everyHours: z.number().int().min(1).max(720).optional(), parts: z.array(z.enum(["library", "files", "repos", "runs"])).optional() }), req.body);
+    const m = await import("./peer-backup.ts");
+    m.setBackup(app, b);
+    return { backups: m.listBackups(app) };
+  });
+  server.delete("/api/peer/backups/:peer", async (req) => {
+    const m = await import("./peer-backup.ts");
+    m.removeBackup(app, (req.params as { peer: string }).peer);
+    return { backups: m.listBackups(app) };
+  });
+  // Starts in the background: a pull can take minutes; the list shows how it went.
+  server.post("/api/peer/backups/:peer/run", async (req) => {
+    const m = await import("./peer-backup.ts");
+    void m.runBackup(app, (req.params as { peer: string }).peer).catch((e) => console.warn("[omem] 备份出错：", (e as Error).message));
+    return { started: true };
+  });
   // Writes into mirror spaces waiting for their home (mesh-write.ts): list, send now, drop one.
   server.get("/api/peer/outbox", async () => ({ entries: (await import("./mesh-write.ts")).listOutbox(app) }));
   server.post("/api/peer/outbox/flush", async () => (await import("./mesh-write.ts")).flushOutbox(app));

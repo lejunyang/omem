@@ -56,6 +56,11 @@ registerScheduleKind("lark-poll", (app) => {
 });
 
 // Other servers' spaces this one mirrors (core/federation.ts).
+registerScheduleKind("peer-backup", (app) => {
+  if (!app.config.backups.length) return;
+  import("./core/peer-backup.ts").then((m) => m.backupTick(app)).catch((e) => console.warn("[omem] 备份别的设备的数据失败：", e.message));
+});
+
 registerScheduleKind("peer-sync", (app) => {
   import("./core/federation.ts").then((m) => m.syncAll(app)).catch((e) => console.warn("[omem] 同步其他服务的空间失败：", e.message));
 });

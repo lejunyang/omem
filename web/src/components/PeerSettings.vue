@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { del, get, patch, post } from "../api";
+import { del, get, patch, post, put } from "../api";
 import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
@@ -27,7 +27,32 @@ const adding = ref(false);
 const viaOptions = computed(() => [{ value: "", label: "直接连接" }, ...(view.value?.peers ?? []).filter((p) => !p.via).map((p) => ({ value: p.id, label: `经 ${p.id} 转发` }))]);
 
 const fail = (e: unknown) => toast((e as Error).message, "error");
+// Copies of other devices' data kept here by themselves (src/core/peer-backup.ts).
+type Backup = { peer: string; to: string; everyHours: number; parts: string[]; okAt?: string; summary?: string; triedAt?: string; problem?: string; away?: boolean; running: boolean; paired: boolean };
+const backups = ref<Backup[]>([]);
+const backupForm = reactive({ peer: "", to: "", everyHours: 12 });
+const loadBackups = () => get<{ backups: Backup[] }>("/api/peer/backups").then((r) => (backups.value = r.backups)).catch(() => {});
+async function saveBackup() {
+  if (!backupForm.peer || !backupForm.to.trim()) return toast("选设备，填备份到哪个目录", "error");
+  try {
+    backups.value = (await put<{ backups: Backup[] }>("/api/peer/backups", { peer: backupForm.peer, to: backupForm.to.trim(), everyHours: Math.max(1, Math.round(Number(backupForm.everyHours) || 12)) })).backups;
+    toast("已设置，连得上时自动拉取", "ok");
+    Object.assign(backupForm, { peer: "", to: "", everyHours: 12 });
+  } catch (e) {
+    fail(e);
+  }
+}
+async function runBackup(b: Backup) {
+  await post(`/api/peer/backups/${encodeURIComponent(b.peer)}/run`).catch(fail);
+  toast("开始拉取，过一会儿刷新看结果", "ok");
+  setTimeout(loadBackups, 4000);
+}
+async function dropBackup(b: Backup) {
+  if (!(await confirmDialog(`不再备份 ${b.peer}？`, { message: `${b.to} 里已有的数据留着，只是不再自动拉取。`, okText: "不再备份" }))) return;
+  backups.value = (await del<{ backups: Backup[] }>(`/api/peer/backups/${encodeURIComponent(b.peer)}`).catch((e) => (fail(e), { backups: backups.value }))).backups;
+}
 async function load() {
+  void loadBackups();
   view.value = await get<View>("/api/peers");
   for (const p of view.value.peers) if (!status[p.id]) void check(p.id);
 }
@@ -171,6 +196,28 @@ onMounted(() => load().catch(fail));
         </template>
       </div>
 
+      <div class="card pad stack">
+        <strong>自动备份</strong>
+        <p class="muted small">把一台设备的数据留一份在本机的一个目录里：每 20 分钟看一眼到期的备份，那台设备连得上（直连或经别的设备）就拉取并合并进去，连不上下次再看。目录是一份普通的数据目录，<span class="mono">omem --home &lt;目录&gt; serve --no-background</span> 可以打开来看。</p>
+        <div v-for="b in backups" :key="b.peer" class="stack tight backup">
+          <div class="row wrap">
+            <strong>{{ b.peer }}</strong><span class="mono small">→ {{ b.to }}</span><span class="muted small">每 {{ b.everyHours }} 小时</span>
+            <span v-if="b.running" class="badge warn">正在拉取</span>
+            <span class="spacer" />
+            <button class="btn ghost sm" :disabled="b.running" @click="runBackup(b)">现在拉一次</button>
+            <button class="btn ghost sm danger" @click="dropBackup(b)">移除</button>
+          </div>
+          <div class="muted small">{{ b.okAt ? `上次成功 ${fmtTime(b.okAt)}：${b.summary}` : "还没有成功过" }}</div>
+          <div v-if="b.problem" class="muted small">最近一次{{ b.away ? "没连上" : "出错" }}<template v-if="b.triedAt">（{{ fmtTime(b.triedAt) }}）</template>：{{ b.problem }}</div>
+        </div>
+        <div class="row wrap">
+          <UiSelect v-model="backupForm.peer" size="sm" width="150px" placeholder="选设备…" aria-label="备份哪台设备" :options="view.peers.map((p) => ({ value: p.id, label: p.id }))" />
+          <input v-model="backupForm.to" class="input sm grow mono" placeholder="备份到本机的哪个目录（不是本机自己的数据目录）" aria-label="备份目录" />
+          <label class="row muted small">每<input v-model.number="backupForm.everyHours" class="input sm hours" type="number" inputmode="numeric" min="1" max="720" aria-label="隔多少小时" />小时</label>
+          <button class="btn sm" @click="saveBackup">设置</button>
+        </div>
+      </div>
+
       <div class="row"><strong class="grow">持有本机令牌的设备</strong></div>
       <div v-if="!view.paired.length" class="card pad muted">没有。生成的配对码被添加后，对方就拿着一个令牌。</div>
       <div v-for="t in view.paired" :key="t.id" class="card pad row wrap">
@@ -185,6 +232,14 @@ onMounted(() => load().catch(fail));
 </template>
 
 <style scoped>
+.backup {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.hours {
+  width: 64px;
+  margin: 0 6px;
+}
 .head,
 .meta {
   gap: 4px 12px;

@@ -420,6 +420,12 @@ export const configSchema = z.object({
   preview: z.object({ idleMinutes: z.number().int().min(1).max(24 * 60).default(30) }).default({ idleMinutes: 30 }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
   node: z.object({ id: z.string().optional() }).default({}),
+  /**
+   * Copies of other devices' data kept here by themselves (src/core/peer-backup.ts): the device, the
+   * data directory its data is pulled into (not this instance's own), how many hours apart, and what
+   * besides the database. Looked at every twenty minutes; a device that is away is tried again then.
+   */
+  backups: z.array(z.object({ peer: z.string().min(1), to: z.string().min(1), everyHours: z.number().int().min(1).max(720).default(12), parts: z.array(z.enum(["library", "files", "repos", "runs"])).default(["library", "files", "repos"]) })).default([]),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
   memory: z
     .object({

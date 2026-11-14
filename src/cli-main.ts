@@ -135,8 +135,9 @@ program
   .description("启动服务（网页、API、后台任务）")
   .option("-p, --port <port>", "端口", (v) => Number(v))
   .option("--host <host>", "监听地址")
+  .option("--no-background", "只开网页和接口：不启动定时任务、渠道和采集（打开一份备份数据来看时用，配合 --home <目录>）")
   .action(async (o) => {
-    await boot(home(), { port: o.port, host: o.host });
+    await boot(home(), { port: o.port, host: o.host, background: o.background });
     let stopping = false;
     const shutdown = async () => {
       if (stopping) return;
@@ -258,6 +259,42 @@ peer
     } finally {
       cleanupFetched(fetched);
     }
+  });
+
+peer
+  .command("backup [device]")
+  .description("自动备份一台设备的数据到本机的一个目录：每 20 分钟看一眼到期的备份，那台设备连得上（直连或经别的设备）就拉取并合并，连不上下次再看。不带参数列出备份和状态。备份目录是一个普通的数据目录，omem --home <目录> serve --no-background 可以打开来看。需要本机的 omem 服务在运行（omem service start / enable）")
+  .option("--to <dir>", "备份到哪个数据目录（不能是本机自己的数据目录；不存在会新建）")
+  .option("--every <hours>", "隔多少小时拉一次（默认 12）", (v) => Number(v))
+  .option("--only <parts>", "除数据库外拉哪些：library、files、repos、runs，逗号分隔（默认 library,files,repos）")
+  .option("--now", "现在就拉一次（设备连不上时只记下）")
+  .option("--remove", "不再备份这台设备（备份目录里的数据留着）")
+  .action(async (device: string | undefined, o) => {
+    const { listBackups, setBackup, removeBackup, runBackup } = await import("./core/peer-backup.ts");
+    const app = open();
+    const show = () => {
+      const list = listBackups(app);
+      if (!list.length) return console.log("还没有设置备份。omem peer backup <设备> --to <目录>");
+      for (const b of list)
+        console.log(`${b.peer} → ${b.to}（每 ${b.everyHours} 小时；数据库${b.parts.length ? `、${b.parts.join("、")}` : ""}）\n  ${b.okAt ? `上次成功 ${new Date(b.okAt).toLocaleString("zh-CN", { hour12: false })}：${b.summary}` : "还没有成功过"}${b.problem ? `\n  最近一次${b.away ? "没连上" : "出错"}（${b.triedAt ? new Date(b.triedAt).toLocaleString("zh-CN", { hour12: false }) : ""}）：${b.problem}` : ""}${b.paired ? "" : "\n  这台设备已不在配对列表里"}`);
+    };
+    if (!device) return show();
+    if (o.remove) {
+      removeBackup(app, device);
+      return console.log(`不再备份 ${device}。`);
+    }
+    if (o.to) {
+      const b = setBackup(app, { peer: device, to: o.to, everyHours: o.every, parts: o.only === undefined ? undefined : String(o.only).split(",").map((s) => s.trim()).filter(Boolean) });
+      console.log(`已设置：${b.peer} → ${b.to}，每 ${b.everyHours} 小时。本机服务运行时自动进行${(await (await import("./core/peers.ts")).serviceRunning(app)) ? "" : "；现在服务没在运行：omem service start（开机自启：omem service enable）"}。`);
+    }
+    if (o.now) {
+      console.error(`正在看 ${device} 连不连得上并拉取…`);
+      const r = await runBackup(app, device, { probeMs: 20_000 });
+      console.log(r.ran && !r.problem ? `完成：${r.summary}` : r.away ? `没连上 ${device}：${r.problem}` : `没有成功：${r.problem ?? "另一次备份正在进行"}`);
+      if (!r.ran || r.problem) process.exitCode = 1;
+      return;
+    }
+    if (!o.to) show();
   });
 
 peer
