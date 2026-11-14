@@ -42,12 +42,20 @@ export function parseParts(value: string | undefined | null): PullPart[] {
 export const FILE_NAME = /^[a-f0-9]{16}\.[a-z0-9]+$/;
 const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-function untar(dir: string, archive: string) {
+/** Unpack an archive fetched into `dir`, refusing paths that leave it. */
+export function untar(dir: string, archive: string) {
   // Relative to the snapshot dir: GNU tar (Git for Windows) reads "C:\…" as a remote host.
   const listing = spawnSync("tar", ["-tf", archive], { cwd: dir, encoding: "utf8", maxBuffer: 256 * 1024 ** 2 });
   if (listing.status !== 0 || listing.stdout.split("\n").some((p) => p.startsWith("/") || /^[A-Za-z]:/.test(p) || p.split(/[\\/]/).includes(".."))) throw new Error("快照目录不合法或传输不完整");
-  const r = spawnSync("tar", ["-xf", archive], { cwd: dir });
-  if (r.status !== 0) throw new Error(`解包失败：${r.stderr.toString().slice(-300)}`);
+  const r = spawnSync("tar", ["-xf", archive], { cwd: dir, maxBuffer: 64 * 1024 ** 2 });
+  if (r.status !== 0) {
+    // A repository's working tree can hold links whose target is gone (rotated logs), and Windows
+    // cannot make those: everything else is unpacked, so the pull goes on without them.
+    const errors = (r.stderr?.toString() ?? "").split("\n").map((l) => l.trim()).filter((l) => l && !/Exiting with failure status|Error exit delayed/i.test(l));
+    const links = errors.filter((l) => /sym(bolic )?link/i.test(l));
+    if (!errors.length || links.length !== errors.length) throw new Error(`解包失败：${r.stderr?.toString().slice(-300)}`);
+    console.warn(`[omem] 解包时有 ${links.length} 个符号链接没能建出来（目标不存在的链接在 Windows 上建不了），已跳过，其余照常`);
+  }
   rmSync(join(dir, archive));
 }
 
