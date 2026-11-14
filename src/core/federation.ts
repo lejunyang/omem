@@ -45,6 +45,7 @@ export function setShares(app: App, userId: string, shares: { space: string; mod
   for (const s of shares) {
     const sp = getSpace(app, s.space);
     if (sp.kind === "personal" || sp.kind === "worktree") throw new HttpError(400, `个人空间和临时空间不能共享：${s.space}`);
+    if ((sp.settings as { local?: boolean }).local) throw new HttpError(400, `空间 ${sp.name} 设了“仅本机”，不能共享`);
   }
   run(app.db, "delete from peer_shares where user_id = ?", userId);
   for (const s of shares) run(app.db, "insert into peer_shares(user_id,space_id,mode,kinds,created_at) values(?,?,?,?,?)", userId, s.space, s.mode ?? "query", JSON.stringify(s.kinds?.length ? s.kinds : DEFAULT_KINDS), now());
@@ -331,6 +332,8 @@ function applyChange(app: App, s: SubRow, c: Change) {
 
 /** The scheduler's pass over every sync subscription. */
 export async function syncAll(app: App) {
+  // Writes that waited for a home go first, so the sync brings them back (mesh-write.ts).
+  await (await import("./mesh-write.ts")).flushOutbox(app).catch((e) => console.warn("[omem] 补发镜像空间的写入失败：", (e as Error).message));
   const out: { id: string; applied?: number; error?: string }[] = [];
   for (const s of listSubscriptions(app).filter((x) => x.mode === "sync")) {
     try {

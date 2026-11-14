@@ -81,3 +81,52 @@ describe("several omem working together", async () => {
     await expect(askPeerAgent(B, "server-a", "researcher", "你好", { pollMs: 200 })).rejects.toThrow(/没有开放/);
   });
 });
+
+describe("lending an AI backend to another person's server", async () => {
+  const homeA = mkdtempSync(join(tmpdir(), "omem-lend-a-"));
+  const homeB = mkdtempSync(join(tmpdir(), "omem-lend-b-"));
+  writeFileSync(join(homeA, "config.json"), JSON.stringify({ node: { id: "lender" }, agents: { profiles: [{ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")] }] } }));
+  writeFileSync(join(homeB, "config.json"), JSON.stringify({ node: { id: "borrower" } }));
+  const a = await boot(homeA, { port: 0, quiet: true, background: false });
+  const b = await boot(homeB, { port: 0, quiet: true, background: false });
+  afterAll(async () => {
+    await b.server.close();
+    await a.server.close();
+  });
+  const A = a.app;
+  const B = b.app;
+  createSpace(A, { id: "handbook", name: "手册" });
+
+  it("opens the backend only with a grant, within its uses a day, and says on the card what is left", async () => {
+    const { lendAllowed, lentByOthers, localOnly } = await import("../src/core/mesh.ts");
+    const { connectAcp } = await import("../src/core/peer-acp.ts");
+    const { setShares } = await import("../src/core/federation.ts");
+    const { updateSpace } = await import("../src/core/spaces.ts");
+    const r = shareInvite(A, { label: "borrower", shares: [{ space: "handbook", mode: "query" }], url: A.baseUrl! });
+    await addPeer(B, r.code);
+    // Not lent: the connection is refused with the reason.
+    await expect(connectAcp(B, "lender", "fake")).rejects.toThrow();
+    setGrants(A, r.userId, [{ kind: "ai", name: "fake", daily: 2 }]);
+    expect((await nodeCard(A, r.userId)).ai).toEqual([expect.objectContaining({ id: "fake", daily: 2, left: 2 })]);
+    const first = await connectAcp(B, "lender", "fake");
+    first.socket.destroy();
+    expect((await nodeCard(A, r.userId)).ai![0].left).toBe(1);
+    expect(lendAllowed(A, r.userId, "fake")).toEqual({ ok: true });
+    expect(lendAllowed(A, r.userId, "fake")).toMatchObject({ ok: false, reason: expect.stringContaining("次数用完了") });
+    await expect(connectAcp(B, "lender", "fake")).rejects.toThrow();
+
+    // The borrower: a backend of someone else's server (its card says how it sees us), never used for a space kept on this machine.
+    await refreshCards(B);
+    expect(knownCards(B)[0].card).toMatchObject({ as: "service" });
+    expect(lentByOthers(B, { peer: { id: "lender" } })).toBe(true);
+    expect(lentByOthers(B, {})).toBe(false);
+    createSpace(B, { id: "diary", name: "日记" });
+    expect(localOnly(B, "diary")).toBe(false);
+    updateSpace(B, "diary", { settings: { local: true } });
+    expect(localOnly(B, "diary")).toBe(true);
+    // Nor shared with anyone.
+    createSpace(A, { id: "private-notes", name: "私人笔记" });
+    updateSpace(A, "private-notes", { settings: { local: true } });
+    expect(() => setShares(A, r.userId, [{ space: "private-notes" }])).toThrow(/仅本机/);
+  }, 60_000);
+});

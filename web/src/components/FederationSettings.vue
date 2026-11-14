@@ -42,6 +42,24 @@ const subForm = ref({ peer: "", space: "", sync: false });
 const offers = ref<Share[] | null>(null);
 const spaceOptions = computed(() => state.spaces.filter((s) => s.kind !== "personal" && !(s.settings as { mirror?: unknown })?.mirror).map((s) => ({ value: s.id, label: s.name })));
 const fail = (e: unknown) => toast((e as Error).message, "error");
+// Writes into mirror spaces waiting for their home (src/core/mesh-write.ts).
+type Outgoing = { id: string; peer: string; space: string; tool: string; summary: string; createdAt: string; tries: number; status: "waiting" | "rejected"; error: string | null };
+const outbox = ref<Outgoing[]>([]);
+const loadOutbox = () => get<{ entries: Outgoing[] }>("/api/peer/outbox").then((r) => (outbox.value = r.entries)).catch(() => {});
+async function flushOutbox() {
+  try {
+    const r = await post<{ sent: number; rejected: number; waiting: number }>("/api/peer/outbox/flush");
+    toast(`补发 ${r.sent} 条${r.rejected ? `，被拒 ${r.rejected} 条` : ""}${r.waiting ? `，还有 ${r.waiting} 条等着` : ""}`, r.rejected ? "error" : "ok");
+  } catch (e) {
+    fail(e);
+  }
+  await loadOutbox();
+}
+async function dropOutgoing(o: Outgoing) {
+  if (!(await confirmDialog("删掉这条没发出去的写入？", { message: `${o.tool}：${o.summary}`, okText: "删掉", danger: true }))) return;
+  await del(`/api/peer/outbox/${encodeURIComponent(o.id)}`).catch(fail);
+  await loadOutbox();
+}
 const cards = ref<Card[]>([]);
 const refreshing = ref(false);
 async function loadCards(refresh = false) {
@@ -59,13 +77,17 @@ const agentNames = ref<{ value: string; label: string; hint?: string }[]>([{ val
 const askable = (a: Account) => (a.grants ?? []).filter((g) => g.kind === "agent").map((g) => g.name);
 const askDaily = (a: Account) => (a.grants ?? []).find((g) => g.kind === "agent")?.daily ?? null;
 const showsAssistants = (a: Account) => (a.grants ?? []).some((g) => g.kind === "card" && g.name === "assistants");
-async function saveGrants(a: Account, next: { agents?: string[]; daily?: number | null; assistants?: boolean }) {
+// Which of this node's AI backends another server may borrow (the model runs here, its tools stay there), and how often a day.
+const lendable = ref<{ value: string; label: string }[]>([]);
+const lent = (a: Account) => (a.grants ?? []).filter((g) => g.kind === "ai").map((g) => g.name);
+const lentDaily = (a: Account) => (a.grants ?? []).find((g) => g.kind === "ai")?.daily ?? null;
+async function saveGrants(a: Account, next: { agents?: string[]; daily?: number | null; assistants?: boolean; ai?: string[]; aiDaily?: number | null }) {
   const agents = next.agents ?? askable(a);
   const daily = next.daily === undefined ? askDaily(a) : next.daily;
   const grants: Grant[] = [
     ...agents.map((name) => ({ kind: "agent" as const, name, daily })),
     ...((next.assistants ?? showsAssistants(a)) ? [{ kind: "card" as const, name: "assistants", daily: null }] : []),
-    ...(a.grants ?? []).filter((g) => g.kind === "ai"),
+    ...(next.ai ?? lent(a)).map((name) => ({ kind: "ai" as const, name, daily: next.aiDaily === undefined ? lentDaily(a) : next.aiDaily })),
   ];
   try {
     await put(`/api/peer/grants/${encodeURIComponent(a.id)}`, { grants });
@@ -82,6 +104,8 @@ async function load() {
   subs.value = s;
   peers.value = p.peers;
   void loadCards();
+  void loadOutbox();
+  void get<{ agents?: { id: string; name?: string; transport: string; installed?: boolean; peer?: unknown }[] }>("/api/settings").then((s) => (lendable.value = (s.agents ?? []).filter((x) => x.transport === "acp" && x.installed && !x.peer).map((x) => ({ value: x.id, label: x.name ?? x.id })))).catch(() => {});
   void get<{ name: string; description?: string }[]>("/api/agents").then((list) => (agentNames.value = [agentNames.value[0], ...list.map((x) => ({ value: x.name, label: x.name, hint: x.description }))])).catch(() => {});
 }
 async function makeShare() {
@@ -176,8 +200,9 @@ onMounted(() => load().catch(fail));
         <template v-else>
           <div v-if="c.card.agents?.length" class="small"><span class="muted">可以请教：</span><span v-for="g in c.card.agents" :key="g.name" class="badge accent" :title="g.description">{{ g.name }}@{{ c.peer }}<template v-if="g.daily"> · 每天 {{ g.daily }} 次</template></span></div>
           <div v-if="c.card.assistants?.length" class="small"><span class="muted">那里的助手：</span>{{ c.card.assistants.map((x) => `${x.name}（${x.owner}的${x.description ? `，${x.description}` : ""}）`).join("、") }}</div>
+          <div v-if="c.card.ai?.length" class="small"><span class="muted">可借的 AI：</span>{{ c.card.ai.map((x) => x.id).join("、") }}<span class="muted">（在上面“设备”里这台的 Agent 列表里勾选后，成为本机的一个后端）</span></div>
           <div v-if="c.card.spaces?.length" class="small"><span class="muted">共享的空间：</span>{{ c.card.spaces.slice(0, 20).map((x) => x.name).join("、") }}<template v-if="c.card.spaces.length > 20"> 等 {{ c.card.spaces.length }} 个</template></div>
-          <p v-if="!c.card.agents?.length && !c.card.assistants?.length && !c.card.spaces?.length" class="muted small">它没有向这台开放什么。</p>
+          <p v-if="!c.card.agents?.length && !c.card.assistants?.length && !c.card.spaces?.length && !c.card.ai?.length" class="muted small">它没有向这台开放什么。</p>
         </template>
       </div>
     </template>
@@ -229,9 +254,28 @@ onMounted(() => load().catch(fail));
           <UiSelect multiple :model-value="askable(a)" size="sm" width="240px" placeholder="不开放" aria-label="可以请教的 Agent" :options="agentNames" @change="(v) => saveGrants(a, { agents: v as string[] })" />
           <label v-if="askable(a).length" class="row muted">每个每天最多<input class="input sm num" type="number" inputmode="numeric" min="1" :value="askDaily(a) ?? ''" placeholder="不限" aria-label="每个 Agent 每天最多被请教几次" @change="saveGrants(a, { daily: Number(($event.target as HTMLInputElement).value) > 0 ? Math.round(Number(($event.target as HTMLInputElement).value)) : null })" />次</label>
         </div>
+        <div v-if="lendable.length" class="row wrap small grant">
+          <span title="对方额度不够时可以把这台的 AI 当它的一个后端用：模型在这台上跑，工具和资料都在对方那边；经过这台的是它的提示和工具调用的内容">可以借用的 AI</span>
+          <UiSelect multiple :model-value="lent(a)" size="sm" width="240px" placeholder="不借出" aria-label="可以借用的 AI" :options="lendable" @change="(v) => saveGrants(a, { ai: v as string[] })" />
+          <label v-if="lent(a).length" class="row muted">每个每天最多<input class="input sm num" type="number" inputmode="numeric" min="1" :value="lentDaily(a) ?? ''" placeholder="不限" aria-label="每个后端每天最多借出几次" @change="saveGrants(a, { aiDaily: Number(($event.target as HTMLInputElement).value) > 0 ? Math.round(Number(($event.target as HTMLInputElement).value)) : null })" />次</label>
+        </div>
         <UiCheckbox :model-value="showsAssistants(a)" size="sm" @change="(v) => saveGrants(a, { assistants: v })">让对方看到这台上有哪些助手（名字、是谁的、做什么）</UiCheckbox>
       </template>
     </div>
+
+    <template v-if="outbox.length">
+      <div class="row"><h2 class="section-title grow">发件箱</h2><button class="btn ghost sm" @click="flushOutbox">现在补发</button></div>
+      <HelpText>在镜像空间里写的记忆、笔记和页面要写到它的主那台上。主连不上时先放在这里，每次同步时自动补发；主不接受的标为“被拒”，不再重试，可以删掉或到主那台上重做。</HelpText>
+      <div class="card pad stack">
+        <div v-for="o in outbox" :key="o.id" class="row wrap small">
+          <span class="badge" :class="o.status === 'rejected' ? 'danger' : 'warn'">{{ o.status === "rejected" ? "被拒" : "等着" }}</span>
+          <span class="mono">{{ o.tool }}</span><span class="grow">{{ o.summary }}</span>
+          <span class="muted">→ {{ o.peer }} · {{ fmtTime(o.createdAt) }}<template v-if="o.tries"> · 试过 {{ o.tries }} 次</template></span>
+          <button class="btn ghost sm danger" @click="dropOutgoing(o)">删掉</button>
+          <span v-if="o.error" class="muted outbox-error">{{ o.error }}</span>
+        </div>
+      </div>
+    </template>
 
     <h2 class="section-title">关注别人共享的空间</h2>
     <HelpText>先把对方给的配对码加到上面的设备里。关注后，检索和助手能查到这些空间（助手引用时先把原件取到本机）；“同步”的空间每半小时同步到本机一个只读空间。</HelpText>
@@ -258,6 +302,9 @@ onMounted(() => load().catch(fail));
 </template>
 
 <style scoped>
+.outbox-error {
+  flex-basis: 100%;
+}
 .grant {
   align-items: center;
   gap: 8px;

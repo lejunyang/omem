@@ -5735,6 +5735,9 @@ export function mcpTools(filter?: Set<string> | null) {
 
 const metaArgs = { omem_help: z.object({ topic: z.string().optional() }), omem_call: z.object({ tool: z.string(), args: z.record(z.string(), z.unknown()).optional() }) };
 
+/** Tools whose write into a mirror space goes to the space's home (core/mesh-write.ts FORWARDED). */
+const MIRROR_FORWARDED = new Set(["remember", "supersede", "forget", "save_note", "write_page"]);
+
 export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
   if (name === "omem_help" || name === "omem_call") {
     const parsed = metaArgs[name].safeParse(args ?? {});
@@ -5753,6 +5756,12 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
   if (ctx.actor === "agent" && !ctx.approved && (ctx.app.config.approvals.tools.includes(name) || alwaysApprove.has(name))) return held(ctx, name, parsed.data as Record<string, unknown>);
+  // A memory, note or page written into a mirror of another node's space is written on its home (core/mesh-write.ts).
+  if (tool.write && MIRROR_FORWARDED.has(name)) {
+    const { forwardToHome } = await import("../core/mesh-write.ts");
+    const there = await forwardToHome(ctx.app, ctx, name, parsed.data as Record<string, unknown>);
+    if (there) return there;
+  }
   return runTool(ctx, tool, name, parsed.data);
 }
 

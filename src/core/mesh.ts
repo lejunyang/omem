@@ -42,6 +42,8 @@ const isOwn = (caller: string) => caller === OWNER;
 export type NodeCard = {
   node: string;
   at: string;
+  /** How this node sees the caller: one of the owner's own devices, or another person's server. */
+  as?: "owner" | "service";
   /** Assistants on the node: whose, and what each is for. */
   assistants?: { name: string; owner: string; description: string; agent: string }[];
   /** Agent profiles the caller may ask (`ask_agent` with `<name>@<node>`). */
@@ -49,14 +51,14 @@ export type NodeCard = {
   /** Spaces shared with the caller. */
   spaces?: { id: string; name: string; description: string; mode: string }[];
   /** AI backends the caller may borrow. */
-  ai?: { id: string; model: string | null; daily: number | null }[];
+  ai?: { id: string; model: string | null; daily: number | null; left: number | null }[];
 };
 
 /** This node as `caller` may see it. */
 export async function nodeCard(app: App, caller: string): Promise<NodeCard> {
   const own = isOwn(caller);
   const grants = own ? [] : grantsFor(app, caller);
-  const card: NodeCard = { node: nodeId(app), at: now() };
+  const card: NodeCard = { node: nodeId(app), at: now(), as: own ? "owner" : "service" };
   if (own || grants.some((g) => g.kind === "card" && g.name === "assistants")) {
     const { listAssistants } = await import("../agents/assistants.ts");
     card.assistants = (await listAssistants(app)).filter((a) => a.enabled).map((a) => ({ name: a.name, owner: a.userName, description: a.description, agent: a.agent }));
@@ -71,7 +73,9 @@ export async function nodeCard(app: App, caller: string): Promise<NodeCard> {
   if (spaces.length) card.spaces = own ? spaces.slice(0, 60) : spaces;
   const { allProfiles } = await import("./config.ts");
   const lent = new Map(grants.filter((g) => g.kind === "ai").map((g) => [g.name, g.daily]));
-  const ai = allProfiles(app.config).filter((p) => !p.peer && (own || lent.has(p.id))).map((p) => ({ id: p.id, model: p.model ?? null, daily: lent.get(p.id) ?? null }));
+  // What can be opened from elsewhere: this node's own ACP backends (core/peer-acp.ts servableAgent).
+  const ai = allProfiles(app.config).filter((p) => !p.peer && p.transport === "acp" && (own || lent.has(p.id)))
+    .map((p) => ({ id: p.id, model: p.model ?? null, daily: lent.get(p.id) ?? null, left: lent.get(p.id) ? Math.max(0, lent.get(p.id)! - lentToday(app, caller, p.id)) : null }));
   if (ai.length) card.ai = ai;
   return card;
 }
@@ -215,4 +219,35 @@ async function landCitations(app: App, peer: string, text: string) {
   const missed = ids.filter((id) => !local.has(id));
   const answer = text.replace(/src:([A-Za-z0-9_-]{6,})/g, (m, id: string) => (local.has(id) ? `src:${local.get(id)}` : m));
   return { answer, landed: local.size, missed };
+}
+
+// ---- lending an AI backend ---------------------------------------------------------------
+
+const lendKey = (app: App, userId: string, backend: string) => `mesh_ai:${userId}:${backend}:${new Date().toLocaleDateString("sv-SE", { timeZone: app.config.timezone })}`;
+/** Connections another person's server opened to a lent backend today. */
+export function lentToday(app: App, userId: string, backend: string) {
+  return Number(one<{ value: string }>(app.db, "select value from kv where key = ?", lendKey(app, userId, backend))?.value ?? 0);
+}
+/**
+ * Another person's server opens one of this node's ACP backends (`/api/peer/acp`, core/peer-acp.ts):
+ * allowed by an `ai:<backend>` grant, within its uses a day; each allowed connection counts as one.
+ * The model runs here; the tools stay on the caller's side (its knowledge, its permissions).
+ */
+export function lendAllowed(app: App, userId: string, backend: string): { ok: boolean; reason?: string } {
+  const g = grantsFor(app, userId).find((x) => x.kind === "ai" && x.name === backend);
+  if (!g) return { ok: false, reason: `没有借出后端 ${backend}` };
+  const used = lentToday(app, userId, backend);
+  if (g.daily && used >= g.daily) return { ok: false, reason: `今天借用 ${backend} 的次数用完了（每天 ${g.daily} 次）` };
+  run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", lendKey(app, userId, backend), String(used + 1));
+  return { ok: true };
+}
+
+/** A space kept on this machine only (settings.local): not shared, not synced, never handed to an AI borrowed from someone else's server. */
+export function localOnly(app: App, spaceId: string) {
+  return !!(json<{ local?: boolean }>(one<{ settings: string }>(app.db, "select settings from spaces where id = ?", spaceId)?.settings, {}).local);
+}
+/** A backend that is another person's server's AI (not one of the owner's own devices'): unknown counts as theirs. */
+export function lentByOthers(app: App, profile: { peer?: { id: string } }) {
+  if (!profile.peer) return false;
+  return knownCards(app).find((c) => c.peer === profile.peer!.id)?.card?.as !== "owner";
 }

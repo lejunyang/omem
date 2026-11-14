@@ -1,4 +1,4 @@
-import { meshNote } from "../core/mesh.ts";
+import { lentByOthers, localOnly, meshNote } from "../core/mesh.ts";
 import { REVIEW_TOOLS } from "./review.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -713,6 +713,12 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // static order (the role's other backends, the fallbacks, the candidates) for whatever it did not rank.
   const single = !!input.shadow || (pinned && app.config.agents.routing.pinnedFallback === "never");
   const chain = single ? [base.profile] : chosen ? distinctProfiles([base.profile, ...chosen.order, ...failoverProfiles(app, actor, base.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, base.profile, own);
+  // A space kept on this machine only is never handed to an AI borrowed from someone else's server (core/mesh.ts):
+  // such backends are passed over; when the run starts on one, it says so instead.
+  if (localOnly(app, input.spaceId)) {
+    if (lentByOthers(app, chain[0])) throw new HttpError(400, `这个空间设了“仅本机”，不能用别人的 omem 借出的 AI（${chain[0].id}）：给这次运行或这个角色换一个本机的后端`);
+    for (let k = chain.length - 1; k > 0; k--) if (lentByOthers(app, chain[k])) chain.splice(k, 1);
+  }
   let orderBy: OrderSource = chosen ? chosen.by : "static";
   let orderReason = chosen?.reason ?? "";
   /**

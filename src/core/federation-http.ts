@@ -46,6 +46,10 @@ export function registerFederationRoutes(server: FastifyInstance, app: App, who:
     const b = parse(z.object({ grants: z.array(z.object({ kind: z.enum(["agent", "ai", "card"]), name: z.string().min(1).max(80), daily: z.number().int().min(1).max(100000).nullable().optional() })).max(100) }), req.body);
     return { grants: setGrants(app, (req.params as { user: string }).user, b.grants) };
   });
+  // Writes into mirror spaces waiting for their home (mesh-write.ts): list, send now, drop one.
+  server.get("/api/peer/outbox", async () => ({ entries: (await import("./mesh-write.ts")).listOutbox(app) }));
+  server.post("/api/peer/outbox/flush", async () => (await import("./mesh-write.ts")).flushOutbox(app));
+  server.delete("/api/peer/outbox/:id", async (req) => (await import("./mesh-write.ts")).dropOutbox(app, (req.params as { id: string }).id));
   // The cards of the paired nodes (settings → 设备); `refresh` asks them again now.
   server.get("/api/peer/cards", async (req) => ({ cards: (req.query as { refresh?: string }).refresh ? await refreshCards(app) : knownCards(app) }));
   server.post("/api/peer/shares", async (req) => {

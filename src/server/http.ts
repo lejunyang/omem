@@ -1410,8 +1410,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Another device runs one of this device's agents (core/peer-acp.ts): the owner's token.
     if (ACP_PATH.test(req.url ?? "")) {
       const h = req.headers.authorization;
-      const owner = h?.startsWith("Bearer ") ? userForToken(app, h.slice(7)) === OWNER : !app.config.token && trustedLocal(req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
-      if (!owner) return void socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      const user = h?.startsWith("Bearer ") ? userForToken(app, h.slice(7)) : null;
+      const owner = h?.startsWith("Bearer ") ? user === OWNER : !app.config.token && trustedLocal(req, req.socket.remoteAddress ?? "", { refuseProxied: app.config.auth.enabled });
+      if (!owner) {
+        // Another person's server borrowing a backend it was lent (core/mesh.ts): within the grant's uses a day.
+        const lend = user ? (await import("../core/mesh.ts")).lendAllowed(app, user, new URL(req.url ?? "/", "http://x").searchParams.get("agent") ?? "") : { ok: false as const, reason: undefined };
+        if (!lend.ok) return void socket.end(lend.reason ? `HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain; charset=utf-8\r\nconnection: close\r\n\r\n${lend.reason}` : "HTTP/1.1 401 Unauthorized\r\n\r\n");
+      }
       return void serveAcp(app, req, socket, head);
     }
     const m = /^\/api\/peers\/([^/?]+)(\/.*)$/.exec(req.url ?? "");
@@ -2651,7 +2656,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     try {
       const d = await peerJson<{ node?: string; version?: string | null }>(app, id, "/api/diag", undefined, 15_000);
       const s = await peerJson<{ agents?: { id: string; name?: string; transport: string; installed?: boolean; peer?: unknown }[] }>(app, id, "/api/settings", undefined, 15_000).catch(() => ({ agents: [] }));
-      const agents = (s.agents ?? []).filter((a) => a.transport === "acp" && a.installed && !a.peer).map((a) => ({ id: a.id, name: a.name ?? a.id }));
+      let agents = (s.agents ?? []).filter((a) => a.transport === "acp" && a.installed && !a.peer).map((a) => ({ id: a.id, name: a.name ?? a.id }));
+      // Another person's server does not show its settings: what it lends is on its card (core/mesh.ts).
+      if (!agents.length) agents = ((await peerJson<{ ai?: { id: string; model: string | null }[] }>(app, id, "/api/fed/card", undefined, 15_000).catch(() => ({ ai: [] }))).ai ?? []).map((a) => ({ id: a.id, name: a.model ? `${a.id} · ${a.model}` : a.id }));
       return { online: true, ms: Date.now() - started, version: d.version ?? null, agents };
     } catch (e) {
       return { online: false, error: (e as Error).message, agents: [] };

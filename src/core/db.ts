@@ -1759,6 +1759,21 @@ export const migrations: readonly string[] = [
   // What another person's omem may use here besides shared spaces (src/core/mesh.ts): ask an Agent,
   // borrow an AI backend, see the assistants on this node's card; `daily` caps uses a day.
   `create table peer_grants (user_id text not null, kind text not null, name text not null, daily integer, created_at text not null, primary key(user_id, kind, name));`,
+  // Writes into a mirror of another node's space, waiting for its home to be reachable (src/core/mesh-write.ts).
+  `create table fed_outbox (
+     id text primary key,
+     peer text not null,
+     space text not null,                 -- the space on the home
+     tool text not null,
+     args text not null,                  -- with the home's ids
+     run_id text,
+     created_at text not null,
+     tries integer not null default 0,
+     status text not null default 'waiting',   -- waiting | sent | rejected
+     error text,
+     sent_at text
+   );
+   create index fed_outbox_waiting on fed_outbox(created_at) where status = 'waiting';`,
 ];
 
 export type Db = DatabaseSync;

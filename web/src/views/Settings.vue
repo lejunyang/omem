@@ -1495,6 +1495,7 @@ async function saveEdit() {
         <div class="row"><strong>空间设置：{{ editing.id }}</strong><span class="spacer" /><button class="btn ghost sm icon" @click="editing = null"><Icon name="x" /></button></div>
         <label class="field"><span>名称</span><input v-model="editing.name" class="input" /></label>
         <label class="field"><span>说明</span><input v-model="editing.description" class="input" /></label>
+        <UiCheckbox v-if="!editing.settings.mirror" v-model="editing.settings.local" title="这个空间的内容不出这台机器：不能共享给别的 omem，在这个空间里的运行也不会用从别人的 omem 借来的 AI">仅本机：不共享、不同步，也不交给借来的 AI</UiCheckbox>
         <div v-if="isRepo(editing)" class="field">
           <span>所属业务空间</span>
           <UiSelect :model-value="editing.parentId ?? ''" :options="parentOptions" aria-label="所属业务空间" @update:model-value="(v) => moveRepo(editing!.id, v || null)" />

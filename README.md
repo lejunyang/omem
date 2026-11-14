@@ -535,11 +535,11 @@ node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / 
 
 ```
 src/auth      登录：登录方（providers.ts，飞书在 lark.ts）、登录与绑定、邀请、机器人登录链接（login.ts）、会话 cookie（sessions.ts）、谁在请求与相关接口（http.ts）；权限（permissions.ts、routes.ts、tools.ts）；连接器：令牌保管（vault.ts）、刷新与续期（connections.ts）、功能与 scope（features.ts）、主人填的平台应用配置（apps.ts）、以某人身份用 lark-cli（lark-user.ts）
-src/core      配置、AI 提供方与 API key（ai-keys.ts）、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）、进程监听的端口（listening.ts）与预览的本机转发（preview-forward.ts）
+src/core      配置、组网（mesh.ts：节点名片、请教别的 omem 的 Agent、借出 AI）、运行的触发方式和触发人（run-trigger.ts）、AI 提供方与 API key（ai-keys.ts）、SQLite、空间、用户与令牌、只读分享链接（shares.ts）、Git、调度、通知、后台服务、磁盘占用统计（storage-scan）与附件压缩（media、stored-files）、多台设备（peers、peer-exec、pull；快照传输、仓库恢复与业务表合并）、进程监听的端口（listening.ts）与预览的本机转发（preview-forward.ts）
 src/rules     任务规则、条件判断、执行动作与触发记录
-src/mentions  有人找你：预筛、等规则和整理、每日上限、分诊、处理与兜底、回复对方的检查（和渠道无关，channel.ts 是渠道接口；飞书的实现在 channels/lark-mentions.ts、mention-reply.ts，经豆包以本人身份发私聊在 doubao-send.ts）
+src/mentions  有人找你：学本人怎么回（reply-learn.ts）、预筛、等规则和整理、每日上限、分诊、处理与兜底、回复对方的检查（和渠道无关，channel.ts 是渠道接口；飞书的实现在 channels/lark-mentions.ts、mention-reply.ts，经豆包以本人身份发私聊在 doubao-send.ts）
 src/remote    远程操作：aad 的进程（assist、mcp、record）、会话与画面转发（/remote）、录制
-src/sources   归档规则与原件迁移（archive.ts）、从个人空间归位（homing.ts：旁证、重判、工作文件跟着事项）、页面引用的可达性（reach.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记、代码索引的基线与定期同步（code-baseline.ts、code-index.ts）
+src/sources   归档规则与原件迁移（archive.ts）、知识库的文档归位（kb-home.ts）、从个人空间归位（homing.ts：旁证、重判、工作文件跟着事项）、页面引用的可达性（reach.ts）、导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记、代码索引的基线与定期同步（code-baseline.ts、code-index.ts）
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合、重排（rerank.ts）
 src/memory    记忆（目录、有效期、版本链、写入检查与复核统计、对话前带上相关记忆、日常不足信号）
 src/items     事项（时间线）、需求树（requirements.ts）、需求点下的编码（work.ts）、一件事在哪些会话里进行（places.ts）
@@ -547,7 +547,7 @@ src/designs   方案：决定、意见与版本（store.ts）、给 Agent 读的
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测、写入检查与发布前核对（checks.ts、verify.ts）、页面的未决问题与旧页面迁移（questions.ts、migrate.ts）
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）
-src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）
+src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md

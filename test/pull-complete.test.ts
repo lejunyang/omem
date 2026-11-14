@@ -43,7 +43,7 @@ describe("complete portable pulls", () => {
     const app = testApp();
     // lark_message_lines: a pulled chat keeps its first copy in lark_messages.source_id / line; source_viewers is what this device saw.
     const derived = new Set(["vector_log", "chunks", "symbols", "code_refs", "pages", "page_rowids", "page_links", "page_cites", "page_aliases", "memory_rowids", "req_rowids", "lark_message_lines", "source_viewers", "source_access"]);
-    const device = new Set(["kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "peer_grants", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
+    const device = new Set(["kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "peer_grants", "fed_outbox", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
       // Which messages link which document (sources/doc-links.ts): rebuilt from lark_messages.
