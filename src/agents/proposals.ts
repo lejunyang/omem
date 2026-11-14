@@ -3,7 +3,8 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, newId, now } from "../core/util.ts";
 import { customizeRole, isBuiltinRole, saveRoleOverride, updateRoleMeta } from "./builtin-roles.ts";
-import { findAgentSpec, saveAgentSpec, saveSkill } from "./specs.ts";
+import { DEFAULT_SPEC_TOOLS, findAgentSpec, saveAgentSpec, saveSkill } from "./specs.ts";
+import { expandTools } from "./tool-help.ts";
 
 /**
  * Changes proposed for a profile (agent spec or built-in role) by its review: a new prompt, a
@@ -66,9 +67,19 @@ export function applyProposal(app: App, id: string, by = "owner") {
     const s = proposalContent.settings.parse(content);
     attachSkills(app, p.target, s.add_skills, s.remove_skills);
     if (s.add_tools.length || s.remove_tools.length) {
-      const edit = (tools: string[]) => [...new Set([...tools.filter((t) => !s.remove_tools.includes(t)), ...s.add_tools])];
+      const edit = (tools: string[]) => {
+        // Adding a tool the list leaves out of a group takes that exclusion away (it would win over the name).
+        const next = [...new Set([...tools.filter((t) => !s.remove_tools.includes(t) && !s.add_tools.some((a) => t === `-${a}`)), ...s.add_tools])];
+        // A tool that comes with a whole group (`group:<id>`) is taken away by leaving it out of the group.
+        const still = new Set(expandTools(next));
+        return [...next, ...s.remove_tools.filter((t) => still.has(t)).map((t) => `-${t}`)];
+      };
       if (role) updateRoleMeta(app, p.target, (m) => ({ ...m, tools: edit(m.tools) }), "user");
-      else saveAgentSpec(app, { name: p.target, tools: edit(findAgentSpec(app, p.target)!.tools) }, "user");
+      else {
+        // A profile that lists no tools runs with the default read tools: the change starts from those, not from nothing.
+        const own = findAgentSpec(app, p.target)!.tools;
+        saveAgentSpec(app, { name: p.target, tools: edit(own.length ? own : DEFAULT_SPEC_TOOLS) }, "user");
+      }
     }
   }
   run(app.db, "update profile_proposals set status = 'applied', resolved_at = ?, resolved_by = ? where id = ?", now(), by, id);

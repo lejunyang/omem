@@ -41,6 +41,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "DELETE /api/mcp/:name": "owner",
   "POST /api/mcp/:name/test": "owner",
   "PUT /api/roles/:name/mcp": "owner",
+  "PUT /api/roles/:name/tools": "owner",
   "GET /api/share/:token": "public",
   "GET /api/shares": "self",
   "DELETE /api/shares/:id": "self",

@@ -7,6 +7,16 @@ updated: 2026-11-14
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## Agent 页按分组选工具；技能可以停用（11-14）
+
+- `web/src/components/ToolPicker.vue`：档案和内置角色的 omem 工具不再是一个长下拉。已选的显示成标签（整组一个标签，带“排除 N 个”），“按分组选择”展开面板：勾分组名写成 `group:<id>`，整组里取消一个写成 `-<工具>`，展开后逐个勾写成工具名；可搜索；底下按档案文件的写法显示结果。`GET /api/profile-options` 多了 `toolGroups` 和每个工具的 `roleOnly`（内置角色交结果用的，不随整组）。
+- 内置角色：`builtin-roles.ts` 的 `roleTools` / `setRoleTools`，`PUT /api/roles/:name/tools`（只给本人）。加减存进叠加（`updateRoleMeta` 的那条路径），角色不变成自定义副本；角色自己列出的交结果工具不能去掉；guest、gatekeeper 拒绝。`GET /api/roles/:name` 返回 `toolSet`（按写法的清单、版本自带的清单、交结果的工具、是否改过）。
+- 档案：`saveAgentSpec` 拒绝不存在的 `group:`（以前不报错，运行时什么都不给）；`save_agent` 的参数说明写了分组和排除的写法。
+- `proposals.ts`：改进建议去掉的工具如果是整组带来的，写成排除；加回时去掉排除；没列工具的档案从默认只读工具起算（以前加一个工具会让它只剩这一个）。
+- 技能停用：`specs.ts` 的 `setSkillStatus` 保留其余 frontmatter，本人停用时记 `tryout: false`（`skillHeld`）；`PUT /api/skills/:name/status`；技能页多了“停用”。`replay-skills.ts` 的候选不含本人停用的草稿和复盘启用过的草稿；候选的向量每晚只算一次；启用失败只记日志。
+- `sources/attention.ts`：关掉标注的独立复核（`notes.review.enabled = false`）时，Agent 的标注直接进本人的待确认队列（开着时仍是复核拿不准的才进）。`config.ts` 里 `notes`、`wiki` 的默认值改成每次加载各自一份。
+- 测试 `test/role-tools.test.ts`。
+
 ## 编码评审：换别家模型、提前精简、第三次修补与复用（11-14）
 
 - `review-chain.ts` / `review.ts` / `families.ts`：默认 prefer 在评审项与编码同家时，从评审换模型列表和任务选型候选顺序找可用别家；保留本人、轮换与复看选择。记录实际独立性，same 在网页有徽标，require 在摘要与裁决材料说明不算独立评审，不拦运行。

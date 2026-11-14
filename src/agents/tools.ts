@@ -951,7 +951,7 @@ def({
     agent: z.string().optional().describe("后端 Agent id（codex、claude…），不填用默认"),
     model: z.string().optional(),
     effort: z.string().optional(),
-    tools: z.array(z.string()).optional().describe("可用的 omem 工具；不填为只读检索工具"),
+    tools: z.array(z.string()).optional().describe("可用的 omem 工具：工具名；整类工具写 group:<分组 id>（omem_help 列出分组），该分组以后加的工具自动带上，-<工具名> 从中排除一个，如 group:read、group:wiki、-write_page。不填为只读检索工具"),
     writes: z.boolean().optional().describe("是否允许改工作目录里的文件"),
     space: z.string().optional(),
     spaces: z.array(z.string()).optional(),

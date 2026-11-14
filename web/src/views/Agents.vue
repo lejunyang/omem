@@ -16,6 +16,7 @@ import ProfileLearning, { type ProfileDetail, type SkillReplay } from "../compon
 import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSelect from "../components/UiSelect.vue";
+import ToolPicker from "../components/ToolPicker.vue";
 import { compactDiff, diffLines } from "../lib/diff";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { state, toast } from "../store";
@@ -28,9 +29,9 @@ import { state, toast } from "../store";
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
 type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; files: string[] };
-type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
+type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
-type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
+type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; toolSet: { tools: string[]; base: string[]; handIn: string[]; changed: boolean; fixed: boolean }; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
 
 const route = useRoute();
 const router = useRouter();
@@ -45,7 +46,7 @@ const roles = ref<RoleState[]>([]);
 const skills = ref<Skill[]>([]);
 const mcpServers = ref<McpServer[]>([]);
 const mcpError = ref("");
-const options = ref<Options>({ backends: [], defaultBackend: "", globalDefaultBackend: "", tools: [], defaultTools: [] });
+const options = ref<Options>({ backends: [], defaultBackend: "", globalDefaultBackend: "", tools: [], toolGroups: [], defaultTools: [] });
 /** Whether the profile's backend can run 完全访问 (by its last detection). */
 const accessHint = (agent?: string) => fullAccessHint(options.value.backends.find((b) => b.id === (agent || options.value.defaultBackend)));
 const loading = ref(true);
@@ -161,12 +162,26 @@ function toggleRaw() {
 
 const spaceOptions = computed(() => [{ value: "", label: "交办时所在的空间" }, ...state.spaces.map((s) => ({ value: s.id, label: s.name, hint: s.id }))]);
 const readableOptions = computed(() => [{ value: "*", label: "全部空间" }, ...state.spaces.map((s) => ({ value: s.id, label: s.name, hint: s.id }))]);
-const toolOptions = computed(() => options.value.tools.map((t) => ({ value: t.name, hint: `${t.write ? "（写）" : ""}${t.description}` })));
 const skillOptions = computed(() => skills.value.map((s) => ({ value: s.name, hint: s.description })));
 const formTools = computed({ get: () => form.value.tools, set: (v) => ((form.value.tools = v), (dirty.value = true)) });
 const formSpaces = computed({ get: () => form.value.spaces, set: (v) => ((form.value.spaces = v), (dirty.value = true)) });
 const formSkills = computed({ get: () => form.value.skills, set: (v) => ((form.value.skills = v), (dirty.value = true)) });
 const missingMcp = computed(() => (form.value.mcpServers ?? []).filter((name) => !mcpServers.value.some((s) => s.name === name)));
+// A built-in role's tools: edited here as a list in the profile syntax, saved as an overlay (the role goes on following the source).
+const roleToolList = ref<string[]>([]);
+const roleToolsBusy = ref(false);
+const roleToolsDirty = computed(() => !!roleDetail.value && JSON.stringify(roleToolList.value) !== JSON.stringify(roleDetail.value.toolSet.tools));
+async function saveRoleTools(tools = roleToolList.value) {
+  const name = roleName.value;
+  if (!name || roleToolsBusy.value) return;
+  roleToolsBusy.value = true;
+  try {
+    await put(`/api/roles/${encodeURIComponent(name)}/tools`, { tools });
+    if (name === roleName.value) await loadRole(true);
+    await loadLists();
+  } catch (e) { toast((e as Error).message, "error"); }
+  finally { roleToolsBusy.value = false; }
+}
 const roleMcpBusy = ref(false);
 async function setRoleMcp(servers: string[]) {
   const name = roleName.value;
@@ -227,6 +242,7 @@ async function loadRole(quiet = false) {
     const result = await get<RoleDetail>(`/api/roles/${encodeURIComponent(roleName.value)}`);
     if (!current()) return;
     roleDetail.value = result;
+    roleToolList.value = [...result.toolSet.tools];
     const ai = roleDetail.value.defaults;
     const saved = ai.byBackend[ai.agent || options.value.globalDefaultBackend];
     roleAi.value = { agent: ai.agent, model: saved?.model ?? "", effort: saved?.effort ?? "" };
@@ -517,7 +533,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           </label>
           <div class="field">
             <span>omem 工具</span>
-            <ChipPicker v-model="formTools" :options="toolOptions" add-label="＋ 工具" />
+            <ToolPicker v-model="formTools" :tools="options.tools" :groups="options.toolGroups" />
             <small class="muted">不选时用默认的只读工具（{{ options.defaultTools.length }} 个：检索、读原件、读记忆和会话等）</small>
           </div>
           <div class="field">
@@ -586,6 +602,19 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <small class="muted">只对你自己的运行生效（你的对话、后台任务）；别的用户和访客不受影响，规则里的运行看规则上的开关。{{ accessHint(roleAi.agent || options.globalDefaultBackend) }}</small>
           </div>
         </div>
+        <div class="card pad stack">
+          <strong>omem 工具</strong>
+          <p v-if="roleDetail.toolSet.fixed" class="muted small">回答访客的角色只用它自带的这几个只读工具，不在这里加减：{{ roleDetail.tools.join("、") || "无" }}</p>
+          <template v-else>
+            <ToolPicker v-model="roleToolList" :tools="options.tools" :groups="options.toolGroups" :locked="roleDetail.toolSet.handIn" />
+            <div v-if="roleToolsDirty || roleDetail.toolSet.changed" class="row wrap">
+              <button v-if="roleToolsDirty" class="btn sm primary" :disabled="roleToolsBusy" @click="saveRoleTools()">保存工具</button>
+              <button v-if="roleToolsDirty" class="btn ghost sm" :disabled="roleToolsBusy" @click="roleToolList = [...roleDetail.toolSet.tools]">撤销</button>
+              <button v-if="!roleToolsDirty && roleDetail.toolSet.changed" class="btn ghost sm" :disabled="roleToolsBusy" @click="saveRoleTools(roleDetail.toolSet.base)">恢复成角色自带的</button>
+            </div>
+            <small class="muted">{{ roleDetail.toolSet.changed ? "你改过这个角色的工具。" : "现在是角色自带的工具。" }}加减的工具单独记着，不复制角色正文：omem 更新这个角色时它照常跟着更新，你的加减继续生效。现在一共 {{ roleDetail.tools.length }} 个。</small>
+          </template>
+        </div>
         <div v-if="!['guest', 'gatekeeper'].includes(roleName!)" class="card pad stack">
           <strong>MCP 服务</strong>
           <p v-if="mcpError" class="error">{{ mcpError }}</p>
@@ -594,7 +623,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <UiCheckbox v-for="name in missingRoleMcp" :key="name" :model-value="roleDetail.role.overlay?.mcp ?? []" :value="name" :aria-label="name" :disabled="roleMcpBusy" @update:model-value="(v) => setRoleMcp(v as string[])">{{ name }}（服务已删除，取消勾选可移除）</UiCheckbox>
           <button v-if="missingRoleMcp.length > 1" class="btn ghost sm" :disabled="roleMcpBusy" @click="setRoleMcp((roleDetail.role.overlay?.mcp ?? []).filter((n) => !missingRoleMcp.includes(n)))">移除已删除的服务</button>
         </div>
-        <p class="muted small meta">{{ roleDetail.description }} · 工具 {{ roleDetail.tools.length ? roleDetail.tools.join(", ") : "无" }}<span v-if="roleDetail.writes"> · 可改文件</span></p>
+        <p class="muted small meta">{{ roleDetail.description }}<span v-if="roleDetail.writes"> · 可改文件</span></p>
         <p v-if="!roleCustomized" class="muted small">这是 omem 源码里的版本。自定义会把它复制到知识库（<code>_roles/{{ roleName }}.md</code>），之后的运行用你的版本；omem 更新了这个角色时这里会提示，可以合并或恢复。</p>
         <div v-if="!roleCustomized" class="card pad doc"><Markdown :source="roleDetail.body" /></div>
         <div v-else-if="showSource" class="diff">

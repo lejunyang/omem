@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { roleNames } from "../core/config.ts";
 import { commitLibrary, fileHistory, git } from "../core/git.ts";
-import { expandTools, TOOL_GROUPS, unknownGroups } from "./tool-help.ts";
+import { expandTools, ROLE_TOOLS, TOOL_GROUPS, unknownGroups } from "./tool-help.ts";
 import { HttpError } from "../core/util.ts";
 
 /**
@@ -186,6 +186,38 @@ export function setRoleMcp(app: App, name: string, servers: string[]) {
   writeOverlay(app, name, { ...roleOverlay(app, name), mcp: [...new Set(servers)] });
   commitLibrary(app.libraryDir, `user: set MCP servers of built-in role ${name}`);
   return roleState(app, name);
+}
+/**
+ * A built-in role's tools as the Agent page edits them: the list as written (groups, exclusions,
+ * names) with the owner's changes applied, what the version in use lists without them, and the
+ * tools the role hands its result in with (those stay).
+ */
+export function roleTools(app: App, name: string) {
+  const current = parseRoleText(roleOverrideText(app, check(name)) ?? roleSourceText(name)).meta;
+  const o = roleOverlay(app, name);
+  return {
+    tools: applyOverlay(current.tools, o.tools),
+    base: current.tools,
+    handIn: current.tools.filter((t) => ROLE_TOOLS.includes(t)),
+    changed: o.tools.add.length + o.tools.remove.length > 0,
+    /** Guest roles keep the source's reach: what a stranger's question may touch is not widened by a tick. */
+    fixed: GUEST_ROLES.includes(name),
+  };
+}
+/**
+ * The owner's pick of tools for a built-in role (the Agent page). Kept as an overlay on whichever
+ * version is in use, so the role goes on following the source; `tools` equal to the version's own
+ * list removes the overlay's tool part.
+ */
+export function setRoleTools(app: App, name: string, tools: string[]) {
+  if (GUEST_ROLES.includes(check(name))) throw new HttpError(400, "回答访客的角色的工具保持源码里的范围，不在这里加减");
+  const list = [...new Set(tools.map((t) => t.trim()).filter(Boolean))];
+  const noGroup = unknownGroups(list);
+  if (noGroup.length) throw new HttpError(400, `没有这些工具分组：${noGroup.join("、")}；可用 ${TOOL_GROUPS.map((g) => `group:${g.id}`).join("、")}`);
+  const given = new Set(expandTools(list));
+  const lost = roleTools(app, name).handIn.filter((t) => !given.has(t));
+  if (lost.length) throw new HttpError(400, `这个角色靠 ${lost.join("、")} 交结果，不能去掉`);
+  return updateRoleMeta(app, name, (m) => ({ ...m, tools: list }), "user");
 }
 export function updateRoleMeta(app: App, name: string, patch: (meta: z.infer<typeof roleMetaSchema>) => z.infer<typeof roleMetaSchema>, actor: "user" | "agent" = "agent") {
   const current = parseRoleText(roleOverrideText(app, name) ?? roleSourceText(name)).meta;

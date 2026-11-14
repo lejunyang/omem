@@ -8,6 +8,7 @@ import { roleNames } from "../core/config.ts";
 import { HttpError, json } from "../core/util.ts";
 import { all } from "../core/db.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
+import { TOOL_GROUPS, unknownGroups } from "./tool-help.ts";
 
 /**
  * What the assistant learns to delegate to, kept as files in the library
@@ -140,6 +141,9 @@ export function saveAgentSpec(app: App, input: Partial<z.input<typeof agentSpecS
   const prev = findAgentSpec(app, input.name);
   const { prompt, ...rest } = input;
   const merged = agentSpecSchema.parse({ ...(prev ?? {}), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) });
+  // `group:<id>` is expanded when the profile runs (tool-help.ts expandTools): a group that does not exist would silently give nothing.
+  const noGroup = unknownGroups(merged.tools);
+  if (noGroup.length) throw new HttpError(400, `没有这些工具分组：${noGroup.join("、")}；可用 ${TOOL_GROUPS.map((g) => `group:${g.id}`).join("、")}`);
   // An agent editing a profile (save_agent) keeps whatever the owner chose.
   if (actor !== "user") merged.fullAccess = prev?.fullAccess ?? false;
   const body = (prompt ?? prev?.prompt ?? "").trim();

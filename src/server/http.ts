@@ -1,3 +1,4 @@
+import { ROLE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
 import { skillDisplayTally } from "../agents/replay-skills.ts";
 import { outcomeBreakdown } from "../core/notify-outcome.ts";
 import { approvalStreak, rungOf } from "../agents/approval-ladder.ts";
@@ -12,7 +13,7 @@ import { symbolRelations } from "../sources/callgraph.ts";
 import { agentSpecSchema, splitFrontmatter, deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, setSkillStatus, saveRaw, saveSkill } from "../agents/specs.ts";
 import { listMcpServers, saveMcpServer, deleteMcpServer } from "../agents/mcp-servers.ts";
 import { testMcpServer } from "../agents/mcp-test.ts";
-import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride, setRoleFullAccess, setRoleMcp } from "../agents/builtin-roles.ts";
+import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, roleTools, saveRoleOverride, setRoleFullAccess, setRoleMcp, setRoleTools } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
 import { cachedProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
@@ -797,6 +798,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/mcp/:name/test", async (req) => testMcpServer(app, (req.params as { name: string }).name));
   server.put("/api/roles/:name/mcp", async (req) => setRoleMcp(app, (req.params as { name: string }).name,
     q(z.object({ servers: z.array(z.string()) }), req.body).servers));
+  // The owner's pick of tools for a built-in role, in the profile syntax (group:<id>, -<name>, names); kept as an overlay.
+  server.put("/api/roles/:name/tools", async (req) => setRoleTools(app, (req.params as { name: string }).name,
+    q(z.object({ tools: z.array(z.string().max(120)).max(400) }), req.body).tools));
   server.get("/api/roles", async () => listRoleStates(app));
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
   server.get("/api/profile-options", async () => ({
@@ -804,7 +808,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(app, p.id) })),
     globalDefaultBackend: app.config.agents.default || listAgentProfiles(app).find((p) => p.installed)?.id || "",
     defaultBackend: (() => { try { return profileFor(app, "assistant").id; } catch { return ""; } })(),
-    tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write })),
+    tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write, roleOnly: ROLE_TOOLS.includes(t.name) })),
+    // The groups a profile's `tools` may name (`group:<id>`); a whole group never brings the roleOnly ones (tool-help.ts expandTools).
+    toolGroups: TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, tools: g.tools })),
     defaultTools: DEFAULT_SPEC_TOOLS,
   }));
   server.get("/api/roles/:name", async (req) => {
@@ -812,7 +818,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = loadRole(name, app);
     // A role a feature waits on until the owner picks its AI (replay-judge: nightly replay does not run without it).
     const notice = name === "replay-judge" ? (await import("../agents/replay.ts")).replayStatus(app).notice : null;
-    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} }, notice, ...profileDetail(app, name) };
+    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} }, notice, toolSet: roleTools(app, name), ...profileDetail(app, name) };
   });
   server.put("/api/roles/:name/defaults", async (req) => {
     const name = (req.params as { name: string }).name;
