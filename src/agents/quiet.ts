@@ -6,8 +6,8 @@ import { hostToldOwner } from "./code-chain.ts";
 /**
  * Saying nothing is a tool call (stay_quiet), never a word in the answer. A run nobody waits on may
  * end without a reply: a wake-up, a watched group's batch, a rule's agent, the tasks a delegation
- * handed back, a background role. A turn answering someone's message may not, so an answer that
- * happens to read "QUIET" is sent like any other.
+ * handed back, a background role. A turn answering someone's message may not. An answer that is only
+ * the word "QUIET" is neither: it goes back to the agent once and is never posted as it is (reply-check.ts).
  */
 export function mayStayQuiet(app: App, run: Run): boolean {
   const input = run.input as { wake?: unknown; rule?: unknown; silent?: unknown; meeting?: unknown; mention?: unknown; coordinate?: unknown; fromAsk?: unknown; handoff?: { kind?: string }; conversationId?: string; messageIds?: string[] };

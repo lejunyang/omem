@@ -129,12 +129,17 @@ describe("feishu bot messaging", () => {
     // A wake-up re-check with nothing new: no reply either.
     expect((await again({ wake: true }, "没有新变化")).quiet).toBe(true);
     expect(client.calls.filter(c => c.op === "reply")).toHaveLength(1);
-    // The word itself means nothing any more: an answer that reads "QUIET" is sent like any other.
+    // The word is not how to say nothing (that is stay_quiet), and it is not a reply either: the agent gets
+    // one more turn (reply-check.ts). Still only the word, on a rule's run nobody waits for: nothing is posted.
     profile.env.FAKE_SAY = "QUIET";
+    await again();
+    expect(client.calls.filter(c => c.op === "reply")).toHaveLength(1);
+    // A real answer after that goes out as usual.
+    profile.env.FAKE_SAY = "项目 A 的发布窗口是周四晚上。";
     await again();
     const replies = client.calls.filter(c => c.op === "reply");
     expect(replies).toHaveLength(2);
-    expect(JSON.parse(replies[1].args.data.content).body.elements[0].content).toBe("QUIET");
+    expect(JSON.parse(replies[1].args.data.content).body.elements[0].content).toBe("项目 A 的发布窗口是周四晚上。");
   }, 40000);
 
   it("builds Card 2.0 with buttons and forms", () => {
