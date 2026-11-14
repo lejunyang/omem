@@ -13,6 +13,7 @@ import { boot } from "../src/main.ts";
 import { remember } from "../src/memory/store.ts";
 import { importText } from "../src/sources/import.ts";
 import { getSource, upsertSource } from "../src/sources/store.ts";
+import { moveSource } from "../src/sources/archive.ts";
 
 /**
  * A pull's snapshot (core/pull-snapshot.ts): built table by table without the derived tables, and,
@@ -46,6 +47,7 @@ describe("the snapshot a pull takes", async () => {
 
   const open = (dir: string) => new DatabaseSync(join(dir, "omem.db"), { readOnly: true });
   let takenAt = "";
+  let again = "";
 
   it("is built without the search chunks and code outline, and is otherwise the whole library", async () => {
     expect(one<{ n: number }>(A.db, "select count(*) n from chunks")!.n).toBeGreaterThan(0);
@@ -92,6 +94,7 @@ describe("the snapshot a pull takes", async () => {
       expect(readManifest(fetched.dbDir)!.since).toBe(new Date(takenAt).toISOString());
       const r = mergeLibrary(B, fetched);
       expect(r.sources).toMatchObject({ added: 1, updated: 1 });
+      again = readManifest(fetched.dbDir)!.takenAt!;
     } finally {
       cleanupFetched(fetched);
     }
@@ -99,5 +102,38 @@ describe("the snapshot a pull takes", async () => {
     expect(one<{ text: string }>(B.db, "select text from sources where id = ?", rules.id)!.text).toContain("45 天");
     // The item cites the travel document, which did not travel this time: its citation is the laptop's id of it.
     expect(JSON.parse(one<{ source_refs: string }>(B.db, "select source_refs from items where id = ?", item.id)!.source_refs)).toEqual([`src:${mine.id}#L3`]);
+  }, 60_000);
+
+  it("follows a source the other side has moved to another space, unless it was moved here later", async () => {
+    await new Promise((r) => setTimeout(r, 20));
+    createSpace(A, { id: "finance", name: "财务" });
+    // Moving changes neither the text nor the time of a document: the next snapshot leaves all three out.
+    moveSource(A, rules.id, "finance", "制度归财务");
+    moveSource(A, travel.id, "finance", "制度归财务");
+    const meals = one<{ id: string }>(A.db, "select id from sources where title = '加班餐标准'")!.id;
+    moveSource(A, meals, "finance", "制度归财务");
+    await new Promise((r) => setTimeout(r, 20));
+    // The laptop has since put the meal standard somewhere itself.
+    moveSource(B, meals, "personal", "我自己在看");
+    const fetched = await fetchPeer(B, "server", { selection: { parts: [], strip: true, since: again } });
+    try {
+      const snap = open(fetched.dbDir);
+      expect((snap.prepare("select count(*) n from sources").get() as { n: number }).n).toBe(0);
+      snap.close();
+      mergeLibrary(B, fetched);
+    } finally {
+      cleanupFetched(fetched);
+    }
+    const place = (id: string) => one<{ space_id: string }>(B.db, "select space_id from sources where id = ?", id)!.space_id;
+    // Taken with the server's id by the first pull; and the laptop's own copy, found where it used to be.
+    expect(place(rules.id)).toBe("finance");
+    expect(place(mine.id)).toBe("finance");
+    expect(all<{ space_id: string }>(B.db, "select distinct space_id from chunks where source_id in (?, ?)", rules.id, mine.id)).toEqual([{ space_id: "finance" }]);
+    expect(one<{ n: number }>(B.db, "select count(*) n from sources where uri = (select uri from sources where id = ?) and deleted_at is null", mine.id)!.n).toBe(1);
+    expect(place(meals)).toBe("personal");
+    // Pulled again, whole this time: nothing moves back or twice.
+    const whole = await fetchPeer(B, "server", { selection: { parts: [], strip: true } });
+    try { mergeLibrary(B, whole); } finally { cleanupFetched(whole); }
+    expect([place(rules.id), place(mine.id), place(meals)]).toEqual(["finance", "finance", "personal"]);
   }, 60_000);
 });

@@ -232,6 +232,27 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
         if (!opts.dryRun) reindexSource(app, id);
         tally("sources")[have ? "updated" : "added"]++;
       }
+      // Sources the other side has since put in another space. Moving one leaves its text and its time
+      // alone, so nothing above took it. This side's own later move stands; before the move history
+      // below is merged, `main.source_moves` holds what this side did and what earlier pulls brought.
+      let moved = 0;
+      for (const m of prepared.moves) {
+        const cur = db.prepare("select space_id, uri, deleted_at from sources where id = ?").get(m.id) as { space_id: string; uri: string; deleted_at: string | null } | undefined;
+        if (!cur || cur.deleted_at || cur.space_id === m.to || !db.prepare("select 1 from spaces where id = ?").get(m.to)) continue;
+        const theirs = (db.prepare("select max(at) at from r.source_moves where source_id = ?").get(m.id) as { at: string | null }).at;
+        const mine = (db.prepare("select max(at) at from main.source_moves where source_id = ?").get(m.id) as { at: string | null }).at;
+        if (mine && (!theirs || theirs < mine)) continue;
+        if (db.prepare("select 1 from sources where space_id = ? and uri = ? and id != ?").get(m.to, cur.uri, m.id)) continue;
+        run(db, "insert or ignore into source_locations(origin_space,uri,source_id) values(?,?,?)", cur.space_id, cur.uri, m.id);
+        run(db, "update sources set space_id = ? where id = ?", m.to, m.id);
+        for (const table of ["chunks", "symbols", "code_refs"]) run(db, `update ${table} set space_id = ? where source_id = ?`, m.to, m.id);
+        moved++;
+      }
+      if (moved) {
+        tally("sources").updated += moved;
+        tally("sources").kept = Math.max(0, tally("sources").kept - moved);
+        log(`${moved} 份原件跟着对方换了空间`);
+      }
       if (!opts.dryRun) copyArtifacts(db, join(dir, "runs"), app.runsDir);
       for (const t of pullTables) {
         const cols = columns(db, t.name).filter((c) => columns(db, t.name, "r").includes(c) && !t.local?.includes(c));

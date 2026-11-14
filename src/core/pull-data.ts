@@ -100,7 +100,11 @@ export function columns(db: DatabaseSync, table: string, schema = "main") {
 }
 
 type Source = Row & { id: string; space_id: string; uri: string; kind: string; text: string; updated_at: string; deleted_at: string | null };
-export type Prepared = { databasePath: string; sources: Source[]; ids: Map<string, string>; lines: Map<string, number[]>; aliases: [string, string, string][] };
+export type Prepared = {
+  databasePath: string; sources: Source[]; ids: Map<string, string>; lines: Map<string, number[]>; aliases: [string, string, string][];
+  /** Sources that are in another space on the other side than here (local id, the other side's space). */
+  moves: { id: string; to: string }[];
+};
 
 /** Append missing occurrences, preserving every existing local line and its citation number. */
 function joinChat(local: string, remote: string) {
@@ -149,11 +153,35 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
   const remote = openDb(databasePath);
   remote.exec("pragma foreign_keys = off");
   for (const t of all<{ name: string }>(remote, "select name from sqlite_master where type = 'trigger' and name glob '*_sync_*'")) remote.exec(`drop trigger ${t.name}`);
-  const prepared: Prepared = { databasePath, sources: [], ids: new Map(), lines: new Map(), aliases: [] };
+  const prepared: Prepared = { databasePath, sources: [], ids: new Map(), lines: new Map(), aliases: [], moves: [] };
   try {
     const lookup = local.prepare("select * from sources where space_id = ? and uri = ?");
+    // A source the other side has moved to another space is not at its new place here. It is the one
+    // where it used to be (a move records the place it leaves in `source_locations`), unless the other
+    // side has something else there now; a copy made by an earlier pull also still has its id.
+    const named = !!remote.prepare("select 1 from sqlite_master where name = 'pull_source_keys'").get();
+    if (named) remote.exec("create index if not exists pull_source_keys_place on pull_source_keys(space_id, uri)");
+    const earlier = new Map<string, string[]>();
+    for (const p of all<{ source_id: string; origin_space: string }>(remote, "select source_id, origin_space from source_locations")) earlier.set(p.source_id, [...(earlier.get(p.source_id) ?? []), p.origin_space]);
+    const other = remote.prepare(`select 1 from sources where space_id = ? and uri = ? and id != ? and deleted_at is null${named ? " union all select 1 from pull_source_keys where space_id = ? and uri = ? and id != ?" : ""} limit 1`);
+    const byId = local.prepare("select * from sources where id = ?");
+    const find = (id: string, space: string, uri: string) => {
+      const here = lookup.get(space, uri) as Source | undefined;
+      if (here) return here;
+      let was: Source | undefined;
+      for (const origin of earlier.get(id) ?? []) {
+        if (origin === space || other.get(...(named ? [origin, uri, id, origin, uri, id] : [origin, uri, id]))) continue;
+        if ((was = lookup.get(origin, uri) as Source | undefined)) break;
+      }
+      if (!was) {
+        const same = byId.get(id) as Source | undefined;
+        if (same && same.uri === uri) was = same;
+      }
+      if (was && !was.deleted_at) prepared.moves.push({ id: was.id, to: space });
+      return was;
+    };
     for (const s of all<Source>(remote, "select * from sources")) {
-      const have = lookup.get(s.space_id, s.uri) as Source | undefined;
+      const have = find(s.id, s.space_id, s.uri);
       prepared.ids.set(s.id, have?.id ?? s.id);
       if (have && !have.deleted_at && !s.deleted_at && (s.kind === "chat" || s.kind === "conversation")) {
         const remoteId = s.id;
@@ -168,10 +196,12 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
     }
     // An incremental snapshot (pull-snapshot.ts `since`) leaves unchanged sources out and names them
     // instead: their ids are mapped the same way, so what refers to them is still rewritten.
-    if (remote.prepare("select 1 from sqlite_master where name = 'pull_source_keys'").get())
+    // A move does not change a source's own time, so a moved one is among these: its place here follows
+    // in the merge (pull.ts).
+    if (named)
       for (const k of all<{ id: string; space_id: string; uri: string }>(remote, "select id, space_id, uri from pull_source_keys")) {
         if (prepared.ids.has(k.id)) continue;
-        const have = lookup.get(k.space_id, k.uri) as Source | undefined;
+        const have = find(k.id, k.space_id, k.uri);
         prepared.ids.set(k.id, have?.id ?? k.id);
       }
 
