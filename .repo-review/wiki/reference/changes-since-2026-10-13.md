@@ -2129,3 +2129,17 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 向量紧凑存储（`src/search/vector-codec.ts`）：`pack` / `unpackInto` / `toFloats` / `isPacked`；`embedPending` 写入 `pack(v)`，`vectors.ts` 的 `push` 和 `sampleMatches` 两种格式都读（`quantize` 挪到 codec）；`packStoredVectors` 按分块 id 顺序每批 500 行改存（游标 `kv.vector_pack_cursor`，做完 `vector_packed = 1`），`main.ts` 启动 20 秒后每秒一批；迁移重建 `vector_log_update` 触发器，同一向量从 float32 改成紧凑格式不记变更。`omem db [status|vacuum]`。记忆的向量（`memories.embedding`）仍是 float32，条数少。找还没算向量的分块（`embedPending`，每半分钟一次）走部分索引 `chunks_unembedded`：原来是读整张表，紧凑格式的向量存在表自己的页里，扫描跳不过去。
 - docs/v2/mesh.md：组网运行（名片、问对方的 Agent、借 AI、按空间定主从与发件箱、租约）和助手的设计，各节写了实现到哪。
 - 助手（`src/agents/assistants.ts`）：`lark.bots` 的机器人加 `userId`（谁的助手）、`name`、`description`、`dailyRuns`；`botSender` 把建机器人的人认成它的主人（成员），`botRoster` 写明是谁的助手；`overDailyLimit` 在 `inbox.receive` 里拦超过每天次数的轮次；`/api/assistants`；`AssistantsSettings.vue` 用在账号页（我的助手）和 设置 → 渠道（全部助手，替换原来的“其他机器人”列表），可以“用飞书创建机器人”（`scanNewAssistant`，`registerLarkBot` 的确认链接）或填已有应用。
+
+## 2026-11-14：多个决策模型
+
+设置 → AI → 决策 可配置多个模型（最多 9 个），用上移、下移调整顺序。第一个存为 `ai.decision.provider` / `model`，其余存为 `others`；`pick` 为 `fixed`（默认，按顺序先问第一个可用的）或 `random`（每次随机选一个可用的先问）。不可用的跳过，拒答或调用出错时自动问下一个；刚调用出错的模型在 5 分钟内排在其他模型之后。判断记录写明实际回答的提供方和模型，换过时另写“没答上，换了一个”。每行分别显示可用状态和缺少的配置。
+
+设置接口返回 `decisionModels`；试用接口可指定提供方和模型，以配置副本测试，不改保存的设置。
+
+## 2026-11-14：Agent 页 MCP 服务
+
+Agent 页新增“MCP 服务”：按名称配置命令和参数或网址，环境变量 / 请求头的值存密钥，保存后只返回名称与是否已设置。可以检测连接并列工具（20 秒超时，回收子进程，响应脱敏），编辑、删除时看哪些档案和角色还在用。
+
+档案表单用 `mcpServers` 选择服务，内置角色用 overlay `mcp`，访客角色不可挂载；旧内联 `mcp` 保留并显示“写在档案文件里”。仅本人运行带这些服务，其他成员、访客和评审不带，夜间复盘只带标只读的。HTTP 路由本人专用，档案保存拒绝未知名称；保存系统设置保留 MCP 的密钥。
+
+实现与专项回归：`src/agents/mcp-test.ts`、`web/src/components/McpServices.vue`、`test/mcp-servers.test.ts`、`test/fixture-mcp-server.ts`。

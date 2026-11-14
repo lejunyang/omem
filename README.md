@@ -30,6 +30,7 @@
 - **记忆有版本，事项会收尾**：约定被纠正时旧版本保留并指向新版本；事项有时间线和期限，没进展自己过期，有新消息再打开。
 - **插件做强交互的事**：一个插件打包 Agent 档案、技能、工具、数据和独立页面。内置的“英语练习”按场景出一组题（中英互选、填空、听写、翻译），一次提交，宿主判客观题、陪练评翻译并点评；陪练在后台补题库，“下一组”按你的水平和薄弱点当场挑出来；也可以和语音模型按场景说英语，陪练评价口语，记进同一份学习画像。自己的插件放数据目录，只写清单和档案就能用表单、图表和默认页面；带代码和常驻服务的（比如实时看机器状态）要你在设置 → 插件里确认后才运行，页面能经 omem 和服务保持 WebSocket 连接，声明了语音的页面能和语音模型对话（麦克风在 omem 的页面里，插件只拿到文字）。
 - **飞书里用**：机器人回答带进度卡片和思考过程，规则一句话写成“遇到什么就做什么”，提问和评审结果都是带按钮的卡片。
+- **给 Agent 接 MCP 服务**：Agent 页 → MCP 服务 配置命令或网址，再到档案或内置角色里勾选；环境变量和请求头的值按密钥保存，保存后只显示是否已设置。可检测连接并查看工具，删除前列出使用它的档案和角色。仅你自己的运行带这些服务，其他成员、访客和评审不带；夜间复盘只用标为只读的服务。
 - **不自带模型**：理解和写作交给你已安装的 Agent（Codex、Claude Code、Gemini CLI 等），omem 管存储、索引、调度和权限。
 
 > v2 是一次精简重写（2026-10）。v1 的代码与文档在 Git 历史和 `docs/archive/v1/` 中；设计取舍见 [docs/v2/architecture.md](docs/v2/architecture.md)，评测见 [evaluation.md](docs/v2/evaluation.md)，验收步骤见 [acceptance.md](docs/v2/acceptance.md)。
@@ -90,6 +91,8 @@ flowchart LR
 豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。
 
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → AI → ACP 注册表”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → AI → API key 添加 OpenAI 或 Anthropic 的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → AI 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。
+
+设置 → AI → 决策 可配置多个模型，按顺序或每次随机先问一个；不可用、拒答或出错会换下一个，刚出错的 5 分钟内排到最后，判断记录显示由谁回答及换用情况。
 
 ```bash
 # 源码运行（osdk 管理 Node/pnpm 与模型）
@@ -552,6 +555,7 @@ src/wiki      统一生成入口、页面文件、链接与引用索引、过期
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）
 src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）
+              MCP 服务配置与密钥（mcp-servers.ts）、连接检测和工具列表（mcp-test.ts）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md

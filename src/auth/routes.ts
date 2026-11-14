@@ -32,6 +32,11 @@ const PEERS = g("peers.manage");
 const USERS = g("users.manage");
 
 export const ROUTE_RULES: Record<string, RouteRule> = {
+  "GET /api/mcp": "owner",
+  "PUT /api/mcp/:name": "owner",
+  "DELETE /api/mcp/:name": "owner",
+  "POST /api/mcp/:name/test": "owner",
+  "PUT /api/roles/:name/mcp": "owner",
   "GET /api/share/:token": "public",
   "GET /api/shares": "self",
   "DELETE /api/shares/:id": "self",

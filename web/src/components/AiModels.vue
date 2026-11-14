@@ -20,15 +20,18 @@ type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; accoun
 type ProviderView = Provider & { keyHint: string; hasKey: boolean; listed: { at: number; count: number; error?: string } | null };
 type Choice = { default: string; models: string[] };
 type Status = { ready: boolean; detail: string; media?: ("images" | "audio" | "videos")[] };
-type AiView = { providers: ProviderView[]; status: Record<"voice" | "decision" | "image", Status>; choices: Record<string, Record<string, Choice>>; kinds: Record<string, string[]>; inherited: string[] };
+type AiView = { decisionModels: Status[]; providers: ProviderView[]; status: Record<"voice" | "decision" | "image", Status>; choices: Record<string, Record<string, Choice>>; kinds: Record<string, string[]>; inherited: string[] };
 type Section = "keys" | "voice" | "decision" | "image";
 
 const props = defineProps<{ section: Section; config: any }>();
 const emit = defineEmits<{ save: [ai: any, note: string]; changed: [] }>();
 
 const view = ref<AiView | null>(null);
+let viewSeq = 0;
 async function load() {
-  view.value = await get<AiView>("/api/ai").catch(() => null);
+  const seq = ++viewSeq;
+  const result = await get<AiView>("/api/ai").catch(() => null);
+  if (seq === viewSeq) view.value = result;
 }
 onMounted(load);
 // The parent saves config `ai`; status depends on it.
@@ -105,7 +108,7 @@ async function replaceKey(id: string) {
   void test(id);
 }
 async function remove(p: ProviderView) {
-  const used = (["voice", "decision", "image"] as const).filter((c) => props.config.ai[c].provider === p.id);
+  const used = (["voice", "decision", "image"] as const).filter((c) => props.config.ai[c].provider === p.id || (c === "decision" && props.config.ai.decision.others?.some((r: DecisionRow) => r.provider === p.id)));
   const ok = await confirmDialog(`移除 ${p.name || p.id}？`, {
     message: `API key 一起删除${p.backends.length ? `，用它生成的 ${p.backends.length} 个后端也会消失（选了它们的角色会报“后端不存在”）` : ""}${used.length ? `；${used.map((c) => CAT_LABEL[c]).join("、")}要重新选提供方` : ""}。`,
     okText: "移除",
@@ -140,6 +143,24 @@ function setCat(patch: Record<string, unknown>, note = `已保存${cat.value ? C
   emit("save", { ...props.config.ai, [cat.value]: { ...props.config.ai[cat.value], ...patch } }, note);
 }
 const status = computed(() => (cat.value && view.value ? view.value.status[cat.value] : null));
+type DecisionRow = { provider: string; model: string };
+function decisionStatus(row: DecisionRow) {
+  const unique = decisionRows.value.filter((r, i, all) => r.provider && all.findIndex((x) => x.provider === r.provider && x.model === r.model) === i);
+  return view.value?.decisionModels[unique.findIndex((r) => r.provider === row.provider && r.model === row.model)];
+}
+const decisionRows = computed<DecisionRow[]>(() => [{ provider: catValue.value?.provider ?? "", model: catValue.value?.model ?? "" }, ...(catValue.value?.others ?? [])]);
+function saveDecisionRows(rows: DecisionRow[]) {
+  const [first = { provider: "", model: "" }, ...others] = rows;
+  setCat({ ...first, others: others.filter((r) => r.provider) });
+}
+function editDecisionRow(i: number, patch: Partial<DecisionRow>) {
+  saveDecisionRows(decisionRows.value.map((r, n) => n === i ? { ...r, ...patch } : r));
+}
+function moveDecisionRow(i: number, step: number) {
+  const rows = [...decisionRows.value];
+  [rows[i], rows[i + step]] = [rows[i + step]!, rows[i]!];
+  saveDecisionRows(rows);
+}
 // Try the decision model on a question (yes/no, or a choice with 2+ options, one per line).
 const trial = ref({ material: "", question: "", options: "", busy: false, result: null as null | { choice: string; probabilities: Record<string, number>; by: string; ms: number }, error: "" });
 async function tryDecision() {
@@ -244,13 +265,30 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
 
     <div v-if="noProviders" class="card pad small">还没有能提供{{ CAT_LABEL[cat] }}的 API key：先到“API key”里添加 OpenAI 的 key。</div>
     <div class="card pad stack">
-      <div class="grid2">
+      <div v-if="cat !== 'decision'" class="grid2">
         <div class="field"><span>提供方</span><UiSelect :model-value="catValue.provider" aria-label="提供方" :options="providerOptions" @change="(v) => setCat({ provider: v })" /></div>
         <div v-if="catValue.provider && catValue.provider !== 'startlux'" class="field">
-          <span>{{ cat === "decision" ? "决策模型（这个提供方的决策接口用哪个模型）" : "模型" }}</span>
+          <span>模型</span>
           <AiModelPick :model-value="catValue.model" :choice="choiceOf(mainField)" label="模型" @change="(v) => setCat({ model: v })" />
         </div>
       </div>
+      <template v-if="cat === 'decision'">
+        <HelpText>可以配置多个决策模型；按顺序时先问第一个，随机时每次任选一个可用的；被问到的那个不可用或出错时自动换下一个，刚出过错的 5 分钟内排到最后；判断记录里会写是哪一个回答的。</HelpText>
+        <div v-for="(r, i) in decisionRows" :key="i" class="stack decision-row">
+          <div class="grid2">
+            <div class="field"><span>提供方 {{ i + 1 }}</span><UiSelect :model-value="r.provider" :aria-label="`决策提供方 ${i + 1}`" :options="providerOptions" @change="(v) => editDecisionRow(i, { provider: v, model: '' })" /></div>
+            <div v-if="r.provider && r.provider !== 'startlux'" class="field"><span>模型</span><AiModelPick :model-value="r.model" :choice="view?.choices[r.provider]?.decision" label="决策模型" @change="(v) => editDecisionRow(i, { model: v })" /></div>
+          </div>
+          <div class="small muted">{{ decisionStatus(r)?.ready ? '可用 · ' : '' }}{{ decisionStatus(r)?.detail ?? '未配置' }}</div>
+          <div class="row wrap">
+            <button class="btn ghost sm" :disabled="i === 0" :aria-label="`上移模型 ${i + 1}`" @click="moveDecisionRow(i, -1)">上移</button>
+            <button class="btn ghost sm" :disabled="i === decisionRows.length - 1" :aria-label="`下移模型 ${i + 1}`" @click="moveDecisionRow(i, 1)">下移</button>
+            <button class="btn ghost sm" :aria-label="`移除模型 ${i + 1}`" @click="saveDecisionRows(decisionRows.filter((_, n) => n !== i))">移除</button>
+          </div>
+        </div>
+        <button class="btn ghost sm" :disabled="decisionRows.length >= 9" @click="saveDecisionRows([...decisionRows, { provider: providerOptions.find((p) => p.value)?.value ?? 'startlux', model: '' }])">添加一个</button>
+        <UiSegmented :model-value="catValue.pick ?? 'fixed'" aria-label="决策模型选择方式" :options="[{ value: 'fixed', label: '按顺序（固定用第一个）' }, { value: 'random', label: '每次随机选一个' }]" @change="(v) => setCat({ pick: v })" />
+      </template>
       <template v-if="cat === 'voice'">
         <div class="field"><span>接口</span><UiSegmented :model-value="catValue.api" aria-label="语音接口" :options="[{ value: 'live', label: 'GPT-Live' }, { value: 'realtime', label: 'Realtime' }]" @change="(v: string) => setCat({ api: v })" /></div>
         <div class="grid2">
@@ -293,6 +331,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
 </template>
 
 <style scoped>
+.decision-row { min-width: 0; overflow-wrap: anywhere; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
 .prow {
   display: flex;
   flex-wrap: wrap;

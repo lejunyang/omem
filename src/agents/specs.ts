@@ -56,6 +56,8 @@ export const agentSpecSchema = z.object({
   cwd: z.string().optional(),
   skills: z.array(z.string()).default([]),
   mcp: z.record(z.string(), mcpServerSchema).default({}),
+  /** MCP servers from the owner's list (settings `mcp.servers`, Agent 页 → MCP) its runs are given, by name. */
+  mcpServers: z.array(z.string()).default([]),
   /** Extra project instructions in the style of AGENTS.md / CLAUDE.md. */
   instructions: z.string().optional(),
   /** Comes from this plugin (docs/v2/plugins.md); its runs read and write the plugin's records. */

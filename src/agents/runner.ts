@@ -31,6 +31,7 @@ import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, spaceSkillsText, type Agent
 import { expandTools } from "./tool-help.ts";
 import { applyOverlay, GUEST_ROLES, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
+import { mcpServersFor } from "./mcp-servers.ts";
 import { commandGateDir } from "./command-gate.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
@@ -527,7 +528,9 @@ export function prepareRun(
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
     mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app)),...(guest || input.replay ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
-    extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor(spec?.mcp ?? {}, !!input.replay),
+    // Its own MCP servers: the ones written into the profile, and the ones it names from the owner's list
+    // (mcp-servers.ts) — those only on the owner's own runs, since they carry the owner's keys.
+    extraMcp: input.reviewCheck || input.reviewLead ? {} : extraMcpFor({ ...(guest || userId !== OWNER ? {} : mcpServersFor(app, spec ? spec.mcpServers : (roleOverlay(app, roleName).mcp ?? []))), ...(spec?.mcp ?? {}) }, !!input.replay),
     allowWrites: readOnly ? false : spec ? spec.writes : role!.writes,
     fullAccess,
     modes: readOnly ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,

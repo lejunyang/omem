@@ -1,5 +1,5 @@
 import type { App } from "./app.ts";
-import { baseOf, categoryStatus, clefModel, type DecisionMedia, keyOf } from "./ai-keys.ts";
+import { baseOf, categoryStatus, clefModel, decisionStatus, decisionStatuses, type CategoryStatus, type DecisionChoice, type DecisionMedia, keyOf } from "./ai-keys.ts";
 
 /**
  * The decision model (docs/v2/ai-models.md): bounded judgments — one of a few options, or yes/no —
@@ -42,28 +42,78 @@ export function decisionReady(app: App) {
 const MEDIA_LABEL: Record<DecisionMedia, string> = { images: "图片", audio: "音频", videos: "视频" };
 const yesNoOptions = (q: Extract<DecisionQuestion, { type: "yesno" }>) => ({ yes: q.yes || "是", no: q.no || "否" });
 
+type Usable = CategoryStatus & DecisionChoice;
+/** A decision model that just failed is asked after the others for this long, not first on every call. */
+const COOL_MS = 5 * 60_000;
+const down = new Map<string, number>();
+const choiceKey = (c: DecisionChoice) => `${c.provider}\n${c.model}`;
+/** Tests start from a clean slate. */
+export function resetDecisionCooldownForTests() {
+  down.clear();
+}
+
+/**
+ * The usable decision models in the order a call asks them. Settings name one or several
+ * (`ai.decision`): `fixed` keeps their order, `random` puts any one of them first. One that failed
+ * in the last few minutes goes to the back whichever way.
+ */
+export function decisionOrder(app: App, rand: () => number = Math.random): Usable[] {
+  const ready = decisionStatuses(app.config, app.home).filter((s) => s.ready);
+  let order = ready;
+  if (app.config.ai.decision.pick === "random" && ready.length > 1) {
+    const first = ready[Math.min(ready.length - 1, Math.floor(rand() * ready.length))];
+    order = [first, ...ready.filter((s) => s !== first)];
+  }
+  const t = Date.now();
+  const isDown = (s: Usable) => (down.get(choiceKey(s)) ?? 0) > t;
+  return [...order.filter((s) => !isDown(s)), ...order.filter(isDown)];
+}
+
 /**
  * Ask the decision model. `material` is what to judge (text, or an object of named parts); null when
- * no decision model is configured. Throws when the call fails or the model refuses.
+ * no decision model is configured. With several configured, one that fails or refuses is passed over
+ * and the next is asked; throws when none of them answers. `only`: ask this one and no other (trying
+ * one out from settings, whether or not it is among the configured ones).
  */
-export async function decide(app: App, material: string | Record<string, unknown>, q: DecisionQuestion, opts: { timeoutMs?: number; signal?: AbortSignal; media?: DecisionMediaInput } = {}): Promise<DecisionResult | null> {
-  const st = categoryStatus(app.config, "decision", app.home);
-  if (!st.ready) return null;
+export async function decide(app: App, material: string | Record<string, unknown>, q: DecisionQuestion, opts: { timeoutMs?: number; signal?: AbortSignal; media?: DecisionMediaInput; only?: DecisionChoice } = {}): Promise<DecisionResult | null> {
+  const order = opts.only ? [decisionStatus(app.config, opts.only, app.home)].filter((s) => s.ready) : decisionOrder(app);
+  if (!order.length) return null;
   const media = Object.fromEntries(Object.entries(opts.media ?? {}).filter(([, v]) => v?.length)) as DecisionMediaInput;
-  // Judging without the picture would answer a different question: refuse rather than drop it.
-  const unread = (Object.keys(media) as DecisionMedia[]).filter((k) => !st.media?.includes(k));
-  if (unread.length) throw new Error(`决策模型（${st.detail}）不读${unread.map((k) => MEDIA_LABEL[k]).join("、")}`);
-  const signal = AbortSignal.any([AbortSignal.timeout(opts.timeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]);
-  if (st.provider === "startlux") return startlux(app, material, q, signal);
-  const p = app.config.ai.providers.find((x) => x.id === st.provider)!;
+  // Judging without the picture would answer a different question: only the ones that read it are asked.
+  const wanted = Object.keys(media) as DecisionMedia[];
+  const able = order.filter((s) => wanted.every((k) => s.media?.includes(k)));
+  if (!able.length) throw new Error(`决策模型（${order.map((s) => s.detail).join("、")}）不读${wanted.filter((k) => !order.some((s) => s.media?.includes(k))).map((k) => MEDIA_LABEL[k]).join("、") || wanted.map((k) => MEDIA_LABEL[k]).join("、")}`);
+  // With others to fall back on, a hung one is not waited out in full.
+  const each = able.length > 1 ? Math.min(opts.timeoutMs ?? 30_000, 15_000) : (opts.timeoutMs ?? 30_000);
+  const passed: string[] = [];
+  let last: unknown;
+  for (const s of able) {
+    try {
+      const r = await ask(app, s, material, q, AbortSignal.any([AbortSignal.timeout(each), ...(opts.signal ? [opts.signal] : [])]), media);
+      down.delete(choiceKey(s));
+      return passed.length ? { ...r, by: `${r.by}；${passed.join("、")}没答上，换了一个` } : r;
+    } catch (e) {
+      if (opts.signal?.aborted) throw e;
+      last = e;
+      passed.push(s.detail);
+      // A refusal is about this question; anything else about the model: keep it out of the way for a while.
+      if (!(e instanceof DecisionRefused)) down.set(choiceKey(s), Date.now() + COOL_MS);
+    }
+  }
+  throw last;
+}
+
+async function ask(app: App, s: Usable, material: string | Record<string, unknown>, q: DecisionQuestion, signal: AbortSignal, media: DecisionMediaInput): Promise<DecisionResult> {
+  if (s.provider === "startlux") return startlux(app, material, q, signal);
+  const p = app.config.ai.providers.find((x) => x.id === s.provider)!;
   const key = keyOf(p.id, app.home);
-  const by = `${p.name || p.id} · ${st.model}`;
-  if (p.kind === "openai") return { ...(await openaiDecide(baseOf(p), key, st.model!, material, q, signal)), by };
+  const by = `${p.name || p.id} · ${s.model}`;
+  if (p.kind === "openai") return { ...(await openaiDecide(baseOf(p), key, s.model, material, q, signal)), by };
   if (p.kind === "cloudflare") {
-    const model = clefModel(st.model!);
+    const model = clefModel(s.model);
     return { ...(await systemOne(`${baseOf(p)}/run/@cf/cloudflare/${model}`, { authorization: `Bearer ${key}` }, model, material, q, signal, false, media)), by };
   }
-  return { ...(await systemOne(`${baseOf(p)}/v1/systemone`, { authorization: `Bearer ${key}` }, st.model!, material, q, signal)), by };
+  return { ...(await systemOne(`${baseOf(p)}/v1/systemone`, { authorization: `Bearer ${key}` }, s.model, material, q, signal)), by };
 }
 
 async function post(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal) {

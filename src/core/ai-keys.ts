@@ -153,8 +153,50 @@ export const clefModel = (model: string) => model.trim().replace(/^@cf\/cloudfla
  * Whether a category is usable: a provider of a fitting kind with a key (for decision also the local
  * StartLux judge). Features and their skills turn on only when this says ready.
  */
-export function categoryStatus(config: Config, cat: Category, home?: string): { ready: boolean; detail: string; provider?: string; model?: string; media?: DecisionMedia[] } {
-  const c = config.ai[cat];
+export type CategoryStatus = { ready: boolean; detail: string; provider?: string; model?: string; media?: DecisionMedia[] };
+
+export function categoryStatus(config: Config, cat: Category, home?: string): CategoryStatus {
+  if (cat !== "decision") return statusOf(config, cat, config.ai[cat], home);
+  // Several decision models may be named: usable when any of them is. Says which one is asked first
+  // (core/decision.ts decides the order per call) and how many more stand behind it.
+  const all = decisionStatuses(config, home);
+  if (!all.length) return { ready: false, detail: "没有选择提供方" };
+  const ok = all.filter((s) => s.ready);
+  if (!ok.length) return all[0];
+  const media = [...new Set(ok.flatMap((s) => s.media ?? []))];
+  return { ...ok[0], detail: ok.length > 1 ? `${ok[0].detail} 等 ${ok.length} 个` : ok[0].detail, ...(media.length ? { media } : {}) };
+}
+
+export type DecisionChoice = { provider: string; model: string };
+
+/** The decision models settings name, the first one first, each once (config.ai.decision). */
+export function decisionChoices(config: Config): DecisionChoice[] {
+  const d = config.ai.decision;
+  const seen = new Set<string>();
+  return [{ provider: d.provider, model: d.model }, ...(d.others ?? [])].filter((c) => {
+    const k = `${c.provider}\n${c.model}`;
+    if (!c.provider || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+/** Whether one decision model (named in settings or not yet) is usable now. */
+export const decisionStatus = (config: Config, c: DecisionChoice, home?: string): CategoryStatus & DecisionChoice => {
+  const s = statusOf(config, "decision", c, home);
+  return { ...s, provider: c.provider, model: s.model ?? c.model };
+};
+
+/** Each named decision model and whether it is usable now, in the order settings list them. */
+export function decisionStatuses(config: Config, home?: string): (CategoryStatus & DecisionChoice)[] {
+  return decisionChoices(config).map((c) => {
+    const s = statusOf(config, "decision", c, home);
+    // `model` is the one that will be asked: the provider's default when settings leave it empty.
+    return { ...s, provider: c.provider, model: s.model ?? c.model };
+  });
+}
+
+function statusOf(config: Config, cat: Category, c: { provider: string; model: string; api?: string }, home?: string): CategoryStatus {
   if (cat === "decision" && c.provider === "startlux") {
     const g = config.guard;
     const ready = g.provider === "startlux" && !!(g.url || g.modelDir);
@@ -166,7 +208,7 @@ export function categoryStatus(config: Config, cat: Category, home?: string): { 
   if (!CATEGORY_KINDS[cat].includes(p.kind)) return { ready: false, detail: `${p.name || p.id} 不提供这类模型` };
   if (!keyOf(p.id, home)) return { ready: false, detail: `${p.name || p.id} 还没有填写 API key` };
   if (p.kind === "cloudflare" && !baseOf(p)) return { ready: false, detail: `${p.name || p.id} 还没有填写 Cloudflare 账号 ID` };
-  const field: ModelField = cat === "voice" ? ((c as { api?: string }).api === "realtime" ? "voice.realtime" : "voice.live") : cat;
+  const field: ModelField = cat === "voice" ? (c.api === "realtime" ? "voice.realtime" : "voice.live") : cat;
   const model = c.model || (home ? modelChoices(home, p, field).default : builtinDefault(field, p.kind));
   if (!model) return { ready: false, detail: "要填写模型" };
   const media = cat === "decision" ? decisionMedia(p.kind, model) : [];

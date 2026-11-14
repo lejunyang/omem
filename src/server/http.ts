@@ -4,8 +4,10 @@ import { presentHits } from "../search/present.ts";
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
-import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
-import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride, setRoleFullAccess } from "../agents/builtin-roles.ts";
+import { agentSpecSchema, splitFrontmatter, deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
+import { listMcpServers, saveMcpServer, deleteMcpServer } from "../agents/mcp-servers.ts";
+import { testMcpServer } from "../agents/mcp-test.ts";
+import { customizeRole, followRoleSource, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride, setRoleFullAccess, setRoleMcp } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
 import { cachedProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
@@ -80,7 +82,7 @@ import { deleteSource, getSource, listSourcePaths, listSources, readSource, sour
 import { deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
 import { mark } from "../core/loop-monitor.ts";
-import { CATEGORY_KINDS, categoryStatus, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider } from "../core/ai-keys.ts";
+import { CATEGORY_KINDS, categoryStatus, decisionStatus, decisionStatuses, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider } from "../core/ai-keys.ts";
 
 /** GET /api/share/<token>: exactly this, no query, no other path under it. */
 const SHARE_ROUTE = /^\/api\/share\/[A-Za-z0-9_-]{43}$/;
@@ -769,6 +771,27 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ...readAgentSpec(app, name), ...profileDetail(app, name) };
   });
   // Built-in roles as profiles: the source version, the owner's copy, and the same learned view.
+  const checkMcpNames = (names: string[]) => {
+    const unknown = names.filter((name) => !app.config.mcp.servers[name]);
+    if (unknown.length) throw new HttpError(400, `没有这些 MCP 服务：${unknown.join("、")}`);
+  };
+  server.get("/api/mcp", async () => {
+    const specs = listAgentSpecs(app, { includeDrafts: true });
+    const roles = listRoleStates(app);
+    return { servers: listMcpServers(app).map((server) => ({ ...server, usedBy: [
+      ...specs.filter((s) => s.mcpServers.includes(server.name)).map((s) => s.name),
+      ...roles.filter((r) => r.overlay.mcp?.includes(server.name)).map((r) => r.name),
+    ] })) };
+  });
+  server.put("/api/mcp/:name", async (req) => saveMcpServer(app, (req.params as { name: string }).name,
+    q(z.object({ description: z.string().optional(), command: z.string().optional(), args: z.array(z.string()).optional(), url: z.string().optional(), readOnly: z.boolean().optional(), secrets: z.record(z.string(), z.string().nullable()).optional() }), req.body)));
+  server.delete("/api/mcp/:name", async (req) => {
+    deleteMcpServer(app, (req.params as { name: string }).name);
+    return { ok: true };
+  });
+  server.post("/api/mcp/:name/test", async (req) => testMcpServer(app, (req.params as { name: string }).name));
+  server.put("/api/roles/:name/mcp", async (req) => setRoleMcp(app, (req.params as { name: string }).name,
+    q(z.object({ servers: z.array(z.string()) }), req.body).servers));
   server.get("/api/roles", async () => listRoleStates(app));
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
   server.get("/api/profile-options", async () => ({
@@ -828,7 +851,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/profile-proposals/:id/reject", async (req) => rejectProposal(app, (req.params as { id: string }).id));
   server.put("/api/agents/:name", async (req) => {
     // 完全访问 is the owner's alone; another user's edit keeps what the profile had.
-    const { fullAccess, ...body } = req.body as { fullAccess?: boolean };
+    const { fullAccess, ...body } = req.body as { fullAccess?: boolean; mcpServers?: unknown };
+    if (body.mcpServers !== undefined) checkMcpNames(q(z.array(z.string()), body.mcpServers));
     return saveAgentSpec(app, { ...body, ...(who(req) === OWNER && fullAccess !== undefined ? { fullAccess } : {}), name: (req.params as { name: string }).name } as never, "user");
   });
   server.delete("/api/agents/:name", async (req) => {
@@ -842,6 +866,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.put("/api/library-files/:kind/:name", async (req) => {
     const { kind, name } = req.params as { kind: "agent" | "skill"; name: string };
     const b = q(z.object({ raw: z.string().min(1) }), req.body);
+    if (kind === "agent") checkMcpNames(agentSpecSchema.parse({ ...splitFrontmatter(b.raw).meta, name }).mcpServers);
     return saveRaw(app, kind === "agent" ? "agent" : "skill", name, b.raw);
   });
   server.get("/api/skills/:name/files", async (req) => listSkillFiles(app, (req.params as { name: string }).name));
@@ -2736,7 +2761,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const restart = atStartup.filter(([, pick]) => JSON.stringify(pick(app.config)) !== JSON.stringify(pick(next))).map(([label]) => label);
     saveConfig(next, app.home);
     // A provider taken out takes its key with it.
-    for (const id of Object.keys(readKeys(app.home))) if (!next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
+    for (const id of Object.keys(readKeys(app.home))) if (!id.startsWith("mcp:") && !next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
     Object.assign(app.config, next);
     return { config: app.config, restart };
   });
@@ -2755,6 +2780,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const cache = readModelCache(app.home);
     return {
       providers: app.config.ai.providers.map((p) => ({ ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id], listed: cache[p.id] ? { at: cache[p.id].at, count: cache[p.id].models.length, error: cache[p.id].error } : null })),
+      decisionModels: decisionStatuses(app.config, app.home),
       status: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, categoryStatus(app.config, c, app.home)])),
       /** Per provider and field: the listed models that fit, and the model an empty field uses. */
       choices: Object.fromEntries(app.config.ai.providers.map((p) => [p.id, Object.fromEntries(MODEL_FIELDS.map((f) => [f, modelChoices(app.home, p, f)]))])),
@@ -2803,15 +2829,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // Settings → AI → 决策: try a question on the configured decision model.
   server.post("/api/ai/decision/test", async (req) => {
-    const b = q(z.object({ material: z.string().trim().min(1).max(20_000), question: z.string().trim().min(1).max(2000), options: z.array(z.string().trim().min(1).max(200)).max(20).default([]) }), req.body);
+    const b = q(z.object({ provider: z.string().min(1).optional(), model: z.string().default(""), material: z.string().trim().min(1).max(20_000), question: z.string().trim().min(1).max(2000), options: z.array(z.string().trim().min(1).max(200)).max(20).default([]) }), req.body);
     const { decide } = await import("../core/decision.ts");
     const started = Date.now();
     const question = b.options.length >= 2
       ? { type: "choice" as const, instructions: b.question, options: Object.fromEntries(b.options.map((o) => [o, o])) }
       : { type: "yesno" as const, instructions: b.question };
     try {
-      const r = await decide(app, b.material, question);
-      if (!r) throw new HttpError(400, categoryStatus(app.config, "decision", app.home).detail);
+      // One of the listed models tried on its own, or whichever the settings would ask.
+      const only = b.provider ? { provider: b.provider, model: b.model } : undefined;
+      const r = await decide(app, b.material, question, { only });
+      if (!r) throw new HttpError(400, (only ? decisionStatus(app.config, only, app.home) : categoryStatus(app.config, "decision", app.home)).detail);
       return { ...r, ms: Date.now() - started };
     } catch (e) {
       if (e instanceof HttpError) throw e;

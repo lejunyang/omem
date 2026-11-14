@@ -3,6 +3,7 @@ import { fullAccessHint } from "../lib/probes";
 import { computed, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
+import McpServices, { type McpServer } from "../components/McpServices.vue";
 import AiDefaults from "../components/AiDefaults.vue";
 import VirtualList from "../components/VirtualList.vue";
 import ChipPicker from "../components/ChipPicker.vue";
@@ -24,8 +25,8 @@ import { state, toast } from "../store";
  * reset / merge when the source changes) and skills. A profile shows who it is (a form, or the
  * raw file), what it has learned and how it is evolving.
  */
-type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
-type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean } };
+type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
+type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
 type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
@@ -33,7 +34,7 @@ type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model
 
 const route = useRoute();
 const router = useRouter();
-const tab = computed(() => (route.query.tab === "skills" ? "skills" : route.query.tab === "review" ? "review" : "agents"));
+const tab = computed(() => (route.query.tab === "mcp" ? "mcp" : route.query.tab === "skills" ? "skills" : route.query.tab === "review" ? "review" : "agents"));
 const specName = computed(() => (tab.value === "agents" && typeof route.query.name === "string" ? route.query.name : null));
 const roleName = computed(() => (tab.value === "agents" && typeof route.query.role === "string" ? route.query.role : null));
 const skillName = computed(() => (tab.value === "skills" && typeof route.query.name === "string" ? route.query.name : null));
@@ -42,20 +43,29 @@ const creating = computed(() => route.query.new === "1");
 const specs = ref<Spec[]>([]);
 const roles = ref<RoleState[]>([]);
 const skills = ref<Skill[]>([]);
+const mcpServers = ref<McpServer[]>([]);
+const mcpError = ref("");
 const options = ref<Options>({ backends: [], defaultBackend: "", globalDefaultBackend: "", tools: [], defaultTools: [] });
 /** Whether the profile's backend can run 完全访问 (by its last detection). */
 const accessHint = (agent?: string) => fullAccessHint(options.value.backends.find((b) => b.id === (agent || options.value.defaultBackend)));
 const loading = ref(true);
+let listSeq = 0;
 async function loadLists() {
+  const seq = ++listSeq;
   try {
-    [specs.value, roles.value, skills.value] = await Promise.all([get<Spec[]>("/api/agents"), get<RoleState[]>("/api/roles"), get<Skill[]>("/api/skills")]);
+    const result = await Promise.all([get<Spec[]>("/api/agents"), get<RoleState[]>("/api/roles"), get<Skill[]>("/api/skills"), get<{ servers: McpServer[] }>("/api/mcp").then((r) => ({ servers: r.servers, error: "" })).catch((e) => ({ servers: [] as McpServer[], error: (e as Error).message }))]);
+    if (seq === listSeq) {
+      [specs.value, roles.value, skills.value] = result;
+      mcpServers.value = result[3].servers;
+      mcpError.value = result[3].error;
+    }
   } finally {
-    loading.value = false;
+    if (seq === listSeq) loading.value = false;
   }
 }
 
 // ---- spec form ------------------------------------------------------------------
-const blank = (): Spec => ({ name: "", description: "", status: "active", tools: [], writes: false, skills: [], mcp: {}, spaces: [], prompt: "" });
+const blank = (): Spec => ({ name: "", description: "", status: "active", tools: [], writes: false, skills: [], mcpServers: [], mcp: {}, spaces: [], prompt: "" });
 const form = ref<Spec>(blank());
 const specDetail = ref<SpecDetail | null>(null);
 const raw = ref("");
@@ -110,6 +120,7 @@ async function saveSpec() {
         model: f.model?.trim() ?? "",
         effort: f.effort ?? "",
         tools: f.tools,
+        mcpServers: f.mcpServers,
         writes: f.writes,
         fullAccess: !!f.fullAccess,
         space: f.space ?? "",
@@ -155,10 +166,24 @@ const skillOptions = computed(() => skills.value.map((s) => ({ value: s.name, hi
 const formTools = computed({ get: () => form.value.tools, set: (v) => ((form.value.tools = v), (dirty.value = true)) });
 const formSpaces = computed({ get: () => form.value.spaces, set: (v) => ((form.value.spaces = v), (dirty.value = true)) });
 const formSkills = computed({ get: () => form.value.skills, set: (v) => ((form.value.skills = v), (dirty.value = true)) });
+const missingMcp = computed(() => (form.value.mcpServers ?? []).filter((name) => !mcpServers.value.some((s) => s.name === name)));
+const roleMcpBusy = ref(false);
+async function setRoleMcp(servers: string[]) {
+  const name = roleName.value;
+  if (!name || roleMcpBusy.value) return;
+  roleMcpBusy.value = true;
+  try {
+    const result = await put<RoleState>(`/api/roles/${encodeURIComponent(name)}/mcp`, { servers });
+    if (name === roleName.value && roleDetail.value) roleDetail.value.role = { ...roleDetail.value.role, ...result };
+    await loadLists();
+  } catch (e) { toast((e as Error).message, "error"); }
+  finally { roleMcpBusy.value = false; }
+}
 const mcpNames = computed(() => Object.keys(form.value.mcp ?? {}));
 
 // ---- built-in role ----------------------------------------------------------------
 const roleDetail = ref<RoleDetail | null>(null);
+const missingRoleMcp = computed(() => (roleDetail.value?.role.overlay?.mcp ?? []).filter((n) => !mcpServers.value.some((s) => s.name === n)));
 const roleText = ref("");
 const roleAi = ref({ agent: "", model: "", effort: "" });
 /** 完全访问 of a built-in role: its runs for you (guests have their own switch under 设置 → 渠道 → 访客提问). */
@@ -369,18 +394,29 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
 <template>
   <ReviewSettings v-if="tab === 'review'">
     <template #tabs>
-      <div class="head row">
+      <div class="head row wrap">
         <button class="tab" @click="go({ tab: 'agents' })">Agent 档案</button>
         <button class="tab" @click="go({ tab: 'skills' })">技能</button>
+        <button class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
         <button class="tab on">评审</button>
       </div>
     </template>
   </ReviewSettings>
+  <div v-else-if="tab === 'mcp'">
+    <div class="head row wrap">
+      <button class="tab" @click="go({ tab: 'agents' })">Agent 档案</button>
+      <button class="tab" @click="go({ tab: 'skills' })">技能</button>
+      <button class="tab on">MCP 服务</button>
+      <button class="tab" @click="go({ tab: 'review' })">评审</button>
+    </div>
+    <McpServices :servers="mcpServers" :loading="loading" :error="mcpError" @changed="loadLists" @dirty="(on) => dirty = on" />
+  </div>
   <div v-else class="agents">
     <aside class="list-col">
-      <div class="head row">
+      <div class="head row wrap">
         <button class="tab" :class="{ on: tab === 'agents' }" @click="go({ tab: 'agents' })">Agent 档案</button>
         <button class="tab" :class="{ on: tab === 'skills' }" @click="go({ tab: 'skills' })">技能</button>
+        <button class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
         <button class="tab" @click="go({ tab: 'review' })">评审</button>
         <span class="spacer" />
         <button class="btn ghost sm icon" :title="tab === 'agents' ? '新建 Agent 档案' : '新建技能'" @click="go({ tab, new: '1' })"><Icon name="plus" :size="15" /></button>
@@ -488,7 +524,14 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <UiCheckbox :model-value="!!form.fullAccess" switch @change="(v: boolean) => { form.fullAccess = v; dirty = true; }">完全访问：命令不进沙箱、不经审批</UiCheckbox>
             <small class="muted">{{ accessHint(form.agent) }}</small>
           </div>
-          <p v-if="mcpNames.length" class="muted small">额外 MCP：{{ mcpNames.join("、") }}（在“原文”里改）</p>
+          <div class="field">
+            <span>MCP 服务</span>
+            <p v-if="mcpError" class="error">{{ mcpError }}</p>
+            <p v-else-if="!mcpServers.length" class="muted small">还没有配置 MCP 服务。<button class="btn ghost sm" @click="go({ tab: 'mcp' })">添加</button></p>
+            <UiCheckbox v-for="server in mcpServers" :key="server.name" v-model="form.mcpServers" :value="server.name" :aria-label="`${server.name} · ${server.description}`" @change="dirty = true">{{ server.name }}<span class="muted small"> · {{ server.description }}</span></UiCheckbox>
+            <UiCheckbox v-for="name in missingMcp" :key="name" v-model="form.mcpServers" :value="name" :aria-label="name" @change="dirty = true">{{ name }}（服务已删除，取消勾选可移除）</UiCheckbox>
+            <p v-if="mcpNames.length" class="muted small">{{ mcpNames.join("、") }} · 写在档案文件里</p>
+          </div>
           <label class="field">
             <span>提示词</span>
             <textarea v-model="form.prompt" class="editor mono" spellcheck="false" @input="dirty = true" />
@@ -531,6 +574,14 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <UiCheckbox :model-value="!!roleDetail.role.overlay?.fullAccess" switch @change="setRoleFullAccess">完全访问：命令不进沙箱、不经审批</UiCheckbox>
             <small class="muted">只对你自己的运行生效（你的对话、后台任务）；别的用户和访客不受影响，规则里的运行看规则上的开关。{{ accessHint(roleAi.agent || options.globalDefaultBackend) }}</small>
           </div>
+        </div>
+        <div v-if="!['guest', 'gatekeeper'].includes(roleName!)" class="card pad stack">
+          <strong>MCP 服务</strong>
+          <p v-if="mcpError" class="error">{{ mcpError }}</p>
+            <p v-else-if="!mcpServers.length" class="muted small">还没有配置 MCP 服务。<button class="btn ghost sm" @click="go({ tab: 'mcp' })">添加</button></p>
+          <UiCheckbox v-for="server in mcpServers" :key="server.name" :model-value="roleDetail.role.overlay?.mcp ?? []" :value="server.name" :aria-label="`${server.name} · ${server.description}`" :disabled="roleMcpBusy" @update:model-value="(v) => setRoleMcp(v as string[])">{{ server.name }}<span class="muted small"> · {{ server.description }}</span></UiCheckbox>
+          <UiCheckbox v-for="name in missingRoleMcp" :key="name" :model-value="roleDetail.role.overlay?.mcp ?? []" :value="name" :aria-label="name" :disabled="roleMcpBusy" @update:model-value="(v) => setRoleMcp(v as string[])">{{ name }}（服务已删除，取消勾选可移除）</UiCheckbox>
+          <button v-if="missingRoleMcp.length > 1" class="btn ghost sm" :disabled="roleMcpBusy" @click="setRoleMcp((roleDetail.role.overlay?.mcp ?? []).filter((n) => !missingRoleMcp.includes(n)))">移除已删除的服务</button>
         </div>
         <p class="muted small meta">{{ roleDetail.description }} · 工具 {{ roleDetail.tools.length ? roleDetail.tools.join(", ") : "无" }}<span v-if="roleDetail.writes"> · 可改文件</span></p>
         <p v-if="!roleCustomized" class="muted small">这是 omem 源码里的版本。自定义会把它复制到知识库（<code>_roles/{{ roleName }}.md</code>），之后的运行用你的版本；omem 更新了这个角色时这里会提示，可以合并或恢复。</p>

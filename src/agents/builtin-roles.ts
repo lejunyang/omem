@@ -78,24 +78,29 @@ export type RoleOverlay = {
   tools: { add: string[]; remove: string[] };
   /** The owner's 完全访问 for this role's runs on the owner's behalf (never guests or other users). */
   fullAccess?: boolean;
+  /** The owner's MCP servers (settings `mcp.servers`) this role's own runs are given, by name. */
+  mcp?: string[];
 };
 const overlayFile = (app: App, name: string) => join(dir(app), `${name}.overlay.yaml`);
 export function roleOverlay(app: App, name: string): RoleOverlay {
   const f = overlayFile(app, check(name));
   const o = (existsSync(f) ? YAML.parse(readFileSync(f, "utf8")) : null) as Partial<RoleOverlay> | null;
   const list = (x?: { add?: unknown; remove?: unknown }) => ({ add: Array.isArray(x?.add) ? x.add.map(String) : [], remove: Array.isArray(x?.remove) ? x.remove.map(String) : [] });
-  return { skills: list(o?.skills), tools: list(o?.tools), ...(o?.fullAccess === true ? { fullAccess: true } : {}) };
+  return { skills: list(o?.skills), tools: list(o?.tools), ...(o?.fullAccess === true ? { fullAccess: true } : {}), ...(Array.isArray(o?.mcp) && o.mcp.length ? { mcp: o.mcp.map(String) } : {}) };
 }
 export const applyOverlay = (list: string[], d: { add: string[]; remove: string[] }) => [...new Set([...list.filter((x) => !d.remove.includes(x)), ...d.add])];
 const diffList = (from: string[], to: string[]) => ({ add: to.filter((x) => !from.includes(x)), remove: from.filter((x) => !to.includes(x)) });
-export const overlayEmpty = (o: RoleOverlay) => !o.skills.add.length && !o.skills.remove.length && !o.tools.add.length && !o.tools.remove.length && !o.fullAccess;
+export const overlayEmpty = (o: RoleOverlay) => !o.skills.add.length && !o.skills.remove.length && !o.tools.add.length && !o.tools.remove.length && !o.fullAccess && !o.mcp?.length;
 /** Roles that answer people who are not the owner: their 完全访问 is the guest setting (lark.guests.fullAccess). */
 export const GUEST_ROLES = ["guest", "gatekeeper"];
 function writeOverlay(app: App, name: string, o: RoleOverlay) {
   const f = overlayFile(app, name);
-  // Changing skills or tools keeps the owner's 完全访问.
-  if (o.fullAccess === undefined && roleOverlay(app, name).fullAccess) o = { ...o, fullAccess: true };
+  // Changing skills or tools keeps the owner's 完全访问 and the MCP servers picked for the role.
+  const kept = roleOverlay(app, name);
+  if (o.fullAccess === undefined && kept.fullAccess) o = { ...o, fullAccess: true };
+  if (o.mcp === undefined && kept.mcp) o = { ...o, mcp: kept.mcp };
   if (!o.fullAccess) delete o.fullAccess;
+  if (!o.mcp?.length) delete o.mcp;
   if (overlayEmpty(o)) rmSync(f, { force: true });
   else {
     mkdirSync(dir(app), { recursive: true });
@@ -173,6 +178,15 @@ export function saveRoleOverride(app: App, name: string, text: string, actor: "u
  * Change a role's skills or tools (attaching a skill, an approved proposal): recorded in its overlay,
  * so the role keeps following the source. Anything else in the frontmatter changes the copy (made first).
  */
+/** Which of the owner's MCP servers a built-in role's runs are given (the owner, on the Agent page). */
+export function setRoleMcp(app: App, name: string, servers: string[]) {
+  if (GUEST_ROLES.includes(check(name))) throw new HttpError(400, "回答访客的角色不带 MCP 服务");
+  const unknown = servers.filter((s) => !app.config.mcp.servers[s]);
+  if (unknown.length) throw new HttpError(400, `没有这些 MCP 服务：${unknown.join("、")}`);
+  writeOverlay(app, name, { ...roleOverlay(app, name), mcp: [...new Set(servers)] });
+  commitLibrary(app.libraryDir, `user: set MCP servers of built-in role ${name}`);
+  return roleState(app, name);
+}
 export function updateRoleMeta(app: App, name: string, patch: (meta: z.infer<typeof roleMetaSchema>) => z.infer<typeof roleMetaSchema>, actor: "user" | "agent" = "agent") {
   const current = parseRoleText(roleOverrideText(app, name) ?? roleSourceText(name)).meta;
   const o = roleOverlay(app, name);
