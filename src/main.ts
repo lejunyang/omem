@@ -222,6 +222,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       const { startOneBot } = await import("./channels/onebot.ts");
       startOneBot(app).catch((e) => console.warn("[omem] OneBot 启动失败：", e.message));
     }
+    // The cards of paired nodes (core/mesh.ts): looked at every ten minutes.
+    (await import("./core/mesh.ts")).startMesh(app);
     if (app.config.lark.enabled) {
       const { startLarkBot } = await import("./channels/lark-bot.ts");
       startLarkBot(app).catch((e) => console.warn("[omem] 飞书机器人启动失败：", e.message));

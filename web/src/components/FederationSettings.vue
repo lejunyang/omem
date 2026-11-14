@@ -14,7 +14,10 @@ import { confirmDialog } from "../lib/dialog";
  * this one follows — searched live, or mirrored here read-only on a schedule.
  */
 type Share = { space: string; name: string; mode: "query" | "sync"; kinds: string[] };
-type Account = { id: string; name: string; createdAt: string; disabled: boolean; lastUsedAt: string | null; shares: Share[] };
+type Grant = { kind: "agent" | "ai" | "card"; name: string; daily: number | null };
+type Account = { id: string; name: string; createdAt: string; disabled: boolean; lastUsedAt: string | null; shares: Share[]; grants?: Grant[] };
+/** What a paired node says about itself (src/core/mesh.ts): its assistants, the Agents it lets this one ask, the spaces it shares. */
+type Card = { peer: string; at: string; error?: string; card: { assistants?: { name: string; owner: string; description: string }[]; agents?: { name: string; description: string; daily: number | null }[]; spaces?: { id: string; name: string; description: string; mode: string }[]; ai?: { id: string }[] } | null };
 type Sub = { id: string; peer: string; remoteSpace: string; remoteName: string; localSpace: string; mode: "query" | "sync"; lastSeq: number; syncedAt: string | null; error: string | null };
 
 const KINDS = [
@@ -39,12 +42,47 @@ const subForm = ref({ peer: "", space: "", sync: false });
 const offers = ref<Share[] | null>(null);
 const spaceOptions = computed(() => state.spaces.filter((s) => s.kind !== "personal" && !(s.settings as { mirror?: unknown })?.mirror).map((s) => ({ value: s.id, label: s.name })));
 const fail = (e: unknown) => toast((e as Error).message, "error");
+const cards = ref<Card[]>([]);
+const refreshing = ref(false);
+async function loadCards(refresh = false) {
+  refreshing.value = refresh;
+  try {
+    cards.value = (await get<{ cards: Card[] }>(`/api/peer/cards${refresh ? "?refresh=1" : ""}`)).cards;
+  } catch (e) {
+    if (refresh) fail(e);
+  } finally {
+    refreshing.value = false;
+  }
+}
+// Which of this node's Agents another server may ask, and how often a day.
+const agentNames = ref<{ value: string; label: string; hint?: string }[]>([{ value: "assistant", label: "助理（只读，按共享的空间回答）" }]);
+const askable = (a: Account) => (a.grants ?? []).filter((g) => g.kind === "agent").map((g) => g.name);
+const askDaily = (a: Account) => (a.grants ?? []).find((g) => g.kind === "agent")?.daily ?? null;
+const showsAssistants = (a: Account) => (a.grants ?? []).some((g) => g.kind === "card" && g.name === "assistants");
+async function saveGrants(a: Account, next: { agents?: string[]; daily?: number | null; assistants?: boolean }) {
+  const agents = next.agents ?? askable(a);
+  const daily = next.daily === undefined ? askDaily(a) : next.daily;
+  const grants: Grant[] = [
+    ...agents.map((name) => ({ kind: "agent" as const, name, daily })),
+    ...((next.assistants ?? showsAssistants(a)) ? [{ kind: "card" as const, name: "assistants", daily: null }] : []),
+    ...(a.grants ?? []).filter((g) => g.kind === "ai"),
+  ];
+  try {
+    await put(`/api/peer/grants/${encodeURIComponent(a.id)}`, { grants });
+    toast("已保存", "ok");
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
 
 async function load() {
   const [a, s, p] = await Promise.all([get<Account[]>("/api/peer/shares"), get<Sub[]>("/api/peer/subscriptions"), get<{ peers: { id: string }[] }>("/api/peers")]);
   accounts.value = a;
   subs.value = s;
   peers.value = p.peers;
+  void loadCards();
+  void get<{ name: string; description?: string }[]>("/api/agents").then((list) => (agentNames.value = [agentNames.value[0], ...list.map((x) => ({ value: x.name, label: x.name, hint: x.description }))])).catch(() => {});
 }
 async function makeShare() {
   if (!form.value.label.trim() || !form.value.shares.length) return toast("填对方的名字，至少选一个空间", "error");
@@ -129,6 +167,21 @@ onMounted(() => load().catch(fail));
 
 <template>
   <div class="stack">
+    <template v-if="cards.length">
+      <div class="row"><h2 class="section-title grow">网络里的 omem</h2><button class="btn ghost sm" :disabled="refreshing" @click="loadCards(true)">{{ refreshing ? "在问…" : "重新问一遍" }}</button></div>
+      <HelpText>配对的每台 omem 每十分钟告诉这台一次它有什么：可以请教的 Agent、那里的助手、共享给这台的空间。你的助手靠这些知道该去问谁；在对话里说“问问 某台 的 某个 Agent”也行。对方给什么由对方的授权决定。</HelpText>
+      <div v-for="c in cards" :key="c.peer" class="card pad stack">
+        <div class="row wrap"><strong>{{ c.peer }}</strong><span class="badge" :class="c.error ? 'warn' : 'ok'">{{ c.error ? "连不上" : "在线" }}</span><span class="muted small">{{ c.error ? `上次看到 ${fmtTime(c.at)}` : fmtTime(c.at) }}</span></div>
+        <p v-if="!c.card" class="muted small">还没拿到过它的名片{{ c.error ? `：${c.error}` : "" }}</p>
+        <template v-else>
+          <div v-if="c.card.agents?.length" class="small"><span class="muted">可以请教：</span><span v-for="g in c.card.agents" :key="g.name" class="badge accent" :title="g.description">{{ g.name }}@{{ c.peer }}<template v-if="g.daily"> · 每天 {{ g.daily }} 次</template></span></div>
+          <div v-if="c.card.assistants?.length" class="small"><span class="muted">那里的助手：</span>{{ c.card.assistants.map((x) => `${x.name}（${x.owner}的${x.description ? `，${x.description}` : ""}）`).join("、") }}</div>
+          <div v-if="c.card.spaces?.length" class="small"><span class="muted">共享的空间：</span>{{ c.card.spaces.slice(0, 20).map((x) => x.name).join("、") }}<template v-if="c.card.spaces.length > 20"> 等 {{ c.card.spaces.length }} 个</template></div>
+          <p v-if="!c.card.agents?.length && !c.card.assistants?.length && !c.card.spaces?.length" class="muted small">它没有向这台开放什么。</p>
+        </template>
+      </div>
+    </template>
+
     <h2 class="section-title">和别人的 omem 共享</h2>
     <HelpText>给别人的 omem 服务开放几个空间：对方只能检索、读这些空间里你选的内容，或者把它们同步过去。它用自己的服务账号，看不到别的空间和你的个人空间；随时可以停止。</HelpText>
 
@@ -170,6 +223,14 @@ onMounted(() => load().catch(fail));
         <span class="spacer" />
         <button v-if="!a.disabled" class="btn ghost sm" @click="saveShares(a, a.shares.filter((x) => x.space !== s.space))">不共享这个空间</button>
       </div>
+      <template v-if="!a.disabled">
+        <div class="row wrap small grant">
+          <span title="对方的助手可以用 ask_agent 向这里的 Agent 提问：它在这台上运行、用这台的 AI，只读共享给对方的空间（空间里的全部内容，不按上面的内容类型过滤），回答里带引用">可以请教的 Agent</span>
+          <UiSelect multiple :model-value="askable(a)" size="sm" width="240px" placeholder="不开放" aria-label="可以请教的 Agent" :options="agentNames" @change="(v) => saveGrants(a, { agents: v as string[] })" />
+          <label v-if="askable(a).length" class="row muted">每个每天最多<input class="input sm num" type="number" inputmode="numeric" min="1" :value="askDaily(a) ?? ''" placeholder="不限" aria-label="每个 Agent 每天最多被请教几次" @change="saveGrants(a, { daily: Number(($event.target as HTMLInputElement).value) > 0 ? Math.round(Number(($event.target as HTMLInputElement).value)) : null })" />次</label>
+        </div>
+        <UiCheckbox :model-value="showsAssistants(a)" size="sm" @change="(v) => saveGrants(a, { assistants: v })">让对方看到这台上有哪些助手（名字、是谁的、做什么）</UiCheckbox>
+      </template>
     </div>
 
     <h2 class="section-title">关注别人共享的空间</h2>
@@ -197,6 +258,16 @@ onMounted(() => load().catch(fail));
 </template>
 
 <style scoped>
+.grant {
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.num {
+  width: 72px;
+  margin: 0 6px;
+}
 .share-row {
   border-top: 1px solid var(--line);
   padding-top: 8px;

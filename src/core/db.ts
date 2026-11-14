@@ -1756,6 +1756,9 @@ export const migrations: readonly string[] = [
    create index reply_samples_chat on reply_samples(chat_id, created_at);
    create index reply_samples_open on reply_samples(created_at) where settled_at is null;
    create index reply_samples_handle on reply_samples(handle_run) where handle_run is not null;`,
+  // What another person's omem may use here besides shared spaces (src/core/mesh.ts): ask an Agent,
+  // borrow an AI backend, see the assistants on this node's card; `daily` caps uses a day.
+  `create table peer_grants (user_id text not null, kind text not null, name text not null, daily integer, created_at text not null, primary key(user_id, kind, name));`,
 ];
 
 export type Db = DatabaseSync;

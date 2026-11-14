@@ -6,6 +6,7 @@ import { now, truncate } from "../core/util.ts";
 import { runRole, type RoleRunInput } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, setRunOutput } from "./runs.ts";
 import type { AgentSpec } from "./specs.ts";
+import type { RunTrigger } from "../core/run-trigger.ts";
 import type { AgentResult } from "./types.ts";
 import { replyOf } from "./types.ts";
 
@@ -24,16 +25,20 @@ const NO_HANDOFF = ["ask_agent", "ask_reviewer", "run_agent", "continue_agent_wo
 export async function consultAgent(app: App, i: {
   execution?: Execution; spec?: AgentSpec; role?: RoleName; label?: string; question: string; askedBy: string; parentRunId: string | null; spaceId: string; userId?: string;
   extra?: Partial<RoleRunInput>; onDone?: (res: AgentResult & { profileId: string }) => void;
+  /** More on the run's input, who was behind it, and its id as soon as it exists (a question from another node, core/mesh.ts). */
+  input?: Record<string, unknown>; trigger?: RunTrigger; onStart?: (runId: string) => void;
 }): Promise<string> {
   const name = i.label ?? i.spec?.name ?? i.role ?? "Agent";
   const r = createRun(app, {
     kind: "agent",
     spaceId: i.spaceId,
     title: truncate(`${name}（被 ${i.askedBy} 请教）：${i.question.split("\n")[0]}`, 80),
-    input: { spec: i.spec?.name, role: i.spec ? undefined : i.role, task: i.question, execution: i.execution, consultOf: i.parentRunId, askedBy: i.askedBy },
+    input: { spec: i.spec?.name, role: i.spec ? undefined : i.role, task: i.question, execution: i.execution, consultOf: i.parentRunId, askedBy: i.askedBy, ...(i.input ?? {}) },
     parentId: i.parentRunId,
     userId: i.userId ?? null,
+    ...(i.trigger ? { trigger: i.trigger } : {}),
   });
+  i.onStart?.(r.id);
   // Claimed before the worker's next look (it runs on a microtask after this synchronous step).
   run(app.db, "update runs set status = 'running', started_at = ? where id = ? and status = 'queued'", now(), r.id);
   app.emit({ type: "run", runId: r.id, status: "running" });

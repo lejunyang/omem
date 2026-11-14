@@ -4,6 +4,7 @@ import type { App } from "./app.ts";
 import { HttpError } from "./util.ts";
 import { nodeId, peerJson } from "./peers.ts";
 import { upsertSchedule } from "./scheduler.ts";
+import { fedAnswer, fedAsk, grantsFor, knownCards, nodeCard, refreshCards, setGrants } from "./mesh.ts";
 import { fedChanges, fedSearch, fedSource, listShareAccounts, listSubscriptions, revokeShareAccount, setShares, shareInvite, sharesFor, subscribe, syncSubscription, unsubscribe } from "./federation.ts";
 
 /**
@@ -31,8 +32,22 @@ export function registerFederationRoutes(server: FastifyInstance, app: App, who:
     return fedChanges(app, who(req), o.space, o.since, o.limit);
   });
 
+  // This node's card, and asking one of its Agents (mesh.ts): by what the caller is granted.
+  server.get("/api/fed/card", async (req) => nodeCard(app, who(req)));
+  server.post("/api/fed/ask", async (req) => {
+    const b = parse(z.object({ agent: z.string().min(1).max(80), question: z.string().min(1).max(20_000), from: z.object({ run: z.string().max(40).optional(), asker: z.string().max(80).optional() }).optional() }), req.body);
+    return fedAsk(app, who(req), b);
+  });
+  server.get("/api/fed/ask/:id", async (req) => fedAnswer(app, who(req), (req.params as { id: string }).id));
+
   // --------------------------------------------------- what this one shares
-  server.get("/api/peer/shares", async () => listShareAccounts(app));
+  server.get("/api/peer/shares", async () => listShareAccounts(app).map((a) => ({ ...a, grants: grantsFor(app, a.id) })));
+  server.put("/api/peer/grants/:user", async (req) => {
+    const b = parse(z.object({ grants: z.array(z.object({ kind: z.enum(["agent", "ai", "card"]), name: z.string().min(1).max(80), daily: z.number().int().min(1).max(100000).nullable().optional() })).max(100) }), req.body);
+    return { grants: setGrants(app, (req.params as { user: string }).user, b.grants) };
+  });
+  // The cards of the paired nodes (settings → 设备); `refresh` asks them again now.
+  server.get("/api/peer/cards", async (req) => ({ cards: (req.query as { refresh?: string }).refresh ? await refreshCards(app) : knownCards(app) }));
   server.post("/api/peer/shares", async (req) => {
     const b = parse(z.object({ label: z.string().min(1).max(40), shares: z.array(shareSchema).min(1).max(50), url: z.string().url().optional() }), req.body);
     const r = shareInvite(app, b);

@@ -1254,10 +1254,23 @@ def({
     "向另一个 Agent 档案请教一个具体问题，并等它回答（同步，通常几分钟）：需要它的专长、它掌握的情况或它的判断时用。它能用自己的工具和技能去查，但不能再请教别人或交办。回答只回到你这里，由你决定怎么用；要它真正接手一件事用 run_agent / continue_agent_work。",
   schema: z.object({
     execution: executionSchema.optional(),
-    name: z.string().describe("档案名（list_agents）"),
+    name: z.string().describe("档案名（list_agents）；别的 omem 的 Agent 写「档案@节点」（常驻说明“网络里的其他 omem”里列出的）"),
     question: z.string().describe("问题本身和它需要的背景：你在做什么、卡在哪、希望它回答到什么程度"),
   }),
   handler: async (ctx, a) => {
+    // An Agent of another node (core/mesh.ts): it runs there, on that node's AI and knowledge; what it cites is brought here.
+    const at = a.name.lastIndexOf("@");
+    if (at > 0) {
+      if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的运行能请教别的 omem 的 Agent");
+      const [agent, peer] = [a.name.slice(0, at), a.name.slice(at + 1)];
+      const { askPeerAgent } = await import("../core/mesh.ts");
+      const r = await askPeerAgent(ctx.app, peer, agent, a.question, { runId: ctx.runId, asker: ctx.spec ?? "主助手" });
+      return `${agent}@${peer} 的回答（对方的运行 ${r.remoteRun}）：
+
+${r.answer}${r.missed.length ? `
+
+（回答里有 ${r.missed.length} 处引用的原件在对方那边，这里没有订阅它所在的空间，引用打不开；要用就转述并说明出处在 ${peer}。）` : ""}`;
+    }
     const execution = validateExecution(ctx.app, a.execution);
     const spec = readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);

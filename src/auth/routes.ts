@@ -326,12 +326,15 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       // Forwarded to a device as they are, any method.
       "* /api/peers/:id/*", "* /api/peers/:id/ide", "* /api/peers/:id/ide/*", "* /api/peers/:id/remote/*",
       // Sharing with other servers (src/core/federation.ts): what this one shares, what it follows.
-      "GET /api/peer/shares", "POST /api/peer/shares", "PUT /api/peer/shares/:user", "DELETE /api/peer/shares/:user",
+      "GET /api/peer/shares", "PUT /api/peer/grants/:user", "GET /api/peer/cards", "POST /api/peer/shares", "PUT /api/peer/shares/:user", "DELETE /api/peer/shares/:user",
       "GET /api/peer/subscriptions", "GET /api/peer/offers/:peer", "POST /api/peer/subscriptions", "DELETE /api/peer/subscriptions/:id", "POST /api/peer/subscriptions/:id/sync",
     ].map((r) => [r, PEERS]),
   ),
   // Another server reading what is shared with it: the handlers keep to the caller's grants.
   "GET /api/fed/info": "self",
+  "GET /api/fed/card": "self",
+  "POST /api/fed/ask": "self",
+  "GET /api/fed/ask/:id": "self",
   "POST /api/fed/search": "self",
   "GET /api/fed/source/:id": "self",
   "GET /api/fed/changes": "self",
