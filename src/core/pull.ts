@@ -200,7 +200,18 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
   try {
     tx(db, () => {
       for (const alias of prepared.aliases) db.prepare("insert into pull_aliases(table_name,remote_key,local_key) values(?,?,?) on conflict(table_name,remote_key) do update set local_key = excluded.local_key").run(...alias);
-      for (const s of all<{ id: string; root_path: string | null }>(db, "select id, root_path from r.spaces where id not in (select id from main.spaces)")) {
+      // A space under another (a repository in its business space) goes in after the one it is under.
+      const under = columns(db, "spaces", "r").includes("parent_id") ? "parent_id" : "null";
+      const fresh = all<{ id: string; root_path: string | null; parent_id: string | null }>(db, `select id, root_path, ${under} as parent_id from r.spaces where id not in (select id from main.spaces)`);
+      const placed = new Set(all<{ id: string }>(db, "select id from main.spaces").map((r) => r.id));
+      const ordered: typeof fresh = [];
+      for (let left = fresh; left.length; ) {
+        const ready = left.filter((s) => !s.parent_id || placed.has(s.parent_id));
+        // None ready: what is left points at spaces that exist nowhere, and the insert says so.
+        for (const s of ready.length ? ready : left) { ordered.push(s); placed.add(s.id); }
+        left = ready.length ? left.filter((s) => !ready.includes(s)) : [];
+      }
+      for (const s of ordered) {
         const cols = columns(db, "spaces").filter((c) => columns(db, "spaces", "r").includes(c));
         run(db, `insert into main.spaces(${cols.join(",")}) select ${cols.join(",")} from r.spaces where id = ?`, s.id);
         const settings = db.prepare("select settings from spaces where id = ?").get(s.id) as { settings: string };

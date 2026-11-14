@@ -39,6 +39,9 @@ describe("pulling a library from another machine", () => {
     appendToSource(remote, { spaceId: "personal", kind: "chat", uri: "lark:oc_1", title: "群", lines: ["a", "b", "c"] });
     // Remote-only things.
     createSpace(remote, { id: "proj", name: "项目", kind: "repo", rootPath: mkdtempSync(join(tmpdir(), "omem-repo-")) });
+    // The repository sits under a business space made after it: the pull has to place that one first.
+    createSpace(remote, { id: "shop", name: "商城", kind: "project" });
+    run(remote.db, "update spaces set parent_id = 'shop' where id = 'proj'");
     const m1 = remember(remote, { spaceId: "personal", kind: "fact", content: "周四和小王同步" });
     supersede(remote, m1.id, { content: "周五和小王同步", reason: "改期" });
     const item = upsertItem(remote, undefined, { title: "交报销单", kind: "todo" }, "user");
@@ -79,6 +82,7 @@ describe("pulling a library from another machine", () => {
     // Repo space without a local path: kept, path remembered for re-linking.
     const proj = getSpace(local, "proj");
     expect(proj.rootPath).toBeNull();
+    expect(one<{ parent_id: string }>(local.db, "select parent_id from spaces where id = 'proj'")?.parent_id).toBe("shop");
     expect(proj.settings.remoteRootPath).toBe("/nowhere/proj");
     // Wiki and files.
     expect(readFileSync(join(local.libraryDir, "personal", "wiki", "notes.md"), "utf8")).toContain("远端写的页面");
