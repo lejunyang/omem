@@ -316,16 +316,18 @@ export const NOTE_ACTIVE_SQL = (a = "n") => `${a}.status != 'rejected' and ${a}.
 export const NOTE_KINDS = ["outdated", "wrong", "key", "note", "exclude"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 export const NOTE_LABELS: Record<NoteKind, string> = { outdated: "已过时", wrong: "有误", key: "关键", note: "备注", exclude: "不检索" };
-export type NoteStatus = "pending" | "confirmed" | "rejected";
+export type NoteStatus = "pending" | "reviewed" | "confirmed" | "rejected";
 export type SourceNote = {
   id: number; sourceId: string; lineStart: number | null; lineEnd: number | null; kind: NoteKind; note: string; ref: string | null; by: string; runId: string | null; createdAt: string;
   quote: string | null; status: NoteStatus; staleAt: string | null;
+  reviewedAt?: string | null; reviewedBy?: string | null; reviewNote?: string | null;
 };
-type NoteRow = { id: number; source_id: string; line_start: number | null; line_end: number | null; kind: string; note: string; ref: string | null; by: string; run_id: string | null; created_at: string; quote: string | null; quote_hash?: string | null; status: string; stale_at: string | null };
+type NoteRow = { id: number; source_id: string; line_start: number | null; line_end: number | null; kind: string; note: string; ref: string | null; by: string; run_id: string | null; created_at: string; quote: string | null; quote_hash?: string | null; status: string; stale_at: string | null; reviewed_at: string | null; reviewed_by: string | null; review_note: string | null };
 
 const toNote = (r: NoteRow): SourceNote => ({
   id: r.id, sourceId: r.source_id, lineStart: r.line_start, lineEnd: r.line_end, kind: r.kind as NoteKind, note: r.note, ref: r.ref, by: r.by, runId: r.run_id, createdAt: r.created_at,
   quote: r.quote, status: (r.status as NoteStatus) ?? "pending", staleAt: r.stale_at,
+  reviewedAt: r.reviewed_at, reviewedBy: r.reviewed_by, reviewNote: r.review_note,
 });
 
 /**
@@ -414,11 +416,11 @@ export const notesOn = (notes: SourceNote[] | undefined, a?: number, b?: number)
   (notes ?? []).filter((n) => n.lineStart === null || a === undefined || b === undefined || (n.lineStart <= b && (n.lineEnd ?? n.lineStart) >= a));
 
 export const noteText = (n: SourceNote) =>
-  `〔${NOTE_LABELS[n.kind]}${n.lineStart !== null ? ` L${n.lineStart}${n.lineEnd !== n.lineStart ? `-${n.lineEnd}` : ""}` : ""}${n.note ? `：${n.note}` : ""}${n.ref ? `；以 ${n.ref} 为准` : ""}${n.staleAt ? "；原文已改动，位置可能不对" : n.by !== "owner" && n.status === "pending" ? "；Agent 标的，待本人确认" : ""}〕`;
+  `〔${NOTE_LABELS[n.kind]}${n.lineStart !== null ? ` L${n.lineStart}${n.lineEnd !== n.lineStart ? `-${n.lineEnd}` : ""}` : ""}${n.note ? `：${n.note}` : ""}${n.ref ? `；以 ${n.ref} 为准` : ""}${n.staleAt ? "；原文已改动，位置可能不对" : n.status === "reviewed" ? "；Agent 标的，另一个模型复核过" : n.by !== "owner" && n.status === "pending" ? n.reviewedAt ? "；复核拿不准，待本人确认" : "；Agent 标的，待本人确认" : ""}〕`;
 
-/** How strongly a note acts: the owner's or a confirmed one fully, an agent's pending one at half, rejected or stale ones not at all. */
+/** How strongly a note acts: the owner's or a confirmed one fully, a reviewed one at 0.8, a pending one at half, rejected or stale ones not at all. */
 export const noteStrength = (n: Pick<SourceNote, "by" | "status" | "staleAt">) =>
-  n.staleAt || n.status === "rejected" ? 0 : n.by === "owner" || n.status === "confirmed" ? 1 : 0.5;
+  n.staleAt || n.status === "rejected" ? 0 : n.by === "owner" || n.status === "confirmed" ? 1 : n.status === "reviewed" ? 0.8 : 0.5;
 
 /**
  * A note's factor on a hit of lines a..b: `w ^ (strength × share)`, where share is the part of the hit's
@@ -477,7 +479,7 @@ export function countNoteHits(app: App, ids: number[]) {
 
 /**
  * What waits for the owner in a space: agents' notes that change ranking (outdated / wrong / not to
- * search) still pending, notes whose passage is gone, and folder levels agents set — each with its
+ * search) left uncertain by the reviewer, notes whose passage is gone, and folder levels agents set — each with its
  * impact (search hits it shaped; sources below a folder), largest first.
  */
 export function reviewQueue(app: App, spaceId: string, limit = 200) {
@@ -485,7 +487,7 @@ export function reviewQueue(app: App, spaceId: string, limit = 200) {
     app.db,
     `select n.*, s.title, h.n hits from source_notes n join sources s on s.id = n.source_id left join source_note_hits h on h.note_id = n.id
      where s.space_id = ? and s.deleted_at is null and n.status != 'rejected'
-       and ((n.status = 'pending' and n.by != 'owner' and n.kind in ('outdated', 'wrong', 'exclude')) or n.stale_at is not null)
+       and ((n.status = 'pending' and n.by != 'owner' and n.reviewed_at is not null and n.kind in ('outdated', 'wrong', 'exclude')) or n.stale_at is not null)
      order by coalesce(h.n, 0) desc, n.created_at desc limit ?`,
     spaceId, limit,
   ).map((r) => ({ ...toNote(r), title: r.title, hits: r.hits ?? 0 }));
@@ -494,6 +496,31 @@ export function reviewQueue(app: App, spaceId: string, limit = 200) {
     .filter((l) => l.by === "agent" && l.status === "active" && cat.nodes.has(l.key))
     .map((l) => ({ ...l, title: cat.nodes.get(l.key)!.title, path: nodePath(cat, l.key), sources: sourcesUnder(cat, l.key).length }))
     .sort((a, b) => b.sources - a.sources);
-  return { notes, levels };
+  const counts = one<{ pending: number; reviewed: number; rejected: number }>(app.db, `select
+    coalesce(sum(n.status = 'pending' and n.reviewed_at is null), 0) pending,
+    coalesce(sum(n.status = 'reviewed'), 0) reviewed,
+    coalesce(sum(n.status = 'rejected' and n.reviewed_at is not null), 0) rejected
+    from source_notes n join sources s on s.id = n.source_id
+    where s.space_id = ? and s.deleted_at is null and n.by != 'owner'`, spaceId)!;
+  const rejected = all<NoteRow & { title: string }>(app.db, `select n.*, s.title from source_notes n join sources s on s.id = n.source_id
+    where s.space_id = ? and s.deleted_at is null and n.by != 'owner' and n.status = 'rejected'
+      and n.reviewed_at >= ? order by n.reviewed_at desc`, spaceId, new Date(Date.now() - 14 * 86400_000).toISOString())
+    .map((r) => ({ ...toNote(r), title: r.title, hits: 0 }));
+  return { notes, levels, counts, rejected };
+}
+
+/** Agent notes eligible for independent review, ranking judgements and search impact first. */
+export function noteReviewCandidates(app: App, spaceId: string, limit: number) {
+  // The text is read afterwards, and only for the few picked that kept no quote: sorting every pending
+  // note with its source's whole text would read the library through.
+  return all<NoteRow & { title: string }>(app.db, `select n.*, s.title from source_notes n
+    join sources s on s.id = n.source_id left join source_note_hits h on h.note_id = n.id
+    where s.space_id = ? and s.deleted_at is null and n.by != 'owner' and n.status = 'pending'
+      and n.reviewed_at is null and n.stale_at is null
+    order by (n.kind in ('wrong','outdated','exclude')) desc, coalesce(h.n, 0) desc, n.created_at, n.id limit ?`, spaceId, limit)
+    .map((r) => {
+      const text = r.quote ? "" : one<{ text: string }>(app.db, "select text from sources where id = ?", r.source_id)?.text ?? "";
+      return { ...toNote(r), title: r.title, passage: (r.quote || (r.line_start === null ? text : passageOf(text, r.line_start, r.line_end ?? r.line_start))).slice(0, 600) };
+    });
 }
 

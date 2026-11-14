@@ -16,6 +16,11 @@ updated: 2026-11-14
 - `src/agents/jobs.ts` 把 `releaseLater` 与 `labelOutcomes` 接入巡检杂务，无新材料也执行。通知工具接受 later；网页区分等待 / 已并入汇总，汇总标题各自可打开；设置 → 渠道编辑时间和查看近 30 天效果。
 - `src/core/notify-outcome.ts` 在超过 48 小时后每轮最多标注 300 条，按负面、处理、先已知道、只读、未读区分，并入汇总单记 bundled。统计按运行类型与聊天原件回给巡检、整理与找人分诊；至少 8 条且从未处理的会话可确认后设免提醒，保留点名、限时例外。忽略规则没记录来源 ID，未拿它判 negative。
 - `web/src/components/ApprovalSettings.vue`：工具审批可选每次问 / 做完告诉 / 不用问，显示连续批准次数、可调提议门槛；report 用 later 告知。核心在 `src/agents/approval-ladder.ts`，强制审批插件不升档。行为回归见 `test/asks.test.ts`；统计、接口、巡检分别见 `notify-outcome`、`notification-settings`、`heartbeat-handler` 测试。
+## 原件标注复核与知识库建议分档（11-14）
+
+- `sources/attention.ts`、`agents/jobs.ts`、`roles/note-reviewer.md`：每小时独立复核 Agent 标注，保留按八成、撤回归零，拿不准才进本人清单；本人可恢复近 14 天撤回的标注，只有本人确认的有误、不检索才移出检索结果。`review_notes` 只给复核角色，记录模型、时间和依据；候选按排名影响、搜索命中和时间排序。
+- `channels/lark-knowledge.ts`：autoApply 改 off/safe/all，旧布尔兼容，新配置默认 safe；归入已有空间和忽略直接应用，新建仍等确认，通知分列处理与等待，原有 reset 可撤销。
+- `wiki/questions.ts`：新增阅读次数、夜间候选排序与预算、旧问题过期函数；网页能筛选过期并重开。定时任务 `wiki-resolve`（每天 05:40，`wiki/verify.ts` 的 `resolveNightly`）先过期、再把当晚选出的问题按空间各排一次调查；`queueResolve` 可以接指定的问题 id 和当晚的日期。
 
 ## 每晚抽检（11-14）
 

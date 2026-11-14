@@ -154,6 +154,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/wiki/:space/questions": s("wiki.write", "p.space"),
   "POST /api/wiki/:space/questions/:id/answer": s("wiki.write", "p.space"),
   "POST /api/wiki/:space/questions/:id/drop": s("wiki.write", "p.space"),
+  "POST /api/wiki/:space/questions/:id/reopen": s("wiki.write", "p.space"),
   "POST /api/wiki/:space/questions/resolve": s("wiki.write", "p.space"),
   "POST /api/wiki/:space/recheck": s("wiki.write", "p.space"),
 

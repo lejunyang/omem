@@ -736,6 +736,9 @@ function saveReview(patch: Record<string, unknown>) {
   const memory = config.value.memory;
   void saveConfig({ memory: { ...memory, review: { ...memory.review, ...patch } } }, "已保存记忆复核设置");
 }
+function saveNoteReview(patch: Record<string, unknown>) {
+  void saveConfig({ notes: { ...config.value.notes, review: { ...config.value.notes.review, ...patch } } }, "已保存标注复核设置");
+}
 function savePassive(patch: Record<string, unknown>) {
   const memory = config.value.memory;
   void saveConfig({ memory: { ...memory, passive: { ...memory.passive, ...patch } } }, "已保存相关记忆设置");
@@ -1048,6 +1051,9 @@ async function saveEdit() {
       <div v-if="config.memory" class="card pad stack">
         <div class="section-title">记忆质量</div>
         <HelpText>新记忆写入前会先过一遍规则检查（免责式、超长（400 字以上）、转述原件、事件复述、无来源、重复），不合格的退回给模型并说明原因。之后每小时由复核模型逐条保留、改写或撤回；复核模型最好和写入的不是同一个，避免一个模型的习惯由它自己评判。结果在“记忆 → 质量”里按模型统计。</HelpText>
+        <UiCheckbox :model-value="config.notes.review.enabled" switch @change="(v) => saveNoteReview({ enabled: v })">复核原件标注</UiCheckbox>
+        <label class="field"><span>每批标注数</span><input class="input" type="number" min="1" max="100" :value="config.notes.review.batch" @change="(e) => saveNoteReview({ batch: Math.max(1, Math.min(100, Math.round(Number((e.target as HTMLInputElement).value) || 20))) })" /></label>
+        <HelpText>Agent 给原件加的标注先按一半的分量起作用；每小时由另一个模型对照原文和依据复核一批，保留的按八成分量起作用，撤回的不再起作用，拿不准的留给你；只有你自己确认的“有误”“不检索”才会把段落从检索结果里拿掉。复核用的模型在 Agent 页给 note-reviewer 选，最好和写标注的不是同一个。</HelpText>
         <UiCheckbox :model-value="config.memory.review.enabled" switch @change="(v) => saveReview({ enabled: v })">复核新记忆（只有复核保留或本人写的经验、偏好才会放进每次运行的提示里）</UiCheckbox>
         <div class="row wrap">
           <span class="small muted">复核用</span>

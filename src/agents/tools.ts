@@ -1884,6 +1884,35 @@ def({
 });
 
 def({
+  name: "review_notes",
+  description: "复核 Agent 的原件标注：keep 保留（可在 note 改好标注），reject 撤回，unsure 留给本人；每条给出依据和理由。",
+  write: true,
+  schema: z.object({ verdicts: z.array(z.object({ note_id: z.number().int(), verdict: z.enum(["keep", "reject", "unsure"]), reason: z.string(), note: z.string().optional() })) }),
+  handler: (ctx, a) => {
+    if (ctx.role !== "note-reviewer") throw new HttpError(403, "只有 note-reviewer 能交标注复核结果");
+    const reviewer = provenance(ctx);
+    const by = [reviewer.agentProfile, reviewer.model].filter(Boolean).join(" · ") || "agent";
+    return a.verdicts.map((v) => {
+      try {
+        const n = one<{ by: string; status: string; space_id: string; source_id: string }>(ctx.app.db,
+          "select n.by, n.status, s.space_id, n.source_id from source_notes n join sources s on s.id = n.source_id where n.id = ?", v.note_id);
+        if (!n) return `${v.note_id} 不存在，跳过`;
+        inScope(ctx, n.space_id, "原件标注");
+        if (n.by === "owner" || n.status !== "pending") return `${v.note_id} 本人标的或已不是待复核状态，跳过`;
+        run(ctx.app.db, `update source_notes set status = ?, reviewed_at = ?, reviewed_by = ?, review_note = ?,
+          note = case when ? then ? else note end where id = ?`,
+          v.verdict === "keep" ? "reviewed" : v.verdict === "reject" ? "rejected" : "pending", now(), by, v.reason,
+          v.verdict === "keep" && v.note !== undefined ? 1 : 0, v.note ?? "", v.note_id);
+        ctx.app.emit({ type: "changed", entity: "source", id: n.source_id, spaceId: n.space_id });
+        return `${v.note_id} ${v.verdict}`;
+      } catch (e) {
+        return `${v.note_id} 跳过：${(e as Error).message}`;
+      }
+    }).join("\n");
+  },
+});
+
+def({
   name: "review_memories",
   description:
     "记忆复核：对任务里列出的每条记忆给出结论。keep：可复用、有来源支撑；rewrite：有价值但写法不对，给出改好的一句话（会作为新版本替代旧的）；split：一条里塞了几条互相独立的结论，在 contents 里分别写好（第一条替代原记忆，其余新建，来源沿用）；retract：不是记忆（事件流水、摘要、免责式、无来源推测、重复），撤回。每条都要写简短理由。",

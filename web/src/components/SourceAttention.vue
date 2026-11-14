@@ -14,7 +14,8 @@ import { fmtTime, toast } from "../store";
  */
 export type SourceNote = {
   id: number; sourceId: string; lineStart: number | null; lineEnd: number | null; kind: "outdated" | "wrong" | "key" | "note" | "exclude"; note: string; ref: string | null; by: string; createdAt: string;
-  quote?: string | null; status?: "pending" | "confirmed" | "rejected"; staleAt?: string | null;
+  quote?: string | null; status?: "pending" | "reviewed" | "confirmed" | "rejected"; staleAt?: string | null;
+  reviewedAt?: string | null; reviewedBy?: string | null; reviewNote?: string | null;
 };
 
 const props = defineProps<{ source: Source; notes: SourceNote[] }>();
@@ -45,6 +46,8 @@ function statusOf(n: SourceNote) {
   if (n.staleAt) return { label: "原文已改动", title: "文档重新读取后找不到被标的那段，暂不参与排序", cls: "warn" };
   if (n.by === "owner") return null;
   if (n.status === "rejected") return { label: "已否定", title: "不影响排序，Agent 不会再加同一条", cls: "" };
+  if (n.status === "reviewed") return { label: "复核保留", title: `另一个模型复核过，按八成分量起作用；${n.reviewedBy ?? ""}：${n.reviewNote ?? ""}`, cls: "ok" };
+  if (n.status === "pending" && n.reviewedAt) return { label: "复核拿不准", title: n.reviewNote ?? "待本人确认", cls: "warn" };
   if (n.status === "confirmed") return { label: "已确认", title: "你确认过，完全生效", cls: "ok" };
   return { label: "待确认", title: "Agent 标的，先按一半强度影响排序；确认后完全生效（有误、不检索的段落确认后不再被检索）", cls: "" };
 }
@@ -116,6 +119,7 @@ const refMarkdown = (r: string) => (/^(src|mem):|^\[\[/.test(r) ? (r.startsWith(
         <span class="text">{{ n.note }}<template v-if="n.ref"> · 以 <Markdown class="inline" :source="refMarkdown(n.ref)" :space="source.spaceId" /> 为准</template></span>
         <span class="muted by" :title="fmtTime(n.createdAt)">{{ n.by === "owner" ? "你" : "Agent" }}</span>
         <span v-if="statusOf(n)" class="badge st" :class="statusOf(n)!.cls" :title="statusOf(n)!.title">{{ statusOf(n)!.label }}</span>
+        <span v-if="n.reviewedBy" class="muted small">复核：{{ n.reviewedBy }}</span>
         <template v-if="n.by !== 'owner' && n.status === 'pending'">
           <button class="btn ghost sm" type="button" title="确认这条标注" @click="review(n, 'confirm')">确认</button>
           <button class="btn ghost sm" type="button" title="否定这条标注" @click="review(n, 'reject')">否定</button>

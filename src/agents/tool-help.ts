@@ -17,7 +17,7 @@ export const CORE_TOOLS = new Set([
   "list_sources", "write_file", "list_runs", "read_run", "wake_later", "cancel_wake",
 ]);
 /** What a background role exists to hand in: always its own tool, and only for that role. */
-export const ROLE_TOOLS = ["describe_source", "classify_source", "propose_archive_rule", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "settle_wiki_question"];
+export const ROLE_TOOLS = ["describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "settle_wiki_question"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
 /**
  * A run allowed this few tools gets every one of them directly: a background role or profile
@@ -36,7 +36,7 @@ export const DIRECT_ALL = 30;
 export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: string[] }[] = [
   { id: "read", label: "查找与阅读原件", doc: "sources", tools: ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_conversations", "read_conversation", "peer_search", "peer_read"] },
   { id: "collect", label: "收进材料", doc: "sources", tools: ["import_url", "save_note", "write_file", "digest_sources", "lark_wiki_crawl"] },
-  { id: "curate", label: "空间与原件治理", doc: "sources", tools: ["create_space", "connect_repository", "relate_spaces", "set_source_attention", "annotate_source", "attention_rules", "describe_source", "classify_source", "propose_archive_rule"] },
+  { id: "curate", label: "空间与原件治理", doc: "sources", tools: ["create_space", "connect_repository", "relate_spaces", "set_source_attention", "annotate_source", "review_notes", "attention_rules", "describe_source", "classify_source", "propose_archive_rule"] },
   { id: "memory", label: "记忆", doc: "memory", tools: ["recall", "remember", "supersede", "forget", "review_memories", "list_memory_folders", "organize_memories"] },
   { id: "track", label: "事项与需求", doc: "items", tools: ["req_tree", "req_read", "save_requirements", "split_requirements", "list_items", "read_item", "upsert_item", "settle_items", "propose_item_update", "list_item_proposals", "resolve_item_proposal"] },
   { id: "notifications", label: "事项通知排查", doc: "items", tools: ["repair_item_association", "inspect_item_notification", "read_item_repair", "refresh_item_notification", "ignore_notification_rule"] },

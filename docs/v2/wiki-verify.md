@@ -102,7 +102,7 @@ flowchart TD
 | `why` | 为什么拿不准（查过哪里、哪两份材料说法不同） |
 | `refs` | 相关引用，JSON 数组（`src:<id>#L起-L止`） |
 | `source` | `writer`（`write_page` 的 `questions`）、`checker`（核对的 `unsure`）、`migration`（旧页面迁出） |
-| `status` | `open` 还没人查 → `resolved`（Agent 查清并写进页面）或 `needs-owner`（只有本人能定）→ `asked`（放进给本人的表单）→ `answered`（正在写回页面）→ `resolved`；`dropped` 本人说不用管 |
+| `status` | `open` 还没人查 → `resolved`（Agent 查清并写进页面）或 `needs-owner`（只有本人能定）→ `asked`（放进给本人的表单）→ `answered`（正在写回页面）→ `resolved`；`dropped` 本人说不用管；`lapsed` 无阅读的旧问题不再追，可重开 |
 | `importance` | 1–3，Agent 判断，3 是不定就会误导读者；问本人时先问高的 |
 | `answer`、`note` | 本人的回答；Agent 查过哪里、写进了哪一段或为什么定不了 |
 | `ask_id`、`run_id` | 问本人的那张表单；记下它的运行 |
@@ -117,6 +117,14 @@ flowchart TD
 4. 本人在表单或清单里回答后（`writeAnswers`）：问题改 `answered`，按页面排写作运行（`generate_wiki` 的 `pages`，运行带 `questionIds`），页面发布时这些问题改 `resolved`。表单里留空的回到 `needs-owner`。
 
 **网页**：有写 Wiki 权限的人在页面右栏看到“未决问题 N”和前几条，左侧目录上方有“N 个未决问题”，点开是按页面分组的清单：每条的状态、为什么拿不准、引用；要本人定的可以直接写答案“补进页面”或“不用管”；“让助手先查一遍”（排一次 `wiki-resolve`，最多 20 个）；“重新核对已有页面（10 页）”。只读的人页面接口里没有 `questions`，清单接口 403。接口：`GET /api/wiki/:space/questions`、`POST …/questions/:id/answer`、`…/questions/:id/drop`、`…/questions/resolve`、`POST /api/wiki/:space/recheck`（都要 `wiki.write`）。
+
+### 夜间处理积压与过期
+
+`wiki.questions.nightly` 默认 20，`expireDays` 默认 45。`nightlyQuestionCandidates` 按页面近 30 天 `page_reads` 的累计阅读次数降序，再按 importance 和创建时间选全局预算；回答或办事的运行才记阅读，网页打开和整理不记。没有阅读的页面只在预算剩余时入选；已有 queued/running 调查或当夜已标记处理的空间跳过。
+
+`lapseQuestions` 把超过 expireDays、页面在这段时间没有阅读的 open 问题标成 lapsed，note 写“这页 N 天没有被读到，问题不再追”。默认清单和未决数排除 lapsed；网页可筛选已过期、重新打开，逐条显示页面近 30 天阅读次数，接口 `POST …/questions/:id/reopen` 要 wiki.write。
+
+定时任务 `wiki-resolve`（每天 05:40，默认开）调 `resolveNightly`：先过期，再把当晚选出的问题按空间分组，每个空间排一个 `wiki-resolve` 运行（`queueResolve` 的 `ids` 和 `nightly`，运行的 input 记当晚的日期）。调查查不清的问题变成“要本人定”，留在未决清单里，不另发通知。积压很大时就是每晚 `nightly` 个地消化，读得多的页面先轮到。
 
 ## 6. 存量迁移与重新核对
 

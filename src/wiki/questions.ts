@@ -11,7 +11,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { json, newId, now } from "../core/util.ts";
 
-export type QuestionStatus = "open" | "needs-owner" | "asked" | "answered" | "resolved" | "dropped";
+export type QuestionStatus = "open" | "needs-owner" | "asked" | "answered" | "resolved" | "dropped" | "lapsed";
 export type WikiQuestion = {
   id: string;
   spaceId: string;
@@ -29,6 +29,7 @@ export type WikiQuestion = {
   runId: string | null;
   createdAt: string;
   updatedAt: string;
+  reads30: number;
 };
 export type QuestionInput = { question: string; why?: string; refs?: string[] };
 
@@ -38,10 +39,11 @@ export const UNSETTLED: QuestionStatus[] = ["open", "needs-owner", "asked", "ans
 export const RESOLVE_LIMIT = 20;
 export const ASK_LIMIT = 5;
 
-type Row = { id: string; space_id: string; page: string; question: string; why: string; refs: string; source: string; status: string; importance: number; answer: string | null; note: string; ask_id: string | null; run_id: string | null; created_at: string; updated_at: string };
+type Row = { id: string; space_id: string; page: string; question: string; why: string; refs: string; source: string; status: string; importance: number; answer: string | null; note: string; ask_id: string | null; run_id: string | null; created_at: string; updated_at: string; reads30: number };
 const toQuestion = (r: Row): WikiQuestion => ({
   id: r.id, spaceId: r.space_id, page: r.page, question: r.question, why: r.why, refs: json<string[]>(r.refs, []), source: r.source as WikiQuestion["source"],
   status: r.status as QuestionStatus, importance: r.importance, answer: r.answer, note: r.note, askId: r.ask_id, runId: r.run_id, createdAt: r.created_at, updatedAt: r.updated_at,
+  reads30: r.reads30 ?? 0,
 });
 
 /** `src:…` references in a piece of text (a migrated item, a finding's basis). */
@@ -70,12 +72,12 @@ export function addQuestions(app: App, spaceId: string, page: string, items: Que
 }
 
 export function getQuestion(app: App, id: string): WikiQuestion | null {
-  const r = one<Row>(app.db, "select * from wiki_questions where id = ?", id);
+  const r = one<Row>(app.db, `select q.*, ${reads30Sql} reads30 from wiki_questions q where id = ?`, id);
   return r ? toQuestion(r) : null;
 }
 
 export function listQuestions(app: App, opts: { spaceId: string; page?: string; status?: QuestionStatus[]; ids?: string[]; limit?: number }): WikiQuestion[] {
-  const where = ["space_id = ?"];
+  const where = ["q.space_id = ?"];
   const params: (string | number)[] = [opts.spaceId];
   if (opts.page) where.push("page = ?"), params.push(opts.page);
   const status = opts.status ?? UNSETTLED;
@@ -84,7 +86,40 @@ export function listQuestions(app: App, opts: { spaceId: string; page?: string; 
     if (!opts.ids.length) return [];
     where.push(`id in (${opts.ids.map(() => "?").join(",")})`), params.push(...opts.ids);
   }
-  return all<Row>(app.db, `select * from wiki_questions where ${where.join(" and ")} order by importance desc, created_at limit ?`, ...params, opts.limit ?? 500).map(toQuestion);
+  return all<Row>(app.db, `select q.*, ${reads30Sql} reads30 from wiki_questions q where ${where.join(" and ")} order by importance desc, created_at limit ?`, ...params, opts.limit ?? 500).map(toQuestion);
+}
+
+// Only answer/action runs record page_reads; opening a page in the web does not inflate it.
+const reads30Sql = "coalesce((select sum(n) from page_reads r where r.space_id = q.space_id and r.slug = q.page and r.day >= date('now', '-30 days')), 0)";
+
+/** Lapse only old open questions on pages nobody has used throughout the expiry window. */
+export function lapseQuestions(app: App) {
+  const days = app.config.wiki.questions.expireDays;
+  const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
+  const qs = all<{ id: string }>(app.db, `select q.id from wiki_questions q where q.status = 'open' and q.created_at < ?
+    and not exists(select 1 from page_reads r where r.space_id = q.space_id and r.slug = q.page and r.day >= ? and r.n > 0)`, cutoff, cutoff.slice(0, 10));
+  for (const q of qs) updateQuestion(app, q.id, { status: "lapsed", note: `这页 ${days} 天没有被读到，问题不再追` });
+  return qs.length;
+}
+
+/**
+ * Tonight's pick: one budget for all spaces, the questions on the most read pages first. A space with
+ * an investigation under way, or already visited tonight (`day`, UTC), waits for the next night.
+ */
+export function nightlyQuestionCandidates(app: App, day = new Date().toISOString().slice(0, 10)) {
+  // Looked up once through the status index: a subquery per question would scan the runs table each time.
+  const busy = all<{ space_id: string | null }>(app.db, `select space_id from runs where status in ('queued','running') and kind = 'wiki-resolve'
+    union select space_id from runs where status in ('done','failed','cancelled') and created_at >= ? and kind = 'wiki-resolve' and json_extract(input, '$.nightly') = ?`,
+    `${day}T00:00:00.000Z`, day).flatMap((r) => (r.space_id ? [r.space_id] : []));
+  return all<Row>(app.db, `select q.*, ${reads30Sql} reads30 from wiki_questions q where q.status = 'open'
+    ${busy.length ? `and q.space_id not in (${busy.map(() => "?").join(",")})` : ""}
+    order by reads30 desc, q.importance desc, q.created_at, q.id limit ?`, ...busy, app.config.wiki.questions.nightly).map(toQuestion);
+}
+
+export function reopenQuestion(app: App, id: string) {
+  const q = getQuestion(app, id);
+  if (!q || q.status !== "lapsed") return null;
+  return updateQuestion(app, id, { status: "open", note: "本人重新打开" });
 }
 
 /** Unsettled questions per page of a space (what the web shows next to each page). */

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { get, post, put } from "../api";
+import HelpText from "../components/HelpText.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
-import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import VirtualList from "../components/VirtualList.vue";
@@ -43,7 +43,7 @@ type Overview = {
   counts: Record<Status | "gone", number>;
   discovery: { running: boolean; last: Report | null };
   reading: { running: boolean; last: Report | null };
-  settings: { direction: string; autoApply: boolean; dailyDocs: number };
+  settings: { direction: string; autoApply: "off" | "safe" | "all"; dailyDocs: number };
   kbs: Kb[];
 };
 
@@ -287,7 +287,7 @@ const lastReading = computed(() => {
       <div class="grow">
         <router-link to="/sources" class="back small"><Icon name="left" :size="14" />原件</router-link>
         <h1>飞书知识库</h1>
-        <p>你在飞书里能看到的知识库。助理按你写的方向提议放进哪个空间；确认后，每晚从已归入的知识库读一些文档，读进对应空间再整理。只读飞书，不会改动知识库。</p>
+        <p>你在飞书里能看到的知识库。助理按你写的方向提议放进哪个空间；归入已有空间和“不读”默认直接生效，新建空间等你确认；每晚从已归入的知识库读一些文档，读进对应空间再整理。只读飞书，不会改动知识库。</p>
       </div>
       <div class="row wrap gap">
         <button class="btn sm" :disabled="data?.discovery.running" @click="discover"><Icon name="search" :size="14" />{{ data?.discovery.running ? "发现中…" : "立即发现" }}</button>
@@ -319,8 +319,9 @@ const lastReading = computed(() => {
               <span>每晚读几篇</span>
               <input v-model.number="form.dailyDocs" class="input sm" type="number" inputmode="numeric" min="0" max="2000" @change="saveSettings({ dailyDocs: Math.max(0, Math.min(2000, Math.round(Number(form.dailyDocs) || 0))) }, '已保存每晚的篇数')" />
             </label>
-            <UiCheckbox :model-value="data.settings.autoApply" switch @change="(v) => saveSettings({ autoApply: v }, v ? '建议会直接生效，处理后通知你' : '建议等你确认')">建议直接生效（不等确认）</UiCheckbox>
+            <UiSegmented class="apply-mode" :model-value="data.settings.autoApply" :options="[{ value: 'off', label: '等我确认' }, { value: 'safe', label: '归入和忽略直接生效' }, { value: 'all', label: '全部直接生效' }]" aria-label="建议生效方式" @change="(v) => saveSettings({ autoApply: v }, '已保存建议生效方式')" />
           </div>
+          <HelpText>归入已有空间和“不读”的建议可以直接生效，随时能在这里改回；新建空间的建议仍然等你确认。</HelpText>
           <p class="muted small">定时：每周日发现一次，每晚 2:30 读取，时间在设置 → 定时任务里改。空间里已有的文档不重复读，读到的按空间交给整理。</p>
         </div>
       </div>
@@ -455,9 +456,19 @@ const lastReading = computed(() => {
   gap: 8px;
 }
 .settings {
+  min-width: 0;
   gap: 10px;
   padding-top: 6px;
   border-top: 1px solid var(--line);
+}
+.settings > .row, .apply-mode {
+  min-width: 0;
+}
+.apply-mode :deep(button) {
+  white-space: normal;
+  height: auto;
+  min-height: 30px;
+  line-height: 1.4;
 }
 .share {
   width: 140px;

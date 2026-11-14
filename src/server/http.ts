@@ -946,9 +946,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { listQuestions, questionCounts } = await import("../wiki/questions.ts");
     const { migrateState } = await import("../wiki/migrate.ts");
     const titles = new Map(listPages(app, space).map((p) => [p.slug, p.title]));
-    const questions = listQuestions(app, { spaceId: space }).map((q) => ({ ...q, pageTitle: titles.get(q.page) ?? q.page }));
+    const status = q(z.object({ status: z.enum(["unsettled", "lapsed"]).default("unsettled") }), req.query ?? {}).status;
+    const questions = listQuestions(app, { spaceId: space, ...(status === "lapsed" ? { status: ["lapsed" as const] } : {}) }).map((q) => ({ ...q, pageTitle: titles.get(q.page) ?? q.page }));
     const resolving = one<{ id: string }>(app.db, "select id from runs where kind = 'wiki-resolve' and space_id = ? and status in ('queued','running')", space)?.id ?? null;
-    return { questions, counts: questionCounts(app, space), migration: migrateState(app), resolving };
+    const lapsed = one<{ n: number }>(app.db, "select count(*) n from wiki_questions where space_id = ? and status = 'lapsed'", space)?.n ?? 0;
+    return { questions, counts: questionCounts(app, space), lapsed, migration: migrateState(app), resolving };
   });
   server.post("/api/wiki/:space/questions/:id/answer", async (req) => {
     const { space, id } = req.params as { space: string; id: string };
@@ -966,6 +968,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const item = qs.getQuestion(app, id);
     if (!item || item.spaceId !== space) throw new HttpError(404, "没有这个未决问题");
     return qs.updateQuestion(app, id, { status: "dropped", note: b.note ?? "本人说不用管" });
+  });
+  server.post("/api/wiki/:space/questions/:id/reopen", async (req) => {
+    const { space, id } = req.params as { space: string; id: string };
+    const qs = await import("../wiki/questions.ts");
+    const item = qs.getQuestion(app, id);
+    if (!item || item.spaceId !== space || item.status !== "lapsed") throw new HttpError(404, "没有这条过期问题");
+    return qs.reopenQuestion(app, id);
   });
   server.post("/api/wiki/:space/questions/resolve", async (req) => {
     const space = (req.params as { space: string }).space;
@@ -2408,7 +2417,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.put("/api/lark/kb/settings", async (req) => {
     ownerOnly(req);
-    const b = q(z.object({ direction: z.string().max(4000).optional(), autoApply: z.boolean().optional(), dailyDocs: z.number().int().min(0).max(2000).optional() }), req.body ?? {});
+    const b = q(z.object({ direction: z.string().max(4000).optional(), autoApply: z.enum(["off", "safe", "all"]).optional(), dailyDocs: z.number().int().min(0).max(2000).optional() }), req.body ?? {});
     const changed = b.direction !== undefined && b.direction.trim() !== (app.config.lark.knowledge?.direction ?? "").trim();
     const next = structuredClone(app.config);
     next.lark.knowledge = { ...next.lark.knowledge, ...Object.fromEntries(Object.entries(b).filter(([, v]) => v !== undefined)) };

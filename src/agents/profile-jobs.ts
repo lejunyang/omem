@@ -22,6 +22,7 @@ const ROLE_RUNS: Record<string, string[]> = {
   reviewer: ["code"],
   dreamer: ["dream"],
   "memory-reviewer": ["memory-review"],
+  "note-reviewer": ["note-review"],
   "memory-organizer": ["memory-organize"],
   "item-keeper": ["item-settle"],
   "wiki-planner": ["wiki-plan"],

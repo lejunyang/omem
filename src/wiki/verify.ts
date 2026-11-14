@@ -21,7 +21,7 @@ import { createRun, getRun, registerHandler, setRunOutput, type Run, type RunCon
 import { createAsk, registerAskHandler } from "../agents/asks.ts";
 import type { RoleName } from "../core/config.ts";
 import { extractCites, folderOverview, listPages, pageExists, writePage, appendLog } from "./store.ts";
-import { addQuestions, ASK_LIMIT, getQuestion, listQuestions, questionsText, RESOLVE_LIMIT, refsIn, updateQuestion, type QuestionInput } from "./questions.ts";
+import { addQuestions, ASK_LIMIT, getQuestion, lapseQuestions, listQuestions, nightlyQuestionCandidates, questionsText, RESOLVE_LIMIT, refsIn, updateQuestion, type QuestionInput } from "./questions.ts";
 import { codeSpaces, mermaidCheckable, refreshCodeIndexes, sameTopicElsewhere, SOFT_LENGTH, textLength } from "./checks.ts";
 
 /** Checks of one page in one run: the first look and up to two after revisions. */
@@ -543,14 +543,34 @@ registerAskHandler("wiki-questions", async (app, ask, context) => {
   if (answered.length) await writeAnswers(app, spaceId, answered, ask.userId);
 });
 
-/** Queue an investigation of a space's questions nobody has looked into yet (at most RESOLVE_LIMIT). */
-export function queueResolve(app: App, spaceId: string, opts: { userId?: string; limit?: number } = {}) {
+/**
+ * Queue an investigation of a space's questions nobody has looked into yet (at most RESOLVE_LIMIT):
+ * the ones given (`ids`, the nightly pick), else the most important. `nightly`: the day this run is the
+ * space's nightly visit of (one a night).
+ */
+export function queueResolve(app: App, spaceId: string, opts: { userId?: string; limit?: number; ids?: string[]; nightly?: string } = {}) {
   const busy = one<{ id: string }>(app.db, "select id from runs where kind = 'wiki-resolve' and space_id = ? and status in ('queued','running')", spaceId);
   if (busy) return { runId: busy.id, questions: 0, already: true };
-  const open = listQuestions(app, { spaceId, status: ["open"], limit: Math.min(opts.limit ?? RESOLVE_LIMIT, RESOLVE_LIMIT) });
+  const open = listQuestions(app, { spaceId, status: ["open"], ...(opts.ids ? { ids: opts.ids } : {}), limit: Math.min(opts.limit ?? RESOLVE_LIMIT, RESOLVE_LIMIT) });
   if (!open.length) return { runId: null, questions: 0 };
-  const r = createRun(app, { kind: "wiki-resolve", spaceId, title: `查清未决问题（${open.length} 个）`, input: { questionIds: open.map((q) => q.id) }, userId: opts.userId ?? OWNER });
+  const r = createRun(app, { kind: "wiki-resolve", spaceId, title: `查清未决问题（${open.length} 个）`, input: { questionIds: open.map((q) => q.id), ...(opts.nightly ? { nightly: opts.nightly } : {}) }, userId: opts.userId ?? OWNER });
   return { runId: r.id, questions: open.length };
+}
+
+/**
+ * Every night: questions on pages nobody has used for a long time lapse, then the backlog is worked
+ * off where it matters — the questions on the most used pages first, a set number in all, one run a space.
+ */
+export function resolveNightly(app: App) {
+  const lapsed = lapseQuestions(app);
+  const day = new Date().toISOString().slice(0, 10);
+  const bySpace = new Map<string, string[]>();
+  for (const q of nightlyQuestionCandidates(app, day)) bySpace.set(q.spaceId, [...(bySpace.get(q.spaceId) ?? []), q.id]);
+  const runs = [...bySpace].flatMap(([spaceId, ids]) => {
+    const r = queueResolve(app, spaceId, { ids, nightly: day });
+    return r.runId && !r.already ? [r.runId] : [];
+  });
+  return { lapsed, questions: [...bySpace.values()].reduce((n, ids) => n + ids.length, 0), runs };
 }
 
 /**

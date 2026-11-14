@@ -9,6 +9,7 @@ import {
 } from "../src/channels/lark-knowledge.ts";
 import { getCrawl, listCrawls } from "../src/channels/lark-wiki.ts";
 import { all, one, run } from "../src/core/db.ts";
+import { configSchema } from "../src/core/config.ts";
 import { listNotifications } from "../src/core/notify.ts";
 import { runPeerCommand } from "../src/core/peer-exec.ts";
 import { createSpace, findSpace } from "../src/core/spaces.ts";
@@ -154,8 +155,39 @@ describe("feishu knowledge bases: discovery", () => {
 });
 
 describe("feishu knowledge bases: proposals and decisions", () => {
+  it("loads legacy booleans and defaults new libraries to safe", () => {
+    expect(configSchema.parse({}).lark.knowledge.autoApply).toBe("safe");
+    expect(configSchema.parse({ lark: { knowledge: { autoApply: true } } }).lark.knowledge.autoApply).toBe("all");
+    expect(configSchema.parse({ lark: { knowledge: { autoApply: false } } }).lark.knowledge.autoApply).toBe("off");
+  });
+
+  it("safe applies maps and ignores, holds creates, records later and reports mixed outcomes; applied decisions can reset", async () => {
+    const app = testApp();
+    const ids = ["kb-map", "kb-ignore", "kb-create", "kb-later"];
+    fakeLark({ kbs: ids.map((id) => ({ id, name: id })), nodes: Object.assign({}, ...ids.map((id) => docs(id, id, 1))) });
+    await discoverKnowledgeBases(app);
+    const meta = { by: "kb-scout", runId: null };
+    const base = { priority: "normal" as const, level: "normal" as const, reason: "按原件内容判断" };
+    expect((await proposeMapping(app, ids[0], { ...base, action: "map", space: "personal" }, meta)).applied).toBe(true);
+    expect((await proposeMapping(app, ids[1], { ...base, action: "ignore" }, meta)).applied).toBe(true);
+    expect((await proposeMapping(app, ids[2], { ...base, action: "create", newSpace: { id: "new-topic", name: "新领域", kind: "topic", description: "单独整理" } }, meta)).applied).toBe(false);
+    expect((await proposeMapping(app, ids[3], { ...base, action: "later" }, meta)).applied).toBe(false);
+    expect(findSpace(app, "new-topic")).toBeNull();
+    expect(getKb(app, ids[3])?.status).toBe("later");
+    notifyProposals(app, ids.map((id) => getKb(app, id)!), null);
+    expect(listNotifications(app, 1)[0]).toMatchObject({ title: "飞书知识库：已处理 2 个，1 个等你确认", urgency: "normal" });
+    expect(listNotifications(app, 1)[0].body).toMatch(/已应用.*kb-map[\s\S]*待确认.*kb-create/);
+    for (const id of ids.slice(0, 2)) {
+      expect(getKb(app, id)?.decidedBy).toBe("agent");
+      await kbAction(app, id, { action: "reset" });
+      expect(getKb(app, id)).toMatchObject({ status: "new", proposal: null });
+    }
+    app.db.close();
+  });
+
   it("lets only the scout propose, for the knowledge bases of its run and the spaces it may write", async () => {
     const app = testApp();
+    app.config.lark.knowledge.autoApply = "off";
     createSpace(app, { id: "project-a", name: "项目 A", kind: "project" });
     createSpace(app, { id: "taken", name: "别的空间" });
     fakeLark({ kbs: [{ id: "kb-a", name: "退款组手册" }, { id: "kb-b", name: "行政通知" }], nodes: docs("a", "kb-a", 1) });
@@ -213,7 +245,7 @@ describe("feishu knowledge bases: proposals and decisions", () => {
 
   it("with autoApply, a proposal takes effect at once and one notification lists what was done", async () => {
     const app = testApp();
-    app.config.lark.knowledge.autoApply = true;
+    app.config.lark.knowledge.autoApply = "all";
     fakeLark({ kbs: [{ id: "kb-a", name: "退款组手册" }, { id: "kb-c", name: "退款排查案例" }], nodes: { ...docs("a", "kb-a", 1), ...docs("c", "kb-c", 1) } });
     await discoverKnowledgeBases(app);
     const ctx = scout(app, ["kb-a", "kb-c"]);

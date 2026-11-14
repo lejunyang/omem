@@ -1,6 +1,7 @@
 import { releaseLater } from "../core/notify.ts";
 import { labelOutcomes, outcomeLine, outcomeStats } from "../core/notify-outcome.ts";
 import { canWrite, OWNER, scopeFor } from "../core/users.ts";
+import { noteReviewCandidates, NOTE_LABELS } from "../sources/attention.ts";
 import { can } from "../auth/permissions.ts";
 import { sourceRoute, moveSource, prepareArchive } from "../sources/archive.ts";
 import { archiveEvidenceFor, noteJudged, previousJudgement, type Evidence } from "../sources/homing.ts";
@@ -656,6 +657,30 @@ registerHandler("ingest-shadow", async (ctx) => {
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   const n = one<{ n: number }>(ctx.app.db, "select count(*) n from shadow_writes where run_id = ?", ctx.run.id)?.n ?? 0;
   return { quiet: true, proposals: n, summary: r.text.trim() };
+});
+
+// ------------------------------------------------------------- source note review
+
+export function scheduleNoteReview(app: App) {
+  if (!app.config.notes.review.enabled) return [];
+  if (one(app.db, "select 1 from runs where kind = 'note-review' and status in ('queued','running') limit 1")) return [];
+  const spaces = all<{ space_id: string; n: number }>(app.db, `select s.space_id, count(*) n from source_notes n join sources s on s.id = n.source_id
+    where n.by != 'owner' and n.status = 'pending' and n.reviewed_at is null and n.stale_at is null and s.deleted_at is null group by s.space_id`);
+  return spaces.map((s) => createRun(app, { kind: "note-review", spaceId: s.space_id, title: `复核原件标注（${s.n}）` }));
+}
+
+registerHandler("note-review", async (ctx) => {
+  const app = ctx.app;
+  const spaceId = ctx.run.spaceId!;
+  const notes = noteReviewCandidates(app, spaceId, app.config.notes.review.batch);
+  if (!notes.length) return { quiet: true, summary: "没有待复核的原件标注" };
+  const task = [`空间 ${spaceId} 待复核的 ${notes.length} 条原件标注：`, ...notes.map((n) =>
+    `## 标注 ${n.id} · ${NOTE_LABELS[n.kind]}\n原件：${n.title}（${n.sourceId}）\n行号：${n.lineStart === null ? "整份" : `L${n.lineStart}-L${n.lineEnd ?? n.lineStart}`}\n原文：${n.passage}\n标注：${n.note}\nref：${n.ref ?? "（无）"}`)].join("\n\n");
+  const r = await runRole(app, { role: "note-reviewer", spaceId, spaces: [spaceId], ownAI: true, task, runId: ctx.run.id,
+    signal: ctx.signal, onEvent: (e) => ctx.event(e.type, e) });
+  run(app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
+  // An omitted verdict stays eligible for a later batch.
+  return { reviewed: notes.filter((n) => one(app.db, "select 1 from source_notes where id = ? and reviewed_at is not null", n.id)).length, summary: r.text.trim() };
 });
 
 // ------------------------------------------------------------- memory review

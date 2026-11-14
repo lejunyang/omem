@@ -12,24 +12,29 @@ import VirtualList from "./VirtualList.vue";
  * not-to-search passages then leave search); reject removes its effect and the agent cannot add it again.
  * Notes whose passage is gone after a re-read are listed too.
  */
-type Note = { id: number; sourceId: string; title: string; lineStart: number | null; lineEnd: number | null; kind: string; note: string; ref: string | null; quote: string | null; by: string; status: string; staleAt: string | null; hits: number };
+type Note = { id: number; sourceId: string; title: string; lineStart: number | null; lineEnd: number | null; kind: string; note: string; ref: string | null; quote: string | null; by: string; status: string; staleAt: string | null; reviewNote: string | null; reviewedBy: string | null; hits: number };
 type LevelItem = { key: string; title: string; path: string; level: string; reason: string; sources: number; at: string };
 type Item = { type: "note"; note: Note } | { type: "level"; level: LevelItem };
 
 const props = defineProps<{ space: string }>();
 const emit = defineEmits<{ count: [n: number]; changed: [] }>();
-const data = ref<{ notes: Note[]; levels: LevelItem[] } | null>(null);
+const data = ref<{ notes: Note[]; levels: LevelItem[]; counts: { pending: number; reviewed: number; rejected: number }; rejected: Note[] } | null>(null);
 const busy = ref(new Set<string>());
 
+let loadSeq = 0;
 async function load() {
+  const seq = ++loadSeq;
+  const space = props.space;
   try {
-    data.value = await get(`/api/sources/review?space=${encodeURIComponent(props.space)}`);
+    const result = await get<NonNullable<typeof data.value>>(`/api/sources/review?space=${encodeURIComponent(space)}`);
+    if (seq !== loadSeq || space !== props.space) return;
+    data.value = result;
     emit("count", data.value!.notes.length + data.value!.levels.length);
   } catch (e) {
-    toast((e as Error).message, "error");
+    if (seq === loadSeq && space === props.space) toast((e as Error).message, "error");
   }
 }
-watch(() => props.space, load, { immediate: true });
+watch(() => props.space, () => { data.value = null; void load(); }, { immediate: true });
 defineExpose({ load });
 
 const items = computed<Item[]>(() => [...(data.value?.levels ?? []).map((l) => ({ type: "level" as const, level: l })), ...(data.value?.notes ?? []).map((n) => ({ type: "note" as const, note: n }))]);
@@ -59,7 +64,9 @@ async function decide(i: Item, decision: "confirm" | "reject") {
 
 <template>
   <Skeleton v-if="!data" :rows="6" />
-  <div v-else-if="!items.length" class="empty small"><p>没有待复核的判断。Agent 新写的有误、过时、不检索标注和目录定级会列在这里。</p></div>
+  <div v-else class="stack">
+  <p class="muted small">待模型复核 {{ data.counts.pending }} 条 · 复核保留 {{ data.counts.reviewed }} 条 · 复核撤回 {{ data.counts.rejected }} 条</p>
+  <div v-if="!items.length" class="empty small"><p>没有要你确认的判断。复核拿不准的标注、原文已改动的标注和 Agent 的目录定级会列在这里。</p></div>
   <VirtualList v-else :items="items" :item-key="keyOf" :estimate="96">
     <template #default="{ item: i }">
       <div class="rv">
@@ -76,6 +83,7 @@ async function decide(i: Item, decision: "confirm" | "reject") {
           </div>
           <router-link :to="linkOf(i.note)" class="ttl ellipsis" :title="i.note.title">{{ i.note.title }} · {{ lines(i.note) }}</router-link>
           <div v-if="i.note.quote" class="quote small">“{{ i.note.quote }}”</div>
+          <div v-if="i.note.reviewNote" class="small why">复核：{{ i.note.reviewNote }}<span class="muted"> · {{ i.note.reviewedBy }}</span></div>
           <div class="small why">{{ i.note.note }}<span v-if="i.note.ref" class="muted"> · 以 {{ i.note.ref }} 为准</span></div>
         </template>
         <div class="row gap acts">
@@ -85,6 +93,20 @@ async function decide(i: Item, decision: "confirm" | "reject") {
       </div>
     </template>
   </VirtualList>
+  <details>
+    <summary>复核撤回的（近 14 天） · {{ data.rejected.length }}</summary>
+    <VirtualList :items="data.rejected" :item-key="(n: Note) => n.id" :estimate="96">
+      <template #default="{ item: n }">
+        <div class="rv">
+          <router-link :to="linkOf(n)" class="ttl">{{ n.title }} · {{ lines(n) }} · {{ NOTE_LABEL[n.kind] }}</router-link>
+          <div class="small why">{{ n.note }}</div>
+          <div class="muted small why">{{ n.reviewNote }} · {{ n.reviewedBy }}</div>
+          <button class="btn ghost sm" :disabled="busy.has(`n${n.id}`)" @click="decide({ type: 'note', note: n }, 'confirm')">恢复</button>
+        </div>
+      </template>
+    </VirtualList>
+  </details>
+  </div>
 </template>
 
 <style scoped>

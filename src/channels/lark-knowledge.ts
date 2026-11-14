@@ -365,7 +365,7 @@ function scoutTask(app: App, kbs: KnowledgeBase[]) {
     `本人的方向：${direction || "（本人还没写方向：只把明显属于已有空间、或明显和本人的工作相关的知识库提出来，其余 later）"}`,
     `已有空间（代码仓库空间不列，不往里放）：\n${spaces.join("\n") || "（只有个人空间）"}`,
     `待判断的知识库（${kbs.length}）：\n\n${kbs.map(kbLine).join("\n\n")}`,
-    `对每个知识库调用一次 propose_knowledge_mapping（kb 填上面的 id）。${app.config.lark.knowledge?.autoApply ? "本人开了自动应用：建议会直接生效。" : "建议要等本人确认。"}`,
+    `对每个知识库调用一次 propose_knowledge_mapping（kb 填上面的 id）。${app.config.lark.knowledge.autoApply === "all" ? "归入、不读、新建空间的建议都会直接生效；先放着只记录判断。" : app.config.lark.knowledge.autoApply === "safe" ? "归入已有空间和不读的建议直接生效；新建空间等本人确认，先放着只记录判断。" : "归入、不读、新建空间的建议都等本人确认；先放着只记录判断。"}`,
   ].join("\n\n");
 }
 
@@ -396,12 +396,14 @@ const describeProposal = (app: App, kb: KnowledgeBase, p: KbProposal | null = kb
 export function notifyProposals(app: App, made: KnowledgeBase[], runId: string | null) {
   const shown = made.filter((k) => k.proposal && k.proposal.action !== "later");
   if (!shown.length) return;
-  const lines = shown.slice(0, 15).map((k) => `- 《${k.name}》：${describeProposal(app, k)}。${k.proposal!.reason}`);
+  const lines = shown.slice(0, 15).map((k) => `- ${k.status === "proposed" ? "待确认" : "已应用"}：《${k.name}》：${describeProposal(app, k)}。${k.proposal!.reason}`);
   if (shown.length > 15) lines.push(`- 另有 ${shown.length - 15} 个`);
-  const applied = shown.every((k) => k.status !== "proposed");
+  const appliedCount = shown.filter((k) => k.status !== "proposed").length;
+  const waiting = shown.length - appliedCount;
+  const applied = waiting === 0;
   notify(app, {
-    title: applied ? `飞书知识库：按建议处理了 ${shown.length} 个` : `飞书知识库：${shown.length} 个有归属建议等你确认`,
-    body: `${lines.join("\n")}\n\n${applied ? "已归入的每天夜里读一些；要改在原件 → 知识库。" : "在原件 → 知识库确认、改目标或忽略；确认后每天夜里读一些。"}`,
+    title: applied ? `飞书知识库：按建议处理了 ${shown.length} 个` : appliedCount ? `飞书知识库：已处理 ${appliedCount} 个，${waiting} 个等你确认` : `飞书知识库：${waiting} 个有归属建议等你确认`,
+    body: `${lines.join("\n")}\n\n${applied ? "已归入的每天夜里读一些；要改在原件 → 知识库。" : appliedCount ? "已归入的每天夜里读一些；待确认的在原件 → 知识库确认、改目标或忽略，已应用的也能改回。" : "在原件 → 知识库确认、改目标或忽略；确认后每天夜里读一些。"}`,
     link: "#/sources/kb",
     runId,
     urgency: applied ? "silent" : "normal",
@@ -418,7 +420,7 @@ export async function proposeMapping(app: App, id: string, p: Pick<KbProposal, "
   if ((kb.status === "mapped" || kb.status === "ignored") && kb.decidedBy === "owner") throw new HttpError(409, `本人已经定过（${STATUS_LABELS[kb.status]}），不要再提`);
   const proposal: KbProposal = { ...p, by: meta.by, runId: meta.runId, at: now(), direction: directionHash(app) };
   run(app.db, "update wiki_spaces set proposal = ?, status = ?, updated_at = ? where id = ?", JSON.stringify(proposal), p.action === "later" ? "later" : "proposed", now(), id);
-  if (app.config.lark.knowledge?.autoApply && p.action !== "later") {
+  if (p.action !== "later" && (app.config.lark.knowledge.autoApply === "all" || (app.config.lark.knowledge.autoApply === "safe" && (p.action === "map" || p.action === "ignore")))) {
     const r = await acceptProposal(app, id, "agent");
     return { applied: true, kb: r.kb, crawl: r.crawl, error: r.error };
   }

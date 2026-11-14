@@ -223,6 +223,10 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| Agent 原件标注独立复核：每小时 35 分，一空间一批，排序判断优先，其次搜索影响、时间；保留八成、撤回归零、拿不准交本人；近 14 天撤回可恢复 | 已实现；`test/note-review.test.ts` | `attention.ts`、`jobs.ts`、`roles/note-reviewer.md`、`review_notes` |
+| 知识库建议三档生效：新配置默认 safe，归入和忽略直接生效、新建仍确认；all 全部生效、off 全部确认，旧布尔兼容；通知分列应用与待确认，保留撤销 | 已实现；`test/lark-knowledge.test.ts` | `src/channels/lark-knowledge.ts`、原件 → 知识库 |
+| Wiki 问题积压：阅读次数、候选全局预算、无阅读旧问题过期、筛选与重开 | 已实现：每天 05:40 先让长期没人读的页面上的旧问题过期，再按页面阅读量取一批、每个空间排一次调查（`resolveNightly`）；网页可筛选过期并重开 | `src/wiki/questions.ts`、`src/wiki/verify.ts`、`test/wiki-question-backlog.test.ts` |
+
 | 每晚抽检（[quality.md](quality.md)）：05:10 抽检 Agent 自主写入的页面；核对角色交事实 / 写法问题，事实问题交回正常写作；按运行类型统计、低于门槛加严；网页、Wiki 记录、设置、只读 peer 摘要 | 已实现；ACP 端到端、HTTP 与工具层见 `test/quality-audit-run.test.ts`；真实模型效果待验 | `src/quality/audit.ts`、`/api/quality`、`#/quality` |
 | 向量紧凑存储：`chunks.embedding` 存 int8 量化后的向量（4 字节标记 + float32 比例 + 每维 1 字节），是内存索引本来就用的量化结果，占原来 float32 的四分之一；旧的 float32 行照常能读，服务运行时每秒一小批在后台改存，不记变更、不影响已载入的索引和快照文件；`omem db` 看进度，`omem db vacuum`（停服务后）把空出来的页还给磁盘。没有把向量拆成独立文件：分块删除、换空间靠主库里的触发器记变更，跨文件做不到，分块 id 又会被复用，拆开后漏删一次就会把旧向量挂到新分块上 | 已实现；2026-11-14，`test/vectors.test.ts`（两种格式检索结果一致、转换不记变更、快照仍有效）；大库上的转换耗时和 vacuum 待真机 | `src/search/vector-codec.ts`、`vectors.ts`（`packStoredVectors`）、`embeddings.ts`、`omem db` |
 | 有人找你 · 学本人怎么回（docs/v2/mentions.md）：每条进到流程的消息记一个样本（对方问的、助手拟的、本人照发 / 改后发 / 没发和原因、本人之后自己回的话或没回）；分诊材料带“本人以往回不回”，处理任务带“本人以往怎么回”（同一个人、同一会话的例子在前）；草稿卡片的“不发”带原因；远长于本人平时的回复拒一次；设置页显示近 60 天的统计 | 已实现；2026-11-14，`test/reply-learn.test.ts`；真实卡片回调和草稿通过率待看 | `src/mentions/reply-learn.ts`、`mentions.ts`、`triage.ts`、`src/channels/mention-reply.ts`、`lark-mentions.ts` |

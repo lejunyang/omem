@@ -2,6 +2,8 @@
 import { computed, ref, watch } from "vue";
 import { get, post } from "../api";
 import { toast } from "../store";
+import UiSegmented from "./UiSegmented.vue";
+import VirtualList from "./VirtualList.vue";
 import Icon from "./Icon.vue";
 import Skeleton from "./Skeleton.vue";
 
@@ -14,7 +16,8 @@ export type WikiQuestion = {
   why: string;
   refs: string[];
   source: string;
-  status: "open" | "needs-owner" | "asked" | "answered" | "resolved" | "dropped";
+  reads30: number;
+  status: "lapsed" | "open" | "needs-owner" | "asked" | "answered" | "resolved" | "dropped";
   importance: number;
   note: string;
   answer: string | null;
@@ -27,21 +30,29 @@ const items = ref<WikiQuestion[]>([]);
 const migration = ref<Migration>(null);
 const resolving = ref<string | null>(null);
 const loading = ref(true);
+const filter = ref<"unsettled" | "lapsed">("unsettled");
+let loadSeq = 0;
 const drafts = ref<Record<string, string>>({});
-const STATUS: Record<WikiQuestion["status"], string> = { open: "还没人查", "needs-owner": "要你定", asked: "已经问你", answered: "正在写回页面", resolved: "已解决", dropped: "不用管" };
+const STATUS: Record<WikiQuestion["status"], string> = { open: "还没人查", "needs-owner": "要你定", asked: "已经问你", answered: "正在写回页面", resolved: "已解决", dropped: "不用管", lapsed: "已过期" };
 
 async function load() {
+  const seq = ++loadSeq;
+  const space = props.space, status = filter.value;
   loading.value = true;
+  items.value = [];
   try {
-    const r = await get<{ questions: WikiQuestion[]; migration: Migration; resolving: string | null }>(`/api/wiki/${props.space}/questions`);
+    const r = await get<{ questions: WikiQuestion[]; migration: Migration; resolving: string | null }>(`/api/wiki/${space}/questions?status=${status}`);
+    if (seq !== loadSeq || space !== props.space || status !== filter.value) return;
     items.value = r.questions;
     migration.value = r.migration;
     resolving.value = r.resolving;
+  } catch (e) {
+    if (seq === loadSeq) toast((e as Error).message, "error");
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
 }
-watch(() => props.space, load, { immediate: true });
+watch([() => props.space, filter], load, { immediate: true });
 
 const groups = computed(() => {
   const by = new Map<string, WikiQuestion[]>();
@@ -65,6 +76,10 @@ async function drop(q: WikiQuestion) {
   await post(`/api/wiki/${props.space}/questions/${q.id}/drop`, {});
   await load();
 }
+async function reopen(q: WikiQuestion) {
+  await post(`/api/wiki/${props.space}/questions/${q.id}/reopen`, {});
+  await load();
+}
 async function resolve() {
   const r = await post<{ runId: string | null; questions: number; already?: boolean }>(`/api/wiki/${props.space}/questions/resolve`, {});
   toast(r.already ? "已经有一次在查了" : r.runId ? `让助手先查 ${r.questions} 个问题` : "没有还没人查的问题");
@@ -85,7 +100,8 @@ async function recheck() {
         <span class="spacer" />
         <button class="btn ghost sm icon" aria-label="关闭" @click="emit('close')"><Icon name="x" /></button>
       </header>
-      <div class="row wrap actions">
+      <UiSegmented v-model="filter" aria-label="问题状态" :options="[{ value: 'unsettled', label: '未决问题' }, { value: 'lapsed', label: '已过期' }]" />
+      <div v-if="filter === 'unsettled'" class="row wrap actions">
         <span class="small">要你定 {{ counts.owner }} 个 · 还没人查 {{ counts.open }} 个</span>
         <span class="spacer" />
         <button class="btn ghost sm" :disabled="!counts.open || !!resolving" @click="resolve"><Icon name="search" :size="14" />{{ resolving ? "助手正在查" : "让助手先查一遍（最多 20 个）" }}</button>
@@ -97,11 +113,13 @@ async function recheck() {
       <div v-else class="groups">
         <section v-for="g in groups" :key="g.page" class="group">
           <a href="#" class="ptitle" @click.prevent="emit('open', g.page)">{{ g.title }}</a>
-          <div v-for="q in g.list" :key="q.id" class="q">
+          <VirtualList :items="g.list" :item-key="(q: WikiQuestion) => q.id" :estimate="120"><template #default="{ item: q }"><div class="q">
             <div class="row top">
               <span class="badge" :class="q.status">{{ STATUS[q.status] }}</span>
               <span class="text">{{ q.question }}</span>
             </div>
+            <div class="muted small">这页近 30 天被读到 {{ q.reads30 }} 次</div>
+            <button v-if="q.status === 'lapsed'" class="btn ghost sm" @click="reopen(q)">重新打开</button>
             <div v-if="q.why" class="muted small">为什么拿不准：{{ q.why }}</div>
             <div v-if="q.note" class="muted small">{{ q.note }}</div>
             <div v-if="q.refs.length" class="muted small refs">{{ q.refs.join(" ") }}</div>
@@ -113,7 +131,7 @@ async function recheck() {
                 <button class="btn primary sm" :disabled="!drafts[q.id]?.trim()" @click="answer(q)">补进页面</button>
               </div>
             </div>
-          </div>
+          </div></template></VirtualList>
         </section>
       </div>
     </div>

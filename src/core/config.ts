@@ -69,6 +69,7 @@ export const roleNames = [
   "distiller",
   "summarizer",
   "memory-reviewer",
+  "note-reviewer",
   "memory-organizer",
   "item-keeper",
   "coach",
@@ -98,7 +99,7 @@ export type RoleName = (typeof roleNames)[number];
  */
 export const upkeepRoles: ReadonlySet<string> = new Set<RoleName>([
   "ingest", "archivist", "archive-rule-writer", "wiki-planner", "wiki-writer", "wiki-linter", "wiki-organizer", "wiki-checker",
-  "dreamer", "curator", "triager", "distiller", "summarizer", "memory-reviewer", "memory-organizer", "item-keeper", "coach",
+  "dreamer", "curator", "triager", "distiller", "summarizer", "memory-reviewer", "note-reviewer", "memory-organizer", "item-keeper", "coach",
   "replay-judge", "kb-scout", "req-splitter", "tutor", "work-state",
 ]);
 
@@ -448,6 +449,12 @@ export const configSchema = z.object({
    */
   backups: z.array(z.object({ peer: z.string().min(1), to: z.string().min(1), everyHours: z.number().int().min(1).max(720).default(12), /** Once a day from this time on (HH:mm, the configured timezone) instead of every `everyHours`. */ at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(), parts: z.array(z.enum(["library", "files", "repos", "runs"])).default(["library", "files", "repos"]) })).default([]),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
+  wiki: z.object({
+    questions: z.object({ nightly: z.number().int().min(0).default(20), expireDays: z.number().int().min(1).default(45) }).default({ nightly: 20, expireDays: 45 }),
+  }).default({ questions: { nightly: 20, expireDays: 45 } }),
+  notes: z.object({
+    review: z.object({ enabled: z.boolean().default(true), batch: z.number().int().min(1).max(100).default(20) }).default({ enabled: true, batch: 20 }),
+  }).default({ review: { enabled: true, batch: 20 } }),
   memory: z
     .object({
       /**
@@ -804,18 +811,18 @@ export const configSchema = z.object({
        * Knowledge bases the owner can see (src/channels/lark-knowledge.ts, read-only): discovered weekly,
        * sorted into spaces by the kb-scout role along `direction` (the owner's words), and read a little
        * every night: `dailyDocs` docs in all, shared by the mapped ones by priority. `autoApply`: the
-       * scout's proposals take effect without the owner's OK (one notification says what was done).
+       * scout's map/ignore proposals take effect in safe mode, creates too in all; off waits for the owner.
        * `origin`: host of the doc links (e.g. https://tenant.larkoffice.com); by default the one most
        * captured docs use.
        */
       knowledge: z
         .object({
           direction: z.string().max(4000).default(""),
-          autoApply: z.boolean().default(false),
+          autoApply: z.preprocess((v) => v === true ? "all" : v === false ? "off" : v, z.enum(["off", "safe", "all"]).default("safe")),
           dailyDocs: z.number().int().min(0).max(2000).default(30),
           origin: z.string().url().optional(),
         })
-        .default({ direction: "", autoApply: false, dailyDocs: 30 }),
+        .default({ direction: "", autoApply: "safe", dailyDocs: 30 }),
     })
     .default({
       enabled: false,
@@ -853,7 +860,7 @@ export const configSchema = z.object({
       guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest", fullAccess: false },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30, signedVia: "lark-cli" },
       invite: { botApproval: false },
-      knowledge: { direction: "", autoApply: false, dailyDocs: 30 },
+      knowledge: { direction: "", autoApply: "safe", dailyDocs: 30 },
     }),
   telegram: z
     .object({

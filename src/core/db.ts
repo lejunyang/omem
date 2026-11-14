@@ -1839,6 +1839,10 @@ export const migrations: readonly string[] = [
      and json_extract(context, '$.replacedBy') is null and json_extract(context, '$.bundle') is null;
    create index notifications_user_at on notifications(user_id, at);
    create index item_events_item_at on item_events(item_id, at);`,
+  // Source notes are independently reviewed before only the uncertain ones reach the owner.
+  `alter table source_notes add column reviewed_at text;
+   alter table source_notes add column reviewed_by text;
+   alter table source_notes add column review_note text;`,
 ];
 
 export type Db = DatabaseSync;

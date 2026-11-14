@@ -63,14 +63,22 @@ const navOpen = ref(false);
 const version = ref<{ hash: string; diff: string } | null>(null);
 // Open questions of the space's pages (writers only: readers get a 403 and see nothing).
 const questionCount = ref(0);
+const lapsedCount = ref(0);
 const questionsOpen = ref(route.query.questions === "1");
 watch(() => route.query.questions, (v) => v === "1" && (questionsOpen.value = true));
+let questionLoad = 0;
 async function loadQuestionCount() {
+  const seq = ++questionLoad;
+  const selected = space.value;
   try {
-    const r = await get<{ counts: Record<string, number> }>(`/api/wiki/${space.value}/questions`);
+    const r = await get<{ counts: Record<string, number>; lapsed: number }>(`/api/wiki/${selected}/questions`);
+    if (seq !== questionLoad || selected !== space.value) return;
     questionCount.value = Object.values(r.counts).reduce((a, b) => a + b, 0);
+    lapsedCount.value = r.lapsed;
   } catch {
+    if (seq !== questionLoad || selected !== space.value) return;
     questionCount.value = 0;
+    lapsedCount.value = 0;
   }
 }
 watch(space, loadQuestionCount, { immediate: true });
@@ -308,7 +316,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         </div>
         <input v-model="filter" class="input filter" placeholder="筛选页面" aria-label="筛选页面" />
         <button v-if="stalePageList.length" class="nav-warn" type="button" @click="toNotice"><Icon name="alert" :size="13" />{{ stalePageList.length }} 页的原件已变化</button>
-        <button v-if="questionCount" class="nav-warn" type="button" title="写作时拿不准、没写进页面的点" @click="questionsOpen = true"><Icon name="chat" :size="13" />{{ questionCount }} 个未决问题</button>
+        <button v-if="questionCount || lapsedCount" class="nav-warn" type="button" title="写作时拿不准、没写进页面的点" @click="questionsOpen = true"><Icon name="chat" :size="13" />{{ questionCount }} 个未决问题<span v-if="lapsedCount"> · {{ lapsedCount }} 个已过期</span></button>
       </div>
       <div class="tree">
         <router-link v-if="hasHome" :to="`/wiki/${space}`" class="home" :class="{ on: currentSlug === 'index' }" @click="navOpen = false"><Icon name="home" :size="14" />首页</router-link>

@@ -1,5 +1,5 @@
 import "./agents/jobs.ts";
-import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, sendItemDigests, sweepItems } from "./agents/jobs.ts";
+import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, scheduleNoteReview, sendItemDigests, sweepItems } from "./agents/jobs.ts";
 import { addRunEvent, createRun, listRuns, startWorker } from "./agents/runs.ts";
 import { startSessionCleanup } from "./agents/session-cleanup.ts";
 import { sweepWorktreeSpaces } from "./agents/worktree-index.ts";
@@ -26,6 +26,8 @@ registerScheduleKind("dream", (app) => createRun(app, { kind: "dream", spaceId: 
 registerScheduleKind("repo-sync", (app) => void import("./sources/code-index.ts").then((m) => m.repoSyncTick(app)).catch((e) => console.warn(`[omem] 同步代码仓库失败：${(e as Error).message}`)));
 
 registerScheduleKind("memory-review", (app) => scheduleMemoryReview(app));
+registerScheduleKind("note-review", (app) => scheduleNoteReview(app));
+registerScheduleKind("wiki-resolve", (app) => void import("./wiki/verify.ts").then((m) => m.resolveNightly(app)).catch((e) => console.warn(`[omem] 夜间处理 Wiki 未决问题失败：${(e as Error).message}`)));
 registerScheduleKind("digest", (app) => void import("./agents/digest.ts").then((m) => m.tickDigestJobs(app)));
 registerScheduleKind("memory-organize", (app) => scheduleMemoryOrganize(app));
 registerScheduleKind("item-sweep", (app) => {

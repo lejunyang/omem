@@ -142,6 +142,28 @@ describe("open questions", () => {
   });
 });
 
+it("filters lapsed questions, exposes page reads and reopens only a lapsed question in the requested space", async () => {
+  const id = addQuestions(app, "biz", "idle-page", [{ question: "原口径还需要追吗？" }], { source: "writer" })[0];
+  run(app.db, "update wiki_questions set status = 'lapsed', note = '这页 45 天没有被读到，问题不再追' where id = ?", id);
+  run(app.db, "insert into page_reads(space_id,slug,day,n) values('biz','idle-page',?,3)", new Date().toISOString().slice(0, 10));
+  const server = await (await import("../src/server/http.ts")).startServer(app, { port: 0, quiet: true });
+  try {
+    const list = (await server.inject({ method: "GET", url: "/api/wiki/biz/questions" })).json();
+    expect(list.questions.some((q: { id: string }) => q.id === id)).toBe(false);
+    expect(list.lapsed).toBe(1);
+    expect(list.counts["idle-page"]).toBeUndefined();
+    const old = (await server.inject({ method: "GET", url: "/api/wiki/biz/questions?status=lapsed" })).json();
+    expect(old.questions).toHaveLength(1);
+    expect(old.questions[0]).toMatchObject({ id, reads30: 3 });
+    expect((await server.inject({ method: "POST", url: `/api/wiki/personal/questions/${id}/reopen`, payload: {} })).statusCode).toBe(404);
+    const opened = await server.inject({ method: "POST", url: `/api/wiki/biz/questions/${id}/reopen`, payload: {} });
+    expect(opened.json().status).toBe("open");
+    expect((await server.inject({ method: "POST", url: `/api/wiki/biz/questions/${id}/reopen`, payload: {} })).statusCode).toBe(404);
+  } finally {
+    await server.close();
+  }
+});
+
 describe("rechecking existing pages", () => {
   it("puts pages never checked through writing and checking, a bounded batch at a time, oldest first", async () => {
     const before = listRuns(app, { kind: "wiki-write", limit: 500 }).length;
