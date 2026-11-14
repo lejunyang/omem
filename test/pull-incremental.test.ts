@@ -14,6 +14,7 @@ import { remember } from "../src/memory/store.ts";
 import { importText } from "../src/sources/import.ts";
 import { getSource, upsertSource } from "../src/sources/store.ts";
 import { moveSource } from "../src/sources/archive.ts";
+import { mergeSources } from "../src/sources/duplicates.ts";
 
 /**
  * A pull's snapshot (core/pull-snapshot.ts): built table by table without the derived tables, and,
@@ -135,5 +136,35 @@ describe("the snapshot a pull takes", async () => {
     const whole = await fetchPeer(B, "server", { selection: { parts: [], strip: true } });
     try { mergeLibrary(B, whole); } finally { cleanupFetched(whole); }
     expect([place(rules.id), place(mine.id), place(meals)]).toEqual(["finance", "finance", "personal"]);
+  }, 60_000);
+
+  it("follows a copy the other side has merged into another source: what hung on it is not taken twice", async () => {
+    await new Promise((r) => setTimeout(r, 20));
+    // A second copy of the rules, read by a digest job; the laptop has both after a pull.
+    const copy = importText(A, "finance", { title: "报销制度（旧链接）", text: "# 报销制度\n\n差旅报销在出差结束后 45 天内提交。", kind: "doc" });
+    run(A.db, "insert into digest_jobs(id, space_id, mode, body, created_at, updated_at) values('dj1', 'finance', 'grade', '{}', '2026-01-01', '2026-01-01')");
+    run(A.db, "insert into digest_done(job_id, source_id, hash, at) values('dj1', ?, 'h', '2026-01-02')", copy.id);
+    let since = "";
+    const first = await fetchPeer(B, "server", { selection: { parts: [], strip: true } });
+    try {
+      since = readManifest(first.dbDir)!.takenAt!;
+      mergeLibrary(B, first);
+    } finally {
+      cleanupFetched(first);
+    }
+    expect(all<{ source_id: string }>(B.db, "select source_id from digest_done where job_id = 'dj1'")).toEqual([{ source_id: copy.id }]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mergeSources(A, copy.id, rules.id, "same-doc")).toBeTruthy();
+    expect(all<{ source_id: string }>(A.db, "select source_id from digest_done where job_id = 'dj1'")).toEqual([{ source_id: rules.id }]);
+    const fetched = await fetchPeer(B, "server", { selection: { parts: [], strip: true, since } });
+    try {
+      mergeLibrary(B, fetched);
+    } finally {
+      cleanupFetched(fetched);
+    }
+    // The one row, now on the kept source; the copy is an alias of it and gone from the listing.
+    expect(all<{ source_id: string }>(B.db, "select source_id from digest_done where job_id = 'dj1'")).toEqual([{ source_id: rules.id }]);
+    expect(one<{ source_id: string }>(B.db, "select source_id from source_aliases where alias_id = ?", copy.id)?.source_id).toBe(rules.id);
+    expect(one<{ deleted_at: string | null }>(B.db, "select deleted_at from sources where id = ?", copy.id)!.deleted_at).toBeTruthy();
   }, 60_000);
 });

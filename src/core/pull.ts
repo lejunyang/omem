@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { reindexMemory } from "../memory/store.ts";
 import { reindexReq } from "../items/requirements.ts";
 import { reindexSource } from "../sources/store.ts";
+import { refTables } from "../sources/duplicates.ts";
 import { syncWiki } from "../wiki/store.ts";
 import type { App } from "./app.ts";
 import { all, openDb, run, tx } from "./db.ts";
@@ -253,13 +254,31 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
         tally("sources").kept = Math.max(0, tally("sources").kept - moved);
         log(`${moved} 份原件跟着对方换了空间`);
       }
+      // Copies the other side has since merged into another source (sources/duplicates.ts): what hung
+      // on the dropped copy hangs on the kept one there, the rows themselves unchanged. The same is
+      // done to this side's rows first, or they would come in a second time under the kept copy and
+      // stay behind under the dropped one.
+      const merged = all<{ alias_id: string; source_id: string }>(db, "select x.alias_id, x.source_id from r.source_aliases x where not exists(select 1 from main.source_aliases l where l.alias_id = x.alias_id and l.source_id = x.source_id) and exists(select 1 from main.sources s where s.id = x.alias_id) and exists(select 1 from main.sources s where s.id = x.source_id)");
+      if (merged.length) {
+        const tables = refTables({ db });
+        for (const a of merged) {
+          for (const t of tables) {
+            run(db, `update or ignore ${t} set source_id = ? where source_id = ?`, a.source_id, a.alias_id);
+            run(db, `delete from ${t} where source_id = ?`, a.alias_id);
+          }
+          run(db, "update or ignore item_materials set ref = ? where kind = 'source' and ref = ?", a.source_id, a.alias_id);
+          run(db, "delete from source_routes where source_id = ?", a.alias_id);
+        }
+      }
       if (!opts.dryRun) copyArtifacts(db, join(dir, "runs"), app.runsDir);
       for (const t of pullTables) {
         const cols = columns(db, t.name).filter((c) => columns(db, t.name, "r").includes(c) && !t.local?.includes(c));
         const match = t.key.map((k) => `l.${k} is x.${k}`).join(" and ");
         const sourceCheck = cols.includes("source_id") ? " and (x.source_id is null or x.source_id in (select id from main.sources))" : "";
         const values = cols.map((c) => t.name === "digest_jobs" && c === "status" ? "case when x.status = 'active' then 'paused' else x.status end" : `x.${c}`);
-        const added = run(db, `insert into main.${t.name}(${cols.join(",")}) select ${values.join(",")} from r.${t.name} x where not exists(select 1 from main.${t.name} l where ${match})${sourceCheck}`).changes;
+        // A row this side already has under another key (the same `sync_key`) is not taken a second time.
+        const known = cols.includes("sync_key") ? ` and (x.sync_key = '' or not exists(select 1 from main.${t.name} k where k.sync_key = x.sync_key))` : "";
+        const added = run(db, `insert into main.${t.name}(${cols.join(",")}) select ${values.join(",")} from r.${t.name} x where not exists(select 1 from main.${t.name} l where ${match})${sourceCheck}${known}`).changes;
         let updated = 0;
         if (t.newer) {
           const stamp = (a: string) => t.newer!.replace(/\b(finished_at|started_at|created_at|updated_at|due_at|handled_at|sync_updated_at|checked_at|removed_at|resolved_at|decided_at|settled_at|at)\b/g, `${a}.$1`);

@@ -68,7 +68,7 @@ export function findDuplicateDocs(app: App, space?: string): DuplicatePair[] {
 
 const RANK: Record<string, number> = { rule: 0, agent: 1, owner: 2 };
 /** Tables whose rows point at a source by `source_id` and are moved to the kept copy (the index is dropped instead). */
-function refTables(app: App) {
+export function refTables(app: Pick<App, "db">) {
   const skip = new Set(["sources", "chunks", "symbols", "code_refs", "source_notes", "source_aliases", "source_routes"]);
   return all<{ name: string }>(app.db, "select m.name from sqlite_master m join pragma_table_info(m.name) p on p.name = 'source_id' where m.type = 'table'")
     .map((r) => r.name).filter((n) => !skip.has(n) && !n.includes("_fts"));
