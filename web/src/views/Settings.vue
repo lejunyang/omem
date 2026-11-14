@@ -1033,6 +1033,11 @@ async function saveEdit() {
         <UiCheckbox :model-value="config.agents.autoAdvance?.preCheck !== false" switch @change="savePreCheck">编码前检查：新交办开始编码前，先查改动会碰到什么、这里以前出过什么问题、改完要回归什么（角色“编码前检查”，在 Agent 页选模型）</UiCheckbox>
       </div>
       <div class="card pad stack">
+        <div class="section-title">回复发出前的检查</div>
+        <HelpText>回复里只有“我核对一下”“收到，我看看”，或只有“可能”“建议进一步确认”这类退路、没有结论和依据时，先不发，退回给 Agent 重写一次：要么给出结果和依据，要么说清缺哪一个信息，没有人在等的那一轮可以直接不说话。只拦这几种明显不是回答的样子，不判断回答对不对；它已经安排了之后回来（定了唤醒、交办了任务）时不拦。每次退回都记在那次运行里。</HelpText>
+        <UiCheckbox :model-value="config.replies?.check !== false" switch @change="(v) => saveConfig({ replies: { ...(config.replies ?? {}), check: v } }, v ? '已打开回复检查' : '已关闭回复检查')">空话和只有退路的回复退回重写一次</UiCheckbox>
+      </div>
+      <div class="card pad stack">
         <div class="section-title">过程消息</div>
         <p class="muted small">Agent 干活时飞书里能看到多少过程。过程都留在网页的运行页和工作会话里，这里只决定发不发到飞书。</p>
         <div class="field"><span>多 Agent 工作的话题里</span>

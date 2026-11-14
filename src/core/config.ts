@@ -452,6 +452,8 @@ export const configSchema = z.object({
   wiki: z.object({
     questions: z.object({ nightly: z.number().int().min(0).default(20), expireDays: z.number().int().min(1).default(45) }).default(() => ({ nightly: 20, expireDays: 45 })),
   }).default(() => ({ questions: { nightly: 20, expireDays: 45 } })),
+  /** A reply that says nothing (only an intent, an acknowledgement, a way out) goes back to the agent once before it is posted (agents/reply-check.ts). */
+  replies: z.object({ check: z.boolean().default(true) }).default(() => ({ check: true })),
   notes: z.object({
     review: z.object({ enabled: z.boolean().default(true), batch: z.number().int().min(1).max(100).default(20) }).default(() => ({ enabled: true, batch: 20 })),
   }).default(() => ({ review: { enabled: true, batch: 20 } })),

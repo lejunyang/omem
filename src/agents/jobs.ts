@@ -24,6 +24,7 @@ import { resolveRunProfile, runRole } from "./runner.ts";
 import { replyOf } from "./types.ts";
 import { quietReason } from "./quiet.ts";
 import { recheckAnswer } from "./awareness.ts";
+import { reviseHollow } from "./reply-check.ts";
 import { retireRecordedSession } from "./session-cleanup.ts";
 import { maybeSummarize, threadTurn } from "./sessions.ts";
 import { readAgentSpec } from "./specs.ts";
@@ -177,6 +178,8 @@ registerHandler("ask", async (ctx) => {
   }
   // Nobody waits on it and the owner spoke in its scope meanwhile: one more turn with their words first (awareness.ts).
   answer = await recheckAnswer(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner", prompt)).text);
+  // A reply that says nothing (only what it is about to do, a bare “收到”, only ways out): back to it once (reply-check.ts).
+  answer = await reviseHollow(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner", prompt)).text);
   // It said it has nothing to say (stay_quiet, only where nobody waits on the turn): nothing is posted.
   const quiet = quietReason(ctx.app, ctx.run.id);
   // Woken by a wake-up it set: nobody waits on it either.
@@ -381,6 +384,11 @@ async function runAgentTask(ctx: RunContext) {
       const again = await go(session, prompt).catch((e) => (session && !ctx.signal.aborted ? go(undefined, prompt) : Promise.reject(e)));
       return replyOf(again).trim();
     }, fullTask);
+    // And one that says nothing goes back once (reply-check.ts).
+    answer = await reviseHollow(ctx, answer, async (prompt) => {
+      const again = await go(session, prompt).catch((e) => (session && !ctx.signal.aborted ? go(undefined, prompt) : Promise.reject(e)));
+      return replyOf(again).trim();
+    });
   }
   // News of its own (a meeting's conclusion, which also carries the rule that brought the bot in):
   // posted in the chat itself, not in the topic the conversation last replied in (lark-bot.ts).
