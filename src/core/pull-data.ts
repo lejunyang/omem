@@ -166,6 +166,14 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
       }
       prepared.sources.push(s);
     }
+    // An incremental snapshot (pull-snapshot.ts `since`) leaves unchanged sources out and names them
+    // instead: their ids are mapped the same way, so what refers to them is still rewritten.
+    if (remote.prepare("select 1 from sqlite_master where name = 'pull_source_keys'").get())
+      for (const k of all<{ id: string; space_id: string; uri: string }>(remote, "select id, space_id, uri from pull_source_keys")) {
+        if (prepared.ids.has(k.id)) continue;
+        const have = lookup.get(k.space_id, k.uri) as Source | undefined;
+        prepared.ids.set(k.id, have?.id ?? k.id);
+      }
 
     // Line-bearing structured records need the mapping from the remote chat before its id changes.
     for (const name of ["lark_messages", "source_notes"])

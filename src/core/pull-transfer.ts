@@ -26,7 +26,8 @@ export const PULL_PART_LABELS: Record<PullPart, string> = {
   runs: "编码工作区与运行产物",
 };
 /** `strip`: leave out what a merge rebuilds itself (search chunks, code outline). */
-export type PullSelection = { parts: PullPart[]; strip?: boolean };
+/** `since` (with `strip`): only the sources and run events changed after this moment (the other side's clock); the puller has the rest from its last complete pull. */
+export type PullSelection = { parts: PullPart[]; strip?: boolean; since?: string };
 export type FetchOptions = { selection?: PullSelection; log?: (s: string) => void; dryRun?: boolean; haveFile?: (name: string) => boolean };
 
 export function parseParts(value: string | undefined | null): PullPart[] {
@@ -131,7 +132,7 @@ export async function snapshotStream(app: App, selection?: PullSelection & { sep
   const parts = selection?.parts ?? [...PULL_PARTS];
   try {
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(process.execPath, ["--no-warnings", "-e", snapshotScript, app.home, dir, JSON.stringify({ parts, strip: !!selection?.strip })], { stdio: ["ignore", "ignore", "pipe"] });
+      const child = spawn(process.execPath, ["--no-warnings", "-e", snapshotScript, app.home, dir, JSON.stringify({ parts, strip: !!selection?.strip, ...(selection?.since ? { since: selection.since } : {}) })], { stdio: ["ignore", "ignore", "pipe"] });
       let error = "";
       child.stderr.on("data", (b: Buffer) => { error = (error + b.toString()).slice(-1000); });
       child.on("error", reject);
@@ -178,7 +179,7 @@ export async function fetchPeer(app: App, peerId: string, opts: FetchOptions = {
     await pipeline(Readable.fromWeb(res.body as import("node:stream/web").ReadableStream), createWriteStream(to));
   };
   try {
-    const query = new URLSearchParams({ parts: selection.parts.join(","), strip: selection.strip ? "1" : "0", files: "separate" });
+    const query = new URLSearchParams({ parts: selection.parts.join(","), strip: selection.strip ? "1" : "0", files: "separate", ...(selection.since ? { since: selection.since } : {}) });
     await download(`/api/peer/snapshot?${query}`, join(dir, "snapshot.tar"));
     const fetched = unpack(dir, selection);
     if (!existsSync(join(dir, "pull-manifest.json"))) {

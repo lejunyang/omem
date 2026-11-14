@@ -2582,11 +2582,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/peer/snapshot", async (req, reply) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
     const { snapshotStream, parseParts } = await import("../core/pull.ts");
-    const q = req.query as { parts?: string; strip?: string; files?: string };
+    const q = req.query as { parts?: string; strip?: string; files?: string; since?: string };
     let parts;
     try { parts = parseParts(q.parts); } catch (e) { throw new HttpError(400, (e as Error).message); }
     reply.type("application/x-tar");
-    return reply.send(await snapshotStream(app, q.parts === undefined && q.strip === undefined && q.files === undefined ? undefined : { parts, strip: q.strip === "1", separateFiles: q.files === "separate" }));
+    return reply.send(await snapshotStream(app, q.parts === undefined && q.strip === undefined && q.files === undefined ? undefined : { parts, strip: q.strip === "1", ...(q.since && !Number.isNaN(Date.parse(q.since)) ? { since: q.since } : {}), separateFiles: q.files === "separate" }));
   });
   server.get("/api/peer/files", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");

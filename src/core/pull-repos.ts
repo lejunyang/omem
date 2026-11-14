@@ -4,7 +4,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { git } from "./git.ts";
 
 type Repository = { key: string; root: string; target: string | null; space: string | null; parent?: string | null; subpath?: string | null; origin?: string | null; branch: string | null; head: string | null; revision: string };
-export type PullManifest = { version: number; home: string; repositories: Repository[] };
+/** `takenAt`: the other side's clock when the snapshot was taken; `since`: the moment it only holds changes after (null: everything). */
+export type PullManifest = { version: number; home: string; repositories: Repository[]; takenAt?: string; since?: string | null };
 
 export function readManifest(dir: string): PullManifest | null {
   const file = join(dir, "pull-manifest.json");

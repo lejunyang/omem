@@ -30,7 +30,7 @@ omem peer backup <设备> --to <目录>
 omem --home <目录> serve --no-background --port 4400
 ```
 
-自动备份需要本机的 omem 服务在运行（`omem service start`，开机自启用 `omem service enable`）。它每次传的是整库快照；只想在本机日常使用对方的某个空间，用下面的“关注并同步”。
+自动备份需要本机的 omem 服务在运行（`omem service start`，开机自启用 `omem service enable`）。第一次拉取是完整的；之后每次只带上次成功以后变过的原件和运行事件，检索索引和向量不传、在本机重建。只想在本机日常使用对方的某个空间，用下面的“关注并同步”。
 
 ## 一个空间只有一个主
 

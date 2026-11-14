@@ -199,10 +199,12 @@ peer
   .option("-y, --yes", "不询问：没给 --only 时拉全部")
   .option("--overwrite", "替换本地业务数据、文件与托管仓库并备份（总是完整拉取）；本机配置、密钥、令牌和采集游标保留")
   .option("--dry-run", "只统计合并结果，不写入（附件只数缺多少）")
+  .option("--full", "拉完整的数据库；默认从同一台机器再次拉取时，原件和运行事件只取上次成功之后变过的")
   .action(async (host: string, o) => {
     if (o.overwrite && o.dryRun) throw new Error("--overwrite 不能与 --dry-run 同时使用；预览合并时只加 --dry-run。");
     if (o.overwrite && o.only !== undefined) throw new Error("--overwrite 总是完整拉取，不能和 --only 一起用。");
     const { fetchPeer, fetchRemote, mergeLibrary, overwriteLocal, cleanupFetched, parseParts, PULL_PARTS, PULL_PART_LABELS } = await import("./core/pull.ts");
+    const { readManifest: readPullManifest } = await import("./core/pull-repos.ts");
     const log = (s: string) => console.error(s);
     const local = open();
     const { findPeer, peerJson } = await import("./core/peers.ts");
@@ -235,8 +237,14 @@ peer
       if (o.overwrite) throw new Error(`${target.home} 的服务正在运行；先 omem service stop（或停掉 omem serve）再覆盖。`);
       log("这个数据目录的服务正在运行：合并照常进行，完成后建议 omem service restart。");
     }
+    // Since the last pull from this machine that got through (the other side's clock, an hour of slack):
+    // the sources and run events unchanged since then are already here.
+    const sinceKey = `pull_since:${host}`;
+    const last = !o.overwrite && !o.full ? (target.db.prepare("select value from kv where key = ?").get(sinceKey) as { value: string } | undefined)?.value : undefined;
+    const since = last && !Number.isNaN(Date.parse(last)) ? new Date(Date.parse(last) - 3600_000).toISOString() : undefined;
+    if (since) log(`上次从 ${host} 拉取成功是 ${new Date(last!).toLocaleString("zh-CN", { hour12: false })}：原件和运行事件只取那之后变过的（--full 拉完整的）。`);
     const fetchOpts = {
-      selection: { parts: o.overwrite ? [...PULL_PARTS] : parts, strip: !o.overwrite },
+      selection: { parts: o.overwrite ? [...PULL_PARTS] : parts, strip: !o.overwrite, ...(since ? { since } : {}) },
       log,
       dryRun: o.dryRun,
       haveFile: (n: string) => existsSync(join(target.filesDir, n)),
@@ -255,6 +263,9 @@ peer
       for (const [k, v] of Object.entries(r))
         if (k !== "wiki" && "added" in v && (v.added || v.updated)) console.log(`${(names[k] ?? k).padEnd(8)} 新增 ${v.added}${v.updated ? `，更新 ${v.updated}` : ""}${v.kept ? `，保留本地 ${v.kept}` : ""}`);
       if (r.wiki?.conflicts.length) console.log(`知识库冲突 ${r.wiki.conflicts.length} 处：保留本地版本，远端版本存为同名 .remote.md：\n  ${r.wiki.conflicts.join("\n  ")}`);
+      // What the next pull from here starts from: when this snapshot was taken, by the other side's clock.
+      const taken = readPullManifest(fetched.dbDir)?.takenAt;
+      if (!o.dryRun && taken) target.db.prepare("insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value").run(sinceKey, taken);
       console.log(o.dryRun ? "（预览，未写入）" : `合并完成（${target.home}）。新原件的向量会由服务在后台补齐。`);
     } finally {
       cleanupFetched(fetched);
