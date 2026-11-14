@@ -74,6 +74,17 @@ it("sends later ones at once when no times are set, and never holds the newer st
   expect(sentIn("C3").map((n) => n.title)).toEqual(["C3 直接发", "C3 待授权", "C3 已授权"]);
 });
 
+it("lets go at once when asked to (the owner just came out of a meeting), without using up the next time of day", () => {
+  const app = setup();
+  notify(app, { title: "E5 会上攒的", urgency: "later" });
+  expect(releaseLater(app, at(8, 0))).toBe(0);
+  expect(releaseLater(app, at(8, 5), { now: true })).toBe(1);
+  expect(sentIn("E5").map((n) => n.title)).toEqual(["E5 会上攒的"]);
+  // The 09:30 slot still works for what comes after.
+  notify(app, { title: "E5 之后的", urgency: "later" });
+  expect(releaseLater(app, at(9, 40))).toBe(1);
+});
+
 it("lets go of what was held once the times of day are cleared", () => {
   const app = setup();
   notify(app, { title: "D4 攒着的", urgency: "later" });

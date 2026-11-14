@@ -201,10 +201,11 @@ export function laterSlot(app: App, at = new Date()): string | null {
  * go out as one notification that lists them (the originals count as delivered with it). Read ones
  * and ones older than two days are let go without a push. Returns how many were released.
  */
-export function releaseLater(app: App, at = new Date()): number {
+export function releaseLater(app: App, at = new Date(), opts: { now?: boolean } = {}): number {
   const slot = laterSlot(app, at);
   // No times of day set any more: what was held before that goes out now instead of waiting for ever.
-  if (app.config.notify.laterTimes.length) {
+  // `now`: a moment the owner is free again (a meeting just ended) is as good as a set time of day.
+  if (app.config.notify.laterTimes.length && !opts.now) {
     if (!slot || one<{ value: string }>(app.db, "select value from kv where key = 'notify_later_slot'")?.value === slot) return 0;
     run(app.db, "insert into kv(key,value) values('notify_later_slot', ?) on conflict(key) do update set value = excluded.value", slot);
   }

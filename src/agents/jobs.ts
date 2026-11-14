@@ -1272,8 +1272,12 @@ registerHandler("brief", async (ctx) => {
   );
   const runs = all<{ id: string; kind: string; title: string; status: string }>(app.db, "select id, kind, title, status from runs where finished_at > ? and kind in ('code','wiki-plan','wiki-write','ingest') order by finished_at desc limit 30", since);
   run(app.db, "insert into kv(key,value) values('brief_at', ?) on conflict(key) do update set value = excluded.value", now());
+  // What the owner is working on these weeks (work-state.ts): the brief prepares the next step of each line where it can.
+  const { workStateBrief } = await import("./work-state.ts");
+  const lines = workStateBrief(app, 4000);
   const task = [
     `时间范围：${since} 至今`,
+    lines ? `本人近况（他这段时间在推进的线；按角色说明先替他备好今天用得上的）：\n${lines}` : "",
     `进行中的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? " 截止 " + i.dueAt : ""}${i.remindAt ? " 提醒 " + i.remindAt : ""}${i.waitingOn ? " 等待 " + i.waitingOn : ""}（更新于 ${localStamp(i.updatedAt, app.config.timezone)}）`).join("\n") || "（无）"}`,
     `期间新增或更新的材料（${fresh.length}）：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n") || "（无）"}`,
     `期间完成的后台运行：\n${runs.map((r) => `- ${r.id} [${r.kind}/${r.status}] ${r.title}`).join("\n") || "（无）"}`,
