@@ -49,7 +49,7 @@ export function registerFederationRoutes(server: FastifyInstance, app: App, who:
   // Copies of other devices' data kept here by themselves (peer-backup.ts).
   server.get("/api/peer/backups", async () => ({ backups: (await import("./peer-backup.ts")).listBackups(app) }));
   server.put("/api/peer/backups", async (req) => {
-    const b = parse(z.object({ peer: z.string().min(1).max(80), to: z.string().min(1).max(500), everyHours: z.number().int().min(1).max(720).optional(), parts: z.array(z.enum(["library", "files", "repos", "runs"])).optional() }), req.body);
+    const b = parse(z.object({ peer: z.string().min(1).max(80), to: z.string().min(1).max(500), everyHours: z.number().int().min(1).max(720).optional(), at: z.string().max(5).nullable().optional(), parts: z.array(z.enum(["library", "files", "repos", "runs"])).optional() }), req.body);
     const m = await import("./peer-backup.ts");
     m.setBackup(app, b);
     return { backups: m.listBackups(app) };

@@ -28,16 +28,16 @@ const viaOptions = computed(() => [{ value: "", label: "直接连接" }, ...(vie
 
 const fail = (e: unknown) => toast((e as Error).message, "error");
 // Copies of other devices' data kept here by themselves (src/core/peer-backup.ts).
-type Backup = { peer: string; to: string; everyHours: number; parts: string[]; okAt?: string; summary?: string; triedAt?: string; problem?: string; away?: boolean; running: boolean; paired: boolean };
+type Backup = { peer: string; to: string; everyHours: number; at?: string; parts: string[]; okAt?: string; summary?: string; triedAt?: string; problem?: string; away?: boolean; running: boolean; paired: boolean };
 const backups = ref<Backup[]>([]);
-const backupForm = reactive({ peer: "", to: "", everyHours: 12 });
+const backupForm = reactive({ peer: "", to: "", everyHours: 12, at: "" });
 const loadBackups = () => get<{ backups: Backup[] }>("/api/peer/backups").then((r) => (backups.value = r.backups)).catch(() => {});
 async function saveBackup() {
   if (!backupForm.peer || !backupForm.to.trim()) return toast("选设备，填备份到哪个目录", "error");
   try {
-    backups.value = (await put<{ backups: Backup[] }>("/api/peer/backups", { peer: backupForm.peer, to: backupForm.to.trim(), everyHours: Math.max(1, Math.round(Number(backupForm.everyHours) || 12)) })).backups;
+    backups.value = (await put<{ backups: Backup[] }>("/api/peer/backups", { peer: backupForm.peer, to: backupForm.to.trim(), everyHours: Math.max(1, Math.round(Number(backupForm.everyHours) || 12)), at: backupForm.at.trim() || null })).backups;
     toast("已设置，连得上时自动拉取", "ok");
-    Object.assign(backupForm, { peer: "", to: "", everyHours: 12 });
+    Object.assign(backupForm, { peer: "", to: "", everyHours: 12, at: "" });
   } catch (e) {
     fail(e);
   }
@@ -201,7 +201,7 @@ onMounted(() => load().catch(fail));
         <p class="muted small">把一台设备的数据留一份在本机的一个目录里：每 20 分钟看一眼到期的备份，那台设备连得上（直连或经别的设备）就拉取并合并进去，连不上下次再看。目录是一份普通的数据目录，<span class="mono">omem --home &lt;目录&gt; serve --no-background</span> 可以打开来看。</p>
         <div v-for="b in backups" :key="b.peer" class="stack tight backup">
           <div class="row wrap">
-            <strong>{{ b.peer }}</strong><span class="mono small">→ {{ b.to }}</span><span class="muted small">每 {{ b.everyHours }} 小时</span>
+            <strong>{{ b.peer }}</strong><span class="mono small">→ {{ b.to }}</span><span class="muted small">{{ b.at ? `每天 ${b.at}` : `每 ${b.everyHours} 小时` }}</span>
             <span v-if="b.running" class="badge warn">正在拉取</span>
             <span class="spacer" />
             <button class="btn ghost sm" :disabled="b.running" @click="runBackup(b)">现在拉一次</button>
@@ -214,6 +214,7 @@ onMounted(() => load().catch(fail));
           <UiSelect v-model="backupForm.peer" size="sm" width="150px" placeholder="选设备…" aria-label="备份哪台设备" :options="view.peers.map((p) => ({ value: p.id, label: p.id }))" />
           <input v-model="backupForm.to" class="input sm grow mono" placeholder="备份到本机的哪个目录（不是本机自己的数据目录）" aria-label="备份目录" />
           <label class="row muted small">每<input v-model.number="backupForm.everyHours" class="input sm hours" type="number" inputmode="numeric" min="1" max="720" aria-label="隔多少小时" />小时</label>
+          <label class="row muted small" title="填了就每天这个时间拉一次（到点连不上，之后连上了再补），不按间隔">或每天<input v-model="backupForm.at" class="input sm hours mono" placeholder="00:00" maxlength="5" aria-label="每天几点" /></label>
           <button class="btn sm" @click="saveBackup">设置</button>
         </div>
       </div>

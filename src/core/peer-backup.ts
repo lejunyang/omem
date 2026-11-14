@@ -51,12 +51,13 @@ export function listBackups(app: App) {
 }
 
 /** Add or change the backup of a device. */
-export function setBackup(app: App, b: { peer: string; to: string; everyHours?: number; parts?: string[] }) {
+export function setBackup(app: App, b: { peer: string; to: string; everyHours?: number; at?: string | null; parts?: string[] }) {
   if (!findPeer(app, b.peer)) throw new HttpError(404, `没有名为 ${b.peer} 的设备：先 omem peer add 配对`);
   const to = resolve(b.to);
   if (to === resolve(app.home)) throw new HttpError(400, "备份目录不能是这台 omem 自己的数据目录：换一个目录，或用 omem peer pull 合并进来");
   const parts = (b.parts ?? ["library", "files", "repos"]).filter((p): p is (typeof BACKUP_PARTS)[number] => (BACKUP_PARTS as readonly string[]).includes(p));
-  const entry: Backup = { peer: b.peer, to, everyHours: Math.min(720, Math.max(1, Math.round(b.everyHours ?? 12))), parts };
+  if (b.at && !/^([01]\d|2[0-3]):[0-5]\d$/.test(b.at)) throw new HttpError(400, "时间写成 HH:mm，如 00:00");
+  const entry: Backup = { peer: b.peer, to, everyHours: Math.min(720, Math.max(1, Math.round(b.everyHours ?? 12))), ...(b.at ? { at: b.at } : {}), parts };
   const next = structuredClone(app.config);
   next.backups = [...next.backups.filter((x) => x.peer !== b.peer), entry];
   saveConfig(next, app.home);
@@ -149,12 +150,27 @@ function tellIfStale(app: App, b: Backup, s: BackupState): BackupState {
   return { ...s, toldAt: now() };
 }
 
+/**
+ * Whether a backup is due. With a time of day: once the clock has passed it (in the configured
+ * timezone) and no pull has got through since — so a device that is away at that time is caught up
+ * with whenever it is back. Otherwise: `everyHours` after the last pull that got through.
+ */
+export function backupDue(app: App, b: Backup, s: BackupState, nowMs = Date.now()) {
+  const ok = Date.parse(s.okAt ?? "") || 0;
+  if (!b.at) return !ok || nowMs - ok >= b.everyHours * 3600_000;
+  const [h, m] = new Date(nowMs).toLocaleTimeString("en-GB", { timeZone: app.config.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).split(":").map(Number);
+  const [ah, am] = b.at.split(":").map(Number);
+  // How long ago the time of day last came round.
+  const since = (((h * 60 + m - (ah * 60 + am)) % 1440) + 1440) % 1440;
+  return ok < nowMs - since * 60_000 - (nowMs % 60_000);
+}
+
 /** The schedule's look: every backup that is due and not running, one after another. */
 export async function backupTick(app: App) {
   for (const b of app.config.backups) {
     const s = stateOf(app, b.peer);
     if (running.has(b.peer) || !findPeer(app, b.peer)) continue;
-    if (s.okAt && Date.now() - Date.parse(s.okAt) < b.everyHours * 3600_000) continue;
+    if (!backupDue(app, b, s)) continue;
     await runBackup(app, b.peer).catch((e) => console.warn(`[omem] 备份 ${b.peer} 出错：`, (e as Error).message));
   }
 }

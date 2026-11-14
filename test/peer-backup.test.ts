@@ -75,3 +75,24 @@ describe("backing up another device by itself", async () => {
     expect(listBackups(B)).toEqual([]);
   }, 60_000);
 });
+
+describe("a backup at a time of day", () => {
+  it("is due once the time has passed and nothing got through since; a device away then is caught up with later", async () => {
+    const { backupDue } = await import("../src/core/peer-backup.ts");
+    const app = { config: { timezone: "Asia/Shanghai" } } as never;
+    const b = { peer: "server", to: "/x", everyHours: 12, at: "00:00", parts: [] } as never;
+    const at = (iso: string) => Date.parse(iso);
+    // 23:50 local, last pull at 00:10 the same day: not yet.
+    expect(backupDue(app, b, { okAt: "2026-11-13T16:10:00.000Z" }, at("2026-11-14T15:50:00.000Z"))).toBe(false);
+    // 00:00 local the next day: due.
+    expect(backupDue(app, b, { okAt: "2026-11-13T16:10:00.000Z" }, at("2026-11-14T16:00:30.000Z"))).toBe(true);
+    // Still due in the evening when it never got through that day; not after it did.
+    expect(backupDue(app, b, { okAt: "2026-11-13T16:10:00.000Z" }, at("2026-11-15T12:00:00.000Z"))).toBe(true);
+    expect(backupDue(app, b, { okAt: "2026-11-15T12:05:00.000Z" }, at("2026-11-15T13:00:00.000Z"))).toBe(false);
+    expect(backupDue(app, b, {}, at("2026-11-14T03:00:00.000Z"))).toBe(true);
+    // Without a time: by the hours since the last pull.
+    const hourly = { peer: "server", to: "/x", everyHours: 12, parts: [] } as never;
+    expect(backupDue(app, hourly, { okAt: "2026-11-14T00:00:00.000Z" }, at("2026-11-14T11:00:00.000Z"))).toBe(false);
+    expect(backupDue(app, hourly, { okAt: "2026-11-14T00:00:00.000Z" }, at("2026-11-14T12:00:00.000Z"))).toBe(true);
+  });
+});

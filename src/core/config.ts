@@ -425,7 +425,7 @@ export const configSchema = z.object({
    * data directory its data is pulled into (not this instance's own), how many hours apart, and what
    * besides the database. Looked at every twenty minutes; a device that is away is tried again then.
    */
-  backups: z.array(z.object({ peer: z.string().min(1), to: z.string().min(1), everyHours: z.number().int().min(1).max(720).default(12), parts: z.array(z.enum(["library", "files", "repos", "runs"])).default(["library", "files", "repos"]) })).default([]),
+  backups: z.array(z.object({ peer: z.string().min(1), to: z.string().min(1), everyHours: z.number().int().min(1).max(720).default(12), /** Once a day from this time on (HH:mm, the configured timezone) instead of every `everyHours`. */ at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(), parts: z.array(z.enum(["library", "files", "repos", "runs"])).default(["library", "files", "repos"]) })).default([]),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
   memory: z
     .object({
