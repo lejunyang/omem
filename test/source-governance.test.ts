@@ -91,6 +91,14 @@ describe("how annotations weigh in search", () => {
     await search(app, "发布前检查 灰度", { spaces: ["proj"] });
     upsertSource(app, { spaceId: "proj", kind: "chat", uri: "lark:oc_n", title: "通知群", text: "机器人通知", meta: { chatId: "oc_n", chatMode: "group" } });
     setNodeLevel(app, "proj", "chat:oc_n", "ignore", "agent", { reason: "刷屏" });
+    // Another model looks first (note-review): the owner only gets what it could not settle…
+    expect(reviewQueue(app, "proj").notes).toEqual([]);
+    expect(reviewQueue(app, "proj").counts.pending).toBe(2);
+    // …unless that review is turned off, when they come straight here.
+    app.config.notes.review.enabled = false;
+    expect(reviewQueue(app, "proj").notes.map((n) => n.id)).toEqual([n1.id]);
+    app.config.notes.review.enabled = true;
+    run(app.db, "update source_notes set reviewed_at = ?, reviewed_by = '另一个模型', review_note = '拿不准' where id = ?", new Date().toISOString(), n1.id);
     const q = reviewQueue(app, "proj");
     expect(q.notes.map((n) => n.id)).toEqual([n1.id]);
     expect(q.notes[0].hits).toBe(2);

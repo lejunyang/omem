@@ -483,13 +483,15 @@ export function countNoteHits(app: App, ids: number[]) {
  * impact (search hits it shaped; sources below a folder), largest first.
  */
 export function reviewQueue(app: App, spaceId: string, limit = 200) {
+  // With the independent review turned off nothing would ever leave “not looked at yet”: they come straight to the owner, as before.
+  const direct = app.config.notes.review.enabled ? 0 : 1;
   const notes = all<NoteRow & { title: string; hits: number | null }>(
     app.db,
     `select n.*, s.title, h.n hits from source_notes n join sources s on s.id = n.source_id left join source_note_hits h on h.note_id = n.id
      where s.space_id = ? and s.deleted_at is null and n.status != 'rejected'
-       and ((n.status = 'pending' and n.by != 'owner' and n.reviewed_at is not null and n.kind in ('outdated', 'wrong', 'exclude')) or n.stale_at is not null)
+       and ((n.status = 'pending' and n.by != 'owner' and (n.reviewed_at is not null or ? = 1) and n.kind in ('outdated', 'wrong', 'exclude')) or n.stale_at is not null)
      order by coalesce(h.n, 0) desc, n.created_at desc limit ?`,
-    spaceId, limit,
+    spaceId, direct, limit,
   ).map((r) => ({ ...toNote(r), title: r.title, hits: r.hits ?? 0 }));
   const cat = catalog(app, spaceId);
   const levels = nodeLevels(app, spaceId)
