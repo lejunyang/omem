@@ -73,8 +73,10 @@ export async function nodeCard(app: App, caller: string): Promise<NodeCard> {
   if (spaces.length) card.spaces = own ? spaces.slice(0, 60) : spaces;
   const { allProfiles } = await import("./config.ts");
   const lent = new Map(grants.filter((g) => g.kind === "ai").map((g) => [g.name, g.daily]));
-  // What can be opened from elsewhere: this node's own ACP backends (core/peer-acp.ts servableAgent).
-  const ai = allProfiles(app.config).filter((p) => !p.peer && p.transport === "acp" && (own || lent.has(p.id)))
+  const { backendAvailable } = await import("../agents/availability.ts");
+  // What can be opened from elsewhere: this node's own ACP backends (core/peer-acp.ts servableAgent),
+  // the ones installed here: the catalog lists every Agent omem knows how to start.
+  const ai = allProfiles(app.config).filter((p) => !p.peer && p.transport === "acp" && (own || lent.has(p.id)) && backendAvailable(p, app.home))
     .map((p) => ({ id: p.id, model: p.model ?? null, daily: lent.get(p.id) ?? null, left: lent.get(p.id) ? Math.max(0, lent.get(p.id)! - lentToday(app, caller, p.id)) : null }));
   if (ai.length) card.ai = ai;
   return card;

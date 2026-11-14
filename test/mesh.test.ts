@@ -32,7 +32,11 @@ describe("several omem working together", async () => {
   const doc = importText(A, "handbook", { title: "报销制度", text: "# 报销制度\n\n差旅报销在出差结束后 30 天内提交。\n住宿标准一线城市每晚 600 元。", kind: "doc" });
   // A's Agent (the real ACP path, test/fake-acp-agent.ts): answers with a citation of A's document.
   A.config.agents.default = "fake";
-  A.config.agents.profiles = [agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_SAY: `一线城市每晚 600 元（[报销制度](src:${doc.id}#L4)）。` } })];
+  A.config.agents.profiles = [
+    agentProfileSchema.parse({ id: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_SAY: `一线城市每晚 600 元（[报销制度](src:${doc.id}#L4)）。` } }),
+    // Known how to start, not installed on this machine.
+    agentProfileSchema.parse({ id: "absent", transport: "acp", command: "omem-no-such-agent-command" }),
+  ];
 
   let svc = "";
   it("a node's card shows another server only what it was granted; the owner's own device sees everything", async () => {
@@ -49,6 +53,8 @@ describe("several omem working together", async () => {
     const own = await nodeCard(A, "owner");
     expect(own.spaces!.map((s) => s.id)).toEqual(expect.arrayContaining(["handbook", "secret"]));
     expect(own.ai!.map((x) => x.id)).toContain("fake");
+    // Only what is installed here can be borrowed.
+    expect(own.ai!.map((x) => x.id)).not.toContain("absent");
     expect(() => setGrants(A, "owner", [])).toThrow(/服务账号/);
   });
 
