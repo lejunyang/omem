@@ -50,7 +50,8 @@ onBeforeUnmount(() => { seq++; clearTimeout(refresh); off(); });
   <div class="coverage">
     <Skeleton v-if="loading && !data" :rows="1" variant="lines" />
     <p v-else-if="error" class="small muted">{{ error }} <button class="btn sm ghost" @click="error = ''; load()">重试</button></p>
-    <details v-else-if="data">
+    <!-- A space with no document marked as important has nothing to say here. -->
+    <details v-else-if="data && data.total > 0">
       <summary>重点文档 {{ data.covered }} / {{ data.total }} 份已写进页面</summary>
       <div class="stack body">
         <p class="small muted">按贴链接、引用和事项等信号排序；近 30 天试过的暂不再选。最多显示 20 份。</p>
