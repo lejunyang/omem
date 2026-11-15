@@ -221,10 +221,11 @@ export async function lessonHits(app: App, space: string, worktreePath: string, 
   }
   // A model-supplied regexp cannot block the server's main thread (catastrophic backtracking).
   const hits = await new Promise<{ id: string; index: number }[]>((resolve, reject) => {
-    const worker = new Worker(`const { parentPort, workerData: d } = require('node:worker_threads');
+    // The worker's own source: a dynamic import, so no bare `require` in this ES module (test/esm.test.ts).
+    const worker = new Worker(`import('node:worker_threads').then(({ parentPort, workerData: d }) => {
       const hits=[]; for (const l of d.lessons) { const re=new RegExp(l.pattern,'u'); let n=0;
         for(let i=0;i<d.lines.length;i++) if(d.lines[i].lessons.includes(l.id) && re.test(d.lines[i].text)) { hits.push({id:l.id,index:i}); if(++n===20) break; }
-      } parentPort.postMessage(hits);`, { eval: true, workerData: { lessons, lines } });
+      } parentPort.postMessage(hits); });`, { eval: true, workerData: { lessons, lines } });
     const timer = setTimeout(() => { void worker.terminate(); reject(new Error("约定模式检查超时，请在空间设置里修改模式")); }, 2000);
     worker.once("message", v => { clearTimeout(timer); void worker.terminate(); resolve(v); });
     worker.once("error", e => { clearTimeout(timer); reject(e); });
