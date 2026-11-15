@@ -13,7 +13,7 @@ import { createSpace } from "../src/core/spaces.ts";
 import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { answerAsk, getAsk } from "../src/agents/asks.ts";
-import { getRun, trackAbort, __testHandlers } from "../src/agents/runs.ts";
+import { createRun, getRun, trackAbort, __testHandlers } from "../src/agents/runs.ts";
 import { artifactInbox } from "../src/agents/artifacts.ts";
 import { readSkill, seedBuiltinSkills } from "../src/agents/specs.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
@@ -306,6 +306,25 @@ describe("试验运行与预算", () => {
 });
 
 describe("台账、发现、证据和权限", () => {
+  it("coach 不属于流程阶段，可读本次可读空间的台账，不能越过空间范围", async () => {
+    const f = await setup(); await select(f, 1); await result(f, "unclear");
+    const finding = recordFinding(f.app, { item: f.item.id, kind: "defect", title: "退款出口未检查", repro: "虚构样本中的复现步骤", trials: [trials(f.app, f.item.id)[0].id] });
+    run(f.app.db, "update study_findings set state='rejected',state_reason='测试夹具缺少前置条件' where id=?", finding);
+    const coach = createRun(f.app, { kind: "profile-review", title: "复盘课题技能", spaceId: "personal", input: { target: "assistant" } });
+    const tools = runner.loadRole("coach", f.app).tools;
+    expect(tools).toContain("read_ledger");
+    const context: ToolContext = { ...ctx(f, coach.id), role: "coach", tools: new Set(tools) };
+    const ledger = await callTool(context, "read_ledger", { item: f.item.id });
+    expect(ledger.text).toContain("unclear"); expect(ledger.text).toContain("rejected"); expect(ledger.text).toContain("测试夹具缺少前置条件");
+    expect(one<{ state: string }>(f.app.db, "select state from study_findings where id=?", finding)?.state).toBe("rejected");
+    const other = createSpace(f.app, { name: "另一个课题空间" });
+    const hidden = upsertItem(f.app, undefined, { spaceId: other.id, title: "不可读课题", kind: "watch" }, "user");
+    const denied = await callTool(context, "read_ledger", { item: hidden.id });
+    expect(denied.isError).toBe(true);
+    expect(denied.text).toContain("不能访问");
+    const member = createUser(f.app, { name: "示例成员" }); addMember(f.app, other.id, member.id);
+    expect((await callTool({ ...context, userId: member.id, spaces: null }, "read_ledger", { item: f.item.id })).isError).toBe(true);
+  });
   it("定方向即使误授 read_ledger 也拒绝；小结可读", async () => {
     const f = await setup(); const r = f.s("plan").by!;
     expect((await callTool(ctx(f, r), "read_ledger", { item: f.item.id })).isError).toBe(true);

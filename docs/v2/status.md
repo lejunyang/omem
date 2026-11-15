@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 课题第四期的一部分：数据页台账计数与明细 / 导出、每日简报的已结束轮次事实、coach 只读台账复盘技能 | 服务端已实现（2026-11-15）；不排名、不算发现率；按模型数运行，未保留档位名；未改网页，未做有改动的发现计数与远端试验，真实模型待验 | `src/insights/insights.ts`、`src/agents/study-brief.ts`、`src/agents/jobs.ts`、`roles/brief.md`、`roles/coach.md`、`test/insights.test.ts`、`test/dream.test.ts`、`test/studies.test.ts` |
 | 课题第二期：三张台账随事项拉取，独立提方向后对账、本人选择、trials 串行试验与重试 / 升档 / 跨轮预算、候选归并发现、工作文件功能清单和粗略覆盖、连续无发现停止自动开轮、四技能与 study 内置流程、三条课题接口 | 服务端已实现（2026-11-15）；假运行和 HTTP 验证；事项页有课题的台账（发现、试验、方向、覆盖），可在页上选方向；编码交办、执行环境和推送授权未做 | `src/studies/`、`flows/library/study.yaml`、`skills/library/study-*`、`test/studies.test.ts`、`docs/v2/studies.md`“第二期的实现” |
 | 流程上下文跟进：关联聊天、会话、文档与会议从开始后的新内容攒批，决策预筛，提炼变化；受影响阶段由本人决定并进、另开或忽略，截止时间更新后告知一次；变化随事项拉取 | 已实现（2026-11-15）：专项测试；事项页列出变化并可逐条处理；文档只交新增或改过的行；真实模型和飞书卡片未验，不做会议专门处理 | `src/flows/follow.ts`、`roles/item-follow.md`、`test/flow-follow.test.ts` |
 | 流程 Git 信号：owner / wait 的 git.pushed、git.merged；按交办已应用落点逐仓库核对提交，巡检 / 推送成功 / 仓库同步触发，限频远端读取，三十天本机记录，视图 waitingSignal | 已实现；2026-11-15，真 Git 与本地裸远端定向测试；网页由后续任务接入，远端 squash / cherry-pick 不推断等价 | `src/flows/signals.ts`、`test/flow-signals.test.ts`、`docs/v2/flows.md`“第二期：Git 信号” |

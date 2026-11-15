@@ -16,6 +16,14 @@ updated: 2026-11-15
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
 
+## 课题进数据页、简报与 coach（11-15）
+
+数据页在编码交付后增加课题板块：期间已交试验、按事项的四种结果、新发现的当前判定、结束方向、按模型的试验运行次数；只含可读空间，没有试验不显示，不排名、不计算发现率。数字沿用 RecordRef 回到运行或事项，Markdown / CSV 一并导出。按人、模型等筛选时省略不能归属的发现和方向。
+
+每日简报的 brief 处理器从台账拼“上一轮的探索”，按原有 brief_at 只纳入新结束的课题轮次；成功才推进边界，生成期间新结束的留给下次。模型照材料写，不给它 read_ledger。coach 精确清单增加只读 read_ledger，按课题技能或阶段读失败、拿不准与被否决发现及原因，提出技能建议。未改网页、台账行为、表、设置或接口；真实模型待验。
+
+入口：`src/insights/insights.ts`、`src/agents/study-brief.ts`、`src/agents/jobs.ts`、`roles/brief.md`、`roles/coach.md`；验收见 `docs/v2/acceptance.md` 的 study-d4。
+
 ## 事项页：变化列表和课题的台账（11-15）
 
 - `web/src/components/ItemFlow.vue`：跟进找到、要本人定的变化放在流程条下面，写明影响哪几段、并进来会重开哪一段，三个按钮对应并进、另开、不用管（`POST /api/items/:id/flow/changes/:change`，`src/flows/follow.ts` 的 `settleChange`）；下面列全部变化（类型、一句话、状态、原话）和正在跟的群、文档、攒着几条新内容。

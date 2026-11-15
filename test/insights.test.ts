@@ -6,6 +6,7 @@ import { addMember, createUser, removeMember } from "../src/core/users.ts";
 import { sceneOf, scenes, sceneTable } from "../src/insights/scenes.ts";
 import { clearInsightsCache, DAILY_SQL, exportInsights, insightRecords, insights, normalizeFilters, type Filters } from "../src/insights/insights.ts";
 import { testApp } from "./helpers.ts";
+import { upsertItem } from "../src/items/store.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
 afterEach(() => { for (const a of apps.splice(0)) { a.db.close(); rmSync(a.home, { recursive: true, force: true }); } });
@@ -25,6 +26,60 @@ function sample(a: ReturnType<typeof setup>, id: string, decision: string | null
   run(a.db, `insert into reply_samples(id,handle_run,channel,chat_id,chat_kind,ask,last_ms,created_at,decision,owner_reply_at) values(?,?,?,?,?,?,?,?,?,?)`, id, handle ?? null, "lark", "chat-a", "group", "不应返回的本人问题正文", Date.parse("2026-11-05T02:00:00Z"), "2026-11-05T02:00:00.000Z", decision, delay === undefined ? null : new Date(Date.parse("2026-11-05T02:00:00Z") + delay * 1000).toISOString());
   clearInsightsCache(a);
 }
+function study(a: ReturnType<typeof setup>, space = "personal") {
+  const item = upsertItem(a, undefined, { spaceId: space, title: "示例商城课题", kind: "watch" }, "user");
+  const at = "2026-11-05T02:00:00.000Z", d = `d-${item.id}`;
+  run(a.db, "insert into study_directions(id,item_id,round,goal,approach,acceptance,state,created_at,updated_at) values(?,?,1,'核验退款','逐项验证','可复现','done',?,?)", d, item.id, at, at);
+  for (const [i, result] of ["passed", "failed", "blocked", "unclear"].entries()) {
+    const rid = i === 3 ? null : seed(a, "study-trial", { space, input: { itemId: item.id }, at: i === 0 ? "2026-10-31T02:00:00.000Z" : at });
+    run(a.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",state,result,run_id,created_at,updated_at) values(?,?,?,1,?,'退款','核验','reported',?,?,?,?)`, `t-${item.id}-${i}`, item.id, d, i, result, rid, "2026-10-31T02:00:00.000Z", at);
+  }
+  for (const [i, state] of ["new", "confirmed", "rejected", "later", "duplicate"].entries())
+    run(a.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,created_at,updated_at) values(?,?,'defect',?,'复现步骤','[]',?,?,?)", `f-${item.id}-${i}`, item.id, `发现 ${i}`, state, at, at);
+  run(a.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,created_at,updated_at) values(?,?,'defect','旧发现刚判定','复现步骤','[]','confirmed','2026-10-31T02:00:00.000Z',?)", `old-${item.id}`, item.id, at);
+  run(a.db, "insert into study_directions(id,item_id,round,goal,approach,acceptance,state,created_at,updated_at) values(?,?,1,'核验通知','逐项验证','可复现','dropped',?,?)", `drop-${item.id}`, item.id, at, at);
+  clearInsightsCache(a);
+  return item;
+}
+it("课题只数期间台账，结果表、事项与运行明细、模型次数和导出可核对", () => {
+  const a = setup(), item = study(a);
+  seed(a, "study-trial", { input: { itemId: item.id }, ai: { model: "model-b" } });
+  const s = report(a).sections.find(s => s.id === "study")!;
+  expect(report(a).sections.map(s => s.id).slice(5, 8)).toEqual(["delivery", "study", "knowledge"]);
+  expect(s.description).toContain("发现多少不代表做得好坏");
+  for (const [key, value] of Object.entries({ trials: 4, findings: 5, "findings:confirmed": 1, "findings:rejected": 1, "findings:pending": 2, directions: 2, "directions:done": 1, "directions:dropped": 1, "model:model-a": 2, "model:model-b": 1 }))
+    expect(metric(a, `study:${key}`).value).toBe(value);
+  for (const result of ["passed", "failed", "blocked", "unclear"]) {
+    const m = metric(a, `study:result:${item.id}:${result}`);
+    expect(m.value).toBe(1); expect(m.cell).toMatchObject({ table: "试验结果", row: item.title });
+  }
+  expect(insightRecords(a, "owner", filters, "study:trials").records.map(r => r.link)).toEqual([expect.stringMatching(/^#\/runs\//), expect.stringMatching(/^#\/runs\//), expect.stringMatching(/^#\/runs\//), `#/items/${item.id}`]);
+  for (const m of s.metrics) expect(insightRecords(a, "owner", filters, m.key).total).toBe(m.value);
+  expect(insightRecords(a, "owner", filters, "study:findings").records.every(r => r.link === `#/items/${item.id}`)).toBe(true);
+  expect(insightRecords(a, "owner", filters, "study:directions").records.every(r => r.link === `#/items/${item.id}`)).toBe(true);
+  expect(exportInsights(a, "owner", filters, "md")).toContain("## 课题");
+  expect(exportInsights(a, "owner", filters, "csv")).toContain('"课题","试验数","4"');
+  const specific = report(a, { model: "model-a" }).sections.find(s => s.id === "study")!;
+  expect(specific.metrics.find(m => m.key === "study:trials")?.value).toBe(3);
+  expect(specific.metrics.some(m => m.key === "study:findings")).toBe(false);
+});
+it("课题按事项可读空间隔离，权限撤销后不复用缓存，没有已交试验就不出现", () => {
+  const a = setup();
+  expect(report(a).sections.some(s => s.id === "study")).toBe(false);
+  const space = createSpace(a, { name: "共享课题" });
+  const user = createUser(a, { name: "示例成员" });
+  addMember(a, space.id, user.id, "reader");
+  const item = study(a, space.id), hidden = study(a);
+  expect(metric(a, "study:trials", {}, user.id).value).toBe(4);
+  expect(JSON.stringify(report(a, {}, user.id))).not.toContain(hidden.id);
+  expect(insightRecords(a, user.id, filters, "study:findings").records.every(r => r.link === `#/items/${item.id}`)).toBe(true);
+  expect(report(a, { space: "personal" }, user.id).sections.some(s => s.id === "study")).toBe(false);
+  removeMember(a, space.id, user.id);
+  expect(report(a, {}, user.id).sections.some(s => s.id === "study")).toBe(false);
+  expect(report(a, { from: "2026-11-10" }).sections.some(s => s.id === "study")).toBe(false);
+  run(a.db, "update study_trials set result=null,state='queued'"); clearInsightsCache(a);
+  expect(report(a).sections.some(s => s.id === "study")).toBe(false);
+});
 it("场景表精确覆盖 RunKind，新类型必须有场景", () => {
   const source = readFileSync(new URL("../src/agents/runs.ts", import.meta.url), "utf8");
   const kinds = [...source.match(/export type RunKind = ([^;]+);/)![1].matchAll(/"([^"]+)"/g)].map(m => m[1]);

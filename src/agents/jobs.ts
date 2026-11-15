@@ -1,4 +1,5 @@
 import { labelDecisions } from "../core/decision-log.ts";
+import { studyBrief } from "./study-brief.ts";
 import { labelReplies, replyLine } from "./reply-outcomes.ts";
 import { releaseLater } from "../core/notify.ts";
 import { labelOutcomes, outcomeLine, outcomeStats } from "../core/notify-outcome.ts";
@@ -1275,6 +1276,7 @@ ${shortcomingsText(gaps)}
 
 registerHandler("brief", async (ctx) => {
   const app = ctx.app;
+  const until = now();
   const since = one<{ value: string }>(app.db, "select value from kv where key = 'brief_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const items = listItems(app, { status: "active" });
   const fresh = all<{ id: string; space_id: string; uri: string; title: string; kind: string }>(
@@ -1287,12 +1289,13 @@ registerHandler("brief", async (ctx) => {
     since,
   );
   const runs = all<{ id: string; kind: string; title: string; status: string }>(app.db, "select id, kind, title, status from runs where finished_at > ? and kind in ('code','wiki-plan','wiki-write','ingest') order by finished_at desc limit 30", since);
-  run(app.db, "insert into kv(key,value) values('brief_at', ?) on conflict(key) do update set value = excluded.value", now());
+  const exploration = studyBrief(app, since, until);
   // What the owner is working on these weeks (work-state.ts): the brief prepares the next step of each line where it can.
   const { workStateBrief } = await import("./work-state.ts");
   const lines = workStateBrief(app, 4000);
   const task = [
     `时间范围：${since} 至今`,
+    exploration,
     lines ? `本人近况（他这段时间在推进的线；按角色说明先替他备好今天用得上的）：\n${lines}` : "",
     `进行中的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? " 截止 " + i.dueAt : ""}${i.remindAt ? " 提醒 " + i.remindAt : ""}${i.waitingOn ? " 等待 " + i.waitingOn : ""}（更新于 ${localStamp(i.updatedAt, app.config.timezone)}）`).join("\n") || "（无）"}`,
     `期间新增或更新的材料（${fresh.length}）：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n") || "（无）"}`,
@@ -1309,6 +1312,7 @@ registerHandler("brief", async (ctx) => {
     .filter(Boolean)
     .join("\n\n");
   const r = await agent(ctx, "brief", "personal", task, null);
+  run(app.db, "insert into kv(key,value) values('brief_at', ?) on conflict(key) do update set value = excluded.value", until);
   return { summary: r.text.trim() };
 });
 

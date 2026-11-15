@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { dreamSince, dreamStockBatch } from "../src/agents/jobs.ts";
-import { createRun } from "../src/agents/runs.ts";
-import { run } from "../src/core/db.ts";
+import { createRun, __testHandlers } from "../src/agents/runs.ts";
+import { one, run } from "../src/core/db.ts";
+import { upsertItem } from "../src/items/store.ts";
+import { loadRole } from "../src/agents/runner.ts";
+import * as runner from "../src/agents/runner.ts";
+import { studyBrief } from "../src/agents/study-brief.ts";
 import { CATCH_UP_WITHIN_MS, catchUpSchedules, ensureDefaultSchedules, listSchedules, registerScheduleKind, upsertSchedule } from "../src/core/scheduler.ts";
 import { digestExperienceCount, digestMergeGroups, digestMergeText } from "../src/memory/digest-merge.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -12,6 +16,78 @@ const vec = (...xs: number[]) => {
   const n = Math.hypot(...xs) || 1;
   return new Uint8Array(v.map((x) => x / n).buffer);
 };
+
+describe("daily brief study rounds", () => {
+  const since = "2026-11-01T00:00:00.000Z", ended = "2026-11-02T00:00:00.000Z";
+  function setup(study = true) {
+    const app = testApp();
+    const item = upsertItem(app, undefined, { spaceId: "personal", kind: "watch", title: "示例商城课题" }, "user");
+    const definition = { id: "demo", name: "示例流程", stages: [{ id: "plan", name: "方向", by: { run: {} }, ...(study ? { tools: ["propose_directions"] } : {}) }] };
+    run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at) values(?,'demo',?,'2026-10-30T00:00:00.000Z','owner',?)", item.id, JSON.stringify(definition), since);
+    run(app.db, "insert into kv(key,value) values('brief_at',?)", since);
+    const close = () => run(app.db, "insert into item_flow_rounds(item_id,started_at,round,ended_at,stages,updated_at) values(?,'2026-10-30T00:00:00.000Z',1,?,'[]',?)", item.id, ended, ended);
+    const d = `d-${item.id}`;
+    run(app.db, "insert into study_directions(id,item_id,round,goal,approach,acceptance,state,created_at,updated_at) values(?,?,1,'验证退款边界','逐项执行','结果可复现','done',?,?)", d, item.id, since, ended);
+    run(app.db, "insert into study_directions(id,item_id,round,goal,approach,acceptance,state,created_at,updated_at) values(?,?,2,'下一轮目标','逐项执行','结果可复现','proposed',?,?)", `next-${d}`, item.id, ended, ended);
+    for (const [i, result] of ["passed", "failed", "blocked", "unclear"].entries())
+      run(app.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",result,state,created_at,updated_at) values(?,?,?,1,?,'退款','执行',?,'reported',?,?)`, `t-${i}`, item.id, d, i, result, since, ended);
+    for (let i = 0; i < 7; i++)
+      run(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,round,flow_started_at,created_at,updated_at) values(?,?,'defect',?,'复现步骤','[]',?,1,'2026-10-30T00:00:00.000Z',?,?)", `f-${i}`, item.id, `边界发现 ${i}`, i < 2 ? "confirmed" : i === 2 ? "rejected" : i === 3 ? "later" : "new", since, ended);
+    return { app, item, close };
+  }
+  it("结束一轮才给简报事实，五条发现之后给余数；同一轮只进一次", async () => {
+    const { app, item, close } = setup();
+    const tasks: string[] = [];
+    const fake = vi.spyOn(runner, "runRole").mockImplementation(async (_app, input) => {
+      expect(input.role).toBe("brief");
+      expect(loadRole("brief", app).tools).not.toContain("read_ledger");
+      expect(input.addTools ?? []).not.toContain("read_ledger");
+      tasks.push(input.task);
+      return { text: "简报已完成", profileId: "fake", ai: { profile: "fake" } } as Awaited<ReturnType<typeof runner.runRole>>;
+    });
+    const brief = async () => {
+      const r = createRun(app, { kind: "brief", title: "每日简报", spaceId: "personal" });
+      return __testHandlers.get("brief")!({ app, run: r, signal: new AbortController().signal, event() {}, output() {} });
+    };
+    try {
+      expect(studyBrief(app, since, ended)).toBe("");
+      close(); await brief();
+      const task = tasks[0];
+      expect(task).toContain("## 上一轮的探索");
+      expect(task).toContain(`[${item.title}](#/items/${item.id}) · 第 1 轮`);
+      expect(task).toContain("方向（目标）：验证退款边界");
+      expect(task).toContain("通过 1；没通过 1；跑不了 1；说不清 1");
+      expect(task).toContain("边界发现 4；另有 2 条");
+      expect(task).not.toContain("边界发现 5");
+      expect(task).toContain("4 条发现还没判定（含以后再说）；有方向等着选");
+      expect(one<{ value: string }>(app.db, "select value from kv where key='brief_at'")!.value > ended).toBe(true);
+      await brief();
+      expect(tasks[1]).not.toContain("上一轮的探索");
+      expect(studyBrief(app, ended, ended)).toBe("");
+    } finally { fake.mockRestore(); app.db.close(); }
+  });
+  it("没结束的轮次、非课题流程和其他本人的事项都不加入探索", () => {
+    const f = setup(false);
+    try {
+      f.close(); expect(studyBrief(f.app, since, ended)).toBe("");
+      run(f.app.db, "update item_flows set definition=?", JSON.stringify({ stages: [{ by: { object: "trials" } }] }));
+      expect(studyBrief(f.app, since, ended)).toContain("上一轮的探索");
+      run(f.app.db, "update items set user_id='other'");
+      expect(studyBrief(f.app, since, ended)).toBe("");
+    } finally { f.app.db.close(); }
+  });
+  it("简报生成失败不推进边界，期间结束的下一轮留给下一份", async () => {
+    const { app, close } = setup(); close();
+    const fake = vi.spyOn(runner, "runRole").mockRejectedValue(new Error("test failure"));
+    try {
+      const r = createRun(app, { kind: "brief", title: "每日简报", spaceId: "personal" });
+      await expect(__testHandlers.get("brief")!({ app, run: r, signal: new AbortController().signal, event() {}, output() {} })).rejects.toThrow("test failure");
+      expect(one<{ value: string }>(app.db, "select value from kv where key='brief_at'")!.value).toBe(since);
+      expect(studyBrief(app, since, "2026-11-01T12:00:00.000Z")).toBe("");
+      expect(studyBrief(app, since, ended)).toContain("第 1 轮");
+    } finally { fake.mockRestore(); app.db.close(); }
+  });
+});
 
 describe("nightly dream", () => {
   it("looks back a week the first time, then from the last dream", () => {

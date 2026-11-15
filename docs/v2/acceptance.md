@@ -2,6 +2,20 @@
 
 按你最初列的目标和日常用途逐项验收。每项写了操作和预期结果；“云端已验”指我在云端用 Claude Code（haiku）实际跑过，“待你验”指需要你的账号或本机环境。
 
+## 课题第四期的一部分：数据页、简报、coach（2026-11-15）
+
+| 编号 | 操作 | 预期 | 验证 |
+| --- | --- | --- | --- |
+| study-d4-01 | 在两个空间放入试验结果、不同判定的发现、做完及放下的方向，查询数据和导出 | 只有期间交过结果才出现课题；试验、发现、方向数字与表格一致；只含可读事项空间；无排名及比值，说明发现多少不代表做得好坏 | `test/insights.test.ts` |
+| study-d4-02 | 点开每个数字，按模型筛选、撤销空间权限、更换时间范围 | 有运行的试验回运行，其余回事项；模型次数含重试；不可归属运行维度的发现与方向省略；权限撤销立即生效，没有期间试验则整个板块不出现 | 同上 |
+| study-d4-03 | 课题结束一轮后生成 brief，再生成一次；另有未结束、非课题流程和其他本人的轮次 | 首次材料含事项链接、轮次、方向、四种结果、最多五条发现及余数、待本人动作；下一份不重复，无符合轮次时不含探索节；brief 没有台账工具 | `test/dream.test.ts` |
+| study-d4-04 | 简报模型失败；轮次结束时间超过本份开始边界 | 失败不推进 brief_at；晚结束的留给下一份，不丢失 | 同上 |
+| study-d4-05 | 用 coach 的工具清单与 profile-review 运行读台账，再读取范围外事项 | 清单含 read_ledger；无流程阶段的运行可读，能看到试验结果；越空间拒绝，定方向拒绝仍有效 | `test/studies.test.ts`、`test/role-tools.test.ts` |
+
+专项命令：`npx vitest run test/insights.test.ts test/studies.test.ts test/role-tools.test.ts test/tool-help.test.ts test/permissions.test.ts test/esm.test.ts test/dream.test.ts --maxWorkers=2 --configLoader native --cache=false`。首次 `Test Files 2 failed | 5 passed (7)`、`Tests 3 failed | 90 passed (93)`，修正新增测试夹具后 `Test Files 7 passed (7)`、`Tests 96 passed (96)`；后端 `npx tsc --noEmit -p .` 通过（退出码 0）。`git diff --check` 通过。
+
+尝试用 Codex `gpt-6.1-sol`、low effort、read-only 和 ephemeral 做简报成文验证，启动失败：`Error finding codex home: Could not find home directory`。真实模型、真实通知和网页未验证；没有运行全量测试或 vue-tsc，没有提交。
+
 ## 事项页：变化列表和课题的台账（2026-11-15）
 
 | 编号 | 操作 | 预期 | 状态 |

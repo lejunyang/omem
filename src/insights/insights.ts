@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
+import { all, one } from "../core/db.ts";
+import type { Direction, Trial, Finding } from "../studies/store.ts";
 import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { runReadableSpaces } from "../auth/permissions.ts";
 import { DECISION_SCENES } from "../core/decision-scenes.ts";
@@ -72,6 +73,11 @@ export function normalizeFilters(app: App, input: Filters = {}): Normal {
 function queryString(f: Normal) {
   return new URLSearchParams(Object.entries(f).filter(([k, v]) => !["start", "end", "days"].includes(k) && v !== undefined && v !== "").map(([k, v]) => [k, String(v)]));
 }
+function matchesFilters(f: Normal, r: RunRow) {
+  return (!f.space || r.space_id === f.space) && (!f.by || r.trigger_by === f.by) && (!f.bot || r.bot === f.bot)
+    && (!f.scene || sceneOf(r) === f.scene) && (!f.profile || r.spec === f.profile || r.roles?.split("|").includes(f.profile))
+    && (!f.model || parseAi(r.ai).model === f.model) && (!f.chat || r.place === f.chat);
+}
 function context(app: App, viewer: string, f: Normal): Ctx {
   const allowed = accessibleSpaces(app, viewer);
   const readable = runReadableSpaces(app, viewer);
@@ -82,13 +88,7 @@ function context(app: App, viewer: string, f: Normal): Ctx {
     if (viewer !== OWNER && r.user_id !== viewer && readable !== null && (!r.space_id || !readable.includes(r.space_id))) return false;
     return true;
   };
-  const runs = all<RunRow>(app.db, DAILY_SQL, f.start, f.end).filter(r => {
-    if (!visible(r)) return false;
-    const ai = parseAi(r.ai);
-    return (!f.space || r.space_id === f.space) && (!f.by || r.trigger_by === f.by) && (!f.bot || r.bot === f.bot)
-      && (!f.scene || sceneOf(r) === f.scene) && (!f.profile || r.spec === f.profile || r.roles?.split("|").includes(f.profile))
-      && (!f.model || ai.model === f.model) && (!f.chat || r.place === f.chat);
-  });
+  const runs = all<RunRow>(app.db, DAILY_SQL, f.start, f.end).filter(r => visible(r) && matchesFilters(f, r));
   return { app, viewer, f, runs, ids: new Set(runs.map(r => r.id)), records: new Map(), visible, link: key => `#/insights?${queryString(f)}&detail=${encodeURIComponent(key)}` };
 }
 function parseAi(s: string | null): { profile?: string; model?: string } { try { return JSON.parse(s ?? "null") ?? {}; } catch { return {}; } }
@@ -311,6 +311,65 @@ export function deliverySection(c: Ctx): Section {
   s.notes.push("通过是指有一轮评审给了通过；用上是指改动已经应用到你的目录。只推送了分支、没有在 omem 里应用的不算用上。这些状态之后还会变。");
   return s;
 }
+export function studySection(c: Ctx): Section {
+  const s = section("study", "课题", "只数台账里的试验、发现和结束的方向。发现多少不代表做得好坏。");
+  const allowed = accessibleSpaces(c.app, c.viewer);
+  // Only items that have a ledger: a handful, found through the directions' item index.
+  const items = all<{ id: string; title: string; space_id: string }>(c.app.db, "select id,title,space_id from items where id in (select distinct item_id from study_directions)")
+    .filter(i => (!c.f.space || i.space_id === c.f.space) && (allowed === null || allowed.includes(i.space_id)));
+  const specific = !!(c.f.by || c.f.bot || c.f.scene || c.f.profile || c.f.model || c.f.chat);
+  const titles = new Map(items.map(i => [i.id, i.title]));
+  const trialRows: Trial[] = [], findingRows: Finding[] = [], directionRows: Direction[] = [];
+  const trialRefs = new Map<string, RecordRef>();
+  const itemRef = (r: { id: string; item_id: string }, label: string, at: string): RecordRef => ({ id: r.id, label, at, link: `#/items/${r.item_id}` });
+  // Per readable study item, so all three ledger queries use their item indexes.
+  for (const i of items) {
+    const ts = all<Trial>(c.app.db, "select * from study_trials where item_id=? and result is not null and updated_at>=? and updated_at<?", i.id, c.f.start, c.f.end);
+    for (const t of ts) {
+      const r = t.run_id ? one<RunRow>(c.app.db, `select ${RUN_COLUMNS} from runs where id=?`, t.run_id) : undefined;
+      if (specific && (!r || !c.visible(r) || !matchesFilters(c.f, r))) continue;
+      trialRows.push(t);
+      trialRefs.set(t.id, r && c.visible(r) ? { ...refRun(r), label: `${i.title} · ${t.object} × ${t.check} · ${t.result}`, at: t.updated_at }
+        : itemRef(t, `${i.title} · ${t.object} × ${t.check} · ${t.result}`, t.updated_at));
+    }
+    if (!specific) {
+      findingRows.push(...all<Finding>(c.app.db, "select * from study_findings where item_id=? and created_at>=? and created_at<?", i.id, c.f.start, c.f.end));
+      directionRows.push(...all<Direction>(c.app.db, "select * from study_directions where item_id=? and state in ('done','dropped') and updated_at>=? and updated_at<?", i.id, c.f.start, c.f.end));
+    }
+  }
+  if (!trialRows.length) return { ...s, empty: "这段时间没有已交结果的试验。" };
+  const tr = (xs: Trial[]) => xs.map(t => trialRefs.get(t.id)!);
+  s.metrics.push(metric(c, "study:trials", "试验数", trialRows.length, tr(trialRows)));
+  for (const item of new Set(trialRows.map(t => t.item_id))) {
+    for (const [result, label] of [["passed", "通过"], ["failed", "没通过"], ["blocked", "跑不了"], ["unclear", "说不清"]]) {
+      const xs = trialRows.filter(t => t.item_id === item && t.result === result);
+      s.metrics.push(metric(c, `study:result:${item}:${result}`, `${titles.get(item)} · ${label}`, xs.length, tr(xs), undefined, undefined,
+        { table: "试验结果", row: titles.get(item)!, col: label }));
+    }
+  }
+  if (!specific) {
+    const fr = (xs: Finding[]) => xs.map(f => itemRef(f, `${titles.get(f.item_id)} · ${f.title}（${f.state}）`, f.created_at));
+    s.metrics.push(metric(c, "study:findings", "新发现数", findingRows.length, fr(findingRows)));
+    for (const [key, label, states] of [["confirmed", "本人认可的", ["confirmed"]], ["rejected", "本人判定不算的", ["rejected"]], ["pending", "还没判定的", ["new", "later"]]] as const) {
+      const xs = findingRows.filter(f => (states as readonly string[]).includes(f.state));
+      s.metrics.push(metric(c, `study:findings:${key}`, label, xs.length, fr(xs)));
+    }
+    const dr = (xs: Direction[]) => xs.map(d => itemRef(d, `${titles.get(d.item_id)} · ${d.goal}（${d.state}）`, d.updated_at));
+    s.metrics.push(metric(c, "study:directions", "结束的方向数", directionRows.length, dr(directionRows)));
+    for (const [key, label] of [["done", "做完的方向"], ["dropped", "放下的方向"]]) {
+      const xs = directionRows.filter(d => d.state === key);
+      s.metrics.push(metric(c, `study:directions:${key}`, label, xs.length, dr(xs)));
+    }
+  } else s.notes.push("发现和方向没有运行归属，按人、模型、场景、会话等筛选时不显示。试验按其结果运行匹配这些条件。");
+  const rs = c.runs.filter(r => r.kind === "study-trial" && titles.has(one<{ item: string }>(c.app.db, "select json_extract(input,'$.itemId') item from runs where id=?", r.id)?.item ?? ""));
+  // Sort labels, never counts: model use is a ledger, not a ranking.
+  for (const model of [...new Set(rs.map(r => parseAi(r.ai).model ?? "没记下"))].sort()) {
+    const xs = rs.filter(r => (parseAi(r.ai).model ?? "没记下") === model);
+    s.metrics.push(metric(c, `study:model:${model}`, `试验运行 · ${model}`, xs.length, refs(xs), undefined, undefined, { table: "试验运行按模型", row: model, col: "次数" }));
+  }
+  s.notes.push("试验按交结果的更新时间、新发现按建立时间、结束方向按更新时间计；认可、不算及未判定是这些新发现的当前状态，未判定含“以后再说”，duplicate 只计新发现总数。运行按创建时间，含重试与升档；运行未保留档位名，按 AI 字段的模型计数。");
+  return s;
+}
 export function knowledgeSection(c: Ctx): Section {
   const s = section("knowledge", "知识用上了没有", "页面有没有被读、记忆有没有被用上。页面的阅读没有记下是回答时读的还是整理时读的，这里放在一起。");
   const scope = accessibleSpaces(c.app, c.viewer);
@@ -363,7 +422,7 @@ export function costSection(c: Ctx): Section {
   s.notes.push("每件事只记了第一次成功调用用的后端和模型，没记下的单独一组。时长不含排队；没有起止时间的只算次数。");
   return s;
 }
-const builders = [usageSection, coverageSection, shieldSection, othersSection, qualitySection, deliverySection, knowledgeSection, costSection];
+const builders = [usageSection, coverageSection, shieldSection, othersSection, qualitySection, deliverySection, studySection, knowledgeSection, costSection];
 type Cached = { at: number; report: Report; records: Map<string, RecordRef[]> };
 const cache = new WeakMap<App, Map<string, Cached>>();
 export function clearInsightsCache(app: App) { cache.delete(app); }
@@ -386,9 +445,9 @@ function compute(app: App, viewer: string, input: Filters): Cached {
       return s;
     } catch {
       // No SQL, paths or stored material in public errors.
-      return { ...section(build.name.replace("Section", ""), ({ usageSection: "用量与覆盖", coverageSection: "用在哪", shieldSection: "替本人挡了多少", othersSection: "给别人带来什么", qualitySection: "质量", deliverySection: "交付", knowledgeSection: "知识", costSection: "成本" } as Record<string, string>)[build.name], "这部分暂时无法读取。"), error: "这部分暂时无法读取，请稍后重试。" };
+      return { ...section(build.name.replace("Section", ""), ({ usageSection: "用量与覆盖", coverageSection: "用在哪", shieldSection: "替本人挡了多少", othersSection: "给别人带来什么", qualitySection: "质量", deliverySection: "交付", studySection: "课题", knowledgeSection: "知识", costSection: "成本" } as Record<string, string>)[build.name], "这部分暂时无法读取。"), error: "这部分暂时无法读取，请稍后重试。" };
     }
-  });
+  }).filter(s => s.id !== "study" || !s.empty);
   const unique = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((s): s is string => !!s))].sort();
   const result: Cached = { at: Date.now(), records: c.records, report: { from: f.from, to: f.to, timezone: app.config.timezone, owner: viewer === OWNER, scenes, sceneTable, generatedAt: new Date().toISOString(), sections,
     options: { spaces: unique(c.runs.map(r => r.space_id)), people: unique(c.runs.map(r => r.trigger_by)), profiles: unique(c.runs.flatMap(r => [r.spec, ...(r.roles ?? "").split("|")])), models: unique(c.runs.map(r => parseAi(r.ai).model)), bots: unique(c.runs.map(r => r.bot)), chats: unique(c.runs.map(r => r.place)) } } };
