@@ -7,6 +7,10 @@ updated: 2026-11-15
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 设计稿：流程、插件的对象与信号、成效页（11-15，未实现）
+
+- `docs/v2/flows.md`：一件事怎么自己往前走。流程定义是一份阶段清单，每个阶段声明前提、承担者、怎样算完成和进入前的关卡，流转由前提推出来，不画连线；跳过、并行、重开、补录、只改这一件事的副本都是一等操作，复杂的编排留在阶段内部（交办、技能）。另写了信号的来源和归属、事项订阅它的群和文档、插件要补的四样接口和两种安装方式、成效页的指标与筛选。没有代码改动。
+
 ## 回复对方的档位升降；不急通知的清单只列 12 条（11-15）
 
 - `src/mentions/reply-ladder.ts`：回复找本人的人和工具审批一样分档升降。`draftStreak` 按 `reply_samples` 数某一类会话（群 / 私聊）最近连续照发的草稿；到 `mentions.reply.promoteAfter`（默认 10，0 不问）时 `suggestReplyPromotion` 问本人一次，回答由 `reply-promote` 处理：只有本人自己选“直接发”才经 `MentionChannel.reply.setMode` 改成 auto。`demoteReplyFor`：自动回复的提醒被本人回负面表情，这一类退回 draft 并重数。入口在 `src/channels/mention-reply.ts decideMentionReply`（照发之后）和 `src/core/notify-reactions.ts applyNegative`（先于学忽略规则）。
