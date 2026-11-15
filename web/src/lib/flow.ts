@@ -6,6 +6,8 @@ export type FlowStage = {
   waitingOn: string | null; evidence: string[]; note: string; gate: string; fixed: boolean;
   question: string | null; carrier: { kind: string; label: string; link?: string };
   object?: { title: string; status: string; link: string };
+  /** The stage completes by itself when this is seen (a push, a merge); what the last look found. */
+  waitingSignal?: { type: string; checkedAt: string | null; note: string };
   /** What this stage's runs reported case by case (a verification stage), failed first, then the ones not done. */
   tests?: StageTest[];
 };
@@ -60,6 +62,7 @@ export function nextWords(s: FlowStage) {
   if (s.question === "refuse") return `等你补充哪里还不行：${task}。写明原因后重开这一段。`;
   if (s.question === "done") return `做完了，确认吗？${task}。确认后继续推进后面的阶段。`;
   if (s.state === "gated") return `要开始这一段了：${task}。你同意才开始。`;
+  if (s.waitingSignal) return `轮到你：${task}。${s.waitingSignal.type === "git.merged" ? "合进目标分支" : "推到远端"}以后这一段会自己完成，后面的阶段接着走；也可以直接点做完。`;
   return `轮到你：${task}。做完点一下，后面的阶段会接着走。`;
 }
 export function evidenceLink(ref: string) {

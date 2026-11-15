@@ -5,7 +5,7 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 import { actorWords, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, type FlowAction, type FlowDefinition, type FlowFile, type FlowStage, type FlowView } from "../lib/flow";
 import RunArtifacts from "./RunArtifacts.vue";
 import { refAction } from "../lib/refs";
-import { fmtTime } from "../store";
+import { fmtTime, relTime } from "../store";
 import Markdown from "./Markdown.vue";
 import Skeleton from "./Skeleton.vue";
 import UiSelect from "./UiSelect.vue";
@@ -114,6 +114,10 @@ async function stop() {
           <template v-if="stage.evidence.length">
             <dt>依据</dt>
             <dd class="evidence"><template v-for="(r, i) in stage.evidence" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原件 {{ i + 1 }}</a><a v-else :href="evidenceLink(r)!" :title="r">{{ r.startsWith("design:") ? "方案" : "运行" }} {{ i + 1 }}</a></template></dd>
+          </template>
+          <template v-if="stage.waitingSignal">
+            <dt>在等</dt>
+            <dd>{{ stage.waitingSignal.note }}<span v-if="stage.waitingSignal.checkedAt" class="muted">（{{ relTime(stage.waitingSignal.checkedAt) }}看的）</span></dd>
           </template>
           <template v-if="stage.note">
             <dt>最近</dt>
