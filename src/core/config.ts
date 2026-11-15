@@ -50,6 +50,7 @@ export const DEFAULT_FEEDBACK_EMOJI = {
 };
 
 export const roleNames = [
+  "item-follow",
   "assistant",
   "ingest",
   "archivist",
@@ -615,6 +616,7 @@ export const configSchema = z.object({
         thresholds: z.object({
           heartbeat: z.number().min(0.5).max(0.99).default(DECISION_SCENES.heartbeat.default),
           watch: z.number().min(0.5).max(0.99).default(DECISION_SCENES.watch.default),
+          follow: z.number().min(0.5).max(0.99).default(DECISION_SCENES.follow.default),
           triage: z.number().min(0.5).max(0.99).default(DECISION_SCENES.triage.default),
           progress: z.number().min(0.5).max(0.99).default(DECISION_SCENES.progress.default),
         }).optional(),
@@ -1092,10 +1094,15 @@ export const configSchema = z.object({
    * into the main assistant's turns, the patrol, the triage of 有人找你 and meeting summaries.
    */
   flows: z.object({
+    follow: z.object({
+      enabled: z.boolean().default(true),
+      quietMinutes: z.number().min(0).max(1440).default(20),
+      maxMessages: z.number().int().min(1).max(1000).default(30),
+    }).default(() => ({ enabled: true, quietMinutes: 20, maxMessages: 30 })),
     idleRounds: z.number().int().min(1).max(100).default(3),
     autoAdvance: z.number().int().min(1).max(20).default(3),
     staleDays: z.number().min(1).max(365).default(2),
-  }).default(() => ({ autoAdvance: 3, staleDays: 2, idleRounds: 3 })),
+  }).default(() => ({ autoAdvance: 3, staleDays: 2, idleRounds: 3, follow: { enabled: true, quietMinutes: 20, maxMessages: 30 } })),
   workState: z
     .object({
       days: z.number().int().min(3).max(60).default(21),

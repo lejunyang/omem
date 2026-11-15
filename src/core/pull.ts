@@ -93,7 +93,7 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
   // Meetings this device is following (lark-meetings.ts) stay with it; their records travel as sources.
   // Share links point at this device's web address, so they stay too; so do remote recordings,
   // whose files are in this device's data directory (src/remote), and this device's bot's document subscriptions, and platform watches (they sync with this device's tokens).
-  const deviceTables = ["api_tokens", "kv", "lark_cursors", "lark_meetings", "lark_meeting_lines", "shares", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "flow_signals"];
+  const deviceTables = ["api_tokens", "kv", "lark_cursors", "lark_meetings", "lark_meeting_lines", "shares", "session_cleanup", "remote_recordings", "lark_doc_subscriptions", "platform_watches", "flow_signals", "item_follow_cursors"];
   const deviceData = new Map<string, Row[]>();
   if (existsSync(join(home, "omem.db"))) {
     const old = openDb(join(home, "omem.db"));

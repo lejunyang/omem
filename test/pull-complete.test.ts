@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import { createRun } from "../src/agents/runs.ts";
 import { App } from "../src/core/app.ts";
+import { upsertItem } from "../src/items/store.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { cleanupFetched, fetchRemote, mergeLibrary, overwriteLocal, snapshotStream, type Fetched } from "../src/core/pull.ts";
@@ -48,7 +49,7 @@ describe("complete portable pulls", () => {
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
       // Live goals measure this machine's delegation worktree; unlike portable task/checkpoint history, never resume them on a pulled device.
-      "improve_goals", "improve_rounds", "flow_signals",
+      "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
       // Decision material and the source-to-sweep links remain private to this device.
@@ -60,22 +61,25 @@ describe("complete portable pulls", () => {
     expect(tables.map((t) => t.name).filter((n) => !derived.has(n) && !device.has(n) && !covered.has(n))).toEqual([]);
   });
 
-  it("keeps Git signal observations on this device during snapshots, merges and overwrites", async () => {
+  it("keeps Git signals and follow cursors on this device during snapshots, merges and overwrites", async () => {
     const local = testApp(), remote = testApp();
     for (const [app, note] of [[local, "local observation"], [remote, "remote observation"]] as const)
       run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,?,?,?,?,?)", "2026-11-15", "git.pushed", "[]", "demo", "push", note);
+    for (const [app, source] of [[local, "local_source"], [remote, "remote_source"]] as const)
+      run(app.db, "insert into item_follow_cursors(item_id,source_id,started_at,line,source_updated_at,updated_at) values('demo',?,'2026-11-15',12,'2026-11-15','2026-11-15')", source);
     const f = await snapshot(remote);
     let localClosed = false;
     try {
       const copied = App.open(f.dbDir);
-      try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); }
+      try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); expect(all(copied.db, "select * from item_follow_cursors")).toEqual([]); }
       finally { copied.db.close(); }
       mergeLibrary(local, f);
       expect(all(local.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]);
+      expect(all(local.db, "select source_id,line from item_follow_cursors")).toEqual([{ source_id: "local_source", line: 12 }]);
       local.db.close(); localClosed = true;
       overwriteLocal(local.home, f);
       const after = App.open(local.home);
-      try { expect(all(after.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]); }
+      try { expect(all(after.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]); expect(all(after.db, "select source_id,line from item_follow_cursors")).toEqual([{ source_id: "local_source", line: 12 }]); }
       finally { after.db.close(); }
     } finally {
       cleanupFetched(f); remote.db.close(); if (!localClosed) local.db.close();
@@ -89,6 +93,8 @@ describe("complete portable pulls", () => {
     const a = appendToSource(local, { spaceId: "personal", kind: "chat", uri: "chat:demo", title: "讨论", lines: ["共同消息", "本地消息"] });
     const b = appendToSource(remote, { spaceId: "personal", kind: "chat", uri: "chat:demo", title: "讨论", lines: ["共同消息", "远端消息"] });
     const memory = remember(remote, { spaceId: "personal", kind: "fact", content: "发布在周五", sourceRefs: [`src:${b.id}#L2`] });
+    const followed = upsertItem(remote, undefined, { title: "示例退款", sourceRefs: [`src:${b.id}#L2`] });
+    run(remote.db, "insert into item_changes(id,item_id,at,type,summary,refs,run_id,updated_at) values('change_demo',?,'2026-11-15','scope','小王提出补退运费',?,'run_demo','2026-11-15')", followed.id, JSON.stringify([`src:${b.id}#L2`]));
     run(remote.db, "insert into source_notes(source_id,line_start,line_end,kind,note,created_at) values(?,2,2,'key','关键依据','2026-01-01')", b.id);
     run(remote.db, "insert into lark_messages(message_id,chat_id,create_ms,source_id,line) values('msg_remote','chat_demo',1,?,2)", b.id);
     run(remote.db, "insert into cards(id,space_id,front,back,state,due_at,created_at) values('card_demo','personal',?,'123456789012345678901234567890','{}','2026-01-01','2026-01-01')", `[依据](src:${b.id}#L2)`);
@@ -99,12 +105,14 @@ describe("complete portable pulls", () => {
       mergeLibrary(local, f);
       expect(one<{ text: string }>(local.db, "select text from sources where id = ?", a.id)!.text).toBe("共同消息\n本地消息\n远端消息");
       expect(one<{ source_refs: string }>(local.db, "select source_refs from memories where id = ?", memory.id)!.source_refs).toContain(`src:${a.id}#L3`);
+      expect(one<{ refs: string }>(local.db, "select refs from item_changes where id='change_demo'")!.refs).toContain(`src:${a.id}#L3`);
       expect(one(local.db, "select source_id,line_start,line_end from source_notes")).toMatchObject({ source_id: a.id, line_start: 3, line_end: 3 });
       expect(one(local.db, "select source_id,line from lark_messages")).toMatchObject({ source_id: a.id, line: 3 });
       expect(one(local.db, "select front,back from cards where id='card_demo'")).toMatchObject({ front: `[依据](src:${a.id}#L3)`, back: "123456789012345678901234567890" });
       expect(readFileSync(join(local.libraryDir, "personal/wiki/chat.md"), "utf8")).toContain(`src:${a.id}#L3`);
       mergeLibrary(local, f);
       expect(all(local.db, "select * from source_notes")).toHaveLength(1);
+      expect(all(local.db, "select * from item_changes")).toHaveLength(1);
       expect(one<{ text: string }>(local.db, "select text from sources where id = ?", a.id)!.text.split("\n")).toHaveLength(3);
     } finally { cleanupFetched(f); }
   });

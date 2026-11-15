@@ -1,6 +1,6 @@
 # 流程：让一件事自己往前走
 
-状态：第一期服务端与网页已实现（2026-11-15）：定义、事项阶段、推进、本人关卡、已有对象、工具与 HTTP，以及事项流程条、操作卡片、定义编辑页。专门的飞书进度卡版式尚未实现。第 5–6、8、10 节及第 7 节中的信号、看板、今日页、阶段副本编辑仍是后续设计；具体边界见“第一期的实现”。
+状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端已实现（2026-11-15）。专门的飞书进度卡版式尚未实现。第 5 节其余信号、第 6 节的现状摘要，以及插件、看板、今日页和阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
 
 ## 1. 要解决的问题
 
@@ -215,7 +215,7 @@ stages:
 
 - **攒一批再看**：同一件事的新消息攒够一段时间（默认 20 分钟没有新的，或攒了 30 条）才处理一次，不是每条消息一次。
 - **先过预筛**：决策模型判断“这批新内容和这件事有没有关系”（新场景 `follow`，门槛和记录沿用 docs/v2/ai-models.md 的做法）。判断无关的记一行“看过，无关”，不起运行。
-- **再提炼**：有关的交给事项维护角色（`item-keeper`），它只做一件事——说清这批内容让这件事**变了什么**，用工具 `note_item_change` 逐条交：
+- **再提炼**：有关的交给上下文跟进角色（`item-follow`），它只做一件事——说清这批内容让这件事**变了什么**，用工具 `note_item_change` 逐条交：
   - 类型：范围（需求点变了）、决定、截止时间、阻塞、信息（只是知道一下）。
   - 影响哪些阶段（可以没有）。
   - 依据：引用原件的行。
@@ -383,7 +383,7 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 
 接口：第一期是 `GET /api/flows`、`PUT/DELETE /api/flows/:id`、`GET/POST/DELETE /api/items/:id/flow`、`POST /api/items/:id/flow/stages/:stage/{confirm,hold,skip,reopen,done}`；具体响应见“第一期的实现”。`GET /api/board`、`GET /api/insights` 留待后续。
 
-设置：第一期 `flows: { autoAdvance: 3, staleDays: 2 }`；`followQuietMinutes: 20, followBatch: 30` 随第二期加入。`flow_signals`、`flow_objects`、`item_objects` 也留待后续。
+设置：`flows: { autoAdvance: 3, staleDays: 2, follow: { enabled: true, quietMinutes: 20, maxMessages: 30 } }`。第二期已有本机 `flow_signals`；`flow_objects`、`item_objects` 留待后续。
 
 ## 12. 要本人定的
 
@@ -470,3 +470,19 @@ HTTP 约定：
 迁移末尾新增本机表 `flow_signals(id, at, type, keys, item_id, stage_id, outcome)`，keys 是空间、分支、提交数组；相同阶段尝试的键和结果不变时不重复追加。检查时顺带删掉三十天前的记录，不新开定时任务。记录不随设备拉取传播，覆盖拉取保留本机记录。流程视图只给 doing 的信号阶段增加 `waitingSignal: { type, checkedAt, note }`：未检查时 checkedAt 为 null，检查后显示最近一次记录的时间和结果。
 
 本期不改网页，不做消息、文档或插件信号，不做无人认领提交补录、上下文订阅或远端等价补丁推断。测试在临时真 Git 仓库和本地裸远端里验证，命令与结果记在本次变更记录及验收项。
+
+## 第二期：上下文跟进
+
+`src/flows/follow.ts` 复用 `flowReminders`，只查 `item_flows.ended_at is null` 的少量事项。事项的地方本来就是 `item_materials`：`conversation` 指 omem 会话，`source` 指原件；`itemPlaces` 只把聊天原件算作地方，其他文档、会议从材料取。飞书会话的 `external_id` 去掉 `#话题`，用 `sources.uri=lark:<群>` 找聊天原件；普通会话用 `conversation:<会话id>` 找转录原件。仅保留本人可读空间里的原件，按 id 去重。订阅查询不调用会读聊天全文的地方摘要函数。
+
+迁移末尾新增 `item_follow_cursors` 和 `item_changes`。开始流程时游标放到当时末尾；之后新加材料在首次巡检发现时从末尾开始。聊天只按 `(source_id,line)` 查新行，`sender_kind` 只数 user / owner，助手和机器人不计；普通会话从结构化消息按现有转录格式计算行号并跳过助手、斜杠命令；文档和会议按 `updated_at` 判断更新，仅变更后读取有界节选。删掉的材料、不可读原件不再跟。游标是设备本地采集状态；变化按 `updated_at` 随事项拉取，引用沿用 pull 的原件与行号换算。
+
+设置为 `flows.follow: { enabled: true, quietMinutes: 20, maxMessages: 30 }`，旧配置自动补默认值。整件事最后一条有效内容安静满二十分钟，或新消息达到三十条，就提交一批。聊天每个原件每批最多二百条，单条有长度上限；文档读取前二万四千字。预筛材料包括事项标题、详情、需求点背景与每条短节选，总节选不超过一万字。决策场景 `follow` 沿用 watch 的谨慎门槛，默认只有“无关”概率至少 0.6 才跳过，写 decisions 和一行 `context.batch` 并前移游标；没配模型或调用失败仍提炼。
+
+新角色与运行都是 `item-follow`。角色按本期任务书的正文注册，只给 `read_item / read_source / req_read / note_item_change / stay_quiet`，不发消息、不改事项或需求点。`note_item_change` 是 flow 组中的角色交结果工具，不随分组授出；校验运行正在处理本事项、流程仍有效、当前权限、阶段属于流程、引用确实在本批次展示的原件行内。deadline 必须提供 ISO 时间或日期；需求点必须在事项空间内。同一件事最多一个排队或运行中的跟进，巡检重入共用同次检查。
+
+信息只存变化。截止时间更新时间线及来源，发一条 `later` 通知，重复交相同变化不会重发。scope / decision / blocker 影响 doing / done 阶段才问事项本人，回答前校验本人及流程版本；同批最多三张卡，多条卡用现有提问表单逐条选。并进时按定义顺序重开最早受影响阶段，将变化及说明作为返工反馈，下游已完成阶段变 stale；另开建立有引用和原件材料的新事项；不用管记 dismissed。只影响未开始阶段的变化保留 noted，供承担者读背景。任何变化都不直接改需求点，也不会在本人选择前重开编码。
+
+批次信号记原件、行范围及运行 id，提炼成功后更新为“记了几条变化，问了本人几条”或“看过，没有变化”，再前移游标；运行期间追加的行留给下一批。失败保留游标，重试重交相同变化复用原记录，不重复通知。普通会话的外来消息保留 `speaker`，不把别人的话标成本人说的。`flowView` 只加 `changes`（最近十条、状态、引用）和 `follow`（订阅原件、游标、待处理数量、最新时间）；`read_item.flow` 直接采用它。`stageTask` 加“最近的变化”。
+
+本期只做服务端与测试，不改 `web/`，不新增定时任务、投影表或触发器，不回读历史，不做会议纪要专门处理，也不生成持续改写的“现状”摘要。真实渠道消息与模型提炼效果需另验；自动测试覆盖批次时机、预筛、权限、引用、本人三种选择、下游待复核、游标与并发。

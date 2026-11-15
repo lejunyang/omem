@@ -23,6 +23,7 @@ import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
 import { continuing, idleRounds, isStudy } from "../studies/store.ts";
 import { cancelTrials, isTrials, tickTrials } from "../studies/trials.ts";
 import { capabilitiesPath, planningMaterials } from "../studies/materials.ts";
+import { initFollow, followContexts, followView, recentChanges, changesBrief } from "./follow.ts";
 import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
 
 const host: FlowActor = { actor: "host" };
@@ -78,6 +79,7 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
   const rows = itemStages(app, item.id);
   const planner = d.tools?.includes("propose_directions");
   return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : materialsBrief(app, item.id, item.userId), `截止时间：${item.dueAt ?? "未定"}`,
+    changesBrief(app, item.id),
     `进行的地方：\n${itemPlaces(app, item.id, item.userId).map((p) => `- ${p.title}（${p.ref}）：${p.summary}`).join("\n") || "尚未关联会话"}`,
     `## 流程：${f.definition.name}\n${f.definition.stages.map((s) => `- ${s.id} ${s.name}：${rows.find((r) => r.id === s.id)?.state ?? "pending"}`).join("\n")}`,
     `## 这一段：${d.name}（${d.id}）\n${d.note ?? ""}`,
@@ -231,6 +233,7 @@ export async function startFlow(app: App, itemId: string, flowId: string, by: Fl
       run(app.db, `insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at,round_started_at) values(?,?,?,?,?,?,?) on conflict(item_id) do update set flow_id=excluded.flow_id,definition=excluded.definition,started_at=excluded.started_at,ended_at=null,auto_streak=0,card=null,started_by=excluded.started_by,updated_at=excluded.updated_at,round=1,round_started_at=excluded.round_started_at,round_closed_at=null,next_round_at=null`, itemId, f.id, JSON.stringify(f), at, by.actor, at, at);
     });
     for (const d of f.stages) changeStage(app, itemId, d.id, "pending", {}, by, "加入流程");
+    initFollow(app, itemId, true);
     await advanceNow(app, item.id, "开始流程");
     return flowView(app, itemId);
   });
@@ -474,16 +477,17 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
   await advanceNow(app, itemId, `本人${action}`);
 }
 
-export function reopenStage(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor) {
+export function reopenStage(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor, opts: { feedback?: boolean; startedAt?: string } = {}) {
   return serial(app, itemId, async () => {
+    if (opts.startedAt && (itemFlow(app, itemId)?.startedAt !== opts.startedAt || itemFlow(app, itemId)?.endedAt)) throw new HttpError(409, "流程已有新的状态");
     if (!reason.trim()) throw new HttpError(400, "重开需要原因");
-    reopenNow(app, itemId, stageId, reason, refs, by);
+    reopenNow(app, itemId, stageId, reason, refs, by, opts.feedback ? reason : undefined);
     if (by.actor === "owner") resetStreak(app, itemId);
     await advanceNow(app, itemId, "重开阶段");
     return flowView(app, itemId);
   });
 }
-function reopenNow(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor) {
+function reopenNow(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor, feedback?: string) {
   const f = itemFlow(app, itemId);
   if (!f) throw new HttpError(409, "事项没有流程");
   if (isTrials(definition(f, stageId))) cancelTrials(app, itemId);
@@ -491,7 +495,7 @@ function reopenNow(app: App, itemId: string, stageId: string, reason: string, re
   withdraw(app, s);
   run(app.db, "update item_flows set ended_at=null,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", now(), itemId);
   if (s.control.runId) cancelRun(app, s.control.runId);
-  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, reported: false, confirmed: undefined, question: undefined, feedback: undefined, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs);
+  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, reported: false, confirmed: undefined, question: undefined, feedback, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs);
   const affected = new Set([stageId]);
   for (const d of f.definition.stages) {
     if (!d.needs.some((n) => affected.has(n))) continue;
@@ -599,12 +603,14 @@ export function flowView(app: App, id: string) {
         carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item), rounds: f ? roundHistory(app, f) : [],
+    changes: recentChanges(app, id), follow: followView(app, id),
   };
 }
 
 export async function flowReminders(app: App, at = new Date()) {
   attachFlows(app);
   await checkGitSignals(app);
+  await followContexts(app, at);
   for (const { item_id: id } of all<{ item_id: string }>(app.db, "select item_id from item_flows where ended_at is null")) await serial(app, id, async () => {
     // Recover terminal runs missed during downtime, then remind only the still-waiting stages.
     await advanceNow(app, id, "例行检查", at);

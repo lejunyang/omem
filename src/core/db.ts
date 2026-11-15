@@ -2005,6 +2005,19 @@ export const migrations: readonly string[] = [
      created_at text not null, updated_at text not null
    );
    create index study_findings_item on study_findings(item_id,state,created_at);`,
+  // Local cursor IDs may outlive an overwritten snapshot; changes travel with their item.
+  `create table item_follow_cursors (
+     item_id text not null, source_id text not null,
+     started_at text not null, line integer not null default 0, source_updated_at text not null,
+     updated_at text not null, primary key(item_id,source_id)
+   );
+   create table item_changes (
+     id text primary key, item_id text not null references items(id), at text not null,
+     type text not null, summary text not null, detail text, req text,
+     stages text not null default '[]', refs text not null, run_id text not null,
+     status text not null default 'noted', ask_id text, updated_at text not null
+   );
+   create index item_changes_item_at on item_changes(item_id,at);`,
 ];
 
 export type Db = DatabaseSync;

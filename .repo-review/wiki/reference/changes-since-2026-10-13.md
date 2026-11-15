@@ -24,6 +24,27 @@ updated: 2026-11-15
 - 功能清单通过主助手已有 write_file 写事项空间的工作文件；定方向只带功能标题的次数与日期和最近提交标题，不带台账结论。内置四个 study 技能及 study.yaml 均只补缺。
 - 课题 GET 和两条本人写接口在 `src/studies/http.ts`，返回最近 200 试验及产物、发现及依据、覆盖与 idleRounds。非 manual 连续三轮没有新发现就停自动开轮并 later 通知；manual 只带计数。三表随事项拉取，通用拉取 SQL 补列名引用以支持 check 字段。
 - 本期不改网页，不做执行环境登记、推送授权、试验内交办或远端试验。测试与细节见 `test/studies.test.ts` 和 `docs/v2/studies.md`“第二期的实现”。
+## 流程第二期：上下文跟进（11-15）
+
+- 进行中的事项订阅材料里的聊天、会话、文档和会议，从流程开始时的末尾跟新内容；复用巡检，二十分钟安静或三十条成批，排除助手和机器人，保留本人的话。
+- 新决策场景 `follow` 只在有把握无关时跳过，否则交只读角色 `item-follow`，通过 `note_item_change` 交带引用的变化。工具只认本运行的事项、批次原件行与流程阶段；不改需求点、不发消息。
+- 信息只记，截止时间更新时间线并发一次不急的通知；影响进行中或已完成阶段时问事项本人，并进带反馈重开最早受影响阶段、下游待复核，另开挂来源，忽略保留记录。同批最多三张卡，多条卡逐条选。
+- `flowView` / `read_item.flow` 增加最近十条变化及订阅游标、待处理数量；阶段任务带最近变化。变化随事项拉取，游标和三十天的批次信号记录保留本机。入口 `src/flows/follow.ts`、`test/flow-follow.test.ts`。
+- 本次不改网页，不新增定时任务、投影或触发器，不做会议纪要专用流程。新增材料在首次巡检发现时初始化末尾，不补读关联前的内容。
+
+验证命令：
+
+```sh
+npx vitest run test/flow-follow.test.ts test/flows.test.ts test/flows-http.test.ts test/flow-signals.test.ts test/flow-rounds.test.ts test/decision-log.test.ts test/esm.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts test/insights.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+git diff --check
+```
+
+最终定向回归退出 0，原样汇总：`Test Files  13 passed (13)`、`Tests  198 passed | 1 skipped (199)`。其中跟进专项 `21 tests` 全过；跳过的是 Windows 无法执行的 SSH shell 脚本用例。类型检查退出 0，无类型错误；空白检查通过。
+
+开发首轮为 `Test Files  3 failed | 10 passed (13)`、`Tests  4 failed | 190 passed | 1 skipped (195)`：旧默认值断言、截止时间通知的有效来源、普通对象重开复核均已修正。末轮前有一次全部断言通过但 Vitest 报 `Errors  1 error`，错误为 `[vitest-worker]: Timeout calling "onTaskUpdate"`，退出 1；同一命令复跑得到上述退出 0 的最终结果。HTTP 测试收尾仍输出两条 `database is not open` 异步警告，8 个用例均通过，未改该测试的既有收尾逻辑。
+
+真实 Agent 验证尝试：`codex exec --ephemeral -s read-only -m gpt-6.1-sol -c model_reasoning_effort=low`，要求按新角色分别判断虚构的范围提议和无关闲聊；当前环境启动时报 `Error finding codex home: Could not find home directory`，退出 1，没有得到模型结果。真实模型与渠道效果仍待验证。
 
 ## 流程的轮次、档位和等推送：界面（11-15）
 
