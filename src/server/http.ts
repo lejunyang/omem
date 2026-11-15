@@ -58,9 +58,9 @@ import { allProfiles, commandRuleSchema, configSchema, saveConfig } from "../cor
 import { approverChoices, commandGate, syncCommandGate } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
-import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
+import { listSchedules, nextRuns, rezoneScheduler, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { businessOf, createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
-import { HttpError, slugify } from "../core/util.ts";
+import { HttpError, slugify, useProcessZone, validZone } from "../core/util.ts";
 import { loopbackIp, trustedLocal, viaProxy } from "./origin.ts";
 import { listenSecure, type SecureListener } from "./secure.ts";
 import { AUTH_LIMITED, AUTH_PUBLIC, bearerToken, registerAuthRoutes, resolveAuth, type RequestAuth } from "../auth/http.ts";
@@ -185,7 +185,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     reply.header("cache-control", "no-store").header("x-robots-tag", "noindex").header("referrer-policy", "no-referrer");
     const share = readShare(app, (req.params as { token: string }).token);
     if (!share) return reply.status(404).send({ error: "这个分享链接无效、已撤销或已过期" });
-    return share;
+    return { ...share, timezone: app.config.timezone };
   });
   server.get("/api/shares", async (req) => ({ shares: listShares(app, who(req)), webUrl: !!app.config.webUrl?.trim(), expiryDays: app.config.shares.expiryDays }));
   server.delete("/api/shares/:id", async (req) => {
@@ -195,7 +195,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/me", async (req) => {
     const u = getUser(app, who(req));
     // What the page may offer: global permissions, and the spaces this person writes or manages.
-    return { ...u, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted };
+    return { ...u, spaces: accessibleSpaces(app, u.id), perms: globalPerms(app, u.id), writes: spacesWith(app, u.id, "memory.write"), wiki: spacesWith(app, u.id, "wiki.write"), manages: spacesWith(app, u.id, "space.manage"), via: authOf(req)?.via ?? "local", restricted: !!authOf(req)?.restricted, timezone: app.config.timezone };
   });
 
   // ---------------------------------------------------------------- tools/MCP
@@ -2887,6 +2887,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home, rerank: rerankStatus(app), embeddingSource: app.config.embeddings.provider === "local" ? modelSource(app.config.embeddings.model) : null, approvalTools: toolList().map((t) => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }));
   server.put("/api/settings", async (req) => {
+    const zone = (req.body as { timezone?: unknown } | null)?.timezone;
+    if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });
     next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
@@ -2903,7 +2905,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     saveConfig(next, app.home);
     // A provider taken out takes its key with it.
     for (const id of Object.keys(readKeys(app.home))) if (!id.startsWith("mcp:") && !next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
+    const zoneChanged = next.timezone !== app.config.timezone;
     Object.assign(app.config, next);
+    if (zoneChanged) {
+      useProcessZone(app.config.timezone);
+      // The timers were made in the old zone.
+      rezoneScheduler(app);
+    }
     return { config: app.config, restart };
   });
 

@@ -3,7 +3,7 @@ import { all, one, run } from "./db.ts";
 import { getItem, itemEvents } from "../items/store.ts";
 import { validateItemRefs } from "../items/evidence.ts";
 import { canWrite } from "./users.ts";
-import { HttpError, json, newId, now } from "./util.ts";
+import { HttpError, json, newId, now, zonedParts } from "./util.ts";
 
 export type NotifyAction = { label: string; action: string; style?: "primary" | "danger" | "default" };
 
@@ -33,7 +33,7 @@ export async function channelAllows(channel: string, n: Notification) {
 }
 
 export function inQuietHours(app: App, at = new Date()) {
-  const h = at.getHours();
+  const h = zonedParts(at, app.config.timezone).hour;
   const { quietStart, quietEnd } = app.config.notify;
   return quietStart > quietEnd ? h >= quietStart || h < quietEnd : h >= quietStart && h < quietEnd;
 }
@@ -192,16 +192,17 @@ const LATER_LISTED = 12;
 /** A held notification older than this is no longer worth a push (it stays in the list). */
 const LATER_KEEP_MS = 48 * 3600_000;
 
-/** The latest of the set times of day that has passed today (the server's clock, as quiet hours), as a key; null before the first. */
+/** The latest of the set times of day that has passed today (the owner's `config.timezone`, as quiet hours), as a key; null before the first. */
 export function laterSlot(app: App, at = new Date()): string | null {
-  const now_ = at.getHours() * 60 + at.getMinutes();
+  const local = zonedParts(at, app.config.timezone);
+  const now_ = local.hour * 60 + local.minute;
   const passed = app.config.notify.laterTimes
     .map((t) => /^(\d{1,2}):(\d{2})$/.exec(t))
     .flatMap((m) => (m ? [Number(m[1]) * 60 + Number(m[2])] : []))
     .filter((m) => m <= now_)
     .sort((a, b) => b - a)[0];
   if (passed === undefined) return null;
-  const day = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+  const day = local.date;
   return `${day} ${String(Math.floor(passed / 60)).padStart(2, "0")}:${String(passed % 60).padStart(2, "0")}`;
 }
 

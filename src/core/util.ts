@@ -74,6 +74,52 @@ export function webLink(app: { config: { webUrl?: string } }, link: string) {
  * Stored times are UTC ISO strings; anything shown to the owner or handed to a model to relay goes through this.
  * `short` drops the year.
  */
+/** This machine's own time zone (what `config.timezone` starts as). */
+export function systemZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+/** An IANA zone name this runtime knows ("Asia/Shanghai", "UTC"). */
+export function validZone(z: unknown): z is string {
+  if (typeof z !== "string" || !z.trim()) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: z });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The owner's time zone for this process's own local-time calls (`getHours`, `toLocaleString` without
+ * a zone) and for the agents and tools it starts: they read TZ. The service and the CLI set it from
+ * `config.timezone`, so the machine's own zone is not used anywhere.
+ */
+export function useProcessZone(z: string) {
+  if (validZone(z) && process.env.TZ !== z) process.env.TZ = z;
+}
+
+/** Wall-clock parts of an instant in a time zone (month 1–12, weekday 0 = Sunday). */
+export function zonedParts(t: string | number | Date, timeZone: string) {
+  const d = t instanceof Date ? t : new Date(t);
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", weekday: "short", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" }).formatToParts(d).map((x) => [x.type, x.value]));
+  const year = Number(p.year), month = Number(p.month), day = Number(p.day);
+  return { year, month, day, hour: Number(p.hour) % 24, minute: Number(p.minute), weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday), date: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}` };
+}
+
+/** The instant a day ("YYYY-MM-DD") starts in a time zone. */
+export function zoneMidnight(day: string, timeZone: string): Date {
+  const target = Date.parse(`${day}T00:00:00Z`);
+  let ms = target;
+  for (let i = 0; i < 3; i++) {
+    const p = zonedParts(ms, timeZone);
+    const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute);
+    if (asUtc === target) break;
+    ms += target - asUtc;
+  }
+  return new Date(ms);
+}
+
 export function localStamp(t: string | number | Date, timeZone?: string, opts: { short?: boolean; seconds?: boolean } = {}): string {
   const d = t instanceof Date ? t : new Date(t);
   if (Number.isNaN(d.getTime())) return String(t);

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import Skeleton from "../components/Skeleton.vue";
+import { fmt, setTimeZone } from "../lib/time";
 import { escapeHtml, highlight, languageOf, renderMarkdown } from "../lib/markdown";
 
 /**
@@ -22,7 +23,7 @@ const share = ref<Share | null>(null);
 const error = ref("");
 const current = computed(() => (route.params.item !== undefined && route.params.item !== "" ? Number(route.params.item) : null));
 
-const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
+const when = (iso: string | null) => (iso ? fmt(iso, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
 /** The mark the message showed for it (src/channels/citations.ts citationMark). */
 const circled = (n: number) => `(${n})`;
 const KIND: Record<string, string> = { code: "代码", work: "工作文件", doc: "文档", note: "笔记", web: "网页", chat: "聊天", conversation: "对话", image: "图片" };
@@ -81,6 +82,7 @@ onMounted(async () => {
     });
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(r.status === 404 ? "链接无效、已撤销或已过期，请向发链接的人要一个新的。" : `打开失败（${body.error ?? r.status}），稍后再试。`);
+    setTimeZone((body as { timezone?: string }).timezone);
     share.value = body as Share;
     document.title = `${share.value.title || "分享"} · omem`;
     await nextTick();

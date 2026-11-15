@@ -5,6 +5,7 @@ import { startSessionCleanup } from "./agents/session-cleanup.ts";
 import { sweepWorktreeSpaces } from "./agents/worktree-index.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
+import { useProcessZone } from "./core/util.ts";
 import { runCoverage } from "./wiki/coverage.ts";
 import { ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
 import { embedPending, embedPendingMemories } from "./search/embeddings.ts";
@@ -102,6 +103,7 @@ export type BootOptions = { port?: number; host?: string; quiet?: boolean; backg
 
 export async function boot(home?: string, opts: BootOptions = {}) {
   const app = App.open(home);
+  useProcessZone(app.config.timezone);
   ensurePersonalSpace(app);
   ensureDefaultSchedules(app);
   // Built-in roles copied only to attach a skill follow the source again (builtin-roles.ts).

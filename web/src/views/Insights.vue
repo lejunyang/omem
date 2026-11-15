@@ -13,6 +13,7 @@ import RankBars from "../components/charts/RankBars.vue";
 import BarChart from "../components/charts/BarChart.vue";
 import TrendChart from "../components/charts/TrendChart.vue";
 import type { ChartSpec, MetricItem } from "@omem-ai/plugin-sdk/charts";
+import { dayKey, fmt, fromWallDate, timeZone } from "../lib/time";
 
 type Section = InsightsReport["sections"][number];
 type Chart = Section["charts"][number];
@@ -39,18 +40,17 @@ function setFilter(name: string, value: unknown) {
   if (value === "" || value === false || value == null) delete next[name]; else next[name] = String(value);
   void router.replace({ path: "/insights", query: next });
 }
-function today() { return new Intl.DateTimeFormat("sv-SE", { timeZone: data.value?.timezone }).format(new Date()); }
+function today() { return new Intl.DateTimeFormat("sv-SE", { timeZone: data.value?.timezone ?? timeZone() }).format(new Date()); }
 function choosePeriod(value: string) {
   if (value === "custom") { setFilter("period", "custom"); return; }
   const to = today(), from = new Date(Date.parse(to) - (Number(value) - 1) * 86400_000).toISOString().slice(0, 10);
   const next: Record<string, typeof route.query[string]> = { ...route.query, from, to }; delete next.detail; delete next.period;
   void router.replace({ query: next });
 }
-function dateValue(day: string) { return day ? `${day}T12:00:00` : null; }
+function dateValue(day: string) { return day ? fromWallDate(new Date(`${day}T12:00:00`)).toISOString() : null; }
 function selectDate(key: string, value: string | null) {
   if (!value) return;
-  const d = new Date(value);
-  setFilter(key, `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  setFilter(key, dayKey(value));
 }
 const filters = computed(() => {
   const options = data.value?.options;
@@ -176,7 +176,7 @@ function shown(m: { value: number | null; unit?: string } | undefined): { value:
 /** A record's time in the reader's own clock; whatever is not a date is shown as it is. */
 function when(at: string) {
   const t = Date.parse(at);
-  return Number.isFinite(t) ? new Date(t).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : at;
+  return Number.isFinite(t) ? fmt(t, { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : at;
 }
 
 // ---- the owner's own assumption, kept in this browser only
@@ -292,7 +292,7 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
           <label class="field estimate"><span>替你答一次，按省多少分钟算</span><input v-model="estimate" class="input" inputmode="decimal" placeholder="不填就不换算" aria-label="替你答一次按省多少分钟算" /></label>
           <p v-if="assumedMinutes && answered != null">估算：{{ Math.round(answered * assumedMinutes * 10) / 10 }} 分钟（替你答了 {{ answered }} 次 × 每次 {{ assumedMinutes }} 分钟）。这是按你填的假设算的，不是量出来的。</p>
         </details>
-        <p class="muted small">统计于 {{ new Date(data.generatedAt).toLocaleString("zh-CN", { hour12: false }) }}，日期按 {{ data.timezone }} 算。别人问机器人的内容只计数，不显示。</p>
+        <p class="muted small">统计于 {{ fmt(data.generatedAt, { hour12: false }) }}，日期按 {{ data.timezone }} 算。别人问机器人的内容只计数，不显示。</p>
       </section>
     </template>
   </div>

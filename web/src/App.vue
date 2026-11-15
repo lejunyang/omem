@@ -12,6 +12,7 @@ import { get, setLiveEvents } from "./api";
 import { loadSpaces, refreshUnread, state } from "./store";
 import { spaceOptions } from "./lib/spaces";
 import { preloadRoute } from "./preload";
+import { setTimeZone } from "./lib/time";
 
 const route = useRoute();
 const router = useRouter();
@@ -94,6 +95,7 @@ onMounted(async () => {
   window.addEventListener("keydown", onKey);
   try {
     state.me = await get("/api/me");
+    setTimeZone(state.me?.timezone);
     await loadSpaces();
     await refreshUnread();
     await addPluginPages();

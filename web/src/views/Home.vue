@@ -7,6 +7,7 @@ import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { currentSpace, fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel } from "../store";
 import { boardLine, type BoardRow } from "../lib/flow";
+import { fmt, toWallDate } from "../lib/time";
 
 type HomeData = {
   decisions: Item[];
@@ -65,10 +66,10 @@ async function ask() {
   }
 }
 const greeting = computed(() => {
-  const h = new Date().getHours();
+  const h = toWallDate(Date.now()).getHours();
   return h < 6 ? "夜深了" : h < 11 ? "早上好" : h < 14 ? "中午好" : h < 18 ? "下午好" : "晚上好";
 });
-const today = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+const today = computed(() => fmt(Date.now(), { month: "long", day: "numeric", weekday: "long" }));
 const empty = computed(() => data.value && !asks.value.length && !gates.value.length && !data.value.decisions.length && !data.value.dueSoon.length && !data.value.waiting.length);
 const suggestions = ["我最近有哪些没完成的事？", "上周关于预算的约定是什么？", "这个仓库的整体架构是什么？"];
 </script>

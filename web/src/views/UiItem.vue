@@ -6,6 +6,7 @@ import AskCard from "../components/AskCard.vue";
 import Markdown from "../components/Markdown.vue";
 import Skeleton from "../components/Skeleton.vue";
 import UiView from "../components/UiView.vue";
+import { fmt } from "../lib/time";
 
 /**
  * One question or view on its own page (`#/ui/<id>`, docs/v2/interactive-ui.md): where a Feishu
@@ -43,7 +44,7 @@ onBeforeUnmount(off);
     <p v-else-if="error" class="muted">{{ error }}</p>
     <template v-else-if="item?.type === 'view'">
       <UiView :components="item.view.components" :title="item.view.title || '展示'" />
-      <p class="muted small">{{ new Date(item.view.createdAt).toLocaleString("zh-CN", { hour12: false }) }}</p>
+      <p class="muted small">{{ fmt(item.view.createdAt, { hour12: false }) }}</p>
     </template>
     <template v-else-if="item?.type === 'ask'">
       <AskCard v-if="item.ask.status === 'pending'" :ask="item.ask" @answered="load" />

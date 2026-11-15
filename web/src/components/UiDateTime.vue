@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import Icon from "./Icon.vue";
+import { fromWallDate, toWallDate } from "../lib/time";
 
 /**
  * Date-time picker without the native control. v-model is an ISO string (or null);
- * the calendar shows local time. Quick picks cover the usual reminder times.
+ * the calendar shows the set time zone's wall clock (lib/time.ts: dates here are wall-clock Dates,
+ * turned back into real instants when emitted). Quick picks cover the usual reminder times.
  */
 const props = withDefaults(defineProps<{ modelValue: string | null; placeholder?: string; ariaLabel?: string; clearable?: boolean }>(), { placeholder: "未设置", clearable: true });
 const emit = defineEmits<{ "update:modelValue": [value: string | null]; change: [value: string | null] }>();
@@ -13,15 +15,16 @@ const open = ref(false);
 const trigger = ref<HTMLButtonElement | null>(null);
 const pop = ref<HTMLElement | null>(null);
 const pos = ref({ top: 0, left: 0, up: false });
-const value = computed(() => (props.modelValue ? new Date(props.modelValue) : null));
-const view = ref(new Date());
+const value = computed(() => (props.modelValue ? toWallDate(props.modelValue) : null));
+const wallNow = () => toWallDate(Date.now());
+const view = ref(wallNow());
 const time = ref("09:00");
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const label = computed(() => {
   const d = value.value;
   if (!d || Number.isNaN(d.getTime())) return "";
-  const today = new Date();
+  const today = wallNow();
   const sameYear = d.getFullYear() === today.getFullYear();
   return `${sameYear ? "" : d.getFullYear() + "年"}${d.getMonth() + 1}月${d.getDate()}日 周${"日一二三四五六"[d.getDay()]} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 });
@@ -36,7 +39,7 @@ const days = computed(() => {
 const same = (a: Date | null, b: Date) => !!a && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
 function emitDate(d: Date | null) {
-  const v = d ? d.toISOString() : null;
+  const v = d ? fromWallDate(d).toISOString() : null;
   emit("update:modelValue", v);
   emit("change", v);
 }
@@ -50,14 +53,14 @@ function pickDay(day: Date) {
 }
 function applyTime() {
   if (!/^\d{1,2}:\d{2}$/.test(time.value.trim())) return;
-  emitDate(at(value.value ?? new Date()));
+  emitDate(at(value.value ?? wallNow()));
 }
 const quick = computed(() => {
-  const now = new Date();
+  const now = wallNow();
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((8 - now.getDay()) % 7 || 7));
   return [
-    { label: "1 小时后", d: new Date(Math.ceil((now.getTime() + 3600_000) / 300_000) * 300_000) },
+    { label: "1 小时后", d: toWallDate(Math.ceil((Date.now() + 3600_000) / 300_000) * 300_000) },
     { label: "今晚 20:00", d: at(now, "20:00") },
     { label: "明天 9:00", d: at(tomorrow, "09:00") },
     { label: "下周一 9:00", d: at(monday, "09:00") },
@@ -72,7 +75,7 @@ function place() {
   pos.value = { top: up ? r.top - 4 : r.bottom + 4, left: Math.min(Math.max(8, r.left), window.innerWidth - 300), up };
 }
 async function show() {
-  view.value = value.value && !Number.isNaN(value.value.getTime()) ? new Date(value.value) : new Date();
+  view.value = value.value && !Number.isNaN(value.value.getTime()) ? new Date(value.value) : wallNow();
   time.value = value.value ? `${pad(value.value.getHours())}:${pad(value.value.getMinutes())}` : "09:00";
   place();
   open.value = true;
@@ -133,7 +136,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDoc, true));
           type="button"
           class="day"
           :data-i="i"
-          :class="{ out: d.getMonth() !== view.getMonth(), today: same(new Date(), d), sel: same(value, d) }"
+          :class="{ out: d.getMonth() !== view.getMonth(), today: same(wallNow(), d), sel: same(value, d) }"
           :aria-pressed="same(value, d)"
           :aria-label="`${d.getMonth() + 1}月${d.getDate()}日`"
           @click="pickDay(d)"

@@ -2,6 +2,7 @@
 import { Cron } from "croner";
 import { computed, ref, watch } from "vue";
 import UiSelect from "./UiSelect.vue";
+import { toWallDate } from "../lib/time";
 
 /**
  * A schedule as a few choices instead of a cron line: every N minutes, every N hours, daily, on
@@ -94,7 +95,8 @@ const describe = computed(() => {
   }
 });
 
-function fmt(d: Date) {
+function fmt(at: Date) {
+  const d = toWallDate(at);
   return `${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 

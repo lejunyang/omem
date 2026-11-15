@@ -1,5 +1,6 @@
 import { reactive, watch } from "vue";
 import { get, onServerEvent, onServerResync, type Space } from "./api";
+import { dayKey, fmt } from "./lib/time";
 
 export type CitationTarget =
   | { kind: "source"; id?: string; uri?: string; space?: string; from?: number; to?: number; label?: string }
@@ -30,7 +31,7 @@ export const state = reactive({
   capture: false,
   theme: stored("omem-theme", "auto"),
   /** Who is using the page (src/auth): the owner, or a member with a smaller set of pages. */
-  me: null as null | { id: string; name: string; role: string; status: string; avatar: string | null; via: string; perms: string[]; spaces: string[] | null; writes: string[] | null; wiki: string[] | null; manages: string[] | null },
+  me: null as null | { id: string; name: string; role: string; status: string; avatar: string | null; via: string; perms: string[]; spaces: string[] | null; writes: string[] | null; wiki: string[] | null; manages: string[] | null; timezone?: string },
 });
 
 watch(
@@ -181,11 +182,9 @@ export const itemKindLabel: Record<string, string> = {
 
 export function fmtTime(iso: string | null | undefined, withTime = true) {
   if (!iso) return "";
-  const d = new Date(iso);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
+  const sameDay = dayKey(iso) === dayKey(Date.now());
   const opts: Intl.DateTimeFormatOptions = sameDay ? { hour: "2-digit", minute: "2-digit" } : withTime ? { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" } : { year: "numeric", month: "numeric", day: "numeric" };
-  return (sameDay ? "今天 " : "") + d.toLocaleString("zh-CN", opts);
+  return (sameDay ? "今天 " : "") + fmt(iso, opts);
 }
 
 export function relTime(iso: string | null | undefined) {

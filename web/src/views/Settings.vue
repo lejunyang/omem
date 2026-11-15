@@ -34,6 +34,7 @@ import { codeIndexLabel } from "../lib/code-index";
 import { fmtTime, kindLabel, loadSpaces, relTime, state, toast } from "../store";
 import { nestedSpaces } from "../lib/spaces";
 import { confirmDialog, promptDialog } from "../lib/dialog";
+import { setTimeZone } from "../lib/time";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
@@ -599,6 +600,25 @@ async function saveCron(s: Schedule, cron: string) {
   } catch (e) {
     toast((e as Error).message, "error");
   }
+}
+const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+function zoneOffset(z: string) {
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: z, timeZoneName: "shortOffset" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value ?? "";
+  } catch {
+    return "";
+  }
+}
+const zoneOptions = computed(() => {
+  const all = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
+  const cur = config.value?.timezone as string | undefined;
+  return [...new Set([...(cur ? [cur] : []), browserZone, "UTC", ...all])].map((z) => ({ value: z, label: z, hint: zoneOffset(z) }));
+});
+async function saveTimezone(z: string) {
+  if (!z || z === config.value?.timezone) return;
+  await saveConfig({ timezone: z }, `时区改为 ${z}`);
+  setTimeZone(config.value?.timezone);
+  void load();
 }
 async function saveScheduleConfig(s: Schedule, config: Record<string, unknown>) {
   await put(`/api/schedules/${s.id}`, { config: { ...s.config, ...config } });
@@ -1167,7 +1187,15 @@ async function saveEdit() {
     </section>
 
     <section v-else-if="tab === 'schedules'" class="stack">
-      <p class="muted">后台任务按设定的时间运行（时区：{{ config?.timezone }}）。到期提醒直接发送；巡检在关注、等待中的事项有新材料时按预筛结果调用助手。</p>
+      <div v-if="config" class="card pad stack">
+        <strong>时区</strong>
+        <HelpText>下面各项任务的时间、免打扰和稍后汇总的时刻、每天的计数和额度，以及网页、飞书消息、给助手的材料里的时间，都按这个时区算，不看服务器和浏览器所在的时区。服务和它启动的 Agent 也用这个时区。改了马上生效，定时任务按新时区重新排。</HelpText>
+        <div class="row wrap">
+          <UiSelect :model-value="config.timezone" :options="zoneOptions" width="300px" aria-label="时区" @change="(z) => saveTimezone(z as string)" />
+          <span v-if="browserZone !== config.timezone" class="muted small">这个浏览器在 {{ browserZone }}</span>
+        </div>
+      </div>
+      <p class="muted">后台任务按上面的时区运行。到期提醒直接发送；巡检在关注、等待中的事项有新材料时按预筛结果调用助手。</p>
       <div v-if="config?.wiki?.coverage" class="card pad stack">
         <strong>重点文档补写</strong>
         <HelpText>每晚把还没被 Wiki 引用的重点文档写进页面。按贴链接、引用和事项等计数排序，沿用规划、写作和核对；30 天内不重复选，关闭自动整理的空间不参加。Wiki 顶部可以展开候选和手动补写。每晚总额设为 0 停止自动补写；每空间额度为 0 时手动也暂停。</HelpText>

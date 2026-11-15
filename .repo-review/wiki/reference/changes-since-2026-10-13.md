@@ -16,6 +16,12 @@ updated: 2026-11-16
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
 
+## 时区设置（11-16）
+
+- `config.timezone` 原来只在定时任务、部分每日计数和给模型的时间里用，默认取系统时区、网页上改不了；免打扰、稍后汇总的时点、学习卡片的“今天”和网页上的所有时间都按服务器或浏览器自己的时区。现在 设置 → 定时任务 顶部可以选时区（`web/src/views/Settings.vue`），`PUT /api/settings` 校验名字并在变了时用 `rezoneScheduler` 重排定时任务（`src/core/scheduler.ts`，换时区前错过的时间点不补跑）。
+- 服务端：`src/core/util.ts` 加 `validZone`、`zonedParts`、`zoneMidnight`、`useProcessZone`；服务（`main.ts`）和 CLI 启动时、设置变了时把进程的 `TZ` 设成配置的时区，没带时区的 `toLocaleString`、`getHours` 和启动的 Agent 都随它。`notify.ts` 的免打扰和汇总时点、`learn/cards.ts` 的“今天”和连续天数显式按配置时区算。配置里不认识的时区退回系统时区。
+- 网页：`web/src/lib/time.ts`（`fmt`、`toWallDate` / `fromWallDate`、`dayKey`），时区来自 `/api/me` 的 `timezone`（分享页来自分享接口）。`fmtTime`、`clockTime`、聊天、日期选择器、cron 预览、首页问候和日期、数据页都改用它。测试 `test/timezone.test.ts`。
+
 ## 真实跑过一轮课题以后的修正，外部状态卡片（11-16）
 
 - 用真实模型在一个小示例仓库上走了两轮课题（记录在 `docs/v2/studies.md` 文末）。第一轮试验全部“跑不了”，是任务措辞的问题；改了 `src/studies/trials.ts` 的任务文字和内置技能 `study-trial`，`src/studies/store.ts` 的 `reconcile`（跑不了的不算试过）和 `confirmDirection`（选了新方向时结束跑完却没结论的旧方向），`src/studies/materials.ts` 的覆盖统计（不数跑不了的）。试验阶段收尾的说明改成“通过 2 个，没通过 1 个”这样的词，没有推送时不提推送。

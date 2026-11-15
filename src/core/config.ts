@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalog.ts";
 import { omemHome } from "./home.ts";
+import { systemZone, validZone } from "./util.ts";
 import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
 
 /** Agents that can run with an API key of their vendor instead of the login on this machine. */
@@ -228,7 +229,12 @@ export const configSchema = z.object({
       connectors: z.array(z.string()).default([]),
     })
     .default({ enabled: false, providers: ["lark"], primary: null, signup: {}, sessionDays: 30, connectors: [] }),
-  timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
+  /**
+   * The owner's time zone (IANA name): schedules, quiet hours, daily counts and every time shown in
+   * the web pages and messages. Starts as the machine's own zone; a name this runtime does not know
+   * falls back to it.
+   */
+  timezone: z.string().default(systemZone).transform((z) => (validZone(z) ? z : systemZone())),
   language: z.string().default("zh-CN"),
   /** Background runs (ingest, wiki, dream…) at the same time; each model's own limit is agents.capacity. */
   concurrency: z.number().int().min(1).max(32).default(2),

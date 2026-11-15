@@ -92,7 +92,13 @@ function fire(app: App, s: Schedule, runner: Runner) {
   }
 }
 
+/** The zone the timers were last made in, and when it last changed: times missed before a change are not made up. */
+let zoneNow = "";
+let zoneChangedAt = 0;
+
 export function restartScheduler(app: App) {
+  if (zoneNow && zoneNow !== app.config.timezone) zoneChangedAt = Date.now();
+  zoneNow = app.config.timezone;
   for (const j of jobs) j.stop();
   jobs = [];
   for (const s of listSchedules(app)) {
@@ -106,6 +112,11 @@ export function restartScheduler(app: App) {
   if (watchdog) clearInterval(watchdog);
   watchdog = setInterval(() => catchUpSchedules(app), 60_000);
   watchdog.unref();
+}
+
+/** After the owner changed the time zone: the timers are made again in it, if this process runs them. */
+export function rezoneScheduler(app: App) {
+  if (watchdog && zoneNow !== app.config.timezone) restartScheduler(app);
 }
 
 /** How late a missed firing may still be made up: later than this it waits for its next time. */
@@ -138,7 +149,7 @@ export function catchUpSchedules(app: App, at = new Date()): string[] {
     // Frequent tasks (every few minutes) just wait for their next time.
     if (!due || (next && next.getTime() - at.getTime() < CATCH_UP_SKIP_NEXT_MS)) continue;
     const late = at.getTime() - due.getTime();
-    if (late < CATCH_UP_AFTER_MS || late > CATCH_UP_WITHIN_MS || Date.parse(s.lastRunAt) >= due.getTime()) continue;
+    if (late < CATCH_UP_AFTER_MS || late > CATCH_UP_WITHIN_MS || Date.parse(s.lastRunAt) >= due.getTime() || due.getTime() < zoneChangedAt) continue;
     console.warn(`[omem] 定时任务 ${s.id} 错过了 ${due.toISOString()} 的时间点（上次 ${s.lastRunAt}），现在补跑`);
     fire(app, s, runner);
     fired.push(s.id);

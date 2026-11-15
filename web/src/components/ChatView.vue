@@ -7,6 +7,7 @@ import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import Skeleton from "./Skeleton.vue";
 import VirtualList from "./VirtualList.vue";
+import { fmt } from "../lib/time";
 
 /**
  * A chat source shown as a chat: sender, time, the replied-to message, Markdown, images,
@@ -56,7 +57,7 @@ const rows = computed<Row[]>(() => {
   let prev: ChatMsg | null = null;
   for (const m of messages.value) {
     if (thread.value && m.threadId !== thread.value) continue;
-    const d = m.time ? new Date(m.time).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "short" }) : "";
+    const d = m.time ? fmt(m.time, { year: "numeric", month: "long", day: "numeric", weekday: "short" }) : "";
     if (d && d !== day) {
       out.push({ kind: "day", key: `d-${d}`, label: d });
       day = d;
@@ -91,7 +92,7 @@ function jumpTo(q: ReturnType<typeof quoteOf>) {
   } else if ((q as { sourceId?: string }).sourceId) openCitation({ kind: "source", id: (q as { sourceId: string }).sourceId, from: (q as { line?: number }).line ?? undefined, to: (q as { line?: number }).line ?? undefined });
 }
 const initial = (name: string) => (name || "?").replace(/^[^\p{L}\p{N}]+/u, "").slice(0, 1).toUpperCase() || "?";
-const timeOf = (iso: string) => (iso ? new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "");
+const timeOf = (iso: string) => (iso ? fmt(iso, { hour: "2-digit", minute: "2-digit" }) : "");
 const md = (m: ChatMsg) => larkToMarkdown(m.content, m.resources, m.mentions, m.id);
 const files = (m: ChatMsg) => Object.values(m.resources).filter((r) => r.sourceId && !r.url);
 const reactionList = (m: ChatMsg) => (m.reactions as { emoji_type?: string; emoji?: string; count?: number }[]).filter((r) => r && (r.emoji_type || r.emoji));

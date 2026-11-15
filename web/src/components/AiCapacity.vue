@@ -5,6 +5,7 @@ import { del, get, post } from "../api";
 import Icon from "./Icon.vue";
 import UiSelect from "./UiSelect.vue";
 import { toast } from "../store";
+import { fmt } from "../lib/time";
 
 /**
  * How much runs at once: omem's own slots (background tasks, conversations) and each model's limit.
@@ -61,7 +62,7 @@ async function useAgain(source: string) {
   await del(`/api/agents/quota/${encodeURIComponent(source)}`);
   await refresh();
 }
-const when = (iso: string) => new Date(iso).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+const when = (iso: string) => fmt(iso, { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 const reading = ref(false);
 async function readQuota() {
   reading.value = true;

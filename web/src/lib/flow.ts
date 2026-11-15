@@ -1,4 +1,5 @@
 /** Presentation only: the server remains the authority for stage transitions. */
+import { dayKey, toWallDate } from "./time.js";
 export type StageState = "pending" | "gated" | "doing" | "blocked" | "done" | "skipped" | "stale";
 export type FlowStage = {
   id: string; name: string; instruction: string; state: StageState; attempt: number;
@@ -100,10 +101,10 @@ export function stageLine(s: FlowStage, now = Date.now()) {
 }
 /** A moment as the reader's clock shows it: the time today, the date as well on another day. */
 export function clockTime(at: string) {
-  const t = new Date(at);
-  if (Number.isNaN(t.getTime())) return at;
-  const time = t.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" });
-  return t.toDateString() === new Date().toDateString() ? time : `${t.getMonth() + 1}-${String(t.getDate()).padStart(2, "0")} ${time}`;
+  if (Number.isNaN(new Date(at).getTime())) return at;
+  const t = toWallDate(at);
+  const time = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+  return dayKey(at) === dayKey(Date.now()) ? time : `${t.getMonth() + 1}-${String(t.getDate()).padStart(2, "0")} ${time}`;
 }
 /** The model a stage ran on, as short as it can be said. */
 export const aiName = (ai: { profile: string; model?: string; effort?: string }) => [ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ");

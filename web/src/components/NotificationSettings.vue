@@ -49,7 +49,7 @@ async function ignore(chat: Chat) {
       <input class="input time" :value="time" :aria-label="`汇总时间 ${i + 1}`" placeholder="HH:mm" maxlength="5" @change="editTime(i, $event)" />
       <button class="btn sm" @click="times(config.notify.laterTimes.filter((_: string, j: number) => j !== i))">移除</button>
     </div>
-    <p class="hint">按服务器时钟。{{ config.notify.laterTimes.length ? '到时一起发。' : '不攒，照常立即发。' }}</p>
+    <p class="hint">按 设置 → 定时任务 里的时区。{{ config.notify.laterTimes.length ? '到时一起发。' : '不攒，照常立即发。' }}</p>
     <button class="btn sm" :disabled="config.notify.laterTimes.length >= 12" @click="times([...config.notify.laterTimes, Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:30`).find((t) => !config.notify.laterTimes.includes(t))!])">添加时间</button>
   </div>
   <div class="card pad stack">

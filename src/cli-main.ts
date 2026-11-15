@@ -1,4 +1,4 @@
-import { localStamp } from "./core/util.ts";
+import { localStamp, useProcessZone } from "./core/util.ts";
 import { generateWiki } from "./wiki/generate.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -37,6 +37,7 @@ program.hook("preAction", () => {
 });
 const open = () => {
   const app = App.open(home());
+  useProcessZone(app.config.timezone);
   ensurePersonalSpace(app);
   return app;
 };

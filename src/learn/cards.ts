@@ -1,7 +1,7 @@
 import { createEmptyCard, fsrs, type Card, type CardInput, type Grade } from "ts-fsrs";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, json, newId, now } from "../core/util.ts";
+import { HttpError, json, newId, now, zoneMidnight, zonedParts } from "../core/util.ts";
 
 /**
  * Spaced repetition with FSRS. A card is generated from material (by the tutor
@@ -117,8 +117,9 @@ export function updateCard(app: App, id: string, patch: { front?: string; back?:
   return getCard(app, id);
 }
 
-function startOfToday() {
-  return new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+/** When today began in the owner's time zone. */
+function startOfToday(app: App) {
+  return zoneMidnight(zonedParts(new Date(), app.config.timezone).date, app.config.timezone).toISOString();
 }
 
 export function studyStats(app: App, filter?: string | CardFilter) {
@@ -127,7 +128,7 @@ export function studyStats(app: App, filter?: string | CardFilter) {
   const due = where(f, ["suspended = 0", "due_at <= ?"]);
   const total = one<{ n: number }>(app.db, `select count(*) n from cards ${all_.sql}`, ...all_.params)?.n ?? 0;
   const dueN = one<{ n: number }>(app.db, `select count(*) n from cards ${due.sql}`, now(), ...due.params)?.n ?? 0;
-  const today = one<{ n: number }>(app.db, `select count(*) n from card_reviews r join cards c on c.id = r.card_id ${where(f).sql.replace(/\b(space_id|goal_id|user_id)\b/g, "c.$1")} and r.at >= ?`, ...where(f).params, startOfToday())?.n ?? 0;
+  const today = one<{ n: number }>(app.db, `select count(*) n from card_reviews r join cards c on c.id = r.card_id ${where(f).sql.replace(/\b(space_id|goal_id|user_id)\b/g, "c.$1")} and r.at >= ?`, ...where(f).params, startOfToday(app))?.n ?? 0;
   return { total, due: dueN, reviewedToday: today };
 }
 
@@ -141,9 +142,10 @@ export function learningProgress(app: App, filter: CardFilter = {}, days = 30) {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
   const reviews = all<{ at: string; rating: number }>(app.db, `select r.at, r.rating from card_reviews r join cards c on c.id = r.card_id ${cw} and r.at >= ? order by r.at`, ...f.params, since);
   const recall = reviews.length ? reviews.filter((r) => r.rating >= 3).length / reviews.length : null;
-  const dayset = new Set(reviews.map((r) => new Date(r.at).toDateString()));
+  const dayOf = (t: string | number) => zonedParts(t, app.config.timezone).date;
+  const dayset = new Set(reviews.map((r) => dayOf(r.at)));
   let streak = 0;
-  for (let d = new Date(); dayset.has(d.toDateString()); d = new Date(d.getTime() - 86400_000)) streak++;
+  for (let d = Date.now(); dayset.has(dayOf(d)); d -= 86400_000) streak++;
   const cards = all<Row>(app.db, `select * from cards ${f.sql}`, ...f.params).map(toCard);
   const weak = cards.filter((c) => c.lapses >= 2).sort((a, b) => b.lapses - a.lapses).slice(0, 15);
   const mature = cards.filter((c) => c.state === 2 && c.reps >= 4).length;

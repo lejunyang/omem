@@ -4,6 +4,7 @@ import { fieldVisible, type UiField } from "@omem-ai/plugin-sdk/blocks";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiDateTime from "./UiDateTime.vue";
 import UiSelect from "./UiSelect.vue";
+import { dayKey, fromWallDate } from "../lib/time";
 
 /**
  * A question's fields (ask_user `fields`, docs/v2/interactive-ui.md) with omem's own controls.
@@ -40,10 +41,9 @@ const maxRows = (f: UiField) => (f.type === "table" ? f.max_rows : 0);
 /** A date field keeps the local day; the picker gives a moment. */
 const localDay = (iso: string | null) => {
   if (!iso) return undefined;
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return dayKey(iso);
 };
-const asMoment = (day: unknown) => (typeof day === "string" && day ? new Date(`${day}T09:00:00`).toISOString() : null);
+const asMoment = (day: unknown) => (typeof day === "string" && day ? fromWallDate(new Date(`${day}T09:00:00`)).toISOString() : null);
 </script>
 
 <template>
