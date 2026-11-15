@@ -3,6 +3,7 @@ import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import type { Direction, Trial, Finding } from "../studies/store.ts";
 import { fixVerified } from "../studies/fix.ts";
+import { flowLog, reviewStages, type ReviewStageDef } from "../flows/review.ts";
 import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { runReadableSpaces } from "../auth/permissions.ts";
 import { DECISION_SCENES } from "../core/decision-scenes.ts";
@@ -312,6 +313,85 @@ export function deliverySection(c: Ctx): Section {
   s.notes.push("通过是指有一轮评审给了通过；用上是指改动已经应用到你的目录。只推送了分支、没有在 omem 里应用的不算用上。这些状态之后还会变。");
   return s;
 }
+type FlowRow = { item_id: string; flow_id: string; definition: string; started_at: string; ended_at: string | null; title: string; space_id: string; user_id: string };
+const hours = (minutes: number) => round(minutes / 60);
+export function flowsSection(c: Ctx): Section {
+  const s = section("flows", "流程", "走流程的事项在各段花了多久、其中等你多久、卡住多久、你要求返工几次。只数这段时间里的部分。");
+  const allowed = accessibleSpaces(c.app, c.viewer);
+  // One row per item that runs a flow (a handful to a few hundred), each stage log read through its item index.
+  const flows = all<FlowRow>(c.app.db, `select f.item_id,f.flow_id,f.definition,f.started_at,f.ended_at,i.title,i.space_id,i.user_id from item_flows f join items i on i.id=f.item_id
+    where f.started_at < ? and (f.ended_at is null or f.ended_at >= ?)`, c.f.end, c.f.start)
+    .filter(f => (!c.f.space || f.space_id === c.f.space) && (allowed === null || allowed.includes(f.space_id)) && (c.viewer === OWNER || f.user_id === c.viewer));
+  if (!flows.length) return { ...s, empty: "这段时间没有走流程的事项。" };
+  if (c.f.by || c.f.bot || c.f.scene || c.f.profile || c.f.model || c.f.chat) {
+    s.notes.push("阶段的记录不归到某一次运行，按人、模型、场景、会话等筛选时不统计流程。");
+    return { ...s, empty: "按运行的条件筛选时不统计流程。" };
+  }
+  const until = new Date(Math.min(Date.now(), Date.parse(c.f.end))).toISOString();
+  const itemRef = (f: FlowRow, label: string, value?: number): RecordRef => ({ id: f.item_id, label: `${f.title} · ${label}`, at: f.started_at, link: `#/items/${f.item_id}`, ...(value !== undefined ? { value } : {}) });
+  type Touch = { f: FlowRow; doing: number; owner: number; blocked: number; reworks: number };
+  const byFlow = new Map<string, { name: string; stages: { id: string; name: string }[]; items: FlowRow[]; touched: Map<string, Touch[]> }>();
+  for (const f of flows) {
+    const def = (() => { try { return JSON.parse(f.definition) as { name?: string; stages?: ReviewStageDef[] }; } catch { return {}; } })();
+    const stages = def.stages ?? [];
+    const g = byFlow.get(f.flow_id) ?? { name: def.name ?? f.flow_id, stages: [] as { id: string; name: string }[], items: [] as FlowRow[], touched: new Map<string, Touch[]>() };
+    for (const d of stages) if (!g.stages.some(x => x.id === d.id)) g.stages.push({ id: d.id, name: d.name });
+    const log = flowLog(c.app, f.item_id, f.started_at);
+    const end = f.ended_at && f.ended_at < until ? f.ended_at : until;
+    // Minutes: every row, clipped to the period. Counts: only what happened in the period.
+    const spans = reviewStages({ stages, log, from: c.f.start, until: end });
+    const counts = reviewStages({ stages, log: log.filter(r => r.at >= c.f.start && r.at < c.f.end), until: end });
+    let active = false;
+    spans.forEach((x, i) => {
+      const reworks = counts[i].reworks, busy = x.doingMinutes + x.gatedMinutes + x.blockedMinutes;
+      if (!busy && !reworks) return;
+      active = true;
+      const list = g.touched.get(x.id) ?? [];
+      list.push({ f, doing: x.doingMinutes, owner: x.ownerMinutes, blocked: x.blockedMinutes, reworks });
+      g.touched.set(x.id, list);
+    });
+    if (active) g.items.push(f);
+    byFlow.set(f.flow_id, g);
+  }
+  const items = [...byFlow.values()].flatMap(g => g.items);
+  if (!items.length) return { ...s, empty: "这段时间没有走流程的事项。" };
+  const reviews = all<{ item_id: string; how: string; ended_at: string; flow_id: string }>(c.app.db, "select r.item_id,r.how,r.ended_at,r.flow_id from item_flow_reviews r where r.ended_at >= ? and r.ended_at < ?", c.f.start, c.f.end);
+  const titles = new Map(flows.map(f => [f.item_id, f]));
+  const ended = (how: string[]) => reviews.filter(r => how.includes(r.how) && (titles.has(r.item_id) || readableItem(c, r.item_id)));
+  const endedRef = (r: { item_id: string; how: string; ended_at: string }) => ({ id: r.item_id, label: `${titles.get(r.item_id)?.title ?? r.item_id} · ${({ completed: "走完了", stopped: "本人停止", closed: "事项关闭时结束" } as Record<string, string>)[r.how] ?? r.how}`, at: r.ended_at, link: `#/items/${r.item_id}` });
+  const done = ended(["completed"]), cut = ended(["stopped", "closed"]);
+  const allTouches = [...byFlow.values()].flatMap(g => [...g.touched.values()].flat());
+  s.metrics.push(metric(c, "flows:items", "走流程的事项", items.length, items.map(f => itemRef(f, f.ended_at ? "已结束" : "进行中"))),
+    metric(c, "flows:completed", "走完的", done.length, done.map(endedRef)),
+    metric(c, "flows:cut", "中途停下或随事项关闭的", cut.length, cut.map(endedRef)),
+    metric(c, "flows:owner", "等你的时间合计", hours(allTouches.reduce((n, t) => n + t.owner, 0)), allTouches.filter(t => t.owner).map(t => itemRef(t.f, `等你 ${hours(t.owner)} 小时`, hours(t.owner))), "小时", "关卡等你点头、轮到你做的一段、做完等你确认的时间；运行或交办在做的时间不算。"),
+    metric(c, "flows:reworks", "你要求返工", allTouches.reduce((n, t) => n + t.reworks, 0), allTouches.filter(t => t.reworks).map(t => itemRef(t.f, `返工 ${t.reworks} 次`, t.reworks)), "次"));
+  for (const [flowId, g] of byFlow) {
+    if (!g.items.length) continue;
+    const table = `流程「${g.name}」各段（平均每件）`;
+    for (const st of g.stages) {
+      const ts = g.touched.get(st.id);
+      if (!ts?.length) continue;
+      const avg = (pick: (t: Touch) => number) => hours(ts.reduce((n, t) => n + pick(t), 0) / ts.length);
+      const cells: [string, string, number, RecordRef[], string?][] = [
+        ["doing", "在做", avg(t => t.doing), ts.map(t => itemRef(t.f, `${st.name} 在做 ${hours(t.doing)} 小时`, hours(t.doing)))],
+        ["owner", "等你", avg(t => t.owner), ts.map(t => itemRef(t.f, `${st.name} 等你 ${hours(t.owner)} 小时`, hours(t.owner)))],
+        ["blocked", "卡住", avg(t => t.blocked), ts.map(t => itemRef(t.f, `${st.name} 卡住 ${hours(t.blocked)} 小时`, hours(t.blocked)))],
+      ];
+      for (const [key, col, value, records] of cells)
+        s.metrics.push(metric(c, `flows:${flowId}:${st.id}:${key}`, `${g.name} · ${st.name} · ${col}`, value, records, "小时", undefined, { table, row: st.name, col }));
+      const rw = ts.filter(t => t.reworks);
+      s.metrics.push(metric(c, `flows:${flowId}:${st.id}:reworks`, `${g.name} · ${st.name} · 返工`, rw.reduce((n, t) => n + t.reworks, 0), rw.map(t => itemRef(t.f, `${st.name} 返工 ${t.reworks} 次`, t.reworks)), "次", undefined, { table, row: st.name, col: "返工" }));
+    }
+  }
+  s.notes.push("每段的平均只算这段时间里在这一段上花过时间或返工过的事项。“等你”是“在做”和“卡住”里等你的部分，加上关卡等你点头的时间，所以三列加起来会比实际多。返工只算你重开和说“还不行”的次数，上游重开带来的复核和换模型重做不算。事项重新开始过流程的，只算最近那一次；走完、停下按流程结束时存下的回顾数。");
+  return s;
+}
+function readableItem(c: Ctx, itemId: string) {
+  const i = one<{ space_id: string; user_id: string }>(c.app.db, "select space_id,user_id from items where id=?", itemId);
+  const allowed = accessibleSpaces(c.app, c.viewer);
+  return !!i && (!c.f.space || i.space_id === c.f.space) && (allowed === null || allowed.includes(i.space_id)) && (c.viewer === OWNER || i.user_id === c.viewer);
+}
 export function studySection(c: Ctx): Section {
   const s = section("study", "课题", "只数台账里的试验、发现和结束的方向。发现多少不代表做得好坏。");
   const allowed = accessibleSpaces(c.app, c.viewer);
@@ -429,7 +509,7 @@ export function costSection(c: Ctx): Section {
   s.notes.push("每件事只记了第一次成功调用用的后端和模型，没记下的单独一组。时长不含排队；没有起止时间的只算次数。");
   return s;
 }
-const builders = [usageSection, coverageSection, shieldSection, othersSection, qualitySection, deliverySection, studySection, knowledgeSection, costSection];
+const builders = [usageSection, coverageSection, shieldSection, othersSection, qualitySection, deliverySection, flowsSection, studySection, knowledgeSection, costSection];
 type Cached = { at: number; report: Report; records: Map<string, RecordRef[]> };
 const cache = new WeakMap<App, Map<string, Cached>>();
 export function clearInsightsCache(app: App) { cache.delete(app); }
@@ -452,9 +532,9 @@ function compute(app: App, viewer: string, input: Filters): Cached {
       return s;
     } catch {
       // No SQL, paths or stored material in public errors.
-      return { ...section(build.name.replace("Section", ""), ({ usageSection: "用量与覆盖", coverageSection: "用在哪", shieldSection: "替本人挡了多少", othersSection: "给别人带来什么", qualitySection: "质量", deliverySection: "交付", studySection: "课题", knowledgeSection: "知识", costSection: "成本" } as Record<string, string>)[build.name], "这部分暂时无法读取。"), error: "这部分暂时无法读取，请稍后重试。" };
+      return { ...section(build.name.replace("Section", ""), ({ usageSection: "用量与覆盖", coverageSection: "用在哪", shieldSection: "替本人挡了多少", othersSection: "给别人带来什么", qualitySection: "质量", deliverySection: "交付", flowsSection: "流程", studySection: "课题", knowledgeSection: "知识", costSection: "成本" } as Record<string, string>)[build.name], "这部分暂时无法读取。"), error: "这部分暂时无法读取，请稍后重试。" };
     }
-  }).filter(s => s.id !== "study" || !s.empty);
+  }).filter(s => !s.empty || s.id !== "study" && (s.id !== "flows" || s.notes.length > 0));
   const unique = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((s): s is string => !!s))].sort();
   const result: Cached = { at: Date.now(), records: c.records, report: { from: f.from, to: f.to, timezone: app.config.timezone, owner: viewer === OWNER, scenes, sceneTable, generatedAt: new Date().toISOString(), sections,
     options: { spaces: unique(c.runs.map(r => r.space_id)), people: unique(c.runs.map(r => r.trigger_by)), profiles: unique(c.runs.flatMap(r => [r.spec, ...(r.roles ?? "").split("|")])), models: unique(c.runs.map(r => parseAi(r.ai).model)), bots: unique(c.runs.map(r => r.bot)), chats: unique(c.runs.map(r => r.place)) } } };

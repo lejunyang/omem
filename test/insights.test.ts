@@ -63,6 +63,44 @@ it("课题只数期间台账，结果表、事项与运行明细、模型次数�
   expect(specific.metrics.find(m => m.key === "study:trials")?.value).toBe(3);
   expect(specific.metrics.some(m => m.key === "study:findings")).toBe(false);
 });
+function flowItem(a: ReturnType<typeof setup>, opts: { started: string; ended: string | null; log: [string, string, string | null, string, string?, string?, string?][]; how?: string }) {
+  const item = upsertItem(a, undefined, { spaceId: "personal", title: "示例商城退款改造", kind: "todo" }, "user");
+  const definition = { id: "delivery", name: "需求交付", stages: [{ id: "clarify", name: "澄清", needs: [] }, { id: "code", name: "编码", needs: ["clarify"] }] };
+  run(a.db, "insert into item_flows(item_id,flow_id,definition,started_at,ended_at,started_by,updated_at,round_started_at) values(?,?,?,?,?,'owner',?,?)", item.id, "delivery", JSON.stringify(definition), opts.started, opts.ended, opts.started, opts.started);
+  for (const [stage, at, from, to, actor = "host", event, waiting] of opts.log)
+    run(a.db, "insert into item_stage_log(item_id,stage_id,at,from_state,to_state,actor,note,event,waiting_on) values(?,?,?,?,?,?,'',?,?)", item.id, stage, at, from, to, actor, event ?? null, waiting ?? null);
+  if (opts.ended && opts.how) run(a.db, "insert into item_flow_reviews(item_id,started_at,flow_id,user_id,ended_at,how,review,updated_at) values(?,?,'delivery','owner',?,?,'{}',?)", item.id, opts.started, opts.ended, opts.how, opts.ended);
+  clearInsightsCache(a);
+  return item;
+}
+it("流程按定义和阶段数在做、等你、卡住的平均小时数和返工，只算期间里的部分", () => {
+  const a = setup();
+  expect(report(a).sections.some(s => s.id === "flows")).toBe(false);
+  const item = flowItem(a, { started: "2026-11-03T00:00:00.000Z", ended: "2026-11-05T00:00:00.000Z", how: "completed", log: [
+    ["clarify", "2026-11-03T00:00:00.000Z", null, "pending"], ["code", "2026-11-03T00:00:00.000Z", null, "pending"],
+    ["clarify", "2026-11-03T00:00:00.000Z", "pending", "gated", "host", "gate-ask", "owner"],
+    ["clarify", "2026-11-03T02:00:00.000Z", "gated", "pending", "owner", "gate-agree"], ["clarify", "2026-11-03T02:00:00.000Z", "pending", "doing"],
+    ["clarify", "2026-11-03T05:00:00.000Z", "doing", "done"], ["code", "2026-11-03T05:00:00.000Z", "pending", "doing"],
+    ["code", "2026-11-04T05:00:00.000Z", "doing", "blocked", "host", undefined, "owner"], ["code", "2026-11-04T07:00:00.000Z", "blocked", "doing"],
+    ["code", "2026-11-04T08:00:00.000Z", "doing", "done"], ["code", "2026-11-04T09:00:00.000Z", "done", "pending", "owner", "reopen"],
+    ["code", "2026-11-04T09:00:00.000Z", "pending", "doing"], ["code", "2026-11-04T10:00:00.000Z", "doing", "done"],
+  ] });
+  // Outside the period: neither its minutes nor its end count.
+  flowItem(a, { started: "2026-10-20T00:00:00.000Z", ended: "2026-10-25T00:00:00.000Z", how: "stopped", log: [["clarify", "2026-10-20T00:00:00.000Z", "pending", "doing"], ["clarify", "2026-10-21T00:00:00.000Z", "doing", "done"]] });
+  for (const [key, value] of Object.entries({ items: 1, completed: 1, cut: 0, owner: 4, reworks: 1, "delivery:clarify:doing": 3, "delivery:clarify:owner": 2, "delivery:clarify:blocked": 0,
+    "delivery:code:doing": 26, "delivery:code:blocked": 2, "delivery:code:owner": 2, "delivery:code:reworks": 1 }))
+    expect(metric(a, `flows:${key}`).value).toBe(value);
+  expect(metric(a, "flows:delivery:code:doing").cell).toEqual({ table: "流程「需求交付」各段（平均每件）", row: "编码", col: "在做" });
+  expect(insightRecords(a, "owner", filters, "flows:completed").records.map(r => r.link)).toEqual([`#/items/${item.id}`]);
+  expect(report(a).sections.map(s => s.id).slice(5, 8)).toEqual(["delivery", "flows", "knowledge"]);
+  // From the 4th (local midnight 03T15:00Z): the code stage's first stretch is cut, the clarify stage is outside.
+  expect(metric(a, "flows:delivery:code:doing", { from: "2026-11-04" }).value).toBe(16);
+  expect(report(a, { from: "2026-11-04" }).sections.find(s => s.id === "flows")!.metrics.some(m => m.key.startsWith("flows:delivery:clarify"))).toBe(false);
+  const filtered = report(a, { model: "model-a" }).sections.find(s => s.id === "flows")!;
+  expect(filtered.empty).toBeTruthy(); expect(filtered.notes.length).toBe(1);
+  const member = createUser(a, { name: "示例成员" });
+  expect(report(a, {}, member.id).sections.some(s => s.id === "flows")).toBe(false);
+});
 it("课题数出有改动的发现，以及改后重跑通过、仍然失败的", () => {
   const a = setup(), item = study(a);
   const old = "2026-10-30T02:00:00.000Z";
