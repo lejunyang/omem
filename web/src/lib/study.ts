@@ -9,11 +9,19 @@ export type StudyTrial = {
   runId: string | null; attempts: number; prior: string | null; unsure: boolean; escalated: boolean; updatedAt: string;
   /** The commit of each repository in the study's own workspace this trial ran on, by repository space. */
   commits?: Record<string, string>;
+  /** A rerun after a code change: the finding it checks and the delegation whose workspace it ran in. */
+  fixOf?: string | null; workId?: string | null;
 };
 /** What a study may touch: the repositories it works in, whether a finding may be turned into a code change, whether samples' own scripts may run on this machine. */
-export type StudyScope = { repos: { id: string; name: string }[]; allowCode: boolean; thirdParty: boolean; candidates?: { id: string; name: string }[] };
+export type StudyScope = {
+  repos: { id: string; name: string }[]; allowCode: boolean; thirdParty: boolean; candidates?: { id: string; name: string }[];
+  /** Standing permission to push: only to this remote, only under this branch prefix. Both set, or it cannot push. */
+  pushRemote?: string | null; pushPrefix?: string | null;
+};
+/** A push a trial made under the study's standing permission. */
+export type StudyPush = { id: string; trialId: string | null; repo: string; remote: string; branch: string; commit: string; note: string; at: string };
 export function scopeWords(s: StudyScope) {
-  return [s.repos.length ? s.repos.map((r) => r.name).join("、") : "没有登记仓库", s.allowCode ? "可以改代码" : "不改代码", s.thirdParty ? "本机可以执行第三方样本的代码" : "本机不执行第三方样本的代码"].join("；");
+  return [s.repos.length ? s.repos.map((r) => r.name).join("、") : "没有登记仓库", s.allowCode ? "可以改代码" : "不改代码", s.thirdParty ? "本机可以执行第三方样本的代码" : "本机不执行第三方样本的代码", s.pushRemote && s.pushPrefix ? `可以推到 ${s.pushRemote} 的 ${s.pushPrefix} 下面` : "不推送"].join("；");
 }
 export type StudyDirection = {
   id: string; round: number; goal: string; approach: string; acceptance: string; env: string; estimate: string;
@@ -28,17 +36,19 @@ export type StudyFinding = {
   id: string; kind: FindingKind; title: string; repro: string; trials: StudyTrial[];
   state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; stateReason: string; sameAs: string | null; createdAt: string; updatedAt: string;
   /** The code delegation started from this finding, and where it stands. */
-  fix?: { workId: string; status: string; link: string } | null;
+  fix?: { workId: string; status: string; link: string; /** How the failed trials went when run again on the change. */ verified?: TrialResult | null; reruns?: string[] } | null;
 };
 export type StudyView = {
   directions: StudyDirection[]; trials: StudyTrial[]; findings: StudyFinding[];
   coverage: { path: string; ref: string | null; features: { title: string; trials: number; lastAt: string | null }[] };
-  idleRounds: number; scope?: StudyScope;
+  idleRounds: number; scope?: StudyScope; pushes?: StudyPush[];
 };
 
 export const kindWords: Record<FindingKind, string> = { defect: "缺陷", gap: "缺口", idea: "想法" };
 export const findingWords: Record<StudyFinding["state"], string> = { new: "等你看", confirmed: "认可", rejected: "不算", later: "以后再说", duplicate: "和另一条是一回事" };
 export const resultWords: Record<TrialResult, string> = { passed: "通过", failed: "没通过", blocked: "跑不了", unclear: "说不清" };
+/** What rerunning the failed trials on a change showed. */
+export const verifiedWords: Record<TrialResult, string> = { passed: "改后重跑通过", failed: "改后重跑仍然没通过", blocked: "改后没能重跑", unclear: "改后重跑说不清" };
 export const directionWords: Record<StudyDirection["state"], string> = { proposed: "等你选", confirmed: "在做", active: "在做", done: "做完了", dropped: "放下了" };
 
 /** What a trial is at now, in one word: its result once it has one. */

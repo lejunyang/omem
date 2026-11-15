@@ -4,7 +4,7 @@ import { get, onServerEvent, onServerResync, post, put } from "../api";
 import { promptDialog } from "../lib/dialog";
 import { refAction } from "../lib/refs";
 import { objectStatusWords } from "../lib/flow";
-import { byConcern, byUnjudged, directionWords, findingWords, kindWords, progress, scopeWords, total, trialTone, trialWord, type StudyDirection, type StudyFinding, type StudyScope, type StudyTrial, type StudyView } from "../lib/study";
+import { byConcern, byUnjudged, directionWords, findingWords, kindWords, progress, scopeWords, total, trialTone, trialWord, verifiedWords, type StudyDirection, type StudyFinding, type StudyScope, type StudyTrial, type StudyView } from "../lib/study";
 import { fmtTime } from "../store";
 import RankBars from "./charts/RankBars.vue";
 import Markdown from "./Markdown.vue";
@@ -27,6 +27,9 @@ let seq = 0, epoch = 0, picked = false;
 const candidates = ref<{ id: string; name: string }[]>([]);
 /** Per proposed direction: may its findings be turned into code changes (offered only when the scope allows it). */
 const withCode = ref<Record<string, boolean>>({});
+/** The push permission as it is being typed; saved together with one button. */
+const pushRemote = ref(""), pushPrefix = ref("");
+const pushDirty = computed(() => pushRemote.value.trim() !== (data.value?.scope?.pushRemote ?? "") || pushPrefix.value.trim() !== (data.value?.scope?.pushPrefix ?? ""));
 
 const proposed = computed(() => props.choosing ? data.value?.directions.filter((d) => d.state === "proposed") ?? [] : []);
 const going = computed(() => data.value?.directions.filter((d) => d.state === "confirmed" || d.state === "active").at(-1) ?? null);
@@ -51,7 +54,9 @@ const tabs = computed(() => [
 ]);
 
 function take(view: StudyView) {
+  const typing = !!data.value && pushDirty.value;
   data.value = view; error.value = "";
+  if (!typing) { pushRemote.value = view.scope?.pushRemote ?? ""; pushPrefix.value = view.scope?.pushPrefix ?? ""; }
   // Open on what matters now, once: a direction to pick, then findings, then the trials.
   if (!picked) { picked = true; tab.value = proposed.value.length ? "directions" : view.findings.length ? "findings" : view.trials.length ? "trials" : view.directions.length ? "directions" : "coverage"; }
 }
@@ -93,13 +98,18 @@ async function openScope(e: Event) {
   catch (err) { error.value = (err as Error).message; }
 }
 /** The owner changes what this study may touch. */
-async function saveScope(patch: { repos?: string[]; allowCode?: boolean; thirdParty?: boolean }) {
+async function saveScope(patch: { repos?: string[]; allowCode?: boolean; thirdParty?: boolean; pushRemote?: string | null; pushPrefix?: string | null }) {
   if (busy.value || !props.editable) return;
   const generation = epoch;
   busy.value = true; error.value = "";
   try { await put(`/api/items/${props.itemId}/study/scope`, patch); if (generation === epoch) await load(); }
   catch (e) { if (generation === epoch) error.value = (e as Error).message; }
   finally { if (generation === epoch) busy.value = false; }
+}
+async function savePush() {
+  const remote = pushRemote.value.trim(), prefix = pushPrefix.value.trim();
+  await saveScope({ pushRemote: remote, pushPrefix: prefix });
+  if (!error.value) { pushRemote.value = remote; pushPrefix.value = prefix; }
 }
 function toggleRepo(id: string, on: boolean) {
   const now = (data.value?.scope?.repos ?? []).map((r) => r.id);
@@ -134,7 +144,7 @@ async function judge(f: StudyFinding, state: "confirmed" | "rejected" | "later")
 }
 /** The commits a trial ran on, shortened. */
 const shas = (t: StudyTrial) => Object.values(t.commits ?? {}).map((c) => c.slice(0, 8)).join("、");
-const trialMeta = (t: StudyTrial) => [trialWord(t), t.unsure ? "它自己拿不准" : "", t.escalated ? "请更好的模型看过" : "", t.attempts > 1 ? `第 ${t.attempts} 次` : "", everyRound.value ? `第 ${t.round} 轮` : ""].filter(Boolean).join(" · ");
+const trialMeta = (t: StudyTrial) => [trialWord(t), t.fixOf ? "改动之后的重跑" : "", t.unsure ? "它自己拿不准" : "", t.escalated ? "请更好的模型看过" : "", t.attempts > 1 ? `第 ${t.attempts} 次` : "", everyRound.value ? `第 ${t.round} 轮` : ""].filter(Boolean).join(" · ");
 </script>
 
 <template>
@@ -154,6 +164,18 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.unsure ? "它自己拿不�
         </div>
         <UiCheckbox :model-value="data.scope.allowCode" switch :disabled="busy || !editable" @change="(v: boolean) => saveScope({ allowCode: v })">可以改代码：从一条发现发起编码交办。改动留在交办自己的分支上，经过评审，不合并、不推送</UiCheckbox>
         <UiCheckbox :model-value="data.scope.thirdParty" switch :disabled="busy || !editable" @change="(v: boolean) => saveScope({ thirdParty: v })">本机可以执行第三方样本的代码：拿别人的仓库当样本时，会在这台机器上跑它的安装脚本和构建脚本（只在课题自己的工作区里）</UiCheckbox>
+        <div class="push">
+          <div>推送：只推到下面这个远端、这个分支前缀下面。两项都填了，试验才能把自己工作区里的提交推上去（比如推到测试分支让托管的流水线跑）；主分支和别的远端推不了，每次推送都留记录。留空就是不推。</div>
+          <div class="push-line">
+            <label class="field"><span>远端的名字</span><input v-model="pushRemote" class="input mono" placeholder="origin" :disabled="busy || !editable" /></label>
+            <label class="field"><span>分支前缀（以 / 结尾）</span><input v-model="pushPrefix" class="input mono" placeholder="study/" :disabled="busy || !editable" /></label>
+            <button v-if="editable && pushDirty" type="button" class="btn sm primary" :disabled="busy" @click="savePush">保存</button>
+          </div>
+        </div>
+        <details v-if="data.pushes?.length" class="sub">
+          <summary>推过 {{ data.pushes.length }} 次</summary>
+          <ul><li v-for="x in data.pushes" :key="x.id"><span class="mono">{{ x.remote }} {{ x.branch }}</span><span class="muted"> · {{ x.commit.slice(0, 8) }} · {{ fmtTime(x.at) }}</span><span v-if="x.note" class="muted prior">{{ x.note }}</span></li></ul>
+        </details>
         <p class="muted">试验在宿主给这个课题单独建的工作区里跑，不碰你的仓库目录。别的执行环境在 设置 → AI 里登记。</p>
       </div>
     </details>
@@ -193,7 +215,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.unsure ? "它自己拿不�
                 <RunArtifacts v-if="t.artifacts.length" :items="t.artifacts" class="basis-files" />
               </div>
             </div>
-            <div v-if="f.fix" class="fix">已有改动：{{ objectStatusWords(f.fix.status) }} · <a :href="f.fix.link">看这次交办</a></div>
+            <div v-if="f.fix" class="fix">已有改动：{{ objectStatusWords(f.fix.status) }}<template v-if="f.fix.verified"> · <span :class="f.fix.verified === 'passed' ? 'fix-ok' : 'fix-bad'">{{ verifiedWords[f.fix.verified] }}</span></template> · <a :href="f.fix.link">看这次交办</a></div>
             <div v-if="editable && f.state !== 'duplicate'" class="row wrap">
               <button v-if="f.state !== 'confirmed'" type="button" class="btn sm" :class="f.state === 'new' ? 'primary' : 'ghost'" :disabled="busy" @click="judge(f, 'confirmed')">认可</button>
               <button v-if="f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'rejected')">不算</button>
@@ -306,6 +328,12 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.unsure ? "它自己拿不�
 .scope-body p { margin: 0; }
 .scope-repos { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
 .fix { color: var(--ink-2); }
+.fix-ok { color: var(--ok); }
+.fix-bad { color: var(--danger); }
+.push { display: grid; gap: 8px; }
+.push-line { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+.push-line .field { flex: 1 1 140px; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
 .link { padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12.5px; }
 .link:hover { color: var(--ink); text-decoration: underline; }
 .link:disabled { cursor: default; opacity: 0.6; }
