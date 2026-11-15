@@ -1,3 +1,4 @@
+import { decideScene, describeScene } from "../core/decision-log.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
@@ -158,14 +159,14 @@ export function listWatches(app: App): WatchInfo[] {
  * with a decision model. Messages that @ the owner or the bot always go through; so does a batch when
  * the model fails. Returns why the batch is skipped, or null to hand it over.
  */
-export async function prefilterBatch(app: App, conversationId: string, batch: { id?: string; text: string; meta: Record<string, unknown> }[], signal?: AbortSignal): Promise<string | null> {
+export async function prefilterBatch(app: App, conversationId: string, batch: { id?: string; text: string; meta: Record<string, unknown> }[], signal?: AbortSignal, log?: { ref: string; reason: (text: string) => void }): Promise<string | null> {
   const { findThread, threadMessages } = await import("../agents/threads.ts");
   const t = findThread(app, conversationId);
   if (!t || t.channel !== WATCH_CHANNEL) return null;
   const rule = watchRule(app, (t.key ?? "").split("#")[0]);
   if (!rule || !(rule.prefilter ?? app.config.lark.watchPrefilter !== false)) return null;
   if (batch.some((m) => m.meta.addressed)) return null;
-  const { decide, decisionReady, describeDecision } = await import("../core/decision.ts");
+  const { decisionReady } = await import("../core/decision.ts");
   if (!decisionReady(app)) return null;
   const chatId = (t.key ?? "").split("#")[0];
   const history = threadMessages(app, conversationId, { limit: 80 });
@@ -177,7 +178,7 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
   const group = before.filter((m) => typeof m.meta.speaker === "string").slice(-10);
   const batchText = batch.map((m) => `${String(m.meta.speaker ?? "?")}：${m.text.slice(0, 600)}`).join("\n");
   try {
-    const r = await decide(app, {
+    const r = await decideScene(app, "watch", {
       群: t.title || t.key,
       盯群的目的: rule.note ?? "（没写）",
       本人在这里的指示: owner.map((m) => m.text.slice(0, 400)).join("\n") || "（无）",
@@ -193,9 +194,10 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
       instructions: "这是本人让助手盯着的一个群新来的一批消息。助手在这个群里的用处由“盯群的目的”和群里的场景决定：不一定是找本人的事，也可能是替群里的人解答问题、查东西、排查报上来的问题、跟进之前处理过的事。判断这一批里有没有助手能有效介入的：有人提问或求助、要查什么、报了问题或异常、和盯群目的相关、或是在接着之前助手处理的事，选“要看”；只是闲聊、客套、“稍等”“收到”、进度播报、系统通知，没人需要帮忙，选“不用看”。拿不准选“要看”。",
       yes: "要看",
       no: "不用看",
-    }, { signal });
-    if (!r || r.choice === "yes") return null;
-    return describeDecision(r, { yes: "要看", no: "不用看" });
+    }, { signal, ref: log?.ref });
+    if (r?.lowered) log?.reason(`预筛：${describeScene(r, { yes: "要看", no: "不用看" })}`);
+    if (!r || r.taken === "yes") return null;
+    return describeScene(r, { yes: "要看", no: "不用看" });
   } catch {
     return null;
   }

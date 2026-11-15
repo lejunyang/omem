@@ -1,3 +1,4 @@
+import { decideScene, describeScene } from "../core/decision-log.ts";
 import { outcomeLine, outcomeStats } from "../core/notify-outcome.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
@@ -165,7 +166,7 @@ function criteria(app: App) {
  * go out by itself, whether it can move on alone — one short call each. Without one: the general model
  * once, writing everything (settings `noDecision: general`), or the setting's fixed answer.
  */
-export async function triage(app: App, material: Record<string, string>, opts: { needProgress: boolean; signal?: AbortSignal }): Promise<Triage> {
+export async function triage(app: App, material: Record<string, string>, opts: { needProgress: boolean; signal?: AbortSignal; ref?: string }): Promise<Triage> {
   const cfg = app.config.mentions;
   const handlers = handlerOptions(app);
   const fixed = (action: TriageAction, reason: string): Triage => ({ action, what: "", handler: "assistant", urgency: "normal", canProgress: false, reason, by: "设置" });
@@ -178,10 +179,10 @@ export async function triage(app: App, material: Record<string, string>, opts: {
   if (!decisionReady(app)) return noModel("没有决策模型，");
   try {
     const instructions = criteria(app);
-    const d = await decide(app, material, { type: "choice", instructions, options: ACTIONS }, { signal: opts.signal, timeoutMs: 20_000 });
+    const d = await decideScene(app, "triage", material, { type: "choice", instructions, options: ACTIONS }, { signal: opts.signal, timeoutMs: 20_000, ref: opts.ref });
     if (!d || !(d.choice in ACTIONS)) return noModel("决策模型没有给出选择，");
-    const action = d.choice as TriageAction;
-    const reasons = [describeDecision(d, { ignore: "不用管", notify: "简短提醒", handle: "先查再告诉本人" })];
+    const action = d.taken as TriageAction;
+    const reasons = [describeScene(d, { ignore: "不用管", notify: "简短提醒", handle: "先查再告诉本人" })];
     let handler = "assistant";
     let canProgress = false;
     if (action === "handle" && Object.keys(handlers).length > 1) {
@@ -192,10 +193,10 @@ export async function triage(app: App, material: Record<string, string>, opts: {
       }
     }
     if (action === "handle" && opts.needProgress) {
-      const p = await decide(app, material, { type: "yesno", instructions: "查清以后，能不能不经本人拍板就直接答复对方？涉及承诺、排期、审批、权限或本人的意见时答否。", yes: "能直接答复", no: "要本人定" }, { signal: opts.signal, timeoutMs: 20_000 });
+      const p = await decideScene(app, "progress", material, { type: "yesno", instructions: "查清以后，能不能不经本人拍板就直接答复对方？涉及承诺、排期、审批、权限或本人的意见时答否。", yes: "能直接答复", no: "要本人定" }, { signal: opts.signal, timeoutMs: 20_000, ref: opts.ref });
       if (p) {
-        canProgress = p.choice === "yes";
-        reasons.push(describeDecision(p, { yes: "能直接答复", no: "要本人定" }));
+        canProgress = p.taken === "yes";
+        reasons.push(describeScene(p, { yes: "能直接答复", no: "要本人定" }));
       }
     }
     return { action, what: "", handler, urgency: "normal", canProgress, reason: reasons.join("；"), by: "决策模型" };

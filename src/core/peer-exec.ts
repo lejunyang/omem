@@ -152,6 +152,11 @@ const LARK_READ = ["+chat-list", "+chat-messages-list", "+threads-messages-list"
 type Command = { description: string; schema: z.ZodTypeAny; run: (app: App, args: any) => Promise<unknown> | unknown };
 
 export const peerCommands: Record<string, Command> = {
+  decisions: {
+    description: "决策场景的门槛和结果统计（不含材料正文）",
+    schema: z.object({ days: z.number().int().min(1).max(90).default(30) }).strict(),
+    run: async (app, args) => (await import("./decision-log.ts")).decisionReport(app, args),
+  },
   quality: {
     description: "每晚抽检：各类运行的统计、加严名单、待检页数和最近 20 条结果（不含问题正文）",
     schema: z.object({}).strict(),

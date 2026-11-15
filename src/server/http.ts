@@ -2903,6 +2903,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return (await import("../core/voice.ts")).saveVoiceSession(app, who(req), b);
   });
 
+  server.get("/api/ai/decision/report", async (req) => {
+    const b = q(z.object({ days: z.coerce.number().int().min(1).max(90).default(30) }), req.query);
+    return (await import("../core/decision-log.ts")).decisionReport(app, b);
+  });
+
   // Settings → AI → 决策: try a question on the configured decision model.
   server.post("/api/ai/decision/test", async (req) => {
     const b = q(z.object({ provider: z.string().min(1).optional(), model: z.string().default(""), material: z.string().trim().min(1).max(20_000), question: z.string().trim().min(1).max(2000), options: z.array(z.string().trim().min(1).max(200)).max(20).default([]) }), req.body);

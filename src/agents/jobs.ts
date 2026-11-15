@@ -1,3 +1,4 @@
+import { labelDecisions } from "../core/decision-log.ts";
 import { releaseLater } from "../core/notify.ts";
 import { labelOutcomes, outcomeLine, outcomeStats } from "../core/notify-outcome.ts";
 import { canWrite, OWNER, scopeFor } from "../core/users.ts";
@@ -155,7 +156,7 @@ registerHandler("ask", async (ctx) => {
   // A watched group's batch: the decision model screens it first (channels/lark-watch.ts prefilterBatch).
   if (msgs.every((m) => typeof m.meta.speaker === "string")) {
     const { prefilterBatch } = await import("../channels/lark-watch.ts");
-    const skipped = await prefilterBatch(ctx.app, input.conversationId, msgs, ctx.signal);
+    const skipped = await prefilterBatch(ctx.app, input.conversationId, msgs, ctx.signal, { ref: ctx.run.id, reason: (text) => ctx.event("status", { text }) });
     if (skipped) {
       ctx.event("status", { text: `预筛：这一批不用看（${skipped}）` });
       // Kept in the conversation, so the next batch's handler knows these were seen.
@@ -1094,6 +1095,7 @@ registerHandler("heartbeat", async (ctx) => {
   await (await import("../channels/notify-read.ts")).syncNotificationReads(app).catch((e: Error) => console.warn("[omem] 同步通知已读失败：", e.message));
   releaseLater(app);
   labelOutcomes(app);
+  labelDecisions(app, { limit: 200 });
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();
@@ -1122,7 +1124,7 @@ registerHandler("heartbeat", async (ctx) => {
   const reactions = outcomeLine(outcomeStats(app, { sender: "heartbeat" }));
   if (!sweep.length) {
     const extra: Record<string, string> = reactions ? { "本人对以往巡检提醒的反应": reactions } : {};
-    const g = await gate.heartbeatGate(app, watching, fresh, sent, ctx.signal, extra);
+    const g = await gate.heartbeatGate(app, watching, fresh, sent, ctx.signal, extra, ctx.run.id);
     if (g.why) ctx.event("status", { text: g.why });
     if (!g.look) {
       gate.keepSkipped(app, fresh);
@@ -1144,7 +1146,7 @@ registerHandler("heartbeat", async (ctx) => {
     .filter(Boolean)
     .join("\n\n");
   const r = await agent(ctx, "heartbeat", "personal", task, null);
-  if (sweep.length) gate.swept(app, handed);
+  if (sweep.length) gate.swept(app, handed, ctx.run.id);
   return { ...quietOf(ctx, r.text), reminders: due.length };
 });
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DecisionCalibration from "./DecisionCalibration.vue";
 import HelpText from "./HelpText.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { get, post, put } from "../api";
@@ -312,6 +313,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
         </div>
       </template>
     </div>
+    <DecisionCalibration v-if="cat === 'decision'" :thresholds="catValue.thresholds" @save="(thresholds) => setCat({ thresholds })" />
     <form v-if="cat === 'decision'" class="card pad stack" @submit.prevent="tryDecision">
       <div class="section-title">试一下</div>
       <label class="field"><span>材料</span><textarea v-model="trial.material" class="textarea" rows="4" required placeholder="例如一条群消息：线上下单页白屏了，用户点支付没反应，两个浏览器都试过" /></label>

@@ -1877,6 +1877,26 @@ export const migrations: readonly string[] = [
    create index quality_audits_decision on quality_audits(space_id, target, written_at) where category = 'level';
    create index quality_audits_level_review on quality_audits(space_id, target) where category = 'level' and verdict = 'wrong' and resolved_at is null;
    create index source_node_levels_agent on source_node_levels(space_id, updated_at) where by = 'agent' and status = 'active';`,
+  `create table decisions (
+     id text primary key, at text not null, scene text not null, "by" text not null,
+     question text not null, material text not null, probabilities text not null,
+     choice text not null, taken text not null, threshold real not null, ref text,
+     sources text not null default '[]', label text check(label in ('needed','unneeded','unclear')),
+     label_why text, labelled_at text, next_label_at text not null default ''
+   );
+   create index decisions_scene_at on decisions(scene, at);
+   create index decisions_at on decisions(at);
+   create index decisions_pending on decisions(next_label_at, at) where label is null and scene in ('heartbeat','triage');
+   create index decisions_ref on decisions(ref);
+   create table decision_sweeps (
+     source_id text not null, run_id text not null, at text not null,
+     primary key(source_id, run_id)
+   );
+   create index decision_sweeps_source_at on decision_sweeps(source_id, at);
+   create index decision_sweeps_at on decision_sweeps(at);
+   create index notifications_run on notifications(json_extract(context, '$.runId'), at);
+   alter table item_events add column run_id text;
+   create index item_events_run on item_events(run_id);`,
 ];
 
 export type Db = DatabaseSync;

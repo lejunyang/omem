@@ -48,6 +48,8 @@ describe("complete portable pulls", () => {
       "archive_recheck", "archive_evidence",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
+      // Decision material and the source-to-sweep links remain private to this device.
+      "decisions", "decision_sweeps",
       // Which messages link which document (sources/doc-links.ts): rebuilt from lark_messages.
       "lark_doc_links"]);
     const covered = new Set(["spaces", "sources", "lark_people", ...pullTables.map((t) => t.name)]);

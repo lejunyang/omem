@@ -17,6 +17,7 @@ import { configPath, omemHome } from "./core/config.ts";
 import { createSpace, ensurePersonalSpace, getSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
 import { listItems, upsertItem } from "./items/store.ts";
 import { listMemories } from "./memory/store.ts";
+import { decisionCommands } from "./cli-decision.ts";
 import { memoriesCommand } from "./cli-memories.ts";
 import { clientName, remoteToolBackend, resolveRemote } from "./remote-client.ts";
 import { addRemoteCommands, clientInfo, today } from "./remote-commands.ts";
@@ -39,6 +40,8 @@ const open = () => {
   ensurePersonalSpace(app);
   return app;
 };
+
+decisionCommands(program, open);
 
 /** Is an omem service already running on this library? Then let it run the job. */
 async function runningServer(app: App) {

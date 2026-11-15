@@ -2159,6 +2159,7 @@ def({
         userId: existing ? undefined : (ctx.userId ?? "owner"),
       },
       ctx.actor,
+      ctx.runId ?? undefined,
     );
     const { addMaterials, removeMaterials } = await import("../items/materials.ts");
     const added = materialsAdd?.length ? addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
@@ -2204,7 +2205,7 @@ def({
         }
         const evidence = (v.evidence ?? []).filter((r) => r.startsWith("src:") || r.startsWith("msg:"));
         validateItemRefs(ctx.app, evidence, ctx.userId ?? OWNER, ctx.spaces);
-        upsertItem(ctx.app, item.id, { status: v.verdict, note: `${v.verdict === "done" ? "推断已处理" : "推断不再需要"}：${v.reason.trim().replace(/[。.!！\s]+$/, "")}。不对的话在事项页恢复。`, sourceRefs: evidence }, ctx.actor);
+        upsertItem(ctx.app, item.id, { status: v.verdict, note: `${v.verdict === "done" ? "推断已处理" : "推断不再需要"}：${v.reason.trim().replace(/[。.!！\s]+$/, "")}。不对的话在事项页恢复。`, sourceRefs: evidence }, ctx.actor, ctx.runId ?? undefined);
         out.push(`${item.id} → ${v.verdict}`);
       } catch (e) {
         out.push(`${v.item_id} 失败：${(e as Error).message}`);
@@ -3502,7 +3503,7 @@ def({
     const rule = a.rule ?? runRule;
     if (a.rule) (await import("../rules/store.ts")).getRule(ctx.app, a.rule);
     const r = writeWorkFile(ctx.app, { spaceId, path: a.path, title: a.title, text: a.content, mode: a.mode, expires: a.expires === undefined ? undefined : a.expires, links: { item: a.item, rule }, runId: ctx.runId });
-    if (a.item && r.created) (await import("../items/store.ts")).addItemEvent(ctx.app, a.item, "note", `工作文件 ${r.uri}`, ctx.actor, [`src:${r.id}`]);
+    if (a.item && r.created) (await import("../items/store.ts")).addItemEvent(ctx.app, a.item, "note", `工作文件 ${r.uri}`, ctx.actor, [`src:${r.id}`], ctx.runId ?? undefined);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "source", id: r.id }, at: now() } });
     return `${r.created ? "已新建" : r.status === "unchanged" ? "内容没变" : a.mode === "append" ? "已追加到" : "已更新"}工作文件 src:${r.id}（${r.uri}，${r.lines} 行${r.expiresAt ? `，${r.expiresAt.slice(0, 10)} 过期` : "，永久"}${a.item ? `，挂在事项 ${a.item}` : ""}${rule ? `，挂在规则 ${rule}` : ""}${followed}）`;
   },

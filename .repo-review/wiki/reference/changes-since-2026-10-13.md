@@ -12,6 +12,12 @@ updated: 2026-11-15
 - `src/mentions/reply-ladder.ts`：回复找本人的人和工具审批一样分档升降。`draftStreak` 按 `reply_samples` 数某一类会话（群 / 私聊）最近连续照发的草稿；到 `mentions.reply.promoteAfter`（默认 10，0 不问）时 `suggestReplyPromotion` 问本人一次，回答由 `reply-promote` 处理：只有本人自己选“直接发”才经 `MentionChannel.reply.setMode` 改成 auto。`demoteReplyFor`：自动回复的提醒被本人回负面表情，这一类退回 draft 并重数。入口在 `src/channels/mention-reply.ts decideMentionReply`（照发之后）和 `src/core/notify-reactions.ts applyNegative`（先于学忽略规则）。
 - `src/core/notify.ts releaseLater`：三条以上合成的清单只列最新的 12 条，更早的只报条数；全部仍随清单算已送达。
 - 测试 `test/reply-ladder.test.ts`、`test/notify-later.test.ts`；验收 43d1–43d3。
+## 2026-11-15：决策按场景设门槛、记结果与离线比较
+
+- 巡检、盯群、有人找你、直接答复分别记录模型、问题、截短材料和概率，低把握的跳过 / 忽略 / 直接答复改为谨慎选项；分诊选处理者和其他调用不变。
+- 巡检按当前运行或来源的补看运行标注；分诊按 mention / handleRun 的通知结果，忽略则按原消息后一天内本人是否回复。通知按运行索引查询，事项事件新增可选运行 ID，标注每轮最多 200 条；超过 90 天分批删除。decisions / decision_sweeps 按 quality_audits 的方式列为设备本地数据，不拉取合并。
+- 设置 → AI → 决策有四项门槛、30 天报告与只读建议；本人接口 `/api/ai/decision/report`、设备命令 `decisions`，以及 `omem decision report` / `omem decision replay`。回放指定单个模型，当前门槛下比较相同成功样本，不写库，连续三次失败停止。盯群和直接答复本次不标注。
+- 详见 `docs/v2/ai-models.md` 的“按场景记录、门槛与回放”和验收 DEC1–DEC6；真实模型效果仍需本人用自己的记录校准。
 
 ## 通知负反馈改变下次行为；会议结束释放通知（11-15）
 

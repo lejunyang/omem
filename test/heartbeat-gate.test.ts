@@ -1,3 +1,4 @@
+import { rmSync } from "node:fs";
 import { afterEach, expect, it } from "vitest";
 import { setKey } from "../src/core/ai-keys.ts";
 import { one, run } from "../src/core/db.ts";
@@ -8,7 +9,7 @@ import { upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
-afterEach(() => { setDecisionFetchForTests(null); for (const app of apps.splice(0)) app.db.close(); });
+afterEach(() => { setDecisionFetchForTests(null); for (const app of apps.splice(0)) { app.db.close(); rmSync(app.home, { recursive: true, force: true }); } });
 
 function setup() {
   const app = testApp(); apps.push(app);
@@ -56,6 +57,10 @@ it("lets the agent look unless the decision model says there is nothing, and nev
   expect(no.why).toContain("不用看");
   expect(body).toContain("等小王补齐审计材料");
   expect(asked()).toBe(1);
+  withDecision(app, 0.44);
+  const lowered = await heartbeatGate(app, [waiting], fresh, []);
+  expect(lowered.look).toBe(true);
+  expect(lowered.why).toContain("把握不到 0.6，按要看处理");
   // Turned off: not asked.
   app.config.heartbeat.gate = "off";
   expect((await heartbeatGate(app, [waiting], fresh, [])).look).toBe(true);

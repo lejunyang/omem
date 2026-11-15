@@ -80,8 +80,8 @@ export function itemEvents(app: App, id: string): ItemEvent[] {
   ).map((e) => ({ id: e.id, itemId: e.item_id, at: e.at, kind: e.kind, text: e.text, sourceRefs: json(e.source_refs, []), actor: e.actor }));
 }
 
-export function addItemEvent(app: App, itemId: string, kind: string, text: string, actor = "agent", sourceRefs: string[] = []) {
-  run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor) values(?,?,?,?,?,?)", itemId, now(), kind, text, JSON.stringify(sourceRefs), actor);
+export function addItemEvent(app: App, itemId: string, kind: string, text: string, actor = "agent", sourceRefs: string[] = [], runId?: string) {
+  run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor,run_id) values(?,?,?,?,?,?,?)", itemId, now(), kind, text, JSON.stringify(sourceRefs), actor, runId ?? null);
 }
 
 export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt">> & { note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
@@ -102,7 +102,7 @@ function itemTx<T>(app: App, fn: () => T): T {
 }
 
 /** Create or update an item; every change is recorded on its timeline with who made it. */
-export function upsertItem(app: App, id: string | undefined, input: ItemInput, actor: "agent" | "user" = "agent"): Item {
+export function upsertItem(app: App, id: string | undefined, input: ItemInput, actor: "agent" | "user" = "agent", runId?: string): Item {
   const at = now();
   if (input.sourceRefsMode && input.sourceRefsMode !== "merge" && !id) throw new HttpError(400, "来源纠正必须指定已有事项");
   if (!id) {
@@ -130,7 +130,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
         at,
         input.userId ?? "owner",
       );
-      addItemEvent(app, newIdValue, "created", input.note || `创建：${input.title}`, actor, input.sourceRefs ?? []);
+      addItemEvent(app, newIdValue, "created", input.note || `创建：${input.title}`, actor, input.sourceRefs ?? [], runId);
     });
     app.emit({ type: "changed", entity: "item", id: newIdValue, spaceId: input.spaceId ?? "personal" });
     return getItem(app, newIdValue);
@@ -174,9 +174,9 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
       closing ? at : reopening ? null : old.closedAt,
       id,
     );
-    if (input.remindAt && input.remindAt !== old.remindAt) addItemEvent(app, id, "reminder-scheduled", `提醒：${input.remindAt}`, actor, input.sourceRefs ?? []);
-    if (mode !== "merge") addItemEvent(app, id, "sources-corrected", JSON.stringify({ reason: input.note, mode, before: old.sourceRefs, after: nextRefs }), actor, []);
-    if (changes.length || input.note || JSON.stringify(nextRefs) !== JSON.stringify(old.sourceRefs)) addItemEvent(app, id, changes.length ? "updated" : "note", [input.note, changes.join("；")].filter(Boolean).join("\n"), actor, mode === "remove" ? [] : input.sourceRefs ?? []);
+    if (input.remindAt && input.remindAt !== old.remindAt) addItemEvent(app, id, "reminder-scheduled", `提醒：${input.remindAt}`, actor, input.sourceRefs ?? [], runId);
+    if (mode !== "merge") addItemEvent(app, id, "sources-corrected", JSON.stringify({ reason: input.note, mode, before: old.sourceRefs, after: nextRefs }), actor, [], runId);
+    if (changes.length || input.note || JSON.stringify(nextRefs) !== JSON.stringify(old.sourceRefs)) addItemEvent(app, id, changes.length ? "updated" : "note", [input.note, changes.join("；")].filter(Boolean).join("\n"), actor, mode === "remove" ? [] : input.sourceRefs ?? [], runId);
   });
   app.emit({ type: "changed", entity: "item", id, spaceId: old.spaceId });
   // An item that ended gives back the workspaces its delegations still hold (their branches stay).

@@ -1,3 +1,4 @@
+import { decideScene, describeScene, recordDecisionSweep } from "../core/decision-log.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { now } from "../core/util.ts";
@@ -64,16 +65,16 @@ const INSTRUCTIONS =
 export type Gate = { look: boolean; why: string };
 
 /** Whether the agent should look at this tick's new material; `why` goes on the run. */
-export async function heartbeatGate(app: App, watching: Item[], fresh: Fresh[], sent: { title: string }[], signal?: AbortSignal, extra: Record<string, string> = {}): Promise<Gate> {
+export async function heartbeatGate(app: App, watching: Item[], fresh: Fresh[], sent: { title: string }[], signal?: AbortSignal, extra: Record<string, string> = {}, ref?: string): Promise<Gate> {
   if (app.config.heartbeat.gate === "off") return { look: true, why: "" };
   if (fresh.length > MAX_FRESH) return { look: true, why: `新材料 ${fresh.length} 份，超过预筛能看的 ${MAX_FRESH} 份，直接交给助手` };
-  const { decide, decisionReady, describeDecision } = await import("../core/decision.ts");
+  const { decisionReady } = await import("../core/decision.ts");
   if (!decisionReady(app)) return { look: true, why: "" };
   try {
-    const r = await decide(app, gateMaterial(app, watching, fresh, sent, extra), { type: "yesno", instructions: INSTRUCTIONS, yes: "要看", no: "不用看" }, { signal });
+    const r = await decideScene(app, "heartbeat", gateMaterial(app, watching, fresh, sent, extra), { type: "yesno", instructions: INSTRUCTIONS, yes: "要看", no: "不用看" }, { signal, ref, sources: fresh.map((s) => s.id) });
     if (!r) return { look: true, why: "" };
-    const said = describeDecision(r, { yes: "要看", no: "不用看" });
-    return r.choice === "yes" ? { look: true, why: `预筛：${said}` } : { look: false, why: `预筛：新材料和关注、等待的事项无关（${said}）` };
+    const said = describeScene(r, { yes: "要看", no: "不用看" });
+    return r.taken === "yes" ? { look: true, why: `预筛：${said}` } : { look: false, why: `预筛：新材料和关注、等待的事项无关（${said}）` };
   } catch (e) {
     return { look: true, why: `预筛没成（${(e as Error).message.slice(0, 120)}），直接交给助手` };
   }
@@ -112,7 +113,8 @@ export function sweepDue(app: App): Fresh[] {
  * only so many) stays, and the sweep stays due: the next tick takes the rest. Sources deleted in
  * the meantime drop out. Only when nothing is left does the clock start again.
  */
-export function swept(app: App, handed: Fresh[]) {
+export function swept(app: App, handed: Fresh[], ref?: string) {
+  if (ref) recordDecisionSweep(app, handed.map((s) => s.id), ref);
   const done = new Set(handed.map((s) => s.id));
   const ids = skippedIds(app).filter((id) => !done.has(id));
   const live = ids.length ? new Set(all<{ id: string }>(app.db, `select id from sources where deleted_at is null and id in (${ids.map(() => "?").join(",")})`, ...ids).map((r) => r.id)) : new Set<string>();

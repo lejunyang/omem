@@ -96,7 +96,7 @@ flowchart LR
 
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → AI → ACP 注册表”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。也可以不登录、改用 API key：设置 → AI → API key 添加 OpenAI 或 Anthropic 的 key，勾选要生成的后端，就多出 `codex@<编号>`、`claude@<编号>` 这样按 API 计费的后端，和本机登录的那个并存，额度分开算；key 存在数据目录的 `secrets/ai-keys.json`，网页只显示后 4 位。同一页的 OpenAI key 也给语音、决策、图片三类模型用（设置 → AI 的对应子页，设计见 [docs/v2/ai-models.md](docs/v2/ai-models.md)）。
 
-设置 → AI → 决策 可配置多个模型，按顺序或每次随机先问一个；不可用、拒答或出错会换下一个，刚出错的 5 分钟内排到最后，判断记录显示由谁回答及换用情况。
+设置 → AI → 决策 可配置多个模型，按顺序或每次随机先问一个；不可用、拒答或出错会换下一个，刚出错的 5 分钟内排到最后，判断记录显示由谁回答及换用情况。 巡检、盯群、有人找你和直接答复分别设最低把握，按后续结果记录漏看、多看；同页可看报告，也可用命令离线比较其他决策模型。
 
 ```bash
 # 源码运行（osdk 管理 Node/pnpm 与模型）
@@ -324,6 +324,8 @@ omem remote add|list|default|rm             # 记下的远程地址（~/.omem/cl
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
+omem decision report [--days N]                  # 决策场景的门槛、结果与校准建议
+omem decision replay --scene <scene> --model <提供方ID>:<模型> [--days 30] [--limit 200]  # 只读回放比较
 omem replay [list] / omem replay run [--run <运行id>] [--axis M1]  # 夜间复盘：看状态和结论；立即复盘（不给 --run 时按选题规则挑 replay.max 题）
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）
 omem agents registry                        # 官方 ACP 注册表里的 Agent

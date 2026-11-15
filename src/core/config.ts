@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalog.ts";
 import { omemHome } from "./home.ts";
+import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
 
 /** Agents that can run with an API key of their vendor instead of the login on this machine. */
 export const AI_KEY_BACKENDS = ["claude", "claude-cli", "codex", "codex-cli"] as const;
@@ -596,6 +597,12 @@ export const configSchema = z.object({
         others: z.array(z.object({ provider: z.string().min(1), model: z.string().default("") })).max(8).optional(),
         pick: z.enum(["fixed", "random"]).optional(),
         fallback: z.enum(["general", "none"]).default("general"),
+        thresholds: z.object({
+          heartbeat: z.number().min(0.5).max(0.99).default(DECISION_SCENES.heartbeat.default),
+          watch: z.number().min(0.5).max(0.99).default(DECISION_SCENES.watch.default),
+          triage: z.number().min(0.5).max(0.99).default(DECISION_SCENES.triage.default),
+          progress: z.number().min(0.5).max(0.99).default(DECISION_SCENES.progress.default),
+        }).optional(),
         /** The guest gatekeeper (lark-guest.ts) asks the decision model first. */
         gatekeeper: z.boolean().default(true),
       }).default(() => ({ provider: "", model: "", fallback: "general" as const, gatekeeper: true })),
@@ -1142,6 +1149,7 @@ export function loadConfig(home = omemHome()): Config {
   if (raw.host === "127.0.0.1") delete raw.host;
   moveOldSettings(raw);
   const config = configSchema.parse(raw);
+  config.ai.decision.thresholds ??= decisionThresholdDefaults();
   if (process.env.OMEM_PORT) config.port = Number(process.env.OMEM_PORT);
   loadedAs.set(resolve(home), structuredClone(config));
   return config;

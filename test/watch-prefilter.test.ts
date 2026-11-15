@@ -1,4 +1,5 @@
-import { afterEach, expect, it } from "vitest";
+import { rmSync } from "node:fs";
+import { afterEach, expect, it, vi } from "vitest";
 import { setKey } from "../src/core/ai-keys.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
 import { prefilterBatch, setWatchRule, WATCH_CHANNEL } from "../src/channels/lark-watch.ts";
@@ -6,7 +7,7 @@ import { resolveThread } from "../src/agents/threads.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
-afterEach(() => { setDecisionFetchForTests(null); for (const app of apps.splice(0)) app.db.close(); });
+afterEach(() => { setDecisionFetchForTests(null); for (const app of apps.splice(0)) { app.db.close(); rmSync(app.home, { recursive: true, force: true }); } });
 
 it("screens a watched group's batch with the decision model: chatter is skipped, an @ always goes through, and it can be turned off", async () => {
   const app = testApp(); apps.push(app);
@@ -24,6 +25,10 @@ it("screens a watched group's batch with the decision model: chatter is skipped,
   // Addressed to the owner or the bot: handed over without asking.
   expect(await prefilterBatch(app, conv.id, [{ text: "@本人 线上报错", meta: { speaker: "小王", addressed: true } }])).toBeNull();
   expect(asked).toBe(1);
+  setDecisionFetchForTests(async () => new Response(JSON.stringify({ answers: [{ type: "predicate", name: "q", probability: 0.44 }] })));
+  const reason = vi.fn();
+  expect(await prefilterBatch(app, conv.id, chatter, undefined, { ref: "run-demo", reason })).toBeNull();
+  expect(reason.mock.calls[0][0]).toContain("把握不到 0.6，按要看处理");
   // Off for this watch, then off for all.
   setWatchRule(app, "oc_ops", { spec: "assistant", on: "all", reply: "none", batchMinutes: 5, prefilter: false });
   expect(await prefilterBatch(app, conv.id, chatter)).toBeNull();

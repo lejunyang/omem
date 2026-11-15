@@ -44,6 +44,15 @@ describe("roles and permissions", async () => {
     fetch(base + path, { ...init, headers: { authorization: `Bearer ${tokens[user]}`, ...(init.body ? { "content-type": "application/json" } : {}), ...(init.headers as Record<string, string>) } });
   const json = async (user: string, path: string, init: RequestInit = {}) => (await as(user, path, init)).json();
 
+  it("keeps decision calibration owner-only", async () => {
+    expect(ROUTE_RULES["GET /api/ai/decision/report"]).toBe("owner");
+    expect((await as("ann", "/api/ai/decision/report")).status).toBe(403);
+    expect((await as("cat", "/api/ai/decision/report")).status).toBe(403);
+    const result = await fetch(base + "/api/ai/decision/report?days=7");
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ days: 7, scenes: expect.any(Array) });
+  });
+
   it("knows what every API route needs, and lists no route that does not exist", () => {
     const listed = new Set(Object.keys(ROUTE_RULES));
     const missing = [...registeredRoutes].filter((r) => {

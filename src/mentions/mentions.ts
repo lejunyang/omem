@@ -213,7 +213,7 @@ registerHandler("mention", async (ctx: RunContext) => {
   }
   const tInput: TriageInput = { chatId: input.chatId, chatName: input.chatName, chatKind: input.chatKind, topicId: input.topicId, spaceId: ctx.run.spaceId ?? channel.spaceOf(app, input.chatId, open[0].id), messages: open };
   const material = await triageMaterial(app, channel, tInput);
-  const t = await triage(app, material, { needProgress: replyMode(app, channel, input.chatKind) === "auto", signal: ctx.signal });
+  const t = await triage(app, material, { needProgress: replyMode(app, channel, input.chatKind) === "auto", signal: ctx.signal, ref: ctx.run.id });
   ctx.event("status", { text: triageText(t), triage: t });
   setRunOutput(app, ctx.run.id, { triage: t, material });
   if (t.action === "ignore") return { quiet: true, summary: triageText(t), triage: t };
