@@ -401,6 +401,9 @@ async function stop() {
 /* A verification stage's cases: one line each, opened to see what was done and the screenshots or recordings. */
 .stage-tests { display: grid; gap: 2px; margin-top: 4px; }
 .tests-head { display: flex; align-items: baseline; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+/* The summary line wraps under the title in a narrow drawer instead of squeezing it. */
+.review .tests-head { flex-wrap: wrap; row-gap: 2px; }
+.review .tests-head > span:first-child { flex: none; }
 .test { border-bottom: 1px solid var(--line); }
 .test summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 6px 0; cursor: pointer; list-style: none; }
 .test summary::-webkit-details-marker { display: none; }
