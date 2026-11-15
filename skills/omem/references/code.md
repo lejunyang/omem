@@ -102,3 +102,14 @@
 5. `git`：`status`、`diff`、`log`、`commit`（`message`，按功能分几次提交，不 push）；`merge`（`ref`，先 fetch，要求工作区干净）把另一条分支合并进来，冲突标记留在文件里，改好后 `commit` 完成合并，`merge-abort` 放弃。`import`（`from_run`）把另一次没应用的交办保存的改动导入工作区（先 `merge` 它基于的提交），核对后 `commit`；用于接手旧交办的工作。
 6. 截图和报告：`run` 的命令写到 `$OMEM_ARTIFACTS` 的文件跑完就收下（输出里会说）；工作区里已有的文件用 `attach`（`path` + `caption`）交。本人在交办视图“产物”里看。
 7. `finish(summary, review)`：排下一轮，提交剩下的改动、运行检查命令、取 diff，再交给评审：`review=peer`（默认）按“设备的外部 Agent 评审分支”的 2–4 步自己评审（`run_id` 用 finish 返回的那一轮），`here` 交给那台机器的评审 Agent。评审要求修改就在同一个工作区接着改，再 `finish`。轮次排队或进行时不能改文件。应用（推送）由本人在网页上确认。
+
+## 改进循环：宿主度量、留下或回退
+
+调用者档案或角色需要授予 `group:improve`；本组同时要求编码交办权限。技能说明本身不授予工具权限。
+
+- `improve_start(run_id, repo_space?, name, metric_command, direction, target?, max_rounds?, until?, protect?, min_gain?)`：在本人发起的编码交办一轮结束后建立目标。多个仓库必须指定 `repo_space`。宿主现在跑基线，命令失败或末行无数字就拒绝；度量命令和方向建立后不改。`direction` 为 `down` / `up`；默认最多 6 轮、上限 20，最小相对增益默认 0.01。`until` 写今天或明天的 `HH:mm`，按设置的时区取下次到达这个时间的时刻。`protect` 是 Git glob 路径，如 `test/**`，建议也保护度量脚本和基准数据。
+- 每轮先选一件有依据的尝试，用 `continue_code_run` 交给编码，等本轮结束且工作区干净后，`improve_round(goal, note, expect?)` 交宿主裁定。`note` 一句话写试了什么，`expect` 写原先预期。不要自行测完认定留下、改度量或 reset。宿主查逐个提交的保护路径，跑委托检查命令并保存 `Check`，再重测；只把达到最小相对增益的改动留下（最佳值为 0 时任何严格改善都算）。未留下用新增 revert 提交撤销，提交、diff、修改项历史仍保留。
+- `improve_round` 返回 before / after / baseline / best、已做与剩余轮数、结果和原因。连续两轮无效的 `next` 要求换结构不同的做法；有 `stop` 就停止交办新尝试。达标、预算用完、四轮无效或到点由宿主停止并发 later 报告，Agent 不必重复通知。没有新提交也算一轮和一次停滞。
+- `improve_status(goal 或 run_id)`：中断后读固定指标、最佳值、预算、停止原因和全部轮次，再决定下一件尝试。只能读写本人发起且本次可访问的委托。完成或停止的目标不能再交轮，需新目标才重新量基线。
+
+度量取输出最后一个非空行的最后一个数字，支持负数和小数，数字后可有单位；不解析千位分隔符。度量和检查共用宿主的 shell、工作区、CI / OMEM_BASE / OMEM_ARTIFACTS、命令规则 PATH 和 20 分钟超时。循环不合并、推送或应用到别处的工作区；分支在别处检出时，回退提交留在委托 worktree 并记为待放回，下一次正常委托结算再处理。目标与轮次属于设备本地，不能通过拉取在另一台机器上继续。

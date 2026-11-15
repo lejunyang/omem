@@ -1,4 +1,5 @@
 import { recordReqStatus, findReq } from "../items/requirements.ts";
+import { improveDelegation, improveGoal, improveRounds, improveText, improvementOf, roundImprove, startImprove } from "./improve.ts";
 import { withBot } from "../core/bot-context.ts";
 import { mark } from "../core/loop-monitor.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
@@ -4130,6 +4131,46 @@ def({
     const id = space(ctx, a.space);
     const { codeHistory } = await import("./code-history.ts");
     return codeHistory(ctx.app, { space: id, paths: a.paths, spaces: ctx.spaces, limit: a.limit });
+  },
+});
+
+def({
+  name: "improve_start",
+  description: "给一次编码交办建立改进目标（先用一轮交办把度量命令跑通，这一轮结束后再调用）：宿主现在量一次作为基线，之后每一轮由 improve_round 决定留下还是回退、还剩几轮、什么时候停。度量命令在交办的工作区里运行，最后一个非空行的最后一个数就是结果；退出码不是 0、超时或那一行没有数，算度量失败。",
+  write: true,
+  schema: z.object({
+    run_id: z.string(), repo_space: z.string().optional(), name: z.string().trim().min(1).max(200),
+    metric_command: z.string().trim().min(1).max(8000), direction: z.enum(["down", "up"]), target: z.number().finite().optional(),
+    max_rounds: z.number().int().min(1).max(20).optional(), until: z.string().optional().describe("今天或明天 HH:mm，按配置时区"),
+    protect: z.array(z.string().trim().min(1).max(500)).max(100).optional().describe("不可更改的仓库相对路径 glob，如 test/**"),
+    min_gain: z.number().finite().min(0).optional().describe("最小相对增益，默认 0.01"),
+  }),
+  handler: async (ctx, a) => improveText(await startImprove(ctx, a)),
+});
+
+def({
+  name: "improve_round",
+  description: "交办的这一轮编码结束后调用，由宿主定这一轮留不留：先看有没有动不许动的路径，再跑仓库的检查命令，再跑度量；比最好的一次至少好 min_gain 才留下，否则用 revert 提交把这一轮撤掉（历史保留，内容回到上一次留下的样子）。返回这一轮的结论和原因、还剩几轮；连着两轮没变好会提示换方向；到了停止条件就停，之后不再接受，停止报告由宿主发给本人。",
+  write: true,
+  schema: z.object({ goal: z.string(), note: z.string().trim().min(1).max(1000).describe("一句话写这轮试了什么"), expect: z.string().max(2000).optional() }),
+  handler: async (ctx, a) => {
+    const result = await roundImprove(ctx, a.goal, a.note, a.expect);
+    return improveText(result.goal, result.round ? [result.round] : []) + (result.next ? `\nnext：${result.next}` : "");
+  },
+});
+
+def({
+  name: "improve_status",
+  description: "读取一个改进目标或编码交办最新的改进目标、固定度量、最佳数字、预算、停止原因和全部轮次。",
+  schema: z.object({ goal: z.string().optional(), run_id: z.string().optional() }).refine((a) => !!a.goal !== !!a.run_id, "goal 或 run_id 二选一"),
+  handler: (ctx, a) => {
+    const goal = a.goal ? improveGoal(ctx.app, a.goal) : (() => {
+      const delegation = improveDelegation(ctx, a.run_id!, false);
+      return improvementOf(ctx.app, delegation.root)?.goal;
+    })();
+    if (!goal) return "这次交办没有改进目标。";
+    improveDelegation(ctx, goal.run_id, false);
+    return improveText(goal, improveRounds(ctx.app, goal.id));
   },
 });
 

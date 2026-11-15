@@ -11,6 +11,7 @@ import CodeDiffList from "./CodeDiffList.vue";
 import CodeLanding, { type ApplyTarget } from "./CodeLanding.vue";
 import CodeSteer from "./CodeSteer.vue";
 import CodeTasks from "./CodeTasks.vue";
+import ImproveGoal, { type Improvement } from "./ImproveGoal.vue";
 import DesignView from "./DesignView.vue";
 import ContextUsage from "./ContextUsage.vue";
 import FixBasket from "./FixBasket.vue";
@@ -56,19 +57,22 @@ type RunContextInfo = {
 type Detail = { run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo };
 const work = ref<CodeWorkDetail | null>(null);
 const detail = ref<Detail | null>(null);
+const improvement = ref<Improvement | null>(null);
 const loading = ref(true);
 let seq = 0;
 async function load() {
   const request = ++seq, id = props.runId;
   try {
-    const [w, d] = await Promise.all([get<CodeWorkDetail>(`/api/code-works/${id}`), get<Detail>(`/api/runs/${id}`)]);
+    const [w, d, i] = await Promise.all([get<CodeWorkDetail>(`/api/code-works/${id}`), get<Detail>(`/api/runs/${id}`), get<Improvement | null>(`/api/code/${id}/improve`)]);
     if (request !== seq) return;
     work.value = w;
     detail.value = d;
+    improvement.value = i;
   } catch (e) {
     if (request !== seq) return;
     work.value = null;
     detail.value = null;
+    improvement.value = null;
     toast((e as Error).message, "error");
   } finally {
     if (request === seq) loading.value = false;
@@ -93,7 +97,7 @@ onBeforeUnmount(() => { ++seq; off(); offResync(); clearTimeout(timer); });
 
 const run = computed(() => detail.value?.run ?? null);
 type Check = { command: string; code: number; output: string; ms?: number; commit?: string };
-type Out = { appliedAt?: string; verdict?: string; discardedAt?: string; review?: string; coderSummary?: string; notes?: { id: string; text: string; at: string; deliveredAt?: string }[]; indexedSpaces?: string[]; repos?: { space: string; check: Check | null }[]; check?: Check };
+type Out = { improveChecks?: { space: string; check: Check }[]; appliedAt?: string; verdict?: string; discardedAt?: string; review?: string; coderSummary?: string; notes?: { id: string; text: string; at: string; deliveredAt?: string }[]; indexedSpaces?: string[]; repos?: { space: string; check: Check | null }[]; check?: Check };
 const out = computed(() => (run.value?.output ?? {}) as Out);
 const branchReview = computed(() => !!work.value?.branchReview);
 const branchWork = computed(() => !!work.value?.branchWork);
@@ -119,8 +123,8 @@ async function loadLive() {
   liveLoading.value = false;
 }
 const checks = computed(() => {
-  if (out.value.repos?.length) return out.value.repos.flatMap((r) => (r.check ? [{ space: out.value.repos!.length > 1 ? r.space : "", check: r.check }] : []));
-  return out.value.check ? [{ space: "", check: out.value.check }] : [];
+  const original = out.value.repos?.length ? out.value.repos.flatMap((r) => r.check ? [{ space: out.value.repos!.length > 1 ? r.space : "", check: r.check }] : []) : out.value.check ? [{ space: "", check: out.value.check }] : [];
+  return [...original, ...(out.value.improveChecks ?? [])];
 });
 // Repositories this round has no check for: the reviewers only have the coder's word on its tests.
 const unchecked = computed(() => (out.value.repos ?? []).filter((r) => !r.check).map((r) => r.space));
@@ -419,6 +423,7 @@ const ctx = computed(() => detail.value?.context ?? null);
         </section>
         <!-- Task-driven: its tasks, the owner's questions, the budget and the changes by task. -->
         <CodeTasks v-if="!branchReview" :key="`tasks:${run.id}`" :run-id="run.id" @artifacts="openArtifacts" />
+        <ImproveGoal v-if="improvement" :data="improvement" />
         <PreCheckCard v-if="work.preCheck" :key="`pre:${work.rootId}`" :check="work.preCheck" :space="run.spaceId ?? undefined" data-ask-label="编码前的检查" />
         <ReviewSummary v-if="hasReview" :key="run.id" :rv="rv" :run-id="run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="canFix" :applied="!!out.appliedAt" stay data-ask-label="评审" @ask="(c) => { askDraft = c.text ?? ''; quote('ask', c); }" @go="(t) => (tab = t)" @started="(id) => emit('open', id)" @open="(id) => emit('open', id)" />
         <section v-else-if="!work.taskMode && out.coderSummary" class="block">
@@ -507,7 +512,7 @@ const ctx = computed(() => detail.value?.context ?? null);
           <div class="section-title">{{ branchReview ? "要评审的分支" : "编码 Agent 这一轮的说明" }}</div>
           <div class="card pad"><Markdown :source="out.coderSummary" :space="run.spaceId ?? undefined" /></div>
         </section>
-        <section v-for="c in checks" :key="c.space" class="block">
+        <section v-for="(c, ci) in checks" :key="`${c.space}:${ci}`" class="block">
           <div class="section-title">检查<template v-if="c.space"> · {{ spaceName(c.space) }}</template>：<span class="mono">{{ c.check.command }}</span> <span class="badge" :class="c.check.code === 0 ? 'ok' : 'danger'">退出码 {{ c.check.code }}</span> <span v-if="c.check.commit || c.check.ms" class="muted small"><template v-if="c.check.commit">提交 <span class="mono">{{ c.check.commit.slice(0, 8) }}</span></template><template v-if="c.check.commit && c.check.ms"> · </template><template v-if="c.check.ms">{{ Math.round(c.check.ms / 1000) }} 秒</template></span></div>
           <pre class="log">{{ stripAnsi(c.check.output ?? "") }}</pre>
         </section>

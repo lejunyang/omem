@@ -120,6 +120,12 @@ pnpm run dev                # 打开 http://localhost:5173
 | # | 操作 | 预期 | 状态 |
 | --- | --- | --- | --- |
 | 17 | 运行页“交办”，或问答里说“在 omem 仓库里实现……” | 独立 worktree 编码 → 检查命令 → 独立评审 → 运行页显示 diff 和结论 → “应用到仓库”后变成未提交改动 | 演示仓库云端已验 |
+| IMP-01 | 编码交办一轮结束后 `improve_start`，固定指标、方向、最小增益；末行有整数、小数或文字中的数，再试无数字和失败命令 | 在指定仓库 worktree 量基线；只读最后一个非空行的最后一个数字，无效则拒建；多仓库要选 repo_space | `test/improve.test.ts` |
+| IMP-02 | 改善后交 `improve_round`，再交没有改善的多个提交 | 改善留下；无效新增 revert 提交，原提交仍可查，树与最佳版本一致；Checks 保留在运行页 | 同上 |
+| IMP-03 | 改 `test/**`（含改了又还原）、检查失败、度量失败、不提交，以及两个方向的不足最小增益 | 分别 protected / broken / nothing / reverted，空轮也计预算和停滞；测试用临时 Git 仓库 | 同上 |
+| IMP-04 | 达标、预算一轮、连续四轮未留下、超过时限 | 宿主停止并发 later 报告，含基线到最佳、留下和未留下的尝试及原因；连续两轮时提示换结构不同的做法 | 同上；真实 Agent 使用新工具待验 |
+| IMP-05 | 运行中、已结束目标、重复 running 目标、另一个用户或越界空间调用；无权限读 API | 拒绝；目标与轮次不变；API 按委托运行的读取权限 | `test/improve.test.ts`、`test/permissions.test.ts` |
+| IMP-06 | 打开交办概览，在 1440 / 390 宽度查看长命令和多轮原因；设备拉取 | 显示改进目标、基线到最佳、状态及轮次，能换行无溢出；目标与轮次属设备本地，不拉到另一设备继续执行 | `test/pull-complete.test.ts`；新增区块演示页已在 1440 / 390 宽度截图核对，scrollWidth 分别为 1440 / 390 |
 | 18 | 问“刚才的交办怎么样了”，再说“应用吧” | 说明状态、检查结果、评审结论；应用为未提交修改 | 查询云端已验 |
 | 18a | 在项目空间里交办，勾选两个仓库（或 `omem delegate <项目> "…" --repos a,b`） | 每个仓库一个 worktree；运行页按仓库显示检查和 diff；评审前后能用 `search`（`space: "*"`）查到改动后的代码；“应用到仓库”两个仓库都变成未提交改动，worktree 和临时空间 `wt-…` 消失；其中一个仓库应用冲突时两个都不动 | 测试覆盖，真实 Agent 待验 |
 | 18g | 运行页“交办 → 评审分支”选仓库和分支（或说“评审 shop-api 的 feature/x”、`omem review-branch shop-api feature/x`） | 分支检出到独立工作区；运行页“要评审的分支”列出提交，diff 只含分支从基线分叉以来的改动（基线之后的新提交不算）；按档位跑各评审项，有结论和问题；没有“应用到仓库”，不续轮；“清理工作区”后原分支还在 | 2026-10-25 测试覆盖（假 ACP），真实 Agent 待验 |
@@ -1792,3 +1798,6 @@ TraeX 与其他 ACP 的清理补验：
 | 43u | `omem peer backup <设备> --to <目录>`，本机服务在运行；白天断开到那台设备的网络，晚上恢复 | 断开期间 `omem peer backup` 显示“最近一次没连上”，不报错不提醒；恢复后 20 分钟内自动拉取，显示“上次成功”和带来了什么；`omem --home <目录> serve --no-background` 能打开这份数据，日志里没有定时任务和采集 | `test/peer-backup.test.ts`（真实拉取、连不上、恢复）；真实设备和经中间设备转发待验 |
 | 43v | 对一个十几 GB 的库 `omem peer pull <设备> --to <目录>` 两次（第二次在对方有少量新材料之后） | 第一次：对方临时目录里的快照只有几 GB（没有检索分块和向量），不再出现一份整库副本；第二次：日志写“原件和运行事件只取那之后变过的”，传输和合并都明显变快，新材料都到了，引用旧原件的新事项照样指向本机的原件；`--full` 回到完整拉取 | `test/pull-incremental.test.ts`（两个节点）；大库上的耗时和体积待真机 |
 | 43w | 更新后让服务运行一段时间，`omem db` 看进度；做完后 `omem service stop && omem db vacuum && omem service start` | 进度从 0% 走到“已全部是紧凑格式”，期间检索结果和耗时没有变化、没有整空间重新载入；vacuum 后数据库文件明显变小（向量部分约为原来的四分之一）；服务在运行时 `omem db vacuum` 拒绝执行 | `test/vectors.test.ts`；大库上的耗时待真机 |
+
+
+改进循环专项验证（2026-11-15）：`npx vitest run test/improve.test.ts test/tool-help.test.ts test/permissions.test.ts test/pull-complete.test.ts --maxWorkers=2 --configLoader native --no-cache`，54 通过、0 失败、1 项既有跳过；后端 `npx tsc --noEmit -p .` 通过。标准 Vitest 配置加载和前端类型检查会尝试在共享 node_modules 写缓存，当前环境拒写，因此 Vitest 用 native 配置加载且关闭缓存；Vue 用继承 `web/tsconfig.json` 的临时配置，仅把 globalTypesPath 指向工作区临时文件，`npx vue-tsc --noEmit -p web/.improve-tsconfig.json` 通过，临时文件随后删除。按本次任务约束未跑全量检查，未提交。真实 Codex（gpt-6.1-sol、low）工具试用因子进程找不到 Codex home 而未能启动；仍需实际部署后验证。默认主助手还需单独授予 `group:improve`，本切片未改内置角色或技能正文。

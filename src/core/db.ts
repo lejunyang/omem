@@ -1897,6 +1897,23 @@ export const migrations: readonly string[] = [
    create index notifications_run on notifications(json_extract(context, '$.runId'), at);
    alter table item_events add column run_id text;
    create index item_events_run on item_events(run_id);`,
+  // Improvement measurements describe a delegation's local worktree, not portable knowledge.
+  `create table improve_goals (
+     id text primary key, run_id text not null references runs(id), space_id text not null references spaces(id),
+     name text not null, metric_command text not null, direction text not null check(direction in ('down','up')),
+     target real, min_gain real not null default 0.01, max_rounds integer not null default 6 check(max_rounds between 1 and 20),
+     until text, protect text not null default '[]', baseline real not null, best real not null, head text not null,
+     rounds integer not null default 0, stale integer not null default 0,
+     state text not null check(state in ('running','done','stopped')), stop_reason text,
+     created_by text not null, created_at text not null, updated_at text not null
+   );
+   create unique index improve_one_running on improve_goals(run_id) where state = 'running';
+   create table improve_rounds (
+     goal_id text not null references improve_goals(id), seq integer not null, at text not null,
+     note text not null, expect text, from_commit text not null, to_commit text not null,
+     before real not null, after real, verdict text not null check(verdict in ('kept','reverted','broken','protected','nothing')),
+     why text not null, revert_commit text, primary key(goal_id, seq)
+   );`,
 ];
 
 export type Db = DatabaseSync;

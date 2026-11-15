@@ -54,6 +54,7 @@ describe("roles and permissions", async () => {
   });
 
   it("knows what every API route needs, and lists no route that does not exist", () => {
+    expect(ROUTE_RULES["GET /api/code/:id/improve"]).toEqual({ run: "read" });
     const listed = new Set(Object.keys(ROUTE_RULES));
     const missing = [...registeredRoutes].filter((r) => {
       const [method, url] = r.split(" ");
@@ -63,6 +64,13 @@ describe("roles and permissions", async () => {
     expect(missing).toEqual([]);
     const urls = new Set([...registeredRoutes].map((r) => r.split(" ")[1]));
     expect(Object.keys(ROUTE_RULES).filter((k) => (k.startsWith("* ") ? !urls.has(k.slice(2)) : !registeredRoutes.has(k)))).toEqual([]);
+  });
+
+  it("keeps improvement history behind the delegation's read permission", async () => {
+    const r = createRun(app, { kind: "code", spaceId: "other", title: "改进目标", input: { spaces: ["other"] }, userId: "owner" });
+    expect((await as("ann", `/api/code/${r.id}/improve`)).status).toBe(404);
+    expect((await as("cat", `/api/code/${r.id}/improve`)).status).toBe(200);
+    expect(toolAllowed(app, "dan", "improve_start")).toBe(false);
   });
 
   it("grants by global role and by space role", () => {

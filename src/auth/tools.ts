@@ -10,6 +10,7 @@ import { can, isOwner, type GlobalPerm } from "./permissions.ts";
  */
 const BY_GROUP: Record<string, GlobalPerm> = {
   coding: "code.delegate",
+  improve: "code.delegate",
   git: "code.delegate",
   "lark-capture": "settings.manage",
   notifications: "agents.manage",

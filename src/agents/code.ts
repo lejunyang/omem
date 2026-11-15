@@ -1,5 +1,6 @@
 import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
+import { killPid } from "../core/procs.ts";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
@@ -12,7 +13,7 @@ import { businessOf, childSpaces, findSpace, getSpace, type Space } from "../cor
 import { HttpError, stripAnsi, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
-import { createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
+import { addRunEvent, createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { leasedTo, leaseWorkspace, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "./workspaces.ts";
 import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, siblingsText, withDiffBase } from "./code-branch.ts";
@@ -29,22 +30,32 @@ export function shell(command: string, cwd: string, signal: AbortSignal, timeout
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
     // Verbatim on Windows, as Node's own `shell: true`: quotes inside the command reach cmd unescaped.
-    const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], { cwd, windowsHide: true, windowsVerbatimArguments: isWin, env: { ...process.env, CI: "1", ...env } });
+    const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], { cwd, windowsHide: true, windowsVerbatimArguments: isWin, detached: !isWin, env: { ...process.env, CI: "1", ...env } });
     let output = "";
     const add = (d: Buffer) => {
       output = (output + d.toString()).slice(-20000);
     };
     child.stdout.on("data", add);
     child.stderr.on("data", add);
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-    const abort = () => child.kill("SIGKILL");
+    let timedOut = false;
+    const abort = () => {
+      if (!child.pid) return;
+      if (isWin) killPid(child.pid);
+      else try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+    };
+    const timer = setTimeout(() => { timedOut = true; abort(); }, timeoutMs);
     signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
     child.on("close", (code) => {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
-      resolve({ code: code ?? -1, output: stripAnsi(output), ms: Date.now() - started });
+      resolve({ code: timedOut ? -1 : code ?? -1, output: stripAnsi(output) + (timedOut ? "\n命令超时" : ""), ms: Date.now() - started });
     });
-    child.on("error", (e) => resolve({ code: -1, output: String(e), ms: Date.now() - started }));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      resolve({ code: -1, output: String(e), ms: Date.now() - started });
+    });
   });
 }
 
@@ -173,6 +184,25 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
  */
 export type Check = { command: string; code: number; output: string; ms: number; commit?: string; base?: string; at?: string };
 
+/** One execution path for repository checks and improvement measurements, including command rules. */
+export async function repositoryCommand(app: App, run: Run, wt: WorktreeRef, command: string, signal: AbortSignal, timeoutMs?: number): Promise<Check> {
+  const base = wt.commits ? changeBase(wt.path, wt) : git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
+  const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
+  const { commandGateDir, withGatePath } = await import("./command-gate.ts");
+  const { issueToolToken, revokeToolToken } = await import("./tools.ts");
+  const gate = commandGateDir(app);
+  const token = gate ? issueToolToken({ runId: run.id, spaceId: wt.space, spaces: [wt.space], tools: new Set(), actor: "agent", userId: runUser(app, run.id) }) : null;
+  const env = withGatePath({ ...process.env, ...(base ? { OMEM_BASE: base } : {}), OMEM_ARTIFACTS: artifactInbox(app, run.id), ...(token ? { OMEM_URL: app.baseUrl, OMEM_TOKEN: token } : {}) }, gate);
+  try {
+    const result = await shell(command, workDirOf(wt), signal, timeoutMs, Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined)));
+    const taken = await collectInbox(app, run.id, { source: "check", by: "host", caption: `检查：${command}` });
+    if (taken.made.length || taken.skipped.length) addRunEvent(app, run.id, "status", { text: takenText(taken) });
+    return { command, ...result, output: result.output.slice(-8000), ...(base ? { base } : {}), commit: git(wt.path, ["rev-parse", "HEAD"]).stdout.trim(), at: new Date().toISOString() };
+  } finally {
+    if (token) revokeToolToken(token);
+  }
+}
+
 /** The check command a round of a delegation runs in a repository: named for it, for all, or the repository's own. */
 export function checkCommandOf(app: App, run: Run, space: string): string | undefined {
   const input = run.input as { checks?: Record<string, string>; checkCommand?: string };
@@ -183,7 +213,9 @@ export function checkCommandOf(app: App, run: Run, space: string): string | unde
 export function latestCheck(app: App, rootId: string, space: string): Check | null {
   const rows = all<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at desc limit 30", rootId, rootId);
   for (const { id } of rows) {
-    const out = getRun(app, id).output as { repos?: { space: string; check: Check | null }[] };
+    const out = getRun(app, id).output as { repos?: { space: string; check: Check | null }[]; improveChecks?: { space: string; check: Check }[] };
+    const improved = out.improveChecks?.filter((c) => c.space === space).at(-1)?.check;
+    if (improved) return improved;
     const c = out.repos?.find((r) => r.space === space)?.check;
     if (c) return c;
   }
@@ -674,14 +706,7 @@ ${input.task}
     let check: Check | null = null;
     if (command) {
       ctx.event("status", { text: `运行检查${multi ? `（${repo.id}）` : ""}：${command}` });
-      // Where the change starts, for a command that checks only what it touches (`git diff --name-only $OMEM_BASE`).
-      const base = wt.commits ? changeBase(wt.path, wt) : git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
-      // Screenshots and reports the check writes to OMEM_ARTIFACTS become the round's artifacts.
-      const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
-      const r = await shell(command, workDirOf(wt), ctx.signal, undefined, { ...(base ? { OMEM_BASE: base } : {}), OMEM_ARTIFACTS: artifactInbox(app, run.id) });
-      check = { command, ...r, output: r.output.slice(-8000), ...(base ? { base } : {}), at: new Date().toISOString() };
-      const taken = await collectInbox(app, run.id, { source: "check", by: "host", caption: `检查${multi ? `（${repo.id}）` : ""}：${command}` });
-      if (taken.made.length || taken.skipped.length) ctx.event("status", { text: takenText(taken) });
+      check = await repositoryCommand(app, run, wt, command, ctx.signal);
     }
     if (wt.commits) {
       // Whatever is left uncommitted becomes this round's last commit; then it goes onto the branch.

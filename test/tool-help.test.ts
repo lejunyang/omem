@@ -11,6 +11,7 @@ const ctxFor = (tools: string[] | null): ToolContext => ({ app: testApp(), runId
 
 describe("omem tools offered to agents", () => {
   it("puts every tool in exactly one group, each with a reference page", () => {
+    expect(expandTools(["group:improve"])).toEqual(["improve_start", "improve_round", "improve_status"]);
     expect(TOOL_GROUPS.find((g) => g.id === "wiki")?.tools).toContain("correct_page");
     expect(CORE_TOOLS).not.toContain("correct_page");
     expect(ROLE_TOOLS).toContain("submit_level_check");

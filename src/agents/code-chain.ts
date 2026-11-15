@@ -95,6 +95,9 @@ export function queueNextCodeRound(
   try {
     chain = (getRun(app, chain.askRunId).output.codeChain as CodeChain | undefined) ?? chain;
     const current = getRun(app, chain.lastCodeRunId!);
+    const root = String(current.input.continueFrom ?? current.id);
+    if (one(app.db, "select key from kv where key = ? and cast(value as integer) >= ?", `improve-lock:${root}`, Date.now() - 45 * 60000))
+      throw new HttpError(409, "宿主正在度量或回退这次交办，结束后再续轮");
     if (chain.rounds.some((id) => { const out = getRun(app, id).output; return out.appliedAt || out.discardedAt; }))
       throw new HttpError(409, "原交办已应用或丢弃，工作区已释放，不能续轮");
     if (opts.manual && ["queued", "running"].includes(current.status))

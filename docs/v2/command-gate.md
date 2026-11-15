@@ -23,7 +23,7 @@
 ## 怎么拦
 
 - 包装（`src/agents/command-gate.ts`）：每次启动 Agent 运行时按当前规则在 `<数据目录>/bin/guarded/` 生成每个受保护命令的同名包装（Unix 是 `#!/bin/sh` 脚本；Windows 是 `<名>.cmd`，另有一个给 Git Bash 用的无扩展名脚本），删掉不再受保护的；它们都去跑 `<数据目录>/bin/command-gate.mjs`（只用 Node 内置模块）。没有规则时不生成，也不改 PATH。
-- PATH：`agentToolEnv`（runner 给所有后端的 Agent 进程，包括 `claude-cli` / `codex-cli` 后备）把拦截目录放在最前面，`withAgentPath` 加别的工具目录时也保持它第一；规则的 `script` 动作同样带上，并为这次脚本发一个不含任何工具的令牌，只用来让拦截认出是哪次运行。
+- PATH：`agentToolEnv`（runner 给所有后端的 Agent 进程，包括 `claude-cli` / `codex-cli` 后备）把拦截目录放在最前面，`withAgentPath` 加别的工具目录时也保持它第一；编码交办每轮的宿主检查和改进循环的度量命令（`src/agents/code.ts repositoryCommand`）、规则的 `script` 动作同样带上，并为这次脚本发一个不含任何工具的令牌，只用来让拦截认出是哪次运行。
 - `command-gate.mjs` 把命令名、参数、目录、`OMEM_TOKEN`、`OMEM_APPROVER`、`OMEM_REASON`（Agent 可选填的原因）发给 `POST /api/command-gate`（只接受本机发起的连接和有效的运行令牌），按回答：
   - `allow`：在去掉拦截目录后的 PATH 里找到真正的命令并执行（继承标准输入输出，透传退出码和信号）；找不到就报错。
   - `deny`：退出码 126，打印原因。

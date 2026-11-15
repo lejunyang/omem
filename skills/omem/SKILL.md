@@ -85,6 +85,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `ask` | 问本人（可带表单或交互页）、等回答、下一步按钮、在回答下展示表格和图表、写交互页、通知本人 | [references/owner.md](references/owner.md) |
 | `wake` | 定时或按消息唤醒、规则 | 同上 |
 | `coding` | 编码交办、评审、修改项、应用改动 | [references/code.md](references/code.md) |
+| `improve` | 改进循环：度量、留下或回退 | [编码](references/code.md) |
 | `design` | 方案：读方案、跟进别人的技术方案（评估、重新评估）、转达本人对自己方案的确认、标意见状态 | 同上 |
 | `git` | 分支、工作区、Git 同步与提交 | 同上 |
 | `code-handin` | 编码与评审角色交结果（只给对应角色） | 同上 |

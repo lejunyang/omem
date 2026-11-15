@@ -1417,6 +1417,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const diff = r.kind === "code" ? codeDiffView(app, id) : null;
     return { run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r) };
   });
+  server.get("/api/code/:id/improve", async (req) => {
+    const { improvementOf } = await import("../agents/improve.ts");
+    return improvementOf(app, (req.params as { id: string }).id);
+  });
   // Folders to open in an editor; `local`: the page is on this machine (loopback, no token), so a
   // local link works; otherwise the viewer reaches them over SSH (`host` keys their alias for it).
   server.get("/api/runs/:id/folders", async (req) => {

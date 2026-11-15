@@ -33,6 +33,7 @@ const USERS = g("users.manage");
 
 export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/ai/decision/report": "owner",
+  "GET /api/code/:id/improve": RUN,
   "GET /api/quality": "owner",
   "POST /api/quality/audit": "owner",
   "GET /api/plugins/pack": "owner",

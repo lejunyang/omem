@@ -2251,3 +2251,11 @@ Agent 页新增“MCP 服务”：按名称配置命令和参数或网址，环�
 - `replay_effects` 记候选 helped / hurt；默认两胜且胜多于负后启用草稿或采纳提案，记复盘归因，发一次 later 通知。`replay.skills.adoptAfter=0` 只试用。两负无胜拒绝提案、草稿仍保留；有胜未达门槛的提案不按年龄过期。Agent 页显示胜负与“复盘后自动启用”，复盘结果带技能名；CLI 与设备命令含 K1。
 - README 与文档站说明内置 `research`（库先查、外部 MCP、多来源核对、开头给结论）、`improve-loop`（先定度量与完成条件，每轮一改，无效回退，两轮换方向、四轮交回）；内部检索或另一模型云端调研的接法只写数据目录技能，内部名字和代码不进入外部查询。技能正文保持不变。
 - 回归限于 `test/replay.test.ts`、`test/desktop-control.test.ts` 与前后端类型检查，未跑全量检查；细项见 `docs/v2/acceptance.md` 的 RP-K1-01 至 RP-K1-07。
+
+
+## 11-15：改进循环由宿主度量、回退和停止
+
+- 新增 `improve_goals` / `improve_rounds`（设备本地），工具组 `improve`：`improve_start` 固定度量和预算、量基线；`improve_round` 检查保护路径、跑委托检查、按相对增益留下或新增 revert 提交；`improve_status` 读状态与历史。达标、预算、四轮无效或时限停止，由宿主发 later 报告，两轮无效返回换方向提示。
+- 检查和度量共用 `repositoryCommand`，继承宿主 shell、环境、工作区与超时；原有宿主检查同时接入命令规则 PATH 垫片。改进轮检查追加到运行的 `improveChecks`，不覆盖原 Check；`latestCheck` 和交办“活动”可见。交办概览新增“改进目标”，新 API `GET /api/code/:id/improve` 按运行读取权限。
+- 无推送、合并或应用。分支在别处检出时，回退提交保留在委托 worktree 的 `pending`，下一次正常结算再处理，不更新别处文件。内置技能正文保持不变，后续需改为调上述三个工具，取消 Agent 自行比较、回退和停止的记账。
+- 专项验证及已知限制见 `docs/v2/coding-loop.md` 与验收 IMP-01 至 IMP-06。
