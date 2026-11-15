@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { saveConfig } from "../core/config.ts";
 import { all, one } from "../core/db.ts";
 import { captureSpace } from "../core/capture-space.ts";
 import { truncate } from "../core/util.ts";
@@ -136,6 +137,10 @@ const lark: MentionChannel = {
   readHint: "消息里的文档已收进来的用 search / read_source 读，没收进来的飞书文档用 lark_doc_fetch（只读）。",
   reply: {
     mode: (app, kind) => app.config.mentions.reply.lark[kind],
+    setMode: (app, kind, mode) => {
+      app.config.mentions.reply.lark[kind] = mode;
+      saveConfig(app.config, app.home);
+    },
     how: replyHow,
     send: (app, runId, text, by) => sendMentionReply(app, runId, text, by),
     draft: async (app, runId, m, text) => (await draftMentionReply(app, runId, m, text)).id,

@@ -63,6 +63,22 @@ it("sends several as one list, and lets go of read and stale ones", () => {
   expect(one<{ n: number }>(app.db, "select count(*) n from notifications where json_extract(context, '$.held') = 1")?.n).toBe(0);
 });
 
+it("names only the newest twelve in a long list and counts the rest", () => {
+  const app = setup();
+  const made = Array.from({ length: 15 }, (_, i) => notify(app, { title: `F6 第 ${String(i + 1).padStart(2, "0")} 条`, urgency: "later" }));
+  // Same millisecond otherwise: spread them out so "newest" is unambiguous.
+  made.forEach((n, i) => run(app.db, "update notifications set at = ? where id = ?", new Date(at(9, 0).getTime() + i * 60_000).toISOString(), n.id));
+  expect(releaseLater(app, at(18, 30))).toBe(15);
+  const [list] = sentIn("F6");
+  expect(list.title).toBe("这段时间的 15 条进展");
+  expect(list.body.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(12);
+  expect(list.body).not.toContain("F6 第 03 条");
+  expect(list.body).toContain("- F6 第 04 条\n");
+  expect(list.body).toContain("更早的 3 条和详情在网页的通知里。");
+  // All fifteen count as delivered with it.
+  expect(list.bundle).toHaveLength(15);
+});
+
 it("sends later ones at once when no times are set, and never holds the newer state of a card already sent", () => {
   const app = setup();
   app.config.notify.laterTimes = [];

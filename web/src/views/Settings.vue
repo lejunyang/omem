@@ -1326,12 +1326,17 @@ async function saveEdit() {
         </label>
         <strong class="small">回复对方</strong>
         <p v-if="replyStats?.samples" class="muted small">近 60 天 {{ replyStats.samples }} 条找你的消息：<template v-if="replyStats.drafts">拟了 {{ replyStats.drafts }} 条回复，照发 {{ replyStats.sent }}、改后发 {{ replyStats.edited }}、没发 {{ replyStats.dropped }}<template v-if="reasonText(replyStats.reasons)">（{{ reasonText(replyStats.reasons) }}）</template>；</template>你自己回了 {{ replyStats.ownReplies }} 条<template v-if="replyStats.typicalLength">，通常 {{ replyStats.typicalLength }} 字左右</template>，没回 {{ replyStats.noReply }} 条。之后的分诊和草稿会参照这些：你怎么回、回多长、哪些不回。</p>
-        <HelpText>查完以后要不要替你回对方，按渠道分别设（现在只有飞书）。草稿：提醒旁边多一张卡片，你可以改了再点发送。自动：分诊也认为不用你拍板时直接回，回了什么会写在提醒里，每次都记进审计；拿不准时仍是草稿。飞书群里由机器人在对方那条消息的话题里回（机器人不在群里时用你的身份把它拉进来）。</HelpText>
+        <HelpText>查完以后要不要替你回对方，按渠道分别设（现在只有飞书）。草稿：提醒旁边多一张卡片，你可以改了再点发送。自动：分诊也认为不用你拍板时直接回，回了什么会写在提醒里，每次都记进审计；拿不准时仍是草稿。飞书群里由机器人在对方那条消息的话题里回（机器人不在群里时用你的身份把它拉进来）。草稿连续照发到设定的次数后（群里和私聊分开数，改过或没发的一条会重新数），会问你一次要不要把这一类改成自动，你点了才改；自动回复的提醒被你点了不满意的表情，这一类立刻改回草稿。</HelpText>
         <div class="row wrap small"><span style="min-width: 4em">飞书群里</span>
           <UiSegmented size="sm" aria-label="群里回复对方" :model-value="config.mentions?.reply?.lark?.group ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentionReply({ group: v })" />
         </div>
         <div class="row wrap small"><span style="min-width: 4em">飞书私聊</span>
           <UiSegmented size="sm" aria-label="私聊回复对方" :model-value="config.mentions?.reply?.lark?.p2p ?? 'off'" :options="[{ value: 'off', label: '不回，只提醒我' }, { value: 'draft', label: '草稿' }, { value: 'auto', label: '自动' }]" @change="(v: string) => saveMentionReply({ p2p: v })" />
+        </div>
+        <div v-if="[config.mentions?.reply?.lark?.group, config.mentions?.reply?.lark?.p2p].some((m) => m === 'draft' || m === 'auto')" class="row wrap small">
+          <span>连续照发</span>
+          <input class="input" style="width: 80px" type="number" inputmode="numeric" min="0" max="100" aria-label="连续照发多少次草稿后问要不要改成自动" :value="config.mentions?.reply?.promoteAfter ?? 10" @change="saveMentions({ reply: { ...(config.mentions?.reply ?? {}), promoteAfter: Math.max(0, Math.min(100, Math.round(Number(($event.target as HTMLInputElement).value)) || 0)) } })" />
+          <span>次草稿后，问我要不要改成自动</span><span class="muted">0 = 不问</span>
         </div>
         <div v-if="(config.mentions?.reply?.lark?.p2p ?? 'off') !== 'off'" class="row wrap small"><span style="min-width: 4em">私聊怎么回</span>
           <UiSegmented size="sm" aria-label="私聊怎么回" :model-value="config.mentions?.reply?.lark?.p2pVia ?? 'group'" :options="[{ value: 'group', label: '拉你、对方和机器人的群' }, { value: 'signed', label: '以你的身份回，带署名' }]" @change="(v: string) => saveMentionReply({ p2pVia: v })" />

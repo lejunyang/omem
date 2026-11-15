@@ -915,6 +915,12 @@ export const configSchema = z.object({
               signedVia: z.enum(["lark-cli", "doubao"]).default("lark-cli"),
             })
             .default({ group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" }),
+          /**
+           * After this many drafts in a row sent exactly as drafted (per kind of chat), the owner is asked
+           * once whether such replies may go out by themselves (mentions/reply-ladder.ts); 0: never asked.
+           * Absent = 10.
+           */
+          promoteAfter: z.number().int().min(0).max(100).optional(),
         })
         .default({ lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } }),
     })

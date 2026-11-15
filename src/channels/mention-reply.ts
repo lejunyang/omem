@@ -8,6 +8,7 @@ import { getRun, setRunOutput } from "../agents/runs.ts";
 import type { MentionInfo, Replied } from "../mentions/channel.ts";
 import { mentionOf } from "../mentions/mentions.ts";
 import { DROP_REASONS, noteDecision, type DropReason } from "../mentions/reply-learn.ts";
+import { suggestReplyPromotion } from "../mentions/reply-ladder.ts";
 
 /**
  * Answering the person who looked for the owner on Feishu (docs/v2/mentions.md “回复对方”; the tool
@@ -98,7 +99,16 @@ export async function decideMentionReply(app: App, payload: { runId: string; tex
     const why = reason && reason in DROP_REASONS ? DROP_REASONS[reason as DropReason] : "";
     return buildCard({ title: "没有回复", color: "grey", blocks: [{ markdown: `${whereOf(m)}：${truncate(payload.text, 600)}` }, ...decidedBlocks({ ...decided, verdict: why ? `决定不发（${why}）` : "决定不发" })] });
   }
-  noteDecision(app, payload.runId, text === payload.text.trim() ? "sent" : "edited", text, null);
+  const unchanged = text === payload.text.trim();
+  noteDecision(app, payload.runId, unchanged ? "sent" : "edited", text, null);
+  // Enough drafts in a row sent as they were: ask (once) whether such replies may go out by themselves.
+  if (unchanged) {
+    try {
+      suggestReplyPromotion(app, m.channel, m.chatKind);
+    } catch (e) {
+      console.warn(`[omem] 回复阶梯：${(e as Error).message}`);
+    }
+  }
   if (viaDoubao(app, m)) {
     // Doubao and the check after it take far longer than a card callback may: the result comes as a reminder.
     void sendMentionReply(app, payload.runId, text, "owner", true).catch((e) => {

@@ -187,6 +187,8 @@ const deliver = (n: Notification) => {
 
 /** More than this many held at once go out as one list instead of one by one. */
 const LATER_SINGLY = 2;
+/** The list names this many; the rest are a count (all of them are in the web list). */
+const LATER_LISTED = 12;
 /** A held notification older than this is no longer worth a push (it stays in the list). */
 const LATER_KEEP_MS = 48 * 3600_000;
 
@@ -232,7 +234,10 @@ export function releaseLater(app: App, at = new Date(), opts: { now?: boolean } 
       for (const n of list) deliver({ ...n, urgency: "normal" });
       continue;
     }
-    notify(app, { title: `这段时间的 ${list.length} 条进展`, body: `${list.map((n) => `- ${n.title}`).join("\n")}\n\n详情在网页的通知里。`, link: "#/notifications", userId, bundle: list.map((n) => n.id) });
+    // A long day does not become a wall of lines: the newest ones are named, the rest counted.
+    const listed = list.slice(-LATER_LISTED);
+    const more = list.length - listed.length;
+    notify(app, { title: `这段时间的 ${list.length} 条进展`, body: `${listed.map((n) => `- ${n.title}`).join("\n")}\n\n${more ? `更早的 ${more} 条和详情` : "详情"}在网页的通知里。`, link: "#/notifications", userId, bundle: list.map((n) => n.id) });
     for (const n of list) markPushed(app, n.id, "bundle");
   }
   return released;

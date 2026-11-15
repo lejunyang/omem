@@ -7,6 +7,12 @@ updated: 2026-11-15
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 回复对方的档位升降；不急通知的清单只列 12 条（11-15）
+
+- `src/mentions/reply-ladder.ts`：回复找本人的人和工具审批一样分档升降。`draftStreak` 按 `reply_samples` 数某一类会话（群 / 私聊）最近连续照发的草稿；到 `mentions.reply.promoteAfter`（默认 10，0 不问）时 `suggestReplyPromotion` 问本人一次，回答由 `reply-promote` 处理：只有本人自己选“直接发”才经 `MentionChannel.reply.setMode` 改成 auto。`demoteReplyFor`：自动回复的提醒被本人回负面表情，这一类退回 draft 并重数。入口在 `src/channels/mention-reply.ts decideMentionReply`（照发之后）和 `src/core/notify-reactions.ts applyNegative`（先于学忽略规则）。
+- `src/core/notify.ts releaseLater`：三条以上合成的清单只列最新的 12 条，更早的只报条数；全部仍随清单算已送达。
+- 测试 `test/reply-ladder.test.ts`、`test/notify-later.test.ts`；验收 43d1–43d3。
+
 ## 通知负反馈改变下次行为；会议结束释放通知（11-15）
 
 - `src/core/notify-reactions.ts`、`src/channels/lark-feedback.ts`：本人对工具完成汇报回负面表情，按通知 `reportTool` 立即用 `setRung` 改回 ask，重算批准连续次数，later 告知一次；普通通知复用“忽略”按钮的模型路径，通知保存生成的规则，一次性事件不告知。紧急提醒与工具汇报不学忽略规则，`notify.learnFromReactions` 默认开，可在渠道设置关闭。通知页展示、删除忽略规则，并显示通知学出的规则。

@@ -42,6 +42,20 @@ async function applyNegative(app: App, id: string, via: "reaction" | "ignore") {
     });
     return;
   }
+  // The reminder of a handling that answered the asker by itself: what is disliked may be the reply.
+  // Replies of that kind go back to drafts (always safe); no ignore rule is drawn from an unclear signal —
+  // from then on the draft card's own buttons say what was wrong.
+  if (via === "reaction" && c.runId) {
+    const { demoteReplyFor, demotedText } = await import("../mentions/reply-ladder.ts");
+    const demoted = demoteReplyFor(app, c.runId);
+    if (demoted) {
+      tx(app.db, () => {
+        run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.negativeHandledAt', ?) where id = ?", at, id);
+        notify(app, { title: "替你回复改回先给你看草稿", body: demotedText(demoted), link: "#/settings?tab=lark&focus=mentions", urgency: "later" });
+      });
+      return;
+    }
+  }
   if (via === "reaction" && (c.urgency === "urgent" || !app.config.notify.learnFromReactions)) return;
   const { learnIgnoreFromNotification } = await import("./notify-ai-gate.ts");
   const rule = await learnIgnoreFromNotification(app, row);

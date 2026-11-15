@@ -92,6 +92,11 @@ export type MentionChannel = {
   reply?: {
     /** The owner's setting for this kind of chat. */
     mode(app: App, kind: "p2p" | "group"): ReplyMode;
+    /**
+     * Change that setting. Only two callers (reply-ladder.ts): the owner's own answer to the question
+     * whether replies may go out by themselves, and stepping back to drafts after the owner disliked one.
+     */
+    setMode?(app: App, kind: "p2p" | "group", mode: ReplyMode): void;
     /** How a reply goes out there, in a sentence (for the handler's task and the draft). */
     how(app: App, m: Pick<MentionInfo, "chatKind" | "senderName">): string;
     /** Send it now: the handler under the owner's standing permission (auto), or the owner from a draft. */
