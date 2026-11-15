@@ -23,7 +23,7 @@ import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
 import { continuing, idleRounds, isStudy } from "../studies/store.ts";
 import { cancelTrials, isTrials, tickTrials } from "../studies/trials.ts";
 import { capabilitiesPath, planningMaterials } from "../studies/materials.ts";
-import { initFollow, followContexts, followView, recentChanges, changesBrief } from "./follow.ts";
+import { initFollow, followContexts, followView, shownChanges, changesBrief } from "./follow.ts";
 import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
 
 const host: FlowActor = { actor: "host" };
@@ -603,7 +603,7 @@ export function flowView(app: App, id: string) {
         carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item), rounds: f ? roundHistory(app, f) : [],
-    changes: recentChanges(app, id), follow: followView(app, id),
+    changes: shownChanges(app, id), follow: followView(app, id),
   };
 }
 

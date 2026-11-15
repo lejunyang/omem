@@ -2009,7 +2009,7 @@ export const migrations: readonly string[] = [
   `create table item_follow_cursors (
      item_id text not null, source_id text not null,
      started_at text not null, line integer not null default 0, source_updated_at text not null,
-     updated_at text not null, primary key(item_id,source_id)
+     seen text, updated_at text not null, primary key(item_id,source_id)
    );
    create table item_changes (
      id text primary key, item_id text not null references items(id), at text not null,

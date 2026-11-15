@@ -8,6 +8,7 @@ import { getItem } from "../items/store.ts";
 import { listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { flowView, ownerAction, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
+import { settleChange } from "./follow.ts";
 import { all } from "../core/db.ts";
 
 /** One bounded query for the already permission-filtered item list; never loads flow bodies. */
@@ -65,6 +66,12 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
   server.post("/api/items/:id/flow/round", async (req) => {
     const id = itemId(req, true);
     return view(app, id, await startRound(app, id, { actor: "owner", userId: who(req) }));
+  });
+  // The owner settles one change the follow-up found: fold it in, make it its own item, or leave it.
+  server.post("/api/items/:id/flow/changes/:change", async (req) => {
+    const id = itemId(req, true), b = body(z.object({ choice: z.enum(["merge", "split", "dismiss"]) }), req.body);
+    await settleChange(app, id, (req.params as { change: string }).change, b.choice, who(req));
+    return view(app, id);
   });
   server.post("/api/items/:id/flow/stages/:stage/budget", async (req) => {
     const id = itemId(req, true), { stage } = req.params as { stage: string };

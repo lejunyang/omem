@@ -5,8 +5,8 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
-| 课题第二期：三张台账随事项拉取，独立提方向后对账、本人选择、trials 串行试验与重试 / 升档 / 跨轮预算、候选归并发现、工作文件功能清单和粗略覆盖、连续无发现停止自动开轮、四技能与 study 内置流程、三条课题接口 | 服务端已实现（2026-11-15）；假运行和 HTTP 验证；网页、编码交办、执行环境和推送授权未做 | `src/studies/`、`flows/library/study.yaml`、`skills/library/study-*`、`test/studies.test.ts`、`docs/v2/studies.md`“第二期的实现” |
-| 流程上下文跟进：关联聊天、会话、文档与会议从开始后的新内容攒批，决策预筛，提炼变化；受影响阶段由本人决定并进、另开或忽略，截止时间更新后告知一次；变化随事项拉取 | 服务端已实现；2026-11-15，专项测试；不改网页，不做会议专门处理 | `src/flows/follow.ts`、`roles/item-follow.md`、`test/flow-follow.test.ts` |
+| 课题第二期：三张台账随事项拉取，独立提方向后对账、本人选择、trials 串行试验与重试 / 升档 / 跨轮预算、候选归并发现、工作文件功能清单和粗略覆盖、连续无发现停止自动开轮、四技能与 study 内置流程、三条课题接口 | 服务端已实现（2026-11-15）；假运行和 HTTP 验证；事项页有课题的台账（发现、试验、方向、覆盖），可在页上选方向；编码交办、执行环境和推送授权未做 | `src/studies/`、`flows/library/study.yaml`、`skills/library/study-*`、`test/studies.test.ts`、`docs/v2/studies.md`“第二期的实现” |
+| 流程上下文跟进：关联聊天、会话、文档与会议从开始后的新内容攒批，决策预筛，提炼变化；受影响阶段由本人决定并进、另开或忽略，截止时间更新后告知一次；变化随事项拉取 | 已实现（2026-11-15）：专项测试；事项页列出变化并可逐条处理；文档只交新增或改过的行；真实模型和飞书卡片未验，不做会议专门处理 | `src/flows/follow.ts`、`roles/item-follow.md`、`test/flow-follow.test.ts` |
 | 流程 Git 信号：owner / wait 的 git.pushed、git.merged；按交办已应用落点逐仓库核对提交，巡检 / 推送成功 / 仓库同步触发，限频远端读取，三十天本机记录，视图 waitingSignal | 已实现；2026-11-15，真 Git 与本地裸远端定向测试；网页由后续任务接入，远端 squash / cherry-pick 不推断等价 | `src/flows/signals.ts`、`test/flow-signals.test.ts`、`docs/v2/flows.md`“第二期：Git 信号” |
 | 数据页：用量、覆盖、找人批次、访客回答、质量、编码交付、知识与运行成本；本地日期 30 天默认、最多 180 天，按条件缓存 3 分钟；指标与图表可回到记录，Markdown/CSV 导出、只读 peer；成员仅自己的可读运行 | 已实现（11-15）；阶段指标随 flows 补入，部分数据边界见 flows §10.6 | `src/insights/`、`web/src/views/Insights.vue`、`test/insights.test.ts` |
 | 事项流程：YAML 定义与补缺播种、事项副本和阶段日志、前提推进、本人关卡、条件判断、编码 / 方案对象、报告与重开、倍增提醒、替换进度通知、工具与 HTTP、三个表随事项拉取、事项流程条与待办卡片、定义 YAML 编辑与校验预览、列表阶段标签 | 已实现；2026-11-15，定向测试；专门的飞书进度卡版式及后续期未做，网页返工与事件缺口见 flows.md | `src/flows/`、`docs/v2/flows.md`、`test/flows.test.ts`、`test/flows-http.test.ts`、`web/src/components/ItemFlow.vue`、`web/src/views/Flows.vue` |

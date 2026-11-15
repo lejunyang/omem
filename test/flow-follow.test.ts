@@ -16,7 +16,8 @@ import { loadRole } from "../src/agents/runner.ts";
 import * as runner from "../src/agents/runner.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
 import { startFlow, stopFlow, flowView, flowReminders, ownerAction } from "../src/flows/engine.ts";
-import { followContexts, finishFollow, noteItemChange, recentChanges } from "../src/flows/follow.ts";
+import { followContexts, finishFollow, noteItemChange, recentChanges, settleChange } from "../src/flows/follow.ts";
+import { startServer } from "../src/server/http.ts";
 import { getStage } from "../src/flows/store.ts";
 import { testApp } from "./helpers.ts";
 
@@ -25,7 +26,7 @@ const owner = { actor: "owner", userId: "owner" };
 async function setup(stages: object[] = [{ id: "code", name: "编码", by: "wait" }, { id: "verify", name: "验证", by: "wait" }, { id: "end", name: "结束", by: "wait" }]) {
   const app = testApp(); apps.push(app); app.config.flows.autoAdvance = 20;
   const item = upsertItem(app, undefined, { title: "示例商城退款", detail: "退商品款", dueAt: "2026-12-01" }, "user");
-  const src = appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_example", title: "示例商城讨论", lines: ["原来的需求"] });
+  const src = appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_example", title: "示例商城讨论", lines: ["原来的需求"], meta: { chatId: "oc_example" } });
   run(app.db, "insert into lark_messages(message_id,chat_id,source_id,line,content,create_ms) values('history','oc_example',?,1,'原来的需求',?)", src.id, Date.now() - 3600000);
   addMaterials(app, item.id, [{ kind: "source", ref: src.id }], "owner");
   saveFlow(app, YAML.stringify({ id: "demo", name: "示例交付", stages }), "owner");
@@ -275,5 +276,69 @@ describe("流程上下文跟进", () => {
     expect(flowView(t.app, t.item.id).follow[0].pending).toBe(1);
     await followContexts(t.app); expect(t.queued()).toHaveLength(2);
     expect(one<{ outcome: string }>(t.app.db, "select outcome from flow_signals where json_extract(keys,'$.runId')=?", r.id)!.outcome).toBe("看过，没有变化");
+  });
+});
+
+describe("原件查找、文档的新行和在事项页逐条处理", () => {
+  const later = (ms: number) => new Date(Date.now() + ms).toISOString();
+  it("只关联了飞书会话时，跟的是那个群的聊天原件", async () => {
+    const t = await setup();
+    run(t.app.db, "delete from item_materials where item_id=? and kind='source'", t.item.id);
+    const thread = createThread(t.app, { spaceId: "personal", channel: "lark", key: "oc_example#omt_demo" });
+    addMaterials(t.app, t.item.id, [{ kind: "conversation", ref: thread.id }], "owner");
+    await followContexts(t.app);
+    expect(flowView(t.app, t.item.id).follow.map((f) => f.sourceId)).toEqual([t.src.id]);
+    t.app.config.flows.follow.enabled = false;
+    expect(flowView(t.app, t.item.id).follow).toEqual([]);
+  });
+  it("文档更新后只交以前没有的行；只删行不起运行", async () => {
+    const t = await setup();
+    const doc = upsertSource(t.app, { spaceId: "personal", kind: "doc", uri: "doc:plan", title: "退款方案", text: "退商品款\n七天内原路退回" });
+    addMaterials(t.app, t.item.id, [{ kind: "source", ref: doc.id }], "owner");
+    await followContexts(t.app);
+    run(t.app.db, "update sources set text=?,updated_at=? where id=?", "退商品款\n七天内原路退回\n部分发货的运费也退", later(1000), doc.id);
+    await followContexts(t.app, new Date(Date.now() + 21 * 60000));
+    const r = t.queued()[0], task = String(r.input.task);
+    expect(task).toContain(`[src:${doc.id}#L3] 部分发货的运费也退`);
+    expect(task).not.toContain(`[src:${doc.id}#L1]`);
+    run(t.app.db, "update runs set status='running' where id=?", r.id);
+    expect(() => noteItemChange(t.app, r.id, { item: t.item.id, type: "info", summary: "旧的一行", refs: [`src:${doc.id}#L1`] })).toThrow("这一批");
+    noteItemChange(t.app, r.id, { item: t.item.id, type: "info", summary: "文档写明运费也退", refs: [`src:${doc.id}#L3`] });
+    finishFollow(t.app, getRun(t.app, r.id)); run(t.app.db, "update runs set status='done' where id=?", r.id);
+    run(t.app.db, "update sources set text=?,updated_at=? where id=?", "退商品款\n部分发货的运费也退", later(2000), doc.id);
+    await followContexts(t.app, new Date(Date.now() + 42 * 60000));
+    expect(t.queued()).toHaveLength(1);
+    expect(flowView(t.app, t.item.id).follow.find((f) => f.sourceId === doc.id)!.pending).toBe(0);
+  });
+  it("在事项页逐条处理：单条的卡片随之回答，多条的卡片处理完才撤回，只限本人", async () => {
+    const t = await setup(); const { r, ref } = await t.processing();
+    for (let i = 0; i < 5; i++) noteItemChange(t.app, r.id, { item: t.item.id, type: "scope", summary: `小王提出第 ${i + 1} 项`, stages: ["code"], refs: [ref] });
+    for (let i = 0; i < 8; i++) noteItemChange(t.app, r.id, { item: t.item.id, type: "info", summary: `同步第 ${i + 1} 条进度`, refs: [ref] });
+    finishFollow(t.app, r);
+    const asks = listAsks(t.app, { runId: r.id }), form = asks.find((a) => a.ui?.fields?.length)!, single = asks.find((a) => !a.ui?.fields?.length)!;
+    // The page lists every change that waits for the owner, however many newer ones there are.
+    const shown = flowView(t.app, t.item.id).changes;
+    expect(shown.filter((c) => c.status === "asked")).toHaveLength(5);
+    const alone = shown.find((c) => c.askId === single.id)!, grouped = shown.filter((c) => c.askId === form.id);
+    await expect(settleChange(t.app, t.item.id, alone.id, "dismiss", "other")).rejects.toThrow("本人");
+    await settleChange(t.app, t.item.id, alone.id, "dismiss", "owner");
+    expect(getAsk(t.app, single.id)).toMatchObject({ status: "answered", choice: 2 });
+    await expect(settleChange(t.app, t.item.id, alone.id, "merge", "owner")).rejects.toThrow("处理过");
+    await settleChange(t.app, t.item.id, grouped[0].id, "split", "owner");
+    expect(getAsk(t.app, form.id).status).toBe("pending");
+    await settleChange(t.app, t.item.id, grouped[1].id, "dismiss", "owner");
+    await settleChange(t.app, t.item.id, grouped[2].id, "merge", "owner");
+    expect(getAsk(t.app, form.id).status).toBe("cancelled");
+    expect(getStage(t.app, t.item.id, "code").control.feedback).toContain("小王提出第");
+    const last = flowView(t.app, t.item.id).changes.filter((c) => c.status === "asked");
+    expect(last).toHaveLength(1);
+    const server = await startServer(t.app, { port: 0, quiet: true });
+    try {
+      const url = `/api/items/${t.item.id}/flow/changes/${last[0].id}`;
+      expect((await server.inject({ method: "POST", url, payload: { choice: "later" } })).statusCode).toBe(400);
+      const res = await server.inject({ method: "POST", url, payload: { choice: "dismiss" } });
+      expect(res.statusCode).toBe(200);
+      expect((res.json().changes as { id: string; status: string }[]).find((c) => c.id === last[0].id)!.status).toBe("dismissed");
+    } finally { await server.close(); }
   });
 });
