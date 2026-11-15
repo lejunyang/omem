@@ -1,6 +1,6 @@
 # omem v2：开发约定
 
-先读 README.md 和 docs/v2/architecture.md（含实现状态表），验收步骤在 docs/v2/acceptance.md。docs/archive 是 v1 的历史资料，其中的“当前”“进度”只对应当时。本仓库的 Wiki 在 `.repo-review/wiki/`（主体生成于 2026-10-13；之后的改动列在 `reference/changes-since-2026-10-13.md`，记忆、渠道、参考三页已同步到 10-18，其他页面以代码为准）。
+先读 README.md 和 docs/v2/architecture.md。每项能力做到哪一步在 docs/v2/status.md，验收步骤在 docs/v2/acceptance.md：这两份都很长，按关键词搜对应的行，不要整份读。docs/archive 是 v1 的历史资料，其中的“当前”“进度”只对应当时。本仓库的 Wiki 在 `.repo-review/wiki/`（主体生成于 2026-10-13；之后的改动列在 `reference/changes-since-2026-10-13.md`，它只留最近的，更早的在同目录的 `changes-2026-10.md`、`changes-2026-11-first-half.md`，找旧改动按关键词搜；记忆、渠道、参考三页已同步到 10-18，其他页面以代码为准）。
 
 ## 仓库里的几类说明
 
@@ -9,7 +9,7 @@
 - `skills/library/*`：内置技能（`SKILL.md`，可带 `references/`），启动时播种到数据目录的 `library/_skills`：按技能名只补缺的（已有的不会被覆盖，新版新增的会补进已有数据目录）。`desktop-control` 教用 ai-auto-desktop（`aad`）操作桌面和浏览器；`aad` 的安装与查找在 `src/core/tools.ts`、`omem setup desktop`。
 - `.agents/skills/*`：在本仓库开发时用的技能（`omem-design` 网页约定、`osdk-guide`、`lieflat-less-ai-tone` 中文表达检查）。网页约定变了更新 `omem-design`。
 - `CLAUDE.md` 只引入本文件；个人的说明（机器、账号、进行中的事）放 `CLAUDE.local.md`，不进仓库。
-- `docs/v2/`：架构与实现状态表、验收、评测；`.repo-review/wiki/`：本仓库 Wiki（生成内容，新改动先记在 `reference/changes-since-2026-10-13.md`）。
+- `docs/v2/`：架构（`architecture.md`）、实现状态表（`status.md`）、验收、评测；`.repo-review/wiki/`：本仓库 Wiki（生成内容，新改动先记在 `reference/changes-since-2026-10-13.md` 的最前面；它超过四百行左右时把最早的一批整节移到同目录按时间段命名的归档文件里）。
 
 ## 产品原则
 
@@ -40,7 +40,7 @@
 
 - Wiki 按用户问题组织，不按文件逐个生成。写作要求在 roles/wiki-writer.md、roles/distiller.md，页面写法（案例页模板、改写对照）在内置技能 `skills/library/wiki-writing`；改写作质量优先改角色说明和这个技能，其次才改代码。
 - 文档和生成内容用中文，直接具体，避免套话。成稿可按 `.agents/skills/lieflat-less-ai-tone/SKILL.md` 检查表达，不改事实和结构。
-- 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/architecture.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 omem 工具还要改 `skills/omem/references/` 里对应的分组，动了网页约定改 `.agents/skills/omem-design`。
+- 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/status.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 omem 工具还要改 `skills/omem/references/` 里对应的分组，动了网页约定改 `.agents/skills/omem-design`。
 - README 和文档站介绍功能与使用方法，不罗列普通 bug 修复。只恢复既有预期行为的修复，不追加成功能特性；修复细节和验证结果记在开发文档、验收项或变更记录中。只有功能或使用方式实际变化时才更新对应的用户文档。
 - VS Code 插件在 `vscode/`（pnpm workspace 里的一个包，`pnpm install && pnpm --filter omem-vscode run build`；`node test/run.mjs` 在真实 VS Code 里测）。它只调 HTTP API，宿主改了运行、评审、问答、交办的接口要一起看它；设计在 docs/v2/ide.md。
 - Chrome 扩展在 `chrome/`（workspace 里的包 `omem-chrome`，`pnpm --filter omem-chrome run check`，e2e 用 `run test:e2e`）：DevTools 网络面板、Mock、设备模拟、用户状态和「拾取」。默认不连 `chrome.debugger`（Chrome 会显示调试提示条），新功能先做不用 CDP 的实现；扩展自己的约定在 `chrome/AGENTS.md`。

@@ -2,7 +2,8 @@
 
 v2（2026-10 重写）的文档：
 
-- [architecture.md](v2/architecture.md)：设计取舍、核心概念、存储、检索、Agent 运行时、主流程，以及**实现状态表**。
+- [architecture.md](v2/architecture.md)：设计取舍、核心概念、存储、检索、Agent 运行时、主流程。
+- [status.md](v2/status.md)：**实现状态表**（每项能力做到哪一步、入口文件；很长，按关键词搜对应的行）。
 - [acceptance.md](v2/acceptance.md)：逐项验收步骤和当前状态（云端已验 / 待你验）。
 - [evaluation.md](v2/evaluation.md)：检索（T2Retrieval nDCG@10）、记忆（LongMemEval 抽样）、规模（17 万片段）评测。
 - [judge-models.md](v2/judge-models.md)：注入标记与 StartLux-Decision 判官模型评测。

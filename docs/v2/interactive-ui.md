@@ -276,7 +276,7 @@ Agent 现在只能用文字和人沟通。少数地方有按钮（`ask_owner` �
 
    2026-11-08 已做：字段 `rank`（回答是 id 的顺序，每条恰好一次）和 `table`（列 `text` / `number` / `choice`，预填的行可改可删可加，空行丢掉，最多 `max_rows`）；两者在飞书卡片里不画，卡片退回网页链接。`ask_user` 的 `to`：只在本人自己会话里 `kind = ask` 的一轮可用，对方要是有效的 omem 用户并能读会话所在空间（`accessibleSpaces`）；提问记 `context.askedBy` / `toName`，归对方（`userId`），只发给对方（通知 + 飞书私聊，卡片和网页写明“X 的助手替 ta 问你”），不进提问人的群；回答以提问人的身份回到原会话（“[回答] 小李回答了…”）。成员自己发起的对话里，普通的 `ask_user` 本来就问那个成员。曾经在发卡片前用 Playwright 给交互页截图放进卡片，后来去掉了：要服务器装浏览器，流程也绕；卡片画不了的一律只给链接（5.1）。
 
-每个阶段按约定同步 README、architecture 状态表、acceptance、`.repo-review/wiki/reference/changes-since-2026-10-13.md`、`skills/omem/references/`；界面约定变了改 `.agents/skills/omem-design`。
+每个阶段按约定同步 README、状态表（`docs/v2/status.md`）、acceptance、`.repo-review/wiki/reference/changes-since-2026-10-13.md`、`skills/omem/references/`；界面约定变了改 `.agents/skills/omem-design`。
 
 ## 10. 验证
 

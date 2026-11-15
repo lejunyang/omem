@@ -245,7 +245,7 @@ api.authenticator({
 2. **认证插件**：`api.authenticator`、`resolveAuth` 接入与缓存、待批准流程、`omem open`。测试：用测试密钥签的 JWT，坏签名、过期、停用账号都被拒。
 3. **预建账号与邮箱认领**：成员页“添加成员”、`POST /api/users`、`omem user add --email`；登录和认证插件的邮箱认领；飞书登录加两项 scope 与检查。测试：假飞书返回本企业 / 外企业邮箱、重复邮箱、已绑账号各种情况。
 
-每期都同步 README（命令行清单）、architecture.md 状态表、acceptance.md、`site/guide` 里的多人与外部 Agent 页面、`skills/omem/SKILL.md` 的接入一节。
+每期都同步 README（命令行清单）、`status.md` 状态表、acceptance.md、`site/guide` 里的多人与外部 Agent 页面、`skills/omem/SKILL.md` 的接入一节。
 
 ## 10. 已定（2026-11-10）与待定
 

@@ -32,6 +32,6 @@ omem 是个人记忆与助理系统：文档、代码、聊天、笔记进同一
 
 ## 修改与参考
 
-- [2026-10-13 之后的变化](./reference/changes-since-2026-10-13.md) —— 本 Wiki 生成后加的功能，其他页面未必都已同步
+- [2026-10-13 之后的变化](./reference/changes-since-2026-10-13.md) —— 本 Wiki 生成后加的功能，其他页面未必都已同步；只留最近的，更早的在 [2026-11 上半月](./reference/changes-2026-11-first-half.md) 和 [2026-10](./reference/changes-2026-10.md)
 - [修改指南](./howto/modify-omem.md) —— 加工具、角色、渠道、定时任务、Run 类型、检索路时各改哪些文件
 - [参考：工具、命令、Run 类型](./reference/tools-commands-runs.md) —— MCP 工具、斜杠命令、CLI 子命令和 Run 类型清单

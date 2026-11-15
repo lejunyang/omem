@@ -99,4 +99,4 @@ create table shares (
 2. `shares` 表、签发与撤销函数、网页“对外分享”列表。验收：过期、撤销后访问返回 404。
 3. `/s/:token` 只读页面（原件、Wiki、运行三种）。验收：1440 与 390 宽度无横向溢出；行段高亮正确；页面里没有指向其他对象的链接。
 4. `resolveCitations` 接入，带权限检查。验收：飞书里引用代码原件得到可点开的链接；其他用户的会话里引用不了本人私有空间的原件。
-5. 同步 README、architecture 状态表、acceptance、wiki changes。
+5. 同步 README、状态表（`docs/v2/status.md`）、acceptance、wiki changes。

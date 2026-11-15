@@ -103,7 +103,7 @@ flowchart LR
 
 建议顺序：
 
-1. `README.md`、`docs/v2/architecture.md`、`AGENTS.md`，建立术语和原则；architecture.md 末尾的状态表标出了每项能力的入口。
+1. `README.md`、`docs/v2/architecture.md`、`AGENTS.md`，建立术语和原则；`docs/v2/status.md` 的状态表标出了每项能力的入口。
 2. `src/main.ts` 和 `src/core/app.ts`：看启动时接了什么；再扫一遍 `src/core/db.ts` 的表。
 3. `src/agents/inbox.ts` → `runs.ts` → `jobs.ts` 中的 `ask` → `runner.ts` 的 `prepareRun`：就是上面的例子。
 4. `src/agents/tools.ts` 和 `roles/assistant.md`：对照着读，工具的描述和角色说明是 Agent 看到的全部“接口文档”。
