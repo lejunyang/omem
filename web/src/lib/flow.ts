@@ -6,6 +6,11 @@ export type FlowStage = {
   waitingOn: string | null; evidence: string[]; note: string; gate: string; fixed: boolean;
   question: string | null; carrier: { kind: string; label: string; link?: string };
   object?: { title: string; status: string; link: string };
+  /** Rounds, model tier, timing and budget (docs/v2/studies.md): what the definition says, in words, and what has been used. */
+  round?: number; waitUntil?: string | null; usedMinutes?: number; escalations?: number;
+  budget?: { minutes?: number; trials?: number } | null; escalate?: { to: string; max: number } | null;
+  actualAI?: { profile: string; model?: string; effort?: string } | null;
+  descriptions?: { ai: string; time: string; budget: string };
   /** The stage completes by itself when this is seen (a push, a merge); what the last look found. */
   waitingSignal?: { type: string; checkedAt: string | null; note: string };
   /** What this stage's runs reported case by case (a verification stage), failed first, then the ones not done. */
@@ -25,7 +30,9 @@ export function testSummary(tests: StageTest[]) {
 export type FlowDefinition = { id: string; name: string; description?: string; stages: { id: string; name: string; note?: string; gate: string; by: string | { run?: { agent?: string }; object?: string } }[] };
 export type FlowFile = { id: string; raw: string; definition: FlowDefinition | null; problem: string | null };
 export type FlowView = {
-  flow: { id: string; name: string; startedAt: string; endedAt: string | null } | null;
+  flow: { id: string; name: string; startedAt: string; endedAt: string | null; round?: number; repeat?: { from: string; every: string | string[] } | null; roundClosedAt?: string | null; nextRoundAt?: string | null; canStartRound?: boolean; repeatDescription?: string } | null;
+  /** Earlier rounds of a repeating flow, newest first: how each stage ended. */
+  rounds?: { round: number; endedAt: string; stages: { id: string; state: StageState; note: string }[] }[];
   stages: FlowStage[]; suits: FlowDefinition[];
   log: { id: number; stageId: string; at: string; fromState: StageState | null; toState: StageState; actor: string; note: string; runId: string | null }[];
 };
@@ -43,8 +50,18 @@ export function stageLine(s: FlowStage, now = Date.now()) {
   if (s.state === "done") return duration(s.enteredAt, s.doneAt ? Date.parse(s.doneAt) : now);
   if (ownerTurn(s)) return `等你 · ${duration(s.since, now)}`;
   if (s.state === "doing") return `${duration(s.since, now)}前开始${s.attempt > 1 ? ` · 第 ${s.attempt} 次` : ""}`;
-  return s.state === "pending" ? "" : stageWords[s.state];
+  if (s.state === "pending") return s.waitUntil ? `等到 ${clockTime(s.waitUntil)}` : "";
+  return stageWords[s.state];
 }
+/** A moment as the reader's clock shows it: the time today, the date as well on another day. */
+export function clockTime(at: string) {
+  const t = new Date(at);
+  if (Number.isNaN(t.getTime())) return at;
+  const time = t.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" });
+  return t.toDateString() === new Date().toDateString() ? time : `${t.getMonth() + 1}-${String(t.getDate()).padStart(2, "0")} ${time}`;
+}
+/** The model a stage ran on, as short as it can be said. */
+export const aiName = (ai: { profile: string; model?: string; effort?: string }) => [ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ");
 export type FlowAction = { action: "confirm" | "hold" | "skip" | "done" | "reopen"; label: string; reason?: boolean };
 export function stageActions(s: FlowStage): FlowAction[] {
   if (s.state === "blocked") return [{ action: "done", label: "我来处理了，继续", reason: true }, { action: "reopen", label: "重开", reason: true }];

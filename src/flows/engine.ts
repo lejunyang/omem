@@ -152,6 +152,8 @@ function closeRound(app: App, f: ItemFlow, at: Date) {
     const last = f.definition.stages.at(-1)!;
     const s = getStage(app, f.itemId, last.id);
     changeStage(app, f.itemId, last.id, s.state, {}, host, `第 ${f.round} 轮已完成${f.definition.repeat?.every === "manual" ? "，等本人开始下一轮" : ""}`);
+    // The line above is for the history and the item's timeline; the stage keeps its own conclusion.
+    run(app.db, "update item_stages set note=? where item_id=? and stage_id=?", s.note, f.itemId, last.id);
   });
 }
 function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date) {
@@ -534,6 +536,8 @@ function stageTests(app: App, itemId: string, stageId: string, since: string, ro
     req: r.nodeId && titles.has(r.nodeId) ? { id: r.nodeId, title: titles.get(r.nodeId)! } : null, artifacts: r.artifacts.flatMap((a) => shots.get(a) ?? []) }));
 }
 
+/** "等到 01:00 再开始" with no reason in front: the stage's time line already says it. */
+const WAITING_NOTE = /^等到 .+ 再开始$/;
 export function flowView(app: App, id: string) {
   const item = getItem(app, id), f = itemFlow(app, id), rows = itemStages(app, id);
   return {
@@ -543,7 +547,7 @@ export function flowView(app: App, id: string) {
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
       const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" && "object" in d.done ? findObject(app, item, d.done.object) : null;
       const signal = waitingSignal(app, id, d);
-      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
+      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
         round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
         carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId) };

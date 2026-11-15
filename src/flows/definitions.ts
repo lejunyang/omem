@@ -50,7 +50,7 @@ export type FlowStage = FlowDefinition["stages"][number];
 
 const OBJECT_NAMES: Record<string, string> = { design: "方案", "code-work": "编码交办" };
 const bare = (s: string) => s.replace(/[。！？\s]+$/, "");
-const aiWords = (ai: FlowStage["ai"]) => typeof ai === "object" ? `用 ${[ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ")}` : ai === "strong" ? "用好的模型" : ai === "cheap" ? "用省的模型" : "用默认的模型";
+const aiWords = (ai: FlowStage["ai"]) => typeof ai === "object" ? `用 ${[ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ")}` : ai === "strong" ? "用好的模型" : ai === "cheap" ? "用省的模型" : ai === "standard" ? "用中档的模型" : "用默认的模型";
 export function describeFlow(f: FlowDefinition) {
   const r = f.repeat;
   if (!r) return "";
@@ -67,7 +67,7 @@ export function describeStage(s: FlowStage) {
     gate: s.gate === "confirm" ? "开始前先问你" : s.by === "owner" ? "轮到就来找你" : s.by === "wait" ? "轮到就开始等" : "轮到就自己开始",
     done: typeof s.done === "object" ? "signal" in s.done ? s.done.signal === "git.pushed" ? "改动推到远端就算做完（你也可以自己点做完）" : "改动合进目标分支就算做完" : `${OBJECT_NAMES[s.done.object]}到了 ${[s.done.status].flat().join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : object ? `${object}完成就算做完` : s.by === "owner" ? "你说做完就算做完" : "交了结果就算做完",
     when: s.when ? `只在需要时做：${bare(s.when)}` : "",
-    ai: `${aiWords(s.ai)}${s.escalate ? `；拿不准时最多请${aiWords(s.escalate.to).replace(/^用/, "")}看 ${s.escalate.max} 次` : ""}`,
+    ai: s.ai || s.escalate ? `${aiWords(s.ai)}${s.escalate ? `；拿不准时最多请${aiWords(s.escalate.to).replace(/^用/, "")}看 ${s.escalate.max} 次` : ""}` : "",
     time: [s.at ? `这一轮 ${s.at} 以后开始` : "", s.window ? `只在 ${s.window.replace("-", "–")} 之间开始` : ""].filter(Boolean).join("；"),
     budget: s.budget?.minutes !== undefined ? `最多跑 ${s.budget.minutes} 分钟` : "",
   };

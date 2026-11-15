@@ -8,8 +8,8 @@ import RuleTabs from "../components/RuleTabs.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 
-type Step = { id: string; name: string; carrier: string; gate: string; done: string; when: string; needs: string[] };
-type Reading = { ok: boolean; id?: string; name?: string; description?: string; problem?: string; stages?: Step[] };
+type Step = { id: string; name: string; carrier: string; gate: string; done: string; when: string; needs: string[]; ai?: string; time?: string; budget?: string };
+type Reading = { ok: boolean; id?: string; name?: string; description?: string; problem?: string; stages?: Step[]; repeatDescription?: string };
 const template = `# id 用小写字母、数字和连字符；保存后保持不变。
 id: my-flow
 name: 我的流程
@@ -155,10 +155,12 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
                   <div class="step-head"><strong>{{ s.name }}</strong><span class="muted">{{ s.carrier }}</span></div>
                   <div class="muted">{{ s.gate }}，{{ s.done }}。</div>
                   <div v-if="s.when" class="muted">{{ s.when }}</div>
+                  <div v-if="s.ai || s.time || s.budget" class="muted">{{ [s.ai, s.time, s.budget].filter(Boolean).join("；") }}</div>
                   <div v-if="waits(s, i)" class="muted">{{ waits(s, i) }}</div>
                 </div>
               </li>
             </ol>
+            <p v-if="shown?.repeatDescription && !reading?.problem" class="small note">一轮一轮转：{{ shown.repeatDescription }}。</p>
             <p v-if="shown?.stages && !reading?.problem" class="muted small note">没有人参与的情况下连着自己开始了几段，下一段会先问你一声；这个数在 设置 → AI → 自动推进 里改。</p>
           </section>
 
@@ -172,11 +174,19 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
                 <dt><code>gate</code></dt>
                 <dd><code>confirm</code> 开始前先问你；不写就轮到自己开始。</dd>
                 <dt><code>done</code></dt>
-                <dd>做到什么算完：<code>confirm</code> 要你点头；也可以写一句话；不写就按“谁来做”默认。</dd>
+                <dd>做到什么算完：<code>confirm</code> 要你点头；<code>{ signal: git.pushed }</code> 改动推到远端就算（<code>git.merged</code> 是合进目标分支，只用在你来做或只等的阶段）；也可以写一句话；不写就按“谁来做”默认。</dd>
                 <dt><code>needs</code></dt>
                 <dd>要等哪些阶段做完，写它们的 id；不写就等上一段，<code>[]</code> 是不用等。</dd>
                 <dt><code>when</code></dt>
                 <dd>一句话，说明什么情况下才需要这一段；不符合时跳过。</dd>
+                <dt><code>ai</code></dt>
+                <dd>这一段的运行用哪一档模型：<code>strong</code> 好的、<code>standard</code> 中档、<code>cheap</code> 省的（各用哪个模型在 设置 → AI → 模型档位 里配）。加 <code>escalate: { to: strong, max: 2 }</code>，交不出结果或拿不准时换那一档重做，每轮最多 2 次。</dd>
+                <dt><code>at</code>、<code>window</code></dt>
+                <dd><code>at: "10:00"</code> 这一轮里不早于这个时刻开始；<code>window: "01:00-06:00"</code> 只在这个时间段里开始，可以跨午夜。</dd>
+                <dt><code>budget</code></dt>
+                <dd><code>{ minutes: 240 }</code> 这一段每轮最多跑这么久，到了就停下来等你。</dd>
+                <dt><code>repeat</code></dt>
+                <dd>写在最外层，不在某一段里：<code>{ from: 某一段的 id, every: manual }</code>。做完以后从那一段起可以再来一轮；<code>manual</code> 你点了才开始，<code>[tue, fri]</code> 每周二、周五，<code>day</code> 每天，<code>done</code> 做完接着来。</dd>
                 <dt><code>note</code></dt>
                 <dd>这一段要做什么，写给做的人看。</dd>
               </dl>

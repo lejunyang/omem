@@ -8,6 +8,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute } from "vue-router";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import AiRouting from "../components/AiRouting.vue";
+import AiDefaults from "../components/AiDefaults.vue";
 import AiCapacity from "../components/AiCapacity.vue";
 import AiModels from "../components/AiModels.vue";
 import ReplaySettings from "../components/ReplaySettings.vue";
@@ -686,6 +687,15 @@ async function saveReplyHours(raw: string) {
   await saveConfig({ replies: { ...config.value.replies, outcome: { ...(config.value.replies?.outcome ?? {}), afterHours: v } } }, `回复发出 ${v} 小时后判断有没有用`);
   void load();
 }
+const TIERS = [{ id: "strong", label: "好的" }, { id: "standard", label: "中档" }, { id: "cheap", label: "省的" }] as const;
+/** Which backend, model and effort a tier stands for; null leaves the tier unset (the role's own AI is used). */
+async function saveTier(id: (typeof TIERS)[number]["id"], v: { agent?: string; model?: string; effort?: string } | null) {
+  const tiers = { ...(config.value.agents.tiers ?? {}) };
+  if (!v?.agent) delete tiers[id];
+  else tiers[id] = { profile: v.agent, ...(v.model ? { model: v.model } : {}), ...(v.effort ? { effort: v.effort } : {}) };
+  await saveConfig({ agents: { ...config.value.agents, tiers } }, v?.agent ? `“${TIERS.find((t) => t.id === id)!.label}”这一档已设置` : "这一档不配了");
+  void load();
+}
 async function savePreCheck(v: boolean) {
   const cur = config.value.agents.autoAdvance ?? { turns: 6, codeRounds: 3 };
   await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, preCheck: v } } }, v ? "新交办开始编码前先做检查" : "新交办直接开始编码");
@@ -1024,6 +1034,14 @@ async function saveEdit() {
         <UiSelect v-model="defaultProfile" width="320px" aria-label="默认 Agent" :options="[{ value: '', label: '自动（第一个已安装的）' }, ...profileOptions]" />
       </div>
       <p class="muted small">内置角色和自定义档案的默认 AI 统一在 <RouterLink to="/agents">Agent 档案</RouterLink> 中设置。</p>
+      <div class="card pad stack">
+        <div class="section-title">模型档位</div>
+        <HelpText>流程里的阶段可以写用哪一档模型（<code>ai: strong</code> / <code>standard</code> / <code>cheap</code>），这里定每一档是哪个后端、模型和强度。定方向这类要判断的事用好的，没人看着时反复去试的用省的。没配的档位用那个角色自己的 AI；流程指定了档位时不会换到别的后端，额度用完就等。</HelpText>
+        <div v-for="t in TIERS" :key="t.id" class="stack">
+          <div class="row"><strong>{{ t.label }}</strong><span class="muted small">{{ t.id }}</span><span class="spacer" /><button v-if="config.agents.tiers?.[t.id]" class="btn ghost sm" @click="saveTier(t.id, null)">不配</button></div>
+          <AiDefaults :model-value="{ agent: config.agents.tiers?.[t.id]?.profile, model: config.agents.tiers?.[t.id]?.model, effort: config.agents.tiers?.[t.id]?.effort }" :backends="profiles.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => saveTier(t.id, v)" />
+        </div>
+      </div>
       <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
       <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, limits: config.agents.capacity?.limits ?? [], quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" :backends="installedProfiles" :models="probedModels" @save="saveCapacity" />
       <div class="card pad stack">

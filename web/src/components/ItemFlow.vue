@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, onServerEvent, onServerResync, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { actorWords, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, type FlowAction, type FlowDefinition, type FlowFile, type FlowStage, type FlowView } from "../lib/flow";
+import { actorWords, aiName, clockTime, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, type FlowAction, type FlowDefinition, type FlowFile, type FlowStage, type FlowView } from "../lib/flow";
 import RunArtifacts from "./RunArtifacts.vue";
 import { refAction } from "../lib/refs";
 import { fmtTime, relTime } from "../store";
@@ -55,6 +55,30 @@ async function pick() {
   } catch (e) { if (request === pickerSeq) error.value = (e as Error).message; }
   finally { if (request === pickerSeq) pickerLoading.value = false; }
 }
+/** The owner starts the next round of a repeating flow. */
+async function nextRound() {
+  const id = props.itemId;
+  await mutate(id, `/api/items/${id}/flow/round`, {});
+}
+/** The owner changes how long this stage may run in this round, and how often a stronger model may look. */
+async function editBudget(s: FlowStage) {
+  const id = props.itemId, generation = epoch;
+  const answer = await promptDialog(`「${s.name}」这一轮的预算`, {
+    message: "只改这件事上的这一份，不改流程定义。留空的不变。",
+    fields: [
+      { id: "minutes", label: "最多跑多少分钟", value: s.budget?.minutes != null ? String(s.budget.minutes) : "" },
+      ...(s.escalate ? [{ id: "escalations", label: "拿不准时最多请更好的模型看几次", value: String(s.escalate.max) }] : []),
+    ],
+    okText: "保存",
+  });
+  if (!answer || generation !== epoch) return;
+  const minutes = Number(answer.minutes), escalations = Number(answer.escalations);
+  const patch = {
+    ...(answer.minutes?.trim() && Number.isFinite(minutes) && minutes > 0 ? { budget: { ...(s.budget ?? {}), minutes: Math.round(minutes) } } : {}),
+    ...(s.escalate && answer.escalations?.trim() && Number.isFinite(escalations) && escalations >= 0 ? { escalate: { max: Math.round(escalations) } } : {}),
+  };
+  if (Object.keys(patch).length) await mutate(id, `/api/items/${id}/flow/stages/${encodeURIComponent(s.id)}/budget`, patch);
+}
 async function act(s: FlowStage, a: FlowAction) {
   const id = props.itemId, generation = epoch;
   let note: string | undefined;
@@ -86,6 +110,7 @@ async function stop() {
     <template v-else-if="data?.flow">
       <div class="flow-head">
         <span class="flow-name">{{ data.flow.name }}</span>
+        <span v-if="data.flow.repeat" class="muted small">第 {{ data.flow.round ?? 1 }} 轮</span>
         <span v-if="data.flow.endedAt" class="muted small">{{ completed ? "走完了" : "已停止" }}</span>
         <span class="spacer" />
         <button v-if="editable && !data.flow.endedAt" type="button" class="link small" :disabled="busy" @click="stop">停止流程</button>
@@ -96,6 +121,10 @@ async function stop() {
           <span class="segment-name">{{ s.name }}</span>
           <span class="segment-line">{{ stageLine(s, now) || "　" }}</span>
         </button>
+      </div>
+      <div v-if="data.flow.canStartRound" class="round-done">
+        <p>第 {{ data.flow.round ?? 1 }} 轮做完了。{{ data.flow.nextRoundAt ? `下一轮 ${clockTime(data.flow.nextRoundAt)} 开始，也可以现在就开始。` : "下一轮等你开始。" }}</p>
+        <div v-if="editable" class="row wrap"><button type="button" class="btn sm primary" :disabled="busy" @click="nextRound">再来一轮</button></div>
       </div>
       <div v-for="s in waiting" :key="s.id" class="turn">
         <p>{{ nextWords(s) }}</p>
@@ -114,6 +143,22 @@ async function stop() {
           <template v-if="stage.evidence.length">
             <dt>依据</dt>
             <dd class="evidence"><template v-for="(r, i) in stage.evidence" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原件 {{ i + 1 }}</a><a v-else :href="evidenceLink(r)!" :title="r">{{ r.startsWith("design:") ? "方案" : "运行" }} {{ i + 1 }}</a></template></dd>
+          </template>
+          <template v-if="stage.descriptions?.ai">
+            <dt>模型</dt>
+            <dd>{{ stage.descriptions.ai }}<span v-if="stage.actualAI" class="muted">（这次用的是 {{ aiName(stage.actualAI) }}）</span></dd>
+          </template>
+          <template v-if="stage.descriptions?.time || (stage.waitUntil && stage.state === 'pending')">
+            <dt>时间</dt>
+            <dd>{{ stage.descriptions?.time }}<span v-if="stage.waitUntil && stage.state === 'pending'" class="muted">{{ stage.descriptions?.time ? "；" : "" }}等到 {{ clockTime(stage.waitUntil) }} 再开始</span></dd>
+          </template>
+          <template v-if="stage.budget?.minutes != null || stage.escalate">
+            <dt>预算</dt>
+            <dd>
+              <template v-if="stage.budget?.minutes != null">已用 {{ Math.round(stage.usedMinutes ?? 0) }} / {{ stage.budget.minutes }} 分钟</template>
+              <template v-if="stage.escalate">{{ stage.budget?.minutes != null ? "；" : "" }}请更好的模型看过 {{ stage.escalations ?? 0 }} / {{ stage.escalate.max }} 次</template>
+              <button v-if="editable && !data.flow.endedAt" type="button" class="link small budget-edit" :disabled="busy" @click="editBudget(stage)">改</button>
+            </dd>
           </template>
           <template v-if="stage.waitingSignal">
             <dt>在等</dt>
@@ -142,6 +187,16 @@ async function stop() {
         </div>
         <button v-if="editable && ['done', 'skipped', 'stale'].includes(stage.state)" type="button" class="link small" :disabled="busy" @click="act(stage, { action: 'reopen', label: '重开这一段', reason: true })">重开这一段</button>
       </div>
+      <details v-if="data.rounds?.length" class="history">
+        <summary>以前各轮</summary>
+        <ol>
+          <li v-for="r in data.rounds" :key="r.round">
+            <span class="history-what">第 {{ r.round }} 轮</span>
+            <span class="muted">{{ fmtTime(r.endedAt) }} 做完</span>
+            <span v-for="s in r.stages.filter((x) => x.note || x.state !== 'done')" :key="s.id" class="muted round-line">{{ data.stages.find((x) => x.id === s.id)?.name ?? s.id }}：{{ stageWords[s.state] }}{{ s.note ? `，${s.note}` : "" }}</span>
+          </li>
+        </ol>
+      </details>
       <details v-if="data.log.length" class="history">
         <summary>经过</summary>
         <ol>
@@ -183,6 +238,12 @@ async function stop() {
 .segment.warn, .segment.accent { flex: 1.7 1 84px; }
 .segment.warn .segment-line { color: var(--warn); }
 .segment:hover .segment-name { text-decoration: underline; }
+
+/* Between two rounds: nothing is waiting, so it is calm; one button starts the next. */
+.round-done { display: grid; gap: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--sunken); }
+.round-done p { margin: 0; font-size: 13.5px; line-height: 1.6; }
+.budget-edit { margin-left: 8px; }
+.round-line { overflow-wrap: anywhere; }
 
 /* What waits for the owner: said once, with the buttons that state allows. */
 .turn { display: grid; gap: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--warn-soft); }
