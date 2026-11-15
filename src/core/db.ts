@@ -1923,6 +1923,12 @@ export const migrations: readonly string[] = [
      announced integer not null default 0
    );
    create index repo_lessons_space_state on repo_lessons(space_id, state, hits desc, created_at desc);`,
+  // 成效聚合只读这张覆盖索引；JSON 仅在写入索引时提取，不在请求路径解析大字段。
+  `create index runs_insights on runs(created_at, id, kind, status, space_id, user_id, trigger_by, profile_id, ai, started_at, finished_at, roles, quiet,
+     json_extract(input, '$.spec'), json_extract(trigger, '$.via'), json_extract(trigger, '$.where'), coalesce(json_extract(input, '$.lark.bot'), json_extract(input, '$.bot')),
+     json_extract(input, '$.continueFrom'), json_extract(output, '$.appliedAt'), json_extract(output, '$.discardedAt'),
+     json_extract(output, '$.verdict'), json_extract(output, '$.triage.action'), json_extract(output, '$.handleRun'),
+     json_extract(output, '$.joined'), json_extract(input, '$.waited'));`,
 ];
 
 export type Db = DatabaseSync;

@@ -2833,6 +2833,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return reply.send(res.body ? (await import("node:stream")).Readable.fromWeb(res.body as never) : "");
   });
 
+  server.get("/api/insights", async (req) => {
+    const { insights, insightFilters } = await import("../insights/insights.ts");
+    return insights(app, who(req), q(insightFilters, req.query));
+  });
+  server.get("/api/insights/records", async (req) => {
+    const { insightRecords, insightFilters } = await import("../insights/insights.ts");
+    const o = q(insightFilters.extend({ metric: z.string().max(800), offset: z.coerce.number().int().min(0).default(0) }), req.query);
+    return insightRecords(app, who(req), o, o.metric, o.offset);
+  });
+  server.get("/api/insights/export", async (req, reply) => {
+    const { exportInsights, insightFilters } = await import("../insights/insights.ts");
+    const o = q(insightFilters.extend({ format: z.enum(["md", "csv"]).default("md") }), req.query);
+    return reply.header("content-disposition", `attachment; filename="insights.${o.format}"`).type(o.format === "csv" ? "text/csv; charset=utf-8" : "text/markdown; charset=utf-8").send(exportInsights(app, who(req), o, o.format));
+  });
   server.get("/api/quality", async () => {
     const { qualityOverview } = await import("../quality/audit.ts");
     const overview = qualityOverview(app);

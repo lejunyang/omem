@@ -14,6 +14,7 @@ import { boot } from "../src/main.ts";
 import { registeredRoutes } from "../src/server/http.ts";
 import { remember } from "../src/memory/store.ts";
 import { writePage } from "../src/wiki/store.ts";
+import { run as sqlRun } from "../src/core/db.ts";
 
 describe("roles and permissions", async () => {
   it("keeps repository lesson curation owner-only", () => {
@@ -56,6 +57,24 @@ describe("roles and permissions", async () => {
     const result = await fetch(base + "/api/ai/decision/report?days=7");
     expect(result.status).toBe(200);
     expect(await result.json()).toMatchObject({ days: 7, scenes: expect.any(Array) });
+  });
+
+  it("serves insights, record lists and exports as self, with members limited to their own part", async () => {
+    for (const path of ["/api/insights", "/api/insights/records", "/api/insights/export"]) expect(ROUTE_RULES[`GET ${path}`]).toBe("self");
+    const at = "2026-11-05T03:00:00.000Z";
+    for (const [id, user, by] of [["insight-member", "ann", "user:ann"], ["insight-other", "bob", "user:bob"]]) sqlRun(app.db, "insert into runs(id,kind,space_id,status,user_id,trigger_by,created_at) values(?,?,?,?,?,?,?)", id, "ask", "team", "done", user, by, at);
+    const filter = "from=2026-11-01&to=2026-11-15";
+    const report = await json("ann", `/api/insights?${filter}`);
+    expect(report.sections.flatMap((s: { metrics: { key: string; value: number }[] }) => s.metrics).find((m: { key: string }) => m.key === "usage:total").value).toBe(1);
+    expect(report.options.people).toEqual(["user:ann"]);
+    const detail = await json("ann", `/api/insights/records?${filter}&metric=usage:total`);
+    expect(detail.records.map((r: { id: string }) => r.id)).toEqual(["insight-member"]);
+    for (const format of ["csv", "md"]) {
+      const response = await as("ann", `/api/insights/export?${filter}&format=${format}`);
+      expect(response.status).toBe(200); expect(response.headers.get("content-disposition")).toContain(`insights.${format}`);
+      expect(await response.text()).not.toContain("user:bob");
+    }
+    expect((await as("ann", "/api/insights?from=2026-01-01&to=2026-11-15")).status).toBe(400);
   });
 
   it("knows what every API route needs, and lists no route that does not exist", () => {

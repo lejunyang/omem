@@ -13,6 +13,7 @@ const view = (pattern: string, loader: () => Promise<unknown>, key = pattern.rep
 
 const routes: RouteRecordRaw[] = [
   view("/quality", () => import("./views/Quality.vue")),
+  view("/insights", () => import("./views/Insights.vue")),
   view("/", () => import("./views/Home.vue")),
   view("/ask/:id?", () => import("./views/Ask.vue"), "/ask"),
   view("/ui/:id", () => import("./views/UiItem.vue"), "/ui"),

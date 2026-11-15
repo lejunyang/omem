@@ -16,6 +16,7 @@ import { loopStats } from "./loop-monitor.ts";
 import { vectorIndex } from "../search/vectors.ts";
 import { searchLatency } from "../search/trace.ts";
 import { readProcessStats } from "../search/read-process.ts";
+import { insights, insightFilters } from "../insights/insights.ts";
 
 /**
  * What another device may ask this instance to do (`POST /api/peer/exec`, owner only):
@@ -156,6 +157,11 @@ export const peerCommands: Record<string, Command> = {
     description: "决策场景的门槛和结果统计（不含材料正文）",
     schema: z.object({ days: z.number().int().min(1).max(90).default(30) }).strict(),
     run: async (app, args) => (await import("./decision-log.ts")).decisionReport(app, args),
+  },
+  insights: {
+    description: "成效统计（只读；不含消息正文）",
+    schema: insightFilters.strict(),
+    run: (app, args) => insights(app, "owner", args),
   },
   quality: {
     description: "每晚抽检：各类运行的统计、加严名单、待检页数和最近 20 条结果（不含问题正文）",

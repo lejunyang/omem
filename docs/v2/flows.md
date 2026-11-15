@@ -287,7 +287,7 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 
 ## 10. 成效页
 
-看 omem 和机器人给本人、给别人带来了什么。页面 `#/insights`，数据接口 `GET /api/insights`。
+看 omem 和机器人给本人、给别人带来了什么。页面 `#/insights`，数据接口 `GET /api/insights`。不依赖流程的八个板块已实现（2026-11-15）；阶段指标随 flows 一起补入。
 
 ### 10.1 原则
 
@@ -301,26 +301,65 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 | 板块 | 指标 | 图 | 数据来源 |
 | --- | --- | --- | --- |
 | 用量与覆盖 | 每天的任务数；每周用过的人数（本人、成员、访客分开）；成功率 | 按场景堆叠的面积图；周活折线 | `runs`（类型、触发方式、触发人、状态） |
-| 用在哪 | 场景分布：问答、排查、编码、评审、文档、会议、提醒、整理 | 条形图，可下钻到运行 | 运行类型 + 这次运行用到的工具组（确定的归类，不用模型） |
+| 用在哪 | 场景、空间、Agent 档案或角色、触发会话的运行次数 | 条形图，可下钻到记录 | 运行行上的类型、档案、角色、触发信息；不读工具事件 |
 | 替本人挡了多少 | 有人找你：进来 → 预筛掉 → 分诊 → 代查 → 代答或提醒 → 本人的反应 | 漏斗 | mention 运行、`reply_samples`、通知的结果 |
-| 给别人带来什么 | 别人直接问机器人的次数和人数；机器人给出回答的时间，对比本人以往在同类会话里回复的中位时间 | 按人、按群的列表；对比条 | 访客运行、`lark_messages`（本人历史回复的延迟是现成的基线） |
+| 给别人带来什么 | 访客提问次数、不同提问身份和所在会话；回答完成用时的中位数与 P90；本人自行回复的中位数 | 会话条形图；双方各至少 10 个样本才画对比条 | 访客运行的 `verdict=answer`、创建至结束时间；`reply_samples.owner_reply_at − last_ms` |
 | 质量 | 负面反馈率；回复草稿照发率；评审发现的采纳率；每晚抽检的准确率；夜间复盘的胜平负；决策模型的漏看 | 趋势线 | `feedback`、`reply_samples`、`review_findings`、`quality_audits`、复盘记录、`decisions` |
-| 交付 | 交办数、应用数、平均轮数、从交办到应用的时间；有流程以后：每周过完流程的事项数、各阶段停留时间、等人的时间、返工次数 | 每周吞吐；阶段停留的堆叠条 | 交办记录、`item_stage_log` |
-| 知识 | 被回答读过的页面占比；记忆的召回命中；查不到的问题；技能的调用次数和复盘里的胜率；仓库约定的命中 | 趋势线；缺口列表 | `page_reads`、`memory_recalls`、复盘记录、`repo_lessons` |
+| 交付 | 发起、评审通过、应用、丢弃的交办数；轮数与发起到应用用时的中位数 | 交办去向条形图 | 编码首轮与续轮的小字段投影；阶段指标随 flows 一起补入 |
+| 知识 | 期间读过的现存页面占比（全部阅读）；记忆按回答 / 整理计召回及引用率；技能复盘尝试和胜平负；仓库约定累计命中 | 召回用途条形图 | `page_reads` 没有用途与人员归属；`memory_recalls.purpose/used`；复盘 `variant.skillName`；`repo_lessons.hits` 是累计值 |
 | 成本 | 各后端、各模型的运行时长和次数 | 堆叠条 | `runs.ai`、起止时间 |
 
 ### 10.3 怎么筛
 
-时间（日 / 周 / 月；以及“某个日期前后各 N 周”的对比）、空间、触发人、机器人、群、场景、Agent 档案、模型、流程和阶段。
+已实现：7 / 30 / 90 天、自定义本地日期（最多 180 天），同跨度上一段比较；空间、触发人、机器人、触发会话、场景、Agent 档案或角色、模型、包含后台整理。筛选在 URL 中，可直接复现。流程和阶段随 flows 一起补入。
 
-成员能看自己的那一份（自己触发的、自己空间里的）；全部的只有主人能看。访客只计数，不显示正文。
+成员只看自己触发或拥有、且所在空间可读的运行；不会因共享空间而看到别人的统计。空间权限使用 `accessibleSpaces`，运行可读范围使用运行列表的 `runReadableSpaces`。全局分诊与通知、页面总阅读及仓库约定累计命中仅主人可看；按人等运行维度筛选时不显示无法归属的数据。访客只计数，接口、明细、peer 和导出均不返回消息正文。
 
 ### 10.4 实现上
 
-- 聚合按请求算，带时间范围上限（默认最近 90 天），结果缓存几分钟。库里的运行是几万条的量级，按时间走索引的聚合够快；量出来慢了再加按天的汇总表，不预先做。
-- 场景归类是一张固定的表（运行类型 → 场景；对话轮次按用到的工具组归），放在一个模块里，页面和接口共用。
-- 每个数字带一个“看明细”的链接，指向运行页或对应列表的同一组筛选条件。
-- 可以导出一段时间的汇总（Markdown 或 CSV），给周报和总结用。
+- 聚合按请求算，默认最近 30 天，单次最多 180 天；每实例按人员、完整筛选与权限集合缓存 3 分钟，最多 8 份。只新增一个索引，无汇总表、触发器和后台任务。
+- `runs_insights` 以 `created_at` 开头，覆盖 `id/kind/status/space_id/user_id/trigger_by/profile_id/ai/started_at/finished_at/roles/quiet`；另外索引小字段表达式：`input.spec`、`trigger.via/where`、`coalesce(input.lark.bot,input.bot)`、`input.continueFrom/waited`、`output.appliedAt/discardedAt/verdict/triage.action/handleRun/joined`。这些值在 SQLite 维护索引时提取；请求从索引读表达式值，不解析大段 input/output，不读 run_events。测试检查查询计划与字节码没有表字段读取及 JSON 函数调用。
+- 场景归类统一由 `src/insights/scenes.ts` 导出；网页从接口取得同一张表作为口径说明。`RunKind` 新增但未归类时，类型检查与测试都会失败。
+- 数字及图表每个数据点带“看明细”，打开 `#/insights?...&detail=指标`。`GET /api/insights/records` 返回同口径的记录标识、状态、时间及原列表链接（每页 100 条），不带正文。比例列出分母样本。采用这个明细页而非改造运行列表的全部筛选；通知、抽检、复盘及约定的原页面链接是最近的现有列表，不会进一步预选那一条，成效明细清单本身准确限定样本。
+- `GET /api/insights/export?format=md|csv` 按板块导出指标、上一段、样本数、口径、图表数据及明细链接；CSV 处理引号及公式前缀。只读 peer 命令 `insights` 返回相同板块，不带正文。
+- 每个板块单独计算、单独捕获错误，空表返回具体空态；一个板块错误不清空其他板块。图表复用 `UiView` 与插件 SDK 的 SVG 绘图，有键盘读数和表格替代。估算默认留空，只有主人填写每次代答的分钟假设后在浏览器换算，假设只存 localStorage。
+
+### 10.5 固定场景表（已实现）
+
+| 场景 | 运行类型 |
+| --- | --- |
+| 问答 | ask、guest、peer-agent、lark-command、tutor |
+| 排查 | agent、agent-followup、rule-fire、rule-script |
+| 编码 | code、req-split、design |
+| 评审 | review、speaking-review、note-review |
+| 文档与知识 | brief、lark-resource-parse |
+| 会议 | 通用 Agent 的 meeting-assistant 档案或角色 |
+| 提醒与跟进 | heartbeat、wake、mention、item-settle、work-state；通用 Agent 的 mention 触发 |
+| 整理（后台） | archive、archive-rule-draft、thread-summary、learn-feed、ingest、ingest-shadow、wiki-plan、wiki-write、wiki-lint、wiki-organize、wiki-resolve、wiki-migrate、wiki-sweep、dream、sync、curate、memory-review、memory-organize、role-merge、profile-review、triage、digest、replay、replay-arm、replay-judge、kb-scout、quality-audit |
+| 其他 | 未识别的旧类型兜底；新增类型仍必须补表 |
+
+通用 Agent 的细分优先级：mention 触发 → 档案 → 角色。`wiki-writer / writer / distiller / summarizer` 归文档与知识，`reviewer / review-lead` 归评审，`coder` 归编码，`investigator` 归排查，`meeting-assistant` 归会议。其他档案、任务规则默认归排查，这是按常用用途选择的固定口径，不代表每轮工具实际用途。后台整理单列，默认不进用量与成本；成功率始终排除它。
+
+### 10.6 漏斗与数据边界
+
+| 步骤 | 实际计数口径 |
+| --- | --- |
+| 进入流程 | 所选期间的 mention 首次运行批次；排除 `input.waited > 0` 的等待重试。一批可有多条消息，不称消息条数 |
+| 分诊前筛掉 | done 且 quiet，并且没有 triage.action、handleRun、joined 的首批运行；不把未完成运行或分诊后 ignore 算进去 |
+| 分诊 | triage.action 已记录的运行 |
+| 交给 Agent | handleRun 或 joined 已记录的运行；包含合并到已有处理的旁支 |
+| 已提醒或代答 | 该批次或关联处理运行在期间有非静默、未替换、非捆绑容器通知，或对应样本的 decision 为 sent / edited / auto；按批次去重 |
+| 本人的反应 | 通知 outcome 的 acted / known / read / unread / negative，另列尚未标注；沿用 outcomeStats / outcomeBreakdown 的排除口径，但支持精确起止与当前筛选，不调用会结算写库的函数 |
+
+主路径条形图为进入 → 分诊 → 分诊后代查 → 代查后提醒或代答，显示各步占上步比例。预筛、直接提醒、合并为旁支，单列计数，不强凑成一条漏斗。
+
+边界与后续：
+
+- 2026-11-14 以前除回填的聊天、找人和访客外，触发信息可能缺失。缺失身份单列，不推断为主人；trigger_by 是身份键，不保证跨渠道去重到真人。where 是位置名称，同名会话会合并。机器人仅按记录的 input.lark.bot / input.bot 筛选；现有访客运行未记录接收机器人，无法按机器人归属，不能推断为 main。
+- 访客提问总数含拒答、忽略；回答用时只含 done 且 verdict=answer。创建至结束含排队；没有实际送达时间和 gateOnly 的独立投影，可能含交回主助手处理的把关结果，因此不把它称为对方收到答案的精确延迟。本人基线用 reply_samples，非 lark_messages 临时扫描；两类样本不同，不推导节省用时。任一方用时样本少于 10 个不画比较条，仍显示样本数与各自统计。
+- 质量正负反馈率是相应反馈的不同运行 / 获得任意有效反馈的不同运行，两个比例可重叠。草稿照发率不含持续授权 auto。评审按 check_name 及裁决规则计采纳 / 不采纳；未裁决与合并不入采纳率分母。写作与定级抽检分开；没核完不进准确率。复盘按变体胜平负，void / failed 不当作平。决策按 decisionReport 相同的 risky/taken/label 口径，保留精确期间，只纳入能关联到所选运行的记录。
+- 编码按首轮发起日期分组，首轮及后续轮当前状态、轮数、应用时间按小字段读出；历史期间仍反映这一批交办的当前去向，比较不代表当时状态的快照。仅推送分支但没有 appliedAt 的不当成应用；阶段停留、等待、返工、每周过完流程等 `item_stage_log` 指标随 flows 一起补入。
+- page_reads 只有页面与 UTC 日期、次数，没有运行、人员或用途：主人未按运行维度筛选时展示“全部阅读”，不冒充“被回答读过”。页面覆盖分母是当前现存页面，不做历史对比。repo_lessons.hits 没有逐次时间，标明累计，不做期间增量和对比。记忆引用率仅表示 used=1；普通技能调用和查不到的问题没有独立计数，不扫描事件补数。金额、Token 没有完整账单数据，只报记录的运行时长和次数。
 
 ## 11. 数据与接口（实现的约定）
 
