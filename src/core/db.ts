@@ -2062,6 +2062,8 @@ export const migrations: readonly string[] = [
      checked_at text, changed_at text not null, error text, updated_at text not null,
      unique(kind,key)
    );`,
+  // The time a deadline change names: a proposal keeps it until the owner accepts or declines.
+  `alter table item_changes add column due text;`,
 ];
 
 export type Db = DatabaseSync;

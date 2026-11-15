@@ -37,7 +37,7 @@
 | `stage_report` | `item`、`stage`、`state: done / blocked / skip`、`note`；可带 `evidence`、`waiting_on`、`unsure`。做完须有依据，卡住写等谁或等什么，跳过写理由。结果说不清、要不要继续定不下来时用 `blocked` 加 `unsure: true`；宿主按阶段的升档上限带反馈重做，用完仍卡住。缺权限、缺材料等确定的阻碍不标拿不准。 |
 | `report_tests`、`attach_artifact` | 只在承担一个阶段的运行里有。验证或验收的阶段用它们逐条交结果：`report_tests` 的每条写需求点（`req`）、`status`、`mode`（在哪测、怎么测）、`note`（做了什么、看到什么）和这一条的截图、录屏（先放进 `$OMEM_ARTIFACTS`）。事项页按条显示，本人照着看完再确认这一段。 |
 | `stage_reopen` | `item`、`stage`、`reason`，可带 `refs`。该段重新开始，下游已完成的变成待复核，已跳过的保持跳过。 |
-| `note_item_change` | 只给 `item-follow` 角色交结果，不随分组授出。`item` 只能是本次运行跟进的事项；`type` 为 scope / decision / deadline / blocker / info；`summary` 一句话，可带 `detail`、需求点 `req`、本流程阶段 id 数组 `stages`。`refs` 至少一条本批次原件的行引用，deadline 必填 ISO 时间或日期 `due`。不直接改需求点；影响进行中或已完成阶段时等事项本人选并进、另开或不用管。 |
+| `note_item_change` | 只给 `item-follow` 角色交结果，不随分组授出。`item` 只能是本次运行跟进的事项；`type` 为 scope / decision / deadline / blocker / info；`summary` 一句话，可带 `detail`、需求点 `req`、本流程阶段 id 数组 `stages`。`refs` 至少一条本批次原件的行引用，deadline 必填 ISO 时间或日期 `due`；新时间是本人说的或材料写明已经定了才加 `decided: true`（截止时间直接改并告诉本人一次），只是有人提议就不加，由本人在卡片上选改或不改。不直接改需求点；影响进行中或已完成阶段时等事项本人选并进、另开或不用管。 |
 
 `read_item(item_id)` 的 `flow` 返回流程摘要、阶段状态、进入时间、承担者、等待对象、依据和最近 50 条日志，还带当前轮、重复方式、下一轮时间、是否可手动开始、各段等待的时刻、指定和实际 AI、预算及已用分钟、升档次数、最近 10 轮结果快照。`changes` 是最近十条变化、状态与引用，`follow` 是当前订阅原件、已处理位置及待处理数量。工具只能修改本次运行可读且可写空间里、属于调用者的事项。
 

@@ -17,8 +17,8 @@ type Cursor = { source_id: string; line: number; source_updated_at: string; star
 /** `seen`: a document's line hashes as of this batch, kept so the next batch is only the lines that are new. */
 type Part = { source: string; from: number; to: number; updatedAt: string; lines: { line: number; text: string }[]; seen?: number[] };
 type Batch = { startedAt: string; parts: Part[] };
-type ChangeRow = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; req: string | null; stages: string; refs: string; run_id: string; status: string; ask_id: string | null };
-const viewChange = (r: ChangeRow) => ({ id: r.id, itemId: r.item_id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, req: r.req, stages: json<string[]>(r.stages, []), refs: json<string[]>(r.refs, []), runId: r.run_id, status: r.status, askId: r.ask_id });
+type ChangeRow = { id: string; item_id: string; at: string; type: string; summary: string; detail: string | null; req: string | null; stages: string; refs: string; run_id: string; status: string; ask_id: string | null; due: string | null };
+const viewChange = (r: ChangeRow) => ({ id: r.id, itemId: r.item_id, at: r.at, type: r.type, summary: r.summary, detail: r.detail, req: r.req, stages: json<string[]>(r.stages, []), refs: json<string[]>(r.refs, []), runId: r.run_id, status: r.status, askId: r.ask_id, due: r.due });
 export function recentChanges(app: App, id: string) {
   return all<ChangeRow>(app.db, "select * from item_changes where item_id=? order by at desc,id desc limit 10", id).map(viewChange);
 }
@@ -204,7 +204,27 @@ async function patrol(app: App, at: Date) {
   }
 }
 
-export const changeSchema = z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info"]), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional() });
+export const changeSchema = z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info"]), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional(), decided: z.boolean().optional() });
+/**
+ * The item's deadline moves to the time a change names. Whatever other proposal was still waiting for
+ * the owner is settled by it.
+ */
+function applyDeadline(app: App, c: ChangeRow, actor: "agent" | "user", runId?: string) {
+  const refs = json<string[]>(c.refs, []);
+  upsertItem(app, c.item_id, { dueAt: c.due!, sourceRefs: refs, note: `${c.summary}（依据：${refs.join(" ")}）` }, actor, runId);
+  run(app.db, "update item_changes set status='merged',updated_at=? where id=?", now(), c.id);
+  for (const other of all<ChangeRow>(app.db, "select * from item_changes where item_id=? and type='deadline' and status='asked' and id!=?", c.item_id, c.id)) {
+    run(app.db, "update item_changes set status='dismissed',updated_at=? where id=?", now(), other.id);
+    if (other.ask_id) cancelAsk(app, other.ask_id, "截止时间已经另外定了");
+  }
+}
+/** Said by the owner, or written down as settled: the deadline moves at once and the owner is told once. */
+function decidedDeadline(app: App, c: ChangeRow, runId: string) {
+  const item = getItem(app, c.item_id), refs = json<string[]>(c.refs, []);
+  applyDeadline(app, c, "agent", runId);
+  const previous = one<{ id: string }>(app.db, "select id from notifications where title=? and json_extract(context,'$.entityId')=? order by rowid desc limit 1", `「${item.title}」截止时间变了`, item.id);
+  notify(app, { userId: item.userId, title: `「${item.title}」截止时间变了`, body: `${c.summary}\n新的截止时间：${c.due}\n${refs.join(" ")}`, urgency: "later", entity: "item", entityId: item.id, sourceRefs: refs, runId, link: `#/items/${item.id}`, ...(previous ? { replaces: previous.id } : {}) });
+}
 function changesOfRun(app: App, r: Run) {
   const ids = json<string[]>(JSON.stringify(getRun(app, r.id).output.followChanges ?? []), []);
   return all<ChangeRow>(app.db, `select * from item_changes where item_id=? and (run_id=? or id in (${ids.map(() => "?").join(",") || "''"})) order by at,id`, String(r.input.itemId), r.id, ...ids);
@@ -240,22 +260,23 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
       return before && current && (["chat", "conversation"].includes(sourcesOf(app, a.item).find((s) => s.id === source)!.kind) || before.updatedAt === current.updatedAt);
     });
   });
-  if (old) return handedIn(app, runId, old);
+  if (old) {
+    // The same finding, now said to be settled, while the first one was only a proposal.
+    if (a.type === "deadline" && a.decided && ["noted", "asked"].includes(old.status)) tx(app.db, () => decidedDeadline(app, { ...old, due: old.due ?? a.due! }, runId));
+    return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", old.id)!);
+  }
   if (changesOfRun(app, r).length >= 30) throw new HttpError(400, "一批最多记 30 条变化，请合并同一件事的表述");
   const id = newId("ic"), at = now();
   tx(app.db, () => {
-    run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,req,stages,refs,run_id,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)", id, a.item, at, a.type, a.summary, detail, a.req ?? null, JSON.stringify(a.stages ?? []), JSON.stringify(a.refs), runId, at);
-    if (a.type === "deadline") {
-      upsertItem(app, a.item, { dueAt: a.due, sourceRefs: a.refs, note: `${a.summary}（依据：${a.refs.join(" ")}）` }, "agent", runId);
-      const previous = one<{ id: string }>(app.db, "select id from notifications where title=? and json_extract(context,'$.entityId')=? order by rowid desc limit 1", `「${item.title}」截止时间变了`, item.id);
-      notify(app, { userId: item.userId, title: `「${item.title}」截止时间变了`, body: `${a.summary}\n新的截止时间：${a.due}\n${a.refs.join(" ")}`, urgency: "later", entity: "item", entityId: item.id, sourceRefs: a.refs, runId, link: `#/items/${item.id}`, ...(previous ? { replaces: previous.id } : {}) });
-      run(app.db, "update item_changes set status='merged' where id=?", id);
-    }
+    run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,req,stages,refs,run_id,updated_at,due) values(?,?,?,?,?,?,?,?,?,?,?,?)", id, a.item, at, a.type, a.summary, detail, a.req ?? null, JSON.stringify(a.stages ?? []), JSON.stringify(a.refs), runId, at, a.type === "deadline" ? a.due! : null);
+    // Somebody proposing another date is not a decision: it stays as noted and the owner is asked when the batch is done.
+    if (a.type === "deadline" && a.decided) decidedDeadline(app, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!, runId);
   });
   return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!);
 }
 
 const choices = ["并进这件事", "另开一件事", "不用管"];
+const deadlineChoices = ["改成这个时间", "不改"];
 const HEADS: Record<string, string> = { scope: "范围变了", decision: "有了新决定", blocker: "有阻塞" };
 function askChanges(app: App, r: Run) {
   const id = String(r.input.itemId), item = getItem(app, id), stages = itemStages(app, id);
@@ -264,7 +285,7 @@ function askChanges(app: App, r: Run) {
   const impact = (ids: string[]) => ids.map((id) => `${definitions.find((s) => s.id === id)?.name ?? id}（${states[stages.find((s) => s.id === id)?.state ?? "pending"]}）`).join("、");
   const changes = changesOfRun(app, r).filter((c) => c.status === "noted" && ["scope", "decision", "blocker"].includes(c.type)).map(viewChange)
     .filter((c) => c.stages.some((id) => stages.some((s) => s.id === id && ["doing", "done"].includes(s.state))));
-  // At most three cards. Each field in the overflow card remains an independent owner choice.
+  // At most three cards for these. Each field in the overflow card remains an independent owner choice.
   const groups = changes.length <= 3 ? changes.map((c) => [c]) : [changes.slice(0, 1), changes.slice(1, 2), changes.slice(2)];
   for (const group of groups) {
     const ask = createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
@@ -273,6 +294,15 @@ function askChanges(app: App, r: Run) {
       ui: group.length === 1 ? null : { fields: group.map((c) => ({ id: c.id, type: "choice" as const, label: c.summary.slice(0, 200), required: true, options: choices })) },
       context: { handler: "item-follow", itemId: id, startedAt: (r.input.batch as Batch).startedAt, changes: group.map((c) => c.id) } });
     for (const c of group) run(app.db, "update item_changes set status='asked',ask_id=?,updated_at=? where id=?", ask.id, now(), c.id);
+  }
+  // A proposed deadline is the owner's to accept, whatever stage the flow is at. One card: the latest proposal of the batch.
+  const proposal = changesOfRun(app, r).filter((c) => c.type === "deadline" && c.due).at(-1);
+  if (proposal?.status === "noted" && proposal.due !== item.dueAt) {
+    const ask = createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
+      question: `「${item.title}」有人提出改截止时间：\n\n${[`**${proposal.summary}**`, proposal.detail ?? "", `- 现在的截止时间：${item.dueAt ?? "未定"}`, `- 原话：${json<string[]>(proposal.refs, []).map((r, i) => `[${i + 1}](${r})`).join(" ")}`].filter(Boolean).join("\n")}`,
+      options: deadlineChoices.map((label) => ({ label })),
+      context: { handler: "item-follow", itemId: id, startedAt: (r.input.batch as Batch).startedAt, changes: [proposal.id] } });
+    run(app.db, "update item_changes set status='asked',ask_id=?,updated_at=? where id=?", ask.id, now(), proposal.id);
   }
 }
 export function finishFollow(app: App, r: Run) {
@@ -289,6 +319,12 @@ export function finishFollow(app: App, r: Run) {
 /** Apply the owner's decision on one change: 0 fold it into this item, 1 make it an item of its own, 2 leave it. */
 async function applyChoice(app: App, itemId: string, c: ChangeRow, choice: number) {
   const item = getItem(app, itemId), f = itemFlow(app, itemId)!;
+  if (c.type === "deadline") {
+    // A proposed deadline has two answers: take the time, or leave the deadline as it is.
+    if (choice === 0) tx(app.db, () => applyDeadline(app, c, "user"));
+    else run(app.db, "update item_changes set status='dismissed',updated_at=? where id=?", now(), c.id);
+    return;
+  }
   if (choice === 0) {
     const affected = json<string[]>(c.stages, []);
     const stage = f.definition.stages.find((s) => affected.includes(s.id));
@@ -341,12 +377,15 @@ export async function settleChange(app: App, itemId: string, changeId: string, c
   const c = one<ChangeRow>(app.db, "select * from item_changes where id=? and item_id=?", changeId, itemId);
   if (!c) throw new HttpError(404, "没有这条变化");
   if (c.status !== "asked") throw new HttpError(409, "这条变化已经处理过了");
+  if (c.type === "deadline" && choice === "split") throw new HttpError(400, "改期的提议只能选改或不改");
+  // The deadline card has two options, the others three.
+  const index = c.type === "deadline" && choice === "dismiss" ? 1 : CHOICE[choice];
   const together = c.ask_id ? all<{ id: string }>(app.db, "select id from item_changes where ask_id=?", c.ask_id).length : 0;
   if (c.ask_id && together === 1) {
-    try { await answerAsk(app, c.ask_id, { choice: CHOICE[choice], by }); return; }
+    try { await answerAsk(app, c.ask_id, { choice: index, by }); return; }
     catch (e) { if (!(e instanceof HttpError) || e.status !== 409) throw e; /* The card is gone: settle it directly. */ }
   }
-  await applyChoice(app, itemId, c, CHOICE[choice]);
+  await applyChoice(app, itemId, c, index);
   if (c.ask_id && !one(app.db, "select 1 from item_changes where ask_id=? and status='asked'", c.ask_id)) cancelAsk(app, c.ask_id, "已在事项页逐条处理");
 }
 

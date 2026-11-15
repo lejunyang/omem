@@ -2227,7 +2227,8 @@ def({
 
 def({
   name: "note_item_change", description: "交代这批新内容让本次跟进的事项变了什么；每条带批次内原件的行引用，deadline 必须填 due。只给 item-follow 角色交结果。",
-  write: true, schema: z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info"]), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional() }),
+  write: true, schema: z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info"]), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional(),
+    decided: z.boolean().optional().describe("只用于 deadline：新时间是本人说的，或材料写明已经定了，填 true，截止时间直接改；只是有人提议就不填，由本人定改不改") }),
   handler: async (ctx, a) => {
     if (ctx.role !== "item-follow" || !ctx.runId) throw new HttpError(403, "只有 item-follow 能交事项变化");
     flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs);

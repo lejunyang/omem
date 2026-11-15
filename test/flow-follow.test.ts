@@ -192,7 +192,7 @@ describe("流程上下文跟进", () => {
   });
   it("deadline 校验 due，更新截止时间、带引用记时间线，同一变化只通知一次", async () => {
     const t = await setup(); const { r, ref } = await t.processing();
-    const a = { item: t.item.id, type: "deadline" as const, summary: "本人确认改到十二月二日", refs: [ref] };
+    const a = { item: t.item.id, type: "deadline" as const, summary: "本人确认改到十二月二日", refs: [ref], decided: true };
     for (const due of [undefined, "明天", "2026-02-30", "2026-12-02T09:00:00"]) expect(() => noteItemChange(t.app, r.id, { ...a, due })).toThrow("due");
     noteItemChange(t.app, r.id, { ...a, due: "2026-12-02" }); noteItemChange(t.app, r.id, { ...a, due: "2026-12-02" });
     expect(getItem(t.app, t.item.id).dueAt).toBe("2026-12-02");
@@ -208,6 +208,49 @@ describe("流程上下文跟进", () => {
     finishFollow(t.app, getRun(t.app, retry.id));
     expect(recentChanges(t.app, t.item.id)).toHaveLength(1);
     expect(all(t.app.db, "select id from notifications where json_extract(context,'$.urgency')='later' and title like '%截止时间变了' ")).toHaveLength(1);
+  });
+  it.each([0, 1])("别人只是提议改期：截止时间不动，问本人改不改，选 %s 后才处理", async (choice) => {
+    const t = await setup(); const { r, ref } = await t.processing();
+    const before = all(t.app.db, "select id from notifications").length;
+    const earlier = noteItemChange(t.app, r.id, { item: t.item.id, type: "deadline", summary: "小王提出改到十二月三日", refs: [ref], due: "2026-12-03" });
+    const change = noteItemChange(t.app, r.id, { item: t.item.id, type: "deadline", summary: "小李提出延到十二月五日，本人还没表态", refs: [ref], due: "2026-12-05" });
+    expect(change).toMatchObject({ status: "noted", due: "2026-12-05" });
+    expect(getItem(t.app, t.item.id).dueAt).toBe("2026-12-01");
+    expect(all(t.app.db, "select id from notifications")).toHaveLength(before);
+    finishFollow(t.app, r); finishFollow(t.app, r);
+    // One card, about the latest proposal of the batch; the earlier one stays on the list.
+    const asks = listAsks(t.app, { runId: r.id }); expect(asks).toHaveLength(1);
+    expect(asks[0].options.map((o) => o.label)).toEqual(["改成这个时间", "不改"]);
+    expect(asks[0].question).toContain("2026-12-05"); expect(asks[0].question).toContain("现在的截止时间：2026-12-01"); expect(asks[0].question).toContain(ref);
+    expect(recentChanges(t.app, t.item.id).find((c) => c.id === earlier.id)!.status).toBe("noted");
+    await expect(settleChange(t.app, t.item.id, change.id, "split", "owner")).rejects.toThrow("改或不改");
+    await expect(answerAsk(t.app, asks[0].id, { choice, by: "other" })).rejects.toThrow("本人");
+    if (choice === 0) await answerAsk(t.app, asks[0].id, { choice, by: "owner" });
+    else await settleChange(t.app, t.item.id, change.id, "dismiss", "owner");
+    expect(getAsk(t.app, asks[0].id)).toMatchObject({ status: "answered", choice });
+    expect(recentChanges(t.app, t.item.id).find((c) => c.id === change.id)!.status).toBe(choice === 0 ? "merged" : "dismissed");
+    expect(getItem(t.app, t.item.id).dueAt).toBe(choice === 0 ? "2026-12-05" : "2026-12-01");
+    if (choice === 0) expect(one<{ source_refs: string }>(t.app.db, "select source_refs from item_events where item_id=? and text like '%小李提出延到十二月五日%'", t.item.id)!.source_refs).toContain(ref);
+    // The owner chose: nothing more to be told about.
+    expect(all(t.app.db, "select id from notifications where title like '%截止时间变了'")).toHaveLength(0);
+  });
+  it("提议还在等本人时，本人在群里定了时间：直接改，原来那张卡片收回", async () => {
+    const t = await setup(); const { r, ref } = await t.processing();
+    const proposal = noteItemChange(t.app, r.id, { item: t.item.id, type: "deadline", summary: "小李提出延到十二月五日", refs: [ref], due: "2026-12-05" });
+    finishFollow(t.app, r); run(t.app.db, "update runs set status='done' where id=?", r.id);
+    const ask = listAsks(t.app, { runId: r.id })[0];
+    const said = t.message("owner", 0, "延到十二月八日");
+    await followContexts(t.app);
+    const next = t.queued().find((q) => q.id !== r.id)!;
+    run(t.app.db, "update runs set status='running' where id=?", next.id);
+    noteItemChange(t.app, next.id, { item: t.item.id, type: "deadline", summary: "本人定了延到十二月八日", refs: [said], due: "2026-12-08", decided: true });
+    expect(getItem(t.app, t.item.id).dueAt).toBe("2026-12-08");
+    expect(recentChanges(t.app, t.item.id).find((c) => c.id === proposal.id)!.status).toBe("dismissed");
+    expect(getAsk(t.app, ask.id).status).toBe("cancelled");
+    finishFollow(t.app, getRun(t.app, next.id));
+    expect(listAsks(t.app, { runId: next.id })).toHaveLength(0);
+    // The time the item already has is not asked about again.
+    await expect(settleChange(t.app, t.item.id, proposal.id, "merge", "owner")).rejects.toThrow("处理过");
   });
   it.each([0, 1, 2])("已完成阶段的范围变化，等待本人选 %s 后才处理", async (choice) => {
     const t = await setup();

@@ -45,6 +45,8 @@ export type FlowChange = {
   id: string; at: string; type: "scope" | "decision" | "deadline" | "blocker" | "info"; summary: string; detail: string | null;
   req: string | null; stages: string[]; refs: string[]; runId: string;
   status: "noted" | "asked" | "merged" | "split" | "dismissed"; askId: string | null;
+  /** The time a deadline change names. Somebody's proposal waits for the owner; a settled one has already moved the deadline. */
+  due?: string | null;
 };
 /** A chat or document the flow keeps reading, and how much new content is waiting to be read together. */
 export type FollowPlace = { sourceId: string; title: string; pending: number; latestAt: string | null };
@@ -53,12 +55,15 @@ export function changeStatus(c: FlowChange) {
   if (c.status === "asked") return "等你定";
   if (c.status === "merged") return c.type === "deadline" ? "截止时间已改" : "已并进这件事";
   if (c.status === "split") return "另开了一件事";
-  if (c.status === "dismissed") return "不用管";
+  if (c.status === "dismissed") return c.type === "deadline" ? "没有改" : "不用管";
   return "记下了";
 }
 /** How a change that waits for the owner is announced. */
-export const changeHeads: Record<FlowChange["type"], string> = { scope: "范围变了", decision: "有了新决定", deadline: "截止时间变了", blocker: "有阻塞", info: "新信息" };
-export const changeChoices = [{ choice: "merge", label: "并进这件事" }, { choice: "split", label: "另开一件事" }, { choice: "dismiss", label: "不用管" }] as const;
+export const changeHeads: Record<FlowChange["type"], string> = { scope: "范围变了", decision: "有了新决定", deadline: "有人提出改期", blocker: "有阻塞", info: "新信息" };
+const scopeChoices = [{ choice: "merge", label: "并进这件事" }, { choice: "split", label: "另开一件事" }, { choice: "dismiss", label: "不用管" }];
+const deadlineChoices = [{ choice: "merge", label: "改成这个时间" }, { choice: "dismiss", label: "不改" }];
+/** What the owner can answer: a proposed deadline is taken or left, anything else is folded in, split off or left. */
+export const changeChoices = (c: FlowChange) => c.type === "deadline" ? deadlineChoices : scopeChoices;
 export type FlowView = {
   flow: { id: string; name: string; startedAt: string; endedAt: string | null; round?: number; repeat?: { from: string; every: string | string[] } | null; roundClosedAt?: string | null; nextRoundAt?: string | null; canStartRound?: boolean; repeatDescription?: string; /** A study: directions, trials and findings are kept for it. */ study?: boolean; idleRounds?: number; /** Today's limit of follow-up batches was reached; the rest waits for tomorrow. */ followCapped?: boolean } | null;
   /** What changed around this item since the flow began: the ones waiting for the owner and the latest ten. */

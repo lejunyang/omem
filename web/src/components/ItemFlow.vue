@@ -27,6 +27,8 @@ const stageName = (id: string) => data.value?.stages.find((s) => s.id === id)?.n
 /** "编码（完成）、测试（进行中）": the stages a change touches, in the flow's order, with where each stands. */
 const touched = (c: FlowChange) => (data.value?.stages ?? []).filter((s) => c.stages.includes(s.id)).map((s) => `${s.name}（${stageWords[s.state]}）`).join("、");
 const reopens = (c: FlowChange) => data.value?.stages.find((s) => c.stages.includes(s.id))?.name;
+/** The proposed time: a plain date stays as it was written, a moment is shown in the configured time zone. */
+const dueWords = (c: FlowChange) => !c.due ? "另一个时间" : /^\d{4}-\d{2}-\d{2}$/.test(c.due) ? c.due : clockTime(c.due);
 /** Where the flow keeps reading, said in one line; the new content waiting there is read together once it goes quiet. */
 const following = computed(() => {
   const places = data.value?.flow?.endedAt ? [] : data.value?.follow ?? [];
@@ -173,10 +175,11 @@ async function stop() {
         <p><span class="turn-kind">{{ changeHeads[c.type] }}</span>{{ c.summary }}</p>
         <Markdown v-if="c.detail" :source="c.detail" class="stage-text" />
         <p class="turn-note">
-          <template v-if="touched(c)">会影响：{{ touched(c) }}。</template><template v-if="reopens(c)">并进来就重开「{{ reopens(c) }}」，把这条带给它，它后面做完的阶段要再看一遍。</template>
+          <template v-if="c.type === 'deadline'">提出改成 {{ dueWords(c) }}，还没有改；你定了才改这件事的截止时间。</template>
+          <template v-else><template v-if="touched(c)">会影响：{{ touched(c) }}。</template><template v-if="reopens(c)">并进来就重开「{{ reopens(c) }}」，把这条带给它，它后面做完的阶段要再看一遍。</template></template>
           <span class="evidence turn-refs"><template v-for="(r, i) in c.refs" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原话 {{ i + 1 }}</a></template></span>
         </p>
-        <div v-if="editable" class="row wrap"><button v-for="(a, i) in changeChoices" :key="a.choice" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="settle(c, a.choice)">{{ a.label }}</button></div>
+        <div v-if="editable" class="row wrap"><button v-for="(a, i) in changeChoices(c)" :key="a.choice" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="settle(c, a.choice)">{{ a.label }}</button></div>
       </div>
       <div v-if="stage" class="stage-detail">
         <div class="stage-title"><strong>{{ stage.name }}</strong><span class="muted">{{ stageWords[stage.state] }}{{ stage.recorded ? "（补录的）" : "" }}</span></div>
