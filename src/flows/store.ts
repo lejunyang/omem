@@ -18,6 +18,7 @@ export type StageControl = {
   budgetStartedAt?: string; usedMinutes?: number;
   budgetExceeded?: boolean;
   admitted?: boolean;
+  trialId?: string; trialEscalated?: boolean; trialFailures?: number; completedTrials?: number;
 };
 export type StageRow = {
   itemId: string; id: string; state: StageState; attempt: number; enteredAt: string | null; doneAt: string | null;

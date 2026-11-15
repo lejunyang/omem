@@ -2,6 +2,40 @@
 
 按你最初列的目标和日常用途逐项验收。每项写了操作和预期结果；“云端已验”指我在云端用 Claude Code（haiku）实际跑过，“待你验”指需要你的账号或本机环境。
 
+## 课题第二期服务端（2026-11-15）
+
+本期只做服务端和内置材料，不改网页。测试使用临时数据库、假运行与假 runRole，不调用真实模型或真实渠道。
+
+| 编号 | 操作 | 预期结果 | 验证 |
+| --- | --- | --- | --- |
+| study-01 | 定义给阶段附加 study 工具、其他分组工具；trials 带角色、技能、档位、时刻、窗口和预算 | 仅 study 工具可授予；trials 能解析并给中文说明 | `test/studies.test.ts` |
+| study-02 | 提完全相同、规范化后相同、同对象不同检查的计划，旧结果为 passed | 只去掉有结果的完全重复，保存旧结果和摘要首行；新检查保留并标 prior，方向不因 passed 删除；没结果的旧试验不去掉 | 同上 |
+| study-03 | 提空数组或普通方向，本人 / 非本人回答、只写自由文本、选这一轮不跑 | 交提案后不建队列；非本人在存答案前拒绝；本人选一个才入队，附的话带进任务；空提案和不跑都跳过余下阶段；自由文本重问 | 同上 |
+| study-04 | 有 active / confirmed 方向还有队列时开下一轮 | 跳过定方向，无新提案运行，说明继续哪个方向、还剩几个 | 同上 |
+| study-05 | 对同一事项并发推进，运行通过 trial_report 交结果，另一个运行冒交 | 每次只有一个试验；只认试验自己的当前运行；结束事件接着排下一个，不增加定时任务；任务不带其他试验结果 | 同上 |
+| study-06 | 正常结束未交、unclear + unsure、后端错误 | 未交记 unclear；同一试验最多升档重做一次、每轮 max 生效，带上次摘要；后端只重试一次，再失败 blocked；结果数量如实统计 | 同上 |
+| study-07 | 试验数 / 分钟用满，零个试验预算，重试耗时、排队时间 | 本轮试验阶段完成，queued 保留；下一轮继续；分钟计运行及重试，不计排队；分钟已用满即使同时遇额度错误也完成，不停在等额度 | 同上 |
+| study-08 | 窗口关闭、worker 排队后窗口变化、额度用完与恢复 | 窗口外不开始新试验，已运行可做完；worker 重查；额度等原模型，不换后端或消耗升档 | 同上 |
+| study-09 | 定方向误带 read_ledger，试验交文件证据与候选发现 | read_ledger 仍按运行所在阶段拒绝，worker 移除历史读取工具；文件只从本运行的产物目录收；候选不自动成正式发现 | 同上 |
+| study-10 | 记相近发现、same_as 合并、distinct_from 新建、引用未交 / 其他课题试验 | 相近先报 id 与复现办法，明确合并或区分；依据必须至少一个本课题有结果的试验；旧发现状态保留；视图带依据及产物 | 同上 |
+| study-11 | 本人结束方向、停止流程、重开或手动跳过试验阶段；旧运行晚交 | 结束要结论，未做的跳过；关闭当前方向取消运行，停止 / 重开 / 手动跳过则保留队列；晚交拒绝 | 同上 |
+| study-12 | 读写课题 HTTP，成员只有空间阅读或编辑权限 | 按空间可读，写还须事项本人；发现仅改该条状态和原因；方向 id 必须属于路径事项 | 同上 |
+| study-13 | 连着几轮无新发现、合并旧发现、创建新发现；manual / done | 合并不冒充新发现，新建打断连续计数；manual 只带数，非 manual 三轮后不自动再开，只发一次 later 通知 | 同上 |
+| study-14 | 播种内置流程和四技能，修改后再播；写功能清单、取覆盖与提交 | 只补缺；功能清单通过已有 write_file 写工作文件，不新增 Wiki 权限；二级标题只统计次数与日期、注明粗略，不带旧结果；可读仓库提供最近提交标题 | 同上 |
+| study-15 | 台账三表随事项拉取，引用指向两端不同 id 和聊天行，远端稍后改状态 | 三表和 JSON 完整合并，check 字段不产生 SQL 语法错误，src 引用与行号映射，updated_at 较新的状态覆盖 | 同上、`test/pull-complete.test.ts` |
+
+检查命令：
+
+```sh
+npx vitest run test/studies.test.ts test/flows.test.ts test/flows-http.test.ts test/flow-rounds.test.ts test/flow-timing.test.ts test/flow-signals.test.ts test/esm.test.ts test/tool-help.test.ts test/role-tools.test.ts test/peer-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts test/insights.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+git diff --check
+```
+
+开发中的两轮回归分别是 `Test Files 3 failed | 11 passed (14)`、`Tests 15 failed | 155 passed | 1 skipped (171)`，以及 `Test Files 1 failed | 13 passed (14)`、`Tests 1 failed | 172 passed | 1 skipped (174)`。已修复拉取通用 SQL 对 check 列未加引号；修正测试里取消机制、通知 context 和假后端命令的用法。随后一轮为 `Test Files 14 passed (14)`、`Tests 178 passed | 1 skipped (179)`；之后补了分钟与额度同时耗尽的边界测试，最终记录见下文。
+
+最终检查：上述完整 Vitest 命令为 `Test Files 14 passed (14)`、`Tests 180 passed | 1 skipped (181)`，退出码 0；其中 `test/studies.test.ts` 为 38 项通过。唯一跳过是原有的 Windows SSH 拉取用例。`npx tsc --noEmit -p .` 退出码 0、无类型错误；`git diff --check` 退出码 0、无输出。没有跑全量测试、vue-tsc、真实模型或真实渠道，没有改 `web/`、没有暂存或提交。
+
 ## 事项流程第一期服务端（2026-11-15）
 
 网页流程条与飞书专门版式留待下一切片；本期用工具、HTTP 与假 Agent 验收，不连接真实模型或渠道。

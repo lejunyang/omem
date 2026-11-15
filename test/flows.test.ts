@@ -92,7 +92,7 @@ describe("流程定义", () => {
   it("旧配置得到独立默认值", () => {
     const a = appFor(), b = appFor();
     a.config.flows.autoAdvance = 9;
-    expect(b.config.flows).toEqual({ autoAdvance: 3, staleDays: 2 });
+    expect(b.config.flows).toEqual({ autoAdvance: 3, staleDays: 2, idleRounds: 3 });
     expect(flowSchema.safeParse({ id: "demo", name: "示例", stages: [stage("a")] }).success).toBe(true);
   });
 });

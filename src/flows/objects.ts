@@ -3,6 +3,7 @@ import { all } from "../core/db.ts";
 import { codeWork, type CodeWorkDetail } from "../agents/code-works.ts";
 import { designFeedback, designForWork, designsOfItem } from "../designs/store.ts";
 import type { Item } from "../items/store.ts";
+import { continuing } from "../studies/store.ts";
 
 export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string };
 export type ObjectKind = { kind: string; label: string; find: (app: App, item: Item) => FlowObject | null };
@@ -23,6 +24,10 @@ export function latestCodeWork(app: App, item: Item): CodeWorkDetail | null {
 
 /** Built-in registry. Plugin registration is deliberately left to a later phase. */
 export const flowObjects: readonly ObjectKind[] = [
+  { kind: "trials", label: "试验", find: (app, item) => {
+    const c = continuing(app, item.id);
+    return c ? { ref: `trials:${c.direction.id}`, title: c.direction.goal, status: c.direction.state, done: false, link: `#/items/${item.id}` } : null;
+  } },
   { kind: "code-work", label: "编码交办", find: (app, item) => {
     const w = latestCodeWork(app, item);
     if (!w) return null;

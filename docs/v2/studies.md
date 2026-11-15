@@ -1,6 +1,6 @@
 # 课题：自主探索一个项目
 
-状态：第一期（流程的轮次、档位、时间段、预算）已实现（2026-11-15）。第 11 节是本人已经定的取舍；台账和课题面板留待第二期。
+状态：第一期和第二期服务端已实现（2026-11-15）：轮次与预算、台账、逐个试验、内置技能和流程、课题接口。第 11 节是本人已经定的取舍；课题面板由独立任务接入。
 
 ## 1. 要解决的问题
 
@@ -275,3 +275,37 @@ budget: { trials: 8, minutes: 240 }   # 这一段这一轮最多做多少
 与设计稿的差异：第 5.2 节原写“时间段结束就停”，本期按任务约定只限制开始，运行由分钟预算限制；升档重做整个运行阶段，尚没有单个试验可供重看。日期循环在上一轮结束后安排下一次，不为错过的日期排队。时间预算由已有巡检检查，取消会有一个巡检间隔的延迟。没有台账前无法判断“连续没有新发现”，所以 `idleRounds` 不在本期实现；自动推进上限先承担无人看守时的停止边界。
 
 未做：台账三表、`study` 工具、`trials` 对象、内置 `study.yaml`、课题面板、执行环境登记、按范围持续授权推送、另一台设备执行试验、课题简报与数据页。它们仍按第 12 节分期。
+
+## 第二期的实现
+
+本期只做服务端、测试和内置材料，没有改 `web/`。
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/studies/store.ts`、`schema.ts` | 方向、试验、发现的事实和参数；规范化对账、相近标题提示、合并依据、结束方向和连续无发现轮数。 |
+| `src/studies/service.ts` | 提案、本人提问及回答校验、试验交结果与产物、台账阅读限制、课题视图。 |
+| `src/studies/trials.ts` | 在流程的事项串行队列里逐个起 `study-trial`，处理重试、升档、额度、时间段和本轮预算；没有增加定时任务。 |
+| `src/studies/materials.ts` | 功能清单工作文件的位置、二级标题的粗略覆盖次数与最近日期、可读仓库最近 20 条提交标题。 |
+| `src/studies/http.ts` | 按空间可读、写限事项本人的三条课题接口。 |
+| `flows/library/study.yaml`、`skills/library/study-*/SKILL.md` | 梳理 → 定方向 → 试验 → 小结；流程与四个技能沿用补缺播种，正文按本期约定。 |
+| `test/studies.test.ts` | 假运行、实际工具调用、HTTP、产物与内置材料的验证。 |
+
+三张台账表在迁移末尾建立，按事项建普通索引，进入 `pullTables`，均用已有的 `updated_at` 比较；它已在 `pull.ts` 的时间列正则中。没有投影表或触发器。为保存确认前的计划和对账结果，方向另存 `plan / removed / note`；候选发现和拿不准标记留在试验的 `findings / unsure`，后端失败次数与是否已升档也随试验保存，避免跨轮后重复重试。正式发现另记创建时的流程起点与轮次；连续无发现按这两个字段计数，更新判定和合并旧依据不会冒充新发现。拉取通用 SQL 给列名加了引号，支持试验的 `check` 保留字；正文、JSON 和引用照原有流程映射。
+
+提案允许零到三个方向。只把有结果、对象和检查项在去掉首尾空白、大小写和连续空白后完全相同的试验去掉，并保存以前结果与摘要首行；同对象的新检查保留，带 `prior`。方向本身不会因以前通过而删掉。提案先存 proposed，选中以后才建 queued 试验；本人可附要求，进入方向的 note 和每个试验任务。没选的方向记 dropped（“本轮未选”）；空提案也要本人点“知道了”，或本人选“这一轮不跑”后，余下阶段写原因并跳过。自由文本没有选项时会重新提问，不擅自选择。有 active / confirmed 方向且还有试验时，下一轮直接跳过定方向。
+
+阶段 `tools` 只接受 study 分组。主助手默认清单有 `write_file`、排除了 `write_page`，因此梳理任务指定写事项所在空间的 `work/studies/<事项 id>/capabilities.md`，`stage_report.evidence` 交返回的 `src:` 引用。定方向任务不复用含历史运行入口的事项材料清单，只给事项说明、功能清单位置、覆盖次数与日期、会话位置和最近提交；运行移除台账和历史运行阅读工具，`read_ledger` 本身仍按阶段副本检查，即使误授也拒绝。试验任务只含方向、本人的话、本试验和 prior，不带别的试验结果。
+
+试验一次只跑一个，`trial_report` 只认当前试验自己的运行。`evidence` 的文件只能在该运行的 `$OMEM_ARTIFACTS` 下，复用现有产物保存；`src:` 经过空间校验。findings 是候选，只有小结调用 `record_finding` 才进正式表。依据至少一个本课题有结果的试验；标题按英文词、中文二元组重合提示相近项，必须明确 same_as 或 distinct_from。same_as 只合并依据，不重置本人的 rejected / later 判定。
+
+没交结果或 unclear + unsure 可对这个试验升档一次，且受本轮升档次数、分钟预算限制；后端失败重试一次，再失败 blocked。试验数按最终完成的不同试验计，重试的运行时间也计入分钟。预算用满时完成本轮试验阶段，没做的保留 queued；分钟预算由既有巡检取消当前运行，取消有巡检间隔的延迟。窗口只限制开始，不中断已运行的试验；worker 真正开始前再检查窗口和额度，额度只等待原模型。队列做完方向仍 active，由小结决定 close_direction；结束方向跳过未做的试验，正在运行的取消。停止流程取消当前试验并放回队列，已经交的结果保留。
+
+接口返回的数据采用台账的下划线字段名：
+
+- `GET /api/items/:id/study` → `{ directions, trials, findings, coverage, idleRounds }`。directions 带解析后的 plan / removed，以及 counts（queued / running / skipped / passed / failed / blocked / unclear）；trials 为最近更新的 200 条，带 evidence、候选 findings 和 artifacts；正式 findings 的 trials 展开为依据试验（含产物）。coverage 是 `{ path, ref, features: [{ title, trials, lastAt }] }`，按对象文字包含功能标题粗略统计，不含结果。
+- `POST /api/items/:id/study/findings/:finding` 收 `{ state: confirmed / rejected / later, reason? }`，只改这一条；`POST /api/items/:id/study/directions/:direction/close` 收 `{ state: done / dropped, conclusion }`。均返回课题视图，写限事项本人和可写空间。
+- `flowView.flow.idleRounds` 为连续完成且无新发现的轮数。`flows.idleRounds` 默认 3；非 manual 达到时清空 nextRoundAt，仅发一次 later 通知，把下一步留给本人。manual 只显示计数，不通知。
+
+与旧设计稿的差异：功能清单是工作文件，方向结论只存台账，不写 Wiki。env 本期只是文字，不代表执行环境授权或远端调度。预算列在方向提问中，本人确认后采用；调整走第一期已有的阶段预算接口，本期没有新做卡片预算表单。没有给任何内置角色默认加入 study 工具；同伴设备的外部工具入口也不开放这组工具。真实模型与真实渠道未跑，按本期任务用假运行验证。
+
+未做：课题面板、试验内编码交办、持续推送授权、执行环境登记、另一台设备执行、课题简报与数据页。验证命令和实际数字见 `acceptance.md` 的“课题第二期服务端”。

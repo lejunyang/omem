@@ -20,6 +20,9 @@ import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage,
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { findObject, objectKind } from "./objects.ts";
 import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
+import { continuing, idleRounds } from "../studies/store.ts";
+import { cancelTrials, isTrials, tickTrials } from "../studies/trials.ts";
+import { capabilitiesPath, planningMaterials } from "../studies/materials.ts";
 import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
 
 const host: FlowActor = { actor: "host" };
@@ -42,6 +45,15 @@ function running(app: App, id: string) {
   if (!f || f.endedAt) throw new HttpError(409, "事项没有进行中的流程");
   return f;
 }
+/** Study writes and owner choices share the flow's existing execution lock. */
+export function studyOperation<T>(app: App, itemId: string, fn: () => Promise<T>) {
+  return serial(app, itemId, async () => {
+    const result = await fn();
+    await advanceNow(app, itemId, "课题台账变化");
+    app.emit({ type: "changed", entity: "item", id: itemId });
+    return result;
+  });
+}
 function definition(f: ItemFlow, id: string) {
   const s = f.definition.stages.find((x) => x.id === id);
   if (!s) throw new HttpError(404, `没有阶段 ${id}`);
@@ -62,21 +74,23 @@ function gate(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: "when" | "
   changeStage(app, f.itemId, d.id, "gated", { askId, waitingOn: "owner", control: { ...s.control, question: kind } }, host, kind === "when" ? "等本人判断这一段是否需要" : "等本人确认开始");
 }
 
-function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedback?: string) {
+async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedback?: string) {
   const rows = itemStages(app, item.id);
-  return [materialsBrief(app, item.id, item.userId), `截止时间：${item.dueAt ?? "未定"}`,
+  const planner = d.tools?.includes("propose_directions");
+  return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : materialsBrief(app, item.id, item.userId), `截止时间：${item.dueAt ?? "未定"}`,
     `进行的地方：\n${itemPlaces(app, item.id, item.userId).map((p) => `- ${p.title}（${p.ref}）：${p.summary}`).join("\n") || "尚未关联会话"}`,
     `## 流程：${f.definition.name}\n${f.definition.stages.map((s) => `- ${s.id} ${s.name}：${rows.find((r) => r.id === s.id)?.state ?? "pending"}`).join("\n")}`,
     `## 这一段：${d.name}（${d.id}）\n${d.note ?? ""}`,
     `完成要求：${typeof d.done === "string" ? d.done : d.done ? JSON.stringify(d.done) : "做完这一段并附上依据"}`,
     typeof d.by === "object" && "object" in d.by ? d.by.object === "code-work" ? `按这件事的需求点发起交办，delegate_code 带上 item_id=${item.id}；流程会跟随交办评审。` : `为这件事写方案，交给本人确认。` : "",
     feedback ? rows.find((s) => s.id === d.id)?.control.escalated ? `上一次的结论或错误：${feedback}。这一轮重新核对并交结果。` : `本人说还不行，原因：${feedback}。这一轮按这个意见重做。` : "",
-    `结束前必须用 stage_report(item="${item.id}", stage="${d.id}") 交代：done 附依据；blocked 写等谁或等什么；skip 写原因。不要以运行结束代替交结果；不要替本人确认。`,
+    typeof d.by === "object" && "run" in d.by && d.by.run.skill === "study-map" ? `功能清单用 write_file(path="${capabilitiesPath(item.id)}", space="${item.spaceId}", item="${item.id}", content=...) 写成工作文件；stage_report 的 evidence 填返回的 src: 引用。不要写 Wiki 页。` : "",
+    planner ? `结束前用 propose_directions(item="${item.id}", directions=[...], note?) 交提案，允许空数组。这一段不能读取台账，不用 stage_report 完成，等本人选定以后宿主会推进。` : `结束前必须用 stage_report(item="${item.id}", stage="${d.id}") 交代：done 附依据；blocked 写等谁或等什么；skip 写原因。不要以运行结束代替交结果；不要替本人确认。`,
   ].filter(Boolean).join("\n\n");
 }
 
 async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Date) {
-  const choice = s.control.escalated ? d.escalate!.to : d.ai;
+  const choice = s.control.escalated && d.escalate ? d.escalate.to : d.ai;
   const pick = typeof choice === "string" ? app.config.agents.tiers[choice] : choice;
   if (choice && !pick && !s.control.tierFallback?.includes(String(choice))) {
     s = changeStage(app, f.itemId, d.id, s.state, { control: { ...s.control, tierFallback: [...s.control.tierFallback ?? [], String(choice)] } }, host, `档位 ${choice} 没有配置，用了默认的 AI`);
@@ -84,7 +98,7 @@ async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Dat
   if (!pick) return { s, execution: undefined, waitUntil: null };
   const execution = validateExecution(app, { ...pick, source: "flow", reason: `流程「${f.definition.name}」的「${d.name}」阶段指定` })!;
   const { resolveRunProfile } = await import("../agents/runner.ts");
-  const name = typeof d.by === "object" && "run" in d.by ? d.by.run.agent ?? "assistant" : "assistant";
+  const name = typeof d.by === "object" ? "run" in d.by ? d.by.run.agent ?? "assistant" : "agent" in d.by ? d.by.agent ?? "assistant" : "assistant" : "assistant";
   const role = (roleNames as readonly string[]).includes(name) ? name as RoleName : null;
   const spec = role ? null : findAgentSpec(app, name);
   if (!role && !spec) throw new HttpError(400, `没有 Agent 档案 ${name}`);
@@ -97,6 +111,19 @@ async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Dat
 
 async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, confirmed = false, current = new Date()) {
   const at = current.toISOString();
+  if (d.tools?.includes("propose_directions")) {
+    const previous = continuing(app, item.id);
+    if (previous) {
+      changeStage(app, item.id, d.id, "skipped", {}, host, `继续「${previous.direction.goal}」：还剩 ${previous.remaining} 个试验`);
+      return true;
+    }
+  }
+  if (isTrials(d)) {
+    run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + 1, at, item.id);
+    const next = changeStage(app, item.id, d.id, "doing", { attempt: s.attempt + 1, enteredAt: at, control: { ...s.control, confirmed: undefined } }, host, "按确认的方向逐个去试");
+    await tickTrials(app, item, f, d, next, current, stageAI);
+    return true;
+  }
   const ai = await stageAI(app, f, d, s, current);
   s = ai.s;
   if (ai.waitUntil) {
@@ -117,7 +144,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
       if ("object" in d.by && d.by.object === "design") designId = obj?.ref.slice("design:".length) ?? createDesign(app, { spaceId: item.spaceId, title: item.title, origin: "own", itemId: item.id, userId: item.userId }).id;
       const name = "run" in d.by ? d.by.run.agent ?? "assistant" : "assistant";
       const r = createRun(app, { kind: "flow-stage", spaceId: item.spaceId, title: `${item.title} · ${d.name}`, userId: item.userId,
-        input: { itemId: item.id, flowId: f.id, flowStartedAt: f.startedAt, round: f.round, stageId: d.id, execution: ai.execution, ownAI: !!d.ai && !ai.execution, agent: name, skill: "run" in d.by ? d.by.run.skill : undefined, designId, task: stageTask(app, item, f, d, s.control.feedback), spaces: [item.spaceId] },
+        input: { itemId: item.id, flowId: f.id, flowStartedAt: f.startedAt, round: f.round, stageId: d.id, stageTools: d.tools ?? [], execution: ai.execution, ownAI: !!d.ai && !ai.execution, agent: name, skill: "run" in d.by ? d.by.run.skill : undefined, designId, task: await stageTask(app, item, f, d, s.control.feedback), spaces: [item.spaceId] },
         trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name }, by: userBy(app, item.userId), where: d.name } });
       carrier = r.id;
       control.runId = r.id;
@@ -145,16 +172,19 @@ function roundComplete(app: App, f: ItemFlow) {
 function closeRound(app: App, f: ItemFlow, at: Date) {
   if (f.roundClosedAt) return;
   const ended = at.toISOString();
+  const idle = idleRounds(app, f.itemId, true, ended);
+  const pause = idle >= app.config.flows.idleRounds && f.definition.repeat?.every !== "manual";
   atomic(app, () => {
     run(app.db, `insert into item_flow_rounds(item_id,started_at,round,ended_at,stages,updated_at) values(?,?,?,?,?,?)
       on conflict(item_id,started_at,round) do update set ended_at=excluded.ended_at,stages=excluded.stages,updated_at=excluded.updated_at`, f.itemId, f.startedAt, f.round, ended, JSON.stringify(itemStages(app, f.itemId)), now());
-    run(app.db, "update item_flows set round_closed_at=?,next_round_at=?,updated_at=? where item_id=?", ended, f.definition.repeat ? nextRoundAt(at, app.config.timezone, f.definition.repeat.every) : null, now(), f.itemId);
+    run(app.db, "update item_flows set round_closed_at=?,next_round_at=?,updated_at=? where item_id=?", ended, f.definition.repeat && !pause ? nextRoundAt(at, app.config.timezone, f.definition.repeat.every) : null, now(), f.itemId);
     const last = f.definition.stages.at(-1)!;
     const s = getStage(app, f.itemId, last.id);
     changeStage(app, f.itemId, last.id, s.state, {}, host, `第 ${f.round} 轮已完成${f.definition.repeat?.every === "manual" ? "，等本人开始下一轮" : ""}`);
     // The line above is for the history and the item's timeline; the stage keeps its own conclusion.
     run(app.db, "update item_stages set note=? where item_id=? and stage_id=?", s.note, f.itemId, last.id);
   });
+  if (pause && f.definition.repeat) notify(app, { userId: getItem(app, f.itemId).userId, title: `连着 ${idle} 轮没有新发现`, body: `「${getItem(app, f.itemId).title}」连着 ${idle} 轮没有新发现，要换方向、暂停还是结束由你定。`, urgency: "later", link: `#/items/${f.itemId}` });
 }
 function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date) {
   if (!f.definition.repeat) throw new HttpError(409, "这份流程没有设置轮次");
@@ -217,7 +247,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
     for (const d of itemFlow(app, itemId)!.definition.stages) {
       const f = itemFlow(app, itemId)!;
       let s = getStage(app, itemId, d.id);
-      if (s.state === "doing" && s.control.runId && d.budget?.minutes !== undefined && !s.control.reported && usedMinutes(app, s, at) >= d.budget.minutes) {
+      if (!isTrials(d) && s.state === "doing" && s.control.runId && d.budget?.minutes !== undefined && !s.control.reported && usedMinutes(app, s, at) >= d.budget.minutes) {
         const control = finishUsage(app, s, at);
         cancelRun(app, s.control.runId);
         changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: { ...control, reported: true, budgetExceeded: true } }, host, `到了这一段的时间预算（${d.budget.minutes} 分钟）`);
@@ -226,9 +256,18 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       if (["pending", "stale"].includes(s.state)) {
         const rows = itemStages(app, itemId);
         if (!d.needs.every((n) => rows.some((r) => r.id === n && ["done", "skipped"].includes(r.state)))) continue;
+        const previous = d.tools?.includes("propose_directions") ? continuing(app, itemId) : null;
+        if (previous) {
+          changeStage(app, itemId, d.id, "skipped", {}, host, `继续「${previous.direction.goal}」：还剩 ${previous.remaining} 个试验`);
+          changed = true; continue;
+        }
+        if (isTrials(d) && !continuing(app, itemId)) {
+          changeStage(app, itemId, d.id, "done", { control: { ...s.control, reported: true } }, host, "没有要做的试验");
+          changed = true; continue;
+        }
         const timing = stageTiming(at, app.config.timezone, d, new Date(f.roundStartedAt));
         if (!timing.ready) { waitStage(app, f, d, s, timing.nextAt!); continue; }
-        if (d.budget?.minutes !== undefined && (s.control.usedMinutes ?? 0) >= d.budget.minutes) {
+        if (!isTrials(d) && d.budget?.minutes !== undefined && (s.control.usedMinutes ?? 0) >= d.budget.minutes) {
           changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: { ...s.control, budgetExceeded: true } }, host, `到了这一段的时间预算（${d.budget.minutes} 分钟）`); changed = true; continue;
         }
         if (s.state === "stale" && typeof d.by === "object" && "object" in d.by) {
@@ -252,6 +291,11 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       }
       s = getStage(app, itemId, d.id);
       if (s.state !== "doing") continue;
+      if (isTrials(d)) {
+        try { changed = await tickTrials(app, item, f, d, s, at, stageAI) || changed; }
+        catch (e) { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `无法开始试验：${(e as Error).message}`); }
+        continue;
+      }
       const carrierKind = typeof d.by === "object" && "object" in d.by ? d.by.object : null;
       const awaitingRevision = carrierKind && s.control.feedback && !s.control.reported;
       const followed = carrierKind && !awaitingRevision ? findObject(app, item, carrierKind) : null;
@@ -337,6 +381,7 @@ export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: strin
 export function reportStage(app: App, itemId: string, stageId: string, report: StageReport, by: FlowActor) {
   return serial(app, itemId, async () => {
     const f = running(app, itemId), d = definition(f, stageId);
+    if (d.tools?.includes("propose_directions") || isTrials(d)) throw new HttpError(403, "课题方向和试验由专门的工具交结果，不能用 stage_report 绕过本人选择或试验队列");
     let s = getStage(app, itemId, stageId);
     if (s.control.budgetExceeded && by.actor !== "owner") throw new HttpError(409, "到了这一段的时间预算，等本人处理");
     if (!report.note.trim()) throw new HttpError(400, "交结果需要说明");
@@ -415,6 +460,7 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
   if (action === "done" && !["doing", "blocked", "gated"].includes(s.state)) throw new HttpError(409, "只能手动完成进行中、卡住或等确认的阶段");
   if (["hold", "confirm"].includes(action) && s.state !== "gated" && !(action === "confirm" && s.state === "doing" && s.control.question === "done")) throw new HttpError(409, "这一段没有等确认的关卡");
   resetStreak(app, itemId);
+  if (isTrials(d) && ["done", "skip"].includes(action)) cancelTrials(app, itemId);
   withdraw(app, s);
   if (action === "done" || action === "skip" || action === "confirm" && s.control.question === "done") {
     s = { ...s, control: finishUsage(app, s, new Date()) };
@@ -440,7 +486,7 @@ export function reopenStage(app: App, itemId: string, stageId: string, reason: s
 function reopenNow(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor) {
   const f = itemFlow(app, itemId);
   if (!f) throw new HttpError(409, "事项没有流程");
-  definition(f, stageId);
+  if (isTrials(definition(f, stageId))) cancelTrials(app, itemId);
   const s = getStage(app, itemId, stageId);
   withdraw(app, s);
   run(app.db, "update item_flows set ended_at=null,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", now(), itemId);
@@ -456,6 +502,7 @@ function reopenNow(app: App, itemId: string, stageId: string, reason: string, re
 }
 function end(app: App, id: string, note: string) {
   if (!itemFlow(app, id) || itemFlow(app, id)!.endedAt) return;
+  cancelTrials(app, id);
   for (const s of itemStages(app, id)) { withdraw(app, s); if (s.state === "doing" && s.control.runId) cancelRun(app, s.control.runId); }
   run(app.db, "update item_flows set ended_at=?,next_round_at=null,updated_at=? where item_id=?", now(), now(), id);
   // Keep ending on the same audit/timeline path (no extra completion ping).
@@ -541,7 +588,7 @@ const WAITING_NOTE = /^等到 .+ 再开始$/;
 export function flowView(app: App, id: string) {
   const item = getItem(app, id), f = itemFlow(app, id), rows = itemStages(app, id);
   return {
-    flow: f ? { id: f.id, name: f.definition.name, startedAt: f.startedAt, endedAt: f.endedAt, autoStreak: f.autoStreak, round: f.round, repeat: f.definition.repeat ?? null, roundStartedAt: f.roundStartedAt, roundClosedAt: f.roundClosedAt, nextRoundAt: f.nextRoundAt, canStartRound: !f.endedAt && !!f.definition.repeat && roundComplete(app, f), repeatDescription: describeFlow(f.definition) } : null,
+    flow: f ? { id: f.id, name: f.definition.name, startedAt: f.startedAt, endedAt: f.endedAt, autoStreak: f.autoStreak, idleRounds: idleRounds(app, id), round: f.round, repeat: f.definition.repeat ?? null, roundStartedAt: f.roundStartedAt, roundClosedAt: f.roundClosedAt, nextRoundAt: f.nextRoundAt, canStartRound: !f.endedAt && !!f.definition.repeat && roundComplete(app, f), repeatDescription: describeFlow(f.definition) } : null,
     stages: f?.definition.stages.map((d) => {
       const s = rows.find((r) => r.id === d.id)!;
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
@@ -583,7 +630,7 @@ export function attachFlows(app: App) {
     const runIds = new Set<string>();
     if (e.type === "run") {
       const r = getRun(app, e.runId);
-      if (typeof r.input.itemId === "string" && r.kind === "flow-stage") ids.add(r.input.itemId);
+      if (typeof r.input.itemId === "string" && ["flow-stage", "study-trial"].includes(r.kind)) ids.add(r.input.itemId);
       runIds.add(r.id);
       if (typeof r.input.continueFrom === "string") runIds.add(r.input.continueFrom);
       if (r.parentId) runIds.add(r.parentId);
@@ -600,7 +647,7 @@ export function attachFlows(app: App) {
   app.events.once("close", () => { app.events.off("event", listener); attached.delete(app); });
 }
 
-registerHandler("flow-stage", async (ctx) => {
+const runFlowStage: Parameters<typeof registerHandler>[1] = async (ctx) => {
   const input = ctx.run.input;
   const itemId = String(input.itemId), stageId = String(input.stageId);
   const f = itemFlow(ctx.app, itemId), s = getStage(ctx.app, itemId, stageId);
@@ -615,6 +662,11 @@ registerHandler("flow-stage", async (ctx) => {
       const ai = await stageAI(ctx.app, flow, d, current, at);
       const wait = timing.nextAt && ai.waitUntil ? (timing.nextAt > ai.waitUntil ? timing.nextAt : ai.waitUntil) : timing.nextAt ?? ai.waitUntil;
       if (wait) {
+        if (ctx.run.kind === "study-trial") {
+          run(ctx.app.db, "update study_trials set state='queued',attempts=max(0,attempts-1),updated_at=? where id=? and run_id=?", now(), String(input.trialId), ctx.run.id);
+          changeStage(ctx.app, itemId, stageId, "doing", { by: null, waitingOn: "time", control: { ...ai.s.control, runId: undefined, budgetStartedAt: undefined, waitUntil: wait } }, host, "排队后重新检查试验的开始条件");
+          return false;
+        }
         const pending = changeStage(ctx.app, itemId, stageId, "pending", { by: null, enteredAt: null, attempt: Math.max(0, current.attempt - 1), control: { ...ai.s.control, admitted: true, runId: undefined, budgetStartedAt: undefined } }, host, "排队后重新检查开始条件");
         waitStage(ctx.app, flow, d, pending, wait, ai.waitUntil ? "模型额度用完" : "");
         return false;
@@ -651,9 +703,13 @@ registerHandler("flow-stage", async (ctx) => {
     if (skill.status !== "active" || !skillUsable(ctx.app, skill)) throw new HttpError(400, `技能 ${skill.name} 尚未启用或缺少模型`);
     task += `\n\n## 这一轮的技能：${skill.name}\n${skill.body}`;
   }
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, spaces: [item.spaceId], task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools: ["stage_report", "report_tests", "attach_artifact"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
+  const d = definition(itemFlow(ctx.app, itemId)!, stageId), planner = d.tools?.includes("propose_directions");
+  const addTools = ctx.run.kind === "study-trial" ? ["trial_report", "attach_artifact", ...d.tools ?? []] : planner ? ["propose_directions", "attach_artifact"] : ["stage_report", "report_tests", "attach_artifact", ...d.tools ?? []];
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, spaces: [item.spaceId], task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["read_ledger", "record_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "read_item", "read_run", "list_runs", "stage_report"] : undefined, artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
-});
+};
+registerHandler("flow-stage", runFlowStage);
+registerHandler("study-trial", runFlowStage);
 
 /** Git checks enter the same item queue as owner actions and revalidate the checked attempt. */
 export function completeBySignal(app: App, itemId: string, stageId: string, note: string, evidence: string[], expected: { startedAt: string; attempt: number; enteredAt: string | null; type: GitSignal; work: string }) {

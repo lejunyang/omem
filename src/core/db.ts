@@ -1980,6 +1980,31 @@ export const migrations: readonly string[] = [
      ended_at text not null, stages text not null, updated_at text not null,
      primary key(item_id,started_at,round)
    );`,
+  // Study facts travel with their item; plans await the owner's choice.
+  `create table study_directions (
+     id text primary key, item_id text not null references items(id), round integer not null,
+     goal text not null, approach text not null, acceptance text not null, env text not null default '', estimate text not null default '',
+     state text not null check(state in ('proposed','confirmed','active','done','dropped')), conclusion text not null default '',
+     note text not null default '', plan text not null default '[]', removed text not null default '[]', created_at text not null, updated_at text not null
+   );
+   create index study_directions_item on study_directions(item_id,state,round);
+   create table study_trials (
+     id text primary key, item_id text not null references items(id), direction_id text not null references study_directions(id),
+     round integer not null, seq integer not null, object text not null, "check" text not null, env text not null default '',
+     state text not null check(state in ('queued','running','reported','skipped')), result text check(result in ('passed','failed','blocked','unclear')),
+     summary text not null default '', evidence text not null default '[]', run_id text, attempts integer not null default 0, prior text,
+     findings text not null default '[]', unsure integer not null default 0, failures integer not null default 0,
+     escalated integer not null default 0, created_at text not null, updated_at text not null
+   );
+   create index study_trials_item on study_trials(item_id,direction_id,state,seq);
+   create index study_trials_round on study_trials(item_id,round,result);
+   create table study_findings (
+     id text primary key, item_id text not null references items(id), kind text not null check(kind in ('defect','gap','idea')),
+     title text not null, repro text not null, trials text not null, round integer not null default 0, flow_started_at text,
+     state text not null check(state in ('new','confirmed','rejected','later','duplicate')), state_reason text not null default '', same_as text,
+     created_at text not null, updated_at text not null
+   );
+   create index study_findings_item on study_findings(item_id,state,created_at);`,
 ];
 
 export type Db = DatabaseSync;

@@ -1,0 +1,31 @@
+id: study
+name: 课题：给一个项目找问题和改进点
+description: 按需要一轮一轮转：对着功能清单定方向，按方向逐个去试，之后小结并把试验归并成发现
+for: { kinds: [watch] }
+repeat: { from: plan, every: manual }
+stages:
+  - id: map
+    name: 梳理
+    note: 把这个项目现在有哪些功能梳理成清单。
+    by: { run: { agent: assistant, skill: study-map } }
+    ai: strong
+    done: confirm
+  - id: plan
+    name: 定方向
+    note: 对着功能清单提出这一轮往哪个方向试。
+    by: { run: { agent: assistant, skill: study-plan } }
+    ai: strong
+    tools: [propose_directions]
+  - id: try
+    name: 试验
+    note: 按确认的方向逐个去试，每个试验照实记下结果。
+    by: { object: trials, agent: assistant, skill: study-trial }
+    ai: cheap
+    escalate: { to: strong, max: 2 }
+    budget: { trials: 8, minutes: 240 }
+  - id: summary
+    name: 小结
+    note: 把这一轮的试验归并成发现，写小结。
+    by: { run: { agent: assistant, skill: study-summary } }
+    ai: standard
+    tools: [read_ledger, record_finding, close_direction]

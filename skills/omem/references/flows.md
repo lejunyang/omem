@@ -1,5 +1,21 @@
 # 流程：一件事的阶段和关卡
 
+## 课题（study 分组）
+
+这组工具不在内置角色的默认清单里，只由流程阶段的 `tools` 或试验运行临时带上；阶段 `tools` 只能填本组的名字。
+
+| 工具 | 参数与用法 |
+| --- | --- |
+| `propose_directions` | `item, directions, note?`。方向零到三个，每个有 `goal / approach / acceptance / env? / estimate? / trials: [{ object, check }]`（1–40 个）。空数组是正常结果，note 写原因。只能由定方向阶段交；宿主按规范化的对象和检查项去掉已有结果的完全重复试验，保留同对象的新检查并标以前的结论；然后问本人选一个或这一轮不跑。本人附的话带入试验任务。 |
+| `trial_report` | `trial, result, summary, evidence?, findings?, unsure?`。result 是 passed / failed / blocked / unclear；证据是 `$OMEM_ARTIFACTS` 内的文件路径或可读 `src:` 引用。只能由这个试验自己的运行交。候选 findings 为 `{ kind, title, repro }`，不会自动变成正式发现。 |
+| `read_ledger` | `item, direction?, object?, result?, round?, limit?`，读试验摘要、证据和候选，以及已有发现。凡阶段 tools 包含 propose_directions，即使误授了此工具也拒绝读取。 |
+| `record_finding` | `item, kind, title, repro, trials, same_as?, distinct_from?`，kind 是 defect / gap / idea。依据至少一条，须是本课题有结果的试验。相近标题会提示先读，same_as 合并依据到已有发现，distinct_from 是已核对且不同的发现 id 数组。拒绝的发现只影响这一条。 |
+| `close_direction` | `direction, state: done / dropped, conclusion`，结论必填，未做的试验跳过。 |
+
+`by: { object: trials, agent?: assistant, skill?: study-trial }` 按顺序一次跑一个试验，支持 AI、时间段和预算。没交结果可升档重做这个试验一次，后端失败同一试验重试一次；额度用完等原模型，不换后端。试验数或分钟用完时本轮这一段完成，剩下的留给下一轮；有未做完的方向时下一轮跳过定方向。功能清单用已有 write_file 写在事项空间的 `work/studies/<事项 id>/capabilities.md`，不写 Wiki。
+
+内置 study 流程默认 manual，由本人决定何时再来一轮。flow.idleRounds 是连续完成且没有新发现的轮数；非 manual 到 flows.idleRounds（默认 3）时暂停自动开轮并给本人一条不急的通知。
+
 流程是一份阶段清单，挂在事项上。每段由运行、编码交办、方案或本人承担，也可以只等。前提都已完成或跳过才开始；条件拿不准、关卡要求本人确认或连续自动开始达到上限时，宿主问本人。确认只认事项本人的回答，等待多久都不会自动通过。
 
 | 工具 | 参数与用法 |
@@ -18,8 +34,8 @@
 
 定义可写 `repeat: { from: plan, every: manual }`（默认手动；也支持 `done / day / [tue, fri]`）。运行阶段的 `ai` 支持 `strong / standard / cheap` 或 `{ profile, model?, effort? }`，档位在配置 `agents.tiers` 中映射。没配档位沿用角色或档案自己的 AI；配错卡住，额度用完等恢复，不自动换更贵的。阶段还可写 `at: "10:00"`、`window: "23:00-05:00"`，按配置时区限制开始，已运行的不因窗口结束停止。
 
-`budget: { minutes: 240, trials: 8 }` 的分钟预算只用于运行阶段，本轮累计，升档也计时，排队和等本人确认不计；试验数仅保存。`escalate: { to: strong, max: 2 }` 只用于写了 `ai` 的运行阶段。本人可经 `POST /api/items/:id/flow/stages/:stage/budget` 改副本的 `budget`、`escalate.max`，不改模板；同轮重开不重置已用值，新轮重新计数。
+`budget: { minutes: 240, trials: 8 }` 用于运行和 trials 阶段，分钟本轮累计，升档也计时，排队和等本人确认不计。普通运行阶段用满分钟时卡住等本人，trials 用满试验数或分钟时完成本轮阶段并保留队列；普通运行的 trials 字段只保存。`escalate: { to: strong, max: 2 }` 用于写了 `ai` 的这两类阶段。本人可经 `POST /api/items/:id/flow/stages/:stage/budget` 改副本的 `budget`、`escalate.max`，不改模板；同轮重开不重置已用值，新轮重新计数。
 
-定义格式见 `docs/v2/flows.md`。支持 `by: {run: {agent?, skill?}}`、`by: {object: code-work / design}`、`by: owner`、`by: wait`；`needs` 只指向更早的阶段，不填等上一个、`[]` 无前提。`when` 与文字完成要求最多 300 字，`note` 最多 1000 字。`done` 可用 `confirm`、一句话或已有对象状态；owner / wait 还可写 `{ signal: git.pushed }` 或 `{ signal: git.merged }`，关联交办已应用的提交全部进入远端 / 目标分支远端后由宿主完成，本人也可手动完成。person、其他信号、插件对象留待后续阶段。定义在 `library/_flows/<id>.yaml`，内置模板只补缺。
+定义格式见 `docs/v2/flows.md`。支持 `by: {run: {agent?, skill?}}`、`by: {object: code-work / design}`、`by: {object: trials, agent?, skill?}`、`by: owner`、`by: wait`；`needs` 只指向更早的阶段，不填等上一个、`[]` 无前提。`when` 与文字完成要求最多 300 字，`note` 最多 1000 字。`done` 可用 `confirm`、一句话或已有对象状态；owner / wait 还可写 `{ signal: git.pushed }` 或 `{ signal: git.merged }`，关联交办已应用的提交全部进入远端 / 目标分支远端后由宿主完成，本人也可手动完成。person、其他信号、插件对象留待后续阶段。定义在 `library/_flows/<id>.yaml`，内置模板只补缺。
 
 阶段运行复用事项材料和会话摘要，使用 `note` 说明这段做什么；`agent` 可以是内置角色或 Agent 档案，不填用主助手，`skill` 只给这一轮。流程监听已有对象和运行事件，更新同一张进度通知；流程走完不关闭事项。网页流程条和飞书进度卡的专门版式尚未实现。

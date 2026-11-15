@@ -1092,9 +1092,10 @@ export const configSchema = z.object({
    * into the main assistant's turns, the patrol, the triage of 有人找你 and meeting summaries.
    */
   flows: z.object({
+    idleRounds: z.number().int().min(1).max(100).default(3),
     autoAdvance: z.number().int().min(1).max(20).default(3),
     staleDays: z.number().min(1).max(365).default(2),
-  }).default(() => ({ autoAdvance: 3, staleDays: 2 })),
+  }).default(() => ({ autoAdvance: 3, staleDays: 2, idleRounds: 3 })),
   workState: z
     .object({
       days: z.number().int().min(3).max(60).default(21),

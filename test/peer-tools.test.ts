@@ -159,6 +159,10 @@ describe("an outside Agent on another device uses this instance's tools", () => 
   it("classifies every built-in tool: outside Agents get it, or it is listed as outward / role-only", () => {
     const grouped = new Set(TOOL_GROUPS.filter((g) => g.id !== "plugins").flatMap((g) => g.tools));
     const allowed = peerToolNames();
+    for (const tool of TOOL_GROUPS.find((g) => g.id === "study")!.tools) {
+      expect(allowed.has(tool)).toBe(false);
+      expect(PEER_DENY.has(tool)).toBe(true);
+    }
     expect([...allowed].filter((n) => n.startsWith("lark_") || n.startsWith("meeting_") || n.startsWith("wake_"))).toEqual([]);
     const registered = new Set(toolList().map((t) => t.name));
     expect([...PEER_DENY].filter((n) => !registered.has(n))).toEqual([]);

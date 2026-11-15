@@ -273,17 +273,18 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
       if (!opts.dryRun) copyArtifacts(db, join(dir, "runs"), app.runsDir);
       for (const t of pullTables) {
         const cols = columns(db, t.name).filter((c) => columns(db, t.name, "r").includes(c) && !t.local?.includes(c));
-        const match = t.key.map((k) => `l.${k} is x.${k}`).join(" and ");
+        const quoted = (c: string) => `"${c.replaceAll('"', '""')}"`;
+        const match = t.key.map((k) => `l.${quoted(k)} is x.${quoted(k)}`).join(" and ");
         const sourceCheck = cols.includes("source_id") ? " and (x.source_id is null or x.source_id in (select id from main.sources))" : "";
-        const values = cols.map((c) => t.name === "digest_jobs" && c === "status" ? "case when x.status = 'active' then 'paused' else x.status end" : `x.${c}`);
+        const values = cols.map((c) => t.name === "digest_jobs" && c === "status" ? "case when x.status = 'active' then 'paused' else x.status end" : `x.${quoted(c)}`);
         // A row this side already has under another key (the same `sync_key`) is not taken a second time.
         const known = cols.includes("sync_key") ? ` and (x.sync_key = '' or not exists(select 1 from main.${t.name} k where k.sync_key = x.sync_key))` : "";
-        const added = run(db, `insert into main.${t.name}(${cols.join(",")}) select ${values.join(",")} from r.${t.name} x where not exists(select 1 from main.${t.name} l where ${match})${sourceCheck}${known}`).changes;
+        const added = run(db, `insert into main.${t.name}(${cols.map(quoted).join(",")}) select ${values.join(",")} from r.${t.name} x where not exists(select 1 from main.${t.name} l where ${match})${sourceCheck}${known}`).changes;
         let updated = 0;
         if (t.newer) {
           const stamp = (a: string) => t.newer!.replace(/\b(finished_at|started_at|created_at|updated_at|due_at|handled_at|sync_updated_at|checked_at|removed_at|resolved_at|decided_at|settled_at|labelled_at|revised_at|at)\b/g, `${a}.$1`);
           const update = cols.filter((c) => !t.key.includes(c));
-          updated = Number(run(db, `update main.${t.name} as l set ${update.map((c) => `${c} = ${t.name === "digest_jobs" && c === "status" ? "case when x.status = 'active' then 'paused' else x.status end" : `x.${c}`}`).join(",")} from r.${t.name} x where ${match} and ${stamp("x")} > ${stamp("l")}${sourceCheck}${t.name === "runs" ? " and l.status not in ('queued','running')" : ""}`).changes);
+          updated = Number(run(db, `update main.${t.name} as l set ${update.map((c) => `${quoted(c)} = ${t.name === "digest_jobs" && c === "status" ? "case when x.status = 'active' then 'paused' else x.status end" : `x.${quoted(c)}`}`).join(",")} from r.${t.name} x where ${match} and ${stamp("x")} > ${stamp("l")}${sourceCheck}${t.name === "runs" ? " and l.status not in ('queued','running')" : ""}`).changes);
         }
         const total = Number((db.prepare(`select count(*) n from r.${t.name}`).get() as { n: number }).n);
         Object.assign(tally(t.name), { added: Number(added), updated, kept: total - Number(added) - updated });

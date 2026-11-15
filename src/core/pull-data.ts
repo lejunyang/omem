@@ -22,6 +22,9 @@ export const pullTables: Table[] = [
   { name: "item_stages", key: ["item_id", "stage_id"], newer: "updated_at" },
   { name: "item_flow_rounds", key: ["item_id", "started_at", "round"], newer: "updated_at" },
   { name: "item_stage_log", key: ["id"], integer: true, natural: ["sync_key"], newer: "at" },
+  { name: "study_directions", key: ["id"], newer: "updated_at" },
+  { name: "study_trials", key: ["id"], newer: "updated_at" },
+  { name: "study_findings", key: ["id"], newer: "updated_at" },
   { name: "conversations", key: ["id"], newer: "updated_at", local: ["agent_session", "agent_cwd"] },
   { name: "runs", key: ["id"], newer: "coalesce(finished_at, started_at, created_at)", local: ["profile_id", "lane", "not_before"] },
   { name: "cards", key: ["id"], newer: "due_at" },
@@ -241,7 +244,7 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
     for (const t of pullTables) {
       const fields = columns(remote, t.name).filter((c) => !["id", "sync_key", "sync_updated_at"].includes(c));
       if (!fields.length) continue;
-      for (const row of all<Row>(remote, `select rowid as _rowid, ${fields.join(",")} from ${t.name}`)) {
+      for (const row of all<Row>(remote, `select rowid as _rowid, ${fields.map((c) => `"${c.replaceAll('"', '""')}"`).join(",")} from ${t.name}`)) {
         const changes: [string, SQLInputValue][] = [];
         for (const c of fields) {
           const v = row[c];
@@ -252,7 +255,7 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
           catch { next = rewrite(v) as string; }
           if (next !== v) changes.push([c, next]);
         }
-        if (changes.length) remote.prepare(`update ${t.name} set ${changes.map(([c]) => `${c} = ?`).join(",")} where rowid = ?`).run(...changes.map(([, v]) => v), row._rowid);
+        if (changes.length) remote.prepare(`update ${t.name} set ${changes.map(([c]) => `"${c.replaceAll('"', '""')}" = ?`).join(",")} where rowid = ?`).run(...changes.map(([, v]) => v), row._rowid);
       }
     }
 

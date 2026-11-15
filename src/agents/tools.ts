@@ -25,6 +25,7 @@ import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
+import { proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf } from "../auth/features.ts";
@@ -2125,6 +2126,48 @@ function flowItem(ctx: ToolContext, id: string, write: boolean) {
   return item;
 }
 function flowActor(ctx: ToolContext) { return { actor: ctx.actor === "user" ? "owner" : ctx.spec ?? ctx.role ?? "assistant", userId: ctx.userId ?? OWNER, runId: ctx.runId ?? undefined }; }
+def({
+  name: "propose_directions", description: "定方向阶段交零到三个方向，宿主对账去重后请本人选；空数组是正常结果，note 写原因。", write: true, schema: proposalSchema,
+  handler: async (ctx, a) => {
+    flowItem(ctx, a.item, true);
+    return (await import("../studies/service.ts")).proposeDirections(ctx.app, a, flowActor(ctx));
+  },
+});
+def({
+  name: "trial_report", description: "只交这个试验的结果：passed / failed / blocked / unclear；拿不准标 unsure。evidence 填 $OMEM_ARTIFACTS 里的文件路径或 src: 引用；findings 只是候选，由小结归并。", write: true, schema: trialReportSchema,
+  handler: async (ctx, a) => {
+    const store = await import("../studies/store.ts");
+    flowItem(ctx, store.trial(ctx.app, a.trial).item_id, true);
+    await flowRefs(ctx, (a.evidence ?? []).filter((r) => r.startsWith("src:")));
+    return (await import("../studies/service.ts")).reportTrial(ctx.app, a, flowActor(ctx));
+  },
+});
+def({
+  name: "read_ledger", description: "按课题、方向、对象、结果和轮次读试验摘要、证据、候选与正式发现；定方向阶段禁止读取。", schema: ledgerSchema,
+  handler: async (ctx, a) => {
+    flowItem(ctx, a.item, false);
+    return (await import("../studies/service.ts")).readLedger(ctx.app, a, ctx.runId);
+  },
+});
+def({
+  name: "record_finding", description: "把有复现依据的试验归并成发现。遇到相近标题先读：same_as 合并到已有发现，distinct_from 列明确不同的已有发现 id；至少一个本课题有结果的试验。", write: true, schema: recordFindingSchema,
+  handler: async (ctx, a) => {
+    flowItem(ctx, a.item, true);
+    (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
+    const { studyOperation } = await import("../flows/engine.ts");
+    return studyOperation(ctx.app, a.item, async () => (await import("../studies/store.ts")).recordFinding(ctx.app, a));
+  },
+});
+def({
+  name: "close_direction", description: "结束（done）或放弃（dropped）方向，必须写结论；未做完的试验跳过。", write: true, schema: closeDirectionSchema,
+  handler: async (ctx, a) => {
+    const store = await import("../studies/store.ts");
+    const d = store.direction(ctx.app, a.direction);
+    flowItem(ctx, d.item_id, true);
+    (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
+    return (await import("../flows/engine.ts")).studyOperation(ctx.app, d.item_id, async () => { store.closeDirection(ctx.app, a.direction, a.state, a.conclusion); return "方向已结束，结论已记下。"; });
+  },
+});
 async function flowRefs(ctx: ToolContext, list: string[]) {
   const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
   for (const ref of list) {

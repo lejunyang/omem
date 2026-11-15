@@ -30,6 +30,7 @@ import { callTool, mcpTools, toolList, type ToolContext } from "./tools.ts";
  * test/peer-tools.test.ts fails when a new tool is in neither this list nor PEER_ALLOWED.
  */
 export const PEER_DENY = new Set([
+  "propose_directions", "trial_report", "read_ledger", "record_finding", "close_direction",
   "report_rule_failure",
   "lark_send", "lark_react", "meeting_send", "lark_card", "lark_update_card", "lark_send_file", "lark_message_file", "lark_read", "lark_write", "lark_invite", "lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize", "lark_wiki_crawl",
   "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "refresh_item_notification", "notify",
