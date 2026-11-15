@@ -22,7 +22,7 @@ updated: 2026-11-15
 
 ## 仓库从评审里学到的约定（11-15）
 
-仓库空间新增“学到的约定”：Agent 对照近 90 天其他交办采纳过的相近问题，通过 `propose_repo_lesson` 提炼；文本或模式相同的合并证据，两个根交办默认启用并只通知一次，本人关闭的不自动打开。启用的模式约定只查每轮新增行，命中复用仓库检查失败结果；其他约定也交给编码和各类评审，问题可引用 `lesson:<id>`。空间设置支持维护条目、打开来源交办；约定随设备拉取携带。代码在 `src/agents/code-lessons.ts`、`code.ts`、`review-chain.ts`、`code-overlap.ts`、`review.ts`、`tools.ts`，网页在 `web/src/components/RepoLessons.vue`。范围与上限见 `docs/v2/review.md`“学到的约定”。
+仓库空间新增“学到的约定”：Agent 对照近 90 天其他交办采纳过的相近问题，通过 `propose_repo_lesson` 提炼；文本或模式相同的合并证据，两个根交办默认启用并只通知一次，本人关闭的不自动打开。启用的模式约定只查每轮新增行，命中复用仓库检查失败结果；其他约定也交给编码和各类评审，问题可引用 `lesson:<id>`。空间设置支持维护条目、打开来源交办；约定随设备拉取携带。代码在 `src/agents/code-lessons.ts`、`code.ts`、`review-chain.ts`、`code-overlap.ts`、`review.ts`、`tools.ts`，网页在 `web/src/components/RepoLessons.vue`。范围与上限见 `docs/v2/review.md`“学到的约定”。角色：`roles/review-lead.md` 多一条“同一类问题第二次出现，写成这个仓库的约定”，`roles/coach.md` 复盘编码类档案时也可以提，两者的工具加 `propose_repo_lesson`；`roles/_common.md` 新增一节“这个仓库学到的约定”，编码和各评审项的运行都带上。找以往采纳过的问题直接从评审记录读，没有另建表。
 
 ## 通知负反馈改变下次行为；会议结束释放通知（11-15）
 

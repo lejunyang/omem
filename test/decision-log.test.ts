@@ -230,7 +230,7 @@ describe("报告和离线回放", () => {
     expect(s.thresholds[1]).toMatchObject({ threshold: 0.6, risky: 19, misses: 1 });
     run(app.db, "update decisions set label='unneeded' where id=?", last.id);
     expect(decisionReport(app).scenes.find((s) => s.scene === "triage")!.suggested).toBe(0.5);
-    expect(decisionReport(app).scenes.find((s) => s.scene === "watch")!.suggestion).toContain("暂不标注");
+    expect(decisionReport(app).scenes.find((s) => s.scene === "watch")!.suggestion).toContain("不标注结果");
     expect(JSON.stringify(await peerCommands.decisions.run(app, {}))).not.toContain("虚构讨论");
     expect(() => peerCommands.decisions.schema.parse({ material: true })).toThrow();
   });
