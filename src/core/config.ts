@@ -50,6 +50,7 @@ export const DEFAULT_FEEDBACK_EMOJI = {
 };
 
 export const roleNames = [
+  "commit-claim",
   "item-follow",
   "assistant",
   "ingest",
@@ -1109,6 +1110,7 @@ export const configSchema = z.object({
     }),
   }).default(() => ({ envs: [] })),
   flows: z.object({
+    commits: z.object({ enabled: z.boolean().default(true), quietMinutes: z.number().min(0).max(1440).default(30) }).default(() => ({ enabled: true, quietMinutes: 30 })),
     gateLadder: z.object({ enabled: z.boolean().default(true), after: z.number().int().min(1).max(1000).default(5) }).default(() => ({ enabled: true, after: 5 })),
     follow: z.object({
       enabled: z.boolean().default(true),
@@ -1119,7 +1121,7 @@ export const configSchema = z.object({
     idleRounds: z.number().int().min(1).max(100).default(3),
     autoAdvance: z.number().int().min(1).max(20).default(3),
     staleDays: z.number().min(1).max(365).default(2),
-  }).default(() => ({ autoAdvance: 3, staleDays: 2, idleRounds: 3, gateLadder: { enabled: true, after: 5 }, follow: { enabled: true, quietMinutes: 20, maxMessages: 30, maxRunsPerDay: 12 } })),
+  }).default(() => ({ commits: { enabled: true, quietMinutes: 30 }, autoAdvance: 3, staleDays: 2, idleRounds: 3, gateLadder: { enabled: true, after: 5 }, follow: { enabled: true, quietMinutes: 20, maxMessages: 30, maxRunsPerDay: 12 } })),
   workState: z
     .object({
       days: z.number().int().min(3).max(60).default(21),

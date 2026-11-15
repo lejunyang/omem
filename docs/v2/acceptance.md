@@ -1,5 +1,27 @@
 # v2 验收清单
 
+## 没人认领的提交（服务端，2026-11-16）
+
+| 编号 | 操作 | 预期 | 状态 |
+| --- | --- | --- | --- |
+| commits-01 | 临时仓库首次核对，随后以本人邮箱提交；分别未满安静期、满期和积满二十条 | 首次不翻历史，未满不处理，满期或二十条起一批；半小时限频，异步 Git 有超时 | `test/flow-commits.test.ts` |
+| commits-02 | 增加其他作者、合并带入、远端分支、交办分支与应用提交，或已挂事项的分支 | 均不算无人认领；关设置不读，单次十个仓库、每仓库二十个本地分支 | 同上 |
+| commits-03 | 角色交一至三个建议；尝试越角色、越批次、他人或结束事项及第四个建议 | 校验拒绝；候选最多三个，最近事项只交三十个标题和 id | 同上 |
+| commits-04 | 本人分别选已有事项、新建或不用管；他人先尝试回答 | 他人回答前拒绝；挂分支和时间线，只补录未到或等确认的编码阶段；已在做或做完不改；新建普通待办不自动开流程 | 同上 |
+| commits-05 | 静默、模型失败两次、待答时继续提交、跨分支重复提交、重写历史 | 静默前移不问，失败保留且同批最多两次；旧版撤回只留一张，已处理不再问，重写不追历史 | 同上 |
+| commits-06 | 导出快照、合并及覆盖拉取 | git_commit_cursors 不出本机，覆盖仍保留本机数据 | `test/pull-complete.test.ts` |
+
+验证命令（只跑这组，不跑全量和 vue-tsc）：
+
+```sh
+npx vitest run test/flow-commits.test.ts test/flow-signals.test.ts test/flows.test.ts test/flows-http.test.ts test/flow-follow.test.ts test/esm.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts test/insights.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+```
+
+首轮 `4 failed | 8 passed (12)`、`10 failed | 156 passed | 1 skipped (167)`：确认处理里的嵌套事务、默认配置与候选词数断言已修正；另有三个超时，多仓库用例单独给九十秒。第二轮 `12 passed (12)`、`167 passed | 1 skipped (168)`；第三轮加 Git 读取失败保护后 `12 passed (12)`、`168 passed | 1 skipped (169)`。最终原地交办与旧记录兼容也通过：`Test Files 12 passed (12)`、`Tests 169 passed | 1 skipped (170)`，提交专项十九项全过，Duration 237.09s。跳过的是既有 SSH 条件用例。最终 tsc 和 git diff --check 均退出 0；新增配置测试中途曾因 saveConfig 参数顺序报一条 TS2345，已修正。
+
+真实 Agent 验证尝试：把角色与两个虚构案例交给 `codex exec -m gpt-6.1-sol -c model_reasoning_effort=low -s read-only --skip-git-repo-check -`，CLI 启动即退出 1，报 `Error finding codex home: Could not find home directory`，没有进入角色运行，不能算通过。真实渠道卡片和网页展示未验；卡片内容、权限与回答结果由临时 Git 仓库测试验证。
+
 按你最初列的目标和日常用途逐项验收。每项写了操作和预期结果；“云端已验”指我在云端用 Claude Code（haiku）实际跑过，“待你验”指需要你的账号或本机环境。
 
 ## 课题第三期第二步（2026-11-15）

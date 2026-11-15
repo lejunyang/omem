@@ -1,4 +1,5 @@
 import { lessonInput, proposeLesson } from "./code-lessons.ts";
+import { claimCommits, claimSchema } from "../flows/commits.ts";
 import { queueCodeWork } from "./code-delegate.ts";
 import { recordReqStatus, findReq } from "../items/requirements.ts";
 import { improveDelegation, improveGoal, improveRounds, improveText, improvementOf, roundImprove, startImprove } from "./improve.ts";
@@ -2206,6 +2207,16 @@ def({
     return `流程草稿等本人确认：${ask.id}`;
   },
 });
+def({
+  name: "claim_commits", description: "建议把本次运行的提交挂到已有事项或新建事项；交给本人确认，不直接修改事项。只给 commit-claim 角色交结果。",
+  write: true, schema: claimSchema,
+  handler: async (ctx, a) => {
+    if (ctx.role !== "commit-claim" || !ctx.runId || (ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人 commit-claim 运行能交认领建议");
+    for (const claim of a.claims) if ("item" in claim) flowItem(ctx, claim.item, true);
+    return JSON.stringify(claimCommits(ctx.app, ctx.runId, a));
+  },
+});
+
 def({
   name: "note_item_change", description: "交代这批新内容让本次跟进的事项变了什么；每条带批次内原件的行引用，deadline 必须填 due。只给 item-follow 角色交结果。",
   write: true, schema: z.object({ item: z.string(), type: z.enum(["scope", "decision", "deadline", "blocker", "info"]), summary: z.string().trim().min(1).max(500), detail: z.string().max(6000).optional(), req: z.string().optional(), stages: z.array(z.string()).max(20).optional(), refs: z.array(z.string()).min(1).max(50), due: z.string().optional() }),

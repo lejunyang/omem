@@ -11,6 +11,17 @@ it("merges only what changed since loading", () => {
   expect(mergeConfig(base, ours, theirs)).toEqual({ a: 5, b: { c: 3, d: [1, 2] }, e: { g: 2 }, x: true });
 });
 
+it("旧流程配置补齐提交检查默认值，并保持各次加载独立", () => {
+  const home = mkdtempSync(join(tmpdir(), "omem-commits-config-"));
+  writeFileSync(join(home, "config.json"), JSON.stringify({ flows: {} }));
+  const first = loadConfig(home), second = loadConfig(home);
+  expect(first.flows.commits).toEqual({ enabled: true, quietMinutes: 30 });
+  first.flows.commits.enabled = false;
+  expect(second.flows.commits.enabled).toBe(true);
+  saveConfig(first, home);
+  expect(loadConfig(home).flows.commits.enabled).toBe(false);
+});
+
 it("旧配置不配流程档位，各档可独立保存并合并其他进程的设置", () => {
   const home = mkdtempSync(join(tmpdir(), "omem-tiers-"));
   const first = loadConfig(home), second = loadConfig(home);

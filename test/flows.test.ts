@@ -92,7 +92,7 @@ describe("流程定义", () => {
   it("旧配置得到独立默认值", () => {
     const a = appFor(), b = appFor();
     a.config.flows.autoAdvance = 9;
-    expect(b.config.flows).toEqual({ autoAdvance: 3, staleDays: 2, idleRounds: 3, gateLadder: { enabled: true, after: 5 }, follow: { enabled: true, quietMinutes: 20, maxMessages: 30, maxRunsPerDay: 12 } });
+    expect(b.config.flows).toEqual({ commits: { enabled: true, quietMinutes: 30 }, autoAdvance: 3, staleDays: 2, idleRounds: 3, gateLadder: { enabled: true, after: 5 }, follow: { enabled: true, quietMinutes: 20, maxMessages: 30, maxRunsPerDay: 12 } });
     expect(flowSchema.safeParse({ id: "demo", name: "示例", stages: [stage("a")] }).success).toBe(true);
   });
 });

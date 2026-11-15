@@ -49,7 +49,7 @@ describe("complete portable pulls", () => {
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
       // Live goals measure this machine's delegation worktree; unlike portable task/checkpoint history, never resume them on a pulled device.
-      "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors",
+      "improve_goals", "improve_rounds", "flow_signals", "item_follow_cursors", "git_commit_cursors",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
       // Decision material and the source-to-sweep links remain private to this device.
@@ -67,18 +67,22 @@ describe("complete portable pulls", () => {
       run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,?,?,?,?,?)", "2026-11-15", "git.pushed", "[]", "demo", "push", note);
     for (const [app, source] of [[local, "local_source"], [remote, "remote_source"]] as const)
       run(app.db, "insert into item_follow_cursors(item_id,source_id,started_at,line,source_updated_at,updated_at) values('demo',?,'2026-11-15',12,'2026-11-15','2026-11-15')", source);
+    for (const [app, commit] of [[local, "local_commit"], [remote, "remote_commit"]] as const)
+      run(app.db, "insert into git_commit_cursors(space_id,branch,commit_id,updated_at,tip,tip_at) values('demo','main',?,'2026-11-15',?,'2026-11-15')", commit, commit);
     const f = await snapshot(remote);
     let localClosed = false;
     try {
       const copied = App.open(f.dbDir);
-      try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); expect(all(copied.db, "select * from item_follow_cursors")).toEqual([]); }
+      try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); expect(all(copied.db, "select * from item_follow_cursors")).toEqual([]); expect(all(copied.db, "select * from git_commit_cursors")).toEqual([]); }
       finally { copied.db.close(); }
       mergeLibrary(local, f);
       expect(all(local.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]);
       expect(all(local.db, "select source_id,line from item_follow_cursors")).toEqual([{ source_id: "local_source", line: 12 }]);
+      expect(all(local.db, "select commit_id from git_commit_cursors")).toEqual([{ commit_id: "local_commit" }]);
       local.db.close(); localClosed = true;
       overwriteLocal(local.home, f);
       const after = App.open(local.home);
+      expect(all(after.db, "select commit_id from git_commit_cursors")).toEqual([{ commit_id: "local_commit" }]);
       try { expect(all(after.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]); expect(all(after.db, "select source_id,line from item_follow_cursors")).toEqual([{ source_id: "local_source", line: 12 }]); }
       finally { after.db.close(); }
     } finally {

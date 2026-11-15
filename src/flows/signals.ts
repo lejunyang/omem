@@ -14,6 +14,7 @@ import { describeStage, type FlowStage } from "./definitions.ts";
 import { completeBySignal } from "./engine.ts";
 import { findObject } from "./objects.ts";
 import { getStage, itemFlow } from "./store.ts";
+import { checkUnclaimedCommits } from "./commits.ts";
 
 export type GitSignal = "git.pushed" | "git.merged";
 type Observation = { at: string; outcome: string; keys: string };
@@ -64,7 +65,7 @@ async function patchCommit(path: string, base: string, tip: string, patch: strin
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
-async function commitsOf(app: App, rootId: string, latestId: string, target: AppliedTarget, path: string): Promise<string[]> {
+export async function commitsOf(app: App, rootId: string, latestId: string, target: AppliedTarget, path: string): Promise<string[]> {
   const root = getRun(app, rootId), latest = getRun(app, latestId);
   const wt = (root.output.worktrees as WorktreeRef[] | undefined)?.find((w) => w.space === target.space);
   if (target.head) return /^[a-f0-9]{40,64}$/.test(target.head) ? [target.head] : [];
@@ -73,15 +74,15 @@ async function commitsOf(app: App, rootId: string, latestId: string, target: App
     const pushed = (root.output.pushed as { space: string; head?: string }[] | undefined)?.find((p) => p.space === target.space)?.head;
     const checked = (latest.output.repos as { space: string; check?: { commit?: string } }[] | undefined)?.find((r) => r.space === target.space)?.check?.commit;
     if (pushed) return [pushed];
-    if (checked && target.branch && git(path, ["merge-base", "--is-ancestor", checked, `refs/heads/${target.branch}`]).ok) return [checked];
+    if (checked && target.branch && (await gitAsync(path, ["merge-base", "--is-ancestor", checked, `refs/heads/${target.branch}`], { timeoutMs: 15_000 })).ok) return [checked];
   }
-  const tip = target.branch && git(path, ["rev-parse", "--verify", `refs/heads/${target.branch}^{commit}`]);
+  const tip = target.branch && await gitAsync(path, ["rev-parse", "--verify", `refs/heads/${target.branch}^{commit}`], { timeoutMs: 15_000 });
   const base = target.base ?? (wt?.commits ? wt.diffBase : wt?.syncHead) ?? wt?.start ?? wt?.base;
   if (!tip || !tip.ok || !base) return [];
-  const patch = codePatches(app, latestId).find((p) => p.space === target.space)?.patch;
+  const patch = codePatches(app, latestId, { storedOnly: true }).find((p) => p.space === target.space)?.patch;
   if (patch?.trim()) return patchCommit(path, base, tip.stdout.trim(), patch);
   // A sync-only application fast-forwards real commits without a patch.
-  return wt?.syncHead && git(path, ["merge-base", "--is-ancestor", wt.syncHead, tip.stdout.trim()]).ok ? [wt.syncHead] : [];
+  return wt?.syncHead && (await gitAsync(path, ["merge-base", "--is-ancestor", wt.syncHead, tip.stdout.trim()], { timeoutMs: 15_000 })).ok ? [wt.syncHead] : [];
 }
 
 function remoteRefs(path: string, remotes: string[], type: GitSignal, targetBranch?: string) {
@@ -137,7 +138,7 @@ const checks = new WeakMap<App, Promise<void>>();
 export function checkGitSignals(app: App): Promise<void> {
   const active = checks.get(app);
   if (active) return active;
-  const check = checkNow(app).finally(() => { checks.delete(app); });
+  const check = checkNow(app).then(() => checkUnclaimedCommits(app)).finally(() => { checks.delete(app); });
   checks.set(app, check);
   return check;
 }

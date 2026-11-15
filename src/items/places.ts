@@ -155,12 +155,20 @@ export function placeCandidates(app: App, runId: string, userId: string, limit =
   if (!here.length || itemsAt(app, here, userId, 1).length) return [];
   const mats = here.map((p) => placeMaterial(app, p));
   const text = mats.map((m) => m.text).join("\n");
+  return materialCandidates(app, text, userId, limit, {
+    people: mats.flatMap((m) => m.people), sources: mats.flatMap((m) => m.source ? [m.source] : []),
+    lastAt: mats.map((m) => m.lastAt).filter((x): x is string => !!x).sort().at(-1),
+  });
+}
+
+/** Shared lexical/link/time scoring for places and locally observed commits; never links an item. */
+export function materialCandidates(app: App, text: string, userId: string, limit = 3, context: { people?: string[]; sources?: string[]; lastAt?: string } = {}): Candidate[] {
   if (!text.trim()) return [];
   const want = grams(text);
   const links = new Set(text.match(LINK_RE) ?? []);
-  const people = [...new Set(mats.flatMap((m) => m.people))].filter((n) => n.length >= 2 && n !== "本人");
-  const sources = mats.map((m) => m.source).filter((s): s is string => !!s);
-  const lastAt = mats.map((m) => m.lastAt).filter((x): x is string => !!x).sort().at(-1);
+  const people = [...new Set(context.people ?? [])].filter((n) => n.length >= 2 && n !== "本人");
+  const sources = context.sources ?? [];
+  const lastAt = context.lastAt;
   const allowed = accessibleSpaces(app, userId);
   type Row = { id: string; title: string; detail: string; waiting_on: string | null; source_refs: string; space_id: string; updated_at: string };
   const rows = all<Row>(app.db, `select id, title, detail, waiting_on, source_refs, space_id, updated_at from items where user_id = ? and status in (${OPEN.map(() => "?").join(",")}) order by updated_at desc limit 300`, userId, ...OPEN);

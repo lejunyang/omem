@@ -2049,6 +2049,12 @@ export const migrations: readonly string[] = [
      note text not null, run_id text not null, round integer not null, flow_started_at text not null, at text not null
    );
    create index study_pushes_item on study_pushes(item_id,at);`,
+  // Commit observations and pending owner decisions belong to this device.
+  `create table git_commit_cursors (
+     space_id text not null, branch text not null, commit_id text not null, updated_at text not null,
+     tip text not null, tip_at text not null, pending text, processed text not null default '[]',
+     primary key(space_id,branch)
+   );`,
 ];
 
 export type Db = DatabaseSync;

@@ -953,7 +953,9 @@ function patchFiles(app: App, runId: string): { space: string; file: string }[] 
   return repos.map((x) => ({ space: x.space, file: patchFile(app, runId, x.space) })).filter((x) => existsSync(x.file));
 }
 
-export function codePatches(app: App, runId: string): { space: string; patch: string }[] {
+export function codePatches(app: App, runId: string, opts: { storedOnly?: boolean } = {}): { space: string; patch: string }[] {
+  // Background Git observations read immutable application evidence, never recompute a live diff.
+  if (opts.storedOnly) return patchFiles(app, runId).map((p) => ({ space: p.space, patch: readFileSync(p.file, "utf8") })).filter((p) => p.patch.trim());
   return codeDiffView(app, runId).patches;
 }
 

@@ -23,6 +23,13 @@ updated: 2026-11-15
 - `scope.ts`、`push.ts`：本人登记 pushRemote / pushPrefix，均非空才持续授权。study_push 只由宿主临时给试验和重跑，只推当前干净工作区 HEAD 到固定的远端及前缀，不强推；成功、失败审计，成功存 study_pushes 并随事项拉取。小结和改阶段说明列本轮推送。
 - 课题视图 findings[].fix 新增 verified / reruns，试验新增 fixOf / workId，scope 新增 pushRemote / pushPrefix，顶层 pushes 为最近 50 次成功推送。接口与判断详见 `docs/v2/studies.md` 文末；验收在 `test/study-fix.test.ts`、`test/study-push.test.ts`。
 - 未改网页，未做自动应用、合并、分支删除、逐次推送批准、读取流水线结果、远端设备执行或新定时任务。内置流程及技能只补缺，已有 study.yaml 不自动增加“改”。真实模型与外部流水线待验。
+## 没人认领的提交：本人确认后挂回事项（11-16）
+
+现有 Git 核对入口顺带观察本机分支的新增本人提交，首次只放游标、不翻历史；按安静期或二十条成批。交办的工作分支、应用提交、已有事项的分支及处理过的提交不再提议。共用事项候选打分，交 commit-claim 角色建议归属，由本人在一张卡片上选择挂到已有事项、新建待办或不用管；挂上后只补录没开始的编码交办阶段，新建不自动开流程。
+
+主逻辑 `src/flows/commits.ts`，配置 `flows.commits` 默认开启、安静三十分钟；新角色和专用交结果工具 claim_commits。git_commit_cursors 留本机，待答合并新提交替换旧卡，失败保留游标、同批最多两次。flow_signals 记每批结局。测试在 `test/flow-commits.test.ts`，拉取隔离在 `test/pull-complete.test.ts`；验证数字见验收清单。没有改 web/，没有写仓库和远端，没有替本人自动关联或确认。
+
+最终指定十二文件回归：`Test Files 12 passed (12)`、`Tests 169 passed | 1 skipped (170)`；提交专项十九项全过，tsc 与差异检查退出 0。旧原地交办只排除应用提交，不占用本人整条分支；旧单仓库交办记录也兼容。真实 Codex 验证受 CLI 无法找到 home 阻断，尚未进入角色运行；真实渠道卡片未验。命令、前几轮失败与修正见 `docs/v2/acceptance.md` 的“没人认领的提交”。
 
 ## 界面：流程看板、补录、逐条签字、关卡授权、课题的范围和修改（11-15）
 

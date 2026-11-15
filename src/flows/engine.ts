@@ -448,9 +448,11 @@ function validEvidence(app: App, ref: string) {
 }
 
 export type OwnerAction = "confirm" | "hold" | "skip" | "done" | "reopen";
-export function recordStage(app: App, itemId: string, stageId: string, note: string, refs: string[] = [], userId = "owner") {
+export function recordStage(app: App, itemId: string, stageId: string, note: string, refs: string[] = [], userId = "owner", expected?: { startedAt: string }) {
   return serial(app, itemId, async () => {
     if (getItem(app, itemId).userId !== userId) throw new HttpError(403, "只有事项本人能补录");
+    const currentFlow = itemFlow(app, itemId);
+    if (expected && (!currentFlow || currentFlow.endedAt || currentFlow.startedAt !== expected.startedAt || !["pending", "gated"].includes(getStage(app, itemId, stageId).state))) return flowView(app, itemId);
     const f = running(app, itemId);
     definition(f, stageId);
     const s = getStage(app, itemId, stageId);
