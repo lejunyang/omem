@@ -1,0 +1,303 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { get, onServerEvent, onServerResync, post } from "../api";
+import { promptDialog } from "../lib/dialog";
+import { refAction } from "../lib/refs";
+import { byConcern, byUnjudged, directionWords, findingWords, kindWords, progress, total, trialTone, trialWord, type StudyDirection, type StudyFinding, type StudyTrial, type StudyView } from "../lib/study";
+import { fmtTime } from "../store";
+import RankBars from "./charts/RankBars.vue";
+import Markdown from "./Markdown.vue";
+import RunArtifacts from "./RunArtifacts.vue";
+import Skeleton from "./Skeleton.vue";
+import UiSegmented from "./UiSegmented.vue";
+
+/**
+ * A study's ledger on the item page (docs/v2/studies.md): what it found, what it tried, the directions
+ * and how much of the feature list has been tried. `choosing`: the flow is waiting for the owner to
+ * pick this round's direction, which is done here.
+ */
+type Tab = "findings" | "trials" | "directions" | "coverage";
+const props = withDefaults(defineProps<{ itemId: string; editable?: boolean; choosing?: boolean }>(), { editable: true });
+const data = ref<StudyView | null>(null), error = ref(""), loading = ref(true), busy = ref(false);
+const tab = ref<Tab>("findings"), everyRound = ref(false);
+let seq = 0, epoch = 0, picked = false;
+
+const proposed = computed(() => props.choosing ? data.value?.directions.filter((d) => d.state === "proposed") ?? [] : []);
+const going = computed(() => data.value?.directions.filter((d) => d.state === "confirmed" || d.state === "active").at(-1) ?? null);
+const findings = computed(() => [...data.value?.findings ?? []].sort(byUnjudged));
+const fresh = computed(() => findings.value.filter((f) => f.state === "new").length);
+const round = computed(() => Math.max(0, ...(data.value?.trials ?? []).map((t) => t.round)));
+const trials = computed(() => {
+  const all = data.value?.trials ?? [];
+  return (everyRound.value ? [...all] : all.filter((t) => t.round === round.value)).sort((a, b) => b.round - a.round || byConcern(a, b));
+});
+/** The one in hand first, then the ones waiting to be picked (as proposed), then earlier ones, newest round first. */
+const rank = (d: StudyDirection) => d.state === "confirmed" || d.state === "active" ? 0 : d.state === "proposed" ? 1 : 2;
+const directions = computed(() => (data.value?.directions ?? []).map((d, i) => ({ d, i })).sort((a, b) => rank(a.d) - rank(b.d) || (rank(a.d) === 2 ? b.d.round - a.d.round : 0) || a.i - b.i).map((x) => x.d));
+const tried = computed(() => (data.value?.coverage.features ?? []).filter((f) => f.trials > 0).sort((a, b) => b.trials - a.trials));
+const untried = computed(() => (data.value?.coverage.features ?? []).filter((f) => !f.trials));
+const empty = computed(() => !!data.value && !data.value.directions.length && !data.value.trials.length && !data.value.findings.length && !data.value.coverage.ref);
+const tabs = computed(() => [
+  { value: "findings" as Tab, label: `发现 ${findings.value.length}` },
+  { value: "trials" as Tab, label: `试验 ${data.value?.trials.length ?? 0}` },
+  { value: "directions" as Tab, label: `方向 ${data.value?.directions.length ?? 0}` },
+  { value: "coverage" as Tab, label: "覆盖" },
+]);
+
+function take(view: StudyView) {
+  data.value = view; error.value = "";
+  // Open on what matters now, once: a direction to pick, then findings, then the trials.
+  if (!picked) { picked = true; tab.value = proposed.value.length ? "directions" : view.findings.length ? "findings" : view.trials.length ? "trials" : view.directions.length ? "directions" : "coverage"; }
+}
+async function load() {
+  const request = ++seq, id = props.itemId;
+  try { const view = await get<StudyView>(`/api/items/${id}/study`); if (request === seq && id === props.itemId) take(view); }
+  catch (e) { if (request === seq) error.value = (e as Error).message; }
+  finally { if (request === seq) loading.value = false; }
+}
+watch(() => props.itemId, () => { ++epoch; ++seq; picked = false; data.value = null; error.value = ""; busy.value = false; loading.value = true; everyRound.value = false; void load(); }, { immediate: true });
+watch(() => props.choosing, (now) => { if (now) tab.value = "directions"; });
+const off = onServerEvent((e) => { if (e.type === "changed" && e.entity === "item" && e.id === props.itemId) void load(); });
+const resync = onServerResync(() => void load());
+onBeforeUnmount(() => { ++epoch; ++seq; off(); resync(); });
+
+async function send(path: string, payload: unknown) {
+  if (busy.value || !props.editable) return;
+  const generation = epoch;
+  busy.value = true; error.value = ""; ++seq;
+  try { const view = await post<StudyView>(`/api/items/${props.itemId}/study/${path}`, payload); if (generation === epoch) { ++seq; take(view); } }
+  catch (e) { if (generation === epoch) error.value = (e as Error).message; }
+  finally { if (generation === epoch) busy.value = false; }
+}
+/** The owner picks this round's direction (or none), with a line of changes if any. */
+async function choose(d: StudyDirection | null) {
+  const generation = epoch;
+  const answer = await promptDialog(d ? `这一轮就做：${d.goal}` : "这一轮不跑", {
+    message: d ? "确认后助手按这个方向逐个去试。想改的地方写在下面，没有就留空。" : "这一轮到此为止，下一轮再定方向。",
+    fields: d ? [{ id: "note", label: "要改的地方", value: "", maxLength: 2000 }] : [{ id: "note", label: "原因（可不填）", value: "", maxLength: 2000 }],
+    okText: d ? "就做这个" : "这一轮不跑",
+  });
+  if (!answer || generation !== epoch) return;
+  await send("choose", { direction: d?.id ?? null, note: answer.note?.trim() || undefined });
+}
+async function close(d: StudyDirection, state: "done" | "dropped") {
+  const generation = epoch;
+  const answer = await promptDialog(state === "done" ? "这个方向做完了" : "放下这个方向", {
+    message: `${d.goal}\n没跑的试验不再跑。结论会留在台账里，以后定方向时能看到。`,
+    fields: [{ id: "conclusion", label: "结论", value: "", required: true, maxLength: 4000 }],
+    okText: state === "done" ? "做完了" : "放下",
+  });
+  if (!answer?.conclusion.trim() || generation !== epoch) return;
+  await send(`directions/${encodeURIComponent(d.id)}/close`, { state, conclusion: answer.conclusion.trim() });
+}
+async function judge(f: StudyFinding, state: "confirmed" | "rejected" | "later") {
+  let reason: string | undefined;
+  if (state === "rejected") {
+    const generation = epoch;
+    const answer = await promptDialog("这条不算", { message: `${f.title}\n写了原因，以后定方向和归并发现时会参考。`, fields: [{ id: "reason", label: "为什么不算（可不填）", value: "", maxLength: 2000 }], okText: "不算" });
+    if (!answer || generation !== epoch) return;
+    reason = answer.reason?.trim() || undefined;
+  }
+  await send(`findings/${encodeURIComponent(f.id)}`, { state, reason });
+}
+const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim())?.trim() ?? "";
+const trialMeta = (t: StudyTrial) => [trialWord(t), t.unsure ? "它自己拿不准" : "", t.escalated ? "请更好的模型看过" : "", t.attempts > 1 ? `第 ${t.attempts} 次` : "", everyRound.value ? `第 ${t.round} 轮` : ""].filter(Boolean).join(" · ");
+</script>
+
+<template>
+  <section class="item-study" aria-label="课题" :aria-busy="busy">
+    <div class="study-head">
+      <span class="study-name">课题的台账</span>
+      <span v-if="fresh" class="study-fresh">{{ fresh }} 条发现等你看</span>
+      <span v-if="data && data.idleRounds > 0" class="muted small">连着 {{ data.idleRounds }} 轮没有新发现</span>
+    </div>
+    <Skeleton v-if="loading" variant="text" :rows="3" />
+    <p v-if="error" class="error small" role="alert">{{ error }} <button class="btn ghost sm" :disabled="busy" @click="load">重试</button></p>
+    <p v-if="empty" class="muted small">还没有内容：先把项目的功能梳理成清单，定了方向以后，每个试验的结果和归并出的发现都记在这里。</p>
+    <template v-else-if="data">
+      <div v-if="going" class="going">
+        <div class="going-goal"><span class="muted">这一轮在试</span>{{ going.goal }}</div>
+        <div v-if="total(going)" class="bar" role="img" :aria-label="progress(going).map((p) => `${p.label} ${p.n}`).join('，')">
+          <span v-for="p in progress(going)" :key="p.tone" :class="`t-${p.tone}`" :style="{ flexGrow: p.n }" />
+        </div>
+        <div class="legend small">
+          <span class="muted">{{ total(going) }} 个试验</span>
+          <span v-for="p in progress(going)" :key="p.tone" class="legend-item"><i :class="`t-${p.tone}`" />{{ p.label }} {{ p.n }}</span>
+        </div>
+      </div>
+      <UiSegmented v-model="tab" size="sm" aria-label="台账的几部分" :options="tabs" />
+
+      <div v-if="tab === 'findings'" class="rows">
+        <p v-if="!findings.length" class="muted small">还没有发现。一轮试验跑完，小结会把几个试验里的同一个问题归并成一条，列在这里等你看。</p>
+        <details v-for="f in findings" :key="f.id" class="entry" :open="f.state === 'new' && fresh <= 3">
+          <summary>
+            <span class="kind" :class="f.kind">{{ kindWords[f.kind] }}</span>
+            <span class="entry-name">{{ f.title }}</span>
+            <span class="entry-meta" :class="f.state === 'new' ? 'waiting' : 'muted'">{{ findingWords[f.state] }}</span>
+          </summary>
+          <div class="entry-body">
+            <Markdown :source="f.repro" class="text" />
+            <div v-if="f.stateReason" class="muted">你写的原因：{{ f.stateReason }}</div>
+            <div v-if="f.trials.length" class="basis">
+              <div class="muted">依据的试验</div>
+              <div v-for="t in f.trials" :key="t.id" class="basis-row">
+                <span class="dot" :class="`t-${trialTone(t)}`" />
+                <span class="basis-what">{{ t.object }} <span class="muted">×</span> {{ t.check }}<span class="muted"> · {{ trialWord(t) }} · 第 {{ t.round }} 轮</span></span>
+                <a v-if="t.runId" :href="`#/runs/${t.runId}`" class="muted">运行</a>
+                <RunArtifacts v-if="t.artifacts.length" :items="t.artifacts" class="basis-files" />
+              </div>
+            </div>
+            <div v-if="editable && f.state !== 'duplicate'" class="row wrap">
+              <button v-if="f.state !== 'confirmed'" type="button" class="btn sm" :class="f.state === 'new' ? 'primary' : 'ghost'" :disabled="busy" @click="judge(f, 'confirmed')">认可</button>
+              <button v-if="f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'rejected')">不算</button>
+              <button v-if="f.state === 'new'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'later')">以后再说</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div v-else-if="tab === 'trials'" class="rows">
+        <p v-if="!data.trials.length" class="muted small">还没有试验。方向确认以后，助手按计划一个一个去试，每个都照实记下结果。</p>
+        <div v-else class="rows-head small muted">
+          <span>{{ everyRound ? `各轮一共 ${data.trials.length} 个` : `第 ${round} 轮，${trials.length} 个` }}，没做好的排在前面</span>
+          <button v-if="data.trials.length > trials.length || everyRound" type="button" class="link" @click="everyRound = !everyRound">{{ everyRound ? "只看这一轮" : `看各轮的（共 ${data.trials.length} 个）` }}</button>
+        </div>
+        <details v-for="t in trials" :key="t.id" class="entry">
+          <summary>
+            <span class="dot" :class="`t-${trialTone(t)}`" />
+            <span class="entry-name">{{ t.object }} <span class="muted">×</span> {{ t.check }}</span>
+            <span class="entry-meta muted">{{ trialMeta(t) }}</span>
+          </summary>
+          <div class="entry-body">
+            <Markdown v-if="t.summary" :source="t.summary" class="text" />
+            <div v-else class="muted">{{ t.state === "running" ? "正在跑。" : t.state === "queued" ? "还没轮到。" : "没有跑。" }}</div>
+            <div v-if="t.prior" class="muted prior">{{ t.prior }}</div>
+            <div v-if="t.findings.length" class="muted">它觉得可能是问题的：{{ t.findings.map((x) => `${kindWords[x.kind] ?? x.kind}「${x.title}」`).join("、") }}</div>
+            <div v-if="t.env" class="muted">在哪跑：{{ t.env }}</div>
+            <div class="links">
+              <template v-for="(r, i) in t.evidence.filter((x) => x.startsWith('src:'))" :key="r"><a href="#" :title="r" @click.prevent="refAction(r)?.()">原件 {{ i + 1 }}</a></template>
+              <a v-if="t.runId" :href="`#/runs/${t.runId}`">看这次运行</a>
+              <span class="muted">{{ fmtTime(t.updatedAt) }}</span>
+            </div>
+            <RunArtifacts v-if="t.artifacts.length" :items="t.artifacts" />
+          </div>
+        </details>
+      </div>
+
+      <div v-else-if="tab === 'directions'" class="rows">
+        <p v-if="!data.directions.length" class="muted small">还没有方向。“定方向”那一段会对着功能清单提出这一轮往哪试，由你来选。</p>
+        <div v-if="proposed.length" class="choose">
+          <p>这一轮提了 {{ proposed.length }} 个方向，选一个{{ editable ? "" : "（由事项本人选）" }}：</p>
+          <div v-if="editable" class="row wrap"><button type="button" class="btn sm ghost" :disabled="busy" @click="choose(null)">这一轮不跑</button></div>
+        </div>
+        <details v-for="d in directions" :key="d.id" class="entry" :open="d.state === 'proposed' && choosing || d.id === going?.id">
+          <summary>
+            <span class="state" :class="d.state">{{ directionWords[d.state] }}</span>
+            <span class="entry-name">{{ d.goal }}</span>
+            <span class="entry-meta muted">第 {{ d.round }} 轮 · {{ total(d) || d.plan.length }} 个试验</span>
+          </summary>
+          <div class="entry-body">
+            <dl class="facts">
+              <template v-if="d.approach"><dt>做法</dt><dd><Markdown :source="d.approach" class="text" /></dd></template>
+              <template v-if="d.acceptance"><dt>验收</dt><dd><Markdown :source="d.acceptance" class="text" /></dd></template>
+              <template v-if="d.env"><dt>在哪跑</dt><dd>{{ d.env }}</dd></template>
+              <template v-if="d.estimate"><dt>预计花费</dt><dd>{{ d.estimate }}</dd></template>
+              <template v-if="d.note"><dt>你的要求</dt><dd>{{ d.note }}</dd></template>
+              <template v-if="d.conclusion"><dt>结论</dt><dd><Markdown :source="d.conclusion" class="text" /></dd></template>
+            </dl>
+            <details v-if="d.plan.length" class="sub">
+              <summary>计划试的 {{ d.plan.length }} 个</summary>
+              <ul><li v-for="(p, i) in d.plan" :key="i">{{ p.object }} <span class="muted">×</span> {{ p.check }}<span v-if="p.prior" class="muted prior">{{ p.prior }}</span></li></ul>
+            </details>
+            <details v-if="d.removed.length" class="sub">
+              <summary>去掉了 {{ d.removed.length }} 个以前试过的</summary>
+              <ul><li v-for="(p, i) in d.removed" :key="i">{{ p.object }} <span class="muted">×</span> {{ p.check }}<span class="muted prior">{{ p.prior }}</span></li></ul>
+            </details>
+            <div v-if="editable && d.state === 'proposed' && choosing" class="row wrap"><button type="button" class="btn sm primary" :disabled="busy" @click="choose(d)">就做这个</button></div>
+            <div v-else-if="editable && (d.state === 'confirmed' || d.state === 'active')" class="row wrap">
+              <button type="button" class="link" :disabled="busy" @click="close(d, 'done')">这个方向做完了…</button>
+              <button type="button" class="link" :disabled="busy" @click="close(d, 'dropped')">放下不做了…</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div v-else class="rows">
+        <p v-if="!data.coverage.ref" class="muted small">还没有功能清单。“梳理”那一段做完以后，这里按功能列出各试过几次、哪些还没碰过。</p>
+        <template v-else>
+          <div class="rows-head small muted">
+            <span>{{ data.coverage.features.length }} 个功能里试过 {{ tried.length }} 个。按试验对象里出现功能名粗略统计。</span>
+            <a href="#" @click.prevent="refAction(data.coverage.ref!)?.()">看功能清单</a>
+          </div>
+          <RankBars v-if="tried.length" :items="tried.map((f) => ({ label: f.title, value: f.trials }))" name="试过的次数" unit="次" :table="false" />
+          <p v-if="untried.length" class="small untried"><span class="muted">还没试过的（{{ untried.length }}）</span>{{ untried.map((f) => f.title).join("、") }}</p>
+        </template>
+      </div>
+    </template>
+  </section>
+</template>
+
+<style scoped>
+.item-study { display: grid; gap: 10px; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.study-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.study-name { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.study-fresh { font-size: 12.5px; font-weight: 600; color: var(--warn); }
+.error { color: var(--danger); margin: 0; }
+.link { padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12.5px; }
+.link:hover { color: var(--ink); text-decoration: underline; }
+.link:disabled { cursor: default; opacity: 0.6; }
+
+/* The direction in hand: its goal, then one thin bar of how its trials went (the flow strip's language). */
+.going { display: grid; gap: 6px; }
+.going-goal { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 13.5px; line-height: 1.5; }
+.bar { display: flex; gap: 2px; height: 3px; }
+.bar span { flex: 1 1 0; min-width: 3px; border-radius: 2px; background: var(--line-strong); transform-origin: left; animation: grow 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes grow { from { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .bar span { animation: none; } }
+.legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); }
+.legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.legend-item i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+.bar .t-ok, .legend-item .t-ok, .dot.t-ok { background: var(--ok); }
+.bar .t-bad, .legend-item .t-bad, .dot.t-bad { background: var(--danger); }
+.bar .t-warn, .legend-item .t-warn, .dot.t-warn { background: var(--warn); }
+.bar .t-run, .legend-item .t-run, .dot.t-run { background: var(--accent); }
+.bar .t-skip, .legend-item .t-skip { background: var(--line); }
+
+/* One line per finding, trial or direction; opened to read it. No boxes: hairlines between rows. */
+.rows { display: grid; gap: 2px; }
+.rows > p { margin: 4px 0; }
+.rows-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding-bottom: 4px; }
+.entry { border-bottom: 1px solid var(--line); }
+.entry > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 7px 0; cursor: pointer; list-style: none; }
+.entry > summary::-webkit-details-marker { display: none; }
+.entry > summary:hover .entry-name { text-decoration: underline; }
+.entry-name { flex: 1 1 12em; min-width: 0; }
+.entry-meta { flex: 0 1 auto; font-size: 12px; }
+.entry-meta.waiting { color: var(--warn); font-weight: 600; }
+.entry-body { display: grid; gap: 8px; padding: 0 0 12px 15px; font-size: 12.5px; }
+.dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); transform: translateY(-1px); }
+.kind, .state { flex: none; min-width: 2.4em; font-size: 12px; color: var(--muted); }
+.kind.defect { color: var(--danger); }
+.kind.gap { color: var(--warn); }
+.kind.idea { color: var(--accent); }
+.state.proposed { color: var(--warn); font-weight: 600; }
+.state.confirmed, .state.active { color: var(--accent); }
+.text { font-size: 12.5px; }
+.text :deep(p) { margin: 0 0 4px; }
+.text :deep(p:last-child) { margin-bottom: 0; }
+.prior { display: block; white-space: pre-line; }
+.links { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.basis { display: grid; gap: 4px; }
+.basis-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.basis-what { flex: 1 1 12em; min-width: 0; }
+.basis-files { flex: 1 1 100%; }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; min-width: 0; }
+.sub > summary { width: fit-content; cursor: pointer; color: var(--muted); }
+.sub ul { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 4px; }
+.choose { display: grid; gap: 8px; padding: 10px 14px; margin-bottom: 4px; border-radius: var(--radius); background: var(--warn-soft); }
+.choose p { margin: 0; font-size: 13.5px; }
+.untried { margin: 6px 0 0; line-height: 1.7; }
+.untried .muted { margin-right: 8px; }
+</style>

@@ -13,6 +13,8 @@ export type FlowStage = {
   descriptions?: { ai: string; time: string; budget: string };
   /** The stage completes by itself when this is seen (a push, a merge); what the last look found. */
   waitingSignal?: { type: string; checkedAt: string | null; note: string };
+  /** The stage asked the owner something that is answered elsewhere on the page: a study's direction for this round. */
+  asking?: "direction";
   /** What this stage's runs reported case by case (a verification stage), failed first, then the ones not done. */
   tests?: StageTest[];
 };
@@ -29,8 +31,30 @@ export function testSummary(tests: StageTest[]) {
 }
 export type FlowDefinition = { id: string; name: string; description?: string; stages: { id: string; name: string; note?: string; gate: string; by: string | { run?: { agent?: string }; object?: string } }[] };
 export type FlowFile = { id: string; raw: string; definition: FlowDefinition | null; problem: string | null };
+/** Something this item's chats and documents said after the flow began, as the follow-up run put it (docs/v2/flows.md). */
+export type FlowChange = {
+  id: string; at: string; type: "scope" | "decision" | "deadline" | "blocker" | "info"; summary: string; detail: string | null;
+  req: string | null; stages: string[]; refs: string[]; runId: string;
+  status: "noted" | "asked" | "merged" | "split" | "dismissed"; askId: string | null;
+};
+/** A chat or document the flow keeps reading, and how much new content is waiting to be read together. */
+export type FollowPlace = { sourceId: string; title: string; pending: number; latestAt: string | null };
+export const changeWords: Record<FlowChange["type"], string> = { scope: "范围", decision: "决定", deadline: "截止时间", blocker: "阻塞", info: "信息" };
+export function changeStatus(c: FlowChange) {
+  if (c.status === "asked") return "等你定";
+  if (c.status === "merged") return c.type === "deadline" ? "截止时间已改" : "已并进这件事";
+  if (c.status === "split") return "另开了一件事";
+  if (c.status === "dismissed") return "不用管";
+  return "记下了";
+}
+/** How a change that waits for the owner is announced. */
+export const changeHeads: Record<FlowChange["type"], string> = { scope: "范围变了", decision: "有了新决定", deadline: "截止时间变了", blocker: "有阻塞", info: "新信息" };
+export const changeChoices = [{ choice: "merge", label: "并进这件事" }, { choice: "split", label: "另开一件事" }, { choice: "dismiss", label: "不用管" }] as const;
 export type FlowView = {
-  flow: { id: string; name: string; startedAt: string; endedAt: string | null; round?: number; repeat?: { from: string; every: string | string[] } | null; roundClosedAt?: string | null; nextRoundAt?: string | null; canStartRound?: boolean; repeatDescription?: string } | null;
+  flow: { id: string; name: string; startedAt: string; endedAt: string | null; round?: number; repeat?: { from: string; every: string | string[] } | null; roundClosedAt?: string | null; nextRoundAt?: string | null; canStartRound?: boolean; repeatDescription?: string; /** A study: directions, trials and findings are kept for it. */ study?: boolean; idleRounds?: number } | null;
+  /** What changed around this item since the flow began: the ones waiting for the owner and the latest ten. */
+  changes?: FlowChange[];
+  follow?: FollowPlace[];
   /** Earlier rounds of a repeating flow, newest first: how each stage ended. */
   rounds?: { round: number; endedAt: string; stages: { id: string; state: StageState; note: string }[] }[];
   stages: FlowStage[]; suits: FlowDefinition[];
@@ -78,6 +102,7 @@ export function nextWords(s: FlowStage) {
   if (s.question === "skip") return `等你补充跳过的原因：${task}。`;
   if (s.question === "refuse") return `等你补充哪里还不行：${task}。写明原因后重开这一段。`;
   if (s.question === "done") return `做完了，确认吗？${task}。确认后继续推进后面的阶段。`;
+  if (s.asking === "direction") return "这一轮的方向提出来了：在下面的台账里选一个，或者这一轮不跑。";
   if (s.state === "gated") return `要开始这一段了：${task}。你同意才开始。`;
   if (s.waitingSignal) return `轮到你：${task}。${s.waitingSignal.type === "git.merged" ? "合进目标分支" : "推到远端"}以后这一段会自己完成，后面的阶段接着走；也可以直接点做完。`;
   return `轮到你：${task}。做完点一下，后面的阶段会接着走。`;
@@ -88,4 +113,4 @@ export function evidenceLink(ref: string) {
   return `#/runs/${encodeURIComponent(ref.replace(/^(run:|code-work:)/, ""))}`;
 }
 export const actorWords = (actor: string) => ({ owner: "你", user: "你", host: "omem", assistant: "助理" }[actor] ?? actor);
-export const objectStatusWords = (status: string) => ({ drafting: "在写", review: "等你确认", approved: "已通过", assessed: "已评估", recorded: "已记录", ended: "已结束", running: "进行中", reviewing: "评审中", peer: "等外部 Agent", "owner-tasks": "等你决定", sync: "同步有冲突", stopped: "已停止", assistant: "助手在处理", paused: "已暂停", "review-open": "有问题待定", "review-ok": "评审通过", done: "完成，等你处理", findings: "等你决定要改的问题", design: "确认方案", plan: "确认评审计划", "no-changes": "没有改动", stalled: "停住了" }[status] ?? "等待进展");
+export const objectStatusWords = (status: string) => ({ drafting: "在写", review: "等你确认", approved: "已通过", assessed: "已评估", recorded: "已记录", ended: "已结束", running: "进行中", reviewing: "评审中", peer: "等外部 Agent", "owner-tasks": "等你决定", sync: "同步有冲突", stopped: "已停止", assistant: "助手在处理", paused: "已暂停", "review-open": "有问题待定", "review-ok": "评审通过", confirmed: "还没开始试", active: "在试", done: "完成，等你处理", findings: "等你决定要改的问题", design: "确认方案", plan: "确认评审计划", "no-changes": "没有改动", stalled: "停住了" }[status] ?? "等待进展");

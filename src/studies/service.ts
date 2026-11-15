@@ -34,7 +34,7 @@ export function proposeDirections(app: App, p: Proposal, by: FlowActor) {
     const text = proposed.length ? proposed.map((d, i) => `${i + 1}. ${d.goal}\n做法：${d.approach}\n验收：${d.acceptance}\n在哪跑：${d.env || "未写"}\n${json<unknown[]>(d.plan, []).length} 个试验，${json<unknown[]>(d.removed, []).length} 个以前做过并被去掉\n${json<{ object: string; check: string; prior: string }[]>(d.removed, []).map((t) => `${t.object} × ${t.check}：${t.prior}`).join("\n")}\n预计花费：${d.estimate || "未估算"}`).join("\n\n") : `这一轮没有提出方向\n${p.note || "没有值得做的方向"}`;
     const budgets = f.definition.stages.filter((d) => typeof d.by === "object" && "object" in d.by && d.by.object === "trials").map((d) => `${d.name}：${JSON.stringify(d.budget ?? {})}，升档上限 ${d.escalate?.max ?? 0}（可用阶段预算接口修改）`).join("\n");
     const ask = createAsk(app, { runId: null, userId: getItem(app, p.item).userId, question: `${text}\n${p.note && proposed.length ? p.note : ""}\n${budgets}\n可附一句改动要求。`, options: proposed.length ? [...proposed.map((d) => ({ label: d.goal })), { label: "这一轮不跑" }] : [{ label: "知道了" }], allowText: true, context: { handler: "study-plan", itemId: p.item, stageId: d.id, startedAt: f.startedAt, round: f.round, directions: proposed.map((d) => d.id) } });
-    changeStage(app, p.item, d.id, "doing", { askId: ask.id, waitingOn: "owner", control: { ...s.control, reported: true } }, by, "提案已交，等本人选方向");
+    changeStage(app, p.item, d.id, "doing", { askId: ask.id, waitingOn: "owner", control: { ...s.control, reported: true } }, by, `提案已交，等本人选方向${p.note?.trim() ? `。${p.note.trim()}` : ""}`);
     return `提案已交，等本人选择：${ask.id}`;
   });
 }

@@ -1,0 +1,57 @@
+import type { Artifact } from "../components/RunArtifacts.vue";
+
+/** A study's ledger as the item page shows it (docs/v2/studies.md): directions, the trials run for them, and findings. */
+export type TrialResult = "passed" | "failed" | "blocked" | "unclear";
+export type StudyTrial = {
+  id: string; directionId: string; round: number; seq: number; object: string; check: string; env: string;
+  state: "queued" | "running" | "reported" | "skipped"; result: TrialResult | null; summary: string;
+  evidence: string[]; artifacts: Artifact[]; findings: { kind: FindingKind; title: string; repro: string }[];
+  runId: string | null; attempts: number; prior: string | null; unsure: boolean; escalated: boolean; updatedAt: string;
+};
+export type StudyDirection = {
+  id: string; round: number; goal: string; approach: string; acceptance: string; env: string; estimate: string;
+  state: "proposed" | "confirmed" | "active" | "done" | "dropped"; conclusion: string; note: string;
+  plan: { object: string; check: string; prior?: string }[]; removed: { object: string; check: string; prior: string }[];
+  counts: Record<"queued" | "running" | "skipped" | TrialResult, number>; createdAt: string; updatedAt: string;
+};
+export type FindingKind = "defect" | "gap" | "idea";
+export type StudyFinding = {
+  id: string; kind: FindingKind; title: string; repro: string; trials: StudyTrial[];
+  state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; stateReason: string; sameAs: string | null; createdAt: string; updatedAt: string;
+};
+export type StudyView = {
+  directions: StudyDirection[]; trials: StudyTrial[]; findings: StudyFinding[];
+  coverage: { path: string; ref: string | null; features: { title: string; trials: number; lastAt: string | null }[] };
+  idleRounds: number;
+};
+
+export const kindWords: Record<FindingKind, string> = { defect: "缺陷", gap: "缺口", idea: "想法" };
+export const findingWords: Record<StudyFinding["state"], string> = { new: "等你看", confirmed: "认可", rejected: "不算", later: "以后再说", duplicate: "和另一条是一回事" };
+export const resultWords: Record<TrialResult, string> = { passed: "通过", failed: "没通过", blocked: "跑不了", unclear: "说不清" };
+export const directionWords: Record<StudyDirection["state"], string> = { proposed: "等你选", confirmed: "在做", active: "在做", done: "做完了", dropped: "放下了" };
+
+/** What a trial is at now, in one word: its result once it has one. */
+export function trialWord(t: StudyTrial) {
+  return t.result ? resultWords[t.result] : t.state === "running" ? "在跑" : t.state === "skipped" ? "没跑" : "排着";
+}
+/** The colour of a trial's dot and of its share of the progress bar. */
+export function trialTone(t: Pick<StudyTrial, "state" | "result">) {
+  return t.result === "passed" ? "ok" : t.result === "failed" ? "bad" : t.result ? "warn" : t.state === "running" ? "run" : "rest";
+}
+/** Read first what did not go well: failed, could not run, unclear, running, passed, then the ones not run. */
+const order = (t: StudyTrial) => t.result === "failed" ? 0 : t.result === "blocked" ? 1 : t.result === "unclear" ? 2 : t.state === "running" ? 3 : t.result === "passed" ? 4 : t.state === "queued" ? 5 : 6;
+export const byConcern = (a: StudyTrial, b: StudyTrial) => order(a) - order(b) || a.seq - b.seq;
+/** Findings the owner has not judged come first, then the ones put off. */
+const findingOrder: Record<StudyFinding["state"], number> = { new: 0, later: 1, confirmed: 2, rejected: 3, duplicate: 4 };
+export const byUnjudged = (a: StudyFinding, b: StudyFinding) => findingOrder[a.state] - findingOrder[b.state] || b.createdAt.localeCompare(a.createdAt);
+
+/** The parts of a direction's progress bar, in a fixed order, leaving out the empty ones. */
+export function progress(d: StudyDirection) {
+  const c = d.counts;
+  return [
+    { tone: "ok", label: "通过", n: c.passed }, { tone: "bad", label: "没通过", n: c.failed },
+    { tone: "warn", label: "跑不了或说不清", n: c.blocked + c.unclear }, { tone: "run", label: "在跑", n: c.running },
+    { tone: "rest", label: "排着", n: c.queued }, { tone: "skip", label: "没跑", n: c.skipped },
+  ].filter((p) => p.n > 0);
+}
+export const total = (d: StudyDirection) => Object.values(d.counts).reduce((a, b) => a + b, 0);

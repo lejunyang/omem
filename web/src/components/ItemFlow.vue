@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, onServerEvent, onServerResync, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { actorWords, aiName, clockTime, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, type FlowAction, type FlowDefinition, type FlowFile, type FlowStage, type FlowView } from "../lib/flow";
+import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView } from "../lib/flow";
+import ItemStudy from "./ItemStudy.vue";
 import RunArtifacts from "./RunArtifacts.vue";
 import { refAction } from "../lib/refs";
 import { fmtTime, relTime } from "../store";
@@ -20,6 +21,20 @@ const clock = setInterval(() => { now.value = Date.now(); }, 60000);
 const current = computed(() => data.value?.stages.find((s) => ownerTurn(s) || s.state === "blocked") ?? data.value?.stages.find((s) => ["doing", "stale", "pending"].includes(s.state)) ?? data.value?.stages.at(-1));
 const stage = computed(() => data.value?.stages.find((s) => s.id === selected.value) ?? current.value);
 const waiting = computed(() => data.value?.flow?.endedAt ? [] : data.value?.stages.filter((s) => ownerTurn(s) || s.state === "blocked") ?? []);
+/** Changes the follow-up found that touch work already begun or done: the owner says what to do with each. */
+const asked = computed(() => data.value?.flow?.endedAt ? [] : data.value?.changes?.filter((c) => c.status === "asked") ?? []);
+const stageName = (id: string) => data.value?.stages.find((s) => s.id === id)?.name ?? id;
+/** "编码（完成）、测试（进行中）": the stages a change touches, in the flow's order, with where each stands. */
+const touched = (c: FlowChange) => (data.value?.stages ?? []).filter((s) => c.stages.includes(s.id)).map((s) => `${s.name}（${stageWords[s.state]}）`).join("、");
+const reopens = (c: FlowChange) => data.value?.stages.find((s) => c.stages.includes(s.id))?.name;
+/** Where the flow keeps reading, said in one line; the new content waiting there is read together once it goes quiet. */
+const following = computed(() => {
+  const places = data.value?.flow?.endedAt ? [] : data.value?.follow ?? [];
+  if (!places.length) return "";
+  const names = places.slice(0, 3).map((p) => p.title || "未命名").join("、") + (places.length > 3 ? ` 等 ${places.length} 处` : "");
+  const pending = places.reduce((n, p) => n + p.pending, 0);
+  return `在跟：${names}。${pending ? `有 ${pending} 条新内容，等那边安静下来一起看。` : "有新结论会列在这里。"}`;
+});
 const completed = computed(() => !!data.value?.flow?.endedAt && data.value.stages.every((s) => ["done", "skipped"].includes(s.state)));
 async function load() {
   const request = ++seq, id = props.itemId;
@@ -89,6 +104,11 @@ async function act(s: FlowStage, a: FlowAction) {
   }
   if (generation === epoch) await mutate(id, `/api/items/${id}/flow/stages/${s.id}/${a.action}`, { note });
 }
+/** The owner settles one change: fold it into this item (reopening the earliest stage it touches), make it an item of its own, or leave it. */
+async function settle(c: FlowChange, choice: string) {
+  const id = props.itemId;
+  await mutate(id, `/api/items/${id}/flow/changes/${encodeURIComponent(c.id)}`, { choice });
+}
 async function stop() {
   const id = props.itemId, generation = epoch;
   if (await confirmDialog("停止流程", { message: "保留已有阶段与经过，撤回尚未回答的问题。事项仍由你决定是否关闭。", danger: true, okText: "停止" }) && generation === epoch) await mutate(id, `/api/items/${id}/flow`, undefined, true);
@@ -129,6 +149,15 @@ async function stop() {
       <div v-for="s in waiting" :key="s.id" class="turn">
         <p>{{ nextWords(s) }}</p>
         <div v-if="editable" class="row wrap"><button v-for="(a, i) in stageActions(s)" :key="a.label" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button></div>
+      </div>
+      <div v-for="c in asked" :key="c.id" class="turn">
+        <p><span class="turn-kind">{{ changeHeads[c.type] }}</span>{{ c.summary }}</p>
+        <Markdown v-if="c.detail" :source="c.detail" class="stage-text" />
+        <p class="turn-note">
+          <template v-if="touched(c)">会影响：{{ touched(c) }}。</template><template v-if="reopens(c)">并进来就重开「{{ reopens(c) }}」，把这条带给它，它后面做完的阶段要再看一遍。</template>
+          <span class="evidence turn-refs"><template v-for="(r, i) in c.refs" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原话 {{ i + 1 }}</a></template></span>
+        </p>
+        <div v-if="editable" class="row wrap"><button v-for="(a, i) in changeChoices" :key="a.choice" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="settle(c, a.choice)">{{ a.label }}</button></div>
       </div>
       <div v-if="stage" class="stage-detail">
         <div class="stage-title"><strong>{{ stage.name }}</strong><span class="muted">{{ stageWords[stage.state] }}</span></div>
@@ -186,6 +215,27 @@ async function stop() {
           </details>
         </div>
         <button v-if="editable && ['done', 'skipped', 'stale'].includes(stage.state)" type="button" class="link small" :disabled="busy" @click="act(stage, { action: 'reopen', label: '重开这一段', reason: true })">重开这一段</button>
+      </div>
+      <ItemStudy v-if="data.flow.study" :item-id="itemId" :editable="editable" :choosing="!data.flow.endedAt && data.stages.some((s) => s.asking === 'direction')" />
+      <div v-if="data.changes?.length || following" class="changes">
+        <div v-if="data.changes?.length" class="tests-head"><span>这件事的变化</span><span class="muted">群里、会话里和文档里新说的</span></div>
+        <details v-for="c in data.changes ?? []" :key="c.id" class="test">
+          <summary>
+            <span class="change-kind" :class="c.type">{{ changeWords[c.type] }}</span>
+            <span class="test-name">{{ c.summary }}</span>
+            <span class="test-meta" :class="c.status === 'asked' ? 'change-waiting' : 'muted'">{{ changeStatus(c) }} · {{ relTime(c.at) }}</span>
+          </summary>
+          <div class="test-body">
+            <Markdown v-if="c.detail" :source="c.detail" class="stage-text" />
+            <div v-if="c.stages.length" class="muted">影响：{{ c.stages.map(stageName).join("、") }}</div>
+            <div v-if="c.req" class="muted">需求点：<a :href="`#/reqs/${c.req}`">打开</a></div>
+            <div class="evidence">
+              <template v-for="(r, i) in c.refs" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原话 {{ i + 1 }}</a></template>
+              <a :href="`#/runs/${c.runId}`" class="muted">看这次是怎么读的</a>
+            </div>
+          </div>
+        </details>
+        <p v-if="following" class="muted small following">{{ following }}</p>
       </div>
       <details v-if="data.rounds?.length" class="history">
         <summary>以前各轮</summary>
@@ -248,6 +298,18 @@ async function stop() {
 /* What waits for the owner: said once, with the buttons that state allows. */
 .turn { display: grid; gap: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--warn-soft); }
 .turn p { margin: 0; font-size: 13.5px; line-height: 1.6; }
+
+.turn-kind { margin-right: 8px; font-weight: 600; color: var(--warn); }
+.turn .turn-note { font-size: 12.5px; color: var(--ink-2); }
+.turn-refs { display: inline-flex; margin-left: 4px; }
+
+/* What the item's chats and documents said since the flow began: one line each, newest first. */
+.changes { display: grid; gap: 2px; font-size: 13px; }
+.change-kind { flex: none; min-width: 2.4em; font-size: 12px; color: var(--muted); }
+.change-kind.scope, .change-kind.blocker { color: var(--warn); }
+.change-kind.decision, .change-kind.deadline { color: var(--accent); }
+.change-waiting { color: var(--warn); font-weight: 600; }
+.following { margin: 6px 0 0; }
 
 .stage-detail { display: grid; gap: 6px; font-size: 13px; }
 .stage-title { display: flex; align-items: baseline; gap: 8px; }
