@@ -162,6 +162,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   if (opts.background !== false) {
     startMemoryWatch();
     startLoopMonitor();
+    // Plugins linked for development (omem plugin link): loaded again when their files or links change.
+    void import("./plugins/links.ts").then((m) => m.watchLinkedPlugins(app));
     restartScheduler(app);
     // Plan usage limits of the logged-in accounts (agents/quota.ts), for choosing backends.
     void import("./agents/quota.ts").then((m) => m.startQuotaWatch(app));

@@ -4,6 +4,7 @@ import { del, get, onServerEvent, onServerResync, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, verdictWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
 import ItemStudy from "./ItemStudy.vue";
+import PluginSlots from "./PluginSlots.vue";
 import RunArtifacts from "./RunArtifacts.vue";
 import { refAction } from "../lib/refs";
 import { fmtTime, relTime } from "../store";
@@ -246,6 +247,7 @@ async function stop() {
         <button v-if="editable && ['done', 'skipped', 'stale'].includes(stage.state)" type="button" class="link small" :disabled="busy" @click="act(stage, { action: 'reopen', label: '重开这一段', reason: true })">重开这一段</button>
         <button v-if="editable && !data.flow.endedAt && ['pending', 'gated'].includes(stage.state)" type="button" class="link small" :disabled="busy" @click="record(stage)">这一段已经做过了…</button>
         <button v-if="editable && !data.flow.endedAt && stage.state === 'doing' && stage.autoStarted" type="button" class="link small" :disabled="busy" @click="act(stage, { action: 'hold', label: '先停下' })">它是直接开始的：先停下，以后轮到这一段还是先问我</button>
+        <PluginSlots at="flow.stage" :item-id="itemId" :stage="stage.id" />
       </div>
       <ItemStudy v-if="data.flow.study" :item-id="itemId" :editable="editable" :choosing="!data.flow.endedAt && data.stages.some((s) => s.asking === 'direction')" />
       <div v-if="data.changes?.length || following" class="changes">

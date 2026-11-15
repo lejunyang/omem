@@ -102,6 +102,7 @@ async function main() {
     },
     channel: unsupported("聊天渠道"),
     block: unsupported("内容块"),
+    slot: unsupported("界面插槽"),
     connector: unsupported("新的连接器"),
     authenticator: unsupported("鉴权方式"),
     appConfig: unsupported("连接器的应用配置"),

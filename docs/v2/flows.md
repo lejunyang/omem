@@ -1,6 +1,6 @@
 # 流程：让一件事自己往前走
 
-状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端、第三期第一步的插件对象及信号记录服务端，以及第四期的补录、逐条签字、关卡升降、每日跟进上限和看板数据已实现（更新至 2026-11-16）。专门的飞书进度卡版式尚未实现。其余信号、现状摘要、插件动作与插槽、新的对象卡片和阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
+状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端、第三期第一步的插件对象及信号记录服务端，以及第四期的补录、逐条签字、关卡升降、每日跟进上限和看板数据已实现（更新至 2026-11-16）。专门的飞书进度卡版式尚未实现。第三期第二步的界面插槽、`plugin link` 和源码构建安装也已实现。其余信号、现状摘要、插件动作、新的对象卡片和阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
 
 ## 1. 要解决的问题
 
@@ -241,7 +241,7 @@ stages:
 
 ## 8. 插件
 
-平台包原有的读取器把内容读成原件并定时同步（docs/v2/connectors.md）。第三期第一步已实现下面的对象类型、状态轮询、流程挂接和信号记录；动作、插槽和规则事件尚未实现。都是通用接口，具体平台各自实现（GitHub 作为仓库里的例子；接内部平台的放数据目录，不进仓库）。
+平台包原有的读取器把内容读成原件并定时同步（docs/v2/connectors.md）。第三期第一步已实现下面的对象类型、状态轮询、流程挂接和信号记录；第二步（2026-11-16）实现了界面插槽、`plugin link` 和从源码构建安装；动作和规则事件尚未实现。都是通用接口，具体平台各自实现（GitHub 作为仓库里的例子；接内部平台的放数据目录，不进仓库）。
 
 **对象类型（服务端已实现）**：平台上一个带状态的东西，全名是 `<插件 id>:<kind>`。
 
@@ -265,18 +265,22 @@ api.object({
 
 **动作**：对象卡上的按钮对应插件的工具，走现有的工具审批档位（每次问 / 做完告诉我 / 不用问）。Agent 在阶段里调用的也是同一个工具，所以人点和 Agent 做是一回事。
 
-**界面插槽**：插件的内容块（现有的 `api.block` 协议）可以声明放在宿主页面的固定位置：事项页侧栏、流程的某个阶段下面、今日页。不用跳到插件自己的页面。
+**界面插槽（已实现）**：插件的内容块（现有的 `api.block` 协议）可以声明放在宿主页面的固定位置：事项页侧栏、流程的某个阶段下面、今日页。不用跳到插件自己的页面。
 
 ```ts
-api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } });
+api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } });
 ```
+
+- 位置三种：`item.panel`、`flow.stage`、`today`。`when` 可写 `object`（本插件的对象类型：侧栏上是事项挂着的这种对象，一个对象一块；阶段下面是这一段跟着的类型）、`stage`（阶段 id，只用于阶段下面）、`flow`（流程 id）、`space`（事项所在空间）；今日页不能写条件。不满足就不显示。
+- 放进插槽的块是只展示的（`display: true`），多两个函数：`load(ctx, slot)` 按看页面的人和事项空间取数（`slot` 带位置、事项 id、阶段 id 和对象），结果按块的 schema 校验；`view(data)` 转成 omem 的展示组件，网页用画 `show` 的同一个渲染器。一个块出错只影响它自己。
+- 事项不可读时接口 404；插件停用、撤销信任、卸载时插槽消失。只有在 omem 里运行的代码能声明。写法和接口见 [plugins.md 的“放在 omem 页面上：插槽”](plugins.md#放在-omem-页面上插槽)。
 
 **流程模板**：场景包可以带 `flows/<id>.yaml`，和它带的技能、规则、对象类型配成一套。例如“GitHub 需求交付”包 = 一份流程 + 合并请求和流水线两种对象 + 建合并请求、等检查、合并三个技能。
 
-**安装**。已有：npm 包、本地目录（复制一份）、GitHub 的 tag。要加：
+**安装**。已有：npm 包、本地目录（复制一份）、GitHub 的 tag。2026-11-16 加了（细节见 [plugins.md](plugins.md) 的“从源码构建”和“开发中的插件”）：
 
-- `omem plugin link <目录>`：开发用，不复制，改了就生效。信任按目录记，页面上标“开发中”；只能链接本机的目录，不随设备同步。
-- 从源码安装时构建：包里有 `build` 脚本而没有构建产物时，安装器先列出要运行的命令，本人确认后在隔离的进程里装依赖并构建，再走原来的信任确认。
+- `omem plugin link <目录>`：开发用，不复制，改了就生效。信任按目录记，页面上标“开发中”；只能链接本机的目录，不随设备同步。`omem plugin unlink <id>` 或卸载去掉链接，目录不动。
+- 从源码安装时构建：包里有 `build` 脚本而清单指向的入口文件（`server`、服务的脚本）还不存在时，安装器先列出要运行的命令，本人确认后在隔离的进程里装依赖并构建，再走原来的信任确认。
 
 ## 9. 和现有部分的关系
 
@@ -585,6 +589,42 @@ npx tsc --noEmit -p packages/plugin-sdk/tsconfig.json
 - 工具与 HTTP：`src/agents/tools.ts`、`tool-help.ts`、`src/server/http.ts`、`src/auth/routes.ts`。
 - SDK 与测试：`packages/plugin-sdk/objects.ts`、`client.ts`、`tsconfig.json`、`README.md`；`test/flow-objects.test.ts`。
 - 文档：本页、`docs/v2/status.md`、`acceptance.md`、`.repo-review/wiki/reference/changes-since-2026-10-13.md`、`skills/omem/references/flows.md`、根 `README.md`、`site/features/items.md`。没有修改 web/，没有提交或推送。
+
+## 第三期的第二步：界面插槽、plugin link 和源码构建（2026-11-16）
+
+第 8 节“界面插槽”和“安装”里的三件做完了，写法在 [plugins.md](plugins.md) 的“放在 omem 页面上：插槽”“从源码构建”“开发中的插件”。
+
+**插槽**。`api.slot(at, { block, when })` 在插件代码加载时登记到 `LoadedPlugin.slots`，卸下代码（停用、撤销信任、卸载、重新加载）时清空，所以“插件停用插槽就消失”不需要另做判断。声明时由 `src/plugins/slots.ts` 的 `checkSlot` 检查：位置只有 `item.panel`、`flow.stage`、`today`；块要先 `api.block` 声明、`display: true`、带 `load` 和 `view`；`when.object` 要是本插件已注册的对象类型（`<插件 id>:<kind>`）；`stage` 只给 `flow.stage`；今日页不收条件；同一块同一位置只放一次。错了就抛错，插件代码加载失败、信任撤回（和声明了没写进 `permissions` 的工具同样处理）。
+
+放进插槽的块用现有的 `api.block` 协议，多两个函数：`load(ctx, slot)` 取数，`view(data)` 转成展示组件。这样 omem 的页面不用认识插件自己的块类型（插件页里的块由插件自己的页面画），只画 `show` 用的那套组件；交互页 `page` 要单独做权限检查，插槽里不收。
+
+两个接口都登记为 `self`，由处理函数自己核对：
+
+| 入口 | 请求 | 响应 |
+| --- | --- | --- |
+| `GET /api/slots` | `at`，`item`（事项页和阶段必填），`stage`（阶段必填） | `[{ key, plugin, pluginName, block, label, at, item, stage, object: { id, title } \| null }]`；不认识的位置或缺参数 400，事项不可读 404，没有流程或阶段不在流程里时为空 |
+| `GET /api/slots/:plugin/:block` | 同上，加 `object` | `{ title, components }`；插槽不存在、条件不满足、对象没挂在这件事上 404；插件读不到、交回的不合 schema、画错 502 |
+
+条件按请求时的状态重新算：`space` 比事项所在空间，`flow` 比事项上的流程 id，`stage` 比请求的阶段，`object` 在事项页上找事项挂着的这种对象（按挂上的先后倒序，最多五个，一个一块），在阶段下面看这一段的 `by` / `done` 是不是这种对象，对象取最近挂的那个，没有时为 `null`。取数时 `PluginContext` 的 `userId` 是看页面的人，`spaceId` 是事项的空间（今日页用插件自己的空间，和插件页的调用一样），十五秒超时；结果先过块的 `schema`，`view` 的结果再过 `viewSchema` 和 `checkView`。事项可读用的是对象接口同一个 `assertObjectItem`。
+
+网页：`PluginSlots.vue` 列出这一页的块（事项变化、插件重新加载、断线重连时重新列），`PluginSlot.vue` 逐块取数、用 `UiView` 画，`onErrorCaptured` 把渲染错误留在这一块里。放在事项页侧栏的外部状态下面、`ItemFlow.vue` 选中阶段的说明最后、今日页右栏最上面；列不出来时页面当作没有插槽。
+
+**plugin link**。链接清单在本机的 `<数据目录>/plugins/.links.json`（`src/plugins/links.ts`），信任在 `secrets/plugin-trust.json` 里记 `dir`（`trust.ts`）。拉取只替换数据库、知识库、附件、运行记录和代码仓库（`src/core/pull.ts` 的 `overwriteLocal`），快照也只打这几样，所以链接既不带走也不会被覆盖，没有改拉取的代码，用测试固定下来。`loadPlugins` 不带参数时在内置和数据目录之后加载链接的插件（`LoadedPlugin.linked`，`source` 仍是 `data`，所以权限声明、隔离运行和别的数据目录插件一样）。重新加载用 `reloadLinked`：和安装更新后一样先 `forgetPlugin` 再读一遍。服务启动时 `watchLinkedPlugins` 盯链接的目录和链接清单，命令行 link / unlink 不用重启；监视句柄 `unref`，不拖住命令行的临时服务。
+
+**源码构建**。`buildPlan` 判断要不要构建：有 `build` 脚本，而清单的 `server`（新加的可选字段，`registry.ts` 的 `serverFile` 统一找服务端文件）或服务命令里的脚本文件还不存在。没有确认过的 `key` 时 `installPlugin` 抛 `BuildNeeded`（409，带计划），在任何脚本运行之前。命令行在终端里确认；HTTP 的安装和更新把它变成 `{ build: 计划 }` 返回，设置页弹窗确认后带 `build` 再请求。构建用异步的 `spawn`，不阻塞服务；Windows 上 npm 要经 shell，传一整行固定的命令，避免 Node 对“shell 加参数数组”的弃用警告。
+
+验证命令：
+
+```sh
+npx vitest run test/plugin-slots.test.ts test/plugin-dev.test.ts test/plugins.test.ts test/plugin-install.test.ts test/plugin-sandbox.test.ts test/plugin-pack.test.ts test/plugin-connectors.test.ts test/plugin-channels.test.ts test/plugin-services.test.ts test/flow-objects.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts test/esm.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+npx tsc --noEmit -p packages/plugin-sdk/tsconfig.json
+npx vue-tsc --noEmit -p web/tsconfig.json
+```
+
+原样结果：上面 16 个文件一起跑，`Test Files 1 failed | 15 passed (16)`、`Tests 1 failed | 145 passed | 1 skipped (147)`，失败的是 `flow-objects.test.ts` 一个用例的 `beforeEach` 超过 10 秒（同一台机器上别的会话也在跑测试），单独重跑这个文件 `Test Files 1 passed (1)`、`Tests 24 passed (24)`。新测试 `plugin-slots` 10 项、`plugin-dev` 10 项。另跑了也加载插件或改到的相邻测试 `connect-plugin`、`platform-packs`、`plugin-voice`、`peer-plugin-page`、`mcp-servers`、`quality-audit-run`、`flows`：`Test Files 7 passed (7)`、`Tests 71 passed (71)`。三条类型检查都退出 0，`npm run build` 通过。之后给清单的 `server` 加了“不能放在信任不核对的目录里”，重跑 `plugin-dev`、`plugin-slots`、`plugin-install`：`Test Files 3 passed (3)`、`Tests 27 passed (27)`，`tsc` 退出 0。
+
+没做和要注意的：内置的 GitHub 插件没有放插槽；网页没在浏览器里看（插槽、设置页的“开发中”、构建确认弹窗）；链接的插件在 omem 里运行时，Node 只重新加载服务端入口文件，它引用的其他文件改了要重启 omem（隔离运行每次是新进程，没有这个问题）；在 vitest 里同样的原因，测试用隔离运行验证“改了就是新代码”。
 
 ## 用真实模型跑过的（2026-11-16）
 

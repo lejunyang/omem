@@ -13,7 +13,9 @@ import { cookies, SESSION_COOKIE, sessionFor } from "../auth/sessions.ts";
 import { callTool } from "../agents/tools.ts";
 import { createSession, listSessions, sendMessage, sessionView, submitBlock } from "./blocks.ts";
 import { codeRuns, describePlugin, findPlugin, forgetPlugin, getPlugin, listPlugins, pluginWebDir, reloadPlugin, setPluginEnabled, setPluginIcon, trustPlugin, untrustPlugin } from "./registry.ts";
-import { installInfo, installPlugin, removeInstalled } from "./install.ts";
+import { BuildNeeded, installInfo, installPlugin, removeInstalled } from "./install.ts";
+import { unlinkPlugin } from "./links.ts";
+import { loadSlot, slotsAt } from "./slots.ts";
 import { packChoices, packPlugin, packSchema } from "./pack.ts";
 import { setTrust } from "./trust.ts";
 import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
@@ -46,6 +48,14 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   const plugin = (req: FastifyRequest) => getPlugin((req.params as { id: string }).id);
 
   server.get("/api/plugins", async () => listPlugins().map(describePlugin));
+  // Slots (slots.ts): which plugin blocks a page of omem's shows, then each block's content on its own,
+  // so one that fails or is slow affects only itself. The item must be readable (404 otherwise).
+  const slotQuery = z.object({ at: z.string(), item: z.string().max(80).optional(), stage: z.string().max(80).optional(), object: z.string().max(200).optional() });
+  server.get("/api/slots", async (req) => slotsAt(app, who(req), parse(slotQuery, req.query)));
+  server.get("/api/slots/:plugin/:block", async (req) => {
+    const p = req.params as { plugin: string; block: string };
+    return loadSlot(app, who(req), { ...parse(slotQuery, req.query), plugin: p.plugin, block: p.block });
+  });
   server.get("/api/plugins/pack", async () => packChoices(app));
   server.post("/api/plugins/pack", async (req) => packPlugin(app, parse(packSchema, req.body)));
   server.get("/api/plugins/:id", async (req) => describePlugin(plugin(req)));
@@ -130,10 +140,20 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   // Turned off: its code unloads, its agents, page and nav entry go away; on again loads it.
   server.put("/api/plugins/:id/enabled", async (req) => setPluginEnabled(app, plugin(req).manifest.id, !!(req.body as { on?: unknown })?.on));
   // Someone else's plugin (install.ts): an npm package or a GitHub tag; its code waits for trust.
+  // From source: the first call answers `{ build: plan }` and runs nothing; the page shows the commands and,
+  // once the owner confirms, calls again with `build: plan.key`.
+  const install = async (source: string, build: unknown) => {
+    try {
+      const r = await installPlugin(app, source, { build: typeof build === "string" ? build : undefined });
+      return { ...r, plugin: await reloadPlugin(app, r.id) };
+    } catch (e) {
+      if (e instanceof BuildNeeded) return { build: e.plan };
+      throw e;
+    }
+  };
   server.post("/api/plugins/install", async (req) => {
-    const source = String((req.body as { source?: unknown })?.source ?? "");
-    const r = await installPlugin(app, source);
-    return { ...r, plugin: await reloadPlugin(app, r.id) };
+    const b = (req.body ?? {}) as { source?: unknown; build?: unknown };
+    return install(String(b.source ?? ""), b.build);
   });
   server.post("/api/plugins/:id/update", async (req) => {
     const p = plugin(req);
@@ -142,11 +162,16 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
     // Same source without a version: the newest npm release; a GitHub source needs the new tag.
     const given = String((req.body as { source?: unknown })?.source ?? "").trim();
     const source = given || (info.source.startsWith("npm:") ? info.source.replace(/^(npm:(?:@[^/]+\/)?[^@]+)@.*$/, "$1") : info.source);
-    const r = await installPlugin(app, source);
-    return { ...r, plugin: await reloadPlugin(app, r.id) };
+    return install(source, (req.body as { build?: unknown } | undefined)?.build);
   });
   server.delete("/api/plugins/:id", async (req) => {
-    const id = plugin(req).manifest.id;
+    const p = plugin(req), id = p.manifest.id;
+    // A linked one: only the link goes (its directory is the developer's own).
+    if (p.linked) {
+      forgetPlugin(id);
+      unlinkPlugin(app, id);
+      return { ok: true, unlinked: true };
+    }
     forgetPlugin(id);
     removeInstalled(app, id);
     setTrust(app, id, null);

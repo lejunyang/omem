@@ -963,14 +963,14 @@ program
     await runJob((app) => ask(app, { text: question.join(" "), spaceId: o.space, conversationId: o.conversation, channel: "cli" }));
   });
 
-const plugin = program.command("plugin").description("插件：打成场景包、列出、安装（本地目录、npm 包或 GitHub tag）、更新、删除、启用和停用（docs/v2/plugins.md）");
+const plugin = program.command("plugin").description("插件：打成场景包、列出、安装（本地目录、npm 包或 GitHub tag，源码先确认再构建）、链接开发目录、更新、删除、启用和停用（docs/v2/plugins.md）");
 plugin
   .command("list")
   .description("列出插件：来源、版本、是否启用、代码是否已信任")
   .action(async () => {
     const { loadPlugins, describePlugin } = await import("./plugins/registry.ts");
     for (const p of (await loadPlugins(open())).map(describePlugin))
-      console.log(`${p.id.padEnd(14)} ${p.enabled ? "启用" : "停用"}  ${p.source === "builtin" ? "内置" : p.installed ? p.installed.source : "本地"}${p.version ? ` ${p.version}` : ""}  ${p.trust}
+      console.log(`${p.id.padEnd(14)} ${p.enabled ? "启用" : "停用"}  ${p.source === "builtin" ? "内置" : p.linked ? `开发中 ${p.dir}` : p.installed ? p.installed.source : "本地"}${p.version ? ` ${p.version}` : ""}  ${p.trust}
   ${p.name}：${p.description}`);
   });
 plugin
@@ -998,20 +998,54 @@ plugin
   });
 plugin
   .command("install <source>")
-  .description("安装插件：本地目录、npm:包名[@版本] 或 github:owner/repo#tag；不运行安装脚本，带代码的要在设置 → 插件里信任后才运行")
+  .description("安装插件：本地目录、npm:包名[@版本] 或 github:owner/repo#tag；不运行安装脚本，带代码的要在设置 → 插件里信任后才运行。包是源码（有 build 脚本、入口文件还没构建）时先列出要运行的命令，你确认后才装依赖并构建")
   .action(async (source: string) => {
-    const { installPlugin } = await import("./plugins/install.ts");
-    const r = await installPlugin(open(), source);
-    console.log(`已${r.replaced ? "更新" : "安装"} ${r.id}${r.version ? ` ${r.version}` : ""} → ${r.dir}
+    const { BuildNeeded, installPlugin } = await import("./plugins/install.ts");
+    const app = open();
+    let r;
+    try {
+      r = await installPlugin(app, source);
+    } catch (e) {
+      if (!(e instanceof BuildNeeded)) throw e;
+      const { plan } = e;
+      console.log(`${plan.id} 是源码，还没有构建（缺 ${plan.missing.join("、")}）。要在它解开的临时目录里运行：
+${plan.commands.map((c) => `  ${c}`).join("\n")}
+其中 npm run build 会运行包自己的脚本：
+${Object.entries(plan.scripts).map(([k, v]) => `  ${k}: ${v}`).join("\n")}
+依赖不运行安装脚本；输出记在 <数据目录>/logs/plugin-builds/${plan.id}.log，最多 10 分钟。`);
+      if (!process.stdin.isTTY) throw new Error("没有在终端里确认，不运行包里的任何脚本，也没有安装");
+      const { confirm } = await import("@inquirer/prompts");
+      if (!(await confirm({ message: "运行这些命令并安装？", default: false }))) return console.log("没有构建，也没有安装");
+      r = await installPlugin(app, source, { build: plan.key });
+    }
+    console.log(`已${r.replaced ? "更新" : "安装"} ${r.id}${r.version ? ` ${r.version}` : ""} → ${r.dir}${r.buildLog ? `\n构建的输出：${r.buildLog}` : ""}
 运行中的 omem 要重启才看得到；带代码的插件在 设置 → 插件 里看过权限、信任后才运行。`);
   });
 plugin
+  .command("link <dir>")
+  .description("开发插件时用：链接这台机器上的插件目录，不复制，改了就重新加载；信任按目录记（之后改代码不用再确认），网页上标“开发中”；只在这台设备上，不随拉取同步")
+  .action(async (dir: string) => {
+    const { linkPlugin } = await import("./plugins/links.ts");
+    const r = await linkPlugin(open(), dir);
+    console.log(`${r.again ? "已经链接着" : r.replaced ? "改为链接" : "已链接"} ${r.id} → ${r.dir}
+运行中的 omem 会自己加载它（没在运行就下次启动时）；带代码的在 设置 → 插件 里信任一次，之后改这个目录不用再确认。去掉：omem plugin unlink ${r.id}`);
+  });
+plugin
+  .command("unlink <id>")
+  .description("去掉 plugin link 的链接（目录本身不动）")
+  .action(async (id: string) => {
+    const { unlinkPlugin } = await import("./plugins/links.ts");
+    console.log(unlinkPlugin(open(), id) ? `已去掉 ${id} 的链接；目录没有动，运行中的 omem 会马上卸下它` : `${id} 不是链接的插件`);
+  });
+plugin
   .command("remove <id>")
-  .description("删除装进来的插件（自己放进数据目录的不删）")
+  .description("删除装进来的插件（自己放进数据目录的不删）；链接的插件只去掉链接")
   .action(async (id: string) => {
     const { removeInstalled } = await import("./plugins/install.ts");
+    const { unlinkPlugin } = await import("./plugins/links.ts");
     const { setTrust } = await import("./plugins/trust.ts");
     const app = open();
+    if (unlinkPlugin(app, id)) return console.log(`${id} 是链接的插件：已去掉链接，目录没有动`);
     removeInstalled(app, id);
     setTrust(app, id, null);
     console.log(`已删除 ${id}；运行中的 omem 重启后不再加载它`);

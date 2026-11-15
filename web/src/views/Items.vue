@@ -13,6 +13,7 @@ import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import ItemPlaces, { type Place, type ItemRun } from "../components/ItemPlaces.vue";
 import ItemFlow from "../components/ItemFlow.vue";
 import ItemObjects from "../components/ItemObjects.vue";
+import PluginSlots from "../components/PluginSlots.vue";
 import DesignRow from "../components/DesignRow.vue";
 import DesignStart from "../components/DesignStart.vue";
 import type { DesignSummary } from "../lib/designs";
@@ -290,6 +291,7 @@ async function addNote() {
         </div>
         <ItemFlow :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
         <ItemObjects :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
+        <PluginSlots at="item.panel" :item-id="detail.item.id" :space="detail.item.spaceId" />
         <ItemPlaces :places="detail.places ?? []" :runs="detail.runs ?? []" />
         <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" @changed="loadDetail" />
         <div class="designs">

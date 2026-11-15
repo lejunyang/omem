@@ -23,6 +23,10 @@ type Plugin = {
   name: string;
   description: string;
   source: "builtin" | "data";
+  /** Linked for development (omem plugin link): read where it is, trusted by directory. */
+  linked?: boolean;
+  /** Its blocks on omem's own pages (api.slot). */
+  slots?: { at: string; block: string }[];
   dir: string | null;
   icon: string;
   iconChosen: boolean;
@@ -67,13 +71,30 @@ function permissionLines(p: Plugin) {
     m.space ? `用自己的空间 ${m.space}` : "",
   ].filter(Boolean);
 }
-const sourceLabel = (p: Plugin) => (p.source === "builtin" ? "内置" : p.installed ? p.installed.source : "数据目录里的");
+const sourceLabel = (p: Plugin) => (p.source === "builtin" ? "内置" : p.linked ? (p.dir ?? "") : p.installed ? p.installed.source : "数据目录里的");
+
+/** A package from source (docs/v2/flows.md §8): what the server would run, shown before anything of it runs. */
+type BuildPlan = { id: string; source: string; missing: string[]; commands: string[]; scripts: Record<string, string>; key: string };
+type Installed = { id: string; version: string; replaced: boolean; buildLog?: string };
+/** Install or update; when the package must be built first, ask with the exact commands, then ask the server again with that plan. */
+async function installing(path: string, body: Record<string, unknown>): Promise<Installed | null> {
+  const r = await post<Installed | { build: BuildPlan }>(path, body);
+  if (!("build" in r)) return r;
+  const plan = r.build;
+  const ok = await confirmDialog(`${plan.id} 要先构建`, {
+    message: `它是源码，缺 ${plan.missing.join("、")}。确认后在它解开的临时目录里依次运行（依赖不运行安装脚本，最多 10 分钟，不带 omem 的密钥）：\n\n${plan.commands.join("\n")}\n\nnpm run build 会运行包自己的脚本：\n${Object.entries(plan.scripts).map(([k, v]) => `${k}: ${v}`).join("\n")}\n\n构建完照常要你看过权限、信任后才运行。`,
+    okText: "构建并安装",
+  });
+  if (!ok) return null;
+  return post<Installed>(path, { ...body, build: plan.key });
+}
 
 async function install() {
   if (!source.value.trim()) return;
   busy.value = true;
   try {
-    const r = await post<{ id: string; version: string; replaced: boolean }>("/api/plugins/install", { source: source.value.trim() });
+    const r = await installing("/api/plugins/install", { source: source.value.trim() });
+    if (!r) return;
     toast(`已${r.replaced ? "更新" : "安装"} ${r.id}${r.version ? ` ${r.version}` : ""}；带代码的看过权限后点“信任并运行”`, "ok");
     source.value = "";
     await load();
@@ -90,13 +111,24 @@ async function update(p: Plugin) {
   if (isGit && !next) return;
   busy.value = true;
   try {
-    const r = await post<{ version: string }>(`/api/plugins/${p.id}/update`, { source: next || undefined });
+    const r = await installing(`/api/plugins/${p.id}/update`, { source: next || undefined });
+    if (!r) return;
     toast(`已更新到 ${r.version || "最新"}；代码变了，要重新信任`, "ok");
     await load();
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {
     busy.value = false;
+  }
+}
+async function unlink(p: Plugin) {
+  if (!(await confirmDialog(`去掉“${p.name}”的链接？`, { message: `只是不再从 ${p.dir} 读它，目录里的文件不动；它的工具、档案和页面马上消失。要再用就 omem plugin link。`, okText: "去掉链接" }))) return;
+  try {
+    await del(`/api/plugins/${p.id}`);
+    await load();
+    state.pluginsChanged++;
+  } catch (e) {
+    toast((e as Error).message, "error");
   }
 }
 async function remove(p: Plugin) {
@@ -118,7 +150,8 @@ async function setEnabled(p: Plugin, on: boolean) {
   }
 }
 
-const TRUST: Record<Plugin["trust"], string> = { builtin: "内置", none: "声明式场景包", trusted: "已信任", required: "需要信任，尚未确认", changed: "代码改过，需要重新确认" };
+const SLOT_WORDS: Record<string, string> = { "item.panel": "事项页侧栏", "flow.stage": "流程阶段下面", today: "今日页" };
+const TRUST: Record<Plugin["trust"], string> ={ builtin: "内置", none: "声明式场景包", trusted: "已信任", required: "需要信任，尚未确认", changed: "代码改过，需要重新确认" };
 
 async function load() {
   plugins.value = await get<Plugin[]>("/api/plugins");
@@ -136,7 +169,7 @@ async function trust(p: Plugin, mode: "isolated" | "inprocess" = "isolated") {
       ? "它的代码在单独的进程里运行：只能读它自己的目录、写它自己的数据目录，读不到 omem 的密钥和你的其他文件，也不能启动别的程序（信任后单独加入的命令 MCP 除外）；读平台、存原件都经过 omem，按调用它的人的权限。"
       : "它的代码在 omem 的进程里运行，能读写你能读写的所有文件、用 omem 的全部权限。只对你自己写的或逐行看过的插件这样做；内容块、新的连接器、鉴权方式和聊天渠道只能这样运行。";
   const ok = await confirmDialog(`信任插件“${p.name}”？`, {
-    message: `${how}代码以后有改动，要在这里重新确认。\n\n${what}`,
+    message: `${how}${p.linked ? "它是链接的开发目录，信任按这个目录记：之后改代码不用再确认，改了会自动重新加载。" : "代码以后有改动，要在这里重新确认。"}\n\n${what}`,
     okText: mode === "isolated" ? "隔离运行" : "在 omem 里运行",
     danger: mode === "inprocess",
   });
@@ -213,8 +246,9 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
           <Icon :name="p.icon" :size="17" />
         </button>
         <strong>{{ p.name }}</strong><span class="muted small mono">{{ p.id }}</span>
-        <span class="badge" :class="{ warn: p.trust === 'required' || p.trust === 'changed', ok: p.trust === 'trusted' }">{{ TRUST[p.trust] }}</span>
-        <span v-if="p.source !== 'builtin' || p.version" class="muted small">{{ p.source === "builtin" ? "" : sourceLabel(p) }}{{ p.version ? `${p.source === "builtin" ? "" : " · "}${p.version}` : "" }}</span>
+        <span v-if="p.linked" class="badge accent" title="omem plugin link 链接的目录：不复制，改了就重新加载；只在这台设备上">开发中</span>
+        <span class="badge" :class="{ warn: p.trust === 'required' || p.trust === 'changed', ok: p.trust === 'trusted' }">{{ p.linked && p.trust === "changed" ? "链接的目录换了，需要重新确认" : TRUST[p.trust] }}</span>
+        <span v-if="p.source !== 'builtin' || p.version" class="muted small path" :title="p.linked ? p.dir ?? '' : undefined">{{ p.source === "builtin" ? "" : sourceLabel(p) }}{{ p.version ? `${p.source === "builtin" ? "" : " · "}${p.version}` : "" }}</span>
         <span class="spacer" />
         <button v-if="p.settings" class="btn ghost sm" @click="editing = p">设置</button>
         <UiCheckbox :model-value="p.enabled" switch size="sm" :aria-label="`启用${p.name}`" @change="(v) => setEnabled(p, v)">启用</UiCheckbox>
@@ -224,6 +258,7 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
         <button v-if="p.trust === 'trusted'" class="btn ghost sm danger" @click="untrust(p)">撤销信任</button>
         <button v-if="p.installed" class="btn ghost sm" :disabled="busy" @click="update(p)">更新</button>
         <button v-if="p.installed" class="btn ghost sm danger" @click="remove(p)">删除</button>
+        <button v-if="p.linked" class="btn ghost sm" @click="unlink(p)">去掉链接</button>
       </div>
       <div v-if="picking === p.id" class="icons stack">
         <div class="grid" role="radiogroup" :aria-label="`${p.page?.title} 的菜单图标`">
@@ -254,6 +289,7 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
         <span v-if="p.agents.length">档案：<span class="mono">{{ p.agents.map((a) => a.name).join("、") }}</span></span>
         <span v-if="p.skills.length">技能：{{ p.skills.join("、") }}</span>
         <span v-if="p.tools.length">工具：<span class="mono">{{ p.tools.join("、") }}</span></span>
+        <span v-if="p.slots?.length">放在页面上：{{ p.slots.map((s) => `${SLOT_WORDS[s.at] ?? s.at}（${s.block}）`).join("、") }}</span>
       </div>
       <div v-for="s in p.spaces" :key="s.id" class="small path">空间：{{ s.name }}（{{ s.id }}） · {{ s.status }}</div>
       <div v-for="r in p.rules" :key="r.file" class="small">

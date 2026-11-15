@@ -12,7 +12,7 @@ plugins/<id>/
   agents/<名>.md        Agent 档案（格式同 library/_agents），对外名字是 <id>-<名>
   skills/<名>/SKILL.md  技能，首次启动播种到 library/_skills（已有的不覆盖）
   rules/<名>.yaml       任务规则（首次启用时导入，默认停用）
-  server.ts            服务端代码：工具、内容块、判分（数据目录里也可以是 server.js / server.mjs）
+  server.ts            服务端代码：工具、内容块、判分（数据目录里也可以是 server.js / server.mjs，或清单 server 指定的构建产物）
   web/                 页面：内置插件放源码，构建到 web/dist/plugins/<id>/；数据目录里的插件放构建好的文件（或手写的 HTML）
   其他文件              服务的程序（清单 services 里的命令在插件目录里运行）
 ```
@@ -25,7 +25,7 @@ plugins/<id>/
 
 数据目录里的插件带代码（`server.*` 或 `services`）或命令 MCP 时，代码以本人的身份运行，所以**本人确认之前一行都不运行**：清单、档案、技能和页面照常可用，工具、内容块和服务不注册、不启动。设置 → 插件列出每个插件的来源、状态、目录、服务的命令；“信任并运行”后立即加载，不用重启。
 
-确认的是代码此刻的样子：清单加上插件目录里除 `web/`、`agents/`、`skills/`、`node_modules/` 以外的所有文件的哈希（超过 50 MB 的文件按大小和修改时间算），存在本机的 `secrets/plugin-trust.json`（不随多设备同步，每台机器各自确认）。代码改过，状态变成“代码改过，需要重新确认”，重启后不再加载。撤销信任时它的工具马上注销、服务停止。
+确认的是代码此刻的样子：清单加上插件目录里除 `web/`、`agents/`、`skills/`、`node_modules/` 以外的所有文件的哈希（超过 50 MB 的文件按大小和修改时间算），存在本机的 `secrets/plugin-trust.json`（不随多设备同步，每台机器各自确认）。代码改过，状态变成“代码改过，需要重新确认”，重启后不再加载。撤销信任时它的工具马上注销、服务停止。`omem plugin link` 链接的开发目录例外：信任按目录记，见“开发中的插件”。
 
 数据目录里的代码用 `api.z`（宿主的 zod），服务用 `OMEM_SERVICE_SDK` 指向的帮助模块。装进来的插件可以带自己的依赖（安装时装进它目录的 `node_modules`），本人手放的插件不能 `import` 宿主没有的包。
 
@@ -37,7 +37,7 @@ plugins/<id>/
 - **工具与平台包**：它的工具和平台包的读取器在 omem 里注册成代理，调用时转给它的进程。参数由插件自己的 zod 定义检查，宿主列工具时用它给出的 JSON Schema。
 - **宿主代办的事**：要读平台（`ctx.connection(...).fetch`）、读写插件记录（`ctx.store`）、存原件（`ctx.saveSource`）、设盯着（`ctx.watches`）、启动服务时，进程向 omem 发请求。omem 按**正在进行的那次调用**的人和空间回答，不认插件自己报的身份。令牌由 omem 加在请求上，插件拿不到。
 - **写法要求**：`ctx.store`、`ctx.saveSource`、`ctx.watches` 在隔离运行时返回 Promise，所以要写 `await`；写了 `await` 在 omem 进程里运行时也照样能用。
-- **不能做的**：内容块（`api.block`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）、聊天渠道（`api.channel`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
+- **不能做的**：内容块（`api.block`）和放块的插槽（`api.slot`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）、聊天渠道（`api.channel`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
 
 **在 omem 里运行**：代码以 omem 的全部权限运行，只适合你自己写的或逐行看过的插件。运行方式记在 `secrets/plugin-trust.json` 的 `mode` 里；以前信任过的插件按原来的方式在 omem 里运行。代码注册了清单没声明的东西，或者没能启动，信任会被撤回。
 
@@ -57,11 +57,31 @@ plugins/<id>/
 
 1. 下载并解包，npm 包用 `npm pack`，GitHub 来源从 codeload 下载 tar.gz。
 2. 检查包里的 `plugin.yaml`。
-3. 拒绝和内置插件重名的 id；数据目录里有同名的、你自己放的插件时，也拒绝，不覆盖。
-4. 有依赖、但包里没带 `node_modules` 时，执行 `npm install --omit=dev --ignore-scripts`。
-5. 放进 `<数据目录>/plugins/<id>/`，来源和版本记在 `.omem-install.json`。
+3. 拒绝和内置插件重名的 id；数据目录里有同名的、你自己放的插件，或这个 id 正链接着开发目录（见下一节）时，也拒绝，不覆盖。
+4. 包是源码时先构建，见下面的“从源码构建”。
+5. 有依赖、但包里没带 `node_modules` 时，执行 `npm install --omit=dev --ignore-scripts`。
+6. 放进 `<数据目录>/plugins/<id>/`，来源和版本记在 `.omem-install.json`。
 
-**安全**：整个安装过程不运行包里的任何脚本。装好后，带代码的插件和手放的一样，要本人确认信任才运行。
+**安全**：没有本人确认，安装过程不运行包里的任何脚本。装好后，带代码的插件和手放的一样，要本人确认信任才运行。
+
+**从源码构建**（2026-11-16）：包的 `package.json` 有 `build` 脚本，而清单指向的入口文件还不存在时，算作源码。入口文件包括清单的 `server`（例如 `server: dist/server.js`，构建产物不在顶层时用它指定服务端文件）和服务命令里的脚本（`args` 里第一个 `.js` / `.mjs` / `.cjs` / `.ts` 相对路径）。安装器先不运行任何东西，只列出要运行的命令：
+
+- 有 `dependencies` 或 `devDependencies`、包里没带 `node_modules` 时装依赖：有 `package-lock.json` 用 `npm ci --ignore-scripts --no-audit --no-fund`，没有用 `npm install --ignore-scripts --no-audit --no-fund --no-package-lock`。依赖自己的安装脚本不运行。
+- `npm run build`，同时列出它会运行的包脚本（`prebuild`、`build`、`postbuild` 的原文）。
+
+命令行 `omem plugin install` 打出这些命令，在终端里问“运行这些命令并安装？”，默认否；没有终端时不运行也不安装。设置页的安装和更新先收到 `{ build: 计划 }`，弹窗列出同样的内容，本人点“构建并安装”后带上计划的 `key` 再请求一次。`key` 由来源、命令和 `package.json` 原文算出：包在两次请求之间变了（比如 npm 上出了新版本、脚本改了），`key` 对不上，要重新确认。
+
+确认后，命令在解开的临时目录里逐条运行（不是本人的源码目录）：独立的子进程，工作目录就是这个临时目录，环境变量去掉 omem 的令牌、密钥和 `OMEM_` 开头的变量，全部命令共十分钟，超时连同子进程一起停掉。输出写进 `<数据目录>/logs/plugin-builds/<id>.log`（每次覆盖），失败时报出退出码、最后几行和日志位置，什么都不装。构建完再检查入口文件，还缺就报错。之后照常放进 `plugins/<id>/`，带代码的等本人在设置 → 插件里信任；开发依赖留在它的 `node_modules` 里（信任的哈希不算 `node_modules`）。
+
+### 开发中的插件（plugin link）
+
+写插件时用 `omem plugin link <目录>`（`src/plugins/links.ts`）：omem 直接读这个目录，不复制。
+
+- **只链接本机目录**：只有命令行能链接，没有链接的 HTTP 接口；网络共享路径（`\\服务器\…`、`//服务器/…`）和网址拒绝；目录里要有 `plugin.yaml`。和内置插件、数据目录 `plugins/` 里已有的插件同 id 时拒绝；同一个 id 改链到另一个目录时，旧目录的信任作废。
+- **信任按目录记**：带代码的照样要在设置 → 插件里信任一次，`secrets/plugin-trust.json` 里记的是这个目录（`dir`），不是代码哈希，所以之后改代码不用再确认。换了目录或复制到别处的同样代码不算已信任。
+- **改了就生效**：运行中的服务盯着链接的目录（`fs.watch`，递归），文件变了停 0.3 秒再按已安装插件更新时的方式重新加载：卸下旧的工具、块、插槽和服务，重新读清单、档案和代码，发一个 `plugin` 事件让页面刷新插槽。`web/`、`node_modules/`、`.git/` 的变化不触发（页面每次请求都从目录里读）。技能和其他插件一样只在第一次补进技能库。在 omem 里运行时，Node 只重新加载服务端入口文件本身，它引用的其他文件改了要重启 omem；隔离运行每次是新进程，没有这个限制。
+- **链接和取消**：服务也盯着链接清单（`<数据目录>/plugins/.links.json`），命令行的 `link` / `unlink` 不用重启就生效；服务没在运行时下次启动加载。`omem plugin unlink <id>`、`omem plugin remove <id>` 或设置页的“去掉链接”只去掉链接和对应的信任，不动目录里的文件。设置页给链接的插件标“开发中”，来源处写目录。
+- **不随设备同步**：链接清单在本机的 `plugins/` 下，信任在 `secrets/` 下。拉取只替换数据库、知识库、附件、运行记录和代码仓库，不带走也不覆盖这两处，所以别的设备看不到这台的链接，拉取别的设备的数据也不会去掉这台的链接。插件自己的记录（`plugin_records` 等）和其他插件一样随数据同步。
 
 **更新和删除**：“更新”对 npm 来源取最新版本；GitHub 来源要填新的 tag。代码变了就要重新信任。“删除”只删安装器放进来的目录，插件存下的原件、记忆和插件记录都保留。
 
@@ -121,6 +141,7 @@ settings:                                               # 本人的设置，外�
 - 插件档案和普通档案一样出现在 Agent 页，可以 `/as english-tutor`、`run_agent`、挂技能、有专属记忆、由 coach 复盘。本人在 Agent 页改它，就在 `library/_agents/` 存一份自定义版本（带 `plugin` 字段）；删掉自定义版本回到插件自带的版本。
 - 导航图标：`icon` 写图标名（`web/src/lib/icons.ts`，设置 → 插件的图标选择里列出的那些），或页面目录里的一个 `.svg`（内置插件放 `web/public/`，数据目录插件放 `web/`），按当前文字颜色画出。本人可以在设置 → 插件里点图标换一个，存在配置的 `plugins.icons`，“用插件自己的图标”恢复。
 - 名字带插件前缀：档案 `english-tutor`，工具 `english_quiz`，避免与内置角色、本人的档案和别的插件撞名。宿主不按插件名特判任何逻辑。
+- `server`（可选）：数据目录里的服务端文件不在顶层（`server.ts` / `server.js` / `server.mjs`）时写它的相对路径，例如构建产物 `dist/server.js`；写了就算带代码，要信任。不能放在 `web/`、`agents/`、`skills/`、`node_modules/` 里（信任的哈希不算这些目录，改了会看不出来）。从源码安装时据它判断要不要先构建。
 
 ## 规则与 MCP 服务
 
@@ -359,6 +380,31 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 
 渲染在 `packages/plugin-sdk/blocks.ts`，不依赖框架：外壳的默认页和插件自己的页面都用它（英语练习页里陪练交的表单和图表也是它画的）。图表的颜色是验证过色觉和对比度的分类色，深浅色各一套；两组以上有图例，每根柱子悬停有数值，“看数据”展开成表格。
 
+### 放在 omem 页面上：插槽
+
+插件的展示块可以声明放在 omem 自己的页面上，不用跳到插件页（2026-11-16，`src/plugins/slots.ts`，设计见 [flows.md](flows.md) 第 8 节）：
+
+```ts
+api.object({ kind: "pull-request", … });
+api.block({
+  kind: "ci_summary",
+  description: "合并请求的检查结果",
+  display: true,
+  schema: api.z.object({ passed: api.z.number(), failed: api.z.number() }),
+  // 看页面的人、事项所在的空间：ctx.userId、ctx.spaceId；slot 是位置、事项、阶段和对象
+  load: async (ctx, slot) => readChecks(await ctx.connection("connect-github"), slot.object?.key),
+  view: (d) => ({ title: "检查", components: [{ type: "metric", items: [{ label: "通过", value: d.passed }, { label: "失败", value: d.failed, good: "down" }] }] }),
+});
+api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } });
+```
+
+- **位置**：`item.panel` 事项页侧栏（外部状态下面），`flow.stage` 流程里选中阶段的说明下面，`today` 今日页右栏的最上面。
+- **条件 `when`**：`object` 是本插件的对象类型——事项页侧栏上要求事项挂着这种对象，挂了几个就显示几块；阶段下面要求这一段跟着这种对象（`by` 或 `done` 写了它），对象是事项上最近挂的那个，还没挂时为 `null`。`stage` 是阶段 id（只用于 `flow.stage`），`flow` 是流程 id，`space` 是事项所在的空间，都可以写一个或一组。今日页没有事项，不能写条件。不满足就不显示。
+- **声明时检查**：位置只有这三种；块要先用 `api.block` 声明、`display: true` 并带 `load` 和 `view`；`when.object` 要是本插件已注册的对象类型；同一个块在同一位置只能放一次；条件和位置不配（`stage` 用在别处、今日页写条件）也拒绝。声明错了，插件的代码加载失败，信任撤回。
+- **取数**：网页先 `GET /api/slots?at=&item=&stage=` 拿到这一页要画的块，再逐块 `GET /api/slots/<插件>/<块>?at=&item=&stage=&object=`。宿主核对事项对这个人可读（不可读 404）、条件仍然满足、对象确实挂在这个事项上，然后按看页面的人和事项的空间构造 `PluginContext`（今日页用插件自己的空间），十五秒内调 `load`，结果按块的 `schema` 校验，再把 `view` 的结果按展示组件（[interactive-ui.md](interactive-ui.md)）校验，交互页 `page` 不能放。插件读不到、交回的内容不合 schema、画错都只是这一块报 502，网页在那一块里写原因和“重试”，别的块和页面照常。
+- **画法**：网页用 `UiView` 画（和 `show` 交出的展示是同一个渲染器，Markdown 经 DOMPurify）。每块上面一行小字写插件名和对象标题；一块渲染出错由它自己的错误边界接住。
+- **什么时候消失**：插槽在插件的代码加载时登记、卸下时清掉，所以插件停用、撤销信任、卸载或重新加载时插槽跟着消失，接口不再列出它，直接取数返回 404。只有在 omem 里运行的代码能声明插槽（隔离运行不能声明内容块）。设置 → 插件的卡片上写“放在页面上：事项页侧栏（ci_summary）”。
+
 ### 不在插件页里的时候
 
 插件档案在别的会话里（比如飞书里 `/as english-tutor`）交出内容块时，宿主替本人新开一个这个插件的会话，把块放进去，工具结果里给 Agent 一个链接 `#/plugin/<id>?session=<会话>`，让它发给本人。配置了网页地址（`config.webUrl`，设置 → 渠道）时链接是完整地址，飞书里能直接打开；页面打开时停在那个会话上。同一个地址也让通知卡片里的页面链接能从飞书打开。
@@ -455,3 +501,5 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 3. **第三期**（2026-10-28）：数据目录里带代码的插件与信任确认（代码哈希，改了重新确认，撤销立即卸载）；`services`（按需启动、空闲停止、清理遗留进程、输出可看）与 `streams`（本人鉴权后转发 WebSocket，外壳中继给沙箱页面）；`approval: true` 的插件工具每次等本人批准；`packages/plugin-sdk/service.mjs` 和 `/plugins/_sdk/omem.js` 让数据目录插件不装包也能写服务和页面；设置 → 插件。
    还没做：服务作为 MCP 服务器直接给 Agent 提供工具（现在经 `server.ts` 的工具转一层）；截屏、输入这类系统相关的现成插件。
 4. **语音**（2026-11-11）：清单 `voice: true`，SDK 的 `omem.voice()` / `voiceStatus()`，外壳拿麦克风和连接、只给页面转写；英语练习的“口语对话”（`speaking` 块、陪练按 `english-speaking` 评价、口语进画像），代替原来网页上单独的“口语”页和 `speaking-coach` 角色。`omem peer open` 下插件页面的文件和流（本机代理放行沙箱的跨域请求并补上跨域头）。
+5. **插槽和开发**（2026-11-16）：`api.slot` 把展示块放到事项页侧栏、流程阶段下面和今日页；`omem plugin link` / `unlink`（不复制、按目录信任、改了自动重新加载、不随设备同步）；从源码安装时先列出命令、本人确认后在隔离的子进程里装依赖并构建；清单 `server` 指定服务端文件。
+   还没做：内置的 GitHub 插件没有放插槽；链接的插件在 omem 里运行时，服务端入口引用的其他文件改了要重启。

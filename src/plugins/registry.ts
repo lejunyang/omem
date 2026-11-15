@@ -28,6 +28,8 @@ import { installInfo } from "./install.ts";
 import { broughtBy, seedContributions, pluginMcpSchema } from "./contributions.ts";
 import { pluginSpaceSchema, pluginSpaces, ensurePluginSpaces, describeSpaces } from "./spaces.ts";
 import { registerPluginChannel, type ChannelState } from "./channels.ts";
+import { checkSlot, type SlotEntry } from "./slots.ts";
+import { readLinks } from "./links.ts";
 import type { PluginApi, PluginBlock, PluginRegister, PluginSourceInput, PluginTool } from "./types.ts";
 
 /**
@@ -47,6 +49,15 @@ export const manifestSchema = z.object({
   description: z.string().default(""),
   /** Shown in settings → 插件; an installed package's own version wins (install.ts). */
   version: z.string().optional(),
+  /**
+   * The server file when it is not server.ts / .js / .mjs at the top: a build's output (`dist/server.js`).
+   * Not under the directories the trust hash leaves out (trust.ts), so a change to it needs trust again.
+   */
+  server: z
+    .string()
+    .regex(/^(?![\\/])(?!.*\.\.)[\w./-]+\.(ts|js|mjs)$/, "server 写插件目录里的相对路径（.ts、.js 或 .mjs）")
+    .refine((f) => !/^(\.\/)?(web|agents|skills|node_modules|\.git)\//.test(f), "server 不能放在 web/、agents/、skills/、node_modules/ 里（信任不核对这些目录）")
+    .optional(),
   /** The nav icon: a name from web/src/lib/icons.ts, or an .svg in the page's directory (web/, or web/public/ for a built page). */
   icon: z.string().regex(/^([a-z][a-z0-9-]*|[\w./-]+\.svg)$/, "图标写图标名，或页面目录里的 .svg 文件").default("box"),
   space: pluginSpaceSchema.optional(),
@@ -91,8 +102,10 @@ export type PluginManifest = z.infer<typeof manifestSchema>;
 export type LoadedPlugin = {
   manifest: PluginManifest;
   dir: string;
-  /** builtin: ships with omem; data: the owner's, in <data>/plugins. */
+  /** builtin: ships with omem; data: the owner's, in <data>/plugins, or linked from a directory on this machine (`linked`). */
   source: "builtin" | "data";
+  /** `omem plugin link`: read where it is, not copied; trusted by directory; this device only (links.ts). */
+  linked: boolean;
   /**
    * Whether its code runs: builtin; none (a data plugin without code); trusted; or, for a data
    * plugin with code the owner has not confirmed (yet, or since it changed), required / changed.
@@ -107,6 +120,8 @@ export type LoadedPlugin = {
   providers: string[];
   platforms: string[];
   blocks: Map<string, PluginBlock>;
+  /** Where its display blocks show on omem's own pages (api.slot, slots.ts). */
+  slots: SlotEntry[];
   /** Undo what api.connector registered (providers and their features). */
   connectors: (() => void)[];
   channels: ChannelState[];
@@ -144,8 +159,9 @@ function asPlugin(env: PluginEnv, ctx: ToolContext) {
   return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input), watches: watchesFor(ctx) };
 }
 
-async function importServer(dir: string, id: string, source: LoadedPlugin["source"]): Promise<PluginRegister | null> {
-  const file = source === "builtin" ? (built ? join(packageRoot(), "dist", "plugins", id, "server.js") : join(dir, "server.ts")) : SERVER_FILES.map((f) => join(dir, f)).find((f) => existsSync(f));
+async function importServer(dir: string, m: PluginManifest, source: LoadedPlugin["source"]): Promise<PluginRegister | null> {
+  const id = m.id;
+  const file = source === "builtin" ? (built ? join(packageRoot(), "dist", "plugins", id, "server.js") : join(dir, "server.ts")) : serverFile(dir, m);
   if (!file || !existsSync(file)) return null;
   // A changed file must load anew after trust is withdrawn and given again.
   const mod = (await import(`${pathToFileURL(file).href}?v=${Date.now()}`)) as { default?: PluginRegister };
@@ -154,11 +170,13 @@ async function importServer(dir: string, id: string, source: LoadedPlugin["sourc
 }
 
 const SERVER_FILES = ["server.ts", "server.js", "server.mjs"];
+/** A data plugin's server file: the one its manifest names, else server.ts / .js / .mjs at the top. */
+export const serverFile = (dir: string, m: PluginManifest) => (m.server ? join(dir, m.server) : SERVER_FILES.map((f) => join(dir, f)).find((f) => existsSync(f)));
 /** A data plugin brings code when it has a server file or services. */
-export const hasCode = (dir: string, m: PluginManifest) => m.services.length > 0 || Object.values(m.mcp).some((s) => !!s.command) || SERVER_FILES.some((f) => existsSync(join(dir, f)));
+export const hasCode = (dir: string, m: PluginManifest) => m.services.length > 0 || Object.values(m.mcp).some((s) => !!s.command) || !!m.server || SERVER_FILES.some((f) => existsSync(join(dir, f)));
 
 /** Tools and blocks are process-wide (like the host's own tools); register a plugin once. */
-async function register(app: App, dir: string, manifest: PluginManifest, source: LoadedPlugin["source"]): Promise<LoadedPlugin> {
+async function register(app: App, dir: string, manifest: PluginManifest, source: LoadedPlugin["source"], linked = false): Promise<LoadedPlugin> {
   const own: LoadedPlugin["tools"] = [];
   const blocks = new Map<string, PluginBlock>();
   for (const st of manifest.streams) if (!manifest.services.some((x) => x.name === st.service)) throw new Error(`流 ${st.name} 用的服务 ${st.service} 没有在 services 里声明`);
@@ -166,13 +184,15 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     manifest,
     dir,
     source,
-    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir) : "none",
+    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir, linked) : "none",
+    linked,
     enabled: !app.config.plugins.disabled.includes(manifest.id),
     specs: [],
     tools: own,
     providers: [],
     platforms: [],
     blocks,
+    slots: [],
     connectors: [],
     channels: [],
     env: {
@@ -229,6 +249,9 @@ async function loadCode(app: App, p: LoadedPlugin) {
       p.blocks.set(b.kind, b);
       p.tools.push({ name, page: false, write: true, approval: false });
     },
+    slot(at, def) {
+      p.slots.push(checkSlot(manifest.id, p.blocks, p.slots, at, def));
+    },
     connector(def) {
       if (!def.id.startsWith(`${manifest.id}-`)) throw new Error(`插件 ${manifest.id} 的连接器 id 要以 ${manifest.id}- 开头：${def.id}`);
       if (loginProvider(def.id)) throw new Error(`已经有连接器 ${def.id}`);
@@ -266,7 +289,7 @@ async function loadCode(app: App, p: LoadedPlugin) {
       };
     },
   };
-  const reg = await importServer(p.dir, manifest.id, p.source);
+  const reg = await importServer(p.dir, manifest, p.source);
   if (reg) await reg(api);
   const group = TOOL_GROUPS.find((g) => g.id === manifest.id);
   if (group) group.tools = p.tools.map((t) => t.name);
@@ -280,8 +303,8 @@ async function loadCode(app: App, p: LoadedPlugin) {
  */
 async function loadIsolated(app: App, p: LoadedPlugin) {
   const { manifest } = p;
-  const server = SERVER_FILES.map((f) => join(p.dir, f)).find((f) => existsSync(f));
-  if (!server) return;
+  const server = serverFile(p.dir, manifest);
+  if (!server || !existsSync(server)) return;
   const sb = await startSandbox(app, { id: manifest.id, dir: p.dir, server, services: manifest.services }, {
     prefix: `${manifest.id}_`,
     packageRoot: packageRoot(),
@@ -305,7 +328,7 @@ export async function trustPlugin(app: App, id: string, mode: RunMode = "isolate
   const p = getPlugin(id);
   if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
   const before = trustMode(app, id);
-  setTrust(app, id, p.dir, mode);
+  setTrust(app, id, p.dir, mode, p.linked);
   if (p.trust !== "trusted" || before !== mode) {
     unloadCode(p);
     p.trust = "trusted";
@@ -342,6 +365,7 @@ function unloadCode(p: LoadedPlugin) {
   p.providers.splice(0);
   p.platforms.splice(0);
   p.blocks.clear();
+  p.slots.splice(0);
   stopPluginServices(p.manifest.id);
   const group = TOOL_GROUPS.findIndex((g) => g.id === p.manifest.id);
   if (group >= 0) TOOL_GROUPS.splice(group, 1);
@@ -485,33 +509,56 @@ export function setPluginIcon(app: App, id: string, icon: string) {
   return describePlugin(p);
 }
 
-export async function loadPlugins(app: App, roots: { dir: string; source: LoadedPlugin["source"] }[] = [{ dir: builtinPluginsDir(), source: "builtin" }, { dir: dataPluginsDir(app), source: "data" }]) {
+/** Without roots: the built-in plugins, the data directory's, then the ones linked on this device (links.ts). */
+export async function loadPlugins(app: App, roots?: { dir: string; source: LoadedPlugin["source"] }[]) {
   host = app;
-  for (const root of roots) {
+  for (const root of roots ?? [{ dir: builtinPluginsDir(), source: "builtin" }, { dir: dataPluginsDir(app), source: "data" }]) {
     if (!existsSync(root.dir)) continue;
     for (const entry of readdirSync(root.dir, { withFileTypes: true })) {
       const dir = join(root.dir, entry.name);
       if (!entry.isDirectory() || !existsSync(join(dir, "plugin.yaml"))) continue;
-      try {
-        const manifest = manifestSchema.parse(YAML.parse(readFileSync(join(dir, "plugin.yaml"), "utf8")));
-        if (manifest.id !== entry.name) throw new Error(`目录名 ${entry.name} 与插件 id ${manifest.id} 不一致`);
-        let p = plugins.get(manifest.id);
-        if (p && p.dir !== dir) throw new Error(`已有同名插件（${p.source === "builtin" ? "内置" : p.dir}）`);
-        if (!p) {
-          p = await register(app, dir, manifest, root.source);
-          plugins.set(manifest.id, p);
-        }
-        if (p.enabled) {
-          seedSkills(app, p);
-          ensurePluginSpaces(app, p.manifest.id, p.manifest);
-          seedContributions(app, p);
-        }
-      } catch (e) {
-        console.warn(`[omem] 跳过插件 ${entry.name}：${(e as Error).message}`);
-      }
+      await loadDir(app, dir, root.source, entry.name);
     }
   }
+  if (!roots) for (const [id, link] of Object.entries(readLinks(app))) await loadDir(app, link.dir, "data", id, true);
   return listPlugins();
+}
+
+/** One plugin directory: `name` is the id it must have (its directory's name, or what it was linked as). */
+async function loadDir(app: App, dir: string, source: LoadedPlugin["source"], name: string, linked = false) {
+  try {
+    if (linked && !existsSync(join(dir, "plugin.yaml"))) throw new Error(`链接的目录 ${dir} 不在了或没有 plugin.yaml`);
+    const manifest = manifestSchema.parse(YAML.parse(readFileSync(join(dir, "plugin.yaml"), "utf8")));
+    if (manifest.id !== name) throw new Error(linked ? `链接时它是 ${name}，现在 plugin.yaml 写的是 ${manifest.id}：重新 omem plugin link` : `目录名 ${name} 与插件 id ${manifest.id} 不一致`);
+    let p = plugins.get(manifest.id);
+    if (p && p.dir !== dir) throw new Error(`已有同名插件（${p.source === "builtin" ? "内置" : p.dir}）`);
+    if (!p) {
+      p = await register(app, dir, manifest, source, linked);
+      plugins.set(manifest.id, p);
+    }
+    if (p.enabled) {
+      seedSkills(app, p);
+      ensurePluginSpaces(app, p.manifest.id, p.manifest);
+      seedContributions(app, p);
+    }
+  } catch (e) {
+    console.warn(`[omem] 跳过插件 ${name}：${(e as Error).message}`);
+  }
+}
+
+/**
+ * A linked plugin changed (its files, or its link): read it again the way an installed one is after an
+ * update. Trusted by directory, so its code runs again without asking; null once it is unlinked.
+ */
+export async function reloadLinked(app: App, id: string) {
+  host = app;
+  const p = plugins.get(id);
+  if (p && !p.linked) throw new HttpError(400, `插件 ${id} 不是链接的`);
+  if (p) forgetPlugin(id);
+  const link = readLinks(app)[id];
+  if (link) await loadDir(app, link.dir, "data", id, true);
+  const now = plugins.get(id);
+  return now ? describePlugin(now) : null;
 }
 
 /** The plugin brings a page of its own (web/index.html); without one the shell shows its default page. */
@@ -538,6 +585,9 @@ export function describePlugin(p: LoadedPlugin) {
     icon: pluginIcon(p),
     iconChosen: !!host?.config.plugins.icons[p.manifest.id],
     source: p.source,
+    // Linked for development (omem plugin link): the page marks it 开发中.
+    linked: p.linked,
+    slots: p.slots.map((s) => ({ at: s.at, block: s.block })),
     space: p.manifest.space?.id ?? null,
     spaces: describeSpaces(host, p.manifest.id, p.manifest),
     agents: p.manifest.agents.map((n) => ({ name: `${p.manifest.id}-${n}`, description: p.specs.find((s) => s.name === `${p.manifest.id}-${n}`)?.description ?? "" })),

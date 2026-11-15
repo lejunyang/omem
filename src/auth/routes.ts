@@ -370,6 +370,9 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/plugins/:id/blocks/:bid/submit": "self",
   "GET /api/plugins/:id/settings": "self",
   "GET /api/plugins/:id/data/:collection": "self",
+  // Plugin blocks on omem's own pages: the handler checks the item is readable and reads as this person.
+  "GET /api/slots": "self",
+  "GET /api/slots/:plugin/:block": "self",
   "POST /api/plugins/:id/call/:tool": "self",
   // A plugin page's voice conversation (the shell asks for it): like /api/voice, anyone who may use the plugin.
   "GET /api/plugins/:id/voice": "self",

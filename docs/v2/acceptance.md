@@ -35,6 +35,41 @@ npx tsc --noEmit -p .
 
 真实 Agent 验证尝试：把角色与两个虚构案例交给 `codex exec -m gpt-6.1-sol -c model_reasoning_effort=low -s read-only --skip-git-repo-check -`，CLI 启动即退出 1，报 `Error finding codex home: Could not find home directory`，没有进入角色运行，不能算通过。真实渠道卡片和网页展示未验；卡片内容、权限与回答结果由临时 Git 仓库测试验证。
 
+## 流程第三期第二步：插件的界面插槽、plugin link、源码构建安装（2026-11-16）
+
+| 编号 | 操作 | 预期 | 验证 |
+| --- | --- | --- | --- |
+| plugin-slot-01 | 插件声明插槽：未知位置、没声明的块、不是 `display` 或缺 `load` / `view` 的块、`stage` 用在事项页、今日页写条件、别的插件的对象类型、同一块同一位置放两次、`when` 里不认识的键 | 都拒绝，说清哪里不对；插件代码里声明错的让信任失败，撤回成“需要信任”，插槽列表为空 | `test/plugin-slots.test.ts` |
+| plugin-slot-02 | 事项挂两个对象，打开事项页侧栏 | `when.object` 的插槽按对象各显示一块（最近挂的在前）；取数时插件拿到看的人、事项空间和对象的键、标题、状态、链接；没挂在这件事上的对象、不带对象的请求都 404 | 同上 |
+| plugin-slot-03 | 插件的 `load` 抛错、交回的内容不合 schema、`view` 画出横轴和数值对不上的图 | 这一块 502 并写明原因，同一页的其他块照常 | 同上 |
+| plugin-slot-04 | `when.space` 限定的插槽，看两个空间的事项 | 只在那个空间的事项上显示 | 同上 |
+| plugin-slot-05 | 事项没有流程、有流程但看别的阶段、阶段跟着的对象先没挂后挂上 | 没有流程或别的阶段不显示；对象没挂时 `object` 为空，挂上后带最近挂的那个 | 同上 |
+| plugin-slot-06 | 今日页的插槽 | 不带事项，用插件自己的空间；不认识的位置、事项页不给事项 id 都是 400 | 同上 |
+| plugin-slot-07 | 停用插件、再启用、撤销信任、再信任 | 停用和撤销后列表为空，直接取数 404；启用并信任后回来 | 同上 |
+| plugin-slot-08 | `GET /api/slots`、`/api/slots/:plugin/:block`：本人、只读成员、看不到这个空间的人 | 本人和只读成员 200，插件按成员自己的身份读；看不到的人 404；今日页的列表谁都能拿 | 同上 |
+| plugin-slot-09 | 网页：事项页侧栏、流程阶段下面、今日页 | 有插槽时在外部状态下面 / 选中阶段说明下面 / 右栏顶上逐块显示，块上一行写插件名和对象；一块出错只在那一块里写原因和“重试”；没有插槽时什么都不多 | 待在浏览器里看（本次只过了 `vue-tsc`） |
+| plugin-link-01 | `omem plugin link` 不存在的目录、没有 plugin.yaml 的目录、`\\服务器\共享` 和 `//服务器/共享`、和内置插件同 id、`plugins/` 里已有同 id | 都拒绝，链接清单不变 | `test/plugin-dev.test.ts` |
+| plugin-link-02 | 链接一个带代码的插件，加载、信任、改 `server.mjs`、重新加载 | 不复制；设置页数据 `linked: true`、来源是目录；信任记目录，改了代码仍是“已信任”，重新加载后运行的是新代码；复制到别处的同样代码不算已信任 | 同上（隔离运行；在 omem 里运行时 vitest 会缓存已导入的文件） |
+| plugin-link-03 | 服务在跑：改链接目录里的文件、改 `web/` 下的页面、命令行 unlink | 改代码 0.3 秒后自动重新加载并发 `plugin` 事件；`web/` 的变化不触发；unlink 后插件卸下、信任去掉、目录里的文件不动 | 同上 |
+| plugin-link-04 | 链接着的 id 再安装；`DELETE /api/plugins/:id` | 安装 409，提示先 unlink；删除接口只去掉链接 | 同上 |
+| plugin-link-05 | 这台设备链接了插件，打快照给别的设备；再拉取别的设备的数据覆盖本机 | 快照里没有链接清单、信任和 `plugins/`；覆盖后本机的链接和信任还在 | 同上 |
+| plugin-build-01 | 安装一个有 `build` 脚本、清单 `server: dist/server.mjs` 还不存在的本地包；用别的 key 确认；两次请求之间改了 `package.json` | 第一次只给出命令（`npm run build`）、缺的文件和脚本原文，构建脚本没运行，也没装；错的 key 和包变了以后旧的 key 都要重新确认 | 同上 |
+| plugin-build-02 | 有依赖、有或没有锁文件、已经构建过、没有 build 脚本、清单 `server` 写 `../` | 依赖用 `npm install` / `npm ci`，都带 `--ignore-scripts`；已构建或没有 build 脚本的不构建；`server` 只收插件目录里的相对路径 | 同上 |
+| plugin-build-03 | 带上计划的 key 确认 | 在解开的临时目录里运行，构建看不到 `OMEM_` 开头的变量，输出进 `logs/plugin-builds/<id>.log`；本人的源码目录没多出构建产物；装好后照常等信任，信任后工具可用 | 同上（用真实的 `npm run build` 跑一个假的 build 脚本，不联网） |
+| plugin-build-04 | 构建脚本退出码 3 | 报出退出码和日志位置，什么都不装 | 同上 |
+| plugin-build-05 | 网页的安装入口 `POST /api/plugins/install` 两次 | 第一次返回 `{ build }` 不运行；带 `build: key` 第二次才构建并安装 | 同上；设置页的确认弹窗待在浏览器里看 |
+
+检查命令：
+
+```sh
+npx vitest run test/plugin-slots.test.ts test/plugin-dev.test.ts test/plugins.test.ts test/plugin-install.test.ts test/plugin-sandbox.test.ts test/plugin-pack.test.ts test/plugin-connectors.test.ts test/plugin-channels.test.ts test/plugin-services.test.ts test/flow-objects.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts test/esm.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+npx tsc --noEmit -p packages/plugin-sdk/tsconfig.json
+npx vue-tsc --noEmit -p web/tsconfig.json
+```
+
+结果见 flows.md 文末“第三期的第二步”。没跑全量，没在浏览器里看网页，没有用真实插件或真实模型试。
+
 ## 流程第三期第一步：插件的对象和信号（2026-11-16）
 
 | 操作 | 预期 | 验证 |

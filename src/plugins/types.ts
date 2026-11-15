@@ -158,7 +158,24 @@ export type PluginBlock<S extends z.ZodObject = z.ZodObject> = {
   grade?: (ctx: PluginContext & { blockId: string }, data: z.infer<S>, answers: Record<string, unknown>) => BlockGrade | Promise<BlockGrade>;
   /** What the tool returns to the agent after storing the block. */
   presented?: (data: z.infer<S>, blockId: string) => string;
+  /** In a slot (`api.slot`): what it shows there, read as the person looking, in the item's space; must pass `schema`. */
+  load?: (ctx: PluginContext, slot: PluginSlotContext) => z.infer<S> | Promise<z.infer<S>>;
+  /** How omem's own pages draw it in a slot: display components (docs/v2/interactive-ui.md), no `page`. */
+  view?: (data: z.infer<S>) => PluginSlotView;
 };
+
+/** Where a block can sit on omem's own pages (docs/v2/flows.md §8, “界面插槽”). */
+export type PluginSlotPlace = "item.panel" | "flow.stage" | "today";
+/**
+ * When a slot shows; not for `today`. `object`: one of this plugin's object kinds — on `item.panel` linked
+ * to the item (one block per object), on `flow.stage` the kind the stage follows (`by` / `done`).
+ * `stage`: stage ids (`flow.stage` only); `flow`: flow ids; `space`: the item's space.
+ */
+export type PluginSlotWhen = { object?: string; stage?: string | string[]; flow?: string | string[]; space?: string | string[] };
+export type PluginSlot = { block: string; when?: PluginSlotWhen };
+/** What a block in a slot is shown for: the item, the stage and the object it sits by (null where there is none). */
+export type PluginSlotContext = { at: PluginSlotPlace; item: string | null; stage: string | null; object: { id: string; kind: string; key: string; title: string; status: string; link: string } | null };
+export type PluginSlotView = { title?: string; components: unknown[] };
 
 export type PluginApi = {
   id: string;
@@ -170,6 +187,8 @@ export type PluginApi = {
   channel(def: PluginChannel): { receive(message: PluginChannelMessage): Promise<void> };
   tool<S extends z.ZodObject>(tool: PluginTool<S>): void;
   block<S extends z.ZodObject>(block: PluginBlock<S>): void;
+  /** Put one of its display blocks (with `load` and `view`) on omem's own pages. In-process only; declare the block and objects first. */
+  slot(at: PluginSlotPlace, def: PluginSlot): void;
   /** One of the services the manifest declares: started on first use, its address and the token it expects. */
   service(name: string): { ensure(): Promise<{ url: string; token: string }> };
   /** A platform people can connect; its id must start with `<plugin id>-`. Gone when the plugin's code is unloaded. */

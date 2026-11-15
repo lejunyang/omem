@@ -43,7 +43,8 @@ export function codeHash(dir: string) {
 
 /** isolated: its code runs in its own process with Node's permission model (sandbox.ts); inprocess: inside omem, with omem's rights. */
 export type RunMode = "isolated" | "inprocess";
-type Record = { hash: string; at: string; mode?: RunMode };
+/** `dir`: a linked plugin (links.ts) is trusted by its directory, so editing it needs no new confirmation. */
+type Record = { hash: string; at: string; mode?: RunMode; dir?: string };
 const file = (app: App) => join(app.home, "secrets", "plugin-trust.json");
 
 function read(app: App): { [id: string]: Record } {
@@ -62,9 +63,11 @@ function write(app: App, all: { [id: string]: Record }) {
 }
 
 /** trusted: confirmed and unchanged; changed: confirmed, but the code is not what was confirmed; required: never confirmed. */
-export function trustState(app: App, id: string, dir: string): "trusted" | "changed" | "required" {
+export function trustState(app: App, id: string, dir: string, linked = false): "trusted" | "changed" | "required" {
   const r = read(app)[id];
   if (!r) return "required";
+  // A trust by directory holds only for that linked directory; a copy (or another directory) is checked by its code.
+  if (linked || r.dir) return linked && r.dir === dir ? "trusted" : "changed";
   return r.hash === codeHash(dir) ? "trusted" : "changed";
 }
 
@@ -74,9 +77,10 @@ export const trustMode = (app: App, id: string): RunMode => {
   return r ? (r.mode ?? "inprocess") : "isolated";
 };
 
-export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated") {
+export function setTrust(app: App, id: string, dir: string | null, mode: RunMode = "isolated", linked = false) {
   const all = read(app);
-  if (dir) all[id] = { hash: codeHash(dir), at: now(), mode };
+  if (dir && linked) all[id] = { hash: "", at: now(), mode, dir };
+  else if (dir) all[id] = { hash: codeHash(dir), at: now(), mode };
   else delete all[id];
   write(app, all);
 }

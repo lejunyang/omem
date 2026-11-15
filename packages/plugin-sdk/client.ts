@@ -9,6 +9,14 @@ export type OmemEvent =
   | { type: "run"; runId: string; status: string };
 
 export { renderBlock, renderView, GENERIC_KINDS, type BlockView, type ViewComponent, type UiField } from "./blocks";
+export type { PluginSlot, PluginSlotApi, PluginSlotContext, PluginSlotPlace, PluginSlotWhen } from "./slots";
+import type { ViewComponent as SlotComponentAll } from "./blocks";
+import type { PluginObjectContext as SlotPluginContext } from "./objects";
+import type { PluginSlotBlock as SlotBlockOf, PluginSlotView as SlotViewOf } from "./slots";
+/** What a slot's block draws on omem's pages: display components, no interactive `page`. */
+export type PluginSlotView = SlotViewOf<Exclude<SlotComponentAll, { type: "page" }>>;
+/** A slot's block: `load` as the person looking (in the item's space), `view` to display components. */
+export type PluginSlotBlock<T> = SlotBlockOf<T, SlotPluginContext, Exclude<SlotComponentAll, { type: "page" }>>;
 export type { PluginObject, PluginObjectState, PluginObjectContext, PluginObjectApi, PluginConnection, PluginSignal } from "./objects";
 
 export type Omem = {

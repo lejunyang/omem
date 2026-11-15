@@ -21,6 +21,15 @@ updated: 2026-11-16
 - 原件表加 `sources_uri` 索引（`src/core/db.ts` 最后一条迁移）。群名、工作近况、引用、找人、有人找你这些地方只按地址（`lark:<群>`、链接）找原件，原来每次都扫整张原件表：常驻那台的备份库上一次热缓存约 250 ms、冷读 11 秒。`scripts/bench-scale.ts --source-uri` 用 10 万份 4KB 的原件比：200 次查找 9320.4 → 4 ms；`test/query-plans.test.ts` 检查这几种写法都走索引。升级时建索引要扫一遍原件表，只在第一次启动时花一点时间。
 - 数据页“课题”板块在发现下面多三项：有改动的、改后重跑通过的、改后重跑仍然失败的（`src/insights/insights.ts` 的 `studySection`）。重跑结果的判定从 `findingFix` 抽成 `fixVerified`（`src/studies/fix.ts`），课题视图和数据页共用。测试 `test/insights.test.ts`。
 
+## 插件的界面插槽、plugin link、从源码构建安装（11-16）
+
+- 设计在 `docs/v2/flows.md` 第 8 节，写法在 `docs/v2/plugins.md` 的“放在 omem 页面上：插槽”“从源码构建”“开发中的插件”。
+- 插槽：`api.slot(at, { block, when })`，位置 `item.panel` / `flow.stage` / `today`，`when` 的 `object`（本插件的对象类型）、`stage`、`flow`、`space`。放进去的块是 `display: true` 并带 `load(ctx, slot)` 和 `view(data)`；声明时检查位置、块、条件和对象类型，错了插件代码加载失败（`src/plugins/slots.ts` 的 `checkSlot`，`registry.ts` 的 `api.slot`，`LoadedPlugin.slots` 随代码卸下清空）。接口 `GET /api/slots`（这一页要画哪些块）和 `GET /api/slots/:plugin/:block`（一块的内容：核对事项可读、条件、对象挂在事项上，按看的人和事项空间构造 `PluginContext`，15 秒，schema 和展示组件两次校验，`page` 不收；插件出错 502），在 `src/auth/routes.ts` 登记为 `self`。隔离运行的 `api.slot` 报不支持（`sandbox-runner.ts`）。
+- 网页：`web/src/components/PluginSlots.vue`（列出）和 `PluginSlot.vue`（逐块取数，用 `UiView` 画，`onErrorCaptured` 只让这一块报错）放在事项页侧栏的外部状态下面（`views/Items.vue`）、流程选中阶段的说明下面（`ItemFlow.vue`）和今日页右栏最上面（`views/Home.vue`）；没有插槽时什么都不显示。设置 → 插件的卡片写“放在页面上”。
+- `omem plugin link <目录>` / `unlink <id>`（`src/plugins/links.ts`、`src/cli-main.ts`）：链接清单在本机 `<数据目录>/plugins/.links.json`，不随拉取；只能命令行链接本机目录（拒绝网络路径），和内置、`plugins/` 里已有的同 id 拒绝。`loadPlugins` 不带参数时最后加载链接的插件（`LoadedPlugin.linked`）；信任记目录（`trust.ts` 的 `dir`），改代码不用重新确认；服务里 `watchLinkedPlugins`（`main.ts` 启动）盯目录和链接清单，改了 0.3 秒后 `reloadLinked`，忽略 `web/`、`node_modules/`、`.git/`，发 `plugin` 事件。`plugin remove`、`DELETE /api/plugins/:id` 对链接的插件只去掉链接；安装同 id 拒绝。设置页标“开发中”，有“去掉链接”。
+- 源码构建（`src/plugins/install.ts`）：`buildPlan` 在有 `build` 脚本、清单的 `server` 或服务脚本还不存在时给出命令（装依赖 `npm ci` / `npm install` 都带 `--ignore-scripts`，再 `npm run build`）和包脚本原文；没带确认过的 `key` 时抛 `BuildNeeded`，什么都不运行。命令行用终端确认，`POST /api/plugins/install` 和 `/update` 先返回 `{ build }`，设置页弹窗确认后带 `build: key` 再请求。确认后在解开的临时目录里逐条 `spawn`（去掉密钥类和 `OMEM_` 环境变量，共十分钟，超时连子进程停掉），输出写 `<数据目录>/logs/plugin-builds/<id>.log`。清单新增可选的 `server`（服务端文件的相对路径），`registry.ts` 的 `serverFile` 统一找服务端文件。
+- SDK：`packages/plugin-sdk/slots.ts`（不带 import 的类型），`client.ts` 导出 `PluginSlot*`，`PluginSlotView` / `PluginSlotBlock` 带上展示组件和上下文类型。测试 `test/plugin-slots.test.ts`、`test/plugin-dev.test.ts`。
+
 ## 用真实模型跑了上下文跟进和提交认领，改了两处（11-16）
 
 - 记录在 `docs/v2/flows.md` 文末“用真实模型跑过的”。两个角色的理解都对（提议和决定分得清、闲聊不交、提交归不到已有事项时建议新建并写理由），问题出在宿主。

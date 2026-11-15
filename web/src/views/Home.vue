@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { get, onServerEvent, onServerResync, post, type Ask, type Item, type Run } from "../api";
 import AskCard from "../components/AskCard.vue";
+import PluginSlots from "../components/PluginSlots.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { currentSpace, fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel } from "../store";
@@ -145,6 +146,7 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
       </section>
 
       <aside class="col side">
+        <PluginSlots at="today" />
         <router-link v-if="data.study.due" to="/learn" class="card pad study">
           <Icon name="cap" />
           <div><strong>{{ data.study.due }} 张卡片待复习</strong><div class="muted small">今天已复习 {{ data.study.reviewedToday }} 张</div></div>

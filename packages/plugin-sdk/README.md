@@ -57,7 +57,35 @@ const object: PluginObject = {
 
 完整的链接匹配、读取及字段例子在 `plugins/github/server.ts`。宿主全名为 `<插件 id>:<kind>`；kind 用小写字母开头，后接小写字母、数字或短横线。statuses 非空，final 必须是已声明状态；poll 默认 5 分钟，最短 1 分钟。对象只有事项关联且事项未结束、对象未到终态时才轮询，始终用事项主人的连接，按插件既有的进程内或隔离方式执行。插件停用或卸载后保留最后状态并标记来源已停用，不再轮询。
 
-`ctx.emit({ kind: "received", keys: { object: "example/shop#7" }, payload: { note: "状态已读取" } })` 记录 `plugin.<插件 id>.received`，keys 与 payload 序列化后各不超过 4000 字符；本步只记录，不触发规则或流程。对象状态变化由宿主另记 `object.<全名>.<状态>` 并推进关联事项。不提供写平台对象的动作、按钮或界面插槽。
+`ctx.emit({ kind: "received", keys: { object: "example/shop#7" }, payload: { note: "状态已读取" } })` 记录 `plugin.<插件 id>.received`，keys 与 payload 序列化后各不超过 4000 字符；本步只记录，不触发规则或流程。对象状态变化由宿主另记 `object.<全名>.<状态>` 并推进关联事项。不提供写平台对象的动作或按钮；界面插槽见下一节。
+
+## 界面插槽
+
+服务端的 `api.slot(at, { block, when })` 把一个只展示的内容块放到 omem 自己的页面上：`item.panel`（事项页侧栏）、`flow.stage`（流程阶段下面）、`today`（今日页）。本包从主入口导出 `PluginSlot / PluginSlotWhen / PluginSlotPlace / PluginSlotContext / PluginSlotView / PluginSlotBlock / PluginSlotApi` 类型（`slots.ts`）。
+
+```ts
+import type { PluginSlotBlock } from "@omem-ai/plugin-sdk";
+
+type Checks = { passed: number; failed: number };
+const checks: PluginSlotBlock<Checks> = {
+  // ctx：看页面的人（ctx.userId）、事项所在的空间（ctx.spaceId）；slot：位置、事项、阶段和对象（键、标题、状态、链接）
+  load: async (ctx, slot) => {
+    const c = await ctx.connection("connect-github");
+    if (!c || !slot.object) return { passed: 0, failed: 0 };
+    return countChecks(await (await c.fetch(`/repos/example/shop/commits/main/check-runs`)).json());
+  },
+  view: (d) => ({ title: "检查", components: [{ type: "metric", items: [{ label: "通过", value: d.passed }, { label: "失败", value: d.failed, good: "down" }] }] }),
+};
+// register(api) 里，先声明对象和块，再放插槽：
+// api.block({ kind: "ci_summary", description: "合并请求的检查结果", display: true, schema, ...checks });
+// api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } });
+```
+
+- `when.object` 是本插件的对象类型：事项页侧栏上要求事项挂着这种对象（一个对象一块），阶段下面要求这一段跟着这种对象；`when.stage`（只用于 `flow.stage`）、`when.flow`、`when.space` 可写一个或一组。今日页不能写条件。
+- `load` 的结果按块的 `schema` 校验，`view` 的结果按展示组件校验（`renderView` 画的那些，不能放交互页 `page`）；任何一步出错只是这一块显示错误。15 秒没结果算失败。
+- 声明错了（位置、块、条件、对象类型不对，或块不是 `display: true`、缺 `load` / `view`），插件代码加载失败。只有在 omem 里运行的代码能声明插槽；插件停用或撤销信任时插槽消失。
+
+开发插件时可以 `omem plugin link <目录>`：不复制，改了自动重新加载，信任按目录记。包里有 `build` 脚本、清单的 `server`（例如 `dist/server.js`）或服务脚本还没构建时，`omem plugin install` 先列出装依赖和构建的命令，确认后才运行。
 
 ## 场景包与聊天渠道
 
