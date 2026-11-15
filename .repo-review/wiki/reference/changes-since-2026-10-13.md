@@ -12,6 +12,7 @@ updated: 2026-11-15
 - `src/mentions/reply-ladder.ts`：回复找本人的人和工具审批一样分档升降。`draftStreak` 按 `reply_samples` 数某一类会话（群 / 私聊）最近连续照发的草稿；到 `mentions.reply.promoteAfter`（默认 10，0 不问）时 `suggestReplyPromotion` 问本人一次，回答由 `reply-promote` 处理：只有本人自己选“直接发”才经 `MentionChannel.reply.setMode` 改成 auto。`demoteReplyFor`：自动回复的提醒被本人回负面表情，这一类退回 draft 并重数。入口在 `src/channels/mention-reply.ts decideMentionReply`（照发之后）和 `src/core/notify-reactions.ts applyNegative`（先于学忽略规则）。
 - `src/core/notify.ts releaseLater`：三条以上合成的清单只列最新的 12 条，更早的只报条数；全部仍随清单算已送达。
 - 测试 `test/reply-ladder.test.ts`、`test/notify-later.test.ts`；验收 43d1–43d3。
+
 ## 2026-11-15：决策按场景设门槛、记结果与离线比较
 
 - 巡检、盯群、有人找你、直接答复分别记录模型、问题、截短材料和概率，低把握的跳过 / 忽略 / 直接答复改为谨慎选项；分诊选处理者和其他调用不变。
@@ -24,11 +25,13 @@ updated: 2026-11-15
 - `src/core/notify-reactions.ts`、`src/channels/lark-feedback.ts`：本人对工具完成汇报回负面表情，按通知 `reportTool` 立即用 `setRung` 改回 ask，重算批准连续次数，later 告知一次；普通通知复用“忽略”按钮的模型路径，通知保存生成的规则，一次性事件不告知。紧急提醒与工具汇报不学忽略规则，`notify.learnFromReactions` 默认开，可在渠道设置关闭。通知页展示、删除忽略规则，并显示通知学出的规则。
 - `src/core/notify-outcome.ts`：标为 negative 时补做同一处理，覆盖服务停机期间已存到 `feedback` 的反应；重复事件与重复标注不重复执行。`src/channels/lark-actions.ts` 的本人“忽略”也共用通知上的处理记录。
 - `src/channels/lark-meetings.ts`：会议结束或本人离会调用 `releaseLater(app, new Date(), { now: true })`，立即放出攒着的通知，不占下个固定时点。本次不增加会中扣留逻辑。测试见 `notify-reactions`、`notify-outcome`、`approval-ladder`、`meeting-rules`、`notification-settings`。
+
 ## 场景包带空间结构（11-15）
 
 - `src/plugins/registry.ts`、`spaces.ts`：清单增加 `spaces`，与旧 `space` 合并；挂载技能须由本包声明，拒绝重复 id、无效 id，忽略未声明字段。启用时按清单顺序创建空间，已有同 id 空间完整保留；详情记录“已创建”或“已有同名空间，没有改动”，停用和卸载不删空间。空间表无插件来源字段，未新增列；创建记录使用插件的保留安装状态。
 - `src/plugins/pack.ts`、`cli-main.ts`、`web/src/components/PluginPack.vue`、`PluginsSettings.vue`：API 的 `spaces`、可重复的 `--space <id>` 和同一打包表单选择空间，只带名称、类型、说明和技能挂载，不读取或复制空间内容，不带成员、仓库路径、会话或其他设置。个人和代码仓库空间拒绝打包；遗漏空间或挂载技能按名称提醒。规则复用 `portableRule`，保留包内空间，安装先建空间再导入停用规则；接收方已有空间的行为保持不变。
 - 测试 `test/plugin-pack.test.ts`、`test/permissions.test.ts`；验收 PL7–PL9。
+
 ## 夜间抽检 Agent 的原件与目录定级（11-15）
 
 - `src/quality/levels.ts`：同一次夜间审计除页面外还抽最多 6 条 Agent 定级（`quality.audit.levels`，0 关闭）。目录先于单篇、忽略和仅检索先于其他，大目录先查，再按定级时间。少量目录候选按空间共用现有内存目录，取路径和原件数；单篇通过部分索引做 SQL 限额查询，只取剩余额度。选中后才取正文前 4000 字；目录从原件 ID 列表等距选最多 15 个 ID，一次只读这些标题。目录不落库，采集时不维护审计专用的目录关系。`wiki-checker` 的工具列表和说明包含 `submit_level_check`，工具只在定级核对步骤接受结论。
@@ -53,17 +56,20 @@ updated: 2026-11-15
 - `loadLocalModel`（`embeddings.ts`）在每个进程里都先查 osdk 的目录；主进程的 `getEmbedder` 和 `rerankScores` 负责发起下载（`prepareLocalModel`）。
 - 设置 → 检索：向量和重排各有一行写明模型从哪里来（本地目录 / osdk 锁定的目录 / 自己下载的缓存 / osdk 正在下载 / osdk 失败的原因）。重排的状态不再把“模型在读进程里加载失败”显示成“还没用过”：读进程把失败原因抛回来（`read-worker.ts`），首次下载期间的超时显示成“正在下载或加载”。
 - 测试 `test/local-models.test.ts`（osdk 用替身，测试进程里不碰真的 osdk）。
+
 ## 经验目录过大时，做梦提炼技能草稿（11-15）
 
 - `src/agents/dream-consolidate.ts`：统计档案和内置角色名下有效的专属经验，按目录条数排序，附最多 12 个标题（回答时召回次数优先，其次新写的）。`dream.consolidate.min` 默认 30，`perNight` 默认 2、0 关闭；同一时区日期内手动再跑也计入额度。共享记忆不计数，空间范围按运行和用户权限限定。
 - `jobs.ts` 的 dream 任务加“经验太多的目录”，无其他变化也可启动；成功后才写 `kv` 的 `dream_consolidated:<档案>:<目录>`（条数、日期、技能名）。通过草稿正文的 `mem:` 出处对应原目录，增长至少 30% 或对应技能删除后才重交；已被复盘启用的技能不算删除。运行摘要列出提炼的技能草稿和归属。
 - `tools.ts` 的 `recall` 原已允许指定别的档案读取，现在补 `limit` / `offset`，可翻完超过 200 条的目录；`save_skill(agent, draft=true)` 沿用原有挂载路径，记录做梦保存的草稿，由既有夜间复盘 K1 试用后启用；原经验不删改。`peer call … config` 自动包含新设置。`test/dream-consolidate.test.ts` 覆盖筛选、去重交接、失败和 ACP + MCP 保存与挂载。
 - `docs/v2/review.md` 同步 `_common.md` 的运行行为证据约定：实际运行附命令和关键输出，只读代码推断要明说未运行并给行号。
+
 ## 重点文档每晚补写进 Wiki（11-15）
 
 - `wiki/coverage.ts`：有效级别为 focus 的文档统计覆盖率；尚无页面引用的按贴链接次数、发帖人数、引用、事项、本人定级和近期修改排序，不读取候选正文。`wiki_coverage_tries` 记录生成尝试并同步，30 天内不重复选。
 - `wiki/generate.ts` 新增 `sourceIds`，只规划指定文档涉及的内容，优先补已有页面，沿用现有写作与核对。默认 `wiki-coverage` 每天 04:10 全局最多 3 份，每空间最多 2 份，跳过关闭自动整理和代码空间。
 - 空间 Wiki 顶部的覆盖数字可展开前 20 份候选和具体信号，写权限用户可点“现在写这几份”；两个 coverage HTTP 路由均需 wiki.write；只读 peer 命令 `wiki-coverage` 返回各空间数字。设置 → 定时任务可调整额度或关闭。回归在 `test/wiki-coverage.test.ts`、`test/permissions.test.ts`。
+
 ## Wiki 指正：改这一页、排查同类、后续核对记住（11-15）
 
 - `src/wiki/corrections.ts`：`page_corrections` 保存本人原话、正确说法和最后写入的运行类型，支持设备拉取合并；网页与 `correct_page` 共用写权限和空间范围检查。原页直接进现有写作核对，再由 `wiki-sweep` 选同空间同类运行近 90 天写的页与搜索命中，同目录优先、默认最多 15 页（0 关闭）。
@@ -84,16 +90,19 @@ updated: 2026-11-15
 
 - `review-chain.ts` / `review.ts` / `families.ts`：默认 prefer 在评审项与编码同家时，从评审换模型列表和任务选型候选顺序找可用别家；保留本人、轮换与复看选择。记录实际独立性，same 在网页有徽标，require 在摘要与裁决材料说明不算独立评审，不拦运行。
 - `code-tasks.ts` / `code-loop.ts` / `code-overlap.ts`：40 行源代码即要求精简；新库标准档功能、精简、业务，完整档再加架构、历史、规范（已有档位不迁移）。阶段计划加同仓库近 30 天采纳 / 驳回史，裁决（含复看）列深度至少 3 的修补链。`pre-check.ts` 的 reuse 清单给编码、方案与评审，概览卡片可展开。细节见 `docs/v2/review.md` 末节。
+
 ## 不急的进展汇总与提醒效果（11-14）
 
 - `src/agents/jobs.ts` 把 `releaseLater` 与 `labelOutcomes` 接入巡检杂务，无新材料也执行。通知工具接受 later；网页区分等待 / 已并入汇总，汇总标题各自可打开；设置 → 渠道编辑时间和查看近 30 天效果。
 - `src/core/notify-outcome.ts` 在超过 48 小时后每轮最多标注 300 条，按负面、处理、先已知道、只读、未读区分，并入汇总单记 bundled。统计按运行类型与聊天原件回给巡检、整理与找人分诊；至少 8 条且从未处理的会话可确认后设免提醒，保留点名、限时例外。忽略规则没记录来源 ID，未拿它判 negative。
 - `web/src/components/ApprovalSettings.vue`：工具审批可选每次问 / 做完告诉 / 不用问，显示连续批准次数、可调提议门槛；report 用 later 告知。核心在 `src/agents/approval-ladder.ts`，强制审批插件不升档。行为回归见 `test/asks.test.ts`；统计、接口、巡检分别见 `notify-outcome`、`notification-settings`、`heartbeat-handler` 测试。
+
 ## 原件标注复核与知识库建议分档（11-14）
 
 - `sources/attention.ts`、`agents/jobs.ts`、`roles/note-reviewer.md`：每小时独立复核 Agent 标注，保留按八成、撤回归零，拿不准才进本人清单；本人可恢复近 14 天撤回的标注，只有本人确认的有误、不检索才移出检索结果。`review_notes` 只给复核角色，记录模型、时间和依据；候选按排名影响、搜索命中和时间排序。
 - `channels/lark-knowledge.ts`：autoApply 改 off/safe/all，旧布尔兼容，新配置默认 safe；归入已有空间和忽略直接应用，新建仍等确认，通知分列处理与等待，原有 reset 可撤销。
 - `wiki/questions.ts`：新增阅读次数、夜间候选排序与预算、旧问题过期函数；网页能筛选过期并重开。定时任务 `wiki-resolve`（每天 05:40，`wiki/verify.ts` 的 `resolveNightly`）先过期、再把当晚选出的问题按空间各排一次调查；`queueResolve` 可以接指定的问题 id 和当晚的日期。
+
 ## 场景包与插件聊天渠道（11-14）
 
 - 插件可带规则与 MCP：规则首次导入停用并记来源，删后不重建；MCP 只留密钥名，命令先经插件信任，同名不覆盖，卸载后保留。`src/plugins/contributions.ts`、`registry.ts`，规则的 `origin` 在 `src/rules/store.ts`。
@@ -1089,6 +1098,7 @@ updated: 2026-11-15
 - `eval-longmemeval.ts --recall`：不启动服务、不用模型，按会话排序算 Recall@5/@10、All@10、NDCG@10，按类型分；`--vector` 用本地向量。
 - 只手动跑，没有定时任务；数字写进 `docs/v2/evaluation.md`。
 - **档案建议不会不打招呼就过期**（10-30）：`proposals.ts` 的 `expireProposals` 只让已经通知过、且通知已满两天的建议过期；超过 14 天却从没通知过的（检查上线前提的、服务停过的）先通知，两天后才过期，通知里写的是实际过期日期。
+
 ## 10-30：原件目录树与按目录定级（原件治理第一期）
 
 - **目录**（`src/sources/catalog.ts`）：按种类给每份原件一条节点链（`dir:`、`wiki:` / `wn:`、`lark-drive` / `from:` / `lark-drive:direct`、`chat:<类型>` / `chat:<会话>` / `chat:<会话>:images`、`site:`、`kind:<种类>[:年[-月]]`），一个空间的树在内存里建好并缓存（原件变化事件作废）。`treeChildren` 返回一层，带份数、各档数量、标注数、节点自己的档。
@@ -2005,6 +2015,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - `mergeRole`：frontmatter 按字段合并，`tools` 和 `skills` 按集合（源码现在有的，加上本人加的，去掉本人去掉的；分组已经带上的工具名不再单独列），只有正文按文本三方合并。合并或模型解决冲突之后，副本如果只剩技能和工具的差别，自动变回叠加设置。
 - `followRoleSource`（`POST /api/roles/:name/follow-source`，Agent 页“正文跟随源码”）：放弃副本的正文，保留副本比源码多的技能和工具（源码特意排除的工具不带回来），之后源码更新直接生效。
 - 模型解决冲突的说明：源码删掉或改写、本人没改过的段落按源码，不把旧写法和新写法并排留着；frontmatter 已合并好，不改。
+
 ## 2026-11-11：工作近况与人物卡（docs/v2/work-state.md）
 
 - 新内置角色 `work-state` 和定时任务 `work-state`（默认每晚 02:50，打开）：宿主把最近 `workState.days`（默认 21）天的事实写进任务（本人发言多的会话、打开过或发过链接的文档、编码交办、打开的事项、会议、本人找助手做的事），角色在 personal 空间改 `state/work`（摘要 / 在推进的事 / 最近活跃 / 要追踪的对象 / 本人补充），再给有新消息的常打交道的人写人物卡 `people/<名字>`（每晚最多 `workState.people`，默认 8）。没有新材料时不调用模型。
@@ -2013,6 +2024,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 注入集中在 `owner-now.ts` 的 `ownerContextParts`：主助手本人的对话轮次（新会话背景；近况页改过后的第一轮再带一次；群里带有人物卡的人）、巡检、有人找你的分诊材料（“发送人”带人物卡那句话）和处理任务、会后说明。设置 `workState.inject` 关掉。
 - 角色说明：`_common.md` 新增“本人近况与人物卡”（只给有 `recall` 的运行，访客没有），`assistant.md` 写清处理不了的事查人物卡、向本人提出拉谁进来（照旧经 `lark_invite` 和本人批准）。
 - 设置 → 定时任务 里这一项下可改天数、每晚人物卡上限和是否注入。
+
 ## 2026-11-11：多 Agent 工作的过程消息收敛、思考气泡三档、交办时借工具
 
 起因：在飞书话题里交给另一个档案做的一件事走了 5 轮，每轮有协调回复、唤醒轮和几个思考气泡，话题里十几条中间消息本人并不需要；那个档案没有读写表格的工具，每轮都回头找主助手代做。
@@ -2035,6 +2047,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 一件事跨会话：`src/items/places.ts`。会话和群聊是事项材料；`upsert_item` 写事项时自动关联运行所在的会话或群（`linkRunPlaces`）；“这件事还在这些会话里进行”（`itemPlacesNote`）；候选事项（`placeCandidates`，引用、链接或单号、人、共同的词、时间）；`read_item` 多返回 `places`、`runs`；`GET /api/items/:id` 多返回 `places`、`runs`（只给事项的主人）；事项页“在这些会话里进行”（`ItemPlaces.vue`）。
 - 接手：新工具 `take_over_run`（分组 `delegate`），停下同一个人的后台运行并返回它最后的文字、工作文件、碰过的事项和已发出的消息。
 - `roles/_common.md` 新增“同时在办的工作”；`skills/omem/references/items.md`、`agents.md` 同步；测试 `test/awareness.test.ts`（假 Agent 新增 `FAKE_MODE=aware`）。
+
 ## 2026-11-11：经豆包以本人身份发私聊
 
 起因：有的企业禁用了 lark-cli 以本人身份发私聊消息的权限，“有人找你”的私聊回复（`p2pVia = signed`）和 `/ai` 都发不出去；豆包 OpenAPI 的云端会话以本人身份运行，能发飞书私聊。
@@ -2091,6 +2104,7 @@ VS Code 的信任记录存在浏览器里、按路径算，交办每次换工作
 - 过期（`expireOverlays`）：交办应用、确认、丢弃、被接替时删每一轮的工作区索引，14 天没动静也删；sha 分支索引 3 天、没登记跟的分支索引 14 天没用就删；`repo-sync` 每小时和启动时清理。
 - 版本说明：`search` 头部、`find_symbol` 末尾、`read_source` 头部写“代码来自”（`codeVersion`）；`roles/_common.md` 加一条：回答代码问题说明依据的分支，问分支或交办的事带 `branch`。
 - 接口（`src/sources/code-index-http.ts`）：`GET/PUT /api/spaces/:id/code-index`、`POST /api/spaces/:id/code-index/refresh`、`GET/POST/DELETE /api/code-index/hook`（变更通知令牌，存 kv `code_hook_token` 的哈希）、`POST /api/code-index/notify`（独立令牌或本人凭据；按 git remote 或空间匹配，后台拉取刷新）。网页仓库设置的“代码索引”（`web/src/components/CodeIndexPanel.vue`），业务空间的仓库列表显示索引到哪个提交。设计 `docs/v2/code-index.md`。
+
 ## 2026-11-12：材料从个人空间归位
 
 起因：个人空间堆了大量业务文档和工作记录（一台实际使用的机器上三千多份文档、一百多份工作文件，业务页面引用个人空间原件七十多处）。archivist 只看正文、一判定终身、“不确定就留个人”；主助手在个人空间里为业务事项写的工作文件留在个人空间；协作者打不开业务页面引用的个人空间原件。设计在 docs/v2/archive-routing.md。
@@ -2257,5 +2271,6 @@ Agent 页新增“MCP 服务”：按名称配置命令和参数或网址，环�
 
 - 新增 `improve_goals` / `improve_rounds`（设备本地），工具组 `improve`：`improve_start` 固定度量和预算、量基线；`improve_round` 检查保护路径、跑委托检查、按相对增益留下或新增 revert 提交；`improve_status` 读状态与历史。达标、预算、四轮无效或时限停止，由宿主发 later 报告，两轮无效返回换方向提示。
 - 检查和度量共用 `repositoryCommand`，继承宿主 shell、环境、工作区与超时；原有宿主检查同时接入命令规则 PATH 垫片。改进轮检查追加到运行的 `improveChecks`，不覆盖原 Check；`latestCheck` 和交办“活动”可见。交办概览新增“改进目标”，新 API `GET /api/code/:id/improve` 按运行读取权限。
-- 无推送、合并或应用。分支在别处检出时，回退提交保留在委托 worktree 的 `pending`，下一次正常结算再处理，不更新别处文件。内置技能正文保持不变，后续需改为调上述三个工具，取消 Agent 自行比较、回退和停止的记账。
+- 无推送、合并或应用。分支在别处检出时，回退提交保留在委托 worktree 的 `pending`，下一次正常结算再处理，不更新别处文件。
 - 专项验证及已知限制见 `docs/v2/coding-loop.md` 与验收 IMP-01 至 IMP-06。
+- `roles/assistant.md` 的工具加 `group:improve`；内置技能 `skills/library/improve-loop` 改成按这三个工具走（第 0 轮先把度量命令跑通，再 `improve_start`；每轮编码后 `improve_round`）。内置技能只补缺：已有数据目录里的旧版 `improve-loop` 不会被覆盖，要在技能页换成仓库版。
