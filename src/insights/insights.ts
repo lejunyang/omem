@@ -5,6 +5,7 @@ import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { runReadableSpaces } from "../auth/permissions.ts";
 import { DECISION_SCENES } from "../core/decision-scenes.ts";
 import { HttpError, localStamp } from "../core/util.ts";
+import { replyOutcomes } from "../agents/reply-outcomes.ts";
 import { sceneOf, scenes, sceneTable } from "./scenes.ts";
 import type { Metric, RecordRef, Section, Report } from "./types.ts";
 
@@ -249,6 +250,26 @@ export function qualitySection(c: Ctx): Section {
   for (const category of ["page", "level"]) {
     const as = audits.filter(a => a.category === category && a.verdict !== "unchecked");
     if (as.length) s.metrics.push(metric(c, `quality:audit:${category}`, category === "page" ? "写作抽检准确率" : "定级抽检准确率", ratio(as.filter(a => a.verdict !== "wrong").length, as.length), as.map(a => ({ id: a.id, at: a.at, label: `抽检 · ${a.verdict}`, link: "#/quality" })), "%", "只算核完的。只有写法问题、事实没错的算准确。"));
+  }
+  // How replies went, read from what people said afterwards (agents/reply-outcomes.ts): a small table by who was answered.
+  const outcomes = replyOutcomes(c.app, c.f.start, c.f.end).filter(o => o.label && c.ids.has(o.runId));
+  if (outcomes.length) {
+    const kindOf = new Map(c.runs.map(r => [r.id, r.kind]));
+    const rowOf = (o: typeof outcomes[number]) => ({ guest: "别人问机器人的", "rule-fire": "规则触发的回答", agent: "交给 Agent 的" } as Record<string, string>)[kindOf.get(o.runId) ?? ""] ?? "对话里的回答";
+    const refs = (xs: typeof outcomes) => xs.map(o => ({ id: o.runId, at: o.at, label: `回复 · ${o.text}${o.revised ? "（改判过）" : ""}`, link: `#/runs/${o.runId}` }));
+    const cols: [string, string, (o: typeof outcomes[number]) => boolean][] = [
+      ["resolved", "解决了", o => o.label === "resolved"], ["followup", "被追问", o => o.label === "followup"], ["corrected", "被纠正", o => o.label === "corrected"],
+      ["taken", "别人接手了", o => o.label === "taken_over"], ["unclear", "看不出", o => ["unrelated", "silent", "unjudged"].includes(o.label!)],
+    ];
+    for (const row of [...new Set(outcomes.map(rowOf))]) {
+      const rs = outcomes.filter(o => rowOf(o) === row);
+      for (const [key, label, is] of cols) s.metrics.push(metric(c, `quality:reply:${row}:${key}`, `${row} · ${label}`, rs.filter(is).length, refs(rs.filter(is)), undefined, undefined, { table: "回复发出后的结果", row, col: label }));
+    }
+    const clear = outcomes.filter(o => ["resolved", "followup", "corrected", "taken_over"].includes(o.label!));
+    s.metrics.push(metric(c, "quality:reply:rate", "回复有用的占比", ratio(clear.filter(o => o.label === "resolved").length, clear.length), refs(clear), "%", "解决了 ÷（解决了 + 被追问 + 被纠正 + 别人接手了）。没人接话和看不出的不算。按回复发出几小时后大家说的话判断，不是表情。"));
+    const revised = outcomes.filter(o => o.revised);
+    const modelled = outcomes.filter(o => o.first && o.first.confidence !== null);
+    if (modelled.length) s.metrics.push(metric(c, "quality:reply:revised", "被复盘改判的", revised.length, refs(revised), undefined, `第一遍由决策模型标（${modelled.length} 条）；夜间复盘的评判和 coach 重读同样的后续消息，认为标错了就改。改判得多，说明决策模型在这件事上不可靠。`));
   }
   const replay = replayRows(c);
   for (const [key, label] of [["win", "夜间复盘：改了更好"], ["tie", "夜间复盘：没差别"], ["loss", "夜间复盘：改了更差"]]) if (replay.length) {

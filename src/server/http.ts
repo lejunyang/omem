@@ -1440,7 +1440,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = getRun(app, id);
     const children = listRuns(app, { parentId: id }).filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
     const diff = r.kind === "code" ? codeDiffView(app, id) : null;
-    return { run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r) };
+    return { run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
+  });
+  // The owner read the follow-up and says the label is wrong (agents/reply-outcomes.ts).
+  server.post("/api/runs/:id/reply-outcome", async (req) => {
+    const b = q(z.object({ label: z.string(), why: z.string().max(400).optional() }), req.body);
+    return (await import("../agents/reply-outcomes.ts")).reviseReply(app, (req.params as { id: string }).id, b.label, "本人", b.why?.trim() || "本人在运行页改的");
   });
   server.get("/api/code/:id/improve", async (req) => {
     const { improvementOf } = await import("../agents/improve.ts");

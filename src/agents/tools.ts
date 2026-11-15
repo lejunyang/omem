@@ -1621,6 +1621,8 @@ def({
     const delivery = (r.output.codeChain as { askRunId?: string } | undefined)?.askRunId;
     const progress = delivery ? getRun(ctx.app, delivery).output.codeProgress : undefined;
     const thinking = r.output.thinkingDelivery;
+    const outcome = (await import("./reply-outcomes.ts")).replyOutcome(ctx.app, r.id);
+    const outcomeText = outcome ? `${(await import("./reply-outcomes.ts")).replyOutcomeText(outcome)}\n` : "";
     // A coding run's review findings by number, with review-lead's ruling and the owner's decision (for fix_review).
     let findingText = "";
     if (r.kind === "code") {
@@ -1631,7 +1633,24 @@ def({
       const rows = reviews.filter((x) => x.round === round).flatMap((x) => x.findings.map((f) => `- #${f.id} [${SEVERITY_LABEL[f.severity]} · ${x.check_name}] ${f.title}${f.file_path ? ` — ${f.file_path}${f.line ? `:${f.line}` : ""}` : ""}${f.state !== "open" ? ` · 负责人：${f.state}` : ""}${f.decision ? ` · 本人：${DECISION_LABEL[f.decision]}${f.decision_note ? `（${f.decision_note}）` : ""}` : ""}`));
       if (rows.length) findingText = `第 ${round} 轮评审的问题（fix_review 用这些编号）：\n${rows.join("\n")}\n`;
     }
-    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}${findingText}${childText}${runSteps(events, r.status)}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
+    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}${findingText}${outcomeText}${childText}${runSteps(events, r.status)}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
+  },
+});
+
+def({
+  name: "revise_reply_outcome",
+  description:
+    "改判一条回复的结果：read_run 里“按后续消息标的结果”和你读到的后续消息对不上时用（那个标注是决策模型给的，会错）。label：resolved 提问的人接受了 / followup 同一件事被追问 / corrected 被指出不对 / taken_over 本人或别人自己答了 / unrelated 后面的话看不出。原来的标注保留，之后以你的为准；why 写一句依据（哪句话说明了什么）。",
+  write: true,
+  schema: z.object({ run_id: z.string(), label: z.enum(["resolved", "followup", "corrected", "taken_over", "unrelated"]), why: z.string().trim().min(2).max(400) }),
+  handler: async (ctx, a) => {
+    const r = getRun(ctx.app, a.run_id);
+    const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
+    if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人这边的运行能改判回复的结果");
+    const { REPLY_LABELS, reviseReply } = await import("./reply-outcomes.ts");
+    const o = reviseReply(ctx.app, a.run_id, a.label, ctx.actor === "user" ? "本人" : ctx.agentProfile ?? "Agent", a.why);
+    return `已改判：${REPLY_LABELS[o.label!]}${o.first ? `（原先标的是 ${REPLY_LABELS[o.first.label]}）` : ""}`;
   },
 });
 

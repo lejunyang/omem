@@ -9,6 +9,15 @@ updated: 2026-11-15
 
 
 
+
+## 回复发出后有没有用（11-15）
+
+- `src/agents/reply-outcomes.ts`、表 `reply_outcomes`（一次运行一行，随运行拉取）。回答别人的运行（ask / guest / lark-command / agent / rule-fire；协调、唤醒、会议轮次除外）发出回复时登记：`threads.ts` 的 `addMessage` 和 `channels/lark-feedback.ts` 的 `recordLarkSent`（`purpose = answer`）。
+- 巡检节拍里 `labelReplies`（不等它跑完，一次最多 12 条）：到了 `replies.outcome.afterHours`（默认 6 小时）以后，取同一会话之后的用户消息和同一个群里之后的消息（话题内或引用它的优先，否则只取两小时内的），决策模型五选一；没人接话、只有表情的不问模型；概率低于 `replies.outcome.threshold`（0.6）按“看不出”；没有决策模型时每小时再试，一周后记“没判”。
+- 改判保留第一遍的标注：夜间复盘的评判在 JSON 里多写 `original`（两种顺序一致才改，`replay.ts`），coach 用工具 `revise_reply_outcome`（分组 `delegate`），本人在运行页点（`POST /api/runs/:id/reply-outcome`，只给主人）。
+- 用在：数据页“做得怎么样”的“回复发出后的结果”小表、“回复有用的占比”“被复盘改判的”（`insights.ts`）；运行页“回复发出后”一栏（`GET /api/runs/:id` 的 `reply`）；复盘挑题把“被纠正”当纠正信号；整理消息的任务在群聊原件后多一行；`read_run` 带上标注和依据。
+- 设置 → AI →“回复发出后看有没有用”。设计和没做的见 `docs/v2/reply-outcomes.md`。
+
 ## 设计稿：课题（按天循环的自主探索）（11-15）
 
 - `docs/v2/studies.md`，未实现。一个长期的探索（给一个仓库找缺陷和改进点）每天转一轮：白天好模型提方向、本人确认，夜里便宜模型按方向逐个做试验，早上小结并把试验归并成发现。

@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { json, now, sha256, truncate } from "../core/util.ts";
 import { notificationForReaction, queueNegativeNotification } from "../core/notify-reactions.ts";
+import { noteReply } from "../agents/reply-outcomes.ts";
 
 /**
  * Reactions as feedback. Every message omem's bots post is recorded in `lark_sent` (which run and
@@ -44,6 +45,7 @@ export function recordLarkSent(app: App, s: SentRecord) {
     s.bot,
     now(),
   );
+  if (s.purpose === "answer" && s.runId) noteReply(app, { runId: s.runId, channel: "lark", chatId: s.chatId, conversationId, messageId: s.messageId });
 }
 
 /** Later knowledge about a sent message: the progress card that became the answer, the run behind it. */

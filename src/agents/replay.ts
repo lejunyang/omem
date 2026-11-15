@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { JUDGED_LABELS, REPLY_LABELS, replyOutcome, replyOutcomeText, reviseReply, type JudgedLabel } from "./reply-outcomes.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -175,6 +176,8 @@ function p75(app: App, kind: string): number | null {
 export function signalOf(app: App, q: Question, slowAfter: number | null): ReplaySignal | null {
   const pol = all<{ polarity: string }>(app.db, "select polarity from feedback where run_id = ? and removed_at is null and on_bot = 1 and actor_kind != 'bot'", q.run.id).map((x) => x.polarity);
   if (pol.includes("negative")) return "negative";
+  // What was said after the answer, read by a model (reply-outcomes.ts), catches corrections the fixed phrases miss.
+  if (replyOutcome(app, q.run.id)?.label === "corrected") return "correction";
   if (q.reaction.said && CORRECTION.test(q.reaction.said)) return "correction";
   if (q.run.status === "failed") return TIMEOUT.test(q.run.error ?? "") ? "timeout" : null;
   if (!q.answer.trim()) return null;
@@ -591,15 +594,17 @@ async function runArm(app: App, parent: RunContext, q: Question, label: string, 
 
 // ------------------------------------------------------------------ judge
 
-type Verdict = { better: "甲" | "乙" | "平"; reason: string; taskType: string | null };
+type Verdict = { better: "甲" | "乙" | "平"; reason: string; taskType: string | null; original?: JudgedLabel };
 
 function judgePrompt(app: App, q: Question, first: { answer: string; check: ArmCheck }, second: { answer: string; check: ArmCheck }) {
   const cites = (c: ArmCheck) => c.cites.length ? c.cites.map((x) => `- ${x.ref}：${x.ok ? (x.text ?? "").replace(/\n/g, " ⏎ ") : `（${x.problem}）`}`).join("\n") : "（没有引用）";
   const reaction = [q.reaction.said ? `本人随后说：${truncate(q.reaction.said, 600)}` : "", q.reaction.emoji.length ? `本人加的表情：${q.reaction.emoji.join("、")}（OK、DONE、+1 这类只表示收到）` : ""].filter(Boolean).join("\n");
+  const outcome = replyOutcome(app, q.run.id);
   return [
     `# 问题（${localTime(app, q.asOf)}）\n\n${q.question}`,
     q.context ? `# 提问前的会话\n\n${truncate(q.context, 4000)}` : "",
     `# 本人事后的反应（针对当时的原答案）\n\n${reaction || "（没有）"}`,
+    outcome?.first ? `# 原答案发出后的结果标注\n\n${replyOutcomeText(outcome)}\n\n可选的标注：${JUDGED_LABELS.map((l) => `${l}（${REPLY_LABELS[l]}）`).join("、")}` : "",
     `# 甲的回答\n\n${truncate(first.answer, 8000)}\n\n甲引用的原文：\n${cites(first.check)}`,
     `# 乙的回答\n\n${truncate(second.answer, 8000)}\n\n乙引用的原文：\n${cites(second.check)}`,
     `# 题型清单\n\n${app.config.replay.taskTypes.join("、")}`,
@@ -614,9 +619,9 @@ async function judgeOnce(app: App, parent: RunContext, q: Question, profile: Age
   try {
     const res = await runBackend(app, profile, { cwd, system: loadRole("replay-judge", app).body, prompt, allowWrites: false, modes: ["read-only"], signal: parent.signal }, (e) => addRunEvent(app, id, e.type, e));
     const text = replyOf(res).trim();
-    const v = jsonIn<{ better?: string; reason?: string; taskType?: string }>(text);
+    const v = jsonIn<{ better?: string; reason?: string; taskType?: string; original?: string }>(text);
     const better = v?.better === "甲" || v?.better === "乙" || v?.better === "平" ? (v.better as Verdict["better"]) : null;
-    const verdict: Verdict | null = better ? { better, reason: truncate(String(v?.reason ?? ""), 300), taskType: app.config.replay.taskTypes.includes(String(v?.taskType)) ? String(v!.taskType) : null } : null;
+    const verdict: Verdict | null = better ? { better, reason: truncate(String(v?.reason ?? ""), 300), taskType: app.config.replay.taskTypes.includes(String(v?.taskType)) ? String(v!.taskType) : null, ...((JUDGED_LABELS as readonly string[]).includes(String(v?.original)) ? { original: v!.original as JudgedLabel } : {}) } : null;
     finishChild(app, id, null, { answer: text, verdict });
     return { verdict, runId: id, ms: Date.now() - started };
   } catch (e) {
@@ -818,6 +823,12 @@ registerHandler("replay", async (ctx) => {
       cost.judge.ms = ab.ms + ba.ms;
       const reason = c.agree ? (ab.verdict?.reason ?? ba.verdict?.reason ?? "") : `两种顺序的结论不一致，记为持平${ab.verdict?.reason ? `（${ab.verdict.reason}）` : ""}`;
       judged = { ...judged, by: "judge", agree: c.agree, orders: [ab.verdict, ba.verdict], runs: [ab.runId, ba.runId], reason };
+      // Both readings of the same follow-up say the first label was wrong: the stronger model's reading stands.
+      const relabel = ab.verdict?.original && ab.verdict.original === ba.verdict?.original ? ab.verdict.original : null;
+      if (relabel && replyOutcome(app, q.run.id)?.first && replyOutcome(app, q.run.id)!.label !== relabel) {
+        reviseReply(app, q.run.id, relabel, `复盘评判（${judge.profile.model ?? judge.profile.id}）`, "两种顺序的评判读了同样的后续消息，都认为该这样标");
+        judged = { ...judged, relabelled: relabel };
+      }
     }
     run(app.db, "update replays set checks = ?, verdict = ?, judge = ?, task_type = ?, cost = ?, status = 'done', finished_at = ? where id = ?", JSON.stringify({ baseline: bc, variant: vc }), verdict, JSON.stringify(judged), taskType, JSON.stringify(cost), now(), replayId);
     const effects = applyEffects(app, replayId);

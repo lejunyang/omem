@@ -1951,6 +1951,17 @@ export const migrations: readonly string[] = [
    );
    create index item_stage_log_item_at on item_stage_log(item_id,at);
    create index item_stage_log_at on item_stage_log(at);`,
+  // Whether a reply helped, judged from what was said after it (agents/reply-outcomes.ts): one row per answering run.
+  `create table reply_outcomes (
+     run_id text primary key, at text not null, channel text not null default 'conversation',
+     chat_id text, conversation_id text, message_id text,
+     label text, confidence real, "by" text, evidence text not null default '[]', labelled_at text,
+     revised_label text, revised_by text, revised_why text, revised_at text,
+     due_at text not null
+   );
+   create index reply_outcomes_due on reply_outcomes(due_at) where label is null;
+   create index reply_outcomes_at on reply_outcomes(at);
+   create index reply_outcomes_chat on reply_outcomes(chat_id, at);`,
 ];
 
 export type Db = DatabaseSync;

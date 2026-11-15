@@ -242,6 +242,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/runs/:id": RUN,
   "POST /api/runs/:id/cancel": RUN,
   "POST /api/runs/:id/retry": RUN,
+  "POST /api/runs/:id/reply-outcome": "owner",
   "GET /api/runs/:id/folders": CODE,
   "GET /api/code-runs/at": CODE,
   "GET /api/code-works": CODE,

@@ -464,7 +464,15 @@ export const configSchema = z.object({
     questions: z.object({ nightly: z.number().int().min(0).default(20), expireDays: z.number().int().min(1).default(45) }).default(() => ({ nightly: 20, expireDays: 45 })),
   }).default(() => ({ questions: { nightly: 20, expireDays: 45 }, coverage: { nightly: 3, perSpace: 2 }, corrections: { sweep: 15 } })),
   /** A reply that says nothing (only an intent, an acknowledgement, a way out) goes back to the agent once before it is posted (agents/reply-check.ts). */
-  replies: z.object({ check: z.boolean().default(true) }).default(() => ({ check: true })),
+  replies: z.object({
+    check: z.boolean().default(true),
+    /** Reading what was said after a reply to tell whether it helped (agents/reply-outcomes.ts). */
+    outcome: z.object({
+      enabled: z.boolean().default(true),
+      afterHours: z.number().min(1).max(72).default(6),
+      threshold: z.number().min(0).max(1).default(0.6),
+    }).default(() => ({ enabled: true, afterHours: 6, threshold: 0.6 })),
+  }).default(() => ({ check: true, outcome: { enabled: true, afterHours: 6, threshold: 0.6 } })),
   notes: z.object({
     review: z.object({ enabled: z.boolean().default(true), batch: z.number().int().min(1).max(100).default(20) }).default(() => ({ enabled: true, batch: 20 })),
   }).default(() => ({ review: { enabled: true, batch: 20 } })),

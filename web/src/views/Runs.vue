@@ -17,6 +17,7 @@ import ContextUsage from "../components/ContextUsage.vue";
 import CodeWork from "../components/CodeWork.vue";
 import CodeWorkList from "../components/CodeWorkList.vue";
 import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
+import { promptDialog } from "../lib/dialog";
 
 const route = useRoute();
 const router = useRouter();
@@ -58,7 +59,19 @@ type RunContextInfo = {
   source: Brief | null;
   work: { id: string; title: string; rounds: { runId: string; agent: string; kind: string; status: string; title: string }[] } | null;
 };
-const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo } | null>(null);
+type ReplyOutcome = { label: string | null; text: string; dueAt: string; first: { label: string; confidence: number | null; by: string } | null; revised: { label: string; by: string; why: string } | null; evidence: { who: string; text: string }[] };
+const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo; reply?: ReplyOutcome | null } | null>(null);
+/** What a reply came to, judged from what people said after it; the owner may overrule the label. */
+const REPLY_LABELS: Record<string, string> = { resolved: "解决了", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "看不出", silent: "没人接话", unjudged: "没判" };
+const REVISABLE = ["resolved", "followup", "corrected", "taken_over", "unrelated"];
+const isOwner = computed(() => !state.me || state.me.role === "owner");
+async function reviseReply(label: string) {
+  if (!detail.value) return;
+  const why = await promptDialog(`改成“${REPLY_LABELS[label]}”`, { message: "写一句依据：后面哪句话说明了什么。可以不写。", okText: "改判" });
+  if (why === null) return;
+  try { detail.value.reply = await post<ReplyOutcome>(`/api/runs/${detail.value.run.id}/reply-outcome`, { label, why }); }
+  catch (e) { toast((e as Error).message, "error"); }
+}
 const id = pageParam("runs");
 
 const listLoading = ref(true);
@@ -401,6 +414,23 @@ const kindOptions = computed(() => [
           </div>
         </section>
 
+        <section v-if="detail.reply" class="card pad block reply-outcome">
+          <div class="section-title">回复发出后</div>
+          <div class="reply-head">
+            <strong>{{ detail.reply.text }}</strong>
+            <span v-if="detail.reply.revised" class="muted small">{{ detail.reply.revised.by }}改判{{ detail.reply.revised.why ? `：${detail.reply.revised.why}` : "" }}（原先标的是“{{ REPLY_LABELS[detail.reply.first?.label ?? ""] }}”）</span>
+            <span v-else-if="detail.reply.first" class="muted small">{{ detail.reply.first.by }}{{ detail.reply.first.confidence != null ? `，把握 ${detail.reply.first.confidence.toFixed(2)}` : "" }}{{ detail.reply.first.label !== detail.reply.label ? `；它选的是“${REPLY_LABELS[detail.reply.first.label]}”，把握不够，按看不出算` : "" }}</span>
+            <span v-else class="muted small">{{ fmtTime(detail.reply.dueAt) }} 以后，按大家在这之后说的话判断这条回复有没有用</span>
+          </div>
+          <ul v-if="detail.reply.evidence.length" class="reply-lines">
+            <li v-for="(l, i) in detail.reply.evidence" :key="i"><span class="muted">{{ l.who }}</span>{{ l.text }}</li>
+          </ul>
+          <div v-if="isOwner && detail.reply.first" class="reply-revise">
+            <span class="muted small">标得不对就改：</span>
+            <button v-for="l in REVISABLE.filter((x) => x !== detail!.reply!.label)" :key="l" type="button" class="btn ghost sm" @click="reviseReply(l)">{{ REPLY_LABELS[l] }}</button>
+          </div>
+        </section>
+
         <section v-if="taskText" class="card pad block" data-ask-label="任务原文">
           <div class="section-title row">任务<span class="spacer" /><button v-if="taskLong" class="btn ghost sm" @click="taskOpen = !taskOpen">{{ taskOpen ? "收起" : "展开全部" }}</button></div>
           <div class="pre task" :class="{ clipped: taskLong && !taskOpen }">{{ taskText }}</div>
@@ -708,6 +738,35 @@ const kindOptions = computed(() => [
   display: grid;
   gap: 2px;
   margin-top: 4px;
+}
+.reply-outcome {
+  display: grid;
+  gap: 8px;
+}
+.reply-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.reply-lines {
+  margin: 0;
+  padding: 0 0 0 10px;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  border-left: 2px solid var(--line);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.reply-lines .muted {
+  margin-right: 8px;
+}
+.reply-revise {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 .ctx-steps .li {
   display: flex;

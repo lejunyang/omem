@@ -680,6 +680,12 @@ async function saveFlows(key: "autoAdvance" | "staleDays", raw: string) {
   await saveConfig({ flows: { ...(config.value.flows ?? {}), [key]: v } }, key === "autoAdvance" ? `流程连着自己开始 ${v} 段后先问你` : `停在等你的阶段 ${v} 天后提醒`);
   void load();
 }
+async function saveReplyHours(raw: string) {
+  const n = Number(raw);
+  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(1, Math.min(72, Math.round(n))) : 6;
+  await saveConfig({ replies: { ...config.value.replies, outcome: { ...(config.value.replies?.outcome ?? {}), afterHours: v } } }, `回复发出 ${v} 小时后判断有没有用`);
+  void load();
+}
 async function savePreCheck(v: boolean) {
   const cur = config.value.agents.autoAdvance ?? { turns: 6, codeRounds: 3 };
   await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, preCheck: v } } }, v ? "新交办开始编码前先做检查" : "新交办直接开始编码");
@@ -1057,6 +1063,14 @@ async function saveEdit() {
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="365" :value="config.flows?.staleDays ?? 2" @change="saveFlows('staleDays', ($event.target as HTMLInputElement).value)" />
         </label>
         <UiCheckbox :model-value="config.agents.autoAdvance?.preCheck !== false" switch @change="savePreCheck">编码前检查：新交办开始编码前，先查改动会碰到什么、这里以前出过什么问题、改完要回归什么（角色“编码前检查”，在 Agent 页选模型）</UiCheckbox>
+      </div>
+      <div class="card pad stack">
+        <div class="section-title">回复发出后看有没有用</div>
+        <HelpText>助手的回答发出几小时后，宿主取同一个会话或群里之后大家说的话，请决策模型标一个结果：解决了、被追问、被纠正、别人接手了、看不出；没人接话的不问模型。结果记在那次运行上（运行页能看到依据的那几句话，标错了你可以改），也给夜间复盘、coach 和整理消息的运行参考；复盘评判和 coach 认为标错时会改判。数据页的“做得怎么样”按它统计。没配决策模型时只记“没人接话”，其余等配好再判。</HelpText>
+        <UiCheckbox :model-value="config.replies?.outcome?.enabled !== false" switch @change="(v: boolean) => saveConfig({ replies: { ...config.replies, outcome: { ...(config.replies?.outcome ?? {}), enabled: v } } }, v ? '回复发出后会看后续' : '不再看回复的后续')">按回复之后大家说的话，判断它有没有用</UiCheckbox>
+        <label class="field"><span>发出几小时后判断（1–72）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="72" :value="config.replies?.outcome?.afterHours ?? 6" @change="saveReplyHours(($event.target as HTMLInputElement).value)" />
+        </label>
       </div>
       <div class="card pad stack">
         <div class="section-title">回复发出前的检查</div>
