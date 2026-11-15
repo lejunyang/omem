@@ -9,19 +9,28 @@ node = "20"
 python = "3.12"
 rust = { version = "1.98.0", components = "rustfmt,clippy", targets = "x86_64-pc-windows-gnu" }
 java = { version = "21", distribution = "zulu", package-type = "jdk" }
+pnpm = "9"
 "npm:prettier" = "3"
 "go:golang.org/x/tools/gopls" = { version = "0.20.0", tags = "tools" }
 zig = { version = "0.15", when = { os = ["linux", "macos"] } }
+"cargo:cargo-release" = { version = "0.25", lazy = true }
 ```
 
 对象字段：
 
 - `version`：必填字符串。
+- `lazy`：可选布尔值；为 `true` 时裸 `osdk install` 默认跳过，
+  `osdk install --include-lazy` 或显式点名仍会安装。未安装时 shell 激活、`osdk env`
+  和不带 `--tool` 的 `osdk exec` 会跳过它，不报错。
 - `when`：可选 `{ os = ..., arch = ... }`。
 - 其余字段：backend 专属选项，等价于命令行 `-o KEY=VALUE`。
 
 同名配置按层级整体替换，不做字段级拼接。被 `when` 排除的工具仍会保留排除原因，
-命令点名时会报告平台不匹配。仅声明 `[tools]` 不需要 trust。
+命令点名时会报告平台不匹配。仅声明 `[tools]` 不需要 trust，`cargo:` 条目除外：编译必然运行 `build.rs` 与过程宏，所以安装前要 `osdk trust`。
+
+`[tools]` 使用普通版本选择语义：`pnpm = "9"`、`pnpm = "9.15"` 会分别解析最新稳定的
+`9.x`、`9.15.x`，精确结果写入 `osdk.lock`。这不同于 `package.json#packageManager`，
+后者按 Node/Corepack 约定要求完整精确 semver。
 
 `osdk use TOOL@VERSION` 会更新项目 `[tools]` 并同步当前平台 `osdk.lock`；直接手工编辑本段
 后运行 `osdk lock`，或用裸 `osdk install` 在当前平台尚无 lock 时安装并记录精确结果。

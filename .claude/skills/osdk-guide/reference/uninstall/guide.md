@@ -8,7 +8,9 @@ osdk uninstall <TOOL[@VERSION]> [-g|--global]
 
 - 别名：`osdk rm`。
 - `--global` 只支持用户全局 npm 动态包，其他 backend 会拒绝。
-- 卸载对象与配置选择是两件事；需要改变项目选择时编辑 `[tools]` 或运行新的 `use`。
+- 前缀（如 `node@20`）优先匹配名称完全相同的安装，否则按整段匹配选最新的已安装版本；
+  `go@1.2` 不会匹配 `1.22.x`。
+- 卸载普通动态工具时，若用户全局配置仍选择被删除的版本，会同步移除该全局 pin 与对应用户 lock 条目；项目配置和项目 lock 不变。
 
 ```bash
 osdk uninstall node@20.11.1

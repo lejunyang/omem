@@ -25,7 +25,7 @@ osdk 读取两类 TOML，字段形状相同：
 | `[registries]` | [registries.md](registries.md) | 安装、依赖作用域 |
 | `[container]` | [container.md](container.md) | container 作用域 |
 | `[sys.pkg]` | [sys.md](sys.md) | 仅 `pkg apply`，且有条目在本机适用 |
-| `[tasks]` | [tasks.md](tasks.md) | 不检查（键入 run 即授权） |
+| `[tasks]` | [tasks.md](tasks.md) | 正文不检查；缺失的 `tools` 需要安装时追加安装作用域 |
 | `[task]` | [task.md](task.md) | run 作用域 |
 | `[deps]` | [deps.md](deps.md) | 依赖作用域，视字段而定 |
 | `[models]` | [models.md](models.md) | 不检查 |
@@ -42,18 +42,20 @@ osdk 读取两类 TOML，字段形状相同：
 只生成新布局。
 
 平台过滤在 `[tools]`、`[tasks]`、`[models]`、`[skills]` 和 `[sys.pkg]` 的包条目中
-复用同一组 OS/arch token。前四者放在 `when` 下：
+复用同一组 OS/arch token，都放在 `when` 下：
 
 ```toml
 when = { os = ["linux", "macos"], arch = "arm64" }
 ```
 
-系统包对象直接使用 `os` / `arch` 字段：
+系统包条目同样如此（旧的顶层 `os` / `arch` 写法仍可读取，`osdk config migrate` 会改写）：
 
 ```toml
 [sys.pkg]
-"apt:gcc" = { version = "latest", os = "linux", arch = ["x86_64", "arm64"] }
+"apt:gcc" = { version = "latest", when = { os = "linux", arch = ["x86_64", "arm64"] } }
 ```
 
 OS token：`windows`、`macos`（也接受 `darwin`）、`linux`；arch token：
 `x86_64`（也接受 `amd64`）、`arm64`（也接受 `aarch64`）。未知维度或 token 硬报错。
+
+显式继承：子项目 `osdk.toml` 可设置 `extends = "../../osdk.toml"`。目录嵌套不会自动继承。优先级为 CLI/环境变量、子文件字段、显式继承的祖先字段、用户配置、默认值。映射按键合并（包括 env），标量与列表替换，`false`、`[]` 都是有效覆盖。继承的依赖 sources/outputs/dir 与任务 dir/file 路径属于声明它的文件。发现 roots/projects 留在根目录，已发现的子配置不能重定义整个目录。继承子项目以根项目声明为默认，显式 provider 字段优先；独立子配置自行声明 provider。根/子目录调用依赖使用同一目录与有效 provider/工具选项。继承链中每个可执行或改变来源的配置都单独检查信任，信任子文件不代表信任父文件。自身循环、非祖先引用及越过仓库边界均报错。`[task].roots` 仍单独负责聚合；继承的 runner 默认值转换到具体子任务。

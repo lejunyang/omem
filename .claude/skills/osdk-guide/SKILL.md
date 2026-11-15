@@ -29,6 +29,7 @@ GitHub Actions 中安装 osdk、恢复缓存并初始化项目环境时，读取
 
 - 使用 `osdk run <name>` 执行任务；不存在裸 `osdk <name>`。
 - 使用 `install` 安装工具，使用 `deps` 安装项目自身依赖，使用 `model sync` 下载模型。
+- 下载副本默认保留上限 2 GiB；`max_size_bytes=0` 成功即删，不阻止大文件下载。用 `cache status/trim` 管理；CAS 与原生 store 不属于该预算。
 - 动态工具使用 `npm:`、`cargo:`、`go:`、`conda:`、`pypi:`、`github:`、`http:` 前缀。
 - CLI → 环境变量 → 项目配置 → 用户配置 → 内置默认，优先级依次降低。
 - 需要执行代码或改变字节来源的项目配置先用 `osdk trust`；安全声明不会无故要求信任。
@@ -63,6 +64,7 @@ GitHub Actions 中安装 osdk、恢复缓存并初始化项目环境时，读取
 | --- | --- |
 | `run` | [reference/run/guide.md](reference/run/guide.md)；Lua 直接读 [reference/run/lua.md](reference/run/lua.md) |
 | `task` | [reference/task/guide.md](reference/task/guide.md) |
+| `project` | [reference/project/guide.md](reference/project/guide.md) |
 | `deps` | [reference/deps/guide.md](reference/deps/guide.md) |
 
 ### 平台与生态工作流
@@ -98,10 +100,13 @@ GitHub Actions 中安装 osdk、恢复缓存并初始化项目环境时，读取
 | --- | --- |
 | `activate` | [reference/activate/guide.md](reference/activate/guide.md) |
 | `deactivate` | [reference/deactivate/guide.md](reference/deactivate/guide.md) |
+| `env` | [reference/env/guide.md](reference/env/guide.md) |
 | `completions` | [reference/completions/guide.md](reference/completions/guide.md) |
 | `hook-env`（隐藏内部命令） | [reference/hook-env/guide.md](reference/hook-env/guide.md) |
 | `help`（Clap 自动入口） | [reference/help/guide.md](reference/help/guide.md) |
 | `alias` | [reference/alias/guide.md](reference/alias/guide.md) |
+
+显式 `extends` 继承与来源信任见 [配置总览](reference/configuration/overview.md)；按项目依赖与原生 workspace 见 [deps](reference/configuration/deps.md)。
 
 ## 配置段索引
 
