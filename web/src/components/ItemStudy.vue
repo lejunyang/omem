@@ -132,7 +132,8 @@ async function judge(f: StudyFinding, state: "confirmed" | "rejected" | "later")
   }
   await send(`findings/${encodeURIComponent(f.id)}`, { state, reason });
 }
-const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim())?.trim() ?? "";
+/** The commits a trial ran on, shortened. */
+const shas = (t: StudyTrial) => Object.values(t.commits ?? {}).map((c) => c.slice(0, 8)).join("、");
 const trialMeta = (t: StudyTrial) => [trialWord(t), t.unsure ? "它自己拿不准" : "", t.escalated ? "请更好的模型看过" : "", t.attempts > 1 ? `第 ${t.attempts} 次` : "", everyRound.value ? `第 ${t.round} 轮` : ""].filter(Boolean).join(" · ");
 </script>
 
@@ -197,7 +198,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.unsure ? "它自己拿不�
               <button v-if="f.state !== 'confirmed'" type="button" class="btn sm" :class="f.state === 'new' ? 'primary' : 'ghost'" :disabled="busy" @click="judge(f, 'confirmed')">认可</button>
               <button v-if="f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'rejected')">不算</button>
               <button v-if="f.state === 'new'" type="button" class="btn sm ghost" :disabled="busy" @click="judge(f, 'later')">以后再说</button>
-              <button v-if="data.scope?.allowCode && !f.fix && f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="fix(f)">去改…</button>
+              <button v-if="data.scope?.allowCode && data.scope.repos.length && !f.fix && f.state !== 'rejected'" type="button" class="btn sm ghost" :disabled="busy" @click="fix(f)">去改…</button>
             </div>
           </div>
         </details>
@@ -220,7 +221,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.unsure ? "它自己拿不�
             <div v-else class="muted">{{ t.state === "running" ? "正在跑。" : t.state === "queued" ? "还没轮到。" : "没有跑。" }}</div>
             <div v-if="t.prior" class="muted prior">{{ t.prior }}</div>
             <div v-if="t.findings.length" class="muted">它觉得可能是问题的：{{ t.findings.map((x) => `${kindWords[x.kind] ?? x.kind}「${x.title}」`).join("、") }}</div>
-            <div v-if="t.env || t.commit" class="muted">{{ [t.env ? `在哪跑：${t.env}` : "", t.commit ? `提交 ${t.commit.slice(0, 8)}` : ""].filter(Boolean).join(" · ") }}</div>
+            <div v-if="t.env || shas(t)" class="muted">{{ [t.env ? `在哪跑：${t.env}` : "", shas(t) ? `提交 ${shas(t)}` : ""].filter(Boolean).join(" · ") }}</div>
             <div class="links">
               <template v-for="(r, i) in t.evidence.filter((x) => x.startsWith('src:'))" :key="r"><a href="#" :title="r" @click.prevent="refAction(r)?.()">原件 {{ i + 1 }}</a></template>
               <a v-if="t.runId" :href="`#/runs/${t.runId}`">看这次运行</a>

@@ -256,6 +256,7 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
 }
 
 const choices = ["并进这件事", "另开一件事", "不用管"];
+const HEADS: Record<string, string> = { scope: "范围变了", decision: "有了新决定", blocker: "有阻塞" };
 function askChanges(app: App, r: Run) {
   const id = String(r.input.itemId), item = getItem(app, id), stages = itemStages(app, id);
   const definitions = itemFlow(app, id)!.definition.stages;
@@ -267,7 +268,7 @@ function askChanges(app: App, r: Run) {
   const groups = changes.length <= 3 ? changes.map((c) => [c]) : [changes.slice(0, 1), changes.slice(1, 2), changes.slice(2)];
   for (const group of groups) {
     const ask = createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
-      question: `「${item.title}」有新变化：\n${group.map((c) => `${c.summary}${c.detail ? `\n${c.detail}` : ""}\n${c.refs.join(" ")}\n影响：${impact(c.stages)}`).join("\n\n")}`,
+      question: `「${item.title}」有新变化：\n\n${group.map((c) => [`**${HEADS[c.type] ?? "有变化"}：${c.summary}**`, c.detail ?? "", `- 影响：${impact(c.stages)}`, `- 原话：${c.refs.map((r, i) => `[${i + 1}](${r})`).join(" ")}`].filter(Boolean).join("\n")).join("\n\n")}`,
       options: group.length === 1 ? choices.map((label) => ({ label })) : [],
       ui: group.length === 1 ? null : { fields: group.map((c) => ({ id: c.id, type: "choice" as const, label: c.summary.slice(0, 200), required: true, options: choices })) },
       context: { handler: "item-follow", itemId: id, startedAt: (r.input.batch as Batch).startedAt, changes: group.map((c) => c.id) } });

@@ -7,8 +7,8 @@ export type StudyTrial = {
   state: "queued" | "running" | "reported" | "skipped"; result: TrialResult | null; summary: string;
   evidence: string[]; artifacts: Artifact[]; findings: { kind: FindingKind; title: string; repro: string }[];
   runId: string | null; attempts: number; prior: string | null; unsure: boolean; escalated: boolean; updatedAt: string;
-  /** The commit of the study's own workspace this trial ran on. */
-  commit?: string | null;
+  /** The commit of each repository in the study's own workspace this trial ran on, by repository space. */
+  commits?: Record<string, string>;
 };
 /** What a study may touch: the repositories it works in, whether a finding may be turned into a code change, whether samples' own scripts may run on this machine. */
 export type StudyScope = { repos: { id: string; name: string }[]; allowCode: boolean; thirdParty: boolean; candidates?: { id: string; name: string }[] };
@@ -21,7 +21,7 @@ export type StudyDirection = {
   plan: { object: string; check: string; prior?: string }[]; removed: { object: string; check: string; prior: string }[];
   counts: Record<"queued" | "running" | "skipped" | TrialResult, number>; createdAt: string; updatedAt: string;
   /** Findings of this direction may be turned into code changes; it runs other people's install or build scripts. */
-  allowCode?: boolean; thirdParty?: boolean;
+  allowCode?: boolean; thirdParty?: boolean; baseline?: Record<string, string>;
 };
 export type FindingKind = "defect" | "gap" | "idea";
 export type StudyFinding = {

@@ -340,6 +340,7 @@ async function stop() {
 .following { margin: 6px 0 0; }
 
 .stage-detail { display: grid; gap: 6px; font-size: 13px; }
+.stage-detail > .link { justify-self: start; text-align: left; }
 .stage-title { display: flex; align-items: baseline; gap: 8px; }
 .stage-title .muted { font-size: 12.5px; }
 .stage-text { font-size: 13px; }

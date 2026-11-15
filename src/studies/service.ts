@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { HttpError, json, now } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
+import { describeStage } from "../flows/definitions.ts";
 import { answerAsk, createAsk, getAsk, registerAskHandler } from "../agents/asks.ts";
 import { artifactInbox, artifactsByIds, attachPath } from "../agents/artifacts.ts";
 import { getRun } from "../agents/runs.ts";
@@ -35,15 +36,18 @@ export function proposeDirections(app: App, p: Proposal, by: FlowActor) {
     const s = getStage(app, p.item, d.id);
     if (s.state !== "doing" || s.control.runId !== r.id || s.control.reported) throw new HttpError(409, "这次定方向已结束或已交提案");
     const proposed = saveProposals(app, { ...p, directions: p.directions.map((d) => ({ ...d, env: resolveEnv(app, p.item, d.env ?? "").id })) }, f.round);
-    const text = proposed.length ? proposed.map((d, i) => {
-      const env = resolveEnv(app, p.item, d.env);
-      return [`${i + 1}. ${d.goal}`, `做法：${d.approach}`, `验收：${d.acceptance}`, `在哪跑：${env.name}\n${env.note}`,
-        d.third_party ? env.thirdParty ? "这个方向要执行第三方样本的代码，所选环境允许执行。" : thirdPartyReason : "",
-        `${json<unknown[]>(d.plan, []).length} 个试验，${json<unknown[]>(d.removed, []).length} 个以前做过并被去掉`,
-        ...json<{ object: string; check: string; prior: string }[]>(d.removed, []).map((t) => `${t.object} × ${t.check}：${t.prior}`), `预计花费：${d.estimate || "未估算"}`].filter(Boolean).join("\n");
-    }).join("\n\n") : `这一轮没有提出方向\n${p.note || "没有值得做的方向"}`;
-    const budgets = f.definition.stages.filter((d) => typeof d.by === "object" && "object" in d.by && d.by.object === "trials").map((d) => `${d.name}：${JSON.stringify(d.budget ?? {})}，升档上限 ${d.escalate?.max ?? 0}（可用阶段预算接口修改）`).join("\n");
-    const ask = createAsk(app, { runId: null, userId: getItem(app, p.item).userId, question: `${text}\n${p.note && proposed.length ? p.note : ""}\n${budgets}\n可附一句改动要求。`, options: proposed.length ? [...proposed.map((d) => ({ label: d.goal })), { label: "这一轮不跑" }] : [{ label: "知道了" }], allowText: true, context: { handler: "study-plan", itemId: p.item, stageId: d.id, startedAt: f.startedAt, round: f.round, directions: proposed.map((d) => d.id) } });
+    const text = proposed.length ? [`这一轮提了 ${proposed.length} 个方向，选一个：`, ...proposed.map((d, i) => {
+      const env = resolveEnv(app, p.item, d.env), removed = json<{ object: string; check: string; prior: string }[]>(d.removed, []);
+      return [`**${i + 1}. ${d.goal}**`, `- 做法：${d.approach}`, `- 验收：${d.acceptance}`, `- 在哪跑：${env.name}`,
+        d.third_party ? `- ${env.thirdParty ? "这个方向要执行第三方样本的代码，所选环境允许执行。" : thirdPartyReason}` : "",
+        `- ${json<unknown[]>(d.plan, []).length} 个试验，${removed.length} 个以前做过并被去掉${removed.length ? `：${removed.map((t) => `${t.object} × ${t.check}（${t.prior}）`).join("；")}` : ""}`,
+        `- 预计花费：${d.estimate || "未估算"}`].filter(Boolean).join("\n");
+    })].join("\n\n") : `这一轮没有提出方向\n${p.note || "没有值得做的方向"}`;
+    const budgets = f.definition.stages.filter((d) => typeof d.by === "object" && "object" in d.by && d.by.object === "trials").map((d) => {
+      const words = describeStage(d);
+      return `「${d.name}」这一段：${[words.budget, words.ai].filter(Boolean).join("；") || "没有设预算"}。要改，在事项页这一段的“预算”里改。`;
+    }).join("\n");
+    const ask = createAsk(app, { runId: null, userId: getItem(app, p.item).userId, question: [text, p.note && proposed.length ? p.note.trim() : "", budgets, proposed.length ? "回答时可以附一句要改的地方。" : ""].filter(Boolean).join("\n\n"), options: proposed.length ? [...proposed.map((d) => ({ label: d.goal })), { label: "这一轮不跑" }] : [{ label: "知道了" }], allowText: true, context: { handler: "study-plan", itemId: p.item, stageId: d.id, startedAt: f.startedAt, round: f.round, directions: proposed.map((d) => d.id) } });
     changeStage(app, p.item, d.id, "doing", { askId: ask.id, waitingOn: "owner", control: { ...s.control, reported: true } }, by, `提案已交，等本人选方向${p.note?.trim() ? `。${p.note.trim()}` : ""}`);
     return `提案已交，等本人选择：${ask.id}`;
   });
