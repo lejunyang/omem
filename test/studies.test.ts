@@ -22,7 +22,7 @@ import { writeWorkFile } from "../src/sources/work.ts";
 import { parseFlow, describeStage, saveFlow, seedBuiltinFlows } from "../src/flows/definitions.ts";
 import { advance, flowReminders, flowView, ownerAction, reopenStage, reportStage, startFlow, startRound, stopFlow, updateStageBudget } from "../src/flows/engine.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
-import { closeDirection, confirmDirection, direction, directions, findings, idleRounds, recordFinding, saveProposals, trial, trials } from "../src/studies/store.ts";
+import { closeDirection, confirmDirection, direction, directions, findings, idleRounds, recordFinding, saveProposals, trial, trials, reconcile, type Trial } from "../src/studies/store.ts";
 import { coverage, capabilitiesPath, planningMaterials } from "../src/studies/materials.ts";
 import { proposeDirections, readLedger, reportTrial, studyView } from "../src/studies/service.ts";
 import { startServer } from "../src/server/http.ts";
@@ -166,7 +166,7 @@ describe("试验运行与预算", () => {
     const denied = await callTool(ctx(f, f.by().runId), "trial_report", { trial: f.s("try").control.trialId, result: "passed", summary: "伪造" }); expect(denied.isError).toBe(true);
     await result(f); expect(trials(f.app, f.item.id).map((t) => t.state)).toEqual(["reported", "running", "queued"]);
     expect(getRun(f.app, f.s("try").control.runId!).input.task).not.toContain("关键输出可复现"); expect(f.s("try").control.runId).not.toBe(first);
-    await result(f, "failed"); await result(f, "blocked"); expect(f.s("try").state).toBe("done"); expect(f.s("try").note).toContain("passed 1"); expect(directions(f.app, f.item.id)[0].state).toBe("active");
+    await result(f, "failed"); await result(f, "blocked"); expect(f.s("try").state).toBe("done"); expect(f.s("try").note).toContain("通过 1 个"); expect(directions(f.app, f.item.id)[0].state).toBe("active");
   });
   it("没有方向时直接完成，无模型运行", async () => {
     const app = fixture(), item = upsertItem(app, undefined, { title: "无方向", spaceId: "personal" }, "user");
@@ -197,7 +197,7 @@ describe("试验运行与预算", () => {
   });
   it("试验数到上限完成本轮，下一轮跳过定方向并继续队列", async () => {
     const f = await setup({ budget: { trials: 1 } }); await select(f, 3); await result(f);
-    expect(f.s("try")).toMatchObject({ state: "done", note: "做了 1 个，还剩 2 个留到下一轮" }); await summary(f);
+    expect(f.s("try")).toMatchObject({ state: "done", note: expect.stringContaining("到了这一轮的预算，还剩 2 个留到下一轮") }); await summary(f);
     const before = all(f.app.db, "select id from runs where kind='flow-stage'").length;
     await startRound(f.app, f.item.id, owner); expect(f.s("plan")).toMatchObject({ state: "skipped", note: "继续「逐项核验命令」：还剩 2 个试验" }); expect(trials(f.app, f.item.id).filter((t) => t.state === "running")).toHaveLength(1);
     expect(all(f.app.db, "select id from runs where kind='flow-stage'")).toHaveLength(before);
@@ -244,7 +244,7 @@ describe("试验运行与预算", () => {
   });
   it("零个试验预算直接完成并保留队列", async () => {
     const f = await setup({ budget: { trials: 0 } }); await select(f, 2);
-    expect(f.s("try").state).toBe("done"); expect(f.s("try").note).toBe("做了 0 个，还剩 2 个留到下一轮"); expect(trials(f.app, f.item.id).every((t) => t.state === "queued")).toBe(true);
+    expect(f.s("try").state).toBe("done"); expect(f.s("try").note).toBe("做了 0 个；到了这一轮的预算，还剩 2 个留到下一轮"); expect(trials(f.app, f.item.id).every((t) => t.state === "queued")).toBe(true);
   });
   it("额度等待不换后端，恢复后继续同一试验", async () => {
     const f = await setup({ ai: { profile: "study-ai", model: "sample" } });
@@ -438,5 +438,17 @@ describe("台账随事项拉取", () => {
     expect(studyView(local, item.id).pushes).toMatchObject([{ id: "sp-test", trialId: "st-rerun", remote: "origin", commit: "abcdef" }]);
     expect(direction(local, d.id)).toMatchObject({ third_party: 1, allow_code: 1, workspace_run_id: null });
     run(remote.db, "update study_findings set state='confirmed',updated_at='2099-01-01' where id=?", finding); await pull(); expect(findings(local, item.id)[0].state).toBe("confirmed");
+  });
+});
+
+describe("真实跑过一轮以后改的", () => {
+  it("跑不了的试验不算试过：下一次提案里照样排上，并带上上次为什么没跑成", () => {
+    const tried = (result: Trial["result"]) => [{ object: "CSV 导出", check: "逗号和引号的转义", result, summary: "工作区里没有可用的解析器" } as Trial];
+    const plan = [{ object: "CSV 导出", check: "逗号和引号的转义" }];
+    const blocked = reconcile(plan, tried("blocked"));
+    expect(blocked.removed).toEqual([]);
+    expect(blocked.kept[0].prior).toContain("工作区里没有可用的解析器");
+    expect(reconcile(plan, tried("failed")).removed).toHaveLength(1);
+    expect(reconcile(plan, tried("passed")).removed).toHaveLength(1);
   });
 });

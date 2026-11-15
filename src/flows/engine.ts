@@ -407,7 +407,7 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     let s = getStage(app, itemId, stageId);
     if (s.control.budgetExceeded && by.actor !== "owner") throw new HttpError(409, "到了这一段的时间预算，等本人处理");
     if (!report.note.trim()) throw new HttpError(400, "交结果需要说明");
-    if (["done", "skip"].includes(report.state) && isStudy(f) && d.tools?.includes("record_finding")) report = { ...report, note: `${report.note}\n${pushSummary(app, f)}` };
+    if (["done", "skip"].includes(report.state) && isStudy(f) && d.tools?.includes("record_finding")) report = { ...report, note: [report.note, pushSummary(app, f)].filter(Boolean).join("\n") };
     if (report.state === "skip" ? s.state === "done" : !["doing", "blocked"].includes(s.state)) throw new HttpError(409, "已完成阶段不能跳过；交结果需要阶段进行中或卡住");
     if (report.state === "skip" && s.state === "skipped") return flowView(app, itemId);
     // An old carrier cannot finish the replacement's attempt.
@@ -530,7 +530,7 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
   if (isTrials(d) && ["done", "skip"].includes(action)) await cancelTrials(app, itemId);
   withdraw(app, s);
   if (isFixes(d) && ["skip", "done"].includes(action)) await cancelFixReruns(app, itemId);
-  if (isStudy(f) && (isFixes(d) || d.tools?.includes("record_finding")) && (["done", "skip"].includes(action) || action === "confirm" && s.control.question === "done")) note = `${note || "本人确认完成"}\n${pushSummary(app, f)}`;
+  if (isStudy(f) && (isFixes(d) || d.tools?.includes("record_finding")) && (["done", "skip"].includes(action) || action === "confirm" && s.control.question === "done")) note = [note || "本人确认完成", pushSummary(app, f)].filter(Boolean).join("\n");
   if (action === "done" || action === "skip" || action === "confirm" && s.control.question === "done") {
     s = { ...s, control: finishUsage(app, s, new Date()) };
     if (s.control.runId) cancelRun(app, s.control.runId);

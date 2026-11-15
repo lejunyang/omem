@@ -31,7 +31,8 @@ export function reconcile(plan: PlannedTrial[], history: Trial[]) {
   for (const t of plan) {
     const same = history.filter((h) => h.result && normalize(h.object) === normalize(t.object));
     const exact = same.filter((h) => normalize(h.check) === normalize(t.check)).at(-1);
-    if (exact) removed.push({ ...t, prior: previous(exact) });
+    // Only a trial that was really carried out settles the question; one that could not run is planned again, with why.
+    if (exact && exact.result !== "blocked") removed.push({ ...t, prior: previous(exact) });
     else if (!kept.some((k) => normalize(k.object) === normalize(t.object) && normalize(k.check) === normalize(t.check))) kept.push({ ...t, ...(same.length ? { prior: same.map((h) => `${h.check}：${previous(h)}`).join("\n") } : {}) });
   }
   return { kept, removed };

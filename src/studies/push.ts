@@ -26,7 +26,7 @@ export function studyPushes(app: App, item: string) {
 }
 export function pushSummary(app: App, f: ItemFlow) {
   const rows = all<{ branch: string }>(app.db, "select branch from study_pushes where item_id=? and flow_started_at=? and round=? order by at,rowid", f.itemId, f.startedAt, f.round);
-  return `这一轮推送 ${rows.length} 次${rows.length ? `：${rows.map((p) => p.branch).join("、")}` : ""}`;
+  return rows.length ? `这一轮推送 ${rows.length} 次：${rows.map((p) => p.branch).join("、")}` : "";
 }
 async function checked(cwd: string, args: string[]) {
   const r = await gitAsync(cwd, args, { timeoutMs: 60_000 });
