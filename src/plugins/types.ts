@@ -106,6 +106,13 @@ export type PluginConnection = { account: string; scopes: string[]; base: string
 
 export type PluginSignal = { kind: string; keys: Record<string, unknown>; payload?: unknown };
 export type PluginObjectState = { title: string; status: string; link: string; fields?: { label: string; value: string }[] };
+/**
+ * Something a person can do to an object (merge it, rerun its failed checks): one of the plugin's own
+ * tools, called with the object's key in `arg` (default `key`). The button on the item page and an
+ * agent calling the tool are the same call, under the same approval rung. `statuses`: only in these
+ * (the button is not shown otherwise); left out, in any.
+ */
+export type PluginObjectAction = { id: string; label: string; tool: string; arg?: string; statuses?: string[]; confirm?: string };
 export type PluginObject = {
   kind: string;
   label: string;
@@ -114,6 +121,7 @@ export type PluginObject = {
   statuses: Record<string, string>;
   final: string[];
   poll?: { minutes: number };
+  actions?: PluginObjectAction[];
 };
 
 /** A platform people connect (logging in with it, or only binding): see src/auth/providers.ts LoginProvider. */
@@ -179,7 +187,7 @@ export type PluginSlotView = { title?: string; components: unknown[] };
 
 export type PluginApi = {
   id: string;
-  /** A read-only stateful object, named <plugin id>:<kind> by the host. */
+  /** A stateful object, named <plugin id>:<kind> by the host; its actions are the plugin's own tools. */
   object(def: PluginObject): void;
   /** The host's zod: plugins in the data directory cannot import packages. */
   z: typeof import("zod").z;

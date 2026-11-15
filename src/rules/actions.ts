@@ -79,7 +79,7 @@ export async function runActions(app: App, rule: Rule, e: RuleEvent, reason: str
       if (!rest.length) break;
       const r = createRun(app, {
         kind: "rule-fire",
-        spaceId: rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : e.doc?.space ?? "personal"),
+        spaceId: rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : e.doc?.space ?? e.object?.space ?? "personal"),
         title: `规则「${rule.name}」：${minutesText(a.minutes)}后接着做`,
         input: { ruleId: rule.id, key: e.key, event: e, actions: rest, reason, ...(extra.discussion ? { discussion: extra.discussion } : {}) },
         notBefore: new Date(Date.now() + a.minutes * 60_000).toISOString(),
@@ -265,9 +265,9 @@ async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, r
   if ("joined" in slot) return slot.joined;
   // A schedule or a document change has no chat of its own: it may speak only in the one the rule
   // names (发到, `conversationId`), through the bot.
-  const chatless = e.kind === "schedule" || e.kind === "doc";
+  const chatless = e.kind === "schedule" || e.kind === "doc" || e.kind === "object";
   const origin = chatless && rule.conversationId ? getThread(app, rule.conversationId) : undefined;
-  if (chatless && a.reply !== "none" && !origin) throw new HttpError(400, `${e.kind === "doc" ? "文档变化" : "定时"}规则缺少投递会话，请在规则的“发到”中选择目标后保存；本次未执行`);
+  if (chatless && a.reply !== "none" && !origin) throw new HttpError(400, `${e.kind === "doc" ? "文档变化" : e.kind === "object" ? "对象状态变化" : "定时"}规则缺少投递会话，请在规则的“发到”中选择目标后保存；本次未执行`);
   if (origin && origin.userId !== OWNER) throw new HttpError(403, "只能投递到本人的会话");
   const larkOrigin = !!origin && (["lark", "lark-watch"].includes(origin.channel) || origin.channel.startsWith("lark:"));
   const chatId = e.chat?.id ?? (larkOrigin ? origin!.key?.split("#")[0] : undefined);
@@ -317,14 +317,15 @@ async function agentAction(app: App, rule: Rule, a: AgentAction, e: RuleEvent, r
         : "不要在群里发消息；最后的回答发给本人。",
   ].filter((x) => x !== "").join("\n");
   // Without a chat of its own, the chat it posts into (发到) decides where it reads, then the document's space.
-  const space = a.space ?? spec.space ?? rule.spaceId ?? (chatId ? chatSpace(app, chatId) : e.doc?.space ?? "personal");
+  // An object's items are where its agent reads.
+  const space = a.space ?? spec.space ?? rule.spaceId ?? e.object?.space ?? (chatId ? chatSpace(app, chatId) : e.doc?.space ?? "personal");
   // It speaks through the bot that is in the chat (the one that saw the message).
   const bot = larkOrigin && origin!.channel.startsWith("lark:") ? origin!.channel.slice(5) : e.bot;
   const lark = { chats: chatId && reply !== "none" ? [chatId] : [], draft: reply === "draft", ...powers(a), ...(bot && bot !== "main" ? { bot } : {}) };
   const r = createRun(app, {
     kind: "agent",
     spaceId: space,
-    title: truncate(`${spec.name}（规则「${rule.name}」）：${e.message?.text.replace(/\s+/g, " ") ?? e.chat?.name ?? e.doc?.title ?? "定时"}`, 80),
+    title: truncate(`${spec.name}（规则「${rule.name}」）：${e.message?.text.replace(/\s+/g, " ") ?? e.chat?.name ?? e.doc?.title ?? (e.object ? `${e.object.title}：${e.object.toLabel}` : undefined) ?? "定时"}`, 80),
     input: {
       spec: spec.name,
       ...assistantScope(spec.name, space, lark),

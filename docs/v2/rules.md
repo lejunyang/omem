@@ -13,13 +13,14 @@
 | 每天早上看一眼发布群，有没有失败的发布 | 定时（cron） | （无，交给模型） | 交给 release-checker，结论通知本人 |
 | 《差旅报销制度》有人改了标准、在里面 @ 我，半小时后提醒我看看 | 文档变化（列出这篇的链接） | @ 了本人 | 延时 30 分钟；通知本人 |
 | 需求排期表里有人把状态改成“已上线”，跑一下发布检查脚本，执行前让改的人的负责人批准 | 文档变化（多维表格） | 变化类型是 record 且 变化内容包含“已上线” | 执行脚本（审批人由 AI 按说明找） |
+| 事项上挂的合并请求没合并就被关掉时告诉我 | 对象状态变化（合并请求 → 已关闭） | （无） | 通知本人 |
 
 ## 模型
 
 一条规则（表 `rules`）：
 
 - `description`：本人的原话，规则的依据。条件和动作都可以重新从它生成。
-- `trigger`：`message`（新消息，含卡片）、`chat-new`（第一次看到的群）、`schedule`（cron）、`meeting`（本人加入飞书视频会议，见下文“会议规则”）、`doc`（飞书文档、电子表格、多维表格有变化，见下文“文档变化规则”；`trigger.docs` 列出要盯的文档链接）。`once: "event" | "chat"`：每条消息都可能触发，或每个群只触发一次（拉机器人、开始监听这类）。
+- `trigger`：`message`（新消息，含卡片）、`chat-new`（第一次看到的群）、`schedule`（cron）、`meeting`（本人加入飞书视频会议，见下文“会议规则”）、`doc`（飞书文档、电子表格、多维表格有变化，见下文“文档变化规则”；`trigger.docs` 列出要盯的文档链接）、`object`（事项上挂的平台对象变了状态，见下文“对象状态变化规则”；`trigger.objectKind` 选对象类型、`trigger.objectStatuses` 选新状态）。`once: "event" | "chat"`：每条消息都可能触发，或每个群只触发一次（拉机器人、开始监听这类）。
 - `conditions`：确定的条件（JSON，见下），可以为空。
 - `judge`：`code`（只看条件）、`ai`（只交给模型）、`code+ai`（条件先筛，命中的再请模型确认）。条件为空时只能是 `ai`。
 - `judgeWith`：模型判断（含“模型判断”这一步）用哪个：`decision`（默认，有决策模型时用它，只给是 / 否和概率）或 `general`（通用模型，写理由）。见 [ai-models.md](ai-models.md)。
@@ -36,7 +37,7 @@
 ] }
 ```
 
-字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于在会人数和会邀人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。文档变化规则只用文档和变化的字段：`doc.title`、`doc.type`（docx / sheet / bitable）、`doc.url`、`doc.location`（知识库和目录）、`doc.space`、`change.kind`（edit / comment / record / field）、`change.text`、`change.added`、`change.sheet` / `change.row`（电子表格的工作表名和行号）、`change.recordId` / `change.tableId`（多维表格记录）、`change.action`（added / edited / deleted）、`change.editor`、`change.editorEmail`、`change.editorId`（修改人在机器人这边的 open_id，可用于 @）、`change.byOwner`（修改人只有本人；不知道修改人时不成立）、`change.mentions`、`change.mentionsOwner`、`change.mentionsBot`。
+字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于在会人数和会邀人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。文档变化规则只用文档和变化的字段：`doc.title`、`doc.type`（docx / sheet / bitable）、`doc.url`、`doc.location`（知识库和目录）、`doc.space`、`change.kind`（edit / comment / record / field）、`change.text`、`change.added`、`change.sheet` / `change.row`（电子表格的工作表名和行号）、`change.recordId` / `change.tableId`（多维表格记录）、`change.action`（added / edited / deleted）、`change.editor`、`change.editorEmail`、`change.editorId`（修改人在机器人这边的 open_id，可用于 @）、`change.byOwner`（修改人只有本人；不知道修改人时不成立）、`change.mentions`、`change.mentionsOwner`、`change.mentionsBot`。对象状态变化规则只用对象的字段：`object.kind`（全名，如 `github:pull-request`）、`object.title`、`object.status`（新状态的标识，如 `merged`）、`object.from`（原来的状态）、`object.link`、`object.items`（关联事项的标题）。
 
 `chat.id` 的值写 `current`（`in` 列表里也行）表示“这个群”：助理在飞书会话里用 `save_rule` 保存时换成这个会话的群 id，不在飞书会话里保存会被拒绝。
 
@@ -82,6 +83,17 @@
 - **权限**：应用身份 `docs:event:subscribe`、`docs:event.document_edited:read`、`docs:document.comment:read`、`base:record:read`、`base:field:read`、`drive:drive.metadata:readonly`（订阅接口还要求用户身份也开通 `docs:event:subscribe`）。设置 → 渠道 → 机器人权限与事件检查里有一行“文档变化规则”，扫码更新应用时一并申请。
 - **改动和整理**：采集过的文档被重新读以后照常交给整理（一次 AI 运行），和每天的检查一样；只要读到最新内容、不要整理的，把这篇的关注程度设为“仅检索”（`scheduleIngest` 跳过仅检索和忽略的原件），或关掉空间的自动整理。规则本身只按它的动作做事，不带额外的 AI 运行。
 - **还没有的**：别人在评论里只 @ 本人（没有 @ 机器人）时，事件发给本人的身份而不是机器人，omem 现在收不到；要收得以本人身份订阅用户云文档事件，不在本期。
+
+### 对象状态变化规则
+
+“事项上挂的合并请求没合并就被关掉时告诉我”：触发 `object`，`trigger.objectKind` 写 `github:pull-request`，`trigger.objectStatuses` 写 `[closed]`，动作通知本人。对象是插件声明的平台上带状态的东西（docs/v2/flows.md 第 8 节），挂在事项上以后宿主按插件定的间隔去读；实现在 `src/flows/plugin-objects.ts`（`objectRuleEvent`）。
+
+- **什么时候触发**：读到的状态和上次存的不一样时，和记 `object.<全名>.<状态>` 信号、推进关联事项的流程是同一次；轮询、挂对象、事项页上点动作按钮之后的重读都算。第一次挂上读到的状态只作基线，不触发；状态没变不触发。事件键 `object:<对象 id>:<新状态>:<读到的时间>`，每条规则对一次变化只触发一次。
+- **只看主人读得到的事项**：事件只带规则主人（本人）能读的空间里关联这个对象的事项；一件都没有就不发。规则选了所属空间时，只在关联事项里有这个空间的事项时触发。
+- **类型和状态**：`objectKind` 不写是任何对象，`objectStatuses` 不写或为空是变成任何状态；写了状态必须先写类型。保存时核对：类型要是现在启用的插件声明的（“没有这种对象：…；装了对应的插件才有”），状态要在这个类型声明的状态里。插件停用后规则保留，不会再收到这种对象的变化。
+- **事件里有什么**：对象类型名和全名、标题、原来和现在的状态（标识和状态词）、链接、关联事项的标题和 id（交给 Agent 时它可以用 `get_item` 读事项）；标题是平台上的外部材料，任务说明里写明不是指令。
+- **动作**：和文档变化规则一样没有群——只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断、执行脚本；不能等待回应或按讨论跳过；Agent 要回复时先选“发到”的会话。没有指定执行空间时，Agent 在第一件关联事项的空间里查资料。不写条件、按条件判断时，选定的类型和状态就是全部条件。
+- **规则页**：触发选“对象状态变化”，“哪种对象”从现在启用的对象类型里选（规则已选、插件却停用了的类型照样列出，标“插件没有启用”），“变成”勾这个类型声明的状态（不勾是任何状态）。`GET /api/rule-options` 的 `objectKinds` 给出 `{ kind, label, statuses, final }`。
 
 ### 处理中再次触发：并入同一会话
 
@@ -182,7 +194,7 @@
 侧栏“规则”：左边规则列表（启用开关、命中次数、最近触发），右边编辑：
 
 - 规则原话（必填）。
-- 触发：新消息 / 新群 / 定时（cron）；每条消息触发或每个群一次。
+- 触发：新消息 / 新群 / 定时（cron）/ 我加入会议时 / 文档变化 / 对象状态变化；每条消息触发或每个群一次。
 - 判断：条件（一句句可读的条件，可增删改）+ “让 AI 从原话生成条件”；判断方式。
 - 动作：按顺序的卡片，选 Agent、开话题、回复方式等。
 - “用最近的消息试一试”：拿最近采集的消息（可选某个群）按当前条件求值，列出会命中的消息和理由（只交给模型的规则抽样试）。
@@ -192,7 +204,7 @@
 
 ## 实现
 
-`src/rules/`：`types.ts`（结构与校验）、`conditions.ts`（求值与中文描述）、`store.ts`（表与去重）、`engine.ts`（事件分发、判断、试运行）、`actions.ts`、`compile.ts`（模型生成条件、模型判断）。事件来源：`lark-bot.ts`（机器人所在群的实时消息）、`lark-personal.ts`（本人采集的所有会话，含第一次读到的群）、`lark-meetings.ts`（本人入会）、定时任务 `rule:<id>`。权限检查在 `permissions.ts`。
+`src/rules/`：`types.ts`（结构与校验）、`conditions.ts`（求值与中文描述）、`store.ts`（表与去重）、`engine.ts`（事件分发、判断、试运行）、`actions.ts`、`compile.ts`（模型生成条件、模型判断）。事件来源：`lark-bot.ts`（机器人所在群的实时消息）、`lark-personal.ts`（本人采集的所有会话，含第一次读到的群）、`lark-meetings.ts`（本人入会）、`lark-doc-events.ts`（文档变化）、`src/flows/plugin-objects.ts`（事项上挂的平台对象变了状态）、定时任务 `rule:<id>`。权限检查在 `permissions.ts`。
 
 ## 所属空间与主助手
 

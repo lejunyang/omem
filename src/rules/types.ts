@@ -49,13 +49,20 @@ export const FIELDS = {
   "change.mentions": "这次变化里被 @ 的人（名字）",
   "change.mentionsOwner": "这次变化 @ 了本人",
   "change.mentionsBot": "这次变化 @ 了 omem 机器人",
+  "object.kind": "对象类型（全名，如 github:pull-request）",
+  "object.title": "对象标题",
+  "object.status": "新状态（状态标识，如 merged）",
+  "object.from": "原来的状态（状态标识）",
+  "object.link": "对象链接",
+  "object.items": "关联的事项（标题）",
 } as const;
 export type Field = keyof typeof FIELDS;
-/** Which fields each trigger has: a meeting has no chat or message, a message no meeting, a document change neither. */
-export const EVENT_FIELDS: Record<"message" | "meeting" | "doc", Field[]> = {
-  message: (Object.keys(FIELDS) as Field[]).filter((f) => !/^(meeting|doc|change)\./.test(f)),
+/** Which fields each trigger has: a meeting has no chat or message, a message no meeting, a document change or an object's state neither. */
+export const EVENT_FIELDS: Record<"message" | "meeting" | "doc" | "object", Field[]> = {
+  message: (Object.keys(FIELDS) as Field[]).filter((f) => !/^(meeting|doc|change|object)\./.test(f)),
   meeting: (Object.keys(FIELDS) as Field[]).filter((f) => f.startsWith("meeting.")),
   doc: (Object.keys(FIELDS) as Field[]).filter((f) => /^(doc|change)\./.test(f)),
+  object: (Object.keys(FIELDS) as Field[]).filter((f) => f.startsWith("object.")),
 };
 export const OPS = ["equals", "contains", "startsWith", "endsWith", "matches", "in", "is", "gte", "lte"] as const;
 export type Op = (typeof OPS)[number];
@@ -203,9 +210,13 @@ export const ruleInputSchema = z.object({
   description: z.string().trim().min(1).max(2000),
   enabled: z.boolean().default(false),
   trigger: z.object({
-    event: z.enum(["message", "chat-new", "schedule", "meeting", "doc"]).default("message"),
+    event: z.enum(["message", "chat-new", "schedule", "meeting", "doc", "object"]).default("message"),
     /** Documents a `doc` rule watches (links): omem subscribes to their changes as the bot. */
     docs: z.array(z.string().trim().min(1).max(500)).max(200).optional(),
+    /** An `object` rule: which kind of plugin object (its full name, `github:pull-request`); left out, any. */
+    objectKind: z.string().trim().min(3).max(80).optional(),
+    /** …and which new states it is about (the kind's status ids); left out or empty, any. */
+    objectStatuses: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
     /** For those of `docs` the bot cannot subscribe to: how often to check them instead (lark-doc-events.ts pollRuleDocs). */
     pollMinutes: z.number().int().min(5).max(1440).optional(),
     once: z.enum(["event", "chat"]).default("event"),
@@ -242,7 +253,7 @@ export type Rule = z.infer<typeof ruleInputSchema> & { id: string; origin?: { pl
 export type RuleEvent = {
   /** Dedupe key: one message (or chat, or schedule tick) is handled once per rule. */
   key: string;
-  kind: "message" | "chat-new" | "schedule" | "meeting" | "doc";
+  kind: "message" | "chat-new" | "schedule" | "meeting" | "doc" | "object";
   at: string;
   chat?: { id: string; name: string; kind: "group" | "p2p" };
   sender?: { id?: string; name: string; email?: string | null; kind: "owner" | "user" | "bot" };
@@ -278,8 +289,13 @@ export type RuleEvent = {
      */
     byOwner?: boolean;
   };
+  /**
+   * A plugin object linked to items changed state (src/flows/plugin-objects.ts): only the items in
+   * spaces the rules' owner can read; `space` is the first one's, where an agent reads.
+   */
+  object?: { id: string; kind: string; label: string; title: string; from: string; fromLabel: string; to: string; toLabel: string; link: string; items: { id: string; title: string; space: string }[]; space: string };
   /** Where it came from: the bot sees groups it is in in real time; the owner's capture sees every chat. */
-  via: "bot" | "capture" | "schedule" | "test" | "meeting" | "doc";
+  via: "bot" | "capture" | "schedule" | "test" | "meeting" | "doc" | "object";
   /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */
   bot?: string;
   /** The message a “wait for a message” step got (fast.ts); the actions after it use it as what to pass on. */

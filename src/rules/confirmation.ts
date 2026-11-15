@@ -19,7 +19,7 @@ export function confirmRule(app: App, rule: Rule, runId: string, conversationId:
     runId, conversationId, userId: OWNER,
     question: [
       `规则「${rule.name}」已保存，是否启用？`, rule.description,
-      `触发：${({ message: "新消息", "chat-new": "第一次看到的群", meeting: "本人加入会议", doc: "文档变化", schedule: `定时 ${rule.trigger.cron ?? ""}` })[rule.trigger.event]}`,
+      `触发：${({ message: "新消息", "chat-new": "第一次看到的群", meeting: "本人加入会议", doc: "文档变化", object: `对象状态变化${rule.trigger.objectKind ? `（${rule.trigger.objectKind}${rule.trigger.objectStatuses?.length ? ` → ${rule.trigger.objectStatuses.join(" / ")}` : ""}）` : ""}`, schedule: `定时 ${rule.trigger.cron ?? ""}` })[rule.trigger.event]}`,
       `条件：${describe(rule.conditions)}`,
       `判断：${({ code: "按条件", ai: "交给 AI", "code+ai": "条件命中后由 AI 确认" })[rule.judge]}`,
       `动作：${actions.join("；")}`,

@@ -64,6 +64,9 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   // Filled by the plugin of the same id when it loads (connect_list, connect_read…): roles name the group
   // before the plugin is there, and its tools come with it.
   { id: "connect", label: "已连接平台的读取与同步", doc: "connect", tools: [] },
+  // Filled by plugins whose object kinds declare actions (github_merge_pull_request…): the same tools as
+  // the buttons on an item's object cards, each under its own approval rung (src/flows/object-actions.ts).
+  { id: "object-actions", label: "平台对象的动作（合并请求的合并……）", doc: "flows", tools: [] },
 ];
 
 /**

@@ -40,10 +40,18 @@ export async function dispatchRuleEvent(app: App, e: RuleEvent, only?: (r: Rule)
   }
 }
 
-/** A rule set to one space sees that space's chats and documents; a document rule with links, only those documents. */
+/**
+ * A rule set to one space sees that space's chats, documents and the objects of its items; a document
+ * rule with links, only those documents; an object rule, the kind and new states it names.
+ */
 function inScope(app: App, r: Rule, e: RuleEvent) {
   if (r.spaceId && e.chat && r.spaceId !== captureSpace(app, e.chat.id)) return false;
   if (r.spaceId && e.doc && e.doc.space && r.spaceId !== e.doc.space) return false;
+  if (e.object) {
+    if (r.trigger.objectKind && r.trigger.objectKind !== e.object.kind) return false;
+    if (r.trigger.objectStatuses?.length && !r.trigger.objectStatuses.includes(e.object.to)) return false;
+    if (r.spaceId && !e.object.items.some((i) => i.space === r.spaceId)) return false;
+  }
   if (e.doc && r.trigger.docs?.length) return r.trigger.docs.some((link) => linkIsDoc(app, link, e.doc!.token));
   return true;
 }
@@ -206,9 +214,10 @@ export async function judge(app: App, rule: Pick<Rule, "id" | "description" | "c
   const read = eventReader(e, { chatBots: (id) => chatBots(app, id), ownAppId: app.config.lark.appId || undefined });
   if (rule.judge !== "ai") {
     // A meeting rule without conditions is about every meeting the owner joins; a document rule without
-    // them, about every change of the documents it lists (inScope checked those).
-    if (!rule.conditions && (e.kind === "meeting" || e.kind === "doc")) {
-      if (rule.judge === "code") return { match: true, by: "code", reason: e.kind === "meeting" ? "每场会议" : "盯着的文档有变化" };
+    // them, about every change of the documents it lists; an object rule, about every change of the
+    // kind and states it names (inScope checked those).
+    if (!rule.conditions && (e.kind === "meeting" || e.kind === "doc" || e.kind === "object")) {
+      if (rule.judge === "code") return { match: true, by: "code", reason: e.kind === "meeting" ? "每场会议" : e.kind === "doc" ? "盯着的文档有变化" : `${e.object?.label ?? "对象"}变成了「${e.object?.toLabel ?? ""}」` };
     } else {
       if (!rule.conditions || !(await evaluate(rule.conditions, read))) return { match: false, by: "code", reason: "" };
       if (rule.judge === "code") return { match: true, by: "code", reason: describe(rule.conditions) };

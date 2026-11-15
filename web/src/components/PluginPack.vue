@@ -6,12 +6,12 @@ import Skeleton from "./Skeleton.vue";
 import HelpText from "./HelpText.vue";
 import VirtualList from "./VirtualList.vue";
 
-type Kind = "agents" | "skills" | "rules" | "mcp" | "spaces";
+type Kind = "agents" | "skills" | "rules" | "flows" | "mcp" | "spaces";
 type Choices = Record<Kind, { id: string; name: string }[]>;
-const kinds: { key: Kind; label: string }[] = [{ key: "spaces", label: "空间" }, { key: "agents", label: "Agent 档案" }, { key: "skills", label: "技能" }, { key: "rules", label: "规则" }, { key: "mcp", label: "MCP 服务" }];
+const kinds: { key: Kind; label: string }[] = [{ key: "spaces", label: "空间" }, { key: "agents", label: "Agent 档案" }, { key: "skills", label: "技能" }, { key: "rules", label: "规则" }, { key: "flows", label: "流程" }, { key: "mcp", label: "MCP 服务" }];
 const opened = ref(false), loading = ref(false), busy = ref(false), error = ref("");
 const choices = ref<Choices | null>(null);
-const selected = ref<Record<Kind, string[]>>({ spaces: [], agents: [], skills: [], rules: [], mcp: [] });
+const selected = ref<Record<Kind, string[]>>({ spaces: [], agents: [], skills: [], rules: [], flows: [], mcp: [] });
 const id = ref(""), name = ref(""), description = ref("");
 const result = ref<{ dir: string; warnings: string[] } | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null), first = ref<HTMLInputElement | null>(null);
@@ -40,7 +40,7 @@ onBeforeUnmount(() => { ++seq; window.removeEventListener("keydown", keydown); }
 <template>
   <div class="card pad stack pack">
     <div class="row wrap"><strong>打成场景包</strong><span class="spacer" /><button ref="trigger" class="btn sm" :aria-expanded="opened" @click="opened ? close() : open()">{{ opened ? "收起" : "打成场景包" }}</button></div>
-    <HelpText>把已有空间、档案、技能、规则和 MCP 定义打成场景包。空间只带名称、类型、说明和技能挂载，不带内容；个人和代码仓库空间不能打包。技能含完整资源，规则停用；MCP 密钥值不导出，其他文本中有已存密钥或用户目录绝对路径时拒绝写入。</HelpText>
+    <HelpText>把已有空间、档案、技能、规则、流程和 MCP 定义打成场景包。空间只带名称、类型、说明和技能挂载，不带内容；个人和代码仓库空间不能打包。技能含完整资源，规则停用，流程装上时只补对方没有的；MCP 密钥值不导出，其他文本中有已存密钥或用户目录绝对路径时拒绝写入。</HelpText>
     <form v-if="opened" class="stack" @submit.prevent="pack">
       <label class="field"><span>id（小写字母和数字，2–24 字符）</span><input ref="first" v-model="id" class="input" required pattern="[a-z][a-z0-9]{1,23}" /></label>
       <label class="field"><span>名字</span><input v-model="name" class="input" required /></label>

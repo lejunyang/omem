@@ -8,7 +8,7 @@
 
 **事项按流程推进。** 在事项上开始一份流程，按前提走过澄清、方案、编码和推送；阶段条显示进度和用时，需要你确认或动手时直接给出操作卡片。推送那一段可以设成“改动推到远端就算做完”：你推送以后，后面的阶段自己开始，也可以手动点做完。点阶段能看承担者、方案、交办和原件依据。到“规则 → 流程”修改做法，也可以让助手起草。[怎么用流程](site/features/items.md)。
 
-启用 GitHub 插件并连接账号后，把合并请求链接发给助手，就能挂到事项上跟进状态，流程也能等它合并或关闭后接着走。插件停用后保留最后状态并停止跟进。
+启用 GitHub 插件并连接账号后，把合并请求链接发给助手，就能挂到事项上跟进状态，流程也能等它合并或关闭后接着走。事项页的合并请求卡上可以直接点“合并”；助手也能合并，默认每次先问你。状态一变还能触发规则（比如“合并请求没合就被关掉时告诉我”）。插件停用后保留最后状态并停止跟进。仓库里的 `examples/plugins/ghdelivery` 是一个现成的场景包：GitHub 需求交付的流程、建合并请求 / 等检查 / 合并三个技能和一条规则。
 
 流程进行中，关联的群、会话和文档有了新内容，助手会攒一批看看这件事变了什么。新要求影响已经在做或做完的部分时，先问你要并进、另开还是不用管，不替你答应。这些变化列在事项页上，等你定的排在最上面，可以逐条处理；文档更新只看新增或改过的行。
 
@@ -247,7 +247,7 @@ npm install -g @omem-ai/cli
 | 让同事也能问机器人项目的事 | 设置 → 渠道 开启访客提问，在“开放给访客的空间”按名称多选；群聊还可读群所属的非个人空间，私聊需另外开启且只读选中的空间，未选择时没有资料可查 |
 | 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 连接 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
 | 成组练英语，按水平和薄弱点出题 | 左侧“英语练习”：选场景和侧重点开始，做完一组一起提交；选择、填空、听写当场判分，翻译由陪练评分点评。“下一组”从陪练补好的题库里按你的情况马上挑（设置里可改成每组由陪练现出），题库里没这个场景的题时由陪练出。右侧是各项水平、今天的目标、近 14 天练习量和薄弱点；“设置”里改每组题数、朗读口音和语速。陪练是 Agent 页里的 `english-tutor`，可以改说明、挂技能 |
-| 把工作配置交给别人 | 设置 → 插件 → 打成场景包，勾选空间、档案、技能、规则、MCP，填名字并写出目录；对方用 `omem plugin install <目录>` 安装。MCP 值不导出，文本含已存密钥或用户目录绝对路径会先拒绝 |
+| 把工作配置交给别人 | 设置 → 插件 → 打成场景包，勾选空间、档案、技能、规则、流程、MCP，填名字并写出目录；对方用 `omem plugin install <目录>` 安装。MCP 值不导出，文本含已存密钥或用户目录绝对路径会先拒绝 |
 | 装别人写的插件 | 设置 → 插件 → 安装插件，填 `npm:包名@版本` 或 `github:owner/repo#tag`（或 `omem plugin install …`）；看过它声明的权限后点“信任并运行”。包是源码时先列出要运行的装依赖和构建命令，你确认了才运行。不想用的插件（内置的也可以）在同一页关掉，不用重启 |
 | 边写插件边试 | `omem plugin link <目录>`：不复制，改了文件运行中的 omem 自动重新加载；带代码的信任一次（按目录记），之后改代码不用再确认；设置页标“开发中”，只在这台设备上。`omem plugin unlink <id>` 去掉 |
 | 插件的内容放到事项页、流程阶段和今日页 | 插件代码里 `api.slot("item.panel", { block, when: { object } })`：比如合并请求的检查结果显示在挂着它的事项侧栏，不用打开插件页；按看的人和事项空间取数，插件停用就消失。写法见 [docs/v2/plugins.md](docs/v2/plugins.md) |
@@ -365,7 +365,7 @@ omem doubao login [--app <appId>]            # 设备码授权豆包（在飞书
 omem doubao send-test                        # 经豆包以本人身份给自己发一条测试私聊并核对（“经豆包发送”前先试）
 omem plugin list|install|remove|enable|disable   # 插件：列出、装本地目录 / npm 包 / GitHub tag（源码先确认命令再构建）、删除、启用和停用
 omem plugin link <目录> / unlink <id>            # 开发插件：链接本机目录（不复制，改了自动重新加载，按目录信任，不随设备同步）/ 去掉链接
-omem plugin pack --id projecta --name "项目 A" --agents helper --skills project-guide   # 打成场景包；也可选 --rules、--mcp、可重复的 --space <id>（只带空间结构），默认写到数据目录 plugins-out/
+omem plugin pack --id projecta --name "项目 A" --agents helper --skills project-guide   # 打成场景包；也可选 --rules、--flows、--mcp、可重复的 --space <id>（只带空间结构），默认写到数据目录 plugins-out/
 omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见“多人使用”
 omem user approve <id> / omem user invite [--space …] [--edit …] [--any]  # 批准登录建好的账号；生成邀请链接（只能用一次）
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
@@ -603,21 +603,22 @@ src/sources   归档规则与原件迁移（archive.ts）、知识库的文档�
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合、重排（rerank.ts）
 src/memory    记忆（目录、有效期、版本链、写入检查与复核统计、对话或任务前带上相关记忆、日常不足信号）
 src/items     事项（时间线）、需求树（requirements.ts）、需求点下的编码（work.ts）、一件事在哪些会话里进行（places.ts）
-src/flows     事项流程：YAML 定义、阶段与关卡、推进、对象注册表、提醒、结束时的回顾与 coach 复盘、工具及 HTTP、事项流程条与定义编辑页
+src/flows     事项流程：YAML 定义、阶段与关卡、推进、对象注册表、插件对象的轮询与动作（plugin-objects.ts、object-actions.ts）、提醒、结束时的回顾与 coach 复盘、工具及 HTTP、事项流程条与定义编辑页
 src/studies   课题：方向 / 试验 / 发现台账、提案对账与本人选择、逐个试验、覆盖情况、工具及 HTTP；把试验派给另一台设备（remote.ts / remote-host.ts）
 src/designs   方案：决定、意见与版本（store.ts）、给 Agent 读的 Markdown（render.ts）、评估别人的方案（assess.ts）、交办里的方案阶段与确认（work.ts）、按决定汇总改动（changes.ts）
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测、写入检查与发布前核对（checks.ts、verify.ts）、页面的未决问题与旧页面迁移（questions.ts、migrate.ts）；问题的阅读次数、候选排序、过期与重开（questions.ts）
 src/quality   每晚抽检助手自主写入的页面和定级；页面按运行类型统计与加严、交回修改（audit.ts），错级交本人复核（levels.ts）
 src/insights  数据页：固定场景表、按权限与期间聚合、记录明细、三分钟缓存、Markdown/CSV 导出（不含消息正文）
 src/learn     FSRS 卡片、学习目标
-src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）；场景包导入（contributions.ts）、打包（pack.ts）、插件渠道（channels.ts）；界面插槽（slots.ts）、开发目录链接（links.ts）、安装与源码构建（install.ts）
+src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）；场景包导入（contributions.ts：规则、MCP、流程）、打包（pack.ts）、插件渠道（channels.ts）；界面插槽（slots.ts）、开发目录链接（links.ts）、安装与源码构建（install.ts）
 src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
               MCP 服务配置与密钥（mcp-servers.ts）、连接检测和工具列表（mcp-test.ts）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
-plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/；connect：Nango 目录与国内平台的连接器、只读请求与存原件的工具、采集档案；figma、notion、github、google、slack、atlassian、linear：平台包，读取器与定时同步）
+plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/；connect：Nango 目录与国内平台的连接器、只读请求与存原件的工具、采集档案；figma、notion、github、google、slack、atlassian、linear：平台包，读取器与定时同步；github 还有合并请求对象和“合并”动作）
+examples/plugins  不随包发布的插件例子（ghdelivery：GitHub 需求交付场景包，流程、技能和对象状态变化规则），用 omem plugin install 装
 packages/cli          轻量命令行（@omem-ai/cli）：只有连远程 omem 的命令，入口 src/main.ts 复用应用里的 remote-client.ts、remote-commands.ts、mcp-server.ts，打包成一个无依赖的文件
 packages/plugin-sdk   插件 SDK（@omem-ai/plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，objects.ts / slots.ts 是对象和插槽的类型，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
 skills/library  内置技能（如 lark-messaging、lark-docs、lark-suite、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）

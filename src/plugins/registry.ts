@@ -17,7 +17,7 @@ import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec 
 import { CORE_TOOLS, TOOL_GROUPS, expandTools } from "../agents/tool-help.ts";
 import { registerTool, saveSourceFor, toolList, unregisterTools, watchesFor, type ToolContext } from "../agents/tools.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
-import { registerObject } from "./objects.ts";
+import { pluginObjectKinds, registerObject, withObjectActions } from "./objects.ts";
 import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
@@ -65,6 +65,8 @@ export const manifestSchema = z.object({
   agents: z.array(z.string().regex(SPEC)).default([]),
   skills: z.array(z.string()).default([]),
   rules: z.array(z.string().regex(SPEC)).default([]),
+  /** Flow definitions (`flows/<id>.yaml`), added to the owner's flows when they have none of that id (contributions.ts). */
+  flows: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/, "流程 id 只能用小写字母、数字和连字符，最长 48 字符")).default([]),
   mcp: z.record(z.string().regex(SPEC), pluginMcpSchema).default({}),
   /** Host tools the plugin's agents may use, besides its own and the plugin tools (plugin_query, ask_user, show…). */
   tools: z.array(z.string()).default([]),
@@ -236,7 +238,7 @@ async function loadCode(app: App, p: LoadedPlugin) {
     tool(t: PluginTool<any>) {
       if (!t.name.startsWith(prefix)) throw new Error(`插件 ${manifest.id} 的工具名要以 ${prefix} 开头：${t.name}`);
       if (p.source === "data" && t.write && !manifest.permissions.write) throw new Error(`插件 ${manifest.id} 的工具 ${t.name} 会写入，但清单没有声明 permissions.write`);
-      registerTool({ name: t.name, description: t.description, schema: t.schema, write: t.write, available: t.whenConnected ? connectedTo(manifest.id) : undefined, handler: (ctx, args) => t.handler(asPlugin(p.env, ctx), args) }, { approval: t.approval });
+      registerTool({ name: t.name, description: t.description, schema: t.schema, write: t.write, available: t.whenConnected ? connectedTo(manifest.id) : undefined, handler: withObjectActions(manifest.id, t.name, (ctx, args) => t.handler(asPlugin(p.env, ctx), args)) }, { approval: t.approval });
       p.tools.push({ name: t.name, page: !!t.page, write: !!t.write, approval: !!t.approval });
     },
     block(b: PluginBlock<any>) {
@@ -291,9 +293,25 @@ async function loadCode(app: App, p: LoadedPlugin) {
   };
   const reg = await importServer(p.dir, manifest, p.source);
   if (reg) await reg(api);
-  const group = TOOL_GROUPS.find((g) => g.id === manifest.id);
-  if (group) group.tools = p.tools.map((t) => t.name);
-  else if (p.tools.length) TOOL_GROUPS.push({ id: manifest.id, label: manifest.name, tools: p.tools.map((t) => t.name) });
+  await actionRungs(app, manifest.id);
+  groupTools(p);
+}
+
+/**
+ * A plugin's tools go into its own group; those its object kinds name as actions go into the shared
+ * `object-actions` group instead, which the main assistant has: an agent in a flow stage can then use
+ * the same tool as the button (under the tool's approval rung), whichever plugin brings it.
+ */
+const ACTIONS_GROUP = "object-actions";
+function groupTools(p: LoadedPlugin) {
+  const names = p.tools.map((t) => t.name);
+  const actions = new Set(pluginObjectKinds().filter((d) => d.plugin === p.manifest.id).flatMap((d) => (d.actions ?? []).map((a) => a.tool)).filter((t) => names.includes(t)));
+  const shared = TOOL_GROUPS.find((g) => g.id === ACTIONS_GROUP);
+  if (shared) shared.tools = [...new Set([...shared.tools, ...actions])];
+  const own = names.filter((n) => !shared || !actions.has(n));
+  const group = TOOL_GROUPS.find((g) => g.id === p.manifest.id);
+  if (group) group.tools = own;
+  else if (own.length) TOOL_GROUPS.push({ id: p.manifest.id, label: p.manifest.name, tools: own });
 }
 
 /**
@@ -320,7 +338,13 @@ async function loadIsolated(app: App, p: LoadedPlugin) {
     unloadCode(p);
     throw new Error(`插件 ${manifest.id} 做了清单没有声明的事：${extra.join("、")}`);
   }
-  if (p.tools.length) TOOL_GROUPS.push({ id: manifest.id, label: manifest.name, tools: p.tools.map((t) => t.name) });
+  await actionRungs(app, manifest.id);
+  groupTools(p);
+}
+
+/** An object action's tool starts on “ask every time” the first time omem sees it (src/flows/object-actions.ts). */
+async function actionRungs(app: App, plugin: string) {
+  (await import("../flows/object-actions.ts")).seedActionRungs(app, plugin);
 }
 
 /** The owner confirms a data plugin's code (as it is now): it runs from here on, no restart. */
@@ -335,6 +359,7 @@ export async function trustPlugin(app: App, id: string, mode: RunMode = "isolate
     try {
       if (p.enabled) await loadCode(app, p);
       if (p.enabled) seedContributions(app, p);
+      if (p.enabled) retryContributions(app, p);
     } catch (e) {
       // Code that does not load (or does more than it declares) is not trusted after all.
       unloadCode(p);
@@ -359,7 +384,10 @@ export function untrustPlugin(app: App, id: string) {
 }
 
 function unloadCode(p: LoadedPlugin) {
-  unregisterTools(p.tools.map((t) => t.name));
+  const names = p.tools.map((t) => t.name);
+  unregisterTools(names);
+  const shared = TOOL_GROUPS.find((g) => g.id === ACTIONS_GROUP);
+  if (shared) shared.tools = shared.tools.filter((t) => !names.includes(t));
   p.tools.splice(0);
   for (const undo of p.connectors.splice(0)) undo();
   p.providers.splice(0);
@@ -392,6 +420,7 @@ export async function setPluginEnabled(app: App, id: string, on: boolean) {
         seedSkills(app, p);
         ensurePluginSpaces(app, p.manifest.id, p.manifest);
         seedContributions(app, p);
+        retryContributions(app, p);
       }
     } catch (e) {
       unloadCode(p);
@@ -512,20 +541,27 @@ export function setPluginIcon(app: App, id: string, icon: string) {
 /** Without roots: the built-in plugins, the data directory's, then the ones linked on this device (links.ts). */
 export async function loadPlugins(app: App, roots?: { dir: string; source: LoadedPlugin["source"] }[]) {
   host = app;
+  const loaded: { p: LoadedPlugin; name: string }[] = [];
   for (const root of roots ?? [{ dir: builtinPluginsDir(), source: "builtin" }, { dir: dataPluginsDir(app), source: "data" }]) {
     if (!existsSync(root.dir)) continue;
     for (const entry of readdirSync(root.dir, { withFileTypes: true })) {
       const dir = join(root.dir, entry.name);
       if (!entry.isDirectory() || !existsSync(join(dir, "plugin.yaml"))) continue;
-      await loadDir(app, dir, root.source, entry.name);
+      const p = await loadDir(app, dir, root.source, entry.name);
+      if (p) loaded.push({ p, name: entry.name });
     }
   }
-  if (!roots) for (const [id, link] of Object.entries(readLinks(app))) await loadDir(app, link.dir, "data", id, true);
+  if (!roots) for (const [id, link] of Object.entries(readLinks(app))) {
+    const p = await loadDir(app, link.dir, "data", id, true);
+    if (p) loaded.push({ p, name: id });
+  }
+  // What they bring goes in once every plugin's code has run: a pack's flow may name another plugin's object kind.
+  for (const { p, name } of loaded) seedLoaded(app, p, name);
   return listPlugins();
 }
 
-/** One plugin directory: `name` is the id it must have (its directory's name, or what it was linked as). */
-async function loadDir(app: App, dir: string, source: LoadedPlugin["source"], name: string, linked = false) {
+/** One plugin directory: `name` is the id it must have (its directory's name, or what it was linked as). Its code runs; what it brings is seedLoaded's. */
+async function loadDir(app: App, dir: string, source: LoadedPlugin["source"], name: string, linked = false): Promise<LoadedPlugin | null> {
   try {
     if (linked && !existsSync(join(dir, "plugin.yaml"))) throw new Error(`链接的目录 ${dir} 不在了或没有 plugin.yaml`);
     const manifest = manifestSchema.parse(YAML.parse(readFileSync(join(dir, "plugin.yaml"), "utf8")));
@@ -536,11 +572,18 @@ async function loadDir(app: App, dir: string, source: LoadedPlugin["source"], na
       p = await register(app, dir, manifest, source, linked);
       plugins.set(manifest.id, p);
     }
-    if (p.enabled) {
-      seedSkills(app, p);
-      ensurePluginSpaces(app, p.manifest.id, p.manifest);
-      seedContributions(app, p);
-    }
+    return p;
+  } catch (e) {
+    console.warn(`[omem] 跳过插件 ${name}：${(e as Error).message}`);
+    return null;
+  }
+}
+function seedLoaded(app: App, p: LoadedPlugin, name: string) {
+  if (!p.enabled) return;
+  try {
+    seedSkills(app, p);
+    ensurePluginSpaces(app, p.manifest.id, p.manifest);
+    seedContributions(app, p);
   } catch (e) {
     console.warn(`[omem] 跳过插件 ${name}：${(e as Error).message}`);
   }
@@ -556,9 +599,24 @@ export async function reloadLinked(app: App, id: string) {
   if (p && !p.linked) throw new HttpError(400, `插件 ${id} 不是链接的`);
   if (p) forgetPlugin(id);
   const link = readLinks(app)[id];
-  if (link) await loadDir(app, link.dir, "data", id, true);
+  const again = link ? await loadDir(app, link.dir, "data", id, true) : null;
+  if (again) {
+    seedLoaded(app, again, id);
+    if (again.enabled) retryContributions(app, again);
+  }
   const now = plugins.get(id);
   return now ? describePlugin(now) : null;
+}
+
+/**
+ * A plugin's code came in (turned on, trusted): the flows and rules other packs could not add for want
+ * of its object kinds get another try (what was added before, or deleted by the owner, is left alone).
+ */
+function retryContributions(app: App, except: LoadedPlugin) {
+  for (const other of plugins.values()) {
+    if (other === except || !other.enabled || (!other.manifest.flows.length && !other.manifest.rules.length)) continue;
+    try { seedContributions(app, other); } catch (e) { console.warn(`[omem] 插件 ${other.manifest.id} 带来的配置没有补上：${(e as Error).message}`); }
+  }
 }
 
 /** The plugin brings a page of its own (web/index.html); without one the shell shows its default page. */
@@ -592,7 +650,7 @@ export function describePlugin(p: LoadedPlugin) {
     spaces: describeSpaces(host, p.manifest.id, p.manifest),
     agents: p.manifest.agents.map((n) => ({ name: `${p.manifest.id}-${n}`, description: p.specs.find((s) => s.name === `${p.manifest.id}-${n}`)?.description ?? "" })),
     skills: p.manifest.skills,
-    ...(host ? broughtBy(host, p) : { rules: [], mcp: [] }),
+    ...(host ? broughtBy(host, p) : { flows: [], rules: [], mcp: [] }),
     channels: p.channels,
     // own: the plugin's page in a sandboxed frame (built or not yet); otherwise the shell's default page.
     page: p.enabled && p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) || devPages(p) } : null,

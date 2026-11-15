@@ -103,6 +103,8 @@ export type ToolContext = {
   larkPowers?: { urgent: boolean; private: boolean };
   /** This call was approved by the owner (a held call running after the OK): do not hold it again. */
   approved?: boolean;
+  /** A person pressed an object's action button on this item's page (src/flows/object-actions.ts): the call is about that item and object. */
+  objectAction?: { item: string; object: string };
   /** Built-in role of the run (ingest, dreamer…); background roles must cite sources for memories. */
   role?: string;
   /** Agent spec running, if any: its experience/preference memories are its own. */
@@ -3185,7 +3187,7 @@ def({
 def({
   name: "save_rule",
   description:
-    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议、飞书文档或表格有改动）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。本人说“这个群 / 这里 / 当前会话”时不要按群名去查：条件写 {field: chat.id, op: equals, value: current}，保存时换成本会话的飞书群（不在飞书会话里会被拒绝）；定时和文档变化规则的结果默认发回本会话（“发到”，rule.conversationId 写 current 也是本会话），Agent 动作 reply 写 auto 才会在群里说话。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：会话中自动准备启用确认卡片，回复送达后展示，点击由宿主直接启用；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
+    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议、飞书文档或表格有改动、事项上挂的合并请求这类平台对象变了状态）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、转发到某个群或某人、拉机器人入会并旁听、优先采集、通知本人）。转发目标（forward 的 to）只能在本人亲自要求的这一轮新加或改：“转到这个群”写 chatId=current，别的会话用 list_lark_chats 查到的 chat_id。本人说“这个群 / 这里 / 当前会话”时不要按群名去查：条件写 {field: chat.id, op: equals, value: current}，保存时换成本会话的飞书群（不在飞书会话里会被拒绝）；定时和文档变化规则的结果默认发回本会话（“发到”，rule.conversationId 写 current 也是本会话），Agent 动作 reply 写 auto 才会在群里说话。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用：会话中自动准备启用确认卡片，回复送达后展示，点击由宿主直接启用；不要用 ask_user 或 suggest_next 重复询问。也可到规则页（#/rules）核对启用；本人明确说现在就启用时 enabled=true。",
   write: true,
   schema: z.object({
     id: z.string().optional().describe("修改已有规则时填（list_rules）"),

@@ -59,6 +59,20 @@ const object: PluginObject = {
 
 `ctx.emit({ kind: "received", keys: { object: "example/shop#7" }, payload: { note: "状态已读取" } })` 记录 `plugin.<插件 id>.received`，keys 与 payload 序列化后各不超过 4000 字符；本步只记录，不触发规则或流程。对象状态变化由宿主另记 `object.<全名>.<状态>` 并推进关联事项。不提供写平台对象的动作或按钮；界面插槽见下一节。
 
+### 动作
+
+对象可以声明按钮（`PluginObjectAction`）。每个动作是本插件自己的一个工具，宿主把对象的键放进 `arg`（默认 `key`）调用它：
+
+```ts
+api.tool({ name: "shop_merge", description: "合并一个合并请求", schema: api.z.object({ pr: api.z.string() }), write: true,
+  handler: async (ctx, a) => { const c = await ctx.connection("connect-github"); /* 用 c.fetch 调平台，令牌由宿主代加 */ return "已合并"; } });
+api.object({ ...object, actions: [{ id: "merge", label: "合并", tool: "shop_merge", arg: "pr", statuses: ["open"], confirm: "检查没过时平台会拒绝。" }] });
+```
+
+- `id` 小写字母开头；`label` 不超过 20 字；`tool` 必须以 `<插件 id>_` 开头；`statuses` 必须是已声明的状态，不写是任何状态都显示；`confirm` 是确认框里多说的一句。
+- 事项页对象卡上按当前状态出按钮。本人点了确认后直接执行（不出审批卡片）；Agent 调用同一个工具时走它的审批档位，第一次见到时是“每次问”。每次执行写审计，执行完宿主马上重读一次对象。
+- 动作工具放在 `object-actions` 分组，主助手可以用。插件拿不到令牌：工具里照常用 `ctx.connection(...).fetch` 代发；隔离运行的插件同样可以声明动作。GitHub 的“合并”（`github_merge_pull_request`）是完整例子。
+
 ## 界面插槽
 
 服务端的 `api.slot(at, { block, when })` 把一个只展示的内容块放到 omem 自己的页面上：`item.panel`（事项页侧栏）、`flow.stage`（流程阶段下面）、`today`（今日页）。本包从主入口导出 `PluginSlot / PluginSlotWhen / PluginSlotPlace / PluginSlotContext / PluginSlotView / PluginSlotBlock / PluginSlotApi` 类型（`slots.ts`）。
@@ -89,7 +103,7 @@ const checks: PluginSlotBlock<Checks> = {
 
 ## 场景包与聊天渠道
 
-插件清单支持 `rules: [名称]`（`rules/<名>.yaml`，首次导入且停用）和 `mcp`（命令 / 网址、变量 / 请求头名字列表，密钥值由本人在 Agent 页填）。`omem plugin pack` 可导出现有档案、完整技能目录、规则和 MCP；默认写到数据目录 `plugins-out/`，拒绝文本中的已存密钥和用户目录绝对路径。安装接受本地目录并复制，命令 MCP 要先信任插件。
+插件清单支持 `rules: [名称]`（`rules/<名>.yaml`，首次导入且停用）、`flows: [id]`（`flows/<id>.yaml`，流程定义，启用时补进流程清单，本人已有同 id 的不覆盖，删掉的不再加回来）和 `mcp`（命令 / 网址、变量 / 请求头名字列表，密钥值由本人在 Agent 页填）。`omem plugin pack` 可导出现有档案、完整技能目录、规则、流程和 MCP；默认写到数据目录 `plugins-out/`，拒绝文本中的已存密钥和用户目录绝对路径。安装接受本地目录并复制，命令 MCP 要先信任插件。完整的场景包例子（流程 + 技能 + 对象状态变化规则）在仓库的 `examples/plugins/ghdelivery`。
 
 服务端的 `register(api)` 可以调用 `api.channel`，它由 omem 宿主提供；本包当前导出页面 SDK、内容块和服务帮助模块，不单独导出宿主的 `PluginApi` 类型。完整接口见 [plugins.md 的渠道](https://github.com/lejunyang/omem/blob/main/docs/v2/plugins.md#渠道)：
 

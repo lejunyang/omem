@@ -9,6 +9,7 @@ import { OWNER } from "../core/users.ts";
 import { HttpError, now } from "../core/util.ts";
 import { listMcpServers, saveMcpServer } from "../agents/mcp-servers.ts";
 import { listRules, saveRule } from "../rules/store.ts";
+import { addFlowIfMissing, flowExists } from "../flows/definitions.ts";
 import { ruleInputSchema } from "../rules/types.ts";
 import type { LoadedPlugin } from "./registry.ts";
 
@@ -25,15 +26,48 @@ export const pluginMcpSchema = z.object({
   .refine((s) => s.url ? !s.env.length : !s.headers.length, "命令用 env，网址用 headers");
 
 /** Reserved host state survives plugin removal and cannot be changed through plugin_query/put. */
-function imported(app: App, id: string): Record<string, string> {
-  const row = one<{ data: string }>(app.db, "select data from plugin_records where id = ?", `${id}:owner:_setup:rules`);
+function imported(app: App, id: string, key: "rules" | "flows" = "rules"): Record<string, string> {
+  const row = one<{ data: string }>(app.db, "select data from plugin_records where id = ?", `${id}:owner:_setup:${key}`);
   return row ? JSON.parse(row.data) : {};
 }
-function remember(app: App, p: LoadedPlugin, names: Record<string, string>) {
+function remember(app: App, p: LoadedPlugin, names: Record<string, string>, key: "rules" | "flows" = "rules") {
   const at = now(), id = p.manifest.id;
   run(app.db, `insert into plugin_records(id,plugin,user_id,space_id,collection,key,data,created_at,updated_at)
-    values(?,?,?,'personal','_setup','rules',?,?,?) on conflict(id) do update set data=excluded.data,updated_at=excluded.updated_at`,
-    `${id}:owner:_setup:rules`, id, OWNER, JSON.stringify(names), at, at);
+    values(?,?,?,'personal','_setup',?,?,?,?) on conflict(id) do update set data=excluded.data,updated_at=excluded.updated_at`,
+    `${id}:owner:_setup:${key}`, id, OWNER, key, JSON.stringify(names), at, at);
+}
+
+/** Why a flow a plugin lists was not added here (shown with the plugin; tried again next time). */
+const flowErrors = new Map<string, Record<string, string>>();
+/**
+ * The flows a scene pack brings (`flows/<id>.yaml`): each added once to the owner's flows, only when
+ * there is none of that id (the owner's own, or one they changed, stays as it is), like the built-in
+ * ones. A flow naming an object kind that is not there yet (its plugin off) is not added and is tried
+ * again when a plugin is turned on; one the owner deleted later is not brought back.
+ */
+export function seedFlows(app: App, p: LoadedPlugin) {
+  if (!p.enabled || !p.manifest.flows.length) return;
+  const done = imported(app, p.manifest.id, "flows");
+  const errors: Record<string, string> = {};
+  for (const file of p.manifest.flows) {
+    if (Object.hasOwn(done, file)) continue;
+    try {
+      // A stage handed to one of the pack's own agents names it as installed here (`<plugin id>-<name>`), like its rules do.
+      const doc = YAML.parseDocument(readFileSync(join(p.dir, "flows", `${file}.yaml`), "utf8"));
+      const stages = doc.get("stages");
+      const count = stages && typeof stages === "object" && "items" in stages && Array.isArray(stages.items) ? stages.items.length : 0;
+      for (let i = 0; i < count; i++) for (const path of [["stages", i, "by", "run", "agent"], ["stages", i, "by", "agent"]]) {
+        const v = doc.getIn(path);
+        if (typeof v === "string" && p.manifest.agents.includes(v)) doc.setIn(path, `${p.manifest.id}-${v}`);
+      }
+      done[file] = addFlowIfMissing(app, doc.toString(), file, `plugin ${p.manifest.id}`) ? "added" : "kept";
+      remember(app, p, done, "flows");
+    } catch (e) {
+      errors[file] = (e as Error).message;
+      console.warn(`[omem] 插件 ${p.manifest.id} 的流程 ${file} 没有加入：${errors[file]}`);
+    }
+  }
+  flowErrors.set(p.manifest.id, errors);
 }
 
 type ParsedRule = z.infer<typeof ruleInputSchema>;
@@ -100,6 +134,7 @@ export function seedContributions(app: App, p: LoadedPlugin) {
     }
   }
   refused.set(p.manifest.id, errors);
+  seedFlows(app, p);
   for (const [short, s] of Object.entries(p.manifest.mcp)) {
     const name = `${p.manifest.id}-${short}`;
     if (app.config.mcp.servers[name] || (s.command && p.trust !== "trusted" && p.trust !== "builtin")) continue;
@@ -109,8 +144,10 @@ export function seedContributions(app: App, p: LoadedPlugin) {
 }
 
 export function broughtBy(app: App, p: LoadedPlugin) {
-  const rules = listRules(app), servers = listMcpServers(app), names = imported(app, p.manifest.id);
+  const rules = listRules(app), servers = listMcpServers(app), names = imported(app, p.manifest.id), flows = imported(app, p.manifest.id, "flows");
   return {
+    // added: put into the flows by this plugin; kept: the owner already had one of that id; error: not added yet, and why.
+    flows: p.manifest.flows.map((file) => ({ id: file, added: flows[file] === "added", kept: flows[file] === "kept", exists: flowExists(app, file), error: flowErrors.get(p.manifest.id)?.[file] ?? null })),
     rules: p.manifest.rules.map((file) => {
       const r = rules.find((r) => r.id === names[file]);
       return { file, id: r?.id ?? null, name: r?.name ?? file, enabled: r?.enabled ?? false, created: Object.hasOwn(names, file), error: refused.get(p.manifest.id)?.[file] ?? null };

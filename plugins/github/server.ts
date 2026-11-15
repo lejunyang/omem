@@ -33,10 +33,45 @@ export function pullRequestMatch(url: string) {
   return m ? `${m[1]}/${m[2]}#${Number(m[3])}` : null;
 }
 
+/**
+ * Merge a pull request as the person who connected GitHub (the button on the item page, or an agent
+ * under the tool's approval rung). GitHub says no when checks or reviews the branch requires are
+ * missing, or the branch conflicts: that answer is passed on as it is.
+ */
+export async function mergePullRequest(c: PluginConnection, pr: string, method: "merge" | "squash" | "rebase" = "merge") {
+  const { owner, repo, n } = issueRef(pr);
+  if (c.scopes.length && !c.scopes.some((s) => s === "repo" || s === "public_repo")) throw new Error("合并要 GitHub 的 repo 权限：在账号页给 GitHub 打开“合并 PR”再试");
+  const r = await c.fetch(`/repos/${owner}/${repo}/pulls/${n}/merge`, {
+    method: "PUT",
+    headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
+    body: JSON.stringify({ merge_method: method }),
+  });
+  const t = await r.text();
+  let body: { merged?: boolean; sha?: string; message?: string } = {};
+  try { body = JSON.parse(t); } catch { /* Not JSON: the status says enough. */ }
+  if (!r.ok || body.merged === false) {
+    const why = r.status === 405 ? "现在不能合并（检查没过、缺评审，或分支要求没满足）" : r.status === 409 ? "和目标分支有冲突，或头提交已经变了" : r.status === 403 || r.status === 404 ? "没有权限，或连接没有 repo 权限" : `HTTP ${r.status}`;
+    throw new Error(`GitHub 没有合并 ${owner}/${repo}#${n}：${why}${body.message ? `（${body.message.slice(0, 200)}）` : ""}`);
+  }
+  return `已合并 ${owner}/${repo}#${n}${body.sha ? `，合并提交 ${body.sha.slice(0, 7)}` : ""}`;
+}
+
 export default function register(api: PluginApi) {
+  api.tool({
+    name: "github_merge_pull_request",
+    description: "合并 GitHub 上的一个 PR，以连接 GitHub 的这个人的身份。pr 写 owner/repo#编号或它的链接；method 默认 merge，可选 squash、rebase。只在本人要求，或流程走到合并、检查已通过时用；GitHub 拒绝时原样告诉本人，不要换方式重试。",
+    schema: api.z.object({ pr: api.z.string().min(1), method: api.z.enum(["merge", "squash", "rebase"]).optional() }),
+    write: true,
+    async handler(ctx, a) {
+      const c = await ctx.connection("connect-github");
+      if (!c) throw new Error("请先在账号页连接 GitHub");
+      return mergePullRequest(c, a.pr, a.method);
+    },
+  });
   api.object({
     kind: "pull-request", label: "合并请求", match: pullRequestMatch,
     statuses: { open: "进行中", merged: "已合并", closed: "已关闭" }, final: ["merged", "closed"], poll: { minutes: 5 },
+    actions: [{ id: "merge", label: "合并", tool: "github_merge_pull_request", arg: "pr", statuses: ["open"], confirm: "GitHub 按仓库的分支要求判断能不能合；检查没过或缺评审时会拒绝。" }],
     async read(ctx, key) {
       const c = await ctx.connection("connect-github");
       if (!c) throw new Error("请先连接 GitHub");
@@ -73,7 +108,8 @@ export default function register(api: PluginApi) {
     provider: "connect-github",
     features: [
       { id: "public", label: "读公开仓库", description: "读公开仓库的 issue、PR 和文件", scopes: ["read:user"] },
-      { id: "private", label: "读私有仓库", description: "也读你能看到的私有仓库（GitHub 的 repo 权限包含写，omem 只读）", scopes: ["repo"] },
+      { id: "private", label: "读私有仓库", description: "也读你能看到的私有仓库（GitHub 的 repo 权限包含写；omem 只在你点“合并”或批准时写）", scopes: ["repo"] },
+      { id: "merge", label: "合并 PR", description: "在事项页的合并请求上点“合并”，或批准助手合并（用 GitHub 的 repo 权限）", scopes: ["repo"] },
     ],
     syncMinutes: 30,
     guide: "issue 写 owner/repo#编号（PR 也是）；repo 写 owner/repo，盯着它会同步改过的 issue 和 PR；file 写 owner/repo/路径，要某个分支加 @分支。",

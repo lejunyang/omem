@@ -1,0 +1,29 @@
+id: github-delivery
+name: GitHub 需求交付
+description: 一件需求从说清楚到合进 GitHub 仓库：澄清、编码与评审、建合并请求、等检查通过、合并
+for: { kinds: [todo] }
+stages:
+  - id: clarify
+    name: 澄清
+    note: 读这件事的材料和它所在的群、文档，把要做什么写成需求点（已有需求点就核对有没有变化），列出还没定的问题。拿不准的问本人，不要自己定。
+    by: { run: { agent: assistant } }
+    done: confirm
+  - id: code
+    name: 编码
+    note: 按确认过的需求点发起交办，评审通过算完成。
+    by: { object: code-work }
+  - id: open-pr
+    name: 建合并请求
+    note: 按技能 github-open-pr，把评审通过的改动写成合并请求的标题和说明，请本人推送分支、在 GitHub 上建合并请求；本人把链接发来后用 attach_object 挂到这件事上。挂上的合并请求还开着（或已经合并）就算做完。
+    by: { run: { agent: assistant, skill: github-open-pr } }
+    done: { object: "github:pull-request", status: [open, merged] }
+  - id: checks
+    name: 等检查
+    note: 按技能 github-wait-checks 看合并请求的检查和评审：都过了就交结果请本人确认；没过的说清是哪一项、为什么；还在跑就说在等哪几项，本人看到跑完后在事项页让这一段再看一次。
+    by: { run: { agent: assistant, skill: github-wait-checks } }
+    done: confirm
+  - id: merge
+    name: 合并
+    note: 按技能 github-merge 合并：本人可以直接在事项页合并请求卡上点“合并”；助手调用 github_merge_pull_request 时按工具审批的档位先问本人。合并请求变成已合并就算做完。
+    by: { run: { agent: assistant, skill: github-merge } }
+    done: { object: "github:pull-request", status: merged }

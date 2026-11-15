@@ -1,0 +1,7 @@
+id: ghdelivery
+name: GitHub 需求交付
+description: 一件需求从说清楚到合进 GitHub 仓库：澄清、编码与评审、建合并请求、等检查、合并。要先启用“GitHub 平台包”，并在账号页连接 GitHub（合并要打开“合并 PR”）
+icon: branch
+skills: [github-open-pr, github-wait-checks, github-merge]
+rules: [pr-closed]
+flows: [github-delivery]

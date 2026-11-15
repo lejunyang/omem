@@ -103,6 +103,18 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
         return e.change?.mentionsOwner;
       case "change.mentionsBot":
         return e.change?.mentionsBot;
+      case "object.kind":
+        return e.object?.kind;
+      case "object.title":
+        return e.object?.title;
+      case "object.status":
+        return e.object?.to;
+      case "object.from":
+        return e.object?.from;
+      case "object.link":
+        return e.object?.link;
+      case "object.items":
+        return e.object?.items.map((i) => i.title);
     }
   };
 }

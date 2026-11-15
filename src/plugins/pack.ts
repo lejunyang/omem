@@ -11,13 +11,14 @@ import { expandTools } from "../agents/tool-help.ts";
 import { listMcpServers } from "../agents/mcp-servers.ts";
 import { getRule, listRules } from "../rules/store.ts";
 import { ruleInputSchema } from "../rules/types.ts";
+import { listFlows, readFlow } from "../flows/definitions.ts";
 import { builtinPluginsDir, dataPluginsDir, manifestSchema } from "./registry.ts";
 import { portableRule } from "./contributions.ts";
 
 export const packSchema = z.object({
   id: z.string(), name: z.string().trim().min(1), description: z.string().default(""),
   agents: z.array(z.string()).default([]), skills: z.array(z.string()).default([]), rules: z.array(z.string()).default([]), mcp: z.array(z.string()).default([]),
-  spaces: z.array(z.string()).default([]),
+  spaces: z.array(z.string()).default([]), flows: z.array(z.string()).default([]),
   out: z.string().optional(), allow: z.array(z.string()).default([]),
 });
 export type PackInput = z.input<typeof packSchema>;
@@ -60,6 +61,7 @@ export function packChoices(app: App) {
     spaces: listSpaces(app).filter((s) => ["project", "topic", "learning"].includes(s.kind) && !s.rootPath).map((s) => ({ id: s.id, name: s.name })),
     skills: listSkills(app).map((s) => ({ id: s.name, name: s.name })),
     rules: listRules(app).filter((r) => !r.temporary).map((r) => ({ id: r.id, name: r.name })),
+    flows: listFlows(app).filter((f) => f.definition).map((f) => ({ id: f.id, name: f.definition!.name })),
     mcp: listMcpServers(app).map((s) => ({ id: s.name, name: s.name })) };
 }
 
@@ -131,13 +133,27 @@ export function packPlugin(app: App, input: PackInput) {
     files.set(`rules/${name}.yaml`, Buffer.from(YAML.stringify(data)));
     return name;
   });
+  // A flow travels as its file; the skills, agents and object kinds it names are the receiver's to have.
+  const flows = [...new Set(o.flows)];
+  for (const id of flows) {
+    const f = readFlow(app, id);
+    files.set(`flows/${id}.yaml`, Buffer.from(listFlows(app).find((x) => x.id === id)!.raw));
+    for (const s of f.stages) {
+      const by = (typeof s.by === "object" ? s.by : {}) as { run?: { agent?: string; skill?: string }; object?: string; agent?: string; skill?: string };
+      const done = (typeof s.done === "object" ? s.done : {}) as { object?: string };
+      const skill = by.skill ?? by.run?.skill, agent = by.agent ?? by.run?.agent;
+      if (skill && !skills.includes(skill)) warnings.push(`流程 ${id} 的阶段「${s.name}」用的技能 ${skill} 未打包`);
+      if (agent && agent !== "assistant" && !agents.includes(agent)) warnings.push(`流程 ${id} 的阶段「${s.name}」交给的档案 ${agent} 未打包`);
+      for (const kind of new Set([by.object, done.object].filter((k): k is string => !!k?.includes(":")))) warnings.push(`流程 ${id} 的阶段「${s.name}」用到对象类型 ${kind}：接收方要先启用提供它的插件`);
+    }
+  }
   const servers = listMcpServers(app);
   for (const name of mcp) {
     const s = servers.find((s) => s.name === name);
     if (!s) throw new HttpError(404, `没有 MCP 服务 ${name}`);
     definitions[name] = { description: s.description, readOnly: s.readOnly, ...(s.kind === "url" ? { url: s.url, headers: s.secrets.map((s) => s.name) } : { command: s.command, args: s.args, env: s.secrets.map((s) => s.name) }) };
   }
-  const manifest = manifestSchema.parse({ id: o.id, name: o.name, description: o.description, spaces, agents, skills, rules: ruleNames, mcp: definitions, tools: [...tools] });
+  const manifest = manifestSchema.parse({ id: o.id, name: o.name, description: o.description, spaces, agents, skills, rules: ruleNames, flows, mcp: definitions, tools: [...tools] });
   files.set("plugin.yaml", Buffer.from(YAML.stringify(manifest)));
   const keys = secretValues(app), hits: string[] = [], personal = new Set<string>();
   for (const [file, bytes] of files) {

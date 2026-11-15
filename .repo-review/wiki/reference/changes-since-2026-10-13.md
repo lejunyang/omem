@@ -46,6 +46,16 @@ updated: 2026-11-16
 - 表 `study_trials` 加 `peer`、`peer_run`、`peer_seen`（后者本机状态，不拉取）；课题视图的试验加 `peer`、`peerRunId`。`src/studies/trials.ts` 的任务文字抽成 `trialTask` 两边共用，`workspace.ts` 抽出 `checkoutManaged` / `releaseManaged`。
 - 文档：`docs/v2/studies.md` 文末“第四期：把试验派给另一台设备”，`docs/v2/mesh.md` 第 4.5 节。测试 `test/study-remote.test.ts`（同一进程两个 app，那台起真实 HTTP 服务）。真实两台设备没验。
 
+## 插件对象的动作、对象状态变化规则、场景包里的流程（11-16）
+
+- 对象类型可以声明 `actions`（插件自己的工具，按状态限定），事项页“外部状态”卡上出按钮。本人点了确认一次后直接执行、不出审批卡片（`POST /api/items/:id/objects/:object/actions/:action`，self）；Agent 调同一个工具走审批档位，第一次见到时放进“每次问”。每次执行写 `audit_events`（`object.action`）并马上重读对象状态。入口 `src/flows/object-actions.ts`，工具包装在 `src/plugins/objects.ts` 的 `withObjectActions`（进程内和隔离两条路都包）。动作工具在新分组 `object-actions`，主助手有它。
+- 对象材料给 Agent 的一行加了字段、可做的动作（工具名和参数）和 `object:<id>`；`stage_report` 的依据认 `object:<id>`。
+- GitHub 平台包：合并请求的“合并”动作（只在 open 时），工具 `github_merge_pull_request`，平台包多一项“合并 PR”（`repo` 权限）。
+- 规则多一种触发 `object`（`trigger.objectKind`、`trigger.objectStatuses`，字段 `object.*`）：对象状态变化时在信号和推进之后交给规则，只带本人能读的空间里的关联事项；规则页可配，`GET /api/rule-options` 多 `objectKinds`。见 `docs/v2/rules.md`“对象状态变化规则”。
+- 场景包清单多 `flows`（`flows/<id>.yaml`）：启用时只补没有的、删掉的不加回来，包内档案名加前缀；对象类型还没有时先不加，任何插件启用或被信任时再试（流程和规则都是）。插件加载改成先跑完所有代码、再补各插件带来的东西。打包可以带流程（`--flows`）。
+- 例子 `examples/plugins/ghdelivery`：GitHub 需求交付流程、三个技能、一条“合并请求被关掉”规则。测试 `test/object-actions.test.ts`；详细记录在 `docs/v2/flows.md` 文末“第三期：对象的动作、规则事件和场景包里的流程”。
+
+
 ## 用真实模型跑了上下文跟进和提交认领，改了两处（11-16）
 
 - 记录在 `docs/v2/flows.md` 文末“用真实模型跑过的”。两个角色的理解都对（提议和决定分得清、闲聊不交、提交归不到已有事项时建议新建并写理由），问题出在宿主。

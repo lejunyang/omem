@@ -35,6 +35,7 @@ type Plugin = {
   skills: string[];
   spaces: { id: string; name: string; status: string }[];
   settings: boolean;
+  flows?: { id: string; added: boolean; kept: boolean; exists: boolean; error: string | null }[];
   rules: { file: string; id: string | null; name: string; enabled: boolean; created: boolean; error?: string | null }[];
   mcp: { name: string; added: boolean; missing: string[] }[];
   tools: string[];
@@ -292,6 +293,10 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
         <span v-if="p.slots?.length">放在页面上：{{ p.slots.map((s) => `${SLOT_WORDS[s.at] ?? s.at}（${s.block}）`).join("、") }}</span>
       </div>
       <div v-for="s in p.spaces" :key="s.id" class="small path">空间：{{ s.name }}（{{ s.id }}） · {{ s.status }}</div>
+      <div v-for="f in p.flows ?? []" :key="`flow:${f.id}`" class="small">
+        流程：<RouterLink v-if="f.exists" class="lnk" to="/flows">{{ f.id }}</RouterLink><span v-else>{{ f.id }}</span>
+        · {{ f.error ? `没有加入：${f.error}` : f.kept ? "已有同名流程，没有覆盖" : f.added ? f.exists ? "已加入流程" : "已删除，不再自动加入" : "尚未加入" }}
+      </div>
       <div v-for="r in p.rules" :key="r.file" class="small">
         规则：<RouterLink v-if="r.id" class="lnk" :to="`/rules?id=${r.id}`">{{ r.name }}</RouterLink><span v-else>{{ r.name }}</span>
         · {{ r.id ? r.enabled ? "已启用" : "还没启用" : r.created ? "已删除，不再自动创建" : r.error ? `没有创建：${r.error}` : "尚未导入" }}

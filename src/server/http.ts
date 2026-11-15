@@ -1383,6 +1383,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const p = req.params as { id: string; object: string };
     return detachObject(app, p.id, p.object, who(req));
   });
+  // A button on an object's card: the person started it, so it runs now as them (no approval card).
+  server.post("/api/items/:id/objects/:object/actions/:action", async (req) => {
+    const { runObjectAction } = await import("../flows/object-actions.ts");
+    const p = req.params as { id: string; object: string; action: string };
+    return runObjectAction(app, p.id, p.object, p.action, who(req));
+  });
   const materialBody = z.object({ kind: z.enum(["source", "conversation", "repo", "space", "run", "req", "object"]), ref: z.string().min(1), branch: z.string().optional(), base: z.string().optional(), label: z.string().optional(), note: z.string().optional() });
   server.post("/api/items/:id/materials", async (req) => {
     const b = q(z.object({ materials: z.array(materialBody).min(1) }), req.body);
@@ -2332,6 +2338,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       fields: FIELDS,
       ops: OPS,
       eventFields: EVENT_FIELDS,
+      // The plugin object kinds enabled now: what an “对象状态变化” rule can be about, with their states.
+      objectKinds: (await import("../plugins/objects.ts")).pluginObjectKinds().map((k) => ({ kind: k.kind, label: k.label, statuses: k.statuses, final: k.final })),
       // omem's bots a meeting rule can bring in ("main" and lark.bots).
       bots: [
         ...(app.config.lark.appId ? [{ id: "main", name: one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value ?? larkBotInfo("main")?.name ?? "主机器人" }] : []),

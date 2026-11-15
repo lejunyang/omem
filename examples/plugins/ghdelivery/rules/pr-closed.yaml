@@ -1,0 +1,9 @@
+name: 合并请求被关掉
+description: 事项上挂的 GitHub 合并请求没合并就被关掉时通知我，流程里等它合并的那一段不会再往下走，要我决定重开一个还是不做了
+trigger:
+  event: object
+  objectKind: github:pull-request
+  objectStatuses: [closed]
+judge: code
+actions:
+  - type: notify

@@ -511,6 +511,8 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
 function validEvidence(app: App, ref: string) {
   if (/^src:[\w-]+(?:#L\d+(?:-L?\d+)?)?$/.test(ref)) return !!one(app.db, "select 1 from sources where id=? and deleted_at is null", ref.slice(4).split("#")[0]);
   if (/^design:/.test(ref)) return !!one(app.db, "select 1 from designs where id=?", ref.slice(7));
+  // A plugin object linked to the item (a merge request), as its material brief names it.
+  if (/^object:fo_/.test(ref)) return !!one(app.db, "select 1 from flow_objects where id=?", ref.slice(7));
   const id = ref.replace(/^(?:run:|code-work:)/, "");
   return !!one(app.db, "select 1 from runs where id=?", id);
 }

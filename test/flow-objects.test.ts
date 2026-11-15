@@ -1,6 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
@@ -294,7 +295,7 @@ describe("GitHub 合并请求例子", () => {
   });
   it.each([[null, "open", "open"], ["2026-11-01", "closed", "merged"], [null, "closed", "closed"]])("状态映射 %s / %s → %s，检查可选且评审有状态", async (mergedAt, state, expected) => {
     let def!: PluginObject;
-    github({ object: (d: PluginObject) => { def = d; }, platform: () => {} } as unknown as PluginApi);
+    github({ object: (d: PluginObject) => { def = d; }, platform: () => {}, tool: () => {}, z } as unknown as PluginApi);
     let checksReadable = true;
     const c = { account: "示例", scopes: [], base: "https://api.github.com", fetch: async (path: string) => {
       if (path.endsWith("/pulls/7")) return new Response(JSON.stringify({ title: "退款改造", state, merged_at: mergedAt, html_url: "https://github.com/example/shop/pull/7", base: { ref: "main" }, head: { sha: "abc" } }));

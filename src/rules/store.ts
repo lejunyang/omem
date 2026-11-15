@@ -11,6 +11,7 @@ import { checkWaitRule } from "./fast.ts";
 import { ruleInputSchema, type Rule, type RuleAction, type RuleInput, type Temporary } from "./types.ts";
 import { OWNER } from "../core/users.ts";
 import { moveRuleWorkFiles } from "../sources/work.ts";
+import { pluginObjectKind } from "../plugins/objects.ts";
 
 type Row = {
   space_id: string | null;
@@ -73,6 +74,36 @@ function checkDocRule(r: ReturnType<typeof ruleInputSchema.parse>) {
     throw new HttpError(400, "文档变化规则没有群：只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断或执行脚本");
   if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
     throw new HttpError(400, "文档变化规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
+}
+
+/**
+ * An object's change of state (a merge request merged) has no chat either: the object fields, a kind
+ * that exists now with its own states, and the actions a document change may have.
+ */
+function checkObjectRule(r: ReturnType<typeof ruleInputSchema.parse>) {
+  const object = r.trigger.event === "object";
+  if (!object && (r.trigger.objectKind || r.trigger.objectStatuses?.length)) throw new HttpError(400, "只有“对象状态变化”规则能选对象类型和状态");
+  const fields = r.conditions ? fieldsOf(r.conditions) : [];
+  if (!object) {
+    const objectFields = fields.filter((f) => f.startsWith("object."));
+    if (objectFields.length) throw new HttpError(400, `${[...new Set(objectFields)].join("、")} 只用于“对象状态变化”规则`);
+    return;
+  }
+  const bad = fields.filter((f) => !f.startsWith("object."));
+  if (bad.length) throw new HttpError(400, `对象状态变化规则只能用对象的字段，不能用 ${[...new Set(bad)].join("、")}`);
+  if (r.trigger.objectStatuses?.length && !r.trigger.objectKind) throw new HttpError(400, "选了状态要先选是哪种对象");
+  if (r.trigger.objectKind) {
+    const def = pluginObjectKind(r.trigger.objectKind);
+    if (!def) throw new HttpError(400, `没有这种对象：${r.trigger.objectKind}；装了对应的插件才有`);
+    const unknown = (r.trigger.objectStatuses ?? []).filter((s) => !Object.hasOwn(def.statuses, s));
+    if (unknown.length) throw new HttpError(400, `${def.label}没有这些状态：${unknown.join("、")}`);
+  }
+  if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "对象状态变化规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
+  const allowed = new Set(["notify", "delay", "check", "script"]);
+  if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
+    throw new HttpError(400, "对象状态变化规则没有群：只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断或执行脚本");
+  if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
+    throw new HttpError(400, "对象状态变化规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
 }
 
 /** A meeting has no chat or message; the meeting action needs a meeting. */
@@ -151,7 +182,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   // Every meeting the owner joins is a reasonable rule (the card asks first), so is every change of the
   // documents a rule lists; every message is not.
   const everyListedDoc = r.trigger.event === "doc" && !!r.trigger.docs?.length;
-  if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule" && r.trigger.event !== "meeting" && !everyListedDoc)
+  if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule" && r.trigger.event !== "meeting" && r.trigger.event !== "object" && !everyListedDoc)
     throw new HttpError(400, r.trigger.event === "doc" ? "文档变化规则要么列出盯哪些文档，要么写条件（或交给 AI 判断）" : "按条件判断需要条件；没有条件就选“交给 AI 判断”，或先从规则原话生成条件");
   if (r.trigger.event === "schedule" && !r.trigger.cron) throw new HttpError(400, "定时规则需要 cron，例如 0 9 * * 1-5");
   if (r.trigger.event === "schedule" && r.actions.some((a) => a.type === "invite-bot" || a.type === "capture" || a.type === "watch" || (a.type === "agent" && a.ownTopic)))
@@ -161,6 +192,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   if (r.trigger.event === "schedule" && !r.conversationId && r.actions.some(a => a.type === "agent" && (["auto", "draft"].includes(a.reply) || a.failureTo === "chat"))) throw new HttpError(400, "定时规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
   checkMeetingRule(app, r);
   checkDocRule(r);
+  checkObjectRule(r);
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;

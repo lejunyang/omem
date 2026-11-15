@@ -149,6 +149,22 @@ export function removeFlow(app: App, id: string, by = "user") {
 export function flowsFor(app: App, item: Pick<Item, "kind" | "spaceId">) {
   return listFlows(app).flatMap((f) => f.definition && (!f.definition.for?.kinds || (f.definition.for.kinds as string[]).includes(item.kind)) && (!f.definition.for?.spaces || f.definition.for.spaces.includes(item.spaceId)) ? [f.definition] : []);
 }
+/**
+ * A flow a plugin (a scene pack) brings, copied into the library only when there is none of that id:
+ * one the owner has, or changed, stays as it is. Checked like any saved flow (the object kinds it
+ * names must be there now). Returns whether it was added.
+ */
+export function addFlowIfMissing(app: App, raw: string, name: string, by: string) {
+  const f = parseFlow(raw);
+  if (f.id !== name) throw new HttpError(400, `流程 id ${f.id} 要和文件名 ${name} 相同`);
+  const target = file(app, f.id);
+  if (existsSync(target)) return false;
+  mkdirSync(join(app.libraryDir, "_flows"), { recursive: true });
+  writeFileSync(target, raw.endsWith("\n") ? raw : `${raw}\n`, { flag: "wx" });
+  commitLibrary(app.libraryDir, `${by}: 添加流程 ${f.id}`);
+  return true;
+}
+export const flowExists = (app: App, id: string) => existsSync(file(app, id));
 export function seedBuiltinFlows(app: App, packageRoot: string) {
   const dir = join(packageRoot, "flows", "library");
   if (!existsSync(dir)) return [];

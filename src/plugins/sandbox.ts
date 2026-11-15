@@ -8,7 +8,7 @@ import { pluginConnection } from "../auth/connections.ts";
 import { registerTool, saveSourceFor, watchesFor, type ToolContext } from "../agents/tools.ts";
 import { OWNER } from "../core/users.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
-import { registerObject } from "./objects.ts";
+import { registerObject, withObjectActions } from "./objects.ts";
 import { emitPluginSignal } from "./signals.ts";
 import { ensureService } from "./services.ts";
 import { pluginStore } from "./store.ts";
@@ -182,7 +182,7 @@ export async function startSandbox(
         jsonSchema: t.jsonSchema,
         write: t.write,
         available: t.whenConnected ? opts.connected : undefined,
-        handler: (ctx, args) => ask({ t: "call", tool: t.name, args, ctx: { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, conversationId: null, settings: opts.settings(ctx.userId ?? OWNER) } }, ctx).then(String),
+        handler: withObjectActions(plugin.id, t.name, (ctx, args) => ask({ t: "call", tool: t.name, args, ctx: { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, conversationId: null, settings: opts.settings(ctx.userId ?? OWNER) } }, ctx).then(String)),
       },
       { approval: t.approval },
     );

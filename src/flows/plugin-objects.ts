@@ -1,20 +1,30 @@
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
-import { accessibleSpaces, canWrite } from "../core/users.ts";
+import { accessibleSpaces, canWrite, OWNER } from "../core/users.ts";
 import { HttpError, json, now, sha256 } from "../core/util.ts";
 import { addItemEvent, getItem, isClosed, type Item } from "../items/store.ts";
 import { pluginObjectKind, pluginObjectKinds, type RegisteredObject } from "../plugins/objects.ts";
 import { pluginContext } from "../plugins/blocks.ts";
-import type { PluginObjectState } from "../plugins/types.ts";
+import type { PluginObjectAction, PluginObjectState } from "../plugins/types.ts";
 import type { FlowObject } from "./objects.ts";
 
-type Row = { id: string; kind: string; key: string; title: string; status: string; link: string; fields: string; checked_at: string | null; changed_at: string; error: string | null; updated_at: string };
-export type ObjectView = { id: string; kind: string; label: string; title: string; status: string; statusLabel: string; final: boolean; link: string; fields: { label: string; value: string }[]; checkedAt: string | null; changedAt: string; error: string | null; disabled: boolean };
-const row = (app: App, id: string) => one<Row>(app.db, "select * from flow_objects where id=?", id);
-const view = (r: Row): ObjectView => {
+export type ObjectRow = { id: string; kind: string; key: string; title: string; status: string; link: string; fields: string; checked_at: string | null; changed_at: string; error: string | null; updated_at: string };
+type Row = ObjectRow;
+/** `actions`: the buttons for its current status (only for someone who may act on the item; empty otherwise). */
+export type ObjectView = { id: string; kind: string; label: string; title: string; status: string; statusLabel: string; final: boolean; link: string; fields: { label: string; value: string }[]; checkedAt: string | null; changedAt: string; error: string | null; disabled: boolean; actions: { id: string; label: string; confirm?: string }[] };
+export const objectRow = (app: App, id: string) => one<Row>(app.db, "select * from flow_objects where id=?", id);
+const row = objectRow;
+export const objectId = (kind: string, key: string) => `fo_${sha256(JSON.stringify([kind, key]))}`;
+/** The actions a kind offers for this status. */
+export const actionsFor = (def: RegisteredObject | undefined, status: string): PluginObjectAction[] => (def?.actions ?? []).filter((a) => !a.statuses || a.statuses.includes(status));
+const view = (r: Row, canAct = false): ObjectView => {
   const def = pluginObjectKind(r.kind);
-  return { id: r.id, kind: r.kind, label: def?.label ?? r.kind, title: r.title, status: r.status, statusLabel: def?.statuses[r.status] ?? r.status, final: def?.final.includes(r.status) ?? false, link: r.link, fields: json(r.fields, []), checkedAt: r.checked_at, changedAt: r.changed_at, error: r.error, disabled: !def };
+  return {
+    id: r.id, kind: r.kind, label: def?.label ?? r.kind, title: r.title, status: r.status, statusLabel: def?.statuses[r.status] ?? r.status, final: def?.final.includes(r.status) ?? false, link: r.link, fields: json(r.fields, []), checkedAt: r.checked_at, changedAt: r.changed_at, error: r.error, disabled: !def,
+    actions: canAct ? actionsFor(def, r.status).map((a) => ({ id: a.id, label: a.label, ...(a.confirm ? { confirm: a.confirm } : {}) })) : [],
+  };
 };
+export const objectView = (app: App, id: string, canAct = false) => { const r = row(app, id); return r ? view(r, canAct) : null; };
 export function assertObjectItem(app: App, itemId: string, userId: string, write = false) {
   const item = getItem(app, itemId), spaces = accessibleSpaces(app, userId);
   if (spaces && !spaces.includes(item.spaceId)) throw new HttpError(404, "没有这个事项");
@@ -22,8 +32,9 @@ export function assertObjectItem(app: App, itemId: string, userId: string, write
   return item;
 }
 export function itemObjects(app: App, itemId: string, userId: string) {
-  assertObjectItem(app, itemId, userId);
-  return all<Row>(app.db, "select o.* from item_materials m join flow_objects o on o.id=m.ref where m.item_id=? and m.kind='object' order by m.id desc", itemId).map(view);
+  const item = assertObjectItem(app, itemId, userId);
+  const canAct = item.userId === userId && canWrite(app, userId, item.spaceId);
+  return all<Row>(app.db, "select o.* from item_materials m join flow_objects o on o.id=m.ref where m.item_id=? and m.kind='object' order by m.id desc", itemId).map((r) => view(r, canAct));
 }
 export function findPluginObject(app: App, item: Item, kind: string, opts?: { statuses?: string[]; after?: string }): FlowObject | null {
   const r = all<Row>(app.db, "select o.* from item_materials m join flow_objects o on o.id=m.ref where m.item_id=? and m.kind='object' and o.kind=? order by m.id desc", item.id, kind)
@@ -36,7 +47,10 @@ export function objectMaterialBrief(app: App, id: string) {
   const r = row(app, id);
   if (!r) return "对象不存在";
   const v = view(r);
-  return `${v.label}：${v.title}（${v.statusLabel}）${v.link}${v.disabled ? "（来源已停用）" : ""}`;
+  // What can be done to it now, as the tool an agent would call (the same one as the button).
+  const can = v.disabled ? [] : actionsFor(pluginObjectKind(r.kind), r.status).map((a) => `${a.label}（工具 ${a.tool}，${a.arg ?? "key"}=${r.key}）`);
+  const fields = v.fields.map((f) => `${f.label} ${f.value}`).join("、");
+  return `${v.label}：${v.title}（${v.statusLabel}）${v.link}${v.disabled ? "（来源已停用）" : ""}${fields ? `；${fields}` : ""}${can.length ? `；可做：${can.join("、")}` : ""}；依据写 object:${r.id}`;
 }
 
 /** State changes and attachments share a per-object lock, including explicit concurrent requests. */
@@ -48,20 +62,22 @@ function serial<T>(app: App, id: string, fn: () => Promise<T>) {
   void next.finally(() => { if (map!.get(id) === next) map!.delete(id); }).catch(() => {});
   return next;
 }
-async function timed<T>(fn: () => T | Promise<T>): Promise<T> {
+export async function timed<T>(fn: () => T | Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try { return await Promise.race([Promise.resolve().then(fn), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("读取对象超过 15 秒")), 15000); })]); }
   finally { clearTimeout(timer); }
 }
 const retryKey = (id: string) => `flow-object-retry:${id}`;
 function retry(app: App, id: string) { return json<{ failures: number; next: number }>(one<{ value: string }>(app.db, "select value from kv where key=?", retryKey(id))?.value, { failures: 0, next: 0 }); }
-function linkedItems(app: App, id: string) { return all<{ item_id: string }>(app.db, "select item_id from item_materials where kind='object' and ref=?", id).map((x) => x.item_id); }
+export function linkedItems(app: App, id: string) { return all<{ item_id: string }>(app.db, "select item_id from item_materials where kind='object' and ref=?", id).map((x) => x.item_id); }
 async function wake(app: App, ids: string[]) {
   const { advance } = await import("./engine.ts");
   for (const id of new Set(ids)) await advance(app, id, "关联对象变化");
 }
-async function readObject(app: App, def: RegisteredObject, key: string, item: Item, at: Date) {
-  const id = `fo_${sha256(JSON.stringify([def.kind, key]))}`;
+type Change = { from: string; to: string; at: string };
+type ReadResult = { id: string; changedItems: string[]; change: Change | null };
+async function readObject(app: App, def: RegisteredObject, key: string, item: Item, at: Date): Promise<ReadResult> {
+  const id = objectId(def.kind, key);
   const old = row(app, id);
   try {
     const { getPlugin } = await import("../plugins/registry.ts");
@@ -83,7 +99,7 @@ async function readObject(app: App, def: RegisteredObject, key: string, item: It
         for (const itemId of ids) addItemEvent(app, itemId, "updated", `${def.label}《${value.title}》：${def.statuses[old.status] ?? old.status} → ${def.statuses[value.status]} ${value.link}`, "host");
       }
     });
-    return { id, changedItems: ids };
+    return { id, changedItems: ids, change: changed ? { from: old.status, to: value.status, at: stamp } : null };
   } catch (e) {
     const error = (e as Error).message, failures = retry(app, id).failures + 1;
     if (old) run(app.db, "update flow_objects set checked_at=?,error=?,updated_at=? where id=?", at.toISOString(), error, at.toISOString(), id);
@@ -91,6 +107,36 @@ async function readObject(app: App, def: RegisteredObject, key: string, item: It
     throw new HttpError(400, `读取对象失败：${error}`);
   }
 }
+/** After a read outside the object lock: the linked items' flows move on, and the rules hear of a change. */
+async function settle(app: App, r: ReadResult, extra: string[] = []) {
+  await wake(app, [...r.changedItems, ...extra]);
+  if (r.change) await objectRuleEvent(app, r.id, r.change);
+}
+
+/**
+ * The rule event of a state change (docs/v2/rules.md, “对象状态变化”): only for the items linked to it
+ * in spaces the rules' owner can read. A change no such item sees reaches no rule.
+ */
+async function objectRuleEvent(app: App, id: string, change: Change) {
+  try {
+    const r = row(app, id), def = r ? pluginObjectKind(r.kind) : undefined;
+    if (!r || !def) return;
+    const readable = accessibleSpaces(app, OWNER);
+    const items = linkedItems(app, id).map((x) => getItem(app, x)).filter((i) => !readable || readable.includes(i.spaceId));
+    if (!items.length) return;
+    const { dispatchRuleEvent } = await import("../rules/engine.ts");
+    await dispatchRuleEvent(app, {
+      key: `object:${id}:${change.to}:${change.at}`,
+      kind: "object",
+      at: change.at,
+      object: { id, kind: r.kind, label: def.label, title: r.title, from: change.from, fromLabel: def.statuses[change.from] ?? change.from, to: change.to, toLabel: def.statuses[change.to] ?? change.to, link: r.link, items: items.map((i) => ({ id: i.id, title: i.title, space: i.spaceId })), space: items[0].spaceId },
+      via: "object",
+    });
+  } catch (e) {
+    console.warn(`[omem] 对象状态变化没有交给规则：${(e as Error).message}`);
+  }
+}
+
 export async function attachObject(app: App, itemId: string, url: string, userId: string, by: "user" | "agent" = "user") {
   assertObjectItem(app, itemId, userId, true);
   if (typeof url !== "string" || !url.trim() || url.length > 4000) throw new HttpError(400, "请给对象的链接");
@@ -107,8 +153,8 @@ export async function attachObject(app: App, itemId: string, url: string, userId
       if (added) addItemEvent(app, itemId, "updated", `关联${def.label}《${o.title}》 ${o.link}`, by);
       return r;
     });
-    await wake(app, [...result.changedItems, itemId]);
-    return view(row(app, result.id)!);
+    await settle(app, result, [itemId]);
+    return view(row(app, result.id)!, true);
   }
   throw new HttpError(400, "没有哪种对象认识这个链接；请先启用对应的插件");
 }
@@ -117,6 +163,30 @@ export function detachObject(app: App, itemId: string, id: string, userId: strin
   const removed = run(app.db, "delete from item_materials where item_id=? and kind='object' and ref=?", itemId, id).changes > 0;
   if (removed) addItemEvent(app, itemId, "updated", `解除对象关联：${row(app, id)?.title ?? id}`, "user");
   return { removed };
+}
+
+/**
+ * Read an object again now (after an action on it), as its linked open item in a writable space —
+ * `prefer` first (the item whose button was pressed). False when there is none to read it as, or the
+ * read failed (kept on the object as its error, the way polling keeps it).
+ */
+export async function refreshObject(app: App, id: string, prefer?: string): Promise<boolean> {
+  const r = row(app, id), def = r ? pluginObjectKind(r.kind) : undefined;
+  if (!r || !def) return false;
+  const items = linkedItems(app, id).map((x) => getItem(app, x)).filter((i) => !isClosed(i.status) && canWrite(app, i.userId, i.spaceId));
+  const item = items.find((i) => i.id === prefer) ?? items[0];
+  if (!item) return false;
+  try {
+    const result = await serial(app, `${r.kind}:${r.key}`, async () => {
+      if (pluginObjectKind(r.kind) !== def) return null;
+      return readObject(app, def, r.key, assertObjectItem(app, item.id, item.userId, true), new Date());
+    });
+    if (!result) return false;
+    await settle(app, result);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const polling = new WeakMap<App, Promise<void>>();
@@ -139,7 +209,7 @@ export function pollObjects(app: App, at = new Date()): Promise<void> {
           if (pluginObjectKind(r.kind) !== def || def.final.includes(fresh.status) || fresh.checked_at && at.getTime() - Date.parse(fresh.checked_at) < (def.poll?.minutes ?? 5) * 60000) return null;
           return readObject(app, def, r.key, assertObjectItem(app, item.id, item.userId, true), at);
         });
-        if (result) await wake(app, result.changedItems);
+        if (result) await settle(app, result);
       } catch { /* Each object's error is retained; the next one still gets checked. */ }
     }
   })().finally(() => { if (polling.get(app) === p) polling.delete(app); });

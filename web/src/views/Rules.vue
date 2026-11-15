@@ -39,7 +39,7 @@ type Rule = {
   name: string;
   description: string;
   enabled: boolean;
-  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc"; docs?: string[]; pollMinutes?: number; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[]; fast?: boolean };
+  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc" | "object"; docs?: string[]; pollMinutes?: number; objectKind?: string; objectStatuses?: string[]; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[]; fast?: boolean };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
   judgeWith?: "decision" | "general";
@@ -51,7 +51,7 @@ type Rule = {
   origin?: { plugin: string; name: string; file: string } | null;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string; chat_mode?: string | null }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
+type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc" | "object", string[]>; objectKinds?: { kind: string; label: string; statuses: Record<string, string>; final: string[] }[]; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string; chat_mode?: string | null }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[]; note: string };
 
 const route = useRoute();
@@ -224,7 +224,7 @@ const REPLY_HINT: Record<string, string> = {
 };
 /** Where a rule belongs: a space's name, or 全局 for one that belongs to none (listed in every space). */
 const spaceName = (id?: string) => (id ? (state.spaces.find((s) => s.id === id)?.name ?? id) : "全局");
-const SPACE_HINT = "消息和第一次看到的群只看这个空间的会话，文档变化只看这个空间的文档，会议记录放进这个空间；交给 Agent 时它默认在这个空间里查资料，读不到别的空间的工作文件（两个空间相关时除外）。全局规则不限空间，在每个空间的规则列表里都会列出。";
+const SPACE_HINT = "消息和第一次看到的群只看这个空间的会话，文档变化只看这个空间的文档，对象状态变化只看这个空间的事项，会议记录放进这个空间；交给 Agent 时它默认在这个空间里查资料，读不到别的空间的工作文件（两个空间相关时除外）。全局规则不限空间，在每个空间的规则列表里都会列出。";
 const spaceOptions = (none: string) => [{ value: "", label: none }, ...state.spaces.map((s) => ({ value: s.id, label: s.name }))];
 // A whole group's conversation is shown as the group itself (its title is often just the first message there).
 const groupIds = computed(() => new Set((options.value.groups ?? []).map((g) => g.chat_id)));
@@ -293,8 +293,9 @@ function moveAction(i: number, d: number) {
 const scheduleOnly = computed(() => form.value?.trigger.event === "schedule");
 const meetingRule = computed(() => form.value?.trigger.event === "meeting");
 const docRule = computed(() => form.value?.trigger.event === "doc");
-/** No chat of its own (a schedule, a document change): replies go to the chat chosen in 发到. */
-const destRule = computed(() => scheduleOnly.value || docRule.value);
+const objectRule = computed(() => form.value?.trigger.event === "object");
+/** No chat of its own (a schedule, a document or object change): replies go to the chat chosen in 发到. */
+const destRule = computed(() => scheduleOnly.value || docRule.value || objectRule.value);
 const isOwner = computed(() => state.me?.role === "owner");
 /** What a new script starts as: reading the event it gets. */
 const SCRIPT_SAMPLE = [
@@ -337,8 +338,8 @@ function setWaitChat(a: Extract<Action, { type: "wait-message" }>, chatId: strin
 const addOptions = computed(() =>
   (Object.keys(ACTION_LABEL) as Action["type"][])
     .filter((t) => (meetingRule.value ? ["meeting-bot", "notify"].includes(t) : t !== "meeting-bot"))
-    // Without a chat (a schedule, a document change) only what needs none.
-    .filter((t) => !(scheduleOnly.value || docRule.value) || ["agent", "notify", "delay", "check", "script"].includes(t))
+    // Without a chat (a schedule, a document or object change) only what needs none.
+    .filter((t) => !destRule.value || ["agent", "notify", "delay", "check", "script"].includes(t))
     // Forwarding needs a message to forward.
     .filter((t) => !["forward", "wait-message"].includes(t) || form.value?.trigger.event === "message")
     .map((t) => ({ value: t as string | null, label: ACTION_LABEL[t], hint: (t === "invite-bot" || t === "forward") && !options.value.botReady ? "需要先配置飞书机器人" : t === "script" && !isOwner.value ? "只有本人能保存带脚本的规则" : "" })),
@@ -347,9 +348,43 @@ const addOptions = computed(() =>
 // ---- meetings ---------------------------------------------------------------------------
 /** The condition fields that make sense for this trigger: a meeting has no chat or message. */
 const condFields = computed(() => {
-  const keys = options.value.eventFields?.[meetingRule.value ? "meeting" : docRule.value ? "doc" : "message"];
+  const keys = options.value.eventFields?.[meetingRule.value ? "meeting" : docRule.value ? "doc" : objectRule.value ? "object" : "message"];
   return keys ? Object.fromEntries(keys.map((k) => [k, options.value.fields[k]])) : options.value.fields;
 });
+// ---- plugin objects -----------------------------------------------------------------------
+/** The object kinds of the plugins enabled now, and a kind a saved rule names that is gone (still shown, so saving does not drop it silently). */
+const objectKindOptions = computed(() => {
+  const kinds = options.value.objectKinds ?? [];
+  const named = form.value?.trigger.objectKind;
+  return [
+    { value: "", label: "任意类型" },
+    ...kinds.map((k) => ({ value: k.kind, label: k.label, hint: k.kind })),
+    ...(named && !kinds.some((k) => k.kind === named) ? [{ value: named, label: named, hint: "插件没有启用" }] : []),
+  ];
+});
+const objectStatuses = computed(() => {
+  const k = options.value.objectKinds?.find((x) => x.kind === form.value?.trigger.objectKind);
+  return k ? Object.entries(k.statuses).map(([id, label]) => ({ id, label, final: k.final.includes(id) })) : [];
+});
+function setObjectKind(v: string) {
+  const f = form.value;
+  if (!f) return;
+  if (v) f.trigger.objectKind = v;
+  else delete f.trigger.objectKind;
+  // States belong to a kind: a new kind starts from “any state”.
+  delete f.trigger.objectStatuses;
+  touch();
+}
+function toggleObjectStatus(id: string, on: boolean) {
+  const f = form.value;
+  if (!f) return;
+  const list = new Set(f.trigger.objectStatuses ?? []);
+  if (on) list.add(id);
+  else list.delete(id);
+  if (list.size) f.trigger.objectStatuses = [...list];
+  else delete f.trigger.objectStatuses;
+  touch();
+}
 const fieldOps = { "meeting.participantCount": ["gte", "lte", "equals"] };
 const meetingSpecOptions = computed(() => [{ value: "", label: "不旁听" }, ...specOptions.value]);
 /** Switching to or from the meeting trigger: keep the actions that still fit, add or drop the meeting one. */
@@ -362,6 +397,16 @@ function onTrigger() {
     f.trigger.waitMinutes = 0;
     f.trigger.unless = [];
   } else f.actions = f.actions.filter((a) => a.type !== "meeting-bot");
+  if (f.trigger.event === "object") {
+    // Like a document change: no chat, no discussion to wait on; the agent reports, or posts into 发到.
+    f.actions = f.actions.filter((a) => ["agent", "notify", "delay", "check", "script"].includes(a.type));
+    for (const a of f.actions) if (a.type === "agent") Object.assign(a, { reply: a.reply === "silent" ? "none" : a.reply, ownTopic: false });
+    f.trigger.waitMinutes = 0;
+    f.trigger.unless = [];
+  } else {
+    delete f.trigger.objectKind;
+    delete f.trigger.objectStatuses;
+  }
   if (f.trigger.event === "doc") {
     // A document change has no chat: the agent only reports to the owner, and nothing waits on a discussion.
     f.actions = f.actions.filter((a) => ["agent", "notify", "delay", "check", "script"].includes(a.type));
@@ -569,7 +614,7 @@ function startFrom(text: string) {
         <section class="block">
           <div class="block-head"><h3>什么时候看</h3></div>
           <div class="row wrap">
-            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '我加入会议时' }, { value: 'doc', label: '文档变化' }]" aria-label="触发" @change="onTrigger" />
+            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '我加入会议时' }, { value: 'doc', label: '文档变化' }, { value: 'object', label: '对象状态变化' }]" aria-label="触发" @change="onTrigger" />
             <UiSegmented v-if="form.trigger.event === 'message'" v-model="form.trigger.once" size="sm" :options="[{ value: 'event', label: '每条消息' }, { value: 'chat', label: '每个群只一次' }]" aria-label="触发次数" @change="touch" />
             <input v-if="form.trigger.event === 'schedule'" v-model="form.trigger.cron" class="input sm mono cron" placeholder="0 9 * * 1-5" aria-label="cron" @input="touch" />
           </div>
@@ -584,6 +629,18 @@ function startFrom(text: string) {
           <small v-if="form.trigger.event === 'message'" class="muted">“每个群只一次”适合拉机器人、开始监听这类一次就够的事。等待和跳过在动手前看一眼这段讨论：你在话题里或半小时内在群里说过话，算“已在讨论里”。</small>
           <small v-else-if="form.trigger.event === 'schedule'" class="muted">cron 写法：分 时 日 月 周，例如 0 9 * * 1-5 是工作日早上 9 点。</small>
           <small v-else-if="meetingRule" class="muted">你加入一场飞书视频会议时判断（用你的 lark-cli 登录接收入会事件）。每场会议对这条规则只触发一次；入会后十分钟内参会人变了会再判断一次。不写条件就是每场会议。</small>
+          <template v-if="objectRule">
+            <div class="row wrap">
+              <span class="small">哪种对象</span>
+              <UiSelect :model-value="form.trigger.objectKind ?? ''" size="sm" width="220px" :options="objectKindOptions" aria-label="对象类型" @update:model-value="(v) => setObjectKind(String(v || ''))" />
+            </div>
+            <div v-if="objectStatuses.length" class="row wrap">
+              <span class="small">变成</span>
+              <UiCheckbox v-for="s in objectStatuses" :key="s.id" :model-value="!!form.trigger.objectStatuses?.includes(s.id)" size="sm" @change="(v) => toggleObjectStatus(s.id, v)">{{ s.label }}</UiCheckbox>
+              <small class="muted">{{ form.trigger.objectStatuses?.length ? "" : "不勾就是变成任何状态" }}</small>
+            </div>
+            <small class="muted">事项上挂的合并请求这类平台对象（{{ options.objectKinds?.length ? "由启用的插件提供" : "还没有启用带对象类型的插件" }}）变了状态时判断：omem 按插件定的间隔去读，读到的状态和上次不一样就触发一次。只看你能读的空间里的事项；上面选了空间就只看这个空间的事项。第一次挂上时读到的状态不算变化。</small>
+          </template>
           <template v-if="docRule">
             <textarea :value="(form.trigger.docs ?? []).join('\n')" class="input mono small" rows="3" placeholder="要盯的飞书文档、电子表格、多维表格或知识库页面的链接，一行一个；不填就看机器人订阅了的所有文档" aria-label="要盯的文档" @input="(e) => ((form!.trigger.docs = docLinks((e.target as HTMLTextAreaElement).value)), touch())" />
             <label class="row inline small">机器人订阅不了的，每
