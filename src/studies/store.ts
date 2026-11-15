@@ -9,7 +9,7 @@ import { cleanupStudyWorkspaces } from "./workspace.ts";
 
 export type PlannedTrial = { object: string; check: string; prior?: string };
 export type Direction = { id: string; item_id: string; round: number; goal: string; approach: string; acceptance: string; env: string; estimate: string; state: "proposed" | "confirmed" | "active" | "done" | "dropped"; conclusion: string; note: string; plan: string; removed: string; baseline: string; third_party: number; allow_code: number; workspace_run_id: string | null; created_at: string; updated_at: string };
-export type Trial = { fix_of: string | null; work_id: string | null; id: string; item_id: string; direction_id: string; round: number; seq: number; object: string; check: string; env: string; state: "queued" | "running" | "reported" | "skipped"; result: TrialReport["result"] | null; summary: string; evidence: string; run_id: string | null; attempts: number; prior: string | null; findings: string; unsure: number; failures: number; escalated: number; commits: string; created_at: string; updated_at: string };
+export type Trial = { fix_of: string | null; work_id: string | null; id: string; item_id: string; direction_id: string; round: number; seq: number; object: string; check: string; env: string; state: "queued" | "running" | "reported" | "skipped"; result: TrialReport["result"] | null; summary: string; evidence: string; run_id: string | null; attempts: number; prior: string | null; findings: string; unsure: number; failures: number; escalated: number; commits: string; peer: string | null; peer_run: string | null; peer_seen: string | null; created_at: string; updated_at: string };
 export type Finding = { round: number; flow_started_at: string | null; id: string; item_id: string; kind: FindingInput["kind"]; title: string; repro: string; trials: string; state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; state_reason: string; same_as: string | null; work_id: string | null; created_at: string; updated_at: string };
 export const directions = (app: App, item: string) => all<Direction>(app.db, "select * from study_directions where item_id=? order by created_at,rowid", item);
 export const trials = (app: App, item: string) => all<Trial>(app.db, "select * from study_trials where item_id=? order by direction_id,seq", item);
@@ -69,7 +69,10 @@ export function continuing(app: App, item: string) {
 export async function closeDirection(app: App, id: string, state: "done" | "dropped", conclusion: string) {
   if (!conclusion.trim()) throw new HttpError(400, "结束方向必须写结论");
   const d = direction(app, id), at = now();
-  for (const t of trials(app, d.item_id).filter((t) => t.direction_id === id && t.state === "running")) if (t.run_id) cancelRun(app, t.run_id);
+  for (const t of trials(app, d.item_id).filter((t) => t.direction_id === id && t.state === "running")) {
+    if (t.run_id) cancelRun(app, t.run_id);
+    if (t.peer_run) await (await import("./remote.ts")).cancelPeerTrial(app, t);
+  }
   atomic(app, () => {
     run(app.db, "update study_directions set state=?,conclusion=?,updated_at=? where id=?", state, conclusion, at, id);
     run(app.db, "update study_trials set state='skipped',updated_at=? where direction_id=? and state in ('queued','running')", at, id);

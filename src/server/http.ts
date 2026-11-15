@@ -2890,6 +2890,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });
+    await (await import("../studies/envs.ts")).checkEnvPeers(app, next.studies.envs);
     next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
     next.security = structuredClone(app.config.security);

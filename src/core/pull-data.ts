@@ -27,7 +27,7 @@ export const pullTables: Table[] = [
   { name: "item_stage_log", key: ["id"], integer: true, natural: ["sync_key"], newer: "at" },
   { name: "study_scopes", key: ["item_id"], newer: "updated_at" },
   { name: "study_directions", key: ["id"], newer: "updated_at", local: ["workspace_run_id"] },
-  { name: "study_trials", key: ["id"], newer: "updated_at" },
+  { name: "study_trials", key: ["id"], newer: "updated_at", local: ["peer_seen"] },
   { name: "study_findings", key: ["id"], newer: "updated_at" },
   { name: "study_pushes", key: ["id"], newer: "at" },
   { name: "item_changes", key: ["id"], newer: "updated_at" },

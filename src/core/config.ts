@@ -1106,6 +1106,8 @@ export const configSchema = z.object({
       name: z.string().trim().min(1).max(100), note: z.string().max(12000),
       ai: z.union([z.enum(["strong", "standard", "cheap"]), z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })]).optional(),
       thirdParty: z.boolean(),
+      /** Trials in this environment go to this paired device of the owner's (studies/remote.ts); it runs them with its own AI. */
+      peer: z.string().trim().min(1).max(80).optional(),
     })).default([]).superRefine((envs, ctx) => {
       const names = new Set(["local", "本机"]);
       for (const e of envs) {

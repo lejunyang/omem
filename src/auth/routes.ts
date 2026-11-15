@@ -389,6 +389,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       // Sharing with other servers (src/core/federation.ts): what this one shares, what it follows.
       "GET /api/peer/shares", "PUT /api/peer/grants/:user", "GET /api/peer/cards", "GET /api/peer/backups", "PUT /api/peer/backups", "DELETE /api/peer/backups/:peer", "POST /api/peer/backups/:peer/run", "GET /api/peer/outbox", "POST /api/peer/outbox/flush", "DELETE /api/peer/outbox/:id", "POST /api/peer/shares", "PUT /api/peer/shares/:user", "DELETE /api/peer/shares/:user",
       "GET /api/peer/subscriptions", "GET /api/peer/offers/:peer", "POST /api/peer/subscriptions", "DELETE /api/peer/subscriptions/:id", "POST /api/peer/subscriptions/:id/sync",
+      // A study's trial handed here by another of the owner's devices (studies/remote-host.ts; the handlers also require the owner's token).
+      "POST /api/peer/trial", "GET /api/peer/trial/:id", "POST /api/peer/trial/:id/cancel",
     ].map((r) => [r, PEERS]),
   ),
   // Another server reading what is shared with it: the handlers keep to the caller's grants.

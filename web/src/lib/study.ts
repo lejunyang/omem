@@ -11,6 +11,8 @@ export type StudyTrial = {
   commits?: Record<string, string>;
   /** A rerun after a code change: the finding it checks and the delegation whose workspace it ran in. */
   fixOf?: string | null; workId?: string | null;
+  /** Handed to another of the owner's devices: which one, and its run there. */
+  peer?: string | null; peerRunId?: string | null;
 };
 /** What a study may touch: the repositories it works in, whether a finding may be turned into a code change, whether samples' own scripts may run on this machine. */
 export type StudyScope = {

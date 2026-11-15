@@ -2077,6 +2077,10 @@ export const migrations: readonly string[] = [
    );
    create index item_flow_reviews_flow on item_flow_reviews(flow_id,user_id,ended_at);
    create index lark_message_lines_line on lark_message_lines(source_id,line);`,
+  // A trial handed to another of the owner's devices: which one and its run there; when it last answered stays here.
+  `alter table study_trials add column peer text;
+   alter table study_trials add column peer_run text;
+   alter table study_trials add column peer_seen text;`,
 ];
 
 export type Db = DatabaseSync;

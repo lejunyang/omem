@@ -37,6 +37,14 @@ updated: 2026-11-16
 - 重开时正在做的下游：照做，给本人一张“停下 / 继续做”的卡片（`control.upstream`，flow-stage 回答 `kind: upstream`）；停下按阶段类型取消（交办用 `stopCodeWork` 只停不删）并待复核，没答就做完的也待复核；流程结束、新一轮、本人在那一段上动作时撤回。事项页有同样两个按钮。
 - 上下文跟进：同一个群或文档在两个空间各有一份时只跟一份（事项所在空间的，否则本人可写、最早建立的）；群消息按这一份自己的行号读（`lark_message_lines`）。测试 `test/flow-review.test.ts`。
 
+## 课题的试验可以派给本人的另一台设备（11-16）
+
+- 执行环境（`studies.envs`）加 `peer`：选了这个环境的试验交给那台设备，由它用自己的模型、在自己宿主管理的工作区里跑，结果和证据文件送回本机的台账。保存设置时校验设备已配对、不是别人的服务（`src/studies/envs.ts` 的 `checkEnvPeers`）；设置里环境多一个“派给设备”（`web/src/components/FlowSettings.vue`）。
+- 本机（`src/studies/remote.ts`）：试验阶段轮到这样的试验时不选模型，`POST /api/peer/trial` 发出试验、方向、环境、每个仓库规范化后的远端地址和基线提交、档案 / 技能 / 档位名、分钟上限，拿回那台的运行 id；之后在试验阶段已有的推进里 `GET /api/peer/trial/:id` 问结果，不新增定时。回来的结果记一条已结束的 `study-trial` 运行收下证据。派不出去、那台出错或失联超过一小时，同一个试验再派一次，之后记“跑不了”；那台明确拒绝的不重试。停止流程、重开、预算用完等时 `POST …/cancel`。
+- 那台（`src/studies/remote-host.ts`）：只认本人令牌；按 `remoteKey` 找自己的仓库空间，没有就 409 “<设备>上没有这个仓库”；新运行类型 `peer-trial`，缺基线提交时 fetch 一次，用和本机试验同一个 `checkoutManaged` 准备工作区，跑完归还；派来的运行里 `trial_report` 只收文件证据。带回的证据单个 2 MB、合计 8 MB，文本超了截断。
+- 表 `study_trials` 加 `peer`、`peer_run`、`peer_seen`（后者本机状态，不拉取）；课题视图的试验加 `peer`、`peerRunId`。`src/studies/trials.ts` 的任务文字抽成 `trialTask` 两边共用，`workspace.ts` 抽出 `checkoutManaged` / `releaseManaged`。
+- 文档：`docs/v2/studies.md` 文末“第四期：把试验派给另一台设备”，`docs/v2/mesh.md` 第 4.5 节。测试 `test/study-remote.test.ts`（同一进程两个 app，那台起真实 HTTP 服务）。真实两台设备没验。
+
 ## 用真实模型跑了上下文跟进和提交认领，改了两处（11-16）
 
 - 记录在 `docs/v2/flows.md` 文末“用真实模型跑过的”。两个角色的理解都对（提议和决定分得清、闲聊不交、提交归不到已有事项时建议新建并写理由），问题出在宿主。

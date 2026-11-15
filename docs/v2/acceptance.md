@@ -34,6 +34,22 @@ npm run build
 
 没验：真实模型跑 coach 的流程复盘（会不会只在反复出现时才提、草稿改得对不对）；飞书上的“停下 / 继续做”卡片；网页截图。
 
+## 课题第四期：把试验派给另一台设备（2026-11-16）
+
+| 编号 | 操作 | 预期 | 验证 |
+| --- | --- | --- | --- |
+| study-peer-01 | 设置里登记一个环境，“派给设备”选一台配对过的设备；再写一台没配对的、一台名片上是别人服务的 | 配对过的能存；没配对的、别人服务的保存时报错并说明；已经存下、后来取消配对的不拦别的设置 | `test/study-remote.test.ts` |
+| study-peer-02 | 课题的方向选这个环境，那台有同一个仓库（远端地址写法不同、少一个提交） | 试验派过去，台账写“在 X 上”；那台 fetch 一次、在自己的工作区切到基线跑，本人的检出不动、跑完归还工作区；结果、候选发现、证据文件回到本机，超过 2 MB 的文本截断并写明；视图带设备名和那边的运行 id；下一个试验在同一次推进里派出 | 同上 |
+| study-peer-03 | 那台没有这个仓库 | 试验记“跑不了”，原因“<设备>上没有这个仓库（仓库名）”，不重试 | 同上 |
+| study-peer-04 | 用别人服务的令牌配对后派；方向要执行第三方样本而环境不允许 | 403，试验记“跑不了”不重试；第三方许可不符时那台 409 | 同上 |
+| study-peer-05 | 那台离线时派；派出去以后那台断开 | 派不出去：10 分钟后再派一次，还不行记“跑不了”；跑着时断开：一小时内只等，超过算一次没跑成，再派一次 | 同上 |
+| study-peer-06 | 那台在跑时用完分钟预算；停止流程 | 请那台取消运行（那台的运行变成取消），本机试验分别记“说不清”和放回队列 | 同上 |
+| study-peer-07 | 那台准备不了工作区（基线提交哪里都取不到） | 那台不起模型，交回“跑不了”和原因，本机照记 | 同上 |
+| study-peer-08 | 派到那台的试验发现了问题，本机改了以后重跑 | 重跑在本机交办的工作区里跑；方向要执行第三方样本、本机范围没允许时重跑记“跑不了” | `test/study-remote.test.ts` |
+| study-peer-09 | 两台真实设备、真实模型：选一个派给另一台的方向跑一轮 | 结果和证据出现在本机台账，那台的运行页能看到这次运行 | 未验 |
+
+专项命令：`npx vitest run test/study-remote.test.ts test/studies.test.ts test/study-fix.test.ts test/study-push.test.ts test/study-scope.test.ts test/study-workspace.test.ts test/peers.test.ts test/mesh.test.ts test/federation.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts test/esm.test.ts test/insights.test.ts --maxWorkers=2 --configLoader native --cache=false`：`Test Files 16 passed (16)`、`Tests 177 passed | 1 skipped (178)`。之后补了改后重跑的检查，再跑 `test/study-remote.test.ts test/study-fix.test.ts test/study-workspace.test.ts`：`Test Files 3 passed (3)`、`Tests 39 passed (39)`。`npx tsc --noEmit -p .`、`vue-tsc --noEmit -p web/tsconfig.json`、`npm run build` 退出码都是 0。没跑全量。设置页和台账的改动没有截图检查。
+
 ## 真实模型跑课题、外部状态卡片（2026-11-16）
 
 | 编号 | 操作 | 预期 | 状态 |

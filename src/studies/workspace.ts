@@ -3,7 +3,7 @@ import { join, resolve, relative, isAbsolute } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, run } from "../core/db.ts";
 import { gitAsync } from "../core/git.ts";
-import { getSpace } from "../core/spaces.ts";
+import { getSpace, type Space } from "../core/spaces.ts";
 import { json, now } from "../core/util.ts";
 import { getRun } from "../agents/runs.ts";
 import { worktreesOf } from "../agents/code.ts";
@@ -58,58 +58,70 @@ function owned(app: App, owner: string, wt: WorktreeRef) {
     throw new Error("独立工作区不能是目录链接");
   }
 }
+/**
+ * One repository at `base` in the host-managed workspace `owner` (a run) holds: a leased slot, or a
+ * worktree of its own under the run's directory; reset and cleaned each time. Never the owner's checkout.
+ */
+export async function checkoutManaged(app: App, owner: string, repo: Space, base: string) {
+  if (!repo.rootPath) throw new Error(`${repo.name} 没有仓库目录`);
+  const refs = worktreesOf(app, owner);
+  let wt = refs.find((w) => w.space === repo.id);
+  if (!wt || !existsSync(wt.path)) {
+    const path = join(app.runsDir, owner, "work", repo.id);
+    const slot = await leaseWorkspaceAsync(app, repo, owner, path);
+    if (!slot) {
+      mkdirSync(join(app.runsDir, owner, "work"), { recursive: true });
+      await checked(repo.rootPath, ["worktree", "add", "-q", "--detach", path, base]);
+    }
+    wt = { space: repo.id, path, branch: "", base, ...(slot ? { slot: slot.path } : {}) };
+    const old = refs.findIndex((w) => w.space === repo.id);
+    if (old >= 0) refs[old] = wt; else refs.push(wt);
+    saveRefs(app, owner, refs);
+  }
+  owned(app, owner, wt);
+  const path = workDirOf(wt);
+  const top = await checked(path, ["rev-parse", "--show-toplevel"]);
+  if (resolve(top) !== resolve(path)) throw new Error("工作区根目录不匹配");
+  await checked(path, ["checkout", "-q", "--detach", "--force", base]);
+  await checked(path, ["reset", "--hard", base]);
+  await checked(path, ["clean", "-ffdqx"]);
+  return { ...wt, base };
+}
 export async function prepareWorkspace(app: App, d: Direction, runId: string) {
   const repos = studyScope(app, d.item_id).repos, baseline = json<Record<string, string>>(d.baseline, {});
   if (!repos.length) return { cwd: undefined, commits: {}, note: "这个课题没有登记仓库" };
   if (!d.workspace_run_id) await cleanupStudyWorkspaces(app, d.item_id);
   const owner = d.workspace_run_id ?? runId;
   if (!d.workspace_run_id) run(app.db, "update study_directions set workspace_run_id=? where id=?", owner, d.id);
-  const refs = worktreesOf(app, owner);
   const selected: WorktreeRef[] = [];
   for (const r of repos) {
     const repo = getSpace(app, r.id), base = baseline[r.id];
     if (!repo.rootPath || !base) throw new Error(`${r.name} 没有确认方向时的基线提交；请重新定方向`);
-    let wt = refs.find((w) => w.space === r.id);
-    if (!wt || !existsSync(wt.path)) {
-      const path = join(app.runsDir, owner, "work", r.id);
-      const slot = await leaseWorkspaceAsync(app, repo, owner, path);
-      if (!slot) {
-        mkdirSync(join(app.runsDir, owner, "work"), { recursive: true });
-        await checked(repo.rootPath, ["worktree", "add", "-q", "--detach", path, base]);
-      }
-      wt = { space: r.id, path, branch: "", base, ...(slot ? { slot: slot.path } : {}) };
-      const old = refs.findIndex((w) => w.space === r.id);
-      if (old >= 0) refs[old] = wt; else refs.push(wt);
-      saveRefs(app, owner, refs);
-    }
-    owned(app, owner, wt);
-    const path = workDirOf(wt);
-    const top = await checked(path, ["rev-parse", "--show-toplevel"]);
-    if (resolve(top) !== resolve(path)) throw new Error("工作区根目录不匹配");
-    await checked(path, ["checkout", "-q", "--detach", "--force", base]);
-    await checked(path, ["reset", "--hard", base]);
-    await checked(path, ["clean", "-ffdqx"]);
-    selected.push(wt);
+    selected.push(await checkoutManaged(app, owner, repo, base));
   }
   return { cwd: selected[0] ? workDirOf(selected[0]) : undefined, commits: Object.fromEntries(selected.map((w) => [w.space, w.base])),
     note: selected.length ? `## 课题工作区\n${selected.map((w) => `${w.space}：${workDirOf(w)}（${w.base}）`).join("\n")}` : "这个课题没有登记仓库" };
 }
+/** Give back what `owner` holds (checkoutManaged): leases returned, its own worktrees removed. What could not be is kept, and returned. */
+export async function releaseManaged(app: App, owner: string) {
+  const remaining: WorktreeRef[] = [];
+  for (const wt of worktreesOf(app, owner)) {
+    try {
+      owned(app, owner, wt);
+      if (!await releaseWorkspaceAsync(owner, wt) && existsSync(wt.path)) {
+        const root = getSpace(app, wt.space).rootPath;
+        if (!root) throw new Error("仓库目录不可用，保留工作区登记");
+        await checked(root, ["worktree", "remove", "--force", wt.path]);
+        await checked(root, ["worktree", "prune"]);
+      }
+    } catch (e) { remaining.push(wt); console.warn(`[omem] 课题工作区清理失败：${(e as Error).message}`); }
+  }
+  saveRefs(app, owner, remaining);
+  return remaining;
+}
 export async function cleanupStudyWorkspaces(app: App, item: string, onlyDirection?: string) {
   const rows = all<Direction>(app.db, "select * from study_directions where item_id=? and workspace_run_id is not null", item);
   for (const d of rows.filter((d) => !onlyDirection || d.id === onlyDirection)) {
-    const owner = d.workspace_run_id!, refs = worktreesOf(app, owner), remaining: WorktreeRef[] = [];
-    for (const wt of refs) {
-      try {
-        owned(app, owner, wt);
-        if (!await releaseWorkspaceAsync(owner, wt) && existsSync(wt.path)) {
-          const root = getSpace(app, wt.space).rootPath;
-          if (!root) throw new Error("仓库目录不可用，保留工作区登记");
-          await checked(root, ["worktree", "remove", "--force", wt.path]);
-          await checked(root, ["worktree", "prune"]);
-        }
-      } catch (e) { remaining.push(wt); console.warn(`[omem] 课题工作区清理失败：${(e as Error).message}`); }
-    }
-    saveRefs(app, owner, remaining);
-    if (!remaining.length) run(app.db, "update study_directions set workspace_run_id=null where id=?", d.id);
+    if (!(await releaseManaged(app, d.workspace_run_id!)).length) run(app.db, "update study_directions set workspace_run_id=null where id=?", d.id);
   }
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { get } from "../api";
 import HelpText from "./HelpText.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
@@ -11,7 +12,7 @@ import UiSelect from "./UiSelect.vue";
  */
 type Follow = { enabled: boolean; quietMinutes: number; maxMessages: number; maxRunsPerDay?: number };
 type Ladder = { enabled: boolean; after: number };
-type Env = { id: string; name: string; note: string; ai?: string | { profile: string; model?: string; effort?: string }; thirdParty: boolean };
+type Env = { id: string; name: string; note: string; ai?: string | { profile: string; model?: string; effort?: string }; thirdParty: boolean; peer?: string };
 type Commits = { enabled: boolean; quietMinutes: number };
 type Flows = { follow?: Follow; gateLadder?: Ladder; commits?: Commits } & Record<string, unknown>;
 type Studies = { envs?: Env[] } & Record<string, unknown>;
@@ -38,6 +39,21 @@ function touch() { dirty.value = true; problem.value = ""; }
 function add() { envs.value.push({ id: "", name: "", note: "", thirdParty: false }); touch(); }
 function remove(i: number) { envs.value.splice(i, 1); touch(); }
 function setTier(e: Env, v: string) { if (v) e.ai = v; else delete e.ai; touch(); }
+/**
+ * The owner's paired devices a trial can be handed to (studies/remote.ts): the server checks again on
+ * save; one known to be someone else's server is left out. A device no longer paired stays listed for
+ * the entry that names it, so the choice can be seen and changed.
+ */
+const devices = ref<string[]>([]);
+onMounted(async () => {
+  try {
+    const [peers, cards] = await Promise.all([get<{ peers: { id: string }[] }>("/api/peers"), get<{ cards: { peer: string; card: { as?: string } | null }[] }>("/api/peer/cards").catch(() => ({ cards: [] }))]);
+    const others = new Set(cards.cards.filter((c) => c.card?.as === "service").map((c) => c.peer));
+    devices.value = peers.peers.map((p) => p.id).filter((id) => !others.has(id));
+  } catch { devices.value = []; }
+});
+const deviceOptions = (e: Env) => [{ value: "", label: "不派给设备" }, ...[...new Set([...devices.value, ...(e.peer ? [e.peer] : [])])].map((id) => ({ value: id, label: devices.value.includes(id) ? id : `${id}（没有配对）` }))];
+function setPeer(e: Env, v: string) { if (v) e.peer = v; else delete e.peer; touch(); }
 function saveEnvs() {
   const list = envs.value.map((e) => ({ ...e, id: e.id.trim(), name: e.name.trim(), note: e.note.trim() }));
   const bad = list.find((e) => !/^[a-z0-9][a-z0-9-]{0,39}$/.test(e.id) || e.id === "local" || !e.name);
@@ -85,7 +101,7 @@ function reset() { dirty.value = false; problem.value = ""; envs.value = (props.
 
   <div class="card pad stack">
     <div class="section-title">课题的试验可以在哪跑</div>
-    <HelpText>课题的每个方向写明它的试验在哪个环境里跑，只能用这里登记的。本机不用登记，它一直在：试验在宿主给课题单独建的工作区里跑，不碰你的仓库目录；能不能在本机执行别人仓库的脚本，在每个课题自己的范围里开。别的环境（云端会话、托管的流水线）在这里登记：说明里写清怎么把文件带过去、怎么读回结果，试验的运行会照着做。</HelpText>
+    <HelpText>课题的每个方向写明它的试验在哪个环境里跑，只能用这里登记的。本机不用登记，它一直在：试验在宿主给课题单独建的工作区里跑，不碰你的仓库目录；能不能在本机执行别人仓库的脚本，在每个课题自己的范围里开。别的环境（云端会话、托管的流水线）在这里登记：说明里写清怎么把文件带过去、怎么读回结果，试验的运行会照着做。选了“派给设备”的环境，试验交给你配对过的那台设备：它按仓库的远端地址找到自己的那份仓库，在它自己的工作区里切到方向确认时的提交，用它自己的模型跑完，把结果和证据文件送回这里。</HelpText>
     <div v-for="(e, i) in envs" :key="i" class="env">
       <div class="env-line">
         <label class="field env-name"><span>名字</span><input v-model="e.name" class="input" placeholder="云端会话" @input="touch" /></label>
@@ -94,7 +110,11 @@ function reset() { dirty.value = false; problem.value = ""; envs.value = (props.
           <span v-if="custom(e)" class="muted small">在配置文件里指定了后端</span>
           <UiSelect v-else :model-value="tierOf(e)" aria-label="用哪一档模型" :options="TIERS" @change="(v) => setTier(e, String(v))" />
         </div>
+        <div class="field env-peer"><span>派给设备</span>
+          <UiSelect :model-value="e.peer ?? ''" aria-label="派给设备" :options="deviceOptions(e)" @change="(v) => setPeer(e, String(v))" />
+        </div>
       </div>
+      <p v-if="e.peer" class="muted small env-hint">试验交给 {{ e.peer }}，用它自己的模型跑；“用哪一档模型”由那台按它自己的档位设置来选。</p>
       <label class="field"><span>怎么用这个环境</span><textarea v-model="e.note" class="input" rows="2" placeholder="把仓库打包上传到会话的工作目录；跑完把日志和结果文件下载回来放进证据。" @input="touch" /></label>
       <div class="row wrap">
         <UiCheckbox v-model="e.thirdParty" @change="touch">这里可以执行别人仓库的安装脚本和构建脚本（用完就丢的环境才勾）</UiCheckbox>
@@ -120,6 +140,8 @@ function reset() { dirty.value = false; problem.value = ""; envs.value = (props.
 .env-name { flex: 2 1 160px; }
 .env-id { flex: 1 1 110px; }
 .env-tier { flex: 1 1 150px; }
+.env-peer { flex: 1 1 150px; }
+.env-hint { margin: 0; }
 .mono { font-family: var(--mono); font-size: 12.5px; }
 .error { color: var(--danger); margin: 0; }
 </style>

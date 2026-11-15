@@ -11,8 +11,11 @@ import { chooseDirection, studyView } from "./service.ts";
 import { putScope, scopeView } from "./scope.ts";
 import { fixFinding } from "./fix.ts";
 import { cancelTrials } from "./trials.ts";
+import { registerPeerTrialRoutes } from "./remote-host.ts";
 
 export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
+  // Trials another of the owner's devices hands to this one (remote-host.ts).
+  registerPeerTrialRoutes(server, app, who);
   const itemId = (req: FastifyRequest, write: boolean) => {
     const item = getItem(app, (req.params as { id: string }).id), user = who(req);
     if (!can(app, user, "space.read", item.spaceId)) throw new HttpError(404, "事项不存在");

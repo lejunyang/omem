@@ -146,6 +146,7 @@ export const runKindLabel: Record<string, string> = {
   "flow-review": "复盘流程",
   "role-merge": "合并角色",
   "peer-agent": "设备的外部 Agent",
+  "peer-trial": "别的设备派来的试验",
   replay: "夜间复盘",
   "replay-arm": "复盘重答",
   "replay-judge": "复盘评判",

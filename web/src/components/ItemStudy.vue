@@ -144,7 +144,7 @@ async function judge(f: StudyFinding, state: "confirmed" | "rejected" | "later")
 }
 /** The commits a trial ran on, shortened. */
 const shas = (t: StudyTrial) => Object.values(t.commits ?? {}).map((c) => c.slice(0, 8)).join("、");
-const trialMeta = (t: StudyTrial) => [trialWord(t), t.fixOf ? "改动之后的重跑" : "", t.unsure ? "它自己拿不准" : "", t.escalated ? "请更好的模型看过" : "", t.attempts > 1 ? `第 ${t.attempts} 次` : "", everyRound.value ? `第 ${t.round} 轮` : ""].filter(Boolean).join(" · ");
+const trialMeta = (t: StudyTrial) => [trialWord(t), t.peer ? `在 ${t.peer} 上` : "", t.fixOf ? "改动之后的重跑" : "", t.unsure ? "它自己拿不准" : "", t.escalated ? "请更好的模型看过" : "", t.attempts > 1 ? `第 ${t.attempts} 次` : "", everyRound.value ? `第 ${t.round} 轮` : ""].filter(Boolean).join(" · ");
 </script>
 
 <template>
@@ -243,7 +243,7 @@ const trialMeta = (t: StudyTrial) => [trialWord(t), t.fixOf ? "改动之后的�
             <div v-else class="muted">{{ t.state === "running" ? "正在跑。" : t.state === "queued" ? "还没轮到。" : "没有跑。" }}</div>
             <div v-if="t.prior" class="muted prior">{{ t.prior }}</div>
             <div v-if="t.findings.length" class="muted">它觉得可能是问题的：{{ t.findings.map((x) => `${kindWords[x.kind] ?? x.kind}「${x.title}」`).join("、") }}</div>
-            <div v-if="t.env || shas(t)" class="muted">{{ [t.env ? `在哪跑：${t.env}` : "", shas(t) ? `提交 ${shas(t)}` : ""].filter(Boolean).join(" · ") }}</div>
+            <div v-if="t.env || shas(t)" class="muted">{{ [t.env ? `在哪跑：${t.env}` : "", t.peer ? `派给了设备 ${t.peer}${t.peerRunId ? `（那边的运行 ${t.peerRunId}）` : ""}` : "", shas(t) ? `提交 ${shas(t)}` : ""].filter(Boolean).join(" · ") }}</div>
             <div class="links">
               <template v-for="(r, i) in t.evidence.filter((x) => x.startsWith('src:'))" :key="r"><a href="#" :title="r" @click.prevent="refAction(r)?.()">原件 {{ i + 1 }}</a></template>
               <a v-if="t.runId" :href="`#/runs/${t.runId}`">看这次运行</a>

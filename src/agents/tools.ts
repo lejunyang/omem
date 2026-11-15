@@ -2146,6 +2146,9 @@ def({
 def({
   name: "trial_report", description: "只交这个试验的结果：passed / failed / blocked / unclear；拿不准标 unsure。evidence 填 $OMEM_ARTIFACTS 里的文件路径或 src: 引用；findings 只是候选，由小结归并。", write: true, schema: trialReportSchema,
   handler: async (ctx, a) => {
+    // A trial another of the owner's devices sent here (studies/remote-host.ts): kept with the run, fetched by that device.
+    const remote = await import("../studies/remote-host.ts");
+    if (remote.isPeerTrialRun(ctx.app, ctx.runId)) return remote.reportPeerTrial(ctx.app, ctx.runId!, a, flowActor(ctx).actor);
     const store = await import("../studies/store.ts");
     flowItem(ctx, store.trial(ctx.app, a.trial).item_id, true);
     await flowRefs(ctx, (a.evidence ?? []).filter((r) => r.startsWith("src:")));

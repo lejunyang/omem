@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
  * handoff). Modules that need it make their own with createRequire.
  */
 describe("ES modules", () => {
-  it.each(["./src/studies/push.ts", "./src/studies/fixes.ts", "./src/agents/tools.ts"])("loads %s as a native entry without an initialization cycle", (entry) => {
+  it.each(["./src/studies/push.ts", "./src/studies/fixes.ts", "./src/studies/remote.ts", "./src/studies/remote-host.ts", "./src/agents/tools.ts"])("loads %s as a native entry without an initialization cycle", (entry) => {
     expect(execFileSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(entry)}); console.log('loaded')`], { encoding: "utf8", windowsHide: true }).trim()).toBe("loaded");
   });
   it("never call require() without createRequire", () => {

@@ -96,6 +96,8 @@ export function cleanupCandidates(app: App, opts: { userId: string | null; space
       if (!path || !inside(app.runsDir, path)) continue;
       const [run, where] = relative(realOr(app.runsDir), realOr(path)).split(/[\\/]/);
       if (all(app.db, "select 1 from study_directions where workspace_run_id=?", run).length) continue;
+      // A trial another device sent here gives its workspace back when its run ends (studies/remote-host.ts).
+      if (all(app.db, "select 1 from runs where id=? and kind='peer-trial' and status in ('queued','running')", run).length) continue;
       if (wanted && !wanted.has(run)) continue;
       if (items.some((i) => realOr(i.path) === realOr(path))) continue;
       const c = every.find((x) => x.first.id === run);
