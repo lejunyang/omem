@@ -114,7 +114,7 @@ export function chartSpec(c: Extract<ViewComponent, { type: "chart" }>): Record<
   }
   if (c.kind === "line" || c.kind === "area") {
     // Straight from point to point, as on the web; a single line keeps a small dot per point.
-    const line = { style: { lineWidth: several ? 1.75 : 1.5, curveType: "linear" } };
+    const line = { style: { lineWidth: several ? 1.75 : 1.5, curveType: "monotone" } };
     return {
       ...base,
       type: c.kind,

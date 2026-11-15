@@ -21,7 +21,7 @@ updated: 2026-11-15
 - 承担一个阶段的运行（`flow-stage`）有了 `report_tests`、`attach_artifact` 和 `$OMEM_ARTIFACTS`（`src/flows/engine.ts`；交法和编码一轮相同）。
 - `flowView` 的每个阶段多 `tests`（`stageTests`）：这一段的运行交过的用例，同一条取最新一次，没通过、没做的在前，带需求点标题、`mode`、`note` 和产物。
 - 事项页的流程面板（`web/src/components/ItemFlow.vue`）在所选阶段下面列“逐条的结果”：一条一行，点开是说明和 `RunArtifacts`（截图、录屏的查看器）；没通过的默认展开。
-- `roles/_common.md`“流程里的一个阶段”加了验证 / 验收的做法：和编码验证的分工、用例从需求点来、凭据由本人输入、缺账号问本人或负责的人、不替本人下结论。
+- `roles/_common.md`“流程里的一个阶段”加了验证 / 验收的做法：和编码验证的分工、用例从需求点来、本人给的测试账号可以直接在测试环境登录（内置技能 `desktop-control` 的“安全”一节同步放开：测试环境、测试账号、凭据来自本人给的材料，三条都满足才行）、缺账号问本人或负责的人、不替本人下结论。折线、面积和小趋势线恢复成曲线（`charts.ts` 的 `curve`，单调三次，不会冲过数据点；飞书卡片 `curveType: monotone`）。
 
 
 ## 图表与指标只有一种画法（11-15）

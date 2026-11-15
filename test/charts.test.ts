@@ -31,4 +31,19 @@ describe("countable units in charts", () => {
     expect(dialTicks([0, 0])).toEqual([0, 0]);
     expect(dialTicks([5, 0, -2])).toEqual([100, 0, 0]);
   });
+  it("折线是曲线，但不会冲过数据点：两个 0 之间不低于 0，峰值不被画高", async () => {
+    const { curve } = await import("../packages/plugin-sdk/charts.ts");
+    const pts: [number, number][] = [[0, 100], [10, 100], [20, 20], [30, 100], [40, 100], [50, 60]];
+    const d = curve(pts);
+    expect(d.startsWith("M0.0,100.0")).toBe(true);
+    const segments = [...d.matchAll(/C([\d.-]+),([\d.-]+) ([\d.-]+),([\d.-]+) ([\d.-]+),([\d.-]+)/g)].map((m) => m.slice(1).map(Number));
+    expect(segments).toHaveLength(pts.length - 1);
+    // Every segment ends on a data point, and its control points stay between the two values it joins.
+    segments.forEach(([, c1y, , c2y, x, y], i) => {
+      expect([x, y]).toEqual(pts[i + 1]);
+      const lo = Math.min(pts[i][1], pts[i + 1][1]), hi = Math.max(pts[i][1], pts[i + 1][1]);
+      for (const c of [c1y, c2y]) { expect(c).toBeGreaterThanOrEqual(lo - 0.05); expect(c).toBeLessThanOrEqual(hi + 0.05); }
+    });
+    expect(curve([[0, 1], [5, 2]])).toBe("M0.0,1.0 L5.0,2.0");
+  });
 });

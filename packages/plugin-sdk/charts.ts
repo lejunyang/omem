@@ -368,6 +368,29 @@ function weekdays(labels: string[]): number[] | null {
   return t.map((x) => new Date(x).getUTCDay());
 }
 const polyline = (pts: [number, number][]) => pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+/**
+ * A smooth line through the points that never overshoots them (monotone cubic): it does not dip
+ * below zero between two zeros or rise above a peak, so the curve shows no value the data lacks.
+ */
+export function curve(pts: [number, number][]): string {
+  const n = pts.length;
+  if (n < 3) return polyline(pts);
+  const h: number[] = [], m: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    h.push(pts[i + 1][0] - pts[i][0]);
+    m.push(h[i] ? (pts[i + 1][1] - pts[i][1]) / h[i] : 0);
+  }
+  // Tangents: flat at a turn, otherwise the weighted harmonic mean of the two slopes around the point.
+  const t: number[] = [m[0]];
+  for (let i = 1; i < n - 1; i++) t.push(m[i - 1] * m[i] <= 0 ? 0 : (3 * (h[i - 1] + h[i])) / ((2 * h[i] + h[i - 1]) / m[i - 1] + (h[i] + 2 * h[i - 1]) / m[i]));
+  t.push(m[n - 2]);
+  let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], k = h[i] / 3;
+    d += ` C${(x0 + k).toFixed(1)},${(y0 + t[i] * k).toFixed(1)} ${(x1 - k).toFixed(1)},${(y1 - t[i + 1] * k).toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  return d;
+}
 const fmtUnit = (u: number, unit: string) => `${full(u)}${unit === "%" ? "%" : unit ? ` ${unit}` : ""}`;
 
 /** A series' colour among several: its slot, else its position. */
@@ -670,11 +693,11 @@ function cartesian(doc: Document, d: ChartSpec, W: number): HTMLElement[] {
         });
       } else if (d.kind === "area") {
         // Several areas on their own: the lines, each over the faintest wash of its colour.
-        g.append(anim(s(doc, "path", { d: `${polyline(pts)} L${cx(n - 1)},${y(0)} L${cx(0)},${y(0)} Z`, fill: color, "fill-opacity": 0.07, stroke: "none" }), "in", 300, 600));
+        g.append(anim(s(doc, "path", { d: `${curve(pts)} L${cx(n - 1)},${y(0)} L${cx(0)},${y(0)} Z`, fill: color, "fill-opacity": 0.07, stroke: "none" }), "in", 300, 600));
       }
       if (!stacked || si === m - 1) {
         // A stack's outline is the total's.
-        const path = s(doc, "path", { d: polyline(pts), fill: "none", stroke: stacked ? "var(--ink-2)" : single && d.kind === "area" ? "var(--chart-seq-4)" : color, "stroke-width": single ? 1.5 : 1.75, "stroke-linejoin": "round", "stroke-linecap": "round", pathLength: 1, "stroke-dasharray": "1 2" });
+        const path = s(doc, "path", { d: curve(pts), fill: "none", stroke: stacked ? "var(--ink-2)" : single && d.kind === "area" ? "var(--chart-seq-4)" : color, "stroke-width": single ? 1.5 : 1.75, "stroke-linejoin": "round", "stroke-linecap": "round", pathLength: 1, "stroke-dasharray": "1 2" });
         g.append(anim(path, "draw", 0, DRAW));
       }
       if (dotsOn) pts.forEach(([px, py], i) => {
@@ -1106,7 +1129,7 @@ export function sparkline(doc: Document, values: number[], label?: string) {
   const pts = values.map((v, i) => [x(i), y(v)] as [number, number]);
   const svg = s(doc, "svg", { viewBox: `0 0 ${W} ${H}`, class: "oc-spark", ...(label ? { role: "img", "aria-label": label } : { "aria-hidden": "true" }) });
   if (values.length <= 60) pts.forEach(([px, py], i) => svg.append(anim(s(doc, "line", { x1: px, x2: px, y1: H, y2: py, class: "oc-spark-hair" }), "grow", (i / values.length) * 600, 260)));
-  svg.append(anim(s(doc, "path", { d: polyline(pts), class: "oc-spark-line", pathLength: 1, "stroke-dasharray": "1 2" }), "draw", 0, 800));
+  svg.append(anim(s(doc, "path", { d: curve(pts), class: "oc-spark-line", pathLength: 1, "stroke-dasharray": "1 2" }), "draw", 0, 800));
   const [ex, ey] = pts[pts.length - 1];
   svg.append(anim(s(doc, "circle", { cx: ex, cy: ey, r: 2.5, class: "oc-spark-dot" }), "pop", 760, 220));
   return svg;
