@@ -10,7 +10,7 @@ import { ensurePersonalSpace } from "../src/core/spaces.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import { recordLarkSent } from "../src/channels/lark-feedback.ts";
-import { labelReplies, noteReply, replyLine, replyOutcome, replyOutcomeText, reviseReply } from "../src/agents/reply-outcomes.ts";
+import { backfillReplies, labelReplies, noteReply, replyLine, replyOutcome, replyOutcomeText, reviseReply } from "../src/agents/reply-outcomes.ts";
 import { signalOf } from "../src/agents/replay.ts";
 import { clearInsightsCache, insights } from "../src/insights/insights.ts";
 
@@ -185,6 +185,21 @@ describe("回复发出后有没有用", () => {
     expect(value("quality:reply:rate")).toBe(66.7);
     expect(value("quality:reply:revised")).toBe(1);
     expect(quality.metrics.find((m) => m.key === "quality:reply:对话里的回答:resolved")!.cell).toEqual({ table: "回复发出后的结果", row: "对话里的回答", col: "解决了" });
+  });
+
+  it("第一次启用时把最近一周的回答补登记一次，更早的和没做完的不补", () => {
+    const app = setup();
+    const recent = answered(app, 3 * 24), old = answered(app, 10 * 24), unfinished = answered(app, 2 * 24);
+    for (const [id, hours] of [[recent.runId, 3 * 24], [old.runId, 10 * 24]] as const) run(app.db, "update runs set status = 'done', created_at = ?, finished_at = ? where id = ?", ago(hours + 0.05), ago(hours), id);
+    run(app.db, "delete from reply_outcomes");
+    expect(backfillReplies(app)).toBe(1);
+    const row = raw(app, recent.runId)!;
+    expect(Math.abs(Date.parse(row.at) - Date.parse(ago(3 * 24)))).toBeLessThan(60_000);
+    expect(Date.parse(row.due_at)).toBeLessThan(Date.now());
+    expect(raw(app, old.runId)).toBeUndefined();
+    expect(raw(app, unfinished.runId)).toBeUndefined();
+    run(app.db, "delete from reply_outcomes");
+    expect(backfillReplies(app)).toBe(0);
   });
 
   it("同一次运行发了几条，以最后一条的时间为准；已经判过的不再重开", () => {

@@ -155,6 +155,29 @@ const QUESTION: DecisionQuestion = {
   },
 };
 
+/**
+ * Once, when this first runs on a library that already has answers: the last week's are noted too
+ * (by when their last message went out), so the first numbers do not take a week to appear.
+ */
+export function backfillReplies(app: App, days = 7): number {
+  if (one(app.db, "select 1 from kv where key = 'reply_outcomes_backfill'")) return 0;
+  run(app.db, "insert or replace into kv(key, value) values('reply_outcomes_backfill', ?)", now());
+  const runs = all<{ id: string; input: string; created_at: string; finished_at: string | null }>(app.db, "select id, input, created_at, finished_at from runs where created_at >= ? and kind in ('ask','guest','lark-command','agent','rule-fire') and status = 'done'", new Date(Date.now() - days * 86400_000).toISOString());
+  let n = 0;
+  for (const r of runs) {
+    const sent = one<{ message_id: string; chat_id: string | null; conversation_id: string | null; at: string }>(app.db, "select message_id, chat_id, conversation_id, at from lark_sent where run_id = ? and purpose = 'answer' order by at desc limit 1", r.id);
+    const input = json<{ conversationId?: unknown; threadId?: unknown }>(r.input, {});
+    const conversationId = sent?.conversation_id ?? (typeof input.conversationId === "string" ? input.conversationId : typeof input.threadId === "string" ? input.threadId : null);
+    // Only the stretch of the conversation this run wrote in: a long-lived conversation is not read through for every run.
+    const said = conversationId ? one<{ created_at: string }>(app.db, "select created_at from messages where conversation_id = ? and created_at >= ? and created_at <= ? and run_id = ? and role = 'assistant' order by created_at desc limit 1", conversationId, r.created_at, new Date(Date.parse(r.finished_at ?? r.created_at) + 600_000).toISOString(), r.id) : undefined;
+    const at = [sent?.at, said?.created_at].filter((x): x is string => !!x).sort().at(-1);
+    if (!at) continue;
+    noteReply(app, { runId: r.id, channel: sent ? "lark" : "conversation", chatId: sent?.chat_id, conversationId, messageId: sent?.message_id, at });
+    n++;
+  }
+  return n;
+}
+
 let labelling = false;
 /**
  * One bounded pass over replies whose waiting time is over. Called from the patrol tick without
@@ -164,6 +187,7 @@ export async function labelReplies(app: App, { limit = 12, at = now() }: { limit
   if (!app.config.replies.outcome.enabled || labelling) return 0;
   labelling = true;
   try {
+    backfillReplies(app);
     const rows = all<Row>(app.db, "select * from reply_outcomes indexed by reply_outcomes_due where label is null and due_at <= ? order by due_at limit ?", at, Math.max(1, Math.min(50, Math.floor(limit))));
     let done = 0;
     for (const o of rows) {
