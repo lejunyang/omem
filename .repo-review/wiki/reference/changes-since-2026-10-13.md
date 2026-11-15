@@ -20,6 +20,10 @@ updated: 2026-11-15
 - 设置 → AI → 决策有四项门槛、30 天报告与只读建议；本人接口 `/api/ai/decision/report`、设备命令 `decisions`，以及 `omem decision report` / `omem decision replay`。回放指定单个模型，当前门槛下比较相同成功样本，不写库，连续三次失败停止。盯群和直接答复本次不标注。
 - 详见 `docs/v2/ai-models.md` 的“按场景记录、门槛与回放”和验收 DEC1–DEC6；真实模型效果仍需本人用自己的记录校准。
 
+## 仓库从评审里学到的约定（11-15）
+
+仓库空间新增“学到的约定”：Agent 对照近 90 天其他交办采纳过的相近问题，通过 `propose_repo_lesson` 提炼；文本或模式相同的合并证据，两个根交办默认启用并只通知一次，本人关闭的不自动打开。启用的模式约定只查每轮新增行，命中复用仓库检查失败结果；其他约定也交给编码和各类评审，问题可引用 `lesson:<id>`。空间设置支持维护条目、打开来源交办；约定随设备拉取携带。代码在 `src/agents/code-lessons.ts`、`code.ts`、`review-chain.ts`、`code-overlap.ts`、`review.ts`、`tools.ts`，网页在 `web/src/components/RepoLessons.vue`。范围与上限见 `docs/v2/review.md`“学到的约定”。
+
 ## 通知负反馈改变下次行为；会议结束释放通知（11-15）
 
 - `src/core/notify-reactions.ts`、`src/channels/lark-feedback.ts`：本人对工具完成汇报回负面表情，按通知 `reportTool` 立即用 `setRung` 改回 ask，重算批准连续次数，later 告知一次；普通通知复用“忽略”按钮的模型路径，通知保存生成的规则，一次性事件不告知。紧急提醒与工具汇报不学忽略规则，`notify.learnFromReactions` 默认开，可在渠道设置关闭。通知页展示、删除忽略规则，并显示通知学出的规则。
@@ -321,7 +325,6 @@ updated: 2026-11-15
 - 加载态（`Skeleton.vue`）与虚拟滚动（`VirtualList.vue`，动态行高）：原件列表、长原件、聊天、运行列表、记忆列表（10-18）。
 - 原生 select / checkbox / datetime-local / confirm / prompt 全部换成自己的组件（10-18）：`web/src/components/UiSelect.vue`、`UiCheckbox.vue`（含 switch）、`UiSegmented.vue`、`UiDateTime.vue`、`DialogHost.vue` 与 `web/src/lib/dialog.ts`。约定写进了 AGENTS.md 和 `.agents/skills/omem-design`。
 
-
 ## 2026-10-19：事项来源、通知与跨空间归属
 
 - 通知持久化本次事件来源，飞书正文和来源区共用最终 URL 去重集合；定时提醒使用设定提醒的来源。
@@ -607,7 +610,6 @@ updated: 2026-11-15
 
 - 临时唤醒取消时，标题与说明分开显示，说明不再挤进标题。
 - `DialogHost` 的内容区支持长链接换行和限高滚动，操作区保留在可见范围；关联说明的无障碍标签。桌面、手机和较矮视口检查换行、滚动、取消与焦点返回。
-
 
 ## 2026-10-23：技能目录、档案默认 AI 与任务选型
 
@@ -907,7 +909,6 @@ updated: 2026-11-15
 - **工具按分组授权**：`tool-help.ts` 的 `expandTools`：角色和 Agent 档案的 `tools` 可写 `group:<分组>` 和 `-<工具>`，加载时展开（`ROLE_TOOLS` 不随分组授出），保存角色时检查分组名。主助手改成按分组写（排除 `write_page`、`propose_item_update`、`propose_profile_change`、`meeting_send`），实际可用的工具和以前一样；以后新工具放进分组就可用，自定义过的主助手也不用再为工具清单合并。
 - **改卡片不再依赖读消息接口**：`tools.ts` 的 `larkGuard` 遇到 `reply_to` / `lark_update_card` 时，先从 `card_interactions`（机器人发的卡片）和 `lark_messages` 找消息所在的会话，找不到才调飞书 `im.message.get`，失败时把飞书的错误码带进报错。起因：机器人读不了消息时，改自己刚发的卡片也报“无法确认被回复消息所在的飞书会话”。
 
-
 ## 10-29：编码交办卡片的检查行、运行标题的悬浮提示
 
 - 编码交办结束的卡片原来把运行输出的 `repos`（含 `git diff --stat` 的文件列表）原样转成 JSON 放在“检查：”后面；没有配置检查命令或交办了多个仓库时都会这样。`src/channels/lark-code-progress.ts` 的 `checkLines` 改为每个仓库一行：检查命令通过 / 未通过（退出码、耗时）或“没有配置检查命令”，加上改动规模（`--stat` 最后一行）。文件明细只在运行页看。
@@ -947,7 +948,6 @@ updated: 2026-11-15
 - **两种人数**：规则字段加 `meeting.invitedCount`（会邀人数）。`lark-meetings.ts` 的 `invitedCount` 按会议链接（`/j/<会议号>`）在已采集的日程原件里找日程 id，找不到再查 `calendar +agenda`；主日历 id 缓存在 kv `lark_primary_calendar`；参与人按 `calendar/v4/.../attendees` 读，`chat` 类型按 `chat_members` 展开去重，跳过会议室和拒绝的。入会时和在会人数一起读，存进新列 `lark_meetings.invited`（迁移）。`meeting.participantCount` 不再算 `user_type = 10` 的应用（`Person.bot`，`countOf`）。确认卡片和试运行写两种人数；规则页“满足条件时询问”的默认条件改为会邀人数 ≥ 30；生成规则的提示说明两者区别。
 - **在会议里拉机器人**：每个机器人的长连接注册 `vc.bot.meeting_invited_v1`，`botInvitedToMeeting`：本人邀请的直接 `bots/join`，别人邀请的发 `meeting-join` 卡片；设置取本人为这个机器人设的会议规则，没有就记录、回答、导入共享文档。不需要规则，`ruleId` 为 `invited`。
 - **入会事件状态**：lark-cli 先打印 ready、十几秒后才因没订阅退出，以前权限检查会误报“正在接收”。现在监听要稳定 45 秒才算在接收，45 秒内退出的不算；没在接收就每分钟轮询。轮询能用时，权限检查把它写成说明，不算缺项。
-
 
 ## 10-30：设置页“占用”
 
@@ -1121,7 +1121,6 @@ updated: 2026-11-15
 - **合并**（`src/sources/duplicates.ts`）：`findDuplicateDocs` 按 document id、`wiki_nodes.obj_token` 或节点找同一空间里的成对副本；`mergeDuplicateDocs` 默认只列出，`dryRun: false` 时每对一个事务：标注按段落移到知识库那份（找不到记失效）、关注程度在更高的人定时带过去、各表的 `source_id`（`page_cites`、`digest_done`、`source_locations`、`source_moves`、`lark_messages`、`wiki_nodes`、`source_cites`…）和事项材料改过去、docx 那份变成保留正文的墓碑，`source_aliases` 记旧 id → 新 id 和 `detail`。入口：`omem lark docs-dedupe [--apply]`、远程 `sources-merge-duplicates`。
 - **解析旧 id**：`aliasTarget` / `canonicalSourceId`，用在 `getSource`（`readSource` 读新 id 的正文）、`read_source` 的 `resolveSource`、`/api/sources/:id`、分享快照、飞书引用链接、Wiki 引用。
 - **相同内容折叠**（`search.ts`）：非代码原件按正文 hash 和起始行折叠，留排名最高的一份，`sameAs` 列出其余；`search` 工具写“另有 N 份相同内容”，命令面板可展开。
-
 
 ## 10-31：页面写给人读（内置技能 wiki-writing）
 
@@ -1486,7 +1485,6 @@ updated: 2026-11-15
 - `lark-cot.ts`：`startCot` 的 `locate`；建气泡前 `GET /im/v1/messages/:id` 看锚点有没有 `thread_id`，有就 `reply_in_thread = true`（普通回复会被飞书放进话题，气泡接口不会）。`lark-agent-cot.ts` 在会话没有话题时传 `locate`。`rules/actions.ts` 记 `lastMessageId` 时一起记 `lastTopicId`。
 - 验收见 acceptance.md 同名一节；测试 `test/lark-cards.test.ts`、`test/lark-answers.test.ts`，`test/asks.test.ts` 的排版用例改写。
 
-
 ## 豆包临时会话在重启后继续清理（2026-11-05）
 
 - 修复运行中重启造成的遗漏：旧豆包 CLI 任务仍在云端执行，但 omem 的 `finally` 已丢失；重跑只删除新会话，旧会话留在历史里。
@@ -1495,7 +1493,6 @@ updated: 2026-11-15
 - 回归用单独的 Node 子进程拿到 ID 后立即退出，确认清理登记先于退出落盘，再用新的 App 恢复；覆盖云端仍在执行、正常完成、接口失败重试、应用变更、404 和权限查询失败。既有 CLI 临时文件测试改用独立临时目录，避免与常驻服务正在使用的文件冲突。
 - 真机：CLI 已创建会话、OpenAPI 返回 in_progress 时退出所属 omem 测试进程，用隔离数据库中的清理记录恢复，等待空闲后删除；最终 OpenAPI 返回 HTTP 404 / code 3440008，CLI 列表不再包含这次会话。该清理表是设备本地的进程状态，快照不携带，覆盖拉取保留本机的记录。
 
-
 ## ACP 与豆包共用会话清理，退役被替换的编码与评审会话（2026-11-05）
 
 - `session-cleanup.ts` 统一登记、释放、重启恢复和失败重试。`session_cleanup` 从前一版豆包清理表迁移，后端与会话 ID 共同定位；凭据从当前配置读取，仅保存原配置指纹，命令或身份配置改变时不改用另一身份清理。该表只在本机保留，不随设备快照同步。
@@ -1503,7 +1500,6 @@ updated: 2026-11-15
 - 复看评审会话超过上限后，旧实现会保存新 ID 并遗失旧 ID；`keepSession` 现在将被替换的旧会话交给同一清理流程。编码换后端、上下文超限或恢复失败后成功建立新会话，同样退役登记过的旧会话。仍在使用的会话保持续聊能力；没有可核对后端身份的既有历史不批量推断处理。
 - 回归覆盖 ACP 子进程退出后的协议删除与归档回退、协议优先、失败后重试、原配置校验、保留会话不自动清理、评审轮换，以及前版豆包清理记录的迁移；真实 Codex / TraeX：临时任务回答 2 后归档成功；另一轮在模型已经产生回复、会话持久化（archived=0）时退出宿主，恢复清理后均为 archived=1，登记表清空。
 - 协议归档被拒绝时保留后端错误的 `data`（例如仍被其他客户端占用），不只写 Internal error，也不绕过协议改用归档命令；记录继续等待重试。模型检测和聊天连接也接入统一登记，聊天仍标为保留。
-
 
 ## 慢检索的索引、空缓存与进程隔离（2026-11-05）
 
@@ -2257,7 +2253,6 @@ Agent 页新增“MCP 服务”：按名称配置命令和参数或网址，环�
 
 实现与专项回归：`src/agents/mcp-test.ts`、`web/src/components/McpServices.vue`、`test/mcp-servers.test.ts`、`test/fixture-mcp-server.ts`。
 
-
 ## 11-14：候选技能交给夜间复盘试用，补充调研与逐轮改进技能说明
 
 - K1 从库中 draft 技能和 pending 技能提案挑候选，按名字、说明匹配问题（向量余弦 ≥0.5，无向量双字相似度 ≥0.2），遵守档案 / 角色归属；同一题同一候选不重试。变体只追加最多 6000 字符，不增加工具。
@@ -2265,7 +2260,6 @@ Agent 页新增“MCP 服务”：按名称配置命令和参数或网址，环�
 - `replay_effects` 记候选 helped / hurt；默认两胜且胜多于负后启用草稿或采纳提案，记复盘归因，发一次 later 通知。`replay.skills.adoptAfter=0` 只试用。两负无胜拒绝提案、草稿仍保留；有胜未达门槛的提案不按年龄过期。Agent 页显示胜负与“复盘后自动启用”，复盘结果带技能名；CLI 与设备命令含 K1。
 - README 与文档站说明内置 `research`（库先查、外部 MCP、多来源核对、开头给结论）、`improve-loop`（先定度量与完成条件，每轮一改，无效回退，两轮换方向、四轮交回）；内部检索或另一模型云端调研的接法只写数据目录技能，内部名字和代码不进入外部查询。技能正文保持不变。
 - 回归限于 `test/replay.test.ts`、`test/desktop-control.test.ts` 与前后端类型检查，未跑全量检查；细项见 `docs/v2/acceptance.md` 的 RP-K1-01 至 RP-K1-07。
-
 
 ## 11-15：改进循环由宿主度量、回退和停止
 

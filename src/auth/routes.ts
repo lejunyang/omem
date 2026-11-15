@@ -57,6 +57,10 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/events": "self",
 
   // spaces
+  "GET /api/spaces/:id/lessons": "owner",
+  "POST /api/spaces/:id/lessons": "owner",
+  "PUT /api/spaces/:id/lessons/:lesson": "owner",
+  "DELETE /api/spaces/:id/lessons/:lesson": "owner",
   "GET /api/spaces": "self",
   "POST /api/spaces": g("spaces.create"),
   "GET /api/spaces/:id": s("space.read", "p.id"),

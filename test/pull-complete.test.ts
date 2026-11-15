@@ -1,3 +1,4 @@
+import { listLessons, proposeLesson, previousLessonMaterial } from "../src/agents/code-lessons.ts";
 import { execFileSync } from "node:child_process";
 import { chmodSync, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -88,15 +89,18 @@ describe("complete portable pulls", () => {
   it("keeps independently allocated annotation and finding IDs, follows merged findings and later decisions", async () => {
     const local = testApp();
     const remote = testApp();
+    for (const app of [local, remote]) createSpace(app, { id: "lesson-demo", name: "示例仓库", kind: "repo" });
     const sources = [local, remote].map((app) => upsertSource(app, { spaceId: "personal", kind: "doc", uri: "plan.md", title: "计划", text: "正文" }));
-    const runs = [local, remote].map((app) => createRun(app, { kind: "code", spaceId: "personal", title: "评审" }));
+    const runs = [local, remote].map((app) => createRun(app, { kind: "code", spaceId: "lesson-demo", title: "评审", input: { repos: ["lesson-demo"] } }));
     for (const [i, app] of [local, remote].entries()) {
-      run(app.db, "insert into reviews(id,code_run_id,check_name,verdict,created_at) values(?,?,'functional','changes','2026-01-01')", `review_${i}`, runs[i].id);
+      run(app.db, "insert into reviews(id,code_run_id,check_name,verdict,created_at) values(?,?,'functional','changes',strftime('%Y-%m-%dT%H:%M:%fZ','now'))", `review_${i}`, runs[i].id);
       run(app.db, "insert into review_findings(review_id,severity,title) values(?,'P2',?)", `review_${i}`, `问题 ${i}`);
       run(app.db, "insert into source_notes(source_id,kind,note,created_at) values(?,'key',?,'2026-01-01')", sources[i].id, `标注 ${i}`);
     }
     run(remote.db, "insert into review_findings(review_id,severity,title,merged_into,state) values('review_1','P2','重复问题',1,'merged')");
     run(remote.db, "update runs set output = ?, status = 'done', finished_at = '2026-01-02' where id = ?", JSON.stringify({ reviewLead: { rulings: [{ id: 2, decision: "merge", into: 1 }] } }), runs[1].id);
+    run(remote.db, "update review_findings set state='accepted' where id=1");
+    const lesson = proposeLesson(remote, "coach", { space: "lesson-demo", text: "查询原件时必须同时限定当前空间", findings: [1] });
     let f = await snapshot(remote);
     try { mergeLibrary(local, f); } finally { cleanupFetched(f); }
     const findings = all<{ id: number; title: string; merged_into: number | null }>(local.db, "select id,title,merged_into from review_findings");
@@ -104,6 +108,8 @@ describe("complete portable pulls", () => {
     const merged = findings.find((r) => r.title === "重复问题")!;
     expect(findings).toHaveLength(3);
     expect(merged.merged_into).toBe(first.id);
+    expect(listLessons(local, "lesson-demo").find(l => l.id === lesson.id)?.evidence).toEqual([{ run: runs[1].id, finding: first.id }]);
+    expect(previousLessonMaterial(local, "lesson-demo", runs[0].id, [{ id: 0, title: "问题 1", file_path: null }])).toContain(`#${first.id}：`);
     expect(all(local.db, "select * from source_notes")).toHaveLength(2);
     expect(JSON.parse(one<{ output: string }>(local.db, "select output from runs where id = ?", runs[1].id)!.output).reviewLead.rulings).toEqual([{ id: merged.id, decision: "merge", into: first.id }]);
     await new Promise((r) => setTimeout(r, 10));

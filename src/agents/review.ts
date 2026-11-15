@@ -1,3 +1,4 @@
+import { bumpLessonRefs } from "./code-lessons.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { defaultReviewTiers } from "../core/config.ts";
@@ -438,7 +439,11 @@ export function recordReview(app: App, r: { codeRunId: string; round: number; ch
     const relation = r.ai && !r.ai.profile?.startsWith("peer:") ? independence(coderAI(app, r.codeRunId), r.ai) : null;
     run(app.db, "insert into reviews(id, code_run_id, round, check_name, tier, profile_id, model, effort, verdict, summary, change_points, created_at, independence) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
       id, r.codeRunId, r.round, r.check, r.tier ?? null, r.ai?.profile ?? null, r.ai?.model ?? null, r.ai?.effort ?? null, r.verdict, r.summary, r.changePoints?.length ? JSON.stringify(r.changePoints) : null, now(), relation);
+    const sourceRun = one<{ input: string; space_id: string }>(app.db, "select input, space_id from runs where id=?", r.codeRunId)!;
+    const repoSpaces = (JSON.parse(sourceRun.input).repos ?? [sourceRun.space_id]) as string[];
     for (const f of r.findings) {
+      const namedRepo = repoSpaces.find(space => f.file?.startsWith(space + "/"));
+      bumpLessonRefs(app, namedRepo ? [namedRepo] : repoSpaces, [f.detail, ...f.evidence].join("\n"));
       run(app.db, "insert into review_findings(review_id, severity, file_path, line, title, detail, suggestion, evidence, confidence, design_decision) values(?,?,?,?,?,?,?,?,?,?)",
         id, f.severity, f.file ?? null, f.line ?? null, f.title, f.detail, f.suggestion, JSON.stringify(f.evidence), f.confidence, f.decision ?? null);
     }

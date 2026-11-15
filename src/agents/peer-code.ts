@@ -1,3 +1,4 @@
+import { lessonsText } from "./code-lessons.ts";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -188,7 +189,7 @@ export async function peerWorkspace(app: App, runId: string, caller: string, a: 
 
 ${String(work.last.input.task ?? "")}` : "";
       const reviews = work.all.length > 1 ? `\n\n## 各轮\n\n${work.all.map((r, i) => `- 第 ${i + 1} 轮 ${r.id}：${r.status}${r.output.verdict ? `，${r.output.verdict}` : ""}`).join("\n")}\n\n评审要求修改时，在同一个工作区接着改，再 finish。评审结论用 read_run 看。` : "";
-      return `# 交办 ${root.id}：${root.title}\n\n状态：${stage}\n\n## 任务\n\n${input.task}${item}${notes}\n\n## 工作区\n\n${ws || "（还在准备）"}${multi ? "\n\n路径写成 仓库空间id/路径。" : ""}\n\n## 怎么做\n\n用 action=list / read / grep 看代码，write / edit / delete 改文件，run 运行上面的命令，git 看状态、diff、提交（按功能分几次提交，不用 push）。改完用 action=finish 写一段说明：这台机器提交剩下的改动、运行检查命令，再按 review 交给评审（peer = 你自己用 review_task / submit_review 评审，here = 这台机器的评审 Agent）。跑过的测试用 report_tests（带 run_id）交结果，每个用例写它对应的需求点或测试点 id。${reviews}`;
+      return `# 交办 ${root.id}：${root.title}\n\n状态：${stage}\n\n## 任务\n\n${input.task}${item}${notes}\n\n${lessonsText(app, worktrees.map(w => w.space))}\n\n## 工作区\n\n${ws || "（还在准备）"}${multi ? "\n\n路径写成 仓库空间id/路径。" : ""}\n\n## 怎么做\n\n用 action=list / read / grep 看代码，write / edit / delete 改文件，run 运行上面的命令，git 看状态、diff、提交（按功能分几次提交，不用 push）。改完用 action=finish 写一段说明：这台机器提交剩下的改动、运行检查命令，再按 review 交给评审（peer = 你自己用 review_task / submit_review 评审，here = 这台机器的评审 Agent）。跑过的测试用 report_tests（带 run_id）交结果，每个用例写它对应的需求点或测试点 id。${reviews}`;
     }
     case "list": {
       const { dir, rel } = locate(work, a.path ?? (multi ? worktrees[0].space : ""));
@@ -363,7 +364,9 @@ ${String(work.last.input.task ?? "")}` : "";
       if (!a.summary?.trim()) throw new HttpError(400, "finish 要写 summary：改了什么、怎么验证的、还有什么没做");
       const { queueStandaloneFix } = await import("./review-fix.ts");
       const peerReviewer = a.review === "here" ? undefined : { ...work.peer };
-      const next = queueStandaloneFix(app, root.id, work.last.id, a.summary.trim(), runUser(app, root.id), { peerFinished: true, peerReviewer });
+      const checked = work.last.output.repos as { space: string; check?: { commit?: string } | null }[] | undefined;
+      const lessonBases = work.last.output.verdict === "awaiting-peer-code" ? work.last.output.lessonBases : Object.fromEntries(worktrees.map(w => [w.space, checked?.find(r => r.space === w.space)?.check?.commit ?? git(workDirOf(w), ["rev-parse", "HEAD"]).stdout.trim()]));
+      const next = queueStandaloneFix(app, root.id, work.last.id, a.summary.trim(), runUser(app, root.id), { peerFinished: true, peerReviewer, lessonBases });
       return `已排队第 ${work.all.length + 1} 轮 ${next.id}：这台机器提交剩下的改动、运行检查命令，再${peerReviewer ? `等你评审（review_task，run_id=${next.id}，用 submit_review 逐项交）` : "交给这台机器的评审 Agent"}。进度用 read_run 看；评审要求修改就在同一个工作区接着改，再 finish。`;
     }
   }

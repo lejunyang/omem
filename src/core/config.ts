@@ -396,6 +396,8 @@ export const configSchema = z.object({
         when: z.any().nullable().default(null),
         guide: z.string().max(2000).default(""),
       })).default({}),
+      /** Accepted review findings may become curated conventions of one repository. */
+      lessons: z.object({ auto: z.boolean().default(true), max: z.number().int().min(1).max(100).default(30) }).default({ auto: true, max: 30 }).optional(),
       /** With a lead, rounds re-review only the checks the fixes touch; every this many rounds all run again. */
       rereviewAllEvery: z.number().int().min(1).max(10).default(2),
       /** Prefer a different maker than the coder; require only adds a warning when unavailable. */
@@ -403,7 +405,7 @@ export const configSchema = z.object({
       /** The models review rounds rotate through (tiers with `rotateModels`, or the owner's choice for a delegation). */
       rotation: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).optional(),
     })
-    .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [], crossFamily: "prefer" as const })),
+    .default(() => ({ tiers: defaultReviewTiers(), checks: {}, lessons: { auto: true, max: 30 }, rereviewAllEvery: 2, rotation: [], crossFamily: "prefer" as const })),
   /**
    * Tools that need the owner (agents/approval-ladder.ts): `tools` wait for an OK every time; `report`
    * run and the owner is told afterwards. After `promoteAfter` approvals in a row of a tool in `tools`

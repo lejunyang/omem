@@ -43,6 +43,7 @@ export const pullTables: Table[] = [
   { name: "page_corrections", key: ["id"], newer: "updated_at" },
   { name: "rules", key: ["id"], newer: "updated_at", local: ["enabled"] },
   { name: "archive_rules", key: ["id"], newer: "sync_updated_at" },
+  { name: "repo_lessons", key: ["id"], newer: "updated_at" },
   { name: "attention_rules", key: ["id"], newer: "sync_updated_at" },
   { name: "rule_handled", key: ["rule_id", "key"] },
   { name: "schedules", key: ["id"], local: ["enabled"] },
@@ -275,6 +276,12 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
         }
       }
       if (t.name === "review_findings") {
+        // Lesson evidence travels with curated space settings; finding ids are device-local integers.
+        for (const row of all<Row>(remote, "select id, evidence from repo_lessons")) {
+          const evidence = JSON.parse(String(row.evidence)) as { finding?: number }[];
+          for (const e of evidence) if (e.finding != null) e.finding = idMap.get(e.finding) ?? e.finding;
+          remote.prepare("update repo_lessons set evidence=? where id=?").run(JSON.stringify(evidence), row.id);
+        }
         for (const row of all<Row>(remote, "select id, merged_into from review_findings where merged_into is not null"))
           remote.prepare("update review_findings set merged_into = ? where id = ?").run(idMap.get(Number(row.merged_into)) ?? null, row.id);
         // These are actionable numeric references, unlike the historical prose in reports.

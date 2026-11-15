@@ -1,3 +1,4 @@
+import { lessonsText, previousLessonMaterial } from "./code-lessons.ts";
 import type { ViewComponent } from "./ui-blocks.ts";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -148,6 +149,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     `## 检查结果\n\n${checkText}`,
     checked ? preCheckText(checked, "review") : "",
     designText,
+    lessonsText(app, worktrees.map(w => w.space)),
     tests.length ? `## 测试结果\n\n编码 Agent 用 report_tests 交的（每个测试取最近一次；是它自己报的，和检查结果、diff 对照着看）：\n\n${rt.testsText(app, tests, { artifactPath: (id) => shotPath.get(id) ?? null })}` : "",
     shots.length ? `## 截图、录屏和报告\n\n编码 Agent 和检查命令交的（T 编号是对应的修改项），文件在这台机器上，需要时打开看：\n\n${art.artifactsText(app, shots)}` : "",
     ignored ? `## 提交了被忽略的文件\n\n仓库的 .gitignore 忽略这些文件（生成代码、依赖、构建产物），改动却把它们加进了提交：\n\n${ignored}\n\n重新安装或生成时它们会被覆盖；除非任务要求入库，这是要改的问题。` : "",
@@ -411,6 +413,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       await runRole(app, {
         role: "review-lead",
         reviewLead: true,
+        addTools: ["propose_repo_lesson"],
         spaceId: run.spaceId!,
         spaces,
         alsoRead: indexed,
@@ -540,7 +543,7 @@ export const TASK_RULING = [
 /** What a check of a task-driven delegation reads about the tasks already there. */
 export const taskCheckBrief = (list: string) => `## 这次交办已有的修改项\n\n${list || "（没有）"}\n\n已经是修改项的问题（包括等本人决定、以后再做的）不要再提。某一项改过了还有问题，或者有新的情况要补充，照常提问题，在标题里写明是哪一项（如“T3 没改好：……”），评审负责人会把它并到那一项。\n\n先找会让需求的验收标准做不到、或在现在的实际用法下出错的问题。只在假想的用法下出现的（多个客户端并发、协议被故意乱用、极少见的时序），严重程度如实标，并在问题里写清要什么条件才会碰到；不要为了找出问题往越来越深的边界里挖。`;
 
-function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, failed: string[], tasks?: string) {
+export function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, failed: string[], tasks?: string) {
   const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
   const round = roundOf(run);
   const fmt = (f: ReturnType<typeof roundFindings>[number]) => {
@@ -564,6 +567,8 @@ function leadTask(app: App, run: Run, plan: ReviewPlan, reviewTask: string, fail
     `## 各评审项的结论\n\n${reviews.join("\n")}${failed.length ? `\n\n没有完成的评审项：${failed.join("、")}（不要替它们下结论，在 summary 里说明缺了哪项）` : ""}`,
     independenceWarnings(app, run.id, round),
     `## 这一轮的问题\n\n${now.map(fmt).join("\n") || "（没有问题）"}`,
+    "采纳的问题能提炼成这个仓库可复用的约定时，用 propose_repo_lesson 提议并带上 findings；是否同类由你判断，能机械表达才给 pattern 和 paths。",
+    ...worktreesOf(app, String(run.input.continueFrom ?? run.id)).map(w => previousLessonMaterial(app, w.space, String(run.input.continueFrom ?? run.id), now)),
     earlier.length ? `## 之前的轮次\n\n${earlier.join("\n\n")}\n\n同一个问题修过还在报时，判断是没修好还是评审要求不合理；连续僵持说明该交给本人（escalate）。` : "",
     tasks !== undefined ? `## 已有的修改项\n\n${tasks || "（没有）"}\n\n${TASK_RULING}` : `## 评审项（下一轮可选择只复审其中受影响的）\n\n${plan.checks.map((n) => `- ${n}（${infos.get(n)?.label ?? n}）：${SEVERITY_LABEL[infos.get(n)?.blocks ?? "major"]}及以上阻塞`).join("\n")}`,
     tasks !== undefined ? thirdFixText(app, workRootOf(app, run.id)) : "",

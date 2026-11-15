@@ -1,3 +1,4 @@
+import { lessonInput, listLessons, saveLesson, removeLesson } from "../agents/code-lessons.ts";
 import { ROLE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
 import { skillDisplayTally } from "../agents/replay-skills.ts";
 import { outcomeBreakdown } from "../core/notify-outcome.ts";
@@ -392,6 +393,26 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return updateSpace(app, id, { name: b.name, description: b.description, settings: b.settings ? { ...getSpace(app, id).settings, ...b.settings } : undefined });
   });
   server.post("/api/spaces/:id/sync", async (req) => scheduleSpaceSync(app, (req.params as { id: string }).id));
+  server.get("/api/spaces/:id/lessons", async req => {
+    const space = (req.params as { id: string }).id;
+    const lessons = listLessons(app, space);
+    const ids = [...new Set(lessons.flatMap(l => l.evidence.map(e => e.run)))];
+    const titles = new Map<string, string>();
+    for (let i = 0; i < ids.length; i += 100) {
+      const batch = ids.slice(i, i + 100);
+      for (const r of all<{ id: string; title: string }>(app.db, `select id,title from runs where id in (${batch.map(() => "?").join(",")}) limit 100`, ...batch)) titles.set(r.id, r.title);
+    }
+    return lessons.map(l => ({ ...l, evidence: l.evidence.map(e => ({ ...e, title: titles.get(e.run) ?? e.run })) }));
+  });
+  server.post("/api/spaces/:id/lessons", async req => saveLesson(app, (req.params as { id: string }).id, lessonInput.parse(req.body)));
+  server.put("/api/spaces/:id/lessons/:lesson", async req => {
+    const p = req.params as { id: string; lesson: string };
+    const body = lessonInput.extend({ state: z.enum(["proposed", "on", "off"]) }).parse(req.body);
+    return saveLesson(app, p.id, { ...body, id: p.lesson });
+  });
+  server.delete("/api/spaces/:id/lessons/:lesson", async req => {
+    const p = req.params as { id: string; lesson: string }; removeLesson(app, p.id, p.lesson); return { ok: true };
+  });
   server.get("/api/spaces/:id/workspaces", async (req) => {
     const { listWorkspaces } = await import("../agents/workspaces.ts");
     return listWorkspaces(app, getSpace(app, (req.params as { id: string }).id));
@@ -1767,7 +1788,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { validateReviewSettings } = await import("../agents/review.ts");
     const settings = validateReviewSettings(app, req.body);
     const next = structuredClone(app.config);
-    next.review = settings;
+    next.review = { ...settings, lessons: app.config.review.lessons };
     saveConfig(next, app.home);
     Object.assign(app.config, next);
     return { ok: true };

@@ -1,3 +1,4 @@
+import { lessonsText, listLessons, previousLessonMaterial } from "./code-lessons.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -107,7 +108,7 @@ export function runCheck(app: App, rootId: string, check: string, t: CheckTurn) 
       spaceId: t.run.spaceId!,
       spaces: t.spaces,
       alsoRead: t.indexed,
-      task: t.task,
+      task: [t.task, lessonsText(app, worktreesOf(app, rootId).map(w => w.space))].filter(Boolean).join("\n\n"),
       runId: t.runId,
       cwd: t.cwd,
       signal: t.signal,
@@ -205,7 +206,7 @@ export function verifyChecks(app: App, rootId: string, run: Run, worktrees: Work
     const head = multi ? `### ${wt.space}\n\n` : "";
     const dir = workDirOf(wt);
     const where = `编码工作区（依赖和构建产物在这里）：${dir}`;
-    const command = checkCommandOf(app, run, wt.space);
+    const command = checkCommandOf(app, run, wt.space) ?? (listLessons(app, wt.space, { states: ["on"] }).some(l => l.pattern) ? "学到的约定" : undefined);
     if (!command) return [`${head}仓库没有设检查命令：只有编码 Agent 在说明里写的验证，宿主没有复核。\n${where}`];
     const last = latestCheck(app, rootId, wt.space);
     const covers = !!last?.commit && shas.length > 0 && shas.every((s) => git(dir, ["merge-base", "--is-ancestor", s, last.commit!]).ok);
@@ -555,9 +556,10 @@ async function lookRuling(app: App, rootId: string, reviewed: Run, round: number
     await runRole(app, {
       role: "review-lead",
       reviewLead: true,
+      addTools: ["propose_repo_lesson"],
       spaceId: reviewed.spaceId!,
       spaces: (await checkScope(app, reviewed)).spaces,
-      task: [LOOK_RULING, `## 复看所用模型\n\n${models}`, independenceWarnings(app, reviewed.id, round), `## 已有的修改项\n\n${taskList(app, rootId) || "（没有）"}`, thirdFixText(app, rootId), `## 复看提的问题\n\n${fresh.map(fmt).join("\n")}`, TASK_RULING, reviewTask].filter(Boolean).join("\n\n"),
+      task: [LOOK_RULING, `## 复看所用模型\n\n${models}`, independenceWarnings(app, reviewed.id, round), `## 已有的修改项\n\n${taskList(app, rootId) || "（没有）"}`, thirdFixText(app, rootId), `## 复看提的问题\n\n${fresh.map(fmt).join("\n")}`, TASK_RULING, ...worktreesOf(app, rootId).map(w => previousLessonMaterial(app, w.space, rootId, fresh)), reviewTask].filter(Boolean).join("\n\n"),
       runId,
       signal,
       onEvent: (e) => event(e.type, { ...e, phase: "lead" }),

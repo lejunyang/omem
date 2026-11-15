@@ -16,6 +16,11 @@ import { remember } from "../src/memory/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 
 describe("roles and permissions", async () => {
+  it("keeps repository lesson curation owner-only", () => {
+    for (const key of ["GET /api/spaces/:id/lessons", "POST /api/spaces/:id/lessons", "PUT /api/spaces/:id/lessons/:lesson", "DELETE /api/spaces/:id/lessons/:lesson"])
+      expect(ROUTE_RULES[key]).toBe("owner");
+    expect(toolAllowed(app, "owner", "propose_repo_lesson")).toBe(true);
+  });
   it("keeps level audit decisions owner-only", () => {
     expect(ROUTE_RULES["POST /api/sources/level-audit/review"]).toBe("owner");
   });

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RepoLessons from "../components/RepoLessons.vue";
 import NotificationSettings from "../components/NotificationSettings.vue";
 import ApprovalSettings from "../components/ApprovalSettings.vue";
 import HelpText from "../components/HelpText.vue";
@@ -1645,6 +1646,7 @@ async function saveEdit() {
         <UiCheckbox :model-value="editing.settings.autoIngest !== false && (editing.kind !== 'repo' || editing.settings.autoIngest === true)" @change="(v) => (editing!.settings.autoIngest = v)">新材料保存后让助理整理（更新记忆、事项、相关页面）</UiCheckbox>
         <UiCheckbox v-if="editing.rootPath" :model-value="editing.settings.design === 'always'" @change="(v) => (editing!.settings.design = v ? 'always' : null)">这个仓库的交办总是先写方案（不管设置 → AI 里的“方案先行”怎么设）</UiCheckbox>
         <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /><span class="hint">每轮编码结束后宿主在工作区运行，结果交给评审，评审不再自己跑测试。命令里可以用环境变量 OMEM_BASE（这次改动的起点提交），如用 <code>git diff --name-only $OMEM_BASE</code> 只测改到的部分。</span></label>
+        <RepoLessons v-if="editing.kind === 'repo' && (!state.me || state.me.role === 'owner')" :key="editing.id" :space="editing.id" />
         <template v-if="editing.rootPath">
           <div v-if="editing.kind === 'repo'" class="field fit">
             <span>仓库目录（交办从这里当前的提交切出工作分支）</span>

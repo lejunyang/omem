@@ -46,7 +46,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "remote", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },
   { id: "ask", label: "问人与通知", doc: "owner", tools: ["ask_user", "wait_answer", "withdraw_ask", "suggest_next", "show", "ui_page", "notify", "stay_quiet"] },
   { id: "wake", label: "唤醒与规则", doc: "owner", tools: ["wake_later", "wake_on_message", "cancel_wake", "list_rules", "save_rule", "report_rule_failure"] },
-  { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["delegate_code", "review_branch", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
+  { id: "coding", label: "编码交办与跟进", doc: "code", tools: ["propose_repo_lesson", "delegate_code", "review_branch", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "revise_finding", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "settle_code_task"] },
   { id: "improve", label: "改进循环：度量、留下或回退", doc: "code", tools: ["improve_start", "improve_round", "improve_status"] },
   { id: "design", label: "方案：读、评估别人的方案、确认", doc: "code", tools: ["read_design", "assess_design", "settle_design"] },
   { id: "git", label: "代码仓库与 Git", doc: "code", tools: ["list_branches", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_status", "code_git_action", "code_history"] },

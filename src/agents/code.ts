@@ -1,3 +1,4 @@
+import { checkLessons, lessonsText } from "./code-lessons.ts";
 import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
 import { killPid } from "../core/procs.ts";
@@ -376,6 +377,10 @@ ${input.task}
   if (synced === "stopped") return { verdict: "sync-conflict" };
   // Finishing a stopped sync that came before coding: the coding is still to do, with the first task.
   if (input.syncResume && !input.syncOnly) coderTask = `${String(getRun(app, rootRunId).input.task ?? "")}${itemBrief}${where}`;
+  // Keep this round's origin across restarts, failed attempts and an outside coder handing it back.
+  const savedLessonBases = (retried?.output.lessonBases ?? run.output.lessonBases ?? (input.peerFinished ? run.input.lessonBases : undefined)) as Record<string, string> | undefined;
+  const lessonBases = savedLessonBases ?? Object.fromEntries(worktrees.map(w => [w.space, git(workDirOf(w), ["rev-parse", "HEAD"]).stdout.trim()]));
+  ctx.output({ lessonBases });
   // Dependencies: a new worktree has none, a reused one only when its lockfiles changed (workspaces.ts).
   for (const [i, repo] of repos.entries()) {
     const dir = workDirOf(worktrees[i]);
@@ -408,6 +413,10 @@ ${input.task}
     const before = one<{ status: string }>(app.db, "select status from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) and id != ? order by created_at desc limit 1", rootRunId, rootRunId, run.id);
     const outside = continueFrom ? tasks.recordOutsideChanges(app, rootRunId, run.id, worktrees, identity, { previousEnded: before?.status === "done", round: Number((input as { round?: number }).round ?? 1) }) : null;
     if (outside) ctx.event("status", { text: `检查点 ${outside.checkpoint.seq}：${outside.checkpoint.label}，${outside.files.length} 个文件` });
+    if (!savedLessonBases) {
+      for (const wt of worktrees) lessonBases[wt.space] = git(workDirOf(wt), ["rev-parse", "HEAD"]).stdout.trim();
+      ctx.output({ lessonBases });
+    }
     const reverted = tasks.applyReverts(app, rootRunId, worktrees, (text) => ctx.event("status", { text }), identity);
     const taken = tasks.takeTasks(app, rootRunId, run.id);
     // This run coded before a restart stopped it (its tasks are done or being verified): it goes on
@@ -567,7 +576,7 @@ ${input.task}
         execution: input.execution,
         spaceId: run.spaceId!,
         spaces,
-        task: conflictTask(wt, files, label, String(getRun(app, rootRunId).input.task ?? input.task)),
+        task: [conflictTask(wt, files, label, String(getRun(app, rootRunId).input.task ?? input.task)), lessonsText(app, [wt.space])].filter(Boolean).join("\n\n"),
         runId: run.id,
         cwd: workDirOf(wt),
         signal: ctx.signal,
@@ -600,7 +609,7 @@ ${input.task}
       execution: input.execution,
       spaceId: run.spaceId!,
       spaces,
-      task,
+      task: [task, lessonsText(app, repos.map(r => r.id))].filter(Boolean).join("\n\n"),
       runId: run.id,
       cwd,
       signal: ctx.signal,
@@ -635,7 +644,7 @@ ${input.task}
       spaces,
       where: (dir, wt) => {
         const command = commandFor(repos.find((r) => r.id === wt.space)!);
-        return `## 工作区\n\n${wt.space}：${dir}（独立的 worktree）${command ? `\n检查命令：${command}` : ""}`;
+        return `## 工作区\n\n${wt.space}：${dir}（独立的 worktree）${command ? `\n检查命令：${command}` : ""}\n\n${lessonsText(app, [wt.space])}`;
       },
     });
     // …and its tasks are verified while it codes on, what is not fixed coming back to it (code-overlap.ts).
@@ -725,6 +734,8 @@ ${input.task}
       // The check ran on the tree this commit holds (what was left uncommitted is in it now).
       if (check) check.commit = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim() || undefined;
     } else git(wt.path, ["add", "-A"]);
+    check = await checkLessons(app, repo.id, workDirOf(wt), lessonBases[repo.id], wt.commits ? "HEAD" : "", check);
+    if (check && wt.commits) check.commit = git(workDirOf(wt), ["rev-parse", "HEAD"]).stdout.trim() || undefined;
     if (check) ctx.event("check", { ...check, space: repo.id });
     const range = changeRange(wt);
     const diff = git(wt.path, ["diff", "--no-color", ...range]).stdout;

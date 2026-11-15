@@ -1914,6 +1914,15 @@ export const migrations: readonly string[] = [
      before real not null, after real, verdict text not null check(verdict in ('kept','reverted','broken','protected','nothing')),
      why text not null, revert_commit text, primary key(goal_id, seq)
    );`,
+  // Conventions a repository space has learned from review (agents/code-lessons.ts), curated by the owner.
+  `create table repo_lessons (
+     id text primary key, space_id text not null references spaces(id) on delete cascade,
+     text text not null, pattern text, paths text, state text not null check(state in ('proposed','on','off')),
+     evidence text not null default '[]', hits integer not null default 0, last_hit_at text,
+     created_by text not null, created_at text not null, updated_at text not null,
+     announced integer not null default 0
+   );
+   create index repo_lessons_space_state on repo_lessons(space_id, state, hits desc, created_at desc);`,
 ];
 
 export type Db = DatabaseSync;

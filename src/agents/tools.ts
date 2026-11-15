@@ -1,3 +1,4 @@
+import { lessonInput, proposeLesson } from "./code-lessons.ts";
 import { recordReqStatus, findReq } from "../items/requirements.ts";
 import { improveDelegation, improveGoal, improveRounds, improveText, improvementOf, roundImprove, startImprove } from "./improve.ts";
 import { withBot } from "../core/bot-context.ts";
@@ -4968,6 +4969,19 @@ def({
     if (!ctx.peer) throw new HttpError(400, "review_task 只给设备的外部 Agent 用；这台机器上的评审项在自己的会话里拿到材料");
     const { peerReviewTask } = await import("./review-chain.ts");
     return peerReviewTask(ctx.app, a.run_id, ctx.peer.caller, { part: a.part, offset: a.offset });
+  },
+});
+
+def({
+  name: "propose_repo_lesson",
+  description: "把评审里反复采纳的同类问题提炼成这个仓库的约定。宿主不判断是否同类：请先对照依据；能机械检查才给无标志的正则源码 pattern 和逗号分隔的 paths glob。两次不同交办的证据默认自动启用；本人关闭过的不重新启用。",
+  write: true,
+  schema: lessonInput.extend({ space: z.string().min(1), findings: z.array(z.number().int().positive()).max(30).optional(), note: z.string().max(500).optional() }),
+  handler: (ctx, a) => {
+    const target = writeSpace(ctx, a.space);
+    const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.writable ?? ctx.spaces);
+    if (allowed && !allowed.includes(target)) throw new HttpError(403, "本次不能修改该仓库空间");
+    return JSON.stringify(proposeLesson(ctx.app, ctx.spec ?? ctx.role ?? ctx.agentProfile ?? "assistant", { ...a, space: target, runId: ctx.runId }));
   },
 });
 
