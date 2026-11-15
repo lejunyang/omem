@@ -30,6 +30,7 @@ import { git } from "../src/core/git.ts";
 import { cleanupFetched, mergeLibrary, snapshotStream, type Fetched } from "../src/core/pull.ts";
 import { appendToSource } from "../src/sources/store.ts";
 import * as runner from "../src/agents/runner.ts";
+import { putScope, scopeView } from "../src/studies/scope.ts";
 
 const apps: App[] = [], servers: FastifyInstance[] = [];
 const owner = { actor: "owner", userId: "owner" };
@@ -40,7 +41,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   for (const app of apps.splice(0)) { app.events.emit("close"); app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
 });
-const planned = (n = 3) => ({ goal: "逐项核验命令", approach: "用 demo-cli 逐个走入口", acceptance: `${n} 项跑完`, env: "本机测试目录", estimate: "30 分钟", trials: Array.from({ length: n }, (_, i) => ({ object: `功能 ${i + 1}`, check: "执行帮助命令" })) });
+const planned = (n = 3) => ({ goal: "逐项核验命令", approach: "用 demo-cli 逐个走入口", acceptance: `${n} 项跑完`, env: "local", estimate: "30 分钟", trials: Array.from({ length: n }, (_, i) => ({ object: `功能 ${i + 1}`, check: "执行帮助命令" })) });
 function definition(extra: object = {}, every: unknown = "manual") {
   return JSON.stringify({ id: "demo-study", name: "示例课题", repeat: { from: "plan", every }, stages: [
     { id: "plan", name: "定方向", by: { run: {} }, tools: ["propose_directions"] },
@@ -117,7 +118,7 @@ describe("提案对账与本人选择", () => {
     const f = await setup();
     const [old] = saveProposals(f.app, { item: f.item.id, directions: [planned(1)] }, 1); confirmDirection(f.app, old.id, "");
     run(f.app.db, "update study_trials set state='reported',result='passed',summary=? where direction_id=?", "没有问题\n第二行不能进简短对账", old.id);
-    closeDirection(f.app, old.id, "done", "试完了");
+    await closeDirection(f.app, old.id, "done", "试完了");
     const proposal = planned(1); proposal.trials = [{ object: "  功能 1  ", check: "执行帮助命令 " }, { object: "功能 1", check: "检查异常参数" }];
     await proposeDirections(f.app, { item: f.item.id, directions: [proposal] }, f.by());
     const d = directions(f.app, f.item.id).find((d) => d.state === "proposed")!;
@@ -350,8 +351,8 @@ describe("台账、发现、证据和权限", () => {
   });
   it("结束或放弃必须写结论，未做的跳过", async () => {
     const f = await setup({ budget: { trials: 1 } }); await select(f, 3); await result(f);
-    const d = directions(f.app, f.item.id)[0]; expect(() => closeDirection(f.app, d.id, "done", "")).toThrow("结论");
-    closeDirection(f.app, d.id, "dropped", "范围已足够，不再做剩下的"); expect(trials(f.app, f.item.id).map((t) => t.state)).toEqual(["reported", "skipped", "skipped"]); expect(direction(f.app, d.id).conclusion).toContain("范围");
+    const d = directions(f.app, f.item.id)[0]; await expect(closeDirection(f.app, d.id, "done", "")).rejects.toThrow("结论");
+    await closeDirection(f.app, d.id, "dropped", "范围已足够，不再做剩下的"); expect(trials(f.app, f.item.id).map((t) => t.state)).toEqual(["reported", "skipped", "skipped"]); expect(direction(f.app, d.id).conclusion).toContain("范围");
   });
   it("本人关闭进行中的方向取消运行并跳过余下试验", async () => {
     const f = await setup(); await select(f, 2); const r = f.s("try").by!, d = directions(f.app, f.item.id)[0];
@@ -415,6 +416,8 @@ describe("台账随事项拉取", () => {
     const item = upsertItem(remote, undefined, { title: "台账拉取", spaceId: "personal" }, "user");
     const p = planned(1); p.trials[0].check = `读 src:${b.id}#L2`;
     const [d] = saveProposals(remote, { item: item.id, directions: [p] }, 1); confirmDirection(remote, d.id, "只读材料");
+    putScope(remote, item.id, { repos: [], allowCode: true, thirdParty: true }, "owner");
+    run(remote.db, "update study_directions set workspace_run_id='remote-holder',third_party=1,allow_code=1 where id=?", d.id);
     const t = trials(remote, item.id)[0]; run(remote.db, "update study_trials set result='failed',state='reported',evidence=? where id=?", JSON.stringify([`src:${b.id}#L2`]), t.id);
     const finding = recordFinding(remote, { item: item.id, kind: "defect", title: "内容遗漏", repro: `核对 src:${b.id}#L2`, trials: [t.id] });
     async function pull() {
@@ -424,6 +427,8 @@ describe("台账随事项拉取", () => {
       try { mergeLibrary(local, f); } finally { cleanupFetched(f); }
     }
     await pull(); expect(trial(local, t.id).check).toBe(`读 src:${a.id}#L3`); expect(JSON.parse(trial(local, t.id).evidence)).toEqual([`src:${a.id}#L3`]); expect(direction(local, d.id).note).toBe("只读材料"); expect(findings(local, item.id)[0].id).toBe(finding);
+    expect(scopeView(local, item.id)).toMatchObject({ repos: [], allowCode: true, thirdParty: true });
+    expect(direction(local, d.id)).toMatchObject({ third_party: 1, allow_code: 1, workspace_run_id: null });
     run(remote.db, "update study_findings set state='confirmed',updated_at='2099-01-01' where id=?", finding); await pull(); expect(findings(local, item.id)[0].state).toBe("confirmed");
   });
 });

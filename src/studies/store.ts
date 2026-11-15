@@ -5,11 +5,12 @@ import { getItem } from "../items/store.ts";
 import { cancelRun } from "../agents/runs.ts";
 import { atomic, itemFlow, type ItemFlow } from "../flows/store.ts";
 import type { Proposal, FindingInput, TrialReport } from "./schema.ts";
+import { cleanupStudyWorkspaces } from "./workspace.ts";
 
 export type PlannedTrial = { object: string; check: string; prior?: string };
-export type Direction = { id: string; item_id: string; round: number; goal: string; approach: string; acceptance: string; env: string; estimate: string; state: "proposed" | "confirmed" | "active" | "done" | "dropped"; conclusion: string; note: string; plan: string; removed: string; created_at: string; updated_at: string };
-export type Trial = { id: string; item_id: string; direction_id: string; round: number; seq: number; object: string; check: string; env: string; state: "queued" | "running" | "reported" | "skipped"; result: TrialReport["result"] | null; summary: string; evidence: string; run_id: string | null; attempts: number; prior: string | null; findings: string; unsure: number; failures: number; escalated: number; created_at: string; updated_at: string };
-export type Finding = { id: string; item_id: string; kind: FindingInput["kind"]; title: string; repro: string; trials: string; state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; state_reason: string; same_as: string | null; created_at: string; updated_at: string };
+export type Direction = { id: string; item_id: string; round: number; goal: string; approach: string; acceptance: string; env: string; estimate: string; state: "proposed" | "confirmed" | "active" | "done" | "dropped"; conclusion: string; note: string; plan: string; removed: string; baseline: string; third_party: number; allow_code: number; workspace_run_id: string | null; created_at: string; updated_at: string };
+export type Trial = { id: string; item_id: string; direction_id: string; round: number; seq: number; object: string; check: string; env: string; state: "queued" | "running" | "reported" | "skipped"; result: TrialReport["result"] | null; summary: string; evidence: string; run_id: string | null; attempts: number; prior: string | null; findings: string; unsure: number; failures: number; escalated: number; commits: string; created_at: string; updated_at: string };
+export type Finding = { id: string; item_id: string; kind: FindingInput["kind"]; title: string; repro: string; trials: string; state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; state_reason: string; same_as: string | null; work_id: string | null; created_at: string; updated_at: string };
 export const directions = (app: App, item: string) => all<Direction>(app.db, "select * from study_directions where item_id=? order by created_at,rowid", item);
 export const trials = (app: App, item: string) => all<Trial>(app.db, "select * from study_trials where item_id=? order by direction_id,seq", item);
 export const findings = (app: App, item: string) => all<Finding>(app.db, "select * from study_findings where item_id=? order by created_at,rowid", item);
@@ -40,14 +41,16 @@ export function saveProposals(app: App, p: Proposal, round: number) {
   return atomic(app, () => p.directions.map((d) => {
     const id = newId("sd"), checked = reconcile(d.trials, history);
     run(app.db, "insert into study_directions(id,item_id,round,goal,approach,acceptance,env,estimate,state,plan,removed,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)", id, p.item, round, d.goal, d.approach, d.acceptance, d.env ?? "", d.estimate ?? "", "proposed", JSON.stringify(checked.kept), JSON.stringify(checked.removed), at, at);
+    run(app.db, "update study_directions set third_party=? where id=?", d.thirdParty ? 1 : 0, id);
     return direction(app, id);
   }));
 }
-export function confirmDirection(app: App, id: string, note: string) {
+export function confirmDirection(app: App, id: string, note: string, baseline: Record<string, string> = {}, allowCode = false) {
   const d = direction(app, id), at = now();
   if (d.state !== "proposed") throw new HttpError(409, "方向已不是待选择的提案");
   atomic(app, () => {
     run(app.db, "update study_directions set state='confirmed',note=?,updated_at=? where id=?", note, at, id);
+    run(app.db, "update study_directions set baseline=?,allow_code=? where id=?", JSON.stringify(baseline), allowCode ? 1 : 0, id);
     for (const [i, t] of json<PlannedTrial[]>(d.plan, []).entries()) run(app.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",env,state,prior,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, newId("st"), d.item_id, id, d.round, i + 1, t.object, t.check, d.env, "queued", t.prior ?? null, at, at);
   });
 }
@@ -58,7 +61,7 @@ export function continuing(app: App, item: string) {
   }
   return null;
 }
-export function closeDirection(app: App, id: string, state: "done" | "dropped", conclusion: string) {
+export async function closeDirection(app: App, id: string, state: "done" | "dropped", conclusion: string) {
   if (!conclusion.trim()) throw new HttpError(400, "结束方向必须写结论");
   const d = direction(app, id), at = now();
   for (const t of trials(app, d.item_id).filter((t) => t.direction_id === id && t.state === "running")) if (t.run_id) cancelRun(app, t.run_id);
@@ -66,6 +69,7 @@ export function closeDirection(app: App, id: string, state: "done" | "dropped", 
     run(app.db, "update study_directions set state=?,conclusion=?,updated_at=? where id=?", state, conclusion, at, id);
     run(app.db, "update study_trials set state='skipped',updated_at=? where direction_id=? and state in ('queued','running')", at, id);
   });
+  await cleanupStudyWorkspaces(app, d.item_id, id);
 }
 function words(s: string) {
   const out = new Set<string>();

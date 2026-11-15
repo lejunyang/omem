@@ -1093,6 +1093,21 @@ export const configSchema = z.object({
    * (personal/people/*) of those with new messages. `inject`: a summary of up to `briefChars` goes
    * into the main assistant's turns, the patrol, the triage of 有人找你 and meeting summaries.
    */
+  studies: z.object({
+    envs: z.array(z.object({
+      id: z.string().trim().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}$/).refine((s) => s.toLowerCase() !== "local", "local 是内置环境"),
+      name: z.string().trim().min(1).max(100), note: z.string().max(12000),
+      ai: z.union([z.enum(["strong", "standard", "cheap"]), z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })]).optional(),
+      thirdParty: z.boolean(),
+    })).default([]).superRefine((envs, ctx) => {
+      const names = new Set(["local", "本机"]);
+      for (const e of envs) {
+        const keys = [...new Set([e.id.toLowerCase(), e.name.toLowerCase()])];
+        if (keys.some((k) => names.has(k))) ctx.addIssue({ code: "custom", message: "执行环境的 id 和名字不能重名或占用本机" });
+        keys.forEach((k) => names.add(k));
+      }
+    }),
+  }).default(() => ({ envs: [] })),
   flows: z.object({
     gateLadder: z.object({ enabled: z.boolean().default(true), after: z.number().int().min(1).max(1000).default(5) }).default(() => ({ enabled: true, after: 5 })),
     follow: z.object({

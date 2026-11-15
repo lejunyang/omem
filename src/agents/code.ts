@@ -83,6 +83,8 @@ export type CodeInput = {
   fetch?: boolean;
   /** Code on top of an existing branch (by repository space): its work branch (code-branch.ts). */
   fromBranches?: Record<string, string>;
+  /** Explicit committed baseline for an owner's study finding; always creates a new branch. */
+  startCommits?: Record<string, string>;
   /** A new work branch's name (by repository space); without it the coding Agent names a temporary one. */
   branchNames?: Record<string, string>;
   /** More spaces the coder and reviewers may read: requirement docs, the source of a migration, past cases. */
@@ -299,7 +301,7 @@ export async function runCodeTask(ctx: RunContext) {
     const was = known.find((w) => w.space === repo.id);
     // A work branch: every round places a workspace (kept, or lent again) on the branch's latest commit.
     if (was?.commits || (!was && !input.branches)) {
-      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? (await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id] })), log);
+      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? (await planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id], base: input.startCommits?.[repo.id] })), log);
       worktrees.push(wt);
       branchNotes[repo.id] = note;
       if (!was) log(`${repo.id} 的工作分支 ${wt.branch}（${wt.newBranch ? `从${wt.cutFrom ? ` ${wt.cutFrom} 的` : ""} ${wt.base.slice(0, 8)} 切出` : `已有分支，从 ${wt.base.slice(0, 8)} 接着做`}），工作区 ${workDirOf(wt)}`);

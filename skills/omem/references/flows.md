@@ -6,7 +6,7 @@
 
 | 工具 | 参数与用法 |
 | --- | --- |
-| `propose_directions` | `item, directions, note?`。方向零到三个，每个有 `goal / approach / acceptance / env? / estimate? / trials: [{ object, check }]`（1–40 个）。空数组是正常结果，note 写原因。只能由定方向阶段交；宿主按规范化的对象和检查项去掉已有结果的完全重复试验，保留同对象的新检查并标以前的结论；然后问本人选一个或这一轮不跑。本人附的话带入试验任务。 |
+| `propose_directions` | `item, directions, note?`。方向零到三个，每个有 `goal / approach / acceptance / env? / thirdParty? / estimate? / trials: [{ object, check }]`（1–40 个）。env 留空为本机，否则须用任务列出的登记环境 id 或名字（去空白、不区分大小写）；未知时拒绝并列出可用环境。执行别人仓库的安装或构建脚本须标 `thirdParty: true`，本人选方向时检查环境许可。空数组是正常结果，note 写原因。只能由定方向阶段交；宿主按规范化的对象和检查项去掉已有结果的完全重复试验，保留同对象的新检查并标以前的结论；然后问本人选一个或这一轮不跑。本人附的话带入试验任务。 |
 | `trial_report` | `trial, result, summary, evidence?, findings?, unsure?`。result 是 passed / failed / blocked / unclear；证据是 `$OMEM_ARTIFACTS` 内的文件路径或可读 `src:` 引用。只能由这个试验自己的运行交。候选 findings 为 `{ kind, title, repro }`，不会自动变成正式发现。 |
 | `read_ledger` | `item, direction?, object?, result?, round?, limit?`，读试验摘要、证据和候选，以及已有发现。凡阶段 tools 包含 propose_directions，即使误授了此工具也拒绝读取。 |
 | `record_finding` | `item, kind, title, repro, trials, same_as?, distinct_from?`，kind 是 defect / gap / idea。依据至少一条，须是本课题有结果的试验。相近标题会提示先读，same_as 合并依据到已有发现，distinct_from 是已核对且不同的发现 id 数组。拒绝的发现只影响这一条。 |

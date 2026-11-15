@@ -24,6 +24,9 @@ import { agreedGate, gateGranted, resetGateStreak, revokeGate } from "./gates.ts
 import { continuing, idleRounds, isStudy } from "../studies/store.ts";
 import { cancelTrials, isTrials, tickTrials } from "../studies/trials.ts";
 import { capabilitiesPath, planningMaterials } from "../studies/materials.ts";
+import { envMaterials, trialStage } from "../studies/envs.ts";
+import { trial } from "../studies/store.ts";
+import { isClosed } from "../items/store.ts";
 import { initFollow, followContexts, followLimit, followView, shownChanges, changesBrief } from "./follow.ts";
 import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
 
@@ -89,6 +92,7 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
     feedback ? rows.find((s) => s.id === d.id)?.control.escalated ? `上一次的结论或错误：${feedback}。这一轮重新核对并交结果。` : `本人说还不行，原因：${feedback}。这一轮按这个意见重做。` : "",
     typeof d.by === "object" && "run" in d.by && d.by.run.skill === "study-map" ? `功能清单用 write_file(path="${capabilitiesPath(item.id)}", space="${item.spaceId}", item="${item.id}", content=...) 写成工作文件；stage_report 的 evidence 填返回的 src: 引用。不要写 Wiki 页。` : "",
     planner ? `结束前用 propose_directions(item="${item.id}", directions=[...], note?) 交提案，允许空数组。这一段不能读取台账，不用 stage_report 完成，等本人选定以后宿主会推进。` : `结束前必须用 stage_report(item="${item.id}", stage="${d.id}") 交代：done 附依据；blocked 写等谁或等什么；skip 写原因。不要以运行结束代替交结果；不要替本人确认。`,
+    planner ? envMaterials(app, item.id) : "",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -247,6 +251,7 @@ export function advance(app: App, itemId: string, cause = "状态变化") {
 async function advanceNow(app: App, itemId: string, _cause: string, at = new Date()) {
   if (!itemFlow(app, itemId) || itemFlow(app, itemId)!.endedAt) return;
   const item = getItem(app, itemId);
+  if (isClosed(item.status) && isStudy(itemFlow(app, itemId)!)) { await end(app, itemId, "事项已关闭"); return; }
   for (let pass = 0; pass < 20; pass++) {
     let changed = false;
     for (const d of itemFlow(app, itemId)!.definition.stages) {
@@ -343,7 +348,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
     if (rows.every((s) => ["done", "skipped"].includes(s.state))) {
       const f = itemFlow(app, itemId)!;
       closeRound(app, f, at);
-      if (!f.definition.repeat) { end(app, itemId, "流程走完了"); return; }
+      if (!f.definition.repeat) { await end(app, itemId, "流程走完了"); return; }
       const closed = itemFlow(app, itemId)!;
       if (!closed.nextRoundAt || Date.parse(closed.nextRoundAt) > at.getTime()) return;
       if (!roundDayMatches(at, app.config.timezone, f.definition.repeat.every)) {
@@ -509,13 +514,13 @@ async function actionNow(app: App, itemId: string, stageId: string, action: Owne
     s = { ...s, control: { ...finishUsage(app, s, new Date()), grantedGate: undefined, runId: undefined, question: "gate", confirmed: undefined, reported: false } };
   }
   resetStreak(app, itemId);
-  if (isTrials(d) && ["done", "skip"].includes(action)) cancelTrials(app, itemId);
+  if (isTrials(d) && ["done", "skip"].includes(action)) await cancelTrials(app, itemId);
   withdraw(app, s);
   if (action === "done" || action === "skip" || action === "confirm" && s.control.question === "done") {
     s = { ...s, control: finishUsage(app, s, new Date()) };
     if (s.control.runId) cancelRun(app, s.control.runId);
   }
-  if (action === "reopen") { const feedback = ownerFeedback(app, f, s, note); reopenNow(app, itemId, stageId, feedback, [], by, feedback); }
+  if (action === "reopen") { const feedback = ownerFeedback(app, f, s, note); await reopenNow(app, itemId, stageId, feedback, [], by, feedback); }
   else if (action === "hold") changeStage(app, itemId, stageId, "gated", { askId: null, control: { ...s.control, reminderAt: now(), reminders: 0 } }, by, note || "本人先别做，暂缓");
   else if (action === "skip" || action === "done" || s.control.question === "done") changeStage(app, itemId, stageId, action === "skip" ? "skipped" : "done", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, reported: true } }, by, note || "本人确认完成");
   else if (s.control.question === "when") changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, whenYes: true, whenAttempt: s.attempt + 1 } }, by, note || "本人判断这一段要做");
@@ -527,16 +532,16 @@ export function reopenStage(app: App, itemId: string, stageId: string, reason: s
   return serial(app, itemId, async () => {
     if (opts.startedAt && (itemFlow(app, itemId)?.startedAt !== opts.startedAt || itemFlow(app, itemId)?.endedAt)) throw new HttpError(409, "流程已有新的状态");
     if (!reason.trim()) throw new HttpError(400, "重开需要原因");
-    reopenNow(app, itemId, stageId, reason, refs, by, opts.feedback ? reason : undefined);
+    await reopenNow(app, itemId, stageId, reason, refs, by, opts.feedback ? reason : undefined);
     if (by.actor === "owner") resetStreak(app, itemId);
     await advanceNow(app, itemId, "重开阶段");
     return flowView(app, itemId);
   });
 }
-function reopenNow(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor, feedback?: string) {
+async function reopenNow(app: App, itemId: string, stageId: string, reason: string, refs: string[], by: FlowActor, feedback?: string) {
   const f = itemFlow(app, itemId);
   if (!f) throw new HttpError(409, "事项没有流程");
-  if (isTrials(definition(f, stageId))) cancelTrials(app, itemId);
+  if (isTrials(definition(f, stageId))) await cancelTrials(app, itemId);
   const s = getStage(app, itemId, stageId);
   if (by.actor === "owner" && s.control.grantedGate) revokeGate(app, f.id, stageId, getItem(app, itemId).userId, itemId);
   withdraw(app, s);
@@ -551,9 +556,9 @@ function reopenNow(app: App, itemId: string, stageId: string, reason: string, re
     if (row.state === "done") changeStage(app, itemId, d.id, "stale", { askId: null, waitingOn: null }, by, `上游「${stageId}」重开，等复核`, refs);
   }
 }
-function end(app: App, id: string, note: string) {
+async function end(app: App, id: string, note: string) {
   if (!itemFlow(app, id) || itemFlow(app, id)!.endedAt) return;
-  cancelTrials(app, id);
+  await cancelTrials(app, id);
   for (const s of itemStages(app, id)) { withdraw(app, s); if (s.state === "doing" && s.control.runId) cancelRun(app, s.control.runId); }
   run(app.db, "update item_flows set ended_at=?,next_round_at=null,updated_at=? where item_id=?", now(), now(), id);
   // Keep ending on the same audit/timeline path (no extra completion ping).
@@ -566,7 +571,7 @@ function end(app: App, id: string, note: string) {
 export function stopFlow(app: App, id: string, userId = "owner") {
   return serial(app, id, async () => {
     if (getItem(app, id).userId !== userId) throw new HttpError(403, "只有事项本人能停止流程");
-    running(app, id); resetStreak(app, id); end(app, id, "本人停止了流程");
+    running(app, id); resetStreak(app, id); await end(app, id, "本人停止了流程");
     return flowView(app, id);
   });
 }
@@ -685,6 +690,11 @@ export function attachFlows(app: App) {
   if (attached.has(app)) return;
   attached.add(app);
   const listener = (e: AppEvent) => {
+    if (e.type === "changed" && e.entity === "item") {
+      const f = itemFlow(app, e.id);
+      if (f && !f.endedAt && isStudy(f) && isClosed(getItem(app, e.id).status)) void advance(app, e.id, "事项关闭").catch((err) => console.warn(`[omem] 课题清理失败：${(err as Error).message}`));
+      return;
+    }
     if (e.type !== "run" && !(e.type === "changed" && ["code-task", "design"].includes(e.entity))) return;
     const ids = new Set<string>();
     const runIds = new Set<string>();
@@ -710,16 +720,19 @@ export function attachFlows(app: App) {
 const runFlowStage: Parameters<typeof registerHandler>[1] = async (ctx) => {
   const input = ctx.run.input;
   const itemId = String(input.itemId), stageId = String(input.stageId);
-  const f = itemFlow(ctx.app, itemId), s = getStage(ctx.app, itemId, stageId);
-  if (!f || f.endedAt || f.startedAt !== input.flowStartedAt || s.control.runId !== ctx.run.id || s.state !== "doing") return { quiet: true, summary: "阶段已有新的状态，不再执行旧运行" };
+  const f = itemFlow(ctx.app, itemId);
+  if (!f || f.endedAt || f.startedAt !== input.flowStartedAt) return { quiet: true, summary: "阶段已有新的状态，不再执行旧运行" };
   // A queued run may reach the worker after its window or daily allowance changed.
   const ready = await serial(ctx.app, itemId, async () => {
     const current = getStage(ctx.app, itemId, stageId), flow = itemFlow(ctx.app, itemId)!;
     if (flow.endedAt || current.control.runId !== ctx.run.id || current.state !== "doing") return false;
+    // Enqueue may wake a worker while the item queue is still preparing its workspace.
+    Object.assign(input, getRun(ctx.app, ctx.run.id).input);
     const d = definition(flow, stageId), at = new Date();
     try {
       const timing = stageTiming(at, ctx.app.config.timezone, d, new Date(flow.roundStartedAt));
-      const ai = await stageAI(ctx.app, flow, d, current, at);
+      const effective = ctx.run.kind === "study-trial" ? trialStage(ctx.app, itemId, trial(ctx.app, String(input.trialId)).env, d) : d;
+      const ai = await stageAI(ctx.app, flow, effective, current, at);
       const wait = timing.nextAt && ai.waitUntil ? (timing.nextAt > ai.waitUntil ? timing.nextAt : ai.waitUntil) : timing.nextAt ?? ai.waitUntil;
       if (wait) {
         if (ctx.run.kind === "study-trial") {
@@ -732,7 +745,7 @@ const runFlowStage: Parameters<typeof registerHandler>[1] = async (ctx) => {
         return false;
       }
       input.execution = ai.execution;
-      input.ownAI = !!d.ai && !ai.execution;
+      input.ownAI = !!effective.ai && !ai.execution;
       run(ctx.app.db, "update item_stages set control=?,updated_at=? where item_id=? and stage_id=?", JSON.stringify({ ...ai.s.control, execution: ai.execution }), now(), itemId, stageId);
       return true;
     } catch (e) {
@@ -765,7 +778,7 @@ const runFlowStage: Parameters<typeof registerHandler>[1] = async (ctx) => {
   }
   const d = definition(itemFlow(ctx.app, itemId)!, stageId), planner = d.tools?.includes("propose_directions");
   const addTools = ctx.run.kind === "study-trial" ? ["trial_report", "attach_artifact", ...d.tools ?? []] : planner ? ["propose_directions", "attach_artifact"] : ["stage_report", "report_tests", "attach_artifact", ...d.tools ?? []];
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, spaces: [item.spaceId], task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["read_ledger", "record_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "read_item", "read_run", "list_runs", "stage_report"] : undefined, artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : [item.spaceId], cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["read_ledger", "record_finding", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "read_item", "read_run", "list_runs", "stage_report", "delegate_code"] : undefined, artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
 };
 registerHandler("flow-stage", runFlowStage);

@@ -34,6 +34,13 @@ updated: 2026-11-15
 接口、字段、同步选择与未做范围见 `docs/v2/flows.md` 文末“第四期的一部分”。入口：`src/flows/engine.ts`、`gates.ts`、`follow.ts`、`http.ts`，迁移只加在 `src/core/db.ts` 末尾，路由登记在 `src/auth/routes.ts`。未增加工具、角色、定时任务、投影表或触发器，未做 git.commits 的无人认领提交补录。验证见 `docs/v2/acceptance.md` 的 flow-f3 项。
 
 最终按任务指定的十三个文件运行 Vitest（`--maxWorkers=2 --configLoader native --cache=false`）：`Test Files  13 passed (13)`、`Tests  156 passed | 1 skipped (157)`，退出 0；类型检查与 git diff --check 均退出 0。开发中一轮出现五个测试超时和一个 worker 通信错误，另一轮有四个待答询问筛选的测试断言失败，后续重跑与修正通过；完整命令及六轮原始数字在验收文档。本期不改 web/，未暂存、提交或推送，未跑全量测试、vue-tsc、真实模型或真实渠道。
+## 课题第三期第一步：范围、工作区、执行环境和发现交办（11-15）
+
+- 本人登记课题能碰的仓库、编码许可和本机第三方执行许可；默认仓库从事项空间推导，两项许可关闭。范围按事项拉取，Agent 没有修改工具。入口 `src/studies/scope.ts`。
+- 方向确认记录各仓库基线，试验借用交办相同的宿主工作区和租约，每次清理后从基线开始；第一个仓库作为运行目录，其余路径写进任务。失败记当前试验 blocked；结束方向、停止流程、关闭事项时清理，不重置本人检出目录。入口 `src/studies/workspace.ts`、`src/agents/workspaces.ts`。
+- `studies.envs` 登记环境说明、可选 AI 和第三方执行许可；本机内置。提案只认登记的 id / 名字，规划任务列清单；卡片和页面选择共用第三方授权检查。试验使用环境 AI，额度等待与升档复用阶段规则。入口 `src/studies/envs.ts`。
+- 本人可从未否决的发现发起编码交办，使用范围内仓库和依据方向的基线，新建交办分支；发现变 confirmed，返回现有交办状态与链接，小结能读到已有改动。与 delegate_code 共用 `queueCodeWork`，不自动应用、合并或推送。入口 `src/studies/fix.ts`、`src/agents/code-delegate.ts`。
+- 接口及视图字段见 [课题设计](../../../docs/v2/studies.md#第三期的第一步)。本步没改网页，没做夜里自动改代码并重跑、推送授权或跨设备执行。内置技能只补缺，已存在的数据目录副本需本人更新。
 
 ## 事项页：变化列表和课题的台账（11-15）
 

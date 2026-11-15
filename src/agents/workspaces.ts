@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
-import { git } from "../core/git.ts";
+import { git, gitAsync } from "../core/git.ts";
 import type { Space } from "../core/spaces.ts";
 import { now, sha256 } from "../core/util.ts";
 
@@ -63,6 +63,54 @@ export function workDirOf(wt: { path: string }) {
 
 export function managedSlot(app: App, repoId: string, n: number) {
   return join(app.home, "workspaces", repoId, String(n));
+}
+
+/** The same leases as coding runs, with timed Git for study request/worker paths. */
+export async function leaseWorkspaceAsync(app: App, repo: Space, runId: string, link: string) {
+  const call = (dir: string, args: string[]) => gitAsync(dir, args, { timeoutMs: 30_000 });
+  const root = repo.rootPath!;
+  const common = await call(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (!common.ok) throw new Error(common.stderr.trim());
+  for (const path of slots(app, repo)) {
+    if (!existsSync(path)) {
+      mkdirSync(dirname(path), { recursive: true });
+      const made = await call(root, ["worktree", "add", "-q", "--detach", path, "HEAD"]);
+      if (!made.ok) continue;
+    }
+    const top = await call(path, ["rev-parse", "--show-toplevel"]);
+    const shared = await call(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    if (!top.ok || real(top.stdout.trim()) !== real(path) || !shared.ok || real(shared.stdout.trim()) !== real(common.stdout.trim())) continue;
+    const dir = await call(path, ["rev-parse", "--absolute-git-dir"]);
+    if (!dir.ok) continue;
+    const file = join(dir.stdout.trim(), LEASE);
+    if (holder(app, path, file)) continue;
+    rmSync(file, { force: true });
+    try { writeFileSync(file, JSON.stringify({ run: runId, space: repo.id, prev: null, at: now() } satisfies Lease), { flag: "wx" }); }
+    catch { continue; }
+    try {
+      mkdirSync(dirname(link), { recursive: true });
+      symlinkSync(path, link, process.platform === "win32" ? "junction" : "dir");
+      return { path };
+    } catch (e) { rmSync(file, { force: true }); throw e; }
+  }
+  return null;
+}
+
+/** Release only a lease still held by this run; never reset an owner's checkout. */
+export async function releaseWorkspaceAsync(runId: string, wt: { path: string; slot?: string }) {
+  if (!wt.slot) return false;
+  if (isLink(wt.path)) unlinkSync(wt.path);
+  if (!existsSync(wt.slot)) return true;
+  const dir = await gitAsync(wt.slot, ["rev-parse", "--absolute-git-dir"], { timeoutMs: 5000 });
+  if (!dir.ok) throw new Error(dir.stderr);
+  const file = join(dir.stdout.trim(), LEASE);
+  if (readLease(file)?.run !== runId) return true;
+  for (const args of [["reset", "-q", "--hard"], ["clean", "-ffdqx"], ["checkout", "-q", "--detach"]]) {
+    const r = await gitAsync(wt.slot, args, { timeoutMs: 30_000 });
+    if (!r.ok) throw new Error(r.stderr);
+  }
+  rmSync(file, { force: true });
+  return true;
 }
 
 const slots = (app: App, repo: Space) => Array.from({ length: MAX_POOL }, (_, i) => managedSlot(app, repo.id, i + 1));

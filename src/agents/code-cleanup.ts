@@ -95,6 +95,7 @@ export function cleanupCandidates(app: App, opts: { userId: string | null; space
       const path = block.split("\0").find((f) => f.startsWith("worktree "))?.slice(9);
       if (!path || !inside(app.runsDir, path)) continue;
       const [run, where] = relative(realOr(app.runsDir), realOr(path)).split(/[\\/]/);
+      if (all(app.db, "select 1 from study_directions where workspace_run_id=?", run).length) continue;
       if (wanted && !wanted.has(run)) continue;
       if (items.some((i) => realOr(i.path) === realOr(path))) continue;
       const c = every.find((x) => x.first.id === run);

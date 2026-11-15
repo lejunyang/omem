@@ -10,6 +10,10 @@ import { studyOperation } from "../flows/engine.ts";
 import { assertOwner, confirmDirection, direction, findings, idleRounds, saveProposals, trial, trials, directions, type PlannedTrial, type Trial } from "./store.ts";
 import { coverage } from "./materials.ts";
 import type { Proposal, TrialReport } from "./schema.ts";
+import { studyScope } from "./scope.ts";
+import { checkDirectionChoice, resolveEnv, thirdPartyReason } from "./envs.ts";
+import { captureBaseline } from "./workspace.ts";
+import { findingFix } from "./fix.ts";
 
 /** Resolve the stage from the host's flow copy, never from the caller's task text. */
 export function runStage(app: App, runId: string) {
@@ -30,8 +34,14 @@ export function proposeDirections(app: App, p: Proposal, by: FlowActor) {
     if (r.kind !== "flow-stage" || !f || f.endedAt || f.itemId !== p.item || f.startedAt !== r.input.flowStartedAt || !d?.tools?.includes("propose_directions")) throw new HttpError(403, "这不是定方向阶段的运行");
     const s = getStage(app, p.item, d.id);
     if (s.state !== "doing" || s.control.runId !== r.id || s.control.reported) throw new HttpError(409, "这次定方向已结束或已交提案");
-    const proposed = saveProposals(app, p, f.round);
-    const text = proposed.length ? proposed.map((d, i) => `${i + 1}. ${d.goal}\n做法：${d.approach}\n验收：${d.acceptance}\n在哪跑：${d.env || "未写"}\n${json<unknown[]>(d.plan, []).length} 个试验，${json<unknown[]>(d.removed, []).length} 个以前做过并被去掉\n${json<{ object: string; check: string; prior: string }[]>(d.removed, []).map((t) => `${t.object} × ${t.check}：${t.prior}`).join("\n")}\n预计花费：${d.estimate || "未估算"}`).join("\n\n") : `这一轮没有提出方向\n${p.note || "没有值得做的方向"}`;
+    const proposed = saveProposals(app, { ...p, directions: p.directions.map((d) => ({ ...d, env: resolveEnv(app, p.item, d.env ?? "").id })) }, f.round);
+    const text = proposed.length ? proposed.map((d, i) => {
+      const env = resolveEnv(app, p.item, d.env);
+      return [`${i + 1}. ${d.goal}`, `做法：${d.approach}`, `验收：${d.acceptance}`, `在哪跑：${env.name}\n${env.note}`,
+        d.third_party ? env.thirdParty ? "这个方向要执行第三方样本的代码，所选环境允许执行。" : thirdPartyReason : "",
+        `${json<unknown[]>(d.plan, []).length} 个试验，${json<unknown[]>(d.removed, []).length} 个以前做过并被去掉`,
+        ...json<{ object: string; check: string; prior: string }[]>(d.removed, []).map((t) => `${t.object} × ${t.check}：${t.prior}`), `预计花费：${d.estimate || "未估算"}`].filter(Boolean).join("\n");
+    }).join("\n\n") : `这一轮没有提出方向\n${p.note || "没有值得做的方向"}`;
     const budgets = f.definition.stages.filter((d) => typeof d.by === "object" && "object" in d.by && d.by.object === "trials").map((d) => `${d.name}：${JSON.stringify(d.budget ?? {})}，升档上限 ${d.escalate?.max ?? 0}（可用阶段预算接口修改）`).join("\n");
     const ask = createAsk(app, { runId: null, userId: getItem(app, p.item).userId, question: `${text}\n${p.note && proposed.length ? p.note : ""}\n${budgets}\n可附一句改动要求。`, options: proposed.length ? [...proposed.map((d) => ({ label: d.goal })), { label: "这一轮不跑" }] : [{ label: "知道了" }], allowText: true, context: { handler: "study-plan", itemId: p.item, stageId: d.id, startedAt: f.startedAt, round: f.round, directions: proposed.map((d) => d.id) } });
     changeStage(app, p.item, d.id, "doing", { askId: ask.id, waitingOn: "owner", control: { ...s.control, reported: true } }, by, `提案已交，等本人选方向${p.note?.trim() ? `。${p.note.trim()}` : ""}`);
@@ -51,7 +61,11 @@ registerAskHandler("study-plan", async (app, ask, ctx) => {
     const ids = ctx.directions as string[], id = ids[ask.choice];
     const label = ask.options[ask.choice ?? -1]?.label ?? "";
     const note = (ask.answer ?? "").startsWith(label) ? (ask.answer ?? "").slice(label.length).replace(/^[：:，,\s]+/, "") : ask.answer ?? "";
-    if (id) confirmDirection(app, id, note);
+    if (id) {
+      const allowCode = checkDirectionChoice(app, itemId, direction(app, id), typeof ctx.allowCode === "boolean" ? ctx.allowCode : undefined);
+      const baseline = await captureBaseline(app, itemId);
+      confirmDirection(app, id, note, baseline, allowCode);
+    }
     for (const other of ids.filter((x) => x !== id)) run(app.db, "update study_directions set state='dropped',conclusion='本轮未选',updated_at=? where id=? and state='proposed'", now(), other);
     changeStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, control: { ...s.control, reported: true } }, { actor: "owner", userId: item.userId }, id ? `本人确认方向：${direction(app, id).goal}${note ? `；${note}` : ""}` : "本人确认这一轮不跑");
     if (!id) {
@@ -60,10 +74,12 @@ registerAskHandler("study-plan", async (app, ask, ctx) => {
     }
     run(app.db, "update item_flows set auto_streak=0,updated_at=? where item_id=?", now(), itemId);
   });
-}, (app, ask, ctx, by) => {
+}, (app, ask, ctx, by, answer) => {
   const item = getItem(app, String(ctx.itemId)), f = itemFlow(app, item.id);
   if (ask.userId !== item.userId || by !== item.userId) throw new HttpError(403, "方向只能由事项本人选择");
   if (!f || f.endedAt || f.startedAt !== ctx.startedAt || f.round !== ctx.round || getStage(app, item.id, String(ctx.stageId)).askId !== ask.id) throw new HttpError(409, "提案已失效");
+  const id = answer.choice === null ? undefined : (ctx.directions as string[])[answer.choice];
+  if (id) checkDirectionChoice(app, item.id, direction(app, id), typeof ctx.allowCode === "boolean" ? ctx.allowCode : undefined);
 });
 
 export async function reportTrial(app: App, report: TrialReport, by: FlowActor) {
@@ -90,10 +106,12 @@ export async function reportTrial(app: App, report: TrialReport, by: FlowActor) 
 export function readLedger(app: App, input: { item: string; direction?: string; object?: string; result?: string; round?: number; limit?: number }, runId: string | null) {
   assertLedgerReader(app, runId);
   const selected = trials(app, input.item).filter((t) => (!input.direction || t.direction_id === input.direction) && (!input.object || t.object.includes(input.object)) && (!input.result || t.result === input.result) && (!input.round || t.round === input.round)).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, input.limit ?? 200);
-  return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}）\n${t.summary}\n证据：${t.evidence}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => `${f.id}（${f.state}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}`)].join("\n\n");
+  return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}）\n${t.summary}\n证据：${t.evidence}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => `${f.id}（${f.state}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${findingFix(app, f)?.status ?? "交办记录不可用"}` : ""}`)].join("\n\n");
 }
 /** The owner picks this round's direction on the item page (null: no run this round): the same answer as on the card. */
-export async function chooseDirection(app: App, itemId: string, directionId: string | null, note: string | undefined, by: string) {
+export async function chooseDirection(app: App, itemId: string, directionId: string | null, note: string | undefined, by: string, allowCode?: boolean) {
+  assertOwner(app, itemId, by);
+  if (allowCode && !studyScope(app, itemId).allowCode) throw new HttpError(409, "先在课题范围里打开可以改代码");
   const f = itemFlow(app, itemId);
   const d = f && !f.endedAt ? f.definition.stages.find((d) => d.tools?.includes("propose_directions")) : undefined;
   const askId = d ? getStage(app, itemId, d.id).askId : null;
@@ -102,6 +120,10 @@ export async function chooseDirection(app: App, itemId: string, directionId: str
   const ids = (JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id=?", ask.id)?.context ?? "{}") as { directions?: string[] }).directions ?? [];
   const choice = directionId === null ? ask.options.length - 1 : ids.indexOf(directionId);
   if (choice < 0) throw new HttpError(404, "这个方向不在这一轮的提案里");
+  if (directionId) {
+    checkDirectionChoice(app, itemId, direction(app, directionId), allowCode);
+    run(app.db, "update asks set context=json_set(context,'$.allowCode',json(?)) where id=?", JSON.stringify(allowCode ?? studyScope(app, itemId).allowCode), ask.id);
+  }
   await answerAsk(app, ask.id, { choice, text: note?.trim() || undefined, by });
 }
 /** The ledger as the item page shows it: directions with how their trials went, the latest trials, findings with the trials they rest on. */
@@ -111,19 +133,20 @@ export function studyView(app: App, itemId: string) {
     const evidence = json<string[]>(t.evidence, []);
     return { id: t.id, directionId: t.direction_id, round: t.round, seq: t.seq, object: t.object, check: t.check, env: t.env, state: t.state, result: t.result, summary: t.summary,
       evidence, artifacts: artifactsByIds(app, evidence.filter((r) => !r.startsWith("src:"))), findings: json<{ kind: string; title: string; repro: string }[]>(t.findings, []),
-      runId: t.run_id, attempts: t.attempts, prior: t.prior, unsure: !!t.unsure, escalated: !!t.escalated, updatedAt: t.updated_at };
+      commits: json<Record<string, string>>(t.commits, {}), runId: t.run_id, attempts: t.attempts, prior: t.prior, unsure: !!t.unsure, escalated: !!t.escalated, updatedAt: t.updated_at };
   };
   return {
+    scope: studyScope(app, itemId),
     directions: directions(app, itemId).map((d) => {
       const own = history.filter((t) => t.direction_id === d.id);
       return { id: d.id, round: d.round, goal: d.goal, approach: d.approach, acceptance: d.acceptance, env: d.env, estimate: d.estimate, state: d.state, conclusion: d.conclusion, note: d.note,
-        plan: json<PlannedTrial[]>(d.plan, []), removed: json<(PlannedTrial & { prior: string })[]>(d.removed, []),
+        allowCode: !!d.allow_code, thirdParty: !!d.third_party, baseline: json<Record<string, string>>(d.baseline, {}), plan: json<PlannedTrial[]>(d.plan, []), removed: json<(PlannedTrial & { prior: string })[]>(d.removed, []),
         counts: Object.fromEntries(["queued", "running", "skipped", "passed", "failed", "blocked", "unclear"].map((key) => [key, own.filter((t) => t.state === key || t.result === key).length])),
         createdAt: d.created_at, updatedAt: d.updated_at };
     }),
     trials: [...history].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id)).slice(0, 200).map(present),
     findings: findings(app, itemId).map((f) => ({ id: f.id, kind: f.kind, title: f.title, repro: f.repro, state: f.state, stateReason: f.state_reason, sameAs: f.same_as, createdAt: f.created_at, updatedAt: f.updated_at,
-      trials: json<string[]>(f.trials, []).flatMap((id) => { const t = history.find((t) => t.id === id); return t ? [present(t)] : []; }) })),
+      fix: findingFix(app, f), trials: json<string[]>(f.trials, []).flatMap((id) => { const t = history.find((t) => t.id === id); return t ? [present(t)] : []; }) })),
     coverage: coverage(app, item), idleRounds: idleRounds(app, itemId),
   };
 }

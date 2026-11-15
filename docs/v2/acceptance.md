@@ -30,6 +30,36 @@
 
 宽 390 时没有横向溢出，深色下可读。没验：真实模型跑出来的台账、飞书上的方向卡片和变化卡片。
 
+## 课题第三期第一步（2026-11-15）
+
+仅服务端、测试和内置材料。使用临时 Git 仓库、假运行和 HTTP，不连接真实模型、外部环境或账号。
+
+| 编号 | 操作 | 预期结果 | 验证 |
+| --- | --- | --- | --- |
+| study-s3-01 | 仓库、普通空间有子仓库、无仓库的事项读范围；PUT 传非仓库、其他空间仓库或缺失 id；成员写范围 | 默认仓库准确，两项许可关闭；候选仅本人可读；写限事项本人和可写空间；视图带 scope 且无 candidates | `test/study-scope.test.ts` |
+| study-s3-02 | 提未知环境、登记名字和大小写变化的 id；读 planner 任务 | 未知拒绝并列出登记环境及说明首行，已登记可识别；任务列名字、完整说明、第三方执行权限 | 同上 |
+| study-s3-03 | 第三方标记开 / 关 × 环境许可开 / 关；从卡片和页面选择，本机从范围打开 | 只有声明第三方且环境不允许时拒绝 409，卡片答案不写入；任务含对应约束 | 同上 |
+| study-s3-04 | 范围未开却传 allowCode=true，范围开后不传或传 false | 未开返回 409；未传取范围值，false 可收窄；方向视图带 allowCode | 同上 |
+| study-s3-05 | 两个试验之间留下跟踪、未跟踪及忽略文件，原仓库新增提交和未跟踪文件 | 运行 cwd 在数据目录的工作区；下一试验清理干净且仍在方向基线；原仓库 HEAD 和文件未被宿主改动，运行拿到仓库路径 | `test/study-workspace.test.ts` |
+| study-s3-06 | 工作区建不出来、停止流程、结束方向、关闭事项 | 建失败只记试验 blocked，继续小结；结束时释放租约 / 删独立工作区；交办清理不误删课题工作区 | 同上 |
+| study-s3-07 | 环境指定 AI，入队后执行，模型额度耗尽再恢复，没有交结果需升档 | 环境 AI 用于入队及 worker；只等待原模型；升档使用阶段 escalate.to | 同上 |
+| study-s3-08 | 范围未开、非本人、rejected / duplicate 发现、已有未结束交办；合法发现发起修复 | 无授权或非法状态拒绝；合法请求复用编码交办入口，状态 confirmed，fix 带根 id / 状态 / 最新链接；任务有复现、依据、本人要求与三条约束；按方向基线新建分支 | 同上 |
+| study-s3-09 | 拉取新范围和新增台账字段；更新已有技能后再播种 | 范围按事项合并，工作区持有者留在本机；内置技能只补缺，不覆盖本人副本 | `test/studies.test.ts`、`test/pull-complete.test.ts` |
+
+检查命令：
+
+```sh
+npx vitest run test/studies.test.ts test/study-scope.test.ts test/study-workspace.test.ts test/flows.test.ts test/flows-http.test.ts test/flow-rounds.test.ts test/code-worktrees.test.ts test/esm.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+git diff --check
+```
+
+最终检查：上述完整 Vitest 命令输出 `Test Files 13 passed (13)`、`Tests 161 passed | 1 skipped (162)`，退出码 0；其中课题原有 38 项、新范围 10 项、新工作区及交办 8 项全部通过。唯一跳过是原有的 Windows SSH 拉取用例。`npx tsc --noEmit -p .` 退出码 0、无类型错误；`git diff --check` 退出码 0、无输出。
+
+首次检查为 `Tests 27 failed | 116 passed | 1 skipped (144)`，原因是旧试验夹具使用未登记的自由文字环境；补测时为 `Tests 2 failed | 157 passed | 1 skipped (160)`，原因是新夹具的子仓库未给目录。均已修正并用完整指定命令复跑通过。编写新测试期间也修正了用户、令牌和服务器夹具的类型调用错误。
+
+未验真实模型与真实环境；未做自动修复重跑、推送授权、另一台设备执行和网页入口。没有跑全量测试或 vue-tsc，没有暂存、提交或推送。
+
 ## 课题第二期服务端（2026-11-15）
 
 本期只做服务端和内置材料，不改网页。测试使用临时数据库、假运行与假 runRole，不调用真实模型或真实渠道。

@@ -2028,6 +2028,16 @@ export const migrations: readonly string[] = [
      granted_at text not null, revoked_at text, updated_at text not null,
      primary key(flow_id,stage_id,user_id)
    );`,
+  `create table study_scopes (
+     item_id text primary key references items(id), repos text not null default '[]',
+     allow_code integer not null default 0, third_party integer not null default 0, updated_at text not null
+   );
+   alter table study_directions add column baseline text not null default '{}';
+   alter table study_directions add column third_party integer not null default 0;
+   alter table study_directions add column allow_code integer not null default 0;
+   alter table study_directions add column workspace_run_id text;
+   alter table study_trials add column commits text not null default '{}';
+   alter table study_findings add column work_id text;`,
 ];
 
 export type Db = DatabaseSync;

@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
-import { refreshDefaultBaseRef, fetchBranch, fetchBranchAsync, git, resolveRef } from "../core/git.ts";
+import { all, one } from "../core/db.ts";
+import { refreshDefaultBaseRef, fetchBranch, fetchBranchAsync, git, gitAsync, resolveRef } from "../core/git.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
@@ -120,8 +120,15 @@ export type BranchPlan = { branch: string; base: string; newBranch: boolean; cut
  * origin has it), a new one named `name` (an existing local one is used as it is), or a temporary
  * `omem/<run>` the coding Agent renames. New branches start at the refreshed default branch (local HEAD only without a default).
  */
-export async function planBranch(repo: Space, runId: string, opts: { from?: string; name?: string }): Promise<BranchPlan> {
+export async function planBranch(repo: Space, runId: string, opts: { from?: string; name?: string; base?: string }): Promise<BranchPlan> {
   const root = repo.rootPath!;
+  if (opts.base) {
+    if (!/^[0-9a-f]{40,64}$/.test(opts.base)) throw new HttpError(400, "起点必须是完整提交");
+    const branch = `omem/${runId}`;
+    const made = await gitAsync(root, ["branch", branch, opts.base], { timeoutMs: 30_000 });
+    if (!made.ok) throw new HttpError(409, `没能从基线建立交办分支：${made.stderr.trim().slice(0, 300)}`);
+    return { branch, base: opts.base, newBranch: true };
+  }
   const existing = opts.from ?? (opts.name && tipOf(root, opts.name) ? opts.name : undefined);
   if (existing) {
     const start = resolveRef(root, existing);
@@ -161,6 +168,7 @@ export async function planBranch(repo: Space, runId: string, opts: { from?: stri
 const idle = (app: App) => (id: string) => {
   try {
     const run = getRun(app, id);
+    if (one(app.db, "select 1 from study_directions where workspace_run_id=?", id)) return false;
     const root = run.input.continueFrom ? getRun(app, String(run.input.continueFrom)) : run;
     if ((root.input as { peerCoder?: unknown }).peerCoder && !root.output.appliedAt && !root.output.discardedAt) return false;
     return !["queued", "running"].includes(run.status);

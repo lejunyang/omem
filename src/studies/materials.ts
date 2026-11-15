@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { gitAsync } from "../core/git.ts";
-import { can } from "../auth/permissions.ts";
+import { studyRepos } from "./scope.ts";
 import { sourceText } from "../sources/store.ts";
 import { workUri } from "../sources/work.ts";
 import type { Item } from "../items/store.ts";
@@ -19,9 +19,10 @@ export function coverage(app: App, item: Item) {
 }
 export async function planningMaterials(app: App, item: Item) {
   const c = coverage(app, item);
-  const repos = all<{ id: string; name: string; root_path: string }>(app.db, "select id,name,root_path from spaces where kind='repo' and (id=? or parent_id=?) and root_path is not null", item.spaceId, item.spaceId).filter((r) => can(app, item.userId, "space.read", r.id));
+  const repos = studyRepos(app, item);
   const commits: string[] = [];
   for (const repo of repos) {
+    if (!repo.root_path) continue;
     try {
       const r = await gitAsync(repo.root_path, ["log", "-20", "--format=%s"], { timeoutMs: 5000 });
       if (r.ok) commits.push(`${repo.name}：\n${r.stdout.trim()}`);

@@ -1,4 +1,5 @@
 import { lessonInput, proposeLesson } from "./code-lessons.ts";
+import { queueCodeWork } from "./code-delegate.ts";
 import { recordReqStatus, findReq } from "../items/requirements.ts";
 import { improveDelegation, improveGoal, improveRounds, improveText, improvementOf, roundImprove, startImprove } from "./improve.ts";
 import { withBot } from "../core/bot-context.ts";
@@ -2165,7 +2166,7 @@ def({
     const d = store.direction(ctx.app, a.direction);
     flowItem(ctx, d.item_id, true);
     (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
-    return (await import("../flows/engine.ts")).studyOperation(ctx.app, d.item_id, async () => { store.closeDirection(ctx.app, a.direction, a.state, a.conclusion); return "方向已结束，结论已记下。"; });
+    return (await import("../flows/engine.ts")).studyOperation(ctx.app, d.item_id, async () => { await store.closeDirection(ctx.app, a.direction, a.state, a.conclusion); return "方向已结束，结论已记下。"; });
   },
 });
 async function flowRefs(ctx: ToolContext, list: string[]) {
@@ -4145,15 +4146,13 @@ def({
         throw new HttpError(400, `方案 ${baseline.id} 不能作为基线：要本人确认过的自己的方案，或评估完的别人的方案（现在：${baseline.origin}，${baseline.status}）`);
       if (baseline.origin === "own" && baseline.workId) throw new HttpError(409, `方案 ${baseline.id} 已经是交办 ${baseline.workId} 的基线`);
     }
-    const r = createRun(ctx.app, {
-      kind: "code",
+    const r = queueCodeWork(ctx.app, {
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
       input: { task: a.task, execution, reviewExecution, ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
-    if (itemId) (await import("../items/materials.ts")).linkRunToItem(ctx.app, r, itemId, ctx.userId ?? OWNER);
     if (baseline) (await import("../designs/store.ts")).setDesignWork(ctx.app, baseline.id, r.id);
     // Pushed and confirmed before, more to do now: what the earlier delegations there left carries on.
     let carried = "";
