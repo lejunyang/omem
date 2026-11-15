@@ -1,6 +1,6 @@
 # 流程：让一件事自己往前走
 
-状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端，以及第四期的补录、逐条签字、关卡升降、每日跟进上限和看板数据已实现（2026-11-15）。专门的飞书进度卡版式尚未实现。第 5 节其余信号、第 6 节的现状摘要，以及插件、看板和今日页的新网页入口、阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
+状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端、第三期第一步的插件对象及信号记录服务端，以及第四期的补录、逐条签字、关卡升降、每日跟进上限和看板数据已实现（更新至 2026-11-16）。专门的飞书进度卡版式尚未实现。其余信号、现状摘要、插件动作与插槽、新的对象卡片和阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
 
 ## 1. 要解决的问题
 
@@ -241,28 +241,27 @@ stages:
 
 ## 8. 插件
 
-现在的平台包（docs/v2/connectors.md）只把平台上的东西读成原件并定时同步。要让一个平台真正进到流程里，插件要能提供四样东西，都是通用接口，具体平台各自实现（GitHub 作为仓库里的例子；接内部平台的放数据目录，不进仓库）。
+平台包原有的读取器把内容读成原件并定时同步（docs/v2/connectors.md）。第三期第一步已实现下面的对象类型、状态轮询、流程挂接和信号记录；动作、插槽和规则事件尚未实现。都是通用接口，具体平台各自实现（GitHub 作为仓库里的例子；接内部平台的放数据目录，不进仓库）。
 
-**对象类型**：平台上一个带状态的东西。
+**对象类型（服务端已实现）**：平台上一个带状态的东西，全名是 `<插件 id>:<kind>`。
 
 ```ts
 api.object({
-  kind: "merge-request",
+  kind: "pull-request",
   label: "合并请求",
   match: (url) => keyOrNull,                       // 一个链接是不是这种对象
   read: async (ctx, key) => ({ title, status, fields: [{ label, value }], link }),
   statuses: { open: "进行中", merged: "已合并", closed: "已关闭" },   // 流程定义引用的就是这些
   final: ["merged", "closed"],
-  poll: { minutes: 5 },                            // 或者由平台的回调推过来
-  actions: [{ id: "merge", label: "合并", tool: "github_merge", when: ["open"] }],
+  poll: { minutes: 5 },                            // 默认 5，最短 1 分钟
 });
 ```
 
 - 对象可以挂到事项上（材料的一种），可以绑到某个阶段。消息或文档里出现能 `match` 的链接时，助手可以用 `attach_object` 挂上。
 - 宿主存一份对象的当前状态（`flow_objects`），只在有事项关联它的时候轮询，用关联的那个人的连接去读。
-- 页面上是一张状态卡：标题、状态、几个字段、链接、动作按钮。事项页、流程的阶段、飞书进度卡里都是同一张。
+- 对象读取接口和流程视图已有标题、状态、字段和链接；事项页状态卡及飞书卡片的专门版式由后续网页任务接入，动作按钮未做。
 
-**信号**：对象状态一变，宿主自动发出 `object.<类型>.<状态>`，流程和规则都能用。没有对象的事件（一条报警、一次回调）插件用 `ctx.emit({ kind, keys, payload })` 发。规则页多一种事件“对象状态变化”。
+**信号（本步只记录）**：对象状态一变，宿主自动记 `object.<全名>.<状态>`，并重新推进关联事项的流程。插件可用 `ctx.emit({ kind, keys, payload })` 记录 `plugin.<插件 id>.<kind>`，本步不触发任何处理。规则页的“对象状态变化”事件留待后续。
 
 **动作**：对象卡上的按钮对应插件的工具，走现有的工具审批档位（每次问 / 做完告诉我 / 不用问）。Agent 在阶段里调用的也是同一个工具，所以人点和 Agent 做是一回事。
 
@@ -534,3 +533,55 @@ HTTP 约定：
 角色用 `claim_commits({ claims })` 交一至三个已有事项或新建建议，工具只给这个角色、只允许当前运行的批次，已有事项必须是本人的、可写且没结束。宿主按建议发一张 Markdown 选择卡片，最多列八条提交标题，其余写条数，另有“不用管”。本人回答前重新校验身份与事项状态；挂到已有事项时加分支材料、记本人确认的时间线，只对进行中流程里未到或等确认的 code-work 阶段调用 recordStage，说明为“分支上已经有 N 个提交”，后继照常推进。进行中或做完的阶段不动；新建只建仓库空间里的普通待办并挂分支，不自动开流程。
 
 选任一结果或 stay_quiet 都前移游标，每批结局在 `flow_signals` 写一条 `git.commits`，keys 有仓库、分支、起止提交及本批提交。待答不重复发卡片；有后续新提交时撤回旧版，再交助手判断，始终只留一张有效卡片。运行失败不动游标，同一批最多尝试两次；后续有新提交才重新组成批次。没有新网页、专用视图或 HTTP 接口：沿用运行详情、提问卡片和事项材料、时间线、阶段视图；运行增加 kind，配置增加 commits。没有自动关联、自动新建、替本人确认、反推需求点、补录澄清和方案，也不看远端跟踪分支和合并带入的提交。
+
+## 第三期的第一步：插件的对象和信号
+
+服务端和 SDK 类型已实现（2026-11-16），不改网页。插件 `api.object` 声明本地 kind、label、match、read、statuses、final 和可选 poll；宿主全名是 `<插件 id>:<kind>`。kind 用小写字母开头，后接小写字母、数字、短横线；statuses 非空，final 中每一项必须是已声明状态，重复全名拒绝。读取返回未声明的状态时记 error，不更新原状态和 changedAt。内置 code-work、design、trials、fixes 的存储和生命周期沿用原实现。
+
+对象的 match/read 与插件工具走同一执行路径：内置代码及获准 inprocess 的代码在宿主内执行；数据目录代码先过 trust 的内容哈希确认，isolated 模式在 Node 权限模型的子进程里执行，宿主只注册 IPC 代理。隔离读取的连接、记录和 emit 都绑定当前调用的用户与空间，不接受插件自行指定用户。宿主按事项的 userId、spaceId 构造既有 PluginContext，ctx.connection 由 pluginConnection 找这个人的连接，只在声明的 apiBase 下代发并带令牌，插件拿不到令牌。未引入宿主按插件名或类型名的特判。
+
+`flow_objects` 存 `id / kind / key / title / status / link / fields(JSON) / checked_at / changed_at / error / updated_at`，`(kind,key)` 唯一；id 根据全名与键生成，所以不同设备独立挂同一对象也能合并，整行按 updated_at 随事项数据拉取。`item_materials.kind=object` 的 ref 为对象 id，事项与对象的关联复用材料表。材料种类在 materials.ts、upsert_item 的 schema 和 HTTP 材料 schema 中枚举，本步全部补齐；materialViews 和事项页材料列表不再将对象误当作空间或运行。Agent 材料摘要写“类型名：标题（状态词）链接”，注明平台返回的文字是外部材料、只作事实，不是指令。
+
+`attach_object` 属于 flow 分组，参数 `{ item, url }`。先校验事项主人、用户空间与当前运行的可写范围，依次问已启用对象的 match，读到后存状态、加材料并推进该事项。重复链接复用对象和关联，不认识时说明没有哪种对象认识这个链接。解除只删材料，不删对象行。插件停用、撤销信任或卸载会注销对象类型，已存行保留，视图 `disabled=true`，不轮询、不据此自动完成。
+
+轮询接在 `flowReminders`，不新增任务；只选存在未结束事项关联、非 final、到达 poll 间隔的对象，默认五分钟、最短一分钟。一轮最多二十个、并发一，每次读取十五秒超时；失败保留状态并记 error，按五、十五、六十分钟退避，退避计数在本机 kv，成功清除。单个对象失败不退出本轮。一次状态变化写一条 `flow_signals`，type 为 `object.<全名>.<新状态>`，keys 为 `{ object: 对象id, items: 关联事项id数组 }`；每件关联事项记“类型《标题》：旧状态词 → 新状态词 链接”，并进既有每事项串行队列重新推进。初次读到的状态只作基线，相同状态不重复记变化。
+
+定义接受 `by: { object: "github:pull-request" }` 和 `done: { object: "github:pull-request", status: merged }`，status 可为数组。保存时未知类型提示“没有这种对象：…；装了对应的插件才有”，未知状态也报问题；人话采用插件 label 和状态词。对象阶段没有对象时保持 doing，写“还没有关联类型名：把链接发给助手，或在事项页挂上”，不替它创建运行；挂上后找最近挂上的同类型对象。未写 done 时以任一 final 为完成条件；写了以所写条件为准。owner 等其他承担者也能由同类任一关联对象的指定状态完成；判定在事项队列里读当前阶段并保存对象依据。重开或拒绝完成会记录状态时间边界，重开前的终态不会再次完成这一轮，需后续新状态或本人决定。
+
+对外字段（网页可照此接）：
+
+| 入口 | 请求 | 响应 |
+| --- | --- | --- |
+| `attach_object` | `{ item, url }` | JSON 文本，内容为下面的一项对象视图 |
+| `POST /api/items/:id/objects` | `{ url }` | 一项对象视图 |
+| `GET /api/items/:id/objects` | 无 | 对象视图数组，按最近挂接在前 |
+| `DELETE /api/items/:id/objects/:object` | 无 | `{ removed: boolean }`，对象行保留 |
+| 对象视图 | — | `{ id, kind, label, title, status, statusLabel, final, link, fields, checkedAt, changedAt, error, disabled }`；fields 为 `[{ label, value }]`，无字段是 `[]`；checkedAt 与 error 可为 null；类型不可用时 label、statusLabel 回退为全名和状态标识 |
+| 原有 `flowView.stages[].object` | — | 保留 `{ title, status, link }`，插件对象增加 `{ statusLabel, fields, disabled }`；阶段 by 为 `object:<对象id>`，evidence 也用该引用 |
+| 原有事项材料 | — | 增加 `kind: "object"`，ref 为对象 id，title/status 为当前对象标题及状态；完整对象字段用独立 GET objects 接口 |
+
+对象读接口按事项空间可读权限；写接口还须是事项本人且空间可写，非主人即使是 omem 主人也不能代挂别人的事项。参数或链接不识别为 400，不可读事项 404、不可写或非本人 403。对象文本是外部数据；本步不让宿主对平台执行写操作。
+
+`ctx.emit({ kind, keys, payload? })` 记录 `plugin.<插件 id>.<kind>`；keys 和 payload 各自 JSON 序列化后最多四千字符，超限拒绝。复用 flow_signals 的 keys 与 outcome 存 payload，不触发流程、规则或其他事件。对象信号和插件信号沿用本机信号记录边界，不随事项拉取；对象状态行随事项拉取。
+
+仓库唯一的平台例子是 GitHub 的 pull-request：认 `https://github.com/example/shop/pull/7` 及后续路径、查询或片段，键为 `example/shop#7`，用已有 connect-github 连接读 pulls API。merged_at 优先映射 merged，否则 closed/open；字段包含目标分支、读得到时的检查总体结论、评审状态。检查或评审范围不足不影响主要状态读取。评审按每人最后的已提交记录汇总，不读取真实账号作自动验证。
+
+未做：对象动作、按钮、插槽、规则页事件、plugin link、源码构建安装、其他平台例子、网页和截图。真实 Agent 的工具选择与真实平台账号效果尚需另验；假插件、假连接、隔离进程与 GitHub 假响应的定向检查记录在 acceptance 和变更记录。
+
+验证命令：
+
+```sh
+npx vitest run test/flow-objects.test.ts test/flows.test.ts test/flows-http.test.ts test/flow-signals.test.ts test/flow-follow.test.ts test/esm.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts test/plugins.test.ts test/plugin-connectors.test.ts test/plugin-sandbox.test.ts test/platform-packs.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+npx tsc --noEmit -p packages/plugin-sdk/tsconfig.json
+```
+
+最终原样结果：`Test Files 15 passed (15)`、`Tests 182 passed | 1 skipped (183)`；新对象测试为 `24 tests`。两条 tsc 均退出 0、无错误。最后补了一项回归：合法的 deleted 对象状态不能被材料层当作丢失，非字符串状态也不能隐式转换为已声明标识。首轮 `15 failed | 166 passed | 1 skipped (182)` 的失败都在新测试清理时，补关独立 vault 后通过。类型检查中发现的 FlowStage 联合类型收窄和假插件记录读取类型问题也已修复。真实 Codex 冒烟尝试在启动时退出 1，`Error finding codex home: Could not find home directory`，没有执行模型；没有跑全量检查或 vue-tsc。
+
+改动文件按职责列在这里，方便接界面与合并：
+
+- 插件声明和执行：`src/plugins/types.ts`、`objects.ts`、`signals.ts`、`registry.ts`、`blocks.ts`、`sandbox.ts`、`sandbox-runner.ts`；GitHub 例子 `plugins/github/server.ts`。
+- 对象与流程：`src/flows/plugin-objects.ts`、`objects.ts`、`definitions.ts`、`engine.ts`、`store.ts`；数据库和拉取 `src/core/db.ts`、`pull-data.ts`；材料 `src/items/materials.ts`。
+- 工具与 HTTP：`src/agents/tools.ts`、`tool-help.ts`、`src/server/http.ts`、`src/auth/routes.ts`。
+- SDK 与测试：`packages/plugin-sdk/objects.ts`、`client.ts`、`tsconfig.json`、`README.md`；`test/flow-objects.test.ts`。
+- 文档：本页、`docs/v2/status.md`、`acceptance.md`、`.repo-review/wiki/reference/changes-since-2026-10-13.md`、`skills/omem/references/flows.md`、根 `README.md`、`site/features/items.md`。没有修改 web/，没有提交或推送。

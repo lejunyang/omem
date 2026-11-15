@@ -1369,7 +1369,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { startReqSplit } = await import("../agents/req-split.ts");
     return startReqSplit(app, { itemId: id, space: target, note: b.note, userId: who(req) });
   });
-  const materialBody = z.object({ kind: z.enum(["source", "conversation", "repo", "space", "run", "req"]), ref: z.string().min(1), branch: z.string().optional(), base: z.string().optional(), label: z.string().optional(), note: z.string().optional() });
+  server.get("/api/items/:id/objects", async (req) => {
+    const { itemObjects } = await import("../flows/plugin-objects.ts");
+    return itemObjects(app, (req.params as { id: string }).id, who(req));
+  });
+  server.post("/api/items/:id/objects", async (req) => {
+    const { attachObject } = await import("../flows/plugin-objects.ts");
+    const { url } = q(z.object({ url: z.string().trim().min(1).max(4000) }), req.body);
+    return attachObject(app, (req.params as { id: string }).id, url, who(req));
+  });
+  server.delete("/api/items/:id/objects/:object", async (req) => {
+    const { detachObject } = await import("../flows/plugin-objects.ts");
+    const p = req.params as { id: string; object: string };
+    return detachObject(app, p.id, p.object, who(req));
+  });
+  const materialBody = z.object({ kind: z.enum(["source", "conversation", "repo", "space", "run", "req", "object"]), ref: z.string().min(1), branch: z.string().optional(), base: z.string().optional(), label: z.string().optional(), note: z.string().optional() });
   server.post("/api/items/:id/materials", async (req) => {
     const b = q(z.object({ materials: z.array(materialBody).min(1) }), req.body);
     return addMaterials(app, (req.params as { id: string }).id, b.materials, who(req), "user");

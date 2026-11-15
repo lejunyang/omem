@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，这里只留最近的；更早的按时间段放在同目录的归档文件里。读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-15
+updated: 2026-11-16
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -15,6 +15,14 @@ updated: 2026-11-15
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+
+## 流程第三期第一步：插件的对象和信号（11-16）
+
+- 插件 `api.object` 注册只读对象类型，宿主按事项主人连接读取；进程内与隔离 IPC 均沿用插件现有信任路径，停用、卸载或撤销信任后注销类型并停止读取。
+- `flow_objects` 存当前状态，按全名和键生成稳定 id 并随事项拉取；材料增加 object，flow 组增加 `attach_object(item,url)`；本人接口为 `POST/GET /api/items/:id/objects` 与 `DELETE /api/items/:id/objects/:object`。完整对象视图与流程字段见 [流程文末](../../../docs/v2/flows.md)。
+- 巡检只查未结束事项关联、未到终态的对象，每轮二十个、串行、十五秒超时，失败五/十五/六十分钟退避；状态变化只记一次信号与每件事项的时间线，再按当前阶段推进。对象阶段可等关联，owner 等其他承担者可按指定对象状态完成；重开不复用旧状态。
+- PluginContext.emit 只记录 plugin 前缀信号，keys/payload 各四千字符；SDK 增加对象和信号类型。公开例子只有 GitHub 合并请求，检查读不到就不显示，不接内部平台。
+- 不改 web，不做动作、插槽、规则事件、plugin link 或源码安装。新增 `test/flow-objects.test.ts`（24 tests），完整定向命令在 flows.md 文末。首轮为 `Test Files 1 failed | 14 passed (15)`、`Tests 15 failed | 166 passed | 1 skipped (182)`，失败均为 Windows 临时目录清理前未关闭连接保管库；补 closeVault 后为 `Test Files 15 passed (15)`、`Tests 182 passed | 1 skipped (183)`。根目录和 SDK 的 tsc 均退出 0。真实 Codex 冒烟尝试因 `Could not find home directory` 在 CLI 启动时退出 1，未执行模型，真实账号也未验。
 
 ## 课题第三期第二步：自动交办与改后重跑、登记范围内推送（11-15）
 

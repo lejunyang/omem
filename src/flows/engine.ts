@@ -19,6 +19,7 @@ import { createDesign } from "../designs/store.ts";
 import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { findObject, objectKind } from "./objects.ts";
+import { pollObjects } from "./plugin-objects.ts";
 import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
 import { agreedGate, gateGranted, resetGateStreak, revokeGate } from "./gates.ts";
 import { continuing, idleRounds, isStudy } from "../studies/store.ts";
@@ -153,7 +154,8 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
   withdraw(app, s);
   if (typeof d.by === "object") {
     const obj = "object" in d.by ? findObject(app, item, d.by.object) : null;
-    if (obj && !s.control.feedback) { carrier = obj.ref; }
+    if ("object" in d.by && d.by.object.includes(":")) { carrier = obj?.ref ?? null; }
+    else if (obj && !s.control.feedback) { carrier = obj.ref; }
     else {
       let designId: string | undefined;
       if ("object" in d.by && d.by.object === "design") designId = obj?.ref.slice("design:".length) ?? createDesign(app, { spaceId: item.spaceId, title: item.title, origin: "own", itemId: item.id, userId: item.userId }).id;
@@ -172,7 +174,9 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
     control.question = "owner";
   }
   run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + (s.control.admitted ? 0 : 1), at, item.id);
-  changeStage(app, item.id, d.id, "doing", { by: carrier, waitingOn, askId, attempt: s.attempt + 1, enteredAt: at, evidence: [], control }, { ...host, runId: control.runId }, confirmed ? "本人确认，开始这一段" : "开始这一段");
+  const missing = typeof d.by === "object" && "object" in d.by && d.by.object.includes(":") && !carrier;
+  const label = typeof d.by === "object" && "object" in d.by ? objectKind(d.by.object)?.label ?? d.by.object : "";
+  changeStage(app, item.id, d.id, "doing", { by: carrier, waitingOn, askId, attempt: s.attempt + 1, enteredAt: at, evidence: [], control }, { ...host, runId: control.runId }, missing ? `还没有关联${label}：把链接发给助手，或在事项页挂上` : confirmed ? "本人确认，开始这一段" : "开始这一段");
   return true;
 }
 
@@ -289,7 +293,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
         }
         if (s.state === "stale" && typeof d.by === "object" && "object" in d.by) {
           const obj = findObject(app, item, typeof d.done === "object" && "object" in d.done ? d.done.object : d.by.object);
-          if (obj && objectDone(d, obj)) {
+          if (obj && objectDone(d, obj) && !obj.changedAt) {
             changeStage(app, itemId, d.id, "done", { by: obj.ref, evidence: [obj.ref], waitingOn: null }, host, "复核对象仍已完成", [obj.ref]); changed = true; continue;
           }
         }
@@ -319,15 +323,16 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
         continue;
       }
       const carrierKind = typeof d.by === "object" && "object" in d.by ? d.by.object : null;
-      const awaitingRevision = carrierKind && s.control.feedback && !s.control.reported;
+      const awaitingRevision = carrierKind && !carrierKind.includes(":") && s.control.feedback && !s.control.reported;
       const followed = carrierKind && !awaitingRevision ? findObject(app, item, carrierKind) : null;
       const kind = typeof d.done === "object" && "object" in d.done ? d.done.object : carrierKind;
-      const obj = kind && !awaitingRevision ? findObject(app, item, kind) : null;
+      const statuses = typeof d.done === "object" && "object" in d.done ? [d.done.status].flat() : undefined;
+      const obj = kind && !awaitingRevision ? findObject(app, item, kind, kind.includes(":") && kind !== carrierKind ? { statuses, after: s.control.objectAfter } : undefined) : null;
       if (followed && s.by !== followed.ref) {
         s = changeStage(app, itemId, d.id, "doing", { by: followed.ref }, host, `跟随${objectKind(carrierKind!)?.label}：${followed.title}`, [followed.ref]); changed = true;
       }
       if (obj) {
-        if (objectDone(d, obj)) {
+        if (objectDone(d, obj) && (!kind?.includes(":") || !obj.disabled && (!s.control.objectAfter || !!obj.changedAt && obj.changedAt > s.control.objectAfter))) {
           changeStage(app, itemId, d.id, "done", { by: followed?.ref ?? s.by, waitingOn: null, askId: null, evidence: [...new Set([...s.evidence, obj.ref])] }, host, `${objectKind(kind!)?.label}已完成（${obj.status}）`, [obj.ref]); withdraw(app, s); changed = true;
         } else if (d.done === "confirm" && obj.done && !["done", "refuse"].includes(s.control.question ?? "")) {
           const askId = question(app, f, d, s, "done", `「${d.name}」做完了：${obj.title}已完成。确认吗？`, ["确认", "还不行"]);
@@ -565,7 +570,7 @@ async function reopenNow(app: App, itemId: string, stageId: string, reason: stri
   withdraw(app, s);
   run(app.db, "update item_flows set ended_at=null,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", now(), itemId);
   if (s.control.runId) cancelRun(app, s.control.runId);
-  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, recorded: undefined, grantedGate: undefined, gateLimit: undefined, reported: false, confirmed: undefined, question: undefined, feedback, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs);
+  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, recorded: undefined, objectAfter: now(), grantedGate: undefined, gateLimit: undefined, reported: false, confirmed: undefined, question: undefined, feedback, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs);
   const affected = new Set([stageId]);
   for (const d of f.definition.stages) {
     if (!d.needs.some((n) => affected.has(n))) continue;
@@ -623,7 +628,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
         resetStreak(app, itemId);
         if (s.attempt >= 3) changeStage(app, itemId, stageId, "blocked", { askId: null, waitingOn: "owner", control: { ...s.control, question: undefined, reported: true } }, { actor: "owner" }, `三次仍未确认：${text}`);
         else {
-          changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, confirmed: !s.control.grantedGate, grantedGate: undefined, feedback: text, reported: false, escalated: undefined } }, { actor: "owner" }, `本人要求重做：${text}`);
+          changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, confirmed: !s.control.grantedGate, grantedGate: undefined, feedback: text, objectAfter: now(), reported: false, escalated: undefined } }, { actor: "owner" }, `本人要求重做：${text}`);
           await advanceNow(app, itemId, "本人要求重做");
         }
       }
@@ -681,7 +686,7 @@ export function flowView(app: App, id: string) {
       return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
         round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: isFixes(d) ? fixMinutes(app, s, new Date()) : usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
         carrier: { kind, label: kind === "trials" ? "助手，一个一个去试" : objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
-        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
+        ...(object ? { object: { title: object.title, status: object.status, link: object.link, ...(object.statusLabel !== undefined ? { statusLabel: object.statusLabel, fields: object.fields ?? [], disabled: !!object.disabled } : {}) } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item), rounds: f ? roundHistory(app, f) : [],
     changes: shownChanges(app, id), follow: followView(app, id),
   };
@@ -690,6 +695,7 @@ export function flowView(app: App, id: string) {
 export async function flowReminders(app: App, at = new Date()) {
   attachFlows(app);
   await checkGitSignals(app);
+  await pollObjects(app, at);
   await followContexts(app, at);
   for (const { item_id: id } of all<{ item_id: string }>(app.db, "select item_id from item_flows where ended_at is null")) await serial(app, id, async () => {
     // Recover terminal runs missed during downtime, then remind only the still-waiting stages.

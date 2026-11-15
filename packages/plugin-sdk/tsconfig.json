@@ -10,5 +10,5 @@
     "emitDeclarationOnly": true,
     "outDir": "dist"
   },
-  "include": ["client.ts", "blocks.ts", "charts.ts"]
+  "include": ["client.ts", "blocks.ts", "charts.ts", "objects.ts"]
 }

@@ -4,8 +4,10 @@ import { codeWork, type CodeWorkDetail } from "../agents/code-works.ts";
 import { designFeedback, designForWork, designsOfItem } from "../designs/store.ts";
 import type { Item } from "../items/store.ts";
 import { continuing } from "../studies/store.ts";
+import { pluginObjectKind } from "../plugins/objects.ts";
+import { findPluginObject } from "./plugin-objects.ts";
 
-export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string };
+export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; changedAt?: string; disabled?: boolean };
 export type ObjectKind = { kind: string; label: string; find: (app: App, item: Item) => FlowObject | null };
 
 /** Per-item run materials bound the lookup; codeWork uses the existing continuation indexes. */
@@ -22,7 +24,7 @@ export function latestCodeWork(app: App, item: Item): CodeWorkDetail | null {
   return null;
 }
 
-/** Built-in registry. Plugin registration is deliberately left to a later phase. */
+/** Built-in object lifecycles stay in their own stores. */
 export const flowObjects: readonly ObjectKind[] = [
   { kind: "fixes", label: "改", find: () => null },
   { kind: "trials", label: "试验", find: (app, item) => {
@@ -45,5 +47,8 @@ export const flowObjects: readonly ObjectKind[] = [
     return { ref: `design:${d.id}`, title: d.title, status: d.status, done, link: `#/design/${d.id}` };
   } },
 ];
-export const objectKind = (kind: string) => flowObjects.find((x) => x.kind === kind);
-export const findObject = (app: App, item: Item, kind: string) => objectKind(kind)?.find(app, item) ?? null;
+export const objectKind = (kind: string): ObjectKind | undefined => {
+  const def = pluginObjectKind(kind);
+  return kind.includes(":") ? def ? { kind, label: def.label, find: (app, item) => findPluginObject(app, item, kind) } : undefined : flowObjects.find((x) => x.kind === kind);
+};
+export const findObject = (app: App, item: Item, kind: string, opts?: { statuses?: string[]; after?: string }): FlowObject | null => kind.includes(":") ? findPluginObject(app, item, kind, opts) : objectKind(kind)?.find(app, item) ?? null;

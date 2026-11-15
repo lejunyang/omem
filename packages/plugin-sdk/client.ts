@@ -9,6 +9,7 @@ export type OmemEvent =
   | { type: "run"; runId: string; status: string };
 
 export { renderBlock, renderView, GENERIC_KINDS, type BlockView, type ViewComponent, type UiField } from "./blocks";
+export type { PluginObject, PluginObjectState, PluginObjectContext, PluginObjectApi, PluginConnection, PluginSignal } from "./objects";
 
 export type Omem = {
   plugin: string;

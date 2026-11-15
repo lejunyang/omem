@@ -2129,6 +2129,14 @@ function flowItem(ctx: ToolContext, id: string, write: boolean) {
 }
 function flowActor(ctx: ToolContext) { return { actor: ctx.actor === "user" ? "owner" : ctx.spec ?? ctx.role ?? "assistant", userId: ctx.userId ?? OWNER, runId: ctx.runId ?? undefined }; }
 def({
+  name: "attach_object", description: "把平台对象的链接挂到事项上（如合并请求）；只读取当前状态，后续宿主自动跟进。需要已启用且认识此链接的插件。", write: true,
+  schema: z.object({ item: z.string(), url: z.string().trim().min(1).max(4000) }),
+  handler: async (ctx, a) => {
+    flowItem(ctx, a.item, true);
+    return JSON.stringify(await (await import("../flows/plugin-objects.ts")).attachObject(ctx.app, a.item, a.url, ctx.userId ?? OWNER, ctx.actor));
+  },
+});
+def({
   name: "propose_directions", description: "定方向阶段交零到三个方向，宿主对账去重后请本人选；空数组是正常结果，note 写原因。", write: true, schema: proposalSchema,
   handler: async (ctx, a) => {
     flowItem(ctx, a.item, true);
@@ -2277,7 +2285,7 @@ def({
     expected_source_refs: refs,
     space: z.string().optional(),
     materials_add: z.array(z.object({
-      kind: z.enum(["source", "conversation", "repo", "space", "run", "req"]).describe("source 原件（文档、群聊、网页…）/ conversation 和 omem 的会话 / repo 代码仓库空间加分支 / space 整个空间（如迁移要对照的源仓库）/ run 为它做过的交办或评审 / req 需求树里这次要做的节点（连同它下面的全部）"),
+      kind: z.enum(["source", "conversation", "repo", "space", "run", "req", "object"]).describe("source 原件（文档、群聊、网页…）/ conversation 和 omem 的会话 / repo 代码仓库空间加分支 / space 整个空间（如迁移要对照的源仓库）/ run 为它做过的交办或评审 / req 需求树里这次要做的节点（连同它下面的全部）"),
       ref: z.string().describe("source：原件 id（src:… 也可以）；repo / space：空间 id；conversation：会话 id；run：运行 id；req：需求点 id"),
       branch: z.string().optional().describe("repo：分支名"),
       base: z.string().optional().describe("repo：对照的基线分支"),

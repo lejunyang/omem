@@ -22,6 +22,21 @@ npx tsc --noEmit -p .
 
 真实 Agent 验证尝试：把角色与两个虚构案例交给 `codex exec -m gpt-6.1-sol -c model_reasoning_effort=low -s read-only --skip-git-repo-check -`，CLI 启动即退出 1，报 `Error finding codex home: Could not find home directory`，没有进入角色运行，不能算通过。真实渠道卡片和网页展示未验；卡片内容、权限与回答结果由临时 Git 仓库测试验证。
 
+## 流程第三期第一步：插件的对象和信号（2026-11-16）
+
+| 操作 | 预期 | 验证 |
+| --- | --- | --- |
+| 假插件声明对象；试非法 kind、空 statuses、未知 final、重复类型和小于一分钟的间隔 | 注册拒绝；未知读取状态保留已存状态并记错误 | `test/flow-objects.test.ts` |
+| 用 attach_object 及 POST/GET/DELETE `/api/items/:id/objects` 挂接、重复挂接、读和解除；换事项主人或只读空间 | 一个 `(kind,key)` 只存一行；一个事项只挂一次；越权拒绝；解除只删关联 | 同上，假账号、假连接和 HTTP |
+| 巡检无关联、已结束事项、终态、未到时间、23 个待查对象、失败、超时、停用的类型 | 只用事项主人连接；每轮最多 20 个、并发 1、15 秒超时；5/15/60 分钟退避；失败不阻断后面的对象 | 同上，含隔离进程路径 |
+| 同一状态重复读取，再改状态，关联两件事项 | 只写一条 object 信号、每件事一笔状态时间线，各推进一次 | 同上 |
+| 定义引用未知对象、未知状态；对象阶段先无对象后挂上；本人阶段等状态；完成后重开 | 保存时报明确问题；无对象等待，关联后跟随；终态或指定状态完成；旧状态不再次完成重开阶段 | 同上，含现有流程回归 |
+| 插件 emit 超过 4000 字符的 keys 或 payload；GitHub PR 的三种状态与可选检查 | 大小分别限制；emit 只记录；GitHub 用假 fetch，不连真实平台 | 同上 |
+
+自动检查：指定的流程、权限、拉取等十一份测试，加 `plugins / plugin-connectors / plugin-sandbox / platform-packs` 四份现有插件测试，命令的完整文件清单见 flows.md 文末。首轮原样结果为 `Test Files 1 failed | 14 passed (15)`、`Tests 15 failed | 166 passed | 1 skipped (182)`，十五个失败均发生在测试清理前未关闭独立连接保管库；补 closeVault 后复测为 `Test Files 15 passed (15)`、`Tests 182 passed | 1 skipped (183)`，其中新文件为 `24 tests`。`npx tsc --noEmit -p .` 和 `npx tsc --noEmit -p packages/plugin-sdk/tsconfig.json` 均退出 0、无错误；没有跑全量测试或 vue-tsc。
+
+真实 Agent 冒烟尝试使用 `codex exec --ephemeral --skip-git-repo-check -s read-only -m gpt-6.1-sol -c 'model_reasoning_effort="low"'`，CLI 在启动时退出 1，原因为 `Error finding codex home: Could not find home directory`，未到模型执行。真实 Agent 与真实平台连接尚需另验；不验网页、动作、插槽、规则事件、plugin link 和源码构建。
+
 按你最初列的目标和日常用途逐项验收。每项写了操作和预期结果；“云端已验”指我在云端用 Claude Code（haiku）实际跑过，“待你验”指需要你的账号或本机环境。
 
 ## 课题第三期第二步（2026-11-15）

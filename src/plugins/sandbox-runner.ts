@@ -1,7 +1,8 @@
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { htmlToMarkdown } from "../sources/html.ts";
-import type { PlatformReader, PluginApi, PluginConnection, PluginPlatform, PluginTool } from "./types.ts";
+import type { PlatformReader, PluginApi, PluginConnection, PluginPlatform, PluginTool, PluginObject } from "./types.ts";
+import { validateObject } from "./objects.ts";
 
 /**
  * A plugin's code in its own process (src/plugins/sandbox.ts): started with Node's permission model,
@@ -55,6 +56,7 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
     spaceId: c.spaceId,
     runId: c.runId,
     actor: c.actor,
+    emit: (signal: unknown) => rpc("emit", { signal, call }),
     conversationId: c.conversationId,
     settings: () => c.settings,
     store: { get: store("get"), put: store("put"), list: store("list"), delete: store("delete") },
@@ -76,15 +78,23 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
 
 const tools = new Map<string, PluginTool>();
 const readers = new Map<string, PlatformReader>();
+const objects = new Map<string, PluginObject>();
 
 async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { tools: unknown[]; platforms: unknown[] } = { tools: [], platforms: [] };
+  const declared: { tools: unknown[]; platforms: unknown[]; objects: unknown[] } = { tools: [], platforms: [], objects: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
+    object(def) {
+      validateObject(def);
+      if (objects.has(def.kind)) throw new Error(`对象类型重复注册：${def.kind}`);
+      objects.set(def.kind, def);
+      const { match, read, ...metadata } = def;
+      declared.objects.push(metadata);
+    },
     z,
     tool(t) {
       tools.set(t.name, t as PluginTool);
@@ -126,6 +136,10 @@ process.on("message", async (m: Msg) => {
       const parsed = t.schema.safeParse(m.args ?? {});
       if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
       value = await t.handler(contextOf({ ...m.ctx, call: m.id }, process.env.OMEM_PLUGIN_ID!), parsed.data);
+    } else if (m.t === "object.match" || m.t === "object.read") {
+      const def = objects.get(m.kind);
+      if (!def) throw new Error(`没有对象类型 ${m.kind}`);
+      value = m.t === "object.match" ? await def.match(m.url) : await def.read(contextOf({ ...m.ctx, call: m.id }, process.env.OMEM_PLUGIN_ID!), m.key);
     } else if (m.t === "read" || m.t === "changes") {
       const r = readers.get(`${m.provider} ${m.kind}`);
       const conn = connectionOf(m.conn);

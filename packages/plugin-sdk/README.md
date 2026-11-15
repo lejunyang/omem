@@ -29,6 +29,36 @@ server. Plugins in omem's data directory need not install this package: omem ser
 
 The plugin format: [docs/v2/plugins.md](https://github.com/lejunyang/omem/blob/main/docs/v2/plugins.md).
 
+## 带状态的对象与信号
+
+服务端由宿主传入的 `api` 支持 `api.object`，本包从主入口导出 `PluginObject / PluginObjectState / PluginObjectContext / PluginObjectApi / PluginSignal / PluginConnection` 类型；沿用页面 SDK 的类型导出和声明构建方式，不把宿主的 App 和完整 PluginApi 带进页面包。
+
+```ts
+import type { PluginObject } from "@omem-ai/plugin-sdk";
+
+const object: PluginObject = {
+  kind: "pull-request",
+  label: "合并请求",
+  match: (url) => url === "https://github.com/example/shop/pull/7" ? "example/shop#7" : null,
+  read: async (ctx, key) => {
+    const connection = await ctx.connection("connect-github");
+    if (!connection) throw new Error("请先连接 GitHub");
+    const response = await connection.fetch("/repos/example/shop/pulls/7");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const pr = await response.json();
+    return { title: pr.title, status: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : "open", link: pr.html_url };
+  },
+  statuses: { open: "进行中", merged: "已合并", closed: "已关闭" },
+  final: ["merged", "closed"],
+  poll: { minutes: 5 },
+};
+// register(api) 中调用 api.object(object)。
+```
+
+完整的链接匹配、读取及字段例子在 `plugins/github/server.ts`。宿主全名为 `<插件 id>:<kind>`；kind 用小写字母开头，后接小写字母、数字或短横线。statuses 非空，final 必须是已声明状态；poll 默认 5 分钟，最短 1 分钟。对象只有事项关联且事项未结束、对象未到终态时才轮询，始终用事项主人的连接，按插件既有的进程内或隔离方式执行。插件停用或卸载后保留最后状态并标记来源已停用，不再轮询。
+
+`ctx.emit({ kind: "received", keys: { object: "example/shop#7" }, payload: { note: "状态已读取" } })` 记录 `plugin.<插件 id>.received`，keys 与 payload 序列化后各不超过 4000 字符；本步只记录，不触发规则或流程。对象状态变化由宿主另记 `object.<全名>.<状态>` 并推进关联事项。不提供写平台对象的动作、按钮或界面插槽。
+
 ## 场景包与聊天渠道
 
 插件清单支持 `rules: [名称]`（`rules/<名>.yaml`，首次导入且停用）和 `mcp`（命令 / 网址、变量 / 请求头名字列表，密钥值由本人在 Agent 页填）。`omem plugin pack` 可导出现有档案、完整技能目录、规则和 MCP；默认写到数据目录 `plugins-out/`，拒绝文本中的已存密钥和用户目录绝对路径。安装接受本地目录并复制，命令 MCP 要先信任插件。

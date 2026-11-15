@@ -9,6 +9,7 @@ import type { Execution } from "../agents/execution.ts";
 export type StageState = "pending" | "gated" | "doing" | "blocked" | "done" | "skipped" | "stale";
 export type FlowActor = { actor: string; runId?: string; userId?: string };
 export type StageControl = {
+  objectAfter?: string;
   recorded?: boolean;
   gateLimit?: boolean; grantedGate?: boolean;
   runId?: string;

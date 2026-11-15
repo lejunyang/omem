@@ -4,6 +4,7 @@ import { OWNER } from "../core/users.ts";
 import { HttpError, json, newId, now, truncate, webLink } from "../core/util.ts";
 import type { HostTool, ToolContext } from "../agents/tools.ts";
 import { pluginStore } from "./store.ts";
+import { emitPluginSignal } from "./signals.ts";
 import type { BlockStatus, PluginBlock, PluginBlockState, PluginContext, PluginSettings } from "./types.ts";
 
 /**
@@ -94,6 +95,7 @@ export function pluginContext(app: App, env: PluginEnv, c: { userId: string; spa
     spaceId: c.spaceId,
     runId: c.runId,
     actor: c.actor,
+    emit: async (signal) => emitPluginSignal(app, env.id, signal),
     conversationId: c.conversationId ?? runConversation(app, c.runId),
     store: pluginStore(app, env.id, c.userId, c.spaceId),
     settings: () => env.settings(app, c.userId),

@@ -28,7 +28,47 @@ const repoRef = (id: string) => {
 };
 const day = (s: string) => s.slice(0, 16).replace("T", " ");
 
+export function pullRequestMatch(url: string) {
+  const m = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)(?:[/?#].*)?$/.exec(url);
+  return m ? `${m[1]}/${m[2]}#${Number(m[3])}` : null;
+}
+
 export default function register(api: PluginApi) {
+  api.object({
+    kind: "pull-request", label: "合并请求", match: pullRequestMatch,
+    statuses: { open: "进行中", merged: "已合并", closed: "已关闭" }, final: ["merged", "closed"], poll: { minutes: 5 },
+    async read(ctx, key) {
+      const c = await ctx.connection("connect-github");
+      if (!c) throw new Error("请先连接 GitHub");
+      const { owner, repo, n } = issueRef(key);
+      const base = `/repos/${owner}/${repo}`;
+      const { body: pr } = await call<{ title: string; state: string; merged_at: string | null; html_url: string; base: { ref: string }; head: { sha: string } }>(c, `${base}/pulls/${n}`);
+      const fields = [{ label: "目标分支", value: pr.base.ref }];
+      const checks: string[] = [];
+      try {
+        const { body: status } = await call<{ state: string; total_count: number }>(c, `${base}/commits/${pr.head.sha}/status`);
+        if (status.total_count > 0) checks.push(status.state);
+      } catch { /* Commit status is optional for connections with fewer scopes. */ }
+      try {
+        const { body: checksBody } = await call<{ total_count: number; check_runs: { status: string; conclusion: string | null }[] }>(c, `${base}/commits/${pr.head.sha}/check-runs?per_page=100`);
+        if (checksBody.total_count > checksBody.check_runs.length) checks.push("pending");
+        for (const check of checksBody.check_runs) checks.push(check.status === "completed" ? check.conclusion ?? "pending" : "pending");
+      } catch { /* Check runs are optional as well. */ }
+      if (checks.length) fields.push({ label: "检查", value: checks.some((s) => ["failure", "error", "timed_out", "cancelled", "action_required", "startup_failure"].includes(s)) ? "未通过" : checks.some((s) => !["success", "neutral", "skipped"].includes(s)) ? "进行中" : "通过" });
+      try {
+        const latest = new Map<string, string>();
+        let complete = false;
+        for (let page = 1; page <= 5; page++) {
+          const { body: reviews, next } = await call<{ user: User | null; state: string }[]>(c, `${base}/pulls/${n}/reviews?per_page=100&page=${page}`);
+          for (const r of reviews) if (r.user && r.state !== "PENDING") latest.set(r.user.login, r.state);
+          if (!next) { complete = true; break; }
+        }
+        const states = [...latest.values()];
+        fields.push({ label: "评审状态", value: !complete ? "评审较多，请查看原页" : states.includes("CHANGES_REQUESTED") ? "要求修改" : states.includes("APPROVED") ? "已批准" : states.length ? "已评论" : "尚无评审" });
+      } catch { fields.push({ label: "评审状态", value: "无法读取" }); }
+      return { title: pr.title, status: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : "open", link: pr.html_url, fields };
+    },
+  });
   api.platform({
     provider: "connect-github",
     features: [

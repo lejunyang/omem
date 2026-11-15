@@ -17,6 +17,7 @@ import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec 
 import { CORE_TOOLS, TOOL_GROUPS, expandTools } from "../agents/tool-help.ts";
 import { registerTool, saveSourceFor, toolList, unregisterTools, watchesFor, type ToolContext } from "../agents/tools.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
+import { registerObject } from "./objects.ts";
 import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
@@ -203,6 +204,7 @@ async function loadCode(app: App, p: LoadedPlugin) {
   if (p.source === "data" && trustMode(app, manifest.id) === "isolated") return loadIsolated(app, p);
   const api: PluginApi = {
     id: manifest.id,
+    object(def) { p.connectors.push(registerObject(manifest.id, def)); },
     z,
     channel(def) {
       const channel = registerPluginChannel(app, p, def);

@@ -35,6 +35,8 @@ export type PluginContext = {
   /** The plugin session the call belongs to, if any. */
   conversationId: string | null;
   actor: "agent" | "user";
+  /** Record a namespaced flow signal; no event is triggered. */
+  emit(signal: PluginSignal): Promise<void>;
   /** This plugin's records for this user. */
   store: PluginStore;
   /** The owner's settings for this plugin, defaults filled in. */
@@ -102,6 +104,18 @@ export type PluginSourceInput = { space?: string; kind?: "doc" | "chat" | "web" 
 /** `base`: where its calls go (the provider's apiBase), null when the owner has not set it up. */
 export type PluginConnection = { account: string; scopes: string[]; base: string | null; fetch(path: string, init?: RequestInit): Promise<Response> };
 
+export type PluginSignal = { kind: string; keys: Record<string, unknown>; payload?: unknown };
+export type PluginObjectState = { title: string; status: string; link: string; fields?: { label: string; value: string }[] };
+export type PluginObject = {
+  kind: string;
+  label: string;
+  match(url: string): string | null;
+  read(ctx: PluginContext, key: string): Promise<PluginObjectState>;
+  statuses: Record<string, string>;
+  final: string[];
+  poll?: { minutes: number };
+};
+
 /** A platform people connect (logging in with it, or only binding): see src/auth/providers.ts LoginProvider. */
 export type PluginConnector = import("../auth/providers.ts").LoginProvider & {
   /** What a person can turn on, each with the scopes it asks for (src/auth/features.ts); a function when they follow the owner's settings. */
@@ -148,6 +162,8 @@ export type PluginBlock<S extends z.ZodObject = z.ZodObject> = {
 
 export type PluginApi = {
   id: string;
+  /** A read-only stateful object, named <plugin id>:<kind> by the host. */
+  object(def: PluginObject): void;
   /** The host's zod: plugins in the data directory cannot import packages. */
   z: typeof import("zod").z;
   /** In-process only. The host resolves identities, splits deliveries and unregisters on stop. */

@@ -8,9 +8,11 @@ import { pluginConnection } from "../auth/connections.ts";
 import { registerTool, saveSourceFor, watchesFor, type ToolContext } from "../agents/tools.ts";
 import { OWNER } from "../core/users.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
+import { registerObject } from "./objects.ts";
+import { emitPluginSignal } from "./signals.ts";
 import { ensureService } from "./services.ts";
 import { pluginStore } from "./store.ts";
-import type { PluginConnection, PluginPlatform } from "./types.ts";
+import type { PluginConnection, PluginPlatform, PluginObject } from "./types.ts";
 
 /**
  * Running a plugin's code in its own process (docs/v2/plugins.md, “隔离运行”): Node's permission model
@@ -23,6 +25,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(here, f)).find((f) => existsSync(f))!;
 
 type Declared = {
+  objects: Omit<PluginObject, "match" | "read">[];
   tools: { name: string; description: string; jsonSchema: Record<string, unknown>; write: boolean; page: boolean; approval: boolean; whenConnected: boolean }[];
   platforms: (Omit<PluginPlatform, "readers"> & { readers: { kind: string; label: string; id: string; read: boolean; changes: boolean }[] })[];
 };
@@ -56,10 +59,11 @@ export async function startSandbox(
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
+      const callMs = String(msg.t).startsWith("object.") ? 15000 : CALL_MS;
       const timer = setTimeout(() => {
         pending.delete(id);
-        fail(new Error(`插件 ${plugin.id} 超过 ${CALL_MS / 60_000} 分钟没有回应`));
-      }, CALL_MS);
+        fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
+      }, callMs);
       pending.set(id, { ok, fail, ctx, timer });
       child.send({ ...msg, id });
     });
@@ -79,6 +83,9 @@ export async function startSandbox(
       return ctx;
     };
     switch (op) {
+      case "emit":
+        need();
+        return emitPluginSignal(app, plugin.id, a.signal);
       case "fetch": {
         const c = conns.get(a.handle);
         if (!c) throw new Error("连接已经失效");
@@ -156,6 +163,14 @@ export async function startSandbox(
   });
 
   const undo: (() => void)[] = [];
+  for (const def of declared.objects ?? []) undo.push(registerObject(plugin.id, {
+    ...def,
+    match: (url) => ask({ t: "object.match", kind: def.kind, url }),
+    read: (ctx, key) => {
+      const toolCtx: ToolContext = { app, userId: ctx.userId, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, spaces: [ctx.spaceId], tools: new Set() };
+      return ask({ t: "object.read", kind: def.kind, key, ctx: { userId: ctx.userId, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, conversationId: null, settings: opts.settings(ctx.userId) } }, toolCtx);
+    },
+  }));
   for (const t of declared.tools) {
     if (!t.name.startsWith(opts.prefix)) throw new Error(`插件 ${plugin.id} 的工具名要以 ${opts.prefix} 开头：${t.name}`);
     registerTool(

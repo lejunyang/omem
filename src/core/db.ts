@@ -2055,6 +2055,13 @@ export const migrations: readonly string[] = [
      tip text not null, tip_at text not null, pending text, processed text not null default '[]',
      primary key(space_id,branch)
    );`,
+  // What a plugin's object looked like when last read; travels with the items it is linked to.
+  `create table flow_objects (
+     id text primary key, kind text not null, key text not null, title text not null,
+     status text not null, link text not null, fields text not null default '[]',
+     checked_at text, changed_at text not null, error text, updated_at text not null,
+     unique(kind,key)
+   );`,
 ];
 
 export type Db = DatabaseSync;
