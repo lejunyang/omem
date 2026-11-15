@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 流程 Git 信号：owner / wait 的 git.pushed、git.merged；按交办已应用落点逐仓库核对提交，巡检 / 推送成功 / 仓库同步触发，限频远端读取，三十天本机记录，视图 waitingSignal | 已实现；2026-11-15，真 Git 与本地裸远端定向测试；网页由后续任务接入，远端 squash / cherry-pick 不推断等价 | `src/flows/signals.ts`、`test/flow-signals.test.ts`、`docs/v2/flows.md`“第二期：Git 信号” |
 | 数据页：用量、覆盖、找人批次、访客回答、质量、编码交付、知识与运行成本；本地日期 30 天默认、最多 180 天，按条件缓存 3 分钟；指标与图表可回到记录，Markdown/CSV 导出、只读 peer；成员仅自己的可读运行 | 已实现（11-15）；阶段指标随 flows 补入，部分数据边界见 flows §10.6 | `src/insights/`、`web/src/views/Insights.vue`、`test/insights.test.ts` |
 | 事项流程：YAML 定义与补缺播种、事项副本和阶段日志、前提推进、本人关卡、条件判断、编码 / 方案对象、报告与重开、倍增提醒、替换进度通知、工具与 HTTP、三个表随事项拉取、事项流程条与待办卡片、定义 YAML 编辑与校验预览、列表阶段标签 | 已实现；2026-11-15，定向测试；专门的飞书进度卡版式及后续期未做，网页返工与事件缺口见 flows.md | `src/flows/`、`docs/v2/flows.md`、`test/flows.test.ts`、`test/flows-http.test.ts`、`web/src/components/ItemFlow.vue`、`web/src/views/Flows.vue` |
 | 重点文档覆盖统计与按计数信号补写：每晚 04:10，全局默认 3 份、每空间 2 份，尊重 autoOrganize，跳过代码空间；30 天尝试冷却；指定 sourceIds 规划后沿用写作核对；Wiki 展开前 20 份和手动运行、设置额度、只读 peer 数字 | 已实现；专项回归覆盖，真实模型成文效果待验 | `src/wiki/coverage.ts`、`generate.ts`、`web/src/components/WikiCoverage.vue`、`test/wiki-coverage.test.ts` |

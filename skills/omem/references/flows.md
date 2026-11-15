@@ -15,6 +15,6 @@
 
 依据可以是 `src:<原件id>#L起-L止`、运行 id（也接受 `run:<id>`）、`code-work:<交办首轮id>` 或 `design:<方案id>`。必须是调用者可读的材料。`done: confirm` 时交结果会另问本人，不能代答。本人说还不行会把理由交给同一承担者重做，第三次仍未通过就卡住；运行结束却没交结果也会卡住，不自动重试。
 
-定义格式见 `docs/v2/flows.md`。第一期支持 `by: {run: {agent?, skill?}}`、`by: {object: code-work / design}`、`by: owner`、`by: wait`；`needs` 只指向更早的阶段，不填等上一个、`[]` 无前提。`when` 与文字完成要求最多 300 字，`note` 最多 1000 字。`done` 可用 `confirm`、一句话或已有对象状态。person、signal、插件对象留待后续阶段。定义在 `library/_flows/<id>.yaml`，内置模板只补缺。
+定义格式见 `docs/v2/flows.md`。支持 `by: {run: {agent?, skill?}}`、`by: {object: code-work / design}`、`by: owner`、`by: wait`；`needs` 只指向更早的阶段，不填等上一个、`[]` 无前提。`when` 与文字完成要求最多 300 字，`note` 最多 1000 字。`done` 可用 `confirm`、一句话或已有对象状态；owner / wait 还可写 `{ signal: git.pushed }` 或 `{ signal: git.merged }`，关联交办已应用的提交全部进入远端 / 目标分支远端后由宿主完成，本人也可手动完成。person、其他信号、插件对象留待后续阶段。定义在 `library/_flows/<id>.yaml`，内置模板只补缺。
 
 阶段运行复用事项材料和会话摘要，使用 `note` 说明这段做什么；`agent` 可以是内置角色或 Agent 档案，不填用主助手，`skill` 只给这一轮。流程监听已有对象和运行事件，更新同一张进度通知；流程走完不关闭事项。网页流程条和飞书进度卡的专门版式尚未实现。

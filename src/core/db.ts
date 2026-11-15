@@ -1962,6 +1962,11 @@ export const migrations: readonly string[] = [
    create index reply_outcomes_due on reply_outcomes(due_at) where label is null;
    create index reply_outcomes_at on reply_outcomes(at);
    create index reply_outcomes_chat on reply_outcomes(chat_id, at);`,
+  // Git observations are device-local evidence, retained for thirty days.
+  `create table flow_signals (
+     id integer primary key autoincrement, at text not null, type text not null,
+     keys text not null, item_id text not null, stage_id text not null, outcome text not null
+   );`,
 ];
 
 export type Db = DatabaseSync;

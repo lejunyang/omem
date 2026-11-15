@@ -472,7 +472,7 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
   const appliedAt = new Date().toISOString();
   const appliedTo = wts.map((wt) => {
     const root = getSpace(app, wt.space).rootPath!;
-    return { space: wt.space, path: checkedOutAt(root, wt.branch) ?? root, branch: wt.branch };
+    return { space: wt.space, path: checkedOutAt(root, wt.branch) ?? root, branch: wt.branch, base: changeBase(root, wt, `refs/heads/${wt.branch}`), head: tipOf(root, wt.branch)! };
   });
   for (const id of new Set([first, runId])) setRunOutput(app, id, { appliedAt, appliedTo, pushed, confirmNotes: notes });
   for (const r of rounds(app, first)) cancelHostAsks(app, r.id, [...ROUND_ASKS, "work-deliver"]);

@@ -210,6 +210,7 @@ function delegationOver(app: App, runId: string, at: number) {
 /** The hourly `repo-sync`: fetch and sync what is behind, refresh followed branches, expire overlays. */
 export async function repoSyncTick(app: App) {
   const r = await refreshRepoSpaces(app);
+  await (await import("../flows/signals.ts")).checkGitSignals(app);
   const x = await expireOverlays(app);
   // Branch indexes asked for lately (not followed) follow their local ref too.
   await (await import("../agents/worktree-index.ts")).refreshBranchIndexes(app);

@@ -157,6 +157,7 @@ export async function actCodeGit(app: App, runId: string, input: Action, actor =
       if (!result.ok) operation.error = `${operation.committed ? "本地提交已完成；" : ""}推送失败，可刷新后仅重试推送${/rejected|non-fast-forward|fetch first/i.test(result.error) && !a.force ? "（远端分支有本地没有的提交：变基过的分支要选“强制推送”，否则先同步）" : ""}：${result.error}`;
       record();
     }
+    if (operation.pushed) await (await import("../flows/signals.ts")).checkGitSignals(app);
     return operation;
   } finally { busy.delete(t.common); }
 }

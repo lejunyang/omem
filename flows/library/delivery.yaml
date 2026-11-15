@@ -19,8 +19,9 @@ stages:
     by: { object: code-work }
   - id: push
     name: 推送
-    note: 评审通过的提交由你看过以后自己推送。
+    note: 评审通过的提交由你看过以后自己推送。推到远端以后这一段会自己完成。
     by: owner
+    done: { signal: git.pushed }
   - id: verify
     name: 上线确认
     note: 推送之后的发布和验证按你自己的做法进行。做完在这里记一笔，写上验证了什么。

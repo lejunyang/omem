@@ -1003,7 +1003,7 @@ function branchFromRef(ref: string): string | null {
   return null;
 }
 
-export type AppliedTarget = { space: string; path: string; branch: string | null };
+export type AppliedTarget = { space: string; path: string; branch: string | null; base?: string; head?: string };
 type ApplyTarget = AppliedTarget & { root: string; file: string; create: boolean; newBranch?: boolean; start?: string; syncHead?: string; startCommit?: string };
 
 /** Resolve the original branch without switching the user's checkout or writing anything. */
@@ -1202,7 +1202,11 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
     }
     throw error;
   }
-  const appliedTo = targets.map(({ space, path, branch }) => ({ space, path, branch }));
+  // The patch is still uncommitted here; preserve its receiving base for later Git observations.
+  const appliedTo = targets.map(({ space, path, branch }) => {
+    const wt = worktreesOf(app, String(r.input.continueFrom ?? r.id)).find((w) => w.space === space);
+    return { space, path, branch, base: wt?.inPlace ? wt.start ?? wt.base : git(path, ["rev-parse", "HEAD"]).stdout.trim() };
+  });
   const appliedAt = new Date().toISOString();
   const firstId = String(r.input.continueFrom ?? r.id);
   if (opts.keepWorking) {

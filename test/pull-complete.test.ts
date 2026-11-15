@@ -48,7 +48,7 @@ describe("complete portable pulls", () => {
       // The archive recheck queue and the evidence each source was judged with (sources/homing.ts): rebuilt by the nightly check.
       "archive_recheck", "archive_evidence",
       // Live goals measure this machine's delegation worktree; unlike portable task/checkpoint history, never resume them on a pulled device.
-      "improve_goals", "improve_rounds",
+      "improve_goals", "improve_rounds", "flow_signals",
       // Who wrote and who read each page on this device, and what its nightly audits found (quality/audit.ts).
       "page_writes", "page_reads", "quality_audits",
       // Decision material and the source-to-sweep links remain private to this device.
@@ -58,6 +58,29 @@ describe("complete portable pulls", () => {
     const covered = new Set(["spaces", "sources", "lark_people", ...pullTables.map((t) => t.name)]);
     const tables = all<{ name: string }>(app.db, "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name not like '%_fts%' and name not like 'memory_fts%'");
     expect(tables.map((t) => t.name).filter((n) => !derived.has(n) && !device.has(n) && !covered.has(n))).toEqual([]);
+  });
+
+  it("keeps Git signal observations on this device during snapshots, merges and overwrites", async () => {
+    const local = testApp(), remote = testApp();
+    for (const [app, note] of [[local, "local observation"], [remote, "remote observation"]] as const)
+      run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,?,?,?,?,?)", "2026-11-15", "git.pushed", "[]", "demo", "push", note);
+    const f = await snapshot(remote);
+    let localClosed = false;
+    try {
+      const copied = App.open(f.dbDir);
+      try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); }
+      finally { copied.db.close(); }
+      mergeLibrary(local, f);
+      expect(all(local.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]);
+      local.db.close(); localClosed = true;
+      overwriteLocal(local.home, f);
+      const after = App.open(local.home);
+      try { expect(all(after.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]); }
+      finally { after.db.close(); }
+    } finally {
+      cleanupFetched(f); remote.db.close(); if (!localClosed) local.db.close();
+      rmSync(local.home, { recursive: true, force: true }); rmSync(remote.home, { recursive: true, force: true });
+    }
   });
 
   it("merges forked chats, relocates remote citations and structured lines without renumbering local lines", async () => {

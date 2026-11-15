@@ -39,14 +39,14 @@ export function git(cwd: string, args: string[], input?: string, env?: Record<st
  * ls-remote) or may take seconds on a large repository. Every HTTP request, tool call and timer
  * waited while a synchronous `git fetch` ran (up to its two-minute timeout).
  */
-export function gitAsync(cwd: string, args: string[], opts: { timeoutMs?: number } = {}): Promise<GitResult> {
+export function gitAsync(cwd: string, args: string[], opts: { timeoutMs?: number; env?: Record<string, string> } = {}): Promise<GitResult> {
   return new Promise((resolve) => {
     execFile("git", args, {
       cwd,
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
       timeout: opts.timeoutMs ?? 0,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8", ...opts.env },
       windowsHide: true,
     }, (error, stdout, stderr) => resolve({ ok: !error, stdout: stdout ?? "", stderr: stderr || (error ? String(error) : "") }));
   });

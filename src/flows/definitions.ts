@@ -16,9 +16,9 @@ const carrier = z.union([
 ], { error: "承担者只能是 run、object、owner 或 wait；person 和插件对象在后续阶段实现" });
 const stageSchema = z.object({
   id: slug, name: text(200), note: text(1000).optional(), needs: z.array(slug).optional(), when: text(300).optional(), by: carrier,
-  done: z.union([text(300), z.object({ object: z.enum(["code-work", "design"], { error: "插件对象在后续阶段实现" }), status: z.union([text(100), z.array(text(100)).min(1, "至少写一个状态")]) }).strict()], { error: "完成规则只能是 confirm、对象状态或一句话；signal 在后续阶段实现" }).optional(),
+  done: z.union([text(300), z.object({ signal: z.enum(["git.pushed", "git.merged"]) }).strict(), z.object({ object: z.enum(["code-work", "design"], { error: "插件对象在后续阶段实现" }), status: z.union([text(100), z.array(text(100)).min(1, "至少写一个状态")]) }).strict()], { error: "完成规则只能是 confirm、Git 信号、对象状态或一句话；插件对象在后续阶段实现" }).optional(),
   gate: z.enum(["auto", "confirm"], { error: "关卡只能是 auto 或 confirm；指定 person 在后续阶段实现" }).default("auto"), fixed: z.boolean().default(false),
-}).strict();
+}).strict().refine((s) => !(typeof s.done === "object" && "signal" in s.done) || s.by === "owner" || s.by === "wait", { path: ["done"], message: "Git 信号只允许用于 owner 或 wait 承担的阶段" });
 export const flowSchema = z.object({
   id: slug, name: text(200), description: text(2000).optional(),
   for: z.object({ kinds: z.array(z.enum(["todo", "waiting", "watch", "decision"], { error: "事项类型只能是 todo / waiting / watch / decision" })).optional(), spaces: z.array(text(100)).optional() }).strict().optional(),
@@ -43,7 +43,7 @@ export function describeStage(s: FlowStage) {
   return {
     carrier: s.by === "owner" ? "你来做" : s.by === "wait" ? "只等进展" : object ? `跟着${object}走` : `${!run?.agent || run.agent === "assistant" ? "助手来做" : `交给 ${run.agent}`}${run?.skill ? `，用技能 ${run.skill}` : ""}`,
     gate: s.gate === "confirm" ? "开始前先问你" : s.by === "owner" ? "轮到就来找你" : s.by === "wait" ? "轮到就开始等" : "轮到就自己开始",
-    done: typeof s.done === "object" ? `${OBJECT_NAMES[s.done.object]}到了 ${[s.done.status].flat().join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : object ? `${object}完成就算做完` : s.by === "owner" ? "你说做完就算做完" : "交了结果就算做完",
+    done: typeof s.done === "object" ? "signal" in s.done ? s.done.signal === "git.pushed" ? "改动推到远端就算做完（你也可以自己点做完）" : "改动合进目标分支就算做完" : `${OBJECT_NAMES[s.done.object]}到了 ${[s.done.status].flat().join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : object ? `${object}完成就算做完` : s.by === "owner" ? "你说做完就算做完" : "交了结果就算做完",
     when: s.when ? `只在需要时做：${bare(s.when)}` : "",
   };
 }

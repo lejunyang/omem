@@ -58,9 +58,9 @@ describe("流程定义", () => {
     expect(() => parseFlow(yaml([]))).toThrow("至少");
     expect(() => parseFlow(yaml(Array.from({ length: 21 }, (_, i) => stage(`s${i}`))))).toThrow("最多");
   });
-  it("拒绝未知承担者、person、signal 与插件对象，并给出分期说明", () => {
+  it("拒绝未知承担者、person、run 信号与插件对象，并给出原因", () => {
     for (const by of [{ person: "某人" }, { object: "pipeline" }, "unknown"]) expect(() => parseFlow(yaml([stage("a", { by })]))).toThrow("后续阶段");
-    expect(() => parseFlow(yaml([stage("a", { done: { signal: "git.pushed" } })]))).toThrow("后续阶段");
+    expect(() => parseFlow(yaml([stage("a", { done: { signal: "git.pushed" } })]))).toThrow("owner 或 wait");
     expect(() => parseFlow(yaml([stage("a", { done: { object: "deployment", status: "succeeded" } })]))).toThrow("后续阶段");
     expect(() => parseFlow(yaml([stage("a")], { for: { kinds: ["task"] } }))).toThrow("todo");
     expect(() => parseFlow(yaml([stage("a", { note: "长".repeat(1001) })]))).toThrow("1000");

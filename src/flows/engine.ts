@@ -16,6 +16,7 @@ import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
 import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage } from "./definitions.ts";
 import { findObject, objectKind } from "./objects.ts";
+import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
 import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
 
 const host: FlowActor = { actor: "host" };
@@ -135,7 +136,7 @@ async function advanceNow(app: App, itemId: string, _cause: string) {
         const rows = itemStages(app, itemId);
         if (!d.needs.every((n) => rows.some((r) => r.id === n && ["done", "skipped"].includes(r.state)))) continue;
         if (s.state === "stale" && typeof d.by === "object" && "object" in d.by) {
-          const obj = findObject(app, item, typeof d.done === "object" ? d.done.object : d.by.object);
+          const obj = findObject(app, item, typeof d.done === "object" && "object" in d.done ? d.done.object : d.by.object);
           if (obj && objectDone(d, obj)) {
             changeStage(app, itemId, d.id, "done", { by: obj.ref, evidence: [obj.ref], waitingOn: null }, host, "复核对象仍已完成", [obj.ref]); changed = true; continue;
           }
@@ -159,7 +160,7 @@ async function advanceNow(app: App, itemId: string, _cause: string) {
       const carrierKind = typeof d.by === "object" && "object" in d.by ? d.by.object : null;
       const awaitingRevision = carrierKind && s.control.feedback && !s.control.reported;
       const followed = carrierKind && !awaitingRevision ? findObject(app, item, carrierKind) : null;
-      const kind = typeof d.done === "object" ? d.done.object : carrierKind;
+      const kind = typeof d.done === "object" && "object" in d.done ? d.done.object : carrierKind;
       const obj = kind && !awaitingRevision ? findObject(app, item, kind) : null;
       if (followed && s.by !== followed.ref) {
         s = changeStage(app, itemId, d.id, "doing", { by: followed.ref }, host, `跟随${objectKind(carrierKind!)?.label}：${followed.title}`, [followed.ref]); changed = true;
@@ -186,7 +187,7 @@ async function advanceNow(app: App, itemId: string, _cause: string) {
   }
 }
 function objectDone(d: FlowStage, obj: NonNullable<ReturnType<typeof findObject>>) {
-  if (typeof d.done === "object") return (Array.isArray(d.done.status) ? d.done.status : [d.done.status]).includes(obj.status) && (d.done.object !== "design" || obj.done);
+  if (typeof d.done === "object" && "object" in d.done) return (Array.isArray(d.done.status) ? d.done.status : [d.done.status]).includes(obj.status) && (d.done.object !== "design" || obj.done);
   return d.done === "confirm" ? false : obj.done;
 }
 
@@ -369,16 +370,18 @@ export function flowView(app: App, id: string) {
     stages: f?.definition.stages.map((d) => {
       const s = rows.find((r) => r.id === d.id)!;
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
-      const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" ? findObject(app, item, d.done.object) : null;
+      const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" && "object" in d.done ? findObject(app, item, d.done.object) : null;
+      const signal = waitingSignal(app, id, d);
       return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
         carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
-        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.control.runId) };
+        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.control.runId) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item),
   };
 }
 
 export async function flowReminders(app: App, at = new Date()) {
   attachFlows(app);
+  await checkGitSignals(app);
   for (const { item_id: id } of all<{ item_id: string }>(app.db, "select item_id from item_flows where ended_at is null")) await serial(app, id, async () => {
     // Recover terminal runs missed during downtime, then remind only the still-waiting stages.
     await advanceNow(app, id, "例行检查");
@@ -451,3 +454,19 @@ registerHandler("flow-stage", async (ctx) => {
   const result = await runRole(ctx.app, { role, spec: spec ?? undefined, spaceId: item.spaceId, spaces: [item.spaceId], task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools: ["stage_report", "report_tests", "attach_artifact"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
 });
+
+/** Git checks enter the same item queue as owner actions and revalidate the checked attempt. */
+export function completeBySignal(app: App, itemId: string, stageId: string, note: string, evidence: string[], expected: { startedAt: string; attempt: number; enteredAt: string | null; type: GitSignal; work: string }) {
+  return serial(app, itemId, async () => {
+    const f = itemFlow(app, itemId);
+    if (!f || f.endedAt || f.startedAt !== expected.startedAt) return false;
+    const d = definition(f, stageId), s = getStage(app, itemId, stageId);
+    if (s.state !== "doing" || s.attempt !== expected.attempt || s.enteredAt !== expected.enteredAt ||
+      !(typeof d.done === "object" && "signal" in d.done && d.done.signal === expected.type) ||
+      (d.by !== "owner" && d.by !== "wait") || findObject(app, getItem(app, itemId), "code-work")?.ref !== expected.work) return false;
+    withdraw(app, s);
+    changeStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, evidence: [...new Set([...s.evidence, ...evidence])], control: { ...s.control, question: undefined, reported: true } }, host, note, evidence);
+    await advanceNow(app, itemId, "Git 信号");
+    return true;
+  });
+}
