@@ -167,7 +167,7 @@ export function decisionReport(app: App, { days = 30 } = {}): DecisionReport {
     const suggested = thresholds.find((t) => base.labelledRiskyChoices >= 20 && t.labelled > 0 && t.misses / t.labelled <= 0.05)?.threshold ?? null;
     const labelsEnabled = scene === "heartbeat" || scene === "triage";
     return { scene, ...s, threshold: sceneThreshold(app, scene), ...base, labelled: base.needed + base.unneeded + base.unclear, labelsEnabled, thresholds, suggested: labelsEnabled ? suggested : null,
-      suggestion: !labelsEnabled ? "本次只记录，暂不标注结果" : base.labelledRiskyChoices < 20 ? enough : suggested === null ? "已知漏看仍超过 5%，先按现在的门槛" : `可考虑门槛 ${suggested}，只供参考，不会自动修改` };
+      suggestion: !labelsEnabled ? "这个场景只记录，不标注结果" : base.labelledRiskyChoices < 20 ? enough : suggested === null ? "已知漏看仍超过 5%，先按现在的门槛" : `可考虑门槛 ${suggested}，只供参考，不会自动修改` };
   });
   return { days, scenes };
 }

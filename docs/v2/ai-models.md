@@ -130,7 +130,7 @@ omem 统一成“材料 + 问题 + 选项 → 选中的一项和每项概率”�
 - 巡检采用“不用看”：`swept` 只为实际交给助手的来源保存补看运行。之后按来源和时间查关联；补看运行的通知 `sourceRefs`、事项事件 `source_refs` 或被修改事项的来源引到其中任一来源，为 `needed`；所有来源都正常补看且没被引用，为 `unneeded`。来源删除、三天未完成补看为 `unclear`。分批补看不会因第一批安静就提前判成不需要。
 - 分诊采用“简短提醒 / 先查”：按 mention 运行及其输出的 `handleRun` 找通知，沿用通知的结果。`acted` 为 `needed`，`negative / unread` 为 `unneeded`，`known / read / bundled` 为 `unclear`。通知结果还没标注就等，等满 7 天仍没有结果的记为 `unclear`；被新状态替换掉的通知不算（结果记在替换它的那条上）；72 小时没有通知为 `unclear`。
 - 分诊采用“不用管”：48 小时后，从 mention 运行输入里的会话和消息 ID 取原消息时间；按 `lark_messages(chat_id, create_ms)` 查消息后 24 小时内本人发的文字，排除自动回复署名。有回复为 `needed`，没有为 `unneeded`；原消息不可用为 `unclear`。
-- 盯群和直接答复本次只记录，不标注，报告明确显示这一点。
+- 盯群和直接答复只记录，不标注（盯群跳过之后没有补看，直接答复的好坏要看本人对回复的处置），报告里写明。
 
 通知用新增的运行表达式索引，事项事件新增可选 `run_id` 和索引，由 `upsert_item` 写入；不扫描 `runs`、`sources`、`notifications` 或 `lark_messages` 找关联。旧事项事件没有运行关联，不回填历史。
 
