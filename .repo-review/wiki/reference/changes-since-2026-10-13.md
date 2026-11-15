@@ -8,6 +8,14 @@ updated: 2026-11-15
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
 
+## 图表与指标只有一种画法（11-15）
+
+- 新增 `packages/plugin-sdk/charts.ts`（`@omem-ai/plugin-sdk/charts`）：柱、横向条形、折线、面积、细环、指标数字和小走势的唯一画法，不依赖框架，颜色全走 CSS 变量。`blocks.ts` 的 `chart` / `metric` 改由它画；网页的 `web/src/components/charts/`（`Chart`、`BarChart`、`RankBars`、`TrendChart`、`ShareChart`、`MetricRow`、`Sparkline`）是它的薄封装。
+- 样子：发丝线网格（每根柱都标了数时不画）、细柱 2px 圆角、关键值用实心点加数字写在图上、几条线在线尾标名字、日期轴每个标签一根短刻度、单组面积图由细竖线组成；横向条形改成 HTML（名字、条、数，可带链接和行尾的其他列）；指标去掉卡片边框，改成发丝竖线隔开的一排数。约定见 `docs/v2/interactive-ui.md`“图表的样子”和 `.agents/skills/omem-design`。
+- 颜色 token：`web/src/styles.css` 的 `--chart-1`…`--chart-8`、`--chart-grid`、`--chart-axis`（浅色、深色各一套，做过色盲区分检查），替换了 `blocks.ts` 里写死的 `--s1`…`--s8`；插件页的 `omem.css` 从同一文件复制。飞书卡片的 `SERIES` 用浅色同一组值，`chartSpec` 改成细柱、值轴浅网格、虚线目标线、细环饼图；`test/ui-blocks.test.ts` 核对卡片色值和 token 一致。
+- 组件块 `chart` 加可选的 `highlight`（强调一个标签，须是 labels 里的一项）；以前的块照常显示。文字版里强调的那一行加粗。
+- 数据页（`web/src/views/Insights.vue`）改用这些组件：一排数字是 `MetricRow`，单列的小表是带链接的条形，多列同单位的小表是并排的彩色条（其余单位写在行尾），每天的件数是按场景堆叠的柱（场景颜色固定），每天的正面、负面反馈是线尾标名字的折线；版式、文字、筛选、明细、导出不变。`scripts/doc-screens.ts` 加了一个月的虚构运行、`insights` 截图和一个包含各种图表的演示块（`#/ui/uv_charts_demo`，只供 `--serve` 时看）。
+
 
 
 ## 回复发出后有没有用（11-15）
@@ -25,6 +33,7 @@ updated: 2026-11-15
 - 不另起一套调度：课题是一件持续关注的事项，加一份带轮次的流程，加一份台账。给流程补四样通用的能力——轮次（`repeat`）、阶段的 AI 档位与时间段（`ai` / `at` / `window`）、升档（`escalate`）、预算（`budget`）；“一个方向下跑很多试验”由新的对象 `trials` 承担。
 - 试验在哪跑不写死：登记的执行环境（本机、云端会话型后端、托管的流水线、另一台设备）。另一台设备现在只能由本机的模型经 `code_workspace` 去操作或 `ask_agent(档案@节点)` 一问一答，“把试验派过去”要新做。第三方样本的代码只在标了可以执行的环境里跑。
 - 台账是三张挂在事项上的表：方向、试验、发现；功能清单和各方向的结论写在仓库空间的 Wiki 里。夜里的改动留在交办分支上、经评审、不合并不推主分支；推送只对课题登记的远端和分支前缀持续授权；对外只出草稿。具体怎么挑样本、怎么跑写成技能，不进仓库。
+
 
 ## 流程的两个页面重做版式和文字（11-15）
 

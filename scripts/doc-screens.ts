@@ -672,11 +672,63 @@ for (const [i, d] of delivery.stages.entries()) {
   run(app.db, "update item_stage_log set at=? where item_id=? and stage_id=?", flowAt(active ? 4 : 24 - i * 6), flowItem.id, d.id);
 }
 
+// ---- a month of runs for the data page (#/insights) -------------------------------------------
+// Fictional counts only: who asked, in which demo chat, with which made-up model.
+{
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+  const kinds: [string, number][] = [["ask", 9], ["agent", 4], ["code", 2], ["review", 2], ["brief", 1], ["heartbeat", 2], ["mention", 2], ["guest", 2], ["ingest", 6]];
+  const bag = kinds.flatMap(([k, w]) => Array<string>(w).fill(k));
+  const people = ["user:owner", "user:owner", "user:owner", "user:xiaowang", "user:xiaoli"];
+  const chats = ["退款改造项目群", "示例商城值班群", "和小王的私聊", "网页"];
+  const ais = [{ profile: "codex-acp", model: "model-a" }, { profile: "codex-acp", model: "model-b" }, { profile: "claude-acp", model: "model-c" }];
+  const day0 = Date.now() - 29 * 86400_000;
+  let k = 0;
+  for (let d = 0; d < 30; d++) {
+    // A working week: busier on weekdays, a little busier towards now.
+    const weekday = new Date(day0 + d * 86400_000).getDay();
+    const n = Math.round((weekday === 0 || weekday === 6 ? 3 : 9) * (0.7 + d / 60) + rnd() * 5);
+    for (let j = 0; j < n; j++) {
+      const kind = pick(bag);
+      const at = day0 + d * 86400_000 + Math.floor((8 + rnd() * 11) * 3600_000);
+      const took = kind === "code" ? 1200 + rnd() * 3600 : 20 + rnd() * 400;
+      const status = rnd() < 0.06 ? "failed" : "done";
+      const id = `r_demo_insight_${k++}`;
+      const guest = kind === "guest";
+      const output: Record<string, unknown> = guest ? { verdict: "answer" } : kind === "code" && rnd() < 0.7 ? { verdict: "approved", ...(rnd() < 0.7 ? { appliedAt: new Date(at + took * 1000 + 3600_000).toISOString() } : {}) } : kind === "mention" ? (rnd() < 0.5 ? { triage: { action: "handle" }, handleRun: `${id}_h` } : {}) : {};
+      const quiet = kind === "mention" && !output.triage ? 1 : 0;
+      run(app.db, "insert into runs(id,kind,space_id,status,title,input,output,trigger,trigger_by,user_id,ai,quiet,created_at,started_at,finished_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        id, kind, pick(["shop", "shop", "refund", "personal"]), status, "演示", JSON.stringify({}), JSON.stringify(output),
+        JSON.stringify({ via: guest ? "guest" : "web", where: pick(chats) }), guest ? pick(["lark:ou_demo_a", "lark:ou_demo_b", "lark:ou_demo_c"]) : pick(people), guest ? null : "owner",
+        JSON.stringify(pick(ais)), quiet, new Date(at).toISOString(), new Date(at + 2000).toISOString(), new Date(at + took * 1000).toISOString());
+      // Reactions on some answers, and memories recalled for some.
+      if ((kind === "ask" || guest) && rnd() < 0.35) run(app.db, "insert into feedback(id,channel,message_id,run_id,on_bot,actor_id,actor_kind,emoji,polarity,at) values(?,?,?,?,?,?,?,?,?,?)",
+        `fb_demo_${k}`, "lark", `om_demo_${k}`, id, 1, "ou_demo_member", "member", "THUMBSUP", rnd() < 0.82 ? "positive" : "negative", new Date(at + took * 1000 + 600_000).toISOString());
+      if (kind !== "ingest" && rnd() < 0.5) run(app.db, "insert into memory_recalls(memory_id,run_id,used,at,purpose) values(?,?,?,?,?)", "m_demo", id, rnd() < 0.4 ? 1 : 0, new Date(at).toISOString(), "answer");
+      if (kind === "ingest" && rnd() < 0.5) run(app.db, "insert into memory_recalls(memory_id,run_id,used,at,purpose) values(?,?,?,?,?)", "m_demo", id, rnd() < 0.2 ? 1 : 0, new Date(at).toISOString(), "upkeep");
+    }
+  }
+}
+
+// Every kind of chart in one view (#/ui/uv_charts_demo), to look at with --serve.
+// In the personal space, so it stays out of the demo project's conversation list in the other shots.
+const chartsDemo = createThread(app, { channel: "web", spaceId: "personal", title: "退款原因与趋势", userId: "owner" });
+addMessage(app, chartsDemo.id, "user", "退款原因和这两周的走势画出来看看。");
+run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,components,created_at) values(?,?,?,?,?,?,?)", "uv_charts_demo", "r_charts_demo", chartsDemo.id, "owner", "退款原因与趋势", JSON.stringify([
+  { type: "metric", items: [{ label: "退款单", value: 482, unit: "单", change: "+12%", good: "down", note: "比上两周", spark: [30, 34, 29, 41, 38, 22, 19, 36, 40, 33, 45, 44, 25, 21] }, { label: "平均处理", value: "2.1", unit: "天", change: "-0.4", good: "down", note: "比上两周" }, { label: "部分退款", value: 97, unit: "单", note: "占 20%" }, { label: "人工介入", value: 31, unit: "单" }] },
+  { type: "chart", title: "退款原因排行", kind: "hbar", unit: "单", labels: ["尺码不合适", "质量问题", "物流太慢", "与描述不符", "不想要了"], series: [{ name: "退款单", values: [168, 121, 84, 63, 46] }], highlight: "质量问题", goal: 150 },
+  { type: "chart", title: "每天的退款单", kind: "area", unit: "单", labels: Array.from({ length: 14 }, (_, i) => `11-${String(i + 1).padStart(2, "0")}`), series: [{ name: "退款单", values: [30, 34, 29, 41, 38, 22, 19, 36, 40, 33, 45, 44, 25, 21] }] },
+  { type: "chart", title: "三个渠道的退款率", kind: "line", unit: "%", labels: ["第 1 周", "第 2 周", "第 3 周", "第 4 周", "第 5 周", "第 6 周"], series: [{ name: "App", values: [3.1, 3.4, 3.2, 3.8, 4.1, 4.6] }, { name: "小程序", values: [2.2, 2.5, 2.4, 2.6, 2.3, 2.4] }, { name: "网页", values: [4.0, 3.6, 3.3, 3.1, 2.9, 2.7] }] },
+  { type: "chart", title: "每周的退款方式", kind: "bar", stack: true, unit: "单", labels: ["第 1 周", "第 2 周", "第 3 周", "第 4 周"], series: [{ name: "原路退回", values: [96, 104, 112, 121] }, { name: "退到余额", values: [41, 38, 47, 52] }, { name: "人工打款", values: [9, 12, 7, 5] }] },
+  { type: "chart", title: "退款单的构成", kind: "pie", unit: "单", labels: ["整单退款", "部分退款", "仅退运费", "其他"], series: [{ name: "退款单", values: [341, 97, 30, 14] }] },
+]), new Date().toISOString());
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
-  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分享页 ${url}/#/share/${shareToken}`);
+  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   const cleanup = async () => { await server.close(); app.db.close(); rmSync(home, { recursive: true, force: true }); process.exit(); };
   process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
   await new Promise(() => {});
@@ -685,6 +737,7 @@ const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: p
 const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; before?: (page: Page) => Promise<void>; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "item-flow", path: `/items/${flowItem.id}`, width: 1440, prepare: async (p) => { await p.getByRole("region", { name: "事项流程", exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "today", path: "/" },
+  { name: "insights", path: "/insights", space: "personal" },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },
   { name: "wiki-tree-mobile", path: "/wiki/shop/refund/cases/partial-shipment-over-refund", width: 390, prepare: async (p) => { await p.getByRole("button", { name: "目录" }).click(); await p.waitForTimeout(400); } },

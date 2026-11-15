@@ -8,6 +8,11 @@ import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSelect from "../components/UiSelect.vue";
 import UiDateTime from "../components/UiDateTime.vue";
 import VirtualList from "../components/VirtualList.vue";
+import MetricRow from "../components/charts/MetricRow.vue";
+import RankBars from "../components/charts/RankBars.vue";
+import BarChart from "../components/charts/BarChart.vue";
+import TrendChart from "../components/charts/TrendChart.vue";
+import type { ChartSpec, MetricItem } from "@omem-ai/plugin-sdk/charts";
 
 type Section = InsightsReport["sections"][number];
 type Chart = Section["charts"][number];
@@ -94,13 +99,17 @@ const allMetrics = computed(() => (data.value?.sections ?? []).flatMap(s => [...
 const detailMetric = computed(() => allMetrics.value.find(m => m.key === q("detail")));
 
 // ---- how a section's numbers are laid out
-// Plain numbers are figures. Numbers the server marked as cells of a table become that table: one
-// column of counts is drawn as bars, several columns as a small table. A chart whose every point is
-// already shown as a figure or a cell is not drawn a second time.
-type Row = { label: string; cells: (InsightMetric | undefined)[] };
-type Table = { title: string; cols: string[]; rows: Row[]; max: number };
-const figures = (s: Section) => s.metrics.filter(m => !m.cell);
-function tables(s: Section): Table[] {
+// Plain numbers are figures. Numbers the server marked as cells of a table become rows of bars: the
+// columns in the first column's unit are bars side by side (each in its own colour, its value at the
+// bar's end), the others (a rate, hours) text at the row's end. A chart whose every point is already
+// shown as a figure or a cell is not drawn a second time. Every bar, figure and cell opens its records.
+const figures = (s: Section): MetricItem[] => s.metrics.filter(m => !m.cell).map(m => {
+  const v = shown(m);
+  const prev = m.previous !== undefined ? shown({ value: m.previous ?? null, unit: m.unit }) : null;
+  return { label: m.label, value: v.value, unit: v.unit, link: m.link, hint: m.note ?? "看是哪些记录", note: prev ? `上一段 ${prev.value}${prev.unit}` : m.samples !== undefined ? `${m.samples} 个样本` : undefined };
+});
+type Block = { key: string; kind: "rows" | "bars" | "trend"; wide: boolean; spec: Omit<ChartSpec, "kind">; empty?: boolean };
+function tableBlocks(s: Section): Block[] {
   const out = new Map<string, { cols: string[]; rows: Map<string, Map<string, InsightMetric>> }>();
   for (const m of s.metrics) {
     if (!m.cell) continue;
@@ -112,25 +121,38 @@ function tables(s: Section): Table[] {
     r.set(m.cell.col, m);
   }
   return [...out].map(([title, t]) => {
-    const rows = [...t.rows].map(([label, cells]) => ({ label, cells: t.cols.map(c => cells.get(c)) }));
-    return { title, cols: t.cols, rows, max: Math.max(1, ...rows.map(r => r.cells[0]?.value ?? 0)) };
+    const rows = [...t.rows];
+    const unitOf = (col: string) => rows.map(([, cells]) => cells.get(col)?.unit).find(u => u !== undefined);
+    const unit = unitOf(t.cols[0]);
+    const bars = t.cols.filter(c => unitOf(c) === unit), extras = t.cols.filter(c => unitOf(c) !== unit);
+    const series = bars.map((col, slot) => ({ name: col, slot, values: rows.map(([, cells]) => cells.get(col)?.value ?? 0), links: bars.length > 1 ? rows.map(([, cells]) => cells.get(col)?.link) : undefined }));
+    // Rows that are weeks or days read as a course: one line per column, each point opening its records.
+    if (bars.length > 1 && !extras.length && rows.length >= 3 && rows.every(([label]) => /^\d{4}-\d{2}-\d{2}/.test(label)))
+      return { key: `t:${title}`, kind: "trend" as const, wide: true, spec: { title, unit, labels: rows.map(([label]) => label), series: series.map(x => ({ ...x, links: rows.map(([, cells]) => cells.get(x.name)?.link) })) } };
+    return { key: `t:${title}`, kind: "rows" as const, wide: bars.length > 1 || extras.length > 1, spec: {
+      title, unit, labels: rows.map(([label]) => label), series,
+      links: bars.length === 1 ? rows.map(([, cells]) => cells.get(t.cols[0])?.link) : undefined,
+      extras: extras.map(col => ({ name: col, values: rows.map(([, cells]) => { const v = shown(cells.get(col)); return v.value === "—" ? "" : `${v.value}${v.unit}`; }), links: rows.map(([, cells]) => cells.get(col)?.link) })),
+    } };
   });
 }
-function charts(s: Section): Chart[] {
-  const shown = new Set(s.metrics.map(m => m.key));
-  return s.charts.filter(c => !(c.points?.length && c.points.every(p => shown.has(p.key))));
+function chartBlocks(s: Section, scenes: readonly string[]): Block[] {
+  const shownKeys = new Set(s.metrics.map(m => m.key));
+  return s.charts.filter(c => !(c.points?.length && c.points.every(p => shownKeys.has(p.key)))).map((c: Chart): Block => {
+    const n = c.labels.length, m = c.series.length;
+    // Points come label by label, a series after another within a label (or one per label for a single series).
+    const at = (i: number, si: number) => c.points?.length === n * m ? c.points[i * m + si]?.link : undefined;
+    if (c.kind === "hbar") return { key: `c:${c.title}`, kind: "rows", wide: false, spec: { title: c.title, unit: c.unit, labels: c.labels, series: c.series, links: c.points?.length === n ? c.points.map(p => p.link) : undefined } };
+    // A series keeps its colour by its place among the scenes (or in the chart), whichever of them are drawn.
+    const series = c.series.map((x, si) => ({ ...x, slot: scenes.includes(x.name) ? scenes.indexOf(x.name) : si, links: c.labels.map((_, i) => at(i, si)) })).filter(x => x.values.some(v => v));
+    const empty = !series.length;
+    // A count per day added up over kinds reads best as stacked columns, one a day.
+    if (c.stack) return { key: `c:${c.title}`, kind: "bars", wide: true, empty, spec: { title: c.title, unit: c.unit, labels: c.labels, series, stack: true, caption: dayLabels(c.labels) ? "一根一天" : undefined } };
+    return { key: `c:${c.title}`, kind: "trend", wide: true, empty, spec: { title: c.title, unit: c.unit, labels: c.labels, series, caption: dayLabels(c.labels) ? "一点一天" : undefined } };
+  });
 }
-type Bar = { label: string; value: number; link?: string };
-const barsOf = (c: Chart): Bar[] => c.labels.map((label, i) => ({ label, value: c.series[0]?.values[i] ?? 0, link: c.points?.[i]?.link }));
-type Spark = { name: string; values: number[]; total: number; isTotal?: boolean };
-function sparksOf(c: Chart): { rows: Spark[]; max: number } {
-  const rows: Spark[] = c.series.map(x => ({ name: x.name, values: x.values, total: x.values.reduce((a, b) => a + b, 0) })).filter(x => x.total > 0);
-  if (rows.length > 1) {
-    const sum = c.labels.map((_, i) => rows.reduce((a, r) => a + (r.values[i] ?? 0), 0));
-    rows.unshift({ name: "合计", values: sum, total: sum.reduce((a, b) => a + b, 0), isTotal: true });
-  }
-  return { rows, max: Math.max(1, ...rows.flatMap(r => r.values)) };
-}
+const dayLabels = (labels: string[]) => labels.length > 1 && labels.every(l => /^\d{4}-\d{2}-\d{2}$/.test(l));
+const blocks = (s: Section) => [...tableBlocks(s), ...chartBlocks(s, data.value?.scenes ?? [])];
 function notes(s: Section): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -156,7 +178,6 @@ function when(at: string) {
   const t = Date.parse(at);
   return Number.isFinite(t) ? new Date(t).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : at;
 }
-const width = (v: number | null | undefined, max: number) => `${Math.max(0, Math.min(100, ((v ?? 0) / max) * 100))}%`;
 
 // ---- the owner's own assumption, kept in this browser only
 const estimate = ref("");
@@ -233,56 +254,17 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
         <p v-if="s.error" role="alert">这一块没算出来：{{ s.error }} <button type="button" class="btn sm" @click="load">重试</button></p>
         <p v-else-if="s.empty" class="muted">{{ s.empty }}</p>
         <template v-else>
-          <div v-if="figures(s).length" class="figures">
-            <a v-for="m in figures(s)" :key="m.key" class="figure" :href="m.link" :title="m.note ?? '看是哪些记录'">
-              <span class="figure-label">{{ m.label }}</span>
-              <span class="figure-value">{{ shown(m).value }}<small v-if="shown(m).unit">{{ shown(m).unit }}</small></span>
-              <span v-if="m.previous !== undefined" class="figure-sub">上一段 {{ shown({ value: m.previous ?? null, unit: m.unit }).value }}{{ shown({ value: m.previous ?? null, unit: m.unit }).unit }}</span>
-              <span v-else-if="m.samples !== undefined" class="figure-sub">{{ m.samples }} 个样本</span>
-            </a>
-          </div>
+          <MetricRow v-if="figures(s).length" :items="figures(s)" />
 
-          <div v-if="tables(s).length || charts(s).length" class="blocks">
-            <div v-for="t in tables(s)" :key="t.title" class="block" :class="{ wide: t.cols.length > 3 }">
-              <h3>{{ t.title }}</h3>
-              <div v-if="t.cols.length === 1" class="bars">
-                <a v-for="r in t.rows" :key="r.label" class="bar-row" :href="r.cells[0]?.link">
-                  <span class="bar-label" :title="r.label">{{ r.label }}</span>
-                  <span class="bar-track"><span class="bar-fill" :style="{ width: width(r.cells[0]?.value, t.max) }"></span></span>
-                  <span class="bar-value">{{ num(r.cells[0]?.value) }}</span>
-                </a>
-              </div>
-              <div v-else class="grid-wrap">
-                <table class="grid">
-                  <thead><tr><th></th><th v-for="c in t.cols" :key="c">{{ c }}</th></tr></thead>
-                  <tbody>
-                    <tr v-for="r in t.rows" :key="r.label">
-                      <th scope="row">{{ r.label }}</th>
-                      <td v-for="(m, i) in r.cells" :key="t.cols[i]"><a v-if="m" :href="m.link" :title="m.note">{{ shown(m).value }}<small v-if="shown(m).unit">{{ shown(m).unit }}</small></a><span v-else class="muted">—</span></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div v-for="c in charts(s)" :key="c.title" class="block" :class="{ wide: c.kind !== 'hbar' }">
-              <h3>{{ c.title }}</h3>
-              <div v-if="c.kind === 'hbar'" class="bars">
-                <component :is="b.link ? 'a' : 'div'" v-for="b in barsOf(c)" :key="b.label" class="bar-row" :href="b.link">
-                  <span class="bar-label" :title="b.label">{{ b.label }}</span>
-                  <span class="bar-track"><span class="bar-fill" :style="{ width: width(b.value, Math.max(1, ...barsOf(c).map(x => x.value))) }"></span></span>
-                  <span class="bar-value">{{ num(b.value) }}</span>
-                </component>
-              </div>
-              <div v-else class="spark" role="img" :aria-label="`${c.title}：${sparksOf(c).rows.map(r => `${r.name} 共 ${r.total}`).join('，')}`">
-                <div v-for="r in sparksOf(c).rows" :key="r.name" class="spark-row" :class="{ total: r.isTotal }">
-                  <span class="spark-name">{{ r.name }}</span>
-                  <span class="spark-bars"><i v-for="(v, i) in r.values" :key="i" :style="{ height: width(v, sparksOf(c).max) }" :title="`${c.labels[i]}：${v}`"></i></span>
-                  <span class="spark-total">{{ num(r.total) }}</span>
-                </div>
-                <div v-if="c.labels.length" class="spark-axis"><span>{{ c.labels[0] }}</span><span>{{ c.labels[c.labels.length - 1] }}</span></div>
-                <p v-if="!sparksOf(c).rows.length" class="muted small">这段时间都是 0。</p>
-              </div>
+          <div v-if="blocks(s).length" class="blocks">
+            <div v-for="b in blocks(s)" :key="b.key" class="block" :class="{ wide: b.wide }">
+              <template v-if="b.empty">
+                <p class="block-title">{{ b.spec.title }}</p>
+                <p class="muted small">这段时间都是 0。</p>
+              </template>
+              <RankBars v-else-if="b.kind === 'rows'" v-bind="b.spec" :table="false" />
+              <BarChart v-else-if="b.kind === 'bars'" v-bind="b.spec" />
+              <TrendChart v-else v-bind="b.spec" />
             </div>
           </div>
 
@@ -317,7 +299,8 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
 </template>
 
 <style scoped>
-.data { min-width: 0; }
+/* The page is on --bg, not on a panel: the ring around a chart's dots takes its colour. */
+.data { min-width: 0; --chart-surface: var(--bg); }
 .head-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 10px; }
 .filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; padding: 14px 0 6px; border-top: 1px solid var(--line); }
@@ -328,44 +311,10 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
 .sec-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; max-width: 48em; }
 .sec > p { margin: 0; }
 
-.figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 16px 24px; }
-.figure { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 6px 8px; margin: -6px -8px; border-radius: var(--radius-sm); color: inherit; text-decoration: none; }
-.figure:hover { background: var(--hover); }
-.figure-label { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
-.figure-value { font-size: 24px; font-weight: 650; line-height: 1.3; font-variant-numeric: tabular-nums; }
-.figure-value small { margin-left: 3px; font-size: 12px; font-weight: 400; color: var(--muted); }
-.figure-sub { font-size: 12px; color: var(--muted); }
-
-.blocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 40px; }
+.blocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 44px; }
 .block { min-width: 0; }
 .block.wide { grid-column: 1 / -1; }
-.block h3 { margin-bottom: 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
-
-.bar-row { display: grid; grid-template-columns: minmax(0, 9.5em) minmax(32px, 1fr) minmax(2.5em, auto); align-items: center; gap: 10px; padding: 3px 0; font-size: 13px; color: inherit; text-decoration: none; }
-a.bar-row:hover .bar-label { text-decoration: underline; }
-.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-track { height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
-.bar-fill { display: block; height: 100%; min-width: 2px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 60%, var(--panel)); }
-.bar-value { text-align: right; font-variant-numeric: tabular-nums; }
-
-.grid-wrap { overflow-x: auto; }
-.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
-.grid th, .grid td { padding: 5px 0 5px 14px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.grid th:first-child { padding-left: 0; text-align: left; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
-.grid thead th { font-size: 12px; font-weight: 500; color: var(--muted); }
-.grid a { color: inherit; text-decoration: none; }
-.grid a:hover { text-decoration: underline; }
-.grid small { margin-left: 2px; font-size: 11.5px; color: var(--muted); }
-
-.spark-row { display: grid; grid-template-columns: 6.5em minmax(0, 1fr) 3.2em; align-items: end; gap: 10px; padding: 3px 0; font-size: 13px; }
-.spark-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
-.spark-bars { display: flex; align-items: flex-end; gap: 1px; height: 28px; border-bottom: 1px solid var(--line); }
-.spark-bars i { flex: 1 1 0; min-width: 1px; border-radius: 1px 1px 0 0; background: color-mix(in srgb, var(--accent) 60%, var(--panel)); }
-.spark-row.total .spark-bars { height: 44px; }
-.spark-row.total .spark-bars i { background: var(--ink-2); }
-.spark-row.total .spark-name { color: var(--ink); font-weight: 600; }
-.spark-total { text-align: right; font-variant-numeric: tabular-nums; }
-.spark-axis { display: flex; justify-content: space-between; margin: 3px calc(3.2em + 10px) 0 calc(6.5em + 10px); font-size: 11.5px; color: var(--muted); }
+.block-title { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
 
 .how { font-size: 12.5px; color: var(--muted); }
 .how summary { cursor: pointer; width: fit-content; }
@@ -383,9 +332,6 @@ a.bar-row:hover .bar-label { text-decoration: underline; }
 .mono { font-family: var(--mono); }
 
 @media (max-width: 760px) {
-  .blocks { grid-template-columns: minmax(0, 1fr); gap: 20px; }
-  .bar-row { grid-template-columns: minmax(0, 7em) minmax(24px, 1fr) minmax(2.5em, auto); }
-  .spark-row { grid-template-columns: 5em minmax(0, 1fr) 3em; }
-  .spark-axis { margin: 3px calc(3em + 10px) 0 calc(5em + 10px); }
+  .blocks { grid-template-columns: minmax(0, 1fr); gap: 24px; }
 }
 </style>
