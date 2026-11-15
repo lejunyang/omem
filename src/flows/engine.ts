@@ -1,4 +1,6 @@
 import type { App, AppEvent } from "../core/app.ts";
+import { latestEach, testsOfWork } from "../items/req-tests.ts";
+import { artifactsByIds } from "../agents/artifacts.ts";
 import { all, one, run } from "../core/db.ts";
 import { decide, decisionReady, describeDecision } from "../core/decision.ts";
 import { notify } from "../core/notify.ts";
@@ -343,6 +345,23 @@ registerAskHandler("flow-save", async (app, ask, ctx) => {
 
 /** What the host writes when a stage merely joins, starts or waits. The page already shows that state, so a stage's latest line leaves these out. */
 const ROUTINE = new Set(["加入流程", "开始这一段", "本人确认，开始这一段", "等本人确认开始", "等本人判断这一段是否需要", "对象已完成，等本人确认", "复核对象仍已完成"]);
+/**
+ * What a stage's runs reported as tests (report_tests): the latest result of each case with its
+ * screenshots and recordings, for the owner to go through case by case before confirming the stage.
+ */
+/** What needs the owner's eye first: the ones that did not pass, then the ones not done. */
+const RANK = { failed: 0, skipped: 1, passed: 2 } as const;
+function stageTests(app: App, itemId: string, stageId: string, since: string, current?: string) {
+  const runs = new Set(all<{ run_id: string }>(app.db, "select distinct run_id from item_stage_log where item_id = ? and stage_id = ? and at >= ? and run_id is not null", itemId, stageId, since).map((r) => r.run_id));
+  if (current) runs.add(current);
+  const results = latestEach([...runs].flatMap((runId) => testsOfWork(app, { runId }))).sort((a, b) => RANK[a.status] - RANK[b.status] || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  if (!results.length) return [];
+  const shots = new Map(artifactsByIds(app, [...new Set(results.flatMap((r) => r.artifacts))]).map((a) => [a.id, a]));
+  const titles = new Map(all<{ id: string; title: string }>(app.db, `select id, title from req_nodes where id in (select value from json_each(?))`, JSON.stringify([...new Set(results.flatMap((r) => r.nodeId ?? []))])).map((n) => [n.id, n.title]));
+  return results.map((r) => ({ id: r.id, name: r.name, status: r.status, mode: r.mode, note: r.note, at: r.at, runId: r.runId,
+    req: r.nodeId && titles.has(r.nodeId) ? { id: r.nodeId, title: titles.get(r.nodeId)! } : null, artifacts: r.artifacts.flatMap((a) => shots.get(a) ?? []) }));
+}
+
 export function flowView(app: App, id: string) {
   const item = getItem(app, id), f = itemFlow(app, id), rows = itemStages(app, id);
   return {
@@ -353,7 +372,7 @@ export function flowView(app: App, id: string) {
       const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" ? findObject(app, item, d.done.object) : null;
       return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
         carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
-        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}) };
+        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.control.runId) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item),
   };
 }
@@ -429,6 +448,6 @@ registerHandler("flow-stage", async (ctx) => {
     if (skill.status !== "active" || !skillUsable(ctx.app, skill)) throw new HttpError(400, `技能 ${skill.name} 尚未启用或缺少模型`);
     task += `\n\n## 这一轮的技能：${skill.name}\n${skill.body}`;
   }
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, spaceId: item.spaceId, spaces: [item.spaceId], task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools: ["stage_report"], onEvent: (e) => ctx.event(e.type, e) });
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, spaceId: item.spaceId, spaces: [item.spaceId], task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools: ["stage_report", "report_tests", "attach_artifact"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
 });

@@ -8,6 +8,7 @@
 | `save_flow` | `yaml` 是整份 YAML。先给本人看阶段、承担者、关卡与完成要求；本人选“启用”才保存。只用于主人的共享定义。 |
 | `flow_start` | `item`、`flow`；一个事项同时只能有一个进行中的流程。开始时复制定义，之后改模板不影响它。 |
 | `stage_report` | `item`、`stage`、`state: done / blocked / skip`、`note`；可带 `evidence`、`waiting_on`。做完须有依据，卡住写等谁或等什么，跳过写理由。 |
+| `report_tests`、`attach_artifact` | 只在承担一个阶段的运行里有。验证或验收的阶段用它们逐条交结果：`report_tests` 的每条写需求点（`req`）、`status`、`mode`（在哪测、怎么测）、`note`（做了什么、看到什么）和这一条的截图、录屏（先放进 `$OMEM_ARTIFACTS`）。事项页按条显示，本人照着看完再确认这一段。 |
 | `stage_reopen` | `item`、`stage`、`reason`，可带 `refs`。该段重新开始，下游已完成的变成待复核，已跳过的保持跳过。 |
 
 `read_item(item_id)` 的 `flow` 返回流程摘要、阶段状态、进入时间、承担者、等待对象、依据和最近 50 条日志。工具只能修改本次运行可写空间里、属于调用者的事项。

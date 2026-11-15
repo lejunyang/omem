@@ -17,6 +17,8 @@ import { createDesign, decideDesign, setDesignStatus } from "../src/designs/stor
 import { flowSchema, flowsFor, listFlows, parseFlow, readFlow, removeFlow, saveFlow, seedBuiltinFlows } from "../src/flows/definitions.ts";
 import { advance, flowReminders, flowView, ownerAction, proposeFlow, reopenStage, reportStage, startFlow, stopFlow } from "../src/flows/engine.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
+import { artifactInbox, collectInbox } from "../src/agents/artifacts.ts";
+import { recordTests } from "../src/items/req-tests.ts";
 import { findObject } from "../src/flows/objects.ts";
 
 vi.mock("../src/core/decision.ts", async (original) => ({ ...await original<typeof import("../src/core/decision.ts")>(), decisionReady: vi.fn(() => false), decide: vi.fn() }));
@@ -322,5 +324,27 @@ describe("对象与工具", () => {
     await expect(answerAsk(app, a.id, { choice: 0, by: "another" })).rejects.toThrow("主人"); expect(listFlows(app)).toEqual([]);
     const b = proposeFlow(app, raw, { actor: "assistant", userId: "owner" });
     await answerAsk(app, b.id, { choice: 0, by: "owner" }); expect(readFlow(app, "demo").name).toBe("示例交付");
+  });
+  it("验证阶段：这一段的运行交的用例带着截图进流程视图，同一条只留最新的，没通过和没做的排前面", async () => {
+    const { app, item, s } = await setup([stage("verify", { name: "验证", done: "confirm" }), stage("after", { by: "owner" })]);
+    const runId = s("verify").control.runId!;
+    const inbox = artifactInbox(app, runId);
+    mkdirSync(inbox, { recursive: true });
+    // A 1×1 PNG stands in for a screenshot.
+    writeFileSync(join(inbox, "refund-step.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64"));
+    const shots = (await collectInbox(app, runId, { source: "agent", by: "assistant" })).made;
+    expect(shots).toHaveLength(1);
+    recordTests(app, { runId, workId: null, spaceId: "personal", round: 1, by: "assistant", tests: [
+      { name: "整单退款到账", status: "failed", mode: "预发 · 测试账号", note: "金额对不上" },
+      { name: "部分退款不退运费", status: "passed", mode: "预发 · 测试账号", note: "下单、申请部分退款、看到运费没退", artifacts: shots },
+    ] });
+    await new Promise((r) => setTimeout(r, 5));
+    recordTests(app, { runId, workId: null, spaceId: "personal", round: 1, by: "assistant", tests: [{ name: "整单退款到账", status: "passed", mode: "预发 · 测试账号", note: "重做后金额一致" }, { name: "退款后再下单", status: "skipped", note: "没有可用的账号" }] });
+    const view = flowView(app, item.id).stages;
+    const tests = view.find((x) => x.id === "verify")!.tests;
+    expect(tests.map((t) => [t.name, t.status])).toEqual([["退款后再下单", "skipped"], ["整单退款到账", "passed"], ["部分退款不退运费", "passed"]]);
+    expect(tests.find((t) => t.name === "部分退款不退运费")!.artifacts).toEqual([expect.objectContaining({ kind: "image", name: "refund-step.png" })]);
+    expect(tests.find((t) => t.name === "整单退款到账")).toMatchObject({ note: "重做后金额一致", mode: "预发 · 测试账号", req: null, runId });
+    expect(view.find((x) => x.id === "after")!.tests).toEqual([]);
   });
 });

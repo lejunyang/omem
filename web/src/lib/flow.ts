@@ -6,7 +6,20 @@ export type FlowStage = {
   waitingOn: string | null; evidence: string[]; note: string; gate: string; fixed: boolean;
   question: string | null; carrier: { kind: string; label: string; link?: string };
   object?: { title: string; status: string; link: string };
+  /** What this stage's runs reported case by case (a verification stage), failed first, then the ones not done. */
+  tests?: StageTest[];
 };
+export type StageTest = {
+  id: string; name: string; status: "passed" | "failed" | "skipped"; mode: string; note: string; at: string; runId: string;
+  req: { id: string; title: string } | null;
+  artifacts: { id: string; runId: string; task: number | null; req: string | null; name: string; caption: string; kind: "image" | "video" | "html" | "site" | "text" | "file"; mime: string; size: number; source: "agent" | "check" | "command"; createdBy: string; createdAt: string; url: string }[];
+};
+export const testWords: Record<StageTest["status"], string> = { passed: "通过", failed: "没通过", skipped: "没做" };
+/** "5 条：通过 3，没通过 1，没做 1" — the ones that are zero are left out. */
+export function testSummary(tests: StageTest[]) {
+  const n = (s: StageTest["status"]) => tests.filter((t) => t.status === s).length;
+  return `${tests.length} 条：${(["passed", "failed", "skipped"] as const).filter((s) => n(s)).map((s) => `${testWords[s]} ${n(s)}`).join("，")}`;
+}
 export type FlowDefinition = { id: string; name: string; description?: string; stages: { id: string; name: string; note?: string; gate: string; by: string | { run?: { agent?: string }; object?: string } }[] };
 export type FlowFile = { id: string; raw: string; definition: FlowDefinition | null; problem: string | null };
 export type FlowView = {

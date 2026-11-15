@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, onServerEvent, onServerResync, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { actorWords, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, type FlowAction, type FlowDefinition, type FlowFile, type FlowStage, type FlowView } from "../lib/flow";
+import { actorWords, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, type FlowAction, type FlowDefinition, type FlowFile, type FlowStage, type FlowView } from "../lib/flow";
+import RunArtifacts from "./RunArtifacts.vue";
 import { refAction } from "../lib/refs";
 import { fmtTime } from "../store";
 import Markdown from "./Markdown.vue";
@@ -119,6 +120,22 @@ async function stop() {
             <dd><Markdown :source="stage.note" class="stage-text" /></dd>
           </template>
         </dl>
+        <div v-if="stage.tests?.length" class="stage-tests">
+          <div class="tests-head"><span>逐条的结果</span><span class="muted">{{ testSummary(stage.tests) }}</span></div>
+          <details v-for="t in stage.tests" :key="t.id" class="test" :open="t.status === 'failed'">
+            <summary>
+              <span class="test-dot" :class="t.status" />
+              <span class="test-name">{{ t.name }}</span>
+              <span class="muted test-meta">{{ testWords[t.status] }}{{ t.mode ? ` · ${t.mode}` : "" }}{{ t.artifacts.length ? ` · ${t.artifacts.length} 份截图或录屏` : "" }}</span>
+            </summary>
+            <div class="test-body">
+              <div v-if="t.req" class="muted">需求点：<a :href="`#/reqs/${t.req.id}`">{{ t.req.title }}</a></div>
+              <Markdown v-if="t.note" :source="t.note" class="stage-text" />
+              <RunArtifacts v-if="t.artifacts.length" :items="t.artifacts" />
+              <div v-else class="muted">这一条没有交截图或录屏。</div>
+            </div>
+          </details>
+        </div>
         <button v-if="editable && ['done', 'skipped', 'stale'].includes(stage.state)" type="button" class="link small" :disabled="busy" @click="act(stage, { action: 'reopen', label: '重开这一段', reason: true })">重开这一段</button>
       </div>
       <details v-if="data.log.length" class="history">
@@ -176,6 +193,20 @@ async function stop() {
 .stage-facts dt { color: var(--muted); }
 .stage-facts dd { margin: 0; min-width: 0; }
 .evidence { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+
+/* A verification stage's cases: one line each, opened to see what was done and the screenshots or recordings. */
+.stage-tests { display: grid; gap: 2px; margin-top: 4px; }
+.tests-head { display: flex; align-items: baseline; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+.test { border-bottom: 1px solid var(--line); }
+.test summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 6px 0; cursor: pointer; list-style: none; }
+.test summary::-webkit-details-marker { display: none; }
+.test-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); transform: translateY(-1px); }
+.test-dot.passed { background: var(--ok); }
+.test-dot.failed { background: var(--danger); }
+.test-name { flex: 1 1 10em; min-width: 0; }
+.test-meta { flex: 0 1 auto; font-size: 12px; }
+.test summary:hover .test-name { text-decoration: underline; }
+.test-body { display: grid; gap: 6px; padding: 0 0 10px 15px; font-size: 12.5px; }
 
 .history { font-size: 12.5px; }
 .history summary { width: fit-content; cursor: pointer; color: var(--muted); }
