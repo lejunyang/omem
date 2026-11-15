@@ -44,6 +44,14 @@ Agent 档案和任务选型的后端、模型、强度使用 `AiDefaults`：可�
 
 保存设置后的提示只说实际发生的事：`PUT /api/settings` 返回的 `restart` 不为空才提示重启，并写出是哪几项。新增只在启动时读取的设置要加进 `src/server/http.ts` 的 `atStartup` 清单。选中文字的颜色在 `styles.css` 的 `::selection` 统一设定（浅底深字），不要在组件里另设。
 
+图表和成排的数字只有一种画法：`packages/plugin-sdk/charts.ts`（组件块的 `chart` / `metric` 也用它）。页面里用 `components/charts/` 的组件，不在页面里手写条形、小柱或 SVG：
+
+- 选哪种：几项比大小、排行、名字长、每行要能点开明细用 `RankBars`（横向条形，`items` 带链接；同一单位的几列并排给 `series`，别的单位的列给 `extras`，写成行尾的文字）；按天、按周的数量用 `BarChart`（几类加起来看合计用 `stack`，`caption` 写“一根一天”）；走势用 `TrendChart`（看量用 `area`）；构成用 `ShareChart`，最多八块；一排关键数字用 `MetricRow`（`link` 打开明细）；数字旁边的小走势用 `Sparkline`。别的形状用 `Chart` 传整个 spec。
+- 颜色：一组数据只用 `--chart-1`；几组用 `--chart-1`…`--chart-8`，按顺序分配，不跳着用。同一个东西在几张图里要同色时（数据页的场景），给 series 一个固定的 `slot`，不随别的组出现或消失而变色。表示好坏的状态（成功、失败）仍用 `--ok` / `--danger`，不和分类色混用。新增颜色先加 token、浅色深色各一份，并重新做色盲检查（相邻两色、前四色两两之间）。
+- 标注：数直接写在图上，几条线在线尾写名字，放不下才用图例；图例只说颜色是哪组，不重复数。标题下一行灰字写单位和“一个记号是什么”。
+- 不用：象形图、关系图、流向图、仪表盘、3D、渐变填充、入场动画；不画两个纵轴（量级不同就分两张图）；不为装饰加网格。
+- 图表要有文字等价物：条形每行有 `aria-label`，柱和线可以用方向键逐个看并有“看数据”表格，环形的右边有数值列表。页面背景不是 `--panel` 时，在容器上设 `--chart-surface`（点的描边用它）。
+
 插件页面（`plugins/<id>/web`，沙箱 iframe）不另做一套样式：引入 `web/src/styles.css` 和 `web/src/components` 里不依赖主站状态的组件（`UiSegmented`、`UiCheckbox`、`UiSelect`、`Skeleton`、`Icon`），主按钮用 `.btn.primary`（深色），输入用 `.input` / `.textarea`；普通 HTML 页面引入 `/plugins/_sdk/omem.css`。只补主站没有的类。
 
 异步详情、列表和二次请求（评审、归档记录等）要按请求序号和当前选择核对后再写状态；错误提示、加载状态和轮询计时器也要核对。切换时立即清掉上一项详情，避免把旧内容挂在新标题下。

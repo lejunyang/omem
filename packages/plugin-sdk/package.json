@@ -7,6 +7,7 @@
   "exports": {
     ".": { "types": "./dist/client.d.ts", "default": "./dist/client.js" },
     "./blocks": { "types": "./dist/blocks.d.ts", "default": "./dist/blocks.js" },
+    "./charts": { "types": "./dist/charts.d.ts", "default": "./dist/charts.js" },
     "./service": "./service.mjs"
   },
   "files": ["dist", "service.mjs", "README.md"],

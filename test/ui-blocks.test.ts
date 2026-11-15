@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { answerAsk, describeAnswer, getAsk, listAsks, showSuggestions } from "../src/agents/asks.ts";
-import { changeText, metricTone, metricTrend, normalizeAnswers, viewText, type UiField, type ViewComponent } from "../src/agents/ui-blocks.ts";
-import { SERIES } from "../src/channels/lark-ui.ts";
+import { readFileSync } from "node:fs";
+import { changeText, checkView, metricTone, metricTrend, normalizeAnswers, viewText, type UiField, type ViewComponent } from "../src/agents/ui-blocks.ts";
+import { chartSpec, SERIES } from "../src/channels/lark-ui.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { run } from "../src/core/db.ts";
@@ -173,6 +174,28 @@ describe("component blocks", () => {
     expect(JSON.stringify(els)).toContain("https://omem.example.test/#/ui/uv1");
   });
 
+  it("a card's chart has the web's colours and shapes: hairline grid on the value axis, thin marks, a dashed goal", () => {
+    // The card's colours are the light chart tokens of the web, in the same order.
+    const css = readFileSync(new URL("../web/src/styles.css", import.meta.url), "utf8");
+    const light = css.slice(css.indexOf(":root {"), css.indexOf("}", css.indexOf(":root {")));
+    expect(SERIES).toEqual(Array.from({ length: 8 }, (_, i) => light.match(new RegExp(`--chart-${i + 1}:\\s*(#[0-9a-f]{6})`))?.[1]));
+    const spec = chartSpec({ type: "chart", title: "退款排行", kind: "hbar", labels: ["尺码", "质量"], series: [{ name: "单", values: [120, 80] }], goal: 100 }) as Record<string, any>;
+    expect(spec).toMatchObject({ type: "bar", direction: "horizontal", barMaxWidth: 10, bar: { style: { cornerRadius: [0, 2, 2, 0] } } });
+    expect(spec.axes[0]).toMatchObject({ orient: "bottom", grid: { visible: true }, domainLine: { visible: false } });
+    expect(spec.markLine[0].line.style.lineDash).toEqual([4, 3]);
+    const pie = chartSpec({ type: "chart", title: "原因", kind: "pie", labels: ["质量", "其他"], series: [{ name: "单", values: [7, 3] }] }) as Record<string, any>;
+    expect(pie).toMatchObject({ innerRadius: 0.64, color: SERIES });
+  });
+
+  it("a chart may emphasise one of its labels; one that is not a label is refused", async () => {
+    const chart = (highlight: string): ViewComponent => ({ type: "chart", title: "每天的退款单", kind: "line", labels: ["周一", "周二", "周三"], series: [{ name: "退款", values: [30, 41, 38] }], highlight });
+    expect(() => checkView([chart("周二")])).not.toThrow();
+    expect(() => checkView([chart("周四")])).toThrow(/不在 labels 里/);
+    expect(viewText([chart("周二")])).toContain("- **周二**：41");
+    // Views shown before the field existed still pass.
+    expect(() => checkView([{ type: "chart", title: "旧图", kind: "bar", labels: ["a"], series: [{ name: "x", values: [1] }] }])).not.toThrow();
+  });
+
   it("a metric's change reads its direction and whether that way is good", () => {
     expect(metricTrend({ change: "+6.2%" })).toBe("up");
     expect(metricTrend({ change: "+0.3pct" })).toBe("up");
@@ -213,7 +236,7 @@ describe("component blocks", () => {
     expect(JSON.stringify(els)).toContain("口径：已支付订单");
     expect(JSON.stringify(rows[2])).toContain("<font color='red'>－</font> 回滚难");
     const [hbar, area] = els.filter((e) => e.tag === "chart").map((e) => e.chart_spec);
-    expect(hbar).toMatchObject({ type: "bar", direction: "horizontal", xField: "v", yField: "x", bar: { style: { cornerRadius: [0, 4, 4, 0] } } });
+    expect(hbar).toMatchObject({ type: "bar", direction: "horizontal", xField: "v", yField: "x", bar: { style: { cornerRadius: [0, 2, 2, 0] } } });
     expect(hbar.markLine[0]).toMatchObject({ x: 100 });
     expect(area).toMatchObject({ type: "area", stack: true, seriesField: "s" });
   });

@@ -16,6 +16,7 @@ const sdkDir = join(repoRoot, "packages", "plugin-sdk");
 export const sdkAlias = [
   { find: /^@omem-ai\/plugin-sdk$/, replacement: join(sdkDir, "client.ts") },
   { find: /^@omem-ai\/plugin-sdk\/blocks$/, replacement: join(sdkDir, "blocks.ts") },
+  { find: /^@omem-ai\/plugin-sdk\/charts$/, replacement: join(sdkDir, "charts.ts") },
 ];
 
 const fsUrl = (path: string) => `/@fs/${path.replace(/\\/g, "/").replace(/^\//, "")}`;

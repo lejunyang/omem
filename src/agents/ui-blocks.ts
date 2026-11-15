@@ -36,6 +36,7 @@ const chart = z.object({
   goal: z.number().optional().describe("目标线的值（bar / hbar / line / area）"),
   unit: z.string().max(10).optional(),
   note: z.string().max(500).optional().describe("口径、时间范围、来源"),
+  highlight: z.string().max(40).optional().describe("要强调的那个横轴标签（和 labels 里的一项一样）：那一点画成实心点并写上数，单组柱子时其余变淡。不给时折线标最高点和最后一点"),
 });
 const metricItem = z.object({
   label: text(40),
@@ -152,6 +153,7 @@ export function checkView(view: ViewComponent[]) {
     if (c.type === "chart" && c.kind === "pie" && c.series[0].values.length !== c.labels.length) throw new HttpError(400, `饼图“${c.title}”的值和名字要一样多`);
     if (c.type === "chart" && c.kind === "pie" && c.labels.length > 8) throw new HttpError(400, `饼图“${c.title}”有 ${c.labels.length} 块，最多 8 块：小的并成“其他”，或改用 hbar`);
     if (c.type === "chart" && c.kind === "pie" && c.series[0].values.some((v) => v < 0)) throw new HttpError(400, `饼图“${c.title}”有负数，构成不能是负的：改用 bar`);
+    if (c.type === "chart" && c.highlight !== undefined && !c.labels.includes(c.highlight)) throw new HttpError(400, `图表“${c.title}”的 highlight “${c.highlight}”不在 labels 里：写成其中一项`);
     if (c.type === "compare") {
       const ids = new Set(c.items.map((i) => i.id));
       if (ids.size !== c.items.length) throw new HttpError(400, "方案对比里有重复的 id");
@@ -367,7 +369,7 @@ export function viewText(view: ViewComponent[]): string {
         break;
       case "chart": {
         const series = c.kind === "pie" ? c.series.slice(0, 1) : c.series;
-        out.push([`**${c.title}**${c.unit ? `（${c.unit}）` : ""}`, ...c.labels.map((l, i) => `- ${l}：${series.map((s) => `${series.length > 1 ? `${s.name} ` : ""}${s.values[i]}`).join("，")}`), c.goal !== undefined && c.kind !== "pie" ? `- 目标：${c.goal}` : "", c.note ?? ""].filter(Boolean).join("\n"));
+        out.push([`**${c.title}**${c.unit ? `（${c.unit}）` : ""}`, ...c.labels.map((l, i) => `- ${l === c.highlight ? `**${l}**` : l}：${series.map((s) => `${series.length > 1 ? `${s.name} ` : ""}${s.values[i]}`).join("，")}`), c.goal !== undefined && c.kind !== "pie" ? `- 目标：${c.goal}` : "", c.note ?? ""].filter(Boolean).join("\n"));
         break;
       }
       case "metric":

@@ -17,12 +17,17 @@ import { one } from "../core/db.ts";
 const MAX_PER_CARD = 5;
 
 /**
- * Series colours, in this order, so a series has the same colour here as on the web
- * (packages/plugin-sdk/blocks.ts, light steps): clear mid-tones that also read on the dark card.
+ * Series colours, in this order, so a series has the same colour here as on the web: the light values
+ * of `--chart-1`…`--chart-8` in web/src/styles.css (a card has no CSS variables; test/ui-blocks.test.ts
+ * checks the two stay the same). Mid-tones, so they also read on a dark card.
  */
-export const SERIES = ["#5b5bf0", "#14b8c8", "#ff5d73", "#ee9e15", "#a855f7", "#17a673", "#f97316", "#3b9cf5"];
-/** The reference line of a goal. */
-const GOAL = "#898781";
+export const SERIES = ["#3860ac", "#bf801e", "#0f968a", "#a04130", "#a065b2", "#627d28", "#8f4966", "#2a8bbf"];
+/** Hairline grid, baseline and small labels, as `--chart-grid`, `--chart-axis` and `--muted` (light). */
+const GRID = "#ebe8e1";
+const AXIS = "#c8c3b8";
+const MUTED = "#7a7f88";
+/** The reference line of a goal: dashed, in the secondary ink. */
+const GOAL = "#4b5059";
 
 /**
  * Callout tones: every callout sits on the same light grey, only its icon is coloured; the card header
@@ -66,14 +71,25 @@ function table(c: Extract<ViewComponent, { type: "table" }>): Record<string, unk
   };
 }
 
-/** A VChart spec for one chart: the series colours, thin rounded marks, a goal line, values on the marks when there are few. */
+/**
+ * A VChart spec for one chart, in the web's look (packages/plugin-sdk/charts.ts) as far as a card
+ * goes: the series colours, thin marks rounded a little at the data end, a hairline grid on the value
+ * axis only and no axis line or ticks there, small grey labels, a dashed goal line, values on the
+ * marks when there are few, a thin ring for shares. What a card cannot do (names at the line ends, a
+ * written peak, a lighter rest when one label is highlighted) falls back to the legend and the labels.
+ */
 export function chartSpec(c: Extract<ViewComponent, { type: "chart" }>): Record<string, unknown> {
+  const small = { fontSize: 10, fill: MUTED };
   if (c.kind === "pie") {
     const s = c.series[0];
     const total = s.values.reduce((a, b) => a + Math.max(0, b), 0) || 1;
     // The share rides in the name, so the legend and the labels both carry it.
     const values = c.labels.map((l, i) => ({ type: `${l} ${Math.round((Math.max(0, s.values[i]) / total) * 100)}%`, value: s.values[i] }));
-    return { type: "pie", data: { values }, valueField: "value", categoryField: "type", color: SERIES, outerRadius: 0.8, label: { visible: true }, legends: { visible: true, orient: "right" } };
+    return {
+      type: "pie", data: { values }, valueField: "value", categoryField: "type", color: SERIES,
+      outerRadius: 0.8, innerRadius: 0.64, padAngle: 0.6, pie: { style: { stroke: "#ffffff", lineWidth: 1 } },
+      label: { visible: true, style: { fontSize: 11 } }, legends: { visible: true, orient: "right" },
+    };
   }
   const several = c.series.length > 1;
   const stack = several && !!c.stack && c.kind !== "line";
@@ -81,36 +97,42 @@ export function chartSpec(c: Extract<ViewComponent, { type: "chart" }>): Record<
   const values = c.series.flatMap((s) => c.labels.map((l, i) => ({ x: l, s: s.name, v: s.values[i] })));
   const points = c.labels.length * (stack ? 1 : c.series.length);
   const labelled = points <= 12;
-  const base: Record<string, unknown> = { data: { values }, color: SERIES, legends: { visible: several, orient: "bottom" } };
+  const valueAxis = { orient: horizontal ? "bottom" : "left", grid: { visible: true, style: { stroke: GRID, lineWidth: 1, lineDash: [] } }, domainLine: { visible: false }, tick: { visible: false }, label: { style: small } };
+  const labelAxis = { orient: horizontal ? "left" : "bottom", grid: { visible: false }, domainLine: { visible: true, style: { stroke: AXIS, lineWidth: 1 } }, tick: { visible: false }, label: { style: { ...small, fontSize: horizontal ? 12 : 10 } } };
+  const base: Record<string, unknown> = {
+    data: { values }, color: SERIES, axes: [valueAxis, labelAxis],
+    legends: { visible: several, orient: c.kind === "line" ? "top" : "bottom", item: { label: { style: { fontSize: 11 } } } },
+  };
   if (several) base.seriesField = "s";
   if (c.goal !== undefined) {
-    base.markLine = [{ [horizontal ? "x" : "y"]: c.goal, line: { style: { stroke: GOAL, lineWidth: 1 } }, label: { visible: true, text: `目标 ${c.goal}`, position: "insideEndTop", labelBackground: { visible: false } } }];
+    base.markLine = [{ [horizontal ? "x" : "y"]: c.goal, line: { style: { stroke: GOAL, lineWidth: 1, lineDash: [4, 3] } }, label: { visible: true, text: `目标 ${c.goal}`, position: "insideEndTop", labelBackground: { visible: false }, style: small } }];
   }
   if (c.kind === "line" || c.kind === "area") {
-    const line = { style: { lineWidth: 2, curveType: "monotone" } };
+    const line = { style: { lineWidth: several ? 1.75 : 1.5, curveType: "monotone" } };
     return {
       ...base,
       type: c.kind,
       xField: "x",
       yField: "v",
-      ...(c.kind === "area" ? { stack, area: { style: { fillOpacity: several && !stack ? 0.08 : 0.14 } } } : {}),
+      ...(c.kind === "area" ? { stack, area: { style: { fillOpacity: stack ? 0.5 : several ? 0.07 : 0.12 } } } : {}),
       line,
-      point: c.labels.length <= 12 && c.kind === "line" ? { style: { size: 6 } } : { visible: false },
-      ...(labelled && !several ? { label: { visible: true } } : {}),
+      point: c.kind === "line" && !several && c.labels.length <= 45 ? { style: { size: c.labels.length <= 14 ? 5 : 4 } } : { visible: false },
+      ...(labelled && !several ? { label: { visible: true, style: { fontSize: 11 } } } : {}),
     };
   }
   const nonNegative = c.series.every((s) => s.values.every((v) => v >= 0));
-  // Rounded at the data end, square at the baseline; stacked segments stay square.
-  const radius = stack || !nonNegative ? 0 : horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0];
+  // Slightly rounded at the data end, square at the baseline; stacked segments stay square.
+  const radius = stack || !nonNegative ? 0 : horizontal ? [0, 2, 2, 0] : [2, 2, 0, 0];
   const grouped = several && !stack ? ["x", "s"] : "x";
   return {
     ...base,
     type: "bar",
     ...(horizontal ? { direction: "horizontal", xField: "v", yField: grouped } : { xField: grouped, yField: "v" }),
     ...(stack ? { stack: true } : {}),
-    barMaxWidth: 24,
+    barMaxWidth: horizontal ? 10 : several && !stack ? 12 : 20,
+    ...(several && !stack ? { barGapInGroup: 2 } : {}),
     bar: { style: { cornerRadius: radius } },
-    ...(labelled ? { label: { visible: true, position: stack ? "inside" : horizontal ? "right" : "top" } } : {}),
+    ...(labelled ? { label: { visible: true, position: stack ? "inside" : horizontal ? "right" : "top", style: { fontSize: 11 } } } : {}),
   };
 }
 

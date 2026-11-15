@@ -44,7 +44,7 @@ const draw = (el: unknown, c: ViewComponent) => {
 <style scoped>
 .ui-view {
   display: grid;
-  gap: 12px;
+  gap: 16px;
   min-width: 0;
   max-width: 760px;
   border: 1px solid var(--line);
