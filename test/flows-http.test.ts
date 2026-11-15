@@ -13,7 +13,8 @@ import { startServer } from "../src/server/http.ts";
 import { appendToSource } from "../src/sources/store.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
-import { advance, ownerAction, reportStage, startFlow } from "../src/flows/engine.ts";
+import { advance, ownerAction, reportStage, startFlow, startRound } from "../src/flows/engine.ts";
+import { agentProfileSchema } from "../src/core/config.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
 import { getRun, startWorker, stopWorker } from "../src/agents/runs.ts";
 import { saveAgentSpec, saveSkill } from "../src/agents/specs.ts";
@@ -31,6 +32,29 @@ afterEach(async () => {
 async function serverFor(app: App) { const s = await startServer(app, { port: 0, quiet: true }); servers.push(s); return s; }
 
 describe("流程 HTTP", () => {
+  it("轮次与预算接口返回附加视图，限事项本人；校验含新字段的人话", async () => {
+    const app = fixture(), server = await serverFor(app);
+    const yaml = JSON.stringify({ id: "repeat", name: "示例核验", repeat: { from: "check" }, stages: [{ id: "check", name: "核验", by: { run: {} }, ai: "cheap", at: "00:00", budget: { minutes: 240, trials: 8 }, escalate: { to: "strong", max: 2 } }] });
+    const checked = (await server.inject({ method: "POST", url: "/api/flows/validate", payload: { yaml } })).json();
+    expect(checked.repeatDescription).toContain("你点了才开始下一轮");
+    expect(checked.stages[0]).toMatchObject({ ai: "用省的模型；拿不准时最多请好的模型看 2 次", time: "这一轮 00:00 以后开始", budget: "最多跑 240 分钟" });
+    saveFlow(app, yaml, "user");
+    const item = upsertItem(app, undefined, { title: "示例核验", spaceId: "personal" }, "user"), url = `/api/items/${item.id}/flow`;
+    await server.inject({ method: "POST", url, payload: { flow: "repeat" } });
+    expect((await server.inject({ method: "POST", url: `${url}/round`, payload: {} })).statusCode).toBe(409);
+    const updated = await server.inject({ method: "POST", url: `${url}/stages/check/budget`, payload: { budget: { minutes: 60, trials: 4 }, escalate: { max: 1 } } });
+    expect(updated.statusCode).toBe(200); expect(updated.json().stages[0]).toMatchObject({ budget: { minutes: 60, trials: 4 }, escalate: { to: "strong", max: 1 }, round: 1 });
+    expect((await server.inject({ method: "POST", url: `${url}/stages/check/budget`, payload: { budget: { minutes: -1 } } })).statusCode).toBe(400);
+    expect((await server.inject({ method: "POST", url: `${url}/stages/check/budget`, payload: { escalate: { max: -1 } } })).statusCode).toBe(400);
+    createUser(app, { id: "reader-rounds", name: "成员乙" }); addMember(app, "personal", "reader-rounds", "editor");
+    const headers = { authorization: `Bearer ${createApiToken(app, "reader-rounds", "test")}` };
+    for (const path of ["round", "stages/check/budget"]) expect((await server.inject({ method: "POST", url: `${url}/${path}`, payload: {}, headers })).statusCode).toBe(403);
+    await ownerAction(app, item.id, "check", "done", "核验完成");
+    const result = (await server.inject({ method: "POST", url: `${url}/round`, payload: {} })).json();
+    expect(result.flow).toMatchObject({ round: 2, canStartRound: false }); expect(result.rounds[0]).toMatchObject({ round: 1 });
+    expect(result.stages[0].budget).toEqual({ minutes: 60, trials: 4 });
+    expect((await server.inject("/api/flows")).json().flows[0].definition.stages[0].budget.minutes).toBe(240);
+  });
   it("校验只读，返回实际默认前提和文字解释，错误带原因，成员不可校验", async () => {
     const app = fixture(), server = await serverFor(app);
     const validate = (yaml: string) => server.inject({ method: "POST", url: "/api/flows/validate", payload: { yaml } });
@@ -127,7 +151,7 @@ describe("流程随事项拉取", () => {
     const b = appendToSource(remote, { spaceId: "personal", kind: "chat", uri: "chat:flow", title: "示例讨论", lines: ["共同消息", "远端消息"] });
     const own = upsertItem(local, undefined, { title: "本机事项", spaceId: "personal" }, "user");
     const item = upsertItem(remote, undefined, { title: "远端事项", spaceId: "personal" }, "user");
-    for (const app of [local, remote]) saveFlow(app, raw, "user");
+    for (const app of [local, remote]) saveFlow(app, raw.replace("stages:", "repeat: { from: check }\nstages:"), "user");
     await startFlow(local, own.id, "demo", { actor: "owner" });
     await startFlow(remote, item.id, "demo", { actor: "owner" });
     await ownerAction(remote, item.id, "check", "confirm");
@@ -141,15 +165,18 @@ describe("流程随事项拉取", () => {
     };
     let f = await snapshot();
     try { mergeLibrary(local, f); } finally { cleanupFetched(f); }
-    expect(itemFlow(local, item.id)!.endedAt).toBeTruthy();
+    expect(itemFlow(local, item.id)!.roundClosedAt).toBeTruthy();
     expect(getStage(local, item.id, "check")).toMatchObject({ state: "done", evidence: [`src:${a.id}#L3`] });
     expect(stageLog(local, item.id).some((l) => l.refs.includes(`src:${a.id}#L3`))).toBe(true);
+    const { flowView } = await import("../src/flows/engine.ts");
+    expect(flowView(local, item.id).rounds[0].stages[0]).toMatchObject({ state: "done", evidence: [`src:${a.id}#L3`] });
     const n = all(local.db, "select * from item_stage_log").length;
     f = await snapshot(); try { mergeLibrary(local, f); } finally { cleanupFetched(f); }
     expect(all(local.db, "select * from item_stage_log")).toHaveLength(n);
-    await ownerAction(remote, item.id, "check", "reopen", "重新核验");
+    await startRound(remote, item.id, { actor: "owner", userId: "owner" });
     f = await snapshot(); try { mergeLibrary(local, f); } finally { cleanupFetched(f); }
     expect(itemFlow(local, item.id)!.endedAt).toBeNull();
+    expect(itemFlow(local, item.id)!.round).toBe(2);
     expect(getStage(local, item.id, "check").state).toBe("gated");
     expect(one(local.db, "select id from items where id=?", own.id)).toBeTruthy();
     await advance(remote, item.id);
@@ -159,13 +186,16 @@ describe("流程随事项拉取", () => {
 describe("阶段运行接入", () => {
   it("worker 调用指定档案、只给这一轮技能，假 Agent 通过工具交结果后推进", async () => {
     const app = fixture();
+    app.config.agents.profiles.push(agentProfileSchema.parse({ id: "flow-ai", command: "node", transport: "acp", model: "test-model" }));
+    app.config.agents.tiers.cheap = { profile: "flow-ai", model: "test-model", effort: "low" };
     saveAgentSpec(app, { name: "demo-worker", description: "核对示例材料", prompt: "读材料后交结果" }, "user");
     saveSkill(app, { name: "demo-skill", description: "核对退款", body: "逐行核验已发货金额。" }, "user");
-    saveFlow(app, "id: runtime\nname: 运行接入\nstages:\n  - id: check\n    name: 核验\n    note: 读材料后核验。\n    by: {run: {agent: demo-worker, skill: demo-skill}}\n  - id: finish\n    name: 收尾\n    by: wait\n", "user");
+    saveFlow(app, "id: runtime\nname: 运行接入\nstages:\n  - id: check\n    name: 核验\n    ai: cheap\n    note: 读材料后核验。\n    by: {run: {agent: demo-worker, skill: demo-skill}}\n  - id: finish\n    name: 收尾\n    by: wait\n", "user");
     const item = upsertItem(app, undefined, { title: "示例退款", spaceId: "personal" }, "user");
     const fake = vi.spyOn(runner, "runRole").mockImplementation(async (a, input) => {
       const r = getRun(a, input.runId!);
       expect(input.spec?.name).toBe("demo-worker");
+      expect(input.execution).toMatchObject({ profile: "flow-ai", model: "test-model", effort: "low", source: "flow", reason: "流程「运行接入」的「核验」阶段指定" });
       expect(input.task).toContain("逐行核验已发货金额");
       expect(input.addTools).toContain("stage_report");
       expect(input.spaces).toEqual(["personal"]);

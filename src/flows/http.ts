@@ -5,8 +5,8 @@ import { can } from "../auth/permissions.ts";
 import { canWrite } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
-import { listFlows, parseFlow, removeFlow, saveFlow, describeStage } from "./definitions.ts";
-import { flowView, ownerAction, startFlow, stopFlow, type OwnerAction } from "./engine.ts";
+import { listFlows, parseFlow, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { flowView, ownerAction, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { all } from "../core/db.ts";
 
@@ -50,7 +50,7 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     const raw = body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
     try {
       const f = parseFlow(raw);
-      return { ok: true, id: f.id, name: f.name, description: f.description, stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
+      return { ok: true, id: f.id, name: f.name, description: f.description, repeat: f.repeat ?? null, repeatDescription: describeFlow(f), stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
     } catch (e) { return { ok: false, problem: (e as Error).message }; }
   });
   server.put("/api/flows/:id", async (req) => {
@@ -62,6 +62,15 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
   server.get("/api/items/:id/flow", async (req) => view(app, itemId(req, false)));
   server.post("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, await startFlow(app, id, body(z.object({ flow: z.string() }), req.body).flow, { actor: "owner", userId: who(req) })); });
   server.delete("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, await stopFlow(app, id, who(req))); });
+  server.post("/api/items/:id/flow/round", async (req) => {
+    const id = itemId(req, true);
+    return view(app, id, await startRound(app, id, { actor: "owner", userId: who(req) }));
+  });
+  server.post("/api/items/:id/flow/stages/:stage/budget", async (req) => {
+    const id = itemId(req, true), { stage } = req.params as { stage: string };
+    const patch = body(z.object({ budget: budgetSchema.optional(), escalate: z.object({ max: z.number().int().min(0).max(100) }).strict().optional() }).strict(), req.body);
+    return view(app, id, await updateStageBudget(app, id, stage, patch, who(req)));
+  });
   for (const action of ["confirm", "hold", "skip", "done", "reopen"] as OwnerAction[]) server.post(`/api/items/:id/flow/stages/:stage/${action}`, async (req) => {
     const id = itemId(req, true), { stage } = req.params as { stage: string };
     const b = body(z.object({ note: z.string().max(4000).optional() }), req.body ?? {});

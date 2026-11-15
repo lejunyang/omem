@@ -20,6 +20,7 @@ export const pullTables: Table[] = [
   { name: "items", key: ["id"], newer: "updated_at" },
   { name: "item_flows", key: ["item_id"], newer: "updated_at" },
   { name: "item_stages", key: ["item_id", "stage_id"], newer: "updated_at" },
+  { name: "item_flow_rounds", key: ["item_id", "started_at", "round"], newer: "updated_at" },
   { name: "item_stage_log", key: ["id"], integer: true, natural: ["sync_key"], newer: "at" },
   { name: "conversations", key: ["id"], newer: "updated_at", local: ["agent_session", "agent_cwd"] },
   { name: "runs", key: ["id"], newer: "coalesce(finished_at, started_at, created_at)", local: ["profile_id", "lane", "not_before"] },

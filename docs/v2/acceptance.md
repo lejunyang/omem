@@ -1862,6 +1862,12 @@ TraeX 与其他 ACP 的清理补验：
 | 45f | 流程里放一个由助手承担、`done: confirm` 的“验证”阶段，事项有需求点。轮到它时让助手在测试环境按需求点逐条做，材料里有测试账号（固定手机号加固定验证码或密码） | 运行用 `report_tests` 交每条的结果（需求点、通过 / 没通过 / 没做、怎么测的、做了什么、截图或录屏）；它用材料里的测试账号自己登录；账号不够、或要登录真人在用的账号时报卡住并写明等谁。记录、截图和录屏里没有密码和验证码。事项页选中“验证”阶段，下面是“逐条的结果”：没通过的排在前面并展开，点开每条能看截图和录屏，没交产物的写着“没有交截图或录屏”；阶段停在“做完了，确认吗？”等你，你确认后才往下走，点“还不行”写原因就重做 | `test/flows.test.ts`（视图里的用例与产物）；真实 Agent、桌面自动化和测试环境未验证 |
 | 45f | 看事项列表及由流程触发的运行 | 列表标题旁出现当前阶段或“等你：推送”；已结束流程不再有标签；触发显示“流程”并可回事项 | 一次 join / 窗口查询每事项取一阶段，HTTP 测试覆盖运行 / 等待 / 完成 / 停止；运行链接代码与类型检查 |
 | 45f1 | owner / wait 阶段配置 git.pushed 或 git.merged，关联已应用交办；分别在推送前、全部仓库推送后、只推一个仓库、合入目标分支后检查；未应用、无远端及远端不可读时重复巡检，再手动完成 | 仅所有应用提交均被相应远端分支包含时 host 完成该段并按原关卡推进；未满足保持 doing、相同原因不重复追加，远端十分钟限频且总超时十五秒；视图有 waitingSignal，手动完成仍可用；本机信号只留三十天，不传播到其他设备；run / object 信号定义报中文错误 | `test/flow-signals.test.ts` 的真 Git / 本地裸远端、指定流程及权限回归和 tsc；网页接入未做 |
+| 45f-1 | 一份含只做一次阶段的流程设 `repeat.from`，手动走三轮；上一轮没完时开始下一轮 | 默认手动，未完成拒绝；前置阶段保留，重复段重置；视图能读最近 10 轮结果，日志带轮次；停止后不再开轮 | `test/flow-rounds.test.ts` |
+| 45f-2 | 设置 `done / day / [tue, fri]`；连续自动转；停机错过周二 | 自动推进到上限先问本人；日期用配置时区，未完成不重叠；错过日子不补跑，不在周三开周二的轮 | `test/flow-rounds.test.ts`、`test/flow-timing.test.ts` |
+| 45f-3 | 运行阶段指定档位或 AI；不配档位、配错、模型每日额度或账号额度用完；额度在排队期间变化 | execution 带流程来源和原因；缺档位沿用自身 AI，一段一轮只记一次；不可用卡住，额度等恢复，不回退到其他模型；运行返回额度错误也不升档 | `test/flow-rounds.test.ts`、`test/flows-http.test.ts`（worker 传 execution） |
+| 45f-4 | 阶段加 at、普通 / 跨午夜 window，推进至前后边界，检查其他时区和夏令时 | 未到留未开始且返回下次时刻，巡检到点开始；含起点、不含终点；已运行的不因离开窗口停止 | `test/flow-timing.test.ts`、排队复查测试 |
+| 45f-5 | 运行用满分钟预算；未交结果结束，或报告 blocked 且 unsure；同轮重开与新轮 | 预算用满取消并卡住，迟交不能绕过；升档带结论 / 错误重做，用完卡住，同轮重开不清计数，新轮重置；trials 只保存 | `test/flow-rounds.test.ts` |
+| 45f-6 | 本人 / 其他成员调用 round 与预算接口；校验新字段；从另一设备拉取 | 写入限事项本人且空间可写；预算只改副本，视图与校验返回新增人话；历史快照和日志随事项拉取、引用映射不丢 | `test/flows-http.test.ts`、`test/config-merge.test.ts`、`test/pull-complete.test.ts` |
 | 45g | 用示例商城演示库打开两页及定义编辑器，检查 1440 / 390、浅 / 深色 | 无横向溢出；窄屏阶段换行、编辑器上下排列；无页面脚本错误 | `scripts/screens.ts` 八张临时截图、编辑器四张截图与 Playwright 尺寸断言；仅保留 `site/public/screens/item-flow.png` |
 
 验证命令：
@@ -1875,3 +1881,9 @@ TraeX 与其他 ACP 的清理补验：
 - `node .flows-browser.mjs <演示地址> <演示事项id>`：临时 Playwright 验证编辑器、原件抽屉与动作，含横向溢出断言，运行后删除脚本与截图。真实 Agent / 飞书未在本次网页验证范围内；未提交或操作仓库 Git 状态。
 
 11-15 两个页面重做版式后（阶段条、列表加详情的定义页），在本地预览用 1440、390 宽和深色核对，没有横向溢出；`test/flows.test.ts`、`test/flows-http.test.ts`、`test/flow-web.test.ts` 39 项通过。阶段条和列表加详情的约定写进了 `.agents/skills/omem-design/SKILL.md`。
+
+11-15 课题第一期的服务端检查（45f-1 至 45f-6）：
+
+- `npx vitest run test/flow-rounds.test.ts test/flow-timing.test.ts test/flows.test.ts test/flows-http.test.ts test/esm.test.ts test/tool-help.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts --maxWorkers=2 --configLoader native --cache=false`：`Test Files 9 passed (9)`，`Tests 96 passed | 1 skipped (97)`；跳过的是原有的 Windows SSH 拉取用例。
+- `npx tsc --noEmit -p .`：退出码 0，无类型错误。未跑全量测试或 vue-tsc，未修改网页。
+- 真实 Codex gpt-6.1-sol / low：在隔离的临时事项和工具服务上尝试两步（blocked + unsure → 升档，done + 依据），CLI 在第一步调用模型前退出，原因为 `Could not find home directory`；退出码 1，真实模型与工具行为未验成，临时脚本和数据已删除。假 Agent 的 worker / 工具链路和 execution 传递由 HTTP 测试覆盖。

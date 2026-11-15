@@ -6,7 +6,9 @@ import { decide, decisionReady, describeDecision } from "../core/decision.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError, json, now } from "../core/util.ts";
 import { cancelAsk, createAsk, getAsk, registerAskHandler, type Ask } from "../agents/asks.ts";
-import { createRun, getRun, registerHandler } from "../agents/runs.ts";
+import { cancelRun, createRun, getRun, registerHandler } from "../agents/runs.ts";
+import { validateExecution, executionArgs, type Execution } from "../agents/execution.ts";
+import { dailyCapReached, outOfQuotaUntil } from "../agents/capacity.ts";
 import { roleNames, type RoleName } from "../core/config.ts";
 import { userBy } from "../core/run-trigger.ts";
 import { findAgentSpec, readSkill, skillUsable } from "../agents/specs.ts";
@@ -14,10 +16,11 @@ import { getItem, type Item } from "../items/store.ts";
 import { addMaterials, materialsBrief } from "../items/materials.ts";
 import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
-import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage } from "./definitions.ts";
+import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
+import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { findObject, objectKind } from "./objects.ts";
 import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
-import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
+import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
 
 const host: FlowActor = { actor: "host" };
 // This is an execution lock, not a projection/cache: each pass reads the item's own rows.
@@ -67,17 +70,44 @@ function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedback?: s
     `## 这一段：${d.name}（${d.id}）\n${d.note ?? ""}`,
     `完成要求：${typeof d.done === "string" ? d.done : d.done ? JSON.stringify(d.done) : "做完这一段并附上依据"}`,
     typeof d.by === "object" && "object" in d.by ? d.by.object === "code-work" ? `按这件事的需求点发起交办，delegate_code 带上 item_id=${item.id}；流程会跟随交办评审。` : `为这件事写方案，交给本人确认。` : "",
-    feedback ? `本人说还不行，原因：${feedback}。这一轮按这个意见重做。` : "",
+    feedback ? rows.find((s) => s.id === d.id)?.control.escalated ? `上一次的结论或错误：${feedback}。这一轮重新核对并交结果。` : `本人说还不行，原因：${feedback}。这一轮按这个意见重做。` : "",
     `结束前必须用 stage_report(item="${item.id}", stage="${d.id}") 交代：done 附依据；blocked 写等谁或等什么；skip 写原因。不要以运行结束代替交结果；不要替本人确认。`,
   ].filter(Boolean).join("\n\n");
 }
 
-function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, confirmed = false) {
-  const at = now();
+async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Date) {
+  const choice = s.control.escalated ? d.escalate!.to : d.ai;
+  const pick = typeof choice === "string" ? app.config.agents.tiers[choice] : choice;
+  if (choice && !pick && !s.control.tierFallback?.includes(String(choice))) {
+    s = changeStage(app, f.itemId, d.id, s.state, { control: { ...s.control, tierFallback: [...s.control.tierFallback ?? [], String(choice)] } }, host, `档位 ${choice} 没有配置，用了默认的 AI`);
+  }
+  if (!pick) return { s, execution: undefined, waitUntil: null };
+  const execution = validateExecution(app, { ...pick, source: "flow", reason: `流程「${f.definition.name}」的「${d.name}」阶段指定` })!;
+  const { resolveRunProfile } = await import("../agents/runner.ts");
+  const name = typeof d.by === "object" && "run" in d.by ? d.by.run.agent ?? "assistant" : "assistant";
+  const role = (roleNames as readonly string[]).includes(name) ? name as RoleName : null;
+  const spec = role ? null : findAgentSpec(app, name);
+  if (!role && !spec) throw new HttpError(400, `没有 Agent 档案 ${name}`);
+  const profile = resolveRunProfile(app, { actor: spec ? { spec } : { role: role! }, ...executionArgs(execution) });
+  const actual = validateExecution(app, { ...execution, model: profile.model, effort: profile.effort })!;
+  const until = outOfQuotaUntil(app, profile, at);
+  const daily = dailyCapReached(app, profile, at.getTime());
+  return { s, execution: actual, waitUntil: until ?? (daily ? nextRoundAt(at, app.config.timezone, "day") : null) };
+}
+
+async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, confirmed = false, current = new Date()) {
+  const at = current.toISOString();
+  const ai = await stageAI(app, f, d, s, current);
+  s = ai.s;
+  if (ai.waitUntil) {
+    const until = stageTiming(new Date(ai.waitUntil), app.config.timezone, d, new Date(f.roundStartedAt)).nextAt ?? ai.waitUntil;
+    waitStage(app, f, d, s, until, "模型额度用完");
+    return false;
+  }
   let carrier: string | null = null;
   let askId: string | null = null;
   let waitingOn: string | null = null;
-  const control: StageControl = { ...s.control, question: undefined, confirmed: undefined, reported: false };
+  const control: StageControl = { ...s.control, question: undefined, confirmed: undefined, reported: false, waitUntil: undefined, admitted: undefined, execution: ai.execution, budgetStartedAt: typeof d.by === "object" && "run" in d.by ? at : undefined };
   withdraw(app, s);
   if (typeof d.by === "object") {
     const obj = "object" in d.by ? findObject(app, item, d.by.object) : null;
@@ -87,7 +117,7 @@ function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, con
       if ("object" in d.by && d.by.object === "design") designId = obj?.ref.slice("design:".length) ?? createDesign(app, { spaceId: item.spaceId, title: item.title, origin: "own", itemId: item.id, userId: item.userId }).id;
       const name = "run" in d.by ? d.by.run.agent ?? "assistant" : "assistant";
       const r = createRun(app, { kind: "flow-stage", spaceId: item.spaceId, title: `${item.title} · ${d.name}`, userId: item.userId,
-        input: { itemId: item.id, flowId: f.id, flowStartedAt: f.startedAt, stageId: d.id, agent: name, skill: "run" in d.by ? d.by.run.skill : undefined, designId, task: stageTask(app, item, f, d, s.control.feedback), spaces: [item.spaceId] },
+        input: { itemId: item.id, flowId: f.id, flowStartedAt: f.startedAt, round: f.round, stageId: d.id, execution: ai.execution, ownAI: !!d.ai && !ai.execution, agent: name, skill: "run" in d.by ? d.by.run.skill : undefined, designId, task: stageTask(app, item, f, d, s.control.feedback), spaces: [item.spaceId] },
         trigger: { via: "flow", source: { kind: "flow", id: f.id, name: f.definition.name }, by: userBy(app, item.userId), where: d.name } });
       carrier = r.id;
       control.runId = r.id;
@@ -99,8 +129,61 @@ function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, con
     askId = question(app, f, d, { ...s, askId: null }, "owner", `「${item.title}」轮到你：${d.name}。${d.note ?? ""}`, ["做完了", "这一段跳过"]);
     control.question = "owner";
   }
-  run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + 1, at, item.id);
-  changeStage(app, item.id, d.id, "doing", { by: carrier, waitingOn, askId, attempt: s.attempt + 1, enteredAt: at, evidence: [], control }, host, confirmed ? "本人确认，开始这一段" : "开始这一段");
+  run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + (s.control.admitted ? 0 : 1), at, item.id);
+  changeStage(app, item.id, d.id, "doing", { by: carrier, waitingOn, askId, attempt: s.attempt + 1, enteredAt: at, evidence: [], control }, { ...host, runId: control.runId }, confirmed ? "本人确认，开始这一段" : "开始这一段");
+  return true;
+}
+
+function waitStage(app: App, f: ItemFlow, d: FlowStage, s: StageRow, until: string, why = "") {
+  if (s.control.waitUntil === until) return;
+  changeStage(app, f.itemId, d.id, s.state, { waitingOn: "time", control: { ...s.control, waitUntil: until } }, host, `${why ? `${why}，` : ""}等到 ${timeLabel(until, app.config.timezone)} 再开始`);
+}
+
+function roundComplete(app: App, f: ItemFlow) {
+  return itemStages(app, f.itemId).every((s) => ["done", "skipped"].includes(s.state));
+}
+function closeRound(app: App, f: ItemFlow, at: Date) {
+  if (f.roundClosedAt) return;
+  const ended = at.toISOString();
+  atomic(app, () => {
+    run(app.db, `insert into item_flow_rounds(item_id,started_at,round,ended_at,stages,updated_at) values(?,?,?,?,?,?)
+      on conflict(item_id,started_at,round) do update set ended_at=excluded.ended_at,stages=excluded.stages,updated_at=excluded.updated_at`, f.itemId, f.startedAt, f.round, ended, JSON.stringify(itemStages(app, f.itemId)), now());
+    run(app.db, "update item_flows set round_closed_at=?,next_round_at=?,updated_at=? where item_id=?", ended, f.definition.repeat ? nextRoundAt(at, app.config.timezone, f.definition.repeat.every) : null, now(), f.itemId);
+    const last = f.definition.stages.at(-1)!;
+    const s = getStage(app, f.itemId, last.id);
+    changeStage(app, f.itemId, last.id, s.state, {}, host, `第 ${f.round} 轮已完成${f.definition.repeat?.every === "manual" ? "，等本人开始下一轮" : ""}`);
+  });
+}
+function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date) {
+  if (!f.definition.repeat) throw new HttpError(409, "这份流程没有设置轮次");
+  if (!roundComplete(app, f)) throw new HttpError(409, "这一轮还没做完，不能开始下一轮");
+  closeRound(app, f, at);
+  const from = f.definition.stages.findIndex((d) => d.id === f.definition.repeat!.from);
+  const noStarts = !itemStages(app, f.itemId).some((s) => f.definition.stages.slice(from).some((d) => d.id === s.id) && s.attempt > 0);
+  atomic(app, () => {
+    run(app.db, "update item_flows set round=round+1,round_started_at=?,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", at.toISOString(), now(), f.itemId);
+    for (const d of f.definition.stages.slice(from)) {
+      const s = getStage(app, f.itemId, d.id);
+      withdraw(app, s);
+      changeStage(app, f.itemId, d.id, "pending", { round: f.round + 1, attempt: 0, enteredAt: null, doneAt: null, by: null, waitingOn: null, evidence: [], askId: null, control: {} }, by, `开始第 ${f.round + 1} 轮`);
+    }
+    if (by.actor === "host" && noStarts) run(app.db, "update item_flows set auto_streak=auto_streak+1 where item_id=?", f.itemId);
+    const next = itemFlow(app, f.itemId)!;
+    if (by.actor === "host" && next.autoStreak >= app.config.flows.autoAdvance) {
+      const d = f.definition.stages[from];
+      gate(app, next, d, getStage(app, f.itemId, d.id), "gate");
+    }
+  });
+}
+export function startRound(app: App, itemId: string, by: FlowActor, at = new Date()) {
+  return serial(app, itemId, async () => {
+    if (getItem(app, itemId).userId !== by.userId) throw new HttpError(403, "只有事项本人能开始下一轮");
+    const f = running(app, itemId);
+    roundNow(app, f, by, at);
+    resetStreak(app, itemId);
+    await advanceNow(app, itemId, "本人开始下一轮", at);
+    return flowView(app, itemId);
+  });
 }
 
 export async function startFlow(app: App, itemId: string, flowId: string, by: FlowActor) {
@@ -113,7 +196,7 @@ export async function startFlow(app: App, itemId: string, flowId: string, by: Fl
       for (const s of itemStages(app, itemId)) withdraw(app, s);
       run(app.db, "delete from item_stages where item_id=?", itemId);
       const at = now();
-      run(app.db, `insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at) values(?,?,?,?,?,?) on conflict(item_id) do update set flow_id=excluded.flow_id,definition=excluded.definition,started_at=excluded.started_at,ended_at=null,auto_streak=0,card=null,started_by=excluded.started_by,updated_at=excluded.updated_at`, itemId, f.id, JSON.stringify(f), at, by.actor, at);
+      run(app.db, `insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at,round_started_at) values(?,?,?,?,?,?,?) on conflict(item_id) do update set flow_id=excluded.flow_id,definition=excluded.definition,started_at=excluded.started_at,ended_at=null,auto_streak=0,card=null,started_by=excluded.started_by,updated_at=excluded.updated_at,round=1,round_started_at=excluded.round_started_at,round_closed_at=null,next_round_at=null`, itemId, f.id, JSON.stringify(f), at, by.actor, at, at);
     });
     for (const d of f.stages) changeStage(app, itemId, d.id, "pending", {}, by, "加入流程");
     await advanceNow(app, item.id, "开始流程");
@@ -124,7 +207,7 @@ export async function startFlow(app: App, itemId: string, flowId: string, by: Fl
 export function advance(app: App, itemId: string, cause = "状态变化") {
   return serial(app, itemId, () => advanceNow(app, itemId, cause));
 }
-async function advanceNow(app: App, itemId: string, _cause: string) {
+async function advanceNow(app: App, itemId: string, _cause: string, at = new Date()) {
   if (!itemFlow(app, itemId) || itemFlow(app, itemId)!.endedAt) return;
   const item = getItem(app, itemId);
   for (let pass = 0; pass < 20; pass++) {
@@ -132,9 +215,20 @@ async function advanceNow(app: App, itemId: string, _cause: string) {
     for (const d of itemFlow(app, itemId)!.definition.stages) {
       const f = itemFlow(app, itemId)!;
       let s = getStage(app, itemId, d.id);
+      if (s.state === "doing" && s.control.runId && d.budget?.minutes !== undefined && !s.control.reported && usedMinutes(app, s, at) >= d.budget.minutes) {
+        const control = finishUsage(app, s, at);
+        cancelRun(app, s.control.runId);
+        changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: { ...control, reported: true, budgetExceeded: true } }, host, `到了这一段的时间预算（${d.budget.minutes} 分钟）`);
+        changed = true; continue;
+      }
       if (["pending", "stale"].includes(s.state)) {
         const rows = itemStages(app, itemId);
         if (!d.needs.every((n) => rows.some((r) => r.id === n && ["done", "skipped"].includes(r.state)))) continue;
+        const timing = stageTiming(at, app.config.timezone, d, new Date(f.roundStartedAt));
+        if (!timing.ready) { waitStage(app, f, d, s, timing.nextAt!); continue; }
+        if (d.budget?.minutes !== undefined && (s.control.usedMinutes ?? 0) >= d.budget.minutes) {
+          changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: { ...s.control, budgetExceeded: true } }, host, `到了这一段的时间预算（${d.budget.minutes} 分钟）`); changed = true; continue;
+        }
         if (s.state === "stale" && typeof d.by === "object" && "object" in d.by) {
           const obj = findObject(app, item, typeof d.done === "object" && "object" in d.done ? d.done.object : d.by.object);
           if (obj && objectDone(d, obj)) {
@@ -150,10 +244,9 @@ async function advanceNow(app: App, itemId: string, _cause: string) {
           changed = true;
           if (!yes) continue;
         }
-        if ((d.gate === "confirm" || f.autoStreak >= app.config.flows.autoAdvance) && !s.control.confirmed) { gate(app, f, d, s, "gate"); changed = true; continue; }
-        try { start(app, item, f, d, s, !!s.control.confirmed); }
+        if ((d.gate === "confirm" || f.autoStreak >= app.config.flows.autoAdvance) && !s.control.confirmed && !s.control.admitted) { gate(app, f, d, s, "gate"); changed = true; continue; }
+        try { changed = await start(app, item, f, d, s, !!s.control.confirmed, at) || changed; }
         catch (e) { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `无法开始：${(e as Error).message}`); }
-        changed = true;
       }
       s = getStage(app, itemId, d.id);
       if (s.state !== "doing") continue;
@@ -177,12 +270,38 @@ async function advanceNow(app: App, itemId: string, _cause: string) {
       if ((s.by === s.control.runId && !!s.by) && !s.control.reported) {
         const r = getRun(app, s.by);
         if (!["queued", "running"].includes(r.status)) {
-          changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `这一段的运行结束了，没有交代结果${r.error ? `：${r.error}` : ""}`); changed = true;
+          const note = `这一段的运行结束了，没有交代结果${r.error ? `：${r.error}` : ""}${typeof r.output.text === "string" ? `；上一次的结论：${r.output.text.slice(0, 4000)}` : ""}`;
+          try {
+            const ai = await stageAI(app, f, d, s, at);
+            if (ai.waitUntil) {
+              const pending = changeStage(app, itemId, d.id, "pending", { by: null, control: { ...finishUsage(app, s, at), runId: undefined, reported: false } }, { ...host, runId: r.id }, note);
+              const until = stageTiming(new Date(ai.waitUntil), app.config.timezone, d, new Date(f.roundStartedAt)).nextAt ?? ai.waitUntil;
+              waitStage(app, f, d, pending, until, "模型额度用完");
+              changed = true; continue;
+            }
+          } catch (e) {
+            changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: finishUsage(app, s, at) }, host, `无法开始：${(e as Error).message}`);
+            changed = true; continue;
+          }
+          if (!escalateStage(app, f, d, s, note, at)) changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", control: finishUsage(app, s, at) }, host, note);
+          changed = true;
         }
       }
     }
     const rows = itemStages(app, itemId);
-    if (rows.every((s) => ["done", "skipped"].includes(s.state))) { end(app, itemId, "流程走完了"); return; }
+    if (rows.every((s) => ["done", "skipped"].includes(s.state))) {
+      const f = itemFlow(app, itemId)!;
+      closeRound(app, f, at);
+      if (!f.definition.repeat) { end(app, itemId, "流程走完了"); return; }
+      const closed = itemFlow(app, itemId)!;
+      if (!closed.nextRoundAt || Date.parse(closed.nextRoundAt) > at.getTime()) return;
+      if (!roundDayMatches(at, app.config.timezone, f.definition.repeat.every)) {
+        run(app.db, "update item_flows set next_round_at=?,updated_at=? where item_id=?", nextRoundAt(at, app.config.timezone, f.definition.repeat.every), now(), itemId);
+        return;
+      }
+      roundNow(app, closed, host, at);
+      changed = true;
+    }
     if (!changed) return;
   }
 }
@@ -191,10 +310,33 @@ function objectDone(d: FlowStage, obj: NonNullable<ReturnType<typeof findObject>
   return d.done === "confirm" ? false : obj.done;
 }
 
-export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; note: string; waitingOn?: string };
+function usedMinutes(app: App, s: StageRow, at: Date) {
+  const r = s.control.runId ? one<{ status: string; started_at: string | null; finished_at: string | null }>(app.db, "select status,started_at,finished_at from runs where id=?", s.control.runId) : null;
+  const start = r?.status === "queued" ? undefined : s.control.budgetStartedAt;
+  const end = r?.finished_at ? Math.min(Date.parse(r.finished_at), at.getTime()) : at.getTime();
+  return (s.control.usedMinutes ?? 0) + (start ? Math.max(0, end - Math.max(Date.parse(start), r?.started_at ? Date.parse(r.started_at) : 0)) / 60000 : 0);
+}
+function actualStageAI(app: App, s: StageRow) {
+  const row = s.control.runId ? one<{ ai: string | null }>(app.db, "select ai from runs where id=?", s.control.runId) : null;
+  return json<{ profile: string; model?: string; effort?: string } | null>(row?.ai, null);
+}
+function finishUsage(app: App, s: StageRow, at: Date): StageControl {
+  return { ...s.control, usedMinutes: usedMinutes(app, s, at), budgetStartedAt: undefined };
+}
+function escalateStage(app: App, f: ItemFlow, d: FlowStage, s: StageRow, feedback: string, at = new Date(), refs = s.evidence) {
+  if (!d.ai || !d.escalate || (s.control.escalations ?? 0) >= d.escalate.max) return false;
+  withdraw(app, s);
+  if (s.control.runId) cancelRun(app, s.control.runId);
+  changeStage(app, f.itemId, d.id, "pending", { by: null, askId: null, waitingOn: null, control: { ...finishUsage(app, s, at), escalated: true, escalations: (s.control.escalations ?? 0) + 1, runId: undefined, reported: false, question: undefined, feedback } }, { ...host, runId: s.control.runId }, `换上一档的模型重做：${feedback}`, refs);
+  return true;
+}
+
+export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; note: string; waitingOn?: string; unsure?: boolean };
 export function reportStage(app: App, itemId: string, stageId: string, report: StageReport, by: FlowActor) {
   return serial(app, itemId, async () => {
-    const f = running(app, itemId), d = definition(f, stageId), s = getStage(app, itemId, stageId);
+    const f = running(app, itemId), d = definition(f, stageId);
+    let s = getStage(app, itemId, stageId);
+    if (s.control.budgetExceeded && by.actor !== "owner") throw new HttpError(409, "到了这一段的时间预算，等本人处理");
     if (!report.note.trim()) throw new HttpError(400, "交结果需要说明");
     if (report.state === "skip" ? s.state === "done" : !["doing", "blocked"].includes(s.state)) throw new HttpError(409, "已完成阶段不能跳过；交结果需要阶段进行中或卡住");
     if (report.state === "skip" && s.state === "skipped") return flowView(app, itemId);
@@ -202,6 +344,10 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     if (by.runId && (s.by === s.control.runId && !!s.by) && s.by !== by.runId) throw new HttpError(409, "这不是当前阶段的承担运行");
     if (by.runId && getRun(app, by.runId).input.flowStartedAt && (getRun(app, by.runId).input.flowStartedAt !== f.startedAt || getRun(app, by.runId).input.stageId !== stageId || s.control.runId !== by.runId)) throw new HttpError(409, "这次运行所属的流程、阶段或尝试已变化");
     const evidence = report.evidence ?? [];
+    if (report.state === "blocked" && report.unsure && escalateStage(app, f, d, s, report.note, new Date(), evidence)) {
+      await advanceNow(app, itemId, "拿不准，升档重做");
+      return flowView(app, itemId);
+    }
     // What only the owner can settle stays the owner's: an agent saying "the owner has done it" becomes a
     // question to the owner, and an agent cannot skip a stage whose start or end waits for the owner.
     const ownerOnly = d.gate === "confirm" || d.done === "confirm" || d.by === "owner";
@@ -209,6 +355,7 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     const asksOwner = report.state === "done" && (d.done === "confirm" || d.by === "owner" && by.actor !== "owner");
     if (report.state === "done" && !asksOwner && (!evidence.length || evidence.some((r) => !validEvidence(app, r)))) throw new HttpError(400, "做完需要至少一项依据（src: 引用、运行 id 或对象引用）");
     if (by.actor === "owner") resetStreak(app, itemId);
+    s = { ...s, control: finishUsage(app, s, new Date()) };
     withdraw(app, s);
     if (asksOwner) {
       const askId = question(app, f, d, { ...s, askId: null }, "done", d.by === "owner" ? `「${d.name}」是你来做的一段，助手说已经做完了：${report.note}。是这样吗？` : `「${d.name}」做完了：${report.note}。确认吗？`, ["确认", "还不行"]);
@@ -238,16 +385,39 @@ export function ownerAction(app: App, itemId: string, stageId: string, action: O
     return flowView(app, itemId);
   });
 }
+export function updateStageBudget(app: App, itemId: string, stageId: string, patch: { budget?: FlowStage["budget"]; escalate?: { max: number } }, userId: string) {
+  return serial(app, itemId, async () => {
+    if (getItem(app, itemId).userId !== userId) throw new HttpError(403, "只有事项本人能修改预算");
+    const f = running(app, itemId), d = definition(f, stageId);
+    if (patch.escalate && !d.escalate) throw new HttpError(400, "这一段没有设置升档");
+    const copy = structuredClone(f.definition), target = copy.stages.find((s) => s.id === stageId)!;
+    if (patch.budget) target.budget = budgetSchema.parse(patch.budget);
+    if (patch.escalate) target.escalate!.max = patch.escalate.max;
+    const validated = parseFlow(JSON.stringify(copy));
+    atomic(app, () => {
+      run(app.db, "update item_flows set definition=?,updated_at=? where item_id=?", JSON.stringify(validated), now(), itemId);
+      const s = getStage(app, itemId, stageId);
+      changeStage(app, itemId, stageId, s.state, {}, { actor: "owner", userId }, "本人修改了这一段的预算和升档上限");
+    });
+    await advanceNow(app, itemId, "本人修改预算");
+    return flowView(app, itemId);
+  });
+}
 async function actionNow(app: App, itemId: string, stageId: string, action: OwnerAction, note: string, by: FlowActor) {
   const f = action === "reopen" ? itemFlow(app, itemId) : running(app, itemId);
   if (!f) throw new HttpError(409, "事项没有流程");
-  const d = definition(f, stageId), s = getStage(app, itemId, stageId);
+  const d = definition(f, stageId);
+  let s = getStage(app, itemId, stageId);
   if (["skip", "done", "reopen"].includes(action) && !note.trim()) throw new HttpError(400, "需要写明原因或说明");
   if (action === "skip" && s.state === "done") throw new HttpError(409, "已完成阶段不能跳过，请先重开");
   if (action === "done" && !["doing", "blocked", "gated"].includes(s.state)) throw new HttpError(409, "只能手动完成进行中、卡住或等确认的阶段");
   if (["hold", "confirm"].includes(action) && s.state !== "gated" && !(action === "confirm" && s.state === "doing" && s.control.question === "done")) throw new HttpError(409, "这一段没有等确认的关卡");
   resetStreak(app, itemId);
   withdraw(app, s);
+  if (action === "done" || action === "skip" || action === "confirm" && s.control.question === "done") {
+    s = { ...s, control: finishUsage(app, s, new Date()) };
+    if (s.control.runId) cancelRun(app, s.control.runId);
+  }
   if (action === "reopen") { reopenNow(app, itemId, stageId, note, [], by); }
   else if (action === "hold") changeStage(app, itemId, stageId, "gated", { askId: null, control: { ...s.control, reminderAt: now(), reminders: 0 } }, by, note || "本人先别做，暂缓");
   else if (action === "skip" || action === "done" || s.control.question === "done") changeStage(app, itemId, stageId, action === "skip" ? "skipped" : "done", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, reported: true } }, by, note || "本人确认完成");
@@ -271,8 +441,9 @@ function reopenNow(app: App, itemId: string, stageId: string, reason: string, re
   definition(f, stageId);
   const s = getStage(app, itemId, stageId);
   withdraw(app, s);
-  run(app.db, "update item_flows set ended_at=null,updated_at=? where item_id=?", now(), itemId);
-  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { whenYes: s.control.whenYes } }, by, reason, refs);
+  run(app.db, "update item_flows set ended_at=null,round_closed_at=null,next_round_at=null,updated_at=? where item_id=?", now(), itemId);
+  if (s.control.runId) cancelRun(app, s.control.runId);
+  changeStage(app, itemId, stageId, "pending", { askId: null, by: null, waitingOn: null, control: { ...finishUsage(app, s, new Date()), runId: undefined, reported: false, confirmed: undefined, question: undefined, feedback: undefined, waitUntil: undefined, budgetExceeded: undefined, escalated: undefined, admitted: undefined } }, by, reason, refs);
   const affected = new Set([stageId]);
   for (const d of f.definition.stages) {
     if (!d.needs.some((n) => affected.has(n))) continue;
@@ -283,8 +454,8 @@ function reopenNow(app: App, itemId: string, stageId: string, reason: string, re
 }
 function end(app: App, id: string, note: string) {
   if (!itemFlow(app, id) || itemFlow(app, id)!.endedAt) return;
-  for (const s of itemStages(app, id)) withdraw(app, s);
-  run(app.db, "update item_flows set ended_at=?,updated_at=? where item_id=?", now(), now(), id);
+  for (const s of itemStages(app, id)) { withdraw(app, s); if (s.state === "doing" && s.control.runId) cancelRun(app, s.control.runId); }
+  run(app.db, "update item_flows set ended_at=?,next_round_at=null,updated_at=? where item_id=?", now(), now(), id);
   // Keep ending on the same audit/timeline path (no extra completion ping).
   const last = itemStages(app, id).at(-1);
   if (last) changeStage(app, id, last.id, last.state, {}, host, note);
@@ -320,7 +491,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
         resetStreak(app, itemId);
         if (s.attempt >= 3) changeStage(app, itemId, stageId, "blocked", { askId: null, waitingOn: "owner", control: { ...s.control, question: undefined, reported: true } }, { actor: "owner" }, `三次仍未确认：${text}`);
         else {
-          changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, confirmed: true, feedback: text, reported: false } }, { actor: "owner" }, `本人要求重做：${text}`);
+          changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, confirmed: true, feedback: text, reported: false, escalated: undefined } }, { actor: "owner" }, `本人要求重做：${text}`);
           await advanceNow(app, itemId, "本人要求重做");
         }
       }
@@ -334,7 +505,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
 
 export function proposeFlow(app: App, raw: string, by: FlowActor) {
   const f = parseFlow(raw);
-  return createAsk(app, { runId: by.runId ?? null, userId: by.userId ?? "owner", question: `启用流程「${f.name}」吗？\n${f.stages.map((s) => { const w = describeStage(s); return `- ${s.name}：${w.carrier}；${w.gate}，${w.done}${w.when ? `；${w.when}` : ""}`; }).join("\n")}`,
+  return createAsk(app, { runId: by.runId ?? null, userId: by.userId ?? "owner", question: `启用流程「${f.name}」吗？\n${describeFlow(f)}\n${f.stages.map((s) => { const w = describeStage(s); return `- ${s.name}：${w.carrier}；${w.gate}，${w.done}${w.when ? `；${w.when}` : ""}${[w.ai, w.time, w.budget].filter(Boolean).map((v) => `；${v}`).join("")}`; }).join("\n")}`,
     options: [{ label: "启用" }, { label: "不用" }], allowText: false, context: { handler: "flow-save", raw } });
 }
 registerAskHandler("flow-save", async (app, ask, ctx) => {
@@ -352,8 +523,8 @@ const ROUTINE = new Set(["加入流程", "开始这一段", "本人确认，开�
  */
 /** What needs the owner's eye first: the ones that did not pass, then the ones not done. */
 const RANK = { failed: 0, skipped: 1, passed: 2 } as const;
-function stageTests(app: App, itemId: string, stageId: string, since: string, current?: string) {
-  const runs = new Set(all<{ run_id: string }>(app.db, "select distinct run_id from item_stage_log where item_id = ? and stage_id = ? and at >= ? and run_id is not null", itemId, stageId, since).map((r) => r.run_id));
+function stageTests(app: App, itemId: string, stageId: string, since: string, round: number, current?: string) {
+  const runs = new Set(all<{ run_id: string }>(app.db, "select distinct run_id from item_stage_log where item_id = ? and stage_id = ? and at >= ? and round = ? and run_id is not null", itemId, stageId, since, round).map((r) => r.run_id));
   if (current) runs.add(current);
   const results = latestEach([...runs].flatMap((runId) => testsOfWork(app, { runId }))).sort((a, b) => RANK[a.status] - RANK[b.status] || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   if (!results.length) return [];
@@ -366,16 +537,17 @@ function stageTests(app: App, itemId: string, stageId: string, since: string, cu
 export function flowView(app: App, id: string) {
   const item = getItem(app, id), f = itemFlow(app, id), rows = itemStages(app, id);
   return {
-    flow: f ? { id: f.id, name: f.definition.name, startedAt: f.startedAt, endedAt: f.endedAt, autoStreak: f.autoStreak } : null,
+    flow: f ? { id: f.id, name: f.definition.name, startedAt: f.startedAt, endedAt: f.endedAt, autoStreak: f.autoStreak, round: f.round, repeat: f.definition.repeat ?? null, roundStartedAt: f.roundStartedAt, roundClosedAt: f.roundClosedAt, nextRoundAt: f.nextRoundAt, canStartRound: !f.endedAt && !!f.definition.repeat && roundComplete(app, f), repeatDescription: describeFlow(f.definition) } : null,
     stages: f?.definition.stages.map((d) => {
       const s = rows.find((r) => r.id === d.id)!;
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
       const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" && "object" in d.done ? findObject(app, item, d.done.object) : null;
       const signal = waitingSignal(app, id, d);
       return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
+        round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
         carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
-        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.control.runId) };
-    }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item),
+        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
+    }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item), rounds: f ? roundHistory(app, f) : [],
   };
 }
 
@@ -384,7 +556,7 @@ export async function flowReminders(app: App, at = new Date()) {
   await checkGitSignals(app);
   for (const { item_id: id } of all<{ item_id: string }>(app.db, "select item_id from item_flows where ended_at is null")) await serial(app, id, async () => {
     // Recover terminal runs missed during downtime, then remind only the still-waiting stages.
-    await advanceNow(app, id, "例行检查");
+    await advanceNow(app, id, "例行检查", at);
     if (itemFlow(app, id)?.endedAt) return;
     for (const s of itemStages(app, id)) {
       if (!["gated", "blocked"].includes(s.state) && !(s.state === "doing" && s.by === "owner")) continue;
@@ -429,6 +601,30 @@ registerHandler("flow-stage", async (ctx) => {
   const itemId = String(input.itemId), stageId = String(input.stageId);
   const f = itemFlow(ctx.app, itemId), s = getStage(ctx.app, itemId, stageId);
   if (!f || f.endedAt || f.startedAt !== input.flowStartedAt || s.control.runId !== ctx.run.id || s.state !== "doing") return { quiet: true, summary: "阶段已有新的状态，不再执行旧运行" };
+  // A queued run may reach the worker after its window or daily allowance changed.
+  const ready = await serial(ctx.app, itemId, async () => {
+    const current = getStage(ctx.app, itemId, stageId), flow = itemFlow(ctx.app, itemId)!;
+    if (flow.endedAt || current.control.runId !== ctx.run.id || current.state !== "doing") return false;
+    const d = definition(flow, stageId), at = new Date();
+    try {
+      const timing = stageTiming(at, ctx.app.config.timezone, d, new Date(flow.roundStartedAt));
+      const ai = await stageAI(ctx.app, flow, d, current, at);
+      const wait = timing.nextAt && ai.waitUntil ? (timing.nextAt > ai.waitUntil ? timing.nextAt : ai.waitUntil) : timing.nextAt ?? ai.waitUntil;
+      if (wait) {
+        const pending = changeStage(ctx.app, itemId, stageId, "pending", { by: null, enteredAt: null, attempt: Math.max(0, current.attempt - 1), control: { ...ai.s.control, admitted: true, runId: undefined, budgetStartedAt: undefined } }, host, "排队后重新检查开始条件");
+        waitStage(ctx.app, flow, d, pending, wait, ai.waitUntil ? "模型额度用完" : "");
+        return false;
+      }
+      input.execution = ai.execution;
+      input.ownAI = !!d.ai && !ai.execution;
+      run(ctx.app.db, "update item_stages set control=?,updated_at=? where item_id=? and stage_id=?", JSON.stringify({ ...ai.s.control, execution: ai.execution }), now(), itemId, stageId);
+      return true;
+    } catch (e) {
+      changeStage(ctx.app, itemId, stageId, "blocked", { waitingOn: "owner", control: { ...current.control, reported: true, budgetStartedAt: undefined } }, host, `无法开始：${(e as Error).message}`);
+      return false;
+    }
+  });
+  if (!ready) return { quiet: true, summary: "阶段等待新的开始条件" };
   const item = getItem(ctx.app, itemId);
   if (typeof input.designId === "string") {
     const { getDesign } = await import("../designs/store.ts");
@@ -451,7 +647,7 @@ registerHandler("flow-stage", async (ctx) => {
     if (skill.status !== "active" || !skillUsable(ctx.app, skill)) throw new HttpError(400, `技能 ${skill.name} 尚未启用或缺少模型`);
     task += `\n\n## 这一轮的技能：${skill.name}\n${skill.body}`;
   }
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, spaceId: item.spaceId, spaces: [item.spaceId], task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools: ["stage_report", "report_tests", "attach_artifact"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, spaces: [item.spaceId], task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools: ["stage_report", "report_tests", "attach_artifact"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
 });
 

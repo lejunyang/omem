@@ -11,6 +11,19 @@ it("merges only what changed since loading", () => {
   expect(mergeConfig(base, ours, theirs)).toEqual({ a: 5, b: { c: 3, d: [1, 2] }, e: { g: 2 }, x: true });
 });
 
+it("旧配置不配流程档位，各档可独立保存并合并其他进程的设置", () => {
+  const home = mkdtempSync(join(tmpdir(), "omem-tiers-"));
+  const first = loadConfig(home), second = loadConfig(home);
+  expect(first.agents.tiers).toEqual({});
+  first.agents.tiers.cheap = { profile: "example-ai", model: "small", effort: "low" };
+  expect(second.agents.tiers).toEqual({});
+  // Simulate another process; this process's merge baseline stays at what it loaded.
+  writeFileSync(join(home, "config.json"), JSON.stringify(first));
+  second.agents.tiers.strong = { profile: "example-ai", model: "large" };
+  saveConfig(second, home);
+  expect(loadConfig(home).agents.tiers).toEqual({ cheap: { profile: "example-ai", model: "small", effort: "low" }, strong: { profile: "example-ai", model: "large" } });
+});
+
 it("a save from a process that loaded earlier keeps what another hand wrote since", () => {
   const home = mkdtempSync(join(tmpdir(), "omem-config-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({ notify: { quietStart: 23 } }));

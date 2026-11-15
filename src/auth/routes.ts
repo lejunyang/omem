@@ -208,6 +208,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/items/:id/flow/stages/:stage/skip": "self",
   "POST /api/items/:id/flow/stages/:stage/done": "self",
   "POST /api/items/:id/flow/stages/:stage/reopen": "self",
+  "POST /api/items/:id/flow/round": "self",
+  "POST /api/items/:id/flow/stages/:stage/budget": "self",
   "GET /api/items": "self",
   "POST /api/items": "self",
   "GET /api/items/:id": "self",

@@ -12,7 +12,7 @@ export const executionSchema = z.object({
   profile: z.string().min(1).describe("后端 id，不是 Agent 档案名；先 list_ai_backends 核对"),
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
-  source: z.enum(["user", "auto"]).default("auto").describe("本人明确指定用 user；助手根据任务选择用 auto"),
+  source: z.enum(["user", "auto", "flow"]).default("auto").describe("本人明确指定用 user；助手根据任务选择用 auto；流程指定用 flow"),
   reason: z.string().min(1).max(1000).describe("本人指定的要求，或为什么这个任务适合此 AI"),
 });
 export type Execution = z.infer<typeof executionSchema>;

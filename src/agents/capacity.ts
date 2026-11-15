@@ -207,11 +207,11 @@ function quotaState(app: App): Record<string, { until: string; message: string }
  * Kept per account (`source`), or per model of an account (`source|model`) when the provider said a
  * limit of one model was reached (a model's own daily limit): the account's other models stay usable.
  */
-export function outOfQuotaUntil(app: App, p: AgentProfile): string | null {
+export function outOfQuotaUntil(app: App, p: AgentProfile, at = new Date()): string | null {
   const st = quotaState(app);
   for (const k of [sourceOf(p), ...(p.model ? [keyOf(p)] : [])]) {
     const e = st[k];
-    if (e && Date.parse(e.until) > Date.now()) return e.until;
+    if (e && Date.parse(e.until) > at.getTime()) return e.until;
   }
   return null;
 }

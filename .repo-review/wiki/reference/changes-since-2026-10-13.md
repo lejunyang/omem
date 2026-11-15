@@ -15,6 +15,16 @@ updated: 2026-11-15
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 课题第一期：流程轮次、AI 档位、时间段和预算（11-15）
+
+- `src/flows/definitions.ts` 增加 `repeat / ai / at / window / budget / escalate` 与中文校验；`describeStage` 增加模型、时间、预算的文字，`describeFlow` 说明轮次。启用确认和校验预览共用，不改原有字段和措辞，未改 `done` 联合类型。
+- `engine.ts / store.ts` 管当前轮和完成快照。默认手动，支持完成后、每天和星期；上一轮没完不开新的，前置段只做一次，自动推进上限照旧，错过日期不补跑。`item_flow_rounds` 随事项拉取，视图只读最近 10 轮；日志与阶段行带轮次。
+- `agents.tiers` 三档默认不配。运行按 `execution.source=flow` 选 AI，不换其他后端或模型；缺档位沿用自身默认并每段每轮只记一次，配错卡住，额度用完等待，包括排队后复查和运行返回额度错误的情形。
+- `timing.ts` 纯函数按配置时区算本轮时刻下限、可跨午夜的开始窗口和下一次日期，覆盖夏令时。已有巡检负责到点推进和累计分钟预算取消，不新建定时任务，运行不因窗口关闭被停止。
+- `stage_report` 增加 `unsure`；未交结果或拿不准时按 `escalate` 上限带反馈重做。同轮重开保留已用时间和升档次数，新轮重置。`flow_round(item)`、round HTTP 与副本预算 HTTP 均按事项本人和空间检查，定义模板不受副本修改影响。
+- 实现边界和设计差异见 `docs/v2/studies.md`“第一期的实现”；未做台账、`trials`、课题工具、内置课题模板或网页。真实 Codex gpt-6.1-sol / low 工具验收已尝试，CLI 在模型调用前因 `Could not find home directory` 退出，真实行为仍待验。
+- 定向检查：9 个测试文件通过，`96 passed | 1 skipped (97)`（原有 Windows SSH 用例跳过）；`npx tsc --noEmit -p .` 退出码 0。命令和验收步骤见 `docs/v2/acceptance.md` 的 45f-1 至 45f-6。
+
 ## 流程 Git 信号：推送以后自己进入下一段（11-15）
 
 - owner / wait 阶段支持 `done: { signal: git.pushed }`、`git.merged`，run / object 校验报中文错误；内置 delivery 的推送段加信号，只补缺，不覆盖已有模板。本人仍可手动完成。
@@ -22,6 +32,7 @@ updated: 2026-11-15
 - 巡检、omem 推送成功、每小时仓库同步后检查；本地远端引用优先，缺少依据时每仓库十分钟尝试一次远端读取、总预算十五秒。通过引擎串行入口，以 host 写完成依据并继续推进；不推送、不切分支、不动本人索引。
 - `flow_signals` 保存键、事项、阶段和完成 / 等待原因，相同结果不重复追加，检查顺带清理三十天前的记录。记录属于本机，拉取不传播、覆盖保留；doing 信号阶段视图增加 `waitingSignal`，未改网页。
 - 验证：`test/flow-signals.test.ts` 使用真 Git 与本地裸远端，19 项通过；按任务指定的七文件命令运行，最终原样结果为 `Test Files 7 passed (7)`、`Tests 90 passed | 1 skipped (91)`；`npx tsc --noEmit -p .` 退出 0。跳过的是 Windows 上原有的假 SSH 测试。消息 / 文档 / 插件信号、补录与上下文跟进未做。
+
 
 ## 图表改成“可数的单位”的画法和配色，加入场动效（11-15）
 

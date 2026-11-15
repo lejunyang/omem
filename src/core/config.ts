@@ -275,6 +275,11 @@ export const configSchema = z.object({
   agents: z
     .object({
       default: z.string().optional(),
+      tiers: z.object({
+        strong: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
+        standard: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
+        cheap: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
+      }).default({}),
       roles: z.record(z.string(), z.string()).default({}),
       /**
        * Per-role model/effort overrides, resolved after the backend profile:
@@ -363,7 +368,7 @@ export const configSchema = z.object({
       progress: z.object({ messages: z.enum(["milestones", "all"]).default("milestones"), thinking: z.enum(["all", "own", "off"]).default("own") }).default({ messages: "milestones", thinking: "own" }),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ tiers: {}, roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

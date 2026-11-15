@@ -1967,6 +1967,19 @@ export const migrations: readonly string[] = [
      id integer primary key autoincrement, at text not null, type text not null,
      keys text not null, item_id text not null, stage_id text not null, outcome text not null
    );`,
+  // Round snapshots travel with items; active stages keep their existing natural key.
+  `alter table item_flows add column round integer not null default 1;
+   alter table item_flows add column round_started_at text;
+   alter table item_flows add column round_closed_at text;
+   alter table item_flows add column next_round_at text;
+   update item_flows set round_started_at=started_at;
+   alter table item_stages add column round integer not null default 1;
+   alter table item_stage_log add column round integer not null default 1;
+   create table item_flow_rounds (
+     item_id text not null references items(id), started_at text not null, round integer not null,
+     ended_at text not null, stages text not null, updated_at text not null,
+     primary key(item_id,started_at,round)
+   );`,
 ];
 
 export type Db = DatabaseSync;

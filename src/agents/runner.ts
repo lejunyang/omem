@@ -738,7 +738,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   };
   if (internal) {
     // nothing to record
-  } else if (execution) notChosen(`${execution.source === "user" ? "本人指定了" : "助手交办时选了"} ${aiLabel(execution)}（${execution.reason}）`);
+  } else if (execution) notChosen(`${execution.source === "flow" ? "流程指定了" : execution.source === "user" ? "本人指定了" : "助手交办时选了"} ${aiLabel(execution)}（${execution.reason}）`);
   else if (runKind === "code" || runKind === "review") notChosen("编码和评审按各自角色的设置，不在运行前自动选");
   else if (input.resumeSessionId) notChosen("接着之前的 Agent 会话，沿用它的 AI");
   else if (input.profileId || input.model || input.effort) notChosen("发起这次运行时已经定了 AI");
@@ -764,7 +764,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const pinned = !!execution;
   // The order to move on in: the chooser's ranking by the owner's routing notes when it ran, then the
   // static order (the role's other backends, the fallbacks, the candidates) for whatever it did not rank.
-  const single = !!input.shadow || (pinned && app.config.agents.routing.pinnedFallback === "never");
+  const single = !!input.shadow || execution?.source === "flow" || (pinned && app.config.agents.routing.pinnedFallback === "never");
   const chain = single ? [base.profile] : chosen ? distinctProfiles([base.profile, ...chosen.order, ...failoverProfiles(app, actor, base.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, base.profile, own);
   // A space kept on this machine only is never handed to an AI borrowed from someone else's server (core/mesh.ts):
   // such backends are passed over; when the run starts on one, it says so instead.
@@ -884,7 +884,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
           emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
         }
-        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution && i === 0 ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+        emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${prep.fullAccess ? " · 完全访问" : ""}${execution && i === 0 ? `（${execution.source === "flow" ? "流程指定" : execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
         // Whether this attempt did anything (a tool call of its own, or a write through omem's tools).
         acted = false;
         writesBefore = writes();

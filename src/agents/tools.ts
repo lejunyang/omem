@@ -2118,8 +2118,9 @@ def({
 
 function flowItem(ctx: ToolContext, id: string, write: boolean) {
   const item = getItem(ctx.app, id);
+  const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
   const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, write ? ctx.writable ?? ctx.spaces : ctx.spaces);
-  if (item.userId !== (ctx.userId ?? OWNER) || allowed && !allowed.includes(item.spaceId)) throw new HttpError(403, "不能访问或修改该事项的流程");
+  if (item.userId !== (ctx.userId ?? OWNER) || readable && !readable.includes(item.spaceId) || allowed && !allowed.includes(item.spaceId)) throw new HttpError(403, "不能访问或修改该事项的流程");
   if (write) inScope(ctx, item.spaceId, "流程");
   return item;
 }
@@ -2161,8 +2162,15 @@ def({
   },
 });
 def({
-  name: "stage_report", description: "交代流程里一个阶段的结果。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段不会直接完成，而是变成一个问本人的确认。blocked：做不下去，waiting_on 写等谁或等什么。skip：这一段不需要，写原因；要本人确认或由本人承担的阶段不能由你跳过，把理由告诉本人。",
-  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), waiting_on: z.string().max(300).optional() }), handler: async (ctx, a) => {
+  name: "flow_round", description: "本人说再来一轮时，开始事项流程的下一轮；这一轮还没做完时不能开始。",
+  write: true, schema: z.object({ item: z.string() }), handler: async (ctx, a) => {
+    flowItem(ctx, a.item, true);
+    return JSON.stringify(await (await import("../flows/engine.ts")).startRound(ctx.app, a.item, flowActor(ctx)));
+  },
+});
+def({
+  name: "stage_report", description: "交代流程里一个阶段的结果。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段不会直接完成，而是变成一个问本人的确认。blocked：做不下去，waiting_on 写等谁或等什么；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：这一段不需要，写原因；要本人确认或由本人承担的阶段不能由你跳过，把理由告诉本人。",
+  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional() }), handler: async (ctx, a) => {
     flowItem(ctx, a.item, true); await flowRefs(ctx, a.evidence ?? []);
     return JSON.stringify(await (await import("../flows/engine.ts")).reportStage(ctx.app, a.item, a.stage, { ...a, waitingOn: a.waiting_on }, flowActor(ctx)));
   },
