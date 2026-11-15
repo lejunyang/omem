@@ -354,7 +354,7 @@ describe("台账、发现、证据和权限", () => {
     createUser(f.app, { id: "reader-study", name: "成员甲" }); const headers = { authorization: `Bearer ${createApiToken(f.app, "reader-study")}` };
     expect((await server.inject({ url, headers })).statusCode).toBe(404); addMember(f.app, "personal", "reader-study", "editor"); expect((await server.inject({ url, headers })).statusCode).toBe(200);
     expect((await server.inject({ method: "POST", url: `${url}/findings/${finding}`, headers, payload: { state: "rejected" } })).statusCode).toBe(403);
-    expect((await server.inject({ method: "POST", url: `${url}/findings/${finding}`, payload: { state: "rejected", reason: "这是预期行为" } })).json().findings[0]).toMatchObject({ state: "rejected", state_reason: "这是预期行为" });
+    expect((await server.inject({ method: "POST", url: `${url}/findings/${finding}`, payload: { state: "rejected", reason: "这是预期行为" } })).json().findings[0]).toMatchObject({ state: "rejected", stateReason: "这是预期行为" });
     expect((await server.inject({ method: "POST", url: `${url}/directions/${d.id}/close`, payload: { state: "done", conclusion: "验收完成" } })).json().directions[0].state).toBe("done");
   });
 });

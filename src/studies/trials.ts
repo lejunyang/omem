@@ -5,7 +5,6 @@ import { userBy } from "../core/run-trigger.ts";
 import { cancelRun, createRun, getRun } from "../agents/runs.ts";
 import type { Execution } from "../agents/execution.ts";
 import type { Item } from "../items/store.ts";
-import { addMaterials } from "../items/materials.ts";
 import type { FlowStage } from "../flows/definitions.ts";
 import { changeStage, type ItemFlow, type StageControl, type StageRow } from "../flows/store.ts";
 import { stageTiming } from "../flows/timing.ts";
@@ -107,7 +106,6 @@ export async function tickTrials(app: App, item: Item, f: ItemFlow, d: FlowStage
   run(app.db, "update study_directions set state='active',updated_at=? where id=?", now(), dir.id);
   run(app.db, "update study_trials set state='running',result=null,run_id=?,round=?,attempts=attempts+1,unsure=0,updated_at=? where id=?", r.id, f.round, now(), t.id);
   c = { ...c, trialId: t.id, runId: r.id, waitUntil: undefined, execution: picked.execution, budgetStartedAt: at.toISOString(), reported: false };
-  addMaterials(app, item.id, [{ kind: "run", ref: r.id, label: r.title }], item.userId);
   return save(`开始试验 ${t.seq}：${t.object} × ${t.check}`);
 }
 

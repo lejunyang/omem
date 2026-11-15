@@ -300,12 +300,18 @@ budget: { trials: 8, minutes: 240 }   # 这一段这一轮最多做多少
 
 没交结果或 unclear + unsure 可对这个试验升档一次，且受本轮升档次数、分钟预算限制；后端失败重试一次，再失败 blocked。试验数按最终完成的不同试验计，重试的运行时间也计入分钟。预算用满时完成本轮试验阶段，没做的保留 queued；分钟预算由既有巡检取消当前运行，取消有巡检间隔的延迟。窗口只限制开始，不中断已运行的试验；worker 真正开始前再检查窗口和额度，额度只等待原模型。队列做完方向仍 active，由小结决定 close_direction；结束方向跳过未做的试验，正在运行的取消。停止流程取消当前试验并放回队列，已经交的结果保留。
 
-接口返回的数据采用台账的下划线字段名：
+接口返回的数据和事项的其他视图一样用驼峰字段名（`directionId`、`runId`、`stateReason`、`updatedAt`）：
 
 - `GET /api/items/:id/study` → `{ directions, trials, findings, coverage, idleRounds }`。directions 带解析后的 plan / removed，以及 counts（queued / running / skipped / passed / failed / blocked / unclear）；trials 为最近更新的 200 条，带 evidence、候选 findings 和 artifacts；正式 findings 的 trials 展开为依据试验（含产物）。coverage 是 `{ path, ref, features: [{ title, trials, lastAt }] }`，按对象文字包含功能标题粗略统计，不含结果。
 - `POST /api/items/:id/study/findings/:finding` 收 `{ state: confirmed / rejected / later, reason? }`，只改这一条；`POST /api/items/:id/study/directions/:direction/close` 收 `{ state: done / dropped, conclusion }`。均返回课题视图，写限事项本人和可写空间。
+- `POST /api/items/:id/study/choose` 收 `{ direction: 方向 id 或 null, note? }`：本人在事项页选这一轮的方向（`null` 是这一轮不跑），和在卡片上回答是同一个提问、同一套校验；没有等选的方向时 409。
+- `flowView.flow.study` 标出这是一份课题流程；定方向阶段等本人选时，它在 `flowView.stages[]` 里带 `asking: "direction"`，事项页据此把选择放进台账里。
 - `flowView.flow.idleRounds` 为连续完成且无新发现的轮数。`flows.idleRounds` 默认 3；非 manual 达到时清空 nextRoundAt，仅发一次 later 通知，把下一步留给本人。manual 只显示计数，不通知。
 
 与旧设计稿的差异：功能清单是工作文件，方向结论只存台账，不写 Wiki。env 本期只是文字，不代表执行环境授权或远端调度。预算列在方向提问中，本人确认后采用；调整走第一期已有的阶段预算接口，本期没有新做卡片预算表单。没有给任何内置角色默认加入 study 工具；同伴设备的外部工具入口也不开放这组工具。真实模型与真实渠道未跑，按本期任务用假运行验证。
 
-未做：课题面板、试验内编码交办、持续推送授权、执行环境登记、另一台设备执行、课题简报与数据页。验证命令和实际数字见 `acceptance.md` 的“课题第二期服务端”。
+试验的运行不挂进事项材料（一个课题会有几百个，台账里每个试验带着它的运行）。
+
+事项页的“课题的台账”（`web/src/components/ItemStudy.vue`）：顶上是在做的方向和一条试验进度；下面分四块——发现（没判定的在前，认可 / 不算 / 以后再说）、试验（没做好的在前，展开看摘要、依据和产物）、方向（等选时在这里选，在做的可以结束并写结论）、覆盖（各功能试过几次、哪些没碰过）。
+
+未做：试验内编码交办、持续推送授权、执行环境登记、另一台设备执行、课题简报与数据页。验证命令和实际数字见 `acceptance.md` 的“课题第二期服务端”。

@@ -7,7 +7,7 @@ import { HttpError } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { studyOperation } from "../flows/engine.ts";
 import { closeDirection, direction, setFindingState } from "./store.ts";
-import { studyView } from "./service.ts";
+import { chooseDirection, studyView } from "./service.ts";
 
 export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   const itemId = (req: FastifyRequest, write: boolean) => {
@@ -17,6 +17,13 @@ export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req
     return item.id;
   };
   server.get("/api/items/:id/study", async (req) => studyView(app, itemId(req, false)));
+  // The owner's pick of this round's direction, made on the item page instead of the card.
+  server.post("/api/items/:id/study/choose", async (req) => {
+    const id = itemId(req, true), b = z.object({ direction: z.string().nullable(), note: z.string().max(2000).optional() }).safeParse(req.body);
+    if (!b.success) throw new HttpError(400, "要给出选哪个方向；这一轮不跑时 direction 填 null");
+    await chooseDirection(app, id, b.data.direction, b.data.note, who(req));
+    return studyView(app, id);
+  });
   server.post("/api/items/:id/study/findings/:finding", async (req) => {
     const id = itemId(req, true), b = z.object({ state: z.enum(["confirmed", "rejected", "later"]), reason: z.string().max(4000).optional() }).safeParse(req.body);
     if (!b.success) throw new HttpError(400, "发现的状态或原因不对");

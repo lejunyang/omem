@@ -202,6 +202,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "DELETE /api/flows/:id": "owner",
   "GET /api/items/:id/flow": "self",
   "GET /api/items/:id/study": "self",
+  "POST /api/items/:id/study/choose": "self",
   "POST /api/items/:id/study/findings/:finding": "self",
   "POST /api/items/:id/study/directions/:direction/close": "self",
   "POST /api/items/:id/flow": "self",

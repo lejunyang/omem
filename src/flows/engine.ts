@@ -20,7 +20,7 @@ import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage,
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
 import { findObject, objectKind } from "./objects.ts";
 import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
-import { continuing, idleRounds } from "../studies/store.ts";
+import { continuing, idleRounds, isStudy } from "../studies/store.ts";
 import { cancelTrials, isTrials, tickTrials } from "../studies/trials.ts";
 import { capabilitiesPath, planningMaterials } from "../studies/materials.ts";
 import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
@@ -588,7 +588,7 @@ const WAITING_NOTE = /^等到 .+ 再开始$/;
 export function flowView(app: App, id: string) {
   const item = getItem(app, id), f = itemFlow(app, id), rows = itemStages(app, id);
   return {
-    flow: f ? { id: f.id, name: f.definition.name, startedAt: f.startedAt, endedAt: f.endedAt, autoStreak: f.autoStreak, idleRounds: idleRounds(app, id), round: f.round, repeat: f.definition.repeat ?? null, roundStartedAt: f.roundStartedAt, roundClosedAt: f.roundClosedAt, nextRoundAt: f.nextRoundAt, canStartRound: !f.endedAt && !!f.definition.repeat && roundComplete(app, f), repeatDescription: describeFlow(f.definition) } : null,
+    flow: f ? { id: f.id, name: f.definition.name, startedAt: f.startedAt, endedAt: f.endedAt, autoStreak: f.autoStreak, study: isStudy(f), idleRounds: idleRounds(app, id), round: f.round, repeat: f.definition.repeat ?? null, roundStartedAt: f.roundStartedAt, roundClosedAt: f.roundClosedAt, nextRoundAt: f.nextRoundAt, canStartRound: !f.endedAt && !!f.definition.repeat && roundComplete(app, f), repeatDescription: describeFlow(f.definition) } : null,
     stages: f?.definition.stages.map((d) => {
       const s = rows.find((r) => r.id === d.id)!;
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
@@ -597,7 +597,7 @@ export function flowView(app: App, id: string) {
       return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
         round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
         carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
-        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
+        ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item), rounds: f ? roundHistory(app, f) : [],
   };
 }

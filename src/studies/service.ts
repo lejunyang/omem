@@ -1,13 +1,13 @@
 import type { App } from "../core/app.ts";
-import { run } from "../core/db.ts";
+import { one, run } from "../core/db.ts";
 import { HttpError, json, now } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
-import { createAsk, registerAskHandler } from "../agents/asks.ts";
+import { answerAsk, createAsk, getAsk, registerAskHandler } from "../agents/asks.ts";
 import { artifactInbox, artifactsByIds, attachPath } from "../agents/artifacts.ts";
 import { getRun } from "../agents/runs.ts";
 import { changeStage, getStage, itemFlow, type FlowActor } from "../flows/store.ts";
 import { studyOperation } from "../flows/engine.ts";
-import { assertOwner, confirmDirection, direction, findings, idleRounds, saveProposals, trial, trials, directions, type PlannedTrial } from "./store.ts";
+import { assertOwner, confirmDirection, direction, findings, idleRounds, saveProposals, trial, trials, directions, type PlannedTrial, type Trial } from "./store.ts";
 import { coverage } from "./materials.ts";
 import type { Proposal, TrialReport } from "./schema.ts";
 
@@ -92,16 +92,38 @@ export function readLedger(app: App, input: { item: string; direction?: string; 
   const selected = trials(app, input.item).filter((t) => (!input.direction || t.direction_id === input.direction) && (!input.object || t.object.includes(input.object)) && (!input.result || t.result === input.result) && (!input.round || t.round === input.round)).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, input.limit ?? 200);
   return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}）\n${t.summary}\n证据：${t.evidence}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => `${f.id}（${f.state}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}`)].join("\n\n");
 }
+/** The owner picks this round's direction on the item page (null: no run this round): the same answer as on the card. */
+export async function chooseDirection(app: App, itemId: string, directionId: string | null, note: string | undefined, by: string) {
+  const f = itemFlow(app, itemId);
+  const d = f && !f.endedAt ? f.definition.stages.find((d) => d.tools?.includes("propose_directions")) : undefined;
+  const askId = d ? getStage(app, itemId, d.id).askId : null;
+  const ask = askId ? getAsk(app, askId) : null;
+  if (!ask || ask.status !== "pending" || ask.handler !== "study-plan") throw new HttpError(409, "现在没有等你选的方向");
+  const ids = (JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id=?", ask.id)?.context ?? "{}") as { directions?: string[] }).directions ?? [];
+  const choice = directionId === null ? ask.options.length - 1 : ids.indexOf(directionId);
+  if (choice < 0) throw new HttpError(404, "这个方向不在这一轮的提案里");
+  await answerAsk(app, ask.id, { choice, text: note?.trim() || undefined, by });
+}
+/** The ledger as the item page shows it: directions with how their trials went, the latest trials, findings with the trials they rest on. */
 export function studyView(app: App, itemId: string) {
   const item = getItem(app, itemId), history = trials(app, itemId);
-  const present = (t: typeof history[number]) => ({ ...t, evidence: json<string[]>(t.evidence, []), findings: json(t.findings, []), artifacts: artifactsByIds(app, json<string[]>(t.evidence, []).filter((r) => !r.startsWith("src:"))) });
+  const present = (t: Trial) => {
+    const evidence = json<string[]>(t.evidence, []);
+    return { id: t.id, directionId: t.direction_id, round: t.round, seq: t.seq, object: t.object, check: t.check, env: t.env, state: t.state, result: t.result, summary: t.summary,
+      evidence, artifacts: artifactsByIds(app, evidence.filter((r) => !r.startsWith("src:"))), findings: json<{ kind: string; title: string; repro: string }[]>(t.findings, []),
+      runId: t.run_id, attempts: t.attempts, prior: t.prior, unsure: !!t.unsure, escalated: !!t.escalated, updatedAt: t.updated_at };
+  };
   return {
     directions: directions(app, itemId).map((d) => {
       const own = history.filter((t) => t.direction_id === d.id);
-      return { ...d, plan: json<PlannedTrial[]>(d.plan, []), removed: json(d.removed, []), counts: Object.fromEntries(["queued", "running", "skipped", "passed", "failed", "blocked", "unclear"].map((key) => [key, own.filter((t) => t.state === key || t.result === key).length])) };
+      return { id: d.id, round: d.round, goal: d.goal, approach: d.approach, acceptance: d.acceptance, env: d.env, estimate: d.estimate, state: d.state, conclusion: d.conclusion, note: d.note,
+        plan: json<PlannedTrial[]>(d.plan, []), removed: json<(PlannedTrial & { prior: string })[]>(d.removed, []),
+        counts: Object.fromEntries(["queued", "running", "skipped", "passed", "failed", "blocked", "unclear"].map((key) => [key, own.filter((t) => t.state === key || t.result === key).length])),
+        createdAt: d.created_at, updatedAt: d.updated_at };
     }),
     trials: [...history].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id)).slice(0, 200).map(present),
-    findings: findings(app, itemId).map((f) => ({ ...f, trials: json<string[]>(f.trials, []).flatMap((id) => { const t = history.find((t) => t.id === id); return t ? [present(t)] : []; }) })),
+    findings: findings(app, itemId).map((f) => ({ id: f.id, kind: f.kind, title: f.title, repro: f.repro, state: f.state, stateReason: f.state_reason, sameAs: f.same_as, createdAt: f.created_at, updatedAt: f.updated_at,
+      trials: json<string[]>(f.trials, []).flatMap((id) => { const t = history.find((t) => t.id === id); return t ? [present(t)] : []; }) })),
     coverage: coverage(app, item), idleRounds: idleRounds(app, itemId),
   };
 }

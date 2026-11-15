@@ -3,7 +3,7 @@ import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { cancelRun } from "../agents/runs.ts";
-import { atomic, itemFlow } from "../flows/store.ts";
+import { atomic, itemFlow, type ItemFlow } from "../flows/store.ts";
 import type { Proposal, FindingInput, TrialReport } from "./schema.ts";
 
 export type PlannedTrial = { object: string; check: string; prior?: string };
@@ -103,10 +103,12 @@ export function setFindingState(app: App, item: string, id: string, state: "conf
   run(app.db, "update study_findings set state=?,state_reason=?,updated_at=? where id=? and item_id=?", state, reason, now(), id, item);
 }
 
+/** A flow that proposes directions or runs trials keeps a ledger. */
+export const isStudy = (f: ItemFlow) => f.definition.stages.some((d) => d.tools?.includes("propose_directions") || typeof d.by === "object" && "object" in d.by && d.by.object === "trials");
 /** Findings keep their creation round; merges and later owner decisions do not create another. */
 export function idleRounds(app: App, item: string, includeCurrent = false, at = now()) {
   const f = itemFlow(app, item);
-  if (!f || !f.definition.stages.some((d) => d.tools?.includes("propose_directions") || typeof d.by === "object" && "object" in d.by && d.by.object === "trials")) return 0;
+  if (!f || !isStudy(f)) return 0;
   const rows = all<{ round: number; ended_at: string }>(app.db, "select round,ended_at from item_flow_rounds where item_id=? and started_at=? order by round", item, f.startedAt);
   if (includeCurrent && !rows.some((r) => r.round === f.round)) rows.push({ round: f.round, ended_at: at });
   let count = 0;
