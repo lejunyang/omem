@@ -36,7 +36,7 @@ import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remot
 import { attachPreviewUpgrade, registerPreviewRoutes } from "./preview-http.ts";
 import { registerArtifactRoutes } from "./artifact-http.ts";
 import { registerDesignRoutes } from "./design-http.ts";
-import { registerFlowRoutes } from "../flows/http.ts";
+import { registerFlowRoutes, itemFlowSummaries } from "../flows/http.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -1249,7 +1249,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/items", async (req) => {
     const o = q(z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional() }), req.query);
     const { itemExpiry } = await import("../items/expiry.ts");
-    return listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, userId: who(req) === OWNER ? undefined : who(req) }).map((i) => {
+    const items = listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, userId: who(req) === OWNER ? undefined : who(req) });
+    const flows = itemFlowSummaries(app, items.map((i) => i.id));
+    return items.map((item) => {
+      const i = { ...item, flow: flows.get(item.id) ?? null };
       const e = itemExpiry(app, i);
       return e ? { ...i, expiresAt: e.at, expiryText: e.text } : i;
     });

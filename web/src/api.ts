@@ -253,12 +253,12 @@ export type MemoryQuality = {
     shadows: { id: string; title: string; status: string; profile_id: string | null; writes: { id: string; tool: string; args: any; verdict: string | null; verdict_note: string | null; model: string | null }[]; rejected: { content: string; codes: string[] }[] }[];
   }[];
 };
-export type Item = { id: string; spaceId: string; kind: string; title: string; detail: string; status: string; priority: number; dueAt: string | null; remindAt: string | null; waitingOn: string | null; watch: any; sourceRefs: string[]; createdAt: string; updatedAt: string; closedAt: string | null; /** When it closes by itself, and why then (open items). */ expiresAt?: string; expiryText?: string };
+export type Item = { id: string; userId?: string; spaceId: string; kind: string; title: string; detail: string; status: string; priority: number; dueAt: string | null; remindAt: string | null; waitingOn: string | null; watch: any; sourceRefs: string[]; createdAt: string; updatedAt: string; closedAt: string | null; flow?: { stage: string; name: string; waiting: boolean } | null; /** When it closes by itself, and why then (open items). */ expiresAt?: string; expiryText?: string };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
 export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; ai?: { profile: string; model?: string; effort?: string } | null; waiting?: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean; trigger?: RunTrigger | null };
 /** How a run came about and who was behind it (src/core/run-trigger.ts). */
-export type RunTrigger = { via: "chat" | "guest" | "mention" | "rule" | "schedule" | "peer" | "member"; by?: { key: string; name: string }; where?: string; source?: { kind: string; id: string; name: string } };
-const VIA: Record<RunTrigger["via"], string> = { chat: "对话", guest: "访客提问", mention: "有人找你", rule: "规则", schedule: "定时", peer: "同伴设备", member: "成员操作" };
+export type RunTrigger = { via: "chat" | "guest" | "mention" | "rule" | "schedule" | "peer" | "member" | "flow"; by?: { key: string; name: string }; where?: string; source?: { kind: string; id: string; name: string } };
+const VIA: Record<RunTrigger["via"], string> = { chat: "对话", guest: "访客提问", mention: "有人找你", rule: "规则", schedule: "定时", peer: "同伴设备", member: "成员操作", flow: "流程" };
 /** "小王 · 访客提问": the person first, then how; a rule or schedule by its name. `full` adds where it happened. */
 export function triggerLabel(t: RunTrigger | null | undefined, full = false) {
   if (!t) return "";

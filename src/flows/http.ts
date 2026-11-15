@@ -7,6 +7,30 @@ import { HttpError } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { listFlows, parseFlow, removeFlow, saveFlow } from "./definitions.ts";
 import { flowView, ownerAction, startFlow, stopFlow, type OwnerAction } from "./engine.ts";
+import { itemStages } from "./store.ts";
+import { all } from "../core/db.ts";
+
+/** One bounded query for the already permission-filtered item list; never loads flow bodies. */
+export function itemFlowSummaries(app: App, ids: string[]) {
+  if (!ids.length) return new Map<string, { stage: string; name: string; waiting: boolean }>();
+  const rows = all<{ item_id: string; stage_id: string; name: string; state: string; by: string | null; waiting_on: string | null }>(app.db, `
+    select * from (select f.item_id, s.stage_id, json_extract(d.value, '$.name') name, s.state, s."by", s.waiting_on,
+      row_number() over (partition by f.item_id order by case when s.state in ('gated','blocked') or s.waiting_on='owner' then 0 else 1 end, cast(d.key as integer)) position
+    from item_flows f join item_stages s on s.item_id=f.item_id
+    join json_each(f.definition, '$.stages') d on json_extract(d.value, '$.id')=s.stage_id
+    where f.ended_at is null and f.item_id in (${ids.map(() => "?").join(",")})
+      and s.state in ('gated','doing','blocked','stale')
+    ) where position=1`, ...ids);
+  const result = new Map<string, { stage: string; name: string; waiting: boolean }>();
+  for (const r of rows) if (!result.has(r.item_id)) result.set(r.item_id, { stage: r.stage_id, name: r.name, waiting: r.state === "gated" || r.by === "owner" || r.waiting_on === "owner" });
+  return result;
+}
+
+/** The engine's question kind is needed to distinguish an entry gate from completion approval. */
+function view(app: App, id: string, payload = flowView(app, id)) {
+  const rows = itemStages(app, id);
+  return { ...payload, stages: payload.stages.map((s) => ({ ...s, question: rows.find((r) => r.id === s.id)?.control.question ?? null })) };
+}
 
 function body<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
   const r = schema.safeParse(input);
@@ -22,18 +46,32 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     return id;
   };
   server.get("/api/flows", async () => ({ flows: listFlows(app) }));
+  server.post("/api/flows/validate", async (req) => {
+    const raw = body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
+    try {
+      const f = parseFlow(raw);
+      const objectName = (kind: string) => kind === "design" ? "方案" : "编码交办";
+      return { ok: true, id: f.id, stages: f.stages.map((s) => ({
+        id: s.id, name: s.name,
+        carrier: s.by === "owner" ? "你来做" : s.by === "wait" ? "等待进展" : typeof s.by === "object" && "object" in s.by ? `跟随${objectName(s.by.object)}` : typeof s.by === "object" && "run" in s.by ? `由 ${s.by.run.agent ?? "assistant"} 做${s.by.run.skill ? `，使用技能 ${s.by.run.skill}` : ""}` : "",
+        gate: s.gate === "confirm" ? "开始前等你确认" : "自动开始（连续推进到上限会问你）",
+        done: typeof s.done === "object" ? `${objectName(s.done.object)}达到 ${[s.done.status].flat().join(" / ")}` : s.done === "confirm" ? "做完后等你确认" : s.done ?? (typeof s.by === "object" && "object" in s.by ? `${objectName(s.by.object)}完成` : s.by === "owner" ? "你说做完了" : "交结果并附依据"),
+        when: s.when ? `需要时才做：${s.when}` : "每次都需要", needs: s.needs,
+      })) };
+    } catch (e) { return { ok: false, problem: (e as Error).message }; }
+  });
   server.put("/api/flows/:id", async (req) => {
     const raw = typeof req.body === "string" ? req.body : body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
     if (parseFlow(raw).id !== (req.params as { id: string }).id) throw new HttpError(400, "路径 id 必须与流程定义 id 相同");
     return saveFlow(app, raw, "owner");
   });
   server.delete("/api/flows/:id", async (req) => { removeFlow(app, (req.params as { id: string }).id, "owner"); return { ok: true }; });
-  server.get("/api/items/:id/flow", async (req) => flowView(app, itemId(req, false)));
-  server.post("/api/items/:id/flow", async (req) => startFlow(app, itemId(req, true), body(z.object({ flow: z.string() }), req.body).flow, { actor: "owner", userId: who(req) }));
-  server.delete("/api/items/:id/flow", async (req) => stopFlow(app, itemId(req, true), who(req)));
+  server.get("/api/items/:id/flow", async (req) => view(app, itemId(req, false)));
+  server.post("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, await startFlow(app, id, body(z.object({ flow: z.string() }), req.body).flow, { actor: "owner", userId: who(req) })); });
+  server.delete("/api/items/:id/flow", async (req) => { const id = itemId(req, true); return view(app, id, await stopFlow(app, id, who(req))); });
   for (const action of ["confirm", "hold", "skip", "done", "reopen"] as OwnerAction[]) server.post(`/api/items/:id/flow/stages/:stage/${action}`, async (req) => {
     const id = itemId(req, true), { stage } = req.params as { stage: string };
     const b = body(z.object({ note: z.string().max(4000).optional() }), req.body ?? {});
-    return ownerAction(app, id, stage, action, b.note, who(req));
+    return view(app, id, await ownerAction(app, id, stage, action, b.note, who(req)));
   });
 }

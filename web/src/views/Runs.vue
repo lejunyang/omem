@@ -356,7 +356,7 @@ const kindOptions = computed(() => [
             <span class="muted">{{ fmtTime(detail.run.createdAt) }}<template v-if="detail.run.finishedAt"> → {{ fmtTime(detail.run.finishedAt) }}</template></span>
             <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· <span class="mono">{{ aiLabel(detail.run) }}</span></span>
             <span v-if="detail.run.spaceId" class="muted">· {{ spaceName(detail.run.spaceId) }}</span>
-            <span v-if="detail.run.trigger" class="muted">· 触发：<button v-if="detail.run.trigger.by" class="linkish" type="button" title="看这个人触发的全部运行" @click="filterBy(detail.run.trigger.by.key)">{{ detail.run.trigger.by.name }}</button><template v-if="detail.run.trigger.by"> · </template>{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</span>
+            <span v-if="detail.run.trigger" class="muted">· 触发：<button v-if="detail.run.trigger.by" class="linkish" type="button" title="看这个人触发的全部运行" @click="filterBy(detail.run.trigger.by.key)">{{ detail.run.trigger.by.name }}</button><template v-if="detail.run.trigger.by"> · </template><router-link v-if="detail.run.trigger.via === 'flow' && detail.run.input.itemId" :to="`/items/${detail.run.input.itemId}`">{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</router-link><template v-else>{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</template></span>
             <router-link v-for="it in ctxInfo?.items ?? []" :key="it.id" :to="`/items/${it.id}`" class="item-link" :title="it.title">事项：{{ it.title }}</router-link>
           </div>
           <h1 :title="hintOf(detail.run)">{{ detail.run.title }}</h1>

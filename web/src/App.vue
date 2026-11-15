@@ -63,7 +63,7 @@ async function addRemotePage() {
 // Settings → 插件 changed an icon.
 watch(() => state.pluginsChanged, addPluginPages);
 const isActive = (to: string, exact?: boolean) =>
-  exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/wiki" && route.path.startsWith("/graph"));
+  exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/rules" && route.path === "/flows") || (to === "/wiki" && route.path.startsWith("/graph"));
 
 function onKey(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;

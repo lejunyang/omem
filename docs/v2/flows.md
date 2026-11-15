@@ -1,6 +1,6 @@
 # 流程：让一件事自己往前走
 
-状态：第一期服务端已实现（2026-11-15）：定义、事项阶段、推进、本人关卡、已有对象、工具与 HTTP。网页流程条与飞书进度卡的专门版式尚未实现。第 5–8、10 节及第四期仍是后续设计；第一期的具体边界见“第一期的实现”。
+状态：第一期服务端与网页已实现（2026-11-15）：定义、事项阶段、推进、本人关卡、已有对象、工具与 HTTP，以及事项流程条、操作卡片、定义编辑页。专门的飞书进度卡版式尚未实现。第 5–6、8、10 节及第 7 节中的信号、看板、今日页、阶段副本编辑仍是后续设计；具体边界见“第一期的实现”。
 
 ## 1. 要解决的问题
 
@@ -407,7 +407,9 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 | `src/flows/store.ts` | 流程副本、阶段与日志；统一写阶段行、日志、事项时间线和 item 变更事件；进度通知用 `replaces` 更新同一张卡片。 |
 | `src/flows/engine.ts` | 每事项串行推进、条件判断、本人提问及回调、报告、重开、结束和心跳提醒；`flow-stage` 运行复用事项材料和所在会话摘要。 |
 | `src/flows/objects.ts` | 小型对象注册表，已有 `code-work`、`design`，以后再接插件。 |
-| `src/flows/http.ts` | 定义与事项流程的 HTTP；路由权限集中登记在 `src/auth/routes.ts`。 |
+| `src/flows/http.ts` | 定义与事项流程的 HTTP、校验预览、列表阶段摘要；路由权限集中登记在 `src/auth/routes.ts`。 |
+| `web/src/components/ItemFlow.vue`、`web/src/lib/flow.ts` | 事项详情中材料上方的流程条、操作卡片、阶段详情与经过。 |
+| `web/src/views/Flows.vue` | `#/flows`，入口在“规则”顶部的“流程”标签；YAML 原文与服务器校验的文字预览，新增、保存、删除。 |
 
 定义最多 20 段，阶段 id 唯一；`needs` 只能指向列表中更早的阶段，不填等上一个，`[]` 无前提。`note` 最多 1000 字；`when` 和文字 `done` 最多 300 字。第一期拒绝 person、signal、插件对象；`done` 对象只可写已有的两种。代码里的事项还有 `reminder`，但流程定义的 `for.kinds` 按本期约定只接受 todo / waiting / watch / decision。
 
@@ -420,8 +422,10 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 HTTP 约定：
 
 - `GET /api/flows` → `{ flows: [{ id, raw, definition, problem }] }`，无效文件仍返回原文与问题。`PUT /api/flows/:id` 收 `{ yaml }` 或 text/plain 原文，路径 id 必须与定义一致；`DELETE` 删除定义，两者限 omem 主人。
+- `POST /api/flows/validate`（主人）收 `{ yaml }`，只校验、不保存，返回 `{ ok, id?, problem?, stages?: [{ id, name, carrier, gate, done, when, needs }] }`。阶段的承担者、关卡、完成条件与适用条件是从 `parseFlow` 的结果生成的中文文字，`needs` 为补齐默认值后的前提 id。
+- `GET /api/items` 每项增加 `flow: { stage, name, waiting } | null`，只含进行中流程的一个当前阶段；优先等本人或卡住的阶段，再按定义顺序。`src/server/http.ts` 在事项权限筛选后调用 `src/flows/http.ts` 的一次有界查询，join 流程、阶段与定义顺序，用窗口函数每件取一行，不改事项存储层。
 - `GET /api/items/:id/flow` → `{ flow, stages, log, suits }`。`flow` 为 null 或 `{ id, name, startedAt, endedAt, autoStreak }`；`suits` 仅在还没有流程时给适用定义。
-- `stages` 每项为 `{ id, name, instruction, state, attempt, since, enteredAt, doneAt, by, waitingOn, evidence, note, gate, fixed, carrier, object?, askId? }`。`instruction` 是定义中的 note，`note` 是最近进展，避免任务书示例中重复的 note 键。`carrier: { kind, label, link? }`；`object: { title, status, link }`。`by` 是当前运行 id、对象引用、owner 或 null。日志最近 50 条，按新到旧，字段 `id / stageId / at / fromState / toState / actor / runId / refs / note`。
+- `stages` 每项为 `{ id, name, instruction, state, attempt, since, enteredAt, doneAt, by, waitingOn, evidence, note, gate, fixed, carrier, object?, askId?, question }`。`instruction` 是定义中的 note，`note` 是最近进展，避免任务书示例中重复的 note 键。`carrier: { kind, label, link? }`；`object: { title, status, link }`。`question` 是 HTTP 层从阶段既有 `control.question` 读取的只读字段（无提问时 null），区分开始关卡与完成确认；所有事项流程写响应也带它。`by` 是当前运行 id、对象引用、owner 或 null。日志最近 50 条，按新到旧，字段 `id / stageId / at / fromState / toState / actor / runId / refs / note`。
 - `POST /api/items/:id/flow` 收 `{ flow }`；`DELETE` 停止。`POST .../stages/:stage/{confirm,hold,skip,done,reopen}` 收 `{ note? }`；skip、done、reopen 必须写 note。所有写事项流程的接口限事项本人并检查空间写权限；读接口按事项空间的阅读权限。
 - 写操作均返回同一份流程视图。本人也可重开已走完或已停止流程中的阶段；走完和停止都撤回未答问题，不替本人关闭事项。
 
@@ -433,4 +437,8 @@ HTTP 约定：
 
 监听 `changed(code-task)`、`changed(design)` 和 `run`（含运行终态），按对象 id、运行主键、continueFrom / parent 及事项 run 材料限定到进行中的流程。未新增任何渠道或编码运行时的发射器。当前缺少即时事件的是：`src/agents/code.ts` 的应用、丢弃，`src/agents/code-branch.ts` 的分支确认 / 归还，以及 `src/designs/store.ts` 的创建、基础信息更新、绑定交办；阶段开始和运行事件会读到已存在的对象，心跳也重新读取，以上独立操作没有即时唤醒保证。具体缺口见本次变更记录。
 
-尚无网页流程条、流程定义表单、专门的飞书进度卡版式、通用信号表、Git 信号、上下文订阅、插件对象、补录、阶段副本编辑、看板、数据页或关卡授权升降。设置只有 `flows: { autoAdvance: 3, staleDays: 2 }`，旧配置自动补默认值；第四期的回顾、coach 和授权阶梯也未接入。默认主助手尚需单独授予 `group:flow`，内置角色正文由后续切片维护。
+网页已提供流程条、当前待办卡片、阶段证据与最近 50 条经过（每次展开十条），完成后可重开，停止前确认。未开始的事项仅显示一行建议或流程选择入口。定义页采用 YAML 原文加服务器文字预览，尚无逐字段表单；尚无专门的飞书进度卡版式、通用信号表、Git 信号、上下文订阅、插件对象、补录、阶段副本编辑、看板、流程阶段的数据页指标或关卡授权升降。设置只有 `flows: { autoAdvance: 3, staleDays: 2 }`，旧配置自动补默认值；第四期的回顾、coach 和授权阶梯也未接入。默认主助手已有 `group:flow`；本次网页实现未改角色正文。
+
+网页动作边界：现有 HTTP 没有独立的“还不行”动作，网页填写原因后调用 `reopen`，会重开阶段并将已完成的下游标为待复核；它不走飞书提问回调中保存返工反馈、三次转卡住的分支。网页未改变引擎的动作语义。`done` 包括本人阶段“做完了”和卡住后手工处理完成，都要求填写说明。完成和停止通过阶段是否全部完成 / 跳过区分，停止不伪装成全部完成。
+
+阶段条复用约定：阶段按定义顺序排列，按钮顶边仅用完成 `--ok`、进行 `--accent`、等本人 / 卡住 `--warn`、未到 `--line-strong` 四色；跳过和待复核用文字。窄屏换行，不横向滚动。操作卡片独立于所选阶段，待办直接显示；点阶段只切换说明与依据。`omem-design/SKILL.md` 本次因沙箱只读未能同步此约定。

@@ -31,6 +31,50 @@ afterEach(async () => {
 async function serverFor(app: App) { const s = await startServer(app, { port: 0, quiet: true }); servers.push(s); return s; }
 
 describe("流程 HTTP", () => {
+  it("校验只读，返回实际默认前提和文字解释，错误带原因，成员不可校验", async () => {
+    const app = fixture(), server = await serverFor(app);
+    const validate = (yaml: string) => server.inject({ method: "POST", url: "/api/flows/validate", payload: { yaml } });
+    const result = (await validate(raw)).json();
+    expect(result).toMatchObject({ ok: true, id: "demo", stages: [{ id: "check", name: "核验", carrier: "等待进展", gate: "开始前等你确认", done: "交结果并附依据", when: "每次都需要", needs: [] }] });
+    expect((await server.inject("/api/flows")).json().flows).toEqual([]);
+    const bad = (await validate("id: bad\nname: 示例\nstages: []")).json();
+    expect(bad.ok).toBe(false); expect(bad.problem).toContain("流程至少需要一个阶段");
+    expect((await validate("stages: [")).json().problem).toContain("YAML");
+    const detailed = (await validate("id: read\nname: 解释\nstages:\n  - {id: a, name: 整理, by: {run: {agent: assistant}}}\n  - {id: b, name: 本人核对, by: owner, done: confirm, when: 材料变化时}\n  - {id: c, name: 方案, by: {object: design}, done: {object: design, status: approved}}\n")).json();
+    expect(detailed.stages[1]).toMatchObject({ carrier: "你来做", gate: "自动开始（连续推进到上限会问你）", done: "做完后等你确认", when: "需要时才做：材料变化时", needs: ["a"] });
+    expect(detailed.stages[2]).toMatchObject({ carrier: "跟随方案", done: "方案达到 approved", needs: ["b"] });
+    createUser(app, { id: "reader", name: "成员甲" });
+    const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
+    expect((await server.inject({ method: "POST", url: "/api/flows/validate", payload: { yaml: raw }, headers })).statusCode).toBe(403);
+  });
+  it("列表只返回可见事项的一个当前阶段，完成和停止后不再显示", async () => {
+    const app = fixture(), server = await serverFor(app);
+    saveFlow(app, raw, "user");
+    const item = upsertItem(app, undefined, { title: "退款交付", spaceId: "personal" }, "user");
+    await startFlow(app, item.id, "demo", { actor: "owner" });
+    const listed = async () => (await server.inject("/api/items?status=all")).json().find((i: { id: string }) => i.id === item.id);
+    expect((await listed()).flow).toEqual({ stage: "check", name: "核验", waiting: true });
+    await ownerAction(app, item.id, "check", "confirm");
+    expect((await listed()).flow).toEqual({ stage: "check", name: "核验", waiting: false });
+    await ownerAction(app, item.id, "check", "done", "核验完成");
+    expect((await listed()).flow).toBeNull();
+    await ownerAction(app, item.id, "check", "reopen", "重看");
+    await server.inject({ method: "DELETE", url: `/api/items/${item.id}/flow` });
+    expect((await listed()).flow).toBeNull();
+    createUser(app, { id: "reader", name: "成员甲" });
+    const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
+    expect((await server.inject({ url: "/api/items?status=all", headers })).json().some((i: { id: string }) => i.id === item.id)).toBe(false);
+  });
+  it("HTTP 只读 question 区分本人执行与助手报告后的完成确认", async () => {
+    const app = fixture(), server = await serverFor(app);
+    saveFlow(app, "id: owner-stage\nname: 本人确认\nstages:\n  - {id: push, name: 推送, by: owner}\n", "user");
+    const item = upsertItem(app, undefined, { title: "核验推送", spaceId: "personal" }, "user");
+    const url = `/api/items/${item.id}/flow`;
+    expect((await server.inject({ method: "POST", url, payload: { flow: "owner-stage" } })).json().stages[0].question).toBe("owner");
+    await reportStage(app, item.id, "push", { state: "done", note: "助手报告已推送", evidence: [] }, { actor: "assistant" });
+    expect((await server.inject(url)).json().stages[0]).toMatchObject({ state: "doing", question: "done" });
+    expect((await server.inject({ method: "POST", url: `${url}/stages/push/confirm`, payload: {} })).json().stages[0]).toMatchObject({ state: "done", question: null });
+  });
   it("定义原文和错误、路径校验、所有事项动作与稳定响应字段", async () => {
     const app = fixture(), server = await serverFor(app);
     expect((await server.inject({ method: "PUT", url: "/api/flows/wrong", payload: { yaml: raw } })).statusCode).toBe(400);

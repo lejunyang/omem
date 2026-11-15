@@ -34,6 +34,7 @@ const routes: RouteRecordRaw[] = [
   view("/rules/archive", () => import("./views/ArchiveRules.vue"), "/rules/archive"),
   { path: "/rules/tasks", redirect: (to) => ({ path: "/rules", query: to.query }) },
   view("/rules", () => import("./views/Rules.vue")),
+  view("/flows", () => import("./views/Flows.vue")),
   view("/notifications", () => import("./views/Notifications.vue")),
   view("/settings", () => import("./views/Settings.vue")),
   view("/account", () => import("./views/Account.vue")),
@@ -56,7 +57,7 @@ setNavigation((to) => void router.isReady().then(() => router.replace(to)));
 // After the first view has settled, pull every other chunk at idle; a share link or a login page
 // (opened by someone who may never see the app) does not.
 const BARE_START = /^\/(share\/|login|cli-login)/;
-router.isReady().then(() => !BARE_START.test(router.currentRoute.value.path) && preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/designs", "/design", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/notifications", "/settings", "/account"]));
+router.isReady().then(() => !BARE_START.test(router.currentRoute.value.path) && preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/designs", "/design", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/remote", "/agents", "/rules", "/rules/archive", "/flows", "/notifications", "/settings", "/account"]));
 
 // After the service is updated, chunks the open page knows by their old names are gone. Opening a
 // view that needs one reloads once (the new index points at the new chunks); a part of a page that

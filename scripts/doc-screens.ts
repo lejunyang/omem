@@ -10,7 +10,7 @@
  * Uses the installed Edge or Chrome (CHROMIUM=path to override). With `--serve` it only serves the
  * demo data and prints the address, to look around by hand; `--only=name,name` captures just those.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type Page } from "playwright";
@@ -30,6 +30,9 @@ import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
+import { addMaterials } from "../src/items/materials.ts";
+import { parseFlow } from "../src/flows/definitions.ts";
+import { changeStage } from "../src/flows/store.ts";
 import { createDesign, getDesign, setConcernState, submitRevision } from "../src/designs/store.ts";
 import { saveReqs } from "../src/items/requirements.ts";
 import { remember } from "../src/memory/store.ts";
@@ -640,15 +643,47 @@ ext1.decisions[3].after = { done: "no", deviation: "分支里没有删 sumRefund
 submitRevision(app, extDesign.id, ext1, { note: "对照分支 feature/refund" });
 const extConcern = getDesign(app, extDesign.id).body.decisions[1].concerns?.[0];
 if (extConcern) setConcernState(app, extDesign.id, extConcern.id, { state: "resolved", note: "分支里导出任务已改用 refundLineAmounts", by: "owner" });
+// A saved snapshot of the built-in delivery flow, with fictional evidence; no Agent is launched.
+const deliveryRaw = readFileSync(new URL("../flows/library/delivery.yaml", import.meta.url), "utf8");
+const delivery = parseFlow(deliveryRaw);
+mkdirSync(join(app.libraryDir, "_flows"), { recursive: true });
+writeFileSync(join(app.libraryDir, "_flows", "delivery.yaml"), deliveryRaw);
+const flowItem = upsertItem(app, undefined, { spaceId: "shop", kind: "todo", title: "退款改造：评审通过，等我推送", detail: "需求和方案已经确认，编码评审通过。核对分支后由我推送。", priority: 1, sourceRefs: [`src:${prd}#L7-L10`] }, "user");
+const flowAt = (hours: number) => new Date(Date.now() - hours * 3600000).toISOString();
+const flowDesign = createDesign(app, { spaceId: "shop", itemId: flowItem.id, title: "退款按已发货行分摊：已确认方案", origin: "own", sources: [`src:${prd}`], repos: ["shop"], userId: "owner" });
+submitRevision(app, flowDesign.id, getDesign(app, ownDesign.id).body, { note: "需求和金额规则已核对" });
+const flowRevision = getDesign(app, flowDesign.id).revision;
+run(app.db, "update designs set status='approved',feedback=? where id=?", JSON.stringify([{ revision: flowRevision, action: "approve", by: "owner", at: flowAt(18), note: "按这个方案实现" }]), flowDesign.id);
+const flowRun = createRun(app, { kind: "code", spaceId: "shop", title: "退款改造：评审通过", input: { itemId: flowItem.id, repos: ["shop"], task: "按已确认方案实现退款行分摊并验证" } });
+setRunOutput(app, flowRun.id, { verdict: "approved", reviewStage: "done", coderSummary: "只退已发货行，分摊尾差、负数和金额精度的测试已通过。", check: { command: "node test.js", code: 0, output: "退款回归断言全部通过" } });
+run(app.db, "update runs set status='done',started_at=?,finished_at=? where id=?", flowAt(16), flowAt(12), flowRun.id);
+addMaterials(app, flowItem.id, [{ kind: "run", ref: flowRun.id }, { kind: "source", ref: prd }], "owner");
+run(app.db, "insert into item_flows(item_id,flow_id,definition,started_at,updated_at,started_by) values(?,?,?,?,?,?)", flowItem.id, delivery.id, JSON.stringify(delivery), flowAt(28), flowAt(4), "owner");
+for (const [i, d] of delivery.stages.entries()) {
+  const finished = i < 3, active = d.id === "push";
+  const evidence = d.id === "clarify" ? [`src:${prd}#L7-L10`] : d.id === "design" ? [`design:${flowDesign.id}`] : d.id === "code" ? [flowRun.id] : [];
+  changeStage(app, flowItem.id, d.id, finished ? "done" : active ? "doing" : "pending", {
+    attempt: finished || active ? 1 : 0, enteredAt: finished ? flowAt(28 - i * 6) : active ? flowAt(4) : null,
+    doneAt: finished ? flowAt(24 - i * 6) : null, since: active ? flowAt(4) : flowAt(24 - i * 6),
+    by: active ? "owner" : d.id === "code" ? `code-work:${flowRun.id}` : d.id === "design" ? `design:${flowDesign.id}` : null, waitingOn: active ? "owner" : null, evidence, control: active ? { question: "owner" } : {},
+  }, { actor: finished ? "assistant" : "host" }, finished ? "已核验，依据见记录" : active ? "评审已通过，轮到你核对后推送" : "", evidence);
+  // changeStage timestamps transitions at the current clock; this fixture represents earlier work.
+  run(app.db, "update item_stages set entered_at=?,done_at=?,since=? where item_id=? and stage_id=?", finished ? flowAt(28 - i * 6) : active ? flowAt(4) : null, finished ? flowAt(24 - i * 6) : null, flowAt(active ? 4 : 24 - i * 6), flowItem.id, d.id);
+  run(app.db, "update item_stage_log set at=? where item_id=? and stage_id=?", flowAt(active ? 4 : 24 - i * 6), flowItem.id, d.id);
+}
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
-  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；分享页 ${url}/#/share/${shareToken}`);
+  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；流程 ${url}/#/items/${flowItem.id}；分享页 ${url}/#/share/${shareToken}`);
+  const cleanup = async () => { await server.close(); app.db.close(); rmSync(home, { recursive: true, force: true }); process.exit(); };
+  process.once("SIGINT", cleanup); process.once("SIGTERM", cleanup);
   await new Promise(() => {});
 }
 const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : { channel: process.platform === "win32" ? "msedge" : "chrome" });
 const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; before?: (page: Page) => Promise<void>; prepare?: (page: Page) => Promise<void> }[] = [
+  { name: "item-flow", path: `/items/${flowItem.id}`, width: 1440, prepare: async (p) => { await p.getByRole("region", { name: "事项流程", exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "today", path: "/" },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },

@@ -1843,3 +1843,28 @@ TraeX 与其他 ACP 的清理补验：
 
 
 改进循环专项验证（2026-11-15）：`npx vitest run test/improve.test.ts test/tool-help.test.ts test/permissions.test.ts test/pull-complete.test.ts --maxWorkers=2 --configLoader native --no-cache`，54 通过、0 失败、1 项既有跳过；后端 `npx tsc --noEmit -p .` 通过。标准 Vitest 配置加载和前端类型检查会尝试在共享 node_modules 写缓存，当前环境拒写，因此 Vitest 用 native 配置加载且关闭缓存；Vue 用继承 `web/tsconfig.json` 的临时配置，仅把 globalTypesPath 指向工作区临时文件，`npx vue-tsc --noEmit -p web/.improve-tsconfig.json` 通过，临时文件随后删除。按本次任务约束未跑全量检查，未提交。真实 Codex（gpt-6.1-sol、low）工具试用因子进程找不到 Codex home 而未能启动；仍需实际部署后验证。默认主助手还需单独授予 `group:improve`，本切片未改内置角色或技能正文。
+
+
+## 事项流程网页（2026-11-15）
+
+| 编号 | 操作 | 预期 | 验证 |
+| --- | --- | --- | --- |
+| 45a | 打开有适用定义、无流程的事项；打开无适用定义的事项 | 前者仅一行建议，开始前逐段说明；后者“用流程推进…”列出全部有效定义，不出现大空卡 | HTTP 适用清单测试；演示库浏览器核验开始 |
+| 45b | 打开需求交付停在推送的事项，选澄清 / 方案 / 编码 | 阶段按定义顺序，四色顶边；显示用时、等待与尝试次数；选段展示说明、承担者、对象、依据和最近进展；原件开引用抽屉，运行和方案跳现有页面 | `test/flow-web.test.ts`；1440 / 390、浅 / 深色四组合浏览器核验，原件抽屉通过 |
+| 45c | 开始、暂缓、完成本人阶段、跳过、完成确认、处理卡住、重开和停止 | 当前待办无需点阶段就显示；写入期间禁用按钮，错误就地提示；跳过 / 手动完成 / 重开必须说明；停止确认；结束后无待办卡片，保留经过，可重开 | HTTP 动作与权限回归；浏览器核验开始、暂缓、原因必填、跳过、完成、重开和停止；“还不行”使用 reopen 的差异见 flows.md |
+| 45d | 打开“规则 → 流程”，新建、改错 YAML、修正、保存、删除 | 两段带注释模板；服务器校验文字预览与默认前提；无效或未改动不能保存；已有 id 不可改；切换 / 离页提示未保存修改；删除确认，不改变已开始事项 | HTTP 校验合法 / 非法 / 默认字段 / 主人权限；浏览器验证编辑、保存与删除 |
+| 45e | 成员访问校验、定义写入、不可读事项；访问别人的可读事项 | 校验和定义写入限主人；不可读事项 404；事项动作限事项本人且空间可写；列表无越权阶段信息，别人的详情不显示操作按钮 | `test/flows-http.test.ts`、`test/permissions.test.ts`；只读按钮随已有事项 userId 与当前账号范围判断 |
+| 45f | 看事项列表及由流程触发的运行 | 列表标题旁出现当前阶段或“等你：推送”；已结束流程不再有标签；触发显示“流程”并可回事项 | 一次 join / 窗口查询每事项取一阶段，HTTP 测试覆盖运行 / 等待 / 完成 / 停止；运行链接代码与类型检查 |
+| 45g | 用示例商城演示库打开两页及定义编辑器，检查 1440 / 390、浅 / 深色 | 无横向溢出；窄屏阶段换行、编辑器上下排列；无页面脚本错误 | `scripts/screens.ts` 八张临时截图、编辑器四张截图与 Playwright 尺寸断言；仅保留 `site/public/screens/item-flow.png` |
+
+验证命令：
+
+- `npx vitest run test/flow-web.test.ts test/flows-http.test.ts test/esm.test.ts test/permissions.test.ts --maxWorkers=2 --configLoader native --cache=false`：28 项通过（4 个文件）；未运行全套测试。
+- `npx tsc --noEmit -p .`：通过。
+- `npx vue-tsc --noEmit -p web/.flows-tsconfig.json`：通过；临时配置继承 `./tsconfig.json`，`vueCompilerOptions.globalTypesPath` 指向 `./.flows-global-types.d.ts`，两文件随后删除。
+- `npx vite build --config web/vite.config.ts --configLoader native`：原配置的 `./vite-plugin-pages` 无后缀，Node native loader 不能加载。临时复制为 `web/.flows-vite.config.ts`，只将该导入补成 `.ts`，`npx vite build --config web/.flows-vite.config.ts --configLoader native` 通过；临时配置及构建产物随后删除，没有写 node_modules。
+- `node scripts/doc-screens.ts --only=item-flow`：只生成这一张 1440 宽文档截图。`node scripts/doc-screens.ts --serve`：提供虚构演示库，验证结束关闭并删除演示目录。
+- 对演示地址执行 `node scripts/screens.ts <演示地址> .flows-screens/light` 与 `node scripts/screens.ts <演示地址> .flows-screens/dark`；`ROUTES` 指向演示事项与 `/flows`，`SCHEME=light|dark`，`CHROMIUM` 指向本机 Edge；默认宽度 1440、390。两页八张截图通过并删除。
+- `node .flows-browser.mjs <演示地址> <演示事项id>`：临时 Playwright 验证编辑器、原件抽屉与动作，含横向溢出断言，运行后删除脚本与截图。真实 Agent / 飞书未在本次网页验证范围内；未提交或操作仓库 Git 状态。
+
+沙箱将 `.agents` 设为只读，更新 `.agents/skills/omem-design/SKILL.md` 被权限策略拒绝。阶段条的复用约定先记在 `docs/v2/flows.md` 末尾，技能文件未改。

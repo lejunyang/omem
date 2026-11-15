@@ -11,6 +11,7 @@ import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import ItemPlaces, { type Place, type ItemRun } from "../components/ItemPlaces.vue";
+import ItemFlow from "../components/ItemFlow.vue";
 import DesignRow from "../components/DesignRow.vue";
 import DesignStart from "../components/DesignStart.vue";
 import type { DesignSummary } from "../lib/designs";
@@ -219,6 +220,7 @@ async function addNote() {
             <div class="row top">
               <button class="check" :title="'标记完成'" @click.prevent="setStatus(i, 'done')"><Icon name="check" :size="12" /></button>
               <span class="ttl" :title="i.title">{{ i.title }}</span>
+              <span v-if="i.flow" class="badge small flow-tag">{{ i.flow.waiting ? '等你：' : '' }}{{ i.flow.name }}</span>
             </div>
             <div class="sub muted small row wrap">
               <span v-if="i.remindAt" :class="{ due: new Date(i.remindAt) < new Date() }"><Icon name="bell" :size="12" /> {{ fmtTime(i.remindAt) }}</span>
@@ -284,6 +286,7 @@ async function addNote() {
           <span class="spacer" />
           <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
+        <ItemFlow :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
         <ItemPlaces :places="detail.places ?? []" :runs="detail.runs ?? []" />
         <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" @changed="loadDetail" />
         <div class="designs">
@@ -366,6 +369,7 @@ async function addNote() {
 </template>
 
 <style scoped>
+.flow-tag { max-width: 50%; white-space: normal; overflow-wrap: anywhere; flex-shrink: 0; }
 .backlog {
   gap: 10px;
   margin-bottom: 18px;
