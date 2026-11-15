@@ -42,7 +42,7 @@ export function describeStage(s: FlowStage) {
   const run = typeof s.by === "object" && "run" in s.by ? s.by.run : null;
   return {
     carrier: s.by === "owner" ? "你来做" : s.by === "wait" ? "只等进展" : object ? `跟着${object}走` : `${!run?.agent || run.agent === "assistant" ? "助手来做" : `交给 ${run.agent}`}${run?.skill ? `，用技能 ${run.skill}` : ""}`,
-    gate: s.gate === "confirm" ? "开始前先问你" : "轮到就自己开始",
+    gate: s.gate === "confirm" ? "开始前先问你" : s.by === "owner" ? "轮到就来找你" : s.by === "wait" ? "轮到就开始等" : "轮到就自己开始",
     done: typeof s.done === "object" ? `${OBJECT_NAMES[s.done.object]}到了 ${[s.done.status].flat().join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : object ? `${object}完成就算做完` : s.by === "owner" ? "你说做完就算做完" : "交了结果就算做完",
     when: s.when ? `只在需要时做：${bare(s.when)}` : "",
   };

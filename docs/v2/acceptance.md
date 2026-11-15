@@ -1867,4 +1867,4 @@ TraeX 与其他 ACP 的清理补验：
 - 对演示地址执行 `node scripts/screens.ts <演示地址> .flows-screens/light` 与 `node scripts/screens.ts <演示地址> .flows-screens/dark`；`ROUTES` 指向演示事项与 `/flows`，`SCHEME=light|dark`，`CHROMIUM` 指向本机 Edge；默认宽度 1440、390。两页八张截图通过并删除。
 - `node .flows-browser.mjs <演示地址> <演示事项id>`：临时 Playwright 验证编辑器、原件抽屉与动作，含横向溢出断言，运行后删除脚本与截图。真实 Agent / 飞书未在本次网页验证范围内；未提交或操作仓库 Git 状态。
 
-沙箱将 `.agents` 设为只读，更新 `.agents/skills/omem-design/SKILL.md` 被权限策略拒绝。阶段条的复用约定先记在 `docs/v2/flows.md` 末尾，技能文件未改。
+11-15 两个页面重做版式后（阶段条、列表加详情的定义页），在本地预览用 1440、390 宽和深色核对，没有横向溢出；`test/flows.test.ts`、`test/flows-http.test.ts`、`test/flow-web.test.ts` 39 项通过。阶段条和列表加详情的约定写进了 `.agents/skills/omem-design/SKILL.md`。

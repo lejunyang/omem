@@ -1,6 +1,6 @@
 id: delivery
 name: 需求交付
-description: 一件需求从说清楚到上线：澄清、需要时先出方案、编码与评审、本人推送、上线后的确认
+description: 一件需求从说清楚到上线：澄清、需要时先出方案、编码与评审、你推送、上线后的确认
 for: { kinds: [todo] }
 stages:
   - id: clarify
@@ -19,7 +19,7 @@ stages:
     by: { object: code-work }
   - id: push
     name: 推送
-    note: 评审通过的提交由本人看过以后自己推送。
+    note: 评审通过的提交由你看过以后自己推送。
     by: owner
   - id: verify
     name: 上线确认

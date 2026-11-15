@@ -41,7 +41,7 @@ describe("流程 HTTP", () => {
     expect(bad.ok).toBe(false); expect(bad.problem).toContain("流程至少需要一个阶段");
     expect((await validate("stages: [")).json().problem).toContain("YAML");
     const detailed = (await validate("id: read\nname: 解释\nstages:\n  - {id: a, name: 整理, by: {run: {agent: assistant}}}\n  - {id: b, name: 本人核对, by: owner, done: confirm, when: 材料变化时}\n  - {id: c, name: 方案, by: {object: design}, done: {object: design, status: approved}}\n")).json();
-    expect(detailed.stages[1]).toMatchObject({ carrier: "你来做", gate: "轮到就自己开始", done: "做完要你点头", when: "只在需要时做：材料变化时", needs: ["a"] });
+    expect(detailed.stages[1]).toMatchObject({ carrier: "你来做", gate: "轮到就来找你", done: "做完要你点头", when: "只在需要时做：材料变化时", needs: ["a"] });
     expect(detailed.stages[2]).toMatchObject({ carrier: "跟着方案走", done: "方案到了 approved 算做完", needs: ["b"] });
     createUser(app, { id: "reader", name: "成员甲" });
     const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
