@@ -126,14 +126,17 @@ describe("delegated coding across repositories", () => {
     expect(existsSync(target.path)).toBe(false);
     expect(sh(api, "branch", "--list", "feature/refund")).toBe("");
     const result = applyCodeRun(app, next.id);
-    expect(result.targets).toEqual(preview);
+    expect(result.targets).toMatchObject(preview);
     expect(sh(api, "status", "--porcelain")).toBe(before);
     expect(sh(api, "branch", "--show-current").trim()).toBe(original);
     expect(sh(target.path, "branch", "--show-current").trim()).toBe("feature/refund");
     expect(readFileSync(join(target.path, "orders.ts"), "utf8")).toContain("[9]");
     expect(readFileSync(join(api, "orders.ts"), "utf8")).not.toContain("[9]");
     expect(worktrees.every(w => !existsSync(w.path))).toBe(true);
-    expect(getRun(app, id).output.appliedTo).toEqual(preview);
+    // What is kept is the preview's targets, each with the commit it was applied on (flows' Git signals read it).
+    const kept = getRun(app, id).output.appliedTo as { base?: string }[];
+    expect(kept).toMatchObject(preview);
+    expect(kept.every((t) => /^[0-9a-f]{40}$/.test(t.base ?? ""))).toBe(true);
     expect(() => applyCodeRun(app, id)).toThrow(/已经应用过/);
     sh(web, "reset", "--hard", "HEAD");
     sh(api, "worktree", "remove", "--force", target.path);
