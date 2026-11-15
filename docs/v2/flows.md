@@ -1,6 +1,6 @@
 # 流程：让一件事自己往前走
 
-状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端、第三期第一步的插件对象及信号记录服务端，以及第四期的补录、逐条签字、关卡升降、每日跟进上限和看板数据已实现（更新至 2026-11-16）。专门的飞书进度卡版式尚未实现。第三期第二步的界面插槽、`plugin link` 和源码构建安装也已实现。其余信号、现状摘要、插件动作、新的对象卡片和阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
+状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端、第三期第一步的插件对象及信号记录服务端，以及第四期的补录、逐条签字、关卡升降、每日跟进上限、看板数据、流程回顾与 coach 的建议已实现（更新至 2026-11-16）。专门的飞书进度卡版式尚未实现。第三期第二步的界面插槽、`plugin link` 和源码构建安装也已实现。其余信号、现状摘要、插件动作、新的对象卡片和阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
 
 ## 1. 要解决的问题
 
@@ -183,6 +183,11 @@ stages:
 ### 4.1 重开和补录
 
 - **重开**（工具 `stage_reopen`，或本人在页面上点）：要写原因和依据。常见的来源是上下文跟进发现需求变了（第 6 节）、评审之后又有提交、部署失败。
+- **重开时正在做的下游**（2026-11-16 本人定：不停，问本人）：依赖它的下游里，做完的变“待复核”；正在做的照做，给事项本人出一张卡片：“上游「X」重开了（原因），正在做的「Y」是按重开前的做的，要停下吗？”（停下 / 继续做）。
+  - 停下：按这一段的类型取消正在做的——运行取消；试验、改这类阶段照停止流程的做法取消排着和在跑的；编码交办只停下正在做的一轮，交办不删、工作区和分支留着。这一段变“待复核”，带上重开的原因，等上游做完重新开始。
+  - 继续做：不动，时间线记一笔，做完照常算完成。
+  - 本人没答它就做完了：卡片撤回，这一段变“待复核”（它是按重开前的上游做的），在它复核之前它的下游不会开始。上游又被重开就换一张新卡；流程结束、开始新一轮、本人在这一段上做了别的处理（确认、跳过、手动完成），卡片都撤回。
+  - 只在流程进行中问；重开已结束流程里的阶段，下游照旧。
 - **本人手动补录**已接入服务端：未到或等确认的阶段，本人可写说明和可选依据记成已经完成，不要求前提已满足；后继仍按原来的前提和关卡推进。重开后清除补录标记。助手不能代本人补录。
 - **补录（代码在前）**已接入服务端：本机分支新增的本人提交若尚未归到事项或交办，攒一批交给助手建议归属，本人在卡片上选择挂到已有事项、新建待办或不用管。挂到已有事项后加入分支材料，并补录流程中未到或等确认的编码交办阶段；已经在做或做完的不动。新建待办不自动开流程，也不反推或补录澄清、方案。
 
@@ -225,6 +230,7 @@ stages:
   - 影响进行中或已完成阶段的：出一张卡片（“小王说部分发货的运费也要退，影响需求点 3，编码已经评审通过。要并进这次交办，还是另开一件？”），本人选了以后重开相应的阶段或新建事项。
   - 截止时间：本人说的，或材料写明已经定了（角色交的时候带 `decided`），改事项的截止时间，记依据，告诉本人一次。只是有人提议改期，时间不动，出一张卡片（“小李提出延到 12 月 5 日。改成这个时间 / 不改”），本人选了才改。
 - **不替本人答应**：别人在群里提的新要求只会变成一条“范围”变化等本人定，不会自动进入编码。
+- **同一个地方只跟一份**：同一个群或文档在两个空间各有一份原件（uri 相同）时只跟一份——事项所在空间的那份；没有的话，选本人可写、最早建立的那份。游标也只记这一份。
 
 事项的“现状”是一小段持续更新的文字（现在到哪了、最近定了什么、还有什么没定），给每个阶段的承担者当背景，也给工作近况（docs/v2/work-state.md）和周报用。
 
@@ -294,7 +300,7 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 | 工作近况、周报、简报 | 读阶段记录：这一周哪些事过了哪些阶段、现在卡在哪 |
 | 授权阶梯 | 关卡的升降 |
 | 决策模型的场景 | 新场景 `follow`（新内容和这件事有没有关系） |
-| 夜间复盘、coach | 事项结束时给一份流程回顾（各段用时、等人最久的、返工几次），coach 据此提流程定义和技能的修改建议 |
+| 夜间复盘、coach | 流程结束时（走完、本人停止、事项关闭）宿主按记录算一份回顾存下，不用模型：各段用时、等本人多久、卡住的原因、返工几次、跳过的段、哪些关卡每次都直接同意。同一份流程定义自 coach 上次看过以后又结束满 3 件（只算本人的事项），起一次 coach 运行读这几份回顾，只能用 `save_flow` 出定义的修改草稿等本人启用，或者不提；技能的修改写在草稿说明里，由本人决定 |
 | 改进循环 | 可以作为某个阶段的承担者 |
 
 ## 10. 数据页
@@ -379,7 +385,8 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 - `item_flows(item_id, flow_id, definition, started_at, ended_at, auto_streak)`：一件事的流程副本。
 - `item_stages(item_id, stage_id, state, attempt, entered_at, done_at, by, waiting_on, evidence, note)`。
-- `item_stage_log(id, item_id, stage_id, at, from_state, to_state, actor, run_id, refs, note)`：阶段类指标和流程回顾都读它。
+- `item_stage_log(id, item_id, stage_id, at, from_state, to_state, actor, run_id, refs, note, round, waiting_on, event)`：阶段类指标和流程回顾都读它；`waiting_on` 是这一行之后这一段在等谁，`event` 标出状态说不清的那几种（重开、拒绝、关卡的问和答……，见 `src/flows/review.ts`）。
+- `item_flow_reviews(item_id, started_at, flow_id, user_id, ended_at, how, review, coach_run, updated_at)`：流程结束时的回顾，随事项拉取。
 - `flow_signals(id, at, kind, keys, payload, item_id, outcome)`：留 30 天。
 - `flow_objects(id, provider, kind, key, title, status, fields, link, checked_at, changed_at)`、`item_objects(item_id, object_id, stage_id, added_by, at)`。
 
@@ -645,3 +652,33 @@ npx vue-tsc --noEmit -p web/tsconfig.json
 - 选“新建”后建了事项、挂上这条分支，时间线记了是哪两条提交和理由。
 
 没验的：飞书上这几张卡片的样子；多个仓库、很多分支同时有新提交时的批次；本人选“挂到已有事项”的那一支（这次的建议只有新建）。
+
+## 第四期：流程回顾、coach 的建议、重开时正在做的下游、只跟一份（2026-11-16）
+
+**回顾怎么算。**`src/flows/review.ts` 的 `reviewStages({ stages, log, until, from? })` 是纯函数：输入一件事这一次流程的阶段日志（`item_stage_log` 中 `at >= item_flows.started_at` 的行，按 id 顺序）和定义里的阶段，不读数据库、不看时钟。一行的状态持续到同一段的下一行，最后一行持续到 `until`；`from` / `until` 只裁时长，不裁次数。每段输出：
+
+| 字段 | 口径 |
+| --- | --- |
+| `doingMinutes` / `gatedMinutes` / `blockedMinutes` | 在 doing、gated、blocked 的分钟，所有尝试和轮次加起来 |
+| `ownerMinutes` | 其中等本人的分钟：gated 全算；doing、blocked 只算这一行 `waiting_on = owner` 的。本人承担的段（`by: owner`，轮到本人）和等本人确认结果的都算；运行或交办在做的不算 |
+| `blocks` | 每次卡住一条：开始时间、分钟、等谁、原因（同一段连续的 blocked 行合成一次，原因取第一行） |
+| `starts` | 从别的状态进 doing 的次数：第一次开始，加上每次重开、拒绝、升档、复核后的重做 |
+| `reopened` / `refused` / `staled` / `escalated` | 自己被重开；本人说“还不行”（含第三次转卡住）；因上游重开待复核（含本人让它停下、没答就做完）；升档重做 |
+| `reworks` | 本人要求的返工：`reopened + refused` |
+| `skipped` / `skipNote` / `recorded` | 最后是跳过及原因；最后是补录的完成 |
+| `gate` | 开始关卡：问了几次（`asked`，另有自动上限 `limitAsked`、要不要做 `whenAsked`）、直接同意、带意见同意、上限后同意、先别做、按授权直接开始各几次；`direct` 是问过且每次都直接同意 |
+| `state` / `enteredAt` / `doneAt` / `rounds` | 最后的状态；第一次离开 pending、最后一次完成或跳过的时间；参与过几轮 |
+
+为了不靠读说明文字认这些，`item_stage_log` 加了 `waiting_on` 和 `event` 两列（迁移末尾一条），`changeStage` 多一个可选的 `event` 参数：重开 `reopen`、下游待复核 `stale`、拒绝 `refuse`、升档 `escalate`、关卡 `gate-ask / limit-ask / when-ask / gate-agree / gate-agree-note / limit-agree / gate-hold / granted-start`、上游重开 `upstream-ask / upstream-stop / upstream-continue / upstream-done`。之前写的行这两列为空，`inferEvent` 按状态和宿主固定的说法推断（`本人要求重做：`、`换上一档的模型重做`、`等本人确认开始`、`本人同意开始`，done / skipped / stale / doing / blocked 回到 pending 且不是宿主、不是新一轮的算重开）；空的 `waiting_on` 按 gated、本人承担的 doing、宿主写的 blocked 算等本人。旧数据推断不出自动上限的问，也分不出带意见的同意。
+
+**存下来。**`end()` 多一个结束方式参数：`completed`（走完）、`stopped`（本人停止）、`closed`（事项关闭）。以前只有课题流程在事项关闭时结束，现在任何流程都是：事项关闭后推进时结束、撤回提问、取消运行。结束时 `computeReview` 用上面的函数算各段，再加上整件事用了多久、轮次、等本人最久的一段、返工合计，`item_changes`（这段时间跟进记下的变化，按类型和处理结果计数）和 `flow_signals`（本机信号按类型计数），以及 `gates.ts` 里现在的连续直接同意次数和是否已授权，存进 `item_flow_reviews`，以（事项，流程开始时间）为键，随事项拉取。流程被重开后再结束，同一个键重新算一次。`flowView.review` 在流程结束后返回这份回顾，`read_item.flow` 也带上。事项页（`ItemFlow.vue`）在阶段条下面显示“这一次走得怎样”：一行结论、各段“用时 / 等你”的横排（`RankBars`），和最多六行要看的（跳过及原因、卡住及原因、返工、每次都直接同意的关卡）。
+
+**coach。**存回顾后 `coachIfDue` 数这份定义下本人的事项里 coach 还没看过的回顾（`coach_run` 为空，或那次运行失败、取消、不在了），满 3 份就起一个 `flow-review` 运行（通道 `flow-review:<定义 id>`，有排队或在跑的就不再起），把这几份（最多最近 10 份）记上这次运行的 id。运行失败的下次有事结束时再算进来，不新增定时任务。只算本人（omem 主人）的事项：共享定义只有主人能改，成员的事项照样存回顾。运行用 coach 角色，任务写清是哪份定义（id、名称、YAML 原文、已授权的关卡）、哪几件事和各自的回顾（`reviewText` 写成一段一行的文字），禁用 remember、supersede、forget、propose_profile_change、propose_repo_lesson、revise_reply_outcome，只剩读的工具、`save_flow` 和 `stay_quiet`。`save_flow` 还是原来的草稿机制：出一张“启用流程「…」吗？”的卡片，主人点“启用”才写文件。`roles/coach.md` 加了“读流程回顾”一节（`<!-- tools: read_flow_reviews -->`），原来的“复盘步骤”标成只给有 `propose_profile_change` 的运行；档案复盘的运行禁用 `save_flow`、`read_flow_reviews`。新工具 `read_flow_reviews(flow?, item?, limit?)` 放在 flow 分组，只读本人自己的、运行可读空间里的回顾。
+
+**重开时正在做的下游。**`reopenNow` 对受影响的 doing 下游调用 `askUpstream`：提问用 flow-stage 回答处理（`kind: "upstream"`），存在阶段的 `control.upstream`（不占阶段自己的 askId，所以本人承担的段、等确认的段原来的问题不受影响）。回答仍要事项本人（沿用原校验）。停下照阶段类型取消（`cancelRun`、`cancelTrials`、`cancelFixReruns`，编码交办用 `stopCodeWork`），阶段变 stale，`feedback` 写上重开的原因，`objectAfter` 记当时，上游做完后由原有逻辑重新开始。没答就做完、离开 doing、流程结束、新一轮、重新开始流程、本人在这一段上动作，都撤回卡片；做完的那种在每一遍推进开头（`settleUpstream`）改成 stale，推进时还挂着卡片的段不算满足下游的前提。
+
+**只跟一份。**`follow.ts` 的 `sourcesOf` 按 uri 合并：原件以 `(space_id, uri)` 唯一，同一个群的副本 uri 都是 `lark:<群>`，同一份文档在两个空间的副本 uri 也相同。一个 uri 只留一份（`mainCopy`：事项所在空间的；没有就本人可写的、`captured_at` 最早的）。初始化时另一份的游标会被删掉。群消息改为按这一份自己的行号读：`lark_message_lines` 里这一份的行，加上没有这种行的旧采集按 `lark_messages.source_id / line`；以前只看 `lark_messages.source_id`，它跟着最近写入的那一份变，选定的那份可能读不到新消息。同一条迁移给 `lark_message_lines` 加了 `(source_id, line)` 索引，按游标往后读不扫整个群。
+
+**没做的。**回顾不进数据页（数据页的“流程”板块另做，可直接调用 `reviewStages`）；coach 不改技能，只能在草稿说明里写该改哪个技能；回顾里没有阶段产物（方案、交办）的质量；旧的阶段日志推断不出自动上限和带意见的同意；本人在别的设备上答了卡片的情况沿用原有的提问同步。没有真实模型跑过 coach 的流程复盘。
+
+验证：`test/flow-review.test.ts` 16 条，加上流程、课题、工具分组、权限、拉取等 24 份相关测试文件，命令和原样结果记在 `docs/v2/acceptance.md` 最前面一节；没跑全量，网页没截图。

@@ -1,5 +1,39 @@
 # v2 验收清单
 
+## 流程回顾和 coach 的建议、重开时正在做的下游、只跟一份（2026-11-16）
+
+| 编号 | 操作 | 预期 | 状态 |
+| --- | --- | --- | --- |
+| review-01 | 构造一份阶段日志：关卡问一次直接同意、方案交了等本人确认、本人说还不行、卡住两行、重开、下游待复核、跳过；再裁时间窗；再把 event / waiting_on 清空 | 各段 doing / gated / blocked / 等本人的分钟、卡住合成一次并带第一行原因、开始次数、重开 / 拒绝 / 待复核、跳过原因、关卡 direct 都对；裁窗只改分钟；旧行按状态和宿主固定说法推断，新一轮不算重开 | `test/flow-review.test.ts` |
+| review-02 | 一件事走完（关卡直接同意、编码重开一次、本人跳过推送）；另一件本人停止；再一件事项关闭；停止的重开后再停 | 存一份回顾，`how` 分别是 completed / stopped / closed；返工 1、关卡 direct、连续同意 1、跳过原因；事项关闭时非课题流程也结束；同一键只留一份；事项页 `flowView.review` 有值；日志 event 依次是 gate-ask、gate-agree、reopen、upstream-ask | 同上 |
+| review-03 | 远端结束一件事后导出快照，本机合并 | 本机有那份回顾 | 同上 |
+| review-04 | 同一份定义：本人结束两件、成员结束一件，再结束第三件；排着时第四件；运行失败后第五件 | 第三件才起一次 flow-review，带三份；排着时不再起；失败后再起一次带五份；成员的不记 coach_run | 同上 |
+| review-05 | 执行 flow-review（模型替身） | coach 角色；任务有定义 id 和原文、三件事的标题和“本人停止”；禁用写记忆和档案建议的工具；角色正文对这次运行只留“读流程回顾”，不含“复盘步骤” | 同上 |
+| review-06 | coach 调 save_flow、read_flow_reviews | 只出一张等主人启用的草稿，定义文件不变；只读到本人自己的回顾 | 同上 |
+| upstream-01 | 方案做完、编码在跑，重开方案；成员抢答 | 编码照做、运行不取消；本人收到“停下 / 继续做”的卡片，原因在里面；流程视图带 upstream；他人回答被拒 | 同上 |
+| upstream-02 | 本人选“停下”，之后方案做完 | 运行取消，编码待复核；方案做完后编码第二次开始，任务带上重开的原因 | 同上 |
+| upstream-03 | 本人选“继续做” | 不动，时间线记“本人让这一段接着做”，做完照常完成 | 同上 |
+| upstream-04 | 没答，编码就交了完成 | 卡片撤回；编码待复核，说明按重开前的方案做的；测试不开始；方案做完后编码重新开始 | 同上 |
+| upstream-05 | 没答时方案又被重开；之后停止流程 | 旧卡撤回、出一张带新原因的；停止时撤回，阶段上不再挂着 | 同上 |
+| follow-09 | 同一个群在事项空间和另一个空间各有一份，另一份建得更早、最近写入也是它；来一条新消息 | 只跟事项空间那份，按它自己的行号读到新消息，只起一批，游标只有一行 | 同上 |
+| follow-10 | 事项空间没有副本，两个空间各有一份同一文档 | 跟建得早的那份 | 同上 |
+| page-review-01 | 打开一件流程已结束的事项 | 阶段条下面“这一次走得怎样”：一行结论、各段“用时 / 等你”的横排、最多六行要看的 | 没截图，`vue-tsc` 通过 |
+| page-upstream-01 | 重开上游后打开事项页 | 正在做的下游上面一块卡片，“停下”“继续做”两个按钮，点了以后卡片消失 | 没截图，`vue-tsc` 通过 |
+
+验证命令（没跑全量）：
+
+```sh
+npx vitest run test/flows.test.ts test/flows-http.test.ts test/flow-follow.test.ts test/flow-gates.test.ts test/flow-board.test.ts test/flow-signals.test.ts test/flow-rounds.test.ts test/flow-objects.test.ts test/flow-commits.test.ts test/flow-timing.test.ts test/flow-web.test.ts test/flow-review.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx vitest run test/studies.test.ts test/study-fix.test.ts test/study-push.test.ts test/study-scope.test.ts test/study-workspace.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts test/esm.test.ts test/insights.test.ts test/profiles.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+npx vue-tsc --noEmit -p web/tsconfig.json
+npm run build
+```
+
+第一组 `Test Files 12 passed (12)`、`Tests 185 passed (185)`（新测试 16 条）；第二组 `Test Files 13 passed (13)`、`Tests 162 passed | 1 skipped (163)`；两条类型检查和构建退出 0。新测试第一次跑有一条失败：把日志倒序后同一毫秒的两行顺序反了，纯函数要求按日志顺序传入，改了测试和注释。
+
+没验：真实模型跑 coach 的流程复盘（会不会只在反复出现时才提、草稿改得对不对）；飞书上的“停下 / 继续做”卡片；网页截图。
+
 ## 真实模型跑课题、外部状态卡片（2026-11-16）
 
 | 编号 | 操作 | 预期 | 状态 |

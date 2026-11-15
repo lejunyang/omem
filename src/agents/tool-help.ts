@@ -35,7 +35,7 @@ export const DIRECT_ALL = 30;
  */
 export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: string[] }[] = [
   { id: "study", label: "课题：方向、试验和发现", doc: "flows", tools: ["propose_directions", "trial_report", "read_ledger", "record_finding", "close_direction", "study_push"] },
-  { id: "flow", label: "流程：一件事的阶段和关卡", doc: "flows", tools: ["list_flows", "save_flow", "flow_start", "flow_round", "stage_report", "stage_reopen", "note_item_change", "claim_commits", "attach_object"] },
+  { id: "flow", label: "流程：一件事的阶段和关卡", doc: "flows", tools: ["list_flows", "save_flow", "flow_start", "flow_round", "stage_report", "stage_reopen", "note_item_change", "claim_commits", "attach_object", "read_flow_reviews"] },
   { id: "read", label: "查找与阅读原件", doc: "sources", tools: ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_conversations", "read_conversation", "peer_search", "peer_read"] },
   { id: "collect", label: "收进材料", doc: "sources", tools: ["import_url", "save_note", "write_file", "digest_sources", "lark_wiki_crawl"] },
   { id: "curate", label: "空间与原件治理", doc: "sources", tools: ["create_space", "connect_repository", "relate_spaces", "set_source_attention", "annotate_source", "review_notes", "attention_rules", "describe_source", "classify_source", "propose_archive_rule"] },

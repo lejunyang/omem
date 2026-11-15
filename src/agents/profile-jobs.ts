@@ -137,7 +137,8 @@ registerHandler("profile-review", async (ctx) => {
   run(ctx.app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", key, now());
   if (!runs) return { quiet: true, summary: "上次复盘以来没有它的运行" };
   const before = one<{ n: number }>(ctx.app.db, "select count(*) n from profile_proposals where target = ? and status = 'pending'", target)!.n;
-  const r = await runRole(ctx.app, { role: "coach", spaceId: ctx.run.spaceId ?? "personal", task, runId: ctx.run.id, signal: ctx.signal, onEvent: (e) => ctx.event(e.type, e) });
+  // Reviewing a profile is not the place to redraft a flow definition (flows/review.ts does that, with the flow's reviews).
+  const r = await runRole(ctx.app, { role: "coach", spaceId: ctx.run.spaceId ?? "personal", task, runId: ctx.run.id, signal: ctx.signal, denyTools: ["save_flow", "read_flow_reviews"], onEvent: (e) => ctx.event(e.type, e) });
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   const reason = quietReason(ctx.app, ctx.run.id);
   const summary = r.text.trim() || reason || "";

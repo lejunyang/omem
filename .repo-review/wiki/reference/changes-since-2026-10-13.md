@@ -15,7 +15,6 @@ updated: 2026-11-16
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
-
 ## 原件按地址查找走索引；数据页数有改动的发现（11-16）
 
 - 原件表加 `sources_uri` 索引（`src/core/db.ts` 最后一条迁移）。群名、工作近况、引用、找人、有人找你这些地方只按地址（`lark:<群>`、链接）找原件，原来每次都扫整张原件表：常驻那台的备份库上一次热缓存约 250 ms、冷读 11 秒。`scripts/bench-scale.ts --source-uri` 用 10 万份 4KB 的原件比：200 次查找 9320.4 → 4 ms；`test/query-plans.test.ts` 检查这几种写法都走索引。升级时建索引要扫一遍原件表，只在第一次启动时花一点时间。
@@ -29,6 +28,14 @@ updated: 2026-11-16
 - `omem plugin link <目录>` / `unlink <id>`（`src/plugins/links.ts`、`src/cli-main.ts`）：链接清单在本机 `<数据目录>/plugins/.links.json`，不随拉取；只能命令行链接本机目录（拒绝网络路径），和内置、`plugins/` 里已有的同 id 拒绝。`loadPlugins` 不带参数时最后加载链接的插件（`LoadedPlugin.linked`）；信任记目录（`trust.ts` 的 `dir`），改代码不用重新确认；服务里 `watchLinkedPlugins`（`main.ts` 启动）盯目录和链接清单，改了 0.3 秒后 `reloadLinked`，忽略 `web/`、`node_modules/`、`.git/`，发 `plugin` 事件。`plugin remove`、`DELETE /api/plugins/:id` 对链接的插件只去掉链接；安装同 id 拒绝。设置页标“开发中”，有“去掉链接”。
 - 源码构建（`src/plugins/install.ts`）：`buildPlan` 在有 `build` 脚本、清单的 `server` 或服务脚本还不存在时给出命令（装依赖 `npm ci` / `npm install` 都带 `--ignore-scripts`，再 `npm run build`）和包脚本原文；没带确认过的 `key` 时抛 `BuildNeeded`，什么都不运行。命令行用终端确认，`POST /api/plugins/install` 和 `/update` 先返回 `{ build }`，设置页弹窗确认后带 `build: key` 再请求。确认后在解开的临时目录里逐条 `spawn`（去掉密钥类和 `OMEM_` 环境变量，共十分钟，超时连子进程停掉），输出写 `<数据目录>/logs/plugin-builds/<id>.log`。清单新增可选的 `server`（服务端文件的相对路径），`registry.ts` 的 `serverFile` 统一找服务端文件。
 - SDK：`packages/plugin-sdk/slots.ts`（不带 import 的类型），`client.ts` 导出 `PluginSlot*`，`PluginSlotView` / `PluginSlotBlock` 带上展示组件和上下文类型。测试 `test/plugin-slots.test.ts`、`test/plugin-dev.test.ts`。
+
+## 流程回顾和 coach 的建议、重开时正在做的下游、只跟一份（11-16）
+
+- 回顾：流程结束（走完、本人停止、事项关闭）时宿主按阶段日志算一份回顾存进 `item_flow_reviews`（随事项拉取），事项页显示“这一次走得怎样”。计算是纯函数 `reviewStages`（`src/flows/review.ts`），每段的 doing / gated / blocked / 等本人分钟、卡住的原因、开始次数、重开 / 拒绝 / 待复核 / 升档、跳过、关卡的问与答；口径写在 `docs/v2/flows.md` 文末。`item_stage_log` 加 `waiting_on`、`event` 两列，`changeStage` 多一个可选的 `event` 参数，旧行由 `inferEvent` 推断。
+- 事项关闭现在会结束任何流程（以前只有课题流程）。
+- coach：同一份定义本人的事项又结束满 3 件就起一次 `flow-review` 运行（失败的下次结束再算进来，不新增定时任务），任务给定义原文和几份回顾，禁用写记忆和档案建议的工具，只能 `save_flow` 出草稿或 `stay_quiet`。`roles/coach.md` 加“读流程回顾”；新工具 `read_flow_reviews` 在 flow 分组。
+- 重开时正在做的下游：照做，给本人一张“停下 / 继续做”的卡片（`control.upstream`，flow-stage 回答 `kind: upstream`）；停下按阶段类型取消（交办用 `stopCodeWork` 只停不删）并待复核，没答就做完的也待复核；流程结束、新一轮、本人在那一段上动作时撤回。事项页有同样两个按钮。
+- 上下文跟进：同一个群或文档在两个空间各有一份时只跟一份（事项所在空间的，否则本人可写、最早建立的）；群消息按这一份自己的行号读（`lark_message_lines`）。测试 `test/flow-review.test.ts`。
 
 ## 用真实模型跑了上下文跟进和提交认领，改了两处（11-16）
 
@@ -65,6 +72,7 @@ updated: 2026-11-16
 - `scope.ts`、`push.ts`：本人登记 pushRemote / pushPrefix，均非空才持续授权。study_push 只由宿主临时给试验和重跑，只推当前干净工作区 HEAD 到固定的远端及前缀，不强推；成功、失败审计，成功存 study_pushes 并随事项拉取。小结和改阶段说明列本轮推送。
 - 课题视图 findings[].fix 新增 verified / reruns，试验新增 fixOf / workId，scope 新增 pushRemote / pushPrefix，顶层 pushes 为最近 50 次成功推送。接口与判断详见 `docs/v2/studies.md` 文末；验收在 `test/study-fix.test.ts`、`test/study-push.test.ts`。
 - 未改网页，未做自动应用、合并、分支删除、逐次推送批准、读取流水线结果、远端设备执行或新定时任务。内置流程及技能只补缺，已有 study.yaml 不自动增加“改”。真实模型与外部流水线待验。
+
 ## 没人认领的提交：本人确认后挂回事项（11-16）
 
 现有 Git 核对入口顺带观察本机分支的新增本人提交，首次只放游标、不翻历史；按安静期或二十条成批。交办的工作分支、应用提交、已有事项的分支及处理过的提交不再提议。共用事项候选打分，交 commit-claim 角色建议归属，由本人在一张卡片上选择挂到已有事项、新建待办或不用管；挂上后只补录没开始的编码交办阶段，新建不自动开流程。
@@ -89,6 +97,7 @@ updated: 2026-11-16
 每日简报的 brief 处理器从台账拼“上一轮的探索”，按原有 brief_at 只纳入新结束的课题轮次；成功才推进边界，生成期间新结束的留给下次。模型照材料写，不给它 read_ledger。coach 精确清单增加只读 read_ledger，按课题技能或阶段读失败、拿不准与被否决发现及原因，提出技能建议。未改网页、台账行为、表、设置或接口；真实模型待验。
 
 入口：`src/insights/insights.ts`、`src/agents/study-brief.ts`、`src/agents/jobs.ts`、`roles/brief.md`、`roles/coach.md`；验收见 `docs/v2/acceptance.md` 的 study-d4。
+
 ## 流程第四期的一部分：本人补录、逐条签字、关卡升降、每日上限和看板数据（11-15）
 
 本期只改服务端与测试，新增网页入口由独立任务接入。未到或等确认阶段可由本人写说明补记完成，可附 src: / run: / design: 依据；不要求前提已完成，后面仍按原推进规则走，重开清除 recorded。验证结果每行可签 ok / wrong / 撤销，范围与 stageTests 一致；新结果不继承旧签字，全 ok 不自动确认，本人重开时把 wrong 的用例名及备注带进新任务。
@@ -100,6 +109,7 @@ updated: 2026-11-16
 接口、字段、同步选择与未做范围见 `docs/v2/flows.md` 文末“第四期的一部分”。入口：`src/flows/engine.ts`、`gates.ts`、`follow.ts`、`http.ts`，迁移只加在 `src/core/db.ts` 末尾，路由登记在 `src/auth/routes.ts`。未增加工具、角色、定时任务、投影表或触发器，未做 git.commits 的无人认领提交补录。验证见 `docs/v2/acceptance.md` 的 flow-f3 项。
 
 最终按任务指定的十三个文件运行 Vitest（`--maxWorkers=2 --configLoader native --cache=false`）：`Test Files  13 passed (13)`、`Tests  156 passed | 1 skipped (157)`，退出 0；类型检查与 git diff --check 均退出 0。开发中一轮出现五个测试超时和一个 worker 通信错误，另一轮有四个待答询问筛选的测试断言失败，后续重跑与修正通过；完整命令及六轮原始数字在验收文档。本期不改 web/，未暂存、提交或推送，未跑全量测试、vue-tsc、真实模型或真实渠道。
+
 ## 课题第三期第一步：范围、工作区、执行环境和发现交办（11-15）
 
 - 本人登记课题能碰的仓库、编码许可和本机第三方执行许可；默认仓库从事项空间推导，两项许可关闭。范围按事项拉取，Agent 没有修改工具。入口 `src/studies/scope.ts`。
@@ -123,6 +133,7 @@ updated: 2026-11-16
 - 功能清单通过主助手已有 write_file 写事项空间的工作文件；定方向只带功能标题的次数与日期和最近提交标题，不带台账结论。内置四个 study 技能及 study.yaml 均只补缺。
 - 课题 GET 和两条本人写接口在 `src/studies/http.ts`，返回最近 200 试验及产物、发现及依据、覆盖与 idleRounds。非 manual 连续三轮没有新发现就停自动开轮并 later 通知；manual 只带计数。三表随事项拉取，通用拉取 SQL 补列名引用以支持 check 字段。
 - 网页见上一节；不做执行环境登记、推送授权、试验内交办或远端试验。测试与细节见 `test/studies.test.ts` 和 `docs/v2/studies.md`“第二期的实现”。
+
 ## 流程第二期：上下文跟进（11-15）
 
 - 进行中的事项订阅材料里的聊天、会话、文档和会议，从流程开始时的末尾跟新内容；复用巡检，二十分钟安静或三十条成批，排除助手和机器人，保留本人的话。
@@ -170,14 +181,12 @@ git diff --check
 - `flow_signals` 保存键、事项、阶段和完成 / 等待原因，相同结果不重复追加，检查顺带清理三十天前的记录。记录属于本机，拉取不传播、覆盖保留；doing 信号阶段视图增加 `waitingSignal`，未改网页。
 - 验证：`test/flow-signals.test.ts` 使用真 Git 与本地裸远端，19 项通过；按任务指定的七文件命令运行，最终原样结果为 `Test Files 7 passed (7)`、`Tests 90 passed | 1 skipped (91)`；`npx tsc --noEmit -p .` 退出 0。跳过的是 Windows 上原有的假 SSH 测试。消息 / 文档 / 插件信号、补录与上下文跟进未做。
 
-
 ## 图表改成“可数的单位”的画法和配色，加入场动效（11-15）
 
 - 仍只在 `packages/plugin-sdk/charts.ts` 画，接口和组件块的 schema 不变。柱改成一格一格的梯级（`rungUnit` 定一格是多少，每五格加粗，超过六十根才退回细实心柱）；横向排行改成一排竖刻度（拉伸的 SVG，`vector-effect: non-scaling-stroke`）；只有一两行的小表画数字加细条；折线逐点画点、周末空心、底线一天一根刻度，线一律直线；面积是一根根发丝线；饼图改成一百根刻度的表盘（`dialTicks` 分配）；指标数字放大、标签加字距，小走势也是发丝线。图下一行写读法（“一格 = 5 单 · 每五格加粗”）。
 - 颜色 token：`--chart-1`…`--chart-8` 换成低饱和、色相和明度都拉开的一组；新增单组用的 `--chart-seq-1`…`4`（青瓷蓝明度阶）和只标“要看的那一个”的 `--chart-accent`（橙红）。色值和检查结果见 `docs/v2/interactive-ui.md`“图表的样子”。插件页的主题消息带上这些 token（`web/src/views/Plugin.vue`）；飞书卡片的 `SERIES`、`SEQ`、`ACCENT` 用浅色同一组值，测试核对。
 - 入场动效：第一次进入视口时播一次（`IntersectionObserver`，CSS 动画，一秒左右），`prefers-reduced-motion`、`[data-chart-still]`、`<html data-chart-motion="off">`、`setChartMotion(false)` 时不播；`scripts/doc-screens.ts`、`scripts/screens.ts` 用 `reducedMotion: "reduce"` 截图（`screens.ts` 设 `MOTION=1` 可保留动效）。悬停时被指的柱、线、表盘一段保持，其余变淡，线图有读数线。
 - `scripts/doc-screens.ts`：数据页的演示数据加了“回复发出后的结果”；`uv_charts_demo` 加了 30 天的折线、一组排行柱和三列并排的刻度行。
-
 
 ## 流程里的验证阶段：逐条的结果带截图和录屏（11-15）
 
@@ -186,7 +195,6 @@ git diff --check
 - 事项页的流程面板（`web/src/components/ItemFlow.vue`）在所选阶段下面列“逐条的结果”：一条一行，点开是说明和 `RunArtifacts`（截图、录屏的查看器）；没通过的默认展开。
 - `roles/_common.md`“流程里的一个阶段”加了验证 / 验收的做法：和编码验证的分工、用例从需求点来、本人给的测试账号可以直接在测试环境登录（内置技能 `desktop-control` 的“安全”一节同步放开：测试环境、测试账号、凭据来自本人给的材料，三条都满足才行）、缺账号问本人或负责的人、不替本人下结论。折线、面积和小趋势线恢复成曲线（`charts.ts` 的 `curve`，单调三次，不会冲过数据点；飞书卡片 `curveType: monotone`）。
 
-
 ## 图表与指标只有一种画法（11-15）
 
 - 新增 `packages/plugin-sdk/charts.ts`（`@omem-ai/plugin-sdk/charts`）：柱、横向条形、折线、面积、细环、指标数字和小走势的唯一画法，不依赖框架，颜色全走 CSS 变量。`blocks.ts` 的 `chart` / `metric` 改由它画；网页的 `web/src/components/charts/`（`Chart`、`BarChart`、`RankBars`、`TrendChart`、`ShareChart`、`MetricRow`、`Sparkline`）是它的薄封装。
@@ -194,8 +202,6 @@ git diff --check
 - 颜色 token：`web/src/styles.css` 的 `--chart-1`…`--chart-8`、`--chart-grid`、`--chart-axis`（浅色、深色各一套，做过色盲区分检查），替换了 `blocks.ts` 里写死的 `--s1`…`--s8`；插件页的 `omem.css` 从同一文件复制。飞书卡片的 `SERIES` 用浅色同一组值，`chartSpec` 改成细柱、值轴浅网格、虚线目标线、细环饼图；`test/ui-blocks.test.ts` 核对卡片色值和 token 一致。
 - 组件块 `chart` 加可选的 `highlight`（强调一个标签，须是 labels 里的一项）；以前的块照常显示。文字版里强调的那一行加粗。
 - 数据页（`web/src/views/Insights.vue`）改用这些组件：一排数字是 `MetricRow`，单列的小表是带链接的条形，多列同单位的小表是并排的彩色条（其余单位写在行尾），每天的件数是按场景堆叠的柱（场景颜色固定），每天的正面、负面反馈是线尾标名字的折线；版式、文字、筛选、明细、导出不变。`scripts/doc-screens.ts` 加了一个月的虚构运行、`insights` 截图和一个包含各种图表的演示块（`#/ui/uv_charts_demo`，只供 `--serve` 时看）。
-
-
 
 ## 回复发出后有没有用（11-15）
 
@@ -213,7 +219,6 @@ git diff --check
 - 不另起一套调度：课题是一件持续关注的事项，加一份带轮次的流程，加一份台账。给流程补四样通用的能力——轮次（`repeat`）、阶段的 AI 档位与时间段（`ai` / `at` / `window`）、升档（`escalate`）、预算（`budget`）；“一个方向下跑很多试验”由新的对象 `trials` 承担。
 - 试验在哪跑不写死：登记的执行环境（本机、云端会话型后端、托管的流水线、另一台设备）。另一台设备现在只能由本机的模型经 `code_workspace` 去操作或 `ask_agent(档案@节点)` 一问一答，“把试验派过去”要新做。第三方样本的代码只在标了可以执行的环境里跑。
 - 台账是三张挂在事项上的表：方向、试验、发现；功能清单和各方向的结论写在仓库空间的 Wiki 里。夜里的改动留在交办分支上、经评审、不合并不推主分支；推送只对课题登记的远端和分支前缀持续授权；对外只出草稿。具体怎么挑样本、怎么跑写成技能，不进仓库。
-
 
 ## 流程的两个页面重做版式和文字（11-15）
 
@@ -235,7 +240,6 @@ git diff --check
 - `web/src/views/Insights.vue` 重写：不再把每个指标铺成一张卡片。每个板块上面是几个数（整块可点，看是哪些记录），下面按内容用条形列表（只有次数的）、小表格（几列的，如评审意见的采纳 / 不采纳 / 采纳率、各后端的次数和时长）和按天的小柱（合计一行，各场景各一行）；口径收在“这些数是怎么数的”里。筛选默认收起。
 - `src/insights/types.ts` 的 `Metric.cell`：服务端把成组的数字标成“哪张表、哪一行、哪一列”，页面据此排表；已经作为数字或表格出现的图不再画第二遍。
 - `src/insights/insights.ts`：板块标题、说明、空状态、口径和指标名全部改成给本人看的话（不出现字段名和内部函数名）；明细列表写“问答 · 做完”和本地时间。导出的标题是“omem 的数据”。
-
 
 ## 成效页：记录、范围、基线与导出（11-15）
 

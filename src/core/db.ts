@@ -2066,6 +2066,17 @@ export const migrations: readonly string[] = [
   `alter table item_changes add column due text;`,
   // Lookups by address alone (a chat's `lark:<id>`, a pasted link) were full scans of the source text.
   `create index sources_uri on sources(uri);`,
+  // A flow's review when it ends (flows/review.ts): computed from its own records, travels with the item.
+  // The stage log keeps whom a stage waited on and what kind of step a row was, so reviews need not read notes.
+  `alter table item_stage_log add column waiting_on text;
+   alter table item_stage_log add column event text;
+   create table item_flow_reviews (
+     item_id text not null references items(id), started_at text not null, flow_id text not null, user_id text not null,
+     ended_at text not null, how text not null, review text not null, coach_run text, updated_at text not null,
+     primary key(item_id,started_at)
+   );
+   create index item_flow_reviews_flow on item_flow_reviews(flow_id,user_id,ended_at);
+   create index lark_message_lines_line on lark_message_lines(source_id,line);`,
 ];
 
 export type Db = DatabaseSync;

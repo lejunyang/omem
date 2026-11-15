@@ -12,7 +12,7 @@ import { addMaterials, materialsBrief } from "../items/materials.ts";
 import { findReq } from "../items/requirements.ts";
 import { itemFlow, itemStages } from "./store.ts";
 
-type Source = { id: string; kind: string; title: string; space_id: string; updated_at: string };
+type Source = { id: string; kind: string; title: string; space_id: string; updated_at: string; uri: string; captured_at: string };
 type Cursor = { source_id: string; line: number; source_updated_at: string; started_at: string; seen: string | null };
 /** `seen`: a document's line hashes as of this batch, kept so the next batch is only the lines that are new. */
 type Part = { source: string; from: number; to: number; updatedAt: string; lines: { line: number; text: string }[]; seen?: number[] };
@@ -38,11 +38,12 @@ const KINDS = ["chat", "doc", "meeting", "conversation"];
 /**
  * The originals behind an item's places and materials, by indexed lookups only (sources has no index
  * on uri alone): a linked source by id, a conversation's transcript by (space, uri), and the live
- * captured chat a Feishu conversation stands for by its chat id.
+ * captured chat a Feishu conversation stands for by its chat id. The same chat or document kept in
+ * two spaces (two copies with one uri) is one place: only its main copy is followed (`mainCopy`).
  */
 function sourcesOf(app: App, id: string): Source[] {
   const item = getItem(app, id), allowed = accessibleSpaces(app, item.userId);
-  const cols = "id,kind,title,space_id,updated_at", found = new Map<string, Source>();
+  const cols = "id,kind,title,space_id,updated_at,uri,captured_at", found = new Map<string, Source>();
   const add = (s: Source | undefined) => { if (s && KINDS.includes(s.kind) && (!allowed || allowed.includes(s.space_id))) found.set(s.id, s); };
   for (const m of all<{ kind: string; ref: string }>(app.db, "select kind,ref from item_materials where item_id=? and kind in ('source','conversation') order by id", id)) {
     if (m.kind === "source") { add(one<Source>(app.db, `select ${cols} from sources where id=? and deleted_at is null`, m.ref)); continue; }
@@ -53,8 +54,26 @@ function sourcesOf(app: App, id: string): Source[] {
     const chat = c.external_id.split("#")[0];
     for (const live of all<Source>(app.db, `select ${cols} from sources where json_extract(meta, '$.chatId')=? and uri=? and deleted_at is null`, chat, `lark:${chat}`)) add(live);
   }
-  return [...found.values()];
+  const copies = new Map<string, Source[]>();
+  for (const s of found.values()) copies.set(s.uri, [...copies.get(s.uri) ?? [], s]);
+  return [...copies.values()].map((same) => same.length === 1 ? same[0] : mainCopy(app, item, same));
 }
+/** Of several copies of one place: the one in the item's own space, else one its person may write, the earliest kept. */
+function mainCopy(app: App, item: { spaceId: string; userId: string }, copies: Source[]) {
+  return copies.find((s) => s.space_id === item.spaceId) ?? [...copies].sort((a, b) =>
+    Number(canWrite(app, item.userId, b.space_id)) - Number(canWrite(app, item.userId, a.space_id)) || a.captured_at.localeCompare(b.captured_at) || a.id.localeCompare(b.id))[0];
+}
+/**
+ * New lines from people in one copy of a chat, by that copy's own line numbers: a message kept in several
+ * copies has a line in each (lark_message_lines); copies captured before those were kept use the message's own.
+ */
+function chatLines(select: string, tail = "") {
+  const cols = (line: string) => `${line} line,m.create_ms,m.sender_name,m.sender_kind,m.content`;
+  const people = "m.create_ms>? and m.sender_kind in ('user','owner')";
+  return `select ${select} from (select ${cols("l.line")} from lark_message_lines l join lark_messages m on m.message_id=l.message_id where l.source_id=? and l.line>? and ${people}
+    union all select ${cols("m.line")} from lark_messages m where m.source_id=? and m.line>? and ${people} and not exists(select 1 from lark_message_lines x where x.source_id=m.source_id and x.message_id=m.message_id))${tail}`;
+}
+const chatArgs = (s: Source, c: Cursor) => [s.id, c.line, Date.parse(c.started_at), s.id, c.line, Date.parse(c.started_at)];
 /** A document is followed by its lines: a cheap hash of each, so an edit hands over only the lines that were not there before. */
 const DOC_CHARS = 24000;
 function lineHash(text: string) {
@@ -74,7 +93,7 @@ const conversationRows = `with numbered as (select role,text,created_at,json_ext
   select role,text,created_at,line_end,speaker from numbered`;
 function tail(app: App, s: Source) {
   if (s.kind === "conversation") return one<{ line: number }>(app.db, "select coalesce(sum(2+length(text)-length(replace(text,char(10),''))),0) line from messages where conversation_id=(select substr(uri,14) from sources where id=?) and json_extract(meta,'$.command') is null", s.id)!.line;
-  return one<{ line: number }>(app.db, "select coalesce(max(line),0) line from lark_messages where source_id=?", s.id)!.line;
+  return one<{ line: number }>(app.db, "select coalesce(max(line),0) line from (select max(line) line from lark_message_lines where source_id=? union all select max(line) from lark_messages where source_id=?)", s.id, s.id)!.line;
 }
 
 /** A newly linked place starts at its current end too; removed or inaccessible places stop following. */
@@ -93,8 +112,7 @@ export function initFollow(app: App, id: string, reset = false) {
 
 function pending(app: App, s: Source, c: Cursor) {
   if (s.kind === "chat") {
-    const r = one<{ count: number; latest: number | null }>(app.db, `select count(*) count,max(create_ms) latest from lark_messages
-      where source_id=? and line>? and create_ms>? and sender_kind in ('user','owner')`, s.id, c.line, Date.parse(c.started_at))!;
+    const r = one<{ count: number; latest: number | null }>(app.db, chatLines("count(*) count,max(create_ms) latest"), ...chatArgs(s, c))!;
     return { count: r.count, latest: r.latest };
   }
   if (s.kind === "conversation") {
@@ -123,8 +141,7 @@ function partsOf(app: App, id: string): { parts: Part[]; count: number; latest: 
     if (!p.count) continue;
     count += p.count;
     if (s.kind === "chat") {
-      const rows = all<{ line: number; text: string }>(app.db, `select line,substr(sender_name,1,80) || '（' || sender_kind || '）：' || substr(content,1,1200) text
-        from lark_messages where source_id=? and line>? and create_ms>? and sender_kind in ('user','owner') order by line limit 200`, s.id, c.line, Date.parse(c.started_at));
+      const rows = all<{ line: number; text: string }>(app.db, chatLines("line,substr(sender_name,1,80) || '（' || sender_kind || '）：' || substr(content,1,1200) text", " order by line limit 200"), ...chatArgs(s, c));
       parts.push({ source: s.id, from: rows[0].line, to: rows.at(-1)!.line, updatedAt: s.updated_at, lines: rows });
     } else if (s.kind === "conversation") {
       // Each non-command message appends a blank line then a heading and its possibly multiline text.

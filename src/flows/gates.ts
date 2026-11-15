@@ -13,6 +13,8 @@ function streak(app: App, flowId: string, stageId: string, userId: string): Stre
 function save(app: App, s: Streak) {
   run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value=excluded.value", key(s.flowId, s.stageId, s.userId), JSON.stringify(s));
 }
+/** How many times in a row the owner let this gate through without remarks (what the ladder counts toward asking). */
+export function gateStreak(app: App, flowId: string, stageId: string, userId: string) { return streak(app, flowId, stageId, userId).count; }
 export function resetGateStreak(app: App, flowId: string, stageId: string, userId: string) {
   const s = streak(app, flowId, stageId, userId);
   if (s.askId) cancelAsk(app, s.askId, "关卡的连续同意重新计数");

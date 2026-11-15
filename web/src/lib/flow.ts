@@ -23,7 +23,40 @@ export type FlowStage = {
   autoStarted?: boolean;
   /** What this stage's runs reported case by case (a verification stage), failed first, then the ones not done. */
   tests?: StageTest[];
+  /** An upstream stage was reopened while this one was being done: the card asking the owner whether to stop it. */
+  upstream?: { askId: string; stage: string; name: string; reason: string } | null;
 };
+/** One stage in a flow's review: figures the host worked out from the records when the flow ended (src/flows/review.ts). */
+export type StageReview = {
+  id: string; name: string; state: StageState; doingMinutes: number; gatedMinutes: number; blockedMinutes: number; ownerMinutes: number;
+  blocks: { at: string; minutes: number; waitingOn: string | null; note: string }[];
+  starts: number; reopened: number; refused: number; staled: number; escalated: number; reworks: number;
+  skipped: boolean; skipNote: string | null; recorded: boolean; rounds: number; streak: number; grantedNow: boolean;
+  gate: { asked: number; agreed: number; agreedWithNote: number; held: number; granted: number; direct: boolean };
+};
+export type FlowReview = {
+  how: "completed" | "stopped" | "closed"; startedAt: string; endedAt: string; minutes: number; rounds: number; reworks: number;
+  stages: StageReview[]; longestOwnerWait: { stage: string; name: string; minutes: number } | null;
+  changes: { total: number; byType: Record<string, number>; byStatus: Record<string, number> };
+};
+export const reviewHow: Record<FlowReview["how"], string> = { completed: "走完了", stopped: "你停下了", closed: "事项关闭时结束" };
+/** "40 分钟", "3.5 小时", "2.1 天": a span of minutes in the unit it reads best in. */
+export function minutesWords(n: number) {
+  return n < 1 ? "不到 1 分钟" : n < 120 ? `${Math.round(n)} 分钟` : n < 2880 ? `${Math.round(n / 6) / 10} 小时` : `${Math.round(n / 144) / 10} 天`;
+}
+/** The few things worth a line in a review: why a stage was skipped or stuck, rework, a gate that was let through every time. */
+export function reviewNotes(r: FlowReview) {
+  const notes: string[] = [];
+  for (const s of r.stages) {
+    if (s.skipped) notes.push(`「${s.name}」跳过了${s.skipNote ? `：${s.skipNote}` : ""}`);
+    if (s.recorded) notes.push(`「${s.name}」是补录的`);
+    if (s.blocks.length) notes.push(`「${s.name}」卡住 ${s.blocks.length} 次，共 ${minutesWords(s.blockedMinutes)}：${s.blocks[0].note}`);
+    const redo = [s.reopened ? `重开 ${s.reopened} 次` : "", s.refused ? `你说还不行 ${s.refused} 次` : "", s.staled ? `上游重开后复核 ${s.staled} 次` : ""].filter(Boolean);
+    if (redo.length) notes.push(`「${s.name}」${redo.join("，")}`);
+    if (s.gate.direct) notes.push(`「${s.name}」开始前问了 ${s.gate.asked} 次，你都直接同意了${s.grantedNow ? "（已经授权以后直接开始）" : s.streak ? `（已经连着 ${s.streak} 次）` : ""}`);
+  }
+  return notes;
+}
 export type StageTest = {
   id: string; name: string; status: "passed" | "failed" | "skipped"; mode: string; note: string; at: string; runId: string;
   req: { id: string; title: string } | null;
@@ -73,6 +106,8 @@ export type FlowView = {
   rounds?: { round: number; endedAt: string; stages: { id: string; state: StageState; note: string }[] }[];
   stages: FlowStage[]; suits: FlowDefinition[];
   log: { id: number; stageId: string; at: string; fromState: StageState | null; toState: StageState; actor: string; note: string; runId: string | null }[];
+  /** How it went, once the flow ended. */
+  review?: FlowReview | null;
 };
 /** One item on the flow board: the stage to look at now and whether it waits for the owner. */
 export type BoardRow = {

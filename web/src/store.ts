@@ -143,6 +143,7 @@ export const runKindLabel: Record<string, string> = {
   "rule-fire": "规则（等待后）",
   "rule-script": "规则脚本",
   "profile-review": "复盘",
+  "flow-review": "复盘流程",
   "role-merge": "合并角色",
   "peer-agent": "设备的外部 Agent",
   replay: "夜间复盘",

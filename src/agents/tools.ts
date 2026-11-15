@@ -2257,10 +2257,18 @@ def({
   },
 });
 def({
-  name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过。",
+  name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过，正在做的照做并问本人要不要停下。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), reason: z.string().trim().min(1).max(4000), refs: z.array(z.string()).max(50).optional() }), handler: async (ctx, a) => {
     flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs ?? []);
     return JSON.stringify(await (await import("../flows/engine.ts")).reopenStage(ctx.app, a.item, a.stage, a.reason, a.refs ?? [], flowActor(ctx)));
+  },
+});
+def({
+  name: "read_flow_reviews", description: "读已经结束的流程的回顾（宿主按记录算的：各段做了多久、等本人多久、卡住的原因、返工、跳过、关卡是不是每次直接同意、怎么结束的），新的在前。flow 给流程定义 id，item 给事项 id，都可以不给。",
+  schema: z.object({ flow: z.string().optional(), item: z.string().optional(), limit: z.number().int().min(1).max(20).optional() }), handler: async (ctx, a) => {
+    const { listReviews } = await import("../flows/review.ts");
+    const reviews = listReviews(ctx.app, { userId: ctx.userId ?? OWNER, spaces: ctx.spaces, flowId: a.flow, itemId: a.item, limit: a.limit ?? 10 });
+    return JSON.stringify({ reviews, ...(reviews.length ? {} : { note: "没有可读的流程回顾：流程结束时才会有" }) });
   },
 });
 

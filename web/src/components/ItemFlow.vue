@@ -2,9 +2,10 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, onServerEvent, onServerResync, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, verdictWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
+import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, minutesWords, nextWords, objectStatusWords, ownerTurn, reviewHow, reviewNotes, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, verdictWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
 import ItemStudy from "./ItemStudy.vue";
 import PluginSlots from "./PluginSlots.vue";
+import RankBars from "./charts/RankBars.vue";
 import RunArtifacts from "./RunArtifacts.vue";
 import { refAction } from "../lib/refs";
 import { fmtTime, relTime } from "../store";
@@ -40,6 +41,30 @@ const following = computed(() => {
   return `在跟：${names}。${pending ? `有 ${pending} 条新内容，等那边安静下来一起看。` : "有新结论会列在这里。"}`;
 });
 const completed = computed(() => !!data.value?.flow?.endedAt && data.value.stages.every((s) => ["done", "skipped"].includes(s.state)));
+/** Stages still being done although a stage they build on was reopened: the owner says whether to stop them. */
+const upstreamAsks = computed(() => data.value?.flow?.endedAt ? [] : data.value?.stages.filter((s) => s.state === "doing" && s.upstream) ?? []);
+/** Once the flow ended: each stage's time, and how much of it waited on the owner, in hours when any stage took two or more. */
+const review = computed(() => {
+  const r = data.value?.review;
+  if (!r) return null;
+  const rows = r.stages.map((s) => ({ name: s.name, total: s.doingMinutes + s.gatedMinutes + s.blockedMinutes, owner: s.ownerMinutes })).filter((s) => s.total > 0);
+  const hours = rows.some((s) => s.total >= 120), unit = (n: number) => hours ? Math.round(n / 6) / 10 : Math.round(n);
+  return {
+    line: [reviewHow[r.how], `用了 ${minutesWords(r.minutes)}`, r.rounds > 1 ? `${r.rounds} 轮` : "", r.reworks ? `你要求返工 ${r.reworks} 次` : "", r.longestOwnerWait ? `等你最久的是「${r.longestOwnerWait.name}」，${minutesWords(r.longestOwnerWait.minutes)}` : ""].filter(Boolean).join(" · "),
+    labels: rows.map((s) => s.name), unit: hours ? "小时" : "分钟",
+    series: [{ name: "用时", values: rows.map((s) => unit(s.total)) }, { name: "等你", values: rows.map((s) => unit(s.owner)) }],
+    notes: reviewNotes(r).slice(0, 6),
+  };
+});
+/** The owner answers the upstream card here: 0 stop the stage, 1 let it go on. */
+async function answerUpstream(s: FlowStage, choice: 0 | 1) {
+  if (!s.upstream || busy.value || !props.editable) return;
+  const generation = epoch;
+  busy.value = true; error.value = "";
+  try { await post(`/api/asks/${encodeURIComponent(s.upstream.askId)}/answer`, { choice }); if (generation === epoch) await load(); }
+  catch (e) { if (generation === epoch) error.value = (e as Error).message; }
+  finally { if (generation === epoch) busy.value = false; }
+}
 async function load() {
   const request = ++seq, id = props.itemId;
   try { const result = await get<FlowView>(`/api/items/${id}/flow`); if (request === seq && id === props.itemId) { data.value = result; error.value = ""; } }
@@ -167,6 +192,18 @@ async function stop() {
       <div v-if="data.flow.canStartRound" class="round-done">
         <p>第 {{ data.flow.round ?? 1 }} 轮做完了。{{ data.flow.nextRoundAt ? `下一轮 ${clockTime(data.flow.nextRoundAt)} 开始，也可以现在就开始。` : "下一轮等你开始。" }}</p>
         <div v-if="editable" class="row wrap"><button type="button" class="btn sm primary" :disabled="busy" @click="nextRound">再来一轮</button></div>
+      </div>
+      <div v-if="review" class="review">
+        <div class="tests-head"><span>这一次走得怎样</span><span class="muted">{{ review.line }}</span></div>
+        <RankBars v-if="review.labels.length" :labels="review.labels" :series="review.series" :unit="review.unit" note="用时算进行中、等你同意开始和卡住的时间；等你算等你同意开始、你自己做和等你确认结果的时间。" :table="false" />
+        <ul v-if="review.notes.length" class="review-notes">
+          <li v-for="n in review.notes" :key="n">{{ n }}</li>
+        </ul>
+      </div>
+      <div v-for="s in upstreamAsks" :key="`up-${s.id}`" class="turn">
+        <p><span class="turn-kind">上游重开了</span>「{{ s.upstream!.name }}」重开了，正在做的「{{ s.name }}」是按重开前的做的。要停下吗？</p>
+        <p class="turn-note">原因：{{ s.upstream!.reason }}。停下就取消这一段正在做的（交办只停下、不丢弃），等「{{ s.upstream!.name }}」做完再重新做；不答的话它做完后也要再复核一次。</p>
+        <div v-if="editable" class="row wrap"><button type="button" class="btn sm primary" :disabled="busy" @click="answerUpstream(s, 0)">停下</button><button type="button" class="btn sm ghost" :disabled="busy" @click="answerUpstream(s, 1)">继续做</button></div>
       </div>
       <div v-for="s in waiting" :key="s.id" class="turn">
         <p>{{ nextWords(s) }}</p>
@@ -336,6 +373,10 @@ async function stop() {
 .turn-kind { margin-right: 8px; font-weight: 600; color: var(--warn); }
 .turn .turn-note { font-size: 12.5px; color: var(--ink-2); }
 .turn-refs { display: inline-flex; margin-left: 4px; }
+
+/* After the flow ended: where the time went, then the few lines worth reading. */
+.review { display: grid; gap: 8px; font-size: 13px; }
+.review-notes { margin: 0; padding: 0 0 0 1.1em; display: grid; gap: 2px; font-size: 12.5px; color: var(--ink-2); }
 
 /* What the item's chats and documents said since the flow began: one line each, newest first. */
 .changes { display: grid; gap: 2px; font-size: 13px; }
