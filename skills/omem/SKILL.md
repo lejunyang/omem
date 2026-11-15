@@ -78,7 +78,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `memory` | 查、写、更正、撤回记忆，记忆目录 | [references/memory.md](references/memory.md) |
 | `track` | 事项与需求：待办、提醒、等待回复，需求树，跨空间进展提案 | [references/items.md](references/items.md) |
 | `flow` | 流程：一件事的阶段和关卡 | [references/flows.md](references/flows.md) |
-| `study` | 课题：提方向、逐个试验、读台账、归并发现、结束方向；仅阶段临时授予 | [references/flows.md](references/flows.md) |
+| `study` | 课题：提方向、逐个试验、读台账、归并发现、结束方向、登记范围内推送；study_push 仅宿主按授权临时授予 | [references/flows.md](references/flows.md) |
 | `notifications` | 事项通知排查：关联修复、通知检查与重发、忽略规则 | 同上 |
 | `wiki` | 读写 Wiki 页面、生成 Wiki | [references/wiki.md](references/wiki.md) |
 | `delegate` | 交给别的 Agent、请教、选 AI、看运行记录 | [references/agents.md](references/agents.md) |

@@ -2,6 +2,35 @@
 
 按你最初列的目标和日常用途逐项验收。每项写了操作和预期结果；“云端已验”指我在云端用 Claude Code（haiku）实际跑过，“待你验”指需要你的账号或本机环境。
 
+## 课题第三期第二步（2026-11-15）
+
+| 编号 | 操作 | 预期 | 验证 |
+| --- | --- | --- | --- |
+| study-s3b-01 | 解析 fixes、fixes 预算；改变发现类型、状态、流程起点、轮次、方向和范围许可、已有交办 | 默认最多两条、上限二十；按建立顺序筛，本轮无可改的跳过并说明；stage_report 拒绝 | `test/study-fix.test.ts` |
+| study-s3b-02 | 交办评审通过，在交办工作区改提交，重跑一条或多条失败依据 | 新行带 fix_of / work_id、当前轮、原对象和检查；commits 为交办 HEAD；所有 passed 才 passed，有 failed 则 failed | 同上 |
+| study-s3b-03 | 交办失败、取消、评审没过；重跑 blocked / unclear、后端失败；重开阶段 | 没改成不重跑；有 work_id 不另发第二次交办；重跑不重试、不升档；读台账带状态及验证结果 | 同上 |
+| study-s3b-04 | 有或没有试验阶段定义；正常 AI 与 worker 启动；累计时间或排队到预算 | 模型取试验阶段，找不到取“改”的 AI；排队不计分钟，用满完成并写还在改，不取消交办 | 同上 |
+| study-s3b-05 | 流程停止、改阶段跳过或重开 | 重跑取消并记 skipped、result 为空；交办保持原状态 | 同上 |
+| study-s3b-06 | 未登记、登记、撤销推送授权；尝试经普通阶段、group 或其他运行调用 | study_push 只临时给已授权的试验和改后重跑；不能借阶段 tools 或 group:study 授出；自己的运行和工作区才可推 | `test/study-push.test.ts` |
+| study-s3b-07 | 非本人改范围，填非法远端、前缀、名字或完整分支参数 | 本人才可改；远端已配置；前缀以 / 结尾，禁止 ..、空白、冒号等非法字符；名字最长四十，只含小写字母、数字、短横线 | 同上 |
+| study-s3b-08 | 用本地裸远端推送；未提交、非快进、远端移除后尝试推送 | 只推固定前缀下的 HEAD；不强推；成功与失败均审计；视图 pushes 含成功记录；原仓库、主分支及别的分支保持原样 | 同上 |
+| study-s3b-09 | 小结 / 改结束；拉取包含新字段和推送的事项 | 阶段说明列本轮成功推送次数和分支；scope 新授权字段、fix_of / work_id、study_pushes 随事项拉取 | 同上、`test/studies.test.ts` |
+| study-s3b-10 | 以原生 Node 分别导入 push、fixes 与 tools 模块 | 无循环初始化错误；工具参数 schema 放在无运行时依赖的 schema 模块 | `test/esm.test.ts` |
+
+检查命令：
+
+```sh
+npx vitest run test/study-fix.test.ts test/study-push.test.ts test/studies.test.ts test/study-scope.test.ts test/study-workspace.test.ts test/flows.test.ts test/flow-rounds.test.ts test/code-worktrees.test.ts test/esm.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+git diff --check
+```
+
+检查输出：`Test Files 14 passed (14)`、`Tests 183 passed | 1 skipped (184)`，退出码 0；新修复测试 20 项、推送测试 6 项全部通过。跳过的是原有 Windows SSH 拉取用例。`npx tsc --noEmit -p .` 退出码 0，无类型错误；`git diff --check` 退出码 0，无空白错误。另用原生 Node 导入核对入口，循环依赖已修正并纳入上面的 ESM 回归。
+
+一次复跑中，原有 flows / flow-rounds 各一项触发 20 秒超时，输出 `Test Files 2 failed | 12 passed (14)`、`Tests 2 failed | 181 passed | 1 skipped (184)`。未改代码、超时或并发设置，再跑上面的完整命令，最终为前述 14 文件全部通过；两项原样复跑分别约 2.4 秒与 4.3 秒通过。未出现断言差异，超时原因未确定。
+
+仅服务端、测试与文档；临时 Git 仓库和假后端、本地裸远端验证。未跑真实模型或真实外部流水线，未改网页。内置流程和技能只补缺，已有 study.yaml 与 study-summary 不会自动更新。
+
 ## 界面：流程看板、补录、逐条签字、课题的范围（2026-11-15）
 
 | 编号 | 操作 | 预期 | 状态 |

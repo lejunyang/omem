@@ -29,3 +29,8 @@ stages:
     by: { run: { agent: assistant, skill: study-summary } }
     ai: standard
     tools: [read_ledger, record_finding, close_direction]
+  - id: fix
+    name: 改
+    note: 这一轮新发现的缺陷，方向允许改代码时逐条去改，改完重跑当初失败的试验。
+    by: { object: fixes }
+    budget: { fixes: 2, minutes: 240 }

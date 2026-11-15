@@ -26,7 +26,7 @@ import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
-import { proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
+import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf } from "../auth/features.ts";
@@ -2141,6 +2141,14 @@ def({
     flowItem(ctx, store.trial(ctx.app, a.trial).item_id, true);
     await flowRefs(ctx, (a.evidence ?? []).filter((r) => r.startsWith("src:")));
     return (await import("../studies/service.ts")).reportTrial(ctx.app, a, flowActor(ctx));
+  },
+});
+def({
+  name: "study_push", description: "将本试验工作区的 HEAD 推到课题登记的远端和固定分支前缀，必须干净，不能强推。", write: true, schema: studyPushSchema,
+  handler: async (ctx, a) => {
+    const store = await import("../studies/store.ts");
+    const item = flowItem(ctx, store.trial(ctx.app, a.trial).item_id, true);
+    return (await import("../flows/engine.ts")).studyOperation(ctx.app, item.id, async () => (await import("../studies/push.ts")).studyPush(ctx.app, a, ctx.runId, ctx.userId ?? OWNER));
   },
 });
 def({

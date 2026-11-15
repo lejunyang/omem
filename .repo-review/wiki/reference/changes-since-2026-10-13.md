@@ -16,6 +16,14 @@ updated: 2026-11-15
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
 
+## 课题第三期第二步：自动交办与改后重跑、登记范围内推送（11-15）
+
+- `src/studies/fixes.ts`：流程新增 fixes 承担者，内置 study 在小结后加“改”，默认每轮最多两条。只挑本轮新建、new / confirmed、没有交办、有失败依据且方向允许编码的缺陷；范围也须允许编码。逐条沿用 `queueFindingFix` → `queueCodeWork`，评审可应用才重跑，失败留给本人，不反复交办。
+- `trials.ts`、`workspace.ts`：普通试验与重跑共用 `startTrial`、study-trial、trial_report；重跑在交办工作区，记录 fix_of / work_id 和 HEAD，模型取试验阶段，缺省取“改”的 AI；不升档、不重试。分钟按交办、评审与重跑实际运行时间计；预算结束或流程停止、重开、跳过只取消重跑，交办不动。
+- `scope.ts`、`push.ts`：本人登记 pushRemote / pushPrefix，均非空才持续授权。study_push 只由宿主临时给试验和重跑，只推当前干净工作区 HEAD 到固定的远端及前缀，不强推；成功、失败审计，成功存 study_pushes 并随事项拉取。小结和改阶段说明列本轮推送。
+- 课题视图 findings[].fix 新增 verified / reruns，试验新增 fixOf / workId，scope 新增 pushRemote / pushPrefix，顶层 pushes 为最近 50 次成功推送。接口与判断详见 `docs/v2/studies.md` 文末；验收在 `test/study-fix.test.ts`、`test/study-push.test.ts`。
+- 未改网页，未做自动应用、合并、分支删除、逐次推送批准、读取流水线结果、远端设备执行或新定时任务。内置流程及技能只补缺，已有 study.yaml 不自动增加“改”。真实模型与外部流水线待验。
+
 ## 界面：流程看板、补录、逐条签字、关卡授权、课题的范围和修改（11-15）
 
 - `web/src/views/Board.vue`（`#/board`，事项页“按流程看”进入）：`GET /api/flows/board` 的事项按流程分区、按该流程定义的阶段顺序分列，没有事项的列只留名字；筛“等我的”“卡住的”；窄屏改成按阶段分组的列表。今日页（`Home.vue`）多一块“流程里等你的”。词和排序在 `web/src/lib/flow.ts` 的 `boardLine`。

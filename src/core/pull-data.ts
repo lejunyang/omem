@@ -27,6 +27,7 @@ export const pullTables: Table[] = [
   { name: "study_directions", key: ["id"], newer: "updated_at", local: ["workspace_run_id"] },
   { name: "study_trials", key: ["id"], newer: "updated_at" },
   { name: "study_findings", key: ["id"], newer: "updated_at" },
+  { name: "study_pushes", key: ["id"], newer: "at" },
   { name: "item_changes", key: ["id"], newer: "updated_at" },
   { name: "conversations", key: ["id"], newer: "updated_at", local: ["agent_session", "agent_cwd"] },
   { name: "runs", key: ["id"], newer: "coalesce(finished_at, started_at, created_at)", local: ["profile_id", "lane", "not_before"] },

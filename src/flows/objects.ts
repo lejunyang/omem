@@ -24,6 +24,7 @@ export function latestCodeWork(app: App, item: Item): CodeWorkDetail | null {
 
 /** Built-in registry. Plugin registration is deliberately left to a later phase. */
 export const flowObjects: readonly ObjectKind[] = [
+  { kind: "fixes", label: "改", find: () => null },
   { kind: "trials", label: "试验", find: (app, item) => {
     const c = continuing(app, item.id);
     return c ? { ref: `trials:${c.direction.id}`, title: c.direction.goal, status: c.direction.state, done: false, link: `#/items/${item.id}` } : null;

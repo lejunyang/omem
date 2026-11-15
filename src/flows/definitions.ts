@@ -13,18 +13,18 @@ const slug = z.string({ error: "id 必须是文字" }).regex(/^[a-z0-9][a-z0-9-]
 const text = (max: number) => z.string({ error: "必须填写文字" }).trim().min(1, "文字不能为空").max(max, `文字不能超过 ${max} 字符`);
 export const tierSchema = z.enum(["strong", "standard", "cheap"]);
 const aiChoice = z.object({ profile: text(200), model: text(200).optional(), effort: text(100).optional() }).strict();
-export const budgetSchema = z.object({ minutes: z.number().positive("分钟预算必须大于 0").max(525600).optional(), trials: z.number().int().nonnegative("试验预算不能小于 0").max(100000).optional() }).strict();
+export const budgetSchema = z.object({ minutes: z.number().positive("分钟预算必须大于 0").max(525600).optional(), fixes: z.number().int().min(0).max(20).optional(), trials: z.number().int().nonnegative("试验预算不能小于 0").max(100000).optional() }).strict();
 const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "时刻必须写成 HH:mm（00:00–23:59）");
 const weekdays = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 const carrier = z.union([
   z.object({ run: z.object({ agent: slug.optional(), skill: slug.optional() }).strict() }).strict(),
-  z.object({ object: z.literal("trials"), agent: slug.optional(), skill: slug.optional() }).strict(),
+  z.object({ object: z.enum(["trials", "fixes"]), agent: slug.optional(), skill: slug.optional() }).strict(),
   z.object({ object: z.enum(["code-work", "design"], { error: "第一期对象只支持 code-work 和 design；插件对象在后续阶段实现" }) }).strict(),
   z.enum(["owner", "wait"]),
 ], { error: "承担者只能是 run、object、owner 或 wait；person 和插件对象在后续阶段实现" });
 const stageSchema = z.object({
   id: slug, name: text(200), note: text(1000).optional(), needs: z.array(slug).optional(), when: text(300).optional(), by: carrier,
-  tools: z.array(z.string().refine((n) => TOOL_GROUPS.find((g) => g.id === "study")!.tools.includes(n), "阶段 tools 只允许 study 分组里的工具")).max(5).optional(),
+  tools: z.array(z.string().refine((n) => TOOL_GROUPS.find((g) => g.id === "study")!.tools.includes(n), "阶段 tools 只允许 study 分组里的工具")).max(6).optional(),
   done: z.union([text(300), z.object({ signal: z.enum(["git.pushed", "git.merged"]) }).strict(), z.object({ object: z.enum(["code-work", "design"], { error: "插件对象在后续阶段实现" }), status: z.union([text(100), z.array(text(100)).min(1, "至少写一个状态")]) }).strict()], { error: "完成规则只能是 confirm、Git 信号、对象状态或一句话；插件对象在后续阶段实现" }).optional(),
   gate: z.enum(["auto", "confirm"], { error: "关卡只能是 auto 或 confirm；指定 person 在后续阶段实现" }).default("auto"), fixed: z.boolean().default(false),
   ai: z.union([tierSchema, aiChoice]).optional(), at: clock.optional(),
@@ -42,7 +42,8 @@ export const flowSchema = z.object({
     if (seen.has(s.id)) ctx.addIssue({ code: "custom", path: ["stages", i, "id"], message: "阶段 id 不能重复" });
     for (const n of s.needs ?? []) if (!seen.has(n)) ctx.addIssue({ code: "custom", path: ["stages", i, "needs"], message: `前提 ${n} 必须是列表中更早的阶段` });
     seen.add(s.id);
-    const isRun = typeof s.by === "object" && ("run" in s.by || s.by.object === "trials");
+    const isRun = typeof s.by === "object" && ("run" in s.by || ["trials", "fixes"].includes(s.by.object));
+    if (s.tools?.includes("study_push")) ctx.addIssue({ code: "custom", path: ["stages", i, "tools"], message: "study_push 只能由宿主按范围临时授予" });
     if (s.tools?.length && !isRun) ctx.addIssue({ code: "custom", path: ["stages", i, "tools"], message: "附加工具只适用于运行或 trials 阶段" });
     if (s.ai && !isRun) ctx.addIssue({ code: "custom", path: ["stages", i, "ai"], message: "指定 AI 只适用于由运行承担的阶段" });
     if (s.budget?.minutes !== undefined && !isRun) ctx.addIssue({ code: "custom", path: ["stages", i, "budget"], message: "时间预算只适用于由运行承担的阶段" });
@@ -65,17 +66,18 @@ export function describeFlow(f: FlowDefinition) {
 }
 /** A stage in the owner's words: who does it, how it starts, what ends it and when it is needed. The definitions page and the confirm card say the same thing. */
 export function describeStage(s: FlowStage) {
+  const fixes = typeof s.by === "object" && "object" in s.by && s.by.object === "fixes";
   const trials = typeof s.by === "object" && "object" in s.by && s.by.object === "trials";
   const object = typeof s.by === "object" && "object" in s.by ? OBJECT_NAMES[s.by.object] : null;
   const run = typeof s.by === "object" && "run" in s.by ? s.by.run : null;
   return {
-    carrier: typeof s.by === "object" && "object" in s.by && s.by.object === "trials" ? "按确认的方向逐个去试" : s.by === "owner" ? "你来做" : s.by === "wait" ? "只等进展" : object ? `跟着${object}走` : `${!run?.agent || run.agent === "assistant" ? "助手来做" : `交给 ${run.agent}`}${run?.skill ? `，用技能 ${run.skill}` : ""}`,
+    carrier: fixes ? "逐条改缺陷，评审通过后重跑" : typeof s.by === "object" && "object" in s.by && s.by.object === "trials" ? "按确认的方向逐个去试" : s.by === "owner" ? "你来做" : s.by === "wait" ? "只等进展" : object ? `跟着${object}走` : `${!run?.agent || run.agent === "assistant" ? "助手来做" : `交给 ${run.agent}`}${run?.skill ? `，用技能 ${run.skill}` : ""}`,
     gate: s.gate === "confirm" ? "开始前先问你" : s.by === "owner" ? "轮到就来找你" : s.by === "wait" ? "轮到就开始等" : "轮到就自己开始",
-    done: typeof s.done === "object" ? "signal" in s.done ? s.done.signal === "git.pushed" ? "改动推到远端就算做完（你也可以自己点做完）" : "改动合进目标分支就算做完" : `${OBJECT_NAMES[s.done.object]}到了 ${[s.done.status].flat().join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : trials ? "队列做完或本轮预算用满就算做完" : object ? `${object}完成就算做完` : s.by === "owner" ? "你说做完就算做完" : "交了结果就算做完",
+    done: typeof s.done === "object" ? "signal" in s.done ? s.done.signal === "git.pushed" ? "改动推到远端就算做完（你也可以自己点做完）" : "改动合进目标分支就算做完" : `${OBJECT_NAMES[s.done.object]}到了 ${[s.done.status].flat().join(" / ")} 算做完` : s.done === "confirm" ? "做完要你点头" : s.done ? bare(s.done) : fixes ? "改完并重跑或预算用满就算做完" : trials ? "队列做完或本轮预算用满就算做完" : object ? `${object}完成就算做完` : s.by === "owner" ? "你说做完就算做完" : "交了结果就算做完",
     when: s.when ? `只在需要时做：${bare(s.when)}` : "",
     ai: s.ai || s.escalate ? `${aiWords(s.ai)}${s.escalate ? `；拿不准时最多请${aiWords(s.escalate.to).replace(/^用/, "")}看 ${s.escalate.max} 次` : ""}` : "",
     time: [s.at ? `这一轮 ${s.at} 以后开始` : "", s.window ? `只在 ${s.window.replace("-", "–")} 之间开始` : ""].filter(Boolean).join("；"),
-    budget: [typeof s.by === "object" && "object" in s.by && s.by.object === "trials" && s.budget?.trials !== undefined ? `最多 ${s.budget.trials} 个试验` : "", s.budget?.minutes !== undefined ? `最多跑 ${s.budget.minutes} 分钟` : ""].filter(Boolean).join("、"),
+    budget: [fixes ? `最多改 ${s.budget?.fixes ?? 2} 条` : "", typeof s.by === "object" && "object" in s.by && s.by.object === "trials" && s.budget?.trials !== undefined ? `最多 ${s.budget.trials} 个试验` : "", s.budget?.minutes !== undefined ? `最多跑 ${s.budget.minutes} 分钟` : ""].filter(Boolean).join("、"),
   };
 }
 

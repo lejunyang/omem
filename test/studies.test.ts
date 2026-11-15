@@ -90,7 +90,7 @@ describe("课题定义与内置材料", () => {
     const app = fixture(), root = resolve(".");
     expect(seedBuiltinFlows(app, root)).toContain("study");
     const f = parseFlow(readFileSync(join(root, "flows/library/study.yaml"), "utf8"));
-    expect(f.repeat).toEqual({ from: "plan", every: "manual" }); expect(f.stages.map((s) => s.id)).toEqual(["map", "plan", "try", "summary"]);
+    expect(f.repeat).toEqual({ from: "plan", every: "manual" }); expect(f.stages.map((s) => s.id)).toEqual(["map", "plan", "try", "summary", "fix"]);
     const added = seedBuiltinSkills(app, root);
     for (const n of ["study-map", "study-plan", "study-trial", "study-summary"]) { expect(added).toContain(n); expect(readSkill(app, n).body).toContain("# "); }
     const path = join(app.libraryDir, "_skills/study-map/SKILL.md"); writeFileSync(path, "---\nname: study-map\ndescription: 自定\n---\n自定内容\n");
@@ -420,6 +420,11 @@ describe("台账随事项拉取", () => {
     run(remote.db, "update study_directions set workspace_run_id='remote-holder',third_party=1,allow_code=1 where id=?", d.id);
     const t = trials(remote, item.id)[0]; run(remote.db, "update study_trials set result='failed',state='reported',evidence=? where id=?", JSON.stringify([`src:${b.id}#L2`]), t.id);
     const finding = recordFinding(remote, { item: item.id, kind: "defect", title: "内容遗漏", repro: `核对 src:${b.id}#L2`, trials: [t.id] });
+    run(remote.db, "update study_scopes set push_remote='origin',push_prefix='study/' where item_id=?", item.id);
+    run(remote.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",env,state,result,fix_of,work_id,created_at,updated_at)
+      values('st-rerun',?,?,1,2,'复现对象','复现检查','local','reported','passed',?,'run-fix',?,?)`, item.id, d.id, finding, now(), now());
+    run(remote.db, `insert into study_pushes(id,item_id,trial_id,repo,remote,branch,"commit",note,run_id,round,flow_started_at,at)
+      values('sp-test',?,'st-rerun','repo-example','origin','study/demo/check','abcdef','验证推送','run-fix',1,'demo',?)`, item.id, now());
     async function pull() {
       const dir = join(local.home, `snapshot-${Math.random().toString(36).slice(2)}`); mkdirSync(dir);
       const archive = join(dir, "snapshot.tar"); await pipeline(await snapshotStream(remote), createWriteStream(archive)); execFileSync("tar", ["-xf", "snapshot.tar"], { cwd: dir });
@@ -428,6 +433,9 @@ describe("台账随事项拉取", () => {
     }
     await pull(); expect(trial(local, t.id).check).toBe(`读 src:${a.id}#L3`); expect(JSON.parse(trial(local, t.id).evidence)).toEqual([`src:${a.id}#L3`]); expect(direction(local, d.id).note).toBe("只读材料"); expect(findings(local, item.id)[0].id).toBe(finding);
     expect(scopeView(local, item.id)).toMatchObject({ repos: [], allowCode: true, thirdParty: true });
+    expect(scopeView(local, item.id)).toMatchObject({ pushRemote: "origin", pushPrefix: "study/" });
+    expect(trial(local, "st-rerun")).toMatchObject({ fix_of: finding, work_id: "run-fix", result: "passed" });
+    expect(studyView(local, item.id).pushes).toMatchObject([{ id: "sp-test", trialId: "st-rerun", remote: "origin", commit: "abcdef" }]);
     expect(direction(local, d.id)).toMatchObject({ third_party: 1, allow_code: 1, workspace_run_id: null });
     run(remote.db, "update study_findings set state='confirmed',updated_at='2099-01-01' where id=?", finding); await pull(); expect(findings(local, item.id)[0].state).toBe("confirmed");
   });

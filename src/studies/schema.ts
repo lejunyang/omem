@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const text = (max = 4000) => z.string().trim().min(1).max(max);
 export const resultSchema = z.enum(["passed", "failed", "blocked", "unclear"]);
+export const studyPushSchema = z.object({ trial: text(100), name: z.string().regex(/^[a-z0-9-]{1,40}$/), note: text(4000) }).strict();
 export const findingSchema = z.object({ kind: z.enum(["defect", "gap", "idea"]), title: text(300), repro: text(12000) });
 export const proposalSchema = z.object({
   item: text(100), note: z.string().max(4000).optional(),

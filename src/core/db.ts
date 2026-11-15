@@ -2038,6 +2038,17 @@ export const migrations: readonly string[] = [
    alter table study_directions add column workspace_run_id text;
    alter table study_trials add column commits text not null default '{}';
    alter table study_findings add column work_id text;`,
+  `alter table study_scopes add column push_remote text not null default '';
+   alter table study_scopes add column push_prefix text not null default '';
+   alter table study_trials add column fix_of text;
+   alter table study_trials add column work_id text;
+   create index study_trials_fix on study_trials(fix_of,work_id,seq);
+   create table study_pushes (
+     id text primary key, item_id text not null references items(id), trial_id text not null,
+     repo text not null, remote text not null, branch text not null, "commit" text not null,
+     note text not null, run_id text not null, round integer not null, flow_started_at text not null, at text not null
+   );
+   create index study_pushes_item on study_pushes(item_id,at);`,
 ];
 
 export type Db = DatabaseSync;

@@ -7,6 +7,7 @@ import { getSpace } from "../core/spaces.ts";
 import { json, now } from "../core/util.ts";
 import { getRun } from "../agents/runs.ts";
 import { worktreesOf } from "../agents/code.ts";
+import { codeWork } from "../agents/code-works.ts";
 import type { WorktreeRef } from "../agents/worktree-index.ts";
 import { leaseWorkspaceAsync, releaseWorkspaceAsync, workDirOf, MAX_POOL, managedSlot } from "../agents/workspaces.ts";
 import type { Direction } from "./store.ts";
@@ -25,6 +26,21 @@ export async function captureBaseline(app: App, item: string) {
     if (root) { const r = await gitAsync(root, ["rev-parse", "HEAD"], { timeoutMs: 5000 }); if (r.ok) baseline[repo.id] = r.stdout.trim(); }
   }
   return baseline;
+}
+/** Never reset or clean a code work's checkout during verification. */
+export async function fixWorkspace(app: App, item: string, work: string) {
+  const w = codeWork(app, work);
+  if (!w || w.item?.id !== item) throw new Error("交办不属于这个课题");
+  const refs = [...w.roundList].reverse().flatMap((r) => worktreesOf(app, r.id));
+  const selected = studyScope(app, item).repos.map((repo) => {
+    const wt = refs.find((r) => r.space === repo.id);
+    if (!wt || !existsSync(workDirOf(wt))) throw new Error(`${repo.name} 的交办工作区不可用`);
+    return wt;
+  });
+  if (!selected.length) throw new Error("课题没有登记仓库");
+  const commits: Record<string, string> = {};
+  for (const wt of selected) commits[wt.space] = await checked(workDirOf(wt), ["rev-parse", "HEAD"]);
+  return { cwd: workDirOf(selected[0]), commits, note: `## 交办工作区\n${selected.map((w) => `${w.space}：${workDirOf(w)}（${commits[w.space]}）`).join("\n")}` };
 }
 function saveRefs(app: App, owner: string, refs: WorktreeRef[]) {
   const r = getRun(app, owner);

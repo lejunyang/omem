@@ -9,8 +9,8 @@ import { cleanupStudyWorkspaces } from "./workspace.ts";
 
 export type PlannedTrial = { object: string; check: string; prior?: string };
 export type Direction = { id: string; item_id: string; round: number; goal: string; approach: string; acceptance: string; env: string; estimate: string; state: "proposed" | "confirmed" | "active" | "done" | "dropped"; conclusion: string; note: string; plan: string; removed: string; baseline: string; third_party: number; allow_code: number; workspace_run_id: string | null; created_at: string; updated_at: string };
-export type Trial = { id: string; item_id: string; direction_id: string; round: number; seq: number; object: string; check: string; env: string; state: "queued" | "running" | "reported" | "skipped"; result: TrialReport["result"] | null; summary: string; evidence: string; run_id: string | null; attempts: number; prior: string | null; findings: string; unsure: number; failures: number; escalated: number; commits: string; created_at: string; updated_at: string };
-export type Finding = { id: string; item_id: string; kind: FindingInput["kind"]; title: string; repro: string; trials: string; state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; state_reason: string; same_as: string | null; work_id: string | null; created_at: string; updated_at: string };
+export type Trial = { fix_of: string | null; work_id: string | null; id: string; item_id: string; direction_id: string; round: number; seq: number; object: string; check: string; env: string; state: "queued" | "running" | "reported" | "skipped"; result: TrialReport["result"] | null; summary: string; evidence: string; run_id: string | null; attempts: number; prior: string | null; findings: string; unsure: number; failures: number; escalated: number; commits: string; created_at: string; updated_at: string };
+export type Finding = { round: number; flow_started_at: string | null; id: string; item_id: string; kind: FindingInput["kind"]; title: string; repro: string; trials: string; state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; state_reason: string; same_as: string | null; work_id: string | null; created_at: string; updated_at: string };
 export const directions = (app: App, item: string) => all<Direction>(app.db, "select * from study_directions where item_id=? order by created_at,rowid", item);
 export const trials = (app: App, item: string) => all<Trial>(app.db, "select * from study_trials where item_id=? order by direction_id,seq", item);
 export const findings = (app: App, item: string) => all<Finding>(app.db, "select * from study_findings where item_id=? order by created_at,rowid", item);
@@ -56,7 +56,7 @@ export function confirmDirection(app: App, id: string, note: string, baseline: R
 }
 export function continuing(app: App, item: string) {
   for (const d of directions(app, item).filter((d) => ["confirmed", "active"].includes(d.state))) {
-    const n = one<{ n: number }>(app.db, "select count(*) n from study_trials where item_id=? and direction_id=? and state in ('queued','running')", item, d.id)!.n;
+    const n = one<{ n: number }>(app.db, "select count(*) n from study_trials where item_id=? and direction_id=? and fix_of is null and state in ('queued','running')", item, d.id)!.n;
     if (n) return { direction: d, remaining: n };
   }
   return null;
@@ -108,7 +108,7 @@ export function setFindingState(app: App, item: string, id: string, state: "conf
 }
 
 /** A flow that proposes directions or runs trials keeps a ledger. */
-export const isStudy = (f: ItemFlow) => f.definition.stages.some((d) => d.tools?.includes("propose_directions") || typeof d.by === "object" && "object" in d.by && d.by.object === "trials");
+export const isStudy = (f: ItemFlow) => f.definition.stages.some((d) => d.tools?.includes("propose_directions") || typeof d.by === "object" && "object" in d.by && ["trials", "fixes"].includes(d.by.object));
 /** Findings keep their creation round; merges and later owner decisions do not create another. */
 export function idleRounds(app: App, item: string, includeCurrent = false, at = now()) {
   const f = itemFlow(app, item);

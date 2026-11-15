@@ -22,7 +22,7 @@ export function registerStudyRoutes(server: FastifyInstance, app: App, who: (req
   server.get("/api/items/:id/study", async (req) => studyView(app, itemId(req, false)));
   server.get("/api/items/:id/study/scope", async (req) => scopeView(app, itemId(req, false)));
   server.put("/api/items/:id/study/scope", async (req) => {
-    const id = itemId(req, true), b = z.object({ repos: z.array(z.string()).max(100).optional(), allowCode: z.boolean().optional(), thirdParty: z.boolean().optional() }).safeParse(req.body);
+    const id = itemId(req, true), b = z.object({ repos: z.array(z.string()).max(100).optional(), allowCode: z.boolean().optional(), thirdParty: z.boolean().optional(), pushRemote: z.string().max(100).optional(), pushPrefix: z.string().max(200).optional() }).safeParse(req.body);
     if (!b.success) throw new HttpError(400, "范围字段不对");
     return studyOperation(app, id, async () => {
       const view = putScope(app, id, b.data, who(req));

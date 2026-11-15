@@ -14,6 +14,7 @@ import type { Proposal, TrialReport } from "./schema.ts";
 import { studyScope } from "./scope.ts";
 import { checkDirectionChoice, resolveEnv, thirdPartyReason } from "./envs.ts";
 import { captureBaseline } from "./workspace.ts";
+import { studyPushes } from "./push.ts";
 import { findingFix } from "./fix.ts";
 
 /** Resolve the stage from the host's flow copy, never from the caller's task text. */
@@ -110,7 +111,10 @@ export async function reportTrial(app: App, report: TrialReport, by: FlowActor) 
 export function readLedger(app: App, input: { item: string; direction?: string; object?: string; result?: string; round?: number; limit?: number }, runId: string | null) {
   assertLedgerReader(app, runId);
   const selected = trials(app, input.item).filter((t) => (!input.direction || t.direction_id === input.direction) && (!input.object || t.object.includes(input.object)) && (!input.result || t.result === input.result) && (!input.round || t.round === input.round)).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, input.limit ?? 200);
-  return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}）\n${t.summary}\n证据：${t.evidence}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => `${f.id}（${f.state}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${findingFix(app, f)?.status ?? "交办记录不可用"}` : ""}`)].join("\n\n");
+  return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}）\n${t.summary}\n证据：${t.evidence}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => {
+    const fix = findingFix(app, f);
+    return `${f.id}（${f.state}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${fix?.status ?? "交办记录不可用"}；重跑：${fix?.verified ?? "未验证"}；试验：${fix?.reruns.join("、") || "无"}` : ""}`;
+  })].join("\n\n");
 }
 /** The owner picks this round's direction on the item page (null: no run this round): the same answer as on the card. */
 export async function chooseDirection(app: App, itemId: string, directionId: string | null, note: string | undefined, by: string, allowCode?: boolean) {
@@ -137,10 +141,10 @@ export function studyView(app: App, itemId: string) {
     const evidence = json<string[]>(t.evidence, []);
     return { id: t.id, directionId: t.direction_id, round: t.round, seq: t.seq, object: t.object, check: t.check, env: t.env, state: t.state, result: t.result, summary: t.summary,
       evidence, artifacts: artifactsByIds(app, evidence.filter((r) => !r.startsWith("src:"))), findings: json<{ kind: string; title: string; repro: string }[]>(t.findings, []),
-      commits: json<Record<string, string>>(t.commits, {}), runId: t.run_id, attempts: t.attempts, prior: t.prior, unsure: !!t.unsure, escalated: !!t.escalated, updatedAt: t.updated_at };
+      fixOf: t.fix_of, workId: t.work_id, commits: json<Record<string, string>>(t.commits, {}), runId: t.run_id, attempts: t.attempts, prior: t.prior, unsure: !!t.unsure, escalated: !!t.escalated, updatedAt: t.updated_at };
   };
   return {
-    scope: studyScope(app, itemId),
+    scope: studyScope(app, itemId), pushes: studyPushes(app, itemId),
     directions: directions(app, itemId).map((d) => {
       const own = history.filter((t) => t.direction_id === d.id);
       return { id: d.id, round: d.round, goal: d.goal, approach: d.approach, acceptance: d.acceptance, env: d.env, estimate: d.estimate, state: d.state, conclusion: d.conclusion, note: d.note,
