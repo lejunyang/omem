@@ -97,6 +97,44 @@ git diff --check
 
 定向命令最终为 `Test Files  13 passed (13)`、`Tests  198 passed | 1 skipped (199)`，退出 0；跟进专项 21 条全过。`npx tsc --noEmit -p .` 退出 0。一次 Vitest worker 通信超时后，同一命令复跑通过；HTTP 收尾有异步警告，详情和命令见本次变更记录。只验服务端与既有提问机制，不更新网页或截图。真实 Codex 尝试因当前环境找不到主目录而未启动，真实模型与渠道效果待验。
 
+## 流程第四期服务端：补录、签字、关卡、每日上限和看板（2026-11-15）
+
+| 编号 | 操作 | 预期 | 验证 |
+| --- | --- | --- | --- |
+| flow-f3-01 | 对 pending / gated 补录，前提未完成也补录，doing 补录及非本人调用；重开 | 说明非空，依据有效，owner 记日志、撤回提问；后继按原 needs 推进，不替前面补完成；doing 拒绝；重开清掉 recorded | `test/flows-http.test.ts` |
+| flow-f3-02 | 每条结果签 ok / wrong / null，跨阶段或轮次签字，重交同名结果，全部标 ok | 限事项本人及当前展示范围，null 清空；新行签字为空；全部 ok 不确认阶段 | 同上 |
+| flow-f3-03 | 标 wrong 并写备注，对阶段“还不行”重开 | 下一次任务附上 wrong 的用例名及备注，只带 wrong | 同上、`test/flows.test.ts` |
+| flow-f3-04 | 连续 N 次直接开始，期间先别做或跳过；固定关卡、修改意见、自动上限的确认 | 满 N 次才提议，先别做和跳过清零，fixed 不参与，修改意见重计，上限提问不计 | `test/flow-gates.test.ts` |
+| flow-f3-05 | 拒绝升级后再同意、非本人回答或篡改被问者；同意升级并走流程 | 拒绝后重新累计 N 次；只认本人回答；授权后自动开始，仍受 autoAdvance 限制 | 同上 |
+| flow-f3-06 | 授权自动开始后重开或 hold，手动撤销，改阶段 id，再拉授权与撤销 | 撤销记时间线，下次先问；列表只带当前用户授权；旧阶段授权失效；撤销墓碑随事项合并 | 同上、`test/flows-http.test.ts` |
+| flow-f3-07 | 达每日跟进上限，反复巡检，次日再巡检，设置 0，跨 UTC 日期 | 不起运行、不动游标；当日仅一条提示；按配置时区换日恢复，0 不限；只数起过运行的 context.batch | `test/flow-follow.test.ts` |
+| flow-f3-08 | 取看板、两个筛选、成员可读与私有事项、完成与停止、48 件流程 | 与事项摘要选择同一段，停留超时有 stale；mine 只取本人待办；blocked 可与 mine 重叠；不可读和已结束不出现；不逐件读 flowView | `test/flow-board.test.ts` |
+
+每个切片使用同一条定向命令，未跑全量测试或 vue-tsc：
+
+```sh
+npx vitest run test/flows.test.ts test/flows-http.test.ts test/flow-follow.test.ts test/flow-gates.test.ts test/flow-board.test.ts test/flow-rounds.test.ts test/flow-signals.test.ts test/esm.test.ts test/tool-help.test.ts test/role-tools.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts --maxWorkers=2 --configLoader native --cache=false
+npx tsc --noEmit -p .
+git diff --check
+```
+
+本期只验服务端，不改 web/，不暂存、提交或推送。真实模型、真实渠道和新增网页入口未验。
+
+分切片检查的原始汇总如下（同一条 Vitest 命令，尚未创建的专项文件不会计入文件数）：
+
+| 轮次 | Test Files | Tests | 说明 |
+| --- | --- | --- | --- |
+| 补录 | `11 passed (11)` | `141 passed \| 1 skipped (142)` | 退出 0 |
+| 签字 | `2 failed \| 9 passed (11)` | `5 failed \| 137 passed \| 1 skipped (143)` | 另有 `1 error`；均为测试超时及 worker onTaskUpdate 超时，无断言失败 |
+| 关卡 | `1 failed \| 11 passed (12)` | `4 failed \| 144 passed \| 1 skipped (149)` | 测试把已答升级询问算成待答，已修正为只取 pending |
+| 每日上限 | `12 passed (12)` | `150 passed \| 1 skipped (151)` | 退出 0 |
+| 看板 | `13 passed (13)` | `153 passed \| 1 skipped (154)` | 退出 0 |
+| 最终回归 | `13 passed (13)` | `156 passed \| 1 skipped (157)` | 退出 0，唯一跳过仍为既有 Windows SSH 拉取用例 |
+
+首次类型检查发现测试辅助代码的四处类型错误（事项动作发起者枚举、Ask 的 handler 字段），修正后类型检查通过。随后补了相同毫秒的新旧结果顺序、授权运行暂停的取消、用户间次数隔离与最后一段补录说明保留的验证。
+
+最终 `npx tsc --noEmit -p .` 退出 0，无类型错误；`git diff --check` 退出 0，无输出。`git diff --name-only -- web` 无输出；没有暂存或提交。最终 Vitest 用时 216.06 秒。
+
 ## 每晚抽检
 
 | # | 操作 | 预期 | 状态 |

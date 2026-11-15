@@ -16,7 +16,7 @@ import { loadRole } from "../src/agents/runner.ts";
 import * as runner from "../src/agents/runner.ts";
 import { saveFlow } from "../src/flows/definitions.ts";
 import { startFlow, stopFlow, flowView, flowReminders, ownerAction } from "../src/flows/engine.ts";
-import { followContexts, finishFollow, noteItemChange, recentChanges, settleChange } from "../src/flows/follow.ts";
+import { followContexts, followLimit, finishFollow, noteItemChange, recentChanges, settleChange } from "../src/flows/follow.ts";
 import { startServer } from "../src/server/http.ts";
 import { getStage } from "../src/flows/store.ts";
 import { testApp } from "./helpers.ts";
@@ -56,6 +56,35 @@ afterEach(async () => {
 });
 
 describe("流程上下文跟进", () => {
+  it("每天达到上限保留游标和新内容，只记一次，次日恢复；零不限", async () => {
+    const t = await setup();
+    t.app.config.flows.follow.maxRunsPerDay = 1;
+    const { r } = await t.processing();
+    finishFollow(t.app, r); run(t.app.db, "update runs set status='done' where id=?", r.id);
+    t.message();
+    const cursor = one(t.app.db, "select * from item_follow_cursors where item_id=?", t.item.id);
+    await followContexts(t.app); await followContexts(t.app);
+    expect(t.queued()).toHaveLength(1);
+    expect(one(t.app.db, "select * from item_follow_cursors where item_id=?", t.item.id)).toEqual(cursor);
+    const signals = all<{ outcome: string }>(t.app.db, "select outcome from flow_signals where json_extract(keys,'$.capped')=1");
+    expect(signals).toEqual([{ outcome: "今天已经看了 1 批，剩下的明天一起看" }]);
+    expect(flowView(t.app, t.item.id).flow!.followCapped).toBe(true);
+    expect(Array.isArray(flowView(t.app, t.item.id).follow)).toBe(true);
+    await followContexts(t.app, new Date(Date.now() + 86400000)); expect(t.queued()).toHaveLength(2);
+    run(t.app.db, "update runs set status='done' where kind='item-follow'");
+    t.app.config.flows.follow.maxRunsPerDay = 0;
+    await followContexts(t.app); expect(t.queued()).toHaveLength(3);
+    expect(flowView(t.app, t.item.id).flow!.followCapped).toBe(false);
+  });
+  it("按配置时区数起过运行的批次，跨 UTC 日期仍属同一天；无关和上限提示不占额度", async () => {
+    const t = await setup(); t.app.config.timezone = "America/Los_Angeles"; t.app.config.flows.follow.maxRunsPerDay = 2;
+    for (const [at, keys] of [
+      ["2026-11-30T23:00:00.000Z", { runId: "first" }], ["2026-12-01T00:00:00.000Z", { runId: "second" }],
+      ["2026-12-01T00:10:00.000Z", {}], ["2026-12-01T00:20:00.000Z", { capped: true }],
+    ] as const) run(t.app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,'context.batch',?,?,'','示例')", at, JSON.stringify(keys), t.item.id);
+    expect(followLimit(t.app, t.item.id, new Date("2026-12-01T01:00:00.000Z"))).toEqual({ capped: true, count: 2, noted: true });
+    expect(followLimit(t.app, t.item.id, new Date("2026-12-01T09:00:00.000Z"))).toEqual({ capped: false, count: 0, noted: false });
+  });
   it("关闭跟进不处理；开始后回溯追加的历史消息不当作新内容", async () => {
     const t = await setup();
     t.message("user", 60); await followContexts(t.app, new Date(Date.now() + 21 * 60000)); expect(t.queued()).toHaveLength(0);

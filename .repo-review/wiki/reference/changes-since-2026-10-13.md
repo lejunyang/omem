@@ -23,6 +23,17 @@ updated: 2026-11-15
 每日简报的 brief 处理器从台账拼“上一轮的探索”，按原有 brief_at 只纳入新结束的课题轮次；成功才推进边界，生成期间新结束的留给下次。模型照材料写，不给它 read_ledger。coach 精确清单增加只读 read_ledger，按课题技能或阶段读失败、拿不准与被否决发现及原因，提出技能建议。未改网页、台账行为、表、设置或接口；真实模型待验。
 
 入口：`src/insights/insights.ts`、`src/agents/study-brief.ts`、`src/agents/jobs.ts`、`roles/brief.md`、`roles/coach.md`；验收见 `docs/v2/acceptance.md` 的 study-d4。
+## 流程第四期的一部分：本人补录、逐条签字、关卡升降、每日上限和看板数据（11-15）
+
+本期只改服务端与测试，新增网页入口由独立任务接入。未到或等确认阶段可由本人写说明补记完成，可附 src: / run: / design: 依据；不要求前提已完成，后面仍按原推进规则走，重开清除 recorded。验证结果每行可签 ok / wrong / 撤销，范围与 stageTests 一致；新结果不继承旧签字，全 ok 不自动确认，本人重开时把 wrong 的用例名及备注带进新任务。
+
+`src/flows/gates.ts` 沿用审批阶梯的本人提问和 kv 标记，按流程、阶段、用户累计直接开始，默认五次问一次；先别做、跳过或改要求重新计数，fixed 与自动上限提问不参与。明确选“以后直接开始”才写 flow_gate_grants，授权不绕过 autoAdvance；因授权自动开始的阶段被本人重开、暂停或拒绝完成时撤销并记时间线。授权与撤销墓碑随事项拉取；阶段被删除或改 id 后授权失效。req_tests 仍是设备本地结果，签字跟在结果行上，不新增跨设备合并。
+
+跟进用 flow_signals 当天带运行的 context.batch 计数，默认每件每天 12 次，0 不限；按配置时区换日，到限不动游标，每天只记一条提示。flow.followCapped 是布尔值，follow 仍为数组。看板与事项列表共用一次阶段选择查询，不逐件读 flowView；`GET /api/flows/board` 可按 mine / blocked 筛，今日页直接用 mine，卡住且等本人的一项可同时在两个筛选中。
+
+接口、字段、同步选择与未做范围见 `docs/v2/flows.md` 文末“第四期的一部分”。入口：`src/flows/engine.ts`、`gates.ts`、`follow.ts`、`http.ts`，迁移只加在 `src/core/db.ts` 末尾，路由登记在 `src/auth/routes.ts`。未增加工具、角色、定时任务、投影表或触发器，未做 git.commits 的无人认领提交补录。验证见 `docs/v2/acceptance.md` 的 flow-f3 项。
+
+最终按任务指定的十三个文件运行 Vitest（`--maxWorkers=2 --configLoader native --cache=false`）：`Test Files  13 passed (13)`、`Tests  156 passed | 1 skipped (157)`，退出 0；类型检查与 git diff --check 均退出 0。开发中一轮出现五个测试超时和一个 worker 通信错误，另一轮有四个待答询问筛选的测试断言失败，后续重跑与修正通过；完整命令及六轮原始数字在验收文档。本期不改 web/，未暂存、提交或推送，未跑全量测试、vue-tsc、真实模型或真实渠道。
 
 ## 事项页：变化列表和课题的台账（11-15）
 

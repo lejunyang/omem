@@ -197,6 +197,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
 
   // items and requirements (the handlers check whose item it is)
   "GET /api/flows": "self",
+  "GET /api/flows/board": "self",
+  "DELETE /api/flows/:id/gates/:stage": "self",
   "POST /api/flows/validate": "owner",
   "PUT /api/flows/:id": "owner",
   "DELETE /api/flows/:id": "owner",
@@ -213,6 +215,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/items/:id/flow/stages/:stage/skip": "self",
   "POST /api/items/:id/flow/stages/:stage/done": "self",
   "POST /api/items/:id/flow/stages/:stage/reopen": "self",
+  "POST /api/items/:id/flow/stages/:stage/record": "self",
+  "POST /api/items/:id/flow/stages/:stage/tests/:test": "self",
   "POST /api/items/:id/flow/round": "self",
   "POST /api/items/:id/flow/stages/:stage/budget": "self",
   "GET /api/items": "self",

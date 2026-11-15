@@ -2018,6 +2018,16 @@ export const migrations: readonly string[] = [
      status text not null default 'noted', ask_id text, updated_at text not null
    );
    create index item_changes_item_at on item_changes(item_id,at);`,
+  // Owner signatures belong to individual result rows, never to a case name.
+  `alter table req_tests add column owner_verdict text check(owner_verdict in ('ok','wrong'));
+   alter table req_tests add column owner_note text;
+   alter table req_tests add column owner_at text;`,
+  // Durable owner consent travels with items, including revocations.
+  `create table flow_gate_grants (
+     flow_id text not null, stage_id text not null, user_id text not null,
+     granted_at text not null, revoked_at text, updated_at text not null,
+     primary key(flow_id,stage_id,user_id)
+   );`,
 ];
 
 export type Db = DatabaseSync;

@@ -7,6 +7,7 @@ import { commitLibrary } from "../core/git.ts";
 import { HttpError } from "../core/util.ts";
 import type { Item } from "../items/store.ts";
 import { TOOL_GROUPS } from "../agents/tool-help.ts";
+import { pruneGateGrants } from "./gates.ts";
 
 const slug = z.string({ error: "id 必须是文字" }).regex(/^[a-z0-9][a-z0-9-]{0,47}$/, "id 只能用小写字母、数字和连字符，最长 48 字符");
 const text = (max: number) => z.string({ error: "必须填写文字" }).trim().min(1, "文字不能为空").max(max, `文字不能超过 ${max} 字符`);
@@ -120,6 +121,7 @@ export function saveFlow(app: App, raw: string, by: string) {
   const path = file(app, f.id);
   mkdirSync(join(app.libraryDir, "_flows"), { recursive: true });
   writeFileSync(path, raw.endsWith("\n") ? raw : `${raw}\n`);
+  pruneGateGrants(app, f.id, f.stages);
   commitLibrary(app.libraryDir, `${by}: 保存流程 ${f.id}`);
   return f;
 }
@@ -127,6 +129,7 @@ export function removeFlow(app: App, id: string, by = "user") {
   const path = file(app, id);
   if (!existsSync(path)) throw new HttpError(404, `没有流程 ${id}`);
   unlinkSync(path);
+  pruneGateGrants(app, id, []);
   commitLibrary(app.libraryDir, `${by}: 删除流程 ${id}`);
 }
 export function flowsFor(app: App, item: Pick<Item, "kind" | "spaceId">) {

@@ -1,6 +1,6 @@
 # 流程：让一件事自己往前走
 
-状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端已实现（2026-11-15）。专门的飞书进度卡版式尚未实现。第 5 节其余信号、第 6 节的现状摘要，以及插件、看板、今日页和阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
+状态：第一期服务端与网页、第二期 Git 信号与上下文跟进服务端，以及第四期的补录、逐条签字、关卡升降、每日跟进上限和看板数据已实现（2026-11-15）。专门的飞书进度卡版式尚未实现。第 5 节其余信号、第 6 节的现状摘要，以及插件、看板和今日页的新网页入口、阶段副本的完整编辑仍是后续设计；具体边界见文末各期实现记录。
 
 ## 1. 要解决的问题
 
@@ -177,12 +177,13 @@ stages:
 - **连续自动推进有上限**（`flows.autoAdvance`，默认 3）：没有人参与的情况下连着自动开始了这么多个阶段，下一个不论关卡怎么写都先问本人。和现有的协作循环上限是同一个想法。
 - **一个阶段的运行失败或超时不算完成**，未配置升档时，运行正常结束却没交结果也卡住。写了 `ai / escalate` 的运行阶段可在本轮上限内带反馈换档重做，额度用完只等待原模型，时间预算用完等本人。`done: confirm` 被本人拒绝时带意见重跑，第三次仍被拒就卡住。
 - **停太久会提醒**：`gated`、`blocked` 或本人承担的 `doing` 默认停满 2 个自然日提醒一次；再隔 4 天、8 天，间隔翻倍。“先别做”重新计时，不自动通过。
-- **关卡按授权阶梯升降**是第四期的设计（沿用 `src/agents/approval-ladder.ts` 的做法）：同一个流程的同一个关卡，本人连续直接同意到设定次数，问一次要不要改成自动；不满意后退回确认。第一期只保留 `fixed` 字段，不做升降。
+- **关卡按授权阶梯升降**已接入服务端：同一用户对同一流程、同一阶段的开始关卡连续直接同意，默认满 5 次问一次是否以后直接开始，本人同意才记授权。先别做、跳过或带修改意见会重新计数，上限引起的确认不计数；拒绝升级后要重新连续同意满次数才再问。授权自动开始的阶段被本人重开或暂停时撤销授权，下次先问；`fixed: true` 始终每次问，连续自动推进上限仍生效。
 - **推进不替人做决定**：宿主从不自己把 `confirm` 当成已确认，也不因为“等太久”自动过关。
 
 ### 4.1 重开和补录
 
 - **重开**（工具 `stage_reopen`，或本人在页面上点）：要写原因和依据。常见的来源是上下文跟进发现需求变了（第 6 节）、评审之后又有提交、部署失败。
+- **本人手动补录**已接入服务端：未到或等确认的阶段，本人可写说明和可选依据记成已经完成，不要求前提已满足；后继仍按原来的前提和关卡推进。重开后清除补录标记。助手不能代本人补录。
 - **补录**（代码在前）：宿主看到某个仓库的分支上有提交，却没有任何事项关联它（信号 `git.commits`），交给助手判断：关联到已有的事项，还是建议新建一件。新建时直接给“编码”补上依据，“澄清”“方案”标成补录，由助手从提交和讨论里反推需求点，本人在一张卡片上确认。这样台账不会和实际的代码脱节。
 
 ## 5. 信号
@@ -381,7 +382,7 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 
 工具（新分组 `flow`）：`flow_start`、`stage_report`（做完了 / 卡住了 / 建议跳过，附依据）、`stage_reopen`、`attach_object`、`note_item_change`、`save_flow`；`read_item` 多返回流程。写入照常按空间和事项的主人限定。
 
-接口：第一期是 `GET /api/flows`、`PUT/DELETE /api/flows/:id`、`GET/POST/DELETE /api/items/:id/flow`、`POST /api/items/:id/flow/stages/:stage/{confirm,hold,skip,reopen,done}`；具体响应见“第一期的实现”。`GET /api/board`、`GET /api/insights` 留待后续。
+接口：第一期是 `GET /api/flows`、`PUT/DELETE /api/flows/:id`、`GET/POST/DELETE /api/items/:id/flow`、`POST /api/items/:id/flow/stages/:stage/{confirm,hold,skip,reopen,done}`；具体响应见“第一期的实现”。补录、签字、授权与 `GET /api/flows/board` 见文末第四期记录；数据页接口另见第 10 节。
 
 设置：`flows: { autoAdvance: 3, staleDays: 2, follow: { enabled: true, quietMinutes: 20, maxMessages: 30 } }`。第二期已有本机 `flow_signals`；`flow_objects`、`item_objects` 留待后续。
 
@@ -488,3 +489,34 @@ HTTP 约定：
 本人也可以在事项页逐条处理：`POST /api/items/:id/flow/changes/:change` 收 `{ choice: merge / split / dismiss }`，只限事项本人，效果和在卡片上选一样。这条变化单独占一张卡片时，卡片随之记为已回答；和别的变化同在一张卡片时，这一条先处理，卡片等它上面的变化都处理完再撤回。事项页（`web/src/components/ItemFlow.vue`）把等本人定的变化放在最上面，写明影响哪几段、并进来会重开哪一段，下面列全部变化和在跟哪几处。
 
 不新增定时任务、投影表或触发器，不回读历史，不做会议纪要专门处理，也不生成持续改写的“现状”摘要。真实渠道消息与模型提炼效果需另验；自动测试覆盖批次时机、预筛、权限、引用、本人三种选择、下游待复核、游标与并发。
+
+## 第四期的一部分：补录、逐条签字、关卡升降、看板数据
+
+本期只做服务端、测试和文档，网页由独立任务接入。本人动作都走 HTTP，按事项本人及空间写权限校验，不新增补录、签字或授权工具。
+
+补录复用每事项串行队列、撤回提问和统一阶段写入路径。只允许 pending / gated，说明保存为 `补录：<note>`，actor 为 owner，依据与 stage_report 用同一套存在性校验，但入口只接受 src: / run: / design: 引用。无须满足 needs；之后仍由原推进循环判断前提、关卡和自动上限，不回头替本人完成前面的阶段。`control.recorded` 在视图中成为 `recorded` 布尔值，重开和新轮清掉。
+
+验证签字存在 req_tests 的每一行：`owner_verdict`、`owner_note`、`owner_at`。接口只接受 stageTests 当前展示的结果，即本流程启动后、本阶段当前轮次的运行所交、同用例最新的一行；别的阶段、别的轮次和被新结果替代的行都拒绝。重新交结果的新行没有签字；全部 ok 也不自动确认阶段。本人重开时把 wrong 的用例名及各自备注接在原因后面，作为反馈交给下一次运行；提问卡片的“还不行”也带同一份反馈。req_tests 原来不在 pullTables 中，仍沿用设备本地结果的边界，新列跟随结果行保存在完整数据库快照中，不另加跨设备结果合并。
+
+关卡沿用 approval-ladder 的“只认本人决定、保留决定历史、kv 记连续次数及询问状态、显式回答才升级”的做法。工具阶梯从已答审批倒数连续批准，并有 60 天窗口、30 天询问冷却；流程的直接开始还包括 HTTP 动作，决定留在阶段日志，按 `(flow_id, stage_id, user_id)` 在 kv 记次数和待答询问，不引入那两个时间窗口。设置 `flows.gateLadder: { enabled: true, after: 5 }`，旧配置自动补齐。只统计 confirm 的开始关卡，fixed 不参与；先别做、跳过、附修改意见清零，autoAdvance 导致的提问不计。满次数问一次“以后直接开始 / 还是每次问我”，被问者与实际答者都必须是本人；拒绝以后重新累计。
+
+授权表 `flow_gate_grants` 以流程、阶段、用户作主键，保存 granted_at，另加 revoked_at 和 updated_at 保存撤销及比较新旧。它随事项数据拉取，撤销留墓碑，旧副本不会恢复已撤销的授权；连续次数和待答询问标记仍是设备本地 kv。授权仅把开始关卡当作 auto，自动推进上限、完成确认和时间预算照旧。阶段记下是否因授权自动开始，本人重开、运行中 hold 或拒绝完成结果会撤销，并在事项时间线记一笔。保存或删除流程定义时，已删除、改 id、改成固定或自动关卡的授权和连续次数失效。
+
+上下文跟进加 `flows.follow.maxRunsPerDay`，默认 12，0 不限。按配置时区当天的 context.batch 行中带 runId 的行计数，失败运行也占一次，预筛无关和上限提示不占。到上限不读取处理批次、不动既有游标，也不起运行；有待看的新内容时当天只写一行“今天已经看了 N 批，剩下的明天一起看”。次日继续原来积攒的内容。`follow` 仍是数组，状态另放 `flow.followCapped`。
+
+看板和事项摘要共用 currentStages 的一次有界查询：先按可读空间筛正在进行的流程，再用窗口函数每件取一段，等本人或 blocked 优先，之后 doing，再 pending / stale，同级按定义顺序；不逐件调用 flowView。停留超过 staleDays 标 stale。`only=mine` 只取当前用户自己事项中等本人的；`only=blocked` 按阶段 blocked 筛。卡住且等本人处理的一项可同时出现在两个筛选中，waiting 为 owner。没有未完成阶段的轮间等待不列入看板，已完成或已停止的流程不列入。
+
+接口供网页接入：
+
+| 请求 | 请求内容 | 响应 |
+| --- | --- | --- |
+| `POST /api/items/:id/flow/stages/:stage/record` | `{ note: string, refs?: string[] }`，note 非空、最多 4000 字 | 流程视图；阶段增加 `recorded: boolean`，补录说明与 refs 在 note / evidence 和 log 中 |
+| `POST /api/items/:id/flow/stages/:stage/tests/:test` | `{ verdict: "ok" / "wrong" / null, note?: string }`；null 撤销并清除备注与时间 | 流程视图；每条 tests 增加 `verdict`、`verdictNote`、`verdictAt`，无签字均为 null |
+| `GET /api/flows` | 无 | 原有 `{ flows }`，每份定义增加当前用户的 `grants: [{ stage, grantedAt }]` |
+| `DELETE /api/flows/:id/gates/:stage` | 无，只撤销当前用户自己的授权，重复撤销也成功 | `{ ok: true }` |
+| `GET /api/flows/board?only=mine` 或 `only=blocked`，也可不筛选 | 无请求体 | 数组，每项 `{ itemId, title, spaceId, flowId, flowName, round, stage: { id, name, state }, waiting: "owner" / "blocked" / null, since, stale, dueAt }`；dueAt 可为 null |
+| 原有事项流程读取及写响应 | 不变 | `flow` 非 null 时增加 `followCapped: boolean`；`follow` 形状不变 |
+
+补录与签字沿用 HTTP 层的 question 字段等全部原有视图字段。参数错误 400，非事项本人且能读事项时 403，不可读事项 404，阶段状态不允许补录时 409，不属于当前范围的测试结果 404。看板参数只接受 mine / blocked，其他值 400。今日页直接使用 `only=mine`，不另做接口。
+
+没有做网页与截图、无人认领提交的 git.commits 补录、按空间或事项类型划分授权、插件、回顾或 coach。没有增加定时任务、投影表、触发器，也没有修改 Agent 工具或角色说明。自动验证使用现有流程、HTTP、跟进、轮次、Git 信号、权限及拉取测试，另加 flow-gates 与 flow-board；命令和最终数字记在 acceptance 与变更记录。

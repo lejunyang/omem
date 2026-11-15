@@ -21,6 +21,9 @@ export const TEST_STATUS_LABEL: Record<TestStatus, string> = { passed: "通过",
 export const KEEP_ARTIFACTS = 3;
 
 export type TestResult = {
+  verdict: "ok" | "wrong" | null;
+  verdictNote: string | null;
+  verdictAt: string | null;
   id: string;
   nodeId: string | null;
   spaceId: string | null;
@@ -41,10 +44,12 @@ export type TestResult = {
 };
 
 type Row = {
+  owner_verdict?: "ok" | "wrong" | null; owner_note?: string | null; owner_at?: string | null;
   id: string; node_id: string | null; space_id: string | null; run_id: string; work_id: string | null; round: number; name: string; file: string;
   status: string; mode: string; note: string; commit_sha: string; artifacts: string; pruned: number; created_by: string; at: string;
 };
 const toResult = (r: Row): TestResult => ({
+  verdict: r.owner_verdict ?? null, verdictNote: r.owner_note ?? null, verdictAt: r.owner_at ?? null,
   id: r.id, nodeId: r.node_id, spaceId: r.space_id, runId: r.run_id, workId: r.work_id, round: r.round, name: r.name, file: r.file,
   status: r.status as TestStatus, mode: r.mode, note: r.note, commit: r.commit_sha, artifacts: json(r.artifacts, []), pruned: !!r.pruned, createdBy: r.created_by, at: r.at,
 });
@@ -131,6 +136,12 @@ export function testsOfWork(app: App, o: { workId?: string | null; runId?: strin
     ? all<Row>(app.db, "select * from req_tests where work_id = ? order by at desc, id desc", o.workId)
     : all<Row>(app.db, "select * from req_tests where run_id = ? order by at desc, id desc", o.runId!);
   return rows.map(toResult);
+}
+
+/** A flow stage can span several runs; insertion order breaks ties within the same millisecond. */
+export function testsOfRuns(app: App, runIds: string[]): TestResult[] {
+  if (!runIds.length) return [];
+  return all<Row>(app.db, "select * from req_tests where run_id in (select value from json_each(?)) order by at desc,rowid desc", JSON.stringify(runIds)).map(toResult);
 }
 
 /**
