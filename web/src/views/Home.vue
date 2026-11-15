@@ -6,6 +6,7 @@ import AskCard from "../components/AskCard.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { currentSpace, fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel } from "../store";
+import { boardLine, type BoardRow } from "../lib/flow";
 
 type HomeData = {
   decisions: Item[];
@@ -22,6 +23,12 @@ const question = ref("");
 const asking = ref(false);
 
 const asks = ref<Ask[]>([]);
+/** Items whose flow is at a stage that waits for the owner or is stuck (docs/v2/flows.md §7). */
+const gates = ref<BoardRow[]>([]);
+async function loadGates() {
+  const r = await get<BoardRow[] | { items: BoardRow[] }>("/api/flows/board").catch(() => []);
+  gates.value = (Array.isArray(r) ? r : r.items).filter((x) => x.waiting);
+}
 async function load() {
   data.value = await get<HomeData>("/api/home");
 }
@@ -30,14 +37,17 @@ async function loadAsks() {
   asks.value = (await get<Ask[]>("/api/asks?status=pending").catch(() => [])).filter((a) => a.kind !== "suggestion");
 }
 onMounted(loadAsks);
+onMounted(loadGates);
 onMounted(load);
 const off = onServerEvent((e) => {
   if (e.type === "changed" || e.type === "run" || e.type === "notification") void load();
+  if (e.type === "changed" && e.entity === "item") void loadGates();
   if (e.type === "ask") void loadAsks();
 });
 const offResync = onServerResync(() => {
   void load();
   void loadAsks();
+  void loadGates();
 });
 onBeforeUnmount(() => {
   off();
@@ -59,7 +69,7 @@ const greeting = computed(() => {
   return h < 6 ? "夜深了" : h < 11 ? "早上好" : h < 14 ? "中午好" : h < 18 ? "下午好" : "晚上好";
 });
 const today = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
-const empty = computed(() => data.value && !asks.value.length && !data.value.decisions.length && !data.value.dueSoon.length && !data.value.waiting.length);
+const empty = computed(() => data.value && !asks.value.length && !gates.value.length && !data.value.decisions.length && !data.value.dueSoon.length && !data.value.waiting.length);
 const suggestions = ["我最近有哪些没完成的事？", "上周关于预算的约定是什么？", "这个仓库的整体架构是什么？"];
 </script>
 
@@ -92,6 +102,12 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
               <AskCard :ask="a" @answered="loadAsks" />
               <router-link v-if="a.conversationId" :to="`/ask/${a.conversationId}`" class="muted small">打开对话</router-link>
             </div>
+          </div>
+        </div>
+        <div v-if="gates.length" class="block">
+          <h2 class="section-title row">流程里等你的<span class="spacer" /><router-link to="/board" class="muted small">看板</router-link></h2>
+          <div class="list">
+            <router-link v-for="g in gates" :key="g.itemId" :to="`/items/${g.itemId}`" class="li"><Icon :name="g.stage.state === 'blocked' ? 'alert' : 'check'" :size="16" :class="{ warn: g.stage.state === 'blocked' }" /><div class="grow"><div>{{ g.title }}</div><div class="muted small">{{ g.flowName }} · {{ g.stage.name }} · {{ boardLine(g) }}</div></div></router-link>
           </div>
         </div>
         <div v-if="data.decisions.length" class="block">

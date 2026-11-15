@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { del, get, onServerEvent, onServerResync, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView } from "../lib/flow";
+import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, nextWords, objectStatusWords, ownerTurn, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, verdictWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
 import ItemStudy from "./ItemStudy.vue";
 import RunArtifacts from "./RunArtifacts.vue";
 import { refAction } from "../lib/refs";
@@ -33,6 +33,7 @@ const following = computed(() => {
   if (!places.length) return "";
   const names = places.slice(0, 3).map((p) => p.title || "未命名").join("、") + (places.length > 3 ? ` 等 ${places.length} 处` : "");
   const pending = places.reduce((n, p) => n + p.pending, 0);
+  if (pending && data.value?.flow?.followCapped) return `在跟：${names}。今天已经读了不少批，还有 ${pending} 条新内容明天一起看。`;
   return `在跟：${names}。${pending ? `有 ${pending} 条新内容，等那边安静下来一起看。` : "有新结论会列在这里。"}`;
 });
 const completed = computed(() => !!data.value?.flow?.endedAt && data.value.stages.every((s) => ["done", "skipped"].includes(s.state)));
@@ -109,6 +110,24 @@ async function settle(c: FlowChange, choice: string) {
   const id = props.itemId;
   await mutate(id, `/api/items/${id}/flow/changes/${encodeURIComponent(c.id)}`, { choice });
 }
+/** The owner says a stage that has not begun was already done before the flow started, and what shows it. */
+async function record(s: FlowStage) {
+  const id = props.itemId, generation = epoch;
+  const answer = await promptDialog(`「${s.name}」已经做过了`, { message: "记成做完，不再去做。写一句是怎么做的、结果在哪，以后翻这件事的经过时看得到。", fields: [{ id: "note", label: "当时是怎么做的", value: "", required: true, maxLength: 4000 }], okText: "记成做完" });
+  if (!answer?.note.trim() || generation !== epoch) return;
+  await mutate(id, `/api/items/${id}/flow/stages/${encodeURIComponent(s.id)}/record`, { note: answer.note.trim() });
+}
+/** The owner's word on one reported case: right, wrong (with what is wrong), or taken back. */
+async function sign(s: FlowStage, t: StageTest, verdict: "ok" | "wrong" | null) {
+  const id = props.itemId, generation = epoch;
+  let note: string | undefined;
+  if (verdict === "wrong") {
+    const answer = await promptDialog("这条不对", { message: `${t.name}\n写下哪里不对。你对这一段点“还不行”时，标了不对的会一起带给下一次。`, fields: [{ id: "note", label: "哪里不对", value: t.verdictNote ?? "", required: true, maxLength: 2000 }], okText: "标成不对" });
+    if (!answer?.note.trim() || generation !== epoch) return;
+    note = answer.note.trim();
+  }
+  await mutate(id, `/api/items/${id}/flow/stages/${encodeURIComponent(s.id)}/tests/${encodeURIComponent(t.id)}`, { verdict, note });
+}
 async function stop() {
   const id = props.itemId, generation = epoch;
   if (await confirmDialog("停止流程", { message: "保留已有阶段与经过，撤回尚未回答的问题。事项仍由你决定是否关闭。", danger: true, okText: "停止" }) && generation === epoch) await mutate(id, `/api/items/${id}/flow`, undefined, true);
@@ -160,7 +179,7 @@ async function stop() {
         <div v-if="editable" class="row wrap"><button v-for="(a, i) in changeChoices" :key="a.choice" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="settle(c, a.choice)">{{ a.label }}</button></div>
       </div>
       <div v-if="stage" class="stage-detail">
-        <div class="stage-title"><strong>{{ stage.name }}</strong><span class="muted">{{ stageWords[stage.state] }}</span></div>
+        <div class="stage-title"><strong>{{ stage.name }}</strong><span class="muted">{{ stageWords[stage.state] }}{{ stage.recorded ? "（补录的）" : "" }}</span></div>
         <Markdown v-if="stage.instruction && !waiting.some((s) => s.id === stage!.id)" :source="stage.instruction" class="stage-text" />
         <dl class="stage-facts">
           <dt>谁来做</dt>
@@ -205,16 +224,25 @@ async function stop() {
               <span class="test-dot" :class="t.status" />
               <span class="test-name">{{ t.name }}</span>
               <span class="muted test-meta">{{ testWords[t.status] }}{{ t.mode ? ` · ${t.mode}` : "" }}{{ t.artifacts.length ? ` · ${t.artifacts.length} 份截图或录屏` : "" }}</span>
+              <span v-if="t.verdict" class="test-meta test-verdict" :class="t.verdict">{{ verdictWords[t.verdict] }}</span>
             </summary>
             <div class="test-body">
               <div v-if="t.req" class="muted">需求点：<a :href="`#/reqs/${t.req.id}`">{{ t.req.title }}</a></div>
               <Markdown v-if="t.note" :source="t.note" class="stage-text" />
               <RunArtifacts v-if="t.artifacts.length" :items="t.artifacts" />
               <div v-else class="muted">这一条没有交截图或录屏。</div>
+              <div v-if="t.verdict === 'wrong' && t.verdictNote" class="verdict-note">你写的：{{ t.verdictNote }}</div>
+              <div v-if="editable && !data.flow.endedAt" class="row wrap">
+                <button v-if="t.verdict !== 'ok'" type="button" class="btn sm ghost" :disabled="busy" @click="sign(stage, t, 'ok')">看过，对</button>
+                <button v-if="t.verdict !== 'wrong'" type="button" class="btn sm ghost" :disabled="busy" @click="sign(stage, t, 'wrong')">不对…</button>
+                <button v-if="t.verdict" type="button" class="link small" :disabled="busy" @click="sign(stage, t, null)">撤销</button>
+              </div>
             </div>
           </details>
         </div>
         <button v-if="editable && ['done', 'skipped', 'stale'].includes(stage.state)" type="button" class="link small" :disabled="busy" @click="act(stage, { action: 'reopen', label: '重开这一段', reason: true })">重开这一段</button>
+        <button v-if="editable && !data.flow.endedAt && ['pending', 'gated'].includes(stage.state)" type="button" class="link small" :disabled="busy" @click="record(stage)">这一段已经做过了…</button>
+        <button v-if="editable && !data.flow.endedAt && stage.state === 'doing' && stage.autoStarted" type="button" class="link small" :disabled="busy" @click="act(stage, { action: 'hold', label: '先停下' })">它是直接开始的：先停下，以后轮到这一段还是先问我</button>
       </div>
       <ItemStudy v-if="data.flow.study" :item-id="itemId" :editable="editable" :choosing="!data.flow.endedAt && data.stages.some((s) => s.asking === 'direction')" />
       <div v-if="data.changes?.length || following" class="changes">
@@ -333,6 +361,9 @@ async function stop() {
 .test-name { flex: 1 1 10em; min-width: 0; }
 .test-meta { flex: 0 1 auto; font-size: 12px; }
 .test summary:hover .test-name { text-decoration: underline; }
+.test-verdict.ok { color: var(--ok); }
+.test-verdict.wrong { color: var(--danger); font-weight: 600; }
+.verdict-note { color: var(--danger); }
 .test-body { display: grid; gap: 6px; padding: 0 0 10px 15px; font-size: 12.5px; }
 
 .history { font-size: 12.5px; }

@@ -35,6 +35,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/rules/tasks", redirect: (to) => ({ path: "/rules", query: to.query }) },
   view("/rules", () => import("./views/Rules.vue")),
   view("/flows", () => import("./views/Flows.vue")),
+  view("/board", () => import("./views/Board.vue")),
   view("/notifications", () => import("./views/Notifications.vue")),
   view("/settings", () => import("./views/Settings.vue")),
   view("/account", () => import("./views/Account.vue")),

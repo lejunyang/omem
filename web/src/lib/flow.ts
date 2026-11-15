@@ -15,14 +15,21 @@ export type FlowStage = {
   waitingSignal?: { type: string; checkedAt: string | null; note: string };
   /** The stage asked the owner something that is answered elsewhere on the page: a study's direction for this round. */
   asking?: "direction";
+  /** The owner recorded this stage as already done before the flow began. */
+  recorded?: boolean;
+  /** It began without asking because the owner agreed to that for this gate; stopping it takes the agreement back. */
+  autoStarted?: boolean;
   /** What this stage's runs reported case by case (a verification stage), failed first, then the ones not done. */
   tests?: StageTest[];
 };
 export type StageTest = {
   id: string; name: string; status: "passed" | "failed" | "skipped"; mode: string; note: string; at: string; runId: string;
   req: { id: string; title: string } | null;
+  /** The owner's own word on this case, after looking at what was done. */
+  verdict?: "ok" | "wrong" | null; verdictNote?: string | null; verdictAt?: string | null;
   artifacts: { id: string; runId: string; task: number | null; req: string | null; name: string; caption: string; kind: "image" | "video" | "html" | "site" | "text" | "file"; mime: string; size: number; source: "agent" | "check" | "command"; createdBy: string; createdAt: string; url: string }[];
 };
+export const verdictWords: Record<"ok" | "wrong", string> = { ok: "你看过，对", wrong: "你看过，不对" };
 export const testWords: Record<StageTest["status"], string> = { passed: "通过", failed: "没通过", skipped: "没做" };
 /** "5 条：通过 3，没通过 1，没做 1" — the ones that are zero are left out. */
 export function testSummary(tests: StageTest[]) {
@@ -30,7 +37,7 @@ export function testSummary(tests: StageTest[]) {
   return `${tests.length} 条：${(["passed", "failed", "skipped"] as const).filter((s) => n(s)).map((s) => `${testWords[s]} ${n(s)}`).join("，")}`;
 }
 export type FlowDefinition = { id: string; name: string; description?: string; stages: { id: string; name: string; note?: string; gate: string; by: string | { run?: { agent?: string }; object?: string } }[] };
-export type FlowFile = { id: string; raw: string; definition: FlowDefinition | null; problem: string | null };
+export type FlowFile = { id: string; raw: string; definition: FlowDefinition | null; problem: string | null; /** Gates of this flow the owner agreed to stop being asked at. */ grants?: { stage: string; grantedAt: string }[] };
 /** Something this item's chats and documents said after the flow began, as the follow-up run put it (docs/v2/flows.md). */
 export type FlowChange = {
   id: string; at: string; type: "scope" | "decision" | "deadline" | "blocker" | "info"; summary: string; detail: string | null;
@@ -51,7 +58,7 @@ export function changeStatus(c: FlowChange) {
 export const changeHeads: Record<FlowChange["type"], string> = { scope: "范围变了", decision: "有了新决定", deadline: "截止时间变了", blocker: "有阻塞", info: "新信息" };
 export const changeChoices = [{ choice: "merge", label: "并进这件事" }, { choice: "split", label: "另开一件事" }, { choice: "dismiss", label: "不用管" }] as const;
 export type FlowView = {
-  flow: { id: string; name: string; startedAt: string; endedAt: string | null; round?: number; repeat?: { from: string; every: string | string[] } | null; roundClosedAt?: string | null; nextRoundAt?: string | null; canStartRound?: boolean; repeatDescription?: string; /** A study: directions, trials and findings are kept for it. */ study?: boolean; idleRounds?: number } | null;
+  flow: { id: string; name: string; startedAt: string; endedAt: string | null; round?: number; repeat?: { from: string; every: string | string[] } | null; roundClosedAt?: string | null; nextRoundAt?: string | null; canStartRound?: boolean; repeatDescription?: string; /** A study: directions, trials and findings are kept for it. */ study?: boolean; idleRounds?: number; /** Today's limit of follow-up batches was reached; the rest waits for tomorrow. */ followCapped?: boolean } | null;
   /** What changed around this item since the flow began: the ones waiting for the owner and the latest ten. */
   changes?: FlowChange[];
   follow?: FollowPlace[];
@@ -60,6 +67,19 @@ export type FlowView = {
   stages: FlowStage[]; suits: FlowDefinition[];
   log: { id: number; stageId: string; at: string; fromState: StageState | null; toState: StageState; actor: string; note: string; runId: string | null }[];
 };
+/** One item on the flow board: the stage to look at now and whether it waits for the owner. */
+export type BoardRow = {
+  itemId: string; title: string; spaceId: string; flowId: string; flowName: string; round?: number | null;
+  stage: { id: string; name: string; state: StageState }; waiting: "owner" | "blocked" | null; since: string | null; stale: boolean; dueAt: string | null;
+};
+/** "等你 · 3 天" / "卡住 · 2 天" / "进行中 · 5 小时" / "还没开始". */
+export function boardLine(r: BoardRow, now = Date.now()) {
+  const how = duration(r.since, now);
+  if (r.stage.state === "blocked") return how ? `卡住 · ${how}` : "卡住";
+  if (r.waiting === "owner") return how ? `等你 · ${how}` : "等你";
+  if (r.stage.state === "doing") return how ? `进行中 · ${how}` : "进行中";
+  return r.stage.state === "pending" ? "还没开始" : stageWords[r.stage.state];
+}
 export const stageWords: Record<StageState, string> = { pending: "未到", gated: "等你确认", doing: "进行中", blocked: "卡住", done: "完成", skipped: "跳过", stale: "待复核" };
 export const ownerTurn = (s: FlowStage) => s.state === "gated" || s.state === "doing" && (s.by === "owner" || s.waitingOn === "owner" || s.question === "done");
 export function stageColour(s: FlowStage) {
@@ -71,7 +91,7 @@ export function duration(from: string | null, to = Date.now()): string {
   return minutes < 1 ? "不足 1 分钟" : minutes < 60 ? `${minutes} 分钟` : minutes < 1440 ? `${Math.floor(minutes / 60)} 小时` : `${Math.floor(minutes / 1440)} 天`;
 }
 export function stageLine(s: FlowStage, now = Date.now()) {
-  if (s.state === "done") return duration(s.enteredAt, s.doneAt ? Date.parse(s.doneAt) : now);
+  if (s.state === "done") return s.recorded ? "补录" : duration(s.enteredAt, s.doneAt ? Date.parse(s.doneAt) : now);
   if (ownerTurn(s)) return `等你 · ${duration(s.since, now)}`;
   if (s.state === "doing") return `${duration(s.since, now)}前开始${s.attempt > 1 ? ` · 第 ${s.attempt} 次` : ""}`;
   if (s.state === "pending") return s.waitUntil ? `等到 ${clockTime(s.waitUntil)}` : "";

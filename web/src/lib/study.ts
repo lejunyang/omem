@@ -7,22 +7,33 @@ export type StudyTrial = {
   state: "queued" | "running" | "reported" | "skipped"; result: TrialResult | null; summary: string;
   evidence: string[]; artifacts: Artifact[]; findings: { kind: FindingKind; title: string; repro: string }[];
   runId: string | null; attempts: number; prior: string | null; unsure: boolean; escalated: boolean; updatedAt: string;
+  /** The commit of the study's own workspace this trial ran on. */
+  commit?: string | null;
 };
+/** What a study may touch: the repositories it works in, whether a finding may be turned into a code change, whether samples' own scripts may run on this machine. */
+export type StudyScope = { repos: { id: string; name: string }[]; allowCode: boolean; thirdParty: boolean; candidates?: { id: string; name: string }[] };
+export function scopeWords(s: StudyScope) {
+  return [s.repos.length ? s.repos.map((r) => r.name).join("、") : "没有登记仓库", s.allowCode ? "可以改代码" : "不改代码", s.thirdParty ? "本机可以执行第三方样本的代码" : "本机不执行第三方样本的代码"].join("；");
+}
 export type StudyDirection = {
   id: string; round: number; goal: string; approach: string; acceptance: string; env: string; estimate: string;
   state: "proposed" | "confirmed" | "active" | "done" | "dropped"; conclusion: string; note: string;
   plan: { object: string; check: string; prior?: string }[]; removed: { object: string; check: string; prior: string }[];
   counts: Record<"queued" | "running" | "skipped" | TrialResult, number>; createdAt: string; updatedAt: string;
+  /** Findings of this direction may be turned into code changes; it runs other people's install or build scripts. */
+  allowCode?: boolean; thirdParty?: boolean;
 };
 export type FindingKind = "defect" | "gap" | "idea";
 export type StudyFinding = {
   id: string; kind: FindingKind; title: string; repro: string; trials: StudyTrial[];
   state: "new" | "confirmed" | "rejected" | "later" | "duplicate"; stateReason: string; sameAs: string | null; createdAt: string; updatedAt: string;
+  /** The code delegation started from this finding, and where it stands. */
+  fix?: { workId: string; status: string; link: string } | null;
 };
 export type StudyView = {
   directions: StudyDirection[]; trials: StudyTrial[]; findings: StudyFinding[];
   coverage: { path: string; ref: string | null; features: { title: string; trials: number; lastAt: string | null }[] };
-  idleRounds: number;
+  idleRounds: number; scope?: StudyScope;
 };
 
 export const kindWords: Record<FindingKind, string> = { defect: "缺陷", gap: "缺口", idea: "想法" };

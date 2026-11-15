@@ -53,6 +53,15 @@ watch(raw, () => {
     finally { if (request === validationSeq) validating.value = false; }
   }, 350);
 });
+/** Gates of the open definition the owner agreed to stop being asked at, by stage id. */
+const grants = computed(() => new Map((files.value.find((f) => f.id === selected.value)?.grants ?? []).map((g) => [g.stage, g.grantedAt])));
+async function askAgain(stage: Step) {
+  if (!selected.value || busy.value) return;
+  busy.value = true;
+  try { await del(`/api/flows/${encodeURIComponent(selected.value)}/gates/${encodeURIComponent(stage.id)}`); await load(); }
+  catch (e) { error.value = (e as Error).message; }
+  finally { busy.value = false; }
+}
 /** What a definition in the list comes to, in a few words. */
 function summary(f: FlowFile) {
   const stages = f.definition?.stages ?? [];
@@ -157,6 +166,7 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
                   <div v-if="s.when" class="muted">{{ s.when }}</div>
                   <div v-if="s.ai || s.time || s.budget" class="muted">{{ [s.ai, s.time, s.budget].filter(Boolean).join("；") }}</div>
                   <div v-if="waits(s, i)" class="muted">{{ waits(s, i) }}</div>
+                  <div v-if="grants.has(s.id)" class="granted">你连着同意过，现在轮到它就直接开始。<button type="button" class="link" :disabled="busy" @click="askAgain(s)">改回每次问我</button></div>
                 </div>
               </li>
             </ol>
@@ -242,6 +252,9 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
 
 .source .field > span { font-size: 12.5px; color: var(--ink-2); }
 .source textarea { width: 100%; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; }
+.granted { color: var(--ink-2); }
+.granted .link { margin-left: 6px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; text-decoration: underline; }
+.granted .link:hover { color: var(--ink); }
 .guide { font-size: 12.5px; color: var(--ink-2); }
 .guide summary { width: fit-content; cursor: pointer; color: var(--muted); }
 .guide dl { margin: 8px 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; line-height: 1.6; }

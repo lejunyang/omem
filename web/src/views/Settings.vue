@@ -12,6 +12,7 @@ import AiDefaults from "../components/AiDefaults.vue";
 import AiCapacity from "../components/AiCapacity.vue";
 import AiModels from "../components/AiModels.vue";
 import ReplaySettings from "../components/ReplaySettings.vue";
+import FlowSettings from "../components/FlowSettings.vue";
 import { detectProbe, probes as shared } from "../lib/probes";
 import Icon from "../components/Icon.vue";
 import CronEditor from "../components/CronEditor.vue";
@@ -1082,6 +1083,7 @@ async function saveEdit() {
         </label>
         <UiCheckbox :model-value="config.agents.autoAdvance?.preCheck !== false" switch @change="savePreCheck">编码前检查：新交办开始编码前，先查改动会碰到什么、这里以前出过什么问题、改完要回归什么（角色“编码前检查”，在 Agent 页选模型）</UiCheckbox>
       </div>
+      <FlowSettings :flows="config.flows" :studies="config.studies" @save="(partial, note) => saveConfig(partial, note).then(() => load())" />
       <div class="card pad stack">
         <div class="section-title">回复发出后看有没有用</div>
         <HelpText>助手的回答发出几小时后，宿主取同一个会话或群里之后大家说的话，请决策模型标一个结果：解决了、被追问、被纠正、别人接手了、看不出；没人接话的不问模型。结果记在那次运行上（运行页能看到依据的那几句话，标错了你可以改），也给夜间复盘、coach 和整理消息的运行参考；复盘评判和 coach 认为标错时会改判。数据页的“做得怎么样”按它统计。没配决策模型时只记“没人接话”，其余等配好再判。</HelpText>
