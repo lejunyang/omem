@@ -180,11 +180,11 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
               <summary>每一段可以写什么</summary>
               <dl>
                 <dt><code>by</code></dt>
-                <dd>谁来做：<code>owner</code> 你来做；<code>wait</code> 只等进展；<code>{ run: {} }</code> 交给助手的一次运行（可写 <code>agent</code>、<code>skill</code>）；<code>{ object: code-work }</code> 或 <code>design</code> 跟着编码交办或方案走。</dd>
+                <dd>谁来做：<code>owner</code> 你来做；<code>wait</code> 只等进展；<code>{ run: {} }</code> 交给助手的一次运行（可写 <code>agent</code>、<code>skill</code>）；<code>{ object: code-work }</code> 或 <code>design</code> 跟着编码交办或方案走；装了插件以后还能跟着它的对象走，写 <code>{ object: "插件:类型" }</code>（比如 <code>"github:pull-request"</code>），在事项页的“外部状态”里挂上链接。</dd>
                 <dt><code>gate</code></dt>
                 <dd><code>confirm</code> 开始前先问你；不写就轮到自己开始。</dd>
                 <dt><code>done</code></dt>
-                <dd>做到什么算完：<code>confirm</code> 要你点头；<code>{ signal: git.pushed }</code> 改动推到远端就算（<code>git.merged</code> 是合进目标分支，只用在你来做或只等的阶段）；也可以写一句话；不写就按“谁来做”默认。</dd>
+                <dd>做到什么算完：<code>confirm</code> 要你点头；<code>{ signal: git.pushed }</code> 改动推到远端就算（<code>git.merged</code> 是合进目标分支，只用在你来做或只等的阶段）；<code>{ object: "插件:类型", status: merged }</code> 是这件事挂着的那个外部对象到了这个状态就算；也可以写一句话；不写就按“谁来做”默认。</dd>
                 <dt><code>needs</code></dt>
                 <dd>要等哪些阶段做完，写它们的 id；不写就等上一段，<code>[]</code> 是不用等。</dd>
                 <dt><code>when</code></dt>

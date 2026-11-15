@@ -5,7 +5,8 @@ export type FlowStage = {
   since: string; enteredAt: string | null; doneAt: string | null; by: string | null;
   waitingOn: string | null; evidence: string[]; note: string; gate: string; fixed: boolean;
   question: string | null; carrier: { kind: string; label: string; link?: string };
-  object?: { title: string; status: string; link: string };
+  /** What the stage follows. A plugin's object says its state in words and may carry a few fields. */
+  object?: { title: string; status: string; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; disabled?: boolean };
   /** Rounds, model tier, timing and budget (docs/v2/studies.md): what the definition says, in words, and what has been used. */
   round?: number; waitUntil?: string | null; usedMinutes?: number; escalations?: number;
   budget?: { minutes?: number; trials?: number } | null; escalate?: { to: string; max: number } | null;

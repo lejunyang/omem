@@ -186,7 +186,7 @@ async function stop() {
           <dd><a v-if="stage.carrier.link" :href="stage.carrier.link">{{ stage.carrier.label }}</a><span v-else>{{ stage.carrier.label }}</span></dd>
           <template v-if="stage.object">
             <dt>跟着</dt>
-            <dd><a :href="stage.object.link">{{ stage.object.title }}</a> <span class="badge" :title="stage.object.status">{{ objectStatusWords(stage.object.status) }}</span></dd>
+            <dd><a :href="stage.object.link" :target="stage.object.statusLabel ? '_blank' : undefined" rel="noopener noreferrer">{{ stage.object.title }}</a> <span class="badge" :title="stage.object.status">{{ stage.object.statusLabel ?? objectStatusWords(stage.object.status) }}</span><span v-if="stage.object.disabled" class="muted">（读它的插件停用了）</span><span v-if="stage.object.fields?.length" class="muted object-fields">{{ stage.object.fields.map((f) => `${f.label} ${f.value}`).join(" · ") }}</span></dd>
           </template>
           <template v-if="stage.evidence.length">
             <dt>依据</dt>
@@ -349,6 +349,7 @@ async function stop() {
 .stage-facts dt { color: var(--muted); }
 .stage-facts dd { margin: 0; min-width: 0; }
 .evidence { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.object-fields { display: block; font-size: 12.5px; }
 
 /* A verification stage's cases: one line each, opened to see what was done and the screenshots or recordings. */
 .stage-tests { display: grid; gap: 2px; margin-top: 4px; }

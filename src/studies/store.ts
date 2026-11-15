@@ -52,6 +52,10 @@ export function confirmDirection(app: App, id: string, note: string, baseline: R
   atomic(app, () => {
     run(app.db, "update study_directions set state='confirmed',note=?,updated_at=? where id=?", note, at, id);
     run(app.db, "update study_directions set baseline=?,allow_code=? where id=?", JSON.stringify(baseline), allowCode ? 1 : 0, id);
+    // An earlier direction with nothing left to run ends here: the owner has moved on to this one.
+    run(app.db, `update study_directions set state='done',conclusion=case when conclusion='' then '试验都跑完了，小结没有写结论；本人选了新的方向' else conclusion end,updated_at=?
+      where item_id=? and id!=? and state in ('confirmed','active')
+        and not exists(select 1 from study_trials t where t.direction_id=study_directions.id and t.state in ('queued','running'))`, at, d.item_id, id);
     for (const [i, t] of json<PlannedTrial[]>(d.plan, []).entries()) run(app.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",env,state,prior,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, newId("st"), d.item_id, id, d.round, i + 1, t.object, t.check, d.env, "queued", t.prior ?? null, at, at);
   });
 }

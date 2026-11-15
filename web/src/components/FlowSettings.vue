@@ -12,7 +12,8 @@ import UiSelect from "./UiSelect.vue";
 type Follow = { enabled: boolean; quietMinutes: number; maxMessages: number; maxRunsPerDay?: number };
 type Ladder = { enabled: boolean; after: number };
 type Env = { id: string; name: string; note: string; ai?: string | { profile: string; model?: string; effort?: string }; thirdParty: boolean };
-type Flows = { follow?: Follow; gateLadder?: Ladder } & Record<string, unknown>;
+type Commits = { enabled: boolean; quietMinutes: number };
+type Flows = { follow?: Follow; gateLadder?: Ladder; commits?: Commits } & Record<string, unknown>;
 type Studies = { envs?: Env[] } & Record<string, unknown>;
 
 const props = defineProps<{ flows?: Flows; studies?: Studies }>();
@@ -22,6 +23,8 @@ const follow = computed<Follow>(() => ({ enabled: true, quietMinutes: 20, maxMes
 const ladder = computed<Ladder>(() => ({ enabled: true, after: 5, ...(props.flows?.gateLadder ?? {}) }));
 const number = (raw: string, min: number, max: number, fallback: number) => { const n = Number(raw); return Number.isFinite(n) && raw.trim() !== "" ? Math.max(min, Math.min(max, Math.round(n))) : fallback; };
 const saveFollow = (patch: Partial<Follow>, note: string) => emit("save", { flows: { ...(props.flows ?? {}), follow: { ...follow.value, ...patch } } }, note);
+const commits = computed<Commits>(() => ({ enabled: true, quietMinutes: 30, ...(props.flows?.commits ?? {}) }));
+const saveCommits = (patch: Partial<Commits>, note: string) => emit("save", { flows: { ...(props.flows ?? {}), commits: { ...commits.value, ...patch } } }, note);
 const saveLadder = (patch: Partial<Ladder>, note: string) => emit("save", { flows: { ...(props.flows ?? {}), gateLadder: { ...ladder.value, ...patch } } }, note);
 
 /** The environments are edited as a whole and saved with one button: an id or a name alone is not a valid entry. */
@@ -68,6 +71,15 @@ function reset() { dirty.value = false; problem.value = ""; envs.value = (props.
     <UiCheckbox :model-value="ladder.enabled" switch @change="(v: boolean) => saveLadder({ enabled: v }, v ? '连着同意以后会问你要不要直接开始' : '关卡一律每次问你')">连着同意以后，问我要不要改成直接开始</UiCheckbox>
     <label class="field"><span>连着同意几次以后问（2–50）</span>
       <input class="input narrow" type="number" inputmode="numeric" min="2" max="50" :value="ladder.after" :disabled="!ladder.enabled" @change="saveLadder({ after: number(($event.target as HTMLInputElement).value, 2, 50, 5) }, '已保存')" />
+    </label>
+  </div>
+
+  <div class="card pad stack">
+    <div class="section-title">你直接做的提交，事后挂回事项上</div>
+    <HelpText>你没经过助手、直接在仓库里写代码并提交时，助手会看这些提交属于哪件事，在一张卡片上请你选：挂到某件已有的事上、新建一件、或不用管。你选了才会动；挂到已有的事上时，它流程里还没开始的编码那一段会记成已经做了。只看你自己写的、本地分支上的新提交，不翻以前的；零碎的提交（改格式、升依赖）不会来问。判断的是角色 commit-claim，在 Agent 页给它选模型。</HelpText>
+    <UiCheckbox :model-value="commits.enabled" switch @change="(v: boolean) => saveCommits({ enabled: v }, v ? '会看你直接做的提交' : '不再看你直接做的提交')">看我直接在仓库里做的提交属于哪件事</UiCheckbox>
+    <label class="field"><span>分支安静多少分钟以后再来问（1–1440）</span>
+      <input class="input narrow" type="number" inputmode="numeric" min="1" max="1440" :value="commits.quietMinutes" :disabled="!commits.enabled" @change="saveCommits({ quietMinutes: number(($event.target as HTMLInputElement).value, 1, 1440, 30) }, '已保存')" />
     </label>
   </div>
 

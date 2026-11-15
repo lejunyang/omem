@@ -442,6 +442,17 @@ describe("台账随事项拉取", () => {
 });
 
 describe("真实跑过一轮以后改的", () => {
+  it("选了新方向以后，试验都跑完却没写结论的旧方向就此结束", async () => {
+    const f = await setup(); await select(f, 1); await result(f, "passed"); await summary(f);
+    const first = directions(f.app, f.item.id).find((d) => ["confirmed", "active"].includes(d.state))!;
+    await startRound(f.app, f.item.id, owner);
+    // Nothing is queued any more, so the planning stage proposes again and the owner picks a new direction.
+    await proposeDirections(f.app, { item: f.item.id, directions: [{ ...planned(1), goal: "换一个功能区再看" }] }, f.by());
+    await answerAsk(f.app, f.s("plan").askId!, { choice: 0, by: "owner" });
+    const all = directions(f.app, f.item.id);
+    expect(all.find((d) => d.id === first.id)).toMatchObject({ state: "done", conclusion: expect.stringContaining("本人选了新的方向") });
+    expect(all.filter((d) => ["confirmed", "active"].includes(d.state)).map((d) => d.goal)).toEqual(["换一个功能区再看"]);
+  });
   it("跑不了的试验不算试过：下一次提案里照样排上，并带上上次为什么没跑成", () => {
     const tried = (result: Trial["result"]) => [{ object: "CSV 导出", check: "逗号和引号的转义", result, summary: "工作区里没有可用的解析器" } as Trial];
     const plan = [{ object: "CSV 导出", check: "逗号和引号的转义" }];

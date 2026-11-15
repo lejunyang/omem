@@ -12,6 +12,7 @@ import UiSelect from "../components/UiSelect.vue";
 import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import ItemPlaces, { type Place, type ItemRun } from "../components/ItemPlaces.vue";
 import ItemFlow from "../components/ItemFlow.vue";
+import ItemObjects from "../components/ItemObjects.vue";
 import DesignRow from "../components/DesignRow.vue";
 import DesignStart from "../components/DesignStart.vue";
 import type { DesignSummary } from "../lib/designs";
@@ -288,6 +289,7 @@ async function addNote() {
           <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
         <ItemFlow :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
+        <ItemObjects :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
         <ItemPlaces :places="detail.places ?? []" :runs="detail.runs ?? []" />
         <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" @changed="loadDetail" />
         <div class="designs">

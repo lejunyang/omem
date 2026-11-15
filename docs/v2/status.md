@@ -5,7 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
-| 流程第三期第一步：插件对象、事项关联、只读轮询与信号记录 | 服务端和 SDK 类型已实现（2026-11-16）；GitHub 合并请求示例；事项主人连接、20 个上限、15 秒超时、5/15/60 分钟退避；不改网页，不做动作、插槽、规则事件和源码安装 | `src/flows/plugin-objects.ts`、`src/plugins/objects.ts`、`plugins/github/server.ts`、`test/flow-objects.test.ts`；字段见 `docs/v2/flows.md` 文末 |
+| 流程第三期第一步：插件对象、事项关联、只读轮询与信号记录 | 服务端和 SDK 类型已实现（2026-11-16）；GitHub 合并请求示例；事项主人连接、20 个上限、15 秒超时、5/15/60 分钟退避；事项页有“外部状态”卡片（挂链接、解除），预览里用演示数据看过，真实平台没连；不做动作、插槽、规则事件和源码安装 | `src/flows/plugin-objects.ts`、`src/plugins/objects.ts`、`plugins/github/server.ts`、`test/flow-objects.test.ts`；字段见 `docs/v2/flows.md` 文末 |
 | 课题第三期第二步：无人看守时逐条编码交办、评审后重跑失败试验、登记范围内推送及审计 | 服务端已实现（2026-11-15）；fixes 默认每轮两条，按实际运行时间计分钟；失败留本人、不反复交办；study_push 仅给已授权的试验和重跑；临时 Git、假后端、本地裸远端验证，网页及真实模型待验；已有流程只补缺不会自动加“改” | `src/studies/fixes.ts`、`fix.ts`、`trials.ts`、`push.ts`、`scope.ts`、`src/flows/engine.ts`、`test/study-fix.test.ts`、`test/study-push.test.ts`；字段见 `docs/v2/studies.md`“第三期的第二步” |
 | 没人认领的提交：仅本机分支新增的本人提交，安静期攒批，助手建议归属，本人确认后挂材料、补录未开始的编码阶段或新建待办；本机游标、两次重试、替换待答卡片 | 服务端已实现；2026-11-16，验证结果见验收与变更记录；未改网页 | `src/flows/commits.ts`、`roles/commit-claim.md`、`test/flow-commits.test.ts` |
 | 课题第四期的一部分：数据页台账计数与明细 / 导出、每日简报的已结束轮次事实、coach 只读台账复盘技能 | 服务端已实现（2026-11-15）；不排名、不算发现率；按模型数运行，未保留档位名；数据页照服务端给的板块通用渲染，预览里看过；未做有改动的发现计数与远端试验，真实模型待验 | `src/insights/insights.ts`、`src/agents/study-brief.ts`、`src/agents/jobs.ts`、`roles/brief.md`、`roles/coach.md`、`test/insights.test.ts`、`test/dream.test.ts`、`test/studies.test.ts` |
