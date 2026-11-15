@@ -136,6 +136,8 @@ async function checkNow(app: App, at: Date) {
     const path = s.rootPath!;
     const email = await readGit(path, ["config", "user.email"]); if (!email.ok || !email.stdout.trim()) continue;
     const refs = await readGit(path, ["for-each-ref", "--sort=-committerdate", "--count=20", "--format=%(refname:strip=2)%09%(objectname)", "refs/heads/"]); if (!refs.ok) continue;
+    // What this repository's branches had already been seen at, before this look.
+    const seenBefore = all<{ commit_id: string }>(app.db, "select commit_id from git_commit_cursors where space_id=?", s.id).map((r) => r.commit_id);
     // Worked out at most once per repository, and only when some branch has moved or has a batch waiting.
     let ownedOnce: Awaited<ReturnType<typeof ownedWork>> | undefined;
     const ownedNow = async () => ownedOnce ??= await ownedWork(app, s.id, path);
@@ -143,8 +145,16 @@ async function checkNow(app: App, at: Date) {
       const [branch, tip] = line.trim().split("\t");
       let c = cursorOf(app, s.id, branch);
       if (!c) {
-        run(app.db, "insert into git_commit_cursors(space_id,branch,commit_id,updated_at,tip,tip_at) values(?,?,?,?,?,?)", s.id, branch, tip, at.toISOString(), tip, at.toISOString());
-        continue;
+        // The first look at a repository only notes where its branches are. A branch that appears later
+        // starts where it left what had been seen, so the commits made on it right away are not skipped.
+        let start = tip;
+        if (seenBefore.length) {
+          const fork = await readGit(path, ["merge-base", tip, ...new Set(seenBefore.slice(0, 40))]);
+          if (fork.ok && fork.stdout.trim()) start = fork.stdout.trim();
+        }
+        run(app.db, "insert into git_commit_cursors(space_id,branch,commit_id,updated_at,tip,tip_at) values(?,?,?,?,?,?)", s.id, branch, start, at.toISOString(), tip, at.toISOString());
+        if (start === tip) continue;
+        c = cursorOf(app, s.id, branch)!;
       }
       if (c.tip !== tip) {
         run(app.db, "update git_commit_cursors set tip=?,tip_at=? where space_id=? and branch=?", tip, at.toISOString(), s.id, branch);

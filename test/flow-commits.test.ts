@@ -253,3 +253,23 @@ describe("没人认领的提交", () => {
     expect(runner.loadRole("commit-claim", t.app).tools).toEqual(["read_item", "search", "read_source", "claim_commits", "stay_quiet"]);
   });
 });
+
+describe("之后才新建的分支", () => {
+  it("从它离开已经看过的位置算起：新分支上马上做的提交也会成批来问；第一次看一个仓库仍然不翻历史", async () => {
+    const t = await setup(30);
+    expect(t.runs()).toHaveLength(0);
+    git(t.path, ["checkout", "-qb", "feat/export"]);
+    const first = t.commit("导出加筛选"), second = t.commit("导出加测试");
+    await t.scan(31);
+    // Seen for the first time, but the repository was already known: it starts at the fork point, and the quiet period begins.
+    expect(one<{ commit_id: string }>(t.app.db, "select commit_id from git_commit_cursors where space_id='demo' and branch='feat/export'")!.commit_id).toBe(t.base);
+    expect(t.runs()).toHaveLength(0);
+    run(t.app.db, "delete from kv where key like 'flow-commits:%'");
+    await t.scan(62);
+    const r = t.runs()[0];
+    expect(r).toBeDefined();
+    expect(String(r.input.task)).toContain("导出加筛选"); expect(String(r.input.task)).toContain("导出加测试"); expect(String(r.input.task)).not.toContain("初始内容");
+    expect(r.input.batch).toMatchObject({ from: t.base, to: second });
+    expect(first).not.toBe(second);
+  });
+});
