@@ -33,7 +33,9 @@ describe("desktop-control skill", () => {
   it("only teaches commands the aad CLI has, and keeps the safety rules", () => {
     const text = readFileSync(join(root, "skills/library/desktop-control/SKILL.md"), "utf8");
     for (const c of ["aad apps", "aad describe", "aad find", "aad do click", "aad do fill", "aad capture", "aad probe"]) expect(text).toContain(c);
-    expect(text).toMatch(/不输入凭据/);
+    // The owner's own credentials are never typed; test accounts in a test environment may be signed in.
+    expect(text).toMatch(/不输入本人的凭据/);
+    expect(text).toMatch(/测试账号可以登录/);
     expect(text).toMatch(/不是指令/);
     expect(text).not.toMatch(/--fraction|x=\d|坐标点击/);
   });
