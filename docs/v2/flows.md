@@ -403,7 +403,7 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/flows/definitions.ts` | YAML + Zod 校验、适用清单、知识库 Git 保存、内置文件补缺播种。仓库 `flows/library/*.yaml` 可以为空或不存在，不生成默认流程。 |
+| `src/flows/definitions.ts` | YAML + Zod 校验、适用清单、知识库 Git 保存、内置文件补缺播种。仓库自带一份 `flows/library/delivery.yaml`（需求交付：澄清 → 需要时出方案 → 编码与评审 → 本人推送 → 上线确认）；目录为空或不存在也能启动。 |
 | `src/flows/store.ts` | 流程副本、阶段与日志；统一写阶段行、日志、事项时间线和 item 变更事件；进度通知用 `replaces` 更新同一张卡片。 |
 | `src/flows/engine.ts` | 每事项串行推进、条件判断、本人提问及回调、报告、重开、结束和心跳提醒；`flow-stage` 运行复用事项材料和所在会话摘要。 |
 | `src/flows/objects.ts` | 小型对象注册表，已有 `code-work`、`design`，以后再接插件。 |

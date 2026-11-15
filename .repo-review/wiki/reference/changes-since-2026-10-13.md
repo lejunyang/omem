@@ -11,6 +11,8 @@ updated: 2026-11-15
 
 ## 事项流程：第一期服务端（11-15）
 
+- 内置流程 `flows/library/delivery.yaml`（需求交付）；`roles/assistant.md` 加工具组 `group:flow` 和一节“流程：让一件事自己往前走”（什么时候起草流程、什么时候让事项走流程、怎么回答进度、怎么重开）；`roles/_common.md` 加一节“流程里的一个阶段”，带 `stage_report` 的运行都会看到（只做这一段、以写明的完成条件为准、结束时必须交代、要本人拍板的不用“完成”带过）。成效页的场景表把阶段运行归到“提醒与跟进”。
+
 `src/flows/` 实现 YAML 定义、内置补缺播种、事项上的流程副本、阶段状态与日志、前提推进、when 决策 / 本人提问、本人关卡、报告、重开、结束和倍增提醒。`code-work` / `design` 是小型对象注册表：按事项 run 材料找交办，读 `codeWork.stage.key` 与最近轮 `roundList.verdict=approved`，方案还核对本版确认记录的 `by` 等于事项本人。没有扫描 runs 的 JSON 事项字段。
 
 所有阶段变化同时写日志和事项时间线、发 item changed，进度通知用 replaces 替换。只有本人自己的答案能过关卡，在写答案前与处理回调时均检查收件人和回答人。`done: confirm` 返工最多三次，运行结束没交结果卡住。新增 `group:flow` 的五个工具、`read_item.flow`、定义和事项流程 HTTP、集中路由权限；细节见 `docs/v2/flows.md` 的“第一期的实现”。
