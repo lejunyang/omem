@@ -334,7 +334,7 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 | 评审 | review、speaking-review、note-review |
 | 文档与知识 | brief、lark-resource-parse |
 | 会议 | 通用 Agent 的 meeting-assistant 档案或角色 |
-| 提醒与跟进 | heartbeat、wake、mention、item-settle、work-state；通用 Agent 的 mention 触发 |
+| 提醒与跟进 | heartbeat、wake、mention、item-settle、work-state、flow-stage；通用 Agent 的 mention 触发。heartbeat、wake、item-settle、work-state 里安静结束的（定时跑了一次，没有要说的）归到整理（后台）：那是系统在空转，不是有人在用 |
 | 整理（后台） | archive、archive-rule-draft、thread-summary、learn-feed、ingest、ingest-shadow、wiki-plan、wiki-write、wiki-lint、wiki-organize、wiki-resolve、wiki-migrate、wiki-sweep、dream、sync、curate、memory-review、memory-organize、role-merge、profile-review、triage、digest、replay、replay-arm、replay-judge、kb-scout、quality-audit |
 | 其他 | 未识别的旧类型兜底；新增类型仍必须补表 |
 

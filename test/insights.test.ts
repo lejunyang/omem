@@ -35,6 +35,16 @@ it("场景表精确覆盖 RunKind，新类型必须有场景", () => {
   expect(sceneOf({ kind: "agent", roles: "|meeting-assistant|" })).toBe("会议");
   expect(scenes).toContain("其他");
 });
+it("定时的空转不算使用：安静结束的巡检、唤醒归后台，提醒了人的才算提醒与跟进", () => {
+  for (const kind of ["heartbeat", "wake", "item-settle", "work-state"]) {
+    expect(sceneOf({ kind, quiet: 1 })).toBe("整理（后台）");
+    expect(sceneOf({ kind, quiet: 0 })).toBe("提醒与跟进");
+  }
+  // A quiet answer or handling is still someone's request.
+  expect(sceneOf({ kind: "ask", quiet: 1 })).toBe("问答");
+  expect(sceneOf({ kind: "mention", quiet: 1 })).toBe("提醒与跟进");
+});
+
 it("每个板块有明确空状态，不用零冒充结果", () => {
   const r = report(setup()); expect(r.sections).toHaveLength(8);
   for (const s of r.sections) { expect(s.empty).toBeTruthy(); expect(s.error).toBeUndefined(); expect(s.metrics).toEqual([]); }

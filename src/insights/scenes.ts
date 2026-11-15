@@ -21,7 +21,12 @@ export const profileScenes: Record<string, Scene> = {
   "wiki-writer": "文档与知识", writer: "文档与知识", distiller: "文档与知识", summarizer: "文档与知识",
   reviewer: "评审", "review-lead": "评审", coder: "编码", investigator: "排查", "meeting-assistant": "会议",
 };
-export function sceneOf(r: { kind: string; spec?: string | null; roles?: string | null; via?: string | null }): Scene {
+/** Ticks on a timer: counted as use only when they came to something. */
+const TICKS = new Set(["heartbeat", "wake", "item-settle", "work-state"]);
+export function sceneOf(r: { kind: string; spec?: string | null; roles?: string | null; via?: string | null; quiet?: number | boolean | null }): Scene {
+  // A patrol every quarter of an hour that found nothing to say is the system idling, not someone
+  // using it: with the upkeep, not in the usage totals. One that reminded or acted stays 提醒与跟进.
+  if (r.quiet && TICKS.has(r.kind)) return "整理（后台）";
   if (["agent", "agent-followup", "rule-fire", "rule-script"].includes(r.kind)) {
     if (r.via === "mention") return "提醒与跟进";
     if (r.spec && profileScenes[r.spec]) return profileScenes[r.spec];
