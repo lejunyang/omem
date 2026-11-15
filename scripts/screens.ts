@@ -9,7 +9,8 @@ const widths = (process.env.WIDTHS ?? "1440,390").split(",").map(Number);
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {});
 for (const width of widths) {
-  const page = await browser.newPage({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: (process.env.SCHEME as "light" | "dark") ?? "light" });
+  // Charts draw themselves in when first seen; a screenshot wants them drawn (MOTION=1 keeps the motion).
+  const page = await browser.newPage({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: (process.env.SCHEME as "light" | "dark") ?? "light", reducedMotion: process.env.MOTION ? "no-preference" : "reduce" });
   for (const r of routes) {
     await page.goto(`${base}/#${r}`);
     await page.waitForTimeout(Number(process.env.WAIT ?? 1200));

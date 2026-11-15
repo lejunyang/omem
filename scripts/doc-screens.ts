@@ -705,6 +705,12 @@ for (const [i, d] of delivery.stages.entries()) {
       // Reactions on some answers, and memories recalled for some.
       if ((kind === "ask" || guest) && rnd() < 0.35) run(app.db, "insert into feedback(id,channel,message_id,run_id,on_bot,actor_id,actor_kind,emoji,polarity,at) values(?,?,?,?,?,?,?,?,?,?)",
         `fb_demo_${k}`, "lark", `om_demo_${k}`, id, 1, "ou_demo_member", "member", "THUMBSUP", rnd() < 0.82 ? "positive" : "negative", new Date(at + took * 1000 + 600_000).toISOString());
+      // How some answers went afterwards (the data page's small table of reply outcomes).
+      if ((kind === "ask" || guest || kind === "agent") && rnd() < 0.6) {
+        const x = rnd();
+        const label = x < 0.52 ? "resolved" : x < 0.68 ? "followup" : x < 0.76 ? "corrected" : x < 0.83 ? "taken_over" : "silent";
+        run(app.db, "insert into reply_outcomes(run_id,at,channel,label,confidence,\"by\",labelled_at,due_at) values(?,?,?,?,?,?,?,?)", id, new Date(at + took * 1000).toISOString(), "lark", label, 0.9, "decision", new Date(at + 6 * 3600_000).toISOString(), new Date(at + 4 * 3600_000).toISOString());
+      }
       if (kind !== "ingest" && rnd() < 0.5) run(app.db, "insert into memory_recalls(memory_id,run_id,used,at,purpose) values(?,?,?,?,?)", "m_demo", id, rnd() < 0.4 ? 1 : 0, new Date(at).toISOString(), "answer");
       if (kind === "ingest" && rnd() < 0.5) run(app.db, "insert into memory_recalls(memory_id,run_id,used,at,purpose) values(?,?,?,?,?)", "m_demo", id, rnd() < 0.2 ? 1 : 0, new Date(at).toISOString(), "upkeep");
     }
@@ -718,7 +724,10 @@ addMessage(app, chartsDemo.id, "user", "退款原因和这两周的走势画出�
 run(app.db, "insert into ui_views(id,run_id,conversation_id,user_id,title,components,created_at) values(?,?,?,?,?,?,?)", "uv_charts_demo", "r_charts_demo", chartsDemo.id, "owner", "退款原因与趋势", JSON.stringify([
   { type: "metric", items: [{ label: "退款单", value: 482, unit: "单", change: "+12%", good: "down", note: "比上两周", spark: [30, 34, 29, 41, 38, 22, 19, 36, 40, 33, 45, 44, 25, 21] }, { label: "平均处理", value: "2.1", unit: "天", change: "-0.4", good: "down", note: "比上两周" }, { label: "部分退款", value: 97, unit: "单", note: "占 20%" }, { label: "人工介入", value: 31, unit: "单" }] },
   { type: "chart", title: "退款原因排行", kind: "hbar", unit: "单", labels: ["尺码不合适", "质量问题", "物流太慢", "与描述不符", "不想要了"], series: [{ name: "退款单", values: [168, 121, 84, 63, 46] }], highlight: "质量问题", goal: 150 },
-  { type: "chart", title: "每天的退款单", kind: "area", unit: "单", labels: Array.from({ length: 14 }, (_, i) => `11-${String(i + 1).padStart(2, "0")}`), series: [{ name: "退款单", values: [30, 34, 29, 41, 38, 22, 19, 36, 40, 33, 45, 44, 25, 21] }] },
+  { type: "chart", title: "每天的退款单", kind: "area", unit: "单", labels: Array.from({ length: 14 }, (_, i) => `2026-11-${String(i + 1).padStart(2, "0")}`), series: [{ name: "退款单", values: [30, 34, 29, 41, 38, 22, 19, 36, 40, 33, 45, 44, 25, 21] }] },
+  { type: "chart", title: "每天新开的售后工单", kind: "line", unit: "单", labels: Array.from({ length: 30 }, (_, i) => new Date(Date.UTC(2026, 9, 17 + i)).toISOString().slice(0, 10)), series: [{ name: "工单", values: [12, 15, 14, 18, 17, 9, 8, 16, 19, 21, 20, 23, 11, 10, 18, 17, 15, 14, 16, 7, 6, 13, 15, 17, 19, 22, 12, 9, 20, 24] }] },
+  { type: "chart", title: "每个客服本周处理的工单", kind: "bar", unit: "单", labels: ["小王", "小李", "小张", "小赵", "小陈", "小周"], series: [{ name: "工单", values: [38, 27, 22, 16, 11, 7] }] },
+  { type: "chart", title: "三个仓的发货与退回", kind: "hbar", unit: "单", labels: ["华东仓", "华南仓", "华北仓"], series: [{ name: "发货", values: [42, 31, 18] }, { name: "退回", values: [9, 6, 5] }, { name: "补发", values: [4, 2, 3] }] },
   { type: "chart", title: "三个渠道的退款率", kind: "line", unit: "%", labels: ["第 1 周", "第 2 周", "第 3 周", "第 4 周", "第 5 周", "第 6 周"], series: [{ name: "App", values: [3.1, 3.4, 3.2, 3.8, 4.1, 4.6] }, { name: "小程序", values: [2.2, 2.5, 2.4, 2.6, 2.3, 2.4] }, { name: "网页", values: [4.0, 3.6, 3.3, 3.1, 2.9, 2.7] }] },
   { type: "chart", title: "每周的退款方式", kind: "bar", stack: true, unit: "单", labels: ["第 1 周", "第 2 周", "第 3 周", "第 4 周"], series: [{ name: "原路退回", values: [96, 104, 112, 121] }, { name: "退到余额", values: [41, 38, 47, 52] }, { name: "人工打款", values: [9, 12, 7, 5] }] },
   { type: "chart", title: "退款单的构成", kind: "pie", unit: "单", labels: ["整单退款", "部分退款", "仅退运费", "其他"], series: [{ name: "退款单", values: [341, 97, 30, 14] }] },
@@ -823,7 +832,8 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
 let failed = 0;
 for (const s of shots.filter((s) => !only || only.includes(s.name))) {
   const width = s.width ?? 1440;
-  const page = await browser.newPage({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: s.dark ? "dark" : "light", deviceScaleFactor: width < 600 ? 2 : 1 });
+  // Reduced motion: charts are captured drawn, not mid-entrance.
+  const page = await browser.newPage({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: s.dark ? "dark" : "light", deviceScaleFactor: width < 600 ? 2 : 1, reducedMotion: "reduce" });
   // Every page opens on the demo project's space.
   await page.addInitScript(([space, init]) => {
     localStorage.setItem("omem-space", space);

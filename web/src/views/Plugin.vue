@@ -39,7 +39,7 @@ async function checkConnectors() {
     .map((w) => ({ provider: w.provider, label: r.available.find((a) => a.id === w.provider)?.label ?? w.provider }));
 }
 
-const TOKENS = ["--bg", "--panel", "--sunken", "--hover", "--line", "--line-strong", "--ink", "--ink-2", "--muted", "--accent", "--accent-ink", "--accent-soft", "--ok", "--ok-soft", "--warn", "--warn-soft", "--danger", "--danger-soft", "--mark", "--shadow", "--shadow-lg", "--radius", "--radius-sm", "--sans", "--serif", "--mono"];
+const TOKENS = ["--bg", "--panel", "--sunken", "--hover", "--line", "--line-strong", "--ink", "--ink-2", "--muted", "--accent", "--accent-ink", "--accent-soft", "--ok", "--ok-soft", "--warn", "--warn-soft", "--danger", "--danger-soft", "--mark", ...[1, 2, 3, 4, 5, 6, 7, 8].map((i) => `--chart-${i}`), "--chart-seq-1", "--chart-seq-2", "--chart-seq-3", "--chart-seq-4", "--chart-accent", "--chart-grid", "--chart-axis", "--shadow", "--shadow-lg", "--radius", "--radius-sm", "--sans", "--serif", "--mono"];
 function theme() {
   const css = getComputedStyle(document.documentElement);
   const vars = Object.fromEntries(TOKENS.map((t) => [t, css.getPropertyValue(t).trim()]));

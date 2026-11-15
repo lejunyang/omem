@@ -18,19 +18,26 @@
   --danger: #b4322e;
   --danger-soft: #fbe9e8;
   --mark: #fff1b8;
-  /* Charts (packages/plugin-sdk/charts.ts): categorical slots in a fixed order, checked for
-     colour-blind separation (adjacent pairs of all eight, every pair of the first four) and 3:1
-     against --panel and --bg. Feishu cards use the same light values (src/channels/lark-ui.ts SERIES). */
-  --chart-1: #3860ac;
-  --chart-2: #bf801e;
-  --chart-3: #0f968a;
-  --chart-4: #a04130;
-  --chart-5: #a065b2;
-  --chart-6: #627d28;
-  --chart-7: #8f4966;
-  --chart-8: #2a8bbf;
-  --chart-grid: #ebe8e1;
-  --chart-axis: #c8c3b8;
+  /* Charts (packages/plugin-sdk/charts.ts). Several series: categorical slots in a fixed order, low
+     saturation, told apart by hue and by lightness between neighbours; checked for colour-blind
+     separation (adjacent pairs of all eight, every pair of the first four). One series: the blue ramp,
+     soft to strong. The accent marks the one thing to look at. Feishu cards use the same light values
+     (src/channels/lark-ui.ts SERIES, SEQ, ACCENT). */
+  --chart-1: #2e6a48;
+  --chart-2: #c4922c;
+  --chart-3: #3f66a3;
+  --chart-4: #c27650;
+  --chart-5: #1f7480;
+  --chart-6: #9a7cb5;
+  --chart-7: #7a8b3a;
+  --chart-8: #a3506f;
+  --chart-seq-1: #c3cde3;
+  --chart-seq-2: #9eb0d8;
+  --chart-seq-3: #4a6aab;
+  --chart-seq-4: #2a4682;
+  --chart-accent: #d9481f;
+  --chart-grid: #e8e5dd;
+  --chart-axis: #c6c1b6;
   --shadow: 0 1px 2px rgba(20, 20, 20, 0.04), 0 4px 16px rgba(20, 20, 20, 0.06);
   --shadow-lg: 0 8px 40px rgba(20, 20, 20, 0.16);
   --radius: 10px;
@@ -62,16 +69,21 @@
     --danger: #f08a85;
     --danger-soft: #331a19;
     --mark: #4a3f12;
-    --chart-1: #7086e3;
-    --chart-2: #ba894a;
-    --chart-3: #39a89c;
-    --chart-4: #c4453a;
-    --chart-5: #a968bc;
-    --chart-6: #869f58;
-    --chart-7: #c47997;
-    --chart-8: #389fd2;
+    --chart-1: #5ea883;
+    --chart-2: #c2882a;
+    --chart-3: #6d8cd0;
+    --chart-4: #a95c3b;
+    --chart-5: #2e8c96;
+    --chart-6: #9d82ca;
+    --chart-7: #86963f;
+    --chart-8: #c66a8a;
+    --chart-seq-1: #2f3a52;
+    --chart-seq-2: #3f5482;
+    --chart-seq-3: #7d9be0;
+    --chart-seq-4: #b4c8f5;
+    --chart-accent: #f06a43;
     --chart-grid: #262a30;
-    --chart-axis: #484d55;
+    --chart-axis: #4a4f57;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
@@ -97,16 +109,21 @@
   --danger: #f08a85;
   --danger-soft: #331a19;
   --mark: #4a3f12;
-  --chart-1: #7086e3;
-  --chart-2: #ba894a;
-  --chart-3: #39a89c;
-  --chart-4: #c4453a;
-  --chart-5: #a968bc;
-  --chart-6: #869f58;
-  --chart-7: #c47997;
-  --chart-8: #389fd2;
+  --chart-1: #5ea883;
+  --chart-2: #c2882a;
+  --chart-3: #6d8cd0;
+  --chart-4: #a95c3b;
+  --chart-5: #2e8c96;
+  --chart-6: #9d82ca;
+  --chart-7: #86963f;
+  --chart-8: #c66a8a;
+  --chart-seq-1: #2f3a52;
+  --chart-seq-2: #3f5482;
+  --chart-seq-3: #7d9be0;
+  --chart-seq-4: #b4c8f5;
+  --chart-accent: #f06a43;
   --chart-grid: #262a30;
-  --chart-axis: #484d55;
+  --chart-axis: #4a4f57;
   color-scheme: dark;
 }
 

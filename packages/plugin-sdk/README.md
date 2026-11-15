@@ -19,7 +19,7 @@ const { transcript } = await call.stop();
   `navigate`, `openSettings`, `stream`, `voice` / `voiceStatus` (omem holds the microphone and the
   connection; the page gets the transcript only), and `renderBlock` / `renderView` for the agent's questions (forms) and views (metrics, callouts, tables, charts, comparisons) in a session.
 - `@omem-ai/plugin-sdk/blocks`: `renderBlock` and `renderView` alone, without a framework.
-- `@omem-ai/plugin-sdk/charts`: the charts and figures those blocks draw (`mountChart`, `metricsElement`, `sparkline`), for a page that wants them without a block. Colours come from omem's `--chart-*` tokens (`/plugins/_sdk/omem.css`).
+- `@omem-ai/plugin-sdk/charts`: the charts and figures those blocks draw (`mountChart`, `metricsElement`, `sparkline`), for a page that wants them without a block. Colours come from omem's `--chart-*` tokens (`/plugins/_sdk/omem.css`). A chart draws itself in once when first seen; `setChartMotion(false)`, `data-chart-still` on an ancestor or `prefers-reduced-motion` turn that off.
 - `@omem-ai/plugin-sdk/service`: for a plugin's service (Node): `serve({ http, socket })` on
   `127.0.0.1:OMEM_SERVICE_PORT`, refusing requests without omem's token.
 

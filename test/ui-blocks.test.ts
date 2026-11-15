@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { answerAsk, describeAnswer, getAsk, listAsks, showSuggestions } from "../src/agents/asks.ts";
 import { readFileSync } from "node:fs";
 import { changeText, checkView, metricTone, metricTrend, normalizeAnswers, viewText, type UiField, type ViewComponent } from "../src/agents/ui-blocks.ts";
-import { chartSpec, SERIES } from "../src/channels/lark-ui.ts";
+import { ACCENT, chartSpec, SEQ, SERIES } from "../src/channels/lark-ui.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { run } from "../src/core/db.ts";
@@ -179,10 +179,13 @@ describe("component blocks", () => {
     const css = readFileSync(new URL("../web/src/styles.css", import.meta.url), "utf8");
     const light = css.slice(css.indexOf(":root {"), css.indexOf("}", css.indexOf(":root {")));
     expect(SERIES).toEqual(Array.from({ length: 8 }, (_, i) => light.match(new RegExp(`--chart-${i + 1}:\\s*(#[0-9a-f]{6})`))?.[1]));
+    expect(SEQ).toBe(light.match(/--chart-seq-3:\s*(#[0-9a-f]{6})/)?.[1]);
+    expect(ACCENT).toBe(light.match(/--chart-accent:\s*(#[0-9a-f]{6})/)?.[1]);
     const spec = chartSpec({ type: "chart", title: "退款排行", kind: "hbar", labels: ["尺码", "质量"], series: [{ name: "单", values: [120, 80] }], goal: 100 }) as Record<string, any>;
-    expect(spec).toMatchObject({ type: "bar", direction: "horizontal", barMaxWidth: 10, bar: { style: { cornerRadius: [0, 2, 2, 0] } } });
+    // One series is the single blue; several take the categorical slots.
+    expect(spec).toMatchObject({ type: "bar", direction: "horizontal", barMaxWidth: 10, color: [SEQ], bar: { style: { cornerRadius: [0, 2, 2, 0] } } });
     expect(spec.axes[0]).toMatchObject({ orient: "bottom", grid: { visible: true }, domainLine: { visible: false } });
-    expect(spec.markLine[0].line.style.lineDash).toEqual([4, 3]);
+    expect(spec.markLine[0].line.style.lineDash).toEqual([2, 3]);
     const pie = chartSpec({ type: "chart", title: "原因", kind: "pie", labels: ["质量", "其他"], series: [{ name: "单", values: [7, 3] }] }) as Record<string, any>;
     expect(pie).toMatchObject({ innerRadius: 0.64, color: SERIES });
   });

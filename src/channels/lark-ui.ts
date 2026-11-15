@@ -21,10 +21,13 @@ const MAX_PER_CARD = 5;
  * of `--chart-1`…`--chart-8` in web/src/styles.css (a card has no CSS variables; test/ui-blocks.test.ts
  * checks the two stay the same). Mid-tones, so they also read on a dark card.
  */
-export const SERIES = ["#3860ac", "#bf801e", "#0f968a", "#a04130", "#a065b2", "#627d28", "#8f4966", "#2a8bbf"];
+export const SERIES = ["#2e6a48", "#c4922c", "#3f66a3", "#c27650", "#1f7480", "#9a7cb5", "#7a8b3a", "#a3506f"];
+/** One series is the blue of `--chart-seq-3`; the highlighted label takes `--chart-accent` (light values). */
+export const SEQ = "#4a6aab";
+export const ACCENT = "#d9481f";
 /** Hairline grid, baseline and small labels, as `--chart-grid`, `--chart-axis` and `--muted` (light). */
-const GRID = "#ebe8e1";
-const AXIS = "#c8c3b8";
+const GRID = "#e8e5dd";
+const AXIS = "#c6c1b6";
 const MUTED = "#7a7f88";
 /** The reference line of a goal: dashed, in the secondary ink. */
 const GOAL = "#4b5059";
@@ -72,11 +75,13 @@ function table(c: Extract<ViewComponent, { type: "table" }>): Record<string, unk
 }
 
 /**
- * A VChart spec for one chart, in the web's look (packages/plugin-sdk/charts.ts) as far as a card
- * goes: the series colours, thin marks rounded a little at the data end, a hairline grid on the value
- * axis only and no axis line or ticks there, small grey labels, a dashed goal line, values on the
- * marks when there are few, a thin ring for shares. What a card cannot do (names at the line ends, a
- * written peak, a lighter rest when one label is highlighted) falls back to the legend and the labels.
+ * A VChart spec for one chart, in the web's colours (packages/plugin-sdk/charts.ts) as far as a card
+ * goes: the categorical slots for several series and the blue for one, thin marks, straight lines, a
+ * hairline grid on the value axis only and no axis line or ticks there, small grey labels, a dotted
+ * goal line, values on the marks when there are few, a thin ring for shares. VChart cannot draw the
+ * web's shapes (columns as rungs, rows as ticks, the dial of a hundred ticks, hairline areas) or the
+ * entrance; nor names at the line ends, a written peak or the accent on one label: those fall back
+ * to the legend and the labels.
  */
 export function chartSpec(c: Extract<ViewComponent, { type: "chart" }>): Record<string, unknown> {
   const small = { fontSize: 10, fill: MUTED };
@@ -100,15 +105,16 @@ export function chartSpec(c: Extract<ViewComponent, { type: "chart" }>): Record<
   const valueAxis = { orient: horizontal ? "bottom" : "left", grid: { visible: true, style: { stroke: GRID, lineWidth: 1, lineDash: [] } }, domainLine: { visible: false }, tick: { visible: false }, label: { style: small } };
   const labelAxis = { orient: horizontal ? "left" : "bottom", grid: { visible: false }, domainLine: { visible: true, style: { stroke: AXIS, lineWidth: 1 } }, tick: { visible: false }, label: { style: { ...small, fontSize: horizontal ? 12 : 10 } } };
   const base: Record<string, unknown> = {
-    data: { values }, color: SERIES, axes: [valueAxis, labelAxis],
+    data: { values }, color: several ? SERIES : [SEQ], axes: [valueAxis, labelAxis],
     legends: { visible: several, orient: c.kind === "line" ? "top" : "bottom", item: { label: { style: { fontSize: 11 } } } },
   };
   if (several) base.seriesField = "s";
   if (c.goal !== undefined) {
-    base.markLine = [{ [horizontal ? "x" : "y"]: c.goal, line: { style: { stroke: GOAL, lineWidth: 1, lineDash: [4, 3] } }, label: { visible: true, text: `目标 ${c.goal}`, position: "insideEndTop", labelBackground: { visible: false }, style: small } }];
+    base.markLine = [{ [horizontal ? "x" : "y"]: c.goal, line: { style: { stroke: GOAL, lineWidth: 1, lineDash: [2, 3] } }, label: { visible: true, text: `目标 ${c.goal}`, position: "insideEndTop", labelBackground: { visible: false }, style: small } }];
   }
   if (c.kind === "line" || c.kind === "area") {
-    const line = { style: { lineWidth: several ? 1.75 : 1.5, curveType: "monotone" } };
+    // Straight from point to point, as on the web; a single line keeps a small dot per point.
+    const line = { style: { lineWidth: several ? 1.75 : 1.5, curveType: "linear" } };
     return {
       ...base,
       type: c.kind,

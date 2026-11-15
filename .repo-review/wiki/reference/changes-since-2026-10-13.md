@@ -8,6 +8,13 @@ updated: 2026-11-15
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
 
+## 图表改成“可数的单位”的画法和配色，加入场动效（11-15）
+
+- 仍只在 `packages/plugin-sdk/charts.ts` 画，接口和组件块的 schema 不变。柱改成一格一格的梯级（`rungUnit` 定一格是多少，每五格加粗，超过六十根才退回细实心柱）；横向排行改成一排竖刻度（拉伸的 SVG，`vector-effect: non-scaling-stroke`）；只有一两行的小表画数字加细条；折线逐点画点、周末空心、底线一天一根刻度，线一律直线；面积是一根根发丝线；饼图改成一百根刻度的表盘（`dialTicks` 分配）；指标数字放大、标签加字距，小走势也是发丝线。图下一行写读法（“一格 = 5 单 · 每五格加粗”）。
+- 颜色 token：`--chart-1`…`--chart-8` 换成低饱和、色相和明度都拉开的一组；新增单组用的 `--chart-seq-1`…`4`（青瓷蓝明度阶）和只标“要看的那一个”的 `--chart-accent`（橙红）。色值和检查结果见 `docs/v2/interactive-ui.md`“图表的样子”。插件页的主题消息带上这些 token（`web/src/views/Plugin.vue`）；飞书卡片的 `SERIES`、`SEQ`、`ACCENT` 用浅色同一组值，测试核对。
+- 入场动效：第一次进入视口时播一次（`IntersectionObserver`，CSS 动画，一秒左右），`prefers-reduced-motion`、`[data-chart-still]`、`<html data-chart-motion="off">`、`setChartMotion(false)` 时不播；`scripts/doc-screens.ts`、`scripts/screens.ts` 用 `reducedMotion: "reduce"` 截图（`screens.ts` 设 `MOTION=1` 可保留动效）。悬停时被指的柱、线、表盘一段保持，其余变淡，线图有读数线。
+- `scripts/doc-screens.ts`：数据页的演示数据加了“回复发出后的结果”；`uv_charts_demo` 加了 30 天的折线、一组排行柱和三列并排的刻度行。
+
 
 ## 流程里的验证阶段：逐条的结果带截图和录屏（11-15）
 
@@ -15,6 +22,7 @@ updated: 2026-11-15
 - `flowView` 的每个阶段多 `tests`（`stageTests`）：这一段的运行交过的用例，同一条取最新一次，没通过、没做的在前，带需求点标题、`mode`、`note` 和产物。
 - 事项页的流程面板（`web/src/components/ItemFlow.vue`）在所选阶段下面列“逐条的结果”：一条一行，点开是说明和 `RunArtifacts`（截图、录屏的查看器）；没通过的默认展开。
 - `roles/_common.md`“流程里的一个阶段”加了验证 / 验收的做法：和编码验证的分工、用例从需求点来、凭据由本人输入、缺账号问本人或负责的人、不替本人下结论。
+
 
 ## 图表与指标只有一种画法（11-15）
 
