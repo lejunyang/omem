@@ -26,7 +26,8 @@ export function eligibleFixes(app: App, f: ItemFlow, d: FlowStage) {
     return t.item_id === f.itemId && t.result === "failed" && !!direction(app, t.direction_id).allow_code;
   })).slice(0, d.budget?.fixes ?? 2);
 }
-const approvedWork = (app: App, id: string) => { const w = codeWork(app, id); return w?.stage.key === "done" && w.next.actions.includes("apply"); };
+/** Review passed and the change waits for the owner: "done" whether the owner is to apply it in place or to confirm its own branch. */
+const approvedWork = (app: App, id: string) => codeWork(app, id)?.stage.key === "done";
 /** Changes the owner started by hand that passed review and whose failed trials were never run again: verified here, whatever the round. */
 export function unverifiedFixes(app: App, f: ItemFlow) {
   const reruns = trials(app, f.itemId).filter((t) => t.fix_of);
@@ -99,7 +100,7 @@ export async function tickFixes(app: App, item: Item, f: ItemFlow, d: FlowStage,
   }
   const w = codeWork(app, v.work_id);
   if (w?.stage.group === "active") return false;
-  const approved = w?.stage.key === "done" && w.next.actions.includes("apply");
+  const approved = w?.stage.key === "done";
   if (!approved) {
     c.fixIndex = (c.fixIndex ?? 0) + 1; c.fixWorkId = undefined;
     return save(`${v.title}：评审没过，等你看`);
