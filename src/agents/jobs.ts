@@ -1094,6 +1094,7 @@ registerHandler("heartbeat", async (ctx) => {
   (await import("./ask-expiry.ts")).sweepStaleAsks(app);
   await (await import("../channels/notify-read.ts")).syncNotificationReads(app).catch((e: Error) => console.warn("[omem] 同步通知已读失败：", e.message));
   releaseLater(app);
+  await (await import("../flows/engine.ts")).flowReminders(app);
   labelOutcomes(app);
   labelDecisions(app, { limit: 200 });
   // 2. Watches and waits only need attention when new material arrived.

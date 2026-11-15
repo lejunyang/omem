@@ -36,6 +36,7 @@ import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remot
 import { attachPreviewUpgrade, registerPreviewRoutes } from "./preview-http.ts";
 import { registerArtifactRoutes } from "./artifact-http.ts";
 import { registerDesignRoutes } from "./design-http.ts";
+import { registerFlowRoutes } from "../flows/http.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -1501,6 +1502,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   attachPreviewUpgrade(app, server.server);
   registerArtifactRoutes(server, app, who);
   registerDesignRoutes(server, app, who);
+  registerFlowRoutes(server, app, who);
   attachPluginStreams(app, server.server);
   // Its WebSocket: upgrades skip the hooks, so the owner's token is checked here.
   server.server.on("upgrade", async (req, socket, head) => {

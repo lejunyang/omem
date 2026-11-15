@@ -1,6 +1,6 @@
 # 流程：让一件事自己往前走
 
-状态：设计稿（2026-11-15），未实现。第 12 节列出要本人定的几点。
+状态：第一期服务端已实现（2026-11-15）：定义、事项阶段、推进、本人关卡、已有对象、工具与 HTTP。网页流程条与飞书进度卡的专门版式尚未实现。第 5–8、10 节及第四期仍是后续设计；第一期的具体边界见“第一期的实现”。
 
 ## 1. 要解决的问题
 
@@ -70,7 +70,7 @@ omem 已经能做一件事里的很多段：进群跟讨论、拆需求点、写
 id: feature
 name: 需求交付
 description: 从群里提出到上线，再写进周报
-for: { kinds: [task], spaces: [demo-mall] }   # 这些事项默认建议用它；也可以在事项上手选
+for: { kinds: [todo], spaces: [demo-mall] }   # todo / waiting / watch / decision；用于建议，不限制手动选择
 stages:
   - id: clarify
     name: 澄清
@@ -89,12 +89,12 @@ stages:
     name: 推送
     needs: [code]
     by: owner                                  # 人自己做
-    done: { signal: git.pushed }               # 宿主看到远端分支跟上了就算完成
+    done: confirm                             # 第一期由本人确认；git.pushed 信号留待第二期
   - id: deploy
     name: 部署到预发
     needs: [push]
     by: { run: { skill: deploy-staging } }
-    done: { object: deployment, status: succeeded }
+    done: 预发部署成功，附验证依据               # 插件 deployment 对象留待第三期
   - id: test
     name: 回归
     needs: [deploy]
@@ -123,7 +123,7 @@ stages:
 | --- | --- | --- |
 | `run: { agent, skill }` | 到了就起一次运行，带上这件事的全部上下文 | 运行用工具交代“做完了”并附依据 |
 | `object: <类型>` | 背后是一个有自己生命周期的对象：方案、交办、评审，或插件提供的合并请求、流水线、部署单 | 对象到了终态 |
-| `owner`（或 `person: <人>`） | 人自己做 | 信号，或本人说做完了 |
+| `owner`（`person: <人>` 留待后续） | 人自己做 | 本人说做完了；信号留待后续 |
 | `wait` | 什么都不做，只等 | 信号 |
 
 **怎样算完成（`done`）**，四种，优先用靠前的：
@@ -135,7 +135,7 @@ stages:
 
 **进入前的关卡（`gate`）**：`auto`（默认，前提满足就开始）、`confirm`（本人点头）、`confirm: <人>`（发给那个人，等他点）。`fixed: true` 的关卡不参加下面说的升降。
 
-**什么时候才需要（`when`）**：一句话或不写。不写就是总要做。到了该判断的时候，由助手判断并写理由；本人可以推翻（“这次要写方案”）。
+**什么时候才需要（`when`）**：一句话或不写。不写就是总要做。第一期直接调用已配置的决策模型，记录选项与概率；未配置或调用失败就问事项本人。每次尝试判断一次，已经判“要做”的重开后不再判断；本人仍可跳过或重开。
 
 ### 3.3 一件事上的流程
 
@@ -148,7 +148,7 @@ stages:
                       │                    │
                       ▼                    ▼
                     跳过                 卡住（等谁、为什么）
-完成 ──被重开──▶ 进行中        完成 ──上游被重开──▶ 待复核
+完成 ──被重开──▶ 未到（重走条件和关卡）        完成 ──上游被重开──▶ 待复核
 ```
 
 - **卡住**：承担者报告做不下去（缺权限、前置条件没满足、等别人），写明等谁、等什么。等的东西到了（信号、对方回复、本人处理）再继续。
@@ -167,9 +167,9 @@ stages:
 几条约束：
 
 - **连续自动推进有上限**（`flows.autoAdvance`，默认 3）：没有人参与的情况下连着自动开始了这么多个阶段，下一个不论关卡怎么写都先问本人。和现有的协作循环上限是同一个想法。
-- **一个阶段的运行失败或超时不算完成**，阶段变成卡住，原因是运行的错误；不自动重试超过一次。
-- **停太久会提醒**：阶段在“等人”或“卡住”超过定义里的时限（默认两个工作日），用不急的通知提一次，之后按间隔翻倍。
-- **关卡按授权阶梯升降**（沿用 `src/agents/approval-ladder.ts` 的做法）：同一个流程的同一个关卡，本人连续直接同意到设定次数，问一次要不要改成自动；本人对自动开始的那一段表示不满意（负面反应、叫停、回退），改回要确认。`fixed: true` 的不问。
+- **一个阶段的运行失败或超时不算完成**，运行正常结束却没交结果也卡住，不自动重试。`done: confirm` 被本人拒绝时才带意见重跑，第三次仍被拒就卡住。
+- **停太久会提醒**：`gated`、`blocked` 或本人承担的 `doing` 默认停满 2 个自然日提醒一次；再隔 4 天、8 天，间隔翻倍。“先别做”重新计时，不自动通过。
+- **关卡按授权阶梯升降**是第四期的设计（沿用 `src/agents/approval-ladder.ts` 的做法）：同一个流程的同一个关卡，本人连续直接同意到设定次数，问一次要不要改成自动；不满意后退回确认。第一期只保留 `fixed` 字段，不做升降。
 - **推进不替人做决定**：宿主从不自己把 `confirm` 当成已确认，也不因为“等太久”自动过关。
 
 ### 4.1 重开和补录
@@ -373,11 +373,13 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 
 工具（新分组 `flow`）：`flow_start`、`stage_report`（做完了 / 卡住了 / 建议跳过，附依据）、`stage_reopen`、`attach_object`、`note_item_change`、`save_flow`；`read_item` 多返回流程。写入照常按空间和事项的主人限定。
 
-接口：`GET/PUT /api/flows`、`GET /api/items/:id/flow`、`POST /api/items/:id/flow/stages/:stage/{confirm,skip,reopen,done}`、`GET /api/board`、`GET /api/insights`。
+接口：第一期是 `GET /api/flows`、`PUT/DELETE /api/flows/:id`、`GET/POST/DELETE /api/items/:id/flow`、`POST /api/items/:id/flow/stages/:stage/{confirm,hold,skip,reopen,done}`；具体响应见“第一期的实现”。`GET /api/board`、`GET /api/insights` 留待后续。
 
-设置：`flows: { autoAdvance: 3, followQuietMinutes: 20, followBatch: 30, staleDays: 2 }`。
+设置：第一期 `flows: { autoAdvance: 3, staleDays: 2 }`；`followQuietMinutes: 20, followBatch: 30` 随第二期加入。`flow_signals`、`flow_objects`、`item_objects` 也留待后续。
 
 ## 12. 要本人定的
+
+2026-11-15 本人定：下面七点都按建议。
 
 1. **流程定义放哪一层**：建议全局一份清单，空间可以指定默认用哪个；不做“每个空间各存一套”。
 2. **大事怎么办**：建议一件事项一个流程。一个项目里有十几个需求时，每个需求一件事项，再用一件“项目”事项关联它们、汇总进度；事项之间加“属于”关系，但不做流程嵌套。还是说先不管大事？
@@ -396,3 +398,39 @@ api.slot("item.panel", { block: "ci-summary", when: { object: "merge-request" } 
 | 三 | 插件的对象、信号、动作、插槽；`plugin link` 和源码构建；GitHub 的例子 | 合并请求的状态卡出现在事项页，合并后流程前进 |
 | 四 | 看板、今日页的关卡栏、流程回顾和 coach 的建议、关卡的升降 | — |
 | 成效页 | 不依赖流程的板块可以和第一期并行做；交付板块里的阶段指标等第一期有了记录再加 | 用常驻服务器上的真实数据核对每个数字的明细 |
+
+## 第一期的实现
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/flows/definitions.ts` | YAML + Zod 校验、适用清单、知识库 Git 保存、内置文件补缺播种。仓库 `flows/library/*.yaml` 可以为空或不存在，不生成默认流程。 |
+| `src/flows/store.ts` | 流程副本、阶段与日志；统一写阶段行、日志、事项时间线和 item 变更事件；进度通知用 `replaces` 更新同一张卡片。 |
+| `src/flows/engine.ts` | 每事项串行推进、条件判断、本人提问及回调、报告、重开、结束和心跳提醒；`flow-stage` 运行复用事项材料和所在会话摘要。 |
+| `src/flows/objects.ts` | 小型对象注册表，已有 `code-work`、`design`，以后再接插件。 |
+| `src/flows/http.ts` | 定义与事项流程的 HTTP；路由权限集中登记在 `src/auth/routes.ts`。 |
+
+定义最多 20 段，阶段 id 唯一；`needs` 只能指向列表中更早的阶段，不填等上一个，`[]` 无前提。`note` 最多 1000 字；`when` 和文字 `done` 最多 300 字。第一期拒绝 person、signal、插件对象；`done` 对象只可写已有的两种。代码里的事项还有 `reminder`，但流程定义的 `for.kinds` 按本期约定只接受 todo / waiting / watch / decision。
+
+对象只查本事项：编码交办从 `item_materials(kind=run)` 找，复用 `codeWork.stage.key` 作状态；最近轮 `roundList.verdict=approved`、运行 done 且阶段为 done / review-ok / ended 时默认完成，应用前就能推进，已丢弃或被新交办接替的不选。方案先找该交办绑定的方案，再找事项的方案；必须是当前版本、状态 approved、确认记录的 `by` 等于事项本人，助手确认不算。
+
+运行承担的阶段只拿事项所在空间的可写范围，临时技能正文像夜间复盘的附加技能一样放进这一轮任务。缺少编码对象时起助手运行，要求 `delegate_code` 带 `item_id`。缺少方案时宿主建立空方案，再调用现有 `runDesigner`，因 `submit_design` 只允许 designer 提交自己的方案；这是与“助手运行写方案”的接口适配，未放宽原角色限制。提交后等本人在现有方案页确认，未交方案则卡住。
+
+数据库末尾追加一条迁移，只有 `item_flows`、`item_stages`、`item_stage_log` 三张表。前两表加显式 `updated_at` 供拉取比较；阶段另有 `since` 和小型 `control` JSON，保存条件已判、提问用途、当前运行、提醒次数与时间。日志的 `sync_key` 区分设备各自分配的整数 id；三个表进入 `pullTables`，键分别是 item_id、(item_id, stage_id)、映射后的日志 id。既有拉取逻辑递归改写 JSON 里的原件引用和行号，无新增投影、触发器或缓存。
+
+HTTP 约定：
+
+- `GET /api/flows` → `{ flows: [{ id, raw, definition, problem }] }`，无效文件仍返回原文与问题。`PUT /api/flows/:id` 收 `{ yaml }` 或 text/plain 原文，路径 id 必须与定义一致；`DELETE` 删除定义，两者限 omem 主人。
+- `GET /api/items/:id/flow` → `{ flow, stages, log, suits }`。`flow` 为 null 或 `{ id, name, startedAt, endedAt, autoStreak }`；`suits` 仅在还没有流程时给适用定义。
+- `stages` 每项为 `{ id, name, instruction, state, attempt, since, enteredAt, doneAt, by, waitingOn, evidence, note, gate, fixed, carrier, object?, askId? }`。`instruction` 是定义中的 note，`note` 是最近进展，避免任务书示例中重复的 note 键。`carrier: { kind, label, link? }`；`object: { title, status, link }`。`by` 是当前运行 id、对象引用、owner 或 null。日志最近 50 条，按新到旧，字段 `id / stageId / at / fromState / toState / actor / runId / refs / note`。
+- `POST /api/items/:id/flow` 收 `{ flow }`；`DELETE` 停止。`POST .../stages/:stage/{confirm,hold,skip,done,reopen}` 收 `{ note? }`；skip、done、reopen 必须写 note。所有写事项流程的接口限事项本人并检查空间写权限；读接口按事项空间的阅读权限。
+- 写操作均返回同一份流程视图。本人也可重开已走完或已停止流程中的阶段；走完和停止都撤回未答问题，不替本人关闭事项。
+
+只有本人能定的事不由 Agent 代办：Agent 对本人承担的阶段报“做完了”，不会直接完成，而是变成一个问本人的确认（“这一段是你来做的，助手说已经做完了……是这样吗？”），本人确认了后面的阶段才开始；进入前要确认、完成要确认或由本人承担的阶段，Agent 不能跳过（工具返回错误，要它把理由告诉本人），本人在卡片或事项页上可以。自动的阶段 Agent 可以跳过，本人会收到一条不急的通知。
+
+进度卡每次操作只更新一次：一次推进里改了几个阶段（开始流程时每个阶段都写一行），结束时才发一条，替换上一张。
+
+工具是 `list_flows / save_flow / flow_start / stage_report / stage_reopen`（`group:flow`）；`save_flow` 只起草，本人选“启用”才写文件。阶段提问在记录答案前校验被问者和回答人，回调还会复核。`read_item.flow` 采用上述视图。
+
+监听 `changed(code-task)`、`changed(design)` 和 `run`（含运行终态），按对象 id、运行主键、continueFrom / parent 及事项 run 材料限定到进行中的流程。未新增任何渠道或编码运行时的发射器。当前缺少即时事件的是：`src/agents/code.ts` 的应用、丢弃，`src/agents/code-branch.ts` 的分支确认 / 归还，以及 `src/designs/store.ts` 的创建、基础信息更新、绑定交办；阶段开始和运行事件会读到已存在的对象，心跳也重新读取，以上独立操作没有即时唤醒保证。具体缺口见本次变更记录。
+
+尚无网页流程条、流程定义表单、专门的飞书进度卡版式、通用信号表、Git 信号、上下文订阅、插件对象、补录、阶段副本编辑、看板、成效页或关卡授权升降。设置只有 `flows: { autoAdvance: 3, staleDays: 2 }`，旧配置自动补默认值；第四期的回顾、coach 和授权阶梯也未接入。默认主助手尚需单独授予 `group:flow`，内置角色正文由后续切片维护。

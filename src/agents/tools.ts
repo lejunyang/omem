@@ -2097,6 +2097,65 @@ def({
   },
 });
 
+function flowItem(ctx: ToolContext, id: string, write: boolean) {
+  const item = getItem(ctx.app, id);
+  const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, write ? ctx.writable ?? ctx.spaces : ctx.spaces);
+  if (item.userId !== (ctx.userId ?? OWNER) || allowed && !allowed.includes(item.spaceId)) throw new HttpError(403, "不能访问或修改该事项的流程");
+  if (write) inScope(ctx, item.spaceId, "流程");
+  return item;
+}
+function flowActor(ctx: ToolContext) { return { actor: ctx.actor === "user" ? "owner" : ctx.spec ?? ctx.role ?? "assistant", userId: ctx.userId ?? OWNER, runId: ctx.runId ?? undefined }; }
+async function flowRefs(ctx: ToolContext, list: string[]) {
+  const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
+  for (const ref of list) {
+    if (ref.startsWith("src:")) { validateItemRefs(ctx.app, [ref], ctx.userId ?? OWNER, ctx.spaces); continue; }
+    if (ref.startsWith("design:")) {
+      const d = (await import("../designs/store.ts")).getDesign(ctx.app, ref.slice(7));
+      if (d.userId !== (ctx.userId ?? OWNER) || allowed && !allowed.includes(d.spaceId)) throw new HttpError(403, "不能引用该方案");
+    } else {
+      const r = getRun(ctx.app, ref.replace(/^(?:run:|code-work:)/, ""));
+      if (runUser(ctx.app, r.id) !== (ctx.userId ?? OWNER) || allowed && (!r.spaceId || !allowed.includes(r.spaceId))) throw new HttpError(403, "不能引用该运行");
+    }
+  }
+}
+def({
+  name: "list_flows", description: "列出流程定义的 id、名称、说明和阶段；item 给出事项 id 时同时列出适用的流程。",
+  schema: z.object({ item: z.string().optional() }), handler: async (ctx, a) => {
+    const item = a.item ? flowItem(ctx, a.item, false) : null;
+    const { listFlows, flowsFor } = await import("../flows/definitions.ts");
+    return JSON.stringify({ flows: listFlows(ctx.app).map((f) => ({ id: f.id, name: f.definition?.name, description: f.definition?.description, stages: f.definition?.stages.map((s) => s.name), problem: f.problem })), ...(item ? { suits: flowsFor(ctx.app, item).map((f) => f.id) } : {}) });
+  },
+});
+def({
+  name: "save_flow", description: "起草整份 YAML 流程；给本人看每段由谁做、关卡和完成要求，只有本人选择启用才保存到 library/_flows。",
+  write: true, schema: z.object({ yaml: z.string().max(60000) }), handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有主人能启用共享流程定义");
+    const ask = (await import("../flows/engine.ts")).proposeFlow(ctx.app, a.yaml, flowActor(ctx));
+    return `流程草稿等本人确认：${ask.id}`;
+  },
+});
+def({
+  name: "flow_start", description: "让事项开始走指定流程；同一事项已有进行中的流程时拒绝。",
+  write: true, schema: z.object({ item: z.string(), flow: z.string() }), handler: async (ctx, a) => {
+    flowItem(ctx, a.item, true);
+    return JSON.stringify(await (await import("../flows/engine.ts")).startFlow(ctx.app, a.item, a.flow, flowActor(ctx)));
+  },
+});
+def({
+  name: "stage_report", description: "交代流程里一个阶段的结果。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段不会直接完成，而是变成一个问本人的确认。blocked：做不下去，waiting_on 写等谁或等什么。skip：这一段不需要，写原因；要本人确认或由本人承担的阶段不能由你跳过，把理由告诉本人。",
+  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), waiting_on: z.string().max(300).optional() }), handler: async (ctx, a) => {
+    flowItem(ctx, a.item, true); await flowRefs(ctx, a.evidence ?? []);
+    return JSON.stringify(await (await import("../flows/engine.ts")).reportStage(ctx.app, a.item, a.stage, { ...a, waitingOn: a.waiting_on }, flowActor(ctx)));
+  },
+});
+def({
+  name: "stage_reopen", description: "重开事项的一个阶段，写原因及依据；下游已完成阶段变成待复核，已跳过的保持跳过。",
+  write: true, schema: z.object({ item: z.string(), stage: z.string(), reason: z.string().trim().min(1).max(4000), refs: z.array(z.string()).max(50).optional() }), handler: async (ctx, a) => {
+    flowItem(ctx, a.item, true); await flowRefs(ctx, a.refs ?? []);
+    return JSON.stringify(await (await import("../flows/engine.ts")).reopenStage(ctx.app, a.item, a.stage, a.reason, a.refs ?? [], flowActor(ctx)));
+  },
+});
+
 def({
   name: "upsert_item",
   description:
@@ -2233,7 +2292,7 @@ def({
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const places = itemPlaces(ctx.app, item.id, ctx.userId ?? OWNER).map(({ link: _, spaceId: __, ...p }) => ({ ...p, ref: p.kind === "source" ? `src:${p.ref}` : p.ref }));
     const runs = itemRuns(ctx.app, item.id, ctx.userId ?? OWNER).filter((r) => r.id !== ctx.runId);
-    return JSON.stringify({ item, events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
+    return JSON.stringify({ item, flow: (await import("../flows/engine.ts")).flowView(ctx.app, item.id), events: itemEvents(ctx.app, item.id), ...(places.length ? { places } : {}), ...(runs.length ? { runs } : {}), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
   },
 });
 def({

@@ -14,16 +14,16 @@ export type RunTrigger = {
    * chat: a message to the assistant; guest: someone who is not a user asking the bot; mention: someone
    * looking for the owner; rule; schedule; peer: an agent on another device; member: a user's own action.
    */
-  via: "chat" | "guest" | "mention" | "rule" | "schedule" | "peer" | "member";
+  via: "chat" | "guest" | "mention" | "rule" | "schedule" | "peer" | "member" | "flow";
   /** The person or bot. `key`: `user:<id>` for a user of omem, `lark:<open_id>` for someone on Feishu, `bot:<id>` for another bot, `name:<name>` when only a name is known. */
   by?: { key: string; name: string };
   /** Where it happened: a chat's name, “私聊”, a device. */
   where?: string;
   /** The rule, schedule or device behind it. */
-  source?: { kind: "rule" | "schedule" | "peer"; id: string; name: string };
+  source?: { kind: "rule" | "schedule" | "peer" | "flow"; id: string; name: string };
 };
 
-export const VIA_LABEL: Record<RunTrigger["via"], string> = { chat: "对话", guest: "访客提问", mention: "有人找你", rule: "规则", schedule: "定时", peer: "同伴设备", member: "成员操作" };
+export const VIA_LABEL: Record<RunTrigger["via"], string> = { chat: "对话", guest: "访客提问", mention: "有人找你", rule: "规则", schedule: "定时", peer: "同伴设备", member: "成员操作", flow: "流程" };
 
 /** A user of omem as the one behind a run. */
 export function userBy(app: App, userId: string | null | undefined): RunTrigger["by"] {

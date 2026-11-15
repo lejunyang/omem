@@ -1078,6 +1078,10 @@ export const configSchema = z.object({
    * (personal/people/*) of those with new messages. `inject`: a summary of up to `briefChars` goes
    * into the main assistant's turns, the patrol, the triage of 有人找你 and meeting summaries.
    */
+  flows: z.object({
+    autoAdvance: z.number().int().min(1).max(20).default(3),
+    staleDays: z.number().min(1).max(365).default(2),
+  }).default(() => ({ autoAdvance: 3, staleDays: 2 })),
   workState: z
     .object({
       days: z.number().int().min(3).max(60).default(21),

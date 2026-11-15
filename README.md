@@ -2,6 +2,8 @@
 
 个人记忆与助理：把文档、代码、聊天、笔记放进同一个知识库，带依据地回答问题，记住约定并在被纠正时更新，持续跟进事项，还能把编码任务交给其他 Agent 并保留检查与评审结果。
 
+事项可以跟随一份流程，由宿主按前提推进阶段，遇到关卡问本人，并跟随方案确认和编码评审。第一期已提供服务端、工具和 HTTP，网页流程条与专门的飞书进度卡版式还没有上线；用法与接口见 [flows.md](docs/v2/flows.md)。
+
 **文档站**：<https://lejunyang.github.io/omem/>（功能介绍、安装和使用，源码在 [site/](site/)）
 
 ## 主要特色
@@ -575,6 +577,7 @@ src/sources   归档规则与原件迁移（archive.ts）、知识库的文档�
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合、重排（rerank.ts）
 src/memory    记忆（目录、有效期、版本链、写入检查与复核统计、对话或任务前带上相关记忆、日常不足信号）
 src/items     事项（时间线）、需求树（requirements.ts）、需求点下的编码（work.ts）、一件事在哪些会话里进行（places.ts）
+src/flows     事项流程：YAML 定义、阶段与关卡、推进、对象注册表、提醒、工具及 HTTP（第一期服务端）
 src/designs   方案：决定、意见与版本（store.ts）、给 Agent 读的 Markdown（render.ts）、评估别人的方案（assess.ts）、交办里的方案阶段与确认（work.ts）、按决定汇总改动（changes.ts）
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测、写入检查与发布前核对（checks.ts、verify.ts）、页面的未决问题与旧页面迁移（questions.ts、migrate.ts）；问题的阅读次数、候选排序、过期与重开（questions.ts）
 src/quality   每晚抽检助手自主写入的页面和定级；页面按运行类型统计与加严、交回修改（audit.ts），错级交本人复核（levels.ts）

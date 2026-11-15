@@ -1929,6 +1929,28 @@ export const migrations: readonly string[] = [
      json_extract(input, '$.continueFrom'), json_extract(output, '$.appliedAt'), json_extract(output, '$.discardedAt'),
      json_extract(output, '$.verdict'), json_extract(output, '$.triage.action'), json_extract(output, '$.handleRun'),
      json_extract(output, '$.joined'), json_extract(input, '$.waited'));`,
+  // Per-item flows: tiny state and append-only history, with portable keys and explicit timestamps.
+  `create table item_flows (
+     item_id text primary key references items(id), flow_id text not null, definition text not null,
+     started_at text not null, ended_at text, auto_streak integer not null default 0,
+     card text, started_by text not null, updated_at text not null
+   );
+   create table item_stages (
+     item_id text not null references items(id), stage_id text not null,
+     state text not null check(state in ('pending','gated','doing','blocked','done','skipped','stale')),
+     attempt integer not null default 0, entered_at text, done_at text, "by" text, waiting_on text,
+     evidence text not null default '[]', note text not null default '', ask_id text,
+     since text not null, control text not null default '{}', updated_at text not null,
+     primary key(item_id,stage_id)
+   );
+   create table item_stage_log (
+     id integer primary key autoincrement, item_id text not null references items(id), stage_id text not null,
+     at text not null, from_state text, to_state text not null, actor text not null, run_id text,
+     refs text not null default '[]', note text not null default '',
+     sync_key text not null unique default (lower(hex(randomblob(16))))
+   );
+   create index item_stage_log_item_at on item_stage_log(item_id,at);
+   create index item_stage_log_at on item_stage_log(at);`,
 ];
 
 export type Db = DatabaseSync;

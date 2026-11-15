@@ -196,6 +196,17 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/memory-quality": AGENTS,
 
   // items and requirements (the handlers check whose item it is)
+  "GET /api/flows": "self",
+  "PUT /api/flows/:id": "owner",
+  "DELETE /api/flows/:id": "owner",
+  "GET /api/items/:id/flow": "self",
+  "POST /api/items/:id/flow": "self",
+  "DELETE /api/items/:id/flow": "self",
+  "POST /api/items/:id/flow/stages/:stage/confirm": "self",
+  "POST /api/items/:id/flow/stages/:stage/hold": "self",
+  "POST /api/items/:id/flow/stages/:stage/skip": "self",
+  "POST /api/items/:id/flow/stages/:stage/done": "self",
+  "POST /api/items/:id/flow/stages/:stage/reopen": "self",
   "GET /api/items": "self",
   "POST /api/items": "self",
   "GET /api/items/:id": "self",

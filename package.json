@@ -65,6 +65,7 @@
     "ws": "^8.18.3"
   },
   "files": [
+    "flows/library/*.yaml",
     "dist/src/**/*.js",
     "dist/plugins/**/*.js",
     "web/dist",

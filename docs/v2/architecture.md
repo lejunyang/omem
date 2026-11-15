@@ -224,6 +224,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
 | 成效页：用量、覆盖、找人批次、访客回答、质量、编码交付、知识与运行成本；本地日期 30 天默认、最多 180 天，按条件缓存 3 分钟；指标与图表可回到记录，Markdown/CSV 导出、只读 peer；成员仅自己的可读运行 | 已实现（11-15）；阶段指标随 flows 补入，部分数据边界见 flows §10.6 | `src/insights/`、`web/src/views/Insights.vue`、`test/insights.test.ts` |
+| 事项流程第一期服务端：YAML 定义与补缺播种、事项副本和阶段日志、前提推进、本人关卡、条件判断、编码 / 方案对象、报告与重开、倍增提醒、替换进度通知、工具与 HTTP、三个表随事项拉取 | 已实现；2026-11-15，定向测试；网页流程条、专门的飞书进度卡版式及后续期未做，缺少事件的独立操作见 flows.md | `src/flows/`、`docs/v2/flows.md`、`test/flows.test.ts`、`test/flows-http.test.ts` |
 | 重点文档覆盖统计与按计数信号补写：每晚 04:10，全局默认 3 份、每空间 2 份，尊重 autoOrganize，跳过代码空间；30 天尝试冷却；指定 sourceIds 规划后沿用写作核对；Wiki 展开前 20 份和手动运行、设置额度、只读 peer 数字 | 已实现；专项回归覆盖，真实模型成文效果待验 | `src/wiki/coverage.ts`、`generate.ts`、`web/src/components/WikiCoverage.vue`、`test/wiki-coverage.test.ts` |
 | Wiki 本人指正与同类排查：网页一次填写哪里不对、应该是什么，工具 `correct_page`；`page_corrections` 记录原话与最后写入的运行类型；先改原页，再查同空间同类运行近 90 天写的页及搜索命中，同目录优先、默认最多 15 页；共用夜间抽检退回路径，实际发布且核对通过才计已改，一条 later 汇总；本空间最近 20 条指正进入后续每轮核对 | 已实现；2026-11-15，`test/wiki-corrections.test.ts`（ACP + MCP 假 Agent）；真实模型判断质量待验 | `src/wiki/corrections.ts`、`verify.ts`、`generate.ts`、`web/src/views/Wiki.vue`、`web/src/components/WikiQuestions.vue` |
 | Agent 原件标注独立复核：每小时 35 分，一空间一批，排序判断优先，其次搜索影响、时间；保留八成、撤回归零、拿不准交本人；近 14 天撤回可恢复 | 已实现；`test/note-review.test.ts` | `attention.ts`、`jobs.ts`、`roles/note-reviewer.md`、`review_notes` |

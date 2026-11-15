@@ -375,14 +375,17 @@ let executor: Executor | null = null;
  */
 type AskHandler = (app: App, ask: Ask, context: Record<string, unknown>) => Promise<void>;
 const askHandlers = new Map<string, AskHandler>();
+const askGuards = new Map<string, (app: App, ask: Ask, context: Record<string, unknown>, by: string) => void>();
 /** Small deterministic actions commit with the answer, before acknowledging the click. */
 const askActions = new Map<string, (app: App, ask: Ask, context: Record<string, unknown>) => string>();
 export function registerAskAction(name: string, action: (app: App, ask: Ask, context: Record<string, unknown>) => string) {
   askActions.set(name, action);
 }
 export const isImmediateAsk = (ask: Ask) => !!ask.handler && askActions.has(ask.handler);
-export function registerAskHandler(name: string, h: AskHandler) {
+export function registerAskHandler(name: string, h: AskHandler, guard?: (app: App, ask: Ask, context: Record<string, unknown>, by: string) => void) {
   askHandlers.set(name, h);
+  if (guard) askGuards.set(name, guard);
+  else askGuards.delete(name);
 }
 
 export function setApprovalExecutor(e: Executor) {
@@ -417,6 +420,7 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
       ? text ?? truncate(JSON.stringify(value), 2000)
       : [option?.label, text].filter(Boolean).join("：") || null;
   const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
+  if (before.handler) askGuards.get(before.handler)?.(app, before, context, input.by);
   const action = before.handler ? askActions.get(before.handler) : undefined;
   const changed = tx(app.db, () => {
     if (getAsk(app, id).status !== "pending") throw new HttpError(409, "这个提问已经处理过了");

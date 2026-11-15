@@ -16,6 +16,7 @@ const BY_GROUP: Record<string, GlobalPerm> = {
   notifications: "agents.manage",
 };
 const BY_TOOL: Record<string, GlobalPerm> = {
+  save_flow: "agents.manage",
   save_skill: "agents.manage",
   save_agent: "agents.manage",
   propose_profile_change: "agents.manage",

@@ -9,6 +9,25 @@ updated: 2026-11-15
 
 ## 成效页：记录、范围、基线与导出（11-15）
 
+## 事项流程：第一期服务端（11-15）
+
+`src/flows/` 实现 YAML 定义、内置补缺播种、事项上的流程副本、阶段状态与日志、前提推进、when 决策 / 本人提问、本人关卡、报告、重开、结束和倍增提醒。`code-work` / `design` 是小型对象注册表：按事项 run 材料找交办，读 `codeWork.stage.key` 与最近轮 `roundList.verdict=approved`，方案还核对本版确认记录的 `by` 等于事项本人。没有扫描 runs 的 JSON 事项字段。
+
+所有阶段变化同时写日志和事项时间线、发 item changed，进度通知用 replaces 替换。只有本人自己的答案能过关卡，在写答案前与处理回调时均检查收件人和回答人。`done: confirm` 返工最多三次，运行结束没交结果卡住。新增 `group:flow` 的五个工具、`read_item.flow`、定义和事项流程 HTTP、集中路由权限；细节见 `docs/v2/flows.md` 的“第一期的实现”。
+
+迁移只追加三个表；流程和阶段以显式 updated_at 比较，日志以 sync_key 映射整数 id，三个表都随事项拉取，既有引用重写也覆盖其中的 JSON。没有增加投影、触发器、缓存或依赖。启动从 `flows/library/*.yaml` 补缺，目录缺失或为空也可用；本切片不带默认 delivery.yaml。
+
+本期的适配：HTTP 示例重复的 note 分为 instruction（定义说明）和 note（最近进展）；提醒按自然日，间隔为 2、4、8 天；缺方案时复用 designer 的 runDesigner（submit_design 的原有角色限制），默认主助手尚需单独授予 group:flow。没有改角色正文或内置技能，也没有实现网页、飞书专门版式、信号、插件对象、上下文订阅、看板、成效页或关卡升降。
+
+监听 changed(code-task)、changed(design)、run（含终态），按运行主键、continueFrom / parent 与事项材料定位正在走的流程。尚无即时事件：应用 `src/agents/code.ts:1226`、丢弃 `:1239`，分支确认 `src/agents/code-branch.ts:477`、归还 `:486`，方案创建 `src/designs/store.ts:53`、基础信息更新 `:276`、绑定交办 `:290`。未改编码或渠道发射器；下次已有事件或心跳重读。
+
+验证：`npx vitest run test/flows.test.ts test/flows-http.test.ts test/esm.test.ts test/tool-help.test.ts test/permissions.test.ts test/pull-complete.test.ts --maxWorkers=2 --configLoader native --cache=false`：6 个文件，62 通过、0 失败、1 项既有跳过；`npx tsc --noEmit -p .` 通过。含真实 worker 调度到假 Agent、通过 stage_report 交结果的路径，不连真实模型。`npm pack --dry-run --json --cache .flow-pack-cache` 成功；仓库没有内置 YAML，实际清单不含流程文件；将相同 package.json 放进临时 fixture 包后，dry-run 列出 flows/library/fixture.yaml，验证白名单；缓存与 fixture 目录已删除。默认 npm 缓存不可写，故临时指定工作区缓存。按任务约束未跑全量检查，未操作仓库 Git 状态，未修改禁改文件。
+
+主助手角色另需授予 `group:flow`，建议增加：“一件事项需要按阶段持续推进时，先用 list_flows(item) 查看适用流程；已有合适流程就 flow_start，没有则用 save_flow 起草，等本人启用。”“流程阶段运行按 note 和 done 做，结束前用 stage_report 交结果：done 附依据，blocked 写等谁或等什么，skip 写原因。”“发现已完成阶段的前提变化时，用 stage_reopen 写原因和依据；confirm 只由本人回答，不把运行结束当作完成。”本切片没有编辑角色正文。
+
+## 设计稿：流程后续期、插件的对象与信号、成效页（11-15）
+
+
 - `src/insights/scenes.ts` 是固定场景表；`insights.ts` 独立计算八个板块，按本人或成员范围过滤，精确本地日期默认 30 天、上限 180 天，内存缓存 3 分钟。`runs_insights` 是唯一新索引，包含时间、小列及编码和分诊状态的小字段表达式；请求不读运行大段输入、输出或事件。
 - `web/src/views/Insights.vue` 与侧栏“成效”：复用抽检布局、现有控件和 SDK 的 SVG 图表。数字与图表数据点可打开同筛选的记录清单，只有标识、状态和时间；支持上一段、Markdown/CSV 导出，估算由主人自行填假设且只存浏览器。API、peer、导出均不含访客正文。
 - 数据限制写在 `docs/v2/flows.md` §10.6：找人按运行批次；访客用时按回答运行完成，基线用 reply_samples，双方各 10 个样本才画比较条；页面阅读不冒充回答阅读，约定命中标累计。交付的阶段指标随 flows 一起补入。验收见 `docs/v2/acceptance.md` 的 44a 起。

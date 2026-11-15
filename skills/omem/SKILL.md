@@ -77,6 +77,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `curate` | 空间与原件治理：建空间、接仓库、空间关联、关注程度与标注、原件归档 | 同上 |
 | `memory` | 查、写、更正、撤回记忆，记忆目录 | [references/memory.md](references/memory.md) |
 | `track` | 事项与需求：待办、提醒、等待回复，需求树，跨空间进展提案 | [references/items.md](references/items.md) |
+| `flow` | 流程：一件事的阶段和关卡 | [references/flows.md](references/flows.md) |
 | `notifications` | 事项通知排查：关联修复、通知检查与重发、忽略规则 | 同上 |
 | `wiki` | 读写 Wiki 页面、生成 Wiki | [references/wiki.md](references/wiki.md) |
 | `delegate` | 交给别的 Agent、请教、选 AI、看运行记录 | [references/agents.md](references/agents.md) |

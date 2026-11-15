@@ -120,6 +120,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   const { seedBuiltinSkills } = await import("./agents/specs.ts");
   const { packageRoot } = await import("./setup.ts");
   seedBuiltinSkills(app, packageRoot());
+  const { seedBuiltinFlows } = await import("./flows/definitions.ts");
+  seedBuiltinFlows(app, packageRoot());
+  const { attachFlows } = await import("./flows/engine.ts");
+  attachFlows(app);
   const { loadPlugins } = await import("./plugins/registry.ts");
   await loadPlugins(app);
   const server = await startServer(app, opts);
