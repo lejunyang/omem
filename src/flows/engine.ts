@@ -12,7 +12,7 @@ import { getItem, type Item } from "../items/store.ts";
 import { addMaterials, materialsBrief } from "../items/materials.ts";
 import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
-import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage } from "./definitions.ts";
+import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage } from "./definitions.ts";
 import { findObject, objectKind } from "./objects.ts";
 import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
 
@@ -331,7 +331,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
 
 export function proposeFlow(app: App, raw: string, by: FlowActor) {
   const f = parseFlow(raw);
-  return createAsk(app, { runId: by.runId ?? null, userId: by.userId ?? "owner", question: `启用流程「${f.name}」吗？\n${f.stages.map((s) => `- ${s.name}：${typeof s.by === "string" ? s.by === "owner" ? "本人做" : "等待" : "run" in s.by ? `由 ${s.by.run.agent ?? "assistant"} 做${s.by.run.skill ? `，技能 ${s.by.run.skill}` : ""}` : `跟随${objectKind(s.by.object)?.label}`}；${s.gate === "confirm" ? "开始前本人确认" : "自动开始（受连续次数上限约束）"}；完成：${typeof s.done === "object" ? `${s.done.object} 到 ${[s.done.status].flat().join(" / ")}` : s.done === "confirm" ? "本人确认" : s.done ?? (typeof s.by === "object" && "object" in s.by ? "对象完成" : s.by === "owner" ? "本人说做完了" : "交结果并附依据")}`).join("\n")}`,
+  return createAsk(app, { runId: by.runId ?? null, userId: by.userId ?? "owner", question: `启用流程「${f.name}」吗？\n${f.stages.map((s) => { const w = describeStage(s); return `- ${s.name}：${w.carrier}；${w.gate}，${w.done}${w.when ? `；${w.when}` : ""}`; }).join("\n")}`,
     options: [{ label: "启用" }, { label: "不用" }], allowText: false, context: { handler: "flow-save", raw } });
 }
 registerAskHandler("flow-save", async (app, ask, ctx) => {
@@ -341,6 +341,8 @@ registerAskHandler("flow-save", async (app, ask, ctx) => {
   if (ask.userId !== "owner" || by !== "owner") throw new HttpError(403, "流程定义只能由主人确认启用");
 });
 
+/** What the host writes when a stage merely joins, starts or waits. The page already shows that state, so a stage's latest line leaves these out. */
+const ROUTINE = new Set(["加入流程", "开始这一段", "本人确认，开始这一段", "等本人确认开始", "等本人判断这一段是否需要", "对象已完成，等本人确认", "复核对象仍已完成"]);
 export function flowView(app: App, id: string) {
   const item = getItem(app, id), f = itemFlow(app, id), rows = itemStages(app, id);
   return {
@@ -349,8 +351,8 @@ export function flowView(app: App, id: string) {
       const s = rows.find((r) => r.id === d.id)!;
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
       const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" ? findObject(app, item, d.done.object) : null;
-      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: s.note, gate: d.gate, fixed: d.fixed,
-        carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "本人" : kind === "wait" ? "等待" : typeof d.by === "object" && "run" in d.by ? d.by.run.agent ?? "assistant" : "运行"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
+      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
+        carrier: { kind, label: objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link } } : {}), ...(s.askId ? { askId: s.askId } : {}) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item),
   };

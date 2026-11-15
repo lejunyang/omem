@@ -318,7 +318,7 @@ describe("对象与工具", () => {
   it("save_flow 是待确认草稿，非本人的回答不落盘，启用才保存", async () => {
     const app = appFor(), raw = yaml([stage("a", { by: "owner" })]);
     const a = proposeFlow(app, raw, { actor: "assistant", userId: "owner" });
-    expect(a.question).toContain("本人做"); expect(existsSync(join(app.libraryDir, "_flows", "demo.yaml"))).toBe(false);
+    expect(a.question).toContain("你来做"); expect(existsSync(join(app.libraryDir, "_flows", "demo.yaml"))).toBe(false);
     await expect(answerAsk(app, a.id, { choice: 0, by: "another" })).rejects.toThrow("主人"); expect(listFlows(app)).toEqual([]);
     const b = proposeFlow(app, raw, { actor: "assistant", userId: "owner" });
     await answerAsk(app, b.id, { choice: 0, by: "owner" }); expect(readFlow(app, "demo").name).toBe("示例交付");

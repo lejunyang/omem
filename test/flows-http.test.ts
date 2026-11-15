@@ -35,14 +35,14 @@ describe("流程 HTTP", () => {
     const app = fixture(), server = await serverFor(app);
     const validate = (yaml: string) => server.inject({ method: "POST", url: "/api/flows/validate", payload: { yaml } });
     const result = (await validate(raw)).json();
-    expect(result).toMatchObject({ ok: true, id: "demo", stages: [{ id: "check", name: "核验", carrier: "等待进展", gate: "开始前等你确认", done: "交结果并附依据", when: "每次都需要", needs: [] }] });
+    expect(result).toMatchObject({ ok: true, id: "demo", stages: [{ id: "check", name: "核验", carrier: "只等进展", gate: "开始前先问你", done: "交了结果就算做完", when: "", needs: [] }] });
     expect((await server.inject("/api/flows")).json().flows).toEqual([]);
     const bad = (await validate("id: bad\nname: 示例\nstages: []")).json();
     expect(bad.ok).toBe(false); expect(bad.problem).toContain("流程至少需要一个阶段");
     expect((await validate("stages: [")).json().problem).toContain("YAML");
     const detailed = (await validate("id: read\nname: 解释\nstages:\n  - {id: a, name: 整理, by: {run: {agent: assistant}}}\n  - {id: b, name: 本人核对, by: owner, done: confirm, when: 材料变化时}\n  - {id: c, name: 方案, by: {object: design}, done: {object: design, status: approved}}\n")).json();
-    expect(detailed.stages[1]).toMatchObject({ carrier: "你来做", gate: "自动开始（连续推进到上限会问你）", done: "做完后等你确认", when: "需要时才做：材料变化时", needs: ["a"] });
-    expect(detailed.stages[2]).toMatchObject({ carrier: "跟随方案", done: "方案达到 approved", needs: ["b"] });
+    expect(detailed.stages[1]).toMatchObject({ carrier: "你来做", gate: "轮到就自己开始", done: "做完要你点头", when: "只在需要时做：材料变化时", needs: ["a"] });
+    expect(detailed.stages[2]).toMatchObject({ carrier: "跟着方案走", done: "方案到了 approved 算做完", needs: ["b"] });
     createUser(app, { id: "reader", name: "成员甲" });
     const headers = { authorization: `Bearer ${createApiToken(app, "reader", "test")}` };
     expect((await server.inject({ method: "POST", url: "/api/flows/validate", payload: { yaml: raw }, headers })).statusCode).toBe(403);
@@ -84,7 +84,7 @@ describe("流程 HTTP", () => {
     const item = upsertItem(app, undefined, { title: "核对退款", spaceId: "personal" }, "user");
     const url = `/api/items/${item.id}/flow`;
     expect((await server.inject(url)).json()).toMatchObject({ flow: null, stages: [], log: [], suits: [{ id: "demo" }] });
-    expect((await server.inject({ method: "POST", url, payload: { flow: "demo" } })).json()).toMatchObject({ flow: { id: "demo", endedAt: null }, stages: [{ id: "check", instruction: "核验材料后再交付。", state: "gated", attempt: 0, carrier: { kind: "wait", label: "等待" }, askId: expect.any(String) }] });
+    expect((await server.inject({ method: "POST", url, payload: { flow: "demo" } })).json()).toMatchObject({ flow: { id: "demo", endedAt: null }, stages: [{ id: "check", instruction: "核验材料后再交付。", state: "gated", attempt: 0, carrier: { kind: "wait", label: "只等进展" }, askId: expect.any(String) }] });
     expect((await server.inject({ method: "POST", url, payload: { flow: "demo" } })).statusCode).toBe(409);
     const act = (action: string, note?: string) => server.inject({ method: "POST", url: `${url}/stages/check/${action}`, payload: note ? { note } : {} });
     expect((await act("hold")).json().stages[0].state).toBe("gated");

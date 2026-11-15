@@ -673,6 +673,13 @@ async function saveAutoAdvance(key: "turns" | "codeRounds", raw: string) {
   await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, [key]: v } } }, key === "turns" ? `多 Agent 自动推进最多 ${v} 次` : `编码交办自动推进到第 ${v} 轮`);
   void load();
 }
+async function saveFlows(key: "autoAdvance" | "staleDays", raw: string) {
+  const [max, fallback] = key === "autoAdvance" ? [20, 3] : [365, 2];
+  const n = Number(raw);
+  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(1, Math.min(max, Math.round(n))) : fallback;
+  await saveConfig({ flows: { ...(config.value.flows ?? {}), [key]: v } }, key === "autoAdvance" ? `流程连着自己开始 ${v} 段后先问你` : `停在等你的阶段 ${v} 天后提醒`);
+  void load();
+}
 async function savePreCheck(v: boolean) {
   const cur = config.value.agents.autoAdvance ?? { turns: 6, codeRounds: 3 };
   await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, preCheck: v } } }, v ? "新交办开始编码前先做检查" : "新交办直接开始编码");
@@ -1042,6 +1049,12 @@ async function saveEdit() {
         </label>
         <label class="field"><span>编码交办：评审要求修改时自动改到第几轮（1–20）</span>
           <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="20" :value="config.agents.autoAdvance?.codeRounds ?? 3" @change="saveAutoAdvance('codeRounds', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label class="field"><span>流程：没有人参与时，连着自己开始几段以后先问你一声（1–20）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="20" :value="config.flows?.autoAdvance ?? 3" @change="saveFlows('autoAdvance', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label class="field"><span>流程：停在等你的阶段，过几天提醒一次（1–365，之后每次间隔加倍）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="365" :value="config.flows?.staleDays ?? 2" @change="saveFlows('staleDays', ($event.target as HTMLInputElement).value)" />
         </label>
         <UiCheckbox :model-value="config.agents.autoAdvance?.preCheck !== false" switch @change="savePreCheck">编码前检查：新交办开始编码前，先查改动会碰到什么、这里以前出过什么问题、改完要回归什么（角色“编码前检查”，在 Agent 页选模型）</UiCheckbox>
       </div>

@@ -5,7 +5,7 @@ import { can } from "../auth/permissions.ts";
 import { canWrite } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
-import { listFlows, parseFlow, removeFlow, saveFlow } from "./definitions.ts";
+import { listFlows, parseFlow, removeFlow, saveFlow, describeStage } from "./definitions.ts";
 import { flowView, ownerAction, startFlow, stopFlow, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { all } from "../core/db.ts";
@@ -50,14 +50,7 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     const raw = body(z.object({ yaml: z.string().max(60000) }), req.body).yaml;
     try {
       const f = parseFlow(raw);
-      const objectName = (kind: string) => kind === "design" ? "方案" : "编码交办";
-      return { ok: true, id: f.id, stages: f.stages.map((s) => ({
-        id: s.id, name: s.name,
-        carrier: s.by === "owner" ? "你来做" : s.by === "wait" ? "等待进展" : typeof s.by === "object" && "object" in s.by ? `跟随${objectName(s.by.object)}` : typeof s.by === "object" && "run" in s.by ? `由 ${s.by.run.agent ?? "assistant"} 做${s.by.run.skill ? `，使用技能 ${s.by.run.skill}` : ""}` : "",
-        gate: s.gate === "confirm" ? "开始前等你确认" : "自动开始（连续推进到上限会问你）",
-        done: typeof s.done === "object" ? `${objectName(s.done.object)}达到 ${[s.done.status].flat().join(" / ")}` : s.done === "confirm" ? "做完后等你确认" : s.done ?? (typeof s.by === "object" && "object" in s.by ? `${objectName(s.by.object)}完成` : s.by === "owner" ? "你说做完了" : "交结果并附依据"),
-        when: s.when ? `需要时才做：${s.when}` : "每次都需要", needs: s.needs,
-      })) };
+      return { ok: true, id: f.id, name: f.name, description: f.description, stages: f.stages.map((s) => ({ id: s.id, name: s.name, ...describeStage(s), needs: s.needs })) };
     } catch (e) { return { ok: false, problem: (e as Error).message }; }
   });
   server.put("/api/flows/:id", async (req) => {

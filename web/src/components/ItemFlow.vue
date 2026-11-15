@@ -83,43 +83,104 @@ async function stop() {
       </div>
     </template>
     <template v-else-if="data?.flow">
-      <div class="row wrap"><strong class="section-title">{{ data.flow.name }}</strong><span class="spacer" /><details v-if="editable && !data.flow.endedAt" class="flow-menu"><summary class="small">更多</summary><button class="btn ghost sm" :disabled="busy" @click="stop">停止流程</button></details></div>
+      <div class="flow-head">
+        <span class="flow-name">{{ data.flow.name }}</span>
+        <span v-if="data.flow.endedAt" class="muted small">{{ completed ? "走完了" : "已停止" }}</span>
+        <span class="spacer" />
+        <button v-if="editable && !data.flow.endedAt" type="button" class="link small" :disabled="busy" @click="stop">停止流程</button>
+      </div>
       <div class="flow-strip" aria-label="阶段">
-        <button v-for="s in data.stages" :key="s.id" class="segment" :class="[stageColour(s), { selected: stage?.id === s.id }]" :aria-pressed="stage?.id === s.id" @click="selected = s.id"><span>{{ s.name }}</span><small>{{ stageLine(s, now) || '　' }}</small></button>
+        <button v-for="s in data.stages" :key="s.id" type="button" class="segment" :class="[stageColour(s), { selected: stage?.id === s.id, skipped: s.state === 'skipped' }]" :aria-pressed="stage?.id === s.id" @click="selected = s.id">
+          <span class="segment-bar" />
+          <span class="segment-name">{{ s.name }}</span>
+          <span class="segment-line">{{ stageLine(s, now) || "　" }}</span>
+        </button>
       </div>
-      <p v-if="data.flow.endedAt" class="muted small">{{ completed ? '流程走完了' : '流程已停止' }}</p>
-      <div v-for="s in waiting" :key="s.id" class="action-card card pad stack">
-        <strong>{{ s.name }}</strong><p>{{ nextWords(s) }}</p>
-        <div v-if="editable" class="row wrap"><button v-for="(a, i) in stageActions(s)" :key="a.label" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button></div>
+      <div v-for="s in waiting" :key="s.id" class="turn">
+        <p>{{ nextWords(s) }}</p>
+        <div v-if="editable" class="row wrap"><button v-for="(a, i) in stageActions(s)" :key="a.label" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button></div>
       </div>
-      <div v-if="stage" class="stage-detail stack small">
-        <strong>{{ stage.name }} <span class="muted">· {{ stageWords[stage.state] }}</span></strong>
-        <Markdown v-if="stage.instruction" :source="stage.instruction" />
-        <div class="muted">承担：<a v-if="stage.carrier.link" :href="stage.carrier.link">{{ stage.carrier.label }}</a><span v-else>{{ stage.carrier.label }}</span></div>
-        <a v-if="stage.object" :href="stage.object.link" class="object-row">{{ stage.object.title }} <span class="badge" :title="stage.object.status">{{ objectStatusWords(stage.object.status) }}</span></a>
-        <div v-if="stage.evidence.length" class="row wrap evidence"><span class="muted">依据</span><template v-for="(r, i) in stage.evidence" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原件 {{ i + 1 }}</a><a v-else :href="evidenceLink(r)!" :title="r">{{ r.startsWith('design:') ? '方案' : '运行' }} {{ i + 1 }}</a></template></div>
-        <Markdown v-if="stage.note" :source="stage.note" />
-        <button v-if="editable && ['done', 'skipped', 'stale'].includes(stage.state)" class="btn ghost sm reopen" :disabled="busy" @click="act(stage, { action: 'reopen', label: '重开这一段', reason: true })">重开这一段</button>
+      <div v-if="stage" class="stage-detail">
+        <div class="stage-title"><strong>{{ stage.name }}</strong><span class="muted">{{ stageWords[stage.state] }}</span></div>
+        <Markdown v-if="stage.instruction && !waiting.some((s) => s.id === stage!.id)" :source="stage.instruction" class="stage-text" />
+        <dl class="stage-facts">
+          <dt>谁来做</dt>
+          <dd><a v-if="stage.carrier.link" :href="stage.carrier.link">{{ stage.carrier.label }}</a><span v-else>{{ stage.carrier.label }}</span></dd>
+          <template v-if="stage.object">
+            <dt>跟着</dt>
+            <dd><a :href="stage.object.link">{{ stage.object.title }}</a> <span class="badge" :title="stage.object.status">{{ objectStatusWords(stage.object.status) }}</span></dd>
+          </template>
+          <template v-if="stage.evidence.length">
+            <dt>依据</dt>
+            <dd class="evidence"><template v-for="(r, i) in stage.evidence" :key="r"><a v-if="refAction(r)" href="#" :title="r" @click.prevent="refAction(r)!()">原件 {{ i + 1 }}</a><a v-else :href="evidenceLink(r)!" :title="r">{{ r.startsWith("design:") ? "方案" : "运行" }} {{ i + 1 }}</a></template></dd>
+          </template>
+          <template v-if="stage.note">
+            <dt>最近</dt>
+            <dd><Markdown :source="stage.note" class="stage-text" /></dd>
+          </template>
+        </dl>
+        <button v-if="editable && ['done', 'skipped', 'stale'].includes(stage.state)" type="button" class="link small" :disabled="busy" @click="act(stage, { action: 'reopen', label: '重开这一段', reason: true })">重开这一段</button>
       </div>
-      <details v-if="data.log.length" class="history"><summary class="small">经过</summary><ol><li v-for="l in data.log.slice(0, historyCount)" :key="l.id"><span class="small muted">{{ fmtTime(l.at) }} · {{ actorWords(l.actor) }}</span><div>{{ data.stages.find((s) => s.id === l.stageId)?.name ?? l.stageId }} · {{ l.fromState ? stageWords[l.fromState] + ' → ' : '' }}{{ stageWords[l.toState] }}</div><Markdown v-if="l.note" :source="l.note" class="small" /></li></ol><button v-if="historyCount < data.log.length" class="btn ghost sm" @click="historyCount += 10">再看十条</button></details>
+      <details v-if="data.log.length" class="history">
+        <summary>经过</summary>
+        <ol>
+          <li v-for="l in data.log.slice(0, historyCount)" :key="l.id">
+            <span class="history-what">{{ data.stages.find((s) => s.id === l.stageId)?.name ?? l.stageId }}：{{ stageWords[l.toState] }}</span>
+            <span class="muted">{{ fmtTime(l.at) }} · {{ actorWords(l.actor) }}</span>
+            <Markdown v-if="l.note" :source="l.note" class="stage-text muted" />
+          </li>
+        </ol>
+        <button v-if="historyCount < data.log.length" type="button" class="link small" @click="historyCount += 10">再看十条</button>
+      </details>
     </template>
   </section>
 </template>
 
 <style scoped>
 .item-flow { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
-.flow-strip { display: flex; flex-wrap: wrap; gap: 4px; }
-.segment { flex: 1 1 72px; min-width: 0; padding: 6px; border: 1px solid var(--line); border-top: 3px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
-.segment small { display: block; color: var(--muted); font-size: 11px; }
-.segment.ok { border-top-color: var(--ok); }.segment.accent { border-top-color: var(--accent); }.segment.warn { border-top-color: var(--warn); }
-.segment.selected { background: var(--hover); }
-.action-card { border-left: 3px solid var(--warn); }
-.stage-detail { border-left: 2px solid var(--line); padding-left: 12px; gap: 6px; }
-.stage-detail :deep(p), .history :deep(p) { margin: 0; }
-.object-row, .evidence { display: flex; flex-wrap: wrap; gap: 6px; }
-.reopen { justify-self: start; }
+.flow-head { display: flex; align-items: baseline; gap: 8px; }
+.flow-name { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.link { padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12.5px; }
+.link:hover { color: var(--ink); text-decoration: underline; }
+.link:disabled { cursor: default; opacity: 0.6; }
+
+/* A row of thin bars, one per stage: no boxes. Four colours only; skipped and stale are said in words. */
+.flow-strip { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.segment { flex: 1 1 56px; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 0 0 4px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: var(--radius-sm); }
+.segment-bar { display: block; height: 3px; border-radius: 2px; background: var(--line-strong); }
+.segment.ok .segment-bar { background: var(--ok); }
+.segment.accent .segment-bar { background: var(--accent); }
+.segment.warn .segment-bar { background: var(--warn); }
+.segment.skipped .segment-bar { background: var(--line); }
+.segment-name { margin-top: 2px; font-size: 13px; line-height: 1.3; color: var(--muted); }
+.segment.ok .segment-name, .segment.accent .segment-name { color: var(--ink); }
+.segment.warn .segment-name { color: var(--warn); font-weight: 600; }
+.segment.selected .segment-name { font-weight: 600; color: var(--ink); }
+.segment.warn.selected .segment-name { color: var(--warn); }
+.segment-line { font-size: 11.5px; line-height: 1.3; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The stage in hand gets the room its line needs. */
+.segment.warn, .segment.accent { flex: 1.7 1 84px; }
+.segment.warn .segment-line { color: var(--warn); }
+.segment:hover .segment-name { text-decoration: underline; }
+
+/* What waits for the owner: said once, with the buttons that state allows. */
+.turn { display: grid; gap: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--warn-soft); }
+.turn p { margin: 0; font-size: 13.5px; line-height: 1.6; }
+
+.stage-detail { display: grid; gap: 6px; font-size: 13px; }
+.stage-title { display: flex; align-items: baseline; gap: 8px; }
+.stage-title .muted { font-size: 12.5px; }
+.stage-text { font-size: 13px; }
+.stage-text :deep(p) { margin: 0; }
+.stage-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+.stage-facts dt { color: var(--muted); }
+.stage-facts dd { margin: 0; min-width: 0; }
+.evidence { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+
+.history { font-size: 12.5px; }
+.history summary { width: fit-content; cursor: pointer; color: var(--muted); }
+.history ol { margin: 8px 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.history li { display: grid; gap: 1px; padding-left: 10px; border-left: 2px solid var(--line); }
+.history-what { color: var(--ink-2); }
 .error { color: var(--danger); margin: 0; }
-.history ol { padding-left: 18px; display: grid; gap: 12px; }
-summary { cursor: pointer; color: var(--muted); }
-.flow-menu { text-align: right; }
 </style>
