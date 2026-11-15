@@ -221,7 +221,10 @@ describe("流程上下文跟进", () => {
     // One card, about the latest proposal of the batch; the earlier one stays on the list.
     const asks = listAsks(t.app, { runId: r.id }); expect(asks).toHaveLength(1);
     expect(asks[0].options.map((o) => o.label)).toEqual(["改成这个时间", "不改"]);
-    expect(asks[0].question).toContain("2026-12-05"); expect(asks[0].question).toContain("现在的截止时间：2026-12-01"); expect(asks[0].question).toContain(ref);
+    expect(asks[0].question).toContain("提出改成：2026-12-05"); expect(asks[0].question).toContain("现在的截止时间：2026-12-01"); expect(asks[0].question).toContain(ref);
+    // Whoever does a later stage reads it as a proposal, not as the new deadline.
+    expect((await callTool({ app: t.app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent" }, "read_item", { item_id: t.item.id })).text).toContain("2026-12-01");
+    expect(recentChanges(t.app, t.item.id).find((c) => c.id === change.id)).toMatchObject({ status: "asked", due: "2026-12-05", detail: null });
     expect(recentChanges(t.app, t.item.id).find((c) => c.id === earlier.id)!.status).toBe("noted");
     await expect(settleChange(t.app, t.item.id, change.id, "split", "owner")).rejects.toThrow("改或不改");
     await expect(answerAsk(t.app, asks[0].id, { choice, by: "other" })).rejects.toThrow("本人");

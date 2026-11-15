@@ -29,7 +29,9 @@ export function shownChanges(app: App, id: string) {
   return [...waiting, ...recent.filter((c) => !waiting.some((w) => w.id === c.id))].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
 }
 export function changesBrief(app: App, id: string) {
-  return `## 最近的变化\n${recentChanges(app, id).map((c) => `- [${c.type}/${c.status}] ${c.summary} ${c.refs.join(" ")}`).join("\n") || "暂无"}`;
+  // A proposed deadline reads differently from one that has moved: say which it is.
+  const due = (c: ReturnType<typeof viewChange>) => c.type !== "deadline" || !c.due ? "" : c.status === "merged" ? `（截止时间已改成 ${c.due}）` : c.status === "dismissed" ? `（提议改成 ${c.due}，没有改）` : `（提议改成 ${c.due}，本人还没定）`;
+  return `## 最近的变化\n${recentChanges(app, id).map((c) => `- [${c.type}/${c.status}] ${c.summary}${due(c)} ${c.refs.join(" ")}`).join("\n") || "暂无"}`;
 }
 
 const KINDS = ["chat", "doc", "meeting", "conversation"];
@@ -251,9 +253,9 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   if (a.stages?.some((s) => !f.definition.stages.some((d) => d.id === s))) throw new HttpError(400, "阶段必须在这件事的流程里");
   if (a.req) { const req = findReq(app, a.req); if (!req || req.spaceId !== item.spaceId) throw new HttpError(400, "需求点不在事项空间里"); }
   if (a.type === "deadline" && !z.union([z.string().date(), z.string().datetime({ offset: true })]).safeParse(a.due).success) throw new HttpError(400, "deadline 必须填写 ISO 时间或日期 due");
-  const detail = a.type === "deadline" ? [a.detail, `新截止时间：${a.due}`].filter(Boolean).join("\n") : a.detail ?? null;
+  const detail = a.detail ?? null, due = a.type === "deadline" ? a.due! : null;
   // A retried run may hand in the same finding after the first run already updated a deadline.
-  const old = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and type=? and summary=? and refs=? and detail is ? and stages=? and req is ? order by at desc limit 10", a.item, a.type, a.summary, JSON.stringify(a.refs), detail, JSON.stringify(a.stages ?? []), a.req ?? null).find((c) => {
+  const old = all<ChangeRow>(app.db, "select * from item_changes where item_id=? and type=? and summary=? and refs=? and detail is ? and stages=? and req is ? and due is ? order by at desc limit 10", a.item, a.type, a.summary, JSON.stringify(a.refs), detail, JSON.stringify(a.stages ?? []), a.req ?? null, due).find((c) => {
     const previous = getRun(app, c.run_id).input.batch as Batch | undefined;
     return previous?.startedAt === batch.startedAt && a.refs.every((ref) => {
       const source = ref.slice(4).split("#")[0], before = previous.parts.find((p) => p.source === source), current = batch.parts.find((p) => p.source === source);
@@ -262,13 +264,13 @@ export function noteItemChange(app: App, runId: string, input: z.input<typeof ch
   });
   if (old) {
     // The same finding, now said to be settled, while the first one was only a proposal.
-    if (a.type === "deadline" && a.decided && ["noted", "asked"].includes(old.status)) tx(app.db, () => decidedDeadline(app, { ...old, due: old.due ?? a.due! }, runId));
+    if (a.type === "deadline" && a.decided && ["noted", "asked"].includes(old.status)) tx(app.db, () => decidedDeadline(app, old, runId));
     return handedIn(app, runId, one<ChangeRow>(app.db, "select * from item_changes where id=?", old.id)!);
   }
   if (changesOfRun(app, r).length >= 30) throw new HttpError(400, "一批最多记 30 条变化，请合并同一件事的表述");
   const id = newId("ic"), at = now();
   tx(app.db, () => {
-    run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,req,stages,refs,run_id,updated_at,due) values(?,?,?,?,?,?,?,?,?,?,?,?)", id, a.item, at, a.type, a.summary, detail, a.req ?? null, JSON.stringify(a.stages ?? []), JSON.stringify(a.refs), runId, at, a.type === "deadline" ? a.due! : null);
+    run(app.db, "insert into item_changes(id,item_id,at,type,summary,detail,req,stages,refs,run_id,updated_at,due) values(?,?,?,?,?,?,?,?,?,?,?,?)", id, a.item, at, a.type, a.summary, detail, a.req ?? null, JSON.stringify(a.stages ?? []), JSON.stringify(a.refs), runId, at, due);
     // Somebody proposing another date is not a decision: it stays as noted and the owner is asked when the batch is done.
     if (a.type === "deadline" && a.decided) decidedDeadline(app, one<ChangeRow>(app.db, "select * from item_changes where id=?", id)!, runId);
   });
@@ -299,7 +301,7 @@ function askChanges(app: App, r: Run) {
   const proposal = changesOfRun(app, r).filter((c) => c.type === "deadline" && c.due).at(-1);
   if (proposal?.status === "noted" && proposal.due !== item.dueAt) {
     const ask = createAsk(app, { runId: r.id, userId: item.userId, allowText: false,
-      question: `「${item.title}」有人提出改截止时间：\n\n${[`**${proposal.summary}**`, proposal.detail ?? "", `- 现在的截止时间：${item.dueAt ?? "未定"}`, `- 原话：${json<string[]>(proposal.refs, []).map((r, i) => `[${i + 1}](${r})`).join(" ")}`].filter(Boolean).join("\n")}`,
+      question: `「${item.title}」有人提出改截止时间：\n\n${[`**${proposal.summary}**`, proposal.detail ?? "", `- 提出改成：${proposal.due}`, `- 现在的截止时间：${item.dueAt ?? "未定"}`, `- 原话：${json<string[]>(proposal.refs, []).map((r, i) => `[${i + 1}](${r})`).join(" ")}`].filter(Boolean).join("\n")}`,
       options: deadlineChoices.map((label) => ({ label })),
       context: { handler: "item-follow", itemId: id, startedAt: (r.input.batch as Batch).startedAt, changes: [proposal.id] } });
     run(app.db, "update item_changes set status='asked',ask_id=?,updated_at=? where id=?", ask.id, now(), proposal.id);

@@ -16,6 +16,13 @@ updated: 2026-11-16
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
 
+## 用真实模型跑了上下文跟进和提交认领，改了两处（11-16）
+
+- 记录在 `docs/v2/flows.md` 文末“用真实模型跑过的”。两个角色的理解都对（提议和决定分得清、闲聊不交、提交归不到已有事项时建议新建并写理由），问题出在宿主。
+- 改期的提议：`note_item_change` 的 `deadline` 加 `decided`。本人说的或材料写明已定才直接改截止时间并告知一次；不带的保持 noted，这一批提炼完后为最后一条提议出一张“改成这个时间 / 不改”的卡片，本人选了才改。截止时间改了以后，其他还在等的改期提议记 dismissed、卡片收回。`item_changes` 加 `due` 列（新时间不再拼进说明里）；给后面阶段的“最近的变化”里写明是提议还是已改。从 `src/flows/follow.ts` 的 `applyDeadline`、`askChanges` 读起，角色说明 `roles/item-follow.md`，测试 `test/flow-follow.test.ts`。
+- 事项页：改期的提议标“有人提出改期”，只有两个按钮；变化列表里写“提出改成”或“截止时间改成了”哪天（`web/src/components/ItemFlow.vue`、`web/src/lib/flow.ts` 的 `changeChoices`）。
+- 提交认领：仓库第一次核对以后才新建的分支，从它和已知分支的 merge-base 算起，不再直接落在分支末端（`src/flows/commits.ts`，`test/flow-commits.test.ts`）。
+
 ## 时区设置（11-16）
 
 - `config.timezone` 原来只在定时任务、部分每日计数和给模型的时间里用，默认取系统时区、网页上改不了；免打扰、稍后汇总的时点、学习卡片的“今天”和网页上的所有时间都按服务器或浏览器自己的时区。现在 设置 → 定时任务 顶部可以选时区（`web/src/views/Settings.vue`），`PUT /api/settings` 校验名字并在变了时用 `rezoneScheduler` 重排定时任务（`src/core/scheduler.ts`，换时区前错过的时间点不补跑）。

@@ -258,6 +258,7 @@ async function stop() {
           </summary>
           <div class="test-body">
             <Markdown v-if="c.detail" :source="c.detail" class="stage-text" />
+            <div v-if="c.type === 'deadline' && c.due" class="muted">{{ c.status === "merged" ? "截止时间改成了" : "提出改成" }} {{ dueWords(c) }}</div>
             <div v-if="c.stages.length" class="muted">影响：{{ c.stages.map(stageName).join("、") }}</div>
             <div v-if="c.req" class="muted">需求点：<a :href="`#/reqs/${c.req}`">打开</a></div>
             <div class="evidence">
