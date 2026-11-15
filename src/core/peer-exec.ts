@@ -159,7 +159,7 @@ export const peerCommands: Record<string, Command> = {
     run: async (app, args) => (await import("./decision-log.ts")).decisionReport(app, args),
   },
   insights: {
-    description: "成效统计（只读；不含消息正文）",
+    description: "数据页的统计：用了多少、用在哪、质量、交付、知识和时间（只读；不含消息正文）",
     schema: insightFilters.strict(),
     run: (app, args) => insights(app, "owner", args),
   },

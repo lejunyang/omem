@@ -43,8 +43,8 @@ const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; memb
   { to: "/agents", label: "Agent", icon: "layers", perm: "agents.manage" },
   { to: "/rules", label: "规则", icon: "zap", perm: "agents.manage" },
   { to: "/runs", label: "运行", icon: "activity", member: true },
-  { to: "/quality", label: "抽检", icon: "activity" },
-  { to: "/insights", label: "成效", icon: "activity", member: true },
+  { to: "/quality", label: "抽检", icon: "sample" },
+  { to: "/insights", label: "数据", icon: "chart", member: true },
 ]);
 // Plugins with a page (docs/v2/plugins.md) go right after 学习.
 async function addPluginPages() {

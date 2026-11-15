@@ -166,7 +166,7 @@ it("本地日期边界、DST、180天上限、无效日期与默认30天", () =>
 it("Markdown逐板块成表、CSV转义公式，导出图表数据和空态", () => {
   const a = setup(); seed(a, "ask", { place: '=HYPERLINK("example")' });
   const md = exportInsights(a, "owner", filters, "md"), csv = exportInsights(a, "owner", filters, "csv");
-  expect(md).toContain("## 用量与覆盖"); expect(md).toContain("## 成本");
+  expect(md).toContain("## 用了多少"); expect(md).toContain("## 花了多少时间");
   expect(csv.startsWith("\uFEFF")).toBe(true); expect(csv).toContain('""example""'); expect(csv).toContain("图表数据");
   expect(md).toContain("还没有人直接问过机器人");
 });
