@@ -2064,6 +2064,8 @@ export const migrations: readonly string[] = [
    );`,
   // The time a deadline change names: a proposal keeps it until the owner accepts or declines.
   `alter table item_changes add column due text;`,
+  // Lookups by address alone (a chat's `lark:<id>`, a pasted link) were full scans of the source text.
+  `create index sources_uri on sources(uri);`,
 ];
 
 export type Db = DatabaseSync;

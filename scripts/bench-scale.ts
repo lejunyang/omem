@@ -7,6 +7,7 @@
  *   node scripts/bench-scale.ts --requirements [--works 20] [--rounds 5] [--payload-kb 128]
  *   node scripts/bench-scale.ts --runs [--count 20000]
  *   node scripts/bench-scale.ts --source-purge
+ *   node scripts/bench-scale.ts --source-uri [--count 100000] [--text-kb 4]
  *   node scripts/bench-scale.ts --code-rounds
  *   node scripts/bench-scale.ts --directory-import [--files 1200]
  *   node scripts/bench-scale.ts --vector-loading [--chunks 650000] [--dims 64] [--spaces 130] [--filled 57] [--snapshot]
@@ -112,6 +113,37 @@ if (process.argv.includes("--source-purge")) {
       results.push({ indexed, sources: 20_000, symbols: 100_000, purged: 300, ms: +(performance.now() - start).toFixed(1) });
     } finally { app.db.close(); rmSync(home, { recursive: true, force: true }); }
   }
+  console.log(JSON.stringify(results));
+  process.exit(0);
+}
+if (process.argv.includes("--source-uri")) {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { App } = await import("../src/core/app.ts");
+  const { ensurePersonalSpace } = await import("../src/core/spaces.ts");
+  const arg = (key: string, fallback: number) => { const at = process.argv.indexOf(key); return at >= 0 ? Number(process.argv[at + 1]) : fallback; };
+  const count = arg("--count", 100_000), textKb = arg("--text-kb", 4);
+  if (!Number.isSafeInteger(count) || count < 1 || !(textKb >= 0)) throw new Error("--count 要是正整数，--text-kb 不能是负数");
+  const home = mkdtempSync(join(tmpdir(), "omem-bench-uri-"));
+  const app = App.open(home);
+  const results = [];
+  try {
+    ensurePersonalSpace(app);
+    const text = "示例消息 ".repeat(Math.ceil(textKb * 1024 / 13));
+    const source = app.db.prepare("insert into sources(id,space_id,kind,uri,title,hash,text,captured_at,updated_at) values(?,'personal','chat',?,'示例群','hash',?,'2026-01-01','2026-01-01')");
+    app.db.exec("begin");
+    for (let i = 0; i < count; i++) source.run(`source-${i}`, `lark:oc_example${i}`, text);
+    app.db.exec("commit");
+    // The same lookups the chat-name and work-state helpers make: by address alone, most recent first.
+    const lookup = app.db.prepare("select title from sources where uri = ? and deleted_at is null order by updated_at desc limit 1");
+    for (const indexed of [true, false]) {
+      if (!indexed) app.db.exec("drop index sources_uri");
+      const start = performance.now();
+      for (let i = 0; i < 200; i++) lookup.get(`lark:oc_example${(i * 7919) % (count + 50)}`);
+      results.push({ indexed, sources: count, textKb, lookups: 200, ms: +(performance.now() - start).toFixed(1) });
+    }
+  } finally { app.db.close(); rmSync(home, { recursive: true, force: true }); }
   console.log(JSON.stringify(results));
   process.exit(0);
 }

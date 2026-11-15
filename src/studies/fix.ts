@@ -10,11 +10,15 @@ import { studyScope } from "./scope.ts";
 import { captureBaseline } from "./workspace.ts";
 import { assertOwner, direction, findings, trial, type Finding } from "./store.ts";
 
-export function findingFix(app: App, f: Finding) {
-  const w = f.work_id ? codeWork(app, f.work_id) : null;
+/** What the trials run again after this finding's change say: null until every rerun has finished. */
+export function fixVerified(app: App, f: Pick<Finding, "id" | "work_id">) {
   const reruns = all<{ id: string; result: string | null; state: string }>(app.db, "select id,result,state from study_trials where fix_of=? and work_id=? order by seq", f.id, f.work_id);
   const verified = reruns.some((t) => t.result === "failed") ? "failed" : !reruns.length || reruns.some((t) => ["queued", "running"].includes(t.state)) ? null : reruns.every((t) => t.result === "passed") ? "passed" : reruns.some((t) => t.result === "blocked") ? "blocked" : "unclear";
-  return w ? { workId: w.rootId, status: w.stage.key, link: `#/runs/${w.latestId}`, verified, reruns: reruns.map((t) => t.id) } : null;
+  return { verified, reruns: reruns.map((t) => t.id) };
+}
+export function findingFix(app: App, f: Finding) {
+  const w = f.work_id ? codeWork(app, f.work_id) : null;
+  return w ? { workId: w.rootId, status: w.stage.key, link: `#/runs/${w.latestId}`, ...fixVerified(app, f) } : null;
 }
 export async function fixFinding(app: App, itemId: string, finding: string, note: string | undefined, user: string) {
   assertOwner(app, itemId, user);

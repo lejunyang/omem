@@ -26,3 +26,20 @@ it("finds symbols by name and by qualified name through indexes", () => {
     expect(plan(app, `${sel} y.name = ? and s.deleted_at is null order by y.id limit 20`, "f")).toMatch(/USING INDEX symbols_any_name/);
   } finally { app.db.close(); }
 });
+
+it("finds a source by its address alone through an index", () => {
+  const app = testApp();
+  try {
+    // The chat-name, work-state and citation helpers look a chat up as lark:<id> without knowing its space.
+    for (const sql of [
+      "select title from sources where uri = ? and deleted_at is null limit 1",
+      "select title from sources where uri = ? and deleted_at is null order by updated_at desc limit 1",
+      "select id, title, space_id from sources where uri = ? and deleted_at is null limit 1",
+      "select captured_at from sources where uri = ? order by captured_at limit 1",
+    ]) {
+      const detail = plan(app, sql, "lark:oc_example");
+      expect(detail).toMatch(/SEARCH sources USING INDEX sources_uri/);
+      expect(detail).not.toMatch(/SCAN sources\b/);
+    }
+  } finally { app.db.close(); }
+});

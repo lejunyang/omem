@@ -63,6 +63,21 @@ it("课题只数期间台账，结果表、事项与运行明细、模型次数�
   expect(specific.metrics.find(m => m.key === "study:trials")?.value).toBe(3);
   expect(specific.metrics.some(m => m.key === "study:findings")).toBe(false);
 });
+it("课题数出有改动的发现，以及改后重跑通过、仍然失败的", () => {
+  const a = setup(), item = study(a);
+  const old = "2026-10-30T02:00:00.000Z";
+  for (const [i, result] of [[0, "passed"], [1, "failed"], [3, null]] as const) {
+    run(a.db, "update study_findings set work_id=? where id=?", `w-${i}`, `f-${item.id}-${i}`);
+    // Reruns finished outside the period still say what the change did.
+    if (result) run(a.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",state,result,fix_of,work_id,created_at,updated_at) values(?,?,?,1,?,'退款','核验','reported',?,?,?,?,?)`, `rerun-${i}`, item.id, `d-${item.id}`, 10 + i, result, `f-${item.id}-${i}`, `w-${i}`, old, old);
+  }
+  run(a.db, "update study_findings set work_id='w-old' where id=?", `old-${item.id}`);
+  clearInsightsCache(a);
+  for (const [key, value] of Object.entries({ fixed: 3, passed: 1, failed: 1 })) expect(metric(a, `study:findings:${key}`).value).toBe(value);
+  expect(insightRecords(a, "owner", filters, "study:findings:passed").records.map(r => r.id)).toEqual([`f-${item.id}-0`]);
+  expect(metric(a, "study:trials").value).toBe(4);
+  expect(report(a, { model: "model-a" }).sections.find(s => s.id === "study")!.metrics.some(m => m.key === "study:findings:fixed")).toBe(false);
+});
 it("课题按事项可读空间隔离，权限撤销后不复用缓存，没有已交试验就不出现", () => {
   const a = setup();
   expect(report(a).sections.some(s => s.id === "study")).toBe(false);

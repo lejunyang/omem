@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import type { Direction, Trial, Finding } from "../studies/store.ts";
+import { fixVerified } from "../studies/fix.ts";
 import { accessibleSpaces, OWNER } from "../core/users.ts";
 import { runReadableSpaces } from "../auth/permissions.ts";
 import { DECISION_SCENES } from "../core/decision-scenes.ts";
@@ -354,6 +355,12 @@ export function studySection(c: Ctx): Section {
       const xs = findingRows.filter(f => (states as readonly string[]).includes(f.state));
       s.metrics.push(metric(c, `study:findings:${key}`, label, xs.length, fr(xs)));
     }
+    // A handful of findings per item: each one's change and reruns are read through their own indexes.
+    const fixes = findingRows.filter(f => f.work_id).map(f => ({ f, verified: fixVerified(c.app, f).verified }));
+    for (const [key, label, keep] of [["fixed", "有改动的", () => true], ["passed", "改后重跑通过的", (v: string | null) => v === "passed"], ["failed", "改后重跑仍然失败的", (v: string | null) => v === "failed"]] as const) {
+      const xs = fixes.filter(x => keep(x.verified)).map(x => x.f);
+      s.metrics.push(metric(c, `study:findings:${key}`, label, xs.length, fr(xs)));
+    }
     const dr = (xs: Direction[]) => xs.map(d => itemRef(d, `${titles.get(d.item_id)} · ${d.goal}（${d.state}）`, d.updated_at));
     s.metrics.push(metric(c, "study:directions", "结束的方向数", directionRows.length, dr(directionRows)));
     for (const [key, label] of [["done", "做完的方向"], ["dropped", "放下的方向"]]) {
@@ -367,7 +374,7 @@ export function studySection(c: Ctx): Section {
     const xs = rs.filter(r => (parseAi(r.ai).model ?? "没记下") === model);
     s.metrics.push(metric(c, `study:model:${model}`, `试验运行 · ${model}`, xs.length, refs(xs), undefined, undefined, { table: "试验运行按模型", row: model, col: "次数" }));
   }
-  s.notes.push("试验按交结果的更新时间、新发现按建立时间、结束方向按更新时间计；认可、不算及未判定是这些新发现的当前状态，未判定含“以后再说”，duplicate 只计新发现总数。运行按创建时间，含重试与升档；运行未保留档位名，按 AI 字段的模型计数。");
+  s.notes.push("试验按交结果的更新时间、新发现按建立时间、结束方向按更新时间计；认可、不算及未判定是这些新发现的当前状态，未判定含“以后再说”，duplicate 只计新发现总数。有改动是指这些新发现现在挂着一次编码交办；改后重跑通过 / 仍然失败按改动之后重跑的试验算，没重跑完的两边都不计。运行按创建时间，含重试与升档；运行未保留档位名，按 AI 字段的模型计数。");
   return s;
 }
 export function knowledgeSection(c: Ctx): Section {

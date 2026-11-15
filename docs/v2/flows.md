@@ -473,7 +473,7 @@ HTTP 约定：
 
 ## 第二期：上下文跟进
 
-`src/flows/follow.ts` 复用 `flowReminders`，只查 `item_flows.ended_at is null` 的少量事项。事项的地方本来就是 `item_materials`：`conversation` 指 omem 会话，`source` 指原件；`itemPlaces` 只把聊天原件算作地方，其他文档、会议从材料取。飞书会话的 `external_id` 去掉 `#话题`，按群 id（`meta.chatId` 的索引）找这个群当前在写的聊天原件 `lark:<群>`；普通会话在它自己的空间里按 `conversation:<会话id>` 找转录原件。原件表没有单独的 uri 索引，这几处都按 id、`(space_id, uri)` 或群 id 查，不扫全表。仅保留本人可读空间里的原件，按 id 去重。订阅查询不调用会读聊天全文的地方摘要函数。
+`src/flows/follow.ts` 复用 `flowReminders`，只查 `item_flows.ended_at is null` 的少量事项。事项的地方本来就是 `item_materials`：`conversation` 指 omem 会话，`source` 指原件；`itemPlaces` 只把聊天原件算作地方，其他文档、会议从材料取。飞书会话的 `external_id` 去掉 `#话题`，按群 id（`meta.chatId` 的索引）找这个群当前在写的聊天原件 `lark:<群>`；普通会话在它自己的空间里按 `conversation:<会话id>` 找转录原件。这几处都按 id、`(space_id, uri)` 或群 id 查，不扫全表（只按地址查的老查询 2026-11-16 起走 `sources_uri` 索引）。仅保留本人可读空间里的原件，按 id 去重。订阅查询不调用会读聊天全文的地方摘要函数。
 
 迁移末尾新增 `item_follow_cursors` 和 `item_changes`。开始流程时游标放到当时末尾；之后新加材料在首次巡检发现时从末尾开始。聊天只按 `(source_id,line)` 查新行，`sender_kind` 只数 user / owner，助手和机器人不计；普通会话从结构化消息按现有转录格式计算行号并跳过助手、斜杠命令；文档和会议按 `updated_at` 判断更新，变更后读前二万四千字，和游标里记的各行哈希（`seen`）比对，只把以前没有的行交出去；只删了行或挪了位置就直接前移游标，不起运行。删掉的材料、不可读原件不再跟。游标是设备本地采集状态；变化按 `updated_at` 随事项拉取，引用沿用 pull 的原件与行号换算。
 
