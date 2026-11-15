@@ -26,6 +26,13 @@ export function eligibleFixes(app: App, f: ItemFlow, d: FlowStage) {
     return t.item_id === f.itemId && t.result === "failed" && !!direction(app, t.direction_id).allow_code;
   })).slice(0, d.budget?.fixes ?? 2);
 }
+const approvedWork = (app: App, id: string) => { const w = codeWork(app, id); return w?.stage.key === "done" && w.next.actions.includes("apply"); };
+/** Changes the owner started by hand that passed review and whose failed trials were never run again: verified here, whatever the round. */
+export function unverifiedFixes(app: App, f: ItemFlow) {
+  const reruns = trials(app, f.itemId).filter((t) => t.fix_of);
+  return findings(app, f.itemId).filter((v) => v.work_id && v.flow_started_at === f.startedAt && !reruns.some((t) => t.fix_of === v.id && t.work_id === v.work_id) && approvedWork(app, v.work_id)
+    && json<string[]>(v.trials, []).some((id) => trial(app, id).result === "failed")).slice(0, 5);
+}
 /** Count occupied time once when a parent and its review run overlap; queued time is excluded. */
 export function fixMinutes(app: App, s: StageRow, at: Date) {
   if (s.doneAt) at = new Date(Math.min(at.getTime(), Date.parse(s.doneAt)));
@@ -51,7 +58,7 @@ export async function cancelFixReruns(app: App, item: string, ids?: string[]) {
 }
 export async function tickFixes(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, at: Date, chooseAI: TrialAI) {
   const c = { ...s.control };
-  if (!c.fixIds) c.fixIds = eligibleFixes(app, f, d).map((v) => v.id);
+  if (!c.fixIds) c.fixIds = [...unverifiedFixes(app, f), ...eligibleFixes(app, f, d)].map((v) => v.id);
   const save = (note: string) => {
     changeStage(app, item.id, d.id, "doing", { control: c, by: c.runId ?? c.fixWorkId ?? null, waitingOn: null }, { actor: "host" }, note);
     return true;

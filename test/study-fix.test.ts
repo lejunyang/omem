@@ -12,6 +12,10 @@ import { eligibleFixes, fixModelStage } from "../src/studies/fixes.ts";
 import { findings, trials, recordFinding } from "../src/studies/store.ts";
 import { studyView, readLedger, reportTrial } from "../src/studies/service.ts";
 import { putScope } from "../src/studies/scope.ts";
+import { fixFinding } from "../src/studies/fix.ts";
+import { setRunOutput } from "../src/agents/runs.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { studyFixture, git } from "./study-fixture.ts";
 
 const fixtures: Awaited<ReturnType<typeof studyFixture>>[] = [];
@@ -146,5 +150,24 @@ describe("课题逐条改缺陷", () => {
     else await reopenStage(f.app, f.item.id, "fix", "重新检查", [], { actor: "owner", userId: "owner" });
     expect(getRun(f.app, rerun).status).toBe("cancelled"); expect(getRun(f.app, work.id).status).toBe("done");
     expect(trials(f.app, f.item.id).find((t) => t.run_id === rerun)).toMatchObject({ state: "skipped", result: null });
+  });
+});
+
+describe("本人手动发起的改动也会被重跑验证", () => {
+  it("评审通过、还没重跑过的手动交办，由下一次“改”这一段在交办的工作区里重跑", async () => {
+    const f = await setup(); await f.finishTrial(); const id = f.finding();
+    await fixFinding(f.app, f.item.id, id, undefined, "owner");
+    const work = getRun(f.app, findings(f.app, f.item.id)[0].work_id!);
+    const cwd = join(f.app.runsDir, work.id, "work", "repo"); mkdirSync(join(f.app.runsDir, work.id, "work"), { recursive: true });
+    await git(f.root, "worktree", "add", "-qb", `fix-${work.id}`, cwd);
+    writeFileSync(join(cwd, "entry.txt"), "after"); await git(cwd, "add", "."); await git(cwd, "commit", "-qm", "fix");
+    setRunOutput(f.app, work.id, { worktrees: [{ space: "repo", path: cwd, branch: `fix-${work.id}`, base: await git(f.root, "rev-parse", "HEAD") }], verdict: "approved" });
+    run(f.app.db, "update runs set status='done',started_at=?,finished_at=? where id=?", now(), now(), work.id);
+    await f.beginFix();
+    // The finding already has a delegation, so nothing new is started: its failed trial is run again on that change.
+    expect(all(f.app.db, "select id from runs where kind='code'")).toHaveLength(1);
+    const rerun = trials(f.app, f.item.id).find((t) => t.fix_of)!;
+    expect(rerun).toMatchObject({ fix_of: id, work_id: work.id, state: "running" });
+    expect(getRun(f.app, rerun.run_id!).input.cwd).toBe(cwd);
   });
 });
