@@ -295,4 +295,25 @@ describe("connections", async () => {
     addMember(app, "proj", "ann", "editor");
     expect(captureSpace(app, "oc_group", "ann")).toBe("proj");
   });
+
+  it("lets a colleague who is not a user grant their own Feishu from a link only they can complete", async () => {
+    const { grantLink, guestUserId } = await import("../src/auth/grants.ts");
+    // The fake Feishu says the authorizing person is ou_ann: a link made for someone else is refused.
+    const other = new URL(grantLink(app, { openId: "ou_someone", name: "小周" }));
+    expect(other.origin).toBe("http://omem.test");
+    const go = await remote(other.pathname);
+    const to = new URL(go.headers.get("location")!);
+    expect(to.searchParams.get("scope")).toContain("offline_access");
+    const refused = await remote(`/api/auth/lark/callback?code=c&state=${to.searchParams.get("state")}`);
+    expect(decodeURIComponent(refused.headers.get("location") ?? "")).toContain("发给别人");
+    expect(findConnection(app, guestUserId("ou_someone"), "lark")).toBeNull();
+    // Theirs: kept like a member's connection, under their Feishu id.
+    const mine = await remote(new URL(grantLink(app, { openId: "ou_ann", name: "小安" })).pathname);
+    const state = new URL(mine.headers.get("location")!).searchParams.get("state")!;
+    const done = await remote(`/api/auth/lark/callback?code=c&state=${state}`);
+    expect(await done.text()).toContain("已授权");
+    expect(findConnection(app, guestUserId("ou_ann"), "lark")).toMatchObject({ status: "active" });
+    // An unknown or expired link says so.
+    expect(await (await remote("/api/auth/lark/grant/nope")).text()).toContain("链接已失效");
+  });
 });

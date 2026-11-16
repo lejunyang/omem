@@ -287,6 +287,46 @@ describe("feishu docs written as the owner", () => {
     for (const token of ["Cross", "Loop", "Shortcut"]) expect((await callTool(ctx, "lark_doc_update", { ...edit, doc: `${ORIGIN}/wiki/${token}` })).text).toContain("需要本人批准");
   });
 
+  it("for a colleague's doc, sends them a link once and then adds the bot as an editor with their grant", async () => {
+    await import("../src/auth/lark-user.ts");
+    const { storeConnection } = await import("../src/auth/vault.ts");
+    const { addMessage } = await import("../src/agents/threads.ts");
+    const app = testApp();
+    app.config.approvals.waitSeconds = 0;
+    app.config.lark.appId = "cli_own_bot";
+    app.config.webUrl = "http://omem.test";
+    process.env.OMEM_LARK_APP_SECRET = "test-secret";
+    const thread = createThread(app, { spaceId: "personal", channel: "lark", userId: "owner" });
+    const asked = addMessage(app, thread.id, "user", "帮我把表格补完", null, { asker: "小李", askerId: "ou_li" });
+    const r = createRun(app, { kind: "ask", spaceId: "personal", title: "补表格", input: { conversationId: thread.id, messageIds: [asked] } });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: r.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
+    const seen: { args: string[]; as?: string }[] = [];
+    let botAdded = false;
+    setLarkCliForTests(async (args, _cwd, as) => {
+      seen.push({ args, as });
+      if (args.includes("+member-add")) { botAdded = true; return { ok: true }; }
+      if (as === "bot:cli_own_bot" && !botAdded) return { ok: false, error: { code: 3380004, message: "No permission to operate on this document" } };
+      return { ok: true, data: { document: { revision_id: 3, content: "<p>表格</p>" } } };
+    });
+    try {
+      const doc = `${ORIGIN}/docx/Li`;
+      // No grant yet: a link for 小李, nothing changed.
+      const first = await callTool(ctx, "lark_doc_update", { doc, command: "append", content: "补一行", identity: "bot" });
+      expect(first.text).toContain("http://omem.test/api/auth/lark/grant/");
+      expect(first.text).toContain("小李");
+      // 小李 agreed (the grant page stored it): the bot is added to that doc with their grant, then edits.
+      storeConnection(app, { userId: "lark:ou_li", provider: "lark", accountId: "on_li", accountName: "小李", scopes: ["docs:permission.member:create", "offline_access"], accessToken: "at_li", refreshToken: "rt_li", expiresIn: 7200 });
+      const done = await callTool(ctx, "lark_doc_update", { doc, command: "append", content: "补一行", identity: "bot" });
+      expect(done.text).toContain("已用机器人的身份编辑");
+      const add = seen.find((c) => c.args.includes("+member-add"))!;
+      expect(add.as).toBe("lark:ou_li");
+      expect(add.args).toEqual(expect.arrayContaining(["--member-type", "appid", "--member-id", "cli_own_bot", "--perm", "edit"]));
+      expect(listAsks(app)).toHaveLength(0);
+    } finally {
+      delete process.env.OMEM_LARK_APP_SECRET;
+    }
+  });
+
   it("edits a doc someone shared with the bot as the bot, when the owner has no access to it", async () => {
     const { app, ctx } = task();
     app.config.lark.appId = "cli_own_bot";
@@ -330,9 +370,15 @@ describe("feishu docs written as the owner", () => {
     const doc = `${ORIGIN}/wiki/Report`;
     expect((await callTool(ctx, "lark_doc_update", { doc, command: "append", content: "放量见[周会记录](src:s_missing#L1-L2)。" })).text).toContain("已编辑");
     expect((await callTool(ctx, "lark_doc_update", { doc, command: "block_insert_after", block_id: "b1", content: '<p>口径<a href="src:s_missing#L3-L4">采集回执</a></p>' })).text).toContain("已编辑");
+    // Another Feishu doc keeps its original link; a wiki page of omem's becomes its words.
+    const now = new Date().toISOString();
+    run(app.db, "insert into sources(id,space_id,kind,uri,title,hash,text,meta,captured_at,updated_at) values('s_plan','personal','doc',?,'方案','h','正文','{}',?,?)", `${ORIGIN}/docx/Plan`, now, now);
+    expect((await callTool(ctx, "lark_doc_update", { doc, command: "append", content: "详见[方案](src:s_plan#L3-L4)，背景见 [[engineering/flows|流程说明]]。" })).text).toContain("已编辑");
     const sent = JSON.stringify(calls.filter((c) => c.includes("+update")));
-    expect(sent).not.toContain("src:");
+    for (const bad of ["src:", "/share/", "[[engineering"]) expect(sent, bad).not.toContain(bad);
     expect(sent).toContain("采集回执");
+    expect(sent).toContain(`[方案](${ORIGIN}/docx/Plan`);
+    expect(sent).toContain("背景见 流程说明");
   });
 
   it("keeps subtree permissions per operation and user, and a later refusal overrides an older grant", async () => {

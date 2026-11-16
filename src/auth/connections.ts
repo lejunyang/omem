@@ -1,3 +1,4 @@
+import { isGuestUserId } from "./grants.ts";
 import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
 import { findUser, updateUser } from "../core/users.ts";
@@ -111,7 +112,8 @@ function expired(app: App, c: Connection, why: string) {
   if (fresh?.status !== "expired") {
     markConnection(app, c.id, "expired", why);
     const label = loginProvider(c.provider)?.label ?? c.provider;
-    notify(app, { userId: c.userId, title: `${label}连接需要重新授权`, body: `omem 用不了你的${label}授权了（${why.slice(0, 120)}）。在 omem 的账号页重新连接${label}。`, link: "#/account", urgency: "normal" });
+    // A colleague's grant (auth/grants.ts): nobody here to tell; the next request of theirs gets a new link.
+    if (!isGuestUserId(c.userId)) notify(app, { userId: c.userId, title: `${label}连接需要重新授权`, body: `omem 用不了你的${label}授权了（${why.slice(0, 120)}）。在 omem 的账号页重新连接${label}。`, link: "#/account", urgency: "normal" });
   }
   return new HttpError(403, `${loginProvider(c.provider)?.label ?? c.provider}连接需要重新授权：在账号页重新连接`);
 }

@@ -24,8 +24,12 @@ const STATE_MS = 10 * 60_000;
 const LINK_MS = 5 * 60_000;
 const b64 = (n: number) => randomBytes(n).toString("base64url");
 
-/** connect: like bind, asking for a feature's scopes and keeping the tokens (src/auth/connections.ts). */
-export type Purpose = "login" | "bind" | "connect";
+/**
+ * connect: like bind, asking for a feature's scopes and keeping the tokens (src/auth/connections.ts).
+ * grant: someone who is not an omem user authorizes their own Feishu for an edit they asked for
+ * (src/auth/grants.ts); `userId` is `lark:<open_id>` and only that person can complete it.
+ */
+export type Purpose = "login" | "bind" | "connect" | "grant";
 
 function requireProvider(app: App, id: string): LoginProvider {
   const p = loginProvider(id);
@@ -61,7 +65,8 @@ export const safeReturn = (to: string | undefined | null) => (to && /^\/[^/\\]/.
 
 export type LoginResult =
   | { kind: "session"; userId: string; restricted: boolean; via: string; returnTo: string; created: boolean }
-  | { kind: "bound"; userId: string; via: string; returnTo: string; lifted: string | null; connected: boolean };
+  | { kind: "bound"; userId: string; via: string; returnTo: string; lifted: string | null; connected: boolean }
+  | { kind: "granted"; userId: string; name: string };
 
 /** The provider sent the browser back: check the state, ask the provider who this is, find or create the user. */
 export async function completeLogin(app: App, input: { provider: string; state: string; code?: string; error?: string }): Promise<LoginResult> {
@@ -80,6 +85,12 @@ export async function completeLogin(app: App, input: { provider: string; state: 
   // Platforms that do not say what they granted granted what was asked for (or refused the whole authorization).
   if (!tokens.scope?.trim() && st.scopes) tokens.scope = st.scopes;
   const who = await p.whoami(app, tokens);
+  if (st.purpose === "grant") {
+    const openId = (st.user_id ?? "").replace(/^lark:/, "");
+    if (!openId || (who.externalId !== openId && !who.aliases?.some((a) => a.externalId === openId))) throw new HttpError(403, "这个授权链接是发给别人的：请让助手给你单独发一个");
+    saveConnection(app, st.user_id!, p.id, who, tokens);
+    return { kind: "granted", userId: st.user_id!, name: who.name };
+  }
   // A capability connector keeps the tokens of whoever started it; it never logs in or records an identity.
   if (!canLogIn(p)) {
     if (st.purpose !== "connect" || !st.user_id) throw new HttpError(400, `${p.label}只用来连接，不能登录或绑定`);

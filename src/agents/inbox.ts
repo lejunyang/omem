@@ -42,6 +42,8 @@ export type Inbound = Partial<ThreadAddress> & {
   meta?: Record<string, unknown>;
   /** A colleague (not a user) asking the assistant in a group the owner is in (lark.guests.ownerPresent). */
   asker?: string;
+  /** That colleague's open_id in omem's main bot app (the app their own grant goes through, auth/grants.ts). */
+  askerId?: string;
   /** Said for the owner by an ask (a clicked suggestion, a delivered answer): not itself an answer. */
   fromAsk?: boolean;
   /** Channel adapter opens a topic and returns its actual external identifiers before the task starts. */
@@ -144,6 +146,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   if (inb.quote) meta.quote = inb.quote;
   if (inb.speaker) meta.speaker = inb.speaker;
   if (inb.asker) meta.asker = inb.asker;
+  if (inb.asker && inb.askerId) meta.askerId = inb.askerId;
   const messageId = addMessage(app, thread.id, "user", text, null, meta);
   // The owner replying to a message of some work carries that work on here (agents/home.ts).
   if (inb.quote?.messageId && userId === OWNER && !inb.speaker && !inb.asker) followQuoted(app, inb.quote.messageId, thread.id, inb.externalMessageId);

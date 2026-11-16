@@ -410,6 +410,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/auth/session": "public",
   "GET /api/auth/:provider/start": "public",
   "GET /api/auth/:provider/callback": "public",
+  "GET /api/auth/lark/grant/:ticket": "public",
   "GET /api/auth/link/:code": "public",
   "POST /api/auth/link/:code": "public",
   "POST /api/auth/lark/app": "public",

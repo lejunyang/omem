@@ -731,10 +731,13 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     // Not the owner and not a registered user (omem user add … --lark <open_id>): guest mode, when on.
     // In a group the owner is in, the owner may let colleagues talk to the assistant itself.
     let asker: string | undefined;
+    let askerId: string | undefined;
     if (!userId) {
       if (!approved && !(await answerGuest(m, ruled))) return;
       userId = OWNER;
       asker = m.senderName;
+      // Their own grant goes through the main bot's app: its open_id for them (another bot's is another app's).
+      if (ref === "main" && !m.fromApp) askerId = m.senderId;
     }
     if (m.chatType === "p2p" && userId === OWNER) kv(app, key("lark_owner_chat"), m.chatId);
     const text = spoken(m);
@@ -760,6 +763,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
           isGroup: m.chatType === "group",
           text,
           asker,
+          askerId,
           spaceId,
           context,
           contextLabel: m.topicId ? "话题里" : "群里",

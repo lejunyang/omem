@@ -111,6 +111,11 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>)
     const scope = e.scopes[0];
     // Someone else's connection (src/auth/lark-user.ts): they authorize the scope on their own connection, from the account page.
     const actor = larkActing();
+    // A colleague's grant (auth/grants.ts) lacks it: dropped, so the next try gives them a fresh link with what is needed.
+    if (actor?.userId.startsWith("lark:")) {
+      (await import("../auth/connections.ts")).disconnect(app, actor.userId, "lark");
+      throw new HttpError(403, `对方的飞书授权少了 ${scope}：再用 identity=bot 试一次会拿到新的授权链接，发给他重新同意。`);
+    }
     if (actor) {
       const { userName } = await import("../core/users.ts");
       notify(app, { userId: actor.userId, tone: "warning", title: "飞书授权：需要补一项权限", body: `${reason}需要你给 omem 授权：${scope}。在账号页点“授权”，在飞书里确认后再试。`, link: `#/account?connect=lark&scopes=${encodeURIComponent(scope)}`, urgency: "normal" });

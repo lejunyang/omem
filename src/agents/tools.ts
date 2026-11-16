@@ -3893,7 +3893,7 @@ def({
     "以本人身份读飞书文档的当前内容，带 block id，供 lark_doc_update 的 block_* 局部编辑定位用（只读，不存为原件；要收进知识库用 import_url）。大文档先 scope=outline 看目录，再 scope=section + 标题的 start_block_id 读那一节；只有关键词时 scope=keyword；整张表格用 scope=range，start_block_id 和 end_block_id 都给表格的 id（默认只返回表头和命中的行）。看到 <excerpt> 表示只拿到容器或表格的一部分。默认 DocxXML。",
   schema: z.object({
     doc: z.string().describe("文档链接（/docx/… 或 /wiki/…，可带 #share 选区）"),
-    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（以本人身份）。bot：用 omem 自己的机器人读写，给别人分享给机器人的文档用（本人没有编辑权限、别人请你改的时候），不用本人批准"),
+    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（以本人身份）。bot：用 omem 自己的机器人读写，群里同事请你改他的文档时用（不用本人批准）：机器人还没有这篇的权限时，工具会给一个授权链接让你发给他，他同意后 omem 用它把机器人加为这篇的可编辑协作者，再试就行"),
     scope: z.enum(["outline", "section", "range", "keyword"]).optional().describe("不填 = 整篇"),
     keyword: z.string().optional().describe("scope=keyword 的关键词，多个用 | 分隔"),
     start_block_id: z.string().optional(),
@@ -3907,45 +3907,94 @@ def({
   handler: async (ctx, a) => {
     ownerOnly(ctx, "docs");
     const w = await import("../channels/lark-doc-write.ts");
-    const r = await w.fetchForEdit(ctx.app, {
+    const input = {
       doc: a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
       contextBefore: a.context_before, contextAfter: a.context_after, detail: a.detail, format: a.format,
-    }, { asBot: a.identity === "bot" }).catch((e) => ownerDenied(ctx.app, e));
+    };
+    const r = a.identity === "bot"
+      ? await botForRequester(ctx, a.doc, () => w.fetchForEdit(ctx.app, input, { asBot: true }))
+      : await w.fetchForEdit(ctx.app, input).catch((e) => ownerDenied(ctx.app, e));
     const max = 60_000;
     const body = r.content.length > max ? `${r.content.slice(0, max)}\n…（已截断，共 ${r.content.length} 字；用 scope=outline / section / range 缩小范围）` : r.content;
     return `版本 ${r.revision ?? "未知"}${r.tips ? `\n飞书的提示：${truncate(r.tips, 300)}` : ""}\n\n${body || "（没有内容）"}`;
   },
 });
 
+/** The colleague whose request this turn is (their message in a group the owner is in), with their Feishu id in the main bot's app. */
+function requesterOf(ctx: ToolContext): { openId: string; name: string } | null {
+  const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+  const ids = r?.kind === "ask" ? ((r.input.messageIds as string[] | undefined) ?? []) : [];
+  if (!ids.length) return null;
+  const row = one<{ id: string | null; name: string | null }>(
+    ctx.app.db,
+    `select json_extract(meta, '$.askerId') id, json_extract(meta, '$.asker') name from messages where id in (${ids.map(() => "?").join(",")}) and role = 'user' and json_extract(meta, '$.askerId') is not null order by created_at desc limit 1`,
+    ...ids,
+  );
+  return row?.id ? { openId: row.id, name: row.name ?? "" } : null;
+}
+
 /**
- * omem's own citations (`src:…`, `mem:…`) mean nothing inside a Feishu doc, where a reader clicked them
- * and got nowhere: written as links that open (the same shares an answer gets), or as their text.
- * DocxXML anchors are handled one by one; Markdown goes through the answer's resolver.
+ * A doc call as omem's own bot. When the bot cannot open the doc and this turn is a colleague's
+ * request, the colleague's grant (auth/grants.ts: one link, agreed once and kept) adds the bot as an
+ * editor of this doc, and the call goes again. Without a grant yet: the link, for the agent to send them.
  */
+async function botForRequester<T>(ctx: ToolContext, doc: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (!(e instanceof HttpError && e.status === 403 && e.message.startsWith("机器人「"))) throw e;
+    const who = requesterOf(ctx);
+    if (!who) throw e;
+    const g = await import("../auth/grants.ts");
+    if (!g.hasGrant(ctx.app, who.openId)) {
+      const link = g.grantLink(ctx.app, who);
+      throw new HttpError(403, `机器人还没有这篇文档的权限。把这个授权链接写进你的回复发给${who.name || "对方"}（@他）：${link}\n他在飞书里打开点同意就行（只有他本人能完成，半小时内有效；授权会保存，以后他的文档不用再授权）。同意后 omem 用它把机器人加为这篇的可编辑协作者；他说好了以后再用 identity=bot 重试，这一轮不要换本人的身份去改。`);
+    }
+    const appId = ctx.app.config.lark.appId!;
+    const { larkCliAs } = await import("../auth/lark-user.ts");
+    await larkCliAs(ctx.app, g.guestUserId(who.openId), ["drive", "+member-add", "--as", "user", "--token", doc, "--member-type", "appid", "--member-id", appId, "--perm", "edit", "--yes"], 60_000);
+    return fn();
+  }
+}
+
 /** The owner cannot open or edit the doc: say what to do instead of only the lark-cli error. */
 function ownerDenied(app: App, e: unknown): never {
   const msg = (e as Error).message;
   const bot = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value || "omem 的机器人";
   if (/3380004|no permission|lacks view|forbidden|没有权限|无权限/i.test(msg) && !/机器人/.test(msg))
-    throw new HttpError(403, `本人没有这篇文档的权限（${truncate(msg, 160)}）。是别人请你改的话，不要让对方给本人开权限：请对方在文档右上角“分享”里搜「${bot}」加为“可编辑”的协作者，再用 identity=bot 读和改。`);
+    throw new HttpError(403, `本人没有这篇文档的权限（${truncate(msg, 160)}）。是群里同事请你改他的文档的话，不要让对方给本人开权限：用 identity=bot 让机器人「${bot}」来改（它还没有权限时工具会给一个授权链接，发给他同意即可）。`);
   throw e;
 }
 
+/**
+ * A Feishu doc carries no omem citations: `src:…`, `mem:…`, `[[页面]]` open nothing for its readers,
+ * and a share link runs out. What has a place of its own outside omem (another Feishu doc, a Feishu
+ * message, a web page) keeps a link to that original; anything else stays as its words. The agent is
+ * told to write the substance out in the doc (skills/library/lark-docs).
+ */
 async function docCitations(ctx: ToolContext, content: string | undefined, markdown: boolean) {
-  if (!content || !/(?:src|mem|wiki):/.test(content)) return content;
-  const { resolveCitations, resolveCitationsNow } = await import("../channels/citations.ts");
-  const ANCHOR = /<a\s+href="((?:src|mem|wiki):[^"]*)"\s*>([\s\S]*?)<\/a>/g;
-  const anchors = [...content.matchAll(ANCHOR)];
-  let out = content;
-  if (anchors.length) {
-    const urls = resolveCitationsNow(ctx.app, anchors.map((m) => `[x](${m[1]})`), { runId: ctx.runId }).map((md) => /\]\(([^)]+)\)/.exec(md)?.[1] ?? "");
-    let i = 0;
-    out = out.replace(ANCHOR, (_all, _href: string, label: string) => {
-      const url = urls[i++];
-      return url ? `<a href="${url.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">${label}</a>` : label;
-    });
-  }
-  return markdown && /\]\((?:src|mem|wiki):/.test(out) ?resolveCitations(ctx.app, out, { runId: ctx.runId }) : out;
+  if (!content || !/(?:src|mem|msg|wiki):|\[\[/.test(content)) return content;
+  const { citationUrl } = await import("../channels/citations.ts");
+  const open = (ref: string) => {
+    try {
+      return citationUrl(ctx.app, ref);
+    } catch {
+      return null;
+    }
+  };
+  const attr = (url: string) => url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  let out = content.replace(/<a\s+href="((?:src|mem|msg|wiki):[^"]*)"\s*>([\s\S]*?)<\/a>/g, (_all, ref: string, label: string) => {
+    const url = open(ref);
+    return url ? `<a href="${attr(url)}">${label}</a>` : label;
+  });
+  if (markdown)
+    out = out
+      .replace(/\[([^\]]*)\]\(((?:src|mem|msg|wiki):[^)\s]*)\)/g, (_all, label: string, ref: string) => {
+        const url = open(ref);
+        return url ? `[${label}](${url})` : label;
+      })
+      .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_all, slug: string, label?: string) => label ?? slug);
+  return out;
 }
 
 def({
@@ -3987,7 +4036,7 @@ def({
     revision_id: z.number().int().optional().describe("基于哪个版本改（lark_doc_fetch 返回的 revision）；不填 = 最新"),
     format: z.enum(["markdown", "xml"]).optional(),
     summary: z.string().min(1).max(500).optional().describe("本次任务整体改动的一两句摘要，说明改什么、保留什么；不贴正文或 HTML/XML"),
-    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（以本人身份）。bot：用 omem 自己的机器人读写，给别人分享给机器人的文档用（本人没有编辑权限、别人请你改的时候），不用本人批准"),
+    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（以本人身份）。bot：用 omem 自己的机器人读写，群里同事请你改他的文档时用（不用本人批准）：机器人还没有这篇的权限时，工具会给一个授权链接让你发给他，他同意后 omem 用它把机器人加为这篇的可编辑协作者，再试就行"),
     approval_docs: z.array(z.string().min(1)).min(1).max(20).optional().describe("首次审批时列出本次任务所有要编辑的文档链接，一次批准这些文档的后续编辑。只列本人要求修改的文档；不填只批准当前文档"),
   }),
   handler: async (ctx, a) => {
@@ -3998,7 +4047,8 @@ def({
     // owner's access to the doc is not needed either.
     if (a.identity === "bot") {
       if (a.command === "overwrite") throw new HttpError(400, "机器人身份不做整篇覆盖：用局部编辑");
-      const r = await w.updateDoc(ctx.app, { ...edit, content: await docCitations(ctx, edit.content, a.format ? a.format === "markdown" : !a.command.startsWith("block_")) }, { asBot: true });
+      const content = await docCitations(ctx, edit.content, a.format ? a.format === "markdown" : !a.command.startsWith("block_"));
+      const r = await botForRequester(ctx, a.doc, () => w.updateDoc(ctx.app, { ...edit, content }, { asBot: true }));
       return `已用机器人的身份编辑（${a.command}）：${a.doc}${r.revision != null ? `，版本 ${r.revision}` : ""}\n${AGENT_NOTE}之前读到的 block id 可能已失效，再改前用 lark_doc_fetch（identity=bot）重新读。`;
     }
     const place = await w.docPlace(ctx.app, a.doc).catch((e) => ownerDenied(ctx.app, e));
@@ -4744,14 +4794,6 @@ def({
     with_children: z.boolean().optional().describe("默认 true"),
   }),
   handler: async (ctx, a) => {
-    // Which AI runs (and what it costs) is the owner's to say: a colleague's words in a group the owner is
-    // in ("切成 gpt") do not switch it.
-    const self = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
-    const said = self?.kind === "ask" ? ((self.input.messageIds as string[] | undefined) ?? []) : [];
-    if (said.length) {
-      const askers = all<{ asker: string | null }>(ctx.app.db, `select json_extract(meta, '$.asker') asker from messages where id in (${said.map(() => "?").join(",")}) and role = 'user'`, ...said);
-      if (askers.length && askers.every((m) => m.asker)) throw new HttpError(403, "换 AI 只听本人的：这一轮的消息来自群里的同事。照常用现在的 AI 回答；同事想换的话请他找本人。");
-    }
     const execution = validateExecution(ctx.app, a.execution)!;
     const root = getRun(ctx.app, a.run_id);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);

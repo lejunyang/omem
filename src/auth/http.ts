@@ -1,3 +1,4 @@
+import { grantScopes, guestUserId, readGrant } from "./grants.ts";
 import type { TLSSocket } from "node:tls";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -60,7 +61,7 @@ export function resolveAuth(app: App, req: FastifyRequest): RequestAuth | null {
 }
 
 /** Routes that find out who is asking themselves (logging in has to work before there is anyone). */
-export const AUTH_PUBLIC = /^\/api\/auth\/(session|logout|lark\/app|cli\/(start|poll)|[a-z][a-z0-9-]*\/(start|callback)|link\/[A-Za-z0-9_-]{20,64})(\?.*)?$/;
+export const AUTH_PUBLIC = /^\/api\/auth\/(session|logout|lark\/app|cli\/(start|poll)|[a-z][a-z0-9-]*\/(start|callback)|link\/[A-Za-z0-9_-]{20,64}|lark\/grant\/[A-Za-z0-9_-]{1,64})(\?.*)?$/;
 /** What a pending user or a restricted session may still reach: who am I, my account, binding, signing out. */
 export const AUTH_LIMITED = /^\/api\/(me|auth\/[^?]*)(\?.*)?$/;
 
@@ -161,12 +162,23 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     }
   });
 
+  // A colleague's own grant for an edit they asked for (src/auth/grants.ts): the link the assistant sent them.
+  server.get("/api/auth/lark/grant/:ticket", async (req, reply) => {
+    const { ticket } = req.params as { ticket: string };
+    const t = readGrant(app, ticket);
+    if (!t) return reply.type("text/html; charset=utf-8").header("cache-control", "no-store").send(page("链接已失效", "<h2>链接已失效</h2><p>授权链接半小时内有效。回到飞书，请助手再发一个。</p>"));
+    const url = beginLogin(app, { provider: "lark", purpose: "grant", redirectUri: callbackUrl(baseUrl(app, req), "lark"), userId: guestUserId(t.openId), scopes: grantScopes() });
+    return reply.header("cache-control", "no-store").redirect(url);
+  });
+
   server.get("/api/auth/:provider/callback", async (req, reply) => {
     const { provider } = req.params as { provider: string };
     const o = parse(z.object({ code: z.string().max(512).optional(), state: z.string().max(128).default(""), error: z.string().max(200).optional() }).passthrough(), req.query);
     const base = baseUrl(app, req);
     try {
       const r = await completeLogin(app, { provider, state: o.state, code: o.code, error: o.error });
+      // A colleague's grant: no omem account to go back to, just say it worked.
+      if (r.kind === "granted") return reply.type("text/html; charset=utf-8").header("cache-control", "no-store").send(page("已授权", `<h2>已授权</h2><p>${esc(r.name)}，omem 会把它的机器人加为你请它改的那篇文档的可编辑协作者，由机器人来改。回到飞书，让它接着做就行。</p><p>不想再用时，在飞书的“账号与安全 → 授权管理”里取消这个应用的授权。</p>`));
       if (r.kind === "bound") {
         if (r.lifted) liftRestriction(app, r.lifted);
         return back(reply, base, r.returnTo || `/account?${r.connected ? "connected" : "bound"}=${encodeURIComponent(provider)}`);
