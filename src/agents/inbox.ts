@@ -222,7 +222,7 @@ export async function deliverToThread(app: App, threadId: string, markdown: stri
   const id = addMessage(app, t.id, "assistant", markdown, recovering && typeof meta.runId === "string" ? meta.runId : null, { ...meta, ...(recovering ? {} : { deliveredAt: now() }) });
   if (recovering) {
     // Persist before sending: the channel may still be connecting after startup.
-    run(app.db, "insert into kv(key,value) values(?,?)", `recovered-reply:${id}`, JSON.stringify({ threadId: t.id, messageId: id }));
+    run(app.db, "insert into kv(key,value) values(?,?)", `recovered-reply:${id}`, JSON.stringify({ threadId: t.id, messageId: id, at: now() }));
     await flushRecoveredReplies(app);
     return !one(app.db, "select 1 from kv where key = ?", `recovered-reply:${id}`);
   }
@@ -238,16 +238,24 @@ export async function deliverToThread(app: App, threadId: string, markdown: stri
 }
 
 const recoveringReplies = new Set<string>();
+const RECOVER_FOR_MS = 24 * 3600_000;
 /** Retry only replies explicitly handed back to a channel after a service restart. */
 export async function flushRecoveredReplies(app: App) {
   for (const row of all<{ key: string; value: string }>(app.db, "select key,value from kv where key glob 'recovered-reply:*' order by key")) {
     const lock = `${app.home}:${row.key}`;
     // An earlier await may let another flush finish a later row from this snapshot.
     if (recoveringReplies.has(lock) || !one(app.db, "select 1 from kv where key = ?", row.key)) continue;
-    const { threadId, messageId } = JSON.parse(row.value) as { threadId: string; messageId: string };
+    const { threadId, messageId, at } = JSON.parse(row.value) as { threadId: string; messageId: string; at?: string };
     const t = findThread(app, threadId);
     const send = t && senders.get(t.channel);
-    if (!t || !send) continue;
+    // The conversation is gone, or its channel never came up (a watched group, a plugin's block: no
+    // sender at all) or kept failing for a day: the reply stays in the conversation, not in the queue.
+    if (!t || (at && Date.now() - Date.parse(at) > RECOVER_FOR_MS)) {
+      if (t) console.warn(`[omem] 恢复会话 ${t.id} 的回复一天内没能发出，不再重试（回复在会话记录里）`);
+      run(app.db, "delete from kv where key = ?", row.key);
+      continue;
+    }
+    if (!send) continue;
     const message = one<{ text: string; meta: string }>(app.db, "select text,meta from messages where id = ? and conversation_id = ?", messageId, t.id);
     if (!message) { run(app.db, "delete from kv where key = ?", row.key); continue; }
     recoveringReplies.add(lock);

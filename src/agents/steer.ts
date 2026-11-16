@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
-import { addRunEvent, cancelRun, queuedInLane, setRunOutput, updateQueuedRun } from "./runs.ts";
+import { addRunEvent, cancelRun, queuedInLane, setRunOutput, stopRequested, updateQueuedRun } from "./runs.ts";
 import { renderMessages } from "./sessions.ts";
 import { threadMessages } from "./threads.ts";
 
@@ -26,7 +26,7 @@ export function takeSteering(app: App, runId: string): string | null {
  */
 export function claimSteering(app: App, runId: string): { text: string; commit: () => boolean } | null {
   const r = one<{ kind: string; status: string; lane: string | null; input: string }>(app.db, "select kind, status, lane, input from runs where id = ?", runId);
-  if (!r || r.kind !== "ask" || r.status !== "running" || !r.lane) return null;
+  if (!r || r.kind !== "ask" || r.status !== "running" || !r.lane || ending(app, runId)) return null;
   const input = JSON.parse(r.input) as { conversationId?: string; userId?: string };
   if (!input.conversationId) return null;
   const next = queuedInLane(app, r.lane, "ask");
@@ -47,7 +47,7 @@ export function claimSteering(app: App, runId: string): { text: string; commit: 
   ].join("\n");
   const commit = () => {
     const now = queuedInLane(app, r.lane!, "ask");
-    if (now?.id !== next.id) return false;
+    if (now?.id !== next.id || ending(app, runId)) return false;
     const rest = ((now.input.messageIds as string[] | undefined) ?? []).filter((id) => !taken.has(id));
     if (rest.length) {
       if (!updateQueuedRun(app, next.id, { input: { ...now.input, messageIds: rest } })) return false;
@@ -66,6 +66,16 @@ export function claimSteering(app: App, runId: string): { text: string; commit: 
   return { text, commit };
 }
 
+/**
+ * A turn on its way out takes nothing more: it was asked to stop, or another run does it again
+ * (switch_run_ai). That run is the next one queued in the lane, with the same messages: taking them
+ * here would cancel it while this one ends too, and the conversation would get no answer at all.
+ */
+function ending(app: App, runId: string) {
+  if (stopRequested(runId)) return true;
+  return !!one<{ r: string | null }>(app.db, "select json_extract(output, '$.replacedBy') r from runs where id = ?", runId)?.r;
+}
+
 type Trigger = { messageId: string | null; topicId: string | null; at: string; summary: string };
 
 /**
@@ -73,7 +83,7 @@ type Trigger = { messageId: string | null; topicId: string | null; at: string; s
  * triggers waiting in the lane's next run come to this one, which drops that run.
  */
 function takeTriggers(app: App, runId: string, lane: string, input: { rule?: { id?: string; mergeReply?: string }; lark?: { chats?: string[] | null } }): string | null {
-  if (input.rule?.mergeReply === "separate") return null;
+  if (input.rule?.mergeReply === "separate" || ending(app, runId)) return null;
   const next = queuedInLane(app, lane, "agent");
   if (!next || (next.input.rule as { id?: string } | undefined)?.id !== input.rule?.id) return null;
   if ((next.input.rule as { mergeReply?: string }).mergeReply === "separate") return null;

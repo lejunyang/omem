@@ -143,7 +143,7 @@ describe("people across Feishu apps", () => {
       } },
     } });
     setLarkClient(client(B));
-    expect(await resolveMention(app, "协作机器人", "oc_g")).toEqual({ name: "协作机器人", userId: B, email: null });
+    expect(await resolveMention(app, "协作机器人", "oc_g")).toEqual({ name: "协作机器人", userId: B, email: null, bot: true });
     expect(reads).toHaveLength(2);
     expect(reads[0].params).toMatchObject({ container_id: "oc_g", container_id_type: "chat" });
     expect(await resolveMention(app, "协作机器人", "oc_g")).toMatchObject({ userId: B });
@@ -225,6 +225,29 @@ describe("people across Feishu apps", () => {
     const text = JSON.parse(sent[0].data.content).text;
     expect(text).toBe(`<at user_id="${C}">小王</at> 小李 请核查`);
     expect(text).not.toContain(B);
+  });
+
+  it("sends Markdown that @s another app's bot as a post, so the bot hears it", async () => {
+    const app = testApp();
+    const sent: any[] = [];
+    setLarkClient({ im: {
+      chatMembers: { get: async () => ({ code: 0, data: { items: [{ member_id: C, name: "小王" }], has_more: false } }) },
+      message: {
+        list: async () => ({ code: 0, data: { items: [{ chat_id: "oc_g", mentions: [{ id: B, id_type: "open_id", name: "构建管家" }] }], has_more: false } }),
+        create: async (args: any) => { sent.push(args); return { code: 0, data: { message_id: "om_sent" } }; },
+      },
+    } });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_g"] }))!;
+    const result = await callTool(ctx, "lark_send", { chat_id: "oc_g", markdown: "@构建管家 **编译失败**，请修复后告诉 @小王", mentions: ["构建管家", "小王"] });
+    expect(result.isError, result.text).toBe(false);
+    expect(sent[0].data.msg_type).toBe("post");
+    const post = JSON.parse(sent[0].data.content).zh_cn;
+    expect(post.content[0]).toEqual([{ tag: "at", user_id: B }, { tag: "at", user_id: C }, { tag: "text", text: " " }]);
+    expect(post.content[1]).toEqual([{ tag: "md", text: "@构建管家 **编译失败**，请修复后告诉 @小王" }]);
+    // People alone still go as a card.
+    sent.length = 0;
+    await callTool(ctx, "lark_send", { chat_id: "oc_g", markdown: "@小王 看下", mentions: ["小王"] });
+    expect(sent[0].data.msg_type).toBe("interactive");
   });
 
   it("also checks a uniquely cached person's name and still posts when every ordinary mention is absent", async () => {

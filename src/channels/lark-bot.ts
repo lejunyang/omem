@@ -536,8 +536,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const spaceId = groupSpace(m.chatId);
     const uri = `lark:${m.chatId}`;
     const before = findSourceByUri(app, spaceId, uri);
+    // The record reads `@名字`, not the event's `@_user_1` placeholders: who someone turned to is what
+    // the next turn's context has to show (“@小李 你要的是哪种？” handed the question to 小李).
+    const content = m.text.replace(/@_user_\d+/g, (key) => (m.mentionNames?.[key] ? `@${m.mentionNames[key].name}` : key));
     const message: LarkMessage = { message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "text",
-      content: m.text, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId,
+      content, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId,
       sender: { id: m.senderId, name: m.senderName, sender_type: m.fromApp ? "app" : "user" }, mentions: m.mentions.map(id => ({ id })) };
     const r = persistChatMessages(app, { chatId: m.chatId, spaceId, name: before?.title ?? groupName(m.chatId), messages: [message], owner: ownerOpenId() });
     if (!r.id) return;

@@ -409,7 +409,9 @@ export type Content =
   | { markdown: string; title?: string; /** Small grey line under the text (the run id under an answer). */ note?: string }
   | { card: Record<string, unknown> }
   | { image: string }
-  | { file: string };
+  | { file: string }
+  /** Markdown as a rich-text post that first @s `mentions` (ids) for real: another app's bot hears an @ only in a post or text message, in a card it reads as a bare id. */
+  | { post: { markdown: string; title?: string; mentions: string[] } };
 
 /**
  * Markdown goes as a single-element card: Feishu renders it fully only inside cards. Every card's
@@ -418,6 +420,11 @@ export type Content =
 function payload(c: Content): { msg_type: string; content: string } {
   if ("text" in c) return { msg_type: "text", content: JSON.stringify({ text: c.text }) };
   if ("markdown" in c || "card" in c) return { msg_type: "interactive", content: JSON.stringify(asCard(c)) };
+  if ("post" in c) {
+    const lead = [...c.post.mentions.map((id) => ({ tag: "at", user_id: id })), { tag: "text", text: " " }];
+    // A post's Markdown element has its paragraph to itself.
+    return { msg_type: "post", content: JSON.stringify({ zh_cn: { title: c.post.title ?? "", content: [lead, [{ tag: "md", text: c.post.markdown }]] } }) };
+  }
   if ("image" in c) return { msg_type: "image", content: JSON.stringify({ image_key: c.image }) };
   return { msg_type: "file", content: JSON.stringify({ file_key: c.file }) };
 }
@@ -508,6 +515,7 @@ export function asCard(content: Content): Record<string, unknown> {
   if ("card" in content) return larkCardMarkdown(content.card);
   if ("markdown" in content) return larkCardMarkdown(buildCard({ title: content.title, blocks: [{ markdown: content.markdown }, ...(content.note ? [{ note: content.note }] : [])] }));
   if ("text" in content) return larkCardMarkdown(buildCard({ blocks: [{ markdown: content.text }] }));
+  if ("post" in content) return larkCardMarkdown(buildCard({ title: content.post.title, blocks: [{ markdown: content.post.markdown }] }));
   throw new HttpError(400, "图片和文件不能只给部分人看");
 }
 

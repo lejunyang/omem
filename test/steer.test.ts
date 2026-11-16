@@ -31,4 +31,23 @@ describe("messages sent while a turn runs", () => {
     expect((await callTool(ctx, "list_spaces", {})).text).not.toContain("你工作期间收到的新消息");
     app.db.close();
   });
+
+  it("leave the turn that takes over when a turn switches its own AI", async () => {
+    const app = testApp();
+    app.config.agents.profiles.push({ id: "other", name: "other", transport: "acp", command: process.execPath, args: [], env: {}, idleTimeoutMs: 60000 });
+    const first = await receive(app, { channel: "web", conversationId: "c_switch", text: "换个 AI 再查" });
+    run(app.db, "update runs set status = 'running' where id = ?", first.runId);
+    const ctx = toolContextForToken(app, issueToolToken({ runId: first.runId, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
+    // The turn hands itself to another AI: the run that does it again waits in the same lane with the same message.
+    const r = await callTool(ctx, "switch_run_ai", { run_id: first.runId, execution: { profile: "other", source: "user", reason: "本人要换" } });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.text).not.toContain("你工作期间收到的新消息");
+    const next = String(getRun(app, first.runId!).output.replacedBy);
+    expect(getRun(app, next).status).toBe("queued");
+    expect(getRun(app, next).output.steeredInto).toBeUndefined();
+    // Nor at a later tool call while the old turn winds down.
+    expect(takeSteering(app, first.runId!)).toBeNull();
+    expect(getRun(app, next).status).toBe("queued");
+    app.db.close();
+  });
 });

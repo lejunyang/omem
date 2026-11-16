@@ -332,5 +332,5 @@ function safeJson(s: string) {
   }
 }
 function previewOf(c: Content) {
-  return "markdown" in c ? c.markdown.slice(0, 3000) : "text" in c ? c.text.slice(0, 3000) : "card" in c ? "（交互卡片）" : "（图片或文件）";
+  return "markdown" in c ? c.markdown.slice(0, 3000) : "text" in c ? c.text.slice(0, 3000) : "post" in c ? c.post.markdown.slice(0, 3000) : "card" in c ? "（交互卡片）" : "（图片或文件）";
 }

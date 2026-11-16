@@ -118,6 +118,16 @@ describe("answers in groups and where thinking bubbles go", async () => {
     expect(content).not.toContain("@小王");
   }, 60_000);
 
+  it("keeps who a message @-s by name in the chat's record, not the event's placeholder", async () => {
+    // The owner turns a question over to a colleague: the next turn's context has to show it went to 小李.
+    const toLi = event({ id: "om_to_li", chat: "oc_team", text: "@_user_2 你要的是只看那几个账号吗", sender: "ou_owner", atBot: false });
+    toLi.message.mentions.push({ key: "@_user_2", name: "小李", id: { open_id: "ou_li" } });
+    await send(toLi);
+    const text = one<{ text: string }>(app.db, "select text from sources where uri = 'lark:oc_team' and deleted_at is null")?.text ?? "";
+    expect(text).toContain("@小李 你要的是只看那几个账号吗");
+    expect(text).not.toContain("@_user_2");
+  }, 60_000);
+
   it("a message @-ing the bot in a watched chat is answered once, by the conversation it was asked in", async () => {
     const { setWatchRule, watchPurpose } = await import("../src/channels/lark-watch.ts");
     setWatchRule(app, "oc_watched", { spec: "assistant", on: "all", reply: "auto", note: "有人要查审核单号就帮着查" });

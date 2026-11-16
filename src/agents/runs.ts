@@ -558,6 +558,11 @@ export function cancelRun(app: App, id: string) {
   return getRun(app, id);
 }
 
+/** A running run asked to stop (cancelRun) that has not ended yet. */
+export function stopRequested(id: string) {
+  return !!controllers.get(id)?.signal.aborted;
+}
+
 /**
  * Work that runs inside another run's handler but has a run of its own (a second look,
  * code-overlap.ts): cancelling that run aborts `controller`. Returns the undo.

@@ -12,7 +12,7 @@
 
 浏览器是中文时，界面用那台机器上装的中文语言包翻译；语言包比 VS Code 旧时，新加的几处显示英文，菜单不会错位。omem 自己的 VS Code 插件已经装在里面，直接连着这台 omem，不用设置。打开交办的工作区时直接按已信任打开，不会每次都问“是否信任此文件夹”；别的文件夹照常进受限模式（`ide.web.trustCodeFolders: false` 可关掉）。网页版第一次启动时，会拿那台机器上 Remote-SSH（或桌面 VS Code）的设置当初始值；那边装过的扩展默认不复制，设置 `ide.web.reuseExtensions: true` 后会把适合这台机器和这一版的各复制一份。快捷键、主题这些存在浏览器里，要和桌面一样，在网页版里登录账号打开“设置同步”。
 
-远程打开请用 HTTPS，或在自己的电脑上运行 `omem peer open <设备>`，从它给的 localhost 地址进入。`http://<内网 IP>` 缺少新版 VS Code 握手需要的浏览器加密接口，会在页面打开后报 `Unauthorized client refused`；重新登录 omem 不能解决这一层错误。
+用常驻服务器的内网 IP（`http://<IP>:<端口>`）也能直接打开。这种地址下浏览器不提供加密接口，新版 VS Code 握手前要用它解开一个签名模块；omem 在服务端替它解开再交给页面。Markdown 预览、扩展的面板这类 webview 同样要这个接口，在 http 地址下仍打不开：要用它们时走 HTTPS，或在自己的电脑上运行 `omem peer open <设备>`，从它给的 localhost 地址进入。
 
 ## 预览：看改出来的页面
 

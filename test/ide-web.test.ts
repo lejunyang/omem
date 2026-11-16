@@ -1,13 +1,14 @@
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { createServer, type Server as HttpServer } from "node:http";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
+import { runInNewContext } from "node:vm";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { startServer } from "../src/server/http.ts";
-import { ideFolder, stopIdeWeb, updateIdeServer } from "../src/server/ide-web.ts";
+import { decryptVsda, ideFolder, stopIdeWeb, updateIdeServer, withPlainContext } from "../src/server/ide-web.ts";
 import { serverFiles, serverPlatform } from "../src/server/ide-download.ts";
 import { addPeer, openPeerUi } from "../src/core/peers.ts";
 import { createUser, OWNER } from "../src/core/users.ts";
@@ -390,6 +391,53 @@ describe("web VS Code under /ide", () => {
     middle.db.close();
     laptop.db.close();
   }, 30000);
+
+  it("lets a plain http:// page sign its connection: vsda decrypted here, VS Code's own decryption left out", async () => {
+    const commit = "e".repeat(40);
+    const serverDir = join(app.home, "ide", "cli", "serve-web", commit);
+    mkdirSync(join(serverDir, "node_modules", "vsda", "rust", "web"), { recursive: true });
+    const license = ["MICROSOFT SOFTWARE LICENSE TERMS, a stand-in long enough for a few rounds of keys", "second line of the stand-in license text", "third"];
+    writeFileSync(join(serverDir, "product.json"), JSON.stringify({ serverLicense: license }));
+    const wasm = Buffer.concat([Buffer.from("0061736d01000000", "hex"), randomBytes(100)]);
+    // Shipped encrypted round after round; VS Code decrypts in order, so encrypt in reverse.
+    const key = Buffer.from(license.join("\n"));
+    const rounds: number[] = [];
+    for (let n = 0; n + 48 < key.length; n += 48) rounds.push(n);
+    expect(rounds.length).toBeGreaterThan(1);
+    let data = wasm;
+    for (const n of rounds.reverse()) {
+      const c = createCipheriv("aes-256-cbc", key.subarray(n + 16, n + 48), key.subarray(n, n + 16));
+      data = Buffer.concat([c.update(data), c.final()]);
+    }
+    writeFileSync(join(serverDir, "node_modules", "vsda", "rust", "web", "vsda_bg.wasm"), data);
+    expect(decryptVsda(serverDir).equals(wasm)).toBe(true);
+
+    const auth = { authorization: "Bearer owner-secret" };
+    const got = await fetch(`${base}/ide/__omem/vsda.wasm?commit=${commit}`, { headers: auth });
+    expect(got.headers.get("content-type")).toBe("application/wasm");
+    expect(Buffer.from(await got.arrayBuffer()).equals(wasm)).toBe(true);
+    expect((await fetch(`${base}/ide/__omem/vsda.wasm?commit=${commit}`)).status).toBe(401);
+    expect((await fetch(`${base}/ide/__omem/vsda.wasm?commit=../x`, { headers: auth })).status).toBe(400);
+    expect((await fetch(`${base}/ide/__omem/vsda.wasm?commit=${"f".repeat(40)}`, { headers: auth })).status).toBe(404);
+
+    // The page carries the script right after the metas it edits and reads.
+    const page = `<meta id="vscode-workbench-web-configuration" data-settings="{&quot;productConfiguration&quot;:{&quot;a&quot;:1}}">\n<meta id="vscode-workbench-web-base-url" data-settings="/ide/stable-${commit}/static">\n<body>`;
+    expect(withPlainContext(page)).toContain(`/static"><script src="/ide/__omem/plain-context.js"></script>\n<body>`);
+    const script = await (await fetch(`${base}/ide/__omem/plain-context.js`, { headers: auth })).text();
+    // In a page without a secure context: the license key goes, the module comes from omem.
+    const attrs: Record<string, string> = { config: JSON.stringify({ productConfiguration: { a: 1 } }), base: `/ide/stable-${commit}/static` };
+    const el = (k: string) => ({ getAttribute: () => attrs[k], setAttribute: (_: string, v: string) => (attrs[k] = v) });
+    const fetched: { url: string; init?: unknown }[] = [];
+    const window: Record<string, unknown> = { isSecureContext: false, fetch: (url: string, init?: unknown) => (fetched.push({ url, init }), Promise.resolve("ok")) };
+    const document = { getElementById: (id: string) => (id === "vscode-workbench-web-configuration" ? el("config") : id === "vscode-workbench-web-base-url" ? el("base") : null) };
+    runInNewContext(script, { window, document, URL, console });
+    expect(JSON.parse(attrs.config)).toEqual({ productConfiguration: { a: 1, serverLicense: [] } });
+    await (window.fetch as (u: string) => Promise<unknown>)(`http://10.0.0.7:4317/ide/stable-${commit}/static/node_modules/vsda/rust/web/vsda_bg.wasm`);
+    await (window.fetch as (u: string) => Promise<unknown>)("http://10.0.0.7:4317/ide/stable-x/static/out/other.js");
+    expect(fetched.map((f) => f.url)).toEqual([`/ide/__omem/vsda.wasm?commit=${commit}`, "http://10.0.0.7:4317/ide/stable-x/static/out/other.js"]);
+    // https or localhost: the page is left alone.
+    expect(() => runInNewContext(script, { window: { isSecureContext: true, fetch: () => null }, document: { getElementById: () => { throw new Error("must not touch the page"); } }, URL, console })).not.toThrow();
+  });
 
   it("opens at the configured web address (an IP over http) for the owner's login, also with no /ide session yet", async () => {
     // Logging in on, no token configured, the page reached by IP from another machine: the browser

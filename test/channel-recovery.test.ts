@@ -4,7 +4,7 @@ import { afterAll, expect, it } from "vitest";
 import { receive, registerThreadSender, flushRecoveredReplies, deliverToThread } from "../src/agents/inbox.ts";
 import { getRun, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
-import { threadMessages } from "../src/agents/threads.ts";
+import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { App } from "../src/core/app.ts";
 import { all, run } from "../src/core/db.ts";
 import { boot } from "../src/main.ts";
@@ -84,3 +84,19 @@ it("resumes channel turns without a live adapter waiter and retries their saved 
     expect(new Set(sent).size).toBe(2);
   } finally { unblock(); remove(); }
 }, 30000);
+
+it("drops a recovered reply its channel never takes after a day, keeping it in the conversation", async () => {
+  const app = testApp();
+  const t = { thread: createThread(app, { channel: "no-sender-test", key: "room", spaceId: "personal" }) };
+  // No sender for this channel (a watched group, a plugin's block): queued, tried again later.
+  expect(await deliverToThread(app, t.thread.id, "结论", { recoverReply: true })).toBe(false);
+  const [row] = all<{ key: string; value: string }>(app.db, "select key, value from kv where key glob 'recovered-reply:*'");
+  await flushRecoveredReplies(app);
+  expect(all(app.db, "select key from kv where key glob 'recovered-reply:*'")).toHaveLength(1);
+  // A day later it leaves the queue; the reply itself stays in the conversation.
+  run(app.db, "update kv set value = json_set(value, '$.at', ?) where key = ?", new Date(Date.now() - 25 * 3600_000).toISOString(), row.key);
+  await flushRecoveredReplies(app);
+  expect(all(app.db, "select key from kv where key glob 'recovered-reply:*'")).toEqual([]);
+  expect(threadMessages(app, t.thread.id).some((m) => m.role === "assistant" && m.text === "结论")).toBe(true);
+  app.db.close();
+});

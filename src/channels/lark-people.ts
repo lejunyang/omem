@@ -113,7 +113,7 @@ export class ChatMemberAbsentError extends HttpError {
  * Who the bot should @: a name, email, known bot-side id or "all". Capture-side open_ids
  * must never be passed through. Group membership can resolve a name without directory access.
  */
-export async function resolveMention(app: App, who: string, chatId?: string | null): Promise<{ name: string; userId: string; email: string | null } | { all: true }> {
+export async function resolveMention(app: App, who: string, chatId?: string | null): Promise<{ name: string; userId: string; email: string | null; bot?: boolean } | { all: true }> {
   const w = who.trim().replace(/^@/, "");
   if (w === "all" || w === "所有人") return { all: true };
   if (w.startsWith("cli_")) throw new HttpError(400, "app_id 不能用于 @ 机器人；请用机器人在本应用收到的 @ 消息里的名字或 open_id。");
@@ -168,7 +168,10 @@ export async function resolveMention(app: App, who: string, chatId?: string | nu
   return { name: r?.name || email.split("@")[0], userId, email };
 }
 
-/** Recent explicit mentions in the target chat, read by the sending bot's app. */
+/**
+ * Recent explicit mentions in the target chat, read by the sending bot's app. Only asked for someone
+ * the member list (which leaves bots out) does not have: what it finds is taken for a bot (`bot`).
+ */
 async function mentionInHistory(app: App, chatId: string, who: string) {
   const { larkClient } = await import("./lark-send.ts");
   const client = larkClient();
@@ -177,7 +180,7 @@ async function mentionInHistory(app: App, chatId: string, who: string) {
   const cached = one<{ value: string }>(app.db, "select value from kv where key = ?", key);
   if (cached) {
     const known = JSON.parse(cached.value) as { name: string; userId: string; at: number };
-    if (Date.now() - known.at < 10 * 60_000) return { name: known.name, userId: known.userId, email: null };
+    if (Date.now() - known.at < 10 * 60_000) return { name: known.name, userId: known.userId, email: null, bot: true };
   }
   const matches = new Map<string, string>();
   const seen = new Set<string>();
@@ -205,7 +208,7 @@ async function mentionInHistory(app: App, chatId: string, who: string) {
   if (!match) return null;
   const [userId, name] = match;
   run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", key, JSON.stringify({ userId, name, at: Date.now() }));
-  return { name, userId, email: null };
+  return { name, userId, email: null, bot: true };
 }
 
 async function mentionInChat(app: App, chatId: string, who: string) {
@@ -279,9 +282,16 @@ export async function realMentions(app: App, text: string, chatId: string | null
   // Code (```…``` and `…`) keeps its @ (decorators, emails in snippets): never a person to look up.
   const code = [...text.matchAll(/```[\s\S]*?```|`[^`\n]*`/g)].map((c) => [c.index!, c.index! + c[0].length]);
   const inCode = (i: number) => code.some(([a, b]) => i >= a && i < b);
+  // omem's own bots keep their name as written (lark-bots.ts renders the @s between them): “@小王的助理”
+  // is not 小王 followed by “的助理”.
+  let bots: string[] = [];
+  try {
+    bots = (await import("./lark-bots.ts")).botRoster(app).map((b) => b.name).filter(Boolean);
+  } catch { /* no bot set up */ }
   for (const m of [...text.matchAll(AT_NAME)]) {
     if (inCode(m.index!) || (m.index! > 0 && /[A-Za-z0-9._%+-]/.test(text[m.index! - 1]))) continue;
     const run = m[1];
+    if (bots.some((b) => run.startsWith(b))) continue;
     let name = run;
     for (let n = Math.min(run.length, 12); n >= 2; n--) if (isPerson(run.slice(0, n))) { name = run.slice(0, n); break; }
     if (done.has(name)) continue;

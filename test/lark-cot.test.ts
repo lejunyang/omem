@@ -257,6 +257,35 @@ it("goes on past a slow update of a bubble that works, and gives it up after thr
   expect(requests.some((r) => r.method === "DELETE" && r.url.endsWith("/messages/om_test"))).toBe(true);
 });
 
+it("sends an update again after a dropped connection instead of recalling a bubble that works", async () => {
+  let failing = 0;
+  respond = async (r) => {
+    if (r.method === "PUT" && failing > 0) { failing--; throw Object.assign(new Error("Client network socket disconnected before secure TLS connection was established"), { code: "ECONNRESET" }); }
+    return accepted(r);
+  };
+  start();
+  await vi.advanceTimersByTimeAsync(300);
+  failing = 1;
+  delta("第二段");
+  await vi.advanceTimersByTimeAsync(700);
+  await vi.advanceTimersByTimeAsync(1_000);
+  cot.finishCot(app, "run_test", true);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+  expect(text()).toContain("第二段");
+  expect(types()).toContain("RUN_FINISHED");
+  expect(logs()).toContainEqual(expect.objectContaining({ action: "retry", attempt: 1, code: "ECONNRESET" }));
+
+  // A connection that stays down: given up after the retries, recalled as before.
+  requests = [];
+  expect(cot.startCot(app, "run_down", { chatId: "oc_test", title: "开始" })).toBe(true);
+  await vi.advanceTimersByTimeAsync(300);
+  failing = 3;
+  cot.cotEvent(app, "run_down", { type: "text-delta", data: { text: "断了" } });
+  await vi.advanceTimersByTimeAsync(700 + 1_000 + 3_000);
+  expect(requests.some((r) => r.method === "DELETE" && r.url.endsWith("/messages/om_test"))).toBe(true);
+});
+
 it("limits an authority cooldown to the affected chat", async () => {
   respond = async () => ({ code: 41050, msg: "no user authority error" });
   start();

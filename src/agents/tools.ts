@@ -2812,6 +2812,9 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     if ("text" in content) content = { text: plain(content.text) };
     else if ("markdown" in content) content = { ...content, markdown: plain(content.markdown) };
     if ("text" in content) content = { text: applyMentions(content.text, people, "text") };
+    // Another app's bot: an @ in a card does not reach it (it shows as a bare id), one in a post does.
+    else if ("markdown" in content && people.some((p) => "bot" in p && p.bot))
+      content = { post: { markdown: content.markdown, title: content.title, mentions: people.map((p) => ("all" in p ? "all" : p.userId)) } };
     else if ("markdown" in content) content = { ...content, markdown: applyMentions(content.markdown, people, "card") };
     else if ("card" in content && people.length) {
       const body = (content.card.body ?? {}) as { elements?: unknown[] };
@@ -2839,7 +2842,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     // Draft: the owner sees exactly what would be sent and decides.
     const ownerTarget = ctx.app.config.lark.ownerOpenId;
     if (!ownerTarget) throw new HttpError(400, "草稿需要知道本人的飞书 open_id（lark.ownerOpenId）");
-    const preview = "markdown" in content ? content.markdown : "text" in content ? content.text : "card" in content ? "（一张交互卡片，发送后可见）" : "（图片或文件）";
+    const preview = "markdown" in content ? content.markdown : "text" in content ? content.text : "post" in content ? content.post.markdown : "card" in content ? "（一张交互卡片，发送后可见）" : "（图片或文件）";
     const card = send.buildCard({
       title: "待确认的回复",
       color: "orange",

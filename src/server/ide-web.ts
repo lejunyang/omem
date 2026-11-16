@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request, type IncomingMessage, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
@@ -49,6 +49,16 @@ const UPDATE_EVERY_MS = 24 * 3600_000;
 const UPDATE_DELAY_MS = 60_000;
 /** The waiting page's own route under /ide: the download's progress (GET), a retry (POST). */
 const DOWNLOAD_ROUTE = "/__omem/server-download";
+/**
+ * A plain http:// address other than localhost (the server's LAN IP) is not a secure context: the
+ * browser has no `crypto.subtle`, which VS Code uses to decrypt the vsda module it signs its connection
+ * with, so the page opened and then said “Unauthorized client refused”. On such a page a script
+ * (PLAIN_SCRIPT, put right after the page's configuration) leaves VS Code's own decryption out (an
+ * empty `serverLicense`, the key it decrypts with) and fetches the module from VSDA_ROUTE, decrypted here.
+ */
+const PLAIN_SCRIPT = "/__omem/plain-context.js";
+const VSDA_ROUTE = "/__omem/vsda.wasm";
+const plainVsda = new Map<string, Buffer>();
 
 /** No server build yet: omem is downloading one and the page shows how far it is. */
 export class IdeNotReady extends Error {}
@@ -295,6 +305,77 @@ export function trustWorkbench(html: string) {
   return html.replace(/(&quot;|")enableWorkspaceTrust\1:true/, "$1enableWorkspaceTrust$1:false");
 }
 
+/** The workbench page with PLAIN_SCRIPT after its base-URL meta (both metas exist when it runs, before the workbench reads them). */
+export function withPlainContext(html: string) {
+  const tag = `<script src="${IDE_BASE}${PLAIN_SCRIPT}"></script>`;
+  for (const id of ["vscode-workbench-web-base-url", "vscode-workbench-web-configuration"]) {
+    const meta = new RegExp(`<meta id="${id}"[^>]*>`);
+    if (meta.test(html)) return html.replace(meta, (m) => m + tag);
+  }
+  return html;
+}
+
+/** Runs in the browser; does nothing in a secure context (https, localhost), where VS Code decrypts by itself. */
+function plainContextScript() {
+  return `(() => {
+  if (window.isSecureContext) return;
+  const config = document.getElementById("vscode-workbench-web-configuration");
+  const base = document.getElementById("vscode-workbench-web-base-url")?.getAttribute("data-settings") ?? "";
+  const commit = /stable-([0-9a-f]{40})/.exec(base)?.[1];
+  if (!config || !commit) return;
+  try {
+    const settings = JSON.parse(config.getAttribute("data-settings"));
+    settings.productConfiguration = Object.assign({}, settings.productConfiguration, { serverLicense: [] });
+    config.setAttribute("data-settings", JSON.stringify(settings));
+  } catch (e) {
+    console.warn("[omem] http 地址下没能调整网页版 VS Code 的配置", e);
+    return;
+  }
+  const plain = ${JSON.stringify(IDE_BASE + VSDA_ROUTE)} + "?commit=" + commit;
+  const original = window.fetch;
+  window.fetch = function (input, init) {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input && input.url;
+    if (typeof url === "string" && /\\/node_modules(?:\\.asar)?\\/vsda\\/rust\\/web\\/vsda_bg\\.wasm(?:[?#]|$)/.test(url))
+      return original.call(this, plain, { cache: "no-store", credentials: "same-origin" });
+    return original.apply(this, arguments);
+  };
+})();
+`;
+}
+
+/**
+ * vsda's WebAssembly as VS Code decrypts it in the browser (AES-256-CBC, keys and IVs taken in turn
+ * from the build's `serverLicense`), for a page without `crypto.subtle`.
+ */
+export function decryptVsda(serverDir: string) {
+  const product = JSON.parse(readFileSync(join(serverDir, "product.json"), "utf8")) as { serverLicense?: string[] };
+  const key = Buffer.from((product.serverLicense ?? []).join("\n"), "utf8");
+  let data = readFileSync(join(serverDir, "node_modules", "vsda", "rust", "web", "vsda_bg.wasm"));
+  const KEY = 32, IV = 16;
+  for (let n = 0; n + KEY + IV < key.length; n += KEY + IV) {
+    const d = createDecipheriv("aes-256-cbc", key.subarray(n + IV, n + IV + KEY), key.subarray(n, n + IV));
+    data = Buffer.concat([d.update(data), d.final()]);
+  }
+  if (data.subarray(0, 4).toString("hex") !== "0061736d") throw new Error("解密后不是 WebAssembly");
+  return data;
+}
+
+function serveVsda(app: App, req: IncomingMessage, res: import("node:http").ServerResponse) {
+  const commit = new URLSearchParams((req.url ?? "").split("?")[1] ?? "").get("commit") ?? "";
+  if (!/^[0-9a-f]{40}$/.test(commit)) return deny(res, 400, "commit 不对");
+  let body = plainVsda.get(commit);
+  if (!body) {
+    try {
+      body = decryptVsda(join(app.home, "ide", "cli", "serve-web", commit));
+    } catch (e) {
+      return deny(res, 404, `没有这个版本的 vsda：${(e as Error).message}`);
+    }
+    plainVsda.set(commit, body);
+  }
+  res.writeHead(200, { "content-type": "application/wasm", "content-length": String(body.length), "cache-control": "no-store" });
+  res.end(body);
+}
+
 async function isCodeFolder(app: App, url: string) {
   const folder = folderOfIdeUrl(url);
   if (!folder) return false;
@@ -369,6 +450,11 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     return void res.end(JSON.stringify(ideDownloadState(app)));
   }
+  if (sub === PLAIN_SCRIPT) {
+    res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
+    return void res.end(plainContextScript());
+  }
+  if (sub === VSDA_ROUTE) return serveVsda(app, req, res);
   const own = NLS_ROUTE.exec(sub);
   if (own) return serveNls(app, own[1], own[2], req, res);
   const fixed = req.method === "GET" && acceptsGzip(req) ? STATIC.exec((req.url ?? "").slice(IDE_BASE.length)) : null;
@@ -401,7 +487,7 @@ export async function proxyIde(app: App, req: IncomingMessage, res: import("node
       const chunks: Buffer[] = [];
       r.on("data", (c: Buffer) => chunks.push(c));
       r.on("end", () => {
-        const html = rewriteWorkbench(Buffer.concat(chunks).toString("utf8"), IDE_BASE, (commit, locale) => !!safeNls(app, commit, locale));
+        const html = withPlainContext(rewriteWorkbench(Buffer.concat(chunks).toString("utf8"), IDE_BASE, (commit, locale) => !!safeNls(app, commit, locale)));
         const body = Buffer.from(trusted ? trustWorkbench(html) : html, "utf8");
         const out: Record<string, string | string[] | undefined> = { ...r.headers, "content-length": String(body.length) };
         delete out["transfer-encoding"];

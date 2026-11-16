@@ -612,7 +612,9 @@ ${WAKE_NOTE}`
         }
       }
     } catch (e) {
-      if (networkAttempt?.signal.aborted) {
+      // Only the network stopping it closes the session: the attempt's signal also carries the run's own
+      // stop (/stop, a takeover, switch_run_ai), which keeps the warm process for the next turn.
+      if (networkAttempt?.signal.aborted && !ctx.signal?.aborted) {
         networkStopped ??= live.get(threadId)?.handle.stopped;
         release(threadId);
       }

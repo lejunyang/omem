@@ -15,6 +15,16 @@ updated: 2026-11-17
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 换 AI 后没了下文、同事的口径、气泡断连、@ 别的机器人、http 地址的网页版 VS Code（11-17）
+
+- 对话这一轮调 `switch_run_ai` 给自己换 AI 时，接替的运行排在同一会话、带着同样的消息；工具调用结束时 `steer.ts` 把它当补充消息并进了正在停下的旧运行并取消，旧运行随后也停，两边都没有回答。现在被要求停下（`runs.ts` 的 `stopRequested`）或输出里已有 `replacedBy` 的运行不再收补充消息，规则的同批触发同理。`test/steer.test.ts`。
+- `sessions.ts`：网络条件的尝试信号里也带着运行自己的停止，停一轮（/stop、接管、换 AI）时会把热着的 ACP 进程一起关掉；只在网络条件叫停时才关。
+- 群里机器人自己采集的那一行原样存了事件里的 `@_user_1` 占位，下一轮的群上下文看不出本人把问题转给了谁。`lark-bot.ts` 的 `captureGroup` 存成 `@名字`。`roles/assistant.md` 加了一条：标着“群里的同事”的消息，他自己的需求和口径他说了算，不再出卡片问本人；以本人身份写文档、发消息时宿主自己会请本人批准。
+- 思考气泡（`lark-cot.ts`）：已经在显示的气泡遇到连接被重置、拒绝、解析失败（`ECONNRESET` 等）时同一批重发两次，不再一次断连就撤回、换成“处理中”卡片。
+- `lark_send`：Markdown 里 @ 了别的应用的机器人（群成员列表没有、从近期提及核实的，`resolveMention` 带 `bot`）时改发富文本 post（`lark-send.ts` 的 `{ post }`），开头是真正的 @；卡片里的 @ 机器人收不到，只显示一串 id。`realMentions` 遇到 omem 自己机器人的名字原样保留，不再把“@某某的助理”拆成 @某某。
+- 网页版 VS Code 用内网 IP 的 http 地址打开：非安全上下文没有 `crypto.subtle`，VS Code 解不开签名模块 vsda。`ide-web.ts` 在页面配置后插 `/ide/__omem/plain-context.js`（只在非安全上下文生效：置空 `serverLicense`，把 `vsda_bg.wasm` 的请求换到 `/ide/__omem/vsda.wasm`），vsda 由服务端解密（`decryptVsda`）。webview 仍要 HTTPS 或 localhost。
+- 重启后待投递的渠道回复（`inbox.ts`）：会话已不在的直接出队；记下入队时间，一天内渠道一直不收（没有发送方的会话、一直失败）的出队，回复留在会话记录里。
+
 ## 临时会话、评审复看与旧对话补归档（11-17）
 
 - `src/agents/acp.ts` 按实际恢复结果决定是否保留会话；恢复失败后新建的临时会话不再因请求里有旧 ID 而漏归档。`session-cleanup.ts` 的持久登记也核对实际 ID。

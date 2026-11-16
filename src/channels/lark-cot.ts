@@ -281,10 +281,29 @@ function eventsFor(st: State): any[] {
   return out;
 }
 
+/**
+ * The connection broke before Feishu answered (reset, refused, DNS): on a flaky network the request
+ * mostly never got there. A bubble that already took updates sends the same batch again a couple of
+ * times instead of being recalled for one dropped connection (it showed as “撤回了一条回复” mid-turn).
+ */
+const NETWORK = new Set(["ECONNRESET", "ECONNREFUSED", "EPIPE", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "ETIMEDOUT"]);
+const RETRIES = 2;
+const RETRY_MS = 1_000;
+
 async function append(st: State, events: ReturnType<typeof ev>[], phase: "append" | "finish" = "append") {
   for (let i = 0; i < events.length; i += 50) {
     const batch = events.slice(i, i + 50);
-    await api(st, phase, "PUT", "/open-apis/im/v1/message_cot", { cot_id: st.cotId, message_id: st.messageId, events: batch }, undefined, batch);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await api(st, phase, "PUT", "/open-apis/im/v1/message_cot", { cot_id: st.cotId, message_id: st.messageId, events: batch }, undefined, batch);
+        break;
+      } catch (e) {
+        const { code } = errorInfo(e);
+        if (!st.proven || attempt >= RETRIES || typeof code !== "string" || !NETWORK.has(code)) throw e;
+        cotLog(st, "retry", { phase, attempt: attempt + 1, code }, true);
+        await new Promise((resolve) => setTimeout(resolve, RETRY_MS * 3 ** attempt));
+      }
+    }
   }
 }
 
