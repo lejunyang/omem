@@ -21,6 +21,17 @@ updated: 2026-11-17
 - `network-request.ts` 使用 Node 原生 HTTP(S) / TLS，支持 IPv6 地址覆盖和代理 CONNECT，不依赖 curl。TUN 先用系统解析，必要时用可配置的 Google / Cloudflare DoH JSON；指定代理时经代理做公网目标的 DoH 查询。AAAA 按 TTL 有界缓存、并发合并，429 遵守 Retry-After 并切换服务，不因本地两秒轮询增加公网 DNS 查询。
 - `network-diagnostics.ts` 读取系统接口 DNS（Linux / macOS / Windows 固定只读命令，失败退回 Node 默认解析器）与可选 Mihomo 生效配置的安全字段；文件和默认解析器变化作废检查。明确区分配置风险与实际 DNS 泄露，未知不停止已有执行。测试见 `test/network-policy.test.ts` 和 `test/network-diagnostics.test.ts`，包括真实 TLS / IPv6 / CONNECT / DoH 服务与证书域名不匹配。
 
+## 渠道对话重启后交回结果；VS Code 的 HTTP 地址限制（11-16）
+
+- 服务重启会恢复排队和执行中的对话，但原渠道等待最终结果的回调已不存在。`runs.ts` 为恢复的渠道对话标记 `recoverReply`，`jobs.ts` 让它们自行交回结果；`inbox.ts` 在发送前保存待投递记录，渠道尚未连接或发送失败时保留并重试，重试复用会话消息，并发检查互相让开。网页和 CLI 对话不外发；过程里发过截图不视为最终结论已交回。测试见 `test/channel-recovery.test.ts`。
+- `acp.ts` 两处标准输出改用 `Readable.toWeb`，由 Node 处理读取取消与迟到数据的生命周期；不再向已关闭的 `ReadableStream` 控制器 enqueue，避免因此崩溃重启。`test/acp-cleanup.test.ts` 以 SDK 取消超长消息后仍有 stdout 到达复现：旧适配器以 `Controller is already closed` 退出，新适配器正常收尾。
+- 真机对照确认：新版 VS Code 在 HTTP 内网 IP 下缺少 `crypto.subtle`，第一次令牌校验通过，第二次握手签名失败并报 `Unauthorized client refused`；localhost 完成连接。此前的本人登录鉴权仍有效。远程使用 HTTPS 或 `omem peer open` 的 localhost 地址，说明同步到 README、`docs/v2/ide.md` 和文档站。
+
+## 豆包 CLI 模型名按检测结果匹配（11-16）
+
+- `src/agents/dispatch.ts` 在启动豆包 CLI 前，用已有的 `resolveModelOption` 将最终选中的模型匹配到检测列表中的原名，覆盖档案默认、角色覆盖和自动选型；空格、连字符或大小写差异不再造成 `Unsupported --model value`。刷新模型只更新检测结果，执行时也必须使用它；不改写档案，无法匹配时仍报 CLI 的原始错误。
+- `test/doubao-cli.test.ts` 覆盖新会话、续聊、保留强度、不改写档案及没有检测结果或未知名称的报错。真实 CLI 用不存在的会话做参数验证：旧拼法在模型校验被拒绝，匹配后的名称通过校验并到达会话查找，未新建对话。
+
 ## 后端网络条件与 TUN 异常接手（11-16）
 
 - `agents.networkPolicies` 按后端 ID 绑定网络条件，支持系统路由或指定 HTTP(S) 代理、接口监控、Trace / JSON 格式的出口探测、地区与固定 IP 允许列表。成功默认缓存一小时，并发探测合并；配置、网络接口或地址变化作废旧结果，过期和故障期间不允许新执行，旧响应不能恢复失效状态。没有绑定的后端不受影响。

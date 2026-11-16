@@ -1,4 +1,5 @@
 import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigOption } from "@agentclientprotocol/sdk";
+import { Readable } from "node:stream";
 import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
@@ -138,28 +139,19 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   const output = new WritableStream<Uint8Array>({
     write: (chunk) => new Promise((resolve, reject) => child.stdin.write(chunk, (e) => (e ? reject(e) : resolve()))),
   });
-  const input = new ReadableStream<Uint8Array>({
-    start(controller) {
-      // Tap raw lines: the SDK validates session/update against its schema and drops
-      // non-standard kinds (traex queue_begin/queue_end), so queue state is read here.
-      let pending = "";
-      child.stdout.on("data", (chunk: Buffer) => {
-        controller.enqueue(new Uint8Array(chunk));
-        pending += chunk.toString("utf8");
-        let nl: number;
-        while ((nl = pending.indexOf("\n")) >= 0) {
-          const line = pending.slice(0, nl);
-          pending = pending.slice(nl + 1);
-          if (/queue/i.test(line)) sniffQueue(line);
-        }
-        if (pending.length > 1_000_000) pending = "";
-      });
-      child.stdout.once("end", () => {
-        try {
-          controller.close();
-        } catch {}
-      });
-    },
+  const input = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
+  // Tap raw lines: the SDK validates session/update against its schema and drops
+  // non-standard kinds (traex queue_begin/queue_end), so queue state is read here.
+  let pending = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    pending += chunk.toString("utf8");
+    let nl: number;
+    while ((nl = pending.indexOf("\n")) >= 0) {
+      const line = pending.slice(0, nl);
+      pending = pending.slice(nl + 1);
+      if (/queue/i.test(line)) sniffQueue(line);
+    }
+    if (pending.length > 1_000_000) pending = "";
   });
   function sniffQueue(line: string) {
     let msg: { method?: string; params?: { update?: Record<string, unknown> } };
@@ -612,12 +604,7 @@ export async function deleteAcpSession(profile: AgentProfile, sessionId: string,
   signal?.addEventListener("abort", onAbort, { once: true });
   child.stderr.resume();
   const output = new WritableStream<Uint8Array>({ write: (chunk) => new Promise((resolve, reject) => child.stdin.write(chunk, (e) => (e ? reject(e) : resolve()))) });
-  const input = new ReadableStream<Uint8Array>({
-    start(controller) {
-      child.stdout.on("data", (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
-      child.stdout.once("end", () => { try { controller.close(); } catch {} });
-    },
-  });
+  const input = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
   const connection = new ClientSideConnection(
     () => ({
       requestPermission: async () => ({ outcome: { outcome: "cancelled" } }),

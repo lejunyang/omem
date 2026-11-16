@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { canWrite, OWNER, personalSpaceId } from "../core/users.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
+import { all, one, run } from "../core/db.ts";
 import { injectionScore } from "../sources/guard.ts";
 import { reviewReply, runCommand } from "./commands.ts";
 import { createRun, queuedInLane, updateQueuedRun } from "./runs.ts";
@@ -217,7 +218,14 @@ export function registerThreadSender(channel: string, send: Sender) {
 export async function deliverToThread(app: App, threadId: string, markdown: string, meta: Record<string, unknown> = {}) {
   const t = findThread(app, threadId);
   if (!t) return false;
-  const id = addMessage(app, t.id, "assistant", markdown, null, { ...meta, deliveredAt: now() });
+  const recovering = meta.recoverReply === true;
+  const id = addMessage(app, t.id, "assistant", markdown, recovering && typeof meta.runId === "string" ? meta.runId : null, { ...meta, ...(recovering ? {} : { deliveredAt: now() }) });
+  if (recovering) {
+    // Persist before sending: the channel may still be connecting after startup.
+    run(app.db, "insert into kv(key,value) values(?,?)", `recovered-reply:${id}`, JSON.stringify({ threadId: t.id, messageId: id }));
+    await flushRecoveredReplies(app);
+    return !one(app.db, "select 1 from kv where key = ?", `recovered-reply:${id}`);
+  }
   const send = senders.get(t.channel);
   if (!send) return false;
   try {
@@ -226,5 +234,29 @@ export async function deliverToThread(app: App, threadId: string, markdown: stri
   } catch (e) {
     console.warn(`[omem] 发送到会话 ${t.id} 失败：${(e as Error).message}`);
     return false;
+  }
+}
+
+const recoveringReplies = new Set<string>();
+/** Retry only replies explicitly handed back to a channel after a service restart. */
+export async function flushRecoveredReplies(app: App) {
+  for (const row of all<{ key: string; value: string }>(app.db, "select key,value from kv where key glob 'recovered-reply:*' order by key")) {
+    const lock = `${app.home}:${row.key}`;
+    // An earlier await may let another flush finish a later row from this snapshot.
+    if (recoveringReplies.has(lock) || !one(app.db, "select 1 from kv where key = ?", row.key)) continue;
+    const { threadId, messageId } = JSON.parse(row.value) as { threadId: string; messageId: string };
+    const t = findThread(app, threadId);
+    const send = t && senders.get(t.channel);
+    if (!t || !send) continue;
+    const message = one<{ text: string; meta: string }>(app.db, "select text,meta from messages where id = ? and conversation_id = ?", messageId, t.id);
+    if (!message) { run(app.db, "delete from kv where key = ?", row.key); continue; }
+    recoveringReplies.add(lock);
+    try {
+      await send(t, message.text, JSON.parse(message.meta), messageId);
+      run(app.db, "update messages set meta = json_set(meta, '$.deliveredAt', ?) where id = ?", now(), messageId);
+      run(app.db, "delete from kv where key = ?", row.key);
+    } catch (e) {
+      console.warn(`[omem] 恢复会话 ${t.id} 的回复失败：${(e as Error).message}`);
+    } finally { recoveringReplies.delete(lock); }
   }
 }

@@ -359,9 +359,17 @@ export function stopWorker() {
 export function startWorker(app: App) {
   if (started) return;
   started = true;
+  // Channel adapters waiting for these answers belonged to the previous process.
+  // The resumed handler must deliver its result itself, including turns still queued at restart.
+  run(app.db, `update runs set input = json_set(input, '$.recoverReply', json('true'))
+    where kind = 'ask' and status in ('queued','running')
+    and json_extract(input, '$.conversationId') in (select id from conversations where channel not in ('web','cli'))`);
   // Runs interrupted by a restart go back to the queue; handlers are written to be re-runnable.
   run(app.db, "update runs set status = 'queued', started_at = null where status = 'running'");
   setInterval(() => kick(app), 2000).unref();
+  setInterval(() => {
+    if (!stopping) void import("./inbox.ts").then(m => m.flushRecoveredReplies(app)).catch(e => console.warn(`[omem] 恢复会话回复失败：${(e as Error).message}`));
+  }, 30_000).unref();
   setInterval(() => watchStalls(app), 60_000).unref();
   kick(app);
 }

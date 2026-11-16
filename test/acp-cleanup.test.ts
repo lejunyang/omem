@@ -7,6 +7,23 @@ import { agentProfileSchema } from "../src/core/config.ts";
 import { retireSession } from "../src/agents/dispatch.ts";
 import { testApp } from "./helpers.ts";
 import { all } from "../src/core/db.ts";
+import { spawnSync } from "node:child_process";
+
+it("survives late stdout after the ACP reader cancels an oversized message", () => {
+  // The SDK cancels its input at the message limit. More stdout arriving after that used to
+  // enqueue into a closed controller and crash omem, including unrelated ongoing turns.
+  const agent = `process.stdin.resume(); process.stdout.on('error', () => process.exit(0));
+    let left = 34 * 1024 * 1024;
+    const more = () => { if (left <= 0) return; left -= 65536; process.stdout.write('x'.repeat(65536)); setImmediate(more); }; more();`;
+  const script = `import { openAcp } from './src/agents/acp.ts';
+    const p = { id: 'broken', transport: 'acp', command: process.execPath, args: ['-e', ${JSON.stringify(agent)}], env: {}, idleTimeoutMs: 5000 };
+    try { const h = await openAcp(p, { cwd: process.cwd() }); h.close(); process.exitCode = 2; }
+    catch { await new Promise(ok => setTimeout(ok, 100)); console.log('closed cleanly'); }`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8", timeout: 15000 });
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain("closed cleanly");
+});
 
 it("deletes a session whose agent process is gone through a new connection", async () => {
   const log = join(mkdtempSync(join(tmpdir(), "omem-acp-")), "deleted.txt");

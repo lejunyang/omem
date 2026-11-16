@@ -10,6 +10,7 @@ import { saveDoubaoToken, setDoubaoFetchForTests } from "../src/agents/doubao.ts
 import { saveLarkSecret } from "../src/channels/lark-setup.ts";
 import { testApp } from "./helpers.ts";
 import { all } from "../src/core/db.ts";
+import { saveProbe } from "../src/agents/probe.ts";
 
 const fake: AgentProfile = { id: "doubao-cli", transport: "doubao-cli", command: process.execPath, args: [resolve("test/fake-doubao-cli.ts")], env: {}, idleTimeoutMs: 60_000 };
 
@@ -46,6 +47,21 @@ describe("doubao cli", () => {
     const r = await runDoubaoCli(fake, { cwd: process.cwd(), prompt: "again", resumeSessionId: "s-7" }, () => {});
     expect(r.sessionId).toBe("s-7");
     await expect(runDoubaoCli(fake, { cwd: process.cwd(), prompt: "fail" }, () => {})).rejects.toThrow("无法启动主任务");
+  });
+
+  it("uses the probed spelling for a configured model when dispatching new and resumed turns", async () => {
+    const app = testApp();
+    saveProbe(app, fake.id, { at: new Date().toISOString(), agent: "fake", models: ["Auto", "Pro 1"], efforts: [] });
+    const profile = { ...fake, model: "pro-1", effort: "high" };
+    for (const resumeSessionId of [undefined, "s-7"]) {
+      const result = await runBackend(app, profile, { cwd: process.cwd(), prompt: "hello", persistSession: true, resumeSessionId }, () => {});
+      expect(result.text).toContain("model=Pro 1 effort=high");
+      expect(result.sessionId).toBe(resumeSessionId ?? "s-1");
+    }
+    expect(profile.model).toBe("pro-1");
+    // An unrelated or undetected name still reaches the CLI and reports its original error.
+    await expect(runBackend(app, { ...fake, model: "Unknown" }, { cwd: process.cwd(), prompt: "hello" }, () => {})).rejects.toThrow("Unsupported --model value");
+    await expect(runBackend(testApp(), profile, { cwd: process.cwd(), prompt: "hello" }, () => {})).rejects.toThrow("Unsupported --model value");
   });
 
   it("deletes a one-off turn's conversation through the OpenAPI, and keeps a thread's", async () => {

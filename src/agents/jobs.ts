@@ -220,6 +220,11 @@ registerHandler("ask", async (ctx) => {
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode, channelDelivered: true };
   }
+  if (ctx.run.input.recoverReply && !ctx.signal.aborted) {
+    await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids, recoverReply: true });
+    maybeSummarize(ctx.app, input.conversationId);
+    return { answer, session: r.mode, channelDelivered: true };
+  }
   const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
   maybeSummarize(ctx.app, input.conversationId);
   return { answer, messageId: id, session: r.mode };
