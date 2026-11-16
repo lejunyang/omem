@@ -80,17 +80,45 @@ export function larkCliWithInput(args: string[], stdin: string) {
   return spawnSync(process.execPath, [larkCliScript(), ...args], { input: stdin, stdio: ["pipe", "inherit", "inherit"], windowsHide: true }).status ?? 1;
 }
 
+/**
+ * lark-cli as an app's bot (tenant identity, `--as bot` in `args`): omem's own bot, not lark-cli's app,
+ * so a doc someone shared with the bot they see in the group can be edited without the owner's access.
+ */
+export async function larkCliAsBot(bot: { appId: string; appSecret: string; brand?: string }, args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
+  if (override) { const result = await override(args, cwd, `bot:${bot.appId}`); assertLarkResult(result); return result; }
+  const env = { ...process.env, LARKSUITE_CLI_APP_ID: bot.appId, LARKSUITE_CLI_APP_SECRET: bot.appSecret, LARKSUITE_CLI_BRAND: bot.brand ?? "feishu" };
+  try {
+    const { stdout } = await exec(process.execPath, [larkCliScript(), ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd, env });
+    const value = JSON.parse(stdout);
+    assertLarkResult(value);
+    return value;
+  } catch (e) {
+    if (e instanceof Error && !e.message.includes("Command failed")) throw new Error(redactLarkError(e.message).slice(0, 300));
+    let detail = "";
+    for (const output of [(e as { stderr?: string }).stderr, (e as { stdout?: string }).stdout]) {
+      try {
+        const match = /\{[\s\S]*\}/.exec(output ?? "")?.[0];
+        const v = match ? (JSON.parse(match).error ?? JSON.parse(match)) : null;
+        detail = v ? [v.type, v.code, v.message ?? v.msg, v.log_id].filter(Boolean).join(" ") : "";
+        if (detail) break;
+      } catch {}
+    }
+    throw new Error(`飞书 CLI（机器人）：${redactLarkError(detail || "调用失败，请检查网络和机器人凭据").slice(0, 300)}`);
+  }
+}
+
 /** Run the official lark-cli (bundled npm dependency) and parse its JSON output. */
 export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
   const actor = larkActing();
   if (actor && !credentials) throw new Error("飞书：还不能以这个用户的身份调用（没有接上连接器）");
   const user = actor ? await credentials!(actor) : null;
-  if (override) { const result = await override(args, cwd, actor?.userId); assertLarkResult(result); return result; }
+  if (override) { const result = await override(args, cwd, actor?.userId); if (!user) noticeLoginGone(result); assertLarkResult(result); return result; }
   const script = larkCliScript();
   const env = user ? { ...process.env, LARKSUITE_CLI_APP_ID: user.appId, LARKSUITE_CLI_USER_ACCESS_TOKEN: user.token, LARKSUITE_CLI_BRAND: user.brand ?? "feishu" } : undefined;
   try {
     const { stdout } = await exec(process.execPath, [script, ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd, env });
     const value = JSON.parse(stdout);
+    if (!user) noticeLoginGone(value);
     assertLarkResult(value);
     return value;
   } catch (e) {
@@ -116,6 +144,12 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
     }
     // The user token lacks a scope: callers can ask the owner to grant it (lark-auth.ts).
     if (missing.length) throw new LarkScopeError(missing, `飞书 CLI：缺少权限 ${missing.join(" 或 ")}`);
+    // The owner's login is gone altogether (expired and not refreshed, removed): the owner is asked to
+    // log in again (lark-auth.ts watchOwnerLogin), once for every caller that runs into it.
+    if (!user && LOGIN_GONE.test(`${detail} ${raw}`)) {
+      ownerLoginMissing?.();
+      throw new Error("飞书 CLI：本人的 lark-cli 登录不可用（token_missing），已请本人重新授权");
+    }
     // A person's own token turned down (lark-cli 1.0.98: exit 3, `authentication` token_invalid 99991668 and the
     // like): theirs to fix in omem, not lark-cli's login; refreshed before the next call.
     if (user && (type === "authentication" || /token_(invalid|expired)/.test(detail))) {
@@ -127,6 +161,20 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
       throw new Error("飞书登录不可用：请在运行 omem 的电脑上执行 lark-cli auth login 后重试");
     throw new Error(detail ? `飞书 CLI：${redactLarkError(detail).slice(0, 300)}${hint ? `（${redactLarkError(hint).slice(0, 200)}）` : ""}` : "飞书 CLI 调用失败，请检查登录和网络");
   }
+}
+
+/** The business domains omem's login asks for (setup and a re-login after the login was lost). */
+export const OWNER_LOGIN_DOMAINS = "im,contact,docs,drive,wiki,calendar,minutes,vc";
+
+let ownerLoginMissing: (() => void) | null = null;
+const LOGIN_GONE = /token_missing|need_user_authorization|no token in keychain/i;
+/** A result saying the owner's login is gone (lark-cli may say so with exit code 0). */
+function noticeLoginGone(value: any) {
+  if (value?.ok === false && LOGIN_GONE.test(JSON.stringify(value.error ?? value))) ownerLoginMissing?.();
+}
+/** Told when a call finds no owner login at all (lark-auth.ts asks the owner to log in again). */
+export function onOwnerLoginMissing(f: (() => void) | null) {
+  ownerLoginMissing = f;
 }
 
 /** lark-cli said which scopes the call needs (any one of `scopes`). */

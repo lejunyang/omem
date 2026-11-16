@@ -2,9 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
+import { one } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { asOwner, cliUser } from "./lark-auth.ts";
-import { larkCli } from "./lark-cli.ts";
+import { larkCli, larkCliAsBot } from "./lark-cli.ts";
+import { larkAppSecret, readLarkSecrets } from "./lark-setup.ts";
 import { personalLibrary, wikiNode, type WikiNode } from "./lark-wiki.ts";
 
 /**
@@ -36,11 +38,13 @@ async function spaceName(app: App, spaceId: string) {
   try {
     const v = await asOwner(app, "读取知识库信息", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: spaceId }), "--as", "user", "--format", "json"], 60_000));
     const d = v?.data ?? v;
-    return String(d?.space?.name ?? d?.name ?? spaceId);
+    const name = d?.space?.name ?? d?.name;
+    if (name) return String(name);
   } catch (e) {
     if (/缺少飞书权限/.test((e as Error).message)) throw e;
-    return spaceId;
   }
+  // The name the knowledge-base catalog already has; never the bare numeric id (it read as noise on the approval).
+  return one<{ name: string }>(app.db, "select name from wiki_spaces where id = ? and name != ''", spaceId)?.name ?? "";
 }
 
 /** Who owns a Drive doc or folder (`drive metas`), and whether that is the owner. */
@@ -54,7 +58,8 @@ async function ownedByOwner(app: App, token: string, type: string) {
 
 async function wikiPlace(app: App, node: WikiNode, under = true): Promise<Place> {
   const personal = node.spaceId === (await personalLibrary(app));
-  const space = personal ? "个人文档库" : `知识库「${await spaceName(app, node.spaceId)}」`;
+  const name = personal ? "" : await spaceName(app, node.spaceId);
+  const space = personal ? "个人文档库" : name ? `知识库「${name}」` : "知识库";
   return { personal, label: `${space}${under ? ` 的《${node.title || node.nodeToken}》下` : ` 里的《${node.title || node.nodeToken}》`}`, parent: { token: node.nodeToken }, wiki: { spaceId: node.spaceId, nodeToken: node.nodeToken } };
 }
 
@@ -157,7 +162,30 @@ export function updateFormat(input: Pick<UpdateInput, "command" | "format">) {
   return input.format ?? (input.command.startsWith("block_") ? "xml" : "markdown");
 }
 
-export async function updateDoc(app: App, input: UpdateInput) {
+/**
+ * omem's own bot (the one people see in the group), for a doc someone shared with it: edits that do not
+ * need the owner's access to the doc, nor their identity.
+ */
+export function ownBot(app: App) {
+  const appId = app.config.lark.appId;
+  const appSecret = appId ? larkAppSecret(app.home, appId, app.config.lark.appSecretEnv) : undefined;
+  if (!appId || !appSecret) throw new HttpError(400, "没有配置 omem 自己的飞书机器人（lark.appId 与密钥），不能用机器人的身份读写文档");
+  const brand = readLarkSecrets(app.home)[appId]?.brand === "lark" ? "lark" : "feishu";
+  return { appId, appSecret, brand };
+}
+
+/** The bot cannot open the doc: what to ask whoever wants the change. */
+function botDenied(app: App, e: unknown): never {
+  const msg = (e as Error).message;
+  if (/3380004|permission|forbidden|1770032|91204|没有权限|无权限/i.test(msg)) {
+    const name = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value || "omem 的机器人";
+    throw new HttpError(403, `机器人「${name}」没有这篇文档的权限：请要改文档的人在文档右上角“分享”里搜「${name}」，把它加为“可编辑”的协作者，加好后再试（${truncateMsg(msg)}）`);
+  }
+  throw e;
+}
+const truncateMsg = (m: string) => (m.length > 160 ? `${m.slice(0, 160)}…` : m);
+
+export async function updateDoc(app: App, input: UpdateInput, opts: { asBot?: boolean } = {}) {
   checkUpdate(input);
   const flags = [
     ...(input.pattern !== undefined ? ["--pattern", input.pattern] : []),
@@ -166,10 +194,11 @@ export async function updateDoc(app: App, input: UpdateInput) {
     ...(input.srcBlockIds ? ["--src-block-ids", input.srcBlockIds] : []),
     ...(input.revisionId !== undefined ? ["--revision-id", String(input.revisionId)] : []),
   ];
+  const args = (content: string[], as: string) => ["docs", "+update", "--as", as, "--doc", input.doc, "--command", input.command, "--doc-format", updateFormat(input), ...content, ...flags];
   const run = (content: string[], cwd?: string) =>
-    asOwner(app, "以本人身份编辑飞书文档", () =>
-      larkCli(["docs", "+update", "--as", "user", "--doc", input.doc, "--command", input.command, "--doc-format", updateFormat(input), ...content, ...flags], 120_000, cwd),
-    );
+    opts.asBot
+      ? larkCliAsBot(ownBot(app), args(content, "bot"), 120_000, cwd).catch((e) => botDenied(app, e))
+      : asOwner(app, "以本人身份编辑飞书文档", () => larkCli(args(content, "user"), 120_000, cwd));
   const v = input.content !== undefined ? await withContent(input.content, (ref, cwd) => run(["--content", ref], cwd)) : await run([]);
   const d = v?.data ?? {};
   return {
@@ -195,11 +224,11 @@ export type FetchInput = {
 };
 
 /** Read a doc, or the part about to change, as the owner: the block ids block_* edits target. */
-export async function fetchForEdit(app: App, input: FetchInput) {
+export async function fetchForEdit(app: App, input: FetchInput, opts: { asBot?: boolean } = {}) {
   if (input.scope === "section" && !input.startBlockId) throw new HttpError(400, "scope=section 需要 start_block_id（标题的 block id，先用 scope=outline 找）");
   if (input.scope === "keyword" && !input.keyword) throw new HttpError(400, "scope=keyword 需要 keyword");
   if (input.scope === "range" && !input.startBlockId && !input.endBlockId) throw new HttpError(400, "scope=range 需要 start_block_id 或 end_block_id");
-  const args = ["docs", "+fetch", "--as", "user", "--doc", input.doc, "--doc-format", input.format ?? "xml", "--detail", input.detail ?? "with-ids"];
+  const args = ["docs", "+fetch", "--as", opts.asBot ? "bot" : "user", "--doc", input.doc, "--doc-format", input.format ?? "xml", "--detail", input.detail ?? "with-ids"];
   if (input.scope) args.push("--scope", input.scope);
   if (input.keyword) args.push("--keyword", input.keyword);
   if (input.startBlockId) args.push("--start-block-id", input.startBlockId);
@@ -207,7 +236,7 @@ export async function fetchForEdit(app: App, input: FetchInput) {
   if (input.maxDepth !== undefined) args.push("--max-depth", String(input.maxDepth));
   if (input.contextBefore) args.push("--context-before", String(input.contextBefore));
   if (input.contextAfter) args.push("--context-after", String(input.contextAfter));
-  const v = await asOwner(app, "读取飞书文档", () => larkCli(args, 60_000));
+  const v = opts.asBot ? await larkCliAsBot(ownBot(app), args, 60_000).catch((e) => botDenied(app, e)) : await asOwner(app, "读取飞书文档", () => larkCli(args, 60_000));
   const d = v?.data?.document ?? {};
   return { content: String(d.content ?? ""), revision: d.revision_id ?? null, tips: typeof d.tips === "string" ? d.tips : "" };
 }

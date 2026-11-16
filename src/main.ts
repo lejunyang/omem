@@ -254,6 +254,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     }
     // The cards of paired nodes (core/mesh.ts): looked at every ten minutes.
     (await import("./core/mesh.ts")).startMesh(app);
+    // The owner's lark-cli login gone (expired, dropped): a link to log in again, not only failures in the log.
+    (await import("./channels/lark-auth.ts")).watchOwnerLogin(app);
     if (app.config.lark.enabled) {
       const { startLarkBot } = await import("./channels/lark-bot.ts");
       startLarkBot(app).catch((e) => console.warn("[omem] 飞书机器人启动失败：", e.message));

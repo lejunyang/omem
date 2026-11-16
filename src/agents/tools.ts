@@ -64,7 +64,7 @@ import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
-import { setApprovalExecutor } from "./asks.ts";
+import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
@@ -3893,6 +3893,7 @@ def({
     "以本人身份读飞书文档的当前内容，带 block id，供 lark_doc_update 的 block_* 局部编辑定位用（只读，不存为原件；要收进知识库用 import_url）。大文档先 scope=outline 看目录，再 scope=section + 标题的 start_block_id 读那一节；只有关键词时 scope=keyword；整张表格用 scope=range，start_block_id 和 end_block_id 都给表格的 id（默认只返回表头和命中的行）。看到 <excerpt> 表示只拿到容器或表格的一部分。默认 DocxXML。",
   schema: z.object({
     doc: z.string().describe("文档链接（/docx/… 或 /wiki/…，可带 #share 选区）"),
+    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（以本人身份）。bot：用 omem 自己的机器人读写，给别人分享给机器人的文档用（本人没有编辑权限、别人请你改的时候），不用本人批准"),
     scope: z.enum(["outline", "section", "range", "keyword"]).optional().describe("不填 = 整篇"),
     keyword: z.string().optional().describe("scope=keyword 的关键词，多个用 | 分隔"),
     start_block_id: z.string().optional(),
@@ -3909,12 +3910,43 @@ def({
     const r = await w.fetchForEdit(ctx.app, {
       doc: a.doc, scope: a.scope, keyword: a.keyword, startBlockId: a.start_block_id, endBlockId: a.end_block_id, maxDepth: a.max_depth,
       contextBefore: a.context_before, contextAfter: a.context_after, detail: a.detail, format: a.format,
-    });
+    }, { asBot: a.identity === "bot" }).catch((e) => ownerDenied(ctx.app, e));
     const max = 60_000;
     const body = r.content.length > max ? `${r.content.slice(0, max)}\n…（已截断，共 ${r.content.length} 字；用 scope=outline / section / range 缩小范围）` : r.content;
     return `版本 ${r.revision ?? "未知"}${r.tips ? `\n飞书的提示：${truncate(r.tips, 300)}` : ""}\n\n${body || "（没有内容）"}`;
   },
 });
+
+/**
+ * omem's own citations (`src:…`, `mem:…`) mean nothing inside a Feishu doc, where a reader clicked them
+ * and got nowhere: written as links that open (the same shares an answer gets), or as their text.
+ * DocxXML anchors are handled one by one; Markdown goes through the answer's resolver.
+ */
+/** The owner cannot open or edit the doc: say what to do instead of only the lark-cli error. */
+function ownerDenied(app: App, e: unknown): never {
+  const msg = (e as Error).message;
+  const bot = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value || "omem 的机器人";
+  if (/3380004|no permission|lacks view|forbidden|没有权限|无权限/i.test(msg) && !/机器人/.test(msg))
+    throw new HttpError(403, `本人没有这篇文档的权限（${truncate(msg, 160)}）。是别人请你改的话，不要让对方给本人开权限：请对方在文档右上角“分享”里搜「${bot}」加为“可编辑”的协作者，再用 identity=bot 读和改。`);
+  throw e;
+}
+
+async function docCitations(ctx: ToolContext, content: string | undefined, markdown: boolean) {
+  if (!content || !/(?:src|mem|wiki):/.test(content)) return content;
+  const { resolveCitations, resolveCitationsNow } = await import("../channels/citations.ts");
+  const ANCHOR = /<a\s+href="((?:src|mem|wiki):[^"]*)"\s*>([\s\S]*?)<\/a>/g;
+  const anchors = [...content.matchAll(ANCHOR)];
+  let out = content;
+  if (anchors.length) {
+    const urls = resolveCitationsNow(ctx.app, anchors.map((m) => `[x](${m[1]})`), { runId: ctx.runId }).map((md) => /\]\(([^)]+)\)/.exec(md)?.[1] ?? "");
+    let i = 0;
+    out = out.replace(ANCHOR, (_all, _href: string, label: string) => {
+      const url = urls[i++];
+      return url ? `<a href="${url.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">${label}</a>` : label;
+    });
+  }
+  return markdown && /\]\((?:src|mem|wiki):/.test(out) ?resolveCitations(ctx.app, out, { runId: ctx.runId }) : out;
+}
 
 def({
   name: "lark_doc_create",
@@ -3933,7 +3965,7 @@ def({
     const place = await w.placeFor(ctx.app, a.parent);
     const wait = await ownerDocGate(ctx, "lark_doc_create", a, `在 ${place.label} 新建文档《${a.title}》。\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content)}`, place.personal, undefined, undefined, { operation: "create", targets: place.wiki ? [place.wiki] : [] });
     if (wait) return wait;
-    const r = await w.createDoc(ctx.app, { title: a.title, content: a.content, format: a.format, place });
+    const r = await w.createDoc(ctx.app, { title: a.title, content: (await docCitations(ctx, a.content, a.format !== "xml"))!, format: a.format, place });
     return `已在 ${place.label} 新建《${a.title}》：${r.url || r.documentId}${r.warnings.length ? `\n飞书的提示：${truncate(JSON.stringify(r.warnings), 500)}` : ""}`;
   },
 });
@@ -3955,13 +3987,21 @@ def({
     revision_id: z.number().int().optional().describe("基于哪个版本改（lark_doc_fetch 返回的 revision）；不填 = 最新"),
     format: z.enum(["markdown", "xml"]).optional(),
     summary: z.string().min(1).max(500).optional().describe("本次任务整体改动的一两句摘要，说明改什么、保留什么；不贴正文或 HTML/XML"),
+    identity: z.enum(["owner", "bot"]).optional().describe("默认 owner（以本人身份）。bot：用 omem 自己的机器人读写，给别人分享给机器人的文档用（本人没有编辑权限、别人请你改的时候），不用本人批准"),
     approval_docs: z.array(z.string().min(1)).min(1).max(20).optional().describe("首次审批时列出本次任务所有要编辑的文档链接，一次批准这些文档的后续编辑。只列本人要求修改的文档；不填只批准当前文档"),
   }),
   handler: async (ctx, a) => {
     const w = await import("../channels/lark-doc-write.ts");
     const edit = { doc: a.doc, command: a.command, content: a.content, pattern: a.pattern, format: a.format, blockId: a.block_id, startBlockId: a.start_block_id, endBlockId: a.end_block_id, srcBlockIds: a.src_block_ids, revisionId: a.revision_id };
     w.checkUpdate(edit);
-    const place = await w.docPlace(ctx.app, a.doc);
+    // As omem's own bot: a doc someone shared with it. Not the owner's identity, so no owner approval; the
+    // owner's access to the doc is not needed either.
+    if (a.identity === "bot") {
+      if (a.command === "overwrite") throw new HttpError(400, "机器人身份不做整篇覆盖：用局部编辑");
+      const r = await w.updateDoc(ctx.app, { ...edit, content: await docCitations(ctx, edit.content, a.format ? a.format === "markdown" : !a.command.startsWith("block_")) }, { asBot: true });
+      return `已用机器人的身份编辑（${a.command}）：${a.doc}${r.revision != null ? `，版本 ${r.revision}` : ""}\n${AGENT_NOTE}之前读到的 block id 可能已失效，再改前用 lark_doc_fetch（identity=bot）重新读。`;
+    }
+    const place = await w.docPlace(ctx.app, a.doc).catch((e) => ownerDenied(ctx.app, e));
     const places = [place];
     for (const doc of a.approval_docs ?? []) {
       if (doc === a.doc) continue;
@@ -3978,14 +4018,14 @@ def({
     const wikiWrite = a.command !== "overwrite" && places.every(p => p.wiki) ? { operation: "edit" as const, targets: places.map(p => p.wiki!) } : undefined;
     const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑以下文档：\n${targets}\n\n${a.summary ? "改动摘要" : "内容预览"}：${docPreview(a.summary ?? a.content ?? verb)}\n首次操作：${verb}`, places.every((p) => p.personal), scope, undefined, wikiWrite);
     if (wait) return wait;
-    const r = await w.updateDoc(ctx.app, edit);
+    const r = await w.updateDoc(ctx.app, { ...edit, content: await docCitations(ctx, edit.content, a.format ? a.format === "markdown" : !a.command.startsWith("block_")) }).catch((e) => ownerDenied(ctx.app, e));
     const extra = [
       r.result && r.result !== "success" ? `结果：${r.result}` : "",
       r.newBlocks.length ? `新 block：${r.newBlocks.map((b) => `${b.block_id}${b.block_type ? `（${b.block_type}）` : ""}`).join("、")}` : "",
       r.warnings.length ? `飞书的提示：${truncate(JSON.stringify(r.warnings), 500)}` : "",
       r.tips ? `建议：${truncate(r.tips, 300)}` : "",
     ].filter(Boolean);
-    return `已编辑（${a.command}）：${a.doc}（${place.label}）${r.revision != null ? `，版本 ${r.revision}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\n之前读到的 block id 可能已失效，再改前重新 lark_doc_fetch。`;
+    return `已编辑（${a.command}）：${a.doc}（${place.label}）${r.revision != null ? `，版本 ${r.revision}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\n${AGENT_NOTE}之前读到的 block id 可能已失效，再改前重新 lark_doc_fetch。`;
   },
 });
 
@@ -4704,6 +4744,14 @@ def({
     with_children: z.boolean().optional().describe("默认 true"),
   }),
   handler: async (ctx, a) => {
+    // Which AI runs (and what it costs) is the owner's to say: a colleague's words in a group the owner is
+    // in ("切成 gpt") do not switch it.
+    const self = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    const said = self?.kind === "ask" ? ((self.input.messageIds as string[] | undefined) ?? []) : [];
+    if (said.length) {
+      const askers = all<{ asker: string | null }>(ctx.app.db, `select json_extract(meta, '$.asker') asker from messages where id in (${said.map(() => "?").join(",")}) and role = 'user'`, ...said);
+      if (askers.length && askers.every((m) => m.asker)) throw new HttpError(403, "换 AI 只听本人的：这一轮的消息来自群里的同事。照常用现在的 AI 回答；同事想换的话请他找本人。");
+    }
     const execution = validateExecution(ctx.app, a.execution)!;
     const root = getRun(ctx.app, a.run_id);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);

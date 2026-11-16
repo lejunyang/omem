@@ -17,15 +17,16 @@ import { createUser, createApiToken, setUserRole } from "../src/core/users.ts";
 import { testApp } from "./helpers.ts";
 
 let tunUp = true;
+let dockerUp = false;
 vi.mock("node:os", async (original) => {
   const actual = await original<typeof import("node:os")>();
   return { ...actual, networkInterfaces: () => {
     const all = actual.networkInterfaces();
-    return { ...all, ...(tunUp ? { "omem-test-tun": Object.values(all).flat().filter((a) => a?.family === "IPv4").slice(0, 1).map((a) => ({ ...a!, internal: false })) } : {}) };
+    return { ...all, ...(dockerUp ? { docker0: [{ address: "172.17.0.1", netmask: "255.255.0.0", family: "IPv4", mac: "02:42:00:00:00:01", internal: false, cidr: "172.17.0.1/16" }] } : {}), ...(tunUp ? { "omem-test-tun": Object.values(all).flat().filter((a) => a?.family === "IPv4").slice(0, 1).map((a) => ({ ...a!, internal: false })) } : {}) };
   } };
 });
 const cleanups: (() => void | Promise<unknown>)[] = [];
-afterEach(async () => { releaseAll(); for (const f of cleanups.splice(0).reverse()) await f(); tunUp = true; vi.restoreAllMocks(); });
+afterEach(async () => { releaseAll(); for (const f of cleanups.splice(0).reverse()) await f(); tunUp = true; dockerUp = false; vi.restoreAllMocks(); });
 async function listen(server: Server) {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>((r) => server.close(() => r())); });
@@ -124,6 +125,23 @@ it("keeps monitoring TUN while a periodic remote probe is stuck", async () => {
   tunUp = false; await pollNetworkPolicies(app);
   expect(attempt.signal.aborted).toBe(true);
   attempt.close(); await tick;
+});
+
+it("keeps running work through a container interface appearing and an edit of the policy", async () => {
+  const { app, policy, first } = await fixture();
+  await refreshNetworkPolicies(app);
+  const attempt = await beginNetworkAttempt(app, first);
+  // Not the watched interface: nothing to stop for.
+  dockerUp = true;
+  await pollNetworkPolicies(app);
+  expect(attempt.signal.aborted).toBe(false);
+  // Renamed in the form: checked again, the attempt carries on.
+  app.config.agents.networkPolicies = [{ ...policy, name: "改了名字" }];
+  await pollNetworkPolicies(app);
+  await refreshNetworkPolicies(app);
+  expect(attempt.signal.aborted).toBe(false);
+  expect(networkReason(app, first)).toBeNull();
+  attempt.close();
 });
 
 it("uses the configured proxy and fails closed when its port disappears", async () => {

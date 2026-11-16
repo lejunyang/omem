@@ -15,6 +15,15 @@ updated: 2026-11-17
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 机器人身份改文档、lark-cli 掉登录后重新授权、网络条件不误停（11-17）
+
+- `lark_doc_fetch` / `lark_doc_update` 加 `identity: "bot"`：用 omem 自己的机器人（`lark.appId` 和密钥，lark-cli 的 `--as bot`，`src/channels/lark-cli.ts` 的 `larkCliAsBot`）读写别人分享给机器人的文档，不用本人的权限和批准，不做整篇覆盖。本人没权限时工具会说请对方把机器人加为可编辑协作者（`ownerDenied`），机器人没权限时说要对方怎么加（`lark-doc-write.ts` 的 `botDenied`）。
+- 写进飞书文档的 `src:` / `mem:` 引用换成能打开的分享链接（`tools.ts` 的 `docCitations`，DocxXML 的 `<a href>` 和 Markdown 都处理）；知识库名读不到时用 `wiki_spaces` 里的名字，不再显示数字 id；工具结果里以 `（给 Agent）` 开头的行不进本人看到的批准结果（`asks.ts` 的 `forOwner`）。
+- lark-cli 报本人登录没了（token_missing）时，`lark-auth.ts` 的 `watchOwnerLogin` 发一次完整登录的链接（和 setup 相同的 `--domain`），本人确认后用 `--device-code` 保存；6 小时内不重复发。主助手角色说明：不要自己在命令行里跑 `lark-cli auth login`。
+- `switch_run_ai`：这一轮的消息全来自群里的同事时拒绝换 AI。
+- 网络条件（`network-policy.ts`）：接口指纹只看所监控的接口（没指定时看实体网卡的 IPv4），容器网卡和 IPv6 临时地址不再让运行停下；代理端口无响应（2 秒）和出口检测没回应要连续两次才停，拒绝连接、地区或 IP 不符仍立即停；改条件只重新检查、不中止运行；运行前只等没检查过或已过期的条件（`refreshForRun`，最多 4 秒），失败的在后台重试。设置页：并排字段对齐、未检查不再显示成警告色、连接错误写成中文。
+- 飞书文档读不到的通知按原因分组，每篇一行链接，不再每篇后面跟同一段英文报错（`lark-docs.ts` 的 `unreadableReason`）。
+
 ## 换 AI 后没了下文、同事的口径、气泡断连、@ 别的机器人、http 地址的网页版 VS Code（11-17）
 
 - 对话这一轮调 `switch_run_ai` 给自己换 AI 时，接替的运行排在同一会话、带着同样的消息；工具调用结束时 `steer.ts` 把它当补充消息并进了正在停下的旧运行并取消，旧运行随后也停，两边都没有回答。现在被要求停下（`runs.ts` 的 `stopRequested`）或输出里已有 `replacedBy` 的运行不再收补充消息，规则的同批触发同理。`test/steer.test.ts`。

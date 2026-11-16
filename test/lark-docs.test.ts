@@ -110,6 +110,10 @@ describe("feishu docs as originals", () => {
     expect(r.missing.map((m) => m.url)).toEqual([`${ORIGIN}/docx/Secret`, `${ORIGIN}/docx/Secret2`]);
     expect(missingDocs(app)).toMatchObject([{ url: `${ORIGIN}/docx/Secret2`, parents: [linked2.id] }, { url: `${ORIGIN}/docx/Secret`, parents: [r.id] }]);
     expect(all(app.db, "select title from notifications").map((n: any) => n.title)).toEqual(["《项目 A 方案》：链接的飞书文档中有 2 篇读不到"]);
+    // One reason for the lot, not the same long error after every doc.
+    const body = (all(app.db, "select body from notifications")[0] as { body: string }).body;
+    expect(body).toMatch(/^没有权限：\n- \[/);
+    expect(body).not.toContain("permission denied");
 
     // Seven media in all (including the synced block's and a linked doc's); Main is read once despite the link back.
     expect(calls.filter((c) => c[1] === "+media-download")).toHaveLength(7);

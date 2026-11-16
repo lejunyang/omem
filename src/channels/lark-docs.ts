@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { json, now } from "../core/util.ts";
+import { json, now, truncate } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
 import { keepOriginal } from "../sources/import.ts";
 import { hasStoredFile } from "../core/stored-files.ts";
@@ -791,11 +791,27 @@ function retryNote(app: App) {
     : "多半是没有权限。按设置不会重试（lark.capture.docRetryMax 为 0）；申请到权限后可以用 omem lark docs-missing --retry 读一次。";
 }
 
+/** Why a doc could not be read, in a few words: the same long lark-cli error repeated per doc said nothing more. */
+export function unreadableReason(error: string) {
+  if (/3380004|no permission|lacks view|forbidden|permission denied|没有权限|无权限/i.test(error)) return "没有权限";
+  if (/not ?found|deleted|已删除|不存在/i.test(error)) return "文档不存在或已删除";
+  if (/network|transport|timeout|ECONN|EOF|调用失败|登录|token_missing|authorization/i.test(error)) return "读取失败（网络或 lark-cli 登录），会再试";
+  return truncate(error.replace(/^飞书 CLI：/, ""), 60);
+}
+
 function tellUnreadable(app: App, title: string, id: string | null, docs: Missing[]) {
   const shown = docs.slice(0, 30);
+  // Grouped by reason, each doc one short line: a link and where it was linked from.
+  const groups = new Map<string, Missing[]>();
+  for (const f of shown) {
+    const why = unreadableReason(f.error);
+    groups.set(why, [...(groups.get(why) ?? []), f]);
+  }
+  const line = (f: Missing) => `- [${(f.title || "无标题").replace(/[[\]]/g, "")}](${f.url})${f.parentTitle && !title.includes(f.parentTitle) ? `（在《${f.parentTitle}》里）` : ""}`;
+  const body = [...groups].map(([why, list]) => `${groups.size > 1 ? `**${why}**（${list.length} 篇）：` : `${why}：`}\n${list.map(line).join("\n")}`).join("\n\n");
   notify(app, {
     title: `${title}：链接的飞书文档中有 ${docs.length} 篇读不到`,
-    body: `${shown.map((f) => `- ${f.title || "（无标题）"}：${f.url}${f.parentTitle && !title.includes(f.parentTitle) ? `（在《${f.parentTitle}》里）` : ""}（${f.error}）`).join("\n")}${docs.length > shown.length ? `\n- ……另有 ${docs.length - shown.length} 篇，见 omem lark docs-missing` : ""}\n\n${retryNote(app)}`,
+    body: `${body}${docs.length > shown.length ? `\n- ……另有 ${docs.length - shown.length} 篇，见 omem lark docs-missing` : ""}\n\n${retryNote(app)}`,
     link: id ? `#/sources/${id}` : null,
   });
 }

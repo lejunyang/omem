@@ -38,6 +38,8 @@ const codes = "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG
 const countryOptions = codes.map((c) => ({ value: c, label: names.of(c) ?? c, hint: c })).sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
 const labels: Record<string, string> = { unchecked: "尚未检查", checking: "检查中", ready: "正常", unavailable: "不可用", recovering: "恢复确认中" };
 const statusOf = (id: string) => statuses.value.find((s) => s.id === id);
+/** Not checked yet is not a problem; failing is. */
+const badgeOf = (status?: string) => status === "ready" ? "ok" : status === "unavailable" ? "danger" : status === "checking" || status === "recovering" ? "warn" : "";
 const backendName = (id: string) => props.backends.find((b) => b.id === id)?.name ?? id;
 const backendOptions = computed(() => {
   const ids = [...new Set([...props.backends.filter((b) => !b.peer).map((b) => b.id), ...(draft.value?.backends ?? [])])];
@@ -103,13 +105,13 @@ onBeforeUnmount(() => clearInterval(timer));
 <template>
   <div class="card pad stack network-conditions" id="network-conditions">
     <div class="row wrap"><strong>网络条件</strong><span class="spacer" /><button class="btn sm" :disabled="!!draft || saving" @click="edit()">添加条件</button></div>
-    <HelpText>限定哪些网络环境可以运行所选后端。出口结果默认有效一小时，过期且需要使用时才重查；有相关执行时到期也会重查。TUN 接口消失或关闭、代理端口不可用时立即作废结果，并按设置停止当前执行、尝试兜底后端。本地检查约每两秒一次；接口存在不能保证路由和上游一直正常。</HelpText>
+    <HelpText>限定哪些网络环境可以运行所选后端。出口结果默认有效一小时，过期且需要使用时才重查；有相关执行时到期也会重查。TUN 接口消失或关闭、代理端口拒绝连接时立即作废结果（端口无响应、出口检测没回应要连续两次），并按设置停止当前执行、尝试兜底后端。本地检查约每两秒一次；接口存在不能保证路由和上游一直正常。</HelpText>
     <Skeleton v-if="loading" variant="lines" :rows="2" />
-    <p v-else-if="error" class="warn small" role="status">{{ error }} <button class="btn ghost sm" @click="load">重试</button></p>
+    <p v-else-if="error" class="warn-text small" role="status">{{ error }} <button class="btn ghost sm" @click="load">重试</button></p>
     <p v-else-if="!policies.length && !draft" class="muted small">还没有网络条件。添加后可同时约束同一网络上的多个后端。</p>
     <div v-for="p in policies" :key="p.id" class="network-row stack">
-      <div class="row wrap"><strong class="grow">{{ p.name }}</strong><span class="badge" :class="statusOf(p.id)?.status === 'ready' ? 'ok' : 'warn'">{{ labels[statusOf(p.id)?.status ?? 'unchecked'] }}</span></div>
-      <p v-if="statusOf(p.id)?.reason" class="small warn" role="status">{{ statusOf(p.id)?.reason }}</p>
+      <div class="row wrap"><strong class="grow">{{ p.name }}</strong><span class="badge" :class="badgeOf(statusOf(p.id)?.status)">{{ labels[statusOf(p.id)?.status ?? 'unchecked'] }}</span></div>
+      <p v-if="statusOf(p.id)?.reason" class="small" :class="statusOf(p.id)?.status === 'unavailable' ? 'failed' : 'warn-text'" role="status">{{ statusOf(p.id)?.reason }}</p>
       <p v-if="statusOf(p.id)?.ip" class="small">上次出口：{{ statusOf(p.id)?.country ? names.of(statusOf(p.id)!.country!) : '地区未知' }} · <span class="mono">{{ statusOf(p.id)?.ip }}</span></p>
       <div v-if="statusOf(p.id)?.ipv6" class="stack small diagnostic">
         <p>IPv6 目标路径 · 检查于{{ relTime(statusOf(p.id)!.ipv6!.checkedAt) }}<span v-if="statusOf(p.id)?.ipv6?.source"> · AAAA：{{ statusOf(p.id)?.ipv6?.source }}</span></p>
@@ -151,8 +153,11 @@ onBeforeUnmount(() => clearInterval(timer));
 .network-row, .network-editor { border-top: 1px solid var(--line); padding-top: 16px; overflow-wrap: anywhere; }
 .network-row .grow { overflow-wrap: anywhere; min-width: 0; }
 .network-editor .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+/* Side by side, a field without a hint must not stretch its label to the neighbour's height. */
+.network-editor .field { align-content: start; }
 .network-editor { scroll-margin-top: 72px; }
 .advanced { margin-top: 12px; }
+.failed { color: var(--danger); }
 .diagnostic { border-left: 2px solid var(--line); padding-left: 12px; }
 .network-editor :deep(.ui-select), .network-editor input { width: 100%; }
 @media (max-width: 760px) { .network-editor .grid2 { grid-template-columns: minmax(0, 1fr); } }

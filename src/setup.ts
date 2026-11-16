@@ -13,7 +13,7 @@ import { run } from "./core/db.ts";
 import { desktopControl, installArgs, installSpec, installTool, toolCommand, toolStatus } from "./core/tools.ts";
 import { judgeProject } from "./sources/judge.ts";
 import { ensureDefaultSchedules, listSchedules, scheduleLabels } from "./core/scheduler.ts";
-import { larkCliInteractive, larkCliText, larkCliWithInput } from "./channels/lark-cli.ts";
+import { larkCliInteractive, larkCliText, larkCliWithInput, OWNER_LOGIN_DOMAINS } from "./channels/lark-cli.ts";
 import { checkLarkApp, knownLarkApps, larkAppSecret, larkCliState, registerLarkBot, saveLarkSecret, type LarkAppCredentials, type LarkCliState } from "./channels/lark-setup.ts";
 import { doclingScript } from "./sources/import.ts";
 
@@ -675,7 +675,7 @@ async function ensurePersonalLogin(app: App, cli: LarkCliState) {
       out("  没有个人登录时采集会跳过；之后重新运行 omem setup 即可。");
       return;
     }
-    const code = larkCliInteractive(["auth", "login", "--domain", "im,contact,docs,drive,wiki,calendar,minutes,vc"]);
+    const code = larkCliInteractive(["auth", "login", "--domain", OWNER_LOGIN_DOMAINS]);
     const after = await larkCliState();
     if (code !== 0 || !after.user?.ok) return out(`  登录没有完成${after.user?.message ? `：${after.user.message}` : ""}。`);
     out(`  ✓ 已登录为 ${after.user.name ?? after.user.openId}。`);

@@ -1,7 +1,8 @@
 import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
 import { HttpError } from "../core/util.ts";
-import { larkActing, larkCli, LarkScopeError } from "./lark-cli.ts";
+import { larkActing, larkCli, LarkScopeError, onOwnerLoginMissing, OWNER_LOGIN_DOMAINS } from "./lark-cli.ts";
+import { one, run } from "../core/db.ts";
 
 /**
  * The owner's lark-cli login (user identity) and what it may do. lark-cli has its own app and
@@ -125,8 +126,51 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>)
   }
 }
 
+/** How long after a login link before another one when the owner has not confirmed it. */
+const RELOGIN_EVERY_MS = 6 * 3600_000;
+let relogin: Promise<void> | null = null;
+
+/**
+ * The owner's login gone altogether (lark-cli reports token_missing: expired and not refreshed, or
+ * removed). Capture, `/ai` in private chats and the rules' quick checks failed every minute with only
+ * a line in the log. Now the owner gets one link for a full login (the same domains as setup), omem
+ * finishes it in the background once confirmed (`--device-code`, which an agent's own login in its
+ * shell had left out), and asks again only after RELOGIN_EVERY_MS.
+ */
+export function watchOwnerLogin(app: App) {
+  onOwnerLoginMissing(() => {
+    if (relogin) return;
+    const last = Number(one<{ value: string }>(app.db, "select value from kv where key = 'lark_relogin_asked_at'")?.value ?? 0);
+    if (Date.now() - last < RELOGIN_EVERY_MS) return;
+    run(app.db, "insert into kv(key,value) values('lark_relogin_asked_at', ?) on conflict(key) do update set value = excluded.value", String(Date.now()));
+    relogin = askOwnerLogin(app)
+      .catch((e) => console.warn(`[omem] 发起 lark-cli 重新登录失败：${(e as Error).message}`))
+      .finally(() => { relogin = null; });
+  });
+}
+
+async function askOwnerLogin(app: App) {
+  const v = await larkCli(["auth", "login", "--domain", OWNER_LOGIN_DOMAINS, "--no-wait", "--json"], 60_000);
+  const d = v?.data ?? v;
+  const url = String(d?.verification_url ?? d?.verification_uri_complete ?? d?.verification_uri ?? "");
+  const code = String(d?.device_code ?? "");
+  if (!url || !code) throw new Error("lark-cli 没有返回授权链接");
+  const seconds = Number(d?.expires_in) || 600;
+  const asked = notify(app, {
+    tone: "warning",
+    title: "飞书授权：lark-cli 的登录失效了",
+    body: `omem 以你的身份读飞书（消息采集、私聊里的指令、规则的快速检查、读文档）要用 lark-cli 的登录，现在它没有可用的登录。\n\n在飞书里打开链接确认（${Math.round(seconds / 60)} 分钟内有效）：${url}\n\n确认后 omem 自己保存登录，不用再做别的。没来得及确认的话 ${RELOGIN_EVERY_MS / 3600_000} 小时后会再发一次；也可以在运行 omem 的电脑上执行 omem setup。`,
+    urgency: "normal",
+  });
+  await larkCli(["auth", "login", "--device-code", code, "--json"], seconds * 1000 + 30_000);
+  cached = null;
+  run(app.db, "delete from kv where key = 'lark_relogin_asked_at'");
+  notify(app, { title: "飞书授权已完成", body: "lark-cli 已重新登录，采集和指令会照常进行。", tone: "done", replaces: asked.id });
+}
+
 /** Tests: forget the cached scopes and waiting logins. */
 export function resetLarkAuthForTests() {
   cached = null;
   pending.clear();
+  relogin = null;
 }

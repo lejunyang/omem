@@ -1,4 +1,4 @@
-import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshNetworkPolicies } from "./network-policy.ts";
+import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshForRun } from "./network-policy.ts";
 import { one } from "../core/db.ts";
 import { hostToldOwner } from "./code-chain.ts";
 import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
@@ -274,7 +274,7 @@ export type TurnResult = { text: string; agent: string; profileId: string; mode:
  */
 export async function threadTurn(ctx: RunContext, threadId: string, messages: ThreadMessage[], userId = "owner", promptOverride?: string): Promise<TurnResult> {
   const app = ctx.app;
-  await refreshNetworkPolicies(app);
+  await refreshForRun(app);
   const t = getThread(app, threadId);
   const { actor, label } = actorFor(app, t);
   const lark = larkScope(t, userId);

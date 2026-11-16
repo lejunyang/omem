@@ -4,6 +4,11 @@ import { HttpError, newId, now, truncate, webLink } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 import { fieldsText, normalizeAnswers, summarizeAnswers, viewText, type AskUi, type ViewComponent } from "./ui-blocks.ts";
 
+/** Marks a line of a tool's result that is for the agent (how to go on), not for the owner reading the approval's outcome. */
+export const AGENT_NOTE = "（给 Agent）";
+/** A tool result as the owner sees it after approving: without the lines meant for the agent. */
+export const forOwner = (text: string) => text.split("\n").filter((l) => !l.startsWith(AGENT_NOTE)).join("\n");
+
 /**
  * Choices put in front of the owner while agents work, answered with one click (Feishu card, web)
  * or a reply in the same chat (a number picks an option):
@@ -446,7 +451,7 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
     if (before.kind === "approval" && approved && executor && !before.handler) {
       const ctx = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}");
       const r = await executor(app, getAsk(app, id), ctx).catch((e: Error) => ({ text: e.message, isError: true }));
-      run(app.db, "update asks set result = ? where id = ?", `${r.isError ? "失败：" : ""}${truncate(r.text, 4000)}`, id);
+      run(app.db, "update asks set result = ? where id = ?", `${r.isError ? "失败：" : ""}${truncate(forOwner(r.text), 4000)}`, id);
     }
     const ask = getAsk(app, id);
     closed(app, ask);

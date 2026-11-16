@@ -51,3 +51,19 @@ describe("messages sent while a turn runs", () => {
     app.db.close();
   });
 });
+
+describe("switching the AI", () => {
+  it("is the owner's call, not a colleague's in a group the owner is in", async () => {
+    const app = testApp();
+    app.config.agents.profiles.push({ id: "other", name: "other", transport: "acp", command: process.execPath, args: [], env: {}, idleTimeoutMs: 60000 });
+    const turn = await receive(app, { channel: "web", conversationId: "c_colleague", text: "你可以把模型切换成 gpt 吗" });
+    run(app.db, "update messages set meta = json_set(meta, '$.asker', '小李') where id = ?", turn.messageId);
+    run(app.db, "update runs set status = 'running' where id = ?", turn.runId);
+    const ctx = toolContextForToken(app, issueToolToken({ runId: turn.runId, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
+    const r = await callTool(ctx, "switch_run_ai", { run_id: turn.runId, execution: { profile: "other", source: "user", reason: "同事要换" } });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("只听本人");
+    expect(getRun(app, turn.runId!).output.replacedBy).toBeUndefined();
+    app.db.close();
+  });
+});

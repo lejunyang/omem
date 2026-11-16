@@ -18,7 +18,7 @@ import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
-import { NetworkUnavailableError, networkReason, refreshNetworkPolicies } from "./network-policy.ts";
+import { NetworkUnavailableError, networkReason, refreshForRun } from "./network-policy.ts";
 import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
 import { aiLabel, candidateProfiles, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
@@ -719,7 +719,7 @@ function runAI(app: App, runId: string | null): Execution | undefined {
 }
 
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
-  await refreshNetworkPolicies(app);
+  await refreshForRun(app);
   const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
