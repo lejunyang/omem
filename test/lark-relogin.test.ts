@@ -22,6 +22,11 @@ it("asks the owner to log in again, once, when lark-cli has no login left, and f
     return { ok: false, error: { type: "authentication", message: "token_missing need_user_authorization (user: ou_owner)" } };
   });
   watchOwnerLogin(app);
+  // During quiet hours the ten-minute link would wait until morning, expired: not asked then.
+  app.config.notify.quietStart = 0; app.config.notify.quietEnd = 24;
+  await expect(larkCli(["im", "+chat-list"])).rejects.toThrow();
+  expect(calls.some((c) => c[0] === "auth")).toBe(false);
+  app.config.notify.quietStart = 0; app.config.notify.quietEnd = 0;
   // Capture and the rules fail every minute: one link, not one per failure.
   for (let i = 0; i < 3; i++) await expect(larkCli(["im", "+chat-list"])).rejects.toThrow();
   await new Promise((r) => setTimeout(r, 20));

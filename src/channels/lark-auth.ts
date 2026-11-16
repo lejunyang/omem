@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { notify } from "../core/notify.ts";
+import { inQuietHours, notify } from "../core/notify.ts";
 import { HttpError } from "../core/util.ts";
 import { larkActing, larkCli, LarkScopeError, onOwnerLoginMissing, OWNER_LOGIN_DOMAINS } from "./lark-cli.ts";
 import { one, run } from "../core/db.ts";
@@ -139,7 +139,9 @@ let relogin: Promise<void> | null = null;
  */
 export function watchOwnerLogin(app: App) {
   onOwnerLoginMissing(() => {
-    if (relogin) return;
+    // A link lasts ten minutes and a notification waits out the quiet hours: ask once they are over
+    // (the failures keep coming every minute), not with a link that has expired by morning.
+    if (relogin || inQuietHours(app)) return;
     const last = Number(one<{ value: string }>(app.db, "select value from kv where key = 'lark_relogin_asked_at'")?.value ?? 0);
     if (Date.now() - last < RELOGIN_EVERY_MS) return;
     run(app.db, "insert into kv(key,value) values('lark_relogin_asked_at', ?) on conflict(key) do update set value = excluded.value", String(Date.now()));
