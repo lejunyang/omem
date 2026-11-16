@@ -99,6 +99,7 @@ new AgentSideConnection(
       return { configOptions: reviewModels ? reviewModelOptions(state.model) : traeOptions(state.model) } as never;
     },
     async resumeSession(p: { sessionId: string; mcpServers?: McpServer[]; cwd?: string }) {
+      if (process.env.FAKE_RESUME_FAIL) throw RequestError.internalError({ details: "session cannot be resumed" });
       sessions.set(p.sessionId, p.mcpServers ?? []);
       if (p.cwd) cwds.set(p.sessionId, p.cwd);
       resumed.add(p.sessionId);

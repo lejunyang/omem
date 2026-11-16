@@ -7,7 +7,7 @@ import { createRun, getRun, queuedInLane, registerHandler, setRunOutput, updateQ
 import { quietReason } from "../agents/quiet.ts";
 import { larkBy } from "../core/run-trigger.ts";
 import { ruleClaim, rulesJudging } from "../rules/store.ts";
-import { handledKey, mentionChannel, mentionChannels, type MentionChannel, type MentionChat, type MentionInfo, type MentionMessage, type Replied, type ReplyMode } from "./channel.ts";
+import { handledKey, mentionChannel, mentionChannels, MENTION_FOLLOW_MS, type MentionChannel, type MentionChat, type MentionInfo, type MentionMessage, type Replied, type ReplyMode } from "./channel.ts";
 
 export type { MentionChannel, MentionChat, MentionInfo, MentionMessage } from "./channel.ts";
 import { localTime, triage, triageMaterial, triageText, type Triage, type TriageInput } from "./triage.ts";
@@ -41,8 +41,6 @@ import { noteAsk, noteDraft, noteHandling, replyHabits, settleSamples, typicalRe
 
 /** How many times a run waits (a minute each) for the rules still judging its messages, or the ingest run reading their lines. */
 const WAITS = 8;
-/** Same person, same topic, within this of a handling: the new messages go to it. */
-const FOLLOW_MS = 30 * 60_000;
 /** Messages handed here this long ago are no longer news to the ingest run (handedToMentions). */
 const HANDED_MS = 6 * 3600_000;
 /** What a handling may not do: no coding, no rules or watches, no other agents, nothing written to Feishu as the owner. */
@@ -154,7 +152,7 @@ function recentHandling(app: App, input: Input, senders: string[]) {
     `select id, status from runs where kind = 'agent' and json_extract(input, '$.mention.chatId') = ? and coalesce(json_extract(input, '$.mention.topicId'), '') = ?
        and json_extract(input, '$.mention.senderId') in (${senders.map(() => "?").join(",")}) and status in ('queued','running','done') and created_at > ?
      order by created_at desc limit 1`,
-    input.chatId, input.topicId ?? "", ...senders, new Date(Date.now() - FOLLOW_MS).toISOString()) ?? null;
+    input.chatId, input.topicId ?? "", ...senders, new Date(Date.now() - MENTION_FOLLOW_MS).toISOString()) ?? null;
 }
 
 registerHandler("mention", async (ctx: RunContext) => {

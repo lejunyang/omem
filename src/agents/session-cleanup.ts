@@ -8,6 +8,7 @@ import { cleanupAcpSession } from "./acp.ts";
 import { disposableChildren } from "./session-children.ts";
 import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoSessionStatus, doubaoTokenExists } from "./doubao.ts";
 import type { AgentEvent, AgentRequest, SessionCleanup } from "./types.ts";
+import { MENTION_FOLLOW_MS } from "../mentions/channel.ts";
 
 type Pending = {
   backend_key: string; session_id: string; transport: string; profile_id: string | null;
@@ -36,13 +37,12 @@ export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<
   const appId = acp ? null : (profile.env.DOUBAO_APP_ID ?? doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config))?.appId ?? null);
   const hash = acp ? fingerprint(profile) : null;
   const backend = acp ? `acp:${hash}` : `doubao:${appId ?? ""}`;
-  const retained = !!req.persistSession || !!req.resumeSessionId;
   const record = (id: string, ready: number) => {
     run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,?,?)
       on conflict(backend_key,session_id) do update set run_id = coalesce(excluded.run_id, session_cleanup.run_id), owner_pid = excluded.owner_pid, ready = excluded.ready`, backend, id, profile.transport, profile.id, hash, appId, req.cwd, req.runId ?? null, process.pid, ready, now());
   };
   return {
-    created(id) { record(id, retained ? -1 : 0); },
+    created(id) { record(id, req.persistSession || id === req.resumeSessionId ? -1 : 0); },
     active(id, active) {
       const key = sessionKey(app, { backend_key: backend, session_id: id });
       if (active) activeTurns.add(key);
@@ -148,8 +148,8 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
   } finally { busy.delete(key); }
 }
 
-/** A rule batch only needs its session while a queued successor or a followed topic can resume it. */
-function releaseRuleSessions(app: App) {
+/** Release retained sessions once their conversation, task or follow-up no longer needs them. */
+function releaseRetainedSessions(app: App) {
   const active = all<{ id: string; lane: string | null; input: string }>(app.db, "select id,lane,input from runs where status in ('queued','running')");
   const lanes = new Set(active.map(r => r.lane).filter(Boolean));
   const resumeIds = new Set<string>();
@@ -178,33 +178,50 @@ function releaseRuleSessions(app: App) {
     const id = r && json<{ sessionId?: string }>(r.output, {}).sessionId;
     if (id) resumeIds.add(id);
   }
-  const kept = all<Pending & { input: string; output: string; status: string; lane: string | null }>(app.db,
-    `select s.*,r.input,r.output,r.status,r.lane from session_cleanup s join runs r on r.id=s.run_id
+  const kept = all<Pending & { input: string; output: string; status: string; lane: string | null; created_at: string }>(app.db,
+    `select s.*,r.input,r.output,r.status,r.lane,r.created_at from session_cleanup s join runs r on r.id=s.run_id
      where s.ready=-1 and r.kind='agent' and r.status not in ('queued','running')`);
   for (const p of kept) {
     if (activeElsewhere(app, p)) continue;
     const input = json<Record<string, unknown>>(p.input, {});
-    if (!input.rule || input.agentWorkId || input.meeting) continue;
+    if ((!input.rule && !input.mention) || input.agentWorkId || input.meeting) continue;
     if (resumeIds.has(p.session_id) || (p.lane && lanes.has(p.lane))) continue;
     const currentId = json<{ sessionId?: string }>(p.output, {}).sessionId;
     if (p.run_id && (resumeRuns.has(p.run_id) || followedRuns.has(p.run_id)) && (!currentId || currentId === p.session_id)) continue;
+    // Match recentHandling's follow-up window; an interrupted replacement is swept here too.
+    if (input.mention && p.status === "done" && Date.parse(p.created_at) > Date.now() - MENTION_FOLLOW_MS) continue;
     update(app, p, "ready = 1, retry_at = ?", now());
   }
   // A delegation that was confirmed or discarded will not resume its coder's or its reviewers'
   // sessions: without this they stay in the backend's history for good (every check keeps one).
-  const coding = all<Pending & { rid: string; input: string }>(app.db,
-    `select s.*, r.id rid, r.input from session_cleanup s join runs r on r.id = s.run_id
-     where s.ready = -1 and r.kind = 'code' and r.status not in ('queued','running')`);
+  const coding = all<Pending & { rid: string; kind: string; input: string }>(app.db,
+    `select s.*, r.id rid, r.kind, r.input from session_cleanup s join runs r on r.id = s.run_id
+     where s.ready = -1 and r.status not in ('queued','running')
+       and (r.kind in ('code','review') or (r.kind='agent' and json_type(r.input,'$.secondLookOf')='text'))`);
   const over = new Map<string, boolean>();
   for (const p of coding) {
     if (activeElsewhere(app, p) || resumeIds.has(p.session_id)) continue;
-    const rootId = String(json<{ continueFrom?: string }>(p.input, {}).continueFrom ?? p.rid);
+    const input = json<{ continueFrom?: string; codeRunId?: string; workId?: string; secondLookOf?: string }>(p.input, {});
+    let rootId = p.kind === "code" ? input.continueFrom ?? p.rid : p.kind === "review" ? input.codeRunId : input.workId ?? input.secondLookOf;
+    if (!rootId) continue;
+    const round = one<{ input: string }>(app.db, "select input from runs where id = ?", rootId);
+    rootId = json<{ continueFrom?: string }>(round?.input ?? "{}", {}).continueFrom ?? rootId;
     if (!over.has(rootId)) {
       const root = one<{ output: string }>(app.db, "select output from runs where id = ?", rootId);
       const o = json<{ appliedAt?: string; discardedAt?: string }>(root?.output ?? "{}", {});
       over.set(rootId, !root || !!o.appliedAt || !!o.discardedAt);
     }
     if (over.get(rootId)) update(app, p, "ready = 1, retry_at = ?", now());
+  }
+  // A restart can lose the immediate retirement after a conversation switched sessions. Keep
+  // every session still attached to a conversation (including one available through /resume).
+  const replaced = all<Pending>(app.db,
+    `select s.* from session_cleanup s join runs r on r.id=s.run_id
+     where s.ready=-1 and r.kind='ask' and r.status not in ('queued','running')
+       and not exists(select 1 from conversations c where c.agent_session=s.session_id)`);
+  for (const p of replaced) {
+    if (activeElsewhere(app, p) || resumeIds.has(p.session_id) || (p.run_id && resumeRuns.has(p.run_id))) continue;
+    update(app, p, "ready = 1, retry_at = ?", now());
   }
   // Work handed to agents has no end of its own: its sessions go once nothing ran in it for two days.
   const weekAgo = new Date(Date.now() - RETAIN_IDLE_MS).toISOString();
@@ -223,7 +240,7 @@ function releaseRuleSessions(app: App) {
 
 /** Recorded disposable sessions only; a live omem process retains ownership, including pool idle time. */
 export async function recoverSessionCleanup(app: App, emit: (runId: string | null, e: AgentEvent) => void) {
-  releaseRuleSessions(app);
+  releaseRetainedSessions(app);
   const pending = all<Pending>(app.db, "select * from session_cleanup where ready >= 0 and retry_at <= ? order by retry_at", now());
   let attempts = 0;
   for (const p of pending) {

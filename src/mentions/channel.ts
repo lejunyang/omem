@@ -1,5 +1,8 @@
 import type { App } from "../core/app.ts";
 
+/** Same person and topic can continue a handling for this long after it was queued. */
+export const MENTION_FOLLOW_MS = 30 * 60_000;
+
 /**
  * What a chat channel tells 有人找你 (docs/v2/mentions.md “渠道”). The flow itself — the free
  * checks, the wait for rules and the ingest run, the daily limits, the triage, the handling and its

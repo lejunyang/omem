@@ -645,7 +645,7 @@ export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e:
     return await handle.prompt(sessionPrompt(handle, req, req.prompt, emit), emit, req.signal);
   } finally {
     req.signal?.removeEventListener("abort", onAbort);
-    if (!req.persistSession && !req.resumeSessionId) await handle.discard();
+    if (!req.persistSession && !handle.resumed) await handle.discard();
     else handle.close();
   }
 }
