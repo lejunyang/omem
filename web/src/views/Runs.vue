@@ -42,9 +42,19 @@ const showQuiet = ref(false);
 const statusFilter = ref<"" | "queued" | "running" | "failed">("");
 // The person behind a run (someone asking the bot, someone looking for you, a member, yourself).
 const byFilter = ref("");
-const people = ref<{ key: string; name: string; runs: number }[]>([]);
-const byOptions = computed(() => [{ value: "", label: "所有人" }, ...people.value.map((p) => ({ value: p.key, label: p.name, hint: `近 30 天 ${p.runs} 次` })), ...(byFilter.value && !people.value.some((p) => p.key === byFilter.value) ? [{ value: byFilter.value, label: byFilter.value }] : [])]);
-const loadPeople = () => get<{ people: { key: string; name: string; runs: number }[] }>("/api/runs/triggerers").then((r) => (people.value = r.people)).catch(() => {});
+const people = ref<{ key: string; name: string; runs: number; ways: Record<string, number> }[]>([]);
+/** How: asking the assistant, looking for you (有人找你), a guest's question… (core/run-trigger.ts VIA_LABEL). */
+const viaFilter = ref("");
+const WAYS: Record<string, string> = { chat: "找助手", mention: "有人找你", guest: "访客提问", rule: "规则", schedule: "定时", member: "成员操作", flow: "流程", peer: "同伴设备" };
+const wayHint = (ways: Record<string, number>) => Object.entries(ways).sort((a, b) => b[1] - a[1]).map(([w, n]) => `${WAYS[w] ?? w} ${n}`).join(" · ");
+const byOptions = computed(() => [{ value: "", label: "所有人" }, ...people.value.map((p) => ({ value: p.key, label: p.name, hint: `近 30 天 ${p.runs} 次：${wayHint(p.ways)}` })), ...(byFilter.value && !people.value.some((p) => p.key === byFilter.value) ? [{ value: byFilter.value, label: byFilter.value.replace(/^name:/, "") }] : [])]);
+const viaOptions = computed(() => {
+  const ways = byFilter.value ? people.value.find((p) => p.key === byFilter.value)?.ways ?? {} : Object.fromEntries(Object.keys(WAYS).map((w) => [w, 1]));
+  return [{ value: "", label: "所有方式" }, ...Object.keys(WAYS).filter((w) => ways[w] || w === viaFilter.value).map((w) => ({ value: w, label: WAYS[w] }))];
+});
+const loadPeople = () => get<{ people: { key: string; name: string; runs: number; ways: Record<string, number> }[] }>("/api/runs/triggerers").then((r) => (people.value = r.people)).catch(() => {});
+/** The filter's key for a run's person: one entry per person by name (run-trigger.ts triggerers), you as yourself. */
+const personKey = (by: { key: string; name: string }) => (by.key === "user:owner" ? by.key : `name:${by.name}`);
 function filterBy(key: string) {
   view.value = "all";
   scope.value = "all";
@@ -119,6 +129,7 @@ function pageQuery() {
   if (showQuiet.value) q.set("all", "true");
   if (statusFilter.value) q.set("status", statusFilter.value);
   if (byFilter.value) q.set("by", byFilter.value);
+  if (viaFilter.value) q.set("via", viaFilter.value);
   return q;
 }
 function loadPage(offset: number, query = pageQuery()) {
@@ -167,6 +178,7 @@ watch(kindFilter, load);
 watch(showQuiet, load);
 watch(statusFilter, load);
 watch(byFilter, load);
+watch(viaFilter, load);
 onMounted(loadPeople);
 watch(() => state.space, load);
 let keywordTimer: ReturnType<typeof setTimeout> | undefined;
@@ -323,7 +335,7 @@ const kindOptions = computed(() => [
         <template v-if="view === 'all'">
           <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
           <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
-          <div class="by-filter"><UiSelect v-model="byFilter" size="sm" width="132px" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" /></div>
+          <div class="by-filter"><UiSelect v-model="byFilter" size="sm" width="132px" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" /><UiSelect v-model="viaFilter" size="sm" width="112px" aria-label="触发方式" :options="viaOptions" title="按触发方式筛选：找助手（@ 或私聊机器人）、有人找你……" /></div>
           <UiCheckbox v-model="showQuiet" size="sm" class="small muted quiet" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
         </template>
         <UiSegmented v-model="scope" class="scope-filter" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
@@ -369,7 +381,7 @@ const kindOptions = computed(() => [
             <span class="muted">{{ fmtTime(detail.run.createdAt) }}<template v-if="detail.run.finishedAt"> → {{ fmtTime(detail.run.finishedAt) }}</template></span>
             <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· <span class="mono">{{ aiLabel(detail.run) }}</span></span>
             <span v-if="detail.run.spaceId" class="muted">· {{ spaceName(detail.run.spaceId) }}</span>
-            <span v-if="detail.run.trigger" class="muted">· 触发：<button v-if="detail.run.trigger.by" class="linkish" type="button" title="看这个人触发的全部运行" @click="filterBy(detail.run.trigger.by.key)">{{ detail.run.trigger.by.name }}</button><template v-if="detail.run.trigger.by"> · </template><router-link v-if="detail.run.trigger.via === 'flow' && detail.run.input.itemId" :to="`/items/${detail.run.input.itemId}`">{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</router-link><template v-else>{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</template></span>
+            <span v-if="detail.run.trigger" class="muted">· 触发：<button v-if="detail.run.trigger.by" class="linkish" type="button" title="看这个人触发的全部运行" @click="filterBy(personKey(detail.run.trigger.by))">{{ detail.run.trigger.by.name }}</button><template v-if="detail.run.trigger.by"> · </template><router-link v-if="detail.run.trigger.via === 'flow' && detail.run.input.itemId" :to="`/items/${detail.run.input.itemId}`">{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</router-link><template v-else>{{ triggerLabel({ ...detail.run.trigger, by: undefined }, true) }}</template></span>
             <router-link v-for="it in ctxInfo?.items ?? []" :key="it.id" :to="`/items/${it.id}`" class="item-link" :title="it.title">事项：{{ it.title }}</router-link>
           </div>
           <h1 :title="hintOf(detail.run)">{{ detail.run.title }}</h1>
@@ -568,7 +580,7 @@ const kindOptions = computed(() => [
 .head .delegate { grid-area: delegate; }
 .head .kind-filter { grid-area: kind; justify-self: start; }
 .head .status-filter { grid-area: status; justify-self: start; }
-.head .by-filter { grid-area: by; justify-self: end; align-self: start; }
+.head .by-filter { grid-area: by; justify-self: end; align-self: start; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .run .by { display: flex; align-items: center; gap: 4px; }
 .linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .linkish:hover { text-decoration: underline; }

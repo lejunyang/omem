@@ -167,13 +167,14 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; visibleTo?: { userId: string; spaces: string[] } };
+type RunFilter = { id?: string; kind?: string; exclude?: string; spaceId?: string; spaceIds?: string[]; status?: string; parentId?: string; includeQuiet?: boolean; q?: string; by?: string; via?: string; visibleTo?: { userId: string; spaces: string[] } };
 
 /**
  * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
  * the runs a built-in role took part in. Any of them matches; `exclude` lists kinds left out (the run
  * page lists coding work on its own). `q` matches the title, the id or the
- * task. `by`: the person behind it (a trigger key, `user:<id>` / `lark:<open_id>` …). `visibleTo`: someone other than the owner sees their own runs, and those whose every
+ * task. `by`: the person behind it (a trigger key, `user:<id>` / `lark:<open_id>` …; `name:<name>` is that person by name,
+ * whichever app's id came with each run). `via`: how it came about (chat, mention, guest, rule…). `visibleTo`: someone other than the owner sees their own runs, and those whose every
  * readable space is in `spaces` (src/auth/permissions.ts canReadRun).
  */
 function runWhere(opts: RunFilter) {
@@ -202,7 +203,9 @@ function runWhere(opts: RunFilter) {
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.spaceIds?.length) where.push(`space_id in (${opts.spaceIds.map(() => "?").join(",")})`), params.push(...opts.spaceIds);
   if (opts.status) where.push("status = ?"), params.push(opts.status);
-  if (opts.by) where.push("trigger_by = ?"), params.push(opts.by);
+  if (opts.by?.startsWith("name:")) where.push("trigger_by is not null and trigger_by != 'user:owner' and json_extract(trigger, '$.by.name') = ?"), params.push(opts.by.slice(5));
+  else if (opts.by) where.push("trigger_by = ?"), params.push(opts.by);
+  if (opts.via) where.push("json_extract(trigger, '$.via') = ?"), params.push(opts.via);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
   if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
   const q = opts.q?.trim();

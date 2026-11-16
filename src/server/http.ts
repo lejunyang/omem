@@ -1433,11 +1433,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // --------------------------------------------------------------------- runs
   server.get("/api/runs", async (req) => {
-    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), by: z.string().max(200).optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
+    const o = q(z.object({ id: z.string().optional(), kind: z.string().optional(), exclude: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), by: z.string().max(200).optional(), via: z.string().max(40).optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     // Someone other than the owner: their own runs and the ones they may read (src/auth/permissions.ts).
     const spaces = runReadableSpaces(app, who(req));
     const visibleTo = spaces === null ? undefined : { userId: who(req), spaces };
-    const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, by: o.by, visibleTo };
+    const opts = { id: o.id, kind: o.kind, exclude: o.exclude, spaceIds: o.space ? spaceFamily(app, o.space) : undefined, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q, by: o.by, via: o.via, visibleTo };
     const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
   });

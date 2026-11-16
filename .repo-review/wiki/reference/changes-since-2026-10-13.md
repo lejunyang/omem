@@ -15,6 +15,11 @@ updated: 2026-11-17
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 运行按人和方式筛选、助手登记用户（11-17）
+
+- 运行页“触发人”一个人只有一项：`core/run-trigger.ts` 的 `triggerers` 按名字合并（同一个人经机器人和 lark-cli 两个应用来，open_id 不同），返回各方式的次数；`listRuns` 的 `by=name:<名字>` 按名字筛，新加 `via` 按方式筛（`chat` 找助手、`mention` 有人找你……），页面多一个“触发方式”下拉。群里同事经主助手问的那一轮，触发人记成他在机器人应用里的 open_id（消息 meta 的 `askerId`）。
+- 工具 `add_users`（`curate` 组）：本人 @ 几个人让助手加成用户时，按群成员认出人、记飞书身份和邮箱（`contact.user.get`，读不到就只靠飞书登录），按话里说的空间加成员；已是用户的只补权限；只认本人的消息。
+
 ## 机器人身份改文档、lark-cli 掉登录后重新授权、网络条件不误停（11-17）
 
 - `lark_doc_fetch` / `lark_doc_update` 加 `identity: "bot"`：用 omem 自己的机器人（`lark.appId` 和密钥，lark-cli 的 `--as bot`，`src/channels/lark-cli.ts` 的 `larkCliAsBot`）读写，不用本人的权限和批准，不做整篇覆盖。机器人没有权限、又是群里同事的请求时（消息 meta 的 `askerId`），工具给出授权链接（`src/auth/grants.ts`：`/api/auth/lark/grant/<票据>`，半小时有效，只有那个人能完成，只要 `docs:permission.member:create` 和后台刷新），同意后令牌按 `lark:<open_id>` 存进连接（和成员的连接一样续期），宿主用它 `drive +member-add --member-type appid` 把机器人加为那篇的可编辑协作者再重试（`tools.ts` 的 `botForRequester`）。本人没权限时工具提示改用机器人（`ownerDenied`）。

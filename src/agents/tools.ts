@@ -4761,6 +4761,63 @@ def({
 });
 
 def({
+  name: "add_users",
+  description:
+    "把本人在消息里点名（@）的人登记为 omem 的用户：记下名字、飞书身份和邮箱，之后他们用飞书（或这个邮箱）登录就直接对应到这个账号，不用再批准；按本人说的给空间权限（reader 只读、contributor 可补充、editor 可写、manager 管理）。已经是用户的人只补空间权限和邮箱。只在本人自己的消息里要求时用。",
+  write: true,
+  schema: z.object({
+    people: z.array(z.string().min(1).max(100)).min(1).max(20).describe("要登记的人：本人消息里 @ 的名字，或邮箱、飞书 open_id"),
+    spaces: z.array(z.object({ space: z.string().min(1), role: z.enum(["reader", "contributor", "editor", "manager"]).default("reader") })).max(20).optional().describe("给他们的空间和权限；不给就只登记，只有自己的个人空间"),
+  }),
+  handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人能登记用户");
+    // A colleague's words in the group do not add people or hand out spaces.
+    const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    const said = r?.kind === "ask" ? ((r.input.messageIds as string[] | undefined) ?? []) : [];
+    if (said.length && all<{ asker: string | null }>(ctx.app.db, `select json_extract(meta, '$.asker') asker from messages where id in (${said.map(() => "?").join(",")}) and role = 'user'`, ...said).every((m) => m.asker))
+      throw new HttpError(403, "登记用户只听本人的：这一轮的消息来自群里的同事");
+    const spaces = (a.spaces ?? []).map((s) => {
+      const found = findSpace(ctx.app, s.space) ?? one<{ id: string }>(ctx.app.db, "select id from spaces where name = ?", s.space);
+      if (!found) throw new HttpError(400, `没有空间「${s.space}」；用 list_spaces 查看`);
+      return { id: found.id, role: s.role };
+    });
+    const { addMember, createUser, emailHolder, getUser, identityOwner, linkIdentity, updateUser } = await import("../core/users.ts");
+    const { resolveMention } = await import("../channels/lark-people.ts");
+    // The chat this turn is in: names are looked up among its members, as an @ would be.
+    const conv = runThread(ctx);
+    const ext = conv ? one<{ external_id: string | null; channel: string }>(ctx.app.db, "select external_id, channel from conversations where id = ?", conv) : undefined;
+    const chat = ext?.channel === "lark" ? (ext.external_id ?? "").split("#")[0] || null : null;
+    const lines: string[] = [];
+    for (const who of a.people) {
+      try {
+        const p = await resolveMention(ctx.app, who, chat);
+        if ("all" in p) throw new HttpError(400, "不能登记“所有人”");
+        let email = p.email;
+        if (!email && p.userId.startsWith("ou_")) {
+          // The directory's email, when the bot may read it (contact:user.email:readonly).
+          try {
+            const { larkClient } = await import("../channels/lark-send.ts");
+            const res = await larkClient().contact.user.get({ path: { user_id: p.userId }, params: { user_id_type: "open_id" } });
+            const u = (res as { data?: { user?: { enterprise_email?: string; email?: string } } }).data?.user;
+            email = u?.enterprise_email || u?.email || null;
+          } catch { /* no email: they can still log in with Feishu */ }
+        }
+        const existing = identityOwner(ctx.app, "lark", p.userId) ?? emailHolder(ctx.app, email)?.id ?? null;
+        const user = existing ? getUser(ctx.app, existing) : createUser(ctx.app, { name: p.name, email: email ?? null });
+        if (!existing && p.userId.startsWith("ou_")) linkIdentity(ctx.app, user.id, "lark", p.userId);
+        if (existing && email && !user.email && !emailHolder(ctx.app, email, user.id)) updateUser(ctx.app, user.id, { email });
+        for (const s of spaces) addMember(ctx.app, s.id, user.id, s.role);
+        lines.push(`- ${existing ? "已是用户" : "已登记"} ${user.name}（${user.id}${email ? `，${email}` : "，没拿到邮箱，用飞书登录"}）${spaces.length ? `：${spaces.map((s) => `${s.id} ${s.role}`).join("、")}` : ""}`);
+      } catch (e) {
+        lines.push(`- ${who}：没登记（${(e as Error).message}）`);
+      }
+    }
+    const base = ctx.app.config.webUrl?.trim().replace(/\/+$/, "");
+    return `${lines.join("\n")}${base ? `\n登录地址：${base}（用飞书登录）` : ""}${ctx.app.config.auth.enabled ? "" : "\n注意：omem 还没打开多人登录（设置 → 成员），他们现在还登录不了"}`;
+  },
+});
+
+def({
   name: "generate_wiki",
   description: "生成或重新规划空间 Wiki：与网页和 CLI 相同，先由 wiki-planner 调查并规划目录，再由 wiki-writer 逐页写作。不要自己写正文或用 run_agent 调用这些内置角色。只改已有的一两页时传 pages，直接交给写作、不重新规划。返回规划运行 ID；规划完成不代表所有页面已写完，用 read_run 查看子运行。",
   write: true,

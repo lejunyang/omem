@@ -23,6 +23,11 @@ describe("who was behind a run", () => {
     expect(createRun(app, { kind: "ingest", title: "整理" }).trigger).toBeNull();
 
     expect(listRuns(app, { by: "lark:ou_wang" }).map((r) => r.id).sort()).toEqual([guest.id, child.id].sort());
-    expect(triggerers(app).map((p) => [p.key, p.name, p.runs])).toEqual([["lark:ou_wang", "小王", 2], ["lark:ou_li", "小李", 1]]);
+    // 小李 also looked for the owner through the capture app (another open_id): still one person, two ways.
+    const again = createRun(app, { kind: "agent", title: "有人找你：小李", input: { spec: "assistant", task: "…", mention: { senderId: "ou_li_cli", senderName: "小李", chatKind: "p2p" } } });
+    expect(triggerers(app).map((p) => [p.key, p.name, p.runs, p.ways]).sort()).toEqual([["name:小李", "小李", 2, { mention: 2 }], ["name:小王", "小王", 2, { guest: 2 }]].sort());
+    expect(listRuns(app, { by: "name:小李" }).map((r) => r.id).sort()).toEqual([handling.id, again.id].sort());
+    expect(listRuns(app, { by: "name:小王", via: "mention" })).toEqual([]);
+    expect(listRuns(app, { via: "mention" })).toHaveLength(2);
   });
 });

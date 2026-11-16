@@ -79,11 +79,26 @@ export function triggerFor(app: App, r: NewRun): RunTrigger | null {
 }
 
 /** People behind recent runs, most runs first (the run page's “触发人” filter). */
+/**
+ * The people behind runs in the last days, one entry each: the same person reaches omem through
+ * different apps (the bot's open_id when they ask it, lark-cli's when they look for the owner, only a
+ * name sometimes), so people go by name (`name:<name>`); the owner stays `user:owner`. `ways`: how
+ * many of their runs came each way (chat = asking the assistant, mention = looking for the owner…).
+ */
 export function triggerers(app: App, opts: { days?: number; visibleTo?: string } = {}) {
   const since = new Date(Date.now() - (opts.days ?? 30) * 86400_000).toISOString();
-  return all<{ key: string; name: string | null; n: number; last: string }>(app.db,
-    `select trigger_by key, max(json_extract(trigger, '$.by.name')) name, count(*) n, max(created_at) last from runs
-      where trigger_by is not null and created_at > ? ${opts.visibleTo ? "and coalesce(user_id, 'owner') = ?" : ""} group by trigger_by order by n desc limit 200`,
-    since, ...(opts.visibleTo ? [opts.visibleTo] : []))
-    .map((r) => ({ key: r.key, name: r.name ?? r.key, runs: r.n, last: r.last }));
+  const rows = all<{ key: string; name: string | null; via: string | null; n: number; last: string }>(app.db,
+    `select case when trigger_by = 'user:owner' then trigger_by else 'name:' || coalesce(json_extract(trigger, '$.by.name'), trigger_by) end key,
+       max(json_extract(trigger, '$.by.name')) name, json_extract(trigger, '$.via') via, count(*) n, max(created_at) last from runs
+      where trigger_by is not null and created_at > ? ${opts.visibleTo ? "and coalesce(user_id, 'owner') = ?" : ""} group by key, via`,
+    since, ...(opts.visibleTo ? [opts.visibleTo] : []));
+  const people = new Map<string, { key: string; name: string; runs: number; last: string; ways: Record<string, number> }>();
+  for (const r of rows) {
+    const p = people.get(r.key) ?? { key: r.key, name: r.name ?? r.key, runs: 0, last: r.last, ways: {} };
+    p.runs += r.n;
+    if (r.last > p.last) p.last = r.last;
+    if (r.via) p.ways[r.via] = (p.ways[r.via] ?? 0) + r.n;
+    people.set(r.key, p);
+  }
+  return [...people.values()].sort((a, b) => b.runs - a.runs).slice(0, 200);
 }

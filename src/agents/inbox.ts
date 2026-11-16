@@ -178,7 +178,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     userId,
     notBefore: mergeMs ? notBefore : null,
     // A colleague asking in the owner's group, or the speaker of a watched chat, is the one behind it; else the sender.
-    trigger: { via: "chat", by: inb.asker ? larkBy(null, inb.asker) : inb.speaker ? larkBy(null, inb.speaker) : userBy(app, userId), where: thread.channel === "web" ? "网页" : thread.title || thread.channel },
+    trigger: { via: "chat", by: inb.asker ? larkBy(inb.askerId ?? null, inb.asker) : inb.speaker ? larkBy(null, inb.speaker) : userBy(app, userId), where: thread.channel === "web" ? "网页" : thread.title || thread.channel },
   });
   app.db.prepare("update messages set run_id = ? where id = ?").run(run.id, messageId);
   steerSoon(app, thread.id);
