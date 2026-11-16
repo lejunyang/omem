@@ -1,3 +1,4 @@
+import { beginNetworkAttempt, networkEnvironment, networkProfile, refreshNetworkPolicies } from "./network-policy.ts";
 import { one } from "../core/db.ts";
 import { hostToldOwner } from "./code-chain.ts";
 import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
@@ -273,6 +274,7 @@ export type TurnResult = { text: string; agent: string; profileId: string; mode:
  */
 export async function threadTurn(ctx: RunContext, threadId: string, messages: ThreadMessage[], userId = "owner", promptOverride?: string): Promise<TurnResult> {
   const app = ctx.app;
+  await refreshNetworkPolicies(app);
   const t = getThread(app, threadId);
   const { actor, label } = actorFor(app, t);
   const lark = larkScope(t, userId);
@@ -480,6 +482,8 @@ ${WAKE_NOTE}`
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
       emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to: aiLabel({ profile: used.id, model: used.model, effort: used.effort }), why: left || "默认后端不可用", orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
     }
+    let networkAttempt: Awaited<ReturnType<typeof beginNetworkAttempt>> | undefined;
+    let networkStopped: Promise<void> | undefined;
     try {
       if (used.transport !== "acp") {
         const r = await runBackend(
@@ -505,7 +509,9 @@ ${WAKE_NOTE}`
         mode = "fresh";
         break;
       }
-      const stepKey = `${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${userId === "owner" ? "" : `|${userId}`}`;
+      networkAttempt = await beginNetworkAttempt(app, used, { signal: ctx.signal, runId: ctx.run.id, stop: () => { networkStopped = live.get(threadId)?.handle.stopped; release(threadId); } });
+      curPrep.profile = networkAttempt.profile;
+      const stepKey = `${JSON.stringify(curPrep.profile.env)}|${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${userId === "owner" ? "" : `|${userId}`}`;
       let l = step === 0 ? live.get(threadId) : undefined;
       if (l && (l.key !== stepKey || !l.handle.alive() || tooLong)) {
         release(threadId);
@@ -522,6 +528,8 @@ ${WAKE_NOTE}`
           handle = await openAcp(
             used,
             {
+              signal: networkAttempt.signal,
+              env: networkEnvironment(app, used),
               cwd: curPrep.cwd,
               cleanup: await sessionCleanup(app, used, { cwd: curPrep.cwd, runId: ctx.run.id, persistSession: true }, emit),
               mcp: curPrep.mcp,
@@ -550,7 +558,7 @@ ${WAKE_NOTE}`
         const promptText = sessionPrompt(mode === "fresh" ? l.handle : { resumed: true }, curPrep, mode === "fresh" ? (step === 0 ? freshBody() : `${freshBody()}${carry ? `\n\n---\n\n${carry}` : ""}`) : `（现在 ${stamp(new Date().toISOString())}）\n\n${newPart}`, emit);
         let r;
         try {
-          r = await l.handle.prompt(promptText, emit, ctx.signal);
+          r = await l.handle.prompt(promptText, emit, networkAttempt.signal);
         } catch (e) {
           if ((e as Error).message === "CANCELLED") throw e;
           // Done already (stay_quiet): the outer catch ends the turn, nothing is asked again.
@@ -570,15 +578,15 @@ ${WAKE_NOTE}`
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
           const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
           const handle = await openAcp(
-            again.profile,
-            { cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
+            networkProfile(app, again.profile),
+            { signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
             emit,
           );
           l = { threadId, key: stepKey, handle, token: again.token, lastUsed: Date.now(), busy: true };
           live.set(threadId, l);
           mode = "fresh";
           curPrep = again;
-          r = await handle.prompt(sessionPrompt(handle, again, freshBody(), emit), emit, ctx.signal);
+          r = await handle.prompt(sessionPrompt(handle, again, freshBody(), emit), emit, networkAttempt.signal);
         }
         save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
         retireReplaced(l.handle.sessionId);
@@ -604,6 +612,12 @@ ${WAKE_NOTE}`
         }
       }
     } catch (e) {
+      if (networkAttempt?.signal.aborted) {
+        networkStopped ??= live.get(threadId)?.handle.stopped;
+        release(threadId);
+      }
+      await networkStopped;
+      e = networkAttempt?.error(e) ?? e;
       // It ended the turn with stay_quiet and only closing the turn failed: nothing to post, nothing to redo.
       if (quietAfterAll(app, ctx.run.id, quietBefore, e)) {
         emit({ type: "status", text: `这一轮已经用 stay_quiet 结束，后端收尾时出错（${(e as Error).message.slice(0, 120)}），按已完成处理` });
@@ -623,7 +637,7 @@ ${WAKE_NOTE}`
       carry = writeCount() > writesBefore ? (await import("./retry.ts")).partialAttemptNote(app, ctx.run.id, writesBefore, e, aiLabel({ profile: used.id, model: used.model })) : "";
       emit({ type: "status", text: why });
       await reorder(step + 1, (e as Error).message);
-    }
+    } finally { networkAttempt?.close(); }
   }
   // The live session keeps curPrep's token (retargeted on reuse); non-live paths revoked theirs.
   if (!live.get(threadId)) revokeToolToken(curPrep.token);

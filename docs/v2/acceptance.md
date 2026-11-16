@@ -433,6 +433,11 @@ pnpm run dev                # 打开 http://localhost:5173
 | 12c | 问汇总类问题：“我这个月一共提到过几次加班？” | 先用 scan 列出所有出处再计数，回答附清单 | LongMemEval 跨会话 6 题 5 对，见 evaluation.md |
 | 12d | 升级后 `omem memories check`，再等一小时（或 设置 → 定时任务 → 复核新记忆 → 立即运行） | check 列出旧的转述、免责、事件复述式记忆；复核运行逐条保留/改写/撤回，记忆页显示“复核撤回”及理由 | 待验 |
 | 12e | 保存一段群聊让助理整理，然后看“记忆 → 质量 → 最近被拒绝的写入” | 写入检查拦下的条目附原因和模型；助理改写后的记忆以主语开头、一句话 | 待验 |
+| 12net-a | 设置 → AI → 通用 添加“网络条件”，选受限后端、系统路由和 TUN 接口，填写检测地址与允许地区，保存后点“现在检查” | 列出出口、地区、检查时间和原因；默认有效一小时；有效期内连续启动任务不重复请求出口服务，手动检查可刷新；未绑定后端照常使用 | `test/network-policy.test.ts`；1440 / 390 界面和表单操作已验，真实 TUN 待验 |
+| 12net-b | 给受限后端配置独立可用的兜底，分别启动整理与对话；关闭 TUN 或代理核心，使所监控接口消失 / 关闭 | 本地检查约两秒内发现，立即作废一小时缓存、停止相关尝试并撤销工具权限，旧进程退出后才交给兜底；状态写网络异常原因，新后端拿到已完成写入；用户点击“停止”仍结束任务，不触发网络接手 | `test/network-policy.test.ts` 假接口 + 真 ACP 进程；真实系统事件待验 |
+| 12net-c | 出口地区 / IP 不符合允许列表，手动指定这个后端；再选择“只限制新执行”；故障后恢复 TUN | 手动指定同样不能绕过网络条件；按兜底设置切换或说明失败。只限制新执行时旧尝试不被打断。恢复时立即重查出口并连续确认两次，已经切换的任务不迁回；两项允许列表都填时同时满足 | `test/network-policy.test.ts` |
+| 12net-d | 开启 IPv6 检查，使用同一目标的 AAAA；模拟默认出口合规但 IPv6 出口地区不符，再模拟无 AAAA、连接失败和地区未知 | 只在已观察到的出口违反地区 / IP 要求时限制后端并按设置中止；无法确认时允许默认路径继续。保留目标 Host、SNI 和证书校验，指定代理时不改直连；显示检查时间和未完成范围 | `test/network-policy.test.ts`、`test/network-diagnostics.test.ts` |
+| 12net-e | 启用 DNS 配置检查，指定预期 DNS 与测试 Mihomo 配置，修改 / 删除文件；让第一 DoH 返回 429，备用服务成功，之后再查并改变网络和时间 | 配置风险只提示，不因未知中断运行；配置变化重查。AAAA 并发合并、按 TTL 缓存，网络变化分开缓存；429 按 Retry-After 退避并切换服务，常见内部名称不发到公网服务。Windows 无 curl 也可探测，接口 DNS 读取失败有默认解析器后备 | 两个网络测试文件；Windows 真机待验 |
 | 12i | 在新飞书话题里让主助手继续旧工作话题里的多 Agent 工作 | 专家在新话题轮次继续（接原 Agent 会话），报告与协调回复只发新话题；旧话题已排队的轮次取消；编码到上限的交接和补拉完成通知也在新话题；超长思考正常分段显示 | 2026-10-21 测试覆盖（fork、cancellation、handoff 跟随） |
 | 12l | 装好豆包 CLI 并 `doubao login`，Agent 页对“豆包 (CLI)”点“检测模型”，选一个模型和强度后让主助手“查一下我有哪些空间，再记住一条偏好” | 列出账号可用的模型和每个模型的强度，检测不在豆包历史里新建对话；回答列出空间，记忆写进 personal（运行里有 `omem tool` 调用）；同一会话追问能接上文 | 2026-10-31 本机 Windows 真机通过（8 个模型；两轮续聊；ask 写入记忆） |
 | 12m | 在授权了豆包 OpenAPI 的机器上用豆包 CLI 跑一次后台任务（如巡检），再看 `doubao --list` | 这次运行的对话不在列表里；聊天会话里的对话保留，聊天换成新会话后旧的消失；没有授权的机器上运行里提示“留在豆包历史里” | 2026-11-03 真机通过（CLI 2.31.2）：保留会话两轮续聊成功，调用会话退役后列表消失；CLI / OpenAPI 单次任务均自动删除，删除接口 HTTP 200 / code 0，查询为 HTTP 404 / code 3440008；未授权提示有测试覆盖 |
@@ -2249,3 +2254,23 @@ TraeX 与其他 ACP 的清理补验：
 - `npx vitest run test/flow-rounds.test.ts test/flow-timing.test.ts test/flows.test.ts test/flows-http.test.ts test/esm.test.ts test/tool-help.test.ts test/permissions.test.ts test/pull-complete.test.ts test/config-merge.test.ts --maxWorkers=2 --configLoader native --cache=false`：`Test Files 9 passed (9)`，`Tests 96 passed | 1 skipped (97)`；跳过的是原有的 Windows SSH 拉取用例。
 - `npx tsc --noEmit -p .`：退出码 0，无类型错误。未跑全量测试或 vue-tsc，未修改网页。
 - 真实 Codex gpt-6.1-sol / low：在隔离的临时事项和工具服务上尝试两步（blocked + unsure → 升档，done + 依据），CLI 在第一步调用模型前退出，原因为 `Could not find home directory`；退出码 1，真实模型与工具行为未验成，临时脚本和数据已删除。假 Agent 的 worker / 工具链路和 execution 传递由 HTTP 测试覆盖。
+
+### 后端网络条件专项验证（2026-11-16）
+
+网络条件结合本地 HTTP 服务与真实假 ACP 进程验证：一小时缓存、并发合并、地区与 IPv4 / IPv6 允许列表、HTTP 代理与 HTTPS CONNECT 拒绝、不合法响应、旧探测响应失效、慢探测期间继续监控本地 TUN、用户取消、只限制新执行、普通 / 复用后台会话 / 对话的中断接手、写入说明、会话清理延后及后端身份、本人权限与配置持久化。`test/network-policy.test.ts` 新增 14 项。相关运行、对话、容量、选型、远端 ACP、额度、配置合并、权限共 10 个文件的回归 78 项通过；后续会话清理修正另跑网络条件及三个清理 / 后台会话文件，40 项通过。类型检查、应用构建、文档站构建均通过。
+
+浏览器走通添加条件、多选后端与地区、保存、手动出口检查、切换代理和 JSON 字段、取消删除；1440 / 390 两种宽度检查无横向溢出。`node scripts/check-composition.ts` 通过。文档截图为虚构出口和网卡，仅生成 `ai-network-conditions` 与 `ai-network-conditions-mobile`。
+
+全量 `pnpm run check` 的最后一次测试为 2101 通过、4 失败。其中 `test/code-git.test.ts` 的非快进推送提示、`test/peer-tools.test.ts` 的工具分类、`test/shares.test.ts` 的响应字段，在修改前的 `f8798b20a` 独立检出中同样失败；另一项 `test/doubao-steps.test.ts` 为 20 秒超时，单独重跑当前版本与基线均通过。前一轮全量检查中的 `test/lark-answers.test.ts` 话题思考气泡失败也在基线复现，后一轮通过。没有改动这些既有问题；全量检查因此未通过，构建单独验证。真实 TUN 故障及恢复仍需在部署机器验收，未中断本机网络或连接真实模型账号。
+
+### 同目标 IPv6 与 DNS 配置诊断验证（2026-11-17）
+
+`test/network-policy.test.ts` 现为 19 项，另有 `test/network-diagnostics.test.ts` 3 项。覆盖同目标 IPv6 已观察到的地区不符、无 AAAA / 无法连接 / 地区未知仍允许默认路径、DNS 风险不作运行闸门、配置文件变化作废结果；真实本地 HTTP(S) / IPv6 / CONNECT 验证 Host、SNI、证书域名校验、DoH 主备切换、AAAA 与 CNAME 的 TTL、并发合并、429 Retry-After 和常见内部域名不外查。DNS 文件状态检查不等待文件系统，避免失效的网络盘路径拖住本地 TUN 轮询；配置正文读取有超时。
+
+最后一次相关回归（两个网络文件、ACP 清理、后台会话、统一会话清理）5 个文件 49 项通过，无未处理错误。网络测试直接驱动 ACP 流，发现过收尾时未刷入文本缓冲的数据库定时回调，已在测试关闭数据库前显式刷入并重跑通过。类型检查、应用构建、文档站构建、输入法回归均通过。Playwright 验证开关、Windows 路径、解析服务 / DNS 列表填写与保存回读，1440 / 390 无横向溢出；仅更新两个网络条件文档截图。
+
+全量 `pnpm run check` 为 2112 通过、5 失败，另有两个 Vitest RPC 更新超时；端口占用和会话清理超时单独重跑均通过。再以 `--maxWorkers=8` 跑全量为 2113 通过、4 失败（298 个文件），剩余为前述基线已复现的 `code-git`、`lark-answers`、`peer-tools`、`shares`；这轮也暴露了上述新测试的收尾回调，随后已修正并通过相关回归。全量检查仍未通过，未改动这些既有断言；网络功能单独提交，不混入其他会话的改动。
+
+Linux 本机另以新实现检查两个目标站点：默认出口符合预期，真实 AAAA 的 IPv6 连接被本机出站规则拒绝，DNS 配置风险单独展示；未据此宣称无 DNS 泄露，也未调用付费模型。Windows 真机和真实 TUN 故障后的执行切换仍待部署环境验收。
+
+提交前将网络功能独立放入临时检出，排除同一工作区中其他会话的改动，重新验证两个网络文件、ACP 清理、后台会话、统一会话清理及 `threads.test.ts`：6 个文件、61 项通过，无未处理错误；服务端与 Vue 类型检查均通过。

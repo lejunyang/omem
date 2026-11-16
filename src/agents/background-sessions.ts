@@ -6,6 +6,7 @@ import { issueToolToken, retargetToolToken, revokeToolToken, toolContextForToken
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
+import { NetworkUnavailableError, networkEnvironment, withNetworkPolicy } from "./network-policy.ts";
 
 type Live = { key: string; handle: AcpHandle; token: string; busy: boolean; usedAt: number; usage?: AgentResult["contextUsage"]; timer?: NodeJS.Timeout; releasing?: Promise<void> };
 const pools = new Map<App, Set<Live>>();
@@ -18,13 +19,13 @@ function stable(value: unknown): unknown {
   return value;
 }
 
-async function release(app: App, entry: Live) {
+async function release(app: App, entry: Live, force = false) {
   if (entry.releasing) return entry.releasing;
   pools.get(app)?.delete(entry);
   if (!pools.get(app)?.size) pools.delete(app);
   clearTimeout(entry.timer);
   revokeToolToken(entry.token);
-  entry.releasing = entry.handle.discard();
+  entry.releasing = force ? (async () => { entry.handle.close(); await entry.handle.stopped; })() : entry.handle.discard();
   await entry.releasing;
 }
 
@@ -44,7 +45,7 @@ export function tooFull(usage: { used: number; size: number }, config: { maxCont
 /** Only recurring jobs opt in. Conversations, coding chains and blind comparisons stay independent. */
 export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequest, task: string, runId: string | null, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   try {
-    return await pooledTurn(app, prep, req, task, runId, quotaEvents(app, prep.profile, emit));
+    return await withNetworkPolicy(app, prep.profile, { signal: req.signal, runId }, (profile, signal) => pooledTurn(app, { ...prep, profile }, { ...req, signal, env: { ...req.env, ...networkEnvironment(app, profile) } }, task, runId, quotaEvents(app, profile, emit)));
   } finally {
     afterTurn(app, prep.profile);
   }
@@ -83,8 +84,12 @@ async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: 
       emit({ type: "status", text: "新建后台会话" });
     } catch (e) { revokeToolToken(token); throw e; }
   }
+  const networkStop = () => {
+    if (req.signal?.reason instanceof NetworkUnavailableError) { revokeToolToken(entry!.token); entry!.handle.close(); }
+  };
+  req.signal?.addEventListener("abort", networkStop, { once: true });
   try {
-    if (req.signal?.aborted) throw new Error("CANCELLED");
+    if (req.signal?.aborted) { networkStop(); throw new Error("CANCELLED"); }
     const prompt = continuing
       ? sessionPrompt({ resumed: true }, req, `（${prep.now}）\n\n# 本轮独立任务\n\n${task}\n\n只处理本轮列出的材料；历史任务不重复执行，旧材料需要时重新读取。`, emit)
       : sessionPrompt(entry.handle, req, req.prompt, emit);
@@ -103,7 +108,7 @@ async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: 
     }
     return result;
   } catch (e) {
-    await release(app, entry);
+    await release(app, entry, req.signal?.reason instanceof NetworkUnavailableError);
     throw e;
-  }
+  } finally { req.signal?.removeEventListener("abort", networkStop); }
 }

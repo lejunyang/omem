@@ -9,6 +9,7 @@ import { disposableChildren } from "./session-children.ts";
 import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoSessionStatus, doubaoTokenExists } from "./doubao.ts";
 import type { AgentEvent, AgentRequest, SessionCleanup } from "./types.ts";
 import { MENTION_FOLLOW_MS } from "../mentions/channel.ts";
+import { NetworkUnavailableError, networkProfile, networkReason, withNetworkPolicy } from "./network-policy.ts";
 
 type Pending = {
   backend_key: string; session_id: string; transport: string; profile_id: string | null;
@@ -35,7 +36,10 @@ function fingerprint(p: AgentProfile) {
 export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<AgentRequest, "cwd" | "runId" | "persistSession" | "resumeSessionId">, emit: Emit): Promise<SessionCleanup> {
   const acp = profile.transport === "acp";
   const appId = acp ? null : (profile.env.DOUBAO_APP_ID ?? doubaoAppFor(app.home, profile, await doubaoApps(app.home, app.config))?.appId ?? null);
-  const hash = acp ? fingerprint(profile) : null;
+  // Runtime proxy variables are derived from the network policy, not a change of backend identity.
+  const configured = allProfiles(app.config).find((p) => p.id === profile.id);
+  const original = configured && fingerprint(networkProfile(app, configured)) === fingerprint(profile) ? configured : profile;
+  const hash = acp ? fingerprint(original) : null;
   const backend = acp ? `acp:${hash}` : `doubao:${appId ?? ""}`;
   const record = (id: string, ready: number) => {
     run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,?,?)
@@ -55,7 +59,7 @@ export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<
     async discard(id, operation) {
       run(app.db, "update session_cleanup set ready = 1 where backend_key = ? and session_id = ?", backend, id);
       const p = one<Pending>(app.db, "select * from session_cleanup where backend_key = ? and session_id = ?", backend, id);
-      if (p) await clean(app, p, emit, false, operation ?? (acp ? () => cleanupAcpSession(profile, id, req.cwd) : undefined), profile);
+      if (p) await clean(app, p, emit, false, operation ?? (acp ? () => cleanAcp(app, profile, id, req.cwd) : undefined), profile);
     },
   };
 }
@@ -87,13 +91,14 @@ function update(app: App, p: Key, sql: string, ...args: (string | number)[]) {
 }
 
 async function cleanChildren(app: App, p: Pending, profile: AgentProfile, emit: Emit) {
+  if (networkReason(app, profile)) return;
   for (const id of await disposableChildren(profile, p.session_id, p.cwd)) {
     // Each helper gets its own durable retry, including when its parent is kept or already archived.
     run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at)
       values(?,?,?,?,?,?,?,?,?,1,?) on conflict(backend_key,session_id) do nothing`,
     p.backend_key, id, p.transport, p.profile_id, p.fingerprint, p.app_id, p.cwd, p.run_id, process.pid, now());
     const child = one<Pending>(app.db, "select * from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, id)!;
-    await clean(app, child, emit, false, () => cleanupAcpSession(profile, id, existsSync(p.cwd) ? p.cwd : app.home), profile);
+    await clean(app, child, emit, false, () => cleanAcp(app, profile, id, existsSync(p.cwd) ? p.cwd : app.home), profile);
   }
 }
 
@@ -103,10 +108,16 @@ function recordedProfile(app: App, p: Pending) {
   return profile;
 }
 
+async function cleanAcp(app: App, profile: AgentProfile, id: string, cwd: string) {
+  const reason = networkReason(app, profile);
+  if (reason) throw new NetworkUnavailableError(reason);
+  await withNetworkPolicy(app, profile, {}, (p, signal) => cleanupAcpSession(p, id, cwd, signal));
+}
+
 async function perform(app: App, p: Pending, recovering: boolean): Promise<boolean> {
   if (p.transport === "acp") {
     const profile = recordedProfile(app, p);
-    await cleanupAcpSession(profile, p.session_id, existsSync(p.cwd) ? p.cwd : app.home);
+    await cleanAcp(app, profile, p.session_id, existsSync(p.cwd) ? p.cwd : app.home);
     return true;
   }
   if (!doubaoTokenExists(app.home)) throw new Error("豆包 OpenAPI 没有在这台机器上授权，会话留在豆包历史里（omem doubao login 后重试）");
@@ -130,12 +141,14 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
   try {
     // Delay both failures and still-running cloud tasks; the next sweep tries again.
     update(app, p, "retry_at = ?", new Date(Date.now() + retryDelay(p.attempts ?? 0)).toISOString());
+    if (p.transport === "acp" && networkReason(app, profile ?? recordedProfile(app, p))) return;
     if (p.transport === "acp") await cleanChildren(app, p, profile ?? recordedProfile(app, p), emit);
     if (operation) await operation();
     else if (!await perform(app, p, recovering)) return;
     run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);
     emit({ type: "status", text: `已清理后端会话 ${p.session_id}（${p.profile_id ?? p.transport}${p.app_id ? `，应用 ${p.app_id}` : ""}${recovering ? "，恢复待清理会话" : ""}）` });
   } catch (e) {
+    if (e instanceof NetworkUnavailableError) return; // Defer without spending the cleanup retry budget.
     const attempts = (p.attempts ?? 0) + 1;
     const why = (e as Error).message.slice(0, 160);
     if (attempts >= GIVE_UP_AFTER) {

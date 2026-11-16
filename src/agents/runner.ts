@@ -18,6 +18,7 @@ import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
+import { NetworkUnavailableError, networkReason, refreshNetworkPolicies } from "./network-policy.ts";
 import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
 import { aiLabel, candidateProfiles, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid } from "./quota.ts";
@@ -115,10 +116,11 @@ export function toolSections(text: string, tools: Set<string>) {
 
 export function listAgentProfiles(app: App) {
   return allProfiles(app.config).map((p) => {
-    if (p.transport === "doubao") return { ...p, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
-    if (p.transport === "doubao-cli") return { ...p, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : DOUBAO_CLI_INSTALL };
+    const network = { networkReason: networkReason(app, p) };
+    if (p.transport === "doubao") return { ...p, ...network, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
+    if (p.transport === "doubao-cli") return { ...p, ...network, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : DOUBAO_CLI_INSTALL };
     const e = catalogEntry(p.id);
-    return { ...p, installed: backendAvailable(p, app.home), install: e && e.command === p.command ? installHint(e) : undefined };
+    return { ...p, ...network, installed: backendAvailable(p, app.home), install: e && e.command === p.command ? installHint(e) : undefined };
   });
 }
 
@@ -600,7 +602,7 @@ export function distinctProfiles(list: AgentProfile[]) {
  * aside for a while (capacity.ts markDown).
  */
 export function isBackendDown(e: unknown): boolean {
-  return breakdownKind(e) !== null;
+  return e instanceof NetworkUnavailableError || breakdownKind(e) !== null;
 }
 
 /**
@@ -717,6 +719,7 @@ function runAI(app: App, runId: string | null): Execution | undefined {
 }
 
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
+  await refreshNetworkPolicies(app);
   const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
@@ -827,7 +830,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       // The named AI is out of quota or past the owner's daily cap: go straight to the next.
       if (pinned && i === 0 && chain.length > 1) {
         const until = outOfQuotaUntil(app, chain[0]);
-        const why = until ? `额度用完（${new Date(until).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 恢复）` : dailyCapReached(app, chain[0]);
+        const why = networkReason(app, chain[0]) ?? (until ? `额度用完（${new Date(until).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 恢复）` : dailyCapReached(app, chain[0]));
         if (why) {
           revokeToolToken(base.token);
           leftBecause = { busy: true, untouched: true, why, first: true };
@@ -875,7 +878,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
         };
         if (i > 0) {
-          const why = leftBecause && !leftBecause.busy && !moved
+          const network = networkReason(app, chain[0]);
+          const why = network ? `${firstWho}网络受限（${network}）` : leftBecause && !leftBecause.busy && !moved
             ? `${leftBecause.first ? firstWho : "上一个后端"}${leftBecause.untouched ? "没有开始工作就失败了" : "中途出错"}（${leftBecause.why}）`
             : failed && !moved ? `${firstWho}不可用（${leftBecause?.why ?? "排队、限流或额度用完"}）`
             : failed ? "重试时原来的模型已满"

@@ -1,3 +1,4 @@
+import { networkInterfacesView, networkPoliciesView, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies } from "../agents/network-policy.ts";
 import { lessonInput, listLessons, saveLesson, removeLesson } from "../agents/code-lessons.ts";
 import { ROLE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
 import { skillDisplayTally } from "../agents/replay-skills.ts";
@@ -54,7 +55,7 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, queueRe
 import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, commandRuleSchema, configSchema, saveConfig } from "../core/config.ts";
+import { allProfiles, commandRuleSchema, configSchema, networkPolicySchema, saveConfig } from "../core/config.ts";
 import { approverChoices, commandGate, syncCommandGate } from "../agents/command-gate.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
@@ -128,6 +129,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   await server.register(fastifyCompress, { encodings: ["gzip"], threshold: 1024, globalDecompression: false });
   server.addHook("onClose", async () => {
+    stopNetworkPolicies(app);
     closeReadProcess(app);
     const { releaseBackgroundSessions } = await import("../agents/background-sessions.ts");
     await releaseBackgroundSessions(app);
@@ -540,6 +542,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return (await import("../agents/digest.ts")).updateDigestJob(app, (req.params as { id: string }).id, req.body);
   });
   // Models in use now against their limits, and how each did in the last 7 days.
+  // Network conditions are local owner settings; interface names and affected runs stay private.
+  networkPoliciesView(app);
+  server.get("/api/agents/network-policies", async (req) => {
+    ownerOnly(req);
+    return { policies: app.config.agents.networkPolicies, states: networkPoliciesView(app), interfaces: networkInterfacesView() };
+  });
+  server.put("/api/agents/network-policies", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ policies: z.array(networkPolicySchema).max(50) }), req.body);
+    const next = q(configSchema, { ...app.config, agents: { ...app.config.agents, networkPolicies: b.policies } });
+    saveConfig(next, app.home);
+    Object.assign(app.config, next);
+    await pollNetworkPolicies(app);
+    audit(app, who(req), "agents.network-policies", "settings", { count: b.policies.length });
+    return { policies: app.config.agents.networkPolicies, states: networkPoliciesView(app), interfaces: networkInterfacesView() };
+  });
+  server.post("/api/agents/network-policies/:id/check", async (req) => {
+    ownerOnly(req);
+    const id = (req.params as { id: string }).id;
+    if (!app.config.agents.networkPolicies.some((p) => p.id === id)) throw new HttpError(404, "没有这份网络条件");
+    return { states: await refreshNetworkPolicies(app, id, true) };
+  });
   server.get("/api/agents/load", async () => {
     const c = await import("../agents/capacity.ts");
     const q = await import("../agents/quota.ts");
@@ -2902,6 +2926,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.approvals.report = (next.approvals.report ?? []).filter((t) => !next.approvals.tools.includes(t) && !toolAlwaysApproves(t));
     // Command rules change only through their own owner-only route (agents/command-gate.ts).
     next.security = structuredClone(app.config.security);
+    // Network conditions likewise have their own owner-only editor.
+    next.agents.networkPolicies = structuredClone(app.config.agents.networkPolicies);
     // Everything else is read on use; these are only read when the service starts.
     const atStartup: [string, (c: typeof next) => unknown][] = [
       ["监听地址和端口", (c) => [c.host, c.port]],
@@ -2916,6 +2942,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     for (const id of Object.keys(readKeys(app.home))) if (!id.startsWith("mcp:") && !next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
     const zoneChanged = next.timezone !== app.config.timezone;
     Object.assign(app.config, next);
+    await pollNetworkPolicies(app);
     if (zoneChanged) {
       useProcessZone(app.config.timezone);
       // The timers were made in the old zone.

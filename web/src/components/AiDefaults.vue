@@ -4,14 +4,14 @@ import { detectProbe, probes, seedProbe, type Probe } from "../lib/probes";
 import UiSelect from "./UiSelect.vue";
 import { relTime } from "../store";
 
-type Backend = { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: Probe | null };
+type Backend = { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: Probe | null; networkReason?: string | null };
 type Choice = { agent?: string; model?: string; effort?: string };
 const props = defineProps<{ modelValue: Choice; backends: Backend[]; defaultBackend: string }>();
 const emit = defineEmits<{ 'update:modelValue': [value: Choice]; change: [] }>();
 const backend = computed(() => props.backends.find((b) => b.id === (props.modelValue.agent || props.defaultBackend)));
 const probe = computed(() => probes.data[backend.value?.id ?? ""]);
 const loading = computed(() => !!probes.pending[backend.value?.id ?? ""]);
-const backendOptions = computed(() => [{ value: "", label: `跟随默认${props.defaultBackend ? `（${props.defaultBackend}）` : ""}` }, ...[...props.backends].sort((a, b) => Number(b.installed) - Number(a.installed) || Number(b.transport === "acp") - Number(a.transport === "acp") || a.name.localeCompare(b.name)).map((b) => ({ value: b.id, label: b.name, hint: `${b.transport ?? ""}${b.installed ? " · 可用" : " · 未安装或未授权"}` }))]);
+const backendOptions = computed(() => [{ value: "", label: `跟随默认${props.defaultBackend ? `（${props.defaultBackend}）` : ""}` }, ...[...props.backends].sort((a, b) => Number(b.installed) - Number(a.installed) || Number(b.transport === "acp") - Number(a.transport === "acp") || a.name.localeCompare(b.name)).map((b) => ({ value: b.id, label: b.name, hint: `${b.transport ?? ""}${b.installed ? b.networkReason ? ` · ${b.networkReason}` : " · 可用" : " · 未安装或未授权"}` }))]);
 const model = computed(() => props.modelValue.model || backend.value?.model || "");
 const efforts = computed(() => probe.value?.effortsByModel?.[model.value] ?? probe.value?.efforts ?? []);
 const noEffort = computed(() => !!probe.value?.effortsByModel && Object.hasOwn(probe.value.effortsByModel, model.value) && efforts.value.length === 0);

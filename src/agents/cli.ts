@@ -53,6 +53,7 @@ export function codexArgs(profile: AgentProfile, req: AgentRequest) {
 
 /** One-shot CLI fallback for agents without ACP. Streams JSON events from stdout. */
 export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
+  if (req.signal?.aborted) throw new Error("CANCELLED");
   const isClaude = profile.transport === "claude-cli";
   const args = isClaude ? claudeArgs(profile, req) : codexArgs(profile, req);
   const child = launch(profile.command, args, { cwd: req.cwd, env: { ...profile.env, ...keyEnv(profile), ...req.mcp?.env, ...req.env } });
@@ -73,7 +74,7 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
     });
     const onAbort = () => {
       stop(child);
-      reject(new Error("CANCELLED"));
+      child.once("exit", () => reject(new Error("CANCELLED")));
     };
     req.signal?.addEventListener("abort", onAbort, { once: true });
     const line = (raw: string) => {
@@ -149,7 +150,8 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
       watchdog.close();
       req.signal?.removeEventListener("abort", onAbort);
       line(buffer);
-      if (failure) reject(new Error(failure));
+      if (req.signal?.aborted) reject(new Error("CANCELLED"));
+      else if (failure) reject(new Error(failure));
       else if (code !== 0 && !text) reject(new Error(`Agent 退出码 ${code}\n${stderr.slice(-800)}`));
       else resolve();
     });

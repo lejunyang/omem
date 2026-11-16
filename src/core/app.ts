@@ -7,6 +7,7 @@ import { disableGitFsmonitor, ensureLibraryRepo } from "./git.ts";
 import { useKeyHome } from "./ai-keys.ts";
 
 export type AppEvent =
+  | { type: "network"; policyId: string }
   | { type: "run"; runId: string; status: string }
   | { type: "run-event"; runId: string; seq: number; event: { type: string; data: unknown; at: string } }
   | { type: "notification"; id: string; title: string; body: string; link?: string | null }

@@ -1,3 +1,4 @@
+import { withNetworkPolicy } from "./network-policy.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { commandExists } from "./spawn.ts";
 import { runAcp } from "./acp.ts";
@@ -52,6 +53,12 @@ export function saveProbe(app: { db: { prepare: (sql: string) => { run(...p: unk
 
 /** Probe a profile now (spawns the CLI briefly). */
 export async function probeProfile(profile: AgentProfile, app?: App): Promise<ProbeInfo> {
+  try {
+    return app ? await withNetworkPolicy(app, profile, {}, (p, signal) => probeOn(p, app, signal)) : await probeOn(profile);
+  } catch (e) { return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: (e as Error).message.slice(0, 300) }; }
+}
+
+async function probeOn(profile: AgentProfile, app?: App, signal?: AbortSignal): Promise<ProbeInfo> {
   if (profile.transport === "doubao")
     return { at: new Date().toISOString(), agent: "豆包 OpenAPI", models: [], efforts: [], error: "豆包后端没有可选模型和思考强度；授权状态用 omem doubao status 查看" };
   if (profile.transport === "doubao-cli" && commandExists(profile.command))
@@ -66,7 +73,7 @@ export async function probeProfile(profile: AgentProfile, app?: App): Promise<Pr
   try {
     const cwd = process.cwd();
     const cleanup = app ? await sessionCleanup(app, profile, { cwd }, e => { if (e.type === "status") console.log(`[omem] ${e.text}`); }) : undefined;
-    const r = await runAcp({ ...profile, model: undefined, effort: undefined }, { cwd, cleanup, prompt: "", probe: true }, () => {});
+    const r = await runAcp({ ...profile, model: undefined, effort: undefined }, { cwd, cleanup, prompt: "", probe: true, signal }, () => {});
     const opts = r.probe?.options ?? [];
     const modelOpt = opts.find((o) => o.id === "model" || o.category === "model");
     const effortOpt = opts.find((o) => o.id !== "model" && (o.category === "thought_level" || /effort|reasoning/i.test(o.id)));

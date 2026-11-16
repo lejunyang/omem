@@ -5,13 +5,17 @@ import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
 import { retireRecordedSession, sessionCleanup } from "./session-cleanup.ts";
 import { DOUBAO_TOOL_NOTE, runDoubaoCli } from "./doubao-cli.ts";
+import { cachedProbe } from "./probe.ts";
+import { resolveModelOption } from "./models.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { networkEnvironment, withNetworkPolicy } from "./network-policy.ts";
+import { revokeToolToken } from "./tools.ts";
 
 /** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   try {
-    return await runOn(app, profile, req, quotaEvents(app, profile, emit));
+    return await withNetworkPolicy(app, profile, { signal: req.signal, runId: req.runId, stop: () => { if (req.mcp) revokeToolToken(req.mcp.token); } }, (p, signal) => runOn(app, p, { ...req, signal, env: { ...req.env, ...networkEnvironment(app, p) } }, quotaEvents(app, p, emit)));
   } finally {
     afterTurn(app, profile);
   }
@@ -54,6 +58,9 @@ async function runDoubaoTurn(app: App, profile: AgentProfile, req: AgentRequest,
     return runDoubao(profile, req, emit, { home: app.home, app: da });
   }
   if (Object.keys(req.extraMcp ?? {}).length) emit({ type: "status", text: "豆包 CLI 接不了额外的 MCP 服务器，只用 omem 的工具" });
+  // The CLI requires its exact offered spelling, including spaces and capitalization.
+  // Resolve here so profile defaults, role overrides and automatic choices all use the probe.
+  if (profile.model) profile = { ...profile, model: resolveModelOption(profile.model, cachedProbe(app, profile.id)?.models ?? []).value };
   const system = req.mcp ? [req.system, DOUBAO_TOOL_NOTE].filter(Boolean).join("\n\n") : req.system;
   return runDoubaoCli(profile, { ...req, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, { ...req, system }, req.prompt, emit), system: undefined }, emit);
 }

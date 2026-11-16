@@ -1,3 +1,4 @@
+import { beginNetworkAttempt } from "../agents/network-policy.ts";
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
@@ -96,10 +97,14 @@ export async function serveAcp(app: App, req: IncomingMessage, socket: Duplex, h
   const caller = (url.searchParams.get("node") ?? "peer").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40) || "peer";
   const cwd = join(app.home, "peer-acp", caller);
   mkdirSync(cwd, { recursive: true });
-  let child;
+  let child: ReturnType<typeof launch> | undefined;
+  let network: Awaited<ReturnType<typeof beginNetworkAttempt>> | undefined;
   try {
-    child = launch(profile.command, profile.args, { cwd, env: profile.env });
+    network = await beginNetworkAttempt(app, profile, { stop: () => { if (child) stop(child); socket.end(); } });
+    if (socket.destroyed || network.signal.aborted) { network.close(); return; }
+    child = launch(profile.command, profile.args, { cwd, env: network.profile.env });
   } catch (e) {
+    network?.close();
     return void socket.end(`HTTP/1.1 503 Service Unavailable\r\ncontent-type: text/plain; charset=utf-8\r\nconnection: close\r\n\r\n${(e as Error).message}`);
   }
   socket.write("HTTP/1.1 101 Switching Protocols\r\nupgrade: omem-acp\r\nconnection: Upgrade\r\n\r\n");
@@ -155,7 +160,7 @@ export async function serveAcp(app: App, req: IncomingMessage, socket: Duplex, h
         p.cwd = cwd;
         p.mcpServers = (p.mcpServers ?? []).map((s) => standIn(s.name));
       }
-      child.stdin.write(JSON.stringify(msg) + "\n");
+      child!.stdin.write(JSON.stringify(msg) + "\n");
     } else if (f?.mcpReply) {
       const w = pending.get(f.mcpReply.id);
       pending.delete(f.mcpReply.id);
@@ -166,7 +171,8 @@ export async function serveAcp(app: App, req: IncomingMessage, socket: Duplex, h
   serving.add(socket);
   const done = () => {
     serving.delete(socket);
-    stop(child);
+    network?.close();
+    if (child) stop(child);
     for (const t of tokens) relays.delete(t);
     for (const w of pending.values()) w.fail(new Error("与发起设备的连接已断开"));
     pending.clear();

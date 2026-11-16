@@ -32,6 +32,9 @@ const PEERS = g("peers.manage");
 const USERS = g("users.manage");
 
 export const ROUTE_RULES: Record<string, RouteRule> = {
+  "GET /api/agents/network-policies": "owner",
+  "PUT /api/agents/network-policies": "owner",
+  "POST /api/agents/network-policies/:id/check": "owner",
   "GET /api/ai/decision/report": "owner",
   "GET /api/code/:id/improve": RUN,
   "GET /api/quality": "owner",

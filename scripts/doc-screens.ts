@@ -26,6 +26,7 @@ import { applyAttempt, type Attempt } from "../plugins/english/learner.ts";
 import { recordReview } from "../src/agents/review.ts";
 import { addRunEvent, createRun, setRunOutput } from "../src/agents/runs.ts";
 import { App } from "../src/core/app.ts";
+import { networkPolicySchema } from "../src/core/config.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
@@ -743,6 +744,26 @@ if (serveOnly) {
   await new Promise(() => {});
 }
 const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : { channel: process.platform === "win32" ? "msedge" : "chrome" });
+// Network screenshots use fictional interfaces and an identity response; no real proxy or provider is contacted.
+const networkDemo = networkPolicySchema.parse({ id: "jp-egress", name: "日本出口", backends: ["claude", "claude-cli"], connection: { type: "system" }, watch: { interface: "demo-tun" }, probe: { url: "https://claude.ai/cdn-cgi/trace" }, require: { countries: ["JP"] }, ipv6: { enabled: true }, dns: { enabled: true } });
+async function prepareNetworkDemo(page: Page) {
+  const checkedAt = new Date(Date.now() - 6 * 60000).toISOString();
+  const states = [{ id: networkDemo.id, status: "ready", reason: null, localReason: null, ip: "203.0.113.10", country: "JP", checkedAt, runs: [], ipv6: { status: "unknown", checkedAt, observations: [], source: "dns.google", reason: "本机拒绝了本次目标的 IPv6 出站连接；默认路径仍按出口要求判断" }, dns: { status: "inspected", checkedAt, servers: ["192.0.2.53"], source: "操作系统各接口 DNS 配置", warnings: ["这是配置检查，不能证明没有 DNS 泄露；实际递归解析器与按域名分流需另行验证"] } }];
+  await page.route("**/api/agents/network-policies", (route) => route.fulfill({ json: { policies: [networkDemo], states, interfaces: [{ name: "demo-tun", addresses: ["192.0.2.1"] }] } }));
+  await page.route("**/api/agents/*/probe", (route) => route.fulfill({ json: { at: new Date().toISOString(), agent: "演示 Agent", models: ["default"], efforts: [] } }));
+  await page.route("**/api/settings", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    data.home = "~/.omem";
+    data.config.agents.networkPolicies = [networkDemo];
+    data.agents = [
+      { id: "claude", name: "Claude Code (ACP)", transport: "acp", command: "claude-agent-acp", args: [], installed: true },
+      { id: "claude-cli", name: "Claude Code CLI", transport: "claude-cli", command: "claude", args: [], installed: true },
+      { id: "codex", name: "Codex (ACP)", transport: "acp", command: "codex-acp", args: [], installed: true },
+    ];
+    await route.fulfill({ json: data });
+  });
+}
 const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; before?: (page: Page) => Promise<void>; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "item-flow", path: `/items/${flowItem.id}`, width: 1440, prepare: async (p) => { await p.getByRole("region", { name: "事项流程", exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "today", path: "/" },
@@ -804,6 +825,8 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "rules", path: `/rules?id=${rule.id}` },
   { name: "meeting-rule-confirmation", path: `/rules?id=${meetingRule.id}`, prepare: async (p) => { await p.getByText("入会确认", { exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "agents", path: "/agents" },
+  { name: "ai-network-conditions", path: "/settings?tab=agents&focus=network-conditions", before: prepareNetworkDemo, prepare: async (p) => { await p.locator("#network-conditions").scrollIntoViewIfNeeded(); } },
+  { name: "ai-network-conditions-mobile", path: "/settings?tab=agents&focus=network-conditions", width: 390, before: prepareNetworkDemo, prepare: async (p) => { await p.locator("#network-conditions").getByRole("button", { name: "编辑", exact: true }).click(); await p.locator(".network-editor").scrollIntoViewIfNeeded(); if (await p.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error("网络条件表单横向溢出"); } },
   { name: "ask-question", path: `/ask/${decide.id}` },
   { name: "ask-form", path: `/ask/${rollout.id}`, prepare: async (p) => { await p.waitForTimeout(800); await p.getByText("先灰度 10%").click(); await p.getByText("逐条确认退款规则").scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
   { name: "ask-view", path: `/ask/${rollout.id}`, prepare: async (p) => { await p.waitForTimeout(800); await p.locator(".ui-view").first().scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },

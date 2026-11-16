@@ -1,3 +1,4 @@
+import { withNetworkPolicy } from "./network-policy.ts";
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -149,10 +150,13 @@ export function codexCommand(p: AgentProfile): { command: string; args: string[]
   }
 }
 
-async function readCodex(p: AgentProfile, timeoutMs = 20_000): Promise<{ plan?: string; windows: QuotaWindow[] }> {
+async function readCodex(p: AgentProfile, signal?: AbortSignal, timeoutMs = 20_000): Promise<{ plan?: string; windows: QuotaWindow[] }> {
   const cmd = codexCommand(p);
   if (!cmd) throw new Error("找不到 codex 命令（app-server）");
   const child = launch(cmd.command, [...cmd.args, "app-server"], { cwd: process.cwd(), env: p.env });
+  const onAbort = () => stop(child);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   try {
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("codex app-server 没有及时回答")), timeoutMs);
@@ -181,6 +185,7 @@ async function readCodex(p: AgentProfile, timeoutMs = 20_000): Promise<{ plan?: 
       send({ id: 1, method: "initialize", params: { clientInfo: { name: "omem", version: "0" } } });
     });
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     stop(child);
   }
 }
@@ -233,7 +238,7 @@ export function parseClaudeUsage(text: string, now = new Date()): { plan?: strin
   return { plan, windows };
 }
 
-async function readClaude(app: App, p: AgentProfile): Promise<{ plan?: string; windows: QuotaWindow[] }> {
+async function readClaude(app: App, p: AgentProfile, signal?: AbortSignal): Promise<{ plan?: string; windows: QuotaWindow[] }> {
   const { listAgentProfiles } = await import("./runner.ts");
   const acp = p.transport === "acp" ? p : listAgentProfiles(app).find((q) => q.transport === "acp" && q.installed && sourceOf(q) === sourceOf(p) && !q.keyRef);
   if (!acp) throw new Error("读 Claude 额度要装 claude-agent-acp");
@@ -245,7 +250,7 @@ async function readClaude(app: App, p: AgentProfile): Promise<{ plan?: string; w
   const timer = setTimeout(() => ctrl.abort(), 60_000);
   try {
     // /usage is a local command: Claude Code answers it without the model.
-    const r = await runAcp({ ...acp, model: undefined, effort: undefined }, { cwd, cleanup, prompt: "/usage", modes: ["read-only"], signal: ctrl.signal }, () => {});
+    const r = await withNetworkPolicy(app, acp, { signal: signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal }, (profile, guarded) => runAcp({ ...profile, model: undefined, effort: undefined }, { cwd, cleanup, prompt: "/usage", modes: ["read-only"], signal: guarded }, () => {}));
     const parsed = parseClaudeUsage(r.text);
     if (!parsed.windows.length)
       throw new Error(/^## Usage/m.test(r.text) && !/### Limits/.test(r.text) ? "Claude Code 没有报套餐额度（没登录订阅账号，或用的是 API Key）" : `没有从 /usage 的回答里读到额度：${r.text.slice(0, 160)}`);
@@ -273,7 +278,7 @@ export async function refreshQuota(app: App, p: AgentProfile, maxAgeMs = 10 * 60
   if (running) return running;
   const job = (async () => {
     try {
-      const r = kind === "codex-app-server" ? await readCodex(p) : await readClaude(app, p);
+      const r = await withNetworkPolicy(app, p, {}, (profile, signal) => kind === "codex-app-server" ? readCodex(profile, signal) : readClaude(app, profile, signal));
       const snap: QuotaSnapshot = { at: new Date().toISOString(), via: kind, ...(r.plan ? { plan: r.plan } : {}), windows: r.windows };
       save(app, source, snap);
       return snap;

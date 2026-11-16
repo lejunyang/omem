@@ -7,6 +7,7 @@ import { isQuotaMessage } from "./capacity.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
 import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult, type SessionCleanup } from "./types.ts";
 import { keyEnv } from "../core/ai-keys.ts";
+import { NetworkUnavailableError } from "./network-policy.ts";
 
 // Provider queue text shown as a normal message by some CLIs (traex included).
 const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
@@ -51,6 +52,7 @@ export function modelNotes(option: SessionConfigOption | undefined, available?: 
 }
 
 export type AcpOpenOptions = {
+  signal?: AbortSignal;
   cwd: string;
   cleanup?: SessionCleanup;
   mcp?: AgentRequest["mcp"];
@@ -84,6 +86,7 @@ export type AcpHandle = {
   alive(): boolean;
   prompt(text: string, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<AgentResult>;
   close(): void;
+  stopped?: Promise<void>;
   /** Remove an omem-owned temporary session from the backend list, when advertised. */
   discard(): Promise<void>;
   /**
@@ -95,7 +98,9 @@ export type AcpHandle = {
 };
 
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
+  if (opts.signal?.aborted) throw new Error("CANCELLED");
   const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env } });
+  const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => {
     stderr = (stderr + d.toString()).slice(-4000);
@@ -267,6 +272,9 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     dead = true;
     stop(child);
   };
+  const onSetupAbort = () => { fail(new Error("CANCELLED")); close(); };
+  opts.signal?.addEventListener("abort", onSetupAbort, { once: true });
+  if (opts.signal?.aborted) onSetupAbort();
   // Setup gets the profile's idle budget too.
   const setupWatch = idleWatchdog(profile.idleTimeoutMs, () => {
     fail(new Error(`Agent 超过 ${Math.round(profile.idleTimeoutMs / 1000)} 秒没有任何活动，已停止`));
@@ -343,6 +351,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       let timer: NodeJS.Timeout | undefined;
       try {
         const operation = async () => {
+          if (opts.signal?.reason instanceof NetworkUnavailableError) throw opts.signal.reason;
           if (resumed) return;
           if (!caps?.sessionCapabilities?.delete && profile.archiveArgs?.length) {
             close();
@@ -357,7 +366,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
             })]).catch(async (e) => {
               if (!dead && !/connection closed|EPIPE|ECONNRESET|会话清理超时/i.test((e as Error).message)) throw e;
               close();
-              await deleteAcpSession(profile, sessionId, opts.cwd, { ...opts.mcp?.env, ...opts.env });
+              if (opts.signal?.reason instanceof NetworkUnavailableError) throw opts.signal.reason;
+              await deleteAcpSession(profile, sessionId, opts.cwd, { ...opts.mcp?.env, ...opts.env }, opts.signal?.reason instanceof NetworkUnavailableError ? opts.signal : undefined);
             });
           } else {
             throw new Error("该后端不支持自动清理会话，历史可能仍显示在后端列表中");
@@ -440,6 +450,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     }
     emitSetup({ type: "status", text: `${resumed ? "已恢复" : "已连接"} ${agentName}${profile.model ? ` · ${profile.model}` : ""}` });
     setupWatch.close();
+    opts.signal?.removeEventListener("abort", onSetupAbort);
     let busy = false;
     /** Whether the agent takes words mid-turn (`_session/steering`); null until tried. */
     let steerable: boolean | null = null;
@@ -450,6 +461,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       system: "systemPrompt" in system,
       alive: () => !dead,
       close,
+      stopped,
       discard: discard!,
       async steer(steerText) {
         if (dead || !busy) return "idle";
@@ -465,6 +477,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         }
       },
       async prompt(promptText, turnEmit, signal) {
+        if (signal?.aborted) { if (signal.reason instanceof NetworkUnavailableError) close(); throw new Error("CANCELLED"); }
         if (dead) throw new Error("Agent 进程已结束");
         if (busy) throw new Error("这个 Agent 会话正在处理上一条消息");
         busy = true;
@@ -538,6 +551,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         const onAbort = () => {
           void connection.cancel({ sessionId }).catch(() => {});
           fail(new Error("CANCELLED"));
+          if (signal?.reason instanceof NetworkUnavailableError) close();
         };
         signal?.addEventListener("abort", onAbort, { once: true });
         try {
@@ -551,16 +565,18 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
           signal?.removeEventListener("abort", onAbort);
           touch = () => {};
           emit = () => {};
-          try { await opts.cleanup?.children?.(sessionId); }
+          try { if (!(signal?.reason instanceof NetworkUnavailableError)) await opts.cleanup?.children?.(sessionId); }
           catch (e) { emitSetup({ type: "status", text: `后端子会话清理失败，稍后重试：${(e as Error).message.slice(0, 160)}` }); }
           finally { opts.cleanup?.active?.(sessionId, false); busy = false; }
         }
       },
     };
   } catch (error) {
+    opts.signal?.removeEventListener("abort", onSetupAbort);
     setupWatch.close();
-    await discard?.();
+    if (!(opts.signal?.reason instanceof NetworkUnavailableError)) await discard?.();
     close();
+    await stopped;
     throw explain(error, profile);
   }
 }
@@ -589,8 +605,11 @@ function explain(error: unknown, profile: AgentProfile) {
 }
 
 /** Delete a session through a connection of its own: start the agent, `session/delete`, stop it. */
-export async function deleteAcpSession(profile: AgentProfile, sessionId: string, cwd: string, env?: Record<string, string>) {
+export async function deleteAcpSession(profile: AgentProfile, sessionId: string, cwd: string, env?: Record<string, string>, signal?: AbortSignal) {
+  if (signal?.aborted) throw new Error("CANCELLED");
   const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...keyEnv(profile), ...env } });
+  const onAbort = () => stop(child);
+  signal?.addEventListener("abort", onAbort, { once: true });
   child.stderr.resume();
   const output = new WritableStream<Uint8Array>({ write: (chunk) => new Promise((resolve, reject) => child.stdin.write(chunk, (e) => (e ? reject(e) : resolve()))) });
   const input = new ReadableStream<Uint8Array>({
@@ -621,31 +640,31 @@ export async function deleteAcpSession(profile: AgentProfile, sessionId: string,
     ]);
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
     stop(child);
   }
 }
 
 /** Negotiate protocol deletion first; an archive command is only a fallback for unsupported agents. */
-export async function cleanupAcpSession(profile: AgentProfile, sessionId: string, cwd: string) {
-  try { await deleteAcpSession(profile, sessionId, cwd); }
+export async function cleanupAcpSession(profile: AgentProfile, sessionId: string, cwd: string, signal?: AbortSignal) {
+  try { await deleteAcpSession(profile, sessionId, cwd, undefined, signal); }
   catch (e) {
     if (!(e as { unsupportedCleanup?: boolean }).unsupportedCleanup || !profile.archiveArgs?.length) throw e;
-    await archiveSession(profile, sessionId, cwd);
+    if (signal?.aborted) throw new Error("CANCELLED");
+    await archiveSession(profile, sessionId, cwd, undefined, signal);
   }
 }
 
 /** One prompt turn against an ACP agent (Codex/TraeX/Claude Code adapters…). */
 export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
-  const onAbort = () => {};
-  req.signal?.addEventListener("abort", onAbort, { once: true });
-  const handle = await openAcp(profile, { cwd: req.cwd, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const handle = await openAcp(profile, { signal: req.signal, cwd: req.cwd, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");
     return await handle.prompt(sessionPrompt(handle, req, req.prompt, emit), emit, req.signal);
   } finally {
-    req.signal?.removeEventListener("abort", onAbort);
-    if (!req.persistSession && !handle.resumed) await handle.discard();
+    if (req.signal?.reason instanceof NetworkUnavailableError) { handle.close(); await handle.stopped; }
+    else if (!req.persistSession && !handle.resumed) await handle.discard();
     else handle.close();
   }
 }

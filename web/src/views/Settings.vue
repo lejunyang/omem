@@ -10,6 +10,7 @@ import { del, get, patch, post, put, type Space, type SpaceRelation } from "../a
 import AiRouting from "../components/AiRouting.vue";
 import AiDefaults from "../components/AiDefaults.vue";
 import AiCapacity from "../components/AiCapacity.vue";
+import AiNetworkConditions from "../components/AiNetworkConditions.vue";
 import AiModels from "../components/AiModels.vue";
 import ReplaySettings from "../components/ReplaySettings.vue";
 import FlowSettings from "../components/FlowSettings.vue";
@@ -36,7 +37,7 @@ import { nestedSpaces } from "../lib/spaces";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { setTimeZone } from "../lib/time";
 
-type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
+type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
 type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "connect" | "members" | "peers" | "shares" | "security" | "plugins" | "storage" | "about";
 const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "connect", "members", "peers", "shares", "security", "plugins", "storage", "about"];
@@ -393,6 +394,7 @@ async function load() {
   home.value = s.home;
   // A link to one card (the rules page's last entry opens 有人找你: ?tab=lark&focus=mentions).
   if (route.query.focus === "mentions" && tab.value === "lark") void nextTick(() => document.getElementById("settings-mentions")?.scrollIntoView({ block: "start" }));
+  if (route.query.focus === "network-conditions" && tab.value === "agents") void nextTick(() => document.getElementById("network-conditions")?.scrollIntoView({ block: "start" }));
   const sc = await get<{ schedules: Schedule[]; next: Record<string, string | null>; labels: Record<string, string> }>("/api/schedules");
   schedules.value = sc.schedules;
   next.value = sc.next;
@@ -804,7 +806,7 @@ async function removeBot(i: number) {
   void saveConfig({ lark: { ...config.value.lark, bots: (config.value.lark.bots as LarkBot[]).filter((_, j) => j !== i) } }, `已移除机器人 ${b.id}`);
 }
 const installedProfiles = computed(() => profiles.value.filter((p) => p.installed));
-const profileOptions = computed(() => installedProfiles.value.map((p) => ({ value: p.id, label: p.name ?? p.id, hint: p.id })));
+const profileOptions = computed(() => installedProfiles.value.map((p) => ({ value: p.id, label: p.name ?? p.id, hint: p.networkReason ?? p.id })));
 function saveReview(patch: Record<string, unknown>) {
   const memory = config.value.memory;
   void saveConfig({ memory: { ...memory, review: { ...memory.review, ...patch } } }, "已保存记忆复核设置");
@@ -975,9 +977,10 @@ async function saveEdit() {
       <div class="card">
         <template v-for="p in installedProfiles" :key="p.id">
           <div class="prow">
-            <span class="badge ok">已安装</span>
+            <span class="badge" :class="p.networkReason ? 'warn' : 'ok'">{{ p.networkReason ? '网络受限' : '已安装' }}</span>
             <div class="grow">
               <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.id }}</span></div>
+              <div v-if="p.networkReason" class="small warn">{{ p.networkReason }}</div>
               <div class="muted small mono">{{ p.transport }} · {{ p.command }} {{ p.args.join(" ") }}<template v-if="p.model"> · {{ p.model }}</template><template v-if="p.effort"> · {{ p.effort }}</template></div>
             </div>
             <button v-if="probeable(p)" class="btn ghost sm" :disabled="probes[p.id]?.loading" @click="probe(p)">{{ probes[p.id]?.loading ? "检测中…" : "检测模型" }}</button>
@@ -1051,6 +1054,7 @@ async function saveEdit() {
           </template>
         </div>
       </div>
+      <AiNetworkConditions :value="config.agents.networkPolicies ?? []" :backends="profiles" @saved="(v) => config.agents.networkPolicies = v" @states="(states) => { for (const p of profiles) { const policy = config.agents.networkPolicies?.find((n: any) => n.backends.includes(p.id)); const s = states.find((n) => n.id === policy?.id); p.networkReason = s && s.status !== 'ready' ? s.reason || '网络条件尚未检查' : null; } }" />
       <div class="field"><span>默认 Agent</span>
         <UiSelect v-model="defaultProfile" width="320px" aria-label="默认 Agent" :options="[{ value: '', label: '自动（第一个已安装的）' }, ...profileOptions]" />
       </div>

@@ -3,6 +3,7 @@ import { all, one, run } from "../core/db.ts";
 import { allProfiles, builtinProfiles, type AgentProfile } from "../core/config.ts";
 import { backendAvailable } from "./availability.ts";
 import { quotaAvoid } from "./quota.ts";
+import { NetworkUnavailableError, networkReason } from "./network-policy.ts";
 
 /**
  * How many runs each model takes at a time. A provider's quota is per account (the source: an ACP
@@ -79,10 +80,12 @@ export function releaseRun(runId: string) {
  * one of its models) whose usage quota ran out and has not reset yet, or a model that reached the
  * owner's daily cap for it.
  */
-export const excluded = (app: App, p: AgentProfile) => limitOf(app, p) <= 0 || outOfQuotaUntil(app, p) !== null || !!dailyCapReached(app, p);
+export const excluded = (app: App, p: AgentProfile) => !!networkReason(app, p) || limitOf(app, p) <= 0 || outOfQuotaUntil(app, p) !== null || !!dailyCapReached(app, p);
 
 /** Why the option is left out of automatic choices, in words, or null. */
 export function excludedReason(app: App, p: AgentProfile): string | null {
+  const network = networkReason(app, p);
+  if (network) return network;
   if (limitOf(app, p) <= 0) return "并行上限设成了 0";
   const until = outOfQuotaUntil(app, p);
   if (until) return `额度用完，${new Date(until).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 恢复`;
@@ -290,7 +293,11 @@ export async function acquire(app: App, options: AgentProfile[], opts: { runId: 
   // Healthy first, then accounts whose plan is nearly used, then backends that just broke down.
   const rank = (p: AgentProfile) => (downReason(app, p) ? 2 : quotaAvoid(app, p) ? 1 : 0);
   const usable = [0, 1, 2].flatMap((r) => allowed.filter((p) => rank(p) === r));
-  if (!usable.length) return { index: 0, release: take(app, options[0], opts.runId) };
+  if (!usable.length) {
+    const reason = networkReason(app, options[0]);
+    if (reason) throw new NetworkUnavailableError(reason);
+    return { index: 0, release: take(app, options[0], opts.runId) };
+  }
   const s = state(app);
   const marker: Slot = { key: keyOf(usable[0]), runId: opts.runId, waiting: true };
   let told = false;
