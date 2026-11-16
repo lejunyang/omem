@@ -480,7 +480,8 @@ export function reportText(g: Generation, r: GenerationReport) {
 function deliverReport(app: App, g: Generation, r: GenerationReport) {
   const left = r.missing.length + r.open.length + r.notes.length;
   const name = findSpace(app, g.spaceId)?.name ?? g.spaceId;
-  // The few questions for the owner go in as one form, opened from this message (afterReply: not announced on its own).
+  // The few questions for the owner go in as one form, sent as a form card of its own: a generation has
+  // no reply in a chat for it to wait for (afterReply left it unshown, the questions never reached Feishu).
   if (r.questions.length) {
     const items = r.questions.map((q, i) => ({ field: `q${i + 1}`, ...q }));
     const ask = createAsk(app, {
@@ -488,7 +489,7 @@ function deliverReport(app: App, g: Generation, r: GenerationReport) {
       question: `Wiki「${name}」写作时查不清、只有你能定的 ${items.length} 个问题。能答的写一下，答了的会补进对应页面；不知道的留空，问题留在清单里。`,
       allowText: false,
       ui: { fields: items.map((q) => ({ id: q.field, type: "textarea" as const, label: truncate(`「${q.title}」${q.question}`, 200), required: false })), submitLabel: "补进页面" },
-      context: { handler: "wiki-questions", afterReply: true, spaceId: g.spaceId, items },
+      context: { handler: "wiki-questions", spaceId: g.spaceId, items },
     });
     r.askId = ask.id;
     for (const q of r.questions) updateQuestion(app, q.id, { status: "asked", askId: ask.id });
@@ -500,7 +501,8 @@ function deliverReport(app: App, g: Generation, r: GenerationReport) {
       link: r.askId ? `#/ui/${r.askId}` : r.open[0] ? pageLink(g.spaceId, r.open[0].slug) : `#/wiki/${encodeURIComponent(g.spaceId)}`,
       userId: g.userId,
       runId: g.planRunId ?? null,
-      urgency: left || r.questions.length ? "normal" : "silent",
+      // The form card already asks the questions: the summary only pushes when something else is left.
+      urgency: left ? "normal" : "silent",
     });
   } catch (e) {
     console.warn(`[omem] Wiki 生成报告发送失败：${(e as Error).message}`);

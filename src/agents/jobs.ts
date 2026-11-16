@@ -619,7 +619,16 @@ registerHandler("ingest", async (ctx) => {
   // Someone looking for the owner in these lines: triaged and maybe handled apart (mentions/mentions.ts), which tells the owner.
   const handed = handedToMentions(ctx.app, sourceIds);
   const mentions = handed.length ? `\n\n有人找本人的这几条消息另有“有人找你”的运行分诊、需要时查背景后提醒本人，不要为它们 notify（记忆、事项照常处理）：${handed.join("、")}` : "";
-  const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}${mentions}${known}`;
+  // Groups the owner is not in (the bot's member list): other people's business, no items or notices for the owner.
+  const outside: string[] = [];
+  const { ownerInChatKnown } = await import("../channels/lark-guest.ts");
+  for (const id of sourceIds) {
+    const s = one<{ uri: string; title: string; kind: string }>(ctx.app.db, "select uri, title, kind from sources where id = ?", id);
+    const chat = s?.kind === "chat" ? /^lark:(oc_[\w-]+)/.exec(s.uri)?.[1] : undefined;
+    if (chat && (await ownerInChatKnown(ctx.app, chat).catch(() => null)) === false) outside.push(`${id}「${s!.title}」`);
+  }
+  const outsideNote = outside.length ? `\n\n本人不在这些群里（机器人被拉进去的）：${outside.join("、")}。这里是别人的事：不建本人的事项、不通知本人，除非有人点名找本人；别人 @ 机器人问的事机器人已经回答，不用接着查。` : "";
+  const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}${mentions}${outsideNote}${known}`;
   // Comparison: the same material through other backends/models; their writes are only recorded.
   for (const c of ctx.app.config.memory.compare)
     createRun(ctx.app, {

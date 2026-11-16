@@ -2277,6 +2277,34 @@ def({
   },
 });
 
+/**
+ * A new item is the owner's own business. Two kinds of runs kept turning other people's into it:
+ * the turn answering a colleague who asked the assistant (or the bot in a group) to do something for
+ * them — the assistant's job, followed with a work file and a wake, not a to-do of the owner's — and
+ * the ingest of a group the owner is not in. Telling whether the owner is in a chat needs the bot's
+ * member list; when that cannot be read the item goes ahead as before.
+ */
+async function notOwnersBusiness(ctx: ToolContext, refs: string[]) {
+  const run = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+  if (!run) return;
+  const by = run.trigger?.by;
+  if (run.kind === "ask" && by && by.key !== "user:owner" && (run.trigger?.via === "chat" || run.trigger?.via === "guest"))
+    throw new HttpError(403, `这是${by.name}请助手做的事，不是本人的事项，不要建：要接着跟进就写工作文件（write_file），用 wake_later / wake_on_message 回来看`);
+  if (run.kind !== "ingest" || !refs.length) return;
+  const chats = new Set<string>();
+  for (const ref of refs) {
+    const id = /^src:([A-Za-z0-9_-]+)/.exec(ref)?.[1];
+    const uri = id ? one<{ uri: string }>(ctx.app.db, "select uri from sources where id = ?", id)?.uri : undefined;
+    const chat = uri ? /^lark:(oc_[\w-]+)/.exec(uri)?.[1] : undefined;
+    // Material other than Feishu group chats (a doc, a mail, a private chat): not decided here.
+    if (!chat) return;
+    chats.add(chat);
+  }
+  const { ownerInChatKnown } = await import("../channels/lark-guest.ts");
+  for (const chat of chats) if ((await ownerInChatKnown(ctx.app, chat)) !== false) return;
+  throw new HttpError(403, "这些消息所在的群本人不在里面：别人的事不建成本人的事项（真有人找本人，“有人找你”会单独处理）。有值得留下的结论写进记忆或页面");
+}
+
 def({
   name: "upsert_item",
   description:
@@ -2316,6 +2344,7 @@ def({
     }
     // Removal may revoke stale/deleted refs, but must match this item's exact old set.
     if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
+    if (!existing) await notOwnersBusiness(ctx, a.source_refs ?? []);
 
     // Only adding or removing materials leaves the item's fields (and its timeline) as they are.
     const { materials_add: materialsAdd, materials_remove: materialsRemove, ...fields } = a;

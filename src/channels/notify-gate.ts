@@ -64,7 +64,7 @@ export async function ownerAlreadyHandled(app: App, n: NotificationLike, signals
   // not resolvable (so fall back to "this chat, recent" when refs resolve to none).
   if (byReply && triggers.length) {
     for (const h of triggers) {
-      if (ownerRepliedAfter(app, h.chatId, h.topicId, h.atMs)) return true;
+      if (ownerRepliedAfter(app, h.chatId, h.topicId, h.atMs, h.messageId)) return true;
     }
   } else if (byReply && refs.length) {
     for (const ref of refs) {
@@ -184,16 +184,24 @@ export function ownerFollowUp(app: App, refs: string[], limit = 6): OwnerFollowU
  * A later owner line in the same chat — and same topic when the trigger is in
  * one — means the owner is actively handling it. Uses already-captured lines.
  */
-function ownerRepliedAfter(app: App, chatId: string, topicId: string | null, afterMs: number): boolean {
+function ownerRepliedAfter(app: App, chatId: string, topicId: string | null, afterMs: number, triggerId: string | null = null): boolean {
   const row = one<{ text: string }>(app.db, "select text from sources where uri = ? and deleted_at is null", `lark:${chatId}`);
   if (!row) return false;
+  // Captured lines carry the minute only: a reply in the same minute as the message (“在的”) counts when
+  // it comes after the message's own line in the record, which is in order.
+  const minute = Math.floor(afterMs / 60_000) * 60_000;
+  let reached = false;
   for (const line of row.text.split("\n")) {
     const p = parseChatLine("", chatId, line);
-    if (!p || p.atMs <= afterMs || !p.self) continue;
+    if (!p || p.atMs < minute) continue;
     // Only require topic equality when BOTH sides carry one; many captured group
     // replies omit the topic tag and would otherwise look like different threads.
     if (topicId && p.topicId && p.topicId !== topicId) continue;
-    return true;
+    if (!p.self) {
+      if (triggerId && p.messageId === triggerId) reached = true;
+      continue;
+    }
+    if (p.atMs > afterMs || reached) return true;
   }
   return false;
 }

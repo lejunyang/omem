@@ -45,7 +45,8 @@ async function generate(id: string, pages: { slug: string; title: string }[]) {
   }
   throw new Error("generation did not settle");
 }
-const lastNotice = () => all<{ title: string; body: string; context: string }>(app.db, "select title, body, context from notifications order by at desc limit 1")[0];
+// The generation's report (a form it opens announces itself separately).
+const lastNotice = () => all<{ title: string; body: string; context: string }>(app.db, "select title, body, context from notifications where title like 'Wiki「%' order by at desc limit 1")[0];
 
 it("revises a page the checker found wrong, publishes it once it passes, and reports quietly", async () => {
   writeFileSync(checkFile, "once");
@@ -130,9 +131,11 @@ it("takes what nobody is sure of out of the page, asks the owner once, and fills
   const n = lastNotice();
   expect(n.title).toContain("1 个问题要你定");
   expect(n.body).toContain("1 个问题已经查清");
-  // One form, opened from that message rather than announced on its own.
+  // One form, sent on its own (a generation has no chat reply for it to wait for); the report then stays in the app.
   const ask = getAsk(app, g.report!.askId!);
   expect(ask).toMatchObject({ kind: "question", handler: "wiki-questions", status: "pending" });
+  expect(ask.shownAt).toBeTruthy();
+  expect(JSON.parse(n.context).urgency).toBe("silent");
   expect(ask.ui?.fields).toHaveLength(1);
   const before = listRuns(app, { kind: "wiki-write", limit: 100 }).length;
   await answerAsk(app, ask.id, { value: { [ask.ui!.fields![0].id]: "3000 元" }, by: "owner" });

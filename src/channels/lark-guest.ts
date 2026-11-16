@@ -36,10 +36,15 @@ export type GuestVerdict = { verdict: "answer" | "refuse" | "ignore"; reason: st
 const members = new Map<string, { at: number; owner: boolean }>();
 /** Whether the owner is in this group (the bot's member list, kept half an hour); unknown counts as no. */
 export async function ownerInChat(app: App, chatId: string): Promise<boolean> {
+  return (await ownerInChatKnown(app, chatId)) ?? false;
+}
+
+/** The same, null when it could not be told (the bot is not in the chat, or the member list failed). */
+export async function ownerInChatKnown(app: App, chatId: string): Promise<boolean | null> {
   const { larkOwnerOpenId } = await import("./lark-send.ts");
   // The owner's id in the bot that is asking (ids are per app).
   const owner = larkOwnerOpenId(app);
-  if (!owner) return false;
+  if (!owner) return null;
   const key = `${owner}:${chatId}`;
   const c = members.get(key);
   if (c && Date.now() - c.at < 30 * 60_000) return c.owner;
@@ -55,7 +60,7 @@ export async function ownerInChat(app: App, chatId: string): Promise<boolean> {
       token = r.data.page_token;
     }
   } catch {
-    return false; // not cached: try again next time
+    return null; // not cached: try again next time
   }
   members.set(key, { at: Date.now(), owner: found });
   return found;

@@ -45,6 +45,13 @@ describe("notify gate: owner already handled", () => {
     expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${read.id}#L1`] }, { read: false })).toBe(false);
     expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${src.id}#L1`] }, { replied: false })).toBe(false);
     expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${src.id}#L1`] }, { read: false, reacted: false })).toBe(true);
+    // Answered within the same minute (the capture keeps only minutes): the order of the lines tells.
+    const minute = Math.floor(t / 60_000) * 60_000;
+    const same = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_test4", title: "私聊", text: [line(minute, "小王", "你在工位么", "om_d1"), line(minute, "本人（本人）", "在的", "om_d2")].join("\n") });
+    expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${same.id}#L1`] }, { read: false, reacted: false })).toBe(true);
+    // The owner speaking first in that minute, then being asked: still open.
+    const before = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_test5", title: "私聊 2", text: [line(minute, "本人（本人）", "我先下线了", "om_e1"), line(minute, "小王", "还有个问题", "om_e2")].join("\n") });
+    expect(await ownerAlreadyHandled(app, { sourceRefs: [`src:${before.id}#L2`] }, { read: false, reacted: false })).toBe(false);
     setLarkCliForTests(null);
     app.db.close();
   });

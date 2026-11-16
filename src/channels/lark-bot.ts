@@ -511,9 +511,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const byUser = new Map<string, ReturnType<typeof takeDeferred>>();
     for (const n of takeDeferred(app)) byUser.set(n.userId, [...(byUser.get(n.userId) ?? []), n]);
     for (const all of byUser.values()) {
-      // A reminder carrying a drafted reply keeps its own card: a list has nowhere to send it from.
-      for (const n of all.filter((x) => x.replyDraft)) await push(n, true).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
-      const items = all.filter((x) => !x.replyDraft);
+      // A reminder carrying a drafted reply, or one that opens something to answer (a form, `#/ui/`), keeps
+      // its own card: a list of titles has nowhere to send from or answer in.
+      const own = (x: (typeof all)[number]) => !!x.replyDraft || (x.link ?? "").startsWith("#/ui/");
+      for (const n of all.filter(own)) await push(n, true).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
+      const items = all.filter((x) => !own(x));
       if (!items.length) continue;
       if (items.length <= 3) {
         for (const n of items) await push(n, true).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
