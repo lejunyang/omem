@@ -112,7 +112,8 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     return r.data;
   };
   const secure = (base: string) => base.startsWith("https:");
-  const back = (reply: FastifyReply, base: string, path: string) => reply.header("cache-control", "no-store").redirect(`${base}/#${path}`);
+  // A path into the Feishu web app (`/lark/#/ui/…`) goes back there, not into the main site's routes.
+  const back = (reply: FastifyReply, base: string, path: string) => reply.header("cache-control", "no-store").redirect(path.startsWith("/lark/#/") ? `${base}${path}` : `${base}/#${path}`);
   const startSession = (req: FastifyRequest, reply: FastifyReply, base: string, userId: string, via: string, restricted: boolean) => {
     const s = createSession(app, userId, { via, restricted, ip: req.ip ?? "", userAgent: String(req.headers["user-agent"] ?? "") });
     reply.header("set-cookie", sessionCookie(s.token, s.maxAge, secure(base)));

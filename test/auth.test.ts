@@ -64,9 +64,9 @@ describe("logging in", async () => {
   const hashOf = (r: Response) => decodeURIComponent(new URL(r.headers.get("location")!).hash);
 
   /** Log in with Feishu as the person behind `code`; returns the redirect and the session cookie. */
-  async function loginAs(code: string, opts: { provider?: string; invite?: string; cookie?: string; purpose?: "bind" } = {}) {
+  async function loginAs(code: string, opts: { provider?: string; invite?: string; cookie?: string; purpose?: "bind"; return?: string } = {}) {
     const provider = opts.provider ?? "lark";
-    const q = new URLSearchParams({ ...(opts.invite ? { invite: opts.invite } : {}), ...(opts.purpose ? { purpose: opts.purpose } : {}) });
+    const q = new URLSearchParams({ ...(opts.invite ? { invite: opts.invite } : {}), ...(opts.purpose ? { purpose: opts.purpose } : {}), ...(opts.return ? { return: opts.return } : {}) });
     const start = await remote(`/api/auth/${provider}/start?${q}`, { cookie: opts.cookie ? `omem_sid=${opts.cookie}` : undefined });
     expect(start.status).toBe(302);
     const to = new URL(start.headers.get("location")!);
@@ -79,7 +79,7 @@ describe("logging in", async () => {
     }
     const back = await remote(`/api/auth/${provider}/callback?code=${code}&state=${state}`, { cookie: opts.cookie ? `omem_sid=${opts.cookie}` : undefined });
     expect(back.status).toBe(302);
-    return { redirect: hashOf(back), cookie: cookieOf(back) };
+    return { redirect: hashOf(back), cookie: cookieOf(back), location: back.headers.get("location")! };
   }
   const me = (cookie?: string) => remote("/api/me", { cookie: cookie ? `omem_sid=${cookie}` : undefined });
 
@@ -98,6 +98,13 @@ describe("logging in", async () => {
     expect(redirect).toBe("#/");
     expect((await (await me(cookie)).json()).id).toBe("owner");
     expect(identitiesOf(app, "owner").map((i) => [i.external_id, i.kind])).toEqual(expect.arrayContaining([["on_owner", "login"], ["ou_owner", "alias"]]));
+  });
+
+  it("goes back into the Feishu web app when that is where the login started", async () => {
+    const r = await loginAs("c_owner", { return: "/lark/#/ui/uv1" });
+    expect(new URL(r.location).pathname).toBe("/lark/");
+    expect(r.redirect).toBe("#/ui/uv1");
+    expect(r.cookie).toBeTruthy();
   });
 
   it("makes a newcomer wait for the owner's approval", async () => {

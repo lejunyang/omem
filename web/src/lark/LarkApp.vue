@@ -84,10 +84,11 @@ onMounted(async () => {
           return;
         }
         // Feishu refused the in-app code (the client APIs are stricter about the page address than the
-        // ordinary authorization page): sign in through that page instead, once, and come back to the
-        // same view on the main site. A second refusal within a few minutes shows why.
+        // ordinary authorization page): sign in through that page instead, once, and come back to this
+        // light page (not the main site, which keeps a live connection open). A second refusal within a
+        // few minutes shows why.
         if (!recentlyRedirected()) {
-          const back = (location.hash.replace(/^#/, "") || "/").slice(0, 300);
+          const back = `/lark/#${location.hash.replace(/^#/, "") || "/"}`.slice(0, 300);
           location.replace(`/api/auth/lark/start?purpose=login&return=${encodeURIComponent(back)}`);
           return;
         }
