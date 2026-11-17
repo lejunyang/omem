@@ -35,17 +35,24 @@ function feishuCode(appId: string): Promise<string> {
     sdk.error?.((e) => reject(new Error(`飞书 JSSDK 出错：${JSON.stringify(e)}`)));
     sdk.ready(() => {
       const tt = window.tt!;
-      const legacy = () =>
+      // What Feishu said, with its error number: "please check errno" alone says nothing.
+      const said = (api: string, e: { errno?: number; errMsg?: string }) => `${api}${e.errno !== undefined ? ` errno ${e.errno}` : ""}：${e.errMsg || "没有说明"}`;
+      const refused = (first: string, second?: string) =>
+        new Error(
+          `飞书没有给登录码（${[first, second].filter(Boolean).join("；")}）。多半是开发者后台还没配好：应用 ${appId} 要有“网页应用”能力，桌面端和移动端主页填 ${location.origin}/lark/，` +
+            `安全设置的 H5 可信域名加上 ${location.host}，改完发布新版本；飞书也可能不接受 IP 或 http 地址，那时要给 omem 配一个域名（设置里的网页地址）。`,
+        );
+      // The older API also gives a code, and is what a client without requestAccess (errno 103) or one that refuses it may still allow.
+      const legacy = (before?: string) =>
         tt.requestAuthCode
-          ? tt.requestAuthCode({ appId, success: (r) => resolve(r.code), fail: (e) => reject(new Error(e.errMsg || "飞书没有给登录码")) })
-          : reject(new Error("飞书版本太旧，升级后再打开"));
+          ? tt.requestAuthCode({ appId, success: (r) => resolve(r.code), fail: (e) => reject(refused(...(before ? [before, said("requestAuthCode", e)] : [said("requestAuthCode", e)]) as [string, string?])) })
+          : reject(before ? refused(before) : new Error("飞书版本太旧，升级后再打开"));
       if (!tt.requestAccess) return legacy();
       tt.requestAccess({
         appID: appId,
         scopeList: [],
         success: (r) => resolve(r.code),
-        // 103: the client is too old for requestAccess.
-        fail: (e) => (e.errno === 103 ? legacy() : reject(new Error(e.errMsg || "飞书没有给登录码"))),
+        fail: (e) => legacy(e.errno === 103 ? undefined : said("requestAccess", e)),
       });
     });
   });
