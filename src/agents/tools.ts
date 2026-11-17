@@ -1050,7 +1050,7 @@ function assistantTaskScope(ctx: ToolContext) {
  */
 const LEND_DENIED = new Set([
   "lark_write", "lark_invite", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize",
-  "lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "reply_to_asker",
+  "lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "reply_to_asker", "meeting_suggest",
   "run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run",
   "stay_quiet", "report_rule_failure", ...ROLE_TOOLS,
 ]);
@@ -2935,6 +2935,24 @@ def({
     const { reactLark } = await import("../channels/lark-send.ts");
     await reactLark(a.message_id, a.emoji ?? "OnIt", ctx.larkBot);
     return "已加表情";
+  },
+});
+
+def({
+  name: "meeting_suggest",
+  description:
+    "旁听飞书会议时，把你主动查清楚的一点交给本人（规则打开了“主动查”时才有）：会上提到了什么、你查到了什么和依据、可以发到会里的两三句。本人在卡片上决定要不要以机器人身份发到会中聊天；你自己不在会里说话。每个点交一次。",
+  write: true,
+  schema: z.object({
+    point: z.string().min(2).max(300).describe("会上提到的问题或疑点，一句话"),
+    basis: z.string().min(2).max(1500).describe("查到的内容和依据（代码位置、文档、数据口径和时间、原件引用），给本人看"),
+    answer: z.string().min(2).max(400).describe("可以发到会里的两三句（200 字以内，所有参会人都看得到：不写本人的私事和个人记忆）"),
+  }),
+  handler: async (ctx, a) => {
+    const m = ctx.runId ? (getRun(ctx.app, ctx.runId).input.meeting as { id: string; suggest?: boolean } | undefined) : undefined;
+    if (!m?.suggest) throw new HttpError(403, "只有打开了“主动查”的会议旁听可以用");
+    const { suggestFinding } = await import("../channels/meeting-answers.ts");
+    return suggestFinding(ctx.app, ctx.runId, m.id, a);
   },
 });
 

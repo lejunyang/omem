@@ -4,6 +4,8 @@ import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { botInvitedToMeeting, meetingEnded, ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
+import { setKey } from "../src/core/ai-keys.ts";
+import { setDecisionFetchForTests } from "../src/core/decision.ts";
 import { resetMeetingAnswersForTests, settleMeetingAnswersForTests } from "../src/channels/meeting-answers.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { addNotificationSink, listNotifications, notify, releaseLater } from "../src/core/notify.ts";
@@ -369,7 +371,7 @@ describe("held notifications after a meeting", () => {
 describe("answering in the meeting", () => {
   // Guest runs a test left unanswered: end them, so nothing waits on a closed database.
   afterEach(async () => {
-    for (const app of apps) for (const r of all<{ id: string }>(app.db, "select id from runs where kind = 'guest' and status in ('queued', 'running')")) {
+    for (const app of apps) for (const r of all<{ id: string }>(app.db, "select id from runs where kind in ('guest', 'agent') and status in ('queued', 'running')")) {
       run(app.db, "update runs set status = 'cancelled' where id = ?", r.id);
       app.events.emit("event", { type: "run", runId: r.id });
     }
@@ -379,7 +381,7 @@ describe("answering in the meeting", () => {
   const chat = (id: string, min: number, from: [string, string], text: string) => ({ event_id: id, activity_event_type: "chat_received", event_time: at(min), chat_received_items: [{ message_id: `c_${id}`, content: text, sender: { id: from[0], name: from[1] }, message_type: 1 }] });
   const said = (id: string, min: number, from: [string, string], text: string) => ({ event_id: id, activity_event_type: "transcript_received", event_time: at(min), transcript_received_items: [{ sentence_id: `s_${id}`, text, speaker: { id: from[0], name: from[1] } }] });
   const answerRule = (app: ReturnType<typeof testApp>, extra: Record<string, unknown> = {}) =>
-    saveRule(app, { name: "答疑", description: "会上有人问机器人就回答", enabled: true, trigger: { event: "meeting" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: true, answer: true, ...extra }] });
+    saveRule(app, { name: "答疑", description: "会上有人问机器人就回答", enabled: true, trigger: { event: "meeting" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: true, answer: true, answerBy: "guest", ...extra }] });
   const guestRuns = (app: ReturnType<typeof testApp>) => all<{ id: string; input: string }>(app.db, "select id, input from runs where kind = 'guest' order by rowid").map((r) => ({ id: r.id, ...JSON.parse(r.input) }));
   async function finish(app: ReturnType<typeof testApp>, runId: string, output: Record<string, unknown>) {
     run(app.db, "update runs set status = 'done', output = ? where id = ?", JSON.stringify(output), runId);
@@ -498,6 +500,107 @@ describe("answering in the meeting", () => {
       expect(runs[0].text).toBe("小助理帮我查一下发布计划");
       expect(runs[0].note).toContain("语音转写");
     } finally { vi.useRealTimers(); }
+  });
+
+  const agentRuns = (app: ReturnType<typeof testApp>, lane: string) => all<{ id: string; input: string; lane: string }>(app.db, "select id, input, lane from runs where kind = 'agent' and lane = ? order by rowid", lane).map((r) => ({ id: r.id, ...JSON.parse(r.input) }));
+  function withDecision(app: ReturnType<typeof testApp>, choice: string) {
+    app.config.ai.providers = [{ id: "d", name: "决策", kind: "openai" as never, backends: [] }];
+    app.config.ai.decision = { provider: "d", model: "", fallback: "general", gatekeeper: true };
+    setKey(app.home, "d", "key-1");
+    const asked: any[] = [];
+    setDecisionFetchForTests((async (_url: string, init: RequestInit) => {
+      asked.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ answers: [{ type: "choice", name: "q", choice, probabilities: [{ value: choice, probability: 0.9 }] }] }), { status: 200 });
+    }) as unknown as typeof fetch);
+    return asked;
+  }
+
+  it("by default the main assistant looks it up with the owner's reach, called by name or by the rule's other words, spoken too", async () => {
+    const { app, cards, botEvents } = setup();
+    answerRule(app, { answerBy: undefined, answerNames: ["助理"], answerSpoken: true });
+    await ownerJoinedMeeting(app, { id: "m8", no: "888888888", topic: "故障复盘" });
+    setMeetingConsumerForTests(() => ({ stop() {} }));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      botEvents.push([said("v1", 1, ["ou_b", "小李"], "助理帮我查一下支付回调为什么重试了三次")]);
+      await tick(app);
+      vi.setSystemTime(Date.now() + 20_000);
+      botEvents.push([]);
+      await tick(app);
+    } finally { vi.useRealTimers(); }
+    const [r] = agentRuns(app, "meeting-answer:m8");
+    expect(guestRuns(app)).toHaveLength(0);
+    expect(r).toMatchObject({ spec: "assistant", meeting: { id: "m8" }, lark: { chats: [] } });
+    // The owner's whole reach (no space list), still without handing work on or changing code.
+    expect(r.assistantScope.spaces).toBeUndefined();
+    expect(r.assistantScope.denyTools).toContain("delegate_code");
+    expect(r.denyTools).toContain("notify");
+    expect(r.task).toContain("口头说");
+    expect(r.task).toContain("支付回调为什么重试了三次");
+    await finish(app, r.id, { answer: "回调超时设的 3 秒，下游慢时会重试，见 pay/callback.ts 的 retryPolicy。" });
+    const card = JSON.stringify(cards.at(-1));
+    expect(card).toContain("要发这个回答吗");
+    expect(card).toContain("主助手按你的权限查的");
+    expect(card).toContain("retryPolicy");
+  });
+
+  it("the decision model keeps a passing mention from starting a run; an agent that stays quiet sends nothing", async () => {
+    const { app, cards, botEvents } = setup();
+    answerRule(app, { answerBy: "assistant", answerMode: "auto" });
+    const asked = withDecision(app, "ignore");
+    try {
+      await ownerJoinedMeeting(app, { id: "m9", no: "999999999", topic: "周会" });
+      setMeetingConsumerForTests(() => ({ stop() {} }));
+      botEvents.push([chat("p1", 1, ["ou_b", "小李"], "小助理今天也在会里哈")]);
+      await tick(app);
+      await settleMeetingAnswersForTests();
+      expect(asked).toHaveLength(1);
+      expect(JSON.stringify(asked[0])).toContain("小助理今天也在会里哈");
+      expect(agentRuns(app, "meeting-answer:m9")).toHaveLength(0);
+    } finally { setDecisionFetchForTests(null); }
+    app.config.ai.decision = { provider: "", model: "", fallback: "general", gatekeeper: true };
+    botEvents.push([chat("p2", 2, ["ou_b", "小李"], "小助理 这个需求谁负责？")]);
+    await tick(app);
+    const [r] = agentRuns(app, "meeting-answer:m9");
+    await finish(app, r.id, { answer: "", stayQuiet: "库里查不到负责人" });
+    const { answersText } = await import("../src/channels/meeting-answers.ts");
+    const summary = answersText(one<{ answers: string }>(app.db, "select answers from lark_meetings where meeting_id = 'm9'")!);
+    expect(summary).toContain("决策模型");
+    expect(summary).toContain("助手没有回答：库里查不到负责人");
+    expect(cards.filter((c) => JSON.stringify(c).includes("要发这个回答吗"))).toHaveLength(0);
+  });
+
+  it("proactive lookups: the listening agent gets the owner's reach and meeting_suggest; findings go to the owner, once each, up to the limit", async () => {
+    const { app, calls, cards, botEvents } = setup();
+    answerRule(app, { answer: false, spec: "assistant", proactive: true, proactiveMax: 2, meetingKind: "review" });
+    await ownerJoinedMeeting(app, { id: "m10", no: "101010101", topic: "退款改造评审" });
+    setMeetingConsumerForTests(() => ({ stop() {} }));
+    botEvents.push([said("w1", 1, ["ou_a", "小王"], "现在退款是同步调银行的吧，我们改成异步")]);
+    await tick(app);
+    const [w] = agentRuns(app, "meeting:m10");
+    expect(w.meeting).toEqual({ id: "m10", suggest: true });
+    expect(w.assistantScope.spaces).toBeUndefined();
+    expect(w.task).toContain("需求评审");
+    expect(w.task).toContain("meeting-assist");
+    const { callTool } = await import("../src/agents/tools.ts");
+    const ctx = { app, runId: w.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" as const };
+    const finding = { point: "退款现在是不是同步调银行", basis: "refund/service.ts 第 40 行起：先落库再投递消息队列，已经是异步的。", answer: "退款现在已经是异步的：先落库再发消息（refund/service.ts）。" };
+    expect(JSON.stringify(await callTool(ctx, "meeting_suggest", finding))).toContain("第 1/2 条");
+    const card = JSON.stringify(cards.at(-1));
+    expect(card).toContain("会上提到的，我查了一下");
+    expect(card).toContain("refund/service.ts 第 40 行起");
+    expect(card).toContain("发到会里");
+    expect(JSON.stringify(await callTool(ctx, "meeting_suggest", finding))).toContain("已经交过了");
+    await callTool(ctx, "meeting_suggest", { ...finding, point: "老数据要不要迁移" });
+    expect(JSON.stringify(await callTool(ctx, "meeting_suggest", { ...finding, point: "第三点" }))).toContain("上限");
+    expect(cards.filter((c) => JSON.stringify(c).includes("会上提到的"))).toHaveLength(2);
+    const r = await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: `om_card${cards.length - 1}` }, action: { tag: "button", value: { action: "send" } } });
+    expect(JSON.stringify(r.card)).toContain("已发到会里");
+    expect(texts(calls)).toEqual([finding.answer]);
+    // A listening run without proactive lookups cannot hand anything in.
+    const { createRun } = await import("../src/agents/runs.ts");
+    const plain = createRun(app, { kind: "agent", spaceId: "personal", title: "旁听", input: { spec: "assistant", task: "x", meeting: { id: "m10" } } });
+    expect(await callTool({ ...ctx, runId: plain.id }, "meeting_suggest", finding)).toMatchObject({ isError: true });
   });
 });
 

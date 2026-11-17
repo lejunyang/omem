@@ -291,7 +291,7 @@ async function runAgentTask(ctx: RunContext) {
     /** A rule's silent investigation: nothing is delivered; the agent posts itself when it decides to. */
     silent?: { chatId: string; messageId: string; topicId: string | null };
     /** Listening to a meeting for the owner (lark-meetings.ts): like silent; it never speaks in the meeting (meeting-answers.ts does). */
-    meeting?: { id: string };
+    meeting?: { id: string; suggest?: boolean };
     /** A rule's agent answering in a topic under this message (its bubble or answer opens the topic). */
     replyAt?: { chatId: string; messageId: string; inThread?: boolean };
     /** A silent agent picking up a topic it follows continues its earlier session. */
@@ -352,7 +352,7 @@ async function runAgentTask(ctx: RunContext) {
       // With no AI named (by the rule, or the assistant handing it on), it is chosen per settings → AI → 任务选型.
       choose: rule ? "rules" : "tasks",
       // Runs nobody waits on may end saying nothing (stay_quiet, quiet.ts); a rule's may report it could not do its job.
-      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...lent],
+      addTools: [...(rule ? ["report_rule_failure"] : []), ...(rule || silent || meeting || (ctx.run.input as { wake?: boolean }).wake ? ["stay_quiet"] : []), ...mentionTools((ctx.run.input as { mention?: MentionInfo }).mention), ...(meeting?.suggest ? ["meeting_suggest"] : []), ...lent],
       execution,
       // A rule's switch turns it on for its runs; left off, they follow the agent's own setting (prepareRun),
       // like every other run of that agent. (Off used to mean off even with the assistant on full access:

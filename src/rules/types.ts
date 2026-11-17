@@ -163,7 +163,10 @@ export const actionSchema = z.discriminatedUnion("type", [
    * `spec` listens along and tells the owner when they are needed; `answer` lets a bot answer questions
    * put to it in the meeting chat (src/channels/meeting-answers.ts), held by `answerFrom` (who may ask),
    * `answerMode` (a draft the owner sends, or straight in), `answerMax` (answers per meeting) and
-   * `answerSpoken` (spoken questions naming the bot count too); `importShared` imports documents shared on screen;
+   * `answerSpoken` (spoken questions naming the bot count too), `answerBy` (the main assistant with the
+   * owner's reach, or the guest role) and `answerNames` (other words that call the bot); `proactive` lets
+   * the listening agent look up what the meeting raises and hand it to the owner (`meetingKind` says what
+   * kind of meeting, `proactiveMax` how many per meeting); `importShared` imports documents shared on screen;
    * `leaveWithOwner` takes the bots out when the owner leaves. See src/channels/lark-meetings.ts.
    */
   z.object({
@@ -179,6 +182,11 @@ export const actionSchema = z.discriminatedUnion("type", [
     answerMode: z.enum(["draft", "auto"]).default("draft"),
     answerMax: z.number().int().min(1).max(30).default(5),
     answerSpoken: z.boolean().default(false),
+    answerBy: z.enum(["assistant", "guest"]).default("assistant"),
+    answerNames: z.array(z.string().trim().min(2).max(20)).max(5).default([]),
+    proactive: z.boolean().default(false),
+    proactiveMax: z.number().int().min(1).max(20).default(5),
+    meetingKind: z.enum(["auto", "problem", "review", "other"]).default("auto"),
     importShared: z.boolean().default(true),
     leaveWithOwner: z.boolean().default(true),
   }),
