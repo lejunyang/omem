@@ -563,7 +563,8 @@ const kindOptions = computed(() => [
     "search search search"
     "status status status"
     "scope scope quiet"
-    "kind kind by";
+    "kind kind kind"
+    "by by by";
   row-gap: 8px;
   align-items: center;
 }
@@ -580,7 +581,8 @@ const kindOptions = computed(() => [
 .head .delegate { grid-area: delegate; }
 .head .kind-filter { grid-area: kind; justify-self: start; }
 .head .status-filter { grid-area: status; justify-self: start; }
-.head .by-filter { grid-area: by; justify-self: end; align-self: start; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+/* Its own full row: two selects in the right-hand column widened it and squeezed the view and scope pickers. */
+.head .by-filter { grid-area: by; justify-self: start; display: flex; gap: 6px; flex-wrap: wrap; }
 .run .by { display: flex; align-items: center; gap: 4px; }
 .linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .linkish:hover { text-decoration: underline; }

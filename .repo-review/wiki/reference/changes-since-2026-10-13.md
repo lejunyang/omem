@@ -20,6 +20,7 @@ updated: 2026-11-17
 - 成员的一轮在哪个空间跑（`src/core/users.ts` 的 `turnSpaceFor`，`agents/inbox.ts` 建运行、`agents/sessions.ts` 的 `prepareRun`）：会话所在的空间他读不了（新群没有绑定空间，按本人的采集设置落在 `personal`）时，这一轮改在他自己的个人空间跑，会话不动。能读什么本来就由工具按他的空间逐个校验，会话的空间只决定这一轮写到哪里，不再让 `runner.ts` 整轮拒绝。
 - `lark_send_file` 等的 `reply_to` 说明（`agents/tools.ts` 的 `larkTarget`，`skills/omem/references/lark.md` 的“附件”）：给这一轮的提问发附件不填 `chat_id`、`reply_to`，和回复落在同一处；之前助手把附件回到最早那条提问下面开了话题，提问的人在回复处看不到。
 - @ 的人不在群里（`larkPost` 的回执）：本人的运行里提示用 `lark_invite` 把要参与的人（审批人、要确认的人）拉进来，本人批准后再发；以前写“无需重试”，规则里审批卡片因值班人不在群就停了。说明页“拉人进群”同步。
+- 运行页筛选区（`web/src/views/Runs.vue`）：“所有人”“所有方式”两个下拉挪到单独一整行。之前两个下拉挤在网格右列，把右列撑到二百多像素，左列的“编码/全部运行”“当前空间/所有空间”被压到出滚动条，“交办”按钮被拉宽。
 - 卡片里的 @（`channels/lark-people.ts` 的 `applyCardMentions`，`larkPost` 的 `mentions` 和审批卡片 `allowed` 两处）：卡片正文已经写了 `@名字` 的就把那处换成真正的 @，只有没写到的人才在顶上加一行；以前卡片顶上一个真 @、正文里再一个 `@名字`，同一个人出现两次。文字和 Markdown 消息本来就是这样。
 - 提交认领（`src/flows/commits.ts`）：卡片多一项“这个仓库以后不用问”，选了就把仓库空间的 `commitClaim` 设为 false，巡检跳过这个仓库；设置 → 空间里能勾回来（`web/src/views/Settings.vue`）。
 
