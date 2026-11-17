@@ -153,7 +153,9 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       // Logging in asks for nothing beyond who the person is, unless they ticked features on the login page.
       const features = (o.features ?? "").split(",").filter(Boolean);
       // Logging in and binding also ask for what recognizes an account made ahead of time (the email).
-      const identity = loginProvider(provider)?.identityScopes ?? [];
+      const lp = loginProvider(provider);
+      const optional = lp?.optionalIdentityScopes?.length ? await lp.grantedScopes?.(app).catch(() => null) : null;
+      const identity = [...(lp?.identityScopes ?? []), ...(lp?.optionalIdentityScopes ?? []).filter((s) => optional?.has(s))];
       const scopes = o.purpose === "connect" ? [...new Set([...scopesFor(provider, features), ...named, ...(named.length ? scopesFor(provider, ["offline"]) : [])])] : o.purpose === "login" ? [...new Set([...identity, ...scopesFor(provider, features)])] : identity;
       const url = beginLogin(app, { provider, purpose: o.purpose, redirectUri: callbackUrl(base, provider), userId: a?.userId, sessionHash: a?.sessionHash, invite: o.invite, returnTo: o.return, scopes });
       return reply.header("cache-control", "no-store").redirect(url);

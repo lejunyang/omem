@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { larkAppSecret, readLarkSecrets } from "../channels/lark-setup.ts";
+import { larkAppScopes, larkAppSecret, readLarkSecrets } from "../channels/lark-setup.ts";
 import { authFetch, GrantRejected, registerLoginProvider, type ProviderIdentity, type ProviderTokens } from "./providers.ts";
 
 /**
@@ -35,6 +35,9 @@ async function call<T>(res: Response, what: string): Promise<T> {
   return v as T;
 }
 
+/** The app's granted scopes, read at most every ten minutes (a minute after a failed read). */
+const granted = new Map<string, { scopes: Set<string> | null; until: number }>();
+
 export const larkProvider = {
   id: "lark",
   label: "飞书",
@@ -44,8 +47,20 @@ export const larkProvider = {
     if (!secret(app)) return "缺少机器人应用的 App Secret";
     return null;
   },
-  // `email` needs the first, `enterprise_email` the second (Feishu's user_info).
-  identityScopes: ["contact:user.email:readonly", "contact:user.employee:readonly"],
+  // `email` needs this (Feishu's user_info); it recognizes an account made ahead of time.
+  identityScopes: ["contact:user.email:readonly"],
+  // `enterprise_email` needs “获取用户受雇信息”, which some tenants' consoles do not offer at all:
+  // asked for only when the app has it, or the authorization page refuses the whole login.
+  optionalIdentityScopes: ["contact:user.employee:readonly"],
+  async grantedScopes(app: App) {
+    const appId = app.config.lark.appId, key = secret(app);
+    if (!appId || !key) return null;
+    const hit = granted.get(appId);
+    if (hit && hit.until > Date.now()) return hit.scopes;
+    const scopes = await larkAppScopes(appId, key);
+    granted.set(appId, { scopes, until: Date.now() + (scopes ? 10 : 1) * 60_000 });
+    return scopes;
+  },
   authorizeUrl(app: App, p: { state: string; challenge: string; redirectUri: string; scopes: string[] }) {
     const q = new URLSearchParams({ client_id: app.config.lark.appId ?? "", response_type: "code", redirect_uri: p.redirectUri, state: p.state, code_challenge: p.challenge, code_challenge_method: "S256" });
     if (p.scopes.length) q.set("scope", p.scopes.join(" "));

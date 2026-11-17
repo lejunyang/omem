@@ -30,7 +30,7 @@
 2. **服务端**：`/api/tools` 和 `/mcp` 除了 `ot_` 也认用户凭据（API 令牌、插件认出的 JWT），按这个人的空间和一套“外部 Agent 工具”开放，每个会话记成他的一条运行。做法沿用现有的 `peer-agent.ts`，从“只有本人”放开成“按用户”。
 3. **鉴权插件**：新增 `api.authenticator()`。插件拿到 Bearer 凭据后自己验证签名，返回身份（id、名字、邮箱），宿主照常经 `identities` 找到用户。内部 JWT 的签发方、公钥、字段名都写在数据目录的插件里。
 4. **按邮箱预建账号**：本人在 设置 → 成员（或 `omem user add --email`）按邮箱建账号。任何能给出可信邮箱的身份（插件认出的 JWT、飞书本企业的账号）第一次出现时，挂到邮箱相同的预建账号上，不再新建待批准的账号。
-5. **飞书登录申请邮箱**：登录时固定申请 `contact:user.email:readonly` 和 `contact:user.employee:readonly`，拿到 `email` 和 `enterprise_email`。
+5. **飞书登录申请邮箱**：登录时固定申请 `contact:user.email:readonly`（`email`）；`contact:user.employee:readonly`（`enterprise_email`）只在应用已开通时才申请（`optionalIdentityScopes`，按应用已开通的权限判断，十分钟读一次，读不到就不申请）：有的租户的开发者后台根本没有这个权限，申请了授权页会拒绝整个登录（2026-11-17）。
 6. **主要登录方的规则不变**：它只管网页会话。命令行凭据（API 令牌、JWT）从来不受它限制，这一点保持不变。
 
 ## 4. 客户端：连远程地址

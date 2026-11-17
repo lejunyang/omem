@@ -117,9 +117,18 @@ describe("connections", async () => {
   });
 
   it("asks for the features ticked on the login page, and for nothing else without them", async () => {
+    // Only what recognizes an account made ahead of time: the email; the enterprise email's scope only when the app has it.
+    const { larkProvider } = await import("../src/auth/lark.ts");
+    const real = larkProvider.grantedScopes;
+    larkProvider.grantedScopes = async () => new Set(["contact:user.email:readonly"]);
     const plain = new URL((await remote("/api/auth/lark/start")).headers.get("location")!);
-    // Only what recognizes an account made ahead of time: the email fields.
-    expect(plain.searchParams.get("scope")!.split(" ").sort()).toEqual(["contact:user.email:readonly", "contact:user.employee:readonly"]);
+    expect(plain.searchParams.get("scope")!.split(" ").sort()).toEqual(["contact:user.email:readonly"]);
+    larkProvider.grantedScopes = async () => new Set(["contact:user.email:readonly", "contact:user.employee:readonly"]);
+    const both = new URL((await remote("/api/auth/lark/start")).headers.get("location")!);
+    expect(both.searchParams.get("scope")!.split(" ").sort()).toEqual(["contact:user.email:readonly", "contact:user.employee:readonly"]);
+    // The app's scopes cannot be read: the optional one is left out rather than risk a refused login.
+    larkProvider.grantedScopes = async () => null;
+    expect(new URL((await remote("/api/auth/lark/start")).headers.get("location")!).searchParams.get("scope")).toBe("contact:user.email:readonly");
     const ticked = new URL((await remote("/api/auth/lark/start?features=calendar")).headers.get("location")!);
     const asked = ticked.searchParams.get("scope")!.split(" ");
     expect(asked).toEqual(expect.arrayContaining([...scopesFor("lark", ["calendar"])]));
@@ -129,6 +138,7 @@ describe("connections", async () => {
     const session = await (await remote("/api/auth/session")).json();
     expect(session.login.providers[0].features.map((f: { id: string }) => f.id)).toEqual(expect.arrayContaining(["messages", "calendar"]));
     expect(session.login.providers[0].features.map((f: { id: string }) => f.id)).not.toContain("offline");
+    larkProvider.grantedScopes = real;
   });
 
   it("does not use a feature turned off in omem, though Feishu still grants it; nor an account waiting for approval", async () => {

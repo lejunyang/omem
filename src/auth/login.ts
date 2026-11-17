@@ -101,7 +101,7 @@ export async function completeLogin(app: App, input: { provider: string; state: 
   // The tokens are kept for a connect, and whenever they bring scopes or there is a connection already:
   // a Feishu token carries every scope granted before, so a later login renews the connection.
   // The scopes every login asks for (the email: identityScopes) are not a reason to keep anything.
-  const beyond = (tokens.scope ?? "").split(/\s+/).some((x) => x && !(p.identityScopes ?? []).includes(x));
+  const beyond = (tokens.scope ?? "").split(/\s+/).some((x) => x && ![...(p.identityScopes ?? []), ...(p.optionalIdentityScopes ?? [])].includes(x));
   const keep = st.purpose === "connect" || !!tokens.refreshToken || beyond || !!findConnection(app, r.userId, p.id);
   if (keep) saveConnection(app, r.userId, p.id, who, tokens);
   return r.kind === "bound" ? { ...r, connected: keep } : r;

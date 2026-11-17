@@ -70,6 +70,13 @@ export type LoginProvider = {
    * recognize an account made ahead of time (Feishu: the email fields, docs/v2/remote-clients.md §7.4).
    */
   identityScopes?: string[];
+  /**
+   * Asked for as well, but only when the app has them (`grantedScopes`): a scope a tenant's console does
+   * not offer would make the authorization page refuse the whole login (Feishu: the enterprise email).
+   */
+  optionalIdentityScopes?: string[];
+  /** The scopes the app has been granted, or null when they cannot be read (then optional ones are left out). */
+  grantedScopes?(app: App): Promise<Set<string> | null>;
   /** The authorization flow; a provider with `credentials` only has none. */
   authorizeUrl?(app: App, p: { state: string; challenge: string; redirectUri: string; scopes: string[] }): string;
   exchange?(app: App, p: { code: string; verifier: string; redirectUri: string }): Promise<ProviderTokens>;
