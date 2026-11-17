@@ -167,7 +167,7 @@ async function checkLocal(app: App, e: Entry) {
     e.recoverUntil = Date.now() + 60000;
     e.retryAt = 0;
     e.status = "recovering";
-    e.reason = "本地网络已恢复，等待出口复核";
+    e.reason = "本地网络恢复了，再查一次出口";
     notify(app, e);
   }
   return !reason;
@@ -211,7 +211,7 @@ async function check(app: App, e: Entry, force = false) {
       e.probeStrikes = 0;
       e.successes++;
       e.retryAt = Date.now() + 5000;
-      if (recovering && e.successes < 2) { e.status = "recovering"; e.reason = "出口检查已通过，等待第二次确认"; }
+      if (recovering && e.successes < 2) { e.status = "recovering"; e.reason = "出口查过一次正常，再查一次就恢复"; }
       else { e.status = "ready"; e.reason = null; e.validUntil = Date.now() + e.policy.probe.maxAgeSeconds * 1000; e.recoverUntil = 0; }
       notify(app, e);
     } catch (error) {
@@ -226,7 +226,7 @@ async function check(app: App, e: Entry, force = false) {
         return;
       }
       e.probeStrikes = 0;
-      block(app, e, control.signal.aborted ? "出口检测超时或已中断" : readable((error as Error).message));
+      block(app, e, control.signal.aborted ? "出口检测超时" : readable((error as Error).message));
       e.retryAt = Date.now() + 5000;
     } finally { clearTimeout(timer); if (e.probeAbort === control) e.probeAbort = undefined; }
   };
@@ -243,7 +243,7 @@ export async function pollNetworkPolicies(app: App) {
       if (e.interfaces === current) continue;
       e.interfaces = current;
       if (e.status === "unchecked") continue;
-      block(app, e, "网络接口或地址已变化，需要重新检查出口");
+      block(app, e, "网卡或地址变了，重新查出口");
       e.recoverUntil = Date.now() + 60000;
       e.retryAt = 0;
     }
@@ -285,7 +285,7 @@ export function networkReason(app: App, profile: AgentProfile) {
   const e = entryFor(app, profile);
   if (!e) return null;
   if (e.status === "ready" && e.validUntil > Date.now()) return null;
-  return `${e.policy.name}：${e.reason ?? (e.validUntil ? "出口检查已过期" : "尚未检查网络条件")}`;
+  return `${e.policy.name}：${e.reason ?? (e.validUntil ? "出口结果过期了，用到时重查" : "还没查过出口")}`;
 }
 export function networkPoliciesView(app: App) {
   return [...state(app).entries.values()].map((e) => ({ id: e.policy.id, status: e.status === "ready" && e.validUntil <= Date.now() ? "unchecked" : e.status, reason: e.reason, localReason: e.localReason, localCheckedAt: e.localCheckedAt, ip: e.ip, country: e.country, ipv6: e.ipv6, dns: e.dns, checkedAt: e.checkedAt, validUntil: e.validUntil ? new Date(e.validUntil).toISOString() : null, runs: [...new Set([...e.active].map((a) => a.runId).filter((id): id is string => !!id))] }));

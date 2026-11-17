@@ -54,6 +54,17 @@ export type ChoiceRecord = {
 
 const label = (c: AiPick) => [c.profile, c.model, c.effort].filter(Boolean).join(" · ");
 
+type Candidate = { profile: string; model?: string; effort?: string; when: string };
+/**
+ * What the owner wrote for a candidate: settings → AI keeps one line for the backend (no model) and
+ * optional lines for its models. A model's line is read together with its backend's.
+ */
+export function candidateWhen(list: Candidate[], c: Candidate) {
+  if (!c.model) return c.when;
+  const backend = list.find((x) => x.profile === c.profile && !x.model)?.when.trim();
+  return backend ? `${backend}；${c.model}：${c.when}` : c.when;
+}
+
 /** The owner's candidates as profiles, installed and not left out (limit 0, quota spent, daily cap); why the others were left out goes to `left`. */
 export function candidateProfiles(app: App, left?: string[]): (AgentProfile & { when: string })[] {
   const r = app.config.agents.routing;
@@ -65,7 +76,7 @@ export function candidateProfiles(app: App, left?: string[]): (AgentProfile & { 
     if (!p || !usable.has(p.id)) return [];
     // An empty model or effort in the settings means the backend's own (not a model named "").
     const model = c.model || undefined;
-    const out = { ...p, model: model ?? p.model, effort: c.effort || (model && model !== p.model ? undefined : p.effort), when: c.when };
+    const out = { ...p, model: model ?? p.model, effort: c.effort || (model && model !== p.model ? undefined : p.effort), when: candidateWhen(r.candidates, c) };
     if (!excluded(app, out)) return [out];
     left?.push(`${label({ profile: out.id, model: out.model, effort: out.effort })}：${excludedReason(app, out) ?? "不可用"}`);
     return [];
@@ -217,8 +228,10 @@ export async function fallbackOrder(
   const byKeys = (ks: string[]) => ks.map((k) => o.options[Number(k.slice(1))]);
   if (hit && now - hit.at < ORDER_TTL) return { order: byKeys(hit.keys), by: "decision", reason: hit.reason };
   const when = (p: AgentProfile) => {
-    const c = r.candidates.find((c) => c.profile === p.id && (!c.model || c.model === p.model) && (!c.effort || c.effort === p.effort));
-    return c?.when ?? "（不在候选里：档案的其他后端或兜底）";
+    const fits = (c: Candidate) => c.profile === p.id && (!c.effort || c.effort === p.effort);
+    // The model's own line before the backend's.
+    const c = r.candidates.find((c) => fits(c) && c.model === p.model) ?? r.candidates.find((c) => fits(c) && !c.model);
+    return c ? candidateWhen(r.candidates, c) : "（不在候选里：档案的其他后端或兜底）";
   };
   const opts = Object.fromEntries(o.options.map((p, i) => [`o${i}`, `${names[i]}：${when(p)}（${state(app, p)}）`]));
   const material = {

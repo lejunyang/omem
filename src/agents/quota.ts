@@ -65,7 +65,10 @@ function liveWindows(snap: QuotaSnapshot | null, model?: string | null, now = Da
  */
 export function quotaAvoid(app: App, p: AgentProfile, now = Date.now()): string | null {
   if (!app.db || !quotaKind(p)) return null;
-  const { quotaAvoidAbove = 90, quotaPerDayBelow = 0 } = app.config.agents.capacity;
+  const cap = app.config.agents.capacity;
+  const own = cap.quotaBySource?.[sourceOf(p)] ?? {};
+  const quotaAvoidAbove = own.avoidAbove ?? cap.quotaAvoidAbove ?? 90;
+  const quotaPerDayBelow = own.perDayBelow ?? cap.quotaPerDayBelow ?? 0;
   for (const w of liveWindows(quotaOf(app, p), p.model, now)) {
     if (quotaAvoidAbove < 100 && w.usedPercent >= quotaAvoidAbove) return `${w.name} 已用 ${Math.round(w.usedPercent)}%`;
     const perDay = perDayLeft(w, now);

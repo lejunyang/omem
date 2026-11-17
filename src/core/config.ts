@@ -369,7 +369,8 @@ export const configSchema = z.object({
        * Plan usage limits (agents/quota.ts): an account with a window used past `quotaAvoidAbove`
        * percent (100: never), or a window of a day or longer whose remaining percent per day until
        * its reset is under `quotaPerDayBelow` (0: not looked at), goes after the others in a role
-       * run's choices and is marked `avoid` for the assistant's own choice.
+       * run's choices and is marked `avoid` for the assistant's own choice. `quotaBySource` sets
+       * either threshold for one account (its source: the ACP agent and its CLI fallback are one).
        */
       capacity: z.object({
         perModel: z.number().int().min(1).max(32).default(3),
@@ -377,7 +378,8 @@ export const configSchema = z.object({
         limits: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), max: z.number().int().min(0).max(32), perDay: z.number().int().min(0).max(100000).optional() })).max(100).default([]),
         quotaAvoidAbove: z.number().min(50).max(100).default(90),
         quotaPerDayBelow: z.number().min(0).max(100).default(0),
-      }).default(() => ({ perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 })),
+        quotaBySource: z.record(z.string(), z.object({ avoidAbove: z.number().min(50).max(100).optional(), perDayBelow: z.number().min(0).max(100).optional() })).default({}),
+      }).default(() => ({ perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} })),
       routing: z.object({
         automatic: z.boolean().default(true),
         guidance: z.string().max(8000).default(""),
@@ -420,7 +422,7 @@ export const configSchema = z.object({
       profiles: z.array(agentProfileSchema).default([]),
       networkPolicies: networkPoliciesSchema,
     })
-    .default(() => ({ tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0 }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

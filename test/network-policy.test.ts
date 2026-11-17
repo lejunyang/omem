@@ -230,7 +230,7 @@ it("reports DNS config risks without gating execution and invalidates its cached
   let view = networkPoliciesView(app)[0];
   expect(view.status).toBe("ready");
   expect(view.dns?.warnings.join(" ")).toMatch(/TCP 53/);
-  expect(view.dns?.warnings.join(" ")).toMatch(/不能证明/);
+  expect(view.dns?.warnings.join(" ")).toMatch(/strict-route/);
   expect(view.dns?.mihomo?.dnsIpv6).toBe(false);
   expect(hits()).toBe(1);
   writeFileSync(config, "dns: { enable: true }\ntun: { enable: false }\n");

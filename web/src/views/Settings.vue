@@ -11,6 +11,8 @@ import AiRouting from "../components/AiRouting.vue";
 import AiDefaults from "../components/AiDefaults.vue";
 import AiCapacity from "../components/AiCapacity.vue";
 import AiNetworkConditions from "../components/AiNetworkConditions.vue";
+import AiBackend, { type AgentLoad } from "../components/AiBackend.vue";
+import { network } from "../lib/network-status";
 import AiModels from "../components/AiModels.vue";
 import ReplaySettings from "../components/ReplaySettings.vue";
 import FlowSettings from "../components/FlowSettings.vue";
@@ -37,7 +39,7 @@ import { nestedSpaces } from "../lib/spaces";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { setTimeZone } from "../lib/time";
 
-type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown };
+type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
 type Tab = "spaces" | "agents" | "schedules" | "search" | "lark" | "connect" | "members" | "peers" | "shares" | "security" | "plugins" | "storage" | "about";
 const TABS: Tab[] = ["spaces", "agents", "schedules", "search", "lark", "connect", "members", "peers", "shares", "security", "plugins", "storage", "about"];
@@ -113,7 +115,9 @@ function buildToc() {
   for (const card of el.querySelectorAll<HTMLElement>(".card")) {
     if (card.parentElement?.closest(".card") || card.closest(".modal")) continue;
     const first = card.firstElementChild;
-    const title = ((first?.tagName === "STRONG" ? first : first?.querySelector("strong"))?.textContent ?? "").trim();
+    // A card's title: a <strong> or a .section-title, the first child itself or inside its first row.
+    const heading = first?.matches("strong, .section-title") ? first : first?.querySelector("strong, .section-title");
+    const title = (heading?.textContent ?? "").trim();
     if (!title || title.length > 24) continue;
     card.id ||= `set-${tab.value}-${i++}`;
     out.push({ id: card.id, title });
@@ -394,7 +398,8 @@ async function load() {
   home.value = s.home;
   // A link to one card (the rules page's last entry opens 有人找你: ?tab=lark&focus=mentions).
   if (route.query.focus === "mentions" && tab.value === "lark") void nextTick(() => document.getElementById("settings-mentions")?.scrollIntoView({ block: "start" }));
-  if (route.query.focus === "network-conditions" && tab.value === "agents") void nextTick(() => document.getElementById("network-conditions")?.scrollIntoView({ block: "start" }));
+  network.policies = s.config.agents.networkPolicies ?? [];
+  if (route.query.focus === "network-conditions" && tab.value === "agents") void nextTick(() => document.getElementById("settings-backends")?.scrollIntoView({ block: "start" }));
   const sc = await get<{ schedules: Schedule[]; next: Record<string, string | null>; labels: Record<string, string> }>("/api/schedules");
   schedules.value = sc.schedules;
   next.value = sc.next;
@@ -778,13 +783,6 @@ async function probe(p: Profile, refresh = true) {
 async function loadProbes() {
   await Promise.all(installedProfiles.value.filter((p) => probeable(p) && !probes.value[p.id]).map((p) => probe(p, false)));
 }
-async function setProfileOption(p: Profile, key: "model" | "effort", value: string) {
-  const { installed, install, ...rest } = p;
-  const next = { ...rest, [key]: value === "default" ? undefined : value };
-  const list = [...config.value.agents.profiles.filter((x: Profile) => x.id !== p.id), next];
-  await saveConfig({ agents: { ...config.value.agents, profiles: list } }, `${p.name ?? p.id}：${key} = ${value}`);
-  void load();
-}
 // Other Feishu bots (lark.bots): who answers for each.
 type LarkBot = { id: string; appId: string; agent: string; enabled: boolean; ownerOpenId?: string };
 const specs = ref<{ name: string; description: string }[]>([]);
@@ -851,9 +849,34 @@ function modelOptionsFor(profileId: string | undefined, key: "model" | "effort",
   return [{ value: "", label: "跟随默认" }, ...list.map((v) => ({ value: v, label: v }))];
 }
 const probedModels = computed(() => Object.fromEntries(installedProfiles.value.map((p) => [p.id, probes.value[p.id]?.data?.models ?? []])));
-function saveCapacity(v: { concurrency: number; interactiveConcurrency: number; perModel: number; limits: { profile: string; model?: string; max: number }[]; quotaAvoidAbove: number; quotaPerDayBelow: number }) {
-  void saveConfig({ concurrency: v.concurrency, interactiveConcurrency: v.interactiveConcurrency, agents: { ...config.value.agents, capacity: { perModel: v.perModel, limits: v.limits, quotaAvoidAbove: v.quotaAvoidAbove, quotaPerDayBelow: v.quotaPerDayBelow } } }, "已保存并行设置");
+function saveCapacity(v: { concurrency: number; interactiveConcurrency: number; perModel: number; quotaAvoidAbove: number; quotaPerDayBelow: number }) {
+  const capacity = { ...config.value.agents.capacity, perModel: v.perModel, quotaAvoidAbove: v.quotaAvoidAbove, quotaPerDayBelow: v.quotaPerDayBelow };
+  void saveConfig({ concurrency: v.concurrency, interactiveConcurrency: v.interactiveConcurrency, agents: { ...config.value.agents, capacity } }, "已保存并行设置");
 }
+/** A change from one backend's block (AiBackend.vue): part of config.agents. */
+async function saveAgents(patch: Record<string, unknown>, note: string) {
+  await saveConfig({ agents: { ...config.value.agents, ...patch } }, note);
+  void load();
+}
+/** The installed backends by account: an ACP agent and its CLI fallback are one (their `source`), ACP first. */
+const backendGroups = computed(() => {
+  const groups = new Map<string, Profile[]>();
+  for (const p of installedProfiles.value) {
+    const key = p.source ?? p.id;
+    groups.set(key, [...(groups.get(key) ?? []), p]);
+  }
+  return [...groups].map(([source, list]) => ({ source, profiles: [...list].sort((a, b) => Number(b.transport === "acp") - Number(a.transport === "acp")) }));
+});
+/** Backends a network condition names that are not installed here: their conditions are listed apart. */
+const orphanNetwork = computed(() => {
+  const installed = new Set(installedProfiles.value.map((p) => p.id));
+  return [...new Set(network.policies.flatMap((p) => p.backends))].filter((id) => !installed.has(id));
+});
+const agentLoad = ref<AgentLoad | null>(null);
+async function loadAgentLoad() {
+  agentLoad.value = await get<AgentLoad>("/api/agents/load").catch(() => null);
+}
+watch(tab, (t) => { if (t === "agents") void loadAgentLoad(); }, { immediate: true });
 const missingProfiles = computed(() => profiles.value.filter((p) => !p.installed));
 // Desktop and browser control (ai-auto-desktop's aad): optional, installed through osdk.
 type Desktop = { installed: boolean; version: string | null; via: "path" | "osdk" | null; spec: string };
@@ -944,7 +967,7 @@ async function saveEdit() {
           <div v-for="c in reposOf(s.id)" :key="c.id" class="sp-repo small">
             <Icon name="code" :size="13" /><span class="ellipsis" :title="c.rootPath ?? ''">{{ c.name }}<span class="muted mono"> · {{ dirName(c.rootPath ?? "") }}</span></span>
             <span class="spacer" />
-            <button class="btn ghost sm icon" :aria-label="`设置 ${c.name}`" title="仓库设置" @click="openSpace(c)"><Icon name="settings" :size="14" /></button>
+            <button class="btn ghost sm icon" :aria-label="`设置 ${c.name}`" title="仓库设置" @click="openSpace(c)"><Icon name="settings" :size="15" /></button>
           </div>
           <div class="sp-meta small muted">
             <span>{{ s.sources ?? 0 }} 份原件</span><span>{{ s.pages ?? 0 }} 个页面</span>
@@ -973,25 +996,15 @@ async function saveEdit() {
       <UiSegmented v-model="aiSection" size="sm" aria-label="AI 分类" :options="AI_SECTIONS" />
       <AiModels v-if="aiSection !== 'general'" :section="aiSection" :config="config" @save="(ai, note) => saveConfig({ ai }, note)" @changed="load" />
       <template v-else>
-      <p class="muted">理解、写作和编码交给 Agent：你已安装并登录的，或用 API key 生成的（在“API key”里添加）。不同角色可以用不同 Agent，例如问答用快的模型，Wiki 和评审用强的模型。</p>
-      <div class="card">
-        <template v-for="p in installedProfiles" :key="p.id">
-          <div class="prow">
-            <span class="badge" :class="p.networkReason ? 'warn' : 'ok'">{{ p.networkReason ? '网络受限' : '已安装' }}</span>
-            <div class="grow">
-              <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.id }}</span></div>
-              <div v-if="p.networkReason" class="small warn">{{ p.networkReason }}</div>
-              <div class="muted small mono">{{ p.transport }} · {{ p.command }} {{ p.args.join(" ") }}<template v-if="p.model"> · {{ p.model }}</template><template v-if="p.effort"> · {{ p.effort }}</template></div>
-            </div>
-            <button v-if="probeable(p)" class="btn ghost sm" :disabled="probes[p.id]?.loading" @click="probe(p)">{{ probes[p.id]?.loading ? "检测中…" : "检测模型" }}</button>
-            <button class="btn ghost sm" @click="editProfile(p)">{{ editingProfile === p.id ? "收起" : "编辑" }}</button>
-          </div>
-          <div v-if="editingProfile === p.id" class="edit-box stack">
-            <textarea v-model="editJson" class="textarea mono" rows="9" />
-            <div class="row"><span class="muted small">model、effort 写 Agent 支持的值；不区分大小写和点/连字符。</span><span class="spacer" /><button class="btn ghost sm" @click="editingProfile = null">取消</button><button class="btn primary sm" @click="saveEdit">保存</button></div>
-          </div>
-        </template>
-        <div v-if="!installedProfiles.length" class="prow muted">还没有可用的 Agent，从下面任选一个安装。</div>
+      <p class="muted">理解、写作和编码交给 Agent：你已安装并登录的，或用 API key 生成的（在“API key”里添加）。同一个账号的 ACP 和命令行合在一起，点开设置默认模型、适合做什么、网络条件和用量。</p>
+      <div id="settings-backends" class="card backends">
+        <strong class="sr-title">后端</strong>
+        <AiBackend v-for="g in backendGroups" :key="g.source" :source="g.source" :profiles="g.profiles" :all="profiles" :config="config" :load="agentLoad" @save="saveAgents" @reload="loadAgentLoad" @network="(v) => (config.agents.networkPolicies = v)" />
+        <div v-if="!backendGroups.length" class="prow muted">还没有可用的 Agent，从下面任选一个安装。</div>
+        <div v-if="orphanNetwork.length" class="orphan">
+          <div class="small muted">没装的后端上还有网络条件：</div>
+          <AiNetworkConditions :scope="orphanNetwork" :backends="profiles" no-add @saved="(v) => (config.agents.networkPolicies = v)" />
+        </div>
         <details v-if="missingProfiles.length" class="more">
           <summary class="small muted">其他支持的 Agent（{{ missingProfiles.length }} 个，未安装）</summary>
           <div v-for="p in missingProfiles" :key="p.id" class="prow">
@@ -1009,66 +1022,21 @@ async function saveEdit() {
             </div>
           </template>
         </details>
-        <template v-for="p in profiles" :key="'probe-' + p.id">
-          <div v-if="probes[p.id]?.data || probes[p.id]?.error" class="probe">
-            <div class="small muted">{{ p.name ?? p.id }}：{{ probes[p.id].error ?? probes[p.id].data!.agent }}</div>
-            <div v-if="probes[p.id].data?.models.length" class="row wrap small">
-              <span class="muted">默认模型：</span>
-              <button v-for="v in probes[p.id].data!.models" :key="v" class="chip" :class="{ on: p.model === v }" @click="setProfileOption(p, 'model', v)">{{ v }}</button>
-            </div>
-            <div v-if="effortsOf(p.id, p.model).length" class="row wrap small">
-              <span class="muted">默认思考强度{{ probes[p.id].data?.effortsByModel && p.model ? `（${p.model}）` : "" }}：</span>
-              <button v-for="v in effortsOf(p.id, p.model)" :key="v" class="chip" :class="{ on: p.effort === v }" @click="setProfileOption(p, 'effort', v)">{{ v }}</button>
-            </div>
-            <div v-else-if="probes[p.id].data?.effortsByModel && p.model" class="small muted">{{ p.model }} 没有思考强度设置</div>
-          </div>
-        </template>
-      </div>
-      <div v-if="desktop" class="card pad stack">
-        <div class="row">
-          <div class="section-title grow">桌面与浏览器控制</div>
-          <span v-if="desktop.installed" class="badge ok">已安装{{ desktop.version ? ` ${desktop.version}` : "" }}</span>
-          <span v-else class="badge">未安装</span>
-        </div>
-        <HelpText>
-          ai-auto-desktop（<span class="mono">aad</span>）让带命令行的 Agent 看和操作本机的桌面程序与浏览器：先读出界面结构，再对读到的元素动手。用法在内置技能 <span class="mono">desktop-control</span>：默认只看，动手前先问你，不输入密码。装好后导航里会出现“远程”：在网页上操作这台机器的浏览器页面或桌面，并把做一遍的过程录成技能。
-          <template v-if="desktop.installed && desktop.via === 'osdk'">在 osdk 安装目录里，omem 启动 Agent 时会把它加进 PATH。</template>
-        </HelpText>
-        <div class="row">
-          <button class="btn ghost sm" :disabled="desktopBusy" @click="installDesktop">{{ desktopBusy ? "安装中…" : desktop.installed ? "更新到最新" : "安装" }}</button>
-          <span class="muted small">经 osdk 安装 <span class="mono">{{ desktop.spec }}</span>；终端里 <span class="mono">omem setup desktop</span> 同样可用并带环境检查</span>
-        </div>
       </div>
       <div class="card pad stack">
-        <div class="row"><div class="section-title grow">ACP 注册表</div><button class="btn ghost sm" @click="loadRegistry">{{ registry ? "刷新" : "浏览" }}</button></div>
-        <HelpText>任何支持 Agent Client Protocol 的 Agent 都能接入。这里列出官方注册表里的 Agent，可以用 npx / uvx 运行，或下载对应平台的程序到数据目录。</HelpText>
-        <div v-for="a in registry ?? []" :key="a.id" class="prow">
-          <div class="grow">
-            <div><strong>{{ a.name }}</strong> <span class="muted small mono">{{ a.id }} v{{ a.version }}</span></div>
-            <div v-if="a.description" class="muted small">{{ a.description }}</div>
-          </div>
-          <span v-if="a.added" class="badge ok">已可用</span>
-          <template v-else>
-            <button v-for="w in a.ways" :key="w" class="btn ghost sm" :disabled="!!registryBusy" @click="addFromRegistry(a, w)">{{ registryBusy === a.id ? "添加中…" : w === "binary" ? "下载" : w }}</button>
-            <span v-if="!a.ways.length" class="muted small">本机不可用</span>
-          </template>
+        <div class="section-title">默认 AI 与档位</div>
+        <div class="field"><span>默认 Agent</span>
+          <UiSelect v-model="defaultProfile" width="320px" aria-label="默认 Agent" :options="[{ value: '', label: '自动（第一个已安装的）' }, ...profileOptions]" />
+          <span class="hint">各角色和自定义档案用哪个 AI 在 <RouterLink to="/agents">Agent 档案</RouterLink> 里设。</span>
         </div>
-      </div>
-      <AiNetworkConditions :value="config.agents.networkPolicies ?? []" :backends="profiles" @saved="(v) => config.agents.networkPolicies = v" @states="(states) => { for (const p of profiles) { const policy = config.agents.networkPolicies?.find((n: any) => n.backends.includes(p.id)); const s = states.find((n) => n.id === policy?.id); p.networkReason = s && s.status !== 'ready' ? s.reason || '网络条件尚未检查' : null; } }" />
-      <div class="field"><span>默认 Agent</span>
-        <UiSelect v-model="defaultProfile" width="320px" aria-label="默认 Agent" :options="[{ value: '', label: '自动（第一个已安装的）' }, ...profileOptions]" />
-      </div>
-      <p class="muted small">内置角色和自定义档案的默认 AI 统一在 <RouterLink to="/agents">Agent 档案</RouterLink> 中设置。</p>
-      <div class="card pad stack">
-        <div class="section-title">模型档位</div>
         <HelpText>流程里的阶段可以写用哪一档模型（<code>ai: strong</code> / <code>standard</code> / <code>cheap</code>），这里定每一档是哪个后端、模型和强度。定方向这类要判断的事用好的，没人看着时反复去试的用省的。没配的档位用那个角色自己的 AI；流程指定了档位时不会换到别的后端，额度用完就等。</HelpText>
         <div v-for="t in TIERS" :key="t.id" class="stack">
-          <div class="row"><strong>{{ t.label }}</strong><span class="muted small">{{ t.id }}</span><span class="spacer" /><button v-if="config.agents.tiers?.[t.id]" class="btn ghost sm" @click="saveTier(t.id, null)">不配</button></div>
+          <div class="row"><strong class="small">{{ t.label }}</strong><span class="muted small">{{ t.id }}</span><span class="spacer" /><button v-if="config.agents.tiers?.[t.id]" class="btn ghost sm" @click="saveTier(t.id, null)">不配</button></div>
           <AiDefaults :model-value="{ agent: config.agents.tiers?.[t.id]?.profile, model: config.agents.tiers?.[t.id]?.model, effort: config.agents.tiers?.[t.id]?.effort }" :backends="profiles.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => saveTier(t.id, v)" />
         </div>
       </div>
       <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
-      <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, limits: config.agents.capacity?.limits ?? [], quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" :backends="installedProfiles" :models="probedModels" @save="saveCapacity" />
+      <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" @save="saveCapacity" />
       <div class="card pad stack">
         <div class="section-title">排队与兜底</div>
         <HelpText>后端排队、被限流、额度快用完或出故障时换一个后端接着做。配了决策模型时，换谁、按什么顺序由它按 任务选型 里的总体偏好和候选说明决定（运行前选 AI 时一起排好，没选过的运行在第一次要换时问一次），运行里写明顺序来自哪里；下面是没有决策模型时的顺序，也是决策模型没排到的后端的顺序。模型满了时按这个顺序找有空位的。</HelpText>
@@ -1182,6 +1150,36 @@ async function saveEdit() {
         </div>
       </div>
       <ReplaySettings v-if="config.replay" :value="config.replay" :backends="profileOptions" :model-options="modelOptionsFor" @save="(replay, note) => saveConfig({ replay }, note)" />
+      <div v-if="desktop" class="card pad stack">
+        <div class="row">
+          <div class="section-title grow">桌面与浏览器控制</div>
+          <span v-if="desktop.installed" class="badge ok">已安装{{ desktop.version ? ` ${desktop.version}` : "" }}</span>
+          <span v-else class="badge">未安装</span>
+        </div>
+        <HelpText>
+          ai-auto-desktop（<span class="mono">aad</span>）让带命令行的 Agent 看和操作本机的桌面程序与浏览器：先读出界面结构，再对读到的元素动手。用法在内置技能 <span class="mono">desktop-control</span>：默认只看，动手前先问你，不输入密码。装好后导航里会出现“远程”：在网页上操作这台机器的浏览器页面或桌面，并把做一遍的过程录成技能。
+          <template v-if="desktop.installed && desktop.via === 'osdk'">在 osdk 安装目录里，omem 启动 Agent 时会把它加进 PATH。</template>
+        </HelpText>
+        <div class="row">
+          <button class="btn ghost sm" :disabled="desktopBusy" @click="installDesktop">{{ desktopBusy ? "安装中…" : desktop.installed ? "更新到最新" : "安装" }}</button>
+          <span class="muted small">经 osdk 安装 <span class="mono">{{ desktop.spec }}</span>；终端里 <span class="mono">omem setup desktop</span> 同样可用并带环境检查</span>
+        </div>
+      </div>
+      <div class="card pad stack">
+        <div class="row"><div class="section-title grow">ACP 注册表</div><button class="btn ghost sm" @click="loadRegistry">{{ registry ? "刷新" : "浏览" }}</button></div>
+        <HelpText>任何支持 Agent Client Protocol 的 Agent 都能接入。这里列出官方注册表里的 Agent，可以用 npx / uvx 运行，或下载对应平台的程序到数据目录。</HelpText>
+        <div v-for="a in registry ?? []" :key="a.id" class="prow">
+          <div class="grow">
+            <div><strong>{{ a.name }}</strong> <span class="muted small mono">{{ a.id }} v{{ a.version }}</span></div>
+            <div v-if="a.description" class="muted small">{{ a.description }}</div>
+          </div>
+          <span v-if="a.added" class="badge ok">已可用</span>
+          <template v-else>
+            <button v-for="w in a.ways" :key="w" class="btn ghost sm" :disabled="!!registryBusy" @click="addFromRegistry(a, w)">{{ registryBusy === a.id ? "添加中…" : w === "binary" ? "下载" : w }}</button>
+            <span v-if="!a.ways.length" class="muted small">本机不可用</span>
+          </template>
+        </div>
+      </div>
       <div class="card pad stack">
         <div class="section-title">添加或修改 Agent 配置</div>
         <textarea v-model="profileJson" class="textarea mono" rows="9" placeholder='{"id":"codex-sol","name":"Codex · Sol","transport":"acp","command":"codex-acp","args":[],"model":"gpt-6.1-sol","effort":"low"}' />
@@ -1249,12 +1247,15 @@ async function saveEdit() {
 
     <section v-else-if="tab === 'search' && config" class="stack">
       <p class="muted">全文检索始终可用（中文按双字切分，代码按标识符切分）。开启向量检索可改善换说法的提问，向量在后台逐步生成。</p>
-      <div class="field"><span>向量检索</span>
-        <UiSegmented :model-value="config.embeddings.provider" aria-label="向量检索" :options="[{ value: 'none', label: '关闭' }, { value: 'local', label: '本地模型（transformers.js）' }, { value: 'openai', label: 'OpenAI 兼容接口' }]" @change="(v) => saveConfig({ embeddings: { ...config.embeddings, provider: v } })" />
+      <div class="card pad stack">
+        <div class="section-title">向量检索</div>
+        <div class="field"><span>用哪种向量</span>
+          <UiSegmented :model-value="config.embeddings.provider" aria-label="向量检索" :options="[{ value: 'none', label: '关闭' }, { value: 'local', label: '本地模型（transformers.js）' }, { value: 'openai', label: 'OpenAI 兼容接口' }]" @change="(v) => saveConfig({ embeddings: { ...config.embeddings, provider: v } })" />
+        </div>
+        <label class="field"><span>模型</span><input class="input mono" :value="config.embeddings.model" @change="saveConfig({ embeddings: { ...config.embeddings, model: ($event.target as HTMLInputElement).value } })" /><span class="hint">本地默认 Xenova/bge-small-zh-v1.5（也可以填本地目录）。有 osdk 时由 osdk 下载并锁定版本，没有才自己下载。</span></label>
+        <p v-if="config.embeddings.provider === 'local' && sourceLine(embeddingSource)" class="small" :class="embeddingSource?.error ? 'warn-text' : 'muted'">{{ sourceLine(embeddingSource) }}</p>
+        <label v-if="config.embeddings.provider === 'openai'" class="field"><span>接口地址</span><input class="input mono" :value="config.embeddings.url ?? ''" placeholder="https://api.openai.com/v1" @change="saveConfig({ embeddings: { ...config.embeddings, url: ($event.target as HTMLInputElement).value } })" /></label>
       </div>
-      <label class="field"><span>模型</span><input class="input mono" :value="config.embeddings.model" @change="saveConfig({ embeddings: { ...config.embeddings, model: ($event.target as HTMLInputElement).value } })" /><span class="hint">本地默认 Xenova/bge-small-zh-v1.5（也可以填本地目录）。有 osdk 时由 osdk 下载并锁定版本，没有才自己下载。</span></label>
-      <p v-if="config.embeddings.provider === 'local' && sourceLine(embeddingSource)" class="small" :class="embeddingSource?.error ? 'warn-text' : 'muted'">{{ sourceLine(embeddingSource) }}</p>
-      <label v-if="config.embeddings.provider === 'openai'" class="field"><span>接口地址</span><input class="input mono" :value="config.embeddings.url ?? ''" placeholder="https://api.openai.com/v1" @change="saveConfig({ embeddings: { ...config.embeddings, url: ($event.target as HTMLInputElement).value } })" /></label>
       <div v-if="config.rerank" class="card pad stack">
         <div class="section-title">重排</div>
         <HelpText>检索先按全文和向量取候选，再由重排模型（bge-reranker-v2-m3，本地运行）把问题和前几条逐条对读、重新排序；对话前带上的记忆也改由它判断相关不相关。公开中文检索集 T2Retrieval 上排序指标 nDCG@10 提高 3～5 点，代价是每次检索多花 CPU，超时就保持原来的顺序。机器上有 osdk 时模型由 osdk 下载并锁定版本，没有才自己下载；改这里的设置不用重启服务。</HelpText>
@@ -1930,7 +1931,10 @@ async function saveEdit() {
   min-width: 0;
   font-size: 15px;
 }
-.sp-head .btn {
+/* The gear buttons keep their size and line up in one column, however long the name before them. */
+.sp-head .btn,
+.sp-repo .btn {
+  flex: none;
   margin: -4px -6px -4px 0;
 }
 .sp-desc {
@@ -1981,8 +1985,9 @@ async function saveEdit() {
   flex: none;
   color: var(--muted);
 }
-.sp-repo .btn {
-  margin: -4px -6px -4px 0;
+.sp-repo > .ellipsis {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .suggest {
   background: var(--accent-soft);
@@ -2036,11 +2041,18 @@ async function saveEdit() {
 .break {
   overflow-wrap: anywhere;
 }
-.probe {
-  padding: 10px 16px;
-  border-top: 1px dashed var(--line);
+.backends > .sr-title {
+  display: block;
+  padding: 14px 16px 10px;
+}
+.backends > .more,
+.orphan {
+  border-top: 1px solid var(--line);
+}
+.orphan {
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  padding: 12px 16px;
 }
 .chip {
   border: 1px solid var(--line);

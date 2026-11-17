@@ -34,7 +34,7 @@ function boundedSignal(parent: AbortSignal, ms: number) { return AbortSignal.any
 
 export async function resolveProbeIpv6(p: NetworkPolicy, signal: AbortSignal, network = ""): Promise<Aaaa> {
   const host = new URL(p.probe.url).hostname.replace(/^\[|\]$/g, "");
-  if (isIP(host)) return { addresses: isIP(host) === 6 ? [host] : [], source: "literal", reason: "检测地址使用 IPv4 字面量，无法检查同一目标的 IPv6" };
+  if (isIP(host)) return { addresses: isIP(host) === 6 ? [host] : [], source: "literal", reason: "检测地址是 IPv4，没有 IPv6 要查" };
   const key = JSON.stringify([host, p.connection, p.ipv6.doh, network]);
   const previous = cache.get(key);
   if (previous?.pending) return previous.pending;
@@ -44,7 +44,7 @@ export async function resolveProbeIpv6(p: NetworkPolicy, signal: AbortSignal, ne
   const entry: Cached = { until: 0 };
   cache.set(key, entry);
   const work = async (): Promise<Aaaa> => {
-    let ttl = 60, value: Aaaa = { addresses: [], source: "system", reason: "系统解析没有提供可用于检测的 AAAA" };
+    let ttl = 60, value: Aaaa = { addresses: [], source: "system", reason: "这个域名没有公网 IPv6 地址，只走 IPv4" };
     const resolver = new Resolver({ timeout: Math.min(1500, p.probe.timeoutMs), tries: 1 });
     const cancel = () => resolver.cancel();
     const localSignal = boundedSignal(signal, Math.min(1500, p.probe.timeoutMs));
@@ -64,7 +64,7 @@ export async function resolveProbeIpv6(p: NetworkPolicy, signal: AbortSignal, ne
     finally { localSignal.removeEventListener("abort", cancel); resolver.cancel(); }
     if (!value.addresses.length && publicName(host)) for (const endpoint of p.ipv6.doh) {
       if (signal.aborted) break;
-      if ((cooldowns.get(endpoint) ?? 0) > Date.now()) { value.reason = "备用解析服务正在退避，稍后重试"; continue; }
+      if ((cooldowns.get(endpoint) ?? 0) > Date.now()) { value.reason = "备用解析服务限流了，稍后再查 IPv6"; continue; }
       try {
         const url = new URL(endpoint);
         url.searchParams.set("name", host); url.searchParams.set("type", "AAAA");
@@ -73,11 +73,11 @@ export async function resolveProbeIpv6(p: NetworkPolicy, signal: AbortSignal, ne
         const records = (Array.isArray(data.Answer) ? data.Answer : []).filter((r: { type?: number; data?: string }) => r.type === 28 && typeof r.data === "string" && publicV6(r.data));
         // CNAME expiry also limits how long a final AAAA may be reused.
         ttl = records.length ? Math.min(...data.Answer.filter((r: { type?: number }) => r.type === 28 || r.type === 5).map((r: { TTL?: number }) => typeof r.TTL === "number" ? r.TTL : 60)) : 60;
-        value = { addresses: unique(records.map((r: { data: string }) => r.data)), source: new URL(endpoint).host, ...(!records.length ? { reason: "解析服务没有返回公共 AAAA，未确认 IPv6 路径" } : {}) };
+        value = { addresses: unique(records.map((r: { data: string }) => r.data)), source: new URL(endpoint).host, ...(!records.length ? { reason: "这个域名没有公网 IPv6 地址，只走 IPv4" } : {}) };
         break;
       } catch (error) {
         if (error instanceof NetworkHttpError && error.status === 429) cooldowns.set(endpoint, Math.max(Date.now() + 60000, error.retryAt));
-        value.reason = "系统及备用 AAAA 解析未能完成，未确认 IPv6 路径";
+        value.reason = "这次没查到这个域名的 IPv6 地址（系统和备用解析都没回应），按 IPv4 判断";
       }
     }
     if (signal.aborted) return value;
@@ -102,10 +102,10 @@ export async function inspectIpv6(p: NetworkPolicy, signal: AbortSignal, parseId
     if (result.observations.length) result.status = "observed";
     if (resolved.addresses.length && !result.observations.length) {
       result.reason = responses.every((r) => r.status === "rejected" && ["EACCES", "EPERM"].includes(r.reason?.code))
-        ? "本机拒绝了本次目标的 IPv6 出站连接；默认路径仍按出口要求判断"
-        : "IPv6 连接或响应未能确认，可能被禁用、阻断或暂时不可用";
-    } else if (responses.some((r) => r.status === "rejected") || resolved.addresses.length > 4) result.reason = "部分 IPv6 地址未能完成检测；只对已观察到的出口作判断";
-  } catch { result.reason = "IPv6 检测未能完成，允许继续使用已通过检查的默认路径"; }
+        ? "本机禁止了 IPv6 出站，请求都走 IPv4"
+        : "有 IPv6 地址但连不上，这台机器多半没有 IPv6 出口，请求会走 IPv4";
+    } else if (responses.some((r) => r.status === "rejected") || resolved.addresses.length > 4) result.reason = `查了 ${Math.min(4, resolved.addresses.length)} 个 IPv6 地址，${result.observations.length} 个连得上，按连得上的判断`;
+  } catch { result.reason = "IPv6 这次没查成，按 IPv4 判断"; }
   return result;
 }
 
@@ -148,11 +148,11 @@ export async function inspectDns(p: NetworkPolicy): Promise<DnsDiagnostic> {
     else output = (await command("resolvectl", ["dns", "--no-pager"], { timeout: 1500, maxBuffer: 131072 })).stdout;
     const candidates = output.split(/[\s",\[\]]+/).map((s) => s.split("%")[0]).filter((s) => isIP(s));
     if (candidates.length) { result.servers = unique(candidates); result.source = "操作系统各接口 DNS 配置"; }
-  } catch { result.warnings.push("未能读取各接口的 DNS，当前只展示默认解析器；分流与 VPN DNS 未确认"); }
+  } catch { result.warnings.push("读不到各网卡的 DNS 设置，下面是 Node 自己用的解析器"); }
   if (p.dns.expectedServers.length) {
     const expected = p.dns.expectedServers.map(canonicalIp);
-    if (result.servers.some((s) => !expected.includes(canonicalIp(s)))) result.warnings.push("系统配置包含预期列表外的 DNS 服务器；需核对 TUN 是否接管这些请求");
-    if (!result.servers.length) result.warnings.push("未能读取 DNS 服务器，无法核对预期列表");
+    if (result.servers.some((s) => !expected.includes(canonicalIp(s)))) result.warnings.push(`有不在预期列表里的 DNS 服务器：${result.servers.filter((s) => !expected.includes(canonicalIp(s))).join("、")}`);
+    if (!result.servers.length) result.warnings.push("读不到 DNS 服务器，没法和预期列表对照");
   }
   if (p.dns.mihomoConfig) try {
     const config = parse(await boundedFile(p.dns.mihomoConfig), { maxAliasCount: 0 });
@@ -160,12 +160,10 @@ export async function inspectDns(p: NetworkPolicy): Promise<DnsDiagnostic> {
     const bool = (value: unknown) => typeof value === "boolean" ? value : undefined;
     result.mihomo = { dnsEnabled: bool(config.dns.enable), ipv6: bool(config.ipv6), dnsIpv6: bool(config.dns.ipv6), tunEnabled: bool(config.tun?.enable), hijack: Array.isArray(config.tun?.["dns-hijack"]) ? config.tun["dns-hijack"].filter((v: unknown) => typeof v === "string").slice(0, 20) : [], strictRoute: bool(config.tun?.["strict-route"]), respectRules: bool(config.dns["respect-rules"]) };
     const m = result.mihomo;
-    if (m.dnsEnabled !== true) result.warnings.push("Mihomo 配置未明确启用内置 DNS");
-    if (m.tunEnabled && !m.hijack.some((s) => /^(any:53|\*:53|udp:\/\/(any|\*):53)$/.test(s))) result.warnings.push("TUN 配置未声明通用 UDP 53 接管");
-    if (m.tunEnabled && !m.hijack.some((s) => /^tcp:\/\/(any|\*):53$/.test(s))) result.warnings.push("TUN 配置未声明通用 TCP 53 接管");
-    if (m.tunEnabled && m.strictRoute !== true) result.warnings.push("TUN 未启用 strict-route；需结合系统路由核对 DNS 绕行风险");
-    if (m.dnsIpv6 === false) result.warnings.push("DNS 不返回 AAAA 不能证明公网 IPv6 已被阻断，仍需同目标的 IPv6 检测");
-  } catch { result.status = "unknown"; result.warnings.push("无法读取或解析指定的 Mihomo 配置；请填写本机正在使用的生成配置文件"); }
-  result.warnings.push("这是配置检查，不能证明没有 DNS 泄露；实际递归解析器与按域名分流需另行验证");
+    if (m.dnsEnabled !== true) result.warnings.push("Mihomo 没开内置 DNS（dns.enable）");
+    if (m.tunEnabled && !m.hijack.some((s) => /^(any:53|\*:53|udp:\/\/(any|\*):53)$/.test(s))) result.warnings.push("TUN 没接管 UDP 53：dns-hijack 里加 any:53");
+    if (m.tunEnabled && !m.hijack.some((s) => /^tcp:\/\/(any|\*):53$/.test(s))) result.warnings.push("TUN 没接管 TCP 53：dns-hijack 里加 tcp://any:53");
+    if (m.tunEnabled && m.strictRoute !== true) result.warnings.push("TUN 没开 strict-route，DNS 请求可能绕过 TUN 直接出去");
+  } catch { result.status = "unknown"; result.warnings.push("读不了这份 Mihomo 配置：路径要指向正在用的生成配置"); }
   return result;
 }

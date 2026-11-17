@@ -84,6 +84,10 @@ describe("plan usage limits", () => {
     expect(quotaAvoid(app, claude)).toBeNull();
     app.config.agents.capacity.quotaPerDayBelow = 10;
     expect(quotaAvoid(app, claude)).toMatch(/7d 剩 20%/);
+    // One account can set its own threshold over the default.
+    app.config.agents.capacity.quotaBySource = { claude: { perDayBelow: 0 } };
+    expect(quotaAvoid(app, claude)).toBeNull();
+    app.config.agents.capacity.quotaBySource = {};
     // A window for another model family does not count against this one.
     app.config.agents.capacity.quotaPerDayBelow = 0;
     noteRateLimit(app, claude, { type: "rate-limit", window: "seven_day_sonnet", usedPercent: 99, resetsAt: in3days });

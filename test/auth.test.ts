@@ -102,7 +102,7 @@ describe("logging in", async () => {
 
   it("goes back into the Feishu web app when that is where the login started", async () => {
     const r = await loginAs("c_owner", { return: "/lark/#/ui/uv1" });
-    expect(new URL(r.location).pathname).toBe("/lark/");
+    expect(new URL(r.location!).pathname).toBe("/lark/");
     expect(r.redirect).toBe("#/ui/uv1");
     expect(r.cookie).toBeTruthy();
   });

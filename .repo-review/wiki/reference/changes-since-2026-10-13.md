@@ -15,6 +15,15 @@ updated: 2026-11-17
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 设置 → AI 按后端整理、网络条件的状态写清查到了什么（11-18）
+
+- 设置 → AI → 通用（`web/src/views/Settings.vue`、新组件 `web/src/components/AiBackend.vue`）：已装的后端按账号（`source`）合并，ACP 和命令行成一行，可折叠。点开后有默认模型（两份配置一起改）、适合做什么、网络条件、用量（在用、整个账号和单个模型的上限、账号额度和本账号的阈值）。外面只留默认 AI 与档位、任务选型（开关、总体偏好、运行前自动选）、并行（总数和默认值）。
+- 任务选型的候选（`agents.routing.candidates`）改为每个后端一条（不带模型）加可选的模型各一条，界面不再写 effort；旧的带 effort 的候选照常生效。模型那条的说明会带上后端那条（`src/agents/choose-ai.ts` 的 `candidateWhen`，助手环境说明 `runner.ts` 的 `routingGuide` 同样）；排顺序时先找模型那条。
+- 账号额度的阈值可以按账号另设：`agents.capacity.quotaBySource.<source>.avoidAbove / perDayBelow`，没设的用 `quotaAvoidAbove / quotaPerDayBelow`（`src/agents/quota.ts` 的 `quotaAvoid`）。
+- 网络条件（`web/src/components/AiNetworkConditions.vue`、`web/src/lib/network-status.ts`）：放进各后端里，状态由一个共享的轮询维护；新加的默认勾上这个账号的几个后端。IPv6、DNS 的原因和提示改成写清查到了什么（`src/agents/network-diagnostics.ts`），去掉每次都附的“这是配置检查，不能证明……”和“DNS 不返回 AAAA 不能证明……”两条，DNS 没问题时显示“没发现问题”。
+- 设置页右侧目录（`buildToc`）也认 `.section-title` 做卡片标题，以前只认 `<strong>`，所以 AI 页只列出三项。
+- 数据页（`web/src/views/Insights.vue`）的导出从标题旁挪到筛选右边，点开选 Markdown 或 CSV。空间卡片里仓库行的设置按钮不再被长名字挤窄，和空间的设置按钮对齐。
+
 ## 成员在本人空间的群里也能问、附件跟着回复走、要审批的人不在群里就拉进来、仓库可以不再问提交（11-17）
 
 - 成员的一轮在哪个空间跑（`src/core/users.ts` 的 `turnSpaceFor`，`agents/inbox.ts` 建运行、`agents/sessions.ts` 的 `prepareRun`）：会话所在的空间他读不了（新群没有绑定空间，按本人的采集设置落在 `personal`）时，这一轮改在他自己的个人空间跑，会话不动。能读什么本来就由工具按他的空间逐个校验，会话的空间只决定这一轮写到哪里，不再让 `runner.ts` 整轮拒绝。

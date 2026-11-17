@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import HelpText from "./HelpText.vue";
 import { ref, watch } from "vue";
-import AiDefaults from "./AiDefaults.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
-import { toast } from "../store";
 
 type Candidate = { profile: string; model?: string; effort?: string; when: string };
 type Choose = { conversation: "off" | "decision"; rules: "off" | "decision" | "always"; tasks: "off" | "decision" | "always" };
@@ -21,8 +19,8 @@ watch(() => props.value, (v) => {
   draft.value = { ...next, choose: { ...CHOOSE, ...(next.choose ?? {}) }, pinnedFallback: next.pinnedFallback ?? "unavailable" };
 }, { immediate: true });
 function save() {
-  if (draft.value.candidates.some((c) => !c.profile || !c.when.trim())) return toast("每个候选都需要后端和适用说明", "error");
-  emit('save', JSON.parse(JSON.stringify(draft.value)));
+  // The candidates are written in each backend's block: keep what is saved.
+  emit('save', { ...JSON.parse(JSON.stringify(draft.value)), candidates: props.value?.candidates ?? [] });
 }
 </script>
 <template>
@@ -46,17 +44,11 @@ function save() {
       <UiSegmented v-model="draft.pinnedFallback" size="sm" aria-label="点名的 AI 不可用时" :options="[{ value: 'unavailable', label: '换兜底和候选' }, { value: 'never', label: '不换，直接失败' }]" />
     </div>
     <HelpText>换了的运行里写明“原指定的 AI、为什么换、换成了谁”。每次运行开始前选了谁、为什么没有选（关着、没有候选、点名了 AI），也都记在运行详情里。</HelpText>
-    <p class="muted small">候选：列出可以换用的后端和模型，各写一句适合什么任务。后端出错、额度用完时，候选也排在兜底后面接手。</p>
-    <div v-for="(c, i) in draft.candidates" :key="i" class="candidate stack">
-      <div class="row"><strong class="small">候选 {{ i + 1 }}</strong><span class="spacer" /><button class="btn ghost sm danger" @click="draft.candidates.splice(i, 1)">移除</button></div>
-      <AiDefaults :model-value="{ agent: c.profile, model: c.model, effort: c.effort }" :backends="backends.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => Object.assign(c, { profile: v.agent ?? '', model: v.model, effort: v.effort })" />
-      <label class="field"><span>适合哪些任务</span><textarea v-model="c.when" class="input" rows="2" maxlength="2000" placeholder="说明适用场景，也可以写成本、速度、时段（如“工作日白天排队，晚上和周末优先”）或避免使用的情况" /></label>
-    </div>
-    <div class="row wrap"><button class="btn sm" :disabled="draft.candidates.length >= 50" @click="draft.candidates.push({ profile: '', when: '' })">＋ 添加候选</button><span class="spacer" /><button class="btn primary sm" @click="save">保存任务选型</button></div>
+    <p class="muted small">每个后端和模型适合做什么，写在上面各后端里的“适合做什么”；写了的就是候选，后端出错、额度用完时也排在兜底后面接手。</p>
+    <div class="row wrap"><span class="spacer" /><button class="btn primary sm" @click="save">保存任务选型</button></div>
   </div>
 </template>
 <style scoped>
-.candidate { padding: 14px 0; border-top: 1px solid var(--line); min-width: 0; }
 .choose { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
 @media (max-width: 640px) { .choose { grid-template-columns: minmax(0, 1fr); } }
 </style>

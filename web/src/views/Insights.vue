@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { authUrl, get, type InsightsReport, type InsightMetric, type InsightRecord } from "../api";
 import Skeleton from "../components/Skeleton.vue";
+import Icon from "../components/Icon.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSelect from "../components/UiSelect.vue";
@@ -66,6 +67,14 @@ const filters = computed(() => {
 });
 const activeFilters = computed(() => filters.value.filter(f => q(f.key)).length + (q("housekeeping") === "true" ? 1 : 0));
 const showFilters = ref(activeFilters.value > 0);
+// 导出: a menu next to the filters, closed by a click elsewhere or Esc.
+const exportOpen = ref(false);
+const exportBox = ref<HTMLElement>();
+const closeExport = (e: Event) => { if (exportOpen.value && !exportBox.value?.contains(e.target as Node)) exportOpen.value = false; };
+const escExport = (e: KeyboardEvent) => { if (e.key === "Escape") exportOpen.value = false; };
+document.addEventListener("pointerdown", closeExport);
+document.addEventListener("keydown", escExport);
+onBeforeUnmount(() => { document.removeEventListener("pointerdown", closeExport); document.removeEventListener("keydown", escExport); });
 function clearFilters() {
   const next = { ...route.query }; delete next.detail; delete next.housekeeping;
   for (const f of filters.value) delete next[f.key];
@@ -195,17 +204,19 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
         <h1>数据</h1>
         <p>omem 和机器人这段时间做了什么。每个数都是从记录里数出来的，点一下能看到是哪些。</p>
       </div>
-      <div class="head-actions">
-        <span class="muted small">导出</span>
-        <a class="btn ghost sm" :href="exportUrl('md')">Markdown</a>
-        <a class="btn ghost sm" :href="exportUrl('csv')">CSV</a>
-      </div>
     </div>
 
     <div class="toolbar">
       <UiSegmented :model-value="period" :options="periods" size="sm" aria-label="看哪一段时间" @update:model-value="choosePeriod" />
       <UiCheckbox :model-value="q('compare') === 'true'" switch @update:model-value="setFilter('compare', $event)">和上一段比较</UiCheckbox>
       <button type="button" class="btn ghost sm" :aria-expanded="showFilters" @click="showFilters = !showFilters">筛选{{ activeFilters ? `（${activeFilters}）` : "" }}</button>
+      <div ref="exportBox" class="export">
+        <button type="button" class="btn ghost sm" aria-haspopup="menu" :aria-expanded="exportOpen" @click="exportOpen = !exportOpen">导出<Icon name="down" :size="13" /></button>
+        <div v-if="exportOpen" class="export-menu" role="menu" @keydown.esc="exportOpen = false">
+          <a role="menuitem" :href="exportUrl('md')" @click="exportOpen = false">Markdown<span class="muted small">报告</span></a>
+          <a role="menuitem" :href="exportUrl('csv')" @click="exportOpen = false">CSV<span class="muted small">表格</span></a>
+        </div>
+      </div>
       <span class="grow"></span>
       <span v-if="data" class="muted small">{{ data.from }} 至 {{ data.to }}</span>
     </div>
@@ -301,7 +312,11 @@ function exportUrl(format: string) { const params = new URLSearchParams(query.va
 <style scoped>
 /* The page is on --bg, not on a panel: the ring around a chart's dots takes its colour. */
 .data { min-width: 0; --chart-surface: var(--bg); }
-.head-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.export { position: relative; }
+.export > .btn { gap: 4px; }
+.export-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; min-width: 168px; display: grid; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
+.export-menu a { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 6px; color: inherit; text-decoration: none; font-size: 13px; }
+.export-menu a:hover, .export-menu a:focus-visible { background: var(--hover); }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 10px; }
 .filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; padding: 14px 0 6px; border-top: 1px solid var(--line); }
 .filters-foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
