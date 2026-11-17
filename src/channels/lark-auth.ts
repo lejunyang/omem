@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { inQuietHours, notify } from "../core/notify.ts";
-import { HttpError } from "../core/util.ts";
-import { larkActing, larkCli, LarkScopeError, onOwnerLoginMissing, OWNER_LOGIN_DOMAINS } from "./lark-cli.ts";
+import { HttpError, zonedParts } from "../core/util.ts";
+import { larkActing, larkActor, larkCli, LarkScopeError, onOwnerLoginMissing, OWNER_LOGIN_DOMAINS } from "./lark-cli.ts";
 import { one, run } from "../core/db.ts";
 
 /**
@@ -131,42 +131,58 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>)
   }
 }
 
-/** How long after a login link before another one when the owner has not confirmed it. */
+/** How long after a login link before another one when nothing but background capture needs the login. */
 const RELOGIN_EVERY_MS = 6 * 3600_000;
-let relogin: Promise<void> | null = null;
+/** ... and when a run is waiting on it (a rule handling an alarm, the assistant): the last link has long expired. */
+const RELOGIN_WAITING_MS = 30 * 60_000;
+let relogin: { done: Promise<void>; until: number } | null = null;
+
 
 /**
  * The owner's login gone altogether (lark-cli reports token_missing: expired and not refreshed, or
  * removed). Capture, `/ai` in private chats and the rules' quick checks failed every minute with only
  * a line in the log. Now the owner gets one link for a full login (the same domains as setup), omem
  * finishes it in the background once confirmed (`--device-code`, which an agent's own login in its
- * shell had left out), and asks again only after RELOGIN_EVERY_MS.
+ * shell had left out). A link lasts ten minutes: background capture asks again only after
+ * RELOGIN_EVERY_MS, but a run that needs the login (a tool call: a rule handling an alarm, the
+ * assistant) gets a new link once the last one is RELOGIN_WAITING_MS old — a link sent while the
+ * owner was away must not leave the alarms failing for six hours. Returns what was done, for the
+ * error the caller (and the agent) sees.
  */
 export function watchOwnerLogin(app: App) {
+  const hhmm = (ms: number) => { const p = zonedParts(ms, app.config.timezone); return `${p.hour}:${String(p.minute).padStart(2, "0")}`; };
   onOwnerLoginMissing(() => {
+    if (relogin) return `已把授权链接发给本人（${hhmm(relogin.until)} 前有效），等本人确认；不要自己跑 lark-cli auth login`;
     // A link lasts ten minutes and a notification waits out the quiet hours: ask once they are over
     // (the failures keep coming every minute), not with a link that has expired by morning.
-    if (relogin || inQuietHours(app)) return;
+    if (inQuietHours(app)) return `现在是免打扰时段，免打扰结束（${app.config.notify.quietEnd} 点）后有运行再用到时会发授权链接`;
+    // Every tool call runs as someone (auth/lark-user.ts asLarkUser); capture and polling do not.
+    const waiting = !!larkActor.getStore();
     const last = Number(one<{ value: string }>(app.db, "select value from kv where key = 'lark_relogin_asked_at'")?.value ?? 0);
-    if (Date.now() - last < RELOGIN_EVERY_MS) return;
+    const gap = waiting ? RELOGIN_WAITING_MS : RELOGIN_EVERY_MS;
+    if (Date.now() - last < gap) return `${hhmm(last)} 发过的授权链接没有确认（已过期），${hhmm(last + RELOGIN_WAITING_MS)} 后再有运行用到时会重发`;
     run(app.db, "insert into kv(key,value) values('lark_relogin_asked_at', ?) on conflict(key) do update set value = excluded.value", String(Date.now()));
-    relogin = askOwnerLogin(app)
+    const current: { done: Promise<void>; until: number } = { done: Promise.resolve(), until: Date.now() + 10 * 60_000 };
+    relogin = current;
+    current.done = askOwnerLogin(app, (until) => { current.until = until; })
       .catch((e) => console.warn(`[omem] 发起 lark-cli 重新登录失败：${(e as Error).message}`))
-      .finally(() => { relogin = null; });
+      .finally(() => { if (relogin === current) relogin = null; });
+    return "已把重新登录的授权链接发给本人（10 分钟内有效），本人确认后再试；不要自己跑 lark-cli auth login";
   });
 }
 
-async function askOwnerLogin(app: App) {
+async function askOwnerLogin(app: App, expires: (until: number) => void) {
   const v = await larkCli(["auth", "login", "--domain", OWNER_LOGIN_DOMAINS, "--no-wait", "--json"], 60_000);
   const d = v?.data ?? v;
   const url = String(d?.verification_url ?? d?.verification_uri_complete ?? d?.verification_uri ?? "");
   const code = String(d?.device_code ?? "");
   if (!url || !code) throw new Error("lark-cli 没有返回授权链接");
   const seconds = Number(d?.expires_in) || 600;
+  expires(Date.now() + seconds * 1000);
   const asked = notify(app, {
     tone: "warning",
     title: "飞书授权：lark-cli 的登录失效了",
-    body: `omem 以你的身份读飞书（消息采集、私聊里的指令、规则的快速检查、读文档）要用 lark-cli 的登录，现在它没有可用的登录。\n\n在飞书里打开链接确认（${Math.round(seconds / 60)} 分钟内有效）：${url}\n\n确认后 omem 自己保存登录，不用再做别的。没来得及确认的话 ${RELOGIN_EVERY_MS / 3600_000} 小时后会再发一次；也可以在运行 omem 的电脑上执行 omem setup。`,
+    body: `omem 以你的身份读飞书（消息采集、私聊里的指令、规则的快速检查、读文档）要用 lark-cli 的登录，现在它没有可用的登录。\n\n在飞书里打开链接确认（${Math.round(seconds / 60)} 分钟内有效）：${url}\n\n确认后 omem 自己保存登录，不用再做别的。没来得及确认的话，之后有规则或助手用到飞书时（最快半小时后）会再发一次；也可以在运行 omem 的电脑上执行 omem setup。`,
     urgency: "normal",
   });
   await larkCli(["auth", "login", "--device-code", code, "--json"], seconds * 1000 + 30_000);

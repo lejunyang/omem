@@ -147,8 +147,8 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
     // The owner's login is gone altogether (expired and not refreshed, removed): the owner is asked to
     // log in again (lark-auth.ts watchOwnerLogin), once for every caller that runs into it.
     if (!user && LOGIN_GONE.test(`${detail} ${raw}`)) {
-      ownerLoginMissing?.();
-      throw new Error("飞书 CLI：本人的 lark-cli 登录不可用（token_missing），已请本人重新授权");
+      const asked = ownerLoginMissing?.() ?? "";
+      throw new Error(`飞书 CLI：本人的 lark-cli 登录不可用（token_missing）${asked ? `，${asked}` : ""}`);
     }
     // A person's own token turned down (lark-cli 1.0.98: exit 3, `authentication` token_invalid 99991668 and the
     // like): theirs to fix in omem, not lark-cli's login; refreshed before the next call.
@@ -166,14 +166,18 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
 /** The business domains omem's login asks for (setup and a re-login after the login was lost). */
 export const OWNER_LOGIN_DOMAINS = "im,contact,docs,drive,wiki,calendar,minutes,vc";
 
-let ownerLoginMissing: (() => void) | null = null;
+/** Says what was done about it (a link sent, or why not), for the error the caller sees. */
+let ownerLoginMissing: (() => string) | null = null;
 const LOGIN_GONE = /token_missing|need_user_authorization|no token in keychain/i;
 /** A result saying the owner's login is gone (lark-cli may say so with exit code 0). */
 function noticeLoginGone(value: any) {
-  if (value?.ok === false && LOGIN_GONE.test(JSON.stringify(value.error ?? value))) ownerLoginMissing?.();
+  if (value?.ok === false && LOGIN_GONE.test(JSON.stringify(value.error ?? value))) {
+    const asked = ownerLoginMissing?.();
+    if (asked) value.error = { code: value.code, ...(value.error ?? {}), message: `${String(value.error?.message ?? value.msg ?? "token_missing")}；${asked}` };
+  }
 }
 /** Told when a call finds no owner login at all (lark-auth.ts asks the owner to log in again). */
-export function onOwnerLoginMissing(f: (() => void) | null) {
+export function onOwnerLoginMissing(f: (() => string) | null) {
   ownerLoginMissing = f;
 }
 
