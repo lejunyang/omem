@@ -183,14 +183,25 @@ describe("没人认领的提交", () => {
     expect(one<{ outcome: string }>(t.app.db, "select outcome from flow_signals where type='git.commits'")!.outcome).toBe("问了本人，挂到了 实现退款校验");
     expect(t.cursor().pending).toBeNull();
   });
-  it("确认新建普通待办、挂分支，不自动开流程", async () => {
+  it("确认新建还没做完的待办、挂分支，不自动开流程", async () => {
     const t = await setup(), r = await t.processing();
-    const ask = t.suggest(r, [{ title: "退款校验", detail: "增加退款金额校验。\n修改 refund.txt。", reason: "完整修复" }]);
+    const ask = t.suggest(r, [{ title: "退款校验", detail: "增加退款金额校验。\n修改 refund.txt。", reason: "只搭了校验入口", ongoing: true }]);
+    expect(ask.options[0].label).toBe("新建一件事（还没做完）：退款校验");
     await answerAsk(t.app, ask.id, { choice: 0, by: "owner" });
     const created = one<{ id: string }>(t.app.db, "select id from items where title='退款校验'")!;
-    expect(getItem(t.app, created.id)).toMatchObject({ kind: "todo", spaceId: "demo", detail: "增加退款金额校验。\n修改 refund.txt。" });
+    expect(getItem(t.app, created.id)).toMatchObject({ kind: "todo", status: "open", spaceId: "demo", detail: "增加退款金额校验。\n修改 refund.txt。" });
     expect(itemMaterials(t.app, created.id)[0].ref).toBe("demo#main");
     expect(one(t.app.db, "select * from item_flows where item_id=?", created.id)).toBeUndefined();
+  });
+  it("没标还要接着做的新建建议，确认后记为已完成", async () => {
+    const t = await setup(), r = await t.processing();
+    const ask = t.suggest(r, [{ title: "退款校验", detail: "增加退款金额校验。", reason: "完整修复" }]);
+    expect(ask.options[0].label).toBe("记一件已完成的事：退款校验");
+    await answerAsk(t.app, ask.id, { choice: 0, by: "owner" });
+    const created = getItem(t.app, one<{ id: string }>(t.app.db, "select id from items where title='退款校验'")!.id);
+    expect(created.status).toBe("done");
+    expect(itemMaterials(t.app, created.id)[0].ref).toBe("demo#main");
+    expect(one<{ outcome: string }>(t.app.db, "select outcome from flow_signals where type='git.commits'")!.outcome).toBe("问了本人，记了已完成的 退款校验");
   });
   it("不用管前移游标并留下结局，同一提交出现在另一分支也不再问", async () => {
     const t = await setup(), item = t.item();

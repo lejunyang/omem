@@ -21,7 +21,8 @@ type Cursor = { space_id: string; branch: string; commit_id: string; tip: string
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const claimSchema = z.object({ claims: z.array(z.union([
   z.object({ item: text(200), reason: text(1000) }).strict(),
-  z.object({ title: text(300), detail: text(6000), reason: text(1000) }).strict(),
+  // A new item from finished commits is recorded as done; only work the commits leave unfinished stays open.
+  z.object({ title: text(300), detail: text(6000), reason: text(1000), ongoing: z.boolean().optional() }).strict(),
 ])).min(1).max(3) });
 type Claim = z.infer<typeof claimSchema>["claims"][number];
 const readGit = (path: string, args: string[]) => gitAsync(path, args, { timeoutMs: 15_000 });
@@ -73,7 +74,7 @@ export function finishCommitClaim(app: App, r: Run) {
   const ask = createAsk(app, { runId: r.id, userId: user, allowText: false,
     question: [`仓库「${name}」的 ${c.branch} 分支有 ${b.commits.length} 条提交：`, "", ...b.commits.slice(0, 8).map((v) => `- ${v.hash.slice(0, 8)} ${v.title}`),
       ...(b.commits.length > 8 ? [`- 另有 ${b.commits.length - 8} 条`] : []), "", ...claims.map((v, i) => `- 建议 ${i + 1}：${v.reason}`)].join("\n"),
-    options: [...claims.map((v) => ({ label: "item" in v ? `挂到「${getItem(app, v.item).title}」` : `新建一件事：${v.title}` })), { label: "不用管" }],
+    options: [...claims.map((v) => ({ label: "item" in v ? `挂到「${getItem(app, v.item).title}」` : v.ongoing ? `新建一件事（还没做完）：${v.title}` : `记一件已完成的事：${v.title}` })), { label: "不用管" }],
     context: { handler: "commit-claim", repo: c.space_id, branch: c.branch, runId: r.id },
   });
   saveBatch(app, c, { ...b, claims, askId: ask.id });
@@ -223,11 +224,13 @@ registerAskHandler("commit-claim", async (app, ask, ctx) => {
   if (!claim) { tx(app.db, () => settle(app, c, b, "本人说不用管")); return; }
   let itemId: string;
   tx(app.db, () => {
-    const item = "item" in claim ? writableItem(app, claim.item, OWNER) : upsertItem(app, undefined, { title: claim.title, detail: claim.detail, kind: "todo", spaceId: c.space_id, userId: OWNER }, "user");
+    let item = "item" in claim ? writableItem(app, claim.item, OWNER) : upsertItem(app, undefined, { title: claim.title, detail: claim.detail, kind: "todo", spaceId: c.space_id, userId: OWNER }, "user");
     itemId = item.id;
     addMaterials(app, item.id, [{ kind: "repo", ref: c.space_id, branch: c.branch }], OWNER, "user");
     addItemEvent(app, item.id, "updated", `本人确认：${c.space_id} 的 ${c.branch} 分支上 ${b.commits.length} 条提交归到这件事；${claim.reason}`, "user", [`run:${b.runId}`]);
-    settle(app, c, b, `问了本人，${"item" in claim ? "挂到了" : "新建了"} ${item.title}`, item.id);
+    const finished = !("item" in claim) && !claim.ongoing;
+    if (finished) item = upsertItem(app, item.id, { status: "done", note: "提交已经做完这件事，记为已完成" }, "user");
+    settle(app, c, b, `问了本人，${"item" in claim ? "挂到了" : finished ? "记了已完成的" : "新建了"} ${item.title}`, item.id);
   });
   if ("item" in claim) {
     const f = itemFlow(app, itemId!);
