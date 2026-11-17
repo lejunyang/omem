@@ -139,6 +139,18 @@ function sh(cmd: string, args: string[], cwd: string, timeoutMs = 120_000) {
   return { code: r.status, stdout: (r.stdout ?? "").slice(-200_000), stderr: (r.stderr ?? "").slice(-50_000) };
 }
 
+/** The public npm registry omem installs from (osdk.toml `[registries.npm] default`); null when it is not there. */
+export function publicNpmRegistry(root: string): string | null {
+  try {
+    const toml = readFileSync(join(root, "osdk.toml"), "utf8");
+    const section = /^\[registries\.npm\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
+    const url = /^\s*default\s*=\s*"([^"]+)"/m.exec(section)?.[1];
+    return url && /^https:\/\//.test(url) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Restart the background service a moment after replying, so the caller gets the answer. */
 function restartSoon(app: App) {
   setTimeout(() => {
@@ -638,7 +650,7 @@ export const peerCommands: Record<string, Command> = {
     run: async (app) => (await import("./peer-inspect.ts")).agentsReport(app),
   },
   "agent-upgrade": {
-    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版（npm i -g <包>@latest）；新会话起生效",
+    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版（npm i -g <包>@latest，从 osdk.toml 的 [registries.npm] 那个公开源装，不受这台机器 .npmrc 的影响）；新会话起生效",
     schema: z.object({ id: z.string().regex(/^[a-z0-9-]{1,40}$/) }),
     run: async (app, a) => {
       const { catalogEntry } = await import("../agents/catalog.ts");
@@ -650,9 +662,11 @@ export const peerCommands: Record<string, Command> = {
       if (!entry?.npm || !profile || profile.command !== entry.command) throw new HttpError(400, `${a.id} 不是目录里带 npm 包的后端`);
       const before = adapterPackage(profile);
       if (before?.via !== "installed" || before.name !== entry.npm) throw new HttpError(400, `${a.id} 的适配器不是全局安装的 ${entry.npm}，不在这里升级`);
-      const r = sh("npm", ["i", "-g", `${entry.npm}@latest`], app.home, 600_000);
+      // A company mirror may lag behind (it served an old “latest” here): use omem's public registry.
+      const registry = publicNpmRegistry(await packageRoot());
+      const r = sh("npm", ["i", "-g", `${entry.npm}@latest`, ...(registry ? [`--registry=${registry}`] : [])], app.home, 600_000);
       const after = adapterPackage(profile);
-      return { ok: r.code === 0, package: entry.npm, before: before.version, after: after?.version ?? null, output: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") };
+      return { ok: r.code === 0, package: entry.npm, before: before.version, after: after?.version ?? null, registry: registry ?? "（这台机器的 npm 设置）", output: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") };
     },
   },
   search: {

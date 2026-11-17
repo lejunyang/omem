@@ -15,6 +15,10 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 远程升级 ACP 适配器从公开源装（11-18）
+
+- `peer call <设备> agent-upgrade` 原来用那台机器自己的 npm 设置装 `@latest`，公司镜像落后时会装回旧版（codex-acp 停在 2.5.0，不认识 Codex 新的默认模型，Agent 页上这个模型没有思考强度）。现在带 `--registry` 用 `osdk.toml` 的 `[registries.npm]`（`src/core/peer-exec.ts` 的 `publicNpmRegistry`），和依赖安装一致。
+
 ## 会议里叫机器人：主助手来查、可设叫法和口头叫它、旁听时按会议性质主动查（11-18）
 
 - 同一天前一版把会上提问交给访客角色。改为默认由主助手按本人的权限查（`answerBy: assistant`，运行沿用规则运行的禁用项，但不限于规则的空间，`lane = meeting-answer:<id>`），访客路径保留为 `answerBy: guest`。起运行前先由决策模型判断是不是在问它（“访客提问把关”打开且可用时），只是提到它的不起运行。

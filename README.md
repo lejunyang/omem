@@ -542,7 +542,7 @@ omem peer call <设备> ide '{}'              # 只读：网页版 VS Code 的�
 omem peer call <设备> replays '{}'          # 只读：夜间复盘的状态（定时、replay-judge 的模型、上次结果或没跑的原因）和最近的结论
 omem peer call <设备> quality '{}'          # 只读：每晚抽检统计、加严名单、待检页数和最近 20 条摘要（不含问题正文）
 omem peer call <设备> replay-run '{"run_id":"r…","axis":"M1"}'   # 立即复盘一题（不带参数按选题规则挑）
-omem peer call <设备> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适配器（如 codex-acp）升到 npm 最新版，返回前后版本
+omem peer call <设备> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适配器（如 codex-acp）升到 npm 最新版（从 osdk.toml 的公开源装），返回前后版本
 omem peer call <设备> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
 omem peer call <设备> lark-docs-refresh '{"metadataOnly":true,"unchecked":true}'  # 只补读从没读过知识库位置的文档的目录（不重读正文），补全原件页的知识库目录树
 omem peer call <设备> sources-merge-duplicates '{}'  # 列出同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件；'{"dryRun":false}' 合并（旧 id 保留为别名）
