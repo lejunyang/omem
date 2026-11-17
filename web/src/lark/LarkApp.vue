@@ -58,6 +58,18 @@ function feishuCode(appId: string): Promise<string> {
   });
 }
 
+/** Whether this browser was sent to the authorization page a moment ago (no loop when that fails too). */
+function recentlyRedirected() {
+  const key = "omem-lark-app-oauth";
+  try {
+    const last = Number(sessionStorage.getItem(key) ?? 0);
+    sessionStorage.setItem(key, String(Date.now()));
+    return Date.now() - last < 3 * 60_000;
+  } catch {
+    return false;
+  }
+}
+
 onMounted(async () => {
   try {
     const s = await get<{ user: unknown; larkApp: string | null }>("/api/auth/session");
@@ -69,6 +81,14 @@ onMounted(async () => {
       } catch (e) {
         if ((e as Error).message === "outside") {
           location.replace(mainSite());
+          return;
+        }
+        // Feishu refused the in-app code (the client APIs are stricter about the page address than the
+        // ordinary authorization page): sign in through that page instead, once, and come back to the
+        // same view on the main site. A second refusal within a few minutes shows why.
+        if (!recentlyRedirected()) {
+          const back = (location.hash.replace(/^#/, "") || "/").slice(0, 300);
+          location.replace(`/api/auth/lark/start?purpose=login&return=${encodeURIComponent(back)}`);
           return;
         }
         throw e;
