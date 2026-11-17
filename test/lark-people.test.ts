@@ -220,6 +220,8 @@ describe("people across Feishu apps", () => {
     const result = await callTool(ctx, "lark_send", { chat_id: "oc_g", text: "@小王 @小李 请核查", mentions: ["小王", "小李"] });
     expect(result.isError).toBe(false);
     expect(result.text).toMatch(/已发送.*已跳过不在目标群的 @ 对象：小李/);
+    // The owner's run can bring the person in when they are needed there.
+    expect(result.text).toContain("lark_invite");
     expect(result.text).not.toMatch(/重名|邮箱/);
     expect(directoryCalls).toBe(0); expect(pages).toBe(4); expect(sent).toHaveLength(1);
     const text = JSON.parse(sent[0].data.content).text;

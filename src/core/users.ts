@@ -121,6 +121,18 @@ export function setUserRole(app: App, userId: string, role: string) {
 export function accessibleSpaces(app: App, userId: string = OWNER): string[] | null {
   return spacesWith(app, userId, "space.read");
 }
+/**
+ * The space a person's turn runs in. A conversation they take part in may live in a space they cannot
+ * read (a group the owner's capture puts in `personal`): what they may see is checked tool by tool
+ * against their own spaces, so the conversation's space does not turn them away; their turn works
+ * (and keeps what it writes) in their own personal space instead.
+ */
+export function turnSpaceFor(app: App, userId: string, spaceId: string): string {
+  const allowed = accessibleSpaces(app, userId);
+  if (allowed === null || allowed.includes(spaceId)) return spaceId;
+  const own = personalSpaceId(userId);
+  return allowed.includes(own) || findSpace(app, own) ? own : (allowed[0] ?? spaceId);
+}
 /** May write memories, items and originals in the space (Wiki pages need `wiki.write`). */
 export function canWrite(app: App, userId: string, spaceId: string) {
   return can(app, userId, "memory.write", spaceId);

@@ -1765,6 +1765,7 @@ async function saveEdit() {
         </template>
         <UiCheckbox :model-value="editing.settings.autoLint !== false" @change="(v) => (editing!.settings.autoLint = v)">原件变化后自动检查受影响的 Wiki 页面（稳定半小时后，一次最多 10 页）</UiCheckbox>
         <UiCheckbox :model-value="editing.settings.autoOrganize !== false" @change="(v) => (editing!.settings.autoOrganize = v)">自动把顶层散落、挤在一起的 Wiki 页面整理进目录</UiCheckbox>
+        <UiCheckbox v-if="editing.kind === 'repo'" :model-value="editing.settings.commitClaim !== false" @change="(v) => (editing!.settings.commitClaim = v)">本人直接在这个仓库提交后，问这些提交属于哪件事</UiCheckbox>
         <UiCheckbox v-if="editing.kind !== 'personal'" :model-value="!!editing.settings.larkAccess" @change="(v) => (editing!.settings.larkAccess = v)">飞书文档按各人的飞书权限显示（成员要连接飞书，飞书说他能看的才显示全文；你不受限）</UiCheckbox>
         <p v-if="editing.settings.mirror" class="muted small">这是 {{ editing.settings.mirror.peer }} 的空间的只读镜像，内容由同步写入。</p>
         <div class="row"><span class="spacer" /><button class="btn primary" @click="saveSpace">保存</button></div>

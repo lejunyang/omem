@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { gitAsync } from "../core/git.ts";
-import { findSpace, listSpaces } from "../core/spaces.ts";
+import { findSpace, listSpaces, updateSpace } from "../core/spaces.ts";
 import { accessibleSpaces, canWrite, OWNER } from "../core/users.ts";
 import { HttpError, json, now } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler } from "../agents/asks.ts";
@@ -74,7 +74,7 @@ export function finishCommitClaim(app: App, r: Run) {
   const ask = createAsk(app, { runId: r.id, userId: user, allowText: false,
     question: [`仓库「${name}」的 ${c.branch} 分支有 ${b.commits.length} 条提交：`, "", ...b.commits.slice(0, 8).map((v) => `- ${v.hash.slice(0, 8)} ${v.title}`),
       ...(b.commits.length > 8 ? [`- 另有 ${b.commits.length - 8} 条`] : []), "", ...claims.map((v, i) => `- 建议 ${i + 1}：${v.reason}`)].join("\n"),
-    options: [...claims.map((v) => ({ label: "item" in v ? `挂到「${getItem(app, v.item).title}」` : v.ongoing ? `新建一件事（还没做完）：${v.title}` : `记一件已完成的事：${v.title}` })), { label: "不用管" }],
+    options: [...claims.map((v) => ({ label: "item" in v ? `挂到「${getItem(app, v.item).title}」` : v.ongoing ? `新建一件事（还没做完）：${v.title}` : `记一件已完成的事：${v.title}` })), { label: "不用管" }, { label: "这个仓库以后不用问" }],
     context: { handler: "commit-claim", repo: c.space_id, branch: c.branch, runId: r.id },
   });
   saveBatch(app, c, { ...b, claims, askId: ask.id });
@@ -129,7 +129,8 @@ export function checkUnclaimedCommits(app: App, at = new Date()): Promise<void> 
 }
 async function checkNow(app: App, at: Date) {
   if (!app.config.flows.commits.enabled) return;
-  const repos = listSpaces(app).filter((s) => s.kind === "repo" && s.rootPath && existsSync(s.rootPath) && readable(app, s.id));
+  // A repository the owner said not to ask about (its space's commitClaim setting) is left alone.
+  const repos = listSpaces(app).filter((s) => s.kind === "repo" && s.settings.commitClaim !== false && s.rootPath && existsSync(s.rootPath) && readable(app, s.id));
   const due = repos.map((s) => ({ s, checked: one<{ value: string }>(app.db, "select value from kv where key=?", `flow-commits:${s.id}`)?.value ?? "" }))
     .filter((v) => !v.checked || at.getTime() - Date.parse(v.checked) >= 1800_000).sort((a, b) => a.checked.localeCompare(b.checked)).slice(0, 10);
   for (const { s } of due) {
@@ -221,6 +222,14 @@ registerAskHandler("commit-claim", async (app, ask, ctx) => {
   const { c, b } = currentBatch(app, getRun(app, String(ctx.runId)));
   if (b.askId !== ask.id || ask.answeredBy !== OWNER) return;
   const claim = b.claims?.[ask.choice!];
+  if (!claim && ask.choice === (b.claims?.length ?? 0) + 1) {
+    tx(app.db, () => {
+      settle(app, c, b, "本人说这个仓库以后不用问");
+      const space = findSpace(app, c.space_id);
+      if (space) updateSpace(app, space.id, { settings: { ...space.settings, commitClaim: false } });
+    });
+    return;
+  }
   if (!claim) { tx(app.db, () => settle(app, c, b, "本人说不用管")); return; }
   let itemId: string;
   tx(app.db, () => {
@@ -244,7 +253,7 @@ registerAskHandler("commit-claim", async (app, ask, ctx) => {
   if (by !== OWNER || ask.userId !== OWNER) throw new HttpError(403, "只有本人能认领提交");
   const { b } = currentBatch(app, getRun(app, String(ctx.runId)));
   if (b.askId !== ask.id) throw new HttpError(409, "这批提交已有新的确认卡片");
-  if (answer.choice === null || answer.choice > (b.claims?.length ?? 0)) throw new HttpError(400, "请选择认领建议或不用管");
+  if (answer.choice === null || answer.choice > (b.claims?.length ?? 0) + 1) throw new HttpError(400, "请选择认领建议或不用管");
   const claim = b.claims?.[answer.choice];
   if (claim && "item" in claim) writableItem(app, claim.item, by);
   else if (claim && !canWrite(app, by, String(ctx.repo))) throw new HttpError(403, "不能在仓库空间新建事项");

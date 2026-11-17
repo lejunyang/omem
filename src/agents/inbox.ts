@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { canWrite, OWNER, personalSpaceId } from "../core/users.ts";
+import { canWrite, OWNER, personalSpaceId, turnSpaceFor } from "../core/users.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { all, one, run } from "../core/db.ts";
 import { injectionScore } from "../sources/guard.ts";
@@ -171,7 +171,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   if (over) return { thread, messageId, runId: null, merged: false, reply: over, started };
   const run = createRun(app, {
     kind: "ask",
-    spaceId: thread.spaceId,
+    spaceId: turnSpaceFor(app, userId, thread.spaceId),
     title: truncate(text.replace(/\s+/g, " "), 60),
     input: { conversationId: thread.id, messageIds: [messageId], ...(inb.fromAsk ? { fromAsk: true } : {}), ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
     lane: thread.id,

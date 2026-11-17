@@ -15,6 +15,13 @@ updated: 2026-11-17
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 成员在本人空间的群里也能问、附件跟着回复走、要审批的人不在群里就拉进来、仓库可以不再问提交（11-17）
+
+- 成员的一轮在哪个空间跑（`src/core/users.ts` 的 `turnSpaceFor`，`agents/inbox.ts` 建运行、`agents/sessions.ts` 的 `prepareRun`）：会话所在的空间他读不了（新群没有绑定空间，按本人的采集设置落在 `personal`）时，这一轮改在他自己的个人空间跑，会话不动。能读什么本来就由工具按他的空间逐个校验，会话的空间只决定这一轮写到哪里，不再让 `runner.ts` 整轮拒绝。
+- `lark_send_file` 等的 `reply_to` 说明（`agents/tools.ts` 的 `larkTarget`，`skills/omem/references/lark.md` 的“附件”）：给这一轮的提问发附件不填 `chat_id`、`reply_to`，和回复落在同一处；之前助手把附件回到最早那条提问下面开了话题，提问的人在回复处看不到。
+- @ 的人不在群里（`larkPost` 的回执）：本人的运行里提示用 `lark_invite` 把要参与的人（审批人、要确认的人）拉进来，本人批准后再发；以前写“无需重试”，规则里审批卡片因值班人不在群就停了。说明页“拉人进群”同步。
+- 提交认领（`src/flows/commits.ts`）：卡片多一项“这个仓库以后不用问”，选了就把仓库空间的 `commitClaim` 设为 false，巡检跳过这个仓库；设置 → 空间里能勾回来（`web/src/views/Settings.vue`）。
+
 ## 飞书结果没送达时重发答案、气泡等待与 TLS 故障识别（11-17）
 
 - 飞书对话（`src/channels/lark-bot.ts`）：AI 已经完成后，结果发送失败不再显示成“没有完成”。复用已保存的会话答案进入原有持久投递队列（`agents/inbox.ts` 的 `retryChannelReply`），恢复后更新原进度卡；没有进度卡时保留原回复位置和同一 UUID，避免后续消息改变投递位置，不再运行 AI。

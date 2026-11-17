@@ -5,7 +5,7 @@ import { clearDown, downReason, excluded, holdForRun } from "./capacity.ts";
 import { aiLabel, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChooseResult, type OrderSource } from "./choose-ai.ts";
 import type { App } from "../core/app.ts";
 import { truncate, localStamp } from "../core/util.ts";
-import { userName } from "../core/users.ts";
+import { turnSpaceFor, userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
 import { distinctProfiles, failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, quietAfterAll, quietSet, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
@@ -278,6 +278,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const t = getThread(app, threadId);
   const { actor, label } = actorFor(app, t);
   const lark = larkScope(t, userId);
+  // Someone who cannot read the conversation's space still gets their turn, in a space of theirs.
+  const space = turnSpaceFor(app, userId, t.spaceId);
   const denyTools = (ctx.run.input as { denyTools?: string[] }).denyTools;
   // One agent session serves every kind of turn, so it always has stay_quiet; the tool refuses a turn
   // that answers someone (quiet.ts), and only the turns allowed to stay quiet mention it.
@@ -301,7 +303,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
     const p = resolveRunProfile(app, { actor, profileId: t.settings.profile ?? undefined, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
     ctx.event("status", choiceEvent({ scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: "这个会话用 /model 或会话设置指定了 AI" }));
   }
-  const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess });
+  const prep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: t.settings.profile ?? auto?.profile, userId, lark, model: t.settings.model ?? auto?.model ?? undefined, effort: t.settings.effort ?? auto?.effort ?? undefined, denyTools, addTools, fullAccess });
   // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
   const limitFor = { profile: prep.profile };
   const emit = (e: AgentEvent) => {
@@ -478,7 +480,7 @@ ${WAKE_NOTE}`
       limitFor.profile = used;
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
+      curPrep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
       emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to: aiLabel({ profile: used.id, model: used.model, effort: used.effort }), why: left || "默认后端不可用", orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
     }
@@ -576,7 +578,7 @@ ${WAKE_NOTE}`
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
+          const again = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
           const handle = await openAcp(
             networkProfile(app, again.profile),
             { signal: networkAttempt.signal, env: networkEnvironment(app, used), cwd: again.cwd, cleanup: await sessionCleanup(app, again.profile, { cwd: again.cwd, runId: ctx.run.id, persistSession: true }, emit), mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, fullAccess: again.fullAccess, system: again.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },

@@ -6,7 +6,7 @@ import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
 import * as gitTools from "../src/core/git.ts";
 import * as users from "../src/core/users.ts";
-import { createSpace } from "../src/core/spaces.ts";
+import { createSpace, findSpace } from "../src/core/spaces.ts";
 import { createRun, getRun, listRuns, setRunOutput, __testHandlers, type Run } from "../src/agents/runs.ts";
 import { answerAsk, getAsk, listAsks } from "../src/agents/asks.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
@@ -212,6 +212,16 @@ describe("没人认领的提交", () => {
     git(t.path, ["branch", "-f", "other", head]);
     await t.scan(90); expect(t.runs()).toHaveLength(1);
     expect(all(t.app.db, "select outcome from flow_signals where type='git.commits'")).toEqual([{ outcome: "本人说不用管" }]);
+  });
+  it("这个仓库以后不用问：前移游标、关掉仓库的提交认领，之后的提交不再起运行", async () => {
+    const t = await setup(), item = t.item();
+    const r = await t.processing(), ask = t.suggest(r, [{ item: item.id, reason: "退款校验" }]);
+    expect(getAsk(t.app, ask.id).options.at(-1)?.label).toBe("这个仓库以后不用问");
+    await answerAsk(t.app, ask.id, { choice: 2, by: "owner" });
+    expect(findSpace(t.app, "demo")!.settings.commitClaim).toBe(false);
+    expect(one<{ outcome: string }>(t.app.db, "select outcome from flow_signals where type='git.commits'")!.outcome).toBe("本人说这个仓库以后不用问");
+    t.commit(); await t.scan(120); await t.scan(200);
+    expect(t.runs()).toHaveLength(1);
   });
   it("stay_quiet 前移、不出卡；运行失败保留游标，同一批最多两次", async () => {
     const t = await setup(), r = await t.processing();

@@ -2727,7 +2727,7 @@ def({
 
 const larkTarget = z.object({
   chat_id: z.string().optional().describe("群或单聊 chat_id（oc_…）；chat_id、reply_to、user_id 都不填时发到本次对话所在的飞书会话"),
-  reply_to: z.string().optional().describe("回复某条消息（om_…）"),
+  reply_to: z.string().optional().describe("回复某条消息（om_…）。给这一轮的提问补发内容（附件、补充）时不要填，chat_id 也不填：不填就和这轮的回复落在同一处（会话在话题里就进那个话题，否则在群的主消息区）；填了别的消息再加 in_thread，会在那条消息下开一个新话题，提问的人在回复处看不到"),
   in_thread: z.boolean().optional().describe("回复时开话题 / 在话题里回复"),
   user_id: z.string().optional().describe("私聊某人（open_id，ou_…）"),
   mentions: z
@@ -2857,7 +2857,11 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     const known = opts.allowed.filter((id) => (main && id === ctx.app.config.lark.ownerOpenId) || !!one(ctx.app.db, `select 1 from lark_people where ${main ? "bot_open_id = ? or " : ""}user_id = ?`, ...(main ? [id, id] : [id])));
     content = { card: send.mentionInCard(content.card, known) };
   }
-  const skippedNote = skipped.length ? `；已跳过不在目标群的 @ 对象：${[...new Set(skipped)].join("、")}。无需重试或在群内说明。` : "";
+  // Someone the task needs in the chat (an approver, the person to confirm) can be brought in: say how.
+  const invitable = skipped.length && (!ctx.tools || ctx.tools.has("lark_invite")) && (ctx.userId ?? OWNER) === OWNER;
+  const skippedNote = skipped.length
+    ? `；已跳过不在目标群的 @ 对象：${[...new Set(skipped)].join("、")}。${invitable ? "只是知会的不用重试；要他们在群里参与（审批卡片、确认、回复）就用 lark_invite 把他们拉进这个群（本人在卡片上批准后执行），拉进来后再发。" : "无需重试或在群内说明。"}`
+    : "";
   // Posting into the chat this run is answering in a topic: stay inside that topic (files,
   // follow-ups) instead of landing at the top of the chat.
   let target: import("../channels/lark-send.ts").Target = delivery.onlyTo ? { chatId: chat! } : { chatId: t.chat_id ?? (t.reply_to ? undefined : chat ?? undefined), userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread, bot: ctx.larkBot };

@@ -209,6 +209,19 @@ describe("threads: continuity, merging, lanes, commands", async () => {
     expect((await answer(follow.runId)).turn).toBe(2);
   }, 60000);
 
+  it("a member asking in a group kept in the owner's personal space gets a turn in their own space", async () => {
+    const user = createUser(app, { id: "group-member", name: "小李" });
+    const asked = await receive(app, { channel: "lark", chatId: "oc_member_group", isGroup: true, userId: user.id, spaceId: "personal", externalMessageId: "om_m1", text: "看下这个数据" });
+    expect(asked.thread.spaceId).toBe("personal");
+    expect(getRun(app, asked.runId!).spaceId).toBe("personal-group-member");
+    expect((await answer(asked.runId)).turn).toBe(1);
+    // The owner in the same group keeps the conversation's own space.
+    const owner = await receive(app, { channel: "lark", chatId: "oc_member_group", isGroup: true, spaceId: "personal", externalMessageId: "om_m2", text: "处理一下" });
+    expect(owner.thread.id).toBe(asked.thread.id);
+    expect(getRun(app, owner.runId!).spaceId).toBe("personal");
+    await answer(owner.runId);
+  }, 60000);
+
   it("keeps the last delivery topic even when the group shares one conversation", async () => {
     const address = { channel: "lark", chatId: "oc_shared", isGroup: true };
     setChatSettings(app, "lark", address.chatId, { mode: "chat" });
