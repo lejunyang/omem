@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
-import { OWNER } from "../core/users.ts";
+import { accessibleSpaces, OWNER, userName } from "../core/users.ts";
 import { addRunEvent, cancelRun, queuedInLane, setRunOutput, stopRequested, updateQueuedRun } from "./runs.ts";
 import { renderMessages } from "./sessions.ts";
 import { threadMessages } from "./threads.ts";
@@ -30,11 +30,12 @@ export function claimSteering(app: App, runId: string): { text: string; commit: 
   const input = JSON.parse(r.input) as { conversationId?: string; userId?: string };
   if (!input.conversationId) return null;
   const next = queuedInLane(app, r.lane, "ask");
-  // Only the same sender's words: each turn runs with its sender's permissions.
-  if (!next || ((next.input.userId as string | undefined) ?? OWNER) !== (input.userId ?? OWNER)) return null;
+  if (!next) return null;
   const ids = (next.input.messageIds as string[] | undefined) ?? [];
   const msgs = threadMessages(app, input.conversationId, { limit: 400 }).filter((m) => ids.includes(m.id) && m.role === "user" && !m.meta.answer);
   if (!msgs.length) return null;
+  const turnUser = input.userId ?? OWNER, sender = (next.input.userId as string | undefined) ?? OWNER;
+  if (!mayJoinTurn(app, turnUser, sender, msgs)) return null;
   const taken = new Set(msgs.map((m) => m.id));
   const text = [
     "",
@@ -44,6 +45,7 @@ export function claimSteering(app: App, runId: string): { text: string; commit: 
     renderMessages(msgs, app),
     "",
     "结合它们继续当前的工作，不用停下重来；和正在做的事冲突时以新消息为准。最后的回复要一并回应它们。",
+    ...(sender !== turnUser ? [`这一轮按${turnUser === OWNER ? "本人" : userName(app, turnUser)}的权限进行（补充的人能看到的不比这少），补充里要的东西也只在这个范围里做；回复时一并回应补充的人。`] : []),
   ].join("\n");
   const commit = () => {
     const now = queuedInLane(app, r.lane!, "ask");
@@ -64,6 +66,21 @@ export function claimSteering(app: App, runId: string): { text: string; commit: 
     return true;
   };
   return { text, commit };
+}
+
+/**
+ * Whether words from `sender` may join a turn running (or waiting) for `turnUser`. The turn keeps its
+ * own user's permissions, so another person may add to it only when they can see at least everything
+ * that user can (the owner always can): their words never reach further than their own access.
+ * A colleague who is not a user (asker, a watched chat's speaker) never joins someone else's turn.
+ */
+export function mayJoinTurn(app: App, turnUser: string, sender: string, msgs: { meta: Record<string, unknown> }[]) {
+  if (sender === turnUser) return true;
+  if (msgs.some((m) => typeof m.meta.asker === "string" || typeof m.meta.speaker === "string")) return false;
+  const theirs = accessibleSpaces(app, sender);
+  if (theirs === null) return true;
+  const turn = accessibleSpaces(app, turnUser);
+  return turn !== null && turn.every((s) => theirs.includes(s));
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { mayJoinTurn } from "./steer.ts";
 import { canWrite, OWNER, personalSpaceId, turnSpaceFor } from "../core/users.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { all, one, run } from "../core/db.ts";
@@ -154,8 +155,9 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   const notBefore = new Date(Date.now() + mergeMs).toISOString();
 
   const waiting = queuedInLane(app, thread.id, "ask");
-  // Bursts merge only within one sender: each turn runs with its sender's permissions.
-  if (waiting && ((waiting.input.userId as string | undefined) ?? OWNER) === userId) {
+  // Bursts merge into a waiting turn of the same sender, or of someone whose access the sender's covers
+  // (steer.ts mayJoinTurn): the turn keeps its own user's permissions.
+  if (waiting && mayJoinTurn(app, (waiting.input.userId as string | undefined) ?? OWNER, userId, [{ meta }])) {
     const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
     // A fixed window (a watched chat's batch) is never pushed back, only brought forward.
     const due = inb.fixedWindow ? app.db.prepare("select not_before from runs where id = ?").get(waiting.id) as { not_before: string | null } | undefined : undefined;
