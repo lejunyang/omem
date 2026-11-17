@@ -113,6 +113,11 @@ export function cotLiveFor(runId: string) {
   return !!st?.proven && !st.disabled && !st.settled;
 }
 
+/** A slow first request is still pending, not evidence that the bubble is unavailable. */
+export function cotFailedFor(runId: string) {
+  return states.get(runId)?.disabled === true;
+}
+
 // The AG-UI gateway takes content as a JSON-encoded STRING (an object is rejected
 // with a misleading 41050). Sending it raw was why bubbles stayed empty.
 const ev = (event_type: string, content: unknown) => ({ event_type, content: JSON.stringify(content), timestamp: Date.now() });

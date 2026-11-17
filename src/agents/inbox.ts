@@ -242,7 +242,16 @@ export async function deliverToThread(app: App, threadId: string, markdown: stri
 
 const recoveringReplies = new Set<string>();
 const RECOVER_FOR_MS = 24 * 3600_000;
-/** Retry only replies explicitly handed back to a channel after a service restart. */
+/** Queue the saved answer after its live channel adapter could not deliver it; do not rerun the AI. */
+export function retryChannelReply(app: App, runId: string, at: { progressMessageId?: string; replyTo?: string; inThread?: boolean } = {}) {
+  const m = one<{ id: string; conversation_id: string }>(app.db, "select id,conversation_id from messages where run_id = ? and role = 'assistant' order by rowid desc limit 1", runId);
+  if (!m) return false;
+  run(app.db, "update messages set meta = json_patch(meta, ?) where id = ?", JSON.stringify({ runId, recoverReply: true, progressMessageId: at.progressMessageId, larkReplyTo: at.replyTo, larkInThread: at.inThread }), m.id);
+  run(app.db, "insert or ignore into kv(key,value) values(?,?)", `recovered-reply:${m.id}`, JSON.stringify({ threadId: m.conversation_id, messageId: m.id, at: now() }));
+  return true;
+}
+
+/** Retry saved channel replies after a restart or a failed live delivery. */
 export async function flushRecoveredReplies(app: App) {
   for (const row of all<{ key: string; value: string }>(app.db, "select key,value from kv where key glob 'recovered-reply:*' order by key")) {
     const lock = `${app.home}:${row.key}`;

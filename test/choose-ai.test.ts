@@ -194,6 +194,8 @@ describe("moving on when a backend breaks down", () => {
     expect(breakdownKind(cut)).toBe("transient");
     expect(breakdownKind(new Error("命令行后端退出码 1：rpc error: code = 13 desc = stream terminated by RST_STREAM with error code: INTERNAL_ERROR"))).toBe("transient");
     expect(breakdownKind(new Error("Agent 进程退出（1）"))).toBe("crash");
+    expect(breakdownKind(new Error("Client network socket disconnected before secure TLS connection was established"))).toBe("transient");
+    expect(breakdownKind(new Error("certificate has expired"))).toBeNull();
     expect(breakdownKind(new Error("Internal error：model `x` is unavailable because its metadata could not be resolved"))).toBeNull();
   });
 
@@ -213,20 +215,20 @@ describe("moving on when a backend breaks down", () => {
     expect(downReason(app, p("zzz"), now + 1000)).toContain("进程退出");
   });
 
-  it("a run whose AI was named moves on when that AI breaks down, saying so; with fallback off it fails", async () => {
+  it.each(["FAKE_DIE", "FAKE_TLS_DISCONNECT"])("a named AI moves on after %s unless fallback is off", async (failure) => {
     const app = testApp();
     app.baseUrl = "http://127.0.0.1:1";
-    app.config.agents.profiles.push(fakeAgent("dying", { FAKE_DIE: "1" }), fakeAgent("spare"));
+    app.config.agents.profiles.push(fakeAgent("dying", { [failure]: "1" }), fakeAgent("spare"));
     app.config.agents.default = "spare";
     app.config.agents.fallback = [{ profile: "spare" }];
     const events: AgentEvent[] = [];
     const r = await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", execution: { profile: "dying", source: "user", reason: "规则指定" }, onEvent: (e) => events.push(e) });
     expect(r.profileId).toBe("spare");
     const moved = events.find((e) => e.type === "status" && !!e.failover) as { text: string; failover: Record<string, unknown> };
-    expect(moved.text).toMatch(/^原指定的 AI（dying）没有开始工作就失败了（(Agent 进程退出|ACP connection closed).*改用 spare/);
+    expect(moved.text).toMatch(/^原指定的 AI（dying）没有开始工作就失败了（(Agent 进程退出|ACP connection closed|Internal error).*改用 spare/);
     expect(moved.failover).toMatchObject({ from: "dying · m1", to: "spare · m1", pinned: true });
     app.config.agents.routing.pinnedFallback = "never";
-    await expect(runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "再总结", execution: { profile: "dying", source: "user", reason: "规则指定" } })).rejects.toThrow(/进程退出|connection closed/);
+    await expect(runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "再总结", execution: { profile: "dying", source: "user", reason: "规则指定" } })).rejects.toThrow(/进程退出|connection closed|secure TLS/);
   }, 60_000);
 
   it("an Agent 档案 run moves to the fallback when its backend dies, and later runs try that backend last", async () => {
@@ -246,10 +248,10 @@ describe("moving on when a backend breaks down", () => {
     expect((await runRole(app, { role: "assistant", spec, spaceId: "personal", runId: null, task: "再看", onEvent: (e) => later.push(e) })).profileId).toBe("spare");
   }, 60_000);
 
-  it("a conversation turn moves to the fallback when the backend dies, and the next turn stays there", async () => {
+  it.each(["FAKE_DIE", "FAKE_TLS_DISCONNECT"])("a conversation moves on after %s and stays on the fallback", async (failure) => {
     const home = mkdtempSync(join(tmpdir(), "omem-down-"));
     const agent = (id: string, env: Record<string, string>) => ({ id, transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "thread", ...env } });
-    writeFileSync(join(home, "config.json"), JSON.stringify({ agents: { default: "dying", fallback: [{ profile: "spare" }], profiles: [agent("dying", { FAKE_DIE: "1" }), agent("spare", {})] } }));
+    writeFileSync(join(home, "config.json"), JSON.stringify({ agents: { default: "dying", fallback: [{ profile: "spare" }], profiles: [agent("dying", { [failure]: "1" }), agent("spare", {})] } }));
     const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
     try {
       const turn = async (text: string) => {

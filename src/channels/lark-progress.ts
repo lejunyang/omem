@@ -3,10 +3,10 @@ import type { App } from "../core/app.ts";
 import { buildCard, reactLark, sendLark, unreactLark, updateLarkCard } from "./lark-send.ts";
 
 import { getRun } from "../agents/runs.ts";
-import { cotEvent, cotLiveFor, startCot } from "./lark-cot.ts";
+import { cotEvent, cotFailedFor, startCot } from "./lark-cot.ts";
 
 /** A fallback status card; reasoning and partial answers belong only in the native bubble. */
-export type Progress = { messageId: string; finish(answer: string, note?: string): Promise<void>; fail(message: string): Promise<void> };
+export type Progress = { messageId: string; finish(answer: string, note?: string): Promise<void>; fail(message: string, delivery?: boolean): Promise<void> };
 
 export async function startProgress(_app: App, at: { messageId: string; inThread: boolean }, runId: string, react = true): Promise<Progress> {
   const started = Date.now();
@@ -16,7 +16,7 @@ export async function startProgress(_app: App, at: { messageId: string; inThread
     if (react) reaction = await reactLark(at.messageId, "OnIt");
   } catch {}
   const sent = await sendLark({ replyTo: at.messageId, inThread: at.inThread, purpose: "progress", runId }, { card: buildCard({
-    title: "处理中", color: "wathet", blocks: [{ markdown: "思考气泡暂不可用，任务仍在处理。完成后这里显示结果。" }],
+    title: "处理中", color: "wathet", blocks: [{ markdown: "思考气泡暂不可用，任务仍在处理。完成后这里显示结果。" }, { note: `id ${runId}` }],
   }) });
   const close = async () => {
     if (reaction) await unreactLark(at.messageId, reaction).catch(() => {});
@@ -30,14 +30,14 @@ export async function startProgress(_app: App, at: { messageId: string; inThread
       // Very long answers do not fit one card: the card keeps the start, the rest follows as messages.
       const head = answer.length > 18000 ? answer.slice(0, 18000) : answer;
       await updateLarkCard(sent.messageId, buildCard({ blocks: [{ markdown: head || "（没有回答）" }, { note }] })).catch(async () => {
-        await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId }, { markdown: head, note });
+        await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId, uuid: `reply-${runId}` }, { markdown: head, note });
       });
-      if (answer.length > 18000) await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId }, { markdown: answer.slice(18000) });
+      if (answer.length > 18000) await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId, uuid: `reply-tail-${runId}` }, { markdown: answer.slice(18000) });
       await reactLark(at.messageId, "DONE").catch(() => {});
     }),
-    fail: (message: string) => withBot(bot, async () => {
+    fail: (message: string, delivery = false) => withBot(bot, async () => {
       await close();
-      await updateLarkCard(sent.messageId, buildCard({ title: "没有完成", color: "red", blocks: [{ markdown: message.slice(0, 4000) }] })).catch(() => {});
+      await updateLarkCard(sent.messageId, buildCard({ title: delivery ? "结果暂未送达" : "没有完成", color: delivery ? "orange" : "red", blocks: [{ markdown: message.slice(0, 4000) }, { note: `id ${runId}` }] })).catch(() => {});
     }),
   };
 }
@@ -70,7 +70,7 @@ export function startReplyProgress(app: App, at: { chatId: string; messageId: st
     if (!native) fallback();
     else {
       timer = setInterval(() => {
-        if (!closed && !cotLiveFor(runId) && getRun(app, runId).status === "running") fallback();
+        if (!closed && cotFailedFor(runId) && getRun(app, runId).status === "running") fallback();
       }, 15_000);
       timer.unref();
     }

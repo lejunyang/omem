@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { saveAgentSpec } from "../src/agents/specs.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
+import { flushRecoveredReplies } from "../src/agents/inbox.ts";
+import { setCotSdk } from "../src/channels/lark-cot.ts";
 import { withBot } from "../src/core/bot-context.ts";
 import { one, run } from "../src/core/db.ts";
 import { OWNER } from "../src/core/users.ts";
@@ -17,7 +19,7 @@ const fake = (id: string, env: Record<string, string>) => ({ id, transport: "acp
 
 type Sent = { to: string; content: string; id: string };
 /** A bot client: records posts; any other SDK call answers with an empty success. */
-function fakeClient(name: string, openId: string, sent: Sent[], chats: Set<string>) {
+function fakeClient(name: string, openId: string, sent: Sent[], chats: Set<string>, delivery?: { fail: boolean; patches: string[]; attempts?: any[] }) {
   const post = (to: string, data: { content: string }) => {
     const id = `om_${openId}_${sent.length + 1}`;
     sent.push({ to, content: data.content, id });
@@ -25,7 +27,16 @@ function fakeClient(name: string, openId: string, sent: Sent[], chats: Set<strin
   };
   const overrides: Record<string, (...a: any[]) => Promise<unknown>> = {
     request: async (o: { url: string }) => (o.url.includes("/bot/v3/info") ? { bot: { open_id: openId, app_name: name } } : { code: 1, msg: "unsupported in test" }),
-    "im.message.reply": async ({ path, data }: any) => post(path.message_id, data),
+    "im.message.reply": async ({ path, data }: any) => {
+      delivery?.attempts?.push({ path, data });
+      if (delivery?.fail && !data.content.includes("思考气泡暂不可用")) throw new Error("Client network socket disconnected before secure TLS connection was established");
+      return post(path.message_id, data);
+    },
+    "im.message.patch": async ({ data }: any) => {
+      if (delivery?.fail && !data.content.includes("结果暂未送达")) throw new Error("Client network socket disconnected before secure TLS connection was established");
+      delivery?.patches.push(data.content);
+      return { code: 0 };
+    },
     "im.message.create": async ({ data }: any) => post(data.receive_id, data),
     "im.messageReaction.create": async () => ({ code: 0, data: { reaction_id: "r1" } }),
     "im.chat.get": async ({ path }: any) => (chats.has(path.chat_id) ? { code: 0, data: { name: "项目群" } } : { code: 232011, msg: "not in chat" }),
@@ -135,5 +146,61 @@ describe("several Feishu bots, the same abilities, each its own profile", async 
     await send(rev, event({ id: "om_3", text: "@_user_1 你好", sender: "ou_stranger", mentions: [{ key: "@_user_1", name: "检查员", open_id: "ou_rev" }] }));
     expect(botSent.length).toBe(before);
     void main;
+  });
+
+  it("retries a failed Feishu delivery on its progress card without rerunning the completed AI", async () => {
+    setCotSdk(null);
+    const delivery = { fail: true, patches: [] as string[] };
+    const sent: Sent[] = [];
+    setLarkBotClient("main", fakeClient("小助手", "ou_main", sent, mainChats, delivery), "ou_main", "小助手");
+    try {
+      await send(main, event({ id: "om_network", sender: "ou_owner", text: "@_user_1 核对项目 A", mentions: [{ key: "@_user_1", name: "小助手", open_id: "ou_main" }] }));
+      expect(sent).toHaveLength(1);
+      const progress = sent[0];
+      const r = one<{ id: string; status: string; error: string | null }>(app.db, "select id,status,error from runs where id = (select run_id from lark_sent where message_id = ?)", progress.id)!;
+      expect(r).toMatchObject({ status: "done", error: null });
+      expect(delivery.patches[0]).toContain("结果暂未送达");
+      expect(delivery.patches[0]).toContain(r.id);
+      expect(one(app.db, "select 1 from kv where key glob 'recovered-reply:*'")).toBeTruthy();
+      await flushRecoveredReplies(app);
+      expect(one(app.db, "select 1 from kv where key glob 'recovered-reply:*'")).toBeTruthy();
+      delivery.fail = false;
+      await flushRecoveredReplies(app);
+      await flushRecoveredReplies(app);
+      expect(one(app.db, "select 1 from kv where key glob 'recovered-reply:*'")).toBeUndefined();
+      expect(delivery.patches.at(-1)).toContain("核对项目 A");
+      expect(sent).toHaveLength(1);
+      expect(one<{ n: number }>(app.db, "select count(*) n from messages where role = 'assistant' and run_id = ?", r.id)?.n).toBe(1);
+      expect(one<{ purpose: string }>(app.db, "select purpose from lark_sent where message_id = ?", progress.id)?.purpose).toBe("answer");
+    } finally {
+      setLarkBotClient("main", fakeClient("小助手", "ou_main", mainSent, mainChats), "ou_main", "小助手");
+    }
+  });
+
+  it("keeps the original reply anchor and UUID when retrying without a progress card", async () => {
+    const previous = app.config.agents.progress.thinking;
+    app.config.agents.progress.thinking = "off";
+    const delivery = { fail: true, patches: [] as string[], attempts: [] as any[] };
+    const sent: Sent[] = [];
+    setLarkBotClient("main", fakeClient("小助手", "ou_main", sent, mainChats, delivery), "ou_main", "小助手");
+    try {
+      await send(main, event({ id: "om_network_plain", sender: "ou_owner", text: "@_user_1 核对项目 B", mentions: [{ key: "@_user_1", name: "小助手", open_id: "ou_main" }] }));
+      expect(sent).toHaveLength(0);
+      const first = delivery.attempts[0];
+      expect(first.data.uuid).toMatch(/^reply-r/);
+      // Another turn may have moved the conversation's last message before connectivity returns.
+      const row = one<{ value: string }>(app.db, "select value from kv where key glob 'recovered-reply:*'")!;
+      run(app.db, "update conversations set settings = json_set(settings, '$.lastMessageId', 'om_later', '$.lastTopicId', 'omt_later') where id = ?", JSON.parse(row.value).threadId);
+      delivery.fail = false;
+      await flushRecoveredReplies(app);
+      expect(sent).toHaveLength(1);
+      expect(delivery.attempts[1].path).toEqual(first.path);
+      expect(delivery.attempts[1].data.uuid).toBe(first.data.uuid);
+      expect(delivery.attempts[1].data.reply_in_thread).toBe(false);
+      expect(one(app.db, "select 1 from kv where key glob 'recovered-reply:*'")).toBeUndefined();
+    } finally {
+      app.config.agents.progress.thinking = previous;
+      setLarkBotClient("main", fakeClient("小助手", "ou_main", mainSent, mainChats), "ou_main", "小助手");
+    }
   });
 });

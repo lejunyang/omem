@@ -49,10 +49,31 @@ it("waits for a late fallback card and reaction before settling the answer", asy
   releaseReaction(); releaseCard();
   await closing;
   expect(replies).toHaveLength(1);
+  expect(replies[0].data.content).toContain("id r");
   expect(patches[0].data.content).toContain("最终答案");
   expect(patches[0].data.content).toContain(note);
   expect(removed).toBe(1);
   expect(app.events.listenerCount("event")).toBe(0);
+});
+
+it("does not call a pending first bubble unavailable after fifteen seconds", async () => {
+  let release!: () => void;
+  setCotSdk({ request: async (req) => {
+    if (req.method === "POST") {
+      await new Promise<void>(ok => { release = ok; });
+      return { code: 0, data: { cot_id: "cot_slow", message_id: "om_native" } };
+    }
+    return { code: 0 };
+  } });
+  const id = task();
+  const p = startReplyProgress(app, at, id);
+  await vi.advanceTimersByTimeAsync(16_000);
+  expect(replies).toHaveLength(0);
+  release();
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(replies).toHaveLength(0);
+  finishCot(app, id, true);
+  expect(await p.close()).toBeNull();
 });
 
 it("shows no fallback for a healthy bubble and clears its delayed work on close", async () => {

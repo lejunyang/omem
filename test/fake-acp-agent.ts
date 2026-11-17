@@ -161,6 +161,10 @@ new AgentSideConnection(
         throw RequestError.internalError({ message, codexErrorInfo: "usageLimitExceeded" });
       }
       // FAKE_DIE=1: the agent process dies in the middle of a turn (a crash, OOM kill).
+      if (process.env.FAKE_TLS_DISCONNECT === "1") {
+        await say("我先看一下……");
+        throw RequestError.internalError({ message: "Client network socket disconnected before secure TLS connection was established" });
+      }
       if (process.env.FAKE_DIE === "1") {
         await say("我先看一下……");
         setTimeout(() => process.exit(1), 20);

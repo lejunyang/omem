@@ -1,5 +1,14 @@
 # v2 验收清单
 
+## 飞书回复投递失败与 TLS 断开（2026-11-17）
+
+- AI 已完成后模拟飞书卡片更新和回复发送都报 TLS 断开：运行仍为完成，答案复用原会话消息进入持久队列；卡片显示“结果暂未送达”和运行 ID。连接恢复后更新原卡片，不再调用 AI，不新增会话消息；重复检查不重复投递。
+- 不显示气泡时模拟最终回复发送失败：重试保持原请求消息、是否在话题内及同一 UUID；等待期间会话来了新消息，也不改投到新话题。
+- 气泡首次创建超过 15 秒但仍在等待：不提前显示“暂不可用”；实际失败才退回进度卡，进度卡和失败卡都有运行 ID。
+- AI 后端经 ACP 返回 `Client network socket disconnected before secure TLS connection was established`：角色运行和对话均换到可用兜底，对话下一轮保持接手的后端；明确关闭兜底时仍不切换，证书过期不当作瞬时故障。
+- 自动验证：`test/lark-bots.test.ts`、`test/lark-progress.test.ts`、`test/choose-ai.test.ts`，连同既有 `test/lark-cot.test.ts` 与 `test/channel-recovery.test.ts`；飞书写入使用假客户端。
+- 完整验证：`VITEST_MAX_FORKS=8 VITEST_MIN_FORKS=1 LANGUAGE=C pnpm run check` 通过（303 个文件、2155 项测试、类型检查和构建）。默认并发的首轮有两项索引迁移测试超时；降低并发后两项均约 2.7 秒通过，未修改这些测试。
+
 ## 流程回顾和 coach 的建议、重开时正在做的下游、只跟一份（2026-11-16）
 
 | 编号 | 操作 | 预期 | 状态 |

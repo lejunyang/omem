@@ -10,7 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scheduleIngest } from "../agents/jobs.ts";
-import { registerThreadSender } from "../agents/inbox.ts";
+import { registerThreadSender, retryChannelReply } from "../agents/inbox.ts";
 import { getRun, setRunOutput } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
@@ -29,7 +29,7 @@ import { finishCot } from "./lark-cot.ts";
 import { showThinking, watchAgentBubbles } from "./lark-agent-cot.ts";
 import { watchWorkProgress } from "./lark-work-progress.ts";
 import { handleCardAction } from "./lark-actions.ts";
-import { larkBotInfo, larkOwnerOpenId, onLarkSent, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark } from "./lark-send.ts";
+import { buildCard, larkBotInfo, larkOwnerOpenId, onLarkSent, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark, updateLarkCard } from "./lark-send.ts";
 import { bindAnswerer, botChannel, botRoster, chatContext, contextLines, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, topicIsolated, type BotRef } from "./lark-bots.ts";
 import { chatRecordSpace, readChatHistory } from "./lark-bot-history.ts";
 import { larkAppSecret } from "./lark-setup.ts";
@@ -286,7 +286,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   const nameOf = larkSenderNames(app, client);
 
   /** `rec`: the run and conversation the message answers for (lark-feedback.ts). */
-  type Rec = { runId?: string | null; conversationId?: string | null };
+  type Rec = { runId?: string | null; conversationId?: string | null; uuid?: string };
   const reply = (chatId: string, markdown: string, replyTo?: string, inThread = false, note?: string, rec: Rec = {}) =>
     sendLark(replyTo ? { replyTo, inThread, ...rec } : { chatId, ...rec }, { markdown, ...(note ? { note } : {}) });
 
@@ -368,10 +368,19 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const cite = { runId, chatId };
     const markdown = await resolveCitations(app, raw, cite);
     const note = answerNote(app, cite.runId);
+    // Retry the saved result on its original progress card. This never starts a new AI turn.
+    if (typeof meta.progressMessageId === "string" && runId) {
+      const head = markdown.slice(0, 18000);
+      await updateLarkCard(meta.progressMessageId, buildCard({ blocks: [{ markdown: head || "（没有回答）" }, ...(note ? [{ note }] : [])] }));
+      if (markdown.length > 18000) await sendLark({ replyTo: typeof meta.larkReplyTo === "string" ? meta.larkReplyTo : meta.progressMessageId, inThread: typeof meta.larkInThread === "boolean" ? meta.larkInThread : !!topic, runId, uuid: `reply-tail-${runId}` }, { markdown: markdown.slice(18000) });
+      markLarkSent(app, meta.progressMessageId, { purpose: "answer", runId, chatId, bot: ref });
+      await sent(meta.progressMessageId);
+      return;
+    }
     // Inside a topic any of its messages keeps the reply there. In the chat itself a reply quotes,
     // so it quotes only this work's own latest message there, or nothing — never whatever the chat
     // said last (a meeting's conclusion, another task's request).
-    const quote = topic ? thread.settings.lastMessageId : replyAnchor(app, runId, thread.id) ?? undefined;
+    const quote = typeof meta.larkReplyTo === "string" ? meta.larkReplyTo : topic ? thread.settings.lastMessageId : replyAnchor(app, runId, thread.id) ?? undefined;
     // First message of a multi-agent work topic: open the topic from the request message.
     if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
       const opened = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true, runId: cite.runId, conversationId: thread.id }, { markdown, note });
@@ -407,7 +416,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       await sent((await sendLark({ ...to, purpose: "answer", runId: cite.runId, conversationId: thread.id }, { card })).messageId);
       return;
     }
-    await sent((await reply(chatId, markdown, quote, !!topic, note, { runId: cite.runId, conversationId: thread.id })).messageId);
+    await sent((await reply(chatId, markdown, quote, typeof meta.larkInThread === "boolean" ? meta.larkInThread : !!topic, note, { runId: cite.runId, conversationId: thread.id, ...(meta.recoverReply ? { uuid: `reply-${runId ?? omemId}` } : {}) })).messageId);
   }
 
   // Background work tied to a conversation goes there (its Feishu topic, through its bot), never as
@@ -771,6 +780,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     let presentation: ReturnType<typeof startReplyProgress> | undefined;
     let runId: string | null = null;
     let answered = false;
+    let delivered = false;
     let replyMessageId = m.messageId;
     let replyInThread = !!m.topicId;
     try {
@@ -840,7 +850,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       const shown = await toAsker(m, renderBotMentions(app, ref, answer));
       // Read the recorded AI after completion so fallbacks show the backend that answered.
       const note = answerNote(app, runId);
-      const sentId = p ? (await p.finish(shown, note), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread, note, { runId })).messageId;
+      const sentId = p ? (await p.finish(shown, note), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread, note, { runId, ...(runId ? { uuid: `reply-${runId}` } : {}) })).messageId;
+      delivered = true;
       // The progress card became the answer: reactions on it are about this run.
       if (sentId) markLarkSent(app, sentId, { purpose: "answer", runId, chatId: m.chatId, bot: ref });
       // It @-ed another omem bot: that one takes it from here.
@@ -855,7 +866,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     } catch (e) {
       if (runId && !answered) finishCot(app, runId, false);
       const p = await presentation?.close();
-      if (p) await p.fail((e as Error).message);
+      if (delivered) console.warn(`[omem] 飞书回复已送达，后续处理失败（${runId}）：${(e as Error).message}`);
+      else if (answered && runId && retryChannelReply(app, runId, { progressMessageId: p?.messageId, replyTo: replyMessageId, inThread: replyInThread })) {
+        console.warn(`[omem] 飞书回复发送失败，已排队重试（${runId}）：${(e as Error).message}`);
+        if (p) await p.fail("任务已完成，但飞书结果发送失败，正在重试。结果已保存在运行记录里。", true);
+      } else if (p) await p.fail((e as Error).message);
       else throw e;
     } finally {
       await presentation?.close();

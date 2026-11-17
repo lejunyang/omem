@@ -610,7 +610,7 @@ export function isBackendDown(e: unknown): boolean {
  * the backend process is fine and another try, or another backend, usually works.
  */
 export function isTransientUpstream(e: unknown): boolean {
-  return e instanceof Error && /stream disconnected|empty (llm )?(response|stream)|llm response empty|RST_STREAM|stream (was )?(terminated|closed|reset)|upstream (error|connect|request timeout|timed out)|bad gateway|service unavailable|gateway time-?out|\b50[234] (bad gateway|service|gateway)|ECONNREFUSED|ETIMEDOUT|unexpected EOF/i.test(e.message);
+  return e instanceof Error && /stream disconnected|Client network socket disconnected before secure TLS connection was established|empty (llm )?(response|stream)|llm response empty|RST_STREAM|stream (was )?(terminated|closed|reset)|upstream (error|connect|request timeout|timed out)|bad gateway|service unavailable|gateway time-?out|\b50[234] (bad gateway|service|gateway)|ECONNREFUSED|ETIMEDOUT|unexpected EOF/i.test(e.message);
 }
 
 /** How a backend broke down: its process or connection (`crash`), or the upstream model stream (`transient`); null when it did not. */
