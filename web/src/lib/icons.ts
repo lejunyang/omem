@@ -57,6 +57,8 @@ export const ICONS: Record<string, string> = {
   notebook: "M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6zM6 3v18M3.5 7.5h3M3.5 12h3M3.5 16.5h3M10 8h5",
   gauge: "M3.5 17a9 9 0 1 1 17 0M12 14l4-5",
   monitor: "M3 4h18v12H3zM8 20h8M12 16v4",
+  maximize: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
+  minimize: "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5",
   terminal: "M4 4h16v16H4zM8 9l3 3-3 3M13 15h3",
   target: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
   heart: "M12 20s-7-4.4-9-9a4.5 4.5 0 0 1 9-3 4.5 4.5 0 0 1 9 3c-2 4.6-9 9-9 9z",

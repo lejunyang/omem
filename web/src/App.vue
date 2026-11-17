@@ -96,6 +96,8 @@ const BARE = ["#/share/", "#/login"];
 const bare = computed(() => route.path.startsWith("/share/") || route.path === "/login" || route.path === "/cli-login" || (!route.matched.length && [...BARE, "#/cli-login"].some((b) => location.hash.startsWith(b))));
 // Live events only with the app frame: a share link is read once, the login pages have nothing to follow.
 watch(bare, (b) => setLiveEvents(!b), { immediate: true });
+// One remote session on a page of its own (Remote.vue): no sidebar, still logged in, dialogs and toasts.
+const solo = computed(() => /^\/remote\/[^/]+/.test(route.path));
 onMounted(async () => {
   if (BARE.some((b) => location.hash.startsWith(b))) return;
   window.addEventListener("keydown", onKey);
@@ -124,6 +126,13 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
 
 <template>
   <router-view v-if="bare" />
+  <div v-else-if="solo" class="solo">
+    <router-view :key="route.path" />
+    <DialogHost />
+    <div class="toasts" aria-live="polite">
+      <div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.kind"><span>{{ t.text }}</span></div>
+    </div>
+  </div>
   <div v-else class="shell" :class="{ 'menu-open': menu }">
     <aside class="side">
       <div class="brand row">
@@ -185,6 +194,9 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
 <style scoped>
 .shell {
   display: flex;
+  height: 100%;
+}
+.solo {
   height: 100%;
 }
 .side {

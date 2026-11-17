@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { del, get, post, put } from "../api";
 import Icon from "../components/Icon.vue";
 import RemoteChat from "../components/RemoteChat.vue";
@@ -20,6 +21,11 @@ type Recording = { id: string; kind: "browser" | "desktop"; goal: string; target
 type Settings = { format: string; quality: number; fps: number; maxWidth: number; cursor: boolean; clipboard: boolean; browser: "" | "chrome" | "edge" | "brave" };
 type VideoProbe = { at: string; ffmpeg: string | null; encoders: Record<string, string> };
 type Screens = { monitors: { monitor: number; name: string; primary?: boolean; width: number; height: number }[]; windows: { window: string; title: string }[]; recordable: { resourceId: string; name: string; process: string | null }[] };
+
+// /remote/<会话>: that session alone, filling the page (opened from 「单独打开」).
+const route = useRoute();
+const soloId = computed(() => (typeof route.params.id === "string" && route.params.id) || "");
+const ended = ref(false);
 
 const loading = ref(true);
 const available = ref(false);
@@ -82,8 +88,13 @@ async function load() {
     windowAvailable.value = r.windowAvailable;
     if (!r.windowAvailable) visible.value = false;
     if (r.available) recordings.value = await get<Recording[]>("/api/remote/recordings");
+    if (soloId.value) {
+      const s = r.sessions.find((x) => x.id === soloId.value);
+      if (s) await show(s);
+      else ended.value = true;
+    }
     // Back on the page with a session still open: show it again (the viewer cookie comes with it).
-    if (!active.value && r.sessions.length) await show(r.sessions[0]);
+    else if (!active.value && r.sessions.length) await show(r.sessions[0]);
   } finally {
     loading.value = false;
   }
@@ -103,6 +114,46 @@ onMounted(() => {
   void loadBrowserProfiles();
 });
 onBeforeUnmount(() => timer && clearInterval(timer));
+const pageTitle = document.title;
+watch(() => soloId.value && active.value?.title, (t) => t && (document.title = `${t} · 远程`));
+onBeforeUnmount(() => (document.title = pageTitle));
+
+/** The open session in a tab of its own, filling the page. */
+function openAlone() {
+  if (active.value) window.open(`${location.pathname}${location.search}#/remote/${encodeURIComponent(active.value.id)}`, "_blank");
+}
+
+// Full screen: the picture with its address bar. Where the browser allows it (Chromium, https or
+// localhost) the keyboard is locked too, so Esc, Alt+Tab and the like go to the remote machine and
+// holding Esc leaves full screen; elsewhere Esc leaves full screen.
+const frameBox = ref<HTMLElement>();
+const fullscreen = ref(false);
+const canFullscreen = typeof document !== "undefined" && !!document.fullscreenEnabled;
+type KeyboardLock = { lock?: (keys?: string[]) => Promise<void>; unlock?: () => void };
+const keyboard = () => (navigator as unknown as { keyboard?: KeyboardLock }).keyboard;
+const keysLocked = ref(false);
+async function toggleFullscreen() {
+  if (document.fullscreenElement) return void (await document.exitFullscreen().catch(() => {}));
+  const box = frameBox.value;
+  if (!box) return;
+  try {
+    await box.requestFullscreen({ navigationUI: "hide" });
+  } catch (e) {
+    return void toast(`没能全屏：${(e as Error).message}`, "error");
+  }
+  keysLocked.value = !!(await keyboard()?.lock?.().then(() => true, () => false));
+  frame.value?.focus();
+}
+function onFullscreenChange() {
+  fullscreen.value = !!document.fullscreenElement && document.fullscreenElement === frameBox.value;
+  if (!fullscreen.value && keysLocked.value) {
+    keyboard()?.unlock?.();
+    keysLocked.value = false;
+  }
+}
+onMounted(() => document.addEventListener("fullscreenchange", onFullscreenChange));
+onBeforeUnmount(() => document.removeEventListener("fullscreenchange", onFullscreenChange));
+const fullscreenTitle = computed(() => (fullscreen.value ? (keysLocked.value ? "退出全屏（也可以按住 Esc）" : "退出全屏（Esc）") : "全屏操作"));
 
 // The viewer's WebSocket can drop (a proxy closing it, the machine sleeping) and aad's page does not
 // try again: it shows "已断开". omem serves that page from its own origin, so watch its status line
@@ -387,8 +438,13 @@ const counts = (r: Recording) => {
 </script>
 
 <template>
-  <div class="remote">
+  <div class="remote" :class="{ solo: soloId }">
     <Skeleton v-if="loading" :rows="6" />
+    <div v-else-if="soloId && !active" class="empty">
+      <h1>远程会话已经结束</h1>
+      <p class="muted">{{ ended ? "这个远程会话不在了：可能已经关掉，或者 30 分钟没人看自动关了。" : "画面已经关掉。" }}到远程页可以重新打开。</p>
+      <router-link to="/remote" class="btn">去远程页</router-link>
+    </div>
     <div v-else-if="!available" class="empty">
       <h1>远程操作</h1>
       <p class="muted">这台机器还没有装 ai-auto-desktop（aad）。到 设置 → AI 里安装后，这里可以打开本机的浏览器页面或桌面，远程操作并录制成技能。</p>
@@ -396,7 +452,7 @@ const counts = (r: Recording) => {
     </div>
     <template v-else>
       <section class="stage">
-        <div class="bar">
+        <div v-if="!soloId" class="bar">
           <div v-if="sessions.length" class="stabs" role="tablist" aria-label="远程会话">
             <div
               v-for="s in sessions"
@@ -427,7 +483,7 @@ const counts = (r: Recording) => {
           </div>
         </div>
 
-        <div v-if="showSettings" class="settings card pad">
+        <div v-if="showSettings && !soloId" class="settings card pad">
           <Skeleton v-if="!settings" :rows="3" />
           <template v-else>
             <div class="grid">
@@ -479,17 +535,20 @@ const counts = (r: Recording) => {
           <p class="muted small">画面在这台机器（omem 所在的电脑）上，你的鼠标键盘会转发过去。30 分钟没人看会自动关闭。</p>
         </div>
 
-        <div v-else class="frame">
-          <form v-if="active.kind === 'browser'" class="address row" @submit.prevent="go">
-            <Icon name="globe" :size="15" />
-            <input v-model="address" class="input grow" placeholder="输入网址，回车前往" aria-label="网址" />
-            <button class="btn sm" :disabled="busy === 'go'">{{ busy === "go" ? "前往中…" : "前往" }}</button>
-            <button type="button" class="btn ghost sm icon" aria-label="刷新画面" title="重新连接画面（页面本身不刷新）" @click="reconnect(true)"><Icon name="refresh" :size="14" /></button>
-          </form>
-          <div v-else class="address row">
-            <span class="muted small grow">{{ active.title }}</span>
-            <button type="button" class="btn ghost sm icon" aria-label="刷新画面" title="重新连接画面" @click="reconnect(true)"><Icon name="refresh" :size="14" /></button>
-          </div>
+        <div v-else ref="frameBox" class="frame" :class="{ full: fullscreen }">
+          <component :is="active.kind === 'browser' ? 'form' : 'div'" class="address row" @submit.prevent="go">
+            <router-link v-if="soloId && !fullscreen" to="/remote" class="btn ghost sm icon" aria-label="回到远程页" title="回到远程页（这个会话不会关）"><Icon name="left" :size="14" /></router-link>
+            <template v-if="active.kind === 'browser'">
+              <Icon name="globe" :size="15" />
+              <input v-model="address" class="input grow" placeholder="输入网址，回车前往" aria-label="网址" />
+              <button class="btn sm" :disabled="busy === 'go'">{{ busy === "go" ? "前往中…" : "前往" }}</button>
+            </template>
+            <span v-else class="muted small grow ellipsis">{{ active.title }}</span>
+            <span v-if="active.recording && (soloId || fullscreen)" class="rec small nowrap"><span class="dot" />录制中 {{ elapsed }}</span>
+            <button type="button" class="btn ghost sm icon" aria-label="刷新画面" :title="active.kind === 'browser' ? '重新连接画面（页面本身不刷新）' : '重新连接画面'" @click="reconnect(true)"><Icon name="refresh" :size="14" /></button>
+            <button v-if="!soloId && !fullscreen" type="button" class="btn ghost sm icon" aria-label="单独打开" title="在新标签页里单独打开这个画面，占满整个网页" @click="openAlone"><Icon name="external" :size="14" /></button>
+            <button v-if="canFullscreen" type="button" class="btn ghost sm icon" :aria-label="fullscreen ? '退出全屏' : '全屏操作'" :aria-pressed="fullscreen" :title="fullscreenTitle" @click="toggleFullscreen"><Icon :name="fullscreen ? 'minimize' : 'maximize'" :size="14" /></button>
+          </component>
           <div class="viewer">
             <iframe ref="frame" :key="`${active.id}:${frameKey}`" :src="active.src" :title="`远程画面：${active.title}`" allow="clipboard-read; clipboard-write" @load="frameLoaded" />
             <div v-if="reconnecting" class="reconnect small" role="status">
@@ -497,7 +556,7 @@ const counts = (r: Recording) => {
               <button class="btn ghost sm" @click="reconnect(true)"><Icon name="refresh" :size="13" />现在刷新</button>
             </div>
           </div>
-          <div class="controls row">
+          <div v-if="!soloId && !fullscreen" class="controls row">
             <template v-if="!active.recording">
               <input v-model="goal" class="input grow" placeholder="这次要教的事（一句话；也可以先在右边和助手说）" aria-label="这次要教的事" />
               <UiSelect
@@ -522,7 +581,7 @@ const counts = (r: Recording) => {
         </div>
       </section>
 
-      <aside class="side">
+      <aside v-if="!soloId" class="side">
         <div class="side-head row"><strong>助手</strong><span class="spacer" /><button v-if="conversationId" class="btn ghost sm" @click="setConversation(null)">新对话</button></div>
         <RemoteChat ref="chat" class="chat" :conversation-id="conversationId" @update:conversation-id="setConversation" />
         <div class="recs">
@@ -697,6 +756,19 @@ const counts = (r: Recording) => {
   border-radius: 0 var(--radius) var(--radius) var(--radius);
   overflow: hidden;
 }
+/* Full screen, or the session on a page of its own: the picture takes everything. */
+.frame.full,
+.solo .frame {
+  border: 0;
+  border-radius: 0;
+}
+.remote.solo {
+  padding: 0;
+  height: 100vh;
+}
+.solo .empty {
+  padding: 0 16px;
+}
 .address {
   gap: 8px;
   padding: 8px 10px;
@@ -807,11 +879,11 @@ const counts = (r: Recording) => {
   color: var(--danger);
 }
 @media (max-width: 960px) {
-  .remote {
+  .remote:not(.solo) {
     flex-direction: column;
     height: auto;
   }
-  .viewer {
+  .remote:not(.solo) .frame:not(.full) .viewer {
     height: 62vh;
     flex: none;
   }

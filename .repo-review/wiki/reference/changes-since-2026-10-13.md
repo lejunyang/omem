@@ -15,6 +15,11 @@ updated: 2026-11-17
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 远程画面可以单独打开和全屏（11-18）
+
+- 远程页地址栏右边加了“单独打开”和“全屏操作”（`web/src/views/Remote.vue`）。单独打开是新路由 `#/remote/<会话>`（`web/src/main.ts` 的 `/remote/:id?`），`App.vue` 对它不画侧栏，只留对话框和提示；页面只有地址栏和画面，会话结束时给回远程页的链接。
+- 全屏对地址栏和画面这一块调 `requestFullscreen`，Chromium 安全上下文里再 `navigator.keyboard.lock()`，Esc、Alt+Tab 送到远程，按住 Esc 退出。图标 `maximize` / `minimize` 加进 `web/src/lib/icons.ts`。
+
 ## 设置 → AI 按后端整理、网络条件的状态写清查到了什么（11-18）
 
 - 设置 → AI → 通用（`web/src/views/Settings.vue`、新组件 `web/src/components/AiBackend.vue`）：已装的后端按账号（`source`）合并，ACP 和命令行成一行，可折叠。点开后有默认模型（两份配置一起改）、适合做什么、网络条件、用量（在用、整个账号和单个模型的上限、账号额度和本账号的阈值）。外面只留默认 AI 与档位、任务选型（开关、总体偏好、运行前自动选）、并行（总数和默认值）。

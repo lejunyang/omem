@@ -29,7 +29,8 @@ const routes: RouteRecordRaw[] = [
   view("/learn", () => import("./views/Learn.vue")),
   view("/plugin/:id", () => import("./views/Plugin.vue"), "/plugin"),
   view("/runs/:id?", () => import("./views/Runs.vue"), "/runs"),
-  view("/remote", () => import("./views/Remote.vue")),
+  // /remote/<会话> shows that session alone, filling the page (App.vue renders it without the app frame).
+  view("/remote/:id?", () => import("./views/Remote.vue"), "/remote"),
   view("/agents", () => import("./views/Agents.vue")),
   view("/rules/archive", () => import("./views/ArchiveRules.vue"), "/rules/archive"),
   { path: "/rules/tasks", redirect: (to) => ({ path: "/rules", query: to.query }) },
