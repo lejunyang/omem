@@ -40,7 +40,7 @@ function feishuCode(appId: string): Promise<string> {
       const refused = (first: string, second?: string) =>
         new Error(
           `飞书没有给登录码（${[first, second].filter(Boolean).join("；")}）。多半是开发者后台还没配好：应用 ${appId} 要有“网页应用”能力，桌面端和移动端主页填 ${location.origin}/lark/，` +
-            `安全设置的 H5 可信域名加上 ${location.host}，改完发布新版本；飞书也可能不接受 IP 或 http 地址，那时要给 omem 配一个域名（设置里的网页地址）。`,
+            `安全设置的“重定向 URL”加上 ${location.origin}/lark/（免登要求调用它的页面地址在这个列表里，只加 H5 可信域名不够），改完发布新版本；飞书也可能不接受 IP 或 http 地址，那时要给 omem 配一个域名（设置里的网页地址）。`,
         );
       // The older API also gives a code, and is what a client without requestAccess (errno 103) or one that refuses it may still allow.
       const legacy = (before?: string) =>

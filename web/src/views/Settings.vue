@@ -1346,7 +1346,7 @@ async function saveEdit() {
       <div class="field">
         <UiCheckbox :model-value="!!config.lark.webApp" switch :disabled="!config.webUrl || !config.lark.appId" @change="(v) => saveConfig({ lark: { ...config.lark, webApp: v } }, v ? '已打开飞书网页应用' : '已关闭飞书网页应用')">飞书网页应用：表单和交互页在飞书侧边栏里打开，不用再登录</UiCheckbox>
         <span v-if="!config.webUrl || !config.lark.appId" class="muted small">先填上面的网页地址{{ config.lark.appId ? "" : "并接入飞书机器人" }}。</span>
-        <span v-else class="muted small">打开前在飞书开发者后台给主机器人的应用（{{ config.lark.appId }}）：添加“网页应用”能力，桌面端和移动端主页都填 <span class="mono">{{ config.webUrl.replace(/\/+$/, "") }}/lark/</span>；安全设置的 H5 可信域名加上 <span class="mono">{{ webHost }}</span>；然后发布版本。手机和电脑都要能访问这个地址。打开后卡片上的“打开填写”“打开交互页”会在飞书侧边栏里打开。</span>
+        <span v-else class="muted small">打开前在飞书开发者后台给主机器人的应用（{{ config.lark.appId }}）：添加“网页应用”能力，桌面端和移动端主页都填 <span class="mono">{{ config.webUrl.replace(/\/+$/, "") }}/lark/</span>；安全设置的<strong>重定向 URL</strong> 加上 <span class="mono">{{ config.webUrl.replace(/\/+$/, "") }}/lark/</span>（免登接口要求调用它的页面地址在这个列表里，只加 H5 可信域名不够），H5 可信域名加上 <span class="mono">{{ webHost }}</span>；然后发布版本。手机和电脑都要能访问这个地址。打开后卡片上的“打开填写”“打开交互页”会在飞书侧边栏里打开。</span>
       </div>
 
       <AssistantsSettings />
