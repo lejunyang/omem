@@ -7,6 +7,7 @@
 | member-group-01 | 已登记的成员在一个没绑定空间的新群里 @ 机器人（群的会话落在本人的 `personal`），本人随后在同一群里提问 | 成员这一轮在他自己的个人空间里运行（会话本身不动），读什么按他能看的空间逐个工具校验，不再整轮报“不能访问空间 personal”；本人那一轮仍在会话的空间 | `test/threads.test.ts` |
 | member-group-02 | 主助手给这一轮的提问发自己生成的附件 | 工具说明和 `lark` 说明页要求不填 `chat_id`、`reply_to`，附件和回复落在同一处，不回到更早那条提问下再开话题 | 说明改动；待真实 Agent 验 |
 | member-group-03 | 本人的运行 `lark_send` / `lark_card` @ 的人不在群里 | 回执除了“已跳过”，还提示要他参与（审批、确认）就用 `lark_invite` 拉进群，本人批准后再发；不是本人的运行仍是“无需重试” | `test/lark-people.test.ts` |
+| member-group-04 | `lark_card` 正文写了“@小王 请审批”，同时 `mentions: ["小王"]`（或 `allowed` 里有他、不传 `mentions`） | 正文那处变成真正的 @，卡片顶上不再多一行 @，同一人只出现一次；正文没写到的人才在顶上加 | `test/lark-people.test.ts` |
 
 ## 飞书回复投递失败与 TLS 断开（2026-11-17）
 

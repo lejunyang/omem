@@ -2827,7 +2827,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   const skipped: string[] = [];
   if (t.mentions?.length) {
     // Real @-mentions using IDs verified for the sending bot (see lark-people.ts).
-    const { applyMentions, resolveMention, ChatMemberAbsentError } = await import("../channels/lark-people.ts");
+    const { applyMentions, applyCardMentions, resolveMention, ChatMemberAbsentError } = await import("../channels/lark-people.ts");
     const people = [];
     for (const who of t.mentions) {
       try { people.push(await resolveMention(ctx.app, who, chat)); }
@@ -2845,17 +2845,18 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     else if ("markdown" in content && people.some((p) => "bot" in p && p.bot))
       content = { post: { markdown: content.markdown, title: content.title, mentions: people.map((p) => ("all" in p ? "all" : p.userId)) } };
     else if ("markdown" in content) content = { ...content, markdown: applyMentions(content.markdown, people, "card") };
-    else if ("card" in content && people.length) {
-      const body = (content.card.body ?? {}) as { elements?: unknown[] };
-      content = { card: { ...content.card, body: { ...body, elements: [{ tag: "markdown", content: applyMentions("", people, "card").trim() }, ...(body.elements ?? [])] } } };
-    }
+    else if ("card" in content && people.length) content = { card: applyCardMentions(content.card, people) };
   }
   // A card only some people may act on, posted in a group: it @s them, unless the agent named whom to @.
   // Only ids this bot is known to use (the owner's, people it has seen): an unknown one fails the whole card.
   if (opts.waitForAction && opts.allowed?.length && "card" in content && !t.mentions?.length && !t.user_id && chat && !send.larkPrivateChat(ctx.app, chat)) {
     const main = !ctx.larkBot || ctx.larkBot === "main";
     const known = opts.allowed.filter((id) => (main && id === ctx.app.config.lark.ownerOpenId) || !!one(ctx.app.db, `select 1 from lark_people where ${main ? "bot_open_id = ? or " : ""}user_id = ?`, ...(main ? [id, id] : [id])));
-    content = { card: send.mentionInCard(content.card, known) };
+    // An `@名字` the card already writes for one of them becomes that mention, not a second one on top.
+    const nameOf = (id: string) => one<{ name: string }>(ctx.app.db, `select name from lark_people where ${main ? "bot_open_id = ? or " : ""}user_id = ? limit 1`, ...(main ? [id, id] : [id]))?.name ?? "";
+    const json = JSON.stringify(content.card);
+    const { applyCardMentions } = await import("../channels/lark-people.ts");
+    content = { card: applyCardMentions(content.card, known.filter((id) => !json.includes(`<at id=${id}>`)).map((id) => ({ userId: id, name: nameOf(id), email: null }))) };
   }
   // Someone the task needs in the chat (an approver, the person to confirm) can be brought in: say how.
   const invitable = skipped.length && (!ctx.tools || ctx.tools.has("lark_invite")) && (ctx.userId ?? OWNER) === OWNER;

@@ -286,6 +286,35 @@ export function applyMentions(text: string, people: Resolved[], kind: "text" | "
   return lead.length ? `${lead.join(" ")} ${out}` : out;
 }
 
+/**
+ * The same for a card: an `@名字` already written in one of its Markdown elements becomes the real
+ * mention there (once per person); only people not written anywhere get a line of mentions on top.
+ * Otherwise the card shows the person twice: the real @ on top and the written name below.
+ */
+export function applyCardMentions(card: Record<string, unknown>, people: Resolved[]): Record<string, unknown> {
+  const out = structuredClone(card);
+  const lead: string[] = [];
+  const markdowns: { content: string }[] = [];
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (!v || typeof v !== "object") return;
+    const o = v as Record<string, unknown>;
+    if (o.tag === "markdown" && typeof o.content === "string") markdowns.push(o as { content: string });
+    for (const x of Object.values(o)) walk(x);
+  };
+  walk(out.body);
+  for (const p of people) {
+    const tag = "all" in p ? "<at id=all></at>" : `<at id=${p.userId}></at>`;
+    const names = ("all" in p ? ["all", "所有人"] : [p.name, p.email].filter((x): x is string => !!x)).map((n) => `@${n}`);
+    const hit = markdowns.map((m) => ({ m, at: names.find((n) => m.content.includes(n)) })).find((x) => x.at);
+    if (hit) hit.m.content = hit.m.content.replace(hit.at!, tag);
+    else lead.push(tag);
+  }
+  if (!lead.length) return out;
+  const body = (out.body ?? {}) as { elements?: unknown[] };
+  return { ...out, body: { ...body, elements: [{ tag: "markdown", content: lead.join(" ") }, ...(body.elements ?? [])] } };
+}
+
 /** Who a name is in a chat, for a while: cards are updated again and again with the same text. */
 const MEMBER_CACHE_MS = 10 * 60_000;
 const memberCache = new Map<string, { id: string | null; until: number }>();

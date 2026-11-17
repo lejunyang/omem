@@ -3,7 +3,7 @@ import { createThread } from "../src/agents/threads.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { cleanUpLarkIds, formatLine, learnPeople, sourceMessages, storeMessages } from "../src/channels/lark-messages.ts";
-import { applyMentions, learnCliPeople, peopleByCliIds, rememberPerson, resolveMention } from "../src/channels/lark-people.ts";
+import { applyCardMentions, applyMentions, learnCliPeople, peopleByCliIds, rememberPerson, resolveMention } from "../src/channels/lark-people.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { one } from "../src/core/db.ts";
 import { withBot } from "../src/core/bot-context.ts";
@@ -85,6 +85,14 @@ describe("people across Feishu apps", () => {
     expect(applyMentions("@小王 看下这个", [p], "text")).toBe('<at user_id="u_wang">小王</at> 看下这个');
     expect(applyMentions("看下这个", [p, { all: true }], "text")).toBe('<at user_id="u_wang">小王</at> <at user_id="all"></at> 看下这个');
     expect(applyMentions("请 @wang@example.com 确认", [p], "card")).toBe("请 <at id=u_wang></at> 确认");
+    // A card that already writes @名字 gets the real mention there, not a second one on top.
+    const card = { body: { elements: [{ tag: "markdown", content: "@小王 请审批" }, { tag: "column_set", columns: [{ elements: [{ tag: "markdown", content: "抄送 @所有人" }] }] }] } };
+    const out = applyCardMentions(card, [p, { all: true }]) as typeof card;
+    expect(out.body.elements[0]).toEqual({ tag: "markdown", content: "<at id=u_wang></at> 请审批" });
+    expect(JSON.stringify(out)).toContain("抄送 <at id=all></at>");
+    expect(JSON.stringify(out).match(/<at id=u_wang>/g)).toHaveLength(1);
+    expect(card.body.elements[0].content).toBe("@小王 请审批");
+    expect((applyCardMentions(card, [{ name: "小李", userId: "u_li", email: null }]) as typeof card).body.elements[0]).toEqual({ tag: "markdown", content: "<at id=u_li></at>" });
   });
 
   it("@s people through lark_send", async () => {
