@@ -145,12 +145,34 @@ export function bindAnswerer(app: App, bot: BotRef, addr: ThreadAddress) {
   if (thread.settings.spec !== spec) updateThread(app, thread.id, { settings: { ...thread.settings, spec } });
 }
 
-/** Recent lines of the chat (whoever captured it), in the topic when there is one. */
+/** The conversation of this topic was set to keep to itself (`isolatedTopic`, commands.ts). */
+export function topicIsolated(app: App, chatId: string, topicId?: string | null) {
+  if (!topicId) return false;
+  return !!one(app.db, "select 1 from conversations where (channel = 'lark' or channel like 'lark:%') and external_id = ? and status = 'active' and json_extract(settings, '$.isolatedTopic') = 1 limit 1", `${chatId}#${topicId}`);
+}
+
+/**
+ * What was said before a message, as context: the chat's last lines, with the topic's own lines kept
+ * even when the chat moved on. Only a topic set to keep to itself sees nothing but its own lines.
+ */
+export function contextLines(lines: string[], topicId: string | null | undefined, isolated: boolean, size = 15) {
+  if (!topicId) return lines.slice(-size);
+  const inTopic = (l: string) => l.includes(`话题 ${topicId}]`);
+  if (isolated) return lines.filter(inTopic).slice(-size);
+  const pick = new Set<number>();
+  lines.forEach((_, i) => { if (i >= lines.length - size) pick.add(i); });
+  const topic = lines.map((l, i) => (inTopic(l) ? i : -1)).filter((i) => i >= 0);
+  // The topic's first message (what it is about) and its latest few.
+  for (const i of [...topic.slice(0, 2), ...topic.slice(-10)]) pick.add(i);
+  return [...pick].sort((a, b) => a - b).map((i) => lines[i]);
+}
+
+/** Recent lines of the chat (whoever captured it), with the topic's own when there is one. */
 export function chatContext(app: App, chatId: string, topicId?: string) {
   const s = findSourceByUri(app, chatSpace(app, chatId), `lark:${chatId}`);
   if (!s) return "";
   const lines = sourceText(app, s.id).split("\n").filter(Boolean);
-  return (topicId ? lines.filter((l) => l.includes(`话题 ${topicId}]`)) : lines).slice(-15).join("\n");
+  return contextLines(lines, topicId, topicIsolated(app, chatId, topicId)).join("\n");
 }
 
 const mainMember = new Map<string, { at: number; yes: boolean }>();

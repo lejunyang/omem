@@ -1,6 +1,6 @@
 import { currentBot } from "../core/bot-context.ts";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, now } from "../core/util.ts";
 import { larkCli } from "./lark-cli.ts";
 
@@ -21,29 +21,54 @@ export type Person = { email: string | null; name: string; cliOpenId: string | n
 type Row = { email: string | null; name: string; cli_open_id: string | null; bot_open_id: string | null; user_id: string | null };
 const toPerson = (r: Row): Person => ({ email: r.email, name: r.name, cliOpenId: r.cli_open_id, botOpenId: r.bot_open_id, userId: r.user_id });
 
-/** Merge what is known about one person into the row that already matches any of its ids. */
+const ID_COLUMNS = ["email", "cli_open_id", "bot_open_id", "user_id"] as const;
+
+/**
+ * Merge what is known about one person into one row. The two apps see a person under different
+ * open_ids, so one person often starts as two rows (lark-cli's with the email, the bot's with its
+ * open_id and user_id); the moment one fact ties them (the bot reads the email, lark-cli the user_id)
+ * they become one row. Rows whose ids contradict (two emails) stay apart: those are two people.
+ */
 export function rememberPerson(app: App, p: Partial<Person> & { name?: string }) {
-  const keys: [string, string | null | undefined][] = [
-    ["email", p.email],
-    ["cli_open_id", p.cliOpenId],
-    ["bot_open_id", p.botOpenId],
-    ["user_id", p.userId],
-  ];
-  const found = keys.map(([k, v]) => (v ? one<Row & { id: number }>(app.db, `select rowid as id, * from lark_people where ${k} = ?`, v) : undefined)).find(Boolean);
-  if (found)
-    run(
-      app.db,
-      `update lark_people set name = coalesce(nullif(?, ''), name), email = coalesce(?, email), cli_open_id = coalesce(?, cli_open_id),
-         bot_open_id = coalesce(?, bot_open_id), user_id = coalesce(?, user_id), updated_at = ? where rowid = ?`,
-      p.name ?? "",
-      p.email || null,
-      p.cliOpenId || null,
-      p.botOpenId || null,
-      p.userId || null,
-      now(),
-      found.id,
-    );
-  else
+  const given: Record<(typeof ID_COLUMNS)[number], string | null> = {
+    email: p.email ? p.email.trim().toLowerCase() : null,
+    cli_open_id: p.cliOpenId || null,
+    bot_open_id: p.botOpenId || null,
+    user_id: p.userId || null,
+  };
+  const rows = new Map<number, Row & { id: number }>();
+  for (const k of ID_COLUMNS) {
+    const v = given[k];
+    if (!v) continue;
+    for (const r of all<Row & { id: number }>(app.db, `select rowid as id, * from lark_people where ${k === "email" ? "lower(email)" : k} = ?`, v)) rows.set(r.id, r);
+  }
+  const found = [...rows.values()];
+  if (found.length) {
+    // What the merged row ends up holding: the new facts first, then each row's own, as long as they agree.
+    const merged: Record<string, string | null> = { ...given };
+    const keep: (Row & { id: number })[] = [];
+    const apart: (Row & { id: number })[] = [];
+    for (const r of found) {
+      if (ID_COLUMNS.some((k) => merged[k] && r[k] && (k === "email" ? merged[k]!.toLowerCase() !== r[k]!.toLowerCase() : merged[k] !== r[k]))) { apart.push(r); continue; }
+      for (const k of ID_COLUMNS) merged[k] ??= r[k];
+      keep.push(r);
+    }
+    if (!keep.length) return;
+    const [target, ...rest] = keep;
+    // An id a row kept apart already holds is that person's: the row that stays keeps its own.
+    for (const r of apart) for (const k of ID_COLUMNS) if (r[k] && merged[k] === r[k]) merged[k] = target[k];
+    const name = p.name || target.name || rest.find((r) => r.name)?.name || "";
+    const write = (fn: () => void) => (app.db.isTransaction ? fn() : tx(app.db, fn));
+    write(() => {
+      // The other rows go first: the unique ids they hold move to the one that stays.
+      for (const r of rest) run(app.db, "delete from lark_people where rowid = ?", r.id);
+      run(
+        app.db,
+        "update lark_people set name = ?, email = ?, cli_open_id = ?, bot_open_id = ?, user_id = ?, updated_at = ? where rowid = ?",
+        name, merged.email, merged.cli_open_id, merged.bot_open_id, merged.user_id, now(), target.id,
+      );
+    });
+  } else
     run(
       app.db,
       "insert into lark_people(email, name, cli_open_id, bot_open_id, user_id, updated_at) values(?,?,?,?,?,?)",
@@ -76,8 +101,8 @@ export async function learnCliPeople(app: App, ids: string[]) {
   for (let i = 0; i < unknown.length; i += 100) {
     try {
       const v = await larkCli(["contact", "+search-user", "--user-ids", unknown.slice(i, i + 100).join(","), "--as", "user"], 60_000);
-      for (const u of (v.data?.users ?? []) as { open_id?: string; localized_name?: string; enterprise_email?: string; email?: string }[])
-        if (u.open_id) rememberPerson(app, { cliOpenId: u.open_id, name: u.localized_name ?? "", email: u.enterprise_email || u.email || null });
+      for (const u of (v.data?.users ?? []) as { open_id?: string; user_id?: string; localized_name?: string; enterprise_email?: string; email?: string }[])
+        if (u.open_id) rememberPerson(app, { cliOpenId: u.open_id, name: u.localized_name ?? "", email: u.enterprise_email || u.email || null, userId: u.user_id || null });
     } catch (e) {
       console.warn(`[omem] 查飞书联系人失败：${(e as Error).message}`);
       return;

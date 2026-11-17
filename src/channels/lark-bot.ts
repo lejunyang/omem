@@ -30,7 +30,8 @@ import { showThinking, watchAgentBubbles } from "./lark-agent-cot.ts";
 import { watchWorkProgress } from "./lark-work-progress.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { larkBotInfo, larkOwnerOpenId, onLarkSent, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark } from "./lark-send.ts";
-import { bindAnswerer, botChannel, botRoster, chatContext, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, type BotRef } from "./lark-bots.ts";
+import { bindAnswerer, botChannel, botRoster, chatContext, contextLines, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, topicIsolated, type BotRef } from "./lark-bots.ts";
+import { chatRecordSpace, readChatHistory } from "./lark-bot-history.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { answeredDirectly, routeWatchedMessages, watchPurpose } from "./lark-watch.ts";
 import { askAsGuest, guestApprovalCard, guestsAllowed, onGuestApproved, ownerInChat, waitGuest, type GuestApproval } from "./lark-guest.ts";
@@ -564,15 +565,26 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   };
 
   /** What was said just before an @mention, in the same topic when there is one. */
-  const groupContext = (m: Inbound) => {
+  const groupContext = async (m: Inbound) => {
+    // A topic whose start nobody here saw (the bot joined later, the owner is not in the chat): the
+    // bot reads the topic itself first, so the question it was asked has what it is about.
+    if (m.topicId && !topicIsolated(app, m.chatId, m.topicId)) await fillTopic(m).catch(() => {});
     const sourceId = lastCapture.get(m.messageId);
     lastCapture.delete(m.messageId);
     // Captured by the main bot (or the owner's lark-cli), not by this one.
     if (!sourceId) return chatContext(app, m.chatId, m.topicId);
-    const lines = sourceText(app, sourceId).split("\n").filter(Boolean);
-    lines.pop(); // the mention itself
-    const pick = m.topicId ? lines.filter((l) => l.includes(`话题 ${m.topicId}]`)) : lines;
-    return pick.slice(-15).join("\n");
+    const lines = sourceText(app, sourceId).split("\n").filter(Boolean).filter((l) => !l.endsWith(`(${m.messageId})`)); // not the mention itself
+    return contextLines(lines, m.topicId, topicIsolated(app, m.chatId, m.topicId)).join("\n");
+  };
+  /** Read the topic's messages once when only the mention itself is on record. */
+  const filledTopics = new Set<string>();
+  const fillTopic = async (m: Inbound) => {
+    if (!m.topicId || filledTopics.has(m.topicId)) return;
+    const s = findSourceByUri(app, chatRecordSpace(app, m.chatId), `lark:${m.chatId}`);
+    const seen = s ? sourceText(app, s.id).split("\n").filter((l) => l.includes(`话题 ${m.topicId}]`) && !l.endsWith(`(${m.messageId})`)).length : 0;
+    if (seen >= 1) return;
+    filledTopics.add(m.topicId);
+    await readChatHistory(app, client, { chatId: m.chatId, topicId: m.topicId, limit: 20, chatName: groupName(m.chatId) });
   };
 
   /** Fetch the message a user quoted/reply-referenced, so the agent knows what they mean. */
@@ -666,8 +678,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const r = askAsGuest(app, {
       chatId: m.chatId, chatType: m.chatType, chatName: m.chatType === "group" ? groupName(m.chatId) : undefined, messageId: m.messageId,
       senderId: m.senderId, senderName: m.senderName, fromApp: !!m.fromApp, text,
-      context: m.chatType === "group" ? groupContext(m) : "", groupSpace: m.chatType === "group" ? groupSpace(m.chatId) : undefined,
-      gateOnly: withOwner,
+      context: m.chatType === "group" ? await groupContext(m) : "", groupSpace: m.chatType === "group" ? groupSpace(m.chatId) : undefined,
+      gateOnly: withOwner, bot: ref,
     });
     if (!r) return false; // over the hourly limit: quietly
     const working = await reactLark(m.messageId, "OnIt").catch(() => undefined);
@@ -703,6 +715,12 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   /** `approved`: the owner let a refused guest through (its records were kept the first time). */
   const handle = async (m: Inbound, approved?: { by: string }) => {
     let ruled: Promise<void> | null = null;
+    // Someone the owner added by email or name, talking to the bot for the first time: the account
+    // takes this open_id now (lark-identity.ts), so the answer is a user's, not a guest's.
+    if (!extra && !m.fromApp && (m.mentionsBot || m.chatType === "p2p") && !who(m)) {
+      const { claimLarkSender } = await import("./lark-identity.ts");
+      await claimLarkSender(app, client, { openId: m.senderId, userId: m.senderUserId, name: m.senderName }).catch((e) => console.warn("[omem] 对应飞书身份失败", (e as Error).message));
+    }
     if (m.chatType === "group" && !approved) {
       // The chat's records (capture, rules, watched chats) are kept once: by the main bot when it is
       // in the chat, otherwise by this one (lark-bots.ts).
@@ -745,7 +763,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const text = spoken(m);
     const context = [
       approved ? `本人看过门卫拦下的这条请求，同意让 ${m.senderName} 这次使用你：照常处理，结果回在群里。` : "",
-      ...(m.chatType === "group" ? [rosterNote(app, ref), watchPurpose(app, m.chatId), groupContext(m)] : []),
+      ...(m.chatType === "group" ? [rosterNote(app, ref), watchPurpose(app, m.chatId), await groupContext(m)] : []),
     ].filter(Boolean).join("\n\n");
     if (!text) return;
     const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : userId === OWNER ? cfg.defaultSpace : undefined;

@@ -4167,6 +4167,43 @@ async function messageFileText(ctx: ToolContext, messageId: string, key?: string
 }
 
 def({
+  name: "lark_chat_history",
+  description:
+    "以机器人身份读这个会话里更早的飞书消息（群或其中一个话题），补上机器人进群前、或采集没看到的上下文；读到的消息记进这个群的原件，返回可引用的行号。有人只说“看下群里的问题”“看下这个”时，先用它读话题或群里前面的消息再回答。默认读本次会话所在的群；本人的运行可以指定别的群（机器人要在群里）。",
+  schema: z.object({
+    topic_id: z.string().regex(/^omt_[0-9a-z]+$/).optional().describe("只读这个话题（上下文里 `话题 omt_…` 的 id）；不填读整个群"),
+    cursor: z.string().max(500).optional().describe("上一次返回的 cursor：接着往前读"),
+    limit: z.number().int().min(1).max(50).optional().describe("条数，默认 30"),
+    chat_id: z.string().regex(/^oc_[0-9a-f]+$/).optional().describe("只有本人的运行能指定：别的群的 chat_id"),
+  }),
+  handler: async (ctx, a) => {
+    const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    const guest = r?.kind === "guest";
+    let chat = guest ? String(r!.input.chatId ?? "") : runLarkChat(ctx);
+    if (a.chat_id && a.chat_id !== chat) {
+      if (guest || (ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只能读本次会话所在的群");
+      chat = a.chat_id;
+    }
+    if (!chat) throw new HttpError(400, "这次运行不在飞书群里；本人的运行可以用 chat_id 指定群");
+    const { chatRecordSpace, readChatHistory } = await import("../channels/lark-bot-history.ts");
+    // The chat's record lives in a space this run must be able to read.
+    space(ctx, chatRecordSpace(ctx.app, chat));
+    const { botOfChannel, withBot } = await import("../core/bot-context.ts");
+    const conv = guest ? null : runThread(ctx);
+    const channel = conv ? one<{ channel: string }>(ctx.app.db, "select channel from conversations where id = ?", conv)?.channel : undefined;
+    const bot = guest ? (r!.input.bot as string | undefined) ?? "main" : botOfChannel(channel);
+    const { larkClientFor } = await import("../channels/lark-send.ts");
+    const page = await readChatHistory(ctx.app, larkClientFor(bot), { chatId: chat, topicId: a.topic_id, cursor: a.cursor, limit: a.limit });
+    if (!page.lines.length) return page.note ?? "没有更早的消息";
+    return [
+      `读到 ${page.lines.length} 条${a.topic_id ? `（话题 ${a.topic_id}）` : ""}，已记进原件 ${page.sourceId}；引用：[文字](src:${page.sourceId}#L行-L行)`,
+      ...page.lines.map((l) => `L${l.line} ${l.text}`),
+      page.cursor ? `更早的还有：cursor=${page.cursor}` : "没有更早的了",
+    ].join("\n");
+  },
+});
+
+def({
   name: "lark_message_file",
   description:
     "读飞书消息里的附件（文件、图片、视频、音频）：给出 omem 保存的那一份。采集时已经存成原件的直接给原件 id；还没下载过的先下载，存进这个群所在的空间再给。message_id 填 om_ 开头的消息 id；一条消息有几个附件时用 file_key（file_ 或 img_ 开头）指定。拿到原件 id 后用 read_source 读正文；视频和音频只保存文件，读不到内容。lark-cli 的 im +messages-resources-download 会写本地文件，lark_read 里也会改走这里。",
@@ -4833,7 +4870,10 @@ def({
         }
         const existing = identityOwner(ctx.app, "lark", p.userId) ?? emailHolder(ctx.app, email)?.id ?? null;
         const user = existing ? getUser(ctx.app, existing) : createUser(ctx.app, { name: p.name, email: email ?? null });
-        if (!existing && p.userId.startsWith("ou_")) linkIdentity(ctx.app, user.id, "lark", p.userId);
+        // An account added earlier by email takes the bot's open_id too: they are not a guest from the first message.
+        if (p.userId.startsWith("ou_") && !identityOwner(ctx.app, "lark", p.userId)) linkIdentity(ctx.app, user.id, "lark", p.userId, { kind: "alias", appId: ctx.app.config.lark.appId ?? null, display: p.name });
+        const { rememberPerson } = await import("../channels/lark-people.ts");
+        rememberPerson(ctx.app, p.userId.startsWith("ou_") ? { botOpenId: p.userId, email, name: p.name } : { userId: p.userId, email, name: p.name });
         if (existing && email && !user.email && !emailHolder(ctx.app, email, user.id)) updateUser(ctx.app, user.id, { email });
         for (const s of spaces) addMember(ctx.app, s.id, user.id, s.role);
         lines.push(`- ${existing ? "已是用户" : "已登记"} ${user.name}（${user.id}${email ? `，${email}` : "，没拿到邮箱，用飞书登录"}）${spaces.length ? `：${spaces.map((s) => `${s.id} ${s.role}`).join("、")}` : ""}`);
