@@ -29,7 +29,7 @@ type Node = { title: string; children?: string[]; space?: string; type?: string;
  * A fake lark-cli with a knowledge base: wiki nodes by token (their children listed by node-list),
  * docs fetched by the same token, the personal library, and doc writes recorded.
  */
-function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeError?: string; failUpdates?: number } = {}) {
+function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeError?: string; failUpdates?: number; fetchError?: () => string | null } = {}) {
   const calls: string[][] = [];
   let updates = 0;
   setLarkCliForTests(async (args, cwd) => {
@@ -42,6 +42,8 @@ function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeE
     };
     if (args[0] === "docs" && args[1] === "+fetch") {
       const token = flag("--doc").split("/").pop()!;
+      const failing = opts.fetchError?.();
+      if (failing) return { ok: false, error: { type: "authentication", message: failing } };
       if (!nodes[token]) throw new Error("not found");
       return { ok: true, data: { document: { document_id: `obj_${token}`, revision_id: 1, content: `<title>${nodes[token].title}</title>\n${nodes[token].title} 的正文` } } };
     }
@@ -211,6 +213,40 @@ describe("feishu knowledge bases", () => {
     expect(after.errors.join()).toMatch(/缺少飞书权限 wiki:node:retrieve.*auth\?code=X/);
     const n = one<{ body: string }>(app.db, "select body from notifications order by at desc limit 1");
     expect(n?.body).toContain("https://tenant.larkoffice.com/auth?code=X");
+  });
+});
+
+describe("a crawl that cannot go on", () => {
+  it("a lost login pauses the crawl with the page still queued; continued, it reads on", async () => {
+    const app = testApp();
+    let gone = false;
+    fakeWiki(TREE, { fetchError: () => (gone ? "token_missing: no user token" : null) });
+    const c = await startCrawl(app, { spaceId: "personal", url: `${ORIGIN}/wiki/Root`, depth: 5, batch: 1 }, { background: false });
+    await crawlLoop(app, c.id);
+    gone = true;
+    continueCrawl(app, c.id, { background: false });
+    const paused = await crawlLoop(app, c.id);
+    expect(paused).toMatchObject({ status: "paused", read: 1, failed: 0 });
+    expect(paused.halted).toMatch(/token_missing/);
+    const queued = paused.queue.length;
+    expect(queued).toBeGreaterThan(0);
+    gone = false;
+    continueCrawl(app, c.id, { batch: null, background: false });
+    expect(getCrawl(app, c.id).halted).toBeUndefined();
+    const done = await crawlLoop(app, c.id);
+    expect(done).toMatchObject({ status: "done", read: 4, failed: 0 });
+  });
+
+  it("failures in a row pause it even when they say nothing known", async () => {
+    const app = testApp();
+    const many: Record<string, Node> = { Root: { title: "根", children: Array.from({ length: 15 }, (_, i) => `P${i}`) } };
+    for (let i = 0; i < 15; i++) many[`P${i}`] = { title: `第 ${i} 篇`, parent: "Root" };
+    fakeWiki(many, { fetchError: () => "3380004 No permission to operate on this document" });
+    const c = await startCrawl(app, { spaceId: "personal", url: `${ORIGIN}/wiki/Root`, depth: 1 }, { background: false });
+    const after = await crawlLoop(app, c.id);
+    expect(after.status).toBe("paused");
+    expect(after.failed).toBe(9);
+    expect(after.queue.length).toBe(16 - 9);
   });
 });
 

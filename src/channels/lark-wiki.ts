@@ -198,6 +198,8 @@ export type WikiCrawl = {
   /** Docs per batch; a crawl with a batch pauses after each until continued. */
   batch: number | null;
   status: "running" | "paused" | "done" | "stopped";
+  /** Why it paused on its own (a lost login, a missing permission, failures in a row); cleared when continued. */
+  halted?: string;
   queue: Entry[];
   /** Node URLs already queued (never queued twice). */
   seen: string[];
@@ -351,6 +353,7 @@ export function continueCrawl(app: App, id: string, opts: { batch?: number | nul
   if (opts.batch !== undefined) c.batch = opts.batch;
   if (opts.maxDocs) c.maxDocs = opts.maxDocs;
   c.status = "running";
+  delete c.halted;
   put(app, c);
   if (opts.background !== false) drive(app, id);
   return crawlSummary(c);
@@ -370,6 +373,11 @@ export function resumeCrawls(app: App) {
 
 const driving = new Set<string>();
 
+/** Errors no page of a crawl gets past (lark-cli.ts wording, old and new): the crawl pauses on them. */
+export const CRAWL_HALT = /缺少飞书权限|登录不可用|token_missing|need_user_authorization|不接受你的授权|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|请检查登录和网络/i;
+/** This many failures in a row pause a crawl too: something is wrong beyond the pages. */
+const FAILED_IN_ROW = 10;
+
 function drive(app: App, id: string) {
   if (driving.has(id)) return;
   driving.add(id);
@@ -386,6 +394,7 @@ export async function crawlLoop(app: App, id: string) {
     !!(findLarkDoc(app, c.spaceId, url) ?? (node.objToken ? findLarkDoc(app, c.spaceId, `${new URL(url).origin}/docx/${node.objToken}`) : undefined));
   let inBatch = 0;
   let steps = 0;
+  let failedInRow = 0;
   for (;;) {
     const c = getCrawl(app, id);
     if (c.status !== "running") return c;
@@ -398,9 +407,23 @@ export async function crawlLoop(app: App, id: string) {
       return c;
     }
     const entry = c.queue[0];
+    // A missing permission, a lost login or a broken network fails every remaining page the same way:
+    // pause with this page still queued (it is read when the crawl goes on), not a failure each.
+    // Several failures in a row are taken the same way, whatever they say.
+    const halt = (e: unknown) => {
+      const message = (e as Error).message;
+      if (!CRAWL_HALT.test(message) && ++failedInRow < FAILED_IN_ROW) return false;
+      c.status = "paused";
+      c.halted = message.slice(0, 300);
+      c.errors.push(c.halted);
+      if (c.errors.length > 50) c.errors.splice(0, c.errors.length - 50);
+      put(app, c);
+      return true;
+    };
+    let node: WikiNode | null = null;
     try {
       // Children come with their node; only the root is looked up.
-      const node = entry.node ?? (await wikiNode(app, entry.url));
+      node = entry.node ?? (await wikiNode(app, entry.url));
       if (node && !isReadableNode(node)) c.skipped++;
       else if (c.skipCaptured && node && captured(c, entry.url, node)) c.known = (c.known ?? 0) + 1;
       else {
@@ -409,6 +432,7 @@ export async function crawlLoop(app: App, id: string) {
         if (!c.ids.includes(r.id)) c.ids.push(r.id);
         c.read++;
         inBatch++;
+        failedInRow = 0;
         // Earlier pages that link to this one now point at the local copy.
         if (r.status === "created" && c.ids.length > 1) {
           const token = new URL(entry.url).pathname.split("/").pop()!;
@@ -418,10 +442,17 @@ export async function crawlLoop(app: App, id: string) {
             relinkParent(app, p.id, entry.url, r.id, title);
         }
       }
-      // A shortcut's children belong to its origin, which is in the tree elsewhere.
-      if (node?.hasChild && node.nodeType !== "shortcut") {
-        if (entry.depth <= 0) c.skipped++;
-        else {
+    } catch (e) {
+      if (halt(e)) return c;
+      c.failed++;
+      if (c.errors.length < 50) c.errors.push(`${entry.title ?? entry.url}：${(e as Error).message.slice(0, 200)}`);
+    }
+    // A page that could not be read still leads to its children (one with no access may have readable ones).
+    // A shortcut's children belong to its origin, which is in the tree elsewhere.
+    if (node?.hasChild && node.nodeType !== "shortcut") {
+      if (entry.depth <= 0) c.skipped++;
+      else {
+        try {
           const origin = new URL(entry.url).origin;
           const room = Math.max(0, c.maxDocs - c.read - c.queue.length + 1);
           const { nodes, more } = await wikiChildren(app, node, room);
@@ -434,18 +465,12 @@ export async function crawlLoop(app: App, id: string) {
             c.queue.push({ url, depth: entry.depth - 1, title: n.title, node: n });
           }
           if (more) c.skipped++;
+        } catch (e) {
+          if (halt(e)) return c;
+          c.failed++;
+          if (c.errors.length < 50) c.errors.push(`${entry.title ?? entry.url} 的子页面：${(e as Error).message.slice(0, 200)}`);
         }
       }
-    } catch (e) {
-      // Missing permission: pause rather than fail every remaining page the same way.
-      if (/缺少飞书权限/.test((e as Error).message)) {
-        c.status = "paused";
-        c.errors.push((e as Error).message.slice(0, 300));
-        put(app, c);
-        return c;
-      }
-      c.failed++;
-      if (c.errors.length < 50) c.errors.push(`${entry.title ?? entry.url}：${(e as Error).message.slice(0, 200)}`);
     }
     c.queue.shift();
     steps++;

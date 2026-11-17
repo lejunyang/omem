@@ -10,7 +10,7 @@ import { createRun, registerHandler } from "../agents/runs.ts";
 import { setNodeLevel } from "../sources/attention.ts";
 import { asOwner, cliUser } from "./lark-auth.ts";
 import { larkCli } from "./lark-cli.ts";
-import { continueCrawl, crawlBusy, crawlLoop, crawlSummary, forgetCrawl, getCrawl, startSpaceCrawl, stopCrawl, wikiChildren, type WikiCrawl } from "./lark-wiki.ts";
+import { CRAWL_HALT, continueCrawl, crawlBusy, crawlLoop, crawlSummary, forgetCrawl, getCrawl, startSpaceCrawl, stopCrawl, wikiChildren, type WikiCrawl } from "./lark-wiki.ts";
 
 /**
  * Knowledge bases the owner can see in Feishu, read a little every day (read-only, as the owner).
@@ -633,7 +633,8 @@ async function readOne(app: App, kb: KnowledgeBase, share: number): Promise<KbRe
   continueCrawl(app, c.id, { batch: share, background: false });
   const after = await crawlLoop(app, c.id);
   Object.assign(out, { read: after.read - before.read, known: (after.known ?? 0) - before.known, skipped: after.skipped - before.skipped, failed: after.failed - before.failed, done: after.status === "done" });
-  if (after.status === "paused" && after.errors.length && /缺少飞书权限/.test(after.errors.at(-1) ?? "")) out.error = after.errors.at(-1);
+  // Paused on a lost login, a missing permission or a broken network: said, and the night stops there (readDaily).
+  if (after.status === "paused" && after.halted) out.error = after.halted;
   if (out.read || out.known || out.skipped || out.failed)
     run(app.db, "insert into lark_kb_reads(at, kb_id, space_id, read, known, skipped, failed) values(?,?,?,?,?,?,?)", now(), kb.id, kb.targetSpace!, out.read, out.known, out.skipped, out.failed);
   return out;
@@ -680,6 +681,8 @@ async function readDaily(app: App, opts: { limit?: number; kb?: string; schedule
     const r = await readOne(app, kb, share);
     report.results.push(r);
     report.read += r.read;
+    // The others would stop on the same thing, one call each.
+    if (r.error && CRAWL_HALT.test(r.error)) return finishDaily(app, { ...report, skipped: r.error.slice(0, 300) });
     if (r.done || r.error || r.skippedBecause || r.read < share) exhausted.add(kb.id);
   }
   // What a finished knowledge base did not use goes to the others, highest priority first.
