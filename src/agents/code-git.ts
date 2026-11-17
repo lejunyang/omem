@@ -4,7 +4,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { git } from "../core/git.ts";
+import { git, GIT_ENV } from "../core/git.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { addRunEvent, getRun, setRunOutput } from "./runs.ts";
@@ -102,7 +102,7 @@ const busy = new Set<string>();
 function mutate(path: string, args: string[]): Promise<{ ok: boolean; error: string }> {
   return new Promise(resolve => {
     execFile("git", args, { cwd: path, encoding: "utf8", timeout: 120000, maxBuffer: 2 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" }, windowsHide: true }, (error, stdout, stderr) => {
+      env: { ...process.env, ...GIT_ENV }, windowsHide: true }, (error, stdout, stderr) => {
       resolve({ ok: !error, error: error ? `${stderr || stdout || error.message}`.slice(0, 4000) : "" });
     });
   });

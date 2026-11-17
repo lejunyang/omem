@@ -175,7 +175,7 @@ describe("share links", () => {
       expect(ok.statusCode).toBe(200);
       expect(ok.headers["cache-control"]).toBe("no-store");
       const body = ok.json();
-      expect(Object.keys(body).sort()).toEqual(["createdAt", "expiresAt", "items", "title"]);
+      expect(Object.keys(body).sort()).toEqual(["createdAt", "expiresAt", "items", "timezone", "title"]);
       expect(JSON.stringify(body)).not.toMatch(/r_owner|token_hash|personal/);
       expect((await server.inject({ url: `/api/share/${"A".repeat(43)}`, ...remote })).statusCode).toBe(404);
       // Anything else still needs a token from another machine: other paths, queries, the owner's list.

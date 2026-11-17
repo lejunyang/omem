@@ -6,6 +6,13 @@ import { noteSync } from "./loop-monitor.ts";
 export type GitResult = { ok: boolean; stdout: string; stderr: string };
 
 /**
+ * Git's messages in English whatever the user's language: callers match them (rejected,
+ * non-fast-forward…). LC_ALL alone is not enough — gettext still honours LANGUAGE (zh_CN:zh)
+ * under C.UTF-8, so it is cleared too.
+ */
+export const GIT_ENV = { GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8", LANGUAGE: "" };
+
+/**
  * No fsmonitor daemon for any git omem (or an agent it starts) runs. With core.fsmonitor on in the
  * user's config, git starts a detached daemon per repository it touches and the daemon stays after
  * the folder is gone — every temporary library, worktree and test repo leaked one (thousands, each
@@ -27,7 +34,7 @@ export function git(cwd: string, args: string[], input?: string, env?: Record<st
     input,
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8", ...env },
+    env: { ...process.env, ...GIT_ENV, ...env },
     windowsHide: true,
   });
   noteSync(`git ${args.filter((a) => !a.startsWith("-")).slice(0, 2).join(" ")}`, start);
@@ -46,7 +53,7 @@ export function gitAsync(cwd: string, args: string[], opts: { timeoutMs?: number
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
       timeout: opts.timeoutMs ?? 0,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8", ...opts.env },
+      env: { ...process.env, ...GIT_ENV, ...opts.env },
       windowsHide: true,
     }, (error, stdout, stderr) => resolve({ ok: !error, stdout: stdout ?? "", stderr: stderr || (error ? String(error) : "") }));
   });
@@ -159,7 +166,7 @@ export function fetchBranch(dir: string, name: string, timeoutMs = 120_000): Git
     cwd: dir,
     encoding: "utf8",
     timeout: timeoutMs,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" },
+    env: { ...process.env, ...GIT_ENV },
     windowsHide: true,
   });
   noteSync("git fetch", start);
