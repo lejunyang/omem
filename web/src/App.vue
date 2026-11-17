@@ -43,9 +43,10 @@ const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; memb
   { to: "/learn", label: "学习", icon: "cap" },
   { to: "/agents", label: "Agent", icon: "layers", perm: "agents.manage" },
   { to: "/rules", label: "规则", icon: "zap", perm: "agents.manage" },
-  { to: "/runs", label: "运行", icon: "activity", member: true },
   { to: "/quality", label: "抽检", icon: "sample" },
   { to: "/insights", label: "数据", icon: "chart", member: true },
+  // 运行 stays last: pages added later (远程) go before it.
+  { to: "/runs", label: "运行", icon: "activity", member: true },
 ]);
 // Plugins with a page (docs/v2/plugins.md) go right after 学习.
 async function addPluginPages() {
@@ -59,7 +60,12 @@ async function addPluginPages() {
 async function addRemotePage() {
   if (!owner.value && !state.me?.perms.includes("desktop.control")) return;
   const r = await get<{ available: boolean }>("/api/remote").catch(() => ({ available: false }));
-  if (r.available && !nav.value.some((n) => n.to === "/remote")) nav.value = [...nav.value, { to: "/remote", label: "远程", icon: "monitor", perm: "desktop.control" }];
+  if (r.available && !nav.value.some((n) => n.to === "/remote")) {
+    const list = [...nav.value];
+    const at = list.findIndex((n) => n.to === "/runs");
+    list.splice(at < 0 ? list.length : at, 0, { to: "/remote", label: "远程", icon: "monitor", perm: "desktop.control" });
+    nav.value = list;
+  }
 }
 // Settings → 插件 changed an icon.
 watch(() => state.pluginsChanged, addPluginPages);
