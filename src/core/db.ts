@@ -2081,6 +2081,8 @@ export const migrations: readonly string[] = [
   `alter table study_trials add column peer text;
    alter table study_trials add column peer_run text;
    alter table study_trials add column peer_seen text;`,
+  // Answering in a meeting's chat (channels/meeting-answers.ts): paused or not, what was answered, skipped and in flight.
+  `alter table lark_meetings add column answers text not null default '{}';`,
 ];
 
 export type Db = DatabaseSync;

@@ -115,6 +115,18 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
     }
   }
+  if (inter.purpose === "meeting-answer") {
+    // A drafted answer to a question put to a bot in a meeting (meeting-answers.ts).
+    const { decideMeetingAnswer } = await import("./meeting-answers.ts");
+    const choice = String((value as { action?: string } | undefined)?.action ?? "");
+    closeInteraction(app, inter.id, operator);
+    try {
+      const card = await decideMeetingAnswer(app, inter.payload as import("./meeting-answers.ts").DraftPayload, choice);
+      return { toast: { type: "success", content: choice === "send" ? "已发到会里" : choice === "pause" ? "这场会不再回答" : "不发" }, card: rawCard(buildCard(card)) };
+    } catch (e) {
+      return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
+    }
+  }
   if (inter.purpose === "rule-script") {
     // A rule's script waiting for its approver (rules/script.ts).
     const { decideScript } = await import("../rules/script.ts");

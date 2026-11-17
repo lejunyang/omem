@@ -290,8 +290,8 @@ async function runAgentTask(ctx: RunContext) {
     lark?: { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean; bot?: string };
     /** A rule's silent investigation: nothing is delivered; the agent posts itself when it decides to. */
     silent?: { chatId: string; messageId: string; topicId: string | null };
-    /** Listening to a meeting for a rule (lark-meetings.ts): like silent, it speaks only through notify / meeting_send. */
-    meeting?: { id: string; bot: string | null; answer: boolean };
+    /** Listening to a meeting for the owner (lark-meetings.ts): like silent; it never speaks in the meeting (meeting-answers.ts does). */
+    meeting?: { id: string };
     /** A rule's agent answering in a topic under this message (its bubble or answer opens the topic). */
     replyAt?: { chatId: string; messageId: string; inThread?: boolean };
     /** A silent agent picking up a topic it follows continues its earlier session. */

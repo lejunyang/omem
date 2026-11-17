@@ -17,7 +17,7 @@ it("gives the assistant every tool of its groups, so a new tool in a group needs
   // A role's own hand-in tools (submit_review, plan_tasks…) never come with a group.
   const code = ["coding", "git", "lark-docs"].flatMap((id) => TOOL_GROUPS.find((g) => g.id === id)!.tools).filter((t) => !ROLE_TOOLS.includes(t));
   expect(tools).toEqual(expect.arrayContaining(code));
-  for (const t of ["write_page", "propose_item_update", "propose_profile_change", "meeting_send", "plugin_put"]) expect(tools).not.toContain(t);
+  for (const t of ["write_page", "propose_item_update", "propose_profile_change", "plugin_put"]) expect(tools).not.toContain(t);
 });
 
 it("rejects a group that does not exist when a role is saved", () => {

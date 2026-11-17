@@ -28,7 +28,7 @@ type Action =
   | { type: "wait-message"; chatId: string; name: string; minutes: number; contains: string; matches: string; onTimeout: "notify" | "none" }
   | { type: "capture" }
   | { type: "notify"; urgent: boolean }
-  | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; importShared: boolean; leaveWithOwner: boolean }
+  | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; answerFrom?: "all" | "owner"; answerMode?: "draft" | "auto"; answerMax?: number; answerSpoken?: boolean; importShared: boolean; leaveWithOwner: boolean }
   | { type: "delay"; minutes: number }
   | { type: "check"; question: string }
   | { type: "script"; runtime: "node" | "python" | "bash"; code: string; timeoutSec: number; approval: { by: "none" | "owner" | "person" | "ai"; person?: string; hint?: string } };
@@ -312,7 +312,7 @@ function setDelay(a: Extract<Action, { type: "delay" }>, n: number, unit: number
   touch();
 }
 const docLinks = (v: string) => v.split("\n").map((x) => x.trim()).filter(Boolean);
-const meetingAction = (): Action => ({ type: "meeting-bot", bots: options.value.bots?.length ? [options.value.bots[0].id] : [], confirm: true, record: true, spec: "", task: "", answer: false, importShared: true, leaveWithOwner: true });
+const meetingAction = (): Action => ({ type: "meeting-bot", bots: options.value.bots?.length ? [options.value.bots[0].id] : [], confirm: true, record: true, spec: "", task: "", answer: false, answerFrom: "all", answerMode: "draft", answerMax: 5, answerSpoken: false, importShared: true, leaveWithOwner: true });
 const confirmOptions = [{ value: "always", label: "始终询问" }, { value: "never", label: "直接加入" }, { value: "condition", label: "满足条件时询问" }];
 function setConfirmation(a: Extract<Action, { type: "meeting-bot" }>, mode: string) {
   a.confirm = mode === "always" ? true : mode === "never" ? false : { field: "meeting.invitedCount", op: "gte", value: "30" };
@@ -744,10 +744,33 @@ function startFrom(text: string) {
                 <span class="small">旁听</span>
                 <UiSelect v-model="a.spec" size="sm" width="180px" :options="meetingSpecOptions" aria-label="旁听的 Agent" @change="touch" />
                 <UiSelect v-if="a.spec" :model-value="a.space ?? ''" size="sm" width="170px" :options="spaceOptions('默认空间')" aria-label="在哪个空间里查资料" @update:model-value="(v) => ((a.space = String(v || '')), touch())" />
-                <UiCheckbox v-if="a.spec" v-model="a.answer" size="sm" :disabled="!a.bots.length" @change="touch">回答会中聊天里点名机器人的问题</UiCheckbox>
               </div>
-              <small class="muted">{{ a.spec ? "每隔几分钟看一次新说的话：有人点你的名、要你表态，或有和你有关的决定、待办、风险时提醒你；会后给你一份简短纪要。" : "不旁听时只保存记录，会后整理进记忆和事项。" }}机器人入会所有参会人都能看到；会议要允许智能体加入。</small>
+              <small class="muted">{{ a.spec ? "每隔几分钟看一次新说的话：有人点你的名、要你表态，或有和你有关的决定、待办、风险时提醒你；会后给你一份简短纪要。旁听只对你说，不在会里发言。" : "不旁听时只保存记录，会后整理进记忆和事项。" }}机器人入会所有参会人都能看到；会议要允许智能体加入。</small>
               <textarea v-if="a.spec" v-model="a.task" class="input" rows="2" placeholder="要它特别留意的，例如：涉及排期和人力的决定都告诉我" @input="touch" />
+              <div class="row wrap">
+                <UiCheckbox v-model="a.answer" size="sm" :disabled="!a.bots.length" @change="touch">在会中聊天里回答点名机器人的问题</UiCheckbox>
+              </div>
+              <template v-if="a.answer && a.bots.length">
+                <div class="row wrap">
+                  <span class="row">
+                    <span class="small">谁问才答</span>
+                    <UiSegmented :model-value="a.answerFrom ?? 'all'" size="sm" :options="[{ value: 'all', label: '所有参会人' }, { value: 'owner', label: '只有我' }]" aria-label="谁问才答" @update:model-value="(v) => ((a.answerFrom = v as 'all' | 'owner'), touch())" />
+                  </span>
+                  <span class="row">
+                    <span class="small">发出前</span>
+                    <UiSegmented :model-value="a.answerMode ?? 'draft'" size="sm" :options="[{ value: 'draft', label: '先给我看' }, { value: 'auto', label: '直接发' }]" aria-label="发出前要不要给我看" @update:model-value="(v) => ((a.answerMode = v as 'draft' | 'auto'), touch())" />
+                  </span>
+                  <span class="row">
+                    <span class="small">每场最多</span>
+                    <input :value="a.answerMax ?? 5" class="input sm num" type="number" inputmode="numeric" min="1" max="30" aria-label="每场会最多回答几次" @input="(e) => ((a.answerMax = Math.min(30, Math.max(1, Math.round(Number((e.target as HTMLInputElement).value) || 1)))), touch())" />
+                    <span class="small">次</span>
+                  </span>
+                </div>
+                <div class="row wrap">
+                  <UiCheckbox :model-value="!!a.answerSpoken" size="sm" @change="(v) => ((a.answerSpoken = v), touch())">口头提到机器人的名字也算提问</UiCheckbox>
+                </div>
+                <small class="muted">回答只查会议所在的空间和你在 设置 → 渠道 里对访客开放的空间，不读你的个人空间和记忆；先由门卫判断该不该答，两三句、200 字以内。{{ (a.answerMode ?? "draft") === "draft" ? "答案先发到你和机器人的私聊，你点“发到会里”才发出。" : "直接发到会里，先回一个“稍等”表情；两次回答至少隔一分钟。" }}你在会中聊天里发 /ai 停 就不再回答，/ai 继续 恢复。口头提问靠语音转写，可能听错。</small>
+              </template>
             </template>
             <template v-else-if="a.type === 'notify'">
               <UiCheckbox v-model="a.urgent" size="sm" @change="touch">紧急（夜间也推送）</UiCheckbox>

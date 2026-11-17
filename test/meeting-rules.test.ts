@@ -4,6 +4,7 @@ import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { botInvitedToMeeting, meetingEnded, ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
+import { resetMeetingAnswersForTests, settleMeetingAnswersForTests } from "../src/channels/meeting-answers.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { addNotificationSink, listNotifications, notify, releaseLater } from "../src/core/notify.ts";
 import { evaluate, eventReader } from "../src/rules/conditions.ts";
@@ -20,6 +21,7 @@ afterEach(() => {
   setLarkCliForTests(null);
   setMeetingConsumerForTests(null);
   resetMeetingsForTests();
+  resetMeetingAnswersForTests();
   for (const app of apps.splice(0)) { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
 });
 
@@ -365,26 +367,137 @@ describe("held notifications after a meeting", () => {
 });
 
 describe("answering in the meeting", () => {
-  it("a question naming the bot in the meeting chat goes to the agent at once; only that run may speak", async () => {
-    const { app, calls, botEvents } = setup();
-    saveRule(app, { name: "答疑", description: "会上有人问机器人就回答", enabled: true, trigger: { event: "meeting" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: true, spec: "assistant", answer: true }] });
+  // Guest runs a test left unanswered: end them, so nothing waits on a closed database.
+  afterEach(async () => {
+    for (const app of apps) for (const r of all<{ id: string }>(app.db, "select id from runs where kind = 'guest' and status in ('queued', 'running')")) {
+      run(app.db, "update runs set status = 'cancelled' where id = ?", r.id);
+      app.events.emit("event", { type: "run", runId: r.id });
+    }
+    await settleMeetingAnswersForTests();
+  });
+  const tick = async (app: ReturnType<typeof testApp>) => { resetMeetingsForTests(); await tickMeetings(app); };
+  const chat = (id: string, min: number, from: [string, string], text: string) => ({ event_id: id, activity_event_type: "chat_received", event_time: at(min), chat_received_items: [{ message_id: `c_${id}`, content: text, sender: { id: from[0], name: from[1] }, message_type: 1 }] });
+  const said = (id: string, min: number, from: [string, string], text: string) => ({ event_id: id, activity_event_type: "transcript_received", event_time: at(min), transcript_received_items: [{ sentence_id: `s_${id}`, text, speaker: { id: from[0], name: from[1] } }] });
+  const answerRule = (app: ReturnType<typeof testApp>, extra: Record<string, unknown> = {}) =>
+    saveRule(app, { name: "答疑", description: "会上有人问机器人就回答", enabled: true, trigger: { event: "meeting" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: true, answer: true, ...extra }] });
+  const guestRuns = (app: ReturnType<typeof testApp>) => all<{ id: string; input: string }>(app.db, "select id, input from runs where kind = 'guest' order by rowid").map((r) => ({ id: r.id, ...JSON.parse(r.input) }));
+  async function finish(app: ReturnType<typeof testApp>, runId: string, output: Record<string, unknown>) {
+    run(app.db, "update runs set status = 'done', output = ? where id = ?", JSON.stringify(output), runId);
+    app.events.emit("event", { type: "run", runId });
+    await settleMeetingAnswersForTests();
+  }
+  const texts = (calls: { url: string; data?: any }[]) => calls.filter((c) => c.url.endsWith("/bots/message") && c.data.msg_type === "text").map((c) => c.data.content);
+
+  it("a question naming the bot goes to a guest run; the answer waits on the owner's card by default", async () => {
+    const { app, calls, cards, botEvents } = setup();
+    answerRule(app);
     await ownerJoinedMeeting(app, { id: "m4", no: "444444444", topic: "周会" });
     setMeetingConsumerForTests(() => ({ stop() {} }));
-    botEvents.push([{ event_id: "q1", activity_event_type: "chat_received", event_time: at(1), chat_received_items: [{ message_id: "c9", content: "@小助理 上次定的上线时间是哪天？", sender: { id: "ou_b", name: "小李" }, message_type: 1 }] }]);
-    await tickMeetings(app);
-    const runs = all<{ input: string }>(app.db, "select input from runs where lane = 'meeting:m4' order by rowid").map((r) => JSON.parse(r.input));
-    const q = runs.find((r) => String(r.task).includes("会中有人问机器人"));
-    expect(q?.meeting).toMatchObject({ id: "m4", bot: "main", answer: true });
-    const { callTool } = await import("../src/agents/tools.ts");
-    const { createRun } = await import("../src/agents/runs.ts");
-    const asking = createRun(app, { kind: "agent", spaceId: "personal", title: "回答", input: { spec: "assistant", task: "x", meeting: { id: "m4", bot: "main", answer: true } } });
-    const ctx = { app, runId: asking.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" as const };
-    expect(JSON.stringify(await callTool(ctx, "meeting_send", { text: "上次定的是 11 月 3 日" }))).toContain("已发到会中聊天");
-    expect(calls.at(-1)).toMatchObject({ method: "POST", url: "/open-apis/vc/v1/bots/message", data: { meeting_id: "m4", content: "上次定的是 11 月 3 日", msg_type: "text" } });
-    const other = createRun(app, { kind: "agent", spaceId: "personal", title: "别的", input: { spec: "assistant", task: "x" } });
-    const refused = await callTool({ ...ctx, runId: other.id }, "meeting_send", { text: "hi" });
-    expect(refused).toMatchObject({ isError: true });
-    expect(JSON.stringify(refused)).toContain("不能在会中发言");
+    botEvents.push([chat("q1", 1, ["ou_b", "小李"], "@小助理 上次定的上线时间是哪天？"), chat("q0", 1, ["ou_a", "小王"], "大家看下文档")]);
+    await tick(app);
+    const [g] = guestRuns(app);
+    expect(guestRuns(app)).toHaveLength(1);
+    expect(g).toMatchObject({ chatId: "meeting:m4", senderName: "小李", text: "@小助理 上次定的上线时间是哪天？" });
+    expect(g.note).toContain("200 字以内");
+    expect(g.spaces).not.toContain("personal");
+    // No agent of the owner's speaks: nothing went to the meeting, not even the “稍等” reaction.
+    expect(calls.some((c) => c.url.endsWith("/bots/message"))).toBe(false);
+    const long = `上次定的是 11 月 3 日上线，依据《发布计划》。${"补充说明。".repeat(60)}`;
+    await finish(app, g.id, { verdict: "answer", reason: "", answer: long });
+    expect(calls.some((c) => c.url.endsWith("/bots/message"))).toBe(false);
+    const card = JSON.stringify(cards.at(-1));
+    expect(card).toContain("要发这个回答吗");
+    expect(card).toContain("发到会里");
+    const click = (action: string) => handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: `om_card${cards.length}` }, action: { tag: "button", value: { action } } });
+    const r = await click("send");
+    expect(JSON.stringify(r.card)).toContain("已发到会里");
+    const [sent] = texts(calls);
+    expect(sent.length).toBeLessThanOrEqual(200);
+    expect(sent.startsWith("上次定的是 11 月 3 日上线")).toBe(true);
+    expect(one<{ n: number }>(app.db, "select count(*) n from audit_events where action = 'lark.meeting-answer' and target = 'm4'")!.n).toBe(1);
+    // The same message seen again (batches overlap) is not asked twice.
+    botEvents.push([chat("q1", 1, ["ou_b", "小李"], "@小助理 上次定的上线时间是哪天？")]);
+    await tick(app);
+    expect(guestRuns(app)).toHaveLength(1);
+  });
+
+  it("auto mode posts at once after a “稍等” reaction, keeps a minute between answers and stops at the limit", async () => {
+    const { app, calls, botEvents } = setup();
+    answerRule(app, { answerMode: "auto", answerMax: 2 });
+    await ownerJoinedMeeting(app, { id: "m5", no: "555555555", topic: "评审" });
+    setMeetingConsumerForTests(() => ({ stop() {} }));
+    botEvents.push([chat("a1", 1, ["ou_b", "小李"], "小助理 接口文档在哪？")]);
+    await tick(app);
+    expect(calls.find((c) => c.url.endsWith("/bots/message"))?.data).toMatchObject({ msg_type: "reaction", content: "OneSecond" });
+    await finish(app, guestRuns(app)[0].id, { verdict: "answer", reason: "", answer: "在《接口说明》第二节。" });
+    expect(texts(calls)).toEqual(["在《接口说明》第二节。"]);
+    // A second question right away waits for nobody: it is skipped, and said so in the summary.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 25_000);
+      botEvents.push([chat("a2", 2, ["ou_a", "小王"], "小助理 那测试环境呢？")]);
+      await tick(app);
+      expect(guestRuns(app)).toHaveLength(1);
+      vi.setSystemTime(Date.now() + 120_000);
+      botEvents.push([chat("a3", 4, ["ou_a", "小王"], "小助理 测试环境地址是什么？")]);
+      await tick(app);
+      expect(guestRuns(app)).toHaveLength(2);
+      // The gatekeeper said no: nothing is posted.
+      await finish(app, guestRuns(app)[1].id, { verdict: "refuse", reason: "打听私人信息" });
+      expect(texts(calls)).toHaveLength(1);
+      vi.setSystemTime(Date.now() + 120_000);
+      botEvents.push([chat("a4", 6, ["ou_a", "小王"], "小助理 发布时间？")]);
+      await tick(app);
+      await finish(app, guestRuns(app)[2].id, { verdict: "answer", reason: "", answer: "周四。" });
+      vi.setSystemTime(Date.now() + 120_000);
+      botEvents.push([chat("a5", 8, ["ou_a", "小王"], "小助理 还有吗？")]);
+      await tick(app);
+      expect(guestRuns(app)).toHaveLength(3);
+    } finally { vi.useRealTimers(); }
+    const { answersText } = await import("../src/channels/meeting-answers.ts");
+    const summary = answersText(one<{ answers: string }>(app.db, "select answers from lark_meetings where meeting_id = 'm5'")!);
+    expect(summary).toContain("离上次回答不到一分钟");
+    expect(summary).toContain("门卫：拒绝");
+    expect(summary).toContain("回答到上限（2 次）");
+  });
+
+  it("only the owner's questions when the rule says so; /ai 停 and /ai 继续 from the owner pause and resume", async () => {
+    const { app, calls, botEvents } = setup();
+    answerRule(app, { answerMode: "auto", answerFrom: "owner" });
+    await ownerJoinedMeeting(app, { id: "m6", no: "666666666", topic: "站会" });
+    setMeetingConsumerForTests(() => ({ stop() {} }));
+    botEvents.push([chat("o1", 1, ["ou_b", "小李"], "小助理 上线时间？")]);
+    await tick(app);
+    expect(guestRuns(app)).toHaveLength(0);
+    botEvents.push([chat("o2", 2, ["ou_b", "小李"], "/ai 停"), chat("o3", 2, ["ou_owner", "我"], "/ai 停")]);
+    await tick(app);
+    expect(calls.filter((c) => c.url.endsWith("/bots/message")).map((c) => c.data.content)).toEqual(["OK"]);
+    botEvents.push([chat("o4", 3, ["ou_owner", "我"], "小助理 上线时间？")]);
+    await tick(app);
+    expect(guestRuns(app)).toHaveLength(0);
+    botEvents.push([chat("o5", 4, ["ou_owner", "我"], "/ai 继续"), chat("o6", 4, ["ou_owner", "我"], "小助理 上线时间？")]);
+    await tick(app);
+    expect(guestRuns(app)).toHaveLength(1);
+  });
+
+  it("spoken questions count only when the rule says so, once the sentence settles", async () => {
+    const { app, botEvents } = setup();
+    answerRule(app, { answerSpoken: true });
+    await ownerJoinedMeeting(app, { id: "m7", no: "777777777", topic: "周会" });
+    setMeetingConsumerForTests(() => ({ stop() {} }));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      botEvents.push([said("t1", 1, ["ou_b", "小李"], "小助理帮我查")]);
+      await tick(app);
+      expect(guestRuns(app)).toHaveLength(0);
+      vi.setSystemTime(Date.now() + 20_000);
+      botEvents.push([said("t1", 1, ["ou_b", "小李"], "小助理帮我查一下发布计划")]);
+      await tick(app);
+      const runs = guestRuns(app);
+      expect(runs).toHaveLength(1);
+      expect(runs[0].text).toBe("小助理帮我查一下发布计划");
+      expect(runs[0].note).toContain("语音转写");
+    } finally { vi.useRealTimers(); }
   });
 });
 

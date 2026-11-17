@@ -160,8 +160,10 @@ export const actionSchema = z.discriminatedUnion("type", [
    * lark.bots; empty = none, listening as the owner only), after asking the owner on a card unless
    * `confirm` is off, or a meeting condition decides when to ask. `record` keeps the meeting
    * (transcript, chat, who came and went) as a source;
-   * `spec` listens along and tells the owner when they are needed; `answer` lets it answer questions
-   * put to a bot in the meeting chat; `importShared` imports documents shared on screen;
+   * `spec` listens along and tells the owner when they are needed; `answer` lets a bot answer questions
+   * put to it in the meeting chat (src/channels/meeting-answers.ts), held by `answerFrom` (who may ask),
+   * `answerMode` (a draft the owner sends, or straight in), `answerMax` (answers per meeting) and
+   * `answerSpoken` (spoken questions naming the bot count too); `importShared` imports documents shared on screen;
    * `leaveWithOwner` takes the bots out when the owner leaves. See src/channels/lark-meetings.ts.
    */
   z.object({
@@ -173,6 +175,10 @@ export const actionSchema = z.discriminatedUnion("type", [
     space: z.string().transform(v => v || undefined).optional(),
     task: z.string().default(""),
     answer: z.boolean().default(false),
+    answerFrom: z.enum(["all", "owner"]).default("all"),
+    answerMode: z.enum(["draft", "auto"]).default("draft"),
+    answerMax: z.number().int().min(1).max(30).default(5),
+    answerSpoken: z.boolean().default(false),
     importShared: z.boolean().default(true),
     leaveWithOwner: z.boolean().default(true),
   }),

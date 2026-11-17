@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，这里只留最近的；更早的按时间段放在同目录的归档文件里。读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-17
+updated: 2026-11-18
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -14,6 +14,13 @@ updated: 2026-11-17
 - [2026-10](./changes-2026-10.md)（10-13 至 10-31，128 节）：规则页与规则引擎、多 Agent 协作、访客与私聊指令、分档评审、多个飞书机器人、会议规则、插件、设备的外部 Agent、夜间复盘、原件治理、需求树。
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
+
+## 会议里回答提问：按访客处理，先给本人看，有上限、能暂停（11-18）
+
+- 会议规则的“在会中聊天里回答点名机器人的问题”原来交给本人的旁听档案，用 `meeting_send` 直接发到会里，读的是本人的范围。现在由 `src/channels/meeting-answers.ts` 接手：提问按访客处理（`askAsGuest`，门卫先判断，`guest` 角色只读会议所在空间和对访客开放的空间，答案截到 200 字以内），再按规则的控制项发出。旁听档案只对本人说，`meeting_send` 工具去掉了。
+- 规则动作 `meeting-bot` 新增 `answerFrom`（all / owner）、`answerMode`（draft 默认 / auto）、`answerMax`（默认 5）、`answerSpoken`（默认关）。草稿发卡片到本人私聊（`card_interactions.purpose = meeting-answer`，“发到会里 / 不发 / 这场会不再回答”）；直接发时先回 `OneSecond` 表情，两次至少隔一分钟。本人在会中聊天发 `/ai 停`、`/ai 继续` 暂停和恢复。
+- 状态记在 `lark_meetings.answers`（新列），每次发出写 `audit_events`（`lark.meeting-answer`），会后纪要或通知列出回答了什么、哪些没回答和原因。不再需要旁听档案才能回答。
+- 规则页“拉机器人入会”动作里加了这几项设置。设计在 `docs/v2/rules.md`“在会中聊天里回答”，测试 `test/meeting-rules.test.ts`。飞书公开文档里没有机器人在会议里出声的接口（`vc/v1/bots/*` 在内测，只能发文字和表情），所以没有做语音。
 
 ## 知识库爬取：掉登录、断网时暂停，不再把整个队列记成失败（11-18）
 

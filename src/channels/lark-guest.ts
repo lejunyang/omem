@@ -32,6 +32,8 @@ export type GuestAsk = {
   gateOnly?: boolean;
   /** The bot that was asked (lark.bots id; main when absent): it reads the chat's earlier messages. */
   bot?: string;
+  /** Where the answer will be shown and how long it may be (a meeting's chat, meeting-answers.ts); else a chat reply. */
+  note?: string;
 };
 export type GuestVerdict = { verdict: "answer" | "refuse" | "ignore"; reason: string; reply?: string; answer?: string };
 
@@ -148,7 +150,7 @@ export async function guestRun(ctx: RunContext): Promise<GuestVerdict> {
     "",
     `可以读的空间：${spaces.join("、")}${q.spaces.length ? "" : "（这是一个空的空间：没有资料可查，只按常识回答，答不了就直说）"}`,
     "",
-    "你最后写的文字会由机器人原样发给提问的人。",
+    q.note ?? "你最后写的文字会由机器人原样发给提问的人。",
   ].join("\n");
   const r = await runRole(ctx.app, { role: "guest", fullAccess: ctx.app.config.lark.guests.fullAccess, spaceId, spaces, task, runId: ctx.run.id, signal: ctx.signal, lark: { chats: [] }, onEvent: (e) => ctx.event(e.type, e) });
   return { verdict, reason, answer: replyOf(r).trim() };

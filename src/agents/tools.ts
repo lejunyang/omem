@@ -1050,7 +1050,7 @@ function assistantTaskScope(ctx: ToolContext) {
  */
 const LEND_DENIED = new Set([
   "lark_write", "lark_invite", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize",
-  "lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "meeting_send", "reply_to_asker",
+  "lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "reply_to_asker",
   "run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run",
   "stay_quiet", "report_rule_failure", ...ROLE_TOOLS,
 ]);
@@ -2935,21 +2935,6 @@ def({
     const { reactLark } = await import("../channels/lark-send.ts");
     await reactLark(a.message_id, a.emoji ?? "OnIt", ctx.larkBot);
     return "已加表情";
-  },
-});
-
-def({
-  name: "meeting_send",
-  description:
-    "在你正在旁听的飞书会议里，以机器人身份往会中聊天发一句话（所有参会人可见）。只在规则允许回答会中提问、且有人点名问机器人时用；简短，只回答问题。",
-  write: true,
-  schema: z.object({ text: z.string().min(1).max(500) }),
-  handler: async (ctx, a) => {
-    const m = ctx.runId ? (getRun(ctx.app, ctx.runId).input.meeting as { id: string; bot: string | null; answer: boolean } | undefined) : undefined;
-    if (!m?.answer || !m.bot) throw new HttpError(403, "这次运行不能在会中发言（只有规则允许回答会中提问的旁听可以）");
-    const { sendMeetingMessage } = await import("../channels/lark-meetings.ts");
-    await sendMeetingMessage(ctx.app, m.id, m.bot, a.text);
-    return "已发到会中聊天";
   },
 });
 
