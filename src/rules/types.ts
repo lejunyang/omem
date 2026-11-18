@@ -29,6 +29,9 @@ export const FIELDS = {
   "meeting.participantCount": "在会人数（入会时和之后十分钟内，不算机器人）",
   "meeting.invitedCount": "会邀人数（日程邀请的人，群按成员算，不算会议室和拒绝的）",
   "meeting.host": "主持人",
+  "meeting.chat": "在哪个群里发起的（群名；只有机器人所在的群里发起的会议有）",
+  "meeting.startedBy": "在群里发起会议的人",
+  "meeting.ownerIn": "你在会上（你入会时成立；群里有人发起、你还没进会时不成立）",
   "doc.title": "文档标题",
   "doc.type": "文档类型（docx 文档 / sheet 电子表格 / bitable 多维表格）",
   "doc.url": "文档链接",
@@ -231,6 +234,11 @@ export const ruleInputSchema = z.object({
     objectKind: z.string().trim().min(3).max(80).optional(),
     /** …and which new states it is about (the kind's status ids); left out or empty, any. */
     objectStatuses: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    /**
+     * A `meeting` rule: which meetings it looks at. `joined` the owner joined one (the default); `group`
+     * someone started one in a group one of omem's bots is in (the owner may not be in it); `both`.
+     */
+    meetingFrom: z.enum(["joined", "group", "both"]).optional(),
     /** For those of `docs` the bot cannot subscribe to: how often to check them instead (lark-doc-events.ts pollRuleDocs). */
     pollMinutes: z.number().int().min(5).max(1440).optional(),
     once: z.enum(["event", "chat"]).default("event"),
@@ -273,7 +281,7 @@ export type RuleEvent = {
   sender?: { id?: string; name: string; email?: string | null; kind: "owner" | "user" | "bot" };
   message?: { id: string; text: string; type: string; mentionsOwner: boolean; mentionsBot: boolean; topicId?: string | null; cardTitle?: string | null };
   /** The meeting the owner joined. participantCount: null = unknown; omitted = count participants. invitedCount: null or omitted = unknown. */
-  meeting?: { id: string; no?: string; title: string; participants: string[]; participantCount?: number | null; invitedCount?: number | null; host?: string; calendarEventId?: string };
+  meeting?: { id: string; no?: string; title: string; participants: string[]; participantCount?: number | null; invitedCount?: number | null; host?: string; calendarEventId?: string; chat?: { id: string; name: string }; startedBy?: string; ownerIn?: boolean };
   /** A document that changed (lark-doc-events.ts): what changed, who changed it, who it @-mentions. */
   doc?: { token: string; type: string; title: string; url: string; location?: string; space?: string; sourceId?: string };
   change?: {

@@ -63,6 +63,12 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
         return e.meeting?.invitedCount ?? undefined;
       case "meeting.host":
         return e.meeting?.host;
+      case "meeting.chat":
+        return e.meeting?.chat?.name;
+      case "meeting.startedBy":
+        return e.meeting?.startedBy;
+      case "meeting.ownerIn":
+        return e.meeting ? e.meeting.ownerIn !== false : undefined;
       case "doc.title":
         return e.doc?.title;
       case "doc.type":

@@ -21,7 +21,7 @@ import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./ty
 export async function dispatchRuleEvent(app: App, e: RuleEvent, only?: (r: Rule) => boolean) {
   let rules: Rule[];
   try {
-    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind && inScope(app, r, e) && (!only || only(r)));
+    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind && meetingFromOk(r, e) && inScope(app, r, e) && (!only || only(r)));
   } catch {
     return;
   }
@@ -38,6 +38,14 @@ export async function dispatchRuleEvent(app: App, e: RuleEvent, only?: (r: Rule)
   } finally {
     endJudging(e.key);
   }
+}
+
+/** A meeting rule looks at the meetings the owner joined, those started in a bot's group, or both. */
+export function meetingFromOk(r: Pick<Rule, "trigger">, e: RuleEvent) {
+  if (e.kind !== "meeting") return true;
+  const from = r.trigger.meetingFrom ?? "joined";
+  if (from === "both") return true;
+  return from === "group" ? !!e.meeting?.chat : e.meeting?.ownerIn !== false;
 }
 
 /**
@@ -323,15 +331,16 @@ export async function testRule(app: App, input: RuleInput, opts: { chatId?: stri
   };
 }
 
-/** A meeting rule tried on the meetings omem saw the owner join recently (no model, nothing fired). */
+/** A meeting rule tried on the meetings omem saw recently (the owner joined, or started in a bot's group; no model, nothing fired). */
 async function testMeetingRule(app: App, rule: Rule | ReturnType<typeof ruleInputSchema.parse>) {
   const { recentMeetingEvents } = await import("../channels/lark-meetings.ts");
   const events = recentMeetingEvents(app, 30);
   const matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[] = [];
   const action = rule.actions.find((a) => a.type === "meeting-bot");
   for (const e of events) {
+    if (!meetingFromOk(rule, e)) continue;
     const d = await judge(app, { ...rule, id: `test:${now()}` }, e, { ai: false });
-    if (d.match) matches.push({ messageId: e.meeting!.id, chat: e.meeting!.title || "（无标题会议）", sender: `${e.meeting!.participantCount === null ? "在会人数未知" : `在会 ${e.meeting!.participantCount ?? e.meeting!.participants.length} 人`}${typeof e.meeting!.invitedCount === "number" ? ` · 会邀 ${e.meeting!.invitedCount} 人` : ""}`, text: e.meeting!.participants.join("、"), at: e.at, reason: d.reason, by: d.by, ...(action ? { action: (await meetingConfirmation(action, e)).reason } : {}) });
+    if (d.match) matches.push({ messageId: e.meeting!.id, chat: `${e.meeting!.title || "（无标题会议）"}${e.meeting!.chat ? `（群「${e.meeting!.chat.name}」${e.meeting!.ownerIn === false ? "，你不在会上" : ""}）` : ""}`, sender: `${e.meeting!.participantCount === null ? "在会人数未知" : `在会 ${e.meeting!.participantCount ?? e.meeting!.participants.length} 人`}${typeof e.meeting!.invitedCount === "number" ? ` · 会邀 ${e.meeting!.invitedCount} 人` : ""}`, text: e.meeting!.participants.join("、"), at: e.at, reason: d.reason, by: d.by, ...(action ? { action: (await meetingConfirmation(action, e)).reason } : {}) });
   }
-  return { checked: events.length, matches, note: events.length ? (rule.judge !== "code" ? "列出的是条件命中的会议，还要模型确认" : "") : "还没有记录到你加入过的会议（启用会议规则后，omem 才开始留意你入会）" };
+  return { checked: events.length, matches, note: events.length ? (rule.judge !== "code" ? "列出的是条件命中的会议，还要模型确认" : "") : "还没有记录到会议（启用会议规则后，omem 才开始留意你入会和机器人所在的群里发起的会议）" };
 }

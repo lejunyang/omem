@@ -28,6 +28,8 @@ export async function rulePermissions(app: App, rule: Pick<Rule, "trigger" | "ac
     out.notes.push("应用的会议权限还要配“权限可访问的数据范围”：开发者后台 → 权限管理 → 数据范围，选“按条件筛选”，条件“会议的归属者 包含 与应用的可用范围一致”；配完重新发布版本。omem 读不到这一项。");
     out.notes.push("会议本身要允许机器人进：多人视频会议、开着 AI 纪要、安全设置里打开“允许智能体加入”；有密码、等候室或只许特定人入会时机器人会被拦下。");
   }
+  if ((rule.trigger.meetingFrom ?? "joined") !== "joined")
+    out.notes.push("看群里发起的会议：只对 omem 的机器人所在、并能收到群里全部消息（im:message.group_msg）的群有效，你的个人采集读不到会议号。按会议号查会议要应用有“获取会议信息”（vc:meeting:readonly）权限；没有时机器人入会后再认这场会议。你不在会上时，只有入会的机器人能读会中内容。");
   return out;
 }
 

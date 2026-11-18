@@ -2083,6 +2083,12 @@ export const migrations: readonly string[] = [
    alter table study_trials add column peer_seen text;`,
   // Answering in a meeting's chat (channels/meeting-answers.ts): paused or not, what was answered, skipped and in flight.
   `alter table lark_meetings add column answers text not null default '{}';`,
+  // A meeting started in a group one of omem's bots is in (lark-meetings.ts groupMeetingStarted): which group, who
+  // started it, and whether the owner is in it (0 until they join; meetings they joined are 1).
+  `alter table lark_meetings add column chat_id text;
+   alter table lark_meetings add column chat_name text;
+   alter table lark_meetings add column started_by text;
+   alter table lark_meetings add column owner_in integer not null default 1;`,
 ];
 
 export type Db = DatabaseSync;

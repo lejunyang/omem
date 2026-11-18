@@ -39,7 +39,7 @@ type Rule = {
   name: string;
   description: string;
   enabled: boolean;
-  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc" | "object"; docs?: string[]; pollMinutes?: number; objectKind?: string; objectStatuses?: string[]; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[]; fast?: boolean };
+  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc" | "object"; meetingFrom?: "joined" | "group" | "both"; docs?: string[]; pollMinutes?: number; objectKind?: string; objectStatuses?: string[]; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[]; fast?: boolean };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
   judgeWith?: "decision" | "general";
@@ -619,8 +619,9 @@ function startFrom(text: string) {
         <section class="block">
           <div class="block-head"><h3>什么时候看</h3></div>
           <div class="row wrap">
-            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '我加入会议时' }, { value: 'doc', label: '文档变化' }, { value: 'object', label: '对象状态变化' }]" aria-label="触发" @change="onTrigger" />
+            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '会议' }, { value: 'doc', label: '文档变化' }, { value: 'object', label: '对象状态变化' }]" aria-label="触发" @change="onTrigger" />
             <UiSegmented v-if="form.trigger.event === 'message'" v-model="form.trigger.once" size="sm" :options="[{ value: 'event', label: '每条消息' }, { value: 'chat', label: '每个群只一次' }]" aria-label="触发次数" @change="touch" />
+            <UiSegmented v-if="meetingRule" :model-value="form.trigger.meetingFrom ?? 'joined'" size="sm" :options="[{ value: 'joined', label: '我入会时' }, { value: 'group', label: '群里有人发起时' }, { value: 'both', label: '两种都算' }]" aria-label="哪些会议" @update:model-value="(v) => ((form!.trigger.meetingFrom = v === 'joined' ? undefined : (v as 'group' | 'both')), touch())" />
             <input v-if="form.trigger.event === 'schedule'" v-model="form.trigger.cron" class="input sm mono cron" placeholder="0 9 * * 1-5" aria-label="cron" @input="touch" />
           </div>
           <div v-if="form.trigger.event === 'message'" class="row wrap">
@@ -633,7 +634,7 @@ function startFrom(text: string) {
           </div>
           <small v-if="form.trigger.event === 'message'" class="muted">“每个群只一次”适合拉机器人、开始监听这类一次就够的事。等待和跳过在动手前看一眼这段讨论：你在话题里或半小时内在群里说过话，算“已在讨论里”。</small>
           <small v-else-if="form.trigger.event === 'schedule'" class="muted">cron 写法：分 时 日 月 周，例如 0 9 * * 1-5 是工作日早上 9 点。</small>
-          <small v-else-if="meetingRule" class="muted">你加入一场飞书视频会议时判断（用你的 lark-cli 登录接收入会事件）。每场会议对这条规则只触发一次；入会后十分钟内参会人变了会再判断一次。不写条件就是每场会议。</small>
+          <small v-else-if="meetingRule" class="muted">“我入会时”：你加入一场飞书视频会议时判断（用你的 lark-cli 登录接收入会事件），入会后十分钟内参会人变了会再判断一次。“群里有人发起时”：omem 的机器人所在的群里有人发起会议就判断，你不在会上也算，之后你进了同一场会不会再触发；你不在会上时，只有入会的机器人能读会中内容。每场会议对这条规则只触发一次，不写条件就是每场会议。</small>
           <template v-if="objectRule">
             <div class="row wrap">
               <span class="small">哪种对象</span>

@@ -35,6 +35,13 @@ import { answersText, MEETING_KINDS, meetingScope, suggestedText } from "./meeti
  * - Who is there: participants from the owner's view of the meeting events (bots left out of the
  *   count), and how many the calendar event invited (groups by their members, rooms left out), found
  *   through the event's meeting link. Either may be unknown; a rule then treats it as such.
+ * - Started in a group: someone starts a meeting in a group one of omem's bots is in. The bot gets the
+ *   group's `video_chat` message, whose content carries the 9-digit number (`meet_number`; the owner's
+ *   lark-cli renders the same message as “[Video call]” and has no number), and the meeting goes to the
+ *   rules that ask for group meetings (`trigger.meetingFrom`), the owner in it or not. The meeting's id
+ *   comes from its number (`vc/v1/meetings/list_by_no` as the bot) or, failing that, from the bot's join;
+ *   until then the row is keyed `no:<number>`. When the owner joins it later it is the same meeting.
+ *   Without the owner in it, only a bot in the meeting can read what happens there.
  * - Invited by hand: someone puts one of omem's bots into a meeting from the meeting itself
  *   (`vc.bot.meeting_invited_v1`, subscribed in that bot's app). The owner's invitation is followed
  *   at once, anyone else's goes to the owner on a card. No rule needed.
@@ -76,10 +83,33 @@ type Row = {
   minutes_token: string | null;
   /** Answering in the meeting chat (meeting-answers.ts), JSON. */
   answers: string;
+  /** Started in this group (groupMeetingStarted); null for meetings found by the owner joining. */
+  chat_id: string | null;
+  chat_name: string | null;
+  started_by: string | null;
+  /** 1 once the owner is in the meeting; 0 for a group's meeting they have not joined. */
+  owner_in: number;
   updated_at: string;
 };
 
 const getRow = (app: App, id: string) => one<Row>(app.db, "select * from lark_meetings where meeting_id = ?", id);
+/** Not followed to the end yet. */
+const LIVE = "('seen','asked','listening','joined')";
+const isLive = (status: string) => ["seen", "asked", "listening", "joined"].includes(status);
+/** Keyed by its number until its id is known (groupMeetingStarted). */
+const PENDING = "no:";
+/** A row by id, or by the number its placeholder id carried before the real id was learned (a card sent meanwhile still says `no:…`). */
+function findRow(app: App, id: string) {
+  return getRow(app, id) ?? (id.startsWith(PENDING) ? one<Row>(app.db, "select * from lark_meetings where meeting_no = ? and chat_id is not null order by started_at desc limit 1", id.slice(PENDING.length)) : undefined);
+}
+/** The meeting's real id is known now: the row and its lines move over. Returns the id it goes by. */
+function adoptMeetingId(app: App, from: string, to: string) {
+  if (from === to || !from.startsWith(PENDING) || getRow(app, to)) return from;
+  run(app.db, "update lark_meetings set meeting_id = ? where meeting_id = ?", to, from);
+  run(app.db, "update lark_meeting_lines set meeting_id = ? where meeting_id = ?", to, from);
+  log(`会议号 ${from.slice(PENDING.length)} 的会议 id 是 ${to}`);
+  return to;
+}
 /** For meeting-answers.ts. */
 export const meetingRow = getRow;
 export const setMeetingAnswers = (app: App, id: string, answers: string) => run(app.db, "update lark_meetings set answers = ? where meeting_id = ?", answers, id);
@@ -89,10 +119,15 @@ function update(app: App, id: string, set: Partial<Record<keyof Row, string | nu
   run(app.db, `update lark_meetings set ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? where meeting_id = ?`, ...keys.map((k) => set[k as keyof Row] ?? null), now(), id);
 }
 
-/** Enabled rules that watch for the owner's meetings. */
+/** Enabled rules that watch for the owner's meetings (a group's meeting the owner joins counts as theirs too). */
 async function meetingRulesOn(app: App) {
   const { listRules } = await import("../rules/store.ts");
   return listRules(app, { enabledOnly: true }).some((r) => r.trigger.event === "meeting");
+}
+/** Enabled rules that look at meetings started in a group. */
+async function groupMeetingRulesOn(app: App) {
+  const { listRules } = await import("../rules/store.ts");
+  return listRules(app, { enabledOnly: true }).some((r) => r.trigger.event === "meeting" && (r.trigger.meetingFrom ?? "joined") !== "joined");
 }
 
 // ---- noticing the owner joined ---------------------------------------------------------------
@@ -253,10 +288,19 @@ async function pollActive(app: App) {
 
 /** The owner joined a meeting: remember it, see who is there, and let the rules look at it. */
 export async function ownerJoinedMeeting(app: App, m: MeetingInfo) {
+  // Started in a bot's group and known by its number so far: the same meeting.
+  const pending = !getRow(app, m.id) && m.no ? one<Row>(app.db, `select * from lark_meetings where meeting_id = ? and status in ${LIVE}`, `${PENDING}${m.no}`) : undefined;
+  if (pending) adoptMeetingId(app, pending.meeting_id, m.id);
   const row = getRow(app, m.id);
   if (row) {
     // Back in a meeting the bots left with the owner: bring them back the same way.
     if (row.status === "ended" && row.error === "owner-left" && row.plan) await startPlan(app, m.id, json<MeetingPlan>(row.plan, null as never));
+    // A group's meeting the owner joined now: rules about the owner's meetings look at it too (one already acting on it stays).
+    if (!row.owner_in) {
+      update(app, m.id, { owner_in: 1 });
+      log(`你加入了群「${row.chat_name ?? ""}」里发起的会议「${row.topic}」（${m.id}）`);
+      if (!row.plan && isLive(row.status)) await dispatchMeeting(app, m.id);
+    }
     return;
   }
   const at = now();
@@ -367,7 +411,18 @@ function eventOf(row: Row): RuleEvent {
     key: `meeting:${row.meeting_id}`,
     kind: "meeting",
     at: row.started_at,
-    meeting: { id: row.meeting_id, no: row.meeting_no ?? undefined, title: row.topic, participants: people.map((p) => p.name).filter(Boolean), participantCount: people.length ? countOf(people) : null, invitedCount: row.invited ?? null, host: people.find((p) => p.host)?.name, calendarEventId: row.calendar_event_id ?? undefined },
+    meeting: {
+      id: row.meeting_id,
+      no: row.meeting_no ?? undefined,
+      title: row.topic,
+      participants: people.map((p) => p.name).filter(Boolean),
+      participantCount: people.length ? countOf(people) : null,
+      invitedCount: row.invited ?? null,
+      host: people.find((p) => p.host)?.name,
+      calendarEventId: row.calendar_event_id ?? undefined,
+      ...(row.chat_id ? { chat: { id: row.chat_id, name: row.chat_name ?? "" }, ...(row.started_by ? { startedBy: row.started_by } : {}) } : {}),
+      ownerIn: row.owner_in !== 0,
+    },
     via: "meeting",
   };
 }
@@ -377,7 +432,7 @@ async function dispatchMeeting(app: App, id: string) {
   await dispatchRuleEvent(app, eventOf(getRow(app, id)!));
 }
 
-/** Meetings omem saw the owner join, newest first (for trying a rule). */
+/** Meetings omem saw (the owner joined, or started in a bot's group), newest first (for trying a rule). */
 export function recentMeetingEvents(app: App, limit = 30): RuleEvent[] {
   return all<Row>(app.db, "select * from lark_meetings order by started_at desc limit ?", limit).map(eventOf);
 }
@@ -386,10 +441,10 @@ export function recentMeetingEvents(app: App, limit = 30): RuleEvent[] {
 
 /** A meeting rule fired (rules/actions.ts): ask the owner first, or go ahead. */
 export async function meetingAction(app: App, request: MeetingRequest, e: RuleEvent): Promise<string> {
-  const id = e.meeting?.id;
-  if (!id) throw new HttpError(400, "这次触发没有会议");
-  const row = getRow(app, id);
+  if (!e.meeting?.id) throw new HttpError(400, "这次触发没有会议");
+  const row = findRow(app, e.meeting.id);
   if (!row) throw new HttpError(404, "没有这场会议的记录");
+  const id = row.meeting_id;
   if (row.plan) return `这场会议已经由规则「${json<MeetingPlan>(row.plan, null as never)?.ruleName ?? "?"}」处理`;
   if (request.bots.length && !row.meeting_no) throw new HttpError(400, "事件里没有会议号，机器人没法入会");
   const decision = await meetingConfirmation(request, e);
@@ -420,8 +475,9 @@ function botName(app: App, ref: string) {
 
 type CardPayload = { meetingId: string };
 /** The card that asks the owner whether to bring the bots in. */
-export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "meeting_no" | "participants"> & { invited?: number | null }, plan: MeetingPlan, state?: "approved" | "declined" | "gone", decided?: { at?: string; result?: string }) {
+export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "meeting_no" | "participants"> & { invited?: number | null; chat_name?: string | null; started_by?: string | null; owner_in?: number }, plan: MeetingPlan, state?: "approved" | "declined" | "gone", decided?: { at?: string; result?: string }) {
   const people = peopleOf(row);
+  const away = row.owner_in === 0;
   const doing = [
     plan.record ? "保存会议记录（转写、会中聊天、进出）" : "",
     plan.spec ? `${plan.spec === "assistant" ? "主助手" : plan.spec} 旁听，需要你时提醒你` : "",
@@ -431,12 +487,13 @@ export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "m
   ].filter(Boolean);
   const blocks: import("./lark-send.ts").CardBlock[] = [
     { fields: [{ label: "会议", value: row.topic || "（无标题）" }, { label: "会议号", value: row.meeting_no ?? "—" }, { label: "人数", value: `${people.length ? `在会 ${countOf(people)}` : "在会人数未知"} · ${row.invited !== null && row.invited !== undefined ? `会邀 ${row.invited}` : "会邀未知"}` }, { label: "规则", value: plan.ruleName }] },
+    ...(row.chat_name ? [{ markdown: `在群「${row.chat_name}」里由${row.started_by ? ` ${row.started_by} ` : "有人"}发起${away ? "，**你不在会上**" : ""}` }] : []),
     { markdown: `**拉进会的机器人**：${botNames(app, plan.bots).join("、")}${doing.length ? `\n**之后**：${doing.join("；")}` : ""}` },
     ...(plan.confirmationReason ? [{ markdown: `**确认方式**：${plan.confirmationReason}` }] : []),
   ];
   if (!state) {
     blocks.push({ buttons: [{ text: "拉进去", value: "approve", style: "primary" }, { text: "这次不用", value: "decline" }] });
-    blocks.push({ note: "机器人入会后所有参会人都能看到它。会议需要允许智能体加入。" });
+    blocks.push({ note: `机器人入会后所有参会人都能看到它${away ? "，你不在会上时它代你听" : ""}。会议要打开「AI 纪要」并允许智能体加入。` });
   } else
     blocks.push(...decidedBlocks({
       verdict: state === "approved" ? "拉机器人入会" : state === "declined" ? "这场会议不拉机器人" : "会议已经结束",
@@ -458,7 +515,7 @@ async function askOwner(app: App, row: Row, plan: MeetingPlan) {
 
 /** The owner answered the card (lark-actions.ts). Returns the card to show instead. */
 export async function decideMeetingJoin(app: App, payload: CardPayload, approve: boolean) {
-  const row = getRow(app, payload.meetingId);
+  const row = findRow(app, payload.meetingId);
   if (!row?.plan) throw new HttpError(404, "没有这场会议的记录");
   const plan = json<MeetingPlan>(row.plan, null as never);
   if (row.status === "ended") return meetingCard(app, row, plan, "gone");
@@ -468,7 +525,7 @@ export async function decideMeetingJoin(app: App, payload: CardPayload, approve:
   }
   const at = new Date().toISOString();
   const detail = await startPlan(app, row.meeting_id, plan);
-  return meetingCard(app, getRow(app, row.meeting_id)!, plan, "approved", { at, result: detail });
+  return meetingCard(app, findRow(app, row.meeting_id) ?? row, plan, "approved", { at, result: detail });
 }
 
 /** Bring the bots in and start listening, as the plan says. Returns what happened. */
@@ -477,7 +534,13 @@ async function startPlan(app: App, id: string, plan: MeetingPlan, opts: { retry?
   const joined: Joined[] = [];
   for (const ref of plan.bots) {
     try {
-      await botCall(ref, "POST", "/open-apis/vc/v1/bots/join", { data: { join_type: 1, join_identify: { meeting_no: row.meeting_no } } });
+      const r = await botCall(ref, "POST", "/open-apis/vc/v1/bots/join", { data: { join_type: 1, join_identify: { meeting_no: row.meeting_no } } });
+      sample(app, "join", r);
+      // Known by its number only (a group's meeting): the join may say which meeting it is.
+      if (id.startsWith(PENDING)) {
+        const real = findKey(r, "meeting_id") ?? (await resolveMeetingId(app, ref, row.meeting_no ?? "", Date.parse(row.started_at)).catch(() => undefined));
+        if (real) id = adoptMeetingId(app, id, real);
+      }
       joined.push({ bot: ref, ok: true, name: botName(app, ref) });
     } catch (e) {
       joined.push({ bot: ref, ok: false, name: botName(app, ref), error: (e as Error).message });
@@ -562,6 +625,66 @@ export async function botInvitedToMeeting(app: App, ref: string, data: Invite): 
     return "已发卡片问你";
   }
   return startPlan(app, id, plan);
+}
+
+// ---- a meeting started in a group ------------------------------------------------------------------
+
+export type GroupMeeting = { chatId: string; chatName: string; raw: string | undefined; senderName: string; byOwner: boolean; at?: number };
+
+/**
+ * Someone started a meeting in a group bot `ref` is in: its `video_chat` message (content
+ * `{"topic","meet_number","start_time","end_time"}`). The meeting goes to the rules that look at
+ * group meetings, once; the owner joining it later is the same meeting (ownerJoinedMeeting).
+ */
+export async function groupMeetingStarted(app: App, ref: string, m: GroupMeeting): Promise<string> {
+  const c = json<Record<string, unknown> | null>(m.raw, null);
+  if (!c || typeof c !== "object") return "消息里没有会议";
+  sample(app, "group-start", c);
+  const no = str(c.meet_number ?? c.meeting_no);
+  if (!no) return "消息里没有会议号";
+  const end = str(c.end_time);
+  if (end && end !== "0") return "会议已经结束";
+  if (!(await groupMeetingRulesOn(app))) return "没有看群里会议的规则";
+  // The same meeting already (the owner joined first, or the message came twice); a personal meeting
+  // number is used again later, so only one still being followed or just started counts.
+  const recent = new Date(Date.now() - 10 * 60_000).toISOString();
+  if (one(app.db, `select 1 from lark_meetings where meeting_no = ? and (status in ${LIVE} or started_at > ?)`, no, recent)) return "已经知道这场会议";
+  const startMs = ms(c.start_time) ?? m.at ?? Date.now();
+  const resolved = await resolveMeetingId(app, ref, no, startMs).catch((e) => void log(`按会议号 ${no} 查会议 id 失败：${(e as Error).message}`));
+  const id = resolved ?? `${PENDING}${no}`;
+  if (getRow(app, id)) return "已经知道这场会议";
+  const topic = str(c.topic) ?? "";
+  const at = now();
+  run(
+    app.db,
+    "insert into lark_meetings(meeting_id, meeting_no, topic, status, participants, started_at, updated_at, chat_id, chat_name, started_by, owner_in) values(?,?,?,?,?,?,?,?,?,?,?)",
+    id,
+    no,
+    topic,
+    "seen",
+    "null",
+    new Date(startMs).toISOString(),
+    at,
+    m.chatId,
+    m.chatName,
+    m.senderName,
+    0,
+  );
+  log(`群「${m.chatName}」里${m.byOwner ? "你" : ` ${m.senderName} `}发起了会议「${topic}」（会议号 ${no}${resolved ? `，${resolved}` : "，id 还不知道"}），交给规则判断`);
+  await dispatchMeeting(app, id);
+  return "交给规则判断";
+}
+
+/** A meeting's id from its number, as bot `ref`: the latest meeting with that number since an hour before `startMs`. */
+async function resolveMeetingId(app: App, ref: string, no: string, startMs: number): Promise<string | undefined> {
+  if (!/^\d{9}$/.test(no)) return undefined;
+  const sec = (t: number) => String(Math.floor(t / 1000));
+  const from = (Number.isFinite(startMs) ? startMs : Date.now()) - 3600_000;
+  const d = await botCall(ref, "GET", "/open-apis/vc/v1/meetings/list_by_no", { params: { meeting_no: no, start_time: sec(from), end_time: sec(Date.now() + 600_000), page_size: 20 } });
+  sample(app, "list-by-no", d);
+  const list = (d?.meeting_briefs ?? d?.items ?? []) as Record<string, unknown>[];
+  const hit = (Array.isArray(list) ? list : []).filter((b) => !b.meeting_no || str(b.meeting_no) === no).at(-1);
+  return str(hit?.id ?? hit?.meeting_id);
 }
 
 // ---- calls as one of omem's bots -------------------------------------------------------------------
@@ -783,9 +906,20 @@ async function ownerIds(app: App) {
 }
 
 /** One look at a meeting being listened to. */
-async function listen(app: App, row: Row) {
+async function listen(app: App, row: Row): Promise<void> {
   const plan = json<MeetingPlan>(row.plan, null as never);
   const bots = json<Joined[]>(row.bots, []);
+  if (row.meeting_id.startsWith(PENDING)) {
+    // Events are asked for by id: learn it first (the bot in the meeting may see it by now).
+    const ref = bots.find((b) => b.ok && !b.left)?.bot ?? plan.bots[0] ?? "main";
+    const real = await resolveMeetingId(app, ref, row.meeting_no ?? "", Date.parse(row.started_at)).catch(() => undefined);
+    if (real && adoptMeetingId(app, row.meeting_id, real) === real) return listen(app, getRow(app, real)!);
+    update(app, row.meeting_id, { error: "还不知道这场会议的 id（只有会议号），读不了会中事件" });
+    const since = failing.get(row.meeting_id) ?? Date.now();
+    failing.set(row.meeting_id, since);
+    if (Date.now() - since > 15 * 60_000) await meetingEnded(app, row.meeting_id, "读不到会议了");
+    return;
+  }
   const readers = [...bots.filter((b) => b.ok && !b.left).map((b) => `bot:${b.bot}`), "user"];
   let got: Awaited<ReturnType<typeof fetchEvents>> | null = null;
   let error = "";
@@ -1090,6 +1224,8 @@ async function follow(app: App, row: Row) {
       // Nobody fired yet: who is there may still change what the rules say.
       if (Date.now() - Date.parse(row.updated_at) > REDISPATCH_MS && age > REDISPATCH_MS) return update(app, row.meeting_id, { status: "passed" });
       if (!isDue(`people:${row.meeting_id}`, 60_000)) return;
+      // Only the owner's view lists who is there; a group's meeting they are not in has none.
+      if (!row.owner_in || row.meeting_id.startsWith(PENDING)) return;
       {
         const people = await readParticipants(app, row.meeting_id).catch(() => null);
         if (!people) return;

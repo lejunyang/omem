@@ -15,6 +15,11 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 群里发起的会议也能触发会议规则（11-19）
+
+- 规则 `trigger.meetingFrom`（`joined` 默认 / `group` / `both`，`src/rules/types.ts`，引擎里 `meetingFromOk`）。机器人在群里收到 `video_chat` 消息（`src/channels/lark-bot.ts` 的 `handle`）时调 `groupMeetingStarted`（`src/channels/lark-meetings.ts`）：内容里的 `meet_number` 是会议号，先用机器人身份 `vc/v1/meetings/list_by_no` 查会议 id，查不到以 `no:<会议号>` 记下，入会返回或之后查到时 `adoptMeetingId` 换成真 id。`lark_meetings` 加 `chat_id`、`chat_name`、`started_by`、`owner_in`；事件加 `meeting.chat`、`meeting.startedBy`、`meeting.ownerIn`。本人之后入会按会议号认作同一场。规则页会议触发下多一组“我入会时 / 群里有人发起时 / 两种都算”。
+- 本人 lark-cli 读到的同一条消息只有“[Video call]”，没有会议号，所以只对机器人所在的群有效。
+
 ## 网页对话可以带图片和文件；流程的定义搬进流程页、靠对话建；人物卡按邮箱；Wiki 页头整理（11-19）
 
 - 对话附件：`src/agents/attachments.ts`（存进 `files/<hash>.<ext>`，`POST /api/ask/attachments`；`/api/ask` 收 `attachments`，消息 `meta.attachments`，正文用 `[图片1]` / `[文件1]` 引用；`renderMessages` 把每个附件的路径交给 Agent）。`web/src/views/Ask.vue`：粘贴、拖进或点按钮加文件，输入框上方显示，点一个在光标处插入引用，发出的消息下面带缩略图。

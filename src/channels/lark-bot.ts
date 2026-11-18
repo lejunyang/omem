@@ -758,6 +758,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       // in the chat, otherwise by this one (lark-bots.ts).
       const keeps = await keepsRecords(ref, m.chatId);
       if (keeps) captureGroup(m);
+      // A meeting started here: its message carries the meeting number (lark-meetings.ts).
+      if (keeps && m.type === "video_chat")
+        void import("./lark-meetings.ts")
+          .then((x) => x.groupMeetingStarted(app, ref, { chatId: m.chatId, chatName: groupName(m.chatId), raw: m.raw, senderName: m.senderName, byOwner: m.senderId === ownerOpenId(), at: Number(m.createTime) || undefined }))
+          .catch((e) => console.warn(`[omem] 处理群里发起的会议失败：${(e as Error).message}`));
       // Another omem bot's post is material here; a hand-off to this bot comes through relayMentions.
       if (postedByOmem(m.messageId)) return;
       if (!m.fromApp) personSpoke(m.chatId, m.topicId);

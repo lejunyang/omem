@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { botInvitedToMeeting, meetingEnded, ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
+import { botInvitedToMeeting, groupMeetingStarted, meetingEnded, ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { setKey } from "../src/core/ai-keys.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
@@ -340,6 +340,88 @@ describe("meetings the owner joins", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("meetings started in a group", () => {
+  /** The group's `video_chat` message, as the bot receives it. */
+  const started = (no: string, topic = "小王的视频会议", end: string | null = null) => JSON.stringify({ topic, meet_number: no, start_time: String(Date.now() - 30_000), end_time: end });
+  const group = (no: string, extra: Partial<Parameters<typeof groupMeetingStarted>[2]> = {}) => ({ chatId: "oc_team", chatName: "项目 A 群", raw: started(no), senderName: "小王", byOwner: false, ...extra });
+  /** The fake bot: `list_by_no` knows (or not) the meeting's id, the join may say it too. */
+  function fakeBot(o: { listed?: string; joinSays?: string }) {
+    const calls: any[] = [];
+    const cards: any[] = [];
+    setLarkClient(
+      {
+        request: async (r: any) => {
+          calls.push(r);
+          if (r.url.endsWith("/meetings/list_by_no")) return o.listed ? { code: 0, data: { meeting_briefs: [{ id: o.listed, meeting_no: r.params.meeting_no, topic: "t" }] } } : { code: 99991672, msg: "scope missing" };
+          if (r.url.endsWith("/bots/join")) return { code: 0, data: o.joinSays ? { meeting: { meeting_id: o.joinSays } } : {} };
+          if (r.url.endsWith("/bots/events")) return { code: 0, data: { events: [], has_more: false } };
+          return { code: 0, data: {} };
+        },
+        im: { message: { create: async (p: any) => (cards.push(p), { code: 0, data: { message_id: `om_card${cards.length}` } }) } },
+      },
+      "ou_bot",
+      "小助理",
+    );
+    return { calls, cards, joins: () => calls.filter((c) => c.url.endsWith("/bots/join")) };
+  }
+
+  it("goes only to rules that ask for group meetings; the bot joins with the number, and the owner joining later is the same meeting", async () => {
+    const { app } = setup();
+    const bot = fakeBot({ listed: "m-g1" });
+    const mine = saveRule(app, { name: "我入会", description: "我入会时拉机器人", enabled: true, trigger: { event: "meeting" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: false }] });
+    // Only a rule about the owner's own meetings: a group's meeting is not looked at.
+    expect(await groupMeetingStarted(app, "main", group("481516234"))).toBe("没有看群里会议的规则");
+    expect(one(app.db, "select 1 from lark_meetings")).toBeUndefined();
+    const groups = saveRule(app, { name: "群里开会", description: "群里有人开会就拉机器人记录", enabled: true, trigger: { event: "meeting", meetingFrom: "group" }, conditions: { field: "meeting.chat", op: "contains", value: "项目 A" }, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: true }] });
+    expect(await groupMeetingStarted(app, "main", group("481516234"))).toBe("交给规则判断");
+    const row = one<any>(app.db, "select * from lark_meetings where meeting_id = 'm-g1'")!;
+    expect(row).toMatchObject({ meeting_no: "481516234", chat_name: "项目 A 群", started_by: "小王", owner_in: 0, status: "listening", topic: "小王的视频会议" });
+    expect(bot.joins()).toHaveLength(1);
+    expect(bot.joins()[0]).toMatchObject({ data: { join_identify: { meeting_no: "481516234" } } });
+    expect(listFirings(app, groups.id)).toHaveLength(1);
+    expect(listFirings(app, mine.id)).toHaveLength(0);
+    // The same message again: nothing new.
+    expect(await groupMeetingStarted(app, "main", group("481516234"))).toBe("已经知道这场会议");
+    // The owner joins it: the same row; the rule that already acted is not asked again, no second join.
+    await ownerJoinedMeeting(app, { id: "m-g1", no: "481516234", topic: "小王的视频会议" });
+    expect(one<any>(app.db, "select owner_in from lark_meetings where meeting_id = 'm-g1'")!.owner_in).toBe(1);
+    expect(bot.joins()).toHaveLength(1);
+    expect(all(app.db, "select meeting_id from lark_meetings")).toHaveLength(1);
+    // Trying the rules: the group rule sees it, the owner's-meetings rule (no group) does too now that the owner is in.
+    expect((await testRule(app, groups)).matches[0].chat).toContain("项目 A 群");
+  });
+
+  it("without the id from the number: keyed by the number, asked on a card, and renamed once the bot's join says the id", async () => {
+    const { app } = setup();
+    const bot = fakeBot({ joinSays: "m-real" });
+    saveRule(app, { name: "群里开会", description: "群里有人开会先问我", enabled: true, trigger: { event: "meeting", meetingFrom: "both" }, conditions: { field: "meeting.ownerIn", op: "is", value: false }, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"] }] });
+    expect(await groupMeetingStarted(app, "main", group("123123123"))).toBe("交给规则判断");
+    expect(one<any>(app.db, "select meeting_id, status from lark_meetings")).toMatchObject({ meeting_id: "no:123123123", status: "asked" });
+    expect(bot.cards).toHaveLength(1);
+    const card = JSON.stringify(bot.cards[0]);
+    expect(card).toContain("项目 A 群");
+    expect(card).toContain("你不在会上");
+    const r = await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: "om_card1" }, action: { tag: "button", value: { action: "approve" } } });
+    expect(JSON.stringify(r.card)).toContain("已把 小助理 拉进会议");
+    expect(one<any>(app.db, "select meeting_id, status from lark_meetings")).toMatchObject({ meeting_id: "m-real", status: "listening" });
+    // Events are read by the real id.
+    await tickMeetings(app);
+    expect(bot.calls.find((c) => c.url.endsWith("/bots/events"))?.params.meeting_id).toBe("m-real");
+  });
+
+  it("the owner joining first makes the group's message the same meeting; an ended meeting or one without a number is left alone", async () => {
+    const { app } = setup();
+    const bot = fakeBot({ listed: "m-o" });
+    saveRule(app, { name: "都算", description: "群里和我入会都拉", enabled: true, trigger: { event: "meeting", meetingFrom: "both" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: false }] });
+    await ownerJoinedMeeting(app, { id: "m-o", no: "555555555", topic: "我开的" });
+    expect(await groupMeetingStarted(app, "main", group("555555555", { byOwner: true, senderName: "我" }))).toBe("已经知道这场会议");
+    expect(bot.joins()).toHaveLength(1);
+    expect(await groupMeetingStarted(app, "main", group("666666666", { raw: started("666666666", "x", String(Date.now())) }))).toBe("会议已经结束");
+    expect(await groupMeetingStarted(app, "main", group("", { raw: "[Video call]" }))).toBe("消息里没有会议");
+    expect(await groupMeetingStarted(app, "main", group("", { raw: JSON.stringify({ topic: "x" }) }))).toBe("消息里没有会议号");
   });
 });
 

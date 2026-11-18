@@ -109,7 +109,7 @@ function checkObjectRule(r: ReturnType<typeof ruleInputSchema.parse>) {
 /** A meeting has no chat or message; the meeting action needs a meeting. */
 function checkMeetingRule(app: App, r: ReturnType<typeof ruleInputSchema.parse>) {
   const meeting = r.trigger.event === "meeting";
-  if (!meeting && r.actions.some((a) => a.type === "meeting-bot")) throw new HttpError(400, "“拉机器人入会”只用于“我加入会议时”触发的规则");
+  if (!meeting && r.actions.some((a) => a.type === "meeting-bot")) throw new HttpError(400, "“拉机器人入会”只用于“会议”触发的规则");
   if (!meeting) return;
   if (r.actions.some((a) => a.type !== "meeting-bot" && a.type !== "notify" && !(a.type === "agent" && !a.ownTopic && a.reply === "none")))
     throw new HttpError(400, "会议规则没有群和消息：只能拉机器人入会、通知本人，或交给 Agent（只告诉我）");
