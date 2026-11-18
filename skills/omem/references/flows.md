@@ -43,7 +43,7 @@
 | `save_flow` | `yaml` 是整份 YAML。先给本人看阶段、承担者、关卡与完成要求；本人选“启用”才保存。只用于主人的共享定义。 |
 | `flow_start` | `item`、`flow`；一个事项同时只能有一个进行中的流程。开始时复制定义，之后改模板不影响它。 |
 | `flow_round` | `item`；本人说“再来一轮”时开始下一轮。定义须有 `repeat`，上一轮所有阶段完成或跳过后才可调用。只重做 `repeat.from` 及之后的阶段，之前的保留。 |
-| `stage_report` | `item`、`stage`、`state: done / blocked / skip`、`note`；可带 `evidence`、`waiting_on`、`unsure`。做完须有依据，卡住写等谁或等什么，跳过写理由。结果说不清、要不要继续定不下来时用 `blocked` 加 `unsure: true`；宿主按阶段的升档上限带反馈重做，用完仍卡住。缺权限、缺材料等确定的阻碍不标拿不准。 |
+| `stage_report` | `item`、`stage`、`state: done / blocked / skip`、`note`；可带 `evidence`、`waiting_on`、`unsure`。做完须有依据，卡住写等谁或等什么，跳过写理由。结果说不清、要不要继续定不下来时用 `blocked` 加 `unsure: true`；宿主按阶段的升档上限带反馈重做，用完仍卡住。缺权限、缺材料等确定的阻碍不标拿不准。运行交过的截图（`$OMEM_ARTIFACTS` 或 `attach_artifact`）在报做完或卡住时附在给本人的卡片上（最多 4 张），事项页这一段下面列出全部截图。 |
 | `report_tests`、`attach_artifact` | 只在承担一个阶段的运行里有。验证或验收的阶段用它们逐条交结果：`report_tests` 的每条写需求点（`req`）、`status`、`mode`（在哪测、怎么测）、`note`（做了什么、看到什么）和这一条的截图、录屏（先放进 `$OMEM_ARTIFACTS`）。事项页按条显示，本人照着看完再确认这一段。 |
 | `stage_reopen` | `item`、`stage`、`reason`，可带 `refs`。该段重新开始，下游已完成的变成待复核，已跳过的保持跳过；正在做的照做，宿主问本人要不要停下（停下就取消并待复核，交办只停不删）。 |
 | `read_flow_reviews` | `flow?`、`item?`、`limit?`（默认 10，最多 20）。读已经结束的流程的回顾，新的在前：怎么结束的（`how`：completed / stopped / closed）、用了多久、轮次、返工合计、等本人最久的一段，每段的 `doingMinutes / gatedMinutes / blockedMinutes / ownerMinutes`、卡住的原因、`starts / reopened / refused / staled / escalated / reworks`、跳过及原因、关卡的问与答（`gate.direct`：问过且每次都直接同意）、现在的连续同意次数和是否已授权。只读本人自己的、可读空间里的事项。数字是宿主按阶段日志算的，口径见 `docs/v2/flows.md` 文末。 |

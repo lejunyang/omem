@@ -4,7 +4,7 @@ import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts
 import { queueMention } from "./lark-mentions.ts";
 import { isMentionRun, mentionOf } from "../mentions/mentions.ts";
 import { chatSpace } from "./lark-personal.ts";
-import { notificationCard } from "./item-notification.ts";
+import { cardImages, notificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -448,10 +448,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const target = { ...to, purpose: "notification" as const, ...(isMentionRun(app, n.runId) ? { runId: n.runId } : {}) };
     // The newer state of a card already sent (an authorization now done): edit that card, no new ping.
     const earlier = n.replaces ? notificationCardOf(app, n.replaces) : null;
+    const images = n.images?.length ? await cardImages(app, n) : [];
     if (earlier) {
       const { updateLarkCard } = await import("./lark-send.ts");
       try {
-        await updateLarkCard(earlier.messageId, notificationCard(app, n), earlier.bot);
+        await updateLarkCard(earlier.messageId, notificationCard(app, n, images), earlier.bot);
         setNotificationCard(app, n.id, earlier.messageId, earlier.bot);
         return;
       } catch (e) {
@@ -493,7 +494,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       }
     }
     // Cards keep external notification links; internal routes stay in the web app.
-    const card = notificationCard(app, n);
+    const card = notificationCard(app, n, images);
     if (n.digest) {
       // Item digest: each button keeps or reopens one item; the card stays usable for the others.
       const { recordInteraction } = await import("./lark-send.ts");

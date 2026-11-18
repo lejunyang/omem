@@ -272,6 +272,25 @@ describe("只有本人能定的事", () => {
     expect(gate).toContain("**这一段做什么**\n在测试环境逐条验收。截图留证");
     expect(gate).toMatch(/\*\*前面\*\*\n- a：已完成，需求点核对完了，改名入口另排/);
   });
+  it("运行交了截图再报做完：卡片带上截图、保留分段的结论，事项页这一段列出截图", async () => {
+    const { app, item, s } = await setup([stage("a"), stage("b")]);
+    const runId = s("a").by!;
+    const inbox = artifactInbox(app, runId);
+    writeFileSync(join(inbox, "repro-01-下载后仍是全量.png"), Buffer.from("89504e470d0a1a0a", "hex"));
+    await collectInbox(app, runId, { source: "agent", by: "assistant" });
+    const note = "已复现：只留 1 列，导出仍是 7 列。\n\n步骤：测试环境 → 数据明细 → 自定义列只留访问人数 → 下载。\n\n原因：导出接口只收日期区间，没有列参数。";
+    await reportStage(app, item.id, "a", { state: "done", note, evidence: [`run:${runId}`] }, { actor: "assistant", runId, userId: "owner" });
+    const n = one<{ body: string; context: string }>(app.db, "select body, context from notifications where json_extract(context, '$.entityId') = ? order by at desc limit 1", item.id)!;
+    expect(n.body).toContain("已复现：只留 1 列，导出仍是 7 列。\n\n步骤：");
+    const images = JSON.parse(n.context).images as string[];
+    expect(images).toHaveLength(1);
+    const { itemNotificationCard } = await import("../src/channels/item-notification.ts");
+    const card = JSON.stringify(itemNotificationCard(app, { ...JSON.parse(n.context), id: "n", at: "", title: item.title, body: n.body, link: null, readAt: null, userId: "owner" }, [{ key: "img_test", alt: "下载后仍是全量" }]));
+    expect(card).toContain("img_test");
+    const view = flowView(app, item.id);
+    expect(view.stages.find((x) => x.id === "a")!.shots.map((a) => a.id)).toEqual(images);
+    expect(view.stages.find((x) => x.id === "b")!.shots).toEqual([]);
+  });
   it("阶段自己的运行已经问了本人，再报卡住等本人时不另发进度卡", async () => {
     const { app, item, s } = await setup([stage("a")]);
     const runId = s("a").by!;

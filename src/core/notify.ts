@@ -82,6 +82,8 @@ export type Notification = {
   bundle?: string[];
   /** A reply to the person who looked for the owner, drafted by the handling (mentions/mentions.ts): the channel puts it on this notification's own card for the owner to send or drop. */
   replyDraft?: string;
+  /** Screenshots a run handed in (agents/artifacts.ts ids): shown on the card under the text. */
+  images?: string[];
 };
 
 type Sink = (n: Notification) => Promise<void> | void;
@@ -103,6 +105,7 @@ export function notify(
     graceDone?: boolean;
     reportTool?: string;
     replyDraft?: string;
+    images?: string[];
     /** The `later` notifications this one stands for (releaseLater). */
     bundle?: string[] },
 ) {
@@ -167,13 +170,14 @@ export function notify(
     ...(input.tone ? { tone: input.tone } : replaced && one<{ t: string | null }>(app.db, "select json_extract(context, '$.tone') t from notifications where id = ?", replaced.id)?.t === "warning" ? { tone: "done" as const } : {}),
     ...(input.entityId ? { entity: input.entity ?? "item", entityId: input.entityId, actions: input.actions ?? [] } : {}),
     ...(input.replyDraft ? { replyDraft: input.replyDraft } : {}),
+    ...(input.images?.length ? { images: input.images } : {}),
     ...(input.bundle?.length ? { bundle: input.bundle } : {}),
   };
   // Not for now: it waits for the next set time of day. (The newer state of a card already sent goes
   // straight to the channels, which edit that card without a ping.)
   const held = n.urgency === "later" && !replaced && app.config.notify.laterTimes.length > 0;
   if (held) n.held = true;
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, reportTool: n.reportTool, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest, replaces: n.replaces, tone: n.tone, replyDraft: n.replyDraft, images: n.images, ...(held ? { held: 1 } : {}), bundle: n.bundle }));
   // The earlier one is now history: read, and no longer waiting for the morning.
   if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });

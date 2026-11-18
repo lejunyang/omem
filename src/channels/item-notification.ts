@@ -2,7 +2,9 @@ import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
 import type { Notification } from "../core/notify.ts";
 import { notificationOrigins, resolveCitationsSync } from "./common.ts";
-import { buildCard, type CardButton } from "./lark-send.ts";
+import { buildCard, uploadLark, type CardButton } from "./lark-send.ts";
+import { artifactPath, artifactsByIds } from "../agents/artifacts.ts";
+import { currentBot } from "../core/bot-context.ts";
 import { webLink } from "../core/util.ts";
 
 /** Page links (#/...) open from Feishu once the web address is configured (config.webUrl). */
@@ -50,21 +52,48 @@ export function itemDigestCard(app: App, n: Notification) {
   });
 }
 
-export function notificationCard(app: App, n: Notification) {
+/** A card's screenshot: Feishu's key for the uploaded image and what it shows. */
+export type CardImage = { key: string; alt: string };
+const uploaded = new Map<string, string>();
+/** Upload the notification's screenshots with the bot sending it (keys are per app); one that fails is left out. */
+export async function cardImages(app: App, n: Pick<Notification, "images">): Promise<CardImage[]> {
+  const out: CardImage[] = [];
+  for (const a of artifactsByIds(app, n.images ?? [])) {
+    if (a.kind !== "image") continue;
+    const cacheKey = `${currentBot()}:${a.id}`;
+    try {
+      let key = uploaded.get(cacheKey);
+      if (!key) {
+        const c = await uploadLark(artifactPath(app, a));
+        if (!("image" in c)) continue;
+        key = String(c.image);
+        uploaded.set(cacheKey, key);
+      }
+      out.push({ key, alt: a.caption || a.name });
+    } catch (e) {
+      console.warn(`[omem] 通知卡片的截图 ${a.id} 没传上飞书：${(e as Error).message}`);
+    }
+  }
+  return out;
+}
+const imageBlocks = (images: CardImage[]) => images.flatMap((i) => [{ image: i.key, alt: i.alt }, ...(i.alt ? [{ note: i.alt }] : [])]);
+
+export function notificationCard(app: App, n: Notification, images: CardImage[] = []) {
   if (n.digest) return itemDigestCard(app, n);
-  if (n.entity === "item" && n.entityId) return itemNotificationCard(app, n);
+  if (n.entity === "item" && n.entityId) return itemNotificationCard(app, n, images);
   const buttons = linkButton(app, n.link);
   return buildCard({
     title: n.title,
     ...(n.tone ? { color: n.tone === "warning" ? "orange" : "green" } : {}),
     blocks: [
       { markdown: resolveCitationsSync(app, n.body) || " " },
+      ...imageBlocks(images),
       ...(buttons.length ? [{ buttons }] : []),
     ],
   });
 }
 
-export function itemNotificationCard(app: App, n: Notification) {
+export function itemNotificationCard(app: App, n: Notification, images: CardImage[] = []) {
   // Details can contain older citations too; only this notification's evidence becomes links.
   const scopedBody = n.body.replace(/\[([^\]]*)\]\(((?:src|mem|msg):[^)]+)\)/g, (all, label: string, ref: string) => (n.sourceRefs ?? []).includes(ref) ? all : label);
   // Share the final URL set across the body and origin block; keep repeated labels as text.
@@ -82,6 +111,7 @@ export function itemNotificationCard(app: App, n: Notification) {
     color: "blue",
     blocks: [
       { markdown: body || " " },
+      ...imageBlocks(images),
       ...(origin ? [{ markdown: origin }] : []),
       {
         buttons: [

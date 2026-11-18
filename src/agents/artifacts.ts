@@ -423,6 +423,13 @@ export function takenText(r: { made: Artifact[]; skipped: string[] }) {
 }
 
 
+/** The screenshots a run handed in, oldest first, at most `max` (the latest ones when there are more). */
+export function runImages(app: App, runIds: string[], max = 4): Artifact[] {
+  if (!runIds.length) return [];
+  const rows = all<Row>(app.db, `select * from run_artifacts where run_id in (${runIds.map(() => "?").join(",")}) and kind = 'image' order by created_at desc, id desc limit ?`, ...runIds, max);
+  return rows.reverse().map(toArtifact);
+}
+
 /** Artifacts by id (those still kept), in the order asked. */
 export function artifactsByIds(app: App, ids: string[]): Artifact[] {
   if (!ids.length) return [];

@@ -258,6 +258,10 @@ async function stop() {
             <dd><Markdown :source="stage.note" class="stage-text" /></dd>
           </template>
         </dl>
+        <div v-if="stage.shots?.length" class="stage-shots">
+          <div class="tests-head"><span>截图</span><span class="muted">{{ stage.shots.length }} 张</span></div>
+          <RunArtifacts :items="stage.shots" />
+        </div>
         <div v-if="stage.tests?.length" class="stage-tests">
           <div class="tests-head"><span>逐条的结果</span><span class="muted">{{ testSummary(stage.tests) }}</span></div>
           <details v-for="t in stage.tests" :key="t.id" class="test" :open="t.status === 'failed'">
@@ -400,6 +404,7 @@ async function stop() {
 
 /* A verification stage's cases: one line each, opened to see what was done and the screenshots or recordings. */
 .stage-tests { display: grid; gap: 2px; margin-top: 4px; }
+.stage-shots { display: grid; gap: 4px; margin-top: 4px; }
 .tests-head { display: flex; align-items: baseline; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
 /* The summary line wraps under the title in a narrow drawer instead of squeezing it. */
 .review .tests-head { flex-wrap: wrap; row-gap: 2px; }

@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
+import { runImages } from "../agents/artifacts.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
 import { addItemEvent, getItem } from "../items/store.ts";
 import type { FlowDefinition } from "./definitions.ts";
@@ -84,23 +85,29 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
   const what = !changed || by.actor === "owner" ? null : state === "done" ? "做完了" : state === "skipped" ? "跳过了" : state === "blocked" ? `卡住了${next.waitingOn ? `，${waitText(next.waitingOn)}` : ""}` : state === "stale" ? "要复核" : null;
   // Stuck on the owner after the stage's own run already asked them: that question is the card.
   const asked = state === "blocked" && !!by.runId && !!one(app.db, "select 1 from asks where run_id=? and status='pending' limit 1", by.runId);
-  if (what && !asked) markProgress(app, itemId, `「${name}」${what}${note ? `：${cardText(note)}` : ""}`, state === "blocked" && next.waitingOn === "owner");
+  // A result or a stop from a run carries what it saw: its screenshots go on the card too.
+  const images = what && by.runId && (state === "done" || state === "blocked") ? runImages(app, [by.runId]).map((a) => a.id) : [];
+  if (what && !asked) markProgress(app, itemId, `「${name}」${what}${note ? `：${cardText(note, state === "done" || state === "blocked" ? 1200 : 300)}` : ""}`, state === "blocked" && next.waitingOn === "owner", images);
   return next;
 }
 
 /** "等本人确认" and "本人确认" both read as one 等. */
 export const waitText = (w: string) => `等${w === "owner" ? "你" : w.replace(/^等+/, "")}`;
 // Run, question and other internal ids mean nothing on a card the owner reads.
-const cardText = (note: string) => truncate(note.replace(/\s*[（(]?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b[）)]?/g, "").replace(/\s+/g, " ").trim(), 300);
+// A result keeps its paragraphs (conclusion, steps, cause); other lines stay one line.
+const cardText = (note: string, max = 300) => {
+  const t = note.replace(/\s*[（(]?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b[）)]?/g, "");
+  return truncate((max > 300 ? t.replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*/g, "\n\n") : t.replace(/\s+/g, " ")).trim(), max);
+};
 
 // One operation of the engine changes several stages: what happened is collected and sent as one card
 // when the operation ends (engine.ts serial), not once per change.
-const stale = new WeakMap<App, Map<string, { lines: string[]; ownerWaiting: boolean }>>();
-export function markProgress(app: App, id: string, line: string, ownerWaiting = false) {
+const stale = new WeakMap<App, Map<string, { lines: string[]; ownerWaiting: boolean; images: string[] }>>();
+export function markProgress(app: App, id: string, line: string, ownerWaiting = false, images: string[] = []) {
   let m = stale.get(app);
   if (!m) stale.set(app, m = new Map());
-  const cur = m.get(id) ?? { lines: [], ownerWaiting: false };
-  m.set(id, { lines: [...cur.lines, line], ownerWaiting: cur.ownerWaiting || ownerWaiting });
+  const cur = m.get(id) ?? { lines: [], ownerWaiting: false, images: [] };
+  m.set(id, { lines: [...cur.lines, line], ownerWaiting: cur.ownerWaiting || ownerWaiting, images: [...cur.images, ...images] });
 }
 /** Send the progress card if something worth telling happened since the last one. */
 export function flushProgress(app: App, id: string) {
@@ -108,14 +115,14 @@ export function flushProgress(app: App, id: string) {
   const pending = m?.get(id);
   if (!pending) return;
   m!.delete(id);
-  progress(app, id, pending.lines, pending.ownerWaiting);
+  progress(app, id, pending.lines, pending.ownerWaiting, pending.images);
 }
 
 /**
  * What happened first, then one line of where the flow stands. Questions for the owner stay separate
  * asks; a newer card replaces the previous one.
  */
-export function progress(app: App, id: string, lines: string[], ownerWaiting = false) {
+export function progress(app: App, id: string, lines: string[], ownerWaiting = false, images: string[] = []) {
   const f = itemFlow(app, id);
   if (!f) return;
   const item = getItem(app, id);
@@ -125,6 +132,6 @@ export function progress(app: App, id: string, lines: string[], ownerWaiting = f
   const now_ = f.endedAt ? rows.every((s) => ["done", "skipped"].includes(s.state)) ? "流程已走完；事项仍由你决定是否关闭。" : "流程已停止。"
     : [doing.length ? `在做：${doing.map((d) => d.name).join("、")}` : "", gated.length ? `等你开始：${gated.map((d) => d.name).join("、")}` : "", blocked.length ? `卡住：${blocked.map((d) => d.name).join("、")}` : ""].filter(Boolean).join("；");
   const body = [...lines, now_ ? `现在 · ${now_}` : ""].filter(Boolean).join("\n");
-  const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/items/${id}` });
+  const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/items/${id}`, images: images.slice(-4) });
   run(app.db, "update item_flows set card=? where item_id=?", n.id, id);
 }
