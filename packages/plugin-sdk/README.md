@@ -31,7 +31,7 @@ The plugin format: [docs/v2/plugins.md](https://github.com/lejunyang/omem/blob/m
 
 ## 带状态的对象与信号
 
-服务端由宿主传入的 `api` 支持 `api.object`，本包从主入口导出 `PluginObject / PluginObjectState / PluginObjectContext / PluginObjectApi / PluginSignal / PluginConnection` 类型；沿用页面 SDK 的类型导出和声明构建方式，不把宿主的 App 和完整 PluginApi 带进页面包。
+服务端由宿主传入的 `api` 支持 `api.object`，本包从主入口导出 `PluginObject / PluginObjectState / PluginObjectContext / PluginObjectApi / PluginSignal / PluginConnection / PluginHook / PluginHookRequest / PluginHookResult` 类型；沿用页面 SDK 的类型导出和声明构建方式，不把宿主的 App 和完整 PluginApi 带进页面包。
 
 ```ts
 import type { PluginObject } from "@omem-ai/plugin-sdk";
@@ -58,6 +58,20 @@ const object: PluginObject = {
 完整的链接匹配、读取及字段例子在 `plugins/github/server.ts`。宿主全名为 `<插件 id>:<kind>`；kind 用小写字母开头，后接小写字母、数字或短横线。statuses 非空，final 必须是已声明状态；poll 默认 5 分钟，最短 1 分钟。对象只有事项关联且事项未结束、对象未到终态时才轮询，始终用事项主人的连接，按插件既有的进程内或隔离方式执行。插件停用或卸载后保留最后状态并标记来源已停用，不再轮询。
 
 `ctx.emit({ kind: "received", keys: { object: "example/shop#7" }, payload: { note: "状态已读取" } })` 记录 `plugin.<插件 id>.received`，keys 与 payload 序列化后各不超过 4000 字符；本步只记录，不触发规则或流程。对象状态变化由宿主另记 `object.<全名>.<状态>` 并推进关联事项。不提供写平台对象的动作或按钮；界面插槽见下一节。
+
+`read` 可以多交 `revision`（你自己定的变化标记，比如头提交加评论数）和 `note`（这次变了什么）：状态没变而修订变了，宿主记 `object.<全名>.updated`，流程可以写 `done: { object, status: "updated" }`，规则的对象触发可选“有更新”。`updated` 是保留字，不能当状态名。
+
+平台能发 webhook 时声明回调（`PluginHook`），宿主马上重读你说的对象，不用等轮询：
+
+```ts
+api.hook({ name: "mr", label: "合并请求有变化", handle(ctx, req) {
+  // req.body 是原始文本，平台的签名自己校验
+  const e = JSON.parse(req.body);
+  return { refresh: [{ kind: "pull-request", key: e.key }] };
+} });
+```
+
+地址是 `POST /api/hooks/<插件 id>/mr/<密钥>`，密钥由本人在 设置 → 插件 生成；每分钟最多 60 次，正文最大 1 MB，每次写审计。
 
 ### 动作
 

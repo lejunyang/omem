@@ -46,7 +46,7 @@ export const flowSchema = z.object({
       const def = pluginObjectKind(kind);
       if (!def) ctx.addIssue({ code: "custom", path: ["stages", i], message: `没有这种对象：${kind}；装了对应的插件才有` });
       else if (typeof s.done === "object" && "object" in s.done && s.done.object === kind) for (const status of [s.done.status].flat()) {
-        if (!Object.hasOwn(def.statuses, status)) ctx.addIssue({ code: "custom", path: ["stages", i, "done", "status"], message: `${def.label}没有这种状态：${status}` });
+        if (status !== "updated" && !Object.hasOwn(def.statuses, status)) ctx.addIssue({ code: "custom", path: ["stages", i, "done", "status"], message: `${def.label}没有这种状态：${status}` });
       }
     }
     if (seen.has(s.id)) ctx.addIssue({ code: "custom", path: ["stages", i, "id"], message: "阶段 id 不能重复" });
@@ -66,7 +66,8 @@ export type FlowStage = FlowDefinition["stages"][number];
 
 const OBJECT_NAMES: Record<string, string> = { design: "方案", "code-work": "编码交办" };
 const objectWords = (kind: string) => pluginObjectKind(kind)?.label ?? OBJECT_NAMES[kind] ?? kind;
-const statusWords = (kind: string, status: string) => pluginObjectKind(kind)?.statuses[status] ?? status;
+// `updated` is reserved: the object's revision moved (a new commit, a new comment) while its status stayed.
+const statusWords = (kind: string, status: string) => status === "updated" ? "有更新" : pluginObjectKind(kind)?.statuses[status] ?? status;
 const bare = (s: string) => s.replace(/[。！？\s]+$/, "");
 const aiWords = (ai: FlowStage["ai"]) => typeof ai === "object" ? `用 ${[ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ")}` : ai === "strong" ? "用好的模型" : ai === "cheap" ? "用省的模型" : ai === "standard" ? "用中档的模型" : "用默认的模型";
 export function describeFlow(f: FlowDefinition) {

@@ -256,7 +256,7 @@ api.object({
   kind: "pull-request",
   label: "合并请求",
   match: (url) => keyOrNull,                       // 一个链接是不是这种对象
-  read: async (ctx, key) => ({ title, status, fields: [{ label, value }], link }),
+  read: async (ctx, key) => ({ title, status, fields: [{ label, value }], link, revision, note }),  // revision、note 可选
   statuses: { open: "进行中", merged: "已合并", closed: "已关闭" },   // 流程定义引用的就是这些
   final: ["merged", "closed"],
   poll: { minutes: 5 },                            // 默认 5，最短 1 分钟
@@ -267,7 +267,7 @@ api.object({
 - 宿主存一份对象的当前状态（`flow_objects`），只在有事项关联它的时候轮询，用关联的那个人的连接去读。
 - 对象读取接口和流程视图已有标题、状态、字段和链接；事项页“外部状态”卡片已有，卡上按当前状态出动作按钮。飞书卡片的专门版式未做。
 
-**信号**：对象状态一变，宿主自动记 `object.<全名>.<状态>`，重新推进关联事项的流程，并交给规则页的“对象状态变化”规则（docs/v2/rules.md）。插件可用 `ctx.emit({ kind, keys, payload })` 记录 `plugin.<插件 id>.<kind>`，只记录，不触发任何处理。
+**信号**：对象状态一变，宿主自动记 `object.<全名>.<状态>`，重新推进关联事项的流程，并交给规则页的“对象状态变化”规则（docs/v2/rules.md）。状态没变而插件给的 `revision` 变了（新提交、新评论），记 `object.<全名>.updated`，同样推进流程、交给选了“有更新”的规则；阶段可以写 `done: { object: "<全名>", status: "updated" }` 等“进这一段（或重开）之后有更新”。插件可用 `ctx.emit({ kind, keys, payload })` 记录 `plugin.<插件 id>.<kind>`，它也作为 omem 内部事件 `plugin.signal` 交给规则（docs/v2/rules.md“omem 里发生的事”）。插件可以声明回调（`api.hook`，docs/v2/plugins.md“回调”），平台有变化时叫醒宿主马上重读，不用等轮询。流程阶段的状态变化也是 omem 内部事件 `flow.stage`。
 
 **动作（已实现）**：对象类型可以声明 `actions: [{ id, label, tool, arg?, statuses?, confirm? }]`，每个动作是本插件的一个工具（以 `<插件 id>_` 开头），按钮把对象的键放进参数 `arg`（默认 `key`）调用它；`statuses` 限定在哪些状态下出按钮。对象卡上的按钮和 Agent 调用是同一个工具：本人在事项页点了算本人亲自发起，确认一次后直接执行、不出审批卡片；Agent 调用走这个工具的审批档位（每次问 / 做完告诉我 / 不用问），第一次见到某个动作工具时落在“每次问”，之后以本人在设置里改的为准。每次执行都写 `audit_events`，执行完马上重读一次对象状态。
 

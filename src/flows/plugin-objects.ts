@@ -8,7 +8,7 @@ import { pluginContext } from "../plugins/blocks.ts";
 import type { PluginObjectAction, PluginObjectState } from "../plugins/types.ts";
 import type { FlowObject } from "./objects.ts";
 
-export type ObjectRow = { id: string; kind: string; key: string; title: string; status: string; link: string; fields: string; checked_at: string | null; changed_at: string; error: string | null; updated_at: string };
+export type ObjectRow = { id: string; kind: string; key: string; title: string; status: string; link: string; fields: string; checked_at: string | null; changed_at: string; error: string | null; updated_at: string; revision: string | null; revised_at: string | null };
 type Row = ObjectRow;
 /** `actions`: the buttons for its current status (only for someone who may act on the item; empty otherwise). */
 export type ObjectView = { id: string; kind: string; label: string; title: string; status: string; statusLabel: string; final: boolean; link: string; fields: { label: string; value: string }[]; checkedAt: string | null; changedAt: string; error: string | null; disabled: boolean; actions: { id: string; label: string; confirm?: string }[] };
@@ -36,12 +36,17 @@ export function itemObjects(app: App, itemId: string, userId: string) {
   const canAct = item.userId === userId && canWrite(app, userId, item.spaceId);
   return all<Row>(app.db, "select o.* from item_materials m join flow_objects o on o.id=m.ref where m.item_id=? and m.kind='object' order by m.id desc", itemId).map((r) => view(r, canAct));
 }
-export function findPluginObject(app: App, item: Item, kind: string, opts?: { statuses?: string[]; after?: string }): FlowObject | null {
+/**
+ * The item's object of this kind: with `statuses`, one in them changed after `after`; `updated` among
+ * them also takes one whose revision moved after `updatedAfter` (marked `updated`).
+ */
+export function findPluginObject(app: App, item: Item, kind: string, opts?: { statuses?: string[]; after?: string; updatedAfter?: string }): FlowObject | null {
+  const revised = (r: Row) => !!opts?.statuses?.includes("updated") && !!opts.updatedAfter && !!r.revised_at && r.revised_at > opts.updatedAfter;
   const r = all<Row>(app.db, "select o.* from item_materials m join flow_objects o on o.id=m.ref where m.item_id=? and m.kind='object' and o.kind=? order by m.id desc", item.id, kind)
-    .find((r) => (!opts?.statuses || opts.statuses.includes(r.status)) && (!opts?.after || r.changed_at > opts.after));
+    .find((r) => (!opts?.statuses || opts.statuses.includes(r.status)) && (!opts?.after || r.changed_at > opts.after) || revised(r));
   if (!r) return null;
   const v = view(r);
-  return { ref: `object:${r.id}`, title: v.title, status: v.status, statusLabel: v.statusLabel, fields: v.fields, link: v.link, done: !v.disabled && v.final, disabled: v.disabled, changedAt: v.changedAt };
+  return { ref: `object:${r.id}`, title: v.title, status: v.status, statusLabel: v.statusLabel, fields: v.fields, link: v.link, done: !v.disabled && v.final, disabled: v.disabled, changedAt: v.changedAt, ...(revised(r) ? { updated: true } : {}) };
 }
 export function objectMaterialBrief(app: App, id: string) {
   const r = row(app, id);
@@ -74,7 +79,8 @@ async function wake(app: App, ids: string[]) {
   const { advance } = await import("./engine.ts");
   for (const id of new Set(ids)) await advance(app, id, "关联对象变化");
 }
-type Change = { from: string; to: string; at: string };
+/** `updated`: the status stayed and the revision moved (`from`/`to` are then the same status). */
+type Change = { from: string; to: string; at: string; updated?: boolean; note?: string };
 type ReadResult = { id: string; changedItems: string[]; change: Change | null };
 async function readObject(app: App, def: RegisteredObject, key: string, item: Item, at: Date): Promise<ReadResult> {
   const id = objectId(def.kind, key);
@@ -85,21 +91,30 @@ async function readObject(app: App, def: RegisteredObject, key: string, item: It
     const value: PluginObjectState = await timed(() => def.read(ctx, key));
     if (!value || typeof value.status !== "string" || !Object.hasOwn(def.statuses, value.status)) throw new Error(`对象返回了不认识的状态：${value?.status}`);
     if (typeof value.title !== "string" || typeof value.link !== "string" || value.fields && (!Array.isArray(value.fields) || value.fields.some((f) => !f || typeof f.label !== "string" || typeof f.value !== "string"))) throw new Error("对象的标题、链接或字段格式不对");
+    if (value.revision != null && (typeof value.revision !== "string" || value.revision.length > 500)) throw new Error("对象的 revision 要是 500 字以内的字符串");
+    if (value.note != null && typeof value.note !== "string") throw new Error("对象的 note 要是字符串");
     if (pluginObjectKind(def.kind) !== def) throw new Error("来源已停用");
     assertObjectItem(app, item.id, item.userId, true);
     const stamp = at.toISOString(), changed = !!old && old.status !== value.status;
-    const ids = changed ? linkedItems(app, id) : [];
+    const revision = value.revision ?? null, note = value.note ? value.note.slice(0, 300) : "";
+    // A revision that moved while the status stayed: “有更新”. The first read (or the first with a revision) only sets it.
+    const updated = !!old && !changed && revision !== null && old.revision !== null && old.revision !== revision;
+    const revisedAt = !old || old.revision !== revision ? stamp : old.revised_at;
+    const ids = changed || updated ? linkedItems(app, id) : [];
     tx(app.db, () => {
-      run(app.db, `insert into flow_objects(id,kind,key,title,status,link,fields,checked_at,changed_at,error,updated_at) values(?,?,?,?,?,?,?,?,?,null,?)
-        on conflict(kind,key) do update set title=excluded.title,status=excluded.status,link=excluded.link,fields=excluded.fields,checked_at=excluded.checked_at,changed_at=excluded.changed_at,error=null,updated_at=excluded.updated_at`,
-      id, def.kind, key, value.title, value.status, value.link, JSON.stringify(value.fields ?? []), stamp, !old || changed ? stamp : old.changed_at, stamp);
+      run(app.db, `insert into flow_objects(id,kind,key,title,status,link,fields,checked_at,changed_at,error,updated_at,revision,revised_at) values(?,?,?,?,?,?,?,?,?,null,?,?,?)
+        on conflict(kind,key) do update set title=excluded.title,status=excluded.status,link=excluded.link,fields=excluded.fields,checked_at=excluded.checked_at,changed_at=excluded.changed_at,error=null,updated_at=excluded.updated_at,revision=excluded.revision,revised_at=excluded.revised_at`,
+      id, def.kind, key, value.title, value.status, value.link, JSON.stringify(value.fields ?? []), stamp, !old || changed ? stamp : old.changed_at, stamp, revision, revisedAt);
       run(app.db, "delete from kv where key=?", retryKey(id));
       if (changed) {
         run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,?,?,?,'',?)", stamp, `object.${def.kind}.${value.status}`, JSON.stringify({ object: id, items: ids }), ids[0] ?? "", `${old.status} → ${value.status}`);
-        for (const itemId of ids) addItemEvent(app, itemId, "updated", `${def.label}《${value.title}》：${def.statuses[old.status] ?? old.status} → ${def.statuses[value.status]} ${value.link}`, "host");
+        for (const itemId of ids) addItemEvent(app, itemId, "updated", `${def.label}《${value.title}》：${def.statuses[old.status] ?? old.status} → ${def.statuses[value.status]}${note ? `（${note}）` : ""} ${value.link}`, "host");
+      } else if (updated) {
+        run(app.db, "insert into flow_signals(at,type,keys,item_id,stage_id,outcome) values(?,?,?,?,'',?)", stamp, `object.${def.kind}.updated`, JSON.stringify({ object: id, items: ids, revision }), ids[0] ?? "", note || `修订 ${old.revision} → ${revision}`);
+        for (const itemId of ids) addItemEvent(app, itemId, "updated", `${def.label}《${value.title}》有更新${note ? `：${note}` : ""} ${value.link}`, "host");
       }
     });
-    return { id, changedItems: ids, change: changed ? { from: old.status, to: value.status, at: stamp } : null };
+    return { id, changedItems: ids, change: changed ? { from: old.status, to: value.status, at: stamp, ...(note ? { note } : {}) } : updated ? { from: value.status, to: value.status, at: stamp, updated: true, ...(note ? { note } : {}) } : null };
   } catch (e) {
     const error = (e as Error).message, failures = retry(app, id).failures + 1;
     if (old) run(app.db, "update flow_objects set checked_at=?,error=?,updated_at=? where id=?", at.toISOString(), error, at.toISOString(), id);
@@ -126,10 +141,10 @@ async function objectRuleEvent(app: App, id: string, change: Change) {
     if (!items.length) return;
     const { dispatchRuleEvent } = await import("../rules/engine.ts");
     await dispatchRuleEvent(app, {
-      key: `object:${id}:${change.to}:${change.at}`,
+      key: `object:${id}:${change.updated ? "updated" : change.to}:${change.at}`,
       kind: "object",
       at: change.at,
-      object: { id, kind: r.kind, label: def.label, title: r.title, from: change.from, fromLabel: def.statuses[change.from] ?? change.from, to: change.to, toLabel: def.statuses[change.to] ?? change.to, link: r.link, items: items.map((i) => ({ id: i.id, title: i.title, space: i.spaceId })), space: items[0].spaceId },
+      object: { id, kind: r.kind, label: def.label, title: r.title, change: change.updated ? "updated" : "status", ...(change.note ? { note: change.note } : {}), from: change.from, fromLabel: def.statuses[change.from] ?? change.from, to: change.to, toLabel: def.statuses[change.to] ?? change.to, link: r.link, items: items.map((i) => ({ id: i.id, title: i.title, space: i.spaceId })), space: items[0].spaceId },
       via: "object",
     });
   } catch (e) {
@@ -187,6 +202,15 @@ export async function refreshObject(app: App, id: string, prefer?: string): Prom
   } catch {
     return false;
   }
+}
+
+/**
+ * A callback said this object changed (plugins/hooks.ts): read it now, if omem follows it (a row an
+ * open item links to). False when it is unknown or there is no item to read it as.
+ */
+export async function refreshObjectByKey(app: App, kind: string, key: string) {
+  const id = objectId(kind, key);
+  return !!row(app, id) && refreshObject(app, id);
 }
 
 const polling = new WeakMap<App, Promise<void>>();

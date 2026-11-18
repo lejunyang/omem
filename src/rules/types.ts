@@ -58,14 +58,53 @@ export const FIELDS = {
   "object.from": "原来的状态（状态标识）",
   "object.link": "对象链接",
   "object.items": "关联的事项（标题）",
+  "object.change": "变化（status 状态变了 / updated 状态没变、有更新）",
+  "object.note": "这次变了什么（插件给的一句话，有更新时常有）",
+  "omem.type": "事件（run.done 运行结束 / run.failed 运行失败 / review.done 评审结束 / code.applied 交办已应用 / code.discarded 交办已丢弃 / ask.answered 提问已回答 / ask.expired 提问已失效 / item.created 新事项 / item.status 事项状态变了 / flow.stage 流程阶段变了 / plugin.signal 插件信号）",
+  "omem.title": "标题（运行、事项、问题、阶段……）",
+  "omem.kind": "类型（运行类型 / 事项类型 / 插件信号的 kind）",
+  "omem.profile": "运行的档案（Agent）",
+  "omem.space": "所在空间（空间 id）",
+  "omem.via": "运行怎么来的（chat / rule / schedule / flow / mention… ；系统自己的是 system）",
+  "omem.status": "新状态（事项状态；阶段 doing / waiting-owner / blocked / done / skipped；评审结论 approved / changes-requested）",
+  "omem.from": "原来的状态",
+  "omem.item": "关联的事项（标题）",
+  "omem.flow": "流程 id",
+  "omem.stage": "阶段 id",
+  "omem.repo": "仓库（空间 id）",
+  "omem.branch": "分支",
+  "omem.text": "内容（运行的结论或错误、问题和回答、信号的内容）",
+  "omem.plugin": "插件 id（插件信号）",
+  "omem.newFindings": "新问题数（评审结束）",
+  "omem.fixed": "上一轮的问题已修几条（复审）",
+  "omem.still": "上一轮的问题仍在几条（复审）",
 } as const;
 export type Field = keyof typeof FIELDS;
-/** Which fields each trigger has: a meeting has no chat or message, a message no meeting, a document change or an object's state neither. */
-export const EVENT_FIELDS: Record<"message" | "meeting" | "doc" | "object", Field[]> = {
-  message: (Object.keys(FIELDS) as Field[]).filter((f) => !/^(meeting|doc|change|object)\./.test(f)),
+/** Which fields each trigger has: a meeting has no chat or message, a message no meeting, a document change, an object's state or omem's own event none of those. */
+export const EVENT_FIELDS: Record<"message" | "meeting" | "doc" | "object" | "omem", Field[]> = {
+  message: (Object.keys(FIELDS) as Field[]).filter((f) => !/^(meeting|doc|change|object|omem)\./.test(f)),
   meeting: (Object.keys(FIELDS) as Field[]).filter((f) => f.startsWith("meeting.")),
   doc: (Object.keys(FIELDS) as Field[]).filter((f) => /^(doc|change)\./.test(f)),
   object: (Object.keys(FIELDS) as Field[]).filter((f) => f.startsWith("object.")),
+  omem: (Object.keys(FIELDS) as Field[]).filter((f) => f.startsWith("omem.")),
+};
+
+/** What happens inside omem that a rule can be about (trigger `omem`, src/rules/omem-events.ts). */
+export const OMEM_TYPES = ["run.done", "run.failed", "review.done", "code.applied", "code.discarded", "ask.answered", "ask.expired", "item.created", "item.status", "flow.stage", "plugin.signal"] as const;
+export type OmemType = (typeof OMEM_TYPES)[number];
+export const OMEM_TYPE_LABEL: Record<OmemType, string> = {
+  "run.done": "运行结束", "run.failed": "运行失败", "review.done": "评审结束", "code.applied": "交办已应用", "code.discarded": "交办已丢弃",
+  "ask.answered": "提问已回答", "ask.expired": "提问已失效", "item.created": "新事项", "item.status": "事项状态变了", "flow.stage": "流程阶段变了", "plugin.signal": "插件信号",
+};
+/**
+ * One thing that happened inside omem, as a rule sees it. `id`: what it is about (a run, an item, a
+ * question), with `status` the dedupe key; `ruleId`: the rule whose run this came from, which never
+ * hears of it again.
+ */
+export type OmemFacts = {
+  type: OmemType; id: string; title: string; kind?: string; profile?: string; space?: string; via?: string; status?: string; from?: string;
+  item?: { id: string; title: string }; flow?: string; stage?: string; repo?: string; branch?: string; text?: string; plugin?: string;
+  newFindings?: number; fixed?: number; still?: number; runId?: string; ruleId?: string; link?: string;
 };
 export const OPS = ["equals", "contains", "startsWith", "endsWith", "matches", "in", "is", "gte", "lte"] as const;
 export type Op = (typeof OPS)[number];
@@ -227,13 +266,17 @@ export const ruleInputSchema = z.object({
   description: z.string().trim().min(1).max(2000),
   enabled: z.boolean().default(false),
   trigger: z.object({
-    event: z.enum(["message", "chat-new", "schedule", "meeting", "doc", "object"]).default("message"),
+    event: z.enum(["message", "chat-new", "schedule", "meeting", "doc", "object", "omem"]).default("message"),
     /** Documents a `doc` rule watches (links): omem subscribes to their changes as the bot. */
     docs: z.array(z.string().trim().min(1).max(500)).max(200).optional(),
     /** An `object` rule: which kind of plugin object (its full name, `github:pull-request`); left out, any. */
     objectKind: z.string().trim().min(3).max(80).optional(),
     /** …and which new states it is about (the kind's status ids); left out or empty, any. */
     objectStatuses: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    /** …and which changes: its status (`status`, the default), or a new revision with the status unchanged (`updated`). */
+    objectChanges: z.array(z.enum(["status", "updated"])).min(1).max(2).optional(),
+    /** An `omem` rule: which of omem's own events (OMEM_TYPES); at least one. */
+    omemTypes: z.array(z.enum(OMEM_TYPES)).max(OMEM_TYPES.length).optional(),
     /**
      * A `meeting` rule: which meetings it looks at. `joined` the owner joined one (the default); `group`
      * someone started one in a group one of omem's bots is in (the owner may not be in it); `both`.
@@ -275,7 +318,7 @@ export type Rule = z.infer<typeof ruleInputSchema> & { id: string; origin?: { pl
 export type RuleEvent = {
   /** Dedupe key: one message (or chat, or schedule tick) is handled once per rule. */
   key: string;
-  kind: "message" | "chat-new" | "schedule" | "meeting" | "doc" | "object";
+  kind: "message" | "chat-new" | "schedule" | "meeting" | "doc" | "object" | "omem";
   at: string;
   chat?: { id: string; name: string; kind: "group" | "p2p" };
   sender?: { id?: string; name: string; email?: string | null; kind: "owner" | "user" | "bot" };
@@ -315,9 +358,11 @@ export type RuleEvent = {
    * A plugin object linked to items changed state (src/flows/plugin-objects.ts): only the items in
    * spaces the rules' owner can read; `space` is the first one's, where an agent reads.
    */
-  object?: { id: string; kind: string; label: string; title: string; from: string; fromLabel: string; to: string; toLabel: string; link: string; items: { id: string; title: string; space: string }[]; space: string };
+  object?: { id: string; kind: string; label: string; title: string; change?: "status" | "updated"; note?: string; from: string; fromLabel: string; to: string; toLabel: string; link: string; items: { id: string; title: string; space: string }[]; space: string };
+  /** Something that happened inside omem (src/rules/omem-events.ts). */
+  omem?: OmemFacts;
   /** Where it came from: the bot sees groups it is in in real time; the owner's capture sees every chat. */
-  via: "bot" | "capture" | "schedule" | "test" | "meeting" | "doc" | "object";
+  via: "bot" | "capture" | "schedule" | "test" | "meeting" | "doc" | "object" | "omem";
   /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */
   bot?: string;
   /** The message a “wait for a message” step got (fast.ts); the actions after it use it as what to pass on. */

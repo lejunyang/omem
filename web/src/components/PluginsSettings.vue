@@ -16,7 +16,9 @@ import UiCheckbox from "./UiCheckbox.vue";
  * Settings → 插件 (docs/v2/plugins.md): installing someone else's plugin (an npm package or a GitHub tag),
  * turning plugins on and off, what each may do, trusting the code of plugins in the data directory (and
  * withdrawing it), updating or removing installed ones, and their services: running or not, recent output.
+ * Its callbacks (api.hook): the address another system calls, with a secret made here and shown once.
  */
+type Hook = { name: string; label: string | null; path: string; secret: { createdAt: string; usedAt: string | null } | null };
 type Service = { name: string; description: string; command: string; running: boolean; startedAt: string | null; streams: number; log: string[] };
 type Plugin = {
   id: string;
@@ -42,6 +44,7 @@ type Plugin = {
   page: { title: string } | null;
   services: { name: string; description: string; command: string }[];
   streams: { name: string; service: string }[];
+  hooks?: Hook[];
   enabled: boolean;
   runMode: "isolated" | "inprocess" | null;
   version: string | null;
@@ -53,6 +56,8 @@ const route = useRoute();
 const editing = ref<Plugin | null>(null);
 const plugins = ref<Plugin[] | null>(null);
 const services = ref<Record<string, Service[]>>({});
+/** A callback address with its secret, right after it was made: shown this once. */
+const freshHook = ref<{ key: string; url: string } | null>(null);
 const openLog = ref<string | null>(null);
 const picking = ref<string | null>(null);
 const source = ref("");
@@ -198,6 +203,33 @@ async function service(p: Plugin, name: string, action: "start" | "stop") {
   services.value[p.id] = await get<Service[]>(`/api/plugins/${p.id}/services`);
 }
 
+const hookUrl = (path: string) => `${location.origin}${path}`;
+const when = (at: string) => new Date(at).toLocaleString();
+async function makeSecret(p: Plugin, h: Hook) {
+  if (h.secret && !(await confirmDialog(`重新生成“${h.label ?? h.name}”的回调地址？`, { message: "旧地址马上失效，外部平台要改成新地址。", okText: "重新生成" }))) return;
+  try {
+    const r = await post<{ secret: string; path: string }>(`/api/plugins/${p.id}/hooks/${h.name}/secret`);
+    freshHook.value = { key: `${p.id}/${h.name}`, url: hookUrl(r.path) };
+    await load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+async function revokeSecret(p: Plugin, h: Hook) {
+  if (!(await confirmDialog(`撤销“${h.label ?? h.name}”的回调地址？`, { message: "外部平台再调用会得到 404，omem 回到按间隔去读。", okText: "撤销" }))) return;
+  await del(`/api/plugins/${p.id}/hooks/${h.name}/secret`);
+  if (freshHook.value?.key === `${p.id}/${h.name}`) freshHook.value = null;
+  await load();
+}
+async function copyHook(url: string) {
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("已复制回调地址", "ok");
+  } catch {
+    toast("复制失败，请手动选中复制", "error");
+  }
+}
+
 /** The nav icon (empty: back to the plugin's own). */
 async function setIcon(p: Plugin, icon: string) {
   try {
@@ -318,6 +350,26 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
         <p v-if="s.description" class="muted small">{{ s.description }}</p>
         <pre v-if="openLog === `${p.id}/${s.name}`" class="log">{{ s.log.join("\n") || "（还没有输出）" }}</pre>
       </div>
+      <div v-for="h in p.hooks ?? []" :key="`hook:${h.name}`" class="service stack">
+        <div class="row wrap small">
+          <span class="dot" :class="{ on: !!h.secret }" aria-hidden="true" />
+          <strong>回调</strong>
+          <span class="mono">{{ h.name }}</span>
+          <span v-if="h.label" class="muted">{{ h.label }}</span>
+          <span class="muted">{{ h.secret ? `地址生成于 ${when(h.secret.createdAt)}${h.secret.usedAt ? ` · 上次调用 ${when(h.secret.usedAt)}` : " · 还没被调用过"}` : "还没有地址" }}</span>
+          <span class="spacer" />
+          <button class="btn ghost sm" :disabled="!p.enabled" @click="makeSecret(p, h)">{{ h.secret ? "重新生成" : "生成地址" }}</button>
+          <button v-if="h.secret" class="btn ghost sm" @click="revokeSecret(p, h)">撤销</button>
+        </div>
+        <div v-if="freshHook?.key === `${p.id}/${h.name}`" class="row wrap small hook-fresh">
+          <code class="mono path grow">{{ freshHook.url }}</code>
+          <button class="btn sm" @click="copyHook(freshHook.url)">复制</button>
+        </div>
+        <p class="muted small">
+          {{ freshHook?.key === `${p.id}/${h.name}` ? "这个地址只显示这一次：填进外部平台的 webhook（POST），之后在这里只能重新生成。" : h.secret ? `地址形如 ${hookUrl(h.path)}<密钥>；密钥只在生成时显示。` : "生成地址后填进外部平台的 webhook，平台有变化时会叫醒 omem 去读，不用一直等轮询。" }}
+          外部平台要能访问到这台 omem；每分钟最多 60 次，正文最大 1 MB。
+        </p>
+      </div>
     </div>
   </div>
 </template>
@@ -356,6 +408,12 @@ onMounted(() => void load().then(locate).catch((e) => toast((e as Error).message
 }
 .dot.on {
   background: var(--ok);
+}
+.hook-fresh code {
+  background: var(--sunken);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  min-width: 0;
 }
 .log {
   max-height: 240px;

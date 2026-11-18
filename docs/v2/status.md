@@ -5,6 +5,8 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 插件回调与对象“有更新”：`api.hook` 声明回调，外部平台调 `POST /api/hooks/<插件>/<名字>/<密钥>`（本人在插件卡上生成和撤销密钥，只存哈希；每分钟 60 次、正文 1 MB；写 `audit_events`），插件说要重读哪些对象、记哪些信号；对象的 `read` 可交 `revision` / `note`，状态没变而修订变了记 `object.<全名>.updated`、推进流程（`done: { object, status: "updated" }`），规则的对象触发可选 `objectChanges`（`status` 默认 / `updated`） | 已实现（2026-11-19）；假插件测过在 omem 进程里和隔离运行两种、错密钥、限流、超长正文；真实平台的 webhook 没接 | `src/plugins/hooks.ts`、`src/plugins/http.ts`（`registerHookRoutes`）、`src/flows/plugin-objects.ts`、`web/src/components/PluginsSettings.vue`；`test/plugin-hooks.test.ts`、`test/flow-objects.test.ts`、`test/object-actions.test.ts` |
+| 规则触发“omem 里发生的事”（`trigger.event = omem`，`omemTypes`）：运行结束 / 失败、评审结束、交办应用 / 丢弃、提问回答 / 失效、事项新建 / 改状态、流程阶段变化、插件信号；`omem.*` 条件字段；规则自己的运行不叫醒它、这类规则的运行不叫醒这类规则，同一件事同一状态十分钟一次 | 已实现（2026-11-19）；`test/rule-omem-events.test.ts`；评审结束目前从交办运行的 `reviewStage: done` 认出，复审的已修 / 仍在数要评审链调用 `reviewFinished` 才有；规则页 390 宽截图看过，真实模型没跑 | `src/rules/omem-events.ts`、`src/rules/`（types、conditions、engine、store、compile、confirmation）、`src/agents/runs.ts`（`setRunOutput`）、`src/items/store.ts`、`src/flows/store.ts`（`changeStage`）、`src/plugins/signals.ts`、`web/src/views/Rules.vue` |
 | 网页对话带图片和文件：粘贴、拖进、点按钮选，输入框上方列出，正文用 `[图片N]` / `[文件N]` 引用（点一个在光标处插入），Agent 拿到每个文件的路径 | 已实现（2026-11-19） | `src/agents/attachments.ts`、`POST /api/ask/attachments`、`web/src/views/Ask.vue` |
 | 流程定义搬到“流程”页（进行中 / 流程定义），新建以对话为主：讲做法交给助理起草，草稿在列表里启用，YAML 收进“查看定义” | 已实现（2026-11-19） | `web/src/views/Flows.vue`、`FlowTabs.vue`、`GET /api/flows` 的 `drafts` |
 | 人物卡路径统一为“名字-邮箱前缀”，旧路径的卡每晚并成一张（别名保留，本人补充合并） | 已实现（2026-11-19） | `src/agents/work-state.ts` 的 `personSlug`、`mergePersonCards` |

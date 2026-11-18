@@ -105,7 +105,21 @@ export type PluginSourceInput = { space?: string; kind?: "doc" | "chat" | "web" 
 export type PluginConnection = { account: string; scopes: string[]; base: string | null; fetch(path: string, init?: RequestInit): Promise<Response> };
 
 export type PluginSignal = { kind: string; keys: Record<string, unknown>; payload?: unknown };
-export type PluginObjectState = { title: string; status: string; link: string; fields?: { label: string; value: string }[] };
+/**
+ * `revision`: the plugin's own mark of “something changed” that is not a status (head commit plus
+ * comment count, say); when it moves while the status stays, omem records `object.<kind>.updated`.
+ * `note`: what changed this time, in a line (shown on the item's timeline).
+ */
+export type PluginObjectState = { title: string; status: string; link: string; fields?: { label: string; value: string }[]; revision?: string; note?: string };
+/** What a callback gets: the request as it came (body as raw text; the plugin checks its signature). */
+export type PluginHookRequest = { headers: Record<string, string>; query: Record<string, string>; body: string };
+/** What the host does next: read these objects again (kind without the plugin prefix is its own), record these signals. */
+export type PluginHookResult = { refresh?: { kind: string; key: string }[]; emit?: PluginSignal[] };
+/**
+ * A callback another system calls when something changed (docs/v2/plugins.md, “回调”), at
+ * `POST /api/hooks/<plugin id>/<name>/<secret>`; the owner makes the secret on the plugin's page.
+ */
+export type PluginHook = { name: string; label?: string; handle(ctx: PluginContext, req: PluginHookRequest): PluginHookResult | void | Promise<PluginHookResult | void> };
 /**
  * Something a person can do to an object (merge it, rerun its failed checks): one of the plugin's own
  * tools, called with the object's key in `arg` (default `key`). The button on the item page and an
@@ -189,6 +203,8 @@ export type PluginApi = {
   id: string;
   /** A stateful object, named <plugin id>:<kind> by the host; its actions are the plugin's own tools. */
   object(def: PluginObject): void;
+  /** A callback from outside: `POST /api/hooks/<plugin id>/<name>/<secret>`. */
+  hook(def: PluginHook): void;
   /** The host's zod: plugins in the data directory cannot import packages. */
   z: typeof import("zod").z;
   /** In-process only. The host resolves identities, splits deliveries and unregisters on stop. */

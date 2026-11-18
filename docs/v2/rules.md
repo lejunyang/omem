@@ -14,13 +14,15 @@
 | 《差旅报销制度》有人改了标准、在里面 @ 我，半小时后提醒我看看 | 文档变化（列出这篇的链接） | @ 了本人 | 延时 30 分钟；通知本人 |
 | 需求排期表里有人把状态改成“已上线”，跑一下发布检查脚本，执行前让改的人的负责人批准 | 文档变化（多维表格） | 变化类型是 record 且 变化内容包含“已上线” | 执行脚本（审批人由 AI 按说明找） |
 | 事项上挂的合并请求没合并就被关掉时告诉我 | 对象状态变化（合并请求 → 已关闭） | （无） | 通知本人 |
+| 别人的合并请求有新提交时让助手复审 | 对象有更新（合并请求，状态没变） | （无） | 交给 Agent：复审这次的改动 |
+| 评审结束、结论要改时告诉我 | omem 里发生的事（评审结束） | 新状态是 changes-requested | 通知本人 |
 
 ## 模型
 
 一条规则（表 `rules`）：
 
 - `description`：本人的原话，规则的依据。条件和动作都可以重新从它生成。
-- `trigger`：`message`（新消息，含卡片）、`chat-new`（第一次看到的群）、`schedule`（cron）、`meeting`（本人加入飞书视频会议，见下文“会议规则”）、`doc`（飞书文档、电子表格、多维表格有变化，见下文“文档变化规则”；`trigger.docs` 列出要盯的文档链接）、`object`（事项上挂的平台对象变了状态，见下文“对象状态变化规则”；`trigger.objectKind` 选对象类型、`trigger.objectStatuses` 选新状态）。`once: "event" | "chat"`：每条消息都可能触发，或每个群只触发一次（拉机器人、开始监听这类）。
+- `trigger`：`message`（新消息，含卡片）、`chat-new`（第一次看到的群）、`schedule`（cron）、`meeting`（本人加入飞书视频会议，见下文“会议规则”）、`doc`（飞书文档、电子表格、多维表格有变化，见下文“文档变化规则”；`trigger.docs` 列出要盯的文档链接）、`object`（事项上挂的平台对象变了状态或有更新，见下文“对象状态变化规则”；`trigger.objectKind` 选对象类型、`trigger.objectStatuses` 选新状态、`trigger.objectChanges` 选哪些变化）、`omem`（omem 自己的事：运行结束、评审结束、提问被回答、事项和流程阶段变化……，见下文“omem 里发生的事”；`trigger.omemTypes` 选哪几种）。`once: "event" | "chat"`：每条消息都可能触发，或每个群只触发一次（拉机器人、开始监听这类）。
 - `conditions`：确定的条件（JSON，见下），可以为空。
 - `judge`：`code`（只看条件）、`ai`（只交给模型）、`code+ai`（条件先筛，命中的再请模型确认）。条件为空时只能是 `ai`。
 - `judgeWith`：模型判断（含“模型判断”这一步）用哪个：`decision`（默认，有决策模型时用它，只给是 / 否和概率）或 `general`（通用模型，写理由）。见 [ai-models.md](ai-models.md)。
@@ -37,7 +39,7 @@
 ] }
 ```
 
-字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于在会人数和会邀人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。文档变化规则只用文档和变化的字段：`doc.title`、`doc.type`（docx / sheet / bitable）、`doc.url`、`doc.location`（知识库和目录）、`doc.space`、`change.kind`（edit / comment / record / field）、`change.text`、`change.added`、`change.sheet` / `change.row`（电子表格的工作表名和行号）、`change.recordId` / `change.tableId`（多维表格记录）、`change.action`（added / edited / deleted）、`change.editor`、`change.editorEmail`、`change.editorId`（修改人在机器人这边的 open_id，可用于 @）、`change.byOwner`（修改人只有本人；不知道修改人时不成立）、`change.mentions`、`change.mentionsOwner`、`change.mentionsBot`。对象状态变化规则只用对象的字段：`object.kind`（全名，如 `github:pull-request`）、`object.title`、`object.status`（新状态的标识，如 `merged`）、`object.from`（原来的状态）、`object.link`、`object.items`（关联事项的标题）。
+字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于在会人数和会邀人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。文档变化规则只用文档和变化的字段：`doc.title`、`doc.type`（docx / sheet / bitable）、`doc.url`、`doc.location`（知识库和目录）、`doc.space`、`change.kind`（edit / comment / record / field）、`change.text`、`change.added`、`change.sheet` / `change.row`（电子表格的工作表名和行号）、`change.recordId` / `change.tableId`（多维表格记录）、`change.action`（added / edited / deleted）、`change.editor`、`change.editorEmail`、`change.editorId`（修改人在机器人这边的 open_id，可用于 @）、`change.byOwner`（修改人只有本人；不知道修改人时不成立）、`change.mentions`、`change.mentionsOwner`、`change.mentionsBot`。对象状态变化规则只用对象的字段：`object.kind`（全名，如 `github:pull-request`）、`object.title`、`object.status`（新状态的标识，如 `merged`）、`object.from`（原来的状态）、`object.link`、`object.items`（关联事项的标题）、`object.change`（`status` 状态变了 / `updated` 有更新）、`object.note`（插件给的“这次变了什么”）。omem 内部事件的规则只用 `omem.*` 字段：`omem.type`、`omem.title`、`omem.kind`（运行类型 / 事项类型 / 信号 kind）、`omem.profile`、`omem.space`、`omem.via`、`omem.status`、`omem.from`、`omem.item`、`omem.flow`、`omem.stage`、`omem.repo`、`omem.branch`、`omem.text`、`omem.plugin`、`omem.newFindings`、`omem.fixed`、`omem.still`（后三个用 `gte` / `lte` 比数）。
 
 `chat.id` 的值写 `current`（`in` 列表里也行）表示“这个群”：助理在飞书会话里用 `save_rule` 保存时换成这个会话的群 id，不在飞书会话里保存会被拒绝。
 
@@ -93,7 +95,28 @@
 - **类型和状态**：`objectKind` 不写是任何对象，`objectStatuses` 不写或为空是变成任何状态；写了状态必须先写类型。保存时核对：类型要是现在启用的插件声明的（“没有这种对象：…；装了对应的插件才有”），状态要在这个类型声明的状态里。插件停用后规则保留，不会再收到这种对象的变化。
 - **事件里有什么**：对象类型名和全名、标题、原来和现在的状态（标识和状态词）、链接、关联事项的标题和 id（交给 Agent 时它可以用 `get_item` 读事项）；标题是平台上的外部材料，任务说明里写明不是指令。
 - **动作**：和文档变化规则一样没有群——只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断、执行脚本；不能等待回应或按讨论跳过；Agent 要回复时先选“发到”的会话。没有指定执行空间时，Agent 在第一件关联事项的空间里查资料。不写条件、按条件判断时，选定的类型和状态就是全部条件。
-- **规则页**：触发选“对象状态变化”，“哪种对象”从现在启用的对象类型里选（规则已选、插件却停用了的类型照样列出，标“插件没有启用”），“变成”勾这个类型声明的状态（不勾是任何状态）。`GET /api/rule-options` 的 `objectKinds` 给出 `{ kind, label, statuses, final }`。
+- **有更新（状态没变）**：插件读对象时可以交一个 `revision`（它自己定：头提交加评论数之类）和一句 `note`（这次变了什么）。状态没变而 `revision` 和上次不一样时，宿主记 `object.<全名>.updated` 信号、推进关联事项的流程，并发一个 `object.change = "updated"` 的规则事件（`from` 和 `to` 都是当前状态，事件键 `object:<对象 id>:updated:<读到的时间>`）。第一次读到、或第一次带上修订时只作基线；状态和修订同时变时只算状态变化。规则的 `trigger.objectChanges` 选 `status`（默认，旧规则就是这样）、`updated` 或两个都要；`objectStatuses` 对“有更新”按当时的状态过滤（“进行中时有更新”）。插件有回调（docs/v2/plugins.md“回调”）时，平台一通知宿主就去读，不用等轮询。
+- **规则页**：触发选“对象状态变化”，“哪种对象”从现在启用的对象类型里选（规则已选、插件却停用了的类型照样列出，标“插件没有启用”），“哪些变化”勾“状态变了”和 / 或“有更新（状态没变）”，“变成”勾这个类型声明的状态（不勾是任何状态）。`GET /api/rule-options` 的 `objectKinds` 给出 `{ kind, label, statuses, final }`。
+
+### omem 里发生的事
+
+“评审结束、结论要改时告诉我”：触发 `omem`，`trigger.omemTypes` 写 `[review.done]`，条件 `omem.status equals changes-requested`，动作通知本人。实现在 `src/rules/omem-events.ts`：订阅进程里的事件总线（`app.events` 的 `run`、`ask`，以及各处发的 `omem` 事件），组装成 `RuleEvent`（`kind: "omem"`、`omem: {…}`）交给 `dispatchRuleEvent`。
+
+| 子类型 | 什么时候 | 主要字段 |
+| --- | --- | --- |
+| `run.done` / `run.failed` | 一次运行结束（取消的、安静结束的不算） | 运行类型、档案、标题、空间、怎么来的（`via`，系统自己的是 `system`）、结论或错误、事项 |
+| `review.done` | 分支评审结束（交办运行的 `reviewStage` 变成 `done`；复审由评审链用 `reviewFinished` 补上已修 / 仍在的数目） | 结论（approved / changes-requested）、新问题数、已修 / 仍在数、仓库和分支、事项 |
+| `code.applied` / `code.discarded` | 交办被应用 / 丢弃（运行输出里第一次出现 `appliedAt` / `discardedAt`） | 仓库、分支、事项 |
+| `ask.answered` / `ask.expired` | 提问被回答 / 撤回或失效 | 问题、回答、事项 |
+| `item.created` / `item.status` | 新建事项 / 事项状态变了 | 类型、新旧状态、空间 |
+| `flow.stage` | 流程阶段的状态变了（`doing`、`waiting-owner`（做着但在等本人）、`blocked`、`done`、`skipped`……） | 流程、阶段、新旧状态、事项、说明 |
+| `plugin.signal` | 插件 `ctx.emit` 记了信号（`plugin.<id>.<kind>`，含回调返回的 `emit`） | 插件、kind、keys 和 payload（外部材料） |
+
+- **防循环**：一条规则自己起的运行（`trigger.source` 或 `input.rule` 是它）结束时不会再叫醒它；“omem 里发生的事”规则起的运行和它做的事（建的事项、推进的阶段）不叫醒任何这种规则，避免两条规则互相叫醒。别的规则（消息、定时……）起的运行照常算。
+- **去重**：同一子类型、同一对象、同一状态十分钟内只交一次（进程内记着）；事件键 `omem:<子类型>:<对象 id>:<状态>:<时间>`。没有启用的这种规则时什么也不组装。
+- **范围**：规则选了所属空间时只看这个空间里的事（事件带空间时）；只看 `omemTypes` 里选了的子类型，保存时至少选一种。
+- **动作**：和文档变化规则一样没有群——只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断、执行脚本；Agent 要回复时先选“发到”的会话；没有指定执行空间时在事件的空间里查资料。不写条件、按条件判断时，选的子类型就是全部条件。
+- **规则页**：触发选“omem 里发生的事”，勾“哪些事”（来自 `GET /api/rule-options` 的 `omemTypes`），条件下拉只有 omem 的字段。
 
 ### 处理中再次触发：并入同一会话
 
@@ -206,7 +229,7 @@
 侧栏“规则”：左边规则列表（启用开关、命中次数、最近触发），右边编辑：
 
 - 规则原话（必填）。
-- 触发：新消息 / 新群 / 定时（cron）/ 会议（我入会时、群里有人发起时）/ 文档变化 / 对象状态变化；每条消息触发或每个群一次。
+- 触发：新消息 / 新群 / 定时（cron）/ 会议（我入会时、群里有人发起时）/ 文档变化 / 对象状态变化（状态变了、有更新）/ omem 里发生的事；每条消息触发或每个群一次。
 - 判断：条件（一句句可读的条件，可增删改）+ “让 AI 从原话生成条件”；判断方式。
 - 动作：按顺序的卡片，选 Agent、开话题、回复方式等。
 - “用最近的消息试一试”：拿最近采集的消息（可选某个群）按当前条件求值，列出会命中的消息和理由（只交给模型的规则抽样试）。

@@ -7,6 +7,7 @@ import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now, localStamp } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
 import { triggerFor, withFollowUp, type RunTrigger } from "../core/run-trigger.ts";
+import { emitOmem, runOutputFacts } from "../rules/omem-events.ts";
 
 export type RunKind = "commit-claim" | "item-follow" | "flow-review" | "study-trial" | "peer-trial" | "flow-stage" | "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "note-review" | "memory-review" | "memory-organize" | "skill-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state" | "quality-audit" | "wiki-sweep";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -236,6 +237,11 @@ export function countRuns(app: App, opts: RunFilter = {}) {
 export function setRunOutput(app: App, id: string, output: Record<string, unknown>) {
   const prev = getRun(app, id).output;
   run(app.db, "update runs set output = ? where id = ?", JSON.stringify({ ...prev, ...output }), id);
+  // A delegation applied or discarded, a review ended: rules about omem's own events hear of it (rules/omem-events.ts).
+  if ("appliedAt" in output || "discardedAt" in output || "reviewStage" in output) {
+    const facts = runOutputFacts(app, id, prev, output);
+    if (facts) emitOmem(app, facts);
+  }
 }
 
 // ---- events -------------------------------------------------------------

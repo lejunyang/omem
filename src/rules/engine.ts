@@ -11,7 +11,7 @@ import { createRun } from "../agents/runs.ts";
 import { discussion, discussionText, engagement, followedTopic, unfollowTopic, type Followed } from "./context.ts";
 import { addressed, claimEvent, deleteRule, endJudging, listRules, recordFiring, startJudging } from "./store.ts";
 import { ownWriteOf } from "./own-writes.ts";
-import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
+import { OMEM_TYPE_LABEL, ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
 
 /**
  * Hand one event to every enabled rule that listens for it. Sources call this and forget it:
@@ -56,9 +56,17 @@ function inScope(app: App, r: Rule, e: RuleEvent) {
   if (r.spaceId && e.chat && r.spaceId !== captureSpace(app, e.chat.id)) return false;
   if (r.spaceId && e.doc && e.doc.space && r.spaceId !== e.doc.space) return false;
   if (e.object) {
+    // Which changes: the status (the default, and what rules before “有更新” meant), a new revision, or both.
+    if (!(r.trigger.objectChanges ?? ["status"]).includes(e.object.change ?? "status")) return false;
     if (r.trigger.objectKind && r.trigger.objectKind !== e.object.kind) return false;
     if (r.trigger.objectStatuses?.length && !r.trigger.objectStatuses.includes(e.object.to)) return false;
     if (r.spaceId && !e.object.items.some((i) => i.space === r.spaceId)) return false;
+  }
+  if (e.omem) {
+    if (!r.trigger.omemTypes?.includes(e.omem.type)) return false;
+    // What a rule's own run did never wakes that rule again (rules/omem-events.ts).
+    if (e.omem.ruleId === r.id) return false;
+    if (r.spaceId && e.omem.space && r.spaceId !== e.omem.space) return false;
   }
   if (e.doc && r.trigger.docs?.length) return r.trigger.docs.some((link) => linkIsDoc(app, link, e.doc!.token));
   return true;
@@ -224,8 +232,8 @@ export async function judge(app: App, rule: Pick<Rule, "id" | "description" | "c
     // A meeting rule without conditions is about every meeting the owner joins; a document rule without
     // them, about every change of the documents it lists; an object rule, about every change of the
     // kind and states it names (inScope checked those).
-    if (!rule.conditions && (e.kind === "meeting" || e.kind === "doc" || e.kind === "object")) {
-      if (rule.judge === "code") return { match: true, by: "code", reason: e.kind === "meeting" ? "每场会议" : e.kind === "doc" ? "盯着的文档有变化" : `${e.object?.label ?? "对象"}变成了「${e.object?.toLabel ?? ""}」` };
+    if (!rule.conditions && (e.kind === "meeting" || e.kind === "doc" || e.kind === "object" || e.kind === "omem")) {
+      if (rule.judge === "code") return { match: true, by: "code", reason: e.kind === "meeting" ? "每场会议" : e.kind === "doc" ? "盯着的文档有变化" : e.kind === "omem" ? omemReason(e) : e.object?.change === "updated" ? `${e.object.label}有更新${e.object.note ? `：${e.object.note}` : ""}` : `${e.object?.label ?? "对象"}变成了「${e.object?.toLabel ?? ""}」` };
     } else {
       if (!rule.conditions || !(await evaluate(rule.conditions, read))) return { match: false, by: "code", reason: "" };
       if (rule.judge === "code") return { match: true, by: "code", reason: describe(rule.conditions) };
@@ -235,6 +243,10 @@ export async function judge(app: App, rule: Pick<Rule, "id" | "description" | "c
   if (!takeAiBudget(rule.id)) return { match: false, by: "limit", reason: `这一小时已请模型判断 ${AI_PER_HOUR} 次` };
   const v = await aiJudge(app, rule as Rule, e);
   return v ? { match: v.match, by: rule.judge, reason: v.reason } : { match: false, by: rule.judge, reason: "模型没有给出判断" };
+}
+
+function omemReason(e: RuleEvent) {
+  return `${OMEM_TYPE_LABEL[e.omem!.type]}：${e.omem!.title}${e.omem!.status ? `（${e.omem!.status}）` : ""}`;
 }
 
 // ---- chat facts read on demand -----------------------------------------------------------

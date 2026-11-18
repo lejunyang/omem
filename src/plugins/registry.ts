@@ -18,6 +18,7 @@ import { CORE_TOOLS, TOOL_GROUPS, expandTools } from "../agents/tool-help.ts";
 import { registerTool, saveSourceFor, toolList, unregisterTools, watchesFor, type ToolContext } from "../agents/tools.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
 import { pluginObjectKinds, registerObject, withObjectActions } from "./objects.ts";
+import { describeHooks, registerHook } from "./hooks.ts";
 import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
@@ -227,6 +228,7 @@ async function loadCode(app: App, p: LoadedPlugin) {
   const api: PluginApi = {
     id: manifest.id,
     object(def) { p.connectors.push(registerObject(manifest.id, def)); },
+    hook(def) { p.connectors.push(registerHook(manifest.id, def)); },
     z,
     channel(def) {
       const channel = registerPluginChannel(app, p, def);
@@ -646,6 +648,8 @@ export function describePlugin(p: LoadedPlugin) {
     // Linked for development (omem plugin link): the page marks it 开发中.
     linked: p.linked,
     slots: p.slots.map((s) => ({ at: s.at, block: s.block })),
+    // Callbacks from outside (hooks.ts): the address without its secret, and whether one is set.
+    hooks: describeHooks(host ?? null, p.manifest.id),
     space: p.manifest.space?.id ?? null,
     spaces: describeSpaces(host, p.manifest.id, p.manifest),
     agents: p.manifest.agents.map((n) => ({ name: `${p.manifest.id}-${n}`, description: p.specs.find((s) => s.name === `${p.manifest.id}-${n}`)?.description ?? "" })),

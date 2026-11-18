@@ -1,8 +1,9 @@
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { htmlToMarkdown } from "../sources/html.ts";
-import type { PlatformReader, PluginApi, PluginConnection, PluginPlatform, PluginTool, PluginObject } from "./types.ts";
+import type { PlatformReader, PluginApi, PluginConnection, PluginPlatform, PluginTool, PluginObject, PluginHook } from "./types.ts";
 import { validateObject } from "./objects.ts";
+import { validateHook } from "./hooks.ts";
 
 /**
  * A plugin's code in its own process (src/plugins/sandbox.ts): started with Node's permission model,
@@ -79,12 +80,13 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
 const tools = new Map<string, PluginTool>();
 const readers = new Map<string, PlatformReader>();
 const objects = new Map<string, PluginObject>();
+const hooks = new Map<string, PluginHook>();
 
 async function main() {
   const dir = process.env.OMEM_PLUGIN_DIR!;
   const file = process.env.OMEM_PLUGIN_SERVER!;
   const plugin = process.env.OMEM_PLUGIN_ID!;
-  const declared: { tools: unknown[]; platforms: unknown[]; objects: unknown[] } = { tools: [], platforms: [], objects: [] };
+  const declared: { tools: unknown[]; platforms: unknown[]; objects: unknown[]; hooks: unknown[] } = { tools: [], platforms: [], objects: [], hooks: [] };
   const platforms = JSON.parse(process.env.OMEM_PLATFORMS ?? "[]") as PluginPlatform[];
   const api: PluginApi = {
     id: plugin,
@@ -94,6 +96,12 @@ async function main() {
       objects.set(def.kind, def);
       const { match, read, ...metadata } = def;
       declared.objects.push(metadata);
+    },
+    hook(def) {
+      validateHook(def);
+      if (hooks.has(def.name)) throw new Error(`回调重复注册：${def.name}`);
+      hooks.set(def.name, def);
+      declared.hooks.push({ name: def.name, ...(def.label ? { label: def.label } : {}) });
     },
     z,
     tool(t) {
@@ -141,6 +149,10 @@ process.on("message", async (m: Msg) => {
       const def = objects.get(m.kind);
       if (!def) throw new Error(`没有对象类型 ${m.kind}`);
       value = m.t === "object.match" ? await def.match(m.url) : await def.read(contextOf({ ...m.ctx, call: m.id }, process.env.OMEM_PLUGIN_ID!), m.key);
+    } else if (m.t === "hook") {
+      const def = hooks.get(m.name);
+      if (!def) throw new Error(`没有回调 ${m.name}`);
+      value = (await def.handle(contextOf({ ...m.ctx, call: m.id }, process.env.OMEM_PLUGIN_ID!), m.req)) ?? null;
     } else if (m.t === "read" || m.t === "changes") {
       const r = readers.get(`${m.provider} ${m.kind}`);
       const conn = connectionOf(m.conn);

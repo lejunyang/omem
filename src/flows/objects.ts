@@ -8,7 +8,8 @@ import { continuing } from "../studies/store.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
 import { findPluginObject } from "./plugin-objects.ts";
 
-export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; changedAt?: string; disabled?: boolean };
+/** `updated`: a plugin object whose revision moved after the time asked about (a stage done on `status: "updated"`). */
+export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; changedAt?: string; disabled?: boolean; updated?: boolean };
 export type ObjectKind = { kind: string; label: string; find: (app: App, item: Item) => FlowObject | null };
 
 /** Per-item run materials bound the lookup; codeWork uses the existing continuation indexes. */
@@ -65,4 +66,4 @@ export const objectKind = (kind: string): ObjectKind | undefined => {
   const def = pluginObjectKind(kind);
   return kind.includes(":") ? def ? { kind, label: def.label, find: (app, item) => findPluginObject(app, item, kind) } : undefined : flowObjects.find((x) => x.kind === kind);
 };
-export const findObject = (app: App, item: Item, kind: string, opts?: { statuses?: string[]; after?: string }): FlowObject | null => kind.includes(":") ? findPluginObject(app, item, kind, opts) : objectKind(kind)?.find(app, item) ?? null;
+export const findObject = (app: App, item: Item, kind: string, opts?: { statuses?: string[]; after?: string; updatedAfter?: string }): FlowObject | null => kind.includes(":") ? findPluginObject(app, item, kind, opts) : objectKind(kind)?.find(app, item) ?? null;

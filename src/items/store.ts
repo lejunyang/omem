@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { lapseItemAsks } from "../agents/ask-expiry.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
+import { emitOmem } from "../rules/omem-events.ts";
 
 export type ItemKind = "todo" | "waiting" | "reminder" | "watch" | "decision";
 /** expired: closed by itself after its period passed with no progress (src/items/expiry.ts), not done. */
@@ -133,7 +134,9 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
       addItemEvent(app, newIdValue, "created", input.note || `创建：${input.title}`, actor, input.sourceRefs ?? [], runId);
     });
     app.emit({ type: "changed", entity: "item", id: newIdValue, spaceId: input.spaceId ?? "personal" });
-    return getItem(app, newIdValue);
+    const made = getItem(app, newIdValue);
+    emitOmem(app, { type: "item.created", id: made.id, title: made.title, kind: made.kind, status: made.status, space: made.spaceId, item: { id: made.id, title: made.title }, ...(runId ? { runId } : {}) });
+    return made;
   }
   const old = getItem(app, id);
   const mode = input.sourceRefsMode ?? "merge";
@@ -179,6 +182,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
     if (changes.length || input.note || JSON.stringify(nextRefs) !== JSON.stringify(old.sourceRefs)) addItemEvent(app, id, changes.length ? "updated" : "note", [input.note, changes.join("；")].filter(Boolean).join("\n"), actor, mode === "remove" ? [] : input.sourceRefs ?? [], runId);
   });
   app.emit({ type: "changed", entity: "item", id, spaceId: old.spaceId });
+  if (next.status !== old.status) emitOmem(app, { type: "item.status", id, title: next.title, kind: next.kind, status: next.status, from: old.status, space: old.spaceId, item: { id, title: next.title }, ...(runId ? { runId } : {}) });
   // An item that ended gives back the workspaces its delegations still hold (their branches stay).
   if (closing) void import("../agents/code-branch.ts").then((m) => m.releaseItemWorkspaces(app, id)).catch(() => {});
   // …and what its runs still ask lapses, its notifications count as read (agents/ask-expiry.ts).

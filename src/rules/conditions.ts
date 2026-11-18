@@ -121,6 +121,46 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
         return e.object?.link;
       case "object.items":
         return e.object?.items.map((i) => i.title);
+      case "object.change":
+        return e.object ? e.object.change ?? "status" : undefined;
+      case "object.note":
+        return e.object?.note;
+      case "omem.type":
+        return e.omem?.type;
+      case "omem.title":
+        return e.omem?.title;
+      case "omem.kind":
+        return e.omem?.kind;
+      case "omem.profile":
+        return e.omem?.profile;
+      case "omem.space":
+        return e.omem?.space;
+      case "omem.via":
+        return e.omem?.via;
+      case "omem.status":
+        return e.omem?.status;
+      case "omem.from":
+        return e.omem?.from;
+      case "omem.item":
+        return e.omem?.item?.title;
+      case "omem.flow":
+        return e.omem?.flow;
+      case "omem.stage":
+        return e.omem?.stage;
+      case "omem.repo":
+        return e.omem?.repo;
+      case "omem.branch":
+        return e.omem?.branch;
+      case "omem.text":
+        return e.omem?.text;
+      case "omem.plugin":
+        return e.omem?.plugin;
+      case "omem.newFindings":
+        return e.omem?.newFindings;
+      case "omem.fixed":
+        return e.omem?.fixed;
+      case "omem.still":
+        return e.omem?.still;
     }
   };
 }

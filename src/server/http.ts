@@ -31,7 +31,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { applyCodeRun, codeApplyTargets, codeDiffView, codeFolders, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
-import { attachPluginStreams, registerPluginRoutes } from "../plugins/http.ts";
+import { attachPluginStreams, registerHookRoutes, registerPluginRoutes } from "../plugins/http.ts";
 import { IDE_BASE, IdeNotReady, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remote/http.ts";
 import { attachPreviewUpgrade, registerPreviewRoutes } from "./preview-http.ts";
@@ -152,7 +152,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     mark(`${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`);
     // Tool routes check their own (per-run) token.
     // So does the code change notification (its hook token, sources/code-index-http.ts).
-    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|code-index\/notify)(\/|\?|$)/.test(req.url)) return;
+    if (!req.url.startsWith("/api/") || /^\/api\/(tools|command-gate|code-index\/notify|hooks)(\/|\?|$)/.test(req.url)) return;
     // A credential omem did not issue: an authenticator plugin checks it first (src/auth/authenticators.ts).
     await checkBearer(app, bearerToken(req));
     // The one read without a token: a share link (core/shares.ts) carries its own, and the route
@@ -181,6 +181,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   registerAuthRoutes(server, app, who, authOf);
   registerFederationRoutes(server, app, who);
   registerCodeIndexRoutes(server, app, who);
+  // Plugin callbacks from outside (plugins/hooks.ts): the secret in the path, no login.
+  await registerHookRoutes(server, app);
 
   // ------------------------------------------------------------------- shares
   server.get("/api/share/:token", async (req, reply) => {
@@ -317,6 +319,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const runFilter = (req.query as { run?: string }).run;
     const shown = eventFilter(who(req));
     const listener = (e: AppEvent) => {
+      // omem's own events for rules (rules/omem-events.ts) stay in the process.
+      if (e.type === "omem") return;
       if (runFilter && !("runId" in e && e.runId === runFilter)) return;
       if (!shown(e)) return;
       res.write(`data: ${JSON.stringify(e)}\n\n`);
@@ -2464,7 +2468,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     }
   };
   server.get("/api/rule-options", async () => {
-    const { FIELDS, OPS, EVENT_FIELDS } = await import("../rules/types.ts");
+    const { FIELDS, OPS, EVENT_FIELDS, OMEM_TYPE_LABEL: OMEM_TYPE_LABELS } = await import("../rules/types.ts");
     const { larkBotInfo } = await import("../channels/lark-send.ts");
     const { ruleGroups } = await import("../rules/destinations.ts");
     return {
@@ -2473,6 +2477,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       eventFields: EVENT_FIELDS,
       // The plugin object kinds enabled now: what an “对象状态变化” rule can be about, with their states.
       objectKinds: (await import("../plugins/objects.ts")).pluginObjectKinds().map((k) => ({ kind: k.kind, label: k.label, statuses: k.statuses, final: k.final })),
+      // omem's own events an “omem 里发生的事” rule can be about (rules/omem-events.ts).
+      omemTypes: (await import("../rules/types.ts")).OMEM_TYPES.map((t) => ({ type: t, label: OMEM_TYPE_LABELS[t] })),
       // omem's bots a meeting rule can bring in ("main" and lark.bots).
       bots: [
         ...(app.config.lark.appId ? [{ id: "main", name: one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value ?? larkBotInfo("main")?.name ?? "主机器人" }] : []),

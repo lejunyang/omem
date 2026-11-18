@@ -65,7 +65,7 @@ const PROBE = `export default function register(api) {
     match: (url) => url.startsWith("https://example.test/changes/") ? url.slice("https://example.test/changes/".length) : null,
     async read(ctx, key) {
       const state = (await ctx.store.get("states", key)) ?? {};
-      return { title: "示例合并请求 " + key, status: state.status ?? "open", link: "https://example.test/changes/" + key, fields: [{ label: "检查", value: "通过" }] };
+      return { title: "示例合并请求 " + key, status: state.status ?? "open", link: "https://example.test/changes/" + key, fields: [{ label: "检查", value: "通过" }], revision: state.revision, note: state.note };
     } });
 }`;
 
@@ -240,6 +240,27 @@ describe("规则：对象状态变化", () => {
     expect(() => rule({}, { actions: [{ type: "agent", spec: "assistant", reply: "auto" }] })).toThrow("先选发到哪个会话");
     expect(() => saveRule(app, { name: "x", description: "x", trigger: { event: "message", objectKind: kind }, judge: "ai", actions: [{ type: "notify" }] }, "user", "owner")).toThrow("只有“对象状态变化”规则");
     expect(() => saveRule(app, { name: "x", description: "x", trigger: { event: "message" }, conditions: { field: "object.title", op: "contains", value: "x" }, judge: "code", actions: [{ type: "notify" }] }, "user", "owner")).toThrow("只用于“对象状态变化”规则");
+  });
+  it("objectChanges 选“有更新”时，状态没变、修订变了也触发；默认只看状态", async () => {
+    const { refreshObject } = await import("../src/flows/plugin-objects.ts");
+    const status = rule({ objectKind: kind }), updated = rule({ objectKind: kind, objectChanges: ["updated"] }), both = rule({ objectChanges: ["status", "updated"] });
+    const onlyOpen = rule({ objectKind: kind, objectStatuses: ["open"], objectChanges: ["updated"] });
+    const i = item(); set("1", { revision: "c1" });
+    const o = await attachObject(app, i.id, url(), "owner");
+    set("1", { revision: "c2", note: "新提交 1 个" }); await refreshObject(app, o.id);
+    expect(listFirings(app, status.id)).toHaveLength(0);
+    expect(listFirings(app, updated.id)).toHaveLength(1);
+    expect(listFirings(app, updated.id)[0].summary).toContain("有更新，状态仍是「进行中」");
+    expect(listFirings(app, updated.id)[0].summary).toContain("新提交 1 个");
+    expect(listFirings(app, onlyOpen.id)).toHaveLength(1);
+    expect(listFirings(app, both.id)).toHaveLength(1);
+    set("1", { status: "merged", revision: "c3" }); await refreshObject(app, o.id);
+    expect(listFirings(app, status.id)).toHaveLength(1);
+    expect(listFirings(app, updated.id)).toHaveLength(1);
+    expect(listFirings(app, both.id)).toHaveLength(2);
+    const field = rule({}, { conditions: { field: "object.change", op: "equals", value: "updated" }, trigger: { event: "object", objectChanges: ["status", "updated"] } });
+    expect(field.trigger.objectChanges).toEqual(["status", "updated"]);
+    expect(() => saveRule(app, { name: "x", description: "x", trigger: { event: "message", objectChanges: ["updated"] }, judge: "ai", actions: [{ type: "notify" }] }, "user", "owner")).toThrow("只有“对象状态变化”规则");
   });
   it("规则页的选项列出启用的对象类型和它们的状态", async () => {
     const s = await server();

@@ -9,6 +9,7 @@ import { registerTool, saveSourceFor, watchesFor, type ToolContext } from "../ag
 import { OWNER } from "../core/users.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
 import { registerObject, withObjectActions } from "./objects.ts";
+import { registerHook } from "./hooks.ts";
 import { emitPluginSignal } from "./signals.ts";
 import { ensureService } from "./services.ts";
 import { pluginStore } from "./store.ts";
@@ -26,6 +27,7 @@ const runner = () => ["sandbox-runner.js", "sandbox-runner.ts"].map((f) => join(
 
 type Declared = {
   objects: Omit<PluginObject, "match" | "read">[];
+  hooks?: { name: string; label?: string }[];
   tools: { name: string; description: string; jsonSchema: Record<string, unknown>; write: boolean; page: boolean; approval: boolean; whenConnected: boolean }[];
   platforms: (Omit<PluginPlatform, "readers"> & { readers: { kind: string; label: string; id: string; read: boolean; changes: boolean }[] })[];
 };
@@ -59,7 +61,7 @@ export async function startSandbox(
     new Promise<any>((ok, fail) => {
       if (dead) return fail(new Error(`插件 ${plugin.id} 的进程已经退出：${dead}`));
       const id = ++seq;
-      const callMs = String(msg.t).startsWith("object.") ? 15000 : CALL_MS;
+      const callMs = String(msg.t).startsWith("object.") || msg.t === "hook" ? 15000 : CALL_MS;
       const timer = setTimeout(() => {
         pending.delete(id);
         fail(new Error(`插件 ${plugin.id} 超过 ${callMs / 1000} 秒没有回应`));
@@ -169,6 +171,13 @@ export async function startSandbox(
     read: (ctx, key) => {
       const toolCtx: ToolContext = { app, userId: ctx.userId, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, spaces: [ctx.spaceId], tools: new Set() };
       return ask({ t: "object.read", kind: def.kind, key, ctx: { userId: ctx.userId, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, conversationId: null, settings: opts.settings(ctx.userId) } }, toolCtx);
+    },
+  }));
+  for (const def of declared.hooks ?? []) undo.push(registerHook(plugin.id, {
+    ...def,
+    handle: (ctx, req) => {
+      const toolCtx: ToolContext = { app, userId: ctx.userId, spaceId: ctx.spaceId, runId: null, actor: ctx.actor, spaces: [ctx.spaceId], tools: new Set() };
+      return ask({ t: "hook", name: def.name, req, ctx: { userId: ctx.userId, spaceId: ctx.spaceId, runId: null, actor: ctx.actor, conversationId: null, settings: opts.settings(ctx.userId) } }, toolCtx);
     },
   }));
   for (const t of declared.tools) {
