@@ -268,6 +268,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     }
     // The cards of paired nodes (core/mesh.ts): looked at every ten minutes.
     (await import("./core/mesh.ts")).startMesh(app);
+    // Devices this one keeps a connection open to so they can call it back (core/peer-back.ts).
+    (await import("./core/peer-back.ts")).startPeerBack(app);
     // The owner's lark-cli login gone (expired, dropped): a link to log in again, not only failures in the log.
     (await import("./channels/lark-auth.ts")).watchOwnerLogin(app);
     if (app.config.lark.enabled) {

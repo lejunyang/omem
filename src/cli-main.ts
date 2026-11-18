@@ -479,7 +479,40 @@ peer
     const { listPeers, nodeId } = await import("./core/peers.ts");
     const app = open();
     console.log(`本机：${nodeId(app)}`);
-    for (const p of listPeers(app)) console.log(`- ${p.id}  ${p.via ? `经 ${p.via}` : p.url}${!p.via && (p.urls?.length ?? 0) > 1 ? `（备用 ${p.urls!.length - 1} 个地址）` : ""}  （${p.addedAt.slice(0, 10)} 添加）`);
+    for (const p of listPeers(app)) {
+      const where = p.via ? `经 ${p.via}` : p.url || "只能等它反向连过来";
+      const extra = [p.back ? "它会反向连过来" : "", p.serveBack ? "本机反向连它" : ""].filter(Boolean).join("，");
+      console.log(`- ${p.id}  ${where}${!p.via && (p.urls?.length ?? 0) > 1 ? `（备用 ${p.urls!.length - 1} 个地址）` : ""}${extra ? `  [${extra}]` : ""}  （${p.addedAt.slice(0, 10)} 添加）`);
+    }
+  });
+peer
+  .command("back <id> [state]")
+  .description("反向连接：本机主动连着这台设备，让它也能调用本机（它连不到本机时用，例如本机在 NAT 后面）；state 是 on / off，不写就看现状")
+  .action(async (id: string, state?: string) => {
+    const app = open();
+    if (state && !/^(on|off)$/.test(state)) throw new Error("state 只能是 on 或 off");
+    const base = await runningServer(app);
+    type View = { peers: { id: string; serving: { state: string; since: string | null; error: string | null } | null; incoming: { online: boolean } | null }[] };
+    let view: View;
+    if (base) {
+      const headers: Record<string, string> = { "content-type": "application/json", ...(app.config.token ? { authorization: `Bearer ${app.config.token}` } : {}) };
+      const res = state
+        ? await fetch(`${base}/api/peers/${encodeURIComponent(id)}/back`, { method: "POST", headers, body: JSON.stringify({ on: state === "on" }) })
+        : await fetch(`${base}/api/peers`, { headers });
+      const body = (await res.json()) as View & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? res.statusText);
+      view = body;
+    } else {
+      const { setServeBack, backState } = await import("./core/peer-back.ts");
+      if (state) setServeBack(app, id, state === "on");
+      view = { peers: [{ id, ...backState(app, id) }] };
+      if (state === "on") console.log("本机服务没有在运行：已记下，服务启动后开始连接。");
+    }
+    const p = view.peers.find((x) => x.id === id);
+    if (!p) throw new Error(`没有名为 ${id} 的设备`);
+    const label: Record<string, string> = { connected: "已连上", connecting: "正在连", waiting: "断开了，稍后重连", off: "还没开始（服务没运行）" };
+    console.log(p.serving ? `本机反向连 ${id}：${label[p.serving.state] ?? p.serving.state}${p.serving.since ? `（${p.serving.since.slice(0, 16)} 起）` : ""}${p.serving.error ? `；上次出错：${p.serving.error}` : ""}` : `本机没有反向连 ${id}`);
+    if (p.incoming) console.log(`${id} 反向连本机：${p.incoming.online ? "在线" : "没连着"}`);
   });
 peer
   .command("remove <id>")

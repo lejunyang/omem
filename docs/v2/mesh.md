@@ -25,6 +25,21 @@ SSH 不是组网的通道：只有 `omem peer pull <ssh 主机>` 能经 SSH 拉�
 
 “设备”（peer）就是组网里的节点：配对是组网的第一步，后面各节是配对之后节点之间能做的事。
 
+## 1.2 反向连接：连不到我的设备也能调用我
+
+每次调用都由调用方新开连接，所以只有 A 能连到 B 时，B 调用不了 A（A 在 NAT 后面，或 B 只能经别的设备转发到）。反向连接（`src/core/peer-back.ts`，2026-11-19）让 A 一直连着 B，B 经这条连接用 A：
+
+- **开关在 A 上**：`omem peer back <设备> on|off`，或 设置 → 设备 每台下面的“让它反过来连本机”（`POST /api/peers/:id/back`）。打开时 A 用 `createApiToken` 给 B 签一个本人令牌（标签 `peer:back-<设备>`），存在 A 的设备记录 `serveBack` 里；关掉时撤销令牌，并告诉 B 忘掉 A。
+- **控制连接**：A 的服务启动后（`startPeerBack`），对每台打开了的设备经 `peerRoute` 发 `GET /api/peer/back?node=<A>`（升级到 `omem-back`，头 `x-omem-back-token` 带令牌）；按行收发 JSON，30 秒一次心跳，95 秒没消息算断；断了按 5 秒、30 秒、2 分钟、5 分钟退避重连。经中间设备转发的照样走（中间那台对本人的升级请求原样转发）。
+- **B 记下 A**：B 收到控制连接时 upsert 设备记录：已有同名的直连记录只补 `back`；没有的建一条 `url` 为空、只有 `back` 的记录（`backOnly`）。设备页、`peer list` 都能看到它。
+- **一次调用一条连接**：B 要访问 A 时在控制连接上发 `{open: n}`，A 再发 `GET /api/peer/back/stream?node=<A>&n=<n>`（升级到 `omem-back-stream`），B 把这条连接交给等着的请求，A 把它 `emit("connection")` 给自己的 HTTP 服务。之后就是普通的 HTTP（或再升级成 ACP、隧道），路由、令牌、权限都不用改。`peerFetch` 对 `backOnly` 的设备、或直连失败而有 `back` 的设备用 `node:http` 的 `createConnection` 在这条连接上发请求；`peerRoute` 多返回 `connect`，`upstream`（隧道）和 `connectAcp` 都用它。
+- **别的进程**：控制连接在服务进程里。ACP 桥（`omem peer acp`，单独的子进程）和命令行要访问 A 时，向本机服务要一条（`/api/peer/back/relay`，本人令牌或本机可信请求），服务接通后两头对拼。
+- **不当成本机请求**：这样进来的连接的远端地址是 B 的；两边在一台机器上时被换成 `0.0.0.0`，所以不带令牌的请求一律 401（`trustedLocal` 只信 loopback）。
+- **借 AI**：B 上 A 出现后，在 B 的 设置 → 设备 → A 下面打开 A 的 Agent，B 就多一个 `peer` 后端，模型和额度在 A，工具在 B（4.3 节）。A 没连着时 `backendAvailable` 返回不可用，换后端的顺序照常往下换。
+- **关服务**：`preClose` 时断开控制连接和交给服务的连接，否则一个空闲的 Agent 会话会让服务关不掉。
+
+没做：控制连接上的多路复用（每次调用一条新连接，ACP 会话这类长连接各占一条）；名片上的反向连接状态（设备页和 `peer back` 能看到）。
+
 ## 2. 已经有的
 
 | 能力 | 现状 | 代码 |

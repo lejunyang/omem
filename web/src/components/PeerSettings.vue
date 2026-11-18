@@ -12,7 +12,21 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
  * devices hold a token of this one, and which of a device's ACP agents to use here
  * (src/core/peer-acp.ts: the agent runs there, its tools stay here).
  */
-type Peer = { id: string; url: string; urls: string[]; via: string | null; addedAt: string };
+type Peer = {
+  id: string;
+  url: string;
+  urls: string[];
+  via: string | null;
+  addedAt: string;
+  name: string | null;
+  /** This machine keeps a connection open to it so it can call this one (src/core/peer-back.ts). */
+  serving: { state: "connected" | "connecting" | "waiting" | "off"; since: string | null; error: string | null } | null;
+  /** It keeps a connection open to this machine. */
+  incoming: { online: boolean; since: string } | null;
+};
+/** Reached only over the connection it keeps here. */
+const backOnly = (p: Peer) => !!p.incoming && !p.url && !p.via;
+const SERVING: Record<string, string> = { connected: "已连上", connecting: "正在连", waiting: "断开了，稍后重连", off: "等本机服务启动" };
 type Paired = { id: string; label: string; createdAt: string; lastUsedAt: string | null };
 type UsedAgent = { id: string; name: string; peer: string; agent: string };
 type View = { node: string; urls: string[]; peers: Peer[]; paired: Paired[]; agents: UsedAgent[] };
@@ -124,6 +138,16 @@ async function toggleAgent(peer: string, agent: { id: string; name: string }, us
     fail(e);
   }
 }
+async function toggleBack(p: Peer, on: boolean) {
+  if (on && !(await confirmDialog(`让 ${p.id} 反过来连本机？`, { message: `本机会一直连着 ${p.id}，并给它一个本人权限的令牌：它能像本机连它那样调用本机（看网页、远程命令、用本机的 Agent 和额度）。适合它连不到本机的时候（本机在 NAT 后面、只能经别的设备转发）。随时可以关掉，关掉时令牌一起撤销。`, okText: "打开" }))) return;
+  try {
+    view.value = await post<View>(`/api/peers/${encodeURIComponent(p.id)}/back`, { on });
+    toast(on ? "已打开：本机正在连它" : "已关掉，令牌已撤销", "ok");
+    if (on) setTimeout(() => load().catch(() => {}), 2000);
+  } catch (e) {
+    fail(e);
+  }
+}
 async function revoke(t: Paired) {
   if (!(await confirmDialog(`撤销配对令牌 ${t.label}？`, { message: "拿着它的设备立刻不能再访问本机：看网页、拉数据、远程命令、用本机的 Agent 都会失败。要恢复得重新配对。", okText: "撤销", danger: true }))) return;
   try {
@@ -172,19 +196,26 @@ onMounted(() => load().catch(fail));
       <div v-for="p in view.peers" :key="p.id" class="card pad stack peer">
         <div class="row wrap head">
           <strong class="mono">{{ p.id }}</strong>
-          <span class="muted small addr">{{ p.via ? `经 ${p.via}` : p.url }}<template v-if="!p.via && p.urls.length > 1">（备用 {{ p.urls.length - 1 }} 个地址）</template></span>
+          <span v-if="p.name" class="small">{{ p.name }}</span>
+          <span class="muted small addr">{{ p.via ? `经 ${p.via}` : backOnly(p) ? "本机连不到它，只能经它连过来的连接访问" : p.url }}<template v-if="!p.via && p.urls.length > 1">（备用 {{ p.urls.length - 1 }} 个地址）</template></span>
           <span class="spacer" />
           <span v-if="status[p.id] === 'loading'" class="badge">检查中</span>
           <span v-else-if="st(p.id)?.online" class="badge ok">在线 · {{ st(p.id)!.ms }} ms</span>
           <span v-else-if="st(p.id)" class="badge danger">连不上</span>
           <button class="btn ghost sm" @click="check(p.id)">检查</button>
-          <button v-if="!p.via" class="btn ghost sm" @click="changeUrl(p)">改地址</button>
+          <button v-if="!p.via && !backOnly(p)" class="btn ghost sm" @click="changeUrl(p)">改地址</button>
           <button class="btn ghost sm danger" @click="remove(p)">移除</button>
         </div>
         <div class="muted small meta">
           <span>{{ fmtTime(p.addedAt) }} 添加</span>
           <span v-if="st(p.id)?.version" class="addr">版本 {{ st(p.id)!.version }}</span>
           <span v-if="st(p.id) && !st(p.id)!.online" class="addr">{{ st(p.id)!.error }}</span>
+          <span v-if="p.incoming">{{ p.incoming.online ? "它连着本机" : "它现在没连着本机" }}</span>
+        </div>
+        <div v-if="!backOnly(p)" class="row wrap back">
+          <UiCheckbox :model-value="!!p.serving" switch size="sm" @change="(v) => toggleBack(p, v)">让它反过来连本机</UiCheckbox>
+          <span v-if="p.serving" class="muted small addr">{{ SERVING[p.serving.state] ?? p.serving.state }}<template v-if="p.serving.error && p.serving.state !== 'connected'">：{{ p.serving.error }}</template></span>
+          <span v-else class="muted small grow">它连不到本机时打开（本机在 NAT 后面、只能经别的设备转发）：本机一直连着它，它就能调用本机、用本机的 Agent</span>
         </div>
         <div v-if="st(p.id)?.agents.length" class="stack agents">
           <div class="small">它的 Agent：打开的会出现在本机的 Agent 列表里，可以分给角色、档案和规则</div>

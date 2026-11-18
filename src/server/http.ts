@@ -1636,6 +1636,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   registerFlowRoutes(server, app, who);
   registerStudyRoutes(server, app, who);
   attachPluginStreams(app, server.server);
+  // Devices that dial in so this one can call them back, and the streams they open for it (core/peer-back.ts).
+  const peerBack = await import("../core/peer-back.ts");
+  peerBack.attachPeerBack(app, server.server);
+  // Before the server waits for its connections: the ones this keeps open would hold it.
+  server.addHook("preClose", async () => peerBack.stopPeerBack(app));
   // Its WebSocket: upgrades skip the hooks, so the owner's token is checked here.
   server.server.on("upgrade", async (req, socket, head) => {
     // Another device runs one of this device's agents (core/peer-acp.ts): the owner's token.
@@ -2907,11 +2912,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   const peerView = async () => {
     const { listPeers, localUrls, nodeId } = await import("../core/peers.ts");
     const { pairedTokens } = await import("../core/users.ts");
+    const { backState } = await import("../core/peer-back.ts");
     const agents = app.config.agents.profiles.filter((p) => p.peer).map((p) => ({ id: p.id, name: p.name ?? p.id, peer: p.peer!.id, agent: p.peer!.agent }));
     return {
       node: nodeId(app),
       urls: localUrls(app),
-      peers: listPeers(app).map((p) => ({ id: p.id, url: p.url, urls: p.urls ?? [p.url], via: p.via ?? null, addedAt: p.addedAt })),
+      peers: listPeers(app).map((p) => ({ id: p.id, url: p.url, urls: p.urls ?? (p.url ? [p.url] : []), via: p.via ?? null, addedAt: p.addedAt, name: p.back?.name ?? null, ...backState(app, p.id) })),
       paired: pairedTokens(app),
       agents,
     };
@@ -2941,6 +2947,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       setPeerUrl(app, (req.params as { id: string }).id, b.url);
     } catch (e) {
       throw new HttpError(404, (e as Error).message);
+    }
+    return peerView();
+  });
+  // Calling back (core/peer-back.ts): this machine keeps a connection open to the device so it can reach this one.
+  server.post("/api/peers/:id/back", async (req) => {
+    const b = q(z.object({ on: z.boolean() }), req.body);
+    const { setServeBack } = await import("../core/peer-back.ts");
+    try {
+      setServeBack(app, (req.params as { id: string }).id, b.on);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message);
     }
     return peerView();
   });

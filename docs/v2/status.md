@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 反向连接（mesh.md §1.2）：连不到本机的设备也能调用本机。本机打开后一直连着它（控制连接、心跳、退避重连），它要访问本机时经控制连接请本机再连进来一条，在上面走普通 HTTP / ACP / 隧道；它那边自动记下本机（`back`），可借本机的 Agent 当 `peer` 后端；进来的连接不算本机请求；关掉时撤销令牌、对方忘掉本机 | 已实现（2026-11-19）；`test/peer-back.test.ts` 三台：经中间设备、直连、裸连接无令牌 401、借 ACP 后端跑一轮、关掉撤销；真机待验 | `src/core/peer-back.ts`、`peers.ts` 的 `backFetch`、`peer-tunnel.ts` 的 `connectOption`、`omem peer back`、`web/src/components/PeerSettings.vue` |
 | 网页对话带图片和文件：粘贴、拖进、点按钮选，输入框上方列出，正文用 `[图片N]` / `[文件N]` 引用（点一个在光标处插入），Agent 拿到每个文件的路径 | 已实现（2026-11-19） | `src/agents/attachments.ts`、`POST /api/ask/attachments`、`web/src/views/Ask.vue` |
 | 流程定义搬到“流程”页（进行中 / 流程定义），新建以对话为主：讲做法交给助理起草，草稿在列表里启用，YAML 收进“查看定义” | 已实现（2026-11-19） | `web/src/views/Flows.vue`、`FlowTabs.vue`、`GET /api/flows` 的 `drafts` |
 | 人物卡路径统一为“名字-邮箱前缀”，旧路径的卡每晚并成一张（别名保留，本人补充合并） | 已实现（2026-11-19） | `src/agents/work-state.ts` 的 `personSlug`、`mergePersonCards` |

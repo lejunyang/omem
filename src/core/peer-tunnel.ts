@@ -2,7 +2,7 @@ import { request as httpRequest, type IncomingMessage, type ServerResponse } fro
 import { request as httpsRequest } from "node:https";
 import type { Duplex } from "node:stream";
 import type { App } from "./app.ts";
-import { findPeer } from "./peers.ts";
+import { backOnly, findPeer } from "./peers.ts";
 
 /**
  * Raw forwarding to a peer, for what `peerFetch` cannot carry: web VS Code under /ide (WebSocket
@@ -23,12 +23,31 @@ export const PLUGIN_STREAM = /^\/api\/plugins\/[a-z][a-z0-9]{1,23}\/streams\/[a-
 /** A preview's port as a raw byte stream (docs/v2/preview.md): `/api/previews/<id>/tcp?port=<n>`. */
 export const PREVIEW_TCP = /^\/api\/previews\/[^/?]+\/tcp(\?|$)/;
 
-export function peerRoute(app: App, id: string, path: string, hops: number): { url: string; token: string; path: string; hops: number } {
+/**
+ * Where a request to device `id` goes first. `connect`: the device is reached only over the
+ * connection it keeps to this machine (peer-back.ts): requests go on a stream from there, not to `url`.
+ */
+export function peerRoute(app: App, id: string, path: string, hops: number): { url: string; token: string; path: string; hops: number; connect?: () => Promise<Duplex> } {
   if (hops > 4) throw new Error("设备转发层数过多");
   const p = findPeer(app, id);
   if (!p) throw new Error(`没有名为 ${id} 的设备（omem peer list 查看）`);
   if (p.via) return peerRoute(app, p.via, `/api/peers/${encodeURIComponent(p.id)}${path}`, hops + 1);
+  if (backOnly(p)) return { url: `http://${p.id}.back`, token: p.back!.token, path, hops, connect: async () => (await import("./peer-back.ts")).openBack(app, p.id) };
   return { url: p.url, token: p.token, path, hops };
+}
+
+/** The `createConnection` option for a route that goes back over a device's own connection. */
+export function connectOption(r: { connect?: () => Promise<Duplex> }) {
+  if (!r.connect) return {};
+  const open = r.connect;
+  return {
+    // Node uses createConnection only without an agent (`agent: false` makes one).
+    agent: undefined,
+    createConnection: ((_o: unknown, cb: (e: Error | null, s?: Duplex) => void) => {
+      open().then((s) => cb(null, s), (e: Error) => cb(e));
+      return undefined;
+    }) as never,
+  };
 }
 
 function upstream(app: App, id: string, req: Pick<IncomingMessage, "headers" | "method">, path: string, hops: number) {
@@ -40,7 +59,7 @@ function upstream(app: App, id: string, req: Pick<IncomingMessage, "headers" | "
   headers["x-omem-hops"] = String(r.hops);
   // Kept from the first hop: web VS Code addresses its WebSocket to the host the browser used.
   if (!headers["x-forwarded-host"] && req.headers.host) headers["x-forwarded-host"] = req.headers.host;
-  return (target.protocol === "https:" ? httpsRequest : httpRequest)(target, { method: req.method, headers, agent: false });
+  return (target.protocol === "https:" ? httpsRequest : httpRequest)(target, { method: req.method, headers, agent: false, ...connectOption(r) });
 }
 
 /**

@@ -8,7 +8,7 @@ import type { Duplex } from "node:stream";
 import type { App } from "./app.ts";
 import { allProfiles } from "./config.ts";
 import { nodeId } from "./peers.ts";
-import { peerRoute } from "./peer-tunnel.ts";
+import { connectOption, peerRoute } from "./peer-tunnel.ts";
 
 /**
  * A device's ACP agents, used from this one (agent profiles with `peer`).
@@ -192,6 +192,7 @@ export function connectAcp(app: App, id: string, agent: string): Promise<{ socke
     const req = (target.protocol === "https:" ? httpsRequest : httpRequest)(target, {
       headers: { connection: "Upgrade", upgrade: "omem-acp", authorization: `Bearer ${r.token}`, "x-omem-hops": String(r.hops) },
       agent: false,
+      ...connectOption(r),
     });
     req.on("upgrade", (_res, socket, head) => ok({ socket, head }));
     req.on("response", (res) => {

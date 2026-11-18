@@ -93,6 +93,7 @@ omem user invite --space team       # 邀请链接：用它登录的人直接建
 omem space share project-a wang [--edit]
 omem peer invite --label laptop     # 打印配对码
 omem peer add <配对码> [--via <中间那台>]
+omem peer back <设备> on|off       # 反向连接：本机一直连着它，它连不到本机时也能调用本机
 omem diag <设备>
 omem peer call <设备> update
 omem peer pull <设备>              # 在终端里选拉哪些、拉进哪个数据目录

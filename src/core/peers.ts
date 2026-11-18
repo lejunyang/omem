@@ -24,7 +24,24 @@ import { createApiToken, OWNER } from "./users.ts";
  * machine that was offline needs no new pairing. Tokens are per user, which leaves
  * room for other people's devices to pair as members later.
  */
-export type Peer = { id: string; url: string; urls?: string[]; token: string; via?: string; addedAt: string };
+export type Peer = {
+  id: string;
+  url: string;
+  urls?: string[];
+  token: string;
+  via?: string;
+  addedAt: string;
+  /**
+   * It keeps a connection open to this machine and is reached back through it (peer-back.ts): its
+   * token for that, and the name it gave. Alone (no `url`, no `via`) it is the only way to it.
+   */
+  back?: { token: string; since: string; name?: string };
+  /** This machine keeps a connection open to it so it can call back (peer-back.ts): the token it was given. */
+  serveBack?: { token: string; since: string };
+};
+
+/** Reached only over the connection it keeps to this machine. */
+export const backOnly = (p: Peer) => !!p.back && !p.url && !p.via;
 
 const fileIn = (home: string) => join(home, "secrets", "peers.json");
 const file = (app: App) => fileIn(app.home);
@@ -46,7 +63,7 @@ export function pairedIn(home: string): Peer[] {
   }
 }
 
-function savePeers(app: App, peers: Peer[]) {
+export function savePeers(app: App, peers: Peer[]) {
   mkdirSync(join(app.home, "secrets"), { recursive: true, mode: 0o700 });
   writeFileSync(file(app), JSON.stringify(peers, null, 2), { mode: 0o600 });
   try {
@@ -163,7 +180,7 @@ export async function removePeer(app: App, id: string) {
   const before = listPeers(app);
   const p = before.find((x) => x.id === id);
   let revoked = false;
-  if (p && !p.via) revoked = await peerJson<{ revoked: boolean }>(app, id, "/api/peer/unpair", {}, 5000).then((r) => r.revoked, () => false);
+  if (p && !p.via && !backOnly(p)) revoked = await peerJson<{ revoked: boolean }>(app, id, "/api/peer/unpair", {}, 5000).then((r) => r.revoked, () => false);
   savePeers(app, before.filter((x) => x.id !== id));
   await dropPeerAgents(app, (x) => x.id === id);
   return { removed: !!p, revoked };
@@ -194,6 +211,7 @@ export async function peerFetch(app: App, id: string, path: string, init: Reques
   const p = findPeer(app, id);
   if (!p) throw new Error(`没有名为 ${id} 的设备（omem peer list 查看）`);
   if (p.via) return peerFetch(app, p.via, `/api/peers/${encodeURIComponent(p.id)}${path}`, init, hops + 1);
+  if (backOnly(p)) return backFetch(app, p, path, init, hops);
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${p.token}`);
   headers.set("x-omem-hops", String(hops));
@@ -224,8 +242,54 @@ export async function peerFetch(app: App, id: string, path: string, init: Reques
       }
       return go(u);
     }
+    // It also keeps a connection open to this machine: go that way.
+    if (p.back)
+      return backFetch(app, p, path, init, hops).catch(() => {
+        throw new Error(`连不上设备 ${p.id}（${p.url}），它也没有反向连过来：${(e as Error).message}`);
+      });
     throw new Error(`连不上设备 ${p.id}（${p.url}）：${(e as Error).message}`);
   }
+}
+
+/**
+ * `peerFetch` over the connection a device keeps to this machine (peer-back.ts): an HTTP request on
+ * a stream it opens for it, made into a `Response` like `fetch` gives.
+ */
+async function backFetch(app: App, p: Peer, path: string, init: RequestInit & { timeoutMs?: number }, hops: number): Promise<Response> {
+  const { openBack } = await import("./peer-back.ts");
+  const { request } = await import("node:http");
+  const { Readable } = await import("node:stream");
+  const headers: Record<string, string> = {};
+  new Headers(init.headers).forEach((v, k) => (headers[k] = v));
+  headers.authorization = `Bearer ${p.back!.token}`;
+  headers["x-omem-hops"] = String(hops);
+  headers.host = `${p.id}.back`;
+  const body = init.body == null ? null : typeof init.body === "string" ? init.body : Buffer.from(await new Response(init.body).arrayBuffer());
+  if (body !== null) headers["content-length"] = String(Buffer.byteLength(body));
+  return new Promise((ok, fail) => {
+    const req = request({
+      method: init.method ?? "GET",
+      path,
+      headers,
+      // No `agent`: with one (even `false`) Node ignores createConnection.
+      createConnection: ((_o: unknown, cb: (e: Error | null, s?: import("node:stream").Duplex) => void) => {
+        openBack(app, p.id).then((s) => cb(null, s), (e: Error) => cb(e));
+        return undefined;
+      }) as never,
+    });
+    req.setTimeout(init.timeoutMs ?? 120_000, () => req.destroy(Object.assign(new Error("请求超时"), { name: "TimeoutError" })));
+    init.signal?.addEventListener("abort", () => req.destroy(Object.assign(new Error("已取消"), { name: "AbortError" })));
+    req.on("response", (res) => {
+      const h = new Headers();
+      for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) for (const x of [v].flat()) h.append(k, x);
+      const status = res.statusCode ?? 502;
+      const empty = status === 204 || status === 304 || (init.method ?? "GET").toUpperCase() === "HEAD";
+      if (empty) res.resume();
+      ok(new Response(empty ? null : (Readable.toWeb(res) as ReadableStream), { status, statusText: res.statusMessage, headers: h }));
+    });
+    req.on("error", (e) => fail(e));
+    req.end(body ?? undefined);
+  });
 }
 
 export async function peerJson<T = unknown>(app: App, id: string, path: string, body?: unknown, timeoutMs?: number): Promise<T> {
