@@ -123,6 +123,13 @@ onMounted(() => {
   void loadConversation();
   void loadAsks();
   void loadViews();
+  // Brought here from somewhere else with what to talk about (an item's flow page): start from it.
+  const draft = route.query.draft;
+  if (typeof draft === "string" && draft && !id.value) {
+    text.value = draft;
+    if (typeof route.query.space === "string" && state.spaces.some((s) => s.id === route.query.space)) state.space = route.query.space;
+    void router.replace({ query: {} });
+  }
   input.value?.focus();
 });
 watch(id, () => {

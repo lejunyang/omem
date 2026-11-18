@@ -117,7 +117,7 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
         <div v-if="gates.length" class="block">
           <h2 class="section-title row">流程里等你的<span class="spacer" /><router-link to="/board" class="muted small">看板</router-link></h2>
           <div class="list">
-            <router-link v-for="g in gates" :key="g.itemId" :to="`/items/${g.itemId}`" class="li"><Icon :name="g.stage.state === 'blocked' ? 'alert' : 'check'" :size="16" :class="{ warn: g.stage.state === 'blocked' }" /><div class="grow"><div>{{ g.title }}</div><div class="muted small">{{ g.flowName }} · {{ g.stage.name }} · {{ boardLine(g) }}</div></div></router-link>
+            <router-link v-for="g in gates" :key="g.itemId" :to="`/items/${g.itemId}/flow`" class="li"><Icon :name="g.stage.state === 'blocked' ? 'alert' : 'check'" :size="16" :class="{ warn: g.stage.state === 'blocked' }" /><div class="grow"><div>{{ g.title }}</div><div class="muted small">{{ g.flowName }} · {{ g.stage.name }} · {{ boardLine(g) }}</div></div></router-link>
           </div>
         </div>
         <div v-if="data.decisions.length" class="block">

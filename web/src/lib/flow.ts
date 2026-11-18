@@ -27,6 +27,10 @@ export type FlowStage = {
   shots?: StageTest["artifacts"];
   /** An upstream stage was reopened while this one was being done: the card asking the owner whether to stop it. */
   upstream?: { askId: string; stage: string; name: string; reason: string } | null;
+  /** The card asking the owner about this stage, answered by a button or in words. */
+  askId?: string;
+  /** What the stage's carrier last wrote in full, when its line is now something else ("本人确认"). */
+  result?: string;
 };
 /** One stage in a flow's review: figures the host worked out from the records when the flow ended (src/flows/review.ts). */
 export type StageReview = {

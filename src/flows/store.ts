@@ -132,6 +132,6 @@ export function progress(app: App, id: string, lines: string[], ownerWaiting = f
   const now_ = f.endedAt ? rows.every((s) => ["done", "skipped"].includes(s.state)) ? "流程已走完；事项仍由你决定是否关闭。" : "流程已停止。"
     : [doing.length ? `在做：${doing.map((d) => d.name).join("、")}` : "", gated.length ? `等你开始：${gated.map((d) => d.name).join("、")}` : "", blocked.length ? `卡住：${blocked.map((d) => d.name).join("、")}` : ""].filter(Boolean).join("；");
   const body = [...lines, now_ ? `现在 · ${now_}` : ""].filter(Boolean).join("\n");
-  const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/items/${id}`, images: images.slice(-4) });
+  const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/items/${id}/flow`, images: images.slice(-4) });
   run(app.db, "update item_flows set card=? where item_id=?", n.id, id);
 }

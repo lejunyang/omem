@@ -19,6 +19,7 @@ const routes: RouteRecordRaw[] = [
   view("/ui/:id", () => import("./views/UiItem.vue"), "/ui"),
   view("/graph/:space?", () => import("./views/Graph.vue"), "/graph"),
   view("/wiki/:space?/:slug(.*)*", () => import("./views/Wiki.vue"), "/wiki"),
+  view("/items/:id/flow", () => import("./views/ItemFlowPage.vue"), "/items"),
   view("/items/:id?", () => import("./views/Items.vue"), "/items"),
   view("/reqs/:id?", () => import("./views/Requirements.vue"), "/reqs"),
   view("/designs", () => import("./views/Designs.vue")),

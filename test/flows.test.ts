@@ -154,6 +154,13 @@ describe("阶段推进", () => {
     const second = await setup([stage("a", { when: "需要方案吗" })]);
     expect(second.s("a").state).toBe("gated");
   });
+  it("关卡上只写一句话不点按钮：按这句话开始这一段", async () => {
+    const { app, item, s } = await setup([stage("a", { gate: "confirm" })]);
+    expect(s("a").state).toBe("gated");
+    await answerAsk(app, s("a").askId!, { text: "先只看退款列表页，别动结算", by: "owner" });
+    expect(s("a").state).toBe("doing");
+    expect(stageLog(app, item.id).some((l) => l.note.includes("先只看退款列表页"))).toBe(true);
+  });
   it("confirm 关卡只认提问对象和实际回答人都是本人", async () => {
     const { app, item, s } = await setup([stage("a", { gate: "confirm" })]);
     expect(s("a")).toMatchObject({ state: "gated", attempt: 0 });

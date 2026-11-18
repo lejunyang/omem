@@ -15,6 +15,12 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 事项的流程页（11-18）
+
+- 新页面 `web/src/views/ItemFlowPage.vue`（路由 `/items/:id/flow`）：等你的段（按钮、一句话、在对话里讨论）、背景、各段结果全文与插图、接下来、来源、流程记录。看板、今日页、飞书进度卡（`src/flows/store.ts` 的 `link`）指向它；`ItemFlow.vue` 加“打开流程页”。
+- `flowView` 的阶段加 `result`（执行者最后写的全文，`stageResult`）。`flow-stage` 提问只回文字不点按钮：开始 / 判断关卡按文字开始，“做完了吗”按文字重做。
+- `web/src/views/Ask.vue` 认 `?draft=&space=` 预填输入框。
+
 ## 别的事项的修改并进同一分支的交办（11-18）
 
 - `message_code_run` 加 `item_id`：交办记到那个事项（`joinCodeWork`，`src/flows/objects.ts`，材料 `meta.joined`），`latestCodeWork` 认它，流程编码阶段跟着走。`delegate_code` 的同分支拒绝说明改为指向这条路、不问本人。续交办的工具改用 `codeSpace`，流程阶段的运行能续项目下仓库的交办。

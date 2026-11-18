@@ -180,6 +180,7 @@ async function stop() {
         <span v-if="data.flow.repeat" class="muted small">第 {{ data.flow.round ?? 1 }} 轮</span>
         <span v-if="data.flow.endedAt" class="muted small">{{ completed ? "走完了" : "已停止" }}</span>
         <span class="spacer" />
+        <router-link :to="`/items/${itemId}/flow`" class="btn sm">打开流程页</router-link>
         <button v-if="editable && !data.flow.endedAt" type="button" class="link small" :disabled="busy" @click="stop">停止流程</button>
       </div>
       <div class="flow-strip" aria-label="阶段">

@@ -70,7 +70,7 @@ const sections = computed(() => {
       <div class="lanes">
         <div v-for="l in f.lanes" :key="l.id" class="lane" :class="[l.tone, { bare: !l.rows.length }]">
           <div class="lane-head"><span class="lane-bar" /><span class="lane-name">{{ l.name }}</span><span v-if="l.rows.length" class="count">{{ l.rows.length }}</span></div>
-          <router-link v-for="r in l.rows" :key="r.itemId" :to="`/items/${r.itemId}`" class="entry" :class="{ waiting: !!r.waiting }">
+          <router-link v-for="r in l.rows" :key="r.itemId" :to="`/items/${r.itemId}/flow`" class="entry" :class="{ waiting: !!r.waiting }">
             <span class="entry-title">{{ r.title }}</span>
             <span class="entry-meta">
               <span :class="{ warn: !!r.waiting }">{{ boardLine(r, now) }}</span>

@@ -156,6 +156,11 @@ function resultNote(app: App, itemId: string, row: StageRow) {
   const said = one<{ note: string }>(app.db, "select note from item_stage_log where item_id=? and stage_id=? and actor not in ('host','owner') and note<>'' order by id desc limit 1", itemId, row.id);
   return said?.note ?? row.note;
 }
+/** What the stage's carrier last wrote in full, when the stage's line is now something else ("本人确认"). */
+function stageResult(app: App, itemId: string, row: StageRow) {
+  const r = resultNote(app, itemId, row);
+  return r && r !== row.note && !ROUTINE.has(r) && !WAITING_NOTE.test(r) ? r : "";
+}
 const askNote = (note: string, max: number) => truncate(note.replace(/\s*[（(]?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b[）)]?/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(), max);
 
 function question(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: NonNullable<StageRow["control"]["question"]>, parts: AskParts, labels: string[]) {
@@ -737,8 +742,11 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
     if (ctx.kind === "upstream") { if (s.control.upstream?.askId === ask.id && s.state === "doing") await answerUpstream(app, f, d, s, ask.choice === 0); return; }
     if (s.askId !== ask.id || s.control.question !== ctx.kind) return;
     let text = answerText(ask);
+    // Words without a button: on "start?" they start the stage with them, on "done?" they send it back
+    // with them; the owner's own stage takes only its buttons.
+    const free = ask.choice == null && !!text;
     const skip = ctx.kind === "gate" && ask.choice === 2 || ["owner", "when"].includes(String(ctx.kind)) && ask.choice === 1 || ctx.kind === "skip";
-    const refusal = ctx.kind === "done" && ask.choice === 1 || ctx.kind === "refuse";
+    const refusal = ctx.kind === "done" && (ask.choice === 1 || free) || ctx.kind === "refuse";
     if (skip || refusal) {
       if (skip) resetGateStreak(app, f.id, stageId, item.userId);
       if (!text) {
@@ -757,7 +765,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
           await advanceNow(app, itemId, "本人要求重做");
         }
       }
-    } else if (ask.choice === 0) await actionNow(app, itemId, stageId, ctx.kind === "owner" ? "done" : "confirm", ctx.kind === "gate" ? text : text || "本人确认", { actor: "owner" });
+    } else if (ask.choice === 0 || free && ["gate", "when"].includes(String(ctx.kind))) await actionNow(app, itemId, stageId, ctx.kind === "owner" ? "done" : "confirm", ctx.kind === "gate" ? text : text || "本人确认", { actor: "owner" });
     else if (ctx.kind === "gate" && ask.choice === 1) await actionNow(app, itemId, stageId, "hold", text, { actor: "owner" });
   });
 }, (app, ask, ctx, by) => {
@@ -816,7 +824,7 @@ export function flowView(app: App, id: string) {
       const kind = typeof d.by === "object" ? "object" in d.by ? d.by.object : "run" : d.by;
       const object = kind !== "run" && kind !== "owner" && kind !== "wait" ? findObject(app, item, kind) : typeof d.done === "object" && "object" in d.done ? findObject(app, item, d.done.object) : null;
       const signal = waitingSignal(app, id, d);
-      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, gate: d.gate, fixed: d.fixed,
+      return { id: d.id, name: d.name, instruction: d.note ?? "", state: s.state, recorded: !!s.control.recorded, autoStarted: !!s.control.grantedGate, attempt: s.attempt, since: s.since, enteredAt: s.enteredAt, doneAt: s.doneAt, by: s.by, waitingOn: s.waitingOn, evidence: s.evidence, note: ROUTINE.has(s.note) || WAITING_NOTE.test(s.note) ? "" : s.note, result: stageResult(app, id, s), gate: d.gate, fixed: d.fixed,
         round: s.round, ai: d.ai ?? null, execution: s.control.execution ?? null, actualAI: actualStageAI(app, s), waitUntil: s.control.waitUntil ?? null, at: d.at ?? null, window: d.window ?? null, budget: d.budget ?? null, usedMinutes: isFixes(d) ? fixMinutes(app, s, new Date()) : usedMinutes(app, s, new Date()), escalate: d.escalate ?? null, escalations: s.control.escalations ?? 0, descriptions: describeStage(d),
         carrier: { kind, label: kind === "trials" ? "助手，一个一个去试" : kind === "fixes" ? "助手，一条一条去改" : objectKind(kind)?.label ?? (kind === "owner" ? "你" : kind === "wait" ? "只等进展" : typeof d.by === "object" && "run" in d.by && d.by.run.agent && d.by.run.agent !== "assistant" ? d.by.run.agent : "助手"), ...(object ? { link: object.link } : (s.by === s.control.runId && !!s.by) ? { link: `#/runs/${s.by}` } : {}) },
         ...(object ? { object: { title: object.title, status: object.status, link: object.link, ...(object.statusLabel !== undefined ? { statusLabel: object.statusLabel, fields: object.fields ?? [], disabled: !!object.disabled } : {}) } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), upstream: s.control.upstream ? { askId: s.control.upstream.askId, stage: s.control.upstream.stage, name: stageName(f!, s.control.upstream.stage), reason: s.control.upstream.reason } : null, tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId), shots: stageShots(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
