@@ -15,6 +15,11 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 运行交的截图按附件压缩设置压（11-18）
+
+- `src/core/media.ts` 加 `compressImageFile`：按 `media.auto` 的模式、质量、长边、最小体积压一张不在 `files/` 里的图片，小 10% 以上才给出压缩后的文件。
+- `src/agents/artifacts.ts` 的 `collectInbox`、`attachPath` 收下后对图片调它，替换文件并更新 `run_artifacts` 的 entry、mime、size、sha。测试 `test/artifact-compress.test.ts`。
+
 ## 进度卡和事项页带阶段截图（11-18）
 
 - 阶段运行报做完或卡住时，它交过的截图最近 4 张跟着进度卡走：`src/flows/store.ts` 收 `runImages`，`notify` 的 `images` 存在通知上，`src/channels/lark-bot.ts` 发卡前用 `item-notification.ts` 的 `cardImages` 上传（按机器人缓存）。这时说明保留分段、最长 1200 字。

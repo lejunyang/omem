@@ -320,6 +320,36 @@ async function compressOne(app: App, c: Candidate, o: CompressOptions, enc: stri
   }
 }
 
+/**
+ * One image outside the stored files (a run's screenshot, agents/artifacts.ts), with the automatic
+ * compression settings (media.auto) when they are on and cover images: the compressed copy next to
+ * it, or null when nothing is to be done (off, too small, no ffmpeg, not 10% smaller, failed).
+ */
+export async function compressImageFile(app: App, input: string): Promise<{ file: string; ext: string } | null> {
+  const a = app.config.media?.auto;
+  if (!a?.enabled || !a.types.includes("image")) return null;
+  const st = statSync(input, { throwIfNoEntry: false });
+  if (!st?.isFile() || st.size < a.minBytes || !eligible(input, "image", a.mode)) return null;
+  const ffmpeg = toolCommand("ffmpeg");
+  if (!ffmpeg) return null;
+  const o: CompressOptions = { types: a.types, mode: a.mode, quality: a.quality, maxSide: a.maxSide, minBytes: a.minBytes, deleteOriginals: a.deleteOriginals, limit: 0 };
+  const plan = encodePlan(input, "image", o, ffmpegEncoders());
+  if (typeof plan === "string") return null;
+  const out = `${input}.compressed${plan.ext}`;
+  try {
+    const r = await runTool(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", input, ...plan.args, out]);
+    const size = r.code === 0 ? statSync(out, { throwIfNoEntry: false })?.size ?? 0 : 0;
+    if (!size || size > st.size * SAVE_RATIO) {
+      rmSync(out, { force: true });
+      return null;
+    }
+    return { file: out, ext: plan.ext };
+  } catch {
+    rmSync(out, { force: true });
+    return null;
+  }
+}
+
 const concurrency = (app: App) => Math.max(1, Math.min(app.config.media?.concurrency ?? 2, cpus().length * 2));
 
 /** Copies renamed into files/ by a run that did not get to record them as done. */

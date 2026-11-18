@@ -312,7 +312,7 @@ export async function collectInbox(app: App, runId: string, meta: Meta & { keep?
   const dir = join(store(app, "inbox"), runId);
   if (!existsSync(dir)) return { made: [], skipped: [] };
   try {
-    return await takeFolder(app, runId, dir, { ...meta, task: null, fallback: meta.task ?? null }, true);
+    return await shrinkImages(app, await takeFolder(app, runId, dir, { ...meta, task: null, fallback: meta.task ?? null }, true));
   } finally {
     // What was not taken (too big, too many) is dropped: the inbox starts empty for the next command.
     if (meta.keep) for (const name of existsSync(dir) ? readdirSync(dir) : []) rmSync(join(dir, name), { recursive: true, force: true });
@@ -344,10 +344,39 @@ export async function attachPath(app: App, runId: string, path: string, roots: s
     const tasks = await taskCheck(app, workId);
     if (meta.task != null && !tasks(meta.task)) throw new HttpError(400, `T${meta.task} 不是这次交办的修改项`);
     const r = take(app, runId, workId, getRun(app, runId).spaceId, found, name, meta, false);
-    return { made: r.artifact ? [r.artifact] : [], skipped: r.skipped ? [r.skipped] : [] };
+    return shrinkImages(app, { made: r.artifact ? [r.artifact] : [], skipped: r.skipped ? [r.skipped] : [] });
   }
   if (!st.isDirectory()) throw new HttpError(400, `${path} 不是文件或目录`);
-  return takeFolder(app, runId, found, meta, false, name);
+  return shrinkImages(app, await takeFolder(app, runId, found, meta, false, name));
+}
+
+/**
+ * Screenshots handed in are compressed like stored media (media.auto, core/media.ts) when that is on:
+ * the kept file becomes the smaller copy, the original goes. Pages and other kinds stay as they are.
+ */
+async function shrinkImages(app: App, r: { made: Artifact[]; skipped: string[] }) {
+  const { compressImageFile } = await import("../core/media.ts");
+  const made: Artifact[] = [];
+  for (const a of r.made) {
+    if (a.kind !== "image") {
+      made.push(a);
+      continue;
+    }
+    const file = artifactPath(app, a);
+    const out = await compressImageFile(app, file).catch(() => null);
+    if (!out) {
+      made.push(a);
+      continue;
+    }
+    const entry = a.entry.replace(/\.[^./]+$/, "") + out.ext;
+    const target = join(store(app, a.id), ...entry.split("/"));
+    renameSync(out.file, target);
+    if (target !== file) rmSync(file, { force: true });
+    const size = statSync(target).size;
+    run(app.db, "update run_artifacts set entry = ?, mime = ?, size = ?, sha = ? where id = ?", entry, mimeOf(entry), size, hashFile(target), a.id);
+    made.push(toArtifact(one<Row>(app.db, "select * from run_artifacts where id = ?", a.id)!));
+  }
+  return { made, skipped: r.skipped };
 }
 
 /** A run's artifacts: on a delegation, all of the delegation's (every round, review and helper). */
