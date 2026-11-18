@@ -15,12 +15,21 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 卡片的 allowed 认 lark-cli 读到的 open_id（11-18）
+
+- open_id 按应用区分：Agent 用 `lark_read` 列群成员拿到的是 lark-cli 那个应用的 id，写进 `lark_card` 的 `allowed` 后，被指定的人点按钮只看到“只有 ou_… 可以处理”，卡片开头也 @ 不到他。
+- `src/agents/tools.ts` 的 `lark_card`：主机器人发卡时按 `lark_people` 把 `cli_open_id` 换成本机器人看到的 `bot_open_id` 再记录。
+- `src/channels/lark-actions.ts` 的 `mayAct`：点击时操作人的 `bot_open_id` / `user_id` 经 `lark_people` 对应到的任一个 id 在 `allowed` 里都算，已经发出去的旧卡片也能点。
+- 别人点了被拒时，提示里的处理人写成“姓名（邮箱）”（`personLabel`，按 `lark_people` 认任一个 id），超过三人写“等 N 人”；以前对 lark-cli 的 id 查不到名字，只显示 ou_…。
+- `lark_card` 的说明写明 `allowed` 可以比 @ 的人多：给 `mentions` 时只 @ 这些人。
+
 ## 流程的进度卡只说发生了什么，阶段任务只带摘要（11-18）
 
 - `src/flows/store.ts`：`changeStage` 只在助手或宿主让一段做完、跳过、卡住、待复核时记一行进度，流程走完时也记（`engine.ts` 的 `end`）；开始、关卡和本人自己的操作不发卡。卡片正文是这些行加一行“现在 · 在做 / 等你开始 / 卡住”，不再列全部阶段；去掉运行和提问编号，`waitText` 防止“等等本人”。
 - `src/items/materials.ts` 的 `materialsBrief`、`src/items/requirements.ts` 的 `reqBrief` 加 `compact`：流程阶段的任务里说明截到 1500 字、材料最近 12 份、需求点只列标题，进行的地方最近 5 处（`engine.ts` 的 `placesBrief`）。一件做了很多轮的事以前给部署这类阶段带了约 40KB 的历史。
 - `stage_report` 的说明要求 note、waiting_on 写给本人看，不带内部编号。
 - 本人承担、以 Git 信号完成的阶段（推送）轮到时先跑一次 `checkGitSignals`，没推才问本人（`engine.ts` 的 `askOwnerNow`）；以前代码早就推了也会先发一张“轮到你：推送”。
+- 阶段的运行先 `ask_user` 问了本人、接着报卡住等本人时，不再另发一张“卡住了”的进度卡（`store.ts`，按运行里还没答的提问判断）。
 - 流程的提问卡片改成同一个版式（`engine.ts` 的 `askText`）：“事项 · 段”、要定什么，再按需要列结果、这一段做什么、前面各段的结果、确认后接着哪几段、依据数目。以前是一句话塞进全部说明，完成确认不写是哪件事。
 
 ## 接管 Agent 自带的技能，按分组给总入口（11-18）

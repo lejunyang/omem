@@ -48,6 +48,27 @@ function quickName(nameOf: (openId: string) => Promise<string>, openId: string, 
   return Promise.race([nameOf(openId).catch(() => openId), new Promise<string>((ok) => { timer = setTimeout(() => ok(openId), waitMs); })]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * Whether the person who clicked is one of the card's `allowed`. open_ids are per app: an id the
+ * agent read through lark-cli (another app) names the same person as this bot's id for them, so
+ * both are matched through lark_people, as is the user_id every app shares.
+ */
+export function mayAct(app: App, allowed: string[], operator: string, userId?: string) {
+  if (allowed.includes(operator) || (userId && allowed.includes(userId))) return true;
+  const main = currentBot() === "main";
+  if (!userId && !(main && operator)) return false;
+  const p = one<{ cli_open_id: string | null; bot_open_id: string | null; user_id: string | null }>(app.db,
+    `select cli_open_id, bot_open_id, user_id from lark_people where ${main && operator ? "bot_open_id = ? or " : ""}user_id = ? limit 1`,
+    ...(main && operator ? [operator, userId ?? ""] : [userId ?? ""]));
+  return !!p && [p.cli_open_id, main ? p.bot_open_id : null, p.user_id].some((id) => !!id && allowed.includes(id));
+}
+
+/** "小王（wang@example.com）" for an id of anyone omem has seen, under whichever app's id the card holds. */
+function personLabel(app: App, id: string): string | null {
+  const p = one<{ name: string; email: string | null }>(app.db, "select name, email from lark_people where (cli_open_id = ? or bot_open_id = ? or user_id = ?) and name != '' limit 1", id, id, id);
+  return p ? (p.email ? `${p.name}（${p.email}）` : p.name) : null;
+}
+
 async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promise<string>): Promise<CardActionResult> {
   const operator: string = data.operator?.open_id ?? data.open_id ?? "";
   // Who clicked, as this bot sees them (open_ids are per app; the other bots also know user_id).
@@ -62,15 +83,15 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     const pending = getInteraction(app, earlyId);
     const chatId = data.context?.open_chat_id;
     if (pending?.purpose === "ask" && pending.status === "open" && !pending.messageId && pending.bot === currentBot() && (!pending.chatId || chatId === pending.chatId) &&
-      pending.allowed.length && (pending.allowed.includes(operator) || (data.operator?.user_id && pending.allowed.includes(data.operator.user_id)))) {
+      pending.allowed.length && mayAct(app, pending.allowed, operator, data.operator?.user_id)) {
       bindInteraction(app, pending.id, messageId);
       inter = getInteraction(app, pending.id);
     }
   }
   if (!inter) return { toast: { type: "warning", content: "这张卡片已经失效" } };
   if (earlyId && earlyId !== inter.id) return { toast: { type: "warning", content: "卡片与交互记录不匹配" } };
-  if (inter.allowed.length && !inter.allowed.includes(operator) && !(data.operator?.user_id && inter.allowed.includes(data.operator.user_id))) {
-    const who = (await Promise.all(inter.allowed.slice(0, 3).map((id) => quickName(nameOf, id)))).join("、");
+  if (inter.allowed.length && !mayAct(app, inter.allowed, operator, data.operator?.user_id)) {
+    const who = (await Promise.all(inter.allowed.slice(0, 3).map((id) => personLabel(app, id) ?? quickName(nameOf, id)))).join("、") + (inter.allowed.length > 3 ? ` 等 ${inter.allowed.length} 人` : "");
     return { toast: { type: "error", content: `只有 ${who} 可以处理` } };
   }
   if (inter.status !== "open") return { toast: { type: "info", content: "已经处理过了" } };

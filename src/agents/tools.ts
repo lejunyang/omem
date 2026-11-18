@@ -3008,7 +3008,7 @@ const cardBlock = z.union([
 def({
   name: "lark_card",
   description:
-    "发一张飞书交互卡片：标题+颜色、Markdown、字段、按钮、表单（输入框、下拉、选人、日期、勾选；字段的 label 写成问题）。有人点按钮或提交表单时，操作会作为新消息回到本会话，由你继续处理。allowed 限定谁可以操作（open_id 列表；'owner' 表示本人），其他人点了会被拒绝；发在群里时卡片开头自动 @ 他们。复杂排版可传 raw_card（Card 2.0 JSON，结构见 lark-cli skills read lark-im/references/card/card-2.0-schema.md）。",
+    "发一张飞书交互卡片：标题+颜色、Markdown、字段、按钮、表单（输入框、下拉、选人、日期、勾选；字段的 label 写成问题）。有人点按钮或提交表单时，操作会作为新消息回到本会话，由你继续处理。allowed 限定谁可以操作（open_id 列表，lark_read 查到的也行；'owner' 表示本人），其他人点了会被拒绝；发在群里时卡片开头自动 @ 他们，给了 mentions 就只 @ mentions（几个人都能批、只 @ 其中一位时这样写）。复杂排版可传 raw_card（Card 2.0 JSON，结构见 lark-cli skills read lark-im/references/card/card-2.0-schema.md）。",
   write: true,
   schema: larkTarget.extend({
     title: z.string().optional(),
@@ -3022,7 +3022,11 @@ def({
     const { buildCard } = await import("../channels/lark-send.ts");
     const card = a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never, wide: a.wide });
     const owner = ctx.app.config.lark.ownerOpenId;
-    const allowed = (a.allowed ?? []).map((x) => (x === "owner" ? (owner ?? x) : x));
+    // An open_id read through lark-cli belongs to another app: store the one this bot sees, so the
+    // card's @ reaches the person and the click matches (lark-actions.ts `mayAct` also maps old cards).
+    const main = !ctx.larkBot || ctx.larkBot === "main";
+    const botId = (x: string) => (main ? one<{ id: string }>(ctx.app.db, "select bot_open_id id from lark_people where cli_open_id = ? and bot_open_id is not null", x)?.id : undefined) ?? x;
+    const allowed = [...new Set((a.allowed ?? []).map((x) => (x === "owner" ? (owner ?? x) : botId(x))))];
     const interactive = JSON.stringify(card).includes('"callback"') || JSON.stringify(card).includes('"form"');
     return larkPost(ctx, a, { card }, { allowed, waitForAction: interactive });
   },

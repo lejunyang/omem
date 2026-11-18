@@ -8,7 +8,7 @@ import { all, one, run } from "../src/core/db.ts";
 import { decide, decisionReady } from "../src/core/decision.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { createUser } from "../src/core/users.ts";
-import { answerAsk, getAsk } from "../src/agents/asks.ts";
+import { answerAsk, createAsk, getAsk } from "../src/agents/asks.ts";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { addMaterials } from "../src/items/materials.ts";
@@ -271,6 +271,14 @@ describe("只有本人能定的事", () => {
     expect(gate).toContain("轮到这一段了，开始吗？");
     expect(gate).toContain("**这一段做什么**\n在测试环境逐条验收。截图留证");
     expect(gate).toMatch(/\*\*前面\*\*\n- a：已完成，需求点核对完了，改名入口另排/);
+  });
+  it("阶段自己的运行已经问了本人，再报卡住等本人时不另发进度卡", async () => {
+    const { app, item, s } = await setup([stage("a")]);
+    const runId = s("a").by!;
+    createAsk(app, { runId, userId: "owner", question: "核对稿填好了，改完确认", options: [{ label: "确认" }], allowText: true });
+    await reportStage(app, item.id, "a", { state: "blocked", note: "等本人确认核对稿", waitingOn: "本人" }, { actor: "assistant", runId, userId: "owner" });
+    expect(s("a").state).toBe("blocked");
+    expect(all(app.db, "select id from notifications where json_extract(context, '$.entityId') = ?", item.id)).toHaveLength(0);
   });
   it("本人承担的阶段，助手说做完了只会变成问本人的确认；本人确认才完成", async () => {
     const { app, item, s } = await setup([{ id: "push", name: "推送", by: "owner" }, stage("deploy")]);

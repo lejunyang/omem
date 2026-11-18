@@ -82,7 +82,9 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
   // Starts, gates (they have their own question card) and the owner's own clicks say nothing new to the
   // owner; a result, a skip, a stop or a re-check written by an Agent or the host does.
   const what = !changed || by.actor === "owner" ? null : state === "done" ? "做完了" : state === "skipped" ? "跳过了" : state === "blocked" ? `卡住了${next.waitingOn ? `，${waitText(next.waitingOn)}` : ""}` : state === "stale" ? "要复核" : null;
-  if (what) markProgress(app, itemId, `「${name}」${what}${note ? `：${cardText(note)}` : ""}`, state === "blocked" && next.waitingOn === "owner");
+  // Stuck on the owner after the stage's own run already asked them: that question is the card.
+  const asked = state === "blocked" && !!by.runId && !!one(app.db, "select 1 from asks where run_id=? and status='pending' limit 1", by.runId);
+  if (what && !asked) markProgress(app, itemId, `「${name}」${what}${note ? `：${cardText(note)}` : ""}`, state === "blocked" && next.waitingOn === "owner");
   return next;
 }
 

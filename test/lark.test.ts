@@ -184,6 +184,26 @@ describe("feishu bot messaging", () => {
     expect(threadMessages(app, t.id).pop()!.meta.speaker).toBe("小王");
   });
 
+  it("lets the named person act when the card was given their lark-cli open_id", async () => {
+    const app = testApp();
+    const client = fakeClient();
+    setLarkClient(client);
+    const { rememberPerson } = await import("../src/channels/lark-people.ts");
+    rememberPerson(app, { name: "小王", cliOpenId: "ou_cli_wang", botOpenId: "ou_bot_wang", userId: "u_wang" });
+    const t = createThread(app, { spaceId: "personal", channel: "lark-watch", key: "oc_g" });
+    const run = createRun(app, { kind: "ask", title: "x", input: { conversationId: t.id, messageIds: [] }, lane: "test-hold", notBefore: "2999-01-01T00:00:00Z" });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: run.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_g"] }))!;
+    const sent = await callTool(ctx, "lark_card", { chat_id: "oc_g", title: "审批", blocks: [{ buttons: [{ text: "批准", value: "approve" }] }], allowed: ["ou_cli_wang"] });
+    const cardId = /已发送 (om_\d+)/.exec(sent.text)![1];
+    // Stored as the id this bot sees, so the card's @ reaches 小王.
+    expect(one<{ allowed: string }>(app.db, "select allowed from card_interactions where message_id = ?", cardId)!.allowed).toBe('["ou_bot_wang"]');
+    expect(JSON.stringify(client.calls.find((c) => c.op === "create")!.args.data)).toContain("ou_bot_wang");
+    // A card recorded earlier with the lark-cli id still matches the click.
+    recordInteraction(app, { messageId: "om_old", chatId: "oc_g", conversationId: t.id, runId: run.id, purpose: "agent", allowed: ["ou_cli_wang"], payload: {} });
+    expect(await handleCardAction(app, { operator: { open_id: "ou_bot_wang" }, context: { open_message_id: "om_old" }, action: { tag: "button", value: { action: "approve" } } })).toMatchObject({ toast: { content: "已收到，处理中" } });
+    expect(await handleCardAction(app, { operator: { open_id: "ou_bot_other" }, context: { open_message_id: "om_old" }, action: { tag: "button", value: { action: "approve" } } })).toMatchObject({ toast: { type: "error" } });
+  });
+
   it("without a target, posts into the Feishu conversation the run is answering", async () => {
     const app = testApp();
     const client = fakeClient();
