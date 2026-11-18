@@ -7,7 +7,7 @@ import UiCheckbox from "./UiCheckbox.vue";
 import Skeleton from "./Skeleton.vue";
 
 /**
- * Agent 自带的技能（src/agents/agent-skills.ts）：Codex、Claude Code、TraeX 的技能目录里别的工具装进去的
+ * Agent 自带的技能（src/agents/agent-skills.ts）：Codex、Claude Code 等 Agent 的技能目录里别的工具装进去的
  * 技能由 omem 接管，目录里只留 omem 说明和每个分组的总入口。
  */
 type Dir = { path: string; agents: string[]; write: boolean; exists: boolean; skills: number };
@@ -87,7 +87,7 @@ async function restore() {
 <template>
   <section class="agent-skills">
     <h3>Agent 自带的技能</h3>
-    <p class="muted small">别的工具往 Codex、Claude Code、TraeX 的技能目录里装了很多技能时，每个 Agent 都背着全部说明，命令行会截断，模型看不清每个是做什么的。接管后它们移进 omem 的库、按分组管理，目录里只留 omem 说明和每个分组一个总入口，Agent 先读总入口再按用途找到具体技能。</p>
+    <p class="muted small">别的工具往 Codex、Claude Code 等 Agent 的技能目录里装了很多技能时，每个 Agent 都背着全部说明，命令行会截断，模型看不清每个是做什么的。接管后它们移进 omem 的库、按分组管理，目录里只留 omem 说明和每个分组一个总入口，Agent 先读总入口再按用途找到具体技能。</p>
     <Skeleton v-if="!status" variant="lines" :rows="4" />
     <template v-else>
       <UiCheckbox :model-value="status.takeOver" switch :disabled="busy" @change="setOn">接管（每 {{ status.everyMinutes }} 分钟收一次新装进来的）</UiCheckbox>
