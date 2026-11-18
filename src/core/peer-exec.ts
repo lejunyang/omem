@@ -650,8 +650,8 @@ export const peerCommands: Record<string, Command> = {
     run: async (app) => (await import("./peer-inspect.ts")).agentsReport(app),
   },
   "agent-upgrade": {
-    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版（npm i -g <包>@latest，从 osdk.toml 的 [registries.npm] 那个公开源装，不受这台机器 .npmrc 的影响）；新会话起生效",
-    schema: z.object({ id: z.string().regex(/^[a-z0-9-]{1,40}$/) }),
+    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版（npm i -g <包>@latest，从 osdk.toml 的 [registries.npm] 那个公开源装，不受这台机器 .npmrc 的影响）；给 version（如 2.7.0）时装这个版本，并且这一次不受这台机器 npm 的发布时长下限限制；新会话起生效",
+    schema: z.object({ id: z.string().regex(/^[a-z0-9-]{1,40}$/), version: z.string().regex(/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/).optional() }),
     run: async (app, a) => {
       const { catalogEntry } = await import("../agents/catalog.ts");
       const { listAgentProfiles } = await import("../agents/runner.ts");
@@ -664,9 +664,11 @@ export const peerCommands: Record<string, Command> = {
       if (before?.via !== "installed" || before.name !== entry.npm) throw new HttpError(400, `${a.id} 的适配器不是全局安装的 ${entry.npm}，不在这里升级`);
       // A company mirror may lag behind (it served an old “latest” here): use omem's public registry.
       const registry = publicNpmRegistry(await packageRoot());
-      const r = sh("npm", ["i", "-g", `${entry.npm}@latest`, ...(registry ? [`--registry=${registry}`] : [])], app.home, 600_000);
+      // An exact version asked for by the owner: also lift a minimum-release-age policy (npm's `before` / `min-release-age`) for this install only.
+      const pin = a.version ? ["--min-release-age=0", `--before=${new Date().toISOString()}`] : [];
+      const r = sh("npm", ["i", "-g", `${entry.npm}@${a.version ?? "latest"}`, ...(registry ? [`--registry=${registry}`] : []), ...pin], app.home, 600_000);
       const after = adapterPackage(profile);
-      return { ok: r.code === 0, package: entry.npm, before: before.version, after: after?.version ?? null, registry: registry ?? "（这台机器的 npm 设置）", output: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") };
+      return { ok: r.code === 0 && (!a.version || after?.version === a.version), package: entry.npm, before: before.version, after: after?.version ?? null, registry: registry ?? "（这台机器的 npm 设置）", output: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") };
     },
   },
   search: {

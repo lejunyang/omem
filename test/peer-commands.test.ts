@@ -34,6 +34,7 @@ describe("read-only peer commands: agents, search, prompt, ide", () => {
     // agent-upgrade: only an installed catalog npm adapter, never an arbitrary package; from the public registry in osdk.toml.
     expect((await import("../src/core/peer-exec.ts")).publicNpmRegistry(process.cwd())).toMatch(/^https:\/\//);
     await expect(call("agent-upgrade", { id: "../npm" })).rejects.toThrow(/id/);
+    await expect(call("agent-upgrade", { id: "codex", version: "latest; rm -rf /" })).rejects.toThrow(/version/);
     await expect(call("agent-upgrade", { id: "cursor" })).rejects.toThrow(/不是目录里带 npm 包的后端/);
     await expect(call("agent-upgrade", { id: "nothing-like-this" })).rejects.toThrow(/不是目录里带 npm 包的后端/);
   });
