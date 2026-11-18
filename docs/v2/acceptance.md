@@ -73,10 +73,10 @@ npm run build
 
 | 编号 | 操作 | 预期 | 验证 |
 | --- | --- | --- | --- |
-| rereview-01 | 分支评审后给一条问题登记评论（`link_finding_external`），分支加一个提交，`rereview_branch` 带补充和作者回复 | 新运行沿用仓库、分支、事项，带 `rereviewOf` 和上次的 tip；三条旧问题进“旧问题” | `test/branch-review.test.ts` |
+| rereview-01 | 分支评审后给一条问题登记评论（`revise_finding` 的 `comment`），分支加一个提交，`review_branch` 带 `rereview_of`、补充、作者回复和一个评审项的 AI | 新运行沿用仓库、分支、事项，带 `rereviewOf` 和上次的 tip；三条旧问题进“旧问题” | `test/branch-review.test.ts` |
 | rereview-02 | 复审跑完 | 评审项看到增量 diff；已修 / 仍在 / 没复核写回原来的行，仍在的不新建；新问题只有新的；输出列出可以 resolve 的评论；事项时间线写“分支复审……上次留下 3 条：已修 1、仍在 1、没复核 1……” | 同上 |
 | rereview-03 | 分支被改写后再复审 | 材料写“历史被改写”，按全量看；已修的不再列为旧问题 | 同上 |
-| rereview-04 | 对交办编码的运行复审 | 拒绝，说明不是分支评审 | 同上 |
+| rereview-04 | 对交办编码的运行复审；不带 rereview_of 也不写仓库和分支；review_executions 写了不存在的评审项 | 拒绝并说明 | 同上 |
 | rereview-05 | 仍在的问题是严重级别、本人没定暂不改 | 复审不通过 | 待补测试 |
 | rereview-06 | 真实模型对真实分支复审，并在评审平台上 resolve 已修的评论 | 待验 | 待验 |
 

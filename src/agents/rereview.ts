@@ -161,7 +161,7 @@ export function setFindingExternal(app: App, findingId: number, ext: Omit<Extern
  * Queue a re-review of branch review `prevId` (the caller checked it may: the tool, the run page).
  * The same branches, item, design and checks; the tier is chosen again for what the branch is now.
  */
-export async function startRereview(app: App, prevId: string, opts: { note?: string; inputs?: string; fetch?: boolean; spaces?: (id: string) => string; itemFor?: (id: string) => string; peerReviewer?: import("./code.ts").PeerReviewer }, userId: string, parentId?: string | null) {
+export async function startRereview(app: App, prevId: string, opts: { note?: string; inputs?: string; fetch?: boolean; spaces?: (id: string) => string; itemFor?: (id: string) => string; peerReviewer?: import("./code.ts").PeerReviewer; reviewTier?: string; reviewExecution?: import("./execution.ts").Execution; reviewExecutions?: Record<string, import("./execution.ts").Execution> }, userId: string, parentId?: string | null) {
   const { prev, input, tips } = rereviewRequest(app, prevId);
   const repos = (input.repos ?? Object.keys(input.branches!)).map((r) => opts.spaces?.(r) ?? r);
   const [first] = Object.values(input.branches!);
@@ -176,6 +176,10 @@ export async function startRereview(app: App, prevId: string, opts: { note?: str
     title: `复审：${prev.title.replace(/^复审：/, "")}`,
     fetch: opts.fetch ?? true,
     reviewChecks: input.reviewChecks,
+    reviewTier: opts.reviewTier,
+    // The AI named for the first review stays unless this one names others.
+    reviewExecution: opts.reviewExecution ?? (input.reviewExecution as import("./execution.ts").Execution | undefined),
+    reviewExecutions: { ...((input as { reviewExecutions?: Record<string, import("./execution.ts").Execution> }).reviewExecutions ?? {}), ...(opts.reviewExecutions ?? {}) },
     readSpaces: (input.readSpaces ?? []).map((s) => opts.spaces?.(s) ?? s),
     itemId: input.itemId ? (opts.itemFor?.(input.itemId) ?? input.itemId) : undefined,
     designId: input.designId,

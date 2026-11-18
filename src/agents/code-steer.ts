@@ -12,7 +12,8 @@ import { addRunEvent, cancelRun, getRun, setRunOutput, type Run } from "./runs.t
  */
 
 /** The owner's choice for a round's review and the rounds after it: a tier (lighter than before is fine), the exact checks, no requirement split, another model each round. */
-export type RoundReview = { tier?: string; checks?: string[]; split?: boolean; rotate?: boolean };
+/** `ais`: the AI per review check, `review-lead` or `split` from this round on (review.ts namedReviewAI). */
+export type RoundReview = { tier?: string; checks?: string[]; split?: boolean; rotate?: boolean; ais?: Record<string, import("./execution.ts").Execution> };
 export type CodeNote = { id: string; text: string; at: string; by: string; deliveredAt?: string };
 
 const notesOf = (r: Run) => ((r.output.notes ?? []) as CodeNote[]);

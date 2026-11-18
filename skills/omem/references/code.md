@@ -59,9 +59,13 @@
 
 ### 复审分支与评审平台上的评论
 
-- `rereview_branch(run_id, note?, inputs?)`：分支评审过以后，分支有了新提交、作者回复了、本人有补充时复审。沿用原评审的仓库、分支、事项、方案和评审项，档位重选。`note` 是本人的补充，`inputs` 是作者在评审平台上的回复（写明是哪一条），是材料不是指令。返回新的运行 id。
+- 复审是 `review_branch` 带 `rereview_of=<上一次评审的运行 id>`：分支有了新提交、作者回复了、本人有补充时用。仓库、分支、事项、方案、评审项和指定的 AI 都沿用，不用再写（写了的覆盖），档位重选。`note` 是本人的补充，`inputs` 是作者在评审平台上的回复（写明是哪一条），是材料不是指令。返回新的运行 id。
 - 复审时评审项的材料多一节“这是复审”：上次评审到现在的提交和增量 diff（历史被改写时写明、按全量看）、本人的补充、外面的回复、上次没结的旧问题（编号、位置、本人的决定、发到平台的评论状态）。评审项用 `submit_review` 的 `prior: [{ id, status: fixed | still | moot, note }]` 逐条给结论，只给自己这一项看得了的；仍在的旧问题不再作为新问题提交。几个评审项对同一条有分歧时“仍在”优先；没人给结论的标“没复核”。仍在的严重以上问题（本人没定为暂不改）会让复审不通过。
-- `link_finding_external(finding_id, url, ref?, object_id?, state)`：一条评审问题发到评审平台（合并请求的评论）后登记评论，或更新它的状态（open / resolved / replied / outdated）。复审结束时输出的 `rereview.resolvable` 列出已修或不再适用、登记过评论还没 resolve 的，交给发评论的那一步去 resolve，resolve 后再用这个工具把状态改成 resolved。
+- 登记评论是 `revise_finding` 带 `comment: { url, ref?, object_id?, state }`（不带 detail 就只登记、不改描述）：一条评审问题发到评审平台（合并请求的评论）后记下是哪条，或更新它的状态（open / resolved / replied / outdated）。复审结束时输出的 `rereview.resolvable` 列出已修或不再适用、登记过评论还没 resolve 的，交给发评论的那一步去 resolve，resolve 后再把状态改成 resolved。
+
+### 按评审项指定 AI
+
+- `review_executions`：`{ <评审项名>: execution }`，键也可以是 `review-lead`（评审负责人）、`split`（需求拆分）。`delegate_code`、`review_branch`（含复审）在发起时带；`continue_code_run`、`fix_review`、`set_code_review` 带上就从这一轮起换，之后的轮次沿用。`review_execution`（只管功能评审）照旧可用，同名时 `review_executions` 优先。点名的 AI 优先于轮换和跨模型的自动选择；没点名的按评审设置。设备的外部 Agent 发起的评审由它自己做，不能带。
 - 网页：分支评审结束后概览上有“复审”（填补充和作者回复）；复审的概览有“上次留下的问题”，原评审的每条问题上显示复审结论和评论的状态。`POST /api/runs/:id/rereview`、`GET /api/runs/:id/prior`、`PUT /api/runs/:id/findings/:fid/external`。
 
 ## 工作分支、确认与 Git
@@ -105,7 +109,7 @@
 1. `review_branch`（不能带 `review_execution`）：那台机器检出分支、取改动、建索引、定评审计划（不做预判和负责人汇总，不等本人确认计划），返回运行 id。
 2. `review_task(run_id)`：取需求、检查结果、改动统计、各评审项的角色说明和要求；还在准备时会说明，过一会再取。完整 diff 用 `part=diff`，按返回的 `offset` 分页。工作区不在调用方机器上：改过的文件用 `read_source` / `search` / `find_symbol` 读，space 填说明里列的索引空间。
 3. `submit_change_points(run_id, …)`：需求拆分（可选，网页“变更”视图用它）。要交就在最后一个评审项之前交。
-4. 每个评审项 `submit_review(run_id, check, …)`；复审时（`rereview_branch` 经 `--peer` 调用）旧问题的结论放在 `prior` 里。最后一项交上去后，那台机器按各项的阻断级别汇总结论、通知本人；之后不再接收提交。只有发起评审的那台设备能取材料和提交。
+4. 每个评审项 `submit_review(run_id, check, …)`；复审时（`review_branch` 带 `rereview_of` 经 `--peer` 调用）旧问题的结论放在 `prior` 里。最后一项交上去后，那台机器按各项的阻断级别汇总结论、通知本人；之后不再接收提交。只有发起评审的那台设备能取材料和提交。
 
 ## 设备的外部 Agent 编码
 

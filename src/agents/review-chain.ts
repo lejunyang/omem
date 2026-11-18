@@ -8,10 +8,10 @@ import { one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, reportConversation, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
-import { codeDiffView, ignoredText, isBranchReview, worktreesOf, type Check, type IgnoredFiles, type PeerReviewer } from "./code.ts";
+import { codeDiffView, ignoredText, isBranchReview, worktreesOf, type Check, type CodeInput, type IgnoredFiles, type PeerReviewer } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
-  blocksAt, checkBrief, FINDING_FORMAT, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
+  blocksAt, checkBrief, FINDING_FORMAT, namedReviewAI, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason, suggestionOf,
   SEVERITY_LABEL, STOP_LABEL, type ChangePoint, type LeadResult, type ReviewPlan, type Severity, type StopReason,
   checkLabel, lookBase, coderAI, independenceWarnings,
 } from "./review.ts";
@@ -187,7 +187,7 @@ export async function splitChangePoints(app: App, codeRunId: string, rc: RoundCo
   // With no design it stays the requirement's change points, as does a delegation's (its tasks name
   // their decisions themselves).
   const design = branchReview ? (await import("../designs/store.ts")).designForWork(app, root) : null;
-  if (design && design.origin !== "derived" && design.revision) return splitOntoDesign(app, run, rc, { cwd, spaces, indexed, reviewTask, execution: input.reviewExecution }, opts.note);
+  if (design && design.origin !== "derived" && design.revision) return splitOntoDesign(app, run, rc, { cwd, spaces, indexed, reviewTask, execution: namedReviewAI(run.input as CodeInput, "split") }, opts.note);
   // Reworking an earlier split: the points as they stand and what the owner wants changed.
   const before = opts.revise ? currentPoints(app, run) : [];
   const revise = [
@@ -208,7 +208,7 @@ export async function splitChangePoints(app: App, codeRunId: string, rc: RoundCo
     onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check: "split" }),
     profileId: app.config.agents.roles["review-business"],
     userId: runUser(app, run.id),
-    execution: input.reviewExecution,
+    execution: namedReviewAI(run.input as CodeInput, "split"),
   });
   const saved = (getRun(app, run.id).output as { changePoints?: { round: number } }).changePoints;
   if (saved?.round !== roundOf(run)) throw new Error("没有提交变更点");
@@ -342,7 +342,9 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     const info = infos.get(name)!;
     const spec = info.builtin ? undefined : readAgentSpec(app, name);
     const actor: Actor = spec ? { spec } : { role: name as RoleName };
-    const prior = (opts.task ? null : rotatedExecution(app, round, plan.checks.indexOf(name), (run.input as { roundReview?: RoundReview }).roundReview?.rotate ?? plan.rotateModels)) ?? (name === "reviewer" ? input.reviewExecution : undefined);
+    // What the owner named for this check comes first; then the round's rotation; the functional check's older single pick.
+    const named = namedReviewAI(run.input as CodeInput, name);
+    const prior = named ?? (opts.task ? null : rotatedExecution(app, round, plan.checks.indexOf(name), (run.input as { roundReview?: RoundReview }).roundReview?.rotate ?? plan.rotateModels)) ?? (name === "reviewer" ? input.reviewExecution : undefined);
     const execution = prior ?? crossFamilyExecution(app, run.id, actor);
     const res = await runRole(app, {
       role: (info.builtin ? name : "reviewer") as RoleName,
@@ -426,6 +428,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
         signal: rc.signal,
         onEvent: (e) => rc.event(e.type, { ...e, phase: "lead" }),
         profileId: app.config.agents.roles["review-lead"],
+        execution: namedReviewAI(run.input as CodeInput, "review-lead"),
       });
       const draft = (getRun(app, run.id).output as Out).reviewLeadDraft;
       if (draft && draft.round === round) lead = { ...draft, by: "lead" } as LeadResult;

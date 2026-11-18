@@ -16,7 +16,7 @@ import {
 import { checkArgs, checkScope, keepSession, lookRunning, planLook, sessionOf, startLook, verifyGroup, withCheck } from "./code-overlap.ts";
 import { askConfirm, reviewContext, reviewRound, type RoundContext } from "./review-chain.ts";
 import { queueStandaloneFix } from "./review-fix.ts";
-import { checkLabel, planReview, reviewChecks, roundFindings, independenceWarnings, type ReviewPlan } from "./review.ts";
+import { checkLabel, namedReviewAI, planReview, reviewChecks, roundFindings, independenceWarnings, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
 import { workDirOf } from "./workspaces.ts";
@@ -252,6 +252,7 @@ async function planStage(app: App, run: Run, rc: RoundContext, since: Record<str
       signal: rc.signal,
       onEvent: (e) => rc.event(e.type, { ...e, phase: "lead" }),
       profileId: app.config.agents.roles["review-lead"],
+      execution: namedReviewAI(run.input as Parameters<typeof namedReviewAI>[0], "review-lead"),
     });
   } catch (e) {
     if (rc.signal.aborted) throw e;
@@ -555,6 +556,7 @@ async function arbitrate(app: App, run: Run, tasks: CodeTask[], rc: RoundContext
       signal: rc.signal,
       onEvent: (e) => rc.event(e.type, { ...e, phase: "lead", arbitrate: true }),
       profileId: app.config.agents.roles["review-lead"],
+      execution: namedReviewAI(run.input as Parameters<typeof namedReviewAI>[0], "review-lead"),
     });
   } catch (e) {
     if (rc.signal.aborted) throw e;

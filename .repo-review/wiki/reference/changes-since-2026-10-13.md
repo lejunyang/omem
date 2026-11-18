@@ -20,10 +20,15 @@ updated: 2026-11-19
 - `src/core/repositories.ts` 的 `initRepository`：名字放数据目录 repos/，绝对路径要不存在或是空目录；`git init -b main` 加一次空提交（没有 Git 身份时用 omem 的），工作区和分支才有起点。
 - 入口：工具 `connect_repository` 的 `create`、`POST /api/spaces` 的 `init`、`omem space add --init [--path]`、设置 → 新建空间里代码仓库的“新建一个空仓库”。测试在 `test/spaces.test.ts`。
 
+## 按评审项指定 AI；复审并进 review_branch（11-19）
+
+- `review_executions`（键：评审项名、`review-lead`、`split`）加在 `delegate_code`、`review_branch` 和 `roundReviewSchema`（`continue_code_run`、`fix_review`、`set_code_review` 共用）上，存为 `input.reviewExecutions` 或 `roundReview.ais`；`review.ts` 的 `namedReviewAI` 一处取用，评审项、评审负责人的各次运行、需求拆分都按它，点名的优先于轮换。`POST /api/review-branch` 收 `reviewAis`。
+- 当天加的 `rereview_branch`、`link_finding_external` 去掉了：复审是 `review_branch` 带 `rereview_of`（`note`、`inputs`；仓库、分支、事项、方案、评审项和指定的 AI 沿用），登记评论是 `revise_finding` 带 `comment`。工具数不增加。
+
 ## 复审已有分支；评审问题对上评审平台的评论（11-19）
 
 - `src/agents/rereview.ts`：`startRereview` 按上一次分支评审新建一次（`rereviewOf`、`rereviewNote`、`rereviewInputs`、`previousTips`）；`rereviewText` 进 `reviewContext`（增量提交、统计、diff，改写过的历史按全量；旧问题清单）；`recordPrior` 记 `submit_review.prior`（“仍在”优先）；`settleRereview` 在评审结束时标没复核、算 `stillBlocking` 和可 resolve 的评论，`review-chain.ts` 用它决定通过与否并写进卡片和事项时间线。
-- `review_findings` 新列 `resolution`、`resolution_note`、`checked_run`、`resolved_run`、`external`。工具 `rereview_branch`、`link_finding_external`（coding 组）；接口 `POST /api/runs/:id/rereview`、`GET /api/runs/:id/prior`、`PUT /api/runs/:id/findings/:fid/external`。
+- `review_findings` 新列 `resolution`、`resolution_note`、`checked_run`、`resolved_run`、`external`。复审用 `review_branch` 的 `rereview_of`、登记评论用 `revise_finding` 的 `comment`（起初另加了两个工具，同一天并回去）；接口 `POST /api/runs/:id/rereview`、`GET /api/runs/:id/prior`、`PUT /api/runs/:id/findings/:fid/external`。
 - 网页 `ReviewSummary.vue`：分支评审概览的“复审”按钮（补充、作者回复两栏），复审概览的“上次留下的问题”，原评审问题上的复审结论和评论状态。
 - 文档 `docs/v2/review.md`“复审已有分支”，工具说明 `skills/omem/references/code.md`。
 

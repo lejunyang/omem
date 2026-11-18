@@ -68,6 +68,8 @@ export type CodeInput = {
   /** Checks review-lead asked to re-run this round (the others are not affected by the fixes). */
   reviewOnly?: string[];
   reviewExecution?: Execution;
+  /** The AI named per review check, `review-lead` or `split` (review.ts namedReviewAI). */
+  reviewExecutions?: Record<string, Execution>;
   task: string;
   /** Applies to every repository unless `checks` names one for it. */
   checkCommand?: string;
@@ -154,7 +156,7 @@ export type BranchReviewRequest = {
   fetch?: boolean;
   /** Spaces the reviewers may read besides the repositories (already checked against the caller's access). */
   readSpaces?: string[];
-} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "itemId" | "peerReviewer" | "designId" | "rereviewOf" | "rereviewNote" | "rereviewInputs" | "previousTips">;
+} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "reviewExecutions" | "itemId" | "peerReviewer" | "designId" | "rereviewOf" | "rereviewNote" | "rereviewInputs" | "previousTips">;
 
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
 export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null, userId = OWNER) {
@@ -169,6 +171,7 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
     input: {
       task: req.task?.trim() || `评审分支 ${req.branch} 相对基线的全部改动。`,
       reviewExecution: req.reviewExecution,
+      reviewExecutions: req.reviewExecutions && Object.keys(req.reviewExecutions).length ? req.reviewExecutions : undefined,
       repos: ids,
       branches,
       fetch: req.fetch !== false,

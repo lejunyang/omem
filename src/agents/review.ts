@@ -115,6 +115,16 @@ export const tierSchema = z.object({
   /** From the second round each check runs on the next model of `rotation`, for a different take. */
   rotateModels: z.boolean().default(false),
 });
+/**
+ * The AI the owner (or the assistant on their word) named for one part of a review: a check by its
+ * name, `review-lead`, or `split` (the requirement split). The functional check also takes the older
+ * single `reviewExecution`. Named choices win over rotation and the cross-family pick.
+ */
+export const REVIEW_AI_PARTS = ["review-lead", "split"] as const;
+export function namedReviewAI(input: { reviewExecutions?: Record<string, import("./execution.ts").Execution>; reviewExecution?: import("./execution.ts").Execution; roundReview?: { ais?: Record<string, import("./execution.ts").Execution> } }, part: string) {
+  return input.roundReview?.ais?.[part] ?? input.reviewExecutions?.[part] ?? (part === "reviewer" || part === "split" ? input.reviewExecution : undefined);
+}
+
 /** The models review rounds rotate through (tiers with `rotateModels`). */
 export const rotationSchema = z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).default([]);
 export const checkSettingSchema = z.object({ label: z.string().trim().min(1).max(12), blocks: z.enum(["blocker", "major", "minor"]), when: reviewCondition.nullable(), guide: z.string().trim().max(2000).default("") });

@@ -14,7 +14,7 @@ import {
 } from "./code-tasks.ts";
 import type { Execution } from "./execution.ts";
 import { reviewContext, taskCheckBrief, TASK_RULING, crossFamilyExecution } from "./review-chain.ts";
-import { checkBrief, checkLabel, independenceWarnings, isLook, lookBase, lookName, recordReview, reviewChecks, reviewFor, roundFindings, SEVERITY_LABEL, type LeadResult, type ReviewPlan } from "./review.ts";
+import { checkBrief, checkLabel, independenceWarnings, isLook, namedReviewAI, lookBase, lookName, recordReview, reviewChecks, reviewFor, roundFindings, SEVERITY_LABEL, type LeadResult, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, getRun, runUser, setRunOutput, trackAbort, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
@@ -84,7 +84,7 @@ export function checkArgs(app: App, rootId: string, check: string, run: Run) {
   if (isLook(check) && !ai) throw new HttpError(409, `${check} 还没有选定模型`);
   const execution: Execution | undefined = ai
     ? { ...ai, source: "user", reason: "评审设置里的轮换模型：换模型复看" }
-    : (base === "reviewer" ? (run.input as { reviewExecution?: Execution }).reviewExecution : undefined)
+    : namedReviewAI(run.input as Parameters<typeof namedReviewAI>[0], base)
       ?? crossFamilyExecution(app, run.id, spec ? { spec } : { role: base as RoleName });
   return {
     role: (info.builtin ? base : "reviewer") as RoleName,
@@ -564,6 +564,7 @@ async function lookRuling(app: App, rootId: string, reviewed: Run, round: number
       signal,
       onEvent: (e) => event(e.type, { ...e, phase: "lead" }),
       profileId: app.config.agents.roles["review-lead"],
+      execution: namedReviewAI(reviewed.input as Parameters<typeof namedReviewAI>[0], "review-lead"),
     });
   } catch (e) {
     if (signal.aborted) throw e;

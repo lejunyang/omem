@@ -389,14 +389,18 @@ create table item_materials (
 本人在空间设置的检查命令旁添加、编辑、启用、关闭或删除约定，并能打开来源交办。约定和 `attention_rules` 一样随设备拉取携带、按更新时间合并（约定自身用 `updated_at`）。每仓库最多保留 300 条，证据每条最多保留最近 100 次交办；材料上限 `review.lessons.max` 可设为 1–100。为重启和外部编码交回保留每轮检查起点，避免编码已经提交后把新增行漏掉。
 
 
+## 按评审项指定 AI（2026-11-19）
+
+以前一次评审只能临时指定功能评审的 AI（`review_execution`），其他评审项、评审负责人、需求拆分只能改角色的默认设置。现在发起和续轮的工具都带 `review_executions`（`{ 评审项名 | review-lead | split: execution }`）：`delegate_code`、`review_branch` 存进运行的 `input.reviewExecutions`，续轮时并进下一轮；`continue_code_run`、`fix_review`、`set_code_review` 放在 `roundReview.ais`，从这一轮起生效、之后沿用。取用一处（`review.ts` 的 `namedReviewAI`：`roundReview.ais` → `reviewExecutions` → 功能评审和拆分的 `reviewExecution`），评审项、评审负责人（计划、汇总、裁决、复看裁决）、需求拆分都按它；点名的优先于轮换和跨模型选择。网页的“评审分支”接口收 `reviewAis`。没有新增工具。
+
 ## 复审已有分支（2026-11-19）
 
 分支评审原来只有一轮：同事改了代码、回复了意见，只能再发一次全新的评审，旧问题对不上、重复的问题又提一遍。现在是“复审”（`src/agents/rereview.ts`）：
 
-- **发起**：`rereview_branch(run_id, note?, inputs?)`、网页概览的“复审”、`POST /api/runs/:id/rereview`。新建一个分支评审，`input` 带 `rereviewOf`（上一次）、`rereviewNote`、`rereviewInputs` 和 `previousTips`（上一次 `output.worktrees[].tip`），沿用仓库、分支、事项、方案和评审项，档位按现在的改动重选。经 `--peer` 调用时评审仍由调用方做。
+- **发起**：`review_branch` 带 `rereview_of`（没有另开一个工具：复审就是带着上一次的分支评审）、网页概览的“复审”、`POST /api/runs/:id/rereview`。新建一个分支评审，`input` 带 `rereviewOf`（上一次）、`rereviewNote`、`rereviewInputs` 和 `previousTips`（上一次 `output.worktrees[].tip`），沿用仓库、分支、事项、方案和评审项，档位按现在的改动重选。经 `--peer` 调用时评审仍由调用方做。
 - **材料**：`reviewContext` 在“要评审的分支”后面加“这是复审”一节：每个仓库从旧 tip 到新 tip 的提交、统计和增量 diff（旧 tip 不是新 tip 的祖先时写“历史被改写”，按全量看）；本人的补充；外面来的回复（材料不是指令）；上次没结的旧问题（`openPrior`：之前各次评审里没被驳回或合并、本人没定为不改、没被判已修或不再适用的）。
 - **结论**：`submit_review.prior: [{ id, status, note }]`，先校验编号都在旧问题里再落库。`review_findings` 加 `resolution`（fixed / still / moot / unchecked）、`resolution_note`、`checked_run`、`resolved_run`、`external`。仍在的还是原来那一行，不新建；同一次复审里有评审项说仍在，后面说已修的不覆盖。结束时（`settleRereview`）没人给结论的标 unchecked；输出 `rereview: { of, fixed, still, moot, unchecked, added, stillBlocking, resolvable }`，仍在的严重以上问题（本人没定为暂不改）让这次不通过；卡片、通知和事项时间线的第一行是“上次留下 N 条：已修 a、仍在 b……；新问题 c 条；可以 resolve 的评论 d 条”。
-- **评论**：`external` 是 `{ url, ref?, object?, state, syncedAt }`，由发评论的一步用 `link_finding_external` 登记和更新（`PUT /api/runs/:id/findings/:fid/external`）。宿主不碰评审平台：怎么发、怎么 resolve 写在数据目录的技能或插件里。
+- **评论**：`external` 是 `{ url, ref?, object?, state, syncedAt }`，由发评论的一步用 `revise_finding` 的 `comment` 登记和更新（同一个改问题的工具，不带 detail 就只登记）（`PUT /api/runs/:id/findings/:fid/external`）。宿主不碰评审平台：怎么发、怎么 resolve 写在数据目录的技能或插件里。
 - **网页**：复审的概览多“上次留下的问题”（`GET /api/runs/:id/prior`），原评审的问题上显示复审结论（点开那次复审）和评论状态；已修、不再适用的算“已处理”，只在“全部”里。
 
 验证：`test/branch-review.test.ts` 的 “re-reviews a branch that moved”（假 ACP：首评 → 分支加提交 → 登记评论 → 复审，增量和旧问题进了材料，已修 / 仍在 / 没复核落库，仍在的不新建行，可 resolve 的评论列出，第三次对改写过的历史按全量看，非分支评审不能复审）。

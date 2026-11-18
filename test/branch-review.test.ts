@@ -464,17 +464,21 @@ describe("reviewing an existing branch", () => {
       const shipped = findings.find((f) => f.title === "已发货行不能退")!;
       // The assistant posted it on the platform the change is reviewed on and says which comment it is.
       const ctx: ToolContext = { app, runId: null, spaceId: "shop-api", spaces: ["shop-api"], tools: null, actor: "agent" };
-      const linked = await callTool(ctx, "link_finding_external", { finding_id: shipped.id, url: "https://code.example.com/shop/merge_requests/7#note_11", ref: "note_11" });
+      const linked = await callTool(ctx, "revise_finding", { run_id: first.id, finding_id: shipped.id, comment: { url: "https://code.example.com/shop/merge_requests/7#note_11", ref: "note_11" } });
       expect(linked.isError).toBeFalsy();
+      // A comment only: the description stays as the check wrote it.
+      expect(reviewsOf(app, [first.id]).flatMap((r) => r.findings).find((f) => f.id === shipped.id)!.revised).toBeNull();
 
       // The author pushes a fix and answers.
       git("checkout", "-q", "feature/rr");
       commit({ "refund.ts": "export function refundAmount(lines: Line[]) {\n  return lines.filter((l) => !l.shipped).length;\n}\n" }, "过滤已发货的行");
       git("checkout", "-q", start);
-      const queued = await callTool(ctx, "rereview_branch", { run_id: first.id, note: "命名的事和作者说好了下个需求改", inputs: "作者在 MR 上回复：已发货的行已经过滤", fetch: false });
+      // The owner names an AI for one check: unknown names are refused, the named one is kept.
+      expect((await callTool(ctx, "review_branch", { rereview_of: first.id, fetch: false, review_executions: { nope: { profile: "fake", source: "user", reason: "x" } } })).text).toMatch(/没有这些评审项：nope/);
+      const queued = await callTool(ctx, "review_branch", { rereview_of: first.id, note: "命名的事和作者说好了下个需求改", inputs: "作者在 MR 上回复：已发货的行已经过滤", fetch: false, review_executions: { "review-business": { profile: "fake", source: "user", reason: "本人点名业务评审用它" } } });
       expect(queued.isError).toBeFalsy();
       const second = getRun(app, queued.text.match(/运行 (\S+)（/)![1]);
-      expect(second.input).toMatchObject({ rereviewOf: first.id, itemId: item.id, rereviewNote: expect.stringContaining("命名"), previousTips: { "shop-api": expect.any(String) } });
+      expect(second.input).toMatchObject({ rereviewOf: first.id, itemId: item.id, rereviewNote: expect.stringContaining("命名"), previousTips: { "shop-api": expect.any(String) }, reviewExecutions: { "review-business": { profile: "fake" } } });
       expect(openPrior(app, second.id).map((f) => f.title).sort()).toEqual(["已发货行不能退", "命名可以更具体", "可以补一条测试"].sort());
       await exec(getRun(app, second.id));
       run(app.db, "update runs set status = 'done' where id = ?", second.id);
@@ -506,7 +510,8 @@ describe("reviewing an existing branch", () => {
       cancelRun(app, third.id);
       // Not a branch review: nothing to re-review.
       const plain = createRun(app, { kind: "code", spaceId: "shop-api", title: "交办", input: { task: "x", repos: ["shop-api"] } });
-      expect((await callTool(ctx, "rereview_branch", { run_id: plain.id })).text).toMatch(/不是分支评审/);
+      expect((await callTool(ctx, "review_branch", { rereview_of: plain.id })).text).toMatch(/不是分支评审/);
+      expect((await callTool(ctx, "review_branch", { fetch: false })).text).toMatch(/要写 repo_spaces 和 branch/);
       cancelRun(app, plain.id);
       discardCodeRun(app, first.id);
       discardCodeRun(app, second.id);

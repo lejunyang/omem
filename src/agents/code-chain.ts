@@ -86,7 +86,7 @@ export function queueNextCodeRound(
   app: App,
   chain: CodeChain,
   task: string,
-  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution; reviewOnly?: string[]; roundReview?: RoundReview; extraInput?: Record<string, unknown> } = {},
+  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; reviewOnly?: string[]; roundReview?: RoundReview; extraInput?: Record<string, unknown> } = {},
 ): { run: Run; chain: CodeChain } | null {
   // Round 1 + automatic continuations up to maxCodeRounds; further rounds need continue_code_run.
   // Reload under a write lock: stale callers and separate MCP processes cannot queue duplicates.
@@ -107,7 +107,7 @@ export function queueNextCodeRound(
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
-    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; fromReview?: string; taskMode?: boolean };
+    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; fromReview?: string; taskMode?: boolean };
     // What the owner added while the last round ran and nobody delivered yet goes with this round's task.
     const notes = pendingNotes(app, chain.lastCodeRunId!);
     const roundNotes = notes.length ? notesText(notes, app.config.timezone) : null;
@@ -124,6 +124,7 @@ export function queueNextCodeRound(
         task,
         execution: opts.execution ?? input.execution,
         reviewExecution: opts.reviewExecution ?? input.reviewExecution,
+        reviewExecutions: { ...(input.reviewExecutions ?? {}), ...(opts.reviewExecutions ?? {}) },
         checkCommand: input.checkCommand,
         repos: input.repos,
         checks: input.checks,
