@@ -2597,6 +2597,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (b.model === null && b.effort === null) byProfile.delete(b.profile);
     else
       byProfile.set(b.profile, {
+  // The npm adapter behind an ACP backend (src/agents/adapter.ts): installed and newest version; upgrade in place.
+  server.get("/api/agents/:id/adapter", async (req) => {
+    const { adapterStatus, hasAdapter } = await import("../agents/adapter.ts");
+    const id = (req.params as { id: string }).id;
+    return hasAdapter(app, id) ? adapterStatus(app, id) : { id, package: null };
+  });
+  server.post("/api/agents/:id/adapter/upgrade", async (req) => {
+    const { upgradeAdapter } = await import("../agents/adapter.ts");
+    const b = q(z.object({ version: z.string().max(40).optional() }), req.body ?? {});
+    return upgradeAdapter(app, (req.params as { id: string }).id, b.version);
+  });
+
         ...(byProfile.get(b.profile) ?? {}),
         ...(b.model === undefined ? {} : { model: b.model || undefined }),
         ...(b.effort === undefined ? {} : { effort: b.effort || undefined }),

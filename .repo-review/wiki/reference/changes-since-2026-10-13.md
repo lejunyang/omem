@@ -15,6 +15,12 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 设置 → AI 能看 ACP 适配器版本并升级（11-18）
+
+- 展开一个后端时，ACP 那一行下面显示 npm 适配器（codex-acp、claude-agent-acp……）的已装版本和公开源上的最新版，有新版时可以点“升级”，确认后升级。装法和远程命令 `agent-upgrade` 是同一套，都在 `src/agents/adapter.ts`：只升目录里那个已经装好的包，从 `osdk.toml` 的公开源装，装进命令实际所在的 npm 前缀，版本变了就重新检测模型。
+- 检测到的模型里有的没有思考强度、别的模型有时，提示可能是适配器比这个模型旧（11-18 codex-acp 2.5.0 和 gpt-6.2-sol 就是这样）。
+- 接口：`GET /api/agents/:id/adapter`、`POST /api/agents/:id/adapter/upgrade`，权限同设置。
+
 ## 远程升级 ACP 适配器从公开源装（11-18）
 
 - `peer call <设备> agent-upgrade` 原来用那台机器自己的 npm 设置装 `@latest`，公司镜像落后时会装回旧版（codex-acp 停在 2.5.0，不认识 Codex 新的默认模型，Agent 页上这个模型没有思考强度）。现在带 `--registry` 用 `osdk.toml` 的 `[registries.npm]`（`src/core/peer-exec.ts` 的 `publicNpmRegistry`），和依赖安装一致。

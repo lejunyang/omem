@@ -650,28 +650,10 @@ export const peerCommands: Record<string, Command> = {
     run: async (app) => (await import("./peer-inspect.ts")).agentsReport(app),
   },
   "agent-upgrade": {
-    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版（npm i -g <包>@latest，从 osdk.toml 的 [registries.npm] 那个公开源装，不受这台机器 .npmrc 的影响）；给 version（如 2.7.0）时装这个版本，并且这一次不受这台机器 npm 的发布时长下限限制；新会话起生效",
+    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版（npm i -g <包>@latest，从 osdk.toml 的 [registries.npm] 那个公开源装，不受这台机器 .npmrc 的影响）；给 version（如 2.7.0）时装这个版本，并且这一次不受这台机器 npm 的发布时长下限限制；装进命令实际所在的 npm 前缀，版本变了就重新检测模型；新会话起生效",
     schema: z.object({ id: z.string().regex(/^[a-z0-9-]{1,40}$/), version: z.string().regex(/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/).optional() }),
-    run: async (app, a) => {
-      const { catalogEntry } = await import("../agents/catalog.ts");
-      const { listAgentProfiles } = await import("../agents/runner.ts");
-      const { adapterPackage, adapterPrefix } = await import("./peer-inspect.ts");
-      // Only a catalog package already installed globally here: nothing new gets onto the machine.
-      const entry = catalogEntry(a.id);
-      const profile = listAgentProfiles(app).find((p) => p.id === a.id);
-      if (!entry?.npm || !profile || profile.command !== entry.command) throw new HttpError(400, `${a.id} 不是目录里带 npm 包的后端`);
-      const before = adapterPackage(profile);
-      if (before?.via !== "installed" || before.name !== entry.npm) throw new HttpError(400, `${a.id} 的适配器不是全局安装的 ${entry.npm}，不在这里升级`);
-      // A company mirror may lag behind (it served an old “latest” here): use omem's public registry.
-      const registry = publicNpmRegistry(await packageRoot());
-      // An exact version asked for by the owner: also lift a minimum-release-age policy (npm's `before` / `min-release-age`) for this install only.
-      const pin = a.version ? ["--min-release-age=0", `--before=${new Date().toISOString()}`] : [];
-      // Into the prefix the command is found in: omem's own npm may have another global prefix, and then the copy in use would stay old.
-      const prefix = adapterPrefix(profile);
-      const r = sh("npm", ["i", "-g", `${entry.npm}@${a.version ?? "latest"}`, ...(prefix ? [`--prefix=${prefix}`] : []), ...(registry ? [`--registry=${registry}`] : []), ...pin], app.home, 600_000);
-      const after = adapterPackage(profile);
-      return { ok: r.code === 0 && (!a.version || after?.version === a.version), package: entry.npm, before: before.version, after: after?.version ?? null, prefix, registry: registry ?? "（这台机器的 npm 设置）", output: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") };
-    },
+    // A company mirror may lag behind: src/agents/adapter.ts installs from the public registry, into the prefix in use, then probes again.
+    run: async (app, a) => (await import("../agents/adapter.ts")).upgradeAdapter(app, a.id, a.version),
   },
   search: {
     description: "只读：用 Agent 的 search 工具同一套检索（本人身份）查一个问题，返回命中的原件 id、标题、uri、类型、空间、分数和工具会给出的片段；space 缺省为所有空间",

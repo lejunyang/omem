@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { del, post } from "../api";
+import { del, get, post } from "../api";
+import { confirmDialog } from "../lib/dialog";
 import { detectProbe, probes } from "../lib/probes";
 import { networkBlock } from "../lib/network-status";
 import { toast } from "../store";
@@ -38,6 +39,43 @@ const probing = computed(() => !!(prober.value && probes.pending[prober.value.id
 const models = computed(() => probe.value?.models ?? []);
 const efforts = computed(() => probe.value?.effortsByModel?.[primary.value.model ?? ""] ?? probe.value?.efforts ?? []);
 watch(open, (o) => { if (o && prober.value) void detectProbe(prober.value.id); });
+
+// ---- the npm adapter behind the ACP agent (src/agents/adapter.ts): installed and newest version, upgrade in place
+type Adapter = { id: string; package: string | null; version?: string | null; latest?: string | null; latestError?: string; upgradable?: boolean };
+const acp = computed(() => props.profiles.find((p) => p.transport === "acp" && p.installed && !p.peer));
+const adapter = ref<Adapter | null>(null);
+const checking = ref(false), upgrading = ref(false);
+async function checkAdapter() {
+  if (!acp.value) return;
+  checking.value = true;
+  try { adapter.value = await get<Adapter>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter`); }
+  catch { adapter.value = null; }
+  finally { checking.value = false; }
+}
+watch(open, (o) => { if (o && !adapter.value) void checkAdapter(); });
+/** Models the last detection gave no effort levels for while others have them: an adapter older than the model. */
+const noEffort = computed(() => {
+  const by = probe.value?.effortsByModel;
+  if (!by || !Object.values(by).some((v) => v.length)) return [];
+  return models.value.filter((m) => by[m] && !by[m].length);
+});
+async function upgradeAdapter() {
+  const a = adapter.value;
+  if (!a?.package || !a.latest || !acp.value) return;
+  if (!(await confirmDialog(`把 ${a.package} 升级到 ${a.latest}？`, { message: "从 omem 指定的公开 npm 源装，替换这台机器上正在用的那一份；正在跑的会话不受影响，新会话起用新版。装完会重新检测模型。", okText: "升级" }))) return;
+  upgrading.value = true;
+  try {
+    const r = await post<{ ok: boolean; after: string | null; output: string; probe?: (typeof probes.data)[string] }>(`/api/agents/${encodeURIComponent(acp.value.id)}/adapter/upgrade`, {});
+    if (r.probe) probes.data[acp.value.id] = r.probe;
+    if (r.ok) toast(`${a.package} 已是 ${r.after}`);
+    else toast(`升级没成功，仍是 ${r.after ?? "未知版本"}：${r.output.trim().split("\n").slice(-2).join(" ").slice(0, 200)}`, "error");
+    await checkAdapter();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    upgrading.value = false;
+  }
+}
 
 const name = computed(() => (primary.value.name ?? primary.value.id).replace(/\s*[(（](ACP|CLI|命令行)[)）]\s*$/i, ""));
 const KIND: Record<string, string> = { acp: "ACP", "claude-cli": "CLI", "codex-cli": "CLI", "doubao-cli": "CLI", doubao: "OpenAPI" };
@@ -199,6 +237,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
           <span class="muted lbl">强度</span>
           <button v-for="v in efforts" :key="v" type="button" class="chip" :class="{ on: primary.effort === v }" @click="setDefault('effort', v)">{{ v }}</button>
         </div>
+        <p v-if="noEffort.length" class="small warn-text">{{ noEffort.join("、") }} 没检测到思考强度{{ adapter?.upgradable ? `：适配器 ${adapter.version} 可能比这个模型旧，升级到 ${adapter.latest} 后会重新检测。` : "，可能是适配器还不认识这个模型。" }}</p>
         <p v-if="probe?.error" class="small warn-text">读不到模型列表：{{ probe.error }}</p>
         <p v-else-if="!prober" class="small muted">这个后端不报告模型列表，在下面的配置里写 model、effort。</p>
         <div class="row wrap small">
@@ -210,6 +249,19 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
             <span class="badge">{{ KIND[p.transport] ?? p.transport }}</span>
             <span class="mono grow ell">{{ p.command }} {{ p.args.join(" ") }}</span>
             <button class="btn ghost sm" @click="editProfile(p)">{{ editing === p.id ? "收起" : "编辑配置" }}</button>
+          </div>
+          <div v-if="p === acp && (checking || adapter?.package)" class="row wrap small adapter">
+            <span class="muted">适配器</span>
+            <span v-if="!adapter" class="muted">查询版本…</span>
+            <template v-else>
+              <span class="mono">{{ adapter.package }} {{ adapter.version ?? "" }}</span>
+              <span v-if="adapter.upgradable" class="badge warn">有新版 {{ adapter.latest }}</span>
+              <span v-else-if="adapter.latest" class="muted">已是最新</span>
+              <span v-else-if="adapter.latestError" class="muted ell" :title="adapter.latestError">查不到最新版</span>
+            </template>
+            <span class="spacer" />
+            <button v-if="adapter?.upgradable" class="btn sm" :disabled="upgrading" @click="upgradeAdapter">{{ upgrading ? "升级中…" : `升级到 ${adapter.latest}` }}</button>
+            <button v-else-if="adapter" class="btn ghost sm" :disabled="checking" @click="checkAdapter">{{ checking ? "查询中…" : "检查更新" }}</button>
           </div>
           <div v-if="editing === p.id" class="stack">
             <textarea v-model="editJson" class="textarea mono" rows="9" />
@@ -306,6 +358,7 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
 .part p { margin: 0; }
 .lbl { min-width: 2.5em; }
 .cmd { display: grid; gap: 8px; min-width: 0; }
+.adapter { padding-left: 2px; }
 .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mrow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: start; }
 .num { width: 72px; margin: 0 4px; }

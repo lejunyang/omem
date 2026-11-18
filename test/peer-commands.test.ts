@@ -37,6 +37,11 @@ describe("read-only peer commands: agents, search, prompt, ide", () => {
     await expect(call("agent-upgrade", { id: "codex", version: "latest; rm -rf /" })).rejects.toThrow(/version/);
     await expect(call("agent-upgrade", { id: "cursor" })).rejects.toThrow(/不是目录里带 npm 包的后端/);
     await expect(call("agent-upgrade", { id: "nothing-like-this" })).rejects.toThrow(/不是目录里带 npm 包的后端/);
+    // Settings → AI uses the same checks: no adapter block for a backend without an installed catalog package.
+    const adapter = await import("../src/agents/adapter.ts");
+    expect(adapter.hasAdapter(app, "cursor")).toBe(false);
+    expect(adapter.hasAdapter(app, "doubao")).toBe(false);
+    await expect(adapter.upgradeAdapter(app, "doubao")).rejects.toThrow(/不是目录里带 npm 包的后端/);
   });
 
   it("search returns the hits the agents' tool would see, with where they come from", async () => {
