@@ -203,10 +203,10 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
     `## 流程：${f.definition.name}\n${f.definition.stages.map((s) => `- ${s.id} ${s.name}：${rows.find((r) => r.id === s.id)?.state ?? "pending"}`).join("\n")}`,
     `## 这一段：${d.name}（${d.id}）\n${d.note ?? ""}`,
     `完成要求：${typeof d.done === "string" ? d.done : d.done ? JSON.stringify(d.done) : "做完这一段并附上依据"}`,
-    typeof d.by === "object" && "object" in d.by ? d.by.object === "code-work" ? `按这件事的需求点发起交办，delegate_code 带上 item_id=${item.id}；流程会跟随交办评审。` : `为这件事写方案，交给本人确认。` : "",
+    typeof d.by === "object" && "object" in d.by ? d.by.object === "code-work" ? `按这件事的需求点发起交办，delegate_code 带上 item_id=${item.id}；同一分支上已有别的事项的交办在进行时，用 message_code_run 把这件的修改交给它（new_item: true，item_id=${item.id}）。交办开始或并进去以后，这一段由流程跟着交办走、评审通过就完成：不要用 stage_report 报 blocked 去等交办，交代一句交给了哪个交办就结束；只有发不出交办、要本人拍板时才报 blocked。` : `为这件事写方案，交给本人确认。` : "",
     feedback ? rows.find((s) => s.id === d.id)?.control.escalated ? `上一次的结论或错误：${feedback}。这一轮重新核对并交结果。` : `本人说还不行，原因：${feedback}。这一轮按这个意见重做。` : "",
     typeof d.by === "object" && "run" in d.by && d.by.run.skill === "study-map" ? `功能清单用 write_file(path="${capabilitiesPath(item.id)}", space="${item.spaceId}", item="${item.id}", content=...) 写成工作文件；stage_report 的 evidence 填返回的 src: 引用。不要写 Wiki 页。` : "",
-    planner ? `结束前用 propose_directions(item="${item.id}", directions=[...], note?) 交提案，允许空数组。这一段不能读取台账，不用 stage_report 完成，等本人选定以后宿主会推进。` : `结束前必须用 stage_report(item="${item.id}", stage="${d.id}") 交代：done 附依据；blocked 写等谁或等什么；skip 写原因。不要以运行结束代替交结果；不要替本人确认。`,
+    planner ? `结束前用 propose_directions(item="${item.id}", directions=[...], note?) 交提案，允许空数组。这一段不能读取台账，不用 stage_report 完成，等本人选定以后宿主会推进。` : typeof d.by === "object" && "object" in d.by && d.by.object === "code-work" ? `发起或并进交办后就结束，不用 stage_report；发不出交办时用 stage_report(item="${item.id}", stage="${d.id}") 报 blocked 写清等谁或等什么，不要替本人确认。` : `结束前必须用 stage_report(item="${item.id}", stage="${d.id}") 交代：done 附依据；blocked 写等谁或等什么；skip 写原因。不要以运行结束代替交结果；不要替本人确认。`,
     planner ? envMaterials(app, item.id) : "",
   ].filter(Boolean).join("\n\n");
 }
@@ -429,7 +429,10 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
         catch (e) { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `无法开始：${(e as Error).message}`); }
       }
       s = getStage(app, itemId, d.id);
-      if (s.state !== "doing") continue;
+      // A stage carried by an object keeps following it while its run said it waits for that object
+      // (a delegation still coding): only the owner's own turn stops it.
+      const following = s.state === "blocked" && typeof d.by === "object" && "object" in d.by && s.waitingOn !== "owner" && !s.control.budgetExceeded && !!findObject(app, item, d.by.object);
+      if (s.state !== "doing" && !following) continue;
       if (isFixes(d)) {
         try { changed = await tickFixes(app, item, f, d, s, at, stageAI) || changed; }
         catch (e) { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner" }, host, `无法改：${(e as Error).message}`); }

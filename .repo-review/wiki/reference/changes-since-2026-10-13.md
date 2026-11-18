@@ -20,6 +20,7 @@ updated: 2026-11-18
 - 新页面 `web/src/views/ItemFlowPage.vue`（路由 `/items/:id/flow`）：等你的段（按钮、一句话、在对话里讨论）、背景、各段结果全文与插图、接下来、来源、流程记录。看板、今日页、飞书进度卡（`src/flows/store.ts` 的 `link`）指向它；`ItemFlow.vue` 加“打开流程页”。
 - `flowView` 的阶段加 `result`（执行者最后写的全文，`stageResult`）。`flow-stage` 提问只回文字不点按钮：开始 / 判断关卡按文字开始，“做完了吗”按文字重做。
 - `web/src/views/Ask.vue` 认 `?draft=&space=` 预填输入框。
+- 跟着对象的段在 blocked 且等的不是本人时仍跟随对象（`advance` 里的 `following`）；编码交办段的任务说明改为发起或并进交办后直接结束。
 
 ## 别的事项的修改并进同一分支的交办（11-18）
 

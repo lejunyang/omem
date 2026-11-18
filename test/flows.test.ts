@@ -362,6 +362,21 @@ describe("对象与工具", () => {
     expect(s("a").state).toBe("done");
     setRunOutput(app, r.id, { discardedAt: "2026-11-15" }); expect(findObject(app, item, "code-work")).toBeNull();
   });
+  it("跟着交办的段被自己的运行报成等交办，交办评审通过后照样完成；等本人的不跟", async () => {
+    const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
+    const r = createRun(app, { kind: "code", spaceId: "personal", title: "同一分支上别的事项的交办", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
+    addMaterials(app, item.id, [{ kind: "run", ref: r.id }], "owner");
+    run(app.db, "update item_stages set state='blocked', waiting_on='同分支的交办编码与评审' where item_id=? and stage_id='a'", item.id);
+    setRunOutput(app, r.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", r.id);
+    await advance(app, item.id);
+    expect(s("a").state).toBe("done"); expect(s("b").state).toBe("doing");
+    const other = await setup([stage("a", { by: { object: "code-work" } })]);
+    const r2 = createRun(other.app, { kind: "code", spaceId: "personal", title: "交办", input: { itemId: other.item.id, repos: ["personal"] }, userId: "owner" });
+    addMaterials(other.app, other.item.id, [{ kind: "run", ref: r2.id }], "owner");
+    run(other.app.db, "update item_stages set state='blocked', waiting_on='owner' where item_id=? and stage_id='a'", other.item.id);
+    await advance(other.app, other.item.id);
+    expect(other.s("a").state).toBe("blocked");
+  });
   it("方案对象只接受本人的本版确认；助手确认不算", async () => {
     const app = appFor(); const item = upsertItem(app, undefined, { title: "方案事项", spaceId: "personal" }, "user");
     const d = createDesign(app, { title: "退款方案", spaceId: "personal", itemId: item.id, origin: "own", userId: "owner" });
