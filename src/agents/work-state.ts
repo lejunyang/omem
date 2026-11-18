@@ -34,7 +34,11 @@ function personEmail(app: App, p: { id?: string | null; name: string; email?: st
   if (p.email) return { email: p.email, namesakes: emails.length > 1 };
   const own = p.id ? one<{ email: string | null }>(app.db, "select email from lark_people where (cli_open_id = ? or bot_open_id = ? or user_id = ?) and email is not null", p.id, p.id, p.id)?.email : null;
   if (own) return { email: own, namesakes: emails.length > 1 };
-  return emails.length === 1 ? { email: emails[0], namesakes: false } : { email: null, namesakes: emails.length > 1 };
+  if (emails.length === 1) return { email: emails[0], namesakes: false };
+  // Namesakes, and this id has no email: the one of them who ever wrote anything is who it is (the
+  // others are names seen in a member list), when that is exactly one.
+  const spoke = all<{ email: string }>(app.db, "select distinct p.email from lark_people p where p.name = ? and p.email is not null and p.cli_open_id is not null and exists (select 1 from lark_messages m where m.sender_id = p.cli_open_id)", p.name.trim()).map((r) => r.email);
+  return spoke.length === 1 ? { email: spoke[0], namesakes: true } : { email: null, namesakes: emails.length > 1 };
 }
 
 /**

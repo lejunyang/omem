@@ -199,4 +199,15 @@ describe("work state: facts, the nightly write-up, and where it is read", async 
     expect(readPage(app, "personal", "people/小王").slug).toBe("people/小王-wang");
     expect(mergePersonCards(app)).toEqual([]);
   });
+
+  it("tells namesakes apart by who ever wrote: a card under an id without email goes to the one who did", () => {
+    // Two 小钱 in the address book; only one ever wrote. The bot saw a 小钱 without an email.
+    rememberPerson(app, { cliOpenId: "ou_qian_talks", name: "小钱", email: "qian.a@example.com" });
+    rememberPerson(app, { cliOpenId: "ou_qian_quiet", name: "小钱", email: "qian.b@example.com" });
+    rememberPerson(app, { botOpenId: "ou_bot_qian9", name: "小钱" });
+    store("oc_wang", "小王", [{ ...msg("oc_wang", "wang", "周四对一下账", 60), sender: { id: "ou_qian_talks", name: "小钱", sender_type: "user" } }]);
+    expect(personSlug(app, { id: "ou_bot_qian9", name: "小钱" })).toBe("people/小钱-qian.a");
+    writePage(app, "personal", "people/小钱-_qian9", { meta: { title: "小钱", kind: "person" }, body: "## 负责什么\n\n对账。" }, { actor: "agent" });
+    expect(mergePersonCards(app)).toEqual([{ to: "people/小钱-qian.a", from: ["people/小钱-_qian9"] }]);
+  });
 });
