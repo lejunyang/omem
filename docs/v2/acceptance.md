@@ -1360,6 +1360,12 @@ TraeX 与其他 ACP 的清理补验：
 - 清空网页地址再问一次：回答里代码、记忆这类引用直接省略，文档和飞书消息的链接照常。
 - 回归：`test/shares.test.ts`（句中与句末、代码块不动、Wiki 小节、访客运行不复制个人空间、卡片多段共用一个分享、补读位置、来自飞书的消息、撤销与过期、免令牌接口只返回快照）、`test/lark.test.ts`、`test/item-evidence.test.ts`。
 
+## 流程里的一段交办到业务空间下的仓库（2026-11-18）
+
+- 缺陷事项在业务空间里走流程，到“修复”这一段时，运行用 `delegate_code` 交办到这个业务空间下的前端仓库：交办建好（返回运行号），不再报“空间 … 这次只能读”。
+- 同一个运行交办到不在这个业务空间下的仓库：仍拒绝；往仓库空间写记忆、页面：仍拒绝。
+- 回归：`test/delegate-scope.test.ts`（改之前同一用例报“只能读”）。
+
 ## 浏览器长期资料和网页操作沉淀（2026-11-18）
 
 - `node skills/library/desktop-control/scripts/browser.mjs open t1 --url <本地页面> --header 127.0.0.1=x-test:1`：打印 `{profile, port, reused:false}`，资料在 `<OMEM_HOME>/remote/profiles/t1`；再执行一次打印 `reused:true` 并多一个标签页；`list` 列出它和端口，`close t1` 后 `list` 里端口为空。

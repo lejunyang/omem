@@ -203,6 +203,20 @@ function writeSpace(ctx: ToolContext, requested?: string | null) {
   inScope(ctx, id, "内容");
   return id;
 }
+/**
+ * A repository to delegate coding into: one this run may write, or a repository under a project
+ * space it may write (a stage of an item in the project hands coding to that project's repos).
+ */
+function codeSpace(ctx: ToolContext, requested: string) {
+  const id = space(ctx, requested);
+  const s = findSpace(ctx.app, id)!;
+  const w = ctx.writable ?? ctx.spaces;
+  if (s.kind === "repo" && s.parentId && w && !w.includes(id) && w.includes(s.parentId) && canWrite(ctx.app, ctx.userId ?? OWNER, id)) {
+    inScope(ctx, s.parentId, "内容");
+    return id;
+  }
+  return writeSpace(ctx, requested);
+}
 /** A space to write Wiki pages in: writable, and its person may write the Wiki there (src/auth/permissions.ts wiki.write). */
 function wikiSpace(ctx: ToolContext, requested?: string | null) {
   const id = writeSpace(ctx, requested);
@@ -4369,7 +4383,7 @@ def({
     if (a.sync_only && !a.sync) throw new HttpError(400, "sync_only 需要同时给出 sync（拉取或合并 / 变基到哪个分支）");
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     // A business space stands for its repository when it has just one (codeRepos).
-    const ids = [...new Set((await import("./code.ts")).codeRepos(ctx.app, "", a.repo_spaces.map((r) => writeSpace(ctx, r))).map((r) => r.id))];
+    const ids = [...new Set((await import("./code.ts")).codeRepos(ctx.app, "", a.repo_spaces.map((r) => codeSpace(ctx, r))).map((r) => r.id))];
     // Without one, work on a branch belongs to the item its earlier delegations were done for.
     const itemId = a.item_id ? itemFor(ctx, a.item_id) : (await import("./review-fix.ts")).itemOnBranch(ctx.app, ids, a.from_branch ?? a.branch, ctx.userId ?? OWNER) ?? undefined;
     const { codeRepos, homeSpace } = await import("./code.ts");
