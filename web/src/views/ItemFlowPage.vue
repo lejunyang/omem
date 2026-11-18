@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, onServerResync, post } from "../api";
 import Icon from "../components/Icon.vue";
 import Markdown from "../components/Markdown.vue";
+import ItemStudy from "../components/ItemStudy.vue";
 import RunArtifacts from "../components/RunArtifacts.vue";
 import Skeleton from "../components/Skeleton.vue";
 import type { Material } from "../components/ItemMaterials.vue";
@@ -153,6 +154,9 @@ function openRef(r: string) {
         </template>
       </section>
 
+      <!-- A study's directions, trials and findings: where its directions are chosen ("在下面的……里选一个"). -->
+      <ItemStudy v-if="flow?.flow?.study" class="study" :item-id="item.id" :editable="editable" :choosing="!ended && stages.some((s) => s.asking === 'direction')" />
+
       <article class="article">
         <section v-if="item.detail" class="chapter">
           <h2>背景</h2>
@@ -230,6 +234,7 @@ function openRef(r: string) {
 .turn { border: 1px solid var(--warn); border-left-width: 3px; border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; background: var(--warn-soft); }
 .turn-head { display: flex; gap: 6px; align-items: center; }
 .turn p { margin: 0; }
+.study { margin: 6px 0 22px; }
 .article { display: grid; gap: 28px; }
 .chapter h2 { font-family: var(--serif); font-size: 19px; margin: 0 0 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .chapter h3 { font-size: 15px; margin: 14px 0 6px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
