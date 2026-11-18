@@ -22,14 +22,15 @@ export async function rulePermissions(app: App, rule: Pick<Rule, "trigger" | "ac
   await checkCli(app, out);
   const bots = new Map<string, { answer: boolean }>();
   for (const a of rule.actions) if (a.type === "meeting-bot") for (const b of a.bots) bots.set(b, { answer: (bots.get(b)?.answer ?? false) || a.answer });
-  for (const [ref, need] of bots) await checkBot(app, ref, need.answer, out);
+  const group = (rule.trigger.meetingFrom ?? "joined") !== "joined";
+  for (const [ref, need] of bots) await checkBot(app, ref, need.answer, out, group);
   if (bots.size) out.notes.push("想在会议里自己把机器人拉进来：机器人的应用要在“事件与回调”里订阅“机器人被邀请入会”（vc.bot.meeting_invited_v1，长连接接收）。你邀请的直接入会，别人邀请的先发卡片问你；会议设置同下。");
   if (bots.size) {
     out.notes.push("应用的会议权限还要配“权限可访问的数据范围”：开发者后台 → 权限管理 → 数据范围，选“按条件筛选”，条件“会议的归属者 包含 与应用的可用范围一致”；配完重新发布版本。omem 读不到这一项。");
     out.notes.push("会议本身要允许机器人进：多人视频会议、开着 AI 纪要、安全设置里打开“允许智能体加入”；有密码、等候室或只许特定人入会时机器人会被拦下。");
   }
   if ((rule.trigger.meetingFrom ?? "joined") !== "joined")
-    out.notes.push("看群里发起的会议：只对 omem 的机器人所在、并能收到群里全部消息（im:message.group_msg）的群有效，你的个人采集读不到会议号。按会议号查会议要应用有“获取会议信息”（vc:meeting:readonly）权限；没有时机器人入会后再认这场会议。你不在会上时，只有入会的机器人能读会中内容。");
+    out.notes.push("看群里发起的会议：只对 omem 的机器人所在的群有效（你的个人采集读到的会议消息没有会议号）。你不在会上时，只有入会的机器人能读会中内容。");
   return out;
 }
 
@@ -84,7 +85,12 @@ async function checkCli(app: App, out: PermissionReport) {
   else out.notes.push(`规则启用后 omem 开始接收你入会的事件（${subscribe}，${larkEventLink(state.appId, state.brand)}）；没订阅也能用，每分钟查一次你所在的会议代替。启用一两分钟后再检查一次可以确认。`);
 }
 
-async function checkBot(app: App, ref: string, answer: boolean, out: PermissionReport) {
+/** Finding a meeting's id from its number (`vc/v1/meetings/list_by_no`): either scope will do. */
+export const MEETING_ID_SCOPES = ["vc:meeting.meetingid:read", "vc:meeting:readonly"];
+/** Seeing a group's meeting message without being @-ed. */
+const GROUP_MSG_SCOPE = "im:message.group_msg";
+
+async function checkBot(app: App, ref: string, answer: boolean, out: PermissionReport, group = false) {
   const { larkAppSecret, larkAppScopes, larkScopeLink } = await import("../channels/lark-setup.ts");
   const cfg = app.config.lark;
   const extra = ref === "main" ? null : cfg.bots.find((b) => b.id === ref);
@@ -100,6 +106,13 @@ async function checkBot(app: App, ref: string, answer: boolean, out: PermissionR
   const missing = need.filter((s) => !have.has(s));
   if (missing.length) out.issues.push({ who: `${who}（${appId}）`, problem: "应用缺少会议权限（应用身份）", scopes: missing, link: larkScopeLink(appId, missing), linkText: "去开发者后台申请" });
   else out.ok.push(`${who}：会议权限已开通`);
+  if (!group) return;
+  // Meetings started in a group: the bot sees the group's meeting message, and finds the meeting by its number.
+  if (!have.has(GROUP_MSG_SCOPE))
+    out.issues.push({ who: `${who}（${appId}）`, problem: "看群里发起的会议：应用收不到没 @ 它的群消息（获取群组中所有消息），看不到群里的会议消息", scopes: [GROUP_MSG_SCOPE], link: larkScopeLink(appId, [GROUP_MSG_SCOPE]), linkText: "去开发者后台申请" });
+  if (!MEETING_ID_SCOPES.some((s) => have.has(s)))
+    out.issues.push({ who: `${who}（${appId}）`, problem: "看群里发起的会议：应用不能按会议号查会议（获取会议基本信息，两项开通一项即可）。没有它时只能等机器人入会后再认这场会议，入会不成功就读不到", scopes: [MEETING_ID_SCOPES[0]], link: larkScopeLink(appId, [MEETING_ID_SCOPES[0]]), linkText: "去开发者后台申请" });
+  else out.ok.push(`${who}：能按会议号查会议`);
 }
 
 /**

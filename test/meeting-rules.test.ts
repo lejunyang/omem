@@ -706,4 +706,35 @@ describe("permissions for meeting rules", () => {
     // Rules that are not about meetings need nothing checked.
     expect((await rulePermissions(app, { trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, actions: [], enabled: true })).issues).toEqual([]);
   });
+
+  it("a rule about group meetings also needs the bot to see all group messages and find a meeting by its number", async () => {
+    const { app } = setup();
+    setLarkCliForTests(async () => ({ ok: true, data: {} }));
+    const env = app.config.lark.appSecretEnv;
+    process.env[env] = "secret";
+    let scopes = ["vc:meeting.bot.join:write", "vc:meeting.meetingevent:read"];
+    vi.stubGlobal("fetch", async (url: string) => ({
+      json: async () => (String(url).includes("tenant_access_token") ? { code: 0, tenant_access_token: "t" } : { code: 0, data: { app: { scopes: scopes.map((scope) => ({ scope })) } } }),
+    }));
+    try {
+      const { rulePermissions } = await import("../src/rules/permissions.ts");
+      const mine = { trigger: { event: "meeting" as const, once: "event" as const, waitMinutes: 0, unless: [] }, actions: [{ type: "meeting-bot" as const, bots: ["main"], confirm: true, record: true, spec: "", task: "", answer: false, answerFrom: "all" as const, answerMode: "draft" as const, answerMax: 5, answerSpoken: false, answerBy: "assistant" as const, answerNames: [], proactive: false, proactiveMax: 5, meetingKind: "auto" as const, importShared: true, leaveWithOwner: true }], enabled: true };
+      // Only the owner's own meetings: nothing more is asked of the bot.
+      const own = await rulePermissions(app, mine);
+      expect(own.issues.filter((i) => i.who.includes("cli_main"))).toEqual([]);
+      const groups = { ...mine, trigger: { ...mine.trigger, meetingFrom: "both" as const } };
+      const p = await rulePermissions(app, groups);
+      const bot = p.issues.filter((i) => i.who.includes("cli_main"));
+      expect(bot.map((i) => i.scopes)).toEqual([["im:message.group_msg"], ["vc:meeting.meetingid:read"]]);
+      expect(bot[1].link).toContain("vc:meeting.meetingid:read");
+      // Either scope finds the meeting.
+      scopes = [...scopes, "im:message.group_msg", "vc:meeting:readonly"];
+      const ok = await rulePermissions(app, groups);
+      expect(ok.issues.filter((i) => i.who.includes("cli_main"))).toEqual([]);
+      expect(ok.ok).toContain("主机器人：能按会议号查会议");
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env[env];
+    }
+  });
 });
