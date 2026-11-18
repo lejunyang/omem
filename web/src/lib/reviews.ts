@@ -4,7 +4,15 @@ import { splitPatch } from "./patch";
 
 /** The reviews of a coding delegation or branch review (GET /api/runs/:id/reviews), shared by the run page's tabs. */
 export type Severity = "blocker" | "major" | "minor" | "nit";
-export type Finding = { id: number; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string; decision: Decision | null; decision_note: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null; task_seq?: number | null };
+export type Finding = { id: number; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string; decision: Decision | null; decision_note: string; owner_suggestion?: string | null; fixed_by?: string | null; revised?: string | null; task_seq?: number | null;
+  /** What a later re-review found of it (src/agents/rereview.ts), and the comment it was posted as on the review platform (JSON). */
+  resolution?: Resolution | null; resolution_note?: string | null; resolved_run?: string | null; checked_run?: string | null; external?: string | null };
+export type Resolution = "fixed" | "still" | "moot" | "unchecked";
+export const RESOLUTION: Record<Resolution, { text: string; cls: string }> = { fixed: { text: "复审：已修", cls: "ok" }, still: { text: "复审：仍在", cls: "warn" }, moot: { text: "复审：不再适用", cls: "" }, unchecked: { text: "复审：没复核", cls: "" } };
+export type External = { url: string; ref?: string; object?: string; state: "open" | "resolved" | "replied" | "outdated"; syncedAt: string };
+export const EXTERNAL_STATE: Record<External["state"], string> = { open: "评论开着", resolved: "评论已解决", replied: "作者回复了", outdated: "评论已过期" };
+/** The comment a finding was posted as (stored as JSON on the finding, or already parsed by /prior). */
+export const externalOf = (f: { external?: string | External | null }): External | null => (!f.external ? null : typeof f.external === "string" ? (JSON.parse(f.external) as External) : f.external);
 /** The suggestion the next round acts on: the owner's rewrite when there is one. */
 export const suggestionOf = (f: Pick<Finding, "suggestion" | "owner_suggestion">) => f.owner_suggestion?.trim() || f.suggestion;
 /** The owner's call on a finding (src/agents/review-fix.ts). */

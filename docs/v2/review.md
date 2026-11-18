@@ -389,6 +389,18 @@ create table item_materials (
 本人在空间设置的检查命令旁添加、编辑、启用、关闭或删除约定，并能打开来源交办。约定和 `attention_rules` 一样随设备拉取携带、按更新时间合并（约定自身用 `updated_at`）。每仓库最多保留 300 条，证据每条最多保留最近 100 次交办；材料上限 `review.lessons.max` 可设为 1–100。为重启和外部编码交回保留每轮检查起点，避免编码已经提交后把新增行漏掉。
 
 
+## 复审已有分支（2026-11-19）
+
+分支评审原来只有一轮：同事改了代码、回复了意见，只能再发一次全新的评审，旧问题对不上、重复的问题又提一遍。现在是“复审”（`src/agents/rereview.ts`）：
+
+- **发起**：`rereview_branch(run_id, note?, inputs?)`、网页概览的“复审”、`POST /api/runs/:id/rereview`。新建一个分支评审，`input` 带 `rereviewOf`（上一次）、`rereviewNote`、`rereviewInputs` 和 `previousTips`（上一次 `output.worktrees[].tip`），沿用仓库、分支、事项、方案和评审项，档位按现在的改动重选。经 `--peer` 调用时评审仍由调用方做。
+- **材料**：`reviewContext` 在“要评审的分支”后面加“这是复审”一节：每个仓库从旧 tip 到新 tip 的提交、统计和增量 diff（旧 tip 不是新 tip 的祖先时写“历史被改写”，按全量看）；本人的补充；外面来的回复（材料不是指令）；上次没结的旧问题（`openPrior`：之前各次评审里没被驳回或合并、本人没定为不改、没被判已修或不再适用的）。
+- **结论**：`submit_review.prior: [{ id, status, note }]`，先校验编号都在旧问题里再落库。`review_findings` 加 `resolution`（fixed / still / moot / unchecked）、`resolution_note`、`checked_run`、`resolved_run`、`external`。仍在的还是原来那一行，不新建；同一次复审里有评审项说仍在，后面说已修的不覆盖。结束时（`settleRereview`）没人给结论的标 unchecked；输出 `rereview: { of, fixed, still, moot, unchecked, added, stillBlocking, resolvable }`，仍在的严重以上问题（本人没定为暂不改）让这次不通过；卡片、通知和事项时间线的第一行是“上次留下 N 条：已修 a、仍在 b……；新问题 c 条；可以 resolve 的评论 d 条”。
+- **评论**：`external` 是 `{ url, ref?, object?, state, syncedAt }`，由发评论的一步用 `link_finding_external` 登记和更新（`PUT /api/runs/:id/findings/:fid/external`）。宿主不碰评审平台：怎么发、怎么 resolve 写在数据目录的技能或插件里。
+- **网页**：复审的概览多“上次留下的问题”（`GET /api/runs/:id/prior`），原评审的问题上显示复审结论（点开那次复审）和评论状态；已修、不再适用的算“已处理”，只在“全部”里。
+
+验证：`test/branch-review.test.ts` 的 “re-reviews a branch that moved”（假 ACP：首评 → 分支加提交 → 登记评论 → 复审，增量和旧问题进了材料，已修 / 仍在 / 没复核落库，仍在的不新建行，可 resolve 的评论列出，第三次对改写过的历史按全量看，非分支评审不能复审）。
+
 ## 2026-11-14：评审换模型、提前精简、停止反复修补、先找已有实现
 
 这次调整来自约 120 次实际交办的统计：精简评审的问题有 93% 被采纳，但参与次数少；规范提的问题最多，也最常被驳回；功能、架构和精简多数和编码用同一家模型；不少交办超过七轮，后面仍在提严重问题，修补又带来修补。这里的统计解释调整原因，不作为某个仓库或项目的特判。

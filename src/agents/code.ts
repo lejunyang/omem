@@ -131,6 +131,11 @@ export type CodeInput = {
   designId?: string;
   /** A task-driven later round: what the owner or the assistant said for it since the last one (code-steer.ts notesText). */
   roundNotes?: string;
+  /** A branch review of branches reviewed before (rereview.ts): the previous review, the owner's note, outside replies, the tips it saw. */
+  rereviewOf?: string;
+  rereviewNote?: string;
+  rereviewInputs?: string;
+  previousTips?: Record<string, string>;
 };
 export type PeerReviewer = { caller: string; session: string; agent?: string; model?: string };
 
@@ -149,7 +154,7 @@ export type BranchReviewRequest = {
   fetch?: boolean;
   /** Spaces the reviewers may read besides the repositories (already checked against the caller's access). */
   readSpaces?: string[];
-} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "itemId" | "peerReviewer" | "designId">;
+} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "itemId" | "peerReviewer" | "designId" | "rereviewOf" | "rereviewNote" | "rereviewInputs" | "previousTips">;
 
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
 export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null, userId = OWNER) {
@@ -173,6 +178,10 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
       itemId: req.itemId,
       peerReviewer: req.peerReviewer,
       designId: req.designId,
+      rereviewOf: req.rereviewOf,
+      rereviewNote: req.rereviewNote,
+      rereviewInputs: req.rereviewInputs,
+      previousTips: req.previousTips,
     } satisfies CodeInput,
     parentId: parentId ?? undefined,
     userId,

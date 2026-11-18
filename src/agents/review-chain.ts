@@ -139,6 +139,8 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const shotPath = new Map(shots.map((a) => [a.id, art.artifactPath(app, a)]));
   // The design the work goes by (designs/work.ts): findings name the decision they are about.
   const designText = designReviewText(app, root);
+  // A re-review of a branch (rereview.ts): what changed since, what the earlier reviews left open.
+  const rereview = branchReview ? (await import("./rereview.ts")).rereviewText(app, run.id, worktrees.map((w) => ({ space: w.space, path: workDirOf(w), tip: w.tip }))) : "";
   const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
     input.itemId ? materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
@@ -146,6 +148,7 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
     note ? `## 本人确认评审计划时补充\n\n${note}` : "",
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${opts.dirs?.[w.space] ?? w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
+    rereview,
     `## 检查结果\n\n${checkText}`,
     checked ? preCheckText(checked, "review") : "",
     designText,
@@ -450,7 +453,11 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     saveCodeChain(app, chain, chain.askRunId, ...chain.rounds);
   }
   const rounds = (chain?.rounds ?? [run.id]).map((id) => getRun(app, id)).filter((r) => roundOf(r) <= round).map((r) => ({ runId: r.id, round: roundOf(r) }));
-  const approved = lead.verdict === "approve";
+  // A re-review (rereview.ts): the earlier findings nobody looked at are marked so; one that is still there
+  // and would block keeps the branch from passing, whatever this review's own findings are.
+  const rere = branchReview ? (await import("./rereview.ts")).settleRereview(app, run.id) : null;
+  if (rere) setRunOutput(app, run.id, { rereview: rere });
+  const approved = lead.verdict === "approve" && !rere?.stillBlocking;
   let stop: StopReason | null = null;
   if (!approved) stop = plan.lead ? stopReason(app, rounds, maxCodeRounds(app, chain), lead.verdict) : round >= maxCodeRounds(app, chain) ? "auto-limit" : null;
   lead = { ...lead, round, ...(stop ? { stop } : {}) };
@@ -473,8 +480,9 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   const results2 = results.filter((r) => r.check);
   const statLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop()?.trim() ?? "")).join("；");
   const checksLine = results2.length ? `，检查${results2.some((r) => r.check!.code !== 0) ? "没通过" : "通过"}` : "";
-  const digest = reviewDigest(app, getRun(app, run.id), round, lead, `${statLine}${checksLine}`);
-  const title = branchReview ? `分支评审${approved ? "通过" : "要求修改"}：${run.title}` : `${approved ? "交办完成，评审通过" : stop ? `交办第 ${round} 轮评审停下来等你决定：${STOP_LABEL[stop]}` : "交办评审要求修改"}：${run.title}`;
+  const rereLine = rere ? (await import("./rereview.ts")).rereviewLine(rere) : "";
+  const digest = `${rereLine ? `${rereLine}\n\n` : ""}${reviewDigest(app, getRun(app, run.id), round, lead, `${statLine}${checksLine}`)}`;
+  const title = branchReview ? `分支${rere ? "复审" : "评审"}${approved ? "通过" : "要求修改"}：${run.title.replace(/^复审：/, "")}` : `${approved ? "交办完成，评审通过" : stop ? `交办第 ${round} 轮评审停下来等你决定：${STOP_LABEL[stop]}` : "交办评审要求修改"}：${run.title}`;
   // The owner's next step goes out as a card with buttons, in the conversation that asked for the work.
   const ask = stop && plan.lead && chain && !branchReview ? escalate(app, run, chain, { ...lead, stop }, digest) : askDone(app, run, chain, { title, digest, approved, branchReview });
   if (ask) setRunOutput(app, run.id, { reviewAskId: ask.id });
@@ -492,7 +500,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   // The item's timeline records the outcome (an item deleted since then has none).
   if (input.itemId && one(app.db, "select 1 from items where id = ?", input.itemId)) {
     const { addItemEvent } = await import("../items/store.ts");
-    addItemEvent(app, input.itemId, "note", `${branchReview ? "分支评审" : `交办第 ${round} 轮评审`}${approved ? "通过" : "要求修改"}（${run.id}）${lead.summary ? `：${truncate(lead.summary, 400)}` : ""}`);
+    addItemEvent(app, input.itemId, "note", `${branchReview ? (rere ? "分支复审" : "分支评审") : `交办第 ${round} 轮评审`}${approved ? "通过" : "要求修改"}（${run.id}）${rereLine ? `；${rereLine}` : ""}${lead.summary ? `：${truncate(lead.summary, 400)}` : ""}`);
   }
   return { verdict: approved ? "approved" : "changes-requested" };
 }

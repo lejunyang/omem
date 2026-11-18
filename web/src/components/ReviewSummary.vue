@@ -11,7 +11,7 @@ import { refAction } from "../lib/refs";
 import { findingMarkdown } from "../lib/findingText";
 import { clearFixDraft, clearQuotes, draftReview, fixDraft, quotesOf, quotesText } from "../lib/quotes";
 import NextRoundReview from "./NextRoundReview.vue";
-import { decisionOf, findingWhere, fixLabel, pointCount, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type Finding, type FixInfo, type LatestState, type Review, type Reviews } from "../lib/reviews";
+import { decisionOf, EXTERNAL_STATE, externalOf, findingWhere, fixLabel, pointCount, RESOLUTION, reviewAi, settled, severityCounts, SEV, suggestionOf, type Decision, type External, type Finding, type FixInfo, type LatestState, type Resolution, type Review, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “概览” for a coding delegation or branch review: the verdict and review-lead's
@@ -50,7 +50,41 @@ const lastAt = computed(() => rv.reviews.value.reduce((t, r) => (r.created_at > 
 // nobody asked to fix.
 /** Merged into a task the work already had (review-lead's rule_review `task`), not into another finding. */
 const intoTask = (f: Finding) => f.state === "merged" && !f.merged_into && !!f.task_seq;
-const quiet = (f: Finding) => settled(f) || !!fixOf(f) || (f.severity === "nit" && decisionOf(f) !== "fix");
+const quiet = (f: Finding) => settled(f) || !!fixOf(f) || f.resolution === "fixed" || f.resolution === "moot" || (f.severity === "nit" && decisionOf(f) !== "fix");
+
+// ---- re-reviewing a branch (src/agents/rereview.ts) ----
+// A re-review lists what it found of the earlier reviews' findings; any finished branch review can be
+// re-reviewed once the branch moved or the author answered.
+type Prior = { id: number; title: string; file_path: string | null; line: number | null; severity: Finding["severity"]; check_name: string; code_run_id: string; resolution: Resolution; resolution_note: string | null; external: External | null };
+const prior = ref<{ of: string | null; findings: Prior[] }>({ of: null, findings: [] });
+watch(() => [props.runId, props.branchReview] as const, async ([id, branch]) => {
+  prior.value = { of: null, findings: [] };
+  if (branch) prior.value = await get<{ of: string | null; findings: Prior[] }>(`/api/runs/${id}/prior`).catch(() => ({ of: null, findings: [] }));
+}, { immediate: true });
+const priorWhere = (f: Prior) => (f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""}` : "");
+const canRereview = computed(() => !!props.branchReview && !!current.value && ["approved", "changes-requested"].includes(current.value.verdict ?? ""));
+const rereviewing = ref(false);
+async function rereview() {
+  const v = await promptDialog("复审这个分支", {
+    message: "分支有了新提交、作者回复了，或你有补充时复审：沿用这次的仓库、分支和事项，评审项看上次以后的改动，并逐条判断这次的问题是已修、仍在还是不再适用。两栏都可以空着。",
+    fields: [
+      { id: "note", label: "你的补充（要特别看什么、哪些和作者谈妥了）", value: "", maxLength: 8000 },
+      { id: "inputs", label: "作者的回复（贴上评审平台上的回复，注明是哪一条）", value: "", maxLength: 30000 },
+    ],
+    okText: "开始复审",
+  });
+  if (!v) return;
+  rereviewing.value = true;
+  try {
+    const r = await post<{ runId: string }>(`/api/runs/${props.runId}/rereview`, { note: v.note?.trim() || undefined, inputs: v.inputs?.trim() || undefined });
+    toast("复审排上了", "ok");
+    emit("open", r.runId);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    rereviewing.value = false;
+  }
+}
 
 // ---- later work on the branch (review-fix.ts fixed_by / newerWork) ----
 // A finding handed to a later fix shows how that fix stands instead of “open”; an older review also
@@ -275,6 +309,7 @@ async function answer(choice: number | null) {
         <strong v-if="headline" class="headline">{{ headline }}</strong>
         <span v-if="current?.plan" class="muted small">「{{ current.plan.tierName }}」档 · 第 {{ current.round }} 轮 · {{ current.plan.checks.length }} 项评审<template v-if="current.lead?.by === 'lead' && lastAt"> · 负责人汇总于 {{ relTime(lastAt) }}</template></span>
         <span class="spacer" />
+        <button v-if="canRereview" class="btn ghost sm" :disabled="rereviewing" title="分支有了新提交、作者回复了评审意见，或你有补充时" @click="rereview">复审</button>
         <button v-if="rv.reviews.value.length" class="lnk small" @click="emit('go', 'review')">每项的完整过程 →</button>
       </div>
       <p v-if="current?.lead?.summary" class="lead-summary">{{ current.lead.summary }}</p>
@@ -307,6 +342,24 @@ async function answer(choice: number | null) {
       <div v-if="rawOpen && reviewText" class="sub"><Markdown :source="reviewText" /></div>
     </div>
 
+    <div v-if="prior.findings.length" class="card pad findings prior">
+      <div class="row wrap"><div class="section-title flat">上次留下的问题</div><span class="muted small">这次复审逐条看了 {{ prior.findings.length }} 条<template v-if="prior.of"> · <a href="#" @click.prevent="emit('open', prior.of)">上一次评审</a></template></span></div>
+      <div v-for="f in prior.findings" :key="f.id" class="finding" :class="{ dim: f.resolution === 'fixed' || f.resolution === 'moot' }">
+        <div class="row line1">
+          <span class="badge" :class="RESOLUTION[f.resolution]?.cls">{{ RESOLUTION[f.resolution]?.text.replace("复审：", "") ?? f.resolution }}</span>
+          <span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span>
+          <span class="title static">{{ f.title }}</span>
+          <span class="spacer" />
+          <a v-if="f.external" :href="f.external.url" target="_blank" rel="noopener" class="badge" :class="{ ok: f.external.state === 'resolved' }" :title="f.external.url">{{ EXTERNAL_STATE[f.external.state] }}</a>
+          <span class="muted small nowrap">{{ rv.label(f.check_name) }} · #{{ f.id }}</span>
+        </div>
+        <div v-if="priorWhere(f) || f.resolution_note" class="line2 small">
+          <a v-if="priorWhere(f)" href="#" class="loc mono" title="打开这段代码" @click.prevent="refAction(priorWhere(f), runId)?.()">{{ priorWhere(f) }}</a>
+          <span v-if="f.resolution_note" class="muted">{{ f.resolution_note }}</span>
+        </div>
+      </div>
+    </div>
+
     <div v-if="newer" class="row wrap newer small">
       <span>这个分支后来有更新的编码：</span>
       <a href="#" @click.prevent="openWork(newer.rootId)">{{ newer.title }}</a>
@@ -331,6 +384,8 @@ async function answer(choice: number | null) {
           <span v-if="f.task_seq" class="badge mono" :title="`修改项 T${f.task_seq}，在“修改项”里处理`">T{{ f.task_seq }}</span>
           <span v-if="f.owner_suggestion" class="badge accent" title="建议按你改写的执行">建议已改</span>
           <a v-if="fixOf(f)" href="#" class="badge ok" :title="`交给了「${fixOf(f)!.title}」`" @click.prevent="openWork(fixOf(f)!.rootId)">{{ fixLabel(fixOf(f)!) }}</a>
+          <a v-if="f.resolution && f.checked_run" href="#" class="badge" :class="RESOLUTION[f.resolution].cls" :title="f.resolution_note ?? '打开那次复审'" @click.prevent="emit('open', f.checked_run!)">{{ RESOLUTION[f.resolution].text }}</a>
+          <a v-if="externalOf(f)" :href="externalOf(f)!.url" target="_blank" rel="noopener" class="badge" :class="{ ok: externalOf(f)!.state === 'resolved' }" :title="externalOf(f)!.url">{{ EXTERNAL_STATE[externalOf(f)!.state] }}</a>
           <span class="spacer" />
           <span v-if="f.source" class="badge" :title="f.source.title">另一份评审</span>
           <span class="muted small nowrap">{{ f.fromRound ? `第 ${f.fromRound} 轮 · ` : "" }}{{ checkLabel(f) }} · #{{ f.id }}</span>

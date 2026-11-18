@@ -2030,6 +2030,31 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ownRun(req, id);
     return (await import("../agents/review-fix.ts")).sameBranchWork(app, id, who(req));
   });
+  // Re-review a branch review (agents/rereview.ts): the branch moved, the author answered, the owner has more to say.
+  server.post("/api/runs/:id/rereview", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({ note: z.string().max(8000).optional(), inputs: z.string().max(30000).optional() }), req.body ?? {});
+    const { startRereview } = await import("../agents/rereview.ts");
+    const r = await startRereview(app, id, { note: b.note, inputs: b.inputs }, who(req));
+    return { runId: r.id };
+  });
+  // What a re-review found of the earlier reviews' findings (agents/rereview.ts).
+  server.get("/api/runs/:id/prior", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const { earlierReviews, judgedIn } = await import("../agents/rereview.ts");
+    return { of: earlierReviews(app, id)[0] ?? null, findings: judgedIn(app, id) };
+  });
+  // The comment a finding was posted as on the platform the change is reviewed on, and its state.
+  server.put("/api/runs/:id/findings/:fid/external", async (req) => {
+    const { id, fid } = req.params as { id: string; fid: string };
+    ownRun(req, id);
+    const b = q(z.object({ url: z.string().url().max(1000), ref: z.string().max(200).optional(), object: z.string().max(200).optional(), state: z.enum(["open", "resolved", "replied", "outdated"]).default("open") }), req.body);
+    const { earlierReviews, setFindingExternal } = await import("../agents/rereview.ts");
+    const runs = new Set([id, ...earlierReviews(app, id)]);
+    return setFindingExternal(app, Number(fid), b, (codeRunId) => runs.has(codeRunId));
+  });
   server.post("/api/runs/:id/fix", async (req) => {
     const id = (req.params as { id: string }).id;
     ownRun(req, id);

@@ -446,6 +446,76 @@ describe("reviewing an existing branch", () => {
       await server.close();
     }
   }, 180000);
+
+  it("re-reviews a branch that moved: the change since, the open findings ruled one by one, the comments to resolve", async () => {
+    fake();
+    const server = await startServer(app, { port: 0, quiet: true });
+    const start = git("rev-parse", "--abbrev-ref", "HEAD").trim();
+    git("branch", "-q", "-f", "feature/rr", "feature/refund");
+    try {
+      const { upsertItem, itemEvents } = await import("../src/items/store.ts");
+      const { reviewsOf } = await import("../src/agents/review.ts");
+      const { openPrior, rereviewText } = await import("../src/agents/rereview.ts");
+      const item = upsertItem(app, undefined, { spaceId: "shop-api", title: "退款需求的评审", kind: "todo" }, "user");
+      const first = createBranchReview(app, { repos: ["shop-api"], branch: "feature/rr", task: "评审退款分支", fetch: false, itemId: item.id });
+      await exec(first);
+      run(app.db, "update runs set status = 'done' where id = ?", first.id);
+      const findings = reviewsOf(app, [first.id]).flatMap((r) => r.findings);
+      const shipped = findings.find((f) => f.title === "已发货行不能退")!;
+      // The assistant posted it on the platform the change is reviewed on and says which comment it is.
+      const ctx: ToolContext = { app, runId: null, spaceId: "shop-api", spaces: ["shop-api"], tools: null, actor: "agent" };
+      const linked = await callTool(ctx, "link_finding_external", { finding_id: shipped.id, url: "https://code.example.com/shop/merge_requests/7#note_11", ref: "note_11" });
+      expect(linked.isError).toBeFalsy();
+
+      // The author pushes a fix and answers.
+      git("checkout", "-q", "feature/rr");
+      commit({ "refund.ts": "export function refundAmount(lines: Line[]) {\n  return lines.filter((l) => !l.shipped).length;\n}\n" }, "过滤已发货的行");
+      git("checkout", "-q", start);
+      const queued = await callTool(ctx, "rereview_branch", { run_id: first.id, note: "命名的事和作者说好了下个需求改", inputs: "作者在 MR 上回复：已发货的行已经过滤", fetch: false });
+      expect(queued.isError).toBeFalsy();
+      const second = getRun(app, queued.text.match(/运行 (\S+)（/)![1]);
+      expect(second.input).toMatchObject({ rereviewOf: first.id, itemId: item.id, rereviewNote: expect.stringContaining("命名"), previousTips: { "shop-api": expect.any(String) } });
+      expect(openPrior(app, second.id).map((f) => f.title).sort()).toEqual(["已发货行不能退", "命名可以更具体", "可以补一条测试"].sort());
+      await exec(getRun(app, second.id));
+      run(app.db, "update runs set status = 'done' where id = ?", second.id);
+
+      // The checks read the change since the first review and the open findings.
+      const reviews = reviewsOf(app, [second.id]);
+      expect(reviews.find((r) => r.check_name === "review-business")!.summary).toContain("看了增量");
+      const state = (title: string) => reviewsOf(app, [first.id]).flatMap((r) => r.findings).find((f) => f.title === title)!;
+      expect(state("已发货行不能退")).toMatchObject({ resolution: "fixed", resolved_run: second.id, checked_run: second.id });
+      expect(state("命名可以更具体")).toMatchObject({ resolution: "still", resolution_note: "名字还是 refundAmount", resolved_run: null });
+      expect(state("可以补一条测试")).toMatchObject({ resolution: "unchecked", checked_run: second.id });
+      // Still there is the same row, not a new one; the new one is new.
+      expect(reviews.flatMap((r) => r.findings).map((f) => f.title)).toEqual(["复审时发现的新问题"]);
+      const out = getRun(app, second.id).output as { rereview: { fixed: number[]; still: number[]; unchecked: number[]; added: number; stillBlocking: number; resolvable: { id: number; ref?: string }[] } };
+      expect(out.rereview).toMatchObject({ fixed: [shipped.id], added: 1, resolvable: [{ id: shipped.id, ref: "note_11" }] });
+      // The naming one still there is a nit and the new one minor: the branch passes this time.
+      expect(out.rereview.stillBlocking).toBe(0);
+      expect(itemEvents(app, item.id).map((e) => e.text).join("\n")).toMatch(/分支复审通过.*上次留下 3 条：已修 1、仍在 1、没复核 1；新问题 1 条；评审平台上可以 resolve 的评论 1 条/);
+
+      // A third look: what is fixed is done with; a rewritten history is read in full.
+      git("branch", "-q", "-f", "feature/rr", "main");
+      git("checkout", "-q", "feature/rr");
+      commit({ "refund.ts": "export const rewritten = 1;\n" }, "重写");
+      git("checkout", "-q", start);
+      const third = createBranchReview(app, { repos: ["shop-api"], branch: "feature/rr", fetch: false, rereviewOf: second.id, previousTips: (getRun(app, second.id).output as { worktrees: { space: string; tip: string }[] }).worktrees.reduce((m, w) => ({ ...m, [w.space]: w.tip }), {}) });
+      expect(openPrior(app, third.id).map((f) => f.title).sort()).toEqual(["命名可以更具体", "可以补一条测试", "复审时发现的新问题"].sort());
+      const tip = git("rev-parse", "feature/rr").trim();
+      expect(rereviewText(app, third.id, [{ space: "shop-api", path: dir, tip }])).toContain("历史被改写");
+      cancelRun(app, third.id);
+      // Not a branch review: nothing to re-review.
+      const plain = createRun(app, { kind: "code", spaceId: "shop-api", title: "交办", input: { task: "x", repos: ["shop-api"] } });
+      expect((await callTool(ctx, "rereview_branch", { run_id: plain.id })).text).toMatch(/不是分支评审/);
+      cancelRun(app, plain.id);
+      discardCodeRun(app, first.id);
+      discardCodeRun(app, second.id);
+    } finally {
+      git("checkout", "-q", start);
+      git("branch", "-q", "-D", "feature/rr");
+      await server.close();
+    }
+  }, 180000);
 });
 
 describe("a branch review an outside Agent on another device does itself", () => {

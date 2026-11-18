@@ -600,7 +600,12 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
           // The business check also maps the requirement to the code; a review of an item says it read the materials.
           const changePoints = asks ? [{ id: "C1", title: "只退未发货的行", status: "partial", requirement: "退款只按未发货的行计算", locations: [{ file: "refund.ts", start: 1, end: 3 }] }] : undefined;
           const decision = prompt.includes("## 方案：") ? { decision: "D1" } : {};
-          await client.callTool({ name: "submit_review", arguments: { verdict: asks ? "changes_requested" : "approved", summary: `${check}评审${prompt.includes("## 所属事项") ? "（读了事项材料）" : ""}`, findings: asks ? [{ severity: "major", file: "refund.ts", line: 1, title: "已发货行不能退", suggestion: "过滤已发货行", ...decision }, { severity: "nit", title: "命名可以更具体" }] : [{ severity: "minor", title: "可以补一条测试" }], change_points: changePoints } });
+          // A re-review (agents/rereview.ts): the business check rules on the earlier findings it raised — the
+          // shipped-lines one fixed, the naming one still there — raises one new finding, and leaves the rest alone.
+          const rereview = prompt.includes("## 这是复审");
+          const prior = rereview && asks ? [...prompt.matchAll(/^- #(\d+) \[\w+\] (.+?) ——/gm)].filter((m) => m[2] !== "可以补一条测试").map((m) => ({ id: Number(m[1]), status: m[2] === "已发货行不能退" ? "fixed" : "still", note: m[2] === "已发货行不能退" ? "新提交里过滤了已发货的行" : "名字还是 refundAmount" })) : undefined;
+          const findings = rereview ? (asks ? [{ severity: "minor", file: "refund.ts", line: 2, title: "复审时发现的新问题" }] : []) : asks ? [{ severity: "major", file: "refund.ts", line: 1, title: "已发货行不能退", suggestion: "过滤已发货行", ...decision }, { severity: "nit", title: "命名可以更具体" }] : [{ severity: "minor", title: "可以补一条测试" }];
+          await client.callTool({ name: "submit_review", arguments: { verdict: asks ? "changes_requested" : "approved", summary: `${check}评审${prompt.includes("## 所属事项") ? "（读了事项材料）" : ""}${rereview && prompt.includes("增量 diff") ? "（看了增量）" : ""}`, findings, change_points: changePoints, ...(prior ? { prior } : {}) } });
           await say(`结论：${asks ? "需要修改" : "通过"}
 ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }

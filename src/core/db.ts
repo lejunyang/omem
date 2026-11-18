@@ -2089,6 +2089,13 @@ export const migrations: readonly string[] = [
    alter table lark_meetings add column chat_name text;
    alter table lark_meetings add column started_by text;
    alter table lark_meetings add column owner_in integer not null default 1;`,
+  // Re-reviewing a branch (agents/rereview.ts): what a later review found of a finding (fixed / still / moot /
+  // unchecked) and in which run, and the comment it was posted as on the platform the change is reviewed on.
+  `alter table review_findings add column resolution text;
+   alter table review_findings add column resolution_note text;
+   alter table review_findings add column checked_run text;
+   alter table review_findings add column resolved_run text;
+   alter table review_findings add column external text;`,
 ];
 
 export type Db = DatabaseSync;
