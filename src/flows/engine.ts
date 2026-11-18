@@ -178,6 +178,17 @@ function placesBrief(app: App, item: Item) {
   return `进行的地方（最近 ${shown.length} 处${all_.length > shown.length ? `，共 ${all_.length} 处，用 read_item 看全部` : ""}）：\n${shown.map((p) => `- ${p.title.slice(0, 80)}（${p.ref}）：${p.summary.slice(0, 200)}`).join("\n")}`;
 }
 
+const ownerTurn = (app: App, f: ItemFlow, d: FlowStage, s: StageRow) =>
+  question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
+/** The owner's turn, asked once its signal check found the stage not done yet. */
+function askOwnerNow(app: App, itemId: string, stageId: string, startedAt: string, attempt: number) {
+  const f = itemFlow(app, itemId);
+  if (!f || f.endedAt || f.startedAt !== startedAt) return;
+  const s = getStage(app, itemId, stageId);
+  if (s.state !== "doing" || s.attempt !== attempt || s.askId) return;
+  changeStage(app, itemId, stageId, "doing", { askId: ownerTurn(app, f, definition(f, stageId), s) }, host, s.note);
+}
+
 async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedback?: string) {
   const rows = itemStages(app, item.id);
   const planner = d.tools?.includes("propose_directions");
@@ -266,8 +277,13 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
   } else if (d.by === "owner") {
     carrier = "owner";
     waitingOn = "owner";
-    askId = question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
     control.question = "owner";
+    // A stage a push or merge completes may already be done (the owner pushed before the flow got
+    // here): look first, and only ask when the signal is not there yet.
+    if (typeof d.done === "object" && "signal" in d.done) {
+      const attempt = s.attempt + 1, startedAt = f.startedAt;
+      setImmediate(() => void checkGitSignals(app).catch(() => undefined).then(() => serial(app, item.id, async () => askOwnerNow(app, item.id, d.id, startedAt, attempt))));
+    } else askId = ownerTurn(app, f, d, s);
   }
   run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + (s.control.admitted ? 0 : 1), at, item.id);
   const missing = typeof d.by === "object" && "object" in d.by && d.by.object.includes(":") && !carrier;

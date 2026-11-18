@@ -20,6 +20,7 @@ updated: 2026-11-18
 - `src/flows/store.ts`：`changeStage` 只在助手或宿主让一段做完、跳过、卡住、待复核时记一行进度，流程走完时也记（`engine.ts` 的 `end`）；开始、关卡和本人自己的操作不发卡。卡片正文是这些行加一行“现在 · 在做 / 等你开始 / 卡住”，不再列全部阶段；去掉运行和提问编号，`waitText` 防止“等等本人”。
 - `src/items/materials.ts` 的 `materialsBrief`、`src/items/requirements.ts` 的 `reqBrief` 加 `compact`：流程阶段的任务里说明截到 1500 字、材料最近 12 份、需求点只列标题，进行的地方最近 5 处（`engine.ts` 的 `placesBrief`）。一件做了很多轮的事以前给部署这类阶段带了约 40KB 的历史。
 - `stage_report` 的说明要求 note、waiting_on 写给本人看，不带内部编号。
+- 本人承担、以 Git 信号完成的阶段（推送）轮到时先跑一次 `checkGitSignals`，没推才问本人（`engine.ts` 的 `askOwnerNow`）；以前代码早就推了也会先发一张“轮到你：推送”。
 - 流程的提问卡片改成同一个版式（`engine.ts` 的 `askText`）：“事项 · 段”、要定什么，再按需要列结果、这一段做什么、前面各段的结果、确认后接着哪几段、依据数目。以前是一句话塞进全部说明，完成确认不写是哪件事。
 
 ## 接管 Agent 自带的技能，按分组给总入口（11-18）

@@ -26,7 +26,7 @@ function git(path: string, args: string[]) {
   return r.stdout.trim();
 }
 const signals = (app: App) => all<{ outcome: string; keys: string }>(app.db, "select * from flow_signals order by id");
-async function setup(options: { count?: number; type?: GitSignal; by?: "owner" | "wait"; applied?: boolean } = {}) {
+async function setup(options: { count?: number; type?: GitSignal; by?: "owner" | "wait"; applied?: boolean; pushedBefore?: boolean } = {}) {
   const app = testApp(); apps.push(app);
   app.config.flows.autoAdvance = 20;
   const item = upsertItem(app, undefined, { title: "示例商城退款", spaceId: "personal" }, "user");
@@ -59,6 +59,7 @@ async function setup(options: { count?: number; type?: GitSignal; by?: "owner" |
     { id: "push", name: "推送", by: options.by ?? "owner", done: { signal: options.type ?? "git.pushed" } },
     { id: "deploy", name: "部署", by: "wait" },
   ] }), "owner");
+  if (options.pushedBefore) for (const r of repos) git(r.path, ["push", "-q", "origin", "feat/refund"]);
   await startFlow(app, item.id, "demo", owner);
   return { app, item, repos, work, s: (id = "push") => getStage(app, item.id, id), push: (i = 0) => git(repos[i].path, ["push", "-q", "origin", "feat/refund"]) };
 }
@@ -87,6 +88,20 @@ describe("Git 完成信号", () => {
     expect(t.s("deploy").state).toBe("doing");
     expect(stageLog(t.app, t.item.id).filter((l) => l.stageId === "push" && l.toState === "done")).toMatchObject([{ actor: "host", refs: [t.work.id], note: expect.stringContaining(`shop-0@feat/refund（${t.repos[0].head.slice(0, 7)}）`) }]);
     expect(JSON.parse(signals(t.app).at(-1)!.keys)).toEqual([{ space: "shop-0", branch: "feat/refund", commits: [t.repos[0].head] }]);
+  });
+  it("轮到本人推送时先查一次：已经推了就直接完成、不问本人；没推才问", async () => {
+    const settle = async (t: Awaited<ReturnType<typeof setup>>) => {
+      for (let i = 0; i < 60 && t.s().state !== "done" && !t.s().askId; i++) await new Promise((r) => setTimeout(r, 50));
+    };
+    let t0 = await setup({ pushedBefore: true });
+    expect(t0.s()).toMatchObject({ state: "doing", askId: null });
+    await settle(t0);
+    expect(t0.s().state).toBe("done");
+    expect(all(t0.app.db, "select id from asks where json_extract(context,'$.kind')='owner'")).toHaveLength(0);
+    t0 = await setup();
+    await settle(t0);
+    expect(t0.s().state).toBe("doing");
+    expect(t0.s().askId).toBeTruthy();
   });
   it("两个仓库只推一个继续等，全部推送才完成", async () => {
     const t = await setup({ count: 2 }); t.push();
