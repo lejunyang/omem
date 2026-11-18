@@ -56,7 +56,7 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
       <div v-if="parts.body" class="ask-body" :class="{ clipped: long && !expanded }">
         <Markdown class="ask-q" :source="parts.body" />
       </div>
-      <button v-if="long" type="button" class="link small more" @click="expanded = !expanded">{{ expanded ? "收起" : "展开全部" }}</button>
+      <button v-if="long" type="button" class="btn ghost sm more" @click="expanded = !expanded">{{ expanded ? "收起" : "展开全部" }}</button>
     </template>
     <UiView v-if="ask.ui?.view?.length" class="ask-view" :components="ask.ui.view" :ask-id="ask.id" :can-submit="!fields.length && ask.status === 'pending'" :draft="(ask as { draft?: unknown }).draft" @answered="emit('answered', ask)" />
     <form v-if="fields.length" class="ask-form" @submit.prevent="answer({ value: { ...values } })">
