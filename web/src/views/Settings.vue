@@ -188,7 +188,7 @@ const home = ref("");
 const schedules = ref<Schedule[]>([]);
 const next = ref<Record<string, string | null>>({});
 const labels = ref<Record<string, string>>({});
-const newSpace = ref({ name: "", kind: "project", rootPath: "", description: "" });
+const newSpace = ref({ name: "", kind: "project", rootPath: "", description: "", init: false });
 const creatingSpace = ref(false);
 const editing = ref<Space | null>(null);
 const guide = ref("");
@@ -458,11 +458,12 @@ async function saveConfig(partial: Record<string, unknown>, note = "已保存") 
 async function createSpace() {
   if (creatingSpace.value) return;
   creatingSpace.value = true;
-  const input = { ...newSpace.value, rootPath: newSpace.value.rootPath.trim() };
+  const init = newSpace.value.kind === "repo" && newSpace.value.init;
+  const input = { ...newSpace.value, rootPath: newSpace.value.rootPath.trim(), init: init || undefined };
   try {
     await post("/api/spaces", { ...input, rootPath: input.rootPath || undefined });
-    toast(input.rootPath ? "已创建，正在导入目录" : "已创建空间", "ok");
-    newSpace.value = { name: "", kind: "project", rootPath: "", description: "" };
+    toast(init ? "已新建仓库和空间，可以交办编码了" : input.rootPath ? "已创建，正在导入目录" : "已创建空间", "ok");
+    newSpace.value = { name: "", kind: "project", rootPath: "", description: "", init: false };
     await loadSpaces();
   } catch (e) {
     toast((e as Error).message, "error");
@@ -987,11 +988,13 @@ async function saveEdit() {
           <div class="field"><span>类型</span><UiSelect v-model="newSpace.kind" aria-label="空间类型" :disabled="creatingSpace" :options="[{ value: 'project', label: '项目' }, { value: 'repo', label: '代码仓库' }, { value: 'learning', label: '学习' }, { value: 'topic', label: '通用' }]" /></div>
         </div>
         <label class="field">
-          <span>{{ newSpace.kind === 'repo' ? '仓库目录或 Git 地址（可选）' : '关联目录（代码仓库或文档目录，可选）' }}</span>
-          <input v-model="newSpace.rootPath" class="input mono" :disabled="creatingSpace" :placeholder="newSpace.kind === 'repo' ? 'https://example.com/team/app.git 或 /home/me/code/app' : 'E:\\Projects\\app 或 /home/me/code/app'" />
-          <span v-if="newSpace.kind === 'repo'" class="hint">自动识别本地目录和 HTTP(S) / SSH Git 地址。Git 地址会克隆到 omem 数据目录的 repos/；私有仓库使用服务器已有的 Git/SSH 凭据，链接里不要填密码或令牌。</span>
-          <span class="hint">本地目录填运行 omem 的机器上已有的绝对路径。创建后导入文本文件（遵守 .gitignore），之后可同步更新。</span>
+          <span>{{ newSpace.kind === 'repo' && newSpace.init ? '新仓库放在哪（可选）' : newSpace.kind === 'repo' ? '仓库目录或 Git 地址（可选）' : '关联目录（代码仓库或文档目录，可选）' }}</span>
+          <input v-model="newSpace.rootPath" class="input mono" :disabled="creatingSpace" :placeholder="newSpace.kind === 'repo' && newSpace.init ? '不填：omem 数据目录的 repos/<空间 id>' : newSpace.kind === 'repo' ? 'https://example.com/team/app.git 或 /home/me/code/app' : 'E:\\Projects\\app 或 /home/me/code/app'" />
+          <span v-if="newSpace.kind === 'repo' && newSpace.init" class="hint">填运行 omem 的机器上不存在或空的绝对路径。omem 在那里 git init 并做一次空提交，之后就能交办编码。</span>
+          <span v-else-if="newSpace.kind === 'repo'" class="hint">自动识别本地目录和 HTTP(S) / SSH Git 地址。Git 地址会克隆到 omem 数据目录的 repos/；私有仓库使用服务器已有的 Git/SSH 凭据，链接里不要填密码或令牌。</span>
+          <span v-if="!(newSpace.kind === 'repo' && newSpace.init)" class="hint">本地目录填运行 omem 的机器上已有的绝对路径。创建后导入文本文件（遵守 .gitignore），之后可同步更新。</span>
         </label>
+        <UiCheckbox v-if="newSpace.kind === 'repo'" v-model="newSpace.init" :disabled="creatingSpace">新建一个空仓库（从零开始的项目）</UiCheckbox>
         <label class="field"><span>说明</span><input v-model="newSpace.description" class="input" :disabled="creatingSpace" placeholder="这个空间收什么、给谁读" /></label>
         <div class="row"><span v-if="creatingSpace" class="small muted" role="status">正在创建空间，Git 仓库克隆可能需要几分钟…</span><span class="spacer" /><button class="btn primary" :disabled="creatingSpace || !newSpace.name.trim()">{{ creatingSpace ? '正在创建…' : '创建' }}</button></div>
       </form>

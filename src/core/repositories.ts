@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { App } from "./app.ts";
 import { git, submodules } from "./git.ts";
@@ -103,6 +103,40 @@ export function repositoryRoot(path: string): string {
   const result = git(path, ["rev-parse", "--show-toplevel"]);
   if (!result.ok) throw new HttpError(400, "关联编码仓库需要一个 Git 工作目录");
   return realpathSync(result.stdout.trim());
+}
+
+/**
+ * A new, empty repository to code in: `value` is an absolute path (absent, or an empty directory) or a
+ * name, which goes under omem's repos/ directory. One empty commit on main, so worktrees and branches
+ * have a base to start from.
+ */
+export function initRepository(app: App, value: string): string {
+  const input = value.trim();
+  if (!input) throw new HttpError(400, "新建仓库要给一个名字或本地绝对路径");
+  let target: string;
+  if (isAbsolute(input)) target = resolve(input);
+  else {
+    const name = slugify(input);
+    if (/[\\/]/.test(input) || !name || name.startsWith(".")) throw new HttpError(400, "新建仓库的名字不能带路径；要放在别处就给绝对路径");
+    const parent = join(realpathSync(app.home), "repos");
+    mkdirSync(parent, { recursive: true });
+    if (realpathSync(parent) !== resolve(parent)) throw new HttpError(400, "repos 目录不能通过符号链接指向其他位置");
+    target = join(parent, name);
+  }
+  if (existsSync(target)) {
+    if (!statSync(target).isDirectory()) throw new HttpError(400, `${target} 已存在且不是目录`);
+    if (readdirSync(target).length) throw new HttpError(409, `${target} 已存在且不是空目录；已有的仓库直接关联，不用新建`);
+  } else mkdirSync(target, { recursive: true });
+  const step = (args: string[]) => {
+    const r = git(target, args);
+    if (!r.ok) throw new HttpError(500, `新建仓库失败（git ${args.find((a) => !a.startsWith("-") && !a.includes("=")) ?? ""}）：${r.stderr.trim().slice(0, 300)}`);
+    return r;
+  };
+  step(["init", "-q", "-b", "main"]);
+  // A machine without a Git identity still gets its first commit; later commits use whatever is configured.
+  const who = git(target, ["config", "user.name"]).stdout.trim() && git(target, ["config", "user.email"]).stdout.trim() ? [] : ["-c", "user.name=omem", "-c", "user.email=omem@localhost"];
+  step([...who, "commit", "-q", "--allow-empty", "-m", "init"]);
+  return realpathSync(target);
 }
 
 const pending = new Map<string, Promise<string>>();

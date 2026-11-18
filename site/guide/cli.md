@@ -20,6 +20,7 @@ omem setup ffmpeg --concurrency 4 --auto lossy   # 同时压 4 个；新下载�
 
 ```bash
 omem space add shop --path ~/code/shop          # 代码仓库空间
+omem space add demo --init                      # 新建空仓库（数据目录 repos/demo）并建空间
 omem space add 商城前端 --path ~/code/shop-web --parent shop   # 挂到业务空间下的仓库
 omem space parent shop-api shop                  # 已有的仓库归到业务空间下（不写业务空间就是移出）
 omem space relate shop-web shop-api -n "调用订单接口"

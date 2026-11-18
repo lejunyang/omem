@@ -46,7 +46,7 @@ import {
   saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes, reviewQueue, reviewSourceNote, reviewNodeLevel, reviewLevelAudit,
 } from "../sources/attention.ts";
 import { defaultBaseRef, fetchBranchAsync, git, isGitRepo, listBranches } from "../core/git.ts";
-import { cloneRepository } from "../core/repositories.ts";
+import { cloneRepository, initRepository } from "../core/repositories.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
@@ -355,13 +355,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return relatedSpaces(app, id);
   });
   server.post("/api/spaces", async (req) => {
-    const b = q(z.object({ id: z.string().optional(), name: z.string().trim().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional(), rootPath: z.string().trim().optional(), parent: z.string().optional() }), req.body);
+    const b = q(z.object({ id: z.string().optional(), name: z.string().trim().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional(), rootPath: z.string().trim().optional(), parent: z.string().optional(), init: z.boolean().optional() }), req.body);
     // A repository added under a business space (its settings' 添加仓库): managing that space is what it takes.
     if (b.parent && !can(app, who(req), "space.manage", b.parent)) throw new HttpError(403, `不能管理空间 ${b.parent}`);
     // Both local directories and remote clones grant filesystem access on this machine.
-    if (b.rootPath && !can(app, who(req), "code.delegate")) throw new HttpError(403, "关联仓库或本机目录要有交办编码的权限");
+    if ((b.rootPath || b.init) && !can(app, who(req), "code.delegate")) throw new HttpError(403, "关联仓库或本机目录要有交办编码的权限");
     if (b.kind === "personal" && who(req) !== OWNER) throw new HttpError(403, "个人空间由 omem 建");
-    if (b.kind === "repo" && b.rootPath && /^(?:[a-z][a-z\d+.-]*:\/\/|[^/\\\s]+@[^/\\\s]+:|ext::)/i.test(b.rootPath)) {
+    if (b.init) {
+      // A new empty repository: rootPath is where (absolute) or its name; by default the space's id under repos/.
+      if (b.kind && b.kind !== "repo") throw new HttpError(400, "新建仓库只用于代码仓库空间");
+      const id = slugify(b.id || b.name);
+      if (id.startsWith("_")) throw new HttpError(400, "空间 id 不能以下划线开头（知识库保留给 Agent 档案和技能）");
+      if (findSpace(app, id)) throw new HttpError(409, `空间已存在：${id}`);
+      b.rootPath = initRepository(app, b.rootPath || id);
+      b.kind = "repo";
+    } else if (b.kind === "repo" && b.rootPath && /^(?:[a-z][a-z\d+.-]*:\/\/|[^/\\\s]+@[^/\\\s]+:|ext::)/i.test(b.rootPath)) {
       // Validate the space before doing network work; cloneRepository validates the transport.
       const id = slugify(b.id || b.name);
       if (id.startsWith("_")) throw new HttpError(400, "空间 id 不能以下划线开头（知识库保留给 Agent 档案和技能）");

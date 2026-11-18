@@ -1,4 +1,4 @@
-import { localStamp, useProcessZone } from "./core/util.ts";
+import { localStamp, slugify, useProcessZone } from "./core/util.ts";
 import { generateWiki } from "./wiki/generate.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -14,7 +14,8 @@ import { ROLE_TOOLS } from "./agents/tool-help.ts";
 import { READ_ONLY_TOOLS } from "./agents/peer-agent.ts";
 import { App, type AppEvent } from "./core/app.ts";
 import { configPath, omemHome } from "./core/config.ts";
-import { createSpace, ensurePersonalSpace, getSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
+import { createSpace, ensurePersonalSpace, findSpace, getSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
+import { initRepository } from "./core/repositories.ts";
 import { listItems, upsertItem } from "./items/store.ts";
 import { listMemories } from "./memory/store.ts";
 import { decisionCommands } from "./cli-decision.ts";
@@ -901,9 +902,17 @@ space
   .option("-d, --description <text>", "说明")
   .option("--exclude <patterns...>", "不导入的路径（前缀或 glob，如 docs/archive '**/*.lock'）")
   .option("--parent <space>", "代码仓库所属的业务空间")
+  .option("--init", "新建一个空的 Git 仓库（--path 给位置，不给就在数据目录的 repos/<id>）")
   .action(async (name, o) => {
     const app = open();
-    const s = createSpace(app, { id: o.id, name, kind: o.kind, rootPath: o.path, description: o.description, parentId: o.parent });
+    let rootPath = o.path;
+    if (o.init) {
+      const id = slugify(o.id || name);
+      if (findSpace(app, id)) throw new Error(`空间已存在：${id}`);
+      rootPath = initRepository(app, o.path ? resolve(o.path) : id);
+      console.log(`已新建仓库 ${rootPath}`);
+    }
+    const s = createSpace(app, { id: o.id, name, kind: o.init ? "repo" : o.kind, rootPath, description: o.description, parentId: o.parent });
     if (o.exclude?.length) updateSpace(app, s.id, { settings: { ...s.settings, exclude: o.exclude } });
     console.log(`已创建空间 ${s.id}`);
     if (s.rootPath) {

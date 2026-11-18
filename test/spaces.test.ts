@@ -205,3 +205,24 @@ it("checks out submodules of cloned repositories one by one, indexes their files
     await new Promise<void>((done) => server.close(() => done()));
   }
 }, 60000);
+
+it("creates a new empty repository with one commit and a repo space for it", async () => {
+  const made = await callTool(ctx, "connect_repository", { repository: "fresh-plugin", create: true, name: "新插件" });
+  expect(made.isError).toBe(false);
+  const s = getSpace(app, "新插件");
+  expect(s.kind).toBe("repo");
+  expect(s.rootPath).toBe(realpathSync(join(app.home, "repos", "fresh-plugin")));
+  expect(execFileSync("git", ["-C", s.rootPath!, "rev-list", "--count", "HEAD"], { encoding: "utf8" }).trim()).toBe("1");
+  expect(execFileSync("git", ["-C", s.rootPath!, "branch", "--show-current"], { encoding: "utf8" }).trim()).toBe("main");
+  // The same name again: the directory is no longer empty, and the space exists.
+  expect((await callTool(ctx, "connect_repository", { repository: "fresh-plugin", create: true, id: "other" })).isError).toBe(true);
+  expect((await callTool(ctx, "connect_repository", { repository: "a/b", create: true, id: "nested" })).isError).toBe(true);
+  // An absolute path that is an empty directory is fine; one with files is not.
+  const empty = join(root, "empty-dir");
+  mkdirSync(empty);
+  expect((await callTool(ctx, "connect_repository", { repository: empty, create: true, id: "at-path" })).isError).toBe(false);
+  expect(getSpace(app, "at-path").rootPath).toBe(realpathSync(empty));
+  expect((await callTool(ctx, "connect_repository", { repository: repo, create: true, id: "taken" })).isError).toBe(true);
+  // A space that already has a repository is not pointed at a new one.
+  expect((await callTool(ctx, "connect_repository", { repository: "second", create: true, space: "at-path" })).isError).toBe(true);
+});

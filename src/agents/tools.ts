@@ -25,7 +25,7 @@ import { upkeepRoles } from "../core/config.ts";
 import { notify } from "../core/notify.ts";
 import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
-import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
+import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, findUser, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
 import { toolAllowed } from "../auth/tools.ts";
@@ -354,14 +354,19 @@ def({
 
 def({
   name: "connect_repository",
-  description: "本人要求接入仓库时使用：本地绝对路径关联 Git 根目录；HTTP(S)/SSH Git 链接尝试 clone 到 omem 数据目录 repos/ 后关联。可指定已有空间；否则按仓库路径复用或创建 repo 空间。自动导入代码。不会覆盖已有的不同仓库。仓库属于某个业务（项目）时传 parent：它挂到那个业务空间下，检索、交办、评审和编码记录都算在业务空间里；已接入的仓库再调一次带 parent 就是归过去（parent 传空字符串是移出）。\n同一个仓库（git remote 相同）已经有空间、只是关联的是别处的目录时，不新建空间，返回那个空间：交办直接用它。本人要让那个空间改用这个目录（比如这里装好了依赖、平时在这里开发）时，带 space 和 relink: true 再调；那个空间还有没应用的交办时不能改。",
-  schema: z.object({ repository: z.string().trim().min(1), space: z.string().optional(), id: z.string().optional(), name: z.string().trim().min(1).optional(), description: z.string().optional(), relink: z.boolean().optional().describe("本人同意后，让同一仓库（remote 相同）的已有空间改为关联这个目录"), parent: z.string().optional().describe("这个仓库所属的业务空间 id；空字符串表示移出，不属于任何业务") }),
+  description: "本人要求接入仓库时使用：本地绝对路径关联 Git 根目录；HTTP(S)/SSH Git 链接尝试 clone 到 omem 数据目录 repos/ 后关联。可指定已有空间；否则按仓库路径复用或创建 repo 空间。自动导入代码。不会覆盖已有的不同仓库。仓库属于某个业务（项目）时传 parent：它挂到那个业务空间下，检索、交办、评审和编码记录都算在业务空间里；已接入的仓库再调一次带 parent 就是归过去（parent 传空字符串是移出）。\n同一个仓库（git remote 相同）已经有空间、只是关联的是别处的目录时，不新建空间，返回那个空间：交办直接用它。本人要让那个空间改用这个目录（比如这里装好了依赖、平时在这里开发）时，带 space 和 relink: true 再调；那个空间还有没应用的交办时不能改。\n本人要从零开始一个新项目时带 create: true：repository 写名字（建在 omem 数据目录的 repos/<名字>）或本地绝对路径（不存在或空目录），宿主 git init 并做一次空提交，再像上面一样建空间，之后就能交办编码。",
+  schema: z.object({ repository: z.string().trim().min(1), create: z.boolean().optional().describe("新建一个空的 Git 仓库再关联：repository 是名字或不存在 / 空的本地绝对路径"), space: z.string().optional(), id: z.string().optional(), name: z.string().trim().min(1).optional(), description: z.string().optional(), relink: z.boolean().optional().describe("本人同意后，让同一仓库（remote 相同）的已有空间改为关联这个目录"), parent: z.string().optional().describe("这个仓库所属的业务空间 id；空字符串表示移出，不属于任何业务") }),
   write: true,
   handler: async (ctx, a) => {
     manageSpaces(ctx);
     if (a.space && a.id) throw new HttpError(400, "关联已有空间用 space；新建空间用 id，不要同时填写");
     const target = a.space ? findSpace(ctx.app, space(ctx, a.space)) : a.id ? findSpace(ctx.app, slugify(a.id)) : null;
-    const root = isAbsolute(a.repository) ? repositoryRoot(a.repository) : await cloneRepository(ctx.app, a.repository);
+    if (a.create) {
+      if (target?.rootPath) throw new HttpError(409, `空间 ${target.id} 已关联仓库 ${target.rootPath}；新仓库用新的空间`);
+      const id = slugify(a.id || a.name || a.repository.split(/[\\/]/).filter(Boolean).pop() || "");
+      if (!target && findSpace(ctx.app, id)) throw new HttpError(409, `空间 ${id} 已存在；换一个 id，或用 space 关联到它`);
+    }
+    const root = a.create ? initRepository(ctx.app, a.repository) : isAbsolute(a.repository) ? repositoryRoot(a.repository) : await cloneRepository(ctx.app, a.repository);
     const rootOf = (p: string) => { try { return repositoryRoot(p); } catch { return null; } };
     const same = listSpaces(ctx.app).find((s) => !!s.rootPath && rootOf(s.rootPath) === root);
     // Another checkout of a repository that already has a space (same remote, different directory).
