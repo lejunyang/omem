@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { CODE_STARTERS } from "../agents/tool-help.ts";
 import { one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { OWNER } from "../core/users.ts";
@@ -44,7 +45,7 @@ const WAITS = 8;
 /** Messages handed here this long ago are no longer news to the ingest run (handedToMentions). */
 const HANDED_MS = 6 * 3600_000;
 /** What a handling may not do: no coding, no rules or watches, no other agents, nothing written to Feishu as the owner. */
-export const MENTION_DENY = ["delegate_code", "continue_agent_work", "continue_code_run", "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action", "save_rule", "set_chat_watch", "run_agent", "ask_agent", "lark_write", "lark_invite","lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"];
+export const MENTION_DENY = [...CODE_STARTERS, "continue_agent_work", "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action", "save_rule", "set_chat_watch", "run_agent", "ask_agent", "lark_write", "lark_invite","lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"];
 
 type Input = { channel?: string; chatId: string; chatName: string; chatKind: "p2p" | "group"; topicId: string | null; messageIds: string[]; waited?: number };
 /** A message the channel picked: someone (not the owner, not a bot) looking for the owner, fresh. */

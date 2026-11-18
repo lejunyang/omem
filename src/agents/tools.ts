@@ -69,7 +69,7 @@ import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
-import { helpText, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
+import { CODE_STARTERS, helpText, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
@@ -1057,7 +1057,7 @@ def({
 function assistantTaskScope(ctx: ToolContext) {
   return {
     spaces: ctx.writable ?? ctx.spaces,
-    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run"])],
+    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "continue_agent_work", "ask_agent", ...CODE_STARTERS])],
     userId: ctx.userId,
     lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private },
   };
@@ -1071,7 +1071,7 @@ function assistantTaskScope(ctx: ToolContext) {
 const LEND_DENIED = new Set([
   "lark_write", "lark_invite", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize",
   "lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "reply_to_asker", "meeting_suggest",
-  "run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run",
+  "run_agent", "continue_agent_work", "ask_agent", ...CODE_STARTERS,
   "stay_quiet", "report_rule_failure", ...ROLE_TOOLS,
 ]);
 const MAX_LENT_TOOLS = 12;
@@ -1116,7 +1116,7 @@ function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, 
 
 /** What a rule's run hands on: where it may answer, how, and on whose behalf the rule fired. */
 const RULE_DELIVERY = ["rule", "lark", "threadId", "replyAt", "silent", "hideThinking", "conversationId", "fullAccess"] as const;
-const HANDOFF_DENIED = ["run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run", "save_rule", "set_chat_watch"];
+const HANDOFF_DENIED = ["run_agent", "continue_agent_work", "ask_agent", ...CODE_STARTERS, "save_rule", "set_chat_watch"];
 
 /**
  * run_agent inside a rule's run: the chosen agent takes this trigger over within the rule's limits —

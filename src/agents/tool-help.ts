@@ -17,6 +17,14 @@ export const CORE_TOOLS = new Set([
   "list_sources", "write_file", "list_runs", "read_run", "wake_later", "cancel_wake",
 ]);
 /** What a background role exists to hand in: always its own tool, and only for that role. */
+/**
+ * Tools that start or continue coding or a review (a delegation, its next round, a fix of a review,
+ * the owner's words to a running round, a retried change item): runs that may not hand work on (an
+ * assistant task, a hand-off, a lent run, a rule's or a mention's handling) are denied all of them.
+ * A new tool that queues coding or review rounds goes here.
+ */
+export const CODE_STARTERS = ["delegate_code", "review_branch", "continue_code_run", "fix_review", "message_code_run", "settle_code_task"];
+
 export const ROLE_TOOLS = ["claim_commits", "note_item_change", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
 /**

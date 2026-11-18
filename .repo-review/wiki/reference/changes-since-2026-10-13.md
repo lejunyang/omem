@@ -20,6 +20,10 @@ updated: 2026-11-19
 - `src/core/repositories.ts` 的 `initRepository`：名字放数据目录 repos/，绝对路径要不存在或是空目录；`git init -b main` 加一次空提交（没有 Git 身份时用 omem 的），工作区和分支才有起点。
 - 入口：工具 `connect_repository` 的 `create`、`POST /api/spaces` 的 `init`、`omem space add --init [--path]`、设置 → 新建空间里代码仓库的“新建一个空仓库”。测试在 `test/spaces.test.ts`。
 
+## 不能交办的运行也不能经别的工具开始编码或评审（11-19）
+
+- `tool-help.ts` 的 `CODE_STARTERS`（delegate_code、review_branch、continue_code_run、fix_review、message_code_run、settle_code_task）：助手的临时任务、交出去的运行、借出的运行（`LEND_DENIED`）、规则的运行（`rules/actions.ts`）、有人找你的处理（`MENTION_DENY`）都整组禁用。以前这几处只列了 delegate_code / continue_code_run（规则和有人找你还漏了 review_branch），`fix_review` 在分支评审上等于交办、`message_code_run` 和 `settle_code_task` 能续轮，都没拦。以后新加会排编码或评审轮次的工具要放进这个列表。
+
 ## 按评审项指定 AI；复审并进 review_branch（11-19）
 
 - `review_executions`（键：评审项名、`review-lead`、`split`）加在 `delegate_code`、`review_branch` 和 `roundReviewSchema`（`continue_code_run`、`fix_review`、`set_code_review` 共用）上，存为 `input.reviewExecutions` 或 `roundReview.ais`；`review.ts` 的 `namedReviewAI` 一处取用，评审项、评审负责人的各次运行、需求拆分都按它，点名的优先于轮换。`POST /api/review-branch` 收 `reviewAis`。
