@@ -255,6 +255,23 @@ describe("只有本人能定的事", () => {
     await reportStage(app, item.id, "b", { state: "skip", note: "这次不用" }, agent);
     expect(jsonContext(app, itemFlow(app, item.id)!.card!).replaces).toBe(first.id);
   });
+  it("流程的提问卡片自己说得清：哪件事哪一段、要定什么、结果和之后接着什么，不带内部编号", async () => {
+    const { app, item, s } = await setup([stage("a", { done: "confirm", note: "核对需求点。拿不准的问本人" }), stage("b", { gate: "confirm", note: "在测试环境逐条验收。截图留证" })]);
+    const r = createRun(app, { kind: "agent", spaceId: "personal", title: "依据" }).id;
+    await reportStage(app, item.id, "a", { state: "done", note: "需求点核对完了，改名入口另排（ask0mabcdefgh1234567）", evidence: [r] }, { actor: "assistant", runId: s("a").by!, userId: "owner" });
+    const done = getAsk(app, s("a").askId!).question;
+    expect(done).toContain("**示例商城退款 · a**");
+    expect(done).toContain("**结果**\n需求点核对完了，改名入口另排");
+    expect(done).not.toContain("ask0");
+    expect(done).toContain("确认后接着：b");
+    expect(done).toContain("依据 1 项");
+    await ownerAction(app, item.id, "a", "confirm");
+    const gate = getAsk(app, s("b").askId!).question;
+    expect(gate).toContain("**示例商城退款 · b**");
+    expect(gate).toContain("轮到这一段了，开始吗？");
+    expect(gate).toContain("**这一段做什么**\n在测试环境逐条验收。截图留证");
+    expect(gate).toMatch(/\*\*前面\*\*\n- a：已完成，需求点核对完了，改名入口另排/);
+  });
   it("本人承担的阶段，助手说做完了只会变成问本人的确认；本人确认才完成", async () => {
     const { app, item, s } = await setup([{ id: "push", name: "推送", by: "owner" }, stage("deploy")]);
     expect(s("push")).toMatchObject({ state: "doing", by: "owner" });

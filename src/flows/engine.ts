@@ -129,16 +129,44 @@ function settleUpstream(app: App, itemId: string) {
   }
   return changed;
 }
-function question(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: NonNullable<StageRow["control"]["question"]>, text: string, labels: string[]) {
+type AskParts = { ask: string; result?: string; evidence?: string[]; plan?: boolean; before?: boolean; after?: boolean };
+/**
+ * A question the owner can decide from the card alone: which item and stage, what is being decided,
+ * then only what bears on it (the result, what the stage will do, what is done before it, what starts
+ * after it, how much evidence) as short labelled paragraphs. Internal ids stay on the item page.
+ */
+function askText(app: App, f: ItemFlow, d: FlowStage, p: AskParts) {
+  const rows = itemStages(app, f.itemId), item = getItem(app, f.itemId);
+  const ups = d.needs.map((id) => ({ def: f.definition.stages.find((x) => x.id === id), row: rows.find((r) => r.id === id) })).filter((u) => u.def && u.row && ["done", "skipped"].includes(u.row.state));
+  const next = f.definition.stages.filter((x) => x.needs.includes(d.id)).map((x) => x.name);
+  const w = describeStage(d);
+  return [
+    `**${item.title} · ${d.name}**`,
+    p.ask,
+    p.result ? `**结果**\n${askNote(p.result, 800)}` : "",
+    p.plan && d.note ? `**这一段做什么**\n${askNote(d.note, 400)}\n（${w.carrier}；${w.done}）` : "",
+    p.before && ups.length ? `**前面**\n${ups.map((u) => { const note = resultNote(app, f.itemId, u.row!); return `- ${u.def!.name}：${u.row!.state === "skipped" ? "跳过" : "已完成"}${note ? `，${askNote(note, 120)}` : ""}`; }).join("\n")}` : "",
+    p.after && next.length ? `**之后**\n确认后接着：${next.join("、")}` : "",
+    p.evidence?.length ? `依据 ${p.evidence.length} 项，在事项页这一段下面可以打开。` : "",
+  ].filter(Boolean).join("\n\n");
+}
+// The owner's "确认" overwrites a stage's latest line; what the stage produced is the last thing its
+// carrier said, falling back to that line.
+function resultNote(app: App, itemId: string, row: StageRow) {
+  const said = one<{ note: string }>(app.db, "select note from item_stage_log where item_id=? and stage_id=? and actor not in ('host','owner') and note<>'' order by id desc limit 1", itemId, row.id);
+  return said?.note ?? row.note;
+}
+const askNote = (note: string, max: number) => truncate(note.replace(/\s*[（(]?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b[）)]?/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(), max);
+
+function question(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: NonNullable<StageRow["control"]["question"]>, parts: AskParts, labels: string[]) {
   if (s.askId && getAsk(app, s.askId).status === "pending" && s.control.question === kind) return s.askId;
   withdraw(app, s);
+  const text = askText(app, f, d, parts);
   return createAsk(app, { runId: null, userId: getItem(app, f.itemId).userId, question: text, options: labels.map((label) => ({ label })), allowText: true,
     context: { handler: "flow-stage", itemId: f.itemId, stageId: d.id, startedAt: f.startedAt, kind } }).id;
 }
 function gate(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: "when" | "gate") {
-  const item = getItem(app, f.itemId);
-  const first = d.note?.split(/[。！？\n]/)[0];
-  const askId = question(app, f, d, s, kind, kind === "when" ? `「${d.name}」这一段要做吗？（${d.when}）` : `「${item.title}」到了「${d.name}」${first ? `：${first}` : ""}。开始吗？`, kind === "when" ? ["要做", "跳过"] : ["开始", "先别做", "跳过这一段"]);
+  const askId = question(app, f, d, s, kind, kind === "when" ? { ask: `这一段要做吗？条件是：${d.when}`, plan: true, before: true } : { ask: "轮到这一段了，开始吗？", plan: true, before: true }, kind === "when" ? ["要做", "跳过"] : ["开始", "先别做", "跳过这一段"]);
   const limit = kind === "gate" && f.autoStreak >= app.config.flows.autoAdvance;
   changeStage(app, f.itemId, d.id, "gated", { askId, waitingOn: "owner", control: { ...s.control, question: kind, gateLimit: limit } }, host, kind === "when" ? "等本人判断这一段是否需要" : "等本人确认开始", [], kind === "when" ? "when-ask" : limit ? "limit-ask" : "gate-ask");
 }
@@ -238,7 +266,7 @@ async function start(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRo
   } else if (d.by === "owner") {
     carrier = "owner";
     waitingOn = "owner";
-    askId = question(app, f, d, { ...s, askId: null }, "owner", `「${item.title}」轮到你：${d.name}。${d.note ?? ""}`, ["做完了", "这一段跳过"]);
+    askId = question(app, f, d, { ...s, askId: null }, "owner", { ask: "轮到你了。做完点“做完了”。", plan: true, before: true, after: true }, ["做完了", "这一段跳过"]);
     control.question = "owner";
   }
   run(app.db, "update item_flows set auto_streak=?,updated_at=? where item_id=?", confirmed ? 0 : f.autoStreak + (s.control.admitted ? 0 : 1), at, item.id);
@@ -404,7 +432,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
         if (objectDone(d, obj) && (!kind?.includes(":") || !obj.disabled && (!s.control.objectAfter || !!obj.changedAt && obj.changedAt > s.control.objectAfter))) {
           changeStage(app, itemId, d.id, "done", { by: followed?.ref ?? s.by, waitingOn: null, askId: null, evidence: [...new Set([...s.evidence, obj.ref])] }, host, `${objectKind(kind!)?.label}已完成（${obj.status}）`, [obj.ref]); withdraw(app, s); changed = true;
         } else if (d.done === "confirm" && obj.done && !["done", "refuse"].includes(s.control.question ?? "")) {
-          const askId = question(app, f, d, s, "done", `「${d.name}」做完了：${obj.title}已完成。确认吗？`, ["确认", "还不行"]);
+          const askId = question(app, f, d, s, "done", { ask: `${obj.title}已完成，确认这一段做完了吗？`, evidence: [obj.ref], after: true }, ["确认", "还不行"]);
           changeStage(app, itemId, d.id, "doing", { askId, waitingOn: "owner", evidence: [obj.ref], control: { ...s.control, question: "done", reported: true } }, host, "对象已完成，等本人确认", [obj.ref]); changed = true;
         }
         if (followed || getStage(app, itemId, d.id).state === "done") continue;
@@ -503,7 +531,7 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     s = { ...s, control: finishUsage(app, s, new Date()) };
     withdraw(app, s);
     if (asksOwner) {
-      const askId = question(app, f, d, { ...s, askId: null }, "done", d.by === "owner" ? `「${d.name}」是你来做的一段，助手说已经做完了：${report.note}。是这样吗？` : `「${d.name}」做完了：${report.note}。确认吗？`, ["确认", "还不行"]);
+      const askId = question(app, f, d, { ...s, askId: null }, "done", d.by === "owner" ? { ask: "这一段是你来做的，助手说已经做完了。是这样吗？", result: report.note, evidence, after: true } : { ask: "助手说这一段做完了，确认吗？不对就点“还不行”写意见。", result: report.note, evidence, after: true }, ["确认", "还不行"]);
       changeStage(app, itemId, stageId, "doing", { askId, evidence, waitingOn: "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
     } else if (report.state === "done" && (typeof d.done === "object" || typeof d.by === "object" && "object" in d.by)) {
       changeStage(app, itemId, stageId, "doing", { askId: null, evidence, control: { ...s.control, reported: true } }, by, report.note, evidence);
@@ -699,7 +727,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
       if (skip) resetGateStreak(app, f.id, stageId, item.userId);
       if (!text) {
         const kind = skip ? "skip" : "refuse";
-        const askId = question(app, f, d, { ...s, askId: null }, kind, skip ? `「${d.name}」为什么跳过？请写原因。` : `「${d.name}」哪里还不行？请写意见。`, []);
+        const askId = question(app, f, d, { ...s, askId: null }, kind, { ask: skip ? "为什么跳过？请写原因。" : "哪里还不行？请写意见，会带给重做的那一次。" }, []);
         changeStage(app, itemId, stageId, s.state, { askId, control: { ...s.control, question: kind } }, { actor: "owner" }, "等本人补充原因"); resetStreak(app, itemId); return;
       }
       if (skip) await actionNow(app, itemId, stageId, "skip", text, { actor: "owner" });
