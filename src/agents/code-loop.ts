@@ -724,7 +724,7 @@ export const ASSISTANT_ADDS = 5;
  */
 export function addAssistantTask(app: App, rootId: string, a: { title: string; doneWhen: string; ownerWords: boolean }, by: string) {
   const added = listTasks(app, rootId).filter((t) => t.notes[0]?.kind === "assistant" && t.notes[0].text.startsWith("助手新增")).length;
-  if (!a.ownerWords && added >= ASSISTANT_ADDS) throw new HttpError(409, `这次交办你已经自己加了 ${added} 项；再加要本人同意（本人说了再在那一轮加），或者用 message_code_run 交代给编码 Agent`);
+  if (!a.ownerWords && added >= ASSISTANT_ADDS) throw new HttpError(409, `这次交办你已经自己加了 ${added} 项；再加要本人同意（本人说了再在那一轮加），或者用 continue_code_run（when=now）交代给编码 Agent`);
   const task = addTask(app, rootId, { title: a.title.trim(), doneWhen: a.doneWhen.trim(), kind: "build", origin: { note: a.doneWhen.trim() } }, by);
   updateTask(app, rootId, task.seq, {}, { by, kind: "assistant", text: `助手新增：${truncate(a.doneWhen.trim(), 1500)}` });
   return { task: getTask(app, rootId, task.seq), next: advanceWork(app, rootId, { owner: a.ownerWords }) };
@@ -828,7 +828,7 @@ registerAskHandler("code-task", async (app: App, ask: Ask, ctx) => {
 });
 
 /**
- * The owner's words for a task-driven delegation (message_code_run, continue_code_run, the run
+ * The owner's words for a task-driven delegation (continue_code_run, the run
  * page): while the coder is coding they reach it at once (code-steer.ts) and null is returned;
  * otherwise, or when `asTask`, they become a task, coded in the next round, which starts now when
  * nothing is running.

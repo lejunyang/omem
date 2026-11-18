@@ -1076,18 +1076,18 @@ describe("a delegation driven by tasks", () => {
       // A turn the owner did not speak in (a handoff queued in the first topic) moves nothing.
       const handoff0 = createRun(app, { kind: "ask", spaceId: "personal", title: "交给助手", input: { conversationId: later.id, handoff: { kind: "code", runId: r.id } }, userId: OWNER });
       const quiet = { app, runId: handoff0.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
-      expect((await callTool(quiet, "message_code_run", { run_id: r.id, text: "提醒一下" })).text).not.toContain("之后这次交办的结果");
+      expect((await callTool(quiet, "continue_code_run", { run_id: r.id, when: "now", task: "提醒一下" })).text).not.toContain("之后这次交办的结果");
       // The owner, in a later topic, adds to the delegation.
       run(app.db, "insert into messages(id,conversation_id,role,text,meta,created_at) values('m_owner_later', ?, 'user', '金额字段改成分', '{}', ?)", later.id, new Date().toISOString());
       const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "补充", input: { conversationId: later.id, messageIds: ["m_owner_later"] }, userId: OWNER });
       const ctx = { app, runId: turn.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: OWNER } as ToolContext;
-      const res = await callTool(ctx, "message_code_run", { run_id: r.id, text: "金额字段改成分" });
+      const res = await callTool(ctx, "continue_code_run", { run_id: r.id, when: "now", task: "金额字段改成分" });
       expect(res.text).toContain("之后这次交办的结果");
       // Said again from there: no second note.
-      expect((await callTool(ctx, "message_code_run", { run_id: r.id, text: "再补一句" })).text).not.toContain("之后这次交办的结果");
+      expect((await callTool(ctx, "continue_code_run", { run_id: r.id, when: "now", task: "再补一句" })).text).not.toContain("之后这次交办的结果");
       // A handoff run still queued in the first topic does not take the reports back there.
       const stale = createRun(app, { kind: "ask", spaceId: "personal", title: "交给助手", input: { conversationId: first.id, handoff: { kind: "code", runId: r.id } }, userId: OWNER });
-      await callTool({ ...ctx, runId: stale.id } as ToolContext, "message_code_run", { run_id: r.id, text: "按原需求" });
+      await callTool({ ...ctx, runId: stale.id } as ToolContext, "continue_code_run", { run_id: r.id, when: "now", task: "按原需求" });
       // A question for the owner, the round's result and the assistant's turn all go to the later topic.
       const q = addTask(app, r.id, { title: "保存时用哪个模板", kind: "fix", state: "assistant", question: "评审负责人没有裁决" }, "review-lead");
       settleTask(app, r.id, q.seq, { action: "owner", text: "是业务口径", ownerWords: false, question: "用哪个模板？", options: ["旧模板", "新模板"] }, "assistant");

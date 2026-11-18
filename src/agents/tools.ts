@@ -1682,7 +1682,7 @@ def({
     const thinking = r.output.thinkingDelivery;
     const outcome = (await import("./reply-outcomes.ts")).replyOutcome(ctx.app, r.id);
     const outcomeText = outcome ? `${(await import("./reply-outcomes.ts")).replyOutcomeText(outcome)}\n` : "";
-    // A coding run's review findings by number, with review-lead's ruling and the owner's decision (for fix_review).
+    // A coding run's review findings by number, with review-lead's ruling and the owner's decision (for continue_code_run's fix).
     let findingText = "";
     if (r.kind === "code") {
       const { workRuns, DECISION_LABEL } = await import("./review-fix.ts");
@@ -1690,7 +1690,7 @@ def({
       const reviews = reviewsOf(ctx.app, workRuns(ctx.app, r.id));
       const round = Math.max(0, ...reviews.map((x) => x.round));
       const rows = reviews.filter((x) => x.round === round).flatMap((x) => x.findings.map((f) => `- #${f.id} [${SEVERITY_LABEL[f.severity]} · ${x.check_name}] ${f.title}${f.file_path ? ` — ${f.file_path}${f.line ? `:${f.line}` : ""}` : ""}${f.state !== "open" ? ` · 负责人：${f.state}` : ""}${f.decision ? ` · 本人：${DECISION_LABEL[f.decision]}${f.decision_note ? `（${f.decision_note}）` : ""}` : ""}`));
-      if (rows.length) findingText = `第 ${round} 轮评审的问题（fix_review 用这些编号）：\n${rows.join("\n")}\n`;
+      if (rows.length) findingText = `第 ${round} 轮评审的问题（continue_code_run 的 fix 用这些编号）：\n${rows.join("\n")}\n`;
     }
     return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}${findingText}${outcomeText}${childText}${runSteps(events, r.status)}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
   },
@@ -4419,7 +4419,7 @@ def({
     if (!a.parallel && onBranch) {
       const { openDelegationOn } = await import("./review-fix.ts");
       const open = openDelegationOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER);
-      if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办 ${open.id}（${open.title}，${open.status}）。新的要求续在它上面：进行中用 message_code_run 补充（是一件能单独验证的修改就带 new_item: true；为别的事项做的再带 item_id，交办会记到那个事项上，它的流程跟着走），结束后用 continue_code_run。不要为这个去问本人；本人明确要另开一次才传 parallel: true`);
+      if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办 ${open.id}（${open.title}，${open.status}）。新的要求续在它上面：进行中用 continue_code_run 带 when=now 补充（是一件能单独验证的修改就带 new_item: true；为别的事项做的再带 item_id，交办会记到那个事项上，它的流程跟着走），结束后用 continue_code_run 开下一轮。不要为这个去问本人；本人明确要另开一次才传 parallel: true`);
     }
     // A design to code from: the owner's, approved, or someone else's, assessed (designs/work.ts).
     const baseline = a.design_id ? await readableDesign(ctx, a.design_id) : null;
@@ -4616,23 +4616,36 @@ def({
 def({
   name: "continue_code_run",
   description:
-    "继续一个交办编码任务的下一轮：评审要求修改或本人看了结果要求调整时用。复用同一次交办的工作区和编码 Agent 会话，不要重新 delegate_code。传入交办的任一 code 运行 id（或最初的 ask 运行 id）和本轮要做的事。",
+    "接着一次编码交办或分支评审往下做，一个工具几种用法（run_id 都是交办或评审的任一运行 id，也可以是最初发起交办的 ask 运行 id）：\n- 开下一轮（默认）：评审要求修改，或本人看了结果要调整。复用同一次交办的工作区和编码 Agent 会话，不要重新 delegate_code。task 写这一轮要做的事。\n- 按评审结论改：fix 写要改的问题编号（read_run 的评审问题 #编号），later / wontfix 同时把问题标成暂不改或不改（不改要写业务理由，之后的评审不再提），task 写本人补充的要求。交办编码续在原工作区；分支评审基于该分支交办编码（只出意见的评审本身不能续轮）。只在本人明确要改时用。\n- 交给正在跑的这一轮（when=now）：本人在交办进行中说了新要求、纠正或补充，原话为主；编码 Agent 下一次调用 omem 工具时收到，已经在评审时随下一轮交给它。\n- 只改之后的评审（不写 task，只写 review_tier / review_checks / split / rotate_models / review_executions）：本人说“后面从简 / 别再拆需求 / 这轮只要功能评审 / 业务评审换个模型”时用，不开新的一轮，还没开始评审的这一轮就按新的来，之后沿用。",
   write: true,
   schema: z.object({
-    execution: executionSchema.optional().describe("编码 AI 的临时选择"),
-    review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
-    run_id: z.string().describe("本次交办的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
-    task: z.string().describe("这一轮要做什么：评审意见或本人的新要求，写具体"),
-    new_item: z.boolean().optional().describe("按修改项推进的交办：本人提了一件新的、能单独验证的修改时 true，记成修改项；只是让它接着推进、提醒注意什么、告诉它环境已经好了时不填，作为下一轮的交代交给编码 Agent"),
+    run_id: z.string().describe("交办或分支评审的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
+    task: z.string().max(20000).optional().describe("这一轮要做什么、本人补充的要求或原话；只改之后的评审、只给问题定改不改时不写"),
+    when: z.enum(["next", "now"]).optional().describe("now：交给正在进行的这一轮（不等它结束、不另开一轮）；默认 next：开下一轮"),
+    fix: z.array(z.number().int()).optional().describe("按评审结论改：要改的问题编号"),
+    later: z.array(z.number().int()).optional().describe("这次暂不改的问题编号"),
+    wontfix: z.array(z.object({ id: z.number().int(), reason: z.string().min(1).max(1000) })).optional().describe("不改的问题和本人给的理由"),
+    execution: executionSchema.optional().describe("编码 AI 的临时选择（换了 AI 就不接着原来的会话）"),
+    review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择"),
+    new_item: z.boolean().optional().describe("按修改项推进的交办：本人提了一件新的、能单独验证的修改时 true，记成修改项；只是让它接着推进、提醒注意什么、告诉它环境已经好了时不填"),
+    item_id: z.string().optional().describe("when=now：这段修改是为另一个事项做的（同一分支上别的事项的交办正在进行，把这件的修改并进去），填那个事项，交办会记到它上面，它的流程跟着这次交办走"),
     sync: syncSchema.optional().describe("这一轮编码前先做的 Git 同步（如先合并最新的 main）；工作区里未提交的改动会先收起、同步后放回"),
     onto_latest_target: z.boolean().optional().describe("只把改动移到目标分支的最新提交上（目标分支有了新提交、应用失败时用），task 可简单写原因；冲突交给编码 Agent，解决不了会问本人"),
     onto_latest_target_mode: z.enum(["merge", "rebase"]).optional().describe("配合 onto_latest_target：默认 merge，集中处理合并冲突；本人要求逐提交重放时才选 rebase"),
-    apply_first: z.boolean().optional().describe("本人说“先应用到原分支再继续改”时 true：上一轮的改动先应用到目标分支，这一轮在同一个工作区接着改"),
+    apply_first: z.boolean().optional().describe("本人说“先应用到原分支再继续改”时 true：上一轮的改动先应用到目标分支（未提交，可再 code_git_action 提交），这一轮在同一个工作区接着改"),
     ...roundReviewSchema,
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
+    if (a.when === "now") return messageRound(ctx, a);
+    const seedRun = getRun(ctx.app, a.run_id);
+    const reviewOfBranch = seedRun.kind === "code" && !!(seedRun.input as { branches?: unknown }).branches;
+    if (a.fix?.length || a.later?.length || a.wontfix?.length || (reviewOfBranch && a.task?.trim())) return fixFindings(ctx, a, execution, reviewExecution);
+    if (!a.task?.trim() && !a.sync && !a.onto_latest_target && !a.apply_first) return setLaterReview(ctx, a);
+    // Only a sync (sync / onto_latest_target without words for the coder): a round of Git work, nothing else.
+    const gitOnly = !a.task?.trim();
+    const task = a.task?.trim() || (a.onto_latest_target ? "把改动移到目标分支的最新提交上（只处理冲突，不改别的）" : "按 sync 同步工作分支（只处理冲突，不改别的）");
     const { codeChainFor, codeChainRounds, queueNextCodeRound } = await import("./code-chain.ts");
     const seed = getRun(ctx.app, a.run_id);
     let askId = a.run_id;
@@ -4640,7 +4653,7 @@ def({
     const rounds = codeChainRounds(ctx.app, askId).filter((r) => r.kind === "code");
     const last = rounds.at(-1);
     if (!last) throw new HttpError(400, "这不是一次交办编码任务");
-    if ((last.input as { branches?: unknown }).branches) throw new HttpError(400, "这是对已有分支的评审，不能续轮编码；要按评审意见修改，用 delegate_code 并传 from_branch 基于该分支交办");
+    if ((last.input as { branches?: unknown }).branches) throw new HttpError(400, "这是对已有分支的评审，本身不能续轮编码：要按评审意见修改就带 fix（问题编号）或 task，会基于该分支交办");
     const chain = codeChainFor(ctx.app, last) ?? (last.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
     if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
     for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
@@ -4648,7 +4661,7 @@ def({
     // Waiting for its design to be confirmed: going on means coding without waiting (designs/work.ts).
     if (last.output.verdict === "awaiting-design") {
       const { skipDesign } = await import("../designs/work.ts");
-      skipDesign(ctx.app, last.id, ctx.userId ?? OWNER, a.task);
+      skipDesign(ctx.app, last.id, ctx.userId ?? OWNER, task);
       return `交办 ${last.id} 不再等方案确认，现在开始编码（方案保留着，只作参考，不再是这次交办的基线；这段话交给编码 Agent）。要按方案改就别用这个，用 settle_design 转达本人的确认或意见。`;
     }
     // A failed round may have no session of its own: resume the latest one that has.
@@ -4660,48 +4673,35 @@ def({
     const switched = taskWork ? (await import("./code-loop.ts")).setWorkAI(ctx.app, last.id, { execution, reviewExecution }) : "";
     if (taskWork && !a.sync && !a.onto_latest_target && !a.apply_first) {
       const loop = await import("./code-loop.ts");
-      if (!a.new_item) return [loop.workNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER), switched].filter(Boolean).join("\n");
-      const made = loop.ownerNote(ctx.app, last.id, a.task, ctx.userId ?? OWNER, { asTask: true })!;
+      if (!a.new_item) return [loop.workNote(ctx.app, last.id, task, ctx.userId ?? OWNER), switched].filter(Boolean).join("\n");
+      const made = loop.ownerNote(ctx.app, last.id, task, ctx.userId ?? OWNER, { asTask: true })!;
       return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，这一轮结束后接着做"}。${switched}`;
     }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
-    const extraInput = a.onto_latest_target ? { moveToTarget: true, moveToTargetMode: a.onto_latest_target_mode ?? "merge" } : a.sync ? { sync: a.sync } : undefined;
+    const extraInput = a.onto_latest_target ? { moveToTarget: true, moveToTargetMode: a.onto_latest_target_mode ?? "merge" } : a.sync ? { sync: a.sync, ...(gitOnly ? { syncOnly: true } : {}) } : undefined;
     const roundReview = await roundReviewOf(ctx, a);
     if (a.apply_first) (await import("./code.ts")).applyCodeRun(ctx.app, last.id, { keepWorking: true });
-    const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution, roundReview, extraInput });
+    const next = queueNextCodeRound(ctx.app, chain, task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution, roundReview, extraInput });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续；请查看 read_run");
     return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
   },
 });
 
-def({
-  name: "fix_review",
-  description:
-    "按评审结论开始修改（交办编码或分支评审都可以）：本人指定要改的问题编号（#编号，见 read_run 的评审问题），可同时把某些问题标成暂不改或不改（不改要写业务上的理由，之后的评审不再提），再加上本人补充的要求（需求变更、评审没发现的问题）。交办编码续在原工作区的下一轮；分支评审基于该分支交办编码，同属一个事项。只在本人明确要改时用。",
-  write: true,
-  schema: z.object({
-    run_id: z.string().describe("交办编码或分支评审的运行 id（任一轮）"),
-    fix: z.array(z.number().int()).optional().describe("要改的问题编号"),
-    later: z.array(z.number().int()).optional().describe("这次暂不改的问题编号"),
-    wontfix: z.array(z.object({ id: z.number().int(), reason: z.string().min(1).max(1000) })).optional().describe("不改的问题和本人给的理由"),
-    text: z.string().max(20000).optional().describe("本人补充的修改要求，原话为主"),
-    review_execution: executionSchema.optional().describe("这一轮功能评审 AI 的临时选择"),
-    apply_first: z.boolean().optional().describe("本人说“先应用到原分支再继续改”时 true：现在的改动先应用到目标分支（未提交，可再 code_git_action 提交），下一轮在同一个工作区接着改，之后的应用只带新的改动"),
-    ...roundReviewSchema,
-  }),
-  handler: async (ctx, a) => {
+
+type ContinueArgs = { run_id: string; task?: string; fix?: number[]; later?: number[]; wontfix?: { id: number; reason: string }[]; new_item?: boolean; item_id?: string; apply_first?: boolean; review_tier?: string; review_checks?: string[]; split?: boolean; rotate_models?: boolean; review_executions?: Record<string, Execution> };
+
+/** continue_code_run with findings: their decisions, then the fix (review-fix.ts startFix). */
+async function fixFindings(ctx: ToolContext, a: ContinueArgs, execution: Execution | undefined, reviewExecution: Execution | undefined) {
     const r = getRun(ctx.app, a.run_id);
     const review = await roundReviewOf(ctx, a);
-    const reviewExecution = validateExecution(ctx.app, a.review_execution);
     for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const { setFindingDecision, startFix } = await import("./review-fix.ts");
     for (const id of a.later ?? []) setFindingDecision(ctx.app, r.id, id, "later");
     for (const w of a.wontfix ?? []) setFindingDecision(ctx.app, r.id, w.id, "wontfix", w.reason);
-    if (!a.fix?.length && !a.text?.trim()) return `已记下：${(a.later ?? []).length} 个暂不改，${(a.wontfix ?? []).length} 个不改。没有要改的，没有开始修改。`;
-    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.text, review, reviewExecution, applyFirst: a.apply_first }, ctx.userId ?? OWNER);
-    return `已开始修改，运行 ${next.id}（${next.title}）：改 ${(a.fix ?? []).length} 个问题${a.text?.trim() ? "和补充的要求" : ""}，暂不改 ${(a.later ?? []).length} 个，不改 ${(a.wontfix ?? []).length} 个。完成后会检查、评审并通知。`;
-  },
-});
+    if (!a.fix?.length && !a.task?.trim()) return `已记下：${(a.later ?? []).length} 个暂不改，${(a.wontfix ?? []).length} 个不改。没有要改的，没有开始修改。`;
+    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.task, review, execution, reviewExecution, applyFirst: a.apply_first }, ctx.userId ?? OWNER);
+    return `已开始修改，运行 ${next.id}（${next.title}）：改 ${(a.fix ?? []).length} 个问题${a.task?.trim() ? "和补充的要求" : ""}，暂不改 ${(a.later ?? []).length} 个，不改 ${(a.wontfix ?? []).length} 个。完成后会检查、评审并通知。`;
+}
 
 /** The delegation a steering call is about, checked against the caller's spaces and owner. */
 function steerable(ctx: ToolContext, runId: string) {
@@ -4711,18 +4711,9 @@ function steerable(ctx: ToolContext, runId: string) {
   return r;
 }
 
-def({
-  name: "message_code_run",
-  description:
-    "把本人的补充要求交给正在进行的编码交办（不用等这一轮结束，也不重开一轮）：编码 Agent 在下一次调用 omem 工具时收到；没收到的在它这一轮写完、检查之前接着同一会话交给它。这一轮已经写完代码、在评审中时，补充随下一轮的任务一起交给它（评审结束后用 continue_code_run 开始下一轮）。本人在交办进行中说了新要求、纠正或补充时用，原话为主。",
-  write: true,
-  schema: z.object({
-    run_id: z.string().describe("交办的任一运行 id"),
-    text: z.string().min(1).max(20000).describe("本人的补充，原话为主"),
-    new_item: z.boolean().optional().describe("按修改项推进的交办：补充的是一件新的、能单独验证的修改时 true，在两轮之间记成修改项；提醒、纠正做法、让它接着推进时不填"),
-    item_id: z.string().optional().describe("这段修改是为另一个事项做的（同一分支上别的事项的交办正在进行，把这件的修改并进去）：填那个事项，交办会记到它上面，它的流程跟着这次交办走"),
-  }),
-  handler: async (ctx, a) => {
+/** continue_code_run with when=now: the owner's words to the round in progress (code-steer.ts addCodeNote). */
+async function messageRound(ctx: ToolContext, a: ContinueArgs) {
+  if (!a.task?.trim()) throw new HttpError(400, "when=now 要写 task：交给编码 Agent 的话");
     steerable(ctx, a.run_id);
     if (a.item_id) {
       const item = itemFor(ctx, a.item_id);
@@ -4733,21 +4724,20 @@ def({
     // A task-driven delegation between rounds: a new change becomes a task (code-loop.ts); other words wait for the next round.
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
     if (isTaskWork(ctx.app, a.run_id) && a.new_item) {
-      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.text, ctx.userId ?? OWNER);
+      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER);
       if (made) return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，下一轮做"}。`;
     }
     const { addCodeNote } = await import("./code-steer.ts");
-    const r = addCodeNote(ctx.app, a.run_id, a.text, ctx.userId ?? OWNER);
+    const r = addCodeNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER);
     if (getRun(ctx.app, r.runId).output.verdict === "awaiting-design") {
       const wait = getRun(ctx.app, r.runId).output.designWait as { designId?: string } | undefined;
-      return `交办在等方案${wait?.designId ? ` ${wait.designId}` : ""} 确认，还没开始编码：这段补充记下了，开始编码时交给编码 Agent。是对方案的意见就用 settle_design（comment）转达，写方案的会话会改一版；本人要不等方案直接改，用 continue_code_run。`;
+      return `交办在等方案${wait?.designId ? ` ${wait.designId}` : ""} 确认，还没开始编码：这段补充记下了，开始编码时交给编码 Agent。是对方案的意见就用 settle_design（comment）转达，写方案的会话会改一版；本人要不等方案直接改，用 continue_code_run（不带 when）。`;
     }
     return r.stage === "coding" ? `已交给正在编码的 ${r.runId}：它下一次调用 omem 工具时收到，最晚在这一轮检查之前。`
       : r.stage === "queued" ? `${r.runId} 还在排队，开始编码时一起交给它。`
-      : r.stage === "review" ? `${r.runId} 已经写完代码、在评审中：补充记下了，随下一轮的任务交给编码 Agent。评审结束后要马上改就用 continue_code_run。`
-      : `${r.runId} 这一轮已经结束：补充记下了，下一轮（continue_code_run / fix_review）开始时交给编码 Agent。`;
-  },
-});
+      : r.stage === "review" ? `${r.runId} 已经写完代码、在评审中：补充记下了，随下一轮的任务交给编码 Agent。评审结束后要马上改就用 continue_code_run（不带 when）。`
+      : `${r.runId} 这一轮已经结束：补充记下了，下一轮（continue_code_run）开始时交给编码 Agent。`;
+}
 
 def({
   name: "revise_finding",
@@ -4789,22 +4779,16 @@ def({
   },
 });
 
-def({
-  name: "set_code_review",
-  description:
-    "改一次编码交办之后的评审：档位（可以比之前轻）、只做哪些评审项、要不要再拆需求。本人说“后面从简 / 只做最简评审 / 别再拆需求 / 这轮只要功能评审”时用；还没开始评审的这一轮就按新的来，之后的轮次（包括自动续轮）沿用，直到再改。不启动新的一轮。",
-  write: true,
-  schema: z.object({ run_id: z.string().describe("交办的任一运行 id"), ...roundReviewSchema }),
-  handler: async (ctx, a) => {
+/** continue_code_run with review settings only: how the rounds from now on are reviewed, no new round (code-steer.ts). */
+async function setLaterReview(ctx: ToolContext, a: ContinueArgs) {
     steerable(ctx, a.run_id);
     const review = await roundReviewOf(ctx, a);
-    if (!review) throw new HttpError(400, "review_tier、review_checks、split、rotate_models、review_executions 至少给一个");
+    if (!review) throw new HttpError(400, "review_tier、review_checks、split、rotate_models、review_executions 至少给一个（或者写 task 开下一轮）");
     const { setRoundReview } = await import("./code-steer.ts");
     const r = setRoundReview(ctx.app, a.run_id, review);
     const what = [r.review.tier ? `「${r.review.tier}」档` : "", r.review.checks?.length ? `只做 ${r.review.checks.join("、")}` : "", r.review.split === false ? "不拆需求" : r.review.split ? "照常拆需求" : "", r.review.rotate ? "每轮换模型" : r.review.rotate === false ? "不换模型" : "", r.review.ais ? `指定了 ${Object.keys(r.review.ais).join("、")} 的 AI` : ""].filter(Boolean).join("，");
     return `已设好评审：${what}。${r.current ? `${r.runId} 这一轮还没开始评审，就按这个来` : `${r.runId} 这一轮已经在评审，从下一轮开始`}；之后的轮次沿用。`;
-  },
-});
+}
 
 def({
   name: "stop_code_run",
@@ -4827,12 +4811,13 @@ def({
   schema: z.object({
     run_id: z.string().describe("交办编码或分支评审的运行 id（任一轮）"),
     request: z.string().max(20000).optional().describe("本人要怎么改，原话为主（如“按前端页面分组，每页下面再列变更点”）；不传就按需求材料重新整理一遍"),
+    execution: executionSchema.optional().describe("这次拆分用哪个 AI；不传按评审里给 split 指定的，再没有按角色设置"),
   }),
   handler: async (ctx, a) => {
     const r = getRun(ctx.app, a.run_id);
     for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const { requestSplit } = await import("./review-chain.ts");
-    const split = await requestSplit(ctx.app, r.id, { note: a.request, revise: true, userId: ctx.userId ?? OWNER });
+    const split = await requestSplit(ctx.app, r.id, { note: a.request, revise: true, userId: ctx.userId ?? OWNER, execution: validateExecution(ctx.app, a.execution) });
     return `已安排${(split.input as { revise?: boolean }).revise ? "重新整理需求拆分" : "需求拆分"}，运行 ${split.id}；完成后在运行页的“变更”里看，进度用 read_run 查看。`;
   },
 });
@@ -5217,16 +5202,14 @@ def({
 def({
   name: "code_branch",
   description:
-    "交办工作分支上的操作（只对本人，本人要求时用；进行中的交办先等这一轮结束）：status 列出每个仓库的工作分支、切出点、提交、推送状态和检出位置；rename 改分支名；checkout_main 把仓库目录切到这条分支（目录要干净），之后每轮的提交会快进到那里，本人可以在仓库目录直接运行验证；squash 把分支压缩成一个提交；sync 排一轮把另一个分支合并（或变基）进来，冲突交给编码 Agent。确认推送用 apply_code_run。",
+    "交办工作分支上的操作（只对本人，本人要求时用；进行中的交办先等这一轮结束）：status 列出每个仓库的工作分支、切出点、提交、推送状态和检出位置；rename 改分支名；checkout_main 把仓库目录切到这条分支（目录要干净），之后每轮的提交会快进到那里，本人可以在仓库目录直接运行验证；squash 把分支压缩成一个提交。把另一个分支合并（或变基）进来用 continue_code_run 的 sync（不写 task 就只做同步）；确认推送用 apply_code_run。",
   write: true,
   schema: z.object({
     run_id: z.string(),
-    action: z.enum(["status", "rename", "checkout_main", "squash", "sync"]),
+    action: z.enum(["status", "rename", "checkout_main", "squash"]),
     space: z.string().optional().describe("仓库空间 id；交办只有一个仓库时可不传（status 不用传）"),
     name: z.string().max(200).optional().describe("rename：新分支名"),
     message: z.string().max(10000).optional().describe("squash：压缩后的提交信息"),
-    onto: z.string().max(200).optional().describe("sync：要合并进来的分支（如 main、origin/main）"),
-    mode: z.enum(["merge", "rebase"]).optional().describe("sync：默认 merge"),
   }),
   handler: async (ctx, a) => {
     if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "分支操作只对本人开放");
@@ -5235,12 +5218,6 @@ def({
     for (const id of repos) inScope(ctx, id, "代码");
     const m = await import("./code-branch.ts");
     if (a.action === "status") return JSON.stringify(m.branchStatus(ctx.app, a.run_id));
-    if (a.action === "sync") {
-      if (!a.onto) throw new HttpError(400, "sync 要传 onto");
-      const { queueSyncRound } = await import("./code.ts");
-      const next = await queueSyncRound(ctx.app, a.run_id, { onto: a.onto, mode: a.mode ?? "merge" }, ctx.userId ?? OWNER);
-      return `已排一轮同步 ${next.id}：把 ${a.onto} ${a.mode === "rebase" ? "变基" : "合并"}到工作分支上。`;
-    }
     const sp = a.space ?? (repos.length === 1 ? repos[0] : null);
     if (!sp) throw new HttpError(400, `这次交办有几个仓库（${repos.join("、")}），传 space`);
     if (a.action === "rename") return JSON.stringify(m.renameWorkBranch(ctx.app, a.run_id, sp, a.name ?? ""));
@@ -6443,7 +6420,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
 }
 
 /** Tools the owner steers a delegation with: when used from another conversation of theirs, its reports follow there. */
-const STEERS_CODE = new Set(["message_code_run", "continue_code_run", "fix_review", "settle_code_task", "apply_code_run"]);
+const STEERS_CODE = new Set(["continue_code_run", "settle_code_task", "apply_code_run"]);
 
 /**
  * The conversation this call's run answers in becomes where the delegation reports (followOwner); a note

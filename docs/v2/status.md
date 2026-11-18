@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 编码交办往下做只剩 `continue_code_run`：开下一轮、按评审结论改（fix / later / wontfix）、交给正在跑的一轮（when=now）、只改之后的评审，都带编码和评审的 AI；`code_branch` 不再有 sync | 已实现（2026-11-19）；原来调 fix_review / message_code_run 的测试改成新写法后通过 | `src/agents/tools.ts` 的 `continue_code_run`、`fixFindings`、`messageRound`、`setLaterReview` |
 | 按评审项指定 AI（review.md“按评审项指定 AI”）：发起和续轮的编码、评审工具带 `review_executions`（评审项名、review-lead、split），点名的优先于轮换和跨模型选择，之后的轮次沿用；不用再为一次评审改角色默认设置 | 已实现（2026-11-19）；`test/branch-review.test.ts` 的复审用例校验未知评审项被拒、点名的进了运行 | `src/agents/review.ts` 的 `namedReviewAI`、`tools.ts` 的 `reviewAIsOf`、`review-chain.ts`、`code-loop.ts`、`code-overlap.ts` |
 | 复审已有分支（review.md“复审已有分支”）：`review_branch` 带 `rereview_of` / 概览“复审”沿用原评审再评一次，评审项拿到上次以后的增量和没结的旧问题，`submit_review.prior` 逐条判已修 / 仍在 / 不再适用，没人看的标没复核，仍在的严重问题让复审不通过；`revise_finding` 的 `comment` 登记问题发到评审平台的哪条评论，复审列出可以 resolve 的 | 已实现（2026-11-19）；`test/branch-review.test.ts` 假 ACP 跑通首评、复审、改写历史；网页用演示数据看过；真实模型和真实评审平台待验 | `src/agents/rereview.ts`、`review-chain.ts`、`tools.ts`、`web/src/components/ReviewSummary.vue` |
 | 反向连接（mesh.md §1.2）：连不到本机的设备也能调用本机。本机打开后一直连着它（控制连接、心跳、退避重连），它要访问本机时经控制连接请本机再连进来一条，在上面走普通 HTTP / ACP / 隧道；它那边自动记下本机（`back`），可借本机的 Agent 当 `peer` 后端；进来的连接不算本机请求；关掉时撤销令牌、对方忘掉本机 | 已实现（2026-11-19）；`test/peer-back.test.ts` 三台：经中间设备、直连、裸连接无令牌 401、借 ACP 后端跑一轮、关掉撤销；真机待验 | `src/core/peer-back.ts`、`peers.ts` 的 `backFetch`、`peer-tunnel.ts` 的 `connectOption`、`omem peer back`、`web/src/components/PeerSettings.vue` |

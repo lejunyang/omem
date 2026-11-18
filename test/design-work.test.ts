@@ -91,7 +91,7 @@ describe("a delegation that writes a design first", () => {
 
       // Words for the coder while it waits are kept for when coding starts; going on would skip the design.
       const ctx: ToolContext = { app, runId: ask.id, spaceId: "shop-api", spaces: ["shop-api", "personal"], tools: null, actor: "agent", userId: OWNER };
-      const said = await callTool(ctx, "message_code_run", { run_id: r1.id, text: "测试用例写在 refund.test.ts" });
+      const said = await callTool(ctx, "continue_code_run", { run_id: r1.id, when: "now", task: "测试用例写在 refund.test.ts" });
       expect(said.text).toContain("在等方案");
 
       // A comment: the same designer session writes the next version, the old card closes, a new one goes out.

@@ -60,7 +60,7 @@ export function roundStage(r: Run): "queued" | "coding" | "review" | "ended" {
 /** Add the owner's words to the delegation's current round. */
 export function addCodeNote(app: App, runId: string, text: string, by: string) {
   const r = latestRound(app, runId);
-  if ((r.input as { branches?: unknown }).branches) throw new HttpError(400, "分支评审不编码，没有编码 Agent 可以补充；要按评审修改用 fix_review");
+  if ((r.input as { branches?: unknown }).branches) throw new HttpError(400, "分支评审不编码，没有编码 Agent 可以补充；要按评审修改用 continue_code_run 带 fix");
   if (r.output.appliedAt || r.output.discardedAt) throw new HttpError(409, "这次交办已经应用或丢弃，工作区已释放；新的要求请重新交办");
   const note: CodeNote = { id: newId("note"), text: text.trim(), at: now(), by };
   if (!note.text) throw new HttpError(400, "补充的内容不能为空");

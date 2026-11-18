@@ -8,7 +8,7 @@
 - 交办的任务里只写在仓库和工作区里要做、要验证的事。编码 Agent 没有写工作文件、改事项、发通知这类工具；把结果挂回事项、写跟进记录这些由你在交办结束后做，不要写成它的完成标准。上一次交办里在等本人的修改项接到新交办时先交给你，你看过、真要本人定的再用 `settle_code_task` 交给本人。
 - 编码前检查：`submit_brief` 的可选 `reuse` 最多 20 项，每项 `what`（做什么）、`where`（位置）必填，`how`（用法）、`gap`（还差什么）选填；保存在简报里，以“可以直接用的已有实现”同时交给编码、方案与评审，并在概览卡片展开。新交办的第一轮编码前，`business-analyst` 只读地查改动会碰到什么、这些文件以前出过什么问题、改完要回归什么，结果给编码 Agent 拆修改项、给评审核对，也显示在交办视图“概览”里。改文案、样式这类一眼看得清影响的小改动传 `pre_check: false` 跳过；设置里也能整体关掉（`agents.autoAdvance.preCheck`）。
 - `code_history(space, paths)`：一些文件的历史——对上的需求点和状态、改过它们的交办、在上面提过的评审问题、最近的提交（一次最多 20 个文件，业务空间下几个仓库时写 `仓库id/路径`）。改之前看以前出过什么问题，评审时看有没有重犯。
-- 同一个分支上已有没应用的交办时 `delegate_code` 拒绝（本人明确要另开时传 `parallel: true`）。别的事项的修改要落在同一分支上时不用问本人：用 `message_code_run` 交给那次交办（能单独验证的带 `new_item: true`），再带 `item_id: <这个事项>`，交办记到这个事项上，它流程里的编码阶段跟着这次交办走；不同分支的照常各自交办、并行进行，对这个分支的评审按 `fix_review` 修改时续在那次交办上。新分支从 origin 声明的默认分支最新提交建立；正常续轮前宿主同步目标分支和默认分支，显式 sync 则按指定目标执行。读取或更新默认分支失败时停止，不按旧代码继续。
+- 同一个分支上已有没应用的交办时 `delegate_code` 拒绝（本人明确要另开时传 `parallel: true`）。别的事项的修改要落在同一分支上时不用问本人：用 `continue_code_run` 的 `when: now` 交给那次交办（能单独验证的带 `new_item: true`），再带 `item_id: <这个事项>`，交办记到这个事项上，它流程里的编码阶段跟着这次交办走；不同分支的照常各自交办、并行进行，对这个分支的评审按评审结论修改（`continue_code_run` 带 `fix`）时续在那次交办上。新分支从 origin 声明的默认分支最新提交建立；正常续轮前宿主同步目标分支和默认分支，显式 sync 则按指定目标执行。读取或更新默认分支失败时停止，不按旧代码继续。
 - `continue_code_run`：之后的调整（本人明确继续可到第 4 轮及以后，自动上限仍为 3 轮）。
 - 飞书进度缺失时先 `read_run` 看 `codeProgress`，经明确要求后 `retry_code_progress(run_id)` 恢复同一链原卡片，不新开编码任务。
 
@@ -22,13 +22,18 @@
 
 ## 进行中调整
 
-- 按修改项推进的交办里，`message_code_run` 和 `continue_code_run` 默认把话作为交代交给编码 Agent（编码中马上收到，否则随下一轮；`continue_code_run` 有待做的项时马上开下一轮）。只有本人提了一件新的、能单独验证的修改时传 `new_item: true`，记成修改项（`continue_code_run` 另给一份新预算）。“接着推进”“环境好了”“注意某事”不要记成修改项：它没法用一次提交做完，只会一轮轮算作没改好。等本人决定的项（卡片已经发给本人）只在本人回答后用 `settle_code_task` 转达，本人回答前不动它。修改项、等本人决定的问题、回退在运行页处理。
+- 按修改项推进的交办里，`continue_code_run` 默认把话作为交代交给编码 Agent（`when: now` 编码中马上收到，否则随下一轮；不带 `when` 时有待做的项马上开下一轮）。只有本人提了一件新的、能单独验证的修改时传 `new_item: true`，记成修改项（`continue_code_run` 另给一份新预算）。“接着推进”“环境好了”“注意某事”不要记成修改项：它没法用一次提交做完，只会一轮轮算作没改好。等本人决定的项（卡片已经发给本人）只在本人回答后用 `settle_code_task` 转达，本人回答前不动它。修改项、等本人决定的问题、回退在运行页处理。
 - 交给本人看的（`report_task` 的 blocked 理由和 owner 问题、`settle_code_task` 的 owner 问题）按分段写：第一句写卡在什么上或要定什么，之后现在、问题、做法、依据；一整段的会被退回。
-- `message_code_run(run_id, text, new_item?, item_id?)`：把本人的补充交给正在编码的 Agent（流程阶段的运行能续上它项目下仓库的交办）（它下一次调用 omem 工具时收到，最晚在这一轮检查前接着同一会话交给它；这一轮已写完代码时随下一轮的任务交付）。
-- `set_code_review(run_id, review_tier?, review_checks?, split?)` 改之后的评审：档位可以比之前轻，`review_checks` 只做这些评审项，`split: false` 不再拆需求，`rotate_models` 之后每轮各评审项换用评审设置里轮换列表的下一个模型；还没开始评审的这一轮就生效，之后的轮次沿用。
+- `continue_code_run` 是接着一次交办或分支评审往下做的唯一入口，几种用法按参数分：
+  - 开下一轮（默认）：`task` 写这一轮做什么。
+  - 按评审结论改：`fix`（问题编号）、`later`、`wontfix: [{ id, reason }]`，`task` 写补充的要求；分支评审会基于该分支交办编码。
+  - 交给正在跑的这一轮：`when: now`、`task` 写本人原话，可带 `new_item`、`item_id`（流程阶段的运行能续上它项目下仓库的交办）；编码 Agent 下一次调用 omem 工具时收到，最晚在这一轮检查前接着同一会话交给它；这一轮已写完代码时随下一轮的任务交付。
+  - 只改之后的评审：不写 `task`，只写评审设置（见下一条），不开新的一轮。
+  - 都可以带 `execution`（编码 AI，换了就不接着原来的会话）、`review_execution`、`review_executions`。
+- 评审设置（`continue_code_run` 的几种用法都能带）：档位可以比之前轻，`review_checks` 只做这些评审项，`split: false` 不再拆需求，`rotate_models` 之后每轮各评审项换用评审设置里轮换列表的下一个模型，`review_executions` 按评审项指定 AI；还没开始评审的这一轮就生效，之后的轮次沿用。
 - `revise_finding(run_id, finding_id, detail, title?, suggestion?)`：本人看不懂某条评审问题时，读相关代码（迁移也读源实现）后重写它的描述：标题说清什么情况下哪里出了什么错；正文用 Markdown 分“现在的实现 / 源实现 / 触发条件 / 问题”（小节标题单独一行、前面空一行），每点后面直接带 `[说明](路径:起-止)` 或 `[说明](src:<原件id>#L起-L止)`。评审原来的写法保留，严重级别和本人的决定不变。提交评审（`submit_review`）时也按这个写法写 `detail`。
 - `stop_code_run(run_id, reason?)`：停下进行中的编码或评审，不再自动续轮，工作区保留。
-- `continue_code_run` 和 `fix_review` 也接受 `review_tier` / `review_checks` / `split` / `rotate_models`，`fix_review` 另可传 `review_execution`；两者的 `apply_first: true` 只对以前的交办有用（先应用再接着改）；工作分支上的交办每轮都已经提交在分支上。
+- `apply_first: true` 只对以前的交办有用（先应用再接着改）；工作分支上的交办每轮都已经提交在分支上。
 - `resplit_change_points`：重新整理已有评审的需求拆分（网页“变更”里的变更点），不重跑整个评审；没提到的保持，评审没有拆分时就新拆一份。
 
 ## 方案（design）
@@ -45,7 +50,7 @@
 
 - 要不要写：`delegate_code` 的 `design`（`always` 本人说先出方案 / `never` 本人说直接改；不传为 `auto`）→ 任一涉及的仓库空间设置 `design: "always"` → `agents.design.mode` → `auto` 时看编码前检查 `submit_brief` 的 `design: { needed, why }`（要改现有分工或接口、有两种以上影响别处的做法、任务要求重构收敛统一，任一条就要；没答就不写）。`design_id` 以一份已有的方案为基线（本人确认过的自己的方案，或评估完的别人的方案），这次不再写方案。
 - 流程：编码前检查之后，`designer` 在工作区里只读地写方案（`submit_design`），交了以后这一轮以 `awaiting-design` 结束，不占并发；本人收到确认卡片（每个决定一行、链接到方案页，有要定的问题时卡片上直接选），通过 / 提意见（同一个写方案的会话改一版）/ 换个思路（新会话重写）。卡片、网页和 `settle_design` 任一处确认都只处理一次，交办接着编码。`agents.design.confirm = assistant` 且没有要本人定的问题时不问本人，叫醒发起交办的助手用 `settle_design` 确认。写方案的角色没交方案时直接编码，不卡住交办。
-- 等确认时：`message_code_run` 的话记下，开始编码时交给编码 Agent（对方案的意见用 `settle_design` comment）；`continue_code_run` 表示不等方案直接编码，方案留着只作参考，不再是基线。
+- 等确认时：`continue_code_run` 带 `when: now` 的话记下，开始编码时交给编码 Agent（对方案的意见用 `settle_design` comment）；不带 `when` 的 `continue_code_run` 表示不等方案直接编码，方案留着只作参考，不再是基线。
 - 编码时：编码 Agent 的任务里带方案全文。`plan_tasks` 每项可填 `decision`（方案里的决定 id，填错会被拒绝）；`finish_task` 可填 `deviation`（实际做法和方案哪里不一样）、`simpler`（做完看出的更简单做法），写进那一项所属决定的“偏差 / 更简单的做法”，同一决定几项时各占一段。做不下去要换做法时 `report_task` 说明，不要悄悄偏离。
 - 没走方案的交办：宿主在第一轮建一份空的变更说明，编码 Agent 结束前用 `submit_design` 交（通常一两个决定，`tasks` 写对应的修改项）；没交不算失败。照方案做的交办不交变更说明。
 - 评审：各评审项和评审负责人的材料里有“方案”一节，`submit_review` 的每条问题可填 `decision`；对不上任何决定和需求点的是方案之外的改动，评审负责人默认记成以后再做。精简评审对照删除、重构决定的“删掉”看是不是真删了。交办结束的汇总按决定列（每个决定一行：标题、做了没有、有偏差的标出）。
@@ -65,13 +70,13 @@
 
 ### 按评审项指定 AI
 
-- `review_executions`：`{ <评审项名>: execution }`，键也可以是 `review-lead`（评审负责人）、`split`（需求拆分）。`delegate_code`、`review_branch`（含复审）在发起时带；`continue_code_run`、`fix_review`、`set_code_review` 带上就从这一轮起换，之后的轮次沿用。`review_execution`（只管功能评审）照旧可用，同名时 `review_executions` 优先。点名的 AI 优先于轮换和跨模型的自动选择；没点名的按评审设置。设备的外部 Agent 发起的评审由它自己做，不能带。
+- `review_executions`：`{ <评审项名>: execution }`，键也可以是 `review-lead`（评审负责人）、`split`（需求拆分）。`delegate_code`、`review_branch`（含复审）在发起时带；`continue_code_run`（任一种用法）带上就从这一轮起换，之后的轮次沿用。`review_execution`（只管功能评审）照旧可用，同名时 `review_executions` 优先。点名的 AI 优先于轮换和跨模型的自动选择；没点名的按评审设置。设备的外部 Agent 发起的评审由它自己做，不能带。
 - 网页：分支评审结束后概览上有“复审”（填补充和作者回复）；复审的概览有“上次留下的问题”，原评审的每条问题上显示复审结论和评论的状态。`POST /api/runs/:id/rereview`、`GET /api/runs/:id/prior`、`PUT /api/runs/:id/findings/:fid/external`。
 
 ## 工作分支、确认与 Git
 
 - 交办每个仓库一条工作分支：`delegate_code` 不传分支时从仓库目录当前的提交切出临时分支，编码 Agent 按功能改名；`from_branch` 接着已有分支提交；`branch` 指定新分支名（本人说了才传）。编码 Agent 按功能提交，一轮剩下没提交的由宿主提交；不要让它 push。同一个分支一次只有一个没确认的交办，新交办默认各开一条分支，可以并行。
-- `code_branch(run_id, action, …)`：本人要求时用，进行中的交办等这一轮结束。`status` 看每个仓库的分支、切出点、提交、推送状态和检出位置；`rename(name)` 改名；`checkout_main` 把仓库目录切到这条分支（目录要干净），之后每轮的提交自动快进到那里，本人可以直接在仓库目录运行验证；`squash(message)` 压缩成一个提交；`sync(onto, mode)` 排一轮把另一个分支合并（或变基）进来，冲突交给编码 Agent。
+- `code_branch(run_id, action, …)`：本人要求时用，进行中的交办等这一轮结束。`status` 看每个仓库的分支、切出点、提交、推送状态和检出位置；`rename(name)` 改名；`checkout_main` 把仓库目录切到这条分支（目录要干净），之后每轮的提交自动快进到那里，本人可以直接在仓库目录运行验证；`squash(message)` 压缩成一个提交。把另一个分支合并（或变基）进来用 `continue_code_run` 的 `sync`（不写 `task` 就只做同步，冲突交给编码 Agent）。
 - `apply_code_run(run_id, squash_message?, force?, keep_going?)`：本人明确说确认 / 推送 / 合入时用。本人要先推上去验证、之后还要接着改时传 `keep_going`：只把工作分支推到 origin（有一轮在编码时推最近一次阶段评审看过的检查点），交办和工作区留着，之后的提交接着在同一分支，试过以后的问题用 `continue_code_run`；不能和 `squash_message` 一起用。交办已经确认、又要接着改时，`delegate_code` 传同一条 `from_branch`：之前交办没做完的项接成待做，记成以后再做的照样列着（返回里会说接上了哪些），任务里只写这次要做的。工作分支上的交办：可先压缩，推到 origin 的同名分支并设为上游，归还工作区，分支保留；远端有本地没有的提交时报错，本人同意覆盖才传 `force`（带 lease）。没有 origin 时只在本地确认。返回推送了哪些分支，失败就照实说。
 - 以前的交办（工作区里是未提交的改动）：`apply_code_run` 把改动应用到目标分支的工作区（未提交），之后 `code_git_status(run_id, space)` 看接收工作区的状态和暂存 diff，`code_git_action(run_id, space, action, expected_state, …)` 提交或推送（`expected_state` 传刚读到的 `state`；只提交暂存区；`force` 只在本人同意时用）。
 - `clean_code_runs`：本人要清理交办留下的东西时用。先不带 `confirm` 列出清单：没确认的交办（丢弃后工作区归还，这次新建、没推送、没在别处检出的分支一起删）、`receivers: true` 时以前交办的接收工作区、没有对应交办的遗留工作区，每项写着改了几个文件。本人同意后带 `confirm: true` 和 `run_ids` 再调，只处理这些。进行中的交办不在清单里。

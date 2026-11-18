@@ -250,7 +250,7 @@ export function itemOnBranch(app: App, repos: string[], branch: string | null | 
 }
 
 // `withSameBranch`: the owner looked at the other reviews of the same branch too (sameBranchWork); their findings may be chosen, and what is left there waits as well.
-export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; reviewExecution?: Execution; applyFirst?: boolean; withSameBranch?: boolean }, userId: string): Promise<Run> {
+export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; execution?: Execution; reviewExecution?: Execution; applyFirst?: boolean; withSameBranch?: boolean }, userId: string): Promise<Run> {
   const runs = workRuns(app, runId);
   const last = getRun(app, runs.at(-1)!);
   if (!req.findingIds.length && !req.text?.trim()) throw new HttpError(400, "选几个要改的问题，或者写下要改什么");
@@ -292,7 +292,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   // A reviewed branch that a delegation is already changing: the fix is that delegation's next round.
   const into = branchReview || applied ? openDelegationOn(app, repos, Object.values(input.branches ?? {})[0]?.branch ?? Object.values(confirmedOn)[0], userId) : last;
   if (into && (branchReview || applied) && ["queued", "running"].includes(into.status))
-    throw new HttpError(409, `交办 ${into.id}（${into.title}）正在改同一个分支，等这一轮结束再改；要马上加要求，补充给正在编码的 Agent（运行页“补充”或 message_code_run）`);
+    throw new HttpError(409, `交办 ${into.id}（${into.title}）正在改同一个分支，等这一轮结束再改；要马上加要求，补充给正在编码的 Agent（运行页“补充”或 continue_code_run 带 when=now）`);
   if (req.applyFirst && (!into || into !== last)) throw new HttpError(400, "分支评审没有可应用的改动；先应用要在交办编码上做");
   if (into) {
     // Applied as a patch: the change sits in the target folder, maybe uncommitted, where a new delegation would not see it.
@@ -331,7 +331,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     const landed = !branchReview && branchWork(app, into.id, userId).some((w) => !!w.appliedAt && w.appliedAt > root.createdAt);
     // The owner starts this round here: this machine's coding and review Agents do it, also when an
     // outside Agent coded or reviewed the rounds before (their peerCoder / peerReviewer stay behind).
-    const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}), ...(landed ? { sync: { pull: true } } : {}), peerCoder: undefined, peerReviewer: undefined };
+    const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}), ...(req.execution ? { execution: req.execution } : {}), ...(landed ? { sync: { pull: true } } : {}), peerCoder: undefined, peerReviewer: undefined };
     const intoRuns = workRuns(app, into.id);
     // Fixing chosen findings: the next round re-reviews only the checks that raised them, and every
     // check every `rereviewAllEvery` rounds (as when review-lead names them). The owner's own words,
@@ -340,7 +340,8 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     const reviewOnly = chosen.length && !req.text?.trim() && !req.review?.checks?.length && (intoRuns.length + 1) % every !== 0 ? [...new Set(chosen.map((f) => f.check_name))] : undefined;
     if (!chain) return accepted(queueStandaloneFix(app, intoRuns[0], into.id, task, userId, { ...extraInput, ...(req.review ? { roundReview: req.review } : {}), reviewOnly }));
     const sessionId = intoRuns.map((id) => (getRun(app, id).output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
-    const next = queueNextCodeRound(app, chain, task, { resumeSessionId: sessionId, manual: true, roundReview: req.review, reviewExecution: req.reviewExecution, reviewOnly, extraInput });
+    // Another coder AI cannot resume the old one's session.
+    const next = queueNextCodeRound(app, chain, task, { resumeSessionId: req.execution ? undefined : sessionId, manual: true, roundReview: req.review, execution: req.execution, reviewExecution: req.reviewExecution, reviewOnly, extraInput });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续");
     return accepted(next.run);
   }
@@ -356,7 +357,9 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
       itemId: input.itemId,
       reviewTier: input.reviewTier,
       roundReview: req.review,
+      execution: req.execution,
       reviewExecution: req.reviewExecution,
+      reviewExecutions: (input as { reviewExecutions?: Record<string, Execution> }).reviewExecutions,
       fromReview: root.id,
       // Others may have pushed to the branch since it was confirmed: start from origin's latest.
       ...(applied ? { sync: { pull: true } } : {}),

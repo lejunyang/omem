@@ -181,13 +181,13 @@ const SPLIT_BRIEF = [
  * next to the checks when the tier has no business check, or on request for an earlier review.
  * The business reviewer's role does it, reading what the checks read.
  */
-export async function splitChangePoints(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; revise?: boolean } = {}) {
+export async function splitChangePoints(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; revise?: boolean; execution?: Execution } = {}) {
   const { run, input, cwd, spaces, indexed, reviewTask, branchReview, root } = await reviewContext(app, codeRunId);
   // A branch review held against a design (designs/): its split puts the files under the decisions.
   // With no design it stays the requirement's change points, as does a delegation's (its tasks name
   // their decisions themselves).
   const design = branchReview ? (await import("../designs/store.ts")).designForWork(app, root) : null;
-  if (design && design.origin !== "derived" && design.revision) return splitOntoDesign(app, run, rc, { cwd, spaces, indexed, reviewTask, execution: namedReviewAI(run.input as CodeInput, "split") }, opts.note);
+  if (design && design.origin !== "derived" && design.revision) return splitOntoDesign(app, run, rc, { cwd, spaces, indexed, reviewTask, execution: opts.execution ?? namedReviewAI(run.input as CodeInput, "split") }, opts.note);
   // Reworking an earlier split: the points as they stand and what the owner wants changed.
   const before = opts.revise ? currentPoints(app, run) : [];
   const revise = [
@@ -208,7 +208,7 @@ export async function splitChangePoints(app: App, codeRunId: string, rc: RoundCo
     onEvent: (e) => rc.event(e.type, { ...e, phase: "reviewer", check: "split" }),
     profileId: app.config.agents.roles["review-business"],
     userId: runUser(app, run.id),
-    execution: namedReviewAI(run.input as CodeInput, "split"),
+    execution: opts.execution ?? namedReviewAI(run.input as CodeInput, "split"),
   });
   const saved = (getRun(app, run.id).output as { changePoints?: { round: number } }).changePoints;
   if (saved?.round !== roundOf(run)) throw new Error("没有提交变更点");
@@ -251,7 +251,7 @@ async function splitOntoDesign(app: App, run: Run, rc: RoundContext, c: SplitCon
  * A split of its own for a delegation's or branch review's latest round, as a `review` run: for an
  * earlier review that has none, or (`revise`) reworking the points it has by the owner's note.
  */
-export async function requestSplit(app: App, runId: string, opts: { note?: string; revise?: boolean; userId: string }) {
+export async function requestSplit(app: App, runId: string, opts: { note?: string; revise?: boolean; userId: string; execution?: Execution }) {
   const { workRuns } = await import("./review-fix.ts");
   const last = getRun(app, workRuns(app, runId).at(-1)!);
   if (last.kind !== "code" || !last.output.reviewPlan) throw new HttpError(400, "只有评审过的交办或分支评审能拆分需求");
@@ -261,7 +261,7 @@ export async function requestSplit(app: App, runId: string, opts: { note?: strin
   }
   return createRun(app, {
     kind: "review", spaceId: last.spaceId, title: `${revise ? "重新整理需求拆分" : "需求拆分"}：${last.title.slice(0, 60)}`,
-    input: { codeRunId: last.id, splitOnly: true, revise, note: opts.note?.trim() || undefined }, parentId: last.id, userId: opts.userId,
+    input: { codeRunId: last.id, splitOnly: true, revise, note: opts.note?.trim() || undefined, ...(opts.execution ? { execution: opts.execution } : {}) }, parentId: last.id, userId: opts.userId,
   });
 }
 
@@ -914,9 +914,9 @@ registerAskHandler("review-escalation",(app, ask, ctx) => onEscalationAnswer(app
 
 // A confirmed plan reviews in a run of its own; the coding run it reviews keeps the results.
 registerHandler("review", async (ctx) => {
-  const { codeRunId, note, splitOnly, revise, only } = ctx.run.input as { codeRunId: string; note?: string; splitOnly?: boolean; revise?: boolean; only?: string[] };
+  const { codeRunId, note, splitOnly, revise, only, execution } = ctx.run.input as { codeRunId: string; note?: string; splitOnly?: boolean; revise?: boolean; only?: string[]; execution?: Execution };
   if (splitOnly) {
-    await splitChangePoints(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note, revise });
+    await splitChangePoints(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note, revise, execution });
     return { changePoints: true };
   }
   const { isTaskWork } = await import("./code-tasks.ts");

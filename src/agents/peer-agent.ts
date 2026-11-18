@@ -36,7 +36,7 @@ export const PEER_DENY = new Set([
   "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "refresh_item_notification", "notify",
   "ask_user", "wait_answer", "withdraw_ask", "suggest_next", "wake_later", "wake_on_message", "cancel_wake",
   "continue_agent_work", "switch_run_ai", "generate_wiki", "digest_sources",
-  "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress",
+  "continue_code_run", "stop_code_run", "resplit_change_points", "retry_code_progress",
   "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action",
   "connect_repository", "save_agent", "save_skill", "organize_skills", "save_rule", "ignore_notification_rule",
 ]);

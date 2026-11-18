@@ -159,9 +159,11 @@ describe("reviewing an existing branch", () => {
 
       expect(() => applyCodeRun(app, r.id)).toThrow(/分支评审/);
       const ctx: ToolContext = { app, runId: ask.id, spaceId: "shop-api", spaces: null, tools: null, actor: "agent" };
-      const cont = await callTool(ctx, "continue_code_run", { run_id: r.id, task: "按意见改" });
+      // The review itself has no coder: words for a round in progress are refused (fixing it is a new
+      // delegation on the branch, continue_code_run with fix / task, tested below).
+      const cont = await callTool(ctx, "continue_code_run", { run_id: r.id, when: "now", task: "按意见改" });
       expect(cont.isError).toBe(true);
-      expect(cont.text).toMatch(/from_branch/);
+      expect(cont.text).toMatch(/分支评审不编码/);
 
       discardCodeRun(app, r.id);
       // (On Windows the folder can outlive the worktree while review sessions still sit in it.)
@@ -229,7 +231,7 @@ describe("reviewing an existing branch", () => {
       expect(materialsBrief(app, item.id, "owner")).toContain("命名沿用源仓库");
 
       const ctx: ToolContext = { app, runId: null, spaceId: "shop-api", spaces: null, tools: null, actor: "agent" };
-      const res = await callTool(ctx, "fix_review", { run_id: r.id, fix: [major.id], later: [minor.id], text: "另外：部分退款要记操作日志" });
+      const res = await callTool(ctx, "continue_code_run", { run_id: r.id, fix: [major.id], later: [minor.id], task: "另外：部分退款要记操作日志" });
       expect(res.isError).toBeFalsy();
       const fixRun = getRun(app, /运行 (r\w+)/.exec(res.text)![1]);
       const input = fixRun.input as { task: string; fromBranches: Record<string, string>; itemId: string; fromReview: string };

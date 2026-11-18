@@ -4,7 +4,7 @@ import { replyProblem, reviseNote, type ReplyContext } from "./reply-quality.ts"
 import { getRun, setRunOutput, type RunContext } from "./runs.ts";
 
 /** Tools that arrange for the turn to come back: after one of them “我去看看” is a true statement. */
-const FOLLOW_UP = ["wake_later", "wake_on_message", "delegate_code", "continue_code_run", "review_branch", "fix_review", "run_agent", "continue_agent_work", "ask_agent", "ask_user", "generate_wiki", "digest_sources", "split_requirements"];
+const FOLLOW_UP = ["wake_later", "wake_on_message", "delegate_code", "continue_code_run", "review_branch", "run_agent", "continue_agent_work", "ask_agent", "ask_user", "generate_wiki", "digest_sources", "split_requirements"];
 
 function turnContext(ctx: Pick<RunContext, "app" | "run">): ReplyContext {
   const { app, run } = ctx;

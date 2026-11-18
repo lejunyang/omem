@@ -28,7 +28,7 @@ export function latestCodeWork(app: App, item: Item): CodeWorkDetail | null {
 }
 
 /**
- * This item's change went into another item's delegation on the same branch (message_code_run with
+ * This item's change went into another item's delegation on the same branch (continue_code_run when=now with
  * item_id): the delegation is listed on this item too, and its flow follows it like its own.
  */
 export function joinCodeWork(app: App, item: Item, rootId: string) {

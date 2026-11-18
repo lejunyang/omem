@@ -8,7 +8,7 @@ import { fmtTime, toast } from "../store";
 /**
  * A coding delegation while it runs (src/agents/code-steer.ts): the owner's words for the coding
  * Agent without waiting for the round to end, and the review the rounds get from now on. The same
- * as telling the assistant (message_code_run / set_code_review).
+ * as telling the assistant (continue_code_run).
  */
 type Note = { id: string; text: string; at: string; deliveredAt?: string };
 type RoundReview = { tier?: string; checks?: string[]; split?: boolean; rotate?: boolean };

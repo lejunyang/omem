@@ -60,7 +60,7 @@ describe("delegate_code from a run that writes only its project space", () => {
     const runId = /运行 (r\w+)/.exec(first.text)![1];
     expect(latestCodeWork(app, getItem(app, b.id))).toBeNull();
 
-    const joined = await callTool(ctx, "message_code_run", { run_id: runId, text: "退款单号在列表里显示不全，改成完整显示", new_item: true, item_id: b.id });
+    const joined = await callTool(ctx, "continue_code_run", { run_id: runId, when: "now", task: "退款单号在列表里显示不全，改成完整显示", new_item: true, item_id: b.id });
     expect(joined.isError, joined.text).toBe(false);
     expect(latestCodeWork(app, getItem(app, b.id))?.rootId).toBe(latestCodeWork(app, getItem(app, a.id))?.rootId);
     run(app.db, "update runs set status = 'cancelled' where kind = 'code'");
