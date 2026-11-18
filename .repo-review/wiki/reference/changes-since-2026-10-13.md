@@ -15,6 +15,12 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 流程的进度卡只说发生了什么，阶段任务只带摘要（11-18）
+
+- `src/flows/store.ts`：`changeStage` 只在助手或宿主让一段做完、跳过、卡住、待复核时记一行进度，流程走完时也记（`engine.ts` 的 `end`）；开始、关卡和本人自己的操作不发卡。卡片正文是这些行加一行“现在 · 在做 / 等你开始 / 卡住”，不再列全部阶段；去掉运行和提问编号，`waitText` 防止“等等本人”。
+- `src/items/materials.ts` 的 `materialsBrief`、`src/items/requirements.ts` 的 `reqBrief` 加 `compact`：流程阶段的任务里说明截到 1500 字、材料最近 12 份、需求点只列标题，进行的地方最近 5 处（`engine.ts` 的 `placesBrief`）。一件做了很多轮的事以前给部署这类阶段带了约 40KB 的历史。
+- `stage_report` 的说明要求 note、waiting_on 写给本人看，不带内部编号。
+
 ## 接管 Agent 自带的技能，按分组给总入口（11-18）
 
 - 新的 `src/agents/agent-skills.ts` 和 `skill-groups.ts`，设计见 `docs/v2/agent-skills.md`。打开 `agentSkills.takeOver`（默认关）后，定时扫描 `catalog.ts` 里各条目 `skills.read` 列出的目录（Codex：`$CODEX_HOME/skills`、`~/.agents/skills`；TraeX：`$TRAE_HOME/skills`、`~/.agents/skills`；Claude Code：`$CLAUDE_CONFIG_DIR/skills`），把里面的技能复制进 `library/_skills`。原件移进 `agent-skills/backup/<时间>/` 并写 manifest，链接只删除。技能按名称前缀归组，分组、用途和开关记在 `library/skill-groups.json`。

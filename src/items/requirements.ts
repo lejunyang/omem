@@ -376,7 +376,8 @@ const STATUS_LABEL: Record<string, string> = { done: "已实现", partial: "部�
  * delegation's or review's task: what to build and check, the test points, what is not confirmed yet,
  * business changes since a time, and the other side of cross-business links.
  */
-export function reqBrief(app: App, ids: string[], opts: { since?: string } = {}) {
+const COMPACT_REQ_LINES = 60;
+export function reqBrief(app: App, ids: string[], opts: { since?: string; compact?: boolean } = {}) {
   const roots = ids.map((id) => findReq(app, id)).filter((n): n is ReqNode => !!n && n.status === "active");
   if (!roots.length) return "";
   const seen = new Set<string>();
@@ -394,6 +395,7 @@ export function reqBrief(app: App, ids: string[], opts: { since?: string } = {})
       const state = states.get(n.id);
       const tags = [!n.confirmed ? "待本人确认" : "", state ? `上一次评审：${STATUS_LABEL[state.status] ?? state.status}` : ""].filter(Boolean).join("，");
       lines.push(`${pad}- [${REQ_KIND_LABEL[n.kind]} ${n.id}] ${n.title}${tags ? `（${tags}）` : ""}`);
+      if (opts.compact) continue;
       if (n.body) lines.push(n.body.split("\n").map((l) => `${pad}  ${l}`).join("\n"));
       if (n.acceptance) lines.push(`${pad}  验收：${n.acceptance.replace(/\n/g, `\n${pad}  `)}`);
       if (n.refs.length) lines.push(`${pad}  依据：${n.refs.join(" ")}`);
@@ -410,8 +412,8 @@ export function reqBrief(app: App, ids: string[], opts: { since?: string } = {})
   }
   return [
     "## 需求点（需求树里这个事项圈定的部分）",
-    "编号是需求点的固定 id。按点实现和检查；“待本人确认”的是 Agent 拆出来、本人还没确认的，有疑问照实说明。测试点要有对应的测试。",
-    lines.join("\n"),
+    opts.compact ? "这里只列标题；某一点的说明、验收口径和依据用 req_read 看。" : "编号是需求点的固定 id。按点实现和检查；“待本人确认”的是 Agent 拆出来、本人还没确认的，有疑问照实说明。测试点要有对应的测试。",
+    opts.compact && lines.length > COMPACT_REQ_LINES ? `${lines.slice(0, COMPACT_REQ_LINES).join("\n")}\n……另有 ${lines.length - COMPACT_REQ_LINES} 行，用 req_read 看` : lines.join("\n"),
     changed.length ? `### 业务变更（上一轮之后）\n\n${changed.join("\n")}` : "",
     crossLinks.length ? `### 关联的其他业务（用 req_read 看对方）\n\n${[...new Set(crossLinks)].join("\n")}` : "",
   ].filter(Boolean).join("\n\n");

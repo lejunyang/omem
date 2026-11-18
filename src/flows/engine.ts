@@ -31,7 +31,7 @@ import { isFixes, tickFixes, cancelFixReruns, fixModelStage, fixMinutes } from "
 import { pushAuthorized, pushSummary } from "../studies/push.ts";
 import { isClosed } from "../items/store.ts";
 import { initFollow, followContexts, followLimit, followView, shownChanges, changesBrief } from "./follow.ts";
-import { atomic, changeStage, flushProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
+import { atomic, changeStage, flushProgress, markProgress, getStage, itemFlow, itemStages, stageLog, roundHistory, type FlowActor, type ItemFlow, type StageRow, type StageControl } from "./store.ts";
 import { saveReview, storedReview, type FlowEnd } from "./review.ts";
 import { stopCodeWork } from "../agents/code-steer.ts";
 
@@ -143,12 +143,19 @@ function gate(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: "when" | "
   changeStage(app, f.itemId, d.id, "gated", { askId, waitingOn: "owner", control: { ...s.control, question: kind, gateLimit: limit } }, host, kind === "when" ? "等本人判断这一段是否需要" : "等本人确认开始", [], kind === "when" ? "when-ask" : limit ? "limit-ask" : "gate-ask");
 }
 
+// The few most recent places; read_item lists them all with their latest lines.
+function placesBrief(app: App, item: Item) {
+  const all_ = itemPlaces(app, item.id, item.userId), shown = all_.slice(-5);
+  if (!all_.length) return "进行的地方：尚未关联会话";
+  return `进行的地方（最近 ${shown.length} 处${all_.length > shown.length ? `，共 ${all_.length} 处，用 read_item 看全部` : ""}）：\n${shown.map((p) => `- ${p.title.slice(0, 80)}（${p.ref}）：${p.summary.slice(0, 200)}`).join("\n")}`;
+}
+
 async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedback?: string) {
   const rows = itemStages(app, item.id);
   const planner = d.tools?.includes("propose_directions");
-  return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : materialsBrief(app, item.id, item.userId), `截止时间：${item.dueAt ?? "未定"}`,
+  return [planner ? `## 所属事项：${item.title}（${item.id}）\n${item.detail}\n\n${await planningMaterials(app, item)}` : materialsBrief(app, item.id, item.userId, { compact: true }), `截止时间：${item.dueAt ?? "未定"}`,
     changesBrief(app, item.id),
-    `进行的地方：\n${itemPlaces(app, item.id, item.userId).map((p) => `- ${p.title}（${p.ref}）：${p.summary}`).join("\n") || "尚未关联会话"}`,
+    placesBrief(app, item),
     `## 流程：${f.definition.name}\n${f.definition.stages.map((s) => `- ${s.id} ${s.name}：${rows.find((r) => r.id === s.id)?.state ?? "pending"}`).join("\n")}`,
     `## 这一段：${d.name}（${d.id}）\n${d.note ?? ""}`,
     `完成要求：${typeof d.done === "string" ? d.done : d.done ? JSON.stringify(d.done) : "做完这一段并附上依据"}`,
@@ -660,6 +667,8 @@ async function end(app: App, id: string, note: string, how: FlowEnd) {
     const lastDef = itemFlow(app, id)!.definition.stages.find((d) => d.id === last.id);
     const keepSummary = lastDef && (isFixes(lastDef) || lastDef.tools?.includes("record_finding"));
     changeStage(app, id, last.id, last.state, {}, host, keepSummary && last.note ? `${last.note}\n${note}` : note);
+    // Stopping or closing is the owner's own doing; only a flow that ran to its end is news.
+    if (how === "completed") markProgress(app, id, "流程走完了");
     if (last.control.recorded) run(app.db, "update item_stages set note=? where item_id=? and stage_id=?", last.note, id, last.id);
   }
   // The review is figures from the records, no model; it may queue the coach for the definition (review.ts).

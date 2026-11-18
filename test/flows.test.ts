@@ -98,6 +98,21 @@ describe("流程定义", () => {
 });
 
 describe("阶段推进", () => {
+  it("阶段的任务只带事项的摘要：说明过长截断、材料只列最近的十几份，其余提示用 read_item 看", async () => {
+    const app = appFor();
+    const item = upsertItem(app, undefined, { title: "示例商城退款", detail: `最新：按行退款已提测。${"很早以前的过程记录。".repeat(600)}`, spaceId: "personal" }, "user");
+    const runs = Array.from({ length: 20 }, (_, i) => createRun(app, { kind: "agent", spaceId: "personal", title: `第 ${i + 1} 次交办` }).id);
+    addMaterials(app, item.id, runs.map((ref) => ({ kind: "run" as const, ref })), item.userId);
+    saveFlow(app, yaml([stage("a")]), "user");
+    await startFlow(app, item.id, "demo", owner);
+    const task = getRun(app, getStage(app, item.id, "a").by!).input.task as string;
+    expect(task).toContain("最新：按行退款已提测");
+    expect(task).toContain("完整的用 read_item 看");
+    expect(task).toContain("第 20 次交办");
+    expect(task).not.toContain("第 1 次交办");
+    expect(task).toContain("另有 8 份较早的材料");
+    expect(task.length).toBeLessThan(4000);
+  });
   it("顺序推进，定义复制，任务复用事项材料并注明技能、完成工具与触发方式", async () => {
     const { app, item, s } = await setup([stage("a", { note: "调查需求。保留依据", by: { run: { skill: "demo-skill" } } }), stage("b"), stage("c", { by: "owner" })]);
     expect(s("a")).toMatchObject({ state: "doing", attempt: 1 });
@@ -194,15 +209,14 @@ describe("阶段推进", () => {
     await done(app, item.id, "b"); await ownerAction(app, item.id, "d", "done", "已核验");
     await ownerAction(app, item.id, "a", "reopen", "本人重开已结束流程"); expect(itemFlow(app, item.id)!.endedAt).toBeNull();
   });
-  it("进度通知形成 replaces 链，停止撤回提问且结束后不再推进", async () => {
+  it("停止撤回提问且结束后不再推进；本人自己暂停、停止不发进度卡", async () => {
     const { app, item, s } = await setup([stage("a", { gate: "confirm" })]);
-    const first = itemFlow(app, item.id)!.card!; const ask = s("a").askId!;
-    await ownerAction(app, item.id, "a", "hold"); const second = itemFlow(app, item.id)!.card!;
-    expect(jsonContext(app, second).replaces).toBe(first);
+    const ask = s("a").askId!;
+    await ownerAction(app, item.id, "a", "hold");
     expect(getAsk(app, ask).status).toBe("cancelled");
     await stopFlow(app, item.id); expect(itemFlow(app, item.id)!.endedAt).toBeTruthy();
     await advance(app, item.id); expect(s("a").state).toBe("gated");
-    expect(jsonContext(app, itemFlow(app, item.id)!.card!).urgency).toBe("later");
+    expect(itemFlow(app, item.id)!.card).toBeFalsy();
   });
   it("提醒间隔从 2 天到 4 天，先别做重新计时", async () => {
     const { app, item, s } = await setup([stage("a", { gate: "confirm" })]);
@@ -222,14 +236,24 @@ describe("阶段推进", () => {
 function jsonContext(app: App, id: string): Record<string, unknown> { return JSON.parse(one<{ context: string }>(app.db, "select context from notifications where id=?", id)!.context); }
 
 describe("只有本人能定的事", () => {
-  it("一次操作只发一张进度卡：开始一个四段的流程是一条通知，不是每段一条", async () => {
-    const { app, item } = await setup([stage("a", { gate: "confirm" }), stage("b"), stage("c"), stage("d")]);
-    const cards = all<{ id: string }>(app.db, "select id from notifications where json_extract(context, '$.entityId') = ?", item.id);
-    expect(cards).toHaveLength(1);
+  it("进度卡只说发生了什么：开始流程、本人自己的操作不发；助手一次推进几段是一张卡，新卡替换旧卡", async () => {
+    const { app, item, s } = await setup([stage("a", { gate: "confirm" }), stage("b"), stage("c"), stage("d")]);
+    const cards = () => all<{ id: string; body: string }>(app.db, "select id, body from notifications where json_extract(context, '$.entityId') = ?", item.id);
+    expect(cards()).toHaveLength(0);
     await ownerAction(app, item.id, "a", "confirm");
-    // The confirmation moved one stage from gated to doing: one more card, replacing the first.
-    expect(all(app.db, "select id from notifications where json_extract(context, '$.entityId') = ?", item.id)).toHaveLength(2);
-    expect(jsonContext(app, itemFlow(app, item.id)!.card!).replaces).toBe(cards[0].id);
+    expect(cards()).toHaveLength(0);
+    const agent = { actor: "assistant", userId: "owner" };
+    await ownerAction(app, item.id, "a", "done", "本人自己做完了");
+    expect(cards()).toHaveLength(0);
+    await reportStage(app, item.id, "b", { state: "blocked", note: "部署失败（ask0mabcdefgh1234567）", waitingOn: "等本人给环境" }, agent);
+    const [first] = cards().slice(-1);
+    expect(first.body).toContain("「b」卡住了，等本人给环境：部署失败");
+    expect(first.body).not.toContain("等等");
+    expect(first.body).not.toContain("ask0");
+    expect(first.body).toMatch(/现在 · .*卡住：b/);
+    expect(first.body).not.toContain("· c");
+    await reportStage(app, item.id, "b", { state: "skip", note: "这次不用" }, agent);
+    expect(jsonContext(app, itemFlow(app, item.id)!.card!).replaces).toBe(first.id);
   });
   it("本人承担的阶段，助手说做完了只会变成问本人的确认；本人确认才完成", async () => {
     const { app, item, s } = await setup([{ id: "push", name: "推送", by: "owner" }, stage("deploy")]);
