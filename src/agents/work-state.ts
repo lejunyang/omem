@@ -69,9 +69,12 @@ export function mergePersonCards(app: App, opts: { dryRun?: boolean } = {}) {
     let who: { id?: string | null; name: string; email?: string | null } = { name };
     if (tag) {
       const byEmail = one<{ email: string; cli_open_id: string | null }>(app.db, "select email, cli_open_id from lark_people where email like ? escape '\\' and name = ?", `${tag.replace(/[%_\\]/g, "\\$&")}@%`, name);
-      const byId = byEmail ? undefined : one<{ email: string | null; cli_open_id: string }>(app.db, "select email, cli_open_id from lark_people where cli_open_id like ? and name = ?", `%${tag}`, name);
+      // An id's tail: the sender's id as it was then, lark-cli's open_id or the bot's (open_id, user_id).
+      const like = `%${tag.replace(/[%_\\]/g, "\\$&")}`;
+      const byId = byEmail ? undefined : one<{ email: string | null; id: string }>(app.db,
+        "select email, coalesce(case when cli_open_id like ?1 escape '\\' then cli_open_id end, case when bot_open_id like ?1 escape '\\' then bot_open_id end, user_id) id from lark_people where name = ?2 and (cli_open_id like ?1 escape '\\' or bot_open_id like ?1 escape '\\' or user_id like ?1 escape '\\')", like, name);
       if (!byEmail && !byId) continue;
-      who = { name, id: (byEmail ?? byId)!.cli_open_id, email: (byEmail ?? byId)!.email };
+      who = byEmail ? { name, id: byEmail.cli_open_id, email: byEmail.email } : { name, id: byId!.id, email: byId!.email };
     }
     const target = personSlug(app, who);
     const ids = all<{ cli_open_id: string }>(app.db, "select cli_open_id from lark_people where name = ? and cli_open_id is not null" + (who.email ? " and (email = ? or email is null)" : ""), ...(who.email ? [name, who.email] : [name])).map((x) => x.cli_open_id);

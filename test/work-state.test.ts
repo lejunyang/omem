@@ -184,10 +184,11 @@ describe("work state: facts, the nightly write-up, and where it is read", async 
     const card = (slug: string, body: string, title = "小赵") => writePage(app, "personal", slug, { meta: { title, kind: "person", summary: "项目 A 测试" }, body }, { actor: "agent" });
     card("people/小赵", "## 负责什么\n\n退款回归测试。");
     card("people/小赵-123abc", "## 负责什么\n\n退款回归测试，也管对账用例。\n\n## 本人补充\n\n- 周报找他要用例数");
+    card("people/小赵-t_zhao", "## 负责什么\n\n对账用例。"); // named by the bot's open_id tail
     card("people/小王", "## 负责什么\n\n退款接口。", "小王");
     expect(mergePersonCards(app, { dryRun: true })).toEqual(expect.arrayContaining([{ to: "people/小王-wang", from: ["people/小王"] }]));
     const done = mergePersonCards(app);
-    expect(done.find((d) => d.to === "people/小赵-zhao.x")?.from.sort()).toEqual(["people/小赵", "people/小赵-123abc"]);
+    expect(done.find((d) => d.to === "people/小赵-zhao.x")?.from.sort()).toEqual(["people/小赵", "people/小赵-123abc", "people/小赵-t_zhao"]);
     const merged = readPage(app, "personal", "people/小赵-zhao.x");
     expect(merged.body).toMatch(/^## 负责什么\n\n退款回归测试，也管对账用例。/);
     expect(merged.body).toContain("## 合并进来的旧卡\n\n### people/小赵\n\n### 负责什么\n\n退款回归测试。");
