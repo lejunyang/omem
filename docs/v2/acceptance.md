@@ -641,6 +641,7 @@ pnpm run dev                # 打开 http://localhost:5173
 | # | 操作 | 预期 | 状态 |
 | --- | --- | --- | --- |
 | 25 | 网页同一对话里先说“我在做项目X的登录模块，用 PKCE”，再问“我刚才说用什么流程” | 第二轮直接答出（同一个 Agent 会话）；`/status` 显示“在线” | 云端 Claude Code 已验 |
+| 26b | 规则或交办的后台运行进行中（已发过一条消息）时 `omem service restart` | 运行重新排队后在原 Agent 会话里接着做（运行页第一轮显示“已恢复”），不再重发已发过的消息；运行开始超过 12 小时的开新会话，同样不重发 | 2026-11-18 `test/restart-resume.test.ts`；常驻服务器待验 |
 | 26 | 重启服务后在同一对话追问 | 恢复原 Agent 会话（运行输出 session=resumed）并答对 | 云端已验 |
 | 26b | 飞书私聊先分享一个群，紧接着说“帮我看看这个群里的事项”，再引用助手的回复补一句 | 一轮回答；助手知道群名和 chat_id（未采集时会建议订阅/回溯），引用内容是助手原来的回答；不因飞书重推出现重复回答 | 单元测试覆盖解析与去重，真实飞书待你验 |
 | 26c | 评审要求修改的交办 | 自动出现第 2 轮 code 运行：同一 ask 运行、同一 worktree、评审通过后只应用一次补丁 | 自动回归（链结构）；真实 Agent 待你验 |
@@ -1358,6 +1359,14 @@ TraeX 与其他 ACP 的清理补验：
 - 设置 → 分享：列出刚才的分享（标题、哪次运行、群名、引用了什么、打开几次）；撤销后链接显示“链接无效、已撤销或已过期”。有效期改成 7 天后新建的分享显示失效时间。
 - 清空网页地址再问一次：回答里代码、记忆这类引用直接省略，文档和飞书消息的链接照常。
 - 回归：`test/shares.test.ts`（句中与句末、代码块不动、Wiki 小节、访客运行不复制个人空间、卡片多段共用一个分享、补读位置、来自飞书的消息、撤销与过期、免令牌接口只返回快照）、`test/lark.test.ts`、`test/item-evidence.test.ts`。
+
+## 浏览器长期资料和网页操作沉淀（2026-11-18）
+
+- `node skills/library/desktop-control/scripts/browser.mjs open t1 --url <本地页面> --header 127.0.0.1=x-test:1`：打印 `{profile, port, reused:false}`，资料在 `<OMEM_HOME>/remote/profiles/t1`；再执行一次打印 `reused:true` 并多一个标签页；`list` 列出它和端口，`close t1` 后 `list` 里端口为空。
+- 本地页面里用 iframe、`a.click()`、链接点击、`window.open`、`location.assign` 打开 `testapp://…`：都不发生（iframe 没有 src），控制台有 `[omem] blocked opening another program`；同一页 `fetch` 到本机的请求带上 `x-test: 1`。
+- 同一份资料第二次打开同一个大页面明显更快（2026-11-18 在 Linux + Chrome 121 + Xvfb 实测：一个脚本 1.4 MB 的登录页，新资料 55 秒出内容，复用资料 6 秒）。
+- 内置技能 `desktop-control` 写着用这个脚本、一个账号一份资料、先找已有脚本、做通后用 `save_skill` 存技能和脚本（脚本里不写凭据）。已有数据目录里的同名技能不被覆盖，要的话手动合并。
+- 待验证：在有真实窗口的机器上打开会弹“要打开 xdg-open 吗”的页面，确认不再弹（Xvfb 下没能复现这个弹窗）。
 
 ## 桌面与浏览器控制（2026-10-30）
 
