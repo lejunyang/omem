@@ -8,6 +8,8 @@ import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { OWNER } from "../src/core/users.ts";
+import { latestCodeWork } from "../src/flows/objects.ts";
+import { getItem, upsertItem } from "../src/items/store.ts";
 import { testApp } from "./helpers.ts";
 
 const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" };
@@ -42,6 +44,25 @@ describe("delegate_code from a run that writes only its project space", () => {
     // Writing the repository's own content (a memory, a page) is still out of scope for this run.
     const note = await callTool(ctx, "remember", { space: "shop-web", content: "退款金额按未发货的行计算，见退款缺陷的复现记录。", kind: "fact" });
     expect(note.isError).toBe(true);
+    run(app.db, "update runs set status = 'cancelled' where kind = 'code'");
+  });
+
+  it("puts another item's change into the open delegation on the branch, and that item follows it", async () => {
+    const app = testApp();
+    createSpace(app, { id: "shop", name: "示例商城", kind: "project" });
+    createSpace(app, { id: "shop-web", name: "商城前端", kind: "repo", rootPath: repo(), parentId: "shop" });
+    const a = upsertItem(app, undefined, { title: "退款金额按未发货的行算", spaceId: "shop" }, "user");
+    const b = upsertItem(app, undefined, { title: "退款单号显示不全", spaceId: "shop" }, "user");
+    const stage = createRun(app, { kind: "flow-stage", spaceId: "shop", title: "修复", input: {} });
+    const ctx: ToolContext = { app, runId: stage.id, spaceId: "shop", spaces: ["shop", "shop-web"], writable: ["shop"], tools: null, actor: "agent", userId: OWNER };
+    const first = await callTool(ctx, "delegate_code", { repo_spaces: ["shop-web"], task: "退款金额按未发货的行算", item_id: a.id, branch: "feat/refund" });
+    expect(first.isError, first.text).toBe(false);
+    const runId = /运行 (r\w+)/.exec(first.text)![1];
+    expect(latestCodeWork(app, getItem(app, b.id))).toBeNull();
+
+    const joined = await callTool(ctx, "message_code_run", { run_id: runId, text: "退款单号在列表里显示不全，改成完整显示", new_item: true, item_id: b.id });
+    expect(joined.isError, joined.text).toBe(false);
+    expect(latestCodeWork(app, getItem(app, b.id))?.rootId).toBe(latestCodeWork(app, getItem(app, a.id))?.rootId);
     run(app.db, "update runs set status = 'cancelled' where kind = 'code'");
   });
 });

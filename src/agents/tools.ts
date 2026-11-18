@@ -4396,7 +4396,7 @@ def({
     if (!a.parallel && onBranch) {
       const { openDelegationOn } = await import("./review-fix.ts");
       const open = openDelegationOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER);
-      if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办 ${open.id}（${open.title}，${open.status}）。新的要求续在它上面：进行中用 message_code_run 补充，结束后用 continue_code_run；本人明确要另开一次才传 parallel: true`);
+      if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办 ${open.id}（${open.title}，${open.status}）。新的要求续在它上面：进行中用 message_code_run 补充（是一件能单独验证的修改就带 new_item: true；为别的事项做的再带 item_id，交办会记到那个事项上，它的流程跟着走），结束后用 continue_code_run。不要为这个去问本人；本人明确要另开一次才传 parallel: true`);
     }
     // A design to code from: the owner's, approved, or someone else's, assessed (designs/work.ts).
     const baseline = a.design_id ? await readableDesign(ctx, a.design_id) : null;
@@ -4602,7 +4602,7 @@ def({
     if ((last.input as { branches?: unknown }).branches) throw new HttpError(400, "这是对已有分支的评审，不能续轮编码；要按评审意见修改，用 delegate_code 并传 from_branch 基于该分支交办");
     const chain = codeChainFor(ctx.app, last) ?? (last.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
     if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
-    for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+    for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     // Waiting for its design to be confirmed: going on means coding without waiting (designs/work.ts).
     if (last.output.verdict === "awaiting-design") {
@@ -4652,7 +4652,7 @@ def({
     const r = getRun(ctx.app, a.run_id);
     const review = await roundReviewOf(ctx, a);
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
-    for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+    for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const { setFindingDecision, startFix } = await import("./review-fix.ts");
     for (const id of a.later ?? []) setFindingDecision(ctx.app, r.id, id, "later");
     for (const w of a.wontfix ?? []) setFindingDecision(ctx.app, r.id, w.id, "wontfix", w.reason);
@@ -4665,7 +4665,7 @@ def({
 /** The delegation a steering call is about, checked against the caller's spaces and owner. */
 function steerable(ctx: ToolContext, runId: string) {
   const r = getRun(ctx.app, runId);
-  for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+  for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
   if (runUser(ctx.app, r.id) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能调整本人发起的编码交办");
   return r;
 }
@@ -4679,9 +4679,16 @@ def({
     run_id: z.string().describe("交办的任一运行 id"),
     text: z.string().min(1).max(20000).describe("本人的补充，原话为主"),
     new_item: z.boolean().optional().describe("按修改项推进的交办：补充的是一件新的、能单独验证的修改时 true，在两轮之间记成修改项；提醒、纠正做法、让它接着推进时不填"),
+    item_id: z.string().optional().describe("这段修改是为另一个事项做的（同一分支上别的事项的交办正在进行，把这件的修改并进去）：填那个事项，交办会记到它上面，它的流程跟着这次交办走"),
   }),
   handler: async (ctx, a) => {
     steerable(ctx, a.run_id);
+    if (a.item_id) {
+      const item = itemFor(ctx, a.item_id);
+      const w = (await import("./code-works.ts")).codeWork(ctx.app, a.run_id);
+      if (!w) throw new HttpError(400, "item_id 要和交办的编码运行一起用：run_id 写交办的任一轮");
+      (await import("../flows/objects.ts")).joinCodeWork(ctx.app, getItem(ctx.app, item), w.rootId);
+    }
     // A task-driven delegation between rounds: a new change becomes a task (code-loop.ts); other words wait for the next round.
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
     if (isTaskWork(ctx.app, a.run_id) && a.new_item) {
@@ -4765,7 +4772,7 @@ def({
   }),
   handler: async (ctx, a) => {
     const r = getRun(ctx.app, a.run_id);
-    for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+    for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const { requestSplit } = await import("./review-chain.ts");
     const split = await requestSplit(ctx.app, r.id, { note: a.request, revise: true, userId: ctx.userId ?? OWNER });
     return `已安排${(split.input as { revise?: boolean }).revise ? "重新整理需求拆分" : "需求拆分"}，运行 ${split.id}；完成后在运行页的“变更”里看，进度用 read_run 查看。`;
@@ -4782,7 +4789,7 @@ def({
     const chain = r.output.codeChain as import("./code-chain.ts").CodeChain | undefined;
     if (!chain?.larkKey) throw new HttpError(400, "该运行没有飞书编码进度链");
     const latest = getRun(ctx.app, chain.lastCodeRunId!);
-    for (const id of [latest.spaceId!, ...((latest.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+    for (const id of [latest.spaceId!, ...((latest.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const thread = findThread(ctx.app, chain.conversationId);
     if (thread?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能恢复本人发起的编码交办");
     const { retryCodeProgress } = await import("../channels/lark-code-progress.ts");

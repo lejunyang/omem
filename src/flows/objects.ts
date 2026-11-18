@@ -1,8 +1,9 @@
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
+import { now } from "../core/util.ts";
 import { codeWork, type CodeWorkDetail } from "../agents/code-works.ts";
 import { designFeedback, designForWork, designsOfItem } from "../designs/store.ts";
-import type { Item } from "../items/store.ts";
+import { addItemEvent, type Item } from "../items/store.ts";
 import { continuing } from "../studies/store.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
 import { findPluginObject } from "./plugin-objects.ts";
@@ -12,16 +13,29 @@ export type ObjectKind = { kind: string; label: string; find: (app: App, item: I
 
 /** Per-item run materials bound the lookup; codeWork uses the existing continuation indexes. */
 export function latestCodeWork(app: App, item: Item): CodeWorkDetail | null {
-  const runs = all<{ id: string }>(app.db, `select r.id from item_materials m join runs r on r.id=m.ref
+  const runs = all<{ id: string; joined: number | null }>(app.db, `select r.id, json_extract(m.meta, '$.joined') joined from item_materials m join runs r on r.id=m.ref
     where m.item_id=? and m.kind='run' and r.kind='code' and coalesce(r.user_id,'owner')=? order by r.created_at desc, m.id desc`, item.id, item.userId);
   for (const r of runs) {
     const w = codeWork(app, r.id);
-    if (!w || w.item?.id !== item.id) continue;
+    // Its own delegation, or one of another item on the same branch this item's change went into (joinCodeWork).
+    if (!w || (w.item?.id !== item.id && !r.joined)) continue;
     const ids = w.roundList.map((x) => x.id);
     if (all<{ id: string }>(app.db, `select id from runs where id in (${ids.map(() => "?").join(",")}) and (json_extract(output,'$.discardedAt') is not null or json_extract(output,'$.supersededBy') is not null)`, ...ids).length) continue;
     return w;
   }
   return null;
+}
+
+/**
+ * This item's change went into another item's delegation on the same branch (message_code_run with
+ * item_id): the delegation is listed on this item too, and its flow follows it like its own.
+ */
+export function joinCodeWork(app: App, item: Item, rootId: string) {
+  const title = one<{ title: string }>(app.db, "select title from runs where id = ?", rootId)?.title ?? rootId;
+  run(app.db, `insert into item_materials(item_id, kind, ref, label, meta, added_by, created_at) values(?, 'run', ?, ?, ?, 'agent', ?)
+    on conflict(item_id, kind, ref) do update set meta = json_set(coalesce(item_materials.meta, '{}'), '$.joined', 1)`, item.id, rootId, title, JSON.stringify({ joined: 1, note: "这件的修改并在同一分支的这次交办里" }), now());
+  addItemEvent(app, item.id, "updated", `修改并进同一分支的交办「${title}」`, "agent");
+  app.emit({ type: "changed", entity: "item", id: item.id });
 }
 
 /** Built-in object lifecycles stay in their own stores. */
