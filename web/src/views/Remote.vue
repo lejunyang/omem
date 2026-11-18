@@ -165,7 +165,53 @@ let watcher: MutationObserver | null = null;
 let retry: ReturnType<typeof setTimeout> | null = null;
 let attempts = 0;
 const DISCONNECTED = ["已断开", "Disconnected"];
+// aad's viewer has its own look (system font, grey outlines, heavy shadows). It is served from this
+// origin, so its status line, buttons, paste notice and clipboard tray get omem's tokens: the values
+// are copied over (custom properties do not cross into a frame) and again when the theme changes.
+const TOKENS = ["bg", "panel", "sunken", "hover", "line", "line-strong", "ink", "muted", "accent", "radius", "radius-sm", "shadow", "sans"];
+const SKIN = `
+:root{--bg:var(--o-sunken);--fg:var(--o-ink);--muted:var(--o-muted)}
+body{font:13px/1.5 var(--o-sans)}
+header{padding:6px 12px;font-size:12px}
+canvas{box-shadow:var(--o-shadow)}
+#take,#remote-clip,#transfer button,#tray button{height:24px;padding:0 10px;border-radius:var(--o-radius-sm);border:1px solid var(--o-line-strong);background:var(--o-panel);color:var(--o-ink);font:inherit;font-size:12px;cursor:pointer}
+#take:hover,#remote-clip:hover,#transfer button:hover,#tray button:hover{background-image:linear-gradient(var(--o-hover),var(--o-hover))}
+#transfer,#tray{background:var(--o-panel);color:var(--o-ink);border:1px solid var(--o-line);border-radius:var(--o-radius);box-shadow:var(--o-shadow);font-size:13px}
+#transfer{top:10px;right:16px;padding:6px 8px 6px 12px;min-height:24px}
+#transfer progress{accent-color:var(--o-accent)}
+#tray{top:10px;right:16px;padding:10px 12px}
+#tray h2{font-size:13px;font-weight:600}
+#tray h2 button{border:0;background:none;height:22px;padding:0 6px;color:var(--o-muted)}
+#tray .row{border-top-color:var(--o-line)}
+#tray .muted{color:var(--o-muted)}
+#tray a{color:var(--o-accent);text-decoration:none}
+#tray a:hover{text-decoration:underline}
+#tray img{border-radius:var(--o-radius-sm);border:1px solid var(--o-line)}`;
+let themeWatch: MutationObserver | null = null;
+function skinViewer() {
+  let doc: Document | null | undefined;
+  try {
+    doc = frame.value?.contentDocument;
+  } catch { /* not the viewer */ }
+  if (!doc?.getElementById("screen")) return;
+  const css = getComputedStyle(document.documentElement);
+  const vars = TOKENS.map((t) => `--o-${t}:${css.getPropertyValue(`--${t}`).trim()}`).join(";");
+  let style = doc.getElementById("omem-skin");
+  if (!style) {
+    style = doc.createElement("style");
+    style.id = "omem-skin";
+    doc.head.append(style);
+  }
+  style.textContent = `:root{${vars};color-scheme:${css.colorScheme || "light"}}${SKIN}`;
+}
+onMounted(() => {
+  themeWatch = new MutationObserver(skinViewer);
+  themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class", "style"] });
+});
+onBeforeUnmount(() => themeWatch?.disconnect());
+
 function frameLoaded() {
+  skinViewer();
   watcher?.disconnect();
   watcher = null;
   let status: HTMLElement | null | undefined;
