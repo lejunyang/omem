@@ -22,7 +22,15 @@ export type PageMeta = {
   [key: string]: unknown;
 };
 export type Page = { id: string; spaceId: string; slug: string; meta: PageMeta; body: string; updatedAt: string };
-export type PageCite = { sourceId: string; uri: string; title: string; lineStart: number | null; lineEnd: number | null; stale: boolean; deleted: boolean };
+/**
+ * Originals that only grow (chat lines are appended, never rewritten): new lines leave the cited ones as
+ * they were, so such an original having grown is not "changed" for the page (not counted, not checked).
+ */
+export const APPEND_ONLY = new Set(["chat", "conversation", "activity", "meeting"]);
+const APPEND_ONLY_SQL = [...APPEND_ONLY].map((k) => `'${k}'`).join(",");
+
+/** `stale`: changed since the page was written (an original that only grew is `grew` instead). */
+export type PageCite = { sourceId: string; uri: string; title: string; lineStart: number | null; lineEnd: number | null; stale: boolean; grew?: boolean; deleted: boolean };
 
 const SLUG = /^[\p{L}\p{N}][\p{L}\p{N}._\-/]*$/u;
 
@@ -210,15 +218,17 @@ export function pageContext(app: App, spaceId: string, slugInput: string) {
     "select p.id, p.title, p.space_id, p.slug from page_links l join pages p on p.id = l.from_id where l.to_id = ? order by p.title",
     id,
   );
-  const cites = all<{ source_id: string; uri: string; title: string; line_start: number | null; line_end: number | null; hash: string; cur: string; deleted_at: string | null }>(
+  const cites = all<{ source_id: string; uri: string; title: string; kind: string; line_start: number | null; line_end: number | null; hash: string; cur: string; deleted_at: string | null }>(
     app.db,
-    `select c.source_id, s.uri, s.title, c.line_start, c.line_end, c.hash, s.hash cur, s.deleted_at from page_cites c join sources s on s.id = c.source_id where c.page_id = ?`,
+    `select c.source_id, s.uri, s.title, s.kind, c.line_start, c.line_end, c.hash, s.hash cur, s.deleted_at from page_cites c join sources s on s.id = c.source_id where c.page_id = ?`,
     id,
   );
   const sources = new Map<string, PageCite>();
-  for (const c of cites)
-    if (!sources.has(c.source_id))
-      sources.set(c.source_id, { sourceId: c.source_id, uri: c.uri, title: c.title, lineStart: c.line_start, lineEnd: c.line_end, stale: c.hash !== c.cur, deleted: !!c.deleted_at });
+  for (const c of cites) {
+    if (sources.has(c.source_id)) continue;
+    const changed = c.hash !== c.cur, grew = changed && !c.deleted_at && APPEND_ONLY.has(c.kind);
+    sources.set(c.source_id, { sourceId: c.source_id, uri: c.uri, title: c.title, lineStart: c.line_start, lineEnd: c.line_end, stale: changed && !grew, ...(grew ? { grew } : {}), deleted: !!c.deleted_at });
+  }
   const missing = all<{ to_id: string }>(app.db, "select l.to_id from page_links l left join pages p on p.id=l.to_id where l.from_id=? and p.id is null", id).map((r) => r.to_id);
   return {
     backlinks: backlinks.map((b) => ({ spaceId: b.space_id, slug: b.slug, title: b.title })),
@@ -242,7 +252,7 @@ export function listPages(app: App, spaceId: string): PageSummary[] {
   const rows = all<{ slug: string; title: string; summary: string; kind: string; updated_at: string; stale: number }>(
     app.db,
     `select p.slug, p.title, p.summary, p.kind, p.updated_at,
-      (select count(distinct c.source_id) from page_cites c join sources s on s.id = c.source_id where c.page_id = p.id and (s.hash != c.hash or s.deleted_at is not null)) stale
+      (select count(distinct c.source_id) from page_cites c join sources s on s.id = c.source_id where c.page_id = p.id and (s.deleted_at is not null or (s.hash != c.hash and s.kind not in (${APPEND_ONLY_SQL})))) stale
      from pages p where p.space_id = ? order by p.slug`,
     spaceId,
   );

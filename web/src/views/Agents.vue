@@ -470,20 +470,18 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <button class="tab" :class="{ on: tab === 'skills' }" @click="go({ tab: 'skills' })">技能</button>
         <button class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
         <button class="tab" @click="go({ tab: 'review' })">评审</button>
-        <span class="spacer" />
-        <button class="btn ghost sm icon" :title="tab === 'agents' ? '新建 Agent 档案' : '新建技能'" @click="go({ tab, new: '1' })"><Icon name="plus" :size="15" /></button>
       </div>
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else-if="tab === 'agents'">
-          <div class="group">我的档案</div>
+          <div class="group row"><span>我的档案</span><span class="spacer" /><button class="add" @click="go({ tab: 'agents', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
           <button v-for="x in specs" :key="x.name" class="li" :class="{ on: x.name === specName }" @click="go({ tab: 'agents', name: x.name })">
             <div class="grow">
               <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.plugin" class="badge" :title="`来自插件 ${x.plugin}`">插件</span></div>
               <div class="muted small clamp">{{ x.description }}</div>
             </div>
           </button>
-          <p v-if="!specs.length" class="muted small hint">还没有。点右上角 ＋ 新建，或对助理说“建一个负责代码评审的 Agent，用 codex，只读”。</p>
+          <p v-if="!specs.length" class="muted small hint">还没有。点“新建”，或对助理说“建一个负责代码评审的 Agent，用 codex，只读”。</p>
           <div class="group">内置角色</div>
           <button v-for="r in roles" :key="r.name" class="li" :class="{ on: r.name === roleName }" @click="go({ tab: 'agents', role: r.name })">
             <div class="grow">
@@ -497,8 +495,8 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           </button>
         </template>
         <template v-else>
+          <div class="group row"><span>{{ skillGroups.length ? "技能分组" : "技能" }}</span><span class="spacer" /><button class="add" @click="go({ tab: 'skills', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
           <template v-if="skillGroups.length">
-            <div class="group">技能分组</div>
             <SkillTree :skills="skills" :groups="skillGroups" :group="groupId" :purpose="purposeQ" :skill="skillName" @group="(id, p) => go(p === undefined ? { tab: 'skills', group: id } : { tab: 'skills', group: id, purpose: p })" @skill="(n) => go({ tab: 'skills', name: n })" />
             <div v-if="looseSkills.length" class="group">未分组</div>
           </template>
@@ -509,7 +507,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
               <div v-if="x.replay" class="muted small">复盘 {{ x.replay.wins }} 胜 {{ x.replay.losses }} 负<span v-if="x.replay.adopted"> · 复盘后自动启用</span></div>
             </div>
           </button>
-          <p v-if="!skills.length" class="muted small hint">还没有技能。点 ＋ 新建，或对助理说“把刚才整理周报的做法记成技能”。</p>
+          <p v-if="!skills.length" class="muted small hint">还没有技能。点“新建”，或对助理说“把刚才整理周报的做法记成技能”。</p>
         </template>
       </div>
     </aside>
@@ -780,6 +778,21 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
   color: var(--muted);
   padding: 10px 10px 4px;
   letter-spacing: 0.04em;
+}
+.group .add {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.group .add:hover {
+  color: var(--accent);
 }
 .hint {
   padding: 2px 10px 6px;

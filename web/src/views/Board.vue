@@ -4,6 +4,7 @@ import { get, onServerEvent, onServerResync } from "../api";
 import { boardLine, type BoardRow, type FlowFile } from "../lib/flow";
 import Skeleton from "../components/Skeleton.vue";
 import UiSegmented from "../components/UiSegmented.vue";
+import FlowTabs from "../components/FlowTabs.vue";
 import { fmtTime } from "../store";
 
 /**
@@ -55,8 +56,8 @@ const sections = computed(() => {
 <template>
   <div class="page board-page">
     <header class="head">
-      <h1>流程</h1>
-      <p class="muted">在走流程的事项，按现在走到哪一段分列，点开看每一件的经过和等你的。<router-link to="/flows">编写流程</router-link></p>
+      <div class="row wrap title-row"><h1>流程</h1><FlowTabs /></div>
+      <p class="muted">在走流程的事项，按现在走到哪一段分列，点开看每一件的经过和等你的。</p>
     </header>
     <div class="toolbar row wrap">
       <UiSegmented v-model="only" size="sm" aria-label="看哪些" :options="filters" />
@@ -86,7 +87,8 @@ const sections = computed(() => {
 </template>
 
 <style scoped>
-.head h1 { margin: 0 0 4px; }
+.head h1 { margin: 0; }
+.title-row { gap: 14px; margin-bottom: 4px; }
 .head p { margin: 0 0 14px; }
 .toolbar { margin-bottom: 18px; }
 .error { color: var(--danger); }

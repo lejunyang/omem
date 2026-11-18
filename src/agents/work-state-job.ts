@@ -9,7 +9,7 @@ import { listCodeWorks } from "./code-works.ts";
 import { chatName } from "./owner-now.ts";
 import { registerHandler } from "./runs.ts";
 import { runRole } from "./runner.ts";
-import { OWNER_SECTION, personSlug, sectionOf, WORK_STATE_PAGE, WORK_STATE_SPACE } from "./work-state.ts";
+import { mergePersonCards, OWNER_SECTION, personSlug, sectionOf, WORK_STATE_PAGE, WORK_STATE_SPACE } from "./work-state.ts";
 
 /**
  * The nightly write-up of the owner's work state (docs/v2/work-state.md): the facts the host
@@ -229,6 +229,13 @@ registerHandler("work-state", async (ctx) => {
   const at = now();
   const last = one<{ value: string }>(app.db, "select value from kv where key = ?", lastKey)?.value ?? null;
   const since = new Date(Date.now() - app.config.workState.days * DAY).toISOString();
+  // One card per person: cards written under an older path rule go to the email-based path first.
+  try {
+    const merged = mergePersonCards(app);
+    if (merged.length) ctx.event("status", { text: `人物卡换到按邮箱的路径：${merged.map((m) => `${m.from.join("、")} → ${m.to}`).join("；")}` });
+  } catch (e) {
+    ctx.event("status", { text: `合并人物卡失败：${(e as Error).message}` });
+  }
   const people = peopleDue(app, { since, limit: app.config.workState.people });
   const fresh = !last || workFactsChanged(app, last) || !pageExists(app, WORK_STATE_SPACE, WORK_STATE_PAGE);
   if (!fresh && !people.length) return { quiet: true, summary: "上次整理以来没有新的工作材料" };

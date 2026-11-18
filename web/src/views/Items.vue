@@ -203,7 +203,6 @@ async function addNote() {
         <button v-else-if="query" type="button" class="btn ghost sm icon" aria-label="清空" @click="query = ''"><Icon name="x" :size="13" /></button>
       </label>
       <span class="spacer" />
-      <router-link to="/board" class="btn ghost sm">按流程看</router-link>
       <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'all', label: '所有空间' }, { value: 'space', label: '当前空间' }]" />
       <UiCheckbox v-model="showDone" size="sm" class="small">显示已完成</UiCheckbox>
     </div>

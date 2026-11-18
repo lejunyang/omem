@@ -8,7 +8,7 @@ import { createRun, waitForRun } from "../src/agents/runs.ts";
 import { OWNER } from "../src/core/users.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { keepOwnerSection, personCard, personLine, sectionOf, workStateBrief } from "../src/agents/work-state.ts";
+import { keepOwnerSection, mergePersonCards, personCard, personLine, personSlug, sectionOf, workStateBrief } from "../src/agents/work-state.ts";
 import { peopleDue, workFacts, workFactsText } from "../src/agents/work-state-job.ts";
 import { guestSpaces } from "../src/channels/lark-guest.ts";
 import { persistChatMessages, type LarkMessage } from "../src/channels/lark-messages.ts";
@@ -99,7 +99,7 @@ describe("work state: facts, the nightly write-up, and where it is read", async 
   it("picks the people the owner deals with, with their lines and where their card goes", () => {
     const due = peopleDue(app, { since: new Date(base - 86400_000).toISOString(), limit: 8 });
     expect(due.map((p) => p.name)).toEqual(["小王", "小李"]);
-    expect(due[0]).toMatchObject({ slug: "people/小王", email: "wang@example.com", p2p: 2, hasCard: false });
+    expect(due[0]).toMatchObject({ slug: "people/小王-wang", email: "wang@example.com", p2p: 2, hasCard: false });
     expect(due[0].lines.join("\n")).toMatch(/本人：按未发货的行算.*src:\w+#L\d+/);
     expect(due[1]).toMatchObject({ mentions: 1 });
     expect(peopleDue(app, { since: new Date(base - 86400_000).toISOString(), limit: 1 })).toHaveLength(1);
@@ -110,15 +110,15 @@ describe("work state: facts, the nightly write-up, and where it is read", async 
     const r = await waitForRun(app, createRun(app, { kind: "work-state", spaceId: "personal", title: "整理工作近况与人物卡" }).id);
     expect(r.status).toBe("done");
     const said = JSON.parse(String(r.output.summary).replace(/^近况已更新 /, ""));
-    expect(said).toMatchObject({ state: "ok", cards: ["people/小王", "people/小李"], hasOwner: true });
+    expect(said).toMatchObject({ state: "ok", cards: ["people/小王-wang", "people/小李-li"], hasOwner: true });
     const page = readPage(app, "personal", "state/work");
     expect(page.body).toContain("退款改造：接口联调中");
     expect(page.body).toContain("- 项目 A 的上线单：用技能 release-status 查状态");
     expect(page.body).not.toContain("应被替换");
-    expect(readPage(app, "personal", "people/小王").meta).toMatchObject({ kind: "person", summary: "项目 A 后端，常找本人确认退款字段" });
+    expect(readPage(app, "personal", "people/小王-wang").meta).toMatchObject({ kind: "person", summary: "项目 A 后端，常找本人确认退款字段" });
     expect(workStateBrief(app)).toContain("退款改造：接口联调中");
-    expect(personCard(app, { id: "ou_wang" })?.slug).toBe("people/小王");
-    expect(personLine(app, { name: "小李" })).toContain("人物卡 personal:people/小李");
+    expect(personCard(app, { id: "ou_wang" })?.slug).toBe("people/小王-wang");
+    expect(personLine(app, { name: "小李" })).toContain("人物卡 personal:people/小李-li");
 
     // Nothing new since: no model run.
     const quiet = await waitForRun(app, createRun(app, { kind: "work-state", spaceId: "personal", title: "整理工作近况与人物卡" }).id);
@@ -135,7 +135,7 @@ describe("work state: facts, the nightly write-up, and where it is read", async 
       messages: [{ id: m.message_id, sender: "小李", senderId: "ou_li", atMs: base + 20 * 60_000, text: "@本人 周四评审退款改造方案", topicId: null, quoted: null, sourceId: m.source_id, ref: `src:${m.source_id}#L${m.line}` }],
     });
     expect(material.本人近况).toContain("退款改造：接口联调中");
-    expect(material.发送人).toContain("项目 A 后端，常找本人确认退款字段（人物卡 personal:people/小李）");
+    expect(material.发送人).toContain("项目 A 后端，常找本人确认退款字段（人物卡 personal:people/小李-li）");
     expect(material.本人在这个会话里).toContain("发了 1 条消息");
     expect(material.本人给这个会话设的规则).toBeUndefined();
     // A rule naming the chat, and an earlier handling there, go in as well.
@@ -171,8 +171,31 @@ describe("work state: facts, the nightly write-up, and where it is read", async 
     const spaces = guestSpaces(app, "personal");
     expect(spaces).not.toContain("personal");
     const ctx: ToolContext = { app, runId: null, spaceId: "project-a", spaces: ["project-a"], tools: new Set(["read_page", "list_pages"]), actor: "agent" };
-    const r = await callTool(ctx, "read_page", { space: "personal", page: "people/小王" });
+    const r = await callTool(ctx, "read_page", { space: "personal", page: "people/小王-wang" });
     expect(r.isError).toBe(true);
     expect((await callTool(ctx, "list_pages", { space: "personal" })).isError).toBe(true);
+  });
+
+  it("keeps one card per person under name-email, folding cards from older path rules into it", () => {
+    // 小赵 is two address-book rows (seen by lark-cli without an email, by the bot with one): one person.
+    rememberPerson(app, { cliOpenId: "ou_zhao_123abc", name: "小赵" });
+    rememberPerson(app, { botOpenId: "ou_bot_zhao", name: "小赵", email: "zhao.x@example.com" });
+    expect(personSlug(app, { id: "ou_zhao_123abc", name: "小赵" })).toBe("people/小赵-zhao.x");
+    const card = (slug: string, body: string, title = "小赵") => writePage(app, "personal", slug, { meta: { title, kind: "person", summary: "项目 A 测试" }, body }, { actor: "agent" });
+    card("people/小赵", "## 负责什么\n\n退款回归测试。");
+    card("people/小赵-123abc", "## 负责什么\n\n退款回归测试，也管对账用例。\n\n## 本人补充\n\n- 周报找他要用例数");
+    card("people/小王", "## 负责什么\n\n退款接口。", "小王");
+    expect(mergePersonCards(app, { dryRun: true })).toEqual(expect.arrayContaining([{ to: "people/小王-wang", from: ["people/小王"] }]));
+    const done = mergePersonCards(app);
+    expect(done.find((d) => d.to === "people/小赵-zhao.x")?.from.sort()).toEqual(["people/小赵", "people/小赵-123abc"]);
+    const merged = readPage(app, "personal", "people/小赵-zhao.x");
+    expect(merged.body).toMatch(/^## 负责什么\n\n退款回归测试，也管对账用例。/);
+    expect(merged.body).toContain("## 合并进来的旧卡\n\n### people/小赵\n\n### 负责什么\n\n退款回归测试。");
+    expect(merged.body.match(/## 本人补充/g)).toHaveLength(1);
+    expect(merged.body).toMatch(/## 本人补充\n\n- 周报找他要用例数\n$/);
+    // Old paths still open the card; the merged one is due again so tonight's run folds the old text in.
+    expect(readPage(app, "personal", "people/小赵").slug).toBe("people/小赵-zhao.x");
+    expect(readPage(app, "personal", "people/小王").slug).toBe("people/小王-wang");
+    expect(mergePersonCards(app)).toEqual([]);
   });
 });

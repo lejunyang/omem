@@ -23,6 +23,7 @@ import { sessionCleanup } from "./session-cleanup.ts";
 import { afterTurn, noteRateLimit } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
 import { awarenessNote } from "./awareness.ts";
+import { attachmentText } from "./attachments.ts";
 
 /**
  * Agent sessions behind threads. Three levels of continuity, cheapest first:
@@ -175,7 +176,7 @@ export function renderMessages(msgs: ThreadMessage[], app?: App) {
       const quote = q?.text
         ? `\n（引用回复${q.sender ? ` ${q.sender}` : ""} 的消息，本人这句话针对的是它：${q.text}）`
         : "";
-      return `${who}（${stamp(m.createdAt)}，msg:${m.id}）：${m.text}${quote}${ctx}`;
+      return `${who}（${stamp(m.createdAt)}，msg:${m.id}）：${m.text}${quote}${attachmentText(app, m.meta.attachments)}${ctx}`;
     })
     .join("\n\n");
 }

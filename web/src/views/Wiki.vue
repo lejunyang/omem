@@ -25,7 +25,7 @@ type PageData = {
   updatedAt: string;
   context: {
     backlinks: { spaceId: string; slug: string; title: string }[];
-    sources: { sourceId: string; uri: string; title: string; lineStart: number | null; lineEnd: number | null; stale: boolean; deleted: boolean }[];
+    sources: { sourceId: string; uri: string; title: string; lineStart: number | null; lineEnd: number | null; stale: boolean; grew?: boolean; deleted: boolean }[];
     missingLinks: string[];
     history: { hash: string; at: string; message: string }[];
   };
@@ -302,11 +302,24 @@ async function movePage() {
     toast((e as Error).message, "error");
   }
 }
-const noticeEl = ref<HTMLElement>();
+const staleOpen = ref(false);
 function toNotice() {
   navOpen.value = false;
-  noticeEl.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+  staleOpen.value = true;
 }
+// The page's "更多" menu: the less used actions, so the header keeps two buttons.
+const moreOpen = ref(false);
+const moreBox = ref<HTMLElement>();
+const closeMore = (e: Event) => {
+  if (moreOpen.value && !moreBox.value?.contains(e.target as Node)) moreOpen.value = false;
+};
+document.addEventListener("mousedown", closeMore);
+onBeforeUnmount(() => document.removeEventListener("mousedown", closeMore));
+function fromMore(fn: () => unknown) {
+  moreOpen.value = false;
+  void fn();
+}
+const canCorrect = computed(() => state.me?.wiki === null || !!state.me?.wiki?.includes(space.value));
 async function showVersion(hash: string) {
   if (!page.value) return;
   const v = await get<{ diff: string }>(`/api/wiki/${space.value}/page/${page.value.slug}?version=${hash}`);
@@ -349,9 +362,6 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         <button v-if="stalePageList.length" class="btn sm warn-btn" @click="toNotice"><Icon name="alert" :size="14" />{{ stalePageList.length }} 页原件已变化</button>
       </div>
 
-      <div ref="noticeEl" class="notice-anchor">
-        <WikiAttention :space="space" :pages="stalePageList" :titles="titles" :upkeep="upkeep" :expanded="!slug" @check="lint" />
-      </div>
       <WikiCoverage :key="space" :space="space" />
 
       <div v-if="(spaceLoading && !pages.length) || pageLoading" class="page-loading"><Skeleton variant="text" :rows="12" /></div>
@@ -414,14 +424,29 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         <div class="meta row wrap">
           <span class="muted small">更新于 {{ page.meta.updated ?? fmtTime(page.updatedAt, false) }}</span>
           <span v-if="page.context.sources.length" class="muted small">· 引用 {{ page.context.sources.length }} 份原件</span>
-          <span v-if="staleSources.length" class="badge warn" :title="staleSources.map((s) => s.uri).join('\n')"><Icon name="alert" :size="12" />{{ staleSources.length }} 份原件已变化</span>
-          <button v-if="pageStale" class="btn ghost sm" :disabled="upkeep?.running" @click="lint([page.slug])"><Icon name="refresh" :size="14" />检查这页</button>
+          <button
+            v-if="staleSources.length"
+            class="badge warn stale-badge"
+            type="button"
+            :disabled="!pageStale || upkeep?.running"
+            :title="staleSources.map((s) => s.uri).join('\n') + (pageStale ? '\n点击让助理检查这页' : '')"
+            @click="lint([page.slug])"
+          >
+            <Icon name="alert" :size="12" />{{ staleSources.length }} 份原件已变化<template v-if="pageStale"> · 检查这页</template>
+          </button>
           <span class="spacer" />
-          <button class="btn ghost sm" @click="startEdit"><Icon name="edit" :size="14" />编辑</button>
-          <button v-if="state.me?.wiki === null || state.me?.wiki?.includes(space)" class="btn ghost sm" @click="correctPage">这页有错</button>
-          <button v-if="page.slug !== 'index'" class="btn ghost sm" @click="movePage"><Icon name="folder" :size="14" />移动</button>
-          <button class="btn ghost sm" @click="rewriteOpen = true"><Icon name="sparkles" :size="14" />让助理改写</button>
-          <button class="btn ghost sm icon danger" title="删除页面" @click="remove"><Icon name="trash" :size="14" /></button>
+          <div class="page-actions row">
+            <button class="btn ghost sm" @click="startEdit"><Icon name="edit" :size="14" />编辑</button>
+            <button class="btn ghost sm" @click="rewriteOpen = true"><Icon name="sparkles" :size="14" />让助理改写</button>
+            <div ref="moreBox" class="more-wrap">
+              <button class="btn ghost sm icon" title="更多" aria-label="更多操作" aria-haspopup="menu" :aria-expanded="moreOpen" @click="moreOpen = !moreOpen"><Icon name="more" :size="15" /></button>
+              <div v-if="moreOpen" class="more-menu" role="menu" @keydown.esc="moreOpen = false">
+                <button v-if="canCorrect" role="menuitem" type="button" @click="fromMore(correctPage)">这页有错<span class="muted small">指出错误，助理修改并排查同类</span></button>
+                <button v-if="page.slug !== 'index'" role="menuitem" type="button" @click="fromMore(movePage)">移动<span class="muted small">换个目录或路径</span></button>
+                <button role="menuitem" type="button" class="danger" @click="fromMore(remove)">删除页面</button>
+              </div>
+            </div>
+          </div>
         </div>
         <Markdown :source="page.body" :space="space" :existing-pages="slugs" @rendered="onRendered" />
         <footer v-if="page.context.backlinks.length" class="backlinks">
@@ -440,7 +465,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
       </div>
       <div v-if="page.context.sources.length" class="block">
         <div class="section-title">引用的原件</div>
-        <a v-for="s in page.context.sources" :key="s.sourceId" href="#" class="src" :class="{ stale: s.stale, deleted: s.deleted }" :title="s.stale ? '写作后这份原件已变化' : s.uri" @click.prevent="openCitation({ kind: 'source', id: s.sourceId }, true)">
+        <a v-for="s in page.context.sources" :key="s.sourceId" href="#" class="src" :class="{ stale: s.stale, deleted: s.deleted }" :title="s.stale ? '写作后这份原件已变化' : s.grew ? '写作后又有了新消息（引用的那几行没变）' : s.uri" @click.prevent="openCitation({ kind: 'source', id: s.sourceId }, true)">
           <Icon :name="s.stale || s.deleted ? 'alert' : 'file'" :size="13" />
           <span class="ellipsis">{{ s.uri }}</span>
         </a>
@@ -465,6 +490,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
       </div>
     </aside>
 
+    <WikiAttention v-if="staleOpen" :space="space" :pages="stalePageList" :titles="titles" :upkeep="upkeep" @check="lint" @close="staleOpen = false" />
     <WikiQuestions v-if="questionsOpen" :space="space" @close="closeQuestions" @open="openQuestionPage" />
 
     <div v-if="version" class="modal-overlay" @mousedown.self="version = null">
@@ -596,9 +622,6 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
 .warn-btn {
   color: var(--warn);
 }
-.notice-anchor {
-  scroll-margin-top: 12px;
-}
 .folder-card {
   align-content: start;
 }
@@ -668,6 +691,57 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
   color: var(--ink-2);
   margin: 0 0 14px;
   line-height: 1.7;
+}
+.stale-badge {
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.stale-badge:disabled {
+  cursor: default;
+}
+.stale-badge:not(:disabled):hover {
+  filter: brightness(0.96);
+}
+.page-actions {
+  gap: 2px;
+}
+.more-wrap {
+  position: relative;
+}
+.more-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 220px;
+  display: grid;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.more-menu button {
+  display: grid;
+  gap: 1px;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.more-menu button:hover,
+.more-menu button:focus-visible {
+  background: var(--hover);
+}
+.more-menu .danger {
+  color: var(--danger);
 }
 .meta {
   gap: 6px;

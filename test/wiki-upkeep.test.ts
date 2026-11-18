@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { all, one } from "../src/core/db.ts";
 import { getSpace, updateSpace } from "../src/core/spaces.ts";
 import { appendToSource, upsertSource } from "../src/sources/store.ts";
-import { staleDetail, writePage } from "../src/wiki/store.ts";
+import { listPages, pageContext, staleDetail, writePage } from "../src/wiki/store.ts";
 import { BATCH, PAGE_COOLDOWN_MS, pagesToCheck, runWikiUpkeep, SETTLE_MS, SPACE_GAP_MS, startWikiUpkeep, upkeepStatus } from "../src/wiki/upkeep.ts";
 import { testApp } from "./helpers.ts";
 
@@ -53,6 +53,10 @@ describe("automatic wiki upkeep", () => {
     appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_1", title: "群", lines: ["[10:01] 乙: 收到"] });
     expect(staleDetail(app, "personal")).toHaveLength(1);
     expect(pagesToCheck(app, "personal", later(SETTLE_MS * 4))).toEqual([]);
+    // Not shown as changed either: the page counts no changed original, the source is marked as grown.
+    expect(listPages(app, "personal").find((p) => p.slug === "from-chat")!.staleSources).toBe(0);
+    expect(pageContext(app, "personal", "from-chat").sources[0]).toMatchObject({ stale: false, grew: true });
+    expect(upkeepStatus(app, "personal").appendOnly).toBe(1);
     app.db.prepare("update sources set deleted_at = ? where id = ?").run(new Date().toISOString(), chat.id);
     expect(pagesToCheck(app, "personal", later(SETTLE_MS * 4))).toEqual(["from-chat"]);
 

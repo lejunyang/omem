@@ -1,12 +1,62 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { onBeforeRouteLeave } from "vue-router";
+import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
 import { confirmDialog } from "../lib/dialog";
 import type { FlowFile } from "../lib/flow";
-import RuleTabs from "../components/RuleTabs.vue";
+import FlowTabs from "../components/FlowTabs.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
+import { state, toast } from "../store";
+
+/**
+ * Flows (docs/v2/flows.md) are made by talking: the owner says how a kind of work goes, the assistant
+ * asks what is unclear and drafts a definition (save_flow) the owner enables. This page starts that
+ * conversation, lists drafts waiting for 启用, and shows each flow as stages; the YAML is there for
+ * whoever wants to read or edit it, folded away.
+ */
+type Draft = { askId: string; conversationId: string | null; createdAt: string; id: string; name: string; description: string; stages: number; replaces: boolean };
+const router = useRouter();
+const drafts = ref<Draft[]>([]);
+/** The YAML of the open flow, shown only when asked for (a new flow written by hand opens with it). */
+const showSource = ref(false);
+const describe = ref("");
+const change = ref("");
+const starting = ref(false);
+const examples = [
+  { label: "需求交付", text: "需求来了先由助手澄清范围、列出要确认的问题，我确认后交给编码 Agent 改，改完它自己跑测试并评审；我看过再推送，推送以后部署预发，由助手按验收点在预发上逐条验，结果给我签字。" },
+  { label: "每周周报", text: "每周五下午，助手先把这周我参与的事项、提交和会议整理成周报草稿，我改完点头，它再发到团队群。" },
+  { label: "线上问题排查", text: "有人报线上问题时，助手先查日志和最近的发布，给出可能的原因和证据；要改代码的话先问我，我同意后交办去修，修完我来确认关单。" },
+];
+/** What the assistant is asked: the owner's words, and how to go about it. */
+function draftPrompt(words: string) {
+  return `帮我建一个流程：\n\n${words.trim()}\n\n先弄清楚：分几段、每段做什么、谁来做（我自己、你的一次运行、交办编码、只是等别人）、哪一段开始前要先问我、每段做到什么算完、做完要不要一轮一轮重复。拿不准的先问我，问清楚了再用 save_flow 起草给我确认。`;
+}
+async function startConversation(text: string) {
+  if (!text.trim() || starting.value) return;
+  starting.value = true;
+  try {
+    const r = await post<{ conversationId: string }>("/api/ask", { text, space: state.space });
+    await router.push(`/ask/${r.conversationId}`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    starting.value = false;
+  }
+}
+async function changeWithAssistant() {
+  if (!selected.value || !change.value.trim()) return;
+  await startConversation(`我想改流程「${title.value}」（id: ${selected.value}）：\n\n${change.value.trim()}\n\n现在的定义：\n\n\`\`\`yaml\n${original.value}\n\`\`\`\n\n拿不准的先问我，改好后用 save_flow 起草新版本给我确认（id 保持 ${selected.value}）。`);
+}
+async function answerDraft(d: Draft, choice: 0 | 1) {
+  try {
+    await post(`/api/asks/${d.askId}/answer`, { choice });
+    toast(choice === 0 ? `已启用「${d.name}」` : "已放弃这份草稿", "ok");
+    await load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 
 type Step = { id: string; name: string; carrier: string; gate: string; done: string; when: string; needs: string[]; ai?: string; time?: string; budget?: string };
 type Reading = { ok: boolean; id?: string; name?: string; description?: string; problem?: string; stages?: Step[]; repeatDescription?: string };
@@ -39,7 +89,7 @@ const status = computed(() => validating.value ? "正在核对…" : !selected.v
 async function load() {
   const request = ++listSeq;
   loading.value = true;
-  try { const result = await get<{ flows: FlowFile[] }>("/api/flows"); if (request === listSeq) { files.value = result.flows; error.value = ""; } }
+  try { const result = await get<{ flows: FlowFile[]; drafts?: Draft[] }>("/api/flows"); if (request === listSeq) { files.value = result.flows; drafts.value = result.drafts ?? []; error.value = ""; } }
   catch (e) { if (request === listSeq) error.value = (e as Error).message; }
   finally { if (request === listSeq) loading.value = false; }
 }
@@ -75,6 +125,7 @@ function waits(s: Step, i: number) {
   return s.needs.length ? `等「${s.needs.map((id) => all.find((n) => n.id === id)?.name ?? id).join("」「")}」做完` : "不用等前面的阶段，可以同时进行";
 }
 const canLeave = () => !changed.value || confirmDialog("放弃没保存的修改", { message: "切换后，这次修改不会保存。", okText: "放弃修改", danger: true });
+/** Open a flow, or (none given) a new one written by hand. */
 async function open(file?: FlowFile) {
   if (busy.value || !await canLeave()) return;
   const next = file?.raw ?? template;
@@ -82,7 +133,13 @@ async function open(file?: FlowFile) {
   selected.value = file?.id ?? null;
   original.value = file?.raw ?? "";
   raw.value = next;
-  editing.value = true; error.value = "";
+  editing.value = true; error.value = ""; change.value = "";
+  showSource.value = !file;
+}
+/** Back to starting a new flow with the assistant. */
+async function startNew() {
+  if (busy.value || !await canLeave()) return;
+  editing.value = false; selected.value = null; original.value = raw.value = ""; reading.value = shown.value = null; error.value = "";
 }
 async function save() {
   if (!valid.value || !changed.value || busy.value) return;
@@ -112,13 +169,27 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
   <div class="flows">
     <aside class="list-col">
       <div class="head row">
-        <RuleTabs />
-        <span class="spacer" />
-        <button class="btn ghost sm icon" title="新建流程" aria-label="新建流程" :disabled="busy" @click="open()"><Icon name="plus" :size="15" /></button>
+        <FlowTabs />
       </div>
       <div class="items">
         <Skeleton v-if="loading" :rows="4" />
         <template v-else>
+          <button class="li new" :class="{ on: !editing }" type="button" :disabled="busy" @click="startNew"><Icon name="sparkles" :size="15" />和助理一起建一个流程</button>
+          <template v-if="drafts.length">
+            <div class="group">等你确认的草稿</div>
+            <div v-for="d in drafts" :key="d.askId" class="li draft">
+              <div class="grow">
+                <div class="row"><strong class="ellipsis">{{ d.name }}</strong><span class="badge warn">草稿</span></div>
+                <div class="muted small">{{ d.stages }} 段<template v-if="d.replaces"> · 会替换现有的同名流程</template></div>
+                <div class="row draft-actions">
+                  <button class="btn primary sm" type="button" @click="answerDraft(d, 0)">启用</button>
+                  <button class="btn ghost sm" type="button" @click="answerDraft(d, 1)">不用</button>
+                  <router-link v-if="d.conversationId" :to="`/ask/${d.conversationId}`" class="btn ghost sm">看对话</router-link>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div v-if="files.length" class="group">流程</div>
           <div v-for="f in files" :key="f.id" class="li" :class="{ on: editing && selected === f.id }">
             <button class="grow pick" type="button" :disabled="busy" @click="open(f)">
               <div class="row"><strong class="ellipsis">{{ f.definition?.name ?? f.id }}</strong></div>
@@ -127,31 +198,49 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
               <div v-if="f.problem" class="err small clamp">这份定义读不了：{{ f.problem }}</div>
             </button>
           </div>
-          <p v-if="!files.length && !error" class="muted small hint">还没有流程。点 ＋ 新建，或把你的做法讲给助理，它起草一份等你确认。</p>
+          <p v-if="!files.length && !error" class="muted small hint">还没有流程。</p>
           <p v-if="error && !editing" class="err small hint" role="alert">{{ error }} <button class="btn ghost sm" @click="load">重试</button></p>
         </template>
       </div>
     </aside>
 
     <main class="detail">
-      <div v-if="!editing" class="empty">
-        <Icon name="layers" :size="34" />
-        <h3>流程</h3>
-        <p>把一类事的做法写成几个阶段，事项就按它往前走：轮到谁就交给谁，要你拍板的地方停下来等你。阶段是一张清单，每段写明谁来做、做到什么算完，不用画图。</p>
-        <p class="muted small">在事项页给一件事选一份流程就开始了。也可以直接对助理说“以后需求都这么走：先澄清，再编码，我推送以后……”，它起草好发给你确认。</p>
-        <button class="btn" :disabled="busy" @click="open()"><Icon name="plus" :size="14" />新建流程</button>
+      <div v-if="!editing" class="start">
+        <h2>和助理一起定一个流程</h2>
+        <p class="lead">流程是一类事的固定做法：分几段，轮到谁就交给谁，要你拍板的地方停下来等你。讲讲这类事你平时怎么做，助理会问清楚拿不准的地方，起草好发给你确认，你点“启用”才生效。</p>
+        <ol class="asks-list">
+          <li><strong>从哪开始</strong><span class="muted">什么时候用这个流程：来了一个需求、每周五、有人报问题……</span></li>
+          <li><strong>分几步，每步做什么</strong><span class="muted">按顺序说就行，不用想格式。</span></li>
+          <li><strong>每步谁来做</strong><span class="muted">你自己、助手跑一次、交给编码 Agent、还是只是等别人。</span></li>
+          <li><strong>哪里要你拍板</strong><span class="muted">开始前要先问你的、做完要你点头的。</span></li>
+          <li><strong>做到什么算完</strong><span class="muted">推到远端、合进主分支、你确认，或一句话说清楚。</span></li>
+        </ol>
+        <label class="field">
+          <span>这类事怎么做</span>
+          <textarea v-model="describe" class="textarea" rows="6" placeholder="例如：需求来了先由助手澄清范围，我确认后交给编码 Agent 改，改完自己跑测试；我看过再推送，推送以后部署预发并逐条验收，结果给我签字。" />
+        </label>
+        <div class="row wrap examples">
+          <span class="muted small">照着改：</span>
+          <button v-for="x in examples" :key="x.label" type="button" class="btn ghost sm" @click="describe = x.text">{{ x.label }}</button>
+        </div>
+        <div class="row wrap">
+          <button class="btn primary" :disabled="!describe.trim() || starting" @click="startConversation(draftPrompt(describe))"><Icon name="chat" :size="15" />交给助理起草</button>
+          <span class="muted small">会打开一段对话，助理问清楚后把草稿发给你；草稿也会出现在左边。</span>
+        </div>
+        <p class="muted small manual">熟悉定义格式的话，也可以<button type="button" class="link" :disabled="busy" @click="open()">自己写定义（YAML）</button>。</p>
       </div>
 
       <div v-else class="page">
         <header class="dh row">
           <strong class="title ellipsis">{{ title }}</strong>
-          <span class="muted small" role="status">{{ status }}</span>
-          <button class="btn primary sm" :disabled="!valid || !changed || busy" @click="save">保存</button>
-          <button v-if="selected" class="btn sm danger" :disabled="busy" @click="remove">删除</button>
+          <span v-if="changed || !selected" class="muted small" role="status">{{ status }}</span>
+          <button v-if="changed || !selected" class="btn primary sm" :disabled="!valid || !changed || busy" @click="save">保存</button>
+          <button v-if="selected" class="btn ghost sm danger" :disabled="busy" @click="remove"><Icon name="trash" :size="14" />删除</button>
         </header>
+        <p v-if="shown?.description" class="muted desc">{{ shown.description }}</p>
         <p v-if="error" class="err small" role="alert">{{ error }}</p>
 
-        <div class="panes">
+        <div class="panes" :class="{ single: !showSource }">
           <section class="reading" aria-live="polite">
             <h3>它会怎么走</h3>
             <p v-if="reading?.problem" class="err small">{{ reading.problem }}</p>
@@ -172,10 +261,12 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
             </ol>
             <p v-if="shown?.repeatDescription && !reading?.problem" class="small note">一轮一轮转：{{ shown.repeatDescription }}。</p>
             <p v-if="shown?.stages && !reading?.problem" class="muted small note">没有人参与的情况下连着自己开始了几段，下一段会先问你一声；这个数在 设置 → AI → 自动推进 里改。</p>
+            <button v-if="!showSource" type="button" class="btn ghost sm source-toggle" @click="showSource = true"><Icon name="code" :size="14" />查看定义（YAML）</button>
           </section>
 
-          <section class="source">
-            <label class="field"><span>定义（YAML）</span><textarea v-model="raw" class="textarea" spellcheck="false" rows="24" :disabled="busy" maxlength="60000" /></label>
+          <section v-if="showSource" class="source">
+            <div class="row"><span class="muted small">定义（YAML）</span><span class="spacer" /><button v-if="selected" type="button" class="btn ghost sm" @click="showSource = false">收起</button></div>
+            <label class="field"><span class="sr-only">定义（YAML）</span><textarea v-model="raw" class="textarea" spellcheck="false" rows="24" :disabled="busy" maxlength="60000" /></label>
             <details class="guide">
               <summary>每一段可以写什么</summary>
               <dl>
@@ -205,6 +296,14 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
             </details>
           </section>
         </div>
+
+        <section v-if="selected" class="change">
+          <label class="field">
+            <span>想怎么改，跟助理说</span>
+            <textarea v-model="change" class="textarea" rows="2" placeholder="例如：编码前加一段“出方案”，方案要我确认；预发验收改成每段都先问我。" />
+          </label>
+          <div class="row"><button class="btn sm" :disabled="!change.trim() || starting" @click="changeWithAssistant"><Icon name="chat" :size="14" />让助理改</button><span class="muted small">它起草新版本发给你确认，确认前现在这份照常用。</span></div>
+        </section>
       </div>
     </main>
   </div>
@@ -227,14 +326,33 @@ onBeforeUnmount(() => { ++validationSeq; ++listSeq; clearTimeout(timer); window.
 .err { color: var(--danger); margin: 0; }
 
 .detail { flex: 1; min-width: 0; overflow-y: auto; }
-.empty { max-width: 560px; margin: 50px auto; text-align: center; color: var(--ink-2); padding: 0 16px; display: grid; gap: 10px; justify-items: center; }
-.empty h3, .empty p { margin: 0; }
-.empty p { line-height: 1.7; }
 .page { max-width: 1080px; padding: 16px 24px 40px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .dh { gap: 10px; flex-wrap: wrap; }
 .title { flex: 1; min-width: 160px; font-size: 16px; font-weight: 600; }
 
 .panes { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 28px; align-items: start; }
+.panes.single { grid-template-columns: minmax(0, 1fr); max-width: 680px; }
+.source-toggle { justify-self: start; }
+.desc { margin: -6px 0 0; line-height: 1.6; }
+.change { display: grid; gap: 8px; max-width: 680px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.change .row { gap: 10px; flex-wrap: wrap; }
+.field { display: grid; gap: 6px; }
+.field > span { font-size: 12.5px; color: var(--ink-2); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.li.new { width: 100%; border: 0; background: none; font: inherit; color: var(--ink); cursor: pointer; align-items: center; gap: 8px; font-weight: 550; }
+.li.new:disabled { cursor: default; }
+.group { font-size: 11px; color: var(--muted); padding: 12px 10px 4px; letter-spacing: 0.04em; }
+.draft-actions { gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.start { max-width: 680px; margin: 36px auto; padding: 0 24px 40px; display: grid; gap: 16px; }
+.start h2 { margin: 0; font-family: var(--serif); font-size: 24px; }
+.start .lead { margin: 0; line-height: 1.75; color: var(--ink-2); }
+.asks-list { margin: 0; padding: 0 0 0 20px; display: grid; gap: 6px; line-height: 1.6; font-size: 13.5px; }
+.asks-list li { padding-left: 4px; }
+.asks-list strong { margin-right: 8px; font-weight: 600; }
+.examples { gap: 6px; }
+.start .row { gap: 10px; }
+.manual { margin: 0; }
+.link { padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; }
 .panes > * { min-width: 0; display: grid; gap: 10px; }
 .reading h3 { margin: 0; font-size: 12.5px; font-weight: 400; color: var(--ink-2); }
 

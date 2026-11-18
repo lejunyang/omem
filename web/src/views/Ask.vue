@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { del, get, onServerEvent, onServerResync, post, type Ask as AskItem, type UiViewItem } from "../api";
+import { api, authUrl, del, get, onServerEvent, onServerResync, post, type Ask as AskItem, type UiViewItem } from "../api";
 import AskCard from "../components/AskCard.vue";
 import UiView from "../components/UiView.vue";
 import Icon from "../components/Icon.vue";
@@ -15,7 +15,9 @@ import { recordSpeech, voiceStatus } from "../lib/voice";
 import { currentSpace, relTime, state, toast } from "../store";
 
 type Conversation = { id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
-type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string };
+/** A file pasted, dropped or picked into the box (src/agents/attachments.ts); the text refers to it as [label]. */
+type Attachment = { name: string; filename: string; kind: "image" | "file"; label: string; size: number };
+type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; meta?: { attachments?: Attachment[] } };
 
 const route = useRoute();
 const router = useRouter();
@@ -169,16 +171,85 @@ const pending = computed(() => {
   return [...new Set(messages.value.filter((m) => m.role === "user" && m.runId && !answered.has(m.runId)).map((m) => m.runId!))];
 });
 
+// ---- attachments: paste, drop or pick files; each shows above the box and is referenced in the text as [图片1] / [文件1]
+const attachments = ref<Attachment[]>([]);
+const uploading = ref(0);
+const picker = ref<HTMLInputElement>();
+const dragging = ref(false);
+const fileUrl = (name: string) => authUrl(`/api/files/${name}`);
+/** Put text where the cursor is (or was, before a chip was clicked), and keep the cursor after it. */
+function insertAtCursor(snippet: string) {
+  const el = input.value;
+  const at = el ? el.selectionStart : text.value.length;
+  const end = el ? el.selectionEnd : at;
+  const before = text.value.slice(0, at), after = text.value.slice(end);
+  const pad = before && !/\s$/.test(before) ? " " : "";
+  text.value = `${before}${pad}${snippet}${after && !/^\s/.test(after) ? " " : ""}${after}`;
+  void nextTick(() => {
+    const pos = before.length + pad.length + snippet.length + 1;
+    el?.focus();
+    el?.setSelectionRange(pos, pos);
+  });
+}
+function nextLabel(kind: Attachment["kind"]) {
+  const word = kind === "image" ? "图片" : "文件";
+  const used = attachments.value.filter((a) => a.kind === kind).map((a) => Number(a.label.slice(word.length)) || 0);
+  return `${word}${Math.max(0, ...used) + 1}`;
+}
+async function addFiles(files: File[]) {
+  if (!files.length) return;
+  uploading.value += files.length;
+  try {
+    const form = new FormData();
+    for (const f of files) form.append("file", f, f.name || (f.type.startsWith("image/") ? `粘贴的图片.${f.type.slice(6).replace("jpeg", "jpg")}` : "粘贴的文件"));
+    const r = await api<{ files: Omit<Attachment, "label">[] }>("/api/ask/attachments", { method: "POST", body: form });
+    const labels: string[] = [];
+    for (const f of r.files) {
+      const a = { ...f, label: nextLabel(f.kind) };
+      attachments.value.push(a);
+      labels.push(`[${a.label}]`);
+    }
+    insertAtCursor(labels.join(" "));
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    uploading.value -= files.length;
+  }
+}
+function onPaste(e: ClipboardEvent) {
+  const files = Array.from(e.clipboardData?.files ?? []);
+  if (!files.length) return;
+  e.preventDefault();
+  void addFiles(files);
+}
+function onDrop(e: DragEvent) {
+  dragging.value = false;
+  const files = Array.from(e.dataTransfer?.files ?? []);
+  if (files.length) void addFiles(files);
+}
+function onPick(e: Event) {
+  const el = e.target as HTMLInputElement;
+  void addFiles(Array.from(el.files ?? []));
+  el.value = "";
+}
+function removeAttachment(a: Attachment) {
+  attachments.value = attachments.value.filter((x) => x !== a);
+  text.value = text.value.split(`[${a.label}]`).join("").replace(/ {2,}/g, " ");
+}
+const sizeText = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
 async function send() {
   const t = text.value.trim();
-  if (!t || sending.value) return;
+  const files = attachments.value;
+  if ((!t && !files.length) || sending.value || uploading.value) return;
   sending.value = true;
   try {
-    const r = await post<{ conversationId: string; messageId: string | null; runId: string | null; reply: string | null }>("/api/ask", { text: t, space: state.space, conversationId: id.value });
+    const r = await post<{ conversationId: string; messageId: string | null; runId: string | null; reply: string | null }>("/api/ask", { text: t, space: state.space, conversationId: id.value, ...(files.length ? { attachments: files } : {}) });
     text.value = "";
+    attachments.value = [];
     if (r.conversationId !== id.value) await router.push(`/ask/${r.conversationId}`);
     else if (r.reply !== null) await loadConversation();
-    else messages.value.push({ id: r.messageId!, role: "user", text: t, runId: r.runId, createdAt: new Date().toISOString() });
+    else messages.value.push({ id: r.messageId!, role: "user", text: t || files.map((a) => `[${a.label}]`).join(" "), runId: r.runId, createdAt: new Date().toISOString(), meta: files.length ? { attachments: files } : undefined });
     void loadList();
     await scrollDown();
   } catch (e) {
@@ -246,7 +317,16 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
           </div>
           <template v-for="m in messages" :key="m.id">
             <div v-if="m.role === 'user'" class="msg user">
-              <div class="bubble">{{ m.text }}</div>
+              <div class="bubble">
+                {{ m.text }}
+                <div v-if="m.meta?.attachments?.length" class="sent-files">
+                  <a v-for="a in m.meta.attachments" :key="a.label" :href="fileUrl(a.name)" target="_blank" rel="noopener" class="sent-file" :title="a.filename">
+                    <img v-if="a.kind === 'image'" :src="fileUrl(a.name)" :alt="a.filename" loading="lazy" />
+                    <span v-else class="file-ico"><Icon name="file" :size="15" /></span>
+                    <span class="small">[{{ a.label }}] {{ a.kind === "image" ? "" : a.filename }}</span>
+                  </a>
+                </div>
+              </div>
             </div>
             <div v-else class="msg bot">
               <RunActivity v-if="m.runId" :run-id="m.runId" :show-text="false" />
@@ -271,13 +351,26 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
         <AskCard v-for="a in waiting" :key="a.id" :ask="a" @answered="loadAsks" />
       </div>
       <VoiceChat v-if="talking" class="voice-panel" :space="state.space" @ended="voiceEnded" />
-      <form class="composer" @submit.prevent="send">
-        <textarea ref="input" v-model="text" rows="1" :placeholder="recording ? '正在听，说完再点一下麦克风…' : transcribing ? '正在转成文字…' : '提问或交代事情；/help 查看命令（Shift+Enter 换行）'" @keydown.enter.exact.prevent="send" />
+      <form class="composer" :class="{ dragging }" @submit.prevent="send" @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop.prevent="onDrop">
+        <div v-if="attachments.length || uploading" class="attachments" aria-label="附件">
+          <div v-for="a in attachments" :key="a.label" class="chip" :title="`点一下在光标处引用 [${a.label}]`">
+            <button type="button" class="chip-main" @mousedown.prevent @click="insertAtCursor(`[${a.label}]`)">
+              <img v-if="a.kind === 'image'" :src="fileUrl(a.name)" :alt="a.filename" />
+              <span v-else class="file-ico"><Icon name="file" :size="16" /></span>
+              <span class="chip-text"><strong>{{ a.label }}</strong><span class="muted ellipsis">{{ a.kind === "image" ? sizeText(a.size) : a.filename }}</span></span>
+            </button>
+            <button type="button" class="chip-x" :aria-label="`移除 ${a.label}`" @click="removeAttachment(a)"><Icon name="x" :size="12" /></button>
+          </div>
+          <div v-if="uploading" class="chip muted small"><span class="spin" />正在上传 {{ uploading }} 个</div>
+        </div>
+        <input ref="picker" type="file" multiple hidden @change="onPick" />
+        <button type="button" class="btn ghost icon" aria-label="添加图片或文件" title="添加图片或文件（也可以直接粘贴或拖进来）" @click="picker?.click()"><Icon name="upload" :size="16" /></button>
+        <textarea ref="input" v-model="text" rows="1" :placeholder="recording ? '正在听，说完再点一下麦克风…' : transcribing ? '正在转成文字…' : '提问或交代事情；可以粘贴图片和文件；/help 查看命令（Shift+Enter 换行）'" @keydown.enter.exact.prevent="send" @paste="onPaste" />
         <template v-if="voiceReady">
           <button type="button" class="btn ghost icon" :class="{ rec: recording }" :disabled="transcribing || talking" :aria-pressed="!!recording" :aria-label="recording ? '停止并转成文字' : '语音输入'" :title="recording ? '停止并转成文字' : '语音输入'" @click="toggleRecord"><Icon name="mic" :size="16" /></button>
           <button type="button" class="btn ghost icon" :disabled="talking || !!recording" aria-label="语音对话" title="和助理实时语音对话" @click="talking = true"><Icon name="waves" :size="16" /></button>
         </template>
-        <button class="btn primary icon" :disabled="sending || !text.trim()" aria-label="发送"><Icon name="send" :size="16" /></button>
+        <button class="btn primary icon" :disabled="sending || !!uploading || (!text.trim() && !attachments.length)" aria-label="发送"><Icon name="send" :size="16" /></button>
       </form>
     </section>
   </div>
@@ -382,6 +475,7 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
 }
 .composer {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: flex-end;
   max-width: 780px;
@@ -392,6 +486,114 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
   border-radius: 14px;
   padding: 8px 8px 8px 14px;
   box-shadow: var(--shadow);
+}
+.composer.dragging {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.attachments {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 3px 4px 3px 3px;
+}
+.chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.chip img,
+.chip .file-ico {
+  width: 38px;
+  height: 38px;
+  border-radius: 7px;
+  object-fit: cover;
+  flex: none;
+}
+.file-ico {
+  display: inline-grid;
+  place-items: center;
+  background: var(--hover);
+  color: var(--muted);
+}
+.chip-text {
+  display: grid;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.chip-x {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+}
+.chip-x:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.spin {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  margin-right: 6px;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.sent-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  white-space: normal;
+}
+.sent-file {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  color: inherit;
+  max-width: 160px;
+  text-decoration: none;
+}
+.sent-file img {
+  max-width: 160px;
+  max-height: 120px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  object-fit: cover;
+}
+.sent-file .file-ico {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
 }
 .voice-panel {
   max-width: 780px;
@@ -404,6 +606,7 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
 }
 .composer textarea {
   flex: 1;
+  min-width: 0;
   border: 0;
   outline: 0;
   background: none;

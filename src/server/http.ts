@@ -91,7 +91,7 @@ import { searchRun } from "../search/trace.ts";
 import { closeReadProcess } from "../search/read-process.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
-import { deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
+import { APPEND_ONLY, deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
 import { mark } from "../core/loop-monitor.ts";
 import { CATEGORY_KINDS, categoryStatus, decisionStatus, decisionStatuses, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider } from "../core/ai-keys.ts";
@@ -812,11 +812,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // --------------------------------------------------------------------- chat
+  const attachmentSchema = z.object({ name: z.string(), filename: z.string().max(200), kind: z.enum(["image", "file"]), label: z.string().max(20), size: z.number().int().min(0) });
   server.post("/api/ask", async (req) => {
-    const b = q(z.object({ text: z.string().min(1), space: z.string().optional(), conversationId: z.string().optional() }), req.body);
+    const b = q(z.object({ text: z.string(), space: z.string().optional(), conversationId: z.string().optional(), attachments: z.array(attachmentSchema).optional() }), req.body);
     const userId = who(req);
     if (b.space && userId !== OWNER && !(accessibleSpaces(app, userId) ?? []).includes(b.space)) throw new HttpError(403, `不能访问空间 ${b.space}`);
-    return ask(app, { text: b.text, spaceId: b.space, conversationId: b.conversationId, userId });
+    const { checkAttachments } = await import("../agents/attachments.ts");
+    const attachments = checkAttachments(app, b.attachments ?? []);
+    const text = b.text.trim() || attachments.map((a) => `[${a.label}]`).join(" ");
+    if (!text) throw new HttpError(400, "消息是空的");
+    return ask(app, { text, spaceId: b.space, conversationId: b.conversationId, userId, ...(attachments.length ? { meta: { attachments } } : {}) });
+  });
+  // Files pasted or dropped into the chat box: kept with the stored originals, sent with the next message (agents/attachments.ts).
+  server.post("/api/ask/attachments", async (req) => {
+    const { saveAttachment } = await import("../agents/attachments.ts");
+    const saved = [];
+    for await (const part of req.files()) saved.push(saveAttachment(app, await part.toBuffer(), part.filename, part.mimetype));
+    if (!saved.length) throw new HttpError(400, "没有收到文件");
+    return { files: saved };
   });
   server.get("/api/conversations", async (req) => {
     const o = q(z.object({ space: z.string().optional() }), req.query);
@@ -1036,7 +1049,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/wiki/:space", async (req) => {
     const space = (req.params as { space: string }).space;
     syncWiki(app, space);
-    const staleList = staleDetail(app, space);
+    // An original that only grew (a chat with new lines) is not a change for the page: left out here, counted in upkeep.appendOnly.
+    const staleList = staleDetail(app, space)
+      .map((p) => ({ slug: p.slug, sources: p.sources.filter((s) => s.deleted || !APPEND_ONLY.has(s.kind)) }))
+      .filter((p) => p.sources.length);
     const aliases = all<{ alias: string }>(app.db, "select alias from page_aliases where space_id = ?", space).map((r) => r.alias);
     // stale: how many pages cite an original that changed; stalePages: which ones and what changed; upkeep: what checks itself.
     return {
@@ -1044,7 +1060,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       pages: listPages(app, space),
       aliases,
       stale: staleList.length,
-      stalePages: staleList.map((p) => ({ slug: p.slug, sources: p.sources })),
+      stalePages: staleList,
       upkeep: upkeepStatus(app, space),
     };
   });

@@ -15,6 +15,14 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 网页对话可以带图片和文件；流程的定义搬进流程页、靠对话建；人物卡按邮箱；Wiki 页头整理（11-19）
+
+- 对话附件：`src/agents/attachments.ts`（存进 `files/<hash>.<ext>`，`POST /api/ask/attachments`；`/api/ask` 收 `attachments`，消息 `meta.attachments`，正文用 `[图片1]` / `[文件1]` 引用；`renderMessages` 把每个附件的路径交给 Agent）。`web/src/views/Ask.vue`：粘贴、拖进或点按钮加文件，输入框上方显示，点一个在光标处插入引用，发出的消息下面带缩略图。
+- 流程：侧栏“流程”下分“进行中”（看板）和“流程定义”（`web/src/components/FlowTabs.vue`），规则页和事项页不再有流程入口。`Flows.vue` 新建时是“和助理一起建一个流程”：讲做法、交给助理起草（开一段对话，助理问清后 `save_flow`）；`GET /api/flows` 多了 `drafts`（等本人启用的 `flow-save` 提问），列表里直接启用 / 不用；打开一份先看“它会怎么走”，“让助理改”开对话起草新版本，YAML 收在“查看定义”里。
+- 人物卡路径：`personSlug` 改成“名字-邮箱前缀”（按 id 找不到邮箱时，用同名的人共有的那一个邮箱；同名不同人又没邮箱时用 id 尾部），以前随“有没有同名记录”在 `people/名字`、`名字-id 尾`、`名字-邮箱前缀` 之间变。`mergePersonCards`（`src/agents/work-state.ts`，每晚 work-state 开头跑）把旧路径的卡并到新路径：一张的直接移动，多张的留最长的那张，其余正文放进“合并进来的旧卡”一节、“本人补充”合在一起、旧路径记成别名，并让这些人当晚重新整理；`roles/work-state.md` 说明怎么把那一节并进去。
+- Wiki：聊天类原件（`APPEND_ONLY`，挪到 `src/wiki/store.ts`）只是有了新消息时不算“原件已变化”（列表的计数、目录的黄点、页面的提示、`stalePages` 都不算，`PageCite.grew` 标出来），以前个人空间 56 页里 41 页是这种，自动检查本来就不看它们。“原件已变化”从页面顶部的横条改成侧栏入口打开的对话框（`WikiAttention.vue`）；页头只留“编辑”“让助理改写”，“这页有错”“移动”“删除”收进“更多”。
+- Agent 页：标签栏右边的 ＋ 去掉，“新建”放在“我的档案”和技能列表的小标题旁。
+
 ## 远程画面的剪贴板互通、aad 的“更新到最新”真的会更新（11-19）
 
 - aad 0.0.9 的 assist 两个方向都能传文字、富文本、图片和文件。omem 这边：远程页的画面设置把“复制的文字带回”换成“剪贴板互通”，加了文件上限（`remoteSettings.clipboardMaxMb`，默认 100，`src/remote/settings.ts`）；不是 100 时给 aad 加 `--clipboard-max-mb`，只在 aad 0.0.9 及以后（`clipboardFiles`），旧版不认这个选项会起不来。转发不用改：上传走查看页的 WebSocket，带回的东西是同一路径下的 GET。

@@ -16,7 +16,7 @@ import { all, one, run } from "../core/db.ts";
 import { createRun } from "../agents/runs.ts";
 import { json } from "../core/util.ts";
 import { getSpace } from "../core/spaces.ts";
-import { listPages, organizeNeeds, staleDetail } from "./store.ts";
+import { APPEND_ONLY, listPages, organizeNeeds, staleDetail } from "./store.ts";
 
 /** A changed original is looked at once it has been quiet this long (a document still being edited is not). */
 export const SETTLE_MS = 30 * 60_000;
@@ -29,8 +29,7 @@ export const BATCH = 10;
 /** Folder upkeep: a pass at most this often while there is work, and after a pass that moved nothing, a week. */
 export const ORGANIZE_GAP_MS = 6 * 3_600_000;
 export const ORGANIZE_IDLE_GAP_MS = 7 * 86_400_000;
-/** Originals that only grow (chat lines are appended, never rewritten): a cited line does not change when more are added. */
-export const APPEND_ONLY = new Set(["chat", "conversation", "activity", "meeting"]);
+export { APPEND_ONLY };
 
 type Checked = Record<string, string>;
 const key = (spaceId: string) => `wiki-checked:${spaceId}`;
