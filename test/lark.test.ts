@@ -11,7 +11,7 @@ import { all, one } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { backfillTick, capturedChats, pollLark, requestBackfill, setCapturePolicy } from "../src/channels/lark-personal.ts";
+import { backfillTick, capturedChats, getSubscriptions, pollLark, requestBackfill, setCapturePolicy, setChatSpace, setSubscribed } from "../src/channels/lark-personal.ts";
 import { fillResources, missingResources, sourceMessages, storeMessages } from "../src/channels/lark-messages.ts";
 import { mkdirSync as mkdirS, writeFileSync as writeF } from "node:fs";
 import { run as runSql } from "../src/core/db.ts";
@@ -406,6 +406,23 @@ describe("feishu capture policies by kind of chat", () => {
     await pollLark(app);
     const again = listRuns(app, { kind: "ingest" }).flatMap((r) => (r.input as { sourceIds: string[] }).sourceIds);
     expect(again).toContain(src("lark:oc_passive").id);
+
+    // The settings list: subscription and space in each row, subscribed chats not read yet included.
+    createSpace(app, { id: "team", name: "项目 A", kind: "project" });
+    setSubscribed(app, { chatId: "oc_later", name: "还没读的群" }, true, "team");
+    setSubscribed(app, { chatId: "oc_notify", name: "工单助手" }, true);
+    let list = Object.fromEntries(capturedChats(app).map((c) => [c.chatId, c]));
+    expect(list.oc_later).toMatchObject({ subscribed: true, captured: false, spaceId: "team", policy: "ingest" });
+    expect(list.oc_notify).toMatchObject({ subscribed: true, captured: true, spaceId: "personal", policy: "ingest" });
+    expect(list.oc_passive).toMatchObject({ subscribed: false, spaceId: "personal" });
+    // A chat's space is its own binding, so it wins over a watch rule; the subscription follows it.
+    setChatSpace(app, "oc_notify", "team");
+    setChatSpace(app, "oc_passive", "team");
+    list = Object.fromEntries(capturedChats(app).map((c) => [c.chatId, c]));
+    expect([list.oc_notify.spaceId, list.oc_passive.spaceId]).toEqual(["team", "team"]);
+    expect(getSubscriptions(app).find((s) => s.chatId === "oc_notify")).toEqual({ chatId: "oc_notify", name: "工单助手", spaceId: "team" });
+    setSubscribed(app, { chatId: "oc_later", name: "还没读的群" }, false);
+    expect(capturedChats(app).some((c) => c.chatId === "oc_later")).toBe(false);
   });
 });
 

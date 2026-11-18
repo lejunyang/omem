@@ -1483,7 +1483,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     const o = q(z.object({ after: z.coerce.number().optional() }), req.query);
     const r = getRun(app, id);
-    const children = listRuns(app, { parentId: id }).filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
+    // A mention run's handling is not its sub-run (it runs as the owner's own work), but it is what came of it.
+    const linked = r.kind === "mention" ? [r.output?.handleRun, r.output?.joined].filter((x): x is string => typeof x === "string") : [];
+    const children = [...listRuns(app, { parentId: id }), ...linked.flatMap((x) => listRuns(app, { id: x, includeQuiet: true }))]
+      .filter((c, i, a) => a.findIndex((d) => d.id === c.id) === i)
+      .filter((c) => who(req) === OWNER || canReadRun(app, who(req), c.id));
     const diff = r.kind === "code" ? codeDiffView(app, id) : null;
     return { run: { ...r, ...(diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children, patches: diff?.patches, context: runContext(app, r), writes: runWrites(app, r), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id) };
   });
@@ -2446,14 +2450,23 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     setCapturePolicy(app, id, b.policy);
     return { chat: capturedChats(app).find((c) => c.chatId === id) ?? null };
   });
-  server.get("/api/lark/subscriptions", async () => {
-    const { getSubscriptions } = await import("../channels/lark-personal.ts");
-    return { subscriptions: getSubscriptions(app) };
+  // Always read this chat and organize it (into `spaceId`, or where it goes now), or stop.
+  server.put("/api/lark/chats/:id/subscription", async (req) => {
+    const { setSubscribed, capturedChats } = await import("../channels/lark-personal.ts");
+    const b = q(z.object({ subscribed: z.boolean(), name: z.string().max(500), spaceId: z.string().optional() }), req.body);
+    if (b.spaceId && !findSpace(app, b.spaceId)) throw new HttpError(400, "没有这个空间");
+    const id = (req.params as { id: string }).id;
+    setSubscribed(app, { chatId: id, name: b.name }, b.subscribed, b.spaceId);
+    return { chat: capturedChats(app).find((c) => c.chatId === id) ?? null };
   });
-  server.put("/api/lark/subscriptions", async (req) => {
-    const { setSubscriptions } = await import("../channels/lark-personal.ts");
-    const b = q(z.object({ subscriptions: z.array(z.object({ chatId: z.string(), name: z.string(), spaceId: z.string() })) }), req.body);
-    return { subscriptions: setSubscriptions(app, b.subscriptions) };
+  // Which space this chat's capture goes to from now on.
+  server.put("/api/lark/chats/:id/space", async (req) => {
+    const { setChatSpace, capturedChats } = await import("../channels/lark-personal.ts");
+    const b = q(z.object({ spaceId: z.string() }), req.body);
+    if (!findSpace(app, b.spaceId)) throw new HttpError(400, "没有这个空间");
+    const id = (req.params as { id: string }).id;
+    setChatSpace(app, id, b.spaceId);
+    return { chat: capturedChats(app).find((c) => c.chatId === id) ?? null };
   });
   server.post("/api/lark/poll", async () => {
     const { pollLark } = await import("../channels/lark-personal.ts");

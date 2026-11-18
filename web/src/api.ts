@@ -257,12 +257,14 @@ export type Item = { id: string; userId?: string; spaceId: string; kind: string;
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
 export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; ai?: { profile: string; model?: string; effort?: string } | null; waiting?: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean; trigger?: RunTrigger | null };
 /** How a run came about and who was behind it (src/core/run-trigger.ts). */
-export type RunTrigger = { via: "chat" | "guest" | "mention" | "rule" | "schedule" | "peer" | "member" | "flow"; by?: { key: string; name: string }; where?: string; source?: { kind: string; id: string; name: string } };
+export type RunTrigger = { via: "chat" | "guest" | "mention" | "rule" | "schedule" | "peer" | "member" | "flow"; by?: { key: string; name: string }; where?: string; source?: { kind: string; id: string; name: string }; followUp?: "wake" | "child" };
 const VIA: Record<RunTrigger["via"], string> = { chat: "对话", guest: "访客提问", mention: "有人找你", rule: "规则", schedule: "定时", peer: "同伴设备", member: "成员操作", flow: "流程" };
 /** "小王 · 访客提问": the person first, then how; a rule or schedule by its name. `full` adds where it happened. */
 export function triggerLabel(t: RunTrigger | null | undefined, full = false) {
   if (!t) return "";
-  const how = t.source && t.via !== "peer" ? `${VIA[t.via]}「${t.source.name}」` : VIA[t.via];
+  const way = t.source && t.via !== "peer" ? `${VIA[t.via]}「${t.source.name}」` : VIA[t.via];
+  // Carried over from the run that started it (a wake it set, a run it started): not that person again.
+  const how = t.followUp ? `接着「${way}」的${t.followUp === "wake" ? "唤醒" : "后续"}` : way;
   return [t.by?.name, how, full || t.via === "peer" ? t.where : ""].filter(Boolean).join(" · ");
 }
 /** "codex · gpt-6.1-sol · low": what a run ran on, or its backend alone for runs recorded before models were. */

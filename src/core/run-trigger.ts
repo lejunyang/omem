@@ -21,6 +21,12 @@ export type RunTrigger = {
   where?: string;
   /** The rule, schedule or device behind it. */
   source?: { kind: "rule" | "schedule" | "peer" | "flow"; id: string; name: string };
+  /**
+   * Taken over from the run that started this one, not something that person did again: a wake that
+   * run set for itself, or a run it started (a delegation, a review). Shown as “接着…”, and not counted
+   * as one more run of theirs in the run page's 触发人 list.
+   */
+  followUp?: "wake" | "child";
 };
 
 export const VIA_LABEL: Record<RunTrigger["via"], string> = { chat: "对话", guest: "访客提问", mention: "有人找你", rule: "规则", schedule: "定时", peer: "同伴设备", member: "成员操作", flow: "流程" };
@@ -72,10 +78,20 @@ export function triggerFor(app: App, r: NewRun): RunTrigger | null {
   // Started by another run (a delegation, a follow-up): whoever was behind that one.
   if (r.parentId) {
     const p = one<{ trigger: string | null }>(app.db, "select trigger from runs where id = ?", r.parentId)?.trigger;
-    if (p) return json<RunTrigger | null>(p, null);
+    const t = p ? json<RunTrigger | null>(p, null) : null;
+    if (t) return { ...t, followUp: input.wake ? "wake" : "child" };
   }
   if (r.userId && r.userId !== OWNER) return { via: "member", by: userBy(app, r.userId) };
   return null;
+}
+
+/** Runs the person brought about themselves, not follow-ups carrying their name (older wakes were stored before `followUp`). */
+const FIRST_HAND = "json_extract(trigger, '$.followUp') is null and not (parent_id is not null and coalesce(json_extract(input, '$.wake'), 0))";
+
+/** A follow-up stored before `followUp` was recorded: a wake inheriting the trigger of the run that set it. */
+export function withFollowUp(t: RunTrigger | null, run: { parentId: string | null; input: Record<string, unknown> }): RunTrigger | null {
+  if (!t || t.followUp || !run.parentId || !run.input.wake) return t;
+  return { ...t, followUp: "wake" };
 }
 
 /** People behind recent runs, most runs first (the run page's “触发人” filter). */
@@ -90,7 +106,7 @@ export function triggerers(app: App, opts: { days?: number; visibleTo?: string }
   const rows = all<{ key: string; name: string | null; via: string | null; n: number; last: string }>(app.db,
     `select case when trigger_by = 'user:owner' then trigger_by else 'name:' || coalesce(json_extract(trigger, '$.by.name'), trigger_by) end key,
        max(json_extract(trigger, '$.by.name')) name, json_extract(trigger, '$.via') via, count(*) n, max(created_at) last from runs
-      where trigger_by is not null and created_at > ? ${opts.visibleTo ? "and coalesce(user_id, 'owner') = ?" : ""} group by key, via`,
+      where trigger_by is not null and created_at > ? and ${FIRST_HAND} ${opts.visibleTo ? "and coalesce(user_id, 'owner') = ?" : ""} group by key, via`,
     since, ...(opts.visibleTo ? [opts.visibleTo] : []));
   const people = new Map<string, { key: string; name: string; runs: number; last: string; ways: Record<string, number> }>();
   for (const r of rows) {

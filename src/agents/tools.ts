@@ -4827,9 +4827,8 @@ def({
   write: true,
   schema: z.object({ chat_id: z.string(), name: z.string(), subscribe: z.boolean(), space: z.string().optional() }),
   handler: async (ctx, a) => {
-    const { getSubscriptions, setSubscriptions } = await import("../channels/lark-personal.ts");
-    const rest = getSubscriptions(ctx.app).filter((s) => s.chatId !== a.chat_id);
-    setSubscriptions(ctx.app, a.subscribe ? [...rest, { chatId: a.chat_id, name: a.name, spaceId: writeSpace(ctx, a.space) }] : rest);
+    const { setSubscribed } = await import("../channels/lark-personal.ts");
+    setSubscribed(ctx.app, { chatId: a.chat_id, name: a.name }, a.subscribe, a.subscribe ? writeSpace(ctx, a.space) : undefined);
     return a.subscribe ? `已订阅「${a.name}」，采集到空间 ${space(ctx, a.space)}（需要在定时任务中开启飞书采集）` : `已取消订阅「${a.name}」`;
   },
 });

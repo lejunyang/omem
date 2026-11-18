@@ -243,6 +243,10 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
       const m = msg(text, { thread_id: topic });
       store([m]);
       const t = await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id);
+      // Each answer of the decision model on its own line, and where the handling is instead of its bare id.
+      expect(t.output.summary).toMatch(/^\*\*分诊：交给主助手先查\*\*\n\n- 做法：先查再告诉本人/);
+      expect(t.output.summary).toContain("“后续任务”");
+      expect(t.output.summary).not.toContain(String(t.output.handleRun));
       return waitForRun(app, String(t.output.handleRun));
     };
     const quiet = await go("handle-quiet", "@勒 群公告：周五发版", "omt_q");
@@ -288,7 +292,11 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     store([m]);
     const r = await waitForRun(app, queueMention(app, group, [m], "ou_owner")!.id);
     expect(decision.calls).toBe(calls);
-    expect(notifiedBy(r.id)!.body).toContain("分诊次数用完了");
+    const cap = app.config.mentions.perDay.triage;
+    // How many, and where to change it.
+    expect(notifiedBy(r.id)!.body).toContain(`分诊已到每天 ${cap} 次的上限`);
+    expect(notifiedBy(r.id)!.body).toContain("#/settings?tab=lark&focus=mentions");
+    expect(r.output.summary).toContain("设置 → 渠道 → 有人找你");
     app.config.mentions.perDay.triage = 80;
   }, 30000);
 

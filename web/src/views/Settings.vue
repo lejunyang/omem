@@ -30,6 +30,7 @@ import CommandRulesSettings from "../components/CommandRulesSettings.vue";
 import DoubaoSendStatus from "../components/DoubaoSendStatus.vue";
 import MembersSettings from "../components/MembersSettings.vue";
 import ProviderApps from "../components/ProviderApps.vue";
+import LarkCapturedChats, { type CapturedChat } from "../components/LarkCapturedChats.vue";
 import FederationSettings from "../components/FederationSettings.vue";
 import PeerSettings from "../components/PeerSettings.vue";
 import CodeIndexPanel from "../components/CodeIndexPanel.vue";
@@ -200,9 +201,12 @@ const spaceSkills = computed<string[]>({
 const profileJson = ref("");
 type Policy = "ingest" | "involved" | "store" | "skip";
 const larkChats = ref<{ chatId: string; name: string; mode: string; kind: string; muted: boolean; policy: Policy }[]>([]);
-type Captured = { chatId: string; name: string; kind: string; muted: boolean; involved: boolean; lastMessageAt: string | null; policy: Policy; own: Policy | null };
-const captured = ref<Captured[]>([]);
-const capturedFilter = ref("");
+const captured = ref<CapturedChat[]>([]);
+/** Recent chats capture has not read: the rest are in the chat list below. */
+const recentNew = computed(() => {
+  const known = new Set(captured.value.map((c) => c.chatId));
+  return larkChats.value.filter((c) => !known.has(c.chatId));
+});
 const policyOptions: { value: Policy; label: string; hint: string }[] = [
   { value: "ingest", label: "保存并整理", hint: "每批新消息都交给助理整理成记忆和事项" },
   { value: "involved", label: "与我有关时整理", hint: "保存；本人发言、被 @ 或参与的话题有新消息时才整理" },
@@ -219,27 +223,27 @@ const policyKinds: [string, string, string][] = [
   ["muted", "免打扰的会话", "你设置了免打扰的群和单聊，优先于上面的类型"],
 ];
 async function loadCaptured() {
-  captured.value = (await get<{ chats: Captured[] }>("/api/lark/captured").catch(() => ({ chats: [] as Captured[] }))).chats;
+  captured.value = (await get<{ chats: CapturedChat[] }>("/api/lark/captured").catch(() => ({ chats: [] as CapturedChat[] }))).chats;
+}
+/** One chat changed (subscription, space, policy): replace its row, drop it if it is no longer listed, add it if new. */
+function capturedChanged(chatId: string, chat: CapturedChat | null) {
+  const rest = captured.value.filter((c) => c.chatId !== chatId);
+  const at = captured.value.findIndex((c) => c.chatId === chatId);
+  if (!chat) captured.value = rest;
+  else if (at < 0) captured.value = [chat, ...rest];
+  else captured.value = captured.value.map((c) => (c.chatId === chatId ? chat : c));
 }
 async function setChatPolicy(c: { chatId: string }, policy: Policy | "") {
-  await put(`/api/lark/chats/${c.chatId}/policy`, { policy: policy || null });
+  const r = await put<{ chat: CapturedChat | null }>(`/api/lark/chats/${encodeURIComponent(c.chatId)}/policy`, { policy: policy || null });
   toast(policy ? `已改为：${policyLabel[policy]}` : "已恢复默认", "ok");
-  void loadCaptured();
+  if (r.chat) capturedChanged(c.chatId, r.chat);
   if (larkChats.value.length) void loadLarkChats();
 }
 function setKindPolicy(kind: string, policy: Policy) {
   const capture = config.value.lark.capture;
   void saveConfig({ lark: { ...config.value.lark, capture: { ...capture, policies: { ...capture.policies, [kind]: policy } } } }, "已保存采集方式");
 }
-const shownCaptured = computed(() => {
-  const f = capturedFilter.value.trim().toLowerCase();
-  return captured.value.filter((c) => !f || c.name.toLowerCase().includes(f)).slice(0, 200);
-});
-const larkSubs = ref<{ chatId: string; name: string; spaceId: string; since?: string }[]>([]);
 const larkError = ref("");
-async function loadLark() {
-  larkSubs.value = (await get<{ subscriptions: typeof larkSubs.value }>("/api/lark/subscriptions")).subscriptions;
-}
 async function loadLarkChats() {
   larkError.value = "";
   try {
@@ -248,19 +252,21 @@ async function loadLarkChats() {
     larkError.value = (e as Error).message;
   }
 }
-function subOf(chatId: string) {
-  return larkSubs.value.find((s) => s.chatId === chatId);
-}
-async function toggleSub(c: { chatId: string; name: string }, spaceId?: string) {
-  const exists = subOf(c.chatId);
-  const next = exists && !spaceId ? larkSubs.value.filter((s) => s.chatId !== c.chatId) : [...larkSubs.value.filter((s) => s.chatId !== c.chatId), { chatId: c.chatId, name: c.name, spaceId: spaceId ?? state.space }];
-  larkSubs.value = (await put<{ subscriptions: typeof larkSubs.value }>("/api/lark/subscriptions", { subscriptions: next })).subscriptions;
+/** Subscribe to a recent chat into the current space; it then shows in the chat list. */
+async function subscribeRecent(c: { chatId: string; name: string }) {
+  try {
+    const r = await put<{ chat: CapturedChat | null }>(`/api/lark/chats/${encodeURIComponent(c.chatId)}/subscription`, { subscribed: true, name: c.name, spaceId: state.space });
+    capturedChanged(c.chatId, r.chat);
+    toast(`已订阅：${c.name}`, "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
 }
 async function pollNow() {
   try {
     await post("/api/lark/poll");
     toast("采集完成，新消息交给助理整理", "ok");
-    void loadLark();
+    void loadCaptured();
   } catch (e) {
     toast((e as Error).message, "error");
   }
@@ -407,7 +413,6 @@ async function load() {
 }
 onMounted(() => {
   void load();
-  void loadLark();
   void loadCaptured();
   void loadCrawls();
   // `?space=<id>` (from a page that needs one of its settings, e.g. a preview command): open it.
@@ -1591,45 +1596,17 @@ async function saveEdit() {
           <span class="hint">订阅的会话按“保存并整理”。单个会话可以在下面单独设置，优先于类型。</span>
         </div>
         <div v-if="larkError" class="badge danger">{{ larkError }}</div>
-        <template v-if="larkSubs.length">
-          <div class="section-title">订阅的会话</div>
-          <div v-for="s in larkSubs" :key="s.chatId" class="row sub">
-            <UiCheckbox :model-value="true" size="sm" aria-label="取消订阅" @change="toggleSub(s)" /><span class="grow ellipsis">{{ s.name }}</span>
-            <UiSelect :model-value="s.spaceId" size="sm" width="160px" aria-label="空间" :options="state.spaces.map((sp) => ({ value: sp.id, label: sp.name }))" @change="(v) => toggleSub(s, v)" />
-            <span class="muted small">{{ s.since ? `已采集到 ${fmtTime(s.since)}` : "尚未采集" }}</span>
-          </div>
-        </template>
         <template v-if="larkChats.length">
-          <div class="section-title">最近会话</div>
-          <template v-for="c in larkChats" :key="c.chatId">
-            <div v-if="!subOf(c.chatId)" class="row sub">
-              <UiCheckbox :model-value="false" size="sm" aria-label="订阅" @change="toggleSub(c)" /><span class="grow ellipsis">{{ c.name }}</span>
-              <span class="badge">{{ chatKindLabel[c.kind] ?? c.kind }}</span>
-              <span v-if="c.muted" class="badge warn">免打扰</span>
-              <UiSelect :model-value="c.policy" size="sm" width="150px" aria-label="处理方式" :options="policyOptions" @change="(v) => setChatPolicy(c, v)" />
-            </div>
-          </template>
-        </template>
-        <template v-if="captured.length">
-          <div class="row"><div class="section-title grow">已采集过的会话（{{ captured.length }}）</div><div class="search-mini row"><Icon name="search" :size="13" /><input v-model="capturedFilter" placeholder="筛选" aria-label="筛选会话" /></div></div>
-          <div class="captured">
-            <div v-for="c in shownCaptured" :key="c.chatId" class="row sub">
-              <span class="grow ellipsis">{{ c.name || c.chatId }}</span>
-              <span class="badge">{{ chatKindLabel[c.kind] ?? c.kind }}</span>
-              <span v-if="c.muted" class="badge warn">免打扰</span>
-              <span v-if="c.involved" class="badge accent" title="你在这里发过言或被 @ 过">参与过</span>
-              <span class="muted small nowrap">{{ c.lastMessageAt ? fmtTime(c.lastMessageAt) : "" }}</span>
-              <UiSelect
-                :model-value="c.own ?? ''"
-                size="sm"
-                width="170px"
-                aria-label="处理方式"
-                :options="[{ value: '', label: `默认（${policyLabel[c.policy]}）` }, ...policyOptions]"
-                @change="(v) => setChatPolicy(c, v)"
-              />
-            </div>
+          <div class="section-title">最近会话里还没采集过的</div>
+          <div v-if="!recentNew.length" class="muted small">最近的会话都在下面的列表里。</div>
+          <div v-for="c in recentNew" :key="c.chatId" class="row sub">
+            <UiCheckbox :model-value="false" size="sm" :aria-label="`订阅 ${c.name}`" @change="subscribeRecent(c)" /><span class="grow ellipsis" :title="c.name">{{ c.name }}</span>
+            <span class="badge">{{ chatKindLabel[c.kind] ?? c.kind }}</span>
+            <span v-if="c.muted" class="badge warn">免打扰</span>
+            <UiSelect :model-value="c.policy" size="sm" width="150px" aria-label="处理方式" :options="policyOptions" @change="(v) => setChatPolicy(c, v)" />
           </div>
         </template>
+        <LarkCapturedChats v-if="captured.length" :chats="captured" :policy-options="policyOptions" @updated="capturedChanged" />
       </div>
 
       <div class="section-title">其他平台</div>
@@ -2107,11 +2084,6 @@ async function saveEdit() {
 .policy-row:last-child {
   border-bottom: 0;
 }
-.captured {
-  max-height: 420px;
-  overflow-y: auto;
-  display: grid;
-}
 .sub {
   padding: 4px 0;
   min-width: 0;
@@ -2122,21 +2094,6 @@ async function saveEdit() {
 }
 .nowrap {
   white-space: nowrap;
-}
-.search-mini {
-  height: 28px;
-  border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  padding: 0 8px;
-  color: var(--muted);
-  gap: 4px;
-}
-.search-mini input {
-  border: 0;
-  outline: 0;
-  background: none;
-  color: var(--ink);
-  width: 120px;
 }
 .sm-input {
   width: 160px;

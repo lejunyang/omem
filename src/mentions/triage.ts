@@ -1,8 +1,8 @@
-import { decideScene, describeScene } from "../core/decision-log.ts";
+import { decideScene, type SceneResult } from "../core/decision-log.ts";
 import { outcomeLine, outcomeStats } from "../core/notify-outcome.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
-import { decide, decisionReady, describeDecision } from "../core/decision.ts";
+import { decide, decisionReady, type DecisionResult } from "../core/decision.ts";
 import { listIgnoreRules } from "../core/notify-lessons.ts";
 import { findSpace, relatedIds } from "../core/spaces.ts";
 import { accessibleSpaces, OWNER } from "../core/users.ts";
@@ -34,6 +34,8 @@ export type Triage = {
   /** It looks as if the handler could answer without the owner deciding anything. */
   canProgress: boolean;
   reason: string;
+  /** The decision model's answers one by one ("做法：先查再告诉本人（把握 0.85）"), for the run page; absent from the other judges. */
+  parts?: string[];
   /** Who judged: 决策模型, 通用模型, or 设置 (no model, the setting's fixed answer). */
   by: "决策模型" | "通用模型" | "设置";
 };
@@ -182,24 +184,24 @@ export async function triage(app: App, material: Record<string, string>, opts: {
     const d = await decideScene(app, "triage", material, { type: "choice", instructions, options: ACTIONS }, { signal: opts.signal, timeoutMs: 20_000, ref: opts.ref });
     if (!d || !(d.choice in ACTIONS)) return noModel("决策模型没有给出选择，");
     const action = d.taken as TriageAction;
-    const reasons = [describeScene(d, { ignore: "不用管", notify: "简短提醒", handle: "先查再告诉本人" })];
+    const parts = [part("做法", d, { ignore: "不用管", notify: "简短提醒", handle: "先查再告诉本人" })];
     let handler = "assistant";
     let canProgress = false;
     if (action === "handle" && Object.keys(handlers).length > 1) {
       const h = await decide(app, material, { type: "choice", instructions: "这件事交给谁先查：问题明显属于某个 Agent 档案说明的领域就选它，否则选主助手。", options: handlers }, { signal: opts.signal, timeoutMs: 20_000 });
       if (h && h.choice in handlers) {
         handler = h.choice;
-        reasons.push(describeDecision(h, Object.fromEntries(Object.keys(handlers).map((k) => [k, k === "assistant" ? "主助手" : k]))));
+        parts.push(part("交给", h, Object.fromEntries(Object.keys(handlers).map((k) => [k, k === "assistant" ? "主助手" : k]))));
       }
     }
     if (action === "handle" && opts.needProgress) {
       const p = await decideScene(app, "progress", material, { type: "yesno", instructions: "查清以后，能不能不经本人拍板就直接答复对方？涉及承诺、排期、审批、权限或本人的意见时答否。", yes: "能直接答复", no: "要本人定" }, { signal: opts.signal, timeoutMs: 20_000, ref: opts.ref });
       if (p) {
         canProgress = p.taken === "yes";
-        reasons.push(describeScene(p, { yes: "能直接答复", no: "要本人定" }));
+        parts.push(part("查清后", p, { yes: "能直接答复", no: "要本人定" }));
       }
     }
-    return { action, what: "", handler, urgency: "normal", canProgress, reason: reasons.join("；"), by: "决策模型" };
+    return { action, what: "", handler, urgency: "normal", canProgress, reason: `决策模型（${d.by}）：${parts.join("；")}`, parts, by: "决策模型" };
   } catch (e) {
     const why = truncate((e as Error).message, 160);
     if (app.config.ai.decision.fallback === "general" && cfg.noDecision === "general") return viaGeneral(`决策模型出错（${why}），改用通用模型：`);
@@ -229,8 +231,28 @@ async function general(app: App, material: Record<string, string>, handlers: Rec
   };
 }
 
-/** One line for the run page. */
+/** One answer of the decision model, labelled: "做法：先查再告诉本人（把握 0.52）". */
+function part(name: string, r: DecisionResult & Partial<Pick<SceneResult, "taken" | "lowered" | "threshold">>, labels: Record<string, string>) {
+  const p = r.probabilities[r.choice];
+  const notes = [
+    Number.isFinite(p) ? `把握 ${p.toFixed(2)}` : "",
+    r.lowered ? `不到 ${r.threshold}，按「${labels[r.taken ?? ""] ?? r.taken}」处理` : "",
+  ].filter(Boolean);
+  return `${name}：${labels[r.choice] ?? r.choice}${notes.length ? `（${notes.join("，")}）` : ""}`;
+}
+
+const triageHead = (t: Triage) =>
+  `${{ ignore: "不用管", notify: "简短提醒", handle: `交给${t.handler === "assistant" ? "主助手" : t.handler}先查` }[t.action]}${t.what ? `（${t.what}）` : ""}${t.urgency === "urgent" ? "，紧急" : ""}${t.action === "handle" && t.canProgress ? "，看起来能直接答复" : ""}`;
+
+/** The run page's status line. */
 export function triageText(t: Triage) {
-  const what = { ignore: "不用管", notify: "简短提醒", handle: `交给${t.handler === "assistant" ? "主助手" : t.handler}先查` }[t.action];
-  return `分诊：${what}${t.what ? `（${t.what}）` : ""}${t.urgency === "urgent" ? "，紧急" : ""}${t.action === "handle" && t.canProgress ? "，看起来能直接答复" : ""}——${t.reason}`;
+  return `分诊：${triageHead(t)}——${t.reason}`;
+}
+
+/** The mention run's result on the run page (Markdown): what was decided, then each answer behind it on its own line. */
+export function triageSummary(t: Triage, after = "") {
+  const why = t.parts?.length
+    ? [...t.parts.map((p) => `- ${p}`), "", `${t.reason.slice(0, t.reason.indexOf("："))}的判断，括号里是它给这个选项的把握（0–1）。`]
+    : [`- 理由（${t.by}）：${t.reason}`];
+  return [`**分诊：${triageHead(t)}**`, "", ...why, ...(after ? ["", after] : [])].join("\n");
 }

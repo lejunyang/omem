@@ -4,7 +4,7 @@ import { testApp } from "./helpers.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { historyPage, historyScan } from "../src/channels/lark-history.ts";
-import { backfillTick, backfillStatus, pollLark, requestBackfill, setSubscriptions } from "../src/channels/lark-personal.ts";
+import { backfillTick, backfillStatus, pollLark, requestBackfill, setSubscribed } from "../src/channels/lark-personal.ts";
 import { persistChatMessages, storeMessages, type LarkMessage } from "../src/channels/lark-messages.ts";
 import { upsertSource } from "../src/sources/store.ts";
 
@@ -125,7 +125,7 @@ describe("remote-evidence history traversal",()=>{
   it("pulls history apart from the live poll, fairly and with the configured concurrency, and notices rate limits",async()=>{
     const {app}=setup();
     requestBackfill(app,"oc_second",0);
-    setSubscriptions(app,[{chatId:"oc_live",name:"活跃群",spaceId:"personal"}]);
+    setSubscribed(app,{chatId:"oc_live",name:"活跃群"},true,"personal");
     const reads:string[]=[];
     setLarkCliForTests(async args=>{
       if(args[0]==="auth") return {data:{identities:{user:{openId:"ou_owner"}}}};

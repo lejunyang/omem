@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { OWNER } from "../core/users.ts";
-import { HttpError, now, truncate } from "../core/util.ts";
+import { HttpError, now, truncate, webLink } from "../core/util.ts";
 import { createRun, getRun, queuedInLane, registerHandler, setRunOutput, updateQueuedRun, type RunContext } from "../agents/runs.ts";
 import { quietReason } from "../agents/quiet.ts";
 import { larkBy } from "../core/run-trigger.ts";
@@ -10,7 +10,7 @@ import { ruleClaim, rulesJudging } from "../rules/store.ts";
 import { handledKey, mentionChannel, mentionChannels, MENTION_FOLLOW_MS, type MentionChannel, type MentionChat, type MentionInfo, type MentionMessage, type Replied, type ReplyMode } from "./channel.ts";
 
 export type { MentionChannel, MentionChat, MentionInfo, MentionMessage } from "./channel.ts";
-import { localTime, triage, triageMaterial, triageText, type Triage, type TriageInput } from "./triage.ts";
+import { localTime, triage, triageMaterial, triageSummary, triageText, type Triage, type TriageInput } from "./triage.ts";
 import { noteAsk, noteDraft, noteHandling, replyHabits, settleSamples, typicalReplyLength } from "./reply-learn.ts";
 
 /**
@@ -122,6 +122,12 @@ function spend(app: App, kind: "triage" | "handle") {
   return true;
 }
 
+/** Today's allowance spent: how many, and where to change it (in the reminder: a link; on the run page: the path). */
+function capNote(app: App, kind: "triage" | "handle", link: boolean) {
+  const where = link ? `[设置 → 渠道 → 有人找你](${webLink(app, "#/settings?tab=lark&focus=mentions")})` : "设置 → 渠道 → 有人找你";
+  return `今天“有人找你”${kind === "handle" ? "交给助手查" : "分诊"}已到每天 ${app.config.mentions.perDay[kind]} 次的上限，只发简短提醒；上限在 ${where} 里改`;
+}
+
 // ---- the short reminder ---------------------------------------------------------------------
 
 const whereOf = (input: { chatKind: "p2p" | "group"; chatName: string }) => (input.chatKind === "p2p" ? "私聊" : `在「${input.chatName}」`);
@@ -195,36 +201,36 @@ registerHandler("mention", async (ctx: RunContext) => {
       const m = prev.input.mention as MentionInfo;
       const more = mentionInfo(channel, input, open, m.reply, m.urgency, m.what, m.from);
       updateQueuedRun(app, earlier.id, { input: { ...prev.input, task: `${prev.input.task}\n\n# 后来又发了\n\n${messageLines(app, channel, open)}`, mention: { ...m, messageIds: [...new Set([...m.messageIds, ...more.messageIds])], refs: [...new Set([...m.refs, ...more.refs])], lastMessageId: more.lastMessageId } } });
-      return { quiet: true, summary: `并进还没开始的处理 ${earlier.id}`, joined: earlier.id };
+      return { quiet: true, summary: "同一个人在同一话题又发了消息，并进还没开始的那次处理（在下面的“后续任务”里）", joined: earlier.id };
     }
     if (!spend(app, "handle")) {
-      shortReminder(app, input, open, ctx.run.id, "今天“有人找你”的处理次数用完了，没有接着查");
-      return { summary: "今天的处理次数用完了，已发简短提醒" };
+      shortReminder(app, input, open, ctx.run.id, capNote(app, "handle", true));
+      return { summary: capNote(app, "handle", false) };
     }
     const m = prev.input.mention as MentionInfo;
     const r = startHandling(app, channel, ctx.run, input, open, { action: "handle", what: m.what, handler: String(prev.input.spec ?? "assistant"), urgency: m.urgency, canProgress: m.reply === "auto", reason: `接着 ${earlier.id}`, by: "设置" }, earlier.id);
-    return { summary: `同一个人在同一话题又发了消息，交给接着处理的运行 ${r.id}`, handleRun: r.id };
+    return { summary: "同一个人在同一话题又发了消息，交给接着处理的那次运行（在下面的“后续任务”里）", handleRun: r.id };
   }
   if (!spend(app, "triage")) {
-    shortReminder(app, input, open, ctx.run.id, "今天“有人找你”的分诊次数用完了，没有先查背景");
-    return { summary: "今天的分诊次数用完了，已发简短提醒" };
+    shortReminder(app, input, open, ctx.run.id, capNote(app, "triage", true));
+    return { summary: capNote(app, "triage", false) };
   }
   const tInput: TriageInput = { chatId: input.chatId, chatName: input.chatName, chatKind: input.chatKind, topicId: input.topicId, spaceId: ctx.run.spaceId ?? channel.spaceOf(app, input.chatId, open[0].id), messages: open };
   const material = await triageMaterial(app, channel, tInput);
   const t = await triage(app, material, { needProgress: replyMode(app, channel, input.chatKind) === "auto", signal: ctx.signal, ref: ctx.run.id });
   ctx.event("status", { text: triageText(t), triage: t });
   setRunOutput(app, ctx.run.id, { triage: t, material });
-  if (t.action === "ignore") return { quiet: true, summary: triageText(t), triage: t };
+  if (t.action === "ignore") return { quiet: true, summary: triageSummary(t), triage: t };
   if (t.action === "notify") {
     shortReminder(app, input, open, ctx.run.id, "", t.what, t.urgency);
-    return { summary: triageText(t), triage: t };
+    return { summary: triageSummary(t, "已发简短提醒。"), triage: t };
   }
   if (!spend(app, "handle")) {
-    shortReminder(app, input, open, ctx.run.id, "今天“有人找你”的处理次数用完了，没有先查背景", t.what, t.urgency);
-    return { summary: "今天的处理次数用完了，已发简短提醒", triage: t };
+    shortReminder(app, input, open, ctx.run.id, capNote(app, "handle", true), t.what, t.urgency);
+    return { summary: triageSummary(t, `没有交出去：${capNote(app, "handle", false)}。`), triage: t };
   }
   const r = startHandling(app, channel, ctx.run, input, open, t, null, material);
-  return { summary: `${triageText(t)}\n交给 ${t.handler === "assistant" ? "主助手" : t.handler}：${r.id}`, triage: t, handleRun: r.id };
+  return { summary: triageSummary(t, `已交给${t.handler === "assistant" ? "主助手" : t.handler}：它查了什么、结论是什么，看下面“后续任务”里的那次运行。`), triage: t, handleRun: r.id };
 });
 
 // ---- handling -------------------------------------------------------------------------------

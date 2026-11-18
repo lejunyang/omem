@@ -6,7 +6,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now, localStamp } from "../core/util.ts";
 import { scopeFor } from "../core/users.ts";
-import { triggerFor, type RunTrigger } from "../core/run-trigger.ts";
+import { triggerFor, withFollowUp, type RunTrigger } from "../core/run-trigger.ts";
 
 export type RunKind = "commit-claim" | "item-follow" | "flow-review" | "study-trial" | "peer-trial" | "flow-stage" | "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "wiki-resolve" | "wiki-migrate" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "note-review" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "rule-script" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout" | "req-split" | "design" | "speaking-review" | "mention" | "work-state" | "quality-audit" | "wiki-sweep";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -69,7 +69,7 @@ const toRun = (r: Row): Run => ({
   finishedAt: r.finished_at,
   lane: r.lane ?? null,
   quiet: !!r.quiet,
-  trigger: r.trigger ? json<RunTrigger | null>(r.trigger, null) : null,
+  trigger: r.trigger ? withFollowUp(json<RunTrigger | null>(r.trigger, null), { parentId: r.parent_id, input: json(r.input, {}) }) : null,
 } as Run);
 
 export function createRun(
@@ -207,8 +207,9 @@ function runWhere(opts: RunFilter) {
   else if (opts.by) where.push("trigger_by = ?"), params.push(opts.by);
   if (opts.via) where.push("json_extract(trigger, '$.via') = ?"), params.push(opts.via);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
-  if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
   const q = opts.q?.trim();
+  // A run looked up by its exact id is shown even when it ended quietly.
+  if (!opts.includeQuiet && !opts.parentId) where.push(q ? "(quiet = 0 or id = ?)" : "quiet = 0"), q && params.push(q);
   if (q) {
     const like = `%${q.replace(/[!%_]/g, (c) => `!${c}`)}%`;
     where.push("(id = ? or title like ? escape '!' or json_extract(input, '$.task') like ? escape '!')"), params.push(q, like, like);
@@ -222,7 +223,7 @@ export function listRuns(app: App, opts: RunFilter & { limit?: number; offset?: 
   const limit = Math.min(opts.limit ?? 100, 500);
   // Titles are short labels; a brief list keeps the head of the task for the hover hint.
   const cols = opts.brief
-    ? "*, json_object('task', substr(coalesce(json_extract(input,'$.task'), json_extract(input,'$.text'), ''), 1, 600)) as input, '{}' as output"
+    ? "*, json_object('task', substr(coalesce(json_extract(input,'$.task'), json_extract(input,'$.text'), ''), 1, 600), 'wake', json_extract(input,'$.wake')) as input, '{}' as output"
     : "*";
   return all<Row>(app.db, `select ${cols} from runs ${w.sql} order by created_at desc limit ? offset ?`, ...w.params, limit, opts.offset ?? 0).map(toRun);
 }

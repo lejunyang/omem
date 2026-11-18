@@ -1,4 +1,4 @@
-import { captureSpace as chatSpace, sharedCopyFor } from "../core/capture-space.ts";
+import { captureSpace as chatSpace, ownerCaptureSpaces, sharedCopyFor } from "../core/capture-space.ts";
 import { historyDue, historyScan, resetHistoryScan, historyPage, RATE_LIMITED, retryHistoryNow } from "./lark-history.ts";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,18 +35,33 @@ import type { RuleEvent } from "../rules/types.ts";
  * Everything new goes to the ingest role, which turns it into memories and
  * items.
  */
-export type Subscription = { chatId: string; name: string; spaceId: string; since?: string };
+/** A chat the owner chose to always read and organize; how far it was read is in `lark_cursors`. */
+export type Subscription = { chatId: string; name: string; spaceId: string };
 
 const KEY = "lark_subscriptions";
 
 export function getSubscriptions(app: App): Subscription[] {
-  return json(one<{ value: string }>(app.db, "select value from kv where key = ?", KEY)?.value, []);
+  return json<Subscription[]>(one<{ value: string }>(app.db, "select value from kv where key = ?", KEY)?.value, []);
 }
 export function setSubscriptions(app: App, subs: Subscription[]) {
-  const prev = new Map(getSubscriptions(app).map((s) => [s.chatId, s]));
-  const next = subs.map((s) => ({ ...s, since: prev.get(s.chatId)?.since ?? s.since }));
+  const next = subs.map(({ chatId, name, spaceId }) => ({ chatId, name, spaceId }));
   run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", KEY, JSON.stringify(next));
   return next;
+}
+/** Subscribe to one chat (into `spaceId`, or where it already goes) or stop. */
+export function setSubscribed(app: App, chat: { chatId: string; name: string }, on: boolean, spaceId?: string) {
+  const rest = getSubscriptions(app).filter((s) => s.chatId !== chat.chatId);
+  return setSubscriptions(app, on ? [...rest, { chatId: chat.chatId, name: chat.name, spaceId: spaceId ?? chatSpace(app, chat.chatId) }] : rest);
+}
+/**
+ * Where one chat's capture goes from now on: the chat's own binding (the same one `/space` sets,
+ * so it wins over watch rules and subscriptions), kept in the subscription too. Sources already
+ * captured stay where they are.
+ */
+export function setChatSpace(app: App, chatId: string, spaceId: string) {
+  setChatSettings(app, "lark", chatId, { spaceId });
+  const subs = getSubscriptions(app);
+  if (subs.some((s) => s.chatId === chatId)) setSubscriptions(app, subs.map((s) => (s.chatId === chatId ? { ...s, spaceId } : s)));
 }
 
 export type ChatKind = "p2p" | "bot" | "own-bot" | "group" | "topic";
@@ -101,10 +116,12 @@ export async function listLarkChats(app: App, pages = 3): Promise<LarkChat[]> {
 
 /** The capture policy for one chat: its own setting, then explicit opt-ins, then do-not-disturb, then its kind. */
 export function capturePolicyFor(app: App, chat: { chatId: string; kind: ChatKind; muted: boolean }): CapturePolicy {
+  return policyOf(app, chat, chatSettings(app, "lark-capture", chat.chatId).policy, getSubscriptions(app).some((s) => s.chatId === chat.chatId));
+}
+function policyOf(app: App, chat: { kind: ChatKind; muted: boolean }, own: CapturePolicy | undefined, subscribed: boolean): CapturePolicy {
   if (chat.kind === "own-bot") return "skip";
-  const own = chatSettings(app, "lark-capture", chat.chatId).policy;
   if (own) return own;
-  if (getSubscriptions(app).some((s) => s.chatId === chat.chatId)) return "ingest";
+  if (subscribed) return "ingest";
   const policies = app.config.lark.capture.policies;
   if (chat.muted) return policies.muted;
   return policies[chat.kind];
@@ -114,26 +131,43 @@ export function setCapturePolicy(app: App, chatId: string, policy: CapturePolicy
   setChatSettings(app, "lark-capture", chatId, { policy: policy ?? undefined });
 }
 
-/** Chats seen by capture, with what is done with them (for the settings page). */
+/**
+ * Chats seen by capture, plus subscribed ones not read yet, with what is done with them and where
+ * they go (for the settings page). All of them: lookups are batched, so thousands stay cheap.
+ */
 export function capturedChats(app: App) {
-  return all<{ chat_id: string; name: string; chat_mode: string; kind: string; muted: number; involved: number; last_time: number; updated_at: string | null; oldest_ms: number | null; backfill_to_ms: number | null }>(
+  type Row = { chat_id: string; name: string; chat_mode: string; kind: string; muted: number; involved: number; last_time: number; oldest_ms: number | null; backfill_to_ms: number | null };
+  const rows = all<Row>(
     app.db,
-    "select chat_id, name, chat_mode, kind, muted, involved, last_time, updated_at, oldest_ms, backfill_to_ms from lark_cursors where chat_id not like 'thread:%' order by last_time desc limit 500",
-  ).map((r) => {
+    "select chat_id, name, chat_mode, kind, muted, involved, last_time, oldest_ms, backfill_to_ms from lark_cursors where chat_id not like 'thread:%' order by last_time desc",
+  );
+  const subs = new Map(getSubscriptions(app).map((s) => [s.chatId, s]));
+  const seen = new Set(rows.map((r) => r.chat_id));
+  for (const s of subs.values())
+    if (!seen.has(s.chatId)) rows.push({ chat_id: s.chatId, name: s.name, chat_mode: "", kind: "", muted: 0, involved: 0, last_time: 0, oldest_ms: null, backfill_to_ms: null });
+  const owns = new Map(all<{ chat_id: string; settings: string }>(app.db, "select chat_id, settings from chat_settings where channel = 'lark-capture'").map((r) => [r.chat_id, json<{ policy?: CapturePolicy }>(r.settings, {}).policy]));
+  const spaces = ownerCaptureSpaces(app, rows.map((r) => r.chat_id));
+  return rows.map((r) => {
     const kind = (r.kind || (r.chat_mode === "p2p" ? "p2p" : r.chat_mode === "topic" ? "topic" : "group")) as ChatKind;
-    const own = chatSettings(app, "lark-capture", r.chat_id).policy ?? null;
+    const own = owns.get(r.chat_id) ?? null;
+    const subscribed = subs.has(r.chat_id);
     return {
       chatId: r.chat_id,
       name: r.name,
       kind,
       muted: !!r.muted,
       involved: !!r.involved,
+      /** Subscribed but never read yet: no cursor. */
+      captured: seen.has(r.chat_id),
       lastMessageAt: r.last_time ? new Date(r.last_time).toISOString() : null,
-      policy: capturePolicyFor(app, { chatId: r.chat_id, kind, muted: !!r.muted }),
+      policy: policyOf(app, { kind, muted: !!r.muted }, own ?? undefined, subscribed),
       own,
+      subscribed,
+      spaceId: spaces.get(r.chat_id)!,
       /** Capture covers messages from here on (live first read or backfilled history). */
       from: r.oldest_ms ? new Date(r.oldest_ms).toISOString() : null,
-      backfilling: backfillStatus(app, r.chat_id).pending,
+      // Only chats with history requested can be backfilling; the full status costs a count per chat.
+      backfilling: r.backfill_to_ms != null && backfillStatus(app, r.chat_id).pending,
     };
   });
 }

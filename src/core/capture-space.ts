@@ -6,13 +6,36 @@ import { findSpace } from "./spaces.ts";
 import { json } from "./util.ts";
 import { chatSettings } from "../agents/threads.ts";
 
+type Settings = ReturnType<typeof chatSettings>;
+const subscriptionsOf = (app: App) => json<{ chatId: string; spaceId: string }[]>(one<{ value: string }>(app.db, "select value from kv where key='lark_subscriptions'")?.value, []);
+const mappedGroups = (app: App) => (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
+/** The order bindings win in: the chat's own (`/space`), its watch rule, a subscription, the old personal-space map. */
+const bindingChain = (settings: Settings, watched: Settings, subscribed: string | undefined, mapped: string | undefined) => [settings.spaceId, watched.spaceId, watched.watch?.spaceId, subscribed, mapped];
+
 /** Shared by conversations, collection and rules. Explicit settings precede inferred locations. */
 export function chatBinding(app: App, chatId: string): string | undefined {
-  const settings = chatSettings(app, "lark", chatId);
-  const watched = chatSettings(app, "lark-watch", chatId);
-  const subscriptions = json<{ chatId: string; spaceId: string }[]>(one<{ value: string }>(app.db, "select value from kv where key='lark_subscriptions'")?.value, []);
-  const mapped = (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
-  return [settings.spaceId, watched.spaceId, watched.watch?.spaceId, subscriptions.find(s => s.chatId === chatId)?.spaceId, mapped[chatId]].find(id => id && findSpace(app, id));
+  const chain = bindingChain(chatSettings(app, "lark", chatId), chatSettings(app, "lark-watch", chatId), subscriptionsOf(app).find((s) => s.chatId === chatId)?.spaceId, mappedGroups(app)[chatId]);
+  return chain.find((id) => id && findSpace(app, id));
+}
+
+/** `captureSpace` for the owner over many chats at once (the settings list): a few queries, not several per chat. */
+export function ownerCaptureSpaces(app: App, chatIds: string[]): Map<string, string> {
+  const settingsOf = (channel: string) => new Map(all<{ chat_id: string; settings: string }>(app.db, "select chat_id, settings from chat_settings where channel = ?", channel).map((r) => [r.chat_id, json<Settings>(r.settings, {})]));
+  const bound = settingsOf("lark");
+  const watched = settingsOf("lark-watch");
+  const subs = new Map(subscriptionsOf(app).map((s) => [s.chatId, s.spaceId]));
+  const mapped = mappedGroups(app);
+  const spaces = new Set(all<{ id: string }>(app.db, "select id from spaces").map((s) => s.id));
+  // One indexed lookup per unbound chat (sources_uri); a `like` over sources would scan the whole table.
+  const existing = app.db.prepare("select space_id from sources where uri = ? and deleted_at is null order by captured_at");
+  const def = spaces.has(app.config.lark.capture.space) ? app.config.lark.capture.space : "personal";
+  return new Map(
+    chatIds.map((id) => {
+      const binding = bindingChain(bound.get(id) ?? {}, watched.get(id) ?? {}, subs.get(id), mapped[id]).find((s) => s && spaces.has(s));
+      const copy = binding ? undefined : (existing.all(`lark:${id}`) as { space_id: string }[]).find((r) => spaces.has(r.space_id))?.space_id;
+      return [id, binding ?? copy ?? def];
+    }),
+  );
 }
 /**
  * Where a chat's capture goes. `userId`: whose capture it is (docs/v2/multi-user.md, “采集进哪个空间”):

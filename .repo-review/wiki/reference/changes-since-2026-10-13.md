@@ -46,6 +46,19 @@ updated: 2026-11-18
 - 一篇读不了（没有这篇的权限）时仍列出它的子页面；列子页面失败单独记一次失败。
 - 每晚读取（`src/channels/lark-knowledge.ts` 的 `readDaily`）遇到这类暂停时当晚停下，原因写进 `lark_kb_last_read` 的 `skipped`，不再让每个知识库各撞一次。
 
+## 有人找你：分诊结果分行写、处理运行挂在下面、唤醒不再算成又找了你（11-18）
+
+- 分诊结果（`src/mentions/triage.ts` 的 `triageSummary`）：第一行写决定，下面每行一个决策模型的回答（“做法：先查再告诉本人（把握 0.85）”“交给：主助手（把握 0.85）”），说明括号里是把握；不再在结尾贴处理运行的 id。
+- 处理运行不是 mention 运行的子运行（不改 `parentId`，它以本人的身份跑，归属和工作区按自己算），运行详情接口把 `output.handleRun` / `joined` 一起列进“后续任务”（`src/server/http.ts`）。运行列表按完整 id 搜时也列出安静结束的运行（`runWhere`）。
+- 每天次数到上限时，简短提醒和运行结果写清是哪一项、上限几次、在 设置 → 渠道 → 有人找你 改（提醒里是链接，`capNote`）。
+- 继承来的触发（`src/core/run-trigger.ts`）带 `followUp: "wake" | "child"`：显示成“小李 · 接着「有人找你」的唤醒”；运行页“触发人”的次数只算本人亲自触发的，按人筛选仍能找到这些后续。之前存下的唤醒（有 `parentId` 且 `input.wake`）读出来时一样补上。
+
+## 设置 → 连接：订阅的会话并进“飞书会话”一个列表（11-18）
+
+- 原来的“订阅的会话”和“已采集过的会话”两个列表合成一个“飞书会话”（`web/src/components/LarkCapturedChats.vue`）：每行有订阅开关、采集到的空间和处理方式，元信息一行写类型、免打扰、参与过、最近消息；全部会话（`capturedChats` 去掉了 `limit 500`），显示总数，虚拟滚动，可按名称筛选或只看已订阅的，标题悬停看全名。“读取最近会话”只列还没采集过的。
+- 订阅条目去掉了 `since`：最早那版采集留下的字段，后来读到哪里记在 `lark_cursors`，它一直是空的，所以订阅列表总显示“尚未采集”。
+- 接口：`GET/PUT /api/lark/subscriptions` 换成 `PUT /api/lark/chats/:id/subscription`（`setSubscribed`）和 `/space`（`setChatSpace`：写会话自己的空间绑定，和 `/space` 命令同一处，订阅里的空间跟着改）。列表里的空间是 `captureSpace` 的结果，批量版 `ownerCaptureSpaces`（`src/core/capture-space.ts`）和单个的共用一条优先顺序；三千多个会话约 50ms。
+
 ## 远程画面可以单独打开和全屏（11-18）
 
 - 远程页地址栏右边加了“单独打开”和“全屏操作”（`web/src/views/Remote.vue`）。单独打开是新路由 `#/remote/<会话>`（`web/src/main.ts` 的 `/remote/:id?`），`App.vue` 对它不画侧栏，只留对话框和提示；页面只有地址栏和画面，会话结束时给回远程页的链接。
