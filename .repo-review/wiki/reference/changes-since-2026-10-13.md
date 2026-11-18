@@ -15,6 +15,11 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 飞书 @ 机器人的富文本消息带上图片（11-18）
+
+- 修正：@ 机器人时一起发的图片、视频在富文本（post）里，`src/channels/lark-bot.ts` 的 `messageText` 只取 `text` / `href`，图片节点被丢掉，Agent 收到的这一轮没有图。现在 `img` 写成 `![Image](img_…)`、`media` 写成 `[Media: file_…]`（和采集记录的写法一致）。
+- 新函数 `attachmentNote`：消息带附件时在这一轮的文字和引用的消息后面附一行 message_id 与 file_key，Agent 用 `lark_message_file` 读；之前这一轮不带消息 id，只有回看历史时才找得到。
+
 ## 事项的流程页（11-18）
 
 - 新页面 `web/src/views/ItemFlowPage.vue`（路由 `/items/:id/flow`）：等你的段（按钮、一句话、在对话里讨论）、背景、各段结果全文与插图、接下来、来源、流程记录。看板、今日页、飞书进度卡（`src/flows/store.ts` 的 `link`）指向它；`ItemFlow.vue` 加“打开流程页”。

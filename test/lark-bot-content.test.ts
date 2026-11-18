@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { describeLarkContent, firstDelivery, messageText } from "../src/channels/lark-bot.ts";
+import { attachmentNote, describeLarkContent, firstDelivery, messageText } from "../src/channels/lark-bot.ts";
 import { notificationOrigins } from "../src/channels/common.ts";
 import { refExcerpt } from "../src/items/evidence.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -93,5 +93,15 @@ describe("read_source for msg: and mem: refs", () => {
     expect(memText).toContain("lark-cli 用 osdk 的");
     expect(memText).toContain(`msg:${id}`);
     await expect(callTool(ctx, "read_source", { source: "msg_nope" })).resolves.toMatchObject({ isError: true });
+  });
+
+  it("keeps the images of a rich-text message and says where to read them", () => {
+    const content = JSON.stringify({ title: "", content: [[{ tag: "at", user_id: "@_user_1" }, { tag: "text", text: " 看下这个报错" }], [{ tag: "img", image_key: "img_v3_a" }], [{ tag: "media", file_key: "file_v3_b", image_key: "img_v3_cover" }]] });
+    expect(messageText(content, "post")).toBe(" 看下这个报错\n![Image](img_v3_a)\n[Media: file_v3_b]");
+    const note = attachmentNote({ messageId: "om_9", type: "post", content });
+    expect(note).toContain("message_id=om_9");
+    expect(note).toContain("img_v3_a、file_v3_b");
+    expect(note).not.toContain("img_v3_cover");
+    expect(attachmentNote({ messageId: "om_10", type: "text", content: JSON.stringify({ text: "你好" }) })).toBe("");
   });
 });

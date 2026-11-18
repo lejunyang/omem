@@ -1,6 +1,7 @@
 import { updateThread, type Thread } from "../agents/threads.ts";
 import { homeOf, noteAnchor, noteTopicRoot, replyAnchor } from "../agents/home.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
+import { resourceKeys } from "./lark-resource-keys.ts";
 import { queueMention } from "./lark-mentions.ts";
 import { isMentionRun, mentionOf } from "../mentions/mentions.ts";
 import { chatSpace } from "./lark-personal.ts";
@@ -130,7 +131,10 @@ export function messageText(raw: string | undefined, type: string | undefined): 
     if (type === "text") return String(c.text ?? "");
     if (type === "post") {
       const body = c.content ?? c.zh_cn?.content ?? c.en_us?.content ?? [];
-      return [c.title, ...body.map((line: { tag: string; text?: string; href?: string }[]) => line.map((n) => n.text ?? n.href ?? "").join(""))].filter(Boolean).join("\n");
+      // Images and videos inside rich text keep their keys (the same forms as captured messages), or the turn loses them.
+      const node = (n: { tag: string; text?: string; href?: string; image_key?: string; file_key?: string; emoji_type?: string }) =>
+        n.tag === "img" && n.image_key ? `![Image](${n.image_key})` : n.tag === "media" && n.file_key ? `[Media: ${n.file_key}]` : n.tag === "emotion" && n.emoji_type ? `[${n.emoji_type}]` : (n.text ?? n.href ?? "");
+      return [c.title, ...body.map((line: Parameters<typeof node>[0][]) => line.map(node).join(""))].filter(Boolean).join("\n");
     }
     if (type === "image") return "[图片]";
     if (type === "file") return `[文件] ${c.file_name ?? ""}`;
@@ -192,6 +196,15 @@ export async function describeLarkContent(app: App, msg: { messageId: string; ty
     return [`[合并转发] ${items.length} 条`, ...lines, ...(items.length > 60 ? [`- …另有 ${items.length - 60} 条`] : [])].join("\n");
   }
   return messageText(msg.content, msg.type);
+}
+
+/**
+ * Where a message's images and files are: the agent reads them by message id and key
+ * (lark_message_file), and the turn's text carries neither. Empty when there are none.
+ */
+export function attachmentNote(msg: { messageId: string; type: string | undefined; content: string | undefined }): string {
+  const keys = msg.content ? [...resourceKeys("", msg.content, msg.type).required] : [];
+  return keys.length ? `（这条消息带 ${keys.length} 个图片或附件：message_id=${msg.messageId}，file_key=${keys.join("、")}；要看内容用 lark_message_file 读）` : "";
 }
 
 /**
@@ -615,7 +628,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       if (!orig) return { messageId: parentId };
       const senderId = typeof orig.sender?.id === "string" ? orig.sender.id : orig.sender?.id?.open_id;
       const own = one<{ text: string }>(app.db, "select text from messages where role = 'assistant' and json_extract(meta, '$.larkMessageId') = ? order by created_at desc limit 1", parentId);
-      const text = own ? `（助手之前的回复）${own.text}` : await describeLarkContent(app, { messageId: parentId, type: orig.msg_type ?? orig.message_type, content: orig.body?.content }, lookups);
+      const quoted = { messageId: parentId, type: orig.msg_type ?? orig.message_type, content: orig.body?.content };
+      const text = own ? `（助手之前的回复）${own.text}` : [await describeLarkContent(app, quoted, lookups), attachmentNote(quoted)].filter(Boolean).join("\n");
       return { messageId: parentId, sender: senderId ? await nameOf(senderId) : undefined, senderId: senderId?.startsWith("ou_") ? senderId : undefined, text: text.slice(0, 2000) || undefined };
     } catch {
       return { messageId: parentId };
@@ -662,11 +676,14 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   };
 
   /** The bot's own @ goes away; other people keep their name (「结合 @小李 在文档里…」 means something). */
-  const spoken = (m: Inbound) =>
-    m.text.replace(/@_user_\d+/g, (key) => {
+  const spoken = (m: Inbound) => {
+    const words = m.text.replace(/@_user_\d+/g, (key) => {
       const who = m.mentionNames?.[key];
       return who && !who.isBot ? `@${who.name}` : "";
     }).replace(/[ \t]{2,}/g, " ").trim();
+    const note = attachmentNote({ messageId: m.messageId, type: m.type, content: m.raw });
+    return words && note ? `${words}\n${note}` : words;
+  };
 
   /**
    * Someone who is not a user (or another bot) asked the bot: the gatekeeper decides, the guest
