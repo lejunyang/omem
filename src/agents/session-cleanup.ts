@@ -163,6 +163,15 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
 
 /** Release retained sessions once their conversation, task or follow-up no longer needs them. */
 function releaseRetainedSessions(app: App) {
+  // A session kept for a run a restart cut off (runs.ts markRestarted) goes back to what it was
+  // once the run ended without continuing in it.
+  const restarted = all<{ id: string; sid: string; ready: number }>(app.db,
+    `select id, json_extract(input,'$.restarted.sessionId') sid, json_extract(input,'$.restarted.ready') ready from runs
+     where json_extract(input,'$.restarted.sessionId') is not null and json_extract(input,'$.restarted.used') is null and status not in ('queued','running')`);
+  for (const r of restarted) {
+    if (r.ready >= 0) run(app.db, "update session_cleanup set ready = 1, retry_at = ? where session_id = ? and transport = 'acp' and ready = -1", now(), r.sid);
+    run(app.db, "update runs set input = json_set(input, '$.restarted.used', json('true')) where id = ?", r.id);
+  }
   const active = all<{ id: string; lane: string | null; input: string }>(app.db, "select id,lane,input from runs where status in ('queued','running')");
   const lanes = new Set(active.map(r => r.lane).filter(Boolean));
   const resumeIds = new Set<string>();

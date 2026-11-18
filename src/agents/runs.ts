@@ -360,6 +360,30 @@ export function stopWorker() {
   stopping = true;
 }
 
+/** How long after it started an interrupted run still continues in its agent session. */
+export const RESTART_RESUME_MS = 12 * 3600_000;
+
+/**
+ * Before a restart's interrupted runs are queued again: what each had written so far and, for a
+ * recent one on an ACP agent, the session it was in. The session is kept from cleanup (ready -1,
+ * its earlier state saved) until the run continues in it or ends (session-cleanup.ts).
+ */
+export function markRestarted(app: App) {
+  const cut = all<{ id: string; started_at: string | null }>(app.db, "select id, started_at from runs where status = 'running'");
+  const recent = new Date(Date.now() - RESTART_RESUME_MS).toISOString();
+  for (const r of cut) {
+    const writes = one<{ n: number }>(app.db, "select count(*) n from run_events where run_id = ? and type = 'tool-write'", r.id)!.n;
+    const sid = one<{ data: string }>(app.db, "select data from run_events where run_id = ? and type = 'session' order by seq desc limit 1", r.id);
+    const sessionId = sid ? json<{ sessionId?: string }>(sid.data, {}).sessionId : undefined;
+    const kept = sessionId && r.started_at && r.started_at >= recent
+      ? one<{ ready: number; profile_id: string | null; cwd: string }>(app.db, "select ready, profile_id, cwd from session_cleanup where session_id = ? and transport = 'acp' order by rowid desc limit 1", sessionId)
+      : undefined;
+    if (kept) run(app.db, "update session_cleanup set ready = -1 where session_id = ? and transport = 'acp'", sessionId!);
+    const note = { at: now(), writes, ...(kept ? { sessionId, profileId: kept.profile_id, cwd: kept.cwd, ready: kept.ready } : {}) };
+    run(app.db, "update runs set input = json_set(input, '$.restarted', json(?)) where id = ?", JSON.stringify(note), r.id);
+  }
+}
+
 export function startWorker(app: App) {
   if (started) return;
   started = true;
@@ -369,6 +393,8 @@ export function startWorker(app: App) {
     where kind = 'ask' and status in ('queued','running')
     and json_extract(input, '$.conversationId') in (select id from conversations where channel not in ('web','cli'))`);
   // Runs interrupted by a restart go back to the queue; handlers are written to be re-runnable.
+  // Each is told it was cut off, and its agent session is kept so it continues there (runner.ts).
+  markRestarted(app);
   run(app.db, "update runs set status = 'queued', started_at = null where status = 'running'");
   setInterval(() => kick(app), 2000).unref();
   setInterval(() => {

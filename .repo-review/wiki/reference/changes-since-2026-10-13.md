@@ -21,6 +21,13 @@ updated: 2026-11-18
 - 技能新增“做通了就留下来”：动手前先找已有技能和脚本，做通的网页操作用 `save_skill` 存成技能和脚本，凭据只在运行时读。原来“不要改用脚本模拟”的说法改成只禁止用脚本绕过被拒绝的操作。
 - 起因：复现缺陷的运行每次用新的临时资料，大页面冷加载几十秒，再从头一步步登录；复用资料后同一页面 6 秒。
 
+## 重启打断的后台运行在原会话里接着做（11-18）
+
+- 以前重启只把 running 的运行改回 queued，重新开始时开新会话、从头做，也不知道重启前发过什么，容易重发消息。
+- `src/agents/runs.ts` 的 `markRestarted`（`startWorker` 里、改回 queued 之前）：给每个运行的 input 记 `restarted`（写入条数；12 小时内开始的 ACP 运行再记最后一个会话、它的 AI、目录和原来的 `ready`），并把那个会话在 `session_cleanup` 里设为 -1，免得启动时被当作临时会话删掉。
+- `src/agents/runner.ts` 的 `takeRestart`：这次运行重新开始后的第一轮 `runAgent` 取走它（记 `used`），AI 和目录都相同就用 `resumeSessionId` 恢复；任务前加 `restartNote`（重启前的写入清单）。原来是临时会话的，这一轮结束后设回 `ready = 1` 交给清理。后台池（`reuseSession`）遇到要恢复的会话时不走池。
+- `src/agents/session-cleanup.ts` 的 `releaseRetainedSessions`：运行没用上保留的会话就结束了，也把它还给清理。
+
 ## 卡片的 allowed 认 lark-cli 读到的 open_id（11-18）
 
 - open_id 按应用区分：Agent 用 `lark_read` 列群成员拿到的是 lark-cli 那个应用的 id，写进 `lark_card` 的 `allowed` 后，被指定的人点按钮只看到“只有 ou_… 可以处理”，卡片开头也 @ 不到他。

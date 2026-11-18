@@ -11,7 +11,7 @@ import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recallPurpose, recordRecalls } from "../memory/recall-stats.ts";
 import { findSpace, kindLabel, relatedSpaces, spaceDir } from "../core/spaces.ts";
 import { all, one, run } from "../core/db.ts";
-import { HttpError, json } from "../core/util.ts";
+import { HttpError, json, now, truncate } from "../core/util.ts";
 import { spaceGuide } from "../wiki/store.ts";
 import { executionArgs, validateExecution, type Execution } from "./execution.ts";
 import { resolveRoleProfile } from "./models.ts";
@@ -825,6 +825,9 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       console.warn("[omem] 给任务带上相关记忆失败：", (e as Error).message);
     }
   }
+  // A restart cut this run off (runs.ts markRestarted): the first agent turn it starts again
+  // continues in the session it was in, when that is the same AI and folder, told what happened.
+  const restarted = input.runId && !input.shadow && !input.replay ? takeRestart(app, input.runId) : null;
   try {
     for (let i = 0; i < chain.length; i++) {
       // The named AI is out of quota or past the owner's daily cap: go straight to the next.
@@ -866,14 +869,14 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
           system: prep.system,
           parts: prep.parts,
-          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}`,
+          prompt: `（${prep.now}）\n\n${carry ? `${carry}\n\n---\n\n` : ""}${i === 0 && restarted ? `${restartNote(app, input.runId!, restarted)}\n\n---\n\n` : ""}# 任务\n\n${task}${aware}`,
           allowWrites: prep.allowWrites,
           modes: prep.modes,
           fullAccess: prep.fullAccess,
           signal: input.signal,
           mcp: inbox ? { ...prep.mcp, env: { ...prep.mcp.env, OMEM_ARTIFACTS: inbox } } : prep.mcp,
           extraMcp: prep.extraMcp,
-          resumeSessionId: i === 0 ? input.resumeSessionId : undefined,
+          resumeSessionId: i === 0 ? input.resumeSessionId ?? (restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined,
           persistSession: input.persistSession ?? !!input.resumeSessionId,
           queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
         };
@@ -900,7 +903,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         const ai = { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort };
         let result: AgentResult;
         try {
-          result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
+          result = input.reuseSession && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp"
             ? await backgroundTurn(app, prep, req, `${task}${aware}`, input.runId, watch)
             : await runBackend(app, prep.profile, req, watch);
         } catch (e) {
@@ -937,10 +940,36 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     }
     throw lastError ?? new Error("没有可用的 Agent");
   } finally {
+    // The kept session was disposable: once continued (or not used), it is cleaned up as before.
+    if (restarted?.sessionId && (restarted.ready ?? 0) >= 0) run(app.db, "update session_cleanup set ready = 1, retry_at = ? where session_id = ? and transport = 'acp' and ready = -1", now(), restarted.sessionId);
     // What the agent left in its artifacts folder (finish_task took what belongs to a task).
     if (inbox && input.runId) {
       const taken = await collectInbox(app, input.runId, { source: "agent", by: input.spec?.name ?? input.checkName ?? input.role }).catch((e: Error) => ({ made: [], skipped: [e.message] }));
       if (taken.made.length || taken.skipped.length) emit({ type: "status", text: takenText(taken) });
     }
   }
+}
+
+type Restarted = { at: string; writes: number; sessionId?: string; profileId?: string | null; cwd?: string; ready?: number };
+
+/** The restart note of a run, once: later agent turns of the same run start as usual. */
+function takeRestart(app: App, runId: string): Restarted | null {
+  const row = one<{ r: string | null }>(app.db, "select json_extract(input, '$.restarted') r from runs where id = ? and json_extract(input, '$.restarted.used') is null", runId);
+  if (!row?.r) return null;
+  run(app.db, "update runs set input = json_set(input, '$.restarted.used', json('true')) where id = ?", runId);
+  return json<Restarted>(row.r, { at: "", writes: 0 });
+}
+
+/** What the agent is told when it picks up a run a restart cut off: what it already wrote, by the run's own record. */
+function restartNote(app: App, runId: string, r: Restarted) {
+  const writes = all<{ data: string }>(app.db, "select data from run_events where run_id = ? and type = 'tool-write' order by seq limit ?", runId, r.writes).map((row) => {
+    const d = json<{ name?: string; args?: unknown }>(row.data, {});
+    return `- ${d.name ?? "?"} ${truncate(JSON.stringify(d.args ?? {}), 300)}`;
+  });
+  return [
+    "# omem 重启打断了这次任务，现在接着做",
+    "",
+    r.sessionId ? "如果你还记得之前的对话，就从断开的地方接着做；不记得就按下面的任务重新看一遍现状再做。" : "之前的对话没有保留，按下面的任务重新看一遍现状再做。",
+    writes.length ? `\n重启前已经做过这些写入，不要重复（已发的消息不要再发，写过的文件接着用）：\n${writes.slice(-30).join("\n")}` : "\n重启前还没有做过写入，可能已经读过一些材料。",
+  ].join("\n");
 }
