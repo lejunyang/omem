@@ -449,13 +449,15 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       const followed = carrierKind && !awaitingRevision ? findObject(app, item, carrierKind) : null;
       const kind = typeof d.done === "object" && "object" in d.done ? d.done.object : carrierKind;
       const statuses = typeof d.done === "object" && "object" in d.done ? [d.done.status].flat() : undefined;
-      const obj = kind && !awaitingRevision ? findObject(app, item, kind, kind.includes(":") && kind !== carrierKind ? { statuses, after: s.control.objectAfter } : undefined) : null;
+      // `updated`: the revision moved after this stage started (or was reopened), whatever the status.
+      const updatedAfter = statuses?.includes("updated") ? s.control.objectAfter ?? s.enteredAt ?? undefined : undefined;
+      const obj = kind && !awaitingRevision ? findObject(app, item, kind, kind.includes(":") && kind !== carrierKind ? { statuses, after: s.control.objectAfter, updatedAfter } : undefined) : null;
       if (followed && s.by !== followed.ref) {
         s = changeStage(app, itemId, d.id, "doing", { by: followed.ref }, host, `跟随${objectKind(carrierKind!)?.label}：${followed.title}`, [followed.ref]); changed = true;
       }
       if (obj) {
-        if (objectDone(d, obj) && (!kind?.includes(":") || !obj.disabled && (!s.control.objectAfter || !!obj.changedAt && obj.changedAt > s.control.objectAfter))) {
-          changeStage(app, itemId, d.id, "done", { by: followed?.ref ?? s.by, waitingOn: null, askId: null, evidence: [...new Set([...s.evidence, obj.ref])] }, host, `${objectKind(kind!)?.label}已完成（${obj.status}）`, [obj.ref]); withdraw(app, s); changed = true;
+        if (objectDone(d, obj) && (!kind?.includes(":") || !obj.disabled && (obj.updated || !s.control.objectAfter || !!obj.changedAt && obj.changedAt > s.control.objectAfter))) {
+          changeStage(app, itemId, d.id, "done", { by: followed?.ref ?? s.by, waitingOn: null, askId: null, evidence: [...new Set([...s.evidence, obj.ref])] }, host, obj.updated ? `${objectKind(kind!)?.label}有更新` : `${objectKind(kind!)?.label}已完成（${obj.status}）`, [obj.ref]); withdraw(app, s); changed = true;
         } else if (d.done === "confirm" && obj.done && !["done", "refuse"].includes(s.control.question ?? "")) {
           const askId = question(app, f, d, s, "done", { ask: `${obj.title}已完成，确认这一段做完了吗？`, evidence: [obj.ref], after: true }, ["确认", "还不行"]);
           changeStage(app, itemId, d.id, "doing", { askId, waitingOn: "owner", evidence: [obj.ref], control: { ...s.control, question: "done", reported: true } }, host, "对象已完成，等本人确认", [obj.ref]); changed = true;
@@ -502,7 +504,7 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
   }
 }
 function objectDone(d: FlowStage, obj: NonNullable<ReturnType<typeof findObject>>) {
-  if (typeof d.done === "object" && "object" in d.done) return (Array.isArray(d.done.status) ? d.done.status : [d.done.status]).includes(obj.status) && (d.done.object !== "design" || obj.done);
+  if (typeof d.done === "object" && "object" in d.done) { const want = [d.done.status].flat(); return (want.includes(obj.status) || want.includes("updated") && !!obj.updated) && (d.done.object !== "design" || obj.done); }
   return d.done === "confirm" ? false : obj.done;
 }
 

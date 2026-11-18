@@ -179,6 +179,32 @@ npx vue-tsc --noEmit -p web/tsconfig.json
 
 结果见 flows.md 文末“第三期的第二步”。没跑全量，没在浏览器里看网页，没有用真实插件或真实模型试。
 
+## 插件回调、对象有更新、omem 内部事件进规则（2026-11-19）
+
+| 编号 | 操作 | 预期 | 验证 |
+| --- | --- | --- | --- |
+| hook-01 | 假插件声明 `api.hook`；重复名字、非法名字；看插件详情 | 注册拒绝；`describePlugin` 的 `hooks` 列出名字、说明、地址前缀和有没有密钥；路由表里回调是 public | `test/plugin-hooks.test.ts` |
+| hook-02 | 本人生成密钥，平台带签名 POST 回调（JSON 正文、查询参数） | 插件拿到原始正文、头和查询；它说的对象被重读（修订变了记 `updated`，规则命中），别的插件的类型跳过；`emit` 记 `plugin.<id>.<kind>`；`audit_events` 记 `plugin.hook` 和数目；插件抛错回 400 也审计 | 同上 |
+| hook-03 | 错密钥、错名字、错插件；重新生成后用旧地址；撤销；成员调管理接口 | 一律 404；旧地址失效；成员 403；kv 里只有哈希 | 同上 |
+| hook-04 | 一分钟内调 61 次；正文超过 1 MB | 第 61 次 429（`retry-after: 60`）；超长 413 | 同上 |
+| hook-05 | 插件选隔离运行再调回调；撤销信任 | 经子进程执行、照样重读；撤销后回调注销，404 | 同上 |
+| object-rev-01 | 对象先无修订、再有修订、再改修订、再改状态 | 只有第三次记 `object.<全名>.updated`（outcome 是插件的 note）和“有更新”时间线；状态变化那次只记状态 | `test/flow-objects.test.ts` |
+| object-rev-02 | 插件状态里写 `updated`；流程 `done` 写 `status: updated` | 注册拒绝；流程能保存，人话“到了 有更新” | 同上 |
+| object-rev-03 | 阶段 `done: { object, status: "updated" }`：进这一段之前修订变过，进来之后再变 | 之前的不算，之后那次做完（说明“合并请求有更新”），下一段开始 | 同上 |
+| object-rule-05 | 对象规则 `objectChanges` 选 `updated`、默认、两个都选、`updated` 加状态过滤；消息规则写 `objectChanges` | 修订变时只有选了 `updated` 的触发（摘要写“有更新，状态仍是…”和 note），状态变时默认和“两个都选”的触发；消息规则拒绝 | `test/object-actions.test.ts` |
+| omem-rule-01 | 建 `run.done` / `run.failed` / 加 `omem.kind` 条件的规则，结束两次运行 | 各自触发一次，摘要写运行类型、档案、结论或错误 | `test/rule-omem-events.test.ts` |
+| omem-rule-02 | 建事项、改成 done；开始一个流程；插件发信号 | `item.created`、`item.status`（open → done）、`flow.stage`（流程和阶段 id）、`plugin.signal` 各自触发 | 同上 |
+| omem-rule-03 | 交办应用（两次写 `appliedAt`）、丢弃、评审结束；回答一个提问、撤回一个 | 应用只算一次；评审写结论和新问题数；回答写选项 | 同上 |
+| omem-rule-04 | `reviewFinished` 带已修 / 仍在，紧接着运行输出也报评审结束 | 只触发一次，带已修、仍在、仓库和分支 | 同上 |
+| omem-rule-05 | 规则自己起的运行结束；它的运行建的事项；消息规则起的运行结束 | 前两种不叫醒任何 omem 规则；第三种照常 | 同上 |
+| omem-rule-06 | 同一事项同一状态五分钟内两次、换状态、十一分钟后再来；没有规则时 | 只算第一、换状态那次和十一分钟后那次；没有规则时不组装 | 同上 |
+| omem-rule-07 | 保存：没选事件、用消息字段、要群的动作、要回复没选发到、等待回应；消息规则写 `omemTypes` 或 `omem.*` | 分别拒绝并写原因 | 同上 |
+| omem-rule-08 | GET `/api/rule-options` | `omemTypes` 有子类型和中文名；`eventFields.omem` 只有 omem 字段；`eventFields.object` 有 `object.change` | 同上 |
+| page-rule-omem-01 | 规则页选“omem 里发生的事”，勾几种事；对象规则勾“有更新” | 出“哪些事”勾选和说明，条件下拉只有 omem 字段；对象规则多“哪些变化”；1440 和 390 宽不横向溢出 | `node scripts/screens.ts` 截图看过 |
+| page-plugin-hook-01 | 设置 → 插件，有回调的插件卡；生成地址、复制、撤销 | 显示回调名、说明、生成时间和上次调用；生成后只显示一次完整地址 | 截图看过 |
+
+没验：真实平台的 webhook（签名、重试）、真实模型按 omem 事件规则做事、复审链调用 `reviewFinished`（等复审那边接上）。
+
 ## 流程第三期：插件对象的动作、对象状态变化规则、场景包里的流程（2026-11-16）
 
 | 编号 | 操作 | 预期 | 验证 |

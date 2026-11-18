@@ -210,6 +210,7 @@ export default function register(api: PluginApi) {
 - `api.tool` 的 `approval: true`：Agent 每次调用都先等本人批准（问本人的卡片 / 今天页，和 `approvals.tools` 同一套），用于点击、输入这类在机器上动手的工具。
 - `api.service(name).ensure()`：启动（如果没在运行）清单里声明的服务，返回 `{ url, token }`；请求带 `authorization: Bearer <token>`。
 - `api.object`：平台上带状态的东西（合并请求），可以挂到事项上、被流程阶段等待；`actions` 把本插件的工具声明成对象卡上的按钮，本人点了直接执行，Agent 调同一个工具走审批档位，默认每次先问。写法和约束见 docs/v2/flows.md 第 8 节和文末，SDK 类型见 `packages/plugin-sdk/README.md`。
+- `api.hook({ name, label?, handle(ctx, req) })`：外部平台有变化时主动叫醒 omem，不用一直轮询，见下文“回调”。
 - 内置插件的 `server.ts` 随 `tsc` 编译到 `dist/plugins/<id>/server.js`，类型只从 `src/plugins/types.ts` 引入。
 
 ### 连接器：以用的人的身份调一个平台
@@ -283,6 +284,28 @@ api.platform({
 - `read` 把一项读成 Markdown。`changes` 列出容器里 `cursor` 之后改过的东西，按时间从旧到新，每项最好带上自己的位置。`c` 是这次用的人的连接（`ctx.connection` 的同一个对象）。
 - 用户通过 `connect_read`、`connect_watch` 使用这些读取器，宿主负责定时同步和写原件（docs/v2/connectors.md）。
 - `api.text.html(html)` 把 HTML 转成 Markdown。
+
+### 回调：外部平台叫醒 omem
+
+平台上的合并请求推了新提交、有人回了评论，插件声明一个回调，平台的 webhook 调它，宿主马上去读插件说的对象，不用等下一次轮询（实现在 `src/plugins/hooks.ts`）。
+
+```ts
+api.hook({
+  name: "mr",                        // 小写字母开头，最长 40
+  label: "合并请求有变化",
+  async handle(ctx, req) {           // req = { headers, query, body }，body 是原始文本
+    if (!verify(req.headers["x-signature"], req.body)) throw new Error("签名不对");
+    const e = JSON.parse(req.body);
+    return { refresh: [{ kind: "merge-request", key: e.id }], emit: [{ kind: "mr.pushed", keys: { id: e.id } }] };
+  },
+});
+```
+
+- **地址**：`POST /api/hooks/<插件 id>/<名字>/<密钥>`，不用登录。密钥由本人在 设置 → 插件 的插件卡上“生成地址”，只显示这一次（宿主只存哈希，kv 里的 `plugin-hook:<插件>/<名字>`）；可以重新生成（旧的马上失效）或撤销。插件卡上列出每个回调、地址有没有、什么时候生成、上次被调用的时间。卸载插件时删掉它的密钥。管理接口 `POST` / `DELETE /api/plugins/:id/hooks/:name/secret` 只给本人。
+- **校验**：插件、名字、密钥不对一律 404；每个回调每分钟最多 60 次，多了 429（`retry-after: 60`）；正文最大 1 MB（超了 413）。正文按原始文本交给插件，平台的签名由插件自己校验；`handle` 十五秒内要回来。
+- **执行**：`handle` 以本人身份、在插件的空间里跑（`ctx` 和对象的 `read` 一样，隔离运行的插件经子进程代理）。返回的 `refresh` 里，`kind` 不带前缀就是本插件的类型，别的插件的类型跳过；只重读 omem 已经在跟的对象（有未结束的事项挂着它），读法和轮询一样（`refreshObject`），状态变了或修订变了照常记信号、推进流程、发规则事件。`emit` 记成 `plugin.<id>.<kind>` 信号（也是 omem 内部事件 `plugin.signal`）。每次调用写一条 `audit_events`（`plugin.hook`，成功时记重读了几个、跳过几个、发了几个信号，失败时记原因），失败回 400。
+- **修订**：对象的 `read` 可以多交 `revision`（插件自己定的“有变化”标记，如头提交加评论数）和 `note`（这次变了什么）。状态没变而修订变了，宿主记 `object.<全名>.updated`；流程阶段可以写 `done: { object, status: "updated" }` 等它，规则的对象触发选“有更新”。`updated` 是保留字，插件的状态不能叫这个名字。
+- **轮询还在**：有回调的对象类型可以把 `poll.minutes` 设长（如 60）当兜底；对象进了终态、或没有未结束的事项挂着它，照旧不再读。
 
 ## 渠道
 
@@ -456,6 +479,8 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 | `GET` / `PUT /api/plugins/:id/settings` | 设置项和当前值；保存一项或几项 |
 | `POST` / `DELETE /api/plugins/:id/trust` | 信任数据目录插件的代码 / 撤销 |
 | `GET /api/plugins/:id/services`、`POST …/services/:name/start`、`…/stop` | 服务状态与最近输出；启动、停止（代码未被信任时拒绝） |
+| `POST` / `DELETE /api/plugins/:id/hooks/:name/secret` | 本人生成（返回只显示一次的密钥和地址）/ 撤销回调的密钥 |
+| `POST /api/hooks/:plugin/:name/:secret` | 外部平台调回调（不用登录，见“回调”） |
 | `GET /api/plugins/:id/streams/:name`（WebSocket） | 流，只给本人，转到插件的服务 |
 | `GET /api/plugins/:id/voice` | 语音能不能用（清单声明了没有、语音模型配好了没有） |
 | `POST /api/plugins/:id/voice/realtime/secret`、`POST …/voice/live/sdp` | 外壳为页面开语音会话，带插件的说明、不带工具；外壳不替页面转发 |

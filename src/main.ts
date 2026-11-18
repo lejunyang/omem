@@ -126,6 +126,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   seedBuiltinFlows(app, packageRoot());
   const { attachFlows } = await import("./flows/engine.ts");
   attachFlows(app);
+  // omem's own events (runs, reviews, questions, items, flow stages, plugin signals) as rule triggers.
+  (await import("./rules/omem-events.ts")).attachOmemEvents(app);
   const { loadPlugins } = await import("./plugins/registry.ts");
   await loadPlugins(app);
   const server = await startServer(app, opts);

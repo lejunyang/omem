@@ -4,6 +4,7 @@ import { notify } from "../core/notify.ts";
 import { runImages } from "../agents/artifacts.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
 import { addItemEvent, getItem } from "../items/store.ts";
+import { emitOmem } from "../rules/omem-events.ts";
 import type { FlowDefinition } from "./definitions.ts";
 import type { Execution } from "../agents/execution.ts";
 import type { StageEvent } from "./review.ts";
@@ -80,6 +81,13 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
     run(app.db, "update items set updated_at=? where id=?", at, itemId);
   });
   app.emit({ type: "changed", entity: "item", id: itemId });
+  // A stage moved (or started waiting on the owner): rules about omem's own events hear of it.
+  const shown = (s: StageState, waitingOn: string | null | undefined) => s === "doing" && waitingOn === "owner" ? "waiting-owner" : s;
+  const status = shown(state, next.waitingOn), was = prev ? shown(prev.state, prev.waitingOn) : null;
+  if (status !== was) {
+    const item = getItem(app, itemId);
+    emitOmem(app, { type: "flow.stage", id: `${itemId}#${id}#${f.round}`, title: `${item.title}：${name}`, flow: f.id, stage: id, status, ...(was ? { from: was } : {}), space: item.spaceId, item: { id: itemId, title: item.title }, text: note.slice(0, 2000), ...(by.runId ? { runId: by.runId } : {}) });
+  }
   // Starts, gates (they have their own question card) and the owner's own clicks say nothing new to the
   // owner; a result, a skip, a stop or a re-check written by an Agent or the host does.
   const what = !changed || by.actor === "owner" ? null : state === "done" ? "做完了" : state === "skipped" ? "跳过了" : state === "blocked" ? `卡住了${next.waitingOn ? `，${waitText(next.waitingOn)}` : ""}` : state === "stale" ? "要复核" : null;

@@ -2096,6 +2096,10 @@ export const migrations: readonly string[] = [
    alter table review_findings add column checked_run text;
    alter table review_findings add column resolved_run text;
    alter table review_findings add column external text;`,
+  // A plugin object's own change mark (plugins/types.ts PluginObjectState.revision): a move while the
+  // status stays is an “updated” signal (flows/plugin-objects.ts).
+  `alter table flow_objects add column revision text;
+   alter table flow_objects add column revised_at text;`,
 ];
 
 export type Db = DatabaseSync;

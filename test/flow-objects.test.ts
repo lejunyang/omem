@@ -56,7 +56,7 @@ beforeEach(async () => {
         if (state.fail) throw new Error("平台暂不可读");
         if (state.hang) return new Promise(() => {});
         if (state.emit) await ctx.emit({ kind: "observed", keys: { key }, payload: { title: "示例" } });
-        return { title: state.title ?? "示例合并请求", status: state.status ?? "open", link: "https://example.test/changes/" + key, fields: [{ label: "目标分支", value: "main" }] };
+        return { title: state.title ?? "示例合并请求", status: state.status ?? "open", link: "https://example.test/changes/" + key, fields: [{ label: "目标分支", value: "main" }], revision: state.revision, note: state.note };
       }
     });
   }`);
@@ -243,6 +243,45 @@ describe("对象巡检与信号", () => {
     expect(one<{ type: string }>(app.db, "select type from flow_signals")?.type).toBe("plugin.objectprobe.observed");
     untrustPlugin(app, "objectprobe"); oldChecks(); await pollObjects(app); expect(reads()).toBe(1);
     expect(itemObjects(app, i.id, "owner")[0].disabled).toBe(true);
+  });
+});
+
+describe("对象的修订（有更新）", () => {
+  it("状态不变而修订变了记 updated 信号和时间线；第一次读和没有修订都不算", async () => {
+    const i = item(); set("1", { status: "open" });
+    const o = await attachObject(app, i.id, url(), "owner");
+    set("1", { status: "open", revision: "c1" }); oldChecks(); await pollObjects(app);
+    expect(all(app.db, "select * from flow_signals")).toHaveLength(0);
+    expect(one<{ revision: string }>(app.db, "select revision from flow_objects")?.revision).toBe("c1");
+    set("1", { status: "open", revision: "c2", note: "新提交 2 个" }); oldChecks(); await pollObjects(app);
+    const signals = all<{ type: string; keys: string; outcome: string }>(app.db, "select * from flow_signals");
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ type: `object.${kind}.updated`, outcome: "新提交 2 个" });
+    expect(JSON.parse(signals[0].keys)).toEqual({ object: o.id, items: [i.id], revision: "c2" });
+    expect(itemEvents(app, i.id).filter((e) => e.text.includes("有更新：新提交 2 个"))).toHaveLength(1);
+    // Same revision again: nothing; a status change with a new revision is a status change only.
+    oldChecks(); await pollObjects(app); expect(all(app.db, "select * from flow_signals")).toHaveLength(1);
+    set("1", { status: "merged", revision: "c3" }); oldChecks(); await pollObjects(app);
+    expect(all<{ type: string }>(app.db, "select type from flow_signals order by id").map((s) => s.type)).toEqual([`object.${kind}.updated`, `object.${kind}.merged`]);
+  });
+  it("updated 是保留的状态：插件不能用它，流程的 done 可以写它，人话是“有更新”", () => {
+    const def: PluginObject = { kind: "reserved", label: "示例", match: () => null, read: async () => ({ title: "示例", status: "open", link: url() }), statuses: { open: "进行中", updated: "已更新" }, final: [] };
+    expect(() => registerObject("objectprobe", def)).toThrow("updated");
+    const f = parseFlow(raw("owner", { object: kind, status: "updated" }));
+    expect(describeStage(f.stages[0]).done).toContain("合并请求到了 有更新");
+  });
+  it("done 写 updated 的阶段：进来之后修订变了才算做完，之前的变化不算", async () => {
+    const i = item(); saveFlow(app, JSON.stringify({ id: "wait-update", name: "等更新", stages: [{ id: "wait", name: "等更新", by: "owner", done: { object: kind, status: "updated" } }, { id: "next", name: "后续", by: "wait" }] }), "user");
+    set("1", { status: "open", revision: "c1" }); await attachObject(app, i.id, url(), "owner");
+    set("1", { status: "open", revision: "c2" }); oldChecks(); await pollObjects(app);
+    await startFlow(app, i.id, "wait-update", owner);
+    expect(getStage(app, i.id, "wait").state).toBe("doing");
+    oldChecks(); await pollObjects(app);
+    expect(getStage(app, i.id, "wait").state).toBe("doing");
+    await new Promise((r) => setTimeout(r, 5));
+    set("1", { status: "open", revision: "c3", note: "有新评论" }); oldChecks(); await pollObjects(app);
+    expect(getStage(app, i.id, "wait")).toMatchObject({ state: "done", note: "合并请求有更新" });
+    expect(getStage(app, i.id, "next").state).toBe("doing");
   });
 });
 

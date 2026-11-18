@@ -82,7 +82,7 @@ function checkDocRule(r: ReturnType<typeof ruleInputSchema.parse>) {
  */
 function checkObjectRule(r: ReturnType<typeof ruleInputSchema.parse>) {
   const object = r.trigger.event === "object";
-  if (!object && (r.trigger.objectKind || r.trigger.objectStatuses?.length)) throw new HttpError(400, "只有“对象状态变化”规则能选对象类型和状态");
+  if (!object && (r.trigger.objectKind || r.trigger.objectStatuses?.length || r.trigger.objectChanges)) throw new HttpError(400, "只有“对象状态变化”规则能选对象类型、状态和变化");
   const fields = r.conditions ? fieldsOf(r.conditions) : [];
   if (!object) {
     const objectFields = fields.filter((f) => f.startsWith("object."));
@@ -104,6 +104,30 @@ function checkObjectRule(r: ReturnType<typeof ruleInputSchema.parse>) {
     throw new HttpError(400, "对象状态变化规则没有群：只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断或执行脚本");
   if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
     throw new HttpError(400, "对象状态变化规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
+}
+
+/**
+ * Something inside omem (a run ended, an item changed state…) has no chat either: the omem fields, at
+ * least one kind of event, and the actions a document change may have.
+ */
+function checkOmemRule(r: ReturnType<typeof ruleInputSchema.parse>) {
+  const omem = r.trigger.event === "omem";
+  const fields = r.conditions ? fieldsOf(r.conditions) : [];
+  if (!omem) {
+    if (r.trigger.omemTypes?.length) throw new HttpError(400, "只有“omem 里发生的事”规则能选事件");
+    const own = fields.filter((f) => f.startsWith("omem."));
+    if (own.length) throw new HttpError(400, `${[...new Set(own)].join("、")} 只用于“omem 里发生的事”规则`);
+    return;
+  }
+  if (!r.trigger.omemTypes?.length) throw new HttpError(400, "“omem 里发生的事”规则至少选一种事件");
+  const bad = fields.filter((f) => !f.startsWith("omem."));
+  if (bad.length) throw new HttpError(400, `“omem 里发生的事”规则只能用 omem 的字段，不能用 ${[...new Set(bad)].join("、")}`);
+  if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "“omem 里发生的事”规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
+  const allowed = new Set(["notify", "delay", "check", "script"]);
+  if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
+    throw new HttpError(400, "“omem 里发生的事”规则没有群：只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断或执行脚本");
+  if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
+    throw new HttpError(400, "“omem 里发生的事”规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
 }
 
 /** A meeting has no chat or message; the meeting action needs a meeting. */
@@ -182,7 +206,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   // Every meeting the owner joins is a reasonable rule (the card asks first), so is every change of the
   // documents a rule lists; every message is not.
   const everyListedDoc = r.trigger.event === "doc" && !!r.trigger.docs?.length;
-  if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule" && r.trigger.event !== "meeting" && r.trigger.event !== "object" && !everyListedDoc)
+  if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule" && r.trigger.event !== "meeting" && r.trigger.event !== "object" && r.trigger.event !== "omem" && !everyListedDoc)
     throw new HttpError(400, r.trigger.event === "doc" ? "文档变化规则要么列出盯哪些文档，要么写条件（或交给 AI 判断）" : "按条件判断需要条件；没有条件就选“交给 AI 判断”，或先从规则原话生成条件");
   if (r.trigger.event === "schedule" && !r.trigger.cron) throw new HttpError(400, "定时规则需要 cron，例如 0 9 * * 1-5");
   if (r.trigger.event === "schedule" && r.actions.some((a) => a.type === "invite-bot" || a.type === "capture" || a.type === "watch" || (a.type === "agent" && a.ownTopic)))
@@ -193,6 +217,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   checkMeetingRule(app, r);
   checkDocRule(r);
   checkObjectRule(r);
+  checkOmemRule(r);
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;

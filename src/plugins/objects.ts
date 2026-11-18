@@ -6,6 +6,7 @@ export type RegisteredObject = Omit<PluginObject, "match"> & { plugin: string; m
 const objects = new Map<string, RegisteredObject>();
 export function validateObject(def: Pick<PluginObject, "kind" | "label" | "statuses" | "final" | "poll" | "actions">) {
   if (!/^[a-z][a-z0-9-]*$/.test(def.kind)) throw new Error(`对象 kind 不合法：${def.kind}`);
+  if (def.statuses && Object.hasOwn(def.statuses, "updated")) throw new Error("对象状态不能叫 updated：它留给“有更新”（修订变了）");
   if (!def.label?.trim() || !def.statuses || !Object.keys(def.statuses).length || Object.values(def.statuses).some((s) => typeof s !== "string" || !s.trim())) throw new Error("对象 statuses 不能为空，状态要有名称");
   if (!Array.isArray(def.final) || def.final.some((s) => !Object.hasOwn(def.statuses, s))) throw new Error("对象 final 必须都在 statuses 里");
   if (def.poll && (!Number.isFinite(def.poll.minutes) || def.poll.minutes < 1)) throw new Error("对象 poll.minutes 最短 1 分钟");

@@ -93,6 +93,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/code-index/hook": "owner",
   "DELETE /api/code-index/hook": "owner",
   "POST /api/code-index/notify": "public",
+  // A plugin's callback from outside: its secret is in the path (src/plugins/hooks.ts).
+  "POST /api/hooks/:plugin/:name/:secret": "public",
 
   // sources
   "GET /api/sources": s("space.read", "q.space"),
@@ -347,6 +349,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "GET /api/diag", "GET /api/storage", "POST /api/storage/scan", "GET /api/media", "POST /api/media/ffmpeg/install", "POST /api/media/compress", "POST /api/media/stop", "POST /api/media/resume",
       "POST /api/media/delete-originals", "PUT /api/plugins/:id/settings", "PUT /api/plugins/:id/icon", "POST /api/plugins/:id/trust", "DELETE /api/plugins/:id/trust", "GET /api/plugins/:id/services",
       "POST /api/plugins/:id/services/:name/start", "POST /api/plugins/:id/services/:name/stop", "PUT /api/plugins/:id/enabled", "POST /api/plugins/install",
+      "POST /api/plugins/:id/hooks/:name/secret", "DELETE /api/plugins/:id/hooks/:name/secret",
       "POST /api/plugins/:id/update", "DELETE /api/plugins/:id",
     ].map((r) => [r, SETTINGS]),
   ),

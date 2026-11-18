@@ -14,7 +14,9 @@ export type AppEvent =
   | { type: "changed"; entity: "source" | "page" | "memory" | "item" | "card" | "space" | "requirement" | "code-task" | "rule" | "design"; id: string; spaceId?: string }
   | { type: "ask"; id: string; status: string; conversationId: string | null }
   | { type: "ui"; id: string; conversationId: string }
-  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean };
+  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean }
+  /** Something inside omem a rule may be about (rules/omem-events.ts); not sent to pages. */
+  | { type: "omem"; event: import("../rules/types.ts").OmemFacts };
 
 /** Shared process context. Services take it instead of importing globals. */
 export class App {

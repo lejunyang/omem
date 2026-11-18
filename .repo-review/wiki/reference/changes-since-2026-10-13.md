@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，这里只留最近的；更早的按时间段放在同目录的归档文件里。读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-18
+updated: 2026-11-19
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -28,6 +28,12 @@ updated: 2026-11-18
 - 设备记录多 `back`（对方连着本机）和 `serveBack`（本机连着对方）；`backOnly` 的设备 `peerFetch` 走 `backFetch`（`createConnection`，不能带 `agent`，否则 Node 不用它），`peerRoute` 多 `connect`，隧道和 `connectAcp` 用 `connectOption`。直连失败而有 `back` 的也退到反向。
 - 进来的连接地址是 loopback 时换成 `0.0.0.0`，不带令牌一律 401；`backendAvailable` 对只能反向到的设备看它连没连着；`preClose` 时断开，免得空闲的 Agent 会话让服务关不掉。服务端升级过的 socket 不能 `setEncoding`（会抛错让进程退出），按行读用 `StringDecoder`。
 - 入口：`omem peer back <设备> [on|off]`、`POST /api/peers/:id/back`、设置 → 设备每台下面的开关。文档 `docs/v2/mesh.md` §1.2，测试 `test/peer-back.test.ts`。
+
+## 插件回调、对象“有更新”、omem 自己的事进规则（11-19）
+
+- 插件回调：`api.hook({ name, handle(ctx, req) })`（`src/plugins/hooks.ts`；在 omem 进程里和隔离运行两条注册路径，`registry.ts`、`sandbox.ts`、`sandbox-runner.ts`）。公开地址 `POST /api/hooks/<插件>/<名字>/<密钥>`（`src/plugins/http.ts` 的 `registerHookRoutes`，单独一层只收原始文本、1 MB；`auth/routes.ts` 里是 public，`server/http.ts` 的鉴权钩子跳过它）。密钥在插件卡上生成和撤销（kv `plugin-hook:<插件>/<名字>` 只存哈希），每分钟 60 次，每次写 `audit_events`（`plugin.hook`）。`handle` 返回的 `refresh` 走 `refreshObjectByKey`，`emit` 走 `emitPluginSignal`。
+- 对象修订：`PluginObjectState` 多 `revision` / `note`，`flow_objects` 多 `revision`、`revised_at` 列。`readObject` 在状态没变、修订变了时记 `object.<全名>.updated`、事项时间线“有更新”、推进流程、发 `object.change = "updated"` 的规则事件。`updated` 是保留状态：`validateObject` 拒绝，流程 `done` 可写（`findPluginObject` 的 `updatedAfter`，从进这一段或重开算起）。规则 `trigger.objectChanges`（默认 `["status"]`）。
+- 规则触发 `omem`（`src/rules/omem-events.ts`）：订阅 `app.events` 的 `run`、`ask` 和新的 `omem` 事件（`AppEvent` 多一种，网页的事件流不发它）。各处发的：`setRunOutput`（`appliedAt` / `discardedAt` / `reviewStage: done`）、`upsertItem`（新建、改状态）、`changeStage`（阶段状态或“在等本人”变了）、`emitPluginSignal`；`reviewFinished` 留给评审链报已修 / 仍在。`types.ts` 的 `OMEM_TYPES`、`OmemFacts`、`omem.*` 字段；`engine.ts` 的 `inScope` 按子类型、空间和 `ruleId` 过滤；防循环看运行的 `trigger.source` / `input.rule`；十分钟去重在进程内。规则页多一个触发“omem 里发生的事”和对象的“哪些变化”。
 
 ## 群里发起的会议也能触发会议规则（11-19）
 

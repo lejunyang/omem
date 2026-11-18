@@ -39,7 +39,7 @@ type Rule = {
   name: string;
   description: string;
   enabled: boolean;
-  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc" | "object"; meetingFrom?: "joined" | "group" | "both"; docs?: string[]; pollMinutes?: number; objectKind?: string; objectStatuses?: string[]; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[]; fast?: boolean };
+  trigger: { event: "message" | "chat-new" | "schedule" | "meeting" | "doc" | "object" | "omem"; meetingFrom?: "joined" | "group" | "both"; docs?: string[]; pollMinutes?: number; objectKind?: string; objectStatuses?: string[]; objectChanges?: ("status" | "updated")[]; omemTypes?: string[]; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[]; fast?: boolean };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
   judgeWith?: "decision" | "general";
@@ -51,7 +51,7 @@ type Rule = {
   origin?: { plugin: string; name: string; file: string } | null;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc" | "object", string[]>; objectKinds?: { kind: string; label: string; statuses: Record<string, string>; final: string[] }[]; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string; chat_mode?: string | null }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
+type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc" | "object" | "omem", string[]>; objectKinds?: { kind: string; label: string; statuses: Record<string, string>; final: string[] }[]; omemTypes?: { type: string; label: string }[]; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string; chat_mode?: string | null }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[]; note: string };
 
 const route = useRoute();
@@ -294,8 +294,13 @@ const scheduleOnly = computed(() => form.value?.trigger.event === "schedule");
 const meetingRule = computed(() => form.value?.trigger.event === "meeting");
 const docRule = computed(() => form.value?.trigger.event === "doc");
 const objectRule = computed(() => form.value?.trigger.event === "object");
-/** No chat of its own (a schedule, a document or object change): replies go to the chat chosen in 发到. */
-const destRule = computed(() => scheduleOnly.value || docRule.value || objectRule.value);
+const omemRule = computed(() => form.value?.trigger.event === "omem");
+const TRIGGERS: { value: Rule["trigger"]["event"]; label: string }[] = [
+  { value: "message", label: "新消息" }, { value: "chat-new", label: "第一次看到的群" }, { value: "schedule", label: "定时" }, { value: "meeting", label: "会议" },
+  { value: "doc", label: "文档变化" }, { value: "object", label: "对象状态变化" }, { value: "omem", label: "omem 里发生的事" },
+];
+/** No chat of its own (a schedule, a document or object change, something inside omem): replies go to the chat chosen in 发到. */
+const destRule = computed(() => scheduleOnly.value || docRule.value || objectRule.value || omemRule.value);
 const isOwner = computed(() => state.me?.role === "owner");
 /** What a new script starts as: reading the event it gets. */
 const SCRIPT_SAMPLE = [
@@ -353,7 +358,7 @@ const addOptions = computed(() =>
 // ---- meetings ---------------------------------------------------------------------------
 /** The condition fields that make sense for this trigger: a meeting has no chat or message. */
 const condFields = computed(() => {
-  const keys = options.value.eventFields?.[meetingRule.value ? "meeting" : docRule.value ? "doc" : objectRule.value ? "object" : "message"];
+  const keys = options.value.eventFields?.[meetingRule.value ? "meeting" : docRule.value ? "doc" : objectRule.value ? "object" : omemRule.value ? "omem" : "message"];
   return keys ? Object.fromEntries(keys.map((k) => [k, options.value.fields[k]])) : options.value.fields;
 });
 // ---- plugin objects -----------------------------------------------------------------------
@@ -380,6 +385,26 @@ function setObjectKind(v: string) {
   delete f.trigger.objectStatuses;
   touch();
 }
+/** Status changes (the default), new revisions with the status unchanged, or both; never neither. */
+function toggleObjectChange(id: "status" | "updated", on: boolean) {
+  const f = form.value;
+  if (!f) return;
+  const list = new Set(f.trigger.objectChanges ?? ["status"]);
+  if (on) list.add(id);
+  else list.delete(id);
+  if (!list.size) list.add(id === "status" ? "updated" : "status");
+  f.trigger.objectChanges = list.size === 1 && list.has("status") ? undefined : (["status", "updated"] as const).filter((x) => list.has(x));
+  touch();
+}
+function toggleOmemType(id: string, on: boolean) {
+  const f = form.value;
+  if (!f) return;
+  const list = new Set(f.trigger.omemTypes ?? []);
+  if (on) list.add(id);
+  else list.delete(id);
+  f.trigger.omemTypes = (options.value.omemTypes ?? []).map((t) => t.type).filter((t) => list.has(t));
+  touch();
+}
 function toggleObjectStatus(id: string, on: boolean) {
   const f = form.value;
   if (!f) return;
@@ -402,16 +427,20 @@ function onTrigger() {
     f.trigger.waitMinutes = 0;
     f.trigger.unless = [];
   } else f.actions = f.actions.filter((a) => a.type !== "meeting-bot");
-  if (f.trigger.event === "object") {
+  if (f.trigger.event === "object" || f.trigger.event === "omem") {
     // Like a document change: no chat, no discussion to wait on; the agent reports, or posts into 发到.
     f.actions = f.actions.filter((a) => ["agent", "notify", "delay", "check", "script"].includes(a.type));
     for (const a of f.actions) if (a.type === "agent") Object.assign(a, { reply: a.reply === "silent" ? "none" : a.reply, ownTopic: false });
     f.trigger.waitMinutes = 0;
     f.trigger.unless = [];
-  } else {
+  }
+  if (f.trigger.event !== "object") {
     delete f.trigger.objectKind;
     delete f.trigger.objectStatuses;
+    delete f.trigger.objectChanges;
   }
+  if (f.trigger.event === "omem") f.trigger.omemTypes ??= [];
+  else delete f.trigger.omemTypes;
   if (f.trigger.event === "doc") {
     // A document change has no chat: the agent only reports to the owner, and nothing waits on a discussion.
     f.actions = f.actions.filter((a) => ["agent", "notify", "delay", "check", "script"].includes(a.type));
@@ -619,7 +648,9 @@ function startFrom(text: string) {
         <section class="block">
           <div class="block-head"><h3>什么时候看</h3></div>
           <div class="row wrap">
-            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '会议' }, { value: 'doc', label: '文档变化' }, { value: 'object', label: '对象状态变化' }]" aria-label="触发" @change="onTrigger" />
+            <!-- Seven kinds do not fit a phone's width: there the same choice is a dropdown, so the chosen one stays in view. -->
+            <span class="trigger-seg"><UiSegmented v-model="form.trigger.event" size="sm" :options="TRIGGERS" aria-label="触发" @change="onTrigger" /></span>
+            <span class="trigger-pick"><UiSelect :model-value="form.trigger.event" size="sm" width="200px" :options="TRIGGERS" aria-label="触发" @update:model-value="(v) => ((form!.trigger.event = v as Rule['trigger']['event']), onTrigger())" /></span>
             <UiSegmented v-if="form.trigger.event === 'message'" v-model="form.trigger.once" size="sm" :options="[{ value: 'event', label: '每条消息' }, { value: 'chat', label: '每个群只一次' }]" aria-label="触发次数" @change="touch" />
             <UiSegmented v-if="meetingRule" :model-value="form.trigger.meetingFrom ?? 'joined'" size="sm" :options="[{ value: 'joined', label: '我入会时' }, { value: 'group', label: '群里有人发起时' }, { value: 'both', label: '两种都算' }]" aria-label="哪些会议" @update:model-value="(v) => ((form!.trigger.meetingFrom = v === 'joined' ? undefined : (v as 'group' | 'both')), touch())" />
             <input v-if="form.trigger.event === 'schedule'" v-model="form.trigger.cron" class="input sm mono cron" placeholder="0 9 * * 1-5" aria-label="cron" @input="touch" />
@@ -640,12 +671,24 @@ function startFrom(text: string) {
               <span class="small">哪种对象</span>
               <UiSelect :model-value="form.trigger.objectKind ?? ''" size="sm" width="220px" :options="objectKindOptions" aria-label="对象类型" @update:model-value="(v) => setObjectKind(String(v || ''))" />
             </div>
+            <div class="row wrap">
+              <span class="small">哪些变化</span>
+              <UiCheckbox :model-value="(form.trigger.objectChanges ?? ['status']).includes('status')" size="sm" @change="(v) => toggleObjectChange('status', v)">状态变了</UiCheckbox>
+              <UiCheckbox :model-value="(form.trigger.objectChanges ?? ['status']).includes('updated')" size="sm" title="状态没变，但插件说它有更新：新的提交、新的评论……" @change="(v) => toggleObjectChange('updated', v)">有更新（状态没变）</UiCheckbox>
+            </div>
             <div v-if="objectStatuses.length" class="row wrap">
-              <span class="small">变成</span>
+              <span class="small">{{ (form.trigger.objectChanges ?? ['status']).includes('status') ? "变成" : "当时是" }}</span>
               <UiCheckbox v-for="s in objectStatuses" :key="s.id" :model-value="!!form.trigger.objectStatuses?.includes(s.id)" size="sm" @change="(v) => toggleObjectStatus(s.id, v)">{{ s.label }}</UiCheckbox>
               <small class="muted">{{ form.trigger.objectStatuses?.length ? "" : "不勾就是变成任何状态" }}</small>
             </div>
-            <small class="muted">事项上挂的合并请求这类平台对象（{{ options.objectKinds?.length ? "由启用的插件提供" : "还没有启用带对象类型的插件" }}）变了状态时判断：omem 按插件定的间隔去读，读到的状态和上次不一样就触发一次。只看你能读的空间里的事项；上面选了空间就只看这个空间的事项。第一次挂上时读到的状态不算变化。</small>
+            <small class="muted">事项上挂的合并请求这类平台对象（{{ options.objectKinds?.length ? "由启用的插件提供" : "还没有启用带对象类型的插件" }}）变了时判断：omem 按插件定的间隔去读（插件有回调的，平台一通知就读），读到的状态和上次不一样就触发一次；“有更新”是状态没变、插件说它有新东西（新的提交、新的评论）。只看你能读的空间里的事项；上面选了空间就只看这个空间的事项。第一次挂上时读到的不算变化。</small>
+          </template>
+          <template v-if="omemRule">
+            <div class="row wrap omem-types">
+              <span class="small">哪些事</span>
+              <UiCheckbox v-for="t in options.omemTypes ?? []" :key="t.type" :model-value="!!form.trigger.omemTypes?.includes(t.type)" size="sm" :title="t.type" @change="(v) => toggleOmemType(t.type, v)">{{ t.label }}</UiCheckbox>
+            </div>
+            <small class="muted">{{ form.trigger.omemTypes?.length ? "" : "至少选一种。" }}omem 自己的事：运行结束或失败、评审结束、交办应用或丢弃、提问被回答或失效、事项新建或改了状态、流程阶段变了、插件发了信号。条件里用 omem 的字段细分（运行类型、档案、新状态、事项、流程和阶段）。这类规则自己起的运行结束时不会再叫醒这类规则（防止互相叫醒）；同一件事在同一个状态上十分钟内只算一次。选了空间就只看这个空间里的。</small>
           </template>
           <template v-if="docRule">
             <textarea :value="(form.trigger.docs ?? []).join('\n')" class="input mono small" rows="3" placeholder="要盯的飞书文档、电子表格、多维表格或知识库页面的链接，一行一个；不填就看机器人订阅了的所有文档" aria-label="要盯的文档" @input="(e) => ((form!.trigger.docs = docLinks((e.target as HTMLTextAreaElement).value)), touch())" />
@@ -1117,6 +1160,17 @@ function startFrom(text: string) {
 .example:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.trigger-pick {
+  display: none;
+}
+@media (max-width: 640px) {
+  .trigger-seg {
+    display: none;
+  }
+  .trigger-pick {
+    display: inline-flex;
+  }
 }
 @media (max-width: 760px) {
   .rules {
