@@ -1098,6 +1098,19 @@ export const configSchema = z.object({
     })
     .default({ emoji: DEFAULT_FEEDBACK_EMOJI }),
   /**
+   * The agents' own skill folders (src/agents/agent-skills.ts, docs/v2/agent-skills.md). `takeOver`
+   * (off by default): every `everyMinutes` the skills other tools installed there move into the
+   * library, grouped, and the folders keep only the omem guide and one hub per group that is on.
+   * `extraDirs`: folders to take over besides the known agents' (taken from, never written to).
+   */
+  agentSkills: z
+    .object({
+      takeOver: z.boolean().default(false),
+      everyMinutes: z.number().int().min(1).max(1440).default(10),
+      extraDirs: z.array(z.string().min(1)).max(20).default([]),
+    })
+    .default({ takeOver: false, everyMinutes: 10, extraDirs: [] }),
+  /**
    * Nightly replay (docs/v2/replay.md): the scheduled job `replay` (off by default) picks `max` past
    * questions a night and answers each again as of its time, a baseline re-run against one variant.
    * No token limits: the owner sets how many questions; each arm is an ordinary run with its usual

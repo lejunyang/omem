@@ -946,7 +946,58 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     deleteSkillFile(app, (req.params as { name: string }).name, q(z.object({ path: z.string() }), req.query).path);
     return { ok: true };
   });
-  server.get("/api/skills", async () => listSkills(app, { includeDrafts: true }).map((s) => ({ ...s, replay: skillDisplayTally(app, s.name) })));
+  server.get("/api/skills", async () => {
+    // Bodies stay out of the list: with the agents' skills taken over there are hundreds.
+    const { loadSkillGroups, skillEnabled } = await import("../agents/skill-groups.ts");
+    const groups = loadSkillGroups(app);
+    return listSkills(app, { includeDrafts: true }).map(({ body: _b, files: _f, ...s }) => ({ ...s, group: groups.skills[s.name]?.group ?? null, enabled: skillEnabled(groups, s.name), replay: skillDisplayTally(app, s.name) }));
+  });
+  // The agents' own skill folders and the groups (agents/agent-skills.ts, docs/v2/agent-skills.md).
+  const ownerSkills = (req: { headers: Record<string, unknown> }) => {
+    if (who(req as never) !== OWNER) throw new HttpError(403, "只有本人能管理 Agent 自带的技能");
+  };
+  server.get("/api/skill-groups", async () => {
+    const m = await import("../agents/agent-skills.ts");
+    return { groups: m.listSkillGroups(app), takeOver: m.takeOverStatus(app) };
+  });
+  server.get("/api/skill-groups/:id", async (req) => (await import("../agents/agent-skills.ts")).readSkillGroup(app, (req.params as { id: string }).id));
+  server.put("/api/skill-groups/:id", async (req) => {
+    ownerSkills(req);
+    const b = q(z.object({ title: z.string().max(80).optional(), description: z.string().max(2000).optional(), enabled: z.boolean().optional() }), req.body);
+    return (await import("../agents/agent-skills.ts")).organizeSkills(app, { groups: [{ id: (req.params as { id: string }).id, ...b }] }, "user");
+  });
+  server.put("/api/skill-groups", async (req) => {
+    ownerSkills(req);
+    const b = q(z.object({ skills: z.array(z.object({ name: z.string(), group: z.string().nullable().optional(), purpose: z.string().max(80).nullable().optional(), enabled: z.boolean().optional() })).max(1000) }), req.body);
+    return (await import("../agents/agent-skills.ts")).organizeSkills(app, { skills: b.skills }, "user");
+  });
+  server.put("/api/agent-skills/settings", async (req) => {
+    ownerSkills(req);
+    const b = q(z.object({ takeOver: z.boolean().optional(), everyMinutes: z.number().int().min(1).max(1440).optional(), extraDirs: z.array(z.string().min(1)).max(20).optional() }), req.body);
+    const next = configSchema.parse({ ...app.config, agentSkills: { ...app.config.agentSkills, ...b } });
+    saveConfig(next, app.home);
+    Object.assign(app.config, next);
+    const m = await import("../agents/agent-skills.ts");
+    // Turned on: the first sweep right away, not at the next tick.
+    if (b.takeOver) await m.tickAgentSkills(app);
+    return m.takeOverStatus(app);
+  });
+  server.post("/api/agent-skills/sweep", async (req) => {
+    ownerSkills(req);
+    const b = q(z.object({ dryRun: z.boolean().optional() }), req.body ?? {});
+    return (await import("../agents/agent-skills.ts")).sweepNow(app, b);
+  });
+  server.post("/api/agent-skills/restore", async (req) => {
+    ownerSkills(req);
+    const b = q(z.object({ backup: z.string().optional() }), req.body ?? {});
+    const r = (await import("../agents/agent-skills.ts")).restoreAgentSkills(app, b.backup);
+    if (app.config.agentSkills.takeOver) {
+      const next = configSchema.parse({ ...app.config, agentSkills: { ...app.config.agentSkills, takeOver: false } });
+      saveConfig(next, app.home);
+      Object.assign(app.config, next);
+    }
+    return r;
+  });
   // Turning a skill off here is the owner's decision: the nightly replay does not try it out again (specs.ts setSkillStatus).
   server.put("/api/skills/:name/status", async (req) => setSkillStatus(app, (req.params as { name: string }).name, q(z.object({ status: z.enum(["active", "draft"]) }), req.body).status, "user"));
   server.get("/api/skills/:name", async (req) => readSkill(app, (req.params as { name: string }).name));

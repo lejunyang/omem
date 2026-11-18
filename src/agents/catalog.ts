@@ -34,13 +34,20 @@ export type CatalogEntry = {
    * local `/usage` command in an ACP session. Accounts behind an API key have none.
    */
   quota?: "codex-app-server" | "claude-usage";
+  /**
+   * Where the agent finds its own skills (agent-skills.ts takes them over when the owner turns that
+   * on): `read` every folder it loads, `write` the one omem puts the omem guide and the group hubs in
+   * (one per agent, so an agent reading two folders does not see them twice). `~` and
+   * `${VAR:-default}` are expanded.
+   */
+  skills?: { read: string[]; write: string };
 };
 
 export const acpCatalog: CatalogEntry[] = [
-  { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server" },
+  { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server", skills: { read: ["${CODEX_HOME:-~/.codex}/skills", "~/.agents/skills"], write: "~/.agents/skills" } },
   // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
-  { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI" },
-  { id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage" },
+  { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI", skills: { read: ["${TRAE_HOME:-~/.trae}/skills", "~/.agents/skills"], write: "~/.agents/skills" } },
+  { id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" } },
   { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
   { id: "copilot", name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
   { id: "qwen", name: "Qwen Code", command: "qwen", args: ["--acp"], npm: "@qwen-code/qwen-code" },

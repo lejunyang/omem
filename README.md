@@ -281,6 +281,7 @@ npm install -g @omem-ai/cli
 | 从新上下文开始任务，或把任务放在独立飞书话题里 | `/new 任务描述` 开新会话并立即执行；在飞书群聊或机器人私聊的主界面发送 `/topic 任务描述`（群里需 @ 机器人），以本条消息开启话题并保持独立上下文；话题内拒绝此指令 |
 | 某次任务想用特定 AI，或不同部分用不同模型 | 直接说“这次用某后端、模型和强度做……”；只影响这次交办。设置 → AI → 任务选型写总体偏好，每个后端点开后写它和其中几个模型适合做什么，也能关闭自主选择；开着时候选会写进助手的环境说明，助手每次交办都对照着挑。没指定 AI 的运行也能在开始前自动选：配了决策模型时它一两秒从候选里挑一个，和助手的对话、规则交给的 Agent、交办和后台任务分别设“不选 / 有决策模型时选 / 总是选”（总是选在没有决策模型时让通用模型挑） |
 | 让 Agent 越用越顺，包括内置的独立评审 | 纠正它时说“以后评审先看错误处理”，助理记成它的专属记忆或挂一个技能；内置角色（独立评审、编码、整理…）在“Agent”页也能自定义，omem 更新后可合并或恢复源码版本（`omem roles`）；每晚复盘有纠正、失败或收到表情的档案，提示词和设置的改动提成建议等你采纳；技能草稿交给夜间复盘试用，默认两胜且胜多于负后启用（有胜场但未达门槛的技能提案继续保留，其他建议 14 天没处理自动过期） |
+| 别的工具往 Claude Code、Codex、TraeX 里装了几百个技能，Agent 看不清每个是做什么的 | Agent 页 → 技能 →“Agent 自带的技能”打开接管（或 `omem skills take-over --on`）：这些技能移进 omem 的库、按名称前缀归组，原件留备份可撤销；各 Agent 的技能目录里只留 omem 说明和每组一个总入口，Agent 先读总入口、按用途找到具体技能再读全文。以后工具升级又装回来的，每 10 分钟收一次，新版替换旧版、分组和开关不变。打开一个分组可以写说明、给技能填用途、单个或整组停用，也可以让助手“把这组按用途整理一下” |
 | 给某个 Agent 多开或少开几个工具 | Agent 页 → 档案或内置角色 → omem 工具 →“按分组选择”：勾分组名是整组（这个分组以后加的工具自动带上），整组里取消一个就是排除它，只要几个就展开逐个勾；面板底下按档案文件的写法显示结果（`group:read`、`-write_page`、工具名）。内置角色的加减单独记着，不复制角色正文，omem 更新角色时照常跟着更新；角色交结果用的工具去不掉，回答访客的两个角色不开放 |
 | 想知道助手的回答到底有没有用，不靠别人点表情 | 默认在看：回答发出几小时后，按同一个会话或群里之后大家说的话，标成解决了、被追问、被纠正、别人接手了或看不出。运行页“回复发出后”能看到依据的那几句话，标错了点另一个结果改掉；数据页“做得怎么样”按它统计（设置 → AI →“回复发出后看有没有用”可以关、可以改等多久） |
 | 不想收到“收到，我看看”“可能是……建议进一步确认”这种回复 | 默认已经在拦：回复里只有要做什么、只应一声或只有退路时，先退回给 Agent 重写一次，要它给结果和依据，或说清缺哪一个信息；它已经安排了之后回来时不拦。设置 → AI →“回复发出前的检查”可以关 |
@@ -356,6 +357,7 @@ omem mcp --remote <名字> / --url <地址>       # 以你的身份连远程 ome
 omem remote add|list|default|rm             # 记下的远程地址（~/.omem/client.json，不配对）；omem open [页面] 用命令行的身份在浏览器里登录远程 omem；只做这些的话装轻量的 @omem-ai/cli
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
+omem skills [take-over [--dry-run] [--on]|restore|group <技能> <分组>]  # 技能分组；接管各 Agent 自带的技能目录，只留 omem 说明和每组的总入口
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
 omem decision report [--days N]                  # 决策场景的门槛、结果与校准建议
 omem decision replay --scene <scene> --model <提供方ID>:<模型> [--days 30] [--limit 200]  # 只读回放比较
@@ -405,7 +407,7 @@ omem link                                   # 从其他设备打开网页的链�
 
 ## 给其他 Agent 用
 
-在 Claude Code、Codex 等里把 omem 配成 MCP 服务（`omem mcp`，只读用 `--read-only`），它们就能检索你的知识库、读原文、记记忆和事项。`skills/omem/SKILL.md` 是给这些 Agent 的使用说明（概览和接入方式），各类工具的做法分在 `skills/omem/references/` 里，可以把整个目录放进它们的技能目录。能跑 shell 的 Agent 也可以不配 MCP，直接用 `omem tool <工具名> 键=值 …`。
+在 Claude Code、Codex 等里把 omem 配成 MCP 服务（`omem mcp`，只读用 `--read-only`），它们就能检索你的知识库、读原文、记记忆和事项。`skills/omem/SKILL.md` 是给这些 Agent 的使用说明（概览和接入方式），各类工具的做法分在 `skills/omem/references/` 里，可以把整个目录放进它们的技能目录；打开“接管 Agent 自带的技能”后 omem 会自己放进去，并把别的工具装的技能按分组换成总入口（[docs/v2/agent-skills.md](docs/v2/agent-skills.md)）。能跑 shell 的 Agent 也可以不配 MCP，直接用 `omem tool <工具名> 键=值 …`。
 
 工具很多（约 100 个），为了不占上下文，常用的二十来个直接作为 MCP 工具列出，其余的经 `omem_help`（看说明）和 `omem_call`（调用）使用；omem 自己调用的 Agent 也是这样。omem 启动 Agent 时给它的进程带上本次运行的令牌（`OMEM_TOKEN`）并把 `omem` 放进 PATH，它在 shell 里用 `omem tool` 时，能用的工具和能读写的空间与 MCP 一样由服务检查。
 
@@ -614,7 +616,7 @@ src/quality   每晚抽检助手自主写入的页面和定级；页面按运行
 src/insights  数据页：固定场景表、按权限与期间聚合、记录明细、三分钟缓存、Markdown/CSV 导出（不含消息正文）
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）；场景包导入（contributions.ts：规则、MCP、流程）、打包（pack.ts）、插件渠道（channels.ts）；界面插槽（slots.ts）、开发目录链接（links.ts）、安装与源码构建（install.ts）
-src/agents    ACP/CLI 运行、后端网络条件（network-policy.ts）与 IPv6 / DNS 诊断（network-diagnostics.ts、network-request.ts）与 Agent 目录（catalog.ts）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
+src/agents    ACP/CLI 运行、后端网络条件（network-policy.ts）与 IPv6 / DNS 诊断（network-diagnostics.ts、network-request.ts）与 Agent 目录（catalog.ts）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、技能分组与接管 Agent 自带的技能目录（skill-groups.ts、agent-skills.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
               MCP 服务配置与密钥（mcp-servers.ts）、连接检测和工具列表（mcp-test.ts）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导

@@ -17,6 +17,8 @@ import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSelect from "../components/UiSelect.vue";
 import ToolPicker from "../components/ToolPicker.vue";
+import AgentSkillsPanel from "../components/AgentSkillsPanel.vue";
+import SkillGroupPage from "../components/SkillGroupPage.vue";
 import { compactDiff, diffLines } from "../lib/diff";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { state, toast } from "../store";
@@ -28,7 +30,8 @@ import { state, toast } from "../store";
  */
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
-type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; files: string[] };
+type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; enabled?: boolean };
+type SkillGroup = { id: string; title: string; enabled: boolean; count: number; enabledCount: number };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
 type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; toolSet: { tools: string[]; base: string[]; handIn: string[]; changed: boolean; fixed: boolean }; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
@@ -39,11 +42,15 @@ const tab = computed(() => (route.query.tab === "mcp" ? "mcp" : route.query.tab 
 const specName = computed(() => (tab.value === "agents" && typeof route.query.name === "string" ? route.query.name : null));
 const roleName = computed(() => (tab.value === "agents" && typeof route.query.role === "string" ? route.query.role : null));
 const skillName = computed(() => (tab.value === "skills" && typeof route.query.name === "string" ? route.query.name : null));
+const groupId = computed(() => (tab.value === "skills" && typeof route.query.group === "string" ? route.query.group : null));
 const creating = computed(() => route.query.new === "1");
 
 const specs = ref<Spec[]>([]);
 const roles = ref<RoleState[]>([]);
 const skills = ref<Skill[]>([]);
+const skillGroups = ref<SkillGroup[]>([]);
+/** Skills in a group are listed on the group's page, not one by one here. */
+const looseSkills = computed(() => skills.value.filter((s) => !s.group));
 const mcpServers = ref<McpServer[]>([]);
 const mcpError = ref("");
 const options = ref<Options>({ backends: [], defaultBackend: "", globalDefaultBackend: "", tools: [], toolGroups: [], defaultTools: [] });
@@ -54,9 +61,10 @@ let listSeq = 0;
 async function loadLists() {
   const seq = ++listSeq;
   try {
-    const result = await Promise.all([get<Spec[]>("/api/agents"), get<RoleState[]>("/api/roles"), get<Skill[]>("/api/skills"), get<{ servers: McpServer[] }>("/api/mcp").then((r) => ({ servers: r.servers, error: "" })).catch((e) => ({ servers: [] as McpServer[], error: (e as Error).message }))]);
+    const result = await Promise.all([get<Spec[]>("/api/agents"), get<RoleState[]>("/api/roles"), get<Skill[]>("/api/skills"), get<{ servers: McpServer[] }>("/api/mcp").then((r) => ({ servers: r.servers, error: "" })).catch((e) => ({ servers: [] as McpServer[], error: (e as Error).message })), get<{ groups: SkillGroup[] }>("/api/skill-groups").then((r) => r.groups).catch(() => [] as SkillGroup[])]);
     if (seq === listSeq) {
       [specs.value, roles.value, skills.value] = result;
+      skillGroups.value = result[4];
       mcpServers.value = result[3].servers;
       mcpError.value = result[3].error;
     }
@@ -414,7 +422,7 @@ onMounted(async () => {
   await loadCurrent();
 });
 watch(() => [route.query.tab, route.query.name, route.query.role, route.query.new], () => void loadCurrent());
-const empty = computed(() => !creating.value && !specName.value && !roleName.value && !skillName.value);
+const empty = computed(() => !creating.value && !specName.value && !roleName.value && !skillName.value && !groupId.value);
 </script>
 
 <template>
@@ -471,14 +479,23 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           </button>
         </template>
         <template v-else>
-          <button v-for="x in skills" :key="x.name" class="li" :class="{ on: x.name === skillName }" @click="go({ tab: 'skills', name: x.name })">
+          <button v-for="x in looseSkills" :key="x.name" class="li" :class="{ on: x.name === skillName }" @click="go({ tab: 'skills', name: x.name })">
             <div class="grow">
-              <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span></div>
+              <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.enabled === false" class="badge">停用</span></div>
               <div class="muted small clamp">{{ x.description }}</div>
               <div v-if="x.replay" class="muted small">复盘 {{ x.replay.wins }} 胜 {{ x.replay.losses }} 负<span v-if="x.replay.adopted"> · 复盘后自动启用</span></div>
             </div>
           </button>
           <p v-if="!skills.length" class="muted small hint">还没有技能。点 ＋ 新建，或对助理说“把刚才整理周报的做法记成技能”。</p>
+          <template v-if="skillGroups.length">
+            <div class="group">技能分组</div>
+            <button v-for="g in skillGroups" :key="g.id" class="li" :class="{ on: g.id === groupId }" @click="go({ tab: 'skills', group: g.id })">
+              <div class="grow">
+                <div class="row"><strong class="ellipsis mono">{{ g.id }}</strong><span class="badge">{{ g.enabledCount }}/{{ g.count }}</span><span v-if="!g.enabled" class="badge">停用</span></div>
+                <div v-if="g.title !== g.id" class="muted small clamp">{{ g.title }}</div>
+              </div>
+            </button>
+          </template>
         </template>
       </div>
     </aside>
@@ -492,6 +509,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <button class="btn" @click="go({ tab, new: '1' })"><Icon name="plus" :size="14" />{{ tab === "agents" ? "新建 Agent 档案" : "新建技能" }}</button>
         <FeedbackStats v-if="tab === 'agents'" class="feedback" />
         <ReplayList v-if="tab === 'agents'" class="feedback" />
+        <AgentSkillsPanel v-if="tab === 'skills'" @changed="loadLists" />
       </div>
       <div v-else-if="detailLoading" class="pad"><Skeleton variant="lines" :rows="14" /></div>
 
@@ -633,6 +651,9 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <textarea v-else v-model="roleText" class="editor mono raw" spellcheck="false" aria-label="角色原文" @input="dirty = true" />
         <ProfileLearning :name="roleName!" :detail="roleDetail" :current-prompt="roleDetail.body" @changed="loadRole(true)" />
       </div>
+
+      <!-- skill group -->
+      <SkillGroupPage v-else-if="tab === 'skills' && groupId" :id="groupId" @open="(n) => go({ tab: 'skills', name: n })" @changed="loadLists" />
 
       <!-- skill -->
       <div v-else-if="tab === 'skills' && creating" class="page">

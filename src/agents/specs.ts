@@ -9,6 +9,7 @@ import { HttpError, json } from "../core/util.ts";
 import { all } from "../core/db.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
 import { TOOL_GROUPS, unknownGroups } from "./tool-help.ts";
+import { groupOf, groupTitle, loadSkillGroups, saveSkillGroups, skillEnabled } from "./skill-groups.ts";
 
 /**
  * What the assistant learns to delegate to, kept as files in the library
@@ -342,6 +343,14 @@ export function deleteSkill(app: App, name: string, actor: "user" | "agent" = "u
   skillPath(app, name, "SKILL.md");
   if (!existsSync(dir)) throw new HttpError(404, `没有名为 ${name} 的技能`);
   rmSync(dir, { recursive: true, force: true });
+  // A skill taken over from an agent's folder keeps its entry, switched off: installed there again,
+  // it comes back off rather than on (agent-skills.ts).
+  const groups = loadSkillGroups(app);
+  if (groups.skills[name]) {
+    if (groups.skills[name].origin) groups.skills[name] = { ...groups.skills[name], enabled: false, hash: undefined };
+    else delete groups.skills[name];
+    saveSkillGroups(app, groups);
+  }
   commitLibrary(app.libraryDir, `${actor}: delete skill ${name}`);
 }
 
@@ -372,18 +381,30 @@ const skillLine = (s: Skill) => `- ${s.name}：${s.description}（全文：read_
  */
 export function skillIndex(app: App, names?: string[], mounted: string[] = []) {
   const bound = boundSkills(app);
-  const list = listSkills(app).filter((s) => skillUsable(app, s) && !mounted.includes(s.name) && (!bound.has(s.name) || names?.includes(s.name)));
-  if (!names) return list.map(skillLine).join("\n");
-  const own = list.filter((s) => names.includes(s.name));
-  const rest = list.filter((s) => !names.includes(s.name));
-  return [...own.map(skillLine), ...(rest.length ? [`- 其他技能（用到时 read_skill 读全文）：${rest.map((s) => s.name).join("、")}`] : [])].join("\n");
+  const groups = loadSkillGroups(app);
+  const list = listSkills(app).filter((s) => skillUsable(app, s) && skillEnabled(groups, s.name) && !mounted.includes(s.name) && (!bound.has(s.name) || names?.includes(s.name)));
+  // A skill in a group is offered through the group (agent-skills.ts), one line for all of them,
+  // unless the run's profile names it.
+  const grouped = new Map<string, string[]>();
+  const loose = list.filter((s) => {
+    const g = groupOf(groups, s.name);
+    if (!g || names?.includes(s.name)) return true;
+    grouped.set(g, [...(grouped.get(g) ?? []), s.name]);
+    return false;
+  });
+  const groupLines = [...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([g, ms]) => `- ${g}（技能分组「${groupTitle(groups, g)}」，${ms.length} 个技能）：${groups.groups[g]?.description?.trim() || `如 ${ms.slice(0, 8).join("、")}${ms.length > 8 ? " 等" : ""}`}（按用途找技能：read_skill name=${g}）`);
+  if (!names) return [...loose.map(skillLine), ...groupLines].join("\n");
+  const own = loose.filter((s) => names.includes(s.name));
+  const rest = loose.filter((s) => !names.includes(s.name));
+  return [...own.map(skillLine), ...(rest.length ? [`- 其他技能（用到时 read_skill 读全文）：${rest.map((s) => s.name).join("、")}`] : []), ...groupLines].join("\n");
 }
 
 /** The skills mounted on these spaces, each with the spaces it is for. */
 export function spaceSkillsText(app: App, spaces: { id: string; name: string; settings: Record<string, unknown> }[]): { text: string; names: string[] } {
   const by = new Map<string, string[]>();
   for (const sp of spaces) for (const n of spaceSkillNames(sp.settings)) by.set(n, [...(by.get(n) ?? []), sp.name]);
-  const skills = listSkills(app).filter((s) => by.has(s.name) && skillUsable(app, s));
+  const groups = loadSkillGroups(app);
+  const skills = listSkills(app).filter((s) => by.has(s.name) && skillUsable(app, s) && skillEnabled(groups, s.name));
   return { text: skills.map((s) => `${skillLine(s)}　用于：${by.get(s.name)!.join("、")}`).join("\n"), names: skills.map((s) => s.name) };
 }
 

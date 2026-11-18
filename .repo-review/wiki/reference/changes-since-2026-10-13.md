@@ -15,6 +15,13 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 接管 Agent 自带的技能，按分组给总入口（11-18）
+
+- 新的 `src/agents/agent-skills.ts` 和 `skill-groups.ts`，设计见 `docs/v2/agent-skills.md`。打开 `agentSkills.takeOver`（默认关）后，定时扫描 `catalog.ts` 里各条目 `skills.read` 列出的目录（Codex：`$CODEX_HOME/skills`、`~/.agents/skills`；TraeX：`$TRAE_HOME/skills`、`~/.agents/skills`；Claude Code：`$CLAUDE_CONFIG_DIR/skills`），把里面的技能复制进 `library/_skills`。原件移进 `agent-skills/backup/<时间>/` 并写 manifest，链接只删除。技能按名称前缀归组，分组、用途和开关记在 `library/skill-groups.json`。
+- 每个 Agent 只往一个目录（`skills.write`）写 omem 说明和每个启用分组的总入口，这些目录带 `.omem-managed` 标记。组大时按用途拆成 `purposes/NN.md`。
+- 运行时的技能目录每组只占一行，停用的技能不列出。`read_skill` 可以读分组的总入口，`list_skills` 新增 `group` 参数。新工具 `organize_skills` 放在 `skills` 分组，设备和影子运行不能用。
+- Agent 页的技能列表按组折叠，另有分组页和“Agent 自带的技能”面板。`GET /api/skills` 不再返回正文。新增命令 `omem skills`。
+
 ## 设置 → AI 能看 ACP 适配器版本并升级（11-18）
 
 - 展开一个后端时，ACP 那一行下面显示 npm 适配器（codex-acp、claude-agent-acp……）的已装版本和公开源上的最新版，有新版时可以点“升级”，确认后升级。装法和远程命令 `agent-upgrade` 是同一套，都在 `src/agents/adapter.ts`：只升目录里那个已经装好的包，从 `osdk.toml` 的公开源装，装进命令实际所在的 npm 前缀，版本变了就重新检测模型。

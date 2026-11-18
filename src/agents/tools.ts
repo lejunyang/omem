@@ -61,7 +61,7 @@ import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOut
 import { takeCodeSteering } from "./code-steer.ts";
 import { afterToolCall, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
-import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
+import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
@@ -145,7 +145,7 @@ async function autoTurnGuard(ctx: ToolContext, work: import("./agent-work.ts").A
 /** Roles that write memories from material on their own; they must say where each one comes from. */
 const SOURCED_ROLES = new Set(["ingest", "dreamer", "heartbeat", "curator"]);
 /** Tools with effects a shadow run must not have, beyond those flagged write. */
-const SHADOW_BLOCKED = new Set(["save_agent", "run_agent", "save_skill"]);
+const SHADOW_BLOCKED = new Set(["save_agent", "run_agent", "save_skill", "organize_skills"]);
 
 type Tool = {
   name: string;
@@ -1299,24 +1299,58 @@ ${r.answer}${r.missed.length ? `
 
 def({
   name: "list_skills",
-  description: "列出技能（可复用的做法：步骤、格式、检查清单）。",
-  schema: z.object({ include_drafts: z.boolean().optional() }),
-  handler: (ctx, a) => {
-    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts }).filter((s) => skillUsable(ctx.app, s));
-    return list.length ? list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}`).join("\n") : "还没有技能。";
+  description: "列出技能（可复用的做法：步骤、格式、检查清单）。分组里的技能只列分组，group=分组名 列出这一组的技能、用途和是否启用。",
+  schema: z.object({ include_drafts: z.boolean().optional(), group: z.string().optional().describe("列出这一组的全部技能（含停用的）") }),
+  handler: async (ctx, a) => {
+    const { loadSkillGroups, skillEnabled } = await import("./skill-groups.ts");
+    const { listSkillGroups, readSkillGroup } = await import("./agent-skills.ts");
+    if (a.group) {
+      const g = readSkillGroup(ctx.app, a.group);
+      return `# ${g.id}（${g.title}${g.enabled ? "" : "，整组停用"}）\n${g.description || g.autoDescription}\n\n${g.skills.map((x) => `- ${x.name}${x.enabled ? "" : "（停用）"}${x.purpose ? ` [${x.purpose}]` : ""}：${x.description.slice(0, 160)}`).join("\n")}`;
+    }
+    const state = loadSkillGroups(ctx.app);
+    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts }).filter((s) => skillUsable(ctx.app, s) && !state.skills[s.name]?.group && skillEnabled(state, s.name));
+    const groups = listSkillGroups(ctx.app).map((g) => `- ${g.id}（分组「${g.title}」，启用 ${g.enabledCount}/${g.count}${g.enabled ? "" : "，整组停用"}）：${g.description || g.autoDescription}`);
+    const lines = [...list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}`), ...groups];
+    return lines.length ? lines.join("\n") : "还没有技能。";
   },
 });
 
 def({
   name: "read_skill",
   description: "读取技能全文（以及它附带的文件列表）。做技能对应的事之前先读。",
-  schema: z.object({ name: z.string(), file: z.string().optional().describe("读技能目录里的附带文件") }),
-  handler: (ctx, a) => {
+  schema: z.object({ name: z.string().describe("技能名，或技能分组名（返回这一组按用途列出的技能）"), file: z.string().optional().describe("读技能目录里的附带文件；分组的 purposes/NN.md 是某个用途下各技能的说明") }),
+  handler: async (ctx, a) => {
+    if (!findSkill(ctx.app, a.name)) {
+      const { groupHub } = await import("./agent-skills.ts");
+      const hub = groupHub(ctx.app, a.name);
+      if (hub) {
+        const text = hub.files[a.file ?? "SKILL.md"];
+        if (text === undefined) throw new HttpError(404, `分组 ${a.name} 没有文件 ${a.file}`);
+        return text;
+      }
+    }
     const sk = readSkill(ctx.app, a.name);
     if (a.file) {
       return readSkillFile(ctx.app, a.name, a.file);
     }
     return `# ${sk.name}${sk.status === "draft" ? "（草稿）" : ""}\n${sk.description}\n\n${sk.body}${sk.files.length ? `\n\n附带文件：${sk.files.join(", ")}` : ""}`;
+  },
+});
+
+def({
+  name: "organize_skills",
+  description:
+    "整理技能分组（含从 Agent 自带目录收进来的技能）：把技能放进分组（group，null 移出分组）、写它在组里的用途（purpose，组的总入口按用途分节列出）、启用或停用（enabled）；给分组写标题、一句话说明（description：做哪类事时该读这一组，Agent 只看得到这句）或整组停用。一次可改多项。",
+  write: true,
+  schema: z.object({
+    skills: z.array(z.object({ name: z.string(), group: z.string().nullable().optional(), purpose: z.string().nullable().optional().describe("几个字的用途，如“日志与监控”“数据库”"), enabled: z.boolean().optional() })).max(400).optional(),
+    groups: z.array(z.object({ id: z.string(), title: z.string().optional(), description: z.string().optional(), enabled: z.boolean().optional() })).max(50).optional(),
+  }),
+  handler: async (ctx, a) => {
+    const { organizeSkills } = await import("./agent-skills.ts");
+    const r = organizeSkills(ctx.app, { skills: a.skills, groups: a.groups }, ctx.actor);
+    return `已更新 ${r.changed} 项。`;
   },
 });
 

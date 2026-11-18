@@ -1392,6 +1392,64 @@ roles
     console.log(`${r.conflicts} 处冲突，模型合并：${run.status}${run.error ? `（${run.error}）` : ""}`);
   });
 
+const skillsCmd = program.command("skills").description("技能分组，以及接管 Codex、Claude Code、TraeX 等 Agent 自带的技能目录（docs/v2/agent-skills.md）");
+skillsCmd
+  .command("status", { isDefault: true })
+  .description("各 Agent 的技能目录、接管开关、上次收取和分组")
+  .action(async () => {
+    const m = await import("./agents/agent-skills.ts");
+    const app = open();
+    const st = m.takeOverStatus(app);
+    console.log(`接管：${st.takeOver ? `开（每 ${st.everyMinutes} 分钟收一次）` : "关"}`);
+    for (const d of st.dirs) console.log(`  ${d.exists ? "✓" : "·"} ${d.path}  ${d.agents.join("、") || "额外目录"}${d.write ? "（写入 omem 说明和总入口）" : ""}${d.exists ? `：${d.skills} 个未接管的技能` : ""}`);
+    if (st.last) console.log(`上次收取 ${st.last.at}：新收 ${st.last.adopted.length}，更新 ${st.last.updated.length}，同名保留库里的 ${st.last.conflicts.length}`);
+    const groups = m.listSkillGroups(app);
+    if (groups.length) console.log("\n分组：");
+    for (const g of groups) console.log(`  ${g.enabled ? " " : "×"} ${g.id.padEnd(20)} 启用 ${g.enabledCount}/${g.count}  ${g.title !== g.id ? g.title : ""}${g.purposes.filter((p) => p.purpose).length ? `  用途：${g.purposes.filter((p) => p.purpose).map((p) => p.purpose).join("、")}` : ""}`);
+  });
+skillsCmd
+  .command("take-over")
+  .description("收一次：把 Agent 目录里的技能移进 omem 的库（原件备份），目录里只留 omem 说明和每个分组的总入口")
+  .option("--dry-run", "只列出会收哪些，不动文件")
+  .option("--on", "同时打开定时接管（之后新装进来的也会收走）")
+  .action(async (o: { dryRun?: boolean; on?: boolean }) => {
+    const m = await import("./agents/agent-skills.ts");
+    const app = open();
+    const r = m.sweepNow(app, { dryRun: o.dryRun });
+    const verb = o.dryRun ? "会" : "已";
+    console.log(`${verb}新收 ${r.adopted.length} 个，更新 ${r.updated.length} 个，没变 ${r.unchanged.length} 个；${verb}从 Agent 目录移走 ${r.removed} 项${r.backup ? `（原件在 ${r.backup}）` : ""}`);
+    if (r.conflicts.length) console.log(`库里已有同名的技能，保留库里的：${r.conflicts.join("、")}`);
+    for (const s of r.skipped) console.log(`跳过 ${s.path}：${s.reason}`);
+    for (const e of r.entries ?? []) console.log(`${e.dir}：${o.dryRun ? "会留下" : "写入"} ${e.written.join("、") || "（没有变化）"}${e.removed.length ? `，去掉 ${e.removed.join("、")}` : ""}`);
+    if (o.on && !o.dryRun) {
+      const { saveConfig } = await import("./core/config.ts");
+      app.config.agentSkills = { ...app.config.agentSkills, takeOver: true };
+      saveConfig(app.config, app.home);
+      console.log("已打开定时接管（服务在运行的话 omem service restart 后生效，或在网页 Agent 页 → 技能里打开）");
+    }
+  });
+skillsCmd
+  .command("restore [backup]")
+  .description("撤销一次收取：原件放回 Agent 目录、去掉 omem 写的入口，并关掉接管（技能仍留在库里）")
+  .action(async (backup?: string) => {
+    const m = await import("./agents/agent-skills.ts");
+    const app = open();
+    const r = m.restoreAgentSkills(app, backup);
+    const { saveConfig } = await import("./core/config.ts");
+    app.config.agentSkills = { ...app.config.agentSkills, takeOver: false };
+    saveConfig(app.config, app.home);
+    console.log(`已还原 ${r.backup}：放回 ${r.restored.length} 项${r.kept.length ? `，${r.kept.length} 项原处已有东西没动` : ""}；接管已关闭`);
+  });
+skillsCmd
+  .command("group <name> <group>")
+  .description("把技能放进分组（group 写 - 表示移出分组）")
+  .option("--purpose <text>", "它在组里的用途")
+  .action(async (name: string, group: string, o: { purpose?: string }) => {
+    const m = await import("./agents/agent-skills.ts");
+    m.organizeSkills(open(), { skills: [{ name, group: group === "-" ? null : group, ...(o.purpose !== undefined ? { purpose: o.purpose } : {}) }] }, "user");
+    console.log("已更新");
+  });
+
 const replay = program.command("replay").description("夜间复盘：回到提问时重答过去的问题，基线和只改一处的变体对比（docs/v2/replay.md）");
 replay
   .command("list", { isDefault: true })

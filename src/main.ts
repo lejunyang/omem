@@ -169,6 +169,18 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     void import("./agents/quota.ts").then((m) => m.startQuotaWatch(app));
     // Wiki pages whose originals changed are checked, and loose pages sorted into folders (src/wiki/upkeep.ts).
     void import("./wiki/upkeep.ts").then((m) => m.startWikiUpkeep(app));
+    // The agents' own skill folders (agents/agent-skills.ts): nothing while the takeover is off.
+    {
+      let last = 0;
+      const tick = () => {
+        const every = app.config.agentSkills.everyMinutes * 60_000;
+        if (!app.config.agentSkills.takeOver || Date.now() - last < every - 5_000) return;
+        last = Date.now();
+        import("./agents/agent-skills.ts").then((m) => m.tickAgentSkills(app)).catch((e) => console.warn("[omem] 收取 Agent 自带的技能失败：", e.message));
+      };
+      setTimeout(tick, 15_000).unref();
+      setInterval(tick, 60_000).unref();
+    }
     // The owner's commands in one-to-one chats (lark.commands; nothing happens while it is off).
     setInterval(() => {
       if (app.config.lark.commands.enabled)
