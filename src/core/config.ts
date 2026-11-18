@@ -118,6 +118,7 @@ export const roleNames = [
   "memory-reviewer",
   "note-reviewer",
   "memory-organizer",
+  "skill-organizer",
   "item-keeper",
   "coach",
   "gatekeeper",
@@ -146,7 +147,7 @@ export type RoleName = (typeof roleNames)[number];
  */
 export const upkeepRoles: ReadonlySet<string> = new Set<RoleName>([
   "ingest", "archivist", "archive-rule-writer", "wiki-planner", "wiki-writer", "wiki-linter", "wiki-organizer", "wiki-checker",
-  "dreamer", "curator", "triager", "distiller", "summarizer", "memory-reviewer", "note-reviewer", "memory-organizer", "item-keeper", "coach",
+  "dreamer", "curator", "triager", "distiller", "summarizer", "memory-reviewer", "note-reviewer", "memory-organizer", "skill-organizer", "item-keeper", "coach",
   "replay-judge", "kb-scout", "req-splitter", "tutor", "work-state",
 ]);
 
@@ -1102,14 +1103,17 @@ export const configSchema = z.object({
    * (off by default): every `everyMinutes` the skills other tools installed there move into the
    * library, grouped, and the folders keep only the omem guide and one hub per group that is on.
    * `extraDirs`: folders to take over besides the known agents' (taken from, never written to).
+   * `autoOrganize` (on by default): skills that arrive, whose description changes, or the owner's
+   * ungrouped skills once there are many, are handed to the skill-organizer role to group and file.
    */
   agentSkills: z
     .object({
       takeOver: z.boolean().default(false),
       everyMinutes: z.number().int().min(1).max(1440).default(10),
       extraDirs: z.array(z.string().min(1)).max(20).default([]),
+      autoOrganize: z.boolean().default(true),
     })
-    .default({ takeOver: false, everyMinutes: 10, extraDirs: [] }),
+    .default({ takeOver: false, everyMinutes: 10, extraDirs: [], autoOrganize: true }),
   /**
    * Nightly replay (docs/v2/replay.md): the scheduled job `replay` (off by default) picks `max` past
    * questions a night and answers each again as of its time, a baseline re-run against one variant.

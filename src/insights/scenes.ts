@@ -12,7 +12,7 @@ export const sceneTable = {
   archive: "整理（后台）", "archive-rule-draft": "整理（后台）", "thread-summary": "整理（后台）", "learn-feed": "整理（后台）",
   ingest: "整理（后台）", "ingest-shadow": "整理（后台）", "wiki-plan": "整理（后台）", "wiki-write": "整理（后台）", "wiki-lint": "整理（后台）",
   "wiki-organize": "整理（后台）", "wiki-resolve": "整理（后台）", "wiki-migrate": "整理（后台）", "wiki-sweep": "整理（后台）",
-  dream: "整理（后台）", sync: "整理（后台）", curate: "整理（后台）", "memory-review": "整理（后台）", "memory-organize": "整理（后台）",
+  dream: "整理（后台）", sync: "整理（后台）", curate: "整理（后台）", "memory-review": "整理（后台）", "memory-organize": "整理（后台）", "skill-organize": "整理（后台）",
   "role-merge": "整理（后台）", "profile-review": "整理（后台）", "flow-review": "整理（后台）", triage: "整理（后台）", digest: "整理（后台）",
   replay: "整理（后台）", "replay-arm": "整理（后台）", "replay-judge": "整理（后台）", "kb-scout": "整理（后台）", "quality-audit": "整理（后台）",
 } satisfies Record<RunKind, Scene>;

@@ -12,7 +12,7 @@ import Skeleton from "./Skeleton.vue";
  */
 type Dir = { path: string; agents: string[]; write: boolean; exists: boolean; skills: number };
 type Sweep = { at: string; adopted: string[]; updated: string[]; conflicts: string[]; removed: number; backup?: string; dryRun: boolean; entries?: { dir: string; written: string[]; removed: string[] }[] };
-type Status = { takeOver: boolean; everyMinutes: number; dirs: Dir[]; last: Sweep | null; backups: string[] };
+type Status = { takeOver: boolean; autoOrganize: boolean; pending: number; everyMinutes: number; dirs: Dir[]; last: Sweep | null; backups: string[] };
 
 const emit = defineEmits<{ changed: [] }>();
 const status = ref<Status | null>(null);
@@ -34,6 +34,29 @@ async function setOn(on: boolean) {
     status.value = await put<Status>("/api/agent-skills/settings", { takeOver: on });
     toast(on ? "已接管" : "已关闭，目录里的总入口保留");
     emit("changed");
+  } catch (e) {
+    toast((e as Error).message);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function setAuto(on: boolean) {
+  busy.value = true;
+  try {
+    status.value = await put<Status>("/api/agent-skills/settings", { autoOrganize: on });
+  } catch (e) {
+    toast((e as Error).message);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function organizeNow() {
+  busy.value = true;
+  try {
+    await post("/api/agent-skills/organize", {});
+    toast("已交给后台整理，完成后会通知你");
   } catch (e) {
     toast((e as Error).message);
   } finally {
@@ -91,6 +114,8 @@ async function restore() {
     <Skeleton v-if="!status" variant="lines" :rows="4" />
     <template v-else>
       <UiCheckbox :model-value="status.takeOver" switch :disabled="busy" @change="setOn">接管（每 {{ status.everyMinutes }} 分钟收一次新装进来的）</UiCheckbox>
+      <UiCheckbox :model-value="status.autoOrganize" switch :disabled="busy" @change="setAuto">自动整理分组</UiCheckbox>
+      <p class="muted small">新收进来的技能、上游更新后说明变了的技能，以及你自己的技能里没分组的攒到一定数量时，交给后台的技能整理角色放进合适的分组和用途，必要时新建分组、补写说明，做完发一条通知。你手动移动过的技能、改过的分组说明，它不会再动。<template v-if="status.pending"> 现在有 {{ status.pending }} 个技能等着整理。</template></p>
       <ul class="dirs small">
         <li v-for="d in status.dirs" :key="d.path">
           <code>{{ d.path }}</code>
@@ -101,6 +126,7 @@ async function restore() {
       <div class="row wrap">
         <button class="btn sm" :disabled="busy" @click="dryRun">看看会收哪些</button>
         <button class="btn sm" :disabled="busy || !waiting" @click="sweep">现在收一次</button>
+        <button class="btn sm" :disabled="busy || !status.pending" @click="organizeNow">现在整理</button>
         <button v-if="status.backups.length" class="btn ghost sm danger" :disabled="busy" @click="restore">撤销最近一次</button>
       </div>
       <div v-if="preview" class="preview small">

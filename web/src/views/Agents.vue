@@ -19,6 +19,8 @@ import UiSelect from "../components/UiSelect.vue";
 import ToolPicker from "../components/ToolPicker.vue";
 import AgentSkillsPanel from "../components/AgentSkillsPanel.vue";
 import SkillGroupPage from "../components/SkillGroupPage.vue";
+import SkillTree from "../components/SkillTree.vue";
+import { moveSkill } from "../lib/skill-move";
 import { compactDiff, diffLines } from "../lib/diff";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { state, toast } from "../store";
@@ -30,7 +32,7 @@ import { state, toast } from "../store";
  */
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
-type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; enabled?: boolean };
+type Skill = { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; purpose?: string; enabled?: boolean };
 type SkillGroup = { id: string; title: string; enabled: boolean; count: number; enabledCount: number };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
@@ -43,6 +45,7 @@ const specName = computed(() => (tab.value === "agents" && typeof route.query.na
 const roleName = computed(() => (tab.value === "agents" && typeof route.query.role === "string" ? route.query.role : null));
 const skillName = computed(() => (tab.value === "skills" && typeof route.query.name === "string" ? route.query.name : null));
 const groupId = computed(() => (tab.value === "skills" && typeof route.query.group === "string" ? route.query.group : null));
+const purposeQ = computed(() => (groupId.value && typeof route.query.purpose === "string" ? route.query.purpose : null));
 const creating = computed(() => route.query.new === "1");
 
 const specs = ref<Spec[]>([]);
@@ -377,6 +380,20 @@ async function saveSkill() {
   }
 }
 const currentSkill = computed(() => skills.value.find((s) => s.name === skillName.value));
+const groupTitleOf = (id: string) => skillGroups.value.find((g) => g.id === id)?.title ?? id;
+async function moveCurrent() {
+  const s = currentSkill.value;
+  if (!s) return;
+  try {
+    const purposes = [...new Set(skills.value.filter((x) => x.group && x.group === s.group && x.purpose).map((x) => x.purpose!))];
+    const to = await moveSkill(s.name, { group: s.group, purpose: s.purpose }, { groups: skillGroups.value, purposes });
+    if (!to) return;
+    await loadLists();
+    toast(to.group ? `已放进 ${groupTitleOf(to.group)}${to.purpose ? ` · ${to.purpose}` : ""}` : "已移出分组");
+  } catch (e) {
+    toast((e as Error).message);
+  }
+}
 async function approveSkill() {
   if (skillPath.value !== "SKILL.md") { await openSkillFile("SKILL.md"); if (skillPath.value !== "SKILL.md") return; }
   skillRaw.value = skillRaw.value.replace(/^status:\s*draft\s*\n/m, "").replace(/^tryout:\s*false\s*\n/m, "");
@@ -404,7 +421,8 @@ async function removeSkill() {
 async function go(query: Record<string, string>) {
   if (dirty.value && !(await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true }))) return;
   dirty.value = false;
-  await router.replace({ query });
+  // Pushed, so the browser's back returns from a skill to the group it was opened from.
+  await router.push({ query });
 }
 onBeforeRouteLeave(async () => !dirty.value || (await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true })));
 async function loadCurrent() {
@@ -479,6 +497,11 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           </button>
         </template>
         <template v-else>
+          <template v-if="skillGroups.length">
+            <div class="group">技能分组</div>
+            <SkillTree :skills="skills" :groups="skillGroups" :group="groupId" :purpose="purposeQ" :skill="skillName" @group="(id, p) => go(p === undefined ? { tab: 'skills', group: id } : { tab: 'skills', group: id, purpose: p })" @skill="(n) => go({ tab: 'skills', name: n })" />
+            <div v-if="looseSkills.length" class="group">未分组</div>
+          </template>
           <button v-for="x in looseSkills" :key="x.name" class="li" :class="{ on: x.name === skillName }" @click="go({ tab: 'skills', name: x.name })">
             <div class="grow">
               <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.enabled === false" class="badge">停用</span></div>
@@ -487,15 +510,6 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             </div>
           </button>
           <p v-if="!skills.length" class="muted small hint">还没有技能。点 ＋ 新建，或对助理说“把刚才整理周报的做法记成技能”。</p>
-          <template v-if="skillGroups.length">
-            <div class="group">技能分组</div>
-            <button v-for="g in skillGroups" :key="g.id" class="li" :class="{ on: g.id === groupId }" @click="go({ tab: 'skills', group: g.id })">
-              <div class="grow">
-                <div class="row"><strong class="ellipsis mono">{{ g.id }}</strong><span class="badge">{{ g.enabledCount }}/{{ g.count }}</span><span v-if="!g.enabled" class="badge">停用</span></div>
-                <div v-if="g.title !== g.id" class="muted small clamp">{{ g.title }}</div>
-              </div>
-            </button>
-          </template>
         </template>
       </div>
     </aside>
@@ -653,7 +667,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
       </div>
 
       <!-- skill group -->
-      <SkillGroupPage v-else-if="tab === 'skills' && groupId" :id="groupId" @open="(n) => go({ tab: 'skills', name: n })" @changed="loadLists" />
+      <SkillGroupPage v-else-if="tab === 'skills' && groupId" :id="groupId" :purpose="purposeQ" :groups="skillGroups" @open="(n) => go({ tab: 'skills', name: n })" @purpose="(p) => router.replace({ query: { tab: 'skills', group: groupId!, ...(p === null ? {} : { purpose: p }) } })" @changed="loadLists" />
 
       <!-- skill -->
       <div v-else-if="tab === 'skills' && creating" class="page">
@@ -669,6 +683,18 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         </div>
       </div>
       <div v-else-if="tab === 'skills' && skillName" class="page">
+        <nav v-if="currentSkill?.group" class="crumbs small" aria-label="所在分组">
+          <button class="link" @click="go({ tab: 'skills', group: currentSkill.group })"><Icon name="left" :size="13" />{{ groupTitleOf(currentSkill.group) }}</button>
+          <template v-if="currentSkill.purpose"><span class="muted">/</span><button class="link" @click="go({ tab: 'skills', group: currentSkill.group, purpose: currentSkill.purpose })">{{ currentSkill.purpose }}</button></template>
+          <span class="spacer" />
+          <span v-if="currentSkill.enabled === false" class="badge">已停用</span>
+          <button class="btn ghost sm" @click="moveCurrent">移动</button>
+        </nav>
+        <nav v-else-if="currentSkill" class="crumbs small">
+          <span class="muted">未分组：单独出现在技能目录里</span>
+          <span class="spacer" />
+          <button class="btn ghost sm" @click="moveCurrent">放进分组</button>
+        </nav>
         <header class="dh row">
           <h2 class="mono">{{ skillName }}</h2>
           <span v-if="currentSkill?.status === 'draft'" class="badge">草稿</span>
@@ -709,6 +735,8 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
 .file-editor { min-width: 0; }
 .file-editor > .row { margin-bottom: 10px; }
 .dh { flex-wrap: wrap; }
+.crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: -6px; }
+.crumbs .link { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
 .dh h2 { overflow-wrap: anywhere; min-width: 0; }
 @media (max-width: 760px) { .skill-workspace { grid-template-columns: 1fr; } .file-tree { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 10px; } }
 

@@ -853,6 +853,32 @@ registerHandler("memory-organize", async (ctx) => {
   return { ...quietOf(ctx, r.text), filed: unfiled.length - left, left };
 });
 
+// --------------------------------------------------------------- skill groups
+
+// Skills taken over from the agents' folders, changed upstream, or the owner's own ungrouped ones
+// (agents/agent-skills.ts): the skill-organizer files them into groups and purposes.
+registerHandler("skill-organize", async (ctx) => {
+  const app = ctx.app;
+  const input = ctx.run.input as { group?: string; round?: number };
+  const m = await import("./agent-skills.ts");
+  const { loadSkillGroups } = await import("./skill-groups.ts");
+  const job = m.skillOrganizeTask(app, input);
+  if (!job) return { quiet: true, summary: "没有要整理的技能" };
+  const before = loadSkillGroups(app);
+  const r = await agent(ctx, "skill-organizer", "personal", job.task, ["personal"]);
+  const { moved, groups } = m.finishSkillOrganize(app, before, job.batch);
+  if (moved.length || groups.length)
+    notify(app, {
+      title: `整理了技能分组：${moved.length} 个技能${groups.length ? `，${groups.length} 个分组` : ""}`,
+      body: [...groups, ...moved.slice(0, 20), moved.length > 20 ? `等 ${moved.length} 个` : ""].filter(Boolean).join("\n"),
+      link: "#/agents?tab=skills",
+      runId: ctx.run.id,
+      urgency: "later",
+    });
+  if (job.more && (input.round ?? 1) < 10) createRun(app, { kind: "skill-organize", spaceId: "personal", title: "整理技能分组（续）", input: { round: (input.round ?? 1) + 1 } });
+  return { ...quietOf(ctx, r.text), moved: moved.length, groups: groups.length };
+});
+
 // --------------------------------------------------------------- item upkeep
 
 const SETTLE_BATCH = 20;

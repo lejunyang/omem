@@ -313,7 +313,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/home": "owner",
   // Skill groups and the agents' own skill folders (agents/agent-skills.ts): the owner's machine.
   "PUT /api/skill-groups": "owner", "PUT /api/skill-groups/:id": "owner",
-  "PUT /api/agent-skills/settings": "owner", "POST /api/agent-skills/sweep": "owner", "POST /api/agent-skills/restore": "owner",
+  "PUT /api/agent-skills/settings": "owner", "POST /api/agent-skills/sweep": "owner", "POST /api/agent-skills/restore": "owner", "POST /api/agent-skills/organize": "owner",
 
   // agents, skills, rules and schedules: shared by everyone, managed by a few
   ...Object.fromEntries(

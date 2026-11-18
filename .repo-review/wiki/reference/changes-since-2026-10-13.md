@@ -19,6 +19,12 @@ updated: 2026-11-18
 
 - `message_code_run` 加 `item_id`：交办记到那个事项（`joinCodeWork`，`src/flows/objects.ts`，材料 `meta.joined`），`latestCodeWork` 认它，流程编码阶段跟着走。`delegate_code` 的同分支拒绝说明改为指向这条路、不问本人。续交办的工具改用 `codeSpace`，流程阶段的运行能续项目下仓库的交办。
 
+## 技能分组的自动整理和分组树（11-18）
+
+- 后台角色 `skill-organizer`（`roles/skill-organizer.md`，运行类型 `skill-organize`，`src/agents/jobs.ts`）：新收进来的、说明变了的技能，以及本人没分组的技能满 8 个时，放进分组和用途、必要时建组写说明，做完通知。要看的技能按 `skill-groups.json` 里的 `seen`（上次看到的说明）判断，`main.ts` 每分钟调 `scheduleSkillOrganize`（`src/agents/agent-skills.ts`）。`agentSkills.autoOrganize` 默认开。
+- 本人（或主助手按本人的话）改的分组、用途、组说明记 `userSet`，整理角色的 `organize_skills` 跳过它们，也不能改开关。`POST /api/agent-skills/organize`（可带 `group` 重整一组）。
+- 网页：技能列表上方的分组树 `web/src/components/SkillTree.vue`；分组页按用途分节、可折叠，去掉用途标签和每行的用途输入框，改为“移动”对话框（`web/src/lib/skill-move.ts`）；技能页顶上回到分组；Agent 页导航改为 `router.push`，后退可用。`/api/skills` 带 `purpose`。测试 `test/agent-skills.test.ts`。
+
 ## 本人放弃一个提问（11-18）
 
 - `POST /api/asks/:id/dismiss`（`src/server/http.ts`）：本人的、还在等的、不是宿主决定卡片的提问按失效关闭（`lapseAsk`），飞书卡片随之变成已失效。`web/src/views/Home.vue` 的“等你回答”每条加“不用了”。测试 `test/ask-dismiss.test.ts`。

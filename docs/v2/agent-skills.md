@@ -16,6 +16,16 @@ omem 自己的运行原来也只列 `library/_skills` 里的技能，不管这�
 4. **定时再收**：工具升级时往往会把技能装回去。接管打开期间，每 `agentSkills.everyMinutes`（默认 10）分钟扫一次。同名技能有新版时，替换库里的副本，分组、用途和开关保持不变；有新技能进来时发一条稍后合并的通知。库里本来就有的同名技能（不是接管来的）保留库里的版本，记为冲突。接管来的技能被删掉后，会留下一条停用记录，以后再被装回来时仍是停用状态。
 5. **撤销**：`omem skills restore` 或网页上的“撤销最近一次”会把原件和链接放回原处（原处已经有东西的不动），删掉 omem 写进去的入口，并关闭接管。技能仍然留在库里。
 
+## 自动整理（`agentSkills.autoOrganize`，默认开）
+
+按前缀归组只能粗分，用途也是空的。整理交给后台角色 `skill-organizer`（`roles/skill-organizer.md`，运行类型 `skill-organize`）：
+
+- **要看的技能**（`pendingSkills`）：`skill-groups.json` 里每个技能记着整理角色上次看到的说明（`seen`，截 300 字）。还没看过的（新收进来的、未分组的）和说明变了的都算。第一次启用时，已经有用途或本人放过的技能算看过。
+- **什么时候排**（`scheduleSkillOrganize`，`main.ts` 每分钟调一次，与接管开关无关）：有新收的或说明变了的技能，或者本人没分组的技能有 8 个以上；最后一个变化的 SKILL.md 已经 3 分钟没动（一次升级装进来的一批一起看）；没有在排队或在跑的整理；上一次失败不到一小时的先不排。
+- **交给它的任务**（`skillOrganizeTask`）：现有分组（标题、说明、各用途和数量，本人定过的标出），加这一批最多 60 个技能（新收 / 说明变了附原说明 / 未分组），剩下的下一轮接着排。分组页的“让助手整理”（`POST /api/agent-skills/organize`，带 `group`）把整组交给它重新分用途。
+- **本人定过的不动**：本人在页面上或让助手（主助手按本人的话）改的分组、用途记为 `userSet`，分组的标题和说明同样。整理角色的 `organize_skills` 调用（`actor = organizer`）跳过这些，也不能改启用状态。
+- **做完**（`finishSkillOrganize`）：这一批记为看过；比对前后，有移动或新建、改说明的分组时发一条稍后合并的通知。自动整理打开时，收取本身不再单独通知。
+
 ## omem 自己的运行
 
 - 技能目录（`specs.ts` 的 `skillIndex`）：分组里的技能不逐个列出，每组只有一行：组名、标题、启用数量，再加组的说明（没有说明时列几个技能名），并提示用 `read_skill name=<组名>` 按用途查找。档案或角色明确挂上的技能仍然单独列出、带说明。停用的技能（包括整组停用）不出现在任何地方，空间挂载的技能也一样。
@@ -25,12 +35,12 @@ omem 自己的运行原来也只列 `library/_skills` 里的技能，不管这�
 
 ## 界面与命令
 
-- Agent 页 → 技能：列表里只有未分组的技能，下面是“技能分组”。打开一个分组可以写标题和说明、整组启用或停用、按名称筛选，以及给每个技能填用途、开关。没选中任何技能时，右侧是“Agent 自带的技能”面板：接管开关、各目录的状态（属于哪个 Agent、是否写入总入口、还有几个没接管）、上次收取的结果，以及“看看会收哪些”（不动文件）、“现在收一次”、“撤销最近一次”三个按钮。
-- 接口：`GET /api/skill-groups`（分组和接管状态）、`GET/PUT /api/skill-groups/:id`、`PUT /api/skill-groups`（批量改技能）、`PUT /api/agent-skills/settings`、`POST /api/agent-skills/sweep`（`dryRun`）、`POST /api/agent-skills/restore`。写操作只有本人能做。`GET /api/skills` 不再返回正文和文件列表，改为带上 `group` 和 `enabled`。
+- Agent 页 → 技能：列表上方是“技能分组”树（分组 → 用途 → 技能，选中的那一支自动展开），下面是未分组的技能。分组页按用途分节（大组默认收起，从树上点用途时展开并滚到那一节；`?purpose=`），可以编辑标题和说明、整组启用、筛选、单个开关，“移动”换分组或用途（`web/src/lib/skill-move.ts`）。技能页顶上是所在分组和用途，点了回去；导航用 `router.push`，浏览器后退也能回到分组。没选中任何技能时，右侧是“Agent 自带的技能”面板：接管开关、自动整理开关（显示有几个在等）、各目录的状态、上次收取的结果，以及“看看会收哪些”（不动文件）、“现在收一次”、“现在整理”、“撤销最近一次”。
+- 接口：`GET /api/skill-groups`（分组和接管状态）、`GET/PUT /api/skill-groups/:id`、`PUT /api/skill-groups`（批量改技能）、`PUT /api/agent-skills/settings`、`POST /api/agent-skills/sweep`（`dryRun`）、`POST /api/agent-skills/organize`（`group` 可选）、`POST /api/agent-skills/restore`。写操作只有本人能做。`GET /api/skills` 不再返回正文和文件列表，改为带上 `group` 和 `enabled`。
 - 命令行：`omem skills`（状态和分组）、`omem skills take-over [--dry-run] [--on]`、`omem skills restore [备份]`、`omem skills group <技能> <分组|-> [--purpose 用途]`。
 
 ## 边界
 
 - Claude Code 插件（marketplace）带来的技能、仓库里的项目级技能（`<repo>/.claude/skills` 等）不在接管范围内。
 - 接管之后，不经 omem、直接打开 Claude Code 或 Codex 时，也只能看到 omem 说明和各组的总入口。读具体技能的全文时要读数据目录下的文件，Claude Code 可能会为此询问一次读取权限。
-- 总入口的分流质量取决于组的说明和用途。自动说明只列出技能名，可以让助手“把某组按用途整理并写好说明”（`organize_skills`）。
+- 总入口的分流质量取决于组的说明和用途。自动整理会补，也可以让助手“把某组按用途整理并写好说明”（`organize_skills`）。

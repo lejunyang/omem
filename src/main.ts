@@ -173,6 +173,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     {
       let last = 0;
       const tick = () => {
+        // Skills that arrived or changed go to the skill organizer once they settle (agentSkills.autoOrganize).
+        import("./agents/agent-skills.ts").then((m) => m.scheduleSkillOrganize(app)).catch((e) => console.warn("[omem] 安排整理技能分组失败：", e.message));
         const every = app.config.agentSkills.everyMinutes * 60_000;
         if (!app.config.agentSkills.takeOver || Date.now() - last < every - 5_000) return;
         last = Date.now();

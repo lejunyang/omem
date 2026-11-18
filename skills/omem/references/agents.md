@@ -21,7 +21,7 @@
 
 - `list_skills` / `read_skill`：本人沉淀的做法。`read_skill(name, file="references/checks.md")` 可读技能内的多层附属文本文件；返回的文件列表使用相对路径。不接受越界或符号链接，文本限 2 MB。
 - 技能分组：从 Agent 自带目录接管来的技能（以及本人分过组的）按组给出，技能目录里每组一行。`read_skill(name="<组名>")` 返回这一组按用途列出的技能，大组的各用途说明在 `file="purposes/NN.md"`；`list_skills(group="<组名>")` 列出组里全部技能、用途和是否停用。
-- `organize_skills`：改技能的分组（`group`，null 移出）、组内用途（`purpose`，几个字）和开关（`enabled`），改组的标题、说明（`description`：做哪类事时该读这一组，Agent 平时只看得到这一句）和整组开关；一次可改多项。本人说“把某组按用途整理一下”时，先 `list_skills(group=…)` 看全组，按用途归成几类（每类几个到几十个），写好组说明后一次提交。
+- `organize_skills`：改技能的分组（`group`，null 移出）、组内用途（`purpose`，几个字）和开关（`enabled`），改组的标题、说明（`description`：做哪类事时该读这一组，Agent 平时只看得到这一句）和整组开关；一次可改多项。本人说“把某组按用途整理一下”时，先 `list_skills(group=…)` 看全组，按用途归成几类（每类几个到几十个），写好组说明后一次提交。你按本人的话改的分组和用途记为本人定过，后台的技能整理角色（新技能进来、说明变了时自动跑）不会再改它们。
 - `save_skill`：把可复用做法存成技能；`agent="档案名"` 保存后直接挂到该档案或内置角色（主助手教档案时用；内置角色会先复制成本人的自定义版本），档案内运行不填默认挂当前档案，`attach: false` 只建技能不挂；名字不存在会报错。
 - 做梦提炼某个档案或角色的经验目录时，用 `save_skill(agent="名字", draft=true)` 挂到原归属；正文保留 `mem:` 出处。草稿交给夜间复盘 K1 试用，达到启用门槛后才生效，原经验保留。
 - `propose_profile_change(target, kind, title, reason, …)`：给档案或内置角色提改进建议（`prompt` 新正文、`skill` 新技能全文、`settings` 加减工具和技能），本人在 Agent 页采纳后才生效；偏好和经验直接 `remember(agent=…)`。

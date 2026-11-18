@@ -8,7 +8,7 @@ import { commitLibrary } from "../core/git.ts";
 import { HttpError } from "../core/util.ts";
 import { acpCatalog } from "./catalog.ts";
 import { GROUP_ID, groupTitle, loadSkillGroups, saveSkillGroups, skillEnabled, type SkillGroups } from "./skill-groups.ts";
-import { readSkill } from "./specs.ts";
+import { listSkills, readSkill } from "./specs.ts";
 import { omemSkillDir } from "./tool-help.ts";
 
 /**
@@ -397,13 +397,23 @@ export function refreshAgentEntries(app: App) {
 export type SkillChange = { name: string; group?: string | null; purpose?: string | null; enabled?: boolean };
 export type GroupChange = { id: string; title?: string; description?: string; enabled?: boolean };
 
-/** Regroup skills, set their purposes and switches, describe groups; one commit. */
-export function organizeSkills(app: App, input: { skills?: SkillChange[]; groups?: GroupChange[] }, actor: "user" | "agent" = "user") {
+/**
+ * Regroup skills, set their purposes and switches, describe groups; one commit. What the owner (or the
+ * assistant at their word) sets is marked theirs; the skill organizer's run cannot change those, nor
+ * switch skills on or off.
+ */
+export function organizeSkills(app: App, input: { skills?: SkillChange[]; groups?: GroupChange[] }, actor: "user" | "agent" | "organizer" = "user") {
   const state = loadSkillGroups(app);
   const changed: string[] = [];
+  const kept: string[] = [];
+  const organizer = actor === "organizer";
   for (const c of input.skills ?? []) {
     readSkill(app, c.name); // 404 for a skill that does not exist
     const s = { ...state.skills[c.name] };
+    if (organizer && s.userSet && (c.group !== undefined || c.purpose !== undefined)) {
+      kept.push(c.name);
+      continue;
+    }
     if (c.group !== undefined) {
       if (c.group === null || c.group === "") delete s.group;
       else {
@@ -417,7 +427,8 @@ export function organizeSkills(app: App, input: { skills?: SkillChange[]; groups
       if (c.purpose === null || !c.purpose.trim()) delete s.purpose;
       else s.purpose = clip(c.purpose, 40);
     }
-    if (c.enabled !== undefined) s.enabled = c.enabled;
+    if (c.enabled !== undefined && !organizer) s.enabled = c.enabled;
+    if (!organizer && (c.group !== undefined || c.purpose !== undefined)) s.userSet = true;
     state.skills[c.name] = s;
     changed.push(c.name);
   }
@@ -425,16 +436,151 @@ export function organizeSkills(app: App, input: { skills?: SkillChange[]; groups
     const cur = state.groups[g.id];
     if (!cur && !Object.values(state.skills).some((s) => s.group === g.id)) throw new HttpError(404, `没有分组 ${g.id}`);
     const next = { ...(cur ?? { enabled: true }) };
+    const words = g.title !== undefined || g.description !== undefined;
+    if (organizer && next.userSet && words) {
+      kept.push(`group:${g.id}`);
+      continue;
+    }
     if (g.title !== undefined) next.title = clip(g.title, 40) || undefined;
     if (g.description !== undefined) next.description = clip(g.description, 1000) || undefined;
-    if (g.enabled !== undefined) next.enabled = g.enabled;
+    if (g.enabled !== undefined && !organizer) next.enabled = g.enabled;
+    if (!organizer && words) next.userSet = true;
     state.groups[g.id] = next;
     changed.push(`group:${g.id}`);
   }
+  if (changed.length) {
+    saveSkillGroups(app, state);
+    commitLibrary(app.libraryDir, `${actor}: organize skills (${changed.slice(0, 12).join(", ")}${changed.length > 12 ? ", …" : ""})`);
+    refreshAgentEntries(app);
+  }
+  return { changed: changed.length, kept };
+}
+
+// ---- the skill organizer (roles/skill-organizer.md) ---------------------------------
+
+const ORGANIZE_BATCH = 60;
+/** Ungrouped skills of the owner's own are looked at once there are this many waiting. */
+const LOOSE_ENOUGH = 8;
+/** Wait this long after the last change, so an upgrade that installs many skills is seen whole. */
+const SETTLE_MS = 3 * 60_000;
+const seenText = (description: string) => clip(description, 300);
+
+export type PendingSkill = { name: string; description: string; kind: "new" | "changed" | "loose"; old?: string; group?: string; purpose?: string; userSet?: boolean; mtime: number };
+
+/**
+ * Skills the organizer has not looked at as they are now: taken over and not yet seen, a description
+ * that changed since, and the owner's own ungrouped skills. The first time (nothing seen yet) a skill
+ * already given a purpose in its group counts as seen: someone filed it.
+ */
+export function pendingSkills(app: App): PendingSkill[] {
+  const state = loadSkillGroups(app);
+  if (!Object.values(state.skills).some((s) => s.seen !== undefined)) {
+    let marked = false;
+    for (const sk of listSkills(app, { includeDrafts: true })) {
+      const s = state.skills[sk.name];
+      if (s?.group && (s.purpose || s.userSet)) (s.seen = seenText(sk.description)), (marked = true);
+    }
+    if (marked) saveSkillGroups(app, state);
+  }
+  const out: PendingSkill[] = [];
+  for (const sk of listSkills(app, { includeDrafts: true })) {
+    const s = state.skills[sk.name];
+    if (s?.enabled === false) continue;
+    const now = seenText(sk.description);
+    if (s?.seen === now) continue;
+    let mtime = 0;
+    try { mtime = statSync(join(libSkills(app), sk.name, "SKILL.md")).mtimeMs; } catch {}
+    const kind = s?.seen !== undefined ? "changed" : s?.origin || s?.group ? "new" : "loose";
+    out.push({ name: sk.name, description: sk.description, kind, old: s?.seen, group: s?.group, purpose: s?.purpose, userSet: s?.userSet, mtime });
+  }
+  return out;
+}
+
+function markSeen(app: App, names: string[]) {
+  const state = loadSkillGroups(app);
+  const now = new Map(listSkills(app, { includeDrafts: true }).map((s) => [s.name, s.description]));
+  for (const n of names) if (now.has(n)) state.skills[n] = { ...state.skills[n], seen: seenText(now.get(n)!) };
   saveSkillGroups(app, state);
-  commitLibrary(app.libraryDir, `${actor}: organize skills (${changed.slice(0, 12).join(", ")}${changed.length > 12 ? ", …" : ""})`);
-  refreshAgentEntries(app);
-  return { changed: changed.length };
+}
+
+const organizerBusy = async (app: App) => {
+  const { listRuns } = await import("./runs.ts");
+  return listRuns(app, { kind: "skill-organize", status: "queued" }).length + listRuns(app, { kind: "skill-organize", status: "running" }).length > 0;
+};
+/** The last pass failed within the hour (no AI set up, say): the schedule waits instead of failing every minute. */
+const failedLately = (app: App) => {
+  const last = one<{ status: string; created_at: string }>(app.db, "select status, created_at from runs where kind = 'skill-organize' order by created_at desc limit 1");
+  return !!last && last.status !== "done" && Date.now() - Date.parse(last.created_at) < 3_600_000;
+};
+
+/** Called every minute (main.ts): queue the organizer when skills wait for it and have settled. */
+export async function scheduleSkillOrganize(app: App) {
+  if (!app.config.agentSkills.autoOrganize || (await organizerBusy(app)) || failedLately(app)) return null;
+  const pending = pendingSkills(app);
+  const fresh = pending.filter((p) => p.kind !== "loose");
+  const loose = pending.length - fresh.length;
+  if (!fresh.length && loose < LOOSE_ENOUGH) return null;
+  if (Date.now() - Math.max(...pending.map((p) => p.mtime)) < SETTLE_MS) return null;
+  return queueSkillOrganize(app);
+}
+
+/** Queue a pass (the owner's button, or the schedule); `group`: look over that whole group again. */
+export async function queueSkillOrganize(app: App, opts: { group?: string } = {}) {
+  if (await organizerBusy(app)) throw new HttpError(409, "已有整理技能分组的运行在进行");
+  if (opts.group && !listSkillGroups(app).some((g) => g.id === opts.group)) throw new HttpError(404, `没有分组 ${opts.group}`);
+  const { createRun } = await import("./runs.ts");
+  const n = opts.group ? 0 : pendingSkills(app).length;
+  return createRun(app, { kind: "skill-organize", spaceId: "personal", title: opts.group ? `整理技能分组 ${opts.group}` : `整理技能分组（${n} 个技能）`, input: opts });
+}
+
+function groupsOverview(app: App, state: SkillGroups) {
+  const groups = listSkillGroups(app);
+  if (!groups.length) return "现在还没有分组。";
+  return `现有分组（${groups.length}）：\n${groups
+    .map((g) => `- ${g.id}「${g.title}」${g.count} 个${state.groups[g.id]?.userSet ? "（标题和说明本人定过）" : ""}：${g.description || "（没写说明）"}\n  用途：${g.purposes.map((p) => `${p.purpose || "未分用途"}（${p.count}）`).join("、") || "无"}`)
+    .join("\n")}`;
+}
+
+/** The organizer's task: the groups, then the skills to look at. `null`: nothing to do. */
+export function skillOrganizeTask(app: App, opts: { group?: string } = {}): { task: string; batch: string[]; more: boolean } | null {
+  const state = loadSkillGroups(app);
+  const kindText = { new: "新收进来", changed: "说明变了", loose: "未分组" } as const;
+  if (opts.group) {
+    const g = readSkillGroup(app, opts.group);
+    const lines = g.skills.map((s) => `- ${s.name}（用途：${s.purpose || "无"}${state.skills[s.name]?.userSet ? "，本人定过" : ""}）：${clip(s.description, 200)}`);
+    return {
+      task: `${groupsOverview(app, state)}\n\n本人要你重新整理分组 ${g.id}「${g.title}」：看用途分得是否合理（同类的合并、太杂的拆开，一组里四到二十个用途为宜，没分用途的放好），组的说明能不能让 Agent 判断该不该来读；不属于这一组的挪到合适的组。这一组的全部技能（${g.skills.length}）：\n${lines.join("\n")}`,
+      batch: g.skills.map((s) => s.name),
+      more: false,
+    };
+  }
+  const pending = pendingSkills(app);
+  const fresh = pending.filter((p) => p.kind !== "loose");
+  const loose = pending.filter((p) => p.kind === "loose");
+  const take = [...fresh, ...(fresh.length || loose.length >= LOOSE_ENOUGH ? loose : [])].slice(0, ORGANIZE_BATCH);
+  if (!take.length) return null;
+  const line = (p: PendingSkill) =>
+    `- ${p.name} [${kindText[p.kind]}]（现在：${p.group ? `${p.group} · ${p.purpose || "未分用途"}` : "不在分组里"}${p.userSet ? "，本人定过" : ""}）：${clip(p.description, 240)}${p.kind === "changed" && p.old ? `\n  原来的说明：${p.old}` : ""}`;
+  const looseNote = loose.length ? `\n\n（未分组的 omem 技能一共 ${listSkills(app, { includeDrafts: true }).filter((s) => !state.skills[s.name]?.group).length} 个，按角色说明的第 3 条看情况处理。）` : "";
+  return { task: `${groupsOverview(app, state)}\n\n这一批要看的技能（${take.length}）：\n${take.map(line).join("\n")}${looseNote}`, batch: take.map((p) => p.name), more: pending.length > take.length };
+}
+
+/** After the organizer's run: mark the batch seen and say what moved. */
+export function finishSkillOrganize(app: App, before: SkillGroups, batch: string[]) {
+  markSeen(app, batch);
+  const after = loadSkillGroups(app);
+  const moved: string[] = [];
+  for (const [name, s] of Object.entries(after.skills)) {
+    const b = before.skills[name];
+    if ((b?.group ?? "") !== (s.group ?? "") || (b?.purpose ?? "") !== (s.purpose ?? "")) moved.push(`${name} → ${s.group ? `${groupTitle(after, s.group)}${s.purpose ? ` · ${s.purpose}` : ""}` : "不分组"}`);
+  }
+  const groups: string[] = [];
+  for (const [id, g] of Object.entries(after.groups)) {
+    const b = before.groups[id];
+    if (!b) groups.push(`新建 ${groupTitle(after, id)}`);
+    else if ((b.title ?? "") !== (g.title ?? "") || (b.description ?? "") !== (g.description ?? "")) groups.push(`改了 ${groupTitle(after, id)} 的说明`);
+  }
+  return { moved, groups };
 }
 
 export function listSkillGroups(app: App) {
@@ -491,7 +637,7 @@ export function takeOverStatus(app: App) {
     return { ...d, skills };
   });
   const backups = existsSync(backupRoot(app)) ? readdirSync(backupRoot(app)).sort().reverse() : [];
-  return { takeOver: app.config.agentSkills.takeOver, everyMinutes: app.config.agentSkills.everyMinutes, extraDirs: app.config.agentSkills.extraDirs, dirs, last: lastSweep(app), backups };
+  return { takeOver: app.config.agentSkills.takeOver, autoOrganize: app.config.agentSkills.autoOrganize, pending: pendingSkills(app).length, everyMinutes: app.config.agentSkills.everyMinutes, extraDirs: app.config.agentSkills.extraDirs, dirs, last: lastSweep(app), backups };
 }
 
 let running = false;
@@ -502,7 +648,7 @@ export async function tickAgentSkills(app: App) {
   try {
     const r = sweepAgentSkills(app);
     if (r.removed || r.entries?.some((e) => e.written.length || e.removed.length)) rememberSweep(app, r);
-    if (r.adopted.length) {
+    if (r.adopted.length && !app.config.agentSkills.autoOrganize) {
       const { notify } = await import("../core/notify.ts");
       notify(app, { title: `收进了 ${r.adopted.length} 个 Agent 自带的技能`, body: `${r.adopted.slice(0, 30).join("、")}${r.adopted.length > 30 ? " 等" : ""}。已按名称归组，可在 Agent 页 → 技能里调整分组、用途和启用。`, link: "#/agents?tab=skills", urgency: "later" });
     }

@@ -950,7 +950,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Bodies stay out of the list: with the agents' skills taken over there are hundreds.
     const { loadSkillGroups, skillEnabled } = await import("../agents/skill-groups.ts");
     const groups = loadSkillGroups(app);
-    return listSkills(app, { includeDrafts: true }).map(({ body: _b, files: _f, ...s }) => ({ ...s, group: groups.skills[s.name]?.group ?? null, enabled: skillEnabled(groups, s.name), replay: skillDisplayTally(app, s.name) }));
+    return listSkills(app, { includeDrafts: true }).map(({ body: _b, files: _f, ...s }) => ({ ...s, group: groups.skills[s.name]?.group ?? null, purpose: groups.skills[s.name]?.purpose ?? "", enabled: skillEnabled(groups, s.name), replay: skillDisplayTally(app, s.name) }));
   });
   // The agents' own skill folders and the groups (agents/agent-skills.ts, docs/v2/agent-skills.md).
   const ownerSkills = (req: { headers: Record<string, unknown> }) => {
@@ -973,7 +973,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.put("/api/agent-skills/settings", async (req) => {
     ownerSkills(req);
-    const b = q(z.object({ takeOver: z.boolean().optional(), everyMinutes: z.number().int().min(1).max(1440).optional(), extraDirs: z.array(z.string().min(1)).max(20).optional() }), req.body);
+    const b = q(z.object({ takeOver: z.boolean().optional(), everyMinutes: z.number().int().min(1).max(1440).optional(), extraDirs: z.array(z.string().min(1)).max(20).optional(), autoOrganize: z.boolean().optional() }), req.body);
     const next = configSchema.parse({ ...app.config, agentSkills: { ...app.config.agentSkills, ...b } });
     saveConfig(next, app.home);
     Object.assign(app.config, next);
@@ -986,6 +986,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ownerSkills(req);
     const b = q(z.object({ dryRun: z.boolean().optional() }), req.body ?? {});
     return (await import("../agents/agent-skills.ts")).sweepNow(app, b);
+  });
+  // The skill organizer (roles/skill-organizer.md) now: the skills waiting for it, or one whole group again.
+  server.post("/api/agent-skills/organize", async (req) => {
+    ownerSkills(req);
+    const b = q(z.object({ group: z.string().optional() }), req.body ?? {});
+    const r = await (await import("../agents/agent-skills.ts")).queueSkillOrganize(app, b);
+    return { runId: r.id };
   });
   server.post("/api/agent-skills/restore", async (req) => {
     ownerSkills(req);

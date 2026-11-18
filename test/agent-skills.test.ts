@@ -157,3 +157,52 @@ describe("taking over the agents' skill folders", () => {
     expect(existsSync(join(h.claude, "omem"))).toBe(false);
   });
 });
+
+describe("the skill organizer", () => {
+  it("is handed new and changed skills, and cannot change what the owner set", async () => {
+    const { pendingSkills, skillOrganizeTask, finishSkillOrganize } = await import("../src/agents/agent-skills.ts");
+    const app = testApp();
+    const h = fakeHome();
+    sweepAgentSkills(app, { env: h.env });
+    const kinds = Object.fromEntries(pendingSkills(app).map((p) => [p.name, p.kind]));
+    expect(kinds["acme-logs"]).toBe("new");
+    expect(kinds["solo-tool"]).toBe("new");
+
+    organizeSkills(app, { skills: [{ name: "acme-db", purpose: "数据库" }] }, "user");
+    expect(loadSkillGroups(app).skills["acme-db"].userSet).toBe(true);
+    const before = loadSkillGroups(app);
+    const job = skillOrganizeTask(app)!;
+    expect(job.task).toContain("acme-logs [新收进来]");
+    // Filed by the owner before the first pass: counted as looked at.
+    expect(job.task).not.toContain("acme-db [");
+
+    const r = organizeSkills(
+      app,
+      { skills: [{ name: "acme-db", purpose: "别的" }, { name: "acme-logs", purpose: "日志", enabled: false }, { name: "solo-tool", group: "tools", purpose: "杂项" }], groups: [{ id: "acme", title: "Acme 平台", description: "用 Acme 平台时读" }] },
+      "organizer",
+    );
+    expect(r.kept).toEqual(["acme-db"]);
+    const state = loadSkillGroups(app);
+    expect(state.skills["acme-db"].purpose).toBe("数据库");
+    expect(state.skills["acme-logs"]).toMatchObject({ purpose: "日志" });
+    expect(state.skills["acme-logs"].enabled).not.toBe(false);
+    expect(state.skills["acme-logs"].userSet).toBeUndefined();
+    expect(state.groups.acme).toMatchObject({ title: "Acme 平台", description: "用 Acme 平台时读" });
+
+    const done = finishSkillOrganize(app, before, job.batch);
+    expect(done.moved).toEqual(expect.arrayContaining(["acme-logs → Acme 平台 · 日志", "solo-tool → tools · 杂项"]));
+    expect(done.groups).toEqual(expect.arrayContaining(["新建 tools", "改了 Acme 平台 的说明"]));
+    expect(pendingSkills(app).map((p) => p.name)).not.toContain("acme-logs");
+
+    // The owner's own words for a group stay too.
+    organizeSkills(app, { groups: [{ id: "acme", description: "本人写的" }] }, "user");
+    expect(organizeSkills(app, { groups: [{ id: "acme", description: "改掉" }] }, "organizer").kept).toEqual(["group:acme"]);
+    expect(loadSkillGroups(app).groups.acme.description).toBe("本人写的");
+
+    // Upstream changes the description: looked at again, with the old one beside it.
+    saveSkill(app, { name: "acme-logs", description: "Acme 日志和链路追踪", body: "正文" }, "user");
+    const changed = pendingSkills(app).find((p) => p.name === "acme-logs")!;
+    expect(changed.kind).toBe("changed");
+    expect(changed.old).toContain("Acme logs 平台");
+  });
+});

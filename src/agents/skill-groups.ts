@@ -12,7 +12,13 @@ import type { App } from "../core/app.ts";
  * them on by purpose) and read the skill from there. A skill without an entry here is on and
  * ungrouped, as before.
  */
-export type GroupState = { title?: string; description?: string; enabled: boolean };
+export type GroupState = {
+  title?: string;
+  description?: string;
+  enabled: boolean;
+  /** The owner (or the assistant at their word) wrote the title or description: the skill organizer leaves them. */
+  userSet?: boolean;
+};
 export type SkillState = {
   group?: string;
   /** Off: offered nowhere (the group's switch turns off all of its skills). */
@@ -23,6 +29,10 @@ export type SkillState = {
   origin?: string;
   adoptedAt?: string;
   hash?: string;
+  /** The owner (or the assistant at their word) placed it: the skill organizer leaves its group and purpose. */
+  userSet?: boolean;
+  /** Its description as the skill organizer last saw it (clipped); a skill whose description differs is looked at again. */
+  seen?: string;
 };
 export type SkillGroups = { groups: Record<string, GroupState>; skills: Record<string, SkillState> };
 

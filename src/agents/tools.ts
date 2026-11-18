@@ -1363,8 +1363,8 @@ def({
   }),
   handler: async (ctx, a) => {
     const { organizeSkills } = await import("./agent-skills.ts");
-    const r = organizeSkills(ctx.app, { skills: a.skills, groups: a.groups }, ctx.actor);
-    return `已更新 ${r.changed} 项。`;
+    const r = organizeSkills(ctx.app, { skills: a.skills, groups: a.groups }, ctx.role === "skill-organizer" ? "organizer" : ctx.actor);
+    return `已更新 ${r.changed} 项。${r.kept.length ? `本人定过、没有改：${r.kept.join("、")}。` : ""}`;
   },
 });
 
