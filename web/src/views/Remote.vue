@@ -18,7 +18,7 @@ import { relTime, toast } from "../store";
 type Session = { id: string; kind: "browser" | "desktop"; title: string; createdAt: string; browser: { name: string; url: string | null; profile: string | null } | null; window: string | null; recording: string | null; viewers: number; src?: string };
 type BrowserProfile = { browser: "chrome" | "edge" | "brave"; id: string; name: string };
 type Recording = { id: string; kind: "browser" | "desktop"; goal: string; target: string; status: "recording" | "done" | "failed"; summary: Record<string, any>; conversationId: string | null; skill: string | null; createdAt: string };
-type Settings = { format: string; quality: number; fps: number; maxWidth: number; cursor: boolean; clipboard: boolean; browser: "" | "chrome" | "edge" | "brave" };
+type Settings = { format: string; quality: number; fps: number; maxWidth: number; cursor: boolean; clipboard: boolean; clipboardMaxMb: number; browser: "" | "chrome" | "edge" | "brave" };
 type VideoProbe = { at: string; ffmpeg: string | null; encoders: Record<string, string> };
 type Screens = { monitors: { monitor: number; name: string; primary?: boolean; width: number; height: number }[]; windows: { window: string; title: string }[]; recordable: { resourceId: string; name: string; process: string | null }[] };
 
@@ -306,6 +306,15 @@ const qualityOptions = [
 ];
 const fpsOptions: SelectOption<number>[] = [{ value: 0, label: "自动", hint: "整张图片 5、其余 30" }, ...[10, 15, 30, 60].map((n) => ({ value: n, label: `每秒 ${n} 帧` }))];
 const widthOptions: SelectOption<number>[] = [1280, 1600, 1920, 2560].map((n) => ({ value: n, label: `${n} 像素`, hint: n === 1600 ? "默认" : undefined })).concat([{ value: 0, label: "不缩小", hint: undefined }]);
+// aad 0.0.9 on: rich text, pictures and files through the clipboard both ways; before, copied text back.
+const richClipboard = computed(() => {
+  const v = /(\d+)\.(\d+)\.(\d+)/.exec(version.value ?? "");
+  return !!v && (Number(v[1]) > 0 || Number(v[2]) > 0 || Number(v[3]) >= 9);
+});
+const fileLimitOptions: SelectOption<number>[] = [
+  { value: 0, label: "不传文件", hint: "文字、富文本和图片照常" },
+  ...[20, 100, 500, 2048].map((n) => ({ value: n, label: n >= 1024 ? `${n / 1024} GB` : `${n} MB`, hint: n === 100 ? "默认" : undefined })),
+];
 const browserOptions: SelectOption<string>[] = [{ value: "", label: "自动", hint: "按 Chrome、Edge、Brave 找第一个" }, { value: "chrome", label: "Chrome" }, { value: "edge", label: "Edge" }, { value: "brave", label: "Brave" }];
 const settingsChanged = computed(() => !!settings.value && JSON.stringify(settings.value) !== saved.value);
 async function saveSettings() {
@@ -495,8 +504,15 @@ const counts = (r: Recording) => {
             </div>
             <div class="checks">
               <UiCheckbox v-model="settings.cursor" size="sm">桌面画面上显示远程的鼠标指针</UiCheckbox>
-              <UiCheckbox v-model="settings.clipboard" size="sm">在画面里复制的文字带回这边的剪贴板</UiCheckbox>
+              <UiCheckbox v-if="richClipboard" v-model="settings.clipboard" size="sm">剪贴板互通（文字、富文本、图片和文件）</UiCheckbox>
+              <UiCheckbox v-else v-model="settings.clipboard" size="sm">在画面里复制的文字带回这边的剪贴板</UiCheckbox>
             </div>
+            <div v-if="richClipboard && settings.clipboard" class="field clip">
+              <span>粘贴或带回的文件一次最多</span>
+              <UiSelect v-model="settings.clipboardMaxMb" :options="fileLimitOptions" aria-label="传文件上限" width="180px" />
+              <span class="hint">这边 Ctrl+V 粘贴的文件传到远程再粘贴；远程复制的文件在画面角上给下载。用 http + IP 打开时，带回的图片也只能下载（浏览器只让 https 或本机地址的网页写图片进剪贴板）。</span>
+            </div>
+            <p v-else-if="!richClipboard && settings.clipboard" class="muted small">aad 0.0.9 起，图片、富文本和文件也能两个方向复制粘贴：到 设置 → AI 的“桌面与浏览器控制”点“更新到最新”。</p>
             <div class="row foot">
               <span class="muted small grow">
                 <template v-if="probing">正在检测这台机器能用的视频编码（可能要半分钟）…</template>

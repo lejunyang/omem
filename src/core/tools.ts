@@ -49,9 +49,26 @@ export function installOptions(name: string, platform: string = process.platform
  */
 const USE_GLOBAL = new Set(["ffmpeg", "ffprobe"]);
 /** The osdk arguments that install a tool. */
-export function installArgs(name: string): string[] {
+export function installArgs(name: string, version?: string | null): string[] {
   const spec = installSpec(name)!;
-  return [...(USE_GLOBAL.has(name) ? ["use", "-g"] : ["install"]), spec, ...installOptions(name)];
+  return [...(USE_GLOBAL.has(name) ? ["use", "-g"] : ["install"]), version ? `${spec}@${version}` : spec, ...installOptions(name)];
+}
+
+/**
+ * The newest release of a GitHub tool (`osdk list-remote`, oldest first). `osdk install` without a
+ * version stops at whatever release is already there, so installing again would never update it.
+ */
+function latestRelease(spec: string): string | null {
+  if (!spec.startsWith("github:")) return null;
+  const r = spawnSync("osdk", ["list-remote", spec], { encoding: "utf8", windowsHide: true, timeout: 60_000, shell: process.platform === "win32" });
+  if (r.status !== 0) return null;
+  const versions = `${r.stdout ?? ""}`.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^v?\d+\.\d+\.\d+[\w.+-]*$/.test(l));
+  const parts = (v: string) => v.replace(/^v/, "").split(/[.+-]/).slice(0, 3).map(Number);
+  versions.sort((a, b) => {
+    const [x, y] = [parts(a), parts(b)];
+    return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+  });
+  return versions.at(-1)?.replace(/^v/, "") ?? null;
 }
 /** ffmpeg only knows `-version` (`--version` exits with an error). */
 const versionFlag = (name: string) => (name === "ffmpeg" || name === "ffprobe" ? "-version" : "--version");
@@ -160,7 +177,7 @@ function osdkToolDir(name: string): string | null {
 export function installTool(name: string, opts: { inherit?: boolean } = {}) {
   const spec = installSpec(name);
   if (!spec || !commandExists("osdk")) return !!toolCommand(name);
-  const r = spawnSync("osdk", installArgs(name), { stdio: opts.inherit ? "inherit" : "pipe", windowsHide: true, shell: process.platform === "win32" });
+  const r = spawnSync("osdk", installArgs(name, latestRelease(spec)), { stdio: opts.inherit ? "inherit" : "pipe", windowsHide: true, shell: process.platform === "win32" });
   forgetTool(name);
   return r.status === 0 && !!toolCommand(name);
 }

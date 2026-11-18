@@ -78,6 +78,7 @@ const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
 if (args[0] === "doctor") console.log("  install_dir  : " + ${JSON.stringify(installs)});
 else if (args[0] === "where") process.exit(1);
+else if (args[0] === "list-remote") console.log("0.0.1\\n0.0.10\\n0.0.2");
 else if (args[0] === "install") {
   const d = join(${JSON.stringify(installs)}, "github", "lejunyang", "ai-auto-desktop", "0.0.2", "key1");
   mkdirSync(d, { recursive: true });
@@ -110,7 +111,8 @@ else if (args[0] === "install") {
     expect(installTool("aad")).toBe(true);
     const calls = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]);
     const install = calls.find((c) => c[0] === "install")!;
-    expect(install.slice(0, 2)).toEqual(["install", "github:lejunyang/ai-auto-desktop"]);
+    // The newest release by version, not the last line: installing without one stops at what is there.
+    expect(install.slice(0, 2)).toEqual(["install", "github:lejunyang/ai-auto-desktop@0.0.10"]);
     expect(install.slice(2)).toEqual(installOptions("aad"));
 
     const cmd = toolCommand("aad")!;

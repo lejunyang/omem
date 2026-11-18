@@ -8,6 +8,7 @@ import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import type { App } from "../src/core/app.ts";
 import { setToolResolverForTests } from "../src/core/tools.ts";
 import { organizeText } from "../src/remote/http.ts";
+import { DEFAULT_SETTINGS, clipboardFiles, viewerArgs } from "../src/remote/settings.ts";
 import { getRecording, readRecording } from "../src/remote/recordings.ts";
 import { profileDir } from "../src/remote/sessions.ts";
 import { startServer } from "../src/server/http.ts";
@@ -335,7 +336,7 @@ describe("remote operation", () => {
   });
 
   it("sends the picture as each user set it, and gives an open session a viewer with new settings", async () => {
-    expect((await api("GET", "/api/remote/settings")).body).toMatchObject({ settings: { format: "auto", quality: 70, fps: 0, maxWidth: 1600, cursor: true, clipboard: true, browser: "" }, video: null });
+    expect((await api("GET", "/api/remote/settings")).body).toMatchObject({ settings: { format: "auto", quality: 70, fps: 0, maxWidth: 1600, cursor: true, clipboard: true, clipboardMaxMb: 100, browser: "" }, video: null });
     // Which video codecs work here: checked once, kept until aad changes.
     expect((await api("POST", "/api/remote/settings/probe")).body).toMatchObject({ aad: "0.0.5", encoders: { h264: "libx264" } });
     expect((await api("GET", "/api/remote/settings")).body.video.encoders).toEqual({ h264: "libx264" });
@@ -366,5 +367,21 @@ describe("remote operation", () => {
     expect((await api("GET", browser.src)).status).toBe(404);
     expect((await api("GET", "/api/remote")).body.sessions).toEqual([]);
     expect((await api("GET", "/api/remote/recordings")).body).toHaveLength(3);
+  });
+});
+
+describe("remote clipboard settings", () => {
+  const s = { ...DEFAULT_SETTINGS, format: "webp" as const };
+  it("passes the file limit only to an aad that knows it, and only when it is not aad's own default", () => {
+    expect(clipboardFiles("0.0.8")).toBe(false);
+    expect(clipboardFiles("0.0.9")).toBe(true);
+    expect(clipboardFiles("0.1.0")).toBe(true);
+    expect(clipboardFiles(null)).toBe(false);
+    expect(viewerArgs({ ...s, clipboardMaxMb: 20 }, "browser", null, "0.0.9")).toContain("--clipboard-max-mb");
+    expect(viewerArgs({ ...s, clipboardMaxMb: 0 }, "browser", null, "0.0.9").join(" ")).toContain("--clipboard-max-mb 0");
+    // An older aad would refuse the option and not start.
+    expect(viewerArgs({ ...s, clipboardMaxMb: 20 }, "browser", null, "0.0.8")).not.toContain("--clipboard-max-mb");
+    expect(viewerArgs({ ...s, clipboardMaxMb: 100 }, "browser", null, "0.0.9")).not.toContain("--clipboard-max-mb");
+    expect(viewerArgs({ ...s, clipboard: false, clipboardMaxMb: 20 }, "browser", null, "0.0.9")).toEqual(["--codecs", "webp", "--quality", "70", "--max-width", "1600", "--no-clipboard"]);
   });
 });

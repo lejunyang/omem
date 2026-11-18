@@ -24,14 +24,16 @@ export const remoteSettingsSchema = z.object({
   maxWidth: z.number().int().min(0).max(7680),
   /** The desktop's pointer drawn over the picture. */
   cursor: z.boolean(),
-  /** Copied text brought back from the remote side. */
+  /** The clipboard both ways (aad 0.0.9 on: rich text, pictures and files; before: copied text back). */
   clipboard: z.boolean(),
+  /** Most MB of files in one paste or one copy brought back; 0 sends no files (`--clipboard-max-mb`). */
+  clipboardMaxMb: z.number().int().min(0).max(4096),
   /** The browser a new browser session opens; empty for the first this machine has. */
   browser: z.enum(["", "chrome", "edge", "brave"]),
 });
 export type RemoteSettings = z.infer<typeof remoteSettingsSchema>;
 
-export const DEFAULT_SETTINGS: RemoteSettings = { format: "auto", quality: 70, fps: 0, maxWidth: 1600, cursor: true, clipboard: true, browser: "" };
+export const DEFAULT_SETTINGS: RemoteSettings = { format: "auto", quality: 70, fps: 0, maxWidth: 1600, cursor: true, clipboard: true, clipboardMaxMb: 100, browser: "" };
 
 const key = (userId: string) => `remote_settings:${userId}`;
 
@@ -92,7 +94,7 @@ export function probeVideo(app: App): Promise<VideoProbe> {
  * offered, each with its encoder named, so assist does not try every encoder again when it starts;
  * a video codec that does not work here falls back to auto.
  */
-export function viewerArgs(s: RemoteSettings, kind: "browser" | "desktop", probe: VideoProbe | null): string[] {
+export function viewerArgs(s: RemoteSettings, kind: "browser" | "desktop", probe: VideoProbe | null, aad: string | null = desktopControl.status().version): string[] {
   const video = probe ? VIDEO_CODECS.filter((c) => probe.encoders[c]) : null;
   const pictures = ["webp", "jpeg", "tiles"];
   let codecs: string[];
@@ -104,6 +106,16 @@ export function viewerArgs(s: RemoteSettings, kind: "browser" | "desktop", probe
   if (probe) for (const c of VIDEO_CODECS) if (codecs.includes(c) && probe.encoders[c]) args.push("--encoder", probe.encoders[c]!);
   if (s.fps) args.push("--fps", String(s.fps));
   if (!s.clipboard) args.push("--no-clipboard");
+  // aad's own default is 100; an older aad does not know the option and would not start.
+  else if (s.clipboardMaxMb !== 100 && clipboardFiles(aad)) args.push("--clipboard-max-mb", String(s.clipboardMaxMb));
   if (kind === "desktop" && !s.cursor) args.push("--hide-cursor");
   return args;
+}
+
+/** aad 0.0.9 brought rich text, pictures and files through the clipboard both ways. */
+export function clipboardFiles(version: string | null): boolean {
+  const v = /(\d+)\.(\d+)\.(\d+)/.exec(version ?? "");
+  if (!v) return false;
+  const [a, b, c] = v.slice(1).map(Number);
+  return a > 0 || b > 0 || c >= 9;
 }

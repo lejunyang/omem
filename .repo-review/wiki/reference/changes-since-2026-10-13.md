@@ -15,6 +15,11 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 远程画面的剪贴板互通、aad 的“更新到最新”真的会更新（11-19）
+
+- aad 0.0.9 的 assist 两个方向都能传文字、富文本、图片和文件。omem 这边：远程页的画面设置把“复制的文字带回”换成“剪贴板互通”，加了文件上限（`remoteSettings.clipboardMaxMb`，默认 100，`src/remote/settings.ts`）；不是 100 时给 aad 加 `--clipboard-max-mb`，只在 aad 0.0.9 及以后（`clipboardFiles`），旧版不认这个选项会起不来。转发不用改：上传走查看页的 WebSocket，带回的东西是同一路径下的 GET。
+- 设置 → AI 的“更新到最新”和 `omem setup desktop` 以前跑 `osdk install github:…`，已经装了一个版本时 osdk 只说“already installed”，从来没更新过。现在先 `osdk list-remote` 找最新的 release，装 `github:…@<版本>`（`src/core/tools.ts` 的 `installTool`）。
+
 ## 要本人回答的内容分段写（11-18）
 
 - `src/agents/brief.ts`：`checkBrief` 在 `ask_user`、`report_task`、`settle_code_task`、`rule_dispute`、`stage_report` 上退回不分段的长文字；`roles/_common.md` 加“给本人看的问题和报告”，`roles/coder.md` 的 blocked 写法同步。
