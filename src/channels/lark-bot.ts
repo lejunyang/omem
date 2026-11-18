@@ -122,6 +122,8 @@ type Inbound = {
   mentionNames?: Record<string, { name: string; isBot: boolean }>;
   /** Sent by an app (alert cards, other bots). */
   fromApp?: boolean;
+  /** An image or file sent on its own right after its sender asked the bot here: part of that request. */
+  followsAsk?: boolean;
 };
 
 export function messageText(raw: string | undefined, type: string | undefined): string {
@@ -211,6 +213,9 @@ export function attachmentNote(msg: { messageId: string; type: string | undefine
  * Feishu pushes an event again when it did not get the acknowledgement in time (after ~15 s, 5 min,
  * 1 h…). The first delivery wins, also across restarts; repeats would otherwise become new turns.
  */
+/** How long after asking the bot in a group an image or file from the same person still belongs to that request. */
+const FOLLOW_ASK_MS = 2 * 60_000;
+
 export function firstDelivery(app: App, messageId: string, channel = "lark-bot") {
   return run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values(?,?,'',?)", channel, messageId, new Date().toISOString()).changes > 0;
 }
@@ -759,14 +764,14 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       // A person @-ing the bot asks it directly, and it answers (a user, or a guest when allowed):
       // the rules (waits, silent checks) are for what nobody asked and step aside.
       // The same goes for a watch on the chat: one answer, from the conversation the question was asked in.
-      if (m.mentionsBot && !m.fromApp && (who(m) || guestsAllowed(app, "group"))) {
+      if ((m.mentionsBot || m.followsAsk) && !m.fromApp && (who(m) || guestsAllowed(app, "group"))) {
         markAddressed(app, `lark:${m.messageId}`);
         if (keeps) answeredDirectly(app, m.chatId, m.messageId);
       } else if (keeps) {
         ruled = dispatchToRules(m).catch(() => {});
         await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
       }
-      if (!m.mentionsBot) return;
+      if (!m.mentionsBot && !m.followsAsk) return;
     }
     if (!ownerOpenId()) {
       await reply(m.chatId, extra
@@ -787,6 +792,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       if (ref === "main" && !m.fromApp) askerId = m.senderId;
     }
     if (m.chatType === "p2p" && userId === OWNER) kv(app, key("lark_owner_chat"), m.chatId);
+    // Images and files this person sends here next belong to this request (processEvent).
+    if (m.chatType === "group" && !asker) recentAsks.set(askKey(m), Date.now());
     const text = spoken(m);
     const context = [
       approved ? `本人看过门卫拦下的这条请求，同意让 ${m.senderName} 这次使用你：照常处理，结果回在群里。` : "",
@@ -825,7 +832,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
           quote: m.quote,
           userId,
           // Material without words: the instruction usually comes right after; the next message shortens the wait again.
-          mergeMs: m.type && CONTENT_ONLY_TYPES.has(m.type) ? Math.max(app.config.sessions.mergeMs, app.config.sessions.contentWaitMs) : undefined,
+          // An attachment following its request needs no wait for words: they came first.
+          mergeMs: m.type && CONTENT_ONLY_TYPES.has(m.type) && !m.followsAsk ? Math.max(app.config.sessions.mergeMs, app.config.sessions.contentWaitMs) : undefined,
         },
         {
           onStart: async (id) => {
@@ -895,6 +903,10 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     }
   };
 
+  /** When each person last asked the bot in a chat (or topic): their attachments right after go with it. */
+  const recentAsks = new Map<string, number>();
+  const askKey = (m: Inbound) => `${m.chatId}|${m.topicId ?? ""}|${m.senderId}`;
+
   const chatNames = new Map<string, string>();
   const groupName = (chatId: string) => chatNames.get(chatId) ?? chatId;
   const learnName = async (chatId: string) => {
@@ -925,7 +937,6 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
         persistChatMessages(app, { chatId: m.chatId, spaceId, name: groupName(m.chatId), messages: [{ message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "file", content: m.text, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId, sender: { id: m.senderId, name: m.senderName, sender_type: m.fromApp ? "app" : "user" } }], resources: new Map([[m.messageId, { [key]: { type: msg.message_type, sourceId: r?.id, file: stored, name, ...(deferred ? { parse: { status: "pending" as const } } : {}) } }]]) });
       }
       if (r && r.status !== "unchanged") scheduleIngest(app, spaceId, [r.id], `飞书${m.chatType === "group" ? "群" : "私聊"}附件`);
-      if (m.chatType === "p2p") await reply(m.chatId, r ? `已保存「${name}」，助理会读取并整理。` : `「${name}」的格式暂不支持。`, m.messageId);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -987,7 +998,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const keeps = m.chatType === "p2p" || (await keepsRecords(ref, m.chatId));
     if ((["image", "file"].includes(msg.message_type) || (m.chatType === "group" && ["media", "audio"].includes(msg.message_type))) && (m.chatType === "group" ? keeps : who(m)))
       saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
-    if (msg.message_type !== "image" && msg.message_type !== "file") {
+    // Feishu sends an image or file as a message of its own (it cannot carry an @): in a private chat it
+    // is part of the conversation; in a group, when its sender asked the bot here moments ago, of that request.
+    const attachment = msg.message_type === "image" || msg.message_type === "file";
+    if (attachment && m.chatType === "group" && who(m) && (recentAsks.get(askKey(m)) ?? 0) > Date.now() - FOLLOW_ASK_MS) m.followsAsk = true;
+    if (!attachment || (m.chatType === "p2p" ? !!who(m) : m.followsAsk)) {
       if (who(m) === OWNER) m.quote = await fetchQuote(msg);
       if (m.chatType === "group") {
         m.people = Object.fromEntries(

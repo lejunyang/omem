@@ -55,7 +55,7 @@ describe("answers in groups and where thinking bubbles go", async () => {
     JSON.stringify({
       lark: { ownerOpenId: "ou_owner", appId: "cli_bot", guests: { enabled: true, ownerPresent: "guest" } },
       agents: { default: "fake", roles: { gatekeeper: "gate-yes" }, profiles: [fake("fake", { FAKE_MODE: "thread" }), fake("gate-yes", { FAKE_SAY: '{"verdict":"answer","reason":"项目相关的提问"}' }), fake("quiet", { FAKE_SAY: "看过了，不是新问题。", FAKE_QUIET: "同一个告警已经在处理" })] },
-      sessions: { mergeMs: 0 },
+      sessions: { mergeMs: 0, contentWaitMs: 0 },
     }),
   );
   const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
@@ -126,6 +126,27 @@ describe("answers in groups and where thinking bubbles go", async () => {
     const text = one<{ text: string }>(app.db, "select text from sources where uri = 'lark:oc_team' and deleted_at is null")?.text ?? "";
     expect(text).toContain("@小李 你要的是只看那几个账号吗");
     expect(text).not.toContain("@_user_2");
+  }, 60_000);
+
+  it("an image or file sent on its own goes with the request: right after asking in a group, always in the private chat", async () => {
+    const attachment = (o: { id: string; chat: string; type?: "group" | "p2p"; sender: string; file?: boolean }) => {
+      const e = event({ ...o, text: "" });
+      Object.assign(e.message, o.file ? { message_type: "file", content: JSON.stringify({ file_key: "file_v3_csv", file_name: "订单.csv" }) } : { message_type: "image", content: JSON.stringify({ image_key: "img_v3_err" }) }, { mentions: [] });
+      return e;
+    };
+    await send(event({ id: "om_ask_pic", chat: "oc_pics", text: "看下这个报错", sender: "ou_owner" }));
+    await send(attachment({ id: "om_pic", chat: "oc_pics", sender: "ou_owner" }));
+    const said = (id: string) => one<{ text: string }>(app.db, "select text from messages where json_extract(meta, '$.externalId') = ?", id)?.text ?? "";
+    expect(answerTo("om_pic")?.content).toContain("[图片]");
+    expect(said("om_pic")).toContain("message_id=om_pic，file_key=img_v3_err");
+    // Someone who did not ask, or no recent request: only kept in the chat's record.
+    await send(attachment({ id: "om_pic_other", chat: "oc_pics", sender: "ou_colleague" }));
+    await send(attachment({ id: "om_pic_elsewhere", chat: "oc_quiet", sender: "ou_owner" }));
+    expect(answerTo("om_pic_other")).toBeUndefined();
+    expect(answerTo("om_pic_elsewhere")).toBeUndefined();
+    await send(attachment({ id: "om_dm_csv", chat: "oc_dm", type: "p2p", sender: "ou_owner", file: true }));
+    expect(answerTo("om_dm_csv")?.content).toContain("订单.csv");
+    expect(said("om_dm_csv")).toContain("file_key=file_v3_csv");
   }, 60_000);
 
   it("a message @-ing the bot in a watched chat is answered once, by the conversation it was asked in", async () => {
