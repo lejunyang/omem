@@ -219,7 +219,7 @@ async function addNote() {
       <section v-for="c in columns" :key="c.key" class="col">
         <h2 class="section-title row"><Icon :name="c.icon" :size="14" />{{ c.title }} <span class="count">{{ c.items.length }}</span></h2>
         <div class="cards">
-          <router-link v-for="i in c.items" :key="i.id" :to="`/items/${i.id}`" class="card item" :class="{ on: detail?.item.id === i.id, p1: i.priority === 1 }">
+          <router-link v-for="i in c.items" :key="i.id" :to="i.flow ? `/items/${i.id}/flow` : `/items/${i.id}`" class="card item" :class="{ on: detail?.item.id === i.id, p1: i.priority === 1 }">
             <div class="row top">
               <button class="check" :title="'标记完成'" @click.prevent="setStatus(i, 'done')"><Icon name="check" :size="12" /></button>
               <span class="ttl" :title="i.title">{{ i.title }}</span>

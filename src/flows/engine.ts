@@ -141,13 +141,14 @@ function askText(app: App, f: ItemFlow, d: FlowStage, p: AskParts) {
   const next = f.definition.stages.filter((x) => x.needs.includes(d.id)).map((x) => x.name);
   const w = describeStage(d);
   return [
-    `**${item.title} · ${d.name}**`,
-    p.ask,
+    // What is asked comes first (src/agents/brief.ts); which item it is about, right under it.
+    `**「${d.name}」${p.ask}**`,
+    `事项：${item.title}`,
     p.result ? `**结果**\n${askNote(p.result, 800)}` : "",
     p.plan && d.note ? `**这一段做什么**\n${askNote(d.note, 400)}\n（${w.carrier}；${w.done}）` : "",
     p.before && ups.length ? `**前面**\n${ups.map((u) => { const note = resultNote(app, f.itemId, u.row!); return `- ${u.def!.name}：${u.row!.state === "skipped" ? "跳过" : "已完成"}${note ? `，${askNote(note, 120)}` : ""}`; }).join("\n")}` : "",
     p.after && next.length ? `**之后**\n确认后接着：${next.join("、")}` : "",
-    p.evidence?.length ? `依据 ${p.evidence.length} 项，在事项页这一段下面可以打开。` : "",
+    p.evidence?.length ? `**依据**\n${p.evidence.length} 项，在这件事的流程页「${d.name}」一段下面可以打开。` : "",
   ].filter(Boolean).join("\n\n");
 }
 // The owner's "确认" overwrites a stage's latest line; what the stage produced is the last thing its

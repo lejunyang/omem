@@ -55,8 +55,8 @@ const sections = computed(() => {
 <template>
   <div class="page board-page">
     <header class="head">
-      <h1>流程看板</h1>
-      <p class="muted">在走流程的事项，按现在走到哪一段分列。<router-link to="/items">回到事项</router-link></p>
+      <h1>流程</h1>
+      <p class="muted">在走流程的事项，按现在走到哪一段分列，点开看每一件的经过和等你的。<router-link to="/flows">编写流程</router-link></p>
     </header>
     <div class="toolbar row wrap">
       <UiSegmented v-model="only" size="sm" aria-label="看哪些" :options="filters" />

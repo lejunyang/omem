@@ -2236,6 +2236,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     lapseAsk(app, id, "本人说不用了");
     return getAsk(app, id);
   });
+  // The owner (or the assistant on their word) restates a waiting question in sections: the card is
+  // redrawn in place. A coding task's card keeps its record: the restated part is the task's question.
+  server.post("/api/asks/:id/question", async (req) => {
+    const { getAsk, reviseAsk } = await import("../agents/asks.ts");
+    const { checkBrief } = await import("../agents/brief.ts");
+    const id = (req.params as { id: string }).id;
+    const a = getAsk(app, id);
+    if (a.userId !== who(req)) throw new HttpError(404, "没有这个提问");
+    const question = q(z.object({ question: z.string().trim().min(1).max(6000) }), req.body).question;
+    checkBrief(question, "问题");
+    const c = one<{ handler: string | null; workId: string | null; seq: number | null }>(app.db, "select json_extract(context, '$.handler') handler, json_extract(context, '$.workId') workId, json_extract(context, '$.seq') seq from asks where id = ?", id);
+    if (c?.handler === "code-task" && c.workId && c.seq) {
+      const t = await import("../agents/code-tasks.ts");
+      const task = t.updateTask(app, c.workId, c.seq, { question });
+      return reviseAsk(app, id, t.ownerQuestionText(app, task));
+    }
+    return reviseAsk(app, id, question);
+  });
   server.post("/api/asks/:id/draft", async (req) => {
     const { saveDraft } = await import("../agents/asks.ts");
     saveDraft(app, (req.params as { id: string }).id, who(req), (req.body as { draft?: unknown } | null)?.draft);

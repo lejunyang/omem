@@ -995,15 +995,16 @@ export function taskText(app: App, t: CodeTask) {
   const tries = t.notes.filter((n) => ["verify", "revert", "host", "owner", "lead", "consult", "assistant"].includes(n.kind)).slice(-6);
   return [
     `### ${taskLabel(t.seq)} ${t.title}`,
-    t.doneWhen ? `完成标准：${t.doneWhen}` : "",
+    t.doneWhen ? `**完成标准**\n${t.doneWhen}` : "",
     ...findings.map((f) => [
       `评审问题 #${(t.origin.findings ?? [])[findings.indexOf(f)]}（${f!.check_name}${f!.file_path ? `，${f!.file_path}${f!.line ? `:${f!.line}` : ""}` : ""}）：${f!.title}`,
       f!.detail ? truncate(f!.detail, 2500) : "",
       f!.owner_suggestion?.trim() ? `建议（本人改写，以此为准）：${f!.owner_suggestion.trim()}` : f!.suggestion ? `建议：${f!.suggestion}` : "",
     ].filter(Boolean).join("\n")),
-    t.origin.note ? `本人的原话：${t.origin.note}` : "",
-    t.answer ? `本人的决定：${t.answer}` : "",
-    tries.length ? `之前的情况：\n${tries.map((n) => `- ${n.text}`).join("\n")}` : "",
+    // The owner's words are often what the task was written from: shown again only when they say more.
+    t.origin.note && !(t.doneWhen ?? "").includes(t.origin.note.trim()) ? `**本人的原话**\n${t.origin.note}` : "",
+    t.answer ? `**本人的决定**\n${t.answer}` : "",
+    tries.length ? `**之前的情况**\n${tries.map((n) => `- ${n.text}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -1017,7 +1018,7 @@ export function ownerQuestionText(app: App, t: CodeTask) {
   return [
     t.question ?? "",
     taskText(app, t).split("\n").slice(1).join("\n").trim(),
-    said && !(t.question ?? "").includes(said.text) ? `编码 Agent 最后的说明：${said.text}` : "",
+    said && !(t.question ?? "").includes(said.text.replace(/^[^：]{0,12}：/, "")) ? `**编码 Agent 最后的说明**\n${said.text}` : "",
   ].filter(Boolean).join("\n\n");
 }
 

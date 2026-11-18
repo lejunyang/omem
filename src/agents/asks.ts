@@ -135,7 +135,7 @@ export function listAsks(app: App, opts: { status?: Ask["status"]; conversationI
 }
 
 /** Channels that show asks (the Feishu bot registers one); `closed` updates what was shown once it is settled. */
-type Sink = { show(app: App, ask: Ask): Promise<boolean>; closed?(app: App, ask: Ask): Promise<void> };
+type Sink = { show(app: App, ask: Ask): Promise<boolean>; closed?(app: App, ask: Ask): Promise<void>; revised?(app: App, ask: Ask): Promise<void> };
 const sinks: Sink[] = [];
 export function addAskSink(s: Sink) {
   sinks.push(s);
@@ -333,6 +333,19 @@ export function nudgePlugin(app: App, conversationId: string | null) {
   if (!conversationId) return;
   const channel = one<{ channel: string }>(app.db, "select channel from conversations where id = ?", conversationId)?.channel;
   if (channel?.startsWith("plugin:")) app.emit({ type: "plugin", plugin: channel.slice("plugin:".length), conversationId });
+}
+
+/**
+ * A question still waiting, said again more plainly (same options, same answer path): shown again
+ * where it was shown, its buttons kept.
+ */
+export async function reviseAsk(app: App, id: string, question: string): Promise<Ask> {
+  if (getAsk(app, id).status !== "pending") throw new HttpError(409, "这个提问已经结束了");
+  run(app.db, "update asks set question = ? where id = ?", question, id);
+  const ask = getAsk(app, id);
+  app.emit({ type: "ask", id, status: ask.status, conversationId: ask.conversationId });
+  for (const s of sinks) await s.revised?.(app, ask).catch(() => {});
+  return ask;
 }
 
 function closed(app: App, ask: Ask) {

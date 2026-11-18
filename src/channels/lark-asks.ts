@@ -1,3 +1,4 @@
+import { briefParts } from "../agents/brief.ts";
 import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, uiLink, type Ask } from "../agents/asks.ts";
 import { viewCardBlocks, viewColor, viewSummary, viewTarget } from "./lark-ui.ts";
 import { fieldsText, normalizeAnswers, type UiField } from "../agents/ui-blocks.ts";
@@ -63,17 +64,37 @@ const withText = (ask: Ask) => ask.allowText || ask.kind === "suggestion";
 /** A question that lists several points to answer (1. … 2. …, ①②) gets a box for several lines. */
 const manyPoints = (question: string) => (question.match(/^\s*(?:\d+\s*[.、．)）]|[①-⑩])/gm) ?? []).length >= 2;
 
+/** Shown open on a card; what is past it goes into a closed fold. */
+const OPEN = 1200;
+
+/**
+ * A question in sections (src/agents/brief.ts): what is asked first, in bold, then the sections that
+ * fit on a phone screen; the rest is folded, never cut.
+ */
+function briefBlocks(app: App, text: string, head = "", rest?: { title: string; markdown: string }): CardBlock[] {
+  const { lead, body } = briefParts(text);
+  const open: string[] = [], folded: string[] = [];
+  for (const p of body ? body.split(/\n\s*\n/) : []) (open.join("\n\n").length + p.length <= OPEN && !folded.length ? open : folded).push(p);
+  const leadLine = !body || lead.startsWith("**") ? lead : `**${lead}**`;
+  return [
+    { markdown: resolveCitationsSync(app, [head, leadLine, ...open].filter(Boolean).join("\n\n")) },
+    ...(folded.length ? [{ fold: { title: "更多情况", markdown: resolveCitationsSync(app, folded.join("\n\n")) } }] : []),
+    ...(rest ? [{ fold: { title: rest.title, markdown: resolveCitationsSync(app, rest.markdown) } }] : []),
+  ];
+}
+
 /** A decision needs its question up front; the investigation stays in the run and a closed fold. */
 function questionBlocks(app: App, ask: Ask): CardBlock[] {
   const row = one<{ context: string | null }>(app.db, "select context from asks where id = ?", ask.id);
   const ctx = JSON.parse(row?.context ?? "{}") as { handler?: string; workId?: string; seq?: number };
-  if (ctx.handler !== "code-task" || !ctx.workId || !ctx.seq) return ask.question ? [{ markdown: resolveCitationsSync(app, ask.question) }] : [];
+  if (ctx.handler !== "code-task" || !ctx.workId || !ctx.seq) return ask.question ? briefBlocks(app, ask.question) : [];
   const task = getTask(app, ctx.workId, ctx.seq);
   const base = (app.config.webUrl || app.baseUrl).replace(/\/$/, "");
+  const asked = task.question ?? "";
+  const record = ask.question.startsWith(asked) ? ask.question.slice(asked.length).trim() : ask.question;
   return [
-    { markdown: resolveCitationsSync(app, `**T${task.seq} · ${task.title}**\n\n${truncate(task.question ?? "", 1200)}`) },
+    ...briefBlocks(app, asked || ask.question, `T${task.seq} · ${cardText(truncate(task.title, 60))}`, record ? { title: "这一项要做的和处理记录", markdown: record } : undefined),
     ...(base ? [{ markdown: `[查看修改项、评审和修复记录](${base}/#/runs/${encodeURIComponent(ctx.workId)})` }] : [{ note: `完整记录：运行 ${ctx.workId} · T${task.seq}` }]),
-    { fold: { title: "完成标准与处理记录", markdown: resolveCitationsSync(app, ask.question) } },
   ];
 }
 
@@ -316,6 +337,10 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
         throw error;
       }
       return true;
+    },
+    async revised(app, ask) {
+      const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and status = 'open' and json_extract(payload, '$.askId') = ? and message_id is not null order by created_at desc limit 1", ask.id);
+      if (row?.message_id) await updateLarkCard(row.message_id, bindCard(askCard(app, ask), row.id), getInteraction(app, row.id)?.bot).catch(() => {});
     },
     async closed(app, ask) {
       // The card that reached Feishu: a send that failed leaves an expired row without a message.

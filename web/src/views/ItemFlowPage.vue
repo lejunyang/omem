@@ -115,7 +115,7 @@ function openRef(r: string) {
 
 <template>
   <div class="page flow-page">
-    <nav class="crumbs small muted"><router-link to="/items">事项</router-link><span>/</span><router-link to="/board">流程看板</router-link></nav>
+    <nav class="crumbs small muted"><router-link to="/items">事项</router-link><span>/</span><router-link to="/board">流程</router-link></nav>
     <Skeleton v-if="loading" variant="text" :rows="6" />
     <p v-else-if="error && !item" class="error" role="alert">{{ error }}</p>
     <template v-else-if="item">

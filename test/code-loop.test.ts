@@ -716,7 +716,7 @@ describe("a delegation driven by tasks", () => {
       expect(stuck.question).toContain("连续 3 轮");
       // What the owner (or the assistant) reads has the task in full, not a cut-off line.
       const text = ownerQuestionText(app, stuck);
-      expect(text).toContain("完成标准：部分退款时运费按金额比例退");
+      expect(text).toContain("**完成标准**\n部分退款时运费按金额比例退");
       expect(text).toContain("第 3 轮编码 Agent 停下时还没做这一项");
       // A try that failed verification still counts.
       updateTask(app, r.id, t.seq, { state: "todo", origin: {} });

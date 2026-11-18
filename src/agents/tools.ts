@@ -35,6 +35,7 @@ import { can, requirePerm } from "../auth/permissions.ts";
 import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
 import { hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate, localStamp } from "../core/util.ts";
+import { checkBrief } from "./brief.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
@@ -2305,6 +2306,7 @@ def({
 def({
   name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段不会直接完成，而是变成一个问本人的确认。blocked：做不下去，waiting_on 写等谁或等什么；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：这一段不需要，写原因；要本人确认或由本人承担的阶段不能由你跳过，把理由告诉本人。",
   write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional() }), handler: async (ctx, a) => {
+    checkBrief(a.note, "note ");
     flowItem(ctx, a.item, true); await flowRefs(ctx, a.evidence ?? []);
     return JSON.stringify(await (await import("../flows/engine.ts")).reportStage(ctx.app, a.item, a.stage, { ...a, waitingOn: a.waiting_on }, flowActor(ctx)));
   },
@@ -3376,6 +3378,7 @@ def({
   }),
   handler: async (ctx, a) => {
     if (ctx.shadow) return "（对比运行）不向本人提问，按你认为最合理的选择继续。";
+    checkBrief(a.question, "问题");
     if (a.fields?.length && a.options?.length) throw new HttpError(400, "有 fields 时不给 options：选项写成一个 choice 字段");
     if (a.fields) checkFields(a.fields);
     if (a.view) {
@@ -6035,11 +6038,13 @@ def({
   schema: z.object({
     task: z.union([z.string(), z.number()]),
     kind: z.enum(["owner", "disputed", "blocked"]),
-    reason: z.string().min(1).max(3000).describe("为什么：分歧点和各自的影响、不成立的理由，或挡住的是什么"),
-    question: z.string().max(1000).optional().describe("owner：给本人的问题，写要定什么和影响"),
+    reason: z.string().min(1).max(3000).describe("为什么：分歧点和各自的影响、不成立的理由，或挡住的是什么。blocked 的会原样给本人看：第一段一句话写卡在什么上、要谁做什么，之后分段写现在、问题、做法、依据；日志和调查过程放附件，只引用"),
+    question: z.string().max(2500).optional().describe("owner：给本人的问题：第一段一句话写要定什么，之后分段写现在、问题、各个做法的影响、依据"),
     options: z.array(z.string().min(1).max(40)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
   handler: async (ctx, a) => {
+    checkBrief(a.reason, "reason ");
+    checkBrief(a.question, "question ");
     const { run: r, rootId, actor } = await taskRound(ctx, "report_task");
     const t = await import("./code-tasks.ts");
     const seq = t.parseTaskRef(a.task);
@@ -6067,7 +6072,8 @@ def({
     // Held up, or objecting to a task no check raised (the assistant or the owner wrote it): the assistant looks first.
     if (a.kind === "blocked" || a.kind === "disputed") {
       const said = a.kind === "blocked" ? "被挡住了" : "认为这一项不该做";
-      const after = t.toAssistant(ctx.app, rootId, seq, `编码 Agent ${said}：${a.reason}`, { by: "coder", kind: "coder", text: `${said}：${a.reason}` });
+      const { lead, body } = (await import("./brief.ts")).briefParts(a.reason);
+      const after = t.toAssistant(ctx.app, rootId, seq, `编码 Agent ${said}：${lead}${body ? `\n\n${body}` : ""}`, { by: "coder", kind: "coder", text: `${said}：${a.reason}` });
       // Woken now, not when the work stops: it may settle this while the round goes on.
       if (after.state === "assistant") (await import("./code-chain.ts")).wakeAssistantForTasks(ctx.app, rootId);
       return `已把 ${t.taskLabel(seq)} 交给${after.state === "assistant" ? "发起交办的助手（它现在就来处理，处理不了才问本人）" : "本人"}，这一项先停着。接着做别的项。`;
@@ -6092,7 +6098,7 @@ def({
     action: z.enum(["retry", "skip", "owner", "later", "add"]),
     title: z.string().max(200).optional().describe("add：新的一项要做成什么，一句话"),
     note: z.string().min(1).max(3000).describe("retry：查到的原因、编码 Agent 这次具体怎么做；skip：为什么不做、在等什么；later：为什么现在不值得改、什么情况下才会碰到；owner：你查过什么、为什么只有本人能定；add：完成标准，以及为什么需要（需求哪里要求的、谁漏了）"),
-    question: z.string().max(1000).optional().describe("owner：给本人的问题，写要定什么和影响，不写调查过程"),
+    question: z.string().max(2500).optional().describe("owner：给本人的问题：第一段一句话写要定什么，之后分段写现在、问题、各个做法的影响、依据，不写调查过程"),
     options: z.array(z.string().min(1).max(60)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
   handler: async (ctx, a) => {
@@ -6106,6 +6112,7 @@ def({
     }
     if (a.task === undefined) throw new HttpError(400, `${a.action} 要填 task（修改项编号）`);
     const seq = t.parseTaskRef(a.task);
+    if (a.action === "owner") checkBrief(a.question, "question ");
     const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action as "retry" | "skip" | "owner" | "later", text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), question: a.question, options: a.options }, "assistant");
     const label = t.taskLabel(seq);
     if (a.action === "owner") return `已把 ${label} 交给本人（发了卡片）。`;
@@ -6166,6 +6173,7 @@ def({
     const t = await import("./code-tasks.ts");
     if (!r || ctx.role !== "review-lead" || !t.isTaskWork(ctx.app, r.id)) throw new HttpError(400, "rule_dispute 只能在按修改项推进的交办的评审负责人运行里使用");
     if (a.decision === "owner" && !a.question?.trim()) throw new HttpError(400, "交给本人要写 question");
+    if (a.decision === "owner") checkBrief(a.question, "question ");
     const { ruleDispute } = await import("./code-loop.ts");
     return ruleDispute(ctx.app, t.workRootOf(ctx.app, r.id), t.parseTaskRef(a.task), a);
   },

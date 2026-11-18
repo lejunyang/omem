@@ -201,11 +201,14 @@ async function remove(c: Conversation) {
   if (c.id === id.value) router.push("/ask");
   void loadList();
 }
-function autosize(e: Event) {
-  const el = e.target as HTMLTextAreaElement;
+/** The box grows with its text, whoever put it there: typing, a draft brought from another page, voice. */
+function autosize() {
+  const el = input.value;
+  if (!el) return;
   el.style.height = "auto";
   el.style.height = Math.min(220, el.scrollHeight) + "px";
 }
+watch(text, () => void nextTick(autosize), { flush: "post" });
 </script>
 
 <template>
@@ -269,7 +272,7 @@ function autosize(e: Event) {
       </div>
       <VoiceChat v-if="talking" class="voice-panel" :space="state.space" @ended="voiceEnded" />
       <form class="composer" @submit.prevent="send">
-        <textarea ref="input" v-model="text" rows="1" :placeholder="recording ? '正在听，说完再点一下麦克风…' : transcribing ? '正在转成文字…' : '提问或交代事情；/help 查看命令（Shift+Enter 换行）'" @input="autosize" @keydown.enter.exact.prevent="send" />
+        <textarea ref="input" v-model="text" rows="1" :placeholder="recording ? '正在听，说完再点一下麦克风…' : transcribing ? '正在转成文字…' : '提问或交代事情；/help 查看命令（Shift+Enter 换行）'" @keydown.enter.exact.prevent="send" />
         <template v-if="voiceReady">
           <button type="button" class="btn ghost icon" :class="{ rec: recording }" :disabled="transcribing || talking" :aria-pressed="!!recording" :aria-label="recording ? '停止并转成文字' : '语音输入'" :title="recording ? '停止并转成文字' : '语音输入'" @click="toggleRecord"><Icon name="mic" :size="16" /></button>
           <button type="button" class="btn ghost icon" :disabled="talking || !!recording" aria-label="语音对话" title="和助理实时语音对话" @click="talking = true"><Icon name="waves" :size="16" /></button>

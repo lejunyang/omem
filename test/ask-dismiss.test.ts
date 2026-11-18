@@ -21,4 +21,20 @@ describe("the owner drops a question they do not need answered", () => {
       await server.close();
     }
   });
+
+  it("restates a waiting question in sections, and refuses a wall of text", async () => {
+    const app = testApp();
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const base = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
+      const a = createAsk(app, { runId: null, userId: "owner", question: "要不要改？", options: [{ label: "改" }], allowText: true });
+      const say = (question: string) => fetch(`${base}/api/asks/${a.id}/question`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) });
+      expect((await say("退款金额算错了，原因在订单行的运费分摊。".repeat(30))).status).toBe(400);
+      const ok = "退款金额按行算还是按单算？\n\n**现在**\n按单算，部分退款时运费退多了。\n\n**做法**\n- 按行算（推荐）：运费按金额比例退";
+      expect((await say(ok)).status).toBe(200);
+      expect(getAsk(app, a.id)).toMatchObject({ status: "pending", question: ok, options: [{ label: "改" }] });
+    } finally {
+      await server.close();
+    }
+  });
 });

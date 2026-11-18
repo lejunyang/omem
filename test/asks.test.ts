@@ -299,7 +299,7 @@ describe("asking the owner", () => {
       const many = createAsk(app, { runId, question: "缺口是否按建议处理？\n\n1. 补提交成功的模式字段\n2. 补挂载成功的来源字段\n3. 补五处曝光\n\n可以整体确认，也可以按编号指出不同意见。", options: [{ label: "按建议补齐" }, { label: "先保留缺口" }] });
       const card = askCard(app, many, { mention: "ou_owner" });
       const elements = (card.body as { elements: any[] }).elements;
-      expect(elements[0].content.startsWith("<at id=ou_owner></at> 缺口是否按建议处理？")).toBe(true);
+      expect(elements[0].content.startsWith("<at id=ou_owner></at> **缺口是否按建议处理？**")).toBe(true);
       const input = elements.find((e) => e.tag === "form").elements.find((e: any) => e.tag === "input");
       expect(input).toMatchObject({ name: "text", input_type: "multiline_text", rows: 3, width: "fill", placeholder: { content: "可以整体回答，也可以按编号逐条写" } });
       // One question: one line, and no @ unless asked (a private chat, or a suggestion).

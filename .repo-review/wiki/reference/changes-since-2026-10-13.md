@@ -15,6 +15,13 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 要本人回答的内容分段写（11-18）
+
+- `src/agents/brief.ts`：`checkBrief` 在 `ask_user`、`report_task`、`settle_code_task`、`rule_dispute`、`stage_report` 上退回不分段的长文字；`roles/_common.md` 加“给本人看的问题和报告”，`roles/coder.md` 的 blocked 写法同步。
+- 卡片：`src/channels/lark-asks.ts` 的 `briefBlocks`（首句加粗、放得下的展开、其余折叠），编码修改项卡片标题截短、记录单独折叠；`code-tasks.ts` 的 `taskText` 用加粗小标题、本人原话与完成标准相同时不重复；`web/src/components/AskCard.vue` 首句加粗、长正文可展开；流程关卡卡片首句是问题。
+- `reviseAsk`（`src/agents/asks.ts`，sink 的 `revised` 原地重画飞书卡片）和 `POST /api/asks/:id/question`。
+- 网页：侧栏“流程”（看板），事项列表里走流程的事项打开流程页；`Ask.vue` 输入框按文字变化自动撑开（含预填）。
+
 ## 单独发的图片和文件并进 @ 机器人的那一轮（11-18）
 
 - 飞书的图片、文件消息不能带 @。`src/channels/lark-bot.ts` 的 `processEvent` 记下每个成员在哪个群（话题）里最近一次 @ 了机器人（`recentAsks`）；两分钟内同一个人在同一处单独发的图片、文件标为 `followsAsk`，像 @ 一样交给 `handle`，不再等内容窗口，正在跑的那一轮直接收到。访客不并。

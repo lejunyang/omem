@@ -148,6 +148,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/asks/:id": "self",
   "POST /api/asks/:id/answer": "self",
   "POST /api/asks/:id/dismiss": "self",
+  "POST /api/asks/:id/question": "self",
   "GET /api/ui/views": "self",
   "GET /api/ui/pages/:id": "self",
   "POST /api/asks/:id/draft": "self",

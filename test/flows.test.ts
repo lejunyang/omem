@@ -267,15 +267,14 @@ describe("只有本人能定的事", () => {
     const r = createRun(app, { kind: "agent", spaceId: "personal", title: "依据" }).id;
     await reportStage(app, item.id, "a", { state: "done", note: "需求点核对完了，改名入口另排（ask0mabcdefgh1234567）", evidence: [r] }, { actor: "assistant", runId: s("a").by!, userId: "owner" });
     const done = getAsk(app, s("a").askId!).question;
-    expect(done).toContain("**示例商城退款 · a**");
+    expect(done.split("\n\n")[0]).toMatch(/^\*\*「a」.*确认吗/); expect(done).toContain("事项：示例商城退款");
     expect(done).toContain("**结果**\n需求点核对完了，改名入口另排");
     expect(done).not.toContain("ask0");
     expect(done).toContain("确认后接着：b");
-    expect(done).toContain("依据 1 项");
+    expect(done).toContain("**依据**\n1 项");
     await ownerAction(app, item.id, "a", "confirm");
     const gate = getAsk(app, s("b").askId!).question;
-    expect(gate).toContain("**示例商城退款 · b**");
-    expect(gate).toContain("轮到这一段了，开始吗？");
+    expect(gate.split("\n\n")[0]).toBe("**「b」轮到这一段了，开始吗？**");
     expect(gate).toContain("**这一段做什么**\n在测试环境逐条验收。截图留证");
     expect(gate).toMatch(/\*\*前面\*\*\n- a：已完成，需求点核对完了，改名入口另排/);
   });

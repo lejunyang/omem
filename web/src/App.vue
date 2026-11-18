@@ -37,6 +37,8 @@ const nav = ref<{ to: string; label: string; icon: string; exact?: boolean; memb
   { to: "/ask", label: "问答", icon: "chat", member: true },
   { to: "/wiki", label: "Wiki", icon: "book", member: true },
   { to: "/items", label: "事项", icon: "checkbox", member: true },
+  // Items moving through a flow, by stage; each opens its own flow page.
+  { to: "/board", label: "流程", icon: "branch", member: true },
   { to: "/reqs", label: "需求", icon: "target", member: true },
   { to: "/memory", label: "记忆", icon: "brain", member: true },
   { to: "/sources", label: "原件", icon: "file", member: true },

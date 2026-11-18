@@ -21,6 +21,13 @@ const title = computed(() => ({ question: "需要你回答", approval: "需要�
 const fields = computed(() => props.ask.ui?.fields ?? []);
 const values = reactive<Record<string, unknown>>(initialValues(props.ask.ui?.fields ?? []));
 const error = ref("");
+/** What is asked, in a sentence, then its sections (src/agents/brief.ts); a long rest opens on demand. */
+const parts = computed(() => {
+  const ps = (props.ask.question ?? "").trim().split(/\n\s*\n/);
+  return { lead: ps[0] ?? "", body: ps.slice(1).join("\n\n") };
+});
+const long = computed(() => parts.value.body.length > 700);
+const expanded = ref(false);
 
 async function answer(body: { choice?: number; approved?: boolean; value?: Record<string, unknown> }) {
   if (busy.value) return;
@@ -44,7 +51,13 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
   <div class="ask" :class="[ask.kind, { compact }]" role="group" :aria-label="title || '下一步'">
     <div v-if="title" class="ask-title small">{{ title }}</div>
     <div v-if="ask.askedBy" class="muted small">{{ ask.askedByName || ask.askedBy }} 的助手替 ta 问你，回答会交给 ta</div>
-    <Markdown v-if="ask.question" class="ask-q" :source="ask.question" />
+    <template v-if="ask.question">
+      <Markdown :class="{ 'ask-lead': !!parts.body }" :source="parts.lead" />
+      <div v-if="parts.body" class="ask-body" :class="{ clipped: long && !expanded }">
+        <Markdown class="ask-q" :source="parts.body" />
+      </div>
+      <button v-if="long" type="button" class="link small more" @click="expanded = !expanded">{{ expanded ? "收起" : "展开全部" }}</button>
+    </template>
     <UiView v-if="ask.ui?.view?.length" class="ask-view" :components="ask.ui.view" :ask-id="ask.id" :can-submit="!fields.length && ask.status === 'pending'" :draft="(ask as { draft?: unknown }).draft" @answered="emit('answered', ask)" />
     <form v-if="fields.length" class="ask-form" @submit.prevent="answer({ value: { ...values } })">
       <UiFields :fields="fields" :values="values" :id-prefix="`ask-${ask.id}`" />
@@ -85,6 +98,10 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.ask-lead { font-weight: 600; }
+.ask-lead :deep(p) { margin: 0; }
+.ask-body.clipped { max-height: 280px; overflow: hidden; mask-image: linear-gradient(to bottom, #000 75%, transparent); }
+.more { align-self: flex-start; }
 .ask > * {
   min-width: 0;
   max-width: 100%;
