@@ -183,6 +183,8 @@ export type Ask = {
   /** Asked for someone else by their assistant (`ask_user` with `to`). */
   askedBy?: string | null;
   askedByName?: string;
+  /** The host's decision card this is (a flow's gate, a delegation's review), answered where its work is. */
+  handler?: string | null;
 };
 
 /** What an agent showed under a reply (`show`). */

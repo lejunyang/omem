@@ -2216,6 +2216,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const p = getPage(app, (req.params as { id: string }).id, who(req), version);
     return { id: p.id, version: p.version, versions: p.versions, title: p.title, createdAt: p.createdAt, document: pageDocument(p.html) };
   });
+  // The owner does not need this question any more: it closes like a lapsed one (its Feishu card keeps
+  // the record, without buttons). The host's decision cards (a flow's gate, a delegation's review) are
+  // answered where they are: dropping one would only leave its work waiting.
+  server.post("/api/asks/:id/dismiss", async (req) => {
+    const { getAsk, lapseAsk } = await import("../agents/asks.ts");
+    const id = (req.params as { id: string }).id;
+    const a = getAsk(app, id);
+    if (a.userId !== who(req)) throw new HttpError(404, "没有这个提问");
+    if (a.status !== "pending") throw new HttpError(409, "这个提问已经结束了");
+    if (one<{ h: string | null }>(app.db, "select json_extract(context, '$.handler') h from asks where id = ?", id)?.h) throw new HttpError(409, "这是流程或交办等着的决定，在它的卡片或页面上回答");
+    lapseAsk(app, id, "本人说不用了");
+    return getAsk(app, id);
+  });
   server.post("/api/asks/:id/draft", async (req) => {
     const { saveDraft } = await import("../agents/asks.ts");
     saveDraft(app, (req.params as { id: string }).id, who(req), (req.body as { draft?: unknown } | null)?.draft);

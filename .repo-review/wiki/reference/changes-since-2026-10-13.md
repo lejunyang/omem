@@ -15,6 +15,10 @@ updated: 2026-11-18
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 本人放弃一个提问（11-18）
+
+- `POST /api/asks/:id/dismiss`（`src/server/http.ts`）：本人的、还在等的、不是宿主决定卡片的提问按失效关闭（`lapseAsk`），飞书卡片随之变成已失效。`web/src/views/Home.vue` 的“等你回答”每条加“不用了”。测试 `test/ask-dismiss.test.ts`。
+
 ## 运行交的截图按附件压缩设置压（11-18）
 
 - `src/core/media.ts` 加 `compressImageFile`：按 `media.auto` 的模式、质量、长边、最小体积压一张不在 `files/` 里的图片，小 10% 以上才给出压缩后的文件。

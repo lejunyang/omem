@@ -35,6 +35,11 @@ async function load() {
   data.value = await get<HomeData>("/api/home");
 }
 /** Questions and approvals agents are waiting on (suggestions stay with their reply). */
+/** Close a question the owner does not need answered any more (its Feishu card keeps the record). */
+async function dismiss(a: Ask) {
+  await post(`/api/asks/${a.id}/dismiss`, {}).catch(() => null);
+  await loadAsks();
+}
 async function loadAsks() {
   asks.value = (await get<Ask[]>("/api/asks?status=pending").catch(() => [])).filter((a) => a.kind !== "suggestion");
 }
@@ -102,7 +107,10 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
           <div class="stack">
             <div v-for="a in asks" :key="a.id" class="stack tight">
               <AskCard :ask="a" @answered="loadAsks" />
-              <router-link v-if="a.conversationId" :to="`/ask/${a.conversationId}`" class="muted small">打开对话</router-link>
+              <div class="row small">
+                <router-link v-if="a.conversationId" :to="`/ask/${a.conversationId}`" class="muted">打开对话</router-link>
+                <button v-if="!a.handler" type="button" class="link small muted" @click="dismiss(a)">不用了</button>
+              </div>
             </div>
           </div>
         </div>
