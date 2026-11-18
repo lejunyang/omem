@@ -655,7 +655,7 @@ export const peerCommands: Record<string, Command> = {
     run: async (app, a) => {
       const { catalogEntry } = await import("../agents/catalog.ts");
       const { listAgentProfiles } = await import("../agents/runner.ts");
-      const { adapterPackage } = await import("./peer-inspect.ts");
+      const { adapterPackage, adapterPrefix } = await import("./peer-inspect.ts");
       // Only a catalog package already installed globally here: nothing new gets onto the machine.
       const entry = catalogEntry(a.id);
       const profile = listAgentProfiles(app).find((p) => p.id === a.id);
@@ -666,9 +666,11 @@ export const peerCommands: Record<string, Command> = {
       const registry = publicNpmRegistry(await packageRoot());
       // An exact version asked for by the owner: also lift a minimum-release-age policy (npm's `before` / `min-release-age`) for this install only.
       const pin = a.version ? ["--min-release-age=0", `--before=${new Date().toISOString()}`] : [];
-      const r = sh("npm", ["i", "-g", `${entry.npm}@${a.version ?? "latest"}`, ...(registry ? [`--registry=${registry}`] : []), ...pin], app.home, 600_000);
+      // Into the prefix the command is found in: omem's own npm may have another global prefix, and then the copy in use would stay old.
+      const prefix = adapterPrefix(profile);
+      const r = sh("npm", ["i", "-g", `${entry.npm}@${a.version ?? "latest"}`, ...(prefix ? [`--prefix=${prefix}`] : []), ...(registry ? [`--registry=${registry}`] : []), ...pin], app.home, 600_000);
       const after = adapterPackage(profile);
-      return { ok: r.code === 0 && (!a.version || after?.version === a.version), package: entry.npm, before: before.version, after: after?.version ?? null, registry: registry ?? "（这台机器的 npm 设置）", output: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") };
+      return { ok: r.code === 0 && (!a.version || after?.version === a.version), package: entry.npm, before: before.version, after: after?.version ?? null, prefix, registry: registry ?? "（这台机器的 npm 设置）", output: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") };
     },
   },
   search: {

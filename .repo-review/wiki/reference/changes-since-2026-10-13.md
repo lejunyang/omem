@@ -18,7 +18,7 @@ updated: 2026-11-18
 ## 远程升级 ACP 适配器从公开源装（11-18）
 
 - `peer call <设备> agent-upgrade` 原来用那台机器自己的 npm 设置装 `@latest`，公司镜像落后时会装回旧版（codex-acp 停在 2.5.0，不认识 Codex 新的默认模型，Agent 页上这个模型没有思考强度）。现在带 `--registry` 用 `osdk.toml` 的 `[registries.npm]`（`src/core/peer-exec.ts` 的 `publicNpmRegistry`），和依赖安装一致。
-- 换了源仍装回旧版时，多半是那台机器的 npm 设了发布时长下限（新版发布不久被跳过）。本人可以给 `version`（如 `2.7.0`）装指定版本，这一次带 `--min-release-age=0` 和 `--before=<现在>` 不受下限限制；装完的版本不是要的版本时 `ok` 为 false。
+- 换了源仍是旧版：npm 报告装成功了，但装进的是 omem 进程里 npm 自己的全局目录，命令实际找到的那份没动。现在装进命令所在的那个前缀（`peer-inspect.ts` 的 `adapterPrefix`，结果里返回 `prefix`）。另外可以给 `version`（如 `2.7.0`）装指定版本，这一次带 `--min-release-age=0` 和 `--before=<现在>`，不受发布时长下限限制；装完的版本不是要的版本时 `ok` 为 false。
 
 ## 会议里叫机器人：主助手来查、可设叫法和口头叫它、旁听时按会议性质主动查（11-18）
 

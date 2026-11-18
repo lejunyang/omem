@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { agentProfileSchema } from "../src/core/config.ts";
-import { adapterPackage } from "../src/core/peer-inspect.ts";
+import { adapterPackage, adapterPrefix } from "../src/core/peer-inspect.ts";
 import { peerCommands, runPeerCommand } from "../src/core/peer-exec.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { remember } from "../src/memory/store.ts";
@@ -79,6 +79,8 @@ describe("read-only peer commands: agents, search, prompt, ide", () => {
     chmodSync(bin, 0o755);
     write(join(dir, "lib", "node_modules", "@vendor", "fake-acp", "package.json"), JSON.stringify({ name: "@vendor/fake-acp", version: "2.5.0" }));
     expect(adapterPackage({ command: bin, args: [] })).toEqual({ name: "@vendor/fake-acp", version: "2.5.0", via: "installed" });
+    // An upgrade goes into the prefix this copy is in, not npm's own global prefix.
+    expect(adapterPrefix({ command: bin, args: [] })).toBe(process.platform === "win32" ? join(dir, "lib") : dir);
     // Outside node_modules a package.json nearby does not count; a missing command has nothing.
     write(join(dir, "tool", "bin", "tool.js"), "");
     write(join(dir, "tool", "package.json"), JSON.stringify({ name: "not-an-adapter", version: "1.0.0" }));

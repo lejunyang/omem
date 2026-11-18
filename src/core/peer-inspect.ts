@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { App } from "./app.ts";
 import type { AgentProfile } from "./config.ts";
 import type { RoleName } from "./config.ts";
@@ -30,6 +30,22 @@ export function adapterPackage(profile: Pick<AgentProfile, "command" | "args">):
     const spec = profile.args.find((a) => !a.startsWith("-"));
     return spec ? { name: spec.replace(/(?<=.)@[^@/]*$/, ""), version: null, via: "npx" } : null;
   }
+  const p = installedAdapter(profile);
+  return p && { name: p.name, version: p.version, via: "installed" };
+}
+
+/** The npm prefix that holds an installed adapter (`<prefix>/lib/node_modules/<pkg>`, or `<prefix>/node_modules/<pkg>` on Windows), so an upgrade replaces this copy and not one in npm's own global prefix. */
+export function adapterPrefix(profile: Pick<AgentProfile, "command" | "args">): string | null {
+  const dir = installedAdapter(profile)?.dir;
+  if (!dir) return null;
+  let modules = dirname(dir);
+  if (basename(modules).startsWith("@")) modules = dirname(modules);
+  if (basename(modules) !== "node_modules") return null;
+  const up = dirname(modules);
+  return basename(up) === "lib" && process.platform !== "win32" ? dirname(up) : up;
+}
+
+function installedAdapter(profile: Pick<AgentProfile, "command" | "args">): { name: string; version: string | null; dir: string } | null {
   const found = resolveCommand(profile.command);
   if (!found) return null;
   let dir: string;
@@ -44,7 +60,7 @@ export function adapterPackage(profile: Pick<AgentProfile, "command" | "args">):
     if (!existsSync(file) || !/[\\/]node_modules[\\/]/.test(dir + "/")) continue;
     try {
       const pkg = JSON.parse(readFileSync(file, "utf8")) as { name?: string; version?: string };
-      if (pkg.name) return { name: pkg.name, version: pkg.version ?? null, via: "installed" };
+      if (pkg.name) return { name: pkg.name, version: pkg.version ?? null, dir };
     } catch {}
   }
   return null;
