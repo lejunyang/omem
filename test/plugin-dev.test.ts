@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -9,7 +9,7 @@ import { App } from "../src/core/app.ts";
 import { overwriteLocal, snapshotStream } from "../src/core/pull.ts";
 import { callTool, toolList } from "../src/agents/tools.ts";
 import { BuildNeeded, buildPlan, installPlugin } from "../src/plugins/install.ts";
-import { linkPlugin, readLinks, unlinkPlugin, watchLinkedPlugins } from "../src/plugins/links.ts";
+import { linkPlugin, readLinks, unlinkPlugin, watchLinkedPlugins, watchTree } from "../src/plugins/links.ts";
 import { describePlugin, findPlugin, forgetPlugin, getPlugin, loadPlugins, manifestSchema, reloadLinked, trustPlugin } from "../src/plugins/registry.ts";
 import { trustState } from "../src/plugins/trust.ts";
 import { startServer } from "../src/server/http.ts";
@@ -159,6 +159,53 @@ describe("omem plugin link", () => {
     expect(readLinks(app)).toEqual({ devnotes: expect.objectContaining({ dir: r.dir }) });
     expect(trustState(app, "devnotes", r.dir, true)).toBe("trusted");
     rmSync(other.home, { recursive: true, force: true });
+  });
+});
+
+describe("watching a plugin being written", () => {
+  it("hears changes in subdirectories, also ones made after it started, and not in node_modules, .git or web", async (ctx) => {
+    const dir = mkdtempSync(join(tmpdir(), "omem-tree-"));
+    // Without a watcher from the system (Linux's inotify instances used up by other programs) the tree is looked over: the next test.
+    try { watch(dir).close(); } catch { rmSync(dir, { recursive: true, force: true }); ctx.skip(); }
+    mkdirSync(join(dir, "src", "lib"), { recursive: true });
+    mkdirSync(join(dir, "node_modules", "x"), { recursive: true });
+    const heard: string[] = [];
+    const w = watchTree(dir, (name) => heard.push(name.replace(/\\/g, "/")));
+    try {
+      writeFileSync(join(dir, "node_modules", "x", "index.js"), "1");
+      mkdirSync(join(dir, "web"));
+      writeFileSync(join(dir, "web", "index.html"), "<p></p>");
+      writeFileSync(join(dir, "src", "lib", "a.ts"), "1");
+      await vi.waitFor(() => expect(heard).toContain("src/lib/a.ts"), { timeout: 5000, interval: 50 });
+      mkdirSync(join(dir, "src", "fresh"));
+      await vi.waitFor(() => expect(heard).toContain("src/fresh"), { timeout: 5000, interval: 50 });
+      // Give the new directory's watcher a moment to be in place, then write into it.
+      await new Promise((r) => setTimeout(r, 100));
+      writeFileSync(join(dir, "src", "fresh", "b.ts"), "1");
+      await vi.waitFor(() => expect(heard).toContain("src/fresh/b.ts"), { timeout: 5000, interval: 50 });
+      expect(heard.filter((n) => /^(node_modules|web)(\/|$)/.test(n))).toEqual([]);
+    } finally {
+      w.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("when the system gives no watcher, looks the tree over instead and still hears a change", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omem-tree-"));
+    mkdirSync(join(dir, "src"));
+    mkdirSync(join(dir, "node_modules"));
+    writeFileSync(join(dir, "src", "a.ts"), "1");
+    let heard = 0;
+    const w = watchTree(dir, () => heard++, { poll: true, pollMs: 30 });
+    try {
+      writeFileSync(join(dir, "node_modules", "x.js"), "1");
+      await new Promise((r) => setTimeout(r, 120));
+      expect(heard).toBe(0);
+      writeFileSync(join(dir, "src", "a.ts"), "2");
+      await vi.waitFor(() => expect(heard).toBeGreaterThan(0), { timeout: 3000, interval: 30 });
+    } finally {
+      w.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

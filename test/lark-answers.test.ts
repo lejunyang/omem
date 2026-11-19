@@ -187,8 +187,9 @@ describe("answers in groups and where thinking bubbles go", async () => {
 
   it("a reply in a topic gets its thinking bubble in that topic, with the answer", async () => {
     await send(event({ id: "om_in_topic", chat: "oc_team", topic: "omt_t1", text: "那就按第二个方案", sender: "ou_owner" }));
-    expect(cots.find((c) => c.origin === "om_in_topic")).toEqual({ origin: "om_in_topic", inThread: true });
-    expect(answerTo("om_in_topic")?.inThread).toBe(true);
+    // The bubble and the answer come from the turn after `send` returns: wait for them.
+    await expect.poll(() => cots.find((c) => c.origin === "om_in_topic"), { timeout: 10_000 }).toEqual({ origin: "om_in_topic", inThread: true });
+    await expect.poll(() => answerTo("om_in_topic")?.inThread, { timeout: 10_000 }).toBe(true);
   }, 60_000);
 
   it("a background turn whose anchor has since become a topic's root shows its bubble inside that topic", async () => {

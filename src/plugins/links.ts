@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { HttpError, now } from "../core/util.ts";
@@ -79,13 +79,98 @@ export function unlinkPlugin(app: App, id: string) {
 /** Changes that do not need a reload: pages are read from the directory on every request. */
 const QUIET = /^(node_modules|\.git|web)(\/|$)/;
 
+/** At most this many directories of one plugin are watched; a tree larger than that is not source being written. */
+const MAX_DIRS = 400;
+
+/**
+ * Watch a directory tree for changes outside QUIET, calling `changed` with the path inside it. Linux
+ * gets a plain watcher per directory (new ones added as they appear): there Node's recursive watch
+ * misses changes when the machine is busy, as the service often is while agents run. Elsewhere the
+ * system's own recursive watch is used. When the system will not give a watcher (Linux's inotify
+ * instances used up by other programs), the tree is looked over once a second instead.
+ */
+export function watchTree(dir: string, changed: (name: string) => void, opts: { pollMs?: number; /** Only the directory itself, not what is under it. */ flat?: boolean; /** Look it over instead of watching (tests). */ poll?: boolean } = {}): { close(): void } {
+  const quiet = (name: string) => QUIET.test(name.replace(/\\/g, "/"));
+  const flat = !!opts.flat;
+  try {
+    if (opts.poll) throw new Error("poll");
+    if (flat || process.platform !== "linux") {
+      const w = watch(dir, { recursive: !flat }, (_e, name) => { if (!quiet(String(name ?? ""))) changed(String(name ?? "")); });
+      w.on("error", () => {});
+      w.unref();
+      return w;
+    }
+    return watchDirs(dir, changed, quiet);
+  } catch {
+    return pollTree(dir, changed, quiet, opts.pollMs ?? 1000, flat);
+  }
+}
+
+function watchDirs(dir: string, changed: (name: string) => void, quiet: (name: string) => boolean) {
+  const watchers = new Map<string, FSWatcher>();
+  const add = (at: string) => {
+    if (watchers.has(at) || watchers.size >= MAX_DIRS) return;
+    const rel = relative(dir, at);
+    if (rel && quiet(rel)) return;
+    const w = watch(at, (_e, name) => {
+      const inner = join(rel, String(name ?? ""));
+      if (quiet(inner)) return;
+      // A directory that appeared (or was moved in) gets its own watcher; the change itself counts.
+      try { if (statSync(join(at, String(name ?? ""))).isDirectory()) add(join(at, String(name ?? ""))); } catch {}
+      changed(inner);
+    });
+    w.on("error", () => { w.close(); watchers.delete(at); });
+    w.unref();
+    watchers.set(at, w);
+    try {
+      for (const e of readdirSync(at, { withFileTypes: true })) if (e.isDirectory()) add(join(at, e.name));
+    } catch {}
+  };
+  try {
+    add(dir);
+  } catch (e) {
+    // Not even the top one, or the system ran out partway: close what was opened and let the caller poll.
+    for (const w of watchers.values()) w.close();
+    if (!watchers.size) throw e;
+  }
+  return { close: () => { for (const w of watchers.values()) w.close(); watchers.clear(); } };
+}
+
+/** The files' sizes and change times, outside QUIET: different when something was written, added or removed. */
+function treeStamp(dir: string, quiet: (name: string) => boolean, flat = false) {
+  const parts: string[] = [];
+  const walk = (at: string) => {
+    let entries;
+    try { entries = readdirSync(at, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (parts.length >= 5000) return;
+      const full = join(at, e.name), rel = relative(dir, full);
+      if (quiet(rel)) continue;
+      if (e.isDirectory()) { if (!flat) walk(full); }
+      else try { const st = statSync(full); parts.push(`${rel}:${st.size}:${st.mtimeMs}`); } catch {}
+    }
+  };
+  walk(dir);
+  return parts.sort().join("\n");
+}
+
+function pollTree(dir: string, changed: (name: string) => void, quiet: (name: string) => boolean, every: number, flat: boolean) {
+  let last = treeStamp(dir, quiet, flat);
+  const t = setInterval(() => {
+    const now = treeStamp(dir, quiet, flat);
+    if (now !== last) { last = now; changed(""); }
+  }, every);
+  t.unref();
+  return { close: () => clearInterval(t) };
+}
+
 /**
  * In the running service: load a linked plugin again when its files change (a moment after the last
  * change), and pick up `omem plugin link` / `unlink` from the command line. Returns a stop function.
  */
 export function watchLinkedPlugins(app: App, opts: { delayMs?: number } = {}) {
   const delay = opts.delayMs ?? 300;
-  const watching = new Map<string, { dir: string; w: FSWatcher }>();
+  const watching = new Map<string, { dir: string; w: { close(): void } }>();
   const timers = new Map<string, NodeJS.Timeout>();
   let stopped = false;
   const later = (key: string, fn: () => Promise<void> | void) => {
@@ -101,18 +186,7 @@ export function watchLinkedPlugins(app: App, opts: { delayMs?: number } = {}) {
     app.emit({ type: "plugin", plugin: id, conversationId: "" });
     console.log(p ? `[omem] 开发中的插件 ${id} 有改动，已重新加载` : `[omem] 插件 ${id} 的链接去掉了`);
   });
-  const watchDir = (id: string, dir: string) => {
-    try {
-      const w = watch(dir, { recursive: true }, (_event, name) => {
-        if (!QUIET.test(String(name ?? "").replace(/\\/g, "/"))) reload(id);
-      });
-      w.on("error", () => {});
-      w.unref();
-      watching.set(id, { dir, w });
-    } catch (e) {
-      console.warn(`[omem] 看不住开发中的插件 ${id} 的目录（${(e as Error).message}）：改了要重启 omem`);
-    }
-  };
+  const watchDir = (id: string, dir: string) => watching.set(id, { dir, w: watchTree(dir, () => reload(id)) });
   /** The links as they are now: watch new ones, drop gone ones; `first`: what loadPlugins just loaded. */
   const sync = (first = false) => {
     const links = readLinks(app);
@@ -130,18 +204,12 @@ export function watchLinkedPlugins(app: App, opts: { delayMs?: number } = {}) {
   };
   sync(true);
   mkdirSync(join(app.home, "plugins"), { recursive: true });
-  let list: FSWatcher | null = null;
-  try {
-    list = watch(join(app.home, "plugins"), (_event, name) => {
-      if (String(name ?? "") === ".links.json") later("(links)", () => sync());
-    });
-    list.on("error", () => {});
-    list.unref();
-  } catch {}
+  // `omem plugin link` / `unlink` from the command line write .links.json; a looked-over directory says only that something changed.
+  const list = watchTree(join(app.home, "plugins"), (name) => { if (name === ".links.json" || name === "") later("(links)", () => sync()); }, { flat: true });
   return () => {
     stopped = true;
     for (const t of timers.values()) clearTimeout(t);
     for (const x of watching.values()) x.w.close();
-    list?.close();
+    list.close();
   };
 }

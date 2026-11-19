@@ -98,7 +98,7 @@ it("分诊采用改判动作，直接答复也受门槛约束；交给谁仍是�
   fake("ignore", { ignore: 0.58, notify: 0.3, handle: 0.12 });
   const t = await triage(app, { 材料: "虚构提问" }, { needProgress: false, ref: "mention-demo" });
   expect(t.action).toBe("notify");
-  expect(t.reason).toContain("把握不到 0.6，按简短提醒处理");
+  expect(t.reason).toContain("把握 0.58，不到 0.6，按「简短提醒」处理");
   setDecisionFetchForTests(async (_url, init) => {
     const q = JSON.parse(String(init!.body)).questions[0];
     if (q.type === "predicate") return new Response(JSON.stringify({ answers: [{ type: "predicate", name: "q", probability: 0.65 }] }));
@@ -106,7 +106,7 @@ it("分诊采用改判动作，直接答复也受门槛约束；交给谁仍是�
   });
   const handle = await triage(app, { 材料: "虚构提问" }, { needProgress: true, ref: "mention-demo" });
   expect(handle.action).toBe("handle"); expect(handle.canProgress).toBe(false);
-  expect(handle.reason).toContain("把握不到 0.7，按要本人定处理");
+  expect(handle.reason).toContain("不到 0.7，按「要本人定」处理");
   expect(all<{ scene: string; ref: string }>(app.db, "select scene, ref from decisions")).toEqual([
     { scene: "triage", ref: "mention-demo" }, { scene: "triage", ref: "mention-demo" }, { scene: "progress", ref: "mention-demo" },
   ]);

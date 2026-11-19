@@ -15,6 +15,11 @@ updated: 2026-11-19
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 开发中插件的目录监听在机器忙时不再漏掉改动；几处跟不上代码的测试（11-19）
+
+- `src/plugins/links.ts` 的 `watchTree`：Linux 上不用 Node 的递归 `fs.watch`（负载高时实测十次漏八次），改为每个子目录一个非递归监听、新目录随时补上（最多 400 个）；`watch` 建不起来（inotify 实例被用完，报 EMFILE）时每秒比一遍文件大小和修改时间。`.links.json` 的监听也走它（`flat`）。测试在 `test/plugin-dev.test.ts`。
+- 测试跟上已有的改动：`test/decision-log.test.ts` 按 11-18 改过的分诊措辞（“把握 0.58，不到 0.6，按「简短提醒」处理”）；`test/item-materials.test.ts` 的精简列表带 `wake`；`test/lark-answers.test.ts` 话题里的思考气泡改为等它出现再断言。
+
 ## 评审结论分享、运行页显示等你的流程段、飞书授权链接与接着做、消息采集开关（11-19）
 
 - `src/core/shares.ts` 的 `shareReview`：review 类只读分享，内容是最近一轮评审的问题和本人决定、负责人总结、分支，不含过程；引用的代码位置用 `src/agents/run-file.ts` 的 `readRunFile`（从 `/api/runs/:id/file` 抽出）按评审分支读出前后几行，`src:`/`mem:` 用分享者能读的范围复制，正文里改成 `#ev-<n>`；分享页（`Share.vue`、`lib/share.ts`、`ShareItemBody.vue`）评审用三栏：问题目录、问题、证据；入口 `POST /api/runs/:id/share-review`、工具 `share_review`、评审概览“分享结论”。分享页 `web/src/views/Share.vue` 加了 review 的渲染。

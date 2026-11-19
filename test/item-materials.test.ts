@@ -72,7 +72,8 @@ describe("finding runs", () => {
     expect(listRuns(app, { kind: "role:review-style" }).map((r) => r.id)).toEqual([a.id]);
     expect(countRuns(app, { kind: "role:review-style,ingest" })).toBe(2);
     const brief = listRuns(app, { q: "refund-split", brief: true })[0];
-    expect(brief.input).toEqual({ task: "对照源仓库的退款卡片" });
+    // `wake` stays so a brief list still tells a wake from someone asking again (run-trigger.ts).
+    expect(brief.input).toEqual({ task: "对照源仓库的退款卡片", wake: null });
     expect(brief.output).toEqual({});
     expect(getRun(app, a.id).input).toMatchObject({ task: "对照源仓库的退款卡片" });
     run(app.db, "update runs set input = json_set(input, '$.task', ?) where id = ?", "长".repeat(2000), a.id);
