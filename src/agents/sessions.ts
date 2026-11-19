@@ -247,10 +247,13 @@ export async function watchedNote(app: App, t: Thread, messages: ThreadMessage[]
   const othersAsks = k.othersAsks === "leave" ? "找别人或别的机器人做的事（标着“@了别人”，或叫某人的助理、某个机器人）不接手，也不抢着回答；除非关注说明里写了要处理" : "找别人或别的机器人的事，你能帮上的也可以处理";
   const depth = k.depth === "investigate" ? "值得查的主动查：用技能、日志、代码、原件去核实，查到符合“值得回复的结论”的再回；查不到就写清还差什么、该找谁" : "只回答能直接答的，不主动去排查";
   const revise = k.reply !== "none" && c.brief && trial.correctionsSinceBrief(app, c) >= trial.REVISE_AFTER;
+  // A matter's 关注: where the matter stands, so questions about it are answered from that.
+  const matter = c.kind === "item" && c.itemId ? (await import("../channels/listen-items.ts")).itemStateText(app, c.itemId) : "";
   return [
     head,
     "",
-    `本人要你关注${c.chats.length > 1 ? `这 ${c.chats.length} 个群` : "这个群"}：${c.note ?? "（没有写目的）"}${c.expiresAt ? `；到 ${localStamp(c.expiresAt, app.config.timezone)}` : ""}。${c.chats.length > 1 ? "每条消息末尾写着它在哪个群；同一件事在几个群里出现时可以连起来看。" : ""}`,
+    `本人要你关注${c.chats.length > 1 ? `这 ${c.chats.length} 个群` : "这个群"}：${c.note ?? (c.kind === "item" ? `这件事（${c.name}）在群里的进展和问题` : "（没有写目的）")}${c.expiresAt ? `；到 ${localStamp(c.expiresAt, app.config.timezone)}` : ""}。${c.chats.length > 1 ? "每条消息末尾写着它在哪个群；同一件事在几个群里出现时可以连起来看。" : ""}`,
+    ...(matter ? ["", matter] : []),
     ...(trial.briefText(c) ? ["", trial.briefText(c)] : []),
     ...(playbook ? ["", `## 这个关注的经验（listen-coach 按以往的案例总结的，和本人的决定冲突时以本人为准）\n\n${playbook}`] : []),
     ...(cases.length ? ["", `## 相近的案例\n\n${casesText(cases)}`] : []),

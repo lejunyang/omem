@@ -68,7 +68,9 @@ function takes(c: ListenContext, m: ChatMessage, who: Who, at: number | null) {
 export async function routeWatchedMessages(app: App, chatId: string, chatName: string, messages: ChatMessage[], opts: { botOpenId?: string | null; ownerId?: string } = {}) {
   if (!chatListened(app, chatId)) return 0;
   await expireContexts(app);
-  const ctxs = contextsOfChat(app, chatId);
+  // A matter's 关注 that only reads is followed by flows/follow.ts (item-follow notes what changed): its
+  // handler is not also run on every batch. With replies on, it reads the groups here like a place.
+  const ctxs = contextsOfChat(app, chatId).filter((c) => c.kind !== "item" || c.knobs.reply !== "none");
   if (!ctxs.length) return 0;
   // Capture (lark-cli) sees people with its own ids: the owner as capture knows them.
   const who = { ownerOpenId: opts.ownerId ?? app.config.lark.ownerOpenId, botOpenId: opts.botOpenId };
@@ -89,6 +91,8 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
     const before = at !== null && at < Date.parse(takers[0].since);
     for (const c of takers) {
       if (!c.conversationId) continue;
+      // A rule already handed this message to this 关注 (rules/actions.ts, action `context`).
+      if (one(app.db, "select 1 from handled_messages where channel = ? and message_id = ?", `listen:${c.id}`, m.id)) continue;
       const batch = c.knobs.batchMinutes * 60_000;
       const others = takers.filter((x) => x.id !== c.id).map((x) => x.name);
       const r = await receive(app, {

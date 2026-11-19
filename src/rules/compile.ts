@@ -7,6 +7,7 @@ import { one } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { describe } from "./conditions.ts";
 import { pluginObjectKinds } from "../plugins/objects.ts";
+import { listContexts } from "../channels/listen.ts";
 import { FIELDS, OMEM_TYPE_LABEL, OMEM_TYPES, OPS, ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
 
 /**
@@ -22,6 +23,7 @@ const LANGUAGE = `条件是 JSON：叶子 {"field": 字段, "op": 运算, "value
 const ACTIONS = `动作（按顺序执行，至少一个）：
 - {"type":"agent","spec":"档案名","task":"交给它的任务说明（触发的消息和正在进行的讨论会自动附上）","ownTopic":是否从触发消息开话题处理,"reply":"none|draft|auto|silent","hideThinking":false,"failureTo":"owner|chat","allowUrgent":false,"allowPrivate":false,"merge":true,"mergeReply":"combined|separate","ai":{"profile":"后端 id","model":"模型","effort":"思考强度"}}：ai 只在本人点名用哪个后端、模型或强度时写（profile 必须是下面列出的后端 id，model、effort 不确定就省略），不写就用档案自己的设置，模型偏好不要写进 task；merge 是处理中再次触发时并入同一会话（默认 true）；mergeReply 默认 combined（合并回复），本人要求每个触发分别回复、逐条完成任务时用 separate，仍 merge=true，依次在同一会话处理；只有本人要求不共用会话、独立并行处理时写 merge=false；allowUrgent 允许它在群里发消息时加急指定的人，allowPrivate 允许它发只给群里某些人看的消息（reply 不是 none 时才有用）；reply 的 none 只把结论发给本人；draft 它要在群里说的话先给本人确认；auto 可以直接在这个群/话题里回复和 @ 人，过程（思考气泡）可见；silent 静默排查：群里看不到过程，它自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题
 - {"type":"watch","spec":"档案名","on":"all|mention|keyword","pattern":"关键词正则（keyword 时）","reply":"none|draft|auto"}：开始监听这个群，之后的消息交给它
+- {"type":"context","context":"关注 id"}：交给关注，把这件事交给本人已有的一个「关注」，由它的处理者带着那个关注的说明、案例和经验处理；只在本人点名交给某个已有的关注时用
 - {"type":"invite-bot"}：以本人身份把 omem 的机器人拉进这个群
 - {"type":"forward","to":{"chatId":"current 或 oc_ 开头的会话 id","name":"会话名"},"note":"附言"}：只用于新消息触发。把触发的消息转发到 to（“转到这个群”写 current，即本人说话的这个飞书会话）；群里没有机器人时以本人身份拉进去，to 是某人的私聊时以本人身份建一个本人、对方和机器人的群
 - {"type":"wait-message","chatId":"oc_ 开头的会话 id","name":"会话名","minutes":5,"contains":"要包含的词","matches":"正则（可空）","onTimeout":"notify|none"}：只用于新消息触发。等那个会话（比如验证码机器人的私聊）出现触发之后的新消息，最多 minutes 分钟，每 10 秒读一次；等到了，后面的动作处理等到的这条（forward 转发的就是它），没等到按 onTimeout 通知本人或不做
@@ -34,6 +36,8 @@ const ACTIONS = `动作（按顺序执行，至少一个）：
 
 export async function draftRule(app: App, description: string, current?: Partial<RuleInput>): Promise<{ rule?: RuleInput; error?: string; summary?: string }> {
   const specs = listAgentSpecs(app).map((s) => `- ${s.name}：${s.description}`).join("\n") || "（还没有 Agent 档案）";
+  const contexts = listContexts(app, { activeOnly: true }).filter((c) => c.kind !== "default").slice(0, 60)
+    .map((c) => `- ${c.id}：「${truncate(c.name, 40)}」（${c.kind === "item" ? "一件事" : `${c.chats.length} 个群`}）${c.note ? `：${truncate(c.note, 80)}` : ""}`).join("\n") || "（还没有关注）";
   const botName = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value;
   const backends = listAgentProfiles(app).filter((p) => p.installed).map((p) => {
     const models = cachedProbe(app, p.id)?.models ?? [];
@@ -52,6 +56,8 @@ export async function draftRule(app: App, description: string, current?: Partial
     ACTIONS,
     "",
     `已有的 Agent 档案：\n${specs}`,
+    "",
+    `已有的关注（context 动作写这里的 id）：\n${contexts}`,
     "",
     `可用的 AI 后端（ai.profile 写这里的 id）：\n${backends}`,
     "",
@@ -75,6 +81,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     `- 本人说 omem 自己的事“运行结束/失败了、评审结束、交办应用了、提问被回答了、事项新建或状态变了、流程到了某一段、插件发了信号”时：trigger.event 用 omem，omemTypes 至少写一种（${OMEM_TYPES.map((t) => `${t} ${OMEM_TYPE_LABEL[t]}`).join("、")}）；条件只能用 omem.* 字段（运行类型 omem.kind、档案 omem.profile、新状态 omem.status、事项 omem.item、流程和阶段 omem.flow / omem.stage）。动作同文档变化规则；规则自己起的运行结束时不会再叫醒这类规则。`,
     "- 不要生成 script 动作：脚本由本人在规则页自己写。",
     "- 未指定专用档案的任务交给 assistant（主助手），不选择第一个或最接近的档案。本人点名的档案不存在时不要替换，改用 notify 提示缺档案。定时任务允许 reply=auto 发回创建时的会话。",
+    "- 本人说“交给某某关注”“放进某某那个关注里处理”，而上面列出了这个关注时，动作用 context（写它的 id）；本人没点名关注就不用 context，点名的关注不在列表里时不要猜，改用 notify 提示没有这个关注。",
   ].join("\n");
   const out = await askModel(app, prompt, { timeoutMs: 120_000 });
   const response = jsonIn<Record<string, unknown>>(out);
