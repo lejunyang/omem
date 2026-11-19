@@ -8,6 +8,8 @@ import { setLarkClient } from "../src/channels/lark-send.ts";
 import { routeWatchedMessages, seedContext } from "../src/channels/lark-watch.ts";
 import { chatListened, contextsOfChat, getContext, migrateWatches, saveContext } from "../src/channels/listen.ts";
 import { casesText, nearCases } from "../src/channels/listen-cases.ts";
+import { remember } from "../src/memory/store.ts";
+import { upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
 afterEach(() => setLarkClient(null));
@@ -217,9 +219,17 @@ describe("「关注」", () => {
       const id = made.json().id;
       expect(made.json()).toMatchObject({ name: "网页建的", knobs: { ownerAsks: "draft" }, brief: { confirmedAt: expect.any(String) } });
       expect((await server.inject({ method: "PUT", url: `/api/listen/${id}`, payload: { knobs: { ownerAsks: null, strictness: 0.8 } } })).json().knobs).toMatchObject({ ownerAsks: "notify", strictness: 0.8 });
+      // Choosing the reply mode on the web ends a trial of direct replies.
+      saveContext(app, { id, kind: "place", knobs: { wantsAuto: true } });
+      expect((await server.inject({ method: "PUT", url: `/api/listen/${id}`, payload: { knobs: { strictness: 0.7 } } })).json().knobs.wantsAuto).toBe(true);
+      expect((await server.inject({ method: "PUT", url: `/api/listen/${id}`, payload: { knobs: { reply: "draft" } } })).json().knobs.wantsAuto).toBeUndefined();
       run(app.db, "insert into reply_samples(id,channel,chat_id,chat_kind,chat_name,asker_name,ask,last_ms,created_at,context_id,decision) values('rs_w','lark','oc_w','group','g','小王','?',0,?,?,'sent')", new Date().toISOString(), id);
+      // A memory the assistant drew from the group (stored without a user, as the owner's are).
+      const chatSource = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_w", title: "g", text: "小王：退款接口 502" }).id;
+      remember(app, { spaceId: "personal", kind: "fact", content: "退款接口 502 是下游超时", sourceRefs: [`src:${chatSource}#L1-L1`], createdBy: "agent" });
       const detail = (await server.inject({ method: "GET", url: `/api/listen/${id}` })).json();
       expect(detail.cases.map((c: { id: string }) => c.id)).toEqual(["rs_w"]);
+      expect(detail.memories.map((m: { content: string }) => m.content)).toEqual(["退款接口 502 是下游超时"]);
       expect(detail.context.groups).toHaveLength(2);
       expect((await server.inject({ method: "PUT", url: "/api/cases/rs_w", payload: { verdict: "should-not", note: "这类不用回" } })).json()).toMatchObject({ verdict: "should-not", note: "这类不用回" });
       expect((await server.inject({ method: "GET", url: "/api/lark/chats/oc_w/detail" })).json().contexts[0].id).toBe(id);

@@ -30,7 +30,12 @@ export type CapturedChat = {
  * Every chat capture has read, plus subscribed ones not read yet: subscription, the space its
  * capture goes to and what is done with it, in one virtualized list.
  */
-const props = defineProps<{ chats: CapturedChat[]; policyOptions: { value: Policy; label: string; hint: string }[] }>();
+const props = defineProps<{
+  chats: CapturedChat[];
+  policyOptions: { value: Policy; label: string; hint: string }[];
+  /** The 关注 each chat is in (chips on its row). */
+  listens?: Record<string, { id: string; name: string; paused: boolean }[]>;
+}>();
 const emit = defineEmits<{ updated: [chatId: string, chat: CapturedChat | null] }>();
 
 const kindLabel: Record<string, string> = { p2p: "单聊", bot: "机器人单聊", "own-bot": "omem 机器人", group: "群聊", topic: "话题群" };
@@ -78,7 +83,11 @@ const setPolicy = (c: CapturedChat, policy: Policy | "") => call(c, "policy", { 
           <div class="chat" :class="{ on: c.subscribed }">
             <UiCheckbox switch size="sm" :model-value="c.subscribed" :aria-label="`订阅 ${oneLine(c.name)}`" @change="(v) => subscribe(c, v)" />
             <div class="main">
-              <div class="name ellipsis" :title="c.name">{{ oneLine(c.name) || c.chatId }}</div>
+              <router-link v-if="c.kind === 'group' || c.kind === 'topic'" :to="`/lark/chats/${encodeURIComponent(c.chatId)}`" class="name ellipsis" :title="`${c.name}：看它在哪些关注里、案例和记忆`">{{ oneLine(c.name) || c.chatId }}</router-link>
+              <div v-else class="name ellipsis" :title="c.name">{{ oneLine(c.name) || c.chatId }}</div>
+              <div v-if="listens?.[c.chatId]?.length" class="in-listen">
+                <router-link v-for="l in listens[c.chatId]" :key="l.id" :to="`/listen/${encodeURIComponent(l.id)}`" class="badge" :class="{ accent: !l.paused }" :title="l.paused ? `关注「${l.name}」（已暂停）` : `在关注「${l.name}」里`">{{ l.name }}</router-link>
+              </div>
               <div class="meta muted small">
                 <span>{{ kindLabel[c.kind] ?? c.kind }}</span>
                 <span v-if="c.muted">免打扰</span>
@@ -159,9 +168,32 @@ const setPolicy = (c: CapturedChat, policy: Policy | "") => call(c, "policy", { 
 }
 .name {
   font-weight: 500;
+  color: var(--ink);
+}
+a.name {
+  text-decoration: none;
+  justify-self: start;
+  max-width: 100%;
+}
+a.name:hover {
+  text-decoration: underline;
 }
 .chat:not(.on) .name {
   color: var(--ink-2);
+}
+.in-listen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.in-listen .badge {
+  display: inline-block;
+  line-height: 20px;
+  text-decoration: none;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .meta {
   display: flex;
