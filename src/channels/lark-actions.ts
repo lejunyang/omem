@@ -200,8 +200,8 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     closeInteraction(app, inter.id, operator);
     try {
       const card =
-        inter.purpose === "watch-brief" ? await trial.decideBrief(app, inter.payload as { chatId: string; at: string }, act, form, opName)
-        : inter.purpose === "watch-promote" ? await trial.decidePromotion(app, inter.payload as { chatId: string }, act, opName)
+        inter.purpose === "watch-brief" ? await trial.decideBrief(app, inter.payload as { contextId: string; at: string }, act, form, opName)
+        : inter.purpose === "watch-promote" ? await trial.decidePromotion(app, inter.payload as { contextId: string }, act, opName)
         : await trial.decideWatchDraft(app, inter.payload as never, act, form && typeof form.reply === "string" ? form.reply : null, opName);
       return { toast: { type: "success", content: "已处理" }, card: rawCard(card) };
     } catch (e) {

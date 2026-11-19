@@ -150,16 +150,18 @@ describe("answers in groups and where thinking bubbles go", async () => {
   }, 60_000);
 
   it("a message @-ing the bot in a watched chat is answered once, by the conversation it was asked in", async () => {
-    const { setWatchRule, watchPurpose } = await import("../src/channels/lark-watch.ts");
-    setWatchRule(app, "oc_watched", { spec: "assistant", on: "all", reply: "auto", note: "有人要查审核单号就帮着查" });
+    const { unwatchChat, watchChat, watchPurpose } = await import("../src/channels/lark-watch.ts");
+    const { saveContext } = await import("../src/channels/listen.ts");
+    const watched = await watchChat(app, "oc_watched", { spec: "assistant", on: "all", reply: "auto" });
+    saveContext(app, { id: watched.id, kind: "place", note: "有人要查审核单号就帮着查" });
     await send(event({ id: "om_watched_at", chat: "oc_watched", text: "查一下这个账号", sender: "ou_owner" }));
     // Answered where it was asked, knowing what the owner wants from this chat…
     expect(answerTo("om_watched_at")?.content).toContain("<at id=ou_owner></at>");
     expect(watchPurpose(app, "oc_watched")).toContain("有人要查审核单号就帮着查");
     // …and not handed to the watch as well.
     expect(one<{ rule: string }>(app.db, "select rule from handled_messages where channel = 'lark' and message_id = 'om_watched_at'")?.rule).toBe("direct");
-    expect(one(app.db, "select 1 from conversations where channel = 'lark-watch' and external_id = 'oc_watched'")).toBeUndefined();
-    setWatchRule(app, "oc_watched", null);
+    expect(one<{ n: number }>(app.db, "select count(*) n from messages where conversation_id = ?", watched.conversationId)?.n).toBe(0);
+    await unwatchChat(app, "oc_watched");
   }, 60_000);
 
   it("a meeting's conclusion goes to the private chat itself, not the topic the owner last wrote in", async () => {

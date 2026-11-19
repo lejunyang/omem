@@ -435,8 +435,13 @@ registerHandler("thread-summary", async (ctx) => {
   const t = getThread(ctx.app, threadId);
   const fresh = threadMessages(ctx.app, threadId, { after: t.summaryAt, limit: 80 }).filter((m) => !m.meta.command);
   if (!fresh.length) return { quiet: true };
-  const transcript = fresh.map((m) => `${m.role === "user" ? "本人" : "助理"}（${localStamp(m.createdAt, ctx.app.config.timezone)}）：${truncate(m.text, 1200)}`).join("\n\n");
-  const task = `${t.summary ? `## 之前的摘要\n\n${t.summary}\n\n` : ""}## 之后的新对话\n\n${transcript}`;
+  // Group members in a 关注's conversation speak for themselves: only the owner's own words are “本人”.
+  const who = (m: (typeof fresh)[number]) => (m.role === "user" ? (typeof m.meta.speaker === "string" ? m.meta.speaker : typeof m.meta.asker === "string" ? m.meta.asker : "本人") : "助理");
+  const transcript = fresh.map((m) => `${who(m)}（${localStamp(m.createdAt, ctx.app.config.timezone)}）：${truncate(m.text, 1200)}`).join("\n\n");
+  const listening = t.channel === "listen"
+    ? "\n\n这是助手替本人关注的群（一个或几个）的会话：写成三段，“在聊的话题”（谁在推进什么）、“没结的问题”（谁问了什么、还在等什么）、“已有结论”（定了什么、查清了什么，带人名）。只写群里的事，不写助手的处理过程。"
+    : "";
+  const task = `${t.summary ? `## 之前的摘要\n\n${t.summary}\n\n` : ""}## 之后的新对话\n\n${transcript}${listening}`;
   const r = await agent(ctx, "summarizer", t.spaceId, task, [t.spaceId]);
   const summary = r.text.trim();
   if (summary) updateThread(ctx.app, threadId, { summary, summaryAt: fresh[fresh.length - 1].createdAt });
@@ -1133,7 +1138,7 @@ registerHandler("heartbeat", async (ctx) => {
   const due = deliverDueReminders(app);
   expireWorkFiles(app);
   await expireTemporaryRules(app);
-  (await import("../channels/lark-watch.ts")).expireWatches(app);
+  await (await import("../channels/listen.ts")).expireContexts(app);
   // Command approvals past their time (their timers do not survive a restart).
   await (await import("./command-gate.ts")).expireCommandAsks(app);
   // Questions nobody waits for any more lapse; notifications the owner read in Feishu count as read.

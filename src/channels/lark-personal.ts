@@ -14,7 +14,7 @@ import { importFile, importUrl } from "../sources/import.ts";
 import { findSourceByUri, upsertSource } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
 import { flattenReplies, persistChatMessages, isApp, keepResources, learnPeople, mentionIds, messageText, quotedMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
-import { routeWatchedMessages, watchRule, type ChatMessage } from "./lark-watch.ts";
+import { routeWatchedMessages, type ChatMessage } from "./lark-watch.ts";
 import { queueMention } from "./lark-mentions.ts";
 import type { RuleEvent } from "../rules/types.ts";
 
@@ -594,7 +594,7 @@ async function pollLarkOnce(app: App) {
   if (cfg.mode === "all") chats = listed.filter((c) => !exclude.has(c.chatId) && capturePolicyFor(app, c) !== "skip").slice(0, cfg.maxChats);
   else if (cfg.mode === "subscribed") chats = subs.map((s) => known(s.chatId, s.name));
   // Watched and subscribed chats are explicit opt-ins: always read, even when muted.
-  for (const r of all<{ chat_id: string }>(app.db, "select chat_id from chat_settings where channel = 'lark-watch' and settings like '%\"watch\"%'"))
+  for (const r of all<{ chat_id: string }>(app.db, "select chat_id from chat_settings where channel = 'lark-watch' and json_extract(settings, '$.contexts') is not null"))
     if (!chats.some((c) => c.chatId === r.chat_id)) chats.push(known(r.chat_id, r.chat_id));
   // So are chats a rule or the owner set to be ingested.
   for (const r of all<{ chat_id: string; name: string | null }>(app.db, "select s.chat_id, c.name from chat_settings s left join lark_cursors c on c.chat_id = s.chat_id where s.channel = 'lark-capture' and json_extract(s.settings, '$.policy') = 'ingest'"))

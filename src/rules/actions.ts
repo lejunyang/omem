@@ -188,8 +188,8 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
     case "watch": {
       const id = needChat();
       readAgentSpec(app, a.spec);
-      const { setWatchRule } = await import("../channels/lark-watch.ts");
-      setWatchRule(app, id, { spec: a.spec, on: a.on, pattern: a.pattern, reply: a.reply, note: `规则「${rule.name}」` });
+      const { watchChat } = await import("../channels/lark-watch.ts");
+      await watchChat(app, id, { spec: a.spec, on: a.on, pattern: a.pattern, reply: a.reply, note: `规则「${rule.name}」` });
       return { action: "watch", ok: true, detail: `之后的${a.on === "all" ? "消息" : a.on === "mention" ? " @ 消息" : "关键词消息"}交给 ${a.spec}（回复：${a.reply}）` };
     }
     case "wake": {

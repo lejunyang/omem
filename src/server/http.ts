@@ -2437,8 +2437,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Groups being watched (set_chat_watch): listed with the wake-ups, can be stopped.
   server.get("/api/watches", async (req) => (who(req) === OWNER ? (await import("../channels/lark-watch.ts")).listWatches(app) : []));
   server.delete("/api/watches/:chatId", async (req) => {
-    if (who(req) !== OWNER) throw new HttpError(403, "只有本人可以取消盯群");
-    (await import("../channels/lark-watch.ts")).setWatchRule(app, (req.params as { chatId: string }).chatId, null);
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人可以取消关注");
+    await (await import("../channels/lark-watch.ts")).unwatchChat(app, (req.params as { chatId: string }).chatId);
     return { ok: true };
   });
   server.delete("/api/wakes/:id", async (req) => {

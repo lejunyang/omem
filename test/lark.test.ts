@@ -16,7 +16,8 @@ import { fillResources, missingResources, sourceMessages, storeMessages } from "
 import { mkdirSync as mkdirS, writeFileSync as writeF } from "node:fs";
 import { run as runSql } from "../src/core/db.ts";
 import { buildCard, recordInteraction, setLarkClient } from "../src/channels/lark-send.ts";
-import { expireWatches, listWatches, routeWatchedMessages, setWatchRule } from "../src/channels/lark-watch.ts";
+import { listWatches, routeWatchedMessages, watchChat } from "../src/channels/lark-watch.ts";
+import { expireContexts } from "../src/channels/listen.ts";
 import { recordCodeActivity } from "../src/sources/activity.ts";
 import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
@@ -267,8 +268,8 @@ describe("watched chats", () => {
   it("hands matching messages to the handler once, in a thread that may post only there", async () => {
     const app = testApp();
     saveAgentSpec(app, { name: "alert-handler", description: "处理报警", prompt: "按告警处理技能处理。" }, "user");
-    expect(() => setWatchRule(app, "oc_alert", { spec: "nope", on: "all", reply: "draft" })).toThrow(/没有 Agent 档案/);
-    setWatchRule(app, "oc_alert", { spec: "alert-handler", on: "keyword", pattern: "P[01]", reply: "draft" });
+    await expect(watchChat(app, "oc_alert", { spec: "nope", on: "all", reply: "draft" })).rejects.toThrow(/没有 Agent 档案/);
+    await watchChat(app, "oc_alert", { spec: "alert-handler", on: "keyword", pattern: "P[01]", reply: "draft" });
     const msgs = [
       { id: "om_a1", time: String(Date.now()), sender: "监控", text: "【P1】订单服务 5xx 升高" },
       { id: "om_a2", time: String(Date.now()), sender: "监控", text: "【P3】磁盘 70%" },
@@ -278,7 +279,7 @@ describe("watched chats", () => {
     const runs = listRuns(app, { kind: "ask" });
     expect(runs).toHaveLength(1);
     const thread = findThread(app, (runs[0].input as { conversationId: string }).conversationId)!;
-    expect(thread.channel).toBe("lark-watch");
+    expect(thread.channel).toBe("listen");
     expect(thread.settings.spec).toBe("alert-handler");
     expect(thread.settings.lark).toEqual({ chats: ["oc_alert"], draft: true });
     expect(threadMessages(app, thread.id)[0].meta.speaker).toBe("监控");
@@ -290,7 +291,7 @@ describe("watched chats", () => {
     // Bringing the bot in is lark_invite's (test/lark-invite.test.ts); set_chat_watch only sets the watch.
     const ask = createRun(app, { kind: "ask", title: "x", input: { conversationId: "c_none", messageIds: [] }, lane: "test-hold", notBefore: "2999-01-01T00:00:00Z" });
     const ctx = toolContextForToken(app, issueToolToken({ runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
-    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", note: "有人问接口进度就帮我回", brief: { handle: ["问接口进度的"], skip: ["闲聊"], valid: "说得出哪天能联调" } })).text).toMatch(/开始盯 oc_proj：消息每 10 分钟一批交给 assistant/);
+    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", note: "有人问接口进度就帮我回", brief: { handle: ["问接口进度的"], skip: ["闲聊"], valid: "说得出哪天能联调" } })).text).toMatch(/开始关注「oc_proj」.*消息每 10 分钟一批交给 assistant/);
     const t = Date.now();
     await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p1", time: String(t), sender: "小王", text: "接口今天能联调吗", topicId: "omt_a" }]);
     await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p2", time: String(t), sender: "小李", text: "另一个话题：周会改到周四", topicId: "omt_b" }]);
@@ -305,11 +306,11 @@ describe("watched chats", () => {
     await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p3", time: String(t), sender: "小王", text: "@本人 帮看下", mentions: ["ou_owner"] }]);
     expect(Date.parse(one<{ not_before: string }>(app.db, "select not_before from runs where id = ?", runs[0].id)!.not_before) - Date.now()).toBeLessThan(31_000);
     // The handler slows down; then the watch runs out.
-    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", batch_minutes: 30 })).text).toMatch(/已更新 oc_proj：消息每 30 分钟/);
+    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", batch_minutes: 30 })).text).toMatch(/已更新「oc_proj」.*消息每 30 分钟/);
     expect(listWatches(app)[0]).toMatchObject({ chatId: "oc_proj", batchMinutes: 30, note: "有人问接口进度就帮我回" });
-    expect(expireWatches(app, new Date(Date.now() + 4 * 86400_000).toISOString())).toBe(1);
+    expect(await expireContexts(app, new Date(Date.now() + 4 * 86400_000).toISOString())).toBe(1);
     expect(listWatches(app)).toHaveLength(0);
-    expect(await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p4", time: String(t), sender: "小王", text: "还在吗" }])).toBe(0);
+    expect(await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p4", time: String(Date.now()), sender: "小王", text: "还在吗" }])).toBe(0);
   });
 });
 

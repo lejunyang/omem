@@ -2103,6 +2103,34 @@ export const migrations: readonly string[] = [
   // A flow stage run done for several items at once (flows/engine.ts `together: push`): which item a
   // test result belongs to, so each item's page shows its own.
   `alter table req_tests add column item_id text;`,
+  // 「关注」(channels/listen.ts): a place (groups), a matter (an item) or the built-in “someone looks for
+  // you”, each with its brief, knobs and one handling conversation. Cases (reply_samples) say which
+  // one they belong to, where they came from, the scene the coach filed them under, and the owner's
+  // correction on the web.
+  `create table listen_contexts (
+     id text primary key,
+     kind text not null,                  -- place | item | default
+     name text not null,
+     chats text not null default '[]',
+     item_id text,
+     spec text not null default 'assistant',
+     space_id text,
+     conversation_id text,
+     settings text not null default '{}',
+     status text not null default 'active',
+     expires_at text,
+     created_at text not null,
+     updated_at text not null
+   );
+   create index listen_contexts_item on listen_contexts(item_id);
+   alter table reply_samples add column context_id text;
+   alter table reply_samples add column source text not null default 'mention';
+   alter table reply_samples add column scene text;
+   alter table reply_samples add column verdict text;
+   alter table reply_samples add column note text;
+   alter table reply_samples add column checked text;
+   alter table reply_samples add column reply_id text;
+   create index reply_samples_context on reply_samples(context_id, created_at);`,
 ];
 
 export type Db = DatabaseSync;

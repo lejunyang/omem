@@ -2,8 +2,8 @@ import { rmSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import { setKey } from "../src/core/ai-keys.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
-import { prefilterBatch, setWatchRule, WATCH_CHANNEL } from "../src/channels/lark-watch.ts";
-import { resolveThread } from "../src/agents/threads.ts";
+import { prefilterBatch } from "../src/channels/lark-watch.ts";
+import { saveContext } from "../src/channels/listen.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
@@ -11,8 +11,8 @@ afterEach(() => { setDecisionFetchForTests(null); for (const app of apps.splice(
 
 it("screens a watched group's batch with the decision model: chatter is skipped, an @ always goes through, and it can be turned off", async () => {
   const app = testApp(); apps.push(app);
-  const conv = resolveThread(app, { channel: WATCH_CHANNEL, chatId: "oc_ops", isGroup: true, title: "项目 A 值班群", spaceId: "personal", userId: "owner" }).thread;
-  setWatchRule(app, "oc_ops", { spec: "assistant", on: "all", reply: "none", note: "有人报线上问题时帮我查", batchMinutes: 5 });
+  const ctx = saveContext(app, { kind: "place", name: "项目 A 值班群", chats: ["oc_ops"], note: "有人报线上问题时帮我查", knobs: { reply: "none", batchMinutes: 5 } });
+  const conv = { id: ctx.conversationId! };
   const chatter = [{ text: "稍等，重新部署中", meta: { speaker: "小王" } }];
   // No decision model: nothing screened.
   expect(await prefilterBatch(app, conv.id, chatter)).toBeNull();
@@ -30,9 +30,9 @@ it("screens a watched group's batch with the decision model: chatter is skipped,
   expect(await prefilterBatch(app, conv.id, chatter, undefined, { ref: "run-demo", reason })).toBeNull();
   expect(reason.mock.calls[0][0]).toContain("把握不到 0.6，按要看处理");
   // Off for this watch, then off for all.
-  setWatchRule(app, "oc_ops", { spec: "assistant", on: "all", reply: "none", batchMinutes: 5, prefilter: false });
+  saveContext(app, { id: ctx.id, kind: "place", knobs: { prefilter: false } });
   expect(await prefilterBatch(app, conv.id, chatter)).toBeNull();
-  setWatchRule(app, "oc_ops", { spec: "assistant", on: "all", reply: "none", batchMinutes: 5 });
+  saveContext(app, { id: ctx.id, kind: "place", knobs: { prefilter: undefined } });
   app.config.lark.watchPrefilter = false;
   expect(await prefilterBatch(app, conv.id, chatter)).toBeNull();
   // A failing model hands the batch over.
@@ -46,8 +46,8 @@ it("gives the decision model the context: the owner's words here, rules on the g
   const { addMessage } = await import("../src/agents/threads.ts");
   const { saveRule } = await import("../src/rules/store.ts");
   const { OWNER } = await import("../src/core/users.ts");
-  const conv = resolveThread(app, { channel: WATCH_CHANNEL, chatId: "oc_help", isGroup: true, title: "项目 A 答疑群", spaceId: "personal", userId: "owner" }).thread;
-  setWatchRule(app, "oc_help", { spec: "assistant", on: "all", reply: "auto", note: "帮群里的人解答接口问题", batchMinutes: 5 });
+  const ctx = saveContext(app, { kind: "place", name: "项目 A 答疑群", chats: ["oc_help"], note: "帮群里的人解答接口问题", knobs: { reply: "auto", batchMinutes: 5 } });
+  const conv = { id: ctx.conversationId! };
   addMessage(app, conv.id, "user", "退款相关的问题都帮他们查一下", null, {});
   addMessage(app, conv.id, "user", "这个接口返回 403 是怎么回事", null, { speaker: "小王" });
   saveRule(app, { name: "答疑群报错", description: "答疑群里有人贴报错就查日志", enabled: true, trigger: { event: "message" }, conditions: { all: [{ field: "chat.id", op: "equals", value: "oc_help" }] }, judge: "code", actions: [{ type: "notify" }] } as never, "user", OWNER);

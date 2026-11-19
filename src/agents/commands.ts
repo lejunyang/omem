@@ -389,20 +389,21 @@ const commands: Record<string, Command> = {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const chatId = parts[0]?.startsWith("oc_") ? parts.shift()! : thread.channel === "lark" ? chatKey(thread) : "";
       if (!chatId) return "在飞书群里发这个命令，或写上群 id：/watch oc_xxx 档案名 …";
-      const { setWatchRule, watchRule } = await import("../channels/lark-watch.ts");
+      const { watchChat, unwatchChat } = await import("../channels/lark-watch.ts");
+      const { contextsOfChat } = await import("../channels/listen.ts");
       const spec = parts[0];
       if (!spec) {
-        const r = watchRule(app, chatId);
-        return r ? `${chatId} 交给 ${r.spec} 处理：${r.on}${r.pattern ? ` ${r.pattern}` : ""}，回复 ${r.reply}` : `${chatId} 没有设置监听。`;
+        const rs = contextsOfChat(app, chatId);
+        return rs.length ? rs.map((r) => `${chatId} 在关注「${r.name}」里，交给 ${r.spec} 处理：${r.knobs.listen}${r.knobs.pattern ? ` ${r.knobs.pattern}` : ""}，回复 ${r.knobs.reply}`).join("\n") : `${chatId} 没有设置关注。`;
       }
       if (spec === "off") {
-        setWatchRule(app, chatId, null);
-        return `已取消 ${chatId} 的监听。`;
+        await unwatchChat(app, chatId);
+        return `已取消 ${chatId} 的关注。`;
       }
       const onArg = parts.find((p) => /^(all|mention|keyword:)/.test(p)) ?? "all";
       const reply = (parts.find((p) => /^(none|draft|auto)$/.test(p)) ?? "draft") as "none" | "draft" | "auto";
       const on = onArg.startsWith("keyword:") ? "keyword" : (onArg as "all" | "mention");
-      setWatchRule(app, chatId, { spec, on, pattern: on === "keyword" ? onArg.slice(8) : undefined, reply });
+      await watchChat(app, chatId, { spec, on, pattern: on === "keyword" ? onArg.slice(8) : undefined, reply });
       return `已设置：${chatId} 的${on === "all" ? "新消息" : on === "mention" ? " @ 消息" : `匹配 ${onArg.slice(8)} 的消息`}交给 ${spec}，回复方式 ${reply}${reply === "auto" ? "（机器人需要在群里）" : ""}。`;
     },
   },

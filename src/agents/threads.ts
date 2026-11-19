@@ -124,6 +124,8 @@ export type ChatSettings = {
   lark?: { chats: string[] | null; draft?: boolean };
   /** Watched chats: which spec handles which messages, and how it may reply. */
   watch?: WatchRule;
+  /** 「关注」 reading this chat (channel "lark-watch", channels/listen.ts). */
+  contexts?: string[];
   /** Feishu capture (channel "lark-capture"): what happens to this chat's messages. */
   policy?: "ingest" | "involved" | "store" | "skip";
 };

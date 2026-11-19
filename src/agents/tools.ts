@@ -2917,10 +2917,18 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     if (topic && convChat === chat && conv?.last) target = { replyTo: conv.last, inThread: true, bot: ctx.larkBot };
   }
   const trial = await import("../channels/watch-trial.ts");
-  const watched = chat && !t.user_id ? trial.watchedChatOfRun(ctx.app, ctx.runId) : null;
-  if (ctx.larkDraft && watched && watched === chat && !("card" in content) && !("image" in content) && !("file" in content)) {
-    // A watched group's reply: a card only the owner sees, editable, and what they decide is learned from.
-    await trial.draftWatchReply(ctx.app, { chatId: watched, runId: ctx.runId ?? null, target, content, delivery });
+  // A 关注's handler posting in one of its groups (channels/listen.ts): one 关注 answers a message, and
+  // what it posts is a case.
+  const listening = chat && !t.user_id ? trial.contextOfRun(ctx.app, ctx.runId) : null;
+  const watched = listening && listening.chats.includes(chat!) ? listening : null;
+  if (watched) {
+    const why = trial.claimReply(ctx.app, watched, target.replyTo);
+    if (why) throw new HttpError(409, why);
+  }
+  const textual = !("card" in content) && !("image" in content) && !("file" in content);
+  if (watched && textual && (ctx.larkDraft || trial.mustDraft(ctx.app, watched, target.replyTo))) {
+    // A card only the owner sees, editable, and what they decide is learned from.
+    await trial.draftWatchReply(ctx.app, { contextId: watched.id, chatId: chat!, runId: ctx.runId ?? null, target, content, delivery });
     return `已作为草稿发给本人确认（只有本人看得到，还没有发出）。${skippedNote}`;
   }
   if (ctx.larkDraft) {
@@ -2938,7 +2946,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     return `已作为草稿发给本人确认（还没有发出）。${skippedNote}`;
   }
   const sent = await send.deliverLark({ ...target, runId: ctx.runId ?? null, conversationId: runThread(ctx) }, content, delivery);
-  if (watched && watched === chat) await trial.noteAutoReply(ctx.app, chat, sent.messageId, content, target.replyTo).catch(() => {});
+  if (watched) try { trial.noteAutoReply(ctx.app, watched, chat!, sent.messageId, content, target.replyTo); } catch {}
   // A rule's silent agent that spoke in a topic follows it: replies there come back to it.
   if (ctx.runId && chat && sent.threadId) {
     const input = (getRun(ctx.app, ctx.runId).input ?? {}) as { silent?: unknown; rule?: { id: string }; spec?: string; handoff?: { from: string; runId: string } };
@@ -3075,22 +3083,23 @@ def({
 def({
   name: "set_chat_watch",
   description:
-    "盯一个飞书群：之后群里的消息按批交给你（spec=assistant，默认）或一个更合适的 Agent 档案，在同一个上下文里读，有能回答的、要排查的、要本人知道的再动手，其余不管。本人说“帮我盯一下这个群”“分享群给你帮我看着”“这个群有问题你先帮我排查”时用；长期的分工（报警群→告警 Agent）也用它。" +
-    "note 写本人要的东西（原话）；until 按本人的说法定（2h、3d、ISO 时间；本人说长期才用 never，默认 3d）；batch_minutes 是攒多久看一次（默认 10，@本人或机器人的消息 30 秒内就看），盯的过程中觉得太频繁或太慢可以只传 chat_id 和 batch_minutes 调整。" +
-    "on：all 全部消息 / mention 只在 @本人或机器人时 / keyword 匹配 pattern；reply：none 只看不回 / draft 回复先给本人确认 / auto 直接用机器人回复。" +
-    "要在群里回复的（draft、auto）必须带 brief：先读这个群最近的消息（read_conversation 或 lark_chat_history），按本人的话拟出要处理哪些消息、哪些不处理（问本人的、要本人拍板的、找别人或别的机器人的一般在这里）、什么样的结论才值得发；宿主把它发给本人确认（只有本人看得到的卡片），本人可以改。" +
-    "reply=auto 也先试运行：回复先是只有本人看得到的草稿，本人连续照发几条后宿主会问要不要直接发；只有本人明确说“不用给我看、直接发”时才传 trial=false。本人说“别自动回了”是改成 draft（或 none），不是 remove；说不用盯了才 remove=true。" +
-    "配了决策模型时每批消息先由它筛一遍（@本人或机器人的不筛），不值得看的不交给你。" +
-    "机器人不在群里时回复不了、也收不到实时消息：先用 lark_invite（bots: [\"self\"]）把 omem 的机器人拉进群。",
+    "设一个「关注」：之后它的群里的消息按批交给你（spec=assistant，默认）或一个更合适的 Agent 档案，在一个上下文里读，有能回答的、要排查的、要本人知道的再动手，其余不管。本人说“帮我盯一下这个群”“这个群有问题你先帮我排查”“这几个群都是 X 需求的，帮我看着”时用；长期的分工（报警群→告警 Agent）也用它。" +
+    "一个关注可以有几个群（chat_id 加 chats），一个群也可以在几个关注里（不同的事分散在几个群）：同一条消息只由最具体的那个关注回复。改已有的关注传 context（关注 id；只传 chat_id 时改这个群唯一的那个）。" +
+    "note 写本人要的东西（原话）；until 按本人的说法定（2h、3d、ISO 时间；本人说长期才用 never，默认 3d）；batch_minutes 是攒多久看一次（默认 10，@本人或机器人的消息 30 秒内就看）。" +
+    "要在群里回复的（reply 为 draft、auto）必须带 brief：先读这些群最近的消息（read_conversation 或 lark_chat_history），按本人的话拟出要处理哪些消息、哪些不处理、什么样的结论才值得发；宿主把它发给本人确认（只有本人看得到的卡片），本人可以改。" +
+    "reply=auto 也先试运行：回复先是只有本人看得到的草稿，本人连续照发几条后宿主会问要不要直接发；只有本人明确说“不用给我看、直接发”时才传 trial=false。" +
+    "其余是可调的做法，本人没说就不传（用默认）：listen（addressed 只看找本人或机器人的 / relevant 预筛后看相关的，默认 / all 全看）、depth（answer 只答能直接答的 / investigate 值得查的主动查，默认）、owner_asks（问本人或要本人拍板的：notify 只私下告诉本人，默认 / draft 拟草稿给本人 / answer 可以直接答）、others_asks（找别人或别的机器人的：leave 不接，默认 / handle）、backlog（关注开始前没人答的问题：off / 24h 默认 / 72h）、strictness（0.5–0.95，越高越少打扰）、per_day（每天最多处理几批，默认 20）、meetings（群里开会时：off / ask 问本人要不要进会，默认 / listen 直接旁听）。" +
+    "本人说“别自动回了”是改 reply（draft 或 none），不是 remove；说不用关注了才 remove=true。机器人不在群里时回复不了、也收不到实时消息：先用 lark_invite（bots: [\"self\"]）把 omem 的机器人拉进群。",
   write: true,
   schema: z.object({
-    chat_id: z.string().describe("群 chat_id（oc_…）：当前群从会话里看，分享的群在消息里，也可用 list_lark_chats 查"),
-    spec: z.string().optional().describe("谁来盯：assistant（主助手，默认）或 Agent 档案名"),
+    chat_id: z.string().optional().describe("群 chat_id（oc_…）：当前群从会话里看，分享的群在消息里，也可用 list_lark_chats 查"),
+    chats: z.array(z.string()).max(20).optional().describe("同一个关注的其余群（合成一个上下文）；改已有关注时传完整的群列表"),
+    context: z.string().optional().describe("要改的关注 id（ctx…）"),
+    name: z.string().max(80).optional().describe("关注的名字，例如“单 B 值班”“异常通知需求”；不传用群名"),
+    spec: z.string().optional().describe("谁来处理：assistant（主助手，默认）或 Agent 档案名"),
     note: z.string().optional().describe("本人要的东西，原话"),
     until: z.string().optional().describe("到什么时候：2h、3d、ISO 时间或 never；默认 3d"),
     batch_minutes: z.number().min(0).max(24 * 60).optional().describe("攒多少分钟的消息看一次，默认 10"),
-    on: z.enum(["all", "mention", "keyword"]).optional(),
-    pattern: z.string().optional(),
     reply: z.enum(["none", "draft", "auto"]).optional(),
     brief: z
       .object({
@@ -3099,55 +3108,94 @@ def({
         valid: z.string().trim().min(2).max(600).describe("什么样的结论才值得发出来（例如“查到了日志或代码依据，说得出原因或该找谁”）"),
       })
       .optional()
-      .describe("盯群说明，会发给本人确认；修订时传完整的新版本"),
+      .describe("关注说明，会发给本人确认；修订时传完整的新版本"),
     trial: z.boolean().optional().describe("默认 true：回复先作为草稿试运行。本人明确说不用确认、直接发时才传 false"),
-    space: z.string().optional().describe("这个群的材料与记录放哪个空间"),
-    prefilter: z.boolean().optional().describe("每批消息先让决策模型判断值不值得看（配了决策模型时默认按设置 → 渠道 的总开关，一般开着）；本人要求这个群每批都看或都先筛时才传"),
-    remove: z.boolean().optional().describe("不再盯这个群（本人说不用盯了时）"),
+    listen: z.enum(["addressed", "relevant", "all"]).optional(),
+    pattern: z.string().optional().describe("只看匹配这个正则的消息"),
+    depth: z.enum(["answer", "investigate"]).optional(),
+    owner_asks: z.enum(["notify", "draft", "answer"]).optional(),
+    others_asks: z.enum(["leave", "handle"]).optional(),
+    backlog: z.enum(["off", "24h", "72h"]).optional(),
+    strictness: z.number().min(0.5).max(0.95).optional(),
+    per_day: z.number().int().min(1).max(500).optional(),
+    meetings: z.enum(["off", "ask", "listen"]).optional(),
+    prefilter: z.boolean().optional().describe("false：每批都交给你，不先筛（本人要求这个群每批都看时）"),
+    space: z.string().optional().describe("这些群的材料与记录放哪个空间"),
+    remove: z.boolean().optional().describe("不再关注（本人说不用关注了时）"),
   }),
   handler: async (ctx, a) => {
-    if ((ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "只有本人可以设置盯群");
-    const { setWatchRule, watchRule, DEFAULT_BATCH_MINUTES } = await import("../channels/lark-watch.ts");
-    const prev = watchRule(ctx.app, a.chat_id);
-    if (a.remove) {
-      setWatchRule(ctx.app, a.chat_id, null);
-      return `不再盯 ${a.chat_id}。`;
+    if ((ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "只有本人可以设置关注");
+    const L = await import("../channels/listen.ts");
+    let prev = a.context ? L.requireContext(ctx.app, a.context) : null;
+    if (!prev && a.chat_id) {
+      const mine = L.contextsOfChat(ctx.app, a.chat_id).filter((c) => c.kind === "place");
+      if (mine.length > 1 && (a.remove || !a.chats)) throw new HttpError(400, `这个群在几个关注里，传 context 指明改哪个：${mine.map((c) => `${c.id}「${c.name}」`).join("、")}`);
+      prev = mine.length === 1 ? mine[0] : null;
+      // A different set of groups is a new 关注 of its own, unless it extends the one this group is in.
+      if (prev && a.chats && !a.context && !a.chats.every((x) => prev!.chats.includes(x)) && !prev.chats.every((x) => [a.chat_id, ...a.chats!].includes(x))) prev = null;
     }
-    const expiresAt = a.until === undefined ? (prev ? prev.expiresAt : untilTime("3d")) : a.until === "never" ? undefined : untilTime(a.until);
+    if (a.remove) {
+      if (!prev) return "没有在关注这个群。";
+      L.saveContext(ctx.app, { id: prev.id, kind: prev.kind, status: "paused" });
+      return `不再关注「${prev.name}」（案例和经验留着，在 连接 → 飞书会话 里可以重新打开）。`;
+    }
+    const chats = [...new Set([...(a.chat_id ? [a.chat_id] : []), ...(a.chats ?? [])])];
+    if (!prev && !chats.length) throw new HttpError(400, "要关注哪个群：传 chat_id（几个群再加 chats）");
+    const { groupName, seedContext } = await import("../channels/lark-watch.ts");
+    const expiresAt = a.until === undefined ? (prev ? prev.expiresAt : untilTime("3d")) : a.until === "never" ? null : untilTime(a.until);
+    const wanted = a.reply ?? prev?.knobs.reply ?? "draft";
     // Asking for direct replies starts a trial (drafts first) unless the owner said to skip it.
-    const wanted = a.reply ?? prev?.reply ?? "draft";
-    const trial = wanted === "auto" && a.reply === "auto" && prev?.reply !== "auto" && a.trial !== false;
+    const trial = wanted === "auto" && a.reply === "auto" && prev?.knobs.reply !== "auto" && a.trial !== false;
     const brief = a.brief ? { ...a.brief, at: now() } : prev?.brief;
     if (wanted !== "none" && !brief)
-      throw new HttpError(400, "要在群里回复的盯群先拟一份 brief：读这个群最近的消息，按本人的话写要处理哪些、不处理哪些、什么样的结论值得发，宿主会发给本人确认");
-    const rule = {
-      ...prev,
-      spec: a.spec ?? prev?.spec ?? "assistant",
-      on: a.on ?? prev?.on ?? "all",
-      pattern: a.pattern ?? prev?.pattern,
-      reply: trial ? ("draft" as const) : wanted,
-      wantsAuto: trial ? true : a.reply ? false : prev?.wantsAuto,
-      spaceId: a.space ? writeSpace(ctx, a.space) : prev?.spaceId,
-      note: a.note ?? prev?.note,
-      batchMinutes: a.batch_minutes ?? prev?.batchMinutes ?? DEFAULT_BATCH_MINUTES,
-      prefilter: a.prefilter ?? prev?.prefilter,
-      expiresAt,
-      since: prev?.since ?? now(),
-      brief,
+      throw new HttpError(400, "要在群里回复的关注先拟一份 brief：读这些群最近的消息，按本人的话写要处理哪些、不处理哪些、什么样的结论值得发，宿主会发给本人确认");
+    const knobs: Partial<import("../channels/listen.ts").ListenKnobs> = {
+      reply: trial ? "draft" : wanted,
+      ...(trial ? { wantsAuto: true } : a.reply ? { wantsAuto: false } : {}),
+      ...(a.listen ? { listen: a.listen } : {}),
+      ...(a.pattern !== undefined ? { pattern: a.pattern || undefined } : {}),
+      ...(a.depth ? { depth: a.depth } : {}),
+      ...(a.owner_asks ? { ownerAsks: a.owner_asks } : {}),
+      ...(a.others_asks ? { othersAsks: a.others_asks } : {}),
+      ...(a.backlog ? { backlog: a.backlog } : {}),
+      ...(a.strictness !== undefined ? { strictness: a.strictness } : {}),
+      ...(a.per_day !== undefined ? { perDay: a.per_day } : {}),
+      ...(a.meetings ? { meetings: a.meetings } : {}),
+      ...(a.prefilter !== undefined ? { prefilter: a.prefilter } : {}),
+      ...(a.batch_minutes !== undefined ? { batchMinutes: a.batch_minutes } : {}),
     };
-    setWatchRule(ctx.app, a.chat_id, rule);
+    const saved = L.saveContext(
+      ctx.app,
+      {
+        id: prev?.id,
+        kind: prev?.kind ?? "place",
+        name: a.name,
+        chats: chats.length ? (prev && !a.chats ? [...new Set([...prev.chats, ...chats])] : chats) : undefined,
+        spec: a.spec,
+        spaceId: a.space ? writeSpace(ctx, a.space) : undefined,
+        note: a.note,
+        brief,
+        knobs,
+        expiresAt,
+        ...(prev && prev.status !== "active" ? { status: "active" as const } : {}),
+      },
+      (id) => groupName(ctx.app, id),
+    );
+    let seeded = 0;
+    if (!prev) seeded = await seedContext(ctx.app, saved).catch(() => 0);
     let briefNote = "";
     if (a.brief && wanted !== "none") {
       try {
-        const sent = await (await import("../channels/watch-trial.ts")).askBrief(ctx.app, a.chat_id, !!prev?.brief);
-        briefNote = sent ? `盯群说明已${sent.inGroup ? "在群里" : "私聊"}发给本人确认（只有本人看得到），确认前回复都只发草稿。` : "";
+        const sent = await (await import("../channels/watch-trial.ts")).askBrief(ctx.app, saved.id, !!prev?.brief);
+        briefNote = sent ? `关注说明已${sent.inGroup ? "在群里" : "私聊"}发给本人确认（只有本人看得到），确认前回复都只发草稿。` : "";
       } catch (e) {
-        briefNote = `盯群说明没能发给本人（${(e as Error).message}），告诉本人在这里看一下。`;
+        briefNote = `关注说明没能发给本人（${(e as Error).message}），告诉本人在 连接 → 飞书会话 里看一下。`;
       }
     }
-    const what = rule.on === "mention" ? " @ 消息" : rule.on === "keyword" ? `匹配 ${rule.pattern} 的消息` : "消息";
-    const how = trial ? "先试运行（回复是只有本人看得到的草稿，连续照发几条后问本人要不要直接发）" : `回复方式 ${rule.reply}`;
-    return `${prev ? "已更新" : "开始盯"} ${a.chat_id}：${what}每 ${rule.batchMinutes} 分钟一批交给 ${rule.spec}，${how}，${rule.expiresAt ? `到 ${localStamp(rule.expiresAt, ctx.app.config.timezone)}` : "直到取消"}。${prev ? "" : "盯之前的消息不处理。"}${briefNote}`;
+    const k = saved.knobs;
+    const what = k.listen === "addressed" ? "找本人或机器人的消息" : k.pattern ? `匹配 ${k.pattern} 的消息` : "消息";
+    const how = k.wantsAuto && k.reply === "draft" ? "先试运行（回复是只有本人看得到的草稿，连续照发几条后问本人要不要直接发）" : `回复方式 ${k.reply}`;
+    return `${prev ? "已更新" : "开始关注"}「${saved.name}」（${saved.id}，${saved.chats.length} 个群）：${what}每 ${k.batchMinutes} 分钟一批交给 ${saved.spec}，${how}，${saved.expiresAt ? `到 ${localStamp(saved.expiresAt, ctx.app.config.timezone)}` : "直到取消"}。${prev ? "" : `关注开始前的消息作为背景已经读进来${seeded ? `，其中 ${seeded} 条还在 ${k.backlog} 内、会当作新消息看一遍` : ""}。`}${briefNote}`;
   },
 });
 

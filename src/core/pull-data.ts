@@ -80,6 +80,8 @@ export const pullTables: Table[] = [
   { name: "wiki_nodes", key: ["token"], newer: "coalesce(checked_at, '')" },
   { name: "wiki_node_homes", key: ["token"], newer: "at" },
   { name: "reply_samples", key: ["id"], newer: "max(created_at, coalesce(decided_at, ''), coalesce(settled_at, ''))" },
+  // 「关注」(channels/listen.ts): the owner's settings for each, whichever node changed them last.
+  { name: "listen_contexts", key: ["id"], newer: "updated_at" },
   { name: "source_node_levels", key: ["space_id", "node_key"], newer: "updated_at" },
   { name: "source_cites", key: ["source_id", "ref"] },
   { name: "source_aliases", key: ["alias_id"] },

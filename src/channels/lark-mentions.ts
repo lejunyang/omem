@@ -9,7 +9,10 @@ import { queueMentions } from "../mentions/mentions.ts";
 import { LIMITS, localTime } from "../mentions/triage.ts";
 import { isApp, mentionIds, messageText, timeMs, type LarkMessage } from "./lark-messages.ts";
 import { ownerAlreadyHandled } from "./notify-gate.ts";
-import { watchRule } from "./lark-watch.ts";
+import { contextsOfChat } from "./listen.ts";
+
+/** A 关注 that may reply reads this group: it handles the messages for the owner there (one that only reads leaves them to this path). */
+const repliedByContext = (app: App, chatId: string) => contextsOfChat(app, chatId).some((c) => c.knobs.reply !== "none");
 import { draftMentionReply, replyHow, sendMentionReply } from "./mention-reply.ts";
 
 /**
@@ -36,8 +39,8 @@ function looksForOwner(app: App, chat: MentionChat, m: LarkMessage, owner: strin
  */
 export function queueMention(app: App, chat: MentionChat, messages: LarkMessage[], owner: string | undefined) {
   if (!app.config.mentions.enabled || !owner) return null;
-  // A watched chat has its own handler, which sees these messages already.
-  if (watchRule(app, chat.id)) return null;
+  // A group in a 关注 that may reply has its own handler, which sees these messages already.
+  if (repliedByContext(app, chat.id)) return null;
   const picked = messages.filter((m) => looksForOwner(app, chat, m, owner)).map((m) => ({ id: m.message_id, topicId: m.thread_id ?? null, sender: m.sender?.name ?? "", atMs: timeMs(m.create_time) }));
   return picked.length ? queueMentions(app, lark, chat, picked) : null;
 }
@@ -106,7 +109,7 @@ const lark: MentionChannel = {
   ownerSeen: async (app, m, skipWhen) => !!m.ref && (await ownerAlreadyHandled(app, { sourceRefs: [m.ref] }, skipWhen)),
   // A watch's handler (channel `lark` in handled_messages, lark-watch.ts; the bots' own rows only record
   // delivery), or the bot answering someone who @-ed it (rules/store.ts markAddressed).
-  takenElsewhere: (app, chatId, m) => !!watchRule(app, chatId) || !!one(app.db, "select 1 from handled_messages where message_id = ? and channel = 'lark'", m.id) || addressed(app, `lark:${m.id}`),
+  takenElsewhere: (app, chatId, m) => repliedByContext(app, chatId) || !!one(app.db, "select 1 from handled_messages where message_id = ? and channel = 'lark' and coalesce(rule, '') not like 'read:%'", m.id) || addressed(app, `lark:${m.id}`),
   ruleKey: (id) => `lark:${id}`,
   talkAround,
   senderLine,

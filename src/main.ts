@@ -126,6 +126,9 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   seedBuiltinFlows(app, packageRoot());
   const { attachFlows } = await import("./flows/engine.ts");
   attachFlows(app);
+  // Groups watched the old way become 「关注」(channels/listen.ts).
+  const moved = (await import("./channels/listen.ts")).migrateWatches(app);
+  if (moved) console.log(`[omem] 把 ${moved} 个盯群换成了关注`);
   // omem's own events (runs, reviews, questions, items, flow stages, plugin signals) as rule triggers.
   (await import("./rules/omem-events.ts")).attachOmemEvents(app);
   const { loadPlugins } = await import("./plugins/registry.ts");
