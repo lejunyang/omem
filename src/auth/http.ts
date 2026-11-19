@@ -8,7 +8,7 @@ import { findSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { addMember, createUser, emailHolder, findUser, getUser, identitiesOf, listUsers, ownTokens, OWNER, removeMember, revokeOwnToken, setUserRole, unlinkIdentity, updateUser, userForToken } from "../core/users.ts";
 import { audit, auditLog, can, deleteRole, findRole, GLOBAL_PERMS, listRoles, requirePerm, saveRole, SPACE_PERMS } from "./permissions.ts";
-import { connectionsOf, connectWithCredentials, disconnect, setFeatureOff } from "./connections.ts";
+import { connectionsOf, connectWithCredentials, disconnect, setChatCapture, setFeatureOff } from "./connections.ts";
 import { appView, setAppConfig } from "./apps.ts";
 import { listWatches, removeWatch, syncWatches } from "../plugins/platforms.ts";
 import { featuresOf, scopesFor } from "./features.ts";
@@ -288,6 +288,13 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     const { on } = parse(z.object({ on: z.boolean() }), req.body);
     setFeatureOff(app, who(req), provider, feature, !on);
     audit(app, who(req), on ? "connection.feature.on" : "connection.feature.off", who(req), { provider, feature });
+    return { connections: connectionsOf(app, who(req)) };
+  });
+  // Which of their Feishu chats omem saves (granting the messages features alone saves nothing).
+  server.put("/api/auth/connections/lark/capture", async (req) => {
+    const patch = parse(z.object({ group: z.boolean().optional(), p2p: z.boolean().optional() }), req.body);
+    setChatCapture(app, who(req), patch);
+    audit(app, who(req), "connection.capture", who(req), patch);
     return { connections: connectionsOf(app, who(req)) };
   });
   server.delete("/api/auth/connections/:provider", async (req) => {

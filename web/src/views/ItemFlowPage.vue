@@ -7,8 +7,9 @@ import Markdown from "../components/Markdown.vue";
 import ItemStudy from "../components/ItemStudy.vue";
 import RunArtifacts from "../components/RunArtifacts.vue";
 import Skeleton from "../components/Skeleton.vue";
+import FlowWaiting from "../components/FlowWaiting.vue";
 import type { Material } from "../components/ItemMaterials.vue";
-import { evidenceLink, nextWords, ownerTurn, stageActions, stageWords, testWords, type FlowAction, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
+import { evidenceLink, ownerTurn, stageWords, testWords, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
 import { refAction } from "../lib/refs";
 import { fmtTime, openCitation, relTime, state } from "../store";
 
@@ -25,8 +26,7 @@ const route = useRoute(), router = useRouter();
 const spaceName = (sid: string) => state.spaces.find((s) => s.id === sid)?.name ?? sid;
 const id = computed(() => String(route.params.id ?? ""));
 const detail = ref<Detail | null>(null), flow = ref<FlowView | null>(null);
-const loading = ref(true), busy = ref(false), error = ref("");
-const replies = ref<Record<string, string>>({});
+const loading = ref(true), error = ref("");
 let seq = 0;
 
 async function load() {
@@ -59,37 +59,6 @@ const dot = (s: Stage) => s.state === "done" ? "ok" : ownerTurn(s) || s.state ==
 const sources = computed(() => (detail.value?.materials ?? []).filter((m) => !m.missing));
 const refLabel = (r: string, i: number) => r.startsWith("src:") ? `原件 ${i + 1}` : r.startsWith("design:") ? "方案" : r.startsWith("code-work:") ? "编码交办" : `运行 ${i + 1}`;
 
-/** Words without a button: what they do depends on what the stage is waiting for. */
-function replyMeaning(s: Stage) {
-  if (s.state === "blocked") return "按这句话重开这一段";
-  if (s.question === "gate" || s.question === "when") return "按这句话开始";
-  if (s.question === "done" || s.question === "refuse") return "按这句话重做";
-  if (s.question === "skip") return "跳过，原因是这句";
-  return "";
-}
-/** The stage's buttons, less "reopen": with a box for words, sending them is the reopen. */
-const buttons = (s: Stage) => stageActions(s).filter((a) => !(a.action === "reopen" && replyMeaning(s)));
-async function act(s: Stage, a: FlowAction) {
-  if (busy.value || !editable.value) return;
-  const note = replies.value[s.id]?.trim();
-  if (a.reason && !note) { error.value = `「${a.label}」要写一句原因：写在下面的框里再点。`; return; }
-  busy.value = true; error.value = "";
-  try { flow.value = await post<FlowView>(`/api/items/${id.value}/flow/stages/${encodeURIComponent(s.id)}/${a.action}`, { note: note || undefined }); replies.value[s.id] = ""; }
-  catch (e) { error.value = (e as Error).message; }
-  finally { busy.value = false; }
-}
-async function reply(s: Stage) {
-  const note = replies.value[s.id]?.trim();
-  if (!note || busy.value || !editable.value) return;
-  busy.value = true; error.value = "";
-  try {
-    if (s.state === "blocked" || !s.askId) await post(`/api/items/${id.value}/flow/stages/${encodeURIComponent(s.id)}/reopen`, { note });
-    else await post(`/api/asks/${encodeURIComponent(s.askId)}/answer`, { text: note });
-    replies.value[s.id] = "";
-    await load();
-  } catch (e) { error.value = (e as Error).message; }
-  finally { busy.value = false; }
-}
 /** Take the stage into a conversation: the assistant gets the item and stage to read, the owner writes the rest. */
 function discuss(s?: Stage) {
   const i = item.value!;
@@ -139,20 +108,7 @@ function openRef(r: string) {
       <p v-if="!flow?.flow" class="muted">这件事没有在走流程。<router-link :to="`/items/${item.id}`">到事项里开始一个</router-link></p>
       <p v-if="error" class="error small" role="alert">{{ error }}</p>
 
-      <section v-for="s in waiting" :key="`w-${s.id}`" class="turn" :aria-label="`等你：${s.name}`">
-        <div class="turn-head"><Icon :name="s.state === 'blocked' ? 'alert' : 'check'" :size="16" /><strong>{{ s.state === "blocked" ? "卡住了" : "等你" }}：{{ s.name }}</strong></div>
-        <p>{{ nextWords(s) }}</p>
-        <Markdown v-if="s.state === 'blocked' && text(s)" :source="text(s)" class="prose" />
-        <template v-if="editable">
-          <textarea v-if="replyMeaning(s)" v-model="replies[s.id]" class="textarea" rows="2" :placeholder="`写一句话：${replyMeaning(s)}；点下面需要原因的按钮时也用这里的话`" />
-          <div class="row wrap">
-            <button v-for="(a, i) in buttons(s)" :key="a.label" type="button" class="btn sm" :class="i === 0 ? 'primary' : 'ghost'" :disabled="busy" @click="act(s, a)">{{ a.label }}</button>
-            <button v-if="replyMeaning(s)" type="button" class="btn sm" :disabled="busy || !replies[s.id]?.trim()" @click="reply(s)">{{ replyMeaning(s) }}</button>
-            <span class="spacer" />
-            <button type="button" class="btn ghost sm" @click="discuss(s)"><Icon name="chat" :size="14" />在对话里讨论</button>
-          </div>
-        </template>
-      </section>
+      <FlowWaiting :item="{ id: item.id, title: item.title, spaceId: item.spaceId }" :flow="flow" :editable="editable" @changed="(v) => (v ? (flow = v) : load())" />
 
       <!-- A study's directions, trials and findings: where its directions are chosen ("在下面的……里选一个"). -->
       <ItemStudy v-if="flow?.flow?.study" class="study" :item-id="item.id" :editable="editable" :choosing="!ended && stages.some((s) => s.asking === 'direction')" />
@@ -231,9 +187,6 @@ function openRef(r: string) {
 .strip li.warn { border-color: var(--warn); background: var(--warn-soft); }
 .strip li.accent { border-color: var(--accent); }
 .strip a { color: inherit; text-decoration: none; }
-.turn { border: 1px solid var(--warn); border-left-width: 3px; border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; background: var(--warn-soft); }
-.turn-head { display: flex; gap: 6px; align-items: center; }
-.turn p { margin: 0; }
 .study { margin: 6px 0 22px; }
 .article { display: grid; gap: 28px; }
 .chapter h2 { font-family: var(--serif); font-size: 19px; margin: 0 0 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }

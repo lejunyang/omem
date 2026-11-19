@@ -30,7 +30,10 @@ export type ShareItem = {
   | { kind: "memory"; title: string; text: string; status: string; createdAt: string }
   | { kind: "message"; title: string; text: string; at: string }
   | { kind: "page"; title: string; section: string | null; markdown: string }
+  | { kind: "review"; title: string; verdict: string | null; summary: string; branches: { repo: string; branch: string; base: string | null }[]; findings: ReviewShareFinding[]; at: string }
 );
+/** One finding of a shared review: what it says and what the owner decided, without the run behind it. */
+export type ReviewShareFinding = { n: number; severity: string; title: string; detail: string; suggestion: string; file: string | null; line: number | null; decision: "fix" | "later" | "wontfix"; note: string; resolution: string | null };
 export type ShareRef = { ref: string; label: string };
 
 /** At most this much of one source / page goes into a share. */
@@ -190,6 +193,41 @@ export function prepareShare(app: App, input: { refs: ShareRef[]; runId?: string
       return id;
     },
   };
+}
+
+/**
+ * A review's conclusion for someone outside omem (a colleague who wrote the branch, a reviewer): its
+ * verdict, the lead's summary and every finding still standing in the latest round, with the owner's
+ * decision. A snapshot like any share: no run, no transcript, no other source; revocable.
+ */
+export function shareReview(app: App, runId: string, userId = OWNER) {
+  const base = webBase(app);
+  if (!base) throw new HttpError(400, "omem 没有配置对外网址（设置 → 系统 → 网页地址），分享链接打不开");
+  const r = one<{ id: string; kind: string; title: string; output: string; input: string; finished_at: string | null; created_at: string }>(app.db, "select id, kind, title, output, input, finished_at, created_at from runs where id = ?", runId);
+  if (!r || r.kind !== "code") throw new HttpError(404, "没有这次评审");
+  const out = json<{ codeChain?: { rounds: string[] }; reviewLead?: { summary?: string } }>(r.output, {});
+  // The latest round that has a review: a round still being coded has none yet.
+  const rounds = out.codeChain?.rounds ?? [r.id];
+  const last = [...rounds].reverse().find((id) => one(app.db, "select 1 from reviews where code_run_id = ? limit 1", id));
+  if (!last) throw new HttpError(409, "这次评审还没有结论");
+  const lastOut = last === r.id ? out : json<typeof out>(one<{ output: string }>(app.db, "select output from runs where id = ?", last)?.output, {});
+  const reviews = all<{ id: string }>(app.db, "select id from reviews where code_run_id = ?", last);
+  const rows = all<{ severity: string; title: string; detail: string; suggestion: string; file_path: string | null; line: number | null; state: string; merged_into: number | null; decision: string | null; decision_note: string | null; resolution: string | null }>(app.db,
+    `select severity, title, detail, suggestion, file_path, line, state, merged_into, decision, decision_note, resolution from review_findings where review_id in (${reviews.map(() => "?").join(",")}) and merged_into is null and state in ('open', 'accepted') order by case severity when 'blocker' then 0 when 'major' then 1 when 'minor' then 2 else 3 end, id`, ...reviews.map((x) => x.id));
+  // As the run page reads them (web/src/lib/reviews.ts decisionOf): undecided serious ones are to fix.
+  const decisionOf = (f: (typeof rows)[number]) => (f.decision ?? (f.state === "accepted" || ["blocker", "major"].includes(f.severity) ? "fix" : "later")) as ReviewShareFinding["decision"];
+  const findings: ReviewShareFinding[] = rows.map((f, i) => ({ n: i + 1, severity: f.severity, title: stripRefs(f.title), detail: stripRefs(f.detail).slice(0, 6000), suggestion: stripRefs(f.suggestion).slice(0, 3000), file: f.file_path, line: f.line, decision: decisionOf(f), note: stripRefs(f.decision_note ?? ""), resolution: f.resolution }));
+  const input = json<{ branches?: Record<string, string | { branch: string; base?: string }>; base?: string }>(r.input, {});
+  const branches = Object.entries(input.branches ?? {}).map(([repo, b]) => typeof b === "string" ? { repo, branch: b, base: input.base ?? null } : { repo, branch: b.branch, base: b.base ?? input.base ?? null });
+  const item: ShareItem = { i: 0, label: r.title, kind: "review", title: r.title, verdict: findings.some((f) => f.decision === "fix") ? "changes-requested" : "approved", summary: stripRefs(lastOut.reviewLead?.summary ?? ""), branches, findings, at: r.finished_at ?? r.created_at };
+  const token = randomBytes(32).toString("base64url");
+  const id = newId("sh");
+  const days = app.config.shares.expiryDays;
+  const created = now();
+  const expires = days > 0 ? new Date(Date.parse(created) + days * 86400_000).toISOString() : null;
+  run(app.db, "insert into shares(id, token_hash, user_id, run_id, origin, title, items, created_at, expires_at) values(?,?,?,?,?,?,?,?,?)",
+    id, hash(token), userId, r.id, "review", `评审：${r.title}`.slice(0, 120), JSON.stringify([item]), created, expires);
+  return { id, url: `${base}/#/share/${token}`, findings: findings.length, expiresAt: expires };
 }
 
 /** What the share page shows; null when the token is unknown, revoked or expired. */

@@ -194,6 +194,20 @@ function originalOf(f: Row): { title: string; detail: string } | null {
 }
 
 // ---- what to fix: each finding's call, then the fix with the owner's own additions ------------
+// A read-only link to this review's conclusion for someone outside omem (core/shares.ts shareReview).
+const sharing = ref(false);
+async function shareReview() {
+  sharing.value = true;
+  try {
+    const s = await post<{ url: string; findings: number }>(`/api/runs/${props.runId}/share-review`);
+    try { await navigator.clipboard.writeText(s.url); toast(`已复制分享链接（${s.findings} 个问题）`, "ok"); }
+    catch { await promptDialog("分享链接", { message: "复制下面的链接发给对方；可以在 设置 → 分享 里撤销。", value: s.url, okText: "好" }); }
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    sharing.value = false;
+  }
+}
 const DECISIONS = [{ value: "fix" as const, label: "改" }, { value: "later" as const, label: "暂不改" }, { value: "wontfix" as const, label: "不改" }];
 const latestRound = computed(() => rv.round.value === (rv.data.value?.rounds.at(-1)?.round ?? rv.round.value));
 const deciding = computed(() => !!props.canFix && latestRound.value);
@@ -310,6 +324,7 @@ async function answer(choice: number | null) {
         <span v-if="current?.plan" class="muted small">「{{ current.plan.tierName }}」档 · 第 {{ current.round }} 轮 · {{ current.plan.checks.length }} 项评审<template v-if="current.lead?.by === 'lead' && lastAt"> · 负责人汇总于 {{ relTime(lastAt) }}</template></span>
         <span class="spacer" />
         <button v-if="canRereview" class="btn ghost sm" :disabled="rereviewing" title="分支有了新提交、作者回复了评审意见，或你有补充时" @click="rereview">复审</button>
+        <button v-if="rv.reviews.value.length" class="btn ghost sm" :disabled="sharing" title="生成只读链接：结论、每个问题和你的决定，不含评审过程，不用登录就能看" @click="shareReview">分享结论</button>
         <button v-if="rv.reviews.value.length" class="lnk small" @click="emit('go', 'review')">每项的完整过程 →</button>
       </div>
       <p v-if="current?.lead?.summary" class="lead-summary">{{ current.lead.summary }}</p>

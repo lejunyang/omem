@@ -1694,6 +1694,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const user = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id ?? OWNER;
     if (who(req) !== OWNER && user !== who(req) && !can(app, who(req), "runs.read.all")) throw new HttpError(403, "只能停下或重试自己的运行");
   };
+  // A read-only link to a review's conclusion for someone outside omem (core/shares.ts shareReview).
+  server.post("/api/runs/:id/share-review", async (req) => {
+    const id = (req.params as { id: string }).id;
+    if (who(req) !== OWNER && !canReadRun(app, who(req), id)) throw new HttpError(403, "看不了这次运行");
+    if (who(req) !== OWNER) requirePerm(app, who(req), "share.external");
+    const { shareReview } = await import("../core/shares.ts");
+    const s = shareReview(app, id, who(req));
+    audit(app, who(req), "share.review", id, { share: s.id });
+    return s;
+  });
   server.post("/api/runs/:id/cancel", async (req) => {
     const id = (req.params as { id: string }).id;
     mayControlRun(req, id);

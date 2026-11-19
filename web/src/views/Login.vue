@@ -26,6 +26,12 @@ const failed = ref("");
 const error = computed(() => (typeof route.query.error === "string" ? route.query.error : ""));
 const invite = computed(() => (typeof route.query.invite === "string" ? route.query.invite : ""));
 const back = computed(() => (typeof route.query.return === "string" && route.query.return.startsWith("/") ? route.query.return : "/"));
+// A link the assistant sent (src/auth/connect-wait.ts): `?provider=lark&features=docs,doc-write&scopes=…` ticks what is missing.
+const qList = (k: string) => (typeof route.query[k] === "string" ? (route.query[k] as string).split(",").map((x) => x.trim()).filter(Boolean) : []);
+const askedProvider = computed(() => (typeof route.query.provider === "string" ? route.query.provider : ""));
+const askedFeatures = computed(() => qList("features"));
+const askedScopes = computed(() => qList("scopes"));
+const asking = computed(() => !!askedProvider.value && (askedFeatures.value.length > 0 || askedScopes.value.length > 0));
 // With a primary provider only it logs in; an invite that allows others shows them all.
 const shown = computed(() => {
   const l = s.value?.login;
@@ -42,9 +48,21 @@ function start(p: Provider, purpose: "login" | "bind" = "login") {
   const q = new URLSearchParams({ purpose });
   if (invite.value && purpose === "login") q.set("invite", invite.value);
   if (purpose === "login" && picked.value[p.id]?.length) q.set("features", picked.value[p.id].join(","));
+  if (purpose === "login" && p.id === askedProvider.value && askedScopes.value.length) q.set("scopes", askedScopes.value.join(","));
   if (back.value !== "/") q.set("return", back.value);
+  else if (purpose === "login" && asking.value) q.set("return", "/login?granted=1");
   location.href = `/api/auth/${p.id}/start?${q}`;
 }
+/** Already logged in, the link asks for more: the same incremental authorization as the account page. */
+function connect(p: Provider) {
+  const q = new URLSearchParams({ purpose: "connect" });
+  if (picked.value[p.id]?.length) q.set("features", picked.value[p.id].join(","));
+  if (askedScopes.value.length) q.set("scopes", askedScopes.value.join(","));
+  q.set("return", "/login?granted=1");
+  location.href = `/api/auth/${p.id}/start?${q}`;
+}
+const granted = computed(() => route.query.granted === "1");
+const askedProviderOf = (sess: Session) => [...sess.login.providers, ...(sess.login.primary ? [sess.login.primary] : [])].find((p) => p.id === askedProvider.value) ?? null;
 async function useToken() {
   const t = (await promptDialog("使用访问令牌", { message: "在运行 omem 的机器上执行 omem user token <用户>，把令牌粘贴到这里。", placeholder: "令牌", okText: "保存" }))?.trim();
   if (!t) return;
@@ -57,9 +75,12 @@ async function useToken() {
 onMounted(async () => {
   try {
     s.value = await get<Session>(`/api/auth/session${invite.value ? `?invite=${encodeURIComponent(invite.value)}` : ""}`);
-    for (const p of [...s.value.login.providers, ...(s.value.login.primary ? [s.value.login.primary] : [])]) picked.value[p.id] ??= [];
-    // Already in (and allowed): nothing to do here.
-    if (s.value.user?.status === "active" && !s.value.restricted && !error.value) await router.replace(back.value);
+    for (const p of [...s.value.login.providers, ...(s.value.login.primary ? [s.value.login.primary] : [])]) {
+      const known = new Set((p.features ?? []).map((f) => f.id));
+      picked.value[p.id] ??= p.id === askedProvider.value ? askedFeatures.value.filter((f) => known.has(f)) : [];
+    }
+    // Already in (and allowed): nothing to do here, unless a link asks for an authorization or reports one.
+    if (s.value.user?.status === "active" && !s.value.restricted && !error.value && !asking.value && !granted.value) await router.replace(back.value);
   } catch (e) {
     failed.value = (e as Error).message;
   }
@@ -92,6 +113,27 @@ onMounted(async () => {
         </div>
       </template>
 
+      <template v-else-if="s.user && s.user.status === 'active' && granted">
+        <h2>已授权</h2>
+        <p class="muted">新授权的功能已经生效。助手刚才因为没有授权没做成的事会自动接着做，回到飞书看结果就行。</p>
+        <div class="row"><router-link class="btn primary" to="/">进入 omem</router-link></div>
+      </template>
+
+      <template v-else-if="s.user && s.user.status === 'active' && asking && askedProviderOf(s)">
+        <h2>给 omem 授权{{ askedProviderOf(s)!.label }}</h2>
+        <p class="muted">{{ s.user.name }}，助手刚才要以你的身份用{{ askedProviderOf(s)!.label }}，缺少下面勾选的功能。在{{ askedProviderOf(s)!.label }}里确认后，它会接着做刚才的事。</p>
+        <div class="stack tight features">
+          <UiCheckbox v-for="f in askedProviderOf(s)!.features ?? []" :key="f.id" v-model="picked[askedProvider]" :value="f.id" size="sm">
+            <span class="feat"><span>{{ f.label }}</span><span class="muted small">{{ f.description }}</span></span>
+          </UiCheckbox>
+        </div>
+        <p v-if="askedScopes.length" class="muted small">另外要补的权限：<span class="mono">{{ askedScopes.join("、") }}</span></p>
+        <div class="row wrap">
+          <button class="btn primary" :disabled="!!askedProviderOf(s)!.unavailable || (!picked[askedProvider]?.length && !askedScopes.length)" @click="connect(askedProviderOf(s)!)">去{{ askedProviderOf(s)!.label }}授权</button>
+          <router-link class="btn ghost" to="/">先不用</router-link>
+        </div>
+      </template>
+
       <template v-else-if="s.user && s.user.status === 'active'">
         <p class="muted">已经以 {{ s.user.name }} 登录。</p>
         <div class="row wrap">
@@ -115,15 +157,15 @@ onMounted(async () => {
           <button v-for="p in shown" :key="p.id" class="btn primary" :disabled="!!p.unavailable" :title="p.unavailable ?? ''" @click="start(p)">用{{ p.label }}登录</button>
         </div>
         <p v-for="p in shown.filter((x) => x.unavailable)" :key="p.id" class="small warn-text">{{ p.label }}：{{ p.unavailable }}</p>
-        <details v-for="p in shown.filter((x) => x.features?.length && !x.unavailable)" :key="`f-${p.id}`" class="pick">
-          <summary class="small">登录时一并授权{{ p.label }}的功能（可选）</summary>
-          <p class="muted small">不勾就只让 omem 知道你是谁。勾上的在飞书授权页一起确认；之后也能在账号页打开或关掉。</p>
-          <div class="stack tight">
+        <section v-for="p in shown.filter((x) => x.features?.length && !x.unavailable)" :key="`f-${p.id}`" class="pick stack tight">
+          <strong class="small">登录时一并授权{{ p.label }}的功能（可选）</strong>
+          <p class="muted small">不勾就只让 omem 知道你是谁。勾上的在{{ p.label }}授权页一起确认，之后也能在账号页打开或关掉。</p>
+          <div class="stack tight features">
             <UiCheckbox v-for="f in p.features" :key="f.id" v-model="picked[p.id]" :value="f.id" size="sm">
-              {{ f.label }}<span class="muted small"> · {{ f.description }}</span>
+              <span class="feat"><span>{{ f.label }}</span><span class="muted small">{{ f.description }}</span></span>
             </UiCheckbox>
           </div>
-        </details>
+        </section>
         <p v-if="!shown.length" class="muted small">还没有可用的登录方式。</p>
         <button class="btn ghost sm token" @click="useToken">使用访问令牌</button>
       </template>
@@ -159,12 +201,23 @@ h2 {
 .pick {
   text-align: left;
 }
-.pick summary {
-  cursor: pointer;
-  color: var(--ink-2);
-}
 .pick > p {
-  margin: 6px 0 8px;
+  margin: 0 0 4px;
+}
+.features {
+  gap: 10px;
+}
+/* The name on one line, what it does on the next: a long description never wraps under the name. */
+.feat {
+  display: grid;
+  gap: 2px;
+}
+/* The box beside the name, not halfway down the description. */
+.features :deep(.ui-check) {
+  align-items: flex-start;
+}
+.features :deep(.ui-check .box) {
+  margin-top: 3px;
 }
 .providers {
   display: grid;

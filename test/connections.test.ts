@@ -165,7 +165,7 @@ describe("connections", async () => {
     const ctx = { app, runId: null, spaceId: "personal-ann", spaces: null, tools: null, actor: "agent" as const, userId: "ann", larkChats: [] };
     const refused = await callTool(ctx, "lark_read", { command: ["im", "+chat-list"] });
     expect(refused.isError).toBe(true);
-    expect(refused.text).toContain("关掉了「我的消息」");
+    expect(refused.text).toContain("关掉了「群聊消息」");
     expect((await callTool(ctx, "lark_read", { command: ["calendar", "+agenda"] })).text).not.toContain("关掉了");
     // Back on: used again at once.
     await remote("/api/auth/connections/lark/features/messages", { method: "PUT", cookie, headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ on: true }) });
@@ -208,9 +208,9 @@ describe("connections", async () => {
     expect(seen).toEqual(["ann", undefined]);
     createUser(app, { name: "小陈", id: "chen" });
     await expect(larkCliAs(app, "chen", ["im", "+messages-search"])).rejects.toThrow(/还没有连接飞书/);
-    await expect(asLarkUser(app, "ann", () => asOwner(app, "读消息", () => larkCli(["im", "+chat-list", "--as", "user"])))).rejects.toThrow(/已把授权链接发给/);
+    await expect(asLarkUser(app, "ann", () => asOwner(app, "读消息", () => larkCli(["im", "+chat-list", "--as", "user"])))).rejects.toThrow(/授权链接：http:\/\/omem\.test\/#\/login\?provider=lark&scopes=im%3Achat%3Aread%3Aextra/);
     const n = one<{ link: string }>(app.db, "select link from notifications where user_id = 'ann' order by rowid desc limit 1")!;
-    expect(n.link).toBe("#/account?connect=lark&scopes=im%3Achat%3Aread%3Aextra");
+    expect(n.link).toBe("http://omem.test/#/login?provider=lark&scopes=im%3Achat%3Aread%3Aextra");
     // Everything inside a person's context runs as them, and caches stay per person.
     setLarkCliForTests(async (args, _cwd, as) => (args.includes("spaces") ? { ok: true, data: { space: { space_id: as ? `lib_${as}` : "lib_owner" } } } : { ok: true }));
     expect(await personalLibrary(app)).toBe("lib_owner");
@@ -229,7 +229,33 @@ describe("connections", async () => {
     createUser(app, { name: "小周", id: "zhou" });
     const refused = await callTool(ctx("zhou"), "lark_read", { command: ["im", "+chat-list"] });
     expect(refused.text).toMatch(/还没有连接飞书/);
+    expect(refused.text).toContain("http://omem.test/#/login?provider=lark&features=messages");
     expect(seen).toEqual([]);
+  });
+
+  it("a member without Feishu gets a link with what is missing ticked; once granted, the conversation goes on by itself", async () => {
+    const { callTool } = await import("../src/agents/tools.ts");
+    const { createRun } = await import("../src/agents/runs.ts");
+    const { connectionGranted } = await import("../src/auth/connect-wait.ts");
+    const { createThread } = await import("../src/agents/threads.ts");
+    createUser(app, { name: "小吴", id: "wu" });
+    const thread = createThread(app, { spaceId: "personal-wu", channel: "lark", userId: "wu" });
+    const r = createRun(app, { kind: "agent", spaceId: "personal-wu", title: "改文档", input: { conversationId: thread.id }, userId: "wu" });
+    const refused = await callTool({ app, runId: r.id, spaceId: "personal-wu", spaces: null, tools: null, actor: "agent", userId: "wu", larkChats: [] }, "lark_doc_update", { doc: "https://tenant.larkoffice.com/docx/abc", command: "append", content: "进度" });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("http://omem.test/#/login?provider=lark&features=docs%2Cdoc-write");
+    expect(refused.text).toContain("自动接着做");
+    // Granted something else: still waiting. Granted what was asked: an [授权] turn in that conversation.
+    storeConnection(app, { userId: "wu", provider: "lark", accountId: "on_wu", accountName: "小吴", scopes: scopesFor("lark", ["calendar"]), accessToken: "at_wu", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    connectionGranted(app, "wu", "lark");
+    const said = () => one<{ text: string }>(app.db, "select text from messages where conversation_id = ? and text like '[授权]%'", thread.id)?.text;
+    await new Promise((res) => setTimeout(res, 50));
+    expect(said()).toBeUndefined();
+    storeConnection(app, { userId: "wu", provider: "lark", accountId: "on_wu", accountName: "小吴", scopes: scopesFor("lark", ["docs", "doc-write"]), accessToken: "at_wu2", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    connectionGranted(app, "wu", "lark");
+    await new Promise((res) => setTimeout(res, 50));
+    expect(said()).toContain("小吴已在飞书完成授权");
+    expect(one(app.db, "select 1 from kv where key = 'connect_wait:wu'")).toBeUndefined();
   });
 
   it("captures a member's own chats with their token, and does not read again what they can already see", async () => {
@@ -243,8 +269,14 @@ describe("connections", async () => {
     persistChatMessages(app, { chatId: "oc_team", spaceId: "team-chat", name: "团队", messages: [msg("om_t1", "oc_team", "周会改到周三", 0)] });
     const ownerCopy = persistChatMessages(app, { chatId: "oc_dm", spaceId: "personal", name: "和小安", messages: [msg("om_d1", "oc_dm", "你好", 0)] });
     const ownerText = one<{ text: string }>(app.db, "select text from sources where id = ?", ownerCopy.id!)!.text;
-    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["messages"]), accessToken: "at_ann3", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
+    storeConnection(app, { userId: "ann", provider: "lark", accountId: "on_ann", accountName: "小安", scopes: scopesFor("lark", ["messages", "messages-p2p"]), accessToken: "at_ann3", refreshToken: "rt_ok", expiresIn: 7200, refreshExpiresIn: 604800 });
     const calls: { args: string[]; as?: string }[] = [];
+    // Granted, but capture not turned on: nothing is read.
+    setLarkCliForTests(async (args, _cwd, as) => (calls.push({ args, as }), { ok: true, data: { chats: [] } }));
+    expect(await captureForMember(app, "ann")).toBe(0);
+    expect(calls.some((c) => c.args.includes("+chat-list"))).toBe(false);
+    const { setChatCapture } = await import("../src/auth/connections.ts");
+    setChatCapture(app, "ann", { group: true, p2p: true });
     setLarkCliForTests(async (args, _cwd, as) => {
       calls.push({ args, as });
       if (args.includes("+chat-list")) return { ok: true, data: { chats: [{ chat_id: "oc_team", name: "团队", chat_mode: "group" }, { chat_id: "oc_dm", name: "和本人", chat_mode: "p2p" }] } };

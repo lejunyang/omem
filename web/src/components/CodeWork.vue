@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import FlowWaiting from "./FlowWaiting.vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { aiLabel, get, onServerEvent, onServerResync, post, type Run, type RunEvent } from "../api";
 import Icon from "./Icon.vue";
@@ -416,6 +417,8 @@ const ctx = computed(() => detail.value?.context ?? null);
       </nav>
 
       <template v-if="tab === 'overview'">
+        <!-- The item's flow waits for the owner (a step after this review, say): answered here, where the work is. -->
+        <FlowWaiting v-if="work.item" :key="`flow:${work.item.id}`" class="flow-waiting-here" :item="{ id: work.item.id, title: work.item.title, spaceId: work.spaceId ?? '' }" titled />
         <section v-if="design && designWaits" class="design-wait row wrap" role="status">
           <Icon name="alert" :size="16" />
           <span class="grow"><strong>方案等你确认</strong><span class="muted small"> · {{ countLine(design.counts) }}。通过后按它编码。</span></span>
@@ -578,6 +581,7 @@ const ctx = computed(() => detail.value?.context ?? null);
 .point .ellipsis { flex: 1; min-width: 0; }
 .design-wait { gap: 8px 10px; padding: 10px 14px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }
 .design-wait .grow { flex: 1 1 14em; min-width: 0; }
+.flow-waiting-here { margin: 0 0 14px; }
 .live-note { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
 .empty-tab .btn { margin-left: 8px; }
 .empty-tab { color: var(--muted); font-size: 13px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius); margin: 0; }

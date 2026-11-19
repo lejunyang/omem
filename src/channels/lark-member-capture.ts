@@ -12,8 +12,10 @@ import { persistChatMessages, timeMs, type LarkMessage } from "./lark-messages.t
 import { captureCalendar, captureMinutes, captureRecentDocs, fetchMessages } from "./lark-personal.ts";
 
 /**
- * Capture for the people who connected Feishu with “我的消息” (docs/v2/multi-user.md, “多用户采集与
- * 去重”), with their own token: their recently active chats go to their personal space, or to a space
+ * Capture for the people who connected Feishu (docs/v2/multi-user.md, “多用户采集与去重”), with their
+ * own token. Chats only when they turned capture on in the account page (`larkCapture`: group chats,
+ * private chats or both; granting the messages features alone saves nothing), and only the kinds they
+ * granted: their recently active chats go to their personal space, or to a space
  * the chat is bound to when they may capture there. A chat that already has a copy in a space they
  * can read (a group the owner or the bot captures into a project space) is not read again: they are
  * only recorded as able to see it (source_viewers). Their cursors are their own (kv), so the owner's
@@ -40,7 +42,8 @@ export async function captureForMember(app: App, userId: string) {
   const features = c ? usableFeatures(app, c) : [];
   return asLarkUser(app, userId, async () => {
     const touched = new Map<string, Set<string>>();
-    const kept = features.includes("messages") ? await captureChats(app, userId, touched) : 0;
+    const types = chatTypes(app, userId, features);
+    const kept = types.length ? await captureChats(app, userId, touched, types) : 0;
     // Their calendar, minutes and the documents they opened lately, as for the owner, into their space.
     const who = { userId, spaceId: personalSpaceId(userId) };
     if (features.includes("calendar")) await captureCalendar(app, touched, who).catch((e) => console.warn(`[omem] ${userName(app, userId)} 的飞书日程读取失败：${(e as Error).message}`));
@@ -51,9 +54,15 @@ export async function captureForMember(app: App, userId: string) {
   });
 }
 
+/** Which chats are saved: what they turned on for capture and also granted. */
+export function chatTypes(app: App, userId: string, features: string[]) {
+  const on = findUser(app, userId)?.settings.larkCapture ?? {};
+  return [...(on.group && features.includes("messages") ? ["group"] : []), ...(on.p2p && features.includes("messages-p2p") ? ["p2p"] : [])];
+}
+
 /** Their recently active chats; returns how many messages were kept. */
-async function captureChats(app: App, userId: string, touched: Map<string, Set<string>>) {
-  const v = await larkCli(["im", "+chat-list", "--as", "user", "--types", "p2p,group", "--sort", "active_time", "--page-size", String(CHATS), "--format", "json"]);
+async function captureChats(app: App, userId: string, touched: Map<string, Set<string>>, types: string[]) {
+  const v = await larkCli(["im", "+chat-list", "--as", "user", "--types", types.join(","), "--sort", "active_time", "--page-size", String(CHATS), "--format", "json"]);
   const chats = ((v.data?.chats ?? []) as { chat_id: string; name?: string; chat_mode?: string }[]).slice(0, CHATS);
   const me = larkOpenIdOf(app, userId);
   const endMs = Date.now();
@@ -79,7 +88,7 @@ async function captureChats(app: App, userId: string, touched: Map<string, Set<s
 }
 
 /** What a member capture reads, when granted and not turned off in omem. */
-const CAPTURED = ["messages", "calendar", "minutes", "docs"];
+const CAPTURED = ["messages", "messages-p2p", "calendar", "minutes", "docs"];
 
 /**
  * Everyone (but the owner, whose capture is lark-personal.ts) with a working connection that has
@@ -89,7 +98,8 @@ export async function pollMembers(app: App) {
   let people = 0;
   for (const c of listConnections(app)) {
     if (c.provider !== "lark" || c.userId === "owner" || c.status !== "active" || findUser(app, c.userId)?.status !== "active") continue;
-    if (!usableFeatures(app, c).some((f) => CAPTURED.includes(f))) continue;
+    const usable = usableFeatures(app, c);
+    if (!usable.some((f) => CAPTURED.includes(f) && !f.startsWith("messages")) && !chatTypes(app, c.userId, usable).length) continue;
     try {
       await captureForMember(app, c.userId);
       people++;

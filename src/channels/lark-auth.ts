@@ -117,9 +117,8 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>)
       throw new HttpError(403, `对方的飞书授权少了 ${scope}：再用 identity=bot 试一次会拿到新的授权链接，发给他重新同意。`);
     }
     if (actor) {
-      const { userName } = await import("../core/users.ts");
-      notify(app, { userId: actor.userId, tone: "warning", title: "飞书授权：需要补一项权限", body: `${reason}需要你给 omem 授权：${scope}。在账号页点“授权”，在飞书里确认后再试。`, link: `#/account?connect=lark&scopes=${encodeURIComponent(scope)}`, urgency: "normal" });
-      throw new HttpError(403, `缺少飞书权限 ${e.scopes.join(" 或 ")}。已把授权链接发给 ${userName(app, actor.userId)}；对方授权后再试，不要换别的方式绕过。`);
+      const { needConnection } = await import("../auth/connect-wait.ts");
+      throw new HttpError(403, needConnection(app, actor.userId, actor.runId, { scopes: [scope], reason: `${reason}缺少飞书权限 ${scope}` }));
     }
     let link = "";
     try {

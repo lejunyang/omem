@@ -19,6 +19,8 @@ const refreshing = new Map<string, Promise<string>>();
 
 /** Keep the tokens a login or a connect brought (identity checked by the caller). */
 export function saveConnection(app: App, userId: string, provider: string, who: ProviderIdentity, tokens: ProviderTokens) {
+  // A conversation that waited for this authorization goes on (src/auth/connect-wait.ts).
+  setImmediate(() => void import("./connect-wait.ts").then((m) => m.connectionGranted(app, userId, provider)).catch(() => undefined));
   return storeConnection(app, {
     userId,
     provider,
@@ -76,7 +78,14 @@ export function setFeatureOff(app: App, userId: string, provider: string, featur
   updateUser(app, userId, { settings: { featuresOff: all } });
 }
 
-export type ConnectionView = Connection & { label: string; features: { id: string; label: string; description: string; on: boolean; paused: boolean }[]; background: boolean; credentials: boolean };
+/** Which of their Feishu chats omem saves in the background (channels/lark-member-capture.ts); off by default. */
+export function setChatCapture(app: App, userId: string, patch: { group?: boolean; p2p?: boolean }) {
+  const u = findUser(app, userId);
+  if (!u) throw new HttpError(404, "没有这个用户");
+  updateUser(app, userId, { settings: { larkCapture: { ...(u.settings.larkCapture ?? {}), ...patch } } });
+}
+
+export type ConnectionView = Connection & { label: string; features: { id: string; label: string; description: string; on: boolean; paused: boolean }[]; background: boolean; credentials: boolean; capture?: { group: boolean; p2p: boolean } };
 export function connectionView(app: App, c: Connection): ConnectionView {
   const on = new Set(grantedFeatures(c.provider, c.scopes));
   const off = new Set(featuresOff(app, c.userId, c.provider));
@@ -87,6 +96,7 @@ export function connectionView(app: App, c: Connection): ConnectionView {
     // A key does not run out: it works in the background as long as it is valid.
     background: !!loginProvider(c.provider)?.credentials || !!connectionSecrets(app, c.id)?.refreshToken,
     credentials: !!loginProvider(c.provider)?.credentials,
+    ...(c.provider === "lark" ? { capture: { group: !!findUser(app, c.userId)?.settings.larkCapture?.group, p2p: !!findUser(app, c.userId)?.settings.larkCapture?.p2p } } : {}),
   };
 }
 export const connectionsOf = (app: App, userId: string) => listConnections(app, userId).map((c) => connectionView(app, c));

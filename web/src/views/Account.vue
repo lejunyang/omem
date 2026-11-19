@@ -71,7 +71,7 @@ const notice = computed(() =>
 );
 // Connected platforms (src/auth/connections.ts): features turned on one at a time (an incremental authorization each).
 type Feature = { id: string; label: string; description: string; on?: boolean; paused?: boolean };
-type Conn = { id: string; provider: string; label: string; accountName: string; status: "active" | "expired" | "error"; scopes: string[]; features: Feature[]; background: boolean; lastError: string | null; updatedAt: string };
+type Conn = { id: string; provider: string; label: string; accountName: string; status: "active" | "expired" | "error"; scopes: string[]; features: Feature[]; background: boolean; lastError: string | null; updatedAt: string; capture?: { group: boolean; p2p: boolean } };
 type KeyField = { key: string; label: string; secret: boolean; optional: boolean; hint: string };
 type Available = { id: string; label: string; unavailable: string | null; group: string; docs: string; identity: boolean; credentials: KeyField[] | null; features: Feature[] };
 type Connections = { connections: Conn[]; available: Available[]; may: boolean };
@@ -134,6 +134,16 @@ async function useFeature(provider: string, f: Feature, on: boolean) {
     toast((e as Error).message, "error");
   }
 }
+/** Which Feishu chats omem saves in the background; granting the messages features alone saves nothing. */
+async function setCapture(patch: { group?: boolean; p2p?: boolean }) {
+  try {
+    conns.value = { ...conns.value!, ...(await put<{ connections: Conn[] }>("/api/auth/connections/lark/capture", patch)) };
+    toast("已保存采集范围", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+const featureOn = (c: Conn, id: string) => c.features.some((f) => f.id === id && f.on && !f.paused);
 function connect(provider: string, features: string[], scopes = "") {
   const q = new URLSearchParams({ purpose: "connect" });
   if (features.length) q.set("features", features.join(","));
@@ -291,6 +301,20 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
             <span v-else-if="f.on" class="badge accent">已打开</span>
             <button v-else-if="connOf(p.id)" class="btn sm" :disabled="!conns?.may || !!p.unavailable" @click="connect(p.id, [f.id])">打开</button>
             <UiCheckbox v-else v-model="picked[p.id]" :value="f.id" size="sm" :aria-label="f.label" />
+          </div>
+        </div>
+        <div v-if="p.id === 'lark' && connOf('lark')?.capture" class="stack tight capture">
+          <strong class="small">采集到 omem</strong>
+          <p class="muted small">授权消息只让助手在你让它看时读。要把聊天保存到你的个人空间（之后能检索、整理），在这里打开；默认不采集。每次读最近活跃的 30 个会话，已经在共享空间里的群不再存一份。</p>
+          <div class="row wrap feature">
+            <div class="stack tight"><span>群聊</span><span class="muted small">{{ featureOn(connOf('lark')!, "messages") ? "你所在的群" : "先授权“群聊消息”" }}</span></div>
+            <span class="spacer" />
+            <UiCheckbox :model-value="connOf('lark')!.capture!.group" switch size="sm" :disabled="!featureOn(connOf('lark')!, 'messages')" aria-label="采集群聊" @change="(v) => setCapture({ group: v })" />
+          </div>
+          <div class="row wrap feature">
+            <div class="stack tight"><span>单聊</span><span class="muted small">{{ featureOn(connOf('lark')!, "messages-p2p") ? "你和别人的私聊" : "先授权“单聊消息”" }}</span></div>
+            <span class="spacer" />
+            <UiCheckbox :model-value="connOf('lark')!.capture!.p2p" switch size="sm" :disabled="!featureOn(connOf('lark')!, 'messages-p2p')" aria-label="采集单聊" @change="(v) => setCapture({ p2p: v })" />
           </div>
         </div>
         <p v-if="connOf(p.id) && !p.credentials" class="muted small">关掉的功能 omem 不再使用，{{ p.label }}那边的授权还在；要连授权一起撤销，在{{ p.label }}里取消对这个应用的授权。</p>

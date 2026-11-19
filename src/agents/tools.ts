@@ -30,9 +30,10 @@ import { accessibleSpaces, findUser, OWNER, canWrite, scopeFor, userName } from 
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema } from "../studies/schema.ts";
 import { toolAllowed } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
-import { featuresOf } from "../auth/features.ts";
-import { can, requirePerm } from "../auth/permissions.ts";
+import { featuresOf, LARK_DOMAIN_FEATURES } from "../auth/features.ts";
+import { can, canReadRun, requirePerm } from "../auth/permissions.ts";
 import { asLarkUser, canActOnLark } from "../auth/lark-user.ts";
+import { needConnection } from "../auth/connect-wait.ts";
 import { hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate, localStamp } from "../core/util.ts";
 import { checkBrief } from "./brief.ts";
@@ -3919,7 +3920,7 @@ def({
  * with their own connection (src/auth/lark-user.ts) — the call runs as whoever the run works for.
  */
 /** Which connection feature a lark-cli command uses (one the account page can turn off), or null. */
-const DOMAIN_FEATURES: Record<string, string> = { im: "messages", contact: "messages", docs: "docs", docx: "docs", wiki: "docs", drive: "docs", markdown: "docs", sheets: "sheets", base: "sheets", calendar: "calendar", minutes: "minutes", vc: "minutes" };
+const DOMAIN_FEATURES = LARK_DOMAIN_FEATURES;
 function commandFeature(command: string[], write = false) {
   const f = DOMAIN_FEATURES[command[0] ?? ""] ?? null;
   return write && f === "docs" ? "doc-write" : f;
@@ -3935,7 +3936,7 @@ function ownerOnly(ctx: ToolContext, feature?: string | null) {
   const user = ctx.userId ?? OWNER;
   if (user !== OWNER) {
     requirePerm(ctx.app, user, "connector.use");
-    if (!canActOnLark(ctx.app, user)) throw new HttpError(403, `${userName(ctx.app, user)}还没有连接飞书（或连接需要重新授权）：请对方在 omem 的账号页连接飞书`);
+    if (!canActOnLark(ctx.app, user)) throw new HttpError(403, needConnection(ctx.app, user, ctx.runId, { features: feature ? [feature] : [], reason: "还没有连接飞书（或连接要重新授权）" }));
     featureGate(ctx, feature);
   }
   // Like the bot's lark_* tools: omem's own runs only (an outside agent over `omem mcp` has no Feishu scope).
@@ -4148,6 +4149,8 @@ def({
       const r = await botForRequester(ctx, a.doc, () => w.updateDoc(ctx.app, { ...edit, content }, { asBot: true }));
       return `已用机器人的身份编辑（${a.command}）：${a.doc}${r.revision != null ? `，版本 ${r.revision}` : ""}\n${AGENT_NOTE}之前读到的 block id 可能已失效，再改前用 lark_doc_fetch（identity=bot）重新读。`;
     }
+    // A member without a connection is asked for writing too, not just reading (src/auth/connect-wait.ts).
+    ownerOnly(ctx, "doc-write");
     const place = await w.docPlace(ctx.app, a.doc).catch((e) => ownerDenied(ctx.app, e));
     const places = [place];
     for (const doc of a.approval_docs ?? []) {
@@ -4469,6 +4472,25 @@ async function validateReviewChoice(ctx: ToolContext, tier?: string, checks?: st
   const unknown = (checks ?? []).filter((c) => !reviewChecks(ctx.app).some((x) => x.name === c));
   if (unknown.length) throw new HttpError(400, `没有评审项 ${unknown.join("、")}；可选：${reviewChecks(ctx.app).map((x) => `${x.name}（${x.label}）`).join("、")}`);
 }
+
+def({
+  name: "share_review",
+  description: "把一次评审（分支评审或交办的评审）的结论做成只读分享链接，发给 omem 之外的人看（写分支的同事、别的评审人）：链接里是分享那一刻的结论、评审负责人的总结和每个问题（级别、文件和行、说明、建议、本人定的改 / 暂不改 / 不改），没有评审过程和别的原件；不用登录就能打开，本人可以在 设置 → 分享 里撤销。本人要你把评审发给某人看时用；只在本人要求时分享。",
+  write: true,
+  schema: z.object({ run_id: z.string().describe("评审所在的编码交办或分支评审的运行 id") }),
+  handler: async (ctx, a) => {
+    const r = getRun(ctx.app, a.run_id);
+    if (r.spaceId) space(ctx, r.spaceId);
+    const user = ctx.userId ?? OWNER;
+    if (user !== OWNER) {
+      if (!canReadRun(ctx.app, user, r.id)) throw new HttpError(403, "看不了这次运行");
+      requirePerm(ctx.app, user, "share.external");
+    }
+    const { shareReview } = await import("../core/shares.ts");
+    const sh = shareReview(ctx.app, r.id, user);
+    return `分享链接：${sh.url}\n里面有 ${sh.findings} 个问题和本人的决定，不含评审过程。${sh.expiresAt ? `${sh.expiresAt.slice(0, 10)} 失效。` : ""}本人可以在 设置 → 分享 里撤销。`;
+  },
+});
 
 def({
   name: "review_branch",
@@ -6471,7 +6493,7 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
     if (recheck) return recheck;
     // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
     // ... and Feishu as the person this run works for (their own connection; src/auth/lark-user.ts).
-    const text = await asLarkUser(ctx.app, ctx.userId ?? OWNER, () => withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data)));
+    const text = await asLarkUser(ctx.app, ctx.userId ?? OWNER, () => withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data)), ctx.runId);
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
     const moved = STEERS_CODE.has(name) ? await followFrom(ctx, (parsed.data as { run_id?: string }).run_id) : tool.write ? followWork(ctx, parsed.data as Record<string, unknown>) : "";
     const linked = afterToolCall(ctx.app, ctx.runId, ctx.userId, name, parsed.data as Record<string, unknown>, String(text));

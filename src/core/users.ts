@@ -19,8 +19,12 @@ export const OWNER = "owner";
 /** `pending`: signed up by logging in, waiting for the owner (src/auth); cannot use anything yet. */
 export type UserStatus = "active" | "pending";
 /** Per-user switches the owner sets. loginAny: may log in with providers other than auth.primary. */
-/** `featuresOff`: connection features the person turned off in omem, by provider (auth/connections.ts). */
-export type UserSettings = { loginAny?: boolean; featuresOff?: Record<string, string[]> };
+/**
+ * `featuresOff`: connection features the person turned off in omem, by provider (auth/connections.ts).
+ * `larkCapture`: which of their Feishu chats omem saves in the background (channels/lark-member-capture.ts);
+ * off unless they turn it on: granting “群聊消息 / 单聊消息” only lets the assistant read them when asked.
+ */
+export type UserSettings = { loginAny?: boolean; featuresOff?: Record<string, string[]>; larkCapture?: { group?: boolean; p2p?: boolean } };
 export type User = {
   id: string;
   name: string;

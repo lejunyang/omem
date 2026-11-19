@@ -20,11 +20,11 @@ export function setLarkCliForTests(fn: Override | null) {
  * written against lark-cli works for anyone who connected Feishu and never falls back to the owner's
  * login. The owner, and anything outside such a context, use lark-cli's own login as before.
  */
-export type LarkActor = { app: { home: string }; userId: string };
+export type LarkActor = { app: { home: string }; userId: string; runId?: string | null };
 export const larkActor = new AsyncLocalStorage<LarkActor>();
 /** `rejected`: Feishu turned the token down (lark-cli's `authentication` errors), so it is refreshed before the next call. */
 type Credentials = { appId: string; token: string; brand?: string; rejected?: () => void };
-let credentials: ((actor: LarkActor) => Promise<Credentials>) | null = null;
+let credentials: ((actor: LarkActor, args: string[]) => Promise<Credentials>) | null = null;
 /** src/auth/lark-user.ts hands in how to get a person's token (kept out of here: no import cycle). */
 export function setLarkCredentials(fn: typeof credentials) {
   credentials = fn;
@@ -111,7 +111,7 @@ export async function larkCliAsBot(bot: { appId: string; appSecret: string; bran
 export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
   const actor = larkActing();
   if (actor && !credentials) throw new Error("飞书：还不能以这个用户的身份调用（没有接上连接器）");
-  const user = actor ? await credentials!(actor) : null;
+  const user = actor ? await credentials!(actor, args) : null;
   if (override) { const result = await override(args, cwd, actor?.userId); if (!user) noticeLoginGone(result); assertLarkResult(result); return result; }
   const script = larkCliScript();
   const env = user ? { ...process.env, LARKSUITE_CLI_APP_ID: user.appId, LARKSUITE_CLI_USER_ACCESS_TOKEN: user.token, LARKSUITE_CLI_BRAND: user.brand ?? "feishu" } : undefined;

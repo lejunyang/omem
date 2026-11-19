@@ -15,7 +15,9 @@ type Item = { i: number; mark?: number; label: string } & (
   | { kind: "memory"; title: string; text: string; status: string; createdAt: string }
   | { kind: "message"; title: string; text: string; at: string }
   | { kind: "page"; title: string; section: string | null; markdown: string }
+  | { kind: "review"; title: string; verdict: string | null; summary: string; branches: { repo: string; branch: string; base: string | null }[]; findings: ReviewFinding[]; at: string }
 );
+type ReviewFinding = { n: number; severity: string; title: string; detail: string; suggestion: string; file: string | null; line: number | null; decision: "fix" | "later" | "wontfix"; note: string; resolution: string | null };
 type Share = { title: string; createdAt: string; expiresAt: string | null; items: Item[] };
 
 const route = useRoute();
@@ -64,8 +66,18 @@ function where(it: Item) {
   }
   if (it.kind === "memory") return `记忆 · ${when(it.createdAt)}${it.status !== "active" ? ` · ${it.status === "superseded" ? "已被更正" : "已撤回"}` : ""}`;
   if (it.kind === "message") return `对话 · ${when(it.at)}`;
+  if (it.kind === "review") return `代码评审 · ${when(it.at)}`;
   return `Wiki${it.section ? ` · ${it.section}` : ""}`;
 }
+
+// A shared review (shares.ts shareReview): severity, the owner's decision, and what a re-review found.
+const SEVERITY: Record<string, { text: string; cls: string }> = { blocker: { text: "阻断", cls: "danger" }, major: { text: "严重", cls: "danger" }, minor: { text: "一般", cls: "warn" }, nit: { text: "提示", cls: "" } };
+const DECISION: Record<string, string> = { fix: "要改", later: "暂不改", wontfix: "不改" };
+const RESOLVED: Record<string, string> = { fixed: "复审：已修", still: "复审：仍在", moot: "复审：不再适用" };
+const VERDICT: Record<string, string> = { approved: "评审通过", "changes-requested": "需要修改" };
+const isReview = computed(() => share.value?.items.length === 1 && share.value.items[0].kind === "review");
+const fixCount = (it: Extract<Item, { kind: "review" }>) => it.findings.filter((f) => f.decision === "fix").length;
+const branchName = (b: string) => b.replace(/^origin\//, "");
 
 /** The server answers a share in milliseconds: a wait this long is the browser holding the request back. */
 const SLOW_MS = 8_000;
@@ -114,7 +126,7 @@ onMounted(async () => {
       </template>
       <template v-else>
         <h1>{{ share.title || "引用的内容" }}</h1>
-        <p class="muted small meta">一条消息引用的 {{ share.items.length }} 处内容 · {{ when(share.createdAt) }} 复制 · {{ share.expiresAt ? `${when(share.expiresAt)} 失效` : "长期有效" }}</p>
+        <p class="muted small meta">{{ isReview ? "代码评审的结论" : `一条消息引用的 ${share.items.length} 处内容` }} · {{ when(share.createdAt) }} 复制 · {{ share.expiresAt ? `${when(share.expiresAt)} 失效` : "长期有效" }}</p>
         <article v-for="it in share.items" :id="`item-${it.i}`" :key="it.i" class="card item" :class="{ on: current === it.i }">
           <div class="item-head">
             <span v-if="it.mark" class="mark" aria-hidden="true">{{ circled(it.mark) }}</span>
@@ -134,9 +146,31 @@ onMounted(async () => {
             <p v-if="it.lines.length && it.start + it.lines.length - 1 < it.total && !it.from" class="muted small">只分享了前 {{ it.lines.length }} 行（共 {{ it.total }} 行）。</p>
           </template>
           <div v-else-if="it.kind === 'page'" class="prose" v-html="safe(it.markdown)" />
+          <div v-else-if="it.kind === 'review'" class="review stack">
+            <p class="row wrap small">
+              <span v-if="it.verdict" class="badge" :class="it.verdict === 'approved' ? 'ok' : 'warn'">{{ VERDICT[it.verdict] ?? it.verdict }}</span>
+              <span>{{ it.findings.length }} 个问题，其中要改 {{ fixCount(it) }} 个</span>
+            </p>
+            <ul v-if="it.branches.length" class="branches small">
+              <li v-for="b in it.branches" :key="b.repo"><span class="muted">{{ b.repo }}</span> <code>{{ branchName(b.branch) }}</code><template v-if="b.base"> <span class="muted">对照</span> <code>{{ branchName(b.base) }}</code></template></li>
+            </ul>
+            <div v-if="it.summary" class="prose" v-html="safe(it.summary)" />
+            <section v-for="f in it.findings" :key="f.n" class="finding" :class="{ quiet: f.decision !== 'fix' }">
+              <div class="row wrap f-head">
+                <strong>#{{ f.n }} {{ f.title }}</strong>
+                <span class="badge" :class="SEVERITY[f.severity]?.cls">{{ SEVERITY[f.severity]?.text ?? f.severity }}</span>
+                <span class="badge">{{ DECISION[f.decision] }}</span>
+                <span v-if="f.resolution && RESOLVED[f.resolution]" class="badge">{{ RESOLVED[f.resolution] }}</span>
+              </div>
+              <p v-if="f.file" class="small muted mono loc">{{ f.file }}{{ f.line ? `:${f.line}` : "" }}</p>
+              <div class="prose" v-html="safe(f.detail)" />
+              <div v-if="f.suggestion" class="prose suggestion"><strong class="small">建议</strong><div v-html="safe(f.suggestion)" /></div>
+              <p v-if="f.note" class="small muted">{{ DECISION[f.decision] }}的理由：{{ f.note }}</p>
+            </section>
+          </div>
           <div v-else class="prose" v-html="safe(it.text)" />
         </article>
-        <p class="muted small foot">这里只有那条消息引用的部分，是发送时的副本；里面提到的其他内容不能从这里打开。</p>
+        <p class="muted small foot">{{ isReview ? "这是分享时评审结论的副本，不含评审过程；里面提到的其他内容不能从这里打开。" : "这里只有那条消息引用的部分，是发送时的副本；里面提到的其他内容不能从这里打开。" }}</p>
       </template>
     </main>
   </div>
@@ -266,4 +300,11 @@ h1 {
     font-size: 20px;
   }
 }
+.review { gap: 12px; }
+.branches { margin: 0; padding-left: 18px; }
+.finding { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 6px; min-width: 0; }
+.finding.quiet { opacity: 0.75; }
+.f-head { gap: 6px; }
+.loc { margin: 0; overflow-wrap: anywhere; }
+.suggestion { border-left: 3px solid var(--line); padding-left: 10px; }
 </style>

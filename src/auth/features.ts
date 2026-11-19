@@ -10,11 +10,18 @@ export type Feature = { id: string; label: string; description: string; scopes: 
 export const FEATURES: Record<string, Feature[]> = {
   lark: [
     { id: "offline", label: "后台访问", description: "omem 在你不在时也能读（刷新令牌）；采集类功能都要它", scopes: ["offline_access"] },
+    // Granting lets the assistant read when you ask it to; nothing is saved until capture is turned on (the account page).
     {
       id: "messages",
-      label: "我的消息",
-      description: "读你的单聊和群聊，保存到你的个人空间",
-      scopes: ["im:chat:read", "im:message:readonly", "im:message.group_msg:get_as_user", "im:message.p2p_msg:get_as_user", "im:resource", "contact:user.base:readonly"],
+      label: "群聊消息",
+      description: "助手在你让它看时，以你的身份读你所在的群。默认不采集，要保存到 omem 在账号页打开采集",
+      scopes: ["im:chat:read", "im:message:readonly", "im:message.group_msg:get_as_user", "im:resource", "contact:user.base:readonly"],
+    },
+    {
+      id: "messages-p2p",
+      label: "单聊消息",
+      description: "助手在你让它看时，以你的身份读你的单聊。默认不采集，要保存到 omem 在账号页打开采集",
+      scopes: ["im:chat:read", "im:message:readonly", "im:message.p2p_msg:get_as_user", "im:resource", "contact:user.base:readonly"],
     },
     { id: "docs", label: "文档与知识库", description: "读你能看到的文档和知识库目录", scopes: ["docx:document:readonly", "docs:document.content:read", "wiki:node:read", "wiki:wiki:readonly", "drive:file:download"] },
     { id: "sheets", label: "表格与多维表格", description: "读你能看到的电子表格和多维表格", scopes: ["sheets:spreadsheet:read", "sheets:spreadsheet.meta:read", "base:app:read", "base:table:read", "base:field:read", "base:record:read", "base:view:read"] },
@@ -23,6 +30,16 @@ export const FEATURES: Record<string, Feature[]> = {
     { id: "doc-write", label: "让助手写文档", description: "助手以你的身份新建、编辑文档（别人的文件先经你批准）", scopes: ["docx:document:write_only", "docx:document:create", "wiki:node:create", "wiki:node:move"] },
   ],
 };
+
+/** Which Feishu feature a lark-cli command family uses (one the account page can turn off). */
+export const LARK_DOMAIN_FEATURES: Record<string, string> = { im: "messages", contact: "messages", docs: "docs", docx: "docs", wiki: "docs", drive: "docs", markdown: "docs", sheets: "sheets", base: "sheets", calendar: "calendar", minutes: "minutes", vc: "minutes" };
+/** What a lark-cli call needs, to ask for when someone has not connected yet: a document write needs writing too. */
+export function larkCommandFeatures(args: string[]): string[] {
+  const f = LARK_DOMAIN_FEATURES[args[0] ?? ""];
+  if (!f) return [];
+  const write = f === "docs" && args.slice(1, 3).some((a) => /^\+?(update|create|write|append|replace|insert|delete|move|upload)/.test(a));
+  return write ? ["docs", "doc-write"] : [f];
+}
 
 /** Plugin providers whose features follow the owner's settings (the scopes they filled in): read each time. */
 const dynamic = new Map<string, () => Feature[]>();

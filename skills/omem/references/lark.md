@@ -33,7 +33,7 @@
 - 共享文档的编辑也可按文档复用批准：首次 `lark_doc_update` 用 `approval_docs` 列出本次全部待编辑文档，`summary` 写一两句整体改动（不贴正文或 HTML/XML）。一次批准后，这些文档在后续任务和对话中的追加、局部替换和失败重试不重复问，兼容旧版已批准的编辑记录；单篇可不填 `approval_docs`。不在节点授权内的其他文档、新建、复制和移动，以及整篇覆盖要重新批准；实际写入仍须本人发起。文档写入的批准卡统一发到本人机器人私聊，回答和执行结果仍回到原任务。卡片列出文档和摘要，旧调用没有摘要时使用去标签的正文预览；`lark_doc_create` 也支持 `summary`。等审批时用 `wait_answer`，同一待批范围不会再发卡片；提示“当前这处编辑尚未执行”时，批准后再调用那处编辑。
 - 其他飞书数据：`lark_read(command)` 以本人身份跑 lark-cli 标为 read 的命令（表格、多维表格、幻灯片、云空间和评论、Markdown 文件、知识库、任务、日历、邮件、聊天记录、会议与妙记、通讯录、OKR、审批），`["skills","read","lark-sheets"]`、`["schema", …]`、`["<域>","--help"]` 读官方说明。`lark_write(command, target, summary)` 只放行 sheets、base、slides、markdown、task 的 write 命令和 drive 的评论命令：本人自己的文件直接写，别人的文件和任务先请本人批准（按文件复用，首次可用 `approval_targets` 列全），命令里改的必须是 `target`；high-risk-write、`--as`、`--yes`、`api` 都不放行。规则触发的运行用它回写被盯的表格时，宿主记下这次写入，几分钟内只由本人造成的那次改动不会再触发同一条规则。做法在内置技能 `lark-suite`。
 - 回复群里的某条消息并 @ 人：`lark_send(reply_to=<om_…>, in_thread=true, mentions=[名字、邮箱或机器人侧 open_id], text)`。消息 id 从那个群的聊天原件（`read_source`）或 `lark_read` 的 `im +chat-messages-list` 找；只能发到本次运行允许的会话。
-- 替成员（不是本人）用这些工具时：他在 omem 账号页关掉的功能，对应的调用会被拒绝并说明（例如关了「我的消息」就读不了聊天）。照实告诉他，让他在账号页打开，不要换别的办法绕过。
+- 替成员（不是本人）用这些工具时：他在 omem 账号页关掉的功能，对应的调用会被拒绝并说明（例如关了「群聊消息」就读不了群聊）。还没连接或缺授权时，工具的报错里有一个预先勾好所缺功能的授权链接，也已私聊发给他：把链接原样给他；他授权后这个会话会收到一条 `[授权]` 消息，接着做刚才没做成的事，不用他再说一遍。不要换别的办法绕过。
 - 读文档用 `import_url`（可给 `depth`）；整个知识库用 `lark_wiki_crawl`（start / continue / stop / status，可分批）。
 
 ## 能看到的知识库（kb-scout）
