@@ -3221,6 +3221,90 @@ def({
   },
 });
 
+const dimsSchema = z.record(z.string(), z.string()).optional().describe("维度，例如 {平台: \"新\", 端: \"PC\"}；同一指标不同维度是不同的线");
+
+def({
+  name: "metric_define",
+  description:
+    "定义或修改一个指标：本人工作上要看的数据（某个功能的埋点事件量、上线后的报错数和使用量、旧平台和新平台的对比……）。写清它在哪个系统、用哪个技能或命令怎么查（query，后台按它取数），关联到事项（item）或关注（context），采集频率（schedule），什么变化要告诉本人（threshold 相对变化、direction 哪个方向是好）。同名的指标会被更新。只读系统的查法，不写会改动线上的操作。",
+  write: true,
+  schema: z.object({
+    id: z.string().optional().describe("要改的指标 id（m…）；新建不传"),
+    name: z.string().trim().min(2).max(120),
+    description: z.string().max(2000).optional().describe("它衡量什么、为什么要看、口径"),
+    unit: z.string().max(20).optional(),
+    source: z.string().max(200).optional().describe("哪个系统（按数据源目录的叫法）"),
+    query: z.string().max(4000).optional().describe("怎么查：技能名、命令或查询语句、参数和时间范围，另一个 Agent 照着能取到同样的数"),
+    item: z.string().optional().describe("关联的事项 id"),
+    context: z.string().optional().describe("关联的关注 id"),
+    space: z.string().optional(),
+    schedule: z.enum(["none", "hourly", "daily", "weekly"]).optional().describe("后台多久取一次；none 只在有人要时取"),
+    baseline: z.number().optional().describe("固定的参照值；不传就和前几次的中位数比"),
+    threshold: z.number().optional().describe("相对变化超过多少要告诉本人，0.3 表示 30%，默认 0.3"),
+    direction: z.enum(["up-good", "down-good", "neutral"]).optional(),
+    status: z.enum(["active", "paused"]).optional(),
+  }),
+  handler: async (ctx, a) => {
+    const { defineMetric } = await import("../data/metrics.ts");
+    if (a.item) {
+      const item = getItem(ctx.app, a.item);
+      inScope(ctx, item.spaceId, "指标关联的事项");
+    }
+    if (a.context) {
+      if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的指标能关联关注");
+      (await import("../channels/listen.ts")).requireContext(ctx.app, a.context);
+    }
+    const m = defineMetric(ctx.app, {
+      id: a.id, name: a.name, description: a.description, unit: a.unit, source: a.source, query: a.query,
+      itemId: a.item, contextId: a.context, spaceId: a.space ? writeSpace(ctx, a.space) : undefined,
+      schedule: a.schedule, baseline: a.baseline, threshold: a.threshold, direction: a.direction, status: a.status,
+    });
+    return `已${a.id ? "更新" : "保存"}指标「${m.name}」（${m.id}），采集：${m.schedule}${m.schedule === "none" ? "" : "，后台到时间按查法取数"}。现在就有数的用 metric_record 记下。`;
+  },
+});
+
+def({
+  name: "metric_record",
+  description: "记下指标的值（取数后调用）：每个点一个值，带时间（不传就是现在）和维度。和基线比变化超过门槛时，宿主会告诉本人、写进关联的关注和事项。",
+  write: true,
+  schema: z.object({
+    metric: z.string().describe("指标 id 或名字"),
+    points: z.array(z.object({ value: z.number(), at: z.string().optional().describe("数据所属的时间（ISO），例如昨天的日数据写昨天"), dims: dimsSchema, note: z.string().max(300).optional() })).min(1).max(200),
+  }),
+  handler: async (ctx, a) => {
+    const { recordPoints, requireMetric, describeChange } = await import("../data/metrics.ts");
+    const m = requireMetric(ctx.app, a.metric);
+    inScope(ctx, m.spaceId, "指标");
+    const changes = await recordPoints(ctx.app, m.id, a.points, ctx.runId);
+    const lines = changes.filter((c) => c.change).map((c) => `${Object.keys(c.dims).length ? `[${Object.entries(c.dims).map(([k, v]) => `${k}=${v}`).join(",")}] ` : ""}${describeChange(m, c.change!)}${c.change!.flagged ? "（超过门槛，已告诉本人）" : ""}`);
+    return `已记 ${a.points.length} 个点。${lines.length ? `\n${lines.join("\n")}` : ""}`;
+  },
+});
+
+def({
+  name: "metric_read",
+  description: "读指标：不传 metric 列出能看的指标（可按 item / context 过滤）；传了给出定义、最近的点、和基线比的变化，chart=true 时附一段报表里能直接放的图（```chart 代码块，网页上画成图）。写数据报表、回答“这个功能上线后怎么样”时用。",
+  schema: z.object({
+    metric: z.string().optional(),
+    item: z.string().optional(),
+    context: z.string().optional(),
+    days: z.number().int().min(1).max(365).optional().describe("看最近几天，默认 30"),
+    dims: dimsSchema,
+    chart: z.boolean().optional(),
+  }),
+  handler: async (ctx, a) => {
+    const M = await import("../data/metrics.ts");
+    if (a.metric) {
+      const m = M.requireMetric(ctx.app, a.metric);
+      inScope(ctx, m.spaceId, "指标");
+      return M.metricText(ctx.app, m.id, { days: a.days, dims: a.dims, chart: a.chart });
+    }
+    const list = M.listMetrics(ctx.app, { itemId: a.item, contextId: a.context, spaces: ctx.spaces });
+    if (!list.length) return "还没有指标。要看的数据先用 metric_define 定义（查法写清），参考数据源目录和技能 observation-plan。";
+    return list.map((m) => `- ${m.id}「${m.name}」${m.unit ? `（${m.unit}）` : ""} · ${m.source || "来源没写"} · ${m.schedule}${m.itemId ? ` · 事项 ${m.itemId}` : ""}${m.status === "paused" ? " · 暂停" : ""}`).join("\n") + `\n\n${M.metricsSummary(ctx.app, list.slice(0, 30))}`;
+  },
+});
+
 def({
   name: "submit_playbook",
   description:

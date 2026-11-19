@@ -53,6 +53,8 @@ marked.use({
       const language = (lang ?? "").trim().split(/\s+/)[0];
       // The source rides in the attribute URI-encoded: DOMPurify drops attribute values containing "-->" (every flowchart has one).
       if (language === "mermaid") return `<div class="mermaid-box" data-mermaid="${encodeURIComponent(text)}"><pre>${escapeHtml(text)}</pre></div>`;
+      // A chart's data (metric_read chart=true, a report): drawn by renderCharts, the data shown until then.
+      if (language === "chart") return `<div class="chart-box" data-chart="${encodeURIComponent(text)}"><pre>${escapeHtml(text)}</pre></div>`;
       return `<pre><code class="hljs${language ? " language-" + escapeHtml(language) : ""}">${highlight(text, language)}</code></pre>`;
     },
     image({ href, title, text }) {
@@ -98,7 +100,7 @@ function preprocess(md: string) {
 
 export function renderMarkdown(md: string, opts: { breaks?: boolean } = {}): string {
   const html = marked.parse(preprocess(md ?? ""), { async: false, breaks: !!opts.breaks }) as string;
-  return DOMPurify.sanitize(html, { ADD_ATTR: ["data-cite", "data-ref", "data-uri", "data-from", "data-to", "data-wiki", "data-mermaid", "target"] });
+  return DOMPurify.sanitize(html, { ADD_ATTR: ["data-cite", "data-ref", "data-uri", "data-from", "data-to", "data-wiki", "data-mermaid", "data-chart", "target"] });
 }
 
 let mermaidLoader: Promise<typeof import("mermaid").default> | null = null;
@@ -209,5 +211,29 @@ export function linkifyPaths(root: HTMLElement) {
     }
     frag.append(text.slice(last));
     node.replaceWith(frag);
+  }
+}
+
+/**
+ * ```chart blocks (a ChartSpec as JSON, see packages/plugin-sdk/charts.ts): drawn with the app's charts
+ * after the text renders. A block that is not a chart stays as its source.
+ */
+export async function renderCharts(root: HTMLElement) {
+  const boxes = [...root.querySelectorAll<HTMLElement>(".chart-box[data-chart]")].filter((b) => !b.dataset.done);
+  if (!boxes.length) return;
+  const { mountChart } = await import("@omem-ai/plugin-sdk/charts");
+  for (const box of boxes) {
+    box.dataset.done = "1";
+    try {
+      const spec = JSON.parse(decodeURIComponent(box.dataset.chart ?? ""));
+      if (!spec || !Array.isArray(spec.labels) || !Array.isArray(spec.series)) throw new Error("不是图表数据");
+      box.innerHTML = "";
+      const el = document.createElement("div");
+      el.className = "chart-mount";
+      box.appendChild(el);
+      mountChart(el, { kind: "line", ...spec });
+    } catch {
+      box.classList.add("chart-failed");
+    }
   }
 }

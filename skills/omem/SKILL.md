@@ -98,6 +98,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `lark-capture` | 飞书会话列表、盯群、采集设置、历史回溯、知识库归属 | 同上 |
 | `learning` | 学习目标与卡片 | [references/learning.md](references/learning.md) |
 | `media` | 图片生成（配好图片模型后才有） | [references/media.md](references/media.md) |
+| `data` | 数据：指标的定义、采集、读数和报表，变化超过门槛时告诉本人 | [references/data.md](references/data.md) |
 | `plugins` | 插件档案读写插件自己的记录；插件的内容块工具（如 `english_quiz`）按插件 id 成组 | [references/plugins.md](references/plugins.md) |
 | `connect` | 以本人的身份读已连接的平台（Notion、GitHub、Figma、Google、Slack……），存成原件、盯着同步；本人连了平台才有 | [references/connect.md](references/connect.md) |
 | `object-actions` | 对事项上挂的平台对象做事（如 `github_merge_pull_request` 合并 PR）：插件声明的动作工具，和事项页卡片上的按钮是同一个；默认每次先问本人 | [references/flows.md](references/flows.md) |

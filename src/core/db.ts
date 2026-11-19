@@ -2133,6 +2133,36 @@ export const migrations: readonly string[] = [
    create index reply_samples_context on reply_samples(context_id, created_at);`,
   // The 「关注」 that asked about a meeting or went into it (channels/listen-meetings.ts): one per meeting.
   `alter table lark_meetings add column context_id text;`,
+  // Metrics of the owner's work and of omem itself (src/data/metrics.ts): definitions and points. One point
+  // per metric, time and dimensions; the same again replaces it.
+  `create table metrics (
+     id text primary key,
+     name text not null,
+     description text not null default '',
+     unit text not null default '',
+     source text not null default '',
+     query text not null default '',
+     item_id text,
+     context_id text,
+     space_id text not null default 'personal',
+     schedule text not null default 'none',
+     settings text not null default '{}',
+     status text not null default 'active',
+     last_at text,
+     created_at text not null,
+     updated_at text not null
+   );
+   create index metrics_item on metrics(item_id);
+   create table metric_points (
+     metric_id text not null references metrics(id) on delete cascade,
+     at text not null,
+     value real not null,
+     dims text not null default '{}',
+     note text,
+     run_id text,
+     created_at text not null,
+     primary key(metric_id, at, dims)
+   );`,
 ];
 
 export type Db = DatabaseSync;

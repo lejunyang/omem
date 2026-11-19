@@ -14,6 +14,7 @@ import ItemPlaces, { type Place, type ItemRun } from "../components/ItemPlaces.v
 import ItemFlow from "../components/ItemFlow.vue";
 import ItemObjects from "../components/ItemObjects.vue";
 import ItemListen from "../components/ItemListen.vue";
+import ItemMetrics from "../components/ItemMetrics.vue";
 import PluginSlots from "../components/PluginSlots.vue";
 import DesignRow from "../components/DesignRow.vue";
 import DesignStart from "../components/DesignStart.vue";
@@ -290,6 +291,7 @@ async function addNote() {
           <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
         <ItemFlow :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
+        <ItemMetrics :item-id="detail.item.id" />
         <ItemListen :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id)" />
         <ItemObjects :item-id="detail.item.id" :editable="(!state.me || detail.item.userId === state.me.id) && (!state.me?.writes || state.me.writes.includes(detail.item.spaceId))" />
         <PluginSlots at="item.panel" :item-id="detail.item.id" :space="detail.item.spaceId" />

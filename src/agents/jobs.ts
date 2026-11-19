@@ -1152,6 +1152,14 @@ registerHandler("heartbeat", async (ctx) => {
   } catch (e) {
     console.warn(`[omem] 关注的案例和经验：${(e as Error).message}`);
   }
+  // Metrics (src/data/metrics.ts): scheduled ones get their collection run; omem's own use is kept day by day.
+  try {
+    const data = await import("../data/metrics.ts");
+    await data.collectDue(app);
+    (await import("../data/omem-usage.ts")).snapshotOmemUsage(app);
+  } catch (e) {
+    console.warn(`[omem] 指标：${(e as Error).message}`);
+  }
   // Command approvals past their time (their timers do not survive a restart).
   await (await import("./command-gate.ts")).expireCommandAsks(app);
   // Questions nobody waits for any more lapse; notifications the owner read in Feishu count as read.

@@ -48,6 +48,13 @@ updated: 2026-11-20
 - 网页：`web/src/components/AgentAccounts.vue`（账号页“我的 AI 账号”）、`AgentAccountsAdmin.vue`（设置 → AI “成员的 AI 账号”）。`osdk.toml` 加 `[sys.pkg]`，只声明 apt / dnf 的 bubblewrap，`scripts/upgrade.ts` 不跑 `osdk pkg apply`。
 - 设计里没做的（额度按账号读、探测缓存按账号分、技能同步进账号目录、`own-or-other`、插件登录）和没在真机上验的写在 `docs/v2/agent-accounts.md` 开头。测试 `test/agent-accounts.test.ts`。
 
+## 工作上的指标、数据源目录和观测计划；omem 自己的用量按天存（11-20）
+
+- `src/data/metrics.ts`：表 `metrics`、`metric_points`（主键 metric_id + at + dims，同一点再记会替换；两张都进拉取）。`defineMetric`（新指标必须写查法）、`recordPoints`（和基线比：固定的 `baseline`，或前 7 个点的中位数；超过 `threshold`（默认 0.3）时 `notify` 稍后档、写进关联关注的会话、事项时间线）、`readMetric`（序列、变化、`ChartSpec`）、`collectDue`（到时间的指标按空间起一次 `kind = agent` 的只读取数运行，`input.metricCollect`，禁发消息、交办、建事项；每天最多 40 次；`quiet.ts` 允许它 `stay_quiet`）。
+- 工具分组 `data`：`metric_define`、`metric_record`、`metric_read`（`chart: true` 附 ` ```chart ` 块）；主助手有 `group:data`。说明页 `skills/omem/references/data.md`。内置技能 `data-sources`（盘点数据源目录，写工作文件 `数据/数据源目录.md`）、`observation-plan`（需求的观测计划）。
+- `src/data/omem-usage.ts`：心跳每天把前一天（首次最多 30 天）的 omem 用量写成 `omem.runs`、`omem.run_minutes`、`omem.runs_by_ai`、`omem.reply_outcomes`（判定、谁判的、有没有改判）、`omem.cases`、`omem.conversations`。
+- 网页：`web/src/lib/markdown.ts renderCharts` 把 ` ```chart ` 块画成图；事项页 `ItemMetrics.vue`；接口 `src/data/http.ts`（`/api/metrics`、`/api/metrics/:id`、改采集频率和门槛）。
+
 ## 「关注」管会议和事项，规则能交给关注（11-20）
 
 - 会议（`src/channels/listen-meetings.ts`）：没有规则接的会议交给关心它的关注（群里发起的给含这个群的关注，本人入会的给默认关注），`meetings: ask` 发只给本人看的卡片（`watch-trial.ts` 的 `ownerCard` 已导出复用），`listen` 直接进；进会沿用规则的旁听流程（`lark-meetings.ts startListenPlan`，计划上带 `contextId`），旁听任务带关注的说明、经验和摘要，记下的和会后小结写回关注会话（`jobs.ts` 里 `listenMeeting`）。“以后不用问”记在参数 `meetingSkip`。进会与否记成案例（`chat_kind = 'meeting'`，不参与回复类的检索和统计）。本人不在的群会议，旁听的写法改成“本人不在会上”。`lark_meetings` 加 `context_id`。

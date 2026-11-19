@@ -67,6 +67,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "lark-owner", label: "以本人身份读写飞书的表格、多维表格、任务，拉人进群", doc: "lark", tools: ["lark_read", "lark_write", "lark_invite"] },
   { id: "lark-capture", label: "飞书采集设置", doc: "lark", tools: ["list_lark_chats", "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "propose_knowledge_mapping", "submit_playbook"] },
   { id: "learning", label: "学习", doc: "learning", tools: ["create_card", "set_learning_goal", "learning_progress"] },
+  { id: "data", label: "数据：指标、采集和报表", doc: "data", tools: ["metric_define", "metric_record", "metric_read"] },
   { id: "media", label: "图片生成", doc: "media", tools: ["generate_image"] },
   { id: "plugins", label: "插件", doc: "plugins", tools: ["plugin_query", "plugin_put"] },
   // Filled by the plugin of the same id when it loads (connect_list, connect_read…): roles name the group

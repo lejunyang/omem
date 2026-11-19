@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { linkifyPaths, renderMarkdown, renderMermaid } from "../lib/markdown";
+import { linkifyPaths, renderCharts, renderMarkdown, renderMermaid } from "../lib/markdown";
 import { layoutCallouts, sizeTables } from "../lib/doc-layout";
 import { openCitation, state } from "../store";
 import { previewFromClick } from "../lib/image-preview";
@@ -31,6 +31,7 @@ async function enhance() {
   root.value.querySelectorAll<HTMLElement>("h2, h3").forEach((h, i) => (h.id ||= `s-${i + 1}`));
   emit("rendered", root.value);
   void renderMermaid(root.value);
+  void renderCharts(root.value);
 }
 onMounted(enhance);
 watch(html, enhance);
