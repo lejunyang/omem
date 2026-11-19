@@ -30,6 +30,8 @@ type Row = {
 };
 
 const flat = (s: string, n: number) => truncate(s.replace(/\s+/g, " ").trim(), n);
+/** Cases about messages: not meetings, and not the owner's choices about items the assistant made (items/auto-cases.ts). */
+const MESSAGES = `${NOT_MEETING} and source != 'item'`;
 
 /** A message looking for the owner reached the flow (whether or not the owner had seen it by then). Once per mention run. */
 export function noteAsk(app: App, runId: string, channel: MentionChannel, chat: { chatId: string; chatName: string; chatKind: string; topicId: string | null }, messages: MentionMessage[], what = "") {
@@ -101,9 +103,9 @@ function outcome(s: Row) {
 /** The samples that say something (a decision, the owner's own reply, or a settled silence), nearest first: this person, this chat, then the rest. */
 function nearest(app: App, to: { askerId: string | null; chatId: string; text?: string }, limit: number) {
   // With the new message: the cases closest to it (same person, same chat, alike in words; channels/listen-cases.ts).
-  if (to.text) return nearCases(app, { askerId: to.askerId, chatId: to.chatId, text: to.text }, limit) as unknown as Row[];
+  if (to.text) return nearCases(app, { askerId: to.askerId, chatId: to.chatId, text: to.text }, limit * 2).filter((c) => c.chat_kind !== "item").slice(0, limit) as unknown as Row[];
   const since = new Date(Date.now() - RECENT_MS).toISOString();
-  const said = `(decision is not null or owner_reply is not null or settled_at is not null) and ${NOT_MEETING}`;
+  const said = `(decision is not null or owner_reply is not null or settled_at is not null) and ${MESSAGES}`;
   const pick = (where: string, n: number, ...params: (string | number)[]) => all<Row>(app.db, `select * from reply_samples where created_at > ? and ${said} and ${where} order by created_at desc limit ?`, since, ...params, n);
   const seen = new Set<string>();
   const out: Row[] = [];
@@ -127,7 +129,7 @@ export function habitLine(app: App, to: { askerId: string | null; askerName: str
   const count = (where: string, ...p: string[]) => one<{ n: number; own: number; silent: number; sent: number; dropped: number; no_need: number }>(app.db,
     `select count(*) n, sum(owner_reply is not null) own, sum(owner_reply is null and settled_at is not null and coalesce(decision, '') not in ('sent', 'edited', 'auto')) silent,
             sum(decision in ('sent', 'edited', 'auto')) sent, sum(decision = 'dropped') dropped, sum(reason = 'no-need') no_need
-       from reply_samples where created_at > ? and ${NOT_MEETING} and ${where}`, since, ...p)!;
+       from reply_samples where created_at > ? and ${MESSAGES} and ${where}`, since, ...p)!;
   const line = (label: string, c: ReturnType<typeof count>) =>
     c.n ? `${label}近 60 天找过本人 ${c.n} 次：本人自己回了 ${c.own ?? 0} 次，没回 ${c.silent ?? 0} 次${(c.sent ?? 0) + (c.dropped ?? 0) ? `；拟好的回复发了 ${c.sent ?? 0} 次、没发 ${c.dropped ?? 0} 次${c.no_need ? `（其中 ${c.no_need} 次本人说不用回）` : ""}` : ""}。` : "";
   return [to.askerId ? line(`${to.askerName} `, count("asker_id = ?", to.askerId)) : "", to.chatKind === "group" ? line("这个群里", count("chat_id = ?", to.chatId)) : ""].filter(Boolean).join("\n");
@@ -140,8 +142,8 @@ export function replyHabits(app: App, to: { askerId: string | null; chatId: stri
   if (!lines.length) return "";
   const since = new Date(Date.now() - RECENT_MS).toISOString();
   const d = one<{ n: number; sent: number; edited: number; dropped: number }>(app.db,
-    `select count(*) n, sum(decision = 'sent') sent, sum(decision = 'edited') edited, sum(decision = 'dropped') dropped from reply_samples where created_at > ? and ${NOT_MEETING} and decision in ('sent', 'edited', 'dropped')`, since)!;
-  const why = all<{ reason: string; n: number }>(app.db, `select reason, count(*) n from reply_samples where created_at > ? and ${NOT_MEETING} and decision = 'dropped' and reason is not null group by reason order by n desc`, since)
+    `select count(*) n, sum(decision = 'sent') sent, sum(decision = 'edited') edited, sum(decision = 'dropped') dropped from reply_samples where created_at > ? and ${MESSAGES} and decision in ('sent', 'edited', 'dropped')`, since)!;
+  const why = all<{ reason: string; n: number }>(app.db, `select reason, count(*) n from reply_samples where created_at > ? and ${MESSAGES} and decision = 'dropped' and reason is not null group by reason order by n desc`, since)
     .map((r) => `${DROP_REASONS[r.reason as DropReason] ?? r.reason} ${r.n}`).join("、");
   const len = typicalReplyLength(app);
   return [
@@ -158,7 +160,7 @@ export function replyStats(app: App) {
   const d = one<{ n: number; drafts: number; sent: number; edited: number; dropped: number; own: number; silent: number }>(app.db,
     `select count(*) n, sum(draft is not null) drafts, sum(decision = 'sent') sent, sum(decision = 'edited') edited, sum(decision = 'dropped') dropped,
             sum(owner_reply is not null) own, sum(owner_reply is null and settled_at is not null and coalesce(decision, '') not in ('sent', 'edited', 'auto')) silent
-       from reply_samples where created_at > ? and ${NOT_MEETING}`, since)!;
-  const reasons = Object.fromEntries(all<{ reason: string; n: number }>(app.db, `select reason, count(*) n from reply_samples where created_at > ? and ${NOT_MEETING} and decision = 'dropped' and reason is not null group by reason`, since).map((r) => [r.reason, r.n]));
+       from reply_samples where created_at > ? and ${MESSAGES}`, since)!;
+  const reasons = Object.fromEntries(all<{ reason: string; n: number }>(app.db, `select reason, count(*) n from reply_samples where created_at > ? and ${MESSAGES} and decision = 'dropped' and reason is not null group by reason`, since).map((r) => [r.reason, r.n]));
   return { days: 60, samples: d.n, drafts: d.drafts ?? 0, sent: d.sent ?? 0, edited: d.edited ?? 0, dropped: d.dropped ?? 0, ownReplies: d.own ?? 0, noReply: d.silent ?? 0, reasons, typicalLength: typicalReplyLength(app) };
 }

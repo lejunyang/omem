@@ -143,7 +143,8 @@ describe("asking the owner", () => {
     const { app, ctx } = working();
     try {
       app.config.approvals.report = ["upsert_item"];
-      const result = await callTool(ctx, "upsert_item", { title: "核对退款金额", kind: "todo" });
+      // A background run: it says why the owner would want the item (items/auto.ts).
+      const result = await callTool(ctx, "upsert_item", { title: "核对退款金额", kind: "todo", why: "本人近况里的退款改造" });
       expect(result.isError).toBe(false);
       expect(listAsks(app)).toHaveLength(0);
       const notices = all<{ title: string; body: string; context: string }>(app.db, "select title,body,context from notifications");

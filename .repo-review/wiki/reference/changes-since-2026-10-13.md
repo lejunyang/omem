@@ -16,6 +16,14 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 助手自己建的事项要站得住：why、候选和本人的取舍（11-20）
+
+- `src/agents/tools.ts`：`upsert_item` 多了 `why`。新建时不是本人自己这一轮（`ownTurn`：本人这一轮的话、成员在自己会话里说的、本人批准过的调用、没有运行的调用之外都算）就必须写，引用照 `source_refs` 校验；同名候选不重复建，本人两周内不要过的同名事项拒绝；后台运行不能改候选的状态；本人这一轮改自动事项的状态按本人的选择记（actor `user`）。`list_items` 的 status 多 `candidate`。
+- `src/items/auto.ts`：`gateItem` 用决策场景 `item`（`src/core/decision-scenes.ts`“自动建事项”，风险答案 keep、谨慎答案 candidate，默认 0.6，配置 `ai.decision.thresholds.item`；设置页的门槛列表按场景自动列出）。材料：事项、理由、建的角色、`workStateBrief`、活跃的「关注」名字和说明、最近的自动事项取舍、免提醒规则。没有决策模型或出错时只认引用了本人原话（群聊里“（本人）”那一行、本人发给助手的消息）或点名关注的理由。另有 `decideCandidate`、`pendingCandidates`、`sweepCandidates`（三天没答取消，不进清点的“已过期”）、`candidatesBody`、`itemLessons`。
+- `src/items/store.ts`：状态多 `candidate`（不在 active、不提醒、`itemExpiry` 返回 null，`item.created` 事件等留下时才有）；每次状态变化调 `src/items/auto-cases.ts` 的 `noteAutoOutcome`，自动事项（时间线有 `auto` 事件，文字以“为什么建：”开头）的取舍记进 `reply_samples`（`source = item`、`chat_kind = item`、`handle_run` 是建它的运行、`final` 是事项 id、`asker_name` 是建它的角色，插入时即 settled）。`src/mentions/reply-learn.ts`、`triage.ts` 读案例时排除这类。
+- 9:30 清点（`jobs.ts` 的 `sendItemDigests`）多一段候选，卡片每件一行“留下 · 标题 / 不要”（`item:take|drop:<id>`，`lark-actions.ts`）；事项页顶部“可能要跟的”、详情里的候选提示用 `POST /api/items/:id/candidate`（`{ keep }`，在 `src/auth/routes.ts` 登记为 self）。`GET /api/items` 和详情对候选带 `auto: { why, by }`。
+- 整理、巡检、夜间整理、简报的任务和有人找你的处理任务末尾带“本人最近对你自动建的事项的取舍”（该角色自己的在前，最多 8 条）。角色说明：`roles/_common.md`“事项与本人的回复”和“怎么写记忆”第 3 问、`ingest.md`、`heartbeat.md`、`dreamer.md`、`brief.md`；`src/memory/quality.ts` 的免责式拒绝理由也要求 why。测试 `test/item-gate.test.ts`。
+
 ## 插件读得到本人填的设置：api.settings() 和登录方式的 ctx.settings（11-20）
 
 - `src/plugins/registry.ts`：在 omem 里运行的插件多了 `api.settings()`，返回本人在 设置 → 插件 里填的值（清单 `settings`，带默认值），每次调用时读；隔离运行的照旧在工具的 `ctx.settings()` 里读（`sandbox-runner.ts` 里调用会报错说明）。

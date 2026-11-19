@@ -3,10 +3,15 @@ import { lapseItemAsks } from "../agents/ask-expiry.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { emitOmem } from "../rules/omem-events.ts";
+import { noteAutoOutcome } from "./auto-cases.ts";
 
 export type ItemKind = "todo" | "waiting" | "reminder" | "watch" | "decision";
-/** expired: closed by itself after its period passed with no progress (src/items/expiry.ts), not done. */
-export type ItemStatus = "open" | "waiting" | "snoozed" | "done" | "cancelled" | "expired";
+/**
+ * expired: closed by itself after its period passed with no progress (src/items/expiry.ts), not done.
+ * candidate: made by the assistant on its own and not yet wanted (src/items/auto.ts): out of the lists,
+ * no reminders, until the owner keeps it (open) or not (cancelled).
+ */
+export type ItemStatus = "open" | "waiting" | "snoozed" | "done" | "cancelled" | "expired" | "candidate";
 export const CLOSED_STATUSES: readonly ItemStatus[] = ["done", "cancelled", "expired"];
 export const isClosed = (s: string) => (CLOSED_STATUSES as readonly string[]).includes(s);
 export type Item = {
@@ -135,7 +140,8 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
     });
     app.emit({ type: "changed", entity: "item", id: newIdValue, spaceId: input.spaceId ?? "personal" });
     const made = getItem(app, newIdValue);
-    emitOmem(app, { type: "item.created", id: made.id, title: made.title, kind: made.kind, status: made.status, space: made.spaceId, item: { id: made.id, title: made.title }, ...(runId ? { runId } : {}) });
+    // A candidate is not an item yet: rules hear of it when the owner keeps it (item.status).
+    if (made.status !== "candidate") emitOmem(app, { type: "item.created", id: made.id, title: made.title, kind: made.kind, status: made.status, space: made.spaceId, item: { id: made.id, title: made.title }, ...(runId ? { runId } : {}) });
     return made;
   }
   const old = getItem(app, id);
@@ -182,6 +188,10 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
     if (changes.length || input.note || JSON.stringify(nextRefs) !== JSON.stringify(old.sourceRefs)) addItemEvent(app, id, changes.length ? "updated" : "note", [input.note, changes.join("；")].filter(Boolean).join("\n"), actor, mode === "remove" ? [] : input.sourceRefs ?? [], runId);
   });
   app.emit({ type: "changed", entity: "item", id, spaceId: old.spaceId });
+  // What the owner did with an item the assistant made on its own teaches the roles that make them (items/auto-cases.ts).
+  if (next.status !== old.status) {
+    try { noteAutoOutcome(app, old, next.status, actor); } catch (e) { console.warn(`[omem] 记录自动事项的取舍失败：${(e as Error).message}`); }
+  }
   if (next.status !== old.status) emitOmem(app, { type: "item.status", id, title: next.title, kind: next.kind, status: next.status, from: old.status, space: old.spaceId, item: { id, title: next.title }, ...(runId ? { runId } : {}) });
   // An item that ended gives back the workspaces its delegations still hold (their branches stay).
   if (closing) void import("../agents/code-branch.ts").then((m) => m.releaseItemWorkspaces(app, id)).catch(() => {});

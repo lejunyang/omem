@@ -517,7 +517,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       // Item digest: each button keeps or reopens one item; the card stays usable for the others.
       const { recordInteraction } = await import("./lark-send.ts");
       const sent = await sendLark(target, { card });
-      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { digest: true, itemIds: [...n.digest.closed, ...n.digest.soon], effectIds: n.digest.effects ?? [], notificationId: n.id, userId: n.userId } });
+      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { digest: true, itemIds: [...n.digest.closed, ...n.digest.soon, ...(n.digest.candidates ?? [])], effectIds: n.digest.effects ?? [], notificationId: n.id, userId: n.userId } });
       markPushed(app, n.id, "lark", sent.messageId);
       return;
     }

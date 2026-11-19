@@ -23,7 +23,7 @@ it("keeps other people's business out of the owner's items", async () => {
   expect(refused.isError).toBe(true);
   expect(refused.text).toContain("本人不在");
   // The owner's own group: as before.
-  const ok = await callTool(ctxFor(app, ingest.id), "upsert_item", { title: "回复小周的问题", kind: "todo", source_refs: ["src:s_team#L1"] });
+  const ok = await callTool(ctxFor(app, ingest.id), "upsert_item", { title: "回复小周的问题", kind: "todo", source_refs: ["src:s_team#L1"], why: "小周在本人的群里问本人" });
   expect(ok.isError, ok.text).toBe(false);
 
   // A colleague asking the assistant: the assistant's job, not the owner's to-do.

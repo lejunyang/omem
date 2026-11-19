@@ -28,7 +28,7 @@ const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
 type WorkFile = { id: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; lines: number };
-const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[] } | null>(null);
+const detail = ref<{ item: Item; auto?: { why: string; by: string }; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[]; places?: Place[]; runs?: ItemRun[] } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const adding = ref(false);
@@ -75,28 +75,62 @@ onMounted(() => {
   void load();
   void loadDetail();
   void loadExpiry();
+  void loadCandidates();
 });
-watch([showDone, scope], load);
+watch([showDone, scope], () => {
+  void load();
+  void loadCandidates();
+});
 watch(itemId, loadDetail);
 const off = onServerEvent((e) => {
   if (e.type === "changed" && e.entity === "item") {
     void load();
     void loadExpiry();
+    void loadCandidates();
     if (detail.value && e.id === detail.value.item.id) void loadDetail();
   }
 });
 const offResync = onServerResync(() => {
   void load();
   void loadExpiry();
+  void loadCandidates();
   if (detail.value) void loadDetail();
 });
+
+// ---- candidates: items the assistant made on its own, kept or not (src/items/auto.ts) ----
+const candidates = ref<Item[]>([]);
+const deciding = ref<string | null>(null);
+let candidateSeq = 0;
+async function loadCandidates() {
+  const my = ++candidateSeq;
+  const r = await get<Item[]>(`/api/items?status=candidate${scope.value === "space" ? `&space=${state.space}` : ""}`).catch(() => null);
+  if (my === candidateSeq && r) candidates.value = r;
+}
+async function decide(i: Item, keep: boolean) {
+  deciding.value = i.id;
+  try {
+    await post(`/api/items/${i.id}/candidate`, { keep });
+    toast(keep ? `已留下「${i.title}」` : `不要了「${i.title}」`, "ok");
+    candidates.value = candidates.value.filter((c) => c.id !== i.id);
+    void load();
+    if (detail.value?.item.id === i.id) void loadDetail();
+  } finally {
+    deciding.value = null;
+  }
+}
+/** While searching, only the candidates that match too. */
+const shownCandidates = computed(() => {
+  const t = query.value.trim().toLowerCase();
+  return t ? candidates.value.filter((c) => `${c.title}\n${c.detail}`.toLowerCase().includes(t)) : candidates.value;
+});
+const candidateWhen = (i: Item) => [itemKindLabel[i.kind] ?? i.kind, i.dueAt ? `截止 ${fmtTime(i.dueAt)}` : "", i.remindAt ? `提醒 ${fmtTime(i.remindAt)}` : "", i.auto?.by ? `${i.auto.by}建的` : "", relTime(i.createdAt)].filter(Boolean).join(" · ");
 onBeforeUnmount(() => {
   off();
   offResync();
 });
 
 const columns = computed(() => {
-  const open = items.value.filter((i) => !closedStatuses.includes(i.status));
+  const open = items.value.filter((i) => !closedStatuses.includes(i.status) && i.status !== "candidate");
   return [
     { key: "decision", title: "需要你决定", icon: "alert", items: open.filter((i) => i.kind === "decision") },
     { key: "todo", title: "待办与提醒", icon: "checkbox", items: open.filter((i) => i.kind === "todo" || i.kind === "reminder") },
@@ -214,6 +248,23 @@ async function addNote() {
       <span class="spacer" />
       <button class="btn sm primary" @click="backlogOpen = true">查看并收尾</button>
     </div>
+    <section v-if="shownCandidates.length" class="candidates" aria-labelledby="candidates-title">
+      <h2 id="candidates-title" class="section-title row"><Icon name="inbox" :size="14" />可能要跟的 <span class="count">{{ shownCandidates.length }}</span></h2>
+      <p class="muted small">助手自己从材料里看出来、你没要求过的事。留下就变成正式事项，提醒时间照旧；不要就放下。3 天没答的会自动放下，你的选择会教它以后少建这类。</p>
+      <div class="cand-list">
+        <div v-for="c in shownCandidates" :key="c.id" class="cand row">
+          <div class="cand-main">
+            <router-link :to="`/items/${c.id}`" class="ttl">{{ c.title }}</router-link>
+            <div class="small muted">{{ candidateWhen(c) }}</div>
+            <div v-if="c.auto?.why" class="small why">{{ c.auto.why }}</div>
+          </div>
+          <div class="cand-actions row">
+            <button class="btn sm primary" :disabled="deciding === c.id" @click="decide(c, true)">留下</button>
+            <button class="btn sm ghost" :disabled="deciding === c.id" @click="decide(c, false)">不要</button>
+          </div>
+        </div>
+      </div>
+    </section>
     <p v-if="query.trim() && !searching && !loading && !items.length" class="muted none-found">没有标题、详情或等待对象里含“{{ query.trim() }}”的事项。</p>
     <div v-else class="board">
       <section v-for="c in columns" :key="c.key" class="col">
@@ -253,6 +304,14 @@ async function addNote() {
           <span class="spacer" />
           <button class="btn ghost sm icon" @click="router.push('/items')"><Icon name="x" /></button>
         </header>
+        <div v-if="detail.item.status === 'candidate'" class="cand-banner">
+          <p><strong>候选：</strong>{{ detail.auto?.by ? `${detail.auto.by}自己建的` : "助手自己建的" }}，你还没说要不要。在你决定之前它不提醒、不进上面的列表。</p>
+          <p v-if="detail.auto?.why" class="small why">{{ detail.auto.why }}</p>
+          <div class="row">
+            <button class="btn sm primary" :disabled="deciding === detail.item.id" @click="decide(detail.item, true)">留下</button>
+            <button class="btn sm ghost" :disabled="deciding === detail.item.id" @click="decide(detail.item, false)">不要</button>
+          </div>
+        </div>
         <input class="input title" :value="detail.item.title" @change="save({ title: ($event.target as HTMLInputElement).value })" />
         <textarea class="textarea" rows="3" placeholder="详情" :value="detail.item.detail" @change="save({ detail: ($event.target as HTMLTextAreaElement).value })" />
         <div class="grid2">
@@ -270,6 +329,7 @@ async function addNote() {
                 { value: 'done', label: '完成' },
                 { value: 'cancelled', label: '取消' },
                 { value: 'expired', label: '过期' },
+                ...(detail.item.status === 'candidate' ? [{ value: 'candidate', label: '候选' }] : []),
               ]"
               @change="(v) => save({ status: v })"
             />
@@ -438,6 +498,68 @@ async function addNote() {
 .toolbar {
   gap: 10px;
   margin-bottom: 20px;
+}
+.candidates {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+.candidates .section-title {
+  gap: 6px;
+  margin: 0;
+}
+.candidates > p,
+.cand-banner p {
+  margin: 0;
+}
+.cand-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+.cand {
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.cand-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.cand-main .ttl {
+  color: var(--ink);
+  font-size: 14px;
+}
+.why {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.cand-actions {
+  gap: 6px;
+  flex: none;
+}
+.cand-banner {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.cand-banner .row {
+  gap: 6px;
+}
+@media (max-width: 560px) {
+  .cand {
+    flex-wrap: wrap;
+  }
+  .cand-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 .search {
   flex: 0 1 340px;

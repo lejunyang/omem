@@ -102,7 +102,7 @@ export function checkMemory(app: App, m: CheckInput): MemoryProblem[] {
     problems.push({
       code: "hedge",
       message:
-        "这条的主体是免责/不确定（“不能证明”“无法确认”“未见回执”之类），不是可复用的结论。确定的部分只写结论；仍需要本人判断或等待结果的，用 upsert_item 建 decision/watch/waiting 事项；什么结论都没有就不记。",
+        "这条的主体是免责/不确定（“不能证明”“无法确认”“未见回执”之类），不是可复用的结论。确定的部分只写结论；确实要本人亲自判断或等结果、并且说得出本人为什么会要它的，用 upsert_item 建 decision/watch/waiting 事项（不是本人这一轮要的，why 写本人的原话并带引用、所属的「关注」或近况里的哪条线）；说不出来或什么结论都没有就不记。",
     });
   if (text.length > maxChars)
     problems.push({

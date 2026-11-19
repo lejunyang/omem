@@ -65,8 +65,8 @@ export type Notification = {
   scheduled?: boolean;
   /** Deliver into this Feishu conversation id instead of the owner's private chat (a work topic). */
   larkConversationId?: string;
-  /** The daily item digest: items that closed by themselves (can be reopened) and that close soon (can be kept); `effects`: nightly replay suggestions to adopt or ignore. */
-  digest?: { closed: string[]; soon: string[]; effects?: string[] };
+  /** The daily item digest: items that closed by themselves (can be reopened) and that close soon (can be kept); `candidates`: items the assistant made on its own, kept or not (items/auto.ts); `effects`: nightly replay suggestions to adopt or ignore. */
+  digest?: { closed: string[]; soon: string[]; candidates?: string[]; effects?: string[] };
   /** How the card reads: `warning` waits on the owner (an authorization, an approval: orange like approval cards), `done` is that settled (green). */
   tone?: NotifyTone;
   /** This is the newer state of an earlier notification (a pending authorization now done): channels edit the card they sent for it instead of sending another. */
@@ -102,7 +102,7 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[]; candidates?: string[]; effects?: string[] }; replaces?: string; tone?: NotifyTone;
     /** The host already gave the owner their time before this run started (mentions/mentions.ts): no first-nudge grace. */
     graceDone?: boolean;
     reportTool?: string;

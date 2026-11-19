@@ -1600,9 +1600,9 @@ def({
 
 def({
   name: "list_items",
-  description: "查看事项（待办、等待回复、提醒、关注、待决定）及其最近进展。active 不含 expired（一段时间没有进展、自动过期的）；新材料和一件已过期的事项有关时，用 status=expired 找到它再 upsert_item 记进展，它会重新打开，不要另建。",
+  description: "查看事项（待办、等待回复、提醒、关注、待决定）及其最近进展。active 不含 expired（一段时间没有进展、自动过期的）和 candidate（助手自己建、还等本人决定要不要的候选）；新材料和一件已过期的事项有关时，用 status=expired 找到它再 upsert_item 记进展，它会重新打开，不要另建。自己想新建前可以用 status=candidate 看看是不是已经在候选里。",
   schema: z.object({
-    status: z.enum(["active", "open", "waiting", "snoozed", "done", "cancelled", "expired", "all"]).optional(),
+    status: z.enum(["active", "open", "waiting", "snoozed", "done", "cancelled", "expired", "candidate", "all"]).optional(),
     kind: z.enum(["todo", "waiting", "reminder", "watch", "decision"]).optional(),
     query: z.string().optional(),
     space: z.string().optional(),
@@ -2357,12 +2357,13 @@ async function notOwnersBusiness(ctx: ToolContext, refs: string[]) {
 def({
   name: "upsert_item",
   description:
-    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。会话和群聊也是这件事“在哪里进行”：你写了事项，宿主会把它关联到你这次所在的会话或群；同一件事在别的会话里也在谈，用 materials_add（kind=conversation，或群聊原件 kind=source）关联过去，不是同一件事用 materials_remove 取消。",
+    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。会话和群聊也是这件事“在哪里进行”：你写了事项，宿主会把它关联到你这次所在的会话或群；同一件事在别的会话里也在谈，用 materials_add（kind=conversation，或群聊原件 kind=source）关联过去，不是同一件事用 materials_remove 取消。不是本人这一轮亲口要你建的（整理、巡检、简报、有人找你、规则、唤醒后的轮次）新建时必须写 why；宿主再判断一次，把握不够的先作为候选（candidate：不提醒、不进列表），由本人在每天的事项清点或事项页上决定留不留。",
   write: true,
   schema: z.object({
     id: z.string().optional(),
     kind: z.enum(["todo", "waiting", "reminder", "watch", "decision"]).optional(),
     title: z.string().optional(),
+    why: z.string().trim().max(400).optional().describe("新建、且不是本人这一轮亲口要的事项时必填：一句话说本人为什么会要它——本人自己的话并带引用（src:…#L… 或 msg:…），或它属于本人的哪个「关注」（写关注的名字），或它服务本人近况里正在推进的哪条线。说不出来就不要建：有价值的结论写进记忆或页面"),
     detail: z.string().optional(),
     status: z.enum(["open", "waiting", "snoozed", "done", "cancelled", "expired"]).optional(),
     priority: z.number().int().min(1).max(3).optional().describe("1 高 2 中 3 低"),
@@ -2394,9 +2395,26 @@ def({
     // Removal may revoke stale/deleted refs, but must match this item's exact old set.
     if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
     if (!existing) await notOwnersBusiness(ctx, a.source_refs ?? []);
+    // Not the owner's own turn: a new item has to say why the owner would want it, and may start as a candidate (items/auto.ts).
+    const onItsOwn = !ownTurn(ctx);
+    if (existing?.status === "candidate" && onItsOwn && a.status)
+      throw new HttpError(403, `「${existing.title}」是候选事项，留不留由本人定（每天的事项清点或事项页）。可以记进展，不能改它的状态`);
+    // The owner's own turn keeping or dropping an item the assistant made on its own is the owner's choice (items/auto-cases.ts).
+    const actor = existing && a.status && a.status !== existing.status && !onItsOwn && (await import("../items/auto-cases.ts")).autoInfo(ctx.app, existing.id) ? "user" : ctx.actor;
+    let gate: import("../items/auto.ts").GateVerdict | null = null;
+    if (!existing && onItsOwn) {
+      const auto = await import("../items/auto.ts");
+      if (!a.why) throw new HttpError(400, "这件事不是本人这一轮要你建的：用 why 写一句本人为什么会要它（本人自己的话并带 src:/msg: 引用、它属于哪个「关注」、或它服务本人近况里的哪条线）。说不出来就不要建，有价值的结论写进记忆或页面。");
+      validateItemRefs(ctx.app, auto.whyRefs(a.why), ctx.userId ?? OWNER, ctx.spaces);
+      const same = auto.sameAutoItem(ctx.app, ctx.userId ?? OWNER, a.title ?? "");
+      if (same?.candidate) return `同样的事项已经是候选：${same.id}「${same.title}」，等本人决定，不用再建。有新进展用 upsert_item(id) 记上。`;
+      if (same) throw new HttpError(409, `本人最近不要过同样的事项（${same.id}「${same.title}」），不再建。真有新情况，写进记忆或在给本人的话里说`);
+      const { creatorOf } = await import("../items/auto-cases.ts");
+      gate = await auto.gateItem(ctx.app, { kind: a.kind ?? "todo", title: a.title ?? "", detail: a.detail, dueAt: a.due_at, remindAt: a.remind_at, why: a.why, runId: ctx.runId, creator: creatorOf(ctx.app, ctx.runId), userId: ctx.userId ?? OWNER });
+    }
 
     // Only adding or removing materials leaves the item's fields (and its timeline) as they are.
-    const { materials_add: materialsAdd, materials_remove: materialsRemove, ...fields } = a;
+    const { materials_add: materialsAdd, materials_remove: materialsRemove, why: _why, ...fields } = a;
     const onlyMaterials = existing && Object.entries(fields).every(([k, v]) => k === "id" || k === "space" || v === undefined);
     const item = onlyMaterials ? existing : upsertItem(
       ctx.app,
@@ -2406,7 +2424,7 @@ def({
         kind: a.kind,
         title: a.title,
         detail: a.detail,
-        status: a.status,
+        status: gate && !gate.keep ? "candidate" : a.status,
         priority: a.priority,
         dueAt: a.due_at,
         remindAt: a.remind_at,
@@ -2418,9 +2436,10 @@ def({
         expectedSourceRefs: a.expected_source_refs,
         userId: existing ? undefined : (ctx.userId ?? "owner"),
       },
-      ctx.actor,
+      actor,
       ctx.runId ?? undefined,
     );
+    if (gate && a.why) (await import("../items/auto.ts")).markAuto(ctx.app, item.id, a.why, gate, ctx.runId);
     const { addMaterials, removeMaterials } = await import("../items/materials.ts");
     const added = materialsAdd?.length ? addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
     const removed = materialsRemove?.length ? removeMaterials(ctx.app, item.id, materialsRemove, ctx.userId ?? OWNER, ctx.actor) : 0;
@@ -2429,7 +2448,8 @@ def({
     const closedWithHistory = existing && item.status === "done" && existing.status !== "done" && itemEvents(ctx.app, item.id).length >= 4;
     const { itemExpiry } = await import("../items/expiry.ts");
     const expiry = existing ? null : itemExpiry(ctx.app, item);
-    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${expiry ? `（期限：${expiry.text}，之后自动过期）` : ""}${materialsLine}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
+    const candidate = !existing && item.status === "candidate" ? `\n先作为候选（${gate?.how ?? ""}）：不提醒、不进事项列表，本人在每天的事项清点或事项页上决定留不留，${(await import("../items/auto.ts")).CANDIDATE_DAYS} 天没答就放下。给本人的话里不要说“已建事项、到时提醒”。` : "";
+    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${expiry ? `（期限：${expiry.text}，之后自动过期）` : ""}${candidate}${materialsLine}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
   },
 });
 
@@ -3328,6 +3348,22 @@ function ownerAskedThisTurn(ctx: ToolContext) {
   const steered = one<{ s: string | null }>(ctx.app.db, "select json_extract(output, '$.steered') s from runs where id = ?", ctx.runId)?.s;
   const ids = [...(input.messageIds ?? []), ...(steered ? (JSON.parse(steered) as string[]) : [])];
   return ids.some((id) => !!one(ctx.app.db, "select 1 from messages where id = ? and role = 'user' and json_extract(meta, '$.speaker') is null and json_extract(meta, '$.asker') is null and json_extract(meta, '$.wake') is null and json_extract(meta, '$.userId') is null", id));
+}
+
+/**
+ * The person whose items these are asked for this themselves: the owner's own turn, the same for a
+ * member in their own conversation, a call they approved, or no run at all (their own tools, the
+ * web). Everything else — 整理、巡检、简报、有人找你、规则、唤醒 — acts on its own (items/auto.ts).
+ */
+function ownTurn(ctx: ToolContext) {
+  if (ctx.actor === "user" || ctx.approved || !ctx.runId || ownerAskedThisTurn(ctx)) return true;
+  const user = ctx.userId ?? OWNER;
+  if (user === OWNER) return false;
+  const r = one<{ kind: string; input: string }>(ctx.app.db, "select kind, input from runs where id = ?", ctx.runId);
+  if (!r || r.kind !== "ask") return false;
+  const input = JSON.parse(r.input) as { messageIds?: string[]; userId?: string; coordinate?: unknown; handoff?: unknown };
+  if (input.coordinate || input.handoff || input.userId !== user) return false;
+  return (input.messageIds ?? []).some((id) => !!one(ctx.app.db, "select 1 from messages where id = ? and role = 'user' and json_extract(meta, '$.speaker') is null and json_extract(meta, '$.asker') is null and json_extract(meta, '$.wake') is null", id));
 }
 
 def({
