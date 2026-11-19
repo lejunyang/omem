@@ -1,12 +1,12 @@
 # 每个人用自己的 AI 账号（设计稿）
 
-> 状态：第一期和第二期的登录页已实现（2026-11-20），还没在真机上跑过。和 [multi-user.md](multi-user.md) 的关系：那里写的是“成员的运行用本人配置的后端”，这份把它改成“可以用成员自己的账号”。
+> 状态：三期都已实现（第一、二期 2026-11-20 上午，第一期剩下的几项和第三期的插件登录 2026-11-20 晚），还没在真机上跑过。和 [multi-user.md](multi-user.md) 的关系：那里写的是“成员的运行用本人配置的后端”，这份把它改成“可以用成员自己的账号”。
 >
-> 已实现：启动时检查 bubblewrap（`src/agents/sandbox.ts`，`omem diag` 的 `agentAccounts`）；Agent 目录的 `account` 字段（Codex、Claude Code、TraeX、豆包命令行，`src/agents/catalog.ts`），登录、检查、退出用的命令可以和 ACP 的命令不同（`account.cli`）；账号目录的建立和删除、`prepareRun` 按发起人选账号、设置 `agents.accounts`（`owner` / `own`，`src/agents/accounts.ts`）；ACP、命令行兜底、会话清理和归档、豆包命令行都经同一个 `launch` 进沙箱；后台会话池、对话会话的 key 和会话清理的记录带上账号；成员账号的运行不读、不记本人的额度，也不因本人额度用完而跳过。登录页：账号 → 我的 AI 账号（设备码 / 二维码登录、粘贴令牌、检查、退出），本人在 设置 → AI → 成员的 AI 账号 设规则、看谁登了什么、让人退出（接口在 `src/server/agent-accounts-http.ts`）。
+> 已实现：启动时检查 bubblewrap（`src/agents/sandbox.ts`，`omem diag` 的 `agentAccounts`）；Agent 目录的 `account` 字段（Codex、Claude Code、TraeX、豆包命令行，`src/agents/catalog.ts`），登录、检查、退出用的命令可以和 ACP 的命令不同（`account.cli`）；本人自己加的后端（`agents.profiles`）也能写 `account`，保存时按同一套规则检查（不认识的字段、`{home}` 写在 env 的值以外、env 里 `{home}` 以外的绝对路径 / `~` / `${…}` 都拒绝，本机的安装写 `mounts`），按它的 source 当后端；账号目录的建立和删除、`prepareRun` 按发起人选账号、设置 `agents.accounts`（`owner` / `own` / `own-or-other`，`src/agents/accounts.ts`）；ACP、命令行兜底、会话清理和归档、豆包命令行都经同一个 `launch` 进沙箱；后台会话池、对话会话的 key 和会话清理的记录带上账号。额度按账号：成员账号的套餐额度在他的沙箱里读（Codex 的 app-server、Claude 的 `/usage`），存在 `<后端>@acct:<用户>` 下，他的运行按自己的额度避让，额度用完只在他自己的运行里跳过（`acct:<用户>/` 前缀），本人的记录不变；成员正在用的账号由额度巡检每 15 分钟读，其余在他打开“我的 AI 账号”时读（超过两小时才读），页面上有“重新读取”。探测缓存按账号：`probe:<档案>@acct:<用户>`，登录成功后在他的沙箱里探测一次，他的运行、`/model`、`list_ai_backends`、临时选型的校验用他自己的结果（没有时退回本机的）。技能：本人开着接管 Agent 技能时，omem 的说明和各组总入口也写进每个账号目录里对应的技能目录（按账号目录展开 `skills.write`，和写本机的是同一个写法），建账号目录、整理分组、还原时都跟着。`own-or-other`：成员没登录这个后端时，按这次运行的兜底顺序换一个他登录过、或允许借用的后端，都没有才失败；它和 `own` 的后端都不进他的兜底链。停用成员时：停掉他进行中的登录，在沙箱里跑各后端的退出（尽力而为），删掉令牌、插件的秘密、登录态和整个账号目录，写一条 `audit_events`（`agent-accounts.remove-all`）；重新启用后要重新登录。登录页：账号 → 我的 AI 账号（设备码 / 二维码登录、粘贴令牌、插件的登录方式、检查、额度、退出），点“登录”后链接和验证码也由机器人发到他的飞书私聊；本人在 设置 → AI → 成员的 AI 账号 设规则（三选一）、看谁用什么方式登了什么、让人退出（接口在 `src/server/agent-accounts-http.ts`）。插件登录（第 6 节）：`api.agentLogin`（`src/agents/agent-logins.ts` 登记，流程在 `accounts.ts`），清单声明 `permissions.agentLogin`，只在本人信任并选“在 omem 里运行”时生效；续签每分钟按 kv 里记的时间检查一次（`tickAgentLogins`），重启不丢。
 >
-> 和下文不同的：第 3 节的 `own-or-other` 没做，只有 `owner` 和 `own`；`own` 的后端在成员没登录时也从他的兜底链里去掉。额度按账号读、探测缓存按账号分、技能目录同步进账号目录（第 4 节）没做：成员账号的运行只是不碰本人的额度记录。用户自己加的后端（配置里的 profiles）还不能写 `account`。登录态放在 kv（`agent_account:<用户>:<后端>`，只在本机），令牌放在 `secrets/vault.db`（提供方 `agent:<后端>`）。成员的登录入口在“账号”页而不是“设置”页（成员看不到设置页）。删除用户时删账号目录没做（现在只能停用用户）；本人可以在设置里让他逐个退出。
+> 和下文不同的：登录态放在 kv（`agent_account:<用户>:<后端>`，只在本机，带 `method`：`native` 或 `<插件>:<id>`，插件登录还有 `expiresAt` / `refreshAt`），令牌放在 `secrets/vault.db`（提供方 `agent:<后端>`），插件的秘密是提供方 `agent:<后端>:<插件>:<id>`，都不在“已连接的应用”里出现。成员的登录入口在“账号”页而不是“设置”页（成员看不到设置页）。删除用户还没有（只能停用，停用时删账号目录）。插件登录方式没有 `refresh` 时，到 `expiresAt` 直接算过期；插件不在了（停用、撤销信任）时登录态留着，到期才算过期。运行时 profile 上带账号的字段叫 `ownAccount`（`account` 留给配置里的 spec）。
 >
-> 没验证的：真实的 bubblewrap 启动（各后端在沙箱里完成一次 ACP 往返、自带沙箱能不能嵌套）、各家登录命令的输出能不能被 `account.login` 的正则认出来、Claude Code 用 `CLAUDE_CODE_OAUTH_TOKEN` 时 `auth status` 的结果、豆包命令行从本机安装的路径在沙箱里启动。单元测试只覆盖参数、环境、选账号和接口权限（`test/agent-accounts.test.ts`）。
+> 没验证的：真实的 bubblewrap 启动（各后端在沙箱里完成一次 ACP 往返、自带沙箱能不能嵌套）、各家登录命令的输出能不能被 `account.login` 的正则认出来、Claude Code 用 `CLAUDE_CODE_OAUTH_TOKEN` 时 `auth status` 的结果、豆包命令行从本机安装的路径在沙箱里启动；成员账号的额度读取和模型探测在沙箱里能不能跑通（Codex app-server、Claude `/usage`、豆包命令行的模型列表）；登录链接发到飞书私聊的卡片；真实插件（公司账号登录 TraeX）的整套流程和续签。单元测试覆盖参数、环境、选账号、额度和探测的分开、技能写入、配置检查、`own-or-other`、停用、插件登录的列出 / 登录 / 续签 / 退出 / 权限（`test/agent-accounts.test.ts`、`test/agent-logins.test.ts`）。
 
 ## 要解决的事
 
@@ -123,7 +123,7 @@ api.agentLogin({
 });
 ```
 
-宿主只负责调用、把链接和设备码显示给这个人（网页上，以及用机器人发到他的飞书私聊，写明是 omem 为谁、为哪个后端发起的）、超时取消、按 `expiresAt` 安排续签；凭据怎么换、写成什么格式由插件决定。续签失败或返回 null 时状态改成“登录过期”并通知这个人。插件要在清单里声明 `permissions.agentLogin: [<后端>]`，本人信任插件、并选“在 omem 里运行”时才生效。“我的 AI 账号”里，一个后端同时列出它自己的登录方式和插件提供的登录方式。数据目录里的公司插件就用这个让同事用公司账号登录 TraeX。
+宿主只负责调用（在 omem 进程里，不进沙箱：插件只写文件）、把链接和设备码显示给这个人（网页上，以及用机器人发到他的飞书私聊，写明是 omem 为谁、为哪个后端发起的）、超时取消（11 分钟）、按 `expiresAt` 安排续签；凭据怎么换、写成什么格式由插件决定。续签失败或返回 null 时状态改成“登录过期”并通知这个人。插件要在清单里声明 `permissions.agentLogin: [<后端>]`，本人信任插件、并选“在 omem 里运行”时才生效。“我的 AI 账号”里，一个后端同时列出它自己的登录方式和插件提供的登录方式。数据目录里的公司插件就用这个让同事用公司账号登录 TraeX。
 
 ### 6.5 别人怎么做的
 

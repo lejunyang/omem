@@ -113,6 +113,7 @@ async function main() {
     slot: unsupported("界面插槽"),
     connector: unsupported("新的连接器"),
     authenticator: unsupported("鉴权方式"),
+    agentLogin: unsupported("AI 账号的登录方式"),
     appConfig: unsupported("连接器的应用配置"),
     service: (name) => ({ ensure: () => rpc("service.ensure", { name }) }),
     fetch: (...a) => fetch(...a),

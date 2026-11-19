@@ -3,7 +3,8 @@ import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { decide, decisionReady, describeDecision } from "../core/decision.ts";
 import { truncate } from "../core/util.ts";
 import { choosableProfiles, downReason, excluded, excludedReason, limitOf, perDayOf, usedOf, usedToday } from "./capacity.ts";
-import { cachedProbe } from "./probe.ts";
+import { probeFor } from "./probe.ts";
+import { accountBlocked, accountFor } from "./accounts.ts";
 import { jsonIn } from "./oneshot.ts";
 import { quotaAvoid, quotaView } from "./quota.ts";
 
@@ -91,7 +92,7 @@ function state(app: App, p: AgentProfile) {
   if (q?.avoid) parts.push(`快用完了：${q.avoid}`);
   const cap = perDayOf(app, p);
   if (cap !== undefined) parts.push(`今天已用 ${usedToday(app, p)}/${cap} 次`);
-  const note = p.model ? cachedProbe(app, p.id)?.modelNotes?.[p.model] : undefined;
+  const note = p.model ? probeFor(app, p)?.modelNotes?.[p.model] : undefined;
   if (note) parts.push(`后端对这个模型的说明：${truncate(note, 120)}`);
   const down = downReason(app, p);
   if (down) parts.push(`刚出过故障：${truncate(down, 80)}`);
@@ -112,7 +113,7 @@ function ranked(keys: string[], probabilities: Record<string, number>, first?: s
  */
 export async function chooseAI(
   app: App,
-  o: { scene: ChooseScene; task: string; who: string; current: AgentProfile; signal?: AbortSignal; onStatus?: (text: string) => void; onRecord?: (r: ChoiceRecord) => void },
+  o: { scene: ChooseScene; task: string; who: string; current: AgentProfile; userId?: string; signal?: AbortSignal; onStatus?: (text: string) => void; onRecord?: (r: ChoiceRecord) => void },
 ): Promise<ChooseResult | null> {
   const r = app.config.agents.routing;
   const current = label({ profile: o.current.id, model: o.current.model, effort: o.current.effort });
@@ -132,8 +133,15 @@ export async function chooseAI(
   // or set aside when a slot is taken (nearly spent, just broke down), so a pick is not overruled after
   // the fact. The run's own AI is always an option; when it is nearly spent its line says so.
   const left: string[] = [];
-  const others = candidateProfiles(app, left).filter((c) => {
+  // A member's run: their own account where they are logged in (its quota, its models), and no
+  // backend the owner keeps to own accounts that they have not logged in to (agents/accounts.ts).
+  const others = candidateProfiles(app, left).map((c) => accountFor(app, o.userId, c)).filter((c) => {
     if (same({ profile: c.id, model: c.model, effort: c.effort })) return false;
+    const blocked = o.userId ? accountBlocked(app, o.userId, c) : null;
+    if (blocked) {
+      left.push(`${label({ profile: c.id, model: c.model, effort: c.effort })}：${blocked}`);
+      return false;
+    }
     const down = downReason(app, c);
     const why = quotaAvoid(app, c) ?? (down ? `刚出过故障：${truncate(down, 60)}` : null);
     if (why) left.push(`${label({ profile: c.id, model: c.model, effort: c.effort })}：${why}`);
@@ -145,7 +153,7 @@ export async function chooseAI(
   }
   const strip = ({ when: _, ...p }: AgentProfile & { when: string }) => p as AgentProfile;
   const opts: Record<string, { pick: AiPick | null; profile: AgentProfile; text: string }> = {
-    keep: { pick: null, profile: o.current, text: `按原来的设置用 ${current}（${state(app, o.current)}）` },
+    keep: { pick: null, profile: o.current, text: `按原来的设置用 ${current}（${state(app, accountFor(app, o.userId, o.current))}）` },
   };
   others.forEach((c, i) => {
     opts[`c${i + 1}`] = { pick: { profile: c.id, model: c.model, effort: c.effort }, profile: strip(c), text: `${label({ profile: c.id, model: c.model, effort: c.effort })}：${c.when}（${state(app, c)}）` };

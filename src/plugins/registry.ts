@@ -1,6 +1,8 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { authFetch, loginProvider, registerLoginProvider } from "../auth/providers.ts";
 import { registerAuthenticator } from "../auth/authenticators.ts";
+import { registerAgentLogin } from "../agents/agent-logins.ts";
+import { accountCatalog } from "../agents/catalog.ts";
 import { registerFeatures } from "../auth/features.ts";
 import { appConfig } from "../auth/apps.ts";
 import { listConnections } from "../auth/vault.ts";
@@ -90,8 +92,15 @@ export const manifestSchema = z.object({
    * registers more than declared is refused.
    */
   permissions: z
-    .object({ write: z.boolean().default(false), connectors: z.array(z.string()).default([]), platforms: z.array(z.string()).default([]), authenticators: z.array(z.string()).default([]) })
-    .default({ write: false, connectors: [], platforms: [], authenticators: [] }),
+    .object({
+      write: z.boolean().default(false),
+      connectors: z.array(z.string()).default([]),
+      platforms: z.array(z.string()).default([]),
+      authenticators: z.array(z.string()).default([]),
+      /** Backends it brings a login method for (`api.agentLogin`, docs/v2/agent-accounts.md §6): it writes credentials into members' account folders. */
+      agentLogin: z.array(z.string()).default([]),
+    })
+    .default({ write: false, connectors: [], platforms: [], authenticators: [], agentLogin: [] }),
 }).refine((m) => Object.keys(m.mcp).every((n) => /^[a-z][a-z0-9-]{0,39}$/.test(`${m.id}-${n}`)), "MCP 服务加插件前缀后最多 40 个字符")
   .refine((m) => m.agents.every((n) => `${m.id}-${n}`.length <= 48), "档案加插件前缀后最多 48 个字符")
   .superRefine((m, ctx) => {
@@ -122,6 +131,8 @@ export type LoadedPlugin = {
   /** Connectors and platform packs its code registered, for the permissions it shows. */
   providers: string[];
   platforms: string[];
+  /** Login methods for members' AI accounts its code registered (`<backend>:<id>`). */
+  logins: string[];
   blocks: Map<string, PluginBlock>;
   /** Where its display blocks show on omem's own pages (api.slot, slots.ts). */
   slots: SlotEntry[];
@@ -194,6 +205,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     tools: own,
     providers: [],
     platforms: [],
+    logins: [],
     blocks,
     slots: [],
     connectors: [],
@@ -269,6 +281,13 @@ async function loadCode(app: App, p: LoadedPlugin) {
       if (!def.id.startsWith(`${manifest.id}-`)) throw new Error(`插件 ${manifest.id} 的鉴权方式 id 要以 ${manifest.id}- 开头：${def.id}`);
       if (p.source === "data" && !manifest.permissions.authenticators.includes(def.id)) throw new Error(`插件 ${manifest.id} 注册的鉴权方式 ${def.id} 没有在 permissions.authenticators 里声明`);
       p.connectors.push(registerAuthenticator(def));
+    },
+    agentLogin(def) {
+      // Only code running inside omem gets here (an isolated plugin's api refuses it: sandbox-runner.ts).
+      if (p.source === "data" && !manifest.permissions.agentLogin.includes(def.backend)) throw new Error(`插件 ${manifest.id} 给 ${def.backend} 注册的登录方式没有在 permissions.agentLogin 里声明`);
+      if (!accountCatalog(app.config.agents.profiles).some((e) => e.id === def.backend)) throw new Error(`插件 ${manifest.id} 的登录方式 ${def.id}：后端 ${def.backend} 不能按人登录`);
+      p.connectors.push(registerAgentLogin(manifest.id, def));
+      p.logins.push(`${def.backend}:${def.id}`);
     },
     fetch: authFetch,
     platform(def) {
@@ -394,6 +413,7 @@ function unloadCode(p: LoadedPlugin) {
   for (const undo of p.connectors.splice(0)) undo();
   p.providers.splice(0);
   p.platforms.splice(0);
+  p.logins.splice(0);
   p.blocks.clear();
   p.slots.splice(0);
   stopPluginServices(p.manifest.id);
@@ -679,6 +699,8 @@ export function describePlugin(p: LoadedPlugin) {
       hostTools: p.manifest.tools,
       providers: codeRuns(p) ? p.providers : p.manifest.permissions.connectors,
       platforms: codeRuns(p) ? p.platforms : p.manifest.permissions.platforms,
+      // Backends it logs members in to (writes credentials into their account folders).
+      agentLogin: codeRuns(p) ? [...new Set(p.logins.map((l) => l.split(":")[0]))] : p.manifest.permissions.agentLogin,
       uses: p.manifest.connectors.map((c) => c.provider),
       services: [...p.manifest.services.map((s) => [s.command, ...s.args].join(" ")), ...Object.values(p.manifest.mcp).filter((s) => s.command).map((s) => [s.command, ...s.args].join(" "))],
       space: p.manifest.space?.id ?? null,

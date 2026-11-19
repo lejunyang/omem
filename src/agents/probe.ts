@@ -4,7 +4,11 @@ import { commandExists } from "./spawn.ts";
 import { runAcp } from "./acp.ts";
 import { probeDoubaoCli } from "./doubao-cli.ts";
 import type { App } from "../core/app.ts";
+import { allProfiles } from "../core/config.ts";
+import { OWNER } from "../core/users.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
+import { accountFor } from "./accounts.ts";
+import { accountOf } from "./sandbox.ts";
 
 /**
  * The models and effort levels an ACP backend actually offers. Probes open
@@ -37,8 +41,11 @@ export function effortsFor(probe: ProbeInfo | null | undefined, model?: string |
   return probe.efforts;
 }
 
-export function cachedProbe(app: { db: { prepare: (sql: string) => { get(...p: unknown[]): unknown } } }, profileId: string): ProbeInfo | null {
-  const row = app.db.prepare("select value from kv where key = ?").get(`probe:${profileId}`) as { value: string } | undefined;
+/** `probe:<profile>`, and `probe:<profile>@acct:<user>` for one user's own account (plans differ: so may the models). */
+const probeKey = (profileId: string, userId?: string) => `probe:${profileId}${userId ? `@acct:${userId}` : ""}`;
+
+export function cachedProbe(app: { db: { prepare: (sql: string) => { get(...p: unknown[]): unknown } } }, profileId: string, userId?: string): ProbeInfo | null {
+  const row = app.db.prepare("select value from kv where key = ?").get(probeKey(profileId, userId)) as { value: string } | undefined;
   if (!row) return null;
   try {
     return JSON.parse(row.value) as ProbeInfo;
@@ -47,8 +54,32 @@ export function cachedProbe(app: { db: { prepare: (sql: string) => { get(...p: u
   }
 }
 
-export function saveProbe(app: { db: { prepare: (sql: string) => { run(...p: unknown[]): unknown } } }, profileId: string, probe: ProbeInfo) {
-  app.db.prepare("insert into kv(key,value) values(?,?) on conflict(key) do update set value=excluded.value").run(`probe:${profileId}`, JSON.stringify(probe));
+export function saveProbe(app: { db: { prepare: (sql: string) => { run(...p: unknown[]): unknown } } }, profileId: string, probe: ProbeInfo, userId?: string) {
+  app.db.prepare("insert into kv(key,value) values(?,?) on conflict(key) do update set value=excluded.value").run(probeKey(profileId, userId), JSON.stringify(probe));
+}
+
+/** What a run on this profile can choose from: its user's own account's probe when it runs with one (falling back to the machine's). */
+export function probeFor(app: App, p: AgentProfile): ProbeInfo | null {
+  const a = accountOf(p);
+  return (a ? cachedProbe(app, p.id, a.userId) : null) ?? cachedProbe(app, p.id);
+}
+
+/** The models a user sees for a backend: their own account's when they are logged in to it, else the machine's. */
+export function userProbe(app: App, userId: string | undefined, profileId: string): ProbeInfo | null {
+  if (userId && userId !== OWNER) {
+    const p = allProfiles(app.config).find((x) => x.id === profileId);
+    if (p && accountOf(accountFor(app, userId, p))) return cachedProbe(app, profileId, userId) ?? cachedProbe(app, profileId);
+  }
+  return cachedProbe(app, profileId);
+}
+
+/** Probe each installed profile of this backend with one user's own account, and keep what it found under that account. */
+export async function probeAccount(app: App, userId: string, backend: string) {
+  const { accountProfiles } = await import("./accounts.ts");
+  for (const p of accountProfiles(app, userId, backend)) {
+    const probe = await probeProfile(p, app);
+    if (!probe.error) saveProbe(app, p.id, probe, userId);
+  }
 }
 
 /** Probe a profile now (spawns the CLI briefly). */
@@ -71,7 +102,8 @@ async function probeOn(profile: AgentProfile, app?: App, signal?: AbortSignal): 
   if (profile.transport !== "acp" || !commandExists(profile.command))
     return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: "命令行后端报不出可选的模型，可以手填" };
   try {
-    const cwd = process.cwd();
+    // A user's own account: in their account folder (the sandbox mounts the folder it starts in writable).
+    const cwd = accountOf(profile)?.home ?? process.cwd();
     const cleanup = app ? await sessionCleanup(app, profile, { cwd }, e => { if (e.type === "status") console.log(`[omem] ${e.text}`); }) : undefined;
     const r = await runAcp({ ...profile, model: undefined, effort: undefined }, { cwd, cleanup, prompt: "", probe: true, signal }, () => {});
     const opts = r.probe?.options ?? [];

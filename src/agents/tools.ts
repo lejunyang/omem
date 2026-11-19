@@ -871,7 +871,7 @@ def({
     const sp = writeSpace(ctx, a.space);
     if (a.agent) checkProfile(ctx, a.agent);
     const job = d.createDigestJob(ctx.app, {
-      mode: a.mode, space: sp, title: a.title, goal: a.goal ?? "", agent: a.agent, execution: validateExecution(ctx.app, a.execution), parallel: a.parallel, batch: a.batch, chars: a.chars, after: a.after,
+      mode: a.mode, space: sp, title: a.title, goal: a.goal ?? "", agent: a.agent, execution: validateExecution(ctx.app, a.execution, ctx.userId), parallel: a.parallel, batch: a.batch, chars: a.chars, after: a.after,
       filter: { chat_id: a.chat_id, title_contains: a.title_contains, wiki_path_contains: a.wiki_path_contains, kind: a.kind, level: a.level },
     });
     return `已开整理任务 ${job.id}：${job.total} 份材料，已做过 ${job.done} 份。${job.status === "done" ? "没有要做的。" : `已排队 ${job.body.parallel ?? 1} 批，进度用 action=status 看。`}`;
@@ -1010,17 +1010,22 @@ def({
   schema: z.object({ profile: z.string().optional(), refresh: z.boolean().optional() }),
   handler: async (ctx, a) => {
     const { listAgentProfiles } = await import("./runner.ts");
-    const { cachedProbe, probeProfile, saveProbe } = await import("./probe.ts");
+    const { cachedProbe, probeFor, probeProfile, saveProbe } = await import("./probe.ts");
+    const { accountFor } = await import("./accounts.ts");
+    const { accountOf } = await import("./sandbox.ts");
+    // A member logged in to a backend sees their own account's models and quota (agents/accounts.ts).
+    const mine = <P extends import("../core/config.ts").AgentProfile>(p: P) => accountFor(ctx.app, ctx.userId, p);
     const backends = listAgentProfiles(ctx.app);
     if (a.profile) {
       const p = backends.find((p) => p.id === a.profile);
       if (!p?.installed) throw new HttpError(400, "后端不可用");
-      if (a.refresh || !cachedProbe(ctx.app, p.id)) { const probe = await probeProfile(p, ctx.app); if (!probe.error) saveProbe(ctx.app, p.id, probe); else return JSON.stringify({ profile: p.id, error: probe.error, routing: ctx.app.config.agents.routing }); }
+      const own = accountOf(mine(p))?.userId;
+      if (a.refresh || !cachedProbe(ctx.app, p.id, own)) { const probe = await probeProfile(mine(p), ctx.app); if (!probe.error) saveProbe(ctx.app, p.id, probe, own); else return JSON.stringify({ profile: p.id, error: probe.error, routing: ctx.app.config.agents.routing }); }
     }
     const { backendLimitOf, choosableProfiles, downReason, excludedReason, limitOf, perDayOf, recentStats, usedOf, usedToday } = await import("./capacity.ts");
     const quota = await import("./quota.ts");
     // Plan limits read in the last 10 minutes are used as they are; older ones are read again (not longer than 15 s).
-    const readable = (await quota.quotaProfiles(ctx.app)).filter((p) => !a.profile || p.id === a.profile);
+    const readable = (await quota.quotaProfiles(ctx.app)).filter((p) => !a.profile || p.id === a.profile).map(mine);
     await Promise.race([Promise.all(readable.map((p) => quota.refreshQuota(ctx.app, p))), new Promise((r) => setTimeout(r, 15_000))]);
     const choosable = new Set(choosableProfiles(ctx.app).map((p) => p.id));
     const stats = recentStats(ctx.app);
@@ -1028,10 +1033,10 @@ def({
     const replayed = (await import("./replay.ts")).replayModelEvidence(ctx.app);
     // Load per probed model: in use / limit (0 = the owner excluded it), and the last 7 days.
     const models = (p: (typeof backends)[number]) => {
-      const probe = cachedProbe(ctx.app, p.id);
+      const probe = probeFor(ctx.app, mine(p));
       const names = [...new Set([p.model, ...(probe?.models ?? [])].filter((m): m is string => !!m))];
       return names.map((model) => {
-        const q = { ...p, model };
+        const q = mine({ ...p, model });
         const st = stats.find((s) => s.profile === p.id && s.model === model);
         const rp = replayed.get(`${p.id}|${model}`);
         const off = excludedReason(ctx.app, q) ?? downReason(ctx.app, q);
@@ -1046,8 +1051,8 @@ def({
       routing: ctx.app.config.agents.routing,
       note: "limit 为 0 的模型本人不想自动使用，不要选；带 unavailable 的模型现在用不了（额度用完、到了每天的上限、刚出过故障），也不要选；today 是今天已用/本人设的每天上限。modelNotes 是后端对各模型的说明（可能写着限额）。quota 是账号的套餐额度：windows 里 used 是已用百分比，resetsIn 是多久后重置，perDayLeft 是周额度剩下的平均到距重置的每一天（%/天）；有 avoid 的账号快用完了，同样合适时选别的。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。replay28d 是夜间复盘近 28 天的单变量对比（type 题型，vs 对照的模型，w/t/l 胜/平/负，tokens 上下文峰值之比），样本小，只作参考。",
       backends: backends.filter((p) => p.installed && choosable.has(p.id) && (!a.profile || p.id === a.profile)).map((p) => {
-        const probe = cachedProbe(ctx.app, p.id);
-        const q = quota.quotaView(ctx.app, p);
+        const probe = probeFor(ctx.app, mine(p));
+        const q = quota.quotaView(ctx.app, mine(p));
         return { id: p.id, name: p.name, transport: p.transport, tools: p.transport !== "doubao", model: p.model, effort: p.effort, backendLimit: backendLimitOf(ctx.app, p), models: models(p), efforts: probe?.effortsByModel ?? probe?.efforts, ...(probe?.modelNotes ? { modelNotes: probe.modelNotes } : {}), ...(q ? { quota: { plan: q.plan, windows: q.windows, ...(q.avoid ? { avoid: q.avoid } : {}), ...(q.error && !q.windows.length ? { error: q.error } : {}) } } : {}) };
       }),
     });
@@ -1185,7 +1190,7 @@ def({
   handler: async (ctx, a) => {
     if (a.work_id || (a.own_topic && !a.name)) return continueAgentWork(ctx, a);
     if (!a.name) throw new HttpError(400, "要交给哪个 Agent：传 name（档案名或 assistant）；继续已有的工作传 work_id");
-    const execution = validateExecution(ctx.app, a.execution);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
     const spec = a.name === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     const extraTools = lendTools(ctx, a.extra_tools);
@@ -1242,7 +1247,7 @@ def({
 async function continueAgentWork(ctx: ToolContext, a: { execution?: z.infer<typeof executionSchema>; work_id?: string; name?: string; task: string; extra_tools?: string[] }) {
   // A rule's run or another device hands work on only as a fresh run (ruleHandoff, peerDispatch), never into a work here.
   if (ctx.peer || (ctx.runId && (getRun(ctx.app, ctx.runId).input as { rule?: unknown }).rule)) throw new HttpError(403, "从别的设备、或在规则的运行里不能接着一项已有的工作：用 run_agent(name, task) 交一件新的");
-  const execution = validateExecution(ctx.app, a.execution);
+  const execution = validateExecution(ctx.app, a.execution, ctx.userId);
   const extraTools = lendTools(ctx, a.extra_tools);
   const lentNote = extraTools.length ? `；这一轮借给它 ${extraTools.join("、")}` : "";
   const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
@@ -1301,7 +1306,7 @@ ${r.answer}${r.missed.length ? `
 
 （回答里有 ${r.missed.length} 处引用的原件在对方那边，这里没有订阅它所在的空间，引用打不开；要用就转述并说明出处在 ${peer}。）` : ""}`;
     }
-    const execution = validateExecution(ctx.app, a.execution);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
     const spec = readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     if (spec.name === ctx.spec) throw new HttpError(400, "不能请教自己");
@@ -4469,7 +4474,7 @@ async function reviewAIsOf(ctx: ToolContext, raw: Record<string, Execution> | un
   const known = new Set([...reviewChecks(ctx.app).map((c) => c.name), ...REVIEW_AI_PARTS]);
   const unknown = Object.keys(raw).filter((k) => !known.has(k));
   if (unknown.length) throw new HttpError(400, `review_executions 里没有这些评审项：${unknown.join("、")}；可选：${[...known].join("、")}`);
-  return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, validateExecution(ctx.app, v)!]));
+  return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, validateExecution(ctx.app, v, ctx.userId)!]));
 }
 
 const roundReviewSchema = {
@@ -4518,10 +4523,10 @@ def({
   handler: async (ctx, a) => {
     // From another device the caller codes: this machine only prepares the worktree (peer-code.ts).
     if (ctx.peer && (a.execution || a.sync)) throw new HttpError(400, "设备的外部 Agent 交办的编码由它自己做：不能指定这台机器的编码 AI，Git 同步也用不上");
-    const execution = validateExecution(ctx.app, a.execution);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
     if (a.sync_only && !a.sync) throw new HttpError(400, "sync_only 需要同时给出 sync（拉取或合并 / 变基到哪个分支）");
-    const reviewExecution = validateExecution(ctx.app, a.review_execution);
+    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId);
     // A business space stands for its repository when it has just one (codeRepos).
     const ids = [...new Set((await import("./code.ts")).codeRepos(ctx.app, "", a.repo_spaces.map((r) => codeSpace(ctx, r))).map((r) => r.id))];
     // Without one, work on a branch belongs to the item its earlier delegations were done for.
@@ -4643,7 +4648,7 @@ def({
       const { startRereview } = await import("./rereview.ts");
       const r = await startRereview(ctx.app, a.rereview_of, {
         note: a.note, inputs: a.inputs, fetch: a.fetch, spaces: (id) => space(ctx, id), itemFor: (id) => itemFor(ctx, id), peerReviewer,
-        reviewTier: a.review_tier, reviewExecution: validateExecution(ctx.app, a.review_execution), reviewExecutions,
+        reviewTier: a.review_tier, reviewExecution: validateExecution(ctx.app, a.review_execution, ctx.userId), reviewExecutions,
       }, ctx.userId ?? OWNER, ctx.runId);
       if (peerReviewer) return `已开始准备复审，运行 ${r.id}：用 review_task（run_id=${r.id}）取材料（里面有上次以后的改动和要逐条判断的旧问题），评审后用 submit_review 逐项提交，旧问题的结论放在 prior 里。`;
       return `已开始复审，运行 ${r.id}（复审 ${a.rereview_of}）。完成后会通知；进度用 read_run 查看。`;
@@ -4651,7 +4656,7 @@ def({
     if (!a.repo_spaces?.length || !a.branch) throw new HttpError(400, "要写 repo_spaces 和 branch；复审已评审过的分支传 rereview_of");
     const repoSpaces = a.repo_spaces, branch = a.branch;
     const readSpaces = (a.read_spaces ?? []).map((r) => space(ctx, r));
-    const reviewExecution = validateExecution(ctx.app, a.review_execution);
+    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId);
     const ids = [...new Set(repoSpaces.map((r) => space(ctx, r)))];
     const itemId = a.item_id ? itemFor(ctx, a.item_id) : undefined;
     // The design the branch is held against: the one named, else the item's latest that says how it should be done.
@@ -4772,8 +4777,8 @@ def({
     ...roundReviewSchema,
   }),
   handler: async (ctx, a) => {
-    const execution = validateExecution(ctx.app, a.execution);
-    const reviewExecution = validateExecution(ctx.app, a.review_execution);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
+    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId);
     if (a.when === "now") return messageRound(ctx, a);
     const seedRun = getRun(ctx.app, a.run_id);
     const reviewOfBranch = seedRun.kind === "code" && !!(seedRun.input as { branches?: unknown }).branches;
@@ -4955,7 +4960,7 @@ def({
     const r = getRun(ctx.app, a.run_id);
     for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const { requestSplit } = await import("./review-chain.ts");
-    const split = await requestSplit(ctx.app, r.id, { note: a.request, revise: true, userId: ctx.userId ?? OWNER, execution: validateExecution(ctx.app, a.execution) });
+    const split = await requestSplit(ctx.app, r.id, { note: a.request, revise: true, userId: ctx.userId ?? OWNER, execution: validateExecution(ctx.app, a.execution, ctx.userId) });
     return `已安排${(split.input as { revise?: boolean }).revise ? "重新整理需求拆分" : "需求拆分"}，运行 ${split.id}；完成后在运行页的“变更”里看，进度用 read_run 查看。`;
   },
 });
@@ -5147,7 +5152,7 @@ def({
   }),
   handler: (ctx, a) => {
     const r = generateWiki(ctx.app, {
-      spaceId: wikiSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution), pages: a.pages,
+      spaceId: wikiSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution, ctx.userId), pages: a.pages,
       userId: ctx.userId, parentId: ctx.runId, readable: ctx.spaces, writable: ctx.writable ?? ctx.spaces,
     });
     const writes = (r as { writeRuns?: string[] }).writeRuns;
@@ -5167,7 +5172,7 @@ def({
     with_children: z.boolean().optional().describe("默认 true"),
   }),
   handler: async (ctx, a) => {
-    const execution = validateExecution(ctx.app, a.execution)!;
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId)!;
     const root = getRun(ctx.app, a.run_id);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
     const visible = (r: { spaceId: string | null }) => !r.spaceId || !allowed || allowed.includes(r.spaceId);
@@ -6156,7 +6161,7 @@ def({
     execution: executionSchema.optional().describe("评估用哪个 AI；不给时按 designer 角色的设置"),
   }),
   handler: async (ctx, a) => {
-    const execution = validateExecution(ctx.app, a.execution);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
     const item = a.item_id ? getItem(ctx.app, itemFor(ctx, a.item_id)) : null;
     const target = writeSpace(ctx, a.space ?? item?.spaceId);
     const repos = [...new Set((a.repo_spaces ?? []).map((id) => space(ctx, id)))];

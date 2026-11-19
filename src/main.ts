@@ -175,6 +175,12 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     restartScheduler(app);
     // Plan usage limits of the logged-in accounts (agents/quota.ts), for choosing backends.
     void import("./agents/quota.ts").then((m) => m.startQuotaWatch(app));
+    // Members' logins through a plugin's method (agents/accounts.ts): refreshed before they run out, from what kv keeps.
+    {
+      const tick = () => void import("./agents/accounts.ts").then((m) => m.tickAgentLogins(app)).catch((e) => console.warn("[omem] 续签成员的 AI 账号登录失败：", e.message));
+      setTimeout(tick, 20_000).unref();
+      setInterval(tick, 60_000).unref();
+    }
     // Wiki pages whose originals changed are checked, and loose pages sorted into folders (src/wiki/upkeep.ts).
     void import("./wiki/upkeep.ts").then((m) => m.startWikiUpkeep(app));
     // The agents' own skill folders (agents/agent-skills.ts): nothing while the takeover is off.

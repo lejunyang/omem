@@ -5,7 +5,7 @@ import { configSchema, saveConfig } from "../core/config.ts";
 import { findUser, OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { isOwner } from "../auth/permissions.ts";
-import { accountEntry, allAccounts, checkAccount, myAccounts, removeAccount, saveToken, startLogin } from "../agents/accounts.ts";
+import { accountEntry, allAccounts, checkAccount, myAccounts, readMyQuota, removeAccount, saveToken, startLogin } from "../agents/accounts.ts";
 import { sandboxSupport } from "../agents/sandbox.ts";
 
 /**
@@ -16,7 +16,7 @@ import { sandboxSupport } from "../agents/sandbox.ts";
 export function registerAgentAccountRoutes(server: FastifyInstance, app: App, who: (req: FastifyRequest) => string) {
   const backendOf = (req: FastifyRequest) => {
     const id = (req.params as { backend: string }).backend;
-    if (!accountEntry(id)) throw new HttpError(404, `后端 ${id} 不能按人登录`);
+    if (!accountEntry(app, id)) throw new HttpError(404, `后端 ${id} 不能按人登录`);
     return id;
   };
   /** The caller, when they can have accounts of their own here. */
@@ -29,9 +29,12 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
   };
 
   server.get("/api/me/agent-accounts", async (req) => myAccounts(app, who(req)));
+  // `method`: the backend's own login (`native`, the default) or a plugin's (`<plugin>:<id>`).
   server.post("/api/me/agent-accounts/:backend/login", async (req) => {
     const userId = member(req);
-    return startLogin(app, userId, backendOf(req));
+    const body = z.object({ method: z.string().max(80).optional() }).safeParse(req.body ?? {});
+    if (!body.success) throw new HttpError(400, "登录方式不对");
+    return startLogin(app, userId, backendOf(req), body.data.method || "native");
   });
   server.post("/api/me/agent-accounts/:backend/token", async (req) => {
     const userId = member(req);
@@ -43,6 +46,11 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
     const userId = member(req);
     return checkAccount(app, userId, backendOf(req));
   });
+  // The plan quota of their own account, read now in their sandbox.
+  server.post("/api/me/agent-accounts/:backend/quota", async (req) => {
+    const userId = member(req);
+    return { quota: await readMyQuota(app, userId, backendOf(req)) };
+  });
   server.delete("/api/me/agent-accounts/:backend", async (req) => {
     const userId = member(req);
     await removeAccount(app, userId, backendOf(req));
@@ -52,8 +60,8 @@ export function registerAgentAccountRoutes(server: FastifyInstance, app: App, wh
   server.get("/api/agent-accounts", async () => allAccounts(app));
   server.put("/api/agent-accounts/:backend/policy", async (req) => {
     const backend = backendOf(req);
-    const body = z.object({ policy: z.enum(["owner", "own"]) }).safeParse(req.body ?? {});
-    if (!body.success) throw new HttpError(400, "规则只能是 owner（借用本人的）或 own（只能用自己的）");
+    const body = z.object({ policy: z.enum(["owner", "own", "own-or-other"]) }).safeParse(req.body ?? {});
+    if (!body.success) throw new HttpError(400, "规则只能是 owner（借用本人的）、own（只能用自己的）或 own-or-other（没登录时换别的后端）");
     const next = configSchema.parse(structuredClone(app.config));
     next.agents.accounts = { ...next.agents.accounts, [backend]: body.data.policy };
     saveConfig(next, app.home);

@@ -37,7 +37,7 @@ export type SandboxAccount = {
 
 /** The user's own account a profile runs with (set by accounts.ts withAccount), if any. */
 export function accountOf(p: object | null | undefined): SandboxAccount | undefined {
-  return (p as { account?: SandboxAccount } | null | undefined)?.account;
+  return (p as { ownAccount?: SandboxAccount } | null | undefined)?.ownAccount;
 }
 
 /** What tells sessions of different accounts apart in keys: "" for the machine's own login, `acct:<user>` otherwise. */

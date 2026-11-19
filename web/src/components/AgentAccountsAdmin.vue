@@ -11,14 +11,14 @@ import UiSegmented from "./UiSegmented.vue";
  * member who has not logged in borrows the owner's login; who logged in to what (no tokens), with a
  * way to log someone out. Shown only where the machine can start the sandbox.
  */
-type Policy = "owner" | "own";
+type Policy = "owner" | "own" | "own-or-other";
 type State = "none" | "logged-in" | "expired" | "logging-in";
 type Overview = {
   supported: boolean;
   reason?: string;
   bwrap: string | null;
   backends: { id: string; name: string; policy: Policy }[];
-  people: { userId: string; name: string; backends: { id: string; name: string; state: State; user?: string; checkedAt?: string }[] }[];
+  people: { userId: string; name: string; backends: { id: string; name: string; state: State; user?: string; checkedAt?: string; methodLabel?: string }[] }[];
 };
 const emit = defineEmits<{ policies: [accounts: Record<string, Policy>] }>();
 
@@ -35,8 +35,14 @@ onMounted(load);
 const STATE: Record<State, string> = { none: "没登录", "logged-in": "已登录", expired: "登录过期", "logging-in": "登录中" };
 const OPTIONS: { value: Policy; label: string }[] = [
   { value: "owner", label: "借用本人的" },
+  { value: "own-or-other", label: "换别的后端" },
   { value: "own", label: "只能用自己的" },
 ];
+const SAVED: Record<Policy, string> = {
+  owner: "已保存：没登录的成员借用你的登录",
+  own: "已保存：没登录的成员用不了这个后端",
+  "own-or-other": "已保存：没登录的成员换一个他登录过、或允许借用的后端",
+};
 
 async function setPolicy(backend: string, policy: Policy) {
   try {
@@ -44,7 +50,7 @@ async function setPolicy(backend: string, policy: Policy) {
     const b = data.value?.backends.find((x) => x.id === backend);
     if (b) b.policy = policy;
     emit("policies", Object.fromEntries((data.value?.backends ?? []).map((x) => [x.id, x.policy])));
-    toast(policy === "own" ? "已保存：没登录的成员用不了这个后端" : "已保存：没登录的成员借用你的登录", "ok");
+    toast(SAVED[policy], "ok");
   } catch (e) {
     toast((e as Error).message, "error");
     await load();
@@ -65,7 +71,7 @@ async function remove(person: Overview["people"][number], b: { id: string; name:
 <template>
   <div v-if="data?.supported" class="card pad stack">
     <strong>成员的 AI 账号</strong>
-    <HelpText>成员可以在自己的“账号”页登录各个后端，之后他发起的运行就用他自己的账号，额度和使用记录算在他名下。这台机器上所有人的 Agent 都以同一个系统用户运行，靠 bubblewrap 沙箱把各人的账号目录隔开：成员的运行看不到你的登录、omem 的数据目录和别人的账号目录。下面按后端设定成员没登录时怎么办：借用你的登录（和以前一样），或者这个后端只能用他自己的账号（运行失败并提示他去登录）。你自己的运行不受影响，照旧用这台机器上的登录。</HelpText>
+    <HelpText>成员可以在自己的“账号”页登录各个后端，之后他发起的运行就用他自己的账号，额度和使用记录算在他名下。这台机器上所有人的 Agent 都以同一个系统用户运行，靠 bubblewrap 沙箱把各人的账号目录隔开：成员的运行看不到你的登录、omem 的数据目录和别人的账号目录。下面按后端设定成员没登录时怎么办：借用你的登录（和以前一样）；换别的后端（按这次运行的选型和兜底顺序，换一个他登录过、或允许借用的后端，都没有才失败）；或者这个后端只能用他自己的账号（运行失败并提示他去登录）。你自己的运行不受影响，照旧用这台机器上的登录。插件可以给某个后端加登录方式（比如用公司账号登录），成员在自己的页面上选。停用一个成员时，他的所有登录和账号目录一并删除。</HelpText>
     <div v-for="b in data.backends" :key="b.id" class="row wrap line">
       <span class="name">{{ b.name }}</span>
       <span class="spacer" />
@@ -78,6 +84,7 @@ async function remove(person: Overview["people"][number], b: { id: string; name:
         <span>{{ b.name }}</span>
         <span class="badge" :class="{ accent: b.state === 'logged-in', danger: b.state === 'expired', warn: b.state === 'logging-in' }">{{ STATE[b.state] }}</span>
         <span v-if="b.user" class="muted small ellipsis" :title="b.user">{{ b.user }}</span>
+        <span v-if="b.methodLabel" class="muted small">{{ b.methodLabel }}</span>
         <span v-if="b.checkedAt" class="muted small">检查于 {{ fmtTime(b.checkedAt) }}</span>
         <span class="spacer" />
         <button class="btn ghost sm danger" @click="remove(p, b)">让他退出</button>

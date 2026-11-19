@@ -15,6 +15,18 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 成员的 AI 账号：额度和模型按账号、技能进账号目录、换后端、停用时清理、插件登录（11-20）
+
+- 运行时 profile 上带成员账号的字段从 `account` 改名 `ownAccount`（`sandbox.ts` 的 `accountOf`）：`account` 现在是配置里 profile 的 spec。
+- 额度：`quota.ts` 加 `quotaKey`（成员账号是 `<后端>@acct:<用户>`），`quotaKind` 不再对成员账号返回空；`readCodex` / `readClaude` 对成员账号在他的沙箱里、以账号目录为 cwd 读；`startQuotaWatch` 也读最近 6 小时在用的成员账号（`accounts.ts` 的 `memberQuotaProfiles`）；`forgetQuota` 在退出时删。`capacity.ts` 的用完标记对成员账号加 `acct:<用户>/` 前缀，`outOfQuotaList` 不列它们；`runner.ts` 的 `noteQuota` 对成员账号也记。`runner.ts` 的兜底链和 `choose-ai.ts` 的候选对成员先 `accountFor`（登录了就换成他的账号，不抛错），`chooseAI` 还去掉 `accountBlocked` 的候选。
+- 探测：`probe.ts` 的 `cachedProbe` / `saveProbe` 多一个 `userId`（键 `probe:<档案>@acct:<用户>`），新 `probeFor`（按运行带的账号）、`userProbe`（按人：登录了用他的）、`probeAccount`（登录成功后在沙箱里探测）；`probeOn` 对成员账号以账号目录为 cwd；`doubao-cli.ts` 的模型探测也能进沙箱。`dispatch.ts`、`execution.ts`（`validateExecution` 多一个 `userId`，`tools.ts` 里传 `ctx.userId`）、`commands.ts` 的 `/model`、`list_ai_backends` 用它们。
+- 技能：`agent-skills.ts` 拆出 `wantedEntries` / `writeEntriesTo`，新 `accountSkillDirs`（目录里的技能路径按账号目录和各后端的 `account.env` 展开）和 `writeAccountEntries`；`writeAgentEntries` 和还原也处理 `<数据目录>/accounts/*/home`；`accounts.ts` 的 `ensureAccountHome` 新建了目录时写一次（接管开着时）。
+- 配置：`config.ts` 加 `accountSpecSchema`（严格字段，`{home}` 只在 env 的值，env 值只许 `{home}/…` 或普通值，`dirs` / `owns` 是相对路径，正则要能编译），`agentProfileSchema.account`；`agents.accounts` 多 `own-or-other`。`catalog.ts` 的 `accountCatalog(profiles)` 把带 `account` 的 profile 按 source 并进来；`accounts.ts` 的查找都改成带 `app`（`accountEntries` / `accountEntry(app, id)` / `accountEntryFor(app, p)`）。
+- `own-or-other`：`withAccount` 多一个 `others` 回调，`prepareRun` 传 `failoverProfiles(...).slice(1)`；换到的后端照常 `withAccount`。运行指定的 AI 被换掉时不再用它校验模型。
+- 停用：`src/auth/http.ts` 停用用户后调 `removeAllAccounts`（停登录、各后端退出、删 `agent:` 开头的连接、kv、账号目录，`audit_events` 记 `agent-accounts.remove-all`）。
+- 插件登录：新文件 `src/agents/agent-logins.ts`（`AgentLoginContext` / `AgentLoginDef`、`registerAgentLogin`、`loginMethodsFor`）；`plugins/registry.ts` 的 `api.agentLogin`（数据目录的插件要在 `permissions.agentLogin` 声明后端，后端要能按人登录，`describePlugin` 的权限里列出），`sandbox-runner.ts` 隔离运行时拒绝，`types.ts` 加类型。`accounts.ts`：`startLogin` 多一个 `method`（`native` 或 `<插件>:<id>`），插件登录在 omem 进程里调 `login`，`show` 的链接和验证码进页面并经 `notify` 发到本人私聊（自己的设备码登录也发），11 分钟超时；登录态记 `method`、`expiresAt`、`refreshAt`；`refreshPluginLogin`（“检查”也走它）和每分钟的 `tickAgentLogins`（`main.ts`）续签，null 或出错改成过期并通知；`removeAccount` 先调插件的 `logout`，删 `agent:<后端>` 和 `agent:<后端>:…` 的连接。视图多 `methods`、`method`、`methodLabel`、`expiresAt`、`quota`；新接口 `POST /api/me/agent-accounts/:backend/quota`（self），登录接口收 `{ method }`。SDK 类型在 `packages/plugin-sdk/agent-login.ts`，从主入口导出。
+- 网页：`AgentAccounts.vue` 加登录方式下拉、额度一行和“重新读取”、登录方式和到期时间；`AgentAccountsAdmin.vue` 的规则三选一、列出登录方式；`PluginsSettings.vue` 的权限说明列出 `agentLogin`。测试 `test/agent-accounts.test.ts`（加了 7 项）、新的 `test/agent-logins.test.ts`。
+
 ## 成员用自己的 AI 账号：账号目录当 HOME，Linux 上用 bubblewrap 启动（11-20）
 
 - 新文件 `src/agents/sandbox.ts`：`sandboxSupport`（只在 Linux、找得到 `bwrap`（或 `OMEM_BWRAP`）、探测命令能跑通时打开，进程内检查一次，`omem diag` 的 `agentAccounts`）；纯函数 `bwrapArgs`（只读根、新的 user / PID 命名空间、`/tmp` 和要隐藏的目录换成空的，挂载按路径深浅排，同一路径可写优先，网络不隔离）和 `sandboxEnv`（去掉服务环境里的凭据和指向隐藏目录的变量，HOME 换成账号目录，Node 放在 PATH 最前）；`sandboxCommand` 按命令的真实位置补只读挂载（npm / pnpm 的安装前缀、Node、omem 的代码）。`accountOf` / `accountTag` 读运行带的账号。

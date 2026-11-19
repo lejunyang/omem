@@ -37,7 +37,7 @@ import { commandGateDir } from "./command-gate.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
-import { accountBlocked, withAccount } from "./accounts.ts";
+import { accountBlocked, accountFor, withAccount } from "./accounts.ts";
 import { accountOf } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -435,8 +435,10 @@ export function prepareRun(
   const spec = "spec" in input.actor ? input.actor.spec : null;
   const role = spec ? null : loadRole((input.actor as { role: RoleName }).role, app);
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
-  // A member's run uses their own account of the backend when they logged in to it (agents/accounts.ts).
-  const profile = withAccount(app, userId, resolveRunProfile(app, input));
+  // A member's run uses their own account of the backend when they logged in to it (agents/accounts.ts);
+  // not logged in to one that must be their own, it may move on in the run's fallback order (`own-or-other`).
+  const resolved = resolveRunProfile(app, input);
+  const profile = withAccount(app, userId, resolved, () => failoverProfiles(app, input.actor, resolved).slice(1));
   if (!input.shadow) recordRunAI(app, input.runId, profile, false);
   if (role && input.runId && !input.shadow) run(app.db, "update runs set roles = coalesce(roles, '|') || ? || '|' where id = ? and instr(coalesce(roles, ''), ?) = 0", roleName, input.runId, `|${roleName}|`);
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
@@ -674,11 +676,10 @@ export function isRetryableAgentError(e: unknown): boolean {
  */
 export function noteQuota(app: App, profile: AgentProfile, e: unknown, emit: (e: AgentEvent) => void) {
   if (!(e instanceof Error) || !(isAgentRunError(e) ? e.kind === "quota" : isQuotaMessage(e.message))) return;
-  // A user's own account: their quota, not the owner's; nothing is set aside for other runs.
-  if (accountOf(profile)) return emit({ type: "status", text: `你自己的 ${profile.name ?? profile.id} 账号额度用完了` });
+  // A user's own account is set aside for that user's runs only (capacity.ts keeps it apart from the owner's).
   const until = markOutOfQuota(app, profile, e.message);
   const one = !!profile.model && isModelQuotaMessage(e.message, profile.model);
-  emit({ type: "status", text: `${profile.name ?? profile.id}${one ? ` 的模型 ${profile.model}` : ""} 的额度用完了，${until.toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 前自动改用${one ? "其他模型和后端" : "其他后端"}` });
+  emit({ type: "status", text: `${accountOf(profile) ? "你自己的 " : ""}${profile.name ?? profile.id}${accountOf(profile) ? " 账号" : ""}${one ? ` 的模型 ${profile.model}` : ""} 的额度用完了，${until.toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 前自动改用${one ? "其他模型和后端" : "其他后端"}` });
 }
 
 /** Build the ordered profile list for one role run: primary then configured fallbacks. */
@@ -725,7 +726,7 @@ function runAI(app: App, runId: string | null): Execution | undefined {
 
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
   await refreshForRun(app);
-  const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)));
+  const execution = validateExecution(app, input.execution ?? (input.ownAI ? undefined : runAI(app, input.runId)), input.userId);
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const told = await lessonsOfTask(app, input);
@@ -752,7 +753,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   else if (input.profileId || input.model || input.effort) notChosen("发起这次运行时已经定了 AI");
   else {
     const current = resolveRunProfile(app, { actor });
-    chosen = await chooseAI(app, { scene, task: input.task, who: input.spec?.name ?? input.role, current, signal: input.signal, onStatus: say, onRecord: (r) => input.onEvent?.(choiceEvent(r)) });
+    chosen = await chooseAI(app, { scene, task: input.task, who: input.spec?.name ?? input.role, current, userId: input.userId, signal: input.signal, onStatus: say, onRecord: (r) => input.onEvent?.(choiceEvent(r)) });
     const pick = chosen?.pick;
     if (pick) {
       own = current;
@@ -760,8 +761,9 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     }
   }
   const base = prepareRun(app, { actor, lessons, lessonIds: told.ids, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, checkName: input.checkName, reviewLead: input.reviewLead, addTools: input.addTools, replay: input.replay, fullAccess: input.fullAccess });
-  if (execution) {
-    try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
+  // (A member's run moved to another backend by `own-or-other` is not the named one any more.)
+  if (execution && base.profile.id === execution.profile) {
+    try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }, input.userId); }
     catch (e) { revokeToolToken(base.token); throw e; }
   }
   // A run (a role's or an Agent 档案's) may move to its other configured backends when its model is
@@ -778,6 +780,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // such backends are passed over; when the run starts on one, it says so instead.
   // A backend the owner keeps to members' own accounts, which this member has not logged in to, is no fallback.
   for (let k = chain.length - 1; k > 0; k--) if (accountBlocked(app, input.userId ?? OWNER, chain[k])) chain.splice(k, 1);
+  // The member's own accounts on the rest, so their quota and spent marks (not the owner's) decide the order.
+  for (let k = 1; k < chain.length; k++) chain[k] = accountFor(app, input.userId, chain[k]);
   if (localOnly(app, input.spaceId)) {
     if (lentByOthers(app, chain[0])) throw new HttpError(400, `这个空间设了“仅本机”，不能用别人的 omem 借出的 AI（${chain[0].id}）：给这次运行或这个角色换一个本机的后端`);
     for (let k = chain.length - 1; k > 0; k--) if (lentByOthers(app, chain[k])) chain.splice(k, 1);

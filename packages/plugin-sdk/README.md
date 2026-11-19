@@ -115,6 +115,10 @@ const checks: PluginSlotBlock<Checks> = {
 
 开发插件时可以 `omem plugin link <目录>`：不复制，改了自动重新加载，信任按目录记。包里有 `build` 脚本、清单的 `server`（例如 `dist/server.js`）或服务脚本还没构建时，`omem plugin install` 先列出装依赖和构建的命令，确认后才运行。
 
+## AI 账号的登录方式
+
+成员用自己的 AI 账号时，插件可以给某个后端提供登录方式：`api.agentLogin(def)`，主入口导出 `AgentLoginDef / AgentLoginContext / AgentLoginResult / AgentLoginApi` 类型。`login(ctx)` 调 `ctx.show({ url, code })` 让 omem 把链接和验证码给这个人（网页上和飞书私聊里），把凭据写到 `ctx.env` 指的位置（他的账号目录里），需要时用 `ctx.secret.set()` 存一份按人保存的秘密，返回 `{ user, expiresAt }`；可选的 `refresh(ctx)` 在到期前 10 分钟被调用，返回新的 `{ expiresAt }` 或 `null`（要重新登录）；可选的 `logout(ctx)` 在他退出时清理。清单声明 `permissions.agentLogin: [<后端>]`，只在 omem 进程里运行。完整说明见 [plugins.md](https://github.com/lejunyang/omem/blob/main/docs/v2/plugins.md) 的“AI 账号的登录方式”。
+
 ## 场景包与聊天渠道
 
 插件清单支持 `rules: [名称]`（`rules/<名>.yaml`，首次导入且停用）、`flows: [id]`（`flows/<id>.yaml`，流程定义，启用时补进流程清单，本人已有同 id 的不覆盖，删掉的不再加回来）和 `mcp`（命令 / 网址、变量 / 请求头名字列表，密钥值由本人在 Agent 页填）。`omem plugin pack` 可导出现有档案、完整技能目录、规则、流程和 MCP；默认写到数据目录 `plugins-out/`，拒绝文本中的已存密钥和用户目录绝对路径。安装接受本地目录并复制，命令 MCP 要先信任插件。完整的场景包例子（流程 + 技能 + 对象状态变化规则）在仓库的 `examples/plugins/ghdelivery`。

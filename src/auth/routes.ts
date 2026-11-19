@@ -59,6 +59,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/me/agent-accounts/:backend/login": "self",
   "POST /api/me/agent-accounts/:backend/token": "self",
   "POST /api/me/agent-accounts/:backend/check": "self",
+  "POST /api/me/agent-accounts/:backend/quota": "self",
   "DELETE /api/me/agent-accounts/:backend": "self",
   // Everyone's logins (no tokens), the per-backend rule, removing a member's login: the owner's.
   "GET /api/agent-accounts": "owner",

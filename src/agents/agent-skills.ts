@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { commitLibrary } from "../core/git.ts";
 import { HttpError } from "../core/util.ts";
-import { acpCatalog } from "./catalog.ts";
+import { accountCatalog, acpCatalog } from "./catalog.ts";
 import { GROUP_ID, groupTitle, loadSkillGroups, saveSkillGroups, skillEnabled, type SkillGroups } from "./skill-groups.ts";
 import { listSkills, readSkill } from "./specs.ts";
 import { omemSkillDir } from "./tool-help.ts";
@@ -348,6 +348,24 @@ function readTree(dir: string) {
  * takes it over first).
  */
 export function writeAgentEntries(app: App, dirs = agentSkillDirs(app)) {
+  const wanted = wantedEntries(app);
+  // Kept beside the data for omem's own runs (read_skill of a group) and to see what was written.
+  rmSync(hubRoot(app), { recursive: true, force: true });
+  for (const [id, files] of wanted) if (id !== "omem") writeTree(join(hubRoot(app), id), files);
+  const out = writeEntriesTo(dirs, wanted);
+  // Members' account folders (agents/accounts.ts) are their agents' HOME: the same entries go there.
+  for (const home of accountHomeDirs(app)) {
+    try {
+      writeEntriesTo(accountSkillDirs(app, home), wanted);
+    } catch (e) {
+      console.warn(`[omem] 更新账号目录里的技能入口失败：${(e as Error).message}`);
+    }
+  }
+  return out;
+}
+
+/** The omem guide and the hub of each group that is on. */
+function wantedEntries(app: App) {
   const state = loadSkillGroups(app);
   const wanted = new Map<string, Record<string, string>>();
   const guide = omemSkillDir();
@@ -357,9 +375,53 @@ export function writeAgentEntries(app: App, dirs = agentSkillDirs(app)) {
     const hub = groupHub(app, id, state);
     if (hub) wanted.set(id, hub.files);
   }
-  // Kept beside the data for omem's own runs (read_skill of a group) and to see what was written.
-  rmSync(hubRoot(app), { recursive: true, force: true });
-  for (const [id, files] of wanted) if (id !== "omem") writeTree(join(hubRoot(app), id), files);
+  return wanted;
+}
+
+/**
+ * The agents' skill folders inside one user's account folder: the catalog's paths expanded with that
+ * folder as HOME and the account backends' own variables (`{home}/.codex`…), never the service's.
+ */
+export function accountSkillDirs(app: App, home: string): SkillDir[] {
+  const env: NodeJS.ProcessEnv = { HOME: home };
+  for (const e of accountCatalog(app.config.agents.profiles)) for (const [k, v] of Object.entries(e.account.env)) env[k] = v.replaceAll("{home}", home);
+  const inside = (p: string) => p === home || p.startsWith(home.endsWith(sep) ? home : home + sep);
+  const map = new Map<string, SkillDir>();
+  for (const e of acpCatalog) {
+    if (!e.skills) continue;
+    const reads = e.skills.read.map((r) => expandPath(r, env));
+    const w = expandPath(e.skills.write, env);
+    if (!inside(w)) continue;
+    if (existsSync(w) || existsSync(dirname(w)) || reads.some((r) => existsSync(r) || existsSync(dirname(r)))) {
+      const d = map.get(w) ?? { path: w, agents: [], write: true, exists: existsSync(w) };
+      if (!d.agents.includes(e.name)) d.agents.push(e.name);
+      map.set(w, d);
+    }
+  }
+  return [...map.values()];
+}
+
+/** The account folders on this machine (`<data>/accounts/<user>/home`), not links. */
+function accountHomeDirs(app: App) {
+  const root = join(app.home, "accounts");
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !d.isSymbolicLink())
+    .map((d) => join(root, d.name, "home"))
+    .filter((h) => existsSync(h) && !lstatSync(h).isSymbolicLink());
+}
+
+/**
+ * omem's entries in these account folders now (a folder was just made; agents/accounts.ts), while the
+ * owner has the takeover on. The hubs beside the data are left as they are.
+ */
+export function writeAccountEntries(app: App, homes: string[]) {
+  if (!app.config.agentSkills.takeOver) return [];
+  const wanted = wantedEntries(app);
+  return homes.flatMap((home) => writeEntriesTo(accountSkillDirs(app, home), wanted));
+}
+
+function writeEntriesTo(dirs: SkillDir[], wanted: Map<string, Record<string, string>>) {
   const out: { dir: string; written: string[]; removed: string[] }[] = [];
   for (const d of dirs.filter((x) => x.write)) {
     mkdirSync(d.path, { recursive: true });
@@ -684,7 +746,7 @@ export function restoreAgentSkills(app: App, stamp?: string) {
   const manifest = JSON.parse(readFileSync(join(root, pick, "manifest.json"), "utf8")) as { items: { entry: string; backup?: string; link?: string }[] };
   const restored: string[] = [];
   const kept: string[] = [];
-  for (const dir of agentSkillDirs(app).filter((d) => d.write && d.exists))
+  for (const dir of [...agentSkillDirs(app), ...accountHomeDirs(app).flatMap((h) => accountSkillDirs(app, h))].filter((d) => d.write && existsSync(d.path)))
     for (const name of readdirSync(dir.path)) if (ours(join(dir.path, name))) rmSync(join(dir.path, name), { recursive: true, force: true });
   for (const it of manifest.items.filter((x) => x.backup)) {
     if (existsSync(it.entry) || !existsSync(it.backup!)) { kept.push(it.entry); continue; }

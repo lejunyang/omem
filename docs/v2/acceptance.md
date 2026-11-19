@@ -1,5 +1,19 @@
 # v2 验收清单
 
+## 成员用自己的 AI 账号：额度、模型、技能、换后端、停用、插件登录（2026-11-20 晚，docs/v2/agent-accounts.md）
+
+准备同下一节：一台装好 bubblewrap 的 Linux，成员小王、小李；本人开着 设置 → Agent → 技能 的“接管”。
+
+- 小王登录 Codex 后，“我的 AI 账号”里 Codex 下面几秒到一分钟内出现他自己的额度（5h、7d 已用多少、多久后重置），和本人在 设置 → AI 里看到的不同；点“重新读取”在他的沙箱里重读（`ps` 能看到 bwrap 下的 `codex app-server`，cwd 是他的账号目录）。他的额度快用完时，他的运行先用别的后端，本人的运行不受影响；他的 Codex 报额度用完后，只有他的运行在重置前跳过 Codex，本人的“额度用完”列表里没有他。
+- 小王登录后，在飞书私聊里 `/model` 或让助手 `list_ai_backends`：列出的是他账号能用的模型（他的套餐和本人不同时可以看出差别）；本人看到的照旧。
+- 小王的账号目录里出现 `.agents/skills/omem/SKILL.md` 和各分组的总入口（Codex 读这里）；本人在 Agent 页改了分组后，他的目录里的入口跟着变；还原接管后被删掉。
+- 本人在 `config.json` 的 `agents.profiles` 里给一个自己加的后端写 `account`（`env` 写 `{home}/…`、`owns`、`login`）：保存后“我的 AI 账号”里多出这个后端；把 env 写成 `/opt/x` 或在 `login.args` 里写 `{home}`，保存被拒绝并写明哪一项不对。
+- 本人把 Codex 的规则设成“换别的后端”：没登录 Codex、登录了 Claude Code 的小李问助手，运行用他自己的 Claude Code 账号（运行页的 AI 写 Claude Code）；他一个都没登录、兜底里也没有允许借用的后端时，运行失败并提示去登录 Codex。
+- 本人在 设置 → 成员 停用小李：他在登录的那个后端的登录命令被停掉；`accounts/<小李的 id>` 整个被删；`secrets/vault.db` 里没有他的 `agent:` 开头的连接；审计记录里有 `agent-accounts.remove-all` 和删掉的后端。重新启用后“我的 AI 账号”全是“没登录”。
+- 小王点 Codex 的“登录”：除了网页上的链接和验证码，机器人在他的飞书私聊发一条“omem 正在为你登录 Codex”，写明是 omem 为他发起的、不是他点的不要理会，带链接和验证码。
+- 插件登录：数据目录里一个声明了 `permissions.agentLogin: [traex]` 的插件，本人信任并选“在 omem 里运行”。小王的 TraeX 一行出现登录方式下拉（“TraeX 自己的登录”和插件的那一项），选插件的登录：页面和飞书私聊都给出插件的链接和验证码；完成后显示“已登录”、“用…登录”和到期时间，凭据写在他的 `accounts/<id>/home/.trae` 里，插件的秘密在 `secrets/vault.db`（`agent:traex:<插件>:<id>`），不在“已连接的应用”里。到期前 10 分钟自动续签（重启服务也照常）；插件续不了时状态变成“登录过期”，小王收到提醒，目录还在。小王点“退出”时插件的 `logout` 先被调用，然后目录被删。插件改成隔离运行、撤销信任或没在清单里声明时，下拉里没有这一项，信任时报错。
+- 自动验证：`test/agent-accounts.test.ts`（额度和用完标记按账号分开、探测按账号、技能写进账号目录、profiles 的 `account` 检查、`own-or-other`、停用、三选一的规则）、`test/agent-logins.test.ts`（插件登录方式的列出、登录写文件和秘密、私聊通知、续签和过期、退出、成员之间互不影响、权限）。上面几条都还没在真机上走过。
+
 ## 成员用自己的 AI 账号（2026-11-20，docs/v2/agent-accounts.md）
 
 准备：一台 Linux，服务以普通用户运行，装好 bubblewrap（`apt install bubblewrap`，或在仓库里 `osdk pkg apply`）；打开多人登录，有一个成员小王。

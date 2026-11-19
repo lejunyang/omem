@@ -448,6 +448,8 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
     if (b.disabled !== undefined) audit(app, who(req), b.disabled ? "user.disable" : "user.enable", id);
     if (b.loginAny !== undefined) audit(app, who(req), "user.login-any", id, { on: b.loginAny });
     if (b.disabled) revokeUserSessions(app, id);
+    // Their own AI accounts go too (agents/accounts.ts): enabled again, they log in again.
+    if (b.disabled) await (await import("../agents/accounts.ts")).removeAllAccounts(app, id, who(req));
     return userView(app, u.id);
   });
   server.delete("/api/users/:id/sessions", async (req) => {
