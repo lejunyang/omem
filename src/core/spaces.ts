@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { App } from "./app.ts";
 import { all, one, run } from "./db.ts";
@@ -251,4 +251,48 @@ export function unrelateSpaces(app: App, a: string, b: string, by: "owner" | "ag
   else run(app.db, "delete from space_relations where space_a = ? and space_b = ? and origin = 'agent'", x, y);
   app.emit({ type: "changed", entity: "space", id: a });
   app.emit({ type: "changed", entity: "space", id: b });
+}
+
+/** Rows that say who may see a space or how it relates to others, and bookkeeping: they go with it. */
+const SPACE_BOOKKEEPING = new Set(["space_members", "change_log", "metrics", "vector_log", "page_reads", "git_commit_cursors"]);
+const CONTENT_LABEL: Record<string, string> = { sources: "原件", chunks: "原件切块", pages: "Wiki 页面", memories: "记忆", items: "事项", runs: "运行", conversations: "对话", rules: "规则", schedules: "定时任务", designs: "方案", req_nodes: "需求", repo_lessons: "仓库约定", plugin_records: "插件记录", symbols: "代码符号", code_refs: "代码引用" };
+
+/** What a space still holds (table → rows), apart from its members and bookkeeping. */
+export function spaceContent(app: App, id: string): { table: string; label: string; count: number }[] {
+  const tables = all<{ name: string }>(app.db, "select name from sqlite_master where type = 'table'").map((t) => t.name);
+  const out: { table: string; label: string; count: number }[] = [];
+  for (const t of tables) {
+    if (SPACE_BOOKKEEPING.has(t)) continue;
+    if (!all<{ name: string }>(app.db, `pragma table_info("${t.replace(/"/g, "")}")`).some((c) => c.name === "space_id")) continue;
+    const n = one<{ n: number }>(app.db, `select count(*) n from "${t}" where space_id = ?`, id)?.n ?? 0;
+    if (n) out.push({ table: t, label: CONTENT_LABEL[t] ?? t, count: n });
+  }
+  return out;
+}
+
+/**
+ * Delete a space that holds nothing (made by mistake, say): its row, members, relations and its
+ * folder in the library. One with content, a personal space, a business space with repositories
+ * under it or an index of a branch is refused with what is in the way. The repository directory of a
+ * repo space is left alone (it is the owner's, or omem's clone under repos/ that may be connected again).
+ */
+export function deleteSpace(app: App, id: string) {
+  const s = getSpace(app, id);
+  if (s.kind === "personal") throw new HttpError(400, "个人空间不能删除");
+  if (s.kind === "worktree") throw new HttpError(400, `${s.name} 是分支或交办的索引，由 omem 自己收回`);
+  const children = childSpaces(app, id);
+  if (children.length) throw new HttpError(409, `${s.name} 下面还有仓库（${children.map((c) => c.name).join("、")}）：先把它们移出`);
+  const content = spaceContent(app, id);
+  if (content.length) throw new HttpError(409, `${s.name} 里还有内容，不能删除：${content.map((c) => `${c.label} ${c.count}`).join("、")}`);
+  run(app.db, "delete from space_members where space_id = ?", id);
+  run(app.db, "delete from git_commit_cursors where space_id = ?", id);
+  run(app.db, "delete from space_relations where space_a = ? or space_b = ?", id, id);
+  run(app.db, "delete from spaces where id = ?", id);
+  const dir = spaceDir(app, id);
+  if (existsSync(dir)) {
+    rmSync(dir, { recursive: true, force: true });
+    commitLibrary(app.libraryDir, `space: delete ${id}`);
+  }
+  app.emit({ type: "changed", entity: "space", id });
+  return { deleted: id };
 }

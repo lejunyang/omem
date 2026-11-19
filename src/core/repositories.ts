@@ -139,6 +139,25 @@ export function initRepository(app: App, value: string): string {
   return realpathSync(target);
 }
 
+/**
+ * Check out `branch` in a repository space's own directory (where delegations cut their work branch
+ * from): a local branch, or one only on origin (made local, tracking it). Refused while there are
+ * uncommitted changes to tracked files, or when another worktree has the branch; untracked files stay.
+ */
+export function checkoutBranch(root: string, branch: string): { current: string; previous: string } {
+  if (!/^(?!-)(?!.*\.\.)[\w./-]+$/.test(branch) || branch.endsWith("/") || branch.endsWith(".lock")) throw new HttpError(400, `分支名不对：${branch}`);
+  const previous = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
+  if (previous === branch) return { current: branch, previous };
+  const dirty = git(root, ["status", "--porcelain", "--untracked-files=no"]).stdout.trim();
+  if (dirty) throw new HttpError(409, `仓库目录里有没提交的改动，先提交或收起再切换：\n${dirty.split("\n").slice(0, 10).join("\n")}`);
+  const local = git(root, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).ok;
+  const remote = !local && git(root, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`]).ok;
+  if (!local && !remote) throw new HttpError(404, `没有分支 ${branch}`);
+  const r = git(root, local ? ["checkout", "-q", branch] : ["checkout", "-q", "--track", "-b", branch, `origin/${branch}`]);
+  if (!r.ok) throw new HttpError(409, `没能检出 ${branch}：${(r.stderr || r.stdout).trim().slice(0, 400)}`);
+  return { current: branch, previous };
+}
+
 const pending = new Map<string, Promise<string>>();
 /** Repeated/concurrent URLs reuse one checkout. Failed clones never become spaces. */
 export async function cloneRepository(app: App, value: string): Promise<string> {

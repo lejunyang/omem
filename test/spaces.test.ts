@@ -226,3 +226,32 @@ it("creates a new empty repository with one commit and a repo space for it", asy
   // A space that already has a repository is not pointed at a new one.
   expect((await callTool(ctx, "connect_repository", { repository: "second", create: true, space: "at-path" })).isError).toBe(true);
 });
+
+it("deletes an empty space only, and says what is in the way otherwise", async () => {
+  const { deleteSpace, spaceContent } = await import("../src/core/spaces.ts");
+  await callTool(ctx, "create_space", { id: "to-delete", name: "要删的" });
+  await callTool(ctx, "create_space", { id: "has-stuff", name: "有内容的" });
+  importText(app, "has-stuff", { text: "一条笔记", kind: "note" });
+  expect(spaceContent(app, "to-delete")).toEqual([]);
+  expect(deleteSpace(app, "to-delete")).toEqual({ deleted: "to-delete" });
+  expect(listSpaces(app).some((s) => s.id === "to-delete")).toBe(false);
+  expect(() => deleteSpace(app, "has-stuff")).toThrow(/原件/);
+  expect(() => deleteSpace(app, "personal")).toThrow(/个人空间/);
+});
+
+it("switches the branch a repository's own directory has checked out, never over uncommitted changes", async () => {
+  const { checkoutBranch } = await import("../src/core/repositories.ts");
+  const r = join(root, "switch");
+  mkdirSync(r);
+  execFileSync("git", ["init", "-q", "-b", "main", r]);
+  execFileSync("git", ["-C", r, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init"]);
+  execFileSync("git", ["-C", r, "branch", "feature"]);
+  expect(checkoutBranch(r, "feature")).toEqual({ current: "feature", previous: "main" });
+  writeFileSync(join(r, "t.txt"), "x");
+  execFileSync("git", ["-C", r, "add", "t.txt"]);
+  expect(() => checkoutBranch(r, "main")).toThrow(/没提交的改动/);
+  execFileSync("git", ["-C", r, "reset", "-q", "--hard"]);
+  expect(() => checkoutBranch(r, "nope")).toThrow(/没有分支/);
+  expect(() => checkoutBranch(r, "--evil")).toThrow(/分支名不对/);
+  expect(checkoutBranch(r, "main").current).toBe("main");
+});

@@ -543,7 +543,11 @@ async function openSpace(s: Space) {
   if (!isRepo(s)) void loadSuggestions(s.id);
   newRelated.value = { space: "", note: "" };
   slots.value = [];
-  guide.value = (await get<{ guide: string }>(`/api/spaces/${s.id}`)).guide;
+  repoBranch.value = null;
+  const detail = await get<{ guide: string; content?: { label: string; count: number }[] }>(`/api/spaces/${s.id}`);
+  guide.value = detail.guide;
+  spaceContentOf.value = detail.content ?? [];
+  if (s.rootPath && s.kind === "repo") void loadRepoBranches(s.id);
   if (!skillOptions.value.length) skillOptions.value = (await get<{ name: string; description: string; status: string }[]>("/api/skills").catch(() => [])).map((k) => ({ value: k.name, label: k.status === "draft" ? `${k.name}（草稿）` : k.name, hint: k.description }));
   if (s.rootPath) slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
 }
@@ -612,6 +616,48 @@ async function relink(path: string): Promise<boolean> {
   } catch (e) {
     toast((e as Error).message, "error");
     return false;
+  }
+}
+/** The branch the repository's own directory has checked out: delegations cut their work from it, and land on it when there is no origin. */
+const repoBranch = ref<{ current: string; pick: string; options: { value: string; label: string }[] } | null>(null);
+const switchingBranch = ref(false);
+async function loadRepoBranches(id: string) {
+  const b = await get<{ current: string; branches: { name: string; remote: boolean }[] }>(`/api/spaces/${id}/branches`).catch(() => null);
+  if (!b || editing.value?.id !== id) return;
+  const local = b.branches.filter((x) => !x.remote).map((x) => x.name);
+  const remoteOnly = b.branches.filter((x) => x.remote && !local.includes(x.name.replace(/^origin\//, ""))).map((x) => x.name.replace(/^origin\//, ""));
+  repoBranch.value = { current: b.current, pick: b.current, options: [...local.map((n) => ({ value: n, label: n })), ...remoteOnly.map((n) => ({ value: n, label: `${n}（只在 origin）` }))] };
+}
+async function switchRepoBranch() {
+  const s = editing.value, b = repoBranch.value;
+  if (!s || !b || b.pick === b.current || switchingBranch.value) return;
+  switchingBranch.value = true;
+  try {
+    await put(`/api/spaces/${s.id}/branches`, { current: b.pick });
+    toast(`仓库目录切到了 ${b.pick}，正在重新导入`, "ok");
+    await loadRepoBranches(s.id);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    switchingBranch.value = false;
+  }
+}
+/** What the space being edited still holds; only an empty one can be deleted. */
+const spaceContentOf = ref<{ label: string; count: number }[]>([]);
+const canDelete = computed(() => !!editing.value && editing.value.kind !== "personal" && editing.value.kind !== "worktree" && (!state.me || state.me.role === "owner"));
+async function removeSpace() {
+  const s = editing.value;
+  if (!s) return;
+  if (spaceContentOf.value.length) return toast(`${s.name} 里还有内容，不能删除：${spaceContentOf.value.map((c) => `${c.label} ${c.count}`).join("、")}`, "error");
+  const ok = await confirmDialog(`删除空间「${s.name}」？`, { message: `它是空的，删掉后从空间列表里消失，成员和与其他空间的关联一起删除。${s.rootPath ? `仓库目录 ${s.rootPath} 不动。` : ""}`, okText: "删除", danger: true });
+  if (!ok) return;
+  try {
+    await del(`/api/spaces/${s.id}`);
+    toast("空间已删除", "ok");
+    editing.value = null;
+    await loadSpaces();
+  } catch (e) {
+    toast((e as Error).message, "error");
   }
 }
 async function changeRoot() {
@@ -1738,6 +1784,14 @@ async function saveEdit() {
             </div>
             <span class="hint">同一个仓库在别处的克隆（remote 相同）可以换过来，比如你平时开发的目录。在这个目录检出交办的分支，每轮的提交会自动快进过来。</span>
           </div>
+          <div v-if="editing.kind === 'repo' && repoBranch" class="field fit">
+            <span>仓库目录检出的分支（新的交办从它切出；仓库没有 origin 时，确认交办会合回这条分支）</span>
+            <div class="row fit">
+              <UiSelect v-model="repoBranch.pick" class="grow" aria-label="仓库目录检出的分支" :options="repoBranch.options" :disabled="switchingBranch" />
+              <button class="btn sm" :disabled="switchingBranch || repoBranch.pick === repoBranch.current" @click="switchRepoBranch">{{ switchingBranch ? "切换中…" : "切换" }}</button>
+            </div>
+            <span class="hint">现在是 <code>{{ repoBranch.current }}</code>。目录里有没提交的改动时不切换。</span>
+          </div>
           <CodeIndexPanel :space-id="editing.id" @config="(c) => (editing!.settings.codeIndex = c)" />
           <label class="field">
             <span>准备命令（新工作区或锁文件变了时，编码前运行）</span>
@@ -1771,7 +1825,10 @@ async function saveEdit() {
         <UiCheckbox v-if="editing.kind === 'repo'" :model-value="editing.settings.commitClaim !== false" @change="(v) => (editing!.settings.commitClaim = v)">本人直接在这个仓库提交后，问这些提交属于哪件事</UiCheckbox>
         <UiCheckbox v-if="editing.kind !== 'personal'" :model-value="!!editing.settings.larkAccess" @change="(v) => (editing!.settings.larkAccess = v)">飞书文档按各人的飞书权限显示（成员要连接飞书，飞书说他能看的才显示全文；你不受限）</UiCheckbox>
         <p v-if="editing.settings.mirror" class="muted small">这是 {{ editing.settings.mirror.peer }} 的空间的只读镜像，内容由同步写入。</p>
-        <div class="row"><span class="spacer" /><button class="btn primary" @click="saveSpace">保存</button></div>
+        <div class="row">
+          <button v-if="canDelete" class="btn ghost danger" :title="spaceContentOf.length ? `还有内容，不能删除：${spaceContentOf.map((c) => `${c.label} ${c.count}`).join('、')}` : '删除这个空的空间'" :disabled="spaceContentOf.length > 0" @click="removeSpace">删除空间</button>
+          <span class="spacer" /><button class="btn primary" @click="saveSpace">保存</button>
+        </div>
       </div>
     </div>
   </div>

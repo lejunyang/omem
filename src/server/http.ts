@@ -47,7 +47,7 @@ import {
   saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes, reviewQueue, reviewSourceNote, reviewNodeLevel, reviewLevelAudit,
 } from "../sources/attention.ts";
 import { defaultBaseRef, fetchBranchAsync, git, isGitRepo, listBranches } from "../core/git.ts";
-import { cloneRepository, initRepository } from "../core/repositories.ts";
+import { checkoutBranch, cloneRepository, initRepository } from "../core/repositories.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
@@ -61,7 +61,7 @@ import { approverChoices, commandGate, syncCommandGate } from "../agents/command
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, rezoneScheduler, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
-import { businessOf, createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
+import { businessOf, createSpace, deleteSpace, findSpace, getSpace, listSpaces, spaceContent, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError, slugify, useProcessZone, validZone } from "../core/util.ts";
 import { loopbackIp, trustedLocal, viaProxy } from "./origin.ts";
 import { listenSecure, type SecureListener } from "./secure.ts";
@@ -395,8 +395,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/spaces/:id/repo-suggestions", async (req) => (await import("../core/space-repos.ts")).repoSuggestions(app, (req.params as { id: string }).id));
   server.get("/api/spaces/:id", async (req) => {
     const id = (req.params as { id: string }).id;
-    return { ...getSpace(app, id), guide: spaceGuide(app, id) };
+    return { ...getSpace(app, id), guide: spaceGuide(app, id), content: spaceContent(app, id) };
   });
+  // Only a space that holds nothing (core/spaces.ts deleteSpace says what is in the way).
+  server.delete("/api/spaces/:id", async (req) => deleteSpace(app, (req.params as { id: string }).id));
   server.patch("/api/spaces/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const b = q(z.object({ name: z.string().optional(), description: z.string().optional(), settings: z.record(z.string(), z.unknown()).optional(), guide: z.string().optional() }), req.body);
@@ -793,6 +795,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!s.rootPath || !isGitRepo(s.rootPath)) throw new HttpError(400, `空间 ${s.id} 没有关联 Git 仓库`);
     return s as typeof s & { rootPath: string };
   };
+  // Which branch the repository's own directory has checked out (delegations cut their work from it).
+  server.put("/api/spaces/:id/branches", async (req) => {
+    const s = repoFor(req, who(req));
+    const b = q(z.object({ current: z.string().trim().min(1).max(200) }), req.body);
+    const r = checkoutBranch(s.rootPath, b.current);
+    if (r.previous !== r.current) scheduleSpaceSync(app, s.id);
+    return r;
+  });
   server.get("/api/spaces/:id/branches", async (req) => {
     const s = repoFor(req, who(req));
     const o = q(z.object({ fetch: z.coerce.boolean().optional() }), req.query);

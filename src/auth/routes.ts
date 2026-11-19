@@ -82,6 +82,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/spaces": g("spaces.create"),
   "GET /api/spaces/:id": s("space.read", "p.id"),
   "PATCH /api/spaces/:id": s("space.manage", "p.id"),
+  // Deleting an empty space: the owner's (core/spaces.ts deleteSpace).
+  "DELETE /api/spaces/:id": "owner",
   "POST /api/spaces/:id/parent": s("space.manage", "p.id"),
   "GET /api/spaces/:id/repo-suggestions": s("space.manage", "p.id"),
   "POST /api/spaces/:id/related": s("space.manage", "p.id"),
@@ -94,6 +96,8 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/spaces/:id/workspaces": CODE,
   "POST /api/spaces/:id/relink": CODE,
   "GET /api/spaces/:id/branches": s("space.read", "p.id"),
+  // Switching the branch the repository's own directory has checked out.
+  "PUT /api/spaces/:id/branches": CODE,
   "POST /api/spaces/:id/branches/index": s("source.write", "p.id"),
   "DELETE /api/spaces/:id/branches/index": s("source.write", "p.id"),
   // code indexes (sources/code-index-http.ts): baseline and followed branches; the notification checks its own hook token
