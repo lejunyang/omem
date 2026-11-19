@@ -340,7 +340,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
       "GET /api/skills", "GET /api/skill-groups", "GET /api/skill-groups/:id", "GET /api/skills/:name", "PUT /api/skills/:name", "PUT /api/skills/:name/status", "DELETE /api/skills/:name", "GET /api/skills/:name/files", "GET /api/skills/:name/file", "PUT /api/skills/:name/file", "DELETE /api/skills/:name/file",
       "GET /api/rules", "GET /api/rules/:id", "GET /api/rules/:id/permissions", "POST /api/rules", "PUT /api/rules/:id", "DELETE /api/rules/:id", "POST /api/rules/draft", "POST /api/rules/test",
       "GET /api/rule-options", "POST /api/rule-conversations", "GET /api/wakes", "DELETE /api/wakes/:id", "GET /api/mentions", "GET /api/watches", "DELETE /api/watches/:chatId",
-      "GET /api/listen", "GET /api/listen/:id", "POST /api/listen", "PUT /api/listen/:id", "DELETE /api/listen/:id", "POST /api/listen/:id/coach", "GET /api/lark/chats/:id/detail", "PUT /api/cases/:id",
+      "GET /api/listen", "GET /api/listen/:id", "POST /api/listen", "PUT /api/listen/:id", "DELETE /api/listen/:id", "POST /api/listen/:id/coach", "GET /api/lark/chats/:id/detail", "PUT /api/cases/:id", "POST /api/items/:id/listen", "POST /api/rules/:id/to-listen",
       "GET /api/notify-ignore-rules", "POST /api/notify-ignore-rules/delete", "GET /api/schedules", "PUT /api/schedules/:id", "POST /api/schedules/:id/run",
       "GET /api/archive-rules", "GET /api/archive-options", "POST /api/archive-rules", "PUT /api/archive-rules/order", "PUT /api/archive-rules/:id", "DELETE /api/archive-rules/:id", "POST /api/archive-rules/draft",
       "GET /api/archive/folders", "POST /api/archive/folders", "POST /api/archive/preview", "POST /api/archive/apply", "POST /api/archive/classify",

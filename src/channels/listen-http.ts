@@ -176,6 +176,22 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
     return { chat: group, contexts, paused, cases: casesOf(app, { chatId }, 50), memories: memoriesFrom(app, [chatId]) };
   });
 
+  // A matter's 关注 on the item page (channels/listen-items.ts).
+  server.post("/api/items/:id/listen", async (req) => {
+    owner(req);
+    const b = parse(z.object({ on: z.boolean(), knobs: knobsSchema.optional() }), req.body);
+    const { setItemListening } = await import("./listen-items.ts");
+    const c = setItemListening(app, (req.params as { id: string }).id, b.on, cleanKnobs(b.knobs));
+    return c ? view(app, c) : { ok: true };
+  });
+
+  // A rule that watches groups with an Agent becomes a 关注 (rules/to-listen.ts).
+  server.post("/api/rules/:id/to-listen", async (req) => {
+    owner(req);
+    const { ruleToContext } = await import("../rules/to-listen.ts");
+    return ruleToContext(app, (req.params as { id: string }).id);
+  });
+
   server.put("/api/cases/:id", async (req) => {
     owner(req);
     const id = (req.params as { id: string }).id;
