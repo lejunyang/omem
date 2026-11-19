@@ -140,9 +140,22 @@ export const accountOnlyCatalog: CatalogEntry[] = [
   },
 ];
 
-/** Every backend that can run with a user's own account. */
-export function accountCatalog(): (CatalogEntry & { account: AccountSpec })[] {
-  return [...acpCatalog, ...accountOnlyCatalog].filter((e): e is CatalogEntry & { account: AccountSpec } => !!e.account);
+/**
+ * Every backend that can run with a user's own account: the catalog's, then the owner's own profiles
+ * (`agents.profiles`) that carry an `account` — keyed by their source, so one replaces a catalog entry
+ * of the same id. A device's agent or an API key never takes part.
+ */
+export function accountCatalog(profiles: AgentProfile[] = []): (CatalogEntry & { account: AccountSpec })[] {
+  const out = [...acpCatalog, ...accountOnlyCatalog].filter((e): e is CatalogEntry & { account: AccountSpec } => !!e.account);
+  for (const p of profiles) {
+    if (!p.account || p.peer || p.keyRef || p.transport === "doubao") continue;
+    const id = p.source ?? p.id;
+    const entry = { id, name: p.name ?? p.id, command: p.command, account: p.account as AccountSpec };
+    const at = out.findIndex((e) => e.id === id);
+    if (at >= 0) out[at] = { ...out[at], ...entry, name: out[at].name };
+    else out.push(entry);
+  }
+  return out;
 }
 
 export function catalogProfile(e: CatalogEntry): AgentProfile {

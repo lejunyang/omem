@@ -37,7 +37,7 @@ plugins/<id>/
 - **工具与平台包**：它的工具和平台包的读取器在 omem 里注册成代理，调用时转给它的进程。参数由插件自己的 zod 定义检查，宿主列工具时用它给出的 JSON Schema。
 - **宿主代办的事**：要读平台（`ctx.connection(...).fetch`）、读写插件记录（`ctx.store`）、存原件（`ctx.saveSource`）、设盯着（`ctx.watches`）、启动服务时，进程向 omem 发请求。omem 按**正在进行的那次调用**的人和空间回答，不认插件自己报的身份。令牌由 omem 加在请求上，插件拿不到。
 - **写法要求**：`ctx.store`、`ctx.saveSource`、`ctx.watches` 在隔离运行时返回 Promise，所以要写 `await`；写了 `await` 在 omem 进程里运行时也照样能用。
-- **不能做的**：内容块（`api.block`）和放块的插槽（`api.slot`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）、聊天渠道（`api.channel`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
+- **不能做的**：内容块（`api.block`）和放块的插槽（`api.slot`）、新的连接器（`api.connector`、`api.appConfig`）、鉴权方式（`api.authenticator`）、AI 账号的登录方式（`api.agentLogin`）、聊天渠道（`api.channel`）都需要代码在 omem 里运行。用到它们的插件在设置页选“在 omem 里运行…”，确认框会说明后果。
 
 **在 omem 里运行**：代码以 omem 的全部权限运行，只适合你自己写的或逐行看过的插件。运行方式记在 `secrets/plugin-trust.json` 的 `mode` 里；以前信任过的插件按原来的方式在 omem 里运行。代码注册了清单没声明的东西，或者没能启动，信任会被撤回。
 
@@ -260,6 +260,41 @@ api.authenticator({
 - 清单里声明 `permissions: { authenticators: [acme-sso] }`；只能在 omem 进程里运行（设置 → 插件 选“在 omem 里运行”）。
 - 宿主只认 `Authorization: Bearer`，按凭据的哈希记住结果到 `expiresAt`（最多 10 分钟），不保存凭据本身。
 - 认出的身份先按 `identities` 找账号，再按 `emailVerified` 的邮箱认领预建账号，都没有时按 `auth.signup[<id>]` 处理（默认等批准，命令行会收到“等 omem 的主人批准”）。
+
+### AI 账号的登录方式：让成员用组织的身份登录某个后端
+
+成员用自己的 AI 账号（[agent-accounts.md](agent-accounts.md)）时，有的后端在公司环境里不走它自己的登录，而是用组织统一身份换来的凭据。插件给这个后端注册一个登录方式，凭据怎么换、写成什么格式由插件决定：
+
+```ts
+import type { AgentLoginDef } from "@omem-ai/plugin-sdk";   // 只有类型；数据目录里的插件不用装
+
+const login: AgentLoginDef = {
+  backend: "traex", id: "sso", label: "用示例公司账号登录",       // id 在插件内唯一，全名 <插件 id>:<id>
+  async login(ctx) {                                            // ctx: userId、home、env、secret、signal、show
+    const device = await startDeviceFlow(ctx.signal);           // 插件自己的授权（设备码或网页）
+    ctx.show({ url: device.url, code: device.code });           // 宿主显示在页面上，也用机器人发到他的飞书私聊
+    const t = await waitForTokens(device, ctx.signal);
+    await writeCredentials(ctx.env.TRAE_HOME, t);               // 写到 env 指的位置（他的账号目录里）
+    await ctx.secret.set(t.refreshToken);                       // 宿主按人保存的一份秘密，不进账号目录
+    return { user: t.user, expiresAt: t.expiresAt };
+  },
+  async refresh(ctx) {                                          // 可选：到期前 10 分钟调用，也可以由“检查”触发
+    const t = await renew(await ctx.secret.get(), ctx.signal);
+    if (!t) return null;                                        // null：续不了，这个人要重新登录
+    await writeCredentials(ctx.env.TRAE_HOME, t);
+    return { expiresAt: t.expiresAt };
+  },
+  async logout(ctx) { await revoke(await ctx.secret.get()); },  // 可选：退出时清理；之后宿主删目录
+};
+api.agentLogin(login);
+```
+
+- 清单里声明 `permissions: { agentLogin: [traex] }`（它要往成员的账号目录写凭据，设置 → 插件 的权限说明里会列出）；后端必须是能按人登录的（Agent 目录里带 `account` 的，或本人自己写了 `account` 的后端）。
+- 只能在 omem 进程里运行：隔离运行的插件调用 `api.agentLogin` 会出错，撤销信任或停用时登录方式一起消失。`login`、`refresh`、`logout` 都在 omem 进程里调用，不进沙箱。
+- `ctx.env` 是 Agent 目录里 `account.env` 按这个人的账号目录展开后的变量；`ctx.home` 是账号目录本身。`ctx.secret` 存在 `secrets/vault.db`（提供方 `agent:<后端>:<插件 id>:<id>`），不在“已连接的应用”里出现，这个人退出或被停用时删除。
+- 登录 11 分钟没完成、60 秒内没调用 `show` 也没完成时，宿主取消（`ctx.signal`）。`show` 只接受 http(s) 链接。
+- 续签：按 `expiresAt` 提前 10 分钟（最短 1 分钟一次）调用 `refresh`，时间记在库里，重启后照常；返回 null 或抛错时登录态改成“登录过期”并通知这个人，账号目录留着。没有 `refresh` 时到 `expiresAt` 直接算过期。
+- “我的 AI 账号”里一个后端同时列出它自己的登录方式和插件提供的，成员选一个；登录态记下是用哪种方式登录的。
 - 主人要填的应用配置写 `appFields`（client id、secret、站点），在设置 → 连接 → 其他平台里填，存在 `secrets/connector-apps.json`，插件用 `api.appConfig(id)` 读；接口地址依赖它时 `apiBase` 写成函数。令牌不是 Bearer 时用 `sign(app, { url, headers }, secret)` 放进请求头或 query。插件自己发的请求（换令牌、查账号）用 `api.fetch`。
 - 工具写 `whenConnected: true`：只在这次运行的人连了本插件的某个连接器（`<插件 id>-…`）时给出。
 - 工具里 `ctx.saveSource({ uri, title, text, space? })` 存原件：`uri` 写 `平台:编号`，同一个 uri 再存是更新，也作 origin_key。

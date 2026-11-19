@@ -2,17 +2,21 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { accountBlocked, accountHome, accountRun, ensureAccountHome, saveToken, stopAccountLogins, withAccount } from "../src/agents/accounts.ts";
-import { outOfQuotaUntil } from "../src/agents/capacity.ts";
+import { accountBlocked, accountEntry, accountFor, accountHome, accountRun, ensureAccountHome, loggedIn as loggedInNow, saveToken, stopAccountLogins, withAccount } from "../src/agents/accounts.ts";
+import { accountSkillDirs } from "../src/agents/agent-skills.ts";
+import { markOutOfQuota, outOfQuotaList, outOfQuotaUntil } from "../src/agents/capacity.ts";
+import { probeFor, saveProbe, userProbe } from "../src/agents/probe.ts";
+import { auditLog } from "../src/auth/permissions.ts";
+import { listConnections, storeConnection } from "../src/auth/vault.ts";
 import { accountCatalog } from "../src/agents/catalog.ts";
-import { quotaKind } from "../src/agents/quota.ts";
+import { noteRateLimit, quotaAvoid, quotaKey, quotaKind, quotaOf } from "../src/agents/quota.ts";
 import { prepareRun } from "../src/agents/runner.ts";
 import { stopWorker } from "../src/agents/runs.ts";
 import { accountOf, accountTag, bwrapArgs, detectSandbox, installRoot, PROBE_ARGS, sandboxEnv, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { ROUTE_RULES } from "../src/auth/routes.ts";
 import { closeVault } from "../src/auth/vault.ts";
-import { allProfiles, loadConfig } from "../src/core/config.ts";
+import { allProfiles, configSchema, loadConfig } from "../src/core/config.ts";
 import { one as sqlOne, run as sqlRun } from "../src/core/db.ts";
 import { recoverSessionCleanup, sessionCleanup } from "../src/agents/session-cleanup.ts";
 import { createApiToken, createUser, OWNER, personalSpaceId } from "../src/core/users.ts";
@@ -191,9 +195,11 @@ describe("accounts of members", async () => {
     expect(a.env.CODEX_HOME).toBe(`${accountHome(app, "ann")}/.codex`);
     expect(a.hide).toContain(app.home);
     expect(accountTag(p)).toBe("acct:ann");
-    // Not the owner's quota: nothing read, nothing set aside.
+    // Their own quota, kept apart from the owner's.
     expect(quotaKind(codex)).toBe("codex-app-server");
-    expect(quotaKind(p)).toBeUndefined();
+    expect(quotaKind(p)).toBe("codex-app-server");
+    expect(quotaKey(p)).toBe("codex@acct:ann");
+    expect(quotaKey(codex)).toBe("codex");
     expect(outOfQuotaUntil(app, p)).toBeNull();
     // Bob is not logged in: own policy still blocks him.
     expect(() => withAccount(app, "bob", codex)).toThrow(/只能用自己的账号/);
@@ -266,6 +272,138 @@ describe("accounts of members", async () => {
     expect((await as(null, "/api/agent-accounts/nothing/policy", { method: "PUT", body })).status).toBe(404);
     // The owner keeps the machine's logins: nothing to log in to here.
     expect((await as(null, "/api/me/agent-accounts/codex/login", { method: "POST", body: "{}" })).status).toBe(400);
+  });
+
+  it("keeps a member's quota and spent marks under their account, apart from the owner's", () => {
+    setSandboxSupportForTests({ ok: true, bwrap: "/usr/bin/bwrap" });
+    loggedIn("ann", "claude");
+    const claude = allProfiles(app.config).find((p) => p.id === "claude")!;
+    const mine = withAccount(app, "ann", claude);
+    expect(quotaKey(mine)).toBe("claude@acct:ann");
+    noteRateLimit(app, mine, { type: "rate-limit", window: "five_hour", usedPercent: 97, resetsAt: new Date(Date.now() + 3_600_000).toISOString() });
+    expect(quotaOf(app, mine)?.windows[0]).toMatchObject({ name: "5h", usedPercent: 97 });
+    expect(quotaOf(app, claude)).toBeNull();
+    expect(quotaAvoid(app, mine)).toMatch(/5h 已用 97%/);
+    expect(quotaAvoid(app, claude)).toBeNull();
+    // Spent: set aside for her runs only, not listed among the owner's.
+    markOutOfQuota(app, mine, "You've hit your usage limit");
+    expect(outOfQuotaUntil(app, mine)).toBeTruthy();
+    expect(outOfQuotaUntil(app, claude)).toBeNull();
+    expect(outOfQuotaList(app)).toEqual([]);
+    // The member's view carries her own numbers; the owner's records stay as they are.
+    expect(accountFor(app, "ann", claude)).toMatchObject({ ownAccount: { userId: "ann" } });
+    expect(accountFor(app, "bob", claude)).toBe(claude);
+    sqlRun(app.db, "delete from kv where key in ('agent_quota', 'agent_quota_exhausted')");
+    sqlRun(app.db, "delete from kv where key like 'agent_account:%'");
+  });
+
+  it("caches probes per account and offers a logged-in member their own models", () => {
+    setSandboxSupportForTests({ ok: true, bwrap: "/usr/bin/bwrap" });
+    const probe = (models: string[]) => ({ at: new Date().toISOString(), agent: "codex", models, efforts: [] });
+    saveProbe(app, "codex", probe(["owner-model"]));
+    saveProbe(app, "codex", probe(["ann-model"]), "ann");
+    expect(userProbe(app, "ann", "codex")?.models).toEqual(["owner-model"]);
+    loggedIn("ann", "codex");
+    expect(userProbe(app, "ann", "codex")?.models).toEqual(["ann-model"]);
+    expect(userProbe(app, "bob", "codex")?.models).toEqual(["owner-model"]);
+    expect(userProbe(app, OWNER, "codex")?.models).toEqual(["owner-model"]);
+    expect(probeFor(app, withAccount(app, "ann", codex))?.models).toEqual(["ann-model"]);
+    expect(probeFor(app, codex)?.models).toEqual(["owner-model"]);
+    sqlRun(app.db, "delete from kv where key like 'probe:%' or key like 'agent_account:%'");
+  });
+
+  it("writes omem's skill entries into a new account folder while the takeover is on", () => {
+    const codexEntry = accountCatalog().find((e) => e.id === "codex")!;
+    app.config.agentSkills.takeOver = false;
+    createUser(app, { name: "carl", id: "carl" });
+    ensureAccountHome(app, "carl", codexEntry);
+    expect(existsSync(join(accountHome(app, "carl"), ".agents", "skills", "omem"))).toBe(false);
+    rmSync(join(home, "accounts", "carl"), { recursive: true, force: true });
+    app.config.agentSkills.takeOver = true;
+    ensureAccountHome(app, "carl", codexEntry);
+    expect(existsSync(join(accountHome(app, "carl"), ".agents", "skills", "omem", "SKILL.md"))).toBe(true);
+    // Its skill folders are its own, never the service's HOME.
+    expect(accountSkillDirs(app, accountHome(app, "carl")).every((d) => d.path.startsWith(accountHome(app, "carl")))).toBe(true);
+    app.config.agentSkills.takeOver = false;
+    rmSync(join(home, "accounts", "carl"), { recursive: true, force: true });
+  });
+
+  it("lets the owner's own profiles carry an account, checked on save", () => {
+    const base = { id: "mycli", name: "我的命令行", transport: "acp", command: "mycli" };
+    const ok = configSchema.parse({ agents: { profiles: [{ ...base, account: { env: { MYCLI_HOME: "{home}/.mycli", MODE: "user" }, dirs: [".mycli"], owns: [".mycli"], mounts: ["/opt/mycli"], login: { args: ["login"], url: "https://\\S+" } } }] } });
+    expect(accountCatalog(ok.agents.profiles).find((e) => e.id === "mycli")?.account.env.MYCLI_HOME).toBe("{home}/.mycli");
+    const bad = (account: unknown) => configSchema.safeParse({ agents: { profiles: [{ ...base, account }] } }).success;
+    const good = { env: {}, owns: [".mycli"] };
+    expect(bad(good)).toBe(true);
+    expect(bad({ ...good, extra: 1 })).toBe(false);
+    expect(bad({ ...good, env: { X: "/opt/x" } })).toBe(false);
+    expect(bad({ ...good, env: { X: "~/x" } })).toBe(false);
+    expect(bad({ ...good, env: { X: "${HOME}/x" } })).toBe(false);
+    expect(bad({ ...good, env: { X: "{home}/../x" } })).toBe(false);
+    expect(bad({ ...good, env: { X: "a{home}" } })).toBe(false);
+    expect(bad({ ...good, login: { args: ["--dir={home}"], url: "https://\\S+" } })).toBe(false);
+    expect(bad({ ...good, owns: ["../x"] })).toBe(false);
+    expect(bad({ ...good, owns: [] })).toBe(false);
+    expect(bad({ ...good, login: { args: [], url: "(" } })).toBe(false);
+    // Saved through the settings it is refused the same way.
+    app.config.agents.profiles = ok.agents.profiles;
+    expect(accountEntry(app, "mycli")?.name).toBe("我的命令行");
+    app.config.agents.profiles = [];
+  });
+
+  it("moves a member's run to another backend under own-or-other, or fails when there is none", () => {
+    setSandboxSupportForTests({ ok: true, bwrap: "/usr/bin/bwrap" });
+    app.config.agents.accounts = { codex: "own-or-other", claude: "own" };
+    const alt = { id: "alt", name: "备用", transport: "acp" as const, command: process.execPath, args: [], env: {}, idleTimeoutMs: 600_000 };
+    const claude = allProfiles(app.config).find((p) => p.id === "claude")!;
+    // Claude is "own" and Ann is not logged in to it: skipped; alt has no accounts: she may borrow it.
+    expect(withAccount(app, "ann", codex, () => [claude, alt]).id).toBe("alt");
+    expect(() => withAccount(app, "ann", codex, () => [claude])).toThrow(/也没有别的/);
+    expect(accountBlocked(app, "ann", codexCli)).toMatch(/换别的后端/);
+    // Logged in to Claude: it is hers and comes first in that order (a profile of the same source that is installed here).
+    loggedIn("ann", "claude");
+    const claudeHere = { ...alt, id: "claude-here", source: "claude" };
+    const picked = withAccount(app, "ann", codex, () => [claudeHere, alt]);
+    expect(picked.id).toBe("claude-here");
+    expect(accountOf(picked)?.userId).toBe("ann");
+    // prepareRun follows the run's fallback order.
+    sqlRun(app.db, "delete from kv where key like 'agent_account:%'");
+    app.config.agents.profiles = [alt];
+    app.config.agents.fallback = [{ profile: "alt" }];
+    const prep = prepareRun(app, { actor: { role: "assistant" }, spaceId: personalSpaceId("ann"), runId: null, userId: "ann", profileId: "codex" });
+    revokeToolToken(prep.token);
+    expect(prep.profile.id).toBe("alt");
+    app.config.agents.profiles = [];
+    app.config.agents.fallback = [];
+    app.config.agents.accounts = {};
+  });
+
+  it("takes every login of a disabled member away, and writes it down", async () => {
+    setSandboxSupportForTests({ ok: true, bwrap: "/usr/bin/bwrap-missing" });
+    createUser(app, { name: "dora", id: "dora" });
+    loggedIn("dora", "codex");
+    storeConnection(app, { userId: "dora", provider: "agent:claude", accountId: "claude", accountName: "Claude Code", scopes: [], accessToken: "tok-dora-1234567890" });
+    storeConnection(app, { userId: "dora", provider: "agent:traex:company:sso", accountId: "traex", accountName: "TraeX", scopes: [], accessToken: "refresh-dora" });
+    sqlRun(app.db, "insert or replace into kv(key, value) values(?, ?)", "agent_account:dora:traex", JSON.stringify({ state: "logged-in", method: "company:sso" }));
+    const r = await as(null, "/api/users/dora", { method: "PATCH", body: JSON.stringify({ disabled: true }) });
+    expect(r.status).toBe(200);
+    expect(existsSync(join(home, "accounts", "dora"))).toBe(false);
+    expect(listConnections(app, "dora").filter((c) => c.provider.startsWith("agent:"))).toEqual([]);
+    expect(sqlOne(app.db, "select 1 from kv where key like 'agent_account:dora:%'")).toBeUndefined();
+    const ev = auditLog(app).find((a) => a.action === "agent-accounts.remove-all" && a.target === "dora");
+    expect(ev?.detail.backends).toEqual(expect.arrayContaining(["codex", "claude", "traex"]));
+    // Enabled again: nothing to come back to, they log in again.
+    expect((await as(null, "/api/users/dora", { method: "PATCH", body: JSON.stringify({ disabled: false }) })).status).toBe(200);
+    expect(loggedInNow(app, "dora", "codex")).toBe(false);
+  });
+
+  it("offers the owner three rules per backend", async () => {
+    const body = JSON.stringify({ policy: "own-or-other" });
+    expect((await as(null, "/api/agent-accounts/codex/policy", { method: "PUT", body })).status).toBe(200);
+    expect(loadConfig(home).agents.accounts.codex).toBe("own-or-other");
+    expect((await as(null, "/api/agent-accounts/codex/policy", { method: "PUT", body: JSON.stringify({ policy: "other" }) })).status).toBe(400);
+    expect(ROUTE_RULES["POST /api/me/agent-accounts/:backend/quota"]).toBe("self");
+    app.config.agents.accounts = {};
   });
 
   it("hides the whole feature where the sandbox cannot start", async () => {

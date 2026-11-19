@@ -17,7 +17,8 @@ import type { AgentEvent } from "./types.ts";
  * and when it resets. Read without spending any of it — Codex through `codex app-server`
  * (account/rateLimits/read), Claude through its local `/usage` command in an ACP session — and kept
  * current by the rate-limit events a turn reports (`_claude/rateLimit` on usage_update, the CLI's
- * rate_limit_event). Kept in kv per source; a window whose reset has passed counts as unknown.
+ * rate_limit_event). Kept in kv per source, and per user for a user's own account (read in their
+ * sandbox, quotaKey); a window whose reset has passed counts as unknown.
  *
  * What it is for: a role run's choices put an account that is nearly out last (`quotaAvoid`), and
  * list_ai_backends shows the numbers so the assistant can weigh them. A spent account is still left
@@ -38,21 +39,37 @@ export type QuotaSnapshot = { at: string; via: "codex-app-server" | "claude-usag
 const KEY = "agent_quota";
 const DAY = 86_400_000;
 
-// A run with a user's own account (agents/sandbox.ts) is not the owner's plan: no numbers are read or kept for it.
-export const quotaKind = (p: AgentProfile) => (accountOf(p) ? undefined : catalogEntry(sourceOf(p))?.quota);
+export const quotaKind = (p: AgentProfile) => catalogEntry(sourceOf(p))?.quota;
+
+/**
+ * Where an account's numbers are kept: its source for the machine's own login (the owner's), and
+ * `<source>@acct:<user>` for a user's own account (agents/accounts.ts), read in that user's sandbox.
+ */
+export const quotaKey = (p: AgentProfile) => {
+  const a = accountOf(p);
+  return a ? `${sourceOf(p)}@acct:${a.userId}` : sourceOf(p);
+};
 
 function store(app: App): Record<string, QuotaSnapshot> {
   if (!app.db) return {};
   try { return JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", KEY)?.value ?? "{}"); } catch { return {}; }
 }
-function save(app: App, source: string, snap: QuotaSnapshot) {
+function save(app: App, key: string, snap: QuotaSnapshot) {
   const all = store(app);
-  all[source] = snap;
+  all[key] = snap;
+  run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", KEY, JSON.stringify(all));
+}
+/** A user's numbers go with their account (accounts.ts removeAccount). */
+export function forgetQuota(app: App, userId: string, source?: string) {
+  const all = store(app);
+  const keys = Object.keys(all).filter((k) => k.endsWith(`@acct:${userId}`) && (!source || k === `${source}@acct:${userId}`));
+  if (!keys.length) return;
+  for (const k of keys) delete all[k];
   run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", KEY, JSON.stringify(all));
 }
 
 export function quotaOf(app: App, p: AgentProfile): QuotaSnapshot | null {
-  return quotaKind(p) ? store(app)[sourceOf(p)] ?? null : null;
+  return quotaKind(p) ? store(app)[quotaKey(p)] ?? null : null;
 }
 
 /** Windows still running (their reset not past) and relevant to the profile's model. */
@@ -158,7 +175,9 @@ export function codexCommand(p: AgentProfile): { command: string; args: string[]
 async function readCodex(p: AgentProfile, signal?: AbortSignal, timeoutMs = 20_000): Promise<{ plan?: string; windows: QuotaWindow[] }> {
   const cmd = codexCommand(p);
   if (!cmd) throw new Error("找不到 codex 命令（app-server）");
-  const child = launch(cmd.command, [...cmd.args, "app-server"], { cwd: process.cwd(), env: p.env });
+  // A user's own account: the same command in their sandbox, in their account folder (CODEX_HOME there).
+  const account = accountOf(p);
+  const child = launch(cmd.command, [...cmd.args, "app-server"], { cwd: account?.home ?? process.cwd(), env: p.env, sandbox: account });
   const onAbort = () => stop(child);
   signal?.addEventListener("abort", onAbort, { once: true });
   if (signal?.aborted) onAbort();
@@ -245,11 +264,14 @@ export function parseClaudeUsage(text: string, now = new Date()): { plan?: strin
 
 async function readClaude(app: App, p: AgentProfile, signal?: AbortSignal): Promise<{ plan?: string; windows: QuotaWindow[] }> {
   const { listAgentProfiles } = await import("./runner.ts");
-  const acp = p.transport === "acp" ? p : listAgentProfiles(app).find((q) => q.transport === "acp" && q.installed && sourceOf(q) === sourceOf(p) && !q.keyRef);
-  if (!acp) throw new Error("读 Claude 额度要装 claude-agent-acp");
+  const found = p.transport === "acp" ? p : listAgentProfiles(app).find((q) => q.transport === "acp" && q.installed && sourceOf(q) === sourceOf(p) && !q.keyRef);
+  if (!found) throw new Error("读 Claude 额度要装 claude-agent-acp");
+  // A user's own account keeps it: read in their sandbox, from their account folder (never the data folder).
+  const account = accountOf(p);
+  const acp = account && !accountOf(found) ? { ...found, ownAccount: account } : found;
   const { runAcp } = await import("./acp.ts");
   const { sessionCleanup } = await import("./session-cleanup.ts");
-  const cwd = app.home;
+  const cwd = account?.home ?? app.home;
   const cleanup = await sessionCleanup(app, acp, { cwd }, () => {});
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60_000);
@@ -273,7 +295,7 @@ const RETRY_AFTER_ERROR = 6 * 3_600_000;
 export async function refreshQuota(app: App, p: AgentProfile, maxAgeMs = 10 * 60_000): Promise<QuotaSnapshot | null> {
   const kind = quotaKind(p);
   if (!kind || p.keyRef) return null;
-  const source = sourceOf(p);
+  const source = quotaKey(p);
   const old = store(app)[source];
   // maxAgeMs 0: the owner asked to read now, failed or not.
   if (old && maxAgeMs > 0 && Date.now() - Date.parse(old.at) < (old.error && old.via !== "event" ? Math.max(maxAgeMs, RETRY_AFTER_ERROR) : maxAgeMs)) return old;
@@ -313,13 +335,20 @@ export async function quotaProfiles(app: App) {
 /**
  * Keep the numbers fresh: every few minutes, an account used in the last 6 hours is read when older
  * than 15 minutes, any other when older than 2 hours (Claude's read starts Claude Code briefly).
+ * Members' own accounts (agents/accounts.ts) are read here only while they run on them; the
+ * 我的 AI 账号 page reads the rest when it is opened.
  */
 export function startQuotaWatch(app: App) {
   const tick = async () => {
     const since = new Date(Date.now() - 6 * 3_600_000).toISOString();
     for (const p of await quotaProfiles(app)) {
-      const used = one(app.db, "select 1 from runs where json_extract(ai, '$.profile') in (select value from json_each(?)) and coalesce(finished_at, started_at) >= ? limit 1", JSON.stringify(sameSource(app, p)), since);
+      const used = one(app.db, "select 1 from runs where json_extract(ai, '$.profile') in (select value from json_each(?)) and coalesce(finished_at, started_at) >= ? and coalesce(user_id, 'owner') = 'owner' limit 1", JSON.stringify(sameSource(app, p)), since);
       await refreshQuota(app, p, used ? 15 * 60_000 : 2 * 3_600_000);
+    }
+    const { memberQuotaProfiles } = await import("./accounts.ts");
+    for (const { userId, profile } of memberQuotaProfiles(app)) {
+      const used = one(app.db, "select 1 from runs where json_extract(ai, '$.profile') in (select value from json_each(?)) and coalesce(finished_at, started_at) >= ? and user_id = ? limit 1", JSON.stringify(sameSource(app, profile)), since, userId);
+      if (used) await refreshQuota(app, profile, 15 * 60_000);
     }
   };
   setTimeout(() => void tick().catch(() => {}), 30_000).unref?.();
@@ -352,7 +381,7 @@ export function noteRateLimit(app: App, p: AgentProfile, e: Extract<AgentEvent, 
   if (!quotaKind(p) || p.keyRef) return;
   const def = EVENT_WINDOWS[e.window];
   if (!def) return;
-  const source = sourceOf(p);
+  const source = quotaKey(p);
   const snap = store(app)[source] ?? { at: new Date().toISOString(), via: "event" as const, windows: [] };
   const windows = snap.windows.filter((w) => w.name !== def.name);
   const prev = snap.windows.find((w) => w.name === def.name);

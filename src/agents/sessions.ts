@@ -20,7 +20,7 @@ import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
 import { WAKE_NOTE } from "./wakes.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
-import { accountBlocked, carryAccount, recordedAccount } from "./accounts.ts";
+import { accountBlocked, accountFor, carryAccount, recordedAccount } from "./accounts.ts";
 import { accountTag } from "./sandbox.ts";
 import { afterTurn, noteRateLimit } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
@@ -487,8 +487,10 @@ ${WAKE_NOTE}`
   // role's other backends, the fallbacks, the routing candidates (runner.ts failoverProfiles).
   // The chooser's ranking by the owner's routing notes first (on the turn that chose), then the static order.
   const chain = (chosen ? distinctProfiles([prep.profile, ...chosen.order, ...failoverProfiles(app, actor, prep.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, prep.profile, own))
-    // Not a backend kept to members' own accounts that this member has not logged in to.
-    .filter((p, i) => i === 0 || !accountBlocked(app, userId, p));
+    // Not a backend kept to members' own accounts that this member has not logged in to; the member's
+    // own account on the rest, so their quota and spent marks (not the owner's) decide what is skipped.
+    .filter((p, i) => i === 0 || !accountBlocked(app, userId, p))
+    .map((p, i) => (i === 0 ? p : accountFor(app, userId, p)));
   let orderBy: OrderSource = chosen ? chosen.by : "static";
   let orderReason = chosen?.reason ?? "";
   let ordered = !!chosen;

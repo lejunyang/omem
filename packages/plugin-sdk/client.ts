@@ -18,6 +18,7 @@ export type PluginSlotView = SlotViewOf<Exclude<SlotComponentAll, { type: "page"
 /** A slot's block: `load` as the person looking (in the item's space), `view` to display components. */
 export type PluginSlotBlock<T> = SlotBlockOf<T, SlotPluginContext, Exclude<SlotComponentAll, { type: "page" }>>;
 export type { PluginObject, PluginObjectAction, PluginObjectState, PluginObjectContext, PluginObjectApi, PluginConnection, PluginSignal, PluginHook, PluginHookRequest, PluginHookResult } from "./objects";
+export type { AgentLoginApi, AgentLoginContext, AgentLoginDef, AgentLoginResult } from "./agent-login";
 
 export type Omem = {
   plugin: string;

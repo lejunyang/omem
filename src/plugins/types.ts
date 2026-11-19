@@ -223,6 +223,14 @@ export type PluginApi = {
    * data directory, be declared in `permissions.authenticators`; only code trusted to run inside omem.
    */
   authenticator(def: import("../auth/authenticators.ts").Authenticator): void;
+  /**
+   * A way for members to log in to a backend with their own account (docs/v2/agent-accounts.md §6):
+   * `login` leads the person through signing in and writes the credentials where `ctx.env` points;
+   * omem shows the link and code, keeps `ctx.secret` per person, calls `refresh` before `expiresAt` and
+   * `logout` when they leave. A plugin in the data directory declares the backend in
+   * `permissions.agentLogin`; only code trusted to run inside omem.
+   */
+  agentLogin(def: import("../agents/agent-logins.ts").AgentLoginDef): void;
   /** What the owner filled in for one of this plugin's connectors (its `appFields`: client id and secret…), read each time. */
   appConfig(provider: string): Record<string, string>;
   /** The host's fetch for a connector's own calls (exchanging codes, whoami): tests answer it without the network. */

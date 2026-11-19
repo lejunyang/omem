@@ -5,7 +5,7 @@ import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
 import { retireRecordedSession, sessionCleanup } from "./session-cleanup.ts";
 import { DOUBAO_TOOL_NOTE, runDoubaoCli } from "./doubao-cli.ts";
-import { cachedProbe } from "./probe.ts";
+import { probeFor } from "./probe.ts";
 import { resolveModelOption } from "./models.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
@@ -60,7 +60,7 @@ async function runDoubaoTurn(app: App, profile: AgentProfile, req: AgentRequest,
   if (Object.keys(req.extraMcp ?? {}).length) emit({ type: "status", text: "豆包 CLI 接不了额外的 MCP 服务器，只用 omem 的工具" });
   // The CLI requires its exact offered spelling, including spaces and capitalization.
   // Resolve here so profile defaults, role overrides and automatic choices all use the probe.
-  if (profile.model) profile = { ...profile, model: resolveModelOption(profile.model, cachedProbe(app, profile.id)?.models ?? []).value };
+  if (profile.model) profile = { ...profile, model: resolveModelOption(profile.model, probeFor(app, profile)?.models ?? []).value };
   const system = req.mcp ? [req.system, DOUBAO_TOOL_NOTE].filter(Boolean).join("\n\n") : req.system;
   return runDoubaoCli(profile, { ...req, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, { ...req, system }, req.prompt, emit), system: undefined }, emit);
 }

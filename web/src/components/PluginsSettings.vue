@@ -49,7 +49,7 @@ type Plugin = {
   runMode: "isolated" | "inprocess" | null;
   version: string | null;
   installed: { source: string; version: string; installedAt: string } | null;
-  permissions: { tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; uses: string[]; services: string[]; space: string | null };
+  permissions: { tools: { name: string; write: boolean; approval: boolean }[]; writes: boolean; hostTools: string[]; providers: string[]; platforms: string[]; agentLogin?: string[]; uses: string[]; services: string[]; space: string | null };
 };
 
 const route = useRoute();
@@ -72,6 +72,7 @@ function permissionLines(p: Plugin) {
     m.hostTools.length ? `它的 Agent 还能用：${m.hostTools.join("、")}` : "",
     m.providers.length ? `带来可连接的平台：${m.providers.length > 6 ? `${m.providers.length} 个` : m.providers.join("、")}` : "",
     m.platforms.length ? `给这些平台加读取和同步：${m.platforms.map((x) => x.replace(/^connect-/, "")).join("、")}` : "",
+    m.agentLogin?.length ? `给成员登录这些 AI 后端，把凭据写进他们的账号目录：${m.agentLogin.join("、")}` : "",
     m.uses.length ? `以你的身份调用：${m.uses.join("、")}` : "",
     m.services.length ? `在这台机器上运行：${m.services.join("；")}` : "",
     m.space ? `用自己的空间 ${m.space}` : "",

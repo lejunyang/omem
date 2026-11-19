@@ -211,12 +211,17 @@ function quotaState(app: App): Record<string, { until: string; message: string }
  * Kept per account (`source`), or per model of an account (`source|model`) when the provider said a
  * limit of one model was reached (a model's own daily limit): the account's other models stay usable.
  */
+/** A user's own account (agents/sandbox.ts) is kept apart from the owner's: `acct:<user>/` before the key. */
+const accountScope = (p: AgentProfile) => {
+  const a = accountOf(p);
+  return a ? `acct:${a.userId}/` : "";
+};
 export function outOfQuotaUntil(app: App, p: AgentProfile, at = new Date()): string | null {
-  // The owner's account being spent says nothing about a user's own (agents/sandbox.ts).
-  if (accountOf(p)) return null;
+  // The owner's account being spent says nothing about a user's own, nor the other way round.
+  const scope = accountScope(p);
   const st = quotaState(app);
   for (const k of [sourceOf(p), ...(p.model ? [keyOf(p)] : [])]) {
-    const e = st[k];
+    const e = st[scope + k];
     if (e && Date.parse(e.until) > at.getTime()) return e.until;
   }
   return null;
@@ -225,7 +230,7 @@ export function markOutOfQuota(app: App, p: AgentProfile, message: string, at = 
   const st = Object.fromEntries(Object.entries(quotaState(app)).filter(([, e]) => Date.parse(e.until) > at.getTime()));
   const perModel = !!p.model && isModelQuotaMessage(message, p.model);
   const until = quotaResetAt(message, at, app.config.timezone);
-  st[perModel ? keyOf(p) : sourceOf(p)] = { until: until.toISOString(), message: message.slice(0, 300) };
+  st[accountScope(p) + (perModel ? keyOf(p) : sourceOf(p))] = { until: until.toISOString(), message: message.slice(0, 300) };
   run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", QUOTA_KEY, JSON.stringify(st));
   return until;
 }
@@ -235,8 +240,9 @@ export function clearOutOfQuota(app: App, source: string) {
   delete st[source];
   run(app.db, "insert into kv(key, value) values(?, ?) on conflict(key) do update set value = excluded.value", QUOTA_KEY, JSON.stringify(st));
 }
+/** The owner's accounts that are spent (users' own accounts are theirs, not listed here). */
 export function outOfQuotaList(app: App) {
-  return Object.entries(quotaState(app)).filter(([, e]) => Date.parse(e.until) > Date.now()).map(([key, e]) => {
+  return Object.entries(quotaState(app)).filter(([k, e]) => !k.startsWith("acct:") && Date.parse(e.until) > Date.now()).map(([key, e]) => {
     const [source, model] = key.split("|");
     return { source: key, ...(model ? { account: source, model } : {}), ...e };
   });

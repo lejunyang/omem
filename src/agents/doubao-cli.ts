@@ -146,14 +146,20 @@ function errorText(stdout: string, stderr: string) {
 }
 
 /** One short invocation that fails during argument checks; returns what it printed. */
-function check(exe: string, args: string[]): Promise<{ code: number | null; out: string }> {
+function check(exe: string, args: string[], account?: ReturnType<typeof accountOf>): Promise<{ code: number | null; out: string }> {
   const r = resolveCommand(exe);
   if (!r) return Promise.resolve({ code: null, out: `找不到命令 ${exe}` });
   return new Promise((resolve) => {
-    const child = spawn(r.file, [...r.prefix, ...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, cwd: tmpdir() });
+    // A user's own account: in their sandbox, from their account folder.
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = account ? launch(exe, args, { cwd: account.home, stdin: "ignore", sandbox: account }) : spawn(r.file, [...r.prefix, ...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, cwd: tmpdir() });
+    } catch (e) {
+      return resolve({ code: null, out: (e as Error).message });
+    }
     let out = "";
-    child.stdout.on("data", (d: Buffer) => (out += d));
-    child.stderr.on("data", (d: Buffer) => (out += d));
+    child.stdout?.on("data", (d: Buffer) => (out += d));
+    child.stderr?.on("data", (d: Buffer) => (out += d));
     const timer = setTimeout(() => stop(child as never), 60_000);
     child.once("error", (e) => resolve({ code: null, out: e.message }));
     child.once("close", (code) => {
@@ -176,14 +182,15 @@ const LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 export async function probeDoubaoCli(profile: AgentProfile): Promise<{ models: string[]; effortsByModel: Record<string, string[]> }> {
   const exe = doubaoExecutable(profile);
   const base = [...profile.args, "--resume", "1", "-p", "x"];
-  const first = await check(exe, [...base, "--model", "__omem_probe__"]);
+  const account = accountOf(profile);
+  const first = await check(exe, [...base, "--model", "__omem_probe__"], account);
   const models = listAfter(first.out, "Available models");
   if (!models?.length) throw new Error(errorText(first.out, "") || "豆包 CLI 没有报出模型列表（先运行 doubao login）");
   const effortsByModel: Record<string, string[]> = {};
   await Promise.all(
     models.map(async (m) => {
       for (const level of ["none", "max"]) {
-        const r = await check(exe, [...base, "--model", m, "--effort", level]);
+        const r = await check(exe, [...base, "--model", m, "--effort", level], account);
         const levels = listAfter(r.out, "Available levels");
         if (levels) return void (effortsByModel[m] = levels);
         // Accepted: it got as far as looking up the conversation. Anything else (no effort setting, a model that needs a subscription): none.

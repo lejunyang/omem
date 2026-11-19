@@ -55,6 +55,39 @@ export const AI_KEY_BACKENDS = ["claude", "claude-cli", "codex", "codex-cli"] as
 /** Which provider kind can drive which of them. */
 export const KEY_BACKENDS_OF: Record<string, readonly (typeof AI_KEY_BACKENDS)[number][]> = { anthropic: ["claude", "claude-cli"], openai: ["codex", "codex-cli"] };
 
+/** A folder under the account folder: relative, no `..`, no placeholder. */
+const accountRel = z.string().min(1).max(200).refine((s) => !/^([\\/]|~|[A-Za-z]:)/.test(s) && !s.split(/[\\/]/).includes("..") && !s.includes("{home}") && !s.includes("$"), "写账号目录下的相对路径（不能以 / 或 ~ 开头，不能有 .. 和 {home}）");
+const accountPattern = z.string().min(1).max(500).refine((s) => {
+  try { new RegExp(s); return true; } catch { return false; }
+}, "不是有效的正则表达式");
+/** No `{home}` outside the values of `env`. */
+const noHome = z.string().refine((s) => !s.includes("{home}"), "{home} 只能写在 env 的值里");
+/**
+ * An env value of a user's account: under `{home}` (the account folder), or a plain value. An absolute
+ * path, `~` or a variable would point outside the account folder, into the service's own HOME.
+ */
+const accountEnvValue = z.string().max(500).refine((v) => {
+  if (v.startsWith("{home}")) return !v.slice(6).split(/[\\/]/).includes("..") && !v.slice(6).includes("{home}") && (v.length === 6 || /^[\\/]/.test(v.slice(6)));
+  return !v.includes("{home}") && !/^([\\/]|~|[A-Za-z]:[\\/])/.test(v) && !v.includes("$");
+}, "env 的值要么在 {home} 下（{home}/…），要么是普通值：不能写绝对路径、~ 或 ${…}（本机的安装放 mounts）");
+/**
+ * Each omem user's own account of a backend (docs/v2/agent-accounts.md §2), the same fields as the
+ * catalog's `account` (agents/catalog.ts AccountSpec). Unknown keys are refused.
+ */
+export const accountSpecSchema = z
+  .object({
+    cli: noHome.pipe(z.string().min(1).max(500)).optional(),
+    env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/, "变量名只能用字母、数字和下划线"), accountEnvValue).default({}),
+    dirs: z.array(accountRel).max(20).optional(),
+    mounts: z.array(noHome.pipe(z.string().min(1).max(500))).max(20).optional(),
+    owns: z.array(accountRel).min(1, "owns 至少写一个：退出时删掉这个后端在账号目录里的哪些东西").max(20),
+    login: z.object({ args: z.array(noHome).max(20), url: accountPattern, code: accountPattern.optional(), timeoutMs: z.number().int().min(30_000).max(3_600_000).optional() }).strict().optional(),
+    status: z.object({ args: z.array(noHome).max(20), user: accountPattern.optional() }).strict().optional(),
+    logout: z.object({ args: z.array(noHome).max(20) }).strict().optional(),
+    tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/).optional(),
+  })
+  .strict();
+
 export const agentProfileSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
@@ -83,6 +116,11 @@ export const agentProfileSchema = z.object({
   peer: z.object({ id: z.string().min(1), agent: z.string().min(1) }).optional(),
   /** Runs with the API key of this AI provider (`ai.providers`, key in secrets/ai-keys.json; core/ai-keys.ts). */
   keyRef: z.string().optional(),
+  /**
+   * Each omem user can run it with an account of their own (docs/v2/agent-accounts.md §2), like the
+   * catalog's backends: keyed by its source (`source`, else its id). Not for a device's agent or an API key.
+   */
+  account: accountSpecSchema.optional(),
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
@@ -426,10 +464,11 @@ export const configSchema = z.object({
       /**
        * Members' runs on a backend that can use their own account (docs/v2/agent-accounts.md), when
        * they have not logged in to it: `owner` borrows the owner's login (as before), `own` fails the
-       * run and tells them to log in. Keyed by the account backend (catalog id: codex, claude, traex,
-       * doubao-cli). Only on machines that can start the sandbox (agents/sandbox.ts).
+       * run and tells them to log in, `own-or-other` moves the run to another backend they are logged
+       * in to or may borrow (the run's fallback order). Keyed by the account backend (catalog id:
+       * codex, claude, traex, doubao-cli). Only on machines that can start the sandbox (agents/sandbox.ts).
        */
-      accounts: z.record(z.string(), z.enum(["owner", "own"])).default({}),
+      accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
     .default(() => ({ accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**

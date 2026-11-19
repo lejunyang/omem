@@ -1,4 +1,4 @@
-import { effortsFor, type ProbeInfo } from "./probe.ts";
+import { effortsFor, userProbe, type ProbeInfo } from "./probe.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, saveConfig, type Config } from "../core/config.ts";
 import { findSpace, listSpaces, relatedIds } from "../core/spaces.ts";
@@ -197,7 +197,7 @@ const commands: Record<string, Command> = {
       const profiles = allProfiles(app.config);
       const profileId = thread.settings.profile ?? app.config.agents.default ?? profiles[0]?.id;
       const profile = profiles.find((p) => p.id === profileId);
-      const probe = cachedProbeSync(app, profileId);
+      const probe = cachedProbeSync(app, profileId, thread.userId);
       if (!text) {
         // In Feishu the bare command opens the interactive model card; elsewhere show text.
         if (inb.channel === "lark") {
@@ -506,15 +506,9 @@ async function modelCardCommand(c: Ctx) {
 }
 
 // /model helpers: probe cache and loose "name effort=high" parsing.
-function cachedProbeSync(app: App, profileId?: string) {
-  if (!profileId) return null;
-  const row = app.db.prepare("select value from kv where key = ?").get(`probe:${profileId}`) as { value: string } | undefined;
-  if (!row) return null;
-  try {
-    return JSON.parse(row.value) as ProbeInfo;
-  } catch {
-    return null;
-  }
+/** What the thread's person can choose: their own account's models when they are logged in to the backend. */
+function cachedProbeSync(app: App, profileId?: string, userId?: string): ProbeInfo | null {
+  return profileId ? userProbe(app, userId, profileId) : null;
 }
 export function parseModelArgs(text: string): { model?: string; effort?: string } {
   const effort = /\beffort\s*[=:]\s*([a-z0-9.-]+)/i.exec(text)?.[1]?.toLowerCase();

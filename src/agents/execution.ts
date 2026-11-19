@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
-import { cachedProbe, effortsFor } from "./probe.ts";
+import { effortsFor, userProbe } from "./probe.ts";
 import { allProfiles } from "../core/config.ts";
 import { backendAvailable } from "./availability.ts";
 import { resolveModelOption } from "./models.ts";
@@ -17,13 +17,14 @@ export const executionSchema = z.object({
 });
 export type Execution = z.infer<typeof executionSchema>;
 
-export function validateExecution(app: App, choice?: Execution): Execution | undefined {
+/** `userId`: whose run it is: a member logged in to the backend is checked against their own account's models. */
+export function validateExecution(app: App, choice?: Execution, userId?: string): Execution | undefined {
   if (!choice) return undefined;
   const e = executionSchema.parse(choice);
   if (e.source === "auto" && !app.config.agents.routing.automatic) throw new HttpError(403, "已关闭助手自主选型；使用档案默认值，只有本人明确指定才能临时更换");
   const backend = allProfiles(app.config).find((p) => p.id === e.profile);
   if (!backend || !backendAvailable(backend, app.home)) throw new HttpError(400, `后端 ${e.profile} 不可用，请先 list_ai_backends 核对`);
-  const probe = cachedProbe(app, e.profile);
+  const probe = userProbe(app, userId, e.profile);
   if (e.model && probe?.models.length) {
     const resolved = resolveModelOption(e.model, probe.models);
     if (!resolved.matched) throw new HttpError(400, `模型 ${e.model} 不在 ${e.profile} 的检测结果中`);
