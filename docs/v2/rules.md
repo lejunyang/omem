@@ -169,7 +169,8 @@
 值班群关单后本人可能被移出，lark-cli 就读不到了。“被 @ 就先保存、把机器人拉进去”用一条规则：条件 `message.mentionsOwner is true`（再加群名或 `chat.bots contains` 值班机器人缩小范围），`trigger.once = chat`，动作“优先采集”+“拉机器人进群”。机器人进群后实时收到的消息照常存进群原件，本人离群也不影响。
 
 要确认“这真是某个工单的群”、查工单状态，写成值班技能（里面用内部命令行），挂在处理这类群的 Agent 档案上，再加一个“交给 Agent”动作让它去查。内部系统只出现在技能里，不进 omem 的代码和配置（AGENTS.md）。
-- `watch`：开始监听这个群，后续消息交给某个 Agent（同 `/watch`：全部 / @ / 关键词，回复方式同上）。
+- `watch`：开始监听这个群，后续消息交给某个 Agent（同 `/watch`：全部 / @ / 关键词，回复方式同上）；现在建的是这个群的「关注」。
+- `context`：交给关注。触发的事件进那个关注的会话，由它带着说明、案例和经验处理，不另起一个没有记忆的运行；文档、对象、omem 事件触发的规则也能用。“交给 Agent 且只看某几个群”的规则在规则页可以一键转成关注（`src/rules/to-listen.ts`）：关注覆盖了规则做的全部事时规则停用，否则规则的动作改成交给关注。
 - `invite-bot`：以本人身份把 omem 自己的机器人加进这个群（lark-cli `im chat.members create`，只加 omem 的 app_id，不发消息、不加别的成员）。只在本人配置的规则里发生。
 - `wait-message`：等另一个会话的新消息（`chatId`、`minutes` 1–30、`contains` / `matches`、`onTimeout: notify | none`），只用于新消息触发。执行到它时排一个 `rule-fire` 运行（输入带 `wait`、`since` = 触发时间、后面的动作），`rules/fast.ts` 的 `waitThenAct` 每 10 秒用本人身份 `+chat-messages-list` 读那个会话，触发之后第一条非本人、符合条件的消息作为事件的 `awaited`，接着做后面的动作；到时没有就按 `onTimeout` 通知本人或不做。
 - `forward`：把触发的消息（带来源会话、发送人、时间和本人的附言 `note`）用机器人发到 `to` 指定的会话，只用于“新消息”触发。`to.kind=group`：先查群里的机器人（`chatBots`），没有 omem 的机器人就以本人身份拉进去（同 `invite-bot`）。`to.kind=p2p`（某人和本人的私聊，机器人不能在里面发言）：第一次转发时以本人身份建一个本人、对方和机器人的群（lark-cli `im +chat-create --as user`，同私聊指令 `/ai拉群`；对方取这个私聊里采集到的最近一条非本人、非机器人消息的发送人），群 id 记在 kv `rule_forward_group:<私聊 id>`，之后都发到这个群。同一条消息重复触发只发一次（发送的 uuid 由规则、消息和目标算出）。来源可以是群，也可以是任何私聊——机器人私聊本人的消息同样会被采集并触发规则（`chat.kind=p2p`、`sender.kind=bot`），延迟是一次采集的间隔。前面有 `wait-message` 时转发的是等到的那条（`awaited`）。`to.kind=origin`：回到触发的会话，群里以机器人回复在触发消息下（没有机器人先以本人身份拉进去），私聊则对触发消息的发送人建群（同上，按那个私聊记住）；只能用在 `wait-message` 之后。目标由本人指定：规则页，或本人在对话里亲自要求的那一轮（`save_rule` 只在 `ownerAskedThisTurn` 时允许新加或改动目标，“这个群”写 `chatId: "current"`，换成本会话的飞书群；别的轮次被拒绝，不动目标的修改照常）。

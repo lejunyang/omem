@@ -26,6 +26,12 @@ updated: 2026-11-20
 - 网页：`web/src/components/AgentAccounts.vue`（账号页“我的 AI 账号”）、`AgentAccountsAdmin.vue`（设置 → AI “成员的 AI 账号”）。`osdk.toml` 加 `[sys.pkg]`，只声明 apt / dnf 的 bubblewrap，`scripts/upgrade.ts` 不跑 `osdk pkg apply`。
 - 设计里没做的（额度按账号读、探测缓存按账号分、技能同步进账号目录、`own-or-other`、插件登录）和没在真机上验的写在 `docs/v2/agent-accounts.md` 开头。测试 `test/agent-accounts.test.ts`。
 
+## 「关注」管会议和事项，规则能交给关注（11-20）
+
+- 会议（`src/channels/listen-meetings.ts`）：没有规则接的会议交给关心它的关注（群里发起的给含这个群的关注，本人入会的给默认关注），`meetings: ask` 发只给本人看的卡片（`watch-trial.ts` 的 `ownerCard` 已导出复用），`listen` 直接进；进会沿用规则的旁听流程（`lark-meetings.ts startListenPlan`，计划上带 `contextId`），旁听任务带关注的说明、经验和摘要，记下的和会后小结写回关注会话（`jobs.ts` 里 `listenMeeting`）。“以后不用问”记在参数 `meetingSkip`。进会与否记成案例（`chat_kind = 'meeting'`，不参与回复类的检索和统计）。本人不在的群会议，旁听的写法改成“本人不在会上”。`lark_meetings` 加 `context_id`。
+- 事项（`src/channels/listen-items.ts`）：开始流程自动建只看不回的事情型关注（`byFlow`，流程结束暂停），启动时 `migrateItemContexts` 补上；`setItemListening` / `set_chat_watch(item)` 打开的不随流程停。群跟着事项关联的群（跟进时同步）。`follow.ts` 跟进的范围是有流程的事项或打开了关注的事项。只看不回的事情型关注不再接收群消息路由（跟进自己读）。
+- 规则（`src/rules/to-listen.ts`）：新动作 `context` 交给关注；`ruleToContext` 把只看某几个群的 Agent 规则转成关注。网页接口 `POST /api/items/:id/listen`、`POST /api/rules/:id/to-listen`。
+
 ## 「关注」：盯群换成关注，按案例和场景经验处理（11-20）
 
 - `src/channels/listen.ts`：新表 `listen_contexts`（place / item / default），每个关注一份说明、一组参数（`ListenKnobs`）、一条处理会话（channel `listen`，key 是关注 id）。`chat_settings('lark-watch')` 只留作群的索引（`contexts`、`spaceId`）。启动时 `migrateWatches` 把旧盯群迁成地方型关注（保留会话，`watch.log` 进案例表）。
