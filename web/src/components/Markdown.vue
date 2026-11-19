@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { linkifyPaths, renderMarkdown, renderMermaid } from "../lib/markdown";
 import { layoutCallouts, sizeTables } from "../lib/doc-layout";
 import { openCitation, state } from "../store";
+import { previewFromClick } from "../lib/image-preview";
 
 /** `runId`: the text is about a coding run (a review finding); `路径:行` opens that run's file instead of an indexed original. */
 const props = withDefaults(defineProps<{ source: string; space?: string; linkify?: boolean; existingPages?: string[]; breaks?: boolean; runId?: string }>(), { linkify: true });
@@ -35,6 +36,8 @@ onMounted(enhance);
 watch(html, enhance);
 
 function onClick(e: MouseEvent) {
+  // A picture opens in the page's preview with the text's other pictures, not in a new tab.
+  if (previewFromClick(e, root.value)) return;
   const a = (e.target as HTMLElement).closest("a") as HTMLAnchorElement | null;
   if (!a) return;
   const cite = a.dataset.cite;

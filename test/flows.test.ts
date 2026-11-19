@@ -298,6 +298,10 @@ describe("只有本人能定的事", () => {
     const view = flowView(app, item.id);
     expect(view.stages.find((x) => x.id === "a")!.shots.map((a) => a.id)).toEqual(images);
     expect(view.stages.find((x) => x.id === "b")!.shots).toEqual([]);
+    // The same picture handed in again under another name shows once.
+    writeFileSync(join(artifactInbox(app, runId), "repro-01-copy.png"), Buffer.from("89504e470d0a1a0a", "hex"));
+    await collectInbox(app, runId, { source: "agent", by: "assistant" });
+    expect(flowView(app, item.id).stages.find((x) => x.id === "a")!.shots.map((a) => a.id)).toEqual(images);
   });
   it("阶段自己的运行已经问了本人，再报卡住等本人时不另发进度卡", async () => {
     const { app, item, s } = await setup([stage("a")]);

@@ -15,6 +15,14 @@ updated: 2026-11-19
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 图片页内预览、流程页截图网格、同一分支不再并行起两次交办、浏览器截图按可见区域（11-19）
+
+- 页内预览：`web/src/components/ImagePreview.vue` 挂在 `App.vue`，`web/src/lib/image-preview.ts` 的 `openImages(list, index)` 打开、`previewFromClick` 处理正文里的图片。接入的地方：`Markdown.vue`（正文图片）、`DiffFile.vue`（改动前 / 改动后）、`Ask.vue`（发出的图片附件）、流程页。`RunArtifacts.vue` 原有的产物查看器不变。
+- 流程页（`ItemFlowPage.vue`）：截图换成 `ShotGrid.vue` 的缩略图网格；`src/flows/engine.ts` 的 `stageShots` 按 `run_artifacts.sha` 去重（留带说明的），阶段重做过时别的运行的截图标 `earlier`，页面折叠在“之前几次的截图”。
+- 交办的“等你决定”（`CodeTasks.vue`）用 Markdown 显示；`web/src/lib/markdown.ts` 的 `preprocess` 把裸写的 `src:<id>#L起-L止` 变成原文引用。
+- `src/agents/review-fix.ts` 的 `openDelegationOn`：还在排队或准备工作区、请求的分支（`fromBranches` / `branchNames`）相同的交办也算“这条分支上已有没确认的交办”。之前两个流程的修复阶段隔两分钟各自 `delegate_code`，第一次还没建好工作区，第二次没被拦下，同一分支上就有了两次交办。测试 `test/delegation-branch.test.ts`。
+- `skills/library/desktop-control/scripts/browser.mjs`：默认 `--window-size=1440,900`（`--size` 可改；无界面 Chrome 自己的 800×600 让视口只有约 765×500），新增 `shot` 用 CDP 截可见区域（`--full` 截整页）。`SKILL.md` 写明截页面用它，不用 `aad capture --role document`（按文档高度截，按视口定位的弹窗只占上面一截）。
+
 ## 开发中插件的目录监听在机器忙时不再漏掉改动；几处跟不上代码的测试（11-19）
 
 - `src/plugins/links.ts` 的 `watchTree`：Linux 上不用 Node 的递归 `fs.watch`（负载高时实测十次漏八次），改为每个子目录一个非递归监听、新目录随时补上（最多 400 个）；`watch` 建不起来（inotify 实例被用完，报 EMFILE）时每秒比一遍文件大小和修改时间。`.links.json` 的监听也走它（`flat`）。测试在 `test/plugin-dev.test.ts`。

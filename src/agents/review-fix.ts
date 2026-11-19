@@ -223,12 +223,22 @@ export function openDelegationOn(app: App, repos: string[], branch: string | nul
   const since = new Date(Date.now() - 30 * 86400_000).toISOString();
   const roots = all<{ id: string }>(app.db, "select id from runs where kind = 'code' and json_extract(input, '$.continueFrom') is null and json_extract(input, '$.branches') is null and json_extract(output, '$.appliedAt') is null and json_extract(output, '$.discardedAt') is null and coalesce(user_id, ?) = ? and created_at > ? order by created_at desc limit 50", OWNER, userId, since);
   for (const { id } of roots) {
-    if (!worktreesOf(app, id).some((w) => repos.includes(w.space) && w.targetBranch === want && (w.commits || existsSync(w.path)))) continue;
+    // One still queued or preparing has no worktree yet: the branch it asked for counts (two flows'
+    // stages delegating on one branch minutes apart would otherwise both start).
+    if (!worktreesOf(app, id).some((w) => repos.includes(w.space) && w.targetBranch === want && (w.commits || existsSync(w.path))) && !askedFor(app, id, repos, want)) continue;
     const rounds = workRuns(app, id).map((x) => getRun(app, x));
     if (rounds.some((x) => x.output.appliedAt || x.output.discardedAt)) continue;
     return rounds.at(-1)!;
   }
   return null;
+}
+
+/** A delegation not yet on its worktree (queued, preparing) that asked to work on `branch` in one of `repos`. */
+function askedFor(app: App, id: string, repos: string[], branch: string) {
+  const r = getRun(app, id);
+  if (!["queued", "running"].includes(r.status) || (r.output.worktrees as unknown[] | undefined)?.length) return false;
+  const asked = { ...(r.input.fromBranches ?? {}), ...(r.input.branchNames ?? {}) } as Record<string, string>;
+  return Object.entries(asked).some(([space, b]) => repos.includes(space) && b.replace(/^refs\/heads\//, "").replace(/^origin\//, "") === branch);
 }
 
 /** Task-driven delegations on a branch that were confirmed (pushed), newest first: a new one on it carries on what they left. */

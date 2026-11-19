@@ -1,6 +1,6 @@
 ---
 name: desktop-control
-description: 用 ai-auto-desktop（命令 aad）看和操作本机的桌面程序与浏览器页面：列窗口、读界面结构、对读到的元素点击/填写/按键/滚动、给网页元素截图。要在电脑上替本人操作某个程序或网页、或需要“看一眼界面里现在是什么”时先读。
+description: 用 ai-auto-desktop（命令 aad）看和操作本机的桌面程序与浏览器页面：列窗口、读界面结构、对读到的元素点击/填写/按键/滚动、给网页和网页元素截图。要在电脑上替本人操作某个程序或网页、或需要“看一眼界面里现在是什么”时先读。
 ---
 
 基于 ai-auto-desktop 0.0.2（`aad --version` 看本机版本；命令随版本可能增减，不确定时以 `aad <命令> --help` 为准）。命令的输出都是 JSON，诊断信息走 stderr。更多细节（错误码、平台差异、保存流程、MCP）见 `references/aad.md`。
@@ -49,10 +49,11 @@ aad do focus  <id> --role Edit
 用本技能的 `scripts/browser.mjs`（在数据目录 `library/_skills/desktop-control/` 下，数据目录默认 `~/.omem`）开浏览器，不要自己拼 Chrome 命令、也不要每次建临时目录：
 
 ```
-node ~/.omem/library/_skills/desktop-control/scripts/browser.mjs open <资料名> [--url 网址] [--visible] [--header 域名=请求头:值]...
+node ~/.omem/library/_skills/desktop-control/scripts/browser.mjs open <资料名> [--url 网址] [--visible] [--size 1440x900] [--header 域名=请求头:值]...
 # 输出 {"profile":…,"port":…,"reused":…}；把 port 设成 AAD_CDP_PORT
 export AAD_CDP_PORT=<port>
 aad apps ; aad describe <页面id> ; aad do click <页面id> --role link --name "更多"
+node ~/.omem/library/_skills/desktop-control/scripts/browser.mjs shot <资料名> --out "$OMEM_ARTIFACTS/01-提交失败.png" [--page 网址或标题里的字]   # 页面现在的样子（可见区域，弹窗按本人看到的样子）
 aad capture <页面id> --role img --name "登录二维码" --out qr.png   # 元素截图，输出里有 digest
 node ~/.omem/library/_skills/desktop-control/scripts/browser.mjs close <资料名>   # 用完关掉；list 看哪些开着
 ```
@@ -66,6 +67,7 @@ node ~/.omem/library/_skills/desktop-control/scripts/browser.mjs close <资料�
 
 - `AAD_CDP_PORT` 只接受本机回环地址；调试端口有很高权限，专用 profile、不要开给局域网。
 - 网页里的普通 click 是 DOM 激活（事件不是“可信”的）；页面要求可信点击时加元素内位置 `--fx 0.5 --fy 0.5`，落点被别的元素盖住时会拒绝（`CONTROL.OCCLUDED`）。
+- **截页面用 `browser.mjs shot`**：截的是可见区域，弹窗、抽屉、提示条和本人看到的一样。不要用 `aad capture --role document` 截整页：它按整篇文档的高度截，而弹窗是按视口定位的，截出来弹窗只占上面一截、下面是没盖住的页面。页面很长、没有弹窗时才加 `--full` 截整页；只要某个区域就用 `aad capture` 截那个元素（如 `--role dialog`）。浏览器默认按 1440×900 打开（`open --size 宽x高` 可改，已开着的资料要先 `close` 再开才生效）。截之前确认页面已经加载完（不是骨架屏或白屏），同一画面不要截两次。
 - `aad capture` 目前只截浏览器页面的元素；原生窗口没有截图，靠 `describe` 读结构。比较两次 `digest` 就知道显示的内容变没变（例如二维码刷新），不用每次都看图。
 - 需要本人登录、验证码或本人拿主意的地方：先停下告诉本人；本人愿意的话用 `aad assist --browser-port 9333` 把页面交给本人（只监听本机，会打印地址和 token）。本人自己的账号不要替他输入密码；测试账号见下面“安全”里的例外。
 - 想了解一个网页怎么用（接口、请求）：`aad browser-record start --browser chrome --url <网址> --out <新目录>` 记录操作、变化和网络请求（默认保留原值，会带上 cookie 等，别把输出发出去）。

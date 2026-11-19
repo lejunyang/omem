@@ -822,12 +822,28 @@ function stageTests(app: App, itemId: string, stageId: string, since: string, ro
     req: r.nodeId && titles.has(r.nodeId) ? { id: r.nodeId, title: titles.get(r.nodeId)! } : null, artifacts: r.artifacts.flatMap((a) => shots.get(a) ?? []) }));
 }
 
-/** Screenshots the stage's runs handed in outside test results (a reproduction, a check on a page), latest last. */
+/**
+ * Screenshots the stage's runs handed in outside test results (a reproduction, a check on a page), latest last.
+ * The same picture handed in twice (a file in $OMEM_ARTIFACTS and again with a caption) shows once, the
+ * captioned one. When the stage was redone, the earlier tries' pictures (a blank login page that stopped
+ * the first try, say) are marked `earlier`: the page folds them under the latest run's.
+ */
 function stageShots(app: App, itemId: string, stageId: string, since: string, round: number, current?: string) {
-  const runs = new Set(all<{ run_id: string }>(app.db, "select distinct run_id from item_stage_log where item_id = ? and stage_id = ? and at >= ? and round = ? and run_id is not null", itemId, stageId, since, round).map((r) => r.run_id));
+  const log = all<{ run_id: string }>(app.db, "select run_id from item_stage_log where item_id = ? and stage_id = ? and at >= ? and round = ? and run_id is not null order by id", itemId, stageId, since, round).map((r) => r.run_id);
+  const runs = new Set(log);
   if (current) runs.add(current);
   const inTests = new Set(testsOfRuns(app, [...runs]).flatMap((t) => t.artifacts));
-  return runImages(app, [...runs], 24).filter((a) => !inTests.has(a.id));
+  const list = runImages(app, [...runs], 40).filter((a) => !inTests.has(a.id));
+  const sha = new Map(list.length ? all<{ id: string; sha: string | null }>(app.db, `select id, sha from run_artifacts where id in (${list.map(() => "?").join(",")})`, ...list.map((a) => a.id)).map((r) => [r.id, r.sha]) : []);
+  const kept = new Map<string, (typeof list)[number]>();
+  for (const a of list) {
+    const key = sha.get(a.id) ?? a.id, had = kept.get(key);
+    if (!had || !had.caption && a.caption) kept.set(key, a);
+  }
+  const unique = list.filter((a) => kept.get(sha.get(a.id) ?? a.id) === a);
+  const latest = current ?? log.at(-1);
+  const hasLatest = !!latest && unique.some((a) => a.runId === latest);
+  return unique.map((a) => ({ ...a, ...(hasLatest && a.runId !== latest ? { earlier: true } : {}) }));
 }
 
 /** "等到 01:00 再开始" with no reason in front: the stage's time line already says it. */

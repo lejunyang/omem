@@ -6,6 +6,7 @@ import Icon from "../components/Icon.vue";
 import Markdown from "../components/Markdown.vue";
 import ItemStudy from "../components/ItemStudy.vue";
 import RunArtifacts from "../components/RunArtifacts.vue";
+import ShotGrid from "../components/ShotGrid.vue";
 import Skeleton from "../components/Skeleton.vue";
 import FlowWaiting from "../components/FlowWaiting.vue";
 import type { Material } from "../components/ItemMaterials.vue";
@@ -52,7 +53,9 @@ const current = computed(() => waiting.value[0] ?? stages.value.find((s) => ["do
 const told = computed(() => stages.value.filter((s) => s.state !== "pending" && (s.result || s.note || s.tests?.length || s.shots?.length || ["done", "doing", "blocked", "stale"].includes(s.state))));
 const upcoming = computed(() => ended.value ? [] : stages.value.filter((s) => ["pending", "gated"].includes(s.state) && !waiting.value.includes(s)));
 const text = (s: Stage) => s.result || s.note;
-const images = (list: Shot[] | undefined) => (list ?? []).filter((a) => a.kind === "image");
+const images = (list: Shot[] | undefined) => (list ?? []).filter((a) => a.kind === "image" && !(a as { earlier?: boolean }).earlier);
+/** Pictures of the stage's earlier tries (before it was redone): folded under the latest. */
+const earlier = (list: Shot[] | undefined) => (list ?? []).filter((a) => a.kind === "image" && (a as { earlier?: boolean }).earlier);
 const others = (list: Shot[] | undefined) => (list ?? []).filter((a) => a.kind !== "image");
 const when = (s: Stage) => s.doneAt ? `${fmtTime(s.doneAt)} 完成` : s.enteredAt ? `${relTime(s.enteredAt)}开始` : "";
 const dot = (s: Stage) => s.state === "done" ? "ok" : ownerTurn(s) || s.state === "blocked" ? "warn" : s.state === "doing" ? "accent" : "quiet";
@@ -123,18 +126,16 @@ function openRef(r: string) {
           <h2><span class="dot" :class="dot(s)" />{{ s.name }}<span class="when muted small">{{ stageWords[s.state] }}{{ when(s) ? ` · ${when(s)}` : "" }}{{ s.attempt > 1 ? ` · 第 ${s.attempt} 次` : "" }}</span></h2>
           <Markdown v-if="text(s)" :source="text(s)" class="prose" />
           <p v-else class="muted">{{ s.state === "doing" ? "正在做，还没写结果。" : "没有写结果。" }}</p>
-          <figure v-for="a in images(s.shots)" :key="a.id" class="shot">
-            <a :href="a.url" target="_blank" rel="noopener noreferrer"><img :src="a.url" :alt="a.caption || a.name" loading="lazy" /></a>
-            <figcaption>{{ a.caption || a.name }}</figcaption>
-          </figure>
+          <ShotGrid v-if="images(s.shots).length" :items="images(s.shots)" />
+          <details v-if="earlier(s.shots).length" class="earlier small">
+            <summary class="muted">之前几次的截图（{{ earlier(s.shots).length }}）</summary>
+            <ShotGrid :items="earlier(s.shots)" />
+          </details>
           <RunArtifacts v-if="others(s.shots).length" :items="others(s.shots)" />
           <div v-for="t in s.tests ?? []" :key="t.id" class="case">
             <h3><span class="dot" :class="t.status === 'passed' ? 'ok' : t.status === 'failed' ? 'warn' : 'quiet'" />{{ t.name }}<span class="when muted small">{{ testWords[t.status] }}</span></h3>
             <Markdown v-if="t.note" :source="t.note" class="prose" />
-            <figure v-for="a in images(t.artifacts)" :key="a.id" class="shot">
-              <a :href="a.url" target="_blank" rel="noopener noreferrer"><img :src="a.url" :alt="a.caption || a.name" loading="lazy" /></a>
-              <figcaption>{{ a.caption || a.name }}</figcaption>
-            </figure>
+            <ShotGrid v-if="images(t.artifacts).length" :items="images(t.artifacts)" />
             <RunArtifacts v-if="others(t.artifacts).length" :items="others(t.artifacts)" />
           </div>
           <p v-if="s.evidence.length || s.object || s.carrier.link" class="refs small muted">
@@ -197,9 +198,7 @@ function openRef(r: string) {
 .dot.warn { background: var(--warn); }
 .dot.accent { background: var(--accent); }
 .prose { line-height: 1.75; overflow-wrap: anywhere; }
-.shot { margin: 12px 0; }
-.shot img { display: block; max-width: 100%; max-height: 560px; border: 1px solid var(--line); border-radius: 6px; }
-.shot figcaption { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.earlier summary { cursor: pointer; }
 .case { border-left: 2px solid var(--line); padding-left: 12px; }
 .refs { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 10px; }
 .next { padding-left: 20px; display: grid; gap: 6px; margin: 0; }

@@ -7,6 +7,7 @@ import UiView from "../components/UiView.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { confirmDialog } from "../lib/dialog";
+import { openImages } from "../lib/image-preview";
 import { pageParam } from "../lib/route";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
@@ -177,6 +178,11 @@ const uploading = ref(0);
 const picker = ref<HTMLInputElement>();
 const dragging = ref(false);
 const fileUrl = (name: string) => authUrl(`/api/files/${name}`);
+/** A sent picture opens in the page's preview with the message's other pictures. */
+function showSent(list: Attachment[], a: Attachment) {
+  const imgs = list.filter((x) => x.kind === "image");
+  openImages(imgs.map((x) => ({ url: fileUrl(x.name), caption: `[${x.label}] ${x.filename}` })), imgs.indexOf(a));
+}
 /** Put text where the cursor is (or was, before a chip was clicked), and keep the cursor after it. */
 function insertAtCursor(snippet: string) {
   const el = input.value;
@@ -320,7 +326,7 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
               <div class="bubble">
                 {{ m.text }}
                 <div v-if="m.meta?.attachments?.length" class="sent-files">
-                  <a v-for="a in m.meta.attachments" :key="a.label" :href="fileUrl(a.name)" target="_blank" rel="noopener" class="sent-file" :title="a.filename">
+                  <a v-for="a in m.meta.attachments" :key="a.label" :href="fileUrl(a.name)" target="_blank" rel="noopener" class="sent-file" :title="a.filename" @click="a.kind === 'image' && ($event.preventDefault(), showSent(m.meta.attachments, a))">
                     <img v-if="a.kind === 'image'" :src="fileUrl(a.name)" :alt="a.filename" loading="lazy" />
                     <span v-else class="file-ico"><Icon name="file" :size="15" /></span>
                     <span class="small">[{{ a.label }}] {{ a.kind === "image" ? "" : a.filename }}</span>

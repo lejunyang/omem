@@ -24,7 +24,7 @@ export type FlowStage = {
   /** What this stage's runs reported case by case (a verification stage), failed first, then the ones not done. */
   tests?: StageTest[];
   /** Screenshots the stage's runs handed in outside test results. */
-  shots?: StageTest["artifacts"];
+  shots?: (StageTest["artifacts"][number] & { earlier?: boolean })[];
   /** An upstream stage was reopened while this one was being done: the card asking the owner whether to stop it. */
   upstream?: { askId: string; stage: string; name: string; reason: string } | null;
   /** The card asking the owner about this stage, answered by a button or in words. */

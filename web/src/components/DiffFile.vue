@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { authUrl, get } from "../api";
 import { diffMeta, isImagePath, modeLabel } from "../lib/patch";
 import { toast } from "../store";
+import { openImages } from "../lib/image-preview";
 import { diffLayout } from "../lib/diffLayout";
 
 /**
@@ -170,6 +171,11 @@ const cols = computed(() => (split.value ? 4 : 3));
 // An index preview must not expand context from the working copy, which may have later edits.
 const canExpand = (g: Gap) => props.expandable && !deleted.value && (g.to === null ? !file.value || hidden(g) > 0 : hidden(g) > 0);
 const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" : `${hidden(g)} 行未改动`);
+/** Before and after side by side in the preview, starting at the one clicked. */
+function showImages(at: string) {
+  const list = [oldSrc.value && { url: oldSrc.value, caption: `${path.value} 改动前` }, newSrc.value && { url: newSrc.value, caption: `${path.value} 改动后` }].filter((x): x is { url: string; caption: string } => !!x && !broken.value.has(x.url));
+  openImages(list, list.findIndex((x) => x.url === at));
+}
 </script>
 
 <template>
@@ -177,8 +183,8 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
     <p v-if="(moveNote || modeNote) && hunks.length" class="note muted small">{{ [moveNote, modeNote].filter(Boolean).join("；") }}</p>
     <div v-if="!hunks.length" class="nohunk small">
       <div v-if="image && (oldSrc || newSrc)" class="imgs">
-        <figure v-if="oldSrc"><figcaption class="muted">{{ newSrc ? "改动前" : "删除前" }}</figcaption><span v-if="broken.has(oldSrc)" class="muted">读不到这个版本</span><a v-else :href="oldSrc" target="_blank" rel="noopener"><img :src="oldSrc" :alt="`${path} 改动前`" loading="lazy" @error="unreadable(oldSrc)" /></a></figure>
-        <figure v-if="newSrc"><figcaption class="muted">{{ oldSrc ? "改动后" : meta.status === "added" ? "新增的图片" : "现在的样子" }}</figcaption><span v-if="broken.has(newSrc)" class="muted">读不到这个文件</span><a v-else :href="newSrc" target="_blank" rel="noopener"><img :src="newSrc" :alt="`${path} 改动后`" loading="lazy" @error="unreadable(newSrc)" /></a></figure>
+        <figure v-if="oldSrc"><figcaption class="muted">{{ newSrc ? "改动前" : "删除前" }}</figcaption><span v-if="broken.has(oldSrc)" class="muted">读不到这个版本</span><a v-else :href="oldSrc" @click.prevent="showImages(oldSrc)"><img :src="oldSrc" :alt="`${path} 改动前`" loading="lazy" @error="unreadable(oldSrc)" /></a></figure>
+        <figure v-if="newSrc"><figcaption class="muted">{{ oldSrc ? "改动后" : meta.status === "added" ? "新增的图片" : "现在的样子" }}</figcaption><span v-if="broken.has(newSrc)" class="muted">读不到这个文件</span><a v-else :href="newSrc" @click.prevent="showImages(newSrc)"><img :src="newSrc" :alt="`${path} 改动后`" loading="lazy" @error="unreadable(newSrc)" /></a></figure>
       </div>
       <template v-if="meta.binary">
         <p v-if="!image" class="muted">二进制文件，不显示内容。</p>

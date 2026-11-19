@@ -6,6 +6,7 @@ import { parsePatches } from "../lib/reviews";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { relTime, toast } from "../store";
 import DiffFile from "./DiffFile.vue";
+import Markdown from "./Markdown.vue";
 import DiffName from "./DiffName.vue";
 import DiffTree from "./DiffTree.vue";
 import UiSegmented from "./UiSegmented.vue";
@@ -213,7 +214,7 @@ async function pickFile(key: string) {
       <div class="section-title">等你决定</div>
       <div v-for="t in owner" :key="t.seq" class="q">
         <p class="small"><strong>T{{ t.seq }} {{ t.title }}</strong></p>
-        <p class="pre small">{{ t.question ?? t.doneWhen }}</p>
+        <Markdown class="small question" :source="t.question ?? t.doneWhen ?? ''" :breaks="true" />
         <div class="row wrap">
           <button v-for="o in t.options" :key="o" class="btn sm" :disabled="working" @click="answer(t, o)">{{ o }}</button>
           <input v-model="answers[t.seq]" class="input sm grow" :aria-label="`T${t.seq} 你的做法`" placeholder="或者写你的做法" @keydown.enter="answers[t.seq]?.trim() && answer(t, null)" />
@@ -310,6 +311,9 @@ async function pickFile(key: string) {
 .q .btn { white-space: normal; height: auto; min-height: 28px; padding-block: 4px; text-align: left; }
 .q p { margin: 0; }
 .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.question { line-height: 1.65; overflow-wrap: anywhere; }
+.question :deep(p), .question :deep(ul), .question :deep(ol) { margin: 0 0 6px; }
+.question :deep(ul), .question :deep(ol) { padding-left: 20px; }
 .grow { flex: 1; min-width: 160px; }
 .changes-bar { gap: 6px; align-items: center; }
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0 2px; }

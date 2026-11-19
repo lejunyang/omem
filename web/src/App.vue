@@ -5,6 +5,7 @@ import CaptureDialog from "./components/CaptureDialog.vue";
 import CitationDrawer from "./components/CitationDrawer.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import DialogHost from "./components/DialogHost.vue";
+import ImagePreview from "./components/ImagePreview.vue";
 import Skeleton from "./components/Skeleton.vue";
 import UiSelect from "./components/UiSelect.vue";
 import Icon from "./components/Icon.vue";
@@ -131,6 +132,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
   <div v-else-if="solo" class="solo">
     <router-view :key="route.path" />
     <DialogHost />
+    <ImagePreview />
     <div class="toasts" aria-live="polite">
       <div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.kind"><span>{{ t.text }}</span></div>
     </div>
@@ -184,6 +186,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
     <CommandPalette />
     <CaptureDialog />
     <DialogHost />
+    <ImagePreview />
     <div class="toasts" aria-live="polite">
       <div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.kind">
         <span>{{ t.text }}</span>

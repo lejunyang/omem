@@ -2,6 +2,7 @@
 // A Chrome on a long-lived profile, for agents that drive web pages with aad.
 //
 //   node browser.mjs open <profile> [--url U] [--visible] [--chrome PATH] [--header host=Name:Value]...
+//   node browser.mjs shot <profile> --out FILE [--page TEXT] [--full]
 //   node browser.mjs close <profile>
 //   node browser.mjs list
 //
@@ -13,11 +14,17 @@
 //   - adds the --header values to requests for those hosts (a test lane, say), so no routing
 //     script is needed;
 //   - prints JSON: { profile, port, pid, reused }. Use it as AAD_CDP_PORT.
-// Headless unless --visible. Only Node built-ins.
+// Headless unless --visible, in a 1440x900 window (--size WxH): headless Chrome's own 800x600 makes
+// a dialog only as tall as that little viewport while the page under it runs on.
+//
+// `shot` saves what the page shows now: the visible part (with any dialog or drawer as the user sees
+// it), not the whole document. --full asks for the whole page, for long pages with no overlay open.
+// --page picks the tab whose URL or title contains TEXT (else the last one opened). Prints
+// { path, width, height, url }. Only Node built-ins.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const home = process.env.OMEM_HOME || join(homedir(), ".omem");
 const root = join(home, "remote", "profiles");
@@ -122,6 +129,58 @@ function writeExtension(dir, headers) {
   return ext;
 }
 
+function windowSize() {
+  const want = opt("--size")[0] ?? "1440x900";
+  const m = /^(\d{3,4})[x,](\d{3,4})$/.exec(want);
+  if (!m) fail(`--size ${want}: expected WIDTHxHEIGHT, such as 1440x900`);
+  return `${m[1]},${m[2]}`;
+}
+
+/** One CDP session on a page target: send(method, params) → result. */
+async function session(wsUrl) {
+  const ws = new WebSocket(wsUrl);
+  await new Promise((ok, no) => { ws.onopen = ok; ws.onerror = () => no(new Error("cannot connect to the page")); });
+  let n = 0;
+  const waiting = new Map();
+  ws.onmessage = (e) => {
+    const m = JSON.parse(String(e.data));
+    const w = waiting.get(m.id);
+    if (!w) return;
+    waiting.delete(m.id);
+    if (m.error) w.no(new Error(m.error.message));
+    else w.ok(m.result);
+  };
+  return {
+    send: (method, params = {}) => new Promise((ok, no) => { const id = ++n; waiting.set(id, { ok, no }); ws.send(JSON.stringify({ id, method, params })); }),
+    close: () => ws.close(),
+  };
+}
+
+async function shot() {
+  const port = await alive(dirOf(name));
+  if (!port) fail(`profile ${name} is not open; open it first`);
+  const out = opt("--out")[0];
+  if (!out) fail("shot needs --out FILE");
+  const want = opt("--page")[0];
+  const pages = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter((t) => t.type === "page");
+  const page = want ? pages.find((t) => t.url.includes(want) || t.title.includes(want)) : pages[0];
+  if (!page) fail(want ? `no tab with "${want}" in its URL or title` : "no open tab");
+  const s = await session(page.webSocketDebuggerUrl);
+  try {
+    const m = await s.send("Page.getLayoutMetrics");
+    const view = m.cssVisualViewport ?? m.visualViewport;
+    const full = has("--full");
+    const size = full ? m.cssContentSize ?? m.contentSize : { width: view.clientWidth, height: view.clientHeight };
+    const r = await s.send("Page.captureScreenshot", { format: "png", ...(full ? { captureBeyondViewport: true, clip: { x: 0, y: 0, width: size.width, height: size.height, scale: 1 } } : {}) });
+    const path = resolve(out);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, Buffer.from(r.data, "base64"));
+    console.log(JSON.stringify({ path, width: Math.round(size.width), height: Math.round(size.height), url: page.url, full }));
+  } finally {
+    s.close();
+  }
+}
+
 async function open() {
   const dir = dirOf(name);
   mkdirSync(dir, { recursive: true });
@@ -146,6 +205,7 @@ async function open() {
     // Newer Chrome ignores --load-extension without this; company intranet assets trip
     // Local Network Access checks in a test profile.
     "--disable-features=DisableLoadExtensionCommandLineSwitch,LocalNetworkAccessChecks",
+    `--window-size=${windowSize()}`,
     ...(has("--visible") ? [] : ["--headless=new"]),
     "about:blank",
   ];
@@ -188,6 +248,7 @@ async function list() {
 }
 
 if (cmd === "open") await open();
+else if (cmd === "shot") await shot();
 else if (cmd === "close") await close();
 else if (cmd === "list") await list();
-else fail("usage: browser.mjs open <profile> [--url U] [--visible] [--chrome PATH] [--header host=Name:Value]... | close <profile> | list");
+else fail("usage: browser.mjs open <profile> [--url U] [--visible] [--size WxH] [--chrome PATH] [--header host=Name:Value]... | shot <profile> --out FILE [--page TEXT] [--full] | close <profile> | list");

@@ -736,6 +736,7 @@ input[type="number"].input::-webkit-outer-spin-button {
   max-width: 100%;
   border-radius: 6px;
 }
+.prose img { cursor: zoom-in; }
 .prose video {
   display: block;
   background: var(--line);
