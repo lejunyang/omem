@@ -74,6 +74,13 @@ exclude = []
 kind = "other"
 family = "docling"
 
+# Members' own AI accounts (docs/v2/agent-accounts.md) start agents inside bubblewrap on Linux.
+# Declared only: `osdk pkg apply` (needs sudo) installs it; upgrades never run it. Without it the
+# feature stays hidden and members borrow the owner's backends.
+[sys.pkg]
+"apt:bubblewrap" = { version = "latest", when = { os = "linux" } }
+"dnf:bubblewrap" = { version = "latest", when = { os = "linux" } }
+
 [deps.pnpm]
 auto = true
 # The workspace also has the docs site and the VS Code extension; the app needs only its own.

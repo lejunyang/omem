@@ -10,6 +10,8 @@ import { deleteDoubaoSession, doubaoAppFor, doubaoApps, doubaoSessionStatus, dou
 import type { AgentEvent, AgentRequest, SessionCleanup } from "./types.ts";
 import { MENTION_FOLLOW_MS } from "../mentions/channel.ts";
 import { NetworkUnavailableError, networkProfile, networkReason, withNetworkPolicy } from "./network-policy.ts";
+import { recordedAccount } from "./accounts.ts";
+import { accountOf } from "./sandbox.ts";
 
 type Pending = {
   backend_key: string; session_id: string; transport: string; profile_id: string | null;
@@ -40,7 +42,11 @@ export async function sessionCleanup(app: App, profile: AgentProfile, req: Pick<
   const configured = allProfiles(app.config).find((p) => p.id === profile.id);
   const original = configured && fingerprint(networkProfile(app, configured)) === fingerprint(profile) ? configured : profile;
   const hash = acp ? fingerprint(original) : null;
-  const backend = acp ? `acp:${hash}` : `doubao:${appId ?? ""}`;
+  // A member's own account (agents/accounts.ts): its sessions are cleaned up with that account.
+  const account = accountOf(profile);
+  // The Doubao CLI's conversations are deleted through the owner's OpenAPI login, which cannot reach a member's own.
+  if (account && !acp) return { created() {}, active() {}, async children() {}, async discard() {} };
+  const backend = acp ? `acp:${hash}${account ? `@acct:${account.userId}` : ""}` : `doubao:${appId ?? ""}`;
   const record = (id: string, ready: number) => {
     run(app.db, `insert into session_cleanup(backend_key,session_id,transport,profile_id,fingerprint,app_id,cwd,run_id,owner_pid,ready,retry_at) values(?,?,?,?,?,?,?,?,?,?,?)
       on conflict(backend_key,session_id) do update set run_id = coalesce(excluded.run_id, session_cleanup.run_id), owner_pid = excluded.owner_pid, ready = excluded.ready`, backend, id, profile.transport, profile.id, hash, appId, req.cwd, req.runId ?? null, process.pid, ready, now());
@@ -102,10 +108,22 @@ async function cleanChildren(app: App, p: Pending, profile: AgentProfile, emit: 
   }
 }
 
+const ACCOUNT_KEY = /@acct:([^@]+)$/;
+/** A session of a member's own account whose account folder is gone (they logged out): nothing left to clean. */
+function accountGone(app: App, p: Pending) {
+  const m = ACCOUNT_KEY.exec(p.backend_key);
+  if (!m) return false;
+  const profile = allProfiles(app.config).find(a => a.id === p.profile_id);
+  return !!profile && !recordedAccount(app, m[1], profile);
+}
 function recordedProfile(app: App, p: Pending) {
   const profile = allProfiles(app.config).find(a => a.id === p.profile_id && fingerprint(a) === p.fingerprint);
   if (!profile) throw new Error("创建时使用的后端配置已变更或移除，等待原配置恢复后重试");
-  return profile;
+  const m = ACCOUNT_KEY.exec(p.backend_key);
+  if (!m) return profile;
+  const own = recordedAccount(app, m[1], profile);
+  if (!own) throw new Error("创建这个会话的账号已经退出");
+  return own;
 }
 
 async function cleanAcp(app: App, profile: AgentProfile, id: string, cwd: string) {
@@ -141,6 +159,10 @@ async function clean(app: App, p: Pending, emit: Emit, recovering: boolean, oper
   try {
     // Delay both failures and still-running cloud tasks; the next sweep tries again.
     update(app, p, "retry_at = ?", new Date(Date.now() + retryDelay(p.attempts ?? 0)).toISOString());
+    if (accountGone(app, p)) {
+      run(app.db, "delete from session_cleanup where backend_key = ? and session_id = ?", p.backend_key, p.session_id);
+      return;
+    }
     if (p.transport === "acp" && networkReason(app, profile ?? recordedProfile(app, p))) return;
     if (p.transport === "acp") await cleanChildren(app, p, profile ?? recordedProfile(app, p), emit);
     if (operation) await operation();

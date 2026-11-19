@@ -152,7 +152,7 @@ omem 现在按对象 id 存：结构化消息 `lark_messages` 的主键是 `mess
 | `connector.use:<provider>` | 能连接哪个平台 | member 及以上：lark |
 | `share.external` | 生成对外分享链接 | member 及以上 |
 
-AI 后端和额度暂时不限制，成员的运行用本人配置的后端和任务选型。`code.delegate` 和 `desktop.control` 只给本人，原因是它们在宿主机上动手，与额度无关。以后要按后端限制时，再加 `agent.backend:<id>`。
+AI 后端和额度暂时不限制，成员的运行用本人配置的后端和任务选型；Linux 上装了 bubblewrap 时，成员可以登录自己的 AI 账号，他的运行就在沙箱里用他自己的账号，本人按后端定没登录的成员借用本人的还是不能用，见 [agent-accounts.md](agent-accounts.md)。`code.delegate` 和 `desktop.control` 只给本人，原因是它们在宿主机上动手，与额度无关。以后要按后端限制时，再加 `agent.backend:<id>`。
 
 空间：
 
@@ -423,7 +423,7 @@ omem peer invite --for 小王的服务 --share project-a:query --share handbook:
 1. 任何打开的登录方都能新建账号；可以设一个主要登录方，设了以后只能用它登录，其他提供方只用来绑定。本人用飞书作为主要登录方。
 2. 新账号进入待批准。
 3. 空间里的飞书文档默认对空间成员可见；“按来源权限过滤”是空间的可选设置。
-4. AI 后端和额度暂时不限制；交办编码和操作桌面只给本人。
+4. AI 后端和额度暂时不限制；交办编码和操作桌面只给本人。成员用自己的 AI 账号见 [agent-accounts.md](agent-accounts.md)。
 5. 不部署 Nango（免费自托管只能用 Docker Compose，还要 Postgres、Redis 和五个服务），只留 broker 接口。
 6. 本人能看所有人的个人空间（保持现状），在成员的账号页写明。
 7. 不做账号合并。绑定时身份已属于另一个账号就拒绝，交给本人解绑。

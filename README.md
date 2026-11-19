@@ -184,6 +184,7 @@ npm install -g @omem-ai/cli
 | 数据库太大 | `omem db` 看大小、空闲页和向量改存紧凑格式的进度（向量占大头，新版按 int8 存，是原来的四分之一，旧的在后台自动改）；改完后停服务运行 `omem db vacuum` 把空间还给磁盘 |
 | 看某个人让机器人做了什么 | 运行 → 全部运行 → “触发人”下拉选他（同一个人只有一项，提示里写着他找助手、有人找你各多少次），旁边“触发方式”再分开看找助手、有人找你……；每条运行的第二行写着谁、怎么触发的 |
 | 把同事加成 omem 的用户 | 在飞书里 @ 助手：“把 @小王 @小李 加成用户，项目 A 可写”。助手登记他们（飞书身份和邮箱），按你说的给空间权限，之后他们用飞书登录直接进来，不用再批准；只认你自己的话 |
+| 同事的运行别再用我的 AI 账号 | Linux 上装好 bubblewrap 后，同事在账号 → 我的 AI 账号 里登录 Codex、TraeX、豆包命令行，或给 Claude Code 粘贴令牌，他发起的运行就在沙箱里用他自己的账号。你在设置 → AI → 成员的 AI 账号 按后端选“借用本人的”或“只能用自己的” |
 | 把几个同事或别的机器人拉进一批群 | 对助理说“把小王、小李和日报机器人拉进项目 A 的三个群”：它查出每个人（重名时先让你挑），发一张审批卡片到你和机器人的私聊，列出每个群和每个人，批准后一次拉完并逐群告诉你谁进了、谁在等群主审批。只拉机器人默认不用批准（设置 → 渠道 → 拉人进群 可改成也要批准） |
 | 盯一张飞书表格，有人新增一行就查一下并回到群里 | 规则 → 文档变化：电子表格按行比对，每个新增或改动的行单独触发；条件里可以排除本人的改动；“发到”选一个群，Agent 回复在对应消息下并 @ 修改人；规则自己回写表格不会再次触发。在群里对助手说“这个群……”就能给当前群建规则 |
 | 某些命令会改敏感数据，想先审批 | 设置 → 安全 → 命令规则：写命令名和参数正则，Agent 和它脚本里的子进程执行时先问 omem，需要审批的发飞书卡片或网页待办，批准后放行；防误操作，拦不住绝对路径调用（docs/v2/command-gate.md） |
@@ -518,6 +519,8 @@ omem space share project-a wang [--edit]           # 再开放一个空间
 
 成员私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。每个人有一个全局角色（管理员、成员、访客，或你建的角色），在加入的每个空间里有一个空间角色（只读、贡献者、编辑、管理，或自定义的）：能不能写记忆、写 Wiki、看别人的运行、管空间成员都按角色来；管理员能改 Agent 和规则，系统设置、设备、交办编码只给你。自己建的空间自己管理，在账号页加人。成员的 Agent 运行只拿到他能用的工具。
 
+成员的 Agent 运行默认借用你在这台机器上的 AI 登录。Linux 上装了 bubblewrap（用系统的包管理器装 `bubblewrap`，或 `osdk pkg apply`；系统要允许非特权用户命名空间）以后，成员可以在账号页“我的 AI 账号”里登录 Codex、TraeX、豆包命令行（设备码或二维码），或给 Claude Code 粘贴在自己电脑上用 `claude setup-token` 生成的令牌；之后他发起的运行用他自己的账号，额度和使用记录算在他名下。所有人的 Agent 都以同一个系统用户运行，靠沙箱把各人的账号目录隔开：成员的运行在沙箱里，HOME 是他自己的账号目录，看不到你的登录、omem 的数据目录和别人的账号目录。你在设置 → AI → 成员的 AI 账号 里按后端定没登录的成员借用你的，还是只能用自己的（运行失败并提示他去登录），也能看到谁登了哪些后端、让他退出。macOS、Windows 和没有 bubblewrap 的 Linux 上没有这一项，成员照旧借用你的。`omem diag` 的 `agentAccounts` 显示这台机器能不能用。设计见 [docs/v2/agent-accounts.md](docs/v2/agent-accounts.md)。
+
 除了飞书，内置的“连接平台”插件还能接 Notion、GitHub、Google、Slack、Jira、钉钉、微信等约 500 个平台：你在设置 → 连接 → 其他平台里搜到平台，按提示在平台开发者后台建应用、填回 Client ID 和 Secret（用 key 连接的平台不用这步），再开放给成员；能确认身份的平台（GitHub、Google、钉钉、微信……）还能用来登录和绑定账号，其余只用来读取。成员连接后，直接让助手以他的身份读这些平台（连了平台才有这些工具），把需要的内容存成原件（只读，不会改平台上的东西）。Figma、Notion、GitHub、Google 云盘 / Gmail / 日历、Slack、Jira、Confluence、Linear 有平台包：设计稿、页面、issue、频道消息直接整理成 Markdown，让助手“盯着”某个项目、仓库或频道后，改动会定时同步进来，账号页能看到和停掉。说明见 [docs/v2/connectors.md](docs/v2/connectors.md)。
 
 成员可以在账号页“已连接的应用”里连接自己的飞书，按功能一项项授权（群聊消息、单聊消息、文档与知识库、表格、日程、妙记、让助手写文档；每打开一项跳一次飞书授权页，只要那一项的权限），也可以在登录页先勾好，登录时一起授权。飞书的授权只增不减，账号页每项功能有“omem 是否使用”的开关：关掉的不采集、对应的工具不用，飞书那边的授权要在飞书里撤销。连接以后，他的 Agent 运行以他自己的身份读写飞书（`lark_read`、`lark_write`、文档工具），没连接就用不了，不会借用你的登录；他的助手要用而还没授权时，会把一个预先勾好所缺功能的授权链接发给他，他在飞书里确认后，刚才那个会话自动接着做。消息授权以后默认不采集，只在他让助手看时读；在账号页打开“采集到 omem”的群聊或单聊后，后台采集他最近活跃的这类聊天，存进他的个人空间；打开了日程、妙记、文档的，他的日程、妙记和最近打开的文档也一样。已经在他能读的共享空间里的群、文档、妙记和日程不会再存一份，只记下他也能看到；正文里嵌着表格的文档按各人看到的分开存。同一个聊天或文档在几个空间各有一份时，检索只显示一条，注明另有几处；内容相同的切块只算一次向量。用到的权限要先在机器人应用的开发者后台开通：设置 → 渠道 的机器人检查会列出成员连接还缺哪些用户身份的权限，“扫码更新”一并申请。令牌加密存在本机 `secrets/vault.db`，不随快照和多台设备同步。空间管理者可以把某份原件设为“受限”（只有记下的人和管理者能看，比如放进项目空间的一段单聊），也可以让空间里的飞书文档按各人的飞书权限显示（成员连接飞书后，飞书说他能看的才显示全文）；这两类原件都不会分享出去，也不会发给别的服务。设计与分期见 [docs/v2/multi-user.md](docs/v2/multi-user.md)。同一台机器、同一个数据目录，不做多租户隔离。
@@ -627,7 +630,7 @@ src/quality   每晚抽检助手自主写入的页面和定级；页面按运行
 src/insights  数据页：固定场景表、按权限与期间聚合、记录明细、三分钟缓存、Markdown/CSV 导出（不含消息正文）
 src/learn     FSRS 卡片、学习目标
 src/plugins   插件：清单与加载（内置与数据目录）、信任（trust.ts）、服务与流（services.ts）、插件档案、插件记录（plugin_records）、设置、内容块（交出、提交、判分）与宿主的表单和图表、插件接口与页面（docs/v2/plugins.md）；场景包导入（contributions.ts：规则、MCP、流程）、打包（pack.ts）、插件渠道（channels.ts）；界面插槽（slots.ts）、开发目录链接（links.ts）、安装与源码构建（install.ts）
-src/agents    ACP/CLI 运行、后端网络条件（network-policy.ts）与 IPv6 / DNS 诊断（network-diagnostics.ts、network-request.ts）与 Agent 目录（catalog.ts）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、技能分组与接管 Agent 自带的技能目录（skill-groups.ts、agent-skills.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
+src/agents    ACP/CLI 运行、后端网络条件（network-policy.ts）与 IPv6 / DNS 诊断（network-diagnostics.ts、network-request.ts）与 Agent 目录（catalog.ts）、成员自己的 AI 账号（accounts.ts：账号目录、登录、按发起人选账号；sandbox.ts：bubblewrap 检查和启动参数）、助手（assistants.ts：每个机器人是谁的、每天次数、网页绑定）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、技能分组与接管 Agent 自带的技能目录（skill-groups.ts、agent-skills.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、交办工作区的预览（previews.ts）、运行产物（artifacts.ts）、编码前检查（pre-check.ts）与文件的历史（code-history.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts；夜间复盘（replay.ts 选题、两臂、检查、评判、改动，replay-view.ts 回到提问时）；本人此刻与近况的注入（owner-now.ts）、工作近况与人物卡（work-state.ts、每晚整理 work-state-job.ts）；运行的范围与相关运行（run-scope.ts）、发出前复核和运行中送达本人的话（awareness.ts）；每小时标注复核（jobs.ts、roles/note-reviewer.md）
               MCP 服务配置与密钥（mcp-servers.ts）、连接检测和工具列表（mcp-test.ts）
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、成员各自的飞书采集（lark-member-capture.ts）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
@@ -654,7 +657,7 @@ web/          Vue 3 网页
 
 ## 当前限制
 
-- 多人：能登录、批准、邀请，按角色和空间角色管权限，成员能连接自己的飞书，能和别人的 omem 服务共享空间；成员的后台采集只有聊天，检索结果还不按同一个平台对象合并显示（docs/v2/multi-user.md 的分期），不做多租户隔离。
+- 多人：能登录、批准、邀请，按角色和空间角色管权限，成员能连接自己的飞书，能和别人的 omem 服务共享空间；成员用自己的 AI 账号只在装了 bubblewrap 的 Linux 上有，额度不按账号分开读（选型时不按成员的额度避让），模型列表按后端缓存、不按账号；成员的后台采集只有聊天，检索结果还不按同一个平台对象合并显示（docs/v2/multi-user.md 的分期），不做多租户隔离。
 - 默认监听所有网卡，其他机器必须带令牌（配对或 `omem link`）或登录；在同一台机器上用反向代理对外暴露时，打开多人登录后带 `X-Forwarded-For` 的请求不算本机（代理要传这个头或 `Host`），没打开时经代理来的请求看起来来自本机，要配置 `token`。多台设备是“一台常驻写入、其他来看”，还没有双向持续同步。
 - 除 Claude Code、OpenCode 外，其他 ACP Agent 只验证过连接握手；各家登录和模型名以实际“检测模型”结果为准。
 - 代码解析：TS/JS/JSX/TSX/Vue 用 TypeScript AST；Python 用导入与缩进分析；Go、Rust、Java、Kotlin、Swift、C、C++、Objective-C、C#、PHP、Ruby、Scala、Dart、Lua、Zig、Elixir、OCaml、ReScript、Solidity、Bash、Emacs Lisp 用 tree-sitter（WebAssembly，无需编译，按需加载语法）；其他语言（Haskell、Erlang、Clojure、Elm…）只做通用声明识别。

@@ -2,6 +2,7 @@ import { open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
+import { accountOf } from "./sandbox.ts";
 
 type Helper = { id: string; parent: string };
 // Rollout metadata is immutable. Cache only complete first records, never a partly written file.
@@ -28,8 +29,10 @@ async function firstRecord(path: string): Promise<{ type?: string; payload?: Rec
 export async function disposableChildren(profile: AgentProfile, parentId: string, cwd = process.cwd()): Promise<string[]> {
   const history = profile.sessionHistory;
   if (!history || profile.peer) return [];
-  const configured = (history.env && (profile.env[history.env] ?? process.env[history.env])) || history.root;
-  const root = resolve(cwd, configured.startsWith("~/") ? join(homedir(), configured.slice(2)) : configured);
+  // A run with a user's own account keeps its history under their account folder (agents/sandbox.ts).
+  const account = accountOf(profile);
+  const configured = (history.env && (account?.env[history.env] ?? profile.env[history.env] ?? (account ? undefined : process.env[history.env]))) || history.root;
+  const root = resolve(cwd, configured.startsWith("~/") ? join(account?.home ?? homedir(), configured.slice(2)) : configured);
   const files: string[] = [];
   async function walk(dir: string) {
     let entries;

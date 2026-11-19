@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { del, get, logout, patch, post, put } from "../api";
 import UiSelect from "../components/UiSelect.vue";
 import AssistantsSettings from "../components/AssistantsSettings.vue";
+import AgentAccounts from "../components/AgentAccounts.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { fmtTime, state, toast } from "../store";
@@ -335,6 +336,8 @@ onMounted(() => Promise.all([load(), loadManaged(), loadConnections(), loadToken
         </div>
       </div>
       <p v-if="conns && !shownProviders.length && state.me?.role !== 'owner'" class="muted small">omem 还没有可以连接的平台。</p>
+
+      <AgentAccounts />
 
       <h2 class="section-title">登录的设备</h2>
       <div v-if="!acc.sessions.length" class="card pad muted small">{{ acc.via === "local" ? "你在运行 omem 的这台机器上，不用登录。" : "没有登录的设备。" }}</div>

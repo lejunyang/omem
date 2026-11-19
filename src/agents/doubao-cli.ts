@@ -5,6 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
 import { idleWatchdog, launch, resolveCommand, stop } from "./spawn.ts";
+import { accountOf } from "./sandbox.ts";
 import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
 
 /**
@@ -70,15 +71,17 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
   const direct = exe !== profile.command || process.platform !== "win32";
   let file: string | undefined;
   let prompt = req.prompt;
+  const account = accountOf(profile);
   if (!direct || prompt.length > INLINE_MAX) {
-    const dir = join(tmpdir(), "omem-doubao");
+    // In a user's sandbox /tmp is its own: the file goes in their account folder, which it sees.
+    const dir = account ? join(account.home, ".omem-prompts") : join(tmpdir(), "omem-doubao");
     mkdirSync(dir, { recursive: true });
     file = join(dir, `${randomUUID()}.md`);
     writeFileSync(file, req.prompt);
     prompt = `先完整读取文件 ${file}（UTF-8），那是这一轮的完整内容，按它执行并回答；回答里不要提这个文件。`;
   }
   // -p 从参数读提示；新版 CLI 无法把 Node 子进程默认的 socket 接为 stdin。
-  const child = launch(exe, doubaoArgs(profile, req, prompt), { cwd: req.cwd, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore" });
+  const child = launch(exe, doubaoArgs(profile, req, prompt), { cwd: req.cwd, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin: "ignore", sandbox: account });
   emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
   if (req.runId) shellToolRuns.add(req.runId);
   let stdout = "";

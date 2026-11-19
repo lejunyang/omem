@@ -41,13 +41,54 @@ export type CatalogEntry = {
    * `${VAR:-default}` are expanded.
    */
   skills?: { read: string[]; write: string };
+  /**
+   * Each omem user can run this backend with an account of their own (docs/v2/agent-accounts.md):
+   * the user's account folder is the HOME of a sandbox the agent starts in (agents/sandbox.ts). Only
+   * backends with this field take part; everything that differs between them is written here.
+   */
+  account?: AccountSpec;
 };
 
+export type AccountSpec = {
+  /** The command that logs in, checks and logs out, when not `command` (the ACP adapter is another program). `~` and `${VAR:-default}` expand. */
+  cli?: string;
+  /** Set at launch; `{home}` is the user's account folder (the sandbox's HOME). */
+  env: Record<string, string>;
+  /** Made beforehand under the account folder, 0700 (socket and temp folders). */
+  dirs?: string[];
+  /** This machine's installs the sandbox sees read-only (`~` and `${VAR:-default}` are the service's own). */
+  mounts?: string[];
+  /** What under the account folder belongs to this backend: removed when the user logs out of it. */
+  owns: string[];
+  /** Logging in without a screen: arguments, and patterns that find the link and the code in what it prints. */
+  login?: { args: string[]; url: string; code?: string; timeoutMs?: number };
+  /** Exit code 0 is logged in; `user` finds the account name in the output. */
+  status?: { args: string[]; user?: string };
+  logout?: { args: string[] };
+  /** A long-lived token can stand in for a login: the variable it goes in (kept in omem's vault, per user). */
+  tokenEnv?: string;
+};
+
+// Patterns for what device logins print. Best effort: the first https link, a code like ABCD-1234.
+const LOGIN_URL = "https://[^\\s\"'<>]+";
+const DEVICE_CODE = "\\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\\b";
+
 export const acpCatalog: CatalogEntry[] = [
-  { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server", skills: { read: ["${CODEX_HOME:-~/.codex}/skills", "~/.agents/skills"], write: "~/.agents/skills" } },
+  {
+    id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low", sessionHistory: { format: "codex-rollout", root: "~/.codex", env: "CODEX_HOME" }, quota: "codex-app-server", skills: { read: ["${CODEX_HOME:-~/.codex}/skills", "~/.agents/skills"], write: "~/.agents/skills" },
+    account: { cli: "codex", env: { CODEX_HOME: "{home}/.codex" }, dirs: [".codex"], owns: [".codex"], login: { args: ["login", "--device-auth"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, status: { args: ["login", "status"], user: "(?:as|account:?)\\s+([^\\s()]+@[^\\s()]+|[^\\s()]+)" }, logout: { args: ["logout"] } },
+  },
   // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
-  { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI", skills: { read: ["${TRAE_HOME:-~/.trae}/skills", "~/.agents/skills"], write: "~/.agents/skills" } },
-  { id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" } },
+  {
+    id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI", skills: { read: ["${TRAE_HOME:-~/.trae}/skills", "~/.agents/skills"], write: "~/.agents/skills" },
+    // Its socket folder and temp folder must be private (0700) and not links.
+    account: { env: { TRAE_HOME: "{home}/.trae", XDG_RUNTIME_DIR: "{home}/.run", TMPDIR: "{home}/.tmp" }, dirs: [".trae", ".run", ".tmp"], owns: [".trae"], login: { args: ["login", "--sso-device"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, status: { args: ["login", "status"], user: "(?:as|user:?|account:?)\\s+([^\\s()]+)" }, logout: { args: ["logout"] } },
+  },
+  {
+    id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp", quota: "claude-usage", skills: { read: ["${CLAUDE_CONFIG_DIR:-~/.claude}/skills"], write: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills" },
+    // `claude setup-token` prints a long-lived token on the person's own machine; pasted here, it goes in the vault.
+    account: { cli: "claude", env: { CLAUDE_CONFIG_DIR: "{home}/.claude" }, dirs: [".claude"], owns: [".claude", ".claude.json"], tokenEnv: "CLAUDE_CODE_OAUTH_TOKEN", status: { args: ["auth", "status"], user: "([^\\s\"]+@[^\\s\"]+)" } },
+  },
   { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
   { id: "copilot", name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
   { id: "qwen", name: "Qwen Code", command: "qwen", args: ["--acp"], npm: "@qwen-code/qwen-code" },
@@ -78,6 +119,31 @@ export const acpCatalog: CatalogEntry[] = [
   { id: "pi", name: "pi", command: "pi-acp", npm: "pi-acp" },
   { id: "deepagents", name: "DeepAgents", command: "deepagents-acp", npm: "deepagents-acp" },
 ];
+
+/**
+ * Backends that are not ACP agents but can run with each user's own account: the Doubao CLI
+ * (agents/doubao-cli.ts). Its native program starts from this machine's install by absolute path,
+ * so that install is mounted read-only; its data and login go under the user's account folder.
+ */
+export const accountOnlyCatalog: CatalogEntry[] = [
+  {
+    id: "doubao-cli", name: "豆包 (CLI)", command: "doubao", install: "npm i -g @bytedance/doubao-cli",
+    account: {
+      cli: "${XDG_DATA_HOME:-~/.local/share}/doubao_cli/app/current/doubao",
+      env: { XDG_DATA_HOME: "{home}/.local/share" },
+      dirs: [".local/share"],
+      mounts: ["${XDG_DATA_HOME:-~/.local/share}/doubao_cli/app"],
+      owns: [".local/share/doubao_cli"],
+      login: { args: ["login", "--qr=full"], url: LOGIN_URL, timeoutMs: 600_000 },
+      status: { args: ["auth", "status"] },
+    },
+  },
+];
+
+/** Every backend that can run with a user's own account. */
+export function accountCatalog(): (CatalogEntry & { account: AccountSpec })[] {
+  return [...acpCatalog, ...accountOnlyCatalog].filter((e): e is CatalogEntry & { account: AccountSpec } => !!e.account);
+}
 
 export function catalogProfile(e: CatalogEntry): AgentProfile {
   return {

@@ -4,6 +4,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
+import { accountOf } from "./sandbox.ts";
 import { isQuotaMessage } from "./capacity.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
 import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult, type SessionCleanup } from "./types.ts";
@@ -100,7 +101,7 @@ export type AcpHandle = {
 
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
   if (opts.signal?.aborted) throw new Error("CANCELLED");
-  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env } });
+  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...keyEnv(profile), ...opts.mcp?.env, ...opts.env }, sandbox: accountOf(profile) });
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => {
@@ -592,14 +593,15 @@ function explain(error: unknown, profile: AgentProfile) {
   const detail = e.data === undefined || e.data === null ? "" : typeof e.data === "string" ? e.data : JSON.stringify(e.data).slice(0, 400);
   const text = `${e.message}${detail ? "：" + detail : ""}`;
   const cli = profile.command === "npx" || profile.command === "uvx" ? `${profile.command} ${profile.args.filter((a) => !a.startsWith("-") || a === "-y").slice(0, 2).join(" ")}` : profile.command;
-  const hint = /auth|login|log in|api.?key|credential|provider|configur/i.test(text) ? `（先在终端直接运行 ${cli} 完成登录或配置，再回来使用）` : "";
+  const needsLogin = /auth|login|log in|api.?key|credential|provider|configur/i.test(text);
+  const hint = !needsLogin ? "" : accountOf(profile) ? "（这次用的是你自己的账号：在 账号 → 我的 AI 账号 里重新登录后再试）" : `（先在终端直接运行 ${cli} 完成登录或配置，再回来使用）`;
   return new Error(text + hint);
 }
 
 /** Delete a session through a connection of its own: start the agent, `session/delete`, stop it. */
 export async function deleteAcpSession(profile: AgentProfile, sessionId: string, cwd: string, env?: Record<string, string>, signal?: AbortSignal) {
   if (signal?.aborted) throw new Error("CANCELLED");
-  const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...keyEnv(profile), ...env } });
+  const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...keyEnv(profile), ...env }, sandbox: accountOf(profile) });
   const onAbort = () => stop(child);
   signal?.addEventListener("abort", onAbort, { once: true });
   child.stderr.resume();

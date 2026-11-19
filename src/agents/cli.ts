@@ -1,5 +1,6 @@
 import type { AgentProfile } from "../core/config.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
+import { accountOf } from "./sandbox.ts";
 import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
 import { keyEnv } from "../core/ai-keys.ts";
@@ -56,7 +57,7 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
   if (req.signal?.aborted) throw new Error("CANCELLED");
   const isClaude = profile.transport === "claude-cli";
   const args = isClaude ? claudeArgs(profile, req) : codexArgs(profile, req);
-  const child = launch(profile.command, args, { cwd: req.cwd, env: { ...profile.env, ...keyEnv(profile), ...req.mcp?.env, ...req.env } });
+  const child = launch(profile.command, args, { cwd: req.cwd, env: { ...profile.env, ...keyEnv(profile), ...req.mcp?.env, ...req.env }, sandbox: accountOf(profile) });
   child.stdin.end(req.prompt);
   let text = "";
   // Text between tool calls; the last segment is the reply proper (see replyFromSegments).
