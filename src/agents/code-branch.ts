@@ -442,8 +442,31 @@ export function deliverBranchWork(app: App, runId: string, opts: { force?: boole
 }
 
 /**
+ * A repository with no origin (a new one omem made, say): confirming has nowhere to push, so the work
+ * branch goes onto the branch it was cut from instead, when that is a fast-forward — through the
+ * checkout that has it (`merge --ff-only`, which refuses to touch uncommitted changes in the same
+ * files), else by moving the ref. What happened, for the confirmation's notes.
+ */
+export function landLocally(root: string, wt: WorktreeRef): string {
+  const target = wt.cutFrom;
+  const tip = tipOf(root, wt.branch);
+  if (!target || target === wt.branch || !tip) return "没有 origin，只在本地";
+  const base = tipOf(root, target);
+  if (!base) return `没有 origin；${target} 不在了，改动留在分支 ${wt.branch}`;
+  if (base === tip) return `没有 origin；${target} 已经是这些提交`;
+  if (!ancestor(root, base, tip)) return `没有 origin；${target} 上有这次交办之外的新提交，没有合进去，改动留在分支 ${wt.branch}（在分支面板“合并到”${target} 后再确认，或自己合）`;
+  const elsewhere = checkedOutAt(root, target);
+  if (elsewhere) {
+    const ff = git(elsewhere, ["merge", "--ff-only", "-q", tip]);
+    if (!ff.ok) return `没有 origin；${elsewhere} 检出的 ${target} 没能快进（${(ff.stderr || ff.stdout).trim().slice(0, 200)}），改动留在分支 ${wt.branch}`;
+  } else if (!git(root, ["update-ref", `refs/heads/${target}`, tip, base]).ok) return `没有 origin；${target} 刚被移动过，没能合进去，改动留在分支 ${wt.branch}`;
+  return `没有 origin，已快进合进本地的 ${target}`;
+}
+
+/**
  * The owner's confirmation: optionally squash, push each work branch to origin (set as upstream;
- * with a lease when it was squashed or `force`), then give the workspaces back. Branches stay.
+ * with a lease when it was squashed or `force`), then give the workspaces back. Branches stay. A
+ * repository without origin gets the work on the branch it was cut from (`landLocally`).
  */
 export function confirmBranchRun(app: App, runId: string, opts: { squash?: string; force?: boolean; push?: boolean } = {}) {
   const run = getRun(app, runId);
@@ -466,8 +489,12 @@ export function confirmBranchRun(app: App, runId: string, opts: { squash?: strin
       notes.push(`${wt.space}：${s.count} 个提交压缩成一个`);
       force = true;
     }
-    if (opts.push === false || !git(t.root, ["remote", "get-url", "origin"]).ok) {
-      notes.push(`${wt.space}：${opts.push === false ? "没有推送" : "没有 origin，只在本地"}`);
+    if (opts.push === false) {
+      notes.push(`${wt.space}：没有推送`);
+      continue;
+    }
+    if (!git(t.root, ["remote", "get-url", "origin"]).ok) {
+      notes.push(`${wt.space}：${landLocally(t.root, wt)}`);
       continue;
     }
     pushed.push(pushWorkBranch(t.root, wt, force, pushed));
