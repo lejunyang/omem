@@ -21,6 +21,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { httpsOf } from "./git-url.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -43,7 +44,17 @@ function step(title: string, cmd: string, args: string[], opts: { optional?: boo
   process.exit(r.status || 1);
 }
 
-if (!has("--no-pull") && existsSync(join(root, ".git"))) step("拉取最新代码", "git", ["pull", "--ff-only"]);
+// SSH can fail under a process manager (no passwd entry for the uid, no agent): retry over https.
+if (!has("--no-pull") && existsSync(join(root, ".git")) && !step("拉取最新代码", "git", ["pull", "--ff-only"], { optional: true })) {
+  const git = (...a: string[]) => spawnSync("git", a, { cwd: root, encoding: "utf8" }).stdout?.trim() ?? "";
+  const https = httpsOf(git("remote", "get-url", "origin"));
+  const branch = git("symbolic-ref", "--quiet", "--short", "HEAD");
+  if (!https || !branch) {
+    console.error("\n✗ 拉取最新代码 失败");
+    process.exit(1);
+  }
+  step(`改用 https 拉取（${https}）`, "git", ["pull", "--ff-only", https, branch]);
+}
 if (spawnSync("osdk", ["--version"], { cwd: root, stdio: "ignore", shell: win }).status === 0) {
   // osdk installs the toolchain osdk.toml pins, then the app's dependencies ([deps.pnpm]) from the
   // registry it names, whatever this machine's .npmrc points at. osdk.toml is trusted first (its

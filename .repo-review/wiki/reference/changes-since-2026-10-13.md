@@ -16,6 +16,10 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 更新时 SSH 拉不下来就改用 https（11-20）
+
+- `scripts/upgrade.ts`：`git pull --ff-only` 失败时，把 SSH 形式的 origin 换成同一仓库的 https 地址（`scripts/git-url.ts` 的 `httpsOf`）再拉当前分支；进程管理器起的服务里 ssh 认不出当前用户（`No user exists for uid …`）或没有 agent 时，远程 `update` 也能拉到代码。测试 `test/git-url.test.ts`。
+
 ## 删除空的空间；切换仓库目录检出的分支（11-20）
 
 - `src/core/spaces.ts` 的 `deleteSpace` / `spaceContent`：本人可以删除什么都没有的空间（`DELETE /api/spaces/:id`），连同成员、与其他空间的关联和知识库里的目录；有原件、页面、记忆、事项、运行等内容的、个人空间、下面还挂着仓库的业务空间、分支索引都拒绝，并说清还有什么。`GET /api/spaces/:id` 多了 `content`。仓库空间的仓库目录不动。
