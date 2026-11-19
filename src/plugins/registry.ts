@@ -286,9 +286,10 @@ async function loadCode(app: App, p: LoadedPlugin) {
       // Only code running inside omem gets here (an isolated plugin's api refuses it: sandbox-runner.ts).
       if (p.source === "data" && !manifest.permissions.agentLogin.includes(def.backend)) throw new Error(`插件 ${manifest.id} 给 ${def.backend} 注册的登录方式没有在 permissions.agentLogin 里声明`);
       if (!accountCatalog(app.config.agents.profiles).some((e) => e.id === def.backend)) throw new Error(`插件 ${manifest.id} 的登录方式 ${def.id}：后端 ${def.backend} 不能按人登录`);
-      p.connectors.push(registerAgentLogin(manifest.id, def));
+      p.connectors.push(registerAgentLogin(manifest.id, def, () => pluginSettings(app, manifest.id, manifest.settings, OWNER)));
       p.logins.push(`${def.backend}:${def.id}`);
     },
+    settings: () => pluginSettings(app, manifest.id, manifest.settings, OWNER),
     fetch: authFetch,
     platform(def) {
       if (p.source === "data" && !manifest.permissions.platforms.includes(def.provider)) throw new Error(`插件 ${manifest.id} 的平台包 ${def.provider} 没有在 permissions.platforms 里声明`);

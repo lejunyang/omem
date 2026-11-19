@@ -483,6 +483,7 @@ function pluginContext(app: App, userId: string, entry: AccountEntry, m: AgentLo
         storeConnection(app, { userId, provider, accountId: entry.id, accountName: `${entry.name} · ${m.label}`, scopes: [], accessToken: value });
       },
     },
+    settings: m.settings(),
     signal,
   };
 }

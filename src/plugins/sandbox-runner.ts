@@ -114,6 +114,7 @@ async function main() {
     connector: unsupported("新的连接器"),
     authenticator: unsupported("鉴权方式"),
     agentLogin: unsupported("AI 账号的登录方式"),
+    settings: unsupported("api.settings（隔离运行时在工具的 ctx.settings() 里读）"),
     appConfig: unsupported("连接器的应用配置"),
     service: (name) => ({ ensure: () => rpc("service.ensure", { name }) }),
     fetch: (...a) => fetch(...a),

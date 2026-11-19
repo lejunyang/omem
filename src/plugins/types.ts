@@ -231,6 +231,12 @@ export type PluginApi = {
    * `permissions.agentLogin`; only code trusted to run inside omem.
    */
   agentLogin(def: import("../agents/agent-logins.ts").AgentLoginDef): void;
+  /**
+   * The owner's values of this plugin's settings (manifest `settings`, 设置 → 插件), defaults filled in;
+   * read it when needed (not once at load) so a change takes effect without reloading. Code running
+   * isolated reads them per call through `ctx.settings()` instead.
+   */
+  settings(): PluginSettings;
   /** What the owner filled in for one of this plugin's connectors (its `appFields`: client id and secret…), read each time. */
   appConfig(provider: string): Record<string, string>;
   /** The host's fetch for a connector's own calls (exchanging codes, whoami): tests answer it without the network. */

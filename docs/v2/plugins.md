@@ -270,7 +270,7 @@ import type { AgentLoginDef } from "@omem-ai/plugin-sdk";   // 只有类型；�
 
 const login: AgentLoginDef = {
   backend: "traex", id: "sso", label: "用示例公司账号登录",       // id 在插件内唯一，全名 <插件 id>:<id>
-  async login(ctx) {                                            // ctx: userId、home、env、secret、signal、show
+  async login(ctx) {                                            // ctx: userId、home、env、secret、settings、signal、show
     const device = await startDeviceFlow(ctx.signal);           // 插件自己的授权（设备码或网页）
     ctx.show({ url: device.url, code: device.code });           // 宿主显示在页面上，也用机器人发到他的飞书私聊
     const t = await waitForTokens(device, ctx.signal);
@@ -295,6 +295,7 @@ api.agentLogin(login);
 - 登录 11 分钟没完成、60 秒内没调用 `show` 也没完成时，宿主取消（`ctx.signal`）。`show` 只接受 http(s) 链接。
 - 续签：按 `expiresAt` 提前 10 分钟（最短 1 分钟一次）调用 `refresh`，时间记在库里，重启后照常；返回 null 或抛错时登录态改成“登录过期”并通知这个人，账号目录留着。没有 `refresh` 时到 `expiresAt` 直接算过期。
 - “我的 AI 账号”里一个后端同时列出它自己的登录方式和插件提供的，成员选一个；登录态记下是用哪种方式登录的。
+- 插件自己的配置（应用标识、站点、接口地址这类）写成清单的 `settings`，本人在 设置 → 插件 里填；`login`、`refresh`、`logout` 从 `ctx.settings` 读到本人填的值。登录方式以外的代码（鉴权方式的 `verify` 等）用 `api.settings()` 读，每次用时读，改了不用重新加载；只有在 omem 里运行的插件有 `api.settings()`，隔离运行的在工具的 `ctx.settings()` 里读。
 - 主人要填的应用配置写 `appFields`（client id、secret、站点），在设置 → 连接 → 其他平台里填，存在 `secrets/connector-apps.json`，插件用 `api.appConfig(id)` 读；接口地址依赖它时 `apiBase` 写成函数。令牌不是 Bearer 时用 `sign(app, { url, headers }, secret)` 放进请求头或 query。插件自己发的请求（换令牌、查账号）用 `api.fetch`。
 - 工具写 `whenConnected: true`：只在这次运行的人连了本插件的某个连接器（`<插件 id>-…`）时给出。
 - 工具里 `ctx.saveSource({ uri, title, text, space? })` 存原件：`uri` 写 `平台:编号`，同一个 uri 再存是更新，也作 origin_key。

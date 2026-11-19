@@ -30,7 +30,7 @@ export default function register(api) {
       await new Promise((r) => setTimeout(r, 20));
       if (globalThis.__loginFail) throw new Error("示例公司账号拒绝了");
       mkdirSync(ctx.env.TRAE_HOME, { recursive: true });
-      writeFileSync(join(ctx.env.TRAE_HOME, "credentials.json"), JSON.stringify({ user: ctx.userId }));
+      writeFileSync(join(ctx.env.TRAE_HOME, "credentials.json"), JSON.stringify({ user: ctx.userId, appKey: ctx.settings.appKey, live: api.settings().appKey }));
       await ctx.secret.set("refresh-" + ctx.userId);
       return { user: ctx.userId + "@example.test", expiresAt: Date.now() + (globalThis.__expiresIn ?? 3600000) };
     },
@@ -78,7 +78,7 @@ beforeEach(async () => {
   for (const k of ["__loginFail", "__expiresIn", "__refreshed", "__refreshNull", "__loggedOut"] as const) delete g[k];
   app = testApp();
   setSandboxSupportForTests({ ok: true, bwrap: "/usr/bin/bwrap-missing" });
-  writePlugin("loginprobe", "id: loginprobe\nname: 示例登录\npermissions:\n  agentLogin: [traex]\n");
+  writePlugin("loginprobe", "id: loginprobe\nname: 示例登录\npermissions:\n  agentLogin: [traex]\nsettings:\n  - { key: appKey, label: 应用标识, type: text, default: \"\" }\n");
   await loadPlugins(app, [{ dir: join(app.home, "plugins"), source: "data" }]);
   await trustPlugin(app, "loginprobe", "inprocess");
   for (const id of ["ann", "bob"]) {
@@ -112,7 +112,8 @@ describe("插件提供的 AI 账号登录方式", () => {
     expect(host.id).toBe("x");
   });
 
-  it("登录：链接和验证码给页面、也发到本人的私聊；凭据写进 env 指的位置，秘密存进密钥库", async () => {
+  it("登录：链接和验证码给页面、也发到本人的私聊；凭据写进 env 指的位置，秘密存进密钥库；插件读得到本人在设置里填的值", async () => {
+    expect((await as(null, "/api/plugins/loginprobe/settings", { method: "PUT", body: JSON.stringify({ appKey: "example_app" }) })).status).toBe(200);
     const r = await login("ann");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ url: "https://sso.example.test/device", code: "WXYZ-1234" });
@@ -124,7 +125,7 @@ describe("插件提供的 AI 账号登录方式", () => {
     await until(() => accountState(app, "ann", "traex").state === "logged-in");
     const s = accountState(app, "ann", "traex");
     expect(s).toMatchObject({ user: "ann@example.test", method: "loginprobe:sso" });
-    expect(JSON.parse(readFileSync(join(accountHome(app, "ann"), ".trae", "credentials.json"), "utf8"))).toEqual({ user: "ann" });
+    expect(JSON.parse(readFileSync(join(accountHome(app, "ann"), ".trae", "credentials.json"), "utf8"))).toEqual({ user: "ann", appKey: "example_app", live: "example_app" });
     expect(secretOf("ann")).toBe("refresh-ann");
     // Not among the connected apps, not in the account folder.
     expect((await (await as("ann", "/api/auth/connections")).text())).not.toContain("refresh-ann");

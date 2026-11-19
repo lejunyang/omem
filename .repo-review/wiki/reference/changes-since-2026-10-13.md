@@ -16,6 +16,11 @@ updated: 2026-11-20
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 插件读得到本人填的设置：api.settings() 和登录方式的 ctx.settings（11-20）
+
+- `src/plugins/registry.ts`：在 omem 里运行的插件多了 `api.settings()`，返回本人在 设置 → 插件 里填的值（清单 `settings`，带默认值），每次调用时读；隔离运行的照旧在工具的 `ctx.settings()` 里读（`sandbox-runner.ts` 里调用会报错说明）。
+- `src/agents/agent-logins.ts`、`accounts.ts`：登录方式的 `login`、`refresh`、`logout` 的上下文多了 `settings`；插件 SDK 的类型同步（`packages/plugin-sdk/agent-login.ts`）。文档 `docs/v2/plugins.md`“AI 账号的登录方式”，测试 `test/agent-logins.test.ts`。
+
 ## 成员的 AI 账号：额度和模型按账号、技能进账号目录、换后端、停用时清理、插件登录（11-20）
 
 - 运行时 profile 上带成员账号的字段从 `account` 改名 `ownAccount`（`sandbox.ts` 的 `accountOf`）：`account` 现在是配置里 profile 的 spec。
