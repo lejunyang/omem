@@ -18,7 +18,7 @@ import { itemPlaces } from "../items/places.ts";
 import { createDesign } from "../designs/store.ts";
 import { flowsFor, parseFlow, readFlow, saveFlow, type FlowStage, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
 import { stageTiming, nextRoundAt, roundDayMatches, timeLabel } from "./timing.ts";
-import { findObject, objectKind } from "./objects.ts";
+import { codeWorkSince, findObject, objectKind } from "./objects.ts";
 import { pollObjects } from "./plugin-objects.ts";
 import { checkGitSignals, waitingSignal, type GitSignal } from "./signals.ts";
 import { agreedGate, gateGranted, resetGateStreak, revokeGate } from "./gates.ts";
@@ -467,7 +467,15 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       if ((s.by === s.control.runId && !!s.by) && !s.control.reported) {
         const r = getRun(app, s.by);
         if (!["queued", "running"].includes(r.status)) {
-          const note = `这一段的运行结束了，没有交代结果${r.error ? `：${r.error}` : ""}${typeof r.output.text === "string" ? `；上一次的结论：${r.output.text.slice(0, 4000)}` : ""}`;
+          // A stage carried by a delegation, redone on the owner's word: its run started or joined a
+          // delegation and ended, as it was told to. The stage follows that delegation; nothing is stuck.
+          const started = carrierKind === "code-work" && !r.error ? codeWorkSince(app, item, r.createdAt) : null;
+          if (started) {
+            changeStage(app, itemId, d.id, "doing", { by: started.ref, control: { ...finishUsage(app, s, at), feedback: undefined } }, { ...host, runId: r.id }, `跟随编码交办：${started.title}`, [started.ref]);
+            changed = true; continue;
+          }
+          const said = typeof r.output.text === "string" ? r.output.text.trim().slice(0, 4000) : "";
+          const note = [`这一段的运行结束了，没有交代结果${r.error ? `：${r.error}` : ""}。`, said ? `**运行最后说的**\n${said}` : ""].filter(Boolean).join("\n\n");
           try {
             const ai = await stageAI(app, f, d, s, at);
             if (ai.waitUntil) {
@@ -723,7 +731,7 @@ async function end(app: App, id: string, note: string, how: FlowEnd) {
     const keepSummary = lastDef && (isFixes(lastDef) || lastDef.tools?.includes("record_finding"));
     changeStage(app, id, last.id, last.state, {}, host, keepSummary && last.note ? `${last.note}\n${note}` : note);
     // Stopping or closing is the owner's own doing; only a flow that ran to its end is news.
-    if (how === "completed") markProgress(app, id, "流程走完了");
+    if (how === "completed") markProgress(app, id, { head: "流程走完了" });
     if (last.control.recorded) run(app.db, "update item_stages set note=? where item_id=? and stage_id=?", last.note, id, last.id);
   }
   // The review is figures from the records, no model; it may queue the coach for the definition (review.ts).

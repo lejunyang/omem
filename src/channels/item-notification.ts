@@ -6,13 +6,14 @@ import { buildCard, uploadLark, type CardButton } from "./lark-send.ts";
 import { artifactPath, artifactsByIds } from "../agents/artifacts.ts";
 import { currentBot } from "../core/bot-context.ts";
 import { webLink } from "../core/util.ts";
+import { PROGRESS_TAIL } from "../flows/store.ts";
 
 /** Page links (#/...) open from Feishu once the web address is configured (config.webUrl). */
-function linkButton(app: App, link: string | null): CardButton[] {
+function linkButton(app: App, link: string | null, text = "打开链接"): CardButton[] {
   if (!link) return [];
   try {
     const url = new URL(webLink(app, link));
-    if (url.protocol === "https:" || url.protocol === "http:") return [{ text: "打开链接", url: url.href }];
+    if (url.protocol === "https:" || url.protocol === "http:") return [{ text, url: url.href }];
   } catch { /* Internal routes and invalid URLs cannot be opened from Feishu. */ }
   return [];
 }
@@ -93,7 +94,49 @@ export function notificationCard(app: App, n: Notification, images: CardImage[] 
   });
 }
 
+/** Paragraphs of a markdown body; a code block with blank lines in it stays one paragraph. */
+function paragraphs(markdown: string): string[] {
+  const out: string[] = [];
+  for (const p of markdown.trim().split(/\n\s*\n/)) {
+    const open = out.length && ((out.at(-1)!.match(/```/g) ?? []).length % 2 === 1);
+    if (open) out[out.length - 1] += `\n\n${p}`;
+    else if (p.trim()) out.push(p);
+  }
+  return out;
+}
+
+/** Shown open on a progress card; what a stage said past this goes into a closed fold, never cut. */
+const FLOW_OPEN = 900;
+
+/**
+ * An item's flow progress (flows/store.ts progress): what happened in bold, what the stage said (the
+ * long part folded), then where the flow stands and what comes next, always open. Its only button
+ * opens the flow page: 已处理 / 忽略 would close or drop the whole item, not answer this card.
+ */
+export function flowProgressCard(app: App, n: Notification, images: CardImage[] = []) {
+  const ps = paragraphs(resolveCitationsSync(app, n.body));
+  const tailAt = ps.findIndex((p, i) => i > 0 && p.startsWith(PROGRESS_TAIL[0]));
+  const head = ps[0] ?? n.title, middle = ps.slice(1, tailAt < 0 ? undefined : tailAt), tail = tailAt < 0 ? [] : ps.slice(tailAt);
+  const open: string[] = [], folded: string[] = [];
+  for (const p of middle) (!folded.length && open.join("\n\n").length + p.length <= FLOW_OPEN ? open : folded).push(p);
+  // Nothing fits: the first paragraph still shows, cut at a line, and the whole goes into the fold.
+  const cut = !open.length && folded.length > 0;
+  if (cut) open.push(folded[0].split("\n").reduce((a, l) => a.length + l.length > FLOW_OPEN ? a : a ? `${a}\n${l}` : l, "") || folded[0].slice(0, FLOW_OPEN) + "…");
+  return buildCard({
+    title: n.title,
+    color: n.tone === "warning" ? "orange" : n.tone === "done" ? "green" : "blue",
+    blocks: [
+      { markdown: [head, ...open].join("\n\n") },
+      ...(folded.length ? [{ fold: { title: cut ? "展开全文" : "更多情况", markdown: folded.join("\n\n") } }] : []),
+      ...imageBlocks(images),
+      ...(tail.length ? [{ markdown: tail.join("\n\n") }] : []),
+      ...((b) => b.length ? [{ buttons: b.map((x) => ({ ...x, style: "primary" as const })) }] : [])(linkButton(app, n.link, "打开流程页")),
+    ],
+  });
+}
+
 export function itemNotificationCard(app: App, n: Notification, images: CardImage[] = []) {
+  if (n.view === "flow") return flowProgressCard(app, n, images);
   // Details can contain older citations too; only this notification's evidence becomes links.
   const scopedBody = n.body.replace(/\[([^\]]*)\]\(((?:src|mem|msg):[^)]+)\)/g, (all, label: string, ref: string) => (n.sourceRefs ?? []).includes(ref) ? all : label);
   // Share the final URL set across the body and origin block; keep repeated labels as text.

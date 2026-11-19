@@ -49,6 +49,29 @@ it("keeps item actions and avoids repeating a link already in the item body", ()
   expect(repeated).not.toContain("open_url");
 });
 
+it("a flow progress card: bold line, long note folded, flow and next steps open, only the flow page button", () => {
+  const app = fresh();
+  app.config.webUrl = "https://omem.example.com";
+  const item = upsertItem(app, undefined, { title: "评审退款改造" });
+  const long = Array.from({ length: 8 }, (_, i) => `第 ${i + 1} 段：${"核对退款回调和重试。".repeat(14)}`).join("\n\n");
+  const body = `**「评审结论」卡住了，等你**\n\n${long}\n\n**流程**\n上下文 ✓ → **评审结论 卡住** → 挑问题\n\n**接下来**\n- 「评审结论」等你：在流程页写一句话让它重做，或直接标做完、跳过。`;
+  const n = notify(app, { title: item.title, body, entityId: item.id, link: `#/items/${item.id}/flow`, view: "flow", tone: "warning" });
+  const card = notificationCard(app, n) as { header: { template: string }; body: { elements: Record<string, unknown>[] } };
+  const text = JSON.stringify(card);
+  expect(card.header.template).toBe("orange");
+  expect(text).not.toContain("item:done");
+  expect(text).not.toContain("item:cancel");
+  expect(text).toContain("打开流程页");
+  const [first] = card.body.elements as { content?: string }[];
+  expect(first.content).toMatch(/^\*\*「评审结论」卡住了，等你\*\*\n\n第 1 段/);
+  expect(first.content).not.toContain("第 8 段");
+  const fold = card.body.elements.find((e) => e.tag === "collapsible_panel");
+  expect(JSON.stringify(fold)).toContain("第 8 段");
+  const tail = card.body.elements.findIndex((e) => typeof e.content === "string" && (e.content as string).startsWith("**流程**"));
+  expect(tail).toBeGreaterThan(card.body.elements.indexOf(fold!));
+  expect(card.body.elements[tail].content).toContain("**接下来**");
+});
+
 it("holds a push back during quiet hours and gives it back once, unless it was read or is old", async () => {
   const { deferNotification, takeDeferred, markRead } = await import("../src/core/notify.ts");
   const { run } = await import("../src/core/db.ts");

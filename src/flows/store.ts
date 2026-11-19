@@ -95,23 +95,25 @@ export function changeStage(app: App, itemId: string, id: string, state: StageSt
   const asked = state === "blocked" && !!by.runId && !!one(app.db, "select 1 from asks where run_id=? and status='pending' limit 1", by.runId);
   // A result or a stop from a run carries what it saw: its screenshots go on the card too.
   const images = what && by.runId && (state === "done" || state === "blocked") ? runImages(app, [by.runId]).map((a) => a.id) : [];
-  if (what && !asked) markProgress(app, itemId, `「${name}」${what}${note ? `：${cardText(note, state === "done" || state === "blocked" ? 1200 : 300)}` : ""}`, state === "blocked" && next.waitingOn === "owner", images);
+  if (what && !asked) markProgress(app, itemId, { head: `「${name}」${what}`, note: note ? cardText(note, state === "done" || state === "blocked" ? 3000 : 300) : "" }, state === "blocked" && next.waitingOn === "owner", images);
   return next;
 }
 
 /** "等本人确认" and "本人确认" both read as one 等. */
 export const waitText = (w: string) => `等${w === "owner" ? "你" : w.replace(/^等+/, "")}`;
-// Run, question and other internal ids mean nothing on a card the owner reads.
+// Run, question and other internal ids mean nothing on a card the owner reads (in code quotes too).
 // A result keeps its paragraphs (conclusion, steps, cause); other lines stay one line.
 const cardText = (note: string, max = 300) => {
-  const t = note.replace(/\s*[（(]?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b[）)]?/g, "");
+  const t = note.replace(/\s*[（(]?`?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b`?[）)]?/g, "");
   return truncate((max > 300 ? t.replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*/g, "\n\n") : t.replace(/\s+/g, " ")).trim(), max);
 };
 
+/** One thing that happened to a stage: `「评审结论」卡住了，等你` and what was said about it. */
+export type ProgressLine = { head: string; note?: string };
 // One operation of the engine changes several stages: what happened is collected and sent as one card
 // when the operation ends (engine.ts serial), not once per change.
-const stale = new WeakMap<App, Map<string, { lines: string[]; ownerWaiting: boolean; images: string[] }>>();
-export function markProgress(app: App, id: string, line: string, ownerWaiting = false, images: string[] = []) {
+const stale = new WeakMap<App, Map<string, { lines: ProgressLine[]; ownerWaiting: boolean; images: string[] }>>();
+export function markProgress(app: App, id: string, line: ProgressLine, ownerWaiting = false, images: string[] = []) {
   let m = stale.get(app);
   if (!m) stale.set(app, m = new Map());
   const cur = m.get(id) ?? { lines: [], ownerWaiting: false, images: [] };
@@ -126,20 +128,39 @@ export function flushProgress(app: App, id: string) {
   progress(app, id, pending.lines, pending.ownerWaiting, pending.images);
 }
 
+/** The sections every progress card ends with; channels keep them open and fold what is above them. */
+export const PROGRESS_TAIL = ["**流程**", "**接下来**"];
+const MARK: Partial<Record<StageState, string>> = { done: "✓", skipped: "跳过", doing: "进行中", gated: "等你开始", blocked: "卡住", stale: "待复核" };
+
 /**
- * What happened first, then one line of where the flow stands. Questions for the owner stay separate
- * asks; a newer card replaces the previous one.
+ * A card in sections: what happened in one bold line, what each stage said, where the flow stands
+ * (every stage in order), and what comes next or what the owner can do. A newer card replaces the
+ * previous one; questions for the owner stay separate asks.
  */
-export function progress(app: App, id: string, lines: string[], ownerWaiting = false, images: string[] = []) {
+export function progress(app: App, id: string, lines: ProgressLine[], ownerWaiting = false, images: string[] = []) {
   const f = itemFlow(app, id);
   if (!f) return;
   const item = getItem(app, id);
   const rows = itemStages(app, id);
-  const named = (state: StageState) => f.definition.stages.filter((d) => rows.find((r) => r.id === d.id)?.state === state);
+  const stateOf = (stageId: string) => rows.find((r) => r.id === stageId)?.state ?? "pending";
+  const named = (state: StageState) => f.definition.stages.filter((d) => stateOf(d.id) === state);
   const doing = named("doing"), gated = named("gated"), blocked = named("blocked");
-  const now_ = f.endedAt ? rows.every((s) => ["done", "skipped"].includes(s.state)) ? "流程已走完；事项仍由你决定是否关闭。" : "流程已停止。"
-    : [doing.length ? `在做：${doing.map((d) => d.name).join("、")}` : "", gated.length ? `等你开始：${gated.map((d) => d.name).join("、")}` : "", blocked.length ? `卡住：${blocked.map((d) => d.name).join("、")}` : ""].filter(Boolean).join("；");
-  const body = [...lines, now_ ? `现在 · ${now_}` : ""].filter(Boolean).join("\n");
-  const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/items/${id}/flow`, images: images.slice(-4) });
+  const lead = lines.length ? lines.map((l) => l.head).join("；") : "流程有了新进展";
+  // One stage: its note sits right under the bold line. Several: each under its own heading.
+  const said = lines.length === 1 ? [lines[0].note ?? ""] : lines.filter((l) => l.note).map((l) => `**${l.head}**\n${l.note}`);
+  const chain = f.definition.stages.map((d) => {
+    const st = stateOf(d.id), mark = MARK[st];
+    const text = `${d.name}${mark ? ` ${mark}` : ""}`;
+    return ["blocked", "gated", "doing", "stale"].includes(st) ? `**${text}**` : text;
+  }).join(" → ");
+  const waitingOwner = blocked.filter((d) => rows.find((r) => r.id === d.id)?.waitingOn === "owner");
+  const next = f.endedAt ? [rows.every((s) => ["done", "skipped"].includes(s.state)) ? "流程走完了；事项要不要关由你定。" : "流程已停止。"] : [
+    ...waitingOwner.map((d) => `「${d.name}」等你：在流程页写一句话让它重做，或直接标做完、跳过。`),
+    ...blocked.filter((d) => !waitingOwner.includes(d)).map((d) => `「${d.name}」${waitText(rows.find((r) => r.id === d.id)?.waitingOn ?? "")}；有了以后流程接着走。`),
+    ...gated.map((d) => `「${d.name}」等你开始：在流程页点开始，或先别做。`),
+    ...doing.map((d) => `「${d.name}」在做，有结果再告诉你。`),
+  ];
+  const body = [`**${lead}**`, ...said, `${PROGRESS_TAIL[0]}\n${chain}`, next.length ? `${PROGRESS_TAIL[1]}\n${next.map((x) => `- ${x}`).join("\n")}` : ""].filter(Boolean).join("\n\n");
+  const n = notify(app, { userId: item.userId, title: item.title, body, entity: "item", entityId: id, sourceRefs: [], graceDone: true, urgency: ownerWaiting ? "normal" : "later", replaces: f.card ?? undefined, link: `#/items/${id}/flow`, images: images.slice(-4), view: "flow", ...(ownerWaiting ? { tone: "warning" as const } : {}) });
   run(app.db, "update item_flows set card=? where item_id=?", n.id, id);
 }

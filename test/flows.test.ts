@@ -254,11 +254,13 @@ describe("只有本人能定的事", () => {
     expect(cards()).toHaveLength(0);
     await reportStage(app, item.id, "b", { state: "blocked", note: "部署失败（ask0mabcdefgh1234567）", waitingOn: "等本人给环境" }, agent);
     const [first] = cards().slice(-1);
-    expect(first.body).toContain("「b」卡住了，等本人给环境：部署失败");
+    expect(first.body.split("\n\n")[0]).toBe("**「b」卡住了，等本人给环境**");
+    expect(first.body.split("\n\n")[1]).toBe("部署失败");
     expect(first.body).not.toContain("等等");
     expect(first.body).not.toContain("ask0");
-    expect(first.body).toMatch(/现在 · .*卡住：b/);
-    expect(first.body).not.toContain("· c");
+    expect(first.body).toContain("**流程**\na ✓ → **b 卡住** → c → d");
+    expect(first.body).toContain("**接下来**\n- 「b」等本人给环境；有了以后流程接着走。");
+    expect(jsonContext(app, first.id).view).toBe("flow");
     await reportStage(app, item.id, "b", { state: "skip", note: "这次不用" }, agent);
     expect(jsonContext(app, itemFlow(app, item.id)!.card!).replaces).toBe(first.id);
   });
@@ -375,6 +377,36 @@ describe("对象与工具", () => {
     run(other.app.db, "update item_stages set state='blocked', waiting_on='owner' where item_id=? and stage_id='a'", other.item.id);
     await advance(other.app, other.item.id);
     expect(other.s("a").state).toBe("blocked");
+  });
+  it("跟着交办的段按本人意见重做：运行发起交办后结束，段跟着新交办走，不报卡住", async () => {
+    const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } }), stage("b", { by: "wait" })]);
+    const old = createRun(app, { kind: "code", spaceId: "personal", title: "第一次交办", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
+    addMaterials(app, item.id, [{ kind: "run", ref: old.id }], "owner");
+    setRunOutput(app, old.id, { verdict: "approved" }); run(app.db, "update runs set status='done', created_at='2026-01-01T00:00:00.000Z' where id=?", old.id);
+    await advance(app, item.id); expect(s("a").state).toBe("done");
+    await reopenStage(app, item.id, "a", "设计稿换了图标，按新稿改", [], owner, { feedback: true });
+    const stageRun = s("a").by!;
+    expect(getRun(app, stageRun).kind).toBe("flow-stage");
+    const next = createRun(app, { kind: "code", spaceId: "personal", title: "换图标", input: { itemId: item.id, repos: ["personal"] }, userId: "owner" });
+    addMaterials(app, item.id, [{ kind: "run", ref: next.id }], "owner");
+    setRunOutput(app, stageRun, { text: "已交办换图标" }); run(app.db, "update runs set status='done' where id=?", stageRun);
+    await advance(app, item.id);
+    expect(s("a")).toMatchObject({ state: "doing", by: `code-work:${next.id}` });
+    expect(s("a").control.feedback).toBeUndefined();
+    setRunOutput(app, next.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", next.id);
+    await advance(app, item.id); expect(s("a").state).toBe("done");
+  });
+  it("运行没交结果也没发起交办：卡片分段写，内部编号连同代码引号一起去掉", async () => {
+    const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } })]);
+    await reopenStage(app, item.id, "a", "按新稿改", [], owner, { feedback: true });
+    const stageRun = s("a").by!;
+    setRunOutput(app, stageRun, { text: "查过了。\n\n已交办：`r0mabcdefghijk12`" }); run(app.db, "update runs set status='done' where id=?", stageRun);
+    await advance(app, item.id);
+    expect(s("a").state).toBe("blocked");
+    const card = one<{ body: string }>(app.db, "select body from notifications where id=?", itemFlow(app, item.id)!.card!)!.body;
+    expect(card).toContain("**「a」卡住了，等你**\n\n这一段的运行结束了，没有交代结果。\n\n**运行最后说的**\n查过了。");
+    expect(card).not.toContain("``");
+    expect(card).toContain("在流程页写一句话让它重做");
   });
   it("方案对象只接受本人的本版确认；助手确认不算", async () => {
     const app = appFor(); const item = upsertItem(app, undefined, { title: "方案事项", spaceId: "personal" }, "user");

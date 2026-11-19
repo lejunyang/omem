@@ -28,6 +28,18 @@ export function latestCodeWork(app: App, item: Item): CodeWorkDetail | null {
 }
 
 /**
+ * The delegation this item follows, when it moved since `since`: started then, or given a new round
+ * (continue_code_run, a change joined into it). A stage's run that handed its work over leaves this.
+ */
+export function codeWorkSince(app: App, item: Item, since: string): FlowObject | null {
+  const w = latestCodeWork(app, item);
+  const at = w ? one<{ c: string }>(app.db, "select created_at c from runs where id = ?", w.latestId)?.c : undefined;
+  const joined = w ? one<{ c: string }>(app.db, "select created_at c from item_materials where item_id = ? and kind = 'run' and ref = ?", item.id, w.rootId)?.c : undefined;
+  if (!w || !(at && at >= since || joined && joined >= since)) return null;
+  return objectKind("code-work")!.find(app, item);
+}
+
+/**
  * This item's change went into another item's delegation on the same branch (continue_code_run when=now with
  * item_id): the delegation is listed on this item too, and its flow follows it like its own.
  */
