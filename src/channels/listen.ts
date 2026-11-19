@@ -74,6 +74,8 @@ export type ListenContext = {
   since: string;
   /** When listen-coach last wrote its lessons. */
   playbookAt?: string;
+  /** A matter's 关注 made because a flow started on the item (listen-items.ts): it ends with the flow, until the owner takes it on. */
+  byFlow?: boolean;
   expiresAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -107,7 +109,7 @@ type Row = {
   id: string; kind: ListenKind; name: string; chats: string; item_id: string | null; spec: string; space_id: string | null;
   conversation_id: string | null; settings: string; status: "active" | "paused"; expires_at: string | null; created_at: string; updated_at: string;
 };
-type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string };
+type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; byFlow?: boolean };
 
 function toContext(r: Row): ListenContext {
   const s = json<Stored>(r.settings, {});
@@ -126,6 +128,7 @@ function toContext(r: Row): ListenContext {
     status: r.status,
     since: s.since ?? r.created_at,
     playbookAt: s.playbookAt,
+    ...(s.byFlow ? { byFlow: true } : {}),
     expiresAt: r.expires_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -187,6 +190,8 @@ export type ContextInput = {
   status?: "active" | "paused";
   since?: string;
   playbookAt?: string;
+  /** true: made for a flow (ends with it); false: the owner's own from now on. */
+  byFlow?: boolean;
   expiresAt?: string | null;
   /** An existing conversation to keep (a watch moved here). */
   conversationId?: string;
@@ -219,6 +224,7 @@ export function saveContext(app: App, input: ContextInput, chatName: (chatId: st
     knobs: diffKnobs(knobs, kind),
     since: input.since ?? prev?.since ?? at,
     playbookAt: input.playbookAt ?? prev?.playbookAt,
+    ...((input.byFlow ?? prev?.byFlow) ? { byFlow: true } : {}),
   };
   const spaceId = input.spaceId === undefined ? (prev?.spaceId ?? null) : input.spaceId;
   const expiresAt = input.expiresAt === undefined ? (prev?.expiresAt ?? null) : input.expiresAt;
@@ -262,11 +268,14 @@ function ensureConversation(app: App, ctx: ListenContext) {
   return created.id;
 }
 
-/** chat_settings(`lark-watch`) of these groups: which 关注 read them, and the space their material goes to. */
+/**
+ * chat_settings(`lark-watch`) of these groups: which 关注 read them, and the space their material goes to
+ * (a place's: a matter's 关注 lives in the item's space, which does not move where its groups are kept).
+ */
 function indexChats(app: App, chats: string[]) {
   for (const chatId of chats) {
     const mine = contextsOfChat(app, chatId);
-    const place = mine.find((c) => c.spaceId);
+    const place = mine.find((c) => c.kind === "place" && c.spaceId);
     setChatSettings(app, "lark-watch", chatId, { contexts: mine.length ? mine.map((c) => c.id) : undefined, spaceId: place?.spaceId ?? undefined, watch: undefined, lark: undefined, spec: undefined, mode: undefined, idleHours: undefined });
   }
 }

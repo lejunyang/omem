@@ -12,6 +12,7 @@ import { ruleInputSchema, type Rule, type RuleAction, type RuleInput, type Tempo
 import { OWNER } from "../core/users.ts";
 import { moveRuleWorkFiles } from "../sources/work.ts";
 import { pluginObjectKind } from "../plugins/objects.ts";
+import { getContext } from "../channels/listen.ts";
 
 type Row = {
   space_id: string | null;
@@ -68,10 +69,10 @@ function checkDocRule(r: ReturnType<typeof ruleInputSchema.parse>) {
   const bad = fields.filter((f) => !/^(doc|change)\./.test(f));
   if (bad.length) throw new HttpError(400, `文档变化规则只能用文档和变化的字段，不能用 ${[...new Set(bad)].join("、")}`);
   if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "文档变化规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
-  const allowed = new Set(["notify", "delay", "check", "script"]);
+  const allowed = new Set(["notify", "delay", "check", "script", "context"]);
   // Like a schedule: the agent may post only into the conversation the rule names (发到).
   if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
-    throw new HttpError(400, "文档变化规则没有群：只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断或执行脚本");
+    throw new HttpError(400, "文档变化规则没有群：只能交给 Agent（不开话题、不静默排查）、交给关注、通知本人、延时、模型判断或执行脚本");
   if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
     throw new HttpError(400, "文档变化规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
 }
@@ -99,9 +100,9 @@ function checkObjectRule(r: ReturnType<typeof ruleInputSchema.parse>) {
     if (unknown.length) throw new HttpError(400, `${def.label}没有这些状态：${unknown.join("、")}`);
   }
   if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "对象状态变化规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
-  const allowed = new Set(["notify", "delay", "check", "script"]);
+  const allowed = new Set(["notify", "delay", "check", "script", "context"]);
   if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
-    throw new HttpError(400, "对象状态变化规则没有群：只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断或执行脚本");
+    throw new HttpError(400, "对象状态变化规则没有群：只能交给 Agent（不开话题、不静默排查）、交给关注、通知本人、延时、模型判断或执行脚本");
   if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
     throw new HttpError(400, "对象状态变化规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
 }
@@ -123,9 +124,9 @@ function checkOmemRule(r: ReturnType<typeof ruleInputSchema.parse>) {
   const bad = fields.filter((f) => !f.startsWith("omem."));
   if (bad.length) throw new HttpError(400, `“omem 里发生的事”规则只能用 omem 的字段，不能用 ${[...new Set(bad)].join("、")}`);
   if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "“omem 里发生的事”规则没有群里的讨论：不能等待回应或按讨论跳过；要晚点再做用“延时”");
-  const allowed = new Set(["notify", "delay", "check", "script"]);
+  const allowed = new Set(["notify", "delay", "check", "script", "context"]);
   if (r.actions.some((a) => !allowed.has(a.type) && !(a.type === "agent" && !a.ownTopic && a.reply !== "silent")))
-    throw new HttpError(400, "“omem 里发生的事”规则没有群：只能交给 Agent（不开话题、不静默排查）、通知本人、延时、模型判断或执行脚本");
+    throw new HttpError(400, "“omem 里发生的事”规则没有群：只能交给 Agent（不开话题、不静默排查）、交给关注、通知本人、延时、模型判断或执行脚本");
   if (!r.conversationId && r.actions.some((a) => a.type === "agent" && (a.reply !== "none" || a.failureTo === "chat")))
     throw new HttpError(400, "“omem 里发生的事”规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
 }
@@ -200,6 +201,8 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
       // The backend must exist and offer the model and effort (checked against its last detection).
       if (a.type === "agent" && a.ai) validateExecution(app, { ...a.ai, source: "user", reason: `规则「${r.name}」指定` });
     }
+    // 交给关注: one that exists (a place or a matter; the built-in “someone looks for you” has no conversation to take it).
+    if (a.type === "context" && !["place", "item"].includes(getContext(app, a.context)?.kind ?? "")) throw new HttpError(400, `没有这个关注：${a.context}（交给关注要选一个已有的关注）`);
   }
   const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;
   if (r.actions.some((a) => a.type === "wake") && !input.temporary && !prevTemp) throw new HttpError(400, "“唤醒”只用于 Agent 设的临时规则（wake 的 on_message）");

@@ -2514,6 +2514,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       conversations: all(app.db, "select id,title,channel,space_id,external_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
       groups: ruleGroups(app),
+      // 「关注」 a rule can hand its events to (交给关注, action `context`): places and matters, paused ones too.
+      contexts: (await import("../channels/listen.ts")).listContexts(app).filter((c) => c.kind !== "default")
+        .map((c) => ({ id: c.id, name: c.name, kind: c.kind, chats: c.chats.length, status: c.status, itemId: c.itemId })),
       // Whether a rule's “决策模型” choice has one to use (settings → AI → 决策).
       decision: (({ ready, detail }) => ({ ready, detail }))(categoryStatus(app.config, "decision", app.home)),
     };

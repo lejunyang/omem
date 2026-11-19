@@ -431,6 +431,8 @@ export async function startFlow(app: App, itemId: string, flowId: string, by: Fl
       run(app.db, `insert into item_flows(item_id,flow_id,definition,started_at,started_by,updated_at,round_started_at) values(?,?,?,?,?,?,?) on conflict(item_id) do update set flow_id=excluded.flow_id,definition=excluded.definition,started_at=excluded.started_at,ended_at=null,auto_streak=0,card=null,started_by=excluded.started_by,updated_at=excluded.updated_at,round=1,round_started_at=excluded.round_started_at,round_closed_at=null,next_round_at=null`, itemId, f.id, JSON.stringify(f), at, by.actor, at, at);
     });
     for (const d of f.stages) changeStage(app, itemId, d.id, "pending", {}, by, "加入流程");
+    // The matter gets its 「关注」 (only reading) if it has none: its groups, one context, later replies.
+    try { (await import("../channels/listen-items.ts")).flowStarted(app, itemId); } catch (e) { console.warn(`[omem] 没能给事项建关注：${(e as Error).message}`); }
     initFollow(app, itemId, true);
     await advanceNow(app, item.id, "开始流程");
     return flowView(app, itemId);
@@ -805,6 +807,8 @@ async function end(app: App, id: string, note: string, how: FlowEnd) {
   }
   // The review is figures from the records, no model; it may queue the coach for the definition (review.ts).
   try { saveReview(app, id, how); } catch (e) { console.warn(`[omem] 流程回顾没有存下：${(e as Error).message}`); }
+  // A 关注 made for this flow ends with it; one the owner keeps goes on.
+  try { (await import("../channels/listen-items.ts")).flowEnded(app, id); } catch (e) { console.warn(`[omem] 事项的关注没有停下：${(e as Error).message}`); }
 }
 export function stopFlow(app: App, id: string, userId = "owner") {
   return serial(app, id, async () => {

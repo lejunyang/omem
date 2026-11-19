@@ -3,7 +3,8 @@ import { CODE_STARTERS } from "../agents/tool-help.ts";
 import { notify } from "../core/notify.ts";
 import { captureSpace as chatSpace } from "../core/capture-space.ts";
 import { OWNER } from "../core/users.ts";
-import { HttpError, truncate } from "../core/util.ts";
+import { one, run } from "../core/db.ts";
+import { HttpError, now, truncate } from "../core/util.ts";
 import { createRun, getRun, runsInLane, updateQueuedRun } from "../agents/runs.ts";
 import { readAgentSpec } from "../agents/specs.ts";
 import { getThread, resolveThread, updateThread } from "../agents/threads.ts";
@@ -192,6 +193,8 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
       await watchChat(app, id, { spec: a.spec, on: a.on, pattern: a.pattern, reply: a.reply, note: `规则「${rule.name}」` });
       return { action: "watch", ok: true, detail: `之后的${a.on === "all" ? "消息" : a.on === "mention" ? " @ 消息" : "关键词消息"}交给 ${a.spec}（回复：${a.reply}）` };
     }
+    case "context":
+      return contextAction(app, rule, a, e, reason);
     case "wake": {
       const { fireWake } = await import("../agents/wakes.ts");
       const t = rule.temporary;
@@ -213,6 +216,45 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
       // Handled in runActions: they shape what runs after them.
       return { action: a.type, ok: true, detail: "" };
   }
+}
+
+/**
+ * 交给关注: the event joins a 「关注」's conversation (in its batch, never screened out) and its handler
+ * takes it up with what it knows of its groups, its brief, cases and lessons. A message the 关注 already
+ * got from its own groups and has not looked at yet is only marked as the rule's; one handed over here is
+ * not routed to it again (lark-watch.ts).
+ */
+async function contextAction(app: App, rule: Rule, a: Extract<RuleAction, { type: "context" }>, e: RuleEvent, reason: string): Promise<ActionResult> {
+  const { getContext, LISTEN_CHANNEL } = await import("../channels/listen.ts");
+  const c = getContext(app, a.context);
+  if (!c || c.kind === "default") throw new HttpError(404, `没有这个关注：${a.context}`);
+  if (c.status !== "active" || (c.expiresAt && c.expiresAt <= now())) throw new HttpError(409, `关注「${c.name}」已经停下，没有交过去；要接着交，先在 连接 → 飞书会话 里重新打开它`);
+  if (!c.conversationId) throw new HttpError(409, `关注「${c.name}」还没有会话`);
+  const m = e.message;
+  if (m) {
+    const there = one<{ id: string; status: string | null }>(app.db, "select x.id, r.status from messages x left join runs r on r.id = x.run_id where x.conversation_id = ? and json_extract(x.meta, '$.externalId') = ? order by x.created_at desc limit 1", c.conversationId, m.id);
+    if (there?.status === "queued") {
+      run(app.db, "update messages set meta = json_set(meta, '$.rule', ?, '$.addressed', json('true')) where id = ?", rule.id, there.id);
+      return { action: "context", ok: true, detail: `这条消息已经在关注「${c.name}」等着看的一批里，标为规则要处理的` };
+    }
+    run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values(?,?,?,?)", `listen:${c.id}`, m.id, rule.id, now());
+  }
+  const where = m && e.chat ? `\n（飞书消息 ${m.id}${m.topicId ? `，话题 ${m.topicId}` : ""}，${e.chat.kind === "p2p" ? "私聊" : "群"}「${e.chat.name}」 ${e.chat.id}${c.chats.includes(e.chat.id) ? "" : "，不是这个关注的群，不能在那里回复"}）` : "";
+  const text = [`规则「${rule.name}」交给这个关注：${eventSummary(e)}`, `本人的规则：${rule.description}`, reason ? `判断：${reason}` : ""].filter(Boolean).join("\n") + where;
+  const { receive } = await import("../agents/inbox.ts");
+  const r = await receive(app, {
+    conversationId: c.conversationId,
+    channel: LISTEN_CHANNEL,
+    // Never the owner's own words: a person's message keeps its sender, anything else is the rule's.
+    speaker: e.sender?.name || `规则「${rule.name}」`,
+    text,
+    ...(m ? { externalMessageId: m.id } : {}),
+    meta: { rule: rule.id, addressed: true, ...(e.chat && c.chats.includes(e.chat.id) ? { chatId: e.chat.id } : {}) },
+    // Looked at soon, like a message for the owner or the bot, without pushing the 关注's batch back.
+    mergeMs: Math.min(c.knobs.batchMinutes * 60_000, 30_000),
+    fixedWindow: true,
+  });
+  return { action: "context", ok: true, detail: `交给关注「${c.name}」`, ...(r.runId ? { runId: r.runId } : {}) };
 }
 
 /** The AI the owner picked for this rule's runs: the run's `execution`, as run_agent passes one. */
