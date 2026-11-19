@@ -26,6 +26,15 @@ updated: 2026-11-20
 - 网页：`web/src/components/AgentAccounts.vue`（账号页“我的 AI 账号”）、`AgentAccountsAdmin.vue`（设置 → AI “成员的 AI 账号”）。`osdk.toml` 加 `[sys.pkg]`，只声明 apt / dnf 的 bubblewrap，`scripts/upgrade.ts` 不跑 `osdk pkg apply`。
 - 设计里没做的（额度按账号读、探测缓存按账号分、技能同步进账号目录、`own-or-other`、插件登录）和没在真机上验的写在 `docs/v2/agent-accounts.md` 开头。测试 `test/agent-accounts.test.ts`。
 
+## 「关注」：盯群换成关注，按案例和场景经验处理（11-20）
+
+- `src/channels/listen.ts`：新表 `listen_contexts`（place / item / default），每个关注一份说明、一组参数（`ListenKnobs`）、一条处理会话（channel `listen`，key 是关注 id）。`chat_settings('lark-watch')` 只留作群的索引（`contexts`、`spaceId`）。启动时 `migrateWatches` 把旧盯群迁成地方型关注（保留会话，`watch.log` 进案例表）。
+- `lark-watch.ts`：一条消息交给它所在的每个关注，第一个能回复的是 `lead`（事情型 → 地方型），别的关注在提示里被告知；`watch-trial.ts claimReply` 在发送前认领（`handled_messages` 的 `listen-reply`）。`seedContext` 读各群三天背景，`backlog` 窗口内的照新消息处理。预筛（`prefilterBatch`）按关注的 `strictness`、`perDay`、经验和案例判断。
+- 处理者的提示（`sessions.ts watchedNote`）按参数生成（问本人的、找别人的、主动查到什么程度），带经验、相近案例、本人最近的决定、召回的记忆。会话摘要按发言人写（以前都标成“本人”），关注的摘要分在聊的话题、没结的问题、已有结论（`jobs.ts thread-summary`）。
+- 案例：`reply_samples` 加 `context_id`、`source`、`scene`、`verdict`、`note`、`checked`、`reply_id`。盯群的决定、没回的一批（`stay_quiet` → `noteQuiet`）、本人在关注群里自己回别人（`collectOwnerReplies`）都记成案例；有人找你的样本归到默认关注。`listen-cases.ts nearCases` 按同一个人、同一个群、问法相近排，分诊、处理者、预筛都用。
+- `listen-coach`（新角色，`listen-coach.ts`）：心跳里攒够 5 条本人有态度的案例、离上次 12 小时以上时整理，用角色专用的 `submit_playbook` 按场景交经验，宿主写成工作文件 `关注/<名>/经验.md` 并给案例标场景；说明该改时发给本人确认。原件目录把 `关注/` 下的工作文件按路径分文件夹（`catalog.ts`）。
+- `set_chat_watch` 改成设关注：`chats`、`context`、`name` 和各参数，说不用关注了是暂停。`/watch`、规则的“盯群”动作走 `watchChat`。网页接口在 `listen-http.ts`。测试 `test/listen.test.ts`，旧的 `watch-trial`、`watch-prefilter`、`lark` 测试改成关注。
+
 ## 盯群先对齐、试运行、按本人的决定学；没改过的内置技能跟新版（11-20）
 
 - 新文件 `src/channels/watch-trial.ts`：盯群说明（`brief`）的确认卡片、试运行的草稿卡片（可改、不发带原因）、连续照发 `PROMOTE_AFTER`（5）条后问要不要直接发、直接发的回复被本人点负面表情退回草稿（`lark-feedback.ts` 调 `dislikedWatchReply`）、本人决定的记录（`WatchRule.log`，最多 30 条）。卡片都只给本人看：本人在群里用临时卡片，否则私聊。`lark-actions.ts` 多三种卡片用途 `watch-brief`、`watch-draft`、`watch-promote`。
