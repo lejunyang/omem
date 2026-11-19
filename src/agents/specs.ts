@@ -3,7 +3,7 @@ import { join } from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { commitLibrary, fileHistory } from "../core/git.ts";
+import { commitLibrary, fileAt, fileHistory } from "../core/git.ts";
 import { roleNames } from "../core/config.ts";
 import { HttpError, json } from "../core/util.ts";
 import { all } from "../core/db.ts";
@@ -458,12 +458,42 @@ export function seedBuiltinSkills(app: App, packageRoot: string) {
   const dir = join(packageRoot, "skills", "library");
   if (!existsSync(dir)) return [];
   const added: string[] = [];
+  const updated: string[] = [];
   for (const name of readdirSync(dir)) {
     const src = join(dir, name, "SKILL.md");
-    if (!existsSync(src) || existsSync(join(skillsDir(app), name, "SKILL.md"))) continue;
-    cpSync(join(dir, name), join(skillsDir(app), name), { recursive: true, force: false });
-    added.push(name);
+    if (!existsSync(src)) continue;
+    const mine = join(skillsDir(app), name);
+    if (!existsSync(join(mine, "SKILL.md"))) {
+      cpSync(join(dir, name), mine, { recursive: true, force: false });
+      added.push(name);
+    } else if (builtinChanged(join(dir, name), mine) && untouchedBuiltin(app, name)) {
+      cpSync(join(dir, name), mine, { recursive: true, force: true });
+      updated.push(name);
+    }
   }
   if (added.length) commitLibrary(app.libraryDir, `omem: add built-in skills ${added.join(", ")}`);
-  return added;
+  if (updated.length) commitLibrary(app.libraryDir, `omem: update built-in skills ${updated.join(", ")}`);
+  return [...added, ...updated];
+}
+
+const filesUnder = (dir: string, base = ""): string[] =>
+  readdirSync(join(dir, base), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(dir, join(base, e.name)) : [join(base, e.name)]));
+
+/** The packaged version of a built-in skill differs from the library copy. */
+function builtinChanged(pkg: string, mine: string) {
+  return filesUnder(pkg).some((f) => !existsSync(join(mine, f)) || readFileSync(join(pkg, f), "utf8") !== readFileSync(join(mine, f), "utf8"));
+}
+
+/**
+ * The library copy of a built-in skill is still what omem put there: every file in it equals its
+ * content at the latest commit omem made of it (seeding or an earlier update). A copy the owner or
+ * an agent edited (or one from before the library kept history) stays theirs and is never replaced.
+ */
+function untouchedBuiltin(app: App, name: string) {
+  const mine = join(skillsDir(app), name);
+  return filesUnder(mine).every((f) => {
+    const rel = `_skills/${name}/${f.replace(/\\/g, "/")}`;
+    const seeded = fileHistory(app.libraryDir, rel).find((c) => /^omem: (add|update) built-in skills /.test(c.message));
+    return !!seeded && fileAt(app.libraryDir, seeded.hash, rel) === readFileSync(join(mine, f), "utf8");
+  });
 }

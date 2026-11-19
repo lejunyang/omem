@@ -144,6 +144,28 @@ export type WatchRule = {
   prefilter?: boolean;
   /** The watch ends then (ISO); unset: until removed. */
   expiresAt?: string;
+  /** When it began: messages from before are not handed over. */
+  since?: string;
+  /** What it is for, drafted by the handler and confirmed by the owner (channels/watch-trial.ts). */
+  brief?: WatchBrief;
+  /** The owner asked for direct replies; drafts come first until the owner says they may go out by themselves. */
+  wantsAuto?: boolean;
+  /** When the owner was last asked whether replies may go out by themselves (or said no). */
+  promoteAskedAt?: string;
+  /** The owner's latest decisions on this group's replies, oldest first (at most 30). */
+  log?: WatchDecision[];
+};
+export type WatchBrief = { handle: string[]; skip: string[]; valid: string; at: string; confirmedAt?: string };
+export type WatchDecision = {
+  at: string;
+  /** sent / edited / dropped: a draft; auto: posted by itself; disliked: the owner disliked an auto reply. */
+  decision: "sent" | "edited" | "dropped" | "auto" | "disliked";
+  reason?: string;
+  /** Who and what it answered. */
+  ask?: string;
+  draft?: string;
+  final?: string;
+  messageId?: string;
 };
 
 export function chatSettings(app: App, channel: string, chatId: string): ChatSettings {

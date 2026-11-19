@@ -401,7 +401,7 @@ async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
       topicId: m.thread_id,
       mentions: mentionIds(m),
     }));
-    await routeWatchedMessages(app, chat.chatId, chat.name, watched);
+    await routeWatchedMessages(app, chat.chatId, chat.name, watched, { ownerId: c.owner });
     // Someone looking for the owner: a small triage, then maybe a handling, before the owner is told (lark-mentions.ts).
     if (kind === "p2p" || kind === "group" || kind === "topic") queueMention(app, { id: chat.chatId, name: chat.name, kind: kind === "p2p" ? "p2p" : "group" }, messages, owner);
     // Rules see every captured chat. Judging may ask the model: it does not hold up the capture.

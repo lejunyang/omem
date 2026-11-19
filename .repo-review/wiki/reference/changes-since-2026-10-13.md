@@ -15,6 +15,13 @@ updated: 2026-11-19
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 盯群先对齐、试运行、按本人的决定学；没改过的内置技能跟新版（11-20）
+
+- 新文件 `src/channels/watch-trial.ts`：盯群说明（`brief`）的确认卡片、试运行的草稿卡片（可改、不发带原因）、连续照发 `PROMOTE_AFTER`（5）条后问要不要直接发、直接发的回复被本人点负面表情退回草稿（`lark-feedback.ts` 调 `dislikedWatchReply`）、本人决定的记录（`WatchRule.log`，最多 30 条）。卡片都只给本人看：本人在群里用临时卡片，否则私聊。`lark-actions.ts` 多三种卡片用途 `watch-brief`、`watch-draft`、`watch-promote`。
+- `set_chat_watch`（`src/agents/tools.ts`）：reply 为 draft / auto 时要 `brief`，`reply: auto` 默认存成 draft 加 `wantsAuto`（`trial: false` 跳过），新盯群记 `since`，改了 `brief` 就再发确认卡片。`larkPost` 遇到盯群处理者的草稿走 `draftWatchReply`，直接发的记 `noteAutoReply`。
+- `lark-watch.ts`：`since` 之前的消息不交出去（`sentMs` 认毫秒、秒和 ISO），消息尾标“@了本人 / @了别人”（采集路径传入本人在 lark-cli 里的 id），预筛带上说明和本人的决定。`sessions.ts` 的 `watchedNote` 改成异步：带说明、最近的决定，问本人或要本人拍板的只 notify，别人的事不接，纠正满 `REVISE_AFTER`（3）次要求重拟说明。
+- `src/agents/specs.ts` 的 `seedBuiltinSkills`：已有的内置技能如果每个文件都还和 omem 最后一次写进去（`omem: add/update built-in skills` 提交）时一样，就换成新版并提交 `omem: update built-in skills …`；改过的照旧不动。测试在 `test/desktop-control.test.ts`、`test/watch-trial.test.ts`。
+
 ## 再并掉四个只差一个参数的工具；旧工具名照样认（11-20）
 
 - `flow_round` 并进 `flow_start`（不传 `flow` 就是开下一轮）；`lark_update_card` 并进 `lark_card`（带 `message_id` 原地更新）；`wake_later`、`wake_on_message` 并成 `wake`（`after` 和 `on_message: {chat_id, contains, from, …}` 二选一，`cancel_wake` 不变）；`continue_agent_work` 并进 `run_agent`（带 `work_id`，或 `own_topic=true` 不带 `name`，续在已有的工作会话上，`name` 不传沿用上一轮的 Agent）。都在 `src/agents/tools.ts`。

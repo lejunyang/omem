@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -28,6 +28,26 @@ describe("desktop-control skill", () => {
     saveSkill(app, { name: "desktop-control", description: s.description, body: "改过" }, "user");
     expect(seedBuiltinSkills(app, root)).toEqual([]);
     expect(readSkill(app, "desktop-control").body).toBe("改过");
+  });
+
+  it("brings an untouched built-in skill up to the new version, never an edited one", () => {
+    const app = testApp();
+    // An older omem shipped other wording of two skills.
+    const old = mkdtempSync(join(tmpdir(), "omem-old-skills-"));
+    for (const name of ["lark-messaging", "improve-loop"]) {
+      cpSync(join(root, "skills/library", name), join(old, "skills/library", name), { recursive: true });
+      writeFileSync(join(old, "skills/library", name, "SKILL.md"), readFileSync(join(root, "skills/library", name, "SKILL.md"), "utf8").replace(/^---\n/, "---\n# 旧版\n"));
+    }
+    expect(seedBuiltinSkills(app, old).sort()).toEqual(["improve-loop", "lark-messaging"]);
+    const edited = readSkill(app, "improve-loop");
+    saveSkill(app, { name: "improve-loop", description: edited.description, body: edited.body + "\n本人加的一段" }, "user");
+    const next = seedBuiltinSkills(app, root);
+    expect(next).toContain("lark-messaging");
+    expect(next).not.toContain("improve-loop");
+    expect(readFileSync(join(app.libraryDir, "_skills/lark-messaging/SKILL.md"), "utf8")).toBe(readFileSync(join(root, "skills/library/lark-messaging/SKILL.md"), "utf8"));
+    expect(readSkill(app, "improve-loop").body).toContain("本人加的一段");
+    // Already current: nothing to do.
+    expect(seedBuiltinSkills(app, root)).toEqual([]);
   });
 
   it("only teaches commands the aad CLI has, and keeps the safety rules", () => {

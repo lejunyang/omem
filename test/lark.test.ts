@@ -290,7 +290,7 @@ describe("watched chats", () => {
     // Bringing the bot in is lark_invite's (test/lark-invite.test.ts); set_chat_watch only sets the watch.
     const ask = createRun(app, { kind: "ask", title: "x", input: { conversationId: "c_none", messageIds: [] }, lane: "test-hold", notBefore: "2999-01-01T00:00:00Z" });
     const ctx = toolContextForToken(app, issueToolToken({ runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
-    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", note: "有人问接口进度就帮我回" })).text).toMatch(/开始盯 oc_proj：消息每 10 分钟一批交给 assistant/);
+    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", note: "有人问接口进度就帮我回", brief: { handle: ["问接口进度的"], skip: ["闲聊"], valid: "说得出哪天能联调" } })).text).toMatch(/开始盯 oc_proj：消息每 10 分钟一批交给 assistant/);
     const t = Date.now();
     await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p1", time: String(t), sender: "小王", text: "接口今天能联调吗", topicId: "omt_a" }]);
     await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p2", time: String(t), sender: "小李", text: "另一个话题：周会改到周四", topicId: "omt_b" }]);

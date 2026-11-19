@@ -144,6 +144,8 @@ export function onLarkReaction(app: App, bot: string, d: ReactionEvent, kind: "c
   if (actorKind === "owner" && polarity === "negative") {
     const notificationId = notificationForReaction(app, messageId);
     if (notificationId) queueNegativeNotification(app, notificationId);
+    // A reply a watched group's handler posted by itself: that group goes back to drafts.
+    if (onBot) void import("./watch-trial.ts").then((t) => t.dislikedWatchReply(app, messageId)).catch((e) => console.warn(`[omem] 盯群回复负反馈处理失败：${(e as Error).message}`));
   }
   return { id, polarity, actorKind, onBot };
 }

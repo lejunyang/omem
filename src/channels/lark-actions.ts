@@ -191,6 +191,25 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       return { toast: { type: "error", content: `没有发出去：${(e as Error).message}`.slice(0, 80) } };
     }
   }
+  if (inter.purpose === "watch-brief" || inter.purpose === "watch-draft" || inter.purpose === "watch-promote") {
+    // A watched group's cards that only the owner sees (watch-trial.ts): the brief, a reply draft, going direct.
+    const trial = await import("./watch-trial.ts");
+    const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;
+    const form = formValue && typeof formValue === "object" ? (formValue as Record<string, unknown>) : null;
+    const act = String((value as { action?: string } | undefined)?.action ?? "");
+    closeInteraction(app, inter.id, operator);
+    try {
+      const card =
+        inter.purpose === "watch-brief" ? await trial.decideBrief(app, inter.payload as { chatId: string; at: string }, act, form, opName)
+        : inter.purpose === "watch-promote" ? await trial.decidePromotion(app, inter.payload as { chatId: string }, act, opName)
+        : await trial.decideWatchDraft(app, inter.payload as never, act, form && typeof form.reply === "string" ? form.reply : null, opName);
+      return { toast: { type: "success", content: "已处理" }, card: rawCard(card) };
+    } catch (e) {
+      // Not done: the card stays usable for another try.
+      run(app.db, "update card_interactions set status = 'open', handled_at = null, handled_by = null where id = ?", inter.id);
+      return { toast: { type: "error", content: `没有办成：${(e as Error).message}`.slice(0, 80) } };
+    }
+  }
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);

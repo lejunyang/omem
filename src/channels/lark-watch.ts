@@ -8,6 +8,7 @@ import { findAgentSpec } from "../agents/specs.ts";
 import { chatSettings, setChatSettings, type WatchRule } from "../agents/threads.ts";
 import { rulesNaming } from "../rules/store.ts";
 import { ownerContextParts } from "../agents/owner-now.ts";
+import { briefText, lessonsText } from "./watch-trial.ts";
 
 /**
  * Watched chats: an alert group, an on-call group, a group the owner asked the assistant to keep
@@ -68,6 +69,25 @@ function mentioned(m: ChatMessage, who: { ownerOpenId?: string; botOpenId?: stri
   return (!!who.ownerOpenId && ids.includes(who.ownerOpenId)) || (!!who.botOpenId && ids.includes(who.botOpenId)) || (!!who.ownerName && m.text.includes(`@${who.ownerName}`));
 }
 
+/** When a message was sent, in ms (the bot gives ms as a string, capture may give ISO or seconds); null when unknown. */
+function sentMs(t: string | undefined) {
+  if (!t) return null;
+  if (/^\d+$/.test(t)) {
+    const n = Number(t);
+    return n < 1e12 ? n * 1000 : n;
+  }
+  const ms = Date.parse(t);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Who a message is for, as the handler should read it: the owner (theirs to answer or decide), someone else, or nobody in particular. */
+function addressee(m: ChatMessage, who: { ownerOpenId?: string; botOpenId?: string | null }) {
+  const ids = m.mentions ?? [];
+  if (who.ownerOpenId && ids.includes(who.ownerOpenId)) return "，@了本人";
+  if (ids.some((id) => id !== who.botOpenId)) return "，@了别人";
+  return "";
+}
+
 function matches(rule: WatchRule, m: ChatMessage, who: { ownerOpenId?: string; botOpenId?: string | null; ownerName?: string }) {
   if (rule.on === "all") return true;
   if (rule.on === "keyword") {
@@ -81,14 +101,15 @@ function matches(rule: WatchRule, m: ChatMessage, who: { ownerOpenId?: string; b
 }
 
 /** Hand new messages of a watched chat to its handler. Returns how many were handed over. */
-export async function routeWatchedMessages(app: App, chatId: string, chatName: string, messages: ChatMessage[], opts: { botOpenId?: string | null } = {}) {
+export async function routeWatchedMessages(app: App, chatId: string, chatName: string, messages: ChatMessage[], opts: { botOpenId?: string | null; ownerId?: string } = {}) {
   const rule = watchRule(app, chatId);
   if (!rule) return 0;
   if (rule.expiresAt && rule.expiresAt < now()) {
     expireWatches(app);
     return 0;
   }
-  const who = { ownerOpenId: app.config.lark.ownerOpenId, botOpenId: opts.botOpenId };
+  // Capture (lark-cli) sees people with its own ids: the owner as capture knows them.
+  const who = { ownerOpenId: opts.ownerId ?? app.config.lark.ownerOpenId, botOpenId: opts.botOpenId };
   let n = 0;
   for (const m of messages) {
     // Each message once, whichever path saw it first.
@@ -96,6 +117,9 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
     if (!matches(rule, m, who)) continue;
     // Never react to our own posts (the bot's open_id in real time, its app id when captured).
     if (m.senderId && (m.senderId === opts.botOpenId || m.senderId === app.config.lark.appId)) continue;
+    // Said before the watch began: not what the owner asked to be watched.
+    const at = sentMs(m.time);
+    if (rule.since && at !== null && at < Date.parse(rule.since)) continue;
     run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values('lark',?,?,?)", m.id, rule.spec, now());
     const batch = rule.batchMinutes === undefined ? 5000 : rule.batchMinutes * 60_000;
     const r = await receive(app, {
@@ -106,7 +130,7 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
       spaceId: rule.spaceId,
       speaker: m.sender,
       text: `${m.text}
-（飞书消息 ${m.id}${m.topicId ? `，话题 ${m.topicId}` : ""}，群「${chatName}」 ${chatId}）`,
+（飞书消息 ${m.id}${m.topicId ? `，话题 ${m.topicId}` : ""}，群「${chatName}」 ${chatId}${addressee(m, who)}）`,
       externalMessageId: m.id,
       // Addressed to the owner or the bot: never screened out (prefilterBatch).
       ...(mentioned(m, who) ? { meta: { addressed: true } } : {}),
@@ -181,6 +205,8 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
     const r = await decideScene(app, "watch", {
       群: t.title || t.key,
       盯群的目的: rule.note ?? "（没写）",
+      盯群说明: briefText(rule) || "（没写）",
+      本人对回复的决定: lessonsText(rule, 8) || "（还没有）",
       本人在这里的指示: owner.map((m) => m.text.slice(0, 400)).join("\n") || "（无）",
       管这个群的规则: rulesNaming(app, chatId, t.title) || "（无）",
       ...ownerContextParts(app, { chatId }),
@@ -191,7 +217,7 @@ export async function prefilterBatch(app: App, conversationId: string, batch: { 
       这一批消息: batchText,
     }, {
       type: "yesno",
-      instructions: "这是本人让助手盯着的一个群新来的一批消息。助手在这个群里的用处由“盯群的目的”和群里的场景决定：不一定是找本人的事，也可能是替群里的人解答问题、查东西、排查报上来的问题、跟进之前处理过的事。判断这一批里有没有助手能有效介入的：有人提问或求助、要查什么、报了问题或异常、和盯群目的相关、或是在接着之前助手处理的事，选“要看”；只是闲聊、客套、“稍等”“收到”、进度播报、系统通知，没人需要帮忙，选“不用看”。拿不准选“要看”。",
+      instructions: "这是本人让助手盯着的一个群新来的一批消息。助手在这个群里的用处由“盯群的目的”和群里的场景决定：不一定是找本人的事，也可能是替群里的人解答问题、查东西、排查报上来的问题、跟进之前处理过的事。判断这一批里有没有助手能有效介入的：有人提问或求助、要查什么、报了问题或异常、和盯群目的相关、或是在接着之前助手处理的事，选“要看”；只是闲聊、客套、“稍等”“收到”、进度播报、系统通知，没人需要帮忙，选“不用看”。有盯群说明时按它判断：只落在“不处理”里的（例如找别人或别的机器人的）选“不用看”；本人对回复的决定里不想要的那类也不用看。拿不准选“要看”。",
       yes: "要看",
       no: "不用看",
     }, { signal, ref: log?.ref });
