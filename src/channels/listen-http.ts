@@ -81,14 +81,14 @@ function casesOf(app: App, where: { contextId?: string; chatId?: string }, limit
   return rows;
 }
 
-/** Memories drawn from these groups' messages (their sources cited in source_refs). */
+/** Memories drawn from these groups' messages (their sources cited in source_refs). The owner's are stored without a user (only preferences carry one). */
 function memoriesFrom(app: App, chats: string[], limit = 30) {
   if (!chats.length) return [];
   const sources = all<{ id: string }>(app.db, `select id from sources where deleted_at is null and (${chats.map(() => "uri = ? or uri like ?").join(" or ")})`, ...chats.flatMap((c) => [`lark:${c}`, `lark:${c}@%`])).map((r) => r.id);
   if (!sources.length) return [];
   return all<{ id: string; kind: string; subject: string | null; content: string; created_at: string; status: string }>(
     app.db,
-    `select id, kind, subject, content, created_at, status from memories where status = 'active' and user_id = 'owner' and exists (select 1 from json_each(memories.source_refs) r where ${sources.map(() => "r.value like ?").join(" or ")}) order by created_at desc limit ?`,
+    `select id, kind, subject, content, created_at, status from memories where status = 'active' and (user_id is null or user_id = 'owner') and exists (select 1 from json_each(memories.source_refs) r where ${sources.map(() => "r.value like ?").join(" or ")}) order by created_at desc limit ?`,
     ...sources.map((id) => `src:${id}%`), limit,
   );
 }
@@ -185,10 +185,15 @@ export function registerListenRoutes(server: FastifyInstance, app: App, who: (re
   });
 }
 
-/** The web form's knobs: null clears a setting back to its default. */
+/**
+ * The web form's knobs: null clears a setting back to its default. Choosing how replies go ends a
+ * trial of direct replies (`wantsAuto`), as setting it through the assistant's tool does; otherwise a
+ * 关注 set back to drafts on the web kept asking to go direct.
+ */
 function cleanKnobs(k: z.infer<typeof knobsSchema> | undefined): Partial<ListenKnobs> {
   if (!k) return {};
   const out: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(k)) out[key] = v === null ? undefined : v;
+  if ("reply" in k) out.wantsAuto = undefined;
   return out as Partial<ListenKnobs>;
 }

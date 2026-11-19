@@ -32,6 +32,8 @@ import DoubaoSendStatus from "../components/DoubaoSendStatus.vue";
 import MembersSettings from "../components/MembersSettings.vue";
 import ProviderApps from "../components/ProviderApps.vue";
 import LarkCapturedChats, { type CapturedChat } from "../components/LarkCapturedChats.vue";
+import ListenContexts from "../components/ListenContexts.vue";
+import { byChat, groupOptions, type ListenView } from "../lib/listen";
 import FederationSettings from "../components/FederationSettings.vue";
 import PeerSettings from "../components/PeerSettings.vue";
 import CodeIndexPanel from "../components/CodeIndexPanel.vue";
@@ -226,6 +228,21 @@ const policyKinds: [string, string, string][] = [
 async function loadCaptured() {
   captured.value = (await get<{ chats: CapturedChat[] }>("/api/lark/captured").catch(() => ({ chats: [] as CapturedChat[] }))).chats;
 }
+// 关注 (连接 → above the chat list): the list, the groups a new one can read, and each chat's chips.
+const listens = ref<ListenView[] | null>(null);
+async function loadListens() {
+  listens.value = await get<ListenView[]>("/api/listen").catch(() => []);
+}
+const listenGroups = computed(() => groupOptions(captured.value));
+const listenByChat = computed(() => byChat(listens.value ?? []));
+/** How 有人找你 answers, from 渠道 → 有人找你 (the default 关注's knobs are not what it uses). */
+const defaultReply = computed(() => {
+  const m = config.value?.mentions;
+  if (m?.enabled === false) return "已关闭";
+  const word: Record<string, string> = { off: "只提醒你", draft: "先给你看", auto: "直接回" };
+  const r = m?.reply?.lark ?? {};
+  return `群里${word[r.group ?? "off"] ?? r.group}，私聊${m?.p2p === false ? "不算" : (word[r.p2p ?? "off"] ?? r.p2p)}`;
+});
 /** One chat changed (subscription, space, policy): replace its row, drop it if it is no longer listed, add it if new. */
 function capturedChanged(chatId: string, chat: CapturedChat | null) {
   const rest = captured.value.filter((c) => c.chatId !== chatId);
@@ -415,6 +432,7 @@ async function load() {
 onMounted(() => {
   void load();
   void loadCaptured();
+  void loadListens();
   void loadCrawls();
   // `?space=<id>` (from a page that needs one of its settings, e.g. a preview command): open it.
   const want = route.query.space;
@@ -1577,6 +1595,8 @@ async function saveEdit() {
         </template>
       </div>
 
+      <ListenContexts :items="listens" :groups="listenGroups" :default-reply="defaultReply" @created="(v) => (listens = [...(listens ?? []), v])" />
+
       <div class="card pad stack">
         <div class="row wrap"><strong>个人消息采集（只读）</strong><span class="spacer" /><button class="btn sm" @click="loadLarkChats">读取最近会话</button><button class="btn sm" @click="pollNow">立即采集</button></div>
         <HelpText>使用本机 lark-cli 的个人登录读取会话；除了你亲手发出的私聊指令（见下）和规则里的“拉机器人进群”，从不以你的身份发消息或操作（写文档见上面“飞书文档”）；定时采集在“定时任务”中开启。omem 机器人自己的私聊和它在群里发的消息不会被采集。</HelpText>
@@ -1611,7 +1631,7 @@ async function saveEdit() {
             <UiSelect :model-value="c.policy" size="sm" width="150px" aria-label="处理方式" :options="policyOptions" @change="(v) => setChatPolicy(c, v)" />
           </div>
         </template>
-        <LarkCapturedChats v-if="captured.length" :chats="captured" :policy-options="policyOptions" @updated="capturedChanged" />
+        <LarkCapturedChats v-if="captured.length" :chats="captured" :policy-options="policyOptions" :listens="listenByChat" @updated="capturedChanged" />
       </div>
 
       <div class="section-title">其他平台</div>

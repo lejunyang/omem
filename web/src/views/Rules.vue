@@ -86,12 +86,13 @@ const mentions = ref<Mentions | null>(null);
 type Wake = { id: string; kind: "timed" | "event"; note: string; at: string | null; expiresAt: string | null; setBy: { agent: string; runId: string | null }; target: { conversationId?: string; spec?: string }; detail: string };
 const wakes = ref<Wake[]>([]);
 // Groups the assistant (or an agent) keeps an eye on, in batches, until a time.
-type Watch = { chatId: string; name: string; conversationId: string | null; spec: string; note?: string; reply: Reply; batchMinutes?: number; expiresAt?: string };
+/** An active 关注 on groups (src/channels/lark-watch.ts `listWatches`); its page is /listen/:contextId. */
+type Watch = { contextId: string; chatId: string; chats: string[]; name: string; conversationId: string | null; spec: string; note?: string; reply: Reply; batchMinutes?: number; expiresAt?: string };
 const watches = ref<Watch[]>([]);
 async function stopWatch(w: Watch) {
-  if (!(await confirmDialog(`不再盯「${w.name}」？`, { okText: "不再盯" }))) return;
-  await del(`/api/watches/${encodeURIComponent(w.chatId)}`);
-  watches.value = watches.value.filter((x) => x.chatId !== w.chatId);
+  if (!(await confirmDialog(`暂停关注「${w.name}」？`, { message: "它不再处理这些群的新消息；在关注页里可以再打开。", okText: "暂停" }))) return;
+  await del(`/api/watches/${encodeURIComponent(w.contextId)}`);
+  watches.value = watches.value.filter((x) => x.contextId !== w.contextId);
 }
 const selectedWake = computed(() => (typeof route.query.wake === "string" ? wakes.value.find((w) => w.id === route.query.wake) ?? null : null));
 // A wake on a message is a temporary rule: its conditions and firings come from the rule.
@@ -569,14 +570,14 @@ function startFrom(text: string) {
           </div>
         </template>
         <template v-if="watches.length">
-          <div class="group muted small" title="本人让助理盯着的群：消息按批交给它，到期自动停止">正在盯的群</div>
-          <div v-for="w in watches" :key="w.chatId" class="li wake">
-            <component :is="w.conversationId ? 'router-link' : 'div'" class="grow pick" :to="w.conversationId ? `/ask/${w.conversationId}` : undefined">
-              <div class="row"><span class="badge">盯群</span><span class="ellipsis small">{{ w.name }}</span></div>
+          <div class="group row muted small" title="本人让助手看着的群：消息按批交给它，到期自动停止"><span class="grow">关注</span><router-link to="/settings?tab=connect" class="muted">全部</router-link></div>
+          <div v-for="w in watches" :key="w.contextId" class="li wake">
+            <router-link class="grow pick" :to="`/listen/${encodeURIComponent(w.contextId)}`">
+              <div class="row"><span class="badge">关注</span><span class="ellipsis small">{{ w.name }}</span></div>
               <div v-if="w.note" class="small clamp">{{ w.note }}</div>
-              <div class="muted small clamp">{{ w.spec === "assistant" ? "主助手" : w.spec }} · {{ w.batchMinutes ? `每 ${w.batchMinutes} 分钟一批` : "即时" }} · {{ w.expiresAt ? `${fmtTime(w.expiresAt)} 停止` : "直到取消" }}</div>
-            </component>
-            <button class="btn ghost sm icon" :title="`不再盯：${w.name}`" @click="stopWatch(w)"><Icon name="x" :size="14" /></button>
+              <div class="muted small clamp">{{ w.chats.length > 1 ? `${w.chats.length} 个群 · ` : "" }}{{ w.spec === "assistant" ? "主助手" : w.spec }} · {{ w.batchMinutes ? `每 ${w.batchMinutes} 分钟一批` : "即时" }} · {{ w.expiresAt ? `${fmtTime(w.expiresAt)} 停止` : "直到取消" }}</div>
+            </router-link>
+            <button class="btn ghost sm icon" :title="`暂停关注：${w.name}`" @click="stopWatch(w)"><Icon name="x" :size="14" /></button>
           </div>
         </template>
       </div>
