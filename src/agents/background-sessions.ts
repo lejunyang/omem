@@ -5,6 +5,7 @@ import type { PreparedRun } from "./runner.ts";
 import { issueToolToken, retargetToolToken, revokeToolToken, toolContextForToken } from "./tools.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
+import { accountOf } from "./sandbox.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
 import { NetworkUnavailableError, networkEnvironment, withNetworkPolicy } from "./network-policy.ts";
 
@@ -58,7 +59,9 @@ async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: 
   const ctx = toolContextForToken(app, prep.token);
   if (!ctx) throw new Error("后台会话的工具权限已失效");
   const { app: _app, runId: _run, ...scope } = ctx;
+  // Whose account the agent runs with (a member's own, agents/accounts.ts, or the machine's): never shared across accounts.
   const key = createHash("sha256").update(JSON.stringify(stable({
+    account: accountOf(prep.profile)?.userId ?? "owner",
     scope, system: prep.system, profile: prep.profile, cwd: prep.cwd,
     extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, modes: prep.modes, fullAccess: !!req.fullAccess,
   }))).digest("hex");

@@ -20,6 +20,8 @@ import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
 import { WAKE_NOTE } from "./wakes.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
+import { accountBlocked, carryAccount, recordedAccount } from "./accounts.ts";
+import { accountTag } from "./sandbox.ts";
 import { afterTurn, noteRateLimit } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
 import { awarenessNote } from "./awareness.ts";
@@ -349,7 +351,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   // A reply never waits for a model slot, but it counts against the model's load (released with the run).
   holdForRun(app, prep.profile, ctx.run.id);
   // Tool tokens are scoped to the sender, so each person gets their own agent session.
-  const keyOf = (p: AgentProfile) => `${p.id}|${label}|${prep.cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}`;
+  // A member's own account (agents/accounts.ts) is part of the key: a session never continues under another account.
+  const keyOf = (p: AgentProfile) => `${p.id}|${label}|${prep.cwd}|${p.model ?? ""}|${p.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(p) ? `|${accountTag(p)}` : ""}`;
   const sessionKey = keyOf(prep.profile);
   const watched = messages.some((m) => typeof m.meta.speaker === "string");
   const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
@@ -429,7 +432,9 @@ ${WAKE_NOTE}`
   // backend's own list (Codex, TraeX, Doubao keep every session the owner can browse).
   const retireReplaced = (sessionId: string | undefined) => {
     if (!t.agentSession || t.agentSession === sessionId) return;
-    const old = allProfiles(app.config).find((p) => p.id === t.agentProfile?.split("|")[0]);
+    const found = allProfiles(app.config).find((p) => p.id === t.agentProfile?.split("|")[0]);
+    // The replaced session was made with this member's own account: cleaned up with it.
+    const old = found && t.agentProfile?.endsWith(`|acct:${userId}`) ? recordedAccount(app, userId, found) : found;
     // In the background, after the reply: a failure goes to the service log, not the finished run.
     if (old) void retireSession(app, old, t.agentSession, t.agentCwd ?? prep.cwd, (e) => e.type === "status" && console.warn(`[omem] ${e.text}`));
   };
@@ -481,7 +486,9 @@ ${WAKE_NOTE}`
   // Where the turn goes when its AI cannot answer: the thread's own AI when another was chosen, the
   // role's other backends, the fallbacks, the routing candidates (runner.ts failoverProfiles).
   // The chooser's ranking by the owner's routing notes first (on the turn that chose), then the static order.
-  const chain = chosen ? distinctProfiles([prep.profile, ...chosen.order, ...failoverProfiles(app, actor, prep.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, prep.profile, own);
+  const chain = (chosen ? distinctProfiles([prep.profile, ...chosen.order, ...failoverProfiles(app, actor, prep.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, prep.profile, own))
+    // Not a backend kept to members' own accounts that this member has not logged in to.
+    .filter((p, i) => i === 0 || !accountBlocked(app, userId, p));
   let orderBy: OrderSource = chosen ? chosen.by : "static";
   let orderReason = chosen?.reason ?? "";
   let ordered = !!chosen;
@@ -518,6 +525,8 @@ ${WAKE_NOTE}`
       release(threadId);
       revokeToolToken(curPrep.token);
       curPrep = prepareRun(app, { actor, spaceId: space, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, addTools, fullAccess });
+      // The fallback runs with this member's own account of it when they have one (prepareRun chose it).
+      used = carryAccount(curPrep.profile, used);
       recordRunAI(app, ctx.run.id, curPrep.profile, true);
       emit({ type: "status", text: `${left || "默认后端不可用"}，改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to: aiLabel({ profile: used.id, model: used.model, effort: used.effort }), why: left || "默认后端不可用", orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
     }
@@ -550,7 +559,7 @@ ${WAKE_NOTE}`
       }
       networkAttempt = await beginNetworkAttempt(app, used, { signal: ctx.signal, runId: ctx.run.id, stop: () => { networkStopped = live.get(threadId)?.handle.stopped; release(threadId); } });
       curPrep.profile = networkAttempt.profile;
-      const stepKey = `${JSON.stringify(curPrep.profile.env)}|${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${userId === "owner" ? "" : `|${userId}`}`;
+      const stepKey = `${JSON.stringify(curPrep.profile.env)}|${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${curPrep.fullAccess ? "|full" : ""}${userId === "owner" ? "" : `|${userId}`}${accountTag(curPrep.profile) ? `|${accountTag(curPrep.profile)}` : ""}`;
       let l = step === 0 ? live.get(threadId) : undefined;
       if (l && (l.key !== stepKey || !l.handle.alive() || tooLong)) {
         release(threadId);

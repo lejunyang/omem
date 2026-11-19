@@ -54,6 +54,16 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/shares": "self",
   "DELETE /api/shares/:id": "self",
   "GET /api/me": "self",
+  // Each person's own AI accounts (docs/v2/agent-accounts.md): the handlers act on the caller's own only.
+  "GET /api/me/agent-accounts": "self",
+  "POST /api/me/agent-accounts/:backend/login": "self",
+  "POST /api/me/agent-accounts/:backend/token": "self",
+  "POST /api/me/agent-accounts/:backend/check": "self",
+  "DELETE /api/me/agent-accounts/:backend": "self",
+  // Everyone's logins (no tokens), the per-backend rule, removing a member's login: the owner's.
+  "GET /api/agent-accounts": "owner",
+  "PUT /api/agent-accounts/:backend/policy": "owner",
+  "DELETE /api/agent-accounts/:user/:backend": "owner",
   "GET /api/tools": "public",
   "POST /api/tools/:name": "public",
   // Checks a run's token and that the request comes from this machine itself (agents/command-gate.ts).

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "n
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
+import { sandboxCommand, type SandboxAccount } from "./sandbox.ts";
 
 /**
  * Find an executable on PATH. On Windows npm installs `.cmd` shims, which
@@ -48,7 +49,8 @@ export function commandExists(command: string) {
   return resolveCommand(command) !== null;
 }
 
-type LaunchOptions = { cwd: string; env?: NodeJS.ProcessEnv };
+/** `sandbox`: run for one user's own account, inside bubblewrap (agents/sandbox.ts); the profile carries it (`accountOf`). */
+type LaunchOptions = { cwd: string; env?: NodeJS.ProcessEnv; sandbox?: SandboxAccount };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin: "ignore" }): Omit<ChildProcessWithoutNullStreams, "stdin"> & { stdin: null };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" }): ChildProcessWithoutNullStreams;
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" | "ignore" }) {
@@ -56,9 +58,10 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   const env = withAgentPath({ ...process.env, ...opts.env });
   const resolved = resolveCommand(command, env);
   if (!resolved) throw new Error(`找不到命令 ${command}。请安装对应 Agent CLI 或在设置中修改命令。`);
-  const child = spawn(resolved.file, [...resolved.prefix, ...args], {
+  const boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...opts.env, PATH: env.PATH }, opts.cwd, opts.sandbox) : null;
+  const child = spawn(boxed?.file ?? resolved.file, boxed?.args ?? [...resolved.prefix, ...args], {
     cwd: opts.cwd,
-    env,
+    env: boxed?.env ?? env,
     stdio: [opts.stdin ?? "pipe", "pipe", "pipe"],
     shell: false,
     windowsHide: true,

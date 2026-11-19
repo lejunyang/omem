@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，这里只留最近的；更早的按时间段放在同目录的归档文件里。读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-19
+updated: 2026-11-20
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -14,6 +14,17 @@ updated: 2026-11-19
 - [2026-10](./changes-2026-10.md)（10-13 至 10-31，128 节）：规则页与规则引擎、多 Agent 协作、访客与私聊指令、分档评审、多个飞书机器人、会议规则、插件、设备的外部 Agent、夜间复盘、原件治理、需求树。
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
+
+## 成员用自己的 AI 账号：账号目录当 HOME，Linux 上用 bubblewrap 启动（11-20）
+
+- 新文件 `src/agents/sandbox.ts`：`sandboxSupport`（只在 Linux、找得到 `bwrap`（或 `OMEM_BWRAP`）、探测命令能跑通时打开，进程内检查一次，`omem diag` 的 `agentAccounts`）；纯函数 `bwrapArgs`（只读根、新的 user / PID 命名空间、`/tmp` 和要隐藏的目录换成空的，挂载按路径深浅排，同一路径可写优先，网络不隔离）和 `sandboxEnv`（去掉服务环境里的凭据和指向隐藏目录的变量，HOME 换成账号目录，Node 放在 PATH 最前）；`sandboxCommand` 按命令的真实位置补只读挂载（npm / pnpm 的安装前缀、Node、omem 的代码）。`accountOf` / `accountTag` 读运行带的账号。
+- 新文件 `src/agents/accounts.ts`：账号目录 `<数据目录>/accounts/<用户>/home`（0700，拒绝符号链接）、`withAccount`（`prepareRun` 里调用：本人和没有 `account` 的后端不变；成员登录过的换成他的账号；没登录看 `agents.accounts`，`own` 时抛出提示）、`accountBlocked`（`runner.ts`、`sessions.ts` 的兜底链去掉这样的后端）、登录（在沙箱里起 `account.login`，从输出认链接和验证码，命令留到结束或超时再 `status`）、粘贴令牌（`secrets/vault.db`，提供方 `agent:<后端>`，账号页的“已连接的应用”不列它）、检查、退出（`logout`、删 `owns` 里的目录，最后一个后端时删整个账号目录）。登录态在 kv `agent_account:<用户>:<后端>`。
+- `src/agents/catalog.ts`：`CatalogEntry.account`（`cli`、`env` 里的 `{home}`、`dirs`、`mounts`、`owns`、`login`、`status`、`logout`、`tokenEnv`），填了 Codex、TraeX、Claude Code，豆包命令行放在新的 `accountOnlyCatalog`；`accountCatalog()` 列出全部。
+- `spawn.ts` 的 `launch` 加 `sandbox`：ACP（含 `deleteAcpSession`）、命令行兜底、归档命令、豆包命令行都传 `accountOf(profile)`；豆包命令行的长提示文件在沙箱里放进账号目录。`session-children.ts` 按账号目录找 Codex 的会话记录。
+- 跟着账号走：`background-sessions.ts` 的池 key 加账号；`sessions.ts` 的会话 key 和 `stepKey` 加 `|acct:<用户>`，兜底那一步带上成员的账号（`carryAccount`），被换掉的会话用原账号清理（`recordedAccount`）；`session-cleanup.ts` 的 `backend_key` 加 `@acct:<用户>`，恢复时按它补回账号，账号目录没了就删记录；成员账号的豆包命令行会话不记清理。`quota.ts` 的 `quotaKind`、`capacity.ts` 的 `outOfQuotaUntil`、`runner.ts` 的 `noteQuota` 对成员账号不读不记本人的额度。
+- 配置 `agents.accounts`（后端 → `owner` / `own`，默认空即借用）。接口在新文件 `src/server/agent-accounts-http.ts`：`/api/me/agent-accounts…`（self，只动自己的；本人调用登录返回 400）、`GET /api/agent-accounts`、`PUT /api/agent-accounts/:backend/policy`、`DELETE /api/agent-accounts/:user/:backend`（owner），都登记在 `src/auth/routes.ts`。
+- 网页：`web/src/components/AgentAccounts.vue`（账号页“我的 AI 账号”）、`AgentAccountsAdmin.vue`（设置 → AI “成员的 AI 账号”）。`osdk.toml` 加 `[sys.pkg]`，只声明 apt / dnf 的 bubblewrap，`scripts/upgrade.ts` 不跑 `osdk pkg apply`。
+- 设计里没做的（额度按账号读、探测缓存按账号分、技能同步进账号目录、`own-or-other`、插件登录）和没在真机上验的写在 `docs/v2/agent-accounts.md` 开头。测试 `test/agent-accounts.test.ts`。
 
 ## 盯群先对齐、试运行、按本人的决定学；没改过的内置技能跟新版（11-20）
 

@@ -37,6 +37,8 @@ import { commandGateDir } from "./command-gate.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
+import { accountBlocked, withAccount } from "./accounts.ts";
+import { accountOf } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -433,7 +435,8 @@ export function prepareRun(
   const spec = "spec" in input.actor ? input.actor.spec : null;
   const role = spec ? null : loadRole((input.actor as { role: RoleName }).role, app);
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
-  const profile = resolveRunProfile(app, input);
+  // A member's run uses their own account of the backend when they logged in to it (agents/accounts.ts).
+  const profile = withAccount(app, userId, resolveRunProfile(app, input));
   if (!input.shadow) recordRunAI(app, input.runId, profile, false);
   if (role && input.runId && !input.shadow) run(app.db, "update runs set roles = coalesce(roles, '|') || ? || '|' where id = ? and instr(coalesce(roles, ''), ?) = 0", roleName, input.runId, `|${roleName}|`);
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
@@ -671,6 +674,8 @@ export function isRetryableAgentError(e: unknown): boolean {
  */
 export function noteQuota(app: App, profile: AgentProfile, e: unknown, emit: (e: AgentEvent) => void) {
   if (!(e instanceof Error) || !(isAgentRunError(e) ? e.kind === "quota" : isQuotaMessage(e.message))) return;
+  // A user's own account: their quota, not the owner's; nothing is set aside for other runs.
+  if (accountOf(profile)) return emit({ type: "status", text: `你自己的 ${profile.name ?? profile.id} 账号额度用完了` });
   const until = markOutOfQuota(app, profile, e.message);
   const one = !!profile.model && isModelQuotaMessage(e.message, profile.model);
   emit({ type: "status", text: `${profile.name ?? profile.id}${one ? ` 的模型 ${profile.model}` : ""} 的额度用完了，${until.toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 前自动改用${one ? "其他模型和后端" : "其他后端"}` });
@@ -771,6 +776,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const chain = single ? [base.profile] : chosen ? distinctProfiles([base.profile, ...chosen.order, ...failoverProfiles(app, actor, base.profile, own)]).filter((p, i) => i === 0 || !excluded(app, p)) : failoverProfiles(app, actor, base.profile, own);
   // A space kept on this machine only is never handed to an AI borrowed from someone else's server (core/mesh.ts):
   // such backends are passed over; when the run starts on one, it says so instead.
+  // A backend the owner keeps to members' own accounts, which this member has not logged in to, is no fallback.
+  for (let k = chain.length - 1; k > 0; k--) if (accountBlocked(app, input.userId ?? OWNER, chain[k])) chain.splice(k, 1);
   if (localOnly(app, input.spaceId)) {
     if (lentByOthers(app, chain[0])) throw new HttpError(400, `这个空间设了“仅本机”，不能用别人的 omem 借出的 AI（${chain[0].id}）：给这次运行或这个角色换一个本机的后端`);
     for (let k = chain.length - 1; k > 0; k--) if (lentByOthers(app, chain[k])) chain.splice(k, 1);

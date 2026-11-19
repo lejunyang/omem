@@ -4,6 +4,7 @@ import { allProfiles, builtinProfiles, type AgentProfile } from "../core/config.
 import { backendAvailable } from "./availability.ts";
 import { quotaAvoid } from "./quota.ts";
 import { NetworkUnavailableError, networkReason } from "./network-policy.ts";
+import { accountOf } from "./sandbox.ts";
 
 /**
  * How many runs each model takes at a time. A provider's quota is per account (the source: an ACP
@@ -211,6 +212,8 @@ function quotaState(app: App): Record<string, { until: string; message: string }
  * limit of one model was reached (a model's own daily limit): the account's other models stay usable.
  */
 export function outOfQuotaUntil(app: App, p: AgentProfile, at = new Date()): string | null {
+  // The owner's account being spent says nothing about a user's own (agents/sandbox.ts).
+  if (accountOf(p)) return null;
   const st = quotaState(app);
   for (const k of [sourceOf(p), ...(p.model ? [keyOf(p)] : [])]) {
     const e = st[k];

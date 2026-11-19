@@ -10,6 +10,7 @@ import { del, get, patch, post, put, type Space, type SpaceRelation } from "../a
 import AiRouting from "../components/AiRouting.vue";
 import AiDefaults from "../components/AiDefaults.vue";
 import AiCapacity from "../components/AiCapacity.vue";
+import AgentAccountsAdmin from "../components/AgentAccountsAdmin.vue";
 import AiNetworkConditions from "../components/AiNetworkConditions.vue";
 import AiBackend, { type AgentLoad } from "../components/AiBackend.vue";
 import { network } from "../lib/network-status";
@@ -1045,6 +1046,7 @@ async function saveEdit() {
       </div>
       <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
       <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" @save="saveCapacity" />
+      <AgentAccountsAdmin @policies="(v) => (config.agents.accounts = v)" />
       <div class="card pad stack">
         <div class="section-title">排队与兜底</div>
         <HelpText>后端排队、被限流、额度快用完或出故障时换一个后端接着做。配了决策模型时，换谁、按什么顺序由它按 任务选型 里的总体偏好和候选说明决定（运行前选 AI 时一起排好，没选过的运行在第一次要换时问一次），运行里写明顺序来自哪里；下面是没有决策模型时的顺序，也是决策模型没排到的后端的顺序。模型满了时按这个顺序找有空位的。</HelpText>

@@ -117,6 +117,8 @@ export async function diag(app: App) {
     },
     // Optional local tools; aad is desktop and browser control (skill desktop-control).
     tools: { aad: desktopControl.status() },
+    // Members' own AI accounts need bubblewrap on Linux (agents/sandbox.ts); without it they borrow the owner's.
+    agentAccounts: await import("../agents/sandbox.ts").then((m) => m.sandboxSupport()),
     agents: { default: app.config.agents.default ?? null, roles: app.config.agents.roles, review: app.config.memory.review, compare: app.config.memory.compare },
     // Nightly replay (agents/replay.ts): on or off, the judge, the last night; details with `replays`.
     replay: await import("../agents/replay.ts").then((m) => { const s = m.replayStatus(app); return { enabled: s.enabled, judge: s.judge, notice: s.notice, last: s.last, pendingEffects: s.pendingEffects }; }).catch((e) => ({ error: (e as Error).message })),

@@ -6,6 +6,7 @@ import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { catalogEntry } from "./catalog.ts";
+import { accountOf } from "./sandbox.ts";
 import { sourceOf } from "./capacity.ts";
 import { launch, resolveCommand, stop } from "./spawn.ts";
 import type { AgentEvent } from "./types.ts";
@@ -37,7 +38,8 @@ export type QuotaSnapshot = { at: string; via: "codex-app-server" | "claude-usag
 const KEY = "agent_quota";
 const DAY = 86_400_000;
 
-export const quotaKind = (p: AgentProfile) => catalogEntry(sourceOf(p))?.quota;
+// A run with a user's own account (agents/sandbox.ts) is not the owner's plan: no numbers are read or kept for it.
+export const quotaKind = (p: AgentProfile) => (accountOf(p) ? undefined : catalogEntry(sourceOf(p))?.quota);
 
 function store(app: App): Record<string, QuotaSnapshot> {
   if (!app.db) return {};

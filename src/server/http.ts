@@ -37,6 +37,7 @@ import { attachRemoteUpgrade, closeRemote, registerRemoteRoutes } from "../remot
 import { attachPreviewUpgrade, registerPreviewRoutes } from "./preview-http.ts";
 import { registerArtifactRoutes } from "./artifact-http.ts";
 import { registerDesignRoutes } from "./design-http.ts";
+import { registerAgentAccountRoutes } from "./agent-accounts-http.ts";
 import { registerFlowRoutes, itemFlowSummaries } from "../flows/http.ts";
 import { registerStudyRoutes } from "../studies/http.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
@@ -1649,6 +1650,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   attachPreviewUpgrade(app, server.server);
   registerArtifactRoutes(server, app, who);
   registerDesignRoutes(server, app, who);
+  // Each person's own AI accounts (docs/v2/agent-accounts.md).
+  registerAgentAccountRoutes(server, app, who);
   registerFlowRoutes(server, app, who);
   registerStudyRoutes(server, app, who);
   attachPluginStreams(app, server.server);
