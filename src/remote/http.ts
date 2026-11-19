@@ -11,7 +11,8 @@ import { desktopControl } from "../core/tools.ts";
 import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { sameOrigin, trustedLocal } from "../server/origin.ts";
-import { getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
+import { importRecording, importSchema } from "./import.ts";
+import { fromExtension, getRecording, listRecordings, markInterrupted, readRecording, updateRecording, type Recording } from "./recordings.ts";
 import { assistOf, browserProfiles, browserWindowAvailable, closeAll, closeSession, getSession, listSessions, navigate, openBrowser, openDesktop, restartViewer, screens, sessionView, startRecording, stopRecording, viewerPath, viewing } from "./sessions.ts";
 import { cachedProbe, probeRunning, probeVideo, readSettings, remoteSettingsSchema, saveSettings, viewerArgs } from "./settings.ts";
 
@@ -124,19 +125,21 @@ const ownerOnly = (userId: string) => {
 };
 
 /** The message that hands a finished recording to the assistant in the page's conversation. */
-export function organizeText(r: Recording) {
+export function organizeText(r: Recording, about?: { item?: { id: string; title: string } }) {
   const s = r.summary;
   if (r.status === "failed") return `刚才的录制（${r.id}）没有完成：${String(s.error ?? "原因不明")}。`;
-  const what = r.kind === "browser" ? `浏览器（${r.target || "页面"}）` : `窗口（${r.target}）`;
+  const ext = fromExtension(r);
+  const what = ext ? `我自己的 Chrome 里（从 ${r.target || "当前页面"} 开始）` : r.kind === "browser" ? `浏览器（${r.target || "页面"}）` : `窗口（${r.target}）`;
   return [
     `我录好了要教你的操作（录制 ${r.id}，在${what}）：${r.goal || "见对话里我说的"}。`,
-    `一共 ${s.actions ?? 0} 个动作${s.requests ? `，记下 ${s.requests} 个请求` : ""}。录的时候可能有试错和多余的操作，请只留下真正完成这件事的步骤和接口。`,
+    `一共 ${s.actions ?? 0} 个动作${s.marks ? `、${s.marks} 处我加的标记（说明那里看的是什么）` : ""}${s.requests ? `，记下 ${s.requests} 个请求` : ""}${ext && s.requests && !s.responseBodies ? "（没开 DevTools 面板，没有响应体）" : ""}。录的时候可能有试错和多余的操作，请只留下真正完成这件事的步骤和接口。`,
+    about?.item ? `这次录的是事项「${about.item.title}」（${about.item.id}）里要做的事。` : "",
     "请按技能 skill-from-recording 看这次录制，先跟我确认流程、每次会变的值和成功的标志，再保存成技能。",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
-async function organize(app: App, r: Recording, userId: string, conversationId?: string | null) {
-  const sent = await ask(app, { text: organizeText(r), conversationId: conversationId ?? r.conversationId ?? undefined, userId });
+async function organize(app: App, r: Recording, userId: string, conversationId?: string | null, about?: Parameters<typeof organizeText>[1]) {
+  const sent = await ask(app, { text: organizeText(r, about), conversationId: conversationId ?? r.conversationId ?? undefined, userId });
   updateRecording(app, r.id, { conversationId: sent.conversationId });
   return sent;
 }
@@ -215,6 +218,18 @@ export function registerRemoteRoutes(server: FastifyInstance, app: App, who: (re
     return { recording: getRecording(app, r.id), conversationId: sent.conversationId };
   });
   server.get("/api/remote/recordings", async (req) => listRecordings(app, who(req)));
+  // A recording made in the owner's own Chrome by the omem extension (import.ts): kept, then handed to
+  // the assistant like a stopped one, in a 关注's conversation when one is named.
+  server.post("/api/remote/recordings/import", async (req) => {
+    const b = q(importSchema, req.body);
+    const userId = who(req);
+    const context = b.contextId ? (await import("../channels/listen.ts")).requireContext(app, b.contextId) : null;
+    const item = b.itemId ? (await import("../items/store.ts")).getItem(app, b.itemId) : null;
+    const r = importRecording(app, userId, b);
+    if (!b.organize) return { recording: r, conversationId: null };
+    const sent = await organize(app, r, userId, b.conversationId ?? context?.conversationId, item ? { item: { id: item.id, title: item.title } } : undefined);
+    return { recording: getRecording(app, r.id), conversationId: sent.conversationId };
+  });
   server.get("/api/remote/recordings/:id", async (req) => {
     const r = getRecording(app, (req.params as { id: string }).id, who(req));
     return { ...r, text: readRecording(app, r.id, who(req), { part: "summary" }) };

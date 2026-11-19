@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "omem 助手",
-  "description": "omem 的浏览器扩展：高级网络面板、Mock、设备模拟、用户状态，以及截图和 UI 走查的「拾取」。默认不连接调试接口。",
+  "description": "omem 的浏览器扩展：高级网络面板、Mock、设备模拟、用户状态，截图和 UI 走查的「拾取」，以及把操作教给助手的「录制」。默认不连接调试接口。",
   "version": "0.1.0",
   "icons": {
     "16": "icons/icon-inactive-16.png",
@@ -34,7 +34,8 @@
     "activeTab",
     "sidePanel",
     "unlimitedStorage",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "webRequest"
   ],
   "optional_host_permissions": [
     "http://*/*",

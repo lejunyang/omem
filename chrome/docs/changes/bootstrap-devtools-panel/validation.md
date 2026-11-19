@@ -247,3 +247,10 @@
 - 未完成所有真实业务站点、支付/登录流程、所有最低支持版本、长期运行、多点触控或真机对照验收。
 - 本轮没有宣称此前原页面缩放/DevTools dock 问题全部消失；新画布避免依赖该缩放路线，原模式边界仍保留。
 - 初次全量回归曾出现“storage 已创建配置，UI 删除按钮消失”的时序失败；新增延迟读取测试并修复 stale read，不能用一次重跑通过掩盖竞态。
+
+## 2026-11-20 录制
+
+- 单元测试 `src/shared/recording.test.ts`（15 项）：敏感输入框、地址 / 请求头 / 请求体的遮盖（再遮一次不变、先遮后截断）、webRequest 和 DevTools 类型、两边记录的合并（哪边先到都一样）、HAR 转换、输入合并、步骤说法、上传内容的截图和请求上限。
+- e2e `e2e/record.e2e.test.ts`：真实 Chromium 加载构建，开始录制后 REC 角标出现；填写三个输入框（密码、验证码只记“受保护”）、点击（有截图）、标记、点链接换页，步骤依次写进 `omem-record`；webRequest 记下 POST，地址里的 `access_token` 和请求体里的密码换成占位，请求头的 authorization 遮掉，整份数据里找不到原值；停止后角标消失；侧栏录制页列出 7 步，点两次 ✕ 后剩 6 步。侧栏改成两页后拾取的 e2e 照常通过。
+- 侧栏录制页的浅色和深色截图看过（未开始、录制中带标记输入框、已停止），400 宽没有横向溢出。
+- 没自动化的：`chrome.permissions.request` 的授权弹窗（e2e 的 manifest 直接带 `<all_urls>`）、在页面上指出元素（e2e 只发了不带元素的标记）、DevTools 开着时 `onRequestFinished` 补响应体（自动化里打不开 DevTools 页面，只有 HAR 转换和合并的单元测试）、service worker 被回收后接着录。风险：回收后合并用的最近记录只在内存里，同一个请求可能记两条。替代验证：在真实 Chrome 里录一段，在 `chrome://serviceworker-internals` 停掉 worker 后接着操作，看步骤和请求是否接着记。

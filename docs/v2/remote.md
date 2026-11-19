@@ -55,6 +55,18 @@
 
 录制和画面是同一份输入：浏览器的点击经 CDP 送到页面，页面里的记录脚本照常看到；Windows 录制听 UIA 事件，Linux 听 AT-SPI 信号和 XTest 输入，远程送进去的键鼠同样被记下。
 
+### 在自己的 Chrome 里录（omem 扩展）
+
+要教的事常常在本人自己的浏览器里做（已经登录、开着很多页面），不必先开一个远程会话。Chrome 扩展（`chrome/`）的侧栏有「录制」一页：写一句要教什么，选一个标签页，开始录制，自己做一遍，停止后选「整理成技能」或「只保存」。录制期间工具栏图标上显示 REC，侧栏里一步一步列出记下的内容，可以删掉试错的步骤。
+
+- 记什么：打开的页面（地址变了才算，前端路由 `#/…` 也算）、点击、填写（同一个输入框连续打字合成一步）、提交表单、在输入框里按 Enter，每步带元素的名字、角色、CSS 路径和所在的标题（和「拾取」同一套取法，`chrome/src/shared/element-context.ts`），点击和换页后截一张可视区（只截正在显示的标签页，最多每 1.1 秒一张、一次 200 张）。从被录的页面打开的新标签页一起录，也可以中途把当前标签页加进来；iframe 里的操作不记。
+- 标记：录的时候点「加标记」写一句“这里看的是……”，可以先在页面上指一个元素（高亮框，点一下记下，这一下不传给页面）。标记是录制里 `kind: "mark"` 的一步，助手读到的是“备注（指着「…」）：…”，不用事后再问本人那里看的是什么。
+- 不记值的输入框：aad 的规则（`password`、`file`、`hidden`）之外，`autocomplete` 是密码、一次性验证码、银行卡的，名字（name、id、label、placeholder）像密码、令牌、验证码、卡号的，只记“填了”（`protected`）。omem 收到后按标签再挡一次。
+- 请求：不用调试器（扩展默认不连 `chrome.debugger`），用 `chrome.webRequest` 只观察：方法、地址、类型、状态、耗时、请求头和请求体（JSON 和表单）。响应体只有 DevTools 开着这个标签页时才有：扩展的 DevTools 页面（不用切到 omem 面板）把 `onRequestFinished` 的 HAR 连同接口和文档的文字响应体（每个最多 32K）送给后台，和 webRequest 记的同一个请求合并。cookie、令牌、密码按 aad 的 `redact_network` 规则在扩展里就换成占位（`chrome/src/shared/recording.ts`），omem 收到后再遮一次（`src/remote/redact.ts`，两边规则相同，遮两次不变）；另外 `pwd` 也算密钥名，片段只留前端路由。
+- 存在哪：录制中的数据在扩展的 IndexedDB `omem-record`（service worker 随时会被回收，每个事件直接写库，醒来读回）；上传成功或放弃后清空。
+
+上传走 `POST /api/remote/recordings/import`（只有本人，`src/remote/import.ts`）：目标、起始页、步骤、请求和截图（base64，最多 80 张、每张 3 MB；请求最多 5000 个，体合计 16M 字，超出时扩展先丢静态资源）。omem 照 aad 浏览器录制的样子写文件：`steps.jsonl`（第 0 步是起始页，之后每步带 `action`、`control`、`locator.css`、`screenshots`、关联的 `network`）、`evidence/network.jsonl`（`request`、`response`、`body`、`step_id` 按时间归到同一个标签页里之前最近的一步）、`images/`，`remote_recordings` 记一行（`kind` 为 browser，`summary.source` 为 `chrome-extension`，另有标记数、带响应体的请求数）。没有 aad 写的操作说明和可回放步骤，`read_recording` 的概要直接列步骤（带截图的文件路径）。之后和远程页的录制一样：选「整理成技能」时以本人名义发整理的消息；`contextId` 给了一个关注时发到它的对话，`itemId` 给了一个事项时消息里写明是这个事项里的事；「只保存」不发消息，之后可以 `POST /api/remote/recordings/:id/organize`。没有响应体时 `requests.ts` 不再把同一个 GET 调了五次当成轮询（没有响应可比，翻页和轮询看起来一样）。
+
 ## 交给助手
 
 停止后 omem 以本人的名义在页面的对话里发一条消息（录制编号和摘要），助手照常回答。助手可用的工具在分组 `remote`（说明 `skills/omem/references/remote.md`）：
@@ -76,6 +88,7 @@
 ## 边界
 
 - 远程画面是给人用的通道，按屏幕位置操作，不经 MCP 提供给 Agent；Agent 只读录制文件。
+- 扩展的录制：没开 DevTools 时没有响应体；webRequest 分不出 fetch 和 XHR（都记成 XHR）；只截正在显示的标签页；被录的页面在扩展里没有权限（没授权所有网站）时开始不了；service worker 被回收再醒来时，刚醒那一刻的请求先排队，合并输入框和 DevTools 记录用的最近状态只在内存里，回收后同一个请求可能各记一条。
 - 录制里的密码框内容不保存，回放时作为运行时输入；请求里的 cookie、Authorization 和常见敏感字段由 `aad` 遮盖。
 - 桌面录制按窗口记元素：录制期间切到别的窗口做的操作不会记下（列在“跳过”里）。
 - Linux 只支持 X11 会话；macOS 需要屏幕录制和辅助功能权限。

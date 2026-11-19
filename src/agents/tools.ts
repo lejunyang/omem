@@ -1376,13 +1376,13 @@ def({
 
 def({
   name: "list_recordings",
-  description: "列出本人在“远程”页面录制的操作（浏览器页面或桌面窗口）：编号、要做的事、步数、是否已整理成技能。",
+  description: "列出本人录制的操作（“远程”页面里的浏览器页面或桌面窗口，或本人用 Chrome 扩展在自己浏览器里录的）：编号、要做的事、步数、是否已整理成技能。",
   schema: z.object({ limit: z.number().int().min(1).max(50).optional() }),
   handler: async (ctx, a) => {
-    const { listRecordings } = await import("../remote/recordings.ts");
+    const { fromExtension, listRecordings } = await import("../remote/recordings.ts");
     const list = listRecordings(ctx.app, ctx.userId ?? OWNER, a.limit ?? 20);
     if (!list.length) return "还没有录制。";
-    return list.map((r) => `- ${r.id}（${r.kind === "browser" ? "浏览器" : "桌面"}，${localStamp(r.createdAt, ctx.app.config.timezone)}，${r.status}）${r.goal || "（没写要做的事）"}：${r.summary.actions ?? r.summary.replayable ?? 0} 个动作${r.summary.requests ? `，${r.summary.requests} 个请求` : ""}${r.skill ? `，已成技能 ${r.skill}` : ""}`).join("\n");
+    return list.map((r) => `- ${r.id}（${fromExtension(r) ? "Chrome 扩展" : r.kind === "browser" ? "浏览器" : "桌面"}，${localStamp(r.createdAt, ctx.app.config.timezone)}，${r.status}）${r.goal || "（没写要做的事）"}：${r.summary.actions ?? r.summary.replayable ?? 0} 个动作${r.summary.requests ? `，${r.summary.requests} 个请求` : ""}${r.skill ? `，已成技能 ${r.skill}` : ""}`).join("\n");
   },
 });
 

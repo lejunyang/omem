@@ -30,6 +30,13 @@ updated: 2026-11-20
 
 - `src/agents/code-branch.ts` 的 `landLocally`：仓库没有 origin 时，确认交办不再只留一条本地分支，而是在能快进时把工作分支合进它切出来的分支（检出着就在那里 `merge --ff-only`，没检出就移动引用）；那条分支上有交办之外的新提交、或检出处快进不了时不合，在确认说明里写原因。接着已有分支做的交办照旧。测试 `test/code-land-local.test.ts`。
 
+## Chrome 扩展的录制：在自己的浏览器里把一件事教给助手（11-20）
+
+- 扩展（`chrome/`）侧栏多了「录制」一页（`sidepanel/RecordPanel.vue`、`use-recording.ts`，和拾取篮用顶上的两个标签切换）：写要教什么、选标签页、开始 / 停止 / 接着录、加标记（可先在页面上指一个元素）、删步骤，停止后「整理成技能」或「只保存」，可选一个关注或事项。录制中工具栏图标显示 REC。
+- 后台 `background/recording-service.ts`：在被录的标签页注入 `inject/recorder.ts`（点击、填写、提交、Enter，元素名字和角色取法同 aad，路径和所在标题用拾取的 `element-context`），从被录页打开的新标签页一起录，`chrome.tabs.onUpdated` 记换页，`captureVisibleTab` 给点击和换页截图；请求用 `chrome.webRequest` 只观察（manifest 加了 `webRequest` 权限，仍不连调试器），DevTools 开着时 `panel/recording-bridge.ts`（挂在 devtools 页面）补上请求体和响应体，`findPartner` / `mergeRequests` 合并同一个请求。数据在 IndexedDB `omem-record`（`shared/recording-store.ts`）。遮盖、敏感输入框、上传内容的规则在 `shared/recording.ts`，单元测试 `recording.test.ts`，e2e `e2e/record.e2e.test.ts`。
+- 服务端新接口 `POST /api/remote/recordings/import`（只有本人，`src/remote/import.ts`）：写成 aad 浏览器录制的文件（`steps.jsonl`、`evidence/network.jsonl`、`images/`），`summary.source` 为 `chrome-extension`；`contextId` 把整理的消息发到关注的对话，`itemId` 在消息里写明事项；遮盖再做一次（`src/remote/redact.ts`，规则同 aad 的 `redact_network`，多了 `pwd`，片段留前端路由）。
+- `src/remote/recordings.ts`：步骤一行多了所在标题、CSS 路径、截图文件路径，“打开页面”和指着元素的标记有了说法；没有 aad 操作说明和可回放步骤时概要直接列步骤。`requests.ts`：没有响应体时不再把重复的 GET 当轮询。`list_recordings` 标出 Chrome 扩展录的；内置技能 `skill-from-recording` 说明了标记和没有响应体的情况（已有数据目录里的副本不会自动更新）。文档 `docs/v2/remote.md`“在自己的 Chrome 里录”，测试 `test/remote-import.test.ts`。
+
 ## 插件读得到本人填的设置：api.settings() 和登录方式的 ctx.settings（11-20）
 
 - `src/plugins/registry.ts`：在 omem 里运行的插件多了 `api.settings()`，返回本人在 设置 → 插件 里填的值（清单 `settings`，带默认值），每次调用时读；隔离运行的照旧在工具的 `ctx.settings()` 里读（`sandbox-runner.ts` 里调用会报错说明）。

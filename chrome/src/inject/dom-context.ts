@@ -13,7 +13,7 @@ import {
 } from "../shared/element-context";
 
 /** 元素前面最近的 h1–h4：先看前面的兄弟，再往上找祖先的前面的兄弟，最多看 300 个节点。 */
-function nearestHeading(element: Element): string {
+export function nearestHeading(element: Element): string {
   let current: Element | null = element;
   let steps = 0;
   while (current && steps < 300) {
