@@ -19,7 +19,7 @@ updated: 2026-11-19
 
 - `src/flows/store.ts` 的 `progress`：`markProgress` 收 `{ head, note }`，正文是加粗的首行、各段说的话、`**流程**`（每段带状态的一行）和 `**接下来**`（`PROGRESS_TAIL`）；通知带 `view: "flow"`，等你时 `tone: "warning"`。
 - `src/channels/item-notification.ts` 的 `flowProgressCard`：长的说明折进“更多情况”，流程和接下来始终展开；只留“打开流程页”。
-- `src/flows/engine.ts`：跟着交办的段带着本人意见重做，运行结束没交 `stage_report` 但发起或并进了交办（`objects.ts` 的 `codeWorkSince`）时，段跟着这次交办走；真没交结果时的说明分段写“运行最后说的”。测试在 `test/flows.test.ts`、`test/notification-card.test.ts`。
+- `src/flows/engine.ts`：跟着交办的段带着本人意见重做，运行结束没交 `stage_report` 但发起或并进了交办（`objects.ts` 的 `codeWorkSince`）时，段跟着这次交办走；真没交结果时的说明分段写“运行最后说的”。跟的是分支评审时（`latestCodeWork` 的 `branchReview`），`stageTask` 让它带 `rereview_of` 复审，不再写“按需求点发起交办”。测试在 `test/flows.test.ts`、`test/notification-card.test.ts`。
 
 ## 新建空仓库并建空间（11-19）
 

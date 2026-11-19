@@ -396,6 +396,17 @@ describe("对象与工具", () => {
     setRunOutput(app, next.id, { verdict: "approved" }); run(app.db, "update runs set status='done' where id=?", next.id);
     await advance(app, item.id); expect(s("a").state).toBe("done");
   });
+  it("跟着分支评审的段按本人意见重做：任务是带 rereview_of 复审，不发起编码交办", async () => {
+    const { app, item, s } = await setup([stage("a", { by: { object: "code-work" }, done: { object: "code-work", status: ["findings", "review-ok"] } })]);
+    const review = createRun(app, { kind: "code", spaceId: "personal", title: "同事分支的评审", input: { itemId: item.id, repos: ["personal"], branches: { personal: "feature/refund" } }, userId: "owner" });
+    addMaterials(app, item.id, [{ kind: "run", ref: review.id }], "owner");
+    await advance(app, item.id); expect(s("a").by).toBe(`code-work:${review.id}`);
+    await reopenStage(app, item.id, "a", "群里说图标要换成耳麦", [], owner, { feedback: true });
+    const task = String(getRun(app, s("a").by!).input.task);
+    expect(task).toContain(`rereview_of=${review.id}`);
+    expect(task).toContain("不要发起 delegate_code");
+    expect(task).not.toContain("按这件事的需求点发起交办");
+  });
   it("运行没交结果也没发起交办：卡片分段写，内部编号连同代码引号一起去掉", async () => {
     const { app, item, s } = await setup([stage("a", { by: { object: "code-work" } })]);
     await reopenStage(app, item.id, "a", "按新稿改", [], owner, { feedback: true });
