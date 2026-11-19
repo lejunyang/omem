@@ -403,6 +403,9 @@ async function runAgentTask(ctx: RunContext) {
       return replyOf(again).trim();
     });
   }
+  // A meeting listened to for a 「关注」: what it noted, and the summary, go into that 关注's conversation too.
+  const listenMeeting = (ctx.run.input as { listenMeeting?: import("../channels/listen-meetings.ts").ListenMeetingRun }).listenMeeting;
+  if (listenMeeting && !quietReason(ctx.app, ctx.run.id)) (await import("../channels/listen-meetings.ts")).noteMeetingRun(ctx.app, listenMeeting, ctx.run.id, answer);
   // News of its own (a meeting's conclusion, which also carries the rule that brought the bot in):
   // posted in the chat itself, not in the topic the conversation last replied in (lark-bot.ts).
   const topLevel = (ctx.run.input as { topLevel?: boolean }).topLevel ? { topLevel: true } : {};

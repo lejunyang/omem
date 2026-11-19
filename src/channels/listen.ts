@@ -48,6 +48,8 @@ export type ListenKnobs = {
   perDay: number;
   /** A meeting in its groups (or, for the default, one the owner joins): ask whether to listen / listen / leave it. */
   meetings: "off" | "ask" | "listen";
+  /** Meeting topics the owner said not to ask about again (“这个会以后不用问”, channels/listen-meetings.ts). */
+  meetingSkip?: string[];
   /** Read what the other 关注 are discussing (read only, never posting across). */
   seeOthers: boolean;
   /** Minutes new messages are collected before the handler looks. */

@@ -2131,6 +2131,8 @@ export const migrations: readonly string[] = [
    alter table reply_samples add column checked text;
    alter table reply_samples add column reply_id text;
    create index reply_samples_context on reply_samples(context_id, created_at);`,
+  // The 「关注」 that asked about a meeting or went into it (channels/listen-meetings.ts): one per meeting.
+  `alter table lark_meetings add column context_id text;`,
 ];
 
 export type Db = DatabaseSync;
