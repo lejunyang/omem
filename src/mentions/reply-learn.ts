@@ -1,3 +1,5 @@
+import { nearCases } from "../channels/listen-cases.ts";
+import { defaultContext } from "../channels/listen.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { now, truncate } from "../core/util.ts";
@@ -34,10 +36,10 @@ export function noteAsk(app: App, runId: string, channel: MentionChannel, chat: 
   if (!messages.length) return;
   const last = messages[messages.length - 1];
   run(app.db,
-    `insert into reply_samples(id, channel, chat_id, chat_kind, chat_name, topic_id, asker_id, asker_name, ask, what, message_ids, last_ms, created_at)
-     values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(id) do update set what = case when excluded.what != '' then excluded.what else reply_samples.what end`,
+    `insert into reply_samples(id, channel, chat_id, chat_kind, chat_name, topic_id, asker_id, asker_name, ask, what, message_ids, last_ms, created_at, context_id)
+     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(id) do update set what = case when excluded.what != '' then excluded.what else reply_samples.what end`,
     runId, channel.id, chat.chatId, chat.chatKind, chat.chatName, chat.topicId, last.senderId, last.sender,
-    truncate(messages.map((m) => m.text).join("\n"), 800), what, JSON.stringify(messages.map((m) => m.id)), Math.max(...messages.map((m) => m.atMs)), now());
+    truncate(messages.map((m) => m.text).join("\n"), 800), what, JSON.stringify(messages.map((m) => m.id)), Math.max(...messages.map((m) => m.atMs)), now(), defaultContext(app).id);
 }
 /** The handling that took the sample's messages. */
 export function noteHandling(app: App, mentionRun: string, handleRun: string, what: string) {
@@ -97,7 +99,9 @@ function outcome(s: Row) {
 }
 
 /** The samples that say something (a decision, the owner's own reply, or a settled silence), nearest first: this person, this chat, then the rest. */
-function nearest(app: App, to: { askerId: string | null; chatId: string }, limit: number) {
+function nearest(app: App, to: { askerId: string | null; chatId: string; text?: string }, limit: number) {
+  // With the new message: the cases closest to it (same person, same chat, alike in words; channels/listen-cases.ts).
+  if (to.text) return nearCases(app, { askerId: to.askerId, chatId: to.chatId, text: to.text }, limit) as unknown as Row[];
   const since = new Date(Date.now() - RECENT_MS).toISOString();
   const said = "(decision is not null or owner_reply is not null or settled_at is not null)";
   const pick = (where: string, n: number, ...params: (string | number)[]) => all<Row>(app.db, `select * from reply_samples where created_at > ? and ${said} and ${where} order by created_at desc limit ?`, since, ...params, n);
@@ -130,7 +134,7 @@ export function habitLine(app: App, to: { askerId: string | null; askerName: str
 }
 
 /** For the handler: how the owner answers, from their own replies and what they did with earlier drafts. Empty when there is nothing yet. */
-export function replyHabits(app: App, to: { askerId: string | null; chatId: string }) {
+export function replyHabits(app: App, to: { askerId: string | null; chatId: string; text?: string }) {
   settleSamples(app);
   const lines = nearest(app, to, 10).map(outcome).filter(Boolean);
   if (!lines.length) return "";

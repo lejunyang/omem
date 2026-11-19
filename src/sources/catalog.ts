@@ -279,6 +279,11 @@ export function buildCatalog(app: App, spaceId: string): Catalog {
         ] : []),
       ]);
       add({ ...leaf, parent, sort: desc(r.date ?? r.captured_at) });
+    } else if (r.kind === "work" && r.uri.startsWith("work/关注/")) {
+      // 「关注」's own files (channels/listen-cases.ts playbookPath): 关注 → each one → its files.
+      const parts = r.uri.slice("work/".length).split("/").filter(Boolean);
+      parent = chain(parts.slice(0, -1).map((p, i) => ({ key: `work-dir:${parts.slice(0, i + 1).join("/")}`, title: p, kind: "dir" as const, sort: i ? `0${p}` : "6关注" })));
+      add({ ...leaf, parent, title: r.title || parts.at(-1)!, sort: `1${parts.at(-1)}` });
     } else if ((r.kind === "code" || r.kind === "doc") && !hasScheme(r.uri) && /[\\/]/.test(r.uri)) {
       const parts = r.uri.replace(/\\/g, "/").split("/").filter(Boolean);
       parent = chain(parts.slice(0, -1).map((p, i) => ({ key: `dir:${parts.slice(0, i + 1).join("/")}`, title: p, kind: "dir" as const, sort: `0${p}` })));

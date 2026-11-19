@@ -25,7 +25,7 @@ export const CORE_TOOLS = new Set([
  */
 export const CODE_STARTERS = ["delegate_code", "review_branch", "continue_code_run", "settle_code_task"];
 
-export const ROLE_TOOLS = ["claim_commits", "note_item_change", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest"];
+export const ROLE_TOOLS = ["claim_commits", "note_item_change", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest", "submit_playbook"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
 /**
  * A run allowed this few tools gets every one of them directly: a background role or profile
@@ -65,7 +65,7 @@ export const TOOL_GROUPS: { id: string; label: string; doc?: string; tools: stri
   { id: "lark-msg", label: "飞书消息与卡片", doc: "lark", tools: ["lark_send", "lark_react", "meeting_suggest", "lark_card", "lark_send_file", "lark_message_file", "lark_chat_history", "reply_to_asker"] },
   { id: "lark-docs", label: "以本人身份写飞书文档", doc: "lark", tools: ["lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"] },
   { id: "lark-owner", label: "以本人身份读写飞书的表格、多维表格、任务，拉人进群", doc: "lark", tools: ["lark_read", "lark_write", "lark_invite"] },
-  { id: "lark-capture", label: "飞书采集设置", doc: "lark", tools: ["list_lark_chats", "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "propose_knowledge_mapping"] },
+  { id: "lark-capture", label: "飞书采集设置", doc: "lark", tools: ["list_lark_chats", "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "propose_knowledge_mapping", "submit_playbook"] },
   { id: "learning", label: "学习", doc: "learning", tools: ["create_card", "set_learning_goal", "learning_progress"] },
   { id: "media", label: "图片生成", doc: "media", tools: ["generate_image"] },
   { id: "plugins", label: "插件", doc: "plugins", tools: ["plugin_query", "plugin_put"] },

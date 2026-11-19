@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
+import { all, one } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import type { ListenContext } from "./listen.ts";
 
@@ -16,8 +16,14 @@ export function playbookPath(c: Pick<ListenContext, "name" | "id">) {
   return `关注/${name}/经验.md`;
 }
 
+/** The lessons listen-coach wrote for a 关注 (its work file), as text; empty when there are none yet. */
+export function playbookOf(app: App, c: Pick<ListenContext, "name" | "id">, max = 4000) {
+  const row = one<{ text: string }>(app.db, "select text from sources where uri = ? and deleted_at is null order by captured_at desc limit 1", `work/${playbookPath(c)}`);
+  return row ? truncate(row.text.trim(), max) : "";
+}
+
 export type CaseLite = {
-  id: string; context_id: string | null; chat_id: string; chat_name: string; asker_id: string | null; asker_name: string; ask: string;
+  id: string; context_id: string | null; chat_id: string; chat_kind: string; chat_name: string; settled_at: string | null; asker_id: string | null; asker_name: string; ask: string;
   draft: string | null; decision: string | null; final: string | null; reason: string | null; owner_reply: string | null;
   verdict: string | null; note: string | null; scene: string | null; checked: string | null; created_at: string;
 };
@@ -43,8 +49,8 @@ function overlap(a: Set<string>, b: Set<string>) {
 export function nearCases(app: App, to: { contextId?: string | null; askerId?: string | null; askerName?: string | null; chatId?: string | null; text: string }, limit = 6): CaseLite[] {
   const rows = all<CaseLite>(
     app.db,
-    `select id, context_id, chat_id, chat_name, asker_id, asker_name, ask, draft, decision, final, reason, owner_reply, verdict, note, scene, checked, created_at
-     from reply_samples where (decision is not null or owner_reply is not null or verdict is not null)
+    `select id, context_id, chat_id, chat_kind, chat_name, settled_at, asker_id, asker_name, ask, draft, decision, final, reason, owner_reply, verdict, note, scene, checked, created_at
+     from reply_samples where (decision is not null or owner_reply is not null or verdict is not null or settled_at is not null)
      and ${to.contextId ? "context_id = ?" : "1 = 1"} order by created_at desc limit 400`,
     ...(to.contextId ? [to.contextId] : []),
   );
@@ -56,12 +62,15 @@ export function nearCases(app: App, to: { contextId?: string | null; askerId?: s
     else if (to.askerName && r.asker_name && r.asker_name === to.askerName) s += 2;
     if (to.chatId && r.chat_id === to.chatId) s += 1;
     if (r.verdict || r.decision === "edited" || r.decision === "dropped" || r.decision === "disliked") s += 0.5;
+    // A silence the owner let stand teaches less than a decision or their own reply.
+    if (!r.decision && !r.owner_reply && !r.verdict) s -= 0.5;
     s -= Math.min(1, (nowMs - Date.parse(r.created_at)) / (60 * 86400_000));
     return { r, s };
   });
   return scored.sort((a, b) => b.s - a.s).slice(0, limit).map((x) => x.r);
 }
 
+const REASONS: Record<string, string> = { "no-need": "不用回", verbose: "太啰嗦", "no-conclusion": "没有结论", self: "本人自己回", "not-ours": "不该回", "owner-decides": "该本人来定", wrong: "结论不对或没依据", useless: "没帮上忙" };
 const DECIDED: Record<string, string> = { sent: "本人照发了", edited: "本人改了再发", dropped: "本人没发", auto: "自动发出", disliked: "自动发出后本人不满意", quiet: "助手没回" };
 const VERDICT: Record<string, string> = { "should-reply": "本人说该回", "should-not": "本人说不该回", wrong: "本人说回得不对" };
 
@@ -69,12 +78,13 @@ const VERDICT: Record<string, string> = { "should-reply": "本人说该回", "sh
 export function casesText(cases: CaseLite[]) {
   return cases
     .map((c) => {
-      const parts = [`${c.asker_name || "有人"}在「${truncate(c.chat_name || c.chat_id, 20)}」${c.scene ? `（${c.scene}）` : ""}：${truncate(c.ask.replace(/\s+/g, " "), 160)}`];
+      const parts = [`${c.asker_name || "有人"}${c.chat_kind === "p2p" ? "私聊" : `在「${truncate(c.chat_name || c.chat_id, 20)}」`}${c.scene ? `（${c.scene}）` : ""}：${truncate(c.ask.replace(/\s+/g, " "), 160)}`];
       if (c.checked) parts.push(`助手查了：${truncate(c.checked, 120)}`);
       if (c.draft) parts.push(`助手拟的：${truncate(c.draft.replace(/\s+/g, " "), 160)}`);
-      if (c.decision) parts.push(`${DECIDED[c.decision] ?? c.decision}${c.reason ? `（${c.reason}）` : ""}${c.decision === "edited" && c.final ? `：${truncate(c.final.replace(/\s+/g, " "), 160)}` : ""}`);
+      if (c.decision) parts.push(`${DECIDED[c.decision] ?? c.decision}${c.reason ? `（${REASONS[c.reason] ?? c.reason}）` : ""}${c.decision === "edited" && c.final ? `：${truncate(c.final.replace(/\s+/g, " "), 160)}` : ""}`);
       if (c.owner_reply) parts.push(`本人自己回了：${truncate(c.owner_reply.replace(/\s+/g, " "), 200)}`);
       if (c.verdict) parts.push(`${VERDICT[c.verdict] ?? c.verdict}${c.note ? `：${truncate(c.note, 120)}` : ""}`);
+      if (!c.decision && !c.owner_reply && !c.verdict && c.settled_at) parts.push("本人没回");
       return `- [${c.id}] ${parts.join("；")}`;
     })
     .join("\n");

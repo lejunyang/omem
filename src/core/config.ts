@@ -136,6 +136,7 @@ export const roleNames = [
   "designer",
   "mention-triage",
   "work-state",
+  "listen-coach",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 

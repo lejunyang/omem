@@ -160,4 +160,48 @@ describe("「关注」", () => {
     expect(contextsOfChat(app, "oc_b").map((c) => c.name)).toEqual(["需求 X"]);
     expect(chatListened(app, "oc_c")).toBe(false);
   });
+
+  it("keeps a quiet batch as a case, files cases into scenes with listen-coach, and learns from the owner's own replies", async () => {
+    const app = testApp();
+    const { createRun } = await import("../src/agents/runs.ts");
+    const { coachDue, collectOwnerReplies } = await import("../src/channels/listen-coach.ts");
+    const { playbookPath } = await import("../src/channels/listen-cases.ts");
+    const c = saveContext(app, { kind: "place", name: "值班群", chats: ["oc_ops"], knobs: { reply: "none" } });
+    await routeWatchedMessages(app, "oc_ops", "值班群", [{ id: "om_q", time: now(), sender: "小王", text: "周会改到几点" }]);
+    const batch = listRuns(app, { kind: "ask" })[0];
+    const handler = toolContextForToken(app, issueToolToken({ runId: batch.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
+    expect((await callTool(handler, "stay_quiet", { reason: "闲聊，和值班无关" })).isError).toBe(false);
+    expect(one(app.db, "select decision, reason, ask, asker_name from reply_samples where context_id = ?", c.id)).toMatchObject({ decision: "quiet", reason: "闲聊，和值班无关", asker_name: "小王" });
+
+    // The owner answers someone in the group themselves: a case, even where nobody drafted anything.
+    const ms = Date.now();
+    run(app.db, "insert into lark_messages(message_id,chat_id,sender_name,sender_kind,content,create_ms) values('om_ask','oc_ops','小李','user','UID 9 的页面打不开',?)", ms - 1000);
+    run(app.db, "insert into lark_messages(message_id,chat_id,parent_id,sender_name,sender_kind,content,create_ms) values('om_mine','oc_ops','om_ask','本人','owner','是 POI 被过滤了，找地点值班',?)", ms);
+    run(app.db, "insert into kv(key,value) values('listen_owner_replies_ms', ?)", String(ms - 5000));
+    expect(collectOwnerReplies(app)).toBe(1);
+    expect(one(app.db, "select owner_reply, asker_name from reply_samples where id = 'rs_own_om_mine'")).toMatchObject({ owner_reply: "是 POI 被过滤了，找地点值班", asker_name: "小李" });
+
+    // Enough cases the owner had a say in: listen-coach is queued, and its hand-in becomes the lessons.
+    for (let i = 0; i < 4; i++) run(app.db, `insert into reply_samples(id,channel,chat_id,chat_kind,chat_name,asker_name,ask,last_ms,created_at,context_id,decision,draft,decided_at) values(?,'lark','oc_ops','group','值班群','小王',?,0,?,?,'sent','查了日志',?)`, `rs_s${i}`, `UID ${i} 打不开`, new Date().toISOString(), c.id, new Date().toISOString());
+    expect(coachDue(app)).toBe(1);
+    expect(coachDue(app)).toBe(0);
+    const coachRun = listRuns(app, { kind: "listen-coach" })[0];
+    const coach = toolContextForToken(app, issueToolToken({ runId: coachRun.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
+    const out = await callTool(coach, "submit_playbook", {
+      scenes: [{ name: "用户报页面打不开", when: "带 UID 说页面打不开", reply: "yes", check: "查 POI 过滤日志", answer: "先给结论再给日志链接", cases: ["rs_s0", "rs_own_om_mine"] }],
+      case_scenes: [{ case: "rs_s1", scene: "用户报页面打不开" }],
+    });
+    expect(out.isError).toBe(false);
+    const file = one<{ text: string }>(app.db, "select text from sources where uri = ?", `work/${playbookPath(c)}`)!;
+    expect(file.text).toContain("## 用户报页面打不开");
+    expect(file.text).toContain("查 POI 过滤日志");
+    expect(all(app.db, "select id from reply_samples where scene = '用户报页面打不开' order by id")).toHaveLength(3);
+    expect(getContext(app, c.id)!.playbookAt).toBeTruthy();
+    // Others may not hand in lessons; the handler now reads them.
+    expect((await callTool(handler, "submit_playbook", { scenes: [{ name: "xx", when: "xx", reply: "no" }] })).isError).toBe(true);
+    await routeWatchedMessages(app, "oc_ops", "值班群", [{ id: "om_q2", time: now(), sender: "小王", text: "UID 7 打不开" }]);
+    const t = findThread(app, c.conversationId!)!;
+    expect(await watchedNote(app, t, threadMessages(app, t.id).slice(-1))).toContain("这个关注的经验");
+  });
 });
+

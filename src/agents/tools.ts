@@ -3199,6 +3199,33 @@ def({
   },
 });
 
+def({
+  name: "submit_playbook",
+  description:
+    "交一个「关注」整理好的经验（只给 listen-coach 用）：按场景写，每个场景写什么时候算、要不要回、查什么、怎么回、别怎样，列出依据的案例 id；整份替换旧的经验。说明本身该改时在 brief 里交完整的新说明，宿主发给本人确认。",
+  write: true,
+  schema: z.object({
+    scenes: z
+      .array(
+        z.object({
+          name: z.string().trim().min(2).max(40).describe("场景名，按对方要什么起，例如“用户报页面打不开”"),
+          when: z.string().trim().min(2).max(400).describe("什么样的消息算这个场景，和相近的场景怎么区分"),
+          reply: z.enum(["yes", "no", "depends"]).describe("要不要回；depends 时在 when 或 answer 里写清看什么定"),
+          check: z.string().trim().max(600).optional().describe("回之前查什么：哪个技能、哪类日志或代码、哪份文档，查到什么程度算有结论"),
+          answer: z.string().trim().max(600).optional().describe("怎么回：长短、口吻、先结论还是先依据、给不给链接、@ 谁"),
+          avoid: z.string().trim().max(300).optional().describe("本人明确不想要的做法"),
+          cases: z.array(z.string()).max(20).optional().describe("依据的案例 id（rs…）"),
+        }),
+      )
+      .min(1)
+      .max(15),
+    case_scenes: z.array(z.object({ case: z.string(), scene: z.string() })).max(200).optional().describe("其余认得出场景的案例"),
+    brief: z.object({ handle: z.array(z.string().trim().min(1).max(200)).min(1).max(12), skip: z.array(z.string().trim().min(1).max(200)).max(12), valid: z.string().trim().min(2).max(600) }).optional(),
+    notes: z.string().max(1000).optional().describe("写在经验开头的一两句总体观察"),
+  }),
+  handler: async (ctx, a) => (await import("../channels/listen-coach.ts")).submitPlaybook(ctx.app, ctx.runId, a),
+});
+
 /** One `lark_invite` call: at most this many groups and members in all, so the approval card shows every one. */
 const INVITE_MAX_CHATS = 20;
 const INVITE_MAX_MEMBERS = 200;
@@ -3619,6 +3646,10 @@ def({
     const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
     if (!r || !mayStayQuiet(ctx.app, r)) throw new HttpError(409, "这一轮在回答别人的消息，不能不回：直接写回答。");
     setRunOutput(ctx.app, r.id, { stayQuiet: a.reason.trim() });
+    // A 关注's batch looked at and left: a case of its own (channels/watch-trial.ts).
+    const trial = await import("../channels/watch-trial.ts");
+    const listening = trial.contextOfRun(ctx.app, r.id);
+    if (listening) trial.noteQuiet(ctx.app, listening, r.id, ((r.input as { messageIds?: string[] }).messageIds ?? []), a.reason.trim());
     addRunEvent(ctx.app, r.id, "status", { text: `这一轮不发回答：${a.reason.trim()}` });
     // A final message left empty fails on some providers ("empty stream"): a few words close the turn; they are not posted.
     return "好，这一轮不发回答。用一句很短的话（比如“已结束”）结束这一轮，不要留空：这句话不会发出去。";

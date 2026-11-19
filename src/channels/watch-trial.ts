@@ -45,6 +45,7 @@ export function recordCase(app: App, c: ListenContext, x: { chatId: string; chat
     id, x.runId, x.chatId, x.chatName, x.asker ?? "", x.ask, JSON.stringify(x.replyTo ? [x.replyTo] : []), Date.now(), x.draft ?? null,
     x.decision ?? null, x.final ?? null, x.reason ?? null, x.decision ? at : null, at, c.id, caseSource(c), x.replyId ?? null,
   );
+  if (x.runId) run(app.db, "update reply_samples set checked = ? where id = ?", checkedOf(app, x.runId), id);
   return id;
 }
 
@@ -137,9 +138,8 @@ export function correctionsSinceBrief(app: App, c: ListenContext) {
 
 /** The lessons listen-coach wrote for this 关注 (a work file), for the handler and the screening. */
 export async function playbookText(app: App, c: ListenContext, _about = "", max = 4000) {
-  const { playbookPath } = await import("./listen-cases.ts");
-  const row = one<{ text: string }>(app.db, "select text from sources where uri = ? and deleted_at is null order by captured_at desc limit 1", `work/${playbookPath(c)}`);
-  return row ? truncate(row.text.trim(), max) : "";
+  const { playbookOf } = await import("./listen-cases.ts");
+  return playbookOf(app, c, max);
 }
 
 function briefCardSpec(c: ListenContext, revised: boolean) {
@@ -345,4 +345,38 @@ export async function dislikedWatchReply(app: App, messageId: string) {
 export function noteAutoReply(app: App, c: ListenContext, chatId: string, messageId: string, content: Content, replyTo?: string) {
   const a = askOf(app, c, replyTo);
   recordCase(app, c, { chatId, chatName: chatName(app, chatId), runId: null, asker: a?.who, ask: a?.text ?? "", replyTo, decision: "auto", final: textOf(content) || "（卡片或文件）", replyId: messageId });
+}
+
+/** What a run looked at, in a line (its tool calls by name): the “查了什么” of a case. */
+export function checkedOf(app: App, runId: string | null) {
+  if (!runId) return null;
+  const rows = all<{ title: string }>(app.db, "select json_extract(data, '$.title') title from run_events where run_id = ? and type = 'tool' and json_extract(data, '$.status') = 'completed'", runId);
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const name = String(r.title ?? "").replace(/^mcp\.omem\./, "").replace(/^omem_call$/, "");
+    if (!name || /^(omem_help|stay_quiet|lark_send|read_skill)$/.test(name)) continue;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return counts.size ? [...counts].map(([n, k]) => (k > 1 ? `${n}×${k}` : n)).join("、") : null;
+}
+
+/** A 关注's handler looked at a batch and said nothing: a case (the owner replying there later teaches when to speak). */
+export function noteQuiet(app: App, c: ListenContext, runId: string, messageIds: string[], reason: string) {
+  if (!c.conversationId || !messageIds.length) return null;
+  const msgs = all<{ text: string; meta: string }>(app.db, `select text, meta from messages where conversation_id = ? and id in (${messageIds.map(() => "?").join(",")}) order by created_at`, c.conversationId, ...messageIds)
+    .map((m) => ({ text: m.text.replace(/\n（飞书消息[\s\S]*$/, "").trim(), meta: json<{ speaker?: string; chatId?: string; externalId?: string; backlog?: boolean }>(m.meta, {}) }))
+    .filter((m) => typeof m.meta.speaker === "string" && !m.meta.backlog);
+  if (!msgs.length) return null;
+  const first = msgs[0];
+  const chatId = first.meta.chatId ?? c.chats[0];
+  const id = newId("rs");
+  const at = now();
+  run(
+    app.db,
+    `insert into reply_samples(id,handle_run,channel,chat_id,chat_kind,chat_name,asker_name,ask,message_ids,last_ms,decision,reason,decided_at,created_at,context_id,source,checked)
+     values(?,?,'lark',?,'group',?,?,?,?,?,'quiet',?,?,?,?,?,?)`,
+    id, runId, chatId, chatName(app, chatId), String(first.meta.speaker ?? ""), truncate(msgs.map((m) => `${m.meta.speaker}：${m.text}`).join("\n"), 800),
+    JSON.stringify(msgs.map((m) => m.meta.externalId).filter(Boolean)), Date.now(), truncate(reason, 300), at, at, c.id, caseSource(c), checkedOf(app, runId),
+  );
+  return id;
 }

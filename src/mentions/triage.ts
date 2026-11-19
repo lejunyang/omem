@@ -14,6 +14,8 @@ import { rulesNaming } from "../rules/store.ts";
 import { personLine } from "../agents/work-state.ts";
 import type { MentionChannel, MentionMessage } from "./channel.ts";
 import { habitLine } from "./reply-learn.ts";
+import { casesText, nearCases, playbookOf } from "../channels/listen-cases.ts";
+import { defaultContext } from "../channels/listen.ts";
 
 /**
  * The triage of a message looking for the owner (docs/v2/mentions.md): one small judgement — ignore,
@@ -136,6 +138,9 @@ export async function triageMaterial(app: App, channel: MentionChannel, input: T
   // What the owner did with this person's and this chat's earlier messages (reply-learn.ts).
   const first = input.messages[input.messages.length - 1];
   const habit = first ? habitLine(app, { askerId: first.senderId, askerName: first.sender, chatId: input.chatId, chatKind: input.chatKind }) : "";
+  // The cases closest to these messages and the lessons of “someone looks for you” (channels/listen-cases.ts).
+  const cases = first ? casesText(nearCases(app, { askerId: first.senderId, askerName: first.sender, chatId: input.chatId, text: input.messages.map((m) => m.text).join("\n") }, 6)) : "";
+  const playbook = playbookOf(app, defaultContext(app), 2500);
   const sourceId = input.messages.find((m) => m.sourceId)?.sourceId;
   const reactions = sourceId ? outcomeLine(outcomeStats(app, { sourceId })) : "";
   return {
@@ -153,6 +158,8 @@ export async function triageMaterial(app: App, channel: MentionChannel, input: T
     ...(rules ? { 本人给这个会话设的规则: rules } : {}),
     ...(earlier.length ? { 最近在这个会话里的处理: earlier.join("\n") } : {}),
     ...(habit ? { 本人以往回不回: habit } : {}),
+    ...(cases ? { 相近的案例: cases } : {}),
+    ...(playbook ? { 有人找你的经验: playbook } : {}),
     ...(ignore.length ? { 本人说过不用提醒的: ignore.join("\n") } : {}),
     现在: new Date().toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, weekday: "short", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }),
   };

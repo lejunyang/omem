@@ -59,6 +59,8 @@ import "./wakes.ts";
 import "./digest.ts";
 // The nightly write-up of the owner's work state and person cards (agents/work-state-job.ts).
 import "./work-state-job.ts";
+// 「关注」's lessons from its cases (channels/listen-coach.ts).
+import "../channels/listen-coach.ts";
 import "../quality/audit.ts";
 import "../wiki/corrections.ts";
 // Also registers the mention handler (someone looking for the owner: triage, then maybe a handling).
@@ -1139,6 +1141,14 @@ registerHandler("heartbeat", async (ctx) => {
   expireWorkFiles(app);
   await expireTemporaryRules(app);
   await (await import("../channels/listen.ts")).expireContexts(app);
+  // 「关注」: the owner's own answers in its groups become cases; enough new cases and listen-coach writes lessons.
+  try {
+    const coach = await import("../channels/listen-coach.ts");
+    coach.collectOwnerReplies(app);
+    coach.coachDue(app);
+  } catch (e) {
+    console.warn(`[omem] 关注的案例和经验：${(e as Error).message}`);
+  }
   // Command approvals past their time (their timers do not survive a restart).
   await (await import("./command-gate.ts")).expireCommandAsks(app);
   // Questions nobody waits for any more lapse; notifications the owner read in Feishu count as read.
