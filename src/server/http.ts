@@ -90,6 +90,7 @@ import { modelSource } from "../search/local-models.ts";
 import { searchRun } from "../search/trace.ts";
 import { closeReadProcess } from "../search/read-process.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
+import { readRunFile, type RunFile } from "../agents/run-file.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
 import { APPEND_ONLY, deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
@@ -1700,7 +1701,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (who(req) !== OWNER && !canReadRun(app, who(req), id)) throw new HttpError(403, "看不了这次运行");
     if (who(req) !== OWNER) requirePerm(app, who(req), "share.external");
     const { shareReview } = await import("../core/shares.ts");
-    const s = shareReview(app, id, who(req));
+    const s = await shareReview(app, id, who(req));
     audit(app, who(req), "share.review", id, { share: s.id });
     return s;
   });
@@ -2121,48 +2122,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return setRoundReview(app, id, b);
   });
 
-  // A file a delegation or review names (`space` optional; a path may start with the repository's
-  // space id): the worktree while it exists, a reviewed branch's tip after it is gone, else the
-  // repository; a path in another space the review read (a migration's source) comes from the index.
-  type RunFile = { from: "worktree" | "branch" | "repo" | "source"; space: string; path: string; bytes: () => Buffer; size: number; sourceId?: string };
   async function runFile(req: FastifyRequest): Promise<RunFile> {
     const o = q(z.object({ space: z.string().optional(), path: z.string().min(1).max(1000) }), req.query);
-    const r = getRun(app, (req.params as { id: string }).id);
-    if (r.kind !== "code") throw new HttpError(400, "只有编码交办有文件");
-    const { worktreesOf } = await import("../agents/code.ts");
-    const root = (r.output as { continueFrom?: string }).continueFrom ?? (r.input as { continueFrom?: string }).continueFrom ?? r.id;
-    const worktrees = worktreesOf(app, root);
-    const input = getRun(app, root).input as { repos?: string[]; readSpaces?: string[]; itemId?: string };
-    const repos = o.space ? [o.space] : [...new Set([...worktrees.map((w) => w.space), ...(input.repos ?? [])])];
-    const allowed = accessibleSpaces(app, who(req));
-    for (const space of repos) {
-      if (allowed && !allowed.includes(space)) continue;
-      const path = o.path.startsWith(`${space}/`) && !o.space ? o.path.slice(space.length + 1) : o.path;
-      const wt = worktrees.find((w) => w.space === space);
-      const appliedTo = (r.output.appliedTo ?? getRun(app, root).output.appliedTo) as { space: string; path: string }[] | undefined;
-      const base = wt && existsSync(wt.path) ? wt.path : appliedTo?.find(t => t.space === space)?.path ?? findSpace(app, space)?.rootPath;
-      // A reviewed branch's tip, or a work branch between rounds (its workspace given back).
-      const tip = wt?.tip ?? (wt?.commits ? `refs/heads/${wt.branch}` : undefined);
-      if (wt && !existsSync(wt.path) && tip && base) {
-        const shown = spawnSync("git", ["show", `${tip}:${path}`], { cwd: base, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
-        if (shown.status === 0) return { from: "branch", space, path, bytes: () => shown.stdout, size: shown.stdout.length };
-      }
-      if (!base) continue;
-      const full = resolvePath(base, path);
-      if (!full.startsWith(resolvePath(base) + sep) || !existsSync(full) || statSync(full).isDirectory()) continue;
-      return { from: wt && existsSync(wt.path) ? "worktree" : "repo", space, path, bytes: () => readFileSync(full), size: statSync(full).size };
-    }
-    const { materialSpaces } = await import("../items/materials.ts");
-    const readable = [...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, who(req)) : [])].filter((s) => !allowed || allowed.includes(s));
-    for (const space of readable) {
-      const path = o.path.startsWith(`${space}/`) ? o.path.slice(space.length + 1) : o.path;
-      const s = one<{ id: string }>(app.db, "select id from sources where space_id = ? and uri = ? and deleted_at is null", space, path);
-      if (s) {
-        const text = Buffer.from(readSource(app, s.id).text, "utf8");
-        return { from: "source", space, path, bytes: () => text, size: text.length, sourceId: s.id };
-      }
-    }
-    throw new HttpError(404, `找不到文件 ${o.path}`);
+    return readRunFile(app, (req.params as { id: string }).id, o, who(req));
   }
   const IMAGE_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", bmp: "image/bmp", ico: "image/x-icon", svg: "image/svg+xml" };
   const imageType = (path: string) => IMAGE_TYPES[path.split(".").pop()!.toLowerCase()];

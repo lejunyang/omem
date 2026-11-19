@@ -17,7 +17,7 @@ updated: 2026-11-19
 
 ## 评审结论分享、运行页显示等你的流程段、飞书授权链接与接着做、消息采集开关（11-19）
 
-- `src/core/shares.ts` 的 `shareReview`：review 类只读分享，内容是最近一轮评审的问题和本人决定、负责人总结、分支，不含过程；入口 `POST /api/runs/:id/share-review`、工具 `share_review`、评审概览“分享结论”。分享页 `web/src/views/Share.vue` 加了 review 的渲染。
+- `src/core/shares.ts` 的 `shareReview`：review 类只读分享，内容是最近一轮评审的问题和本人决定、负责人总结、分支，不含过程；引用的代码位置用 `src/agents/run-file.ts` 的 `readRunFile`（从 `/api/runs/:id/file` 抽出）按评审分支读出前后几行，`src:`/`mem:` 用分享者能读的范围复制，正文里改成 `#ev-<n>`；分享页（`Share.vue`、`lib/share.ts`、`ShareItemBody.vue`）评审用三栏：问题目录、问题、证据；入口 `POST /api/runs/:id/share-review`、工具 `share_review`、评审概览“分享结论”。分享页 `web/src/views/Share.vue` 加了 review 的渲染。
 - `web/src/components/FlowWaiting.vue`：流程页顶部等你的段抽成组件，运行页概览（`CodeWork.vue`）在交办归属的事项流程等你时也显示，不按流程或平台特判。
 - `src/auth/connect-wait.ts`：成员没连接飞书或缺功能、scope 时，`needConnection` 生成预先勾好的登录页链接（`#/login?provider=lark&features=…&scopes=…`），私聊通知并记下会话（kv `connect_wait:<用户>`，6 小时）；`saveConnection` 后 `connectionGranted` 用 `[授权]` 一轮接着做。lark-cli 取令牌的回调带上命令参数（`larkCommandFeatures`），`lark_doc_update` 先查 doc-write。
 - `src/auth/features.ts`：“我的消息”拆成“群聊消息”“单聊消息”；采集默认关，账号页“采集到 omem”分别打开（`setChatCapture`、`PUT /api/auth/connections/lark/capture`、`lark-member-capture.ts` 的 `chatTypes`）。登录页功能列表默认展开、说明另起一行、读 URL 参数预勾。

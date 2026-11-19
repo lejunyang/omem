@@ -33,7 +33,7 @@ export type ShareItem = {
   | { kind: "review"; title: string; verdict: string | null; summary: string; branches: { repo: string; branch: string; base: string | null }[]; findings: ReviewShareFinding[]; at: string }
 );
 /** One finding of a shared review: what it says and what the owner decided, without the run behind it. */
-export type ReviewShareFinding = { n: number; severity: string; title: string; detail: string; suggestion: string; file: string | null; line: number | null; decision: "fix" | "later" | "wontfix"; note: string; resolution: string | null };
+export type ReviewShareFinding = { n: number; severity: string; title: string; detail: string; suggestion: string; file: string | null; line: number | null; /** The copied code at the finding's own place, when it could be read. */ at: number | null; decision: "fix" | "later" | "wontfix"; note: string; resolution: string | null };
 export type ShareRef = { ref: string; label: string };
 
 /** At most this much of one source / page goes into a share. */
@@ -195,15 +195,23 @@ export function prepareShare(app: App, input: { refs: ShareRef[]; runId?: string
   };
 }
 
+/** A code location the way reviews write it: `repo/path/file.ts`, `…:12`, `…:12-30` (web/src/lib/markdown.ts). */
+const CODE_REF = /^((?:[\w.@~-]+\/)*[\w.@~-]+\.[\w]{1,8})(?::L?(\d+)(?:[-–]L?(\d+))?)?$/;
+/** Lines of code around a cited range in a shared review, and at most this many in all. */
+const CODE_CONTEXT = 12, CODE_LINES = 240, MAX_EVIDENCE = 120;
+
 /**
  * A review's conclusion for someone outside omem (a colleague who wrote the branch, a reviewer): its
  * verdict, the lead's summary and every finding still standing in the latest round, with the owner's
- * decision. A snapshot like any share: no run, no transcript, no other source; revocable.
+ * decision. What the findings cite comes along, so the reader can open it: the code lines on the
+ * reviewed branch (with some lines around them), and the sources, memories and pages the sharer may
+ * read (never a restricted source). A citation in the text becomes `#ev-<n>`, the copied item n; one
+ * that cannot be copied keeps its words only. A snapshot like any share: no run, no transcript; revocable.
  */
-export function shareReview(app: App, runId: string, userId = OWNER) {
+export async function shareReview(app: App, runId: string, userId = OWNER) {
   const base = webBase(app);
   if (!base) throw new HttpError(400, "omem 没有配置对外网址（设置 → 系统 → 网页地址），分享链接打不开");
-  const r = one<{ id: string; kind: string; title: string; output: string; input: string; finished_at: string | null; created_at: string }>(app.db, "select id, kind, title, output, input, finished_at, created_at from runs where id = ?", runId);
+  const r = one<{ id: string; kind: string; title: string; output: string; input: string; finished_at: string | null; created_at: string; space_id: string | null }>(app.db, "select id, kind, title, output, input, finished_at, created_at, space_id from runs where id = ?", runId);
   if (!r || r.kind !== "code") throw new HttpError(404, "没有这次评审");
   const out = json<{ codeChain?: { rounds: string[] }; reviewLead?: { summary?: string } }>(r.output, {});
   // The latest round that has a review: a round still being coded has none yet.
@@ -214,20 +222,79 @@ export function shareReview(app: App, runId: string, userId = OWNER) {
   const reviews = all<{ id: string }>(app.db, "select id from reviews where code_run_id = ?", last);
   const rows = all<{ severity: string; title: string; detail: string; suggestion: string; file_path: string | null; line: number | null; state: string; merged_into: number | null; decision: string | null; decision_note: string | null; resolution: string | null }>(app.db,
     `select severity, title, detail, suggestion, file_path, line, state, merged_into, decision, decision_note, resolution from review_findings where review_id in (${reviews.map(() => "?").join(",")}) and merged_into is null and state in ('open', 'accepted') order by case severity when 'blocker' then 0 when 'major' then 1 when 'minor' then 2 else 3 end, id`, ...reviews.map((x) => x.id));
-  // As the run page reads them (web/src/lib/reviews.ts decisionOf): undecided serious ones are to fix.
+
+  // ---- evidence: copied once per place, numbered from 1 (0 is the review itself)
+  const scope = accessibleSpaces(app, userId);
+  const { readRunFile } = await import("../agents/run-file.ts");
+  const files = new Map<string, Promise<{ path: string; lines: string[] } | null>>();
+  const fileOf = (path: string) => {
+    if (!files.has(path)) files.set(path, readRunFile(app, last, { path }, userId).then((f) => {
+      if (f.size > 2 * 1024 * 1024) return null;
+      const bytes = f.bytes();
+      return bytes.subarray(0, 8000).includes(0) ? null : { path: `${f.space}/${f.path}`, lines: bytes.toString("utf8").split(/\r?\n/) };
+    }).catch(() => null));
+    return files.get(path)!;
+  };
+  const evidence: ShareItem[] = [];
+  const index = new Map<string, number>();
+  async function cite(ref: string, label: string): Promise<number | null> {
+    if (index.has(ref)) return index.get(ref)!;
+    if (evidence.length >= MAX_EVIDENCE) return null;
+    let item: Snapshot | null = null;
+    const m = CODE_REF.exec(ref);
+    if (m && !/^(?:src|mem|msg|wiki):/.test(ref)) {
+      const f = await fileOf(m[1]);
+      if (f) {
+        const total = f.lines.length;
+        const from = m[2] ? Math.min(Math.max(1, Number(m[2])), Math.max(1, total)) : null;
+        const to = from ? Math.min(total, Math.max(from, Number(m[3] ?? m[2]))) : null;
+        const start = from ? Math.max(1, from - CODE_CONTEXT) : 1;
+        const end = to ? Math.min(total, to + CODE_CONTEXT, start + CODE_LINES - 1) : Math.min(total, CODE_LINES);
+        item = { kind: "source", title: f.path.split("/").pop() ?? f.path, sourceKind: "code", path: f.path, from, to, start, lines: clipLines(f.lines.slice(start - 1, end)), total, format: "code" };
+      }
+    } else item = snapshot(app, scope, ref, r!.space_id);
+    if (!item) return null;
+    const i = evidence.length + 1;
+    index.set(ref, i);
+    evidence.push({ ...item, i, label } as ShareItem);
+    return i;
+  }
+  /** The text with each citation it can copy pointing at the copy, the rest as plain words. */
+  async function linked(md: string) {
+    const found: { at: number; len: number; label: string; ref: string }[] = [];
+    for (const m of md.matchAll(/(?<!!)\[([^\]]*)\]\(([^)\s]+)\)/g)) {
+      let href = m[2];
+      try { href = decodeURIComponent(href); } catch {}
+      if (/^(?:https?:|mailto:|#)/i.test(href)) continue;
+      found.push({ at: m.index!, len: m[0].length, label: m[1], ref: href });
+    }
+    let text = "", pos = 0;
+    for (const f of found) {
+      const n = await cite(f.ref, f.label || f.ref);
+      text += md.slice(pos, f.at) + (n ? `[${f.label || f.ref}](#ev-${n})` : f.label);
+      pos = f.at + f.len;
+    }
+    return stripRefs(text + md.slice(pos));
+  }
+
   const decisionOf = (f: (typeof rows)[number]) => (f.decision ?? (f.state === "accepted" || ["blocker", "major"].includes(f.severity) ? "fix" : "later")) as ReviewShareFinding["decision"];
-  const findings: ReviewShareFinding[] = rows.map((f, i) => ({ n: i + 1, severity: f.severity, title: stripRefs(f.title), detail: stripRefs(f.detail).slice(0, 6000), suggestion: stripRefs(f.suggestion).slice(0, 3000), file: f.file_path, line: f.line, decision: decisionOf(f), note: stripRefs(f.decision_note ?? ""), resolution: f.resolution }));
+  const findings: ReviewShareFinding[] = [];
+  for (const [k, f] of rows.entries()) {
+    const at = f.file_path ? await cite(`${f.file_path}${f.line ? `:${f.line}` : ""}`, `${f.file_path}${f.line ? `:${f.line}` : ""}`) : null;
+    findings.push({ n: k + 1, severity: f.severity, title: stripRefs(f.title), detail: (await linked(f.detail)).slice(0, 8000), suggestion: (await linked(f.suggestion)).slice(0, 4000), file: f.file_path, line: f.line, at, decision: decisionOf(f), note: stripRefs(f.decision_note ?? ""), resolution: f.resolution });
+  }
   const input = json<{ branches?: Record<string, string | { branch: string; base?: string }>; base?: string }>(r.input, {});
   const branches = Object.entries(input.branches ?? {}).map(([repo, b]) => typeof b === "string" ? { repo, branch: b, base: input.base ?? null } : { repo, branch: b.branch, base: b.base ?? input.base ?? null });
-  const item: ShareItem = { i: 0, label: r.title, kind: "review", title: r.title, verdict: findings.some((f) => f.decision === "fix") ? "changes-requested" : "approved", summary: stripRefs(lastOut.reviewLead?.summary ?? ""), branches, findings, at: r.finished_at ?? r.created_at };
+  const summary = await linked(lastOut.reviewLead?.summary ?? "");
+  const item: ShareItem = { i: 0, label: r.title, kind: "review", title: r.title, verdict: findings.some((f) => f.decision === "fix") ? "changes-requested" : "approved", summary, branches, findings, at: r.finished_at ?? r.created_at };
   const token = randomBytes(32).toString("base64url");
   const id = newId("sh");
   const days = app.config.shares.expiryDays;
   const created = now();
   const expires = days > 0 ? new Date(Date.parse(created) + days * 86400_000).toISOString() : null;
   run(app.db, "insert into shares(id, token_hash, user_id, run_id, origin, title, items, created_at, expires_at) values(?,?,?,?,?,?,?,?,?)",
-    id, hash(token), userId, r.id, "review", `评审：${r.title}`.slice(0, 120), JSON.stringify([item]), created, expires);
-  return { id, url: `${base}/#/share/${token}`, findings: findings.length, expiresAt: expires };
+    id, hash(token), userId, r.id, "review", `评审：${r.title}`.slice(0, 120), JSON.stringify([item, ...evidence]), created, expires);
+  return { id, url: `${base}/#/share/${token}`, findings: findings.length, evidence: evidence.length, expiresAt: expires };
 }
 
 /** What the share page shows; null when the token is unknown, revoked or expired. */

@@ -196,17 +196,17 @@ describe("share links", () => {
 
 describe("sharing a review's conclusion", () => {
   it("copies the verdict, the standing findings and the owner's decisions, and nothing of the run", async () => {
-    const { app } = fixture();
+    const { app, mem } = fixture();
     const { recordReview } = await import("../src/agents/review.ts");
     const { shareReview } = await import("../src/core/shares.ts");
     run(app.db, "insert into runs(id, kind, space_id, status, title, input, output, created_at, user_id) values('r_rev', 'code', 'personal', 'done', '评审退款分支', ?, ?, '2026-10-29T10:00:00Z', 'owner')",
-      JSON.stringify({ branches: { shop: { branch: "origin/feat/refund", base: "origin/main" } } }), JSON.stringify({ verdict: "awaiting-owner", reviewLead: { summary: "两处要改，见 [原话](src:abc123def#L1)" } }));
+      JSON.stringify({ branches: { shop: { branch: "origin/feat/refund", base: "origin/main" } }, readSpaces: ["personal"] }), JSON.stringify({ verdict: "awaiting-owner", reviewLead: { summary: "两处要改，见 [原话](src:abc123def#L1)" } }));
     recordReview(app, { codeRunId: "r_rev", round: 1, check: "correctness", verdict: "changes_requested", summary: "过程里的长篇推理", findings: [
       { severity: "minor", title: "日志太多", detail: "每次都打", suggestion: "", evidence: [], confidence: "medium" },
-      { severity: "major", file: "src/refund.ts", line: 12, title: "超时没重试", detail: "渠道超时直接失败", suggestion: "加一次重试", evidence: ["src/refund.ts:12"], confidence: "high" },
+      { severity: "major", file: "src/refund.ts", line: 12, title: "超时没重试", detail: `渠道超时直接失败 [refund.ts](src/refund.ts:12-13)，团队约定见 [记忆](mem:${mem.id})，[看不到的](src:nosuchsrc01#L2)`, suggestion: "加一次重试", evidence: ["src/refund.ts:12"], confidence: "high" },
     ] });
     run(app.db, "update review_findings set decision = 'wontfix', decision_note = '本期不管' where title = '日志太多'");
-    const s = shareReview(app, "r_rev");
+    const s = await shareReview(app, "r_rev");
     const token = tokenOf(s.url)!;
     const got = readShare(app, token)!;
     expect(got.title).toBe("评审：评审退款分支");
@@ -217,6 +217,16 @@ describe("sharing a review's conclusion", () => {
     expect(it.branches).toEqual([{ repo: "shop", branch: "origin/feat/refund", base: "origin/main" }]);
     expect(it.findings.map((f) => [f.n, f.title, f.decision])).toEqual([[1, "超时没重试", "fix"], [2, "日志太多", "wontfix"]]);
     expect(it.findings[0]).toMatchObject({ file: "src/refund.ts", line: 12, suggestion: "加一次重试" });
+    // What the finding cites is copied and linked: the code lines around 12-13, the memory; what cannot be read keeps its words.
+    const ev = (n: number) => got.items.find((x) => x.i === n)!;
+    const code = /\[refund\.ts\]\(#ev-(\d+)\)/.exec(it.findings[0].detail)!;
+    expect(ev(Number(code[1]))).toMatchObject({ kind: "source", sourceKind: "code", from: 12, to: 13, start: 1 });
+    expect((ev(Number(code[1])) as { lines: string[] }).lines).toContain("line 12");
+    expect(ev(it.findings[0].at!)).toMatchObject({ kind: "source", from: 12, to: 12 });
+    const m = /\[记忆\]\(#ev-(\d+)\)/.exec(it.findings[0].detail)!;
+    expect(ev(Number(m[1]))).toMatchObject({ kind: "memory" });
+    expect(it.findings[0].detail).toContain("，看不到的");
+    expect(it.findings[0].detail).not.toContain("nosuchsrc01");
     expect(JSON.stringify(got)).not.toContain("过程里的长篇推理");
     expect(listShares(app)[0]).toMatchObject({ runId: "r_rev", origin: "review" });
     revokeShare(app, s.id);

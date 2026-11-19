@@ -1,83 +1,93 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
-import { useRoute } from "vue-router";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import Icon from "../components/Icon.vue";
+import ShareItemBody from "../components/ShareItemBody.vue";
 import Skeleton from "../components/Skeleton.vue";
-import { fmt, setTimeZone } from "../lib/time";
-import { escapeHtml, highlight, languageOf, renderMarkdown } from "../lib/markdown";
+import UiSegmented from "../components/UiSegmented.vue";
+import { setTimeZone } from "../lib/time";
+import { safe, when, where, type ReviewFinding, type ReviewItem, type ShareItem } from "../lib/share";
 
 /**
- * A read-only share (src/core/shares.ts): the parts of omem that one message sent outside cited,
- * copied when it was sent. Opened by anyone with the link, without a token: no navigation, no
- * citations to follow, no images from omem (they would need a token).
+ * A read-only share (src/core/shares.ts), opened by anyone with the link, without a token. Either
+ * the parts of omem one message sent outside cited, copied when it was sent; or a review's
+ * conclusion: its findings with a contents list to move between them, and what they cite (the code
+ * on the reviewed branch, sources, memories) copied along and opened beside them.
  */
-type Item = { i: number; mark?: number; label: string } & (
-  | { kind: "source"; title: string; sourceKind: string; path: string; from: number | null; to: number | null; start: number; lines: string[]; total: number; format: "code" | "markdown" | "text" }
-  | { kind: "memory"; title: string; text: string; status: string; createdAt: string }
-  | { kind: "message"; title: string; text: string; at: string }
-  | { kind: "page"; title: string; section: string | null; markdown: string }
-  | { kind: "review"; title: string; verdict: string | null; summary: string; branches: { repo: string; branch: string; base: string | null }[]; findings: ReviewFinding[]; at: string }
-);
-type ReviewFinding = { n: number; severity: string; title: string; detail: string; suggestion: string; file: string | null; line: number | null; decision: "fix" | "later" | "wontfix"; note: string; resolution: string | null };
-type Share = { title: string; createdAt: string; expiresAt: string | null; items: Item[] };
+type Share = { title: string; createdAt: string; expiresAt: string | null; items: ShareItem[] };
+type Evidence = Exclude<ShareItem, { kind: "review" }>;
 
-const route = useRoute();
+const route = useRoute(), router = useRouter();
 const share = ref<Share | null>(null);
 const error = ref("");
 const current = computed(() => (route.params.item !== undefined && route.params.item !== "" ? Number(route.params.item) : null));
-
-const when = (iso: string | null) => (iso ? fmt(iso, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
 /** The mark the message showed for it (src/channels/citations.ts citationMark). */
 const circled = (n: number) => `(${n})`;
-const KIND: Record<string, string> = { code: "代码", work: "工作文件", doc: "文档", note: "笔记", web: "网页", chat: "聊天", conversation: "对话", image: "图片" };
 
-/** Rendered Markdown with everything that would lead back into omem made inert. */
-function safe(md: string) {
-  const box = document.createElement("template");
-  box.innerHTML = renderMarkdown(md);
-  for (const a of box.content.querySelectorAll<HTMLAnchorElement>("a")) {
-    const href = a.getAttribute("href") ?? "";
-    if (a.dataset.cite || a.dataset.wiki || !/^https?:/i.test(href)) {
-      const span = document.createElement("span");
-      span.textContent = a.textContent;
-      a.replaceWith(span);
-    } else a.setAttribute("rel", "noopener noreferrer");
-  }
-  for (const img of box.content.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img, video")) {
-    if (/^https?:/i.test(img.getAttribute("src") ?? "") && !/\/api\//.test(img.getAttribute("src") ?? "")) continue;
-    const span = document.createElement("span");
-    span.className = "muted";
-    span.textContent = `（图片${img.getAttribute("alt") ? `：${img.getAttribute("alt")}` : ""}）`;
-    img.replaceWith(span);
-  }
-  return box.innerHTML;
-}
-
-function codeLines(it: Extract<Item, { kind: "source" }>) {
-  const lang = languageOf(it.path || it.title);
-  return it.lines.map((l, k) => ({ n: it.start + k, html: highlight(l, lang) || "&nbsp;", hit: it.from !== null && it.start + k >= it.from && it.start + k <= (it.to ?? it.from) }));
-}
-const textLines = (it: Extract<Item, { kind: "source" }>) =>
-  it.lines.map((l, k) => ({ n: it.start + k, html: escapeHtml(l) || "&nbsp;", hit: it.from !== null && it.start + k >= it.from && it.start + k <= (it.to ?? it.from) }));
-
-function where(it: Item) {
-  if (it.kind === "source") {
-    const range = it.from ? `第 ${it.from}${it.to && it.to !== it.from ? `–${it.to}` : ""} 行` : "全文";
-    return [KIND[it.sourceKind] ?? "原件", it.path && it.path !== it.title ? it.path : "", range].filter(Boolean).join(" · ");
-  }
-  if (it.kind === "memory") return `记忆 · ${when(it.createdAt)}${it.status !== "active" ? ` · ${it.status === "superseded" ? "已被更正" : "已撤回"}` : ""}`;
-  if (it.kind === "message") return `对话 · ${when(it.at)}`;
-  if (it.kind === "review") return `代码评审 · ${when(it.at)}`;
-  return `Wiki${it.section ? ` · ${it.section}` : ""}`;
-}
-
-// A shared review (shares.ts shareReview): severity, the owner's decision, and what a re-review found.
+// ---- a shared review
 const SEVERITY: Record<string, { text: string; cls: string }> = { blocker: { text: "阻断", cls: "danger" }, major: { text: "严重", cls: "danger" }, minor: { text: "一般", cls: "warn" }, nit: { text: "提示", cls: "" } };
 const DECISION: Record<string, string> = { fix: "要改", later: "暂不改", wontfix: "不改" };
 const RESOLVED: Record<string, string> = { fixed: "复审：已修", still: "复审：仍在", moot: "复审：不再适用" };
 const VERDICT: Record<string, string> = { approved: "评审通过", "changes-requested": "需要修改" };
-const isReview = computed(() => share.value?.items.length === 1 && share.value.items[0].kind === "review");
-const fixCount = (it: Extract<Item, { kind: "review" }>) => it.findings.filter((f) => f.decision === "fix").length;
+const review = computed(() => (share.value?.items[0]?.kind === "review" ? (share.value.items[0] as ReviewItem) : null));
 const branchName = (b: string) => b.replace(/^origin\//, "");
+type Filter = "all" | ReviewFinding["decision"];
+const filter = ref<Filter>("all");
+const count = (d: Filter) => (review.value?.findings ?? []).filter((f) => d === "all" || f.decision === d).length;
+const filters = computed(() => (["all", "fix", "later", "wontfix"] as Filter[]).filter((d) => d === "all" || count(d)).map((d) => ({ value: d, label: `${d === "all" ? "全部" : DECISION[d]} ${count(d)}` })));
+const shown = computed(() => (review.value?.findings ?? []).filter((f) => filter.value === "all" || f.decision === filter.value));
+const active = ref<number | null>(null);
+const tocOpen = ref(false);
+
+/** The copied item a citation points at, open beside the findings. */
+const opened = ref<Evidence | null>(null);
+const evidenceOf = (n: number) => share.value?.items.find((x) => x.i === n && x.kind !== "review") as Evidence | undefined;
+function openEvidence(n: number, push = true) {
+  const it = evidenceOf(n);
+  if (!it) return;
+  opened.value = it;
+  if (push) void router.replace(`/share/${String(route.params.token)}/${n}`);
+  void nextTick(() => document.querySelector<HTMLElement>(".evidence .ev-body .hit")?.scrollIntoView({ block: "center" }));
+}
+function closeEvidence() {
+  opened.value = null;
+  void router.replace(`/share/${String(route.params.token)}`);
+}
+/** A citation in the text (`#ev-<n>`, lib/share.ts safe) opens its copy instead of moving the page. */
+function onClick(e: MouseEvent) {
+  const a = (e.target as HTMLElement).closest<HTMLAnchorElement>("a[data-ev]");
+  if (!a) return;
+  e.preventDefault();
+  openEvidence(Number(a.dataset.ev));
+}
+function jump(n: number | "summary") {
+  tocOpen.value = false;
+  document.getElementById(n === "summary" ? "summary" : `finding-${n}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (n !== "summary") active.value = n;
+}
+// The finding being read: the last one whose top has passed the top of the page.
+let frame = 0;
+function onScroll() {
+  if (frame) return;
+  frame = requestAnimationFrame(() => {
+    frame = 0;
+    let last: number | null = null;
+    for (const el of document.querySelectorAll<HTMLElement>(".finding[data-n]")) {
+      if (el.getBoundingClientRect().top > 140) break;
+      last = Number(el.dataset.n);
+    }
+    active.value = last;
+  });
+}
+// The link's own item (`…/share/<token>/<n>`), also when only the address changes.
+watch(current, (n) => {
+  if (!review.value) return;
+  if (n === null) opened.value = null;
+  else if (opened.value?.i !== n) openEvidence(n, false);
+});
+function onKey(e: KeyboardEvent) {
+  if (e.key === "Escape" && opened.value) closeEvidence();
+}
 
 /** The server answers a share in milliseconds: a wait this long is the browser holding the request back. */
 const SLOW_MS = 8_000;
@@ -85,6 +95,7 @@ const GIVE_UP_MS = 60_000;
 const slow = ref(false);
 
 onMounted(async () => {
+  window.addEventListener("keydown", onKey);
   const slowTimer = setTimeout(() => (slow.value = true), SLOW_MS);
   const ctrl = new AbortController();
   const giveUp = setTimeout(() => ctrl.abort(), GIVE_UP_MS);
@@ -98,7 +109,10 @@ onMounted(async () => {
     share.value = body as Share;
     document.title = `${share.value.title || "分享"} · omem`;
     await nextTick();
-    if (current.value !== null) document.getElementById(`item-${current.value}`)?.scrollIntoView({ block: "start" });
+    if (current.value !== null) {
+      if (review.value) openEvidence(current.value, false);
+      else document.getElementById(`item-${current.value}`)?.scrollIntoView({ block: "start" });
+    }
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -107,71 +121,104 @@ onMounted(async () => {
     slow.value = false;
   }
 });
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKey);
+  if (frame) cancelAnimationFrame(frame);
+});
 </script>
 
 <template>
-  <div class="share-page">
+  <div class="share-page" @scroll.passive="onScroll">
     <header class="share-head">
       <span class="brand"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor" /><circle cx="16" cy="16" r="7" fill="none" stroke="var(--bg)" stroke-width="3" /></svg>omem</span>
       <span class="muted small">只读分享</span>
     </header>
-    <main class="share-body">
+
+    <main v-if="error || !share" class="share-body">
       <div v-if="error" class="card pad empty-share">
         <strong>打不开这个分享</strong>
         <p class="muted">{{ error }}</p>
       </div>
-      <template v-else-if="!share">
+      <template v-else>
         <p v-if="slow" class="muted small" role="status">还在等……同一浏览器里开着很多这个地址的页面时，浏览器会让这个请求排队；关掉几个页面，或换个浏览器打开。</p>
         <Skeleton variant="text" :rows="10" />
       </template>
-      <template v-else>
-        <h1>{{ share.title || "引用的内容" }}</h1>
-        <p class="muted small meta">{{ isReview ? "代码评审的结论" : `一条消息引用的 ${share.items.length} 处内容` }} · {{ when(share.createdAt) }} 复制 · {{ share.expiresAt ? `${when(share.expiresAt)} 失效` : "长期有效" }}</p>
-        <article v-for="it in share.items" :id="`item-${it.i}`" :key="it.i" class="card item" :class="{ on: current === it.i }">
-          <div class="item-head">
-            <span v-if="it.mark" class="mark" aria-hidden="true">{{ circled(it.mark) }}</span>
-            <div class="item-title">
-              <strong>{{ it.label || it.title }}</strong>
-              <span class="muted small">{{ it.label && it.label !== it.title ? `${it.title} · ` : "" }}{{ where(it) }}</span>
+    </main>
+
+    <!-- A review: contents on the left, findings in the middle, what a citation points at on the right. -->
+    <main v-else-if="review" class="review-body" :class="{ 'with-ev': opened }">
+      <nav class="toc" :class="{ open: tocOpen }" aria-label="问题目录">
+        <button type="button" class="toc-toggle btn ghost sm" :aria-expanded="tocOpen" @click="tocOpen = !tocOpen"><Icon name="menu" :size="15" />问题目录 · {{ shown.length }}</button>
+        <div class="toc-inner">
+          <UiSegmented v-if="filters.length > 2" v-model="filter" :options="filters" size="sm" aria-label="按决定筛选" />
+          <button type="button" class="toc-row" @click="jump('summary')"><span class="toc-title">结论与总结</span></button>
+          <button v-for="f in shown" :key="f.n" type="button" class="toc-row" :class="{ on: active === f.n, quiet: f.decision !== 'fix' }" :title="f.title" @click="jump(f.n)">
+            <span class="sev-dot" :class="SEVERITY[f.severity]?.cls" :title="SEVERITY[f.severity]?.text" />
+            <span class="toc-n">#{{ f.n }}</span>
+            <span class="toc-title">{{ f.title }}</span>
+          </button>
+        </div>
+      </nav>
+
+      <div class="findings" @click="onClick">
+        <h1 id="summary">{{ share.title || review.title }}</h1>
+        <p class="muted small meta">代码评审的结论 · {{ when(share.createdAt) }} 复制 · {{ share.expiresAt ? `${when(share.expiresAt)} 失效` : "长期有效" }}</p>
+        <p class="row wrap small">
+          <span v-if="review.verdict" class="badge" :class="review.verdict === 'approved' ? 'ok' : 'warn'">{{ VERDICT[review.verdict] ?? review.verdict }}</span>
+          <span>{{ review.findings.length }} 个问题，其中要改 {{ count("fix") }} 个</span>
+        </p>
+        <ul v-if="review.branches.length" class="branches small">
+          <li v-for="b in review.branches" :key="b.repo" class="branch"><span class="muted">{{ b.repo }}</span><code>{{ branchName(b.branch) }}</code><template v-if="b.base"><span class="muted">对照</span><code>{{ branchName(b.base) }}</code></template></li>
+        </ul>
+        <div v-if="review.summary" class="prose summary" v-html="safe(review.summary)" />
+
+        <section v-for="f in shown" :id="`finding-${f.n}`" :key="f.n" :data-n="f.n" class="card finding" :class="{ quiet: f.decision !== 'fix' }">
+          <div class="f-head">
+            <h2>#{{ f.n }} {{ f.title }}</h2>
+            <div class="row wrap tags">
+              <span class="badge" :class="SEVERITY[f.severity]?.cls">{{ SEVERITY[f.severity]?.text ?? f.severity }}</span>
+              <span class="badge" :class="f.decision === 'fix' ? 'accent' : ''">{{ DECISION[f.decision] }}</span>
+              <span v-if="f.resolution && RESOLVED[f.resolution]" class="badge">{{ RESOLVED[f.resolution] }}</span>
             </div>
           </div>
-          <template v-if="it.kind === 'source'">
-            <div v-if="!it.lines.length" class="muted small">这个原件没有可分享的文字。</div>
-            <div v-else-if="it.format === 'markdown'" class="prose" v-html="safe(it.lines.join('\n'))" />
-            <div v-else class="lines" :class="it.format" role="table">
-              <div v-for="l in it.format === 'code' ? codeLines(it) : textLines(it)" :key="l.n" class="line" :class="{ hit: l.hit }" role="row">
-                <span class="ln" role="cell">{{ l.n }}</span><code role="cell" v-html="l.html" />
-              </div>
-            </div>
-            <p v-if="it.lines.length && it.start + it.lines.length - 1 < it.total && !it.from" class="muted small">只分享了前 {{ it.lines.length }} 行（共 {{ it.total }} 行）。</p>
+          <template v-if="f.file">
+            <a v-if="f.at" :href="`#ev-${f.at}`" :data-ev="f.at" class="loc mono small ev">{{ f.file }}{{ f.line ? `:${f.line}` : "" }}</a>
+            <p v-else class="loc mono small muted">{{ f.file }}{{ f.line ? `:${f.line}` : "" }}</p>
           </template>
-          <div v-else-if="it.kind === 'page'" class="prose" v-html="safe(it.markdown)" />
-          <div v-else-if="it.kind === 'review'" class="review stack">
-            <p class="row wrap small">
-              <span v-if="it.verdict" class="badge" :class="it.verdict === 'approved' ? 'ok' : 'warn'">{{ VERDICT[it.verdict] ?? it.verdict }}</span>
-              <span>{{ it.findings.length }} 个问题，其中要改 {{ fixCount(it) }} 个</span>
-            </p>
-            <ul v-if="it.branches.length" class="branches small">
-              <li v-for="b in it.branches" :key="b.repo"><span class="muted">{{ b.repo }}</span> <code>{{ branchName(b.branch) }}</code><template v-if="b.base"> <span class="muted">对照</span> <code>{{ branchName(b.base) }}</code></template></li>
-            </ul>
-            <div v-if="it.summary" class="prose" v-html="safe(it.summary)" />
-            <section v-for="f in it.findings" :key="f.n" class="finding" :class="{ quiet: f.decision !== 'fix' }">
-              <div class="row wrap f-head">
-                <strong>#{{ f.n }} {{ f.title }}</strong>
-                <span class="badge" :class="SEVERITY[f.severity]?.cls">{{ SEVERITY[f.severity]?.text ?? f.severity }}</span>
-                <span class="badge">{{ DECISION[f.decision] }}</span>
-                <span v-if="f.resolution && RESOLVED[f.resolution]" class="badge">{{ RESOLVED[f.resolution] }}</span>
-              </div>
-              <p v-if="f.file" class="small muted mono loc">{{ f.file }}{{ f.line ? `:${f.line}` : "" }}</p>
-              <div class="prose" v-html="safe(f.detail)" />
-              <div v-if="f.suggestion" class="prose suggestion"><strong class="small">建议</strong><div v-html="safe(f.suggestion)" /></div>
-              <p v-if="f.note" class="small muted">{{ DECISION[f.decision] }}的理由：{{ f.note }}</p>
-            </section>
+          <div class="prose" v-html="safe(f.detail)" />
+          <div v-if="f.suggestion" class="suggestion"><strong class="small">建议</strong><div class="prose" v-html="safe(f.suggestion)" /></div>
+          <p v-if="f.note" class="small muted">{{ DECISION[f.decision] }}的理由：{{ f.note }}</p>
+        </section>
+        <p v-if="!shown.length" class="muted">没有这一类的问题。</p>
+        <p class="muted small foot">这是分享时评审结论的副本，不含评审过程。带下划线的引用能打开：代码是评审时分支上的那几行，其他是当时的原件或记忆。</p>
+      </div>
+
+      <aside v-if="opened" class="evidence" :aria-label="`引用：${opened.label || opened.title}`">
+        <div class="ev-head">
+          <div class="ev-title">
+            <strong>{{ opened.label || opened.title }}</strong>
+            <span class="muted small">{{ opened.label && opened.label !== opened.title ? `${opened.title} · ` : "" }}{{ where(opened) }}</span>
           </div>
-          <div v-else class="prose" v-html="safe(it.text)" />
-        </article>
-        <p class="muted small foot">{{ isReview ? "这是分享时评审结论的副本，不含评审过程；里面提到的其他内容不能从这里打开。" : "这里只有那条消息引用的部分，是发送时的副本；里面提到的其他内容不能从这里打开。" }}</p>
-      </template>
+          <button type="button" class="btn ghost sm" aria-label="关闭引用" title="关闭（Esc）" @click="closeEvidence"><Icon name="x" :size="16" /></button>
+        </div>
+        <div class="ev-body"><ShareItemBody :item="opened" /></div>
+      </aside>
+    </main>
+
+    <main v-else class="share-body">
+      <h1>{{ share.title || "引用的内容" }}</h1>
+      <p class="muted small meta">一条消息引用的 {{ share.items.length }} 处内容 · {{ when(share.createdAt) }} 复制 · {{ share.expiresAt ? `${when(share.expiresAt)} 失效` : "长期有效" }}</p>
+      <article v-for="it in share.items as Evidence[]" :id="`item-${it.i}`" :key="it.i" class="card item" :class="{ on: current === it.i }">
+        <div class="item-head">
+          <span v-if="it.mark" class="mark" aria-hidden="true">{{ circled(it.mark) }}</span>
+          <div class="item-title">
+            <strong>{{ it.label || it.title }}</strong>
+            <span class="muted small">{{ it.label && it.label !== it.title ? `${it.title} · ` : "" }}{{ where(it) }}</span>
+          </div>
+        </div>
+        <ShareItemBody :item="it" />
+      </article>
+      <p class="muted small foot">这里只有那条消息引用的部分，是发送时的副本；里面提到的其他内容不能从这里打开。</p>
     </main>
   </div>
 </template>
@@ -198,7 +245,7 @@ onMounted(async () => {
   font-weight: 650;
 }
 .share-body {
-  max-width: 820px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 28px 20px 64px;
   display: flex;
@@ -212,6 +259,7 @@ h1 {
   line-height: 1.4;
   margin: 0;
   overflow-wrap: anywhere;
+  scroll-margin-top: 16px;
 }
 .meta {
   margin: -8px 0 4px;
@@ -239,50 +287,13 @@ h1 {
   line-height: 1.3;
   color: var(--accent);
 }
-.item-title {
+.item-title,
+.ev-title {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.lines {
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.6;
-  background: var(--sunken);
-  border-radius: var(--radius-sm);
-  padding: 8px 0;
-  overflow-x: auto;
-}
-.line {
-  display: flex;
-  min-width: max-content;
-}
-.lines.text .line {
-  min-width: 0;
-}
-.line.hit {
-  background: var(--mark);
-}
-.ln {
-  flex: none;
-  width: 3.5em;
-  padding-right: 10px;
-  text-align: right;
-  color: var(--muted);
-  user-select: none;
-}
-.line code {
-  white-space: pre;
-  padding-right: 12px;
-  background: none;
-  font: inherit;
-}
-.lines.text .line code {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  min-width: 0;
 }
 .empty-share {
   display: flex;
@@ -292,19 +303,229 @@ h1 {
 .foot {
   text-align: center;
 }
+
+/* ---- a shared review: the page's width goes to the findings and, when one is open, the evidence */
+.review-body {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 28px;
+  max-width: 1760px;
+  margin: 0 auto;
+  padding: 24px 24px 64px;
+  align-items: start;
+}
+.review-body.with-ev {
+  grid-template-columns: 220px minmax(0, 1fr) minmax(360px, 40%);
+  gap: 20px;
+}
+.toc {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  min-width: 0;
+}
+.toc-toggle {
+  display: none;
+}
+.toc-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.toc-inner > :first-child {
+  margin-bottom: 8px;
+}
+.toc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.toc-row:hover {
+  background: var(--sunken);
+}
+.toc-row.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.toc-row.quiet:not(.on) {
+  color: var(--muted);
+}
+.toc-n {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.toc-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sev-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+.sev-dot.danger {
+  background: var(--danger);
+}
+.sev-dot.warn {
+  background: var(--warn);
+}
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.branches {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.branch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.summary {
+  margin-bottom: 4px;
+}
+.finding {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  scroll-margin-top: 16px;
+}
+.finding.quiet {
+  opacity: 0.8;
+}
+.f-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.f-head h2 {
+  font-size: 16px;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tags {
+  gap: 6px;
+}
+.loc {
+  margin: 0;
+  overflow-wrap: anywhere;
+  align-self: flex-start;
+}
+.suggestion {
+  border-left: 3px solid var(--line);
+  padding-left: 12px;
+}
+.findings :deep(a.ev) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.evidence {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.ev-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.ev-body {
+  padding: 12px 14px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Narrower: the contents fold above the findings, the evidence slides over from the right. */
+@media (max-width: 1100px) {
+  .review-body,
+  .review-body.with-ev {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 20px 20px 56px;
+  }
+  .toc {
+    position: static;
+    max-height: none;
+  }
+  .toc-toggle {
+    display: inline-flex;
+  }
+  .toc-inner {
+    display: none;
+    margin-top: 8px;
+  }
+  .toc.open .toc-inner {
+    display: flex;
+  }
+  .evidence {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(100vw, 680px);
+    max-height: none;
+    border-radius: 0;
+    border-width: 0 0 0 1px;
+    box-shadow: var(--shadow-lg, 0 8px 32px rgba(0, 0, 0, 0.18));
+    z-index: 20;
+  }
+}
 @media (max-width: 760px) {
   .share-body {
     padding: 20px 16px 48px;
+  }
+  .review-body,
+  .review-body.with-ev {
+    padding: 16px 16px 48px;
   }
   h1 {
     font-size: 20px;
   }
 }
-.review { gap: 12px; }
-.branches { margin: 0; padding-left: 18px; }
-.finding { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 6px; min-width: 0; }
-.finding.quiet { opacity: 0.75; }
-.f-head { gap: 6px; }
-.loc { margin: 0; overflow-wrap: anywhere; }
-.suggestion { border-left: 3px solid var(--line); padding-left: 10px; }
 </style>

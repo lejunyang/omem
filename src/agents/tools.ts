@@ -4487,8 +4487,8 @@ def({
       requirePerm(ctx.app, user, "share.external");
     }
     const { shareReview } = await import("../core/shares.ts");
-    const sh = shareReview(ctx.app, r.id, user);
-    return `分享链接：${sh.url}\n里面有 ${sh.findings} 个问题和本人的决定，不含评审过程。${sh.expiresAt ? `${sh.expiresAt.slice(0, 10)} 失效。` : ""}本人可以在 设置 → 分享 里撤销。`;
+    const sh = await shareReview(ctx.app, r.id, user);
+    return `分享链接：${sh.url}\n里面有 ${sh.findings} 个问题和本人的决定，引用的 ${sh.evidence} 处代码和原件能点开，不含评审过程。${sh.expiresAt ? `${sh.expiresAt.slice(0, 10)} 失效。` : ""}本人可以在 设置 → 分享 里撤销。`;
   },
 });
 
