@@ -1653,6 +1653,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Each person's own AI accounts (docs/v2/agent-accounts.md).
   registerAgentAccountRoutes(server, app, who);
   registerFlowRoutes(server, app, who);
+  // 「关注」(channels/listen-http.ts): 连接 → 飞书会话.
+  (await import("../channels/listen-http.ts")).registerListenRoutes(server, app, who);
   registerStudyRoutes(server, app, who);
   attachPluginStreams(app, server.server);
   // Devices that dial in so this one can call them back, and the streams they open for it (core/peer-back.ts).

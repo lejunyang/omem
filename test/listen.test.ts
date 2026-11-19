@@ -203,5 +203,32 @@ describe("「关注」", () => {
     const t = findThread(app, c.conversationId!)!;
     expect(await watchedNote(app, t, threadMessages(app, t.id).slice(-1))).toContain("这个关注的经验");
   });
+
+  it("serves 关注 to the web: list with the default one, detail, create, update, correct a case, coach by hand", async () => {
+    const app = testApp();
+    const { startServer } = await import("../src/server/http.ts");
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const list = (await server.inject({ method: "GET", url: "/api/listen" })).json();
+      expect(list.map((c: { kind: string }) => c.kind)).toContain("default");
+      expect((await server.inject({ method: "POST", url: "/api/listen", payload: { chats: ["oc_w"], knobs: { reply: "draft" } } })).statusCode).toBe(400);
+      const made = await server.inject({ method: "POST", url: "/api/listen", payload: { name: "网页建的", chats: ["oc_w", "oc_w2"], brief: { handle: ["报错"], skip: [], valid: "有依据" }, knobs: { ownerAsks: "draft" } } });
+      expect(made.statusCode).toBe(200);
+      const id = made.json().id;
+      expect(made.json()).toMatchObject({ name: "网页建的", knobs: { ownerAsks: "draft" }, brief: { confirmedAt: expect.any(String) } });
+      expect((await server.inject({ method: "PUT", url: `/api/listen/${id}`, payload: { knobs: { ownerAsks: null, strictness: 0.8 } } })).json().knobs).toMatchObject({ ownerAsks: "notify", strictness: 0.8 });
+      run(app.db, "insert into reply_samples(id,channel,chat_id,chat_kind,chat_name,asker_name,ask,last_ms,created_at,context_id,decision) values('rs_w','lark','oc_w','group','g','小王','?',0,?,?,'sent')", new Date().toISOString(), id);
+      const detail = (await server.inject({ method: "GET", url: `/api/listen/${id}` })).json();
+      expect(detail.cases.map((c: { id: string }) => c.id)).toEqual(["rs_w"]);
+      expect(detail.context.groups).toHaveLength(2);
+      expect((await server.inject({ method: "PUT", url: "/api/cases/rs_w", payload: { verdict: "should-not", note: "这类不用回" } })).json()).toMatchObject({ verdict: "should-not", note: "这类不用回" });
+      expect((await server.inject({ method: "GET", url: "/api/lark/chats/oc_w/detail" })).json().contexts[0].id).toBe(id);
+      expect((await server.inject({ method: "POST", url: `/api/listen/${id}/coach` })).json().runId).toBeTruthy();
+      expect((await server.inject({ method: "DELETE", url: `/api/listen/${id}` })).statusCode).toBe(200);
+      expect(chatListened(app, "oc_w")).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
