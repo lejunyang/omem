@@ -25,7 +25,7 @@ it("run_agent in a rule's run hands the trigger over within the rule's limits", 
     const [child] = all<{ id: string }>(app.db, "select id from runs where parent_id = ?", parent.id);
     const input = getRun(app, child.id).input as Record<string, unknown>;
     expect(input).toMatchObject({ spec: "investigator-x", rule: { id: "rule_x" }, lark, hideThinking: true, fullAccess: true, silent: { chatId: "oc_alerts" }, handoff: { from: "assistant", runId: parent.id } });
-    expect(input.denyTools).toEqual(expect.arrayContaining(["run_agent", "ask_agent", "continue_agent_work"]));
+    expect(input.denyTools).toEqual(expect.arrayContaining(["run_agent", "ask_agent"]));
     expect(String(input.task)).toMatch(/查这条报警的原因[\s\S]*静默排查[\s\S]*原始任务/);
     expect(input.assistantScope).toBeUndefined();
     // Not to itself.

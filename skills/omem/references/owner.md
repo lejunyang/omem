@@ -26,7 +26,7 @@
 
 ## 唤醒
 
-- `wake_later(after, note, agent?)` / `wake_on_message(chat_id, note, contains?, from?, mentions_owner?)` / `cancel_wake(id?)`：过一段时间、或某个飞书群出现符合条件的消息时唤醒。omem 里的会话由它的 Agent 接着做；在外部 Agent 里调用要用 `agent` 指定唤醒哪个档案。
+- `wake(note, after? | on_message?: {chat_id, contains?, from?, mentions_owner?, include_bots?, expires?, once?}, agent?, skip_if_owner_replies?)` / `cancel_wake(id?)`：过一段时间（after）、或某个飞书群出现符合条件的消息时（on_message）唤醒，二选一。omem 里的会话由它的 Agent 接着做；在外部 Agent 里调用要用 `agent` 指定唤醒哪个档案。
 - 最远 7 天，每处最多 5 个待触发。规则触发的档案不传 agent 时唤醒自己，延续原空间、话题和回复权限（含草稿 / 静默），没有新变化就调用 `stay_quiet`；交给其他档案不会继承原运行的渠道权限。
 - note 写足复查对象、口径和工作文件，醒来时未必记得细节。提醒本人做事用事项的 remind_at，不用唤醒。
 - 醒来后只有要本人做或决定的事、或者事情有了结果（办成、办不成、对方不用了）才写给本人；别人还在跟、又排了下次复查这类进展记进事项，调用 `stay_quiet`。

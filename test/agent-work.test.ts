@@ -91,7 +91,7 @@ describe("multi-agent work", () => {
     app.config.agents.autoAdvance = { ...app.config.agents.autoAdvance, turns: 3 };
     const results: string[] = [];
     const restore = stubHandlers(app, async (tctx) => {
-      const r = await callTool(tctx, "continue_agent_work", { task: "继续往下查" });
+      const r = await callTool(tctx, "run_agent", { own_topic: true, task: "继续往下查" });
       results.push(r.isError ? `ERR ${r.text}` : "ok");
       return r.isError ? "已自动推进到上限，汇报进展：……要继续吗？" : "让 researcher-z 继续查下一步。";
     });
@@ -170,7 +170,7 @@ describe("multi-agent work", () => {
     try {
       const newRoot = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_c#omt_new2", userId: "owner" });
       const ask1 = createRun(app, { kind: "ask", spaceId: "personal", title: "新话题", input: { conversationId: newRoot.id } });
-      const out = await callTool({ app, runId: ask1.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" }, "continue_agent_work", { work_id: ask0, task: "新话题里的新要求" });
+      const out = await callTool({ app, runId: ask1.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" }, "run_agent", { work_id: ask0, task: "新话题里的新要求" });
       expect(String(out.text)).toContain("转到当前话题");
       const w = (getRun(app, ask0).output as { agentWork: AgentWork }).agentWork;
       expect(w.workConversationId).not.toBe(stale.workConversationId);
@@ -188,7 +188,7 @@ describe("multi-agent work", () => {
   it("with milestones (default) only the turn that stopped is posted; turns that handed on stay in the work conversation", async () => {
     app.config.agents.autoAdvance = { ...app.config.agents.autoAdvance, turns: 2 };
     const restore = stubHandlers(app, async (tctx) => {
-      const r = await callTool(tctx, "continue_agent_work", { task: "继续" });
+      const r = await callTool(tctx, "run_agent", { own_topic: true, task: "继续" });
       return r.isError ? "到上限了：进展是……要继续吗？" : "让它接着查。";
     });
     try {

@@ -37,7 +37,7 @@ describe("wake-ups", () => {
     saveAgentSpec(app, { name: "alert-checker", description: "复查", prompt: "复查指标" }, "user");
     const origin = { spec, assistantScope: { spaces: ["project-a"], userId: "owner", denyTools: ["save_rule"], lark: { chats: ["oc_alert"], draft: true } }, denyTools: ["meeting_send"], replyAt: { chatId: "oc_alert", messageId: "om_alert" }, rule: { id: "rule_alert", name: "报警" }, lark: { chats: ["oc_alert"], draft: true, urgent: false } };
     run(app.db, "update runs set input=?,output=?,user_id=?,space_id=? where id=?", JSON.stringify(origin), JSON.stringify({ sessionId: "session_alert" }), "owner", "project-a", runId);
-    const r = await callTool(ctx, "wake_later", { after: "5m", note: "按原规则过滤条件复查" });
+    const r = await callTool(ctx, "wake", { after: "5m", note: "按原规则过滤条件复查" });
     const id = /已设唤醒 (\S+)：/.exec(r.text)![1];
     const fired = fireWake(app, inputOf(app, id));
     expect(inputOf(app, fired.runId!)).toMatchObject({ ...origin, wake: true, resumeSessionId: "session_alert" });
@@ -50,15 +50,15 @@ describe("wake-ups", () => {
 
   it("wakes the conversation's agent later with its note, at most five pending, cancellable", async () => {
     const { app, thread, ctx } = working();
-    const r = await callTool(ctx, "wake_later", { after: "20m", note: "看 CI 有没有跑完，跑完了告诉本人结果" });
+    const r = await callTool(ctx, "wake", { after: "20m", note: "看 CI 有没有跑完，跑完了告诉本人结果" });
     expect(r.text).toMatch(/已设唤醒 (\S+)：/);
     const id = /已设唤醒 (\S+)：/.exec(r.text)![1];
     const queued = one<{ status: string; not_before: string }>(app.db, "select status, not_before from runs where id = ?", id)!;
     expect(queued.status).toBe("queued");
     expect(Date.parse(queued.not_before) - Date.now()).toBeGreaterThan(19 * 60_000);
     expect((await callTool(ctx, "cancel_wake", {})).text).toContain("看 CI 有没有跑完");
-    for (let i = 0; i < 4; i++) await callTool(ctx, "wake_later", { after: "1h", note: `第 ${i} 个` });
-    expect((await callTool(ctx, "wake_later", { after: "1h", note: "第六个" })).isError).toBe(true);
+    for (let i = 0; i < 4; i++) await callTool(ctx, "wake", { after: "1h", note: `第 ${i} 个` });
+    expect((await callTool(ctx, "wake", { after: "1h", note: "第六个" })).isError).toBe(true);
     await callTool(ctx, "cancel_wake", { id });
     expect(pendingWakes(app, { conversationId: thread.id })).toHaveLength(4);
     expect(() => wakeTime("8d")).toThrow(/7 天/);
@@ -80,7 +80,7 @@ describe("wake-ups", () => {
     const w: WakeInput = { note: "半小时没回就再问一次", target: { conversationId: thread.id }, setBy: { runId, agent: "助理" }, setAt: new Date(Date.now() - 60_000).toISOString(), skipIfOwnerSpoke: true };
     addMessage(app, thread.id, "user", "我看到了，晚点回", null, {});
     expect(fireWake(app, w)).toEqual({ skipped: "本人之后已经说过话" });
-    const other = await callTool(ctx, "wake_later", { after: "2h", note: "检查发布单状态", agent: "release-checker" });
+    const other = await callTool(ctx, "wake", { after: "2h", note: "检查发布单状态", agent: "release-checker" });
     const id = /已设唤醒 (\S+)：/.exec(other.text)![1];
     const r = fireWake(app, inputOf(app, id));
     expect(inputOf(app, r.runId!)).toMatchObject({ spec: "release-checker", threadId: thread.id });
@@ -89,7 +89,7 @@ describe("wake-ups", () => {
 
   it("wakes on a matching message through a temporary rule, once, and the rule disappears", async () => {
     const { app, thread, ctx } = working();
-    const r = await callTool(ctx, "wake_on_message", { chat_id: "oc_release", contains: "发布单", note: "小王发了发布单就检查里面的回滚方案" });
+    const r = await callTool(ctx, "wake", { note: "小王发了发布单就检查里面的回滚方案", on_message: { chat_id: "oc_release", contains: "发布单" } });
     expect(r.isError).toBeFalsy();
     const [rule] = listRules(app).filter((x) => x.temporary);
     expect(rule.temporary).toMatchObject({ once: true, setBy: { agent: "助理" } });
@@ -108,10 +108,10 @@ describe("wake-ups", () => {
 
   it("drops expired temporary rules and keeps wake actions out of ordinary rules", async () => {
     const { app, ctx } = working();
-    await callTool(ctx, "wake_on_message", { chat_id: "oc_release", from: "小王", note: "看他说什么", expires: "2h" });
+    await callTool(ctx, "wake", { note: "看他说什么", on_message: { chat_id: "oc_release", from: "小王", expires: "2h" } });
     expect(await expireTemporaryRules(app, new Date(Date.now() + 3 * 3600_000).toISOString())).toBe(1);
     expect(listRules(app)).toHaveLength(0);
     expect(() => saveRule(app, { name: "x", description: "x", enabled: true, conditions: { field: "chat.id", op: "equals", value: "oc_x" }, judge: "code", actions: [{ type: "wake", note: "x", target: {} }] })).toThrow(/临时规则/);
-    expect((await callTool(ctx, "wake_on_message", { chat_id: "oc_release", note: "没条件" })).isError).toBe(true);
+    expect((await callTool(ctx, "wake", { note: "没条件", on_message: { chat_id: "oc_release" } })).isError).toBe(true);
   });
 });

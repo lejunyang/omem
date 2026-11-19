@@ -202,7 +202,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     }
   }
   const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;
-  if (r.actions.some((a) => a.type === "wake") && !input.temporary && !prevTemp) throw new HttpError(400, "“唤醒”只用于 Agent 设的临时规则（wake_on_message）");
+  if (r.actions.some((a) => a.type === "wake") && !input.temporary && !prevTemp) throw new HttpError(400, "“唤醒”只用于 Agent 设的临时规则（wake 的 on_message）");
   // Every meeting the owner joins is a reasonable rule (the card asks first), so is every change of the
   // documents a rule lists; every message is not.
   const everyListedDoc = r.trigger.event === "doc" && !!r.trigger.docs?.length;

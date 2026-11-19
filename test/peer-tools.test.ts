@@ -53,7 +53,7 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     expect(peerToolNames().has("rule_review") || peerToolNames({ readOnly: true }).has("submit_review")).toBe(false);
     const full = peerToolNames();
     expect(full.has("upsert_item") && full.has("set_source_attention") && full.has("organize_memories") && full.has("supersede") && full.has("forget")).toBe(true);
-    expect(full.has("wake_later") || full.has("lark_card")).toBe(false);
+    expect(full.has("wake") || full.has("lark_card")).toBe(false);
     const ro = await peerJson<{ tools: { name: string }[] }>(laptop, "server", "/api/peer/tools?readOnly=1");
     expect(ro.tools.map((t) => t.name)).not.toContain("remember");
     // help does not open a run
@@ -96,7 +96,7 @@ describe("an outside Agent on another device uses this instance's tools", () => 
       ["lark_send", { text: "hi" }],
       ["notify", { title: "t", body: "b" }],
       ["apply_code_run", { run_id: "x" }],
-      ["wake_later", { minutes: 1, note: "n" }],
+      ["wake", { after: "1m", note: "n" }],
       ["omem_call", { tool: "lark_send", args: { text: "hi" } }],
       ["omem_call", { tool: "notify", args: { title: "t", body: "b" } }],
     ] as const) {

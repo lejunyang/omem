@@ -70,7 +70,7 @@ import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { confirmRule } from "../rules/confirmation.ts";
 import { noteRuleWrite, recordIdsIn } from "../rules/own-writes.ts";
 import { currentChatIn } from "../rules/conditions.ts";
-import { CODE_STARTERS, helpText, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
+import { CODE_STARTERS, helpText, MERGED_TOOLS, metaSchemas, ROLE_TOOLS, splitDirect } from "./tool-help.ts";
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
@@ -1058,21 +1058,21 @@ def({
 function assistantTaskScope(ctx: ToolContext) {
   return {
     spaces: ctx.writable ?? ctx.spaces,
-    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "continue_agent_work", "ask_agent", ...CODE_STARTERS])],
+    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "ask_agent", ...CODE_STARTERS])],
     userId: ctx.userId,
     lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private },
   };
 }
 
 /**
- * Never lent with a hand-off (run_agent / continue_agent_work `extra_tools`): writing Feishu as the
+ * Never lent with a hand-off (run_agent `extra_tools`): writing Feishu as the
  * owner, speaking in chats (what reaches the owner stays with the one who handed the work out),
  * handing work on again, and a role's own hand-in tools.
  */
 const LEND_DENIED = new Set([
   "lark_write", "lark_invite", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize",
-  "lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "reply_to_asker", "meeting_suggest",
-  "run_agent", "continue_agent_work", "ask_agent", ...CODE_STARTERS,
+  "lark_send", "lark_react", "lark_card", "lark_send_file", "reply_to_asker", "meeting_suggest",
+  "run_agent", "ask_agent", ...CODE_STARTERS,
   "stay_quiet", "report_rule_failure", ...ROLE_TOOLS,
 ]);
 const MAX_LENT_TOOLS = 12;
@@ -1117,7 +1117,7 @@ function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, 
 
 /** What a rule's run hands on: where it may answer, how, and on whose behalf the rule fired. */
 const RULE_DELIVERY = ["rule", "lark", "threadId", "replyAt", "silent", "hideThinking", "conversationId", "fullAccess"] as const;
-const HANDOFF_DENIED = ["run_agent", "continue_agent_work", "ask_agent", ...CODE_STARTERS, "save_rule", "set_chat_watch"];
+const HANDOFF_DENIED = ["run_agent", "ask_agent", ...CODE_STARTERS, "save_rule", "set_chat_watch"];
 
 /**
  * run_agent inside a rule's run: the chosen agent takes this trigger over within the rule's limits —
@@ -1171,16 +1171,20 @@ function ruleHandoff(ctx: ToolContext, parent: Record<string, unknown>, spec: { 
 def({
   name: "run_agent",
   description:
-    "把一件事交给某个 Agent 档案去做（后台运行）。没有专门档案时 name=assistant 使用主助手角色完成这次任务，不新建档案。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；只是接着交办时你的回复留在工作会话里（话题里有一张原地更新的进度卡），做完、要本人决定或卡住时才发到话题里，报告折叠在下面。交办前看对方档案（list_agents）有没有做完这件事要用的工具：没有的，那一步你自己做，或用 extra_tools 借给它这一轮，不要让它每轮回头找你代做。简单一次性的事 own_topic 保持 false，结果直接发回本会话。",
+    "把一件事交给某个 Agent 档案去做（后台运行）。没有专门档案时 name=assistant 使用主助手角色完成这次任务，不新建档案。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；只是接着交办时你的回复留在工作会话里（话题里有一张原地更新的进度卡），做完、要本人决定或卡住时才发到话题里，报告折叠在下面。交办前看对方档案（list_agents）有没有做完这件事要用的工具：没有的，那一步你自己做，或用 extra_tools 借给它这一轮，不要让它每轮回头找你代做。简单一次性的事 own_topic 保持 false，结果直接发回本会话。" +
+    "继续一个已经在独立工作会话里进行的工作（本人补充了要求，或你看了报告认为还要再推进）：传 work_id（或 own_topic=true 且不传 name，取本会话最近一个仍在进行的工作），在原工作会话里排下一轮，同一个 Agent 接着它上一轮的会话，name 不传沿用上一轮的 Agent；不要为同一件事新开一个工作会话。上一轮它回头找你代做的（缺工具），这一轮用 extra_tools 借给它，或你先做完那一步再交办。",
   schema: z.object({
     execution: executionSchema.optional(),
-    name: z.string(),
-    task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入"),
+    name: z.string().optional().describe("Agent 档案名，或 assistant；继续已有工作时不传就沿用上一轮的 Agent"),
+    task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入。继续已有工作时写这一轮要做什么：本人的新要求或你判断还需要推进的事"),
     space: z.string().optional(),
     own_topic: z.boolean().optional().describe("长任务/多 Agent 协同：单独工作会话（飞书新话题），每轮报告交回给你继续推进"),
+    work_id: z.string().optional().describe("继续这项工作（发起它的那次运行 id，r…）"),
     extra_tools: extraToolsSchema,
   }),
   handler: async (ctx, a) => {
+    if (a.work_id || (a.own_topic && !a.name)) return continueAgentWork(ctx, a);
+    if (!a.name) throw new HttpError(400, "要交给哪个 Agent：传 name（档案名或 assistant）；继续已有的工作传 work_id");
     const execution = validateExecution(ctx.app, a.execution);
     const spec = a.name === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
@@ -1234,60 +1238,50 @@ def({
 });
 
 
-def({
-  name: "continue_agent_work",
-  description:
-    "继续一个已经在独立工作会话（飞书话题）里进行的多 Agent 任务：本人补充了要求，或你看了报告认为还要再推进时用。在原工作会话里排下一轮（同一条话题，同一个 Agent 会接着它上一轮的会话，并能看到这项工作到目前为止的经过）；交回报告后你会再次接手。不要用 run_agent 新开一个。上一轮它回头找你代做的（缺工具），这一轮用 extra_tools 借给它，或你先做完那一步再交办。",
-  write: true,
-  schema: z.object({
-    execution: executionSchema.optional(),
-    work_id: z.string().optional().describe("发起那次工作的 ask 运行 id（r…）；不传时取本会话最近一个仍在进行的工作会话"),
-    agent: z.string().optional().describe("这一轮用哪个 Agent 档案；不传沿用上一轮的 Agent"),
-    task: z.string().describe("这一轮要做什么：本人的新要求或你判断还需要推进的事，写具体"),
-    extra_tools: extraToolsSchema,
-  }),
-  handler: async (ctx, a) => {
-    const execution = validateExecution(ctx.app, a.execution);
-    const extraTools = lendTools(ctx, a.extra_tools);
-    const lentNote = extraTools.length ? `；这一轮借给它 ${extraTools.join("、")}` : "";
-    const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
-    const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
-    const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
-    let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
-    if (!work && conv) work = workInConversation(ctx.app, conv, { includeRoot: true });
-    if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent own_topic=true 开始");
-    const agent = a.agent ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
-    if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
-    const assistantScope = agent === "assistant" ? assistantTaskScope(ctx) : undefined;
-    // The owner continues the work from another conversation (a new Feishu topic): fork it into
-    // this conversation so the specialist's report and every later coordination reply land here.
-    if (conv && work.workConversationId !== conv) {
-      const { getThread } = await import("./threads.ts");
-      const here = getThread(ctx.app, conv);
-      const otherTopic = !!String(here?.key ?? "").includes("#") && here?.key !== work.larkKey;
-      if (otherTopic || work.rootConversationId !== conv) {
-        const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
-        return `已把这项工作转到当前话题继续（运行 ${f.runId}${lentNote}）；后续 ${agent} 的报告和协调回复都在这里，不再回到旧话题。旧话题里的经过可以用 read_conversation 读工作会话 ${work.workConversationId}。`;
-      }
+/** run_agent with work_id (or own_topic without name): the next round of a work in its own conversation. */
+async function continueAgentWork(ctx: ToolContext, a: { execution?: z.infer<typeof executionSchema>; work_id?: string; name?: string; task: string; extra_tools?: string[] }) {
+  // A rule's run or another device hands work on only as a fresh run (ruleHandoff, peerDispatch), never into a work here.
+  if (ctx.peer || (ctx.runId && (getRun(ctx.app, ctx.runId).input as { rule?: unknown }).rule)) throw new HttpError(403, "从别的设备、或在规则的运行里不能接着一项已有的工作：用 run_agent(name, task) 交一件新的");
+  const execution = validateExecution(ctx.app, a.execution);
+  const extraTools = lendTools(ctx, a.extra_tools);
+  const lentNote = extraTools.length ? `；这一轮借给它 ${extraTools.join("、")}` : "";
+  const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
+  const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
+  const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
+  let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
+  if (!work && conv) work = workInConversation(ctx.app, conv, { includeRoot: true });
+  if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent(name, task, own_topic=true) 开始");
+  const agent = a.name ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
+  if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
+  const assistantScope = agent === "assistant" ? assistantTaskScope(ctx) : undefined;
+  // The owner continues the work from another conversation (a new Feishu topic): fork it into
+  // this conversation so the specialist's report and every later coordination reply land here.
+  if (conv && work.workConversationId !== conv) {
+    const { getThread } = await import("./threads.ts");
+    const here = getThread(ctx.app, conv);
+    const otherTopic = !!String(here?.key ?? "").includes("#") && here?.key !== work.larkKey;
+    if (otherTopic || work.rootConversationId !== conv) {
+      const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
+      return `已把这项工作转到当前话题继续（运行 ${f.runId}${lentNote}）；后续 ${agent} 的报告和协调回复都在这里，不再回到旧话题。旧话题里的经过可以用 read_conversation 读工作会话 ${work.workConversationId}。`;
     }
-    await autoTurnGuard(ctx, work);
-    let id: string;
-    try {
-      id = queueAgentRound(ctx.app, work, { agent, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
-    } catch (e) {
-      if (!String((e as Error).message).includes("已达上限")) throw e;
-      // A cap is only a guard against loops, not a reason to drop the user's request:
-      // the main assistant takes over the remaining work directly in this conversation.
-      return `这项工作在独立工作会话里已循环 ${MAX_AGENT_WORK_RUNS} 轮（防失控上限）。不要再开新的工作会话；请你直接在本会话完成本人这条要求：${a.task}。需要的上下文用 read_conversation 读该工作会话，结论直接回复本人。`;
-    }
-    return `已在原工作会话安排 ${agent} 的下一轮 ${id}${lentNote}；它交回报告后你会接着处理。`;
-  },
-});
+  }
+  await autoTurnGuard(ctx, work);
+  let id: string;
+  try {
+    id = queueAgentRound(ctx.app, work, { agent, task: a.task, execution, assistantScope, queuedBy: ctx.runId, extraTools });
+  } catch (e) {
+    if (!String((e as Error).message).includes("已达上限")) throw e;
+    // A cap is only a guard against loops, not a reason to drop the user's request:
+    // the main assistant takes over the remaining work directly in this conversation.
+    return `这项工作在独立工作会话里已循环 ${MAX_AGENT_WORK_RUNS} 轮（防失控上限）。不要再开新的工作会话；请你直接在本会话完成本人这条要求：${a.task}。需要的上下文用 read_conversation 读该工作会话，结论直接回复本人。`;
+  }
+  return `已在原工作会话安排 ${agent} 的下一轮 ${id}${lentNote}；它交回报告后你会接着处理。`;
+}
 
 def({
   name: "ask_agent",
   description:
-    "向另一个 Agent 档案请教一个具体问题，并等它回答（同步，通常几分钟）：需要它的专长、它掌握的情况或它的判断时用。它能用自己的工具和技能去查，但不能再请教别人或交办。回答只回到你这里，由你决定怎么用；要它真正接手一件事用 run_agent / continue_agent_work。",
+    "向另一个 Agent 档案请教一个具体问题，并等它回答（同步，通常几分钟）：需要它的专长、它掌握的情况或它的判断时用。它能用自己的工具和技能去查，但不能再请教别人或交办。回答只回到你这里，由你决定怎么用；要它真正接手一件事用 run_agent。",
   schema: z.object({
     execution: executionSchema.optional(),
     name: z.string().describe("档案名（list_agents）；别的 omem 的 Agent 写「档案@节点」（常驻说明“网络里的其他 omem”里列出的）"),
@@ -2296,17 +2290,11 @@ def({
   },
 });
 def({
-  name: "flow_start", description: "让事项开始走指定流程；同一事项已有进行中的流程时拒绝。",
-  write: true, schema: z.object({ item: z.string(), flow: z.string() }), handler: async (ctx, a) => {
+  name: "flow_start", description: "传 flow：让事项开始走这个流程，同一事项已有进行中的流程时拒绝。不传 flow：本人说再来一轮时，开始事项已有流程的下一轮，这一轮还没做完时不能开始。",
+  write: true, schema: z.object({ item: z.string(), flow: z.string().optional().describe("流程名；不传就是对事项已有的流程开下一轮") }), handler: async (ctx, a) => {
     flowItem(ctx, a.item, true);
-    return JSON.stringify(await (await import("../flows/engine.ts")).startFlow(ctx.app, a.item, a.flow, flowActor(ctx)));
-  },
-});
-def({
-  name: "flow_round", description: "本人说再来一轮时，开始事项流程的下一轮；这一轮还没做完时不能开始。",
-  write: true, schema: z.object({ item: z.string() }), handler: async (ctx, a) => {
-    flowItem(ctx, a.item, true);
-    return JSON.stringify(await (await import("../flows/engine.ts")).startRound(ctx.app, a.item, flowActor(ctx)));
+    const engine = await import("../flows/engine.ts");
+    return JSON.stringify(a.flow ? await engine.startFlow(ctx.app, a.item, a.flow, flowActor(ctx)) : await engine.startRound(ctx.app, a.item, flowActor(ctx)));
   },
 });
 def({
@@ -2345,7 +2333,7 @@ async function notOwnersBusiness(ctx: ToolContext, refs: string[]) {
   if (!run) return;
   const by = run.trigger?.by;
   if (run.kind === "ask" && by && by.key !== "user:owner" && (run.trigger?.via === "chat" || run.trigger?.via === "guest"))
-    throw new HttpError(403, `这是${by.name}请助手做的事，不是本人的事项，不要建：要接着跟进就写工作文件（write_file），用 wake_later / wake_on_message 回来看`);
+    throw new HttpError(403, `这是${by.name}请助手做的事，不是本人的事项，不要建：要接着跟进就写工作文件（write_file），用 wake 回来看`);
   if (run.kind !== "ingest" || !refs.length) return;
   const chats = new Set<string>();
   for (const ref of refs) {
@@ -3030,9 +3018,11 @@ const cardBlock = z.union([
 def({
   name: "lark_card",
   description:
-    "发一张飞书交互卡片：标题+颜色、Markdown、字段、按钮、表单（输入框、下拉、选人、日期、勾选；字段的 label 写成问题）。有人点按钮或提交表单时，操作会作为新消息回到本会话，由你继续处理。allowed 限定谁可以操作（open_id 列表，lark_read 查到的也行；'owner' 表示本人），其他人点了会被拒绝；发在群里时卡片开头自动 @ 他们，给了 mentions 就只 @ mentions（几个人都能批、只 @ 其中一位时这样写）。复杂排版可传 raw_card（Card 2.0 JSON，结构见 lark-cli skills read lark-im/references/card/card-2.0-schema.md）。",
+    "发一张飞书交互卡片：标题+颜色、Markdown、字段、按钮、表单（输入框、下拉、选人、日期、勾选；字段的 label 写成问题）。有人点按钮或提交表单时，操作会作为新消息回到本会话，由你继续处理。allowed 限定谁可以操作（open_id 列表，lark_read 查到的也行；'owner' 表示本人），其他人点了会被拒绝；发在群里时卡片开头自动 @ 他们，给了 mentions 就只 @ mentions（几个人都能批、只 @ 其中一位时这样写）。复杂排版可传 raw_card（Card 2.0 JSON，结构见 lark-cli skills read lark-im/references/card/card-2.0-schema.md）。" +
+    "传 message_id 时改为原地更新那张机器人发过的卡片（例如处理完后把按钮换成“已处理 by xx”）：传完整的新内容（blocks 或 raw_card），发送目标、allowed 这些不用传。",
   write: true,
   schema: larkTarget.extend({
+    message_id: z.string().optional().describe("要原地更新的卡片（om_…）；不传就是发一张新的"),
     title: z.string().optional(),
     color: z.string().optional().describe("blue wathet turquoise green yellow orange red carmine violet purple indigo grey"),
     blocks: z.array(cardBlock).optional(),
@@ -3041,8 +3031,14 @@ def({
     wide: z.boolean().optional(),
   }),
   handler: async (ctx, a) => {
-    const { buildCard } = await import("../channels/lark-send.ts");
+    const { buildCard, updateLarkCard } = await import("../channels/lark-send.ts");
     const card = a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never, wide: a.wide });
+    if (a.message_id) {
+      await larkGuard(ctx, { reply_to: a.message_id });
+      const { resolveCardCitations } = await import("../channels/common.ts");
+      await updateLarkCard(a.message_id, await resolveCardCitations(ctx.app, card, { runId: ctx.runId }), ctx.larkBot);
+      return "已更新卡片";
+    }
     const owner = ctx.app.config.lark.ownerOpenId;
     // An open_id read through lark-cli belongs to another app: store the one this bot sees, so the
     // card's @ reaches the person and the click matches (lark-actions.ts `mayAct` also maps old cards).
@@ -3051,20 +3047,6 @@ def({
     const allowed = [...new Set((a.allowed ?? []).map((x) => (x === "owner" ? (owner ?? x) : botId(x))))];
     const interactive = JSON.stringify(card).includes('"callback"') || JSON.stringify(card).includes('"form"');
     return larkPost(ctx, a, { card }, { allowed, waitForAction: interactive });
-  },
-});
-
-def({
-  name: "lark_update_card",
-  description: "原地更新一张机器人发过的卡片（例如处理完后把按钮换成“已处理 by xx”）。传完整的新卡片：blocks 或 raw_card。",
-  write: true,
-  schema: z.object({ message_id: z.string(), title: z.string().optional(), color: z.string().optional(), blocks: z.array(cardBlock).optional(), raw_card: z.record(z.string(), z.any()).optional() }),
-  handler: async (ctx, a) => {
-    await larkGuard(ctx, { reply_to: a.message_id });
-    const { buildCard, updateLarkCard } = await import("../channels/lark-send.ts");
-    const { resolveCardCitations } = await import("../channels/common.ts");
-    await updateLarkCard(a.message_id, await resolveCardCitations(ctx.app, a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never }), { runId: ctx.runId }), ctx.larkBot);
-    return "已更新卡片";
   },
 });
 
@@ -3573,20 +3555,70 @@ async function wakeOrigin(ctx: ToolContext, agent?: string): Promise<{ target: i
   throw new HttpError(400, "这次运行不在会话里：用 agent 指定唤醒哪个 Agent 档案");
 }
 
+const wakeOnMessage = z.object({
+  chat_id: z.string().describe("群或会话的 chat_id（oc_…）"),
+  contains: z.string().optional().describe("消息包含的文字"),
+  from: z.string().optional().describe("发送人名字包含"),
+  mentions_owner: z.boolean().optional().describe("@了本人"),
+  include_bots: z.boolean().optional().describe("机器人发的消息也算（默认不算）"),
+  expires: z.string().optional().describe("多久后失效：12h、3d，默认 24h，最长 7 天"),
+  once: z.boolean().optional().describe("默认 true：触发一次就删除"),
+});
+
+/** A wake on a message is a temporary rule (rules page, “临时”): deleted when it fires (unless `once: false`) or expires. */
+async function wakeOnMessageRule(ctx: ToolContext, note: string, agent: string | undefined, m: z.infer<typeof wakeOnMessage>) {
+  if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的助理和 Agent 能设消息唤醒");
+  if (!m.contains && !m.from && !m.mentions_owner) throw new HttpError(400, "至少给一个条件：contains、from 或 mentions_owner");
+  const { checkPending, wakeTime } = await import("./wakes.ts");
+  const { saveRule } = await import("../rules/store.ts");
+  const { describe: describeCondition } = await import("../rules/conditions.ts");
+  const expiresAt = wakeTime(m.expires ?? "24h");
+  const { target, setBy } = await wakeOrigin(ctx, agent);
+  checkPending(ctx.app, target, setBy);
+  type Cond = import("../rules/types.ts").Condition;
+  const conds: Cond[] = [{ field: "chat.id", op: "equals", value: m.chat_id }];
+  if (m.contains) conds.push({ field: "message.text", op: "contains", value: m.contains });
+  if (m.from) conds.push({ field: "sender.name", op: "contains", value: m.from });
+  if (m.mentions_owner) conds.push({ field: "message.mentionsOwner", op: "is", value: true });
+  if (!m.include_bots) conds.push({ not: { field: "sender.kind", op: "equals", value: "bot" } });
+  const conditions: Cond = { all: conds };
+  const chatName = one<{ name: string }>(ctx.app.db, "select name from lark_cursors where chat_id = ?", m.chat_id)?.name;
+  const watch = `${chatName ? `「${chatName}」` : m.chat_id}：${describeCondition({ all: conds.slice(1) })}`;
+  const rule = saveRule(
+    ctx.app,
+    {
+      name: truncate(`临时：${note.replace(/\s+/g, " ")}`, 60),
+      description: note,
+      enabled: true,
+      trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] },
+      conditions,
+      judge: "code",
+      actions: [{ type: "wake", note: note, target }],
+      temporary: { expiresAt, once: m.once ?? true, setBy, setAt: now(), watch },
+    },
+    "agent",
+  );
+  return `已设消息唤醒 ${rule.id}（${watch}），${expiresAt} 前有效${m.once === false ? "，每条符合的消息都会唤醒" : "，触发一次后删除"}。不需要了用 cancel_wake 取消。`;
+}
+
 def({
-  name: "wake_later",
+  name: "wake",
   description:
-    "过一段时间再唤醒自己（或另一个 Agent 档案）接着做：等 CI 跑完再看、半小时后看看对方回了没有、明早再查一次。时间到了，你所在的会话会开新一轮（接着你的会话），备注作为这一轮的任务；没东西要说时调用 stay_quiet，本人不会收到消息。agent 填档案名时改为唤醒那个 Agent，备注就是交给它的任务，结果发回本会话。只用于你自己的后续工作；提醒本人的事用事项的 remind_at。每个会话最多 5 个待触发的唤醒，最远 7 天。",
+    "之后再唤醒自己（或另一个 Agent 档案）接着做，二选一：after 过一段时间（等 CI 跑完再看、半小时后看看对方回了没有、明早再查一次）；on_message 某个飞书群或会话里出现符合条件的新消息时（等某人回复、等报警恢复、等对方发来文件），条件至少给一个：contains、from、mentions_owner，会建一条临时规则（规则页“临时”里可见），默认触发一次就删除、24 小时后失效。" +
+    "唤醒时你所在的会话会开新一轮（接着你的会话），备注作为这一轮的任务；没东西要说时调用 stay_quiet，本人不会收到消息。agent 填档案名时改为唤醒那个 Agent，备注就是交给它的任务，结果发回本会话。只用于你自己的后续工作，消息唤醒只在本人交代的事需要等外部消息时用；提醒本人的事用事项的 remind_at。每个会话最多 5 个待触发的唤醒，最远 7 天。不需要了用 cancel_wake 取消。",
   write: true,
   schema: z.object({
-    after: z.string().describe("多久以后：20m、2h、1d，或带时区的 ISO 时间"),
     note: z.string().describe("醒来后要做什么：查看什么、依据什么判断、接下来怎么办；写清楚，醒来时你可能已经不记得细节"),
+    after: z.string().optional().describe("多久以后：20m、2h、1d，或带时区的 ISO 时间"),
+    on_message: wakeOnMessage.optional().describe("出现符合条件的消息时唤醒"),
     agent: z.string().optional().describe("唤醒另一个 Agent 档案（默认唤醒自己）"),
-    skip_if_owner_replies: z.boolean().optional().describe("这期间本人在会话里说过话就不唤醒（如“半小时没回就跟进”）"),
+    skip_if_owner_replies: z.boolean().optional().describe("after 用：这期间本人在会话里说过话就不唤醒（如“半小时没回就跟进”）"),
   }),
   handler: async (ctx, a) => {
+    if (!a.after === !a.on_message) throw new HttpError(400, "after 和 on_message 二选一：过一段时间唤醒传 after，等消息唤醒传 on_message");
+    if (a.on_message) return wakeOnMessageRule(ctx, a.note, a.agent, a.on_message);
     const { scheduleWake, wakeTime } = await import("./wakes.ts");
-    const at = wakeTime(a.after);
+    const at = wakeTime(a.after!);
     const { target, setBy } = await wakeOrigin(ctx, a.agent);
     const r = scheduleWake(ctx.app, { at, note: a.note, target, setBy, skipIfOwnerSpoke: a.skip_if_owner_replies });
     return `已设唤醒 ${r.id}：${at}${target.spec && !target.resumeRunId ? `唤醒 ${target.spec}` : "唤醒你"}。不需要了用 cancel_wake 取消。`;
@@ -3594,60 +3626,8 @@ def({
 });
 
 def({
-  name: "wake_on_message",
-  description:
-    "某个飞书群或会话里出现符合条件的新消息时唤醒自己（或另一个 Agent 档案）：等某人回复、等报警恢复、等对方发来文件。会建一条临时规则（规则页“临时”里可见），默认触发一次就删除，到期（默认 24 小时，最长 7 天）也删除。条件至少给一个：contains 消息包含的文字、from 发送人名字包含、mentions_owner @了本人；默认不算机器人发的消息。只在本人交代的事需要等外部消息时用。",
-  write: true,
-  schema: z.object({
-    chat_id: z.string().describe("群或会话的 chat_id（oc_…）"),
-    note: z.string().describe("醒来后要做什么"),
-    contains: z.string().optional(),
-    from: z.string().optional(),
-    mentions_owner: z.boolean().optional(),
-    include_bots: z.boolean().optional(),
-    expires: z.string().optional().describe("多久后失效：12h、3d，默认 24h"),
-    once: z.boolean().optional().describe("默认 true：触发一次就删除"),
-    agent: z.string().optional().describe("唤醒另一个 Agent 档案（默认唤醒自己）"),
-  }),
-  handler: async (ctx, a) => {
-    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的助理和 Agent 能设消息唤醒");
-    if (!a.contains && !a.from && !a.mentions_owner) throw new HttpError(400, "至少给一个条件：contains、from 或 mentions_owner");
-    const { checkPending, wakeTime } = await import("./wakes.ts");
-    const { saveRule } = await import("../rules/store.ts");
-    const { describe: describeCondition } = await import("../rules/conditions.ts");
-    const expiresAt = wakeTime(a.expires ?? "24h");
-    const { target, setBy } = await wakeOrigin(ctx, a.agent);
-    checkPending(ctx.app, target, setBy);
-    type Cond = import("../rules/types.ts").Condition;
-    const conds: Cond[] = [{ field: "chat.id", op: "equals", value: a.chat_id }];
-    if (a.contains) conds.push({ field: "message.text", op: "contains", value: a.contains });
-    if (a.from) conds.push({ field: "sender.name", op: "contains", value: a.from });
-    if (a.mentions_owner) conds.push({ field: "message.mentionsOwner", op: "is", value: true });
-    if (!a.include_bots) conds.push({ not: { field: "sender.kind", op: "equals", value: "bot" } });
-    const conditions: Cond = { all: conds };
-    const chatName = one<{ name: string }>(ctx.app.db, "select name from lark_cursors where chat_id = ?", a.chat_id)?.name;
-    const watch = `${chatName ? `「${chatName}」` : a.chat_id}：${describeCondition({ all: conds.slice(1) })}`;
-    const rule = saveRule(
-      ctx.app,
-      {
-        name: truncate(`临时：${a.note.replace(/\s+/g, " ")}`, 60),
-        description: a.note,
-        enabled: true,
-        trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] },
-        conditions,
-        judge: "code",
-        actions: [{ type: "wake", note: a.note, target }],
-        temporary: { expiresAt, once: a.once ?? true, setBy, setAt: now(), watch },
-      },
-      "agent",
-    );
-    return `已设消息唤醒 ${rule.id}（${watch}），${expiresAt} 前有效${a.once === false ? "，每条符合的消息都会唤醒" : "，触发一次后删除"}。不需要了用 cancel_wake 取消。`;
-  },
-});
-
-def({
   name: "cancel_wake",
-  description: "取消一个还没触发的唤醒（wake_later 或 wake_on_message 设的）。不传 id 时列出当前会话（或你这个档案）待触发的唤醒。",
+  description: "取消一个还没触发的唤醒（wake 设的，定时或等消息）。不传 id 时列出当前会话（或你这个档案）待触发的唤醒。",
   write: true,
   schema: z.object({ id: z.string().optional() }),
   handler: async (ctx, a) => {
@@ -3809,7 +3789,7 @@ def({
 def({
   name: "lark_wiki_crawl",
   description:
-    "按目录树读取飞书知识库：从一个知识库页面开始，读它和往下 depth 层的子页面（只读文档，表格等留链接），存为原件并交给整理。读的进度存在库里，重启后继续。action=start 开始（max_docs 总量上限，batch 每批篇数：给了 batch 就每读完一批暂停，等下次 continue，适合定时规则或 wake_later 一点点读完庞大的知识库；不给就在后台一直读完）；continue 继续暂停的爬取；stop 停止；status 列出全部爬取和进度。只在本人要读整个知识库或大目录时用；单篇文档和少量链接用 import_url。",
+    "按目录树读取飞书知识库：从一个知识库页面开始，读它和往下 depth 层的子页面（只读文档，表格等留链接），存为原件并交给整理。读的进度存在库里，重启后继续。action=start 开始（max_docs 总量上限，batch 每批篇数：给了 batch 就每读完一批暂停，等下次 continue，适合定时规则或 wake 一点点读完庞大的知识库；不给就在后台一直读完）；continue 继续暂停的爬取；stop 停止；status 列出全部爬取和进度。只在本人要读整个知识库或大目录时用；单篇文档和少量链接用 import_url。",
   write: true,
   schema: z.object({
     action: z.enum(["start", "continue", "stop", "status"]),
@@ -6428,6 +6408,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
     return callTool(ctx, call.tool, call.args ?? {});
   }
   const tool = tools.find((t) => t.name === name);
+  if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
   if (!tool || (ctx.tools && !ctx.tools.has(name))) return { text: `工具 ${name} 不可用`, isError: true };
   mark(`tool ${name}`);
   // Whoever the run works for needs the tool's global permission (src/auth/tools.ts), whatever its list says.

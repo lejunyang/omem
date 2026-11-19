@@ -343,7 +343,7 @@ export const progressMessages = (app: App) => app.config.agents.progress?.messag
 /**
  * A turn in a work that only moved it on, so in `milestones` mode its reply stays in the work
  * conversation (the web shows it) and the topic's progress card says what is going on instead:
- * - it handed out a next round itself (continue_agent_work / run_agent queued one with its id),
+ * - it handed out a next round itself (run_agent queued one with its id),
  * - it asked the owner nothing (no ask_user, no approval held for the owner in this run),
  * - none of the messages it answered is the owner's (a reply to the owner always goes out),
  * - the work is not waiting for the owner.

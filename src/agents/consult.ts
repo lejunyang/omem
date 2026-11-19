@@ -11,7 +11,7 @@ import type { AgentResult } from "./types.ts";
 import { replyOf } from "./types.ts";
 
 /** What a consulted agent cannot do: ask on, or hand work out. */
-const NO_HANDOFF = ["ask_agent", "ask_reviewer", "run_agent", "continue_agent_work", "delegate_code", "review_branch", "continue_code_run"];
+const NO_HANDOFF = ["ask_agent", "ask_reviewer", "run_agent", "delegate_code", "review_branch", "continue_code_run"];
 
 /**
  * One agent asks another a question and waits for the answer (`ask_agent`, and the coder asking the

@@ -264,7 +264,7 @@ budget: { trials: 8, minutes: 240 }   # 这一段这一轮最多做多少
 
 本期只补流程的通用能力，没有建立课题台账或课题界面。
 
-- `repeat: { from, every }`：`from` 之前只做一次，从它起每轮重做。默认 `manual`，本人说“再来一轮”时助手用 `flow_round(item)`，也可调用 `POST /api/items/:id/flow/round`。上一轮没做完不能开新的；`done` 自动接下一轮，`day` / 星期在上一轮完成后的下一个符合日开始，配置时区按 `app.config.timezone`。自动推进仍受 `flows.autoAdvance` 限制；停机错过的日子不补跑。
+- `repeat: { from, every }`：`from` 之前只做一次，从它起每轮重做。默认 `manual`，本人说“再来一轮”时助手用 `flow_start(item)`（不传 flow），也可调用 `POST /api/items/:id/flow/round`。上一轮没做完不能开新的；`done` 自动接下一轮，`day` / 星期在上一轮完成后的下一个符合日开始，配置时区按 `app.config.timezone`。自动推进仍受 `flows.autoAdvance` 限制；停机错过的日子不补跑。
 - 当前轮次、开始时间、完成时间和下一轮时间在 `item_flows`；当前阶段和追加日志带 `round`。`item_flow_rounds` 保存每轮结束时各段的状态、完成时间、备注、依据和执行控制信息，随事项拉取，引用照旧映射。视图返回最近 10 轮。
 - `agents.tiers` 的 `strong / standard / cheap` 各对应 `{ profile, model?, effort? }`，默认都空。运行阶段可写档位或直接写这三个字段，变成 `execution`（`source: flow`，原因写明流程和阶段）。没配档位时沿用角色或档案自己的 AI，一阶段一轮只记一次；配置不可用时卡住。模型达到每日额度或账号额度用完时保留未开始，写清恢复时刻，由巡检重试，不换其他模型。worker 真正开始前再检查一次。
 - `at` 是本轮开始日期的当地时刻下限；跨过这一天后不会再等同一个时刻。`window` 是允许开始的时间段，含开始、不含结束，可跨午夜。时间计算在 `src/flows/timing.ts`，巡检传入的时间用于推进和预算判断，测试不用实际等待。

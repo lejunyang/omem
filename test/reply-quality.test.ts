@@ -71,7 +71,7 @@ describe("sending a hollow reply back once", () => {
     const a = ctxOf(app);
     expect(await reviseHollow(a.ctx, "项目 A 的退款入口在订单详情页右上角。", rerun)).toBe("项目 A 的退款入口在订单详情页右上角。");
     const b = ctxOf(app);
-    addRunEvent(app, b.id, "tool-write", { name: "wake_later", args: {} });
+    addRunEvent(app, b.id, "tool-write", { name: "wake", args: {} });
     expect(await reviseHollow(b.ctx, "我核对一下发布记录。", rerun)).toBe("我核对一下发布记录。");
     const c = ctxOf(app);
     app.config.replies.check = false;

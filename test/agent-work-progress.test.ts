@@ -68,7 +68,7 @@ describe("lending tools with a hand-off", () => {
     saveAgentSpec(app, { name: "sheet-y", description: "整理表格", prompt: "只整理", status: "active" }, "user");
     const root = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
     const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "长任务", input: { conversationId: root.id } });
-    const mine = ["run_agent", "continue_agent_work", "lark_read", "lark_write", "search"];
+    const mine = ["run_agent", "lark_read", "lark_write", "search"];
     // Not its own: refused.
     const notMine = await callTool(owner(app, ask.id, mine), "run_agent", { name: "sheet-y", own_topic: true, task: "整理", extra_tools: ["generate_image"] });
     expect(notMine.isError).toBe(true);
@@ -86,10 +86,10 @@ describe("lending tools with a hand-off", () => {
     expect(ok.text).toContain("借给它 lark_read");
     const w = (getRun(app, ask.id).output as { agentWork: AgentWork }).agentWork;
     expect(getRun(app, w.rounds[0].runId).input).toMatchObject({ extraTools: ["lark_read"], queuedBy: ask.id });
-    // The next round lends again only when asked; continue_agent_work checks the same way.
+    // The next round lends again only when asked; continuing a work checks the same way.
     const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "协调", input: { conversationId: w.workConversationId, coordinate: { workId: ask.id } }, lane: w.workConversationId });
-    expect((await callTool(owner(app, turn.id, mine), "continue_agent_work", { task: "下一步", extra_tools: ["lark_write"] })).isError).toBe(true);
-    const next = await callTool(owner(app, turn.id, mine), "continue_agent_work", { task: "下一步", extra_tools: ["search"] });
+    expect((await callTool(owner(app, turn.id, mine), "run_agent", { own_topic: true, task: "下一步", extra_tools: ["lark_write"] })).isError).toBe(true);
+    const next = await callTool(owner(app, turn.id, mine), "run_agent", { own_topic: true, task: "下一步", extra_tools: ["search"] });
     expect(next.isError).toBe(false);
     const w2 = refreshWork(app, ask.id)!;
     expect(getRun(app, w2.rounds.at(-1)!.runId).input).toMatchObject({ extraTools: ["search"], queuedBy: turn.id });

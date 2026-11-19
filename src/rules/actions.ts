@@ -251,7 +251,7 @@ function ruleFiles(app: App, rule: Rule) {
  */
 export function assistantScope(spec: string, space: string, lark: { chats: string[]; draft: boolean }) {
   if (spec !== "assistant") return {};
-  return { assistantScope: { spaces: [space], userId: OWNER, denyTools: [...CODE_STARTERS, "continue_agent_work", "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action", "save_rule", "set_chat_watch"], lark } };
+  return { assistantScope: { spaces: [space], userId: OWNER, denyTools: [...CODE_STARTERS, "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action", "save_rule", "set_chat_watch"], lark } };
 }
 
 /**

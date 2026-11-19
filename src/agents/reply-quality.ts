@@ -68,6 +68,6 @@ export function reviseNote(p: ReplyProblem, mayStayQuiet: boolean): string {
       ? `不说话是调用 stay_quiet，不是在回复里写一个词。${mayStayQuiet ? "没有要说的就调 stay_quiet；" : "这一轮有人在等回答，"}有要说的就直接写正文。`
       : p.kind === "hedge"
         ? "给出结论和依据（引用原件、页面或代码）；确实定不了，就说清楚缺的是哪一个信息、谁能提供。不要用“可能”“建议进一步确认”收尾。"
-        : `把事情做完再回，回的是结果；要对方等，就先安排好之后回来（wake_later 或交办），再说清在等什么、什么时候回。${quiet}`;
+        : `把事情做完再回，回的是结果；要对方等，就先安排好之后回来（wake 或交办），再说清在等什么、什么时候回。${quiet}`;
   return `刚才这条回复没有发出去：${p.why}。${how}重新写这条回复，只写正文。`;
 }

@@ -15,6 +15,12 @@ updated: 2026-11-19
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 再并掉四个只差一个参数的工具；旧工具名照样认（11-20）
+
+- `flow_round` 并进 `flow_start`（不传 `flow` 就是开下一轮）；`lark_update_card` 并进 `lark_card`（带 `message_id` 原地更新）；`wake_later`、`wake_on_message` 并成 `wake`（`after` 和 `on_message: {chat_id, contains, from, …}` 二选一，`cancel_wake` 不变）；`continue_agent_work` 并进 `run_agent`（带 `work_id`，或 `own_topic=true` 不带 `name`，续在已有的工作会话上，`name` 不传沿用上一轮的 Agent）。都在 `src/agents/tools.ts`。
+- 续一项工作原来靠拒绝清单挡住规则的运行和别的设备，现在 `continueAgentWork` 自己拒绝这两种调用方。
+- `src/agents/tool-help.ts` 新加 `MERGED_TOOLS`（旧名 → 新工具和怎么传，含 11-19 并掉的 `fix_review` 等五个）：角色、档案里还写着旧名的，`expandTools` 换成新工具；按旧名调用时报错里说改用哪个、传什么。改了 `roles/assistant.md`、`_common.md`、`heartbeat.md`，`skills/omem/references` 的 agents、flows、lark、owner，内置技能 lark-messaging、improve-loop，`docs/v2` 的 rules、studies、status、architecture。
+
 ## 同一次推送的几件事项合用一个回归验证运行（11-19）
 
 - 流程段新字段 `together: push`（`src/flows/definitions.ts`，只用于运行阶段）。`src/flows/engine.ts`：`start` 里按 `pushKey`（事项跟着的交办 `output.pushed` 的仓库、分支、head）找同一流程同一段还在排队的运行，`joinBatch` 把事项加进 `input.items`；没有就新建，`not_before` 推后一分钟等同批的。`runFlowStage` 拆成 `prepareStage`（每件检查是否还在等这个运行、时间窗和额度）和 `runStageAgent`，多件时用 `batchTask` 拼任务。`stopStageRun` 代替直接 `cancelRun`：合用的运行只拿掉这一件。

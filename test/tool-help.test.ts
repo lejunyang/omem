@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { testApp } from "./helpers.ts";
 import { callTool, mcpTools, toolList, type ToolContext } from "../src/agents/tools.ts";
-import { CORE_TOOLS, DIRECT_ALL, describeParams, expandTools, omemSkillDir, ROLE_TOOLS, TOOL_GROUPS } from "../src/agents/tool-help.ts";
+import { CORE_TOOLS, DIRECT_ALL, describeParams, expandTools, MERGED_TOOLS, omemSkillDir, ROLE_TOOLS, TOOL_GROUPS } from "../src/agents/tool-help.ts";
 import { agentToolEnv, toolArgs } from "../src/agents/tool-cli.ts";
 import { remember } from "../src/memory/store.ts";
 
@@ -70,6 +70,19 @@ describe("omem tools offered to agents", () => {
     const all = await callTool(ctx, "omem_help", {});
     expect(all.text).toContain("list_memory_folders");
     expect(all.text).not.toContain("delegate_code");
+  });
+
+  it("maps a merged tool's old name to the tool that does it now", async () => {
+    const names = new Set(toolList().map((t) => t.name));
+    for (const [old, m] of Object.entries(MERGED_TOOLS)) {
+      expect(names.has(old), old).toBe(false);
+      expect(names.has(m.into), m.into).toBe(true);
+    }
+    expect(expandTools(["wake_later", "continue_agent_work", "-lark_update_card", "lark_card"])).toEqual(["wake", "run_agent"]);
+    const r = await callTool(ctxFor(null), "flow_round", { item: "x" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("flow_start");
+    expect((await callTool(ctxFor(null), "omem_help", { topic: "wake_on_message" })).text).toContain("on_message");
   });
 
   it("describes nested and optional parameters", () => {

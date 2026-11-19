@@ -63,7 +63,7 @@ describe("temporary AI choices", () => {
     expect((await callTool(ctx, "run_agent", { name: "specialist", task: "分析", own_topic: true, execution: choice })).isError).toBe(false);
     const children = listRuns(app, { parentId: r.id });
     expect(children.some((r) => r.input.agentWorkId && JSON.stringify(r.input.execution) === JSON.stringify(choice))).toBe(true);
-    expect((await callTool(ctx, "continue_agent_work", { work_id: r.id, task: "再核对", execution: { ...choice, model: "m2", effort: "low" } })).isError).toBe(false);
+    expect((await callTool(ctx, "run_agent", { work_id: r.id, task: "再核对", execution: { ...choice, model: "m2", effort: "low" } })).isError).toBe(false);
     expect(listRuns(app, { parentId: r.id }).some((r) => (r.input.execution as Execution)?.model === "m2")).toBe(true);
   });
 

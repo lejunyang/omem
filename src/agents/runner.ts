@@ -461,10 +461,10 @@ export function prepareRun(
   // Working files: where a long task keeps its current results and a scheduled rule its report.
   if (spec || roleName === "assistant") tools.add("write_file");
   // Wake-ups for its own follow-up work (after a while, or on a message in a chat).
-  if (spec || roleName === "assistant") for (const t of ["wake_later", "wake_on_message", "cancel_wake"]) tools.add(t);
+  if (spec || roleName === "assistant") for (const t of ["wake", "cancel_wake"]) tools.add(t);
   if (!guest) tools.add("wait_answer");
   // A thread that may post into specific Feishu chats (watched groups) gets the bot's voice and notify.
-  if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "notify"]) tools.add(t);
+  if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_send_file", "notify"]) tools.add(t);
   for (const t of input.denyTools ?? []) tools.delete(t);
   // Tools that need a model configured in settings → AI exist only once it is (generate_image).
   if (tools.has("generate_image") && !categoryStatus(app.config, "image", app.home).ready) tools.delete("generate_image");
@@ -560,7 +560,7 @@ function extraMcpFor(mcp: Record<string, McpServerSpec>, onlyReadOnly: boolean):
 }
 
 /** Tools that hand work to another run and accept an `execution` choice. */
-const DELEGATING = ["run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run", "generate_wiki"];
+const DELEGATING = ["run_agent", "ask_agent", "delegate_code", "review_branch", "continue_code_run", "generate_wiki"];
 /**
  * The owner's routing candidates, for a run that delegates. Without them in view the assistant
  * never looked them up (list_ai_backends) and every delegation used the profile default.

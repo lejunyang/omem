@@ -83,7 +83,7 @@ describe("feishu bot messaging", () => {
     expect(client.calls.at(-1)!.args.data.content).not.toContain("src:");
     const callback = { tag: "markdown", content: md };
     const raw = { schema: "2.0", body: { elements: [{ tag: "div", text: { tag: "lark_md", content: md } }, { tag: "button", behaviors: [{ type: "callback", value: callback }] }] } };
-    expect((await callTool(ctx, "lark_update_card", { message_id: "om_g1", raw_card: raw })).isError).toBe(false);
+    expect((await callTool(ctx, "lark_card", { message_id: "om_g1", raw_card: raw })).isError).toBe(false);
     const updated = JSON.parse(client.calls.at(-1)!.args.data.content);
     expect(updated.body.elements[0].text.content).toBe(expected);
     expect(updated.body.elements[1].behaviors[0].value).toEqual(callback);
@@ -226,9 +226,9 @@ describe("feishu bot messaging", () => {
     const ctx = toolContextForToken(app, issueToolToken({ runId: run.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: null }))!;
     const sent = await callTool(ctx, "lark_card", { title: "测试", blocks: [{ buttons: [{ text: "选项一", value: "test_option_1" }] }] });
     const cardId = /已发送 (om_\d+)/.exec(sent.text)![1];
-    const r = await callTool(ctx, "lark_update_card", { message_id: cardId, title: "测试成功", blocks: [{ markdown: "按钮正常" }] });
+    const r = await callTool(ctx, "lark_card", { message_id: cardId, title: "测试成功", blocks: [{ markdown: "按钮正常" }] });
     expect(r).toMatchObject({ isError: false, text: "已更新卡片" });
-    const other = await callTool(ctx, "lark_update_card", { message_id: "om_unknown", blocks: [{ markdown: "x" }] });
+    const other = await callTool(ctx, "lark_card", { message_id: "om_unknown", blocks: [{ markdown: "x" }] });
     expect(other.text).toMatch(/无法确认消息 om_unknown 所在的飞书会话（飞书：230027/);
   });
 

@@ -78,11 +78,11 @@ describe("流程轮次", () => {
     expect(itemFlow(app, id)!.round).toBe(2); expect(s().state).toBe("doing");
     await flowReminders(app, new Date("2026-12-09T12:00:00Z")); expect(itemFlow(app, id)!.round).toBe(2);
   });
-  it("flow_round 工具按事项主人和可写范围检查", async () => {
+  it("flow_start 不传 flow 开下一轮，按事项主人和可写范围检查", async () => {
     const { app, id } = await setup([stage("work")], { repeat: { from: "work" } }); await finish(app, id);
-    const ctx: ToolContext = { app, runId: null, spaceId: "personal", spaces: ["personal"], writable: ["personal"], tools: new Set(["flow_round"]), actor: "agent", userId: "owner" };
-    for (const denied of [{ ...ctx, userId: "another" }, { ...ctx, writable: [] }, { ...ctx, spaces: ["other"] }]) expect((await callTool(denied, "flow_round", { item: id })).isError).toBe(true);
-    expect((await callTool(ctx, "flow_round", { item: id })).isError).toBe(false); expect(itemFlow(app, id)!.round).toBe(2);
+    const ctx: ToolContext = { app, runId: null, spaceId: "personal", spaces: ["personal"], writable: ["personal"], tools: new Set(["flow_start"]), actor: "agent", userId: "owner" };
+    for (const denied of [{ ...ctx, userId: "another" }, { ...ctx, writable: [] }, { ...ctx, spaces: ["other"] }]) expect((await callTool(denied, "flow_start", { item: id })).isError).toBe(true);
+    expect((await callTool(ctx, "flow_start", { item: id })).isError).toBe(false); expect(itemFlow(app, id)!.round).toBe(2);
   });
   it("错过星期日程后等下一个符合日，不在周三补跑周二", async () => {
     const { app, id } = await setup([stage("work")], { repeat: { from: "work", every: ["tue", "fri"] } });

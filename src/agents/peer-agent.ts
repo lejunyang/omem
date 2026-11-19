@@ -32,10 +32,10 @@ import { callTool, mcpTools, toolList, type ToolContext } from "./tools.ts";
 export const PEER_DENY = new Set([
   "propose_directions", "trial_report", "read_ledger", "record_finding", "close_direction", "study_push",
   "report_rule_failure",
-  "lark_send", "lark_react", "meeting_suggest", "lark_card", "lark_update_card", "lark_send_file", "lark_message_file", "lark_chat_history", "lark_read", "lark_write", "lark_invite", "lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize", "lark_wiki_crawl",
+  "lark_send", "lark_react", "meeting_suggest", "lark_card", "lark_send_file", "lark_message_file", "lark_chat_history", "lark_read", "lark_write", "lark_invite", "lark_doc_fetch", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize", "lark_wiki_crawl",
   "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "refresh_item_notification", "notify",
-  "ask_user", "wait_answer", "withdraw_ask", "suggest_next", "wake_later", "wake_on_message", "cancel_wake",
-  "continue_agent_work", "switch_run_ai", "generate_wiki", "digest_sources",
+  "ask_user", "wait_answer", "withdraw_ask", "suggest_next", "wake", "cancel_wake",
+  "switch_run_ai", "generate_wiki", "digest_sources",
   "continue_code_run", "stop_code_run", "resplit_change_points", "retry_code_progress",
   "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action",
   "connect_repository", "save_agent", "save_skill", "organize_skills", "save_rule", "ignore_notification_rule",
