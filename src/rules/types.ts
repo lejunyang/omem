@@ -209,7 +209,12 @@ export const actionSchema = z.discriminatedUnion("type", [
    * owner's reach, or the guest role) and `answerNames` (other words that call the bot); `proactive` lets
    * the listening agent look up what the meeting raises and hand it to the owner (`meetingKind` says what
    * kind of meeting, `proactiveMax` how many per meeting); `importShared` imports documents shared on screen;
-   * `leaveWithOwner` takes the bots out when the owner leaves. See src/channels/lark-meetings.ts.
+   * `leaveWithOwner` takes the bots out when the owner leaves. How `spec` listens: `listen` is `window`
+   * (a look every `listenEvery` minutes, sooner after `listenLines` new lines) or `after` (only the
+   * summary once it is over); `listenPrefilter` asks the decision model first whether a stretch is worth
+   * a look (the 旁听预筛 scene; a stretch it passes over is looked at again with the next one);
+   * `listenRollover` is how many looks share one agent session before a new one starts with what was
+   * noted so far. See src/channels/lark-meetings.ts.
    */
   z.object({
     type: z.literal("meeting-bot"),
@@ -231,6 +236,11 @@ export const actionSchema = z.discriminatedUnion("type", [
     meetingKind: z.enum(["auto", "problem", "review", "other"]).default("auto"),
     importShared: z.boolean().default(true),
     leaveWithOwner: z.boolean().default(true),
+    listen: z.enum(["window", "after"]).default("window"),
+    listenEvery: z.number().int().min(1).max(60).default(5),
+    listenLines: z.number().int().min(10).max(500).default(60),
+    listenPrefilter: z.boolean().default(true),
+    listenRollover: z.number().int().min(2).max(50).default(8),
   }),
   /** Only in temporary rules an agent sets (agents/wakes.ts): wake a conversation's agent or a profile. */
   z.object({ type: z.literal("wake"), note: z.string(), target: z.object({ conversationId: z.string().optional(), spec: z.string().optional(), resumeRunId: z.string().optional() }) }),

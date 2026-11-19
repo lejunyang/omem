@@ -28,7 +28,7 @@ type Action =
   | { type: "wait-message"; chatId: string; name: string; minutes: number; contains: string; matches: string; onTimeout: "notify" | "none" }
   | { type: "capture" }
   | { type: "notify"; urgent: boolean }
-  | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; answerFrom?: "all" | "owner"; answerMode?: "draft" | "auto"; answerMax?: number; answerSpoken?: boolean; answerBy?: "assistant" | "guest"; answerNames?: string[]; proactive?: boolean; proactiveMax?: number; meetingKind?: "auto" | "problem" | "review" | "other"; importShared: boolean; leaveWithOwner: boolean }
+  | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; answerFrom?: "all" | "owner"; answerMode?: "draft" | "auto"; answerMax?: number; answerSpoken?: boolean; answerBy?: "assistant" | "guest"; answerNames?: string[]; proactive?: boolean; proactiveMax?: number; meetingKind?: "auto" | "problem" | "review" | "other"; importShared: boolean; leaveWithOwner: boolean; listen?: "window" | "after"; listenEvery?: number; listenLines?: number; listenPrefilter?: boolean; listenRollover?: number }
   | { type: "delay"; minutes: number }
   | { type: "check"; question: string }
   | { type: "script"; runtime: "node" | "python" | "bash"; code: string; timeoutSec: number; approval: { by: "none" | "owner" | "person" | "ai"; person?: string; hint?: string } };
@@ -317,7 +317,14 @@ function setDelay(a: Extract<Action, { type: "delay" }>, n: number, unit: number
   touch();
 }
 const docLinks = (v: string) => v.split("\n").map((x) => x.trim()).filter(Boolean);
-const meetingAction = (): Action => ({ type: "meeting-bot", bots: options.value.bots?.length ? [options.value.bots[0].id] : [], confirm: true, record: true, spec: "", task: "", answer: false, answerFrom: "all", answerMode: "draft", answerMax: 5, answerSpoken: false, answerBy: "assistant", answerNames: [], proactive: false, proactiveMax: 5, meetingKind: "auto", importShared: true, leaveWithOwner: true });
+/** A whole number from a number input, kept in range (on change: typing "6" toward "60" is not 10 yet). */
+function clampInt(e: Event, min: number, max: number) {
+  const input = e.target as HTMLInputElement;
+  const n = Math.min(max, Math.max(min, Math.round(Number(input.value) || min)));
+  input.value = String(n);
+  return n;
+}
+const meetingAction = (): Action => ({ type: "meeting-bot", bots: options.value.bots?.length ? [options.value.bots[0].id] : [], confirm: true, record: true, spec: "", task: "", answer: false, answerFrom: "all", answerMode: "draft", answerMax: 5, answerSpoken: false, answerBy: "assistant", answerNames: [], proactive: false, proactiveMax: 5, meetingKind: "auto", importShared: true, leaveWithOwner: true, listen: "window", listenEvery: 5, listenLines: 60, listenPrefilter: true, listenRollover: 8 });
 const meetingKindOptions = [{ value: "auto", label: "自己判断会议性质" }, { value: "problem", label: "解决问题（查逻辑、代码、数据）" }, { value: "review", label: "需求评审（查现状、提设计问题）" }, { value: "other", label: "同步、周会（一般不主动查）" }];
 /** “助理, omem” → the rule's other names for the bot (two characters at least, five at most). */
 const setCallNames = (a: Extract<Action, { type: "meeting-bot" }>, text: string) => {
@@ -794,9 +801,33 @@ function startFrom(text: string) {
                 <UiSelect v-model="a.spec" size="sm" width="180px" :options="meetingSpecOptions" aria-label="旁听的 Agent" @change="touch" />
                 <UiSelect v-if="a.spec" :model-value="a.space ?? ''" size="sm" width="170px" :options="spaceOptions('默认空间')" aria-label="在哪个空间里查资料" @update:model-value="(v) => ((a.space = String(v || '')), touch())" />
               </div>
-              <small class="muted">{{ a.spec ? "每隔几分钟看一次新说的话：有人点你的名、要你表态，或有和你有关的决定、待办、风险时提醒你；会后给你一份简短纪要。旁听只对你说，不在会里发言。" : "不旁听时只保存记录，会后整理进记忆和事项。" }}机器人入会所有参会人都能看到；会议要允许智能体加入。</small>
+              <small class="muted">{{ !a.spec ? "不旁听时只保存记录，会后整理进记忆和事项。" : a.listen === "after" ? "会中不看，会后读整场记录给你一份简短纪要：落到你头上的事、你能推进的下一步。" : "会中按下面的节奏看新说的话，把点你的名、要你表态、和你有关的决定和待办记下来，会后一起给你一份简短纪要。旁听只对你说，不在会里发言。" }}机器人入会所有参会人都能看到；会议要允许智能体加入。</small>
               <textarea v-if="a.spec" v-model="a.task" class="input" rows="2" placeholder="要它特别留意的，例如：涉及排期和人力的决定都告诉我" @input="touch" />
               <template v-if="a.spec">
+                <div class="row wrap">
+                  <span class="small">会中</span>
+                  <UiSegmented :model-value="a.listen ?? 'window'" size="sm" :options="[{ value: 'window', label: '分段看' }, { value: 'after', label: '只在会后处理' }]" aria-label="会中怎么旁听" @update:model-value="(v) => ((a.listen = v as 'window' | 'after'), touch())" />
+                  <template v-if="(a.listen ?? 'window') === 'window'">
+                    <span class="row">
+                      <span class="small">每</span>
+                      <input :value="a.listenEvery ?? 5" class="input sm num" type="number" inputmode="numeric" min="1" max="60" aria-label="每隔几分钟看一次" @change="(e) => ((a.listenEvery = clampInt(e, 1, 60)), touch())" />
+                      <span class="small">分钟，或攒满</span>
+                      <input :value="a.listenLines ?? 60" class="input sm num" type="number" inputmode="numeric" min="10" max="500" aria-label="攒满几行提前看" @change="(e) => ((a.listenLines = clampInt(e, 10, 500)), touch())" />
+                      <span class="small">行</span>
+                    </span>
+                  </template>
+                </div>
+                <template v-if="(a.listen ?? 'window') === 'window'">
+                  <div class="row wrap">
+                    <UiCheckbox :model-value="a.listenPrefilter !== false" size="sm" @change="(v) => ((a.listenPrefilter = v), touch())">先预筛</UiCheckbox>
+                    <span class="row">
+                      <span class="small">同一会话最多连看</span>
+                      <input :value="a.listenRollover ?? 8" class="input sm num" type="number" inputmode="numeric" min="2" max="50" aria-label="同一个 Agent 会话最多连着看几段" @change="(e) => ((a.listenRollover = clampInt(e, 2, 50)), touch())" />
+                      <span class="small">段</span>
+                    </span>
+                  </div>
+                  <small class="muted">预筛用设置 → AI 里的决策模型判断这一段有没有和你有关的，没配置决策模型时每段都看；跳过的这一段会和下一段一起再判断。连看的几段共用一个 Agent 会话，缓存命中好；到了段数换新会话，带上前面记下的事。</small>
+                </template>
                 <div class="row wrap">
                   <UiCheckbox :model-value="!!a.proactive" size="sm" @change="(v) => ((a.proactive = v), touch())">会上主动查</UiCheckbox>
                   <template v-if="a.proactive">

@@ -2297,7 +2297,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     const v = one<{ id: string; run_id: string | null; conversation_id: string | null; user_id: string; title: string; components: string; created_at: string }>(app.db, "select * from ui_views where id = ?", id);
     if (v) {
-      if (v.user_id !== who(req)) throw new HttpError(404, "没有这个内容");
+      // A view only shows: the owner sees one drawn for a member (as with their runs); an ask stays theirs to answer.
+      if (v.user_id !== who(req) && who(req) !== OWNER) throw new HttpError(404, "没有这个内容");
       return { type: "view", view: { id: v.id, runId: v.run_id, conversationId: v.conversation_id, title: v.title, components: JSON.parse(v.components), createdAt: v.created_at } };
     }
     const { getAsk, draftOf } = await import("../agents/asks.ts");

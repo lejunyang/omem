@@ -15,6 +15,13 @@ updated: 2026-11-19
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 会议旁听的节奏可按规则设置；成员的展示页本人也能打开（11-19）
+
+- 会议规则 `meeting-bot` 动作加 `listen`（`window` 分段看 / `after` 只在会后）、`listenEvery`（分钟，默认 5）、`listenLines`（攒满几行提前看，默认 60）、`listenPrefilter`（默认开）、`listenRollover`（同一会话连看几段，默认 8），`src/rules/types.ts`，规则页在“旁听”下面。之前写死每 3 分钟或 40 行一段，长会议的运行很多。
+- `src/channels/lark-meetings.ts`：`considerWindow` 决定这一段现在交不交给旁听的 Agent；`prefilter` 用决策模型的新场景 `meeting`（旁听预筛，`src/core/decision-scenes.ts`，门槛 `ai.decision.thresholds.meeting`），判为不用看时只重置计时、不推进 `agent_seq`，这一段和下一段一起再判断（`screened` 记着跳过到哪一行，攒行数从那之后算）。`startAgent` 按 `listenRollover` 决定续用上一个会话还是换新会话，换时把 `heldNotes` 放进任务。
+- `/api/ui/:id`（`src/server/http.ts`）：成员会话里画的表格、图表（`ui_views`）本人也能打开，和本人能看成员的运行一致；提问和交互页仍只给被问的人。之前本人点成员会话卡片上的“在网页上查看”得到“没有这个内容”。
+- 测试：`test/meeting-rules.test.ts` 的 “how the listening agent paces itself”，`test/ui-blocks.test.ts`，`test/decision-log.test.ts` 补 `meeting` 场景。
+
 ## 图片页内预览、流程页截图网格、同一分支不再并行起两次交办、浏览器截图按可见区域（11-19）
 
 - 页内预览：`web/src/components/ImagePreview.vue` 挂在 `App.vue`，`web/src/lib/image-preview.ts` 的 `openImages(list, index)` 打开、`previewFromClick` 处理正文里的图片。接入的地方：`Markdown.vue`（正文图片）、`DiffFile.vue`（改动前 / 改动后）、`Ask.vue`（发出的图片附件）、流程页。`RunArtifacts.vue` 原有的产物查看器不变。

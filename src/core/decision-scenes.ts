@@ -3,6 +3,7 @@ export const DECISION_SCENES = {
   heartbeat: { label: "巡检预筛", risky: "no", cautious: "yes", default: 0.6, help: "有这么大把握不用看，才跳过助手巡检。" },
   watch: { label: "盯群预筛", risky: "no", cautious: "yes", default: 0.6, help: "有这么大把握不用看，才跳过这一批群聊。" },
   follow: { label: "事项上下文预筛", risky: "no", cautious: "yes", default: 0.6, help: "有这么大把握无关，才跳过这件事的新内容。" },
+  meeting: { label: "旁听预筛", risky: "no", cautious: "yes", default: 0.6, help: "有这么大把握这一段会上说的和你无关，才不让旁听的 Agent 看（攒到下一段再判断）。" },
   triage: { label: "有人找你", risky: "ignore", cautious: "notify", default: 0.6, help: "有这么大把握不用管，才不提醒你。" },
   progress: { label: "直接答复", risky: "yes", cautious: "no", default: 0.7, help: "有这么大把握不用你拍板，才允许直接答复。" },
 } as const;

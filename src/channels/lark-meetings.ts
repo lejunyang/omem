@@ -51,9 +51,6 @@ const JOINED = "vc.meeting.participant_meeting_joined_v1";
 const ENDED = "vc.meeting.participant_meeting_ended_v1";
 /** How long after the owner joined a changed list of participants is shown to the rules again. */
 const REDISPATCH_MS = 10 * 60_000;
-/** An agent looks at what was said at most this often (sooner when a lot was said). */
-const WINDOW_MS = 3 * 60_000;
-const WINDOW_LINES = 40;
 
 type MeetingRequest = Extract<RuleAction, { type: "meeting-bot" }> & { ruleId: string; ruleName: string; ruleDescription: string; ruleSpace?: string };
 export type MeetingPlan = Omit<MeetingRequest, "confirm"> & { confirm: boolean; confirmationReason?: string };
@@ -615,7 +612,7 @@ export async function botInvitedToMeeting(app: App, ref: string, data: Invite): 
   }
   const { listRules } = await import("../rules/store.ts");
   const like = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === "meeting").flatMap((r) => r.actions.filter((a) => a.type === "meeting-bot" && a.bots.includes(ref)).map((a) => ({ r, a: a as MeetingRequest })))[0];
-  const base = like?.a ?? { type: "meeting-bot" as const, bots: [ref], confirm: true, record: true, spec: "", task: "", answer: true, answerFrom: "all" as const, answerMode: "draft" as const, answerMax: 5, answerSpoken: false, answerBy: "assistant" as const, answerNames: [], proactive: false, proactiveMax: 5, meetingKind: "auto" as const, importShared: true, leaveWithOwner: false };
+  const base = like?.a ?? { type: "meeting-bot" as const, bots: [ref], confirm: true, record: true, spec: "", task: "", answer: true, answerFrom: "all" as const, answerMode: "draft" as const, answerMax: 5, answerSpoken: false, answerBy: "assistant" as const, answerNames: [], proactive: false, proactiveMax: 5, meetingKind: "auto" as const, importShared: true, leaveWithOwner: false, listen: "window" as const, listenEvery: 5, listenLines: 60, listenPrefilter: true, listenRollover: 8 };
   const plan: MeetingPlan = { ...base, bots: [ref], confirm: !byOwner, leaveWithOwner: false, ruleId: INVITED, ruleName: `${inviter}在会议里邀请了${botName(app, ref)}`, ruleDescription: `${inviter}在会议里邀请机器人入会${like ? `（按规则「${like.r.name}」的设置）` : ""}`, ...(like?.r.spaceId ? { ruleSpace: like.r.spaceId } : {}) };
   update(app, id, { plan: JSON.stringify(plan), meeting_no: no });
   log(`${inviter}把 ${botName(app, ref)} 邀请进会议「${row.topic}」（${id}）${byOwner ? "，直接入会" : "，先问你"}`);
@@ -958,7 +955,72 @@ async function listen(app: App, row: Row): Promise<void> {
   if (got.ended) return meetingEnded(app, row.meeting_id, "会议结束");
   const left = lines.filter((l) => l.kind === "leave" && added.has(l.key));
   if (left.some((l) => (l.speakerId && owner.ids.has(l.speakerId)) || (!!owner.name && l.speaker === owner.name))) return meetingEnded(app, row.meeting_id, "owner-left");
-  startAgent(app, fresh, plan);
+  await considerWindow(app, fresh, plan, owner.name);
+}
+
+/** The last line a pre-filter passed over, per meeting: the line count for an early look starts after it. */
+const screened = new Map<string, number>();
+
+/**
+ * Whether what was said since the last look goes to the listening agent now (the rule's `listen*`
+ * settings): every `listenEvery` minutes, sooner once `listenLines` new lines came in; never while
+ * the meeting runs when the rule listens only after it. With `listenPrefilter` the decision model
+ * says first whether the stretch is worth a look; a stretch it passes over stays unread and goes
+ * with the next one.
+ */
+async function considerWindow(app: App, row: Row, plan: MeetingPlan, ownerName: string | null) {
+  if (!plan.spec || plan.listen === "after") return;
+  const lane = `meeting:${row.meeting_id}`;
+  const fresh = all<LineRow>(app.db, "select seq, at_ms, kind, speaker, text from lark_meeting_lines where meeting_id = ? and seq > ? order by at_ms, seq", row.meeting_id, row.agent_seq);
+  if (!fresh.some((l) => l.kind === "transcript" || l.kind === "chat")) return;
+  if (one(app.db, "select 1 from runs where lane = ? and status in ('queued','running')", lane)) return;
+  const every = (plan.listenEvery ?? 5) * 60_000;
+  const since = row.agent_at ? Date.parse(row.agent_at) : (fresh[0].at_ms ?? Date.now());
+  const after = screened.get(row.meeting_id) ?? 0;
+  const unseen = fresh.filter((l) => l.seq > after).length;
+  if (Date.now() - since < every && unseen < (plan.listenLines ?? 60)) return;
+  if (plan.listenPrefilter !== false) {
+    const skip = await prefilter(app, row, plan, fresh, ownerName);
+    if (skip) {
+      screened.set(row.meeting_id, fresh.at(-1)!.seq);
+      // The clock starts again; agent_seq stays, so these lines go with the next stretch.
+      update(app, row.meeting_id, { agent_at: now() });
+      log(`会议「${row.topic || row.meeting_id}」这一段（${fresh.length} 行）预筛跳过：${skip}`);
+      return;
+    }
+  }
+  screened.delete(row.meeting_id);
+  startAgent(app, getRow(app, row.meeting_id) ?? row, plan);
+}
+
+/** The decision model's word on a stretch (旁听预筛): why it can be passed over, or null to look. */
+async function prefilter(app: App, row: Row, plan: MeetingPlan, fresh: LineRow[], ownerName: string | null): Promise<string | null> {
+  const { decideScene, describeScene } = await import("../core/decision-log.ts");
+  // The newest lines matter most: what was passed over before was judged then.
+  const text = fresh.map(lineText).join("\n");
+  const tail = text.length > 8000 ? `……\n${text.slice(-8000)}` : text;
+  const labels = { yes: "要看", no: "不用看" };
+  try {
+    const r = await decideScene(app, "meeting", {
+      本人: ownerName ?? "（名字不清楚）",
+      规则: `${plan.ruleName}：${plan.ruleDescription}`,
+      本人要留意的: plan.task || "（没写）",
+      会议: `「${row.topic || "无标题"}」，在会的：${peopleOf(row).map((p) => p.name).join("、") || "（不清楚）"}`,
+      这一段说的: tail,
+    }, {
+      type: "yesno",
+      instructions: [
+        "这是本人在开的一场会，助手在替本人旁听。判断这一段里有没有需要旁听的助手看一眼的：有人点本人的名字提问、请本人表态、把事情分给本人、本人答应了什么、作出了改变本人手上工作的决定，或和“本人要留意的”有关，选“要看”。",
+        plan.proactive ? "本人还让助手在会上主动查：这一段提到了能查清、对推进这场会有用的具体问题（现象、接口、数据、方案里的设计点），也选“要看”。" : "",
+        "只是别人之间的讨论、闲聊、寒暄、等人、共享屏幕的操作说明，和本人无关，选“不用看”。拿不准选“要看”。",
+      ].filter(Boolean).join(""),
+      ...labels,
+    }, { timeoutMs: 20_000, ref: `meeting:${row.meeting_id}` });
+    if (!r || r.taken === "yes") return null;
+    return describeScene(r, labels);
+  } catch {
+    return null;
+  }
 }
 
 async function importShared(app: App, row: Row, s: { url: string; title: string }) {
@@ -982,11 +1044,13 @@ function startAgent(app: App, row: Row, plan: MeetingPlan, opts: { final?: boole
   if (!plan.spec) return;
   const lane = `meeting:${row.meeting_id}`;
   const fresh = all<LineRow>(app.db, "select seq, at_ms, kind, speaker, text from lark_meeting_lines where meeting_id = ? and seq > ? order by at_ms, seq", row.meeting_id, row.agent_seq);
-  if (!opts.final) {
-    if (!fresh.length || one(app.db, "select 1 from runs where lane = ? and status in ('queued','running')", lane)) return;
-    if (row.agent_at && Date.now() - Date.parse(row.agent_at) < WINDOW_MS && fresh.length < WINDOW_LINES) return;
-    if (!fresh.some((l) => l.kind === "transcript" || l.kind === "chat")) return;
-  }
+  // One agent session goes on from look to look (its cache stays warm) until `listenRollover` looks
+  // shared it; then a new one starts, given what the earlier looks noted.
+  const prev = one<{ output: string }>(app.db, "select output from runs where lane = ? and status = 'done' and json_extract(output, '$.sessionId') is not null order by created_at desc limit 1", lane);
+  const prevSession = prev ? json<{ sessionId?: string }>(prev.output, {}).sessionId : undefined;
+  const looks = prevSession ? (one<{ n: number }>(app.db, "select count(*) n from runs where lane = ? and status = 'done' and json_extract(output, '$.sessionId') = ?", lane, prevSession)?.n ?? 0) : 0;
+  const resume = prevSession && looks < (plan.listenRollover ?? 8) ? prevSession : undefined;
+  const earlier = !opts.final && prevSession && !resume ? heldNotes(app, lane) : "";
   const people = peopleOf(row);
   const head = [
     `本人的规则「${plan.ruleName}」：${plan.ruleDescription}`,
@@ -1026,6 +1090,7 @@ function startAgent(app: App, row: Row, plan: MeetingPlan, opts: { final?: boole
       `# 旁听会议（规则「${plan.ruleName}」）`,
       ...head,
       "",
+      earlier ? `\n# 前面几段你已经记下的（换了新会话，接着记，不要重复）\n\n${truncate(earlier, 12_000)}\n` : "",
       "# 上次之后的记录",
       "",
       truncate(fresh.map(lineText).join("\n"), 30_000),
@@ -1040,8 +1105,6 @@ function startAgent(app: App, row: Row, plan: MeetingPlan, opts: { final?: boole
     ].filter((x) => x !== "").join("\n");
   }
   const space = row.space_id ?? captureSpace(app);
-  const prev = one<{ output: string }>(app.db, "select output from runs where lane = ? and status = 'done' and json_extract(output, '$.sessionId') is not null order by created_at desc limit 1", lane);
-  const resume = prev ? json<{ sessionId?: string }>(prev.output, {}).sessionId : undefined;
   const lark = { chats: [] as string[], draft: false };
   // Looking things up for the meeting needs the owner's whole reach (code, other spaces), not the rule's one space.
   const scope = plan.proactive && !opts.final ? meetingScope(assistantScope(plan.spec, space, lark)) : assistantScope(plan.spec, space, lark);
@@ -1256,6 +1319,7 @@ export function resetMeetingsForTests() {
   stopConsumers();
   due.clear();
   failing.clear();
+  screened.clear();
   retryAt.clear();
   consumerError = null;
   lastPoll = 0;

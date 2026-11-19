@@ -671,6 +671,7 @@ export const configSchema = z.object({
           heartbeat: z.number().min(0.5).max(0.99).default(DECISION_SCENES.heartbeat.default),
           watch: z.number().min(0.5).max(0.99).default(DECISION_SCENES.watch.default),
           follow: z.number().min(0.5).max(0.99).default(DECISION_SCENES.follow.default),
+          meeting: z.number().min(0.5).max(0.99).default(DECISION_SCENES.meeting.default),
           triage: z.number().min(0.5).max(0.99).default(DECISION_SCENES.triage.default),
           progress: z.number().min(0.5).max(0.99).default(DECISION_SCENES.progress.default),
         }).optional(),

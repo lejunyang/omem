@@ -686,6 +686,98 @@ describe("answering in the meeting", () => {
   });
 });
 
+describe("how the listening agent paces itself", () => {
+  const said = (id: string, min: number, text: string) => ({ event_id: id, activity_event_type: "transcript_received", event_time: at(min), transcript_received_items: [{ sentence_id: `s_${id}`, text, speaker: { id: "ou_a", name: "小王" } }] });
+  const windows = (app: ReturnType<typeof testApp>, id: string) => all<{ id: string; input: string }>(app.db, "select id, input from runs where lane = ? order by rowid", `meeting:${id}`).map((r) => ({ id: r.id, ...JSON.parse(r.input) }));
+  /** A meeting being listened to by a rule with these `listen*` settings, the clock at its start. */
+  async function listening(id: string, listen: Record<string, unknown>) {
+    const ctx = setup();
+    saveRule(ctx.app, { name: "旁听", description: "我开会时旁听", enabled: true, trigger: { event: "meeting" }, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"], confirm: false, record: false, spec: "assistant", ...listen } as never] });
+    await ownerJoinedMeeting(ctx.app, { id, no: "555555555", topic: "排期会" });
+    setMeetingConsumerForTests(() => ({ stop() {} }));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Number(at(0)));
+    // Each look a little later than the last (the meeting is read every 20 seconds).
+    const look = async (min: number, events: unknown[]) => {
+      vi.setSystemTime(Number(at(min)) + 1000);
+      ctx.botEvents.push(events);
+      await tickMeetings(ctx.app);
+    };
+    const finish = (runId: string, sessionId: string, answer = "（没有输出）") => run(ctx.app.db, "update runs set status = 'done', output = ? where id = ?", JSON.stringify({ sessionId, answer }), runId);
+    return { ...ctx, look, finish };
+  }
+  afterEach(() => { vi.useRealTimers(); setDecisionFetchForTests(null); });
+
+  it("looks every few minutes, sooner once enough lines came in", async () => {
+    const { app, look, finish } = await listening("p1", { listenEvery: 5, listenLines: 10 });
+    await look(1, [said("a1", 1, "先过一下排期")]);
+    expect(windows(app, "p1")).toHaveLength(0);
+    await look(6, [said("a2", 6, "接口下周三提测")]);
+    const [w1] = windows(app, "p1");
+    expect(w1.task).toContain("先过一下排期");
+    expect(w1.task).toContain("接口下周三提测");
+    finish(w1.id, "sess-1");
+    // Ten lines a minute later: no need to wait the five minutes.
+    await look(7, Array.from({ length: 10 }, (_, i) => said(`b${i}`, 7, `第 ${i} 条`)));
+    expect(windows(app, "p1")).toHaveLength(2);
+    expect(windows(app, "p1")[1].resumeSessionId).toBe("sess-1");
+  });
+
+  it("only after the meeting when the rule says so", async () => {
+    const { app, look } = await listening("p2", { listen: "after" });
+    await look(10, [said("a1", 10, "先过一下排期")]);
+    await look(30, [said("a2", 30, "接口下周三提测")]);
+    expect(windows(app, "p2")).toHaveLength(0);
+    await meetingEnded(app, "p2", "会议结束");
+    const [final] = windows(app, "p2");
+    expect(final.task).toContain("# 会议结束");
+    expect(final.meetingWindow).toBeUndefined();
+  });
+
+  it("a stretch the pre-filter passes over goes with the next one", async () => {
+    const { app, look } = await listening("p3", { listenEvery: 5 });
+    app.config.ai.providers = [{ id: "d", name: "决策", kind: "openai" as never, backends: [] }];
+    app.config.ai.decision = { provider: "d", model: "", fallback: "general", gatekeeper: true };
+    setKey(app.home, "d", "key-1");
+    const asked: string[] = [];
+    let yes = 0.1;
+    setDecisionFetchForTests((async (_u: string, init: RequestInit) => (asked.push(String(init.body)), new Response(JSON.stringify({ answers: [{ type: "predicate", name: "q", probability: yes }] })))) as unknown as typeof fetch);
+    await look(6, [said("a1", 1, "大家等一下小李")]);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain("大家等一下小李");
+    expect(windows(app, "p3")).toHaveLength(0);
+    expect(one<{ agent_seq: number }>(app.db, "select agent_seq from lark_meetings where meeting_id = 'p3'")?.agent_seq).toBe(0);
+    // Not asked again until the next stretch is due.
+    await look(7, [said("a2", 7, "小李到了")]);
+    expect(asked).toHaveLength(1);
+    yes = 0.9;
+    await look(12, [said("a3", 12, "这个接口请本人周五前给结论")]);
+    expect(asked).toHaveLength(2);
+    const [w] = windows(app, "p3");
+    expect(w.task).toContain("大家等一下小李");
+    expect(w.task).toContain("这个接口请本人周五前给结论");
+    expect(one<{ n: number }>(app.db, "select count(*) n from decisions where scene = 'meeting'")?.n).toBe(2);
+  });
+
+  it("a new session after the rule's number of looks, given what was noted", async () => {
+    const { app, look, finish } = await listening("p4", { listenEvery: 1, listenRollover: 2, listenPrefilter: false });
+    await look(2, [said("a1", 1, "第一段")]);
+    finish(windows(app, "p4")[0].id, "sess-1", "小王说接口下周三提测，本人要联调");
+    await look(4, [said("a2", 3, "第二段")]);
+    expect(windows(app, "p4")[1].resumeSessionId).toBe("sess-1");
+    finish(windows(app, "p4")[1].id, "sess-1");
+    await look(6, [said("a3", 5, "第三段")]);
+    const third = windows(app, "p4")[2];
+    expect(third.resumeSessionId).toBeUndefined();
+    expect(third.task).toContain("前面几段你已经记下的");
+    expect(third.task).toContain("小王说接口下周三提测，本人要联调");
+    finish(third.id, "sess-2");
+    await look(8, [said("a4", 7, "第四段")]);
+    expect(windows(app, "p4")[3].resumeSessionId).toBe("sess-2");
+    expect(windows(app, "p4")[3].task).not.toContain("前面几段你已经记下的");
+  });
+});
+
 describe("permissions for meeting rules", () => {
   it("lists what lark-cli and each bot lack, with where to apply", async () => {
     const { app } = setup();
@@ -718,7 +810,7 @@ describe("permissions for meeting rules", () => {
     }));
     try {
       const { rulePermissions } = await import("../src/rules/permissions.ts");
-      const mine = { trigger: { event: "meeting" as const, once: "event" as const, waitMinutes: 0, unless: [] }, actions: [{ type: "meeting-bot" as const, bots: ["main"], confirm: true, record: true, spec: "", task: "", answer: false, answerFrom: "all" as const, answerMode: "draft" as const, answerMax: 5, answerSpoken: false, answerBy: "assistant" as const, answerNames: [], proactive: false, proactiveMax: 5, meetingKind: "auto" as const, importShared: true, leaveWithOwner: true }], enabled: true };
+      const mine = { trigger: { event: "meeting" as const, once: "event" as const, waitMinutes: 0, unless: [] }, actions: [{ type: "meeting-bot" as const, bots: ["main"], confirm: true, record: true, spec: "", task: "", answer: false, answerFrom: "all" as const, answerMode: "draft" as const, answerMax: 5, answerSpoken: false, answerBy: "assistant" as const, answerNames: [], proactive: false, proactiveMax: 5, meetingKind: "auto" as const, importShared: true, leaveWithOwner: true, listen: "window" as const, listenEvery: 5, listenLines: 60, listenPrefilter: true, listenRollover: 8 }], enabled: true };
       // Only the owner's own meetings: nothing more is asked of the bot.
       const own = await rulePermissions(app, mine);
       expect(own.issues.filter((i) => i.who.includes("cli_main"))).toEqual([]);

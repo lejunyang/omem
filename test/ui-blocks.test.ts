@@ -8,6 +8,7 @@ import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { run } from "../src/core/db.ts";
 import { askCard, handleAskAction, viewCard } from "../src/channels/lark-asks.ts";
 import { startServer } from "../src/server/http.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
 import { testApp } from "./helpers.ts";
 
 /** A conversation on `channel` with an agent run working in it. */
@@ -131,6 +132,14 @@ describe("component blocks", () => {
       const listed = (await server.inject({ url: `/api/ui/views?conversation=${web.thread.id}` })).json();
       expect(listed).toMatchObject([{ runId: web.runId, title: "本周退款", components: [{ type: "chart", kind: "bar" }] }]);
       expect((await server.inject({ url: `/api/ui/${listed[0].id}` })).json()).toMatchObject({ type: "view", view: { title: "本周退款" } });
+      // A view drawn for a member opens for them and for the owner, not for another member.
+      createUser(web.app, { id: "m1", name: "小王" });
+      createUser(web.app, { id: "m2", name: "小李" });
+      run(web.app.db, "insert into ui_views(id, run_id, conversation_id, user_id, title, components, created_at) values ('uv-m1', null, null, 'm1', '小王的表', '[]', '2026-11-19T00:00:00Z')");
+      const as = (u: string) => ({ authorization: `Bearer ${createApiToken(web.app, u, "test")}` });
+      expect((await server.inject({ url: "/api/ui/uv-m1", headers: as("m1") })).statusCode).toBe(200);
+      expect((await server.inject({ url: "/api/ui/uv-m1" })).json()).toMatchObject({ type: "view", view: { title: "小王的表" } });
+      expect((await server.inject({ url: "/api/ui/uv-m1", headers: as("m2") })).statusCode).toBe(404);
     } finally {
       await server.close();
     }
