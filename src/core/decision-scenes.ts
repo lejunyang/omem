@@ -6,6 +6,7 @@ export const DECISION_SCENES = {
   meeting: { label: "旁听预筛", risky: "no", cautious: "yes", default: 0.6, help: "有这么大把握这一段会上说的和你无关，才不让旁听的 Agent 看（攒到下一段再判断）。" },
   triage: { label: "有人找你", risky: "ignore", cautious: "notify", default: 0.6, help: "有这么大把握不用管，才不提醒你。" },
   progress: { label: "直接答复", risky: "yes", cautious: "no", default: 0.7, help: "有这么大把握不用你拍板，才允许直接答复。" },
+  item: { label: "自动建事项", risky: "keep", cautious: "candidate", default: 0.6, help: "后台想替你建事项时，有这么大把握你会要，才直接建；不到就先放进候选，等你每天看一眼。" },
 } as const;
 export type DecisionScene = keyof typeof DECISION_SCENES;
 export const decisionThresholdDefaults = () => Object.fromEntries(Object.entries(DECISION_SCENES).map(([k, v]) => [k, v.default])) as Record<DecisionScene, number>;

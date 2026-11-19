@@ -37,6 +37,14 @@ updated: 2026-11-20
 - 服务端新接口 `POST /api/remote/recordings/import`（只有本人，`src/remote/import.ts`）：写成 aad 浏览器录制的文件（`steps.jsonl`、`evidence/network.jsonl`、`images/`），`summary.source` 为 `chrome-extension`；`contextId` 把整理的消息发到关注的对话，`itemId` 在消息里写明事项；遮盖再做一次（`src/remote/redact.ts`，规则同 aad 的 `redact_network`，多了 `pwd`，片段留前端路由）。
 - `src/remote/recordings.ts`：步骤一行多了所在标题、CSS 路径、截图文件路径，“打开页面”和指着元素的标记有了说法；没有 aad 操作说明和可回放步骤时概要直接列步骤。`requests.ts`：没有响应体时不再把重复的 GET 当轮询。`list_recordings` 标出 Chrome 扩展录的；内置技能 `skill-from-recording` 说明了标记和没有响应体的情况（已有数据目录里的副本不会自动更新）。文档 `docs/v2/remote.md`“在自己的 Chrome 里录”，测试 `test/remote-import.test.ts`。
 
+## 助手自己建的事项要站得住：why、候选和本人的取舍（11-20）
+
+- `src/agents/tools.ts`：`upsert_item` 多了 `why`。新建时不是本人自己这一轮（`ownTurn`：本人这一轮的话、成员在自己会话里说的、本人批准过的调用、没有运行的调用之外都算）就必须写，引用照 `source_refs` 校验；同名候选不重复建，本人两周内不要过的同名事项拒绝；后台运行不能改候选的状态；本人这一轮改自动事项的状态按本人的选择记（actor `user`）。`list_items` 的 status 多 `candidate`。
+- `src/items/auto.ts`：`gateItem` 用决策场景 `item`（`src/core/decision-scenes.ts`“自动建事项”，风险答案 keep、谨慎答案 candidate，默认 0.6，配置 `ai.decision.thresholds.item`；设置页的门槛列表按场景自动列出）。材料：事项、理由、建的角色、`workStateBrief`、活跃的「关注」名字和说明、最近的自动事项取舍、免提醒规则。没有决策模型或出错时只认引用了本人原话（群聊里“（本人）”那一行、本人发给助手的消息）或点名关注的理由。另有 `decideCandidate`、`pendingCandidates`、`sweepCandidates`（三天没答取消，不进清点的“已过期”）、`candidatesBody`、`itemLessons`。
+- `src/items/store.ts`：状态多 `candidate`（不在 active、不提醒、`itemExpiry` 返回 null，`item.created` 事件等留下时才有）；每次状态变化调 `src/items/auto-cases.ts` 的 `noteAutoOutcome`，自动事项（时间线有 `auto` 事件，文字以“为什么建：”开头）的取舍记进 `reply_samples`（`source = item`、`chat_kind = item`、`handle_run` 是建它的运行、`final` 是事项 id、`asker_name` 是建它的角色，插入时即 settled）。`src/mentions/reply-learn.ts`、`triage.ts` 读案例时排除这类。
+- 9:30 清点（`jobs.ts` 的 `sendItemDigests`）多一段候选，卡片每件一行“留下 · 标题 / 不要”（`item:take|drop:<id>`，`lark-actions.ts`）；事项页顶部“可能要跟的”、详情里的候选提示用 `POST /api/items/:id/candidate`（`{ keep }`，在 `src/auth/routes.ts` 登记为 self）。`GET /api/items` 和详情对候选带 `auto: { why, by }`。
+- 整理、巡检、夜间整理、简报的任务和有人找你的处理任务末尾带“本人最近对你自动建的事项的取舍”（该角色自己的在前，最多 8 条）。角色说明：`roles/_common.md`“事项与本人的回复”和“怎么写记忆”第 3 问、`ingest.md`、`heartbeat.md`、`dreamer.md`、`brief.md`；`src/memory/quality.ts` 的免责式拒绝理由也要求 why。测试 `test/item-gate.test.ts`。
+
 ## 插件读得到本人填的设置：api.settings() 和登录方式的 ctx.settings（11-20）
 
 - `src/plugins/registry.ts`：在 omem 里运行的插件多了 `api.settings()`，返回本人在 设置 → 插件 里填的值（清单 `settings`，带默认值），每次调用时读；隔离运行的照旧在工具的 `ctx.settings()` 里读（`sandbox-runner.ts` 里调用会报错说明）。

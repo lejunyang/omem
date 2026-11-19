@@ -28,6 +28,11 @@ export function itemDigestCard(app: App, n: Notification) {
   const reopen: CardButton[] = (n.digest?.closed ?? []).slice(0, MAX).map((id) => ({ text: `恢复 · ${title(id)}`, value: `item:reopen:${id}` }));
   const keep: CardButton[] = (n.digest?.soon ?? []).slice(0, MAX).map((id) => ({ text: `保留 · ${title(id)}`, value: `item:keep:${id}` }));
   const more = (n.digest?.closed.length ?? 0) + (n.digest?.soon.length ?? 0) - reopen.length - keep.length;
+  // Candidates the assistant made on its own (items/auto.ts): one row each, 留下 or 不要.
+  const candidates = (n.digest?.candidates ?? []).slice(0, 6).map((id) => [
+    { text: `留下 · ${title(id)}`, value: `item:take:${id}`, style: "primary" as const },
+    { text: "不要", value: `item:drop:${id}` },
+  ] as CardButton[]);
   // Nightly replay's suggestions (agents/replay.ts): adopt or ignore each one.
   const effect = (id: string) => {
     const e = one<{ effect: string; target_id: string | null }>(app.db, "select effect, target_id from replay_effects where id = ?", id);
@@ -47,6 +52,7 @@ export function itemDigestCard(app: App, n: Notification) {
       ...(reopen.length ? [{ buttons: reopen }] : []),
       ...(keep.length ? [{ buttons: keep }] : []),
       ...(more > 0 ? [{ note: `另有 ${more} 件，在网页“事项”里处理` }] : []),
+      ...candidates.map((buttons) => ({ buttons })),
       ...effects.map((id) => ({ buttons: effect(id) })),
       ...((n.digest?.effects?.length ?? 0) > effects.length ? [{ note: `另有 ${(n.digest?.effects?.length ?? 0) - effects.length} 条复盘建议，在网页“Agent”页处理` }] : []),
     ],

@@ -44,7 +44,8 @@ export type Expiry = { at: string; text: string };
 /** When an open item expires, and why then. Null for closed items or when expiry is off. */
 export function itemExpiry(app: App, item: Item): Expiry | null {
   const cfg = app.config.items;
-  if (!cfg.expiry || isClosed(item.status)) return null;
+  // A candidate waits for the owner's answer instead (items/auto.ts sweepCandidates).
+  if (!cfg.expiry || isClosed(item.status) || item.status === "candidate") return null;
   const days = cfg.days;
   if (item.kind === "reminder") {
     const reminded = [...itemEvents(app, item.id)].reverse().find((e) => e.kind === "reminded")?.at;

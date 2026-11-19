@@ -265,7 +265,7 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
         return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
       }
     }
-    const digest = /^item:(keep|reopen):([^:]+)$/.exec(act);
+    const digest = /^item:(keep|reopen|take|drop):([^:]+)$/.exec(act);
     if ((inter.payload as { digest?: boolean }).digest && digest) {
       const [, op, id] = digest;
       if (!((inter.payload as { itemIds?: string[] }).itemIds ?? []).includes(id)) return { toast: { type: "error", content: "按钮与事项不匹配" } };
@@ -274,6 +274,13 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       const userId = operatorUser();
       const item = getItem(app, id);
       if (!userId || item.userId !== userId || !canWrite(app, userId, item.spaceId)) return { toast: { type: "error", content: "无权处理该事项" } };
+      // A candidate the assistant made on its own (items/auto.ts): 留下 opens it, 不要 puts it down.
+      if (op === "take" || op === "drop") {
+        if (item.status !== "candidate") return { toast: { type: "info", content: `「${item.title}」已经处理过了` } };
+        const { decideCandidate } = await import("../items/auto.ts");
+        decideCandidate(app, id, op === "take", userId, "card");
+        return { toast: { type: "success", content: op === "take" ? `已留下「${item.title}」` : `不要了「${item.title}」` } };
+      }
       const closed = ["done", "cancelled", "expired"].includes(item.status);
       if (op === "reopen" && !closed) return { toast: { type: "info", content: `「${item.title}」已经是打开的` } };
       keepItem(app, id, "user");

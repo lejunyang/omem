@@ -1377,10 +1377,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { itemExpiry } = await import("../items/expiry.ts");
     const items = listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, userId: who(req) === OWNER ? undefined : who(req) });
     const flows = itemFlowSummaries(app, items.map((i) => i.id));
+    // A candidate shows why the assistant made it and who did (items/auto.ts).
+    const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
     return items.map((item) => {
       const i = { ...item, flow: flows.get(item.id) ?? null };
+      const a = item.status === "candidate" ? autoInfo(app, item.id) : null;
       const e = itemExpiry(app, i);
-      return e ? { ...i, expiresAt: e.at, expiryText: e.text } : i;
+      return { ...i, ...(e ? { expiresAt: e.at, expiryText: e.text } : {}), ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}) };
     });
   });
   // Items close themselves (src/items/expiry.ts): the rules, the backlog waiting for review, and "keep".
@@ -1416,6 +1419,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { keepItem } = await import("../items/expiry.ts");
     return keepItem(app, id, "user");
   });
+  // A candidate the assistant made on its own (items/auto.ts): kept (opens) or not (cancelled). The same as the daily card's buttons.
+  server.post("/api/items/:id/candidate", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const b = q(z.object({ keep: z.boolean() }), req.body);
+    const item = getItem(app, id);
+    if (!canWrite(app, who(req), item.spaceId)) throw new HttpError(403, "无权修改该事项");
+    const { decideCandidate } = await import("../items/auto.ts");
+    return decideCandidate(app, id, b.keep, who(req), "web");
+  });
   server.get("/api/items/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const item = getItem(app, id);
@@ -1432,7 +1444,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // Where the work goes on and what runs for it now (items/places.ts): only for the item's own person.
     const { itemPlaces, itemRuns } = await import("../items/places.ts");
     const mine = item.userId === who(req);
-    return { item, events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app)), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
+    const { autoInfo, creatorLabel } = await import("../items/auto-cases.ts");
+    const a = autoInfo(app, id);
+    return { item, ...(a ? { auto: { why: a.why, by: creatorLabel(a.creator) } } : {}), events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app)), places: mine ? itemPlaces(app, id, who(req)) : [], runs: mine ? itemRuns(app, id, who(req)) : [] };
   });
   // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
   // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.

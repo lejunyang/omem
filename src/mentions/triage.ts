@@ -139,7 +139,8 @@ export async function triageMaterial(app: App, channel: MentionChannel, input: T
   const first = input.messages[input.messages.length - 1];
   const habit = first ? habitLine(app, { askerId: first.senderId, askerName: first.sender, chatId: input.chatId, chatKind: input.chatKind }) : "";
   // The cases closest to these messages and the lessons of “someone looks for you” (channels/listen-cases.ts).
-  const cases = first ? casesText(nearCases(app, { askerId: first.senderId, askerName: first.sender, chatId: input.chatId, text: input.messages.map((m) => m.text).join("\n") }, 6)) : "";
+  // Not the owner's choices about items the assistant made (reply_samples source `item`, items/auto-cases.ts).
+  const cases = first ? casesText(nearCases(app, { askerId: first.senderId, askerName: first.sender, chatId: input.chatId, text: input.messages.map((m) => m.text).join("\n") }, 12).filter((c) => c.chat_kind !== "item").slice(0, 6)) : "";
   const playbook = playbookOf(app, defaultContext(app), 2500);
   const sourceId = input.messages.find((m) => m.sourceId)?.sourceId;
   const reactions = sourceId ? outcomeLine(outcomeStats(app, { sourceId })) : "";

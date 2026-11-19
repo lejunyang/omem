@@ -15,6 +15,7 @@ import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace, getSpace, listSpaces, relatedIds, relatedSpaces, updateSpace } from "../core/spaces.ts";
 import { json, newId, now, truncate, localStamp } from "../core/util.ts";
+import { itemLessons } from "../items/auto.ts";
 import { deliverDueReminders } from "../items/reminders.ts";
 import { listItems, upsertItem, UTC } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
@@ -639,7 +640,9 @@ registerHandler("ingest", async (ctx) => {
     if (chat && (await ownerInChatKnown(ctx.app, chat).catch(() => null)) === false) outside.push(`${id}「${s!.title}」`);
   }
   const outsideNote = outside.length ? `\n\n本人不在这些群里（机器人被拉进去的）：${outside.join("、")}。这里是别人的事：不建本人的事项、不通知本人，除非有人点名找本人；别人 @ 机器人问的事机器人已经回答，不用接着查。` : "";
-  const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}${mentions}${outsideNote}${known}`;
+  // What the owner kept and dropped of the items ingest made on its own (items/auto.ts).
+  const lessons = itemLessons(ctx.app, "ingest");
+  const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}${mentions}${outsideNote}${known}${lessons ? `\n\n${lessons}` : ""}`;
   // Comparison: the same material through other backends/models; their writes are only recorded.
   for (const c of ctx.app.config.memory.compare)
     createRun(ctx.app, {
@@ -901,6 +904,8 @@ const SETTLE_BATCH = 20;
 export async function sweepItems(app: App) {
   const { expireDue, handledCandidates, candidatesTask } = await import("../items/expiry.ts");
   const expired = expireDue(app);
+  // Candidates the owner left unanswered for three days are put down (items/auto.ts).
+  (await import("../items/auto.ts")).sweepCandidates(app);
   if (listRuns(app, { kind: "item-settle", status: "queued" }).length || listRuns(app, { kind: "item-settle", status: "running" }).length) return { expired, settle: null };
   const cs = (await handledCandidates(app, { userId: OWNER })).slice(0, SETTLE_BATCH);
   if (!cs.length) return { expired, settle: null };
@@ -929,9 +934,13 @@ registerHandler("item-settle", async (ctx) => {
   return { ...q, quiet: q.quiet || !closed, closed, checked: checks.length };
 });
 
-/** Daily: what closed by itself and what closes tomorrow, one card per person with keep/reopen buttons. */
+/**
+ * Daily: what closed by itself and what closes tomorrow, one card per person with keep/reopen buttons;
+ * and the candidates the assistant made on its own, each with 留下 / 不要 (items/auto.ts).
+ */
 export async function sendItemDigests(app: App) {
   const { digestFor, digestBody, markDigestSent } = await import("../items/expiry.ts");
+  const { candidatesBody, pendingCandidates } = await import("../items/auto.ts");
   const sent = [];
   // Last night's replays go to the owner's card as a section of their own (agents/replay.ts); none ran → no section.
   const { replayDigest } = await import("./replay.ts");
@@ -943,17 +952,18 @@ export async function sendItemDigests(app: App) {
     const d = digestFor(app, user_id);
     markDigestSent(app, user_id);
     const section = user_id === OWNER ? replays : null;
-    if (!d && !section) continue;
+    const candidates = pendingCandidates(app, user_id, 6);
+    if (!d && !section && !candidates.length) continue;
     const handled = d ? d.closed.filter((c) => c.status !== "expired").length : 0;
     const expired = d ? d.closed.length - handled : 0;
-    const parts = [handled ? `${handled} 件看起来已办` : "", expired ? `${expired} 件已过期` : "", d?.soon.length ? `${d.soon.length} 件明天过期` : "", section ? "昨晚复盘" : ""].filter(Boolean);
+    const parts = [handled ? `${handled} 件看起来已办` : "", expired ? `${expired} 件已过期` : "", d?.soon.length ? `${d.soon.length} 件明天过期` : "", candidates.length ? `${candidates.length} 件要不要跟` : "", section ? "昨晚复盘" : ""].filter(Boolean);
     sent.push(
       notify(app, {
         title: `事项清点：${parts.join("，")}`,
-        body: [d ? digestBody(app, d) : "", section?.text ?? ""].filter(Boolean).join("\n\n"),
-        link: d ? "#/items" : "#/agents",
+        body: [d ? digestBody(app, d) : "", candidates.length ? candidatesBody(app, candidates) : "", section?.text ?? ""].filter(Boolean).join("\n\n"),
+        link: d || candidates.length ? "#/items" : "#/agents",
         userId: user_id,
-        digest: { closed: d?.closed.map((c) => c.id) ?? [], soon: d?.soon.map((s) => s.item.id) ?? [], ...(section?.effects.length ? { effects: section.effects.map((e) => e.id) } : {}) },
+        digest: { closed: d?.closed.map((c) => c.id) ?? [], soon: d?.soon.map((s) => s.item.id) ?? [], ...(candidates.length ? { candidates: candidates.map((c) => c.id) } : {}), ...(section?.effects.length ? { effects: section.effects.map((e) => e.id) } : {}) },
       }),
     );
   }
@@ -1217,6 +1227,7 @@ registerHandler("heartbeat", async (ctx) => {
     sent.length ? `上次巡检以来已经发给本人的通知（不要重复这些内容）：\n${sent.map((n) => `- ${localStamp(n.at, app.config.timezone)} ${n.title}`).join("\n")}` : "",
     `关注/等待中的事项：\n${watching.map((i) => `- ${i.id} [${i.kind}] ${i.title}${i.waitingOn ? `（等待 ${i.waitingOn}）` : ""}${i.watch?.query ? `：关注 ${i.watch.query}` : ""}`).join("\n")}`,
     `上次巡检（${last}）以来新增或变化的材料：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n")}`,
+    itemLessons(app, "heartbeat"),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1328,6 +1339,7 @@ ${shortcomingsText(gaps)}
 能补的就补：缺的事实或约定从原件里找到后记下来；同一类错误反复出现就写一条 experience 记忆，过程复杂的写成案例页（cases/）；需要本人提供的知识建一个 todo 事项问本人。补不了或本来就答得对的不用管。`
       : "",
     candidates.length ? `可能相关、还没关联的空间（宿主从引用、链接、依赖声明、标签里看到的迹象；读过后判断无关的，用 relate_spaces decline=true 记下原因，同样的迹象就不会再列出）：\n${candidates.map((c) => `- ${c.a} ↔ ${c.b}：${c.signals.join("；")}`).join("\n")}` : "",
+    itemLessons(app, "dream"),
     "需要更多上下文时用 recall（可加 include_history）和 list_items 查同主题的其他记录。",
   ]
     .filter(Boolean)
@@ -1375,6 +1387,7 @@ registerHandler("brief", async (ctx) => {
       const s = studyStats(app);
       return s.due ? `学习：${s.due} 张卡片到期待复习（共 ${s.total} 张，今天已复习 ${s.reviewedToday} 张），简报里提一句并给出“学习”页入口。` : "";
     })(),
+    itemLessons(app, "brief"),
   ]
     .filter(Boolean)
     .join("\n\n");

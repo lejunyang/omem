@@ -200,7 +200,8 @@ describe("runs that know about each other and about the owner", async () => {
   it("links an item to the places where it is written, shows the whole picture, and keeps it to its person", async () => {
     const c1 = ensureConversation(app, { spaceId: "personal", channel: "web", title: "退款口径讨论" });
     const c2 = ensureConversation(app, { spaceId: "personal", channel: "lark", externalId: "oc_team#omt_1", title: "项目 A 群的退款话题" });
-    const r1 = parked("ask", { conversationId: c1 });
+    // The owner's own turn asks for it (items/auto.ts: no reason needed, made at once).
+    const r1 = parked("ask", { conversationId: c1, messageIds: [addMessage(app, c1, "user", "退款口径记一下，要定下来")] });
     const r2 = parked("ask", { conversationId: c2 });
     const made = await callTool(ctx(r1), "upsert_item", { kind: "todo", title: "退款口径要定下来", detail: "只退未发货的行" });
     expect(made.isError).toBe(false);
