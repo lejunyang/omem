@@ -5,7 +5,7 @@ import { audit } from "../auth/permissions.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError, json, newId, now, truncate } from "../core/util.ts";
 import { addMessage, type WatchBrief } from "../agents/threads.ts";
-import type { Content, Delivery, Target } from "./lark-send.ts";
+import type { Content, Delivery, Interaction, Target } from "./lark-send.ts";
 import { contextOfConversation, getContext, requireContext, saveContext, type ListenContext } from "./listen.ts";
 
 /**
@@ -53,8 +53,9 @@ function decideCase(app: App, id: string, decision: "sent" | "edited" | "dropped
   run(app.db, "update reply_samples set decision = ?, final = coalesce(?, final), reason = coalesce(?, reason), reply_id = coalesce(?, reply_id), decided_at = ? where id = ?", decision, patch.final ?? null, patch.reason ?? null, patch.replyId ?? null, now(), id);
 }
 
+// Replies only: whether to go into a meeting (source 'meeting', listen-meetings.ts) is no draft decision.
 const casesOf = (app: App, c: ListenContext, limit: number) =>
-  all<CaseRow>(app.db, "select id, decision, reason, ask, asker_name, draft, final, owner_reply, verdict, note, scene, created_at, decided_at, reply_id from reply_samples where context_id = ? order by created_at desc limit ?", c.id, limit);
+  all<CaseRow>(app.db, "select id, decision, reason, ask, asker_name, draft, final, owner_reply, verdict, note, scene, created_at, decided_at, reply_id from reply_samples where context_id = ? and source != 'meeting' order by created_at desc limit ?", c.id, limit);
 
 /** The 关注 a run handles (its conversation is a 关注's), or null. */
 export function contextOfRun(app: App, runId: string | null | undefined): ListenContext | null {
@@ -69,7 +70,7 @@ function chatName(app: App, chatId: string) {
 }
 
 /** A card only the owner sees: ephemeral in that group when they are in it, else in their private chat. */
-async function ownerCard(app: App, chatId: string | null, card: Record<string, unknown>, purpose: "watch-brief" | "watch-draft" | "watch-promote", payload: Record<string, unknown>, conversationId: string | null, runId: string | null = null) {
+export async function ownerCard(app: App, chatId: string | null, card: Record<string, unknown>, purpose: Interaction["purpose"], payload: Record<string, unknown>, conversationId: string | null, runId: string | null = null) {
   const send = await import("./lark-send.ts");
   const owner = send.larkOwnerOpenId(app, "main");
   let messageId: string | undefined;
@@ -133,7 +134,7 @@ export type Verdict = keyof typeof VERDICTS;
 /** Corrections since the brief was written: enough of them and the handler is asked to redraft it. */
 export function correctionsSinceBrief(app: App, c: ListenContext) {
   const since = c.brief?.at ?? "";
-  return one<{ n: number }>(app.db, "select count(*) n from reply_samples where context_id = ? and coalesce(decided_at, created_at) > ? and (decision in ('dropped','edited','disliked') or verdict is not null)", c.id, since)?.n ?? 0;
+  return one<{ n: number }>(app.db, "select count(*) n from reply_samples where context_id = ? and source != 'meeting' and coalesce(decided_at, created_at) > ? and (decision in ('dropped','edited','disliked') or verdict is not null)", c.id, since)?.n ?? 0;
 }
 
 /** The lessons listen-coach wrote for this 关注 (a work file), for the handler and the screening. */

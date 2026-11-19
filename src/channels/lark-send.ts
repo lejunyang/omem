@@ -573,7 +573,7 @@ export type Interaction = {
   chatId: string | null;
   conversationId: string | null;
   runId: string | null;
-  purpose: "agent" | "draft" | "model" | "ask" | "guest-approval" | "meeting-join" | "rule-script" | "command-gate" | "mention-reply" | "meeting-answer" | "watch-brief" | "watch-draft" | "watch-promote";
+  purpose: "agent" | "draft" | "model" | "ask" | "guest-approval" | "meeting-join" | "rule-script" | "command-gate" | "mention-reply" | "meeting-answer" | "watch-brief" | "watch-draft" | "watch-promote" | "listen-meeting";
   allowed: string[];
   payload: Record<string, unknown>;
   status: "open" | "done" | "expired";

@@ -136,6 +136,20 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
       return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
     }
   }
+  if (inter.purpose === "listen-meeting") {
+    // A 「关注」 asking whether to listen to a meeting in its groups, or one the owner joined (listen-meetings.ts).
+    const { decideListenMeeting } = await import("./listen-meetings.ts");
+    const act = String((value as { action?: string } | undefined)?.action ?? "");
+    closeInteraction(app, inter.id, operator);
+    try {
+      const card = await decideListenMeeting(app, inter.payload as import("./listen-meetings.ts").ListenMeetingCard, act, opName);
+      return { toast: { type: "success", content: act === "join" ? "已处理" : act === "never" ? "这个会以后不问" : "这次不进会" }, card: rawCard(card) };
+    } catch (e) {
+      // Not done: the card stays usable for another try.
+      run(app.db, "update card_interactions set status = 'open', handled_at = null, handled_by = null where id = ?", inter.id);
+      return { toast: { type: "error", content: `没有办成：${(e as Error).message}`.slice(0, 80) } };
+    }
+  }
   if (inter.purpose === "meeting-answer") {
     // A drafted answer to a question put to a bot in a meeting (meeting-answers.ts).
     const { decideMeetingAnswer } = await import("./meeting-answers.ts");

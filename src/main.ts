@@ -201,7 +201,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     setInterval(() => {
       import("./channels/lark-doc-events.ts").then((m) => m.pollRuleDocs(app)).catch((e) => console.warn("[omem] 定时检查规则盯的文档失败：", e.message));
     }, 60_000).unref();
-    // The owner's meetings, for meeting rules (nothing runs while there are none).
+    // The owner's meetings, for meeting rules and 「关注」 (nothing runs while neither wants them).
     setInterval(() => {
       import("./channels/lark-meetings.ts").then((m) => m.tickMeetings(app)).catch((e) => console.warn("[omem] 跟进会议失败：", e.message));
     }, 15_000).unref();

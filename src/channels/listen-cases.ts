@@ -22,6 +22,12 @@ export function playbookOf(app: App, c: Pick<ListenContext, "name" | "id">, max 
   return row ? truncate(row.text.trim(), max) : "";
 }
 
+/**
+ * Cases about messages, not about going into a meeting (chat_kind 'meeting', listen-meetings.ts): what
+ * a reply, a draft streak or the owner's reply habits are read from. The coach reads both.
+ */
+export const NOT_MEETING = "chat_kind != 'meeting'";
+
 export type CaseLite = {
   id: string; context_id: string | null; chat_id: string; chat_kind: string; chat_name: string; settled_at: string | null; asker_id: string | null; asker_name: string; ask: string;
   draft: string | null; decision: string | null; final: string | null; reason: string | null; owner_reply: string | null;
@@ -51,7 +57,7 @@ export function nearCases(app: App, to: { contextId?: string | null; askerId?: s
     app.db,
     `select id, context_id, chat_id, chat_kind, chat_name, settled_at, asker_id, asker_name, ask, draft, decision, final, reason, owner_reply, verdict, note, scene, checked, created_at
      from reply_samples where (decision is not null or owner_reply is not null or verdict is not null or settled_at is not null)
-     and ${to.contextId ? "context_id = ?" : "1 = 1"} order by created_at desc limit 400`,
+     and ${NOT_MEETING} and ${to.contextId ? "context_id = ?" : "1 = 1"} order by created_at desc limit 400`,
     ...(to.contextId ? [to.contextId] : []),
   );
   const q = grams(to.text);
@@ -78,6 +84,7 @@ const VERDICT: Record<string, string> = { "should-reply": "本人说该回", "sh
 export function casesText(cases: CaseLite[]) {
   return cases
     .map((c) => {
+      if (c.chat_kind === "meeting") return `- [${c.id}] ${meetingCaseText(c)}`;
       const parts = [`${c.asker_name || "有人"}${c.chat_kind === "p2p" ? "私聊" : `在「${truncate(c.chat_name || c.chat_id, 20)}」`}${c.scene ? `（${c.scene}）` : ""}：${truncate(c.ask.replace(/\s+/g, " "), 160)}`];
       if (c.checked) parts.push(`助手查了：${truncate(c.checked, 120)}`);
       if (c.draft) parts.push(`助手拟的：${truncate(c.draft.replace(/\s+/g, " "), 160)}`);
@@ -88,4 +95,14 @@ export function casesText(cases: CaseLite[]) {
       return `- [${c.id}] ${parts.join("；")}`;
     })
     .join("\n");
+}
+
+/** A meeting the 关注 asked about (listen-meetings.ts): which one, and whether the assistant went in. */
+function meetingCaseText(c: CaseLite) {
+  const did =
+    c.decision === "sent" ? "本人让助手进会旁听"
+    : c.decision === "auto" ? "助手直接进会旁听（关注设的是直接旁听）"
+    : c.decision === "dropped" ? (c.reason === "never" ? "本人说这个会以后不用问" : "本人说这次不用旁听")
+    : "本人没答";
+  return `${c.ask}${c.asker_name ? `（${c.asker_name} 发起）` : ""}${c.scene ? `（${c.scene}）` : ""}：${did}${c.verdict ? `；${VERDICT[c.verdict] ?? c.verdict}${c.note ? `：${truncate(c.note, 120)}` : ""}` : ""}`;
 }
