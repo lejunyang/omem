@@ -98,15 +98,32 @@ account?: {
 有的后端在公司环境里不走它自己的登录，而是用公司统一身份换来的凭据。插件可以给某个后端注册一个登录方式：
 
 ```ts
+type AgentLoginContext = {
+  userId: string;
+  /** 这个人的账号目录（沙箱里的 HOME） */
+  home: string;
+  /** Agent 目录里 account.env 展开后的变量（例：TRAE_HOME=<home>/.trae）：凭据写到它们指的位置 */
+  env: Record<string, string>;
+  /** 宿主替插件按人保存的一份秘密（存在 secrets/vault.db，不进账号目录），比如刷新令牌 */
+  secret: { get(): Promise<string | null>; set(value: string | null): Promise<void> };
+  signal: AbortSignal;
+};
+
 api.agentLogin({
   backend: "traex",
+  id: "company",                 // 同一个后端可以有几种登录方式，插件内唯一
   label: "用公司账号登录",
-  // 引导这个用户授权（设备码或网页 OAuth），拿到凭据后写进账号目录
-  async login(ctx: { userId: string; home: string; show(link: { url: string; code?: string }): void; signal: AbortSignal }): Promise<{ user: string }>;
+  // 引导这个用户授权（设备码或网页 OAuth），拿到凭据后写进 env 指的位置
+  login(ctx: AgentLoginContext & { show(link: { url: string; code?: string }): void }): Promise<{ user: string; expiresAt?: number }>;
+  // 可选：续签。宿主在 expiresAt 前（提前 10 分钟，最短 1 分钟一次）调用，也可以由“检查”手动触发；
+  // 返回新的 expiresAt；返回 null 表示续不了，要这个人重新登录
+  refresh?(ctx: AgentLoginContext): Promise<{ expiresAt?: number } | null>;
+  // 可选：退出时清理（撤销令牌等）；宿主之后照常删目录
+  logout?(ctx: AgentLoginContext): Promise<void>;
 });
 ```
 
-宿主只负责调用、把链接显示给这个人、超时取消；凭据怎么换、写成什么格式由插件决定。数据目录里的公司插件就用这个让同事用公司账号登录 TraeX。插件要在清单里声明 `permissions.agentLogin: [<后端>]`，本人信任插件时能看到。
+宿主只负责调用、把链接和设备码显示给这个人（网页上，以及用机器人发到他的飞书私聊，写明是 omem 为谁、为哪个后端发起的）、超时取消、按 `expiresAt` 安排续签；凭据怎么换、写成什么格式由插件决定。续签失败或返回 null 时状态改成“登录过期”并通知这个人。插件要在清单里声明 `permissions.agentLogin: [<后端>]`，本人信任插件、并选“在 omem 里运行”时才生效。“我的 AI 账号”里，一个后端同时列出它自己的登录方式和插件提供的登录方式。数据目录里的公司插件就用这个让同事用公司账号登录 TraeX。
 
 ### 6.5 别人怎么做的
 
