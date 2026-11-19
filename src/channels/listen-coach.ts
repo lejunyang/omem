@@ -116,7 +116,7 @@ export async function submitPlaybook(app: App, runId: string | null, input: { sc
   const r = writeWorkFile(app, { spaceId: c.spaceId ?? "personal", path, title: `关注「${c.name}」的经验`, text, runId });
   for (const s of input.scenes) for (const id of s.cases ?? []) if (known.has(id)) run(app.db, "update reply_samples set scene = ? where id = ?", s.name, id);
   for (const x of input.case_scenes ?? []) if (known.has(x.case)) run(app.db, "update reply_samples set scene = ? where id = ?", x.scene, x.case);
-  saveContext(app, { id: c.id, kind: c.kind, playbookAt: now() });
+  saveContext(app, { id: c.id, kind: c.kind, playbookAt: now(), playbookFile: path });
   let briefNote = "";
   if (input.brief && c.kind !== "default") {
     const same = c.brief && JSON.stringify([c.brief.handle, c.brief.skip, c.brief.valid]) === JSON.stringify([input.brief.handle, input.brief.skip, input.brief.valid]);

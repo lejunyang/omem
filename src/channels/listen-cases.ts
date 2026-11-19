@@ -11,13 +11,14 @@ import type { ListenContext } from "./listen.ts";
  */
 
 /** Where listen-coach's lessons of a 关注 live (a work file in its space; the source tree shows 关注/ as folders). */
-export function playbookPath(c: Pick<ListenContext, "name" | "id">) {
+export function playbookPath(c: Pick<ListenContext, "name" | "id"> & { playbookFile?: string }) {
+  if (c.playbookFile) return c.playbookFile;
   const name = c.name.replace(/[\\/:*?"<>|#\s]+/g, " ").trim().slice(0, 40) || c.id;
   return `关注/${name}/经验.md`;
 }
 
 /** The lessons listen-coach wrote for a 关注 (its work file), as text; empty when there are none yet. */
-export function playbookOf(app: App, c: Pick<ListenContext, "name" | "id">, max = 4000) {
+export function playbookOf(app: App, c: Pick<ListenContext, "name" | "id"> & { playbookFile?: string }, max = 4000) {
   const row = one<{ text: string }>(app.db, "select text from sources where uri = ? and deleted_at is null order by captured_at desc limit 1", `work/${playbookPath(c)}`);
   return row ? truncate(row.text.trim(), max) : "";
 }

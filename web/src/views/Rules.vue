@@ -23,6 +23,7 @@ type Unless = "owner-engaged" | "answered";
 type Action =
   | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; hideThinking?: boolean; failureTo?: "owner" | "chat"; allowUrgent?: boolean; allowPrivate?: boolean; merge?: boolean; mergeReply?: "combined" | "separate"; ai?: { profile: string; model?: string; effort?: string }; fullAccess?: boolean }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
+  | { type: "context"; context: string }
   | { type: "invite-bot" }
   | { type: "forward"; to: { chatId: string; name: string; kind: "group" | "p2p" | "origin" }; note: string }
   | { type: "wait-message"; chatId: string; name: string; minutes: number; contains: string; matches: string; onTimeout: "notify" | "none" }
@@ -51,7 +52,7 @@ type Rule = {
   origin?: { plugin: string; name: string; file: string } | null;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc" | "object" | "omem", string[]>; objectKinds?: { kind: string; label: string; statuses: Record<string, string>; final: string[] }[]; omemTypes?: { type: string; label: string }[]; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string; chat_mode?: string | null }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
+type Options = { decision?: { ready: boolean; detail: string }; fields: Record<string, string>; eventFields?: Record<"message" | "meeting" | "doc" | "object" | "omem", string[]>; objectKinds?: { kind: string; label: string; statuses: Record<string, string>; final: string[] }[]; omemTypes?: { type: string; label: string }[]; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string; agent?: string }[]; backends?: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: any }[]; chats: { chat_id: string; name: string; chat_mode?: string | null }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[]; contexts?: { id: string; name: string; kind: string; chats: number; status: string; itemId: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[]; note: string };
 
 const route = useRoute();
@@ -201,6 +202,22 @@ async function toggle(r: Rule) {
     toast((e as Error).message, "error");
   }
 }
+const contextOptions = computed(() =>
+  (options.value.contexts ?? []).map((c) => ({ value: c.id, label: `${c.name}${c.kind === "item" ? "（事项）" : `（${c.chats} 个群）`}${c.status === "active" ? "" : " · 已暂停"}` })),
+);
+/** A rule that hands a group's messages to an Agent: what a 关注 does with more context (rules/to-listen.ts). */
+const convertible = computed(() => !!form.value && form.value.trigger.event === "message" && form.value.actions.some((a) => a.type === "agent" || a.type === "watch"));
+async function toListen() {
+  const f = form.value;
+  if (!f?.id || !(await confirmDialog(`把规则「${f.name}」转成关注？`, { message: "建一个看同样几个群的关注（带上这条规则的要求），之后由它带着上下文、案例和经验处理。关注能做完规则做的全部事时规则停用，否则规则改成交给这个关注。", okText: "转成关注" }))) return;
+  try {
+    const r = await post<{ context: { id: string }; outcome: "disabled" | "switched"; reused?: boolean }>(`/api/rules/${f.id}/to-listen`, {});
+    toast(r.outcome === "disabled" ? "已转成关注，规则停用了" : "已转成关注，规则改成交给这个关注", "ok");
+    await router.push(`/listen/${r.context.id}`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 async function remove() {
   if (!form.value?.id || !(await confirmDialog(`删除规则「${form.value.name}」？`, { okText: "删除", danger: true }))) return;
   await del(`/api/rules/${form.value.id}`);
@@ -210,7 +227,7 @@ async function remove() {
 }
 
 // ---- actions ------------------------------------------------------------------------
-const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", forward: "转发到", "wait-message": "等某个会话的新消息", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会", delay: "延时", check: "模型判断", script: "执行脚本" };
+const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", context: "交给关注", "invite-bot": "拉机器人进群", forward: "转发到", "wait-message": "等某个会话的新消息", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会", delay: "延时", check: "模型判断", script: "执行脚本" };
 const replyOptions = [
   { value: "none", label: "只告诉我" },
   { value: "draft", label: "先给我看" },
@@ -273,6 +290,7 @@ function addAction(type: string | null) {
   const a: Action =
     type === "agent" ? { type, spec, task: "", ownTopic: false, reply: "none" }
     : type === "watch" ? { type, spec, on: "mention", reply: "draft" }
+    : type === "context" ? { type, context: options.value.contexts?.find((c) => c.status === "active")?.id ?? "" }
     : type === "notify" ? { type, urgent: false }
     : type === "forward" ? { type, to: { chatId: "", name: "", kind: "group" }, note: "" }
     : type === "wait-message" ? { type, chatId: "", name: "", minutes: 5, contains: "", matches: "", onTimeout: "notify" }
@@ -357,7 +375,9 @@ const addOptions = computed(() =>
   (Object.keys(ACTION_LABEL) as Action["type"][])
     .filter((t) => (meetingRule.value ? ["meeting-bot", "notify"].includes(t) : t !== "meeting-bot"))
     // Without a chat (a schedule, a document or object change) only what needs none.
-    .filter((t) => !destRule.value || ["agent", "notify", "delay", "check", "script"].includes(t))
+    .filter((t) => !destRule.value || ["agent", "context", "notify", "delay", "check", "script"].includes(t))
+    // 交给关注 needs a 关注 to hand to.
+    .filter((t) => t !== "context" || !!options.value.contexts?.length)
     // Forwarding needs a message to forward.
     .filter((t) => !["forward", "wait-message"].includes(t) || form.value?.trigger.event === "message")
     .map((t) => ({ value: t as string | null, label: ACTION_LABEL[t], hint: (t === "invite-bot" || t === "forward") && !options.value.botReady ? "需要先配置飞书机器人" : t === "script" && !isOwner.value ? "只有本人能保存带脚本的规则" : "" })),
@@ -636,6 +656,7 @@ function startFrom(text: string) {
           <input v-model="form.name" class="input title" placeholder="规则名" aria-label="规则名" @input="touch" />
           <UiCheckbox v-model="form.enabled" switch @change="touch">启用</UiCheckbox>
           <button class="btn sm primary" :disabled="saving || (!!form.id && !dirty)" @click="save">保存</button>
+          <button v-if="form.id && convertible" class="btn ghost sm" :disabled="dirty" title="建一个同样看这些群的关注，规则停用或改成交给关注" @click="toListen">转成关注</button>
           <button v-if="form.id" class="btn ghost sm icon danger" title="删除" @click="remove"><Icon name="trash" :size="14" /></button>
         </header>
 
@@ -768,6 +789,13 @@ function startFrom(text: string) {
                 <small class="muted">{{ a.fullAccess ? accessHint(a) : "不勾时跟这个 Agent 自己的设置（Agent 页里打开了完全访问就同样不进沙箱）；那里没开、这条规则又要联网排查（报警、值班）时在这里打开。交给别的 Agent 时它也照此运行。" }}</small>
               </div>
               <textarea v-model="a.task" class="input" rows="2" placeholder="交给它的要求（触发的消息会自动附上），例如：分析报警，需要关注就 @ 值班人" @input="touch" />
+            </template>
+            <template v-else-if="a.type === 'context'">
+              <div class="row wrap">
+                <UiSelect v-model="a.context" size="sm" width="260px" :options="contextOptions" placeholder="选择关注" aria-label="关注" @change="touch" />
+                <RouterLink v-if="a.context" class="small" :to="`/listen/${a.context}`">打开这个关注</RouterLink>
+              </div>
+              <small class="muted">触发的事件进这个关注的会话，由它带着说明、案例和经验处理。</small>
             </template>
             <template v-else-if="a.type === 'watch'">
               <div class="row wrap">

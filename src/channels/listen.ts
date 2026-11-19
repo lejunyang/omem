@@ -74,6 +74,8 @@ export type ListenContext = {
   since: string;
   /** When listen-coach last wrote its lessons. */
   playbookAt?: string;
+  /** Where its lessons are (fixed at the first write, so a rename keeps them). */
+  playbookFile?: string;
   /** A matter's 关注 made because a flow started on the item (listen-items.ts): it ends with the flow, until the owner takes it on. */
   byFlow?: boolean;
   expiresAt: string | null;
@@ -109,7 +111,7 @@ type Row = {
   id: string; kind: ListenKind; name: string; chats: string; item_id: string | null; spec: string; space_id: string | null;
   conversation_id: string | null; settings: string; status: "active" | "paused"; expires_at: string | null; created_at: string; updated_at: string;
 };
-type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; byFlow?: boolean };
+type Stored = { note?: string; brief?: WatchBrief; knobs?: Partial<ListenKnobs>; since?: string; playbookAt?: string; playbookFile?: string; byFlow?: boolean };
 
 function toContext(r: Row): ListenContext {
   const s = json<Stored>(r.settings, {});
@@ -128,6 +130,7 @@ function toContext(r: Row): ListenContext {
     status: r.status,
     since: s.since ?? r.created_at,
     playbookAt: s.playbookAt,
+    playbookFile: s.playbookFile,
     ...(s.byFlow ? { byFlow: true } : {}),
     expiresAt: r.expires_at,
     createdAt: r.created_at,
@@ -190,6 +193,7 @@ export type ContextInput = {
   status?: "active" | "paused";
   since?: string;
   playbookAt?: string;
+  playbookFile?: string;
   /** true: made for a flow (ends with it); false: the owner's own from now on. */
   byFlow?: boolean;
   expiresAt?: string | null;
@@ -224,6 +228,7 @@ export function saveContext(app: App, input: ContextInput, chatName: (chatId: st
     knobs: diffKnobs(knobs, kind),
     since: input.since ?? prev?.since ?? at,
     playbookAt: input.playbookAt ?? prev?.playbookAt,
+    playbookFile: input.playbookFile ?? prev?.playbookFile,
     ...((input.byFlow ?? prev?.byFlow) ? { byFlow: true } : {}),
   };
   const spaceId = input.spaceId === undefined ? (prev?.spaceId ?? null) : input.spaceId;

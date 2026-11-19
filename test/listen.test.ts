@@ -7,7 +7,7 @@ import { all, one, run } from "../src/core/db.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { routeWatchedMessages, seedContext } from "../src/channels/lark-watch.ts";
 import { chatListened, contextsOfChat, getContext, migrateWatches, saveContext } from "../src/channels/listen.ts";
-import { casesText, nearCases } from "../src/channels/listen-cases.ts";
+import { casesText, nearCases, playbookOf } from "../src/channels/listen-cases.ts";
 import { remember } from "../src/memory/store.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
@@ -199,6 +199,9 @@ describe("「关注」", () => {
     expect(file.text).toContain("查 POI 过滤日志");
     expect(all(app.db, "select id from reply_samples where scene = '用户报页面打不开' order by id")).toHaveLength(3);
     expect(getContext(app, c.id)!.playbookAt).toBeTruthy();
+    // A rename keeps the lessons where they were written.
+    saveContext(app, { id: c.id, kind: "place", name: "改名后的值班群" });
+    expect(playbookOf(app, getContext(app, c.id)!)).toContain("用户报页面打不开");
     // Others may not hand in lessons; the handler now reads them.
     expect((await callTool(handler, "submit_playbook", { scenes: [{ name: "xx", when: "xx", reply: "no" }] })).isError).toBe(true);
     await routeWatchedMessages(app, "oc_ops", "值班群", [{ id: "om_q2", time: now(), sender: "小王", text: "UID 7 打不开" }]);
