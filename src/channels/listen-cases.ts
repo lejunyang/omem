@@ -24,10 +24,11 @@ export function playbookOf(app: App, c: Pick<ListenContext, "name" | "id"> & { p
 }
 
 /**
- * Cases about messages, not about going into a meeting (chat_kind 'meeting', listen-meetings.ts): what
+ * Cases about messages, not about going into a meeting (chat_kind 'meeting', listen-meetings.ts) or keeping an
+ * item the assistant made (chat_kind 'item', items/auto-cases.ts): what
  * a reply, a draft streak or the owner's reply habits are read from. The coach reads both.
  */
-export const NOT_MEETING = "chat_kind != 'meeting'";
+export const NOT_MEETING = "chat_kind not in ('meeting', 'item')";
 
 export type CaseLite = {
   id: string; context_id: string | null; chat_id: string; chat_kind: string; chat_name: string; settled_at: string | null; asker_id: string | null; asker_name: string; ask: string;
