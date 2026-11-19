@@ -1,0 +1,304 @@
+/* 侧栏的两页切换和「录制」页。类名用 side- 和 rec-，不和拾取篮的 record- 混用。 */
+
+.side-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--sunken-2);
+}
+
+.side-tab {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 6px;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  color: var(--ink-2);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.side-tab:hover {
+  color: var(--ink);
+}
+
+.side-tab.is-active {
+  color: var(--ink);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(20, 20, 20, 0.08);
+}
+
+.side-tab .muted {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* 录制的红点：正在录时一呼一吸 */
+.rec-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e5484d;
+}
+
+.rec-dot.is-live,
+.rec-status.is-recording .rec-dot {
+  animation: rec-pulse 1.6s ease-in-out infinite;
+}
+
+.rec-status:not(.is-recording) .rec-dot {
+  background: var(--muted);
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #e5484d 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, #e5484d 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot.is-live,
+  .rec-status.is-recording .rec-dot {
+    animation: none;
+  }
+}
+
+.rec {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.rec-result {
+  margin: 10px 10px 0;
+}
+
+.rec-setup {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.rec-label {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rec-textarea {
+  width: 100%;
+  height: auto;
+  min-height: 52px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.rec-tab-select {
+  width: 100%;
+}
+
+.rec-tip {
+  margin: 2px 0 4px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.rec-start {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-self: start;
+}
+
+.rec-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.rec-status.is-recording {
+  background: color-mix(in srgb, #e5484d 7%, var(--panel));
+}
+
+.rec-counts {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-goal {
+  padding: 10px 14px 0;
+}
+
+.rec-goal p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+.rec-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px 0;
+}
+
+.rec-mark {
+  display: grid;
+  gap: 8px;
+  margin: 10px 10px 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.rec-mark-target {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.rec-pointed {
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rec-steps {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 6px;
+  margin: 0;
+  padding: 10px;
+  list-style: none;
+}
+
+.rec-step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 6px 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.rec-step.is-mark {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--panel));
+}
+
+.rec-step.is-navigate {
+  background: var(--sunken);
+}
+
+.rec-step-no {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.rec-step-body {
+  min-width: 0;
+}
+
+.rec-step-title {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.rec-step-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rec-kind {
+  flex-shrink: 0;
+  padding: 0 5px;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  background: var(--sunken-2);
+}
+
+.rec-step.is-mark .rec-kind {
+  color: var(--accent);
+  background: var(--panel);
+}
+
+.rec-step-sub {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rec-step .record-confirm {
+  padding: 2px 0 0;
+}
+
+.rec-step-thumb img {
+  display: block;
+  width: 56px;
+  height: 36px;
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.rec-step-delete {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.rec-empty {
+  padding: 32px 12px;
+  text-align: center;
+}
+
+/* 步骤多时列表在上面滚，上传的按钮留在底部 */
+.rec-upload {
+  position: sticky;
+  bottom: 0;
+}
+
+.rec-upload .composer-actions {
+  flex-wrap: wrap;
+}
+
+.rec-target {
+  width: 100%;
+}

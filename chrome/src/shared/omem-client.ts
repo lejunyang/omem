@@ -136,3 +136,18 @@ export interface ConversationMessage {
   text: string;
   created_at?: string;
 }
+
+// ---------- 录制 ----------
+
+/** POST /api/remote/recordings/import 的回答：只保存时 conversationId 为 null。 */
+export interface RecordingImportResponse {
+  recording: { id: string; summary: Record<string, unknown> };
+  conversationId: string | null;
+}
+
+/** 录制可以接着的地方：一个关注（整理的消息发到它的对话）或一个事项（消息里提到它）。 */
+export interface RecordingTarget {
+  kind: "context" | "item";
+  id: string;
+  name: string;
+}

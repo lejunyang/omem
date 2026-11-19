@@ -1,6 +1,6 @@
 # omem 助手（Chrome 扩展）
 
-omem 仓库里的浏览器扩展（workspace 包 `omem-chrome`）。DevTools 里的「网络」面板（请求列表、高级筛选、筛选方案、Mock、资源搜索）、popup 里的 Mock / 用户状态 / 设备模拟，以及截图和 UI 走查用的「拾取」。
+omem 仓库里的浏览器扩展（workspace 包 `omem-chrome`）。DevTools 里的「网络」面板（请求列表、高级筛选、筛选方案、Mock、资源搜索）、popup 里的 Mock / 用户状态 / 设备模拟，截图和 UI 走查用的「拾取」，以及把一件事做给 omem 的助手看的「录制」。
 
 ## 安装
 
@@ -38,6 +38,16 @@ pnpm --filter omem-chrome run build
 - 拾取篮：点卡片看大图、样式、间距、写说明；「引用」或在输入框里输入 `#` 把记录插进去，前后写描述；「复制为 Markdown」，或「问 omem」「存为原件」（见下）。
 
 截图和记录存在扩展自己的 IndexedDB，发给 omem 之前不出浏览器。
+
+## 录制
+
+侧栏切到「录制」：写一句要教助手什么，选标签页，「开始录制」，照平常做一遍，「停止」后删掉多余的步骤，点「整理成技能」（交给 omem 的助手整理）或「只保存」。录制中工具栏图标显示 REC。
+
+- 记下打开的页面、点击、填写、提交、Enter（元素的名字、角色、CSS 路径、所在标题），点击和换页后截可视区；从被录页打开的新标签页一起录。「加标记」写一句“这里看的是……”，可先在页面上指一个元素。
+- 密码、验证码、卡号一类的输入框只记“填了”。请求用 `chrome.webRequest` 只观察（不连调试器）：方法、地址、状态、耗时、请求头和请求体；同时开着这个页面的 DevTools 时，devtools 页面补上响应体。cookie、令牌、密码在扩展里就换成占位，规则同 omem 远程录制（aad 的 `redact_network`）。
+- 录制中的数据在 IndexedDB `omem-record`，上传成功或放弃后清空。上传接口 `POST /api/remote/recordings/import`（只有 omem 的本人），omem 写成和远程页浏览器录制一样的文件。设计和边界见仓库的 `docs/v2/remote.md`「在自己的 Chrome 里录」。
+
+代码：`src/background/recording-service.ts`（注入、步骤、webRequest、截图、REC）、`src/inject/recorder.ts`（页面里的记录脚本和指出元素）、`src/panel/recording-bridge.ts`（DevTools 开着时补响应体）、`src/shared/recording.ts`（遮盖、敏感输入框、合并、上传内容，单元测试 `recording.test.ts`）、`src/sidepanel/RecordPanel.vue`；e2e `e2e/record.e2e.test.ts`。
 
 ## 连接 omem
 

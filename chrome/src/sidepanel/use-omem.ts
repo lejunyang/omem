@@ -21,9 +21,12 @@ import {
   type OmemPeer,
   type OmemSpace,
   pollLogin,
+  type RecordingImportResponse,
+  type RecordingTarget,
   requestFor,
   startLogin
 } from "../shared/omem-client";
+import type { ImportRequest } from "../shared/recording";
 
 export type ConnectionStatus = { state: "idle" } | { state: "checking" } | { state: "ok"; me: OmemMe } | { state: "error"; message: string; relogin: boolean };
 
@@ -216,6 +219,28 @@ export function useOmem() {
     return requestFor(connection, connections.value)<ClipResponse>("/api/clips", { body: { ...clip, space: space.value }, timeoutMs: 120_000 });
   }
 
+  /** 录制交给 omem：只有本人能上传（本人的令牌）；截图可能有几十张，等久一点。 */
+  async function importRecording(body: ImportRequest): Promise<RecordingImportResponse> {
+    const connection = active.value;
+    if (!connection) throw new Error("还没有连接 omem");
+    return requestFor(connection, connections.value)<RecordingImportResponse>("/api/remote/recordings/import", { body, timeoutMs: 180_000 });
+  }
+
+  /** 录制可以接着的关注（只有本人看得到）和进行中的事项；读不到就当没有。 */
+  async function recordingTargets(): Promise<RecordingTarget[]> {
+    const connection = active.value;
+    if (!connection) return [];
+    const request = requestFor(connection, connections.value);
+    const [contexts, items] = await Promise.all([
+      request<Array<{ id: string; kind: string; name: string; status: string }>>("/api/listen").catch(() => []),
+      request<Array<{ id: string; title: string }>>("/api/items").catch(() => [])
+    ]);
+    return [
+      ...contexts.filter((c) => c.kind !== "default" && c.status === "active").map((c): RecordingTarget => ({ kind: "context", id: c.id, name: c.name })),
+      ...items.slice(0, 50).map((i): RecordingTarget => ({ kind: "item", id: i.id, name: i.title }))
+    ];
+  }
+
   async function conversation(id: string): Promise<ConversationMessage[]> {
     const connection = active.value;
     if (!connection) return [];
@@ -240,10 +265,12 @@ export function useOmem() {
     check,
     connections,
     conversation,
+    importRecording,
     listPeers,
     loaded,
     login,
     pending,
+    recordingTargets,
     remove,
     rename,
     send,

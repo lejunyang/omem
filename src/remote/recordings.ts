@@ -119,14 +119,32 @@ export function recordingSummary(dir: string): Record<string, unknown> {
   };
 }
 
-/** One step as a line: what was done, to which element, and what it changed. */
-function stepLine(s: any): string {
+/** Recorded where: aad in a remote session, or the owner's own Chrome through the omem extension (import.ts). */
+export const fromExtension = (r: Recording) => r.summary.source === "chrome-extension";
+export const kindLabel = (r: Recording) => (fromExtension(r) ? "Chrome 扩展" : r.kind === "browser" ? "浏览器" : "桌面窗口");
+
+/**
+ * One step as a line: what was done, to which element, and what it changed. Steps recorded by the
+ * extension also carry the heading the element sits under, its CSS path and a screenshot (`dir` turns
+ * the screenshot into a path an agent can open).
+ */
+function stepLine(s: any, dir?: string): string {
   const a = s.action ?? {};
-  const what = a.kind === "input" ? `填写「${a.label ?? a.name ?? ""}」${a.protected ? "（受保护，内容未记录）" : `：${truncate(String(a.value ?? ""), 120)}`}` : a.kind === "click" ? `点击「${a.label ?? a.name ?? ""}」` : a.kind === "enter" ? `在「${a.label ?? a.name ?? ""}」按 Enter` : a.kind === "submit" ? `提交表单「${a.label ?? ""}」` : s.kind === "mark" ? `备注：${a.note ?? ""}` : s.kind;
-  const role = a.control?.role ?? a.role;
+  const name = a.label ?? a.name ?? "";
+  const what = a.kind === "input" ? `填写「${name}」${a.protected ? "（受保护，内容未记录）" : `：${truncate(String(a.value ?? ""), 120)}`}` : a.kind === "click" ? `点击「${name}」` : a.kind === "enter" ? `在「${name}」按 Enter` : a.kind === "submit" ? `提交表单「${a.label ?? ""}」` : a.kind === "navigate" ? `打开页面${a.title ? `「${truncate(String(a.title), 80)}」` : ""}` : s.kind === "mark" ? `备注${name ? `（指着「${name}」）` : ""}：${a.note ?? ""}` : s.kind;
+  const role = a.control?.role || a.role;
+  const where = a.heading ? `在「${truncate(String(a.heading), 60)}」下` : "";
+  const context = role || where ? `（${[role, where].filter(Boolean).join("，")}）` : "";
   const changes = (s.changes ?? []).slice(0, 4).map((c: any) => truncate(typeof c === "string" ? c : JSON.stringify(c), 160));
   const net = (s.network ?? []).slice(0, 4).map((n: any) => `${n.method ?? ""} ${truncate(String(n.url ?? ""), 120)} → ${n.status ?? "?"}`);
-  return [`#${s.id} ${what}${role ? `（${role}）` : ""}${a.url ? ` @ ${truncate(String(a.url), 100)}` : ""}`, ...changes.map((c: string) => `   变化：${c}`), ...net.map((n: string) => `   请求：${n}`)].join("\n");
+  const shot = dir && s.screenshots?.[0]?.path ? join(dir, String(s.screenshots[0].path)) : "";
+  return [
+    `#${s.id} ${what}${context}${a.url ? ` @ ${truncate(String(a.url), 100)}` : ""}`,
+    ...(a.locator?.css ? [`   元素：${truncate(String(a.locator.css), 160)}`] : []),
+    ...changes.map((c: string) => `   变化：${c}`),
+    ...net.map((n: string) => `   请求：${n}`),
+    ...(shot ? [`   截图：${shot}`] : []),
+  ].join("\n");
 }
 
 /** A desktop step (control-steps) as a line. */
@@ -145,13 +163,25 @@ export function readRecording(app: App, id: string, userId: string, o: { part?: 
     const s = r.summary;
     const walkthrough = existsSync(join(r.dir, "walkthrough.md")) ? readFileSync(join(r.dir, "walkthrough.md"), "utf8") : "";
     const replay = readJson(join(r.dir, "record.json"));
+    // The extension's recordings have neither aad's walkthrough nor replay steps: the steps themselves.
+    const recorded = walkthrough || replay?.steps?.length ? [] : jsonLines(join(r.dir, "steps.jsonl")).filter((x) => x.id >= 1);
+    const ext = fromExtension(r);
     return [
-      `录制 ${r.id}（${r.kind === "browser" ? "浏览器" : "桌面窗口"}，${r.status}）`,
+      `录制 ${r.id}（${kindLabel(r)}，${r.status}）`,
       `要做的事：${r.goal || "（没写）"}`,
       `对象：${r.target || "（未知）"}`,
-      `动作 ${s.actions ?? 0} 个，可回放 ${s.replayable ?? 0} 步，跳过 ${s.skipped ?? 0} 个，请求 ${s.requests ?? 0} 个，截图 ${s.screenshots ?? 0} 张${s.workflow ? "；有 workflow.yaml" : ""}`,
+      ext
+        ? `动作 ${s.actions ?? 0} 个，本人加的标记 ${s.marks ?? 0} 处，请求 ${s.requests ?? 0} 个（带响应体的 ${s.responseBodies ?? 0} 个），截图 ${s.screenshots ?? 0} 张`
+        : `动作 ${s.actions ?? 0} 个，可回放 ${s.replayable ?? 0} 步，跳过 ${s.skipped ?? 0} 个，请求 ${s.requests ?? 0} 个，截图 ${s.screenshots ?? 0} 张${s.workflow ? "；有 workflow.yaml" : ""}`,
+      ext ? "本人在自己的 Chrome 里用 omem 扩展录的：标记是本人说明那里看的是什么；没有可回放的步骤。" + (s.requests && !s.responseBodies ? "录的时候没开扩展的 DevTools 面板，请求只有地址、状态、请求头和请求体，没有响应体。" : "") : "",
       r.skill ? `已整理成技能：${r.skill}` : "",
-      walkthrough ? `\n## aad 写的操作说明\n\n${truncate(walkthrough, 12_000)}` : replay?.steps?.length ? `\n## 步骤\n\n${replay.steps.slice(0, 60).map(replayLine).join("\n")}` : "",
+      walkthrough
+        ? `\n## aad 写的操作说明\n\n${truncate(walkthrough, 12_000)}`
+        : replay?.steps?.length
+          ? `\n## 步骤\n\n${replay.steps.slice(0, 60).map(replayLine).join("\n")}`
+          : recorded.length
+            ? `\n## 步骤\n\n${recorded.slice(0, 60).map((x) => stepLine(x, r.dir)).join("\n")}${recorded.length > 60 ? `\n……共 ${recorded.length} 步，part=steps from=61 接着看` : ""}`
+            : "",
       apiOverview(r.dir),
       replay?.skipped?.length ? `\n## 没能成为步骤的操作\n\n${replay.skipped.slice(0, 20).map((x: any) => `- ${x.reason ?? ""}${x.summary ? `：${typeof x.summary === "string" ? x.summary : JSON.stringify(x.summary)}` : ""}`).join("\n")}` : "",
       "\n录制时可能有试错和多余的操作：按要做的事挑出真正完成它的那几步和接口。part=steps 看每一步（带引起的变化和请求），part=requests 看接口（bodies=true 带请求体和响应体），part=replay 看可回放的步骤。",
@@ -168,7 +198,7 @@ export function readRecording(app: App, id: string, userId: string, o: { part?: 
     if (!steps.length) return readRecording(app, id, userId, { part: "replay", from, limit });
     const noisy = new Set(endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl"))).filter((e) => e.noise).flatMap((e) => e.requests.map((q) => `${q.method} ${q.url}`)));
     const page = steps.filter((s) => s.id >= from).slice(0, limit);
-    return page.map((s) => stepLine({ ...s, network: (s.network ?? []).filter((n: any) => !noisy.has(`${String(n.method ?? "").toUpperCase()} ${n.url ?? ""}`)) })).join("\n") + (steps.some((s) => s.id > (page.at(-1)?.id ?? 0)) ? `\n……from=${(page.at(-1)?.id ?? 0) + 1} 接着看` : "");
+    return page.map((s) => stepLine({ ...s, network: (s.network ?? []).filter((n: any) => !noisy.has(`${String(n.method ?? "").toUpperCase()} ${n.url ?? ""}`)) }, r.dir)).join("\n") + (steps.some((s) => s.id > (page.at(-1)?.id ?? 0)) ? `\n……from=${(page.at(-1)?.id ?? 0) + 1} 接着看` : "");
   }
   const list = endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl")));
   if (!list.length) return "这次录制没有记下请求。";
@@ -220,7 +250,7 @@ export function skillFilesOf(app: App, id: string, userId: string, keep?: string
     "recording/requests.md": [
       "# 录制时调用的接口",
       "",
-      `录制 ${r.id}（${r.createdAt.slice(0, 10)}）。${wanted?.length ? "整理技能时挑出的接口。" : `${skipped ? `去掉了${skipped}，` : ""}同一个接口合成一条。`}cookie、令牌、密码等敏感值已由 aad 替换；请求体和响应体只保留开头。`,
+      `录制 ${r.id}（${r.createdAt.slice(0, 10)}）。${wanted?.length ? "整理技能时挑出的接口。" : `${skipped ? `去掉了${skipped}，` : ""}同一个接口合成一条。`}cookie、令牌、密码等敏感值录制时已替换成占位；请求体和响应体只保留开头。`,
       "",
       ...ordered(chosen).map((e, i) => endpointText(e, i + 1, true)),
       "",

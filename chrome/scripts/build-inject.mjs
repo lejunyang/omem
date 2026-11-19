@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "vite";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const entries = ["page-hook", "page-bridge", "simulator-env", "pick-overlay"];
+const entries = ["page-hook", "page-bridge", "simulator-env", "pick-overlay", "recorder"];
 const watch = process.argv.includes("--watch");
 
 for (const name of entries) {

@@ -87,7 +87,10 @@ function noiseOf(e: Omit<Endpoint, "noise">): string | null {
   if (segments.some((s) => TELEMETRY_SEGMENT.test(s)) && (TELEMETRY_HOST.test(e.host) || e.method === "POST" && e.requests.length >= 3)) return "埋点";
   if (TELEMETRY_HOST.test(e.host) && e.method === "POST") return "埋点";
   // The same read again and again with nothing new: a page polling (a login QR code, a status badge).
-  if (e.method === "GET" && e.requests.length >= 5 && new Set(e.requests.map((r) => bodyText(r.got).slice(0, 500))).size <= 2) return "轮询";
+  // Only when the responses were kept: without them (the extension recording without DevTools) a list
+  // paged five times would look the same as a poll.
+  const answered = e.requests.filter((r) => r.got != null);
+  if (e.method === "GET" && answered.length >= 5 && new Set(answered.map((r) => bodyText(r.got).slice(0, 500))).size <= 2) return "轮询";
   return null;
 }
 

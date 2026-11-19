@@ -2,6 +2,7 @@ import { createDeviceSimulatorService } from "./background/device-simulator-serv
 import { syncPageHookRegistration } from "./background/page-hook-registration";
 import { clearSimulatorFallback, configureSimulatorFallback } from "./background/simulator-fallback";
 import { createPickService } from "./background/pick-service";
+import { createRecordingService } from "./background/recording-service";
 import {
   CDP_MODE_STORAGE_KEY,
   type CdpMode,
@@ -170,6 +171,9 @@ const pickService = createPickService({
   isCdpEnabled: () => cdpMode === "on",
   releaseDebugger: (tabId) => maybeDetachDebugger(tabId)
 });
+// 录制：webRequest、标签页的监听要在 service worker 启动时同步注册。
+const recordingService = createRecordingService();
+recordingService.install();
 const fallbackSimulatorTabs = new Set<number>();
 
 // 「CDP 增强」开关：默认关闭。必须在第一次 attach 前读到，所以 attachDebugger 会等 cdpModeReady。
@@ -302,6 +306,13 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   }
   if (messageType === "advanced-network:get-cdp-status") {
     void cdpModeReady.then(() => sendResponse({ ok: true, mode: cdpMode, attachedTabs: [...attachedTabs] }));
+    return true;
+  }
+  if (recordingService.isMessage(message)) {
+    void recordingService
+      .handleMessage(message, sender)
+      .then(sendResponse)
+      .catch((error) => sendResponse(toMessageResponse(error)));
     return true;
   }
   if (pickService.isPickMessage(message)) {

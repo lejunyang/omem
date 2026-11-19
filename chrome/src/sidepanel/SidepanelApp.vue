@@ -6,6 +6,7 @@ import { imageForUpload } from "./image-data";
 import OmemConnections from "./OmemConnections.vue";
 import PickComposer from "./PickComposer.vue";
 import PickRecordDetail from "./PickRecordDetail.vue";
+import RecordPanel from "./RecordPanel.vue";
 import { useOmem } from "./use-omem";
 import { usePickBasket } from "./use-pick-basket";
 
@@ -13,6 +14,16 @@ const basket = usePickBasket();
 const omem = useOmem();
 const { status: omemStatus, active: omemActive, spaces: omemSpaces, space: omemSpace } = omem;
 const showConnections = ref(false);
+
+/** 侧栏两页：拾取篮和录制。打开侧栏时如果正在录制，直接显示录制。 */
+const view = ref<"pick" | "record">("pick");
+const recordingLive = ref(false);
+let recordingKnown = false;
+function onRecordingState(live: boolean): void {
+  if (!recordingKnown && live) view.value = "record";
+  recordingKnown = true;
+  recordingLive.value = live;
+}
 
 /** 发送的状态：发出去以后问答要等助手回答，这里轮询对话把回答显示出来。 */
 type SendState =
@@ -165,11 +176,15 @@ function time(value: number): string {
 <template>
   <main class="basket">
     <header class="basket-header">
-      <div class="basket-title">
-        <strong>拾取篮</strong>
-        <span v-if="items.length" class="muted">{{ items.length }} 条</span>
+      <div class="side-tabs" role="tablist" aria-label="侧栏">
+        <button class="side-tab" :class="{ 'is-active': view === 'pick' }" type="button" role="tab" :aria-selected="view === 'pick'" data-testid="side-tab-pick" @click="view = 'pick'">
+          拾取篮<span v-if="items.length" class="muted">{{ items.length }}</span>
+        </button>
+        <button class="side-tab" :class="{ 'is-active': view === 'record' }" type="button" role="tab" :aria-selected="view === 'record'" data-testid="side-tab-record" @click="view = 'record'">
+          录制<i v-if="recordingLive" class="rec-dot is-live" aria-label="录制中" />
+        </button>
       </div>
-      <div class="basket-start" role="group" aria-label="开始拾取">
+      <div v-show="view === 'pick'" class="basket-start" role="group" aria-label="开始拾取">
         <button
           v-for="item in modes"
           :key="item.mode"
@@ -204,12 +219,15 @@ function time(value: number): string {
     </div>
     <OmemConnections v-if="showConnections" :omem="omem" @close="showConnections = false" />
 
-    <p v-if="notice" class="basket-notice">
+    <!-- 录制一直挂着（v-show）：切到拾取篮时它的状态和计时不断，标签上的红点也靠它报告 -->
+    <RecordPanel v-show="view === 'record'" :omem="omem" @recording="onRecordingState" />
+
+    <p v-if="notice && view === 'pick'" class="basket-notice">
       <span>{{ notice }}</span>
       <button v-if="needsPermission" class="button" type="button" @click="basket.grantAllSites()">授权所有网站</button>
     </p>
 
-    <section class="basket-list" aria-label="记录">
+    <section v-show="view === 'pick'" class="basket-list" aria-label="记录">
       <div v-if="loading" class="basket-skeleton" aria-hidden="true"><i /><i /><i /></div>
       <div v-else-if="!items.length" class="basket-empty">
         <strong>还没有记录</strong>
@@ -244,7 +262,7 @@ function time(value: number): string {
       </article>
     </section>
 
-    <footer class="composer">
+    <footer v-show="view === 'pick'" class="composer">
       <PickComposer
         ref="composer"
         :segments="draft"

@@ -99,3 +99,12 @@
 - [x] 重构功能导航和设备实验参数组件；整理 popup、表单、空状态与窄窗口布局。
 - [x] 增加真实浏览器画布交互、参数切换、拖动滚动、CSP 保留和 UI 无异常回归。
 - [x] 明确原页面原生模拟与画布属性/事件模拟的差异，见 mobile-simulator-review.md。
+
+## 2026-11-20 录制
+
+- [x] 侧栏「录制」页：目标、选标签页、开始 / 停止 / 接着录、加标记（可在页面上指出元素）、删步骤、整理成技能 / 只保存，可选关注或事项。
+- [x] 后台录制服务：注入记录脚本、输入合并、换页、新标签页跟随、截图节流、REC 角标；`chrome.webRequest` 观察请求（manifest 加 `webRequest`）。
+- [x] DevTools 页面补请求体和响应体，与 webRequest 的记录合并。
+- [x] 遮盖和敏感输入框规则（同 omem 的 `src/remote/redact.ts`），IndexedDB `omem-record`。
+- [x] 单元测试 `src/shared/recording.test.ts`，e2e `e2e/record.e2e.test.ts`。
+- [ ] 有界面的真实 Chrome 上验：授权弹窗、指出元素、DevTools 开着时的响应体、上传后助手整理。
