@@ -15,6 +15,11 @@ updated: 2026-11-19
 
 这个文件超过四百行左右时，把最早的一批整节移到归档里（没有合适的就新建一个按时间段命名的文件，并在上面加一行）。
 
+## 并进别的交办的修改没做时，流程不再当作修好（11-19）
+
+- `continue_code_run` 带 `item_id` 和 `new_item` 记成的修改项在 `origin.item` 记下来源事项（`src/agents/tools.ts` 的 `messageRound`，`code-loop.ts` 的 `ownerNote`）。
+- `src/flows/objects.ts` 的 `droppedFor`：这次交办里记到该事项的修改项全是 `wontdo` 时，`code-work` 对象对这个事项不算完成，带 `dropped`（各项的回答）；`src/flows/engine.ts` 跟随它的那一段转为 `blocked`、等本人，不再进推送和回归验证。之前并入的事项只看交办整体，本人说“不做”的那件也被标成修复完成，接着推送、问要不要开始回归验证。
+
 ## 会议旁听的节奏可按规则设置；成员的展示页本人也能打开（11-19）
 
 - 会议规则 `meeting-bot` 动作加 `listen`（`window` 分段看 / `after` 只在会后）、`listenEvery`（分钟，默认 5）、`listenLines`（攒满几行提前看，默认 60）、`listenPrefilter`（默认开）、`listenRollover`（同一会话连看几段，默认 8），`src/rules/types.ts`，规则页在“旁听”下面。之前写死每 3 分钟或 40 行一段，长会议的运行很多。

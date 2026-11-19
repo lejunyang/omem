@@ -9,7 +9,7 @@ import { pluginObjectKind } from "../plugins/objects.ts";
 import { findPluginObject } from "./plugin-objects.ts";
 
 /** `updated`: a plugin object whose revision moved after the time asked about (a stage done on `status: "updated"`). */
-export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; changedAt?: string; disabled?: boolean; updated?: boolean };
+export type FlowObject = { ref: string; title: string; status: string; done: boolean; link: string; statusLabel?: string; fields?: { label: string; value: string }[]; changedAt?: string; disabled?: boolean; updated?: boolean; dropped?: string };
 export type ObjectKind = { kind: string; label: string; find: (app: App, item: Item) => FlowObject | null };
 
 /** Per-item run materials bound the lookup; codeWork uses the existing continuation indexes. */
@@ -51,6 +51,18 @@ export function joinCodeWork(app: App, item: Item, rootId: string) {
   app.emit({ type: "changed", entity: "item", id: item.id });
 }
 
+/**
+ * A change this item put into another item's delegation (continue_code_run with item_id and new_item,
+ * its tasks carry `origin.item`) that was all declined or put off: the delegation finishing is not this
+ * item fixed. Returns why, from the tasks' answers; null when any of them was done, or none is known.
+ */
+export function droppedFor(app: App, item: Item, rootId: string): string | null {
+  const rows = all<{ seq: number; state: string; answer: string | null }>(app.db,
+    "select seq, state, answer from code_tasks where work_id = ? and json_extract(origin, '$.item') = ?", rootId, item.id);
+  if (!rows.length || rows.some((t) => t.state !== "wontdo")) return null;
+  return rows.map((t) => `T${t.seq}${t.answer ? `：${t.answer}` : ""}`).join("；");
+}
+
 /** Built-in object lifecycles stay in their own stores. */
 export const flowObjects: readonly ObjectKind[] = [
   { kind: "fixes", label: "改", find: () => null },
@@ -64,7 +76,8 @@ export const flowObjects: readonly ObjectKind[] = [
     const last = w.roundList.at(-1);
     // `stage.key` is the view's state; the verdict in roundList preserves review approval after apply.
     const done = last?.status === "done" && last.verdict === "approved" && ["done", "review-ok", "ended"].includes(w.stage.key);
-    return { ref: `code-work:${w.rootId}`, title: w.title, status: w.stage.key, done, link: `#/runs/${w.latestId}` };
+    const dropped = done ? droppedFor(app, item, w.rootId) : null;
+    return { ref: `code-work:${w.rootId}`, title: w.title, status: w.stage.key, done: done && !dropped, link: `#/runs/${w.latestId}`, ...(dropped ? { dropped } : {}) };
   } },
   { kind: "design", label: "方案", find: (app, item) => {
     const w = latestCodeWork(app, item);

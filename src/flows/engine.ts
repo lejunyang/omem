@@ -458,6 +458,12 @@ async function advanceNow(app: App, itemId: string, _cause: string, at = new Dat
       if (followed && s.by !== followed.ref) {
         s = changeStage(app, itemId, d.id, "doing", { by: followed.ref }, host, `跟随${objectKind(carrierKind!)?.label}：${followed.title}`, [followed.ref]); changed = true;
       }
+      const ownRunBusy = !!s.control.runId && ["queued", "running"].includes(getRun(app, s.control.runId).status);
+      if (obj?.dropped && !ownRunBusy) {
+        // This item's own change in a shared delegation was declined: the delegation ending is not this fixed.
+        if (s.state !== "blocked") { changeStage(app, itemId, d.id, "blocked", { waitingOn: "owner", evidence: [...new Set([...s.evidence, obj.ref])] }, host, `这件的修改没做：${obj.dropped}`, [obj.ref]); changed = true; }
+        continue;
+      }
       if (obj) {
         if (objectDone(d, obj) && (!kind?.includes(":") || !obj.disabled && (obj.updated || !s.control.objectAfter || !!obj.changedAt && obj.changedAt > s.control.objectAfter))) {
           changeStage(app, itemId, d.id, "done", { by: followed?.ref ?? s.by, waitingOn: null, askId: null, evidence: [...new Set([...s.evidence, obj.ref])] }, host, obj.updated ? `${objectKind(kind!)?.label}有更新` : `${objectKind(kind!)?.label}已完成（${obj.status}）`, [obj.ref]); withdraw(app, s); changed = true;

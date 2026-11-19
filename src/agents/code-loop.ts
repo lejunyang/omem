@@ -833,13 +833,13 @@ registerAskHandler("code-task", async (app: App, ask: Ask, ctx) => {
  * otherwise, or when `asTask`, they become a task, coded in the next round, which starts now when
  * nothing is running.
  */
-export function ownerNote(app: App, runId: string, text: string, by: string, opts: { asTask?: boolean } = {}): { task: CodeTask; next: Run | null } | null {
+export function ownerNote(app: App, runId: string, text: string, by: string, opts: { asTask?: boolean; item?: string } = {}): { task: CodeTask; next: Run | null } | null {
   const rootId = workRootOf(app, runId);
   const last = lastRound(app, rootId);
   const coding = last.status === "queued" || (last.status === "running" && typeof last.output.coderSummary !== "string");
   if (coding && !opts.asTask) return null;
   const first = text.trim().split("\n")[0];
-  const task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: "owner", origin: { note: text.trim() } }, by);
+  const task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: "owner", origin: { note: text.trim(), ...(opts.item ? { item: opts.item } : {}) } }, by);
   return { task, next: advanceWork(app, rootId, { owner: true }) };
 }
 

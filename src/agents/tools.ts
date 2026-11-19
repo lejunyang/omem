@@ -4737,8 +4737,10 @@ function steerable(ctx: ToolContext, runId: string) {
 async function messageRound(ctx: ToolContext, a: ContinueArgs) {
   if (!a.task?.trim()) throw new HttpError(400, "when=now 要写 task：交给编码 Agent 的话");
     steerable(ctx, a.run_id);
+    let joinedItem: string | undefined;
     if (a.item_id) {
       const item = itemFor(ctx, a.item_id);
+      joinedItem = item;
       const w = (await import("./code-works.ts")).codeWork(ctx.app, a.run_id);
       if (!w) throw new HttpError(400, "item_id 要和交办的编码运行一起用：run_id 写交办的任一轮");
       (await import("../flows/objects.ts")).joinCodeWork(ctx.app, getItem(ctx.app, item), w.rootId);
@@ -4746,7 +4748,7 @@ async function messageRound(ctx: ToolContext, a: ContinueArgs) {
     // A task-driven delegation between rounds: a new change becomes a task (code-loop.ts); other words wait for the next round.
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
     if (isTaskWork(ctx.app, a.run_id) && a.new_item) {
-      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER);
+      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER, { item: joinedItem });
       if (made) return `已记成修改项 ${taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮 ${made.next.id} 开始做` : "，下一轮做"}。`;
     }
     const { addCodeNote } = await import("./code-steer.ts");

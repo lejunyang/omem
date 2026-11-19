@@ -8,7 +8,8 @@ import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { OWNER } from "../src/core/users.ts";
-import { latestCodeWork } from "../src/flows/objects.ts";
+import { droppedFor, latestCodeWork } from "../src/flows/objects.ts";
+import { listTasks, updateTask } from "../src/agents/code-tasks.ts";
 import { getItem, upsertItem } from "../src/items/store.ts";
 import { testApp } from "./helpers.ts";
 
@@ -63,6 +64,30 @@ describe("delegate_code from a run that writes only its project space", () => {
     const joined = await callTool(ctx, "continue_code_run", { run_id: runId, when: "now", task: "退款单号在列表里显示不全，改成完整显示", new_item: true, item_id: b.id });
     expect(joined.isError, joined.text).toBe(false);
     expect(latestCodeWork(app, getItem(app, b.id))?.rootId).toBe(latestCodeWork(app, getItem(app, a.id))?.rootId);
+    run(app.db, "update runs set status = 'cancelled' where kind = 'code'");
+  });
+
+  it("a joined item whose own change was declined is not fixed when the delegation ends", async () => {
+    const app = testApp();
+    createSpace(app, { id: "shop", name: "示例商城", kind: "project" });
+    createSpace(app, { id: "shop-web", name: "商城前端", kind: "repo", rootPath: repo(), parentId: "shop" });
+    const a = upsertItem(app, undefined, { title: "退款金额按未发货的行算", spaceId: "shop" }, "user");
+    const b = upsertItem(app, undefined, { title: "退款单保存失败", spaceId: "shop" }, "user");
+    const stage = createRun(app, { kind: "flow-stage", spaceId: "shop", title: "修复", input: {} });
+    const ctx: ToolContext = { app, runId: stage.id, spaceId: "shop", spaces: ["shop", "shop-web"], writable: ["shop"], tools: null, actor: "agent", userId: OWNER };
+    const first = await callTool(ctx, "delegate_code", { repo_spaces: ["shop-web"], task: "退款金额按未发货的行算", item_id: a.id, branch: "feat/refund" });
+    const runId = /运行 (r\w+)/.exec(first.text)![1];
+    // Between rounds the joined change becomes a task of its own, marked with the item it came from.
+    run(app.db, "update runs set status = 'done', output = json_set(coalesce(output, '{}'), '$.coderSummary', '做完了') where kind = 'code'");
+    const joined = await callTool(ctx, "continue_code_run", { run_id: runId, when: "now", task: "退款单保存失败，查清后修复", new_item: true, item_id: b.id });
+    expect(joined.text).toContain("已记成修改项");
+    const rootId = latestCodeWork(app, getItem(app, b.id))!.rootId;
+    const mine = listTasks(app, rootId).filter((t) => t.origin.item === b.id);
+    expect(mine).toHaveLength(1);
+    expect(droppedFor(app, getItem(app, a.id), rootId)).toBeNull();
+    expect(droppedFor(app, getItem(app, b.id), rootId)).toBeNull();
+    updateTask(app, rootId, mine[0].seq, { state: "wontdo", answer: "原因在下游服务，不在这个仓库" });
+    expect(droppedFor(app, getItem(app, b.id), rootId)).toContain("原因在下游服务");
     run(app.db, "update runs set status = 'cancelled' where kind = 'code'");
   });
 });
