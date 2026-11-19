@@ -14,22 +14,22 @@ omem 支持多人登录以后，同事在 omem 里提问、交办，背后跑的
 
 ## 先看各家命令行怎么放登录态
 
-主流命令行都把登录态放在 HOME 下的一个目录里，并且大多认一个环境变量来换这个目录。没有一家提供“同一个进程里切账号”。TraeX 和豆包命令行两行在一台 Linux 上实测过（空目录下启动、换变量后登录态的位置）；Codex 和 Claude Code 两行来自它们的帮助和文档，还要用同样的办法实测一遍。
+主流命令行都把登录态放在 HOME 下的一个目录里，并且大多认一个环境变量来换这个目录。没有一家提供“同一个进程里切账号”。下表在一台 Linux 上用空目录实测过（2026-11-20：两个空账号目录同时启动，用文件跟踪看各自打开了哪些路径；都还没有用真实账号登录）。
 
-| 后端 | 换目录的变量 | 无界面登录 | 备注 |
+| 后端 | 每个账号要分开的 | 无界面登录 | 实测结果 |
 | --- | --- | --- | --- |
-| Codex | `CODEX_HOME` | `codex login --device-auth`（设备码） | 会话记录、技能也在这个目录 |
-| Claude Code | `CLAUDE_CONFIG_DIR` | `claude setup-token` 打印长期令牌，之后可用 `CLAUDE_CODE_OAUTH_TOKEN` 直接注入 | 有令牌注入，不一定要目录 |
-| TraeX | `TRAE_HOME` | `traex login --sso-device`（设备码） | 目录不能是符号链接；它自带的沙箱要求 socket 目录属于当前用户、权限 0700 |
-| 豆包命令行 | `XDG_DATA_HOME`（没有就 `HOME`） | 二维码 | 运行时也装在这个目录下，换目录要连运行时一起准备；同一账号同时只能有一个共享服务 |
+| Codex | `CODEX_HOME`、`HOME` | `codex login --device-auth`（设备码） | 空目录下 `login status` 为未登录 |
+| Claude Code | `CLAUDE_CONFIG_DIR`、`HOME` | `claude setup-token` 打印长期令牌，之后可用 `CLAUDE_CODE_OAUTH_TOKEN` 直接注入 | Linux 上凭据文件和配置都落在 `CLAUDE_CONFIG_DIR`（macOS 在钥匙串，不随目录变） |
+| TraeX | `TRAE_HOME`（也认 `TRAECLI_HOME`）、`HOME`、私有的 `XDG_RUNTIME_DIR` 和 `TMPDIR`（0700） | `traex login --sso-device`（设备码） | 两个空账号同时完成 ACP 初始化，各自只查自己的登录文件；技能从 `$TRAE_HOME/skills` 读；目录不能是符号链接 |
+| 豆包命令行 | `HOME`、`XDG_DATA_HOME`，**还要私有的 `/tmp` 和 PID 视图** | 二维码 | 只分开目录时，两份进程用了同一个 `/tmp` 下的服务 socket，后启动的连进了前一个账号的服务；用 bubblewrap 各给一个 `/tmp` 和 PID 命名空间后才各连各的。程序可以直接从本机安装的绝对路径启动，不用每人复制一份 |
 
-所以 omem 能用同一个办法处理所有后端：**每个用户、每个后端一个账号目录，启动 Agent 时把对应变量指向它**。差异写进 Agent 目录（`src/agents/catalog.ts`），运行时不按 Agent 名特判。
+所以 omem 能用同一个办法处理所有后端：**每个用户一个账号目录（当作他的 HOME），在沙箱里启动 Agent，把对应变量指向它**。差异写进 Agent 目录（`src/agents/catalog.ts`），运行时不按 Agent 名特判。豆包这一行也说明只换目录变量不够，沙箱（私有 `/tmp`、PID 视图）是必需的，不是加固项。
 
 ## 设计
 
 ### 1. 账号目录
 
-- 位置：数据目录下 `accounts/<用户 id>/<后端 id>/`，权限 0700，不允许符号链接。本人不用这一层，照旧用本机已有的登录。
+- 位置：数据目录下 `accounts/<用户 id>/home/`，权限 0700，不允许符号链接。它是这个人在沙箱里的整个 HOME，各后端的目录（`.codex`、`.trae`、`.local/share/doubao_cli`……）都在里面，所以不靠各家的目录变量也能分开；`account.env` 只用来补那些不从 HOME 推目录的后端。本人不用这一层，照旧用本机已有的登录。
 - 目录里放什么由后端决定，omem 不读不写里面的凭据，只负责建目录、设变量、删除。
 - 删除用户、用户退出某个后端时删掉对应目录（先让后端自己 logout，失败也删）。
 
@@ -37,12 +37,12 @@ omem 支持多人登录以后，同事在 omem 里提问、交办，背后跑的
 
 ```ts
 account?: {
-  /** 启动时设的环境变量，{dir} 是这个用户这个后端的账号目录 */
-  env: Record<string, string>;            // 例：{ CODEX_HOME: "{dir}" }
+  /** 启动时设的环境变量，{home} 是这个用户的账号目录（沙箱里的 HOME） */
+  env: Record<string, string>;            // 例：{ CODEX_HOME: "{home}/.codex" }
   /** 要预先建好的子目录（0700），比如 socket 目录 */
-  dirs?: string[];                        // 例：["run"]，配合 env 里的 XDG_RUNTIME_DIR: "{dir}/run"
-  /** 准备目录时从本机安装里复制过来的东西（只复制程序，不复制登录态） */
-  copy?: { from: string; to: string }[];  // 豆包命令行的运行时
+  dirs?: string[];                        // 例：[".run"]，配合 env 里的 XDG_RUNTIME_DIR: "{home}/.run"
+  /** 沙箱里要只读挂进来的本机安装（程序从本机的绝对路径启动，不每人复制） */
+  mounts?: string[];                      // 例：豆包命令行的 app/current
   /** 无界面登录：命令、从输出里认出链接和验证码的正则、超时 */
   login?: { args: string[]; url: string; code?: string; timeoutMs?: number };
   /** 查登录状态：退出码 0 算已登录，输出里认出账号名的正则 */
@@ -60,7 +60,7 @@ account?: {
 `prepareRun` 已经知道这次运行替谁跑（`userId`）。在它决定后端之后：
 
 1. 发起人是本人，或后端没有 `account` → 照旧。
-2. 发起人是成员，且他在这个后端有账号（目录存在且上次 `status` 是已登录）→ 用他的账号目录：`launch` 时合并 `account.env`（展开 `{dir}`），令牌型的再加 `tokenEnv`。
+2. 发起人是成员，且他在这个后端有账号（目录存在且上次 `status` 是已登录）→ 在沙箱里启动，HOME 是他的账号目录，合并 `account.env`（展开 `{home}`），令牌型的再加 `tokenEnv`。
 3. 成员没有账号 → 看设置 `agents.accounts.<后端>`：
    - `owner`（默认，等于现在的行为）：借用本人的；
    - `own`：这个后端只能用自己的账号，运行失败，提示“在 设置 → 我的 AI 账号 里登录 <后端>”；
@@ -96,20 +96,39 @@ api.agentLogin({
   backend: "traex",
   label: "用公司账号登录",
   // 引导这个用户授权（设备码或网页 OAuth），拿到凭据后写进账号目录
-  async login(ctx: { userId: string; dir: string; show(link: { url: string; code?: string }): void; signal: AbortSignal }): Promise<{ user: string }>;
+  async login(ctx: { userId: string; home: string; show(link: { url: string; code?: string }): void; signal: AbortSignal }): Promise<{ user: string }>;
 });
 ```
 
 宿主只负责调用、把链接显示给这个人、超时取消；凭据怎么换、写成什么格式由插件决定。数据目录里的公司插件就用这个让同事用公司账号登录 TraeX。插件要在清单里声明 `permissions.agentLogin: [<后端>]`，本人信任插件时能看到。
 
+### 6.5 别人怎么做的
+
+开源项目里，按人分账号大致有三种做法：
+
+| 做法 | 例子 | 优点 | 缺口 |
+| --- | --- | --- | --- |
+| 只换各家的目录变量 | 各种多账号切换工具：每个账号一个目录，启动时设 `CLAUDE_CONFIG_DIR`、`CODEX_HOME` | 简单，不要权限 | Agent 执行的子进程（git、gh、shell）仍用原来的 HOME，能读到本人的配置和令牌；macOS 上 Claude Code 的凭据在钥匙串里，不随目录变 |
+| 每人一个系统用户 | Clay：给每个成员建 Linux 账号，用 `setfacl` 管文件权限，Agent 进程用他的 uid / gid 启动 | 由内核保证互相读不到 | 要 root 或 sudo 建用户、切用户 |
+| 每人一个容器或沙箱 | agent-fleet：每人一个容器（没有 Docker 时用 bubblewrap），家目录持久，各自 `/login` | 隔离完整，HOME 本身就是他的 | 要准备镜像或沙箱里的程序，后端自带的沙箱要能嵌套 |
+
+可以借用的组件：Anthropic 开源的 sandbox-runtime（`srt`），Linux 上用 bubblewrap，macOS 上用 sandbox-exec，同时管文件和网络，能包住任意进程。
+
+所以只换目录变量不够：Agent 跑的命令会继承真正的 HOME。omem 第一期就把**整个 HOME 换成这个人的账号目录**，并在 Linux 上用 bubblewrap 启动（不需要 root）：只读挂系统和程序，可写挂他的 HOME 和这次运行的工作目录，别人的账号目录和 omem 数据目录不挂进去。
+
+### 6.6 支持哪些系统
+
+- 第一期只支持 Linux，并且要求装了 bubblewrap、允许非特权用户命名空间（启动时检查一次）。
+- 不满足条件的机器（macOS、Windows、没有 bubblewrap 的 Linux）不提供多账号：设置页不显示“我的 AI 账号”和各后端的规则，成员的运行照旧借用本人的后端。
+- macOS 以后再看：钥匙串、豆包命令行的数据目录（`~/Library/Application Support`）、sandbox-exec 都要单独验证。
+
 ### 7. 隔离的边界（重要）
 
 同一台机器、同一个系统用户跑所有人的 Agent 时，账号目录只能防止“串号”（A 的运行用了 B 的账号），**防不了一个能执行命令的 Agent 去读另一个人的账号目录**：它们的文件属于同一个系统用户。
 
-所以分两步：
+所以成员的运行一开始就放进沙箱（见 6.5）：bubblewrap 里只有这个人的 HOME、需要的程序和这次运行的工作目录，其他人的账号目录和 omem 数据目录看不到。omem 的工具照旧经 MCP 回到宿主，权限仍按这个用户限定。要先验证各后端自带的沙箱在里面还能起来（TraeX 的 socket 目录、豆包沙箱需要的系统调用），起不来的后端不开放多账号。
 
-1. **第一期**：账号目录 + 环境变量。成员的运行本来就不能交办编码、不能操作桌面（`code.delegate`、`desktop.control` 只给本人），问答和后台任务里的 Agent 没有任意执行命令的工具时，这一层够用。给成员打开带执行命令能力的后端前，设置页要明说这条边界。
-2. **第二期**：成员的运行放进沙箱启动。Agent 目录加 `account.sandbox`：用 bubblewrap（或独立系统用户 / 容器）只挂这个人的账号目录、需要的程序和这次运行的工作目录，其他人的账号目录和 omem 数据目录不可见。要先验证各后端自带的沙箱在里面还能起来（TraeX 的 socket 目录、豆包沙箱需要的系统调用）。
+以后如果有 root，可以换成每人一个系统用户（Clay 的做法），隔离由内核保证，也不再需要嵌套沙箱。
 
 ### 8. 不做的
 
@@ -119,13 +138,13 @@ api.agentLogin({
 
 ## 分期
 
-1. Agent 目录的 `account` 字段（Codex、Claude Code、TraeX、豆包命令行先写上），账号目录的建立和删除，`prepareRun` 按发起人选账号，设置 `agents.accounts`。后台会话池、续用、额度、探测缓存按账号区分。
-2. “我的 AI 账号”页面：设备码 / 二维码登录、令牌粘贴、状态、退出；本人的总览。
-3. 插件的 `api.agentLogin`。
-4. 沙箱启动（`account.sandbox`），之后才给成员开放带执行命令能力的后端。
+1. Agent 目录的 `account` 字段（TraeX、豆包命令行、Codex、Claude Code），账号目录（整个 HOME）的建立和删除，bubblewrap 启动和启动前的系统检查，`prepareRun` 按发起人选账号，设置 `agents.accounts`。后台会话池、续用、额度、探测缓存按账号区分。
+2. “我的 AI 账号”页面：设备码 / 二维码登录、令牌粘贴、状态、退出；本人的总览。系统不支持时整页不出现。
+3. 插件的 `api.agentLogin`（公司插件用它做 TraeX 的公司账号登录）。
 
 ## 要先验证的
 
 - 每个后端在独立账号目录里能完成一次完整的 ACP 往返（初始化、建会话、一轮对话）。
 - 同一后端两个账号目录同时运行互不干扰；同一个账号在两个目录里同时运行会怎样（有的后端限制单个共享服务）。
 - 设备码登录的输出格式（链接和验证码能不能稳定地用正则认出来）。
+- 沙箱里没有系统钥匙串（keyring）时，各后端的登录态能不能落在文件里、跨进程保留。有的命令行在没有钥匙串的环境里只把令牌放在内存里，换个进程就要重登。
